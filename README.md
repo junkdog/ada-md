@@ -1,33 +1,29 @@
 # ada
 
+![The Matriarch](ada.jpg)
+
+_Named after Ada, regal matriarch, at her behest._
+
 A terminal markdown viewer for notes you walk between: follow links and come back to where you
 were, see what git says changed, read wide tables at any width, and look at the pictures.
 
 `ada` renders CommonMark and GitHub-flavoured markdown with `[[wiki links]]`, highlights code
-in some 200 languages, and shows images inline in terminals that can (kitty, sixel, iTerm2). It
-sleeps while you read: no timers, no CPU, until a key, a resize or the file changes.
+in some 200 languages, and shows images inline in terminals that can (kitty, sixel, iTerm2). 
 
 ## Features
 
-- headings, emphasis, lists and task lists, block quotes and callouts (`> [!NOTE]`), footnotes,
-  rules, and tables with GFM alignment
-- tables that fit: columns are sized like a browser's automatic table layout, the header sticks
-  while you scroll, and a table too wide for the terminal turns into one card per row (`t`)
-- syntax-highlighted code blocks with a language label; long lines wrap, or scroll sideways
-  together (`w`, then `←`/`→`)
-- links: relative paths, `[[wiki]]`, `[[wiki#Heading]]`, `[[wiki|alias]]`, `#anchors` and
-  footnotes. `Tab` focuses one, `Enter` follows it, and back and forward keep the scroll
-  position and focus. Web links open in your browser; broken links look it
-- a git gutter: lines added, modified and deleted since `HEAD`, with staged and unstaged
-  changes in different colours, and `]c`/`[c` to jump between them
-- images: inline when alone in a paragraph, and full screen from any link to a png or jpeg
-- regex search that ignores markdown syntax: `foo bar` finds `**foo** _bar_`. Link targets
-  match too, and the status line shows what matched
-- an outline of the headings, filtered as you type
-- live reload when the file changes, and `e` to edit it at the line you're reading
-- `y` copies the focused link, or the code block on screen, to the clipboard (OSC 52)
+- CommonMark and GFM: tables, task lists, footnotes and callouts (`> [!NOTE]`)
+- tables sized like a browser's, with a sticky header; too-wide tables become cards (`t`)
+- syntax-highlighted code; long lines wrap or scroll sideways (`w`)
+- links: relative paths, `[[wiki]]`, anchors and footnotes, with back/forward history
+- git gutter for staged and unstaged changes; `]c`/`[c` to jump between them
+- inline images, and full screen from any linked png or jpeg
+- regex search that sees through markup: `foo bar` finds `**foo** _bar_`
+- a filterable heading outline
+- live reload, and `e` to edit at the current line
+- `y` to copy the focused link or visible code block (OSC 52)
 - themes, keys and options in one config file
-- `--print` for pipes and fzf preview panes, with the same rendering
+- `--print` for pipes and fzf previews
 
 ## Install
 

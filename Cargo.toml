@@ -6,6 +6,7 @@ rust-version = "1.99"
 description = "A terminal markdown viewer"
 license = "MIT"
 readme = "README.md"
+exclude = ["ada.jpg"]
 keywords = ["markdown", "viewer", "terminal", "tui", "pager"]
 categories = ["command-line-utilities"]
 
