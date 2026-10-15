@@ -54,6 +54,7 @@ style_keys! {
     CalloutWarning => "block.callout_warning",
     CalloutCaution => "block.callout_caution",
     CodeBlock => "block.code",
+    CodeText => "block.code_text",
     CodeLabel => "block.code_label",
     CodeWrapMark => "block.code_wrap_mark",
     ListBullet => "block.list_bullet",
@@ -102,6 +103,14 @@ impl StyleKey {
         }
     }
 
+    /// The key this one refines, so that themes may leave it out.
+    fn parent(self) -> Option<StyleKey> {
+        match self {
+            StyleKey::CodeText => Some(StyleKey::CodeBlock),
+            _ => None,
+        }
+    }
+
     fn heading_level(self) -> Option<usize> {
         let level = self as usize;
         (StyleKey::H1 as usize..=StyleKey::H6 as usize)
@@ -140,6 +149,8 @@ pub struct Glyphs {
     /// `[done, open]` task boxes.
     pub task: [String; 2],
     pub wrap_mark: String,
+    /// `[left, right]` marks for code clipped at the edges in no-wrap mode.
+    pub code_clip: [String; 2],
     pub image: String,
     /// Gutter marks, in the order of the `Gutter*` style keys.
     pub gutter: [String; 6],
@@ -157,6 +168,7 @@ impl Default for Glyphs {
             table_border: TableBorder::Rounded,
             task: ["[x] ".into(), "[ ] ".into()],
             wrap_mark: "↪".into(),
+            code_clip: ["‹".into(), "›".into()],
             image: "🖼 ".into(),
             gutter: Default::default(),
         }
@@ -178,7 +190,8 @@ pub struct Theme {
     pub palette: Vec<(String, Color)>,
     pub styles: [Style; StyleKey::COUNT],
     pub glyphs: Glyphs,
-    /// TextMate scope prefix → style; becomes a syntect theme in P3 (ADR-07).
+    /// TextMate scope selector → style; [`crate::highlight::SyntaxTheme`] turns it into a
+    /// syntect theme (ADR-07).
     pub syntax: Vec<(String, Style)>,
 }
 
@@ -200,9 +213,14 @@ impl Theme {
             .expect("the built-in theme is valid")
     }
 
-    /// A key's style on top of the document style.
+    /// A key's style on top of the document style, and of its parent's.
     pub fn style(&self, key: StyleKey) -> Style {
-        self.styles[StyleKey::Text as usize].patch(self.styles[key as usize])
+        let base = self.styles[StyleKey::Text as usize];
+        let base = match key.parent() {
+            Some(parent) => base.patch(self.styles[parent as usize]),
+            None => base,
+        };
+        base.patch(self.styles[key as usize])
     }
 
     /// The style of a laid-out span: its key, then inline markup, then link styling.

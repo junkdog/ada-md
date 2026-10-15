@@ -7,24 +7,32 @@ use std::io::{self, Write};
 use ratatui::style::{Color, Modifier, Style};
 
 use crate::doc::Doc;
+use crate::highlight::{Highlights, SyntaxTheme};
 use crate::layout::{self, LayoutParams};
 use crate::theme::Theme;
-use crate::ui;
+use crate::ui::Painter;
 
-/// Render a document as ANSI text, one line per row.
+/// Render a document as ANSI text, one line per row. Code is highlighted first, synchronously,
+/// because the output has to be complete (architecture §12).
 pub fn render(doc: &Doc, theme: &Theme, params: LayoutParams) -> String {
     let layout = layout::layout(doc, &theme.glyphs, params);
+    let highlights = Highlights::compute_all(&doc.code_blocks(), &SyntaxTheme::new(&theme.syntax));
+    let painter = Painter {
+        theme,
+        layout: &layout,
+        highlights: &highlights,
+        code_x: 0,
+    };
     let mut out = String::with_capacity(layout.text.len() * 2);
     for row in &layout.rows {
         let mut current = None;
-        for (text, span) in layout.spans(row) {
-            let style = ui::span_style(theme, span);
+        painter.row(row, &mut |text, style| {
             if current != Some(style) {
                 sgr(style, &mut out);
                 current = Some(style);
             }
             out.push_str(text);
-        }
+        });
         if current.is_some() {
             out.push_str("\x1b[0m");
         }
@@ -131,5 +139,27 @@ mod tests {
         let out = render(&doc, &Theme::builtin(), params);
         assert_eq!(out.lines().count(), 3);
         assert!(out.contains("Title"));
+    }
+
+    #[test]
+    fn code_is_highlighted() {
+        let doc = crate::doc::parse("```rust\nlet s = \"hi\";\n```\n");
+        let params = LayoutParams {
+            width: 40,
+            max_width: None,
+            table_mode: Default::default(),
+            code_wrap: true,
+            glyphs_gen: 0,
+        };
+        let theme = Theme::builtin();
+        let out = render(&doc, &theme, params);
+        let string = theme.syntax.iter().find(|(s, _)| s == "string").unwrap().1;
+        let Some(Color::Rgb(r, g, b)) = string.fg else {
+            panic!("strings have an rgb colour");
+        };
+        assert!(
+            out.contains(&format!("38;2;{r};{g};{b};48;2;60;56;54m\"hi\"\x1b")),
+            "{out:?}"
+        );
     }
 }

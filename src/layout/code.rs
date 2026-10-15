@@ -1,22 +1,31 @@
 //! Code blocks (ADR-20): a background-filled block with the language on its top row. With
-//! `code_wrap` on, long lines wrap with the theme's `↪`; with it off, each source line is one row,
-//! sliced at paint time by the shared horizontal offset (P3). Highlighting fills in at paint (P3).
+//! `code_wrap` on, long lines wrap with the theme's `↪`. With it off, each source line is one
+//! row whose code span is a fixed-width window, sliced at paint time by the shared horizontal
+//! offset, so scrolling sideways never relayouts. Highlighting is overlaid at paint, too.
+
+use std::borrow::Cow;
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::{Builder, RowKind};
-use crate::doc::{CodeBlock, LineRange};
+use super::{Builder, CodeInfo, RowKind, push_span};
+use crate::doc::{CodeBlock, InlineStyle, LineRange};
+use crate::highlight;
 use crate::theme::StyleKey;
 
 const TAB_STOP: usize = 4;
 
 pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
-    let block = b.code_blocks;
-    b.code_blocks += 1;
+    let block = code.id;
     let g = b.g;
     let avail = b.avail();
-    let lead = g.wrap_mark.width().max(1) as u16;
-    let inner = avail.saturating_sub(lead + 1).max(1);
+    let lead = [&g.wrap_mark, &g.code_clip[0]]
+        .iter()
+        .map(|s| s.width())
+        .max()
+        .unwrap_or(0)
+        .max(1) as u16;
+    let trail = g.code_clip[1].width().max(1) as u16;
+    let inner = avail.saturating_sub(lead + trail).max(1);
     let pad = " ".repeat(lead as usize);
 
     b.begin_row();
@@ -33,15 +42,13 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
     b.end_row(fence, RowKind::Decor);
 
     let mut count = 0;
+    let mut widest = 0;
     for (n, line) in code.lines().enumerate() {
         count += 1;
         let line = expand_tabs(line);
         let line_src = LineRange::line(code.first_line + n as u32);
-        let kind = RowKind::Code {
-            block,
-            line: n as u32,
-        };
         if b.params.code_wrap {
+            let mut from = 0;
             for (i, chunk) in chunks(&line, inner).into_iter().enumerate() {
                 b.begin_row();
                 if i == 0 {
@@ -50,17 +57,38 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
                     b.text(&g.wrap_mark, StyleKey::CodeWrapMark);
                     b.fill(lead, StyleKey::CodeBlock);
                 }
-                b.text(chunk, StyleKey::CodeBlock);
+                b.text(chunk, StyleKey::CodeText);
                 b.fill(avail, StyleKey::CodeBlock);
+                let kind = RowKind::Code {
+                    block,
+                    line: n as u32,
+                    from,
+                };
                 b.end_row(line_src, kind);
+                from += chunk.len() as u32;
             }
         } else {
             b.begin_row();
             b.text(&pad, StyleKey::CodeBlock);
-            b.text(&line, StyleKey::CodeBlock);
+            // The whole line, in a span `inner` columns wide that paint slices.
+            let look = (StyleKey::CodeText, InlineStyle::NONE, None);
+            push_span(&mut b.out, b.row_start, &mut b.col, &line, inner, look);
             b.fill(avail, StyleKey::CodeBlock);
+            let kind = RowKind::Code {
+                block,
+                line: n as u32,
+                from: 0,
+            };
             b.end_row(line_src, kind);
         }
+        widest = widest.max(line.width());
+    }
+    if let Some(info) = b.out.code.get_mut(block as usize) {
+        *info = CodeInfo {
+            key: highlight::key(code),
+            width: widest.min(usize::from(u16::MAX)) as u16,
+            window: inner,
+        };
     }
 
     b.begin_row();
@@ -74,9 +102,11 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
     b.end_row(close, RowKind::Decor);
 }
 
-fn expand_tabs(line: &str) -> String {
-    if !line.contains(['\t', '\u{b}', '\u{c}']) {
-        return line.to_owned();
+/// Tabs to spaces at stops of four, and other control characters to spaces. Layout and the
+/// highlighter both work on the expanded line, so their byte offsets agree.
+pub fn expand_tabs(line: &str) -> Cow<'_, str> {
+    if !line.contains(|c: char| c.is_control()) {
+        return Cow::Borrowed(line);
     }
     let mut out = String::with_capacity(line.len() + TAB_STOP);
     let mut col = 0;
@@ -93,7 +123,7 @@ fn expand_tabs(line: &str) -> String {
             col += c.width().unwrap_or(0);
         }
     }
-    out
+    Cow::Owned(out)
 }
 
 /// Split a line into pieces at most `width` columns wide. An empty line is one empty chunk.

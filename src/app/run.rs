@@ -1,4 +1,4 @@
-//! The interactive loop (ADR-04, ADR-05): an input thread and (later) workers feed one channel;
+//! The interactive loop (ADR-04, ADR-05): an input thread and the workers feed one channel;
 //! the main thread blocks in `recv()`, so idle costs nothing, then drains, updates and draws once.
 
 use std::collections::VecDeque;
@@ -41,6 +41,7 @@ fn event_loop(
 ) -> Result<(), String> {
     let size = terminal.size().map_err(|e| e.to_string())?;
     let (tx, rx) = mpsc::channel();
+    effects.spawn_workers(&tx);
     spawn_input(tx);
 
     let mut queue = VecDeque::from([
@@ -58,7 +59,7 @@ fn event_loop(
                 rec.log(&msg).map_err(|e| format!("recording: {e}"))?;
             }
             for cmd in update(state, msg) {
-                queue.extend(effects.run(&cmd));
+                queue.extend(effects.run(cmd));
             }
         }
         if state.quit {

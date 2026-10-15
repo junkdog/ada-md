@@ -72,6 +72,62 @@ fn table_mode_snapshots() {
     }
 }
 
+/// Code in no-wrap mode: one row per line, in a fixed window that paint slices.
+#[test]
+fn code_nowrap_snapshot() {
+    let theme = Theme::builtin();
+    let text =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/code.md"))
+            .expect("fixture");
+    let doc = parse(&text);
+    let l = layout(
+        &doc,
+        &theme.glyphs,
+        LayoutParams {
+            code_wrap: false,
+            ..params(40)
+        },
+    );
+    insta::assert_snapshot!("code-nowrap@40", render(&l));
+    let long = l
+        .code
+        .iter()
+        .find(|c| c.width > c.window)
+        .expect("the rust block has a long line");
+    assert_eq!(long.window, 40 - 2 * 2 - 2);
+    assert!(long.max_x() > 0);
+    assert!(l.code.iter().all(|c| c.window == long.window));
+}
+
+#[test]
+fn code_rows_know_their_byte_offsets() {
+    let theme = Theme::builtin();
+    let doc = parse("```rust\nlet x = \"abcdefghijklmnopqrstuvwxyz\";\n```\n");
+    let l = layout(&doc, &theme.glyphs, params(20));
+    let rows: Vec<_> = l
+        .rows
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| match r.kind {
+            RowKind::Code { line, from, .. } => Some((line, from, i)),
+            _ => None,
+        })
+        .collect();
+    let mut joined = String::new();
+    for &(line, from, i) in &rows {
+        assert_eq!(line, 0);
+        assert_eq!(from as usize, joined.len());
+        let code: String = l
+            .spans(&l.rows[i])
+            .filter(|(_, s)| s.key == crate::theme::StyleKey::CodeText)
+            .map(|(t, _)| t)
+            .collect();
+        joined.push_str(&code);
+    }
+    assert!(rows.len() > 1);
+    assert_eq!(joined, "let x = \"abcdefghijklmnopqrstuvwxyz\";");
+}
+
 #[test]
 fn fixture_snapshots() {
     let theme = Theme::builtin();
@@ -97,12 +153,16 @@ fn mapping_and_width_invariants() {
             .position(|b| matches!(b.kind, BlockKind::FootnoteDefs));
         for width in [12, 20, 40, 80, 135, 200] {
             for table_mode in MODES {
-                let p = LayoutParams {
-                    table_mode,
-                    ..params(width)
-                };
-                let l = layout(&doc, &theme.glyphs, p);
-                check_invariants(&l, footnotes, &format!("{name}@{width} {table_mode:?}"));
+                for code_wrap in [true, false] {
+                    let p = LayoutParams {
+                        table_mode,
+                        code_wrap,
+                        ..params(width)
+                    };
+                    let l = layout(&doc, &theme.glyphs, p);
+                    let what = format!("{name}@{width} {table_mode:?} wrap={code_wrap}");
+                    check_invariants(&l, footnotes, &what);
+                }
             }
         }
     }
@@ -114,11 +174,15 @@ pub(crate) fn check_invariants(l: &Layout, footnote_block: Option<usize>, what: 
     for (i, row) in l.rows.iter().enumerate() {
         let text = l.row_text(i);
         let width: u16 = l.spans(row).map(|(_, s)| s.width).sum();
-        assert_eq!(
-            usize::from(width),
-            unicode_width::UnicodeWidthStr::width(text.as_str()),
-            "{what} row {i}: span widths disagree with the text"
-        );
+        // A no-wrap code span is a window onto its whole line, so only its width is fixed.
+        let window = !l.params.code_wrap && matches!(row.kind, RowKind::Code { .. });
+        if !window {
+            assert_eq!(
+                usize::from(width),
+                unicode_width::UnicodeWidthStr::width(text.as_str()),
+                "{what} row {i}: span widths disagree with the text"
+            );
+        }
         if l.params.width >= 20 {
             assert!(
                 width <= l.params.width,
@@ -285,13 +349,17 @@ fn corpus_invariants() {
                     .iter()
                     .position(|b| matches!(b.kind, BlockKind::FootnoteDefs));
                 for width in [40, 80, 135] {
-                    for table_mode in MODES {
+                    for (table_mode, code_wrap) in
+                        MODES.iter().flat_map(|&m| [(m, true), (m, false)])
+                    {
                         let p = LayoutParams {
                             table_mode,
+                            code_wrap,
                             ..params(width)
                         };
                         let l = layout(&doc, &theme.glyphs, p);
-                        let what = format!("{}@{width} {table_mode:?}", path.display());
+                        let what =
+                            format!("{}@{width} {table_mode:?} wrap={code_wrap}", path.display());
                         check_invariants(&l, footnotes, &what);
                     }
                 }

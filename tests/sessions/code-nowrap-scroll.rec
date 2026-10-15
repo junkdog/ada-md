@@ -1,0 +1,28 @@
+preen-rec 1
++0 init size=60x16
++1 open path="build.md"
++2 doc-loaded path="build.md" mtime=1760535362123 text:327
+# Build
+
+The release profile, and the commands that use it.
+
+```toml
+[profile.release]
+lto = "fat"            # whole-program optimisation; slow to link, but the binary is smaller and faster
+codegen-units = 1
+```
+
+```zsh
+cargo build --release && ls -la target/release/preen && strip --strip-all target/release/preen
+```
+
+Done.
+
++40 highlighted doc_gen=1 block=0
++41 highlighted doc_gen=1 block=1
++300 toggle-code-wrap
++400 scroll-code-x by=8
++450 scroll-code-x by=8
++500 scroll-code-x by=8
++600 scroll-code-x by=-8
++900 quit

@@ -1,0 +1,31 @@
+---
+source: src/layout/tests.rs
+expression: render(&l)
+---
+    1│   Code
+     │
+    3│   rust
+    4│   fn main() {
+    5│       println!("tab-indented");
+    6│       let long_line = "this line is deliberately long enough that it has to wrap when the block is narrower than it";
+    7│   }
+    8│
+     │
+   10│   kotlin
+   11│   fun greet(name: String) = "Hello, $name"
+   12│
+     │
+   14│
+   15│   untagged block
+   16│
+     │
+     │
+   18│   indented code
+   19│   block
+     │
+     │
+   21│   ts
+   22│   const x: number = 1;
+   23│
+     │
+   25│  Text after code.

@@ -14,6 +14,7 @@ pub type LinkId = u32;
 pub type AnchorId = u32;
 pub type FootnoteId = u32;
 pub type TableId = u32;
+pub type CodeId = u32;
 
 /// 1-based, inclusive source lines. `start == 0` means the thing has no source (decorative).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -66,6 +67,8 @@ pub struct Doc {
     pub line_starts: Vec<u32>,
     /// Tables are numbered `0..table_count` in source order, wherever they are nested.
     pub table_count: u32,
+    /// Code blocks are numbered `0..code_count` the same way.
+    pub code_count: u32,
 }
 
 impl Doc {
@@ -144,6 +147,8 @@ impl Callout {
 
 #[derive(Debug)]
 pub struct CodeBlock {
+    /// Indexes per-document code data such as line widths and highlighting.
+    pub id: CodeId,
     pub lang: Option<Box<str>>,
     pub text: Arc<str>,
     /// Content hash, the key of the highlight cache (P3).
@@ -156,13 +161,18 @@ pub struct CodeBlock {
 impl CodeBlock {
     /// The code's lines, without the final newline.
     pub fn lines(&self) -> impl Iterator<Item = &str> {
-        let text = self.text.strip_suffix('\n').unwrap_or(&self.text);
-        Some(text)
-            .filter(|t| !t.is_empty())
-            .into_iter()
-            .flat_map(|t| t.split('\n'))
-            .map(|l| l.strip_suffix('\r').unwrap_or(l))
+        code_lines(&self.text)
     }
+}
+
+/// The lines of a code block's text, without the final newline.
+pub fn code_lines(text: &str) -> impl Iterator<Item = &str> {
+    let text = text.strip_suffix('\n').unwrap_or(text);
+    Some(text)
+        .filter(|t| !t.is_empty())
+        .into_iter()
+        .flat_map(|t| t.split('\n'))
+        .map(|l| l.strip_suffix('\r').unwrap_or(l))
 }
 
 #[derive(Debug)]
@@ -301,4 +311,34 @@ pub struct Footnote {
     pub anchor: Option<AnchorId>,
     pub blocks: Vec<Block>,
     pub src: LineRange,
+}
+
+impl Doc {
+    /// The code blocks, indexed by [`CodeBlock::id`].
+    pub fn code_blocks(&self) -> Vec<&CodeBlock> {
+        fn walk<'a>(blocks: &'a [Block], out: &mut [Option<&'a CodeBlock>]) {
+            for block in blocks {
+                match &block.kind {
+                    BlockKind::Code(code) => {
+                        if let Some(slot) = out.get_mut(code.id as usize) {
+                            *slot = Some(code);
+                        }
+                    }
+                    BlockKind::List(list) => {
+                        for item in &list.items {
+                            walk(&item.blocks, out);
+                        }
+                    }
+                    BlockKind::Quote { blocks, .. } => walk(blocks, out),
+                    _ => {}
+                }
+            }
+        }
+        let mut out = vec![None; self.code_count as usize];
+        walk(&self.blocks, &mut out);
+        for note in &self.footnotes {
+            walk(&note.blocks, &mut out);
+        }
+        out.into_iter().flatten().collect()
+    }
 }

@@ -1,0 +1,20 @@
+---
+source: src/record.rs
+expression: frames.last().unwrap()
+---
+   Build
+
+  The release profile, and the commands that use it.
+
+   toml
+  ‹]
+  ‹       # whole-program optimisation; slow to link, but›
+  ‹1
+
+
+   zsh
+  ‹lease && ls -la target/release/preen && strip --strip-›
+
+
+  Done.
+ build.md  Build                                        All

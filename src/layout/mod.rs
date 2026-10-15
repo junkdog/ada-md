@@ -5,6 +5,8 @@ mod code;
 mod table;
 pub mod wrap;
 
+pub use code::expand_tabs;
+
 #[cfg(test)]
 mod tests;
 
@@ -13,7 +15,8 @@ use std::ops::Range;
 use unicode_width::UnicodeWidthStr;
 
 use crate::doc::{
-    AnchorId, Block, BlockKind, Callout, Doc, InlineStyle, LineRange, LinkId, List, Run, Table,
+    AnchorId, Block, BlockKind, Callout, CodeId, Doc, InlineStyle, LineRange, LinkId, List, Run,
+    Table,
 };
 use crate::theme::{Glyphs, StyleKey};
 use table::ColMeasure;
@@ -84,10 +87,12 @@ pub enum RowKind {
     Blank,
     /// Borders, rules, code-block padding.
     Decor,
-    /// A row of code: block index (in document order) and line within the block.
+    /// A row of code: the block's [`CodeId`], the line within the block, and the byte offset
+    /// in the (tab-expanded) line where this row's piece of it starts.
     Code {
-        block: u32,
+        block: CodeId,
         line: u32,
+        from: u32,
     },
 }
 
@@ -113,6 +118,24 @@ pub struct HeadingRow {
     pub row: u32,
     pub level: u8,
     pub anchor: AnchorId,
+}
+
+/// What paint needs to know about a code block.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CodeInfo {
+    /// The highlight cache key; `None` for plain code.
+    pub key: Option<u64>,
+    /// The longest line, in columns.
+    pub width: u16,
+    /// Columns the code gets on each row.
+    pub window: u16,
+}
+
+impl CodeInfo {
+    /// The furthest the shared horizontal offset can shift this block.
+    pub fn max_x(&self) -> u16 {
+        self.width.saturating_sub(self.window)
+    }
 }
 
 /// A grid table's rows, for the sticky header.
@@ -181,6 +204,8 @@ pub struct Layout {
     pub hits: Vec<Hit>,
     /// Grid tables with body rows, in row order.
     pub grids: Vec<GridRows>,
+    /// Code blocks, indexed by [`CodeId`].
+    pub code: Vec<CodeInfo>,
 }
 
 impl Layout {
@@ -241,13 +266,13 @@ pub fn layout_measured(
             headings: Vec::new(),
             hits: Vec::new(),
             grids: Vec::new(),
+            code: vec![CodeInfo::default(); doc.code_count as usize],
         },
         prefixes: Vec::new(),
         prefix_width: 0,
         right_margin: margin,
         text_key: StyleKey::Text,
         list_depth: 0,
-        code_blocks: 0,
         row_start: 0,
         col: 0,
     };
@@ -288,7 +313,6 @@ struct Builder<'a> {
     /// The base style of prose: `Text`, or `Quote` inside a block quote.
     text_key: StyleKey,
     list_depth: usize,
-    code_blocks: u32,
     /// Where the row being built starts in `out.spans`.
     row_start: u32,
     /// The column the next span lands in.

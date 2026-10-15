@@ -10,8 +10,9 @@ use std::mem;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::doc::{self, Doc};
-use crate::layout::{self, Layout, LayoutParams, Measure, TableMode};
+use crate::doc::{self, CodeId, Doc};
+use crate::highlight::{self, CodeSpans, Highlights, Job, SyntaxTheme};
+use crate::layout::{self, Layout, LayoutParams, Measure, RowKind, TableMode};
 use crate::theme::Theme;
 
 pub use effects::{Effects, load_doc};
@@ -39,6 +40,14 @@ pub enum ScrollBy {
     Bottom,
 }
 
+/// Columns per `←`/`→` press.
+pub const CODE_X_STEP: i16 = 8;
+
+/// The result of a pure computation done off-thread. Recordings keep only the marker, and replay
+/// recomputes the value from state when it reaches `update` without one (ADR-19).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Computed<T>(pub Option<T>);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Msg {
     // terminal and session
@@ -59,6 +68,11 @@ pub enum Msg {
         dir: Dir,
     },
     ToggleTableMode,
+    ToggleCodeWrap,
+    /// Shift every code block sideways, in no-wrap mode.
+    ScrollCodeX {
+        by: i16,
+    },
     Quit,
     // world → app: the payload is recorded, because these read the outside world
     DocLoaded {
@@ -71,6 +85,12 @@ pub enum Msg {
         path: PathBuf,
         error: String,
     },
+    // pure computation done off-thread: recorded as a marker only
+    Highlighted {
+        doc_gen: u64,
+        block: CodeId,
+        spans: Computed<Arc<CodeSpans>>,
+    },
 }
 
 impl Msg {
@@ -79,11 +99,18 @@ impl Msg {
     pub fn is_world(&self) -> bool {
         matches!(self, Msg::DocLoaded { .. } | Msg::DocFailed { .. })
     }
+
+    /// Messages that commands produce: world results, and computed ones. `--replay-live` skips
+    /// them, since its re-executed commands produce them again.
+    pub fn is_result(&self) -> bool {
+        self.is_world() || matches!(self, Msg::Highlighted { .. })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Cmd {
     LoadDoc(PathBuf),
+    Highlight(Job),
     Quit,
 }
 
@@ -135,6 +162,11 @@ pub struct State {
     pub scroll: u32,
     pub table_mode: TableMode,
     pub code_wrap: bool,
+    /// The shared horizontal offset of code blocks in no-wrap mode (ADR-20).
+    pub code_x: u16,
+    pub highlights: Highlights,
+    /// The theme's `[syntax]` table, for the highlighter.
+    syntax: Arc<SyntaxTheme>,
     pub status: Option<String>,
     pub quit: bool,
     glyphs_gen: u64,
@@ -144,6 +176,7 @@ pub struct State {
 impl State {
     pub fn new(theme: Theme, config: Config) -> Self {
         let glyphs_gen = theme.glyphs.generation();
+        let syntax = Arc::new(SyntaxTheme::new(&theme.syntax));
         Self {
             theme,
             config,
@@ -152,6 +185,9 @@ impl State {
             scroll: 0,
             table_mode: TableMode::Auto,
             code_wrap: true,
+            code_x: 0,
+            highlights: Highlights::default(),
+            syntax,
             status: None,
             quit: false,
             glyphs_gen,
@@ -208,6 +244,136 @@ impl State {
             generation: self.generation,
         });
         self.scroll = self.scroll.min(self.max_scroll());
+    }
+
+    /// The code blocks on screen, in row order.
+    fn visible_code(&self) -> Vec<CodeId> {
+        let Some(doc) = &self.doc else {
+            return Vec::new();
+        };
+        let mut ids: Vec<CodeId> = Vec::new();
+        let rows = doc.layout.rows.iter().skip(self.scroll as usize);
+        for row in rows.take(self.viewport_height() as usize) {
+            if let RowKind::Code { block, .. } = row.kind
+                && ids.last() != Some(&block)
+                && !ids.contains(&block)
+            {
+                ids.push(block);
+            }
+        }
+        ids
+    }
+
+    fn job(&self, doc: &Document, block: CodeId, key: u64, urgent: bool) -> Option<Cmd> {
+        let code = doc.doc.code_blocks().into_iter().nth(block as usize)?;
+        Some(Cmd::Highlight(Job {
+            doc_gen: doc.generation,
+            block,
+            key,
+            lang: code.lang.clone()?,
+            text: code.text.clone(),
+            theme: self.syntax.clone(),
+            urgent,
+        }))
+    }
+
+    /// Jobs for every block not highlighted yet: the visible ones first, at the front of the
+    /// worker's queue.
+    fn highlight_all(&mut self) -> Vec<Cmd> {
+        let Some(doc) = &self.doc else {
+            return Vec::new();
+        };
+        let visible = self.visible_code();
+        let rest = (0..doc.doc.code_count).filter(|b| !visible.contains(b));
+        let blocks = doc.doc.code_blocks();
+        let mut cmds = Vec::new();
+        for (block, urgent) in visible
+            .iter()
+            .map(|&b| (b, true))
+            .chain(rest.map(|b| (b, false)))
+        {
+            let Some(code) = blocks.get(block as usize) else {
+                continue;
+            };
+            let (Some(key), Some(lang)) = (highlight::key(code), &code.lang) else {
+                continue;
+            };
+            if !self.highlights.wants(key) {
+                continue;
+            }
+            self.highlights.request(key);
+            if urgent {
+                self.highlights.urge(key);
+            }
+            cmds.push(Cmd::Highlight(Job {
+                doc_gen: doc.generation,
+                block,
+                key,
+                lang: lang.clone(),
+                text: code.text.clone(),
+                theme: self.syntax.clone(),
+                urgent,
+            }));
+        }
+        cmds
+    }
+
+    /// Move blocks that scrolled into view to the front of the worker's queue.
+    fn highlight_visible(&mut self) -> Vec<Cmd> {
+        let Some(doc) = &self.doc else {
+            return Vec::new();
+        };
+        let mut cmds = Vec::new();
+        for block in self.visible_code() {
+            let Some(key) = doc.layout.code.get(block as usize).and_then(|c| c.key) else {
+                continue;
+            };
+            if self.highlights.urge(key) {
+                cmds.extend(self.job(doc, block, key, true));
+            }
+        }
+        cmds
+    }
+
+    fn highlighted(&mut self, doc_gen: u64, block: CodeId, spans: Option<Arc<CodeSpans>>) {
+        let spans = match spans {
+            Some(spans) => spans,
+            // a replay: recompute, if the block is still around
+            None => {
+                let Some(doc) = self.doc.as_ref().filter(|d| d.generation == doc_gen) else {
+                    return;
+                };
+                let blocks = doc.doc.code_blocks();
+                let Some(code) = blocks.get(block as usize) else {
+                    return;
+                };
+                let (Some(key), Some(lang)) = (highlight::key(code), &code.lang) else {
+                    return;
+                };
+                Arc::new(highlight::highlight(key, lang, &code.text, &self.syntax))
+            }
+        };
+        self.highlights.insert(spans);
+    }
+
+    fn scroll_code_x(&mut self, by: i16) {
+        if self.code_wrap {
+            self.status = Some("code wraps: press w to scroll it sideways".to_owned());
+            return;
+        }
+        let Some(doc) = &self.doc else {
+            return;
+        };
+        let max = self
+            .visible_code()
+            .iter()
+            .filter_map(|&b| doc.layout.code.get(b as usize))
+            .map(layout::CodeInfo::max_x)
+            .max();
+        if let Some(max) = max {
+            let x = i32::from(self.code_x.min(max)) + i32::from(by);
+            self.code_x = x.clamp(0, i32::from(max)) as u16;
+        }
     }
 
     fn scroll_by(&mut self, by: ScrollBy) {
@@ -309,12 +475,12 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Init { size } | Msg::Resize { size } => {
             state.size = size;
             state.relayout();
-            Vec::new()
+            state.highlight_visible()
         }
         Msg::Open { path } => vec![Cmd::LoadDoc(path)],
         Msg::DocLoaded { path, mtime, text } => {
             state.load(path, mtime, &text);
-            Vec::new()
+            state.highlight_all()
         }
         Msg::DocFailed { path, error } => {
             state.status = Some(format!("{}: {error}", path.display()));
@@ -323,17 +489,41 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Scroll { by } => {
             state.status = None;
             state.scroll_by(by);
-            Vec::new()
+            state.highlight_visible()
         }
         Msg::JumpHeading { dir } => {
             state.status = None;
             state.jump_heading(dir);
-            Vec::new()
+            state.highlight_visible()
         }
         Msg::ToggleTableMode => {
             state.table_mode = state.table_mode.next();
             state.status = Some(format!("tables: {}", state.table_mode.name()));
             state.relayout();
+            state.highlight_visible()
+        }
+        Msg::ToggleCodeWrap => {
+            state.code_wrap = !state.code_wrap;
+            let mode = if state.code_wrap {
+                "wrap"
+            } else {
+                "no-wrap, ←/→ scroll"
+            };
+            state.status = Some(format!("code: {mode}"));
+            state.relayout();
+            state.highlight_visible()
+        }
+        Msg::ScrollCodeX { by } => {
+            state.status = None;
+            state.scroll_code_x(by);
+            Vec::new()
+        }
+        Msg::Highlighted {
+            doc_gen,
+            block,
+            spans,
+        } => {
+            state.highlighted(doc_gen, block, spans.0);
             Vec::new()
         }
         Msg::Quit => {
@@ -511,6 +701,152 @@ mod tests {
         assert!(state.scroll > first);
         update(&mut state, Msg::JumpHeading { dir: Dir::Prev });
         assert_eq!(state.scroll, first);
+    }
+
+    fn code_doc() -> String {
+        let mut md = String::from("```rust\nfn main() {}\n```\n\n");
+        md.push_str(&sample());
+        md.push_str("\n```ts\nconst x = 1;\n```\n\n```text\nplain\n```\n\n");
+        md.push_str("```rust\nfn main() {}\n```\n\n```kotlin\nval long = \"");
+        md.push_str(&"x".repeat(120));
+        md.push_str("\"\n```\n");
+        md
+    }
+
+    fn jobs(cmds: &[Cmd]) -> Vec<(CodeId, bool)> {
+        cmds.iter()
+            .filter_map(|c| match c {
+                Cmd::Highlight(job) => Some((job.block, job.urgent)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn load_cmds(state: &mut State, text: String) -> Vec<Cmd> {
+        update(
+            state,
+            Msg::DocLoaded {
+                path: "t.md".into(),
+                mtime: None,
+                text: text.into(),
+            },
+        )
+    }
+
+    #[test]
+    fn highlighting_starts_with_the_visible_blocks() {
+        let mut state = loaded("", 80, 10);
+        let cmds = load_cmds(&mut state, code_doc());
+        // block 2 is `text`; block 3 has the same key as block 0
+        assert_eq!(jobs(&cmds), [(0, true), (1, false), (4, false)]);
+
+        // scrolling blocks into view moves them to the front, once each
+        let mut urged = jobs(&update(
+            &mut state,
+            Msg::Scroll {
+                by: ScrollBy::Bottom,
+            },
+        ));
+        for _ in 0..30 {
+            urged.extend(jobs(&update(
+                &mut state,
+                Msg::Scroll {
+                    by: ScrollBy::Rows(-1),
+                },
+            )));
+        }
+        urged.sort_unstable();
+        assert_eq!(urged, [(1, true), (4, true)]);
+
+        // results clear the pending state
+        let Some(Cmd::Highlight(job)) = cmds_for(&state, 1) else {
+            panic!("block 1 is still pending");
+        };
+        update(&mut state, job.run());
+        assert!(state.highlights.get(job.key).is_some());
+        assert!(!state.highlights.is_pending(job.key));
+    }
+
+    /// The pending job for `block`, recreated the way a fresh load would.
+    fn cmds_for(state: &State, block: CodeId) -> Option<Cmd> {
+        let doc = state.doc.as_ref()?;
+        let key = doc.layout.code[block as usize].key?;
+        state.job(doc, block, key, false)
+    }
+
+    #[test]
+    fn replayed_highlights_are_recomputed() {
+        let mut state = loaded("", 80, 10);
+        load_cmds(&mut state, code_doc());
+        let key = state.doc.as_ref().unwrap().layout.code[1].key.unwrap();
+        let replayed = |doc_gen| Msg::Highlighted {
+            doc_gen,
+            block: 1,
+            spans: Computed(None),
+        };
+        update(&mut state, replayed(7));
+        assert!(
+            state.highlights.get(key).is_none(),
+            "another document's block"
+        );
+        let doc_gen = state.generation;
+        update(&mut state, replayed(doc_gen));
+        let spans = state.highlights.get(key).expect("recomputed");
+        assert!(!spans.line(0).is_empty());
+    }
+
+    #[test]
+    fn code_scrolls_sideways_only_without_wrapping() {
+        let mut state = loaded(&code_doc(), 60, 10);
+        update(
+            &mut state,
+            Msg::Scroll {
+                by: ScrollBy::Bottom,
+            },
+        );
+        update(&mut state, Msg::ScrollCodeX { by: 8 });
+        assert_eq!(state.code_x, 0);
+        assert!(state.status.as_deref().unwrap().contains("press w"));
+
+        update(&mut state, Msg::Scroll { by: ScrollBy::Top });
+        update(
+            &mut state,
+            Msg::Scroll {
+                by: ScrollBy::Rows(57),
+            },
+        );
+        let line = top_line(&state);
+        update(&mut state, Msg::ToggleCodeWrap);
+        assert!(!state.code_wrap);
+        assert_eq!(top_line(&state), line);
+        update(
+            &mut state,
+            Msg::Scroll {
+                by: ScrollBy::Bottom,
+            },
+        );
+        let max = state.doc.as_ref().unwrap().layout.code[4].max_x();
+        assert!(max > 8);
+        update(&mut state, Msg::ScrollCodeX { by: 8 });
+        assert_eq!(state.code_x, 8);
+        for _ in 0..40 {
+            update(&mut state, Msg::ScrollCodeX { by: 8 });
+        }
+        assert_eq!(state.code_x, max);
+        update(&mut state, Msg::ScrollCodeX { by: -100 });
+        assert_eq!(state.code_x, 0);
+
+        // with no code on screen, the offset stays put
+        update(&mut state, Msg::ScrollCodeX { by: 8 });
+        update(&mut state, Msg::Scroll { by: ScrollBy::Top });
+        update(
+            &mut state,
+            Msg::Scroll {
+                by: ScrollBy::Rows(5),
+            },
+        );
+        update(&mut state, Msg::ScrollCodeX { by: 8 });
+        assert_eq!(state.code_x, 8);
     }
 
     #[test]

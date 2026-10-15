@@ -4,7 +4,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use super::{Dir, Msg, ScrollBy};
+use super::{CODE_X_STEP, Dir, Msg, ScrollBy};
 
 #[derive(Debug, Default)]
 pub struct Keymap {
@@ -45,6 +45,9 @@ impl Keymap {
             KeyCode::Char('g') | KeyCode::Home => scroll(ScrollBy::Top),
             KeyCode::Char('G') | KeyCode::End => scroll(ScrollBy::Bottom),
             KeyCode::Char('t') => Some(Msg::ToggleTableMode),
+            KeyCode::Char('w') => Some(Msg::ToggleCodeWrap),
+            KeyCode::Left => Some(Msg::ScrollCodeX { by: -CODE_X_STEP }),
+            KeyCode::Right => Some(Msg::ScrollCodeX { by: CODE_X_STEP }),
             KeyCode::Char('q') | KeyCode::Esc => Some(Msg::Quit),
             _ => None,
         }
@@ -94,5 +97,22 @@ mod tests {
             })
         );
         assert_eq!(km.map(ctrl('q')), None);
+    }
+
+    #[test]
+    fn code_keys() {
+        let mut km = Keymap::default();
+        assert_eq!(
+            press(&mut km, KeyCode::Char('w')),
+            Some(Msg::ToggleCodeWrap)
+        );
+        assert_eq!(
+            press(&mut km, KeyCode::Left),
+            Some(Msg::ScrollCodeX { by: -CODE_X_STEP })
+        );
+        assert_eq!(
+            press(&mut km, KeyCode::Right),
+            Some(Msg::ScrollCodeX { by: CODE_X_STEP })
+        );
     }
 }

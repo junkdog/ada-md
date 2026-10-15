@@ -248,6 +248,10 @@ fn glyphs(theme: &mut Theme, v: &Value<'_>, cx: &mut Cx<'_>) -> Result<(), Strin
                 Err(_) => return Err(cx.at(v.span(), "task needs two glyphs: [done, open]")),
             },
             "wrap_mark" => g.wrap_mark = cx.glyph(v)?,
+            "code_clip" => match <[String; 2]>::try_from(cx.strings(v)?) {
+                Ok(clip) => g.code_clip = clip,
+                Err(_) => return Err(cx.at(v.span(), "code_clip needs two glyphs: [left, right]")),
+            },
             "image" => g.image = cx.string(v)?.to_owned(),
             other => cx.warn(k.span(), format_args!("unknown glyph \"{other}\"")),
         }

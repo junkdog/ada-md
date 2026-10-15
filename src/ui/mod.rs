@@ -1,17 +1,20 @@
 //! The document viewport and the status bar. [`view`] is pure: it reads [`State`] and writes the
 //! frame, touching only the rows on screen (ADR-05).
 
+mod paint;
+
 use std::ops::Range;
 
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{Document, State};
-use crate::layout::{Layout, Row, Span};
-use crate::theme::{StyleKey, Theme};
+use crate::layout::Layout;
+use crate::theme::StyleKey;
+
+pub use paint::{Painter, span_style};
 
 pub fn view(state: &State, frame: &mut Frame<'_>) {
     let area = frame.area();
@@ -31,9 +34,16 @@ pub fn view(state: &State, frame: &mut Frame<'_>) {
     };
     if let Some(doc) = &state.doc {
         let layout = &doc.layout;
-        paint_rows(buf, doc_area, layout, state.scroll, &state.theme);
+        let painter = Painter {
+            theme: &state.theme,
+            layout,
+            highlights: &state.highlights,
+            code_x: state.code_x,
+        };
+        painter.rows(buf, doc_area, state.scroll);
         if let Some(header) = sticky_header(layout, state.scroll, u32::from(doc_area.height)) {
-            for (y, row) in (doc_area.y..).zip(header) {
+            let rows = header.filter_map(|r| layout.rows.get(r as usize));
+            for (y, row) in (doc_area.y..).zip(rows) {
                 let line = Rect {
                     y,
                     height: 1,
@@ -43,55 +53,11 @@ pub fn view(state: &State, frame: &mut Frame<'_>) {
                     buf[(x, y)].reset();
                 }
                 buf.set_style(line, state.theme.style(StyleKey::Text));
-                paint_row(buf, line, layout, row, &state.theme);
+                painter.row_into(buf, line.x, y, line.right(), row);
             }
         }
     }
     status_bar(buf, status_area, state);
-}
-
-/// A laid-out span's style.
-pub fn span_style(theme: &Theme, span: &Span) -> Style {
-    // Images and footnote references have their own link-like styles.
-    let link = span.link.is_some() && !matches!(span.key, StyleKey::Image | StyleKey::FootnoteRef);
-    theme.span_style(span.key, span.inline, link)
-}
-
-/// Paint `layout` rows starting at `scroll` into `area`.
-pub fn paint_rows(buf: &mut Buffer, area: Rect, layout: &Layout, scroll: u32, theme: &Theme) {
-    let rows = layout
-        .rows
-        .iter()
-        .skip(scroll as usize)
-        .take(area.height as usize);
-    for (y, row) in (area.y..).zip(rows) {
-        paint_spans(buf, area.x, y, area.right(), layout, row, theme);
-    }
-}
-
-/// Paint layout row `row` on the first line of `area`.
-fn paint_row(buf: &mut Buffer, area: Rect, layout: &Layout, row: u32, theme: &Theme) {
-    if let Some(row) = layout.rows.get(row as usize) {
-        paint_spans(buf, area.x, area.y, area.right(), layout, row, theme);
-    }
-}
-
-fn paint_spans(
-    buf: &mut Buffer,
-    mut x: u16,
-    y: u16,
-    right: u16,
-    layout: &Layout,
-    row: &Row,
-    theme: &Theme,
-) {
-    for (text, span) in layout.spans(row) {
-        if x >= right {
-            break;
-        }
-        let room = usize::from(right - x);
-        (x, _) = buf.set_stringn(x, y, text, room, span_style(theme, span));
-    }
 }
 
 /// The header rows of the grid table straddling the top of a `height`-row viewport: its header
@@ -220,6 +186,7 @@ mod tests {
     use super::*;
 
     use crate::layout::{self, LayoutParams};
+    use crate::theme::Theme;
 
     #[test]
     fn sticky_header_while_the_body_is_on_screen() {

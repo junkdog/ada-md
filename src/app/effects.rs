@@ -4,25 +4,41 @@
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::mpsc::Sender;
 use std::time::UNIX_EPOCH;
 
 use super::{Cmd, Msg};
+use crate::highlight::{self, Job};
 
 pub struct Effects {
     /// stdin, read once at startup, served for the path `-`.
     stdin: Option<Arc<str>>,
+    /// The highlight worker's queue; without a worker, highlighting runs inline.
+    highlight: Option<Sender<Job>>,
 }
 
 impl Effects {
     pub fn new(stdin: Option<Arc<str>>) -> Self {
-        Self { stdin }
+        Self {
+            stdin,
+            highlight: None,
+        }
     }
 
-    /// Run one command. P1's commands are all quick and synchronous; slow ones (git, highlight,
-    /// images) will post their results to the message channel from worker threads instead.
-    pub fn run(&mut self, cmd: &Cmd) -> Option<Msg> {
+    /// Start the worker threads, which post their results to `tx`.
+    pub fn spawn_workers(&mut self, tx: &Sender<Msg>) {
+        self.highlight = Some(highlight::spawn_worker(tx.clone()));
+    }
+
+    /// Run one command. Quick ones answer right away; slow ones go to a worker, which posts
+    /// its result to the message channel.
+    pub fn run(&mut self, cmd: Cmd) -> Option<Msg> {
         match cmd {
-            Cmd::LoadDoc(path) => Some(load_doc(path, self.stdin.as_ref())),
+            Cmd::LoadDoc(path) => Some(load_doc(&path, self.stdin.as_ref())),
+            Cmd::Highlight(job) => match &self.highlight {
+                Some(worker) => worker.send(job).err().map(|e| e.0.run()),
+                None => Some(job.run()),
+            },
             Cmd::Quit => None,
         }
     }

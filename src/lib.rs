@@ -4,6 +4,7 @@
 pub mod app;
 pub mod cli;
 pub mod doc;
+pub mod highlight;
 pub mod layout;
 pub mod print;
 pub mod record;

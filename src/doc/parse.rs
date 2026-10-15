@@ -12,9 +12,9 @@ use pulldown_cmark::{
 
 use super::slug::Slugger;
 use super::{
-    Align, Anchor, AnchorKind, Block, BlockKind, Callout, CodeBlock, Doc, Footnote, FootnoteId,
-    InlineStyle, Inlines, LineRange, LinkId, LinkKind, LinkRef, List, ListItem, Run, RunKind,
-    Table, TableId, TableRow, fence,
+    Align, Anchor, AnchorKind, Block, BlockKind, Callout, CodeBlock, CodeId, Doc, Footnote,
+    FootnoteId, InlineStyle, Inlines, LineRange, LinkId, LinkKind, LinkRef, List, ListItem, Run,
+    RunKind, Table, TableId, TableRow, fence,
 };
 
 pub fn options() -> Options {
@@ -113,6 +113,7 @@ struct Builder {
     link: Option<LinkId>,
     image: Option<ImageDraft>,
     tables: TableId,
+    code_blocks: CodeId,
 }
 
 impl Builder {
@@ -144,6 +145,7 @@ impl Builder {
             link: None,
             image: None,
             tables: 0,
+            code_blocks: 0,
         }
     }
 
@@ -603,8 +605,10 @@ impl Builder {
             } => {
                 let mut h = DefaultHasher::new();
                 text.hash(&mut h);
+                self.code_blocks += 1;
                 Block {
                     kind: BlockKind::Code(CodeBlock {
+                        id: self.code_blocks - 1,
                         lang,
                         hash: h.finish(),
                         text: text.into(),
@@ -703,6 +707,7 @@ impl Builder {
             footnotes: self.footnotes,
             line_starts: self.line_starts,
             table_count: self.tables,
+            code_count: self.code_blocks,
         }
     }
 }

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use std::{env, fs, process};
 
-use preen::app::{Config, Dir, Msg, ScrollBy, Size, State, update};
+use preen::app::{Cmd, Config, Dir, Msg, ScrollBy, Size, State, update};
 use preen::layout::{self, LayoutParams, TableMode};
 use preen::theme::Theme;
 use preen::{doc, ui};
@@ -118,12 +118,14 @@ fn measure(theme: &Theme, text: &str) -> Measured {
         std::hint::black_box(doc::parse(text));
     });
 
-    // First paint: parse + layout + paint, through update like the real thing.
+    // First paint: parse + layout + paint, through update like the real thing. Highlighting
+    // arrives after first paint and isn't counted.
     let mut state = State::new(theme.clone(), Config::default());
+    let mut cmds = Vec::new();
     let first_paint = median(|| {
         state = State::new(theme.clone(), Config::default());
         update(&mut state, Msg::Init { size });
-        update(
+        cmds = update(
             &mut state,
             Msg::DocLoaded {
                 path: "bench.md".into(),
@@ -134,6 +136,12 @@ fn measure(theme: &Theme, text: &str) -> Measured {
         terminal.draw(|f| ui::view(&state, f)).expect("draw");
     });
     let rows = state.doc.as_ref().map_or(0, |d| d.layout.row_count());
+    // ...but repaints include it.
+    for cmd in cmds {
+        if let Cmd::Highlight(job) = cmd {
+            update(&mut state, job.run());
+        }
+    }
 
     // Relayout: alternate between two widths so neither cached layout ever matches... except the
     // previous one, which is exactly the resize-drag case. Use three widths to defeat both.

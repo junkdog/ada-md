@@ -51,6 +51,7 @@ callout_important = { fg = "purple", bold = true }
 callout_warning = { fg = "yellow", bold = true }
 callout_caution = { fg = "red", bold = true }
 code = { fg = "fg", bg = "bg1" }
+code_text = {}           # code itself; inherits block.code, under the [syntax] colours
 code_label = { fg = "gray", bg = "bg1", italic = true }
 code_wrap_mark = { fg = "gray", bg = "bg1" }
 list_bullet = { fg = "fg4" }
@@ -70,6 +71,7 @@ rule = "─"
 table_border = "rounded"     # rounded | ascii | none
 task = ["[✓] ", "[ ] "]
 wrap_mark = "↪"
+code_clip = ["‹", "›"]       # code clipped at the edges when not wrapping (`w`)
 image = "🖼 "
 
 [gutter.unstaged]            # working tree differs from the index
@@ -91,7 +93,7 @@ status_message = { fg = "yellow", bg = "bg1" }
 search_match = { fg = "bg", bg = "orange" }
 search_match_hidden = { underline = true, underline_color = "purple" }
 
-[syntax]                     # TextMate scope prefix → style; becomes a syntect theme (P3)
+[syntax]                     # TextMate scope selector → style; the most specific match wins
 "comment" = { fg = "gray", italic = true }
 "meta.preprocessor" = { fg = "orange" }
 "keyword" = { fg = "red" }
@@ -99,6 +101,8 @@ search_match_hidden = { underline = true, underline_color = "purple" }
 "storage.modifier" = { fg = "red" }
 "keyword.operator" = { fg = "orange" }
 "punctuation" = { fg = "fg" }
+"punctuation.definition.string" = { fg = "green" }
+"punctuation.definition.comment" = { fg = "gray", italic = true }
 "variable" = { fg = "fg" }
 "support.function" = { fg = "yellow" }
 "entity.name.tag" = { fg = "red" }

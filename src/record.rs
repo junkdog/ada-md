@@ -29,7 +29,7 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{self, Dir, Effects, Msg, ScrollBy, Size, State};
+use crate::app::{self, Computed, Dir, Effects, Msg, ScrollBy, Size, State};
 use crate::ui;
 
 pub const HEADER: &str = "preen-rec 1";
@@ -64,9 +64,12 @@ messages! {
     "scroll" => Scroll { by },
     "jump-heading" => JumpHeading { dir },
     "toggle-table-mode" => ToggleTableMode {},
+    "toggle-code-wrap" => ToggleCodeWrap {},
+    "scroll-code-x" => ScrollCodeX { by },
     "quit" => Quit {},
     "doc-loaded" => DocLoaded { path, mtime, text },
     "doc-failed" => DocFailed { path, error },
+    "highlighted" => Highlighted { doc_gen, block, spans },
 }
 
 // --- field values -----------------------------------------------------------------------------
@@ -83,6 +86,11 @@ enum Value {
 trait Field: Sized {
     fn write(&self, key: &str, line: &mut String, blobs: &mut Vec<u8>);
     fn read(value: Value) -> Option<Self>;
+
+    /// The value of a field the line leaves out, if it may.
+    fn absent() -> Option<Self> {
+        None
+    }
 }
 
 fn inline(key: &str, line: &mut String, value: impl Display) {
@@ -102,6 +110,38 @@ fn quote(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+macro_rules! int_fields {
+    ($($t:ty),*) => {$(
+        impl Field for $t {
+            fn write(&self, key: &str, line: &mut String, _: &mut Vec<u8>) {
+                inline(key, line, self);
+            }
+
+            fn read(value: Value) -> Option<Self> {
+                match value {
+                    Value::Int(n) => <$t>::try_from(n).ok(),
+                    _ => None,
+                }
+            }
+        }
+    )*};
+}
+
+int_fields!(i16, u32, u64);
+
+/// Computed results are never written: replay recomputes them (ADR-19).
+impl<T> Field for Computed<T> {
+    fn write(&self, _: &str, _: &mut String, _: &mut Vec<u8>) {}
+
+    fn read(_: Value) -> Option<Self> {
+        None
+    }
+
+    fn absent() -> Option<Self> {
+        Some(Computed(None))
+    }
 }
 
 impl Field for Size {
@@ -226,11 +266,9 @@ struct Fields(Vec<(String, Value)>);
 
 impl Fields {
     fn take<T: Field>(&mut self, key: &str) -> Result<T, String> {
-        let i = self
-            .0
-            .iter()
-            .position(|(k, _)| k == key)
-            .ok_or_else(|| format!("missing field `{key}`"))?;
+        let Some(i) = self.0.iter().position(|(k, _)| k == key) else {
+            return T::absent().ok_or_else(|| format!("missing field `{key}`"));
+        };
         let (_, value) = self.0.swap_remove(i);
         T::read(value).ok_or_else(|| format!("bad value for `{key}`"))
     }
@@ -465,7 +503,7 @@ fn step(state: &mut State, msg: Msg, effects: &mut Effects, live: bool) {
     while let Some(msg) = queue.pop_front() {
         for cmd in app::update(state, msg) {
             if live {
-                queue.extend(effects.run(&cmd));
+                queue.extend(effects.run(cmd));
             }
         }
     }
@@ -482,7 +520,7 @@ pub fn replay_headless(
         Terminal::new(TestBackend::new(state.size.w, state.size.h)).map_err(|e| e.to_string())?;
     let mut frames = Vec::new();
     for entry in entries {
-        if live && entry.msg.is_world() {
+        if live && entry.msg.is_result() {
             continue;
         }
         step(state, entry.msg.clone(), effects, live);
@@ -511,7 +549,7 @@ fn replay_terminal(
     let start = Instant::now();
     let mut result = Ok(());
     for entry in entries {
-        if live && entry.msg.is_world() {
+        if live && entry.msg.is_result() {
             continue;
         }
         if let Some(wait) = Duration::from_millis(entry.at_ms).checked_sub(start.elapsed()) {
@@ -584,6 +622,13 @@ mod tests {
             },
             Msg::JumpHeading { dir: Dir::Prev },
             Msg::ToggleTableMode,
+            Msg::ToggleCodeWrap,
+            Msg::ScrollCodeX { by: -8 },
+            Msg::Highlighted {
+                doc_gen: 3,
+                block: 12,
+                spans: Computed(None),
+            },
             Msg::DocLoaded {
                 path: "a.md".into(),
                 mtime: Some(1_760_535_362_123),
