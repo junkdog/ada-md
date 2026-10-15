@@ -3,6 +3,23 @@
 version = 4
 
 [[package]]
+name = "ada-md"
+version = "0.1.0"
+dependencies = [
+ "anpa",
+ "image",
+ "insta",
+ "pulldown-cmark",
+ "ratatui",
+ "ratatui-image",
+ "regex",
+ "syntect",
+ "toml",
+ "two-face",
+ "unicode-width",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1193,23 +1210,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
 dependencies = [
  "zerocopy",
-]
-
-[[package]]
-name = "preen"
-version = "0.1.0"
-dependencies = [
- "anpa",
- "image",
- "insta",
- "pulldown-cmark",
- "ratatui",
- "ratatui-image",
- "regex",
- "syntect",
- "toml",
- "two-face",
- "unicode-width",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-# preen fixture: basics
+# ada fixture: basics
 
 A paragraph with **strong**, _emphasis_, ***both***, ~~struck~~ and `inline code`. It goes on long
 enough to wrap at narrow widths, so the wrapper has something to chew on, including a

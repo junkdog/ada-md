@@ -1,4 +1,4 @@
-//! preen: a terminal markdown viewer. The pipeline is Source → [`doc`] → [`layout`] → paint
+//! ada: a terminal markdown viewer. The pipeline is Source → [`doc`] → [`layout`] → paint
 //! ([`ui`], [`print`]); interaction goes through the message architecture in [`app`].
 
 pub mod app;

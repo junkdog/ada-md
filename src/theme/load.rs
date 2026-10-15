@@ -1,5 +1,5 @@
 //! Theme TOML → [`Theme`], walked by hand from `DeTable` without serde (ADR-08). Spans make errors
-//! precise; unknown keys are warnings so newer themes still load in older preen.
+//! precise; unknown keys are warnings so newer themes still load in older ada.
 
 use std::borrow::Cow;
 use std::fmt::Display;
@@ -20,7 +20,7 @@ const MAX_EXTENDS_DEPTH: u32 = 8;
 
 type Value<'i> = Spanned<DeValue<'i>>;
 
-/// Resolve `--theme NAME`: a path, then `$XDG_CONFIG_HOME/preen/themes/NAME.toml`, then the
+/// Resolve `--theme NAME`: a path, then `$XDG_CONFIG_HOME/ada/themes/NAME.toml`, then the
 /// built-ins. Returns the theme and any warnings.
 pub fn load(name: Option<&str>) -> Result<(Theme, Vec<String>), String> {
     let mut warnings = Vec::new();
@@ -63,7 +63,7 @@ fn themes_dir() -> Option<PathBuf> {
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
         .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-    Some(config.join("preen").join("themes"))
+    Some(config.join("ada").join("themes"))
 }
 
 /// Load a theme from TOML text. `file` names it in messages; `depth` guards `extends` cycles.

@@ -161,7 +161,7 @@ struct CodeBlock {
     text: String,
 }
 
-/// Fence-token lookup with the aliases from preen-plan P3. Untagged and `text` blocks stay plain.
+/// Fence-token lookup with the aliases from ada-md-plan P3. Untagged and `text` blocks stay plain.
 fn resolve<'a>(syntaxes: &'a SyntaxSet, lang: Option<&str>) -> Option<&'a SyntaxReference> {
     let token = match lang? {
         "text" | "txt" | "plain" => return None,

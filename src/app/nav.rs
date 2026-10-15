@@ -19,7 +19,7 @@ pub enum LinkState {
     Pending,
     /// A heading or footnote in the same document.
     Anchor(AnchorId),
-    /// A note preen opens itself, maybe at a heading.
+    /// A note ada opens itself, maybe at a heading.
     Doc {
         path: PathBuf,
         frag: Option<String>,

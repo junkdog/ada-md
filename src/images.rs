@@ -370,7 +370,7 @@ pub(crate) mod tests {
 
     /// A `w`×`h` PNG in a fresh temporary directory.
     pub(crate) fn png(name: &str, w: u32, h: u32) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("preen-images-{}-{name}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("ada-images-{}-{name}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join(format!("{name}.png"));
         let img =

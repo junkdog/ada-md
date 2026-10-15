@@ -14,7 +14,7 @@ use crate::images;
 use crate::record::Recorder;
 use crate::ui;
 
-/// Run preen in the terminal until the user quits.
+/// Run ada in the terminal until the user quits.
 pub fn run_tui(
     mut state: State,
     path: PathBuf,

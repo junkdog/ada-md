@@ -3,7 +3,7 @@
 //!
 //! Results are colour-free. The theme's `[syntax]` table becomes a syntect theme whose rule `i`
 //! "colours" a token with `i` encoded in its foreground, so a highlighted line is a list of
-//! `(end byte, rule)` runs, and paint resolves each rule against the preen theme (ADR-03).
+//! `(end byte, rule)` runs, and paint resolves each rule against the ada theme (ADR-03).
 //! Results are cached by [`key`], a hash of the language and the code.
 
 use std::collections::hash_map::Entry;

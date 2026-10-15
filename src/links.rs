@@ -1,4 +1,4 @@
-//! Link resolution (ADR-13, architecture §7). preen knows nothing about vaults: paths and
+//! Link resolution (ADR-13, architecture §7). ada knows nothing about vaults: paths and
 //! `[[wiki]]` names resolve relative to the note's own directory.
 //!
 //! Classifying a link is pure. Finding the file it names reads the filesystem, so it runs in the
@@ -187,7 +187,7 @@ pub fn is_openable(url: &str) -> bool {
     })
 }
 
-/// Notes preen opens itself.
+/// Notes ada opens itself.
 pub fn is_markdown(path: &Path) -> bool {
     has_extension(path, &["md", "markdown", "mdown", "mkd", "mkdn"])
 }
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn builtin_resolution() {
-        let dir = std::env::temp_dir().join(format!("preen-links-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("ada-links-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         for f in ["note.md", "sub/other.md", "plain", "pic.png"] {
             std::fs::write(dir.join(f), "x").unwrap();

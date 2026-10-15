@@ -391,11 +391,11 @@ fn anchors_map_to_rows() {
     assert_eq!(rows, ["One", "## Two", "[1] the note"]);
 }
 
-/// The invariants over a real corpus: `PREEN_CORPUS=~/opt/birb-vault cargo test -- --ignored`.
+/// The invariants over a real corpus: `ADA_CORPUS=~/opt/birb-vault cargo test -- --ignored`.
 #[test]
-#[ignore = "needs PREEN_CORPUS"]
+#[ignore = "needs ADA_CORPUS"]
 fn corpus_invariants() {
-    let root = PathBuf::from(std::env::var_os("PREEN_CORPUS").expect("PREEN_CORPUS"));
+    let root = PathBuf::from(std::env::var_os("ADA_CORPUS").expect("ADA_CORPUS"));
     let mut stack = vec![root];
     let mut notes = 0;
     let theme = Theme::builtin();

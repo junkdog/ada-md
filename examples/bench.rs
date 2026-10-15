@@ -12,11 +12,11 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use std::{env, fs, process};
 
-use preen::app::{Cmd, Config, Dir, Msg, ScrollBy, Size, State, update};
-use preen::layout::{self, LayoutParams, TableMode};
-use preen::search::SearchMap;
-use preen::theme::Theme;
-use preen::{doc, ui};
+use ada::app::{Cmd, Config, Dir, Msg, ScrollBy, Size, State, update};
+use ada::layout::{self, LayoutParams, TableMode};
+use ada::search::SearchMap;
+use ada::theme::Theme;
+use ada::{doc, ui};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 

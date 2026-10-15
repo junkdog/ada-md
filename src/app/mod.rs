@@ -1895,7 +1895,7 @@ mod tests {
             [Cmd::OpenWithSystem("neumann.jpeg".into())]
         );
         assert!(state.view.is_some());
-        // q and Esc close the view, not preen
+        // q and Esc close the view, not ada
         update(&mut state, Msg::Quit);
         assert!(state.view.is_none() && !state.quit);
 

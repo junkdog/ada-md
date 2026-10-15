@@ -1,7 +1,7 @@
 //! Spike C: parse cost.
 //!
 //! Times pulldown-cmark (with offsets) plus construction of an IR shaped like the one in
-//! preen-architecture §2: owned, markup-free runs with style bits, a link table, anchors and a
+//! ada-md-architecture §2: owned, markup-free runs with style bits, a link table, anchors and a
 //! source line on every block and run. The IR here is a stand-in; P1 replaces it with the real one.
 //!
 //! ```zsh

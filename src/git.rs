@@ -400,7 +400,7 @@ mod tests {
     /// A real repository: a staged edit, then an unstaged one on top.
     #[test]
     fn staged_and_unstaged_in_a_real_repo() {
-        let dir = std::env::temp_dir().join(format!("preen-git-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("ada-git-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let sh = |args: &[&str]| {

@@ -2,7 +2,7 @@
 source: src/layout/tests.rs
 expression: render(&l)
 ---
-    1│   preen fixture: basics
+    1│   ada fixture: basics
      │
     3│  A paragraph with strong, emphasis, both, struck and  inline code . It goes
  3-4 │  on long enough to wrap at narrow widths, so the wrapper has something to

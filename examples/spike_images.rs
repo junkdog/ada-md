@@ -14,7 +14,7 @@
 //! Keys: `j`/`k` row · `d`/`u` half page · `space`/`b` page · `g`/`G` top/bottom ·
 //! `a` autoscroll (bounces at ~60 rows/s) · `A` autoscroll as fast as frames draw · `q` quit.
 //!
-//! The loop blocks in `event::read()` unless autoscroll is on, so it is idle-free like preen.
+//! The loop blocks in `event::read()` unless autoscroll is on, so it is idle-free like ada.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -125,7 +125,7 @@ impl App {
         (self.doc_rows(viewport) - i32::from(viewport)).max(0)
     }
 
-    /// Re-encodes the image when the width changes. This is the cost preen would pay on the
+    /// Re-encodes the image when the width changes. This is the cost ada would pay on the
     /// image worker; here it runs inline so it shows up in the status line.
     fn ensure_protocol(&mut self, area: Rect) -> Duration {
         if self.sliced.as_ref().is_some_and(|(w, _)| *w == area.width) {
@@ -191,7 +191,7 @@ fn main() {
     if let Some(protocol) = args.protocol {
         picker.set_protocol_type(protocol);
     } else if picker.tmux_detected() && picker.protocol_type() == ProtocolType::Kitty {
-        // preen-plan P6: kitty graphics don't work inside tmux
+        // ada-md-plan P6: kitty graphics don't work inside tmux
         picker.set_protocol_type(ProtocolType::Halfblocks);
     }
 
@@ -276,7 +276,7 @@ fn draw<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
 ) -> Result<(), B::Error> {
-    // draw time excludes re-encoding, which preen does on a worker
+    // draw time excludes re-encoding, which ada does on a worker
     let start = Instant::now();
     let mut encode = Duration::ZERO;
     terminal.draw(|f| {

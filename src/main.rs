@@ -4,18 +4,18 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::{env, fs};
 
-use preen::app::{self, Config, Effects, Msg, State};
-use preen::cli::{self, Args, Input};
-use preen::layout::{LayoutParams, TableMode};
-use preen::record::{self, Recorder, ReplayOptions};
-use preen::theme::Theme;
-use preen::{doc, print, theme};
+use ada::app::{self, Config, Effects, Msg, State};
+use ada::cli::{self, Args, Input};
+use ada::layout::{LayoutParams, TableMode};
+use ada::record::{self, Recorder, ReplayOptions};
+use ada::theme::Theme;
+use ada::{doc, print, theme};
 
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("preen: {e}");
+            eprintln!("ada: {e}");
             ExitCode::from(2)
         }
     }
@@ -28,13 +28,13 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
     if args.version {
-        println!("preen {}", env!("CARGO_PKG_VERSION"));
+        println!("ada {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
 
     let (theme, warnings) = theme::load(args.theme.as_deref())?;
     for w in &warnings {
-        eprintln!("preen: warning: {w}");
+        eprintln!("ada: warning: {w}");
     }
     let config = Config {
         max_width: args.max_width,

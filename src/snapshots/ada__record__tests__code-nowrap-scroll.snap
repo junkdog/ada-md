@@ -13,7 +13,7 @@ expression: frames.last().unwrap()
 
 
    zsh
-  ‹lease && ls -la target/release/preen && strip --strip-›
+  ‹lease && ls -la target/release/ada && strip --strip-al›
 
 
   Done.

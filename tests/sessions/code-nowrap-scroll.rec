@@ -1,7 +1,7 @@
-preen-rec 1
+ada-rec 1
 +0 init size=60x16
 +1 open path="build.md"
-+2 doc-loaded path="build.md" mtime=1760535362123 text:327
++2 doc-loaded path="build.md" mtime=1760535362123 text:323
 # Build
 
 The release profile, and the commands that use it.
@@ -13,7 +13,7 @@ codegen-units = 1
 ```
 
 ```zsh
-cargo build --release && ls -la target/release/preen && strip --strip-all target/release/preen
+cargo build --release && ls -la target/release/ada && strip --strip-all target/release/ada
 ```
 
 Done.

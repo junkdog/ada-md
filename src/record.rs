@@ -1,6 +1,6 @@
 //! Session recording and replay (ADR-19, architecture §10 "Recording format").
 //!
-//! A `.rec` file is a `preen-rec 1` header, then one line per message:
+//! A `.rec` file is a `ada-rec 1` header, then one line per message:
 //! `+<ms since start> <kebab-name> <field>*`. A field is `key=value` (an integer, `WxH`, a bare
 //! identifier or a `"quoted string"`) or `key:<len>`, in which case `len` raw bytes follow the
 //! line, in field order, then a newline. File text is stored verbatim, unescaped.
@@ -34,7 +34,7 @@ use crate::images::{Probe, Proto};
 use crate::links::Resolved;
 use crate::ui;
 
-pub const HEADER: &str = "preen-rec 1";
+pub const HEADER: &str = "ada-rec 1";
 
 macro_rules! messages {
     ($($name:literal => $variant:ident { $($field:ident),* },)*) => {
@@ -875,7 +875,7 @@ mod tests {
 
     #[test]
     fn reads_the_documented_format() {
-        let text = "preen-rec 1\n+0 init size=120x40\n+3 doc-loaded path=\"notes/a.md\" mtime=1760535362123 text:7\n# a\nb\nc\n+412 scroll by=3\n+500 scroll by=page-down\n+980 resize size=100x40\n\n+5000 quit\n";
+        let text = "ada-rec 1\n+0 init size=120x40\n+3 doc-loaded path=\"notes/a.md\" mtime=1760535362123 text:7\n# a\nb\nc\n+412 scroll by=3\n+500 scroll by=page-down\n+980 resize size=100x40\n\n+5000 quit\n";
         let entries = parse(text.as_bytes()).unwrap();
         assert_eq!(entries.len(), 6);
         assert_eq!(
@@ -897,11 +897,11 @@ mod tests {
 
     #[test]
     fn rejects_bad_input() {
-        assert!(parse(b"preen-rec 2\n").is_err());
-        assert!(parse(b"preen-rec 1\n+0 dance\n").is_err());
-        assert!(parse(b"preen-rec 1\n+0 scroll by=sideways\n").is_err());
-        assert!(parse(b"preen-rec 1\n+0 doc-loaded path=\"x\" mtime=none text:99\nshort").is_err());
-        assert!(parse(b"preen-rec 1\n+x quit\n").is_err());
+        assert!(parse(b"ada-rec 2\n").is_err());
+        assert!(parse(b"ada-rec 1\n+0 dance\n").is_err());
+        assert!(parse(b"ada-rec 1\n+0 scroll by=sideways\n").is_err());
+        assert!(parse(b"ada-rec 1\n+0 doc-loaded path=\"x\" mtime=none text:99\nshort").is_err());
+        assert!(parse(b"ada-rec 1\n+x quit\n").is_err());
     }
 
     #[test]

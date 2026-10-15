@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use crate::images::{ImageMode, Proto};
 
 pub const USAGE: &str = "\
-usage: preen [options] [FILE | -]
+usage: ada [options] [FILE | -]
 
 A terminal markdown viewer. Reads stdin when FILE is `-`, or is omitted and stdin is a pipe.
 Prints instead of paging when stdout is not a terminal.
@@ -62,7 +62,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
         if only_files || text == "-" || !text.starts_with('-') {
             if out.input.is_some() {
                 return Err(format!(
-                    "unexpected argument `{text}`: preen shows one file"
+                    "unexpected argument `{text}`: ada shows one file"
                 ));
             }
             out.input = Some(if text == "-" {
