@@ -81,11 +81,14 @@ messages! {
     "search-submit" => SearchSubmit {},
     "search-cancel" => SearchCancel {},
     "search-next" => SearchNext { dir },
+    "jump-change" => JumpChange { dir },
+    "reload" => Reload {},
     "quit" => Quit {},
     "doc-loaded" => DocLoaded { path, mtime, text },
     "doc-failed" => DocFailed { path, error },
     "links-resolved" => LinksResolved { doc_gen, resolved },
     "open-failed" => OpenFailed { target, error },
+    "git-diff" => GitDiff { doc_gen, untracked, total, unstaged },
     "highlighted" => Highlighted { doc_gen, block, spans },
 }
 
@@ -158,6 +161,20 @@ impl<T> Field for Computed<T> {
 
     fn absent() -> Option<Self> {
         Some(Computed(None))
+    }
+}
+
+impl Field for bool {
+    fn write(&self, key: &str, line: &mut String, _: &mut Vec<u8>) {
+        inline(key, line, self);
+    }
+
+    fn read(value: Value) -> Option<Self> {
+        match value {
+            Value::Ident(s) if s == "true" => Some(true),
+            Value::Ident(s) if s == "false" => Some(false),
+            _ => None,
+        }
     }
 }
 
@@ -703,6 +720,14 @@ mod tests {
             Msg::LinksResolved {
                 doc_gen: 3,
                 resolved: Vec::new(),
+            },
+            Msg::JumpChange { dir: Dir::Next },
+            Msg::Reload,
+            Msg::GitDiff {
+                doc_gen: 4,
+                untracked: false,
+                total: "@@ -1 +1 @@\n-a\n+b\n".into(),
+                unstaged: "".into(),
             },
             Msg::OpenFailed {
                 target: "x.png".into(),

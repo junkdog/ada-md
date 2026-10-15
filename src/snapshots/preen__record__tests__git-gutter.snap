@@ -1,0 +1,20 @@
+---
+source: src/record.rs
+expression: frames.last().unwrap()
+---
+   Changes
+
+▎ A line committed long ago. A line that was
+▎ edited and staged.
+
+  ## Unstaged
+
+▎ • a new item, not staged yet
+▎ • another new one
+▎ • an old item, edited again
+
+  The paragraph after a deletion.
+
+
+
+ changes.md  reloaded                         All

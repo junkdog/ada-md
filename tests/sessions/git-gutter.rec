@@ -1,0 +1,71 @@
+preen-rec 1
++0 init size=50x16
++1 open path="changes.md"
++2 doc-loaded path="changes.md" mtime=1760535362123 text:181
+# Changes
+
+A line committed long ago.
+A line that was edited and staged.
+
+## Unstaged
+
+- a new item, not staged yet
+- another new one
+- an old item
+
+The paragraph after a deletion.
+
++30 git-diff doc_gen=1 untracked=false total:99 unstaged:46
+@@ -4 +4 @@
+-old
++A line that was edited and staged.
+@@ -7,0 +8,2 @@
++a
++b
+@@ -11,1 +11,0 @@
+-gone
+@@ -7,0 +8,2 @@
++a
++b
+@@ -11,1 +11,0 @@
+-gone
+
++500 jump-change dir=next
++600 jump-change dir=next
++700 jump-change dir=prev
++800 reload
++801 doc-loaded path="changes.md" mtime=1760535369999 text:195
+# Changes
+
+A line committed long ago.
+A line that was edited and staged.
+
+## Unstaged
+
+- a new item, not staged yet
+- another new one
+- an old item, edited again
+
+The paragraph after a deletion.
+
++830 git-diff doc_gen=2 untracked=false total:119 unstaged:66
+@@ -4 +4 @@
+-old
++A line that was edited and staged.
+@@ -7,0 +8,2 @@
++a
++b
+@@ -11,1 +11,0 @@
+-gone
+@@ -10 +10 @@
+-x
++y
+@@ -7,0 +8,2 @@
++a
++b
+@@ -11,1 +11,0 @@
+-gone
+@@ -10 +10 @@
+-x
++y
+

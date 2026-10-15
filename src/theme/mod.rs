@@ -120,6 +120,11 @@ impl StyleKey {
         }
     }
 
+    /// The gutter style for a mark index (see [`crate::git::Mark::index`]).
+    pub fn gutter(index: usize) -> StyleKey {
+        StyleKey::ALL[StyleKey::GutterUnstagedAdded as usize + index.min(5)]
+    }
+
     fn heading_level(self) -> Option<usize> {
         let level = self as usize;
         (StyleKey::H1 as usize..=StyleKey::H6 as usize)

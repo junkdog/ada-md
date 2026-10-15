@@ -7,8 +7,8 @@ expression: frames.last().unwrap()
   Start here, │ › e▏                         │ missing
   one.        │ Walker                       │
               │   Details                    │
-  ## Backgroun╰──────────────────────────────╯
-
+  ## Backgroun│                              │
+              ╰──────────────────────────────╯
   Notes link to each other with relative paths and wiki
   links. The back stack remembers where you were.
 

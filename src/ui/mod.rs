@@ -60,6 +60,7 @@ pub fn view(state: &State, frame: &mut Frame<'_>) {
             painter.row_into(buf, line.x, y, line.right(), row);
         }
         overlays(buf, doc_area, state, doc, &lines);
+        gutter(buf, doc_area, state, doc, &lines);
     }
     if state.outline.is_some() {
         outline::draw(buf, doc_area, state);
@@ -79,6 +80,26 @@ fn screen_rows(layout: &Layout, scroll: u32, area: Rect) -> Vec<(u16, u32)> {
         }
     }
     lines
+}
+
+/// The git gutter, in the left margin column, so it costs no width and no relayout.
+fn gutter(buf: &mut Buffer, area: Rect, state: &State, doc: &Document, lines: &[(u16, u32)]) {
+    let Some(marks) = doc.marks.as_ref().filter(|m| !m.is_empty()) else {
+        return;
+    };
+    if doc.layout.margin == 0 || area.width == 0 {
+        return;
+    }
+    let theme = &state.theme;
+    for &(y, r) in lines {
+        if let Some(mark) = marks.row_mark(&doc.layout, r) {
+            let i = mark.index();
+            let glyph = &theme.glyphs.gutter[i];
+            if !glyph.is_empty() {
+                buf.set_stringn(area.x, y, glyph, 1, theme.style(StyleKey::gutter(i)));
+            }
+        }
+    }
 }
 
 /// Search matches and the focused link, patched over the painted rows (ADR-03).

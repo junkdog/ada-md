@@ -131,6 +131,14 @@ impl Keymap {
                 self.pending = Some(c);
                 None
             }
+            KeyCode::Char('c') if !ctrl && pending.is_some() => {
+                let dir = if pending == Some(']') {
+                    Dir::Next
+                } else {
+                    Dir::Prev
+                };
+                Some(Msg::JumpChange { dir })
+            }
             KeyCode::Char('c') if ctrl => Some(Msg::Quit),
             KeyCode::Char('d') if ctrl => scroll(ScrollBy::HalfPage(Dir::Next)),
             KeyCode::Char('u') if ctrl => scroll(ScrollBy::HalfPage(Dir::Prev)),
@@ -165,6 +173,7 @@ impl Keymap {
                 self.mode = Mode::Search(String::new());
                 Some(Msg::SearchOpen)
             }
+            KeyCode::Char('r') => Some(Msg::Reload),
             KeyCode::Char('n') => Some(Msg::SearchNext { dir: Dir::Next }),
             KeyCode::Char('N') => Some(Msg::SearchNext { dir: Dir::Prev }),
             KeyCode::Char('q') | KeyCode::Esc => Some(Msg::Quit),
@@ -208,6 +217,27 @@ mod tests {
             press(&mut km, KeyCode::Char('[')),
             Some(Msg::JumpHeading { dir: Dir::Prev })
         );
+    }
+
+    #[test]
+    fn change_jumps_and_reload() {
+        let mut km = Keymap::default();
+        assert_eq!(press(&mut km, KeyCode::Char(']')), None);
+        assert_eq!(
+            press(&mut km, KeyCode::Char('c')),
+            Some(Msg::JumpChange { dir: Dir::Next })
+        );
+        press(&mut km, KeyCode::Char('['));
+        assert_eq!(
+            press(&mut km, KeyCode::Char('c')),
+            Some(Msg::JumpChange { dir: Dir::Prev })
+        );
+        assert_eq!(
+            press(&mut km, KeyCode::Char('c')),
+            None,
+            "c alone does nothing"
+        );
+        assert_eq!(press(&mut km, KeyCode::Char('r')), Some(Msg::Reload));
     }
 
     #[test]

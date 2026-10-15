@@ -45,6 +45,8 @@ pub(super) enum NavOp {
     Follow,
     Back,
     Forward,
+    /// The same document again: no history.
+    Reload,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -375,6 +377,7 @@ impl State {
                 self.forward.pop();
                 self.back.extend(current);
             }
+            NavOp::Reload => {}
         }
     }
 
@@ -391,7 +394,38 @@ impl State {
     }
 
     /// The document a navigation waited for has loaded.
+    /// `r`: read the file again, keeping the place; git runs again even when the text is the
+    /// same, since staging changes the gutter without touching the file.
+    pub(super) fn reload(&mut self) -> Vec<Cmd> {
+        if self.nav.is_some() {
+            return Vec::new();
+        }
+        let Some(entry) = self.entry() else {
+            return Vec::new();
+        };
+        if entry.path.as_os_str() == "-" {
+            self.status = Some("stdin can't be reloaded".into());
+            return Vec::new();
+        }
+        self.nav = Some(Nav {
+            path: entry.path.clone(),
+            op: NavOp::Reload,
+            land: Landing::Entry(entry.clone()),
+        });
+        vec![Cmd::LoadDoc(entry.path)]
+    }
+
     pub(super) fn arrive(&mut self, nav: Nav, mtime: Option<u64>, text: Arc<str>) -> Vec<Cmd> {
+        if nav.op == NavOp::Reload {
+            self.status = Some("reloaded".into());
+            if let Some(doc) = &mut self.doc
+                && doc.path == nav.path
+                && doc.text == text
+            {
+                doc.mtime = mtime;
+                return self.git_cmd().into_iter().collect();
+            }
+        }
         self.shift_history(nav.op);
         let cmds = self.install(nav.path, mtime, text);
         match nav.land {

@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::doc::{self, CodeId, Doc, LinkId};
+use crate::git::LineMarks;
 use crate::highlight::{self, CodeSpans, Highlights, Job, SyntaxTheme};
 use crate::layout::{self, Layout, LayoutParams, Measure, RowKind, TableMode};
 use crate::links::{LocalTarget, Resolved};
@@ -106,6 +107,12 @@ pub enum Msg {
     SearchNext {
         dir: Dir,
     },
+    /// `]c` / `[c`: the next or previous run of changed rows.
+    JumpChange {
+        dir: Dir,
+    },
+    /// Read the file again, keeping the place, and refresh the gutter.
+    Reload,
     Quit,
     // world → app: the payload is recorded, because these read the outside world
     DocLoaded {
@@ -128,6 +135,14 @@ pub enum Msg {
         target: String,
         error: String,
     },
+    /// `git diff HEAD` and `git diff` of a document's file (ADR-06). Only sent inside a
+    /// repository; `untracked` means the file isn't in the index, and the diffs are empty.
+    GitDiff {
+        doc_gen: u64,
+        untracked: bool,
+        total: Arc<str>,
+        unstaged: Arc<str>,
+    },
     // pure computation done off-thread: recorded as a marker only
     Highlighted {
         doc_gen: u64,
@@ -146,6 +161,7 @@ impl Msg {
                 | Msg::DocFailed { .. }
                 | Msg::LinksResolved { .. }
                 | Msg::OpenFailed { .. }
+                | Msg::GitDiff { .. }
         )
     }
 
@@ -168,6 +184,11 @@ pub enum Cmd {
     },
     /// Hand a file or URL to the desktop's opener (`xdg-open`).
     OpenWithSystem(OsString),
+    /// Diff a document's file against the index and `HEAD`, off the UI thread.
+    RunGit {
+        doc_gen: u64,
+        path: PathBuf,
+    },
     Quit,
 }
 
@@ -194,6 +215,8 @@ pub struct Document {
     pub links: Vec<LinkState>,
     /// The searchable text, built on the first search.
     search_map: Option<SearchMap>,
+    /// The git gutter; `None` outside a repository, or until git answers.
+    pub marks: Option<LineMarks>,
 }
 
 impl Document {
@@ -220,6 +243,7 @@ impl Document {
             generation,
             links,
             search_map: None,
+            marks: None,
         }
     }
 
@@ -376,14 +400,62 @@ impl State {
                 doc
             }
         };
-        if let Some(old) = self.doc.replace(doc) {
+        if let Some(old) = self.doc.replace(doc)
+            && self.doc.as_ref().is_some_and(|d| d.path != old.path)
+        {
             self.stash(old);
         }
         self.focus = None;
         self.scroll = 0;
         self.rematch();
         cmds.extend(self.highlight_all());
+        cmds.extend(self.git_cmd());
         cmds
+    }
+
+    /// Refresh the current document's gutter. Stdin has no file to diff.
+    fn git_cmd(&self) -> Option<Cmd> {
+        let doc = self.doc.as_ref().filter(|d| d.path.as_os_str() != "-")?;
+        Some(Cmd::RunGit {
+            doc_gen: doc.generation,
+            path: doc.path.clone(),
+        })
+    }
+
+    fn git_diff(&mut self, doc_gen: u64, total: &str, unstaged: &str, untracked: bool) {
+        let doc = self
+            .doc
+            .iter_mut()
+            .chain(self.cache.iter_mut())
+            .find(|d| d.generation == doc_gen);
+        if let Some(doc) = doc {
+            doc.marks = Some(LineMarks::new(total, unstaged, untracked));
+        }
+    }
+
+    fn jump_change(&mut self, dir: Dir) {
+        let Some(doc) = &self.doc else {
+            return;
+        };
+        let Some(marks) = &doc.marks else {
+            self.status = Some("no git changes to jump to".into());
+            return;
+        };
+        let starts = marks.change_starts(&doc.layout);
+        let target = match dir {
+            Dir::Next => starts.iter().find(|&&r| r > self.scroll),
+            Dir::Prev => starts.iter().rev().find(|&&r| r < self.scroll),
+        };
+        match target {
+            Some(&row) => self.scroll = row.min(self.max_scroll()),
+            None if starts.is_empty() => self.status = Some("no changes".into()),
+            None => {
+                self.status = Some(match dir {
+                    Dir::Next => "no more changes below".into(),
+                    Dir::Prev => "no more changes above".into(),
+                });
+            }
+        }
     }
 
     /// The first load, or one that isn't a navigation: no history.
@@ -642,6 +714,24 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::LinksResolved { doc_gen, resolved } => {
             state.links_resolved(doc_gen, &resolved);
             Vec::new()
+        }
+        Msg::GitDiff {
+            doc_gen,
+            untracked,
+            total,
+            unstaged,
+        } => {
+            state.git_diff(doc_gen, &total, &unstaged, untracked);
+            Vec::new()
+        }
+        Msg::JumpChange { dir } => {
+            state.status = None;
+            state.jump_change(dir);
+            state.highlight_visible()
+        }
+        Msg::Reload => {
+            state.status = None;
+            state.reload()
         }
         Msg::OpenFailed { target, error } => {
             state.status = Some(format!("can't open {target}: {error}"));
@@ -1467,5 +1557,102 @@ mod tests {
         assert_eq!(state.scroll, heading.min(state.max_scroll()));
         update(&mut state, Msg::Back);
         assert_eq!(state.scroll, 30);
+    }
+
+    // --- P5: the git gutter and reload --------------------------------------------------------
+
+    fn git_diff(state: &mut State, total: &str, unstaged: &str) {
+        let doc_gen = state.doc.as_ref().unwrap().generation;
+        update(
+            state,
+            Msg::GitDiff {
+                doc_gen,
+                untracked: false,
+                total: total.into(),
+                unstaged: unstaged.into(),
+            },
+        );
+    }
+
+    #[test]
+    fn loads_ask_git_and_stdin_does_not() {
+        let mut state = loaded("", 80, 20);
+        let cmds = load_at(&mut state, "notes/a.md", "# a\n");
+        assert!(cmds.contains(&Cmd::RunGit {
+            doc_gen: state.generation,
+            path: "notes/a.md".into()
+        }));
+        let cmds = load_at(&mut state, "-", "# a\n");
+        assert!(!cmds.iter().any(|c| matches!(c, Cmd::RunGit { .. })));
+    }
+
+    #[test]
+    fn change_jumps() {
+        let mut state = loaded(&sample(), 80, 20);
+        update(&mut state, Msg::JumpChange { dir: Dir::Next });
+        assert_eq!(state.status.as_deref(), Some("no git changes to jump to"));
+        // a staged heading near the top, unstaged edits further down
+        git_diff(
+            &mut state,
+            "@@ -1 +1 @@\n",
+            "@@ -41 +41 @@\n@@ -101,0 +102,2 @@\n",
+        );
+        let doc = state.doc.as_ref().unwrap();
+        let rows = |line| doc.layout.row_for_line(line).unwrap();
+        let (a, b) = (rows(41), rows(102));
+        update(&mut state, Msg::JumpChange { dir: Dir::Next });
+        assert_eq!(state.scroll, a);
+        update(&mut state, Msg::JumpChange { dir: Dir::Next });
+        assert_eq!(state.scroll, b.min(state.max_scroll()));
+        update(&mut state, Msg::JumpChange { dir: Dir::Prev });
+        assert_eq!(state.scroll, a);
+        update(&mut state, Msg::JumpChange { dir: Dir::Prev });
+        assert_eq!(state.scroll, 0);
+        update(&mut state, Msg::JumpChange { dir: Dir::Prev });
+        assert_eq!(state.status.as_deref(), Some("no more changes above"));
+    }
+
+    #[test]
+    fn reload_keeps_the_place_and_asks_git_again() {
+        let mut state = loaded("", 80, 20);
+        load_at(&mut state, "a.md", &sample());
+        update(
+            &mut state,
+            Msg::Scroll {
+                by: ScrollBy::Rows(40),
+            },
+        );
+        let line = top_line(&state);
+        let doc_gen = state.generation;
+
+        // unchanged text: the same document, and only git runs
+        assert_eq!(
+            update(&mut state, Msg::Reload),
+            [Cmd::LoadDoc("a.md".into())]
+        );
+        let cmds = load_at(&mut state, "a.md", &sample());
+        assert_eq!(
+            cmds,
+            [Cmd::RunGit {
+                doc_gen,
+                path: "a.md".into()
+            }]
+        );
+        assert_eq!(top_line(&state), line);
+        assert_eq!(state.status.as_deref(), Some("reloaded"));
+
+        // edited above the viewport: parsed again, anchored to the same source line number
+        update(&mut state, Msg::Reload);
+        let edited = format!("# New title\n\nNew intro.\n\n{}", sample());
+        let cmds = load_at(&mut state, "a.md", &edited);
+        assert!(cmds.iter().any(|c| matches!(c, Cmd::RunGit { .. })));
+        assert!(state.generation > doc_gen);
+        assert_eq!(top_line(&state), line);
+        update(&mut state, Msg::Back);
+        assert_eq!(
+            state.status.as_deref(),
+            Some("nothing to go back to"),
+            "no history"
+        );
     }
 }

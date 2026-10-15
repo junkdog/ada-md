@@ -206,6 +206,8 @@ fn each_table<'a>(blocks: &'a [Block], f: &mut impl FnMut(&'a Table)) {
 #[derive(Debug)]
 pub struct Layout {
     pub params: LayoutParams,
+    /// Blank columns on each side; the git gutter draws in the left one.
+    pub margin: u16,
     /// The arena all spans point into.
     pub text: String,
     pub spans: Vec<Span>,
@@ -274,6 +276,7 @@ pub fn layout_measured(
         params,
         out: Layout {
             params,
+            margin,
             text: String::new(),
             spans: Vec::new(),
             rows: Vec::new(),

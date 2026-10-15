@@ -17,15 +17,23 @@ pub fn draw(buf: &mut Buffer, area: Rect, state: &State) {
     let theme = &state.theme;
     let entries = state.outline_entries();
     let indent = |level: u8| 2 * usize::from(level.saturating_sub(1));
-    let widest = entries
+    // Sized for every heading, not just the filtered ones, so the frame holds still while typing.
+    let Some(doc) = &state.doc else {
+        return;
+    };
+    let all = &doc.layout.headings;
+    let widest = all
         .iter()
-        .map(|e| indent(e.level) + e.text.width())
+        .filter_map(|h| {
+            let text = &doc.doc.anchors.get(h.anchor as usize)?.text;
+            Some(indent(h.level) + text.width())
+        })
         .max()
         .unwrap_or(0);
     let width = (widest as u16 + 4)
         .clamp(32, MAX_WIDTH)
         .min(area.width.saturating_sub(2));
-    let height = (entries.len() as u16 + 3).min(area.height.saturating_sub(2));
+    let height = (all.len().max(1) as u16 + 3).min(area.height.saturating_sub(2));
     if width < 8 || height < 4 {
         return;
     }

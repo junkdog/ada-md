@@ -11,6 +11,7 @@ use std::thread;
 use std::time::UNIX_EPOCH;
 
 use super::{Cmd, Msg};
+use crate::git;
 use crate::highlight::{self, Job};
 use crate::links::{BuiltinResolver, Resolver};
 
@@ -20,6 +21,8 @@ pub struct Effects {
     /// The highlight worker's queue; without a worker, highlighting runs inline.
     highlight: Option<Sender<Job>>,
     resolver: Box<dyn Resolver>,
+    /// Where git runs post their results; without it, git runs inline.
+    git: Option<Sender<Msg>>,
 }
 
 impl Effects {
@@ -28,12 +31,14 @@ impl Effects {
             stdin,
             highlight: None,
             resolver: Box::new(BuiltinResolver),
+            git: None,
         }
     }
 
     /// Start the worker threads, which post their results to `tx`.
     pub fn spawn_workers(&mut self, tx: &Sender<Msg>) {
         self.highlight = Some(highlight::spawn_worker(tx.clone()));
+        self.git = Some(tx.clone());
     }
 
     /// Run one command. Quick ones answer right away; slow ones go to a worker, which posts
@@ -61,6 +66,24 @@ impl Effects {
                     target: target.to_string_lossy().into_owned(),
                     error: e.to_string(),
                 })
+            }
+            Cmd::RunGit { doc_gen, path } => {
+                let diff = move || {
+                    git::run(&path).map(|d| Msg::GitDiff {
+                        doc_gen,
+                        untracked: d.untracked,
+                        total: d.total.into(),
+                        unstaged: d.unstaged.into(),
+                    })
+                };
+                match &self.git {
+                    Some(tx) => {
+                        let tx = tx.clone();
+                        thread::spawn(move || diff().map(|msg| tx.send(msg)));
+                        None
+                    }
+                    None => diff(),
+                }
             }
             Cmd::Quit => None,
         }
