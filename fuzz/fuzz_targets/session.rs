@@ -3,8 +3,9 @@
 //! and up to 64 intents. Commands run against a stub world: links resolve to fuzz-chosen files
 //! in a scratch directory, git answers with fuzzed hunks, image probes report fuzzed sizes, and
 //! every result waits in a queue until the script delivers it, so results can arrive late, out
-//! of order, or after the document they were for is gone. Every step is painted. Nothing may
-//! panic.
+//! of order, or after the document they were for is gone. Intents arrive directly or as keys
+//! through the default keymap, and `T` cycles through two extra themes with wide, empty and
+//! ASCII glyphs. Every step is painted. Nothing may panic.
 //!
 //! ```zsh
 //! cargo +nightly fuzz run -s none -a session -- -dict=fuzz/markdown.dict -max_len=16384
@@ -16,7 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-use ada::app::{self, Cmd, Computed, Config, Dir, Effects, Msg, ScrollBy, Size, State};
+use ada::app::{self, Cmd, Computed, Config, Dir, Effects, Keymap, Msg, ScrollBy, Size, State};
 use ada::images::{Probe, Proto};
 use ada::layout::TableMode;
 use ada::links::Resolved;
@@ -25,6 +26,7 @@ use libfuzzer_sys::arbitrary::{self, Arbitrary, Result, Unstructured};
 use libfuzzer_sys::fuzz_target;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 const MAX_OPS: usize = 64;
 
@@ -71,6 +73,11 @@ enum Op {
     Edit,
     Yank,
     Open(u8),
+    /// A key press, through the default keymap.
+    Key {
+        code: u8,
+        mods: u8,
+    },
     FileChanged {
         other: bool,
         mtime: Option<u8>,
@@ -144,6 +151,88 @@ fn theme() -> Theme {
     THEME.get_or_init(Theme::builtin).clone()
 }
 
+/// Themes whose glyphs and `[syntax]` differ from the built-ins', so `T` lays out and
+/// highlights again: wide and multi-cell glyphs with a wide margin, and empty ones with none.
+fn extra_themes() -> &'static [Theme] {
+    const WIDE: &str = r#"
+extends = "gruvbox-dark"
+[document]
+margin = 7
+[heading]
+1 = { prefix = "🦀🦀 ", suffix = " 日本" }
+2 = { prefix = "" }
+[glyphs]
+bullets = ["★", "→→", "日"]
+quote_bar = "┃日 "
+rule = "═"
+table_border = "ascii"
+task = ["✅ ", "⬜⬜ "]
+wrap_mark = "⏎"
+code_clip = ["◀◀", "▶"]
+image = "🖼🖼 "
+[syntax]
+"keyword" = { fg = "blue", bold = true }
+"string" = { fg = "red", underline = true }
+"keyword.control.flow" = { fg = "aqua" }   # a new selector: only selectors trigger a re-highlight
+"#;
+    const EMPTY: &str = r#"
+extends = "gruvbox-light"
+[document]
+margin = 0
+[glyphs]
+bullets = [""]
+quote_bar = ""
+table_border = "none"
+task = ["", ""]
+code_clip = ["", ""]
+image = ""
+[syntax]
+"comment" = { fg = "green" }
+"#;
+    static THEMES: OnceLock<Vec<Theme>> = OnceLock::new();
+    THEMES.get_or_init(|| {
+        [("fuzz-wide", WIDE), ("fuzz-empty", EMPTY)]
+            .into_iter()
+            .map(|(name, text)| {
+                let mut theme = ada::theme::load_str(name, text, &mut Vec::new(), 0)
+                    .unwrap_or_else(|e| panic!("{name}: {e}"));
+                theme.name = name.into();
+                theme
+            })
+            .collect()
+    })
+}
+
+/// A key the keymap might care about: printable ASCII, or a named key.
+fn key(code: u8, mods: u8) -> KeyEvent {
+    const NAMED: [KeyCode; 14] = [
+        KeyCode::Enter,
+        KeyCode::Esc,
+        KeyCode::Tab,
+        KeyCode::BackTab,
+        KeyCode::Backspace,
+        KeyCode::Up,
+        KeyCode::Down,
+        KeyCode::Left,
+        KeyCode::Right,
+        KeyCode::PageUp,
+        KeyCode::PageDown,
+        KeyCode::Home,
+        KeyCode::End,
+        KeyCode::F(1),
+    ];
+    let code = match code {
+        0x20..=0x7e => KeyCode::Char(char::from(code)),
+        _ => NAMED[usize::from(code) % NAMED.len()],
+    };
+    // mostly plain keys; ctrl, alt and shift now and then
+    let mods = match mods >> 5 {
+        0 => KeyModifiers::from_bits_truncate(mods),
+        _ => KeyModifiers::NONE,
+    };
+    KeyEvent::new(code, mods)
+}
+
 fn size(w: u16, h: u8) -> Size {
     Size {
         w: w % 400 + 1,
@@ -214,6 +303,12 @@ fn answer(
                 mtime: u.arbitrary()?,
                 text: doc.clone(),
             },
+        }),
+        // now and then the marker a replay carries, which `update` recomputes
+        Cmd::Highlight(job) if u.ratio(1, 8)? => Some(Msg::Highlighted {
+            doc_gen: job.doc_gen,
+            block: job.block,
+            spans: Computed(None),
         }),
         Cmd::Highlight(job) => Some(job.run()),
         Cmd::ResolveLinks {
@@ -297,6 +392,7 @@ fn answer(
 
 struct Session<'a> {
     state: State,
+    keymap: Keymap,
     effects: Effects,
     pending: Vec<Msg>,
     doc: Arc<str>,
@@ -404,6 +500,7 @@ impl Session<'_> {
                     path: files[usize::from(i) % files.len()].clone(),
                 }
             }
+            Op::Key { code, mods } => return self.keymap.map(key(code, mods)),
             Op::FileChanged { other, mtime } => {
                 let path = match (&self.state.doc, other) {
                     (Some(doc), false) => doc.path.clone(),
@@ -465,11 +562,14 @@ fuzz_target!(|data: &[u8]| {
         ..Config::default()
     };
     let graphics: Option<(u8, u8, u8)> = u.arbitrary().unwrap_or_default();
+    let stdin = u.ratio(1, 16).unwrap_or(false);
 
-    let state = State::new(theme(), config);
+    let mut state = State::new(theme(), config);
+    state.themes.extend_from_slice(extra_themes());
     let terminal = Terminal::new(TestBackend::new(state.size.w, state.size.h)).expect("terminal");
     let mut s = Session {
         state,
+        keymap: Keymap::default(),
         effects: Effects::new(None),
         pending: Vec::new(),
         doc: doc.clone(),
@@ -484,7 +584,11 @@ fuzz_target!(|data: &[u8]| {
         }
     }
     s.send(Msg::DocLoaded {
-        path: doc_path().to_owned(),
+        path: if stdin {
+            "-".into()
+        } else {
+            doc_path().to_owned()
+        },
         mtime: Some(1),
         text: doc,
     });
