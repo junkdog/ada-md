@@ -8,14 +8,19 @@ use ratatui::style::{Color, Modifier, Style};
 
 use crate::doc::Doc;
 use crate::highlight::{Highlights, SyntaxTheme};
-use crate::layout::{self, LayoutParams};
+use crate::layout::{self, Layout, LayoutParams};
 use crate::theme::Theme;
 use crate::ui::Painter;
 
 /// Render a document as ANSI text, one line per row. Code is highlighted first, synchronously,
 /// because the output has to be complete (architecture §12).
-pub fn render(doc: &Doc, theme: &Theme, params: LayoutParams) -> String {
+///
+/// With `align`, the output is shifted so that the row rendering that source line is output line
+/// `align`. A pager or fzf preview that scrolls by source line, as it would for `bat`, then lands
+/// on the right row.
+pub fn render(doc: &Doc, theme: &Theme, params: LayoutParams, align: Option<u32>) -> String {
     let layout = layout::layout(doc, &theme.glyphs, params);
+    let (skip, pad) = align.map_or((0, 0), |line| alignment(&layout, line));
     let highlights = Highlights::compute_all(&doc.code_blocks(), &SyntaxTheme::new(&theme.syntax));
     let painter = Painter {
         theme,
@@ -24,7 +29,8 @@ pub fn render(doc: &Doc, theme: &Theme, params: LayoutParams) -> String {
         code_x: 0,
     };
     let mut out = String::with_capacity(layout.text.len() * 2);
-    for row in &layout.rows {
+    out.extend(std::iter::repeat_n('\n', pad));
+    for row in layout.rows.iter().skip(skip) {
         let mut current = None;
         painter.row(row, &mut |text, style| {
             if current != Some(style) {
@@ -41,9 +47,19 @@ pub fn render(doc: &Doc, theme: &Theme, params: LayoutParams) -> String {
     out
 }
 
+/// Rows to drop from the top, and blank lines to add, so that the first row rendering `line`
+/// becomes output line `line`.
+fn alignment(layout: &Layout, line: u32) -> (usize, usize) {
+    let Some(row) = layout.row_for_line(line) else {
+        return (0, 0);
+    };
+    let (row, target) = (row as usize, line.saturating_sub(1) as usize);
+    (row.saturating_sub(target), target.saturating_sub(row))
+}
+
 /// Print a document to stdout. A closed pipe (fzf moving on) is not an error.
-pub fn run(doc: &Doc, theme: &Theme, params: LayoutParams) -> io::Result<()> {
-    let out = render(doc, theme, params);
+pub fn run(doc: &Doc, theme: &Theme, params: LayoutParams, align: Option<u32>) -> io::Result<()> {
+    let out = render(doc, theme, params, align);
     let mut stdout = io::stdout().lock();
     match stdout
         .write_all(out.as_bytes())
@@ -136,9 +152,52 @@ mod tests {
             code_wrap: true,
             glyphs_gen: 0,
         };
-        let out = render(&doc, &Theme::builtin(), params);
+        let out = render(&doc, &Theme::builtin(), params, None);
         assert_eq!(out.lines().count(), 3);
         assert!(out.contains("Title"));
+    }
+
+    #[test]
+    fn aligned_output_puts_the_line_on_its_own_row() {
+        let params = LayoutParams {
+            width: 30,
+            max_width: None,
+            table_mode: Default::default(),
+            code_wrap: true,
+            glyphs_gen: 0,
+        };
+        let plain = |text: &str, line| {
+            let out = render(
+                &crate::doc::parse(text),
+                &Theme::builtin(),
+                params,
+                Some(line),
+            );
+            let mut lines: Vec<String> = Vec::new();
+            for l in out.lines() {
+                let mut s = String::new();
+                let mut esc = false;
+                for c in l.chars() {
+                    match (esc, c) {
+                        (_, '\x1b') => esc = true,
+                        (true, 'm') => esc = false,
+                        (true, _) => {}
+                        (false, c) => s.push(c),
+                    }
+                }
+                lines.push(s.trim().to_owned());
+            }
+            lines
+        };
+        // more rows than lines above the target: rows are dropped
+        let wrapped = "a paragraph long enough to wrap over several rows at thirty\n\ntarget\n";
+        assert_eq!(plain(wrapped, 3)[2], "target");
+        // fewer rows than lines above it: blank lines are added
+        let fence = "```\nx\n```\n\n\n\n\ntarget\n";
+        let out = plain(fence, 8);
+        assert_eq!(out[7], "target");
+        // a line past the end leaves the output alone
+        assert_eq!(plain("one\n", 50), ["one"]);
     }
 
     #[test]
@@ -152,7 +211,7 @@ mod tests {
             glyphs_gen: 0,
         };
         let theme = Theme::builtin();
-        let out = render(&doc, &theme, params);
+        let out = render(&doc, &theme, params, None);
         let string = theme.syntax.iter().find(|(s, _)| s == "string").unwrap().1;
         let Some(Color::Rgb(r, g, b)) = string.fg else {
             panic!("strings have an rgb colour");

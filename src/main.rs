@@ -95,9 +95,12 @@ fn print_doc(
         Msg::DocFailed { path, error } => return Err(format!("{}: {error}", path.display())),
         other => return Err(format!("unexpected {other:?}")),
     };
+    // fzf exports the whole terminal as $COLUMNS, and the preview pane as $FZF_PREVIEW_COLUMNS.
+    let env_width = |name| env::var(name).ok()?.trim().parse().ok();
     let width = args
         .width
-        .or_else(|| env::var("COLUMNS").ok()?.trim().parse().ok())
+        .or_else(|| env_width("FZF_PREVIEW_COLUMNS"))
+        .or_else(|| env_width("COLUMNS"))
         .or_else(|| {
             io::stdout()
                 .is_terminal()
@@ -113,5 +116,5 @@ fn print_doc(
         code_wrap: true,
         glyphs_gen: theme.glyphs.generation(),
     };
-    print::run(&doc::parse(&text), theme, params).map_err(|e| e.to_string())
+    print::run(&doc::parse(&text), theme, params, args.line).map_err(|e| e.to_string())
 }

@@ -11,9 +11,10 @@ Prints instead of paging when stdout is not a terminal.
 
 options:
   -p, --print           write the rendered document to stdout and exit
-  -w, --width N         print width (default: $COLUMNS, then 80)
+  -w, --width N         print width (default: $FZF_PREVIEW_COLUMNS, $COLUMNS, then 80)
       --max-width N     wrap prose at most N columns wide
-  -l, --line N          start at source line N
+  -l, --line N          start at source line N; when printing, shift the output so
+                        that line N renders on output line N (for fzf previews)
   -t, --theme NAME      a theme name or a path to a .toml theme
       --record FILE     record the session to FILE
       --replay FILE     replay a recorded session
