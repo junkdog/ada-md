@@ -101,7 +101,9 @@ fn diff_marks(diff: &str) -> Vec<(u32, Kind)> {
             let modified = h.old.min(h.new);
             out.extend(lines(h.new_start, modified).map(|(l, _)| (l, Kind::Modified)));
             let extra = h.new - modified;
-            out.extend(lines(h.new_start + modified, extra).map(|(l, _)| (l, Kind::Added)));
+            out.extend(
+                lines(h.new_start.saturating_add(modified), extra).map(|(l, _)| (l, Kind::Added)),
+            );
         }
     }
     out
@@ -329,6 +331,12 @@ mod tests {
                 (20, Modified)
             ]
         );
+    }
+
+    #[test]
+    fn hunks_at_the_end_of_u32_saturate() {
+        // found by fuzz round 2: `new_start + modified` overflowed; lines past the end drop
+        assert_eq!(diff_marks("@@ -1,2 +4294967295,3 @@\n"), []);
     }
 
     #[test]
