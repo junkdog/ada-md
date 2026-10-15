@@ -5,30 +5,172 @@ use std::path::PathBuf;
 
 use crate::images::{ImageMode, Proto};
 
-pub const USAGE: &str = "\
+/// What a flag's value completes to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Value {
+    /// No value: a switch.
+    None,
+    Number,
+    Theme,
+    File,
+    /// A recording.
+    Rec,
+    Choice(&'static [&'static str]),
+}
+
+pub struct Flag {
+    pub short: Option<char>,
+    pub long: &'static str,
+    /// The value's name in the usage, and what it completes to.
+    pub value: (&'static str, Value),
+    /// The usage's description; `\n` continues it on the next line.
+    pub help: &'static str,
+}
+
+const fn flag(
+    short: Option<char>,
+    long: &'static str,
+    value: (&'static str, Value),
+    help: &'static str,
+) -> Flag {
+    Flag {
+        short,
+        long,
+        value,
+        help,
+    }
+}
+
+const SWITCH: (&str, Value) = ("", Value::None);
+
+pub const SHELLS: &[&str] = &["zsh", "bash", "fish"];
+
+/// Every flag, in the order the usage lists them. The parser, the usage and the completion
+/// scripts all follow this table.
+pub const FLAGS: &[Flag] = &[
+    flag(
+        Some('p'),
+        "print",
+        SWITCH,
+        "write the rendered document to stdout and exit",
+    ),
+    flag(
+        Some('w'),
+        "width",
+        ("N", Value::Number),
+        "print width (default: $FZF_PREVIEW_COLUMNS, $COLUMNS, then 80)",
+    ),
+    flag(
+        None,
+        "max-width",
+        ("N", Value::Number),
+        "wrap prose at most N columns wide",
+    ),
+    flag(
+        Some('l'),
+        "line",
+        ("N", Value::Number),
+        "start at source line N; when printing, shift the output so\nthat line N renders on output line N (for fzf previews)",
+    ),
+    flag(
+        Some('t'),
+        "theme",
+        ("NAME", Value::Theme),
+        "a theme name or a path to a .toml theme",
+    ),
+    flag(
+        None,
+        "no-images",
+        SWITCH,
+        "show images as text, without asking the terminal what it supports",
+    ),
+    flag(
+        None,
+        "image-protocol",
+        (
+            "P",
+            Value::Choice(&["kitty", "sixel", "iterm2", "halfblocks"]),
+        ),
+        "kitty, sixel, iterm2 or halfblocks, instead of what the terminal\nreports (kitty is otherwise never used inside tmux)",
+    ),
+    flag(
+        None,
+        "no-reload",
+        SWITCH,
+        "don't reload when the file changes on disk",
+    ),
+    flag(
+        None,
+        "record",
+        ("FILE", Value::File),
+        "record the session to FILE",
+    ),
+    flag(
+        None,
+        "replay",
+        ("FILE", Value::Rec),
+        "replay a recorded session",
+    ),
+    flag(
+        None,
+        "replay-live",
+        SWITCH,
+        "with --replay: re-run effects instead of using recorded results",
+    ),
+    flag(
+        None,
+        "headless",
+        SWITCH,
+        "with --replay: render off-screen and print the final frame",
+    ),
+    flag(
+        None,
+        "completions",
+        ("SHELL", Value::Choice(SHELLS)),
+        "print a completion script for zsh, bash or fish",
+    ),
+    flag(Some('h'), "help", SWITCH, "show this help"),
+    flag(Some('V'), "version", SWITCH, "show the version"),
+];
+
+/// Where the usage's descriptions start.
+const HELP_COLUMN: usize = 24;
+
+pub fn usage() -> String {
+    let mut out = String::from(
+        "\
 usage: ada [options] [FILE | -]
 
 A terminal markdown viewer. Reads stdin when FILE is `-`, or is omitted and stdin is a pipe.
-Prints instead of paging when stdout is not a terminal.
+Prints instead of paging when stdout is not a terminal. Options are also read from
+~/.config/ada/config.toml (written with the defaults on first run); flags win.
 
 options:
-  -p, --print           write the rendered document to stdout and exit
-  -w, --width N         print width (default: $FZF_PREVIEW_COLUMNS, $COLUMNS, then 80)
-      --max-width N     wrap prose at most N columns wide
-  -l, --line N          start at source line N; when printing, shift the output so
-                        that line N renders on output line N (for fzf previews)
-  -t, --theme NAME      a theme name or a path to a .toml theme
-      --no-images       show images as text, without asking the terminal what it supports
-      --image-protocol P
-                        kitty, sixel, iterm2 or halfblocks, instead of what the terminal
-                        reports (kitty is otherwise never used inside tmux)
-      --record FILE     record the session to FILE
-      --replay FILE     replay a recorded session
-      --replay-live     with --replay: re-run effects instead of using recorded results
-      --headless        with --replay: render off-screen and print the final frame
-  -h, --help            show this help
-  -V, --version         show the version
-";
+",
+    );
+    for f in FLAGS {
+        let short = f
+            .short
+            .map_or_else(|| "    ".to_owned(), |c| format!("-{c}, "));
+        let value = if f.value.0.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", f.value.0)
+        };
+        let head = format!("  {short}--{}{value}", f.long);
+        let mut lines = f.help.split('\n');
+        let first = lines.next().unwrap_or_default();
+        if head.len() < HELP_COLUMN {
+            out.push_str(&format!("{head:<HELP_COLUMN$}{first}\n"));
+        } else {
+            out.push_str(&format!("{head}\n{:HELP_COLUMN$}{first}\n", ""));
+        }
+        for line in lines {
+            out.push_str(&format!("{:HELP_COLUMN$}{line}\n", ""));
+        }
+    }
+    out
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
@@ -45,10 +187,12 @@ pub struct Args {
     pub line: Option<u32>,
     pub theme: Option<String>,
     pub images: ImageMode,
+    pub no_reload: bool,
     pub record: Option<PathBuf>,
     pub replay: Option<PathBuf>,
     pub replay_live: bool,
     pub headless: bool,
+    pub completions: Option<String>,
     pub help: bool,
     pub version: bool,
 }
@@ -61,9 +205,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
         let text = arg.to_string_lossy();
         if only_files || text == "-" || !text.starts_with('-') {
             if out.input.is_some() {
-                return Err(format!(
-                    "unexpected argument `{text}`: ada shows one file"
-                ));
+                return Err(format!("unexpected argument `{text}`: ada shows one file"));
             }
             out.input = Some(if text == "-" {
                 Input::Stdin
@@ -102,20 +244,26 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
                 })?;
                 out.images = ImageMode::Force(proto);
             }
+            "--no-reload" => out.no_reload = true,
             "--record" => out.record = Some(value(&flag)?.into()),
             "--replay" => out.replay = Some(value(&flag)?.into()),
             "--replay-live" => out.replay_live = true,
             "--headless" => out.headless = true,
+            "--completions" => {
+                let shell = value(&flag)?;
+                if !SHELLS.contains(&shell.as_str()) {
+                    return Err(format!("{flag}: `{shell}` is not zsh, bash or fish"));
+                }
+                out.completions = Some(shell);
+            }
             "-h" | "--help" => out.help = true,
             "-V" | "--version" => out.version = true,
             _ => return Err(format!("unknown option `{flag}` (try --help)")),
         }
-        if inline.is_some()
-            && matches!(
-                flag.as_str(),
-                "--print" | "--replay-live" | "--headless" | "--no-images" | "--help" | "--version"
-            )
-        {
+        let switch = FLAGS
+            .iter()
+            .any(|f| f.value.1 == Value::None && flag == format!("--{}", f.long));
+        if inline.is_some() && switch {
             return Err(format!("{flag} takes no value"));
         }
     }
@@ -175,6 +323,33 @@ mod tests {
         assert!(args(&["--headless"]).is_err());
         assert!(args(&["--print=yes"]).is_err());
         assert!(args(&["--image-protocol", "chafa"]).is_err());
+    }
+
+    #[test]
+    fn the_usage_lists_every_flag_the_parser_takes() {
+        let usage = usage();
+        for f in FLAGS {
+            assert!(usage.contains(&format!("--{}", f.long)), "{}", f.long);
+            let value = (f.value.1 != Value::None).then_some("zsh");
+            let parsed = match f.long {
+                "replay-live" | "headless" => {
+                    args(&["--replay", "x.rec", &format!("--{}", f.long)])
+                }
+                long => args(
+                    &[&format!("--{long}")]
+                        .into_iter()
+                        .map(String::as_str)
+                        .chain(value)
+                        .collect::<Vec<_>>(),
+                ),
+            };
+            let err = parsed.err().unwrap_or_default();
+            assert!(!err.contains("unknown option"), "--{}: {err}", f.long);
+        }
+        assert!(usage.contains(
+            "  -l, --line N          start at source line N; when printing, shift the output so\n"
+        ));
+        assert!(usage.contains("      --image-protocol P\n                        kitty, sixel"));
     }
 
     #[test]

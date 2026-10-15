@@ -75,12 +75,18 @@ pub fn key(code: &CodeBlock) -> Option<u64> {
 #[derive(Debug, PartialEq)]
 pub struct SyntaxTheme {
     theme: SynTheme,
+    /// A hash of the rules' scope selectors: spans from another set of rules mean other rules.
+    pub id: u64,
 }
 
 impl Eq for SyntaxTheme {}
 
 impl SyntaxTheme {
     pub fn new(rules: &[(String, Style)]) -> Self {
+        let mut h = DefaultHasher::new();
+        for (scope, _) in rules {
+            scope.hash(&mut h);
+        }
         let scopes = rules
             .iter()
             .enumerate()
@@ -118,6 +124,7 @@ impl SyntaxTheme {
                 scopes,
                 ..SynTheme::default()
             },
+            id: h.finish(),
         }
     }
 }
@@ -152,6 +159,8 @@ pub struct Run {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct CodeSpans {
     pub key: u64,
+    /// The [`SyntaxTheme::id`] the rules come from.
+    pub rules: u64,
     lines: Vec<Box<[Run]>>,
 }
 
@@ -166,6 +175,7 @@ impl CodeSpans {
 pub fn highlight(key: u64, lang: &str, text: &str, theme: &SyntaxTheme) -> CodeSpans {
     let plain = CodeSpans {
         key,
+        rules: theme.id,
         lines: Vec::new(),
     };
     let Some(syntax) = find_syntax(lang) else {
@@ -205,7 +215,11 @@ pub fn highlight(key: u64, lang: &str, text: &str, theme: &SyntaxTheme) -> CodeS
         }
         lines.push(runs.into_boxed_slice());
     }
-    CodeSpans { key, lines }
+    CodeSpans {
+        key,
+        rules: theme.id,
+        lines,
+    }
 }
 
 /// Highlighting results, and the blocks waiting for them.

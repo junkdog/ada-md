@@ -2,30 +2,84 @@
 //! precise; unknown keys are warnings so newer themes still load in older ada.
 
 use std::borrow::Cow;
-use std::fmt::Display;
+use std::fs;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::{env, fs};
 
 use ratatui::style::{Color, Modifier, Style};
-use toml::Spanned;
 use toml::de::{DeTable, DeValue};
 
 use super::{StyleKey, TableBorder, Theme};
+use crate::toml_walk::{self, Cx, Value, entry};
 
 /// Built-in themes, `(name, toml)`. The first one is the default.
-pub const BUILTIN: &[(&str, &str)] = &[("gruvbox-dark", include_str!("builtin/gruvbox-dark.toml"))];
+pub const BUILTIN: &[(&str, &str)] = &[
+    ("gruvbox-dark", include_str!("builtin/gruvbox-dark.toml")),
+    ("gruvbox-light", include_str!("builtin/gruvbox-light.toml")),
+];
 
 const MAX_EXTENDS_DEPTH: u32 = 8;
 
-type Value<'i> = Spanned<DeValue<'i>>;
-
 /// Resolve `--theme NAME`: a path, then `$XDG_CONFIG_HOME/ada/themes/NAME.toml`, then the
 /// built-ins. Returns the theme and any warnings.
+/// The theme is named after how it was asked for: `T` and the status line show that name.
 pub fn load(name: Option<&str>) -> Result<(Theme, Vec<String>), String> {
     let mut warnings = Vec::new();
-    let theme = resolve(name.unwrap_or(BUILTIN[0].0), &mut warnings, 0)?;
+    let name = name.unwrap_or(BUILTIN[0].0);
+    let mut theme = resolve(name, &mut warnings, 0)?;
+    theme.name = lookup_name(name);
     Ok((theme, warnings))
+}
+
+/// `--theme ~/x/mine.toml` is the theme `mine`.
+fn lookup_name(name: &str) -> String {
+    if name.ends_with(".toml") || name.contains('/') {
+        let path = std::path::Path::new(name);
+        return path
+            .file_stem()
+            .map_or_else(|| name.to_owned(), |s| s.to_string_lossy().into_owned());
+    }
+    name.to_owned()
+}
+
+/// Every theme `T` cycles through: the built-ins, then the user's themes directory by name,
+/// with `current` among them. A user theme named like a built-in replaces it. Themes that
+/// don't load are left out, with a warning.
+pub fn load_all(current: &Theme) -> (Vec<Theme>, Vec<String>) {
+    let mut warnings = Vec::new();
+    let mut names: Vec<String> = BUILTIN.iter().map(|(n, _)| (*n).to_owned()).collect();
+    if let Some(dir) = themes_dir()
+        && let Ok(entries) = fs::read_dir(dir)
+    {
+        let mut user: Vec<String> = entries
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "toml"))
+            .filter_map(|p| Some(p.file_stem()?.to_string_lossy().into_owned()))
+            .filter(|n| !names.contains(n))
+            .collect();
+        user.sort();
+        names.extend(user);
+    }
+    if !names.contains(&current.name) {
+        names.insert(0, current.name.clone());
+    }
+    let mut themes = Vec::new();
+    for name in names {
+        if name == current.name {
+            themes.push(current.clone());
+            continue;
+        }
+        let mut w = Vec::new();
+        match resolve(&name, &mut w, 0) {
+            Ok(mut theme) => {
+                theme.name = name;
+                themes.push(theme);
+            }
+            Err(e) => warnings.push(e),
+        }
+    }
+    (themes, warnings)
 }
 
 fn resolve(name: &str, warnings: &mut Vec<String>, depth: u32) -> Result<Theme, String> {
@@ -58,12 +112,8 @@ fn find(name: &str) -> Result<(String, Cow<'static, str>), String> {
         .ok_or_else(|| format!("unknown theme \"{name}\""))
 }
 
-fn themes_dir() -> Option<PathBuf> {
-    let config = env::var_os("XDG_CONFIG_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-    Some(config.join("ada").join("themes"))
+pub(crate) fn themes_dir() -> Option<PathBuf> {
+    Some(toml_walk::config_dir()?.join("themes"))
 }
 
 /// Load a theme from TOML text. `file` names it in messages; `depth` guards `extends` cycles.
@@ -73,13 +123,7 @@ pub fn load_str(
     warnings: &mut Vec<String>,
     depth: u32,
 ) -> Result<Theme, String> {
-    let root = DeTable::parse(text).map_err(|e| {
-        let at = e.span().map_or_else(String::new, |s| {
-            let (line, col) = position(text, s.start);
-            format!(":{line}:{col}")
-        });
-        format!("{file}{at}: {}", e.message().trim())
-    })?;
+    let root = toml_walk::parse(file, text)?;
     let root = root.get_ref();
     let mut cx = Cx {
         file,
@@ -97,18 +141,11 @@ pub fn load_str(
     Ok(theme)
 }
 
-fn entry<'v, 'i>(table: &'v DeTable<'i>, key: &str) -> Option<&'v Value<'i>> {
-    table
-        .iter()
-        .find(|(k, _)| k.get_ref().as_ref() == key)
-        .map(|(_, v)| v)
-}
-
 fn apply(theme: &mut Theme, root: &DeTable<'_>, cx: &mut Cx<'_>) -> Result<(), String> {
     // The palette comes first: every colour below may refer to it.
     if let Some(palette) = entry(root, "palette") {
         for (k, v) in cx.table(palette)? {
-            let color = cx.color(&theme.palette, v)?;
+            let color = color(cx, &theme.palette, v)?;
             let name = k.get_ref().as_ref();
             match theme.palette.iter_mut().find(|(n, _)| n == name) {
                 Some(slot) => slot.1 = color,
@@ -189,9 +226,9 @@ fn parse_style<'v, 'i>(
     for (k, v) in cx.table(v)? {
         let name: &str = k.get_ref();
         style = match name {
-            "fg" => style.fg(cx.color(palette, v)?),
-            "bg" => style.bg(cx.color(palette, v)?),
-            "underline_color" => style.underline_color(cx.color(palette, v)?),
+            "fg" => style.fg(color(cx, palette, v)?),
+            "bg" => style.bg(color(cx, palette, v)?),
+            "underline_color" => style.underline_color(color(cx, palette, v)?),
             "bold" => modifier(style, Modifier::BOLD, cx.bool(v)?),
             "italic" => modifier(style, Modifier::ITALIC, cx.bool(v)?),
             "underline" => modifier(style, Modifier::UNDERLINED, cx.bool(v)?),
@@ -302,99 +339,14 @@ fn parse_color(s: &str, palette: &[(String, Color)]) -> Option<Color> {
     }
 }
 
-/// 1-based line and column of a byte offset.
-fn position(text: &str, offset: usize) -> (usize, usize) {
-    let before = &text[..text.floor_char_boundary(offset)];
-    let line = before.matches('\n').count() + 1;
-    let col = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
-    (line, col)
-}
-
-struct Cx<'a> {
-    file: &'a str,
-    text: &'a str,
-    warnings: &'a mut Vec<String>,
-}
-
-impl Cx<'_> {
-    fn at(&self, span: Range<usize>, msg: impl Display) -> String {
-        let (line, col) = position(self.text, span.start);
-        format!("{}:{line}:{col}: {msg}", self.file)
-    }
-
-    fn warn(&mut self, span: Range<usize>, msg: impl Display) {
-        let w = self.at(span, msg);
-        self.warnings.push(w);
-    }
-
-    fn expected(&self, what: &str, v: &Value<'_>) -> String {
-        self.at(
-            v.span(),
-            format_args!("expected {what}, found {}", v.get_ref().type_str()),
-        )
-    }
-
-    fn table<'v, 'i>(&self, v: &'v Value<'i>) -> Result<&'v DeTable<'i>, String> {
-        v.get_ref()
-            .as_table()
-            .ok_or_else(|| self.expected("a table", v))
-    }
-
-    fn string<'v>(&self, v: &'v Value<'_>) -> Result<&'v str, String> {
-        v.get_ref()
-            .as_str()
-            .ok_or_else(|| self.expected("a string", v))
-    }
-
-    /// A non-empty string, for glyphs that are repeated or must take up space.
-    fn glyph(&self, v: &Value<'_>) -> Result<String, String> {
-        let s = self.string(v)?;
-        if unicode_width::UnicodeWidthStr::width(s) == 0 {
-            return Err(self.at(v.span(), "glyph must be at least one column wide"));
-        }
-        Ok(s.to_owned())
-    }
-
-    fn strings(&self, v: &Value<'_>) -> Result<Vec<String>, String> {
-        let array = v
-            .get_ref()
-            .as_array()
-            .ok_or_else(|| self.expected("an array of strings", v))?;
-        array
-            .into_iter()
-            .map(|item| self.string(item).map(str::to_owned))
-            .collect()
-    }
-
-    fn bool(&self, v: &Value<'_>) -> Result<bool, String> {
-        v.get_ref()
-            .as_bool()
-            .ok_or_else(|| self.expected("true or false", v))
-    }
-
-    fn int(&self, v: &Value<'_>) -> Result<i64, String> {
-        let i = v
-            .get_ref()
-            .as_integer()
-            .ok_or_else(|| self.expected("an integer", v))?;
-        i64::from_str_radix(i.as_str(), i.radix())
-            .map_err(|e| self.at(v.span(), format_args!("bad integer: {e}")))
-    }
-
-    fn u16(&self, v: &Value<'_>) -> Result<u16, String> {
-        u16::try_from(self.int(v)?)
-            .map_err(|_| self.at(v.span(), "expected a number from 0 to 65535"))
-    }
-
-    fn color(&self, palette: &[(String, Color)], v: &Value<'_>) -> Result<Color, String> {
-        match v.get_ref() {
-            DeValue::String(s) => parse_color(s, palette)
-                .ok_or_else(|| self.at(v.span(), format_args!("unknown palette colour \"{s}\""))),
-            DeValue::Integer(_) => u8::try_from(self.int(v)?)
-                .map(Color::Indexed)
-                .map_err(|_| self.at(v.span(), "colour index must be 0–255")),
-            _ => Err(self.expected("a colour", v)),
-        }
+fn color(cx: &Cx<'_>, palette: &[(String, Color)], v: &Value<'_>) -> Result<Color, String> {
+    match v.get_ref() {
+        DeValue::String(s) => parse_color(s, palette)
+            .ok_or_else(|| cx.at(v.span(), format_args!("unknown palette colour \"{s}\""))),
+        DeValue::Integer(_) => u8::try_from(cx.int(v)?)
+            .map(Color::Indexed)
+            .map_err(|_| cx.at(v.span(), "colour index must be 0–255")),
+        _ => Err(cx.expected("a colour", v)),
     }
 }
 
@@ -403,10 +355,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builtin_loads_without_warnings() {
+    fn builtins_load_without_warnings() {
+        for (name, text) in BUILTIN {
+            let mut warnings = Vec::new();
+            let theme = load_str("builtin", text, &mut warnings, 0).unwrap();
+            assert_eq!(warnings, Vec::<String>::new());
+            assert_eq!(theme.name, *name);
+        }
         let mut warnings = Vec::new();
         let theme = load_str("builtin", BUILTIN[0].1, &mut warnings, 0).unwrap();
-        assert_eq!(warnings, Vec::<String>::new());
         assert_eq!(theme.name, "gruvbox-dark");
         assert_eq!(theme.glyphs.heading[1].0, "## ");
         assert_eq!(theme.glyphs.code_pad, 1);

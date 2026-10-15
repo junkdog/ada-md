@@ -6,10 +6,11 @@ use std::{env, fs};
 
 use ada::app::{self, Config, Effects, Msg, State};
 use ada::cli::{self, Args, Input};
-use ada::layout::{LayoutParams, TableMode};
+use ada::images::ImageMode;
+use ada::layout::LayoutParams;
 use ada::record::{self, Recorder, ReplayOptions};
 use ada::theme::Theme;
-use ada::{doc, print, theme};
+use ada::{completions, config, doc, print, theme};
 
 fn main() -> ExitCode {
     match run() {
@@ -24,22 +25,33 @@ fn main() -> ExitCode {
 fn run() -> Result<(), String> {
     let args = cli::parse(env::args_os().skip(1))?;
     if args.help {
-        print!("{}", cli::USAGE);
+        print!("{}", cli::usage());
         return Ok(());
     }
     if args.version {
         println!("ada {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-
-    let (theme, warnings) = theme::load(args.theme.as_deref())?;
-    for w in &warnings {
-        eprintln!("ada: warning: {w}");
+    if let Some(shell) = &args.completions {
+        print!("{}", completions::script(shell).unwrap_or_default());
+        return Ok(());
     }
+
+    let (settings, file, mut warnings) = config::load()?;
+    let (theme, theme_warnings) = theme::load(args.theme.as_deref().or(settings.theme.as_deref()))?;
+    warnings.extend(theme_warnings);
     let config = Config {
-        max_width: args.max_width,
+        max_width: args.max_width.or(settings.max_width),
         start_line: args.line,
-        images: args.images,
+        images: match args.images {
+            ImageMode::Auto => settings.images,
+            flag => flag,
+        },
+        live_reload: settings.live_reload && !args.no_reload,
+        table_mode: settings.table_mode,
+        code_wrap: settings.code_wrap,
+        keys: settings.keys,
+        file,
     };
 
     if let Some(path) = &args.replay {
@@ -47,13 +59,16 @@ fn run() -> Result<(), String> {
             live: args.replay_live,
             headless: args.headless,
         };
+        for w in &warnings {
+            eprintln!("ada: warning: {w}");
+        }
         return record::replay(path, State::new(theme, config), Effects::new(None), opts);
     }
 
     let input = match &args.input {
         Some(input) => input.clone(),
         None if !io::stdin().is_terminal() => Input::Stdin,
-        None => return Err(format!("no file given\n\n{}", cli::USAGE)),
+        None => return Err(format!("no file given\n\n{}", cli::usage())),
     };
     let (path, stdin) = match input {
         Input::Stdin => {
@@ -68,7 +83,10 @@ fn run() -> Result<(), String> {
     };
 
     if args.print || !io::stdout().is_terminal() {
-        return print_doc(&args, &theme, &path, stdin.as_ref());
+        for w in &warnings {
+            eprintln!("ada: warning: {w}");
+        }
+        return print_doc(&args, &config, &theme, &path, stdin.as_ref());
     }
 
     if stdin.is_none() {
@@ -80,13 +98,21 @@ fn run() -> Result<(), String> {
         .map(Recorder::create)
         .transpose()
         .map_err(|e| format!("--record: {e}"))?;
+    let (themes, theme_warnings) = theme::load_all(&theme);
+    warnings.extend(theme_warnings);
+    // The alternate screen hides stderr until ada quits; the first warning shows meanwhile.
+    for w in &warnings {
+        eprintln!("ada: warning: {w}");
+    }
     let mut state = State::new(theme, config);
+    state.themes = themes;
     state.status = warnings.first().map(|w| format!("warning: {w}"));
     app::run_tui(state, path, Effects::new(stdin), recorder)
 }
 
 fn print_doc(
     args: &Args,
+    config: &Config,
     theme: &Theme,
     path: &Path,
     stdin: Option<&Arc<str>>,
@@ -110,10 +136,11 @@ fn print_doc(
         })
         .unwrap_or(80)
         .max(1);
+    // Printed code always wraps: there is no scrolling sideways on paper.
     let params = LayoutParams {
         width,
-        max_width: args.max_width,
-        table_mode: TableMode::Auto,
+        max_width: config.max_width,
+        table_mode: config.table_mode,
         code_wrap: true,
         glyphs_gen: theme.glyphs.generation(),
         images: None,

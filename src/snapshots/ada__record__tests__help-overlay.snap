@@ -1,0 +1,28 @@
+---
+source: src/record.rs
+expression: frames.last().unwrap()
+---
+   Code
+             ╭─ keys ─────────────────────────────────────────────╮
+   rust      │   L               go forward                       │
+   fn main() │                                                    │
+       printl│ Search and outline                                 │
+       let lo│   /               search with a regex              │it has to
+  ↪wrap when │   n               the next match                   │
+   }         │   N               the previous match               │
+             │   o               the outline of headings          │
+             │                                                    │
+   kotlin    │ View                                               │
+   fun greet(│   t               tables: auto, grid, records      │
+             │   w               wrap code, or scroll it sideways │
+             │   ←               scroll code left                 │
+             │   →               scroll code right                │
+   untagged b│   T               the next theme                   │
+             │                                                    │
+             │ Other                                              │
+             │   r               read the file again              │
+   indented c│   e               edit in $VISUAL or $EDITOR       │
+   block     │   y               copy the link or the code block  │
+             ╰─────────────────────────────────────── j/k scroll ─╯
+
+ tests/fixtures/code.md  any other key closes the help                      Top

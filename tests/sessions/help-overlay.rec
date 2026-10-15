@@ -1,0 +1,33 @@
+ada-rec 1
++0 init size=80x24
++3 doc-loaded path="tests/fixtures/code.md" mtime=none text:352
+# Code
+
+```rust
+fn main() {
+	println!("tab-indented");
+    let long_line = "this line is deliberately long enough that it has to wrap when the block is narrower than it";
+}
+```
+
+```{.kotlin}
+fun greet(name: String) = "Hello, $name"
+```
+
+```
+untagged block
+```
+
+    indented code
+    block
+
+```ts title="x.ts"
+const x: number = 1;
+```
+
+Text after code.
+
++100 help
++200 help-scroll by=4
++300 help-scroll by=1000
++400 help-scroll by=-2

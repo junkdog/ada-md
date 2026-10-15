@@ -1,0 +1,28 @@
+---
+source: src/record.rs
+expression: frames.last().unwrap()
+---
+       println!("tab-indented");
+       let long_line = "this line is deliberately long enough that it has to ›
+   }
+
+
+   kotlin
+   fun greet(name: String) = "Hello, $name"
+
+
+
+   untagged block
+
+
+
+   indented code
+   block
+
+
+   ts
+   const x: number = 1;
+
+
+  Text after code.
+ tests/fixtures/code.md  theme: gruvbox-light (2/2)                         Bot

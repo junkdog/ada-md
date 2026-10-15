@@ -1,0 +1,23 @@
+[package]
+name = "ada-md-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ada-md = { path = ".." }
+
+[[bin]]
+name = "render"
+path = "fuzz_targets/render.rs"
+test = false
+doc = false
+bench = false
+
+# not part of ada's own build
+[workspace]
+members = ["."]

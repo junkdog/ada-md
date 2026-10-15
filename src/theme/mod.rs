@@ -9,7 +9,7 @@ use ratatui::style::{Color, Style};
 
 use crate::doc::{Callout, InlineStyle};
 
-pub use load::{BUILTIN, load, load_str};
+pub use load::{BUILTIN, load, load_all, load_str};
 
 macro_rules! style_keys {
     ($($variant:ident => $path:literal,)*) => {
@@ -227,6 +227,17 @@ impl Theme {
         let (name, text) = BUILTIN[0];
         load_str(&format!("builtin:{name}"), text, &mut Vec::new(), 0)
             .expect("the built-in theme is valid")
+    }
+
+    /// Every built-in theme, the default first.
+    pub fn builtins() -> Vec<Theme> {
+        BUILTIN
+            .iter()
+            .map(|(name, text)| {
+                load_str(&format!("builtin:{name}"), text, &mut Vec::new(), 0)
+                    .expect("the built-in themes are valid")
+            })
+            .collect()
     }
 
     /// A key's style on top of the document style, and of its parent's.

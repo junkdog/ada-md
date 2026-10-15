@@ -432,6 +432,7 @@ impl State {
                     .git_cmd()
                     .into_iter()
                     .chain(self.probe_cmd(doc_gen))
+                    .chain(self.watch_cmd())
                     .collect();
             }
         }

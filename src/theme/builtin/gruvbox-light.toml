@@ -1,0 +1,133 @@
+# gruvbox light: gruvbox dark's styles over the light palette. It paints its own background,
+# so it reads the same in a dark terminal.
+name = "gruvbox-light"
+
+[palette]
+bg = "#fbf1c7"
+bg0_s = "#f2e5bc"
+bg1 = "#ebdbb2"
+bg2 = "#d5c4a1"
+fg = "#3c3836"
+fg0 = "#282828"
+fg4 = "#7c6f64"
+gray = "#928374"
+red = "#9d0006"
+green = "#79740e"
+yellow = "#b57614"
+blue = "#076678"
+purple = "#8f3f71"
+aqua = "#427b58"
+orange = "#af3a03"
+
+[document]
+fg = "fg"
+bg = "bg"
+margin = 2
+
+[heading]
+1 = { fg = "bg", bg = "orange", bold = true, prefix = " ", suffix = " " }
+2 = { fg = "orange", bold = true, prefix = "## " }
+3 = { fg = "orange", bold = true, prefix = "### " }
+4 = { fg = "orange", bold = true, prefix = "#### " }
+5 = { fg = "orange", bold = true, prefix = "##### " }
+6 = { fg = "orange", prefix = "###### " }
+
+[inline]
+emph = { fg = "yellow", italic = true }
+strong = { fg = "orange", bold = true }
+strike = { crossed_out = true }
+code = { fg = "red", bg = "bg1", pad = 1 }
+link = { fg = "aqua", underline = true }
+link_focused = { fg = "bg", bg = "aqua" }
+link_broken = { fg = "red", crossed_out = true }
+image = { fg = "purple", underline = true }
+footnote_ref = { fg = "blue" }
+
+[block]
+quote = { fg = "fg4" }
+quote_bar = { fg = "fg4" }
+callout_note = { fg = "blue", bold = true }
+callout_tip = { fg = "green", bold = true }
+callout_important = { fg = "purple", bold = true }
+callout_warning = { fg = "yellow", bold = true }
+callout_caution = { fg = "red", bold = true }
+code = { fg = "fg", bg = "bg1" }
+code_text = {}           # code itself; inherits block.code, under the [syntax] colours
+code_label = { fg = "gray", bg = "bg1", italic = true }
+code_wrap_mark = { fg = "gray", bg = "bg1" }
+list_bullet = { fg = "fg4" }
+list_number = { fg = "fg4" }
+task_done = { fg = "green" }
+task_open = { fg = "gray" }
+rule = { fg = "gray" }
+table_border = { fg = "gray" }
+table_header = { fg = "orange", bold = true }
+table_row_alt = { bg = "bg0_s" }   # every other body row or record card
+footnote_label = { fg = "blue" }
+html = { fg = "gray" }
+image_frame = {}         # an image's frame until it has decoded; inherits block.table_border
+
+[glyphs]
+bullets = ["•", "◦", "▪"]
+quote_bar = "│ "
+rule = "─"
+table_border = "rounded"     # rounded | ascii | none
+task = ["[✓] ", "[ ] "]
+wrap_mark = "↪"
+code_clip = ["‹", "›"]       # code clipped at the edges when not wrapping (`w`)
+image = "🖼 "
+
+[gutter.unstaged]            # working tree differs from the index
+added = { glyph = "▎", fg = "green" }
+modified = { glyph = "▎", fg = "blue" }
+deleted = { glyph = "▁", fg = "red" }
+
+[gutter.staged]              # index differs from HEAD, working tree matches the index
+added = { glyph = "▎", fg = "aqua" }
+modified = { glyph = "▎", fg = "purple" }
+deleted = { glyph = "▁", fg = "orange" }
+
+[ui]
+status_bar = { fg = "fg4", bg = "bg1" }
+status_file = { fg = "fg", bg = "bg2", bold = true }
+status_heading = { fg = "orange", bg = "bg1" }
+status_pos = { fg = "fg4", bg = "bg2" }
+status_message = { fg = "yellow", bg = "bg1" }
+status_link = { fg = "aqua", bg = "bg1" }        # the focused link's target
+search_match = { fg = "bg", bg = "orange" }
+search_match_hidden = { underline = true, underline_color = "purple" }   # matched in a link target
+search_current = { fg = "bg", bg = "yellow", bold = true }
+prompt = { fg = "fg", bg = "bg1" }
+prompt_error = { fg = "red", bg = "bg1" }
+popup = { fg = "fg", bg = "bg1" }               # the outline
+popup_border = { fg = "gray", bg = "bg1" }
+popup_title = { fg = "orange", bg = "bg1", bold = true }
+popup_selected = { fg = "bg", bg = "orange", bold = true }
+
+[syntax]                     # TextMate scope selector → style; the most specific match wins
+"comment" = { fg = "gray", italic = true }
+"meta.preprocessor" = { fg = "orange" }
+"keyword" = { fg = "red" }
+"storage.type" = { fg = "yellow" }
+"storage.modifier" = { fg = "red" }
+"keyword.operator" = { fg = "orange" }
+"punctuation" = { fg = "fg" }
+"punctuation.definition.string" = { fg = "green" }
+"punctuation.definition.comment" = { fg = "gray", italic = true }
+"variable" = { fg = "fg" }
+"support.function" = { fg = "yellow" }
+"entity.name.tag" = { fg = "red" }
+"entity.other.attribute-name" = { fg = "green" }
+"entity.name.type" = { fg = "yellow", bold = true, underline = true }
+"entity.name.class" = { fg = "yellow", bold = true, underline = true }
+"entity.name.function" = { fg = "green" }
+"constant" = { fg = "purple" }
+"constant.numeric" = { fg = "purple" }
+"string" = { fg = "green" }
+"constant.character.escape" = { fg = "orange" }
+"markup.deleted" = { fg = "red" }
+"markup.inserted" = { fg = "green" }
+"markup.italic" = { italic = true }
+"markup.bold" = { bold = true }
+"markup.heading" = { fg = "gray" }
+"invalid" = { fg = "bg", bg = "red" }

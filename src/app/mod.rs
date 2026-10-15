@@ -4,6 +4,7 @@
 
 mod effects;
 mod find;
+mod handoff;
 mod imaging;
 mod keymap;
 mod nav;
@@ -23,10 +24,10 @@ use crate::links::{LocalTarget, Resolved};
 use crate::search::SearchMap;
 use crate::theme::Theme;
 
-pub use effects::{Effects, load_doc};
+pub use effects::{Effects, editor_command, load_doc, osc52};
 pub use find::{Outline, OutlineEntry, Prompt, Search};
 pub use imaging::{ImageFile, ImageView};
-pub use keymap::Keymap;
+pub use keymap::{Action, Bindings, Key, KeySeq, Keymap};
 pub use nav::LinkState;
 use nav::{Entry, Nav};
 pub use run::run_tui;
@@ -122,6 +123,18 @@ pub enum Msg {
     },
     /// Read the file again, keeping the place, and refresh the gutter.
     Reload,
+    /// `T`: the next theme.
+    CycleTheme,
+    /// `?`: the help overlay, which lists the keys.
+    Help,
+    HelpScroll {
+        by: i32,
+    },
+    HelpClose,
+    /// `e`: hand the file to `$VISUAL` / `$EDITOR` at the current line (ADR-18).
+    Edit,
+    /// `y`: copy the focused link's target, or the code block on screen, through OSC 52.
+    Yank,
     Quit,
     // world → app: the payload is recorded, because these read the outside world
     DocLoaded {
@@ -157,6 +170,15 @@ pub enum Msg {
         doc_gen: u64,
         probes: Vec<Probe>,
     },
+    /// The editor `Cmd::SpawnEditor` started has exited; `-1` when a signal ended it.
+    EditorExited {
+        status: i32,
+    },
+    /// The watched file's modification time changed (ADR-14).
+    FileChanged {
+        path: PathBuf,
+        mtime: Option<u64>,
+    },
     // pure computation done off-thread: recorded as a marker only
     Highlighted {
         doc_gen: u64,
@@ -185,6 +207,8 @@ impl Msg {
                 | Msg::OpenFailed { .. }
                 | Msg::GitDiff { .. }
                 | Msg::ImagesProbed { .. }
+                | Msg::EditorExited { .. }
+                | Msg::FileChanged { .. }
         )
     }
 
@@ -227,17 +251,53 @@ pub enum Cmd {
         paths: Vec<PathBuf>,
     },
     DecodeImage(images::Job),
+    /// Run the editor on `file` at `line`, in the foreground, with the terminal handed over.
+    SpawnEditor {
+        file: PathBuf,
+        line: u32,
+    },
+    /// Put text on the system clipboard through the terminal (OSC 52).
+    Osc52(String),
+    /// Watch `path` for changes, polling its modification time (ADR-14). Replaces the file
+    /// watched before.
+    Watch {
+        path: PathBuf,
+        mtime: Option<u64>,
+    },
     Quit,
 }
 
-/// Settings fixed for the session.
-#[derive(Clone, Debug, Default)]
+/// Settings fixed for the session: the command line over the config file.
+#[derive(Clone, Debug)]
 pub struct Config {
     pub max_width: Option<u16>,
     /// Scroll to this source line on the first load.
     pub start_line: Option<u32>,
     /// Whether to query the terminal for image support. Only the TUI reads it.
     pub images: ImageMode,
+    /// Reload when the file changes on disk.
+    pub live_reload: bool,
+    /// The table layout and code wrapping to start with.
+    pub table_mode: TableMode,
+    pub code_wrap: bool,
+    pub keys: Bindings,
+    /// The config file, for the help to point at.
+    pub file: Option<PathBuf>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            max_width: None,
+            start_line: None,
+            images: ImageMode::default(),
+            live_reload: true,
+            table_mode: TableMode::Auto,
+            code_wrap: true,
+            keys: Bindings::default(),
+            file: None,
+        }
+    }
 }
 
 /// One loaded document with its layouts: the current one and the previous one, so toggling back
@@ -334,6 +394,8 @@ impl Document {
 
 pub struct State {
     pub theme: Theme,
+    /// The themes `T` cycles through, the current one among them.
+    pub themes: Vec<Theme>,
     pub config: Config,
     pub size: Size,
     pub doc: Option<Document>,
@@ -367,20 +429,29 @@ pub struct State {
     pub images: ImageCache,
     /// The full-screen image view, while it is open.
     pub view: Option<ImageView>,
+    /// The help overlay's scroll offset, while it is open.
+    pub help: Option<u16>,
 }
 
 impl State {
     pub fn new(theme: Theme, config: Config) -> Self {
         let glyphs_gen = theme.glyphs.generation();
         let syntax = Arc::new(SyntaxTheme::new(&theme.syntax));
+        // the built-ins need no files; `main` adds the user's themes
+        let mut themes = Theme::builtins();
+        match themes.iter_mut().find(|t| t.name == theme.name) {
+            Some(slot) => *slot = theme.clone(),
+            None => themes.insert(0, theme.clone()),
+        }
         Self {
+            themes,
             theme,
-            config,
             size: Size { w: 80, h: 24 },
             doc: None,
             scroll: 0,
-            table_mode: TableMode::Auto,
-            code_wrap: true,
+            table_mode: config.table_mode,
+            code_wrap: config.code_wrap,
+            config,
             code_x: 0,
             highlights: Highlights::default(),
             syntax,
@@ -399,6 +470,7 @@ impl State {
             graphics: None,
             images: ImageCache::default(),
             view: None,
+            help: None,
         }
     }
 
@@ -474,6 +546,7 @@ impl State {
         cmds.extend(self.highlight_all());
         cmds.extend(self.image_jobs());
         cmds.extend(self.git_cmd());
+        cmds.extend(self.watch_cmd());
         cmds
     }
 
@@ -630,6 +703,8 @@ impl State {
 
     fn highlighted(&mut self, doc_gen: u64, block: CodeId, spans: Option<Arc<CodeSpans>>) {
         let spans = match spans {
+            // a result for the theme before the last switch has the wrong rules
+            Some(spans) if spans.rules != self.syntax.id => return,
             Some(spans) => spans,
             // a replay: recompute, if the block is still around
             None => {
@@ -680,6 +755,54 @@ impl State {
         };
         let target = (i64::from(self.scroll) + delta).clamp(0, i64::from(self.max_scroll()));
         self.scroll = target as u32;
+    }
+
+    /// `T`: the theme after the current one.
+    fn cycle_theme(&mut self) -> Vec<Cmd> {
+        let n = self.themes.len();
+        if n < 2 {
+            self.status = Some("no other themes: add some to ~/.config/ada/themes".into());
+            return Vec::new();
+        }
+        let i = self
+            .themes
+            .iter()
+            .position(|t| t.name == self.theme.name)
+            .map_or(0, |i| (i + 1) % n);
+        let theme = self.themes[i].clone();
+        let cmds = self.set_theme(theme);
+        self.status = Some(format!("theme: {} ({}/{n})", self.theme.name, i + 1));
+        cmds
+    }
+
+    /// Switch themes. Colours resolve at paint, so only new glyphs lay the documents out again,
+    /// and only new `[syntax]` rules highlight the code again (architecture §5).
+    fn set_theme(&mut self, theme: Theme) -> Vec<Cmd> {
+        let same_rules = self
+            .theme
+            .syntax
+            .iter()
+            .map(|(scope, _)| scope)
+            .eq(theme.syntax.iter().map(|(scope, _)| scope));
+        let glyphs_gen = theme.glyphs.generation();
+        self.theme = theme;
+        let mut cmds = Vec::new();
+        if !same_rules {
+            self.syntax = Arc::new(SyntaxTheme::new(&self.theme.syntax));
+            self.highlights = Highlights::default();
+            cmds.extend(self.highlight_all());
+        }
+        if glyphs_gen != self.glyphs_gen {
+            self.glyphs_gen = glyphs_gen;
+            // the searchable text holds glyphs too
+            for doc in self.doc.iter_mut().chain(self.cache.iter_mut()) {
+                doc.search_map = None;
+            }
+            self.relayout();
+            self.rematch();
+        }
+        cmds.extend(self.visible_jobs());
+        cmds
     }
 
     fn jump_heading(&mut self, dir: Dir) {
@@ -837,6 +960,37 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Reload => {
             state.status = None;
             state.reload()
+        }
+        Msg::FileChanged { path, mtime } => match &state.doc {
+            Some(doc) if doc.path == path && doc.mtime != mtime => state.reload(),
+            _ => Vec::new(),
+        },
+        Msg::Edit => {
+            state.status = None;
+            state.edit()
+        }
+        Msg::EditorExited { status } => state.editor_exited(status),
+        Msg::Yank => {
+            state.status = None;
+            state.yank()
+        }
+        Msg::CycleTheme => state.cycle_theme(),
+        Msg::Help => {
+            state.status = None;
+            state.outline = None;
+            state.help = Some(0);
+            Vec::new()
+        }
+        Msg::HelpScroll { by } => {
+            let max = i64::from(crate::ui::help_max_scroll(state));
+            if let Some(help) = &mut state.help {
+                *help = (i64::from(*help) + i64::from(by)).clamp(0, max) as u16;
+            }
+            Vec::new()
+        }
+        Msg::HelpClose => {
+            state.help = None;
+            state.visible_jobs()
         }
         Msg::OpenFailed { target, error } => {
             state.status = Some(format!("can't open {target}: {error}"));
@@ -1738,10 +1892,16 @@ mod tests {
         let cmds = load_at(&mut state, "a.md", &sample());
         assert_eq!(
             cmds,
-            [Cmd::RunGit {
-                doc_gen,
-                path: "a.md".into()
-            }]
+            [
+                Cmd::RunGit {
+                    doc_gen,
+                    path: "a.md".into()
+                },
+                Cmd::Watch {
+                    path: "a.md".into(),
+                    mtime: None
+                }
+            ]
         );
         assert_eq!(top_line(&state), line);
         assert_eq!(state.status.as_deref(), Some("reloaded"));

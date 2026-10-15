@@ -1,6 +1,7 @@
 //! The document viewport and the status bar. [`view`] is pure: it reads [`State`] and writes the
 //! frame, touching only the rows on screen (ADR-05).
 
+mod help;
 mod outline;
 mod paint;
 
@@ -17,6 +18,7 @@ use crate::images::{self, Entry};
 use crate::layout::{Layout, RowKind};
 use crate::theme::{StyleKey, Theme};
 
+pub use help::max_scroll as help_max_scroll;
 pub use paint::{Painter, span_style};
 
 pub fn view(state: &State, frame: &mut Frame<'_>) {
@@ -66,13 +68,14 @@ pub fn view(state: &State, frame: &mut Frame<'_>) {
         gutter(buf, doc_area, state, doc, &lines);
         // A kitty image is sent once, with the first cell it paints; the popup would paint over
         // that cell and lose it. Sixel would draw over the popup. So images wait for it to close.
-        if state.outline.is_none() {
+        if state.outline.is_none() && state.help.is_none() {
             block_images(buf, doc_area, state, doc);
         }
     }
     if state.outline.is_some() {
         outline::draw(buf, doc_area, state);
     }
+    help::draw(buf, doc_area, state);
     status_bar(buf, status_area, state);
 }
 
@@ -332,6 +335,10 @@ fn status_text(state: &State, room: usize) -> Pieces {
     let theme = &state.theme;
     if let Some(msg) = &state.status {
         return vec![(elide_start(msg, room), theme.style(StyleKey::StatusMessage))];
+    }
+    if state.help.is_some() {
+        let hint = "any other key closes the help";
+        return vec![(elide_end(hint, room), theme.style(StyleKey::StatusHeading))];
     }
     if state.view.is_some() {
         let hint = "Esc closes · Enter opens it in the system viewer";
