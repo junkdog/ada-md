@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use std::{env, fs, process};
 
 use preen::app::{Config, Dir, Msg, ScrollBy, Size, State, update};
-use preen::layout::{self, LayoutParams};
+use preen::layout::{self, LayoutParams, TableMode};
 use preen::theme::Theme;
 use preen::{doc, ui};
 use ratatui::Terminal;
@@ -182,6 +182,7 @@ fn params(theme: &Theme, width: u16) -> LayoutParams {
     LayoutParams {
         width,
         max_width: None,
+        table_mode: TableMode::Auto,
         code_wrap: true,
         glyphs_gen: theme.glyphs.generation(),
     }

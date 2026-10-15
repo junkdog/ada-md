@@ -13,6 +13,7 @@ pub use parse::parse;
 pub type LinkId = u32;
 pub type AnchorId = u32;
 pub type FootnoteId = u32;
+pub type TableId = u32;
 
 /// 1-based, inclusive source lines. `start == 0` means the thing has no source (decorative).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -63,6 +64,8 @@ pub struct Doc {
     pub footnotes: Vec<Footnote>,
     /// Byte offset of the start of each line, for offset → line lookups.
     pub line_starts: Vec<u32>,
+    /// Tables are numbered `0..table_count` in source order, wherever they are nested.
+    pub table_count: u32,
 }
 
 impl Doc {
@@ -164,6 +167,8 @@ impl CodeBlock {
 
 #[derive(Debug)]
 pub struct Table {
+    /// Indexes per-document table data such as column measurements.
+    pub id: TableId,
     pub aligns: Vec<Align>,
     pub header: TableRow,
     pub rows: Vec<TableRow>,

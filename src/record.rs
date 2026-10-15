@@ -63,6 +63,7 @@ messages! {
     "open" => Open { path },
     "scroll" => Scroll { by },
     "jump-heading" => JumpHeading { dir },
+    "toggle-table-mode" => ToggleTableMode {},
     "quit" => Quit {},
     "doc-loaded" => DocLoaded { path, mtime, text },
     "doc-failed" => DocFailed { path, error },
@@ -582,6 +583,7 @@ mod tests {
                 by: ScrollBy::Bottom,
             },
             Msg::JumpHeading { dir: Dir::Prev },
+            Msg::ToggleTableMode,
             Msg::DocLoaded {
                 path: "a.md".into(),
                 mtime: Some(1_760_535_362_123),

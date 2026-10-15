@@ -15,20 +15,18 @@ expression: render(&l)
      │
     9│  A wide table that cannot fit narrow terminals:
      │
-   13│  ╭─ 1 ───────────────────────────────────────────────────────────────────────
-   13│  │ Module       asm-analysis
-   13│  │ Java main    2,379
-   13│  │ Tests        9 classes · 3.0k lines
-   13│  │ oxasm crate  oxasm-analysis
-   13│  │ Description  Control-flow and data-flow analysis over method bodies
-   14│  ╭─ 2 ───────────────────────────────────────────────────────────────────────
-   14│  │ Module       asm-tree
-   14│  │ Java main    4,120
-   14│  │ Tests        14 classes · 5.1k lines
-   14│  │ oxasm crate  oxasm-tree
-   14│  │ Description  The tree API: ClassNode, MethodNode, InsnList and friends
+     │  ╭───────────┬────────┬─────────────┬────────────┬──────────────────────────╮
+   11│  │ Module    │ Java   │ Tests       │ oxasm      │ Description              │
+   11│  │           │ main   │             │ crate      │                          │
+     │  ├───────────┼────────┼─────────────┼────────────┼──────────────────────────┤
+   13│  │ asm-      │ 2,379  │ 9 classes · │ oxasm-     │ Control-flow and data-   │
+   13│  │ analysis  │        │ 3.0k lines  │ analysis   │ flow analysis over       │
+   13│  │           │        │             │            │ method bodies            │
+   14│  │ asm-tree  │ 4,120  │ 14 classes  │ oxasm-tree │ The tree API: ClassNode, │
+   14│  │           │        │ · 5.1k      │            │ MethodNode, InsnList and │
+   14│  │           │        │ lines       │            │ friends                  │
+     │  ╰───────────┴────────┴─────────────┴────────────┴──────────────────────────╯
      │
      │  ╭─────────────╮
    16│  │ only header │
-     │  ├─────────────┤
      │  ╰─────────────╯

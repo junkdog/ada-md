@@ -1,6 +1,8 @@
 //! The document viewport and the status bar. [`view`] is pure: it reads [`State`] and writes the
 //! frame, touching only the rows on screen (ADR-05).
 
+use std::ops::Range;
+
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -8,7 +10,7 @@ use ratatui::style::Style;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{Document, State};
-use crate::layout::{Layout, Span};
+use crate::layout::{Layout, Row, Span};
 use crate::theme::{StyleKey, Theme};
 
 pub fn view(state: &State, frame: &mut Frame<'_>) {
@@ -28,7 +30,22 @@ pub fn view(state: &State, frame: &mut Frame<'_>) {
         ..area
     };
     if let Some(doc) = &state.doc {
-        paint_rows(buf, doc_area, &doc.layout, state.scroll, &state.theme);
+        let layout = &doc.layout;
+        paint_rows(buf, doc_area, layout, state.scroll, &state.theme);
+        if let Some(header) = sticky_header(layout, state.scroll, u32::from(doc_area.height)) {
+            for (y, row) in (doc_area.y..).zip(header) {
+                let line = Rect {
+                    y,
+                    height: 1,
+                    ..doc_area
+                };
+                for x in line.left()..line.right() {
+                    buf[(x, y)].reset();
+                }
+                buf.set_style(line, state.theme.style(StyleKey::Text));
+                paint_row(buf, line, layout, row, &state.theme);
+            }
+        }
     }
     status_bar(buf, status_area, state);
 }
@@ -48,15 +65,45 @@ pub fn paint_rows(buf: &mut Buffer, area: Rect, layout: &Layout, scroll: u32, th
         .skip(scroll as usize)
         .take(area.height as usize);
     for (y, row) in (area.y..).zip(rows) {
-        let mut x = area.x;
-        for (text, span) in layout.spans(row) {
-            if x >= area.right() {
-                break;
-            }
-            let room = usize::from(area.right() - x);
-            (x, _) = buf.set_stringn(x, y, text, room, span_style(theme, span));
-        }
+        paint_spans(buf, area.x, y, area.right(), layout, row, theme);
     }
+}
+
+/// Paint layout row `row` on the first line of `area`.
+fn paint_row(buf: &mut Buffer, area: Rect, layout: &Layout, row: u32, theme: &Theme) {
+    if let Some(row) = layout.rows.get(row as usize) {
+        paint_spans(buf, area.x, area.y, area.right(), layout, row, theme);
+    }
+}
+
+fn paint_spans(
+    buf: &mut Buffer,
+    mut x: u16,
+    y: u16,
+    right: u16,
+    layout: &Layout,
+    row: &Row,
+    theme: &Theme,
+) {
+    for (text, span) in layout.spans(row) {
+        if x >= right {
+            break;
+        }
+        let room = usize::from(right - x);
+        (x, _) = buf.set_stringn(x, y, text, room, span_style(theme, span));
+    }
+}
+
+/// The header rows of the grid table straddling the top of a `height`-row viewport: its header
+/// has scrolled off while body rows are still on screen below where the header will be drawn.
+pub fn sticky_header(layout: &Layout, scroll: u32, height: u32) -> Option<Range<u32>> {
+    let i = layout
+        .grids
+        .partition_point(|g| g.header.start < scroll)
+        .checked_sub(1)?;
+    let grid = &layout.grids[i];
+    let len = grid.header.len() as u32;
+    (scroll + len < grid.end && height > 2 * len).then(|| grid.header.clone())
 }
 
 fn status_bar(buf: &mut Buffer, area: Rect, state: &State) {
@@ -171,6 +218,35 @@ fn elide_start(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::layout::{self, LayoutParams};
+
+    #[test]
+    fn sticky_header_while_the_body_is_on_screen() {
+        let mut md = String::from("intro\n\n| a | b |\n|---|---|\n");
+        for i in 0..20 {
+            md.push_str(&format!("| {i} | x |\n"));
+        }
+        let doc = crate::doc::parse(&md);
+        let params = LayoutParams {
+            width: 40,
+            max_width: None,
+            table_mode: Default::default(),
+            code_wrap: true,
+            glyphs_gen: 0,
+        };
+        let l = layout::layout(&doc, &Theme::builtin().glyphs, params);
+        // intro, blank, top border, header (row 3), separator, 20 body rows (5..25), bottom border.
+        let g = &l.grids[0];
+        assert_eq!((g.header.clone(), g.end), (3..5, 25));
+        let sticky = |scroll| sticky_header(&l, scroll, 10);
+        assert_eq!(sticky(0), None);
+        assert_eq!(sticky(3), None, "the header is on screen");
+        assert_eq!(sticky(4), Some(3..5));
+        assert_eq!(sticky(22), Some(3..5), "one body row left under the header");
+        assert_eq!(sticky(23), None);
+        assert_eq!(sticky_header(&l, 10, 4), None, "the viewport is too short");
+    }
 
     #[test]
     fn eliding() {

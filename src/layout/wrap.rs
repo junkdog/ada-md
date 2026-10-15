@@ -81,6 +81,31 @@ pub fn wrap(
     w
 }
 
+/// The widths `runs` can wrap to: `(min, max)`. `min` is the widest unbreakable word and `max`
+/// the widest line when nothing wraps. Agrees with [`wrap`]: at `avail >= min` no word is
+/// hard-broken, and at `avail >= max` no line wraps.
+pub fn measure(runs: &[Run], doc: &Doc, glyphs: &Glyphs) -> (u16, u16) {
+    let mut w = Wrapped::default();
+    flatten(runs, StyleKey::Text, doc, glyphs, &mut w);
+    let (mut min, mut max, mut line) = (0u16, 0u16, 0u16);
+    let (mut started, mut pending) = (false, false);
+    for tok in tokenize(&w.buf) {
+        match tok {
+            Tok::Space { .. } => pending = started,
+            Tok::Newline => (line, started, pending) = (0, false, false),
+            Tok::Word { width, .. } => {
+                line = line
+                    .saturating_add(u16::from(pending))
+                    .saturating_add(width);
+                (started, pending) = (true, false);
+                min = min.max(width);
+                max = max.max(line);
+            }
+        }
+    }
+    (min, max)
+}
+
 /// Wrap plain text that has a single style.
 pub fn wrap_plain(text: &str, key: StyleKey, src_line: u32, avail: u16) -> Wrapped {
     let mut w = Wrapped::default();

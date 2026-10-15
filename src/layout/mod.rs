@@ -13,10 +13,41 @@ use std::ops::Range;
 use unicode_width::UnicodeWidthStr;
 
 use crate::doc::{
-    AnchorId, Block, BlockKind, Callout, Doc, InlineStyle, LineRange, LinkId, List, Run,
+    AnchorId, Block, BlockKind, Callout, Doc, InlineStyle, LineRange, LinkId, List, Run, Table,
 };
 use crate::theme::{Glyphs, StyleKey};
+use table::ColMeasure;
 use wrap::{Line, NBSP, Wrapped};
+
+/// How tables render; `t` cycles it for the whole session (ADR-11, plan Q12).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TableMode {
+    /// A grid when the words fit, otherwise record cards.
+    #[default]
+    Auto,
+    /// Always a grid, breaking words if it must.
+    Grid,
+    /// Always record cards.
+    Records,
+}
+
+impl TableMode {
+    pub fn next(self) -> Self {
+        match self {
+            TableMode::Auto => TableMode::Grid,
+            TableMode::Grid => TableMode::Records,
+            TableMode::Records => TableMode::Auto,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            TableMode::Auto => "auto",
+            TableMode::Grid => "grid",
+            TableMode::Records => "records",
+        }
+    }
+}
 
 /// Everything a layout depends on besides the Doc. Colours are deliberately absent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,6 +56,7 @@ pub struct LayoutParams {
     pub width: u16,
     /// Prose wraps at `min(width, max_width)`.
     pub max_width: Option<u16>,
+    pub table_mode: TableMode,
     pub code_wrap: bool,
     pub glyphs_gen: u64,
 }
@@ -83,6 +115,57 @@ pub struct HeadingRow {
     pub anchor: AnchorId,
 }
 
+/// A grid table's rows, for the sticky header.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GridRows {
+    /// The header row(s) and the separator under them.
+    pub header: Range<u32>,
+    /// One past the last body row.
+    pub end: u32,
+}
+
+/// The width-independent work behind a layout, done once per Doc and glyph set (architecture §1,
+/// "Measure"), so that a resize or a table-mode toggle only redistributes.
+#[derive(Debug, Default)]
+pub struct Measure {
+    pub glyphs_gen: u64,
+    /// Column measurements, indexed by [`Table::id`].
+    tables: Vec<Vec<ColMeasure>>,
+}
+
+impl Measure {
+    pub fn new(doc: &Doc, glyphs: &Glyphs) -> Self {
+        let mut tables = vec![Vec::new(); doc.table_count as usize];
+        let footnotes = doc.footnotes.iter().map(|f| &f.blocks[..]);
+        for blocks in std::iter::once(&doc.blocks[..]).chain(footnotes) {
+            each_table(blocks, &mut |t| {
+                if let Some(slot) = tables.get_mut(t.id as usize) {
+                    *slot = table::measure(t, doc, glyphs);
+                }
+            });
+        }
+        Self {
+            glyphs_gen: glyphs.generation(),
+            tables,
+        }
+    }
+}
+
+fn each_table<'a>(blocks: &'a [Block], f: &mut impl FnMut(&'a Table)) {
+    for block in blocks {
+        match &block.kind {
+            BlockKind::Table(t) => f(t),
+            BlockKind::List(list) => {
+                for item in &list.items {
+                    each_table(&item.blocks, f);
+                }
+            }
+            BlockKind::Quote { blocks, .. } => each_table(blocks, f),
+            _ => {}
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Layout {
     pub params: LayoutParams,
@@ -96,6 +179,8 @@ pub struct Layout {
     pub anchor_rows: Vec<u32>,
     pub headings: Vec<HeadingRow>,
     pub hits: Vec<Hit>,
+    /// Grid tables with body rows, in row order.
+    pub grids: Vec<GridRows>,
 }
 
 impl Layout {
@@ -124,8 +209,18 @@ impl Layout {
     }
 }
 
-/// Lay out a document.
+/// Lay out a document, measuring it first. Use [`layout_measured`] to reuse a [`Measure`].
 pub fn layout(doc: &Doc, glyphs: &Glyphs, params: LayoutParams) -> Layout {
+    layout_measured(doc, &Measure::new(doc, glyphs), glyphs, params)
+}
+
+/// Lay out a document measured with the same glyphs.
+pub fn layout_measured(
+    doc: &Doc,
+    measure: &Measure,
+    glyphs: &Glyphs,
+    params: LayoutParams,
+) -> Layout {
     let margin = if params.prose_width() >= 24 {
         glyphs.margin
     } else {
@@ -133,6 +228,7 @@ pub fn layout(doc: &Doc, glyphs: &Glyphs, params: LayoutParams) -> Layout {
     };
     let mut b = Builder {
         doc,
+        measure,
         g: glyphs,
         params,
         out: Layout {
@@ -144,6 +240,7 @@ pub fn layout(doc: &Doc, glyphs: &Glyphs, params: LayoutParams) -> Layout {
             anchor_rows: vec![u32::MAX; doc.anchors.len()],
             headings: Vec::new(),
             hits: Vec::new(),
+            grids: Vec::new(),
         },
         prefixes: Vec::new(),
         prefix_width: 0,
@@ -181,6 +278,7 @@ struct Prefix {
 
 struct Builder<'a> {
     doc: &'a Doc,
+    measure: &'a Measure,
     g: &'a Glyphs,
     params: LayoutParams,
     out: Layout,

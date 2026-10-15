@@ -6,7 +6,7 @@ use std::{env, fs};
 
 use preen::app::{self, Config, Effects, Msg, State};
 use preen::cli::{self, Args, Input};
-use preen::layout::LayoutParams;
+use preen::layout::{LayoutParams, TableMode};
 use preen::record::{self, Recorder, ReplayOptions};
 use preen::theme::Theme;
 use preen::{doc, print, theme};
@@ -109,6 +109,7 @@ fn print_doc(
     let params = LayoutParams {
         width,
         max_width: args.max_width,
+        table_mode: TableMode::Auto,
         code_wrap: true,
         glyphs_gen: theme.glyphs.generation(),
     };

@@ -14,7 +14,7 @@ use super::slug::Slugger;
 use super::{
     Align, Anchor, AnchorKind, Block, BlockKind, Callout, CodeBlock, Doc, Footnote, FootnoteId,
     InlineStyle, Inlines, LineRange, LinkId, LinkKind, LinkRef, List, ListItem, Run, RunKind,
-    Table, TableRow, fence,
+    Table, TableId, TableRow, fence,
 };
 
 pub fn options() -> Options {
@@ -112,6 +112,7 @@ struct Builder {
     style: InlineStyle,
     link: Option<LinkId>,
     image: Option<ImageDraft>,
+    tables: TableId,
 }
 
 impl Builder {
@@ -142,6 +143,7 @@ impl Builder {
             style: InlineStyle::NONE,
             link: None,
             image: None,
+            tables: 0,
         }
     }
 
@@ -628,14 +630,18 @@ impl Builder {
                 rows,
                 src,
                 ..
-            } => Block {
-                kind: BlockKind::Table(Table {
-                    aligns,
-                    header,
-                    rows,
-                }),
-                src,
-            },
+            } => {
+                self.tables += 1;
+                Block {
+                    kind: BlockKind::Table(Table {
+                        id: self.tables - 1,
+                        aligns,
+                        header,
+                        rows,
+                    }),
+                    src,
+                }
+            }
             Frame::Skip => return,
         };
         if matches!(&block.kind, BlockKind::Paragraph(inl) if inl.runs.is_empty()) {
@@ -696,6 +702,7 @@ impl Builder {
             anchors: self.anchors,
             footnotes: self.footnotes,
             line_starts: self.line_starts,
+            table_count: self.tables,
         }
     }
 }

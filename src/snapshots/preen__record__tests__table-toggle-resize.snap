@@ -1,0 +1,20 @@
+---
+source: src/record.rs
+expression: frames.last().unwrap()
+---
+  │ Description  The tree API: ClassNode,
+  │              MethodNode, InsnList and
+  │              friends
+  ╭─ 3 ───────────────────────────────────────
+  │ Module        asm-commons
+  │ Java main    1,870
+  │ Description  Adapters: GeneratorAdapter,
+  │              LocalVariablesSorter,
+  │              remappers
+  ╭─ 4 ───────────────────────────────────────
+  │ Module        asm-util
+  │ Java main    2,045
+  │ Description  Textifier, CheckClassAdapter
+  │              and the trace visitors
+  ╭─ 5 ───────────────────────────────────────
+ modules.md  tables: records                40%

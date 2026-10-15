@@ -44,6 +44,7 @@ impl Keymap {
             KeyCode::Char('b') | KeyCode::PageUp => scroll(ScrollBy::Page(Dir::Prev)),
             KeyCode::Char('g') | KeyCode::Home => scroll(ScrollBy::Top),
             KeyCode::Char('G') | KeyCode::End => scroll(ScrollBy::Bottom),
+            KeyCode::Char('t') => Some(Msg::ToggleTableMode),
             KeyCode::Char('q') | KeyCode::Esc => Some(Msg::Quit),
             _ => None,
         }

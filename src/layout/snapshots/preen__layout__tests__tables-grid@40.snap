@@ -1,0 +1,55 @@
+---
+source: src/layout/tests.rs
+expression: render(&l)
+---
+    1│   Tables
+     │
+     │  ╭─────┬───────┬───────╮
+    3│  │ Key │ Value │ Notes │
+     │  ├─────┼───────┼───────┤
+    5│  │ a   │     1 │ short │
+    6│  │  b  │    22 │ bold  │
+    7│  │ c   │   333 │ line  │
+    7│  │     │       │ break │
+     │  ╰─────┴───────┴───────╯
+     │
+    9│  A wide table that cannot fit narrow
+    9│  terminals:
+     │
+     │  ╭──────┬─────┬──────┬──────┬───────╮
+   11│  │ Modu │ Jav │ Test │ oxas │ Descr │
+   11│  │ le   │ a   │ s    │ m    │ iptio │
+   11│  │      │ mai │      │ crat │ n     │
+   11│  │      │ n   │      │ e    │       │
+     │  ├──────┼─────┼──────┼──────┼───────┤
+   13│  │ asm- │ 2,3 │ 9    │ oxas │ Contr │
+   13│  │ anal │ 79  │ clas │ m-   │ ol-   │
+   13│  │ ysis │     │ ses  │ anal │ flow  │
+   13│  │      │     │ ·    │ ysis │ and   │
+   13│  │      │     │ 3.0k │      │ data- │
+   13│  │      │     │ line │      │ flow  │
+   13│  │      │     │ s    │      │ analy │
+   13│  │      │     │      │      │ sis   │
+   13│  │      │     │      │      │ over  │
+   13│  │      │     │      │      │ metho │
+   13│  │      │     │      │      │ d     │
+   13│  │      │     │      │      │ bodie │
+   13│  │      │     │      │      │ s     │
+   14│  │ asm- │ 4,1 │ 14   │ oxas │ The   │
+   14│  │ tree │ 20  │ clas │ m-   │ tree  │
+   14│  │      │     │ ses  │ tree │ API:  │
+   14│  │      │     │ ·    │      │ Class │
+   14│  │      │     │ 5.1k │      │ Node, │
+   14│  │      │     │ line │      │ Metho │
+   14│  │      │     │ s    │      │ dNode │
+   14│  │      │     │      │      │ ,     │
+   14│  │      │     │      │      │ InsnL │
+   14│  │      │     │      │      │ ist   │
+   14│  │      │     │      │      │ and   │
+   14│  │      │     │      │      │ frien │
+   14│  │      │     │      │      │ ds    │
+     │  ╰──────┴─────┴──────┴──────┴───────╯
+     │
+     │  ╭─────────────╮
+   16│  │ only header │
+     │  ╰─────────────╯

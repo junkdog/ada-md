@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{Layout, LayoutParams, RowKind, layout};
+use super::{Layout, LayoutParams, RowKind, TableMode, layout};
 use crate::doc::{BlockKind, parse};
 use crate::theme::Theme;
 
@@ -24,10 +24,13 @@ fn fixtures() -> Vec<(String, String)> {
         .collect()
 }
 
+const MODES: [TableMode; 3] = [TableMode::Auto, TableMode::Grid, TableMode::Records];
+
 fn params(width: u16) -> LayoutParams {
     LayoutParams {
         width,
         max_width: None,
+        table_mode: TableMode::Auto,
         code_wrap: true,
         glyphs_gen: 0,
     }
@@ -46,6 +49,27 @@ fn render(layout: &Layout) -> String {
         out.push_str(&format!("{src}│{}\n", layout.row_text(i).trim_end()));
     }
     out
+}
+
+/// The forced table modes, at the widths where they differ from `auto`.
+#[test]
+fn table_mode_snapshots() {
+    let theme = Theme::builtin();
+    let text =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tables.md"))
+            .expect("fixture");
+    let doc = parse(&text);
+    for (mode, width) in [(TableMode::Grid, 40), (TableMode::Records, 80)] {
+        let l = layout(
+            &doc,
+            &theme.glyphs,
+            LayoutParams {
+                table_mode: mode,
+                ..params(width)
+            },
+        );
+        insta::assert_snapshot!(format!("tables-{}@{width}", mode.name()), render(&l));
+    }
 }
 
 #[test]
@@ -72,8 +96,14 @@ fn mapping_and_width_invariants() {
             .iter()
             .position(|b| matches!(b.kind, BlockKind::FootnoteDefs));
         for width in [12, 20, 40, 80, 135, 200] {
-            let l = layout(&doc, &theme.glyphs, params(width));
-            check_invariants(&l, footnotes, &format!("{name}@{width}"));
+            for table_mode in MODES {
+                let p = LayoutParams {
+                    table_mode,
+                    ..params(width)
+                };
+                let l = layout(&doc, &theme.glyphs, p);
+                check_invariants(&l, footnotes, &format!("{name}@{width} {table_mode:?}"));
+            }
         }
     }
 }
@@ -140,6 +170,62 @@ fn max_width_limits_prose_but_not_tables() {
 }
 
 #[test]
+fn grid_rows_cover_header_and_body() {
+    let theme = Theme::builtin();
+    let doc = parse("text\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\n| only |\n|---|\n");
+    let l = layout(&doc, &theme.glyphs, params(80));
+    assert_eq!(
+        l.grids.len(),
+        1,
+        "a header-only table has nothing to scroll"
+    );
+    let g = &l.grids[0];
+    let header: Vec<_> = g.header.clone().map(|r| l.row_text(r as usize)).collect();
+    assert_eq!(header.len(), 2);
+    assert!(header[0].contains("│ a │ b │"));
+    assert!(header[1].contains("├───┼───┤"));
+    assert!(l.row_text(g.end as usize - 1).contains("│ 3 │ 4 │"));
+    assert!(l.row_text(g.end as usize).contains("╰───┴───╯"));
+}
+
+#[test]
+fn cells_keep_links_and_styles_when_wrapped() {
+    let theme = Theme::builtin();
+    let doc = parse(
+        "| k | v |\n|---|---|\n| x | see [the long link text](a.md) and **bold words here** |\n",
+    );
+    let l = layout(
+        &doc,
+        &theme.glyphs,
+        LayoutParams {
+            table_mode: TableMode::Grid,
+            ..params(30)
+        },
+    );
+    let linked: String = l
+        .hits
+        .iter()
+        .map(|h| {
+            let row = l.row_text(h.row as usize);
+            row.chars()
+                .skip(h.cols.start as usize)
+                .take((h.cols.end - h.cols.start) as usize)
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert_eq!(linked, "the long link text");
+    let bold: Vec<_> = l
+        .rows
+        .iter()
+        .flat_map(|r| l.spans(r))
+        .filter(|(_, s)| s.inline.contains(crate::doc::InlineStyle::STRONG))
+        .map(|(t, _)| t.trim())
+        .collect();
+    assert_eq!(bold.join(" "), "bold words here");
+}
+
+#[test]
 fn hits_cover_link_text() {
     let theme = Theme::builtin();
     let doc = parse("see [the docs](x.md) and [[wiki]]\n");
@@ -199,8 +285,15 @@ fn corpus_invariants() {
                     .iter()
                     .position(|b| matches!(b.kind, BlockKind::FootnoteDefs));
                 for width in [40, 80, 135] {
-                    let l = layout(&doc, &theme.glyphs, params(width));
-                    check_invariants(&l, footnotes, &format!("{}@{width}", path.display()));
+                    for table_mode in MODES {
+                        let p = LayoutParams {
+                            table_mode,
+                            ..params(width)
+                        };
+                        let l = layout(&doc, &theme.glyphs, p);
+                        let what = format!("{}@{width} {table_mode:?}", path.display());
+                        check_invariants(&l, footnotes, &what);
+                    }
                 }
                 notes += 1;
             }

@@ -124,6 +124,7 @@ mod tests {
         let params = LayoutParams {
             width: 40,
             max_width: None,
+            table_mode: Default::default(),
             code_wrap: true,
             glyphs_gen: 0,
         };

@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::doc::{self, Doc};
-use crate::layout::{self, Layout, LayoutParams};
+use crate::layout::{self, Layout, LayoutParams, Measure, TableMode};
 use crate::theme::Theme;
 
 pub use effects::{Effects, load_doc};
@@ -58,6 +58,7 @@ pub enum Msg {
     JumpHeading {
         dir: Dir,
     },
+    ToggleTableMode,
     Quit,
     // world → app: the payload is recorded, because these read the outside world
     DocLoaded {
@@ -100,6 +101,7 @@ pub struct Document {
     pub path: PathBuf,
     pub mtime: Option<u64>,
     pub doc: Doc,
+    measure: Measure,
     pub layout: Layout,
     prev: Option<Layout>,
     pub generation: u64,
@@ -116,7 +118,10 @@ impl Document {
             mem::swap(&mut self.layout, prev);
             return;
         }
-        let next = layout::layout(&self.doc, &theme.glyphs, params);
+        if self.measure.glyphs_gen != params.glyphs_gen {
+            self.measure = Measure::new(&self.doc, &theme.glyphs);
+        }
+        let next = layout::layout_measured(&self.doc, &self.measure, &theme.glyphs, params);
         self.prev = Some(mem::replace(&mut self.layout, next));
     }
 }
@@ -128,6 +133,7 @@ pub struct State {
     pub doc: Option<Document>,
     /// The first visible row.
     pub scroll: u32,
+    pub table_mode: TableMode,
     pub code_wrap: bool,
     pub status: Option<String>,
     pub quit: bool,
@@ -144,6 +150,7 @@ impl State {
             size: Size { w: 80, h: 24 },
             doc: None,
             scroll: 0,
+            table_mode: TableMode::Auto,
             code_wrap: true,
             status: None,
             quit: false,
@@ -161,6 +168,7 @@ impl State {
         LayoutParams {
             width: self.size.w,
             max_width: self.config.max_width,
+            table_mode: self.table_mode,
             code_wrap: self.code_wrap,
             glyphs_gen: self.glyphs_gen,
         }
@@ -186,13 +194,15 @@ impl State {
     fn load(&mut self, path: PathBuf, mtime: Option<u64>, text: &str) {
         self.generation += 1;
         let doc = doc::parse(text);
-        let layout = layout::layout(&doc, &self.theme.glyphs, self.params());
+        let measure = Measure::new(&doc, &self.theme.glyphs);
+        let layout = layout::layout_measured(&doc, &measure, &self.theme.glyphs, self.params());
         let line = self.config.start_line.take();
         self.scroll = line.and_then(|l| layout.row_for_line(l)).unwrap_or(0);
         self.doc = Some(Document {
             path,
             mtime,
             doc,
+            measure,
             layout,
             prev: None,
             generation: self.generation,
@@ -320,6 +330,12 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.jump_heading(dir);
             Vec::new()
         }
+        Msg::ToggleTableMode => {
+            state.table_mode = state.table_mode.next();
+            state.status = Some(format!("tables: {}", state.table_mode.name()));
+            state.relayout();
+            Vec::new()
+        }
         Msg::Quit => {
             state.quit = true;
             vec![Cmd::Quit]
@@ -440,6 +456,49 @@ mod tests {
             },
         );
         assert_eq!(ptr(&state), narrow);
+    }
+
+    #[test]
+    fn table_mode_cycles_and_keeps_the_top_line() {
+        let mut md = sample();
+        md.push_str("\n| Module | Description |\n|---|---|\n");
+        for i in 0..30 {
+            md.push_str(&format!(
+                "| module-{i} | a description long enough to need wrapping in a narrow column {i} |\n"
+            ));
+        }
+        md.push_str("\nafter the table\n");
+        let mut state = loaded(&md, 60, 20);
+        update(
+            &mut state,
+            Msg::Scroll {
+                by: ScrollBy::Bottom,
+            },
+        );
+        update(
+            &mut state,
+            Msg::Scroll {
+                by: ScrollBy::Rows(-12),
+            },
+        );
+        let line = top_line(&state);
+        let rows = |s: &State| s.doc.as_ref().unwrap().layout.row_count();
+        let mut counts = vec![rows(&state)];
+        for expected in ["grid", "records", "auto"] {
+            update(&mut state, Msg::ToggleTableMode);
+            assert_eq!(
+                state.status.as_deref(),
+                Some(&*format!("tables: {expected}"))
+            );
+            assert_eq!(top_line(&state), line, "after switching to {expected}");
+            counts.push(rows(&state));
+        }
+        assert_eq!(state.table_mode, TableMode::Auto);
+        assert_eq!(counts[0], counts[3]);
+        assert!(
+            counts[2] > counts[1],
+            "records take more rows than a grid: {counts:?}"
+        );
     }
 
     #[test]
