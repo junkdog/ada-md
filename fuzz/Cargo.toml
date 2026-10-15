@@ -8,12 +8,21 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
-libfuzzer-sys = "0.4"
+libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+ratatui = { version = "0.30", default-features = false }
 ada-md = { path = ".." }
 
 [[bin]]
 name = "render"
 path = "fuzz_targets/render.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "session"
+path = "fuzz_targets/session.rs"
 test = false
 doc = false
 bench = false
