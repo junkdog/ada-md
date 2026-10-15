@@ -30,6 +30,7 @@ use ratatui::buffer::Buffer;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{self, Computed, Dir, Effects, Msg, ScrollBy, Size, State};
+use crate::images::{Probe, Proto};
 use crate::links::Resolved;
 use crate::ui;
 
@@ -60,6 +61,7 @@ macro_rules! messages {
 
 messages! {
     "init" => Init { size },
+    "graphics" => Graphics { proto, cell },
     "resize" => Resize { size },
     "open" => Open { path },
     "scroll" => Scroll { by },
@@ -89,7 +91,9 @@ messages! {
     "links-resolved" => LinksResolved { doc_gen, resolved },
     "open-failed" => OpenFailed { target, error },
     "git-diff" => GitDiff { doc_gen, untracked, total, unstaged },
+    "images-probed" => ImagesProbed { doc_gen, probes },
     "highlighted" => Highlighted { doc_gen, block, spans },
+    "image-ready" => ImageReady { path, mtime, size, image },
 }
 
 // --- field values -----------------------------------------------------------------------------
@@ -259,6 +263,65 @@ impl Field for Vec<Resolved> {
                 }
             })
             .collect()
+    }
+}
+
+/// One line per image: `image <W>x<H> mtime=<ms|none>` or `failed "<reason>"`.
+impl Field for Vec<Probe> {
+    fn write(&self, key: &str, line: &mut String, blobs: &mut Vec<u8>) {
+        let mut text = String::new();
+        for p in self {
+            let _ = match p {
+                Probe::Image { w, h, mtime } => {
+                    let mtime = mtime.map_or_else(|| "none".to_owned(), |m| m.to_string());
+                    writeln!(text, "image {w}x{h} mtime={mtime}")
+                }
+                Probe::Failed(why) => writeln!(text, "failed {}", quote(why)),
+            };
+        }
+        let _ = write!(line, " {key}:{}", text.len());
+        blobs.extend_from_slice(text.as_bytes());
+    }
+
+    fn read(value: Value) -> Option<Self> {
+        let Value::Blob(bytes) = value else {
+            return None;
+        };
+        let text = String::from_utf8(bytes).ok()?;
+        text.lines()
+            .map(|l| match l.split_once(' ')? {
+                ("image", rest) => {
+                    let (size, mtime) = rest.split_once(" mtime=")?;
+                    let (w, h) = size.split_once('x')?;
+                    Some(Probe::Image {
+                        w: w.parse().ok()?,
+                        h: h.parse().ok()?,
+                        mtime: match mtime {
+                            "none" => None,
+                            m => Some(m.parse().ok()?),
+                        },
+                    })
+                }
+                ("failed", rest) => left(quoted(), empty())
+                    .parse(rest)
+                    .result
+                    .map(Probe::Failed),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+impl Field for Proto {
+    fn write(&self, key: &str, line: &mut String, _: &mut Vec<u8>) {
+        inline(key, line, self.name());
+    }
+
+    fn read(value: Value) -> Option<Self> {
+        match value {
+            Value::Ident(s) => Proto::parse(&s),
+            _ => None,
+        }
     }
 }
 
@@ -669,6 +732,10 @@ mod tests {
             Msg::Init {
                 size: Size { w: 120, h: 40 },
             },
+            Msg::Graphics {
+                proto: Proto::Kitty,
+                cell: Size { w: 9, h: 18 },
+            },
             Msg::Resize {
                 size: Size { w: 100, h: 30 },
             },
@@ -737,6 +804,28 @@ mod tests {
                 doc_gen: 3,
                 block: 12,
                 spans: Computed(None),
+            },
+            Msg::ImagesProbed {
+                doc_gen: 3,
+                probes: vec![
+                    Probe::Image {
+                        w: 686,
+                        h: 811,
+                        mtime: Some(1_760_535_362_123),
+                    },
+                    Probe::Image {
+                        w: 1,
+                        h: 2,
+                        mtime: None,
+                    },
+                    Probe::Failed("The image format \"Gif\" is not supported".into()),
+                ],
+            },
+            Msg::ImageReady {
+                path: "img/cat.png".into(),
+                mtime: None,
+                size: Size { w: 40, h: 12 },
+                image: Computed(None),
             },
             Msg::DocLoaded {
                 path: "a.md".into(),

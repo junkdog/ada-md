@@ -10,9 +10,12 @@ use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::UNIX_EPOCH;
 
+use ratatui_image::picker::Picker;
+
 use super::{Cmd, Msg};
 use crate::git;
 use crate::highlight::{self, Job};
+use crate::images;
 use crate::links::{BuiltinResolver, Resolver};
 
 pub struct Effects {
@@ -23,6 +26,11 @@ pub struct Effects {
     resolver: Box<dyn Resolver>,
     /// Where git runs post their results; without it, git runs inline.
     git: Option<Sender<Msg>>,
+    /// The terminal's image support, as queried at startup. Without it, images are encoded as
+    /// half-blocks, as `--replay-live` does.
+    picker: Option<Picker>,
+    /// The image worker's queue; without a worker, images are decoded inline.
+    images: Option<Sender<images::Job>>,
 }
 
 impl Effects {
@@ -32,13 +40,27 @@ impl Effects {
             highlight: None,
             resolver: Box::new(BuiltinResolver),
             git: None,
+            picker: None,
+            images: None,
         }
+    }
+
+    /// Encode images for the terminal `picker` describes.
+    pub fn set_picker(&mut self, picker: Picker) {
+        self.picker = Some(picker);
+    }
+
+    fn picker(&mut self) -> &Picker {
+        self.picker.get_or_insert_with(Picker::halfblocks)
     }
 
     /// Start the worker threads, which post their results to `tx`.
     pub fn spawn_workers(&mut self, tx: &Sender<Msg>) {
         self.highlight = Some(highlight::spawn_worker(tx.clone()));
         self.git = Some(tx.clone());
+        if let Some(picker) = &self.picker {
+            self.images = Some(images::spawn_worker(picker.clone(), tx.clone()));
+        }
     }
 
     /// Run one command. Quick ones answer right away; slow ones go to a worker, which posts
@@ -84,6 +106,17 @@ impl Effects {
                     }
                     None => diff(),
                 }
+            }
+            Cmd::ProbeImages { doc_gen, paths } => Some(Msg::ImagesProbed {
+                doc_gen,
+                probes: paths.iter().map(|p| images::probe(p)).collect(),
+            }),
+            Cmd::DecodeImage(job) => {
+                let job = match &self.images {
+                    Some(worker) => worker.send(job).err()?.0,
+                    None => job,
+                };
+                Some(job.run(self.picker()))
             }
             Cmd::Quit => None,
         }

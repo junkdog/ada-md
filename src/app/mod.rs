@@ -4,6 +4,7 @@
 
 mod effects;
 mod find;
+mod imaging;
 mod keymap;
 mod nav;
 mod run;
@@ -16,13 +17,15 @@ use std::sync::Arc;
 use crate::doc::{self, CodeId, Doc, LinkId};
 use crate::git::LineMarks;
 use crate::highlight::{self, CodeSpans, Highlights, Job, SyntaxTheme};
-use crate::layout::{self, Layout, LayoutParams, Measure, RowKind, TableMode};
+use crate::images::{self, Encoded, Graphics, ImageCache, ImageKey, ImageMode, Probe, Proto};
+use crate::layout::{self, ImageFit, Layout, LayoutParams, Measure, RowKind, TableMode};
 use crate::links::{LocalTarget, Resolved};
 use crate::search::SearchMap;
 use crate::theme::Theme;
 
 pub use effects::{Effects, load_doc};
 pub use find::{Outline, OutlineEntry, Prompt, Search};
+pub use imaging::{ImageFile, ImageView};
 pub use keymap::Keymap;
 pub use nav::LinkState;
 use nav::{Entry, Nav};
@@ -62,6 +65,12 @@ pub enum Msg {
     // terminal and session
     Init {
         size: Size,
+    },
+    /// The terminal can show images: its protocol, and its font's cell size in pixels. Sent
+    /// after `Init` when images are on.
+    Graphics {
+        proto: Proto,
+        cell: Size,
     },
     Resize {
         size: Size,
@@ -143,11 +152,24 @@ pub enum Msg {
         total: Arc<str>,
         unstaged: Arc<str>,
     },
+    /// The headers of a document's images, in the order `Cmd::ProbeImages` asked.
+    ImagesProbed {
+        doc_gen: u64,
+        probes: Vec<Probe>,
+    },
     // pure computation done off-thread: recorded as a marker only
     Highlighted {
         doc_gen: u64,
         block: CodeId,
         spans: Computed<Arc<CodeSpans>>,
+    },
+    /// An image decoded and encoded for the terminal, `size` cells big. Replay can't recompute
+    /// it, as image bytes aren't recorded, so a replayed image stays a placeholder.
+    ImageReady {
+        path: PathBuf,
+        mtime: Option<u64>,
+        size: Size,
+        image: Computed<Result<Encoded, String>>,
     },
 }
 
@@ -162,13 +184,23 @@ impl Msg {
                 | Msg::LinksResolved { .. }
                 | Msg::OpenFailed { .. }
                 | Msg::GitDiff { .. }
+                | Msg::ImagesProbed { .. }
         )
     }
 
     /// Messages that commands produce: world results, and computed ones. `--replay-live` skips
     /// them, since its re-executed commands produce them again.
     pub fn is_result(&self) -> bool {
-        self.is_world() || matches!(self, Msg::Highlighted { .. })
+        self.is_world() || matches!(self, Msg::Highlighted { .. } | Msg::ImageReady { .. })
+    }
+
+    /// Messages that leave the image view open: results, and the terminal's own.
+    fn keeps_view(&self) -> bool {
+        self.is_result()
+            || matches!(
+                self,
+                Msg::Init { .. } | Msg::Graphics { .. } | Msg::Resize { .. } | Msg::Open { .. }
+            )
     }
 }
 
@@ -189,6 +221,12 @@ pub enum Cmd {
         doc_gen: u64,
         path: PathBuf,
     },
+    /// Read the headers of the images a document's links lead to.
+    ProbeImages {
+        doc_gen: u64,
+        paths: Vec<PathBuf>,
+    },
+    DecodeImage(images::Job),
     Quit,
 }
 
@@ -198,6 +236,8 @@ pub struct Config {
     pub max_width: Option<u16>,
     /// Scroll to this source line on the first load.
     pub start_line: Option<u32>,
+    /// Whether to query the terminal for image support. Only the TUI reads it.
+    pub images: ImageMode,
 }
 
 /// One loaded document with its layouts: the current one and the previous one, so toggling back
@@ -217,6 +257,8 @@ pub struct Document {
     search_map: Option<SearchMap>,
     /// The git gutter; `None` outside a repository, or until git answers.
     pub marks: Option<LineMarks>,
+    /// The image files links lead to, indexed by [`LinkId`], once their headers are read.
+    pub images: Vec<Option<ImageFile>>,
 }
 
 impl Document {
@@ -232,6 +274,7 @@ impl Document {
         let measure = Measure::new(&doc, &theme.glyphs);
         let layout = layout::layout_measured(&doc, &measure, &theme.glyphs, params);
         let links = nav::initial_links(&doc);
+        let images = vec![None; doc.links.len()];
         Self {
             path,
             mtime,
@@ -244,6 +287,7 @@ impl Document {
             links,
             search_map: None,
             marks: None,
+            images,
         }
     }
 
@@ -275,10 +319,16 @@ impl Document {
             return;
         }
         if self.measure.glyphs_gen != params.glyphs_gen {
-            self.measure = Measure::new(&self.doc, &theme.glyphs);
+            self.measure.remeasure(&self.doc, &theme.glyphs);
         }
         let next = layout::layout_measured(&self.doc, &self.measure, &theme.glyphs, params);
         self.prev = Some(mem::replace(&mut self.layout, next));
+    }
+
+    /// Lay out again after the measurements changed, dropping the previous layout.
+    fn relayout_now(&mut self, theme: &Theme, params: LayoutParams) {
+        self.layout = layout::layout_measured(&self.doc, &self.measure, &theme.glyphs, params);
+        self.prev = None;
     }
 }
 
@@ -312,6 +362,11 @@ pub struct State {
     /// The search prompt, while it is open.
     pub prompt: Option<Prompt>,
     pub outline: Option<Outline>,
+    /// The terminal's image support; `None` shows images as text.
+    pub graphics: Option<Graphics>,
+    pub images: ImageCache,
+    /// The full-screen image view, while it is open.
+    pub view: Option<ImageView>,
 }
 
 impl State {
@@ -341,6 +396,9 @@ impl State {
             search: None,
             prompt: None,
             outline: None,
+            graphics: None,
+            images: ImageCache::default(),
+            view: None,
         }
     }
 
@@ -356,6 +414,11 @@ impl State {
             table_mode: self.table_mode,
             code_wrap: self.code_wrap,
             glyphs_gen: self.glyphs_gen,
+            // an image may take 60 % of the viewport
+            images: self.graphics.map(|g| ImageFit {
+                cell: g.cell,
+                max_rows: (self.viewport_height() * 3 / 5).max(1) as u16,
+            }),
         }
     }
 
@@ -409,6 +472,7 @@ impl State {
         self.scroll = 0;
         self.rematch();
         cmds.extend(self.highlight_all());
+        cmds.extend(self.image_jobs());
         cmds.extend(self.git_cmd());
         cmds
     }
@@ -537,6 +601,13 @@ impl State {
                 urgent,
             }));
         }
+        cmds
+    }
+
+    /// Work for what is on screen now: highlighting, and decoding images.
+    fn visible_jobs(&mut self) -> Vec<Cmd> {
+        let mut cmds = self.highlight_visible();
+        cmds.extend(self.image_jobs());
         cmds
     }
 
@@ -693,11 +764,31 @@ fn group_of(layout: &Layout, row: usize, line: u32) -> std::ops::Range<usize> {
 
 /// The only place state changes. Deterministic: no clock, environment or filesystem.
 pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
+    // The image view takes the keys that close it, and `Enter`; any other intent closes it and
+    // goes ahead, so the keymap's idea of the mode stays right.
+    if state.view.is_some() {
+        match &msg {
+            Msg::Quit | Msg::Back => {
+                state.view = None;
+                state.status = None;
+                return state.visible_jobs();
+            }
+            Msg::Follow => return state.view_external(),
+            m if m.keeps_view() => {}
+            _ => state.view = None,
+        }
+    }
     match msg {
         Msg::Init { size } | Msg::Resize { size } => {
             state.size = size;
             state.relayout();
-            state.highlight_visible()
+            state.visible_jobs()
+        }
+        Msg::Graphics { proto, cell } => {
+            let cell = ratatui::layout::Size::new(cell.w.max(1), cell.h.max(1));
+            state.graphics = Some(Graphics { proto, cell });
+            state.relayout();
+            state.visible_jobs()
         }
         Msg::Open { path } => vec![Cmd::LoadDoc(crate::links::normalize(&path))],
         Msg::DocLoaded { path, mtime, text } => match state.nav.take() {
@@ -713,6 +804,20 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::LinksResolved { doc_gen, resolved } => {
             state.links_resolved(doc_gen, &resolved);
+            state.probe_cmd(doc_gen).into_iter().collect()
+        }
+        Msg::ImagesProbed { doc_gen, probes } => {
+            state.images_probed(doc_gen, &probes);
+            state.visible_jobs()
+        }
+        Msg::ImageReady {
+            path,
+            mtime,
+            size,
+            image,
+        } => {
+            let size = ratatui::layout::Size::new(size.w, size.h);
+            state.image_ready(ImageKey { path, mtime, size }, image.0);
             Vec::new()
         }
         Msg::GitDiff {
@@ -727,7 +832,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::JumpChange { dir } => {
             state.status = None;
             state.jump_change(dir);
-            state.highlight_visible()
+            state.visible_jobs()
         }
         Msg::Reload => {
             state.status = None;
@@ -740,24 +845,24 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::FocusLink { dir } => {
             state.status = None;
             state.focus_link(dir);
-            state.highlight_visible()
+            state.visible_jobs()
         }
         Msg::Follow => {
             state.status = None;
             let mut cmds = state.follow();
-            cmds.extend(state.highlight_visible());
+            cmds.extend(state.visible_jobs());
             cmds
         }
         Msg::Back => {
             state.status = None;
             let mut cmds = state.go_back();
-            cmds.extend(state.highlight_visible());
+            cmds.extend(state.visible_jobs());
             cmds
         }
         Msg::Forward => {
             state.status = None;
             let mut cmds = state.go_forward();
-            cmds.extend(state.highlight_visible());
+            cmds.extend(state.visible_jobs());
             cmds
         }
         Msg::OpenOutline => {
@@ -775,7 +880,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::OutlinePick => {
             state.outline_pick();
-            state.highlight_visible()
+            state.visible_jobs()
         }
         Msg::OutlineClose => {
             state.outline = None;
@@ -788,36 +893,36 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::SearchInput { pattern } => {
             state.search_input(pattern);
-            state.highlight_visible()
+            state.visible_jobs()
         }
         Msg::SearchSubmit => {
             state.search_submit();
-            state.highlight_visible()
+            state.visible_jobs()
         }
         Msg::SearchCancel => {
             state.search_cancel();
-            state.highlight_visible()
+            state.visible_jobs()
         }
         Msg::SearchNext { dir } => {
             state.status = None;
             state.search_next(dir);
-            state.highlight_visible()
+            state.visible_jobs()
         }
         Msg::Scroll { by } => {
             state.status = None;
             state.scroll_by(by);
-            state.highlight_visible()
+            state.visible_jobs()
         }
         Msg::JumpHeading { dir } => {
             state.status = None;
             state.jump_heading(dir);
-            state.highlight_visible()
+            state.visible_jobs()
         }
         Msg::ToggleTableMode => {
             state.table_mode = state.table_mode.next();
             state.status = Some(format!("tables: {}", state.table_mode.name()));
             state.relayout();
-            state.highlight_visible()
+            state.visible_jobs()
         }
         Msg::ToggleCodeWrap => {
             state.code_wrap = !state.code_wrap;
@@ -828,7 +933,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             };
             state.status = Some(format!("code: {mode}"));
             state.relayout();
-            state.highlight_visible()
+            state.visible_jobs()
         }
         Msg::ScrollCodeX { by } => {
             state.status = None;
@@ -1654,5 +1759,178 @@ mod tests {
             Some("nothing to go back to"),
             "no history"
         );
+    }
+
+    // --- P6: images ---------------------------------------------------------------------------
+
+    use crate::images::{Entry, Job};
+
+    fn pets_md() -> String {
+        let mut md = String::from("# Pets\n\n![Ada](ada.png)\n\n");
+        md.push_str(&sample());
+        md.push_str("\nsee [the photo](neumann.jpeg) and [notes](n.md)\n");
+        md
+    }
+
+    /// `p.md` loaded and its links resolved, in an 80×20 terminal that shows images when
+    /// `graphics` is set. Returns the commands the links' resolution produced.
+    fn pets(graphics: bool) -> (State, Vec<Cmd>) {
+        let mut state = loaded("", 80, 20);
+        if graphics {
+            update(
+                &mut state,
+                Msg::Graphics {
+                    proto: Proto::Halfblocks,
+                    cell: Size { w: 10, h: 20 },
+                },
+            );
+        }
+        load_at(&mut state, "p.md", &pets_md());
+        let doc_gen = state.generation;
+        let resolved = ["ada.png", "neumann.jpeg", "n.md"]
+            .map(|p| Resolved::Found(p.into()))
+            .to_vec();
+        let cmds = update(&mut state, Msg::LinksResolved { doc_gen, resolved });
+        (state, cmds)
+    }
+
+    fn decodes(cmds: &[Cmd]) -> Vec<(&str, (u16, u16), bool)> {
+        cmds.iter()
+            .filter_map(|c| match c {
+                Cmd::DecodeImage(Job { key, urgent }) => Some((
+                    key.path.to_str().unwrap(),
+                    (key.size.width, key.size.height),
+                    *urgent,
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// [`pets`] with the image headers read: Ada is 300×200, the photo 2000×3000.
+    fn pets_probed() -> (State, Vec<Cmd>) {
+        let (mut state, cmds) = pets(true);
+        let doc_gen = state.generation;
+        assert_eq!(
+            cmds,
+            [Cmd::ProbeImages {
+                doc_gen,
+                paths: vec!["ada.png".into(), "neumann.jpeg".into()]
+            }]
+        );
+        let probes = vec![
+            Probe::Image {
+                w: 300,
+                h: 200,
+                mtime: Some(7),
+            },
+            Probe::Image {
+                w: 2000,
+                h: 3000,
+                mtime: Some(8),
+            },
+        ];
+        let cmds = update(&mut state, Msg::ImagesProbed { doc_gen, probes });
+        (state, cmds)
+    }
+
+    #[test]
+    fn block_images_are_sized_and_decoded_near_the_viewport() {
+        let (mut state, cmds) = pets_probed();
+        let slot = state.doc.as_ref().unwrap().layout.images[0];
+        assert_eq!((slot.size.width, slot.size.height), (30, 10));
+        assert_eq!(decodes(&cmds), [("ada.png", (30, 10), true)]);
+        // asked once: scrolling doesn't ask again
+        assert!(
+            decodes(&update(
+                &mut state,
+                Msg::Scroll {
+                    by: ScrollBy::Rows(1)
+                }
+            ))
+            .is_empty()
+        );
+
+        let key = ImageKey {
+            path: "ada.png".into(),
+            mtime: Some(7),
+            size: ratatui::layout::Size::new(30, 10),
+        };
+        assert_eq!(state.images.get(&key), Some(&Entry::Pending));
+        let ready = |image| Msg::ImageReady {
+            path: "ada.png".into(),
+            mtime: Some(7),
+            size: Size { w: 30, h: 10 },
+            image: Computed(image),
+        };
+        // a replay has no image: the placeholder stays
+        update(&mut state, ready(None));
+        assert_eq!(state.images.get(&key), Some(&Entry::Pending));
+        update(&mut state, ready(Some(Err("corrupt".into()))));
+        assert_eq!(
+            state.images.get(&key),
+            Some(&Entry::Failed("corrupt".into()))
+        );
+    }
+
+    #[test]
+    fn the_image_view() {
+        let (mut state, _) = pets_probed();
+        update(
+            &mut state,
+            Msg::Scroll {
+                by: ScrollBy::Bottom,
+            },
+        );
+        update(&mut state, Msg::FocusLink { dir: Dir::Next });
+        assert_eq!(focused_dest(&state).as_deref(), Some("neumann.jpeg"));
+        let cmds = update(&mut state, Msg::Follow);
+        assert!(state.view.is_some());
+        // 200×150 cells, cut to the 19 rows above the status bar
+        assert_eq!(decodes(&cmds), [("neumann.jpeg", (26, 19), true)]);
+
+        // Enter again hands it to the system's viewer
+        assert_eq!(
+            update(&mut state, Msg::Follow),
+            [Cmd::OpenWithSystem("neumann.jpeg".into())]
+        );
+        assert!(state.view.is_some());
+        // q and Esc close the view, not preen
+        update(&mut state, Msg::Quit);
+        assert!(state.view.is_none() && !state.quit);
+
+        // a resize keeps it open and fits it again; any other intent closes it and goes ahead
+        update(&mut state, Msg::Follow);
+        let cmds = update(
+            &mut state,
+            Msg::Resize {
+                size: Size { w: 80, h: 41 },
+            },
+        );
+        assert!(state.view.is_some());
+        assert_eq!(decodes(&cmds), [("neumann.jpeg", (54, 40), true)]);
+        let scroll = state.scroll;
+        update(&mut state, Msg::Scroll { by: ScrollBy::Top });
+        assert!(state.view.is_none());
+        assert!(state.scroll < scroll);
+    }
+
+    #[test]
+    fn without_graphics_images_are_text_and_open_externally() {
+        let (mut state, cmds) = pets(false);
+        assert!(cmds.is_empty(), "no headers to read");
+        assert!(state.doc.as_ref().unwrap().layout.images.is_empty());
+        update(
+            &mut state,
+            Msg::Scroll {
+                by: ScrollBy::Bottom,
+            },
+        );
+        update(&mut state, Msg::FocusLink { dir: Dir::Next });
+        assert_eq!(
+            update(&mut state, Msg::Follow),
+            [Cmd::OpenWithSystem("neumann.jpeg".into())]
+        );
+        assert!(state.view.is_none());
     }
 }

@@ -3,6 +3,8 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use crate::images::{ImageMode, Proto};
+
 pub const USAGE: &str = "\
 usage: preen [options] [FILE | -]
 
@@ -16,6 +18,10 @@ options:
   -l, --line N          start at source line N; when printing, shift the output so
                         that line N renders on output line N (for fzf previews)
   -t, --theme NAME      a theme name or a path to a .toml theme
+      --no-images       show images as text, without asking the terminal what it supports
+      --image-protocol P
+                        kitty, sixel, iterm2 or halfblocks, instead of what the terminal
+                        reports (kitty is otherwise never used inside tmux)
       --record FILE     record the session to FILE
       --replay FILE     replay a recorded session
       --replay-live     with --replay: re-run effects instead of using recorded results
@@ -38,6 +44,7 @@ pub struct Args {
     pub max_width: Option<u16>,
     pub line: Option<u32>,
     pub theme: Option<String>,
+    pub images: ImageMode,
     pub record: Option<PathBuf>,
     pub replay: Option<PathBuf>,
     pub replay_live: bool,
@@ -87,6 +94,14 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
             "--max-width" => out.max_width = Some(number(&flag, &value(&flag)?)?),
             "-l" | "--line" => out.line = Some(number(&flag, &value(&flag)?)?),
             "-t" | "--theme" => out.theme = Some(value(&flag)?),
+            "--no-images" => out.images = ImageMode::Off,
+            "--image-protocol" => {
+                let name = value(&flag)?;
+                let proto = Proto::parse(&name).ok_or_else(|| {
+                    format!("{flag}: `{name}` is not kitty, sixel, iterm2 or halfblocks")
+                })?;
+                out.images = ImageMode::Force(proto);
+            }
             "--record" => out.record = Some(value(&flag)?.into()),
             "--replay" => out.replay = Some(value(&flag)?.into()),
             "--replay-live" => out.replay_live = true,
@@ -98,7 +113,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
         if inline.is_some()
             && matches!(
                 flag.as_str(),
-                "--print" | "--replay-live" | "--headless" | "--help" | "--version"
+                "--print" | "--replay-live" | "--headless" | "--no-images" | "--help" | "--version"
             )
         {
             return Err(format!("{flag} takes no value"));
@@ -159,5 +174,16 @@ mod tests {
         assert!(args(&["a.md", "b.md"]).is_err());
         assert!(args(&["--headless"]).is_err());
         assert!(args(&["--print=yes"]).is_err());
+        assert!(args(&["--image-protocol", "chafa"]).is_err());
+    }
+
+    #[test]
+    fn image_flags() {
+        assert_eq!(args(&[]).unwrap().images, ImageMode::Auto);
+        assert_eq!(args(&["--no-images"]).unwrap().images, ImageMode::Off);
+        assert_eq!(
+            args(&["--image-protocol=sixel"]).unwrap().images,
+            ImageMode::Force(Proto::Sixel)
+        );
     }
 }

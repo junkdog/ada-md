@@ -67,6 +67,7 @@ style_keys! {
     TableRowAlt => "block.table_row_alt",
     FootnoteLabel => "block.footnote_label",
     Html => "block.html",
+    ImageFrame => "block.image_frame",
     GutterUnstagedAdded => "gutter.unstaged.added",
     GutterUnstagedModified => "gutter.unstaged.modified",
     GutterUnstagedDeleted => "gutter.unstaged.deleted",
@@ -116,6 +117,7 @@ impl StyleKey {
     fn parent(self) -> Option<StyleKey> {
         match self {
             StyleKey::CodeText => Some(StyleKey::CodeBlock),
+            StyleKey::ImageFrame => Some(StyleKey::TableBorder),
             _ => None,
         }
     }

@@ -39,6 +39,7 @@ fn run() -> Result<(), String> {
     let config = Config {
         max_width: args.max_width,
         start_line: args.line,
+        images: args.images,
     };
 
     if let Some(path) = &args.replay {
@@ -115,6 +116,7 @@ fn print_doc(
         table_mode: TableMode::Auto,
         code_wrap: true,
         glyphs_gen: theme.glyphs.generation(),
+        images: None,
     };
     print::run(&doc::parse(&text), theme, params, args.line).map_err(|e| e.to_string())
 }

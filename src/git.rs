@@ -364,6 +364,7 @@ mod tests {
             table_mode: Default::default(),
             code_wrap: true,
             glyphs_gen: 0,
+            images: None,
         };
         let layout = crate::layout::layout(&doc, &theme.glyphs, params);
         let rows: Vec<_> = layout.rows.iter().map(|r| r.src).collect();

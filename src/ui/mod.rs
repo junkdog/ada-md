@@ -12,9 +12,10 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{Document, State};
+use crate::app::{Document, ImageView, State};
+use crate::images::{self, Entry};
 use crate::layout::{Layout, RowKind};
-use crate::theme::StyleKey;
+use crate::theme::{StyleKey, Theme};
 
 pub use paint::{Painter, span_style};
 
@@ -34,7 +35,9 @@ pub fn view(state: &State, frame: &mut Frame<'_>) {
         height: 1,
         ..area
     };
-    if let Some(doc) = &state.doc {
+    if let Some(view) = &state.view {
+        image_view(buf, doc_area, state, view);
+    } else if let Some(doc) = &state.doc {
         let layout = &doc.layout;
         let painter = Painter {
             theme: &state.theme,
@@ -61,6 +64,11 @@ pub fn view(state: &State, frame: &mut Frame<'_>) {
         }
         overlays(buf, doc_area, state, doc, &lines);
         gutter(buf, doc_area, state, doc, &lines);
+        // A kitty image is sent once, with the first cell it paints; the popup would paint over
+        // that cell and lose it. Sixel would draw over the popup. So images wait for it to close.
+        if state.outline.is_none() {
+            block_images(buf, doc_area, state, doc);
+        }
     }
     if state.outline.is_some() {
         outline::draw(buf, doc_area, state);
@@ -80,6 +88,91 @@ fn screen_rows(layout: &Layout, scroll: u32, area: Rect) -> Vec<(u16, u32)> {
         }
     }
     lines
+}
+
+/// Block images over the rows reserved for them: the image once it has been encoded, a frame
+/// until then. Rows outside the viewport are clipped, so scrolling costs no image work.
+fn block_images(buf: &mut Buffer, area: Rect, state: &State, doc: &Document) {
+    let scroll = state.scroll;
+    let on_screen = scroll..scroll + u32::from(area.height);
+    for slot in doc
+        .layout
+        .images
+        .iter()
+        .filter(|s| s.overlaps(on_screen.clone()))
+    {
+        let y = i64::from(slot.row) - i64::from(scroll);
+        let file = doc.images.get(slot.link as usize).and_then(Option::as_ref);
+        let entry = file.and_then(|f| state.images.get(&f.key(slot.size)));
+        let at = (slot.x, y as i32);
+        match entry {
+            Some(Entry::Ready(image)) => images::render(image, buf, area, at.0, at.1),
+            Some(Entry::Failed(why)) => frame(buf, area, &state.theme, at, slot.size, why),
+            _ => frame(buf, area, &state.theme, at, slot.size, ""),
+        }
+    }
+}
+
+/// The full-screen image view: the image centred in the document's area.
+fn image_view(buf: &mut Buffer, area: Rect, state: &State, view: &ImageView) {
+    let Some(key) = state.view_key() else {
+        return;
+    };
+    let entry = state.images.get(&key);
+    let size = match entry {
+        Some(Entry::Ready(image)) => image.size(),
+        _ => key.size,
+    };
+    let x = area.width.saturating_sub(size.width) / 2;
+    let y = i32::from(area.height.saturating_sub(size.height) / 2);
+    match entry {
+        Some(Entry::Ready(image)) => images::render(image, buf, area, x, y),
+        Some(Entry::Failed(why)) => frame(buf, area, &state.theme, (x, y), size, why),
+        _ => {
+            let name = view.file.path.file_name().unwrap_or_default();
+            let label = name.to_string_lossy();
+            frame(buf, area, &state.theme, (x, y), size, &label);
+        }
+    }
+}
+
+/// A frame where an image will be, with `label` in the middle, clipped to `area`.
+fn frame(
+    buf: &mut Buffer,
+    area: Rect,
+    theme: &Theme,
+    at: (u16, i32),
+    size: ratatui::layout::Size,
+    label: &str,
+) {
+    let (w, h) = (usize::from(size.width), i32::from(size.height));
+    let x = area.x.saturating_add(at.0);
+    if w < 2 || x >= area.right() {
+        return;
+    }
+    let style = theme.style(StyleKey::ImageFrame);
+    let inner = w - 2;
+    let label = elide_end(label, inner.saturating_sub(2));
+    let middle = (h - 1) / 2;
+    for r in 0..h {
+        let y = at.1 + r;
+        if y < 0 || y >= i32::from(area.height) {
+            continue;
+        }
+        let text = match r {
+            _ if h == 1 => "─".repeat(w),
+            0 => format!("┌{}┐", "─".repeat(inner)),
+            r if r == h - 1 => format!("└{}┘", "─".repeat(inner)),
+            r if r == middle && !label.is_empty() => {
+                let pad = inner - label.width();
+                let left = pad / 2;
+                format!("│{}{label}{}│", " ".repeat(left), " ".repeat(pad - left))
+            }
+            _ => format!("│{}│", " ".repeat(inner)),
+        };
+        let max = usize::from(area.right() - x);
+        buf.set_stringn(x, area.y + y as u16, &text, max, style);
+    }
 }
 
 /// The git gutter, in the left margin column, so it costs no width and no relayout.
@@ -184,10 +277,11 @@ fn status_bar(buf: &mut Buffer, area: Rect, state: &State) {
     if let Some(search) = &state.search {
         right.push_str(&format!(" {} ", search.counter()));
     }
-    let position = state
-        .doc
-        .as_ref()
-        .map_or_else(String::new, |_| position(state));
+    let position = match (&state.view, &state.doc) {
+        (Some(view), _) => format!("{}×{}", view.file.px.0, view.file.px.1),
+        (None, Some(_)) => position(state),
+        (None, None) => String::new(),
+    };
     let pos_text = format!(" {position} ");
     let pos_width = (right.width() + pos_text.width()).min(width) as u16;
     let pos_x = area.right().saturating_sub(pos_width);
@@ -213,9 +307,10 @@ fn status_bar(buf: &mut Buffer, area: Rect, state: &State) {
         return;
     }
 
-    let name = match &state.doc {
-        Some(doc) => display_name(doc),
-        None => String::new(),
+    let name = match (&state.view, &state.doc) {
+        (Some(view), _) => view.file.path.display().to_string(),
+        (None, Some(doc)) => display_name(doc),
+        (None, None) => String::new(),
     };
     let name = format!(" {} ", elide_start(&name, width / 2));
     let (x, _) = buf.set_stringn(
@@ -237,6 +332,10 @@ fn status_text(state: &State, room: usize) -> Pieces {
     let theme = &state.theme;
     if let Some(msg) = &state.status {
         return vec![(elide_start(msg, room), theme.style(StyleKey::StatusMessage))];
+    }
+    if state.view.is_some() {
+        let hint = "Esc closes · Enter opens it in the system viewer";
+        return vec![(elide_end(hint, room), theme.style(StyleKey::StatusHeading))];
     }
     if let Some((kind, text, range)) = state.hidden_match() {
         let label = format!("{kind} → ");
@@ -383,6 +482,7 @@ mod tests {
             table_mode: Default::default(),
             code_wrap: true,
             glyphs_gen: 0,
+            images: None,
         };
         let l = layout::layout(&doc, &Theme::builtin().glyphs, params);
         // intro, blank, top border, header (row 3), separator, 20 body rows (5..25), bottom border.

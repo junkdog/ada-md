@@ -1,0 +1,29 @@
+---
+source: src/layout/tests.rs
+assertion_line: 461
+expression: render(&l)
+---
+    1│  intro
+     │
+    3│
+    3│
+    3│
+    3│
+    3│
+    3│
+    3│
+    3│
+    3│
+    3│
+    3│  🖼 a cat
+     │
+    5│  │
+    5│  │
+    5│  │
+    5│  │
+    5│  │
+    5│  │
+    5│  │
+    5│  │ 🖼 (deep/dog.jpg)
+     │
+    7│  🖼 gone (x.png)

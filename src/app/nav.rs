@@ -301,6 +301,9 @@ impl State {
                 vec![Cmd::LoadDoc(path)]
             }
             Some(LinkState::File(path)) => {
+                if let Some(cmds) = self.open_view(link) {
+                    return cmds;
+                }
                 let what = if links::is_image(&path) {
                     "image"
                 } else {
@@ -393,7 +396,6 @@ impl State {
         self.focus = entry.focus.filter(|&f| (f as usize) < doc.doc.links.len());
     }
 
-    /// The document a navigation waited for has loaded.
     /// `r`: read the file again, keeping the place; git runs again even when the text is the
     /// same, since staging changes the gutter without touching the file.
     pub(super) fn reload(&mut self) -> Vec<Cmd> {
@@ -415,6 +417,7 @@ impl State {
         vec![Cmd::LoadDoc(entry.path)]
     }
 
+    /// The document a navigation waited for has loaded.
     pub(super) fn arrive(&mut self, nav: Nav, mtime: Option<u64>, text: Arc<str>) -> Vec<Cmd> {
         if nav.op == NavOp::Reload {
             self.status = Some("reloaded".into());
@@ -423,7 +426,13 @@ impl State {
                 && doc.text == text
             {
                 doc.mtime = mtime;
-                return self.git_cmd().into_iter().collect();
+                // images may have changed even if the note hasn't
+                let doc_gen = doc.generation;
+                return self
+                    .git_cmd()
+                    .into_iter()
+                    .chain(self.probe_cmd(doc_gen))
+                    .collect();
             }
         }
         self.shift_history(nav.op);

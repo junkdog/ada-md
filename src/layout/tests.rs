@@ -3,7 +3,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{Layout, LayoutParams, RowKind, TableMode, layout};
+use ratatui::layout::Size;
+
+use super::{ImageFit, Layout, LayoutParams, Measure, RowKind, TableMode, layout, layout_measured};
 use crate::doc::{BlockKind, parse};
 use crate::theme::Theme;
 
@@ -33,6 +35,7 @@ fn params(width: u16) -> LayoutParams {
         table_mode: TableMode::Auto,
         code_wrap: true,
         glyphs_gen: 0,
+        images: None,
     }
 }
 
@@ -437,4 +440,44 @@ fn corpus_invariants() {
         }
     }
     assert!(notes > 0);
+}
+
+#[test]
+fn block_images_reserve_rows_once_their_size_is_known() {
+    let theme = Theme::builtin();
+    let doc = parse("intro\n\n![a cat](cat.png)\n\n> ![](deep/dog.jpg)\n\n![gone](x.png)\n");
+    let mut measure = Measure::new(&doc, &theme.glyphs);
+    measure.set_image(0, Some((400, 300)));
+    measure.set_image(1, Some((4000, 1000)));
+    let p = LayoutParams {
+        images: Some(ImageFit {
+            cell: Size::new(10, 20),
+            max_rows: 10,
+        }),
+        ..params(60)
+    };
+    let l = layout_measured(&doc, &measure, &theme.glyphs, p);
+    check_invariants(&l, None, "images");
+    insta::assert_snapshot!(render(&l));
+
+    // 40×15 cells, cut to 10 rows; the quoted one is cut to the 54 columns inside the bar
+    let slots: Vec<_> = l.images.iter().map(|s| (s.link, s.x, s.size)).collect();
+    assert_eq!(slots, [(0, 2, Size::new(27, 10)), (1, 4, Size::new(54, 7))]);
+    let cat = l.images[0].row as usize;
+    assert!(
+        l.rows[cat..cat + 10]
+            .iter()
+            .all(|r| r.kind == RowKind::Image { slot: 0 })
+    );
+    assert_eq!(l.row_text(cat + 10).trim(), "🖼 a cat");
+    assert_eq!(
+        l.hits.iter().filter(|h| h.link == 0).count(),
+        1,
+        "the caption is the link"
+    );
+
+    // without images, or before their headers are read, they are lines of text
+    let text = layout(&doc, &theme.glyphs, params(60));
+    assert!(text.images.is_empty());
+    assert!(text.row_text(2).contains("🖼 a cat (cat.png)"));
 }

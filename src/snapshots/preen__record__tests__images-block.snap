@@ -1,0 +1,29 @@
+---
+source: src/record.rs
+assertion_line: 922
+expression: frames.last().unwrap()
+---
+   Pets
+
+  ┌──────────────────────────────┐
+  │                              │
+  │                              │
+  │                              │
+  │                              │
+  │                              │
+  │                              │
+  │                              │
+  │                              │
+  │                              │
+  │                              │
+  └──────────────────────────────┘
+  🖼 Ada on the rug
+
+  │ Neumann, on a shoulder:
+  │
+  │ 🖼 (pets/neumann.jpeg)
+
+  More photos: the string game and an old note.
+
+
+ pets.md  → pets/neumann.jpeg                           All

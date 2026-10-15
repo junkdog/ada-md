@@ -1,0 +1,32 @@
+preen-rec 1
++0 init size=60x24
++0 graphics proto=halfblocks cell=10x20
++1 open path="pets.md"
++2 doc-loaded path="pets.md" mtime=1760535362123 text:173
+# Pets
+
+![Ada on the rug](pets/ada.png)
+
+> Neumann, on a shoulder:
+>
+> ![](pets/neumann.jpeg)
+
+More photos: [the string game](pets/string.jpeg) and [an old note](notes.md).
+
++3 links-resolved doc_gen=1 resolved:89
+found "pets/ada.png"
+found "pets/neumann.jpeg"
+found "pets/string.jpeg"
+found "notes.md"
+
++4 images-probed doc_gen=1 probes:117
+image 320x240 mtime=1760535362123
+failed "The image format Gif is not supported"
+image 1800x1200 mtime=1760535362123
+
++40 image-ready path="pets/ada.png" mtime=1760535362123 size=32x12
++500 focus-link dir=next
++600 focus-link dir=next
++700 focus-link dir=next
++800 follow
++900 follow

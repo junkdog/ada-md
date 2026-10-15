@@ -353,6 +353,7 @@ mod tests {
             table_mode: TableMode::Auto,
             code_wrap: true,
             glyphs_gen: 0,
+            images: None,
         }
     }
 

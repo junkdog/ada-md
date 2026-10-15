@@ -10,6 +10,7 @@ use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event};
 
 use super::{Effects, Keymap, Msg, Size, State, update};
+use crate::images;
 use crate::record::Recorder;
 use crate::ui;
 
@@ -40,19 +41,24 @@ fn event_loop(
     mut recorder: Option<&mut Recorder>,
 ) -> Result<(), String> {
     let size = terminal.size().map_err(|e| e.to_string())?;
+    // The query reads the terminal's answers from stdin, so it goes before the input thread.
+    let picker = images::detect(state.config.images);
+    let graphics = picker.as_ref().map(images::graphics_msg);
+    if let Some(picker) = picker {
+        effects.set_picker(picker);
+    }
     let (tx, rx) = mpsc::channel();
     effects.spawn_workers(&tx);
     spawn_input(tx);
 
-    let mut queue = VecDeque::from([
-        Msg::Init {
-            size: Size {
-                w: size.width,
-                h: size.height,
-            },
+    let init = Msg::Init {
+        size: Size {
+            w: size.width,
+            h: size.height,
         },
-        Msg::Open { path },
-    ]);
+    };
+    let mut queue: VecDeque<Msg> = [init].into_iter().chain(graphics).collect();
+    queue.push_back(Msg::Open { path });
     loop {
         while let Some(msg) = queue.pop_front() {
             if let Some(rec) = recorder.as_deref_mut() {

@@ -12,12 +12,14 @@ mod tests;
 
 use std::ops::Range;
 
+use ratatui::layout::Size;
 use unicode_width::UnicodeWidthStr;
 
 use crate::doc::{
     AnchorId, Block, BlockKind, Callout, CodeId, Doc, InlineStyle, Inlines, LineRange, LinkId,
     List, Run, Table, UnitId,
 };
+use crate::images;
 use crate::theme::{Glyphs, StyleKey};
 use table::ColMeasure;
 use wrap::{Line, NBSP, Wrapped};
@@ -62,6 +64,17 @@ pub struct LayoutParams {
     pub table_mode: TableMode,
     pub code_wrap: bool,
     pub glyphs_gen: u64,
+    /// Block images render as images when set; otherwise as a `🖼 alt (path)` line.
+    pub images: Option<ImageFit>,
+}
+
+/// How block images are sized (architecture §9).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImageFit {
+    /// The font's cell size in pixels.
+    pub cell: Size,
+    /// The most rows one image may take.
+    pub max_rows: u16,
 }
 
 impl LayoutParams {
@@ -93,6 +106,10 @@ pub enum RowKind {
         block: CodeId,
         line: u32,
         from: u32,
+    },
+    /// A row reserved for [`Layout::images`]`[slot]`, which paint draws over it.
+    Image {
+        slot: u32,
     },
 }
 
@@ -152,6 +169,23 @@ impl CodeInfo {
     }
 }
 
+/// Where a block image goes: `size` cells from column `x` of `row` on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImageSlot {
+    pub link: LinkId,
+    pub row: u32,
+    pub x: u16,
+    /// Columns × rows.
+    pub size: Size,
+}
+
+impl ImageSlot {
+    /// Whether any of its rows is in `rows`.
+    pub fn overlaps(&self, rows: Range<u32>) -> bool {
+        self.row < rows.end && self.row + u32::from(self.size.height) > rows.start
+    }
+}
+
 /// A grid table's rows, for the sticky header.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GridRows {
@@ -168,6 +202,8 @@ pub struct Measure {
     pub glyphs_gen: u64,
     /// Column measurements, indexed by [`Table::id`].
     tables: Vec<Vec<ColMeasure>>,
+    /// Image sizes in pixels, indexed by [`LinkId`]; known once their headers have been read.
+    images: Vec<Option<(u32, u32)>>,
 }
 
 impl Measure {
@@ -184,6 +220,23 @@ impl Measure {
         Self {
             glyphs_gen: glyphs.generation(),
             tables,
+            images: vec![None; doc.links.len()],
+        }
+    }
+
+    /// Measure again for new glyphs, keeping the image sizes.
+    pub fn remeasure(&mut self, doc: &Doc, glyphs: &Glyphs) {
+        let images = std::mem::take(&mut self.images);
+        *self = Self {
+            images,
+            ..Self::new(doc, glyphs)
+        };
+    }
+
+    /// Record the pixel size of the image `link` shows.
+    pub fn set_image(&mut self, link: LinkId, px: Option<(u32, u32)>) {
+        if let Some(slot) = self.images.get_mut(link as usize) {
+            *slot = px;
         }
     }
 }
@@ -224,6 +277,8 @@ pub struct Layout {
     pub grids: Vec<GridRows>,
     /// Code blocks, indexed by [`CodeId`].
     pub code: Vec<CodeInfo>,
+    /// Block images shown as images, in row order.
+    pub images: Vec<ImageSlot>,
 }
 
 impl Layout {
@@ -287,6 +342,7 @@ pub fn layout_measured(
             search: Vec::new(),
             grids: Vec::new(),
             code: vec![CodeInfo::default(); doc.code_count as usize],
+            images: Vec::new(),
         },
         prefixes: Vec::new(),
         prefix_width: 0,
@@ -698,11 +754,35 @@ impl Builder<'_> {
         self.pop_prefix();
     }
 
+    /// A block image: reserved rows and a caption when its size is known and the terminal can
+    /// show images, otherwise a `🖼 alt (path)` line.
     fn image(&mut self, link: LinkId, alt: &str, unit: UnitId, src: LineRange) {
         let dest = self.doc.links.get(link as usize).map_or("", |l| &l.dest);
         let alt = image_alt(alt);
+        let px = self.measure.images.get(link as usize).copied().flatten();
+        let shown = match (self.params.images, px) {
+            (Some(fit), Some(px)) => {
+                let max = Size::new(self.avail(), fit.max_rows);
+                let size = images::fit(px, fit.cell, max);
+                let slot = self.out.images.len() as u32;
+                self.out.images.push(ImageSlot {
+                    link,
+                    row: self.out.row_count(),
+                    x: self.prefix_width,
+                    size,
+                });
+                for _ in 0..size.height {
+                    self.begin_row();
+                    self.end_row(src, RowKind::Image { slot });
+                }
+                true
+            }
+            _ => false,
+        };
+        // Under the image, the caption names it: the alt text, or the path when there is none.
         let dest = match alt {
             "" => format!("({dest})"),
+            _ if shown => String::new(),
             _ => format!(" ({dest})"),
         };
         let parts = [&self.g.image[..], alt, &dest];

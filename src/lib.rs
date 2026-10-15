@@ -6,6 +6,7 @@ pub mod cli;
 pub mod doc;
 pub mod git;
 pub mod highlight;
+pub mod images;
 pub mod layout;
 pub mod links;
 pub mod print;

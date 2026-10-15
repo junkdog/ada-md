@@ -152,6 +152,7 @@ mod tests {
             table_mode: Default::default(),
             code_wrap: true,
             glyphs_gen: 0,
+            images: None,
         };
         let out = render(&doc, &Theme::builtin(), params, None);
         assert_eq!(out.lines().count(), 3);
@@ -166,6 +167,7 @@ mod tests {
             table_mode: Default::default(),
             code_wrap: true,
             glyphs_gen: 0,
+            images: None,
         };
         let plain = |text: &str, line| {
             let out = render(
@@ -210,6 +212,7 @@ mod tests {
             table_mode: Default::default(),
             code_wrap: true,
             glyphs_gen: 0,
+            images: None,
         };
         let theme = Theme::builtin();
         let out = render(&doc, &theme, params, None);
