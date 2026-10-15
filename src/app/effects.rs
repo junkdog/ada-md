@@ -1,20 +1,25 @@
 //! The effect runner: executes [`Cmd`]s and turns their results into messages. This and the
 //! input thread are the only places that touch the outside world.
 
+use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
+use std::thread;
 use std::time::UNIX_EPOCH;
 
 use super::{Cmd, Msg};
 use crate::highlight::{self, Job};
+use crate::links::{BuiltinResolver, Resolver};
 
 pub struct Effects {
     /// stdin, read once at startup, served for the path `-`.
     stdin: Option<Arc<str>>,
     /// The highlight worker's queue; without a worker, highlighting runs inline.
     highlight: Option<Sender<Job>>,
+    resolver: Box<dyn Resolver>,
 }
 
 impl Effects {
@@ -22,6 +27,7 @@ impl Effects {
         Self {
             stdin,
             highlight: None,
+            resolver: Box::new(BuiltinResolver),
         }
     }
 
@@ -39,9 +45,44 @@ impl Effects {
                 Some(worker) => worker.send(job).err().map(|e| e.0.run()),
                 None => Some(job.run()),
             },
+            Cmd::ResolveLinks {
+                doc_gen,
+                source,
+                targets,
+            } => Some(Msg::LinksResolved {
+                doc_gen,
+                resolved: targets
+                    .iter()
+                    .map(|t| self.resolver.resolve(&source, t))
+                    .collect(),
+            }),
+            Cmd::OpenWithSystem(target) => {
+                open_with_system(&target).err().map(|e| Msg::OpenFailed {
+                    target: target.to_string_lossy().into_owned(),
+                    error: e.to_string(),
+                })
+            }
             Cmd::Quit => None,
         }
     }
+}
+
+/// Hand a file or URL to the desktop's opener, detached from the terminal.
+fn open_with_system(target: &OsStr) -> std::io::Result<()> {
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    let mut child = Command::new(opener)
+        .arg(target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    // Reap it whenever it exits, so it doesn't linger as a zombie.
+    thread::spawn(move || child.wait());
+    Ok(())
 }
 
 /// Read a document: `DocLoaded` with its text, or `DocFailed`.

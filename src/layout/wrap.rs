@@ -4,10 +4,14 @@
 //! `-` and `/`, and packed greedily. A word longer than the line is hard-broken. Style changes
 //! inside a word (`**foo**bar`) never create a break opportunity. Every line keeps the source
 //! lines of the pieces on it.
+//!
+//! A piece may have a searchable *body* between decorations (inline code padding, an image icon).
+//! The bodies of a [`Wrapped`], in order, are its search unit's text (ADR-12), so layout can map
+//! every row back to the stretch of the unit it shows.
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::doc::{Doc, InlineStyle, LineRange, LinkId, Run, RunKind};
+use crate::doc::{Doc, InlineStyle, LineRange, LinkId, Run, RunKind, UnitId};
 use crate::theme::{Glyphs, StyleKey};
 
 /// Non-breaking padding; rendered as a plain space.
@@ -22,6 +26,11 @@ pub struct Piece {
     pub inline: InlineStyle,
     pub link: Option<LinkId>,
     pub src_line: u32,
+    /// The searchable part of the piece, `body_start..body_end` in the buffer.
+    pub body_start: u32,
+    pub body_end: u32,
+    /// Where the body starts in the unit's text.
+    pub unit_off: u32,
 }
 
 /// Part of a line: a slice of the buffer inside one piece.
@@ -45,6 +54,10 @@ pub struct Wrapped {
     pub buf: String,
     pub pieces: Vec<Piece>,
     pub lines: Vec<Line>,
+    /// The search unit the bodies belong to.
+    pub unit: Option<UnitId>,
+    /// The length of the unit's text so far.
+    unit_len: u32,
 }
 
 impl Wrapped {
@@ -61,13 +74,17 @@ impl Wrapped {
 /// last word (a heading's trailing pad).
 pub fn wrap(
     runs: &[Run],
+    unit: Option<UnitId>,
     key: StyleKey,
     avail: u16,
     doc: &Doc,
     glyphs: &Glyphs,
     suffix: Option<&str>,
 ) -> Wrapped {
-    let mut w = Wrapped::default();
+    let mut w = Wrapped {
+        unit,
+        ..Wrapped::default()
+    };
     flatten(runs, key, doc, glyphs, &mut w);
     if let Some(suffix) = suffix.filter(|s| !s.is_empty()) {
         let line = w.pieces.last().map_or(0, |p| p.src_line);
@@ -106,12 +123,55 @@ pub fn measure(runs: &[Run], doc: &Doc, glyphs: &Glyphs) -> (u16, u16) {
     (min, max)
 }
 
+/// The text of a search unit made of `runs`: the bodies [`wrap`] gives them, in order.
+pub fn unit_text(runs: &[Run], doc: &Doc, glyphs: &Glyphs) -> String {
+    let mut w = Wrapped::default();
+    flatten(runs, StyleKey::Text, doc, glyphs, &mut w);
+    w.pieces
+        .iter()
+        .map(|p| &w.buf[p.body_start as usize..p.body_end as usize])
+        .collect()
+}
+
 /// Wrap plain text that has a single style.
 pub fn wrap_plain(text: &str, key: StyleKey, src_line: u32, avail: u16) -> Wrapped {
     let mut w = Wrapped::default();
     push_piece(&mut w, text, key, InlineStyle::NONE, None, src_line);
     pack(&mut w, avail.max(1));
     w
+}
+
+/// Wrap single-style text whose middle part, `body`, is the text of search unit `unit`.
+pub fn wrap_unit(
+    [pre, body, post]: [&str; 3],
+    unit: UnitId,
+    key: StyleKey,
+    src_line: u32,
+    avail: u16,
+) -> Wrapped {
+    let mut w = Wrapped {
+        unit: Some(unit),
+        ..Wrapped::default()
+    };
+    let look = (key, InlineStyle::NONE, None);
+    push_parts(&mut w, [pre, body, post], look, src_line);
+    pack(&mut w, avail.max(1));
+    w
+}
+
+/// What the buffer holds for `c`: tabs, carriage returns and other control characters, except
+/// newlines, become spaces.
+pub fn clean_char(c: char) -> char {
+    match c {
+        '\t' | '\r' => ' ',
+        c if c.is_control() && c != '\n' => ' ',
+        c => c,
+    }
+}
+
+/// `text` as the buffer holds it.
+pub fn clean(text: &str) -> String {
+    text.chars().map(clean_char).collect()
 }
 
 fn push_piece(
@@ -122,17 +182,25 @@ fn push_piece(
     link: Option<LinkId>,
     src_line: u32,
 ) {
-    if text.is_empty() {
+    push_parts(w, [text, "", ""], (key, inline, link), src_line);
+}
+
+/// Push one piece: decoration, a searchable body, decoration.
+fn push_parts(
+    w: &mut Wrapped,
+    [pre, body, post]: [&str; 3],
+    (key, inline, link): (StyleKey, InlineStyle, Option<LinkId>),
+    src_line: u32,
+) {
+    if pre.is_empty() && body.is_empty() && post.is_empty() {
         return;
     }
     let start = w.buf.len() as u32;
-    for c in text.chars() {
-        w.buf.push(match c {
-            '\t' | '\r' => ' ',
-            c if c.is_control() && c != '\n' => ' ',
-            c => c,
-        });
-    }
+    w.buf.extend(pre.chars().map(clean_char));
+    let body_start = w.buf.len() as u32;
+    w.buf.extend(body.chars().map(clean_char));
+    let body_end = w.buf.len() as u32;
+    w.buf.extend(post.chars().map(clean_char));
     w.pieces.push(Piece {
         start,
         end: w.buf.len() as u32,
@@ -140,47 +208,48 @@ fn push_piece(
         inline,
         link,
         src_line,
+        body_start,
+        body_end,
+        unit_off: w.unit_len,
     });
+    w.unit_len += body_end - body_start;
 }
 
 fn flatten(runs: &[Run], key: StyleKey, doc: &Doc, glyphs: &Glyphs, w: &mut Wrapped) {
     for run in runs {
         let line = run.src_line;
+        let look = (key, run.style, run.link);
         match run.kind {
             RunKind::Text if run.style.contains(InlineStyle::CODE) => {
                 let pad: String = std::iter::repeat_n(NBSP, glyphs.code_pad as usize).collect();
-                let text = format!("{pad}{}{pad}", run.text.replace('\n', " "));
-                push_piece(w, &text, key, run.style, run.link, line);
+                let text = run.text.replace('\n', " ");
+                push_parts(w, [&pad, &text, &pad], look, line);
             }
             RunKind::Text => {
                 let text = run.text.replace('\n', " ");
-                push_piece(w, &text, key, run.style, run.link, line);
+                push_parts(w, ["", &text, ""], look, line);
             }
-            RunKind::SoftBreak => push_piece(w, " ", key, run.style, run.link, line),
-            RunKind::HardBreak => push_piece(w, "\n", key, run.style, run.link, line),
+            RunKind::SoftBreak => push_parts(w, ["", " ", ""], look, line),
+            RunKind::HardBreak => push_parts(w, ["", "\n", ""], look, line),
             RunKind::InlineImage(link) => {
                 let icon: String = glyphs
                     .image
                     .chars()
                     .map(|c| if c == ' ' { NBSP } else { c })
                     .collect();
-                let text = if run.text.is_empty() {
-                    icon.trim_end_matches(NBSP).to_owned()
+                let icon = if run.text.is_empty() {
+                    icon.trim_end_matches(NBSP)
                 } else {
-                    format!("{icon}{}", run.text)
+                    &icon
                 };
-                push_piece(w, &text, StyleKey::Image, run.style, Some(link), line);
+                let text = run.text.replace('\n', " ");
+                let look = (StyleKey::Image, run.style, Some(link));
+                push_parts(w, [icon, &text, ""], look, line);
             }
             RunKind::FootnoteRef(id) => {
                 let n = doc.footnotes.get(id as usize).map_or(0, |f| f.number);
-                push_piece(
-                    w,
-                    &format!("[{n}]"),
-                    StyleKey::FootnoteRef,
-                    InlineStyle::NONE,
-                    run.link,
-                    line,
-                );
+                let look = (StyleKey::FootnoteRef, InlineStyle::NONE, run.link);
+                push_parts(w, [&format!("[{n}]"), "", ""], look, line);
             }
         }
     }
@@ -342,7 +411,7 @@ mod tests {
             code_pad: 1,
             ..Glyphs::default()
         };
-        let w = wrap(&inl.runs, StyleKey::Text, avail, &doc, &glyphs, None);
+        let w = wrap(&inl.runs, None, StyleKey::Text, avail, &doc, &glyphs, None);
         w.lines
             .iter()
             .map(|l| {
@@ -403,6 +472,7 @@ mod tests {
         };
         let w = wrap(
             &inl.runs,
+            None,
             StyleKey::Text,
             12,
             &doc,

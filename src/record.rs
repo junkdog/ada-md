@@ -30,6 +30,7 @@ use ratatui::buffer::Buffer;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{self, Computed, Dir, Effects, Msg, ScrollBy, Size, State};
+use crate::links::Resolved;
 use crate::ui;
 
 pub const HEADER: &str = "preen-rec 1";
@@ -66,9 +67,25 @@ messages! {
     "toggle-table-mode" => ToggleTableMode {},
     "toggle-code-wrap" => ToggleCodeWrap {},
     "scroll-code-x" => ScrollCodeX { by },
+    "focus-link" => FocusLink { dir },
+    "follow" => Follow {},
+    "back" => Back {},
+    "forward" => Forward {},
+    "open-outline" => OpenOutline {},
+    "outline-filter" => OutlineFilter { text },
+    "outline-move" => OutlineMove { by },
+    "outline-pick" => OutlinePick {},
+    "outline-close" => OutlineClose {},
+    "search-open" => SearchOpen {},
+    "search-input" => SearchInput { pattern },
+    "search-submit" => SearchSubmit {},
+    "search-cancel" => SearchCancel {},
+    "search-next" => SearchNext { dir },
     "quit" => Quit {},
     "doc-loaded" => DocLoaded { path, mtime, text },
     "doc-failed" => DocFailed { path, error },
+    "links-resolved" => LinksResolved { doc_gen, resolved },
+    "open-failed" => OpenFailed { target, error },
     "highlighted" => Highlighted { doc_gen, block, spans },
 }
 
@@ -129,7 +146,7 @@ macro_rules! int_fields {
     )*};
 }
 
-int_fields!(i16, u32, u64);
+int_fields!(i16, i32, u32, u64);
 
 /// Computed results are never written: replay recomputes them (ADR-19).
 impl<T> Field for Computed<T> {
@@ -191,6 +208,40 @@ impl Field for Arc<str> {
             Value::Blob(bytes) => String::from_utf8(bytes).ok().map(Arc::from),
             _ => None,
         }
+    }
+}
+
+/// One line per target: `found "<path>"` or `broken "<reason>"`.
+impl Field for Vec<Resolved> {
+    fn write(&self, key: &str, line: &mut String, blobs: &mut Vec<u8>) {
+        let mut text = String::new();
+        for r in self {
+            let (kind, value) = match r {
+                Resolved::Found(path) => ("found", path.to_string_lossy()),
+                Resolved::Broken(why) => ("broken", why.into()),
+            };
+            let _ = writeln!(text, "{kind} {}", quote(&value));
+        }
+        let _ = write!(line, " {key}:{}", text.len());
+        blobs.extend_from_slice(text.as_bytes());
+    }
+
+    fn read(value: Value) -> Option<Self> {
+        let Value::Blob(bytes) = value else {
+            return None;
+        };
+        let text = String::from_utf8(bytes).ok()?;
+        text.lines()
+            .map(|l| {
+                let (kind, rest) = l.split_once(' ')?;
+                let value = left(quoted(), empty()).parse(rest).result?;
+                match kind {
+                    "found" => Some(Resolved::Found(value.into())),
+                    "broken" => Some(Resolved::Broken(value)),
+                    _ => None,
+                }
+            })
+            .collect()
     }
 }
 
@@ -624,6 +675,39 @@ mod tests {
             Msg::ToggleTableMode,
             Msg::ToggleCodeWrap,
             Msg::ScrollCodeX { by: -8 },
+            Msg::FocusLink { dir: Dir::Next },
+            Msg::Follow,
+            Msg::Back,
+            Msg::Forward,
+            Msg::OpenOutline,
+            Msg::OutlineFilter {
+                text: "p4 \"links\"".into(),
+            },
+            Msg::OutlineMove { by: -3 },
+            Msg::OutlinePick,
+            Msg::OutlineClose,
+            Msg::SearchOpen,
+            Msg::SearchInput {
+                pattern: "foo\\s+bar".into(),
+            },
+            Msg::SearchSubmit,
+            Msg::SearchCancel,
+            Msg::SearchNext { dir: Dir::Prev },
+            Msg::LinksResolved {
+                doc_gen: 2,
+                resolved: vec![
+                    Resolved::Found("notes/a \"b\".md".into()),
+                    Resolved::Broken("no such file: x.md".into()),
+                ],
+            },
+            Msg::LinksResolved {
+                doc_gen: 3,
+                resolved: Vec::new(),
+            },
+            Msg::OpenFailed {
+                target: "x.png".into(),
+                error: "No such file".into(),
+            },
             Msg::Highlighted {
                 doc_gen: 3,
                 block: 12,

@@ -151,6 +151,7 @@ fn mapping_and_width_invariants() {
             .blocks
             .iter()
             .position(|b| matches!(b.kind, BlockKind::FootnoteDefs));
+        let map = crate::search::SearchMap::build(&doc, &theme.glyphs);
         for width in [12, 20, 40, 80, 135, 200] {
             for table_mode in MODES {
                 for code_wrap in [true, false] {
@@ -162,9 +163,38 @@ fn mapping_and_width_invariants() {
                     let l = layout(&doc, &theme.glyphs, p);
                     let what = format!("{name}@{width} {table_mode:?} wrap={code_wrap}");
                     check_invariants(&l, footnotes, &what);
+                    check_search_segs(&l, &map, &what);
                 }
             }
         }
+    }
+}
+
+/// Every search segment shows exactly its stretch of the unit's text, where it says it does.
+pub(crate) fn check_search_segs(l: &Layout, map: &crate::search::SearchMap, what: &str) {
+    for seg in &l.search {
+        let row = &l.rows[seg.row as usize];
+        if !l.params.code_wrap && matches!(row.kind, RowKind::Code { .. }) {
+            continue;
+        }
+        let unit = map.unit_text(seg.unit);
+        let Some(expected) = unit.get(seg.start as usize..seg.end as usize) else {
+            panic!("{what}: {seg:?} is outside its unit {unit:?}");
+        };
+        let expected = expected.replace(super::wrap::NBSP, " ");
+        let width = unicode_width::UnicodeWidthStr::width(expected.as_str());
+        // Columns as layout counts them: string widths, which treat emoji sequences as one.
+        let text = l.row_text(seg.row as usize);
+        let col = |i: usize| unicode_width::UnicodeWidthStr::width(&text[..i]);
+        let mut bounds = (0..=text.len()).filter(|&i| text.is_char_boundary(i));
+        let start = usize::from(seg.col);
+        let a = bounds.clone().find(|&i| col(i) >= start);
+        // zero-width characters such as joiners belong to what precedes them
+        let b = bounds.rfind(|&i| col(i) <= start + width);
+        let (Some(a), Some(b)) = (a, b) else {
+            panic!("{what}: {seg:?} runs past row {text:?}");
+        };
+        assert_eq!(&text[a..b], expected, "{what}: {seg:?} in row {text:?}");
     }
 }
 
@@ -250,6 +280,43 @@ fn grid_rows_cover_header_and_body() {
     assert!(header[1].contains("├───┼───┤"));
     assert!(l.row_text(g.end as usize - 1).contains("│ 3 │ 4 │"));
     assert!(l.row_text(g.end as usize).contains("╰───┴───╯"));
+}
+
+/// Every other body row is striped, on every terminal row it takes, inside the outer borders.
+#[test]
+fn alternate_rows_are_striped() {
+    let theme = Theme::builtin();
+    let md = "| k | v |\n|---|---|\n| a | one |\n| b | two words that wrap |\n| c | three |\n";
+    let doc = parse(md);
+    let striped = |l: &Layout| -> Vec<String> {
+        l.rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| {
+                let cols = r.stripe.clone()?;
+                let text: String = l
+                    .row_text(i)
+                    .chars()
+                    .skip(cols.start as usize)
+                    .take((cols.end - cols.start) as usize)
+                    .collect();
+                Some(text)
+            })
+            .collect()
+    };
+    let grid = layout(&doc, &theme.glyphs, params(20));
+    assert_eq!(striped(&grid), [" b │ two words    ", "   │ that wrap    "]);
+    let records = layout(
+        &doc,
+        &theme.glyphs,
+        LayoutParams {
+            table_mode: TableMode::Records,
+            ..params(30)
+        },
+    );
+    let rows = striped(&records);
+    assert_eq!(rows.len(), 2, "the second card's fields: {rows:?}");
+    assert!(rows[0].starts_with(" k  b"), "{rows:?}");
 }
 
 #[test]
@@ -348,6 +415,7 @@ fn corpus_invariants() {
                     .blocks
                     .iter()
                     .position(|b| matches!(b.kind, BlockKind::FootnoteDefs));
+                let map = crate::search::SearchMap::build(&doc, &theme.glyphs);
                 for width in [40, 80, 135] {
                     for (table_mode, code_wrap) in
                         MODES.iter().flat_map(|&m| [(m, true), (m, false)])
@@ -361,6 +429,7 @@ fn corpus_invariants() {
                         let what =
                             format!("{}@{width} {table_mode:?} wrap={code_wrap}", path.display());
                         check_invariants(&l, footnotes, &what);
+                        check_search_segs(&l, &map, &what);
                     }
                 }
                 notes += 1;

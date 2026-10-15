@@ -64,6 +64,7 @@ style_keys! {
     Rule => "block.rule",
     TableBorder => "block.table_border",
     TableHeader => "block.table_header",
+    TableRowAlt => "block.table_row_alt",
     FootnoteLabel => "block.footnote_label",
     Html => "block.html",
     GutterUnstagedAdded => "gutter.unstaged.added",
@@ -77,8 +78,16 @@ style_keys! {
     StatusHeading => "ui.status_heading",
     StatusPos => "ui.status_pos",
     StatusMessage => "ui.status_message",
+    StatusLink => "ui.status_link",
     SearchMatch => "ui.search_match",
     SearchMatchHidden => "ui.search_match_hidden",
+    SearchCurrent => "ui.search_current",
+    Prompt => "ui.prompt",
+    PromptError => "ui.prompt_error",
+    Popup => "ui.popup",
+    PopupBorder => "ui.popup_border",
+    PopupTitle => "ui.popup_title",
+    PopupSelected => "ui.popup_selected",
 }
 
 impl StyleKey {

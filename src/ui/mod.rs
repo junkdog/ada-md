@@ -1,6 +1,7 @@
 //! The document viewport and the status bar. [`view`] is pure: it reads [`State`] and writes the
 //! frame, touching only the rows on screen (ADR-05).
 
+mod outline;
 mod paint;
 
 use std::ops::Range;
@@ -8,10 +9,11 @@ use std::ops::Range;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{Document, State};
-use crate::layout::Layout;
+use crate::layout::{Layout, RowKind};
 use crate::theme::StyleKey;
 
 pub use paint::{Painter, span_style};
@@ -39,25 +41,89 @@ pub fn view(state: &State, frame: &mut Frame<'_>) {
             layout,
             highlights: &state.highlights,
             code_x: state.code_x,
+            links: &doc.links,
         };
-        painter.rows(buf, doc_area, state.scroll);
-        if let Some(header) = sticky_header(layout, state.scroll, u32::from(doc_area.height)) {
-            let rows = header.filter_map(|r| layout.rows.get(r as usize));
-            for (y, row) in (doc_area.y..).zip(rows) {
-                let line = Rect {
-                    y,
-                    height: 1,
-                    ..doc_area
+        let lines = screen_rows(layout, state.scroll, doc_area);
+        for &(y, r) in &lines {
+            let Some(row) = layout.rows.get(r as usize) else {
+                continue;
+            };
+            let line = Rect {
+                y,
+                height: 1,
+                ..doc_area
+            };
+            for x in line.left()..line.right() {
+                buf[(x, y)].reset();
+            }
+            buf.set_style(line, state.theme.style(StyleKey::Text));
+            painter.row_into(buf, line.x, y, line.right(), row);
+        }
+        overlays(buf, doc_area, state, doc, &lines);
+    }
+    if state.outline.is_some() {
+        outline::draw(buf, doc_area, state);
+    }
+    status_bar(buf, status_area, state);
+}
+
+/// Which layout row each screen line of `area` shows: the rows from `scroll`, with the sticky
+/// header of a table straddling the top drawn over the first lines.
+fn screen_rows(layout: &Layout, scroll: u32, area: Rect) -> Vec<(u16, u32)> {
+    let mut lines: Vec<(u16, u32)> = (area.y..area.bottom())
+        .zip(scroll..layout.row_count())
+        .collect();
+    if let Some(header) = sticky_header(layout, scroll, u32::from(area.height)) {
+        for (line, r) in lines.iter_mut().zip(header) {
+            line.1 = r;
+        }
+    }
+    lines
+}
+
+/// Search matches and the focused link, patched over the painted rows (ADR-03).
+fn overlays(buf: &mut Buffer, area: Rect, state: &State, doc: &Document, lines: &[(u16, u32)]) {
+    let theme = &state.theme;
+    let layout = &doc.layout;
+    let patch = |buf: &mut Buffer, y: u16, cols: Range<u16>, key: StyleKey| {
+        let x = area.x.saturating_add(cols.start);
+        let right = area.x.saturating_add(cols.end).min(area.right());
+        if x < right {
+            let rect = Rect::new(x, y, right - x, 1);
+            buf.set_style(rect, theme.styles[key as usize]);
+        }
+    };
+    if let Some(search) = &state.search {
+        for &(y, r) in lines {
+            for cells in search.projection.on_rows(r..r + 1) {
+                let key = if Some(cells.at) == search.current {
+                    StyleKey::SearchCurrent
+                } else if cells.hidden {
+                    StyleKey::SearchMatchHidden
+                } else {
+                    StyleKey::SearchMatch
                 };
-                for x in line.left()..line.right() {
-                    buf[(x, y)].reset();
-                }
-                buf.set_style(line, state.theme.style(StyleKey::Text));
-                painter.row_into(buf, line.x, y, line.right(), row);
+                let cols = match (cells.window, layout.rows[r as usize].kind) {
+                    (Some(start), RowKind::Code { block, .. }) => {
+                        let info = layout.code.get(block as usize).copied().unwrap_or_default();
+                        let x = state.code_x.min(info.max_x());
+                        let end = start + info.window;
+                        let shift = |c: u16| c.saturating_sub(x).clamp(start, end);
+                        shift(cells.cols.start)..shift(cells.cols.end)
+                    }
+                    _ => cells.cols.clone(),
+                };
+                patch(buf, y, cols, key);
             }
         }
     }
-    status_bar(buf, status_area, state);
+    if let Some(focus) = state.visible_focus() {
+        for &(y, r) in lines {
+            for hit in layout.hits.iter().filter(|h| h.row == r && h.link == focus) {
+                patch(buf, y, hit.cols.clone(), StyleKey::LinkFocused);
+            }
+        }
+    }
 }
 
 /// The header rows of the grid table straddling the top of a `height`-row viewport: its header
@@ -72,53 +138,148 @@ pub fn sticky_header(layout: &Layout, scroll: u32, height: u32) -> Option<Range<
     (scroll + len < grid.end && height > 2 * len).then(|| grid.header.clone())
 }
 
+/// Styled pieces of text, written left to right.
+type Pieces = Vec<(String, Style)>;
+
+/// Write `pieces` from `x`, within `max` columns. Returns where they end.
+fn put(buf: &mut Buffer, x: u16, y: u16, max: usize, pieces: &Pieces) -> u16 {
+    let mut x = x;
+    let end = x.saturating_add(max as u16);
+    for (text, style) in pieces {
+        if x >= end {
+            break;
+        }
+        (x, _) = buf.set_stringn(x, y, text, usize::from(end - x), *style);
+    }
+    x
+}
+
 fn status_bar(buf: &mut Buffer, area: Rect, state: &State) {
     let theme = &state.theme;
     buf.set_style(area, theme.style(StyleKey::StatusBar));
     let width = usize::from(area.width);
 
-    let (name, position) = match &state.doc {
-        Some(doc) => (display_name(doc), position(state)),
-        None => (String::new(), String::new()),
+    let mut right = String::new();
+    if let Some(search) = &state.search {
+        right.push_str(&format!(" {} ", search.counter()));
+    }
+    let position = state
+        .doc
+        .as_ref()
+        .map_or_else(String::new, |_| position(state));
+    let pos_text = format!(" {position} ");
+    let pos_width = (right.width() + pos_text.width()).min(width) as u16;
+    let pos_x = area.right().saturating_sub(pos_width);
+    put(
+        buf,
+        pos_x,
+        area.y,
+        usize::from(pos_width),
+        &vec![
+            (right, theme.style(StyleKey::StatusMessage)),
+            (pos_text, theme.style(StyleKey::StatusPos)),
+        ],
+    );
+
+    if let Some(prompt) = &state.prompt {
+        let room = usize::from(pos_x - area.x);
+        let mut pieces = vec![(format!("/{}", prompt.input), theme.style(StyleKey::Prompt))];
+        pieces.push(("▏".to_owned(), theme.style(StyleKey::Prompt)));
+        if let Some(e) = &prompt.error {
+            pieces.push((format!("  {e}"), theme.style(StyleKey::PromptError)));
+        }
+        put(buf, area.x, area.y, room, &pieces);
+        return;
+    }
+
+    let name = match &state.doc {
+        Some(doc) => display_name(doc),
+        None => String::new(),
     };
     let name = format!(" {} ", elide_start(&name, width / 2));
-    let position = format!(" {position} ");
     let (x, _) = buf.set_stringn(
         area.x,
         area.y,
         &name,
-        width,
+        usize::from(pos_x - area.x),
         theme.style(StyleKey::StatusFile),
     );
-
-    let pos_width = position.width() as u16;
-    let pos_x = area.right().saturating_sub(pos_width).max(x);
-    buf.set_stringn(
-        pos_x,
-        area.y,
-        &position,
-        usize::from(area.right() - pos_x),
-        theme.style(StyleKey::StatusPos),
-    );
-
     let room = usize::from(pos_x.saturating_sub(x)).saturating_sub(2);
-    let (text, key) = match (&state.status, &state.doc) {
-        (Some(msg), _) => (msg.clone(), StyleKey::StatusMessage),
-        (None, Some(doc)) => (
-            heading_path(doc, state.scroll).join(" › "),
-            StyleKey::StatusHeading,
-        ),
-        (None, None) => (String::new(), StyleKey::StatusBar),
-    };
-    if room > 0 && !text.is_empty() {
-        buf.set_stringn(
-            x + 1,
-            area.y,
-            elide_start(&text, room),
-            room,
-            theme.style(key),
-        );
+    if room > 0 {
+        put(buf, x + 1, area.y, room, &status_text(state, room));
     }
+}
+
+/// The middle of the status line: a message, a match in hidden text, the focused link, or the
+/// heading path, in that order of precedence.
+fn status_text(state: &State, room: usize) -> Pieces {
+    let theme = &state.theme;
+    if let Some(msg) = &state.status {
+        return vec![(elide_start(msg, room), theme.style(StyleKey::StatusMessage))];
+    }
+    if let Some((kind, text, range)) = state.hidden_match() {
+        let label = format!("{kind} → ");
+        let base = theme.style(StyleKey::StatusLink);
+        let hit = base.patch(theme.styles[StyleKey::SearchCurrent as usize]);
+        let [before, matched, after] =
+            elide_around(text, range, room.saturating_sub(label.width()));
+        return vec![(label, base), (before, base), (matched, hit), (after, base)];
+    }
+    if let Some(target) = state.focus_text() {
+        let text = format!("→ {target}");
+        return vec![(elide_start(&text, room), theme.style(StyleKey::StatusLink))];
+    }
+    match &state.doc {
+        Some(doc) => {
+            let path = heading_path(doc, state.scroll).join(" › ");
+            vec![(
+                elide_start(&path, room),
+                theme.style(StyleKey::StatusHeading),
+            )]
+        }
+        None => Vec::new(),
+    }
+}
+
+/// `text` split around `range` and elided to `max` columns, keeping the match in view.
+fn elide_around(text: &str, range: Range<usize>, max: usize) -> [String; 3] {
+    let (Some(before), Some(matched), Some(after)) = (
+        text.get(..range.start),
+        text.get(range.clone()),
+        text.get(range.end..),
+    ) else {
+        return [elide_start(text, max), String::new(), String::new()];
+    };
+    if text.width() <= max {
+        return [before.to_owned(), matched.to_owned(), after.to_owned()];
+    }
+    let matched = elide_end(matched, max);
+    let left = max.saturating_sub(matched.width());
+    let before_room = (left / 2).max(left.saturating_sub(after.width()));
+    let before = elide_start(before, before_room);
+    let after = elide_end(after, left.saturating_sub(before.width()));
+    [before, matched, after]
+}
+
+/// Keep the start of `s` within `max` columns.
+fn elide_end(s: &str, max: usize) -> String {
+    if s.width() <= max {
+        return s.to_owned();
+    }
+    if max == 0 {
+        return String::new();
+    }
+    let mut used = 1;
+    let mut out = String::new();
+    for c in s.chars() {
+        used += c.width().unwrap_or(0);
+        if used > max {
+            break;
+        }
+        out.push(c);
+    }
+    out.push('…');
+    out
 }
 
 fn display_name(doc: &Document) -> String {
@@ -220,5 +381,10 @@ mod tests {
         assert_eq!(elide_start("abcdef", 6), "abcdef");
         assert_eq!(elide_start("abcdef", 4), "…def");
         assert_eq!(elide_start("abcdef", 0), "");
+        assert_eq!(elide_end("abcdef", 4), "abc…");
+        let around = |max| elide_around("../30-resources/ratatui/README.md", 24..30, max).join("|");
+        assert_eq!(around(80), "../30-resources/ratatui/|README|.md");
+        assert_eq!(around(16), "…tatui/|README|.md");
+        assert_eq!(around(4), "|REA…|");
     }
 }

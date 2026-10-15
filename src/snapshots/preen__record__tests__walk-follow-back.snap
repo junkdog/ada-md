@@ -1,0 +1,20 @@
+---
+source: src/record.rs
+expression: frames.last().unwrap()
+---
+   Walker
+
+  Start here, then read the second note or the missing
+  one.
+
+  ## Background
+
+  Notes link to each other with relative paths and wiki
+  links. The back stack remembers where you were.
+
+  ## Details
+
+  • following a link pushes history
+  • going back restores the scroll position and the focus
+
+ a.md  → [[missing]]  ✗ no such file: missing.md        All

@@ -46,6 +46,7 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
     for (n, line) in code.lines().enumerate() {
         count += 1;
         let line = expand_tabs(line);
+        let unit = code.first_unit + n as u32;
         let line_src = LineRange::line(code.first_line + n as u32);
         if b.params.code_wrap {
             let mut from = 0;
@@ -56,6 +57,11 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
                 } else {
                     b.text(&g.wrap_mark, StyleKey::CodeWrapMark);
                     b.fill(lead, StyleKey::CodeBlock);
+                }
+                if !chunk.is_empty() {
+                    let col = b.col;
+                    let range = from..from + chunk.len() as u32;
+                    b.search_seg(unit, range, col..col + chunk.width() as u16);
                 }
                 b.text(chunk, StyleKey::CodeText);
                 b.fill(avail, StyleKey::CodeBlock);
@@ -70,6 +76,10 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
         } else {
             b.begin_row();
             b.text(&pad, StyleKey::CodeBlock);
+            if !line.is_empty() {
+                let col = b.col;
+                b.search_seg(unit, 0..line.len() as u32, col..col + inner);
+            }
             // The whole line, in a span `inner` columns wide that paint slices.
             let look = (StyleKey::CodeText, InlineStyle::NONE, None);
             push_span(&mut b.out, b.row_start, &mut b.col, &line, inner, look);

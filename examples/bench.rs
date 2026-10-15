@@ -1,5 +1,6 @@
 //! Timing harness for the P1 budgets (plan §1, success criteria 2 and 3): first paint ≤ 30 ms,
-//! full relayout ≤ 5 ms, scroll repaint ≤ 2 ms. Also a robustness sweep: every note is laid out at
+//! full relayout ≤ 5 ms, scroll repaint ≤ 2 ms. Also times search (P4): building the searchable
+//! text once per document, and one keystroke of an incremental search, drawn. Also a robustness sweep: every note is laid out at
 //! several widths and must not panic.
 //!
 //! ```zsh
@@ -13,6 +14,7 @@ use std::{env, fs, process};
 
 use preen::app::{Cmd, Config, Dir, Msg, ScrollBy, Size, State, update};
 use preen::layout::{self, LayoutParams, TableMode};
+use preen::search::SearchMap;
 use preen::theme::Theme;
 use preen::{doc, ui};
 use ratatui::Terminal;
@@ -70,8 +72,8 @@ fn main() {
     );
 
     println!(
-        "{:>8} {:>6} {:>9} {:>9} {:>9} {:>9}  file",
-        "bytes", "rows", "parse", "1st paint", "relayout", "repaint"
+        "{:>8} {:>6} {:>9} {:>9} {:>9} {:>9} {:>9} {:>9}  file",
+        "bytes", "rows", "parse", "1st paint", "relayout", "repaint", "srch map", "srch key"
     );
     let mut over = 0;
     for path in files
@@ -85,13 +87,15 @@ fn main() {
         let bad = m.first_paint > FIRST_PAINT || m.relayout > RELAYOUT || m.repaint > REPAINT;
         over += usize::from(bad);
         println!(
-            "{:>8} {:>6} {:>9.3} {:>9.3} {:>9.3} {:>9.3}  {}{}",
+            "{:>8} {:>6} {:>9.3} {:>9.3} {:>9.3} {:>9.3} {:>9.3} {:>9.3}  {}{}",
             text.len(),
             m.rows,
             ms(m.parse),
             ms(m.first_paint),
             ms(m.relayout),
             ms(m.repaint),
+            ms(m.search_map),
+            ms(m.search_key),
             path.display(),
             if bad { "  OVER BUDGET" } else { "" }
         );
@@ -108,6 +112,8 @@ struct Measured {
     first_paint: Duration,
     relayout: Duration,
     repaint: Duration,
+    search_map: Duration,
+    search_key: Duration,
 }
 
 fn measure(theme: &Theme, text: &str) -> Measured {
@@ -177,12 +183,29 @@ fn measure(theme: &Theme, text: &str) -> Measured {
         terminal.draw(|f| ui::view(&state, f)).expect("draw");
     });
 
+    let doc = doc::parse(text);
+    let search_map = median(|| {
+        std::hint::black_box(SearchMap::build(&doc, &theme.glyphs));
+    });
+    update(&mut state, Msg::Scroll { by: ScrollBy::Top });
+    update(&mut state, Msg::SearchOpen);
+    let patterns = ["the", "th", "t"];
+    let mut i = 0;
+    let search_key = median(|| {
+        i += 1;
+        let pattern = patterns[i % patterns.len()].to_owned();
+        update(&mut state, Msg::SearchInput { pattern });
+        terminal.draw(|f| ui::view(&state, f)).expect("draw");
+    });
+
     Measured {
         rows,
         parse,
         first_paint,
         relayout,
         repaint,
+        search_map,
+        search_key,
     }
 }
 

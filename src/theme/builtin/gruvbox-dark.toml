@@ -5,6 +5,7 @@ name = "gruvbox-dark"
 
 [palette]
 bg = "#282828"
+bg0_s = "#32302f"
 bg1 = "#3c3836"
 bg2 = "#504945"
 fg = "#ebdbb2"
@@ -61,6 +62,7 @@ task_open = { fg = "gray" }
 rule = { fg = "gray" }
 table_border = { fg = "gray" }
 table_header = { fg = "orange", bold = true }
+table_row_alt = { bg = "bg0_s" }   # every other body row or record card
 footnote_label = { fg = "blue" }
 html = { fg = "gray" }
 
@@ -90,8 +92,16 @@ status_file = { fg = "fg", bg = "bg2", bold = true }
 status_heading = { fg = "orange", bg = "bg1" }
 status_pos = { fg = "fg4", bg = "bg2" }
 status_message = { fg = "yellow", bg = "bg1" }
+status_link = { fg = "aqua", bg = "bg1" }        # the focused link's target
 search_match = { fg = "bg", bg = "orange" }
-search_match_hidden = { underline = true, underline_color = "purple" }
+search_match_hidden = { underline = true, underline_color = "purple" }   # matched in a link target
+search_current = { fg = "bg", bg = "yellow", bold = true }
+prompt = { fg = "fg", bg = "bg1" }
+prompt_error = { fg = "red", bg = "bg1" }
+popup = { fg = "fg", bg = "bg1" }               # the outline
+popup_border = { fg = "gray", bg = "bg1" }
+popup_title = { fg = "orange", bg = "bg1", bold = true }
+popup_selected = { fg = "bg", bg = "orange", bold = true }
 
 [syntax]                     # TextMate scope selector → style; the most specific match wins
 "comment" = { fg = "gray", italic = true }

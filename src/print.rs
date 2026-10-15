@@ -27,6 +27,7 @@ pub fn render(doc: &Doc, theme: &Theme, params: LayoutParams, align: Option<u32>
         layout: &layout,
         highlights: &highlights,
         code_x: 0,
+        links: &[],
     };
     let mut out = String::with_capacity(layout.text.len() * 2);
     out.extend(std::iter::repeat_n('\n', pad));

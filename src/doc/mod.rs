@@ -15,6 +15,9 @@ pub type AnchorId = u32;
 pub type FootnoteId = u32;
 pub type TableId = u32;
 pub type CodeId = u32;
+/// A searchable stretch of visible text: a paragraph, heading, table cell, image alt text or
+/// code line (ADR-12). Numbered `0..Doc::unit_count` in source order.
+pub type UnitId = u32;
 
 /// 1-based, inclusive source lines. `start == 0` means the thing has no source (decorative).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -69,6 +72,8 @@ pub struct Doc {
     pub table_count: u32,
     /// Code blocks are numbered `0..code_count` the same way.
     pub code_count: u32,
+    /// Search units are numbered `0..unit_count`.
+    pub unit_count: u32,
 }
 
 impl Doc {
@@ -102,6 +107,8 @@ pub enum BlockKind {
     Image {
         link: LinkId,
         alt: Box<str>,
+        /// The alt text's search unit.
+        unit: UnitId,
     },
     Rule,
     Html(Box<str>),
@@ -156,6 +163,8 @@ pub struct CodeBlock {
     /// The source line of the first line of code.
     pub first_line: u32,
     pub fenced: bool,
+    /// The search unit of the first line; line `n` is unit `first_unit + n`.
+    pub first_unit: UnitId,
 }
 
 impl CodeBlock {
@@ -201,6 +210,7 @@ pub enum Align {
 #[derive(Debug, Default)]
 pub struct Inlines {
     pub runs: Vec<Run>,
+    pub unit: UnitId,
 }
 
 impl Inlines {

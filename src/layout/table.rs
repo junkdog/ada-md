@@ -187,7 +187,7 @@ fn cells(b: &Builder<'_>, row: &TableRow, widths: &[u16], key: StyleKey) -> Vec<
         .enumerate()
         .map(|(c, &w)| {
             row.cells.get(c).map_or_else(Wrapped::default, |inl| {
-                wrap::wrap(&inl.runs, key, w, b.doc, b.g, None)
+                wrap::wrap(&inl.runs, Some(inl.unit), key, w, b.doc, b.g, None)
             })
         })
         .collect()
@@ -206,9 +206,11 @@ fn grid(b: &mut Builder<'_>, t: &Table, widths: &[u16], border: Option<&Border>)
         border_row(b, widths, bd.sep, bd.horiz);
     }
     let header = header_start..b.out.row_count();
-    for row in &t.rows {
+    for (i, row) in t.rows.iter().enumerate() {
         let cells = cells(b, row, widths, b.text_key);
+        b.striped = i % 2 == 1;
         grid_row(b, row, &cells, widths, &t.aligns, border);
+        b.striped = false;
     }
     if !t.rows.is_empty() {
         b.out.grids.push(GridRows {
@@ -253,6 +255,7 @@ fn grid_row(
         if let Some(bd) = border {
             b.text(bd.vert, StyleKey::TableBorder);
         }
+        let start = b.col;
         for (c, cell) in cells.iter().enumerate() {
             if c > 0
                 && let Some(bd) = border
@@ -271,6 +274,9 @@ fn grid_row(
                 b.emit_line(cell, line);
             }
             b.text(&" ".repeat(1 + right as usize), StyleKey::Text);
+        }
+        if b.striped {
+            b.stripe = Some(start..b.col);
         }
         if let Some(bd) = border {
             b.text(bd.vert, StyleKey::TableBorder);
@@ -332,6 +338,10 @@ fn records(b: &mut Builder<'_>, t: &Table, cols: &[ColMeasure], border: Option<&
                 );
                 if let Some(line) = value.lines.get(k) {
                     b.emit_line(value, line);
+                }
+                if i % 2 == 1 {
+                    let start = b.prefix_width + bar_width.min(1);
+                    b.stripe = Some(start..b.prefix_width.saturating_add(avail));
                 }
                 b.end_row(row.src, RowKind::Text);
             }

@@ -58,8 +58,14 @@ fn event_loop(
             if let Some(rec) = recorder.as_deref_mut() {
                 rec.log(&msg).map_err(|e| format!("recording: {e}"))?;
             }
-            for cmd in update(state, msg) {
-                queue.extend(effects.run(cmd));
+            // An effect's results apply before any input queued behind the message, so a quick
+            // `Back Back` can't overtake the load the first one started.
+            let results: Vec<Msg> = update(state, msg)
+                .into_iter()
+                .filter_map(|cmd| effects.run(cmd))
+                .collect();
+            for msg in results.into_iter().rev() {
+                queue.push_front(msg);
             }
         }
         if state.quit {
@@ -73,9 +79,15 @@ fn event_loop(
             return Ok(());
         };
         for msg in std::iter::once(msg).chain(rx.try_iter()) {
-            // A resize drag produces a burst; only the last size matters.
-            if matches!(msg, Msg::Resize { .. }) && matches!(queue.back(), Some(Msg::Resize { .. }))
-            {
+            // A resize drag produces a burst, and so does typing a search pattern quickly: only
+            // the last one matters.
+            let superseded = matches!(
+                (&msg, queue.back()),
+                (Msg::Resize { .. }, Some(Msg::Resize { .. }))
+                    | (Msg::SearchInput { .. }, Some(Msg::SearchInput { .. }))
+                    | (Msg::OutlineFilter { .. }, Some(Msg::OutlineFilter { .. }))
+            );
+            if superseded {
                 queue.pop_back();
             }
             queue.push_back(msg);

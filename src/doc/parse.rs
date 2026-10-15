@@ -14,7 +14,7 @@ use super::slug::Slugger;
 use super::{
     Align, Anchor, AnchorKind, Block, BlockKind, Callout, CodeBlock, CodeId, Doc, Footnote,
     FootnoteId, InlineStyle, Inlines, LineRange, LinkId, LinkKind, LinkRef, List, ListItem, Run,
-    RunKind, Table, TableId, TableRow, fence,
+    RunKind, Table, TableId, TableRow, UnitId, fence,
 };
 
 pub fn options() -> Options {
@@ -114,6 +114,7 @@ struct Builder {
     image: Option<ImageDraft>,
     tables: TableId,
     code_blocks: CodeId,
+    units: UnitId,
 }
 
 impl Builder {
@@ -146,6 +147,7 @@ impl Builder {
             image: None,
             tables: 0,
             code_blocks: 0,
+            units: 0,
         }
     }
 
@@ -356,7 +358,11 @@ impl Builder {
                     && let Some(Frame::Inline { runs, .. }) = self.stack.pop()
                     && let Some(Frame::Table { cells, .. }) = self.stack.last_mut()
                 {
-                    cells.push(Inlines { runs });
+                    cells.push(Inlines {
+                        runs,
+                        unit: self.units,
+                    });
+                    self.units += 1;
                 }
             }
             _ => {
@@ -521,8 +527,16 @@ impl Builder {
         };
         let block = match frame {
             Frame::Inline { kind, runs, src } => match kind {
+                InlineKind::Paragraph | InlineKind::Implicit | InlineKind::Cell
+                    if runs.is_empty() =>
+                {
+                    return;
+                }
                 InlineKind::Heading(level) => {
-                    let inlines = Inlines { runs };
+                    let inlines = Inlines {
+                        runs,
+                        unit: self.next_unit(),
+                    };
                     let text = inlines.plain_text();
                     let slug = self.slugs.slug(&text);
                     self.anchors.push(Anchor {
@@ -542,9 +556,9 @@ impl Builder {
                 InlineKind::Implicit => {
                     let first = runs.first().map_or(src.start, |r| r.src_line);
                     let last = runs.last().map_or(src.end, |r| r.src_line);
-                    paragraph(runs, LineRange::new(first, last))
+                    paragraph(runs, LineRange::new(first, last), self.next_unit())
                 }
-                InlineKind::Paragraph | InlineKind::Cell => paragraph(runs, src),
+                InlineKind::Paragraph | InlineKind::Cell => paragraph(runs, src, self.next_unit()),
             },
             Frame::Blocks {
                 kind,
@@ -606,6 +620,8 @@ impl Builder {
                 let mut h = DefaultHasher::new();
                 text.hash(&mut h);
                 self.code_blocks += 1;
+                let first_unit = self.units;
+                self.units += super::code_lines(&text).count() as UnitId;
                 Block {
                     kind: BlockKind::Code(CodeBlock {
                         id: self.code_blocks - 1,
@@ -614,6 +630,7 @@ impl Builder {
                         text: text.into(),
                         first_line: src.start + u32::from(fenced),
                         fenced,
+                        first_unit,
                     }),
                     src,
                 }
@@ -648,10 +665,12 @@ impl Builder {
             }
             Frame::Skip => return,
         };
-        if matches!(&block.kind, BlockKind::Paragraph(inl) if inl.runs.is_empty()) {
-            return;
-        }
         self.push_block(block);
+    }
+
+    fn next_unit(&mut self) -> UnitId {
+        self.units += 1;
+        self.units - 1
     }
 
     fn push_block(&mut self, block: Block) {
@@ -708,12 +727,13 @@ impl Builder {
             line_starts: self.line_starts,
             table_count: self.tables,
             code_count: self.code_blocks,
+            unit_count: self.units,
         }
     }
 }
 
 /// A paragraph that holds nothing but one image becomes an image block.
-fn paragraph(runs: Vec<Run>, src: LineRange) -> Block {
+fn paragraph(runs: Vec<Run>, src: LineRange, unit: UnitId) -> Block {
     let mut images = runs.iter().filter(|r| !is_blank(r));
     if let (Some(run), None) = (images.next(), images.next())
         && let RunKind::InlineImage(link) = run.kind
@@ -722,12 +742,13 @@ fn paragraph(runs: Vec<Run>, src: LineRange) -> Block {
             kind: BlockKind::Image {
                 link,
                 alt: run.text.clone(),
+                unit,
             },
             src,
         };
     }
     Block {
-        kind: BlockKind::Paragraph(Inlines { runs }),
+        kind: BlockKind::Paragraph(Inlines { runs, unit }),
         src,
     }
 }

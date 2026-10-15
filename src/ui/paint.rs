@@ -7,6 +7,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::app::LinkState;
 use crate::highlight::{Highlights, Run};
 use crate::layout::{Layout, Row, RowKind, Span};
 use crate::theme::{StyleKey, Theme};
@@ -25,6 +26,8 @@ pub struct Painter<'a> {
     pub highlights: &'a Highlights,
     /// The shared horizontal offset of code in no-wrap mode.
     pub code_x: u16,
+    /// Where each link leads, so broken ones look it; empty when unknown.
+    pub links: &'a [LinkState],
 }
 
 impl Painter<'_> {
@@ -48,8 +51,25 @@ impl Painter<'_> {
     /// A row's styled pieces, left to right. Their widths add up to the row's.
     pub fn row(&self, row: &Row, emit: &mut impl FnMut(&str, Style)) {
         let RowKind::Code { block, line, from } = row.kind else {
+            let Some(stripe) = &row.stripe else {
+                for (text, span) in self.layout.spans(row) {
+                    emit(text, self.style(span));
+                }
+                return;
+            };
+            let bg = self.theme.styles[StyleKey::TableRowAlt as usize];
+            let plain = self.theme.styles[StyleKey::Text as usize].bg;
+            let mut col = 0;
             for (text, span) in self.layout.spans(row) {
-                emit(text, span_style(self.theme, span));
+                let style = self.style(span);
+                let width = span.width;
+                // Spans with a background of their own, like inline code, keep it.
+                if col >= stripe.end || col + width <= stripe.start || style.bg != plain {
+                    emit(text, style);
+                } else {
+                    stripe_piece(text, col, stripe, style, bg, emit);
+                }
+                col += width;
             }
             return;
         };
@@ -96,11 +116,51 @@ impl Painter<'_> {
         }
     }
 
+    /// A span's style, with broken links styled as such.
+    fn style(&self, span: &Span) -> Style {
+        let broken = span
+            .link
+            .and_then(|l| self.links.get(l as usize))
+            .is_some_and(|s| matches!(s, LinkState::Broken(_)));
+        if broken {
+            let t = self.theme;
+            t.span_style(span.key, span.inline, false)
+                .patch(t.styles[StyleKey::LinkBroken as usize])
+        } else {
+            span_style(self.theme, span)
+        }
+    }
+
     /// A clip mark, padded to the `width` of the span it replaces.
     fn mark(&self, glyph: &str, width: u16, pad: Style, emit: &mut impl FnMut(&str, Style)) {
         emit(glyph, self.theme.style(StyleKey::CodeWrapMark));
         spaces(usize::from(width).saturating_sub(glyph.width()), pad, emit);
     }
+}
+
+/// Emit `text`, which starts at column `col`, with `bg` patched over the part in `stripe`.
+fn stripe_piece(
+    text: &str,
+    col: u16,
+    stripe: &std::ops::Range<u16>,
+    style: Style,
+    bg: Style,
+    emit: &mut impl FnMut(&str, Style),
+) {
+    let mut start = 0;
+    let mut inside = col >= stripe.start && col < stripe.end;
+    let mut c = col;
+    for (i, ch) in text.char_indices() {
+        let now = c >= stripe.start && c < stripe.end;
+        if now != inside {
+            let piece = &text[start..i];
+            emit(piece, if inside { style.patch(bg) } else { style });
+            start = i;
+            inside = now;
+        }
+        c += ch.width().unwrap_or(0) as u16;
+    }
+    emit(&text[start..], if inside { style.patch(bg) } else { style });
 }
 
 fn spaces(n: usize, style: Style, emit: &mut impl FnMut(&str, Style)) {
@@ -210,6 +270,25 @@ mod tests {
             out.push(t.to_owned());
         });
         out
+    }
+
+    #[test]
+    fn stripes_split_pieces_at_their_edges() {
+        let bg = Style::new().bg(ratatui::style::Color::Red);
+        let mut out = Vec::new();
+        stripe_piece(
+            "ab日cd",
+            3,
+            &(4..7),
+            Style::new(),
+            bg,
+            &mut |t: &str, s| {
+                out.push((t.to_owned(), s == bg));
+            },
+        );
+        // columns: a=3 b=4 日=5-6 c=7 d=8
+        let expected = [("a", false), ("b日", true), ("cd", false)];
+        assert_eq!(out, expected.map(|(t, b)| (t.to_owned(), b)));
     }
 
     #[test]

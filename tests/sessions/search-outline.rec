@@ -1,0 +1,38 @@
+preen-rec 1
++0 init size=60x16
++1 open path="a.md"
++2 doc-loaded path="a.md" mtime=1760535362123 text:309
+# Walker
+
+Start here, then read [the second note](b.md#details) or the [[missing]] one.
+
+## Background
+
+Notes link to each other with relative paths and wiki links.
+The back stack remembers where you were.
+
+## Details
+
+- following a link pushes history
+- going back restores the scroll position and the focus
+
++3 links-resolved doc_gen=1 resolved:47
+found "b.md"
+broken "no such file: missing.md"
+
++100 search-open
++110 search-input pattern="d"
++120 search-input pattern="de"
++130 search-input pattern="det"
++140 search-submit
++200 search-next dir=next
++300 open-outline
++310 outline-filter text="d"
++320 outline-move by=1
++400 outline-pick
++600 search-open
++610 search-input pattern="(un"
++620 search-cancel
++700 open-outline
++710 outline-filter text="e"
++720 outline-move by=1

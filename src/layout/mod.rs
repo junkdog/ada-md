@@ -15,8 +15,8 @@ use std::ops::Range;
 use unicode_width::UnicodeWidthStr;
 
 use crate::doc::{
-    AnchorId, Block, BlockKind, Callout, CodeId, Doc, InlineStyle, LineRange, LinkId, List, Run,
-    Table,
+    AnchorId, Block, BlockKind, Callout, CodeId, Doc, InlineStyle, Inlines, LineRange, LinkId,
+    List, Run, Table, UnitId,
 };
 use crate::theme::{Glyphs, StyleKey};
 use table::ColMeasure;
@@ -103,6 +103,8 @@ pub struct Row {
     /// The source lines this row renders; `LineRange::NONE` for decoration.
     pub src: LineRange,
     pub kind: RowKind,
+    /// Columns painted with the alternate table-row background.
+    pub stripe: Option<Range<u16>>,
 }
 
 /// A link's cells on one row, for keyboard focus (and a future mouse).
@@ -111,6 +113,18 @@ pub struct Hit {
     pub row: u32,
     pub cols: Range<u16>,
     pub link: LinkId,
+}
+
+/// Where a stretch of a search unit's text renders: bytes `start..end` of the unit, on `row`,
+/// starting at column `col` (ADR-12). In no-wrap code, `col` is where the code's window starts,
+/// and paint shifts by the horizontal offset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SearchSeg {
+    pub unit: UnitId,
+    pub start: u32,
+    pub end: u32,
+    pub row: u32,
+    pub col: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -202,6 +216,8 @@ pub struct Layout {
     pub anchor_rows: Vec<u32>,
     pub headings: Vec<HeadingRow>,
     pub hits: Vec<Hit>,
+    /// Search units → rows and columns, in row order.
+    pub search: Vec<SearchSeg>,
     /// Grid tables with body rows, in row order.
     pub grids: Vec<GridRows>,
     /// Code blocks, indexed by [`CodeId`].
@@ -265,6 +281,7 @@ pub fn layout_measured(
             anchor_rows: vec![u32::MAX; doc.anchors.len()],
             headings: Vec::new(),
             hits: Vec::new(),
+            search: Vec::new(),
             grids: Vec::new(),
             code: vec![CodeInfo::default(); doc.code_count as usize],
         },
@@ -275,6 +292,9 @@ pub fn layout_measured(
         list_depth: 0,
         row_start: 0,
         col: 0,
+        search_col: 0,
+        stripe: None,
+        striped: false,
     };
     if margin > 0 {
         b.push_prefix(&" ".repeat(margin as usize), StyleKey::Text);
@@ -288,6 +308,11 @@ pub fn layout_measured(
         b.out.block_rows.push(first..b.out.row_count());
     }
     b.out
+}
+
+/// The part of an image block's alt text that renders: its search unit's text.
+pub fn image_alt(alt: &str) -> &str {
+    alt.trim()
 }
 
 /// Indentation pushed by a container: a bullet, a quote bar, a heading prefix.
@@ -317,6 +342,12 @@ struct Builder<'a> {
     row_start: u32,
     /// The column the next span lands in.
     col: u16,
+    /// The column where the last search segment ends.
+    search_col: u16,
+    /// The stripe of the row being built.
+    stripe: Option<Range<u16>>,
+    /// Whether the table row being built is striped.
+    striped: bool,
 }
 
 /// A span's style: key, inline markup, link.
@@ -427,6 +458,7 @@ impl Builder<'_> {
             spans: self.row_start..self.out.spans.len() as u32,
             src,
             kind,
+            stripe: self.stripe.take(),
         });
     }
 
@@ -485,6 +517,15 @@ impl Builder<'_> {
         for seg in &line.segs {
             let piece = &w.pieces[seg.piece as usize];
             let from = self.col;
+            if let Some(unit) = w.unit {
+                let (a, b) = (seg.start.max(piece.body_start), seg.end.min(piece.body_end));
+                if a < b {
+                    let col = from + w.buf[seg.start as usize..a as usize].width() as u16;
+                    let end = col + w.buf[a as usize..b as usize].width() as u16;
+                    let at = |x: u32| piece.unit_off + (x - piece.body_start);
+                    self.search_seg(unit, at(a)..at(b), col..end);
+                }
+            }
             push_span(
                 &mut self.out,
                 self.row_start,
@@ -505,6 +546,26 @@ impl Builder<'_> {
             self.emit_line(w, line);
             self.end_row(line.src, RowKind::Text);
         }
+    }
+
+    /// Record that bytes `range` of `unit` render on the current row in columns `cols`.
+    fn search_seg(&mut self, unit: UnitId, range: Range<u32>, cols: Range<u16>) {
+        let row = self.out.row_count();
+        if let Some(last) = self.out.search.last_mut()
+            && (last.unit, last.row, last.end) == (unit, row, range.start)
+            && self.search_col == cols.start
+        {
+            last.end = range.end;
+        } else {
+            self.out.search.push(SearchSeg {
+                unit,
+                start: range.start,
+                end: range.end,
+                row,
+                col: cols.start,
+            });
+        }
+        self.search_col = cols.end;
     }
 
     fn hit(&mut self, from: u16, to: u16, link: LinkId) {
@@ -539,25 +600,28 @@ impl Builder<'_> {
                 level,
                 inlines,
                 anchor,
-            } => self.heading(*level, &inlines.runs, *anchor),
-            BlockKind::Paragraph(inlines) => self.paragraph(&inlines.runs, self.text_key, None),
+            } => self.heading(*level, inlines, *anchor),
+            BlockKind::Paragraph(inlines) => {
+                self.paragraph(&inlines.runs, inlines.unit, self.text_key, None);
+            }
             BlockKind::List(list) => self.list(list),
             BlockKind::Quote { callout, blocks } => self.quote(*callout, blocks, block.src),
             BlockKind::Code(code) => code::layout(self, code, block.src),
             BlockKind::Table(table) => table::layout(self, table),
-            BlockKind::Image { link, alt } => self.image(*link, alt, block.src),
+            BlockKind::Image { link, alt, unit } => self.image(*link, alt, *unit, block.src),
             BlockKind::Rule => self.rule(block.src),
             BlockKind::Html(html) => self.html(html, block.src),
             BlockKind::FootnoteDefs => self.footnotes(),
         }
     }
 
-    fn paragraph(&mut self, runs: &[Run], key: StyleKey, suffix: Option<&str>) {
-        let w = wrap::wrap(runs, key, self.avail(), self.doc, self.g, suffix);
+    fn paragraph(&mut self, runs: &[Run], unit: UnitId, key: StyleKey, suffix: Option<&str>) {
+        let avail = self.avail();
+        let w = wrap::wrap(runs, Some(unit), key, avail, self.doc, self.g, suffix);
         self.emit_lines(&w);
     }
 
-    fn heading(&mut self, level: u8, runs: &[Run], anchor: AnchorId) {
+    fn heading(&mut self, level: u8, inlines: &Inlines, anchor: AnchorId) {
         let row = self.out.row_count();
         if let Some(slot) = self.out.anchor_rows.get_mut(anchor as usize) {
             *slot = row;
@@ -567,7 +631,7 @@ impl Builder<'_> {
         let g = self.g;
         let (prefix, suffix) = &g.heading[usize::from(level.clamp(1, 6) - 1)];
         self.push_prefix(prefix, key);
-        self.paragraph(runs, key, Some(suffix));
+        self.paragraph(&inlines.runs, inlines.unit, key, Some(suffix));
         self.pop_prefix();
     }
 
@@ -631,13 +695,15 @@ impl Builder<'_> {
         self.pop_prefix();
     }
 
-    fn image(&mut self, link: LinkId, alt: &str, src: LineRange) {
+    fn image(&mut self, link: LinkId, alt: &str, unit: UnitId, src: LineRange) {
         let dest = self.doc.links.get(link as usize).map_or("", |l| &l.dest);
-        let text = match alt.trim() {
-            "" => format!("{}({dest})", self.g.image),
-            alt => format!("{}{alt} ({dest})", self.g.image),
+        let alt = image_alt(alt);
+        let dest = match alt {
+            "" => format!("({dest})"),
+            _ => format!(" ({dest})"),
         };
-        let mut w = wrap::wrap_plain(&text, StyleKey::Image, src.start, self.avail());
+        let parts = [&self.g.image[..], alt, &dest];
+        let mut w = wrap::wrap_unit(parts, unit, StyleKey::Image, src.start, self.avail());
         for piece in &mut w.pieces {
             piece.link = Some(link);
         }
