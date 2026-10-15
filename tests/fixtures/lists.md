@@ -1,0 +1,32 @@
+# Lists
+
+- one
+- two, with a long item that has to wrap onto a second line when the terminal is narrow enough
+  - nested under two
+    - and deeper still
+  - back to the second level
+- three
+
+1. first
+2. second
+   1. nested ordered
+   2. another
+3. third
+
+- [x] a finished task
+- [ ] an open task with **markup**
+  - [ ] a nested task
+
+9. nine
+10. ten, with the number column right-aligned
+11. eleven
+
+- a loose list item
+
+  with a second paragraph
+
+- and another loose item
+
+  ```sh
+  echo "code inside a list"
+  ```

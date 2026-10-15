@@ -1,0 +1,685 @@
+//! Session recording and replay (ADR-19, architecture §10 "Recording format").
+//!
+//! A `.rec` file is a `preen-rec 1` header, then one line per message:
+//! `+<ms since start> <kebab-name> <field>*`. A field is `key=value` (an integer, `WxH`, a bare
+//! identifier or a `"quoted string"`) or `key:<len>`, in which case `len` raw bytes follow the
+//! line, in field order, then a newline. File text is stored verbatim, unescaped.
+//!
+//! One macro table generates both the writer and the reader's message mapping, so they can't
+//! drift; the line grammar is an anpa parser.
+
+use std::collections::VecDeque;
+use std::fmt::{Display, Write as _};
+use std::fs::{self, File};
+use std::io::{self, BufWriter, Write};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
+
+use anpa::combinators::{
+    attempt, fold, left, map, map_if, middle, no_separator, not_empty, or, or_diff, peek, right,
+};
+use anpa::core::{ParserExtNoState, StrParser};
+use anpa::number::integer;
+use anpa::parsers::{empty, item, item_if, item_while, skip};
+use anpa::{or, tuplify};
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
+use unicode_width::UnicodeWidthStr;
+
+use crate::app::{self, Dir, Effects, Msg, ScrollBy, Size, State};
+use crate::ui;
+
+pub const HEADER: &str = "preen-rec 1";
+
+macro_rules! messages {
+    ($($name:literal => $variant:ident { $($field:ident),* },)*) => {
+        fn encode(msg: &Msg, line: &mut String, blobs: &mut Vec<u8>) {
+            match msg {
+                $(Msg::$variant { $($field),* } => {
+                    line.push_str($name);
+                    $(Field::write($field, stringify!($field), line, blobs);)*
+                })*
+            }
+        }
+
+        fn decode(name: &str, mut _fields: Fields) -> Result<Msg, String> {
+            match name {
+                $($name => Ok(Msg::$variant { $($field: _fields.take(stringify!($field))?,)* }),)*
+                _ => Err(format!("unknown message `{name}`")),
+            }
+        }
+
+        #[cfg(test)]
+        const NAMES: &[&str] = &[$($name),*];
+    };
+}
+
+messages! {
+    "init" => Init { size },
+    "resize" => Resize { size },
+    "open" => Open { path },
+    "scroll" => Scroll { by },
+    "jump-heading" => JumpHeading { dir },
+    "quit" => Quit {},
+    "doc-loaded" => DocLoaded { path, mtime, text },
+    "doc-failed" => DocFailed { path, error },
+}
+
+// --- field values -----------------------------------------------------------------------------
+
+#[derive(Debug, PartialEq)]
+enum Value {
+    Int(i64),
+    Size(u16, u16),
+    Ident(String),
+    Str(String),
+    Blob(Vec<u8>),
+}
+
+trait Field: Sized {
+    fn write(&self, key: &str, line: &mut String, blobs: &mut Vec<u8>);
+    fn read(value: Value) -> Option<Self>;
+}
+
+fn inline(key: &str, line: &mut String, value: impl Display) {
+    let _ = write!(line, " {key}={value}");
+}
+
+fn quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+impl Field for Size {
+    fn write(&self, key: &str, line: &mut String, _: &mut Vec<u8>) {
+        inline(key, line, format_args!("{}x{}", self.w, self.h));
+    }
+
+    fn read(value: Value) -> Option<Self> {
+        match value {
+            Value::Size(w, h) => Some(Size { w, h }),
+            _ => None,
+        }
+    }
+}
+
+impl Field for String {
+    fn write(&self, key: &str, line: &mut String, _: &mut Vec<u8>) {
+        inline(key, line, quote(self));
+    }
+
+    fn read(value: Value) -> Option<Self> {
+        match value {
+            Value::Str(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
+impl Field for PathBuf {
+    fn write(&self, key: &str, line: &mut String, _: &mut Vec<u8>) {
+        inline(key, line, quote(&self.to_string_lossy()));
+    }
+
+    fn read(value: Value) -> Option<Self> {
+        String::read(value).map(PathBuf::from)
+    }
+}
+
+impl Field for Arc<str> {
+    fn write(&self, key: &str, line: &mut String, blobs: &mut Vec<u8>) {
+        let _ = write!(line, " {key}:{}", self.len());
+        blobs.extend_from_slice(self.as_bytes());
+    }
+
+    fn read(value: Value) -> Option<Self> {
+        match value {
+            Value::Blob(bytes) => String::from_utf8(bytes).ok().map(Arc::from),
+            _ => None,
+        }
+    }
+}
+
+impl Field for Option<u64> {
+    fn write(&self, key: &str, line: &mut String, _: &mut Vec<u8>) {
+        match self {
+            Some(n) => inline(key, line, n),
+            None => inline(key, line, "none"),
+        }
+    }
+
+    fn read(value: Value) -> Option<Self> {
+        match value {
+            Value::Int(n) => u64::try_from(n).ok().map(Some),
+            Value::Ident(s) if s == "none" => Some(None),
+            _ => None,
+        }
+    }
+}
+
+impl Field for Dir {
+    fn write(&self, key: &str, line: &mut String, _: &mut Vec<u8>) {
+        inline(key, line, dir_name(*self));
+    }
+
+    fn read(value: Value) -> Option<Self> {
+        match value {
+            Value::Ident(s) if s == "next" => Some(Dir::Next),
+            Value::Ident(s) if s == "prev" => Some(Dir::Prev),
+            _ => None,
+        }
+    }
+}
+
+fn dir_name(dir: Dir) -> &'static str {
+    match dir {
+        Dir::Next => "next",
+        Dir::Prev => "prev",
+    }
+}
+
+impl Field for ScrollBy {
+    fn write(&self, key: &str, line: &mut String, _: &mut Vec<u8>) {
+        match self {
+            ScrollBy::Rows(n) => inline(key, line, n),
+            ScrollBy::HalfPage(Dir::Next) => inline(key, line, "half-down"),
+            ScrollBy::HalfPage(Dir::Prev) => inline(key, line, "half-up"),
+            ScrollBy::Page(Dir::Next) => inline(key, line, "page-down"),
+            ScrollBy::Page(Dir::Prev) => inline(key, line, "page-up"),
+            ScrollBy::Top => inline(key, line, "top"),
+            ScrollBy::Bottom => inline(key, line, "bottom"),
+        }
+    }
+
+    fn read(value: Value) -> Option<Self> {
+        match value {
+            Value::Int(n) => i32::try_from(n).ok().map(ScrollBy::Rows),
+            Value::Ident(s) => match s.as_str() {
+                "half-down" => Some(ScrollBy::HalfPage(Dir::Next)),
+                "half-up" => Some(ScrollBy::HalfPage(Dir::Prev)),
+                "page-down" => Some(ScrollBy::Page(Dir::Next)),
+                "page-up" => Some(ScrollBy::Page(Dir::Prev)),
+                "top" => Some(ScrollBy::Top),
+                "bottom" => Some(ScrollBy::Bottom),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
+struct Fields(Vec<(String, Value)>);
+
+impl Fields {
+    fn take<T: Field>(&mut self, key: &str) -> Result<T, String> {
+        let i = self
+            .0
+            .iter()
+            .position(|(k, _)| k == key)
+            .ok_or_else(|| format!("missing field `{key}`"))?;
+        let (_, value) = self.0.swap_remove(i);
+        T::read(value).ok_or_else(|| format!("bad value for `{key}`"))
+    }
+}
+
+// --- the line grammar -------------------------------------------------------------------------
+
+enum Raw<'a> {
+    Int(i64),
+    Size(u16, u16),
+    Ident(&'a str),
+    Str(String),
+    Blob(usize),
+}
+
+fn ident<'a>() -> impl StrParser<'a, &'a str> {
+    not_empty(item_while(|c: char| {
+        c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')
+    }))
+}
+
+fn quoted<'a>() -> impl StrParser<'a, String> {
+    let escaped = right(
+        skip('\\'),
+        map_if(item(), |c: char| match c {
+            'n' => Some('\n'),
+            '"' => Some('"'),
+            '\\' => Some('\\'),
+            _ => None,
+        }),
+    );
+    let plain = item_if(|c: char| c != '"' && c != '\\');
+    let body = fold(
+        or(escaped, plain),
+        String::new,
+        |s: &mut String, c: char| s.push(c),
+        true,
+        no_separator(),
+    );
+    middle(skip('"'), body, skip('"'))
+}
+
+/// A value ends at a space or the end of the line.
+fn end_of_value<'a>() -> impl StrParser<'a, ()> {
+    peek(or_diff(skip(' '), empty()))
+}
+
+fn value<'a>() -> impl StrParser<'a, Raw<'a>> {
+    let size = attempt(left(
+        tuplify!(left(integer(), skip('x')), integer()),
+        end_of_value(),
+    ));
+    let int = attempt(left(integer(), end_of_value()));
+    or!(
+        map(quoted(), Raw::Str),
+        map(size, |(w, h)| Raw::Size(w, h)),
+        map(int, Raw::Int),
+        map(ident(), Raw::Ident),
+    )
+}
+
+fn field<'a>() -> impl StrParser<'a, (&'a str, Raw<'a>)> {
+    tuplify!(
+        ident(),
+        or(
+            right(skip('='), value()),
+            right(skip(':'), map(integer(), Raw::Blob))
+        )
+    )
+}
+
+type Line<'a> = (u64, &'a str, Vec<(&'a str, Raw<'a>)>);
+
+fn line<'a>() -> impl StrParser<'a, Line<'a>> {
+    let fields = fold(
+        right(skip(' '), field()),
+        Vec::new,
+        |v: &mut Vec<_>, f| v.push(f),
+        true,
+        no_separator(),
+    );
+    left(
+        tuplify!(
+            right(skip('+'), integer()),
+            right(skip(' '), ident()),
+            fields
+        ),
+        empty(),
+    )
+}
+
+// --- reading and writing ----------------------------------------------------------------------
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Entry {
+    /// Milliseconds since the session started.
+    pub at_ms: u64,
+    pub msg: Msg,
+}
+
+/// Append one entry to `out`.
+pub fn encode_entry(at_ms: u64, msg: &Msg, out: &mut Vec<u8>) {
+    let mut line = format!("+{at_ms} ");
+    let mut blobs = Vec::new();
+    encode(msg, &mut line, &mut blobs);
+    line.push('\n');
+    out.extend_from_slice(line.as_bytes());
+    if !blobs.is_empty() {
+        out.extend_from_slice(&blobs);
+        out.push(b'\n');
+    }
+}
+
+fn take_line<'a>(bytes: &'a [u8], pos: &mut usize) -> &'a [u8] {
+    let rest = &bytes[*pos..];
+    let len = rest.iter().position(|&b| b == b'\n').unwrap_or(rest.len());
+    *pos += (len + 1).min(rest.len());
+    &rest[..len]
+}
+
+/// Parse a recording.
+pub fn parse(bytes: &[u8]) -> Result<Vec<Entry>, String> {
+    let mut pos = 0;
+    let header = take_line(bytes, &mut pos);
+    if header != HEADER.as_bytes() {
+        return Err(format!(
+            "not a recording: expected `{HEADER}` on the first line"
+        ));
+    }
+    let mut entries = Vec::new();
+    while pos < bytes.len() {
+        let raw = take_line(bytes, &mut pos);
+        if raw.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        let n = entries.len() + 1;
+        let text = std::str::from_utf8(raw).map_err(|_| format!("entry {n}: not UTF-8"))?;
+        let (at_ms, name, fields) = line()
+            .parse(text)
+            .result
+            .ok_or_else(|| format!("entry {n}: cannot parse `{text}`"))?;
+        let mut values = Vec::with_capacity(fields.len());
+        let mut blobs = false;
+        for (key, raw) in fields {
+            let value = match raw {
+                Raw::Blob(len) => {
+                    blobs = true;
+                    let end = pos
+                        .checked_add(len)
+                        .filter(|&end| end <= bytes.len())
+                        .ok_or_else(|| format!("entry {n}: `{key}` runs past the end"))?;
+                    let blob = bytes[pos..end].to_vec();
+                    pos = end;
+                    Value::Blob(blob)
+                }
+                Raw::Int(i) => Value::Int(i),
+                Raw::Size(w, h) => Value::Size(w, h),
+                Raw::Ident(s) => Value::Ident(s.to_owned()),
+                Raw::Str(s) => Value::Str(s),
+            };
+            values.push((key.to_owned(), value));
+        }
+        if blobs && bytes.get(pos) == Some(&b'\n') {
+            pos += 1;
+        }
+        let msg = decode(name, Fields(values)).map_err(|e| format!("entry {n}: {e}"))?;
+        entries.push(Entry { at_ms, msg });
+    }
+    Ok(entries)
+}
+
+/// `--record FILE`: logs every message as it reaches `update`.
+pub struct Recorder {
+    out: BufWriter<File>,
+    start: Instant,
+    buf: Vec<u8>,
+}
+
+impl Recorder {
+    pub fn create(path: &Path) -> io::Result<Self> {
+        let mut out = BufWriter::new(File::create(path)?);
+        writeln!(out, "{HEADER}")?;
+        Ok(Self {
+            out,
+            start: Instant::now(),
+            buf: Vec::new(),
+        })
+    }
+
+    pub fn log(&mut self, msg: &Msg) -> io::Result<()> {
+        self.buf.clear();
+        encode_entry(self.start.elapsed().as_millis() as u64, msg, &mut self.buf);
+        self.out.write_all(&self.buf)?;
+        // flushed per message, so a crash keeps everything up to it
+        self.out.flush()
+    }
+}
+
+// --- replay -----------------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ReplayOptions {
+    /// Re-execute commands, skipping recorded world messages (for benchmarking).
+    pub live: bool,
+    /// Render to a `TestBackend` and print the final frame.
+    pub headless: bool,
+}
+
+/// `--replay FILE`.
+pub fn replay(
+    path: &Path,
+    mut state: State,
+    mut effects: Effects,
+    opts: ReplayOptions,
+) -> Result<(), String> {
+    let bytes = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let entries = parse(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    if opts.headless {
+        let frames = replay_headless(&entries, &mut state, &mut effects, opts.live)?;
+        if let Some(last) = frames.last() {
+            print!("{last}");
+        }
+        Ok(())
+    } else {
+        replay_terminal(&entries, &mut state, &mut effects, opts.live)
+    }
+}
+
+/// Apply one message, and in live mode the messages its commands produce.
+fn step(state: &mut State, msg: Msg, effects: &mut Effects, live: bool) {
+    let mut queue = VecDeque::from([msg]);
+    while let Some(msg) = queue.pop_front() {
+        for cmd in app::update(state, msg) {
+            if live {
+                queue.extend(effects.run(&cmd));
+            }
+        }
+    }
+}
+
+/// Replay against a `TestBackend`, returning the frame after every message.
+pub fn replay_headless(
+    entries: &[Entry],
+    state: &mut State,
+    effects: &mut Effects,
+    live: bool,
+) -> Result<Vec<String>, String> {
+    let mut terminal =
+        Terminal::new(TestBackend::new(state.size.w, state.size.h)).map_err(|e| e.to_string())?;
+    let mut frames = Vec::new();
+    for entry in entries {
+        if live && entry.msg.is_world() {
+            continue;
+        }
+        step(state, entry.msg.clone(), effects, live);
+        if state.quit {
+            break;
+        }
+        let area = terminal.backend().buffer().area;
+        if (area.width, area.height) != (state.size.w, state.size.h) {
+            terminal.backend_mut().resize(state.size.w, state.size.h);
+        }
+        terminal
+            .draw(|frame| ui::view(state, frame))
+            .map_err(|e| e.to_string())?;
+        frames.push(frame_text(terminal.backend().buffer()));
+    }
+    Ok(frames)
+}
+
+fn replay_terminal(
+    entries: &[Entry],
+    state: &mut State,
+    effects: &mut Effects,
+    live: bool,
+) -> Result<(), String> {
+    let mut terminal = ratatui::try_init().map_err(|e| format!("terminal: {e}"))?;
+    let start = Instant::now();
+    let mut result = Ok(());
+    for entry in entries {
+        if live && entry.msg.is_world() {
+            continue;
+        }
+        if let Some(wait) = Duration::from_millis(entry.at_ms).checked_sub(start.elapsed()) {
+            thread::sleep(wait);
+        }
+        step(state, entry.msg.clone(), effects, live);
+        if state.quit {
+            break;
+        }
+        if let Err(e) = terminal.draw(|frame| ui::view(state, frame)) {
+            result = Err(e.to_string());
+            break;
+        }
+    }
+    ratatui::restore();
+    result
+}
+
+/// A buffer as plain text, one line per row, trailing blanks trimmed.
+pub fn frame_text(buf: &Buffer) -> String {
+    let area = buf.area;
+    let mut out = String::new();
+    for y in area.top()..area.bottom() {
+        let mut line = String::new();
+        let mut skip = 0;
+        for x in area.left()..area.right() {
+            if skip > 0 {
+                skip -= 1;
+                continue;
+            }
+            let symbol = buf[(x, y)].symbol();
+            line.push_str(symbol);
+            skip = symbol.width().saturating_sub(1);
+        }
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::Config;
+    use crate::theme::Theme;
+
+    fn every_message() -> Vec<Msg> {
+        vec![
+            Msg::Init {
+                size: Size { w: 120, h: 40 },
+            },
+            Msg::Resize {
+                size: Size { w: 100, h: 30 },
+            },
+            Msg::Open {
+                path: "notes/a \"quoted\" \\ name.md".into(),
+            },
+            Msg::Scroll {
+                by: ScrollBy::Rows(-3),
+            },
+            Msg::Scroll {
+                by: ScrollBy::HalfPage(Dir::Next),
+            },
+            Msg::Scroll {
+                by: ScrollBy::Page(Dir::Prev),
+            },
+            Msg::Scroll { by: ScrollBy::Top },
+            Msg::Scroll {
+                by: ScrollBy::Bottom,
+            },
+            Msg::JumpHeading { dir: Dir::Prev },
+            Msg::DocLoaded {
+                path: "a.md".into(),
+                mtime: Some(1_760_535_362_123),
+                text: "# Title\n\nno trailing newline".into(),
+            },
+            Msg::DocLoaded {
+                path: "-".into(),
+                mtime: None,
+                text: "".into(),
+            },
+            Msg::DocFailed {
+                path: "gone.md".into(),
+                error: "No such file\nor directory".into(),
+            },
+            Msg::Quit,
+        ]
+    }
+
+    #[test]
+    fn round_trip_covers_every_variant() {
+        let msgs = every_message();
+        let mut bytes = format!("{HEADER}\n").into_bytes();
+        for (i, msg) in msgs.iter().enumerate() {
+            encode_entry(i as u64 * 7, msg, &mut bytes);
+        }
+        let entries = parse(&bytes).unwrap();
+        let back: Vec<_> = entries.iter().map(|e| e.msg.clone()).collect();
+        assert_eq!(back, msgs);
+        assert_eq!(entries[3].at_ms, 21);
+
+        let mut names: Vec<_> = msgs
+            .iter()
+            .map(|m| {
+                let mut line = String::new();
+                encode(m, &mut line, &mut Vec::new());
+                line
+            })
+            .map(|l| l.split(' ').next().unwrap_or_default().to_owned())
+            .collect();
+        names.sort();
+        names.dedup();
+        let mut expected = NAMES.to_vec();
+        expected.sort_unstable();
+        assert_eq!(names, expected);
+    }
+
+    #[test]
+    fn reads_the_documented_format() {
+        let text = "preen-rec 1\n+0 init size=120x40\n+3 doc-loaded path=\"notes/a.md\" mtime=1760535362123 text:7\n# a\nb\nc\n+412 scroll by=3\n+500 scroll by=page-down\n+980 resize size=100x40\n\n+5000 quit\n";
+        let entries = parse(text.as_bytes()).unwrap();
+        assert_eq!(entries.len(), 6);
+        assert_eq!(
+            entries[1].msg,
+            Msg::DocLoaded {
+                path: "notes/a.md".into(),
+                mtime: Some(1_760_535_362_123),
+                text: "# a\nb\nc".into(),
+            }
+        );
+        assert_eq!(
+            entries[5],
+            Entry {
+                at_ms: 5000,
+                msg: Msg::Quit
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_bad_input() {
+        assert!(parse(b"preen-rec 2\n").is_err());
+        assert!(parse(b"preen-rec 1\n+0 dance\n").is_err());
+        assert!(parse(b"preen-rec 1\n+0 scroll by=sideways\n").is_err());
+        assert!(parse(b"preen-rec 1\n+0 doc-loaded path=\"x\" mtime=none text:99\nshort").is_err());
+        assert!(parse(b"preen-rec 1\n+x quit\n").is_err());
+    }
+
+    #[test]
+    fn checked_in_sessions_replay_identically() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/sessions");
+        let mut checked = 0;
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|e| e != "rec") {
+                continue;
+            }
+            let entries = parse(&fs::read(&path).unwrap()).unwrap();
+            let run = || {
+                let mut state = State::new(Theme::builtin(), Config::default());
+                replay_headless(&entries, &mut state, &mut Effects::new(None), false).unwrap()
+            };
+            let frames = run();
+            assert!(!frames.is_empty(), "{}", path.display());
+            assert_eq!(frames, run(), "{} replays differently", path.display());
+            let name = path.file_stem().unwrap().to_string_lossy().into_owned();
+            insta::assert_snapshot!(name, frames.last().unwrap());
+            checked += 1;
+        }
+        assert!(checked > 0);
+    }
+}

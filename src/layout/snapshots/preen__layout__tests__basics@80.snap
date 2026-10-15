@@ -1,0 +1,36 @@
+---
+source: src/layout/tests.rs
+expression: render(&l)
+---
+    1│   preen fixture: basics
+     │
+    3│  A paragraph with strong, emphasis, both, struck and  inline code . It goes
+ 3-4 │  on long enough to wrap at narrow widths, so the wrapper has something to
+ 4-5 │  chew on, including a bold phrase that spans several words and a path like
+    5│  ../30-resources/ratatui/README.md.
+     │
+    7│  Hard breaks end a line here,
+    8│  and here
+    8│  and the text continues.
+     │
+   10│  ## Links
+     │
+12-13│  An inline link, a link with a fragment, a wiki-link, an aliased wiki link,
+13-14│  an autolink https://example.com/path and an image in running text 🖼 a small
+   14│  icon too.
+     │
+   16│  ### Emoji and symbols
+     │
+   18│  Done ✅, checked ✓, arrow 🠶, and a mix: ✅ ok ✓ fine.
+     │
+   20│  #### Level four
+     │
+   22│  ##### Level five
+     │
+   24│  ###### Level six
+     │
+   26│  ────────────────────────────────────────────────────────────────────────────
+     │
+   28│  🖼 A standalone image (images/diagram.png)
+     │
+   30│  The end.

@@ -1,0 +1,42 @@
+---
+source: src/layout/tests.rs
+expression: render(&l)
+---
+    1│   Tables
+     │
+     │  ╭─────┬───────┬───────╮
+    3│  │ Key │ Value │ Notes │
+     │  ├─────┼───────┼───────┤
+    5│  │ a   │     1 │ short │
+    6│  │  b  │    22 │ bold  │
+    7│  │ c   │   333 │ line  │
+    7│  │     │       │ break │
+     │  ╰─────┴───────┴───────╯
+     │
+    9│  A wide table that cannot fit narrow
+    9│  terminals:
+     │
+   13│  ╭─ 1 ───────────────────────────────
+   13│  │ Module       asm-analysis
+   13│  │ Java main    2,379
+   13│  │ Tests        9 classes · 3.0k
+   13│  │              lines
+   13│  │ oxasm crate  oxasm-analysis
+   13│  │ Description  Control-flow and
+   13│  │              data-flow analysis
+   13│  │              over method bodies
+   14│  ╭─ 2 ───────────────────────────────
+   14│  │ Module       asm-tree
+   14│  │ Java main    4,120
+   14│  │ Tests        14 classes · 5.1k
+   14│  │              lines
+   14│  │ oxasm crate  oxasm-tree
+   14│  │ Description  The tree API:
+   14│  │              ClassNode,
+   14│  │              MethodNode, InsnList
+   14│  │              and friends
+     │
+     │  ╭─────────────╮
+   16│  │ only header │
+     │  ├─────────────┤
+     │  ╰─────────────╯

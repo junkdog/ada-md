@@ -1,0 +1,13 @@
+---
+source: src/layout/tests.rs
+expression: render(&l)
+---
+    1│   Footnotes
+     │
+    3│  A claim[1] and another[2], then the first again[1].
+     │
+    5│  A paragraph that mentions a missing note[^missing].
+     │
+     │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    7│  [1] The source, with a link.
+ 8-9 │  [2] A second note that continues on a lazy line.

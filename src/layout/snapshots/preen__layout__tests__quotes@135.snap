@@ -1,0 +1,20 @@
+---
+source: src/layout/tests.rs
+expression: render(&l)
+---
+    1│   Quotes
+     │
+ 3-4 │  │ A block quote with emphasis that is long enough to wrap when the terminal gets narrow, so the bar repeats on every row.
+     │  │
+    6│  │ │ A nested quote.
+     │  │
+    8│  │ Back to the outer quote.
+     │
+   10│  │ Note
+   11│  │ A callout, as GitHub renders them.
+     │
+   13│  │ Warning
+   14│  │ Careful: this one has a list.
+     │  │
+   16│  │ • item one
+   17│  │ • item two

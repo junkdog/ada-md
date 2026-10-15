@@ -1,0 +1,37 @@
+---
+source: src/layout/tests.rs
+expression: render(&l)
+---
+    1│   Lists
+     │
+    3│  • one
+    4│  • two, with a long item that has to wrap onto a second line when the
+    4│    terminal is narrow enough
+    5│    ◦ nested under two
+    6│      ▪ and deeper still
+    7│    ◦ back to the second level
+    8│  • three
+     │
+   10│  1. first
+   11│  2. second
+   12│     1. nested ordered
+   13│     2. another
+   14│  3. third
+     │
+   16│  [✓] a finished task
+   17│  [ ] an open task with markup
+   18│      [ ] a nested task
+     │
+   20│   9. nine
+   21│  10. ten, with the number column right-aligned
+   22│  11. eleven
+     │
+   24│  • a loose list item
+     │
+   26│    with a second paragraph
+     │
+   28│  • and another loose item
+     │
+   30│     sh
+   31│     echo "code inside a list"
+   32│

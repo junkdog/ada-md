@@ -1,0 +1,118 @@
+# gruvbox dark, ported from ~/.config/glow/gruvbox-dark.json (including its chroma colours), so
+# the switch from glow is visually continuous. User themes may `extends = "gruvbox-dark"` and
+# override only some keys.
+name = "gruvbox-dark"
+
+[palette]
+bg = "#282828"
+bg1 = "#3c3836"
+bg2 = "#504945"
+fg = "#ebdbb2"
+fg0 = "#fbf1c7"
+fg4 = "#a89984"
+gray = "#928374"
+red = "#fb4934"
+green = "#b8bb26"
+yellow = "#fabd2f"
+blue = "#83a598"
+purple = "#d3869b"
+aqua = "#8ec07c"
+orange = "#fe8019"
+
+[document]
+fg = "fg"          # bg unset = terminal default
+margin = 2
+
+[heading]
+1 = { fg = "bg", bg = "orange", bold = true, prefix = " ", suffix = " " }
+2 = { fg = "orange", bold = true, prefix = "## " }
+3 = { fg = "orange", bold = true, prefix = "### " }
+4 = { fg = "orange", bold = true, prefix = "#### " }
+5 = { fg = "orange", bold = true, prefix = "##### " }
+6 = { fg = "orange", prefix = "###### " }
+
+[inline]
+emph = { fg = "yellow", italic = true }
+strong = { fg = "orange", bold = true }
+strike = { crossed_out = true }
+code = { fg = "red", bg = "bg1", pad = 1 }
+link = { fg = "aqua", underline = true }
+link_focused = { fg = "bg", bg = "aqua" }
+link_broken = { fg = "red", crossed_out = true }
+image = { fg = "purple", underline = true }
+footnote_ref = { fg = "blue" }
+
+[block]
+quote = { fg = "fg4" }
+quote_bar = { fg = "fg4" }
+callout_note = { fg = "blue", bold = true }
+callout_tip = { fg = "green", bold = true }
+callout_important = { fg = "purple", bold = true }
+callout_warning = { fg = "yellow", bold = true }
+callout_caution = { fg = "red", bold = true }
+code = { fg = "fg", bg = "bg1" }
+code_label = { fg = "gray", bg = "bg1", italic = true }
+code_wrap_mark = { fg = "gray", bg = "bg1" }
+list_bullet = { fg = "fg4" }
+list_number = { fg = "fg4" }
+task_done = { fg = "green" }
+task_open = { fg = "gray" }
+rule = { fg = "gray" }
+table_border = { fg = "gray" }
+table_header = { fg = "orange", bold = true }
+footnote_label = { fg = "blue" }
+html = { fg = "gray" }
+
+[glyphs]
+bullets = ["•", "◦", "▪"]
+quote_bar = "│ "
+rule = "─"
+table_border = "rounded"     # rounded | ascii | none
+task = ["[✓] ", "[ ] "]
+wrap_mark = "↪"
+image = "🖼 "
+
+[gutter.unstaged]            # working tree differs from the index
+added = { glyph = "▎", fg = "green" }
+modified = { glyph = "▎", fg = "blue" }
+deleted = { glyph = "▁", fg = "red" }
+
+[gutter.staged]              # index differs from HEAD, working tree matches the index
+added = { glyph = "▎", fg = "aqua" }
+modified = { glyph = "▎", fg = "purple" }
+deleted = { glyph = "▁", fg = "orange" }
+
+[ui]
+status_bar = { fg = "fg4", bg = "bg1" }
+status_file = { fg = "fg", bg = "bg2", bold = true }
+status_heading = { fg = "orange", bg = "bg1" }
+status_pos = { fg = "fg4", bg = "bg2" }
+status_message = { fg = "yellow", bg = "bg1" }
+search_match = { fg = "bg", bg = "orange" }
+search_match_hidden = { underline = true, underline_color = "purple" }
+
+[syntax]                     # TextMate scope prefix → style; becomes a syntect theme (P3)
+"comment" = { fg = "gray", italic = true }
+"meta.preprocessor" = { fg = "orange" }
+"keyword" = { fg = "red" }
+"storage.type" = { fg = "yellow" }
+"storage.modifier" = { fg = "red" }
+"keyword.operator" = { fg = "orange" }
+"punctuation" = { fg = "fg" }
+"variable" = { fg = "fg" }
+"support.function" = { fg = "yellow" }
+"entity.name.tag" = { fg = "red" }
+"entity.other.attribute-name" = { fg = "green" }
+"entity.name.type" = { fg = "yellow", bold = true, underline = true }
+"entity.name.class" = { fg = "yellow", bold = true, underline = true }
+"entity.name.function" = { fg = "green" }
+"constant" = { fg = "purple" }
+"constant.numeric" = { fg = "purple" }
+"string" = { fg = "green" }
+"constant.character.escape" = { fg = "orange" }
+"markup.deleted" = { fg = "red" }
+"markup.inserted" = { fg = "green" }
+"markup.italic" = { italic = true }
+"markup.bold" = { bold = true }
+"markup.heading" = { fg = "gray" }
+"invalid" = { fg = "fg0", bg = "red" }
