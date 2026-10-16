@@ -1,4 +1,4 @@
-//! `--print`, and output to a pipe (ADR-15): the same [`Layout`](crate::layout::Layout), written
+//! `--print`, and output to a pipe (ADR-15): the same [`Layout`], written
 //! as SGR-styled text, so ada can stand in for glow in pipes and fzf preview panes.
 
 use std::fmt::Write as _;

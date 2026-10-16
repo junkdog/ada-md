@@ -580,10 +580,10 @@ fuzz_target!(|data: &[u8]| {
     };
 
     s.send(Msg::Init { size: size(w, h) });
-    if let Some((proto, w, h)) = graphics {
-        if let Some(msg) = s.intent(Op::Graphics { proto, w, h }) {
-            s.send(msg);
-        }
+    if let Some((proto, w, h)) = graphics
+        && let Some(msg) = s.intent(Op::Graphics { proto, w, h })
+    {
+        s.send(msg);
     }
     s.send(Msg::DocLoaded {
         path: if stdin {

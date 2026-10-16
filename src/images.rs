@@ -305,7 +305,7 @@ pub enum Entry {
     Failed(String),
 }
 
-/// Encoded images, by key. The least recently requested go first once it holds [`CACHE_CAP`].
+/// Encoded images, by key. The least recently requested go first once it holds `CACHE_CAP`.
 #[derive(Debug, Default)]
 pub struct ImageCache {
     map: HashMap<ImageKey, Entry>,

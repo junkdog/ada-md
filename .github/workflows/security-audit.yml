@@ -1,0 +1,39 @@
+name: 🔒 Security Audit
+
+# Checks every crate in the lockfiles (transitive included) against the RustSec advisory db.
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  push:
+    branches: [ main ]
+    paths: [ '**/Cargo.toml', '**/Cargo.lock', '.github/workflows/security-audit.yml' ]
+  pull_request:
+    paths: [ '**/Cargo.toml', '**/Cargo.lock', '.github/workflows/security-audit.yml' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  audit:
+    name: 🔒 cargo audit (${{ matrix.lockfile }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lockfile: [ Cargo.lock, fuzz/Cargo.lock ]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: 🔍 Run audit
+        run: cargo audit --file ${{ matrix.lockfile }}
+      - name: 📊 Summary
+        if: failure()
+        run: |
+          echo "## Security audit failed: \`${{ matrix.lockfile }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "A dependency has a RustSec advisory; see the audit output above." >> "$GITHUB_STEP_SUMMARY"

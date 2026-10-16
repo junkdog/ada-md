@@ -1,6 +1,6 @@
 //! Shell completion scripts, generated from the CLI's flag table (`ada --completions SHELL`).
 //! ada has no clap (ADR-10), so instead of clap_complete these few lines write the zsh, bash and
-//! fish scripts from [`cli::FLAGS`]: a new flag completes without touching this file. Themes
+//! fish scripts from [`cli::FLAGS`](crate::cli::FLAGS): a new flag completes without touching this file. Themes
 //! complete to the built-ins, the user's themes directory (read when completing) and `.toml`
 //! paths; files to markdown.
 

@@ -1,5 +1,5 @@
 //! ada: a terminal markdown viewer. The pipeline is Source → [`doc`] → [`layout`] → paint
-//! ([`ui`], [`print`]); interaction goes through the message architecture in [`app`].
+//! ([`ui`], [`print`](mod@print)); interaction goes through the message architecture in [`app`].
 
 pub mod app;
 pub mod cli;
