@@ -1,12 +1,12 @@
-//! Search (ADR-12) and the outline: the prompt, `n`/`N`, and the filterable list of headings or
-//! links. Both work on messages carrying what the user typed so far, so recordings replay them
+//! Search (ADR-12) and the outline: the prompt, `n`/`N`, and the filterable list of headings,
+//! links or themes. Both work on messages carrying what the user typed so far, so recordings replay them
 //! exactly.
 
 use std::borrow::Cow;
 
 use regex::Regex;
 
-use super::{Dir, Document, State};
+use super::{Cmd, Dir, Document, State};
 use crate::doc::{LinkId, LinkKind};
 use crate::search::{self, Match, Projection, UnitKind};
 
@@ -53,6 +53,8 @@ pub enum Listing {
     Headings,
     /// `l`: every link, in the order Tab visits them.
     Links,
+    /// `T`: the themes, each previewed while it is selected.
+    Themes,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -61,6 +63,8 @@ pub struct Outline {
     pub filter: String,
     /// An index into the filtered entries.
     pub selected: usize,
+    /// The theme before the theme list opened, put back unless another one is picked.
+    theme: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -190,14 +194,15 @@ impl State {
         }
     }
 
-    pub(super) fn search_open(&mut self) {
-        self.outline = None;
+    pub(super) fn search_open(&mut self) -> Vec<Cmd> {
+        let cmds = self.outline_close();
         self.prompt = Some(Prompt {
             input: String::new(),
             error: None,
             saved: self.search.take(),
             origin: self.scroll,
         });
+        cmds
     }
 
     /// Incremental search: match as the pattern is typed, from where the prompt opened.
@@ -339,11 +344,25 @@ impl State {
 
     /// Everything the outline lists, before filtering.
     pub fn outline_all(&self) -> Vec<OutlineEntry<'_>> {
-        let (Some(doc), Some(outline)) = (&self.doc, &self.outline) else {
+        let Some(outline) = &self.outline else {
             return Vec::new();
         };
-        match outline.listing {
-            Listing::Headings => doc
+        match (outline.listing, &self.doc) {
+            (Listing::Themes, _) => self
+                .themes
+                .iter()
+                .enumerate()
+                .map(|(i, t)| OutlineEntry {
+                    id: i as u32,
+                    level: 0,
+                    row: 0,
+                    text: Cow::Borrowed(&t.name),
+                    dest: (outline.theme.as_ref() == Some(&t.name)).then(|| "current".to_owned()),
+                    broken: false,
+                })
+                .collect(),
+            (_, None) => Vec::new(),
+            (Listing::Headings, Some(doc)) => doc
                 .layout
                 .headings
                 .iter()
@@ -358,7 +377,7 @@ impl State {
                     })
                 })
                 .collect(),
-            Listing::Links => link_entries(doc),
+            (Listing::Links, Some(doc)) => link_entries(doc),
         }
     }
 
@@ -370,12 +389,14 @@ impl State {
         entries
     }
 
-    /// Open the outline at the heading the view is in, or at the focused link or the first one
-    /// on screen.
-    pub(super) fn open_outline(&mut self, listing: Listing) {
+    /// Open the outline at the heading the view is in, at the focused link or the first one on
+    /// screen, or at the current theme.
+    pub(super) fn open_outline(&mut self, listing: Listing) -> Vec<Cmd> {
+        let cmds = self.outline_close();
         self.prompt = None;
         self.outline = Some(Outline {
             listing,
+            theme: (listing == Listing::Themes).then(|| self.theme.name.clone()),
             ..Outline::default()
         });
         let (scroll, focus) = (self.scroll, self.visible_focus());
@@ -387,11 +408,39 @@ impl State {
                 .position(|e| Some(e.id) == focus)
                 .or_else(|| entries.iter().position(|e| e.row >= scroll))
                 .or(entries.len().checked_sub(1)),
+            Listing::Themes => entries.iter().position(|e| e.dest.is_some()),
         };
         let selected = selected.unwrap_or(0);
         if let Some(outline) = &mut self.outline {
             outline.selected = selected;
         }
+        cmds
+    }
+
+    /// Close the outline; the theme list puts back the theme it opened on.
+    pub(super) fn outline_close(&mut self) -> Vec<Cmd> {
+        match self.outline.take().and_then(|o| o.theme) {
+            Some(name) => self.switch_theme(&name),
+            None => Vec::new(),
+        }
+    }
+
+    /// In the theme list, show the selected theme; or the one it opened on, when the filter
+    /// leaves none.
+    pub(super) fn preview_theme(&mut self) -> Vec<Cmd> {
+        let Some(outline) = self
+            .outline
+            .as_ref()
+            .filter(|o| o.listing == Listing::Themes)
+        else {
+            return Vec::new();
+        };
+        let selected = self.outline_entries().get(outline.selected).map(|e| e.id);
+        let name = match selected.and_then(|i| self.themes.get(i as usize)) {
+            Some(theme) => theme.name.clone(),
+            None => outline.theme.clone().unwrap_or_default(),
+        };
+        self.switch_theme(&name)
     }
 
     pub(super) fn outline_filter(&mut self, text: String) {
@@ -420,8 +469,8 @@ impl State {
         }
     }
 
-    /// Jump to the heading; or bring the link on screen, a third of the way down, and focus it,
-    /// so `Enter` follows it.
+    /// Jump to the heading; bring the link on screen, a third of the way down, and focus it, so
+    /// `Enter` follows it; or keep the theme on show.
     pub(super) fn outline_pick(&mut self) {
         let picked = self
             .outline_entries()
@@ -438,6 +487,7 @@ impl State {
                 }
                 self.focus = Some(id as LinkId);
             }
+            Listing::Themes => self.status = Some(format!("theme: {}", self.theme.name)),
         }
     }
 }

@@ -85,7 +85,7 @@ actions! {
         CodeWrap => "code_wrap", "wrap code, or scroll it sideways", ["w"],
         CodeLeft => "code_left", "scroll code left", ["left"],
         CodeRight => "code_right", "scroll code right", ["right"],
-        Theme => "theme", "the next theme", ["T"],
+        Theme => "theme", "pick a theme, previewing each", ["T"],
     }
     "Other" {
         Reload => "reload", "read the file again", ["r"],
@@ -131,7 +131,7 @@ impl Action {
             Action::CodeWrap => Msg::ToggleCodeWrap,
             Action::CodeLeft => Msg::ScrollCodeX { by: -CODE_X_STEP },
             Action::CodeRight => Msg::ScrollCodeX { by: CODE_X_STEP },
-            Action::Theme => Msg::CycleTheme,
+            Action::Theme => Msg::OpenThemes,
             Action::Reload => Msg::Reload,
             Action::Edit => Msg::Edit,
             Action::Yank => Msg::Yank,
@@ -417,7 +417,7 @@ enum Mode {
     Normal,
     /// The search prompt, with the pattern typed so far.
     Search(String),
-    /// The outline popup, of headings or links, with its filter.
+    /// The outline popup, of headings, links or themes, with its filter.
     Outline(String),
     Help,
     /// After `s`: a digit picks the column to sort by.
@@ -583,7 +583,9 @@ impl Keymap {
             None => self.bindings.find(&[key])?,
         };
         match action {
-            Action::Outline | Action::Links => self.mode = Mode::Outline(String::new()),
+            Action::Outline | Action::Links | Action::Theme => {
+                self.mode = Mode::Outline(String::new());
+            }
             Action::Search => self.mode = Mode::Search(String::new()),
             Action::Help => self.mode = Mode::Help,
             Action::Sort => self.mode = Mode::Sort,
@@ -676,9 +678,9 @@ mod tests {
                 by: ScrollBy::Bottom
             })
         );
-        assert_eq!(km.map(shifted('T')), Some(Msg::CycleTheme));
         let backtab = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
         assert_eq!(km.map(backtab), Some(Msg::FocusLink { dir: Dir::Prev }));
+        assert_eq!(km.map(shifted('T')), Some(Msg::OpenThemes));
     }
 
     #[test]
@@ -715,7 +717,6 @@ mod tests {
         let mut km = Keymap::default();
         assert_eq!(press(&mut km, KeyCode::Char('e')), Some(Msg::Edit));
         assert_eq!(press(&mut km, KeyCode::Char('y')), Some(Msg::Yank));
-        assert_eq!(press(&mut km, KeyCode::Char('T')), Some(Msg::CycleTheme));
         assert_eq!(press(&mut km, KeyCode::Char('?')), Some(Msg::Help));
         // the help scrolls, and closes on anything else
         assert_eq!(
@@ -775,6 +776,14 @@ mod tests {
             [Msg::OutlineFilter { text: "q".into() }]
         );
         assert_eq!(press(&mut km, KeyCode::Enter), Some(Msg::OutlinePick));
+
+        // and so does the theme list
+        assert_eq!(press(&mut km, KeyCode::Char('T')), Some(Msg::OpenThemes));
+        assert_eq!(
+            press(&mut km, KeyCode::Down),
+            Some(Msg::OutlineMove { by: 1 })
+        );
+        assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::OutlineClose));
     }
 
     #[test]

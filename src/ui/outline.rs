@@ -1,5 +1,5 @@
-//! The outline popup: the headings (`o`), indented by level, or the links (`l`), each with where
-//! it leads; filtered by what's typed.
+//! The outline popup: the headings (`o`), indented by level, the links (`l`), each with where it
+//! leads, or the themes (`T`); filtered by what's typed.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -39,6 +39,7 @@ pub fn draw(buf: &mut Buffer, area: Rect, state: &State) {
     let (max_width, what) = match outline.listing {
         Listing::Headings => (MAX_WIDTH, "outline"),
         Listing::Links => (MAX_LINKS_WIDTH, "links"),
+        Listing::Themes => (MAX_WIDTH, "themes"),
     };
     let width = (widest as u16 + 4)
         .clamp(32, max_width)
@@ -92,6 +93,7 @@ pub fn draw(buf: &mut Buffer, area: Rect, state: &State) {
         let none = match (outline.filter.is_empty(), outline.listing) {
             (true, Listing::Headings) => "   no headings",
             (true, Listing::Links) => "   no links",
+            (true, Listing::Themes) => "   no themes",
             (false, _) => "   no match",
         };
         buf.set_stringn(x, top + 2, none, inner, theme.style(StyleKey::PopupBorder));

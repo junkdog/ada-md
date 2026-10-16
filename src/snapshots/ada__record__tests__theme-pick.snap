@@ -1,0 +1,28 @@
+---
+source: src/record.rs
+expression: frames.last().unwrap()
+---
+       println!("tab-indented");
+       let long_line = "╭─ themes 1/2 ─────────────────╮nough that it has to ›
+   }                    │ › ▏                          │
+                        │ gruvbox-dark                 │
+                        │ gruvbox-light  current       │
+   kotlin               ╰──────────────────────────────╯
+   fun greet(name: String) = "Hello, $name"
+
+
+
+   untagged block
+
+
+
+   indented code
+   block
+
+
+   ts
+   const x: number = 1;
+
+
+  Text after code.
+ tests/fixtures/code.md  Code                                               Bot

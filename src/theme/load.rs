@@ -42,7 +42,7 @@ fn lookup_name(name: &str) -> String {
     name.to_owned()
 }
 
-/// Every theme `T` cycles through: the built-ins, then the user's themes directory by name,
+/// Every theme `T` lists: the built-ins, then the user's themes directory by name,
 /// with `current` among them. A user theme named like a built-in replaces it. Themes that
 /// don't load are left out, with a warning.
 pub fn load_all(current: &Theme) -> (Vec<Theme>, Vec<String>) {

@@ -4,8 +4,8 @@
 //! in a scratch directory, git answers with fuzzed hunks, image probes report fuzzed sizes, and
 //! every result waits in a queue until the script delivers it, so results can arrive late, out
 //! of order, or after the document they were for is gone. Intents arrive directly or as keys
-//! through the default keymap, and `T` cycles through two extra themes with wide, empty and
-//! ASCII glyphs. Every step is painted. Nothing may panic.
+//! through the default keymap, and `T` lists two extra themes with wide, empty and ASCII
+//! glyphs. Every step is painted. Nothing may panic.
 //!
 //! ```zsh
 //! cargo +nightly fuzz run -s none -a session -- -dict=fuzz/markdown.dict -max_len=16384
@@ -70,7 +70,7 @@ enum Op {
     SearchNext(bool),
     JumpChange(bool),
     Reload,
-    CycleTheme,
+    OpenThemes,
     Help,
     HelpScroll(i16),
     HelpClose,
@@ -500,7 +500,7 @@ impl Session<'_> {
             Op::SearchNext(next) => Msg::SearchNext { dir: dir(next) },
             Op::JumpChange(next) => Msg::JumpChange { dir: dir(next) },
             Op::Reload => Msg::Reload,
-            Op::CycleTheme => Msg::CycleTheme,
+            Op::OpenThemes => Msg::OpenThemes,
             Op::Help => Msg::Help,
             Op::HelpScroll(by) => Msg::HelpScroll { by: i32::from(by) },
             Op::HelpClose => Msg::HelpClose,

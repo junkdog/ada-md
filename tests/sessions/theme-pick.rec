@@ -27,8 +27,10 @@ const x: number = 1;
 
 Text after code.
 
-+100 cycle-theme
-+200 scroll by=8
-+300 toggle-code-wrap
-+400 cycle-theme
-+500 cycle-theme
++100 open-themes
++150 outline-move by=1
++200 outline-pick
++300 scroll by=8
++400 toggle-code-wrap
++500 open-themes
++600 outline-move by=-1

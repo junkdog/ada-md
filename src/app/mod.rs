@@ -134,8 +134,8 @@ pub enum Msg {
     },
     /// Read the file again, keeping the place, and refresh the gutter.
     Reload,
-    /// `T`: the next theme.
-    CycleTheme,
+    /// `T`: the outline, listing the themes.
+    OpenThemes,
     /// `?`: the help overlay, which lists the keys.
     Help,
     HelpScroll {
@@ -405,7 +405,7 @@ impl Document {
 
 pub struct State {
     pub theme: Theme,
-    /// The themes `T` cycles through, the current one among them.
+    /// The themes `T` lists, the current one among them.
     pub themes: Vec<Theme>,
     pub config: Config,
     pub size: Size,
@@ -776,22 +776,15 @@ impl State {
         self.scroll = target as u32;
     }
 
-    /// `T`: the theme after the current one.
-    fn cycle_theme(&mut self) -> Vec<Cmd> {
-        let n = self.themes.len();
-        if n < 2 {
-            self.status = Some("no other themes: add some to ~/.config/ada/themes".into());
+    /// Switch to the theme named `name`, unless it's on already.
+    fn switch_theme(&mut self, name: &str) -> Vec<Cmd> {
+        if self.theme.name == name {
             return Vec::new();
         }
-        let i = self
-            .themes
-            .iter()
-            .position(|t| t.name == self.theme.name)
-            .map_or(0, |i| (i + 1) % n);
-        let theme = self.themes[i].clone();
-        let cmds = self.set_theme(theme);
-        self.status = Some(format!("theme: {} ({}/{n})", self.theme.name, i + 1));
-        cmds
+        match self.themes.iter().find(|t| t.name == name) {
+            Some(theme) => self.set_theme(theme.clone()),
+            None => Vec::new(),
+        }
     }
 
     /// Switch themes. Colours resolve at paint, so only new glyphs lay the documents out again,
@@ -997,12 +990,11 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.status = None;
             state.yank()
         }
-        Msg::CycleTheme => state.cycle_theme(),
         Msg::Help => {
             state.status = None;
-            state.outline = None;
+            let cmds = state.outline_close();
             state.help = Some(0);
-            Vec::new()
+            cmds
         }
         Msg::HelpScroll { by } => {
             let max = i64::from(crate::ui::help_max_scroll(state));
@@ -1044,34 +1036,32 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::OpenOutline => {
             state.status = None;
-            state.open_outline(Listing::Headings);
-            Vec::new()
+            state.open_outline(Listing::Headings)
         }
         Msg::OpenLinks => {
             state.status = None;
-            state.open_outline(Listing::Links);
-            Vec::new()
+            state.open_outline(Listing::Links)
+        }
+        Msg::OpenThemes => {
+            state.status = None;
+            state.open_outline(Listing::Themes)
         }
         Msg::OutlineFilter { text } => {
             state.outline_filter(text);
-            Vec::new()
+            state.preview_theme()
         }
         Msg::OutlineMove { by } => {
             state.outline_move(by);
-            Vec::new()
+            state.preview_theme()
         }
         Msg::OutlinePick => {
             state.outline_pick();
             state.visible_jobs()
         }
-        Msg::OutlineClose => {
-            state.outline = None;
-            Vec::new()
-        }
+        Msg::OutlineClose => state.outline_close(),
         Msg::SearchOpen => {
             state.status = None;
-            state.search_open();
-            Vec::new()
+            state.search_open()
         }
         Msg::SearchInput { pattern } => {
             state.search_input(pattern);
@@ -1851,6 +1841,60 @@ mod tests {
         assert_eq!(state.scroll, heading.min(state.max_scroll()));
         update(&mut state, Msg::Back);
         assert_eq!(state.scroll, 30);
+    }
+
+    #[test]
+    fn theme_list_previews_and_keeps_only_the_pick() {
+        let mut state = loaded("# Themes\n", 80, 20);
+        let name = |s: &State| s.theme.name.clone();
+        let (dark, light) = ("gruvbox-dark".to_owned(), "gruvbox-light".to_owned());
+        assert_eq!(name(&state), dark);
+
+        // the selection is on show, and `Esc` puts the old theme back
+        update(&mut state, Msg::OpenThemes);
+        assert_eq!(state.outline_entries()[0].dest.as_deref(), Some("current"));
+        update(&mut state, Msg::OutlineMove { by: 1 });
+        assert_eq!(name(&state), light);
+        update(&mut state, Msg::OutlineClose);
+        assert_eq!(name(&state), dark);
+
+        // a filter matching nothing shows the old theme, and so does picking nothing
+        update(&mut state, Msg::OpenThemes);
+        update(
+            &mut state,
+            Msg::OutlineFilter {
+                text: "light".into(),
+            },
+        );
+        assert_eq!(name(&state), light);
+        update(
+            &mut state,
+            Msg::OutlineFilter {
+                text: "nope".into(),
+            },
+        );
+        assert_eq!(name(&state), dark);
+        update(&mut state, Msg::OutlinePick);
+        assert_eq!(name(&state), dark);
+
+        // the help closes the list without picking
+        update(&mut state, Msg::OpenThemes);
+        update(&mut state, Msg::OutlineMove { by: 1 });
+        update(&mut state, Msg::Help);
+        assert_eq!(name(&state), dark);
+        update(&mut state, Msg::HelpClose);
+
+        update(&mut state, Msg::OpenThemes);
+        update(&mut state, Msg::OutlineMove { by: 1 });
+        update(&mut state, Msg::OutlinePick);
+        assert_eq!(name(&state), light);
+        assert_eq!(state.status.as_deref(), Some("theme: gruvbox-light"));
+        update(&mut state, Msg::OpenThemes);
+        let current = &state.outline_entries()[state.outline.as_ref().unwrap().selected];
+        assert_eq!(
+            current.text, "gruvbox-light",
+            "the list opens on the current theme"
+        );
     }
 
     #[test]

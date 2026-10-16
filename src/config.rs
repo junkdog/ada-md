@@ -153,7 +153,7 @@ pub fn default_text() -> String {
 # command-line flags win over what is set here.
 
 # The theme: a built-in name (gruvbox-dark, gruvbox-light), the name of a theme in
-# ~/.config/ada/themes/, or a path to a .toml theme. `T` cycles through them all.
+# ~/.config/ada/themes/, or a path to a .toml theme. `T` picks among them all.
 # theme = \"gruvbox-dark\"
 
 # Wrap prose at most this many columns wide; 0 uses the terminal's width. Tables that need

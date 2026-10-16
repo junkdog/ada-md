@@ -17,7 +17,7 @@ expression: frames.last().unwrap()
              │   w               wrap code, or scroll it sideways │
              │   ←               scroll code left                 │
              │   →               scroll code right                │
-   untagged b│   T               the next theme                   │
+   untagged b│   T               pick a theme, previewing each    │
              │                                                    │
              │ Other                                              │
              │   r               read the file again              │

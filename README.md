@@ -117,7 +117,7 @@ the keys in use.
 
 Two themes are built in, `gruvbox-dark` (the default) and `gruvbox-light`. Your own go in
 `~/.config/ada/themes/NAME.toml` and are picked with `--theme NAME` or `theme = "NAME"`; `T`
-cycles through all of them. A theme can start from another and change only some of it:
+lists all of them, previewing each as it's selected: `Enter` keeps it, `Esc` goes back. A theme can start from another and change only some of it:
 
 ```toml
 extends = "gruvbox-dark"
