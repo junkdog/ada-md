@@ -107,6 +107,7 @@ popup = { fg = "fg", bg = "bg1" }               # the outline
 popup_border = { fg = "bg3", bg = "bg1" }
 popup_title = { fg = "orange", bg = "bg1", bold = true }
 popup_selected = { fg = "bg", bg = "orange", bold = true }
+sort_table = { fg = "orange" }                  # the borders and header of the table `s` sorts
 
 [syntax]                     # TextMate scope selector → style; the most specific match wins
 "comment" = { fg = "gray", italic = true }

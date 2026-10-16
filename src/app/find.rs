@@ -1,13 +1,13 @@
 //! Search (ADR-12) and the outline: the prompt, `n`/`N`, and the filterable list of headings,
-//! links or themes. Both work on messages carrying what the user typed so far, so recordings replay them
-//! exactly.
+//! links, themes or a table's columns. Both work on messages carrying what the user typed so far,
+//! so recordings replay them exactly.
 
 use std::borrow::Cow;
 
 use regex::Regex;
 
 use super::{Cmd, Dir, Document, State};
-use crate::doc::{LinkId, LinkKind};
+use crate::doc::{LinkId, LinkKind, TableId};
 use crate::search::{self, Match, Projection, UnitKind};
 
 #[derive(Debug)]
@@ -55,6 +55,10 @@ pub enum Listing {
     Links,
     /// `T`: the themes, each previewed while it is selected.
     Themes,
+    /// `s`: the columns to sort a table by, each ascending and descending, then the source order
+    /// if it is sorted; `None` when
+    /// no table on screen has rows to sort.
+    Columns(Option<TableId>),
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -69,7 +73,8 @@ pub struct Outline {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OutlineEntry<'a> {
-    /// The heading's anchor, or the link.
+    /// The heading's anchor, the link, the theme's index, or how to sort a table (see
+    /// `sort::entry_id`).
     pub id: u32,
     /// The heading level; 0 for links.
     pub level: u8,
@@ -378,6 +383,8 @@ impl State {
                 })
                 .collect(),
             (Listing::Links, Some(doc)) => link_entries(doc),
+            (Listing::Columns(None), Some(_)) => Vec::new(),
+            (Listing::Columns(Some(id)), Some(_)) => self.column_entries(id),
         }
     }
 
@@ -390,7 +397,7 @@ impl State {
     }
 
     /// Open the outline at the heading the view is in, at the focused link or the first one on
-    /// screen, or at the current theme.
+    /// screen, at the current theme, or at the other way round from how the table is sorted.
     pub(super) fn open_outline(&mut self, listing: Listing) -> Vec<Cmd> {
         let cmds = self.outline_close();
         self.prompt = None;
@@ -409,6 +416,10 @@ impl State {
                 .or_else(|| entries.iter().position(|e| e.row >= scroll))
                 .or(entries.len().checked_sub(1)),
             Listing::Themes => entries.iter().position(|e| e.dest.is_some()),
+            Listing::Columns(table) => {
+                let open = table.and_then(|t| self.column_to_open(t));
+                entries.iter().position(|e| Some(e.id) == open)
+            }
         };
         let selected = selected.unwrap_or(0);
         if let Some(outline) = &mut self.outline {
@@ -470,14 +481,14 @@ impl State {
     }
 
     /// Jump to the heading; bring the link on screen, a third of the way down, and focus it, so
-    /// `Enter` follows it; or keep the theme on show.
-    pub(super) fn outline_pick(&mut self) {
+    /// `Enter` follows it; keep the theme on show; or sort the table by the column.
+    pub(super) fn outline_pick(&mut self) -> Vec<Cmd> {
         let picked = self
             .outline_entries()
             .get(self.outline.as_ref().map_or(0, |o| o.selected))
             .map(|e| (e.id, e.row));
         let (Some(outline), Some((id, row))) = (self.outline.take(), picked) else {
-            return;
+            return Vec::new();
         };
         match outline.listing {
             Listing::Headings => self.jump_local(row),
@@ -488,7 +499,10 @@ impl State {
                 self.focus = Some(id as LinkId);
             }
             Listing::Themes => self.status = Some(format!("theme: {}", self.theme.name)),
+            Listing::Columns(None) => {}
+            Listing::Columns(Some(table)) => return self.sort_column(table, id),
         }
+        self.visible_jobs()
     }
 }
 

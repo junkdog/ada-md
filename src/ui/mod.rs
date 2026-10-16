@@ -198,7 +198,8 @@ fn gutter(buf: &mut Buffer, area: Rect, state: &State, doc: &Document, lines: &[
     }
 }
 
-/// Search matches and the focused link, patched over the painted rows (ADR-03).
+/// Search matches, the focused link, and the borders and header of the table the column list is
+/// for, patched over the painted rows (ADR-03).
 fn overlays(buf: &mut Buffer, area: Rect, state: &State, doc: &Document, lines: &[(u16, u32)]) {
     let theme = &state.theme;
     let layout = &doc.layout;
@@ -238,6 +239,22 @@ fn overlays(buf: &mut Buffer, area: Rect, state: &State, doc: &Document, lines: 
         for &(y, r) in lines {
             for hit in layout.hits.iter().filter(|h| h.row == r && h.link == focus) {
                 patch(buf, y, hit.cols.clone(), StyleKey::LinkFocused);
+            }
+        }
+    }
+    // so it's plain which table the column list sorts
+    if let Some(table) = state
+        .sorting()
+        .and_then(|t| layout.tables.iter().find(|r| r.table == t))
+    {
+        for &(y, r) in lines.iter().filter(|(_, r)| table.rows.contains(r)) {
+            let mut x = 0;
+            for (_, span) in layout.spans(&layout.rows[r as usize]) {
+                let cols = x..x + span.width;
+                x = cols.end;
+                if matches!(span.key, StyleKey::TableBorder | StyleKey::TableHeader) {
+                    patch(buf, y, cols, StyleKey::SortTable);
+                }
             }
         }
     }
@@ -333,9 +350,6 @@ fn status_bar(buf: &mut Buffer, area: Rect, state: &State) {
 /// heading path, in that order of precedence.
 fn status_text(state: &State, room: usize) -> Pieces {
     let theme = &state.theme;
-    if state.sorting.is_some() {
-        return sort_picker(state);
-    }
     if let Some(msg) = &state.status {
         return vec![(elide_start(msg, room), theme.style(StyleKey::StatusMessage))];
     }
@@ -369,36 +383,6 @@ fn status_text(state: &State, room: usize) -> Pieces {
         }
         None => Vec::new(),
     }
-}
-
-/// `sort: 1 Name ▲  2 Size  3 Date  0 unsorted`: the columns `s` can sort the table by.
-fn sort_picker(state: &State) -> Pieces {
-    let theme = &state.theme;
-    let (key, label) = (
-        theme.style(StyleKey::StatusMessage),
-        theme.style(StyleKey::StatusHeading),
-    );
-    let [asc, desc] = &theme.glyphs.sort_mark;
-    let mut pieces = vec![("sort:".to_owned(), label)];
-    let columns = state.sort_columns();
-    let options = columns
-        .iter()
-        .enumerate()
-        .map(|(i, (name, sort))| {
-            let mark = match sort {
-                Some(s) if s.desc => format!(" {desc}"),
-                Some(_) => format!(" {asc}"),
-                None => String::new(),
-            };
-            (format!("{}", i + 1), format!("{name}{mark}"))
-        })
-        .chain(std::iter::once(("0".to_owned(), "unsorted".to_owned())));
-    for (digit, name) in options {
-        pieces.push((format!("  {digit}"), key));
-        pieces.push((format!(" {name}"), label));
-    }
-    // `put` clips what doesn't fit
-    pieces
 }
 
 /// `text` split around `range` and elided to `max` columns, keeping the match in view.
@@ -535,6 +519,52 @@ mod tests {
         assert_eq!(sticky(22), Some(3..5), "one body row left under the header");
         assert_eq!(sticky(23), None);
         assert_eq!(sticky_header(&l, 10, 4), None, "the viewport is too short");
+    }
+
+    #[test]
+    fn the_table_being_sorted_takes_the_sort_table_colour() {
+        use crate::app::{Config, Dir, Msg, Size, update};
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let table = "| Name | Size |\n|---|--:|\n| beta | 10 |\n| alpha | 9 |\n";
+        let mut state = State::new(Theme::builtin(), Config::default());
+        update(
+            &mut state,
+            Msg::Init {
+                size: Size { w: 60, h: 30 },
+            },
+        );
+        let text = format!("{table}\ngap\n\n{table}");
+        update(
+            &mut state,
+            Msg::DocLoaded {
+                path: "t.md".into(),
+                mtime: None,
+                text: text.into(),
+            },
+        );
+        let border = |state: &State| {
+            let mut term = Terminal::new(TestBackend::new(60, 30)).unwrap();
+            term.draw(|f| view(state, f)).unwrap();
+            let buf = term.backend().buffer().clone();
+            // each table's top-left corner
+            let corners: Vec<_> = (0..30)
+                .flat_map(|y| (0..60).map(move |x| (x, y)))
+                .filter(|&(x, y)| buf[(x, y)].symbol() == "╭" && x < 5)
+                .map(|(x, y)| buf[(x, y)].fg)
+                .collect();
+            corners
+        };
+        let theme = &state.theme;
+        let (plain, lit) = (
+            theme.styles[StyleKey::TableBorder as usize].fg.unwrap(),
+            theme.styles[StyleKey::SortTable as usize].fg.unwrap(),
+        );
+        assert_eq!(border(&state), [plain, plain]);
+        update(&mut state, Msg::SortOpen);
+        assert_eq!(border(&state), [lit, plain]);
+        update(&mut state, Msg::SortTable { dir: Dir::Next });
+        assert_eq!(border(&state), [plain, lit]);
     }
 
     #[test]

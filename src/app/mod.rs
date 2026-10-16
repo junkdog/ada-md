@@ -16,7 +16,7 @@ use std::mem;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::doc::{self, CodeId, Doc, LinkId, TableId};
+use crate::doc::{self, CodeId, Doc, LinkId};
 use crate::git::LineMarks;
 use crate::highlight::{self, CodeSpans, Highlights, Job, SyntaxTheme};
 use crate::images::{self, Encoded, Graphics, ImageCache, ImageKey, ImageMode, Probe, Proto};
@@ -88,14 +88,12 @@ pub enum Msg {
         dir: Dir,
     },
     ToggleTableMode,
-    /// `s`: pick a column to sort the table on screen by.
+    /// `s`: the outline, listing the columns of the first table on screen to sort it by.
     SortOpen,
-    /// A column picked after `s`, from 1; the same one again sorts the other way, then not at
-    /// all. 0 puts the source order back.
-    SortColumn {
-        col: u16,
+    /// In the column list: the columns of the next or previous table on screen instead.
+    SortTable {
+        dir: Dir,
     },
-    SortCancel,
     ToggleCodeWrap,
     /// Shift every code block sideways, in no-wrap mode.
     ScrollCodeX {
@@ -442,8 +440,6 @@ pub struct State {
     pub view: Option<ImageView>,
     /// The help overlay's scroll offset, while it is open.
     pub help: Option<u16>,
-    /// The table `s` is picking a column of, while it is.
-    pub sorting: Option<TableId>,
 }
 
 impl State {
@@ -484,7 +480,6 @@ impl State {
             images: ImageCache::default(),
             view: None,
             help: None,
-            sorting: None,
         }
     }
 
@@ -559,7 +554,6 @@ impl State {
             self.stash(old);
         }
         self.focus = None;
-        self.sorting = None;
         self.scroll = 0;
         self.rematch();
         cmds.extend(self.highlight_all());
@@ -913,10 +907,6 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             _ => state.view = None,
         }
     }
-    // The column picker closes on any other intent, so the key that closed it still counts.
-    if state.sorting.is_some() && !msg.keeps_view() && !matches!(msg, Msg::SortColumn { .. }) {
-        state.sorting = None;
-    }
     match msg {
         Msg::Init { size } | Msg::Resize { size } => {
             state.size = size;
@@ -1054,10 +1044,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.outline_move(by);
             state.preview_theme()
         }
-        Msg::OutlinePick => {
-            state.outline_pick();
-            state.visible_jobs()
-        }
+        Msg::OutlinePick => state.outline_pick(),
         Msg::OutlineClose => state.outline_close(),
         Msg::SearchOpen => {
             state.status = None;
@@ -1098,11 +1085,12 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::SortOpen => {
             state.status = None;
-            state.sort_open();
+            state.sort_open()
+        }
+        Msg::SortTable { dir } => {
+            state.sort_table(dir);
             Vec::new()
         }
-        Msg::SortColumn { col } => state.sort_column(col),
-        Msg::SortCancel => Vec::new(),
         Msg::ToggleCodeWrap => {
             state.code_wrap = !state.code_wrap;
             let mode = if state.code_wrap {

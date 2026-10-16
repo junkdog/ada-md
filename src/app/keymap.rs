@@ -81,7 +81,7 @@ actions! {
     }
     "View" {
         TableMode => "table_mode", "tables: auto, grid, records", ["t"],
-        Sort => "sort", "sort the table on screen", ["s"],
+        Sort => "sort", "sort a table on screen by a column", ["s"],
         CodeWrap => "code_wrap", "wrap code, or scroll it sideways", ["w"],
         CodeLeft => "code_left", "scroll code left", ["left"],
         CodeRight => "code_right", "scroll code right", ["right"],
@@ -420,8 +420,8 @@ enum Mode {
     /// The outline popup, of headings, links or themes, with its filter.
     Outline(String),
     Help,
-    /// After `s`: a digit picks the column to sort by.
-    Sort,
+    /// The outline popup listing a table's columns, which `←`/`→` trade for another table's.
+    Sort(String),
 }
 
 #[derive(Debug, Default)]
@@ -464,6 +464,7 @@ impl Keymap {
         if key.kind == KeyEventKind::Release {
             return None;
         }
+        let sorting = matches!(self.mode, Mode::Sort(_));
         match &mut self.mode {
             Mode::Normal => self.normal(&key),
             Mode::Search(text) => {
@@ -494,10 +495,17 @@ impl Keymap {
                     }
                 }
             }
-            Mode::Outline(text) => {
+            Mode::Outline(text) | Mode::Sort(text) => {
                 let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
                 let by = |by| Some(Msg::OutlineMove { by });
+                // another table's columns: the filter starts over
+                let table = |text: &mut String, dir| {
+                    text.clear();
+                    Some(Msg::SortTable { dir })
+                };
                 match key.code {
+                    KeyCode::Left if sorting => table(text, Dir::Prev),
+                    KeyCode::Right if sorting => table(text, Dir::Next),
                     KeyCode::Enter => {
                         self.mode = Mode::Normal;
                         Some(Msg::OutlinePick)
@@ -521,27 +529,6 @@ impl Keymap {
                     _ => {
                         edit(text, &key)?;
                         Some(Msg::OutlineFilter { text: text.clone() })
-                    }
-                }
-            }
-            // A digit picks the column, `Esc` changes its mind, and any other key closes the
-            // picker and does what it always does.
-            Mode::Sort => {
-                let plain = key.modifiers - KeyModifiers::SHIFT == KeyModifiers::NONE;
-                match key.code {
-                    KeyCode::Char(c @ '0'..='9') if plain => {
-                        self.mode = Mode::Normal;
-                        Some(Msg::SortColumn {
-                            col: c as u16 - '0' as u16,
-                        })
-                    }
-                    KeyCode::Esc => {
-                        self.mode = Mode::Normal;
-                        Some(Msg::SortCancel)
-                    }
-                    _ => {
-                        self.mode = Mode::Normal;
-                        self.normal(&key)
                     }
                 }
             }
@@ -588,7 +575,7 @@ impl Keymap {
             }
             Action::Search => self.mode = Mode::Search(String::new()),
             Action::Help => self.mode = Mode::Help,
-            Action::Sort => self.mode = Mode::Sort,
+            Action::Sort => self.mode = Mode::Sort(String::new()),
             _ => {}
         }
         Some(action.msg())
@@ -864,26 +851,36 @@ mod tests {
     }
 
     #[test]
-    fn sort_picks_a_column_or_lets_the_key_through() {
+    fn sort_lists_columns_and_trades_tables_with_left_and_right() {
         let mut km = Keymap::default();
         assert_eq!(
-            typed(&mut km, "s2"),
-            [Msg::SortOpen, Msg::SortColumn { col: 2 }]
+            typed(&mut km, "sj"),
+            [Msg::SortOpen, Msg::OutlineFilter { text: "j".into() }]
         );
         assert_eq!(
-            typed(&mut km, "sj"),
-            [
-                Msg::SortOpen,
-                Msg::Scroll {
-                    by: ScrollBy::Rows(1)
-                }
-            ]
+            press(&mut km, KeyCode::Right),
+            Some(Msg::SortTable { dir: Dir::Next })
         );
-        assert_eq!(typed(&mut km, "s/"), [Msg::SortOpen, Msg::SearchOpen]);
-        press(&mut km, KeyCode::Esc);
+        // the filter started over with the other table
+        assert_eq!(
+            typed(&mut km, "x"),
+            [Msg::OutlineFilter { text: "x".into() }]
+        );
+        assert_eq!(
+            press(&mut km, KeyCode::Left),
+            Some(Msg::SortTable { dir: Dir::Prev })
+        );
+        assert_eq!(
+            press(&mut km, KeyCode::Tab),
+            Some(Msg::OutlineMove { by: 1 })
+        );
+        assert_eq!(press(&mut km, KeyCode::Enter), Some(Msg::OutlinePick));
         typed(&mut km, "s");
-        assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::SortCancel));
+        assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::OutlineClose));
         assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::Quit));
+        // the other lists leave the arrows alone
+        typed(&mut km, "o");
+        assert_eq!(press(&mut km, KeyCode::Right), None);
     }
 
     #[test]

@@ -75,7 +75,7 @@ Press `?` in ada for the keys. See `ada --help` for every option.
 | `o` | the outline: type to filter, `Enter` to jump |
 | `l` | the links: type to filter, `Enter` to focus one |
 | `t` | tables: auto, grid, records |
-| `s`, then `1`–`9` | sort the table on screen by a column: ascending, descending, source order; `0` resets |
+| `s` | sort a table on screen by a column: ascending, descending, source order; `←` `→` pick another table |
 | `w`, `←` `→` | wrap code, or scroll it sideways |
 | `T` | the next theme |
 | `r` | read the file again |

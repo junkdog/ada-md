@@ -1,5 +1,5 @@
 //! The outline popup: the headings (`o`), indented by level, the links (`l`), each with where it
-//! leads, or the themes (`T`); filtered by what's typed.
+//! leads, the themes (`T`), or the columns to sort a table by (`s`); filtered by what's typed.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -40,6 +40,7 @@ pub fn draw(buf: &mut Buffer, area: Rect, state: &State) {
         Listing::Headings => (MAX_WIDTH, "outline"),
         Listing::Links => (MAX_LINKS_WIDTH, "links"),
         Listing::Themes => (MAX_WIDTH, "themes"),
+        Listing::Columns(_) => (MAX_WIDTH, "sort by"),
     };
     let width = (widest as u16 + 4)
         .clamp(32, max_width)
@@ -50,7 +51,7 @@ pub fn draw(buf: &mut Buffer, area: Rect, state: &State) {
     }
     let rect = Rect {
         x: area.x + (area.width - width) / 2,
-        y: area.y + 1,
+        y: area.y + popup_y(state, area, height),
         width,
         height,
     };
@@ -83,6 +84,20 @@ pub fn draw(buf: &mut Buffer, area: Rect, state: &State) {
         inner - 1,
         theme.style(StyleKey::PopupTitle),
     );
+    // which of the tables on screen it sorts, when there's a choice
+    let tables = state.tables_on_screen();
+    if let (Some(i), true) = (
+        state
+            .sorting()
+            .and_then(|t| tables.iter().position(|&s| s == t)),
+        tables.len() > 1,
+    ) {
+        let hint = format!(" ← table {}/{} → ", i + 1, tables.len());
+        let x = rect.right().saturating_sub(hint.width() as u16 + 2);
+        if x > rect.x + 1 {
+            buf.set_string(x, bottom, &hint, theme.style(StyleKey::PopupTitle));
+        }
+    }
 
     // the filter, then as many entries as fit, keeping the selection in view
     let x = rect.x + 1;
@@ -94,6 +109,7 @@ pub fn draw(buf: &mut Buffer, area: Rect, state: &State) {
             (true, Listing::Headings) => "   no headings",
             (true, Listing::Links) => "   no links",
             (true, Listing::Themes) => "   no themes",
+            (true, Listing::Columns(_)) => "   no table on screen to sort",
             (false, _) => "   no match",
         };
         buf.set_stringn(x, top + 2, none, inner, theme.style(StyleKey::PopupBorder));
@@ -128,5 +144,35 @@ pub fn draw(buf: &mut Buffer, area: Rect, state: &State) {
         if entry.broken {
             tail(BROKEN, StyleKey::LinkBroken);
         }
+    }
+}
+
+/// The popup's row in `area`: one below the top, unless the table the column list sorts shows
+/// more of itself with the popup at the bottom.
+fn popup_y(state: &State, area: Rect, height: u16) -> u16 {
+    let top = 1;
+    let bottom = area.height.saturating_sub(height + 1).max(top);
+    let rows = state
+        .sorting()
+        .zip(state.doc.as_ref())
+        .and_then(|(t, doc)| {
+            let table = doc.layout.tables.iter().find(|r| r.table == t)?;
+            let at = |r: u32| r.saturating_sub(state.scroll).min(u32::from(area.height));
+            Some(at(table.rows.start)..at(table.rows.end))
+        });
+    let Some(rows) = rows else {
+        return top;
+    };
+    let hidden = |y: u16| {
+        let popup = u32::from(y)..u32::from(y + height);
+        popup
+            .end
+            .min(rows.end)
+            .saturating_sub(popup.start.max(rows.start))
+    };
+    if hidden(bottom) < hidden(top) {
+        bottom
+    } else {
+        top
     }
 }

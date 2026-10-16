@@ -89,6 +89,7 @@ style_keys! {
     PopupBorder => "ui.popup_border",
     PopupTitle => "ui.popup_title",
     PopupSelected => "ui.popup_selected",
+    SortTable => "ui.sort_table",
 }
 
 impl StyleKey {
