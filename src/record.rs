@@ -67,6 +67,9 @@ messages! {
     "scroll" => Scroll { by },
     "jump-heading" => JumpHeading { dir },
     "toggle-table-mode" => ToggleTableMode {},
+    "sort-open" => SortOpen {},
+    "sort-column" => SortColumn { col },
+    "sort-cancel" => SortCancel {},
     "toggle-code-wrap" => ToggleCodeWrap {},
     "scroll-code-x" => ScrollCodeX { by },
     "focus-link" => FocusLink { dir },
@@ -162,7 +165,7 @@ macro_rules! int_fields {
     )*};
 }
 
-int_fields!(i16, i32, u32, u64);
+int_fields!(i16, i32, u16, u32, u64);
 
 /// Computed results are never written: replay recomputes them (ADR-19).
 impl<T> Field for Computed<T> {
@@ -766,6 +769,9 @@ mod tests {
             },
             Msg::JumpHeading { dir: Dir::Prev },
             Msg::ToggleTableMode,
+            Msg::SortOpen,
+            Msg::SortColumn { col: 3 },
+            Msg::SortCancel,
             Msg::ToggleCodeWrap,
             Msg::ScrollCodeX { by: -8 },
             Msg::FocusLink { dir: Dir::Next },

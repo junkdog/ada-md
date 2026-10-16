@@ -17,11 +17,12 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::doc::{
     AnchorId, Block, BlockKind, Callout, CodeId, Doc, InlineStyle, Inlines, LineRange, LinkId,
-    List, Run, Table, UnitId,
+    List, Run, Table, TableId, UnitId,
 };
 use crate::images;
 use crate::theme::{Glyphs, StyleKey};
 use table::ColMeasure;
+pub use table::Sort;
 use wrap::{Line, NBSP, Wrapped};
 
 /// How tables render; `t` cycles it for the whole session (ADR-11, plan Q12).
@@ -186,6 +187,13 @@ impl ImageSlot {
     }
 }
 
+/// Where a table renders, grid or cards.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TableRows {
+    pub table: TableId,
+    pub rows: Range<u32>,
+}
+
 /// A grid table's rows, for the sticky header.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GridRows {
@@ -193,6 +201,13 @@ pub struct GridRows {
     pub header: Range<u32>,
     /// One past the last body row.
     pub end: u32,
+}
+
+/// A table's rows in their sorted order, as indices into [`Table::rows`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Sorted {
+    sort: Sort,
+    order: Vec<u32>,
 }
 
 /// The width-independent work behind a layout, done once per Doc and glyph set (architecture §1,
@@ -204,54 +219,63 @@ pub struct Measure {
     tables: Vec<Vec<ColMeasure>>,
     /// Image sizes in pixels, indexed by [`LinkId`]; known once their headers have been read.
     images: Vec<Option<(u32, u32)>>,
+    /// The order of sorted tables' rows, indexed by [`Table::id`]; `None` keeps the source order.
+    sorts: Vec<Option<Sorted>>,
 }
 
 impl Measure {
     pub fn new(doc: &Doc, glyphs: &Glyphs) -> Self {
-        let mut tables = vec![Vec::new(); doc.table_count as usize];
-        let footnotes = doc.footnotes.iter().map(|f| &f.blocks[..]);
-        for blocks in std::iter::once(&doc.blocks[..]).chain(footnotes) {
-            each_table(blocks, &mut |t| {
-                if let Some(slot) = tables.get_mut(t.id as usize) {
-                    *slot = table::measure(t, doc, glyphs);
-                }
-            });
-        }
+        let tables = doc
+            .tables()
+            .into_iter()
+            .map(|t| table::measure(t, doc, glyphs))
+            .collect();
         Self {
             glyphs_gen: glyphs.generation(),
             tables,
             images: vec![None; doc.links.len()],
+            sorts: vec![None; doc.table_count as usize],
         }
     }
 
-    /// Measure again for new glyphs, keeping the image sizes.
+    /// Measure again for new glyphs, keeping the image sizes and the sorted tables.
     pub fn remeasure(&mut self, doc: &Doc, glyphs: &Glyphs) {
         let images = std::mem::take(&mut self.images);
+        let sorts = std::mem::take(&mut self.sorts);
         *self = Self {
             images,
+            sorts,
             ..Self::new(doc, glyphs)
         };
+    }
+
+    /// How table `t` is sorted, if it is.
+    pub fn sort(&self, t: TableId) -> Option<Sort> {
+        self.sorted(t).map(|s| s.sort)
+    }
+
+    fn sorted(&self, t: TableId) -> Option<&Sorted> {
+        self.sorts.get(t as usize)?.as_ref()
+    }
+
+    /// Sort `table`'s rows, or put them back in source order. A column the table doesn't have
+    /// leaves it in source order.
+    pub fn set_sort(&mut self, table: &Table, sort: Option<Sort>) {
+        let Some(slot) = self.sorts.get_mut(table.id as usize) else {
+            return;
+        };
+        *slot = sort
+            .filter(|s| usize::from(s.col) < table.column_count())
+            .map(|sort| Sorted {
+                sort,
+                order: table::order(table, sort),
+            });
     }
 
     /// Record the pixel size of the image `link` shows.
     pub fn set_image(&mut self, link: LinkId, px: Option<(u32, u32)>) {
         if let Some(slot) = self.images.get_mut(link as usize) {
             *slot = px;
-        }
-    }
-}
-
-fn each_table<'a>(blocks: &'a [Block], f: &mut impl FnMut(&'a Table)) {
-    for block in blocks {
-        match &block.kind {
-            BlockKind::Table(t) => f(t),
-            BlockKind::List(list) => {
-                for item in &list.items {
-                    each_table(&item.blocks, f);
-                }
-            }
-            BlockKind::Quote { blocks, .. } => each_table(blocks, f),
-            _ => {}
         }
     }
 }
@@ -275,6 +299,8 @@ pub struct Layout {
     pub search: Vec<SearchSeg>,
     /// Grid tables with body rows, in row order.
     pub grids: Vec<GridRows>,
+    /// Every table, in row order.
+    pub tables: Vec<TableRows>,
     /// Code blocks, indexed by [`CodeId`].
     pub code: Vec<CodeInfo>,
     /// Block images shown as images, in row order.
@@ -341,6 +367,7 @@ pub fn layout_measured(
             hits: Vec::new(),
             search: Vec::new(),
             grids: Vec::new(),
+            tables: Vec::new(),
             code: vec![CodeInfo::default(); doc.code_count as usize],
             images: Vec::new(),
         },

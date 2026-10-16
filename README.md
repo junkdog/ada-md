@@ -13,7 +13,8 @@ in some 200 languages, and shows images inline in terminals that can (kitty, six
 ## Features
 
 - CommonMark and GFM: tables, task lists, footnotes and callouts (`> [!NOTE]`)
-- tables sized like a browser's, with a sticky header; too-wide tables become cards (`t`)
+- tables sized like a browser's, with a sticky header; too-wide tables become cards (`t`);
+  sortable by any column (`s`)
 - syntax-highlighted code; long lines wrap or scroll sideways (`w`)
 - links: relative paths, `[[wiki]]`, anchors and footnotes, with back/forward history
 - git gutter for staged and unstaged changes; `]c`/`[c` to jump between them
@@ -74,6 +75,7 @@ Press `?` in ada for the keys. See `ada --help` for every option.
 | `o` | the outline: type to filter, `Enter` to jump |
 | `l` | the links: type to filter, `Enter` to focus one |
 | `t` | tables: auto, grid, records |
+| `s`, then `1`–`9` | sort the table on screen by a column: ascending, descending, source order; `0` resets |
 | `w`, `←` `→` | wrap code, or scroll it sideways |
 | `T` | the next theme |
 | `r` | read the file again |

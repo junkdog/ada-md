@@ -167,6 +167,8 @@ pub struct Glyphs {
     pub wrap_mark: String,
     /// `[left, right]` marks for code clipped at the edges in no-wrap mode.
     pub code_clip: [String; 2],
+    /// `[ascending, descending]` marks on the header of the column a table is sorted by.
+    pub sort_mark: [String; 2],
     pub image: String,
     /// Gutter marks, in the order of the `Gutter*` style keys.
     pub gutter: [String; 6],
@@ -185,6 +187,7 @@ impl Default for Glyphs {
             task: ["[x] ".into(), "[ ] ".into()],
             wrap_mark: "↪".into(),
             code_clip: ["‹".into(), "›".into()],
+            sort_mark: ["▲".into(), "▼".into()],
             image: "🖼 ".into(),
             gutter: Default::default(),
         }

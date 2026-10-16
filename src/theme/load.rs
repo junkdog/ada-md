@@ -289,6 +289,10 @@ fn glyphs(theme: &mut Theme, v: &Value<'_>, cx: &mut Cx<'_>) -> Result<(), Strin
                 Ok(clip) => g.code_clip = clip,
                 Err(_) => return Err(cx.at(v.span(), "code_clip needs two glyphs: [left, right]")),
             },
+            "sort_mark" => match <[String; 2]>::try_from(cx.strings(v)?) {
+                Ok(mark) => g.sort_mark = mark,
+                Err(_) => return Err(cx.at(v.span(), "sort_mark needs two glyphs: [asc, desc]")),
+            },
             "image" => g.image = cx.string(v)?.to_owned(),
             other => cx.warn(k.span(), format_args!("unknown glyph \"{other}\"")),
         }

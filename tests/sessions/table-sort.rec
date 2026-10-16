@@ -1,0 +1,31 @@
+ada-rec 1
++0 init size=90x22
++1 open path="modules.md"
++2 doc-loaded path="modules.md" mtime=1760535362123 text:1041
+# Modules
+
+The ported modules, with their size in lines of Java.
+
+| Module | Java main | Description |
+|---|--:|---|
+| `asm-analysis` | 2,379 | Control-flow and data-flow analysis over method bodies |
+| `asm-tree` | 4,120 | The tree API: ClassNode, MethodNode, InsnList and friends |
+| `asm-commons` | 1,870 | Adapters: GeneratorAdapter, LocalVariablesSorter, remappers |
+| `asm-util` | 2,045 | Textifier, CheckClassAdapter and the trace visitors |
+| `asm-core` | 9,812 | ClassReader, ClassWriter and the visitor interfaces |
+| `asm-test` | 610 | Shared fixtures for the module test suites |
+| `asm-bench` | 455 | JMH benchmarks against the previous release |
+| `asm-verify` | 1,204 | Frame computation and the bytecode verifier |
+| `asm-attrs` | 388 | Custom attribute prototypes and their readers |
+| `asm-signature` | 702 | Generic signature parsing and writing |
+| `asm-remap` | 930 | Remapping of names across a class hierarchy |
+| `asm-shrink` | 1,415 | Dead-code elimination and constant folding passes |
+
+Everything after the table.
+
++400 sort-open
++500 sort-column col=2
++700 sort-open
++800 sort-column col=2
++1000 sort-open
++1500 quit

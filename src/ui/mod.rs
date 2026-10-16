@@ -333,6 +333,9 @@ fn status_bar(buf: &mut Buffer, area: Rect, state: &State) {
 /// heading path, in that order of precedence.
 fn status_text(state: &State, room: usize) -> Pieces {
     let theme = &state.theme;
+    if state.sorting.is_some() {
+        return sort_picker(state);
+    }
     if let Some(msg) = &state.status {
         return vec![(elide_start(msg, room), theme.style(StyleKey::StatusMessage))];
     }
@@ -366,6 +369,36 @@ fn status_text(state: &State, room: usize) -> Pieces {
         }
         None => Vec::new(),
     }
+}
+
+/// `sort: 1 Name ▲  2 Size  3 Date  0 unsorted`: the columns `s` can sort the table by.
+fn sort_picker(state: &State) -> Pieces {
+    let theme = &state.theme;
+    let (key, label) = (
+        theme.style(StyleKey::StatusMessage),
+        theme.style(StyleKey::StatusHeading),
+    );
+    let [asc, desc] = &theme.glyphs.sort_mark;
+    let mut pieces = vec![("sort:".to_owned(), label)];
+    let columns = state.sort_columns();
+    let options = columns
+        .iter()
+        .enumerate()
+        .map(|(i, (name, sort))| {
+            let mark = match sort {
+                Some(s) if s.desc => format!(" {desc}"),
+                Some(_) => format!(" {asc}"),
+                None => String::new(),
+            };
+            (format!("{}", i + 1), format!("{name}{mark}"))
+        })
+        .chain(std::iter::once(("0".to_owned(), "unsorted".to_owned())));
+    for (digit, name) in options {
+        pieces.push((format!("  {digit}"), key));
+        pieces.push((format!(" {name}"), label));
+    }
+    // `put` clips what doesn't fit
+    pieces
 }
 
 /// `text` split around `range` and elided to `max` columns, keeping the match in view.

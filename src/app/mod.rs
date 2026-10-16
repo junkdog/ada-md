@@ -9,13 +9,14 @@ mod imaging;
 mod keymap;
 mod nav;
 mod run;
+mod sort;
 
 use std::ffi::OsString;
 use std::mem;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::doc::{self, CodeId, Doc, LinkId};
+use crate::doc::{self, CodeId, Doc, LinkId, TableId};
 use crate::git::LineMarks;
 use crate::highlight::{self, CodeSpans, Highlights, Job, SyntaxTheme};
 use crate::images::{self, Encoded, Graphics, ImageCache, ImageKey, ImageMode, Probe, Proto};
@@ -87,6 +88,14 @@ pub enum Msg {
         dir: Dir,
     },
     ToggleTableMode,
+    /// `s`: pick a column to sort the table on screen by.
+    SortOpen,
+    /// A column picked after `s`, from 1; the same one again sorts the other way, then not at
+    /// all. 0 puts the source order back.
+    SortColumn {
+        col: u16,
+    },
+    SortCancel,
     ToggleCodeWrap,
     /// Shift every code block sideways, in no-wrap mode.
     ScrollCodeX {
@@ -433,6 +442,8 @@ pub struct State {
     pub view: Option<ImageView>,
     /// The help overlay's scroll offset, while it is open.
     pub help: Option<u16>,
+    /// The table `s` is picking a column of, while it is.
+    pub sorting: Option<TableId>,
 }
 
 impl State {
@@ -473,6 +484,7 @@ impl State {
             images: ImageCache::default(),
             view: None,
             help: None,
+            sorting: None,
         }
     }
 
@@ -532,7 +544,11 @@ impl State {
             }
             None => {
                 self.generation += 1;
-                let doc = Document::new(path, mtime, text, &self.theme, params, self.generation);
+                let mut doc =
+                    Document::new(path, mtime, text, &self.theme, params, self.generation);
+                if let Some(old) = self.doc.as_ref().filter(|d| d.path == doc.path) {
+                    doc.keep_sorts(old, &self.theme, params);
+                }
                 cmds.extend(nav::resolve_cmd(&doc));
                 doc
             }
@@ -543,6 +559,7 @@ impl State {
             self.stash(old);
         }
         self.focus = None;
+        self.sorting = None;
         self.scroll = 0;
         self.rematch();
         cmds.extend(self.highlight_all());
@@ -903,6 +920,10 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             _ => state.view = None,
         }
     }
+    // The column picker closes on any other intent, so the key that closed it still counts.
+    if state.sorting.is_some() && !msg.keeps_view() && !matches!(msg, Msg::SortColumn { .. }) {
+        state.sorting = None;
+    }
     match msg {
         Msg::Init { size } | Msg::Resize { size } => {
             state.size = size;
@@ -1085,6 +1106,13 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.relayout();
             state.visible_jobs()
         }
+        Msg::SortOpen => {
+            state.status = None;
+            state.sort_open();
+            Vec::new()
+        }
+        Msg::SortColumn { col } => state.sort_column(col),
+        Msg::SortCancel => Vec::new(),
         Msg::ToggleCodeWrap => {
             state.code_wrap = !state.code_wrap;
             let mode = if state.code_wrap {

@@ -81,6 +81,7 @@ actions! {
     }
     "View" {
         TableMode => "table_mode", "tables: auto, grid, records", ["t"],
+        Sort => "sort", "sort the table on screen", ["s"],
         CodeWrap => "code_wrap", "wrap code, or scroll it sideways", ["w"],
         CodeLeft => "code_left", "scroll code left", ["left"],
         CodeRight => "code_right", "scroll code right", ["right"],
@@ -126,6 +127,7 @@ impl Action {
             Action::Outline => Msg::OpenOutline,
             Action::Links => Msg::OpenLinks,
             Action::TableMode => Msg::ToggleTableMode,
+            Action::Sort => Msg::SortOpen,
             Action::CodeWrap => Msg::ToggleCodeWrap,
             Action::CodeLeft => Msg::ScrollCodeX { by: -CODE_X_STEP },
             Action::CodeRight => Msg::ScrollCodeX { by: CODE_X_STEP },
@@ -418,6 +420,8 @@ enum Mode {
     /// The outline popup, of headings or links, with its filter.
     Outline(String),
     Help,
+    /// After `s`: a digit picks the column to sort by.
+    Sort,
 }
 
 #[derive(Debug, Default)]
@@ -520,6 +524,27 @@ impl Keymap {
                     }
                 }
             }
+            // A digit picks the column, `Esc` changes its mind, and any other key closes the
+            // picker and does what it always does.
+            Mode::Sort => {
+                let plain = key.modifiers - KeyModifiers::SHIFT == KeyModifiers::NONE;
+                match key.code {
+                    KeyCode::Char(c @ '0'..='9') if plain => {
+                        self.mode = Mode::Normal;
+                        Some(Msg::SortColumn {
+                            col: c as u16 - '0' as u16,
+                        })
+                    }
+                    KeyCode::Esc => {
+                        self.mode = Mode::Normal;
+                        Some(Msg::SortCancel)
+                    }
+                    _ => {
+                        self.mode = Mode::Normal;
+                        self.normal(&key)
+                    }
+                }
+            }
             // The help scrolls with the usual keys; any other key closes it.
             Mode::Help => {
                 let by = |by| Some(Msg::HelpScroll { by });
@@ -561,6 +586,7 @@ impl Keymap {
             Action::Outline | Action::Links => self.mode = Mode::Outline(String::new()),
             Action::Search => self.mode = Mode::Search(String::new()),
             Action::Help => self.mode = Mode::Help,
+            Action::Sort => self.mode = Mode::Sort,
             _ => {}
         }
         Some(action.msg())
@@ -826,6 +852,29 @@ mod tests {
             warnings,
             ["keys: ] (theme) also starts a two-key binding, so it can't work alone"]
         );
+    }
+
+    #[test]
+    fn sort_picks_a_column_or_lets_the_key_through() {
+        let mut km = Keymap::default();
+        assert_eq!(
+            typed(&mut km, "s2"),
+            [Msg::SortOpen, Msg::SortColumn { col: 2 }]
+        );
+        assert_eq!(
+            typed(&mut km, "sj"),
+            [
+                Msg::SortOpen,
+                Msg::Scroll {
+                    by: ScrollBy::Rows(1)
+                }
+            ]
+        );
+        assert_eq!(typed(&mut km, "s/"), [Msg::SortOpen, Msg::SearchOpen]);
+        press(&mut km, KeyCode::Esc);
+        typed(&mut km, "s");
+        assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::SortCancel));
+        assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::Quit));
     }
 
     #[test]

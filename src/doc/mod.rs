@@ -193,6 +193,16 @@ pub struct Table {
     pub rows: Vec<TableRow>,
 }
 
+impl Table {
+    /// The widest of the alignment row, the header and the body rows.
+    pub fn column_count(&self) -> usize {
+        self.aligns
+            .len()
+            .max(self.header.cells.len())
+            .max(self.rows.iter().map(|r| r.cells.len()).max().unwrap_or(0))
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct TableRow {
     pub cells: Vec<Inlines>,
@@ -324,31 +334,51 @@ pub struct Footnote {
 }
 
 impl Doc {
-    /// The code blocks, indexed by [`CodeBlock::id`].
-    pub fn code_blocks(&self) -> Vec<&CodeBlock> {
-        fn walk<'a>(blocks: &'a [Block], out: &mut [Option<&'a CodeBlock>]) {
+    /// Every block, nested ones and footnotes' included, in source order.
+    fn each_block<'a>(&'a self, f: &mut impl FnMut(&'a Block)) {
+        fn walk<'a>(blocks: &'a [Block], f: &mut impl FnMut(&'a Block)) {
             for block in blocks {
+                f(block);
                 match &block.kind {
-                    BlockKind::Code(code) => {
-                        if let Some(slot) = out.get_mut(code.id as usize) {
-                            *slot = Some(code);
-                        }
-                    }
                     BlockKind::List(list) => {
                         for item in &list.items {
-                            walk(&item.blocks, out);
+                            walk(&item.blocks, f);
                         }
                     }
-                    BlockKind::Quote { blocks, .. } => walk(blocks, out),
+                    BlockKind::Quote { blocks, .. } => walk(blocks, f),
                     _ => {}
                 }
             }
         }
-        let mut out = vec![None; self.code_count as usize];
-        walk(&self.blocks, &mut out);
+        walk(&self.blocks, f);
         for note in &self.footnotes {
-            walk(&note.blocks, &mut out);
+            walk(&note.blocks, f);
         }
+    }
+
+    /// The code blocks, indexed by [`CodeBlock::id`].
+    pub fn code_blocks(&self) -> Vec<&CodeBlock> {
+        let mut out = vec![None; self.code_count as usize];
+        self.each_block(&mut |block| {
+            if let BlockKind::Code(code) = &block.kind
+                && let Some(slot) = out.get_mut(code.id as usize)
+            {
+                *slot = Some(code);
+            }
+        });
+        out.into_iter().flatten().collect()
+    }
+
+    /// The tables, indexed by [`Table::id`].
+    pub fn tables(&self) -> Vec<&Table> {
+        let mut out = vec![None; self.table_count as usize];
+        self.each_block(&mut |block| {
+            if let BlockKind::Table(t) = &block.kind
+                && let Some(slot) = out.get_mut(t.id as usize)
+            {
+                *slot = Some(t);
+            }
+        });
         out.into_iter().flatten().collect()
     }
 }

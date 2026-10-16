@@ -75,6 +75,7 @@ table_border = "rounded"     # rounded | ascii | none
 task = ["[✓] ", "[ ] "]
 wrap_mark = "↪"
 code_clip = ["‹", "›"]       # code clipped at the edges when not wrapping (`w`)
+sort_mark = ["▲", "▼"]       # on the header of the column a table is sorted by (`s`)
 image = "🖼 "
 
 [gutter.unstaged]            # working tree differs from the index

@@ -4,16 +4,16 @@ expression: frames.last().unwrap()
 ---
    Code
              ╭─ keys ─────────────────────────────────────────────╮
-   rust      │                                                    │
-   fn main() │ Search and outline                                 │
-       printl│   /               search with a regex              │
-       let lo│   n               the next match                   │it has to
-  ↪wrap when │   N               the previous match               │
-   }         │   o               the outline of headings          │
-             │   l               the list of links                │
+   rust      │ Search and outline                                 │
+   fn main() │   /               search with a regex              │
+       printl│   n               the next match                   │
+       let lo│   N               the previous match               │it has to
+  ↪wrap when │   o               the outline of headings          │
+   }         │   l               the list of links                │
              │                                                    │
-   kotlin    │ View                                               │
-   fun greet(│   t               tables: auto, grid, records      │
+             │ View                                               │
+   kotlin    │   t               tables: auto, grid, records      │
+   fun greet(│   s               sort the table on screen         │
              │   w               wrap code, or scroll it sideways │
              │   ←               scroll code left                 │
              │   →               scroll code right                │

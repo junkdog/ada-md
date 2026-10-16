@@ -48,6 +48,9 @@ enum Op {
     Bottom,
     JumpHeading(bool),
     ToggleTableMode,
+    SortOpen,
+    SortColumn(u8),
+    SortCancel,
     ToggleCodeWrap,
     ScrollCodeX(i16),
     FocusLink(bool),
@@ -170,6 +173,7 @@ table_border = "ascii"
 task = ["✅ ", "⬜⬜ "]
 wrap_mark = "⏎"
 code_clip = ["◀◀", "▶"]
+sort_mark = ["⬆⬆", "日"]
 image = "🖼🖼 "
 [syntax]
 "keyword" = { fg = "blue", bold = true }
@@ -186,6 +190,7 @@ quote_bar = ""
 table_border = "none"
 task = ["", ""]
 code_clip = ["", ""]
+sort_mark = ["", ""]
 image = ""
 [syntax]
 "comment" = { fg = "green" }
@@ -471,6 +476,11 @@ impl Session<'_> {
             },
             Op::JumpHeading(next) => Msg::JumpHeading { dir: dir(next) },
             Op::ToggleTableMode => Msg::ToggleTableMode,
+            Op::SortOpen => Msg::SortOpen,
+            Op::SortColumn(col) => Msg::SortColumn {
+                col: u16::from(col % 12),
+            },
+            Op::SortCancel => Msg::SortCancel,
             Op::ToggleCodeWrap => Msg::ToggleCodeWrap,
             Op::ScrollCodeX(by) => Msg::ScrollCodeX { by },
             Op::FocusLink(next) => Msg::FocusLink { dir: dir(next) },
