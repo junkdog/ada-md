@@ -16,6 +16,7 @@ use crate::toml_walk::{self, Cx, Value, entry};
 pub const BUILTIN: &[(&str, &str)] = &[
     ("gruvbox-dark", include_str!("builtin/gruvbox-dark.toml")),
     ("gruvbox-light", include_str!("builtin/gruvbox-light.toml")),
+    ("catppuccin-mocha", include_str!("builtin/catppuccin-mocha.toml")),
 ];
 
 const MAX_EXTENDS_DEPTH: u32 = 8;

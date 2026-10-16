@@ -3,12 +3,12 @@ source: src/record.rs
 expression: frames.last().unwrap()
 ---
        println!("tab-indented");
-       let long_line = "╭─ themes 1/2 ─────────────────╮nough that it has to ›
+       let long_line = "╭─ themes 1/3 ─────────────────╮nough that it has to ›
    }                    │ › ▏                          │
                         │ gruvbox-dark                 │
                         │ gruvbox-light  current       │
-   kotlin               ╰──────────────────────────────╯
-   fun greet(name: String) = "Hello, $name"
+   kotlin               │ catppuccin-mocha             │
+   fun greet(name: Strin╰──────────────────────────────╯
 
 
 
