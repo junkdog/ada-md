@@ -13,6 +13,7 @@ use std::time::{Duration, UNIX_EPOCH};
 use ratatui_image::picker::Picker;
 
 use super::{Cmd, Msg};
+use crate::filetype::{self, FileType};
 use crate::git;
 use crate::highlight::{self, Job};
 use crate::images;
@@ -152,7 +153,8 @@ fn open_with_system(target: &OsStr) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Read a document: `DocLoaded` with its text, or `DocFailed`.
+/// Read a document: `DocLoaded` with its text, or `DocFailed`. An image has no text, and a
+/// binary file fails.
 pub fn load_doc(path: &Path, stdin: Option<&Arc<str>>) -> Msg {
     if path == Path::new("-") {
         return Msg::DocLoaded {
@@ -163,7 +165,19 @@ pub fn load_doc(path: &Path, stdin: Option<&Arc<str>>) -> Msg {
     }
     // The time first: a write landing while we read leaves a newer time for the watcher.
     let mtime = mtime_of(path);
-    match fs::read(path) {
+    let filetype = FileType::by_path(path);
+    // An image is read by the image worker; its document is only its name.
+    let read = match filetype {
+        Some(FileType::Image) => fs::metadata(path).map(|_| Vec::new()),
+        _ => fs::read(path),
+    };
+    match read {
+        Ok(bytes) if filetype != Some(FileType::Markdown) && filetype::is_binary(&bytes) => {
+            Msg::DocFailed {
+                path: path.to_owned(),
+                error: "binary file".into(),
+            }
+        }
         Ok(bytes) => {
             let text = match String::from_utf8(bytes) {
                 Ok(text) => text,

@@ -6,6 +6,7 @@ pub mod cli;
 pub mod completions;
 pub mod config;
 pub mod doc;
+pub mod filetype;
 pub mod git;
 pub mod highlight;
 pub mod images;

@@ -2,6 +2,7 @@
 //! version. Nothing downstream of [`parse`] sees pulldown-cmark types.
 
 mod fence;
+pub mod file;
 mod parse;
 pub mod slug;
 

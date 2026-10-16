@@ -6,11 +6,12 @@ use std::{env, fs};
 
 use ada::app::{self, Config, Effects, Msg, State};
 use ada::cli::{self, Args, Input};
+use ada::filetype::FileType;
 use ada::images::ImageMode;
 use ada::layout::LayoutParams;
 use ada::record::{self, Recorder, ReplayOptions};
 use ada::theme::Theme;
-use ada::{completions, config, doc, print, theme};
+use ada::{completions, config, print, theme};
 
 fn main() -> ExitCode {
     match run() {
@@ -145,5 +146,7 @@ fn print_doc(
         glyphs_gen: theme.glyphs.generation(),
         images: None,
     };
-    print::run(&doc::parse(&text), theme, params, args.line).map_err(|e| e.to_string())
+    let filetype = FileType::of(path, &text);
+    let doc = filetype.parse(path, &text);
+    print::run(&doc, theme, filetype.params(params), args.line).map_err(|e| e.to_string())
 }

@@ -76,6 +76,8 @@ pub struct ImageFit {
     pub cell: Size,
     /// The most rows one image may take.
     pub max_rows: u16,
+    /// The rows the document has on screen.
+    pub screen_rows: u16,
 }
 
 impl LayoutParams {

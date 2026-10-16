@@ -2,7 +2,7 @@
 //! ada has no clap (ADR-10), so instead of clap_complete these few lines write the zsh, bash and
 //! fish scripts from [`cli::FLAGS`](crate::cli::FLAGS): a new flag completes without touching this file. Themes
 //! complete to the built-ins, the user's themes directory (read when completing) and `.toml`
-//! paths; files to markdown.
+//! paths; the file to any file.
 
 use std::fmt::Write as _;
 
@@ -88,7 +88,7 @@ _ada() {{
         let _ = writeln!(out, "    {line} \\");
     }
     out.push_str(
-        "    '1:markdown file:_files -g \"*.(md|markdown)(-.)\"'
+        "    '1:file:_files'
 }
 
 # Autoloaded from $fpath, this file is the completion function, so complete. Sourced, as with
@@ -150,7 +150,7 @@ _ada() {{
     COMPREPLY=($(compgen -W \"{}\" -- \"$cur\"))
     return
   fi
-  COMPREPLY=($(compgen -f -X '!*.md' -- \"$cur\") $(compgen -f -X '!*.markdown' -- \"$cur\") $(compgen -d -- \"$cur\"))
+  COMPREPLY=($(compgen -f -- \"$cur\"))
 }}
 
 complete -o filenames -F _ada ada
@@ -173,7 +173,6 @@ function __ada_themes
     end
 end
 
-complete -c ada -k -a '(__fish_complete_suffix .md; __fish_complete_suffix .markdown)'
 ",
         builtin_themes()
     );

@@ -16,6 +16,8 @@ in some 200 languages, and shows images inline in terminals that can (kitty, six
 - tables sized like a browser's, with a sticky header; too-wide tables become cards (`t`);
   sortable by any column (`s`)
 - syntax-highlighted code; long lines wrap or scroll sideways (`w`)
+- code, config and other text files shown whole and highlighted, and image files shown to fit
+  the screen; links to them open in ada, `src/main.rs#L42` at its line
 - links: relative paths, `[[wiki]]`, anchors and footnotes, with back/forward history
 - git gutter for staged and unstaged changes; `]c`/`[c` to jump between them
 - inline images, and full screen from any linked png or jpeg
@@ -45,6 +47,11 @@ git show HEAD~3:README.md | ada
 
 # start at line 120
 ada --line 120 notes/today.md
+
+# not only markdown: code and config files, highlighted, and images
+ada src/main.rs
+ada ~/.config/ada/config.toml
+ada plot.png
 
 # print instead of paging: what happens anyway when stdout isn't a terminal
 ada --print --width 100 notes/today.md | less -R
@@ -135,6 +142,15 @@ Colours are `#rrggbb`, `#rgb`, a terminal colour name or index, or a name from t
 `[palette]`. The built-in
 [gruvbox-dark.toml](src/theme/builtin/gruvbox-dark.toml) lists every style there is. Mistakes
 are reported with the file, line and column.
+
+## Other files
+
+ada goes by the file's name: markdown is rendered, a png or jpeg is shown as large as the screen
+allows, and a file whose name a syntax claims (`main.rs`, `Cargo.lock`, `Makefile`, `.zshrc`) is
+shown whole as highlighted code, full width, with the git gutter, search, `e` and `--line`
+working on its lines. Failing that, a `#!` first line names the language, and other text is shown
+plain, except files with no extension at all, which are read as markdown. Binary files aren't
+shown. Stdin is always markdown.
 
 ## Images
 

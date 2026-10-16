@@ -453,6 +453,7 @@ fn block_images_reserve_rows_once_their_size_is_known() {
         images: Some(ImageFit {
             cell: Size::new(10, 20),
             max_rows: 10,
+            screen_rows: 16,
         }),
         ..params(60)
     };

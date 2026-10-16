@@ -36,6 +36,19 @@ pub fn parse(text: &str) -> Doc {
     b.finish()
 }
 
+/// The byte offset of the start of each line.
+pub(super) fn line_starts(text: &str) -> Vec<u32> {
+    std::iter::once(0)
+        .chain(
+            text.bytes()
+                .enumerate()
+                .filter(|&(_, b)| b == b'\n')
+                .map(|(i, _)| i as u32 + 1),
+        )
+        .filter(|&s| s < text.len() as u32 || s == 0)
+        .collect()
+}
+
 enum Container {
     Root,
     Quote(Option<Callout>),
@@ -119,17 +132,8 @@ struct Builder {
 
 impl Builder {
     fn new(text: &str) -> Self {
-        let line_starts = std::iter::once(0)
-            .chain(
-                text.bytes()
-                    .enumerate()
-                    .filter(|&(_, b)| b == b'\n')
-                    .map(|(i, _)| i as u32 + 1),
-            )
-            .filter(|&s| s < text.len() as u32 || s == 0)
-            .collect();
         Self {
-            line_starts,
+            line_starts: line_starts(text),
             stack: vec![Frame::Blocks {
                 kind: Container::Root,
                 blocks: Vec::new(),

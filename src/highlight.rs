@@ -9,6 +9,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, OnceLock};
@@ -58,7 +59,33 @@ pub fn find_syntax(lang: &str) -> Option<&'static SyntaxReference> {
         "jsonl" | "jsonc" | "json5" => "json",
         other => other,
     };
-    syntaxes().find_syntax_by_token(token)
+    // a syntax's own name, as a whole file's language is given (`Rust`, `TOML`)
+    syntaxes()
+        .find_syntax_by_name(lang)
+        .or_else(|| syntaxes().find_syntax_by_token(token))
+}
+
+/// The language of a whole file, by its name alone: the name itself (`Makefile`, `.zshrc`,
+/// `Cargo.lock`), then its extension. `None` when that says nothing, or says plain text.
+pub fn file_language(path: &Path) -> Option<&'static str> {
+    let set = syntaxes();
+    let by_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| set.find_syntax_by_extension(n));
+    let by_ext = || find_syntax(path.extension()?.to_str()?);
+    by_name.or_else(by_ext).and_then(language)
+}
+
+/// The language a file's first line declares: a `#!` line, `<?xml`, a vim modeline.
+pub fn first_line_language(line: &str) -> Option<&'static str> {
+    syntaxes()
+        .find_syntax_by_first_line(line)
+        .and_then(language)
+}
+
+fn language(syntax: &'static SyntaxReference) -> Option<&'static str> {
+    Some(&*syntax.name).filter(|&n| n != "Plain Text")
 }
 
 /// The cache key of a code block, or `None` when it has no language worth highlighting.

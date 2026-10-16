@@ -141,7 +141,8 @@ pub fn usage() -> String {
         "\
 usage: ada [options] [FILE | -]
 
-A terminal markdown viewer. Reads stdin when FILE is `-`, or is omitted and stdin is a pipe.
+A terminal markdown viewer, which also shows code, config and other text files highlighted,
+and images. Reads stdin, as markdown, when FILE is `-`, or is omitted and stdin is a pipe.
 Prints instead of paging when stdout is not a terminal. Options are also read from
 ~/.config/ada/config.toml (written with the defaults on first run); flags win.
 

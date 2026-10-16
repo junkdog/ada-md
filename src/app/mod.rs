@@ -16,7 +16,8 @@ use std::mem;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::doc::{self, CodeId, Doc, LinkId};
+use crate::doc::{CodeId, Doc, LinkId};
+use crate::filetype::FileType;
 use crate::git::LineMarks;
 use crate::highlight::{self, CodeSpans, Highlights, Job, SyntaxTheme};
 use crate::images::{self, Encoded, Graphics, ImageCache, ImageKey, ImageMode, Probe, Proto};
@@ -313,6 +314,8 @@ impl Default for Config {
 /// and forth during a resize drag stays cheap.
 pub struct Document {
     pub path: PathBuf,
+    /// Markdown, an image, or code: what the file holds decides how it's parsed and laid out.
+    pub filetype: FileType,
     pub mtime: Option<u64>,
     pub text: Arc<str>,
     pub doc: Doc,
@@ -339,13 +342,16 @@ impl Document {
         params: LayoutParams,
         generation: u64,
     ) -> Self {
-        let doc = doc::parse(&text);
+        let filetype = FileType::of(&path, &text);
+        let doc = filetype.parse(&path, &text);
         let measure = Measure::new(&doc, &theme.glyphs);
+        let params = filetype.params(params);
         let layout = layout::layout_measured(&doc, &measure, &theme.glyphs, params);
         let links = nav::initial_links(&doc);
         let images = vec![None; doc.links.len()];
         Self {
             path,
+            filetype,
             mtime,
             text,
             doc,
@@ -378,6 +384,7 @@ impl Document {
     }
 
     fn relayout(&mut self, theme: &Theme, params: LayoutParams) {
+        let params = self.filetype.params(params);
         if self.layout.params == params {
             return;
         }
@@ -396,6 +403,7 @@ impl Document {
 
     /// Lay out again after the measurements changed, dropping the previous layout.
     fn relayout_now(&mut self, theme: &Theme, params: LayoutParams) {
+        let params = self.filetype.params(params);
         self.layout = layout::layout_measured(&self.doc, &self.measure, &theme.glyphs, params);
         self.prev = None;
     }
@@ -499,6 +507,7 @@ impl State {
             images: self.graphics.map(|g| ImageFit {
                 cell: g.cell,
                 max_rows: (self.viewport_height() * 3 / 5).max(1) as u16,
+                screen_rows: self.viewport_height() as u16,
             }),
         }
     }
@@ -563,9 +572,12 @@ impl State {
         cmds
     }
 
-    /// Refresh the current document's gutter. Stdin has no file to diff.
+    /// Refresh the current document's gutter. Stdin has no file to diff, and an image no lines.
     fn git_cmd(&self) -> Option<Cmd> {
-        let doc = self.doc.as_ref().filter(|d| d.path.as_os_str() != "-")?;
+        let doc = self
+            .doc
+            .as_ref()
+            .filter(|d| d.path.as_os_str() != "-" && d.filetype != FileType::Image)?;
         Some(Cmd::RunGit {
             doc_gen: doc.generation,
             path: doc.path.clone(),
@@ -2206,5 +2218,158 @@ mod tests {
             [Cmd::OpenWithSystem("neumann.jpeg".into())]
         );
         assert!(state.view.is_none());
+    }
+
+    // --- files that aren't markdown ------------------------------------------------------------
+
+    fn rust_file() -> String {
+        (1..=80)
+            .map(|i| format!("fn f{i}() {{ /* {} */ }}\n", "x".repeat(i % 7 * 20)))
+            .collect()
+    }
+
+    #[test]
+    fn a_code_file_is_one_highlighted_block_as_wide_as_the_terminal() {
+        let mut state = loaded("", 140, 20);
+        state.config.max_width = Some(60);
+        let cmds = load_at(&mut state, "src/lib.rs", &rust_file());
+        let doc = state.doc.as_ref().unwrap();
+        assert_eq!(doc.filetype, FileType::Text { lang: Some("Rust") });
+        assert_eq!(doc.layout.params.max_width, None, "code isn't prose");
+        let width = |r| {
+            doc.layout
+                .spans(r)
+                .map(|(_, s)| u32::from(s.width))
+                .sum::<u32>()
+        };
+        let widest = doc.layout.rows.iter().map(width).max();
+        assert!(widest.unwrap() > 60, "{widest:?}");
+        let langs: Vec<&str> = cmds
+            .iter()
+            .filter_map(|c| match c {
+                Cmd::Highlight(job) => Some(&*job.lang),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(langs, ["Rust"]);
+        assert!(cmds.iter().any(|c| matches!(c, Cmd::RunGit { .. })));
+
+        // the source lines are the file's own, for the gutter, `e` and `--line`
+        update(
+            &mut state,
+            Msg::Scroll {
+                by: ScrollBy::Rows(30),
+            },
+        );
+        let line = top_line(&state);
+        assert!(line > 1);
+        assert_eq!(
+            update(&mut state, Msg::Edit),
+            [Cmd::SpawnEditor {
+                file: "src/lib.rs".into(),
+                line
+            }]
+        );
+    }
+
+    #[test]
+    fn links_to_code_open_in_ada_at_a_line() {
+        let mut state = loaded("", 80, 20);
+        let md = "# A\n\nsee [lib](src/lib.rs#L40) and [the pdf](x.pdf)\n";
+        let cmds = load_at(&mut state, "a.md", md);
+        let doc_gen = state.generation;
+        assert!(cmds.iter().any(|c| matches!(c, Cmd::ResolveLinks { .. })));
+        let resolved = ["src/lib.rs", "x.pdf"]
+            .map(|p| Resolved::Found(p.into()))
+            .to_vec();
+        update(&mut state, Msg::LinksResolved { doc_gen, resolved });
+        let links = &state.doc.as_ref().unwrap().links;
+        assert!(matches!(&links[0], LinkState::Doc { frag: Some(f), .. } if f == "L40"));
+        assert_eq!(links[1], LinkState::File("x.pdf".into()));
+
+        update(&mut state, Msg::FocusLink { dir: Dir::Next });
+        assert_eq!(
+            update(&mut state, Msg::Follow),
+            [Cmd::LoadDoc("src/lib.rs".into())]
+        );
+        load_at(&mut state, "src/lib.rs", &rust_file());
+        assert_eq!(path(&state), "src/lib.rs");
+        assert_eq!(top_line(&state), 40);
+        assert_eq!(state.status, None);
+    }
+
+    #[test]
+    fn a_missing_line_says_so() {
+        assert_eq!(nav::line_frag("L12-L20"), Some(12));
+        assert_eq!(nav::line_frag("L0"), None);
+        assert_eq!(nav::line_frag("Lists"), None);
+        let mut state = loaded("", 80, 20);
+        load_at(&mut state, "a.md", "[far](b.rs#L999)\n");
+        let doc_gen = state.generation;
+        let resolved = vec![Resolved::Found("b.rs".into())];
+        update(&mut state, Msg::LinksResolved { doc_gen, resolved });
+        update(&mut state, Msg::FocusLink { dir: Dir::Next });
+        update(&mut state, Msg::Follow);
+        load_at(&mut state, "b.rs", &rust_file());
+        assert_eq!(path(&state), "b.rs");
+        assert_eq!(
+            (state.scroll, state.status.as_deref()),
+            (0, Some("no line 999"))
+        );
+    }
+
+    #[test]
+    fn an_image_file_fills_the_screen() {
+        let mut state = loaded("", 80, 20);
+        update(
+            &mut state,
+            Msg::Graphics {
+                proto: Proto::Halfblocks,
+                cell: Size { w: 10, h: 20 },
+            },
+        );
+        let cmds = load_at(&mut state, "pics/cat.png", "");
+        let doc_gen = state.generation;
+        assert_eq!(state.doc.as_ref().unwrap().filetype, FileType::Image);
+        assert!(!cmds.iter().any(|c| matches!(c, Cmd::RunGit { .. })));
+        assert!(cmds.contains(&Cmd::ResolveLinks {
+            doc_gen,
+            source: "pics/cat.png".into(),
+            targets: vec![LocalTarget::Path("cat.png".into())],
+        }));
+        let resolved = vec![Resolved::Found("pics/cat.png".into())];
+        let cmds = update(&mut state, Msg::LinksResolved { doc_gen, resolved });
+        assert_eq!(
+            cmds,
+            [Cmd::ProbeImages {
+                doc_gen,
+                paths: vec!["pics/cat.png".into()]
+            }]
+        );
+        let probes = vec![Probe::Image {
+            w: 4000,
+            h: 4000,
+            mtime: Some(1),
+        }];
+        update(&mut state, Msg::ImagesProbed { doc_gen, probes });
+        let slot = state.doc.as_ref().unwrap().layout.images[0];
+        // 19 rows for the document, one of them the caption
+        assert_eq!(slot.size.height, 18);
+        update(&mut state, Msg::Edit);
+        assert_eq!(state.status.as_deref(), Some("an image can't be edited"));
+    }
+
+    #[test]
+    fn binary_files_aren_t_loaded() {
+        let dir = std::env::temp_dir().join(format!("ada-binary-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("blob.dat");
+        std::fs::write(&path, b"ELF\0\0\x01").unwrap();
+        let msg = load_doc(&path, None);
+        assert!(
+            matches!(&msg, Msg::DocFailed { error, .. } if error == "binary file"),
+            "{msg:?}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

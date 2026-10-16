@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use super::{Cmd, Dir, Document, ScrollAnchor, State};
 use crate::doc::{AnchorId, Doc, LinkId, LinkKind};
+use crate::filetype::FileType;
 use crate::links::{self, LocalTarget, Resolved, Target};
 
 /// Recently visited documents kept parsed and laid out, besides the current one.
@@ -104,6 +105,12 @@ pub(super) fn initial_links(doc: &Doc) -> Vec<LinkState> {
         .collect()
 }
 
+/// The first line a GitHub line fragment names: `L42` or `L42-L50`.
+pub(super) fn line_frag(frag: &str) -> Option<u32> {
+    let first = frag.strip_prefix('L')?.split('-').next()?;
+    first.parse().ok().filter(|&n| n > 0)
+}
+
 /// The command that resolves a new document's local links, if it has any.
 pub(super) fn resolve_cmd(doc: &Document) -> Option<Cmd> {
     let (targets, _) = local_targets(&doc.doc);
@@ -134,7 +141,7 @@ impl State {
                 _ => None,
             };
             doc.links[id] = match resolved.get(i) {
-                Some(Resolved::Found(path)) if links::is_markdown(path) => LinkState::Doc {
+                Some(Resolved::Found(path)) if FileType::opens_in_ada(path) => LinkState::Doc {
                     path: path.clone(),
                     frag,
                 },
@@ -246,6 +253,24 @@ impl State {
         self.scroll = row.min(self.max_scroll());
     }
 
+    /// The row a link's `#frag` leads to: a heading, or a line as GitHub numbers them in code
+    /// (`#L42`, `#L42-L50`). A heading that isn't shown leads to the top.
+    fn frag_row(&self, frag: &str) -> Result<u32, String> {
+        let Some(doc) = &self.doc else {
+            return Err("no document".into());
+        };
+        if let Some(a) = links::find_anchor(&doc.doc, frag) {
+            return Ok(self.anchor_row(a).unwrap_or(0));
+        }
+        match line_frag(frag) {
+            Some(line) => doc
+                .layout
+                .row_for_line(line)
+                .ok_or_else(|| format!("no line {line}")),
+            None => Err(format!("no heading #{frag}")),
+        }
+    }
+
     fn anchor_row(&self, anchor: AnchorId) -> Option<u32> {
         let doc = self.doc.as_ref()?;
         doc.layout
@@ -279,16 +304,12 @@ impl State {
                 Vec::new()
             }
             Some(LinkState::Doc { path, frag }) if same_doc(&path) => {
-                let anchor = frag.as_deref().map(|f| links::find_anchor(&doc.doc, f));
-                match anchor {
+                match frag {
                     None => self.jump_local(0),
-                    Some(Some(a)) => {
-                        let row = self.anchor_row(a).unwrap_or(0);
-                        self.jump_local(row);
-                    }
-                    Some(None) => {
-                        self.status = Some(format!("no heading #{}", frag.unwrap_or_default()));
-                    }
+                    Some(frag) => match self.frag_row(&frag) {
+                        Ok(row) => self.jump_local(row),
+                        Err(why) => self.status = Some(why),
+                    },
                 }
                 Vec::new()
             }
@@ -441,16 +462,10 @@ impl State {
         match nav.land {
             Landing::Entry(entry) => self.restore(&entry),
             Landing::Frag(None) => {}
-            Landing::Frag(Some(frag)) => {
-                let anchor = self
-                    .doc
-                    .as_ref()
-                    .and_then(|d| links::find_anchor(&d.doc, &frag));
-                match anchor.and_then(|a| self.anchor_row(a)) {
-                    Some(row) => self.scroll = row.min(self.max_scroll()),
-                    None => self.status = Some(format!("no heading #{frag}")),
-                }
-            }
+            Landing::Frag(Some(frag)) => match self.frag_row(&frag) {
+                Ok(row) => self.scroll = row.min(self.max_scroll()),
+                Err(why) => self.status = Some(why),
+            },
         }
         cmds
     }

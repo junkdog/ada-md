@@ -4,6 +4,7 @@
 
 use super::{Cmd, LinkState, ScrollAnchor, State};
 use crate::doc::LinkKind;
+use crate::filetype::FileType;
 use crate::images::ImageCache;
 
 impl State {
@@ -26,6 +27,10 @@ impl State {
         };
         if doc.path.as_os_str() == "-" {
             self.status = Some("stdin can't be edited".into());
+            return Vec::new();
+        }
+        if doc.filetype == FileType::Image {
+            self.status = Some("an image can't be edited".into());
             return Vec::new();
         }
         let line = ScrollAnchor::capture(&doc.layout, self.scroll).map_or(1, |a| a.line);
