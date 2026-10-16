@@ -8,7 +8,19 @@ A terminal markdown viewer for notes you walk between: follow links and come bac
 were, see what git says changed, read wide tables at any width, and look at the pictures.
 
 `ada` renders CommonMark and GitHub-flavoured markdown with `[[wiki links]]`, highlights code
-in some 200 languages, and shows images inline in terminals that can (kitty, sixel, iTerm2). 
+in some 200 languages, and shows images inline in terminals that can (kitty, sixel, iTerm2).
+It isn't only for markdown: code, config and other text files open highlighted, and png and
+jpeg files full screen, whether named on the command line or reached through a link
+([Other files](#other-files)).
+
+![ada following a wiki link, sorting a table by cost, going back, searching, and picking a theme](demo/short.gif)
+
+<details>
+<summary>A longer tour: links and history, code files, tables, search, images, live reload, themes and <code>--print</code></summary>
+
+![ada's features, one chapter at a time, each introduced by a shell comment](demo/tour.gif)
+
+</details>
 
 ## Features
 
@@ -25,6 +37,7 @@ in some 200 languages, and shows images inline in terminals that can (kitty, six
 - a filterable heading outline, and a filterable list of links
 - live reload, and `e` to edit at the current line
 - `y` to copy the focused link or visible code block (OSC 52)
+- three built-in themes, and your own; `T` previews each before you pick one
 - themes, keys and options in one config file
 - `--print` for pipes and fzf previews
 
@@ -84,7 +97,7 @@ Press `?` in ada for the keys. See `ada --help` for every option.
 | `t` | tables: auto, grid, records |
 | `s` | sort a table on screen by a column: ascending, descending, source order; `←` `→` pick another table |
 | `w`, `←` `→` | wrap code, or scroll it sideways |
-| `T` | the next theme |
+| `T` | pick a theme, previewing each: `Enter` keeps it, `Esc` goes back |
 | `r` | read the file again |
 | `e` | edit in `$VISUAL` or `$EDITOR` at the current line |
 | `y` | copy the focused link, or the code block on screen |
@@ -190,6 +203,18 @@ complete from the built-ins and your themes directory.
 files and git output ada read, as plain text in the order it happened. `--replay FILE` plays it
 back exactly, even after the files have changed, which makes a bug report out of a session.
 `--headless` replays it off-screen and prints the last frame.
+
+## Demos
+
+The recordings above are made with [VHS](https://github.com/charmbracelet/vhs) from
+`demo/short.tape` and `demo/tour.tape`, which read the made-up notes in `demo/notes` from a
+scratch git repository and a config of their own. To record them again:
+
+```zsh
+cargo build --release
+vhs demo/short.tape
+vhs demo/tour.tape
+```
 
 ## License
 
