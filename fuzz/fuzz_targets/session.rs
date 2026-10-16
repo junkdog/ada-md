@@ -5,7 +5,8 @@
 //! every result waits in a queue until the script delivers it, so results can arrive late, out
 //! of order, or after the document they were for is gone. Intents arrive directly or as keys
 //! through the default keymap, and `T` lists two extra themes with wide, empty and ASCII
-//! glyphs. Every step is painted. Nothing may panic.
+//! glyphs. The document is markdown, code, config, plain text or an image, as its name says,
+//! and links lead to code files at a `#L42` line. Every step is painted. Nothing may panic.
 //!
 //! ```zsh
 //! cargo +nightly fuzz run -s none -a session -- -dict=fuzz/markdown.dict -max_len=16384
@@ -14,7 +15,7 @@
 #![no_main]
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use ada::app::{self, Cmd, Computed, Config, Dir, Effects, Keymap, Msg, ScrollBy, Size, State};
@@ -134,8 +135,14 @@ fn world() -> &'static World {
                 .expect("jpeg");
             out.into_inner()
         };
+        let rust: String = (1..=40)
+            .map(|i| format!("fn f{i}() {{ /* {} */ }}\n", "日x".repeat(i % 7 * 9)))
+            .collect();
         let files = vec![
-            write("a.md", b"# A\n\nback to [fuzz](fuzz.md) and [[b]]\n"),
+            write(
+                "a.md",
+                b"# A\n\nback to [fuzz](fuzz.md), [[b]] and [code](c.rs#L3-L5)\n",
+            ),
             write("b.md", b"## B\n\n![i](img.png)\n\n| x |\n|---|\n| y |\n"),
             write("img.png", &png(3, 2)),
             write("tall.png", &png(1, 64)),
@@ -144,6 +151,14 @@ fn world() -> &'static World {
             dir.join("missing.png"),
             dir.join("missing.md"),
             dir.join("fuzz.md"),
+            write("c.rs", rust.as_bytes()),
+            write(
+                "conf.toml",
+                b"[a]\nb = \"[x](a.md)\" # c\n\n[[d]]\ne = [1, 2]\n",
+            ),
+            write("notes.txt", b"plain\ttext, [not](a.md) a link\n"),
+            write("run", b"#!/usr/bin/env python3\nprint('ada')\n"),
+            write("blob.dat", b"ELF\0\0\x01"),
         ];
         World { dir, files }
     })
@@ -537,9 +552,26 @@ impl Session<'_> {
     }
 }
 
-fn doc_path() -> &'static Path {
-    static PATH: OnceLock<PathBuf> = OnceLock::new();
-    PATH.get_or_init(|| world().dir.join("fuzz.md"))
+/// Names the document can have. Its file type decides how it's parsed and laid out: markdown
+/// mostly, then code and config in a few syntaxes, plain text, an image, a name only the first
+/// line explains (markdown unless it's a `#!` line), and an extension nothing claims.
+const DOC_NAMES: [&str; 12] = [
+    "fuzz.md",
+    "fuzz.md",
+    "fuzz.md",
+    "fuzz.md",
+    "fuzz.rs",
+    "Cargo.toml",
+    "ci.yml",
+    "fuzz.py",
+    "fuzz.txt",
+    "fuzz",
+    "fuzz.png",
+    "fuzz.xyz",
+];
+
+fn doc_path(name: usize) -> PathBuf {
+    world().dir.join(DOC_NAMES[name % DOC_NAMES.len()])
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -571,6 +603,7 @@ fuzz_target!(|data: &[u8]| {
     };
     let graphics: Option<(u8, u8, u8)> = u.arbitrary().unwrap_or_default();
     let stdin = u.ratio(1, 16).unwrap_or(false);
+    let name: usize = u.int_in_range(0..=DOC_NAMES.len() - 1).unwrap_or(0);
 
     let mut state = State::new(theme(), config);
     state.themes.extend_from_slice(extra_themes());
@@ -592,11 +625,7 @@ fuzz_target!(|data: &[u8]| {
         s.send(msg);
     }
     s.send(Msg::DocLoaded {
-        path: if stdin {
-            "-".into()
-        } else {
-            doc_path().to_owned()
-        },
+        path: if stdin { "-".into() } else { doc_path(name) },
         mtime: Some(1),
         text: doc,
     });
