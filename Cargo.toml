@@ -17,6 +17,12 @@ name = "ada"
 name = "ada"
 path = "src/main.rs"
 
+[features]
+default = ["onig"]
+# Oniguruma (C, built with `cc`) for syntect's regexes: 10-25x faster first use per language, 3x
+# faster parsing and ~5x less memory than fancy-regex. Without it, highlighting stays pure Rust.
+onig = ["syntect/regex-onig", "two-face/syntect-onig"]
+
 [dependencies]
 anpa = "0.12"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

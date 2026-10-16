@@ -47,7 +47,11 @@ jpeg files full screen, whether named on the command line or reached through a l
 cargo install --path .
 ```
 
-Rust 1.99 or newer. There are no C dependencies; git integration runs the `git` command.
+Rust 1.99 or newer, and a C compiler: syntax highlighting runs on
+[Oniguruma](https://github.com/kkos/oniguruma), which is built from source. For a pure-Rust
+build, use `cargo install --path . --no-default-features`. Highlighting then runs on
+fancy-regex and looks the same, but each language costs 10–20 ms on first use instead of about
+1 ms. Git integration runs the `git` command.
 
 ## Usage
 

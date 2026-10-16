@@ -1,7 +1,8 @@
 //! Spike B: highlighting cost.
 //!
 //! Measures how long two-face's `extra_newlines()` SyntaxSet takes to load, then highlights every
-//! fenced code block found under the given paths with syntect + fancy-regex, grouped by language.
+//! fenced code block found under the given paths with syntect, grouped by language. Add
+//! `--no-default-features` to measure fancy-regex instead of Oniguruma.
 //! The theme is syntect's empty default: colour lookup is cheap next to parsing, which is what we
 //! are measuring.
 //!

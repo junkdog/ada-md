@@ -1,5 +1,6 @@
-//! Syntax highlighting (ADR-07): syntect with fancy-regex and two-face's syntax set, run on a
-//! worker thread so the first paint never waits for it.
+//! Syntax highlighting (ADR-07): syntect with two-face's syntax set, run on a worker thread so
+//! the first paint never waits for it. The regexes run on Oniguruma by default; building without
+//! the `onig` feature keeps them on fancy-regex, pure Rust.
 //!
 //! Results are colour-free. The theme's `[syntax]` table becomes a syntect theme whose rule `i`
 //! "colours" a token with `i` encoded in its foreground, so a highlighted line is a list of
@@ -26,14 +27,16 @@ use crate::app::{Computed, Msg};
 use crate::doc::{CodeBlock, CodeId, code_lines};
 use crate::layout::expand_tabs;
 
-/// Longer lines are left plain: fancy-regex can be slow on them, and nobody reads them anyway.
+/// Longer lines are left plain: backtracking regexes can be slow on them, and nobody reads them
+/// anyway.
 const MAX_LINE: usize = 4096;
 
 /// Cached blocks before the cache starts over.
 const CACHE_CAP: usize = 4096;
 
 /// bat's syntax set, loaded once. Loading is ~1 ms; syntect compiles each syntax's regexes on
-/// first use, which is the expensive part (up to ~200 ms for TypeScript).
+/// first use, which is the expensive part: ~1 ms a language on Oniguruma, up to ~200 ms
+/// (TypeScript) on fancy-regex.
 pub fn syntaxes() -> &'static SyntaxSet {
     static SET: OnceLock<SyntaxSet> = OnceLock::new();
     SET.get_or_init(two_face::syntax::extra_newlines)
