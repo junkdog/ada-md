@@ -221,7 +221,7 @@ mod tests {
             panic!("strings have an rgb colour");
         };
         assert!(
-            out.contains(&format!("38;2;{r};{g};{b};48;2;60;56;54m\"hi\"\x1b")),
+            out.contains(&format!("38;2;{r};{g};{b};48;2;50;48;47m\"hi\"\x1b")),
             "{out:?}"
         );
     }

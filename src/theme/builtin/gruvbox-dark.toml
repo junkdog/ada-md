@@ -1,15 +1,18 @@
-# gruvbox dark, ported from ~/.config/glow/gruvbox-dark.json (including its chroma colours), so
-# the switch from glow is visually continuous. User themes may `extends = "gruvbox-dark"` and
-# override only some keys.
+# gruvbox dark, after the gruvbox palette (github.com/morhetz/gruvbox). Prose stays cream, and
+# colour is kept for structure: headings run warm to cool as they drop, and syntax colours follow
+# gruvbox's vim mapping. User themes may `extends = "gruvbox-dark"` and override only some keys.
 name = "gruvbox-dark"
 
 [palette]
+bg0_h = "#1d2021"
 bg = "#282828"
 bg0_s = "#32302f"
 bg1 = "#3c3836"
 bg2 = "#504945"
+bg3 = "#665c54"
 fg = "#ebdbb2"
 fg0 = "#fbf1c7"
+fg2 = "#d5c4a1"
 fg4 = "#a89984"
 gray = "#928374"
 red = "#fb4934"
@@ -24,44 +27,44 @@ orange = "#fe8019"
 fg = "fg"          # bg unset = terminal default
 margin = 2
 
-[heading]
+[heading]                    # warm to cool as the levels drop
 1 = { fg = "bg", bg = "orange", bold = true, prefix = " ", suffix = " " }
 2 = { fg = "orange", bold = true, prefix = "## " }
-3 = { fg = "orange", bold = true, prefix = "### " }
-4 = { fg = "orange", bold = true, prefix = "#### " }
-5 = { fg = "orange", bold = true, prefix = "##### " }
-6 = { fg = "orange", prefix = "###### " }
+3 = { fg = "yellow", bold = true, prefix = "### " }
+4 = { fg = "aqua", bold = true, prefix = "#### " }
+5 = { fg = "blue", bold = true, prefix = "##### " }
+6 = { fg = "purple", prefix = "###### " }
 
 [inline]
-emph = { fg = "yellow", italic = true }
-strong = { fg = "orange", bold = true }
-strike = { crossed_out = true }
-code = { fg = "red", bg = "bg1", pad = 1 }
-link = { fg = "aqua", underline = true }
-link_focused = { fg = "bg", bg = "aqua" }
+emph = { fg = "fg2", italic = true }
+strong = { fg = "fg0", bold = true }
+strike = { fg = "gray", crossed_out = true }
+code = { fg = "aqua", bg = "bg1", pad = 1 }
+link = { fg = "blue", underline = true }
+link_focused = { fg = "bg", bg = "blue" }
 link_broken = { fg = "red", crossed_out = true }
 image = { fg = "purple", underline = true }
 footnote_ref = { fg = "blue" }
 
 [block]
 quote = { fg = "fg4" }
-quote_bar = { fg = "fg4" }
+quote_bar = { fg = "bg3" }
 callout_note = { fg = "blue", bold = true }
 callout_tip = { fg = "green", bold = true }
 callout_important = { fg = "purple", bold = true }
 callout_warning = { fg = "yellow", bold = true }
 callout_caution = { fg = "red", bold = true }
-code = { fg = "fg", bg = "bg1" }
+code = { fg = "fg", bg = "bg0_s" }
 code_text = {}           # code itself; inherits block.code, under the [syntax] colours
-code_label = { fg = "gray", bg = "bg1", italic = true }
-code_wrap_mark = { fg = "gray", bg = "bg1" }
-list_bullet = { fg = "fg4" }
-list_number = { fg = "fg4" }
+code_label = { fg = "gray", bg = "bg0_s", italic = true }
+code_wrap_mark = { fg = "gray", bg = "bg0_s" }
+list_bullet = { fg = "yellow" }
+list_number = { fg = "yellow" }
 task_done = { fg = "green" }
 task_open = { fg = "gray" }
-rule = { fg = "gray" }
-table_border = { fg = "gray" }
-table_header = { fg = "orange", bold = true }
+rule = { fg = "bg3" }
+table_border = { fg = "bg3" }
+table_header = { fg = "yellow", bold = true }
 table_row_alt = { bg = "bg0_s" }   # every other body row or record card
 footnote_label = { fg = "blue" }
 html = { fg = "gray" }
@@ -94,41 +97,57 @@ status_file = { fg = "fg", bg = "bg2", bold = true }
 status_heading = { fg = "orange", bg = "bg1" }
 status_pos = { fg = "fg4", bg = "bg2" }
 status_message = { fg = "yellow", bg = "bg1" }
-status_link = { fg = "aqua", bg = "bg1" }        # the focused link's target
+status_link = { fg = "blue", bg = "bg1" }        # the focused link's target
 search_match = { fg = "bg", bg = "orange" }
 search_match_hidden = { underline = true, underline_color = "purple" }   # matched in a link target
 search_current = { fg = "bg", bg = "yellow", bold = true }
 prompt = { fg = "fg", bg = "bg1" }
 prompt_error = { fg = "red", bg = "bg1" }
 popup = { fg = "fg", bg = "bg1" }               # the outline
-popup_border = { fg = "gray", bg = "bg1" }
+popup_border = { fg = "bg3", bg = "bg1" }
 popup_title = { fg = "orange", bg = "bg1", bold = true }
 popup_selected = { fg = "bg", bg = "orange", bold = true }
 
 [syntax]                     # TextMate scope selector → style; the most specific match wins
 "comment" = { fg = "gray", italic = true }
-"meta.preprocessor" = { fg = "orange" }
+"meta.preprocessor" = { fg = "aqua" }
+"meta.annotation" = { fg = "aqua" }
+"variable.annotation" = { fg = "aqua" }
 "keyword" = { fg = "red" }
-"storage.type" = { fg = "yellow" }
-"storage.modifier" = { fg = "red" }
 "keyword.operator" = { fg = "orange" }
+"storage" = { fg = "red" }
+"storage.type" = { fg = "yellow" }           # u32, int; also rust's `let`, which shares the scope
+"storage.type.function" = { fg = "red" }     # fn, struct, impl, …: keywords, not types
+"storage.type.struct" = { fg = "red" }
+"storage.type.enum" = { fg = "red" }
+"storage.type.union" = { fg = "red" }
+"storage.type.trait" = { fg = "red" }
+"storage.type.impl" = { fg = "red" }
+"storage.type.type" = { fg = "red" }
+"storage.type.module" = { fg = "red" }
+"storage.type.class" = { fg = "red" }
+"storage.type.interface" = { fg = "red" }
+"storage.modifier.lifetime" = { fg = "orange" }
 "punctuation" = { fg = "fg" }
 "punctuation.definition.string" = { fg = "green" }
 "punctuation.definition.comment" = { fg = "gray", italic = true }
 "variable" = { fg = "fg" }
-"support.function" = { fg = "yellow" }
-"entity.name.tag" = { fg = "red" }
-"entity.other.attribute-name" = { fg = "green" }
-"entity.name.type" = { fg = "yellow", bold = true, underline = true }
-"entity.name.class" = { fg = "yellow", bold = true, underline = true }
-"entity.name.function" = { fg = "green" }
+"support.function" = { fg = "aqua" }
+"support.macro" = { fg = "aqua" }
+"support.type" = { fg = "yellow" }
+"entity.name" = { fg = "yellow" }            # struct, enum, trait and class names
+"entity.name.function" = { fg = "green", bold = true }
+"entity.name.tag" = { fg = "blue" }          # html tags, toml and yaml keys
+"entity.name.table" = { fg = "yellow", bold = true }
+"entity.other.attribute-name" = { fg = "aqua" }
 "constant" = { fg = "purple" }
 "constant.numeric" = { fg = "purple" }
 "string" = { fg = "green" }
 "constant.character.escape" = { fg = "orange" }
+"constant.other.placeholder" = { fg = "orange" }
 "markup.deleted" = { fg = "red" }
 "markup.inserted" = { fg = "green" }
 "markup.italic" = { italic = true }
 "markup.bold" = { bold = true }
-"markup.heading" = { fg = "gray" }
+"markup.heading" = { fg = "orange", bold = true }
 "invalid" = { fg = "fg0", bg = "red" }

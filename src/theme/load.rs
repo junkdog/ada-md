@@ -374,7 +374,7 @@ mod tests {
         assert_eq!(theme.glyphs.code_pad, 1);
         assert_eq!(
             theme.styles[StyleKey::Emph as usize].fg,
-            Some(Color::Rgb(0xfa, 0xbd, 0x2f))
+            Some(Color::Rgb(0xd5, 0xc4, 0xa1))
         );
         assert!(!theme.syntax.is_empty());
     }
