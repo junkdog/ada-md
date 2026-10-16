@@ -19,7 +19,7 @@ in some 200 languages, and shows images inline in terminals that can (kitty, six
 - git gutter for staged and unstaged changes; `]c`/`[c` to jump between them
 - inline images, and full screen from any linked png or jpeg
 - regex search that sees through markup: `foo bar` finds `**foo** _bar_`
-- a filterable heading outline
+- a filterable heading outline, and a filterable list of links
 - live reload, and `e` to edit at the current line
 - `y` to copy the focused link or visible code block (OSC 52)
 - themes, keys and options in one config file
@@ -72,6 +72,7 @@ Press `?` in ada for the keys. See `ada --help` for every option.
 | `BS` `H` `C-o`, `L` | back, forward |
 | `/`, `n` `N` | search with a regex, next and previous match |
 | `o` | the outline: type to filter, `Enter` to jump |
+| `l` | the links: type to filter, `Enter` to focus one |
 | `t` | tables: auto, grid, records |
 | `w`, `←` `→` | wrap code, or scroll it sideways |
 | `T` | the next theme |

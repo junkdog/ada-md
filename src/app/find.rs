@@ -1,10 +1,13 @@
-//! Search (ADR-12) and the outline: the prompt, `n`/`N`, and the heading list. Both work on
-//! messages carrying what the user typed so far, so recordings replay them exactly.
+//! Search (ADR-12) and the outline: the prompt, `n`/`N`, and the filterable list of headings or
+//! links. Both work on messages carrying what the user typed so far, so recordings replay them
+//! exactly.
+
+use std::borrow::Cow;
 
 use regex::Regex;
 
-use super::{Dir, State};
-use crate::doc::{AnchorId, LinkKind};
+use super::{Dir, Document, State};
+use crate::doc::{LinkId, LinkKind};
 use crate::search::{self, Match, Projection, UnitKind};
 
 #[derive(Debug)]
@@ -42,19 +45,44 @@ pub struct Prompt {
     origin: u32,
 }
 
+/// What the outline lists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Listing {
+    /// `o`: the headings, indented by level.
+    #[default]
+    Headings,
+    /// `l`: every link, in the order Tab visits them.
+    Links,
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Outline {
+    pub listing: Listing,
     pub filter: String,
     /// An index into the filtered entries.
     pub selected: usize,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OutlineEntry<'a> {
-    pub anchor: AnchorId,
+    /// The heading's anchor, or the link.
+    pub id: u32,
+    /// The heading level; 0 for links.
     pub level: u8,
     pub row: u32,
-    pub text: &'a str,
+    pub text: Cow<'a, str>,
+    /// Where a link leads, as written, unless the text already says so.
+    pub dest: Option<String>,
+    pub broken: bool,
+}
+
+impl OutlineEntry<'_> {
+    fn matches(&self, filter: &str) -> bool {
+        match &self.dest {
+            Some(dest) => matches_filter(&format!("{} {dest}", self.text), filter),
+            None => matches_filter(&self.text, filter),
+        }
+    }
 }
 
 /// Every word of `filter` occurs in `text`, ignoring case.
@@ -63,6 +91,58 @@ fn matches_filter(text: &str, filter: &str) -> bool {
     filter
         .split_whitespace()
         .all(|w| text.contains(&w.to_lowercase()))
+}
+
+/// Each link once, in row order, with the text it renders as: the text of its spans on every
+/// row it spans, whitespace collapsed.
+fn link_entries(doc: &Document) -> Vec<OutlineEntry<'_>> {
+    let layout = &doc.layout;
+    let mut entries: Vec<OutlineEntry<'_>> = Vec::new();
+    // per link: its entry, and the last row its text was taken from
+    let mut seen: Vec<Option<(usize, u32)>> = vec![None; doc.doc.links.len()];
+    for hit in &layout.hits {
+        let Some(slot) = seen.get_mut(hit.link as usize) else {
+            continue;
+        };
+        let at = match *slot {
+            Some((_, row)) if row == hit.row => continue,
+            Some((at, _)) => at,
+            None => {
+                entries.push(OutlineEntry {
+                    id: hit.link,
+                    level: 0,
+                    row: hit.row,
+                    text: Cow::Owned(String::new()),
+                    dest: None,
+                    broken: doc.is_broken(hit.link),
+                });
+                entries.len() - 1
+            }
+        };
+        *slot = Some((at, hit.row));
+        let Some(row) = layout.rows.get(hit.row as usize) else {
+            continue;
+        };
+        let text = entries[at].text.to_mut();
+        text.push(' ');
+        for (t, _) in layout.spans(row).filter(|(_, s)| s.link == Some(hit.link)) {
+            text.push_str(t);
+        }
+    }
+    for entry in &mut entries {
+        let text = entry.text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let Some(link) = doc.doc.links.get(entry.id as usize) else {
+            continue;
+        };
+        let written = super::nav::written_dest(&doc.doc, entry.id);
+        if text.is_empty() {
+            entry.text = Cow::Owned(written);
+        } else {
+            entry.dest = (text != *link.dest).then_some(written);
+            entry.text = Cow::Owned(text);
+        }
+    }
+    entries
 }
 
 impl State {
@@ -257,35 +337,58 @@ impl State {
         ))
     }
 
-    /// The headings the outline lists, filtered.
-    pub fn outline_entries(&self) -> Vec<OutlineEntry<'_>> {
+    /// Everything the outline lists, before filtering.
+    pub fn outline_all(&self) -> Vec<OutlineEntry<'_>> {
         let (Some(doc), Some(outline)) = (&self.doc, &self.outline) else {
             return Vec::new();
         };
-        doc.layout
-            .headings
-            .iter()
-            .filter_map(|h| {
-                let text = &doc.doc.anchors.get(h.anchor as usize)?.text;
-                matches_filter(text, &outline.filter).then_some(OutlineEntry {
-                    anchor: h.anchor,
-                    level: h.level,
-                    row: h.row,
-                    text,
+        match outline.listing {
+            Listing::Headings => doc
+                .layout
+                .headings
+                .iter()
+                .filter_map(|h| {
+                    Some(OutlineEntry {
+                        id: h.anchor,
+                        level: h.level,
+                        row: h.row,
+                        text: Cow::Borrowed(&doc.doc.anchors.get(h.anchor as usize)?.text),
+                        dest: None,
+                        broken: false,
+                    })
                 })
-            })
-            .collect()
+                .collect(),
+            Listing::Links => link_entries(doc),
+        }
     }
 
-    pub(super) fn open_outline(&mut self) {
+    /// What the outline lists, filtered.
+    pub fn outline_entries(&self) -> Vec<OutlineEntry<'_>> {
+        let filter = self.outline.as_ref().map_or("", |o| &o.filter);
+        let mut entries = self.outline_all();
+        entries.retain(|e| e.matches(filter));
+        entries
+    }
+
+    /// Open the outline at the heading the view is in, or at the focused link or the first one
+    /// on screen.
+    pub(super) fn open_outline(&mut self, listing: Listing) {
         self.prompt = None;
-        self.outline = Some(Outline::default());
-        let scroll = self.scroll;
-        let selected = self
-            .outline_entries()
-            .iter()
-            .rposition(|e| e.row <= scroll)
-            .unwrap_or(0);
+        self.outline = Some(Outline {
+            listing,
+            ..Outline::default()
+        });
+        let (scroll, focus) = (self.scroll, self.visible_focus());
+        let entries = self.outline_all();
+        let selected = match listing {
+            Listing::Headings => entries.iter().rposition(|e| e.row <= scroll),
+            Listing::Links => entries
+                .iter()
+                .position(|e| Some(e.id) == focus)
+                .or_else(|| entries.iter().position(|e| e.row >= scroll))
+                .or(entries.len().checked_sub(1)),
+        };
+        let selected = selected.unwrap_or(0);
         if let Some(outline) = &mut self.outline {
             outline.selected = selected;
         }
@@ -295,13 +398,15 @@ impl State {
         let selected = self
             .outline_entries()
             .get(self.outline.as_ref().map_or(0, |o| o.selected))
-            .map(|e| e.anchor);
+            .map(|e| e.id);
         let Some(outline) = &mut self.outline else {
             return;
         };
         outline.filter = text;
-        let entries = self.outline_entries();
-        let keep = entries.iter().position(|e| Some(e.anchor) == selected);
+        let keep = self
+            .outline_entries()
+            .iter()
+            .position(|e| Some(e.id) == selected);
         if let Some(outline) = &mut self.outline {
             outline.selected = keep.unwrap_or(0);
         }
@@ -315,14 +420,24 @@ impl State {
         }
     }
 
+    /// Jump to the heading; or bring the link on screen, a third of the way down, and focus it,
+    /// so `Enter` follows it.
     pub(super) fn outline_pick(&mut self) {
-        let row = self
+        let picked = self
             .outline_entries()
             .get(self.outline.as_ref().map_or(0, |o| o.selected))
-            .map(|e| e.row);
-        self.outline = None;
-        if let Some(row) = row {
-            self.jump_local(row);
+            .map(|e| (e.id, e.row));
+        let (Some(outline), Some((id, row))) = (self.outline.take(), picked) else {
+            return;
+        };
+        match outline.listing {
+            Listing::Headings => self.jump_local(row),
+            Listing::Links => {
+                if !self.visible(row) {
+                    self.jump_local(row.saturating_sub(self.viewport_height() / 3));
+                }
+                self.focus = Some(id as LinkId);
+            }
         }
     }
 }

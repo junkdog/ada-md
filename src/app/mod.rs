@@ -25,7 +25,7 @@ use crate::search::SearchMap;
 use crate::theme::Theme;
 
 pub use effects::{Effects, editor_command, load_doc, osc52};
-pub use find::{Outline, OutlineEntry, Prompt, Search};
+pub use find::{Listing, Outline, OutlineEntry, Prompt, Search};
 pub use imaging::{ImageFile, ImageView};
 pub use keymap::{Action, Bindings, Key, KeySeq, Keymap};
 pub use nav::LinkState;
@@ -99,6 +99,8 @@ pub enum Msg {
     Back,
     Forward,
     OpenOutline,
+    /// `l`: the outline, listing the links.
+    OpenLinks,
     OutlineFilter {
         text: String,
     },
@@ -1021,7 +1023,12 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::OpenOutline => {
             state.status = None;
-            state.open_outline();
+            state.open_outline(Listing::Headings);
+            Vec::new()
+        }
+        Msg::OpenLinks => {
+            state.status = None;
+            state.open_outline(Listing::Links);
             Vec::new()
         }
         Msg::OutlineFilter { text } => {
@@ -1785,7 +1792,7 @@ mod tests {
         let selected = |s: &State| {
             s.outline_entries()[s.outline.as_ref().unwrap().selected]
                 .text
-                .to_owned()
+                .to_string()
         };
         let current = selected(&state);
         assert!(current.starts_with("Heading "), "{current}");
@@ -1816,6 +1823,53 @@ mod tests {
         assert_eq!(state.scroll, heading.min(state.max_scroll()));
         update(&mut state, Msg::Back);
         assert_eq!(state.scroll, 30);
+    }
+
+    #[test]
+    fn link_list_filters_and_focuses() {
+        let mut state = walker();
+        update(&mut state, Msg::OpenLinks);
+        let shown: Vec<_> = state
+            .outline_entries()
+            .iter()
+            .map(|e| (e.text.to_string(), e.dest.clone(), e.broken))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("b".into(), Some("b.md#part-two".into()), false),
+                ("gone".into(), None, true),
+                ("x".into(), Some("#later".into()), false),
+                ("https://example.com".into(), None, false),
+            ]
+        );
+        // the destination counts for the filter
+        update(
+            &mut state,
+            Msg::OutlineFilter {
+                text: "later".into(),
+            },
+        );
+        assert_eq!(state.outline_entries().len(), 1);
+        update(
+            &mut state,
+            Msg::OutlineFilter {
+                text: String::new(),
+            },
+        );
+        update(&mut state, Msg::OutlineMove { by: 3 });
+        update(&mut state, Msg::OutlinePick);
+        assert!(state.outline.is_none());
+        assert_eq!(focused_dest(&state).as_deref(), Some("https://example.com"));
+        assert!(state.scroll > 0, "scrolled to the last link");
+        // reopening starts at the focused link; picking one on screen doesn't scroll
+        update(&mut state, Msg::OpenLinks);
+        assert_eq!(state.outline.as_ref().unwrap().selected, 3);
+        let scroll = state.scroll;
+        update(&mut state, Msg::OutlinePick);
+        assert_eq!(state.scroll, scroll);
+        update(&mut state, Msg::Back);
+        assert_eq!(state.scroll, 0);
     }
 
     // --- P5: the git gutter and reload --------------------------------------------------------

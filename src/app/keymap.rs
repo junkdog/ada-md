@@ -77,6 +77,7 @@ actions! {
         SearchNext => "search_next", "the next match", ["n"],
         SearchPrev => "search_prev", "the previous match", ["N"],
         Outline => "outline", "the outline of headings", ["o"],
+        Links => "links", "the list of links", ["l"],
     }
     "View" {
         TableMode => "table_mode", "tables: auto, grid, records", ["t"],
@@ -123,6 +124,7 @@ impl Action {
             Action::SearchNext => Msg::SearchNext { dir: Dir::Next },
             Action::SearchPrev => Msg::SearchNext { dir: Dir::Prev },
             Action::Outline => Msg::OpenOutline,
+            Action::Links => Msg::OpenLinks,
             Action::TableMode => Msg::ToggleTableMode,
             Action::CodeWrap => Msg::ToggleCodeWrap,
             Action::CodeLeft => Msg::ScrollCodeX { by: -CODE_X_STEP },
@@ -413,7 +415,7 @@ enum Mode {
     Normal,
     /// The search prompt, with the pattern typed so far.
     Search(String),
-    /// The outline popup, with its filter.
+    /// The outline popup, of headings or links, with its filter.
     Outline(String),
     Help,
 }
@@ -556,7 +558,7 @@ impl Keymap {
             None => self.bindings.find(&[key])?,
         };
         match action {
-            Action::Outline => self.mode = Mode::Outline(String::new()),
+            Action::Outline | Action::Links => self.mode = Mode::Outline(String::new()),
             Action::Search => self.mode = Mode::Search(String::new()),
             Action::Help => self.mode = Mode::Help,
             _ => {}
@@ -739,6 +741,14 @@ mod tests {
         );
         assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::OutlineClose));
         assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::Quit));
+
+        // the link list shares the outline's keys
+        assert_eq!(press(&mut km, KeyCode::Char('l')), Some(Msg::OpenLinks));
+        assert_eq!(
+            typed(&mut km, "q"),
+            [Msg::OutlineFilter { text: "q".into() }]
+        );
+        assert_eq!(press(&mut km, KeyCode::Enter), Some(Msg::OutlinePick));
     }
 
     #[test]

@@ -145,7 +145,7 @@ impl State {
         }
     }
 
-    fn visible(&self, row: u32) -> bool {
+    pub(super) fn visible(&self, row: u32) -> bool {
         (self.scroll..self.scroll + self.viewport_height()).contains(&row)
     }
 
@@ -469,18 +469,26 @@ impl State {
     pub fn focus_text(&self) -> Option<String> {
         let link = self.visible_focus()?;
         let doc = self.doc.as_ref()?;
-        let link_ref = doc.doc.links.get(link as usize)?;
-        let shown = match link_ref.kind {
-            LinkKind::Footnote(id) => {
-                let n = doc.doc.footnotes.get(id as usize).map_or(0, |f| f.number);
-                format!("footnote [{n}]")
-            }
-            LinkKind::Wiki { .. } => format!("[[{}]]", link_ref.dest),
-            _ => link_ref.dest.to_string(),
-        };
+        doc.doc.links.get(link as usize)?;
+        let shown = written_dest(&doc.doc, link);
         Some(match doc.links.get(link as usize) {
             Some(LinkState::Broken(why)) => format!("{shown}  ✗ {why}"),
             _ => shown,
         })
+    }
+}
+
+/// A link's destination as written: `[[note]]` for a wiki link, `footnote [3]` for a footnote.
+pub(super) fn written_dest(doc: &Doc, link: LinkId) -> String {
+    let Some(link_ref) = doc.links.get(link as usize) else {
+        return String::new();
+    };
+    match link_ref.kind {
+        LinkKind::Footnote(id) => {
+            let n = doc.footnotes.get(id as usize).map_or(0, |f| f.number);
+            format!("footnote [{n}]")
+        }
+        LinkKind::Wiki { .. } => format!("[[{}]]", link_ref.dest),
+        _ => link_ref.dest.to_string(),
     }
 }

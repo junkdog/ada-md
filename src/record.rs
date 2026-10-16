@@ -74,6 +74,7 @@ messages! {
     "back" => Back {},
     "forward" => Forward {},
     "open-outline" => OpenOutline {},
+    "open-links" => OpenLinks {},
     "outline-filter" => OutlineFilter { text },
     "outline-move" => OutlineMove { by },
     "outline-pick" => OutlinePick {},
@@ -772,6 +773,7 @@ mod tests {
             Msg::Back,
             Msg::Forward,
             Msg::OpenOutline,
+            Msg::OpenLinks,
             Msg::OutlineFilter {
                 text: "p4 \"links\"".into(),
             },

@@ -1,0 +1,27 @@
+ada-rec 1
++0 init size=60x16
++1 open path="a.md"
++2 doc-loaded path="a.md" mtime=1760535362123 text:309
+# Walker
+
+Start here, then read [the second note](b.md#details) or the [[missing]] one.
+
+## Background
+
+Notes link to each other with relative paths and wiki links.
+The back stack remembers where you were.
+
+## Details
+
+- following a link pushes history
+- going back restores the scroll position and the focus
+
++3 links-resolved doc_gen=1 resolved:47
+found "b.md"
+broken "no such file: missing.md"
+
++100 open-links
++110 outline-filter text="sec"
++120 outline-pick
++200 focus-link dir=next
++300 open-links
