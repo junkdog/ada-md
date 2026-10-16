@@ -160,11 +160,27 @@ impl LineMarks {
 
     /// Row `row`'s mark: the strongest mark on its lines. A deletion shows on the last row
     /// above the gap it left, where the glyph's low bar sits, even when the line it follows
-    /// renders nothing (a blank line between blocks).
+    /// renders nothing (a blank line between blocks). A row without source (spacing, table
+    /// borders) bridges the rows around it when both carry the same mark, so a changed run
+    /// reads as one bar; never a deletion, which marks a point, not a span.
     pub fn row_mark(&self, layout: &Layout, row: u32) -> Option<Mark> {
         let rows = &layout.rows;
+        if !rows.get(row as usize)?.src.is_none() {
+            return self.source_row_mark(layout, row);
+        }
+        let (before, after) = rows.split_at(row as usize);
+        let above = before.iter().rposition(|r| !r.src.is_none())?;
+        let below = row as usize + after.iter().position(|r| !r.src.is_none())?;
+        let mark = self.source_row_mark(layout, above as u32)?;
+        (mark.kind != Kind::Deleted && self.source_row_mark(layout, below as u32) == Some(mark))
+            .then_some(mark)
+    }
+
+    /// [`Self::row_mark`] for a row that renders source lines.
+    fn source_row_mark(&self, layout: &Layout, row: u32) -> Option<Mark> {
+        let rows = &layout.rows;
         let src = rows.get(row as usize)?.src;
-        if self.untracked || src.is_none() {
+        if self.untracked {
             return self.strongest(src);
         }
         // This row owns the deletions after its first line, up to the next row's first line.
@@ -392,6 +408,53 @@ mod tests {
             .map(|r| lm.row_mark(&layout, r).map(|m| m.kind))
             .collect();
         assert_eq!(marks, [None, Some(Kind::Deleted), None, None]);
+    }
+
+    #[test]
+    fn rows_without_source_bridge_matching_marks() {
+        let theme = crate::theme::Theme::builtin();
+        let doc = crate::doc::parse("one\n\ntwo\n\nthree\n");
+        let params = crate::layout::LayoutParams {
+            width: 20,
+            max_width: None,
+            table_mode: Default::default(),
+            code_wrap: true,
+            glyphs_gen: 0,
+            images: None,
+        };
+        let layout = crate::layout::layout(&doc, &theme.glyphs, params);
+        let line = LineRange::line;
+        let rows: Vec<_> = layout.rows.iter().map(|r| r.src).collect();
+        assert_eq!(
+            rows,
+            [line(1), LineRange::NONE, line(3), LineRange::NONE, line(5)]
+        );
+        let kinds = |lm: &LineMarks| -> Vec<_> {
+            (0..layout.row_count())
+                .map(|r| lm.row_mark(&layout, r).map(|m| m.kind))
+                .collect()
+        };
+        use Kind::*;
+
+        // untracked: one unbroken bar
+        let lm = LineMarks::new("", "", true);
+        assert_eq!(kinds(&lm), [Some(Added); 5]);
+        assert_eq!(lm.change_starts(&layout), [0]);
+
+        // added 1-3, modified 5: the gap between added rows fills, the one before 5 doesn't
+        let lm = LineMarks::new("@@ -0,0 +1,3 @@\n@@ -3 +5 @@\n", "", false);
+        assert_eq!(
+            kinds(&lm),
+            [Some(Added), Some(Added), Some(Added), None, Some(Modified)]
+        );
+
+        // same kind, different stage: no bridge
+        let lm = LineMarks::new("@@ -0,0 +1 @@\n@@ -0,0 +3 @@\n", "@@ -0,0 +3 @@\n", false);
+        assert_eq!(kinds(&lm), [Some(Added), None, Some(Added), None, None]);
+
+        // deletions mark a point, never a span
+        let lm = LineMarks::new("@@ -2 +1,0 @@\n@@ -5 +3,0 @@\n", "", false);
+        assert_eq!(kinds(&lm), [Some(Deleted), None, Some(Deleted), None, None]);
     }
 
     #[test]
