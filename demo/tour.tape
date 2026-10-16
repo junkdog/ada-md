@@ -26,7 +26,7 @@ Show
 
 Type "# a note, rendered; the gutter marks what git says changed, staged and unstaged"
 Enter
-Sleep 300ms
+Sleep 1.3s
 Type "ada index.md"
 Enter
 Sleep 3s
@@ -52,7 +52,7 @@ Show
 
 Type "# links: Tab focuses one, Enter follows it, Backspace comes back to the same place"
 Enter
-Sleep 300ms
+Sleep 1.3s
 Type "ada index.md"
 Enter
 Sleep 1.5s
@@ -95,7 +95,7 @@ Show
 
 Type "# tables: sized like a browser's, sorted by a column with s, or shown as cards with t"
 Enter
-Sleep 300ms
+Sleep 1.3s
 Type "ada vet.md"
 Enter
 Sleep 2s
@@ -129,7 +129,7 @@ Show
 
 Type "# search sees through markup and into link targets; o is the outline of headings"
 Enter
-Sleep 300ms
+Sleep 1.3s
 Type "ada index.md"
 Enter
 Sleep 1.5s
@@ -162,7 +162,7 @@ Show
 
 Type "# images: inline, or full screen from a link (crisp in kitty, sixel and iTerm2)"
 Enter
-Sleep 300ms
+Sleep 1.3s
 Type "ada index.md"
 Enter
 Sleep 1.5s
@@ -190,7 +190,7 @@ Show
 
 Type "# live reload: ada reads the file again when it changes, keeping its place"
 Enter
-Sleep 300ms
+Sleep 1.3s
 Type "ada vet.md"
 Enter
 Sleep 6s
@@ -205,7 +205,7 @@ Show
 
 Type "# T picks a theme, previewing each one; ? lists every key"
 Enter
-Sleep 300ms
+Sleep 1.3s
 Type "ada index.md"
 Enter
 Sleep 1.5s
@@ -232,7 +232,7 @@ Show
 
 Type "# --print writes to a pipe, at any width: for fzf previews, say"
 Enter
-Sleep 300ms
+Sleep 1.3s
 Type "ada --print --width 64 feeding.md | head -26"
 Enter
 Sleep 4s
