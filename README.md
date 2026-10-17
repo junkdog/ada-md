@@ -109,7 +109,9 @@ Press `?` in ada for the keys. See `ada --help` for every option.
 | `q` `Esc` | quit; `C-c` always quits |
 
 In the search prompt, `Enter` keeps the matches, `Esc` puts the previous search back, `C-u`
-and `C-w` edit, and an empty pattern repeats the last search. Search is smart-case.
+and `C-w` edit, and an empty pattern repeats the last search. Search is smart-case: it ignores case
+unless the pattern has an uppercase letter. So are the filters of the outline, links, themes and
+columns lists.
 
 ## Configuration
 

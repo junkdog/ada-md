@@ -94,8 +94,12 @@ impl OutlineEntry<'_> {
     }
 }
 
-/// Every word of `filter` occurs in `text`, ignoring case.
+/// Every word of `filter` occurs in `text`. Smart-case, as search is: ignoring case unless
+/// `filter` has an uppercase letter.
 fn matches_filter(text: &str, filter: &str) -> bool {
+    if filter.chars().any(char::is_uppercase) {
+        return filter.split_whitespace().all(|w| text.contains(w));
+    }
     let text = text.to_lowercase();
     filter
         .split_whitespace()
@@ -515,5 +519,18 @@ mod tests {
         assert!(matches_filter("P4 · Links, history", "hist p4"));
         assert!(matches_filter("anything", ""));
         assert!(!matches_filter("P4 · Links", "search"));
+    }
+
+    #[test]
+    fn outline_filters_are_smart_case() {
+        assert!(matches_filter("P4 · Links, history", "links"));
+        assert!(matches_filter("P4 · Links, history", "Links"));
+        assert!(!matches_filter("P4 · links, history", "Links"));
+        assert!(
+            !matches_filter("P4 · Links, history", "History links"),
+            "one uppercase letter makes every word case-sensitive"
+        );
+        assert!(matches_filter("Ärger", "ärger"));
+        assert!(!matches_filter("ärger", "Ärger"));
     }
 }
