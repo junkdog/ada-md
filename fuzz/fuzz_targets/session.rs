@@ -440,7 +440,7 @@ impl Session<'_> {
     fn paint(&mut self) {
         let Size { w, h } = self.state.size;
         if self.screen.size() != Cells::new(w, h) {
-            self.screen.resize(Cells::new(w, h)).expect("sink");
+            self.screen.resize(Cells::new(w, h));
         }
         let state = &self.state;
         self.screen.draw(|grid| ada::ui::view(state, grid)).expect("sink");

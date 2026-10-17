@@ -76,7 +76,9 @@ drive() {
     [[ -n $pid ]] && ! kill -0 $pid 2>/dev/null && { print "  ${bin:t}: the terminal exited after $n keys"; return 1 }
     n=$((n+1)); send $k; sleep 0.4; grab ${(l:2::0:)n}
   done
+  # stop's last kill fails when the terminal already quit, which isn't the build's failure
   stop
+  return 0
 }
 
 drive $base $out/$term-$doc-base || exit 1

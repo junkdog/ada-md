@@ -7,6 +7,7 @@ name = "ada-md"
 version = "0.1.0"
 dependencies = [
  "anpa",
+ "crossterm",
  "image",
  "pulldown-cmark",
  "ratatui",
@@ -305,6 +306,7 @@ dependencies = [
  "crossterm_winapi",
  "derive_more",
  "document-features",
+ "filedescriptor",
  "mio",
  "parking_lot",
  "rustix 1.1.5",
