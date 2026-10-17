@@ -12,7 +12,7 @@ use std::io::{self, Write};
 use std::rc::Rc;
 use std::{env, fs};
 
-use ada::app::{Cmd, Config, Dir, Msg, ScrollBy, Size, State, update};
+use ada::app::{Cmd, Computed, Config, Dir, Msg, ScrollBy, Size, State, update};
 use ada::grid::Screen;
 use ada::theme::Theme;
 use ada::ui;
@@ -62,6 +62,7 @@ fn main() {
                     path: path.as_str().into(),
                     mtime: None,
                     text: text.as_str().into(),
+                    doc: Computed(None),
                 },
             );
             let mut script: Vec<Msg> = Vec::new();

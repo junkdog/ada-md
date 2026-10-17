@@ -1086,7 +1086,7 @@ mod tests {
     /// The test documents, scrolled and searched through the real view.
     #[test]
     fn scrolled_documents_replay_to_their_frames() {
-        use crate::app::{Cmd, Config, Dir, Msg, ScrollBy, Size, State, update};
+        use crate::app::{Cmd, Computed, Config, Dir, Msg, ScrollBy, Size, State, update};
         let docs = [
             include_str!("../../tests/fixtures/basics.md"),
             include_str!("../../tests/fixtures/code.md"),
@@ -1106,6 +1106,7 @@ mod tests {
                         path: "test.md".into(),
                         mtime: None,
                         text: text.into(),
+                        doc: Computed(None),
                     },
                 );
                 term.draw(|g| crate::ui::view(&state, g));

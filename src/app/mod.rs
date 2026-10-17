@@ -7,6 +7,7 @@ mod find;
 mod handoff;
 mod imaging;
 mod keymap;
+mod load;
 mod nav;
 mod run;
 mod sort;
@@ -25,12 +26,13 @@ use crate::images::{self, Encoded, Graphics, ImageCache, ImageKey, ImageMode, Pr
 use crate::layout::{self, ImageFit, Layout, LayoutParams, Measure, RowKind, TableMode};
 use crate::links::{LocalTarget, Resolved};
 use crate::search::SearchMap;
-use crate::theme::Theme;
+use crate::theme::{Glyphs, Theme};
 
 pub use effects::{Effects, editor_command, load_doc, osc52};
 pub use find::{Listing, Outline, OutlineEntry, Prompt, Search};
 pub use imaging::{ImageFile, ImageView};
 pub use keymap::{Action, Bindings, Key, KeySeq, Keymap};
+pub use load::{Prepare, Prepared, prepare};
 pub use nav::LinkState;
 use nav::{Entry, Nav};
 pub use run::run_tui;
@@ -158,6 +160,8 @@ pub enum Msg {
         /// Milliseconds since the epoch, when known.
         mtime: Option<u64>,
         text: Arc<str>,
+        /// The document parsed and laid out by the loader (O-32); recorded as a marker only.
+        doc: Computed<Prepared>,
     },
     DocFailed {
         path: PathBuf,
@@ -236,6 +240,21 @@ impl Msg {
         self.is_world() || matches!(self, Msg::Highlighted { .. } | Msg::ImageReady { .. })
     }
 
+    /// Messages that would start a load, or that `update` turns away while a navigation waits
+    /// for its document: the interactive loop holds them until it has arrived (O-32).
+    pub fn waits_for_load(&self) -> bool {
+        matches!(
+            self,
+            Msg::Open { .. }
+                | Msg::Follow
+                | Msg::Back
+                | Msg::Forward
+                | Msg::Reload
+                | Msg::FileChanged { .. }
+                | Msg::EditorExited { .. }
+        )
+    }
+
     /// Messages that leave the image view open: results, and the terminal's own.
     fn keeps_view(&self) -> bool {
         self.is_result()
@@ -248,7 +267,14 @@ impl Msg {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Cmd {
-    LoadDoc(PathBuf),
+    /// Read a document. A navigation's goes to the effect runner's loader, which also parses it
+    /// and lays it out for `prepare`, off the UI thread, while the document on screen answers
+    /// (O-32). The first, with nothing on screen to answer, is read at once: the UI thread `wait`s.
+    LoadDoc {
+        path: PathBuf,
+        prepare: Box<Prepare>,
+        wait: bool,
+    },
     Highlight(Job),
     /// Highlighting is wanted only for this document and these rules from now on: the worker
     /// drops other jobs, and stops the one running if it's another's (O-05).
@@ -349,15 +375,15 @@ impl Document {
         path: PathBuf,
         mtime: Option<u64>,
         text: Arc<str>,
-        theme: &Theme,
+        glyphs: &Glyphs,
         params: LayoutParams,
         generation: u64,
     ) -> Self {
         let filetype = FileType::of(&path, &text);
         let doc = filetype.parse(&path, &text);
-        let measure = Measure::new(&doc, &theme.glyphs);
+        let measure = Measure::new(&doc, glyphs);
         let params = filetype.params(params);
-        let layout = layout::layout_measured(&doc, &measure, &theme.glyphs, params);
+        let layout = layout::layout_measured(&doc, &measure, glyphs, params);
         let links = nav::initial_links(&doc);
         let images = vec![None; doc.links.len()];
         Self {
@@ -394,7 +420,7 @@ impl Document {
         matches!(self.links.get(link as usize), Some(LinkState::Broken(_)))
     }
 
-    fn relayout(&mut self, theme: &Theme, params: LayoutParams) {
+    fn relayout(&mut self, glyphs: &Glyphs, params: LayoutParams) {
         let params = self.filetype.params(params);
         if self.layout.params == params {
             return;
@@ -406,21 +432,21 @@ impl Document {
             return;
         }
         if self.measure.glyphs_gen != params.glyphs_gen {
-            self.measure.remeasure(&self.doc, &theme.glyphs);
+            self.measure.remeasure(&self.doc, glyphs);
         }
-        let next = self.lay_out(theme, params);
+        let next = self.lay_out(glyphs, params);
         self.prev = Some(mem::replace(&mut self.layout, next));
     }
 
     /// Lay out again after the measurements changed, dropping the previous layout.
-    fn relayout_now(&mut self, theme: &Theme, params: LayoutParams) {
+    fn relayout_now(&mut self, glyphs: &Glyphs, params: LayoutParams) {
         let params = self.filetype.params(params);
-        self.layout = self.lay_out(theme, params);
+        self.layout = self.lay_out(glyphs, params);
     }
 
     /// A new layout, in the buffers of the previous one when there is one.
-    fn lay_out(&mut self, theme: &Theme, params: LayoutParams) -> Layout {
-        let (doc, measure, glyphs) = (&self.doc, &self.measure, &theme.glyphs);
+    fn lay_out(&mut self, glyphs: &Glyphs, params: LayoutParams) -> Layout {
+        let (doc, measure) = (&self.doc, &self.measure);
         match self.prev.take() {
             Some(spare) => layout::relayout(doc, measure, glyphs, params, spare),
             None => layout::layout_measured(doc, measure, glyphs, params),
@@ -543,15 +569,22 @@ impl State {
             return;
         };
         let anchor = ScrollAnchor::capture(&doc.layout, self.scroll);
-        doc.relayout(&self.theme, params);
+        doc.relayout(&self.theme.glyphs, params);
         self.scroll = anchor.map_or(0, |a| a.restore(&doc.layout));
         self.scroll = self.scroll.min(self.max_scroll());
         self.reproject();
     }
 
-    /// Make a loaded document current, reusing the cached one when its text is unchanged, and
-    /// stash the previous one. Returns the commands a fresh document needs.
-    fn install(&mut self, path: PathBuf, mtime: Option<u64>, text: Arc<str>) -> Vec<Cmd> {
+    /// Make a loaded document current, reusing the cached one when its text is unchanged, or
+    /// the one the loader prepared, and stash the previous one. Returns the commands a fresh
+    /// document needs.
+    fn install(
+        &mut self,
+        path: PathBuf,
+        mtime: Option<u64>,
+        text: Arc<str>,
+        prepared: Option<Prepared>,
+    ) -> Vec<Cmd> {
         let params = self.params();
         let cached = self
             .cache
@@ -562,15 +595,24 @@ impl State {
         let doc = match cached {
             Some(mut doc) => {
                 doc.mtime = mtime;
-                doc.relayout(&self.theme, params);
+                doc.relayout(&self.theme.glyphs, params);
                 doc
             }
             None => {
                 self.generation += 1;
-                let mut doc =
-                    Document::new(path, mtime, text, &self.theme, params, self.generation);
+                let glyphs = &self.theme.glyphs;
+                let mut doc = match prepared.and_then(Prepared::take) {
+                    // laid out for the screen as it was: the width or the glyphs may have
+                    // changed since
+                    Some(mut doc) => {
+                        doc.generation = self.generation;
+                        doc.relayout(glyphs, params);
+                        doc
+                    }
+                    None => Document::new(path, mtime, text, glyphs, params, self.generation),
+                };
                 if let Some(old) = self.doc.as_ref().filter(|d| d.path == doc.path) {
-                    doc.keep_sorts(old, &self.theme, params);
+                    doc.keep_sorts(old, glyphs, params);
                 }
                 cmds.extend(nav::resolve_cmd(&doc));
                 doc
@@ -640,8 +682,14 @@ impl State {
     }
 
     /// The first load, or one that isn't a navigation: no history.
-    fn load(&mut self, path: PathBuf, mtime: Option<u64>, text: Arc<str>) -> Vec<Cmd> {
-        let cmds = self.install(path, mtime, text);
+    fn load(
+        &mut self,
+        path: PathBuf,
+        mtime: Option<u64>,
+        text: Arc<str>,
+        prepared: Option<Prepared>,
+    ) -> Vec<Cmd> {
+        let cmds = self.install(path, mtime, text, prepared);
         if let (Some(line), Some(doc)) = (self.config.start_line.take(), &self.doc) {
             self.scroll = doc.layout.row_for_line(line).unwrap_or(0);
         }
@@ -968,10 +1016,15 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.relayout();
             state.visible_jobs()
         }
-        Msg::Open { path } => vec![Cmd::LoadDoc(crate::links::normalize(&path))],
-        Msg::DocLoaded { path, mtime, text } => match state.nav.take() {
-            Some(nav) if nav.path == path => state.arrive(nav, mtime, text),
-            _ => state.load(path, mtime, text),
+        Msg::Open { path } => vec![state.load_cmd(crate::links::normalize(&path))],
+        Msg::DocLoaded {
+            path,
+            mtime,
+            text,
+            doc,
+        } => match state.nav.take() {
+            Some(nav) if nav.path == path => state.arrive(nav, mtime, text, doc.0),
+            _ => state.load(path, mtime, text, doc.0),
         },
         Msg::DocFailed { path, error } => {
             if state.nav.as_ref().is_some_and(|n| n.path == path) {
@@ -1173,6 +1226,36 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
     }
 }
 
+/// The file a lone `LoadDoc` among `cmds` reads.
+#[cfg(test)]
+fn only_load(cmds: &[Cmd]) -> Option<&str> {
+    match cmds {
+        [Cmd::LoadDoc { path, .. }] => path.to_str(),
+        _ => None,
+    }
+}
+
+/// What the loader posts for a navigation's lone `LoadDoc` among `cmds`, when the file holds
+/// `text`.
+#[cfg(test)]
+fn loader_answer(cmds: &[Cmd], text: &str) -> Msg {
+    let [
+        Cmd::LoadDoc {
+            path, prepare: how, ..
+        },
+    ] = cmds
+    else {
+        panic!("no navigation's load in {cmds:?}");
+    };
+    let loaded = Msg::DocLoaded {
+        path: path.clone(),
+        mtime: None,
+        text: text.into(),
+        doc: Computed(None),
+    };
+    prepare(loaded, how)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1191,6 +1274,7 @@ mod tests {
                 path: "t.md".into(),
                 mtime: None,
                 text: text.into(),
+                doc: Computed(None),
             },
         );
         state
@@ -1369,6 +1453,7 @@ mod tests {
                 path: "t.md".into(),
                 mtime: None,
                 text: text.into(),
+                doc: Computed(None),
             },
         )
     }
@@ -1566,6 +1651,7 @@ mod tests {
             path: "t.md".into(),
             mtime: None,
             text: sample().into(),
+            doc: Computed(None),
         };
         update(&mut state, msg.clone());
         assert_eq!(top_line(&state), 41);
@@ -1582,6 +1668,7 @@ mod tests {
                 path: path.into(),
                 mtime: None,
                 text: text.into(),
+                doc: Computed(None),
             },
         )
     }
@@ -1682,7 +1769,7 @@ mod tests {
         update(&mut state, Msg::FocusLink { dir: Dir::Next });
         let a_gen = state.doc.as_ref().unwrap().generation;
         let cmds = update(&mut state, Msg::Follow);
-        assert_eq!(cmds, [Cmd::LoadDoc("b.md".into())]);
+        assert_eq!(only_load(&cmds), Some("b.md"));
         assert_eq!(path(&state), "a.md", "nothing changes until b.md arrives");
 
         load_at(&mut state, "b.md", &b_doc());
@@ -1690,7 +1777,7 @@ mod tests {
         assert!(top_line(&state) >= 120, "landed on #part-two");
         assert_eq!(state.focus, None);
 
-        assert_eq!(update(&mut state, Msg::Back), [Cmd::LoadDoc("a.md".into())]);
+        assert_eq!(only_load(&update(&mut state, Msg::Back)), Some("a.md"));
         let cmds = load_at(&mut state, "a.md", &linked());
         assert!(
             !cmds.iter().any(|c| matches!(c, Cmd::ResolveLinks { .. })),
@@ -1701,10 +1788,7 @@ mod tests {
         assert_eq!(state.scroll, 1);
         assert_eq!(focused_dest(&state).as_deref(), Some("b.md#part-two"));
 
-        assert_eq!(
-            update(&mut state, Msg::Forward),
-            [Cmd::LoadDoc("b.md".into())]
-        );
+        assert_eq!(only_load(&update(&mut state, Msg::Forward)), Some("b.md"));
         load_at(&mut state, "b.md", &b_doc());
         assert!(top_line(&state) >= 120);
         update(&mut state, Msg::Forward);
@@ -2174,10 +2258,7 @@ mod tests {
         let doc_gen = state.generation;
 
         // unchanged text: the same document, and only git runs
-        assert_eq!(
-            update(&mut state, Msg::Reload),
-            [Cmd::LoadDoc("a.md".into())]
-        );
+        assert_eq!(only_load(&update(&mut state, Msg::Reload)), Some("a.md"));
         let cmds = load_at(&mut state, "a.md", &sample());
         assert_eq!(
             cmds,
@@ -2208,6 +2289,86 @@ mod tests {
             Some("nothing to go back to"),
             "no history"
         );
+    }
+
+    // --- O-32: loading off the UI thread -------------------------------------------------------
+
+    fn is_prepared(msg: &Msg) -> bool {
+        matches!(
+            msg,
+            Msg::DocLoaded {
+                doc: Computed(Some(_)),
+                ..
+            }
+        )
+    }
+
+    #[test]
+    fn a_prepared_document_is_the_one_update_would_parse() {
+        let follow = || {
+            let mut state = walker();
+            update(&mut state, Msg::FocusLink { dir: Dir::Next });
+            let cmds = update(&mut state, Msg::Follow);
+            // the screen narrows while b.md loads
+            update(
+                &mut state,
+                Msg::Resize {
+                    size: Size { w: 50, h: 20 },
+                },
+            );
+            (state, cmds)
+        };
+        let (mut inline, _) = follow();
+        load_at(&mut inline, "b.md", &b_doc());
+        let (mut state, cmds) = follow();
+        let msg = loader_answer(&cmds, &b_doc());
+        assert!(is_prepared(&msg));
+        update(&mut state, msg);
+
+        let (doc, want) = (state.doc.as_ref().unwrap(), inline.doc.as_ref().unwrap());
+        assert_eq!(doc.layout.params.width, 50);
+        assert_eq!(format!("{:?}", doc.layout), format!("{:?}", want.layout));
+        assert_eq!(doc.generation, want.generation);
+        assert_eq!(state.scroll, inline.scroll);
+        assert!(top_line(&state) >= 120, "landed on #part-two");
+        assert_eq!(
+            update(&mut state, Msg::Back),
+            update(&mut inline, Msg::Back)
+        );
+    }
+
+    #[test]
+    fn a_reload_lands_where_the_document_is_when_it_arrives() {
+        let mut state = loaded("", 80, 20);
+        load_at(&mut state, "a.md", &sample());
+        let cmds = update(&mut state, Msg::Reload);
+        // still on screen while it loads, and still scrolling
+        update(
+            &mut state,
+            Msg::Scroll {
+                by: ScrollBy::Rows(40),
+            },
+        );
+        let line = top_line(&state);
+        let edited = format!("# New title\n\nNew intro.\n\n{}", sample());
+        update(&mut state, loader_answer(&cmds, &edited));
+        assert_eq!(top_line(&state), line);
+        assert_eq!(state.status.as_deref(), Some("reloaded"));
+    }
+
+    #[test]
+    fn the_loader_leaves_text_ada_has_to_update() {
+        let mut state = walker();
+        let cmds = update(&mut state, Msg::Reload);
+        assert!(!is_prepared(&loader_answer(&cmds, &linked())), "on screen");
+        load_at(&mut state, "a.md", &linked());
+
+        update(&mut state, Msg::FocusLink { dir: Dir::Next });
+        let cmds = update(&mut state, Msg::Follow);
+        update(&mut state, loader_answer(&cmds, &b_doc()));
+        let cmds = update(&mut state, Msg::Back);
+        assert!(!is_prepared(&loader_answer(&cmds, &linked())), "cached");
+        assert!(is_prepared(&loader_answer(&cmds, &b_doc())), "changed");
     }
 
     // --- P6: images ---------------------------------------------------------------------------
@@ -2452,8 +2613,8 @@ mod tests {
 
         update(&mut state, Msg::FocusLink { dir: Dir::Next });
         assert_eq!(
-            update(&mut state, Msg::Follow),
-            [Cmd::LoadDoc("src/lib.rs".into())]
+            only_load(&update(&mut state, Msg::Follow)),
+            Some("src/lib.rs")
         );
         load_at(&mut state, "src/lib.rs", &rust_file());
         assert_eq!(path(&state), "src/lib.rs");

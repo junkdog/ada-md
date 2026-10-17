@@ -10,6 +10,7 @@ dependencies = [
  "crossterm",
  "image",
  "insta",
+ "libc",
  "pulldown-cmark",
  "ratatui",
  "ratatui-image",

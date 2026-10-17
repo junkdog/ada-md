@@ -30,7 +30,8 @@ in some 200 languages, and shows images inline in terminals that can (kitty, six
   link to each other, as in an
   [LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) or an
   Obsidian-style vault. The rest (a file browser, editing, mermaid, math) stays out.
-- **No crashes, on any input.** ada has no `unsafe` code. Every interaction is a message, so a
+- **No crashes, on any input.** Parsing, layout and drawing are safe Rust; ada's only `unsafe` is
+  one call at startup that sets a malloc option. Every interaction is a message, so a
   recorded session replays to identical frames. Whole scripted sessions are fuzzed for hours at a
   time: documents, keys, resizes, and file, git and image results that arrive late, out of order,
   or after their document is gone.

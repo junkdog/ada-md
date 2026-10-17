@@ -11,7 +11,7 @@ use unicode_width::UnicodeWidthStr;
 use super::{Cmd, Dir, Document, Listing, OutlineEntry, State};
 use crate::doc::TableId;
 use crate::layout::{LayoutParams, Sort};
-use crate::theme::Theme;
+use crate::theme::Glyphs;
 
 impl State {
     /// The tables on screen with more than one body row to sort, in row order.
@@ -155,7 +155,7 @@ impl State {
         });
         doc.measure.set_sort(table, sort);
         // only this table's rows change, so the rows above it stay where they are
-        doc.relayout_now(&self.theme, params);
+        doc.relayout_now(&self.theme.glyphs, params);
         self.scroll = self.scroll.min(self.max_scroll());
         self.reproject();
         self.visible_jobs()
@@ -165,19 +165,31 @@ impl State {
 impl Document {
     /// Sort a reloaded document's tables the way the old one's were, where they still have
     /// the column.
-    pub(super) fn keep_sorts(&mut self, old: &Document, theme: &Theme, params: LayoutParams) {
-        let mut kept = false;
+    pub(super) fn keep_sorts(&mut self, old: &Document, glyphs: &Glyphs, params: LayoutParams) {
+        if self.set_sorts(|t| old.measure.sort(t)) {
+            self.relayout_now(glyphs, params);
+        }
+    }
+
+    /// Sort each table the way `sort_of` says, where it still has the column; whether any
+    /// changed. The layout is left to the caller.
+    pub(super) fn set_sorts(&mut self, sort_of: impl Fn(TableId) -> Option<Sort>) -> bool {
+        let mut changed = false;
         for table in self.doc.tables() {
-            if let Some(sort) = old.measure.sort(table.id)
-                && usize::from(sort.col) < table.column_count()
-            {
-                self.measure.set_sort(table, Some(sort));
-                kept = true;
+            let sort = sort_of(table.id).filter(|s| usize::from(s.col) < table.column_count());
+            if sort != self.measure.sort(table.id) {
+                self.measure.set_sort(table, sort);
+                changed = true;
             }
         }
-        if kept {
-            self.relayout_now(theme, params);
-        }
+        changed
+    }
+
+    /// How each table is sorted, by table.
+    pub(super) fn sorts(&self) -> Vec<Option<Sort>> {
+        (0..self.doc.table_count)
+            .map(|t| self.measure.sort(t))
+            .collect()
     }
 }
 
@@ -215,9 +227,10 @@ fn header_name(table: &crate::doc::Table, col: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Config, Msg, ScrollBy, Size, update};
+    use super::super::{Computed, Config, Msg, ScrollBy, Size, loader_answer, update};
     use super::*;
     use crate::layout::TableMode;
+    use crate::theme::Theme;
 
     const TABLE: &str =
         "| Name | Size |\n|---|--:|\n| beta | 10 |\n| alpha | 9 |\n| gamma | 200 |\n";
@@ -241,6 +254,7 @@ mod tests {
                 path: "t.md".into(),
                 mtime: None,
                 text: text.into(),
+                doc: Computed(None),
             },
         );
     }
@@ -365,6 +379,24 @@ mod tests {
         // a reload that loses the column loses the order
         load(&mut state, "| Name |\n|---|\n| beta |\n| alpha |\n");
         assert_eq!(names(&state), ["beta", "alpha"]);
+    }
+
+    #[test]
+    fn a_reload_the_loader_prepares_keeps_the_order_the_table_has_when_it_arrives() {
+        let mut state = loaded(TABLE);
+        sort(&mut state, "size desc");
+        let cmds = update(&mut state, Msg::Reload);
+        let grown = format!("{TABLE}| alpha | 1000 |\n");
+        update(&mut state, loader_answer(&cmds, &grown));
+        assert_eq!(names(&state), ["alpha", "gamma", "beta", "alpha"]);
+        // sorted the other way while it loaded
+        let cmds = update(&mut state, Msg::Reload);
+        sort(&mut state, "size asc");
+        update(
+            &mut state,
+            loader_answer(&cmds, &format!("{grown}| beta | 3 |\n")),
+        );
+        assert_eq!(names(&state), ["beta", "alpha", "beta", "gamma", "alpha"]);
     }
 
     #[test]

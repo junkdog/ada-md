@@ -52,6 +52,7 @@ pub fn run_tui(
     mut effects: Effects,
     mut recorder: Option<Recorder>,
 ) -> Result<(), String> {
+    one_arena();
     // `try_init` sets up the screen and the panic hook; ada draws with its own grid, not ratatui's.
     ratatui::try_init().map_err(|e| format!("terminal: {e}"))?;
     let mut terminal = new_screen().map_err(|e| format!("terminal: {e}"))?;
@@ -68,6 +69,23 @@ pub fn run_tui(
     std::mem::forget((terminal, state, effects));
     result
 }
+
+/// One malloc arena for every thread (glibc), set before the workers start. A document the loader
+/// builds lands in its thread's arena, layouts built on the UI thread in the main one, and pages
+/// freed in one arena don't serve the other: a session on a 2 MB document that reloaded and
+/// resized peaked 6–27 MiB higher, and its first paint 4 MiB (O-32, ADR-27). Only the TUI: print
+/// mode's highlighting threads keep their own (O-04).
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn one_arena() {
+    // SAFETY: `mallopt` only changes a setting of glibc's malloc; `M_ARENA_MAX` caps the arenas
+    // created from now on, and no other thread runs yet.
+    unsafe {
+        libc::mallopt(libc::M_ARENA_MAX, 1);
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn one_arena() {}
 
 fn event_loop(
     terminal: &mut Term,
@@ -91,8 +109,16 @@ fn event_loop(
     let init = Msg::Init { size };
     let mut queue: VecDeque<Msg> = [init].into_iter().chain(graphics).collect();
     queue.push_back(Msg::Open { path });
+    // What waits for a navigation's document, which loads off this thread (O-32): keys and
+    // resizes answer from the document on screen meanwhile, but `Back Back` still goes back
+    // twice, and a save during a reload is read once it is in.
+    let mut held: VecDeque<Msg> = VecDeque::new();
     loop {
         while let Some(msg) = queue.pop_front() {
+            if state.loading() && msg.waits_for_load() {
+                held.push_back(msg);
+                continue;
+            }
             if let Some(rec) = recorder.as_deref_mut() {
                 rec.log(&msg).map_err(|e| format!("recording: {e}"))?;
             }
@@ -111,6 +137,9 @@ fn event_loop(
                 }
                 // the input thread waits after sending `Edit`, so it can't steal the editor's keys
                 let _ = resume.send(());
+            }
+            if !state.loading() {
+                results.extend(held.drain(..));
             }
             for msg in results.into_iter().rev() {
                 queue.push_front(msg);

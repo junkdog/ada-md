@@ -3,7 +3,7 @@
 //! through parse → layout → paint at random sizes, with the toggles and a search in between.
 //! None may panic. The real fuzzer lives in `fuzz/`.
 
-use ada::app::{Config, Dir, Effects, Msg, ScrollBy, Size, State};
+use ada::app::{Computed, Config, Dir, Effects, Msg, ScrollBy, Size, State};
 use ada::record::{Entry, replay_headless};
 use ada::theme::Theme;
 
@@ -109,6 +109,7 @@ fn random_documents_never_panic() {
                 path: "fuzz.md".into(),
                 mtime: None,
                 text: text.clone().into(),
+                doc: Computed(None),
             },
         ];
         for _ in 0..12 {

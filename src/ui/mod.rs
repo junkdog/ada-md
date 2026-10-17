@@ -515,7 +515,7 @@ mod tests {
 
     #[test]
     fn the_table_being_sorted_takes_the_sort_table_color() {
-        use crate::app::{Config, Dir, Msg, Size, update};
+        use crate::app::{Computed, Config, Dir, Msg, Size, update};
 
         let table = "| Name | Size |\n|---|--:|\n| beta | 10 |\n| alpha | 9 |\n";
         let mut state = State::new(Theme::builtin(), Config::default());
@@ -532,6 +532,7 @@ mod tests {
                 path: "t.md".into(),
                 mtime: None,
                 text: text.into(),
+                doc: Computed(None),
             },
         );
         let border = |state: &State| {

@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::{Cmd, Dir, Document, ScrollAnchor, State};
+use super::{Cmd, Dir, Document, Prepared, ScrollAnchor, State};
 use crate::doc::{AnchorId, Doc, LinkId, LinkKind};
 use crate::filetype::FileType;
 use crate::links::{self, LocalTarget, Resolved, Target};
@@ -319,7 +319,7 @@ impl State {
                     op: NavOp::Follow,
                     land: Landing::Frag(frag),
                 });
-                vec![Cmd::LoadDoc(path)]
+                vec![self.load_cmd(path)]
             }
             Some(LinkState::File(path)) => {
                 if let Some(cmds) = self.open_view(link) {
@@ -382,7 +382,7 @@ impl State {
             op,
             land: Landing::Entry(entry.clone()),
         });
-        vec![Cmd::LoadDoc(entry.path)]
+        vec![self.load_cmd(entry.path)]
     }
 
     /// Move the current place onto the stack opposite the one `op` takes from.
@@ -435,12 +435,22 @@ impl State {
             op: NavOp::Reload,
             land: Landing::Entry(entry.clone()),
         });
-        vec![Cmd::LoadDoc(entry.path)]
+        vec![self.load_cmd(entry.path)]
     }
 
     /// The document a navigation waited for has loaded.
-    pub(super) fn arrive(&mut self, nav: Nav, mtime: Option<u64>, text: Arc<str>) -> Vec<Cmd> {
+    pub(super) fn arrive(
+        &mut self,
+        mut nav: Nav,
+        mtime: Option<u64>,
+        text: Arc<str>,
+        prepared: Option<Prepared>,
+    ) -> Vec<Cmd> {
         if nav.op == NavOp::Reload {
+            // the document stayed on screen while it loaded: keep the place it has now
+            if let Some(entry) = self.entry().filter(|e| e.path == nav.path) {
+                nav.land = Landing::Entry(entry);
+            }
             self.status = Some("reloaded".into());
             if let Some(doc) = &mut self.doc
                 && doc.path == nav.path
@@ -458,7 +468,7 @@ impl State {
             }
         }
         self.shift_history(nav.op);
-        let cmds = self.install(nav.path, mtime, text);
+        let cmds = self.install(nav.path, mtime, text, prepared);
         match nav.land {
             Landing::Entry(entry) => self.restore(&entry),
             Landing::Frag(None) => {}

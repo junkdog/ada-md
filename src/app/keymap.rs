@@ -92,7 +92,7 @@ actions! {
         Edit => "edit", "edit in $VISUAL or $EDITOR", ["e"],
         Yank => "yank", "copy the link or the code block", ["y"],
         Help => "help", "this help", ["?"],
-        Quit => "quit", "quit (C-c always does)", ["q", "esc"],
+        Quit => "quit", "quit (so does C-c)", ["q", "esc"],
     }
 }
 

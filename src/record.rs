@@ -95,7 +95,7 @@ messages! {
     "edit" => Edit {},
     "yank" => Yank {},
     "quit" => Quit {},
-    "doc-loaded" => DocLoaded { path, mtime, text },
+    "doc-loaded" => DocLoaded { path, mtime, text, doc },
     "doc-failed" => DocFailed { path, error },
     "links-resolved" => LinksResolved { doc_gen, resolved },
     "open-failed" => OpenFailed { target, error },
@@ -887,11 +887,13 @@ mod tests {
                 path: "a.md".into(),
                 mtime: Some(1_760_535_362_123),
                 text: "# Title\n\nno trailing newline".into(),
+                doc: Computed(None),
             },
             Msg::DocLoaded {
                 path: "-".into(),
                 mtime: None,
                 text: "".into(),
+                doc: Computed(None),
             },
             Msg::DocFailed {
                 path: "gone.md".into(),
@@ -940,6 +942,7 @@ mod tests {
                 path: "notes/a.md".into(),
                 mtime: Some(1_760_535_362_123),
                 text: "# a\nb\nc".into(),
+                doc: Computed(None),
             }
         );
         assert_eq!(
@@ -974,6 +977,7 @@ mod tests {
                 path: "a.md".into(),
                 mtime: None,
                 text: "```rust\nfn main() {}\n```\n".into(),
+                doc: Computed(None),
             },
         ]
         .map(|msg| Entry { at_ms: 0, msg });

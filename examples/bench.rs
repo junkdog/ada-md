@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use std::{env, fs, process};
 
-use ada::app::{Cmd, Config, Dir, Msg, ScrollBy, Size, State, update};
+use ada::app::{Cmd, Computed, Config, Dir, Msg, ScrollBy, Size, State, update};
 use ada::grid::Screen;
 use ada::layout::{self, LayoutParams, TableMode};
 use ada::search::SearchMap;
@@ -138,6 +138,7 @@ fn measure(theme: &Theme, text: &str) -> Measured {
                 path: "bench.md".into(),
                 mtime: None,
                 text: text.into(),
+                doc: Computed(None),
             },
         );
         terminal.draw(|g| ui::view(&state, g)).expect("draw");

@@ -12,7 +12,7 @@
 //! SPEC is a list of jobs (see mkspec.py):
 //!   {"name": "ada-l", "cmd": [...], "env": {...}, "cwd": ".../corpus", "file": "l.md", "runs": 5,
 //!    "first": "Successor",            // word on the first screen
-//!    "scenarios": ["paint", "idle", "line", "page", "end", "resize", "search", "burst", "reload"],
+//!    "scenarios": ["paint", "idle", "line", "page", "end", "resize", "search", "burst", "reload", "busy"],
 //!    "keys": {"line": "j", "page": "\u001b[6~", "end": "G", "home": "g", "quit": "q",
 //!             "search": ["/", "TERM", "\r"], "search_reset": []},
 //!    "end_sentinel": "word", "search_term": "word", "search_sentinel": "word", "reload_from": "word"}
@@ -86,6 +86,13 @@ struct Job {
     steps: usize,
     #[serde(default = "five")]
     reloads: usize,
+    /// For `busy`: how long after the write the key goes, while the viewer reloads.
+    #[serde(default = "two")]
+    busy_after_ms: f64,
+}
+
+fn two() -> f64 {
+    2.0
 }
 
 fn five() -> usize {
@@ -320,6 +327,25 @@ fn script(
         s.mark("restore");
         s.wait_stable(0.3, 8.0, Some(&job.first));
     }
+    if job.has("busy") {
+        // a key while the viewer reloads: it answers from the document on screen, or after the reload
+        let from = job.reload_from.as_bytes();
+        for i in 0..job.reloads {
+            let word = format!("Zqbusy{run}x{i}");
+            fs::write(path, replace_first(original, from, word.as_bytes()))?;
+            let t_key = now() + job.busy_after_ms / 1e3;
+            while now() < t_key {
+                s.pump(t_key - now());
+            }
+            s.send(&keys.line, format!("busy:{i}"));
+            s.wait_stable(0.3, 8.0, None);
+            s.send(&keys.home, "home");
+            s.wait_stable(0.3, 5.0, Some(&word));
+        }
+        fs::write(path, original)?;
+        s.mark("restore");
+        s.wait_stable(0.3, 8.0, Some(&job.first));
+    }
     if job.has("resize") {
         for i in 0..5 {
             s.resize(ROWS, 90, format!("resize:narrow:{i}"));
@@ -388,7 +414,7 @@ fn analyze(job: &Job, s: &Session, rec: &mut Map<String, Value>) {
             _ => None,
         };
         if [
-            "line", "page", "resize", "end", "search", "reload", "endhome",
+            "line", "page", "resize", "end", "search", "reload", "endhome", "busy",
         ]
         .contains(&kind)
         {

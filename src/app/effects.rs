@@ -11,8 +11,9 @@ use std::thread;
 
 use ratatui_image::picker::Picker;
 
+use super::load;
 use super::watch::{Watcher, mtime_of};
-use super::{Cmd, Msg};
+use super::{Cmd, Computed, Msg};
 use crate::filetype::{self, FileType};
 use crate::git;
 use crate::highlight::{self, Request};
@@ -34,6 +35,11 @@ pub struct Effects {
     images: Option<Sender<images::Job>>,
     /// The live-reload watcher; without it, nothing is watched.
     watcher: Option<Watcher>,
+    /// Where the loader posts documents; without it, documents are read inline and parsed in
+    /// `update`.
+    loads: Option<Sender<Msg>>,
+    /// The loader's queue, from the first navigation on.
+    loader: Option<Sender<load::Job>>,
 }
 
 impl Effects {
@@ -46,6 +52,8 @@ impl Effects {
             picker: None,
             images: None,
             watcher: None,
+            loads: None,
+            loader: None,
         }
     }
 
@@ -66,13 +74,31 @@ impl Effects {
             self.images = Some(images::spawn_worker(picker.clone(), tx.clone()));
         }
         self.watcher = Some(Watcher::new(tx.clone()));
+        self.loads = Some(tx.clone());
     }
 
     /// Run one command. Quick ones answer right away; slow ones go to a worker, which posts
     /// its result to the message channel.
     pub fn run(&mut self, cmd: Cmd) -> Option<Msg> {
         match cmd {
-            Cmd::LoadDoc(path) => Some(load_doc(&path, self.stdin.as_ref())),
+            Cmd::LoadDoc {
+                path,
+                prepare,
+                wait,
+            } => {
+                // with nothing on screen there is nothing to answer meanwhile: read it here
+                let tx = match &self.loads {
+                    Some(tx) if !wait => tx,
+                    _ => return Some(load_doc(&path, self.stdin.as_ref())),
+                };
+                let loader = self
+                    .loader
+                    .get_or_insert_with(|| load::spawn_worker(self.stdin.clone(), tx.clone()));
+                match loader.send((path, prepare)) {
+                    Err(mpsc::SendError((path, _))) => Some(load_doc(&path, self.stdin.as_ref())),
+                    Ok(()) => None,
+                }
+            }
             Cmd::Highlight(job) => match &self.highlight {
                 Some(worker) if job.first.is_none() => match worker.send(Request::Job(job)) {
                     Err(mpsc::SendError(Request::Job(job))) => Some(job.run()),
@@ -170,6 +196,7 @@ pub fn load_doc(path: &Path, stdin: Option<&Arc<str>>) -> Msg {
             path: path.to_owned(),
             mtime: None,
             text: stdin.cloned().unwrap_or_default(),
+            doc: Computed(None),
         };
     }
     // The time first: a write landing while we read leaves a newer time for the watcher.
@@ -196,6 +223,7 @@ pub fn load_doc(path: &Path, stdin: Option<&Arc<str>>) -> Msg {
                 path: path.to_owned(),
                 mtime,
                 text: text.into(),
+                doc: Computed(None),
             }
         }
         Err(e) => Msg::DocFailed {

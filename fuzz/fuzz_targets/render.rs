@@ -7,7 +7,7 @@
 
 #![no_main]
 
-use ada::app::{Config, Effects, Msg, ScrollBy, Size, State};
+use ada::app::{Computed, Config, Effects, Msg, ScrollBy, Size, State};
 use ada::record::{Entry, replay_headless};
 use ada::theme::Theme;
 use libfuzzer_sys::fuzz_target;
@@ -27,6 +27,7 @@ fuzz_target!(|data: &[u8]| {
             path: "fuzz.md".into(),
             mtime: None,
             text: text.as_ref().into(),
+            doc: Computed(None),
         },
         Msg::Scroll {
             by: ScrollBy::Rows(i32::from(*h)),

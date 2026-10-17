@@ -106,7 +106,7 @@ impl State {
                 .set_image(id as LinkId, file.as_ref().map(|f| f.px));
             doc.images[id] = file;
         }
-        doc.relayout_now(&self.theme, params);
+        doc.relayout_now(&self.theme.glyphs, params);
         if current {
             let layout = &doc.layout;
             self.scroll = anchor.map_or(0, |a| a.restore(layout));

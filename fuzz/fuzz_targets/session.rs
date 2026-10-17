@@ -301,37 +301,48 @@ fn answer(
 ) -> Result<Option<Msg>> {
     let world = world();
     Ok(match cmd {
-        Cmd::LoadDoc(path) => Some(match u.int_in_range(0..=7)? {
-            0 => Msg::DocFailed {
-                path,
-                error: "fuzz".into(),
-            },
-            1 => {
-                let text = fs::read_to_string(&path).unwrap_or_default();
-                Msg::DocLoaded {
+        Cmd::LoadDoc { path, prepare, .. } => {
+            let msg = match u.int_in_range(0..=7)? {
+                0 => Msg::DocFailed {
+                    path,
+                    error: "fuzz".into(),
+                },
+                1 => {
+                    let text = fs::read_to_string(&path).unwrap_or_default();
+                    Msg::DocLoaded {
+                        path,
+                        mtime: u.arbitrary()?,
+                        text: text.into(),
+                        doc: Computed(None),
+                    }
+                }
+                2 => {
+                    let cut = u.int_in_range(0..=doc.len())?;
+                    let cut = (0..=cut)
+                        .rev()
+                        .find(|&i| doc.is_char_boundary(i))
+                        .unwrap_or(0);
+                    Msg::DocLoaded {
+                        path,
+                        mtime: u.arbitrary()?,
+                        text: doc[cut..].into(),
+                        doc: Computed(None),
+                    }
+                }
+                _ => Msg::DocLoaded {
                     path,
                     mtime: u.arbitrary()?,
-                    text: text.into(),
-                }
-            }
-            2 => {
-                let cut = u.int_in_range(0..=doc.len())?;
-                let cut = (0..=cut)
-                    .rev()
-                    .find(|&i| doc.is_char_boundary(i))
-                    .unwrap_or(0);
-                Msg::DocLoaded {
-                    path,
-                    mtime: u.arbitrary()?,
-                    text: doc[cut..].into(),
-                }
-            }
-            _ => Msg::DocLoaded {
-                path,
-                mtime: u.arbitrary()?,
-                text: doc.clone(),
-            },
-        }),
+                    text: doc.clone(),
+                    doc: Computed(None),
+                },
+            };
+            // a navigation's, now and then as the loader posts it: parsed for the screen as it
+            // was when the load began (O-32)
+            Some(match u.arbitrary()? {
+                true => app::prepare(msg, &prepare),
+                false => msg,
+            })
+        }
         // now and then the marker a replay carries, which `update` asks for again
         Cmd::Highlight(job) if u.ratio(1, 8)? => Some(Msg::Highlighted {
             doc_gen: job.doc_gen,
@@ -926,6 +937,7 @@ fuzz_target!(|data: &[u8]| {
         path: if stdin { "-".into() } else { doc_path(name) },
         mtime: Some(1),
         text: doc,
+        doc: Computed(None),
     });
     for _ in 0..MAX_OPS {
         if s.state.quit {

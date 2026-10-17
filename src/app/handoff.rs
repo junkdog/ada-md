@@ -95,7 +95,7 @@ impl State {
 
 #[cfg(test)]
 mod tests {
-    use crate::app::{Cmd, Config, Dir, Msg, ScrollBy, Size, State, update};
+    use crate::app::{Cmd, Computed, Config, Dir, Msg, ScrollBy, Size, State, only_load, update};
     use crate::theme::Theme;
 
     fn loaded(path: &str, text: &str) -> State {
@@ -112,6 +112,7 @@ mod tests {
                 path: path.into(),
                 mtime: Some(5),
                 text: text.into(),
+                doc: Computed(None),
             },
         );
         state
@@ -135,6 +136,7 @@ mod tests {
                 path: "a.md".into(),
                 mtime: Some(5),
                 text: "# a\n".into(),
+                doc: Computed(None),
             },
         );
         assert!(cmds.contains(&Cmd::Watch {
@@ -153,6 +155,7 @@ mod tests {
                 path: "a.md".into(),
                 mtime: Some(5),
                 text: "# a\n".into(),
+                doc: Computed(None),
             },
         );
         assert!(!cmds.iter().any(|c| matches!(c, Cmd::Watch { .. })));
@@ -172,8 +175,8 @@ mod tests {
         };
         assert!(update(&mut state, other).is_empty(), "not the current file");
         assert_eq!(
-            update(&mut state, changed(Some(9))),
-            [Cmd::LoadDoc("a.md".into())]
+            only_load(&update(&mut state, changed(Some(9)))),
+            Some("a.md")
         );
     }
 
@@ -194,8 +197,8 @@ mod tests {
         assert_eq!(*line, 7, "the first source line on screen");
 
         assert_eq!(
-            update(&mut state, Msg::EditorExited { status: 0 }),
-            [Cmd::LoadDoc("a.md".into())]
+            only_load(&update(&mut state, Msg::EditorExited { status: 0 })),
+            Some("a.md")
         );
         // the reload is still on its way; a failed editor doesn't start another
         update(
@@ -204,10 +207,11 @@ mod tests {
                 path: "a.md".into(),
                 mtime: Some(6),
                 text: note().into(),
+                doc: Computed(None),
             },
         );
         let cmds = update(&mut state, Msg::EditorExited { status: 1 });
-        assert!(!cmds.contains(&Cmd::LoadDoc("a.md".into())));
+        assert!(!cmds.iter().any(|c| matches!(c, Cmd::LoadDoc { .. })));
         assert_eq!(
             state.status.as_deref(),
             Some("the editor exited with status 1")
