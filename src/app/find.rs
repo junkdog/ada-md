@@ -69,6 +69,8 @@ pub struct Outline {
     pub selected: usize,
     /// The theme before the theme list opened, put back unless another one is picked.
     theme: Option<String>,
+    /// The theme list shows the light themes, not the dark ones; `←`/`→` switch.
+    pub light: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -361,6 +363,7 @@ impl State {
                 .themes
                 .iter()
                 .enumerate()
+                .filter(|(_, t)| t.is_light() == outline.light)
                 .map(|(i, t)| OutlineEntry {
                     id: i as u32,
                     level: 0,
@@ -408,6 +411,7 @@ impl State {
         self.outline = Some(Outline {
             listing,
             theme: (listing == Listing::Themes).then(|| self.theme.name.clone()),
+            light: self.theme.is_light(),
             ..Outline::default()
         });
         let (scroll, focus) = (self.scroll, self.visible_focus());
@@ -456,6 +460,46 @@ impl State {
             None => outline.theme.clone().unwrap_or_default(),
         };
         self.switch_theme(&name)
+    }
+
+    /// In the theme list, `←` lists the dark themes and `→` the light ones, at the selected
+    /// theme's counterpart: the first one sharing the most `-`-separated words of its name, as
+    /// `gruvbox-light` does `gruvbox-dark`'s. The filter stays.
+    pub(super) fn themes_tone(&mut self, dir: Dir) -> Vec<Cmd> {
+        let light = dir == Dir::Next;
+        let Some(outline) = self
+            .outline
+            .as_ref()
+            .filter(|o| o.listing == Listing::Themes && o.light != light)
+        else {
+            return Vec::new();
+        };
+        let selected = self
+            .outline_entries()
+            .get(outline.selected)
+            .map(|e| e.text.clone().into_owned());
+        if let Some(outline) = &mut self.outline {
+            outline.light = light;
+        }
+        let shared = |name: &str| {
+            let words = selected.as_deref().unwrap_or("").split('-');
+            words
+                .zip(name.split('-'))
+                .take_while(|(a, b)| a == b)
+                .count()
+        };
+        let entries = self.outline_entries();
+        // the first of the most alike, as `max_by_key` would take the last
+        let best = entries
+            .iter()
+            .enumerate()
+            .rev()
+            .max_by_key(|(_, e)| shared(&e.text))
+            .map_or(0, |(i, _)| i);
+        if let Some(outline) = &mut self.outline {
+            outline.selected = best;
+        }
+        self.preview_theme()
     }
 
     pub(super) fn outline_filter(&mut self, text: String) {

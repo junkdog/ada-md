@@ -28,9 +28,9 @@ const x: number = 1;
 Text after code.
 
 +100 open-themes
-+150 outline-move by=1
++150 themes-tone dir=next
 +200 outline-pick
 +300 scroll by=8
 +400 toggle-code-wrap
 +500 open-themes
-+600 outline-move by=-1
++600 themes-tone dir=prev

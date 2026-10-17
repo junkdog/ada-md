@@ -98,6 +98,29 @@ pub fn draw(buf: &mut Grid, area: Rect, state: &State) {
             buf.set_string(x, bottom, &hint, theme.style(StyleKey::PopupTitle));
         }
     }
+    // the theme list's tone, the one shown lit
+    if outline.listing == Listing::Themes {
+        let (title, border) = (
+            theme.style(StyleKey::PopupTitle),
+            theme.style(StyleKey::PopupBorder),
+        );
+        let lit = |on: bool| if on { title } else { border };
+        let parts = [
+            (" ← ", border),
+            ("dark", lit(!outline.light)),
+            (" · ", border),
+            ("light", lit(outline.light)),
+            (" → ", border),
+        ];
+        let width: usize = parts.iter().map(|(s, _)| s.width()).sum();
+        let mut x = rect.right().saturating_sub(width as u16 + 2);
+        if x > rect.x + 1 {
+            for (s, style) in parts {
+                buf.set_string(x, bottom, s, style);
+                x += s.width() as u16;
+            }
+        }
+    }
 
     // the filter, then as many entries as fit, keeping the selection in view
     let x = rect.x + 1;

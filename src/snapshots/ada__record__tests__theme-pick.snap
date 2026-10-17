@@ -3,23 +3,23 @@ source: src/record.rs
 expression: frames.last().unwrap()
 ---
        println!("tab-indented");
-       let long_line = "╭─ themes 1/14 ────────────────╮nough that it has to ›
+       let long_line = "╭─ themes 1/10 ────────────────╮nough that it has to ›
    }                    │ › ▏                          │
                         │ gruvbox-dark                 │
-                        │ gruvbox-light  current       │
-   kotlin               │ catppuccin-mocha             │
-   fun greet(name: Strin│ catppuccin-macchiato         │
-                        │ catppuccin-frappe            │
-                        │ catppuccin-latte             │
+                        │ catppuccin-mocha             │
+   kotlin               │ catppuccin-macchiato         │
+   fun greet(name: Strin│ catppuccin-frappe            │
                         │ tokyonight-night             │
-   untagged block       │ tokyonight-storm             │
+                        │ tokyonight-storm             │
                         │ tokyonight-moon              │
-                        │ tokyonight-day               │
-                        │ rose-pine                    │
-   indented code        │ rose-pine-moon               │
-   block                │ rose-pine-dawn               │
+   untagged block       │ rose-pine                    │
+                        │ rose-pine-moon               │
                         │ dracula                      │
-                        ╰──────────────────────────────╯
+                        ╰─────────── ← dark · light → ─╯
+   indented code
+   block
+
+
    ts
    const x: number = 1;
 

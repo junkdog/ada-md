@@ -422,6 +422,8 @@ enum Mode {
     Help,
     /// The outline popup listing a table's columns, which `←`/`→` trade for another table's.
     Sort(String),
+    /// The outline popup listing the themes, which `←`/`→` trade for the dark or light ones.
+    Themes(String),
 }
 
 #[derive(Debug, Default)]
@@ -465,6 +467,7 @@ impl Keymap {
             return None;
         }
         let sorting = matches!(self.mode, Mode::Sort(_));
+        let themes = matches!(self.mode, Mode::Themes(_));
         match &mut self.mode {
             Mode::Normal => self.normal(&key),
             Mode::Search(text) => {
@@ -495,7 +498,7 @@ impl Keymap {
                     }
                 }
             }
-            Mode::Outline(text) | Mode::Sort(text) => {
+            Mode::Outline(text) | Mode::Sort(text) | Mode::Themes(text) => {
                 let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
                 let by = |by| Some(Msg::OutlineMove { by });
                 // another table's columns: the filter starts over
@@ -506,6 +509,8 @@ impl Keymap {
                 match key.code {
                     KeyCode::Left if sorting => table(text, Dir::Prev),
                     KeyCode::Right if sorting => table(text, Dir::Next),
+                    KeyCode::Left if themes => Some(Msg::ThemesTone { dir: Dir::Prev }),
+                    KeyCode::Right if themes => Some(Msg::ThemesTone { dir: Dir::Next }),
                     KeyCode::Enter => {
                         self.mode = Mode::Normal;
                         Some(Msg::OutlinePick)
@@ -570,12 +575,13 @@ impl Keymap {
             None => self.bindings.find(&[key])?,
         };
         match action {
-            Action::Outline | Action::Links | Action::Theme => {
+            Action::Outline | Action::Links => {
                 self.mode = Mode::Outline(String::new());
             }
             Action::Search => self.mode = Mode::Search(String::new()),
             Action::Help => self.mode = Mode::Help,
             Action::Sort => self.mode = Mode::Sort(String::new()),
+            Action::Theme => self.mode = Mode::Themes(String::new()),
             _ => {}
         }
         Some(action.msg())
@@ -764,12 +770,25 @@ mod tests {
         );
         assert_eq!(press(&mut km, KeyCode::Enter), Some(Msg::OutlinePick));
 
-        // and so does the theme list
+        // and so does the theme list, whose `←`/`→` list the dark or light themes
         assert_eq!(press(&mut km, KeyCode::Char('T')), Some(Msg::OpenThemes));
         assert_eq!(
             press(&mut km, KeyCode::Down),
             Some(Msg::OutlineMove { by: 1 })
         );
+        assert_eq!(
+            press(&mut km, KeyCode::Right),
+            Some(Msg::ThemesTone { dir: Dir::Next })
+        );
+        assert_eq!(
+            press(&mut km, KeyCode::Left),
+            Some(Msg::ThemesTone { dir: Dir::Prev })
+        );
+        assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::OutlineClose));
+
+        // the outline has no use for them
+        assert_eq!(press(&mut km, KeyCode::Char('o')), Some(Msg::OpenOutline));
+        assert_eq!(press(&mut km, KeyCode::Right), None);
         assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::OutlineClose));
     }
 

@@ -244,6 +244,22 @@ impl Theme {
             .collect()
     }
 
+    /// A theme for a light background: its document background is light or, when it leaves
+    /// the terminal's, its text is dark. A theme with neither in RGB counts as dark.
+    pub fn is_light(&self) -> bool {
+        // relative luminance, roughly; light above the middle gray
+        let light = |c| match c {
+            Some(Color::Rgb(r, g, b)) => {
+                Some(299 * u32::from(r) + 587 * u32::from(g) + 114 * u32::from(b) > 128_000)
+            }
+            _ => None,
+        };
+        let text = self.styles[StyleKey::Text as usize];
+        light(text.bg)
+            .or_else(|| light(text.fg).map(|fg| !fg))
+            .unwrap_or(false)
+    }
+
     /// A key's style on top of the document style, and of its parent's.
     pub fn style(&self, key: StyleKey) -> Style {
         let base = self.styles[StyleKey::Text as usize];
@@ -277,6 +293,24 @@ impl Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn builtins_are_light_or_dark_by_their_colors() {
+        let light: Vec<String> = Theme::builtins()
+            .into_iter()
+            .filter(Theme::is_light)
+            .map(|t| t.name)
+            .collect();
+        assert_eq!(
+            light,
+            [
+                "gruvbox-light",
+                "catppuccin-latte",
+                "tokyonight-day",
+                "rose-pine-dawn"
+            ]
+        );
+    }
 
     #[test]
     fn style_paths_are_unique() {

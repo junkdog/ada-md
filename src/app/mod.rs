@@ -137,6 +137,10 @@ pub enum Msg {
     Reload,
     /// `T`: the outline, listing the themes.
     OpenThemes,
+    /// In the theme list: the dark themes (`Prev`, `←`) or the light ones (`Next`, `→`).
+    ThemesTone {
+        dir: Dir,
+    },
     /// `?`: the help overlay, which lists the keys.
     Help,
     HelpScroll {
@@ -1081,6 +1085,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.status = None;
             state.open_outline(Listing::Themes)
         }
+        Msg::ThemesTone { dir } => state.themes_tone(dir),
         Msg::OutlineFilter { text } => {
             state.outline_filter(text);
             state.preview_theme()
@@ -1945,7 +1950,7 @@ mod tests {
         // the selection is on show, and `Esc` puts the old theme back
         update(&mut state, Msg::OpenThemes);
         assert_eq!(state.outline_entries()[0].dest.as_deref(), Some("current"));
-        update(&mut state, Msg::OutlineMove { by: 1 });
+        update(&mut state, Msg::ThemesTone { dir: Dir::Next });
         assert_eq!(name(&state), light);
         update(&mut state, Msg::OutlineClose);
         assert_eq!(name(&state), dark);
@@ -1955,10 +1960,10 @@ mod tests {
         update(
             &mut state,
             Msg::OutlineFilter {
-                text: "light".into(),
+                text: "mocha".into(),
             },
         );
-        assert_eq!(name(&state), light);
+        assert_eq!(name(&state), "catppuccin-mocha");
         update(
             &mut state,
             Msg::OutlineFilter {
@@ -1977,7 +1982,7 @@ mod tests {
         update(&mut state, Msg::HelpClose);
 
         update(&mut state, Msg::OpenThemes);
-        update(&mut state, Msg::OutlineMove { by: 1 });
+        update(&mut state, Msg::ThemesTone { dir: Dir::Next });
         update(&mut state, Msg::OutlinePick);
         assert_eq!(name(&state), light);
         assert_eq!(state.status.as_deref(), Some("theme: gruvbox-light"));
@@ -1987,6 +1992,72 @@ mod tests {
             current.text, "gruvbox-light",
             "the list opens on the current theme"
         );
+        assert!(
+            state.outline.as_ref().unwrap().light,
+            "among the light themes"
+        );
+    }
+
+    #[test]
+    fn theme_list_trades_dark_for_light_at_the_counterpart() {
+        let mut state = loaded("# Themes\n", 80, 20);
+        let name = |s: &State| s.theme.name.clone();
+        let tone = |state: &mut State, dir| {
+            update(state, Msg::ThemesTone { dir });
+            name(state)
+        };
+        update(&mut state, Msg::OpenThemes);
+        let listed = |s: &State| {
+            s.outline_entries()
+                .iter()
+                .map(|e| e.text.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert!(!listed(&state).contains(&"gruvbox-light".to_owned()));
+        assert_eq!(tone(&mut state, Dir::Prev), "gruvbox-dark", "already dark");
+
+        // the counterpart shares the most words of the name; the first of equals wins
+        update(
+            &mut state,
+            Msg::OutlineFilter {
+                text: "moon".into(),
+            },
+        );
+        assert_eq!(name(&state), "tokyonight-moon");
+        update(
+            &mut state,
+            Msg::OutlineFilter {
+                text: String::new(),
+            },
+        );
+        update(&mut state, Msg::OutlineMove { by: 2 });
+        assert_eq!(name(&state), "rose-pine-moon");
+        assert_eq!(tone(&mut state, Dir::Next), "rose-pine-dawn");
+        assert_eq!(
+            listed(&state),
+            [
+                "gruvbox-light",
+                "catppuccin-latte",
+                "tokyonight-day",
+                "rose-pine-dawn"
+            ]
+        );
+        assert_eq!(tone(&mut state, Dir::Prev), "rose-pine");
+        update(&mut state, Msg::OutlineMove { by: 2 });
+        assert_eq!(name(&state), "dracula");
+        assert_eq!(
+            tone(&mut state, Dir::Next),
+            "gruvbox-light",
+            "no counterpart: the first"
+        );
+
+        // the filter stays, and `Esc` still puts the old theme back
+        update(&mut state, Msg::OutlineFilter { text: "cat".into() });
+        assert_eq!(name(&state), "catppuccin-latte");
+        assert_eq!(tone(&mut state, Dir::Prev), "catppuccin-mocha");
+        assert_eq!(listed(&state).len(), 3);
+        update(&mut state, Msg::OutlineClose);
+        assert_eq!(name(&state), "gruvbox-dark");
     }
 
     #[test]

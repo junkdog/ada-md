@@ -55,7 +55,7 @@ in some 200 languages, and shows images inline in terminals that can (kitty, six
   from a session
 
 Also: callouts, footnotes and task lists, a filterable outline and list of links, code that
-wraps or scrolls sideways, three built-in themes and your own (`T` previews them), and keys
+wraps or scrolls sideways, fourteen built-in themes and your own (`T` previews them), and keys
 you can remap.
 
 ## Performance
@@ -141,7 +141,7 @@ Press `?` in ada for the keys. See `ada --help` for every option.
 | `t` | tables: auto, grid, records |
 | `s` | sort a table on screen by a column: ascending, descending, source order; `←` `→` pick another table |
 | `w`, `←` `→` | wrap code, or scroll it sideways |
-| `T` | pick a theme, previewing each: `Enter` keeps it, `Esc` goes back |
+| `T` | pick a theme, previewing each: `Enter` keeps it, `Esc` goes back; `←` `→` list the dark or the light themes |
 | `r` | read the file again |
 | `e` | edit in `$VISUAL` or `$EDITOR` at the current line |
 | `y` | copy the focused link, or the code block on screen |
@@ -192,7 +192,8 @@ These themes are built in:
 | dracula | `dracula` |
 
 Your own go in `~/.config/ada/themes/NAME.toml` and are picked with `--theme NAME` or `theme = "NAME"`; `T`
-lists all of them, previewing each as it's selected: `Enter` keeps it, `Esc` goes back. A theme can start from another and change only some of it:
+lists all of them, previewing each as it's selected: `Enter` keeps it, `Esc` goes back. It lists the dark themes or the
+light ones, whichever the current theme is, and `←` `→` switch, landing on the counterpart (`gruvbox-dark` ↔ `gruvbox-light`). A theme can start from another and change only some of it:
 
 ```toml
 extends = "gruvbox-dark"
