@@ -12,7 +12,7 @@ use ratatui::style::Modifier;
 
 use super::{Cell, Grid, LONG};
 
-/// Styles that show on a blank cell, so a wide grapheme's leftover columns need redrawing.
+/// Styles that show on a blank cell: a blank with none of them shows only its background.
 const VISIBLE_ON_BLANK: u16 = Modifier::REVERSED
     .union(Modifier::UNDERLINED)
     .union(Modifier::SLOW_BLINK)
@@ -53,6 +53,11 @@ impl<W: Write> Screen<W> {
 
     pub fn size(&self) -> Size {
         self.last.area.as_size()
+    }
+
+    /// What the terminal shows, as the frames written so far left it.
+    pub fn shown(&self) -> &Grid {
+        &self.last
     }
 
     /// A new size: the next frame clears the terminal and draws every cell, in one synchronized
@@ -264,28 +269,39 @@ fn encode(last: &Grid, next: &Grid, out: &mut Vec<u8>) {
             i = end;
             continue;
         }
-        // A wide emoji with VS16 may be drawn one column wide, and a wide grapheme replaced by a
-        // narrow one may leave its style on the columns it covered: redraw those after it.
-        let mut trailing = None;
+        // A wide emoji with VS16 is drawn two columns wide by most terminals and one by some:
+        // the column it covers goes first, so the emoji covers it in the first kind and leaves
+        // it shown in the second. Drawn after the emoji, the column would erase it (F-04).
         if width > 1 && next.symbol_at(at).contains('\u{FE0F}') {
-            trailing = Some((at + 1, (at + width).min(len), false));
-        } else if width > 1 {
+            let end = (at + width).min(len);
+            for k in at + 1..end {
+                if !next.cells[k].skip() && last.symbol_at(k) != next.symbol_at(k) {
+                    pen.cell(next, k, out);
+                }
+            }
+            pen.cell(next, at, out);
+            i = end;
+            continue;
+        }
+        // A wide grapheme replaced by a narrow one leaves the columns it covered to the
+        // terminal, which erases them by its own rules (tmux and alacritty to a default blank,
+        // others with the pen, F-04): redraw those after it.
+        let mut trailing = None;
+        if width > 1 {
             i += width - 1;
-        } else if usize::from(prev.width()) > width
-            && (prev.bg != 0 || prev.modifier & VISIBLE_ON_BLANK != 0)
-        {
-            trailing = Some((at + 1, (at + usize::from(prev.width())).min(len), true));
+        } else if usize::from(prev.width()) > width {
+            trailing = Some((at + 1, (at + usize::from(prev.width())).min(len)));
         }
         pen.cell(next, at, out);
         if trailing.is_none() && width == 1 {
             i = pen.run(next, last, i, end.min(tail.1), out);
         }
-        if let Some((mut j, mut end, force)) = trailing {
+        if let Some((mut j, mut end)) = trailing {
             while j < end {
                 let k = j;
                 j += usize::from(next.cells[k].width()).max(1);
                 end = end.max(j).min(len);
-                if !next.cells[k].skip() && (force || last.symbol_at(k) != next.symbol_at(k)) {
+                if !next.cells[k].skip() {
                     pen.cell(next, k, out);
                 }
             }
@@ -881,6 +897,59 @@ mod tests {
             draw(&mut screen, "hi"),
             "\x1b[?2026h\x1b[2J\x1b[1Hhi\x1b[?25l\x1b[?2026l"
         );
+    }
+
+    /// A narrow grapheme over a wide one redraws the column the wide one covered, even blank on
+    /// blank: terminals erase it by their own rules, some with the pen just used (F-04).
+    #[test]
+    fn a_narrow_grapheme_over_a_wide_one_redraws_its_other_column() {
+        let mut screen = Screen::new(Vec::new(), Size::new(10, 3));
+        screen
+            .draw(|g| g.set_string(0, 0, "日x", Style::new()))
+            .unwrap();
+        screen.out.clear();
+        let border = Style::new().bg(Color::Rgb(60, 56, 54));
+        screen
+            .draw(|g| {
+                g.set_string(0, 0, "│", border);
+                g.set_string(2, 0, "x", Style::new());
+            })
+            .unwrap();
+        assert_eq!(text_of(&screen.out), "│ ", "{:?}", screen.out.escape_ascii());
+    }
+
+    /// A VS16 emoji's covered column is drawn before the emoji, which a terminal drawing it two
+    /// columns wide would erase if it came after (F-04).
+    #[test]
+    fn a_vs16_emoji_comes_after_the_column_it_covers() {
+        let mut screen = Screen::new(Vec::new(), Size::new(10, 3));
+        screen
+            .draw(|g| g.set_string(0, 0, "ab", Style::new()))
+            .unwrap();
+        screen.out.clear();
+        screen
+            .draw(|g| g.set_string(0, 0, "❤\u{fe0f}", Style::new()))
+            .unwrap();
+        assert_eq!(
+            text_of(&screen.out),
+            " ❤\u{fe0f}",
+            "{:?}",
+            screen.out.escape_ascii()
+        );
+    }
+
+    /// The text a frame wrote, without its escape sequences.
+    fn text_of(out: &[u8]) -> String {
+        let mut text = String::new();
+        let mut chars = std::str::from_utf8(out).unwrap().chars();
+        while let Some(c) = chars.next() {
+            if c == '\x1b' {
+                chars.by_ref().find(char::is_ascii_alphabetic);
+            } else {
+                text.push(c);
+            }
+        }
+        text
     }
 
     /// Frames of random strings and styles, shifted a row or a column at a time as scrolling

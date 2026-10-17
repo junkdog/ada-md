@@ -82,7 +82,8 @@ impl Cell {
             | u128::from(self.bg) << 96
     }
 
-    fn width(&self) -> u16 {
+    /// Columns the symbol covers.
+    pub fn width(&self) -> u16 {
         u16::from(self.meta & WIDTH)
     }
 
@@ -92,6 +93,11 @@ impl Cell {
 
     fn forced(&self) -> bool {
         self.meta & FORCED != 0
+    }
+
+    /// Part of an image: the terminal draws it, or leaves it alone, by the protocol's rules.
+    pub fn is_image(&self) -> bool {
+        self.meta & (SKIP | FORCED) != 0
     }
 }
 
@@ -277,6 +283,7 @@ impl Grid {
             return (x, y);
         }
         let row = self.index(self.area.x, y);
+        self.split_wide(row, x);
         let patch = Patch::new(style);
         let bytes = s.as_bytes();
         let mut i = 0;
@@ -340,6 +347,31 @@ impl Grid {
             x += width;
         }
         (x, y)
+    }
+
+    /// A write from column `x` of the row starting at `row` that lands inside a wide grapheme,
+    /// such as a popup's border over CJK text: the grapheme can't show whole, so it becomes a
+    /// blank with its style, as in a terminal. Kept, the encoder would write the grapheme and
+    /// skip the columns it covers, and with them what was written there (F-04).
+    fn split_wide(&mut self, row: usize, x: u16) {
+        let x = x - self.area.x;
+        for d in 1..=x.min(u16::from(WIDTH)) {
+            let c = &mut self.cells[row + usize::from(x - d)];
+            if c.forced() || c.skip() {
+                return;
+            }
+            let width = c.width();
+            if width > d {
+                c.sym = [b' ', 0, 0, 0];
+                c.len = 1;
+                c.meta = 1;
+                return;
+            }
+            // only blanks may be the columns of a wide grapheme further left
+            if width > 1 || c.len != 1 || c.sym[0] != b' ' {
+                return;
+            }
+        }
     }
 
     pub fn set_string(&mut self, x: u16, y: u16, string: impl AsRef<str>, style: Style) {
@@ -617,5 +649,21 @@ mod tests {
         for c in colors {
             assert_eq!(unpack(pack(c)), c);
         }
+    }
+
+    /// Writing into the right half of a wide grapheme blanks the grapheme, keeping its style,
+    /// so what was written there shows (F-04).
+    #[test]
+    fn a_write_inside_a_wide_grapheme_blanks_it() {
+        let mut grid = Grid::empty(Rect::new(0, 0, 6, 1));
+        let red = Style::new().bg(Color::Red);
+        grid.set_string(0, 0, "日本x", red);
+        grid.set_string(3, 0, "\u{2502}", Style::new());
+        let row: Vec<_> = (0..6).map(|x| grid.symbol((x, 0))).collect();
+        assert_eq!(row, ["日", " ", " ", "\u{2502}", "x", " "]);
+        assert_eq!((grid[(2, 0)].width(), grid[(2, 0)].bg()), (1, Color::Red));
+        // a write that starts where one ends leaves it alone
+        grid.set_string(2, 0, "ab", Style::new());
+        assert_eq!(grid.symbol((0, 0)), "日");
     }
 }
