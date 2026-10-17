@@ -23,7 +23,7 @@ use crate::images;
 use crate::theme::{Glyphs, StyleKey};
 use table::ColMeasure;
 pub use table::Sort;
-use wrap::{Line, NBSP, Wrapped};
+use wrap::{Line, NBSP, Wrapped, text_width};
 
 /// How tables render; `t` cycles it for the whole session (ADR-11, plan Q12).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -347,11 +347,69 @@ pub fn layout_measured(
     glyphs: &Glyphs,
     params: LayoutParams,
 ) -> Layout {
+    let spare = Layout {
+        params,
+        margin: 0,
+        text: String::new(),
+        spans: Vec::new(),
+        rows: Vec::new(),
+        block_rows: Vec::new(),
+        anchor_rows: Vec::new(),
+        headings: Vec::new(),
+        hits: Vec::new(),
+        search: Vec::new(),
+        grids: Vec::new(),
+        tables: Vec::new(),
+        code: Vec::new(),
+        images: Vec::new(),
+    };
+    relayout(doc, measure, glyphs, params, spare)
+}
+
+/// Lay out a document measured with the same glyphs, reusing the buffers of `spare`, a layout
+/// that is no longer needed.
+pub fn relayout(
+    doc: &Doc,
+    measure: &Measure,
+    glyphs: &Glyphs,
+    params: LayoutParams,
+    spare: Layout,
+) -> Layout {
     let margin = if params.prose_width() >= 24 {
         glyphs.margin
     } else {
         0
     };
+    let Layout {
+        mut text,
+        mut spans,
+        mut rows,
+        mut block_rows,
+        mut anchor_rows,
+        mut headings,
+        mut hits,
+        mut search,
+        mut grids,
+        mut tables,
+        mut code,
+        mut images,
+        ..
+    } = spare;
+    text.clear();
+    spans.clear();
+    rows.clear();
+    block_rows.clear();
+    block_rows.reserve(doc.blocks.len());
+    anchor_rows.clear();
+    anchor_rows.resize(doc.anchors.len(), u32::MAX);
+    headings.clear();
+    hits.clear();
+    search.clear();
+    grids.clear();
+    tables.clear();
+    code.clear();
+    code.resize(doc.code_count as usize, CodeInfo::default());
+    images.clear();
     let mut b = Builder {
         doc,
         measure,
@@ -360,18 +418,18 @@ pub fn layout_measured(
         out: Layout {
             params,
             margin,
-            text: String::new(),
-            spans: Vec::new(),
-            rows: Vec::new(),
-            block_rows: Vec::with_capacity(doc.blocks.len()),
-            anchor_rows: vec![u32::MAX; doc.anchors.len()],
-            headings: Vec::new(),
-            hits: Vec::new(),
-            search: Vec::new(),
-            grids: Vec::new(),
-            tables: Vec::new(),
-            code: vec![CodeInfo::default(); doc.code_count as usize],
-            images: Vec::new(),
+            text,
+            spans,
+            rows,
+            block_rows,
+            anchor_rows,
+            headings,
+            hits,
+            search,
+            grids,
+            tables,
+            code,
+            images,
         },
         prefixes: Vec::new(),
         prefix_width: 0,
@@ -383,6 +441,7 @@ pub fn layout_measured(
         search_col: 0,
         stripe: None,
         striped: false,
+        scratch: Wrapped::default(),
     };
     if margin > 0 {
         b.push_prefix(&" ".repeat(margin as usize), StyleKey::Text);
@@ -436,6 +495,8 @@ struct Builder<'a> {
     stripe: Option<Range<u16>>,
     /// Whether the table row being built is striped.
     striped: bool,
+    /// The last paragraph's wrap, whose buffers the next one reuses.
+    scratch: Wrapped,
 }
 
 /// A span's style: key, inline markup, link.
@@ -447,7 +508,8 @@ fn push_span(out: &mut Layout, row_start: u32, col: &mut u16, text: &str, width:
         return;
     }
     let start = out.text.len() as u32;
-    if text.contains(NBSP) {
+    // 0xa0 ends NBSP's encoding (and others'); most spans don't have it, and memchr is quick.
+    if text.as_bytes().contains(&0xa0) {
         out.text
             .extend(text.chars().map(|c| if c == NBSP { ' ' } else { c }));
     } else {
@@ -574,7 +636,7 @@ impl Builder<'_> {
     }
 
     fn text(&mut self, text: &str, key: StyleKey) {
-        let width = text.width() as u16;
+        let width = text_width(text) as u16;
         push_span(
             &mut self.out,
             self.row_start,
@@ -602,14 +664,18 @@ impl Builder<'_> {
     }
 
     fn emit_line(&mut self, w: &Wrapped, line: &Line) {
-        for seg in &line.segs {
+        for seg in w.line_segs(line) {
             let piece = &w.pieces[seg.piece as usize];
             let from = self.col;
             if let Some(unit) = w.unit {
                 let (a, b) = (seg.start.max(piece.body_start), seg.end.min(piece.body_end));
                 if a < b {
-                    let col = from + w.buf[seg.start as usize..a as usize].width() as u16;
-                    let end = col + w.buf[a as usize..b as usize].width() as u16;
+                    let (col, end) = if (a, b) == (seg.start, seg.end) {
+                        (from, from + seg.width)
+                    } else {
+                        let col = from + text_width(&w.buf[seg.start as usize..a as usize]) as u16;
+                        (col, col + text_width(&w.buf[a as usize..b as usize]) as u16)
+                    };
                     let at = |x: u32| piece.unit_off + (x - piece.body_start);
                     self.search_seg(unit, at(a)..at(b), col..end);
                 }
@@ -705,8 +771,10 @@ impl Builder<'_> {
 
     fn paragraph(&mut self, runs: &[Run], unit: UnitId, key: StyleKey, suffix: Option<&str>) {
         let avail = self.avail();
-        let w = wrap::wrap(runs, Some(unit), key, avail, self.doc, self.g, suffix);
+        let into = std::mem::take(&mut self.scratch).recycle(Some(unit));
+        let w = wrap::wrap(into, runs, key, avail, self.doc, self.g, suffix);
         self.emit_lines(&w);
+        self.scratch = w;
     }
 
     fn heading(&mut self, level: u8, inlines: &Inlines, anchor: AnchorId) {

@@ -391,8 +391,11 @@ fn cells(
         .map(|(c, &w)| {
             let suffix = mark.filter(|&(col, _)| col == c).map(|(_, m)| m);
             match (row.cells.get(c), suffix) {
-                (Some(inl), _) => wrap::wrap(&inl.runs, Some(inl.unit), key, w, b.doc, b.g, suffix),
-                (None, Some(_)) => wrap::wrap(&[], None, key, w, b.doc, b.g, suffix),
+                (Some(inl), _) => {
+                    let into = Wrapped::new(Some(inl.unit));
+                    wrap::wrap(into, &inl.runs, key, w, b.doc, b.g, suffix)
+                }
+                (None, Some(_)) => wrap::wrap(Wrapped::new(None), &[], key, w, b.doc, b.g, suffix),
                 (None, None) => Wrapped::default(),
             }
         })

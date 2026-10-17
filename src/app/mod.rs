@@ -398,15 +398,23 @@ impl Document {
         if self.measure.glyphs_gen != params.glyphs_gen {
             self.measure.remeasure(&self.doc, &theme.glyphs);
         }
-        let next = layout::layout_measured(&self.doc, &self.measure, &theme.glyphs, params);
+        let next = self.lay_out(theme, params);
         self.prev = Some(mem::replace(&mut self.layout, next));
     }
 
     /// Lay out again after the measurements changed, dropping the previous layout.
     fn relayout_now(&mut self, theme: &Theme, params: LayoutParams) {
         let params = self.filetype.params(params);
-        self.layout = layout::layout_measured(&self.doc, &self.measure, &theme.glyphs, params);
-        self.prev = None;
+        self.layout = self.lay_out(theme, params);
+    }
+
+    /// A new layout, in the buffers of the previous one when there is one.
+    fn lay_out(&mut self, theme: &Theme, params: LayoutParams) -> Layout {
+        let (doc, measure, glyphs) = (&self.doc, &self.measure, &theme.glyphs);
+        match self.prev.take() {
+            Some(spare) => layout::relayout(doc, measure, glyphs, params, spare),
+            None => layout::layout_measured(doc, measure, glyphs, params),
+        }
     }
 }
 

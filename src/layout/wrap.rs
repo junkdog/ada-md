@@ -9,6 +9,9 @@
 //! The bodies of a [`Wrapped`], in order, are its search unit's text (ADR-12), so layout can map
 //! every row back to the stretch of the unit it shows.
 
+use std::borrow::Cow;
+use std::ops::Range;
+
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::doc::{Doc, InlineStyle, LineRange, LinkId, Run, RunKind, UnitId};
@@ -44,23 +47,52 @@ pub struct Seg {
 
 #[derive(Debug, Default)]
 pub struct Line {
-    pub segs: Vec<Seg>,
+    /// Indices into [`Wrapped::segs`].
+    pub segs: Range<u32>,
     pub width: u16,
     pub src: LineRange,
 }
 
+/// Wrapped text. Its buffers can be reused for the next wrap ([`Wrapped::recycle`]), since
+/// layout wraps one paragraph after another.
 #[derive(Debug, Default)]
 pub struct Wrapped {
     pub buf: String,
     pub pieces: Vec<Piece>,
+    pub segs: Vec<Seg>,
     pub lines: Vec<Line>,
     /// The search unit the bodies belong to.
     pub unit: Option<UnitId>,
     /// The length of the unit's text so far.
     unit_len: u32,
+    toks: Vec<Tok>,
 }
 
 impl Wrapped {
+    /// Nothing yet, for search unit `unit`.
+    pub fn new(unit: Option<UnitId>) -> Self {
+        Self {
+            unit,
+            ..Self::default()
+        }
+    }
+
+    /// Empty again, for search unit `unit`, keeping the buffers.
+    pub fn recycle(mut self, unit: Option<UnitId>) -> Self {
+        self.buf.clear();
+        self.pieces.clear();
+        self.segs.clear();
+        self.lines.clear();
+        self.toks.clear();
+        self.unit = unit;
+        self.unit_len = 0;
+        self
+    }
+
+    pub fn line_segs(&self, line: &Line) -> &[Seg] {
+        &self.segs[line.segs.start as usize..line.segs.end as usize]
+    }
+
     pub fn seg_text(&self, seg: &Seg) -> &str {
         &self.buf[seg.start as usize..seg.end as usize]
     }
@@ -70,21 +102,18 @@ impl Wrapped {
     }
 }
 
-/// Wrap `runs` to `avail` columns. `key` is the base style of the text; `suffix` is glued to the
-/// last word (a heading's trailing pad).
+/// Wrap `runs` to `avail` columns, into `w` (empty, from [`Wrapped::new`] or
+/// [`Wrapped::recycle`]). `key` is the base style of the text; `suffix` is glued to the last
+/// word (a heading's trailing pad).
 pub fn wrap(
+    mut w: Wrapped,
     runs: &[Run],
-    unit: Option<UnitId>,
     key: StyleKey,
     avail: u16,
     doc: &Doc,
     glyphs: &Glyphs,
     suffix: Option<&str>,
 ) -> Wrapped {
-    let mut w = Wrapped {
-        unit,
-        ..Wrapped::default()
-    };
     flatten(runs, key, doc, glyphs, &mut w);
     if let Some(suffix) = suffix.filter(|s| !s.is_empty()) {
         let line = w.pieces.last().map_or(0, |p| p.src_line);
@@ -106,7 +135,8 @@ pub fn measure(runs: &[Run], doc: &Doc, glyphs: &Glyphs) -> (u16, u16) {
     flatten(runs, StyleKey::Text, doc, glyphs, &mut w);
     let (mut min, mut max, mut line) = (0u16, 0u16, 0u16);
     let (mut started, mut pending) = (false, false);
-    for tok in tokenize(&w.buf) {
+    tokenize(&w.buf, &mut w.toks);
+    for &tok in &w.toks {
         match tok {
             Tok::Space { .. } => pending = started,
             Tok::Newline => (line, started, pending) = (0, false, false),
@@ -149,14 +179,21 @@ pub fn wrap_unit(
     src_line: u32,
     avail: u16,
 ) -> Wrapped {
-    let mut w = Wrapped {
-        unit: Some(unit),
-        ..Wrapped::default()
-    };
+    let mut w = Wrapped::new(Some(unit));
     let look = (key, InlineStyle::NONE, None);
     push_parts(&mut w, [pre, body, post], look, src_line);
     pack(&mut w, avail.max(1));
     w
+}
+
+/// The columns `s` takes: its length when it's ASCII, otherwise [`UnicodeWidthStr::width`].
+/// A `\r` before a `\n` takes no column of its own there, so it takes the slow path.
+pub fn text_width(s: &str) -> usize {
+    if s.bytes().all(|b| b < 0x80 && b != b'\r') {
+        s.len()
+    } else {
+        s.width()
+    }
 }
 
 /// What the buffer holds for `c`: tabs, carriage returns and other control characters, except
@@ -171,7 +208,25 @@ pub fn clean_char(c: char) -> char {
 
 /// `text` as the buffer holds it.
 pub fn clean(text: &str) -> String {
-    text.chars().map(clean_char).collect()
+    let mut out = String::with_capacity(text.len());
+    push_clean(&mut out, text);
+    out
+}
+
+/// Append `s` as the buffer holds it, copied whole when [`clean_char`] would change nothing.
+fn push_clean(buf: &mut String, s: &str) {
+    if needs_clean(s) {
+        buf.extend(s.chars().map(clean_char));
+    } else {
+        buf.push_str(s);
+    }
+}
+
+/// Whether `s` has a control character other than `\n`. Every one starts with a byte below
+/// 0x20, 0x7f, or 0xc2 (C1 controls, but also `NBSP`, `©`, `°`), so only those look closer.
+fn needs_clean(s: &str) -> bool {
+    let suspect = |b: u8| (b < 0x20 && b != b'\n') || b == 0x7f || b == 0xc2;
+    s.bytes().any(suspect) && s.chars().any(|c| c != '\n' && c.is_control())
 }
 
 fn push_piece(
@@ -196,11 +251,11 @@ fn push_parts(
         return;
     }
     let start = w.buf.len() as u32;
-    w.buf.extend(pre.chars().map(clean_char));
+    push_clean(&mut w.buf, pre);
     let body_start = w.buf.len() as u32;
-    w.buf.extend(body.chars().map(clean_char));
+    push_clean(&mut w.buf, body);
     let body_end = w.buf.len() as u32;
-    w.buf.extend(post.chars().map(clean_char));
+    push_clean(&mut w.buf, post);
     w.pieces.push(Piece {
         start,
         end: w.buf.len() as u32,
@@ -215,20 +270,28 @@ fn push_parts(
     w.unit_len += body_end - body_start;
 }
 
+/// `text` with its newlines as spaces, borrowed when it has none.
+fn unfold(text: &str) -> Cow<'_, str> {
+    if text.contains('\n') {
+        Cow::Owned(text.replace('\n', " "))
+    } else {
+        Cow::Borrowed(text)
+    }
+}
+
 fn flatten(runs: &[Run], key: StyleKey, doc: &Doc, glyphs: &Glyphs, w: &mut Wrapped) {
+    let mut code_pad: Option<String> = None;
     for run in runs {
         let line = run.src_line;
         let look = (key, run.style, run.link);
         match run.kind {
             RunKind::Text if run.style.contains(InlineStyle::CODE) => {
-                let pad: String = std::iter::repeat_n(NBSP, glyphs.code_pad as usize).collect();
-                let text = run.text.replace('\n', " ");
-                push_parts(w, [&pad, &text, &pad], look, line);
+                let pad = code_pad.get_or_insert_with(|| {
+                    std::iter::repeat_n(NBSP, glyphs.code_pad as usize).collect()
+                });
+                push_parts(w, [pad, &unfold(&run.text), pad], look, line);
             }
-            RunKind::Text => {
-                let text = run.text.replace('\n', " ");
-                push_parts(w, ["", &text, ""], look, line);
-            }
+            RunKind::Text => push_parts(w, ["", &unfold(&run.text), ""], look, line),
             RunKind::SoftBreak => push_parts(w, ["", " ", ""], look, line),
             RunKind::HardBreak => push_parts(w, ["", "\n", ""], look, line),
             RunKind::InlineImage(link) => {
@@ -242,9 +305,8 @@ fn flatten(runs: &[Run], key: StyleKey, doc: &Doc, glyphs: &Glyphs, w: &mut Wrap
                 } else {
                     &icon
                 };
-                let text = run.text.replace('\n', " ");
                 let look = (StyleKey::Image, run.style, Some(link));
-                push_parts(w, [icon, &text, ""], look, line);
+                push_parts(w, [icon, &unfold(&run.text), ""], look, line);
             }
             RunKind::FootnoteRef(id) => {
                 let n = doc.footnotes.get(id as usize).map_or(0, |f| f.number);
@@ -255,19 +317,21 @@ fn flatten(runs: &[Run], key: StyleKey, doc: &Doc, glyphs: &Glyphs, w: &mut Wrap
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum Tok {
     Word { start: u32, end: u32, width: u16 },
     Space { start: u32, end: u32 },
     Newline,
 }
 
-fn tokenize(buf: &str) -> Vec<Tok> {
-    let mut toks = Vec::new();
+/// Split `buf` into `toks`.
+fn tokenize(buf: &str, toks: &mut Vec<Tok>) {
+    toks.clear();
+    toks.reserve(buf.len() / 3 + 1);
     let mut word: Option<u32> = None;
     let close = |toks: &mut Vec<Tok>, word: &mut Option<u32>, end: usize| {
         if let Some(start) = word.take() {
-            let width = buf[start as usize..end].width().min(u16::MAX as usize) as u16;
+            let width = text_width(&buf[start as usize..end]).min(u16::MAX as usize) as u16;
             toks.push(Tok::Word {
                 start,
                 end: end as u32,
@@ -275,11 +339,12 @@ fn tokenize(buf: &str) -> Vec<Tok> {
             });
         }
     };
-    let mut chars = buf.char_indices().peekable();
-    while let Some((i, c)) = chars.next() {
+    // Every delimiter is ASCII, and no byte of a multi-byte character is, so bytes will do.
+    let bytes = buf.as_bytes();
+    for (i, &c) in bytes.iter().enumerate() {
         match c {
-            ' ' => {
-                close(&mut toks, &mut word, i);
+            b' ' => {
+                close(toks, &mut word, i);
                 if !matches!(toks.last(), Some(Tok::Space { .. })) {
                     toks.push(Tok::Space {
                         start: i as u32,
@@ -287,44 +352,52 @@ fn tokenize(buf: &str) -> Vec<Tok> {
                     });
                 }
             }
-            '\n' => {
-                close(&mut toks, &mut word, i);
+            b'\n' => {
+                close(toks, &mut word, i);
                 toks.push(Tok::Newline);
             }
             _ => {
                 let start = *word.get_or_insert(i as u32);
-                let breaks_after = (c == '-' || c == '/')
+                let breaks_after = (c == b'-' || c == b'/')
                     && start < i as u32
-                    && chars.peek().is_some_and(|&(_, n)| n != ' ' && n != '\n');
+                    && bytes.get(i + 1).is_some_and(|&n| n != b' ' && n != b'\n');
                 if breaks_after {
-                    close(&mut toks, &mut word, i + c.len_utf8());
+                    close(toks, &mut word, i + 1);
                 }
             }
         }
     }
-    close(&mut toks, &mut word, buf.len());
-    toks
+    close(toks, &mut word, buf.len());
 }
 
 struct Packer<'w> {
     pieces: &'w [Piece],
     buf: &'w str,
     cursor: usize,
+    /// The line being packed; its `segs` start where `segs` ends.
     line: Line,
-    lines: Vec<Line>,
+    segs: &'w mut Vec<Seg>,
+    lines: &'w mut Vec<Line>,
 }
 
 impl Packer<'_> {
-    /// Append `[start, end)` to the current line, split at piece boundaries.
-    fn add(&mut self, mut start: u32, end: u32) {
+    /// Append `[start, end)`, `width` columns wide, to the current line, split at piece
+    /// boundaries.
+    fn add(&mut self, mut start: u32, end: u32, width: u16) {
+        let mut whole = true;
         while start < end {
             while self.cursor + 1 < self.pieces.len() && self.pieces[self.cursor].end <= start {
                 self.cursor += 1;
             }
             let piece = self.pieces[self.cursor];
             let stop = end.min(piece.end).max(start + 1);
-            let width = self.buf[start as usize..stop as usize].width() as u16;
-            self.line.segs.push(Seg {
+            let width = if whole && stop == end {
+                width
+            } else {
+                text_width(&self.buf[start as usize..stop as usize]) as u16
+            };
+            whole = false;
+            self.segs.push(Seg {
                 start,
                 end: stop,
                 width,
@@ -336,25 +409,41 @@ impl Packer<'_> {
         }
     }
 
+    /// Whether the line being packed is empty.
+    fn is_empty(&self) -> bool {
+        self.segs.len() as u32 == self.line.segs.start
+    }
+
     fn flush(&mut self) {
-        self.lines.push(std::mem::take(&mut self.line));
+        let end = self.segs.len() as u32;
+        self.line.segs.end = end;
+        let line = std::mem::replace(
+            &mut self.line,
+            Line {
+                segs: end..end,
+                ..Line::default()
+            },
+        );
+        self.lines.push(line);
     }
 }
 
 fn pack(w: &mut Wrapped, avail: u16) {
-    let toks = tokenize(&w.buf);
+    let mut toks = std::mem::take(&mut w.toks);
+    tokenize(&w.buf, &mut toks);
     let mut p = Packer {
         pieces: &w.pieces,
         buf: &w.buf,
         cursor: 0,
         line: Line::default(),
-        lines: Vec::new(),
+        segs: &mut w.segs,
+        lines: &mut w.lines,
     };
     let mut pending: Option<(u32, u32)> = None;
-    for tok in toks {
+    for &tok in &toks {
         match tok {
             Tok::Space { start, end } => {
-                if !p.line.segs.is_empty() {
+                if !p.is_empty() {
                     pending = Some((start, end));
                 }
             }
@@ -366,35 +455,36 @@ fn pack(w: &mut Wrapped, avail: u16) {
                 let space = u16::from(pending.is_some());
                 if p.line.width.saturating_add(space).saturating_add(width) <= avail {
                     if let Some((s, e)) = pending {
-                        p.add(s, e);
+                        p.add(s, e, 1);
                     }
-                    p.add(start, end);
+                    p.add(start, end, width);
                 } else if width <= avail {
                     p.flush();
-                    p.add(start, end);
+                    p.add(start, end, width);
                 } else {
                     // Longer than a whole line: hard-break it, starting on a fresh line.
-                    if !p.line.segs.is_empty() {
+                    if !p.is_empty() {
                         p.flush();
                     }
                     let word = &w.buf[start as usize..end as usize];
                     for (i, c) in word.char_indices() {
                         let cw = c.width().unwrap_or(0) as u16;
-                        if p.line.width + cw > avail && !p.line.segs.is_empty() {
+                        if p.line.width + cw > avail && !p.is_empty() {
                             p.flush();
                         }
                         let s = start + i as u32;
-                        p.add(s, s + c.len_utf8() as u32);
+                        let e = s + c.len_utf8() as u32;
+                        p.add(s, e, text_width(&w.buf[s as usize..e as usize]) as u16);
                     }
                 }
                 pending = None;
             }
         }
     }
-    if !p.line.segs.is_empty() || p.lines.is_empty() {
+    if !p.is_empty() || p.lines.is_empty() {
         p.flush();
     }
-    w.lines = p.lines;
+    w.toks = toks;
 }
 
 #[cfg(test)]
@@ -411,11 +501,19 @@ mod tests {
             code_pad: 1,
             ..Glyphs::default()
         };
-        let w = wrap(&inl.runs, None, StyleKey::Text, avail, &doc, &glyphs, None);
+        let w = wrap(
+            Wrapped::new(None),
+            &inl.runs,
+            StyleKey::Text,
+            avail,
+            &doc,
+            &glyphs,
+            None,
+        );
         w.lines
             .iter()
             .map(|l| {
-                l.segs
+                w.line_segs(l)
                     .iter()
                     .map(|s| w.seg_text(s).replace(NBSP, "·"))
                     .collect()
@@ -465,14 +563,43 @@ mod tests {
     }
 
     #[test]
+    fn text_width_agrees_with_unicode_width() {
+        let ascii = (0u8..0x80).map(char::from);
+        for a in ascii.clone() {
+            for b in ascii.clone() {
+                let s = format!("x{a}{b}y");
+                assert_eq!(text_width(&s), s.width(), "{s:?}");
+            }
+        }
+        for s in [
+            "日本語",
+            "a\u{a0}b",
+            "e\u{301}",
+            "👍🏽 ok",
+            "\u{2764}\u{fe0f}",
+        ] {
+            assert_eq!(text_width(s), s.width(), "{s:?}");
+        }
+    }
+
+    #[test]
+    fn needs_clean_agrees_with_clean_char() {
+        for c in (0..0x800).filter_map(char::from_u32) {
+            let s = format!("a{c}b");
+            let changed = s.chars().map(clean_char).ne(s.chars());
+            assert_eq!(needs_clean(&s), changed, "{c:?}");
+        }
+    }
+
+    #[test]
     fn source_lines_per_row() {
         let doc = parse("alpha beta\ngamma delta\n");
         let crate::doc::BlockKind::Paragraph(inl) = &doc.blocks[0].kind else {
             panic!()
         };
         let w = wrap(
+            Wrapped::new(None),
             &inl.runs,
-            None,
             StyleKey::Text,
             12,
             &doc,

@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 
 use ratatui::layout::Size;
 
-use super::{ImageFit, Layout, LayoutParams, Measure, RowKind, TableMode, layout, layout_measured};
+use super::{
+    ImageFit, Layout, LayoutParams, Measure, RowKind, TableMode, layout, layout_measured, relayout,
+};
 use crate::doc::{BlockKind, parse};
 use crate::theme::Theme;
 
@@ -52,6 +54,29 @@ fn render(layout: &Layout) -> String {
         out.push_str(&format!("{src}│{}\n", layout.row_text(i).trim_end()));
     }
     out
+}
+
+/// A layout built in another one's buffers is the layout built from scratch.
+#[test]
+fn relayout_in_spare_buffers_matches_a_fresh_layout() {
+    let theme = Theme::builtin();
+    let fixtures = fixtures();
+    // Each layout reuses the buffers of a different document's, at another width.
+    let mut spare = layout(&parse("# spare\n\n[a](b) `c`\n"), &theme.glyphs, params(30));
+    for (name, md) in &fixtures {
+        let doc = parse(md);
+        let measure = Measure::new(&doc, &theme.glyphs);
+        for width in [24, 80] {
+            let fresh = layout_measured(&doc, &measure, &theme.glyphs, params(width));
+            let reused = relayout(&doc, &measure, &theme.glyphs, params(width), spare);
+            assert_eq!(
+                format!("{fresh:?}"),
+                format!("{reused:?}"),
+                "{name} at {width}"
+            );
+            spare = reused;
+        }
+    }
 }
 
 /// The forced table modes, at the widths where they differ from `auto`.
