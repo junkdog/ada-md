@@ -260,6 +260,11 @@ impl Session {
         t
     }
 
+    /// Writes input without a mark: in a flood, a mark's /proc reads would cost more than the key.
+    pub fn write(&self, data: &[u8]) -> io::Result<()> {
+        (&self.master).write_all(data)
+    }
+
     pub fn send(&mut self, data: &str, label: impl Into<String>) -> f64 {
         let t = self.mark_inner(label.into());
         let _ = (&self.master).write_all(data.as_bytes());

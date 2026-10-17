@@ -34,11 +34,27 @@ zsh bench/b2/b2a.zsh && python3 -I bench/b2/b2a_report.py
 with no program on the slave. Run it under `taskset` on a lane's cores, alone and beside a run, to see what a
 difference has to exceed. `b2 probe CWD KEY... -- CMD...` dumps the emulated screen after each key.
 
+### Flood: scrolling at full speed
+
+`b2 flood` sends scroll keys one per write at a fixed rate, or as fast as the pty takes them (`RATE` 0, which
+crossterm-based viewers stall on; see the vault note `ada-optimization`, O-21). It prints one JSON line: frames a
+second, keys per frame, bytes and `write` calls per frame, CPU per frame and per thread, and key-to-frame latency.
+Frames are counted by ratatui's per-draw cursor hide, so those columns mean something only for ratatui viewers.
+
+```zsh
+cd $B2_ROOT/corpus
+for r in 30 1000 5000 20000; do   # RATE SECS DOWN UP N: N x DOWN, then N x UP, repeating
+  taskset -c 8,10 $B2 flood . $r 2 j k 300 -- taskset -c 0,2,4,6 $ADA l.md
+  taskset -c 8,10 $B2 flood . $r 2 '\e[6~' '\e[5~' 20 -- taskset -c 0,2,4,6 $ADA l.md
+done
+```
+
 ## Files
 
 | File | Purpose |
 |---|---|
 | `src/` (`b2`) | pty driver: a reader thread timestamps output and answers terminal queries in order; afterwards, vt100 replays each run to find when the screen showed what |
+| `src/flood.rs` | `b2 flood`: keys at a fixed rate, frames, CPU per thread and latency per key |
 | `mkspec.py` | jobs: viewers, their keys, documents and sentinels |
 | `lanes.py` | splits the jobs into four CPU lanes |
 | `report.py`, `rank.py` | tables, and where ada isn't first |

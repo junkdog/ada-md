@@ -5,6 +5,9 @@
 //!   b2 floor [SAMPLES] [OUT.json]            the harness's own key -> pty -> timestamp floor
 //!   b2 probe CWD KEY... -- CMD...            dump the screen after each key (keys take \e \r \n \t \xNN escapes,
 //!                                            and SLEEP<secs> waits)
+//!   b2 flood CWD RATE SECS DOWN UP N -- CMD...
+//!                                            scroll at RATE keys/s (0: as fast as the pty takes them) for SECS,
+//!                                            N x DOWN then N x UP; one JSON line (see src/flood.rs)
 //!
 //! SPEC is a list of jobs (see mkspec.py):
 //!   {"name": "ada-l", "cmd": [...], "env": {...}, "cwd": ".../corpus", "file": "l.md", "runs": 5,
@@ -19,6 +22,7 @@
 //! when. Afterwards every chunk is replayed through vt100 to find when the screen first showed each sentinel,
 //! so the emulator's cost never lands inside a measurement.
 
+mod flood;
 mod pty;
 mod replay;
 
@@ -504,8 +508,9 @@ fn main() {
         Some("run") => cmd_run(rest),
         Some("floor") => cmd_floor(rest),
         Some("probe") => cmd_probe(rest),
+        Some("flood") => flood::cmd_flood(rest),
         _ => Err(io::Error::other(
-            "usage: b2 run|floor|probe ... (see src/main.rs)",
+            "usage: b2 run|floor|probe|flood ... (see src/main.rs)",
         )),
     };
     if let Err(e) = result {
