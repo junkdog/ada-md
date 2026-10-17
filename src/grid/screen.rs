@@ -1,8 +1,10 @@
 //! Frames to the terminal. The diff against the last frame follows ratatui's `BufferDiff`, wide
 //! graphemes and images included; the encoder writes each changed cell's cursor move, one SGR
-//! sequence for what changed of its style, and its symbol, straight into one buffer.
+//! sequence for what changed of its style, and its symbol, straight into one buffer. A list that
+//! scrolled moves its rows in the terminal first, so only the rows that came in are drawn.
 
 use std::io::{self, Write};
+use std::ops::Range;
 
 use ratatui::layout::{Rect, Size};
 use ratatui::style::Modifier;
@@ -56,6 +58,10 @@ impl<W: Write> Screen<W> {
         self.next.reset();
         paint(&mut self.next);
         self.bytes.clear();
+        if let Some(scroll) = Scroll::between(&self.last, &self.next) {
+            scroll.encode(self.last.area.bottom(), &mut self.bytes);
+            self.last.scroll_rows(scroll.rows, scroll.by);
+        }
         encode(&self.last, &self.next, &mut self.bytes);
         self.out.write_all(&self.bytes)?;
         self.out.flush()?;
@@ -64,14 +70,93 @@ impl<W: Write> Screen<W> {
     }
 }
 
+/// Rows the terminal moves before a frame is drawn: `rows` up by `by` rows, or down when it's
+/// negative.
+struct Scroll {
+    rows: Range<u16>,
+    by: i32,
+}
+
+impl Scroll {
+    /// The move that lets `next` keep the most of `last`'s rows, when the painter marked the same
+    /// rows of both as one list from different rows, and more of them match moved than in place.
+    /// Rows at either end that don't match moved, such as a table's sticky header, stay out.
+    fn between(last: &Grid, next: &Grid) -> Option<Scroll> {
+        let ((top, bottom, from), (t, b, to)) = (last.scrolled?, next.scrolled?);
+        if (top, bottom) != (t, b) || last.area != next.area || last.images || next.images {
+            return None;
+        }
+        let by = i64::from(to) - i64::from(from);
+        if by == 0 || by.unsigned_abs() >= u64::from(bottom - top) {
+            return None;
+        }
+        let by = by as i32;
+        let moved = |y: u16| same_row(next, y, last, (i32::from(y) + by) as u16);
+        // the rows of `next` whose row in `last` is in the region, trimmed to those that match
+        let (mut lo, mut hi) = (top + (-by).max(0) as u16, bottom - by.max(0) as u16);
+        while lo < hi && !moved(lo) {
+            lo += 1;
+        }
+        while hi > lo && !moved(hi - 1) {
+            hi -= 1;
+        }
+        let rows = (i32::from(lo) + by.min(0)) as u16..(i32::from(hi) + by.max(0)) as u16;
+        let kept = (lo..hi).filter(|&y| moved(y)).count();
+        let in_place = rows
+            .clone()
+            .filter(|&y| same_row(next, y, last, y))
+            .count();
+        (kept > in_place).then_some(Scroll { rows, by })
+    }
+
+    /// Set the margins to the rows unless they end at the screen's, then delete or insert lines
+    /// from the first row, and reset the margins. `DECSTBM`, `DL` and `IL` are VT100 and VT102,
+    /// unlike `SU` and `SD`, which the Linux console lacks. The style is the default when a frame
+    /// starts, so the blank rows come in on the default background, with bce or without.
+    fn encode(&self, screen_bottom: u16, out: &mut Vec<u8>) {
+        let margins = self.rows.end < screen_bottom;
+        if margins {
+            out.extend_from_slice(b"\x1b[");
+            number(out, self.rows.start + 1);
+            out.push(b';');
+            number(out, self.rows.end);
+            out.push(b'r');
+        }
+        out.extend_from_slice(b"\x1b[");
+        number(out, self.rows.start + 1);
+        out.extend_from_slice(b"H\x1b[");
+        let n = self.by.unsigned_abs() as u16;
+        if n > 1 {
+            number(out, n);
+        }
+        out.push(if self.by > 0 { b'M' } else { b'L' });
+        if margins {
+            out.extend_from_slice(b"\x1b[r");
+        }
+    }
+}
+
 /// Whether cell `i` is the same in both grids.
 fn same(a: &Grid, b: &Grid, i: usize) -> bool {
-    let (x, y) = (&a.cells[i], &b.cells[i]);
+    same_cell(a, i, b, i)
+}
+
+/// Whether cell `i` of `a` is the same as cell `j` of `b`.
+fn same_cell(a: &Grid, i: usize, b: &Grid, j: usize) -> bool {
+    let (x, y) = (&a.cells[i], &b.cells[j]);
     if x.len != LONG && y.len != LONG {
         return x == y;
     }
     let style = |c: &Cell| (c.meta, c.modifier, c.fg, c.bg);
-    x.len == y.len && style(x) == style(y) && a.symbol_at(i) == b.symbol_at(i)
+    x.len == y.len && style(x) == style(y) && a.symbol_at(i) == b.symbol_at(j)
+}
+
+/// Whether row `ya` of `a` is the same as row `yb` of `b`, grids of one width.
+fn same_row(a: &Grid, ya: u16, b: &Grid, yb: u16) -> bool {
+    let w = usize::from(a.area.width);
+    let i = usize::from(ya - a.area.y) * w;
+    let j = usize::from(yb - b.area.y) * w;
+    (0..w).all(|k| same_cell(a, i + k, b, j + k))
 }
 
 /// Whether a cell shows nothing but its background: a narrow space with no style that marks a
@@ -440,9 +525,32 @@ mod tests {
 
     use ratatui::style::{Color, Style};
 
-    /// What the encoder wrote, replayed over the terminal's cells.
-    fn replay(cells: &mut [(String, Style)], area: Rect, bytes: &[u8]) {
+    /// What the encoder wrote, replayed over the terminal's cells, within the scroll margins
+    /// the terminal kept from the frame before.
+    fn replay(
+        cells: &mut [(String, Style)],
+        area: Rect,
+        margins: &mut Range<usize>,
+        bytes: &[u8],
+    ) {
         let (mut x, mut y, mut style) = (0usize, 0usize, Style::reset());
+        let w = usize::from(area.width);
+        // `n` rows from row `y` to the bottom margin move up, or down when negative, and the
+        // rows left behind are blank on the current background (bce)
+        let shift = |cells: &mut [(String, Style)], y: usize, end: usize, n: isize, bg| {
+            let rows = &mut cells[y * w..end * w];
+            let k = n.unsigned_abs().min(end - y) * w;
+            if n > 0 {
+                rows.rotate_left(k);
+            } else {
+                rows.rotate_right(k);
+            }
+            let len = rows.len();
+            let blank = if n > 0 { len - k..len } else { 0..k };
+            for c in &mut rows[blank] {
+                *c = (" ".to_owned(), Style::reset().bg(bg));
+            }
+        };
         let text = String::from_utf8_lossy(bytes);
         let mut rest = &*text;
         while !rest.is_empty() {
@@ -465,6 +573,19 @@ mod tests {
                         }
                     }
                     "m" => style = sgr(style, params),
+                    "r" => {
+                        *margins = match params.split_once(';') {
+                            Some((t, b)) => t.parse::<usize>().unwrap() - 1..b.parse().unwrap(),
+                            None => 0..usize::from(area.height),
+                        };
+                        (x, y) = (0, 0);
+                    }
+                    "L" | "M" if margins.contains(&y) => {
+                        let n = params.parse::<isize>().unwrap_or(1);
+                        let n = if kind == "M" { n } else { -n };
+                        shift(cells, y, margins.end, n, style.bg.unwrap());
+                        x = 0;
+                    }
                     _ => {}
                 }
                 rest = &seq[end + 1..];
@@ -476,7 +597,11 @@ mod tests {
                 continue;
             }
             if let Some(after) = rest.strip_prefix('\n') {
-                y += 1;
+                if y + 1 == margins.end {
+                    shift(cells, margins.start, margins.end, 1, style.bg.unwrap());
+                } else {
+                    y += 1;
+                }
                 rest = after;
                 continue;
             }
@@ -570,6 +695,7 @@ mod tests {
     struct Term {
         screen: Screen<Vec<u8>>,
         cells: Vec<(String, Style)>,
+        margins: Range<usize>,
     }
 
     impl Term {
@@ -578,6 +704,7 @@ mod tests {
             Term {
                 screen: Screen::new(Vec::new(), area.as_size()),
                 cells: vec![blank; area.area() as usize],
+                margins: 0..usize::from(area.height),
             }
         }
 
@@ -586,7 +713,14 @@ mod tests {
             let screen = &mut self.screen;
             screen.out.clear();
             screen.draw(paint).unwrap();
-            replay(&mut self.cells, screen.last.area, &screen.out);
+            replay(
+                &mut self.cells,
+                screen.last.area,
+                &mut self.margins,
+                &screen.out,
+            );
+            let full = 0..usize::from(screen.last.area.height);
+            assert_eq!(self.margins, full, "a frame leaves the margins reset");
             let want: Vec<_> = (0..screen.last.cells.len())
                 .map(|i| {
                     (
@@ -673,20 +807,81 @@ mod tests {
             })
             .collect();
         let mut term = Term::new(area);
+        let (mut top, mut left, mut base, mut scrolled) = (0, 0, styles[0], 0);
         for frame in 0..300 {
-            let (top, left) = (frame % 33, next(3) as u16);
-            let base = styles[next(3)];
+            // a few rows up or down, and now and then a shift sideways or a new background
+            top = (top + next(7)).saturating_sub(3).min(32);
+            if next(4) == 0 {
+                (left, base) = (next(3) as u16, styles[next(3)]);
+            }
             term.draw(|g| {
                 if frame % 7 != 0 {
                     g.set_style(area, base);
                 }
+                // rows 1 to 6 as one list, which the screen may scroll within margins
+                g.set_scroll(Rect::new(0, 1, 24, 6), top as u32 + 1);
                 for (y, row) in doc[top..top + 8].iter().enumerate() {
                     for &(x, word, style) in row {
                         g.set_string(x.saturating_sub(left), y as u16, word, style);
                     }
                 }
             });
+            scrolled += usize::from(term.screen.out.starts_with(b"\x1b[2;7r"));
         }
+        assert!(scrolled > 50, "{scrolled} frames scrolled");
+    }
+
+    /// A list that scrolls moves its rows in the terminal: only the rows that came in are drawn.
+    #[test]
+    fn a_scrolled_list_moves_its_rows() {
+        let list = |top: u32, header: bool, images: bool| {
+            move |g: &mut Grid| {
+                let rows = Rect::new(0, 0, 10, 5);
+                g.set_scroll(rows, top);
+                let red = Style::new().fg(Color::Rgb(200, 10, 10));
+                for y in 0..5 {
+                    g.set_string(0, y, format!("line {}", top + u32::from(y)), red);
+                }
+                if header {
+                    g.set_string(0, 0, format!("{:<10}", "header"), Style::new().bold());
+                }
+                if g.area.height > 5 {
+                    g.set_string(0, 5, format!("{top}%"), Style::new().reversed());
+                }
+                g.images = images;
+            }
+        };
+        let mut term = Term::new(Rect::new(0, 0, 10, 6));
+        let mut draw = |top, header, images| {
+            term.draw(list(top, header, images));
+            String::from_utf8(term.screen.out.clone()).unwrap()
+        };
+        draw(0, false, false);
+        let down = draw(1, false, false);
+        assert!(down.starts_with("\x1b[1;5r\x1b[1H\x1b[M\x1b[r"), "{down:?}");
+        assert!(down.contains("line 5"), "{down:?}");
+        assert!(!["line 2", "line 3", "line 4"].iter().any(|l| down.contains(l)));
+        let up = draw(0, false, false);
+        assert!(up.starts_with("\x1b[1;5r\x1b[1H\x1b[L\x1b[r"), "{up:?}");
+        let three = draw(3, false, false);
+        assert!(three.starts_with("\x1b[1;5r\x1b[1H\x1b[3M\x1b[r"), "{three:?}");
+        // a page down keeps no row, and images stay where they are
+        for (top, images) in [(8, false), (9, true)] {
+            let frame = draw(top, false, images);
+            assert!(!frame.contains('r'), "{frame:?}");
+        }
+        // a sticky first row stays out of the margins
+        draw(3, true, false);
+        let sticky = draw(4, true, false);
+        assert!(sticky.starts_with("\x1b[2;5r\x1b[2H\x1b[M\x1b[r"), "{sticky:?}");
+        assert!(!sticky.contains("header"), "{sticky:?}");
+
+        // a list down to the screen's last row needs no margins
+        let mut term = Term::new(Rect::new(0, 0, 10, 5));
+        term.draw(list(0, false, false));
+        term.draw(list(1, false, false));
+        let out = String::from_utf8(term.screen.out.clone()).unwrap();
+        assert!(out.starts_with("\x1b[1H\x1b[M\x1b[5H"), "{out:?}");
     }
 
     /// The test documents, scrolled and searched through the real view.

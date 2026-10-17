@@ -10,7 +10,7 @@ mod screen;
 pub use screen::Screen;
 
 use std::num::NonZeroU16;
-use std::ops::{Index, IndexMut};
+use std::ops::{Index, IndexMut, Range};
 
 use ratatui::buffer::{Buffer, CellDiffOption};
 use ratatui::layout::Rect;
@@ -100,6 +100,11 @@ pub struct Grid {
     cells: Vec<Cell>,
     /// Symbols too long for a cell: graphemes over four bytes and images' escape sequences.
     long: Vec<String>,
+    /// The rows that show a scrolled list, and the list's row at the first of them.
+    scrolled: Option<(u16, u16, u32)>,
+    /// An image protocol wrote escape sequences into cells, which the terminal may not move
+    /// with its rows.
+    images: bool,
 }
 
 impl Grid {
@@ -108,6 +113,8 @@ impl Grid {
             area,
             cells: vec![Cell::BLANK; usize::from(area.width) * usize::from(area.height)],
             long: Vec::new(),
+            scrolled: None,
+            images: false,
         }
     }
 
@@ -119,6 +126,8 @@ impl Grid {
     pub fn reset(&mut self) {
         self.cells.fill(Cell::BLANK);
         self.long.clear();
+        self.scrolled = None;
+        self.images = false;
     }
 
     /// Blank, at a new size.
@@ -130,6 +139,34 @@ impl Grid {
             Cell::BLANK,
         );
         self.long.clear();
+        self.scrolled = None;
+        self.images = false;
+    }
+
+    /// The rows of `area` show a list from its row `top` on. When the next frame shows the same
+    /// list from another row, [`Screen`] can move the rows in the terminal instead of drawing
+    /// them again. Only a full-width area can scroll.
+    pub fn set_scroll(&mut self, area: Rect, top: u32) {
+        let area = self.area.intersection(area);
+        if !area.is_empty() && area.width == self.area.width {
+            self.scrolled = Some((area.top(), area.bottom(), top));
+        }
+    }
+
+    /// Move `rows` up by `by` rows, or down when it's negative, as the terminal's delete or
+    /// insert line does: the rows left behind are blank.
+    fn scroll_rows(&mut self, rows: Range<u16>, by: i32) {
+        let w = usize::from(self.area.width);
+        let start = usize::from(rows.start - self.area.y) * w;
+        let end = usize::from(rows.end - self.area.y) * w;
+        let n = by.unsigned_abs() as usize * w;
+        if by > 0 {
+            self.cells.copy_within(start + n..end, start);
+            self.cells[end - n..end].fill(Cell::BLANK);
+        } else {
+            self.cells.copy_within(start..end - n, start + n);
+            self.cells[start..start + n].fill(Cell::BLANK);
+        }
     }
 
     /// The index of cell `(x, y)`; panics outside the area, as ratatui's buffer does.
@@ -288,6 +325,7 @@ impl Grid {
                     CellDiffOption::ForcedWidth(w) => (FORCED, w.get()),
                     _ => (0, cell_width(symbol)),
                 };
+                self.images |= flags != 0;
                 self.cells[i].meta = 0;
                 self.put(i, symbol, width);
                 let c = &mut self.cells[i];

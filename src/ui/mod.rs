@@ -46,6 +46,7 @@ pub fn view(state: &State, buf: &mut Grid) {
             code_x: state.code_x,
             links: &doc.links,
         };
+        buf.set_scroll(doc_area, state.scroll);
         let lines = screen_rows(layout, state.scroll, doc_area);
         for &(y, r) in &lines {
             let Some(row) = layout.rows.get(r as usize) else {
