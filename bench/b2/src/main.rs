@@ -315,7 +315,10 @@ fn script(
             s.mark(format!("reload:{i}:{word}"));
             s.wait_stable(0.3, 8.0, Some(&word));
         }
+        // wait for the restore to show too: an inotify viewer reloads it at once, and resize would time that
         fs::write(path, original)?;
+        s.mark("restore");
+        s.wait_stable(0.3, 8.0, Some(&job.first));
     }
     if job.has("resize") {
         for i in 0..5 {
