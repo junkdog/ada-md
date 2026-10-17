@@ -38,7 +38,7 @@ fn terminal_size() -> Result<Size, String> {
 pub(crate) fn draw_frame(terminal: &mut Term, state: &State) -> io::Result<()> {
     let (w, h) = terminal::size()?;
     if Cells::new(w, h) != terminal.size() {
-        terminal.resize(Cells::new(w, h))?;
+        terminal.resize(Cells::new(w, h));
     }
     terminal.draw(|grid| ui::view(state, grid))
 }

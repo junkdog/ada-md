@@ -16,7 +16,7 @@ use ratatui::buffer::{Buffer, CellDiffOption};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// `Cell::len` when the symbol doesn't fit in `sym`, which then holds its index in `Grid::long`.
 const LONG: u8 = u8::MAX;
@@ -30,6 +30,7 @@ const FORCED: u8 = 1 << 5;
 /// One terminal cell: 16 bytes, `Copy`, compared as plain bytes. There is no underline color: an
 /// underline takes the foreground's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(C)]
 pub struct Cell {
     /// The grapheme's UTF-8, zero-padded, or the index of a longer one.
     sym: [u8; 4],
@@ -69,6 +70,18 @@ impl Cell {
         Modifier::from_bits_truncate(self.modifier)
     }
 
+    /// The cell as one number, in the order of its bytes, so comparing two is one comparison.
+    /// Equal numbers are the same cell unless the symbol is long: its index may point at
+    /// different text in another grid.
+    fn bits(&self) -> u128 {
+        u128::from(u32::from_le_bytes(self.sym))
+            | u128::from(self.len) << 32
+            | u128::from(self.meta) << 40
+            | u128::from(self.modifier) << 48
+            | u128::from(self.fg) << 64
+            | u128::from(self.bg) << 96
+    }
+
     fn width(&self) -> u16 {
         u16::from(self.meta & WIDTH)
     }
@@ -80,16 +93,33 @@ impl Cell {
     fn forced(&self) -> bool {
         self.meta & FORCED != 0
     }
+}
 
-    /// Patch `style` over the cell's: only what `style` sets changes.
-    fn set_style(&mut self, style: Style) {
-        if let Some(c) = style.fg {
-            self.fg = pack(c);
+/// A style packed for patching cells: each field is kept where `keep` has bits and set from `set`,
+/// so patching a cell is three masks with no branch. A style's colors are packed once, not per cell.
+#[derive(Clone, Copy)]
+struct Patch {
+    keep: (u16, u32, u32),
+    set: (u16, u32, u32),
+}
+
+impl Patch {
+    fn new(style: Style) -> Patch {
+        let color = |c: Option<Color>| c.map_or((u32::MAX, 0), |c| (0, pack(c)));
+        let (keep_fg, fg) = color(style.fg);
+        let (keep_bg, bg) = color(style.bg);
+        let sub = style.sub_modifier.bits();
+        Patch {
+            keep: (!sub, keep_fg, keep_bg),
+            set: (style.add_modifier.bits() & !sub, fg, bg),
         }
-        if let Some(c) = style.bg {
-            self.bg = pack(c);
-        }
-        self.modifier = (self.modifier | style.add_modifier.bits()) & !style.sub_modifier.bits();
+    }
+
+    /// Patch the style over `c`'s: only what the style sets changes.
+    fn apply(self, c: &mut Cell) {
+        c.modifier = c.modifier & self.keep.0 | self.set.0;
+        c.fg = c.fg & self.keep.1 | self.set.1;
+        c.bg = c.bg & self.keep.2 | self.set.2;
     }
 }
 
@@ -124,10 +154,18 @@ impl Grid {
 
     /// Every cell blank.
     pub fn reset(&mut self) {
-        self.cells.fill(Cell::BLANK);
+        fill(&mut self.cells, Cell::BLANK);
         self.long.clear();
         self.scrolled = None;
         self.images = false;
+    }
+
+    /// Every cell blank in `style`: on a blank grid, the same as patching `style` over all of it,
+    /// without reading a cell.
+    pub fn fill(&mut self, style: Style) {
+        let mut blank = Cell::BLANK;
+        Patch::new(style).apply(&mut blank);
+        fill(&mut self.cells, blank);
     }
 
     /// Blank, at a new size.
@@ -239,32 +277,62 @@ impl Grid {
             return (x, y);
         }
         let row = self.index(self.area.x, y);
+        let patch = Patch::new(style);
         let bytes = s.as_bytes();
         let mut i = 0;
         while i < bytes.len() {
+            // A run of printable ASCII, one cell a byte; the last byte stays out when a non-ASCII
+            // character follows it, which may be a combining mark that joins it.
+            let mut run = bytes[i..]
+                .iter()
+                .take_while(|b| matches!(b, b' '..=b'~'))
+                .count();
+            if run > 0 && bytes.get(i + run).is_some_and(|b| !b.is_ascii()) {
+                run -= 1;
+            }
+            if run > 0 {
+                let n = run.min(usize::from(remaining));
+                let at = row + usize::from(x - self.area.x);
+                // `put` for one byte
+                for (c, &b) in self.cells[at..at + n].iter_mut().zip(&bytes[i..i + n]) {
+                    c.sym = [b, 0, 0, 0];
+                    c.len = 1;
+                    if !c.forced() {
+                        c.meta = (c.meta & SKIP) | 1;
+                    }
+                    patch.apply(c);
+                }
+                // `n` is at most `remaining`, a u16
+                (x, remaining) = (x + n as u16, remaining - n as u16);
+                if n < run {
+                    break;
+                }
+                i += n;
+                continue;
+            }
             let b = bytes[i];
-            let (g, width) = if b.is_ascii() && bytes.get(i + 1).is_none_or(u8::is_ascii) {
+            if b.is_ascii_control() {
                 i += 1;
-                if b.is_ascii_control() {
-                    continue;
+                continue;
+            }
+            let (g, width) = match lone(&s[i..]) {
+                Some(len) => (&s[i..i + len], 1),
+                None => {
+                    let g = s[i..].graphemes(true).next().unwrap_or(&s[i..]);
+                    (g, cell_width(g))
                 }
-                (&s[i - 1..i], 1)
-            } else {
-                let g = s[i..].graphemes(true).next().unwrap_or(&s[i..]);
-                i += g.len();
-                let width = cell_width(g);
-                if width == 0 || g.contains(char::is_control) {
-                    continue;
-                }
-                (g, width)
             };
+            i += g.len();
+            if width == 0 || g.contains(char::is_control) {
+                continue;
+            }
             let Some(rest) = remaining.checked_sub(width) else {
                 break;
             };
             remaining = rest;
             let at = row + usize::from(x - self.area.x);
             self.put(at, g, width);
-            self.cells[at].set_style(style);
+            patch.apply(&mut self.cells[at]);
             // the cells a wide grapheme covers are blank
             for c in &mut self.cells[at + 1..at + usize::from(width)] {
                 *c = Cell::BLANK;
@@ -281,10 +349,11 @@ impl Grid {
     /// Patch `style` over every cell of `area` within the grid.
     pub fn set_style(&mut self, area: Rect, style: Style) {
         let area = self.area.intersection(area);
+        let patch = Patch::new(style);
         for y in area.top()..area.bottom() {
             let row = self.index(area.x, y);
             for c in &mut self.cells[row..row + usize::from(area.width)] {
-                c.set_style(style);
+                patch.apply(c);
             }
         }
     }
@@ -351,6 +420,45 @@ impl IndexMut<(u16, u16)> for Grid {
         let i = Grid::index(self, x, y);
         &mut self.cells[i]
     }
+}
+
+/// Set every cell to `cell` by copying the cells already set, doubling each time: `<[T]>::fill`
+/// stores a cell's five fields one by one, and a copy moves many cells a store.
+fn fill(cells: &mut [Cell], cell: Cell) {
+    let Some(first) = cells.first_mut() else {
+        return;
+    };
+    *first = cell;
+    let mut done = 1;
+    while done < cells.len() {
+        let n = done.min(cells.len() - done);
+        cells.copy_within(..n, done);
+        done += n;
+    }
+}
+
+/// Characters that are graphemes of their own next to ASCII or each other: Latin-1 but the soft
+/// hyphen, dashes, bullets and quotes, arrows, box drawing and shapes. None of them is a mark, a
+/// joiner, a prepended character, a control, Hangul or a regional indicator, the only kinds that
+/// join a neighbor.
+fn loner(c: char) -> bool {
+    matches!(c,
+        '\u{A0}'..='\u{AC}'
+        | '\u{AE}'..='\u{FF}'
+        | '\u{2010}'..='\u{2027}'
+        | '\u{2030}'..='\u{205E}'
+        | '\u{2190}'..='\u{21FF}'
+        | '\u{2500}'..='\u{25FF}')
+}
+
+/// The length of the character `s` starts with, when it is a grapheme one column wide by
+/// itself: a [`loner`] that ASCII, another loner or nothing follows. Most box drawing, dashes and
+/// arrows skip grapheme segmentation this way.
+fn lone(s: &str) -> Option<usize> {
+    let mut chars = s.chars();
+    let c = chars.next()?;
+    let alone = loner(c) && chars.next().is_none_or(|d| d.is_ascii() || loner(d));
+    (alone && c.width() == Some(1)).then(|| c.len_utf8())
 }
 
 /// Columns a grapheme takes, as ratatui counts them (halfwidth sound marks take one each).
@@ -463,6 +571,41 @@ mod tests {
             c.stringn(0, 2, "ﾊﾞ…›│", 12, Style::new().not_bold().italic());
             c.style(Rect::new(2, 0, 3, 3), Style::new().reversed().not_italic());
         });
+    }
+
+    /// Every character that can skip grapheme segmentation, before what may or may not join it.
+    #[test]
+    fn lone_characters_paint_as_on_a_ratatui_buffer() {
+        let next = [
+            "",
+            "a",
+            " ",
+            "\t",
+            "─",
+            "é",
+            "\u{301}",
+            "\u{FE0F}",
+            "\u{200D}",
+            "\u{903}",
+            "\u{AD}",
+            "日",
+            "\u{1F1E6}",
+            "\u{1100}",
+            "ﾞ",
+        ];
+        let loners = (0xA0..0x100)
+            .chain(0x2010..0x2060)
+            .chain(0x2190..0x2200)
+            .chain(0x2500..0x2600)
+            .filter_map(char::from_u32);
+        for c in loners {
+            for d in next {
+                same_as_ratatui(|g| {
+                    g.stringn(0, 0, &format!("{c}{d}{c}x"), 12, Style::new().red());
+                    g.stringn(0, 1, &format!("ab{c}{d}"), 12, Style::new());
+                });
+            }
+        }
     }
 
     #[test]

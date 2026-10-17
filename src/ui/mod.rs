@@ -20,9 +20,11 @@ use crate::theme::{StyleKey, Theme};
 pub use help::max_scroll as help_max_scroll;
 pub use paint::{Painter, span_style};
 
+/// Paint the frame on `buf`, which is blank, as [`Screen::draw`](crate::grid::Screen::draw) hands
+/// it over.
 pub fn view(state: &State, buf: &mut Grid) {
     let area = buf.area();
-    buf.set_style(area, state.theme.style(StyleKey::Text));
+    buf.fill(state.theme.style(StyleKey::Text));
     if area.height == 0 {
         return;
     }
@@ -48,20 +50,11 @@ pub fn view(state: &State, buf: &mut Grid) {
         };
         buf.set_scroll(doc_area, state.scroll);
         let lines = screen_rows(layout, state.scroll, doc_area);
+        // the grid is blank, and the text style is already over it
         for &(y, r) in &lines {
-            let Some(row) = layout.rows.get(r as usize) else {
-                continue;
-            };
-            let line = Rect {
-                y,
-                height: 1,
-                ..doc_area
-            };
-            for x in line.left()..line.right() {
-                buf[(x, y)].reset();
+            if let Some(row) = layout.rows.get(r as usize) {
+                painter.row_into(buf, doc_area.x, y, doc_area.right(), row);
             }
-            buf.set_style(line, state.theme.style(StyleKey::Text));
-            painter.row_into(buf, line.x, y, line.right(), row);
         }
         overlays(buf, doc_area, state, doc, &lines);
         gutter(buf, doc_area, state, doc, &lines);

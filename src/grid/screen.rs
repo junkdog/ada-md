@@ -1,7 +1,8 @@
 //! Frames to the terminal. The diff against the last frame follows ratatui's `BufferDiff`, wide
 //! graphemes and images included; the encoder writes each changed cell's cursor move, one SGR
 //! sequence for what changed of its style, and its symbol, straight into one buffer. A list that
-//! scrolled moves its rows in the terminal first, so only the rows that came in are drawn.
+//! scrolled moves its rows in the terminal first, so only the rows that came in are drawn. Each
+//! frame is one write and one synchronized update.
 
 use std::io::{self, Write};
 use std::ops::Range;
@@ -19,6 +20,13 @@ const VISIBLE_ON_BLANK: u16 = Modifier::REVERSED
     .union(Modifier::CROSSED_OUT)
     .bits();
 
+/// Synchronized output (DEC mode 2026): the terminal shows nothing of a frame until its end, so a
+/// frame is never seen half drawn. Terminals without the mode ignore it.
+const BEGIN_SYNC: &[u8] = b"\x1b[?2026h";
+const END_SYNC: &[u8] = b"\x1b[?2026l";
+/// Hidden after every frame, as ratatui does; `b2 flood` counts frames by it.
+const HIDE_CURSOR: &[u8] = b"\x1b[?25l";
+
 /// The terminal, as the frames written to it left it.
 pub struct Screen<W: Write> {
     out: W,
@@ -26,6 +34,8 @@ pub struct Screen<W: Write> {
     last: Grid,
     next: Grid,
     bytes: Vec<u8>,
+    /// The size changed: the next frame clears the terminal first.
+    clear: bool,
 }
 
 impl<W: Write> Screen<W> {
@@ -37,6 +47,7 @@ impl<W: Write> Screen<W> {
             last: Grid::empty(area),
             next: Grid::empty(area),
             bytes: Vec::new(),
+            clear: false,
         }
     }
 
@@ -44,26 +55,39 @@ impl<W: Write> Screen<W> {
         self.last.area.as_size()
     }
 
-    /// Clear the terminal for a new size, so the next frame draws every cell.
-    pub fn resize(&mut self, size: Size) -> io::Result<()> {
+    /// A new size: the next frame clears the terminal and draws every cell, in one synchronized
+    /// update, so the terminal never shows the cleared screen.
+    pub fn resize(&mut self, size: Size) {
         let area = Rect::new(0, 0, size.width, size.height);
         self.last.resize(area);
         self.next.resize(area);
-        self.out.write_all(b"\x1b[2J")?;
-        self.out.flush()
+        self.clear = true;
     }
 
-    /// Paint a frame on a blank grid and write what differs from the last one, in one write.
+    /// Paint a frame on a blank grid and write what differs from the last one, in one write and
+    /// one synchronized update.
     pub fn draw(&mut self, paint: impl FnOnce(&mut Grid)) -> io::Result<()> {
         self.next.reset();
         paint(&mut self.next);
         self.bytes.clear();
+        self.bytes.extend_from_slice(BEGIN_SYNC);
+        if std::mem::take(&mut self.clear) {
+            self.bytes.extend_from_slice(b"\x1b[2J");
+        }
         if let Some(scroll) = Scroll::between(&self.last, &self.next) {
             scroll.encode(self.last.area.bottom(), &mut self.bytes);
             self.last.scroll_rows(scroll.rows, scroll.by);
         }
         encode(&self.last, &self.next, &mut self.bytes);
-        self.out.write_all(&self.bytes)?;
+        self.bytes.extend_from_slice(HIDE_CURSOR);
+        // a frame that changes nothing needs no update around it
+        let frame = if self.bytes.len() > BEGIN_SYNC.len() + HIDE_CURSOR.len() {
+            self.bytes.extend_from_slice(END_SYNC);
+            &self.bytes[..]
+        } else {
+            &self.bytes[BEGIN_SYNC.len()..]
+        };
+        self.out.write_all(frame)?;
         self.out.flush()?;
         std::mem::swap(&mut self.last, &mut self.next);
         Ok(())
@@ -102,10 +126,7 @@ impl Scroll {
         }
         let rows = (i32::from(lo) + by.min(0)) as u16..(i32::from(hi) + by.max(0)) as u16;
         let kept = (lo..hi).filter(|&y| moved(y)).count();
-        let in_place = rows
-            .clone()
-            .filter(|&y| same_row(next, y, last, y))
-            .count();
+        let in_place = rows.clone().filter(|&y| same_row(next, y, last, y)).count();
         (kept > in_place).then_some(Scroll { rows, by })
     }
 
@@ -144,11 +165,11 @@ fn same(a: &Grid, b: &Grid, i: usize) -> bool {
 /// Whether cell `i` of `a` is the same as cell `j` of `b`.
 fn same_cell(a: &Grid, i: usize, b: &Grid, j: usize) -> bool {
     let (x, y) = (&a.cells[i], &b.cells[j]);
-    if x.len != LONG && y.len != LONG {
-        return x == y;
+    if x.bits() == y.bits() && x.len != LONG {
+        return true;
     }
     let style = |c: &Cell| (c.meta, c.modifier, c.fg, c.bg);
-    x.len == y.len && style(x) == style(y) && a.symbol_at(i) == b.symbol_at(j)
+    x.len == LONG && y.len == LONG && style(x) == style(y) && a.symbol_at(i) == b.symbol_at(j)
 }
 
 /// Whether row `ya` of `a` is the same as row `yb` of `b`, grids of one width.
@@ -156,7 +177,29 @@ fn same_row(a: &Grid, ya: u16, b: &Grid, yb: u16) -> bool {
     let w = usize::from(a.area.width);
     let i = usize::from(ya - a.area.y) * w;
     let j = usize::from(yb - b.area.y) * w;
+    let (x, y) = (&a.cells[i..i + w], &b.cells[j..j + w]);
+    // most rows have no long symbol, and compare as plain numbers
+    if alike(x, y, |x, y| (x.bits() == y.bits()) & (x.len != LONG)) == w {
+        return true;
+    }
     (0..w).all(|k| same_cell(a, i + k, b, j + k))
+}
+
+/// How many cells from the start of `a` and `b` are alike by `alike`, eight at a time while they
+/// all are, so that the comparisons don't branch on every cell.
+fn alike(a: &[Cell], b: &[Cell], alike: impl Fn(&Cell, &Cell) -> bool) -> usize {
+    let mut n = 0;
+    for (x, y) in a.as_chunks::<8>().0.iter().zip(b.as_chunks::<8>().0) {
+        if !x.iter().zip(y).fold(true, |all, (x, y)| all & alike(x, y)) {
+            break;
+        }
+        n += 8;
+    }
+    n + a[n..]
+        .iter()
+        .zip(&b[n..])
+        .take_while(|(x, y)| alike(x, y))
+        .count()
 }
 
 /// Whether a cell shows nothing but its background: a narrow space with no style that marks a
@@ -185,6 +228,13 @@ fn encode(last: &Grid, next: &Grid, out: &mut Vec<u8>) {
     let mut tail = (usize::MAX, 0);
     let mut i = 0;
     while i < len {
+        // the cells that didn't change and take one column, most of them, in one sweep
+        i += alike(&next.cells[i..len], &last.cells[i..len], |c, p| {
+            (c.bits() == p.bits()) & (c.meta == 1) & (c.len != LONG)
+        });
+        if i == len {
+            break;
+        }
         let (cur, prev) = (&next.cells[i], &last.cells[i]);
         let at = i;
         i += 1;
@@ -227,6 +277,9 @@ fn encode(last: &Grid, next: &Grid, out: &mut Vec<u8>) {
             trailing = Some((at + 1, (at + usize::from(prev.width())).min(len), true));
         }
         pen.cell(next, at, out);
+        if trailing.is_none() && width == 1 {
+            i = pen.run(next, last, i, end.min(tail.1), out);
+        }
         if let Some((mut j, mut end, force)) = trailing {
             while j < end {
                 let k = j;
@@ -242,8 +295,6 @@ fn encode(last: &Grid, next: &Grid, out: &mut Vec<u8>) {
     if pen.styled() {
         out.extend_from_slice(b"\x1b[0m");
     }
-    // as ratatui does after every frame; `b2 flood` counts frames by it
-    out.extend_from_slice(b"\x1b[?25l");
 }
 
 /// The terminal's cursor and current style while a frame is written. A frame starts with the
@@ -304,6 +355,41 @@ impl Pen {
         // halfwidth sound marks), and an image's escape sequence moves the cursor its own way, so
         // after anything but a narrow cell the next one is placed explicitly, as ratatui does.
         self.cursor = (c.width() == 1 && !c.forced()).then_some((x + 1, y));
+    }
+
+    /// Write the changed cells from `i` up to `end` that follow a narrow cell just written, while
+    /// they are narrow too: the cursor is already at each, so each is what changed of its style
+    /// and its symbol, as [`Pen::cell`] writes it. Returns where the run stopped.
+    fn run(
+        &mut self,
+        next: &Grid,
+        last: &Grid,
+        mut i: usize,
+        end: usize,
+        out: &mut Vec<u8>,
+    ) -> usize {
+        let start = i;
+        while i < end {
+            let (c, p) = (&next.cells[i], &last.cells[i]);
+            // a wide cell, a long symbol, or the leftovers of a wide one go the long way
+            if c.meta != 1 || c.len == LONG || p.width() > 1 || c.bits() == p.bits() {
+                break;
+            }
+            let wants = self.wants(c);
+            if wants != self.style() {
+                self.set(wants, out);
+            }
+            if c.len == 1 {
+                out.push(c.sym[0]);
+            } else {
+                out.extend_from_slice(&c.sym[..usize::from(c.len)]);
+            }
+            i += 1;
+        }
+        if let Some((x, _)) = &mut self.cursor {
+            *x += (i - start) as u16;
+        }
+        i
     }
 
     /// Clear from cell `i` to the end of its row, to the default background.
@@ -527,12 +613,7 @@ mod tests {
 
     /// What the encoder wrote, replayed over the terminal's cells, within the scroll margins
     /// the terminal kept from the frame before.
-    fn replay(
-        cells: &mut [(String, Style)],
-        area: Rect,
-        margins: &mut Range<usize>,
-        bytes: &[u8],
-    ) {
+    fn replay(cells: &mut [(String, Style)], area: Rect, margins: &mut Range<usize>, bytes: &[u8]) {
         let (mut x, mut y, mut style) = (0usize, 0usize, Style::reset());
         let w = usize::from(area.width);
         // `n` rows from row `y` to the bottom margin move up, or down when negative, and the
@@ -708,11 +789,21 @@ mod tests {
             }
         }
 
-        /// Draw a frame: what the encoder wrote, replayed, shows the frame.
+        /// Draw a frame: what the encoder wrote, replayed, shows the frame. A frame that changes
+        /// anything is one synchronized update, which `screen.out` is left holding the inside of.
         fn draw(&mut self, paint: impl FnOnce(&mut Grid)) {
             let screen = &mut self.screen;
             screen.out.clear();
             screen.draw(paint).unwrap();
+            if screen.out != HIDE_CURSOR {
+                let inner = screen
+                    .out
+                    .strip_prefix(BEGIN_SYNC)
+                    .and_then(|o| o.strip_suffix(END_SYNC))
+                    .expect("a frame in a synchronized update");
+                assert!(inner.ends_with(HIDE_CURSOR), "the cursor hidden last");
+                screen.out = inner.to_vec();
+            }
             replay(
                 &mut self.cells,
                 screen.last.area,
@@ -766,6 +857,30 @@ mod tests {
                 g.set_string(0, 2, "→ two", Style::new().fg(Color::Indexed(100)));
             },
         ]);
+    }
+
+    /// A frame that changes anything is one synchronized update, a resize's clear inside it; one
+    /// that changes nothing only hides the cursor.
+    #[test]
+    fn frames_are_synchronized_updates() {
+        let mut screen = Screen::new(Vec::new(), Size::new(10, 3));
+        let draw = |screen: &mut Screen<Vec<u8>>, text: &str| {
+            screen.out.clear();
+            screen
+                .draw(|g| g.set_string(0, 0, text, Style::new()))
+                .unwrap();
+            String::from_utf8(screen.out.clone()).unwrap()
+        };
+        assert_eq!(
+            draw(&mut screen, "hi"),
+            "\x1b[?2026h\x1b[1Hhi\x1b[?25l\x1b[?2026l"
+        );
+        assert_eq!(draw(&mut screen, "hi"), "\x1b[?25l");
+        screen.resize(Size::new(8, 3));
+        assert_eq!(
+            draw(&mut screen, "hi"),
+            "\x1b[?2026h\x1b[2J\x1b[1Hhi\x1b[?25l\x1b[?2026l"
+        );
     }
 
     /// Frames of random strings and styles, shifted a row or a column at a time as scrolling
@@ -860,11 +975,18 @@ mod tests {
         let down = draw(1, false, false);
         assert!(down.starts_with("\x1b[1;5r\x1b[1H\x1b[M\x1b[r"), "{down:?}");
         assert!(down.contains("line 5"), "{down:?}");
-        assert!(!["line 2", "line 3", "line 4"].iter().any(|l| down.contains(l)));
+        assert!(
+            !["line 2", "line 3", "line 4"]
+                .iter()
+                .any(|l| down.contains(l))
+        );
         let up = draw(0, false, false);
         assert!(up.starts_with("\x1b[1;5r\x1b[1H\x1b[L\x1b[r"), "{up:?}");
         let three = draw(3, false, false);
-        assert!(three.starts_with("\x1b[1;5r\x1b[1H\x1b[3M\x1b[r"), "{three:?}");
+        assert!(
+            three.starts_with("\x1b[1;5r\x1b[1H\x1b[3M\x1b[r"),
+            "{three:?}"
+        );
         // a page down keeps no row, and images stay where they are
         for (top, images) in [(8, false), (9, true)] {
             let frame = draw(top, false, images);
@@ -873,7 +995,10 @@ mod tests {
         // a sticky first row stays out of the margins
         draw(3, true, false);
         let sticky = draw(4, true, false);
-        assert!(sticky.starts_with("\x1b[2;5r\x1b[2H\x1b[M\x1b[r"), "{sticky:?}");
+        assert!(
+            sticky.starts_with("\x1b[2;5r\x1b[2H\x1b[M\x1b[r"),
+            "{sticky:?}"
+        );
         assert!(!sticky.contains("header"), "{sticky:?}");
 
         // a list down to the screen's last row needs no margins
