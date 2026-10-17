@@ -13,18 +13,18 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
 use std::thread;
 
 use ratatui::style::Style;
-use syntect::easy::HighlightLines;
 use syntect::highlighting::{
-    Color, ScopeSelectors, StyleModifier, Theme as SynTheme, ThemeItem, ThemeSettings,
+    Color, HighlightIterator, HighlightState, Highlighter as SynHighlighter, ScopeSelectors,
+    StyleModifier, Theme as SynTheme, ThemeItem, ThemeSettings,
 };
-use syntect::parsing::{SyntaxReference, SyntaxSet};
+use syntect::parsing::{ParseState, ScopeStack, SyntaxReference, SyntaxSet};
 
 use crate::app::{Computed, Msg};
-use crate::doc::{CodeBlock, CodeId, code_lines};
+use crate::doc::{CodeBlock, CodeId};
 use crate::layout::expand_tabs;
 
 /// Longer lines are left plain: backtracking regexes can be slow on them, and nobody reads them
@@ -186,11 +186,13 @@ pub struct Run {
 }
 
 /// The highlighting of one code block. Empty when the language isn't known.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CodeSpans {
     pub key: u64,
     /// The [`SyntaxTheme::id`] the rules come from.
     pub rules: u64,
+    /// Only the first lines, while the worker is still on the rest (O-05).
+    pub partial: bool,
     lines: Vec<Box<[Run]>>,
 }
 
@@ -199,36 +201,66 @@ impl CodeSpans {
     pub fn line(&self, n: u32) -> &[Run] {
         self.lines.get(n as usize).map_or(&[], |l| l)
     }
+
+    /// How many lines are highlighted.
+    pub fn line_count(&self) -> u32 {
+        self.lines.len() as u32
+    }
 }
 
 /// Highlight a code block's text. Deterministic, so replays recompute it (ADR-19).
 pub fn highlight(key: u64, lang: &str, text: &str, theme: &SyntaxTheme) -> CodeSpans {
-    let plain = CodeSpans {
-        key,
-        rules: theme.id,
-        lines: Vec::new(),
-    };
-    let Some(syntax) = find_syntax(lang) else {
-        return plain;
-    };
-    let mut h = HighlightLines::new(syntax, &theme.theme);
-    let mut lines = Vec::new();
-    let mut buf = String::new();
-    for line in code_lines(text) {
+    let mut h = Highlighter::new(key, lang, text, theme);
+    while h.step(usize::MAX) {}
+    h.finish()
+}
+
+/// Highlight only a code block's first `lines` lines, as a partial result did (O-05).
+pub fn highlight_first(
+    key: u64,
+    lang: &str,
+    text: &str,
+    theme: &SyntaxTheme,
+    lines: u32,
+) -> CodeSpans {
+    let mut h = Highlighter::new(key, lang, text, theme);
+    h.step(lines as usize);
+    h.partial()
+}
+
+/// Where syntect is between two lines: what the next line's highlighting depends on, besides
+/// the line.
+struct LineState {
+    parse: ParseState,
+    scopes: HighlightState,
+}
+
+impl LineState {
+    fn new(syntax: &SyntaxReference, highlighter: &SynHighlighter) -> Self {
+        Self {
+            parse: ParseState::new(syntax),
+            scopes: HighlightState::new(highlighter, ScopeStack::new()),
+        }
+    }
+
+    /// Highlight one line, moving to the state after it. `None` when syntect fails.
+    fn line(
+        &mut self,
+        line: &str,
+        highlighter: &SynHighlighter,
+        buf: &mut String,
+    ) -> Option<Box<[Run]>> {
         let line = expand_tabs(line);
         if line.len() > MAX_LINE {
-            lines.push(Box::default());
-            continue;
+            return Some(Box::default());
         }
         buf.clear();
         buf.push_str(&line);
         buf.push('\n');
-        let Ok(regions) = h.highlight_line(&buf, syntaxes()) else {
-            return plain;
-        };
+        let ops = self.parse.parse_line(buf, syntaxes()).ok()?;
         let mut runs: Vec<Run> = Vec::new();
         let mut end = 0;
-        for (style, piece) in regions {
+        for (style, piece) in HighlightIterator::new(&mut self.scopes, &ops, buf, highlighter) {
             let start = end;
             end = (end + piece.len()).min(line.len());
             if end == start {
@@ -243,13 +275,336 @@ pub fn highlight(key: u64, lang: &str, text: &str, theme: &SyntaxTheme) -> CodeS
                 }),
             }
         }
-        lines.push(runs.into_boxed_slice());
+        Some(runs.into_boxed_slice())
+    }
+}
+
+/// The lines of a code block, split as [`crate::doc::code_lines`] splits them.
+#[derive(Clone, Copy)]
+struct Lines<'a>(Option<&'a str>);
+
+impl<'a> Lines<'a> {
+    fn new(text: &'a str) -> Self {
+        Self(Some(text.strip_suffix('\n').unwrap_or(text)).filter(|t| !t.is_empty()))
+    }
+}
+
+impl<'a> Iterator for Lines<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<&'a str> {
+        let rest = self.0?;
+        let (line, tail) = match rest.split_once('\n') {
+            Some((line, tail)) => (line, Some(tail)),
+            None => (rest, None),
+        };
+        self.0 = tail;
+        Some(line.strip_suffix('\r').unwrap_or(line))
+    }
+}
+
+/// Highlights a block a few lines at a time, carrying syntect's state from one step to the
+/// next, so the worker can post the first lines early and stop between steps (O-05).
+pub struct Highlighter<'a> {
+    key: u64,
+    rules: u64,
+    highlighter: SynHighlighter<'a>,
+    /// `None` once the block turns out plain, or syntect fails on it.
+    state: Option<LineState>,
+    rest: Lines<'a>,
+    lines: Vec<Box<[Run]>>,
+    buf: String,
+}
+
+impl<'a> Highlighter<'a> {
+    pub fn new(key: u64, lang: &str, text: &'a str, theme: &'a SyntaxTheme) -> Self {
+        let highlighter = SynHighlighter::new(&theme.theme);
+        Self {
+            key,
+            rules: theme.id,
+            state: find_syntax(lang).map(|s| LineState::new(s, &highlighter)),
+            highlighter,
+            rest: Lines::new(text),
+            lines: Vec::new(),
+            buf: String::new(),
+        }
+    }
+
+    /// Highlight up to `n` more lines. False once the block is done.
+    pub fn step(&mut self, n: usize) -> bool {
+        for _ in 0..n {
+            let Some(state) = &mut self.state else {
+                return false;
+            };
+            let Some(line) = self.rest.next() else {
+                return false;
+            };
+            match state.line(line, &self.highlighter, &mut self.buf) {
+                Some(runs) => self.lines.push(runs),
+                None => {
+                    // plain, as a whole
+                    self.state = None;
+                    self.lines.clear();
+                    return false;
+                }
+            }
+        }
+        self.state.is_some() && self.rest.0.is_some()
+    }
+
+    /// How many lines are done.
+    pub fn line_count(&self) -> u32 {
+        self.lines.len() as u32
+    }
+
+    /// The lines done so far, as a partial result.
+    pub fn partial(&self) -> CodeSpans {
+        CodeSpans {
+            key: self.key,
+            rules: self.rules,
+            partial: true,
+            lines: self.lines.clone(),
+        }
+    }
+
+    pub fn finish(self) -> CodeSpans {
+        CodeSpans {
+            key: self.key,
+            rules: self.rules,
+            partial: false,
+            lines: self.lines,
+        }
+    }
+}
+
+/// Blocks this big are highlighted on several threads in print mode (O-04).
+const PARALLEL_BYTES: usize = 1 << 20;
+const PARALLEL_LINES: usize = 20_000;
+
+/// How often a chunk shows its state, to compare with the state the chunk before it really ends
+/// in.
+const CHECKPOINT_EVERY: usize = 32;
+
+/// [`highlight`] for print mode (O-04): a block of 1 MiB or 20,000 lines and up is cut into one
+/// chunk per thread, each highlighted at once from a fresh state, as if it began the block. The
+/// thread with the true state at a chunk's end (the first one, to begin with) then highlights
+/// on into the next chunk until its state matches one of that chunk's checkpoints. From there
+/// on the chunk's guess is what one thread would have produced, since a line's highlighting
+/// depends only on the line and the state before it, and that chunk's thread carries on. Most
+/// syntaxes come back to the same state within a few lines; for one that never does, the first
+/// thread does all the work. The result is [`highlight`]'s.
+pub fn highlight_parallel(key: u64, lang: &str, text: &str, theme: &SyntaxTheme) -> CodeSpans {
+    let Some(syntax) = find_syntax(lang) else {
+        return highlight(key, lang, text, theme);
+    };
+    if text.len() < PARALLEL_BYTES && newlines(text) < PARALLEL_LINES {
+        return highlight(key, lang, text, theme);
+    }
+    // not for every block: it reads the cgroup's CPU quota
+    let threads = thread::available_parallelism().map_or(1, |n| n.get().min(8));
+    if threads < 2 {
+        return highlight(key, lang, text, theme);
+    }
+    highlight_on(key, syntax, text, theme, threads)
+}
+
+/// [`highlight_parallel`] on `threads` threads, whatever the size.
+fn highlight_on(
+    key: u64,
+    syntax: &SyntaxReference,
+    text: &str,
+    theme: &SyntaxTheme,
+    threads: usize,
+) -> CodeSpans {
+    let all: Vec<&str> = Lines::new(text).collect();
+    let chunks: Vec<&[&str]> = all.chunks(all.len().div_ceil(threads)).collect();
+    let seams = Seams::new(chunks.len());
+    let mut outs: Vec<Option<Chunk>> = thread::scope(|s| {
+        let handles: Vec<_> = (0..chunks.len())
+            .map(|k| {
+                let (chunks, seams) = (&chunks, &seams);
+                s.spawn(move || chunk(k, chunks, syntax, theme, seams))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("highlight thread"))
+            .collect()
+    });
+    let mut lines = Vec::with_capacity(all.len());
+    let mut k = 0;
+    loop {
+        let Some(out) = outs.get_mut(k).and_then(Option::take) else {
+            // syntect failed on a line: plain, as a whole
+            lines.clear();
+            break;
+        };
+        lines.extend(out.lines.into_iter().skip(out.from));
+        lines.extend(out.over);
+        match out.meet {
+            Some(m) => k = m,
+            None => break,
+        }
     }
     CodeSpans {
         key,
         rules: theme.id,
+        partial: false,
         lines,
     }
+}
+
+/// What a chunk's thread found. Its lines from `from` on are true, then `over`, the lines it
+/// highlighted after its chunk, run up to chunk `meet`'s checkpoint, or to the block's end.
+struct Chunk {
+    from: usize,
+    lines: Vec<Box<[Run]>>,
+    over: Vec<Box<[Run]>>,
+    meet: Option<usize>,
+}
+
+/// A state's fingerprint, to compare it with another thread's: its `Debug` text, which shows
+/// every field's value. Not for a state that holds a match's captures: an Oniguruma `Region`
+/// shows its pointers, and states can't move between threads to be compared directly.
+fn fingerprint(state: &LineState) -> Option<String> {
+    let text = format!("{:?}{:?}", state.parse, state.scopes);
+    (!text.contains("captures: Some")).then_some(text)
+}
+
+/// Where each chunk's thread learns from the one before it whether, and from which line, its
+/// guess is true.
+struct Seams {
+    seams: Mutex<(Vec<Seam>, bool)>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct Seam {
+    /// The fingerprints before every `CHECKPOINT_EVERY`th line, once guessed; empty if syntect
+    /// failed on the guess.
+    checkpoints: Option<Vec<Option<String>>>,
+    /// The first true line of the guess; `None` inside when the true state ran past the chunk.
+    from: Option<Option<usize>>,
+}
+
+impl Seams {
+    fn new(n: usize) -> Self {
+        Self {
+            seams: Mutex::new(((0..n).map(|_| Seam::default()).collect(), false)),
+            changed: Condvar::new(),
+        }
+    }
+
+    fn update(&self, f: impl FnOnce(&mut Vec<Seam>, &mut bool)) {
+        let mut guard = self.seams.lock().unwrap_or_else(PoisonError::into_inner);
+        let (seams, failed) = &mut *guard;
+        f(seams, failed);
+        self.changed.notify_all();
+    }
+
+    /// Wait until `get` has an answer, or the block fails.
+    fn wait<T>(&self, mut get: impl FnMut(&[Seam]) -> Option<T>) -> Option<T> {
+        let mut guard = self.seams.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            if guard.1 {
+                return None;
+            }
+            if let Some(answer) = get(&guard.0) {
+                return Some(answer);
+            }
+            guard = self
+                .changed
+                .wait(guard)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+
+    fn fail(&self) {
+        self.update(|_, failed| *failed = true);
+    }
+}
+
+/// Chunk `k`'s thread: guess the chunk, then, if the state at its end turns out true, carry it
+/// on until it meets a later chunk's checkpoint. `None` when syntect fails on a true line.
+fn chunk(
+    k: usize,
+    chunks: &[&[&str]],
+    syntax: &SyntaxReference,
+    theme: &SyntaxTheme,
+    seams: &Seams,
+) -> Option<Chunk> {
+    let highlighter = SynHighlighter::new(&theme.theme);
+    let mut state = LineState::new(syntax, &highlighter);
+    let mut buf = String::new();
+    let mut lines = Vec::with_capacity(chunks[k].len());
+    let mut checkpoints = Vec::new();
+    let mut failed = false;
+    for (i, line) in chunks[k].iter().enumerate() {
+        if i > 0 && i % CHECKPOINT_EVERY == 0 {
+            checkpoints.push(fingerprint(&state));
+        }
+        let Some(runs) = state.line(line, &highlighter, &mut buf) else {
+            failed = true;
+            break;
+        };
+        lines.push(runs);
+    }
+    if failed {
+        checkpoints.clear();
+    }
+    seams.update(|s, _| s[k].checkpoints = Some(checkpoints));
+    let from = match k {
+        0 => Some(0),
+        _ => seams.wait(|s| s[k].from)?,
+    };
+    let Some(from) = from else {
+        // the true state ran past this chunk: the guess isn't used
+        return Some(Chunk {
+            from: 0,
+            lines: Vec::new(),
+            over: Vec::new(),
+            meet: None,
+        });
+    };
+    if failed {
+        // the failing line comes after the checkpoint the true state met, so it fails for true
+        seams.fail();
+        return None;
+    }
+    let mut over = Vec::new();
+    for (m, chunk) in chunks.iter().enumerate().skip(k + 1) {
+        let theirs = seams.wait(|s| s[m].checkpoints.clone())?;
+        for (i, line) in chunk.iter().enumerate() {
+            if i > 0 && i % CHECKPOINT_EVERY == 0 {
+                let mine = fingerprint(&state);
+                if mine.is_some() && theirs.get(i / CHECKPOINT_EVERY - 1) == Some(&mine) {
+                    seams.update(|s, _| s[m].from = Some(Some(i)));
+                    return Some(Chunk {
+                        from,
+                        lines,
+                        over,
+                        meet: Some(m),
+                    });
+                }
+            }
+            let Some(runs) = state.line(line, &highlighter, &mut buf) else {
+                seams.fail();
+                return None;
+            };
+            over.push(runs);
+        }
+        seams.update(|s, _| s[m].from = Some(None));
+    }
+    Some(Chunk {
+        from,
+        lines,
+        over,
+        meet: None,
+    })
+}
+
+fn newlines(text: &str) -> usize {
+    text.bytes().filter(|&b| b == b'\n').count()
 }
 
 /// Highlighting results, and the blocks waiting for them.
@@ -270,9 +625,17 @@ impl Highlights {
         self.pending.contains(&key)
     }
 
-    /// Whether `key` still needs a job.
+    /// Whether `key` still needs a job: nothing, or only the first lines, came back for it, and
+    /// none is under way.
     pub fn wants(&self, key: u64) -> bool {
-        !self.done.contains_key(&key) && !self.pending.contains(&key)
+        !self.pending.contains(&key) && self.done.get(&key).is_none_or(|s| s.partial)
+    }
+
+    /// Forget the jobs under way: the worker drops them when another document or theme comes
+    /// along (O-05), so they're asked for again on the way back.
+    pub fn forget_pending(&mut self) {
+        self.pending.clear();
+        self.urged.clear();
     }
 
     pub fn request(&mut self, key: u64) {
@@ -285,6 +648,13 @@ impl Highlights {
     }
 
     pub fn insert(&mut self, spans: Arc<CodeSpans>) {
+        if spans.partial {
+            // the first lines, unless the whole block is already here
+            if self.done.get(&spans.key).is_none_or(|s| s.partial) {
+                self.done.insert(spans.key, spans);
+            }
+            return;
+        }
         self.pending.remove(&spans.key);
         self.urged.remove(&spans.key);
         if self.done.len() >= CACHE_CAP && !self.done.contains_key(&spans.key) {
@@ -301,7 +671,7 @@ impl Highlights {
                 continue;
             };
             if let Entry::Vacant(slot) = out.done.entry(key) {
-                slot.insert(Arc::new(highlight(key, lang, &code.text, theme)));
+                slot.insert(Arc::new(highlight_parallel(key, lang, &code.text, theme)));
             }
         }
         out
@@ -326,6 +696,7 @@ impl Job {
         Msg::Highlighted {
             doc_gen: self.doc_gen,
             block: self.block,
+            lines: None,
             spans: Computed(Some(Arc::new(highlight(
                 self.key,
                 &self.lang,
@@ -334,48 +705,135 @@ impl Job {
             )))),
         }
     }
+
+    /// The document and rules the job is for.
+    fn epoch(&self) -> Epoch {
+        Epoch {
+            doc_gen: self.doc_gen,
+            rules: self.theme.id,
+        }
+    }
 }
 
+/// A document generation and a set of `[syntax]` rules: the jobs worth finishing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Epoch {
+    pub doc_gen: u64,
+    pub rules: u64,
+}
+
+/// What the worker is asked.
+#[derive(Debug)]
+pub enum Request {
+    Job(Job),
+    /// Only jobs for this epoch are wanted from now on: drop the rest, and stop the one
+    /// running if it isn't (O-05).
+    Only(Epoch),
+}
+
+/// Lines highlighted between two looks at the queue.
+const STEP: usize = 256;
+
 /// Start the highlight worker. It loads the syntax set right away, off the UI thread, then
-/// works through its queue, urgent jobs first, posting each result to `tx`.
-pub fn spawn_worker(tx: Sender<Msg>) -> Sender<Job> {
-    let (jobs_tx, jobs) = mpsc::channel::<Job>();
+/// works through its queue, urgent jobs first, posting each result to `tx`. A block goes
+/// `STEP` lines at a time: in between, the worker takes new requests, and stops the block when
+/// another document or theme came along. A long block posts its first lines when 256, 512,
+/// 1,024 … are done, so the top shows highlighted long before the rest (O-05).
+pub fn spawn_worker(tx: Sender<Msg>) -> Sender<Request> {
+    let (requests, rx) = mpsc::channel::<Request>();
     thread::spawn(move || {
         syntaxes();
-        let mut queue: VecDeque<Job> = VecDeque::new();
+        let mut queue = Queue::default();
         loop {
             let mut batch = Vec::new();
-            if queue.is_empty() {
-                let Ok(job) = jobs.recv() else {
+            if queue.jobs.is_empty() {
+                let Ok(request) = rx.recv() else {
                     return;
                 };
-                batch.push(job);
+                batch.push(request);
             }
-            batch.extend(jobs.try_iter());
-            enqueue(&mut queue, batch);
-            let Some(job) = queue.pop_front() else {
+            batch.extend(rx.try_iter());
+            queue.add(batch);
+            let Some(job) = queue.jobs.pop_front() else {
                 continue;
             };
-            if tx.send(job.run()).is_err() {
+            let mut h = Highlighter::new(job.key, &job.lang, &job.text, &job.theme);
+            let mut post_at = STEP as u32;
+            let mut stopped = false;
+            while h.step(STEP) {
+                queue.add(rx.try_iter().collect());
+                if queue.epoch != Some(job.epoch()) {
+                    stopped = true;
+                    break;
+                }
+                if h.line_count() >= post_at {
+                    post_at = h.line_count() * 2;
+                    let msg = Msg::Highlighted {
+                        doc_gen: job.doc_gen,
+                        block: job.block,
+                        lines: Some(h.line_count()),
+                        spans: Computed(Some(Arc::new(h.partial()))),
+                    };
+                    if tx.send(msg).is_err() {
+                        return;
+                    }
+                }
+            }
+            if stopped {
+                continue;
+            }
+            let msg = Msg::Highlighted {
+                doc_gen: job.doc_gen,
+                block: job.block,
+                lines: None,
+                spans: Computed(Some(Arc::new(h.finish()))),
+            };
+            if tx.send(msg).is_err() {
                 return;
             }
         }
     });
-    jobs_tx
+    requests
 }
 
-/// Queue a batch of jobs: urgent ones go to the front, in their batch order, and replace any
-/// queued copies; the rest go to the back, unless already queued.
-fn enqueue(queue: &mut VecDeque<Job>, batch: Vec<Job>) {
-    let (urgent, rest): (Vec<_>, Vec<_>) = batch.into_iter().partition(|j| j.urgent);
-    for job in rest {
-        if !queue.iter().any(|j| j.key == job.key) {
-            queue.push_back(job);
+/// The worker's queue, and the epoch its jobs are for.
+#[derive(Debug, Default)]
+struct Queue {
+    jobs: VecDeque<Job>,
+    epoch: Option<Epoch>,
+}
+
+impl Queue {
+    /// Take a batch of requests. A job for another epoch than the queue's starts a new one, as
+    /// `Only` does, and drops the jobs queued for the old. Then urgent jobs go to the front, in
+    /// their batch order, and replace any queued copies; the rest go to the back, unless
+    /// already queued.
+    fn add(&mut self, batch: Vec<Request>) {
+        let mut jobs = Vec::new();
+        for request in batch {
+            let epoch = match &request {
+                Request::Job(job) => job.epoch(),
+                Request::Only(epoch) => *epoch,
+            };
+            if self.epoch != Some(epoch) {
+                self.epoch = Some(epoch);
+                self.jobs.retain(|j| j.epoch() == epoch);
+                jobs.retain(|j: &Job| j.epoch() == epoch);
+            }
+            if let Request::Job(job) = request {
+                jobs.push(job);
+            }
         }
-    }
-    for job in urgent.into_iter().rev() {
-        queue.retain(|j| j.key != job.key);
-        queue.push_front(job);
+        let (urgent, rest): (Vec<_>, Vec<_>) = jobs.into_iter().partition(|j| j.urgent);
+        for job in rest {
+            if !self.jobs.iter().any(|j| j.key == job.key) {
+                self.jobs.push_back(job);
+            }
+        }
+        for job in urgent.into_iter().rev() {
+            self.jobs.retain(|j| j.key != job.key);
+            self.jobs.push_front(job);
+        }
     }
 }
 
@@ -472,23 +930,187 @@ mod tests {
         assert_eq!((keys[1], keys[3]), (None, None));
     }
 
-    #[test]
-    fn urgent_jobs_jump_the_queue() {
-        let theme = Arc::new(SyntaxTheme::new(&[]));
-        let job = |key, urgent| Job {
-            doc_gen: 1,
+    fn job(theme: &Arc<SyntaxTheme>, doc_gen: u64, key: u64, urgent: bool) -> Job {
+        Job {
+            doc_gen,
             block: key as u32,
             key,
             lang: "rust".into(),
             text: "".into(),
             theme: theme.clone(),
             urgent,
+        }
+    }
+
+    fn keys(q: &Queue) -> Vec<u64> {
+        q.jobs.iter().map(|j| j.key).collect()
+    }
+
+    #[test]
+    fn urgent_jobs_jump_the_queue() {
+        let theme = Arc::new(SyntaxTheme::new(&[]));
+        let job = |key, urgent| Request::Job(job(&theme, 1, key, urgent));
+        let mut q = Queue::default();
+        q.add((0..4).map(|k| job(k, false)).collect());
+        q.add(vec![job(1, false)]);
+        q.add(vec![job(3, true), job(1, true), job(5, false)]);
+        assert_eq!(keys(&q), [3, 1, 0, 2, 5]);
+    }
+
+    /// Another document's or theme's jobs drop the queued ones (O-05).
+    #[test]
+    fn a_new_epoch_drops_the_old_jobs() {
+        let theme = Arc::new(SyntaxTheme::new(&[]));
+        let other = Arc::new(SyntaxTheme::new(&[("comment".to_owned(), Style::new())]));
+        let mut q = Queue::default();
+        q.add(
+            (0..3)
+                .map(|k| Request::Job(job(&theme, 1, k, false)))
+                .collect(),
+        );
+        // the same document again, as a cached one comes back: kept
+        q.add(vec![Request::Job(job(&theme, 1, 7, false))]);
+        assert_eq!(keys(&q), [0, 1, 2, 7]);
+        // another document with no code: only `Only` says so
+        q.add(vec![Request::Only(Epoch {
+            doc_gen: 2,
+            rules: theme.id,
+        })]);
+        assert_eq!(keys(&q), Vec::<u64>::new());
+        // a batch that switches mid-way keeps only the jobs after the switch
+        q.add(vec![
+            Request::Job(job(&theme, 2, 4, false)),
+            Request::Job(job(&other, 2, 5, true)),
+            Request::Job(job(&other, 2, 6, false)),
+        ]);
+        assert_eq!(keys(&q), [5, 6]);
+        assert_eq!(
+            q.epoch,
+            Some(Epoch {
+                doc_gen: 2,
+                rules: other.id
+            })
+        );
+    }
+
+    /// The first lines stand in until the whole block comes, and leave the block wanted if the
+    /// rest never does (O-05).
+    #[test]
+    fn partial_results_stand_in() {
+        let theme = SyntaxTheme::new(&Theme::builtin().syntax);
+        let text = "fn a() {}\n".repeat(10);
+        let first = Arc::new(highlight_first(9, "rust", &text, &theme, 4));
+        let whole = Arc::new(highlight(9, "rust", &text, &theme));
+        assert!(first.partial && first.line_count() == 4 && whole.line_count() == 10);
+        let mut h = Highlights::default();
+        h.request(9);
+        h.insert(first.clone());
+        assert!(h.is_pending(9) && !h.wants(9), "still under way");
+        assert_eq!(h.get(9).map(CodeSpans::line_count), Some(4));
+        // stopped for another document: wanted again, the first lines still shown
+        h.forget_pending();
+        assert!(h.wants(9));
+        h.request(9);
+        h.insert(whole.clone());
+        assert!(!h.wants(9) && !h.is_pending(9));
+        // a late partial doesn't replace the whole
+        h.insert(first);
+        assert_eq!(h.get(9), Some(&*whole));
+    }
+
+    /// A long block posts its first 256, 512, 1,024 … lines, then all of it; another document
+    /// stops it, and the next document's block comes next (O-05).
+    #[test]
+    fn the_worker_posts_early_and_stops_for_another_document() {
+        let theme = Arc::new(SyntaxTheme::new(&Theme::builtin().syntax));
+        let (tx, rx) = mpsc::channel();
+        let worker = spawn_worker(tx);
+        let long = |doc_gen, lines: usize| Job {
+            doc_gen,
+            block: 0,
+            key: doc_gen,
+            lang: "rust".into(),
+            text: "let x = 1; // n\n".repeat(lines).into(),
+            theme: theme.clone(),
+            urgent: true,
         };
-        let mut q = VecDeque::new();
-        enqueue(&mut q, (0..4).map(|k| job(k, false)).collect());
-        enqueue(&mut q, vec![job(1, false)]);
-        enqueue(&mut q, vec![job(3, true), job(1, true), job(5, false)]);
-        let keys: Vec<_> = q.iter().map(|j| j.key).collect();
-        assert_eq!(keys, [3, 1, 0, 2, 5]);
+        worker.send(Request::Job(long(1, 1500))).unwrap();
+        let mut posted = Vec::new();
+        loop {
+            let Msg::Highlighted { lines, spans, .. } =
+                rx.recv_timeout(std::time::Duration::from_secs(20)).unwrap()
+            else {
+                panic!("not a highlight");
+            };
+            let spans = spans.0.unwrap();
+            assert_eq!(spans.partial, lines.is_some());
+            posted.push(spans.line_count());
+            if lines.is_none() {
+                break;
+            }
+        }
+        assert_eq!(posted, [256, 512, 1024, 1500]);
+
+        // far too long to finish; the next document's block comes instead, once it runs
+        worker.send(Request::Job(long(2, 1_000_000))).unwrap();
+        let Ok(Msg::Highlighted { doc_gen: 2, .. }) =
+            rx.recv_timeout(std::time::Duration::from_secs(20))
+        else {
+            panic!("the long block's first lines");
+        };
+        worker
+            .send(Request::Only(Epoch {
+                doc_gen: 3,
+                rules: theme.id,
+            }))
+            .unwrap();
+        worker.send(Request::Job(long(3, 10))).unwrap();
+        let next_whole = loop {
+            let Msg::Highlighted { doc_gen, lines, .. } =
+                rx.recv_timeout(std::time::Duration::from_secs(20)).unwrap()
+            else {
+                panic!("not a highlight");
+            };
+            if lines.is_none() {
+                break doc_gen;
+            }
+            assert_eq!(
+                doc_gen, 2,
+                "only the stopped block's first lines come before"
+            );
+        };
+        assert_eq!(next_whole, 3);
+    }
+
+    /// The parallel highlighting gives what one thread gives, however the block is cut: with
+    /// states that hold captures (raw strings, heredocs), and with one that never comes back
+    /// (a comment left open).
+    #[test]
+    fn parallel_highlighting_matches_one_thread() {
+        let theme = Theme::builtin();
+        let syntax = SyntaxTheme::new(&theme.syntax);
+        let rust = "fn main() {\n    let s = r#\"a \"quoted\"\n line\"#;\n    // note\n    let n = 0x1f;\n}\n";
+        let bash = "cat <<EOF\nhello $USER\nEOF\nfor f in *; do echo \"$f\"; done\n";
+        let log =
+            "2026-10-17 12:00:01 INFO started pid=42\n2026-10-17 12:00:02 ERROR failed: \"x\"\n";
+        let c = "int x = 1; // note\n";
+        for (lang, unit, reps) in [
+            ("rust", rust, 60),
+            ("bash", bash, 80),
+            ("log", log, 150),
+            ("c", c, 300),
+        ] {
+            let mut text = unit.repeat(reps);
+            if lang == "c" {
+                text.insert_str(0, "/* never closed\n");
+            }
+            let one = highlight(1, lang, &text, &syntax);
+            assert!(one.line_count() > 200, "{lang}: highlighted at all");
+            let found = find_syntax(lang).unwrap();
+            for threads in 2..=5 {
+                let many = highlight_on(1, found, &text, &syntax, threads);
+                assert!(many == one, "{lang} on {threads} threads");
+            }
+        }
     }
 }

@@ -3,19 +3,19 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, Sender};
 use std::thread;
-use std::time::{Duration, UNIX_EPOCH};
 
 use ratatui_image::picker::Picker;
 
+use super::watch::{Watcher, mtime_of};
 use super::{Cmd, Msg};
 use crate::filetype::{self, FileType};
 use crate::git;
-use crate::highlight::{self, Job};
+use crate::highlight::{self, Request};
 use crate::images;
 use crate::links::{BuiltinResolver, Resolver};
 
@@ -23,7 +23,7 @@ pub struct Effects {
     /// stdin, read once at startup, served for the path `-`.
     stdin: Option<Arc<str>>,
     /// The highlight worker's queue; without a worker, highlighting runs inline.
-    highlight: Option<Sender<Job>>,
+    highlight: Option<Sender<Request>>,
     resolver: Box<dyn Resolver>,
     /// Where git runs post their results; without it, git runs inline.
     git: Option<Sender<Msg>>,
@@ -33,7 +33,7 @@ pub struct Effects {
     /// The image worker's queue; without a worker, images are decoded inline.
     images: Option<Sender<images::Job>>,
     /// The live-reload watcher; without it, nothing is watched.
-    watcher: Option<Sender<(PathBuf, Option<u64>)>>,
+    watcher: Option<Watcher>,
 }
 
 impl Effects {
@@ -65,7 +65,7 @@ impl Effects {
         if let Some(picker) = &self.picker {
             self.images = Some(images::spawn_worker(picker.clone(), tx.clone()));
         }
-        self.watcher = Some(spawn_watcher(tx.clone()));
+        self.watcher = Some(Watcher::new(tx.clone()));
     }
 
     /// Run one command. Quick ones answer right away; slow ones go to a worker, which posts
@@ -74,9 +74,18 @@ impl Effects {
         match cmd {
             Cmd::LoadDoc(path) => Some(load_doc(&path, self.stdin.as_ref())),
             Cmd::Highlight(job) => match &self.highlight {
-                Some(worker) => worker.send(job).err().map(|e| e.0.run()),
+                Some(worker) => match worker.send(Request::Job(job)) {
+                    Err(mpsc::SendError(Request::Job(job))) => Some(job.run()),
+                    _ => None,
+                },
                 None => Some(job.run()),
             },
+            Cmd::HighlightOnly(epoch) => {
+                if let Some(worker) = &self.highlight {
+                    let _ = worker.send(Request::Only(epoch));
+                }
+                None
+            }
             Cmd::ResolveLinks {
                 doc_gen,
                 source,
@@ -124,8 +133,8 @@ impl Effects {
                 Some(job.run(self.picker()))
             }
             Cmd::Watch { path, mtime } => {
-                if let Some(watcher) = &self.watcher {
-                    let _ = watcher.send((path, mtime));
+                if let Some(watcher) = &mut self.watcher {
+                    watcher.watch(path, mtime);
                 }
                 None
             }
@@ -194,55 +203,6 @@ pub fn load_doc(path: &Path, stdin: Option<&Arc<str>>) -> Msg {
             error: e.to_string(),
         },
     }
-}
-
-/// A file's modification time in milliseconds since the epoch.
-fn mtime_of(path: &Path) -> Option<u64> {
-    let modified = fs::metadata(path).and_then(|m| m.modified()).ok()?;
-    let since = modified.duration_since(UNIX_EPOCH).ok()?;
-    Some(since.as_millis() as u64)
-}
-
-/// How often the watcher looks at the file (ADR-14).
-const WATCH_EVERY: Duration = Duration::from_secs(1);
-
-/// Start the live-reload watcher: once it has a file, it `stat`s it every second and posts
-/// `FileChanged` when its modification time moves. Until then it sleeps in `recv()`.
-fn spawn_watcher(tx: Sender<Msg>) -> Sender<(PathBuf, Option<u64>)> {
-    let (files, rx) = mpsc::channel::<(PathBuf, Option<u64>)>();
-    thread::spawn(move || {
-        let mut watched: Option<(PathBuf, Option<u64>)> = None;
-        loop {
-            let next = match watched {
-                None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
-                Some(_) => rx.recv_timeout(WATCH_EVERY),
-            };
-            match next {
-                Ok(file) => watched = Some(file),
-                Err(RecvTimeoutError::Disconnected) => return,
-                Err(RecvTimeoutError::Timeout) => {
-                    let Some((path, known)) = &mut watched else {
-                        continue;
-                    };
-                    // a file being replaced may be missing for a moment
-                    let Some(mtime) = mtime_of(path) else {
-                        continue;
-                    };
-                    if Some(mtime) != *known {
-                        *known = Some(mtime);
-                        let msg = Msg::FileChanged {
-                            path: path.clone(),
-                            mtime: Some(mtime),
-                        };
-                        if tx.send(msg).is_err() {
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-    });
-    files
 }
 
 /// Split an editor setting the way a shell would: words, `'single'` and `"double"` quotes,
@@ -400,29 +360,5 @@ mod tests {
             osc52("hi", true),
             "\x1b]52;c;aGk=\x07\x1bPtmux;\x1b\x1b]52;c;aGk=\x07\x1b\\"
         );
-    }
-
-    #[test]
-    fn the_watcher_reports_changes() {
-        let dir = std::env::temp_dir().join(format!("ada-watch-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("w.md");
-        fs::write(&path, "a").unwrap();
-        let (tx, rx) = mpsc::channel();
-        let watcher = spawn_watcher(tx);
-        // told an old time: the next look reports the real one
-        watcher.send((path.clone(), Some(1))).unwrap();
-        let msg = rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(
-            msg,
-            Msg::FileChanged {
-                path: path.clone(),
-                mtime: mtime_of(&path)
-            }
-        );
-        // and then stays quiet while nothing changes
-        assert!(rx.recv_timeout(Duration::from_millis(1500)).is_err());
-        drop(watcher);
-        fs::remove_dir_all(&dir).unwrap();
     }
 }

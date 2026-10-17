@@ -10,6 +10,7 @@ mod keymap;
 mod nav;
 mod run;
 mod sort;
+mod watch;
 
 use std::ffi::OsString;
 use std::mem;
@@ -19,7 +20,7 @@ use std::sync::Arc;
 use crate::doc::{CodeId, Doc, LinkId};
 use crate::filetype::FileType;
 use crate::git::LineMarks;
-use crate::highlight::{self, CodeSpans, Highlights, Job, SyntaxTheme};
+use crate::highlight::{self, CodeSpans, Epoch, Highlights, Job, SyntaxTheme};
 use crate::images::{self, Encoded, Graphics, ImageCache, ImageKey, ImageMode, Probe, Proto};
 use crate::layout::{self, ImageFit, Layout, LayoutParams, Measure, RowKind, TableMode};
 use crate::links::{LocalTarget, Resolved};
@@ -185,7 +186,7 @@ pub enum Msg {
     EditorExited {
         status: i32,
     },
-    /// The watched file's modification time changed (ADR-14).
+    /// The watched file's modification time changed (ADR-26).
     FileChanged {
         path: PathBuf,
         mtime: Option<u64>,
@@ -194,6 +195,8 @@ pub enum Msg {
     Highlighted {
         doc_gen: u64,
         block: CodeId,
+        /// For the block's first lines only, while the worker goes on (O-05): how many.
+        lines: Option<u32>,
         spans: Computed<Arc<CodeSpans>>,
     },
     /// An image decoded and encoded for the terminal, `size` cells big. Replay can't recompute
@@ -243,6 +246,9 @@ impl Msg {
 pub enum Cmd {
     LoadDoc(PathBuf),
     Highlight(Job),
+    /// Highlighting is wanted only for this document and these rules from now on: the worker
+    /// drops other jobs, and stops the one running if it's another's (O-05).
+    HighlightOnly(Epoch),
     /// Find the files a document's links name, relative to `source`.
     ResolveLinks {
         doc_gen: u64,
@@ -269,8 +275,8 @@ pub enum Cmd {
     },
     /// Put text on the system clipboard through the terminal (OSC 52).
     Osc52(String),
-    /// Watch `path` for changes, polling its modification time (ADR-14). Replaces the file
-    /// watched before.
+    /// Watch `path` for changes, through inotify or by polling its modification time (ADR-26).
+    /// Replaces the file watched before.
     Watch {
         path: PathBuf,
         mtime: Option<u64>,
@@ -671,15 +677,19 @@ impl State {
     }
 
     /// Jobs for every block not highlighted yet: the visible ones first, at the front of the
-    /// worker's queue.
+    /// worker's queue. Jobs for another document or theme are dropped.
     fn highlight_all(&mut self) -> Vec<Cmd> {
         let Some(doc) = &self.doc else {
             return Vec::new();
         };
+        self.highlights.forget_pending();
+        let mut cmds = vec![Cmd::HighlightOnly(Epoch {
+            doc_gen: doc.generation,
+            rules: self.syntax.id,
+        })];
         let visible = self.visible_code();
         let rest = (0..doc.doc.code_count).filter(|b| !visible.contains(b));
         let blocks = doc.doc.code_blocks();
-        let mut cmds = Vec::new();
         for (block, urgent) in visible
             .iter()
             .map(|&b| (b, true))
@@ -735,7 +745,13 @@ impl State {
         cmds
     }
 
-    fn highlighted(&mut self, doc_gen: u64, block: CodeId, spans: Option<Arc<CodeSpans>>) {
+    fn highlighted(
+        &mut self,
+        doc_gen: u64,
+        block: CodeId,
+        lines: Option<u32>,
+        spans: Option<Arc<CodeSpans>>,
+    ) {
         let spans = match spans {
             // a result for the theme before the last switch has the wrong rules
             Some(spans) if spans.rules != self.syntax.id => return,
@@ -752,7 +768,10 @@ impl State {
                 let (Some(key), Some(lang)) = (highlight::key(code), &code.lang) else {
                     return;
                 };
-                Arc::new(highlight::highlight(key, lang, &code.text, &self.syntax))
+                Arc::new(match lines {
+                    Some(n) => highlight::highlight_first(key, lang, &code.text, &self.syntax, n),
+                    None => highlight::highlight(key, lang, &code.text, &self.syntax),
+                })
             }
         };
         self.highlights.insert(spans);
@@ -1131,9 +1150,10 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Highlighted {
             doc_gen,
             block,
+            lines,
             spans,
         } => {
-            state.highlighted(doc_gen, block, spans.0);
+            state.highlighted(doc_gen, block, lines, spans.0);
             Vec::new()
         }
         Msg::Quit => {
@@ -1392,6 +1412,7 @@ mod tests {
         let replayed = |doc_gen| Msg::Highlighted {
             doc_gen,
             block: 1,
+            lines: None,
             spans: Computed(None),
         };
         update(&mut state, replayed(7));
@@ -1403,6 +1424,46 @@ mod tests {
         update(&mut state, replayed(doc_gen));
         let spans = state.highlights.get(key).expect("recomputed");
         assert!(!spans.line(0).is_empty());
+    }
+
+    /// A partial result's marker replays as that many lines (O-05).
+    #[test]
+    fn replayed_partial_highlights_keep_their_length() {
+        let mut state = loaded("", 80, 10);
+        load_cmds(&mut state, code_doc());
+        let key = state.doc.as_ref().unwrap().layout.code[1].key.unwrap();
+        let doc_gen = state.generation;
+        update(
+            &mut state,
+            Msg::Highlighted {
+                doc_gen,
+                block: 1,
+                lines: Some(1),
+                spans: Computed(None),
+            },
+        );
+        let spans = state.highlights.get(key).expect("recomputed");
+        assert!(spans.partial && spans.line_count() == 1);
+    }
+
+    /// Every switch of document or theme tells the worker which jobs are still wanted.
+    #[test]
+    fn loads_and_theme_switches_name_the_wanted_jobs() {
+        let mut state = loaded("", 80, 10);
+        let cmds = load_cmds(&mut state, code_doc());
+        let only = |state: &State| {
+            Cmd::HighlightOnly(Epoch {
+                doc_gen: state.generation,
+                rules: state.syntax.id,
+            })
+        };
+        assert_eq!(cmds.first(), Some(&only(&state)));
+        let other = Theme::builtins()
+            .into_iter()
+            .find(|t| SyntaxTheme::new(&t.syntax).id != state.syntax.id)
+            .expect("a theme with other [syntax] rules");
+        let cmds = state.set_theme(other);
+        assert_eq!(cmds.first(), Some(&only(&state)));
     }
 
     #[test]

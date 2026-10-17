@@ -18,6 +18,23 @@ use crate::ui::Painter;
 /// `align`. A pager or fzf preview that scrolls by source line, as it would for `bat`, then lands
 /// on the right row.
 pub fn render(doc: &Doc, theme: &Theme, params: LayoutParams, align: Option<u32>) -> String {
+    let mut out = Vec::new();
+    write(doc, theme, params, align, &mut out).expect("writing to a Vec");
+    String::from_utf8(out).expect("UTF-8 in, UTF-8 out")
+}
+
+/// Output is written in pieces of about this size: building all of it first held up to twice
+/// its size (6.3 MB in an 8 MB buffer for XL) at the peak (O-16).
+const PIECE: usize = 64 * 1024;
+
+/// [`render`] into `w`, a piece at a time.
+fn write(
+    doc: &Doc,
+    theme: &Theme,
+    params: LayoutParams,
+    align: Option<u32>,
+    w: &mut impl Write,
+) -> io::Result<()> {
     let layout = layout::layout(doc, &theme.glyphs, params);
     let (skip, pad) = align.map_or((0, 0), |line| alignment(&layout, line));
     let highlights = Highlights::compute_all(&doc.code_blocks(), &SyntaxTheme::new(&theme.syntax));
@@ -28,7 +45,7 @@ pub fn render(doc: &Doc, theme: &Theme, params: LayoutParams, align: Option<u32>
         code_x: 0,
         links: &[],
     };
-    let mut out = String::with_capacity(layout.text.len() * 2);
+    let mut out = String::with_capacity(PIECE * 2);
     out.extend(std::iter::repeat_n('\n', pad));
     let mut scratch = String::new();
     for row in layout.rows.iter().skip(skip) {
@@ -40,8 +57,12 @@ pub fn render(doc: &Doc, theme: &Theme, params: LayoutParams, align: Option<u32>
             out.push_str("\x1b[0m");
         }
         out.push('\n');
+        if out.len() >= PIECE {
+            w.write_all(out.as_bytes())?;
+            out.clear();
+        }
     }
-    out
+    w.write_all(out.as_bytes())
 }
 
 /// One output line as it's written. A line starts with no style and ends with none, so a
@@ -214,12 +235,8 @@ fn alignment(layout: &Layout, line: u32) -> (usize, usize) {
 
 /// Print a document to stdout. A closed pipe (fzf moving on) is not an error.
 pub fn run(doc: &Doc, theme: &Theme, params: LayoutParams, align: Option<u32>) -> io::Result<()> {
-    let out = render(doc, theme, params, align);
     let mut stdout = io::stdout().lock();
-    match stdout
-        .write_all(out.as_bytes())
-        .and_then(|()| stdout.flush())
-    {
+    match write(doc, theme, params, align, &mut stdout).and_then(|()| stdout.flush()) {
         Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(()),
         result => result,
     }

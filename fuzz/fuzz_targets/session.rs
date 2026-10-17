@@ -21,6 +21,7 @@ use std::sync::{Arc, OnceLock};
 
 use ada::app::{self, Cmd, Computed, Config, Dir, Effects, Keymap, Msg, ScrollBy, Size, State};
 use ada::grid::Screen;
+use ada::highlight;
 use ada::images::{Probe, Proto};
 use ada::layout::TableMode;
 use ada::links::Resolved;
@@ -329,8 +330,24 @@ fn answer(
         Cmd::Highlight(job) if u.ratio(1, 8)? => Some(Msg::Highlighted {
             doc_gen: job.doc_gen,
             block: job.block,
+            lines: match u.arbitrary()? {
+                true => Some(u.int_in_range(0..=600)?),
+                false => None,
+            },
             spans: Computed(None),
         }),
+        // now and then only the first lines, as the worker posts them for a long block, and
+        // never the rest, as when it stops for another document (O-05)
+        Cmd::Highlight(job) if u.ratio(1, 8)? => {
+            let n = u.int_in_range(0..=600)?;
+            let spans = highlight::highlight_first(job.key, &job.lang, &job.text, &job.theme, n);
+            Some(Msg::Highlighted {
+                doc_gen: job.doc_gen,
+                block: job.block,
+                lines: Some(n),
+                spans: Computed(Some(Arc::new(spans))),
+            })
+        }
         Cmd::Highlight(job) => Some(job.run()),
         Cmd::ResolveLinks {
             doc_gen, targets, ..
@@ -407,7 +424,7 @@ fn answer(
             let _ = app::osc52(&text, u.arbitrary()?);
             None
         }
-        Cmd::Watch { .. } | Cmd::Quit => None,
+        Cmd::Watch { .. } | Cmd::HighlightOnly(_) | Cmd::Quit => None,
     })
 }
 

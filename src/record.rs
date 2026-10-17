@@ -102,7 +102,7 @@ messages! {
     "images-probed" => ImagesProbed { doc_gen, probes },
     "editor-exited" => EditorExited { status },
     "file-changed" => FileChanged { path, mtime },
-    "highlighted" => Highlighted { doc_gen, block, spans },
+    "highlighted" => Highlighted { doc_gen, block, lines, spans },
     "image-ready" => ImageReady { path, mtime, size, image },
 }
 
@@ -349,6 +349,27 @@ impl Field for Option<u64> {
             Value::Ident(s) if s == "none" => Some(None),
             _ => None,
         }
+    }
+}
+
+/// Left out when `None`: a partial highlighting's line count (O-05), which older recordings don't
+/// have.
+impl Field for Option<u32> {
+    fn write(&self, key: &str, line: &mut String, _: &mut Vec<u8>) {
+        if let Some(n) = self {
+            inline(key, line, n);
+        }
+    }
+
+    fn read(value: Value) -> Option<Self> {
+        match value {
+            Value::Int(n) => u32::try_from(n).ok().map(Some),
+            _ => None,
+        }
+    }
+
+    fn absent() -> Option<Self> {
+        Some(None)
     }
 }
 
@@ -827,6 +848,13 @@ mod tests {
             Msg::Highlighted {
                 doc_gen: 3,
                 block: 12,
+                lines: None,
+                spans: Computed(None),
+            },
+            Msg::Highlighted {
+                doc_gen: 3,
+                block: 13,
+                lines: Some(512),
                 spans: Computed(None),
             },
             Msg::ImagesProbed {

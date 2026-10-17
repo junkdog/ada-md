@@ -14,6 +14,7 @@ dependencies = [
  "ratatui",
  "ratatui-image",
  "regex",
+ "rustix 1.1.5",
  "syntect",
  "toml",
  "two-face",

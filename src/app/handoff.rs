@@ -1,6 +1,6 @@
 //! Handing things to the world outside ada (P7): the file to an editor (`e`, ADR-18), text to
 //! the clipboard (`y`, OSC 52), and the file to a watcher that notices when it changes on disk
-//! (live reload, ADR-14). Each is a command; what comes back is a message.
+//! (live reload, ADR-26). Each is a command; what comes back is a message.
 
 use super::{Cmd, LinkState, ScrollAnchor, State};
 use crate::doc::LinkKind;
