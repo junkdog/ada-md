@@ -58,6 +58,29 @@ Also: callouts, footnotes and task lists, a filterable outline and list of links
 wraps or scrolls sideways, three built-in themes and your own (`T` previews them), and keys
 you can remap.
 
+## Performance
+
+ada against other terminal markdown viewers, on the same machine, documents and 120×40 pty:
+four notes from 13 KB to a 2 MB concatenation, each viewer pinned to four physical cores of an
+AMD Ryzen AI MAX+ PRO 395, medians of 3–5 runs (ada `3202a1a`, 2026-10-17). Lower is better;
+the bars are on a log scale, so each one carries its value.
+
+![First paint, CPU per line scroll, search, cold resize, CPU over a held page-down, and peak
+memory for ada, leaf, mdfried, md-tui, treemd and glow on four documents](bench/b2/plots/interactive.png)
+
+![Print time and peak memory for ada --print, leaf, mdcat, glow and lowdown on four
+documents](bench/b2/plots/print.png)
+
+ada is first in 78 of the 84 interactive measurements, on time and on CPU or memory, and
+prints faster and in less memory than the other highlighting printers. It isn't first on the
+bytes it writes per page (glow writes about a third less) or on peak memory for the smallest
+note (md-tui, 9.3 MiB against 10.8). A missing bar is a measurement the viewer doesn't have:
+glow has no search and its screen goes blank after a resize, treemd (its unreleased HEAD, the
+faster of its two builds) shows one section of the 2 MB document at a time and md-tui never
+finished parsing it, mdfried leaves the 2 MB search's match where the harness didn't look, and
+md-tui re-parses for seconds on a resize. The harness and how to run it are in
+[`bench/b2`](bench/b2/README.md).
+
 ## Install
 
 ```zsh
