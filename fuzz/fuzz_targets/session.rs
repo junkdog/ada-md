@@ -443,7 +443,9 @@ impl Session<'_> {
             self.screen.resize(Cells::new(w, h));
         }
         let state = &self.state;
-        self.screen.draw(|grid| ada::ui::view(state, grid)).expect("sink");
+        self.screen
+            .draw(|grid| ada::ui::view(state, grid))
+            .expect("sink");
     }
 
     fn deliver(&mut self, i: usize) {
