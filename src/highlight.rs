@@ -2,8 +2,8 @@
 //! the first paint never waits for it. The regexes run on Oniguruma by default; building without
 //! the `onig` feature keeps them on fancy-regex, pure Rust.
 //!
-//! Results are colour-free. The theme's `[syntax]` table becomes a syntect theme whose rule `i`
-//! "colours" a token with `i` encoded in its foreground, so a highlighted line is a list of
+//! Results are color-free. The theme's `[syntax]` table becomes a syntect theme whose rule `i`
+//! "colors" a token with `i` encoded in its foreground, so a highlighted line is a list of
 //! `(end byte, rule)` runs, and paint resolves each rule against the ada theme (ADR-03).
 //! Results are cached by [`key`], a hash of the language and the code.
 

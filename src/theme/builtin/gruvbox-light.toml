@@ -55,7 +55,7 @@ callout_important = { fg = "purple", bold = true }
 callout_warning = { fg = "yellow", bold = true }
 callout_caution = { fg = "red", bold = true }
 code = { fg = "fg", bg = "bg0_s" }
-code_text = {}           # code itself; inherits block.code, under the [syntax] colours
+code_text = {}           # code itself; inherits block.code, under the [syntax] colors
 code_label = { fg = "gray", bg = "bg0_s", italic = true }
 code_wrap_mark = { fg = "gray", bg = "bg0_s" }
 list_bullet = { fg = "yellow" }

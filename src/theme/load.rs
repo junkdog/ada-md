@@ -146,7 +146,7 @@ pub fn load_str(
 }
 
 fn apply(theme: &mut Theme, root: &DeTable<'_>, cx: &mut Cx<'_>) -> Result<(), String> {
-    // The palette comes first: every colour below may refer to it.
+    // The palette comes first: every color below may refer to it.
     if let Some(palette) = entry(root, "palette") {
         for (k, v) in cx.table(palette)? {
             let color = color(cx, &theme.palette, v)?;
@@ -350,11 +350,11 @@ fn parse_color(s: &str, palette: &[(String, Color)]) -> Option<Color> {
 fn color(cx: &Cx<'_>, palette: &[(String, Color)], v: &Value<'_>) -> Result<Color, String> {
     match v.get_ref() {
         DeValue::String(s) => parse_color(s, palette)
-            .ok_or_else(|| cx.at(v.span(), format_args!("unknown palette colour \"{s}\""))),
+            .ok_or_else(|| cx.at(v.span(), format_args!("unknown palette color \"{s}\""))),
         DeValue::Integer(_) => u8::try_from(cx.int(v)?)
             .map(Color::Indexed)
-            .map_err(|_| cx.at(v.span(), "colour index must be 0–255")),
-        _ => Err(cx.expected("a colour", v)),
+            .map_err(|_| cx.at(v.span(), "color index must be 0–255")),
+        _ => Err(cx.expected("a color", v)),
     }
 }
 
@@ -386,7 +386,7 @@ mod tests {
     fn errors_point_at_the_value() {
         let text = "[palette]\nfg = \"#ebdbb2\"\n\n[inline]\nemph = { fg = \"orang\" }\n";
         let err = load_str("t.toml", text, &mut Vec::new(), 0).unwrap_err();
-        assert_eq!(err, "t.toml:5:15: unknown palette colour \"orang\"");
+        assert_eq!(err, "t.toml:5:15: unknown palette color \"orang\"");
     }
 
     #[test]
@@ -417,7 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn colours() {
+    fn colors() {
         let palette = [("x".to_owned(), Color::Rgb(1, 2, 3))];
         assert_eq!(parse_color("x", &palette), Some(Color::Rgb(1, 2, 3)));
         assert_eq!(

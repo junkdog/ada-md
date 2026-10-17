@@ -33,6 +33,7 @@ pub use keymap::{Action, Bindings, Key, KeySeq, Keymap};
 pub use nav::LinkState;
 use nav::{Entry, Nav};
 pub use run::run_tui;
+pub(crate) use run::{draw_frame, new_screen};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Size {
@@ -793,7 +794,7 @@ impl State {
         }
     }
 
-    /// Switch themes. Colours resolve at paint, so only new glyphs lay the documents out again,
+    /// Switch themes. Colors resolve at paint, so only new glyphs lay the documents out again,
     /// and only new `[syntax]` rules highlight the code again (architecture §5).
     fn set_theme(&mut self, theme: Theme) -> Vec<Cmd> {
         let same_rules = self

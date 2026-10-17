@@ -259,11 +259,11 @@ mod tests {
         assert_eq!(err, "c.toml:2:8: can't read the key \"ctrl-\"");
 
         let mut warnings = Vec::new();
-        parse("c.toml", "colour = 1\n[keys]\nfly = \"f\"\n", &mut warnings).unwrap();
+        parse("c.toml", "color = 1\n[keys]\nfly = \"f\"\n", &mut warnings).unwrap();
         assert_eq!(
             warnings,
             [
-                "c.toml:1:1: unknown key \"colour\"",
+                "c.toml:1:1: unknown key \"color\"",
                 "c.toml:3:1: unknown action \"fly\""
             ]
         );

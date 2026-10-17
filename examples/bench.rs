@@ -13,12 +13,12 @@ use std::time::{Duration, Instant};
 use std::{env, fs, process};
 
 use ada::app::{Cmd, Config, Dir, Msg, ScrollBy, Size, State, update};
+use ada::grid::Screen;
 use ada::layout::{self, LayoutParams, TableMode};
 use ada::search::SearchMap;
 use ada::theme::Theme;
 use ada::{doc, ui};
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
+use ratatui::layout::Size as Cells;
 
 const ITERATIONS: usize = 15;
 const FIRST_PAINT: Duration = Duration::from_millis(30);
@@ -118,7 +118,8 @@ struct Measured {
 
 fn measure(theme: &Theme, text: &str) -> Measured {
     let size = Size { w: 135, h: 40 };
-    let mut terminal = Terminal::new(TestBackend::new(size.w, size.h)).expect("test backend");
+    // diffed and encoded like a real frame, then dropped
+    let mut terminal = Screen::new(std::io::sink(), Cells::new(size.w, size.h));
 
     let parse = median(|| {
         std::hint::black_box(doc::parse(text));
@@ -139,7 +140,7 @@ fn measure(theme: &Theme, text: &str) -> Measured {
                 text: text.into(),
             },
         );
-        terminal.draw(|f| ui::view(&state, f)).expect("draw");
+        terminal.draw(|g| ui::view(&state, g)).expect("draw");
     });
     let rows = state.doc.as_ref().map_or(0, |d| d.layout.row_count());
     // ...but repaints include it.
@@ -166,7 +167,7 @@ fn measure(theme: &Theme, text: &str) -> Measured {
 
     update(&mut state, Msg::Resize { size });
     update(&mut state, Msg::Scroll { by: ScrollBy::Top });
-    terminal.draw(|f| ui::view(&state, f)).expect("draw");
+    terminal.draw(|g| ui::view(&state, g)).expect("draw");
     let mut dir = Dir::Next;
     let repaint = median(|| {
         if state.scroll >= state.max_scroll() {
@@ -180,7 +181,7 @@ fn measure(theme: &Theme, text: &str) -> Measured {
                 by: ScrollBy::Page(dir),
             },
         );
-        terminal.draw(|f| ui::view(&state, f)).expect("draw");
+        terminal.draw(|g| ui::view(&state, g)).expect("draw");
     });
 
     let doc = doc::parse(text);
@@ -195,7 +196,7 @@ fn measure(theme: &Theme, text: &str) -> Measured {
         i += 1;
         let pattern = patterns[i % patterns.len()].to_owned();
         update(&mut state, Msg::SearchInput { pattern });
-        terminal.draw(|f| ui::view(&state, f)).expect("draw");
+        terminal.draw(|g| ui::view(&state, g)).expect("draw");
     });
 
     Measured {

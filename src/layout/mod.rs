@@ -1,5 +1,5 @@
 //! Layout (architecture §3): `Doc` + [`LayoutParams`] → rows of [`StyleKey`]'d spans. Every row
-//! carries the source lines it renders (ADR-02); colours are resolved later, at paint (ADR-03).
+//! carries the source lines it renders (ADR-02); colors are resolved later, at paint (ADR-03).
 
 mod code;
 mod table;
@@ -55,7 +55,7 @@ impl TableMode {
     }
 }
 
-/// Everything a layout depends on besides the Doc. Colours are deliberately absent.
+/// Everything a layout depends on besides the Doc. Colors are deliberately absent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LayoutParams {
     /// The terminal width. Tables may use all of it.

@@ -1,7 +1,7 @@
 //! The outline popup: the headings (`o`), indented by level, the links (`l`), each with where it
 //! leads, the themes (`T`), or the columns to sort a table by (`s`); filtered by what's typed.
 
-use ratatui::buffer::Buffer;
+use crate::grid::Grid;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use unicode_width::UnicodeWidthStr;
@@ -27,7 +27,7 @@ fn entry_width(entry: &OutlineEntry) -> usize {
     indent(entry.level) + entry.text.width() + dest + broken
 }
 
-pub fn draw(buf: &mut Buffer, area: Rect, state: &State) {
+pub fn draw(buf: &mut Grid, area: Rect, state: &State) {
     let Some(outline) = &state.outline else {
         return;
     };

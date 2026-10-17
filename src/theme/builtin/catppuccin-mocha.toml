@@ -1,6 +1,6 @@
 # catppuccin mocha, after the catppuccin style guide (github.com/catppuccin/catppuccin): headings
-# run red → lavender, mauve is the accent, and syntax colours follow its code mapping. It paints
-# its own background, `base`, so it reads as mocha whatever the terminal's colours.
+# run red → lavender, mauve is the accent, and syntax colors follow its code mapping. It paints
+# its own background, `base`, so it reads as mocha whatever the terminal's colors.
 name = "catppuccin-mocha"
 
 [palette]

@@ -155,7 +155,7 @@ bullets = ["-", "+", "*"]
 table_border = "ascii"
 ```
 
-Colours are `#rrggbb`, `#rgb`, a terminal colour name or index, or a name from the theme's
+Colors are `#rrggbb`, `#rgb`, a terminal color name or index, or a name from the theme's
 `[palette]`. The built-in
 [gruvbox-dark.toml](src/theme/builtin/gruvbox-dark.toml) lists every style there is. Mistakes
 are reported with the file, line and column.

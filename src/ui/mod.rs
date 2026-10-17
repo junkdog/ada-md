@@ -7,8 +7,7 @@ mod paint;
 
 use std::ops::Range;
 
-use ratatui::Frame;
-use ratatui::buffer::Buffer;
+use crate::grid::Grid;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -21,9 +20,8 @@ use crate::theme::{StyleKey, Theme};
 pub use help::max_scroll as help_max_scroll;
 pub use paint::{Painter, span_style};
 
-pub fn view(state: &State, frame: &mut Frame<'_>) {
-    let area = frame.area();
-    let buf = frame.buffer_mut();
+pub fn view(state: &State, buf: &mut Grid) {
+    let area = buf.area();
     buf.set_style(area, state.theme.style(StyleKey::Text));
     if area.height == 0 {
         return;
@@ -95,7 +93,7 @@ fn screen_rows(layout: &Layout, scroll: u32, area: Rect) -> Vec<(u16, u32)> {
 
 /// Block images over the rows reserved for them: the image once it has been encoded, a frame
 /// until then. Rows outside the viewport are clipped, so scrolling costs no image work.
-fn block_images(buf: &mut Buffer, area: Rect, state: &State, doc: &Document) {
+fn block_images(buf: &mut Grid, area: Rect, state: &State, doc: &Document) {
     let scroll = state.scroll;
     let on_screen = scroll..scroll + u32::from(area.height);
     for slot in doc
@@ -116,8 +114,8 @@ fn block_images(buf: &mut Buffer, area: Rect, state: &State, doc: &Document) {
     }
 }
 
-/// The full-screen image view: the image centred in the document's area.
-fn image_view(buf: &mut Buffer, area: Rect, state: &State, view: &ImageView) {
+/// The full-screen image view: the image centered in the document's area.
+fn image_view(buf: &mut Grid, area: Rect, state: &State, view: &ImageView) {
     let Some(key) = state.view_key() else {
         return;
     };
@@ -141,7 +139,7 @@ fn image_view(buf: &mut Buffer, area: Rect, state: &State, view: &ImageView) {
 
 /// A frame where an image will be, with `label` in the middle, clipped to `area`.
 fn frame(
-    buf: &mut Buffer,
+    buf: &mut Grid,
     area: Rect,
     theme: &Theme,
     at: (u16, i32),
@@ -179,7 +177,7 @@ fn frame(
 }
 
 /// The git gutter, in the left margin column, so it costs no width and no relayout.
-fn gutter(buf: &mut Buffer, area: Rect, state: &State, doc: &Document, lines: &[(u16, u32)]) {
+fn gutter(buf: &mut Grid, area: Rect, state: &State, doc: &Document, lines: &[(u16, u32)]) {
     let Some(marks) = doc.marks.as_ref().filter(|m| !m.is_empty()) else {
         return;
     };
@@ -200,10 +198,10 @@ fn gutter(buf: &mut Buffer, area: Rect, state: &State, doc: &Document, lines: &[
 
 /// Search matches, the focused link, and the borders and header of the table the column list is
 /// for, patched over the painted rows (ADR-03).
-fn overlays(buf: &mut Buffer, area: Rect, state: &State, doc: &Document, lines: &[(u16, u32)]) {
+fn overlays(buf: &mut Grid, area: Rect, state: &State, doc: &Document, lines: &[(u16, u32)]) {
     let theme = &state.theme;
     let layout = &doc.layout;
-    let patch = |buf: &mut Buffer, y: u16, cols: Range<u16>, key: StyleKey| {
+    let patch = |buf: &mut Grid, y: u16, cols: Range<u16>, key: StyleKey| {
         let x = area.x.saturating_add(cols.start);
         let right = area.x.saturating_add(cols.end).min(area.right());
         if x < right {
@@ -276,7 +274,7 @@ pub fn sticky_header(layout: &Layout, scroll: u32, height: u32) -> Option<Range<
 type Pieces = Vec<(String, Style)>;
 
 /// Write `pieces` from `x`, within `max` columns. Returns where they end.
-fn put(buf: &mut Buffer, x: u16, y: u16, max: usize, pieces: &Pieces) -> u16 {
+fn put(buf: &mut Grid, x: u16, y: u16, max: usize, pieces: &Pieces) -> u16 {
     let mut x = x;
     let end = x.saturating_add(max as u16);
     for (text, style) in pieces {
@@ -288,7 +286,7 @@ fn put(buf: &mut Buffer, x: u16, y: u16, max: usize, pieces: &Pieces) -> u16 {
     x
 }
 
-fn status_bar(buf: &mut Buffer, area: Rect, state: &State) {
+fn status_bar(buf: &mut Grid, area: Rect, state: &State) {
     let theme = &state.theme;
     buf.set_style(area, theme.style(StyleKey::StatusBar));
     let width = usize::from(area.width);
@@ -522,9 +520,8 @@ mod tests {
     }
 
     #[test]
-    fn the_table_being_sorted_takes_the_sort_table_colour() {
+    fn the_table_being_sorted_takes_the_sort_table_color() {
         use crate::app::{Config, Dir, Msg, Size, update};
-        use ratatui::{Terminal, backend::TestBackend};
 
         let table = "| Name | Size |\n|---|--:|\n| beta | 10 |\n| alpha | 9 |\n";
         let mut state = State::new(Theme::builtin(), Config::default());
@@ -544,14 +541,13 @@ mod tests {
             },
         );
         let border = |state: &State| {
-            let mut term = Terminal::new(TestBackend::new(60, 30)).unwrap();
-            term.draw(|f| view(state, f)).unwrap();
-            let buf = term.backend().buffer().clone();
+            let mut grid = Grid::empty(Rect::new(0, 0, 60, 30));
+            view(state, &mut grid);
             // each table's top-left corner
             let corners: Vec<_> = (0..30)
                 .flat_map(|y| (0..60).map(move |x| (x, y)))
-                .filter(|&(x, y)| buf[(x, y)].symbol() == "╭" && x < 5)
-                .map(|(x, y)| buf[(x, y)].fg)
+                .filter(|&(x, y)| grid.symbol((x, y)) == "╭" && x < 5)
+                .map(|(x, y)| grid[(x, y)].fg())
                 .collect();
             corners
         };

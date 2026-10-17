@@ -146,7 +146,7 @@ fn run_job(job: &Job, out: &mut File) -> io::Result<()> {
         if let Err(e) = result {
             rec.insert("error".into(), json!(e.to_string()));
         }
-        analyse(job, &s, &mut rec);
+        analyze(job, &s, &mut rec);
         writeln!(out, "{}", Value::Object(rec.clone()))?;
         out.flush()?;
         let brief: Map<String, Value> = rec
@@ -162,7 +162,7 @@ fn run_job(job: &Job, out: &mut File) -> io::Result<()> {
     Ok(())
 }
 
-/// One run's interactions; the timings come from `analyse` afterwards.
+/// One run's interactions; the timings come from `analyze` afterwards.
 fn script(
     job: &Job,
     run: usize,
@@ -289,7 +289,7 @@ fn replace_first(hay: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
     }
 }
 
-fn analyse(job: &Job, s: &Session, rec: &mut Map<String, Value>) {
+fn analyze(job: &Job, s: &Session, rec: &mut Map<String, Value>) {
     let (ch, marks) = (&s.chunks, &s.marks);
     let mut rp = Replay::new();
     let pre: Vec<f64> = marks

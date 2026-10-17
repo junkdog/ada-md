@@ -1,8 +1,8 @@
 //! Rows → styled pieces, shared by the viewport and `--print`. Code rows are where paint does
-//! real work: syntax colours are overlaid on the code span, and in no-wrap mode the span is a
+//! real work: syntax colors are overlaid on the code span, and in no-wrap mode the span is a
 //! window into its line, shifted by the shared offset (ADR-20).
 
-use ratatui::buffer::Buffer;
+use crate::grid::Grid;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -32,7 +32,7 @@ pub struct Painter<'a> {
 
 impl Painter<'_> {
     /// Paint rows starting at `scroll` into `area`.
-    pub fn rows(&self, buf: &mut Buffer, area: Rect, scroll: u32) {
+    pub fn rows(&self, buf: &mut Grid, area: Rect, scroll: u32) {
         let rows = self.layout.rows.iter().skip(scroll as usize);
         for (y, row) in (area.y..area.bottom()).zip(rows) {
             self.row_into(buf, area.x, y, area.right(), row);
@@ -40,7 +40,7 @@ impl Painter<'_> {
     }
 
     /// Paint row `row` on line `y`, from `x` up to `right`.
-    pub fn row_into(&self, buf: &mut Buffer, mut x: u16, y: u16, right: u16, row: &Row) {
+    pub fn row_into(&self, buf: &mut Grid, mut x: u16, y: u16, right: u16, row: &Row) {
         self.row(row, &mut |text, style| {
             if x < right {
                 (x, _) = buf.set_stringn(x, y, text, usize::from(right - x), style);

@@ -1,7 +1,7 @@
 //! The help overlay (`?`): every action with its keys, from the bindings in use, so rebound keys
 //! show as they are. It scrolls when it doesn't fit.
 
-use ratatui::buffer::Buffer;
+use crate::grid::Grid;
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
@@ -63,7 +63,7 @@ pub fn max_scroll(state: &State) -> u16 {
     lines.len().saturating_sub(shown) as u16
 }
 
-pub fn draw(buf: &mut Buffer, area: Rect, state: &State) {
+pub fn draw(buf: &mut Grid, area: Rect, state: &State) {
     let Some(scroll) = state.help else {
         return;
     };

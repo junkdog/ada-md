@@ -15,19 +15,20 @@
 #![no_main]
 
 use std::fs;
+use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use ada::app::{self, Cmd, Computed, Config, Dir, Effects, Keymap, Msg, ScrollBy, Size, State};
+use ada::grid::Screen;
 use ada::images::{Probe, Proto};
 use ada::layout::TableMode;
 use ada::links::Resolved;
 use ada::theme::Theme;
 use libfuzzer_sys::arbitrary::{self, Arbitrary, Result, Unstructured};
 use libfuzzer_sys::fuzz_target;
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::layout::Size as Cells;
 
 const MAX_OPS: usize = 64;
 
@@ -416,7 +417,7 @@ struct Session<'a> {
     effects: Effects,
     pending: Vec<Msg>,
     doc: Arc<str>,
-    terminal: Terminal<TestBackend>,
+    screen: Screen<io::Sink>,
     u: Unstructured<'a>,
 }
 
@@ -434,17 +435,15 @@ impl Session<'_> {
         self.paint();
     }
 
-    /// Paint into the frame's buffer and throw it away: diffing against the last frame and
-    /// flushing to the backend is ratatui's work, not ada's, and was 40% of the time.
+    /// Paint, diff against the last frame and encode, into a sink: since the grid replaced
+    /// ratatui's buffer, the diff and the encoder are ada's code too.
     fn paint(&mut self) {
         let Size { w, h } = self.state.size;
-        let area = self.terminal.backend().buffer().area;
-        if (area.width, area.height) != (w, h) {
-            self.terminal = Terminal::new(TestBackend::new(w, h)).expect("terminal");
+        if self.screen.size() != Cells::new(w, h) {
+            self.screen.resize(Cells::new(w, h)).expect("sink");
         }
-        let mut frame = self.terminal.get_frame();
-        ada::ui::view(&self.state, &mut frame);
-        self.terminal.current_buffer_mut().reset();
+        let state = &self.state;
+        self.screen.draw(|grid| ada::ui::view(state, grid)).expect("sink");
     }
 
     fn deliver(&mut self, i: usize) {
@@ -607,14 +606,14 @@ fuzz_target!(|data: &[u8]| {
 
     let mut state = State::new(theme(), config);
     state.themes.extend_from_slice(extra_themes());
-    let terminal = Terminal::new(TestBackend::new(state.size.w, state.size.h)).expect("terminal");
+    let screen = Screen::new(io::sink(), Cells::new(state.size.w, state.size.h));
     let mut s = Session {
         state,
         keymap: Keymap::default(),
         effects: Effects::new(None),
         pending: Vec::new(),
         doc: doc.clone(),
-        terminal,
+        screen,
         u,
     };
 

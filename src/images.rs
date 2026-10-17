@@ -18,12 +18,13 @@ use std::time::UNIX_EPOCH;
 use image::imageops::FilterType;
 use image::metadata::Orientation;
 use image::{DynamicImage, ImageDecoder, ImageReader};
-use ratatui::buffer::Buffer;
 use ratatui::layout::{Rect, Size};
 use ratatui::widgets::Widget;
 use ratatui_image::Resize;
 use ratatui_image::picker::{Capability, Picker, ProtocolType};
 use ratatui_image::sliced::{SignedPosition, SlicedImage, SlicedProtocol};
+
+use crate::grid::Grid;
 
 use crate::app::{self, Computed, Msg};
 
@@ -354,14 +355,20 @@ impl ImageCache {
 }
 
 /// Paint `image` with its top-left corner at column `x` and row `y` of `area`. Rows outside
-/// `area` are clipped, so `y` may be negative.
-pub fn render(image: &Encoded, buf: &mut Buffer, area: Rect, x: u16, y: i32) {
+/// `area` are clipped, so `y` may be negative. The protocols write ratatui cells, so the grid
+/// lends them the cells the image covers.
+pub fn render(image: &Encoded, grid: &mut Grid, area: Rect, x: u16, y: i32) {
     if x >= area.width {
         return;
     }
     let y = y.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
     let position = SignedPosition::from((x as i16, y));
-    SlicedImage::new(&image.0, position).render(area, buf);
+    let size = image.size();
+    let top = area.y.saturating_add(y.max(0) as u16);
+    let covered = Rect::new(area.x + x, top, size.width, size.height).intersection(area);
+    grid.lend(covered, |buf| {
+        SlicedImage::new(&image.0, position).render(area, buf);
+    });
 }
 
 #[cfg(test)]
@@ -452,9 +459,9 @@ pub(crate) mod tests {
 
         // clipped at the top: only the bottom row lands in the area
         let area = Rect::new(0, 0, 10, 4);
-        let mut buf = Buffer::empty(area);
-        render(&image, &mut buf, area, 2, -2);
-        let painted = |y| (0..10).filter(|&x| buf[(x, y)].symbol() != " ").count();
+        let mut grid = Grid::empty(area);
+        render(&image, &mut grid, area, 2, -2);
+        let painted = |y| (0..10).filter(|&x| grid.symbol((x, y)) != " ").count();
         assert_eq!((painted(0), painted(1)), (4, 0));
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }

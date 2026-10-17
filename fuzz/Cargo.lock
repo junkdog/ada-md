@@ -15,6 +15,7 @@ dependencies = [
  "syntect",
  "toml",
  "two-face",
+ "unicode-segmentation",
  "unicode-width",
 ]
 

@@ -1,5 +1,5 @@
 //! Themes (ADR-03, ADR-08). Layout emits semantic [`StyleKey`]s and paint resolves them here, so a
-//! colour-only theme switch needs no relayout. Glyphs change widths, so they are a layout input.
+//! color-only theme switch needs no relayout. Glyphs change widths, so they are a layout input.
 
 mod load;
 

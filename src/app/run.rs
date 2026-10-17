@@ -2,32 +2,45 @@
 //! the main thread blocks in `recv()`, so idle costs nothing, then drains, updates and draws once.
 
 use std::collections::VecDeque;
-use std::io::{self, BufWriter, Stdout, Write};
+use std::io::{self, Stdout, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::{env, thread};
 
-use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{self, Event};
 use ratatui::crossterm::execute;
-use ratatui::crossterm::terminal::{Clear, ClearType, EnterAlternateScreen, enable_raw_mode};
+use ratatui::crossterm::terminal::{self, Clear, ClearType, EnterAlternateScreen, enable_raw_mode};
+use ratatui::layout::Size as Cells;
 
 use super::{Bindings, Cmd, Effects, Keymap, Msg, Size, State, editor_command, osc52, update};
+use crate::grid::Screen;
 use crate::images;
 use crate::record::Recorder;
 use crate::ui;
 
-/// A terminal whose frames reach stdout in one write. Stdout itself is a 1 KB line buffer behind a
-/// lock taken for every piece crossterm formats: about ten writes a frame, and a fifth of its CPU.
-type Term = Terminal<CrosstermBackend<BufWriter<Stdout>>>;
+/// The terminal: each frame diffed against the last and written to stdout in one write.
+type Term = Screen<Stdout>;
 
-fn new_terminal() -> io::Result<Term> {
-    Terminal::new(CrosstermBackend::new(BufWriter::with_capacity(
-        1 << 16,
-        io::stdout(),
-    )))
+/// A screen over the alternate screen just entered, which is blank.
+pub(crate) fn new_screen() -> io::Result<Term> {
+    let (w, h) = terminal::size()?;
+    Ok(Screen::new(io::stdout(), Cells::new(w, h)))
+}
+
+fn terminal_size() -> Result<Size, String> {
+    let (w, h) = terminal::size().map_err(|e| e.to_string())?;
+    Ok(Size { w, h })
+}
+
+/// Draw a frame at the terminal's size, clearing it first if that changed, as ratatui's
+/// `Terminal::draw` did.
+pub(crate) fn draw_frame(terminal: &mut Term, state: &State) -> io::Result<()> {
+    let (w, h) = terminal::size()?;
+    if Cells::new(w, h) != terminal.size() {
+        terminal.resize(Cells::new(w, h))?;
+    }
+    terminal.draw(|grid| ui::view(state, grid))
 }
 
 /// Run ada in the terminal until the user quits.
@@ -37,9 +50,9 @@ pub fn run_tui(
     mut effects: Effects,
     mut recorder: Option<Recorder>,
 ) -> Result<(), String> {
-    // `try_init` sets up the screen and the panic hook; the terminal it returns writes unbuffered.
+    // `try_init` sets up the screen and the panic hook; ada draws with its own grid, not ratatui's.
     ratatui::try_init().map_err(|e| format!("terminal: {e}"))?;
-    let mut terminal = new_terminal().map_err(|e| format!("terminal: {e}"))?;
+    let mut terminal = new_screen().map_err(|e| format!("terminal: {e}"))?;
     let result = event_loop(
         &mut terminal,
         &mut state,
@@ -58,7 +71,7 @@ fn event_loop(
     effects: &mut Effects,
     mut recorder: Option<&mut Recorder>,
 ) -> Result<(), String> {
-    let size = terminal.size().map_err(|e| e.to_string())?;
+    let size = terminal_size()?;
     // The query reads the terminal's answers from stdin, so it goes before the input thread.
     let picker = images::detect(state.config.images);
     let graphics = picker.as_ref().map(images::graphics_msg);
@@ -70,12 +83,7 @@ fn event_loop(
     let (resume, resumed) = mpsc::channel();
     spawn_input(tx, state.config.keys.clone(), resumed);
 
-    let init = Msg::Init {
-        size: Size {
-            w: size.width,
-            h: size.height,
-        },
-    };
+    let init = Msg::Init { size };
     let mut queue: VecDeque<Msg> = [init].into_iter().chain(graphics).collect();
     queue.push_back(Msg::Open { path });
     loop {
@@ -92,11 +100,7 @@ fn event_loop(
             }
             if edit {
                 // the editor may have left the terminal another size
-                let now = terminal.size().map_err(|e| e.to_string())?;
-                let now = Size {
-                    w: now.width,
-                    h: now.height,
-                };
+                let now = terminal_size()?;
                 if now != state.size {
                     results.push(Msg::Resize { size: now });
                 }
@@ -110,9 +114,7 @@ fn event_loop(
         if state.quit {
             return Ok(());
         }
-        terminal
-            .draw(|frame| ui::view(state, frame))
-            .map_err(|e| e.to_string())?;
+        draw_frame(terminal, state).map_err(|e| e.to_string())?;
 
         let Ok(msg) = rx.recv() else {
             return Ok(());
@@ -167,9 +169,8 @@ fn edit(terminal: &mut Term, file: &Path, line: u32) -> Result<Option<Msg>, Stri
     let back = || -> io::Result<Term> {
         enable_raw_mode()?;
         execute!(io::stdout(), EnterAlternateScreen, Clear(ClearType::All))?;
-        // A new terminal has a blank back buffer, so the next draw paints every cell.
-        // (`Terminal::clear` would ask for the cursor's position, which needs an answer.)
-        new_terminal()
+        // A new screen has a blank last frame, so the next draw paints every cell.
+        new_screen()
     };
     *terminal = back().map_err(|e| format!("terminal: {e}"))?;
     Ok(Some(match status {

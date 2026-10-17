@@ -24,12 +24,11 @@ use anpa::core::{ParserExtNoState, StrParser};
 use anpa::number::integer;
 use anpa::parsers::{empty, item, item_if, item_while, skip};
 use anpa::{or, tuplify};
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
-use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{self, Computed, Dir, Effects, Msg, ScrollBy, Size, State};
+use crate::grid::Grid;
 use crate::images::{Probe, Proto};
 use crate::links::Resolved;
 use crate::ui;
@@ -615,7 +614,7 @@ impl Recorder {
 pub struct ReplayOptions {
     /// Re-execute commands, skipping recorded world messages (for benchmarking).
     pub live: bool,
-    /// Render to a `TestBackend` and print the final frame.
+    /// Render without a terminal and print the final frame.
     pub headless: bool,
 }
 
@@ -651,15 +650,14 @@ fn step(state: &mut State, msg: Msg, effects: &mut Effects, live: bool) {
     }
 }
 
-/// Replay against a `TestBackend`, returning the frame after every message.
+/// Replay without a terminal, returning the frame after every message.
 pub fn replay_headless(
     entries: &[Entry],
     state: &mut State,
     effects: &mut Effects,
     live: bool,
 ) -> Result<Vec<String>, String> {
-    let mut terminal =
-        Terminal::new(TestBackend::new(state.size.w, state.size.h)).map_err(|e| e.to_string())?;
+    let mut grid = Grid::empty(Rect::new(0, 0, state.size.w, state.size.h));
     let mut frames = Vec::new();
     for entry in entries {
         if live && entry.msg.is_result() {
@@ -669,14 +667,14 @@ pub fn replay_headless(
         if state.quit {
             break;
         }
-        let area = terminal.backend().buffer().area;
-        if (area.width, area.height) != (state.size.w, state.size.h) {
-            terminal.backend_mut().resize(state.size.w, state.size.h);
+        let area = Rect::new(0, 0, state.size.w, state.size.h);
+        if grid.area() == area {
+            grid.reset();
+        } else {
+            grid.resize(area);
         }
-        terminal
-            .draw(|frame| ui::view(state, frame))
-            .map_err(|e| e.to_string())?;
-        frames.push(frame_text(terminal.backend().buffer()));
+        ui::view(state, &mut grid);
+        frames.push(frame_text(&grid));
     }
     Ok(frames)
 }
@@ -687,7 +685,8 @@ fn replay_terminal(
     effects: &mut Effects,
     live: bool,
 ) -> Result<(), String> {
-    let mut terminal = ratatui::try_init().map_err(|e| format!("terminal: {e}"))?;
+    ratatui::try_init().map_err(|e| format!("terminal: {e}"))?;
+    let mut terminal = app::new_screen().map_err(|e| format!("terminal: {e}"))?;
     let start = Instant::now();
     let mut result = Ok(());
     for entry in entries {
@@ -701,7 +700,7 @@ fn replay_terminal(
         if state.quit {
             break;
         }
-        if let Err(e) = terminal.draw(|frame| ui::view(state, frame)) {
+        if let Err(e) = app::draw_frame(&mut terminal, state) {
             result = Err(e.to_string());
             break;
         }
@@ -710,9 +709,9 @@ fn replay_terminal(
     result
 }
 
-/// A buffer as plain text, one line per row, trailing blanks trimmed.
-pub fn frame_text(buf: &Buffer) -> String {
-    let area = buf.area;
+/// A frame as plain text, one line per row, trailing blanks trimmed.
+pub fn frame_text(grid: &Grid) -> String {
+    let area = grid.area();
     let mut out = String::new();
     for y in area.top()..area.bottom() {
         let mut line = String::new();
@@ -722,7 +721,7 @@ pub fn frame_text(buf: &Buffer) -> String {
                 skip -= 1;
                 continue;
             }
-            let symbol = buf[(x, y)].symbol();
+            let symbol = grid.symbol((x, y));
             line.push_str(symbol);
             skip = symbol.width().saturating_sub(1);
         }

@@ -218,7 +218,7 @@ mod tests {
         let out = render(&doc, &theme, params, None);
         let string = theme.syntax.iter().find(|(s, _)| s == "string").unwrap().1;
         let Some(Color::Rgb(r, g, b)) = string.fg else {
-            panic!("strings have an rgb colour");
+            panic!("strings have an rgb color");
         };
         assert!(
             out.contains(&format!("38;2;{r};{g};{b};48;2;50;48;47m\"hi\"\x1b")),
