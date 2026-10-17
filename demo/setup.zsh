@@ -29,9 +29,11 @@ git commit -qm "notes"
 perl -pi -e 's/^(- \[x\] brush the ruff)$/$1\n- [x] refill the water fountain/' index.md
 git add index.md
 
-# unstaged: an edited paragraph, a new visit, and a shorter timeout in the firmware
+# unstaged: an edited task and paragraph, a new task, a new shenanigan, and a shorter timeout in the firmware
 perl -pi -e 's/patrolling the hallway and inspecting the/patrolling the stairs and inspecting all the/' index.md
-perl -pi -e 's/^(\| 2026-08-12 .*)$/$1\n| 2026-10-14 | Birchwood | a cough | 30 min | €80 | 5.3 | a hairball |/' vet.md
+perl -pi -e 's/^- \[x\] brush the ruff$/- [x] brush the ruff, twice/' index.md
+perl -pi -e 's/^(- \[ \] find out who opened the cheese drawer.*)$/$1\n- [ ] order more salmon/' index.md
+perl -pi -e 's/^(\| 2026-08-12 .*)$/$1\n| 2026-10-14 | walked across the keyboard | study | 6 s | €0 | | committed it |/' shenanigans.md
 perl -pi -e 's/from_millis\(800\)/from_millis(650)/' feeder/src/main.rs
 
 print -r -- $base

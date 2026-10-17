@@ -1,25 +1,25 @@
 # Ada's notes
 
-The household's notes on Ada: what she eats, when she sees the vet, and the feeder that keeps
+The household's notes on Ada: what she eats, what she gets up to, and the feeder that keeps
 her schedule. They link to each other with `[[wiki links]]`, and they live in git.
 
 > [!NOTE]
-> Ada is a Norwegian forest cat, and the matriarch of the house. She does not like to be kept
-> waiting, least of all at breakfast.
+> Ada is a fluffy mixed-breed cat, and the matriarch of the house. Her brother Neumann is, in her
+> view, a complete dork; they get along anyway.
 
 ## Today
 
 - [x] breakfast at 07:00
 - [x] brush the ruff
 - [ ] refill the feeder's hopper
-- [ ] book the autumn checkup, see [[vet#Upcoming]]
+- [ ] find out who opened the cheese drawer, see [[shenanigans#Unsolved]]
 
 ## Where things are
 
 | Note | What's in it |
 |---|---|
 | [[feeding]] | portions, the schedule, and the feeder's config |
-| [[vet]] | every visit, what it cost, and her weight |
+| [[shenanigans]] | what she got up to, and what it cost |
 | [the feeder's firmware](feeder/src/main.rs#L24) | the code that runs the schedule |
 | [Ada on the rug](pics/ada.jpg) | the photo from the hallway |
 
@@ -37,7 +37,7 @@ groceries.
 
 ### Words she knows
 
-`treats`, `brush`, `vet` (she leaves the room), and her name, which she ignores.
+`cheese`, `ice cream`, `brush`, `vet` (she leaves the room), and her name, which she ignores.
 
 [^rug]: The rug is hers. It was bought for the hallway, and she agreed to it.
 

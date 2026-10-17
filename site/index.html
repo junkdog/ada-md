@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ada · a fast terminal markdown viewer</title>
+<meta name="description" content="A fast terminal markdown viewer, for one file or a whole vault of notes: sortable tables, a git gutter, links with history, code and image files, and inline images.">
+<meta name="color-scheme" content="dark light">
+<link rel="preload" href="fonts/jetbrains-mono-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- mockup only: a theme switch, pure CSS -->
+<form class="mock" aria-label="mockup controls">
+  <fieldset><legend>theme</legend>
+    <input type="radio" name="theme" id="theme-auto" checked><label for="theme-auto">auto</label>
+    <input type="radio" name="theme" id="theme-dark"><label for="theme-dark">dark</label>
+    <input type="radio" name="theme" id="theme-light"><label for="theme-light">light</label>
+  </fieldset>
+</form>
+
+<header class="top">
+  <nav class="wrap">
+    <a class="wordmark" href="#"><span>❯</span> ada</a>
+    <a href="#features">Features</a>
+    <a href="#performance">Performance</a>
+    <a href="#robust">Robustness</a>
+    <a href="#install">Install</a>
+    <a href="https://github.com/junkdog/ada-md">GitHub</a>
+  </nav>
+</header>
+
+<main>
+
+<section class="hero wrap">
+  <div class="hero-text">
+    <h1>ada</h1>
+    <p class="pitch">A fast terminal markdown viewer, for one file or a whole vault of notes.</p>
+    <p class="sub">Follow links and come back to where you were, see what git says changed, read wide tables at
+      any width, and look at the pictures.</p>
+    <div class="cmd">
+      <code id="install-cmd">cargo install --git https://github.com/junkdog/ada-md</code>
+      <button type="button" data-copy="install-cmd" hidden>copy</button>
+    </div>
+  </div>
+  <figure class="ada">
+    <img src="media/ada.jpg" width="560" height="340" alt="Ada, a fluffy grey mixed-breed cat, lying on a shelf and looking at the camera">
+    <figcaption>Named after Ada, regal matriarch, at her behest.</figcaption>
+  </figure>
+  <a class="term term-hero" id="tour" href="#zoom-hero">
+    <div class="term-bar"><i></i><i></i><i></i><span>ada index.md</span></div>
+    <img src="media/hero.webp" width="1000" height="600" alt="ada following a wiki link, sorting a table, going back, searching, and picking a theme">
+  </a>
+</section>
+
+<section id="features" class="features">
+
+  <article id="tables" class="card">
+    <div class="text">
+      <h2>Tables you can work with</h2>
+      <p><strong>Sorting knows its units:</strong> <code>350 µs</code>, <code>12 ms</code>, <code>1.2 s</code>,
+        <code>1m 30s</code> and <code>6 days</code> sort as the durations they are, <code>1,440</code> as a
+        number and <code>€420</code> as money. In a long table, <strong>the header row stays on screen</strong>
+        as it scrolls.</p>
+      <p class="keys"><kbd>s</kbd> sort by a column <kbd>←</kbd> <kbd>→</kbd> another table <kbd>t</kbd> auto, grid, records</p>
+    </div>
+    <div class="media-2">
+      <figure>
+        <a class="term" href="#zoom-sort">
+          <div class="term-bar"><i></i><i></i><i></i><span>ada feeding.md</span></div>
+          <img src="media/sort.webp" width="680" height="420" loading="lazy" alt="a table of durations in µs, ms, s, minutes and days, sorted ascending, then descending, then back to the source order">
+        </a>
+        <figcaption>Ascending, descending, and back to the source order.</figcaption>
+      </figure>
+      <figure>
+        <a class="term" href="#zoom-sticky">
+          <div class="term-bar"><i></i><i></i><i></i><span>ada feeding.md</span></div>
+          <img src="media/sticky.webp" width="680" height="420" loading="lazy" alt="a long table scrolling with its header row kept at the top">
+        </a>
+        <figcaption>A month of the feeder's log; the header stays.</figcaption>
+      </figure>
+    </div>
+    <div class="text">
+      <h3>At any width</h3>
+      <p>Prose rewraps and tables re-lay out the moment the terminal changes size. A table too wide to fit
+        <strong>turns into records</strong>, a card per row; widen the terminal and the grid comes back.</p>
+    </div>
+    <figure>
+      <a class="term term-wide" href="#zoom-resize">
+        <div class="term-bar"><i></i><i></i><i></i><span>ada shenanigans.md</span></div>
+        <img src="media/resize.webp" width="1000" height="420" loading="lazy" alt="a seven-column table re-laid out as the terminal narrows, turning into records, then back into a grid">
+      </a>
+      <figcaption>A real resize: ada in a tmux pane, the border moving.</figcaption>
+    </figure>
+  </article>
+
+  <article id="links" class="card">
+    <div class="text">
+      <h2>Links you can walk</h2>
+      <p>Relative paths, <code>[[wiki links]]</code>, anchors and <code>src/main.rs#L42</code>. <strong>Back and
+        forward return to the same spot</strong>, with the same link focused. The outline and the list of links
+        filter as you type, and take you there.</p>
+      <p class="keys"><kbd>Tab</kbd> focus <kbd>Enter</kbd> follow <kbd>BS</kbd> back <kbd>L</kbd> forward
+        <kbd>o</kbd> outline <kbd>l</kbd> links</p>
+    </div>
+    <div class="media-2">
+      <figure>
+        <a class="term" href="#zoom-links">
+          <div class="term-bar"><i></i><i></i><i></i><span>ada index.md</span></div>
+          <img src="media/links.webp" width="680" height="420" loading="lazy" alt="following a wiki link to a heading in another note, and coming back">
+        </a>
+        <figcaption><code>[[shenanigans#Unsolved]]</code>, there and back.</figcaption>
+      </figure>
+      <figure>
+        <a class="term" href="#zoom-outline">
+          <div class="term-bar"><i></i><i></i><i></i><span>ada index.md</span></div>
+          <img src="media/outline.png" width="680" height="420" loading="lazy" alt="the outline of headings in a popup, filtered">
+        </a>
+        <figcaption>The outline, <kbd>o</kbd>: type to filter, <kbd>Enter</kbd> to jump.</figcaption>
+      </figure>
+    </div>
+  </article>
+
+  <div class="pair">
+    <article id="gutter" class="card">
+      <div class="text">
+        <h2>A git gutter</h2>
+        <p>The gutter marks what git says changed in the rendered note: <strong>added and modified lines, staged
+          and unstaged</strong>, each in its own color.</p>
+        <p class="keys"><kbd>]c</kbd> <kbd>[c</kbd> next, previous change</p>
+      </div>
+      <figure>
+        <a class="term" href="#zoom-gutter">
+          <div class="term-bar"><i></i><i></i><i></i><span>ada index.md</span></div>
+          <img src="media/gutter.png" width="680" height="420" loading="lazy" alt="a note with change marks in the left gutter beside a staged new task, an unstaged edited task and an unstaged new task">
+        </a>
+      </figure>
+    </article>
+
+    <article id="search" class="card">
+      <div class="text">
+        <h2>Search that sees through markup</h2>
+        <p>A regex matches the text as you read it, <strong>across bold, italic and plain</strong>, as you type.
+          Link targets match too, and it's smart-case.</p>
+        <p class="keys"><kbd>/</kbd> search <kbd>n</kbd> <kbd>N</kbd> next, previous</p>
+      </div>
+      <figure>
+        <a class="term" href="#zoom-search">
+          <div class="term-bar"><i></i><i></i><i></i><span>ada index.md</span></div>
+          <img src="media/search.webp" width="680" height="420" loading="lazy" alt="typing a search that matches across bold, italic and plain text">
+        </a>
+      </figure>
+    </article>
+  </div>
+
+  <article id="images" class="card side">
+    <figure>
+      <a class="term" href="#zoom-images">
+        <div class="term-bar"><i></i><i></i><i></i><span>ada ada.md</span></div>
+        <img src="img/kitty-images.png" width="680" height="420" loading="lazy" alt="a note with a photo of Ada shown inline, in kitty">
+      </a>
+      <figcaption>In kitty.</figcaption>
+    </figure>
+    <div class="text">
+      <h2>Inline images</h2>
+      <p>png and jpeg, <strong>right in the note</strong>, over kitty, sixel or iTerm2, with half-blocks as the
+        fallback, and sixel inside tmux when it can. A link to an image opens it full screen.</p>
+    </div>
+  </article>
+
+  <article id="themes" class="card">
+    <div class="text">
+      <h2>Fourteen themes, and yours</h2>
+      <p>The ten dark ones are below; <strong>the light ones</strong> are <code>gruvbox-light</code>,
+        <code>catppuccin-latte</code>, <code>tokyonight-day</code> and <code>rose-pine-dawn</code>.
+        <kbd>T</kbd> previews each as you move through the list, and <kbd>←</kbd> <kbd>→</kbd> switch between dark
+        and light. Your own start from any of them and change only what they need.</p>
+    </div>
+    <ul class="gallery">
+      <li><a href="#zoom-theme-gruvbox-dark"><img src="media/theme-gruvbox-dark.png" width="680" height="420" loading="lazy" alt=""></a><code>gruvbox-dark</code></li>
+      <li><a href="#zoom-theme-catppuccin-mocha"><img src="media/theme-catppuccin-mocha.png" width="680" height="420" loading="lazy" alt=""></a><code>catppuccin-mocha</code></li>
+      <li><a href="#zoom-theme-catppuccin-macchiato"><img src="media/theme-catppuccin-macchiato.png" width="680" height="420" loading="lazy" alt=""></a><code>catppuccin-macchiato</code></li>
+      <li><a href="#zoom-theme-catppuccin-frappe"><img src="media/theme-catppuccin-frappe.png" width="680" height="420" loading="lazy" alt=""></a><code>catppuccin-frappe</code></li>
+      <li><a href="#zoom-theme-dracula"><img src="media/theme-dracula.png" width="680" height="420" loading="lazy" alt=""></a><code>dracula</code></li>
+      <li><a href="#zoom-theme-tokyonight-night"><img src="media/theme-tokyonight-night.png" width="680" height="420" loading="lazy" alt=""></a><code>tokyonight-night</code></li>
+      <li><a href="#zoom-theme-tokyonight-storm"><img src="media/theme-tokyonight-storm.png" width="680" height="420" loading="lazy" alt=""></a><code>tokyonight-storm</code></li>
+      <li><a href="#zoom-theme-tokyonight-moon"><img src="media/theme-tokyonight-moon.png" width="680" height="420" loading="lazy" alt=""></a><code>tokyonight-moon</code></li>
+      <li><a href="#zoom-theme-rose-pine"><img src="media/theme-rose-pine.png" width="680" height="420" loading="lazy" alt=""></a><code>rose-pine</code></li>
+      <li><a href="#zoom-theme-rose-pine-moon"><img src="media/theme-rose-pine-moon.png" width="680" height="420" loading="lazy" alt=""></a><code>rose-pine-moon</code></li>
+    </ul>
+  </article>
+
+  <div class="wrap">
+    <h2 class="also-title">Also</h2>
+    <ul class="also">
+      <li><h3>Not only markdown</h3><p>Code, config and other text files open whole and highlighted, in some 200
+        languages; <code>main.rs#L24</code> lands on line 24. <kbd>w</kbd> wraps code or scrolls it sideways.</p></li>
+      <li><h3>Callouts, footnotes, task lists</h3><p>GitHub's five callout kinds, footnotes you can follow, and
+        checkboxes.</p></li>
+      <li><h3>Live reload</h3><p>Reads the file again the moment it changes, keeping its place. <kbd>e</kbd> opens
+        <code>$EDITOR</code> at the line on screen.</p></li>
+      <li><h3>Pipes and previews</h3><p><code>--print</code> writes to a pipe at any width:
+        <code>fzf --preview 'ada --print {}'</code>.</p></li>
+      <li><h3>Your keys</h3><p>Remap any action, including two-key sequences like <code>"g g"</code>, in
+        <code>config.toml</code>.</p></li>
+      <li><h3>Record and replay</h3><p><code>--record</code> a session and <code>--replay</code> it to the same
+        frames: a bug report that reproduces.</p></li>
+    </ul>
+  </div>
+
+</section>
+
+<section id="performance" class="perf wrap">
+  <h2>Fast, and lean</h2>
+  <p>ada against other terminal markdown viewers on the same machine, documents and terminal. Lower is better;
+    bars are on a log scale.</p>
+<!-- perf:begin -->
+<p class="lede">Measured on the 238 KB note, the largest in the vault:</p>
+<div class="tiles">
+<div class="tile"><b>8.6 <span>ms</span></b><p>first paint</p><small>next: leaf, 30.3 ms (3.5×)</small></div>
+<div class="tile"><b>0.11 <span>ms</span></b><p>CPU per line scrolled</p><small>next: mdfried, 0.86 ms (8.1×)</small></div>
+<div class="tile"><b>3.4 <span>ms</span></b><p>re-layout after a resize</p><small>next: treemd, 28.0 ms (8.1×)</small></div>
+<div class="tile"><b>17.4 <span>MiB</span></b><p>peak memory</p><small>next: treemd, 24.1 MiB (1.4×)</small></div>
+</div>
+<div class="doc-tabs" role="radiogroup" aria-label="document">
+<input type="radio" name="doc" id="doc-s"><label for="doc-s"><b>S</b> 13 KB, the median note</label>
+<input type="radio" name="doc" id="doc-m"><label for="doc-m"><b>M</b> 86 KB, table-heavy</label>
+<input type="radio" name="doc" id="doc-l" checked><label for="doc-l"><b>L</b> 238 KB, the largest note</label>
+<input type="radio" name="doc" id="doc-xl"><label for="doc-xl"><b>XL</b> 2 MB, notes concatenated</label>
+</div>
+<div class="perf-panel" data-doc="s"><h3>In a 120×40 terminal</h3><div class="charts">
+<figure class="chart"><figcaption>first paint <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:21.6%"><span class="name">ada</span><span class="bar"></span><span class="val">3.7</span></li>
+<li style="--w:35.6%"><span class="name">leaf</span><span class="bar"></span><span class="val">6.7 <small>1.8×</small></span></li>
+<li style="--w:53.5%"><span class="name">treemd</span><span class="bar"></span><span class="val">14.4 <small>3.9×</small></span></li>
+<li style="--w:71.3%"><span class="name">md-tui</span><span class="bar"></span><span class="val">30.6 <small>8.2×</small></span></li>
+<li style="--w:79.0%"><span class="name">glow</span><span class="bar"></span><span class="val">42.3 <small>11×</small></span></li>
+<li style="--w:100.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">103 <small>28×</small></span></li>
+</ol></figure>
+<figure class="chart"><figcaption>CPU per line scrolled <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:19.9%"><span class="name">ada</span><span class="bar"></span><span class="val">0.10</span></li>
+<li style="--w:65.8%"><span class="name">mdfried</span><span class="bar"></span><span class="val">0.86 <small>8.3×</small></span></li>
+<li style="--w:68.8%"><span class="name">leaf</span><span class="bar"></span><span class="val">0.98 <small>9.5×</small></span></li>
+<li style="--w:76.3%"><span class="name">treemd</span><span class="bar"></span><span class="val">1.4 <small>13×</small></span></li>
+<li style="--w:80.5%"><span class="name">md-tui</span><span class="bar"></span><span class="val">1.7 <small>16×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">4.1 <small>40×</small></span></li>
+</ol></figure>
+<figure class="chart"><figcaption>search <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:16.3%"><span class="name">ada</span><span class="bar"></span><span class="val">0.94</span></li>
+<li style="--w:34.9%"><span class="name">md-tui</span><span class="bar"></span><span class="val">2.7 <small>2.8×</small></span></li>
+<li style="--w:39.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">3.4 <small>3.6×</small></span></li>
+<li style="--w:68.8%"><span class="name">treemd</span><span class="bar"></span><span class="val">17.9 <small>19×</small></span></li>
+<li style="--w:100.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">103 <small>110×</small></span></li>
+<li class="missing"><span class="name">glow</span><span class="why">has no search</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>re-layout after a resize <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:15.1%"><span class="name">ada</span><span class="bar"></span><span class="val">0.72</span></li>
+<li style="--w:41.1%"><span class="name">treemd</span><span class="bar"></span><span class="val">3.5 <small>4.9×</small></span></li>
+<li style="--w:76.5%"><span class="name">md-tui</span><span class="bar"></span><span class="val">29.7 <small>41×</small></span></li>
+<li style="--w:96.7%"><span class="name">mdfried</span><span class="bar"></span><span class="val">101 <small>141×</small></span></li>
+<li style="--w:100.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">124 <small>172×</small></span></li>
+<li class="missing"><span class="name">glow</span><span class="why">blank after a resize</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>CPU over a held page-down <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:23.3%"><span class="name">ada</span><span class="bar"></span><span class="val">5.3</span></li>
+<li style="--w:68.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">30.8 <small>5.8×</small></span></li>
+<li style="--w:74.2%"><span class="name">md-tui</span><span class="bar"></span><span class="val">39.2 <small>7.4×</small></span></li>
+<li style="--w:77.7%"><span class="name">leaf</span><span class="bar"></span><span class="val">44.9 <small>8.4×</small></span></li>
+<li style="--w:87.6%"><span class="name">treemd</span><span class="bar"></span><span class="val">66.3 <small>12×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">108 <small>20×</small></span></li>
+</ol></figure>
+<figure class="chart"><figcaption>peak memory <span>MiB</span></figcaption><ol>
+<li style="--w:40.4%"><span class="name">md-tui</span><span class="bar"></span><span class="val">9.3 <small>0.9×</small></span></li>
+<li class="ada" style="--w:47.1%"><span class="name">ada</span><span class="bar"></span><span class="val">10.8</span></li>
+<li style="--w:47.2%"><span class="name">leaf</span><span class="bar"></span><span class="val">10.9 <small>1.0×</small></span></li>
+<li style="--w:61.0%"><span class="name">treemd</span><span class="bar"></span><span class="val">14.9 <small>1.4×</small></span></li>
+<li style="--w:70.7%"><span class="name">mdfried</span><span class="bar"></span><span class="val">18.5 <small>1.7×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">36.0 <small>3.3×</small></span></li>
+</ol></figure>
+</div><h3>Printing, <code>--print</code> and the other printers</h3><div class="charts">
+<figure class="chart"><figcaption>print to a pipe <span>ms</span></figcaption><ol>
+<li style="--w:21.7%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">0.63 <small>0.3×</small></span></li>
+<li class="ada" style="--w:54.0%"><span class="name">ada</span><span class="bar"></span><span class="val">2.5</span></li>
+<li style="--w:61.3%"><span class="name">leaf</span><span class="bar"></span><span class="val">3.3 <small>1.4×</small></span></li>
+<li style="--w:71.4%"><span class="name">mdcat</span><span class="bar"></span><span class="val">5.1 <small>2.1×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">17.0 <small>6.9×</small></span></li>
+</ol></figure>
+<figure class="chart"><figcaption>peak memory, printing <span>MiB</span></figcaption><ol>
+<li style="--w:42.5%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">7.9 <small>0.9×</small></span></li>
+<li class="ada" style="--w:49.1%"><span class="name">ada</span><span class="bar"></span><span class="val">9.0</span></li>
+<li style="--w:49.5%"><span class="name">leaf</span><span class="bar"></span><span class="val">9.1 <small>1.0×</small></span></li>
+<li style="--w:89.6%"><span class="name">mdcat</span><span class="bar"></span><span class="val">21.7 <small>2.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">27.1 <small>3.0×</small></span></li>
+</ol></figure>
+</div></div>
+<div class="perf-panel" data-doc="m"><h3>In a 120×40 terminal</h3><div class="charts">
+<figure class="chart"><figcaption>first paint <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:16.8%"><span class="name">ada</span><span class="bar"></span><span class="val">7.1</span></li>
+<li style="--w:35.4%"><span class="name">leaf</span><span class="bar"></span><span class="val">19.5 <small>2.8×</small></span></li>
+<li style="--w:42.6%"><span class="name">treemd</span><span class="bar"></span><span class="val">29.0 <small>4.1×</small></span></li>
+<li style="--w:65.8%"><span class="name">mdfried</span><span class="bar"></span><span class="val">103 <small>14×</small></span></li>
+<li style="--w:70.7%"><span class="name">glow</span><span class="bar"></span><span class="val">134 <small>19×</small></span></li>
+<li style="--w:100.0%"><span class="name">md-tui</span><span class="bar"></span><span class="val">663 <small>94×</small></span></li>
+</ol></figure>
+<figure class="chart"><figcaption>CPU per line scrolled <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:23.5%"><span class="name">ada</span><span class="bar"></span><span class="val">0.22</span></li>
+<li style="--w:62.3%"><span class="name">leaf</span><span class="bar"></span><span class="val">1.0 <small>4.5×</small></span></li>
+<li style="--w:65.6%"><span class="name">mdfried</span><span class="bar"></span><span class="val">1.2 <small>5.2×</small></span></li>
+<li style="--w:75.2%"><span class="name">md-tui</span><span class="bar"></span><span class="val">1.7 <small>7.5×</small></span></li>
+<li style="--w:75.5%"><span class="name">treemd</span><span class="bar"></span><span class="val">1.7 <small>7.6×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">4.4 <small>20×</small></span></li>
+</ol></figure>
+<figure class="chart"><figcaption>search <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:17.1%"><span class="name">ada</span><span class="bar"></span><span class="val">1.4</span></li>
+<li style="--w:40.1%"><span class="name">md-tui</span><span class="bar"></span><span class="val">4.6 <small>3.4×</small></span></li>
+<li style="--w:42.4%"><span class="name">leaf</span><span class="bar"></span><span class="val">5.2 <small>3.8×</small></span></li>
+<li style="--w:96.2%"><span class="name">treemd</span><span class="bar"></span><span class="val">92.5 <small>68×</small></span></li>
+<li style="--w:100.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">113 <small>84×</small></span></li>
+<li class="missing"><span class="name">glow</span><span class="why">has no search</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>re-layout after a resize <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:19.0%"><span class="name">ada</span><span class="bar"></span><span class="val">2.7</span></li>
+<li style="--w:54.3%"><span class="name">treemd</span><span class="bar"></span><span class="val">14.5 <small>5.5×</small></span></li>
+<li style="--w:94.9%"><span class="name">mdfried</span><span class="bar"></span><span class="val">103 <small>39×</small></span></li>
+<li style="--w:100.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">131 <small>49×</small></span></li>
+<li class="missing"><span class="name">md-tui</span><span class="why">re-parses for seconds</span></li>
+<li class="missing"><span class="name">glow</span><span class="why">blank after a resize</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>CPU over a held page-down <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:30.5%"><span class="name">ada</span><span class="bar"></span><span class="val">18.1</span></li>
+<li style="--w:63.3%"><span class="name">mdfried</span><span class="bar"></span><span class="val">48.7 <small>2.7×</small></span></li>
+<li style="--w:65.4%"><span class="name">md-tui</span><span class="bar"></span><span class="val">51.8 <small>2.9×</small></span></li>
+<li style="--w:75.2%"><span class="name">leaf</span><span class="bar"></span><span class="val">69.5 <small>3.8×</small></span></li>
+<li style="--w:82.6%"><span class="name">treemd</span><span class="bar"></span><span class="val">86.8 <small>4.8×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">147 <small>8.1×</small></span></li>
+</ol></figure>
+<figure class="chart"><figcaption>peak memory <span>MiB</span></figcaption><ol>
+<li class="ada" style="--w:38.6%"><span class="name">ada</span><span class="bar"></span><span class="val">13.3</span></li>
+<li style="--w:44.0%"><span class="name">md-tui</span><span class="bar"></span><span class="val">15.2 <small>1.1×</small></span></li>
+<li style="--w:48.9%"><span class="name">leaf</span><span class="bar"></span><span class="val">17.0 <small>1.3×</small></span></li>
+<li style="--w:54.0%"><span class="name">treemd</span><span class="bar"></span><span class="val">19.2 <small>1.4×</small></span></li>
+<li style="--w:64.2%"><span class="name">mdfried</span><span class="bar"></span><span class="val">24.5 <small>1.8×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">57.4 <small>4.3×</small></span></li>
+</ol></figure>
+</div><h3>Printing, <code>--print</code> and the other printers</h3><div class="charts">
+<figure class="chart"><figcaption>print to a pipe <span>ms</span></figcaption><ol>
+<li style="--w:22.8%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">3.2 <small>0.7×</small></span></li>
+<li class="ada" style="--w:32.3%"><span class="name">ada</span><span class="bar"></span><span class="val">4.7</span></li>
+<li style="--w:46.2%"><span class="name">mdcat</span><span class="bar"></span><span class="val">8.1 <small>1.7×</small></span></li>
+<li style="--w:49.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">9.1 <small>2.0×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">70.7 <small>15×</small></span></li>
+</ol></figure>
+<figure class="chart"><figcaption>peak memory, printing <span>MiB</span></figcaption><ol>
+<li style="--w:34.9%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">6.1 <small>0.6×</small></span></li>
+<li class="ada" style="--w:53.0%"><span class="name">ada</span><span class="bar"></span><span class="val">9.8</span></li>
+<li style="--w:56.4%"><span class="name">leaf</span><span class="bar"></span><span class="val">10.7 <small>1.1×</small></span></li>
+<li style="--w:83.9%"><span class="name">mdcat</span><span class="bar"></span><span class="val">22.1 <small>2.3×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">33.7 <small>3.4×</small></span></li>
+</ol></figure>
+</div></div>
+<div class="perf-panel" data-doc="l"><h3>In a 120×40 terminal</h3><div class="charts">
+<figure class="chart"><figcaption>first paint <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:12.9%"><span class="name">ada</span><span class="bar"></span><span class="val">8.6</span></li>
+<li style="--w:30.7%"><span class="name">leaf</span><span class="bar"></span><span class="val">30.3 <small>3.5×</small></span></li>
+<li style="--w:37.1%"><span class="name">treemd</span><span class="bar"></span><span class="val">47.5 <small>5.6×</small></span></li>
+<li style="--w:47.9%"><span class="name">mdfried</span><span class="bar"></span><span class="val">103 <small>12×</small></span></li>
+<li style="--w:63.6%"><span class="name">glow</span><span class="bar"></span><span class="val">311 <small>36×</small></span></li>
+<li style="--w:100.0%"><span class="name">md-tui</span><span class="bar"></span><span class="val">4,130 <small>483×</small></span></li>
+</ol></figure>
+<figure class="chart"><figcaption>CPU per line scrolled <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:19.3%"><span class="name">ada</span><span class="bar"></span><span class="val">0.11</span></li>
+<li style="--w:63.3%"><span class="name">mdfried</span><span class="bar"></span><span class="val">0.86 <small>8.1×</small></span></li>
+<li style="--w:65.2%"><span class="name">leaf</span><span class="bar"></span><span class="val">0.95 <small>8.9×</small></span></li>
+<li style="--w:78.1%"><span class="name">treemd</span><span class="bar"></span><span class="val">1.7 <small>16×</small></span></li>
+<li style="--w:78.6%"><span class="name">md-tui</span><span class="bar"></span><span class="val">1.8 <small>17×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">5.0 <small>46×</small></span></li>
+</ol></figure>
+<figure class="chart"><figcaption>search <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:15.9%"><span class="name">ada</span><span class="bar"></span><span class="val">1.1</span></li>
+<li style="--w:35.6%"><span class="name">leaf</span><span class="bar"></span><span class="val">3.4 <small>3.1×</small></span></li>
+<li style="--w:48.6%"><span class="name">md-tui</span><span class="bar"></span><span class="val">7.1 <small>6.6×</small></span></li>
+<li style="--w:96.5%"><span class="name">mdfried</span><span class="bar"></span><span class="val">113 <small>105×</small></span></li>
+<li style="--w:100.0%"><span class="name">treemd</span><span class="bar"></span><span class="val">139 <small>129×</small></span></li>
+<li class="missing"><span class="name">glow</span><span class="why">has no search</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>re-layout after a resize <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:18.4%"><span class="name">ada</span><span class="bar"></span><span class="val">3.4</span></li>
+<li style="--w:60.4%"><span class="name">treemd</span><span class="bar"></span><span class="val">28.0 <small>8.1×</small></span></li>
+<li style="--w:92.1%"><span class="name">leaf</span><span class="bar"></span><span class="val">137 <small>40×</small></span></li>
+<li style="--w:100.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">203 <small>59×</small></span></li>
+<li class="missing"><span class="name">md-tui</span><span class="why">re-parses for seconds</span></li>
+<li class="missing"><span class="name">glow</span><span class="why">blank after a resize</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>CPU over a held page-down <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:23.5%"><span class="name">ada</span><span class="bar"></span><span class="val">9.2</span></li>
+<li style="--w:68.1%"><span class="name">mdfried</span><span class="bar"></span><span class="val">52.7 <small>5.7×</small></span></li>
+<li style="--w:71.4%"><span class="name">leaf</span><span class="bar"></span><span class="val">60.0 <small>6.5×</small></span></li>
+<li style="--w:75.8%"><span class="name">md-tui</span><span class="bar"></span><span class="val">71.2 <small>7.7×</small></span></li>
+<li style="--w:82.6%"><span class="name">treemd</span><span class="bar"></span><span class="val">92.9 <small>10×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">183 <small>20×</small></span></li>
+</ol></figure>
+<figure class="chart"><figcaption>peak memory <span>MiB</span></figcaption><ol>
+<li class="ada" style="--w:35.0%"><span class="name">ada</span><span class="bar"></span><span class="val">17.4</span></li>
+<li style="--w:47.4%"><span class="name">treemd</span><span class="bar"></span><span class="val">24.1 <small>1.4×</small></span></li>
+<li style="--w:48.1%"><span class="name">leaf</span><span class="bar"></span><span class="val">24.5 <small>1.4×</small></span></li>
+<li style="--w:56.5%"><span class="name">md-tui</span><span class="bar"></span><span class="val">30.5 <small>1.8×</small></span></li>
+<li style="--w:93.7%"><span class="name">mdfried</span><span class="bar"></span><span class="val">80.9 <small>4.7×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">95.3 <small>5.5×</small></span></li>
+</ol></figure>
+</div><h3>Printing, <code>--print</code> and the other printers</h3><div class="charts">
+<figure class="chart"><figcaption>print to a pipe <span>ms</span></figcaption><ol>
+<li style="--w:22.5%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">6.1 <small>0.8×</small></span></li>
+<li class="ada" style="--w:28.4%"><span class="name">ada</span><span class="bar"></span><span class="val">7.7</span></li>
+<li style="--w:39.4%"><span class="name">mdcat</span><span class="bar"></span><span class="val">12.1 <small>1.6×</small></span></li>
+<li style="--w:40.2%"><span class="name">leaf</span><span class="bar"></span><span class="val">12.5 <small>1.6×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">143 <small>19×</small></span></li>
+</ol></figure>
+<figure class="chart"><figcaption>peak memory, printing <span>MiB</span></figcaption><ol>
+<li style="--w:34.9%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">8.1 <small>0.7×</small></span></li>
+<li class="ada" style="--w:46.4%"><span class="name">ada</span><span class="bar"></span><span class="val">11.0</span></li>
+<li style="--w:47.7%"><span class="name">leaf</span><span class="bar"></span><span class="val">11.4 <small>1.0×</small></span></li>
+<li style="--w:73.0%"><span class="name">mdcat</span><span class="bar"></span><span class="val">22.2 <small>2.0×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">45.0 <small>4.1×</small></span></li>
+</ol></figure>
+</div></div>
+<div class="perf-panel" data-doc="xl"><h3>In a 120×40 terminal</h3><div class="charts">
+<figure class="chart"><figcaption>first paint <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:20.2%"><span class="name">ada</span><span class="bar"></span><span class="val">88.6</span></li>
+<li style="--w:51.5%"><span class="name">leaf</span><span class="bar"></span><span class="val">366 <small>4.1×</small></span></li>
+<li style="--w:53.7%"><span class="name">mdfried</span><span class="bar"></span><span class="val">404 <small>4.6×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">3,304 <small>37×</small></span></li>
+<li class="missing"><span class="name">md-tui</span><span class="why">never finished parsing</span></li>
+<li class="missing"><span class="name">treemd</span><span class="why">shows one section at a time</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>CPU per line scrolled <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:24.2%"><span class="name">ada</span><span class="bar"></span><span class="val">0.25</span></li>
+<li style="--w:61.7%"><span class="name">mdfried</span><span class="bar"></span><span class="val">1.0 <small>4.1×</small></span></li>
+<li style="--w:65.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">1.1 <small>4.7×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">4.3 <small>18×</small></span></li>
+<li class="missing"><span class="name">md-tui</span><span class="why">never finished parsing</span></li>
+<li class="missing"><span class="name">treemd</span><span class="why">shows one section at a time</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>search <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:42.8%"><span class="name">ada</span><span class="bar"></span><span class="val">2.8</span></li>
+<li style="--w:100.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">9.7 <small>3.4×</small></span></li>
+<li class="missing"><span class="name">mdfried</span><span class="why">match off-screen</span></li>
+<li class="missing"><span class="name">md-tui</span><span class="why">never finished parsing</span></li>
+<li class="missing"><span class="name">treemd</span><span class="why">shows one section at a time</span></li>
+<li class="missing"><span class="name">glow</span><span class="why">has no search</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>re-layout after a resize <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:20.8%"><span class="name">ada</span><span class="bar"></span><span class="val">37.0</span></li>
+<li style="--w:51.4%"><span class="name">leaf</span><span class="bar"></span><span class="val">143 <small>3.9×</small></span></li>
+<li style="--w:100.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">1,222 <small>33×</small></span></li>
+<li class="missing"><span class="name">md-tui</span><span class="why">never finished parsing</span></li>
+<li class="missing"><span class="name">treemd</span><span class="why">shows one section at a time</span></li>
+<li class="missing"><span class="name">glow</span><span class="why">blank after a resize</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>CPU over a held page-down <span>ms</span></figcaption><ol>
+<li class="ada" style="--w:27.0%"><span class="name">ada</span><span class="bar"></span><span class="val">17.3</span></li>
+<li style="--w:58.9%"><span class="name">mdfried</span><span class="bar"></span><span class="val">50.9 <small>2.9×</small></span></li>
+<li style="--w:68.4%"><span class="name">leaf</span><span class="bar"></span><span class="val">70.3 <small>4.1×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">205 <small>12×</small></span></li>
+<li class="missing"><span class="name">md-tui</span><span class="why">never finished parsing</span></li>
+<li class="missing"><span class="name">treemd</span><span class="why">shows one section at a time</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>peak memory <span>MiB</span></figcaption><ol>
+<li class="ada" style="--w:27.0%"><span class="name">ada</span><span class="bar"></span><span class="val">102</span></li>
+<li style="--w:46.5%"><span class="name">leaf</span><span class="bar"></span><span class="val">198 <small>1.9×</small></span></li>
+<li style="--w:68.7%"><span class="name">mdfried</span><span class="bar"></span><span class="val">422 <small>4.1×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">1,222 <small>12×</small></span></li>
+<li class="missing"><span class="name">md-tui</span><span class="why">never finished parsing</span></li>
+<li class="missing"><span class="name">treemd</span><span class="why">shows one section at a time</span></li>
+</ol></figure>
+</div><h3>Printing, <code>--print</code> and the other printers</h3><div class="charts">
+<figure class="chart"><figcaption>print to a pipe <span>ms</span></figcaption><ol>
+<li style="--w:20.8%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">73.1 <small>0.7×</small></span></li>
+<li class="ada" style="--w:30.1%"><span class="name">ada</span><span class="bar"></span><span class="val">110</span></li>
+<li style="--w:33.6%"><span class="name">mdcat</span><span class="bar"></span><span class="val">128 <small>1.2×</small></span></li>
+<li style="--w:49.3%"><span class="name">leaf</span><span class="bar"></span><span class="val">256 <small>2.3×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">2,380 <small>22×</small></span></li>
+</ol></figure>
+<figure class="chart"><figcaption>peak memory, printing <span>MiB</span></figcaption><ol>
+<li style="--w:31.8%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">42.1 <small>1.0×</small></span></li>
+<li class="ada" style="--w:32.3%"><span class="name">ada</span><span class="bar"></span><span class="val">42.6</span></li>
+<li style="--w:34.1%"><span class="name">mdcat</span><span class="bar"></span><span class="val">44.9 <small>1.1×</small></span></li>
+<li style="--w:53.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">77.4 <small>1.8×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">299 <small>7.0×</small></span></li>
+</ol></figure>
+</div></div>
+<p class="stamp">B2 at ada <code>3202a1a</code>, 2026-10-17</p>
+<!-- perf:end -->
+  <p class="caveats">Where ada isn't first: glow writes about a third fewer bytes per page, and md-tui uses less
+    memory on the smallest note. Each viewer ran pinned to four physical cores of the same machine, in a 120×40
+    pty; the numbers are medians of 3–5 runs. The harness is in
+    <a href="https://github.com/junkdog/ada-md/tree/main/bench/b2">bench/b2</a>.</p>
+</section>
+
+<section id="robust" class="robust wrap">
+  <h2>No crashes, on any input</h2>
+  <p class="lede">ada is fuzzed as <strong>whole sessions</strong>, not one function at a time: a document, then up to
+    64 things a reader, the file system, git or the terminal can do, in any order.</p>
+  <div class="tiles">
+    <div class="tile"><b>7.0 M</b><p>fuzzed sessions</p><small>whole scripted sessions, over 4.5 h in four rounds</small></div>
+    <div class="tile"><b>4</b><p>bugs found, all fixed</p><small>an overflow on a git hunk real git can't make; three frame bugs with wide glyphs and emoji</small></div>
+    <div class="tile"><b>0</b><p>crashes, hangs or OOMs</p><small>in every run since the fixes</small></div>
+    <div class="tile"><b>1</b><p><code>unsafe</code> block</p><small>a malloc option at startup, out of the fuzzer's reach</small></div>
+  </div>
+  <ul class="fuzz">
+    <li><h3>Any document</h3><p>Markdown, code, config, plain text and images, built from random bytes and a
+      dictionary of the parts markdown parsers find hardest.</p></li>
+    <li><h3>Any input</h3><p>Every action, through the real keymap or directly: scrolling, links, search, sorting,
+      the outline, themes, and resizes at any size.</p></li>
+    <li><h3>A world that answers badly</h3><p>Links to missing or corrupt files, fuzzed git hunks, images that
+      report zero or huge sizes, and results that arrive late, out of order, or after their document is gone.</p></li>
+    <li><h3>Every frame checked</h3><p>Each step paints through ada's real diff and encoder into a vt100 terminal
+      emulator, which must show exactly what ada meant to draw, cell by cell: glyphs, colors and attributes.</p></li>
+  </ul>
+  <p>Every interaction is a message, so a recorded session replays to identical frames: <code>--record</code>
+    makes a bug report that reproduces. A deterministic stand-in for the fuzzer runs with every
+    <code>cargo test</code>.</p>
+</section>
+
+<section id="install" class="install wrap">
+  <h2>Install</h2>
+  <pre><code>cargo install --git https://github.com/junkdog/ada-md</code></pre>
+  <p>Rust 1.99 or newer, and a C compiler: highlighting runs on Oniguruma, built from source. For a pure-Rust
+    build, add <code>--no-default-features</code>. Git integration runs the <code>git</code> command.</p>
+  <pre><code><span class="c"># read a note</span>
+ada notes/today.md
+
+<span class="c"># from a pipe</span>
+git show HEAD~3:README.md | ada
+
+<span class="c"># code, config and images too</span>
+ada src/main.rs
+ada plot.png
+
+<span class="c"># as an fzf preview</span>
+fzf --preview 'ada --print {}'</code></pre>
+  <p>Press <kbd>?</kbd> in ada for the keys. The
+    <a href="https://github.com/junkdog/ada-md#readme">README</a> has every key and option.</p>
+</section>
+
+</main>
+
+<footer class="wrap">
+  <p><a href="https://github.com/junkdog/ada-md">github.com/junkdog/ada-md</a> · MIT license</p>
+</footer>
+
+<!-- lightboxes: :target, no script -->
+<div class="zoom" id="zoom-hero"><a href="#tour" aria-label="close"></a><img src="media/hero.webp" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-sort"><a href="#tables" aria-label="close"></a><img src="media/sort.webp" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-sticky"><a href="#tables" aria-label="close"></a><img src="media/sticky.webp" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-resize"><a href="#tables" aria-label="close"></a><img src="media/resize.webp" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-links"><a href="#links" aria-label="close"></a><img src="media/links.webp" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-outline"><a href="#links" aria-label="close"></a><img src="media/outline.png" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-gutter"><a href="#gutter" aria-label="close"></a><img src="media/gutter.png" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-search"><a href="#search" aria-label="close"></a><img src="media/search.webp" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-images"><a href="#images" aria-label="close"></a><img src="img/kitty-images.png" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-theme-gruvbox-dark"><a href="#themes" aria-label="close"></a><img src="media/theme-gruvbox-dark.png" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-theme-catppuccin-mocha"><a href="#themes" aria-label="close"></a><img src="media/theme-catppuccin-mocha.png" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-theme-catppuccin-macchiato"><a href="#themes" aria-label="close"></a><img src="media/theme-catppuccin-macchiato.png" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-theme-catppuccin-frappe"><a href="#themes" aria-label="close"></a><img src="media/theme-catppuccin-frappe.png" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-theme-dracula"><a href="#themes" aria-label="close"></a><img src="media/theme-dracula.png" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-theme-tokyonight-night"><a href="#themes" aria-label="close"></a><img src="media/theme-tokyonight-night.png" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-theme-tokyonight-storm"><a href="#themes" aria-label="close"></a><img src="media/theme-tokyonight-storm.png" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-theme-tokyonight-moon"><a href="#themes" aria-label="close"></a><img src="media/theme-tokyonight-moon.png" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-theme-rose-pine"><a href="#themes" aria-label="close"></a><img src="media/theme-rose-pine.png" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-theme-rose-pine-moon"><a href="#themes" aria-label="close"></a><img src="media/theme-rose-pine-moon.png" loading="lazy" alt=""></div>
+
+<script>
+for (const b of document.querySelectorAll("button[data-copy]")) {
+  b.hidden = false;
+  b.onclick = () => navigator.clipboard.writeText(document.getElementById(b.dataset.copy).textContent)
+    .then(() => { b.textContent = "copied"; setTimeout(() => b.textContent = "copy", 1500); });
+}
+</script>
+</body>
+</html>

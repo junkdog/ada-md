@@ -26,16 +26,16 @@ Sleep 400ms
 Enter
 Sleep 2.5s
 
-# follow [[vet]] from the table
+# follow [[shenanigans]] from the table
 Tab@600ms 3
 Sleep 1s
 Enter
 Sleep 2s
 
-# sort the visits by what they cost, most first
+# sort the shenanigans by what they cost, most first
 Type "s"
 Sleep 1s
-Type "cost"
+Type "damage"
 Sleep 500ms
 Down
 Sleep 800ms
