@@ -28,7 +28,12 @@ done; wait
 cat $B2_ROOT/b2/lane*.jsonl > $B2_ROOT/b2/all.jsonl
 python3 -I bench/b2/report.py $B2_ROOT/b2/all.jsonl; python3 -I bench/b2/rank.py
 zsh bench/b2/b2a.zsh && python3 -I bench/b2/b2a_report.py
+python3 -I bench/b2/doctables.py > tables.md   # the vault notes' tables, × columns and ranks included
+python3 -I bench/b2/plot.py $(git rev-parse --short HEAD) && gnuplot bench/b2/plots/b2.gnuplot   # the README's charts
 ```
+
+The four lanes take about 25 minutes (md-tui's XL runs, each at the 90 s cap, set the length), and print mode
+another 1–2. Each job works on its own copy of its document, in `jobs/` beside the spec.
 
 Memory is defragmented before measuring when less than 8 GiB is free (`MemFree`; `B2_DROP_BELOW_GB` sets another
 threshold), as oxasm's and sift's benchmarks do: `b2 run` and `b2a.zsh` check once at their start, `b2 flood`
@@ -66,6 +71,8 @@ done
 | `mkspec.py` | jobs: viewers, their keys, documents and sentinels |
 | `lanes.py` | splits the jobs into four CPU lanes |
 | `report.py`, `rank.py` | tables, and where ada isn't first |
+| `doctables.py` | the vault notes' B2 tables in their layout: × columns, the best value per column bold, ranks, the cold resize |
+| `plot.py`, `plots/b2.gnuplot` | the README's charts: `plots/interactive.png` and `plots/print.png`, from the `.dat` files `plot.py` writes |
 | `b2a.zsh`, `b2a_report.py` | print mode with hyperfine 2 (wall, CPU, peak RSS, instructions) |
 | `pick.py` | picking search terms |
 | `printcmp.zsh`, `sgrcmp.py` | print mode, two builds compared by what each character shows (SGR interpreted, blanks by background), over the vault and the corpus at four widths |

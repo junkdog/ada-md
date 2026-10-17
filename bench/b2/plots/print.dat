@@ -1,0 +1,15 @@
+# B2 print mode at ada 3202a1a: hyperfine medians, ms (peak RSS in MiB); written by bench/b2/plot.py
+# print to a pipe, wall
+# doc ada leaf mdcat glow lowdown
+S 2.45264 3.33482 5.10738 17.0277 0.628899
+M 4.65983 9.12105 8.14842 70.7372 3.18344
+L 7.70527 12.4939 12.0541 142.839 6.05883
+XL 109.993 256.203 127.951 2380.44 73.0551
+
+
+# print to a pipe, peak RSS
+# doc ada leaf mdcat glow lowdown
+S 9.04492 9.14062 21.6934 27.1152 7.85547
+M 9.82422 10.7305 22.1172 33.6992 6.11328
+L 11.002 11.3867 22.1602 45.0312 8.13281
+XL 42.5898 77.4375 44.918 299.055 42.0781
