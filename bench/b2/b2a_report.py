@@ -12,14 +12,18 @@ for d in ["s", "m", "l", "xl"]:
                                    user=g("time_user") * 1e3, sys=g("time_system") * 1e3,
                                    rss=g("memory_peak_resident") / 2**20, ins=g("instructions") / 1e6)
 names = ["ada", "mdcat", "glow", "leaf", "lowdown"]
-def f(x): return f"{x/1000:.2f} s" if x >= 1000 else (f"{x:.0f}" if x >= 100 else f"{x:.1f}")
-print("| Viewer | " + " | ".join(f"{d.upper()}: wall (CPU) ms" for d in ["s", "m", "l", "xl"]) + " |")
-print("|---|---|---|---|---|")
+def f(x): return f"{x:,.0f}" if x >= 100 else f"{x:.1f}"
+# one number per cell, so that a table sorts by any column
+D = ["s", "m", "l", "xl"]
+print("| Viewer | " + " | ".join(f"{k} {d.upper()}" for d in D for k in ("Wall", "CPU")) + " |")
+print("|" + "---|" * (1 + 2 * len(D)))
 for n in names:
-    print(f"| {n} | " + " | ".join(f"{f(res[(d,n)]['wall'])} ({f(res[(d,n)]['cpu'])})" for d in ["s", "m", "l", "xl"]) + " |")
-print()
-print("| Viewer | " + " | ".join(f"{d.upper()}: RSS MiB / output KB / Minstr" for d in ["s", "m", "l", "xl"]) + " |")
-print("|---|---|---|---|---|")
+    print(f"| {n} | " + " | ".join(f"{f(res[(d,n)]['wall'])} | {f(res[(d,n)]['cpu'])}" for d in D) + " |")
+print("\nwall and CPU in ms; peak RSS in MiB, output in KB, instructions in millions:\n")
+print("| Viewer | " + " | ".join(f"{k} {d.upper()}" for k in ("RSS", "Output", "Instructions") for d in D) + " |")
+print("|" + "---|" * (1 + 3 * len(D)))
 for n in names:
-    print(f"| {n} | " + " | ".join(f"{res[(d,n)]['rss']:.1f} / {nbytes[(d,n)]/1000:.0f} / {res[(d,n)]['ins']:.0f}" for d in ["s", "m", "l", "xl"]) + " |")
+    r = [res[(d, n)] for d in D]
+    print(f"| {n} | " + " | ".join([f"{x['rss']:.1f}" for x in r] + [f"{nbytes[(d,n)]/1000:,.0f}" if (d, n) in nbytes else "" for d in D]
+                                   + [f"{x['ins']:,.0f}" for x in r]) + " |")
 print("\nruns:", {k: v["n"] for k, v in res.items() if k[0] in ("s", "xl")})

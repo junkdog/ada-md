@@ -1,4 +1,7 @@
-"""Aggregate B2 runs into markdown tables: median across runs of each run's median."""
+"""Aggregate B2 runs into markdown tables: median across runs of each run's median.
+
+One number per cell, in the unit its header names, so that a table sorts by any column; a cell
+without a number is empty, and what it lacks is listed under its table."""
 import json, sys, statistics as st
 from collections import defaultdict
 
@@ -42,49 +45,45 @@ def misses(v, d, kind, key="shown"):
 
 def ms(x, d=1):
     if x is None:
-        return "–"
+        return ""
     if x >= 1000:
-        return f"{x / 1000:.2f} s"
+        return f"{x:,.0f}"
     if x >= 100:
         return f"{x:.0f}"
     return f"{x:.{d}f}"
 
 
 def mib(x):
-    return "–" if x is None else (f"{x / 1024:.2f} GiB" if x >= 1024 else f"{x:.1f}")
+    return "" if x is None else f"{x:,.1f}"
 
 
 def kb(x):
-    return "–" if x is None else f"{x / 1000:.1f} KB"
+    return "" if x is None else f"{x / 1000:.1f}"
 
 
-def cell(wall, cpu, d=1):
-    if wall is None:
-        return "–"
-    return f"{ms(wall, d)} ({ms(cpu, d)})" if cpu is not None else ms(wall, d)
-
-
-def table(header, rows):
+def table(header, rows, notes=()):
     out = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
     out += ["| " + " | ".join(r) + " |" for r in rows]
+    out += [""] + [f"- {n}" for n in notes] if notes else []
     return "\n".join(out)
 
 
 sec = sys.argv[2] if len(sys.argv) > 2 else "all"
 
 # 1. startup
-rows = []
+rows, notes = [], []
 for v in V:
     row = [NAME[v]]
     for d in DOCS:
         f = agg(v, d, lambda r: r.get("first_ms"))
-        capped = all(r.get("first_ms") is None for r in runs.get((v, d), [])) and runs.get((v, d))
-        row.append("never (90 s cap)" if capped and d == "xl" else ms(f))
-    for d in DOCS:
-        row.append(cell(agg(v, d, lambda r: r.get("settle_ms")), agg(v, d, lambda r: r.get("paint_cpu_ms"))))
+        if f is None and runs.get((v, d)):
+            notes.append(f"{NAME[v]} {d.upper()}: never painted (90 s cap)")
+        row.append(ms(f))
+    row += [ms(agg(v, d, lambda r: r.get("settle_ms"))) for d in DOCS]
+    row += [ms(agg(v, d, lambda r: r.get("paint_cpu_ms"))) for d in DOCS]
     rows.append(row)
-print("#### startup\n")
-print(table(["Viewer", "First S", "M", "L", "XL", "Settled S (CPU)", "M", "L", "XL"], rows))
+print("#### startup: first paint, settled, and CPU until settled (ms)\n")
+print(table(["Viewer"] + [f"{k} {d.upper()}" for k in ("First", "Settled", "CPU") for d in DOCS], rows, notes))
 
 # 2. memory, idle
 rows = []
@@ -93,52 +92,59 @@ for v in V:
     for d in DOCS:
         row.append(mib(agg(v, d, lambda r: (r.get("hwm_kib") or 0) / 1024 or None)))
     for d in ("l", "xl"):
-        row.append(f"{ms(agg(v, d, lambda r: r.get('idle_cpu_ms')))} / {ms(agg(v, d, lambda r: r.get('idle_ctxsw_s')), 0)}")
+        row.append(ms(agg(v, d, lambda r: r.get("idle_cpu_ms"))))
+        row.append(ms(agg(v, d, lambda r: r.get("idle_ctxsw_s")), 0))
     rows.append(row)
-print("\n#### memory and idle\n")
-print(table(["Viewer", "Peak RSS S", "M", "L", "XL", "Idle L: CPU ms in 5 s / wakeups/s", "Idle XL"], rows))
+print("\n#### memory (peak RSS, MiB) and idle (CPU ms in 5 s, wakeups a second)\n")
+print(table(["Viewer", "RSS S", "RSS M", "RSS L", "RSS XL", "Idle CPU L", "Wakeups L", "Idle CPU XL", "Wakeups XL"], rows))
 
 # 3. interaction per doc
+KINDS = ("line", "page", "end", "search", "resize", "reload")
 for d in DOCS:
-    rows = []
+    rows, notes = [], []
     for v in V:
         row = [NAME[v]]
-        for kind, oc in (("line", True), ("page", True), ("end", False), ("search", False), ("resize", False), ("reload", False)):
+        for kind in KINDS:
+            note = None
             if kind in ("end", "search", "reload"):
                 wall = agg(v, d, lambda r: per_run(r, kind, "shown"))
-                m, t = misses(v, d, kind)
                 cpu = agg(v, d, lambda r: per_run(r, kind, "cpu"))
-                c = cell(wall, cpu)
-                if t and m == t:
-                    c = "missed" if kind != "search" or v != "glow" else "–"
-                elif m:
-                    c += f" [{m}/{t} missed]"
+                m, t = misses(v, d, kind)
                 if kind == "search" and v == "glow":
-                    c = "no search"
+                    wall = cpu = None
+                    note = "no search"
+                elif t and m == t:
+                    wall = cpu = None
+                    note = "missed"
+                elif m:
+                    note = f"{m}/{t} missed"
+                d1, d2 = ms(wall), ms(cpu)
             else:
+                oc = kind in ("line", "page")
                 wall = agg(v, d, lambda r: per_run(r, kind, "done", oc))
                 cpu = agg(v, d, lambda r: per_run(r, kind, "cpu", oc))
-                c = cell(wall, cpu, 2)
                 if kind == "resize":
                     ch = sum(sum(1 for x in (r.get("resize_changed") or []) if x) for r in runs.get((v, d), []))
                     if runs.get((v, d)) and ch == 0:
-                        c = "no repaint in 5 s"
-            row.append(c)
+                        wall = cpu = None
+                        note = "no repaint in 5 s"
+                d1, d2 = ms(wall, 2), ms(cpu, 2)
+            if note:
+                notes.append(f"{NAME[v]} {kind}: {note}")
+            row += [d1, d2]
         rows.append(row)
-    print(f"\n#### interaction, {d.upper()}\n")
-    print(table(["Viewer", "Line", "Page", "End", "Search", "Resize", "Reload"], rows))
+    print(f"\n#### interaction, {d.upper()} (ms)\n")
+    print(table(["Viewer"] + [h for k in KINDS for h in (k.capitalize(), f"{k.capitalize()} CPU")], rows, notes))
 
 # 4. held page-down
 rows = []
 for v in V:
     row = [NAME[v]]
-    for d in DOCS:
-        lag = agg(v, d, lambda r: r.get("burst_lag_ms"))
-        cpu = agg(v, d, lambda r: r.get("burst_cpu_ms"))
-        row.append(f"{ms(lag)} ({ms(cpu)})")
+    row += [ms(agg(v, d, lambda r: r.get("burst_lag_ms"))) for d in DOCS]
+    row += [ms(agg(v, d, lambda r: r.get("burst_cpu_ms"))) for d in DOCS]
     rows.append(row)
-print("\n#### held page-down: lag after the last key (CPU over the burst)\n")
-print(table(["Viewer", "S", "M", "L", "XL"], rows))
+print("\n#### held page-down: lag past one key interval after the last key, and CPU over the burst (ms)\n")
+print(table(["Viewer"] + [f"{k} {d.upper()}" for k in ("Lag", "CPU") for d in DOCS], rows))
 
 # 5. bytes per page and session totals
 rows = []
@@ -148,7 +154,8 @@ for v in V:
         row.append(kb(agg(v, d, lambda r: per_run(r, "page", "bytes", True))))
     for d in ("l", "xl"):
         c = agg(v, d, lambda r: r.get("total_cpu_ms")); w = agg(v, d, lambda r: r.get("total_wall_ms"))
-        row.append("–" if c is None else f"{ms(c)} / {ms(w)} ({100 * c / w:.1f}%)")
+        row += ["", "", ""] if c is None else [f"{c / 1000:.2f}", f"{w / 1000:.1f}", f"{100 * c / w:.1f}"]
     rows.append(row)
-print("\n#### bytes per page, and whole-session CPU over wall\n")
-print(table(["Viewer", "Bytes per page S", "L", "Session L: CPU / wall", "Session XL"], rows))
+print("\n#### bytes per page (KB), and whole-session CPU and wall (s)\n")
+print(table(["Viewer", "Page S", "Page L", "Session L CPU", "Session L wall", "Session L CPU %",
+             "Session XL CPU", "Session XL wall", "Session XL CPU %"], rows))
