@@ -13,12 +13,7 @@ in some 200 languages, and shows images inline in terminals that can (kitty, six
 
 ![ada following a wiki link, sorting a table by cost, going back, searching, and picking a theme](demo/short.gif)
 
-<details>
-<summary>A longer tour: links and history, code files, tables, search, images, live reload, themes and <code>--print</code></summary>
-
-![ada's features, one chapter at a time, each introduced by a shell comment](demo/tour.gif)
-
-</details>
+More of it, one feature at a time, on [the site](https://junkdog.github.io/ada-md/).
 
 ## Goals
 
@@ -285,14 +280,15 @@ back exactly, even after the files have changed, which makes a bug report out of
 
 ## Demos
 
-The recordings above are made with [VHS](https://github.com/charmbracelet/vhs) from
-`demo/short.tape` and `demo/tour.tape`, which read the made-up notes in `demo/notes` from a
-scratch git repository and a config of their own. To record them again:
+The recording above is made with [VHS](https://github.com/charmbracelet/vhs) from
+`demo/short.tape`, which reads the made-up notes in `demo/notes` from a scratch git repository
+and a config of its own; it's also the site's hero. The site's clips are recorded by
+`site/build.zsh`. To record the demo again:
 
 ```zsh
 cargo build --release
 vhs demo/short.tape
-vhs demo/tour.tape
+ffmpeg -y -i demo/short.gif -c:v libwebp_anim -quality 80 -loop 0 site/media/hero.webp
 ```
 
 ## License
