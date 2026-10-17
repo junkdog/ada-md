@@ -1,0 +1,13 @@
+[package]
+name = "b2"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+libc = "0.2.191"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+vt100 = "0.16.2"
+
+# not a member of ada's package; a workspace of its own
+[workspace]
