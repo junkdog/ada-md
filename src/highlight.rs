@@ -689,20 +689,22 @@ pub struct Job {
     pub theme: Arc<SyntaxTheme>,
     /// Visible blocks go to the front of the queue.
     pub urgent: bool,
+    /// Only the first lines, as a replayed partial result had them (O-05). Replays run these
+    /// inline; the worker never gets one.
+    pub first: Option<u32>,
 }
 
 impl Job {
     pub fn run(&self) -> Msg {
+        let spans = match self.first {
+            Some(n) => highlight_first(self.key, &self.lang, &self.text, &self.theme, n),
+            None => highlight(self.key, &self.lang, &self.text, &self.theme),
+        };
         Msg::Highlighted {
             doc_gen: self.doc_gen,
             block: self.block,
-            lines: None,
-            spans: Computed(Some(Arc::new(highlight(
-                self.key,
-                &self.lang,
-                &self.text,
-                &self.theme,
-            )))),
+            lines: self.first,
+            spans: Computed(Some(Arc::new(spans))),
         }
     }
 
@@ -939,6 +941,7 @@ mod tests {
             text: "".into(),
             theme: theme.clone(),
             urgent,
+            first: None,
         }
     }
 
@@ -1033,6 +1036,7 @@ mod tests {
             text: "let x = 1; // n\n".repeat(lines).into(),
             theme: theme.clone(),
             urgent: true,
+            first: None,
         };
         worker.send(Request::Job(long(1, 1500))).unwrap();
         let mut posted = Vec::new();

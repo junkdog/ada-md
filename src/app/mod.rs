@@ -673,6 +673,7 @@ impl State {
             text: code.text.clone(),
             theme: self.syntax.clone(),
             urgent,
+            first: None,
         }))
     }
 
@@ -716,6 +717,7 @@ impl State {
                 text: code.text.clone(),
                 theme: self.syntax.clone(),
                 urgent,
+                first: None,
             }));
         }
         cmds
@@ -745,36 +747,39 @@ impl State {
         cmds
     }
 
+    /// Keep a block's highlighting. A replay's marker carries none: it asks for the block
+    /// again, as it was then, and the replay runs that job inline (ADR-19).
     fn highlighted(
         &mut self,
         doc_gen: u64,
         block: CodeId,
         lines: Option<u32>,
         spans: Option<Arc<CodeSpans>>,
-    ) {
-        let spans = match spans {
+    ) -> Option<Cmd> {
+        match spans {
             // a result for the theme before the last switch has the wrong rules
-            Some(spans) if spans.rules != self.syntax.id => return,
-            Some(spans) => spans,
-            // a replay: recompute, if the block is still around
-            None => {
-                let Some(doc) = self.doc.as_ref().filter(|d| d.generation == doc_gen) else {
-                    return;
-                };
-                let blocks = doc.doc.code_blocks();
-                let Some(code) = blocks.get(block as usize) else {
-                    return;
-                };
-                let (Some(key), Some(lang)) = (highlight::key(code), &code.lang) else {
-                    return;
-                };
-                Arc::new(match lines {
-                    Some(n) => highlight::highlight_first(key, lang, &code.text, &self.syntax, n),
-                    None => highlight::highlight(key, lang, &code.text, &self.syntax),
-                })
+            Some(spans) if spans.rules != self.syntax.id => None,
+            Some(spans) => {
+                self.highlights.insert(spans);
+                None
             }
-        };
-        self.highlights.insert(spans);
+            // a replay: highlight again, if the block is still around
+            None => {
+                let doc = self.doc.as_ref().filter(|d| d.generation == doc_gen)?;
+                let blocks = doc.doc.code_blocks();
+                let code = blocks.get(block as usize)?;
+                Some(Cmd::Highlight(Job {
+                    doc_gen,
+                    block,
+                    key: highlight::key(code)?,
+                    lang: code.lang.clone()?,
+                    text: code.text.clone(),
+                    theme: self.syntax.clone(),
+                    urgent: true,
+                    first: lines,
+                }))
+            }
+        }
     }
 
     fn scroll_code_x(&mut self, by: i16) {
@@ -1152,10 +1157,10 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             block,
             lines,
             spans,
-        } => {
-            state.highlighted(doc_gen, block, lines, spans.0);
-            Vec::new()
-        }
+        } => state
+            .highlighted(doc_gen, block, lines, spans.0)
+            .into_iter()
+            .collect(),
         Msg::Quit => {
             state.quit = true;
             vec![Cmd::Quit]
@@ -1404,6 +1409,16 @@ mod tests {
         state.job(doc, block, key, false)
     }
 
+    /// Apply `msg`, then run the jobs it asks for inline, as a replay does.
+    fn replay_step(state: &mut State, msg: Msg) {
+        for cmd in update(state, msg) {
+            let Cmd::Highlight(job) = cmd else {
+                panic!("a marker asks only for highlighting: {cmd:?}");
+            };
+            assert!(update(state, job.run()).is_empty());
+        }
+    }
+
     #[test]
     fn replayed_highlights_are_recomputed() {
         let mut state = loaded("", 80, 10);
@@ -1415,15 +1430,20 @@ mod tests {
             lines: None,
             spans: Computed(None),
         };
-        update(&mut state, replayed(7));
         assert!(
-            state.highlights.get(key).is_none(),
+            update(&mut state, replayed(7)).is_empty(),
             "another document's block"
         );
         let doc_gen = state.generation;
-        update(&mut state, replayed(doc_gen));
+        let cmds = update(&mut state, replayed(doc_gen));
+        assert!(
+            state.highlights.get(key).is_none(),
+            "update leaves the work to the job"
+        );
+        assert!(matches!(&cmds[..], [Cmd::Highlight(job)] if job.key == key && job.first.is_none()));
+        replay_step(&mut state, replayed(doc_gen));
         let spans = state.highlights.get(key).expect("recomputed");
-        assert!(!spans.line(0).is_empty());
+        assert!(!spans.partial && !spans.line(0).is_empty());
     }
 
     /// A partial result's marker replays as that many lines (O-05).
@@ -1433,7 +1453,7 @@ mod tests {
         load_cmds(&mut state, code_doc());
         let key = state.doc.as_ref().unwrap().layout.code[1].key.unwrap();
         let doc_gen = state.generation;
-        update(
+        replay_step(
             &mut state,
             Msg::Highlighted {
                 doc_gen,
@@ -1445,6 +1465,7 @@ mod tests {
         let spans = state.highlights.get(key).expect("recomputed");
         assert!(spans.partial && spans.line_count() == 1);
     }
+
 
     /// Every switch of document or theme tells the worker which jobs are still wanted.
     #[test]

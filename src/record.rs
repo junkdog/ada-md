@@ -659,12 +659,14 @@ pub fn replay(
     }
 }
 
-/// Apply one message, and in live mode the messages its commands produce.
+/// Apply one message, and in live mode the messages its commands produce. Otherwise only a
+/// highlighting marker's job runs, inline, so its frame shows the highlighting (ADR-19).
 fn step(state: &mut State, msg: Msg, effects: &mut Effects, live: bool) {
     let mut queue = VecDeque::from([msg]);
     while let Some(msg) = queue.pop_front() {
+        let marker = matches!(msg, Msg::Highlighted { .. });
         for cmd in app::update(state, msg) {
-            if live {
+            if live || marker {
                 queue.extend(effects.run(cmd));
             }
         }
@@ -954,6 +956,41 @@ mod tests {
         assert!(parse(b"ada-rec 1\n+0 scroll by=sideways\n").is_err());
         assert!(parse(b"ada-rec 1\n+0 doc-loaded path=\"x\" mtime=none text:99\nshort").is_err());
         assert!(parse(b"ada-rec 1\n+x quit\n").is_err());
+    }
+
+    /// A marker's job runs inline, so the frame after it is highlighted (ADR-19). Frame text
+    /// doesn't show colors, so this looks at the state.
+    #[test]
+    fn replayed_markers_highlight_before_the_next_frame() {
+        let mut state = State::new(Theme::builtin(), Config::default());
+        let mut effects = Effects::new(None);
+        let load = [
+            Msg::Init {
+                size: Size { w: 80, h: 10 },
+            },
+            Msg::DocLoaded {
+                path: "a.md".into(),
+                mtime: None,
+                text: "```rust\nfn main() {}\n```\n".into(),
+            },
+        ]
+        .map(|msg| Entry { at_ms: 0, msg });
+        replay_headless(&load, &mut state, &mut effects, false).unwrap();
+        let doc = state.doc.as_ref().unwrap();
+        let key = crate::highlight::key(doc.doc.code_blocks()[0]).unwrap();
+        assert!(state.highlights.get(key).is_none());
+        let marker = Entry {
+            at_ms: 0,
+            msg: Msg::Highlighted {
+                doc_gen: doc.generation,
+                block: 0,
+                lines: None,
+                spans: Computed(None),
+            },
+        };
+        replay_headless(&[marker], &mut state, &mut effects, false).unwrap();
+        let spans = state.highlights.get(key).expect("highlighted by the replay");
+        assert!(!spans.line(0).is_empty());
     }
 
     #[test]

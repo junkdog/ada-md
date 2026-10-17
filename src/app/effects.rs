@@ -74,11 +74,11 @@ impl Effects {
         match cmd {
             Cmd::LoadDoc(path) => Some(load_doc(&path, self.stdin.as_ref())),
             Cmd::Highlight(job) => match &self.highlight {
-                Some(worker) => match worker.send(Request::Job(job)) {
+                Some(worker) if job.first.is_none() => match worker.send(Request::Job(job)) {
                     Err(mpsc::SendError(Request::Job(job))) => Some(job.run()),
                     _ => None,
                 },
-                None => Some(job.run()),
+                _ => Some(job.run()),
             },
             Cmd::HighlightOnly(epoch) => {
                 if let Some(worker) = &self.highlight {
