@@ -148,5 +148,9 @@ fn print_doc(
     };
     let filetype = FileType::of(path, &text);
     let doc = filetype.parse(path, &text);
-    print::run(&doc, theme, filetype.params(params), args.line).map_err(|e| e.to_string())
+    let result = print::run(&doc, theme, filetype.params(params), args.line);
+    // ada exits next: the document is left for the OS to reclaim instead of freed (O-31).
+    std::mem::forget(doc);
+    std::mem::forget(text);
+    result.map_err(|e| e.to_string())
 }

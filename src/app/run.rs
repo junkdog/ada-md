@@ -43,7 +43,9 @@ pub(crate) fn draw_frame(terminal: &mut Term, state: &State) -> io::Result<()> {
     terminal.draw(|grid| ui::view(state, grid))
 }
 
-/// Run ada in the terminal until the user quits.
+/// Run ada in the terminal until the user quits, for a process that exits next: the documents,
+/// their layouts and the caches are left for the OS to reclaim instead of freed (O-31: 45 ms on
+/// quit for a 20 MB document).
 pub fn run_tui(
     mut state: State,
     path: PathBuf,
@@ -61,6 +63,9 @@ pub fn run_tui(
         recorder.as_mut(),
     );
     ratatui::restore();
+    // The recording is a `BufWriter`: its drop writes the tail.
+    drop(recorder);
+    std::mem::forget((terminal, state, effects));
     result
 }
 
