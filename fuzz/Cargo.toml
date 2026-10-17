@@ -11,6 +11,10 @@ cargo-fuzz = true
 libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 ratatui = { version = "0.30", default-features = false }
+unicode-segmentation = "1.13"
+unicode-width = "0.2"
+# the terminal the frames are checked on (F-04)
+vt100 = "0.16.2"
 ada-md = { path = ".." }
 
 [[bin]]

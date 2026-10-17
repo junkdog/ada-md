@@ -14,13 +14,15 @@
 
 #![no_main]
 
+use std::cell::RefCell;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use ada::app::{self, Cmd, Computed, Config, Dir, Effects, Keymap, Msg, ScrollBy, Size, State};
-use ada::grid::Screen;
+use ada::grid::{Grid, Screen};
 use ada::highlight;
 use ada::images::{Probe, Proto};
 use ada::layout::TableMode;
@@ -30,6 +32,9 @@ use libfuzzer_sys::arbitrary::{self, Arbitrary, Result, Unstructured};
 use libfuzzer_sys::fuzz_target;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Size as Cells;
+use ratatui::style::{Color, Modifier};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const MAX_OPS: usize = 64;
 
@@ -326,7 +331,7 @@ fn answer(
                 text: doc.clone(),
             },
         }),
-        // now and then the marker a replay carries, which `update` recomputes
+        // now and then the marker a replay carries, which `update` asks for again
         Cmd::Highlight(job) if u.ratio(1, 8)? => Some(Msg::Highlighted {
             doc_gen: job.doc_gen,
             block: job.block,
@@ -348,6 +353,7 @@ fn answer(
                 spans: Computed(Some(Arc::new(spans))),
             })
         }
+        // a replayed marker's job keeps its length
         Cmd::Highlight(job) => Some(job.run()),
         Cmd::ResolveLinks {
             doc_gen, targets, ..
@@ -428,19 +434,262 @@ fn answer(
     })
 }
 
+/// `ADA_FUZZ_TRACE=1` prints every message and every frame's bytes, to follow a failing input.
+fn trace() -> bool {
+    static TRACE: OnceLock<bool> = OnceLock::new();
+    *TRACE.get_or_init(|| std::env::var_os("ADA_FUZZ_TRACE").is_some())
+}
+
+/// The screen's writer: the terminal model reads what it wrote.
+struct Tap(Rc<RefCell<Vec<u8>>>);
+
+impl io::Write for Tap {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.borrow_mut().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Styles that show on a blank, as ada's encoder counts them: on any other blank, only the
+/// background shows, and the encoder may leave the rest of the pen as it was.
+const VISIBLE_ON_BLANK: Modifier = Modifier::REVERSED
+    .union(Modifier::UNDERLINED)
+    .union(Modifier::SLOW_BLINK)
+    .union(Modifier::RAPID_BLINK)
+    .union(Modifier::CROSSED_OUT);
+
+/// The terminal's color for one of ada's: named colors are the first 16 indexes.
+fn term_color(c: Color) -> vt100::Color {
+    const NAMED: [Color; 16] = [
+        Color::Black,
+        Color::Red,
+        Color::Green,
+        Color::Yellow,
+        Color::Blue,
+        Color::Magenta,
+        Color::Cyan,
+        Color::Gray,
+        Color::DarkGray,
+        Color::LightRed,
+        Color::LightGreen,
+        Color::LightYellow,
+        Color::LightBlue,
+        Color::LightMagenta,
+        Color::LightCyan,
+        Color::White,
+    ];
+    match c {
+        Color::Reset => vt100::Color::Default,
+        Color::Indexed(i) => vt100::Color::Idx(i),
+        Color::Rgb(r, g, b) => vt100::Color::Rgb(r, g, b),
+        named => vt100::Color::Idx(NAMED.iter().position(|&n| n == named).unwrap_or(0) as u8),
+    }
+}
+
+/// The columns ada gives a grapheme (`grid::cell_width`): its width, plus one for each
+/// halfwidth voiced mark.
+fn cell_width(g: &str) -> usize {
+    g.width() + g.chars().filter(|c| matches!(c, '\u{FF9E}' | '\u{FF9F}')).count()
+}
+
+/// What vt100 is given in place of grapheme `g`, so that it lays the grapheme out as ada does.
+/// vt100 measures a code point at a time, and attaches a zero-width one to the cell before,
+/// so a grapheme of several code points (an emoji sequence, a prepended mark) takes the wrong
+/// columns; and it drops U+FFFD, which terminals draw (and fuzzed documents are full of). Such
+/// a grapheme becomes one private-use character, or one wide CJK one, of ada's width.
+fn stand_in(g: &str) -> &str {
+    let mut chars = g.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) if c != '\u{fffd}' && c.width() == Some(cell_width(g)) => g,
+        _ => match cell_width(g) {
+            0 => "",
+            1 => "\u{e000}",
+            _ => "\u{4e00}",
+        },
+    }
+}
+
+/// A frame's bytes as vt100 is given them: escape sequences and control characters as they
+/// are, and each symbol written by its [`stand_in`]. The symbols are the new frame's, at the
+/// cursor, which follows ada's moves (`CUP`, `CUF`, `CHA`, CR, LF, and the margins and line
+/// moves of a scroll), as the text alone can't say where one cell ends: `"` and `🏽` from two
+/// cells read as one grapheme. Text that isn't what the grid holds there goes a grapheme at a
+/// time, and vt100 then shows the difference. `rows` gets the rows the bytes touch, all of
+/// them when lines move or the screen clears.
+fn for_vt100(bytes: &[u8], grid: &Grid, rows: &mut [bool]) -> Vec<u8> {
+    let touch = |rows: &mut [bool], y: u16| {
+        if let Some(r) = rows.get_mut(usize::from(y)) {
+            *r = true;
+        }
+    };
+    let area = grid.area();
+    let mut out = Vec::with_capacity(bytes.len());
+    let (mut x, mut y) = (0u16, 0u16);
+    let mut i = 0;
+    while i < bytes.len() {
+        let end = match bytes[i] {
+            0x1b => match bytes.get(i + 1) {
+                // CSI: parameters up to a final byte
+                Some(b'[') => {
+                    let end = (i + 2..bytes.len())
+                        .find(|&j| (0x40..=0x7e).contains(&bytes[j]))
+                        .map_or(bytes.len(), |j| j + 1);
+                    let params = std::str::from_utf8(&bytes[i + 2..end - 1]).unwrap_or("");
+                    let mut n = params.split(';').map(|p| p.parse::<u16>().unwrap_or(1).max(1));
+                    match bytes[end - 1] {
+                        b'H' => {
+                            y = n.next().unwrap_or(1) - 1;
+                            x = n.next().unwrap_or(1) - 1;
+                        }
+                        b'C' => x = x.saturating_add(n.next().unwrap_or(1)),
+                        b'G' => x = n.next().unwrap_or(1) - 1,
+                        b'r' => (x, y) = (0, 0),
+                        b'L' | b'M' => {
+                            x = 0;
+                            rows.fill(true);
+                        }
+                        b'J' => rows.fill(true),
+                        b'K' => touch(rows, y),
+                        _ => {}
+                    }
+                    end
+                }
+                // a string (DCS, APC, OSC, PM, SOS): up to BEL or ST
+                Some(b'P' | b'_' | b']' | b'^' | b'X') => (i + 2..bytes.len())
+                    .find(|&j| bytes[j] == 0x07 || bytes[j..].starts_with(b"\x1b\\"))
+                    .map_or(bytes.len(), |j| j + if bytes[j] == 0x07 { 1 } else { 2 }),
+                _ => (i + 2).min(bytes.len()),
+            },
+            b'\r' => {
+                x = 0;
+                i + 1
+            }
+            b'\n' => {
+                y = y.saturating_add(1);
+                i + 1
+            }
+            b if b < 0x20 || b == 0x7f => i + 1,
+            _ => {
+                let end = (i..bytes.len())
+                    .find(|&j| bytes[j] < 0x20 || bytes[j] == 0x7f)
+                    .unwrap_or(bytes.len());
+                let mut text = std::str::from_utf8(&bytes[i..end]).expect("ada writes UTF-8");
+                touch(rows, y);
+                while !text.is_empty() {
+                    let here = (x < area.width && y < area.height)
+                        .then(|| (grid.symbol((x, y)), grid[(x, y)].width()))
+                        .filter(|(s, _)| !s.is_empty() && text.starts_with(s));
+                    let (symbol, width) = here.unwrap_or_else(|| {
+                        let g = text.graphemes(true).next().unwrap_or(text);
+                        (g, cell_width(g) as u16)
+                    });
+                    out.extend_from_slice(stand_in(symbol).as_bytes());
+                    text = &text[symbol.len()..];
+                    x = x.saturating_add(width.max(1));
+                }
+                i = end;
+                continue;
+            }
+        };
+        out.extend_from_slice(&bytes[i..end]);
+        i = end;
+    }
+    out
+}
+
+/// The terminal shows what the grid holds, cell by cell: what the diff left out was already
+/// there, and what the encoder wrote, scroll moves included, lands where it should (F-04). A
+/// blank is compared by what shows of it, a grapheme by its [`stand_in`]. Image cells, and
+/// graphemes no or several columns wide, are left out. With `rows`, only the rows it marks.
+fn shows(term: &vt100::Screen, grid: &Grid, rows: Option<&[bool]>) {
+    let area = grid.area();
+    assert_eq!(term.size(), (area.height, area.width));
+    for y in 0..area.height {
+        if rows.is_some_and(|r| !r[usize::from(y)]) {
+            continue;
+        }
+        let mut x = 0;
+        while x < area.width {
+            let cell = &grid[(x, y)];
+            let width = cell.width().max(1);
+            let symbol = match grid.symbol((x, y)) {
+                // ASCII
+                s if s.len() == 1 => s,
+                s => stand_in(s),
+            };
+            if !symbol.is_empty() && width <= 2 && !cell.is_image() {
+
+                let m = cell.modifier();
+                let blank = symbol == " " && !m.intersects(VISIBLE_ON_BLANK);
+                let styles = [
+                    Modifier::BOLD,
+                    Modifier::DIM,
+                    Modifier::ITALIC,
+                    Modifier::UNDERLINED,
+                    Modifier::REVERSED,
+                ]
+                .map(|s| m.contains(s));
+                let want = (
+                    symbol,
+                    term_color(cell.bg()),
+                    (!blank).then(|| (term_color(cell.fg()), styles)),
+                );
+                let seen = term.cell(y, x).expect("cell in the terminal");
+                let styles = [
+                    seen.bold(),
+                    seen.dim(),
+                    seen.italic(),
+                    seen.underline(),
+                    seen.inverse(),
+                ];
+                let got = (
+                    if seen.has_contents() {
+                        seen.contents()
+                    } else {
+                        " "
+                    },
+                    seen.bgcolor(),
+                    (!blank).then(|| (seen.fgcolor(), styles)),
+                );
+                assert_eq!(
+                    want,
+                    got,
+                    "cell ({x}, {y}) of {}×{}: the grid's, then the terminal's; their rows:\n{:?}\n{:?}",
+                    area.width,
+                    area.height,
+                    (0..area.width).map(|x| stand_in(grid.symbol((x, y)))).collect::<String>(),
+                    term.contents_between(y, 0, y, area.width),
+                );
+            }
+            x += width;
+        }
+    }
+}
+
 struct Session<'a> {
     state: State,
     keymap: Keymap,
     effects: Effects,
     pending: Vec<Msg>,
     doc: Arc<str>,
-    screen: Screen<io::Sink>,
+    screen: Screen<Tap>,
+    /// What the screen wrote since the last frame was checked.
+    out: Rc<RefCell<Vec<u8>>>,
+    term: vt100::Parser,
+    paints: u32,
     u: Unstructured<'a>,
 }
 
 impl Session<'_> {
     /// Apply `msg`; queue the stub world's answers to its commands.
     fn send(&mut self, msg: Msg) {
+        if trace() {
+            eprintln!("msg {msg:?}");
+        }
         for cmd in app::update(&mut self.state, msg) {
             match answer(cmd, &mut self.u, &self.doc, &mut self.effects) {
                 Ok(Some(msg)) => self.pending.push(msg),
@@ -452,17 +701,35 @@ impl Session<'_> {
         self.paint();
     }
 
-    /// Paint, diff against the last frame and encode, into a sink: since the grid replaced
-    /// ratatui's buffer, the diff and the encoder are ada's code too.
+    /// Paint, diff against the last frame and encode: since the grid replaced ratatui's buffer,
+    /// the diff and the encoder are ada's code too. The bytes go to a vt100 terminal, which
+    /// must then show the frame (F-04).
     fn paint(&mut self) {
         let Size { w, h } = self.state.size;
         if self.screen.size() != Cells::new(w, h) {
             self.screen.resize(Cells::new(w, h));
+            self.term.screen_mut().set_size(h, w);
         }
         let state = &self.state;
         self.screen
             .draw(|grid| ada::ui::view(state, grid))
-            .expect("sink");
+            .expect("tap");
+        let bytes = std::mem::take(&mut *self.out.borrow_mut());
+        if trace() {
+            eprintln!("frame {}", bytes.escape_ascii());
+        }
+        // the rows this frame touched, and every row now and then: a changed row the diff left
+        // out entirely stays wrong until it's checked
+        let mut rows = vec![false; usize::from(h)];
+        self.term
+            .process(&for_vt100(&bytes, self.screen.shown(), &mut rows));
+        self.paints += 1;
+        let all = self.paints.is_multiple_of(8);
+        shows(
+            self.term.screen(),
+            self.screen.shown(),
+            (!all).then_some(&rows[..]),
+        );
     }
 
     fn deliver(&mut self, i: usize) {
@@ -625,7 +892,9 @@ fuzz_target!(|data: &[u8]| {
 
     let mut state = State::new(theme(), config);
     state.themes.extend_from_slice(extra_themes());
-    let screen = Screen::new(io::sink(), Cells::new(state.size.w, state.size.h));
+    let out = Rc::new(RefCell::new(Vec::new()));
+    let screen = Screen::new(Tap(out.clone()), Cells::new(state.size.w, state.size.h));
+    let term = vt100::Parser::new(state.size.h, state.size.w, 0);
     let mut s = Session {
         state,
         keymap: Keymap::default(),
@@ -633,6 +902,9 @@ fuzz_target!(|data: &[u8]| {
         pending: Vec::new(),
         doc: doc.clone(),
         screen,
+        out,
+        term,
+        paints: 0,
         u,
     };
 
@@ -663,4 +935,5 @@ fuzz_target!(|data: &[u8]| {
         }
     }
     s.settle();
+    shows(s.term.screen(), s.screen.shown(), None);
 });

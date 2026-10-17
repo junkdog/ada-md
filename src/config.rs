@@ -165,7 +165,7 @@ pub fn default_text() -> String {
 # Which protocol: auto asks the terminal, or kitty, sixel, iterm2, halfblocks.
 # image_protocol = \"auto\"
 
-# Read the file again when it changes on disk; ada looks at its time once a second.
+# Read the file again when it changes on disk.
 # live_reload = true
 
 # The table layout to start with (`t` cycles it): auto, grid or records.
