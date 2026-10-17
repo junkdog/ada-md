@@ -2,22 +2,33 @@
 //! the main thread blocks in `recv()`, so idle costs nothing, then drains, updates and draws once.
 
 use std::collections::VecDeque;
-use std::io::{self, Write};
+use std::io::{self, BufWriter, Stdout, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::{env, thread};
 
+use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{self, Event};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{Clear, ClearType, EnterAlternateScreen, enable_raw_mode};
-use ratatui::{DefaultTerminal, Terminal};
 
 use super::{Bindings, Cmd, Effects, Keymap, Msg, Size, State, editor_command, osc52, update};
 use crate::images;
 use crate::record::Recorder;
 use crate::ui;
+
+/// A terminal whose frames reach stdout in one write. Stdout itself is a 1 KB line buffer behind a
+/// lock taken for every piece crossterm formats: about ten writes a frame, and a fifth of its CPU.
+type Term = Terminal<CrosstermBackend<BufWriter<Stdout>>>;
+
+fn new_terminal() -> io::Result<Term> {
+    Terminal::new(CrosstermBackend::new(BufWriter::with_capacity(
+        1 << 16,
+        io::stdout(),
+    )))
+}
 
 /// Run ada in the terminal until the user quits.
 pub fn run_tui(
@@ -26,7 +37,9 @@ pub fn run_tui(
     mut effects: Effects,
     mut recorder: Option<Recorder>,
 ) -> Result<(), String> {
-    let mut terminal = ratatui::try_init().map_err(|e| format!("terminal: {e}"))?;
+    // `try_init` sets up the screen and the panic hook; the terminal it returns writes unbuffered.
+    ratatui::try_init().map_err(|e| format!("terminal: {e}"))?;
+    let mut terminal = new_terminal().map_err(|e| format!("terminal: {e}"))?;
     let result = event_loop(
         &mut terminal,
         &mut state,
@@ -39,7 +52,7 @@ pub fn run_tui(
 }
 
 fn event_loop(
-    terminal: &mut DefaultTerminal,
+    terminal: &mut Term,
     state: &mut State,
     path: PathBuf,
     effects: &mut Effects,
@@ -122,11 +135,7 @@ fn event_loop(
 }
 
 /// Run one command: the terminal's own here, the rest through the effect runner.
-fn run_cmd(
-    terminal: &mut DefaultTerminal,
-    effects: &mut Effects,
-    cmd: Cmd,
-) -> Result<Option<Msg>, String> {
+fn run_cmd(terminal: &mut Term, effects: &mut Effects, cmd: Cmd) -> Result<Option<Msg>, String> {
     match cmd {
         Cmd::SpawnEditor { file, line } => edit(terminal, &file, line),
         Cmd::Osc52(text) => {
@@ -143,7 +152,7 @@ fn run_cmd(
 
 /// Hand the terminal to the editor (ADR-18): leave the alternate screen, run it in the
 /// foreground, then take the screen back and redraw all of it.
-fn edit(terminal: &mut DefaultTerminal, file: &Path, line: u32) -> Result<Option<Msg>, String> {
+fn edit(terminal: &mut Term, file: &Path, line: u32) -> Result<Option<Msg>, String> {
     let editor = ["VISUAL", "EDITOR"]
         .iter()
         .filter_map(env::var_os)
@@ -155,12 +164,12 @@ fn edit(terminal: &mut DefaultTerminal, file: &Path, line: u32) -> Result<Option
     };
     ratatui::restore();
     let status = Command::new(&argv[0]).args(&argv[1..]).status();
-    let back = || -> io::Result<DefaultTerminal> {
+    let back = || -> io::Result<Term> {
         enable_raw_mode()?;
         execute!(io::stdout(), EnterAlternateScreen, Clear(ClearType::All))?;
         // A new terminal has a blank back buffer, so the next draw paints every cell.
         // (`Terminal::clear` would ask for the cursor's position, which needs an answer.)
-        Terminal::new(CrosstermBackend::new(io::stdout()))
+        new_terminal()
     };
     *terminal = back().map_err(|e| format!("terminal: {e}"))?;
     Ok(Some(match status {
