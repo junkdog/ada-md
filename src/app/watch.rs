@@ -292,7 +292,6 @@ mod inotify {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
     use std::sync::mpsc::Receiver;
 
     use super::*;
@@ -339,6 +338,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn inotify_reports_each_kind_of_save() {
+        use std::io::Write;
+
         let dir = temp_dir("inotify");
         let path = dir.join("w.md");
         let other = dir.join("other.md");

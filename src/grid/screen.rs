@@ -915,7 +915,12 @@ mod tests {
                 g.set_string(2, 0, "x", Style::new());
             })
             .unwrap();
-        assert_eq!(text_of(&screen.out), "│ ", "{:?}", screen.out.escape_ascii());
+        assert_eq!(
+            text_of(&screen.out),
+            "│ ",
+            "{:?}",
+            screen.out.escape_ascii()
+        );
     }
 
     /// A VS16 emoji's covered column is drawn before the emoji, which a terminal drawing it two

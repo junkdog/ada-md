@@ -989,7 +989,10 @@ mod tests {
             },
         };
         replay_headless(&[marker], &mut state, &mut effects, false).unwrap();
-        let spans = state.highlights.get(key).expect("highlighted by the replay");
+        let spans = state
+            .highlights
+            .get(key)
+            .expect("highlighted by the replay");
         assert!(!spans.line(0).is_empty());
     }
 

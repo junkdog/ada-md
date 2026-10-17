@@ -493,7 +493,10 @@ fn term_color(c: Color) -> vt100::Color {
 /// The columns ada gives a grapheme (`grid::cell_width`): its width, plus one for each
 /// halfwidth voiced mark.
 fn cell_width(g: &str) -> usize {
-    g.width() + g.chars().filter(|c| matches!(c, '\u{FF9E}' | '\u{FF9F}')).count()
+    g.width()
+        + g.chars()
+            .filter(|c| matches!(c, '\u{FF9E}' | '\u{FF9F}'))
+            .count()
 }
 
 /// What vt100 is given in place of grapheme `g`, so that it lays the grapheme out as ada does.
@@ -539,7 +542,9 @@ fn for_vt100(bytes: &[u8], grid: &Grid, rows: &mut [bool]) -> Vec<u8> {
                         .find(|&j| (0x40..=0x7e).contains(&bytes[j]))
                         .map_or(bytes.len(), |j| j + 1);
                     let params = std::str::from_utf8(&bytes[i + 2..end - 1]).unwrap_or("");
-                    let mut n = params.split(';').map(|p| p.parse::<u16>().unwrap_or(1).max(1));
+                    let mut n = params
+                        .split(';')
+                        .map(|p| p.parse::<u16>().unwrap_or(1).max(1));
                     match bytes[end - 1] {
                         b'H' => {
                             y = n.next().unwrap_or(1) - 1;
@@ -622,7 +627,6 @@ fn shows(term: &vt100::Screen, grid: &Grid, rows: Option<&[bool]>) {
                 s => stand_in(s),
             };
             if !symbol.is_empty() && width <= 2 && !cell.is_image() {
-
                 let m = cell.modifier();
                 let blank = symbol == " " && !m.intersects(VISIBLE_ON_BLANK);
                 let styles = [
@@ -661,7 +665,9 @@ fn shows(term: &vt100::Screen, grid: &Grid, rows: Option<&[bool]>) {
                     "cell ({x}, {y}) of {}×{}: the grid's, then the terminal's; their rows:\n{:?}\n{:?}",
                     area.width,
                     area.height,
-                    (0..area.width).map(|x| stand_in(grid.symbol((x, y)))).collect::<String>(),
+                    (0..area.width)
+                        .map(|x| stand_in(grid.symbol((x, y))))
+                        .collect::<String>(),
                     term.contents_between(y, 0, y, area.width),
                 );
             }

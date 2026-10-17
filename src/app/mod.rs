@@ -1440,7 +1440,9 @@ mod tests {
             state.highlights.get(key).is_none(),
             "update leaves the work to the job"
         );
-        assert!(matches!(&cmds[..], [Cmd::Highlight(job)] if job.key == key && job.first.is_none()));
+        assert!(
+            matches!(&cmds[..], [Cmd::Highlight(job)] if job.key == key && job.first.is_none())
+        );
         replay_step(&mut state, replayed(doc_gen));
         let spans = state.highlights.get(key).expect("recomputed");
         assert!(!spans.partial && !spans.line(0).is_empty());
@@ -1465,7 +1467,6 @@ mod tests {
         let spans = state.highlights.get(key).expect("recomputed");
         assert!(spans.partial && spans.line_count() == 1);
     }
-
 
     /// Every switch of document or theme tells the worker which jobs are still wanted.
     #[test]
