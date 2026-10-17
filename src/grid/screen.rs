@@ -74,10 +74,30 @@ fn same(a: &Grid, b: &Grid, i: usize) -> bool {
     x.len == y.len && style(x) == style(y) && a.symbol_at(i) == b.symbol_at(i)
 }
 
+/// Whether a cell shows nothing but its background: a narrow space with no style that marks a
+/// blank. Its foreground and other modifiers don't show, so the encoder needn't send them.
+fn blank(c: &Cell) -> bool {
+    c.len == 1 && c.sym[0] == b' ' && c.meta == 1 && c.modifier & VISIBLE_ON_BLANK == 0
+}
+
+/// Where the row's run of blank cells on the default background starts, which an erase to the
+/// end of the line can draw.
+fn blank_tail(grid: &Grid, row: std::ops::Range<usize>) -> usize {
+    let cells = &grid.cells[row.clone()];
+    let blanks = cells
+        .iter()
+        .rev()
+        .take_while(|c| blank(c) && c.bg == 0)
+        .count();
+    row.end - blanks
+}
+
 /// The cells of `next` that differ from `last`, as ratatui's `BufferDiff` picks them, encoded.
 fn encode(last: &Grid, next: &Grid, out: &mut Vec<u8>) {
     let mut pen = Pen::new(next.area);
     let len = next.cells.len().min(last.cells.len());
+    let w = usize::from(next.area.width).max(1);
+    let mut tail = (usize::MAX, 0);
     let mut i = 0;
     while i < len {
         let (cur, prev) = (&next.cells[i], &last.cells[i]);
@@ -96,6 +116,17 @@ fn encode(last: &Grid, next: &Grid, out: &mut Vec<u8>) {
         }
         if same(next, last, at) {
             i += width.saturating_sub(1);
+            continue;
+        }
+        // The rest of the row is blank: erase it in one go, if more than this cell changed.
+        let row = at / w;
+        if tail.0 != row {
+            tail = (row, blank_tail(next, row * w..(row + 1) * w));
+        }
+        let end = ((row + 1) * w).min(len);
+        if at >= tail.1 && (at + 1..end).any(|k| !same(next, last, k)) {
+            pen.erase_line(at, out);
+            i = end;
             continue;
         }
         // A wide emoji with VS16 may be drawn one column wide, and a wide grapheme replaced by a
@@ -155,33 +186,121 @@ impl Pen {
         (self.modifier, self.fg, self.bg) != (0, 0, 0)
     }
 
+    fn at(&self, i: usize) -> (u16, u16) {
+        let w = usize::from(self.area.width);
+        (self.area.x + (i % w) as u16, self.area.y + (i / w) as u16)
+    }
+
+    /// The style to write `c` with: the pen's, for a blank it can draw as it is, or else its
+    /// own. A blank that needs a new background takes its own style too, since the cells after
+    /// it are likely to share it.
+    fn wants(&self, c: &Cell) -> (u16, u32, u32) {
+        if blank(c) && self.modifier & VISIBLE_ON_BLANK == 0 && self.bg == c.bg {
+            self.style()
+        } else {
+            (c.modifier, c.fg, c.bg)
+        }
+    }
+
     /// Write cell `i` of `grid`: move there unless the cursor is there, set what differs of its
     /// style, then its symbol.
     fn cell(&mut self, grid: &Grid, i: usize, out: &mut Vec<u8>) {
-        let w = usize::from(self.area.width);
-        let (x, y) = (self.area.x + (i % w) as u16, self.area.y + (i / w) as u16);
+        let (x, y) = self.at(i);
         let c = &grid.cells[i];
         if self.cursor != Some((x, y)) {
-            out.extend_from_slice(b"\x1b[");
-            number(out, y + 1);
+            self.goto(grid, i, (x, y), out);
+        }
+        let wants = self.wants(c);
+        if wants != self.style() {
+            self.set(wants, out);
+        }
+        symbol(grid, i, out);
+        // Terminals disagree on how wide some graphemes are (emoji with modifiers, ZWJ sequences,
+        // halfwidth sound marks), and an image's escape sequence moves the cursor its own way, so
+        // after anything but a narrow cell the next one is placed explicitly, as ratatui does.
+        self.cursor = (c.width() == 1 && !c.forced()).then_some((x + 1, y));
+    }
+
+    /// Clear from cell `i` to the end of its row, to the default background.
+    fn erase_line(&mut self, i: usize, out: &mut Vec<u8>) {
+        self.goto_cup(self.at(i), out);
+        self.set((self.modifier & !VISIBLE_ON_BLANK, self.fg, 0), out);
+        out.extend_from_slice(b"\x1b[K");
+    }
+
+    /// Move the cursor to cell `i` by the shortest way the pen knows: from where it is, by
+    /// writing again the cells in between when they need no new style, or else forward, or to
+    /// the start of the next row, or by row and column.
+    fn goto(&mut self, grid: &Grid, i: usize, (x, y): (u16, u16), out: &mut Vec<u8>) {
+        let cup = 3 + digits(y + 1) + if x == 0 { 0 } else { 1 + digits(x + 1) };
+        match self.cursor {
+            Some((cx, cy)) if cy == y && cx < x => {
+                let n = x - cx;
+                let forward = 3 + digits(n);
+                let gap = i - usize::from(n)..i;
+                let mut bytes = 0;
+                let fits = grid.cells[gap.clone()].iter().all(|c| {
+                    bytes += usize::from(c.len);
+                    c.meta == 1
+                        && c.len != LONG
+                        && self.wants(c) == self.style()
+                        && bytes <= cup.min(forward)
+                });
+                if fits {
+                    for k in gap {
+                        symbol(grid, k, out);
+                    }
+                } else if forward < cup {
+                    forward_by(out, n);
+                } else {
+                    return self.goto_cup((x, y), out);
+                }
+            }
+            Some((_, cy)) if y == cy + 1 && 2 + if x == 0 { 0 } else { 3 + digits(x) } < cup => {
+                out.extend_from_slice(b"\r\n");
+                if x > 0 {
+                    forward_by(out, x);
+                }
+            }
+            _ => return self.goto_cup((x, y), out),
+        }
+        self.cursor = Some((x, y));
+    }
+
+    fn goto_cup(&mut self, (x, y): (u16, u16), out: &mut Vec<u8>) {
+        if self.cursor == Some((x, y)) {
+            return;
+        }
+        out.extend_from_slice(b"\x1b[");
+        number(out, y + 1);
+        if x > 0 {
             out.push(b';');
             number(out, x + 1);
-            out.push(b'H');
         }
+        out.push(b'H');
+        self.cursor = Some((x, y));
+    }
+
+    fn style(&self) -> (u16, u32, u32) {
+        (self.modifier, self.fg, self.bg)
+    }
+
+    /// One SGR sequence for what differs of `(modifier, fg, bg)`, or none.
+    fn set(&mut self, (modifier, fg, bg): (u16, u32, u32), out: &mut Vec<u8>) {
         let start = out.len();
         out.extend_from_slice(b"\x1b[");
         let params = out.len();
-        if c.modifier != self.modifier {
-            modifiers(out, self.modifier, c.modifier);
-            self.modifier = c.modifier;
+        if modifier != self.modifier {
+            modifiers(out, self.modifier, modifier);
+            self.modifier = modifier;
         }
-        if c.fg != self.fg {
-            color(out, 30, c.fg);
-            self.fg = c.fg;
+        if fg != self.fg {
+            color(out, 30, fg);
+            self.fg = fg;
         }
-        if c.bg != self.bg {
-            color(out, 40, c.bg);
-            self.bg = c.bg;
+        if bg != self.bg {
+            color(out, 40, bg);
+            self.bg = bg;
         }
         if out.len() == params {
             out.truncate(start);
@@ -189,11 +308,33 @@ impl Pen {
             // the last parameter's separator ends the sequence
             *out.last_mut().unwrap_or(&mut 0) = b'm';
         }
+    }
+}
+
+/// Cell `i`'s symbol; most are one byte, which needn't go through a copy.
+fn symbol(grid: &Grid, i: usize, out: &mut Vec<u8>) {
+    let c = &grid.cells[i];
+    if c.len == 1 {
+        out.push(c.sym[0]);
+    } else {
         out.extend_from_slice(grid.symbol_bytes(i));
-        // Terminals disagree on how wide some graphemes are (emoji with modifiers, ZWJ sequences,
-        // halfwidth sound marks), and an image's escape sequence moves the cursor its own way, so
-        // after anything but a narrow cell the next one is placed explicitly, as ratatui does.
-        self.cursor = (c.width() == 1 && !c.forced()).then_some((x + 1, y));
+    }
+}
+
+/// `CSI n C`: the cursor `n` columns right.
+fn forward_by(out: &mut Vec<u8>, n: u16) {
+    out.extend_from_slice(b"\x1b[");
+    number(out, n);
+    out.push(b'C');
+}
+
+fn digits(n: u16) -> usize {
+    match n {
+        0..10 => 1,
+        10..100 => 2,
+        100..1000 => 3,
+        1000..10000 => 4,
+        _ => 5,
     }
 }
 
@@ -299,12 +440,8 @@ mod tests {
 
     use ratatui::style::{Color, Style};
 
-    /// A frame's cells, read back from what the encoder wrote: replayed over the last frame's.
-    fn replay(last: &Grid, bytes: &[u8]) -> Vec<(String, Style)> {
-        let area = last.area;
-        let mut cells: Vec<(String, Style)> = (0..last.cells.len())
-            .map(|i| (last.symbol_at(i).to_owned(), style_of(&last.cells[i])))
-            .collect();
+    /// What the encoder wrote, replayed over the terminal's cells.
+    fn replay(cells: &mut [(String, Style)], area: Rect, bytes: &[u8]) {
         let (mut x, mut y, mut style) = (0usize, 0usize, Style::reset());
         let text = String::from_utf8_lossy(bytes);
         let mut rest = &*text;
@@ -314,16 +451,33 @@ mod tests {
                 let (params, kind) = (&seq[..end], &seq[end..end + 1]);
                 match kind {
                     "H" => {
-                        let (r, c) = params.split_once(';').unwrap();
+                        let (r, c) = params.split_once(';').unwrap_or((params, "1"));
                         (y, x) = (
                             r.parse::<usize>().unwrap() - 1,
                             c.parse::<usize>().unwrap() - 1,
                         );
                     }
+                    "C" => x += params.parse::<usize>().unwrap(),
+                    "K" => {
+                        let row = y * usize::from(area.width);
+                        for c in &mut cells[row + x..row + usize::from(area.width)] {
+                            *c = (" ".to_owned(), Style::reset().bg(style.bg.unwrap()));
+                        }
+                    }
                     "m" => style = sgr(style, params),
                     _ => {}
                 }
                 rest = &seq[end + 1..];
+                continue;
+            }
+            if let Some(after) = rest.strip_prefix('\r') {
+                x = 0;
+                rest = after;
+                continue;
+            }
+            if let Some(after) = rest.strip_prefix('\n') {
+                y += 1;
+                rest = after;
                 continue;
             }
             let g = unicode_segmentation::UnicodeSegmentation::graphemes(rest, true)
@@ -338,7 +492,6 @@ mod tests {
             x += width;
             rest = &rest[g.len()..];
         }
-        cells
     }
 
     fn style_of(c: &Cell) -> Style {
@@ -394,25 +547,46 @@ mod tests {
         cells
             .iter()
             .map(|(s, st)| {
+                // a blank shows only its background
+                let blank = s == " "
+                    && !st
+                        .add_modifier
+                        .intersects(Modifier::from_bits_truncate(VISIBLE_ON_BLANK));
                 (
                     s.clone(),
-                    st.fg.map(indexed),
+                    st.fg.map(indexed).filter(|_| !blank),
                     st.bg.map(indexed),
-                    st.add_modifier,
+                    if blank {
+                        Modifier::empty()
+                    } else {
+                        st.add_modifier
+                    },
                 )
             })
             .collect()
     }
 
-    /// Frames painted in turn: after each, what the encoder wrote, replayed over the last frame,
-    /// is the frame.
-    fn frames(paints: &[&dyn Fn(&mut Grid)]) {
-        let area = Rect::new(0, 0, 10, 3);
-        let mut screen = Screen::new(Vec::new(), area.as_size());
-        for paint in paints {
-            let last = screen.last.clone();
+    /// A terminal of `area` that the frames drawn on it are replayed on.
+    struct Term {
+        screen: Screen<Vec<u8>>,
+        cells: Vec<(String, Style)>,
+    }
+
+    impl Term {
+        fn new(area: Rect) -> Term {
+            let blank = (" ".to_owned(), style_of(&Cell::BLANK));
+            Term {
+                screen: Screen::new(Vec::new(), area.as_size()),
+                cells: vec![blank; area.area() as usize],
+            }
+        }
+
+        /// Draw a frame: what the encoder wrote, replayed, shows the frame.
+        fn draw(&mut self, paint: impl FnOnce(&mut Grid)) {
+            let screen = &mut self.screen;
             screen.out.clear();
-            screen.draw(|g| paint(g)).unwrap();
+            screen.draw(paint).unwrap();
+            replay(&mut self.cells, screen.last.area, &screen.out);
             let want: Vec<_> = (0..screen.last.cells.len())
                 .map(|i| {
                     (
@@ -421,7 +595,15 @@ mod tests {
                     )
                 })
                 .collect();
-            assert_eq!(seen(&replay(&last, &screen.out)), seen(&want));
+            assert_eq!(seen(&self.cells), seen(&want));
+        }
+    }
+
+    /// Frames painted in turn on a 10×3 terminal.
+    fn frames(paints: &[&dyn Fn(&mut Grid)]) {
+        let mut term = Term::new(Rect::new(0, 0, 10, 3));
+        for paint in paints {
+            term.draw(paint);
         }
     }
 
@@ -450,5 +632,108 @@ mod tests {
                 g.set_string(0, 2, "→ two", Style::new().fg(Color::Indexed(100)));
             },
         ]);
+    }
+
+    /// Frames of random strings and styles, shifted a row or a column at a time as scrolling
+    /// does, so the encoder's cursor moves, refills and erases all come up.
+    #[test]
+    fn random_frames_replay_to_the_frames() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let words = [
+            "ab", "  ", "日本", "x y", "    ", "👍", "é", "wörd", " ", "ﾊﾞ",
+        ];
+        let styles = [
+            Style::new(),
+            Style::new().fg(Color::Rgb(200, 10, 10)),
+            Style::new().bg(Color::Rgb(40, 40, 40)),
+            Style::new().fg(Color::Blue).bg(Color::Rgb(40, 40, 40)),
+            Style::new().underlined(),
+            Style::new().reversed(),
+            Style::new().bold().italic(),
+            Style::new().crossed_out().fg(Color::Indexed(100)),
+        ];
+        let area = Rect::new(0, 0, 24, 8);
+        let doc: Vec<Vec<(u16, &str, Style)>> = (0..40)
+            .map(|_| {
+                (0..next(5))
+                    .map(|_| {
+                        (
+                            next(24) as u16,
+                            words[next(words.len())],
+                            styles[next(styles.len())],
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut term = Term::new(area);
+        for frame in 0..300 {
+            let (top, left) = (frame % 33, next(3) as u16);
+            let base = styles[next(3)];
+            term.draw(|g| {
+                if frame % 7 != 0 {
+                    g.set_style(area, base);
+                }
+                for (y, row) in doc[top..top + 8].iter().enumerate() {
+                    for &(x, word, style) in row {
+                        g.set_string(x.saturating_sub(left), y as u16, word, style);
+                    }
+                }
+            });
+        }
+    }
+
+    /// The test documents, scrolled and searched through the real view.
+    #[test]
+    fn scrolled_documents_replay_to_their_frames() {
+        use crate::app::{Cmd, Config, Dir, Msg, ScrollBy, Size, State, update};
+        let docs = [
+            include_str!("../../tests/fixtures/basics.md"),
+            include_str!("../../tests/fixtures/code.md"),
+            include_str!("../../tests/fixtures/tables.md"),
+            include_str!("../../tests/fixtures/wide.md"),
+            include_str!("../../tests/fixtures/quotes.md"),
+        ];
+        for (w, h) in [(60, 20), (120, 40)] {
+            for text in docs {
+                let size = Size { w, h };
+                let mut term = Term::new(Rect::new(0, 0, w, h));
+                let mut state = State::new(crate::theme::Theme::builtin(), Config::default());
+                update(&mut state, Msg::Init { size });
+                let cmds = update(
+                    &mut state,
+                    Msg::DocLoaded {
+                        path: "test.md".into(),
+                        mtime: None,
+                        text: text.into(),
+                    },
+                );
+                term.draw(|g| crate::ui::view(&state, g));
+                for cmd in cmds {
+                    if let Cmd::Highlight(job) = cmd {
+                        update(&mut state, job.run());
+                    }
+                }
+                let mut moves = vec![ScrollBy::Rows(1); 6];
+                moves.extend([
+                    ScrollBy::Page(Dir::Next),
+                    ScrollBy::HalfPage(Dir::Next),
+                    ScrollBy::Rows(-1),
+                    ScrollBy::Bottom,
+                    ScrollBy::Page(Dir::Prev),
+                    ScrollBy::Top,
+                ]);
+                for by in moves {
+                    update(&mut state, Msg::Scroll { by });
+                    term.draw(|g| crate::ui::view(&state, g));
+                }
+            }
+        }
     }
 }

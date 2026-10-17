@@ -68,3 +68,4 @@ done
 | `report.py`, `rank.py` | tables, and where ada isn't first |
 | `b2a.zsh`, `b2a_report.py` | print mode with hyperfine 2 (wall, CPU, peak RSS, instructions) |
 | `pick.py` | picking search terms |
+| `printcmp.zsh`, `sgrcmp.py` | print mode, two builds compared by what each character shows (SGR interpreted, blanks by background), over the vault and the corpus at four widths |
