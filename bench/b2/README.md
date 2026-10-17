@@ -45,7 +45,7 @@ difference has to exceed. `b2 probe CWD KEY... -- CMD...` dumps the emulated scr
 ### Flood: scrolling at full speed
 
 `b2 flood` sends scroll keys one per write at a fixed rate, or as fast as the pty takes them (`RATE` 0, which
-crossterm-based viewers stall on; see the vault note `ada-optimization`, O-21). It prints one JSON line: frames a
+viewers on crossterm's default event source stall on; ada's fix is in the vault note `ada-optimization`, O-21). It prints one JSON line: frames a
 second, keys per frame, bytes and `write` calls per frame, CPU per frame and per thread, and key-to-frame latency.
 Frames are counted by ratatui's per-draw cursor hide, so those columns mean something only for ratatui viewers.
 
