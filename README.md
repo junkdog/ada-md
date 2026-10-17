@@ -181,8 +181,17 @@ the keys in use.
 
 ### Themes
 
-Three themes are built in, `gruvbox-dark` (the default), `gruvbox-light` and
-`catppuccin-mocha`. Your own go in `~/.config/ada/themes/NAME.toml` and are picked with `--theme NAME` or `theme = "NAME"`; `T`
+These themes are built in:
+
+| family | themes |
+|---|---|
+| gruvbox | `gruvbox-dark` (the default), `gruvbox-light` |
+| catppuccin | `catppuccin-mocha`, `catppuccin-macchiato`, `catppuccin-frappe`, `catppuccin-latte` |
+| tokyonight | `tokyonight-night`, `tokyonight-storm`, `tokyonight-moon`, `tokyonight-day` |
+| rosé pine | `rose-pine`, `rose-pine-moon`, `rose-pine-dawn` |
+| dracula | `dracula` |
+
+Your own go in `~/.config/ada/themes/NAME.toml` and are picked with `--theme NAME` or `theme = "NAME"`; `T`
 lists all of them, previewing each as it's selected: `Enter` keeps it, `Esc` goes back. A theme can start from another and change only some of it:
 
 ```toml

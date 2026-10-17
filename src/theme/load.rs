@@ -20,6 +20,44 @@ pub const BUILTIN: &[(&str, &str)] = &[
         "catppuccin-mocha",
         include_str!("builtin/catppuccin-mocha.toml"),
     ),
+    (
+        "catppuccin-macchiato",
+        include_str!("builtin/catppuccin-macchiato.toml"),
+    ),
+    (
+        "catppuccin-frappe",
+        include_str!("builtin/catppuccin-frappe.toml"),
+    ),
+    (
+        "catppuccin-latte",
+        include_str!("builtin/catppuccin-latte.toml"),
+    ),
+    (
+        "tokyonight-night",
+        include_str!("builtin/tokyonight-night.toml"),
+    ),
+    (
+        "tokyonight-storm",
+        include_str!("builtin/tokyonight-storm.toml"),
+    ),
+    (
+        "tokyonight-moon",
+        include_str!("builtin/tokyonight-moon.toml"),
+    ),
+    (
+        "tokyonight-day",
+        include_str!("builtin/tokyonight-day.toml"),
+    ),
+    ("rose-pine", include_str!("builtin/rose-pine.toml")),
+    (
+        "rose-pine-moon",
+        include_str!("builtin/rose-pine-moon.toml"),
+    ),
+    (
+        "rose-pine-dawn",
+        include_str!("builtin/rose-pine-dawn.toml"),
+    ),
+    ("dracula", include_str!("builtin/dracula.toml")),
 ];
 
 const MAX_EXTENDS_DEPTH: u32 = 8;

@@ -1,0 +1,160 @@
+# tokyonight moon, after tokyonight.nvim (github.com/folke/tokyonight.nvim): headings take its
+# markdown rainbow, blue → purple, blue is the accent, and syntax colors follow its treesitter
+# mapping. It paints its own background, `bg`, so it reads as moon whatever the terminal's colors.
+name = "tokyonight-moon"
+
+[palette]
+bg = "#222436"
+bg_dark = "#1e2030"
+bg_highlight = "#2f334d"
+fg = "#c8d3f5"
+fg_dark = "#828bb8"
+fg_gutter = "#3b4261"
+comment = "#636da6"
+dark3 = "#545c7e"
+blue = "#82aaff"
+blue1 = "#65bcff"
+blue5 = "#89ddff"
+cyan = "#86e1fc"
+magenta = "#c099ff"
+purple = "#fca7ea"
+orange = "#ff966c"
+yellow = "#ffc777"
+green = "#c3e88d"
+green1 = "#4fd6be"
+teal = "#4fd6be"
+red = "#ff757f"
+border_highlight = "#589ed7"
+
+[document]
+fg = "fg"
+bg = "bg"
+margin = 2
+
+[heading]
+1 = { fg = "bg", bg = "blue", bold = true, prefix = " ", suffix = " " }
+2 = { fg = "yellow", bold = true, prefix = "## " }
+3 = { fg = "green", bold = true, prefix = "### " }
+4 = { fg = "teal", bold = true, prefix = "#### " }
+5 = { fg = "magenta", bold = true, prefix = "##### " }
+6 = { fg = "purple", prefix = "###### " }
+
+[inline]
+emph = { fg = "magenta", italic = true }
+strong = { fg = "orange", bold = true }
+strike = { fg = "comment", crossed_out = true }
+code = { fg = "blue", bg = "bg_highlight", pad = 1 }
+link = { fg = "teal", underline = true }
+link_focused = { fg = "bg", bg = "teal" }
+link_broken = { fg = "red", crossed_out = true }
+image = { fg = "purple", underline = true }
+footnote_ref = { fg = "cyan" }
+
+[block]
+quote = { fg = "fg_dark" }
+quote_bar = { fg = "dark3" }
+callout_note = { fg = "blue", bold = true }
+callout_tip = { fg = "teal", bold = true }
+callout_important = { fg = "magenta", bold = true }
+callout_warning = { fg = "yellow", bold = true }
+callout_caution = { fg = "red", bold = true }
+code = { fg = "fg", bg = "bg_dark" }
+code_text = {}
+code_label = { fg = "comment", bg = "bg_dark", italic = true }
+code_wrap_mark = { fg = "dark3", bg = "bg_dark" }
+list_bullet = { fg = "blue5" }
+list_number = { fg = "blue5" }
+task_done = { fg = "green" }
+task_open = { fg = "comment" }
+rule = { fg = "dark3" }
+table_border = { fg = "fg_gutter" }
+table_header = { fg = "magenta", bold = true }
+table_row_alt = { bg = "bg_dark" }
+footnote_label = { fg = "cyan" }
+html = { fg = "comment" }
+image_frame = {}
+
+[glyphs]
+bullets = ["•", "◦", "▪"]
+quote_bar = "│ "
+rule = "─"
+table_border = "rounded"
+task = ["[✓] ", "[ ] "]
+wrap_mark = "↪"
+code_clip = ["‹", "›"]
+sort_mark = ["▲", "▼"]
+image = "🖼 "
+
+[gutter.unstaged]
+added = { glyph = "▎", fg = "green" }
+modified = { glyph = "▎", fg = "blue" }
+deleted = { glyph = "▁", fg = "red" }
+
+[gutter.staged]
+added = { glyph = "▎", fg = "teal" }
+modified = { glyph = "▎", fg = "magenta" }
+deleted = { glyph = "▁", fg = "orange" }
+
+[ui]
+status_bar = { fg = "fg_dark", bg = "bg_dark" }
+status_file = { fg = "fg", bg = "bg_highlight", bold = true }
+status_heading = { fg = "blue", bg = "bg_dark" }
+status_pos = { fg = "fg_dark", bg = "bg_highlight" }
+status_message = { fg = "yellow", bg = "bg_dark" }
+status_link = { fg = "teal", bg = "bg_dark" }
+search_match = { fg = "bg", bg = "blue" }
+search_match_hidden = { underline = true, bg = "bg_highlight" }
+search_current = { fg = "bg", bg = "orange", bold = true }
+prompt = { fg = "fg", bg = "bg_dark" }
+prompt_error = { fg = "red", bg = "bg_dark" }
+popup = { fg = "fg", bg = "bg_dark" }
+popup_border = { fg = "border_highlight", bg = "bg_dark" }
+popup_title = { fg = "blue", bg = "bg_dark", bold = true }
+popup_selected = { fg = "bg", bg = "blue", bold = true }
+sort_table = { fg = "magenta" }
+
+[syntax]
+"comment" = { fg = "comment", italic = true }
+"meta.preprocessor" = { fg = "cyan" }
+"meta.annotation" = { fg = "cyan" }
+"variable.annotation" = { fg = "cyan" }
+"keyword" = { fg = "purple", italic = true }
+"keyword.operator" = { fg = "blue5" }
+"storage" = { fg = "purple", italic = true }
+"storage.type" = { fg = "blue1" }              # u32, int; also rust's `let`, which shares the scope
+"storage.type.function" = { fg = "magenta" }   # fn, struct, impl, …: keywords, not types
+"storage.type.struct" = { fg = "purple", italic = true }
+"storage.type.enum" = { fg = "purple", italic = true }
+"storage.type.union" = { fg = "purple", italic = true }
+"storage.type.trait" = { fg = "purple", italic = true }
+"storage.type.impl" = { fg = "purple", italic = true }
+"storage.type.type" = { fg = "purple", italic = true }
+"storage.type.module" = { fg = "purple", italic = true }
+"storage.type.class" = { fg = "purple", italic = true }
+"storage.type.interface" = { fg = "purple", italic = true }
+"storage.modifier.lifetime" = { fg = "orange" }
+"punctuation" = { fg = "fg_dark" }
+"punctuation.separator" = { fg = "blue5" }
+"punctuation.definition.string" = { fg = "green" }
+"punctuation.definition.comment" = { fg = "comment", italic = true }
+"variable" = { fg = "fg" }
+"variable.parameter" = { fg = "yellow" }
+"support.function" = { fg = "blue1" }
+"support.macro" = { fg = "blue1" }
+"support.type" = { fg = "blue1" }
+"entity.name" = { fg = "blue1" }               # struct, enum, trait and class names
+"entity.name.function" = { fg = "blue" }
+"entity.name.tag" = { fg = "green1" }          # html tags, toml and yaml keys: its property color
+"entity.name.table" = { fg = "blue", bold = true }
+"entity.other.attribute-name" = { fg = "green1" }
+"constant" = { fg = "orange" }
+"constant.numeric" = { fg = "orange" }
+"string" = { fg = "green" }
+"constant.character.escape" = { fg = "magenta" }
+"constant.other.placeholder" = { fg = "magenta" }
+"markup.deleted" = { fg = "red" }
+"markup.inserted" = { fg = "green" }
+"markup.italic" = { italic = true }
+"markup.bold" = { bold = true }
+"markup.heading" = { fg = "blue", bold = true }
+"invalid" = { fg = "bg", bg = "red" }

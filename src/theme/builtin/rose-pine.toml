@@ -1,0 +1,154 @@
+# rosé pine, after its palette (rosepinetheme.com): headings run iris, foam, rose, gold, pine,
+# foam as in its neovim theme, iris is the accent, and syntax colors follow its mapping. It paints
+# its own background, `base`, so it reads as rosé pine whatever the terminal's colors.
+name = "rose-pine"
+
+[palette]
+base = "#191724"
+surface = "#1f1d2e"
+overlay = "#26233a"
+muted = "#6e6a86"
+subtle = "#908caa"
+text = "#e0def4"
+love = "#eb6f92"
+gold = "#f6c177"
+rose = "#ebbcba"
+pine = "#31748f"
+foam = "#9ccfd8"
+iris = "#c4a7e7"
+highlight_low = "#21202e"
+highlight_med = "#403d52"
+highlight_high = "#524f67"
+
+[document]
+fg = "text"
+bg = "base"
+margin = 2
+
+[heading]
+1 = { fg = "base", bg = "iris", bold = true, prefix = " ", suffix = " " }
+2 = { fg = "foam", bold = true, prefix = "## " }
+3 = { fg = "rose", bold = true, prefix = "### " }
+4 = { fg = "gold", bold = true, prefix = "#### " }
+5 = { fg = "pine", bold = true, prefix = "##### " }
+6 = { fg = "foam", prefix = "###### " }
+
+[inline]
+emph = { fg = "rose", italic = true }
+strong = { fg = "gold", bold = true }
+strike = { fg = "muted", crossed_out = true }
+code = { fg = "foam", bg = "overlay", pad = 1 }
+link = { fg = "iris", underline = true }
+link_focused = { fg = "base", bg = "iris" }
+link_broken = { fg = "love", crossed_out = true }
+image = { fg = "rose", underline = true }
+footnote_ref = { fg = "iris" }
+
+[block]
+quote = { fg = "subtle" }
+quote_bar = { fg = "muted" }
+callout_note = { fg = "foam", bold = true }
+callout_tip = { fg = "pine", bold = true }
+callout_important = { fg = "iris", bold = true }
+callout_warning = { fg = "gold", bold = true }
+callout_caution = { fg = "love", bold = true }
+code = { fg = "text", bg = "surface" }
+code_text = {}
+code_label = { fg = "muted", bg = "surface", italic = true }
+code_wrap_mark = { fg = "muted", bg = "surface" }
+list_bullet = { fg = "subtle" }
+list_number = { fg = "subtle" }
+task_done = { fg = "foam" }
+task_open = { fg = "muted" }
+rule = { fg = "highlight_high" }
+table_border = { fg = "highlight_high" }
+table_header = { fg = "iris", bold = true }
+table_row_alt = { bg = "surface" }
+footnote_label = { fg = "iris" }
+html = { fg = "muted" }
+image_frame = {}
+
+[glyphs]
+bullets = ["•", "◦", "▪"]
+quote_bar = "│ "
+rule = "─"
+table_border = "rounded"
+task = ["[✓] ", "[ ] "]
+wrap_mark = "↪"
+code_clip = ["‹", "›"]
+sort_mark = ["▲", "▼"]
+image = "🖼 "
+
+[gutter.unstaged]
+added = { glyph = "▎", fg = "foam" }
+modified = { glyph = "▎", fg = "rose" }
+deleted = { glyph = "▁", fg = "love" }
+
+[gutter.staged]
+added = { glyph = "▎", fg = "pine" }
+modified = { glyph = "▎", fg = "iris" }
+deleted = { glyph = "▁", fg = "gold" }
+
+[ui]
+status_bar = { fg = "subtle", bg = "surface" }
+status_file = { fg = "text", bg = "overlay", bold = true }
+status_heading = { fg = "iris", bg = "surface" }
+status_pos = { fg = "subtle", bg = "overlay" }
+status_message = { fg = "gold", bg = "surface" }
+status_link = { fg = "iris", bg = "surface" }
+search_match = { fg = "base", bg = "rose" }
+search_match_hidden = { underline = true, bg = "highlight_med" }
+search_current = { fg = "base", bg = "gold", bold = true }
+prompt = { fg = "text", bg = "surface" }
+prompt_error = { fg = "love", bg = "surface" }
+popup = { fg = "text", bg = "surface" }
+popup_border = { fg = "muted", bg = "surface" }
+popup_title = { fg = "iris", bg = "surface", bold = true }
+popup_selected = { fg = "base", bg = "iris", bold = true }
+sort_table = { fg = "iris" }
+
+[syntax]
+"comment" = { fg = "muted", italic = true }
+"meta.preprocessor" = { fg = "iris" }
+"meta.annotation" = { fg = "iris" }
+"variable.annotation" = { fg = "iris" }
+"keyword" = { fg = "pine" }
+"keyword.operator" = { fg = "subtle" }
+"storage" = { fg = "pine" }
+"storage.type" = { fg = "foam" }             # u32, int; also rust's `let`, which shares the scope
+"storage.type.function" = { fg = "pine" }    # fn, struct, impl, …: keywords, not types
+"storage.type.struct" = { fg = "pine" }
+"storage.type.enum" = { fg = "pine" }
+"storage.type.union" = { fg = "pine" }
+"storage.type.trait" = { fg = "pine" }
+"storage.type.impl" = { fg = "pine" }
+"storage.type.type" = { fg = "pine" }
+"storage.type.module" = { fg = "pine" }
+"storage.type.class" = { fg = "pine" }
+"storage.type.interface" = { fg = "pine" }
+"storage.modifier.lifetime" = { fg = "iris" }
+"punctuation" = { fg = "subtle" }
+"punctuation.definition.string" = { fg = "gold" }
+"punctuation.definition.comment" = { fg = "muted", italic = true }
+"variable" = { fg = "text" }
+"variable.parameter" = { fg = "iris", italic = true }
+"support.function" = { fg = "rose" }
+"support.macro" = { fg = "rose" }
+"support.type" = { fg = "foam" }
+"entity.name" = { fg = "foam" }              # struct, enum, trait and class names
+"entity.name.function" = { fg = "rose" }
+"entity.name.tag" = { fg = "foam" }          # html tags, toml and yaml keys
+"entity.name.table" = { fg = "foam", bold = true }
+"entity.other.attribute-name" = { fg = "iris" }
+"constant" = { fg = "gold" }
+"constant.numeric" = { fg = "gold" }
+"constant.language" = { fg = "rose" }        # true, false, null
+"string" = { fg = "gold" }
+"constant.character.escape" = { fg = "pine" }
+"constant.other.placeholder" = { fg = "iris" }
+"markup.deleted" = { fg = "love" }
+"markup.inserted" = { fg = "foam" }
+"markup.italic" = { italic = true }
+"markup.bold" = { bold = true }
+"markup.heading" = { fg = "iris", bold = true }
+"invalid" = { fg = "base", bg = "love" }

@@ -1,0 +1,149 @@
+# catppuccin macchiato, after its style guide (github.com/catppuccin/catppuccin): headings
+# run red → lavender, mauve is the accent, and syntax colors follow its code mapping. It paints
+# its own background, `base`, so it reads as macchiato whatever the terminal's colors.
+name = "catppuccin-macchiato"
+
+[palette]
+rosewater = "#f4dbd6"
+flamingo = "#f0c6c6"
+pink = "#f5bde6"
+mauve = "#c6a0f6"
+red = "#ed8796"
+maroon = "#ee99a0"
+peach = "#f5a97f"
+yellow = "#eed49f"
+green = "#a6da95"
+teal = "#8bd5ca"
+sky = "#91d7e3"
+sapphire = "#7dc4e4"
+blue = "#8aadf4"
+lavender = "#b7bdf8"
+text = "#cad3f5"
+subtext1 = "#b8c0e0"
+subtext0 = "#a5adcb"
+overlay2 = "#939ab7"
+overlay1 = "#8087a2"
+overlay0 = "#6e738d"
+surface2 = "#5b6078"
+surface1 = "#494d64"
+surface0 = "#363a4f"
+base = "#24273a"
+mantle = "#1e2030"
+crust = "#181926"
+
+[document]
+fg = "text"
+bg = "base"
+margin = 2
+
+[heading]
+1 = { fg = "base", bg = "red", bold = true, prefix = " ", suffix = " " }
+2 = { fg = "peach", bold = true, prefix = "## " }
+3 = { fg = "yellow", bold = true, prefix = "### " }
+4 = { fg = "green", bold = true, prefix = "#### " }
+5 = { fg = "sapphire", bold = true, prefix = "##### " }
+6 = { fg = "lavender", prefix = "###### " }
+
+[inline]
+emph = { fg = "pink", italic = true }
+strong = { fg = "peach", bold = true }
+strike = { crossed_out = true }
+code = { fg = "green", bg = "surface0", pad = 1 }
+link = { fg = "blue", underline = true }
+link_focused = { fg = "base", bg = "blue" }
+link_broken = { fg = "red", crossed_out = true }
+image = { fg = "mauve", underline = true }
+footnote_ref = { fg = "lavender" }
+
+[block]
+quote = { fg = "subtext0" }
+quote_bar = { fg = "overlay0" }
+callout_note = { fg = "blue", bold = true }
+callout_tip = { fg = "green", bold = true }
+callout_important = { fg = "mauve", bold = true }
+callout_warning = { fg = "yellow", bold = true }
+callout_caution = { fg = "red", bold = true }
+code = { fg = "text", bg = "mantle" }
+code_text = {}
+code_label = { fg = "overlay1", bg = "mantle", italic = true }
+code_wrap_mark = { fg = "overlay0", bg = "mantle" }
+list_bullet = { fg = "overlay2" }
+list_number = { fg = "overlay2" }
+task_done = { fg = "green" }
+task_open = { fg = "overlay1" }
+rule = { fg = "overlay0" }
+table_border = { fg = "surface2" }
+table_header = { fg = "mauve", bold = true }
+table_row_alt = { bg = "mantle" }
+footnote_label = { fg = "lavender" }
+html = { fg = "overlay1" }
+image_frame = {}
+
+[glyphs]
+bullets = ["•", "◦", "▪"]
+quote_bar = "│ "
+rule = "─"
+table_border = "rounded"
+task = ["[✓] ", "[ ] "]
+wrap_mark = "↪"
+code_clip = ["‹", "›"]
+sort_mark = ["▲", "▼"]
+image = "🖼 "
+
+[gutter.unstaged]
+added = { glyph = "▎", fg = "green" }
+modified = { glyph = "▎", fg = "blue" }
+deleted = { glyph = "▁", fg = "red" }
+
+[gutter.staged]
+added = { glyph = "▎", fg = "teal" }
+modified = { glyph = "▎", fg = "mauve" }
+deleted = { glyph = "▁", fg = "peach" }
+
+[ui]
+status_bar = { fg = "subtext0", bg = "mantle" }
+status_file = { fg = "text", bg = "surface0", bold = true }
+status_heading = { fg = "mauve", bg = "mantle" }
+status_pos = { fg = "subtext0", bg = "surface0" }
+status_message = { fg = "yellow", bg = "mantle" }
+status_link = { fg = "blue", bg = "mantle" }
+search_match = { fg = "base", bg = "peach" }
+search_match_hidden = { underline = true, bg = "surface1" }
+search_current = { fg = "base", bg = "yellow", bold = true }
+prompt = { fg = "text", bg = "mantle" }
+prompt_error = { fg = "red", bg = "mantle" }
+popup = { fg = "text", bg = "mantle" }
+popup_border = { fg = "lavender", bg = "mantle" }
+popup_title = { fg = "mauve", bg = "mantle", bold = true }
+popup_selected = { fg = "base", bg = "mauve", bold = true }
+sort_table = { fg = "mauve" }
+
+[syntax]
+"comment" = { fg = "overlay2", italic = true }
+"meta.preprocessor" = { fg = "pink" }
+"keyword" = { fg = "mauve" }
+"storage.type" = { fg = "mauve" }
+"storage.modifier" = { fg = "mauve" }
+"keyword.operator" = { fg = "sky" }
+"punctuation" = { fg = "overlay2" }
+"punctuation.definition.string" = { fg = "green" }
+"punctuation.definition.comment" = { fg = "overlay2", italic = true }
+"variable" = { fg = "text" }
+"variable.parameter" = { fg = "maroon" }
+"support.function" = { fg = "blue" }
+"support.type" = { fg = "yellow" }
+"entity.name.tag" = { fg = "blue" }
+"entity.other.attribute-name" = { fg = "yellow" }
+"entity.name.type" = { fg = "yellow" }
+"entity.name.class" = { fg = "yellow" }
+"entity.name.function" = { fg = "blue" }
+"constant" = { fg = "peach" }
+"constant.numeric" = { fg = "peach" }
+"string" = { fg = "green" }
+"constant.character.escape" = { fg = "pink" }
+"markup.deleted" = { fg = "red" }
+"markup.inserted" = { fg = "green" }
+"markup.italic" = { italic = true }
+"markup.bold" = { bold = true }
+"markup.heading" = { fg = "blue" }
+"invalid" = { fg = "base", bg = "red" }

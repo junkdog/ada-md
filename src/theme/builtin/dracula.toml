@@ -1,0 +1,151 @@
+# dracula, after the dracula spec (draculatheme.com/spec): headings start purple, bold is orange,
+# italic yellow, links cyan, and syntax colors follow its code mapping; the darker backgrounds are
+# its editor theme's. It paints its own background, so it reads as dracula in any terminal.
+name = "dracula"
+
+[palette]
+background = "#282a36"
+background_dark = "#21222c"
+background_darker = "#191a21"
+current_line = "#44475a"
+foreground = "#f8f8f2"
+comment = "#6272a4"
+cyan = "#8be9fd"
+green = "#50fa7b"
+orange = "#ffb86c"
+pink = "#ff79c6"
+purple = "#bd93f9"
+red = "#ff5555"
+yellow = "#f1fa8c"
+
+[document]
+fg = "foreground"
+bg = "background"
+margin = 2
+
+[heading]
+1 = { fg = "background", bg = "purple", bold = true, prefix = " ", suffix = " " }
+2 = { fg = "purple", bold = true, prefix = "## " }
+3 = { fg = "pink", bold = true, prefix = "### " }
+4 = { fg = "cyan", bold = true, prefix = "#### " }
+5 = { fg = "green", bold = true, prefix = "##### " }
+6 = { fg = "comment", prefix = "###### " }
+
+[inline]
+emph = { fg = "yellow", italic = true }
+strong = { fg = "orange", bold = true }
+strike = { fg = "comment", crossed_out = true }
+code = { fg = "green", bg = "current_line", pad = 1 }
+link = { fg = "cyan", underline = true }
+link_focused = { fg = "background", bg = "cyan" }
+link_broken = { fg = "red", crossed_out = true }
+image = { fg = "pink", underline = true }
+footnote_ref = { fg = "purple" }
+
+[block]
+quote = { fg = "yellow", italic = true }
+quote_bar = { fg = "comment" }
+callout_note = { fg = "cyan", bold = true }
+callout_tip = { fg = "green", bold = true }
+callout_important = { fg = "purple", bold = true }
+callout_warning = { fg = "orange", bold = true }
+callout_caution = { fg = "red", bold = true }
+code = { fg = "foreground", bg = "background_dark" }
+code_text = {}
+code_label = { fg = "comment", bg = "background_dark", italic = true }
+code_wrap_mark = { fg = "comment", bg = "background_dark" }
+list_bullet = { fg = "cyan" }
+list_number = { fg = "cyan" }
+task_done = { fg = "green" }
+task_open = { fg = "comment" }
+rule = { fg = "comment" }
+table_border = { fg = "current_line" }
+table_header = { fg = "purple", bold = true }
+table_row_alt = { bg = "background_dark" }
+footnote_label = { fg = "purple" }
+html = { fg = "comment" }
+image_frame = {}
+
+[glyphs]
+bullets = ["•", "◦", "▪"]
+quote_bar = "│ "
+rule = "─"
+table_border = "rounded"
+task = ["[✓] ", "[ ] "]
+wrap_mark = "↪"
+code_clip = ["‹", "›"]
+sort_mark = ["▲", "▼"]
+image = "🖼 "
+
+[gutter.unstaged]
+added = { glyph = "▎", fg = "green" }
+modified = { glyph = "▎", fg = "cyan" }
+deleted = { glyph = "▁", fg = "red" }
+
+[gutter.staged]
+added = { glyph = "▎", fg = "yellow" }
+modified = { glyph = "▎", fg = "purple" }
+deleted = { glyph = "▁", fg = "orange" }
+
+[ui]
+status_bar = { fg = "foreground", bg = "background_darker" }
+status_file = { fg = "foreground", bg = "current_line", bold = true }
+status_heading = { fg = "purple", bg = "background_darker" }
+status_pos = { fg = "foreground", bg = "current_line" }
+status_message = { fg = "yellow", bg = "background_darker" }
+status_link = { fg = "cyan", bg = "background_darker" }
+search_match = { fg = "background", bg = "orange" }
+search_match_hidden = { underline = true, bg = "current_line" }
+search_current = { fg = "background", bg = "yellow", bold = true }
+prompt = { fg = "foreground", bg = "background_darker" }
+prompt_error = { fg = "red", bg = "background_darker" }
+popup = { fg = "foreground", bg = "background_dark" }
+popup_border = { fg = "purple", bg = "background_dark" }
+popup_title = { fg = "pink", bg = "background_dark", bold = true }
+popup_selected = { fg = "background", bg = "purple", bold = true }
+sort_table = { fg = "purple" }
+
+[syntax]
+"comment" = { fg = "comment" }
+"meta.preprocessor" = { fg = "pink" }
+"meta.annotation" = { fg = "green", italic = true }
+"variable.annotation" = { fg = "green", italic = true }
+"keyword" = { fg = "pink" }
+"keyword.operator" = { fg = "pink" }
+"storage" = { fg = "pink" }
+"storage.type" = { fg = "cyan", italic = true } # u32, int; also rust's `let`, same scope
+"storage.type.function" = { fg = "pink" }         # fn, struct, impl, …: keywords, not types
+"storage.type.struct" = { fg = "pink" }
+"storage.type.enum" = { fg = "pink" }
+"storage.type.union" = { fg = "pink" }
+"storage.type.trait" = { fg = "pink" }
+"storage.type.impl" = { fg = "pink" }
+"storage.type.type" = { fg = "pink" }
+"storage.type.module" = { fg = "pink" }
+"storage.type.class" = { fg = "pink" }
+"storage.type.interface" = { fg = "pink" }
+"storage.modifier.lifetime" = { fg = "orange", italic = true }
+"punctuation" = { fg = "foreground" }
+"punctuation.definition.string" = { fg = "yellow" }
+"punctuation.definition.comment" = { fg = "comment" }
+"variable" = { fg = "foreground" }
+"variable.parameter" = { fg = "orange", italic = true }
+"support.function" = { fg = "cyan" }
+"support.macro" = { fg = "cyan" }
+"support.type" = { fg = "cyan", italic = true }
+"entity.name" = { fg = "cyan" }                   # struct, enum, trait and class names
+"entity.name.function" = { fg = "green" }
+"entity.name.tag" = { fg = "pink" }               # html tags, toml and yaml keys
+"entity.name.table" = { fg = "purple", bold = true }
+"entity.other.attribute-name" = { fg = "green", italic = true }
+"constant" = { fg = "purple" }
+"constant.numeric" = { fg = "purple" }
+"string" = { fg = "yellow" }
+"constant.character.escape" = { fg = "pink" }
+"constant.other.placeholder" = { fg = "pink" }
+"markup.deleted" = { fg = "red" }
+"markup.inserted" = { fg = "green" }
+"markup.italic" = { italic = true }
+"markup.bold" = { bold = true }
+"markup.heading" = { fg = "purple", bold = true }
+"invalid" = { fg = "foreground", bg = "red" }
