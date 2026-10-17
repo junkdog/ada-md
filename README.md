@@ -4,14 +4,12 @@
 
 _Named after Ada, regal matriarch, at her behest._
 
-A terminal markdown viewer for notes you walk between: follow links and come back to where you
-were, see what git says changed, read wide tables at any width, and look at the pictures.
+A fast terminal markdown viewer, for one file or a whole vault of notes: follow links and come
+back to where you were, see what git says changed, read wide tables at any width, and look at
+the pictures.
 
-`ada` renders CommonMark and GitHub-flavoured markdown with `[[wiki links]]`, highlights code
+`ada` renders CommonMark and GitHub-flavored markdown with `[[wiki links]]`, highlights code
 in some 200 languages, and shows images inline in terminals that can (kitty, sixel, iTerm2).
-It isn't only for markdown: code, config and other text files open highlighted, and png and
-jpeg files full screen, whether named on the command line or reached through a link
-([Other files](#other-files)).
 
 ![ada following a wiki link, sorting a table by cost, going back, searching, and picking a theme](demo/short.gif)
 
@@ -22,24 +20,43 @@ jpeg files full screen, whether named on the command line or reached through a l
 
 </details>
 
-## Features
+## Goals
 
-- CommonMark and GFM: tables, task lists, footnotes and callouts (`> [!NOTE]`)
-- tables sized like a browser's, with a sticky header; too-wide tables become cards (`t`);
-  sortable by any column (`s`)
-- syntax-highlighted code; long lines wrap or scroll sideways (`w`)
-- code, config and other text files shown whole and highlighted, and image files shown to fit
-  the screen; links to them open in ada, `src/main.rs#L42` at its line
-- links: relative paths, `[[wiki]]`, anchors and footnotes, with back/forward history
-- git gutter for staged and unstaged changes; `]c`/`[c` to jump between them
-- inline images, and full screen from any linked png or jpeg
-- regex search that sees through markup: `foo bar` finds `**foo** _bar_`
-- a filterable heading outline, and a filterable list of links
-- live reload, and `e` to edit at the current line
-- `y` to copy the focused link or visible code block (OSC 52)
-- three built-in themes, and your own; `T` previews each before you pick one
-- themes, keys and options in one config file
-- `--print` for pipes and fzf previews
+- **The fastest markdown viewer, and the leanest:** wall time, CPU and memory are all measured,
+  against the other terminal viewers and against ada's own budgets. A key draws its frame in
+  well under a millisecond whatever the document's size, an idle ada sleeps until something
+  happens, and a typical note takes about 11 MiB of memory.
+- **A curated feature set:** what a single markdown file needs, and what matters once files
+  link to each other, as in an
+  [LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) or an
+  Obsidian-style vault. The rest (a file browser, editing, mermaid, math) stays out.
+- **No crashes, on any input.** ada has no `unsafe` code. Every interaction is a message, so a
+  recorded session replays to identical frames. Whole scripted sessions are fuzzed for hours at a
+  time: documents, keys, resizes, and file, git and image results that arrive late, out of order,
+  or after their document is gone.
+
+## Standout features
+
+- **Tables you can work with:** sort by any column, by value (`s`), with the header row kept on
+  screen while a long table scrolls; too wide, and it turns into cards ([Tables](#tables))
+- **Links you can walk:** relative paths, `[[wiki links]]`, anchors and `src/main.rs#L42`, with
+  back and forward history that comes back to the same spot and the same focused link
+- **Not only markdown:** code, config and other text files open whole and highlighted, in some
+  200 languages, and png and jpeg files full screen, from the command line or through a link
+  ([Other files](#other-files))
+- **A git gutter** that marks staged and unstaged changes in the rendered note; `]c` `[c` jump
+  between them
+- **Search that sees through markup:** a regex `foo bar` finds `**foo** _bar_`, and link
+  targets match too
+- **Inline images** over kitty, sixel or iTerm2, with half-blocks as the fallback, and sixel
+  inside tmux when it can
+- **Live reload** the moment the file changes, and `e` to edit at the line on screen
+- **`--print`** for pipes and fzf previews, and `--record` and `--replay` to make a bug report
+  from a session
+
+Also: callouts, footnotes and task lists, a filterable outline and list of links, code that
+wraps or scrolls sideways, three built-in themes and your own (`T` previews them), and keys
+you can remap.
 
 ## Install
 
@@ -124,7 +141,7 @@ theme = "gruvbox-light"
 max_width = 100            # wrap prose at most 100 columns wide; tables may use the rest
 images = true              # or false for text only
 image_protocol = "auto"    # or kitty, sixel, iterm2, halfblocks
-live_reload = true         # look at the file's time once a second
+live_reload = true         # read the file again when it changes
 tables = "auto"            # the table layout to start with: auto, grid or records
 code_wrap = true
 
@@ -161,6 +178,28 @@ Colors are `#rrggbb`, `#rgb`, a terminal color name or index, or a name from the
 `[palette]`. The built-in
 [gruvbox-dark.toml](src/theme/builtin/gruvbox-dark.toml) lists every style there is. Mistakes
 are reported with the file, line and column.
+
+## Tables
+
+Notes are full of tables: costs, timings, versions, lists of things to compare. ada treats them
+as more than text.
+
+- **Sort by any column.** `s` lists the columns of the first table on screen, each ascending
+  and descending; type to filter (`cost desc`), and `Enter` sorts. `←` `→` switch to another
+  table on screen, and once a table is sorted, the list also offers its source order back.
+  On a sorted table, `s Enter` flips its order. Each table keeps its own order, through
+  resizes, going back and forth, theme switches, and reloads that keep the column.
+- **By value, not as text.** Numbers sort as numbers, with signs, thousands separators and
+  currency or percent signs (`€85` before `€310`), and durations as durations, in any mix of
+  units (`5 min` before `45 min`, `1h 30m` after `80m`). Everything else sorts naturally, digit
+  runs by value and case ignored. Empty cells go last either way, and ties keep their order.
+  The column shows `▲` or `▼`, and the status line says what the table is sorted by.
+- **A sticky header.** While a long table scrolls past, its header row stays at the top of the
+  screen, so you always know which column is which.
+- **Sized like a browser's.** Column widths follow their content, and a table may grow past
+  `max_width`, up to the terminal's width, while the prose around it stays narrow. A table that
+  still doesn't fit becomes cards, one per row, each cell beside its header, instead of columns
+  three characters wide. `t` cycles every table between auto, grid and cards (records).
 
 ## Other files
 
