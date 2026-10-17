@@ -69,3 +69,4 @@ done
 | `b2a.zsh`, `b2a_report.py` | print mode with hyperfine 2 (wall, CPU, peak RSS, instructions) |
 | `pick.py` | picking search terms |
 | `printcmp.zsh`, `sgrcmp.py` | print mode, two builds compared by what each character shows (SGR interpreted, blanks by background), over the vault and the corpus at four widths |
+| `termcmp.zsh`, `relay.py` | two builds live in tmux, kitty or alacritty through one key script, compared screen by screen (`sgrcmp.py --screen`, or pixels for alacritty); `relay.py` feeds keys to ada inside alacritty |

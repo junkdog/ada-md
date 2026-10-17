@@ -1,14 +1,22 @@
-"""Compare two SGR-styled outputs by what each character shows. Exit 1 on a difference."""
+"""Compare two SGR-styled outputs by what each character shows. Exit 1 on a difference.
+
+sgrcmp.py [--screen] A B: with --screen, A and B are terminal screen captures (`tmux capture-pane
+-e`, `kitten @ get-text --ansi`), whose style carries from line to line and may end set."""
 import re, sys
 
-SEQ = re.compile(r'\x1b\[([0-9;]*)m')
+SCREEN = '--screen' in sys.argv
+ARGS = [a for a in sys.argv[1:] if a != '--screen']
+
+SEQ = re.compile(r'\x1b\[([0-9;:]*)m')
 VIS = {'ul', 'rev', 'strike'}
 
 def lines(path):
     text = open(path, encoding='utf-8', errors='replace').read()
     out = []
+    st = dict(mods=frozenset(), fg=None, bg=None, ulc=None)
     for n, line in enumerate(text.split('\n')):
-        st = dict(mods=frozenset(), fg=None, bg=None, ulc=None)
+        if not SCREEN:
+            st = dict(mods=frozenset(), fg=None, bg=None, ulc=None)
         cells, pos = [], 0
         for m in list(SEQ.finditer(line)) + [None]:
             end = m.start() if m else len(line)
@@ -23,7 +31,7 @@ def lines(path):
                 break
             pos = m.end()
             st = apply(st, m.group(1))
-        if st != dict(mods=frozenset(), fg=None, bg=None, ulc=None):
+        if not SCREEN and st != dict(mods=frozenset(), fg=None, bg=None, ulc=None):
             sys.exit(f'{path}:{n + 1}: line ends styled: {st}')
         while cells and cells[-1][0] == ' ' and cells[-1][1:] == (None, None, frozenset(), None):
             cells.pop()
@@ -32,6 +40,8 @@ def lines(path):
 
 def apply(st, params):
     st = dict(st)
+    # colors in colon form, as kitty writes them: 38:2:r:g:b, or 38:2::r:g:b with a color space
+    params = params.replace('::', ':').replace(':', ';')
     p = [int(x) if x else 0 for x in params.split(';')] if params else [0]
     i, mods = 0, set(st['mods'])
     names = {1: 'bold', 2: 'dim', 3: 'italic', 4: 'ul', 7: 'rev', 9: 'strike'}
@@ -59,7 +69,7 @@ def apply(st, params):
     st['mods'] = frozenset(mods)
     return st
 
-a, b = lines(sys.argv[1]), lines(sys.argv[2])
+a, b = lines(ARGS[0]), lines(ARGS[1])
 if a != b:
     for n, (x, y) in enumerate(zip(a, b)):
         if x != y:
