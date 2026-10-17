@@ -158,6 +158,16 @@ figcaption { margin-top: .5rem; font-size: .88rem; color: var(--muted); }
 .perf { padding-block: 3rem; }
 .perf > p { color: var(--muted); max-width: 46rem; }
 .lede { margin-bottom: .75rem; }
+/* the two kinds of time: a legend under the intro, and a tag on each chart and tile */
+.kinds { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: .75rem 2rem; max-width: 60rem; margin: 0 0 2rem; }
+.kinds div { display: flex; gap: .75rem; align-items: baseline; }
+.kinds dt { flex: none; width: 3rem; }
+.kinds dd { margin: 0; color: var(--muted); font-size: .95rem; }
+.kinds dd b { color: var(--fg); font-weight: 600; }
+.kind { font: 400 .7rem var(--mono); padding: 0 .4rem; border: 1px solid currentColor; border-radius: 999px; margin-left: .35rem; vertical-align: .1em; white-space: nowrap; }
+.kinds .kind { margin-left: 0; }
+.kind.wall { color: var(--link); }
+.kind.cpu { color: var(--accent); }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 1rem; margin-bottom: 2.5rem; }
 .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.25rem; }
 .tile b { font: 700 2rem var(--mono); color: var(--ada); }
@@ -182,6 +192,7 @@ figcaption { margin-top: .5rem; font-size: .88rem; color: var(--muted); }
 .chart { margin: 0; }
 .chart figcaption { font: 700 .95rem var(--mono); margin: 0 0 .5rem; color: var(--fg); }
 .chart figcaption span { font-weight: 400; color: var(--muted); }
+.chart figcaption small { display: block; font: .8rem var(--sans); color: var(--muted); margin-top: .1rem; }
 .chart ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .chart li { --w: 0%; display: grid; grid-template-columns: 6.5rem 1fr; align-items: center; gap: .5rem; font-size: .85rem; }
 .chart .bar { grid-column: 2; grid-row: 1; height: 1.15rem; width: calc(var(--w) * .7); min-width: 2px; background: var(--other); border-radius: 0 3px 3px 0; }

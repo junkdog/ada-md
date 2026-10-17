@@ -30,6 +30,18 @@ MISSING = [("search", "glow", None, "has no search"),
            ("resize, cold", "mdtui", None, "re-parses for seconds"),
            ("search", "mdfried", "XL", "match off-screen")]
 NOTES = {"lowdown": "no highlighting"}
+# what each chart times, under its caption, and its kind of time: the legend above the charts says what
+# wall and CPU mean; memory has neither
+DESCS = {"first paint": "from launch until the document's first line is on screen",
+         "CPU per line scroll": "for one line down, from the key until the screen holds still; the median",
+         "search": "from the term and Enter until the match is on screen",
+         "resize, cold": "from the first resize until the screen stops changing",
+         "held page-down CPU": "for 60 page-downs at 30 a second, until the screen catches up",
+         "peak RSS": "the most resident at once, over the whole session",
+         "print to a pipe, wall": "to print the whole document to a pipe",
+         "print to a pipe, peak RSS": "the most resident at once while printing"}
+KINDS = {"first paint": "wall", "CPU per line scroll": "CPU", "search": "wall", "resize, cold": "wall",
+         "held page-down CPU": "CPU", "print to a pipe, wall": "wall"}
 TILES = [("first paint", "first paint"), ("CPU per line scroll", "CPU per line scrolled"),
          ("resize, cold", "re-layout after a resize"), ("peak RSS", "peak memory")]
 
@@ -57,13 +69,19 @@ def why(metric, viewer, doc):
     return next((r for m, v, d, r in MISSING if m in (None, metric) and v == viewer and d in (None, doc)), "not measured")
 
 
+def kind(metric):
+    k = KINDS.get(metric)
+    return f' <em class="kind {k.lower()}">{k}</em>' if k else ""
+
+
 def chart(metric, cells, doc):
     unit = UNITS.get(metric, "ms")
     vals = [v for v in cells.values() if v is not None]
     lo, hi = min(vals) / 2.5, max(vals)
     ada = cells["ada"]
     rows = sorted(cells.items(), key=lambda kv: (kv[1] is None, kv[1] or 0))
-    out = [f'<figure class="chart"><figcaption>{escape(CAPTIONS[metric])} <span>{unit}</span></figcaption><ol>']
+    out = [f'<figure class="chart"><figcaption>{escape(CAPTIONS[metric])} <span>{unit}</span>{kind(metric)}'
+           f'<small>{escape(DESCS[metric])}</small></figcaption><ol>']
     for viewer, v in rows:
         name = escape(NAMES.get(viewer, viewer))
         if viewer in NOTES:
@@ -87,7 +105,7 @@ def tiles(panels):
         cells = panels[metric][TILE_DOC]
         unit = UNITS.get(metric, "ms")
         best = min((v, k) for k, v in cells.items() if k != "ada" and v is not None)
-        out.append(f'<div class="tile"><b>{num(cells["ada"])} <span>{unit}</span></b><p>{escape(label)}</p>'
+        out.append(f'<div class="tile"><b>{num(cells["ada"])} <span>{unit}</span></b><p>{escape(label)}{kind(metric)}</p>'
                    f'<small>next: {escape(NAMES.get(best[1], best[1]))}, {num(best[0])} {unit}'
                    f' ({best[0] / cells["ada"]:.1f}×)</small></div>')
     out.append("</div>")
