@@ -4,6 +4,13 @@ S=${B2_ROOT:?set B2_ROOT}
 B=$S/tools/bin; ADA=${ADA:-ada}
 export XDG_CONFIG_HOME=$S/home/x/config
 cd $S/corpus; mkdir -p $S/b2a; : > $S/b2a/bytes.txt
+# drop the page cache and compact memory once if free memory is low, as `b2 run` does (see DROP_CACHES in
+# src/main.rs): print mode is all startup, so not before every run; hyperfine's warmup refills the cache
+DROP=${B2_DROP_CACHES:-/usr/local/sbin/oxasm-drop-caches}
+free_kib=$(awk '/^MemFree:/ { print $2 }' /proc/meminfo)
+if [[ $DROP != off ]] && (( free_kib < ${B2_DROP_BELOW_GB:-8} * 1024 * 1024 )); then
+  sudo -n $DROP >&2 || { echo "b2a: sudo -n $DROP failed; or set B2_DROP_CACHES=off" >&2; exit 1 }
+fi
 for d in s m l xl; do
   runs=15; [[ $d == xl ]] && runs=5
   taskset -c 2,4,6,8 $B/hyperfine -N --input=null --output=pipe --warmup 2 --min-runs $runs --export-json $S/b2a/$d.json \

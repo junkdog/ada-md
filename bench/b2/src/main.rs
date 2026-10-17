@@ -124,6 +124,56 @@ fn base_env() -> BTreeMap<String, String> {
     env
 }
 
+/// The root-owned script that drops the page cache and compacts memory, so transparent huge pages find free
+/// 2 MiB blocks instead of falling back to 4 KiB pages. It is oxasm's (`xtask/scripts/oxasm-drop-caches`, which
+/// says how to install it and the sudoers rule that runs it without a password); `B2_DROP_CACHES` names another,
+/// or `off` skips it.
+const DROP_CACHES: &str = "/usr/local/sbin/oxasm-drop-caches";
+
+/// Drop only below this much free memory (GiB; `B2_DROP_BELOW_GB` sets another): oxasm and sift lost speed with
+/// a couple of GB free. `MemFree`, not `MemAvailable`, which counts the page cache as available and so stays high
+/// when the cache has taken the memory.
+const DROP_BELOW_GB: f64 = 8.0;
+
+/// Drop the page cache and compact memory before a measurement when free memory is low; its before/after report
+/// goes to stderr, so stdout stays one JSON line.
+pub fn drop_caches() -> io::Result<()> {
+    let script = std::env::var("B2_DROP_CACHES").unwrap_or_else(|_| DROP_CACHES.into());
+    let below: f64 = match std::env::var("B2_DROP_BELOW_GB") {
+        Ok(gb) => gb
+            .parse()
+            .map_err(|_| io::Error::other(format!("B2_DROP_BELOW_GB={gb} is not a number")))?,
+        Err(_) => DROP_BELOW_GB,
+    };
+    if script == "off" || mem_free_kib().is_some_and(|kib| kib as f64 >= below * 1024.0 * 1024.0) {
+        return Ok(());
+    }
+    let out = std::process::Command::new("sudo")
+        .args(["-n", &script])
+        .stderr(std::process::Stdio::inherit())
+        .output()?;
+    if !out.status.success() {
+        return Err(io::Error::other(format!(
+            "`sudo -n {script}` exited with {}; install it as oxasm's xtask/scripts/oxasm-drop-caches says, \
+             or set B2_DROP_CACHES=off",
+            out.status
+        )));
+    }
+    io::stderr().write_all(&out.stdout)
+}
+
+/// `MemFree` from /proc/meminfo, in KiB; `None` where there is none, which drops.
+fn mem_free_kib() -> Option<u64> {
+    fs::read_to_string("/proc/meminfo")
+        .ok()?
+        .lines()
+        .find_map(|l| l.strip_prefix("MemFree:"))?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
+}
+
 fn run_job(job: &Job, out: &mut File) -> io::Result<()> {
     let mut env = base_env();
     env.extend(job.env.clone());
@@ -278,6 +328,9 @@ fn script(
     if let Ok(kib) = s.hwm_kib() {
         rec.insert("hwm_kib".into(), json!(kib));
     }
+    if let Ok(kib) = s.anon_huge_kib() {
+        rec.insert("anon_huge_kib".into(), json!(kib));
+    }
     s.mark("done");
     Ok(())
 }
@@ -378,6 +431,10 @@ fn cmd_run(args: &[String]) -> io::Result<()> {
     };
     let jobs: Vec<Job> = serde_json::from_slice(&fs::read(spec)?).map_err(io::Error::other)?;
     let mut out = File::options().create(true).append(true).open(out)?;
+    // Once, not before every run: paint includes startup, and a dropped cache would make each a cold start.
+    // When it drops, the first run of each viewer is cold; the report's median across runs absorbs it, and also
+    // the other lanes' drops, which start together with this one.
+    drop_caches()?;
     for job in &jobs {
         if only.is_empty() || only.iter().any(|o| job.name.contains(o.as_str())) {
             run_job(job, &mut out)?;

@@ -30,6 +30,14 @@ python3 -I bench/b2/report.py $B2_ROOT/b2/all.jsonl; python3 -I bench/b2/rank.py
 zsh bench/b2/b2a.zsh && python3 -I bench/b2/b2a_report.py
 ```
 
+Memory is defragmented before measuring when less than 8 GiB is free (`MemFree`; `B2_DROP_BELOW_GB` sets another
+threshold), as oxasm's and sift's benchmarks do: `b2 run` and `b2a.zsh` check once at their start, `b2 flood`
+before each process. When free memory is short or fragmented, transparent huge pages fall back to 4 KiB pages and
+a viewer's heap faults more. They run `sudo -n /usr/local/sbin/oxasm-drop-caches`, which drops the page cache and
+compacts memory; oxasm's `xtask/scripts/oxasm-drop-caches` says how to install it and its password-free sudoers
+rule. `B2_DROP_CACHES` names another script, or `off` skips it. Runs and floods record the viewer's
+`anon_huge_kib` (`AnonHugePages`): how much of its heap got huge pages.
+
 `b2 floor [SAMPLES] [OUT.json]` measures the harness's own key → pty → timestamp path against the tty's echo,
 with no program on the slave. Run it under `taskset` on a lane's cores, alone and beside a run, to see what a
 difference has to exceed. `b2 probe CWD KEY... -- CMD...` dumps the emulated screen after each key.

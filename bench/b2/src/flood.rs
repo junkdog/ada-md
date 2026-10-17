@@ -17,7 +17,7 @@ use std::time::Duration;
 use serde_json::{Map, Value, json};
 
 use crate::pty::{Session, now};
-use crate::{base_env, unescape};
+use crate::{base_env, drop_caches, unescape};
 
 const STALL: f64 = 3.0;
 const HIDE_CURSOR: &[u8] = b"\x1b[?25l";
@@ -93,6 +93,8 @@ pub fn cmd_flood(args: &[String]) -> io::Result<()> {
         }
     };
 
+    // before each process when memory is low: the flood starts after startup, so a cold cache costs it nothing
+    drop_caches()?;
     let mut s = Session::spawn(&args[sep + 1..], &base_env(), cwd)?;
     s.wait_quiet(0.8, 20.0);
     let first_chunk = s.chunks.len();
@@ -159,6 +161,7 @@ pub fn cmd_flood(args: &[String]) -> io::Result<()> {
     // a stalled viewer is dead by now, so this only collects what it wrote before
     s.wait_quiet(0.5, 60.0);
     let after = (!stalled).then(|| threads(s.pid));
+    let anon_huge_kib = s.anon_huge_kib().ok().filter(|_| !stalled);
 
     // frames end where a cursor hide completes, at the time of the chunk that completes it
     let mut frames: Vec<f64> = vec![];
@@ -224,6 +227,7 @@ pub fn cmd_flood(args: &[String]) -> io::Result<()> {
         "cpu_per_frame_ms": cpu_ms.and_then(per_frame),
         "key_to_frame_ms": quantiles(&mut to_frame, &[("p50", 0.5), ("p99", 0.99), ("max", 1.0)]),
         "frame_gap_ms": quantiles(&mut gaps, &[("p50", 0.5), ("p99", 0.99)]),
+        "anon_huge_kib": anon_huge_kib,
         "threads": per_thread,
     });
     println!("{rec}");

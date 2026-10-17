@@ -321,6 +321,16 @@ impl Session {
             .ok_or_else(|| io::Error::other("no VmHWM"))
     }
 
+    /// Anonymous memory backed by transparent huge pages, from smaps_rollup: how much of the heap got
+    /// 2 MiB pages rather than falling back to 4 KiB ones.
+    pub fn anon_huge_kib(&self) -> io::Result<u64> {
+        let s = fs::read_to_string(format!("/proc/{}/smaps_rollup", self.pid))?;
+        s.lines()
+            .find(|l| l.starts_with("AnonHugePages:"))
+            .and_then(|l| l.split_whitespace().nth(1)?.parse().ok())
+            .ok_or_else(|| io::Error::other("no AnonHugePages"))
+    }
+
     pub fn close(&mut self, quit: &str) {
         let _ = (&self.master).write_all(quit.as_bytes());
         self.wait_quiet(0.1, 0.5);
