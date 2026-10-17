@@ -99,7 +99,7 @@ status_pos = { fg = "fg4", bg = "bg2" }
 status_message = { fg = "yellow", bg = "bg1" }
 status_link = { fg = "blue", bg = "bg1" }        # the focused link's target
 search_match = { fg = "bg", bg = "orange" }
-search_match_hidden = { underline = true, underline_color = "purple" }   # matched in a link target
+search_match_hidden = { underline = true, bg = "bg2" }   # matched in a link target
 search_current = { fg = "bg", bg = "yellow", bold = true }
 prompt = { fg = "fg", bg = "bg1" }
 prompt_error = { fg = "red", bg = "bg1" }

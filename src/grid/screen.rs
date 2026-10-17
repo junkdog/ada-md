@@ -70,7 +70,7 @@ fn same(a: &Grid, b: &Grid, i: usize) -> bool {
     if x.len != LONG && y.len != LONG {
         return x == y;
     }
-    let style = |c: &Cell| (c.meta, c.modifier, c.fg, c.bg, c.underline);
+    let style = |c: &Cell| (c.meta, c.modifier, c.fg, c.bg);
     x.len == y.len && style(x) == style(y) && a.symbol_at(i) == b.symbol_at(i)
 }
 
@@ -138,7 +138,6 @@ struct Pen {
     modifier: u16,
     fg: u32,
     bg: u32,
-    underline: u32,
 }
 
 impl Pen {
@@ -149,12 +148,11 @@ impl Pen {
             modifier: 0,
             fg: 0,
             bg: 0,
-            underline: 0,
         }
     }
 
     fn styled(&self) -> bool {
-        (self.modifier, self.fg, self.bg, self.underline) != (0, 0, 0, 0)
+        (self.modifier, self.fg, self.bg) != (0, 0, 0)
     }
 
     /// Write cell `i` of `grid`: move there unless the cursor is there, set what differs of its
@@ -184,10 +182,6 @@ impl Pen {
         if c.bg != self.bg {
             color(out, 40, c.bg);
             self.bg = c.bg;
-        }
-        if c.underline != self.underline {
-            color(out, 50, c.underline);
-            self.underline = c.underline;
         }
         if out.len() == params {
             out.truncate(start);
@@ -260,9 +254,8 @@ fn modifiers(out: &mut Vec<u8>, from: u16, to: u16) {
     }
 }
 
-/// A color's SGR parameters, followed by `;`. `base` is 30 for the foreground, 40 for the
-/// background and 50 for the underline; named colors go as their 256-color index, as crossterm
-/// sends them.
+/// A color's SGR parameters, followed by `;`. `base` is 30 for the foreground and 40 for the
+/// background; named colors go as their 256-color index, as crossterm sends them.
 fn color(out: &mut Vec<u8>, base: u16, c: u32) {
     let [kind, r, g, b] = c.to_be_bytes();
     match kind {
@@ -352,7 +345,6 @@ mod tests {
         Style::reset()
             .fg(c.fg())
             .bg(c.bg())
-            .underline_color(super::super::unpack(c.underline))
             .add_modifier(c.modifier())
     }
 
@@ -383,8 +375,6 @@ mod tests {
                 39 => style.fg(Color::Reset),
                 48 => style.bg(color(&mut it)),
                 49 => style.bg(Color::Reset),
-                58 => style.underline_color(color(&mut it)),
-                59 => style.underline_color(Color::Reset),
                 n => panic!("unexpected SGR {n}"),
             };
         }

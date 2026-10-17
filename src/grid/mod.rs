@@ -27,7 +27,8 @@ const SKIP: u8 = 1 << 4;
 /// The symbol is written as is and counts as `WIDTH` columns: an image's escape sequence.
 const FORCED: u8 = 1 << 5;
 
-/// One terminal cell: 20 bytes, `Copy`, compared as plain bytes.
+/// One terminal cell: 16 bytes, `Copy`, compared as plain bytes. There is no underline color: an
+/// underline takes the foreground's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cell {
     /// The grapheme's UTF-8, zero-padded, or the index of a longer one.
@@ -37,8 +38,9 @@ pub struct Cell {
     modifier: u16,
     fg: u32,
     bg: u32,
-    underline: u32,
 }
+
+const _: () = assert!(size_of::<Cell>() == 16);
 
 impl Cell {
     /// A space with no style, as ratatui's `Cell::EMPTY`.
@@ -49,7 +51,6 @@ impl Cell {
         modifier: 0,
         fg: 0,
         bg: 0,
-        underline: 0,
     };
 
     pub fn reset(&mut self) {
@@ -87,9 +88,6 @@ impl Cell {
         }
         if let Some(c) = style.bg {
             self.bg = pack(c);
-        }
-        if let Some(c) = style.underline_color {
-            self.underline = pack(c);
         }
         self.modifier = (self.modifier | style.add_modifier.bits()) & !style.sub_modifier.bits();
     }
@@ -271,7 +269,6 @@ impl Grid {
                 out.set_symbol(self.symbol_at(i));
                 out.fg = c.fg();
                 out.bg = c.bg();
-                out.underline_color = unpack(c.underline);
                 out.modifier = c.modifier();
                 out.diff_option = match NonZeroU16::new(c.width()) {
                     _ if c.skip() => CellDiffOption::Skip,
@@ -297,7 +294,6 @@ impl Grid {
                 c.meta = flags | width.min(u16::from(WIDTH)) as u8;
                 c.fg = pack(from.fg);
                 c.bg = pack(from.bg);
-                c.underline = pack(from.underline_color);
                 c.modifier = from.modifier.bits();
             }
         }
@@ -390,7 +386,6 @@ mod tests {
                     (g.fg(), g.bg(), g.modifier()),
                     "{at}"
                 );
-                assert_eq!(b.underline_color, unpack(g.underline), "{at}");
             }
         }
     }

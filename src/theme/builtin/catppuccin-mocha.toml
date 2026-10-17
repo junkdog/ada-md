@@ -108,7 +108,7 @@ status_pos = { fg = "subtext0", bg = "surface0" }
 status_message = { fg = "yellow", bg = "mantle" }
 status_link = { fg = "blue", bg = "mantle" }
 search_match = { fg = "base", bg = "peach" }
-search_match_hidden = { underline = true, underline_color = "mauve" }
+search_match_hidden = { underline = true, bg = "surface1" }
 search_current = { fg = "base", bg = "yellow", bold = true }
 prompt = { fg = "text", bg = "mantle" }
 prompt_error = { fg = "red", bg = "mantle" }
