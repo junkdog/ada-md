@@ -56,28 +56,20 @@ you can remap.
 
 ## Performance
 
-ada against other terminal markdown viewers, on the same machine, documents and 120×40 pty:
-four notes from 13 KB to a 2 MB concatenation, each viewer pinned to four physical cores of an
-AMD Ryzen AI MAX+ PRO 395, medians of 3–5 runs (ada `137570c`, 2026-10-18).
+Against other terminal markdown viewers, ada is first in 79 of the 84 interactive measurements
+of time, CPU and memory: four notes from 13 KB to 2 MB in a 120×40 pty, four pinned cores of an
+AMD Ryzen AI MAX+ PRO 395, medians of 3–5 runs (ada `137570c`, 2026-10-18). The exceptions: glow
+writes about a third fewer bytes per page, and md-tui and leaf peak lower on the smallest note.
 
-ada is first in 79 of the 84 interactive measurements, on time and on CPU or memory. It isn't
-first on the bytes it writes per page (glow writes about a third less) or on peak memory for
-the smallest note (md-tui 9.3 MiB and leaf 10.9, against 11.2).
+Printing to a pipe, it's the fastest of the printers that render and highlight, on every note.
+As a previewer it beats bat on code, on pretty-printed JSON (6.5 MB in 160 ms, bat 1.9 s) and on
+logs (1 MB in 16 ms, bat 3.3 s), though a single 3.75 MB line of JSON takes it twice bat's time,
+which leaves such lines uncolored. Image previews are 1.5–20× faster than `kitten icat`, in
+1.2–13× less memory.
 
-Printing to a pipe, ada is the fastest of the printers that render and highlight (leaf, mdcat,
-rich, mcat, glow) on every note, and the leanest on two of four (leaf takes 0.3 and 0.2 MiB less
-on S and L). As a previewer, it prints code faster and leaner than bat. JSON goes through a
-scanner of its own: a 6.5 MB pretty-printed file in 160 ms (bat 1.9 s). A 3.75 MB line of JSON
-takes it twice bat's time, because bat doesn't color it (it skips highlighting any line over
-16 KB): ada colors every key and value, and writes 2.7× the bytes. Logs go through a parser of
-its own too: a 1 MB log in 16 ms (bat 3.3 s), an 80 MB one
-in under a second (bat doesn't finish in a minute). Its image previews are 1.5–20× faster than
-`kitten icat`, in 1.2–13× less memory.
-
-The charts, per document and with what each one times, are on
-[the site](https://junkdog.github.io/ada-md/#performance). The medians behind them are in
+Charts are on [the site](https://junkdog.github.io/ada-md/#performance), the medians in
 [`interactive.dat`](bench/b2/plots/interactive.dat) and [`print.dat`](bench/b2/plots/print.dat),
-and the harness and how to run it in [`bench/b2`](bench/b2/README.md).
+and the harness in [`bench/b2`](bench/b2/README.md).
 
 ## Install
 
@@ -158,6 +150,7 @@ Press `?` in ada for the keys. See `ada --help` for every option.
 | `r` | read the file again |
 | `e` | edit in `$VISUAL` or `$EDITOR` at the current line |
 | `y` | copy the focused link, or the code block on screen |
+| `S` | save the settings in effect to the config file: a box lists what changes, `Enter` saves, `Esc` cancels |
 | `?` | help |
 | `q` `Esc` | quit; `C-c` always quits |
 
@@ -171,6 +164,11 @@ columns lists.
 ada reads `~/.config/ada/config.toml` (or `$XDG_CONFIG_HOME/ada/config.toml`). The first time it
 runs it writes that file with every option commented out at its default, so it's a place to
 look as much as a place to change things. Flags on the command line win.
+
+`S` saves the settings in effect back to it: the theme `T` picked, the `t`, `w` and `#` toggles, and
+flags such as `--theme`, `--max-width`, `-n`, `--no-images` and `--no-reload`. A box lists each option that
+changes, `old → new`, before anything is written. Only the values change; comments and the lines around them
+stay as they are. A theme loaded from a path is saved as that path.
 
 ```toml
 theme = "gruvbox-light"
@@ -229,47 +227,28 @@ are reported with the file, line and column.
 
 ## Tables
 
-Notes are full of tables: costs, timings, versions, lists of things to compare. ada treats them
-as more than text.
-
-- **Sort by any column.** `s` lists the columns of the first table on screen, each ascending
-  and descending; type to filter (`cost desc`), and `Enter` sorts. `←` `→` switch to another
-  table on screen, and once a table is sorted, the list also offers its source order back.
-  On a sorted table, `s Enter` flips its order. Each table keeps its own order, through
-  resizes, going back and forth, theme switches, and reloads that keep the column.
-- **By value, not as text.** Numbers sort as numbers, with signs, thousands separators and
-  currency or percent signs (`€85` before `€310`), and durations as durations, in any mix of
-  units (`5 min` before `45 min`, `1h 30m` after `80m`). Everything else sorts naturally, digit
-  runs by value and case ignored. Empty cells go last either way, and ties keep their order.
-  The column shows `▲` or `▼`, and the status line says what the table is sorted by.
-- **A sticky header.** While a long table scrolls past, its header row stays at the top of the
-  screen, so you always know which column is which.
-- **Sized like a browser's.** Column widths follow their content, and a table may grow past
-  `max_width`, up to the terminal's width, while the prose around it stays narrow. A table that
-  still doesn't fit becomes cards, one per row, each cell beside its header, instead of columns
-  three characters wide. `t` cycles every table between auto, grid and cards (records).
+- **Sort by any column.** `s` lists the columns of a table on screen, ascending and descending:
+  type to filter, `Enter` sorts, `←` `→` pick another table. Numbers, money, percentages and
+  durations sort by value (`€85` before `€310`, `1h 30m` after `80m`), other text naturally, and
+  empty cells go last. Each table keeps its order through resizes, navigation and reloads.
+- **A sticky header** stays at the top while a long table scrolls past.
+- **Sized like a browser's.** Columns follow their content, and a table may grow past
+  `max_width` to the terminal's width. One that still doesn't fit becomes cards, one per row.
+  `t` cycles every table between auto, grid and records.
 
 ## Other files
 
-ada goes by the file's name: markdown is rendered, a png or jpeg is shown as large as the screen
-allows, and a file whose name a syntax claims (`main.rs`, `Cargo.lock`, `Makefile`, `.zshrc`) is
-shown whole as highlighted code, full width, with the git gutter, search, `e` and `--line`
-working on its lines. Failing that, a `#!` first line names the language, and other text is shown
-plain. Binary files aren't shown.
+Markdown is rendered, a png or jpeg is shown full screen, and code and config files (`main.rs`,
+`Cargo.lock`, `Makefile`, `.zshrc`, or a `#!` first line) are shown whole and highlighted, with
+the git gutter, search, `e` and `--line` working on their lines. Other text is shown plain;
+binary files aren't shown.
 
-Stdin, and files with no extension at all, go by what they hold, from their first 8 KB: a `#!`
-or `<?xml` line, a diff or `git show`, JSON (JSON lines too), YAML, TOML, HTML, a log (lines led
-by timestamps or levels), or markdown (headings, fences, lists, tables, links, front matter).
-Logs (`.log` files, `journalctl`, syslog, tracing, glog, dmesg, `mvn` output) are highlighted by
-ada's own parser, one line at a time: timestamps, levels and error words, a journal's
-`host unit[pid]:`, strings, numbers, `0x` hex, hashes, UUIDs, IP addresses, URLs and `key=value`
-pairs; a theme styles levels with `markup.error`, `markup.warning`, `markup.info` and `markup.debug`.
-JSON is highlighted by a scanner of ada's own as well, with the scopes bat's grammar gives (keys
-`meta.mapping.key`), lines of any length included; `//` and `/* */` comments too.
-Piped text that's none of these is shown plain, line for line, so command output is never
-reflowed as prose; a file with no extension is still read as markdown, as a `README` should be.
-`-l NAME` overrides the guess, for a file too; it completes in zsh, bash and fish to every
-language ada knows.
+Stdin and files with no extension go by their first 8 KB: a diff, JSON (JSON lines too), YAML,
+TOML, HTML, a log, or markdown. Piped text that's none of these is shown line for line, never
+reflowed; a file with no extension falls back to markdown, as a `README` should. Logs and JSON
+are highlighted by ada's own scanners, lines of any length included; a theme styles log levels
+with `markup.error`, `markup.warning`, `markup.info` and `markup.debug`. `-l NAME` overrides the
+guess, and completes to every language ada knows.
 
 ## Images
 
