@@ -1,4 +1,4 @@
-/* ada's site: gruvbox, dark or light with the system. The clips stay dark in both. */
+/* ada's site: gruvbox dark, like the clips. */
 
 @font-face { font-family: "JetBrains Mono"; src: url(fonts/jetbrains-mono-latin-400-normal.woff2) format("woff2"); font-weight: 400; font-display: swap; }
 @font-face { font-family: "JetBrains Mono"; src: url(fonts/jetbrains-mono-latin-700-normal.woff2) format("woff2"); font-weight: 700; font-display: swap; }
@@ -23,35 +23,6 @@
   --gap: 32px;
   color-scheme: dark;
 }
-
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
-    --bg: #f9f5d7; --surface: #fbf1c7; --surface-2: #f2e5bc; --line: #d5c4a1; --fg: #3c3836; --strong: #282828;
-    --muted: #7c6f64; --accent: #b57614; --link: #076678; --ada: #af3a03; --other: #bdae93; color-scheme: light;
-  }
-}
-:root[data-theme="light"] {
-  --bg: #f9f5d7; --surface: #fbf1c7; --surface-2: #f2e5bc; --line: #d5c4a1; --fg: #3c3836; --strong: #282828;
-  --muted: #7c6f64; --accent: #b57614; --link: #076678; --ada: #af3a03; --other: #bdae93; color-scheme: light;
-}
-
-/* mockup only: the theme switch */
-:root:has(#theme-dark:checked) {
-  --bg: #1d2021; --surface: #282828; --surface-2: #32302f; --line: #3c3836; --fg: #ebdbb2; --strong: #fbf1c7;
-  --muted: #a89984; --accent: #fabd2f; --link: #83a598; --ada: #fe8019; --other: #665c54; color-scheme: dark;
-}
-:root:has(#theme-light:checked) {
-  --bg: #f9f5d7; --surface: #fbf1c7; --surface-2: #f2e5bc; --line: #d5c4a1; --fg: #3c3836; --strong: #282828;
-  --muted: #7c6f64; --accent: #b57614; --link: #076678; --ada: #af3a03; --other: #bdae93; color-scheme: light;
-}
-.mock {
-  position: fixed; right: 1rem; bottom: 1rem; z-index: 20; display: flex; gap: 1rem; padding: .5rem .75rem;
-  background: var(--surface-2); border: 1px dashed var(--accent); border-radius: 8px; font: 13px var(--sans);
-}
-.mock fieldset { border: 0; margin: 0; padding: 0; display: flex; gap: .35rem; align-items: center; }
-.mock legend { float: left; color: var(--muted); margin-right: .25rem; }
-.mock input { margin: 0; }
-.mock label { margin-right: .4rem; }
 
 /* base */
 *, *::before, *::after { box-sizing: border-box; }
@@ -235,7 +206,6 @@ footer { padding-block: 2rem 4rem; color: var(--muted); font-size: .9rem; border
   body { font-size: 16px; }
   .top nav { gap: 1rem; }
   .top nav a:nth-child(2) { display: none; }
-  .mock { left: 16px; right: 16px; flex-wrap: wrap; }
 }
 @media (max-width: 440px) {
   .top nav { gap: .6rem; font-size: .88rem; }
