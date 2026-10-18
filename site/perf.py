@@ -1,10 +1,11 @@
-"""The site's performance section, from the B2 data behind the README's charts: bench/b2/plots/{interactive,print}.dat.
+"""The site's performance section, from the B2 data behind the README's charts: bench/b2/plots/{interactive,print}.dat,
+and the previewer files and image previews: bench/b2/plots/{previewer,images}.dat (plot.py writes all four).
 
     python3 -I site/perf.py          # rewrites site/index.html between <!-- perf:begin --> and <!-- perf:end -->
     python3 -I site/perf.py --check  # exits 1 if index.html is out of date
 
 Writes headline tiles for one document, then CSS-only tabs (radio inputs, no script) with a small bar chart per
-metric for each document. Bars are on a log scale and every bar carries its value; a viewer the run couldn't
+metric for each document, then the same for each previewer file and each image. Bars are on a log scale and every bar carries its value; a viewer the run couldn't
 measure gets the reason instead of a bar."""
 import math, os, re, subprocess, sys
 from html import escape
@@ -16,12 +17,29 @@ PAGE = f"{ROOT}/site/index.html"
 DOCS = {"S": "13 KB, the median note", "M": "86 KB, table-heavy", "L": "238 KB, the largest note",
         "XL": "2 MB, notes concatenated"}
 TILE_DOC = "L"
-NAMES = {"mdtui": "md-tui", "treemd-head": "treemd"}
-UNITS = {"peak RSS": "MiB", "print to a pipe, peak RSS": "MiB"}
+NAMES = {"mdtui": "md-tui", "treemd-head": "treemd", "icat": "kitten icat", "icat-shm": "kitten icat"}
+UNITS = {"peak RSS": "MiB", "print to a pipe, peak RSS": "MiB", "previewer, a preview, peak RSS": "MiB",
+         "previewer, the whole file, peak RSS": "MiB", "image, kitty graphics, peak RSS": "MiB",
+         "image, text, peak RSS": "MiB"}
+# previewer.dat's and images.dat's rows: (tab label, description)
+FILES = {"code-s.rs": ("6 KB", "Rust"), "code-m.rs": ("47 KB", "Rust"), "code-l.rs": ("305 KB", "Rust"),
+         "log.log": ("1 MB", "journal log"), "huge.json": ("3.75 MB", "JSON, one line"),
+         "huge.log": ("80 MB", "journal log")}
+FILE_TAB = "huge.log"
+IMAGES = {"fit.png": ("686×811", "PNG that fits as it is"), "diagram.png": ("2473×1808", "PNG diagram"),
+          "photo-12mp.png": ("12 MP", "PNG photo"), "photo.jpg": ("1500×2000", "JPEG photo"),
+          "photo-12mp.jpg": ("12 MP", "JPEG photo"), "photo-24mp.jpg": ("24 MP", "JPEG photo")}
+IMAGE_TAB = "photo.jpg"  # an ordinary photo, not fit.png, ada's best case
 CAPTIONS = {"first paint": "first paint", "CPU per line scroll": "CPU per line scrolled", "search": "search",
             "resize, cold": "re-layout after a resize", "held page-down CPU": "CPU over a held page-down",
             "peak RSS": "peak memory", "print to a pipe, wall": "print to a pipe",
-            "print to a pipe, peak RSS": "peak memory, printing"}
+            "print to a pipe, peak RSS": "peak memory, printing",
+            "previewer, a preview, wall": "a preview", "previewer, the whole file, wall": "the whole file",
+            "previewer, a preview, peak RSS": "peak memory, a preview",
+            "previewer, the whole file, peak RSS": "peak memory, the whole file",
+            "image, kitty graphics, wall": "kitty graphics", "image, text, wall": "half-blocks and symbols",
+            "image, kitty graphics, peak RSS": "peak memory, kitty graphics",
+            "image, text, peak RSS": "peak memory, half-blocks and symbols"}
 # why a cell is missing, as the README explains it: (metric or None for any, viewer, doc or None for any)
 MISSING = [("search", "glow", None, "has no search"),
            ("resize, cold", "glow", None, "blank after a resize"),
@@ -30,6 +48,11 @@ MISSING = [("search", "glow", None, "has no search"),
            ("resize, cold", "mdtui", None, "re-parses for seconds"),
            ("search", "mdfried", "XL", "match off-screen")]
 NOTES = {"lowdown": "no highlighting", "bat": "source, not rendered"}
+# notes on the previewer files and images, by viewer and, where it's only one file, (viewer, file)
+PREV_NOTES = {("rich", "log.log"): "no color", ("rich", "huge.log"): "no color",
+              ("mcat", "code-l.rs"): "most of it as markdown"}
+IMAGE_NOTES = {"icat": "streamed, as ada", "icat-shm": "shared memory", "chafa-vhalf": "half-blocks only",
+               "mcat": None, "viu": None}
 # what each chart times, under its caption, and its kind of time: the legend above the charts says what
 # wall and CPU mean; memory has neither
 DESCS = {"first paint": "from launch until the document's first line is on screen",
@@ -39,24 +62,35 @@ DESCS = {"first paint": "from launch until the document's first line is on scree
          "held page-down CPU": "for 60 page-downs at 30 a second, until the screen catches up",
          "peak RSS": "the most resident at once, over the whole session",
          "print to a pipe, wall": "to print the whole document to a pipe",
-         "print to a pipe, peak RSS": "the most resident at once while printing"}
+         "print to a pipe, peak RSS": "the most resident at once while printing",
+         "previewer, a preview, wall": "the first 2,000 rows (bat and rich: 2,000 source lines), to a pipe",
+         "previewer, the whole file, wall": "all of it, to a pipe at 100 columns",
+         "previewer, a preview, peak RSS": "the most resident at once, for a preview",
+         "previewer, the whole file, peak RSS": "the most resident at once, for the whole file",
+         "image, kitty graphics, wall": "a 100×50-cell preview in kitty's graphics protocol, to a pipe",
+         "image, text, wall": "the same preview drawn in characters, for any terminal",
+         "image, kitty graphics, peak RSS": "the most resident at once, kitty graphics",
+         "image, text, peak RSS": "the most resident at once, in characters"}
 KINDS = {"first paint": "wall", "CPU per line scroll": "CPU", "search": "wall", "resize, cold": "wall",
-         "held page-down CPU": "CPU", "print to a pipe, wall": "wall"}
+         "held page-down CPU": "CPU", "print to a pipe, wall": "wall", "previewer, a preview, wall": "wall",
+         "previewer, the whole file, wall": "wall", "image, kitty graphics, wall": "wall", "image, text, wall": "wall"}
 TILES = [("first paint", "first paint"), ("CPU per line scroll", "CPU per line scrolled"),
          ("resize, cold", "re-layout after a resize"), ("peak RSS", "peak memory")]
 
 
 def parse(path):
-    """{title: {doc: {viewer: value or None}}} and the commit from the header."""
+    """{title: {doc: {viewer: value, None, or "cap"}}} and the stamp from the header: a commit, or a commit and
+    the files rerun at another ("137570c, logs e9ec3b7")."""
     text = open(path).read()
-    commit = re.search(r"at ada (\w+)", text).group(1)
+    commit = re.search(r"at ada (.+?):", text).group(1)
     panels = {}
     for block in text.strip().split("\n\n\n"):
         lines = block.strip().splitlines()
         if lines[0].startswith("# B2"):
             lines = lines[1:]
         title, names = lines[0][2:], lines[1].split()[2:]
-        panels[title] = {r.split()[0]: {n: None if v == "?" else float(v) for n, v in zip(names, r.split()[1:])}
+        panels[title] = {r.split()[0]: {n: None if v == "?" else v if v == "cap" else float(v)
+                                        for n, v in zip(names, r.split()[1:])}
                          for r in lines[2:]}
     return panels, commit
 
@@ -74,19 +108,25 @@ def kind(metric):
     return f' <em class="kind {k.lower()}">{k}</em>' if k else ""
 
 
-def chart(metric, cells, doc):
+def chart(metric, cells, doc, note=NOTES.get, cap=None):
+    """note(viewer) is the small print under a viewer's name; a `cap` cell was stopped after cap seconds."""
     unit = UNITS.get(metric, "ms")
-    vals = [v for v in cells.values() if v is not None]
+    cells = {k: None if v == "cap" else v for k, v in cells.items()} | {k: "cap" for k, v in cells.items() if v == "cap"}
+    vals = [v for v in cells.values() if v not in (None, "cap")]
     lo, hi = min(vals) / 2.5, max(vals)
     ada = cells["ada"]
-    rows = sorted(cells.items(), key=lambda kv: (kv[1] is None, kv[1] or 0))
+    rows = sorted(cells.items(), key=lambda kv: (kv[1] in (None, "cap"), kv[1] == "cap", 0 if kv[1] == "cap" else kv[1] or 0))
     out = [f'<figure class="chart"><figcaption>{escape(CAPTIONS[metric])} <span>{unit}</span>{kind(metric)}'
            f'<small>{escape(DESCS[metric])}</small></figcaption><ol>']
     for viewer, v in rows:
         name = escape(NAMES.get(viewer, viewer))
-        if viewer in NOTES:
-            name += f' <small>{escape(NOTES[viewer])}</small>'
+        if n := note(viewer):
+            name += f' <small>{escape(n)}</small>'
         cls = ' class="ada"' if viewer == "ada" else ""
+        if v == "cap":
+            out.append(f'<li class="missing"><span class="name">{name}</span>'
+                       f'<span class="why">stopped after {cap} s</span></li>')
+            continue
         if v is None:
             out.append(f'<li class="missing"><span class="name">{name}</span>'
                        f'<span class="why">{escape(why(metric, viewer, doc))}</span></li>')
@@ -130,8 +170,50 @@ def section():
         out.append('</div><h3>Printing, <code>--print</code> and the other printers</h3><div class="charts">')
         out += [chart(m, prints[m][doc], doc) for m in prints]
         out.append("</div></div>")
-    out.append(f'<p class="stamp">B2 at ada <code>{commit}</code>, {date}</p>')
+    out += tabbed("prev", f"{PLOTS}/previewer.dat", FILES, FILE_TAB,
+                  "As a previewer: code, logs and JSON",
+                  "What fzf's preview pane shows besides markdown, against the tools ada replaces there: bat, rich "
+                  "and mcat. A preview stops at a budget; the whole file is printed, all of it, to a pipe.",
+                  lambda f: lambda v: PREV_NOTES.get((v, f)))
+    out += tabbed("img", f"{PLOTS}/images.dat", IMAGES, IMAGE_TAB,
+                  "Image previews",
+                  "A 100×50-cell preview of each image, printed to a pipe, against kitten icat, chafa, mcat and "
+                  "viu: in kitty's graphics protocol, and drawn in characters for any other terminal.",
+                  lambda f: IMAGE_NOTES.get)
+    out.append(f'<p class="stamp">B2 at ada <code>{commit}</code>, {date}{stamps()}</p>')
     return "\n".join(out)
+
+
+def stamps():
+    """The previewer files' and images' stamps, where they differ from the documents' commit."""
+    extra = []
+    for name, label in (("previewer", "previewer files"), ("images", "images")):
+        if os.path.exists(path := f"{PLOTS}/{name}.dat"):
+            commit = parse(path)[1]
+            if commit != parse(f"{PLOTS}/interactive.dat")[1]:
+                extra.append(f"{label} at ada <code>{escape(commit)}</code>")
+    return "".join(f"; {e}" for e in extra)
+
+
+def tabbed(key, path, inputs, checked, title, lede, notes):
+    """A heading, a lede, one tab per input and a panel of charts each, from a .dat of plot.py's whose rows are
+    the inputs. notes(input) gives the note function for that input's charts."""
+    if not os.path.exists(path):
+        return []
+    panels, _ = parse(path)
+    cap = re.search(r"cap at (\d+) s", open(path).read())
+    out = [f'<h3 class="perf-sub">{escape(title)}</h3><p class="lede">{escape(lede)}</p>',
+           f'<div class="doc-tabs" role="radiogroup" aria-label="{key}">']
+    for i, (f, (size, desc)) in enumerate(inputs.items()):
+        on = " checked" if f == checked else ""
+        out.append(f'<input type="radio" name="{key}" id="{key}-{i}"{on}>'
+                   f'<label for="{key}-{i}"><b>{escape(size)}</b> {escape(desc)}</label>')
+    out.append("</div>")
+    for i, f in enumerate(inputs):
+        out.append(f'<div class="perf-panel" data-{key}="{i}"><div class="charts">')
+        out += [chart(m, panels[m][f], f, notes(f), cap and cap[1]) for m in panels]
+        out.append("</div></div>")
+    return out
 
 
 page = open(PAGE).read()

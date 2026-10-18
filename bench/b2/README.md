@@ -35,6 +35,7 @@ zsh bench/b2/b2p.zsh   # the previewer files: code, a log, huge files; whole and
 zsh bench/b2/b2i.zsh   # image previews: kitty graphics, half-blocks and symbols
 python3 -I bench/b2/doctables.py > tables.md   # the vault notes' tables, × columns and ranks included
 python3 -I bench/b2/plot.py $(git rev-parse --short HEAD) && gnuplot bench/b2/plots/b2.gnuplot   # the README's charts
+python3 -I site/perf.py   # the site's perf section, from the same .dat files
 ```
 
 The four lanes take about 25 minutes (md-tui's XL runs, each at the 90 s cap, set the length), print mode
@@ -103,7 +104,7 @@ done
 | `lanes.py` | splits the jobs into four CPU lanes |
 | `report.py`, `rank.py` | tables, and where ada isn't first |
 | `doctables.py` | the vault notes' B2 tables in their layout: × columns, the best value per column bold, ranks, the cold resize |
-| `plot.py`, `plots/b2.gnuplot` | the README's charts: `plots/interactive.png` and `plots/print.png`, from the `.dat` files `plot.py` writes |
+| `plot.py`, `plots/b2.gnuplot` | the charts' data: `plots/interactive.dat` and `print.dat` (the README's `interactive.png` and `print.png`, and the site), `previewer.dat` and `images.dat` (the site only; `B2P_DIRS` and `B2I_DIRS` merge reruns as for `doctables.py`, and a second argument stamps `previewer.dat` when some files were rerun at another commit: `plot.py 137570c "137570c, logs e9ec3b7"`) |
 | `b2a.zsh`, `b2a_report.py` | print mode with hyperfine 2 (wall, CPU, peak RSS, instructions) |
 | `b2p.zsh` | the previewer files (code, logs, huge files) printed whole and under a preview's budget |
 | `b2i.zsh` | image previews against kitten icat, chafa, viu and mcat |
