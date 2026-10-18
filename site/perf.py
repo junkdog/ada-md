@@ -39,6 +39,7 @@ CAPTIONS = {"first paint": "first paint", "CPU per line scroll": "CPU per line s
             "previewer, a preview, peak RSS": "peak memory, a preview",
             "previewer, the whole file, peak RSS": "peak memory, the whole file",
             "image, kitty graphics, wall": "kitty graphics", "image, text, wall": "half-blocks and symbols",
+            "image, kitty graphics, CPU": "CPU, kitty graphics", "image, text, CPU": "CPU, half-blocks and symbols",
             "image, kitty graphics, peak RSS": "peak memory, kitty graphics",
             "image, text, peak RSS": "peak memory, half-blocks and symbols"}
 # why a cell is missing, as the README explains it: (metric or None for any, viewer, doc or None for any)
@@ -70,11 +71,14 @@ DESCS = {"first paint": "from launch until the document's first line is on scree
          "previewer, the whole file, peak RSS": "the most resident at once, for the whole file",
          "image, kitty graphics, wall": "a 100×50-cell preview in kitty's graphics protocol, to a pipe",
          "image, text, wall": "the same preview drawn in characters, for any terminal",
+         "image, kitty graphics, CPU": "user and system time for the kitty preview, over all threads",
+         "image, text, CPU": "user and system time for the preview in characters, over all threads",
          "image, kitty graphics, peak RSS": "the most resident at once, kitty graphics",
          "image, text, peak RSS": "the most resident at once, in characters"}
 KINDS = {"first paint": "wall", "CPU per line scroll": "CPU", "search": "wall", "resize, cold": "wall",
          "held page-down CPU": "CPU", "print to a pipe, wall": "wall", "previewer, a preview, wall": "wall",
-         "previewer, the whole file, wall": "wall", "image, kitty graphics, wall": "wall", "image, text, wall": "wall"}
+         "previewer, the whole file, wall": "wall", "image, kitty graphics, wall": "wall", "image, text, wall": "wall",
+         "image, kitty graphics, CPU": "CPU", "image, text, CPU": "CPU"}
 TILES = [("first paint", "first paint"), ("CPU per line scroll", "CPU per line scrolled"),
          ("resize, cold", "re-layout after a resize"), ("peak RSS", "peak memory")]
 

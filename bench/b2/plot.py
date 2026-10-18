@@ -75,14 +75,14 @@ if os.path.exists(f"{S}/b2i"):
     load = loader("b2i")
     tools = {"kitty": ["ada", "icat", "icat-shm", "chafa", "mcat"], "text": ["ada", "viu", "chafa", "chafa-vhalf"]}
     blocks = []
-    for key, unit in (("wall", "wall"), ("rss", "peak RSS")):
+    for key, unit in (("wall", "wall"), ("cpu", "CPU"), ("rss", "peak RSS")):
         for mode, label in (("kitty", "kitty graphics"), ("text", "text")):
             res = {f: load(f, mode) for f in IMAGES}
             rows = [[f] + ["?" if n not in res[f] or res[f][n]["killed"] else cell(res[f][n][key])
                            for n in tools[mode]] for f in IMAGES]
             blocks.append(block(f"image, {label}, {unit}", rows, tools[mode]))
     with open(f"{OUT}/images.dat", "w") as f:
-        f.write(f"# B2 image previews at ada {commit}: hyperfine medians, ms (peak RSS in MiB); "
+        f.write(f"# B2 image previews at ada {commit}: hyperfine medians, ms (CPU: user + system; peak RSS in MiB); "
                 f"written by bench/b2/plot.py\n")
         f.write("\n\n\n".join(blocks) + "\n")
     print(f"wrote {OUT}/images.dat")

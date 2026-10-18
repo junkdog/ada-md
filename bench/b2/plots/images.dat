@@ -1,4 +1,4 @@
-# B2 image previews at ada 137570c: hyperfine medians, ms (peak RSS in MiB); written by bench/b2/plot.py
+# B2 image previews at ada 137570c: hyperfine medians, ms (CPU: user + system; peak RSS in MiB); written by bench/b2/plot.py
 # image, kitty graphics, wall
 # doc ada icat icat-shm chafa mcat
 fit.png 1.11435 22.0731 21.6833 21.826 15.5239
@@ -17,6 +17,26 @@ photo-12mp.png 94.9539 143.152 153.322 151.604
 photo.jpg 10.3878 17.0624 17.3863 16.6245
 photo-12mp.jpg 36.774 79.7441 36.0832 35.6156
 photo-24mp.jpg 69.7464 134.182 57.5753 56.5356
+
+
+# image, kitty graphics, CPU
+# doc ada icat icat-shm chafa mcat
+fit.png 1.079 25.031 23.99 23.941 15.436
+diagram.png 16.9195 123.04 117.629 41.226 11.8
+photo-12mp.png 109.616 478.2 450.958 173.165 101.521
+photo.jpg 28.431 106.793 80.5925 24.469 15.658
+photo-12mp.jpg 52.761 249.67 222.155 54.392 40.8215
+photo-24mp.jpg 78.581 408.317 384.534 91.135 60.6825
+
+
+# image, text, CPU
+# doc ada viu chafa chafa-vhalf
+fit.png 5.8435 6.6105 23.85 22.18
+diagram.png 9.805 20.5245 39.9955 39.314
+photo-12mp.png 94.588 142.802 179.065 176.993
+photo.jpg 10.2935 17.007 25.654 24.152
+photo-12mp.jpg 36.444 79.47 58.4605 56.816
+photo-24mp.jpg 69.323 133.806 92.756 91.369
 
 
 # image, kitty graphics, peak RSS
