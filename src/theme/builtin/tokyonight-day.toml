@@ -155,6 +155,10 @@ line_number = { fg = "fg_gutter" }
 "constant.other.placeholder" = { fg = "magenta" }
 "markup.deleted" = { fg = "red" }
 "markup.inserted" = { fg = "green" }
+"markup.error" = { fg = "red" }         # log levels
+"markup.warning" = { fg = "yellow" }
+"markup.info" = { fg = "green" }
+"markup.debug" = { fg = "comment" }
 "markup.italic" = { italic = true }
 "markup.bold" = { bold = true }
 "markup.heading" = { fg = "blue", bold = true }

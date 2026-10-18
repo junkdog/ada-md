@@ -37,8 +37,8 @@ pub use keymap::{Action, Bindings, Key, KeySeq, Keymap};
 pub use load::{Prepare, Prepared, prepare};
 pub use nav::LinkState;
 use nav::{Entry, Nav};
-pub use run::{one_arena, run_tui};
 pub(crate) use run::{draw_frame, init_terminal, restore_terminal};
+pub use run::{one_arena, run_tui};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Size {

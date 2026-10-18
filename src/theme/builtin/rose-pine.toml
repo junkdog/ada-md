@@ -149,6 +149,10 @@ line_number = { fg = "muted" }
 "constant.other.placeholder" = { fg = "iris" }
 "markup.deleted" = { fg = "love" }
 "markup.inserted" = { fg = "foam" }
+"markup.error" = { fg = "love" }         # log levels
+"markup.warning" = { fg = "gold" }
+"markup.info" = { fg = "foam" }
+"markup.debug" = { fg = "muted" }
 "markup.italic" = { italic = true }
 "markup.bold" = { bold = true }
 "markup.heading" = { fg = "iris", bold = true }

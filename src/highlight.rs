@@ -22,11 +22,12 @@ use syntect::highlighting::{
     Color, HighlightIterator, HighlightState, Highlighter as SynHighlighter, ScopeSelectors,
     StyleModifier, Theme as SynTheme, ThemeItem, ThemeSettings,
 };
-use syntect::parsing::{ParseState, ScopeStack, SyntaxReference, SyntaxSet};
+use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 
 use crate::app::{Computed, Msg};
 use crate::doc::{CodeBlock, CodeId};
 use crate::layout::expand_tabs;
+use crate::logs::{self, Kind, Span};
 
 /// Longer lines are left plain: backtracking regexes can be slow on them, and nobody reads them
 /// anyway.
@@ -318,6 +319,71 @@ impl LineState {
     }
 }
 
+/// Whether a language is bat's `Log`, which ada highlights with its own parser (O-43).
+fn is_log(lang: &str) -> bool {
+    find_syntax(lang).is_some_and(|s| s.name == "log")
+}
+
+/// The theme's rule for each log [`Kind`], as syntect would pick it for the kind's scopes.
+struct LogRules([Rule; Kind::ALL.len()]);
+
+impl LogRules {
+    fn new(theme: &SyntaxTheme) -> Self {
+        let highlighter = SynHighlighter::new(&theme.theme);
+        let base = Scope::new("text.log").expect("scope");
+        Self(Kind::ALL.map(|kind| {
+            let mut stack = vec![base];
+            stack.extend(
+                kind.scopes()
+                    .split(' ')
+                    .map(|s| Scope::new(s).expect("scope")),
+            );
+            highlighter
+                .style_mod_for_stack(&stack)
+                .foreground
+                .map_or(Rule(Rule::NONE), Rule::decode)
+        }))
+    }
+
+    fn rule(&self, kind: Kind) -> Rule {
+        self.0[kind as usize]
+    }
+
+    /// Highlight one log line; `spans` is scratch space.
+    fn line(&self, line: &str, spans: &mut Vec<Span>) -> Box<[Run]> {
+        let line = expand_tabs(line);
+        logs::tokens(&line, spans);
+        fn push(runs: &mut Vec<Run>, end: u32, rule: Rule) {
+            match runs.last_mut() {
+                Some(last) if last.rule == rule => last.end = end,
+                _ => runs.push(Run { end, rule }),
+            }
+        }
+        let mut runs: Vec<Run> = Vec::new();
+        let mut at = 0;
+        for span in spans.iter() {
+            if span.start > at {
+                push(&mut runs, span.start, Rule(Rule::NONE));
+            }
+            push(&mut runs, span.end, self.rule(span.kind));
+            at = span.end;
+        }
+        if runs.iter().all(|r| r.rule.0 == Rule::NONE) {
+            return Box::default();
+        }
+        if (at as usize) < line.len() {
+            push(&mut runs, line.len() as u32, Rule(Rule::NONE));
+        }
+        runs.into_boxed_slice()
+    }
+}
+
+/// What highlights a block's lines.
+enum Engine {
+    Syntect(LineState),
+    Log(LogRules, Vec<Span>),
+}
+
 /// The lines of a code block, split as [`crate::doc::code_lines`] splits them.
 #[derive(Clone, Copy)]
 struct Lines<'a>(Option<&'a str>);
@@ -349,7 +415,7 @@ pub struct Highlighter<'a> {
     rules: u64,
     highlighter: SynHighlighter<'a>,
     /// `None` once the block turns out plain, or syntect fails on it.
-    state: Option<LineState>,
+    state: Option<Engine>,
     rest: Lines<'a>,
     lines: Vec<Box<[Run]>>,
     buf: String,
@@ -358,10 +424,14 @@ pub struct Highlighter<'a> {
 impl<'a> Highlighter<'a> {
     pub fn new(key: u64, lang: &str, text: &'a str, theme: &'a SyntaxTheme) -> Self {
         let highlighter = SynHighlighter::new(&theme.theme);
+        let state = match is_log(lang) {
+            true => Some(Engine::Log(LogRules::new(theme), Vec::new())),
+            false => find_syntax(lang).map(|s| Engine::Syntect(LineState::new(s, &highlighter))),
+        };
         Self {
             key,
             rules: theme.id,
-            state: find_syntax(lang).map(|s| LineState::new(s, &highlighter)),
+            state,
             highlighter,
             rest: Lines::new(text),
             lines: Vec::new(),
@@ -378,7 +448,14 @@ impl<'a> Highlighter<'a> {
             let Some(line) = self.rest.next() else {
                 return false;
             };
-            match state.line(line, &self.highlighter, &mut self.buf) {
+            let runs = match state {
+                Engine::Syntect(state) => state.line(line, &self.highlighter, &mut self.buf),
+                Engine::Log(rules, spans) => {
+                    LINES.fetch_add(1, Ordering::Relaxed);
+                    Some(rules.line(line, spans))
+                }
+            };
+            match runs {
                 Some(runs) => self.lines.push(runs),
                 None => {
                     // plain, as a whole
@@ -444,7 +521,45 @@ pub fn highlight_parallel(key: u64, lang: &str, text: &str, theme: &SyntaxTheme)
     if threads < 2 {
         return highlight(key, lang, text, theme);
     }
+    if syntax.name == "log" {
+        return highlight_log_on(key, text, theme, threads);
+    }
     highlight_on(key, syntax, text, theme, threads)
+}
+
+/// A log on `threads` threads: its lines don't depend on each other, so each thread takes a
+/// chunk of them as it comes.
+fn highlight_log_on(key: u64, text: &str, theme: &SyntaxTheme, threads: usize) -> CodeSpans {
+    let all: Vec<&str> = Lines::new(text).collect();
+    let rules = LogRules::new(theme);
+    let chunks: Vec<Vec<Box<[Run]>>> = thread::scope(|s| {
+        let handles: Vec<_> = all
+            .chunks(all.len().div_ceil(threads))
+            .map(|chunk| {
+                let rules = &rules;
+                s.spawn(move || {
+                    let mut spans = Vec::new();
+                    let mut lines = Vec::with_capacity(chunk.len());
+                    // the watch in print mode sees progress (F-06)
+                    for part in chunk.chunks(4096) {
+                        lines.extend(part.iter().map(|l| rules.line(l, &mut spans)));
+                        LINES.fetch_add(part.len() as u64, Ordering::Relaxed);
+                    }
+                    lines
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("highlight thread"))
+            .collect()
+    });
+    CodeSpans {
+        key,
+        rules: theme.id,
+        partial: false,
+        lines: chunks.into_iter().flatten().collect(),
+    }
 }
 
 /// [`highlight_parallel`] on `threads` threads, whatever the size.
@@ -1303,7 +1418,10 @@ mod tests {
             assert!(one.line_count() > 200, "{lang}: highlighted at all");
             let found = find_syntax(lang).unwrap();
             for threads in 2..=5 {
-                let many = highlight_on(1, found, &text, &syntax, threads);
+                let many = match lang {
+                    "log" => highlight_log_on(1, &text, &syntax, threads),
+                    _ => highlight_on(1, found, &text, &syntax, threads),
+                };
                 assert!(many == one, "{lang} on {threads} threads");
             }
         }

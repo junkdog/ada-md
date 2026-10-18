@@ -144,6 +144,10 @@ line_number = { fg = "surface1" }
 "constant.character.escape" = { fg = "pink" }
 "markup.deleted" = { fg = "red" }
 "markup.inserted" = { fg = "green" }
+"markup.error" = { fg = "red" }         # log levels
+"markup.warning" = { fg = "yellow" }
+"markup.info" = { fg = "green" }
+"markup.debug" = { fg = "overlay2" }
 "markup.italic" = { italic = true }
 "markup.bold" = { bold = true }
 "markup.heading" = { fg = "blue" }

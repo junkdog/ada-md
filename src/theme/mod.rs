@@ -329,7 +329,10 @@ mod tests {
             ..named("dracula")
         };
         let themes = Theme::with_builtins(&Theme::builtin(), vec![mine, named("zzz")]);
-        assert_eq!(names(&themes), [&builtins[..], &["zzz".to_owned()]].concat());
+        assert_eq!(
+            names(&themes),
+            [&builtins[..], &["zzz".to_owned()]].concat()
+        );
         let dracula = themes.iter().find(|t| t.name == "dracula").unwrap();
         assert_eq!(dracula.palette, [("mine".to_owned(), Color::Reset)]);
 

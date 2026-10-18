@@ -451,6 +451,11 @@ mod tests {
                 log,
             ),
             (
+                "mvn test compile",
+                "[INFO] Scanning for projects...\n[INFO] \n[INFO] --------------< magnetar:ada >--------------\n[INFO] Building ada 1.0-SNAPSHOT\n[WARNING] /src/A.java:[12,5] deprecated\n[ERROR] Tests run: 3, Failures: 1, Errors: 0, Skipped: 0\n[INFO] BUILD FAILURE\n",
+                log,
+            ),
+            (
                 "readme",
                 "# ada\n\nA terminal markdown viewer.\n",
                 Some(FileType::Markdown),

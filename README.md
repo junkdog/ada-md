@@ -256,6 +256,10 @@ plain. Binary files aren't shown.
 Stdin, and files with no extension at all, go by what they hold, from their first 8 KB: a `#!`
 or `<?xml` line, a diff or `git show`, JSON (JSON lines too), YAML, TOML, HTML, a log (lines led
 by timestamps or levels), or markdown (headings, fences, lists, tables, links, front matter).
+Logs (`.log` files, `journalctl`, syslog, tracing, glog, dmesg, `mvn` output) are highlighted by
+ada's own parser, one line at a time: timestamps, levels and error words, a journal's
+`host unit[pid]:`, strings, numbers, `0x` hex, hashes, UUIDs, IP addresses, URLs and `key=value`
+pairs; a theme styles levels with `markup.error`, `markup.warning`, `markup.info` and `markup.debug`.
 Piped text that's none of these is shown plain, line for line, so command output is never
 reflowed as prose; a file with no extension is still read as markdown, as a `README` should be.
 `-l NAME` overrides the guess, for a file too; it completes in zsh, bash and fish to every
