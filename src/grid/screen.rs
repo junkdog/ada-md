@@ -240,7 +240,7 @@ fn encode(last: &Grid, next: &Grid, out: &mut Vec<u8>) {
         if i == len {
             break;
         }
-        let (cur, prev) = (&next.cells[i], &last.cells[i]);
+        let cur = &next.cells[i];
         let at = i;
         i += 1;
         if cur.skip() {
@@ -269,28 +269,31 @@ fn encode(last: &Grid, next: &Grid, out: &mut Vec<u8>) {
             i = end;
             continue;
         }
+        // A grapheme written over part of a wide one, a narrow one over its first column or a
+        // wide one over either, leaves the columns the wide one covered past it to the
+        // terminal, which erases them by its own rules (tmux and alacritty to a default blank,
+        // others with the pen, F-04): redraw those after it, even where the grid's cell is the
+        // same, as a blank a wide grapheme covered is the same as any other. Each one redrawn
+        // may be written over part of another.
+        let reach = |k: usize, w: usize| {
+            (k..(k + w).min(len))
+                .map(|k| k + usize::from(last.cells[k].width()).max(1))
+                .fold(k + w, usize::max)
+                .min(len)
+        };
+        let span = (at + width.max(1)).min(len);
+        let covered = reach(at, width.max(1));
+        let trailing = (covered > span).then_some((span, covered));
+        i = span;
         // A wide emoji with VS16 is drawn two columns wide by most terminals and one by some:
         // the column it covers goes first, so the emoji covers it in the first kind and leaves
         // it shown in the second. Drawn after the emoji, the column would erase it (F-04).
         if width > 1 && next.symbol_at(at).contains('\u{FE0F}') {
-            let end = (at + width).min(len);
-            for k in at + 1..end {
+            for k in at + 1..span {
                 if !next.cells[k].skip() && last.symbol_at(k) != next.symbol_at(k) {
                     pen.cell(next, k, out);
                 }
             }
-            pen.cell(next, at, out);
-            i = end;
-            continue;
-        }
-        // A wide grapheme replaced by a narrow one leaves the columns it covered to the
-        // terminal, which erases them by its own rules (tmux and alacritty to a default blank,
-        // others with the pen, F-04): redraw those after it.
-        let mut trailing = None;
-        if width > 1 {
-            i += width - 1;
-        } else if usize::from(prev.width()) > width {
-            trailing = Some((at + 1, (at + usize::from(prev.width())).min(len)));
         }
         pen.cell(next, at, out);
         if trailing.is_none() && width == 1 {
@@ -298,9 +301,9 @@ fn encode(last: &Grid, next: &Grid, out: &mut Vec<u8>) {
         }
         if let Some((mut j, mut end)) = trailing {
             while j < end {
-                let k = j;
-                j += usize::from(next.cells[k].width()).max(1);
-                end = end.max(j).min(len);
+                let (k, w) = (j, usize::from(next.cells[j].width()).max(1));
+                j += w;
+                end = end.max(reach(k, w));
                 if !next.cells[k].skip() {
                     pen.cell(next, k, out);
                 }
@@ -918,6 +921,48 @@ mod tests {
         assert_eq!(
             text_of(&screen.out),
             "│ ",
+            "{:?}",
+            screen.out.escape_ascii()
+        );
+    }
+
+    /// A wide grapheme over the first column of another wide one redraws the column the other
+    /// one covered, even when the grid's cell there is unchanged: the terminal erased it (F-04).
+    #[test]
+    fn a_wide_grapheme_over_half_a_wide_one_redraws_its_other_column() {
+        let mut screen = Screen::new(Vec::new(), Size::new(10, 3));
+        let hit = Style::new().bg(Color::Rgb(254, 128, 25));
+        let paint = |g: &mut Grid, x| {
+            g.set_string(x, 0, "日", Style::new());
+            g.set_style(Rect::new(2, 0, 1, 1), hit);
+        };
+        screen.draw(|g| paint(g, 1)).unwrap();
+        screen.out.clear();
+        screen.draw(|g| paint(g, 0)).unwrap();
+        assert_eq!(
+            text_of(&screen.out),
+            "日 ",
+            "{:?}",
+            screen.out.escape_ascii()
+        );
+    }
+
+    /// A column redrawn after a narrow grapheme over a wide one can itself be a wide grapheme
+    /// over half of the next wide one, whose other column is redrawn too (F-04).
+    #[test]
+    fn a_redrawn_column_over_half_a_wide_one_redraws_its_other_column() {
+        let mut screen = Screen::new(Vec::new(), Size::new(10, 3));
+        let hit = Style::new().bg(Color::Rgb(254, 128, 25));
+        let paint = |g: &mut Grid, s| {
+            g.set_string(1, 0, s, Style::new());
+            g.set_style(Rect::new(4, 0, 1, 1), hit);
+        };
+        screen.draw(|g| paint(g, "日日")).unwrap();
+        screen.out.clear();
+        screen.draw(|g| paint(g, "x本")).unwrap();
+        assert_eq!(
+            text_of(&screen.out),
+            "x本 ",
             "{:?}",
             screen.out.escape_ascii()
         );
