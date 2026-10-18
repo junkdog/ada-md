@@ -32,6 +32,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "tokens"
+path = "fuzz_targets/tokens.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "session"
 path = "fuzz_targets/session.rs"
 test = false

@@ -8,7 +8,8 @@
 //! glyphs. The document is markdown, code, config, plain text or an image, as its name says,
 //! and links lead to code files at a `#L42` line. `S` reads a fuzzed config file, answered at
 //! once as the interactive loop does, and is never written: what it would write must read back
-//! with nothing left to save. Every step is painted. Nothing may panic.
+//! with nothing left to save. Every step is painted, and the rows kept on quit replay to the
+//! last frame. Nothing may panic.
 //!
 //! ```zsh
 //! cargo +nightly fuzz run -s none -a session -- -dict=fuzz/markdown.dict -max_len=16384
@@ -24,12 +25,12 @@ use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use ada::app::{self, Cmd, Computed, Config, Dir, Effects, Keymap, Msg, ScrollBy, Size, State};
+use ada::config;
 use ada::grid::{Grid, Screen};
 use ada::highlight;
 use ada::images::{Probe, Proto};
 use ada::layout::{LineNumbers, TableMode};
 use ada::links::Resolved;
-use ada::config;
 use ada::theme::Theme;
 use libfuzzer_sys::arbitrary::{self, Arbitrary, Result, Unstructured};
 use libfuzzer_sys::fuzz_target;
@@ -582,6 +583,7 @@ fn for_vt100(bytes: &[u8], grid: &Grid, rows: &mut [bool]) -> Vec<u8> {
     let area = grid.area();
     let mut out = Vec::with_capacity(bytes.len());
     let (mut x, mut y) = (0u16, 0u16);
+    let mut saved = (0u16, 0u16);
     let mut i = 0;
     while i < bytes.len() {
         let end = match bytes[i] {
@@ -600,6 +602,7 @@ fn for_vt100(bytes: &[u8], grid: &Grid, rows: &mut [bool]) -> Vec<u8> {
                             y = n.next().unwrap_or(1) - 1;
                             x = n.next().unwrap_or(1) - 1;
                         }
+                        b'A' => y = y.saturating_sub(n.next().unwrap_or(1)),
                         b'C' => x = x.saturating_add(n.next().unwrap_or(1)),
                         b'G' => x = n.next().unwrap_or(1) - 1,
                         b'r' => (x, y) = (0, 0),
@@ -617,6 +620,15 @@ fn for_vt100(bytes: &[u8], grid: &Grid, rows: &mut [bool]) -> Vec<u8> {
                 Some(b'P' | b'_' | b']' | b'^' | b'X') => (i + 2..bytes.len())
                     .find(|&j| bytes[j] == 0x07 || bytes[j..].starts_with(b"\x1b\\"))
                     .map_or(bytes.len(), |j| j + if bytes[j] == 0x07 { 1 } else { 2 }),
+                // DECSC and DECRC, around the images `keep` writes
+                Some(b'7') => {
+                    saved = (x, y);
+                    i + 2
+                }
+                Some(b'8') => {
+                    (x, y) = saved;
+                    i + 2
+                }
                 _ => (i + 2).min(bytes.len()),
             },
             b'\r' => {
@@ -750,8 +762,13 @@ impl Session<'_> {
         let opens = matches!(msg, Msg::ConfigRead { .. });
         let mut read = Vec::new();
         let cmds = app::update(&mut self.state, msg);
-        // what the box would write reads back with nothing left to save
-        if opens && let Some(box_) = &self.state.save {
+        // what the box would write reads back with nothing left to save. Only a box this read
+        // opened, which clears the status: an older one can be stale, since a direct intent
+        // gets past the box the keymap would hold the keys for
+        if opens
+            && self.state.status.is_none()
+            && let Some(box_) = &self.state.save
+        {
             let text = &box_.save.text;
             let again = config::save("c.toml", text, &self.state.active_settings());
             assert_eq!(again.map(|s| s.changes), Ok(Vec::new()), "saving:\n{text}");
@@ -805,6 +822,23 @@ impl Session<'_> {
             self.screen.shown(),
             (!all).then_some(&rows[..]),
         );
+    }
+
+    /// On quit, the rows `keep_screen` leaves in the terminal, all but the status bar's at most,
+    /// written as lines from the top of a blank one, show as the last frame did.
+    fn kept(&mut self) {
+        let Size { w, h } = self.state.size;
+        let rows = h.saturating_sub(1);
+        self.screen.keep(rows).expect("tap");
+        let bytes = std::mem::take(&mut *self.out.borrow_mut());
+        if trace() {
+            eprintln!("kept {}", bytes.escape_ascii());
+        }
+        let mut term = vt100::Parser::new(h, w, 0);
+        term.process(&for_vt100(&bytes, self.screen.shown(), &mut []));
+        let mut check = vec![true; usize::from(h)];
+        check[usize::from(rows)..].fill(false);
+        shows(term.screen(), self.screen.shown(), Some(&check));
     }
 
     fn deliver(&mut self, i: usize) {
@@ -1008,6 +1042,7 @@ fuzz_target!(|data: &[u8]| {
     });
     for _ in 0..MAX_OPS {
         if s.state.quit {
+            s.kept();
             return;
         }
         // an exhausted `Unstructured` yields defaults forever, not errors
@@ -1023,4 +1058,5 @@ fuzz_target!(|data: &[u8]| {
     }
     s.settle();
     shows(s.term.screen(), s.screen.shown(), None);
+    s.kept();
 });
