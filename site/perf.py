@@ -1,7 +1,8 @@
 """The site's performance section, from the B2 data behind the README's charts: bench/b2/plots/{interactive,print}.dat,
 and the previewer files and image previews: bench/b2/plots/{previewer,images}.dat (plot.py writes all four).
 
-    python3 -I site/perf.py          # rewrites site/index.html between <!-- perf:begin --> and <!-- perf:end -->
+    python3 -I site/perf.py          # rewrites site/index.html between <!-- perf:begin --> and <!-- perf:end -->,
+                                     # and the hero's line between <!-- proof:begin --> and <!-- proof:end -->
     python3 -I site/perf.py --check  # exits 1 if index.html is out of date
 
 Writes headline tiles for one document, then CSS-only tabs (radio inputs, no script) with a small bar chart per
@@ -217,8 +218,21 @@ def tabbed(key, anchor, path, inputs, checked, title, lede, notes):
     return out
 
 
+def proof():
+    """The hero's line under the pitch: how often ada is first over every ranked measurement, as plot.py counts it
+    into interactive.dat's header, against how many other viewers."""
+    text = open(f"{PLOTS}/interactive.dat").read()
+    first, total = re.search(r"ada first in (\d+) of (\d+)", text).groups()
+    others = len(re.search(r"^# doc (.*)$", text, re.M)[1].split()) - 1
+    words = {4: "four", 5: "five", 6: "six", 7: "seven"}
+    return (f'<p class="proof"><a href="#performance">First in {first} of {total} measurements</a> against '
+            f'{words.get(others, others)} other terminal viewers, on time, CPU and memory.</p>')
+
+
 page = open(PAGE).read()
 new = re.sub(r"(<!-- perf:begin -->\n).*?(<!-- perf:end -->)", lambda m: m[1] + section() + "\n" + m[2], page,
+             flags=re.S)
+new = re.sub(r"(<!-- proof:begin -->\n).*?(<!-- proof:end -->)", lambda m: m[1] + proof() + "\n" + m[2], new,
              flags=re.S)
 if "--check" in sys.argv:
     sys.exit(0 if new == page else 1)

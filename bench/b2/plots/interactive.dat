@@ -1,4 +1,4 @@
-# B2 at ada 137570c: medians, ms (peak RSS in MiB); written by bench/b2/plot.py
+# B2 at ada 137570c: medians, ms (peak RSS in MiB); ada first in 79 of 84 ranked measurements; written by bench/b2/plot.py
 # first paint
 # doc ada leaf mdfried mdtui treemd-head glow
 S 3.67449 6.65407 102.676 30.7658 11.6781 42.2191

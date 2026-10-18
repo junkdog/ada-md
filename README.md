@@ -4,7 +4,7 @@
 
 _Named after Ada, regal matriarch, at her behest._
 
-A fast terminal markdown viewer, for one file or a whole vault of notes: follow links and come
+The fastest terminal markdown viewer, for one file or a whole vault of notes: follow links and come
 back to where you were, see what git says changed, read wide tables at any width, and look at
 the pictures.
 

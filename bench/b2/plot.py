@@ -6,11 +6,12 @@ site, and previewer.dat and images.dat, for the site only.
 Reads the same records as doctables.py ($B2_ROOT/b2/all.jsonl, $B2_ROOT/b2a/, and $B2_ROOT/b2p/ and b2i/, merged
 with $B2P_DIRS and $B2I_DIRS) and takes its cell values, so a chart shows exactly what the vault tables do. One block per panel
 (gnuplot's `index`), a row per document or file, a column per viewer; `?` is a cell the run couldn't measure,
-`cap` a run b2p.zsh stopped at its cap. PREVIEWER stamps previewer.dat (default COMMIT), for a rerun of some files
+`cap` a run b2p.zsh stopped at its cap. interactive.dat's header also counts how often ada is first over every
+ranked measurement ("ada first in 79 of 84"), which site/perf.py puts in the hero. PREVIEWER stamps previewer.dat (default COMMIT), for a rerun of some files
 at another commit merged over the full run: "137570c, logs e9ec3b7"."""
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from doctables import DOCS, IMAGES, PREV_FILES, S, b2a, loader, val
+from doctables import DOCS, IMAGES, PREV_FILES, RANKED, S, b2a, loader, rank, val
 
 OUT = os.path.dirname(os.path.abspath(__file__)) + "/plots"
 commit = sys.argv[1] if len(sys.argv) > 1 else "?"
@@ -36,8 +37,12 @@ blocks = []
 for title, facet, scale in PANELS:
     rows = [[d.upper()] + [cell(None if (x := val(v, d, facet)) is None else x * scale) for v in VIEWERS] for d in DOCS]
     blocks.append(block(title, rows, VIEWERS))
+# how often ada is first, over every ranked measurement (doctables.py's "Not first"), not only the charted ones:
+# the README's count and the site's hero
+ranks = [k for f in RANKED for d in DOCS if (k := rank(d, f)[0]) is not None]
 with open(f"{OUT}/interactive.dat", "w") as f:
-    f.write(f"# B2 at ada {commit}: medians, ms (peak RSS in MiB); written by bench/b2/plot.py\n")
+    f.write(f"# B2 at ada {commit}: medians, ms (peak RSS in MiB); ada first in {ranks.count(1)} of {len(ranks)} "
+            f"ranked measurements; written by bench/b2/plot.py\n")
     f.write("\n\n\n".join(blocks) + "\n")
 
 res = b2a()
