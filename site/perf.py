@@ -170,12 +170,12 @@ def section():
         out.append('</div><h3>Printing, <code>--print</code> and the other printers</h3><div class="charts">')
         out += [chart(m, prints[m][doc], doc) for m in prints]
         out.append("</div></div>")
-    out += tabbed("prev", f"{PLOTS}/previewer.dat", FILES, FILE_TAB,
+    out += tabbed("prev", "previewer-perf", f"{PLOTS}/previewer.dat", FILES, FILE_TAB,
                   "As a previewer: code, logs and JSON",
                   "What fzf's preview pane shows besides markdown, against the tools ada replaces there: bat, rich "
                   "and mcat. A preview stops at a budget; the whole file is printed, all of it, to a pipe.",
                   lambda f: lambda v: PREV_NOTES.get((v, f)))
-    out += tabbed("img", f"{PLOTS}/images.dat", IMAGES, IMAGE_TAB,
+    out += tabbed("img", "image-perf", f"{PLOTS}/images.dat", IMAGES, IMAGE_TAB,
                   "Image previews",
                   "A 100×50-cell preview of each image, printed to a pipe, against kitten icat, chafa, mcat and "
                   "viu: in kitty's graphics protocol, and drawn in characters for any other terminal.",
@@ -195,14 +195,15 @@ def stamps():
     return "".join(f"; {e}" for e in extra)
 
 
-def tabbed(key, path, inputs, checked, title, lede, notes):
-    """A heading, a lede, one tab per input and a panel of charts each, from a .dat of plot.py's whose rows are
+def tabbed(key, anchor, path, inputs, checked, title, lede, notes):
+    """A heading (with an anchor link, id anchor), a lede, one tab per input and a panel of charts each, from a .dat of plot.py's whose rows are
     the inputs. notes(input) gives the note function for that input's charts."""
     if not os.path.exists(path):
         return []
     panels, _ = parse(path)
     cap = re.search(r"cap at (\d+) s", open(path).read())
-    out = [f'<h3 class="perf-sub">{escape(title)}</h3><p class="lede">{escape(lede)}</p>',
+    out = [f'<h3 class="perf-sub" id="{anchor}">{escape(title)} <a class="anchor" href="#{anchor}" '
+           f'aria-label="link to this section">#</a></h3><p class="lede">{escape(lede)}</p>',
            f'<div class="doc-tabs" role="radiogroup" aria-label="{key}">']
     for i, (f, (size, desc)) in enumerate(inputs.items()):
         on = " checked" if f == checked else ""

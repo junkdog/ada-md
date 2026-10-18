@@ -1,0 +1,30 @@
+06:59:58.112 INFO  feeder::clock ntp 192.168.1.1 date=2026-10-02
+07:00:00.004 INFO  feeder::meal breakfast due grams=20 turns=8
+07:00:00.391 DEBUG feeder::motor turn ok ms=387 ma=412
+07:00:00.788 DEBUG feeder::motor turn ok ms=395 ma=418
+07:00:01.596 WARN  feeder::motor jam try=1 cause="paw in the chute"
+07:00:02.396 WARN  feeder::motor jam try=2 cause="paw in the chute"
+07:00:02.799 DEBUG feeder::motor turn ok ms=401 ma=446
+07:00:03.190 DEBUG feeder::motor turn ok ms=389 ma=415
+07:00:03.588 DEBUG feeder::motor turn ok ms=396 ma=409
+07:00:03.982 DEBUG feeder::motor turn ok ms=392 ma=411
+07:00:04.377 DEBUG feeder::motor turn ok ms=393 ma=414
+07:00:04.771 DEBUG feeder::motor turn ok ms=392 ma=410
+07:00:04.773 INFO  feeder::meal breakfast out grams=20 jams=2 bowl=ada
+07:00:41.733 INFO  feeder::scale bowl empty after=41s eater=neumann
+12:00:00.002 INFO  feeder::meal lunch due grams=15 turns=6
+12:00:02.371 INFO  feeder::meal lunch out grams=15 jams=0 bowl=ada
+13:47:19.406 WARN  feeder::lid opened by=paw reason=unknown
+13:47:21.950 ERROR feeder::hopper grams=-120 while=closed suspect=ada
+13:47:22.003 INFO  feeder::alarm chirp sent to=0x7f3a9c04
+13:49:10.517 WARN  feeder::lid closed by=paw after=111s
+17:00:00.001 INFO  feeder::meal dinner skipped food=wet by=hand
+17:02:45.880 INFO  feeder::scale bowl empty after=165s eater=ada
+21:59:58.100 INFO  feeder::clock ntp 192.168.1.1 offset_ms=3
+22:00:00.003 INFO  feeder::meal supper due grams=10 turns=4
+22:00:01.581 INFO  feeder::meal supper out grams=10 jams=0 bowl=ada
+22:00:01.590 INFO  feeder::day dispensed=45 jams=2
+23:00:00.001 INFO  feeder::scale bowl at night left_g=2
+23:00:00.004 INFO  feeder::sd wrote log.txt bytes=18432 free=94%
+23:41:07.660 ERROR feeder::motor stalled cause="cat asleep on the lid" kg=4.3
+00:00:00.004 INFO  feeder::meal snack refused asked_by=ada at=midnight

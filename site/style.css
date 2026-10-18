@@ -32,6 +32,11 @@ body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.6 var(--
 a { color: var(--link); text-underline-offset: .2em; }
 h1, h2, h3 { font-family: var(--mono); line-height: 1.2; font-weight: 700; }
 h2 { font-size: 1.6rem; margin: 0 0 .75rem; }
+/* a heading's # link, to share the card or section: shown on hover, always (dimmed) on touch screens */
+.anchor { color: var(--muted); font-weight: 400; text-decoration: none; opacity: 0; transition: opacity .15s; }
+:is(h2, h3):hover .anchor, .anchor:focus-visible { opacity: 1; }
+.anchor:hover { color: var(--accent); }
+@media (hover: none) { .anchor { opacity: .5; } }
 h3 { font-size: 1.15rem; margin: 0 0 .5rem; }
 strong { color: var(--strong); font-weight: 600; }
 code, kbd, pre { font-family: var(--mono); font-size: .88em; }
@@ -62,6 +67,7 @@ figcaption { margin-top: .5rem; font-size: .88rem; color: var(--muted); }
 }
 .hero h1 { font-size: clamp(3.5rem, 10vw, 6rem); margin: 0; letter-spacing: -.02em; }
 .pitch { font-size: 1.4rem; margin: .5rem 0 .25rem; }
+.proof { font-size: .95rem; margin: 0 0 .75rem; }
 .sub { color: var(--muted); margin: 0 0 1.75rem; }
 .cmd {
   display: inline-flex; align-items: center; gap: .5rem; max-width: 100%; padding: .4rem .4rem .4rem 1rem;

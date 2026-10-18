@@ -3,9 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ada · a fast terminal markdown viewer</title>
-<meta name="description" content="A fast terminal markdown viewer, for one file or a whole vault of notes: sortable tables, a git gutter, links with history, code and image files, and inline images.">
+<title>ada · the fastest terminal markdown viewer</title>
+<meta name="description" content="The fastest terminal markdown viewer, for one file or a whole vault of notes: sortable tables, a git gutter, links with history, code, log and image files, inline images, and fzf previews.">
 <meta name="color-scheme" content="dark">
+<!-- link previews: og:url and og:image must be absolute, the one exception to D7's relative links -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="ada · the fastest terminal markdown viewer">
+<meta property="og:description" content="For one file or a whole vault of notes: sortable tables, a git gutter, links with history, code, log and image files, inline images, and fzf previews.">
+<meta property="og:url" content="https://junkdog.github.io/ada-md/">
+<meta property="og:image" content="https://junkdog.github.io/ada-md/media/og.webp">
+<meta property="og:image:type" content="image/webp">
+<meta property="og:image:width" content="1000">
+<meta property="og:image:height" content="600">
+<meta property="og:image:alt" content="ada in a terminal: a table of how long things take, sorted by duration, from 6 days down to 350 µs">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="preload" href="fonts/jetbrains-mono-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -27,7 +38,9 @@
 <section class="hero wrap">
   <div class="hero-text">
     <h1>ada</h1>
-    <p class="pitch">A fast terminal markdown viewer, for one file or a whole vault of notes.</p>
+    <p class="pitch">The fastest terminal markdown viewer, for one file or a whole vault of notes.</p>
+    <p class="proof"><a href="#performance">First in 79 of 84 measurements</a> against five other terminal viewers,
+      on time, CPU and memory.</p>
     <p class="sub">Follow links and come back to where you were, see what git says changed, read wide tables at
       any width, and look at the pictures.</p>
     <div class="cmd">
@@ -49,7 +62,7 @@
 
   <article id="tables" class="card">
     <div class="text">
-      <h2>Tables you can work with</h2>
+      <h2>Tables you can work with <a class="anchor" href="#tables" aria-label="link to this section">#</a></h2>
       <p><strong>Sorting knows its units:</strong> <code>350 µs</code>, <code>12 ms</code>, <code>1.2 s</code>,
         <code>1m 30s</code> and <code>6 days</code> sort as the durations they are, <code>1,440</code> as a
         number and <code>€420</code> as money. In a long table, <strong>the header row stays on screen</strong>
@@ -73,7 +86,7 @@
       </figure>
     </div>
     <div class="text">
-      <h3>At any width</h3>
+      <h3 id="resize">At any width <a class="anchor" href="#resize" aria-label="link to this section">#</a></h3>
       <p>Prose rewraps and tables re-lay out the moment the terminal changes size. A table too wide to fit
         <strong>turns into records</strong>, a card per row; widen the terminal and the grid comes back.</p>
     </div>
@@ -88,7 +101,7 @@
 
   <article id="links" class="card">
     <div class="text">
-      <h2>Links you can walk</h2>
+      <h2>Links you can walk <a class="anchor" href="#links" aria-label="link to this section">#</a></h2>
       <p>Relative paths, <code>[[wiki links]]</code>, anchors and <code>src/main.rs#L42</code>. <strong>Back and
         forward return to the same spot</strong>, with the same link focused. The outline and the list of links
         filter as you type, and take you there.</p>
@@ -116,7 +129,7 @@
   <div class="pair">
     <article id="gutter" class="card">
       <div class="text">
-        <h2>A git gutter</h2>
+        <h2>A git gutter <a class="anchor" href="#gutter" aria-label="link to this section">#</a></h2>
         <p>The gutter marks what git says changed in the rendered note: <strong>added and modified lines, staged
           and unstaged</strong>, each in its own color.</p>
         <p class="keys"><kbd>]c</kbd> <kbd>[c</kbd> next, previous change</p>
@@ -131,7 +144,7 @@
 
     <article id="search" class="card">
       <div class="text">
-        <h2>Search that sees through markup</h2>
+        <h2>Search that sees through markup <a class="anchor" href="#search" aria-label="link to this section">#</a></h2>
         <p>A regex matches the text as you read it, <strong>across bold, italic and plain</strong>, as you type.
           Link targets match too, and it's smart-case.</p>
         <p class="keys"><kbd>/</kbd> search <kbd>n</kbd> <kbd>N</kbd> next, previous</p>
@@ -154,15 +167,38 @@
       <figcaption>In kitty.</figcaption>
     </figure>
     <div class="text">
-      <h2>Inline images</h2>
+      <h2>Inline images <a class="anchor" href="#images" aria-label="link to this section">#</a></h2>
       <p>png and jpeg, <strong>right in the note</strong>, over kitty, sixel or iTerm2, with half-blocks as the
         fallback, and inside tmux. A link to an image opens it full screen.</p>
     </div>
   </article>
 
+  <article id="preview" class="card">
+    <div class="text">
+      <h2>One previewer for fzf <a class="anchor" href="#preview" aria-label="link to this section">#</a></h2>
+      <p><code>ada --print</code> fills fzf's preview pane at its size: notes rendered, tables and all, code
+        highlighted, logs colored by a parser of ada's own, and <strong>images too</strong>, in kitty's graphics
+        protocol in kitty and Ghostty and in half-blocks elsewhere. <strong>It stands in for both
+        <code>bat</code> and <code>kitten icat</code>.</strong></p>
+      <p>A preview stops 2,000 rows in and reads no further, so an 80 MB log previews as fast as a small file:
+        <a href="#previewer-perf">5.4 ms, where bat takes a second</a>.</p>
+      <pre><code>fzf --preview 'ada --print {}'
+<span class="c"># from rg matches: the matched line lands mid-pane</span>
+rg -n . | fzf -d : --preview-window '+{2}-/2' \
+  --preview 'ada --print --line {2} {1}'</code></pre>
+    </div>
+    <figure>
+      <a class="term term-wide" href="#zoom-preview">
+        <div class="term-bar"><i></i><i></i><i></i><span>fzf --preview 'ada --print {}'</span></div>
+        <img src="media/preview.webp" width="1000" height="540" loading="lazy" alt="fzf with ada as its previewer, moving from a note with two tables to one with a seven-column table, then a Rust file and a highlighted log">
+      </a>
+      <figcaption>Two notes with tables, the feeder's code, and its log.</figcaption>
+    </figure>
+  </article>
+
   <article id="themes" class="card">
     <div class="text">
-      <h2>Fourteen themes, and yours</h2>
+      <h2>Fourteen themes, and yours <a class="anchor" href="#themes" aria-label="link to this section">#</a></h2>
       <p>The ten dark ones are below; <strong>the light ones</strong> are <code>gruvbox-light</code>,
         <code>catppuccin-latte</code>, <code>tokyonight-day</code> and <code>rose-pine-dawn</code>.
         <kbd>T</kbd> previews each as you move through the list, and <kbd>←</kbd> <kbd>→</kbd> switch between dark
@@ -183,19 +219,20 @@
   </article>
 
   <div class="wrap">
-    <h2 class="also-title">Also</h2>
+    <h2 id="also" class="also-title">Also <a class="anchor" href="#also" aria-label="link to this section">#</a></h2>
     <ul class="also">
-      <li><h3>Not only markdown</h3><p>Code, config and other text files open whole and highlighted, in some 200
-        languages; <code>main.rs#L24</code> lands on line 24. <kbd>w</kbd> wraps code or scrolls it sideways.</p></li>
-      <li><h3>Callouts, footnotes, task lists</h3><p>GitHub's five callout kinds, footnotes you can follow, and
+      <li id="other-files"><h3>Not only markdown <a class="anchor" href="#other-files" aria-label="link to this section">#</a></h3><p>Code, config and other text files open whole and highlighted, in some 200
+        languages, and logs through a parser of ada's own; <code>main.rs#L24</code> lands on line 24. <kbd>w</kbd>
+        wraps code or scrolls it sideways, <kbd>#</kbd> shows line numbers.</p></li>
+      <li id="callouts"><h3>Callouts, footnotes, task lists <a class="anchor" href="#callouts" aria-label="link to this section">#</a></h3><p>GitHub's five callout kinds, footnotes you can follow, and
         checkboxes.</p></li>
-      <li><h3>Live reload</h3><p>Reads the file again the moment it changes, keeping its place. <kbd>e</kbd> opens
+      <li id="live-reload"><h3>Live reload <a class="anchor" href="#live-reload" aria-label="link to this section">#</a></h3><p>Reads the file again the moment it changes, keeping its place. <kbd>e</kbd> opens
         <code>$EDITOR</code> at the line on screen.</p></li>
-      <li><h3>Pipes and previews</h3><p><code>--print</code> writes to a pipe at any width:
-        <code>fzf --preview 'ada --print {}'</code>.</p></li>
-      <li><h3>Your keys</h3><p>Remap any action, including two-key sequences like <code>"g g"</code>, in
+      <li id="pipes"><h3>From a pipe <a class="anchor" href="#pipes" aria-label="link to this section">#</a></h3><p>ada tells markdown, code, JSON, YAML, diffs and logs apart by what they hold:
+        <code>journalctl -b | ada</code>. <code>-l json</code> names the language when the guess is wrong.</p></li>
+      <li id="keys"><h3>Your keys <a class="anchor" href="#keys" aria-label="link to this section">#</a></h3><p>Remap any action, including two-key sequences like <code>"g g"</code>, in
         <code>config.toml</code>.</p></li>
-      <li><h3>Record and replay</h3><p><code>--record</code> a session and <code>--replay</code> it to the same
+      <li id="record"><h3>Record and replay <a class="anchor" href="#record" aria-label="link to this section">#</a></h3><p><code>--record</code> a session and <code>--replay</code> it to the same
         frames: a bug report that reproduces.</p></li>
     </ul>
   </div>
@@ -203,7 +240,7 @@
 </section>
 
 <section id="performance" class="perf wrap">
-  <h2>Fast, and lean</h2>
+  <h2>Fast, and lean <a class="anchor" href="#performance" aria-label="link to this section">#</a></h2>
   <p>ada against other terminal markdown viewers on the same machine, documents and terminal. Lower is better;
     bars are on a log scale. The times are of two kinds:</p>
   <dl class="kinds">
@@ -512,7 +549,7 @@
 <li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">300 <small>6.9×</small></span></li>
 </ol></figure>
 </div></div>
-<h3 class="perf-sub">As a previewer: code, logs and JSON</h3><p class="lede">What fzf&#x27;s preview pane shows besides markdown, against the tools ada replaces there: bat, rich and mcat. A preview stops at a budget; the whole file is printed, all of it, to a pipe.</p>
+<h3 class="perf-sub" id="previewer-perf">As a previewer: code, logs and JSON <a class="anchor" href="#previewer-perf" aria-label="link to this section">#</a></h3><p class="lede">What fzf&#x27;s preview pane shows besides markdown, against the tools ada replaces there: bat, rich and mcat. A preview stops at a budget; the whole file is printed, all of it, to a pipe.</p>
 <div class="doc-tabs" role="radiogroup" aria-label="prev">
 <input type="radio" name="prev" id="prev-0"><label for="prev-0"><b>6 KB</b> Rust</label>
 <input type="radio" name="prev" id="prev-1"><label for="prev-1"><b>47 KB</b> Rust</label>
@@ -665,7 +702,7 @@
 <li class="missing"><span class="name">mcat</span><span class="why">stopped after 60 s</span></li>
 </ol></figure>
 </div></div>
-<h3 class="perf-sub">Image previews</h3><p class="lede">A 100×50-cell preview of each image, printed to a pipe, against kitten icat, chafa, mcat and viu: in kitty&#x27;s graphics protocol, and drawn in characters for any other terminal.</p>
+<h3 class="perf-sub" id="image-perf">Image previews <a class="anchor" href="#image-perf" aria-label="link to this section">#</a></h3><p class="lede">A 100×50-cell preview of each image, printed to a pipe, against kitten icat, chafa, mcat and viu: in kitty&#x27;s graphics protocol, and drawn in characters for any other terminal.</p>
 <div class="doc-tabs" role="radiogroup" aria-label="img">
 <input type="radio" name="img" id="img-0"><label for="img-0"><b>686×811</b> PNG that fits as it is</label>
 <input type="radio" name="img" id="img-1"><label for="img-1"><b>2473×1808</b> PNG diagram</label>
@@ -853,7 +890,7 @@
 </section>
 
 <section id="robust" class="robust wrap">
-  <h2>No crashes, on any input</h2>
+  <h2>No crashes, on any input <a class="anchor" href="#robust" aria-label="link to this section">#</a></h2>
   <p class="lede">ada is fuzzed as <strong>whole sessions</strong>, not one function at a time: a document, then up to
     64 things a reader, the file system, git or the terminal can do, in any order.</p>
   <div class="tiles">
@@ -879,15 +916,16 @@
 </section>
 
 <section id="install" class="install wrap">
-  <h2>Install</h2>
+  <h2>Install <a class="anchor" href="#install" aria-label="link to this section">#</a></h2>
   <pre><code>cargo install --git https://github.com/junkdog/ada-md</code></pre>
   <p>Rust 1.99 or newer, and a C compiler: highlighting runs on Oniguruma, built from source. For a pure-Rust
     build, add <code>--no-default-features</code>. Git integration runs the <code>git</code> command.</p>
   <pre><code><span class="c"># read a note</span>
 ada notes/today.md
 
-<span class="c"># from a pipe</span>
+<span class="c"># from a pipe: ada tells markdown, code, JSON, YAML, diffs and logs apart</span>
 git show HEAD~3:README.md | ada
+journalctl -b -u sshd | ada
 
 <span class="c"># code, config and images too</span>
 ada src/main.rs
@@ -915,6 +953,7 @@ fzf --preview 'ada --print {}'</code></pre>
 <div class="zoom" id="zoom-gutter"><a href="#gutter" aria-label="close"></a><img src="media/gutter.png" loading="lazy" alt=""></div>
 <div class="zoom" id="zoom-search"><a href="#search" aria-label="close"></a><img src="media/search.webp" loading="lazy" alt=""></div>
 <div class="zoom" id="zoom-images"><a href="#images" aria-label="close"></a><img src="img/kitty-images.png" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-preview"><a href="#preview" aria-label="close"></a><img src="media/preview.webp" loading="lazy" alt=""></div>
 <div class="zoom" id="zoom-theme-gruvbox-dark"><a href="#themes" aria-label="close"></a><img src="media/theme-gruvbox-dark.png" loading="lazy" alt=""></div>
 <div class="zoom" id="zoom-theme-catppuccin-mocha"><a href="#themes" aria-label="close"></a><img src="media/theme-catppuccin-mocha.png" loading="lazy" alt=""></div>
 <div class="zoom" id="zoom-theme-catppuccin-macchiato"><a href="#themes" aria-label="close"></a><img src="media/theme-catppuccin-macchiato.png" loading="lazy" alt=""></div>
