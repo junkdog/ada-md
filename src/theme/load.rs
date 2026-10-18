@@ -84,34 +84,24 @@ fn lookup_name(name: &str) -> String {
     name.to_owned()
 }
 
-/// Every theme `T` lists: the built-ins, then the user's themes directory by name,
-/// with `current` among them. A user theme named like a built-in replaces it. Themes that
-/// don't load are left out, with a warning.
-pub fn load_all(current: &Theme) -> (Vec<Theme>, Vec<String>) {
+/// The user's themes directory by name, for `T`: every theme in it but `current`, which `T`
+/// lists as it is. Themes that don't load are left out, with a warning. The built-ins join them
+/// when `T` first opens ([`Theme::with_builtins`]), so startup parses none of them (O-42).
+pub fn load_user(current: &Theme) -> (Vec<Theme>, Vec<String>) {
     let mut warnings = Vec::new();
-    let mut names: Vec<String> = BUILTIN.iter().map(|(n, _)| (*n).to_owned()).collect();
-    if let Some(dir) = themes_dir()
-        && let Ok(entries) = fs::read_dir(dir)
-    {
-        let mut user: Vec<String> = entries
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|e| e == "toml"))
-            .filter_map(|p| Some(p.file_stem()?.to_string_lossy().into_owned()))
-            .filter(|n| !names.contains(n))
-            .collect();
-        user.sort();
-        names.extend(user);
-    }
-    if !names.contains(&current.name) {
-        names.insert(0, current.name.clone());
-    }
     let mut themes = Vec::new();
+    let Some(entries) = themes_dir().and_then(|dir| fs::read_dir(dir).ok()) else {
+        return (themes, warnings);
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "toml"))
+        .filter_map(|p| Some(p.file_stem()?.to_string_lossy().into_owned()))
+        .filter(|n| *n != current.name)
+        .collect();
+    names.sort();
     for name in names {
-        if name == current.name {
-            themes.push(current.clone());
-            continue;
-        }
         let mut w = Vec::new();
         match resolve(&name, &mut w, 0) {
             Ok(mut theme) => {

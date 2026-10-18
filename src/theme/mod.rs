@@ -9,7 +9,7 @@ use ratatui::style::{Color, Style};
 
 use crate::doc::{Callout, InlineStyle};
 
-pub use load::{BUILTIN, load, load_all, load_str};
+pub use load::{BUILTIN, load, load_str, load_user};
 
 macro_rules! style_keys {
     ($($variant:ident => $path:literal,)*) => {
@@ -245,6 +245,25 @@ impl Theme {
             .collect()
     }
 
+    /// Every theme `T` lists: the built-ins, then `others` (the user's, from [`load_user`]),
+    /// with `current` among them. A theme named like a built-in takes its place.
+    pub fn with_builtins(current: &Theme, others: Vec<Theme>) -> Vec<Theme> {
+        let mut themes = Theme::builtins();
+        let mut rest = Vec::new();
+        for theme in others {
+            match themes.iter_mut().find(|t| t.name == theme.name) {
+                Some(slot) => *slot = theme,
+                None => rest.push(theme),
+            }
+        }
+        themes.extend(rest);
+        match themes.iter_mut().find(|t| t.name == current.name) {
+            Some(slot) => *slot = current.clone(),
+            None => themes.insert(0, current.clone()),
+        }
+        themes
+    }
+
     /// A theme for a light background: its document background is light or, when it leaves
     /// the terminal's, its text is dark. A theme with neither in RGB counts as dark.
     pub fn is_light(&self) -> bool {
@@ -294,6 +313,31 @@ impl Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn with_builtins_lists_the_built_ins_then_the_users_with_the_current_one_in_its_place() {
+        let named = |name: &str| Theme {
+            name: name.into(),
+            ..Theme::builtin()
+        };
+        let names = |themes: &[Theme]| themes.iter().map(|t| t.name.clone()).collect::<Vec<_>>();
+        let builtins = names(&Theme::builtins());
+
+        // a user theme named like a built-in takes its place; the others follow the built-ins
+        let mine = Theme {
+            palette: vec![("mine".into(), Color::Reset)],
+            ..named("dracula")
+        };
+        let themes = Theme::with_builtins(&Theme::builtin(), vec![mine, named("zzz")]);
+        assert_eq!(names(&themes), [&builtins[..], &["zzz".to_owned()]].concat());
+        let dracula = themes.iter().find(|t| t.name == "dracula").unwrap();
+        assert_eq!(dracula.palette, [("mine".to_owned(), Color::Reset)]);
+
+        // a current theme from a path is listed first
+        let themes = Theme::with_builtins(&named("mine"), Vec::new());
+        assert_eq!(themes[0].name, "mine");
+        assert_eq!(themes.len(), builtins.len() + 1);
+    }
 
     #[test]
     fn builtins_are_light_or_dark_by_their_colors() {

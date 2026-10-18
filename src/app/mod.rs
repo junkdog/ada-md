@@ -37,7 +37,7 @@ pub use keymap::{Action, Bindings, Key, KeySeq, Keymap};
 pub use load::{Prepare, Prepared, prepare};
 pub use nav::LinkState;
 use nav::{Entry, Nav};
-pub use run::run_tui;
+pub use run::{one_arena, run_tui};
 pub(crate) use run::{draw_frame, init_terminal, restore_terminal};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -480,8 +480,10 @@ impl Document {
 
 pub struct State {
     pub theme: Theme,
-    /// The themes `T` lists, the current one among them.
+    /// The themes `T` lists, the current one among them. Until `T` first opens, only the user's
+    /// own: the built-ins are parsed then (O-42).
     pub themes: Vec<Theme>,
+    themes_listed: bool,
     pub config: Config,
     pub size: Size,
     pub doc: Option<Document>,
@@ -524,14 +526,10 @@ impl State {
     pub fn new(theme: Theme, config: Config) -> Self {
         let glyphs_gen = theme.glyphs.generation();
         let syntax = Arc::new(SyntaxTheme::new(&theme.syntax));
-        // the built-ins need no files; `main` adds the user's themes
-        let mut themes = Theme::builtins();
-        match themes.iter_mut().find(|t| t.name == theme.name) {
-            Some(slot) => *slot = theme.clone(),
-            None => themes.insert(0, theme.clone()),
-        }
         Self {
-            themes,
+            // `main` adds the user's themes, and the first `T` the built-ins
+            themes: Vec::new(),
+            themes_listed: false,
             theme,
             size: Size { w: 80, h: 24 },
             doc: None,
@@ -897,6 +895,15 @@ impl State {
         self.scroll = target as u32;
     }
 
+    /// Add the built-ins to the themes `T` lists, the first time it opens: parsed at every start,
+    /// twice over, they cost it ~1.8 ms (O-42).
+    fn list_themes(&mut self) {
+        if !self.themes_listed {
+            self.themes = Theme::with_builtins(&self.theme, mem::take(&mut self.themes));
+            self.themes_listed = true;
+        }
+    }
+
     /// Switch to the theme named `name`, unless it's on already.
     fn switch_theme(&mut self, name: &str) -> Vec<Cmd> {
         if self.theme.name == name {
@@ -1166,6 +1173,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::OpenThemes => {
             state.status = None;
+            state.list_themes();
             state.open_outline(Listing::Themes)
         }
         Msg::ThemesTone { dir } => state.themes_tone(dir),
@@ -2062,6 +2070,19 @@ mod tests {
         assert_eq!(state.scroll, heading.min(state.max_scroll()));
         update(&mut state, Msg::Back);
         assert_eq!(state.scroll, 30);
+    }
+
+    #[test]
+    fn the_built_in_themes_are_parsed_when_the_theme_list_first_opens() {
+        let mut state = loaded("# Themes\n", 80, 20);
+        assert!(state.themes.is_empty());
+        update(&mut state, Msg::OpenThemes);
+        let names: Vec<&str> = state.themes.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names.len(), crate::theme::BUILTIN.len());
+        assert_eq!(names[0], "gruvbox-dark");
+        update(&mut state, Msg::OutlineClose);
+        update(&mut state, Msg::OpenThemes);
+        assert_eq!(state.themes.len(), crate::theme::BUILTIN.len());
     }
 
     #[test]

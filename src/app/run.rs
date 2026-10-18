@@ -80,7 +80,6 @@ pub fn run_tui(
     mut effects: Effects,
     mut recorder: Option<Recorder>,
 ) -> Result<(), String> {
-    one_arena();
     let mut terminal = init_terminal().map_err(|e| format!("terminal: {e}"))?;
     let result = event_loop(
         &mut terminal,
@@ -141,13 +140,14 @@ fn keep_screen(terminal: &mut Term, state: &State) {
     let _ = terminal.keep(rows);
 }
 
-/// One malloc arena for every thread (glibc), set before the workers start. A document the loader
+/// One malloc arena for every thread (glibc), set before any thread starts. A document the loader
 /// builds lands in its thread's arena, layouts built on the UI thread in the main one, and pages
 /// freed in one arena don't serve the other: a session on a 2 MB document that reloaded and
-/// resized peaked 6–27 MiB higher, and its first paint 4 MiB (O-32, ADR-27). Only the TUI: print
-/// mode's highlighting threads keep their own (O-04).
+/// resized peaked 6–27 MiB higher, and its first paint 4 MiB (O-32, ADR-27). Print mode too,
+/// since highlighting runs on a watched thread (F-06): its arena put 2 MB's print 3.7 MiB higher,
+/// and one arena is no slower with O-04's parallel blocks (experiment 20).
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn one_arena() {
+pub fn one_arena() {
     // SAFETY: `mallopt` only changes a setting of glibc's malloc; `M_ARENA_MAX` caps the arenas
     // created from now on, and no other thread runs yet.
     unsafe {
@@ -156,7 +156,7 @@ fn one_arena() {
 }
 
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
-fn one_arena() {}
+pub fn one_arena() {}
 
 fn event_loop(
     terminal: &mut Term,

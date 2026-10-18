@@ -24,6 +24,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
+    app::one_arena();
     let args = cli::parse(env::args_os().skip(1))?;
     if args.help {
         print!("{}", cli::usage());
@@ -105,7 +106,7 @@ fn run() -> Result<(), String> {
         .map(Recorder::create)
         .transpose()
         .map_err(|e| format!("--record: {e}"))?;
-    let (themes, theme_warnings) = theme::load_all(&theme);
+    let (themes, theme_warnings) = theme::load_user(&theme);
     warnings.extend(theme_warnings);
     // The alternate screen hides stderr until ada quits; the first warning shows meanwhile.
     for w in &warnings {
