@@ -21,7 +21,7 @@ use image::{DynamicImage, ImageDecoder, ImageReader};
 use ratatui::layout::{Rect, Size};
 use ratatui::widgets::Widget;
 use ratatui_image::Resize;
-use ratatui_image::picker::{Capability, Picker, ProtocolType};
+use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::sliced::{SignedPosition, SlicedImage, SlicedProtocol};
 
 use crate::grid::Grid;
@@ -102,20 +102,16 @@ pub fn detect(mode: ImageMode) -> Option<Picker> {
     };
     let mut picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
     let tmux = picker.tmux_detected() || std::env::var_os("TMUX").is_some_and(|v| !v.is_empty());
-    let sixel = picker.capabilities().contains(&Capability::Sixel);
-    let proto = forced.unwrap_or_else(|| choose(Proto::of(picker.protocol_type()), tmux, sixel));
+    let proto = forced.unwrap_or_else(|| choose(Proto::of(picker.protocol_type()), tmux));
     picker.set_protocol_type(proto.protocol_type());
     Some(picker)
 }
 
-/// The protocol to use, given what the query found. Kitty graphics don't work inside tmux, and
-/// won't (plan Q10): there, sixel if tmux passes it through, otherwise half-blocks.
-pub fn choose(found: Proto, tmux: bool, sixel: bool) -> Proto {
-    match found {
-        Proto::Kitty if tmux && sixel => Proto::Sixel,
-        Proto::Kitty if tmux => Proto::Halfblocks,
-        p => p,
-    }
+/// The protocol to use, given what the query found. Inside tmux, half-blocks only: kitty graphics
+/// don't work there (plan Q10), and sixel and iTerm2 reach the terminal only through tmux's
+/// passthrough, which misplaces them and loses them on tmux's redraws (KNOWN_ISSUES.md).
+pub fn choose(found: Proto, tmux: bool) -> Proto {
+    if tmux { Proto::Halfblocks } else { found }
 }
 
 /// The message that tells `update` what the picker found.
@@ -387,12 +383,11 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn kitty_is_never_picked_inside_tmux() {
-        assert_eq!(choose(Proto::Kitty, false, true), Proto::Kitty);
-        assert_eq!(choose(Proto::Kitty, true, true), Proto::Sixel);
-        assert_eq!(choose(Proto::Kitty, true, false), Proto::Halfblocks);
-        assert_eq!(choose(Proto::Sixel, true, true), Proto::Sixel);
-        assert_eq!(choose(Proto::Halfblocks, true, false), Proto::Halfblocks);
+    fn only_half_blocks_inside_tmux() {
+        for p in Proto::ALL {
+            assert_eq!(choose(p, false), p);
+            assert_eq!(choose(p, true), Proto::Halfblocks);
+        }
     }
 
     #[test]

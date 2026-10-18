@@ -98,7 +98,7 @@ pub const FLAGS: &[Flag] = &[
             "P",
             Value::Choice(&["kitty", "sixel", "iterm2", "halfblocks"]),
         ),
-        "kitty, sixel, iterm2 or halfblocks, instead of what the terminal\nreports (kitty is otherwise never used inside tmux)",
+        "kitty, sixel, iterm2 or halfblocks, instead of what the terminal\nreports (inside tmux, ada otherwise uses half-blocks)",
     ),
     flag(
         None,

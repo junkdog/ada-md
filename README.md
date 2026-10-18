@@ -44,8 +44,8 @@ More of it, one feature at a time, on [the site](https://junkdog.github.io/ada-m
   between them
 - **Search that sees through markup:** a regex `foo bar` finds `**foo** _bar_`, and link
   targets match too
-- **Inline images** over kitty, sixel or iTerm2, with half-blocks as the fallback, and sixel
-  inside tmux when it can
+- **Inline images** over kitty, sixel or iTerm2, with half-blocks as the fallback, and inside
+  tmux
 - **Live reload** the moment the file changes, and `e` to edit at the line on screen
 - **`--print`** for pipes and fzf previews, and `--record` and `--replay` to make a bug report
   from a session
@@ -247,9 +247,9 @@ terminal what it supports:
 - foot, wezterm, and other sixel terminals get sixel
 - the rest get half-block characters
 
-Inside tmux, kitty graphics don't work, so ada uses sixel when tmux and the terminal both
-support it, and half-blocks otherwise. `--image-protocol` overrides what ada picks, and
-`--no-images` turns images off.
+Inside tmux, ada uses half-blocks: kitty graphics don't work there, and sixel and iTerm2 images
+get misplaced and lost on tmux's redraws ([KNOWN_ISSUES.md](KNOWN_ISSUES.md)). `--image-protocol`
+overrides what ada picks, and `--no-images` turns images off.
 
 ## Editing
 
