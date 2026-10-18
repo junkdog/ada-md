@@ -178,7 +178,7 @@
     <div class="text">
       <h2>One previewer for fzf <a class="anchor" href="#preview" aria-label="link to this section">#</a></h2>
       <p><code>ada --print</code> fills fzf's preview pane at its size: notes rendered, tables and all, code
-        highlighted, logs colored by a parser of ada's own, and <strong>images too</strong>, in kitty's graphics
+        highlighted, logs and JSON colored by parsers of ada's own, and <strong>images too</strong>, in kitty's graphics
         protocol in kitty and Ghostty and in half-blocks elsewhere. <strong>It stands in for both
         <code>bat</code> and <code>kitten icat</code>.</strong></p>
       <p>A preview stops 2,000 rows in and reads no further, so an 80 MB log previews as fast as a small file:
@@ -223,7 +223,7 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
     <h2 id="also" class="also-title">Also <a class="anchor" href="#also" aria-label="link to this section">#</a></h2>
     <ul class="also">
       <li id="other-files"><h3>Not only markdown <a class="anchor" href="#other-files" aria-label="link to this section">#</a></h3><p>Code, config and other text files open whole and highlighted, in some 200
-        languages, and logs through a parser of ada's own; <code>main.rs#L24</code> lands on line 24. <kbd>w</kbd>
+        languages, and logs and JSON through parsers of ada's own (JSON colored however long its lines); <code>main.rs#L24</code> lands on line 24. <kbd>w</kbd>
         wraps code or scrolls it sideways, <kbd>#</kbd> shows line numbers.</p></li>
       <li id="callouts"><h3>Callouts, footnotes, task lists <a class="anchor" href="#callouts" aria-label="link to this section">#</a></h3><p>GitHub's five callout kinds, footnotes you can follow, and
         checkboxes.</p></li>
@@ -657,25 +657,25 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
 </div></div>
 <div class="perf-panel" data-prev="4"><div class="charts">
 <figure class="chart"><figcaption>a preview <span>ms</span> <em class="kind wall">wall</em><small>the first 2,000 rows (bat and rich: 2,000 source lines), to a pipe</small></figcaption><ol>
-<li class="ada" style="--w:12.3%"><span class="name">ada</span><span class="bar"></span><span class="val">6.1</span></li>
-<li style="--w:33.6%"><span class="name">bat</span><span class="bar"></span><span class="val">30.2 <small>4.9×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">4,308 <small>703×</small></span></li>
+<li class="ada" style="--w:12.9%"><span class="name">ada</span><span class="bar"></span><span class="val">9.1</span></li>
+<li style="--w:30.2%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">30.8 <small>3.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">4,308 <small>473×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>the whole file <span>ms</span> <em class="kind wall">wall</em><small>all of it, to a pipe at 100 columns</small></figcaption><ol>
-<li class="ada" style="--w:15.3%"><span class="name">ada</span><span class="bar"></span><span class="val">26.2</span></li>
-<li style="--w:17.7%"><span class="name">bat</span><span class="bar"></span><span class="val">30.3 <small>1.2×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">4,222 <small>161×</small></span></li>
+<li style="--w:16.1%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">35.2 <small>0.5×</small></span></li>
+<li class="ada" style="--w:29.5%"><span class="name">ada</span><span class="bar"></span><span class="val">75.6</span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">4,222 <small>56×</small></span></li>
 <li class="missing"><span class="name">mcat</span><span class="why">stopped after 60 s</span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, a preview <span>MiB</span><small>the most resident at once, for a preview</small></figcaption><ol>
-<li class="ada" style="--w:19.5%"><span class="name">ada</span><span class="bar"></span><span class="val">13.3</span></li>
-<li style="--w:33.7%"><span class="name">bat</span><span class="bar"></span><span class="val">25.9 <small>1.9×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">580 <small>43×</small></span></li>
+<li class="ada" style="--w:20.7%"><span class="name">ada</span><span class="bar"></span><span class="val">17.4</span></li>
+<li style="--w:30.0%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">26.3 <small>1.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">580 <small>33×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, the whole file <span>MiB</span><small>the most resident at once, for the whole file</small></figcaption><ol>
-<li style="--w:22.7%"><span class="name">bat</span><span class="bar"></span><span class="val">25.4 <small>0.8×</small></span></li>
-<li class="ada" style="--w:29.3%"><span class="name">ada</span><span class="bar"></span><span class="val">33.2</span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">580 <small>17×</small></span></li>
+<li style="--w:22.8%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">26.0 <small>0.5×</small></span></li>
+<li class="ada" style="--w:40.4%"><span class="name">ada</span><span class="bar"></span><span class="val">52.7</span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">580 <small>11×</small></span></li>
 <li class="missing"><span class="name">mcat</span><span class="why">stopped after 60 s</span></li>
 </ol></figure>
 </div></div>
@@ -958,10 +958,12 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
 <li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">96.7 <small>1.2×</small></span></li>
 </ol></figure>
 </div></div>
-<p class="stamp">B2 at ada <code>137570c</code>, 2026-10-18; previewer files at ada <code>137570c, logs e9ec3b7</code></p>
+<p class="stamp">B2 at ada <code>137570c</code>, 2026-10-18; previewer files at ada <code>137570c, logs e9ec3b7, JSON 72f4fa4 + O-48</code></p>
 <!-- perf:end -->
   <p class="caveats">Where ada isn't first: glow writes about a third fewer bytes per page, and md-tui uses less
-    memory on the smallest note. As a previewer, bat peaks lower on the whole 3.75 MB JSON line (rich prints logs
+    memory on the smallest note. As a previewer, bat prints the whole 3.75 MB JSON line faster and in less
+    memory, because it doesn't color it: bat skips highlighting any line over 16 KB. ada colors it, every key
+    and value, and writes 15.5 MB to bat's 5.8; left plain, ada printed it faster than bat (rich prints logs
     without color, having no lexer for them). In kitty's graphics protocol, mcat or chafa preview five of the six
     images faster (mcat five on CPU too), and chafa the two largest photos in characters, on wall time only: its
     threads spend 1.3–1.6× ada's CPU there. ada uses the least memory on every one. Each viewer ran pinned to four physical cores of the same machine, in a 120×40

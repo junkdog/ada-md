@@ -195,8 +195,10 @@ fn overlay(
     let from = from as usize;
     let end = from + text.len();
     let mut pos = from;
-    let mut run_start = 0;
-    for run in runs {
+    // a row of a long line starts deep in its runs (O-48)
+    let first = runs.partition_point(|r| r.end as usize <= from);
+    let mut run_start = first.checked_sub(1).map_or(0, |i| runs[i].end as usize);
+    for run in &runs[first..] {
         let (a, b) = (run_start.max(pos), (run.end as usize).min(end));
         run_start = run.end as usize;
         if a >= b {

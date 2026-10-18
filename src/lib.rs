@@ -12,6 +12,7 @@ pub mod grid;
 pub mod guard;
 pub mod highlight;
 pub mod images;
+pub mod json;
 pub mod kitty;
 pub mod layout;
 pub mod links;

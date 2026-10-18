@@ -66,8 +66,11 @@ the smallest note (md-tui 9.3 MiB and leaf 10.9, against 11.2).
 
 Printing to a pipe, ada is the fastest of the printers that render and highlight (leaf, mdcat,
 rich, mcat, glow) on every note, and the leanest on two of four (leaf takes 0.3 and 0.2 MiB less
-on S and L). As a previewer, it prints code and JSON faster than bat, and leaner but for a 3.75 MB
-line of JSON; logs go through a parser of its own: a 1 MB log in 16 ms (bat 3.3 s), an 80 MB one
+on S and L). As a previewer, it prints code faster and leaner than bat. JSON goes through a
+scanner of its own: a 6.5 MB pretty-printed file in 160 ms (bat 1.9 s). A 3.75 MB line of JSON
+takes it twice bat's time, because bat doesn't color it (it skips highlighting any line over
+16 KB): ada colors every key and value, and writes 2.7× the bytes. Logs go through a parser of
+its own too: a 1 MB log in 16 ms (bat 3.3 s), an 80 MB one
 in under a second (bat doesn't finish in a minute). Its image previews are 1.5–20× faster than
 `kitten icat`, in 1.2–13× less memory.
 
@@ -261,6 +264,8 @@ Logs (`.log` files, `journalctl`, syslog, tracing, glog, dmesg, `mvn` output) ar
 ada's own parser, one line at a time: timestamps, levels and error words, a journal's
 `host unit[pid]:`, strings, numbers, `0x` hex, hashes, UUIDs, IP addresses, URLs and `key=value`
 pairs; a theme styles levels with `markup.error`, `markup.warning`, `markup.info` and `markup.debug`.
+JSON is highlighted by a scanner of ada's own as well, with the scopes bat's grammar gives (keys
+`meta.mapping.key`), lines of any length included; `//` and `/* */` comments too.
 Piped text that's none of these is shown plain, line for line, so command output is never
 reflowed as prose; a file with no extension is still read as markdown, as a `README` should be.
 `-l NAME` overrides the guess, for a file too; it completes in zsh, bash and fish to every

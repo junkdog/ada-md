@@ -52,6 +52,8 @@ MISSING = [("search", "glow", None, "has no search"),
 NOTES = {"lowdown": "no highlighting", "bat": "source, not rendered"}
 # notes on the previewer files and images, by viewer and, where it's only one file, (viewer, file)
 PREV_NOTES = {("rich", "log.log"): "no color", ("rich", "huge.log"): "no color",
+              # bat's printer skips highlighting a line over 16 KiB; ada colors it (O-48)
+              ("bat", "huge.json"): "no color on lines over 16 KB",
               ("mcat", "code-l.rs"): "most of it as markdown"}
 IMAGE_NOTES = {"icat": "streamed, as ada", "icat-shm": "shared memory", "chafa-vhalf": "half-blocks only",
                "mcat": None, "viu": None}

@@ -26,6 +26,7 @@ use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet
 
 use crate::app::{Computed, Msg};
 use crate::doc::{CodeBlock, CodeId};
+use crate::json;
 use crate::layout::expand_tabs;
 use crate::logs::{self, Kind, Span};
 
@@ -324,57 +325,85 @@ fn is_log(lang: &str) -> bool {
     find_syntax(lang).is_some_and(|s| s.name == "log")
 }
 
-/// The theme's rule for each log [`Kind`], as syntect would pick it for the kind's scopes.
+/// Whether a language is bat's `JSON`, which ada highlights with its own scanner (O-48).
+fn is_json(lang: &str) -> bool {
+    find_syntax(lang).is_some_and(|s| s.name == "JSON")
+}
+
+/// The theme's rule for each of a lexer's kinds, as syntect would pick it for the kind's
+/// scopes under `base`.
+fn kind_rules<const N: usize>(theme: &SyntaxTheme, base: &str, scopes: [&str; N]) -> [Rule; N] {
+    let highlighter = SynHighlighter::new(&theme.theme);
+    let base = Scope::new(base).expect("scope");
+    scopes.map(|scopes| {
+        let mut stack = vec![base];
+        stack.extend(scopes.split(' ').map(|s| Scope::new(s).expect("scope")));
+        highlighter
+            .style_mod_for_stack(&stack)
+            .foreground
+            .map_or(Rule(Rule::NONE), Rule::decode)
+    })
+}
+
+/// A line's runs from its spans, `(start, end, rule)` in order; empty when no span has a rule.
+fn span_runs(len: usize, spans: impl Iterator<Item = (u32, u32, Rule)>) -> Box<[Run]> {
+    fn push(runs: &mut Vec<Run>, end: u32, rule: Rule) {
+        match runs.last_mut() {
+            Some(last) if last.rule == rule => last.end = end,
+            _ => runs.push(Run { end, rule }),
+        }
+    }
+    let mut runs: Vec<Run> = Vec::new();
+    let mut at = 0;
+    for (start, end, rule) in spans {
+        if start > at {
+            push(&mut runs, start, Rule(Rule::NONE));
+        }
+        push(&mut runs, end, rule);
+        at = end;
+    }
+    if runs.iter().all(|r| r.rule.0 == Rule::NONE) {
+        return Box::default();
+    }
+    if (at as usize) < len {
+        push(&mut runs, len as u32, Rule(Rule::NONE));
+    }
+    runs.into_boxed_slice()
+}
+
+/// The theme's rule for each log [`Kind`].
 struct LogRules([Rule; Kind::ALL.len()]);
 
 impl LogRules {
     fn new(theme: &SyntaxTheme) -> Self {
-        let highlighter = SynHighlighter::new(&theme.theme);
-        let base = Scope::new("text.log").expect("scope");
-        Self(Kind::ALL.map(|kind| {
-            let mut stack = vec![base];
-            stack.extend(
-                kind.scopes()
-                    .split(' ')
-                    .map(|s| Scope::new(s).expect("scope")),
-            );
-            highlighter
-                .style_mod_for_stack(&stack)
-                .foreground
-                .map_or(Rule(Rule::NONE), Rule::decode)
-        }))
-    }
-
-    fn rule(&self, kind: Kind) -> Rule {
-        self.0[kind as usize]
+        Self(kind_rules(theme, "text.log", Kind::ALL.map(Kind::scopes)))
     }
 
     /// Highlight one log line; `spans` is scratch space.
     fn line(&self, line: &str, spans: &mut Vec<Span>) -> Box<[Run]> {
         let line = expand_tabs(line);
         logs::tokens(&line, spans);
-        fn push(runs: &mut Vec<Run>, end: u32, rule: Rule) {
-            match runs.last_mut() {
-                Some(last) if last.rule == rule => last.end = end,
-                _ => runs.push(Run { end, rule }),
-            }
-        }
-        let mut runs: Vec<Run> = Vec::new();
-        let mut at = 0;
-        for span in spans.iter() {
-            if span.start > at {
-                push(&mut runs, span.start, Rule(Rule::NONE));
-            }
-            push(&mut runs, span.end, self.rule(span.kind));
-            at = span.end;
-        }
-        if runs.iter().all(|r| r.rule.0 == Rule::NONE) {
-            return Box::default();
-        }
-        if (at as usize) < line.len() {
-            push(&mut runs, line.len() as u32, Rule(Rule::NONE));
-        }
-        runs.into_boxed_slice()
+        let rule = |s: &Span| (s.start, s.end, self.0[s.kind as usize]);
+        span_runs(line.len(), spans.iter().map(rule))
+    }
+}
+
+/// The theme's rule for each JSON [`json::Kind`].
+struct JsonRules([Rule; json::Kind::ALL.len()]);
+
+impl JsonRules {
+    fn new(theme: &SyntaxTheme) -> Self {
+        let scopes = json::Kind::ALL.map(json::Kind::scopes);
+        Self(kind_rules(theme, "source.json", scopes))
+    }
+
+    /// Highlight one JSON line, after one that left a `/* */` comment open or not; `spans` is
+    /// scratch space.
+    fn line(&self, line: &str, comment: &mut bool, spans: &mut Vec<json::Span>) -> Box<[Run]> {
+        let line = expand_tabs(line);
+        json::tokens(&line, comment, spans);
+        let rule = |s: &json::Span| (s.start, s.end, self.0[s.kind as usize]);
+        span_runs(line.len(), spans.iter().map(rule))
     }
 }
 
@@ -382,6 +411,8 @@ impl LogRules {
 enum Engine {
     Syntect(LineState),
     Log(LogRules, Vec<Span>),
+    /// Whether a `/* */` comment is open.
+    Json(JsonRules, Vec<json::Span>, bool),
 }
 
 /// The lines of a code block, split as [`crate::doc::code_lines`] splits them.
@@ -424,9 +455,12 @@ pub struct Highlighter<'a> {
 impl<'a> Highlighter<'a> {
     pub fn new(key: u64, lang: &str, text: &'a str, theme: &'a SyntaxTheme) -> Self {
         let highlighter = SynHighlighter::new(&theme.theme);
-        let state = match is_log(lang) {
-            true => Some(Engine::Log(LogRules::new(theme), Vec::new())),
-            false => find_syntax(lang).map(|s| Engine::Syntect(LineState::new(s, &highlighter))),
+        let state = if is_log(lang) {
+            Some(Engine::Log(LogRules::new(theme), Vec::new()))
+        } else if is_json(lang) {
+            Some(Engine::Json(JsonRules::new(theme), Vec::new(), false))
+        } else {
+            find_syntax(lang).map(|s| Engine::Syntect(LineState::new(s, &highlighter)))
         };
         Self {
             key,
@@ -453,6 +487,10 @@ impl<'a> Highlighter<'a> {
                 Engine::Log(rules, spans) => {
                     LINES.fetch_add(1, Ordering::Relaxed);
                     Some(rules.line(line, spans))
+                }
+                Engine::Json(rules, spans, comment) => {
+                    LINES.fetch_add(1, Ordering::Relaxed);
+                    Some(rules.line(line, comment, spans))
                 }
             };
             match runs {
@@ -521,28 +559,52 @@ pub fn highlight_parallel(key: u64, lang: &str, text: &str, theme: &SyntaxTheme)
     if threads < 2 {
         return highlight(key, lang, text, theme);
     }
-    if syntax.name == "log" {
-        return highlight_log_on(key, text, theme, threads);
+    match &*syntax.name {
+        "log" => highlight_log_on(key, text, theme, threads),
+        // a `/* */` comment carries over lines: rare in JSON this big, and fast on one thread
+        "JSON" if text.contains("/*") => highlight(key, lang, text, theme),
+        "JSON" => highlight_json_on(key, text, theme, threads),
+        _ => highlight_on(key, syntax, text, theme, threads),
     }
-    highlight_on(key, syntax, text, theme, threads)
 }
 
-/// A log on `threads` threads: its lines don't depend on each other, so each thread takes a
-/// chunk of them as it comes.
+/// A log on `threads` threads: its lines don't depend on each other.
 fn highlight_log_on(key: u64, text: &str, theme: &SyntaxTheme, threads: usize) -> CodeSpans {
-    let all: Vec<&str> = Lines::new(text).collect();
     let rules = LogRules::new(theme);
+    lines_on(key, text, theme, threads, |line, spans| {
+        rules.line(line, spans)
+    })
+}
+
+/// JSON with no `/* */` comment on `threads` threads: its lines don't depend on each other.
+fn highlight_json_on(key: u64, text: &str, theme: &SyntaxTheme, threads: usize) -> CodeSpans {
+    let rules = JsonRules::new(theme);
+    lines_on(key, text, theme, threads, |line, spans| {
+        rules.line(line, &mut false, spans)
+    })
+}
+
+/// A block whose lines don't depend on each other on `threads` threads, each taking a chunk of
+/// them as it comes; `line` highlights one, with scratch space of its own.
+fn lines_on<S: Default>(
+    key: u64,
+    text: &str,
+    theme: &SyntaxTheme,
+    threads: usize,
+    line: impl Fn(&str, &mut S) -> Box<[Run]> + Sync,
+) -> CodeSpans {
+    let all: Vec<&str> = Lines::new(text).collect();
     let chunks: Vec<Vec<Box<[Run]>>> = thread::scope(|s| {
         let handles: Vec<_> = all
             .chunks(all.len().div_ceil(threads))
             .map(|chunk| {
-                let rules = &rules;
+                let line = &line;
                 s.spawn(move || {
-                    let mut spans = Vec::new();
+                    let mut scratch = S::default();
                     let mut lines = Vec::with_capacity(chunk.len());
                     // the watch in print mode sees progress (F-06)
                     for part in chunk.chunks(4096) {
-                        lines.extend(part.iter().map(|l| rules.line(l, &mut spans)));
+                        lines.extend(part.iter().map(|l| line(l, &mut scratch)));
                         LINES.fetch_add(part.len() as u64, Ordering::Relaxed);
                     }
                     lines
@@ -1176,6 +1238,32 @@ mod tests {
         }
     }
 
+    /// On valid JSON, the scanner picks the rules bat's grammar picks, in every built-in theme
+    /// (O-48).
+    #[test]
+    fn json_rules_match_the_grammar() {
+        let text = concat!(
+            "{\n",
+            "  \"name\": \"ada\", \"tab\":\t\"a\\tb \\\"q\\\" \\u00e9 \\x\",\n",
+            "  \"n\" : [0, -12, 1.5, -0.25e+3, 1E9, true, false, null],\n",
+            "  \"o\": {\"k\": [], \"e\": {}}, // note\n",
+            "  /* a comment\n",
+            "     over lines */ \"k\\\"ey\": \"//\" /* inline */\n",
+            "}\n",
+        );
+        let grammar = find_syntax("json").unwrap();
+        for theme in Theme::builtins() {
+            let theme = SyntaxTheme::new(&theme.syntax);
+            let highlighter = SynHighlighter::new(&theme.theme);
+            let mut state = LineState::new(grammar, &highlighter);
+            let mut buf = String::new();
+            let want: Vec<_> = Lines::new(text)
+                .map(|l| state.line(l, &highlighter, &mut buf).unwrap())
+                .collect();
+            assert_eq!(highlight(1, "json", text, &theme).lines, want);
+        }
+    }
+
     fn rule_names(theme: &Theme, spans: &CodeSpans, line: &str, n: u32) -> Vec<(String, String)> {
         let mut start = 0;
         spans
@@ -1404,11 +1492,13 @@ mod tests {
         let log =
             "2026-10-17 12:00:01 INFO started pid=42\n2026-10-17 12:00:02 ERROR failed: \"x\"\n";
         let c = "int x = 1; // note\n";
+        let json = "  {\"k\": [1, -2.5e3, true, \"s\\\"\"], \"open\": \"x\n  \"n\": null},\n";
         for (lang, unit, reps) in [
             ("rust", rust, 60),
             ("bash", bash, 80),
             ("log", log, 150),
             ("c", c, 300),
+            ("json", json, 150),
         ] {
             let mut text = unit.repeat(reps);
             if lang == "c" {
@@ -1420,6 +1510,7 @@ mod tests {
             for threads in 2..=5 {
                 let many = match lang {
                     "log" => highlight_log_on(1, &text, &syntax, threads),
+                    "json" => highlight_json_on(1, &text, &syntax, threads),
                     _ => highlight_on(1, found, &text, &syntax, threads),
                 };
                 assert!(many == one, "{lang} on {threads} threads");
