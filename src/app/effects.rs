@@ -256,6 +256,13 @@ fn read_head(path: &Path, head: Head) -> std::io::Result<Vec<u8>> {
     fs::File::open(path)?
         .take(head.bytes as u64)
         .read_to_end(&mut bytes)?;
+    cut_to_head(&mut bytes, head);
+    Ok(bytes)
+}
+
+/// Cut text read up to `head.bytes` to its first `head.lines` lines, or else to its last whole
+/// character.
+pub fn cut_to_head(bytes: &mut Vec<u8>, head: Head) {
     if let Some((end, _)) = bytes
         .iter()
         .enumerate()
@@ -263,12 +270,11 @@ fn read_head(path: &Path, head: Head) -> std::io::Result<Vec<u8>> {
         .nth(head.lines.saturating_sub(1))
     {
         bytes.truncate(end + 1);
-    } else if let Err(e) = std::str::from_utf8(&bytes)
+    } else if let Err(e) = std::str::from_utf8(bytes)
         && e.error_len().is_none()
     {
         bytes.truncate(e.valid_up_to());
     }
-    Ok(bytes)
 }
 
 /// Split an editor setting the way a shell would: words, `'single'` and `"double"` quotes,

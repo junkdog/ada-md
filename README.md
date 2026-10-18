@@ -88,8 +88,13 @@ fancy-regex and looks the same, but each language costs 10–20 ms on first use 
 # read a note
 ada notes/today.md
 
-# from a pipe
+# from a pipe: ada tells markdown, code, JSON, YAML, diffs and logs apart by what they hold
 git show HEAD~3:README.md | ada
+journalctl -b -u sshd | ada
+kubectl get pod ada -o yaml | ada
+
+# when the guess is wrong, name the language (bat's -l): a syntax name or an extension
+curl -s https://example.com/api | ada -l json
 
 # start at line 120
 ada --line 120 notes/today.md
@@ -240,8 +245,15 @@ ada goes by the file's name: markdown is rendered, a png or jpeg is shown as lar
 allows, and a file whose name a syntax claims (`main.rs`, `Cargo.lock`, `Makefile`, `.zshrc`) is
 shown whole as highlighted code, full width, with the git gutter, search, `e` and `--line`
 working on its lines. Failing that, a `#!` first line names the language, and other text is shown
-plain, except files with no extension at all, which are read as markdown. Binary files aren't
-shown. Stdin is always markdown.
+plain. Binary files aren't shown.
+
+Stdin, and files with no extension at all, go by what they hold, from their first 8 KB: a `#!`
+or `<?xml` line, a diff or `git show`, JSON (JSON lines too), YAML, TOML, HTML, a log (lines led
+by timestamps or levels), or markdown (headings, fences, lists, tables, links, front matter).
+Piped text that's none of these is shown plain, line for line, so command output is never
+reflowed as prose; a file with no extension is still read as markdown, as a `README` should be.
+`-l NAME` overrides the guess, for a file too; it completes in zsh, bash and fish to every
+language ada knows.
 
 ## Images
 

@@ -1,0 +1,11 @@
+ada-rec 1
++0 init size=60x10
++2 doc-loaded path="-" mtime=none text:313
+Oct 18 07:00:02 feeder ada-feeder[412]: meal 1: 40 g dispensed
+Oct 18 07:31:40 feeder ada-feeder[412]: bowl: 6 g left
+Oct 18 12:00:01 feeder ada-feeder[412]: meal 2: 40 g dispensed
+Oct 18 12:00:09 feeder ada-feeder[412]: WARN motor stalled, retrying
+Oct 18 12:00:11 feeder ada-feeder[412]: meal 2: 40 g dispensed
+
++40 highlighted doc_gen=1 block=0
++900 quit

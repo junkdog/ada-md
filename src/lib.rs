@@ -18,6 +18,7 @@ pub mod pixels;
 pub mod print;
 pub mod record;
 pub mod search;
+pub mod sniff;
 pub mod theme;
 mod toml_walk;
 pub mod ui;

@@ -6,12 +6,12 @@ use std::path::Path;
 use crate::doc::{self, Doc};
 use crate::highlight;
 use crate::layout::{LayoutParams, LineNumbers};
-use crate::links;
+use crate::{links, sniff};
 
 /// Text files no syntax claims, shown plain rather than handed to the system's opener.
 const PLAIN: &[&str] = &["txt", "text", "log", "out", "conf", "cfg", "env", "list"];
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileType {
     Markdown,
     Image,
@@ -22,10 +22,12 @@ pub enum FileType {
 }
 
 impl FileType {
-    /// What the path alone says, or `None` when only the contents can tell. Stdin (`-`) is
-    /// markdown.
+    /// What the path alone says, or `None` when only the contents can tell, as for stdin (`-`).
     pub fn by_path(path: &Path) -> Option<FileType> {
-        if path.as_os_str() == "-" || links::is_markdown(path) {
+        if path.as_os_str() == "-" {
+            return None;
+        }
+        if links::is_markdown(path) {
             return Some(FileType::Markdown);
         }
         if links::is_image(path) {
@@ -41,19 +43,43 @@ impl FileType {
         plain.then_some(FileType::Text { lang: None })
     }
 
-    /// What a file holds, by its path and then its first line. A file neither names is plain
-    /// text, unless it has no extension at all: `README`, `TODO` and the like are read as
-    /// markdown, as they always were.
+    /// What a file holds, by its path and then its contents. Stdin and a file with no extension
+    /// are [sniffed](sniff::sniff); a file of an extension no syntax knows only by its first line.
+    /// What neither tells is plain text, kept line for line, but for a file with no extension:
+    /// `README`, `TODO` and the like are read as markdown, as they always were.
     pub fn of(path: &Path, text: &str) -> FileType {
         if let Some(t) = FileType::by_path(path) {
             return t;
         }
-        let first = text.lines().next().unwrap_or_default();
-        match highlight::first_line_language(first) {
-            Some(lang) => FileType::Text { lang: Some(lang) },
-            None if path.extension().is_none() => FileType::Markdown,
+        let stdin = path.as_os_str() == "-";
+        let guess = if stdin || path.extension().is_none() {
+            sniff::sniff(text)
+        } else {
+            let first = text.lines().next().unwrap_or_default();
+            highlight::first_line_language(first).map(|lang| FileType::Text { lang: Some(lang) })
+        };
+        match guess {
+            Some(t) => t,
+            None if !stdin && path.extension().is_none() => FileType::Markdown,
             None => FileType::Text { lang: None },
         }
+    }
+
+    /// The type `-l NAME` asks for: `md` or `markdown`, a plain-text name (`txt`, `text`), or a
+    /// syntax by its name or an extension (`Rust`, `rs`, `yaml`).
+    pub fn named(name: &str) -> Option<FileType> {
+        if ["txt", "text", "plain"]
+            .iter()
+            .any(|p| name.eq_ignore_ascii_case(p))
+        {
+            return Some(FileType::Text { lang: None });
+        }
+        let syntax = highlight::find_syntax(name)?;
+        Some(match &*syntax.name {
+            "Markdown" | "MultiMarkdown" => FileType::Markdown,
+            "Plain Text" => FileType::Text { lang: None },
+            lang => FileType::Text { lang: Some(lang) },
+        })
     }
 
     /// Whether following a link to a file of this type opens it in ada. Images open in the
@@ -105,6 +131,38 @@ impl FileType {
     }
 }
 
+/// What `-l` completes to: every name [`FileType::named`] takes for a language, an extension or
+/// a file name of one word (`rs`, `yml`, `Makefile`), with the syntax it names. Names with
+/// spaces or shell punctuation are left out; `-l` still takes them.
+pub fn language_names() -> Vec<(String, &'static str)> {
+    let mut names = vec![
+        ("md".to_owned(), "Markdown"),
+        ("txt".to_owned(), "Plain Text"),
+    ];
+    for syntax in highlight::syntaxes().syntaxes() {
+        if syntax.hidden {
+            continue;
+        }
+        for ext in &syntax.file_extensions {
+            let word = ext
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "_+-.".contains(c));
+            // the name must lead back to this syntax: an extension two of them claim goes to one
+            let named = || match FileType::named(ext) {
+                Some(FileType::Markdown) => syntax.name == "Markdown",
+                Some(FileType::Text { lang }) => lang == Some(&*syntax.name),
+                _ => false,
+            };
+            if word && !ext.starts_with('.') && named() {
+                names.push((ext.clone(), &*syntax.name));
+            }
+        }
+    }
+    names.sort();
+    names.dedup_by(|a, b| a.0 == b.0);
+    names
+}
+
 /// Whether `bytes` look like a binary file: a NUL among the first 8 KiB, as git and grep judge.
 pub fn is_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(8192).any(|&b| b == 0)
@@ -124,7 +182,7 @@ mod tests {
 
     #[test]
     fn by_name_and_extension() {
-        assert_eq!(by_path("-"), Some(FileType::Markdown));
+        assert_eq!(by_path("-"), None);
         assert_eq!(by_path("notes/a.MD"), Some(FileType::Markdown));
         assert_eq!(by_path("pic.jpeg"), Some(FileType::Image));
         assert_eq!(by_path("src/main.rs"), lang("Rust"));
@@ -154,6 +212,49 @@ mod tests {
             of("main.rs", "#!/bin/sh\n"),
             FileType::Text { lang: Some("Rust") }
         );
+    }
+
+    #[test]
+    fn stdin_and_extensionless_files_by_contents() {
+        let of = |path: &str, text: &str| FileType::of(Path::new(path), text);
+        let json = FileType::Text { lang: Some("JSON") };
+        assert_eq!(of("-", "{\"a\": 1}\n"), json);
+        assert_eq!(of("out", "{\"a\": 1}\n"), json);
+        assert_eq!(
+            of("x.unknown", "{\"a\": 1}\n"),
+            FileType::Text { lang: None }
+        );
+        assert_eq!(of("-", "# ada\n\nA viewer.\n"), FileType::Markdown);
+        // nothing stands out: stdin stays line for line, a README is still markdown
+        assert_eq!(of("-", "Ada is a cat.\n"), FileType::Text { lang: None });
+        assert_eq!(of("README", "Ada is a cat.\n"), FileType::Markdown);
+    }
+
+    #[test]
+    fn languages_by_name() {
+        let named = FileType::named;
+        assert_eq!(named("md"), Some(FileType::Markdown));
+        assert_eq!(named("Markdown"), Some(FileType::Markdown));
+        assert_eq!(named("txt"), Some(FileType::Text { lang: None }));
+        assert_eq!(named("rs"), lang("Rust"));
+        assert_eq!(named("Rust"), lang("Rust"));
+        assert_eq!(named("yaml"), lang("YAML"));
+        assert_eq!(named("zsh"), lang("Bourne Again Shell (bash)"));
+        assert_eq!(named("diff"), lang("Diff"));
+        assert_eq!(named("nope"), None);
+    }
+
+    #[test]
+    fn every_completed_language_is_taken() {
+        let names = language_names();
+        for want in [
+            "md", "txt", "rs", "json", "yaml", "yml", "toml", "diff", "log", "zsh",
+        ] {
+            assert!(names.iter().any(|(n, _)| n == want), "{want}");
+        }
+        for (name, syntax) in &names {
+            assert!(FileType::named(name).is_some(), "{name} ({syntax})");
+        }
     }
 
     #[test]

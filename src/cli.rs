@@ -13,6 +13,8 @@ pub enum Value {
     None,
     Number,
     Theme,
+    /// A language: what [`language_names`](crate::filetype::language_names) lists.
+    Language,
     File,
     /// A recording.
     Rec,
@@ -45,7 +47,6 @@ const fn flag(
 const SWITCH: (&str, Value) = ("", Value::None);
 
 pub const SHELLS: &[&str] = &["zsh", "bash", "fish"];
-
 /// Every flag, in the order the usage lists them. The parser, the usage and the completion
 /// scripts all follow this table.
 pub const FLAGS: &[Flag] = &[
@@ -75,6 +76,12 @@ pub const FLAGS: &[Flag] = &[
     ),
     flag(
         Some('l'),
+        "language",
+        ("NAME", Value::Language),
+        "show the file as language NAME instead of what ada detects\n(a syntax name or extension: md for markdown, txt for plain text)",
+    ),
+    flag(
+        Some('L'),
         "line",
         ("N", Value::Number),
         "start at source line N; when printing, shift the output so\nthat line N renders on output line N (for fzf previews)",
@@ -155,7 +162,8 @@ pub fn usage() -> String {
 usage: ada [options] [FILE | -]
 
 A terminal markdown viewer, which also shows code, config and other text files highlighted,
-and images. Reads stdin, as markdown, when FILE is `-`, or is omitted and stdin is a pipe.
+and images. Reads stdin when FILE is `-`, or is omitted and stdin is a pipe, and tells
+markdown, code, data, diffs and logs apart by what it holds (else plain text; -l names it).
 Prints instead of paging when stdout is not a terminal. Options are also read from
 ~/.config/ada/config.toml (written with the defaults on first run); flags win.
 
@@ -199,6 +207,8 @@ pub struct Args {
     pub width: Option<u16>,
     pub height: Option<u16>,
     pub max_width: Option<u16>,
+    /// A language name, checked when it's used: the syntaxes load then.
+    pub language: Option<String>,
     pub line: Option<u32>,
     pub theme: Option<String>,
     pub line_numbers: Option<LineNumbers>,
@@ -251,7 +261,8 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
             "-w" | "--width" => out.width = Some(number(&flag, &value(&flag)?)?),
             "--height" => out.height = Some(number(&flag, &value(&flag)?)?),
             "--max-width" => out.max_width = Some(number(&flag, &value(&flag)?)?),
-            "-l" | "--line" => out.line = Some(number(&flag, &value(&flag)?)?),
+            "-l" | "--language" => out.language = Some(value(&flag)?),
+            "-L" | "--line" => out.line = Some(number(&flag, &value(&flag)?)?),
             "-t" | "--theme" => out.theme = Some(value(&flag)?),
             "-n" | "--line-numbers" => {
                 let when = value(&flag)?;
@@ -374,9 +385,20 @@ mod tests {
             assert!(!err.contains("unknown option"), "--{}: {err}", f.long);
         }
         assert!(usage.contains(
-            "  -l, --line N          start at source line N; when printing, shift the output so\n"
+            "  -L, --line N          start at source line N; when printing, shift the output so\n"
         ));
         assert!(usage.contains("      --image-protocol P\n                        kitty, sixel"));
+    }
+
+    #[test]
+    fn language_and_line() {
+        let a = args(&["-l", "json", "-L", "12", "-"]).unwrap();
+        assert_eq!(a.language.as_deref(), Some("json"));
+        assert_eq!(a.line, Some(12));
+        let a = args(&["--language=md", "--line", "3"]).unwrap();
+        assert_eq!(a.language.as_deref(), Some("md"));
+        assert_eq!(a.line, Some(3));
+        assert!(args(&["-l"]).is_err());
     }
 
     #[test]

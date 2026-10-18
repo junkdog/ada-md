@@ -15,7 +15,7 @@ mod watch;
 
 use std::ffi::OsString;
 use std::mem;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::doc::{CodeId, Doc, LinkId};
@@ -30,7 +30,7 @@ use crate::links::{LocalTarget, Resolved};
 use crate::search::SearchMap;
 use crate::theme::{Glyphs, Theme};
 
-pub use effects::{Effects, Head, editor_command, load_doc, load_doc_head, osc52};
+pub use effects::{Effects, Head, cut_to_head, editor_command, load_doc, load_doc_head, osc52};
 pub use find::{Listing, Outline, OutlineEntry, Prompt, Search};
 pub use imaging::{ImageFile, ImageView};
 pub use keymap::{Action, Bindings, Key, KeySeq, Keymap};
@@ -335,6 +335,19 @@ pub struct Config {
     pub keys: Bindings,
     /// The config file, for the help to point at.
     pub file: Option<PathBuf>,
+    /// The type `-l` gives the file ada opened, over what its name and contents say. Files
+    /// reached by a link are typed as usual.
+    pub language: Option<(PathBuf, FileType)>,
+}
+
+impl Config {
+    /// The type `-l` forces on `path`, if any.
+    pub fn forced_type(&self, path: &Path) -> Option<FileType> {
+        self.language
+            .as_ref()
+            .filter(|(p, _)| p == path)
+            .map(|&(_, t)| t)
+    }
 }
 
 impl Default for Config {
@@ -349,6 +362,7 @@ impl Default for Config {
             line_numbers: LineNumbers::Off,
             keys: Bindings::default(),
             file: None,
+            language: None,
         }
     }
 }
@@ -384,8 +398,9 @@ impl Document {
         glyphs: &Glyphs,
         params: LayoutParams,
         generation: u64,
+        forced: Option<FileType>,
     ) -> Self {
-        let filetype = FileType::of(&path, &text);
+        let filetype = forced.unwrap_or_else(|| FileType::of(&path, &text));
         let doc = filetype.parse(&path, &text);
         let measure = Measure::new(&doc, glyphs);
         let params = filetype.params(params);
@@ -618,7 +633,10 @@ impl State {
                         doc.relayout(glyphs, params);
                         doc
                     }
-                    None => Document::new(path, mtime, text, glyphs, params, self.generation),
+                    None => {
+                        let forced = self.config.forced_type(&path);
+                        Document::new(path, mtime, text, glyphs, params, self.generation, forced)
+                    }
                 };
                 if let Some(old) = self.doc.as_ref().filter(|d| d.path == doc.path) {
                     doc.keep_sorts(old, glyphs, params);

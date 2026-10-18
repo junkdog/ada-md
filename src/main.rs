@@ -6,7 +6,7 @@ use std::{env, fs};
 
 use ada::app::{self, Config, Effects, Head, Msg, State};
 use ada::cli::{self, Args, Input};
-use ada::filetype::FileType;
+use ada::filetype::{self, FileType};
 use ada::images::{self, ImageMode};
 use ada::layout::{ImageFit, LayoutParams};
 use ada::record::{self, Recorder, ReplayOptions};
@@ -38,10 +38,16 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
+    let forced = match &args.language {
+        Some(name) => Some(FileType::named(name).ok_or_else(|| {
+            format!("--language: `{name}` is no syntax ada knows (md, txt, rs, yaml, …)")
+        })?),
+        None => None,
+    };
     let (settings, file, mut warnings) = config::load()?;
     let (theme, theme_warnings) = theme::load(args.theme.as_deref().or(settings.theme.as_deref()))?;
     warnings.extend(theme_warnings);
-    let config = Config {
+    let mut config = Config {
         max_width: args.max_width.or(settings.max_width),
         start_line: args.line,
         images: match args.images {
@@ -54,6 +60,7 @@ fn run() -> Result<(), String> {
         line_numbers: args.line_numbers.unwrap_or(settings.line_numbers),
         keys: settings.keys,
         file,
+        language: None,
     };
 
     if let Some(path) = &args.replay {
@@ -72,25 +79,22 @@ fn run() -> Result<(), String> {
         None if !io::stdin().is_terminal() => Input::Stdin,
         None => return Err(format!("no file given\n\n{}", cli::usage())),
     };
-    let (path, stdin) = match input {
-        Input::Stdin => {
-            let mut bytes = Vec::new();
-            io::stdin()
-                .read_to_end(&mut bytes)
-                .map_err(|e| format!("stdin: {e}"))?;
-            let text = String::from_utf8_lossy(&bytes).into_owned();
-            (PathBuf::from("-"), Some(Arc::from(text)))
-        }
-        Input::Path(path) => (path, None),
+    let path = match input {
+        Input::Stdin => PathBuf::from("-"),
+        Input::Path(path) => path,
     };
+    config.language = forced.map(|t| (path.clone(), t));
 
     if args.print || !io::stdout().is_terminal() {
         for w in &warnings {
             eprintln!("ada: warning: {w}");
         }
-        return print_doc(&args, &config, &theme, &path, stdin.as_ref());
+        return print_doc(&args, &config, &theme, &path);
     }
 
+    let stdin = (path == Path::new("-"))
+        .then(|| read_stdin(None, forced))
+        .transpose()?;
     if stdin.is_none() {
         fs::metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     }
@@ -116,13 +120,40 @@ fn run() -> Result<(), String> {
 /// and a bound on a huge file, which isn't read past them (plan, "ada as the only fzf previewer").
 const PREVIEW_ROWS: usize = 2000;
 
-fn print_doc(
-    args: &Args,
-    config: &Config,
-    theme: &Theme,
-    path: &Path,
-    stdin: Option<&Arc<str>>,
-) -> Result<(), String> {
+/// Read stdin, as [`app::load_doc_head`] reads a file: whole, or with a `head` only the head of
+/// what isn't markdown, which the first bytes tell. Input with a NUL in it isn't shown, unless
+/// `-l` names its type.
+fn read_stdin(head: Option<Head>, forced: Option<FileType>) -> Result<Arc<str>, String> {
+    let err = |e: io::Error| format!("stdin: {e}");
+    let mut stdin = io::stdin().lock();
+    let mut bytes = Vec::new();
+    if let Some(head) = head {
+        (&mut stdin)
+            .take(head.bytes as u64)
+            .read_to_end(&mut bytes)
+            .map_err(err)?;
+        let sniffed = || FileType::of(Path::new("-"), &String::from_utf8_lossy(&bytes));
+        if forced.unwrap_or_else(sniffed) != FileType::Markdown {
+            app::cut_to_head(&mut bytes, head);
+            return text_of(bytes, forced);
+        }
+    }
+    stdin.read_to_end(&mut bytes).map_err(err)?;
+    text_of(bytes, forced)
+}
+
+fn text_of(bytes: Vec<u8>, forced: Option<FileType>) -> Result<Arc<str>, String> {
+    if forced.is_none() && filetype::is_binary(&bytes) {
+        return Err("stdin: binary input (-l names a type to show it anyway)".into());
+    }
+    let text = match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    };
+    Ok(text.into())
+}
+
+fn print_doc(args: &Args, config: &Config, theme: &Theme, path: &Path) -> Result<(), String> {
     // fzf exports the whole terminal as $COLUMNS, and the preview pane as $FZF_PREVIEW_COLUMNS.
     let env_number = |name| env::var(name).ok()?.trim().parse().ok();
     let tty = io::stdout().is_terminal();
@@ -143,18 +174,26 @@ fn print_doc(
         .or_else(|| env_number("FZF_PREVIEW_LINES"))
         .map(|h| h.max(1));
     let rows = preview.map(|h| usize::from(h).max(PREVIEW_ROWS));
-    let head = rows.map(|rows| {
-        // each line takes a row at least, and a row's text is rarely over 4 bytes a column
-        let lines = args.line.map_or(0, |l| l as usize) + rows;
-        Head {
-            lines,
-            bytes: (lines * (usize::from(width) + 1) * 4).max(1 << 16),
+    let forced = config.forced_type(path);
+    // a note is read whole, `-l md` or not
+    let head = rows
+        .filter(|_| forced != Some(FileType::Markdown))
+        .map(|rows| {
+            // each line takes a row at least, and a row's text is rarely over 4 bytes a column
+            let lines = args.line.map_or(0, |l| l as usize) + rows;
+            Head {
+                lines,
+                bytes: (lines * (usize::from(width) + 1) * 4).max(1 << 16),
+            }
+        });
+    let text = if path == Path::new("-") {
+        read_stdin(head, forced)?
+    } else {
+        match app::load_doc_head(path, None, head) {
+            Msg::DocLoaded { text, .. } => text,
+            Msg::DocFailed { path, error } => return Err(format!("{}: {error}", path.display())),
+            other => return Err(format!("unexpected {other:?}")),
         }
-    });
-    let text = match app::load_doc_head(path, stdin, head) {
-        Msg::DocLoaded { text, .. } => text,
-        Msg::DocFailed { path, error } => return Err(format!("{}: {error}", path.display())),
-        other => return Err(format!("unexpected {other:?}")),
     };
     // Images only where they reach a terminal, or when asked for by name.
     let to_terminal = tty || preview.is_some() || matches!(args.images, ImageMode::Force(_));
@@ -177,7 +216,7 @@ fn print_doc(
             screen_rows: height,
         }),
     };
-    let filetype = FileType::of(path, &text);
+    let filetype = forced.unwrap_or_else(|| FileType::of(path, &text));
     let doc = filetype.parse(path, &text);
     // fzf redraws its preview pane for every file: its images can replace the last file's
     let reuse_ids = env::var_os("FZF_PREVIEW_LINES").is_some();

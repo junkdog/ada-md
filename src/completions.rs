@@ -2,11 +2,13 @@
 //! ada has no clap (ADR-10), so instead of clap_complete these few lines write the zsh, bash and
 //! fish scripts from [`cli::FLAGS`](crate::cli::FLAGS): a new flag completes without touching this file. Themes
 //! complete to the built-ins, the user's themes directory (read when completing) and `.toml`
-//! paths; the file to any file.
+//! paths; languages to the names the bundled syntaxes take, listed in the script; the file to any
+//! file.
 
 use std::fmt::Write as _;
 
 use crate::cli::{FLAGS, Flag, Value};
+use crate::filetype::language_names;
 use crate::theme::BUILTIN;
 
 pub fn script(shell: &str) -> Option<String> {
@@ -22,6 +24,14 @@ fn builtin_themes() -> String {
     BUILTIN
         .iter()
         .map(|(n, _)| *n)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn language_words() -> String {
+    language_names()
+        .into_iter()
+        .map(|(n, _)| n)
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -45,10 +55,25 @@ _ada_themes() {{
   _alternative 'themes:theme:compadd -a themes' 'files:theme file:_files -g \"*.toml\"'
 }}
 
+_ada_languages() {{
+  local -a languages
+  languages=(
+{}  )
+  _describe -t languages language languages
+}}
+
 _ada() {{
   _arguments -s -S \\
 ",
-        builtin_themes()
+        builtin_themes(),
+        language_names()
+            .iter()
+            .map(|(n, syntax)| {
+                // `name:description`, single-quoted
+                let syntax = syntax.replace(':', "\\:").replace('\'', "'\\''");
+                format!("    '{n}:{syntax}'\n")
+            })
+            .collect::<String>()
     );
     for f in FLAGS {
         // `[` and `]` end the description, and `:` would start the value's
@@ -61,6 +86,7 @@ _ada() {{
             Value::None => String::new(),
             Value::Number => format!(":{}:", f.value.0.to_lowercase()),
             Value::Theme => ":theme:_ada_themes".to_owned(),
+            Value::Language => ":language:_ada_languages".to_owned(),
             Value::File => ":file:_files".to_owned(),
             Value::Rec => ":recording:_files -g \"*.rec\"".to_owned(),
             Value::Choice(values) => {
@@ -129,6 +155,10 @@ fn bash() -> String {
                 "local themes=\"{}\" f\n      for f in \"{THEMES_DIR}\"/*.toml; do\n        [[ -e $f ]] && f=${{f##*/}} && themes+=\" ${{f%.toml}}\"\n      done\n      COMPREPLY=($(compgen -W \"$themes\" -- \"$cur\") $(compgen -f -X '!*.toml' -- \"$cur\") $(compgen -d -- \"$cur\"))\n      return",
                 builtin_themes()
             ),
+            Value::Language => format!(
+                "COMPREPLY=($(compgen -W \"{}\" -- \"$cur\"))\n      return",
+                language_words()
+            ),
             Value::File => "COMPREPLY=($(compgen -f -- \"$cur\"))\n      return".to_owned(),
             Value::Rec => "COMPREPLY=($(compgen -f -X '!*.rec' -- \"$cur\") $(compgen -d -- \"$cur\"))\n      return".to_owned(),
             Value::Choice(values) => format!(
@@ -173,8 +203,18 @@ function __ada_themes
     end
 end
 
+function __ada_languages
+    printf '%s\\t%s\\n' \\
+{}
+end
+
 ",
-        builtin_themes()
+        builtin_themes(),
+        language_names()
+            .iter()
+            .map(|(n, syntax)| format!("        '{n}' '{}'", syntax.replace('\'', "\\'")))
+            .collect::<Vec<_>>()
+            .join(" \\\n")
     );
     for f in FLAGS {
         let mut line = String::from("complete -c ada");
@@ -186,6 +226,7 @@ end
             Value::None => {}
             Value::Number => line.push_str(" -x"),
             Value::Theme => line.push_str(" -r -a '(__ada_themes)'"),
+            Value::Language => line.push_str(" -x -a '(__ada_languages)'"),
             Value::File => line.push_str(" -r -F"),
             Value::Rec => line.push_str(" -r -k -a '(__fish_complete_suffix .rec)'"),
             Value::Choice(values) => {
@@ -215,6 +256,7 @@ mod tests {
                 text.contains("gruvbox-light"),
                 "{shell}: the built-in themes"
             );
+            assert!(text.contains("yml"), "{shell}: the languages");
         }
         assert_eq!(script("tcsh"), None);
     }

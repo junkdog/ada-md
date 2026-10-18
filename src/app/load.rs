@@ -10,6 +10,7 @@ use std::sync::mpsc::{self, Sender};
 use std::thread;
 
 use super::{Cmd, Computed, Document, Msg, State, load_doc};
+use crate::filetype::FileType;
 use crate::layout::{LayoutParams, Sort};
 use crate::theme::Glyphs;
 
@@ -24,6 +25,8 @@ pub struct Prepare {
     /// The text ada holds for the file already, on screen or cached. If the file still reads the
     /// same, `update` has its document, and nothing is parsed.
     pub known: Option<Arc<str>>,
+    /// The type `-l` gives the file.
+    pub forced: Option<FileType>,
 }
 
 /// A document the loader parsed and laid out, moved into the state when its `DocLoaded` arrives.
@@ -61,7 +64,8 @@ pub fn prepare(msg: Msg, how: &Prepare) -> Msg {
     };
     let doc = (how.known.as_ref() != Some(&text)).then(|| {
         let (glyphs, params) = (&how.glyphs, how.params);
-        let mut doc = Document::new(path.clone(), mtime, text.clone(), glyphs, params, 0);
+        let forced = how.forced;
+        let mut doc = Document::new(path.clone(), mtime, text.clone(), glyphs, params, 0, forced);
         if doc.set_sorts(|t| how.sorts.get(t as usize).copied().flatten()) {
             doc.relayout_now(glyphs, params);
         }
@@ -115,6 +119,7 @@ impl State {
             glyphs: self.theme.glyphs.clone(),
             sorts,
             known,
+            forced: self.config.forced_type(&path),
         };
         Cmd::LoadDoc {
             path,
