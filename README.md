@@ -11,7 +11,7 @@ the pictures.
 `ada` renders CommonMark and GitHub-flavored markdown with `[[wiki links]]`, highlights code
 in some 200 languages, and shows images inline in terminals that can (kitty, sixel, iTerm2).
 
-![ada following a wiki link, sorting a table by cost, going back, searching, and picking a theme](demo/short.gif)
+![ada jumping to a heading from the outline, searching, following a link from the link list, sorting the second of two tables by how long things take, going back, and picking a dark theme](site/media/hero.webp)
 
 More of it, one feature at a time, on [the site](https://junkdog.github.io/ada-md/).
 
@@ -279,14 +279,15 @@ back exactly, even after the files have changed, which makes a bug report out of
 ## Demos
 
 The recording above is made with [VHS](https://github.com/charmbracelet/vhs) from
-`demo/short.tape`, which reads the made-up notes in `demo/notes` from a scratch git repository
-and a config of its own; it's also the site's hero. The site's clips are recorded by
-`site/build.zsh`. To record the demo again:
+`demo/demo.tape`, which reads the made-up notes in `demo/notes` from a scratch git repository
+and a config of its own; it's also the site's hero. VHS writes a GIF (`demo/demo.gif`, not kept in
+git), and ffmpeg makes the animated WebP shown here, at less than half the size. The site's clips
+are recorded by `site/build.zsh`. To record the demo again:
 
 ```zsh
 cargo build --release
-vhs demo/short.tape
-ffmpeg -y -i demo/short.gif -c:v libwebp_anim -quality 80 -loop 0 site/media/hero.webp
+vhs demo/demo.tape
+ffmpeg -y -i demo/demo.gif -c:v libwebp_anim -quality 80 -loop 0 site/media/hero.webp
 ```
 
 ## License
