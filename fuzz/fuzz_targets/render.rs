@@ -37,6 +37,7 @@ fuzz_target!(|data: &[u8]| {
         },
         Msg::ToggleTableMode,
         Msg::ToggleCodeWrap,
+        Msg::ToggleLineNumbers,
         Msg::SearchOpen,
         Msg::SearchInput {
             pattern: "[a-z]+".into(),

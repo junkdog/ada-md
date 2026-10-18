@@ -117,6 +117,7 @@ popup_border = { fg = "lavender", bg = "mantle" }
 popup_title = { fg = "mauve", bg = "mantle", bold = true }
 popup_selected = { fg = "base", bg = "mauve", bold = true }
 sort_table = { fg = "mauve" }
+line_number = { fg = "surface1" }
 
 [syntax]
 "comment" = { fg = "overlay2", italic = true }

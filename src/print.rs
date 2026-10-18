@@ -48,11 +48,13 @@ fn write(
     let mut out = String::with_capacity(PIECE * 2);
     out.extend(std::iter::repeat_n('\n', pad));
     let mut scratch = String::new();
-    for row in layout.rows.iter().skip(skip) {
+    for (r, row) in layout.rows.iter().enumerate().skip(skip) {
         let mut line = Line::default();
-        painter.row(row, &mut |text, style| {
+        let mut emit = |text: &str, style| {
             line.span(text, Pen::of(style), &mut out, &mut scratch);
-        });
+        };
+        painter.number(r as u32, &mut emit);
+        painter.row(row, &mut emit);
         if line.pen != Pen::default() {
             out.push_str("\x1b[0m");
         }
@@ -395,6 +397,7 @@ mod tests {
             max_width: None,
             table_mode: Default::default(),
             code_wrap: true,
+            line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,
         };
@@ -410,6 +413,7 @@ mod tests {
             max_width: None,
             table_mode: Default::default(),
             code_wrap: true,
+            line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,
         };
@@ -448,6 +452,38 @@ mod tests {
     }
 
     #[test]
+    fn line_numbers_lead_the_rows_that_start_a_line() {
+        let doc = crate::doc::parse("# Title\n\nsome text\n");
+        let params = LayoutParams {
+            width: 40,
+            max_width: None,
+            table_mode: Default::default(),
+            code_wrap: true,
+            line_numbers: crate::layout::LineNumbers::All,
+            glyphs_gen: 0,
+            images: None,
+        };
+        let out = render(&doc, &Theme::builtin(), params, None);
+        let mut plain = String::new();
+        let mut esc = false;
+        for c in out.chars() {
+            match (esc, c) {
+                (_, '\x1b') => esc = true,
+                (true, 'm') => esc = false,
+                (true, _) => {}
+                (false, c) => plain.push(c),
+            }
+        }
+        let lines: Vec<&str> = plain.lines().collect();
+        assert!(
+            lines[0].starts_with("1   ") && lines[0].contains("Title"),
+            "{lines:?}"
+        );
+        assert_eq!(lines[1], "");
+        assert!(lines[2].starts_with("3   some text"), "{lines:?}");
+    }
+
+    #[test]
     fn code_is_highlighted() {
         let doc = crate::doc::parse("```rust\nlet s = \"hi\";\n```\n");
         let params = LayoutParams {
@@ -455,6 +491,7 @@ mod tests {
             max_width: None,
             table_mode: Default::default(),
             code_wrap: true,
+            line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,
         };

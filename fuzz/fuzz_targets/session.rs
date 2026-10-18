@@ -25,7 +25,7 @@ use ada::app::{self, Cmd, Computed, Config, Dir, Effects, Keymap, Msg, ScrollBy,
 use ada::grid::{Grid, Screen};
 use ada::highlight;
 use ada::images::{Probe, Proto};
-use ada::layout::TableMode;
+use ada::layout::{LineNumbers, TableMode};
 use ada::links::Resolved;
 use ada::theme::Theme;
 use libfuzzer_sys::arbitrary::{self, Arbitrary, Result, Unstructured};
@@ -59,6 +59,7 @@ enum Op {
     SortOpen,
     SortTable(bool),
     ToggleCodeWrap,
+    ToggleLineNumbers,
     ScrollCodeX(i16),
     FocusLink(bool),
     Follow,
@@ -796,6 +797,7 @@ impl Session<'_> {
             Op::SortOpen => Msg::SortOpen,
             Op::SortTable(next) => Msg::SortTable { dir: dir(next) },
             Op::ToggleCodeWrap => Msg::ToggleCodeWrap,
+            Op::ToggleLineNumbers => Msg::ToggleLineNumbers,
             Op::ScrollCodeX(by) => Msg::ScrollCodeX { by },
             Op::FocusLink(next) => Msg::FocusLink { dir: dir(next) },
             Op::Follow => Msg::Follow,
@@ -899,6 +901,11 @@ fuzz_target!(|data: &[u8]| {
             _ => TableMode::Records,
         },
         code_wrap: u.arbitrary().unwrap_or(true),
+        line_numbers: match u.int_in_range(0..=2).unwrap_or(0) {
+            0 => LineNumbers::Off,
+            1 => LineNumbers::Code,
+            _ => LineNumbers::All,
+        },
         start_line: u
             .arbitrary::<Option<u16>>()
             .unwrap_or_default()

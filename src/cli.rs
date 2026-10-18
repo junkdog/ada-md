@@ -4,6 +4,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use crate::images::{ImageMode, Proto};
+use crate::layout::LineNumbers;
 
 /// What a flag's value completes to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,6 +78,12 @@ pub const FLAGS: &[Flag] = &[
         "theme",
         ("NAME", Value::Theme),
         "a theme name or a path to a .toml theme",
+    ),
+    flag(
+        Some('n'),
+        "line-numbers",
+        ("WHEN", Value::Choice(&["off", "code", "all"])),
+        "number rows by source line: off, code (code and other text\nfiles) or all (markdown too)",
     ),
     flag(
         None,
@@ -187,6 +194,7 @@ pub struct Args {
     pub max_width: Option<u16>,
     pub line: Option<u32>,
     pub theme: Option<String>,
+    pub line_numbers: Option<LineNumbers>,
     pub images: ImageMode,
     pub no_reload: bool,
     pub record: Option<PathBuf>,
@@ -237,6 +245,12 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
             "--max-width" => out.max_width = Some(number(&flag, &value(&flag)?)?),
             "-l" | "--line" => out.line = Some(number(&flag, &value(&flag)?)?),
             "-t" | "--theme" => out.theme = Some(value(&flag)?),
+            "-n" | "--line-numbers" => {
+                let when = value(&flag)?;
+                let numbers = LineNumbers::parse(&when)
+                    .ok_or_else(|| format!("{flag}: `{when}` is not off, code or all"))?;
+                out.line_numbers = Some(numbers);
+            }
             "--no-images" => out.images = ImageMode::Off,
             "--image-protocol" => {
                 let name = value(&flag)?;
@@ -324,6 +338,7 @@ mod tests {
         assert!(args(&["--headless"]).is_err());
         assert!(args(&["--print=yes"]).is_err());
         assert!(args(&["--image-protocol", "chafa"]).is_err());
+        assert!(args(&["-n", "yes"]).is_err());
     }
 
     #[test]
@@ -351,6 +366,19 @@ mod tests {
             "  -l, --line N          start at source line N; when printing, shift the output so\n"
         ));
         assert!(usage.contains("      --image-protocol P\n                        kitty, sixel"));
+    }
+
+    #[test]
+    fn line_numbers() {
+        assert_eq!(args(&[]).unwrap().line_numbers, None);
+        assert_eq!(
+            args(&["-n", "all", "a.md"]).unwrap().line_numbers,
+            Some(LineNumbers::All)
+        );
+        assert_eq!(
+            args(&["--line-numbers=off"]).unwrap().line_numbers,
+            Some(LineNumbers::Off)
+        );
     }
 
     #[test]

@@ -55,6 +55,47 @@ impl TableMode {
     }
 }
 
+/// Which files number their rows by source line, left of the margin; `#` toggles them for the
+/// kind of file shown. Each mode covers the ones before it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LineNumbers {
+    #[default]
+    Off,
+    /// Code and text files, whose rows map to their lines one to one.
+    Code,
+    /// Markdown too.
+    All,
+}
+
+impl LineNumbers {
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "off" => Some(LineNumbers::Off),
+            "code" => Some(LineNumbers::Code),
+            "all" => Some(LineNumbers::All),
+            _ => None,
+        }
+    }
+
+    /// Show or hide the numbers of the kind of file shown, keeping the other kind as it is.
+    pub fn toggle(self, code: bool) -> Self {
+        match (code, self) {
+            (true, LineNumbers::Off) => LineNumbers::Code,
+            (true, _) => LineNumbers::Off,
+            (false, LineNumbers::All) => LineNumbers::Code,
+            (false, _) => LineNumbers::All,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            LineNumbers::Off => "off",
+            LineNumbers::Code => "code files",
+            LineNumbers::All => "all files",
+        }
+    }
+}
+
 /// Everything a layout depends on besides the Doc. Colors are deliberately absent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LayoutParams {
@@ -64,6 +105,9 @@ pub struct LayoutParams {
     pub max_width: Option<u16>,
     pub table_mode: TableMode,
     pub code_wrap: bool,
+    /// Rows are numbered unless `Off`: [`FileType::params`](crate::filetype::FileType::params)
+    /// turns the mode off for the files it doesn't cover.
+    pub line_numbers: LineNumbers,
     pub glyphs_gen: u64,
     /// Block images render as images when set; otherwise as a `🖼 alt (path)` line.
     pub images: Option<ImageFit>,
@@ -285,6 +329,9 @@ impl Measure {
 #[derive(Debug)]
 pub struct Layout {
     pub params: LayoutParams,
+    /// Columns left of everything else for line numbers, a space after them included; 0 without.
+    /// Row columns start after them, as if the terminal were that much narrower.
+    pub numbers: u16,
     /// Blank columns on each side; the git gutter draws in the left one.
     pub margin: u16,
     /// The arena all spans point into.
@@ -333,6 +380,14 @@ impl Layout {
             .or_else(|| self.rows.iter().position(|r| r.src.start > line))
             .map(|r| r as u32)
     }
+
+    /// The line number `row` shows: the first source line it renders, unless the row before
+    /// starts on the same line (a wrapped line, a paragraph's later rows).
+    pub fn line_number(&self, row: u32) -> Option<u32> {
+        let start = self.rows.get(row as usize)?.src.start;
+        let prev = row.checked_sub(1).map(|r| self.rows[r as usize].src.start);
+        (start != 0 && prev != Some(start)).then_some(start)
+    }
 }
 
 /// Lay out a document, measuring it first. Use [`layout_measured`] to reuse a [`Measure`].
@@ -349,6 +404,7 @@ pub fn layout_measured(
 ) -> Layout {
     let spare = Layout {
         params,
+        numbers: 0,
         margin: 0,
         text: String::new(),
         spans: Vec::new(),
@@ -375,7 +431,14 @@ pub fn relayout(
     params: LayoutParams,
     spare: Layout,
 ) -> Layout {
-    let margin = if params.prose_width() >= 24 {
+    let numbers = number_width(doc, params);
+    // the rows lay out beside the numbers; `out.params` keeps the width asked for, which is
+    // what relayouts compare
+    let inner = LayoutParams {
+        width: params.width - numbers,
+        ..params
+    };
+    let margin = if inner.prose_width() >= 24 {
         glyphs.margin
     } else {
         0
@@ -414,9 +477,10 @@ pub fn relayout(
         doc,
         measure,
         g: glyphs,
-        params,
+        params: inner,
         out: Layout {
             params,
+            numbers,
             margin,
             text,
             spans,
@@ -455,6 +519,16 @@ pub fn relayout(
         b.out.block_rows.push(first..b.out.row_count());
     }
     b.out
+}
+
+/// The columns line numbers take: the last line's digits and a space, when they're on and leave
+/// the document as much room as the margin needs.
+fn number_width(doc: &Doc, params: LayoutParams) -> u16 {
+    if params.line_numbers == LineNumbers::Off {
+        return 0;
+    }
+    let width = doc.line_count().max(1).ilog10() as u16 + 2;
+    if params.width >= width + 24 { width } else { 0 }
 }
 
 /// The part of an image block's alt text that renders: its search unit's text.

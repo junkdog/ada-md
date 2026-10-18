@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use crate::app::{Action, Bindings, KeySeq};
 use crate::images::{ImageMode, Proto};
-use crate::layout::TableMode;
+use crate::layout::{LineNumbers, TableMode};
 use crate::toml_walk::{self, Cx};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,6 +20,7 @@ pub struct Settings {
     pub live_reload: bool,
     pub table_mode: TableMode,
     pub code_wrap: bool,
+    pub line_numbers: LineNumbers,
     pub keys: Bindings,
 }
 
@@ -32,6 +33,7 @@ impl Default for Settings {
             live_reload: true,
             table_mode: TableMode::Auto,
             code_wrap: true,
+            line_numbers: LineNumbers::Off,
             keys: Bindings::default(),
         }
     }
@@ -113,6 +115,15 @@ pub fn parse(file: &str, text: &str, warnings: &mut Vec<String>) -> Result<Setti
                 };
             }
             "code_wrap" => s.code_wrap = cx.bool(v)?,
+            "line_numbers" => {
+                let name = cx.string(v)?;
+                s.line_numbers = LineNumbers::parse(name).ok_or_else(|| {
+                    cx.at(
+                        v.span(),
+                        format_args!("unknown line numbers \"{name}\" (off, code or all)"),
+                    )
+                })?;
+            }
             "keys" => {
                 let mut set = Vec::new();
                 for (k, v) in cx.table(v)? {
@@ -176,6 +187,10 @@ pub fn default_text() -> String {
 # Wrap long lines of code (`w` toggles it); false scrolls them sideways with ←/→.
 # code_wrap = true
 
+# Number rows by source line (`#` toggles it for the kind of file shown): off, code for code
+# and other text files, or all for markdown too.
+# line_numbers = \"off\"
+
 # Keys: each action takes a key or a list of keys, and setting one replaces its defaults.
 # Keys look like j, G, ctrl-d, alt-x, shift-up, space, enter, esc, tab, shift-tab,
 # backspace, up, down, left, right, home, end, pageup, pagedown, f1–f12; two keys pressed in
@@ -234,12 +249,13 @@ mod tests {
 
     #[test]
     fn options() {
-        let text = "max_width = 100\nimages = true\nimage_protocol = \"sixel\"\nlive_reload = false\ntables = \"records\"\ncode_wrap = false\n";
+        let text = "max_width = 100\nimages = true\nimage_protocol = \"sixel\"\nlive_reload = false\ntables = \"records\"\ncode_wrap = false\nline_numbers = \"all\"\n";
         let s = parse("c.toml", text, &mut Vec::new()).unwrap();
         assert_eq!(s.max_width, Some(100));
         assert_eq!(s.images, ImageMode::Force(Proto::Sixel));
         assert!(!s.live_reload && !s.code_wrap);
         assert_eq!(s.table_mode, TableMode::Records);
+        assert_eq!(s.line_numbers, LineNumbers::All);
         let off = parse(
             "c.toml",
             "images = false\nimage_protocol = \"kitty\"\n",

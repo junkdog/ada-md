@@ -85,6 +85,7 @@ actions! {
         CodeWrap => "code_wrap", "wrap code, or scroll it sideways", ["w"],
         CodeLeft => "code_left", "scroll code left", ["left"],
         CodeRight => "code_right", "scroll code right", ["right"],
+        LineNumbers => "line_numbers", "show or hide line numbers", ["#"],
         Theme => "theme", "pick a theme, previewing each", ["T"],
     }
     "Other" {
@@ -131,6 +132,7 @@ impl Action {
             Action::CodeWrap => Msg::ToggleCodeWrap,
             Action::CodeLeft => Msg::ScrollCodeX { by: -CODE_X_STEP },
             Action::CodeRight => Msg::ScrollCodeX { by: CODE_X_STEP },
+            Action::LineNumbers => Msg::ToggleLineNumbers,
             Action::Theme => Msg::OpenThemes,
             Action::Reload => Msg::Reload,
             Action::Edit => Msg::Edit,
@@ -691,6 +693,9 @@ mod tests {
             press(&mut km, KeyCode::Right),
             Some(Msg::ScrollCodeX { by: CODE_X_STEP })
         );
+        let mut hash = |mods| km.map(KeyEvent::new(KeyCode::Char('#'), mods));
+        assert_eq!(hash(KeyModifiers::NONE), Some(Msg::ToggleLineNumbers));
+        assert_eq!(hash(KeyModifiers::SHIFT), Some(Msg::ToggleLineNumbers));
     }
 
     #[test]

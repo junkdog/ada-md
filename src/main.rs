@@ -51,6 +51,7 @@ fn run() -> Result<(), String> {
         live_reload: settings.live_reload && !args.no_reload,
         table_mode: settings.table_mode,
         code_wrap: settings.code_wrap,
+        line_numbers: args.line_numbers.unwrap_or(settings.line_numbers),
         keys: settings.keys,
         file,
     };
@@ -143,6 +144,7 @@ fn print_doc(
         max_width: config.max_width,
         table_mode: config.table_mode,
         code_wrap: true,
+        line_numbers: config.line_numbers,
         glyphs_gen: theme.glyphs.generation(),
         images: None,
     };

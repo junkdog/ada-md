@@ -10,6 +10,7 @@ bg0_s = "#32302f"
 bg1 = "#3c3836"
 bg2 = "#504945"
 bg3 = "#665c54"
+bg4 = "#7c6f64"
 fg = "#ebdbb2"
 fg0 = "#fbf1c7"
 fg2 = "#d5c4a1"
@@ -108,6 +109,7 @@ popup_border = { fg = "bg3", bg = "bg1" }
 popup_title = { fg = "orange", bg = "bg1", bold = true }
 popup_selected = { fg = "bg", bg = "orange", bold = true }
 sort_table = { fg = "orange" }                  # the borders and header of the table `s` sorts
+line_number = { fg = "bg4" }                    # line numbers (`#`)
 
 [syntax]                     # TextMate scope selector → style; the most specific match wins
 "comment" = { fg = "gray", italic = true }

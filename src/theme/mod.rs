@@ -74,6 +74,7 @@ style_keys! {
     GutterStagedAdded => "gutter.staged.added",
     GutterStagedModified => "gutter.staged.modified",
     GutterStagedDeleted => "gutter.staged.deleted",
+    LineNumber => "ui.line_number",
     StatusBar => "ui.status_bar",
     StatusFile => "ui.status_file",
     StatusHeading => "ui.status_heading",

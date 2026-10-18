@@ -99,6 +99,9 @@ ada src/main.rs
 ada ~/.config/ada/config.toml
 ada plot.png
 
+# with line numbers: off, code (code and text files) or all (markdown too)
+ada -n all notes/today.md
+
 # print instead of paging: what happens anyway when stdout isn't a terminal
 ada --print --width 100 notes/today.md | less -R
 ```
@@ -130,6 +133,7 @@ Press `?` in ada for the keys. See `ada --help` for every option.
 | `t` | tables: auto, grid, records |
 | `s` | sort a table on screen by a column: ascending, descending, source order; `←` `→` pick another table |
 | `w`, `←` `→` | wrap code, or scroll it sideways |
+| `#` | show or hide line numbers, for code files or for markdown, whichever is shown |
 | `T` | pick a theme, previewing each: `Enter` keeps it, `Esc` goes back; `←` `→` list the dark or the light themes |
 | `r` | read the file again |
 | `e` | edit in `$VISUAL` or `$EDITOR` at the current line |
@@ -156,6 +160,7 @@ image_protocol = "auto"    # or kitty, sixel, iterm2, halfblocks
 live_reload = true         # read the file again when it changes
 tables = "auto"            # the table layout to start with: auto, grid or records
 code_wrap = true
+line_numbers = "code"      # number rows by source line: off, code (code and text files) or all
 
 [keys]
 # setting an action replaces its keys; keys it takes from another action leave it

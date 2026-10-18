@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use ratatui::layout::Size;
 
 use super::{
-    ImageFit, Layout, LayoutParams, Measure, RowKind, TableMode, layout, layout_measured, relayout,
+    ImageFit, Layout, LayoutParams, LineNumbers, Measure, RowKind, TableMode, layout,
+    layout_measured, relayout,
 };
 use crate::doc::{BlockKind, parse};
 use crate::theme::Theme;
@@ -36,6 +37,7 @@ fn params(width: u16) -> LayoutParams {
         max_width: None,
         table_mode: TableMode::Auto,
         code_wrap: true,
+        line_numbers: Default::default(),
         glyphs_gen: 0,
         images: None,
     }
@@ -506,4 +508,36 @@ fn block_images_reserve_rows_once_their_size_is_known() {
     let text = layout(&doc, &theme.glyphs, params(60));
     assert!(text.images.is_empty());
     assert!(text.row_text(2).contains("🖼 a cat (cat.png)"));
+}
+
+/// Line numbers take columns of their own, left of the margin, and number each line on its
+/// first row only.
+#[test]
+fn line_numbers_take_columns_and_number_first_rows() {
+    let theme = Theme::builtin();
+    let text: String = (1..=12)
+        .map(|i| format!("let x{i} = {}0;\n", "1 + ".repeat(i * 3)))
+        .collect();
+    let doc = crate::doc::file::code(&text, Some("Rust"));
+    let numbered = |width| LayoutParams {
+        line_numbers: LineNumbers::Code,
+        ..params(width)
+    };
+    let l = layout(&doc, &theme.glyphs, numbered(40));
+    let plain = layout(&doc, &theme.glyphs, params(40));
+    assert_eq!((l.numbers, plain.numbers), (3, 0), "two digits and a space");
+    assert_eq!(l.params.width, 40, "relayouts compare the width asked for");
+    assert!(l.rows.len() > plain.rows.len(), "the rows have less room");
+    for (i, row) in l.rows.iter().enumerate() {
+        let width: u16 = l.spans(row).map(|(_, s)| s.width).sum();
+        assert!(width <= 40 - 3, "row {i} is {width} wide");
+    }
+    let shown: Vec<u32> = (0..l.row_count())
+        .filter_map(|r| l.line_number(r))
+        .collect();
+    assert_eq!(shown, (1..=12).collect::<Vec<_>>());
+
+    // the document keeps the room the margin needs
+    assert_eq!(layout(&doc, &theme.glyphs, numbered(26)).numbers, 0);
+    assert_eq!(layout(&doc, &theme.glyphs, numbered(27)).numbers, 3);
 }

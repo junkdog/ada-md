@@ -104,6 +104,7 @@ popup_border = { fg = "purple", bg = "background_dark" }
 popup_title = { fg = "pink", bg = "background_dark", bold = true }
 popup_selected = { fg = "background", bg = "purple", bold = true }
 sort_table = { fg = "purple" }
+line_number = { fg = "comment" }
 
 [syntax]
 "comment" = { fg = "comment" }

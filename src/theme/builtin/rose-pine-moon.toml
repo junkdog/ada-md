@@ -106,6 +106,7 @@ popup_border = { fg = "muted", bg = "surface" }
 popup_title = { fg = "iris", bg = "surface", bold = true }
 popup_selected = { fg = "base", bg = "iris", bold = true }
 sort_table = { fg = "iris" }
+line_number = { fg = "muted" }
 
 [syntax]
 "comment" = { fg = "muted", italic = true }

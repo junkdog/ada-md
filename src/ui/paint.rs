@@ -48,6 +48,20 @@ impl Painter<'_> {
         });
     }
 
+    /// Row `row`'s line number, right-aligned in the [`Layout::numbers`] columns with a space
+    /// after it, or blanks.
+    pub fn number(&self, row: u32, emit: &mut impl FnMut(&str, Style)) {
+        let width = usize::from(self.layout.numbers);
+        match self.layout.line_number(row) {
+            _ if width == 0 => {}
+            Some(n) => {
+                let style = self.theme.style(StyleKey::LineNumber);
+                emit(&format!("{n:>w$} ", w = width - 1), style);
+            }
+            None => spaces(width, self.theme.style(StyleKey::Text), emit),
+        }
+    }
+
     /// A row's styled pieces, left to right. Their widths add up to the row's.
     pub fn row(&self, row: &Row, emit: &mut impl FnMut(&str, Style)) {
         let RowKind::Code { block, line, from } = row.kind else {

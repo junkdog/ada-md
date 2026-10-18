@@ -387,6 +387,7 @@ mod tests {
             max_width: None,
             table_mode: Default::default(),
             code_wrap: true,
+            line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,
         };
@@ -419,6 +420,7 @@ mod tests {
             max_width: None,
             table_mode: Default::default(),
             code_wrap: true,
+            line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,
         };

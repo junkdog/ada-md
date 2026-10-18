@@ -4,19 +4,19 @@ expression: frames.last().unwrap()
 ---
    Code
             ╭─ keys ───────────────────────────────────────────────╮
-   rust     │ Search and outline                                   │
-   fn main()│   /               search with a regex                │
-       print│   n               the next match                     │
-       let l│   N               the previous match                 │t has to
-  ↪wrap when│   o               the outline of headings            │
-   }        │   l               the list of links                  │
-            │                                                      │
+   rust     │   /               search with a regex                │
+   fn main()│   n               the next match                     │
+       print│   N               the previous match                 │
+       let l│   o               the outline of headings            │t has to
+  ↪wrap when│   l               the list of links                  │
+   }        │                                                      │
             │ View                                                 │
-   kotlin   │   t               tables: auto, grid, records        │
-   fun greet│   s               sort a table on screen by a column │
-            │   w               wrap code, or scroll it sideways   │
+            │   t               tables: auto, grid, records        │
+   kotlin   │   s               sort a table on screen by a column │
+   fun greet│   w               wrap code, or scroll it sideways   │
             │   ←               scroll code left                   │
             │   →               scroll code right                  │
+            │   #               show or hide line numbers          │
    untagged │   T               pick a theme, previewing each      │
             │                                                      │
             │ Other                                                │

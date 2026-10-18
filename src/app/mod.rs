@@ -23,7 +23,9 @@ use crate::filetype::FileType;
 use crate::git::LineMarks;
 use crate::highlight::{self, CodeSpans, Epoch, Highlights, Job, SyntaxTheme};
 use crate::images::{self, Encoded, Graphics, ImageCache, ImageKey, ImageMode, Probe, Proto};
-use crate::layout::{self, ImageFit, Layout, LayoutParams, Measure, RowKind, TableMode};
+use crate::layout::{
+    self, ImageFit, Layout, LayoutParams, LineNumbers, Measure, RowKind, TableMode,
+};
 use crate::links::{LocalTarget, Resolved};
 use crate::search::SearchMap;
 use crate::theme::{Glyphs, Theme};
@@ -100,6 +102,8 @@ pub enum Msg {
         dir: Dir,
     },
     ToggleCodeWrap,
+    /// `#`: show or hide line numbers for the kind of file shown.
+    ToggleLineNumbers,
     /// Shift every code block sideways, in no-wrap mode.
     ScrollCodeX {
         by: i16,
@@ -324,9 +328,10 @@ pub struct Config {
     pub images: ImageMode,
     /// Reload when the file changes on disk.
     pub live_reload: bool,
-    /// The table layout and code wrapping to start with.
+    /// The table layout, code wrapping and line numbers to start with.
     pub table_mode: TableMode,
     pub code_wrap: bool,
+    pub line_numbers: LineNumbers,
     pub keys: Bindings,
     /// The config file, for the help to point at.
     pub file: Option<PathBuf>,
@@ -341,6 +346,7 @@ impl Default for Config {
             live_reload: true,
             table_mode: TableMode::Auto,
             code_wrap: true,
+            line_numbers: LineNumbers::Off,
             keys: Bindings::default(),
             file: None,
         }
@@ -465,6 +471,7 @@ pub struct State {
     pub scroll: u32,
     pub table_mode: TableMode,
     pub code_wrap: bool,
+    pub line_numbers: LineNumbers,
     /// The shared horizontal offset of code blocks in no-wrap mode (ADR-20).
     pub code_x: u16,
     pub highlights: Highlights,
@@ -513,6 +520,7 @@ impl State {
             scroll: 0,
             table_mode: config.table_mode,
             code_wrap: config.code_wrap,
+            line_numbers: config.line_numbers,
             config,
             code_x: 0,
             highlights: Highlights::default(),
@@ -547,6 +555,7 @@ impl State {
             max_width: self.config.max_width,
             table_mode: self.table_mode,
             code_wrap: self.code_wrap,
+            line_numbers: self.line_numbers,
             glyphs_gen: self.glyphs_gen,
             // an image may take 60 % of the viewport
             images: self.graphics.map(|g| ImageFit {
@@ -1202,6 +1211,16 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 "no-wrap, ←/→ scroll"
             };
             state.status = Some(format!("code: {mode}"));
+            state.relayout();
+            state.visible_jobs()
+        }
+        Msg::ToggleLineNumbers => {
+            let code = state
+                .doc
+                .as_ref()
+                .is_some_and(|d| matches!(d.filetype, FileType::Text { .. }));
+            state.line_numbers = state.line_numbers.toggle(code);
+            state.status = Some(format!("line numbers: {}", state.line_numbers.name()));
             state.relayout();
             state.visible_jobs()
         }
@@ -2594,6 +2613,37 @@ mod tests {
                 line
             }]
         );
+    }
+
+    #[test]
+    fn hash_numbers_the_lines_of_the_kind_of_file_shown() {
+        let md = "# A\n\ntext\n";
+        let mut state = loaded(md, 80, 20);
+        let numbers = |s: &State| s.doc.as_ref().unwrap().layout.numbers;
+        load_at(&mut state, "src/lib.rs", &rust_file());
+        assert_eq!(numbers(&state), 0);
+
+        update(&mut state, Msg::ToggleLineNumbers);
+        assert_eq!(state.line_numbers, LineNumbers::Code);
+        assert_eq!(state.status.as_deref(), Some("line numbers: code files"));
+        assert_eq!(numbers(&state), 3, "80 lines: two digits and a space");
+
+        // markdown isn't numbered in this mode; `#` numbers it too, then only code again
+        load_at(&mut state, "a.md", md);
+        assert_eq!(numbers(&state), 0);
+        update(&mut state, Msg::ToggleLineNumbers);
+        assert_eq!(state.line_numbers, LineNumbers::All);
+        assert_eq!(numbers(&state), 2);
+        update(&mut state, Msg::ToggleLineNumbers);
+        assert_eq!(state.line_numbers, LineNumbers::Code);
+        assert_eq!(numbers(&state), 0);
+
+        // the cached code file comes back numbered, and `#` there turns them off
+        load_at(&mut state, "src/lib.rs", &rust_file());
+        assert_eq!(numbers(&state), 3);
+        update(&mut state, Msg::ToggleLineNumbers);
+        assert_eq!(state.line_numbers, LineNumbers::Off);
+        assert_eq!(numbers(&state), 0);
     }
 
     #[test]

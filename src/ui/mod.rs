@@ -50,18 +50,31 @@ pub fn view(state: &State, buf: &mut Grid) {
         };
         buf.set_scroll(doc_area, state.scroll);
         let lines = screen_rows(layout, state.scroll, doc_area);
+        // the rows start right of the line numbers, and every column in them is relative to that
+        let numbers = layout.numbers.min(doc_area.width);
+        let rows_area = Rect {
+            x: doc_area.x + numbers,
+            width: doc_area.width - numbers,
+            ..doc_area
+        };
         // the grid is blank, and the text style is already over it
         for &(y, r) in &lines {
             if let Some(row) = layout.rows.get(r as usize) {
-                painter.row_into(buf, doc_area.x, y, doc_area.right(), row);
+                if numbers > 0 {
+                    let mut x = doc_area.x;
+                    painter.number(r, &mut |text, style| {
+                        (x, _) = buf.set_stringn(x, y, text, usize::from(numbers), style);
+                    });
+                }
+                painter.row_into(buf, rows_area.x, y, rows_area.right(), row);
             }
         }
-        overlays(buf, doc_area, state, doc, &lines);
-        gutter(buf, doc_area, state, doc, &lines);
+        overlays(buf, rows_area, state, doc, &lines);
+        gutter(buf, rows_area, state, doc, &lines);
         // A kitty image is sent once, with the first cell it paints; the popup would paint over
         // that cell and lose it. Sixel would draw over the popup. So images wait for it to close.
         if state.outline.is_none() && state.help.is_none() {
-            block_images(buf, doc_area, state, doc);
+            block_images(buf, rows_area, state, doc);
         }
     }
     if state.outline.is_some() {
@@ -497,6 +510,7 @@ mod tests {
             max_width: None,
             table_mode: Default::default(),
             code_wrap: true,
+            line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,
         };

@@ -1,0 +1,20 @@
+---
+source: src/record.rs
+expression: frames.last().unwrap()
+---
+      Rust
+ 1    //! Feeder firmware: the schedule.
+ 2
+ 3 ▎  const MEALS: [u8; 3] = [7, 12, 19];
+ 4
+ 5    fn main() {
+ 6        for hour in MEALS {
+ 7            // each meal is logged, so the ve
+     ↪t can see when Ada ate and how much was l
+     ↪eft in the bowl
+ 8            log(hour);
+ 9        }
+10    }
+11
+12 ▎  fn log(hour: u8) {
+ main.rs  line numbers: code files            Top

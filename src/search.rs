@@ -352,6 +352,7 @@ mod tests {
             max_width: None,
             table_mode: TableMode::Auto,
             code_wrap: true,
+            line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,
         }

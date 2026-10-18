@@ -103,6 +103,7 @@ fn main() {
             max_width: None,
             table_mode: TableMode::default(),
             code_wrap: true,
+            line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,
         };

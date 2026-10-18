@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::doc::{self, Doc};
 use crate::highlight;
-use crate::layout::LayoutParams;
+use crate::layout::{LayoutParams, LineNumbers};
 use crate::links;
 
 /// Text files no syntax claims, shown plain rather than handed to the system's opener.
@@ -78,12 +78,23 @@ impl FileType {
     }
 
     /// How a document of this type is laid out. Code isn't prose: it takes the terminal's
-    /// whole width. An image takes the whole screen, but for its caption.
+    /// whole width. An image takes the whole screen, but for its caption. Line numbers come out
+    /// `Off` or not by whether the mode covers the file, and the same for every mode that does,
+    /// so that toggling them for the other kind of file doesn't relayout this one.
     pub fn params(&self, mut params: LayoutParams) -> LayoutParams {
+        let numbers = &mut params.line_numbers;
         match self {
-            FileType::Markdown => {}
-            FileType::Text { .. } => params.max_width = None,
+            FileType::Markdown => {
+                if *numbers < LineNumbers::All {
+                    *numbers = LineNumbers::Off;
+                }
+            }
+            FileType::Text { .. } => {
+                params.max_width = None;
+                *numbers = (*numbers).min(LineNumbers::Code);
+            }
             FileType::Image => {
+                *numbers = LineNumbers::Off;
                 params.max_width = None;
                 if let Some(fit) = &mut params.images {
                     fit.max_rows = fit.screen_rows.saturating_sub(1).max(1);
@@ -154,6 +165,31 @@ mod tests {
         assert!(!opens("pic.png"));
         assert!(!opens("report.pdf"));
         assert!(!opens("plain"));
+    }
+
+    #[test]
+    fn line_numbers_resolve_to_off_or_one_mode_per_kind_of_file() {
+        let numbers = |ft: FileType, mode| {
+            let params = LayoutParams {
+                width: 80,
+                max_width: None,
+                table_mode: Default::default(),
+                code_wrap: true,
+                line_numbers: mode,
+                glyphs_gen: 0,
+                images: None,
+            };
+            ft.params(params).line_numbers
+        };
+        let code = || FileType::Text { lang: None };
+        use LineNumbers::{All, Code, Off};
+        assert_eq!(
+            [Off, Code, All].map(|m| numbers(code(), m)),
+            [Off, Code, Code]
+        );
+        let md = [Off, Code, All].map(|m| numbers(FileType::Markdown, m));
+        assert_eq!(md, [Off, Off, All]);
+        assert_eq!(numbers(FileType::Image, All), Off);
     }
 
     #[test]

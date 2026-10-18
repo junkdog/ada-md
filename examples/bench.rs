@@ -217,6 +217,7 @@ fn params(theme: &Theme, width: u16) -> LayoutParams {
         max_width: None,
         table_mode: TableMode::Auto,
         code_wrap: true,
+        line_numbers: Default::default(),
         glyphs_gen: theme.glyphs.generation(),
         images: None,
     }
