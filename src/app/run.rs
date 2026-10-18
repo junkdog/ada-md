@@ -8,6 +8,7 @@ use std::process::Command;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::{env, thread};
 
+use ratatui::crossterm::cursor::Show;
 use ratatui::crossterm::event::{self, Event};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{self, Clear, ClearType, EnterAlternateScreen, enable_raw_mode};
@@ -22,8 +23,28 @@ use crate::ui;
 /// The terminal: each frame diffed against the last and written to stdout in one write.
 type Term = Screen<Stdout>;
 
+/// Take the terminal: raw mode, the alternate screen, and a panic hook that gives it back. ada
+/// draws with its own grid, not ratatui's.
+pub(crate) fn init_terminal() -> io::Result<Term> {
+    ratatui::try_init()?;
+    // ratatui's hook leaves the alternate screen; the frames hid the cursor, so show it after.
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        hook(info);
+        let _ = execute!(io::stdout(), Show);
+    }));
+    new_screen()
+}
+
+/// Give the terminal back as it was: ratatui's `restore`, and the cursor every frame hid, which
+/// ratatui's `Terminal` showed on drop but ada's `Screen` doesn't.
+pub(crate) fn restore_terminal() {
+    ratatui::restore();
+    let _ = execute!(io::stdout(), Show);
+}
+
 /// A screen over the alternate screen just entered, which is blank.
-pub(crate) fn new_screen() -> io::Result<Term> {
+fn new_screen() -> io::Result<Term> {
     let (w, h) = terminal::size()?;
     Ok(Screen::new(io::stdout(), Cells::new(w, h)))
 }
@@ -53,9 +74,7 @@ pub fn run_tui(
     mut recorder: Option<Recorder>,
 ) -> Result<(), String> {
     one_arena();
-    // `try_init` sets up the screen and the panic hook; ada draws with its own grid, not ratatui's.
-    ratatui::try_init().map_err(|e| format!("terminal: {e}"))?;
-    let mut terminal = new_screen().map_err(|e| format!("terminal: {e}"))?;
+    let mut terminal = init_terminal().map_err(|e| format!("terminal: {e}"))?;
     let result = event_loop(
         &mut terminal,
         &mut state,
@@ -63,7 +82,7 @@ pub fn run_tui(
         &mut effects,
         recorder.as_mut(),
     );
-    ratatui::restore();
+    restore_terminal();
     // The recording is a `BufWriter`: its drop writes the tail.
     drop(recorder);
     std::mem::forget((terminal, state, effects));
@@ -198,7 +217,7 @@ fn edit(terminal: &mut Term, file: &Path, line: u32) -> Result<Option<Msg>, Stri
     let Some(argv) = editor_command(&editor, file, line) else {
         return Ok(None);
     };
-    ratatui::restore();
+    restore_terminal();
     let status = Command::new(&argv[0]).args(&argv[1..]).status();
     let back = || -> io::Result<Term> {
         enable_raw_mode()?;

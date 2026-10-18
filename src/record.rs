@@ -710,8 +710,7 @@ fn replay_terminal(
     effects: &mut Effects,
     live: bool,
 ) -> Result<(), String> {
-    ratatui::try_init().map_err(|e| format!("terminal: {e}"))?;
-    let mut terminal = app::new_screen().map_err(|e| format!("terminal: {e}"))?;
+    let mut terminal = app::init_terminal().map_err(|e| format!("terminal: {e}"))?;
     let start = Instant::now();
     let mut result = Ok(());
     for entry in entries {
@@ -730,7 +729,7 @@ fn replay_terminal(
             break;
         }
     }
-    ratatui::restore();
+    app::restore_terminal();
     result
 }
 

@@ -38,7 +38,7 @@ pub use load::{Prepare, Prepared, prepare};
 pub use nav::LinkState;
 use nav::{Entry, Nav};
 pub use run::run_tui;
-pub(crate) use run::{draw_frame, new_screen};
+pub(crate) use run::{draw_frame, init_terminal, restore_terminal};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Size {
