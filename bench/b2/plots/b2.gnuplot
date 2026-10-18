@@ -18,9 +18,9 @@ set style fill solid 0.9 border rgb '#282828'
 # -- Accent Color Palette: ada bright, the others in gruvbox's darker shades --
 col_ada = '#fabd2f'
 array COL[6] = ['#fabd2f', '#98971a', '#b16286', '#458588', '#689d6a', '#cc241d']
-array PCOL[5] = ['#fabd2f', '#98971a', '#d65d0e', '#cc241d', '#665c54']
+array PCOL[8] = ['#fabd2f', '#98971a', '#d65d0e', '#458588', '#b16286', '#cc241d', '#689d6a', '#665c54']
 array NAME[6] = ['ada', 'leaf', 'mdfried', 'md-tui', 'treemd HEAD', 'glow']
-array PNAME[5] = ['ada', 'leaf', 'mdcat', 'glow', 'lowdown (no highlighting)']
+array PNAME[8] = ['ada', 'leaf', 'mdcat', 'rich', 'mcat', 'glow', 'bat (source only)', 'lowdown (no highlighting)']
 
 group = 0.8   # share of a document's slot the bars take
 
@@ -72,7 +72,7 @@ unset multiplot
 set output dir . '/print.png'
 set terminal pngcairo size 1800,760 enhanced font 'sans,13' background '#282828'
 array PTITLE[2] = ['print to a pipe: wall time (ms)', 'print to a pipe: peak RSS (MiB)']
-N = 5; w = group / N
+N = 8; w = group / N
 unset logscale y
 set autoscale
 do for [p = 0:1] {
@@ -86,7 +86,7 @@ set logscale y
 set xrange [-0.5:3.5]
 unset object; unset label
 do for [i = 1:N] {
-    x = 0.5 + (i - (N + 1) / 2.0) * 0.13 - 0.04
+    x = 0.5 + (i - (N + 1) / 2.0) * 0.105 - 0.06
     set object i rect from screen x - 0.05, 0.815 to screen x - 0.04, 0.837 fc rgb PCOL[i] fs solid noborder
     set label i PNAME[i] at screen x - 0.034, 0.826 left tc rgb '#ebdbb2' font ',13'
 }

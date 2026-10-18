@@ -29,7 +29,7 @@ MISSING = [("search", "glow", None, "has no search"),
            (None, "mdtui", "XL", "never finished parsing"),
            ("resize, cold", "mdtui", None, "re-parses for seconds"),
            ("search", "mdfried", "XL", "match off-screen")]
-NOTES = {"lowdown": "no highlighting"}
+NOTES = {"lowdown": "no highlighting", "bat": "source, not rendered"}
 # what each chart times, under its caption, and its kind of time: the legend above the charts says what
 # wall and CPU mean; memory has neither
 DESCS = {"first paint": "from launch until the document's first line is on screen",

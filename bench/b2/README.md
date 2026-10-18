@@ -10,6 +10,9 @@ export B2_ROOT=~/b2 ADA=$PWD/target/release/ada
 mkdir -p $B2_ROOT/{corpus,tools,b2}
 # viewers, into a prefix of their own
 cargo install --locked --root $B2_ROOT/tools treemd@0.9.1 leaf-markdown-viewer@1.29.1 md-tui@0.11.0 mdcat@2.18.0 hyperfine
+cargo install --locked --root $B2_ROOT/tools mcat@0.6.5 viu@1.6.1
+UV_TOOL_DIR=$B2_ROOT/tools/uv UV_TOOL_BIN_DIR=$B2_ROOT/tools/bin uv tool install rich-cli==1.8.1
+# bat, kitty (kitten), chafa and glow from the distribution
 cargo install --locked --root $B2_ROOT/tools mdfried@0.22.8 --no-default-features --features svg,mermaid  # no libchafa
 # treemd HEAD, if wanted, as tools/bin/treemd-head; glow from the distribution; lowdown built with cc -O2
 # the corpus: s.md, m.md, l.md (vault notes) and xl.md (notes over 4 KB concatenated to 2 MB)
@@ -28,12 +31,40 @@ done; wait
 cat $B2_ROOT/b2/lane*.jsonl > $B2_ROOT/b2/all.jsonl
 python3 -I bench/b2/report.py $B2_ROOT/b2/all.jsonl; python3 -I bench/b2/rank.py
 zsh bench/b2/b2a.zsh && python3 -I bench/b2/b2a_report.py
+zsh bench/b2/b2p.zsh   # the previewer files: code, a log, huge files; whole and under a preview's budget
+zsh bench/b2/b2i.zsh   # image previews: kitty graphics, half-blocks and symbols
 python3 -I bench/b2/doctables.py > tables.md   # the vault notes' tables, × columns and ranks included
 python3 -I bench/b2/plot.py $(git rev-parse --short HEAD) && gnuplot bench/b2/plots/b2.gnuplot   # the README's charts
 ```
 
-The four lanes take about 25 minutes (md-tui's XL runs, each at the 90 s cap, set the length), and print mode
-another 1–2. Each job works on its own copy of its document, in `jobs/` beside the spec.
+The four lanes take about 25 minutes (md-tui's XL runs, each at the 90 s cap, set the length), print mode
+another 3, the previewer files about 25 (the huge files' runs are capped at 60 s each, `B2P_CAP`), and images 3.
+
+### Print, previewer files and images
+
+All three use `hyperfine -N` to a pipe at 100 columns, pinned to CPUs 2,4,6,8, one hyperfine call per input with
+every tool in it, and take peak RSS from a short call of its own per command: a child's `ru_maxrss` counts what
+hyperfine held when it spawned it, and hyperfine grows with every run it keeps, so in a long call a small tool
+reports hyperfine's size.
+
+- `b2a.zsh`: the four notes. bat highlights the source and lowdown doesn't highlight, so neither is ranked.
+  `COLUMNS=100` is exported because rich lays out at `-w` but crops each line at its console's width (80 to a pipe).
+- `b2p.zsh`: inputs in `corpus/` beside the notes: `code-s.rs`, `code-m.rs` (ada's `src/layout/code.rs` and
+  `src/highlight.rs`), `code-l.rs` (zerocopy 0.8.61's `src/lib.rs`), `log.log` (1 MB of `journalctl -o short-iso`),
+  `huge.log` (80 MB of the same) and `huge.json` (3.75 MB on one line: `cargo metadata` of eight projects as a JSON
+  array). `whole` prints the file; `preview` gives ada `--height 50` (its fzf budget, 2,000 rows), bat
+  `--line-range=:2000` and rich `--head 2000`. The huge files run under `timeout -s KILL $B2P_CAP`; a killed run
+  shows as `> 60 s`, and its CPU and RSS are lost (timeout signals its own process group, so it never reaps the
+  child).
+- `b2i.zsh`: `corpus/img/`: `fit.png` (686×811, sent to kitty as it is), `diagram.png` (2473×1808), `photo.jpg`
+  (1500×2000), `photo-12mp.png`/`.jpg` and `photo-24mp.jpg` (a vault photo resized with ImageMagick), each as a
+  100×50-cell preview at 10×20 px. kitty: ada, `kitten icat` streamed and through shared memory (its leftover
+  `/dev/shm/icat-*` files are removed), chafa and mcat; text: ada's half-blocks, viu's, and chafa's symbols.
+- `B2P_ONLY="ada rich"` with `B2P_OUT=<dir>` reruns some tools into another directory, and
+  `B2P_DIRS="b2p <dir>"` merges it over the full run in `doctables.py`; `B2I_ONLY`, `B2I_OUT` and `B2I_DIRS` the
+  same for images.
+- `runcmp.py OLD.jsonl NEW.jsonl` lines up every ranked interactive cell of two runs, with how far the other
+  viewers moved: when they all moved, so did the machine. Each job works on its own copy of its document, in `jobs/` beside the spec.
 
 Memory is defragmented before measuring when less than 8 GiB is free (`MemFree`; `B2_DROP_BELOW_GB` sets another
 threshold), as oxasm's and sift's benchmarks do: `b2 run` and `b2a.zsh` check once at their start, `b2 flood`
@@ -74,6 +105,9 @@ done
 | `doctables.py` | the vault notes' B2 tables in their layout: × columns, the best value per column bold, ranks, the cold resize |
 | `plot.py`, `plots/b2.gnuplot` | the README's charts: `plots/interactive.png` and `plots/print.png`, from the `.dat` files `plot.py` writes |
 | `b2a.zsh`, `b2a_report.py` | print mode with hyperfine 2 (wall, CPU, peak RSS, instructions) |
+| `b2p.zsh` | the previewer files (code, logs, huge files) printed whole and under a preview's budget |
+| `b2i.zsh` | image previews against kitten icat, chafa, viu and mcat |
+| `runcmp.py` | two runs' interactive cells side by side, for regressions |
 | `pick.py` | picking search terms |
 | `printcmp.zsh`, `sgrcmp.py` | print mode, two builds compared by what each character shows (SGR interpreted, blanks by background), over the vault and the corpus at four widths |
 | `termcmp.zsh`, `relay.py` | two builds live in tmux, kitty or alacritty through one key script, compared screen by screen (`sgrcmp.py --screen`, or pixels for alacritty); `relay.py` feeds keys to ada inside alacritty |

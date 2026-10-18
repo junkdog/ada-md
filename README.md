@@ -58,12 +58,17 @@ you can remap.
 
 ada against other terminal markdown viewers, on the same machine, documents and 120×40 pty:
 four notes from 13 KB to a 2 MB concatenation, each viewer pinned to four physical cores of an
-AMD Ryzen AI MAX+ PRO 395, medians of 3–5 runs (ada `3202a1a`, 2026-10-17).
+AMD Ryzen AI MAX+ PRO 395, medians of 3–5 runs (ada `WTFIX`, 2026-10-18).
 
-ada is first in 78 of the 84 interactive measurements, on time and on CPU or memory, and
-prints faster and in less memory than the other highlighting printers. It isn't first on the
-bytes it writes per page (glow writes about a third less) or on peak memory for the smallest
-note (md-tui, 9.3 MiB against 10.8).
+ada is first in 79 of the 84 interactive measurements, on time and on CPU or memory. It isn't
+first on the bytes it writes per page (glow writes about a third less) or on peak memory for
+the smallest note (md-tui 9.3 MiB and leaf 10.9, against 11.2).
+
+Printing to a pipe, ada is the fastest of the printers that render and highlight (leaf, mdcat,
+rich, mcat, glow) on every note, and the leanest on two of four (leaf takes 0.3 and 0.2 MiB less
+on S and L). As a previewer, it prints code faster and leaner than bat, and logs and JSON a
+little faster (bat peaks lower on a whole log, or a 3.75 MB line of JSON), and its image previews
+are 1.5–20× faster than `kitten icat`, in 1.2–13× less memory.
 
 The charts, per document and with what each one times, are on
 [the site](https://junkdog.github.io/ada-md/#performance). The medians behind them are in

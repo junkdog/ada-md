@@ -15,7 +15,7 @@ commit = sys.argv[1] if len(sys.argv) > 1 else "?"
 VIEWERS = ["ada", "leaf", "mdfried", "mdtui", "treemd-head", "glow"]
 PANELS = [("first paint", "first", 1), ("CPU per line scroll", "line CPU", 1), ("search", "search", 1),
           ("resize, cold", "resize", 1), ("held page-down CPU", "burst CPU", 1), ("peak RSS", "rss", 1)]
-PRINTERS = ["ada", "leaf", "mdcat", "glow", "lowdown"]
+PRINTERS = ["ada", "leaf", "mdcat", "rich", "mcat", "glow", "bat", "lowdown"]
 
 
 def cell(x):

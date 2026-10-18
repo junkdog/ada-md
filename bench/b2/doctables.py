@@ -1,9 +1,10 @@
 """The B2 tables of the vault notes, in their layout: feature-matrix-comparison's Performance (B2) tables, with
 the × columns (each viewer's value divided by ada's), and ada-optimization's Where ada stands, with ranks.
 
-    python3 -I bench/b2/doctables.py [fm|stands|all]
+    python3 -I bench/b2/doctables.py [fm|stands|prev|images|all]
 
-Reads $B2_ROOT/b2/all.jsonl and, for print mode, $B2_ROOT/b2a/*.json and bytes.txt. Resize is the first (cold)
+Reads $B2_ROOT/b2/all.jsonl and, for print mode, $B2_ROOT/b2a/*.json and bytes.txt; the previewer files and the
+images from $B2_ROOT/b2p/ and $B2_ROOT/b2i/ (b2p.zsh, b2i.zsh), when they exist. Resize is the first (cold)
 resize of each run, unlike report.py's median over all ten. The best value of each column is bold. Cells that the
 scripted runs can't measure (md-tui on XL, mdfried's XL search) come out empty; the notes fill them from separate
 runs, with a footnote."""
@@ -159,19 +160,23 @@ def b2a():
         for r in json.load(open(f"{S}/b2a/{d}.json"))["results"]:
             m = r["measurements"]
             g = lambda k: st.median(x[k]["value"] for x in m)
+            rss = g("memory_peak_resident") / 2**20
+            if os.path.exists(own := f"{S}/b2a/{d}.rss.{r['name']}.json"):  # see loader()
+                rss = hyperfine(own)[r["name"]]["rss"]
             res[(d, r["name"])] = dict(n=len(m), wall=g("time_wall_clock") * 1e3, cpu=g("time_cpu") * 1e3,
-                                       rss=g("memory_peak_resident") / 2**20, ins=g("instructions") / 1e6,
+                                       rss=rss, ins=g("instructions") / 1e6,
                                        out=nbytes[(d, r["name"])] / 1000 if (d, r["name"]) in nbytes else None)
     return res
 
 
-PRINTERS = ["ada", "mdcat", "leaf", "glow", "lowdown"]
+PRINTERS = ["ada", "mdcat", "leaf", "rich", "mcat", "glow", "bat", "lowdown"]
+FLOORS = ("lowdown", "bat")  # lowdown doesn't highlight, bat doesn't render: never bold, never ranked against
 
 
 def printmode():
     res = b2a()
     printers = [n for n in PRINTERS if (DOCS[0], n) in res]
-    hl = [n for n in printers if n != "lowdown"]  # lowdown doesn't highlight: never bold
+    hl = [n for n in printers if n not in FLOORS]
     print("\n#### Print to a pipe (ms)\n")
     rows = []
     for n in printers:
@@ -245,7 +250,7 @@ def stands():
     res = b2a()
     rows = []
     for d in DOCS:
-        hl = ["ada", "mdcat", "leaf"]  # the highlighting printers measured together; glow is far behind
+        hl = [n for n in PRINTERS if n not in FLOORS and (d, n) in res]  # the printers that render and highlight
         a = res[(d, "ada")]
         near = min((n for n in hl if n != "ada"), key=lambda n: res[(d, n)]["wall"])
         o = res[(d, near)]
@@ -270,6 +275,118 @@ def stands():
     print(f"\nada first in {first} of {total}")
 
 
+def hyperfine(path):
+    """{name: medians} from one hyperfine JSON. A command with any failed run (killed by b2p.zsh's cap) gets
+    killed=True and no numbers: its successful runs, if any, aren't comparable."""
+    out = {}
+    for r in json.load(open(path))["results"]:
+        m = r["measurements"]
+        g = lambda k: st.median(x[k]["value"] for x in m)
+        if any(x.get("exit_code", 0) != 0 for x in m):
+            out[r["name"]] = dict(n=len(m), killed=True)
+            continue
+        out[r["name"]] = dict(n=len(m), killed=False, wall=g("time_wall_clock") * 1e3, cpu=g("time_cpu") * 1e3,
+                              rss=g("memory_peak_resident") / 2**20, ins=g("instructions") / 1e6)
+    return out
+
+
+def bytes_of(path):
+    """{(input, mode, name): KB} from b2p's or b2i's bytes.txt; None where the run was killed."""
+    out = {}
+    for line in open(path):
+        f, mode, n, *kv = line.split()
+        kv = dict(x.split("=") for x in kv)
+        out[(f, mode, n)] = None if kv.get("rc", "0") != "0" else int(kv["bytes"]) / 1000
+    return out
+
+
+def grid(title, inputs, modes, names, load, floors=(), cap=None, flags=None):
+    """One time table (wall, CPU and × per input) and one resource table (RSS, output) per mode. load(input, mode)
+    gives {name: medians}; bytes come from load.bytes. The best value of a column is bold, floors excepted."""
+    for mode, label in modes:
+        res = {f: load(f, mode) for f in inputs}
+        ns = [n for n in names if any(n in res[f] for f in inputs)]
+        cell = lambda f, n, k: None if n not in res[f] or res[f][n]["killed"] else res[f][n][k]
+        rows = []
+        for n in ns:
+            row = [n]
+            for f in inputs:
+                for k in ("wall", "cpu"):
+                    x, a = cell(f, n, k), cell(f, "ada", k)
+                    best = min((y for m in ns if m not in floors and (f, m) not in (flags or {})
+                                and (y := cell(f, m, k)) is not None), default=None)
+                    if n not in res[f]:
+                        row += ["", ""]
+                        continue
+                    s = f"> {cap} s" if res[f][n]["killed"] else fmt(x)
+                    if (f, n) in (flags or {}):
+                        row += [s + " †", ""]  # its output isn't the same file shown: not ranked
+                        continue
+                    row += [f"**{s}**" if n not in floors and x is not None and x == best else s,
+                            "" if n == "ada" or x is None or not a else fmt(x / a)]
+            rows.append(row)
+        print(f"\n#### {title}, {label} (ms)\n")
+        print(table(["Tool"] + [h for f in inputs for k in ("Wall", "CPU") for h in (f"{k} {f}", f"{k} {f} ×")], rows))
+        rows = []
+        for n in ns:
+            row = [n]
+            for k in ("rss", "out"):
+                for f in inputs:
+                    x = load.bytes.get((f, mode, n)) if k == "out" else cell(f, n, k)
+                    best = min((y for m in ns if m not in floors and (y := (load.bytes.get((f, mode, m)) if k == "out"
+                                else cell(f, m, k))) is not None), default=None)
+                    row.append("" if x is None else f"**{fmt(x)}**" if n not in floors and x == best else fmt(x))
+            rows.append(row)
+        print(f"\n{title}, {label}: peak RSS (MiB) and output (KB):\n")
+        print(table(["Tool"] + [f"{h} {f}" for h in ("RSS", "Output") for f in inputs], rows))
+        for (f, n), why in ((k, v) for k, v in (flags or {}).items() if k[1] in ns):
+            print(f"\n† {n} on {f}: {why}")
+        print("\nruns:", {f: {n: r["n"] for n, r in res[f].items()} for f in inputs})
+
+
+PREV_FILES = ["code-s.rs", "code-m.rs", "code-l.rs", "log.log", "huge.json", "huge.log"]
+IMAGES = ["fit.png", "diagram.png", "photo-12mp.png", "photo.jpg", "photo-12mp.jpg", "photo-24mp.jpg"]
+
+
+def loader(d):
+    """Records from $B2_ROOT/<dir> for each dir in $<D>_DIRS (default: d), a later one replacing an earlier one's
+    tools: a rerun of some tools (B2P_ONLY, B2P_OUT) merges into the full run. Peak RSS comes from each command's
+    own short call (*.rss.NAME.json) where there is one."""
+    dirs = os.environ.get(f"{d.upper()}_DIRS", d).split()
+
+    def load(f, mode):
+        out = {}
+        for x in dirs:
+            if os.path.exists(path := f"{S}/{x}/{f}.{mode}.json"):
+                for n, r in hyperfine(path).items():
+                    rss = f"{S}/{x}/{f}.{mode}.rss.{n}.json"
+                    if not r["killed"] and os.path.exists(rss):
+                        own = hyperfine(rss).get(n)
+                        r["rss"] = own["rss"] if own and not own["killed"] else r["rss"]
+                    out[n] = r
+        return out
+    load.bytes = {}
+    for x in dirs:
+        if os.path.exists(path := f"{S}/{x}/bytes.txt"):
+            load.bytes.update(bytes_of(path))
+    return load
+
+
+def previewer():
+    """b2p.zsh: code, a log and huge files, whole and under a preview's budget; mcat has no budget."""
+    fence = "it wraps the file in a markdown code fence, which a fence inside the file closes; the rest shows as markdown"
+    plain = "Pygments has no lexer for .log, so rich prints it without color"
+    grid("Previewer files", PREV_FILES, [("whole", "whole file"), ("preview", "preview budget")],
+         ["ada", "bat", "rich", "mcat"], loader("b2p"), cap=int(os.environ.get("B2P_CAP", 60)),
+         flags={("code-l.rs", "mcat"): fence, ("log.log", "rich"): plain, ("huge.log", "rich"): plain})
+
+
+def images():
+    """b2i.zsh: 100×50-cell previews of each image, kitty graphics and text."""
+    grid("Images", IMAGES, [("kitty", "kitty graphics"), ("text", "half-blocks and symbols")],
+         ["ada", "icat", "icat-shm", "chafa", "mcat", "viu", "chafa-vhalf"], loader("b2i"))
+
+
 if __name__ == "__main__":
     sec = sys.argv[1] if len(sys.argv) > 1 else "all"
     if sec in ("fm", "all"):
@@ -277,3 +394,7 @@ if __name__ == "__main__":
     if sec in ("stands", "all"):
         print()
         stands()
+    if sec in ("prev", "all") and os.path.exists(f"{S}/b2p/bytes.txt"):
+        previewer()
+    if sec in ("images", "all") and os.path.exists(f"{S}/b2i/bytes.txt"):
+        images()
