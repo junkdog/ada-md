@@ -10,6 +10,7 @@ mod keymap;
 mod load;
 mod nav;
 mod run;
+mod save;
 mod sort;
 mod watch;
 
@@ -39,6 +40,7 @@ pub use nav::LinkState;
 use nav::{Entry, Nav};
 pub(crate) use run::{draw_frame, init_terminal, restore_terminal};
 pub use run::{one_arena, run_tui};
+pub use save::Saving;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Size {
@@ -157,6 +159,12 @@ pub enum Msg {
     Edit,
     /// `y`: copy the focused link's target, or the code block on screen, through OSC 52.
     Yank,
+    /// `S`: offer to save the settings in effect to the config file, listing what changes.
+    SaveConfig,
+    /// In the save box: write the file.
+    SaveConfirm,
+    /// In the save box: close it, writing nothing.
+    SaveCancel,
     Quit,
     // world → app: the payload is recorded, because these read the outside world
     DocLoaded {
@@ -203,6 +211,19 @@ pub enum Msg {
         path: PathBuf,
         mtime: Option<u64>,
     },
+    /// The config file, read for `S`: a missing one reads as the file ada would write.
+    ConfigRead {
+        path: PathBuf,
+        text: Arc<str>,
+    },
+    /// `Cmd::WriteConfig` wrote the config file.
+    ConfigWritten {
+        path: PathBuf,
+    },
+    /// Reading or writing the config file failed.
+    ConfigFailed {
+        error: String,
+    },
     // pure computation done off-thread: recorded as a marker only
     Highlighted {
         doc_gen: u64,
@@ -235,6 +256,9 @@ impl Msg {
                 | Msg::ImagesProbed { .. }
                 | Msg::EditorExited { .. }
                 | Msg::FileChanged { .. }
+                | Msg::ConfigRead { .. }
+                | Msg::ConfigWritten { .. }
+                | Msg::ConfigFailed { .. }
         )
     }
 
@@ -314,6 +338,13 @@ pub enum Cmd {
     Watch {
         path: PathBuf,
         mtime: Option<u64>,
+    },
+    /// Read the config file, for `S` to compare the settings in effect with.
+    ReadConfig(PathBuf),
+    /// Write the config file. Only the interactive loop does: a replay never touches it.
+    WriteConfig {
+        path: PathBuf,
+        text: String,
     },
     Quit,
 }
@@ -520,6 +551,8 @@ pub struct State {
     pub view: Option<ImageView>,
     /// The help overlay's scroll offset, while it is open.
     pub help: Option<u16>,
+    /// The box `S` opens, asking whether to save the config, while it is open.
+    pub save: Option<Saving>,
 }
 
 impl State {
@@ -557,6 +590,7 @@ impl State {
             images: ImageCache::default(),
             view: None,
             help: None,
+            save: None,
         }
     }
 
@@ -1135,6 +1169,27 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::HelpClose => {
             state.help = None;
             state.visible_jobs()
+        }
+        Msg::SaveConfig => {
+            state.status = None;
+            state.save_config()
+        }
+        Msg::ConfigRead { path, text } => {
+            state.config_read(path, &text);
+            Vec::new()
+        }
+        Msg::SaveConfirm => state.save_confirm(),
+        Msg::SaveCancel => {
+            state.save = None;
+            state.visible_jobs()
+        }
+        Msg::ConfigWritten { path } => {
+            state.status = Some(format!("saved {}", path.display()));
+            Vec::new()
+        }
+        Msg::ConfigFailed { error } => {
+            state.status = Some(error);
+            Vec::new()
         }
         Msg::OpenFailed { target, error } => {
             state.status = Some(format!("can't open {target}: {error}"));

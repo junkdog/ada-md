@@ -1,0 +1,28 @@
+---
+source: src/record.rs
+expression: frames.last().unwrap()
+---
+   Settings
+                       ╭─ save to config.toml ─────────╮
+  ╭─ 1 ────────────────│ tables     "auto" → "records" │──────────────────────
+  │ option  tables     │ code_wrap  true → false       │
+  │ value   records    │                               │
+  ╭─ 2 ────────────────│    Enter save · Esc cancel    │──────────────────────
+  │ option  code_wrap  ╰───────────────────────────────╯
+  │ value   false
+
+   rust
+   fn main() { println!("a line of code long enough to wrap when the terminal›
+
+
+
+
+
+
+
+
+
+
+
+
+ settings.md  Settings                                                      All

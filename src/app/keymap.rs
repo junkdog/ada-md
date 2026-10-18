@@ -4,7 +4,9 @@
 //! changes.
 //!
 //! The keymap runs on the input thread, so it tracks the mode itself: `/` opens the prompt here
-//! and now, and the keys typed right after it can't race the main loop.
+//! and now, and the keys typed right after it can't race the main loop. The one mode it can't
+//! know is the confirm box `S` opens, which opens only when saving would change the file: the
+//! input thread waits for the main loop's answer, and [`Keymap::no_confirm`] takes the box back.
 //!
 //! Normal-mode keys come from [`Bindings`]: one table of actions with their default keys, which
 //! the config file's `[keys]` section overrides, and which the help overlay lists.
@@ -92,6 +94,7 @@ actions! {
         Reload => "reload", "read the file again", ["r"],
         Edit => "edit", "edit in $VISUAL or $EDITOR", ["e"],
         Yank => "yank", "copy the link or the code block", ["y"],
+        SaveConfig => "save_config", "save the settings to the config file", ["S"],
         Help => "help", "this help", ["?"],
         Quit => "quit", "quit (so does C-c)", ["q", "esc"],
     }
@@ -137,6 +140,7 @@ impl Action {
             Action::Reload => Msg::Reload,
             Action::Edit => Msg::Edit,
             Action::Yank => Msg::Yank,
+            Action::SaveConfig => Msg::SaveConfig,
             Action::Help => Msg::Help,
             Action::Quit => Msg::Quit,
         }
@@ -426,6 +430,8 @@ enum Mode {
     Sort(String),
     /// The outline popup listing the themes, which `←`/`→` trade for the dark or light ones.
     Themes(String),
+    /// The box asking whether to save the config: `Enter`/`y` or `Esc`/`n`/`q`.
+    Confirm,
 }
 
 #[derive(Debug, Default)]
@@ -558,6 +564,26 @@ impl Keymap {
                     }
                 }
             }
+            // The box waits for an answer; other keys do nothing.
+            Mode::Confirm => {
+                let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                let msg = match key.code {
+                    KeyCode::Char('c') if ctrl => Msg::SaveCancel,
+                    KeyCode::Enter | KeyCode::Char('y') => Msg::SaveConfirm,
+                    KeyCode::Esc | KeyCode::Char('n' | 'q') => Msg::SaveCancel,
+                    _ => return None,
+                };
+                self.mode = Mode::Normal;
+                Some(msg)
+            }
+        }
+    }
+
+    /// The confirm box `S` asks for didn't open, since saving would change nothing (or
+    /// couldn't): back to the usual keys.
+    pub fn no_confirm(&mut self) {
+        if self.mode == Mode::Confirm {
+            self.mode = Mode::Normal;
         }
     }
 
@@ -584,6 +610,7 @@ impl Keymap {
             Action::Help => self.mode = Mode::Help,
             Action::Sort => self.mode = Mode::Sort(String::new()),
             Action::Theme => self.mode = Mode::Themes(String::new()),
+            Action::SaveConfig => self.mode = Mode::Confirm,
             _ => {}
         }
         Some(action.msg())
@@ -722,6 +749,31 @@ mod tests {
             Some(Msg::HelpScroll { by: 1 })
         );
         assert_eq!(press(&mut km, KeyCode::Char('q')), Some(Msg::HelpClose));
+        assert_eq!(press(&mut km, KeyCode::Char('q')), Some(Msg::Quit));
+    }
+
+    #[test]
+    fn the_save_box_takes_an_answer() {
+        let mut km = Keymap::default();
+        for (key, answer) in [
+            (KeyCode::Enter, Msg::SaveConfirm),
+            (KeyCode::Char('y'), Msg::SaveConfirm),
+            (KeyCode::Esc, Msg::SaveCancel),
+            (KeyCode::Char('n'), Msg::SaveCancel),
+            (KeyCode::Char('q'), Msg::SaveCancel),
+        ] {
+            assert_eq!(press(&mut km, KeyCode::Char('S')), Some(Msg::SaveConfig));
+            // other keys wait for the answer
+            assert_eq!(press(&mut km, KeyCode::Char('j')), None);
+            assert_eq!(press(&mut km, key), Some(answer));
+        }
+        assert_eq!(
+            km.map(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some(Msg::Quit)
+        );
+        // no box opened: the next key is a usual one
+        assert_eq!(press(&mut km, KeyCode::Char('S')), Some(Msg::SaveConfig));
+        km.no_confirm();
         assert_eq!(press(&mut km, KeyCode::Char('q')), Some(Msg::Quit));
     }
 

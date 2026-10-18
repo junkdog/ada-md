@@ -6,7 +6,9 @@
 //! of order, or after the document they were for is gone. Intents arrive directly or as keys
 //! through the default keymap, and `T` lists two extra themes with wide, empty and ASCII
 //! glyphs. The document is markdown, code, config, plain text or an image, as its name says,
-//! and links lead to code files at a `#L42` line. Every step is painted. Nothing may panic.
+//! and links lead to code files at a `#L42` line. `S` reads a fuzzed config file, answered at
+//! once as the interactive loop does, and is never written: what it would write must read back
+//! with nothing left to save. Every step is painted. Nothing may panic.
 //!
 //! ```zsh
 //! cargo +nightly fuzz run -s none -a session -- -dict=fuzz/markdown.dict -max_len=16384
@@ -27,6 +29,7 @@ use ada::highlight;
 use ada::images::{Probe, Proto};
 use ada::layout::{LineNumbers, TableMode};
 use ada::links::Resolved;
+use ada::config;
 use ada::theme::Theme;
 use libfuzzer_sys::arbitrary::{self, Arbitrary, Result, Unstructured};
 use libfuzzer_sys::fuzz_target;
@@ -100,6 +103,9 @@ enum Op {
     DeliverAll,
     /// Drop the oldest pending result, as if the worker lost it.
     Drop,
+    SaveConfig,
+    SaveConfirm,
+    SaveCancel,
 }
 
 /// A string of at most 24 chars, so search patterns and filters stay cheap.
@@ -443,6 +449,37 @@ fn answer(
             let _ = app::osc52(&text, u.arbitrary()?);
             None
         }
+        // the file as ada writes it, set to other values, empty, or the document's text
+        Cmd::ReadConfig(path) => Some(match u.int_in_range(0..=5)? {
+            0 => Msg::ConfigFailed {
+                error: "fuzz".into(),
+            },
+            1 => Msg::ConfigRead {
+                path,
+                text: doc.clone(),
+            },
+            2 => Msg::ConfigRead {
+                path,
+                text: "".into(),
+            },
+            3 => Msg::ConfigRead {
+                path,
+                text: "theme = \"dracula\"\ntables = \"grid\"\ncode_wrap = false\n\
+                       line_numbers = \"all\"\nmax_width = 70\nimages = false\n\
+                       image_protocol = \"sixel\"\nlive_reload = false\n\n[keys]\nquit = \"x\"\n"
+                    .into(),
+            },
+            _ => Msg::ConfigRead {
+                path,
+                text: config::default_text().into(),
+            },
+        }),
+        Cmd::WriteConfig { path, .. } => Some(match u.arbitrary()? {
+            true => Msg::ConfigWritten { path },
+            false => Msg::ConfigFailed {
+                error: "fuzz".into(),
+            },
+        }),
         Cmd::Watch { .. } | Cmd::HighlightOnly(_) | Cmd::Quit => None,
     })
 }
@@ -709,8 +746,20 @@ impl Session<'_> {
         if trace() {
             eprintln!("msg {msg:?}");
         }
-        for cmd in app::update(&mut self.state, msg) {
+        let saving = msg == Msg::SaveConfig;
+        let opens = matches!(msg, Msg::ConfigRead { .. });
+        let mut read = Vec::new();
+        let cmds = app::update(&mut self.state, msg);
+        // what the box would write reads back with nothing left to save
+        if opens && let Some(box_) = &self.state.save {
+            let text = &box_.save.text;
+            let again = config::save("c.toml", text, &self.state.active_settings());
+            assert_eq!(again.map(|s| s.changes), Ok(Vec::new()), "saving:\n{text}");
+        }
+        for cmd in cmds {
             match answer(cmd, &mut self.u, &self.doc, &mut self.effects) {
+                // the interactive loop reads the config file inline
+                Ok(Some(msg)) if saving => read.push(msg),
                 Ok(Some(msg)) => self.pending.push(msg),
                 Ok(None) => {}
                 // out of input: the world goes quiet
@@ -718,6 +767,13 @@ impl Session<'_> {
             }
         }
         self.paint();
+        for msg in read {
+            self.send(msg);
+        }
+        // and the input thread hears whether the box opened
+        if saving && self.state.save.is_none() {
+            self.keymap.no_confirm();
+        }
     }
 
     /// Paint, diff against the last frame and encode: since the grid replaced ratatui's buffer,
@@ -823,6 +879,9 @@ impl Session<'_> {
             Op::HelpClose => Msg::HelpClose,
             Op::Edit => Msg::Edit,
             Op::Yank => Msg::Yank,
+            Op::SaveConfig => Msg::SaveConfig,
+            Op::SaveConfirm => Msg::SaveConfirm,
+            Op::SaveCancel => Msg::SaveCancel,
             Op::Open(i) => {
                 let files = &world().files;
                 Msg::Open {
@@ -910,6 +969,7 @@ fuzz_target!(|data: &[u8]| {
             .arbitrary::<Option<u16>>()
             .unwrap_or_default()
             .map(u32::from),
+        file: Some(world().dir.join("config.toml")),
         ..Config::default()
     };
     let graphics: Option<(u8, u8, u8)> = u.arbitrary().unwrap_or_default();

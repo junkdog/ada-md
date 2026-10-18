@@ -3,6 +3,7 @@
 
 use std::collections::{HashSet, VecDeque};
 use std::io::{self, Stdout, Write};
+use std::mem;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -16,6 +17,7 @@ use ratatui::layout::{Rect, Size as Cells};
 use ratatui::style::Color;
 
 use super::{Bindings, Cmd, Effects, Keymap, Msg, Size, State, editor_command, osc52, update};
+use crate::config;
 use crate::grid::{Grid, Screen};
 use crate::guard;
 use crate::images;
@@ -184,6 +186,8 @@ fn event_loop(
     // resizes answer from the document on screen meanwhile, but `Back Back` still goes back
     // twice, and a save during a reload is read once it is in.
     let mut held: VecDeque<Msg> = VecDeque::new();
+    // `S` was pressed, and the input thread waits to hear whether the save box opened
+    let mut saving = false;
     loop {
         while let Some(msg) = queue.pop_front() {
             if state.loading() && msg.waits_for_load() {
@@ -194,6 +198,7 @@ fn event_loop(
                 rec.log(&msg).map_err(|e| format!("recording: {e}"))?;
             }
             let edit = msg == Msg::Edit;
+            saving |= msg == Msg::SaveConfig;
             // An effect's results apply before any input queued behind the message, so a quick
             // `Back Back` can't overtake the load the first one started.
             let mut results = Vec::new();
@@ -207,7 +212,7 @@ fn event_loop(
                     results.push(Msg::Resize { size: now });
                 }
                 // the input thread waits after sending `Edit`, so it can't steal the editor's keys
-                let _ = resume.send(());
+                let _ = resume.send(true);
             }
             if !state.loading() {
                 results.extend(held.drain(..));
@@ -215,6 +220,10 @@ fn event_loop(
             for msg in results.into_iter().rev() {
                 queue.push_front(msg);
             }
+        }
+        // The file was read inline, and its text applied before the queue ran dry.
+        if mem::take(&mut saving) {
+            let _ = resume.send(state.save.is_some());
         }
         if state.quit {
             return Ok(());
@@ -253,6 +262,12 @@ fn run_cmd(terminal: &mut Term, effects: &mut Effects, cmd: Cmd) -> Result<Optio
                 .map_err(|e| format!("clipboard: {e}"))?;
             Ok(None)
         }
+        Cmd::WriteConfig { path, text } => Ok(Some(match config::write(&path, &text) {
+            Ok(()) => Msg::ConfigWritten { path },
+            Err(e) => Msg::ConfigFailed {
+                error: format!("can't write {}: {e}", path.display()),
+            },
+        })),
         cmd => Ok(effects.run(cmd)),
     }
 }
@@ -289,7 +304,9 @@ fn edit(terminal: &mut Term, file: &Path, line: u32) -> Result<Option<Msg>, Stri
     }))
 }
 
-fn spawn_input(tx: Sender<Msg>, keys: Bindings, resume: Receiver<()>) {
+/// Read the terminal's events into messages. After `Edit` and `SaveConfig` it waits on `resume`
+/// for the main loop: until the editor quits, and to hear whether the save box opened.
+fn spawn_input(tx: Sender<Msg>, keys: Bindings, resume: Receiver<bool>) {
     thread::spawn(move || {
         let mut keymap = Keymap::new(keys);
         loop {
@@ -304,13 +321,20 @@ fn spawn_input(tx: Sender<Msg>, keys: Bindings, resume: Receiver<()>) {
             let Some(msg) = msg else {
                 continue;
             };
-            let edit = msg == Msg::Edit;
+            let (edit, save) = (msg == Msg::Edit, msg == Msg::SaveConfig);
             if tx.send(msg).is_err() {
                 return;
             }
             // While the editor runs, the terminal's input is the editor's.
             if edit && resume.recv().is_err() {
                 return;
+            }
+            if save {
+                match resume.recv() {
+                    Ok(true) => {}
+                    Ok(false) => keymap.no_confirm(),
+                    Err(_) => return,
+                }
             }
         }
     });

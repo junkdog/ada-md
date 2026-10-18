@@ -208,6 +208,10 @@ impl Glyphs {
 #[derive(Clone, Debug)]
 pub struct Theme {
     pub name: String,
+    /// The path it was asked for by, as given (`--theme ~/x/mine.toml`), so saving the config
+    /// writes that and not the name, which wouldn't load; `None` for a built-in or a theme in
+    /// `themes/`, asked for by name.
+    pub path: Option<String>,
     pub palette: Vec<(String, Color)>,
     pub styles: [Style; StyleKey::COUNT],
     pub glyphs: Glyphs,
@@ -220,6 +224,7 @@ impl Theme {
     pub fn empty() -> Self {
         Self {
             name: String::new(),
+            path: None,
             palette: Vec::new(),
             styles: [Style::new(); StyleKey::COUNT],
             glyphs: Glyphs::default(),

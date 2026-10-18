@@ -4,6 +4,7 @@
 mod help;
 mod outline;
 mod paint;
+mod save;
 
 use std::ops::Range;
 
@@ -73,7 +74,7 @@ pub fn view(state: &State, buf: &mut Grid) {
         gutter(buf, rows_area, state, doc, &lines);
         // A kitty image is sent once, with the first cell it paints; the popup would paint over
         // that cell and lose it. Sixel would draw over the popup. So images wait for it to close.
-        if state.outline.is_none() && state.help.is_none() {
+        if state.outline.is_none() && state.help.is_none() && state.save.is_none() {
             block_images(buf, rows_area, state, doc);
         }
     }
@@ -81,6 +82,7 @@ pub fn view(state: &State, buf: &mut Grid) {
         outline::draw(buf, doc_area, state);
     }
     help::draw(buf, doc_area, state);
+    save::draw(buf, doc_area, state);
     status_bar(buf, status_area, state);
 }
 

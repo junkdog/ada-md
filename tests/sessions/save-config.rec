@@ -1,0 +1,25 @@
+ada-rec 1
++0 init size=80x24
++3 doc-loaded path="settings.md" mtime=none text:200
+# Settings
+
+| option | value |
+|---|---|
+| tables | records |
+| code_wrap | false |
+
+```rust
+fn main() { println!("a line of code long enough to wrap when the terminal is eighty columns wide"); }
+```
+
++100 toggle-table-mode
++150 toggle-table-mode
++200 toggle-code-wrap
++300 save-config
++301 config-read path="config.toml" text:49
+# mine
+theme = "gruvbox-dark"
+
+[keys]
+quit = "q"
+

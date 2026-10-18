@@ -70,12 +70,18 @@ pub fn load(name: Option<&str>) -> Result<(Theme, Vec<String>), String> {
     let name = name.unwrap_or(BUILTIN[0].0);
     let mut theme = resolve(name, &mut warnings, 0)?;
     theme.name = lookup_name(name);
+    theme.path = is_path(name).then(|| name.to_owned());
     Ok((theme, warnings))
+}
+
+/// Whether a theme is asked for by its path rather than by name.
+fn is_path(name: &str) -> bool {
+    name.ends_with(".toml") || name.contains('/')
 }
 
 /// `--theme ~/x/mine.toml` is the theme `mine`.
 fn lookup_name(name: &str) -> String {
-    if name.ends_with(".toml") || name.contains('/') {
+    if is_path(name) {
         let path = std::path::Path::new(name);
         return path
             .file_stem()
@@ -128,7 +134,7 @@ fn find(name: &str) -> Result<(String, Cow<'static, str>), String> {
             .map(|text| (path.display().to_string(), Cow::Owned(text)))
             .map_err(|e| format!("{}: {e}", path.display()))
     };
-    if name.ends_with(".toml") || name.contains('/') {
+    if is_path(name) {
         return read(PathBuf::from(name));
     }
     if let Some(dir) = themes_dir() {
@@ -408,6 +414,22 @@ mod tests {
             Some(Color::Rgb(0xd5, 0xc4, 0xa1))
         );
         assert!(!theme.syntax.is_empty());
+    }
+
+    #[test]
+    fn a_theme_from_a_path_keeps_the_path() {
+        let (theme, _) = load(Some("dracula")).unwrap();
+        assert_eq!((theme.name.as_str(), theme.path), ("dracula", None));
+
+        let dir = std::env::temp_dir().join(format!("ada-theme-path-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("mine.toml");
+        fs::write(&file, "extends = \"dracula\"\n").unwrap();
+        let given = file.display().to_string();
+        let (theme, _) = load(Some(&given)).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(theme.name, "mine");
+        assert_eq!(theme.path.as_deref(), Some(given.as_str()));
     }
 
     #[test]

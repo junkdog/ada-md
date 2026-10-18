@@ -77,6 +77,15 @@ impl LineNumbers {
         }
     }
 
+    /// As the config file and `-n` spell it: the inverse of [`LineNumbers::parse`].
+    pub fn spelling(self) -> &'static str {
+        match self {
+            LineNumbers::Off => "off",
+            LineNumbers::Code => "code",
+            LineNumbers::All => "all",
+        }
+    }
+
     /// Show or hide the numbers of the kind of file shown, keeping the other kind as it is.
     pub fn toggle(self, code: bool) -> Self {
         match (code, self) {

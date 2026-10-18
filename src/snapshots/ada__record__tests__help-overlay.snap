@@ -3,26 +3,26 @@ source: src/record.rs
 expression: frames.last().unwrap()
 ---
    Code
-            ╭─ keys ───────────────────────────────────────────────╮
-   rust     │   /               search with a regex                │
-   fn main()│   n               the next match                     │
-       print│   N               the previous match                 │
-       let l│   o               the outline of headings            │t has to
-  ↪wrap when│   l               the list of links                  │
-   }        │                                                      │
-            │ View                                                 │
-            │   t               tables: auto, grid, records        │
-   kotlin   │   s               sort a table on screen by a column │
-   fun greet│   w               wrap code, or scroll it sideways   │
-            │   ←               scroll code left                   │
-            │   →               scroll code right                  │
-            │   #               show or hide line numbers          │
-   untagged │   T               pick a theme, previewing each      │
-            │                                                      │
-            │ Other                                                │
-            │   r               read the file again                │
-   indented │   e               edit in $VISUAL or $EDITOR         │
-   block    │   y               copy the link or the code block    │
-            ╰───────────────────────────────────────── j/k scroll ─╯
+           ╭─ keys ─────────────────────────────────────────────────╮
+   rust    │   n               the next match                       │
+   fn main(│   N               the previous match                   │
+       prin│   o               the outline of headings              │
+       let │   l               the list of links                    │ has to
+  ↪wrap whe│                                                        │
+   }       │ View                                                   │
+           │   t               tables: auto, grid, records          │
+           │   s               sort a table on screen by a column   │
+   kotlin  │   w               wrap code, or scroll it sideways     │
+   fun gree│   ←               scroll code left                     │
+           │   →               scroll code right                    │
+           │   #               show or hide line numbers            │
+           │   T               pick a theme, previewing each        │
+   untagged│                                                        │
+           │ Other                                                  │
+           │   r               read the file again                  │
+           │   e               edit in $VISUAL or $EDITOR           │
+   indented│   y               copy the link or the code block      │
+   block   │   S               save the settings to the config file │
+           ╰─────────────────────────────────────────── j/k scroll ─╯
 
  tests/fixtures/code.md  any other key closes the help                      Top

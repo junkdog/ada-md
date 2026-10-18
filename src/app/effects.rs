@@ -15,6 +15,7 @@ use ratatui_image::picker::Picker;
 use super::load;
 use super::watch::{Watcher, mtime_of};
 use super::{Cmd, Computed, Msg};
+use crate::config;
 use crate::filetype::{self, FileType};
 use crate::git;
 use crate::highlight::{self, Request};
@@ -165,8 +166,17 @@ impl Effects {
                 }
                 None
             }
+            Cmd::ReadConfig(path) => Some(match config::read(&path) {
+                Ok(text) => Msg::ConfigRead {
+                    path,
+                    text: text.into(),
+                },
+                Err(e) => Msg::ConfigFailed {
+                    error: format!("can't read {}: {e}", path.display()),
+                },
+            }),
             // The terminal's: the interactive loop runs them, and a replay never does.
-            Cmd::SpawnEditor { .. } | Cmd::Osc52(_) | Cmd::Quit => None,
+            Cmd::SpawnEditor { .. } | Cmd::Osc52(_) | Cmd::WriteConfig { .. } | Cmd::Quit => None,
         }
     }
 }

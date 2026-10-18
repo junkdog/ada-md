@@ -95,6 +95,9 @@ messages! {
     "help-close" => HelpClose {},
     "edit" => Edit {},
     "yank" => Yank {},
+    "save-config" => SaveConfig {},
+    "save-confirm" => SaveConfirm {},
+    "save-cancel" => SaveCancel {},
     "quit" => Quit {},
     "doc-loaded" => DocLoaded { path, mtime, text, doc },
     "doc-failed" => DocFailed { path, error },
@@ -104,6 +107,9 @@ messages! {
     "images-probed" => ImagesProbed { doc_gen, probes },
     "editor-exited" => EditorExited { status },
     "file-changed" => FileChanged { path, mtime },
+    "config-read" => ConfigRead { path, text },
+    "config-written" => ConfigWritten { path },
+    "config-failed" => ConfigFailed { error },
     "highlighted" => Highlighted { doc_gen, block, lines, spans },
     "image-ready" => ImageReady { path, mtime, size, image },
 }
@@ -835,6 +841,19 @@ mod tests {
             Msg::HelpClose,
             Msg::Edit,
             Msg::Yank,
+            Msg::SaveConfig,
+            Msg::ConfigRead {
+                path: "/home/u/.config/ada/config.toml".into(),
+                text: "# options\ntables = \"grid\"\n".into(),
+            },
+            Msg::SaveConfirm,
+            Msg::SaveCancel,
+            Msg::ConfigWritten {
+                path: "/home/u/.config/ada/config.toml".into(),
+            },
+            Msg::ConfigFailed {
+                error: "can't write config.toml: Permission denied".into(),
+            },
             Msg::EditorExited { status: -1 },
             Msg::FileChanged {
                 path: "notes/a.md".into(),
