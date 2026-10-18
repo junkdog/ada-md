@@ -328,6 +328,8 @@ pub struct Config {
     pub images: ImageMode,
     /// Reload when the file changes on disk.
     pub live_reload: bool,
+    /// Leave the last frame on the screen on quit.
+    pub keep_screen: bool,
     /// The table layout, code wrapping and line numbers to start with.
     pub table_mode: TableMode,
     pub code_wrap: bool,
@@ -357,6 +359,7 @@ impl Default for Config {
             start_line: None,
             images: ImageMode::default(),
             live_reload: true,
+            keep_screen: true,
             table_mode: TableMode::Auto,
             code_wrap: true,
             line_numbers: LineNumbers::Off,

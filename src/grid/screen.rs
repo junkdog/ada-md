@@ -97,6 +97,75 @@ impl<W: Write> Screen<W> {
         std::mem::swap(&mut self.last, &mut self.next);
         Ok(())
     }
+
+    /// Write the top `rows` rows of what the terminal shows as lines from the cursor, once ada
+    /// has left the alternate screen, so that they stay on the screen and in the scrollback after
+    /// it quits.
+    pub fn keep(&mut self, rows: u16) -> io::Result<()> {
+        self.bytes.clear();
+        keep(&self.last, rows, &mut self.bytes);
+        self.out.write_all(&self.bytes)?;
+        self.out.flush()
+    }
+}
+
+/// Rows of `grid` as lines from the cursor, which is where the shell's next line would go, so
+/// nothing about where they land is known. Each line is its cells left to right, with the style
+/// reset before the newline so that a scroll brings in a default blank row. The images' cells go
+/// as blanks on their background; then, from the saved cursor below the last line, each image's
+/// escape sequence is written up and across at its first cell.
+fn keep(grid: &Grid, rows: u16, out: &mut Vec<u8>) {
+    let w = usize::from(grid.area.width);
+    let rows = rows.min(grid.area.height);
+    let mut pen = Pen::new(grid.area);
+    let mut images = Vec::new();
+    for y in 0..usize::from(rows) {
+        let mut x = 0;
+        while x < w {
+            let i = y * w + x;
+            let c = &grid.cells[i];
+            if c.is_image() {
+                if c.forced() {
+                    images.push(i);
+                }
+                pen.set((0, pen.fg, c.bg), out);
+                out.push(b' ');
+                x += 1;
+                continue;
+            }
+            pen.set(pen.wants(c), out);
+            symbol(grid, i, out);
+            let width = usize::from(c.width()).max(1);
+            x += width;
+            // terminals disagree on how wide some graphemes are: the next cell goes where the
+            // grid has it
+            if width > 1 && x < w {
+                out.extend_from_slice(b"\x1b[");
+                number(out, x as u16 + 1);
+                out.push(b'G');
+            }
+        }
+        pen.set((0, 0, 0), out);
+        out.extend_from_slice(b"\r\n");
+    }
+    if images.is_empty() {
+        return;
+    }
+    out.extend_from_slice(b"\x1b7");
+    for i in images {
+        let (x, y) = (i % w, i / w);
+        out.extend_from_slice(b"\x1b8\x1b[");
+        number(out, rows - y as u16);
+        out.push(b'A');
+        if x > 0 {
+            out.extend_from_slice(b"\x1b[");
+            number(out, x as u16 + 1);
+            out.push(b'G');
+        }
+        symbol(grid, i, out);
+    }
+    // an image's escape sequence may leave a style set, which the restore resets
+    out.extend_from_slice(b"\x1b8");
 }
 
 /// Rows the terminal moves before a frame is drawn: `rows` up by `by` rows, or down when it's
@@ -628,6 +697,9 @@ fn number(out: &mut Vec<u8>, n: u16) {
 mod tests {
     use super::*;
 
+    use std::num::NonZeroU16;
+
+    use ratatui::buffer::CellDiffOption;
     use ratatui::style::{Color, Style};
 
     /// What the encoder wrote, replayed over the terminal's cells, within the scroll margins
@@ -666,6 +738,7 @@ mod tests {
                         );
                     }
                     "C" => x += params.parse::<usize>().unwrap(),
+                    "G" => x = params.parse::<usize>().unwrap() - 1,
                     "K" => {
                         let row = y * usize::from(area.width);
                         for c in &mut cells[row + x..row + usize::from(area.width)] {
@@ -1175,5 +1248,67 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The rows kept on quit, written as lines over a blank terminal, show as the frame did: its
+    /// cells, wide graphemes and styles, with no row or column given by number.
+    #[test]
+    fn kept_rows_replay_to_the_frame() {
+        let area = Rect::new(0, 0, 10, 3);
+        let mut term = Term::new(area);
+        let bg = Style::new().bg(Color::Rgb(40, 40, 40)).fg(Color::Gray);
+        term.draw(|g| {
+            g.fill(bg);
+            g.set_string(0, 0, "hello 日本", Style::new().bold());
+            g.set_string(1, 1, "→ ok", Style::new().fg(Color::Red));
+            g.set_string(0, 2, "status", Style::new().reversed());
+        });
+        term.screen.out.clear();
+        term.screen.keep(2).unwrap();
+        let out = std::mem::take(&mut term.screen.out);
+        assert!(!out.contains(&b'H'), "{:?}", out.escape_ascii());
+        let blank = (" ".to_owned(), style_of(&Cell::BLANK));
+        let mut cells = vec![blank; area.area() as usize];
+        replay(&mut cells, area, &mut (0..3), &out);
+        let want: Vec<_> = (0..20)
+            .map(|i| {
+                let last = &term.screen.last;
+                (last.symbol_at(i).to_owned(), style_of(&last.cells[i]))
+            })
+            .collect();
+        assert_eq!(seen(&cells[..20]), seen(&want));
+        assert!(
+            cells[20..]
+                .iter()
+                .all(|(s, st)| s == " " && st.bg == Some(Color::Reset))
+        );
+    }
+
+    /// An image's cells are kept as blanks, then its escape sequence goes over them, moved to
+    /// from the saved cursor below the lines.
+    #[test]
+    fn kept_images_are_drawn_over_their_cells() {
+        let mut screen = Screen::new(Vec::new(), Size::new(6, 3));
+        screen
+            .draw(|g| {
+                g.lend(Rect::new(1, 1, 3, 1), |buf| {
+                    let width = NonZeroU16::new(3).unwrap();
+                    buf[(1, 1)].set_symbol("\x1b_Gimg\x1b\\").diff_option =
+                        CellDiffOption::ForcedWidth(width);
+                    for x in 2..4 {
+                        buf[(x, 1)].diff_option = CellDiffOption::Skip;
+                    }
+                });
+            })
+            .unwrap();
+        screen.out.clear();
+        screen.keep(3).unwrap();
+        let out = String::from_utf8(screen.out).unwrap();
+        assert!(
+            out.ends_with("\x1b7\x1b8\x1b[2A\x1b[2G\x1b_Gimg\x1b\\\x1b8"),
+            "{out:?}"
+        );
+        let lines: Vec<_> = out.split("\r\n").collect();
+        assert_eq!(lines[1], "      ", "the image's cells as blanks");
     }
 }

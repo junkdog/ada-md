@@ -12,13 +12,14 @@ use ratatui::crossterm::cursor::Show;
 use ratatui::crossterm::event::{self, Event};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{self, Clear, ClearType, EnterAlternateScreen, enable_raw_mode};
-use ratatui::layout::Size as Cells;
+use ratatui::layout::{Rect, Size as Cells};
 
 use super::{Bindings, Cmd, Effects, Keymap, Msg, Size, State, editor_command, osc52, update};
-use crate::grid::Screen;
+use crate::grid::{Grid, Screen};
 use crate::guard;
 use crate::images;
 use crate::record::Recorder;
+use crate::theme::StyleKey;
 use crate::ui;
 
 /// The terminal: each frame diffed against the last and written to stdout in one write.
@@ -88,10 +89,31 @@ pub fn run_tui(
         recorder.as_mut(),
     );
     restore_terminal();
+    if result.is_ok() && state.config.keep_screen {
+        keep_screen(&mut terminal, &state);
+    }
     // The recording is a `BufWriter`: its drop writes the tail.
     drop(recorder);
     std::mem::forget((terminal, state, effects));
     result
+}
+
+/// Leave the last frame on the screen ada just gave back, below the command that ran it: the
+/// document's rows, without the status bar or the blank rows under a short document. Not when
+/// the terminal changed size since the frame, which would wrap or cut its rows.
+fn keep_screen(terminal: &mut Term, state: &State) {
+    let size = terminal.size();
+    if terminal::size().ok() != Some((size.width, size.height)) {
+        return;
+    }
+    let mut blank = Grid::empty(Rect::new(0, 0, 1, 1));
+    blank.fill(state.theme.style(StyleKey::Text));
+    let shown = terminal.shown();
+    let mut rows = size.height.saturating_sub(1);
+    while rows > 0 && (0..size.width).all(|x| shown[(x, rows - 1)] == blank[(0, 0)]) {
+        rows -= 1;
+    }
+    let _ = terminal.keep(rows);
 }
 
 /// One malloc arena for every thread (glibc), set before the workers start. A document the loader

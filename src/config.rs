@@ -18,6 +18,7 @@ pub struct Settings {
     pub max_width: Option<u16>,
     pub images: ImageMode,
     pub live_reload: bool,
+    pub keep_screen: bool,
     pub table_mode: TableMode,
     pub code_wrap: bool,
     pub line_numbers: LineNumbers,
@@ -31,6 +32,7 @@ impl Default for Settings {
             max_width: None,
             images: ImageMode::Auto,
             live_reload: true,
+            keep_screen: true,
             table_mode: TableMode::Auto,
             code_wrap: true,
             line_numbers: LineNumbers::Off,
@@ -99,6 +101,7 @@ pub fn parse(file: &str, text: &str, warnings: &mut Vec<String>) -> Result<Setti
                 }
             },
             "live_reload" => s.live_reload = cx.bool(v)?,
+            "keep_screen" => s.keep_screen = cx.bool(v)?,
             "tables" => {
                 s.table_mode = match cx.string(v)? {
                     "auto" => TableMode::Auto,
@@ -181,6 +184,10 @@ pub fn default_text() -> String {
 # Read the file again when it changes on disk.
 # live_reload = true
 
+# Leave what ada showed in the terminal when it quits, below the command that ran it, so it
+# can still be read (and scrolled back to); false clears it, as most full-screen programs do.
+# keep_screen = true
+
 # The table layout to start with (`t` cycles it): auto, grid or records.
 # tables = \"auto\"
 
@@ -249,11 +256,11 @@ mod tests {
 
     #[test]
     fn options() {
-        let text = "max_width = 100\nimages = true\nimage_protocol = \"sixel\"\nlive_reload = false\ntables = \"records\"\ncode_wrap = false\nline_numbers = \"all\"\n";
+        let text = "max_width = 100\nimages = true\nimage_protocol = \"sixel\"\nlive_reload = false\nkeep_screen = false\ntables = \"records\"\ncode_wrap = false\nline_numbers = \"all\"\n";
         let s = parse("c.toml", text, &mut Vec::new()).unwrap();
         assert_eq!(s.max_width, Some(100));
         assert_eq!(s.images, ImageMode::Force(Proto::Sixel));
-        assert!(!s.live_reload && !s.code_wrap);
+        assert!(!s.live_reload && !s.keep_screen && !s.code_wrap);
         assert_eq!(s.table_mode, TableMode::Records);
         assert_eq!(s.line_numbers, LineNumbers::All);
         let off = parse(
