@@ -59,7 +59,7 @@ insta = "1.49"
 lto = "fat"
 codegen-units = 1
 strip = true
-panic = "abort"
+# unwinding, not abort: `guard::catch` stops a panic in a dependency (F-05)
 
 [lints.rust]
 unused_variables = "deny"

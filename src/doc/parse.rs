@@ -16,6 +16,7 @@ use super::{
     FootnoteId, InlineStyle, Inlines, LineRange, LinkId, LinkKind, LinkRef, List, ListItem, Run,
     RunKind, Table, TableId, TableRow, UnitId, fence,
 };
+use crate::guard;
 
 pub fn options() -> Options {
     Options::ENABLE_TABLES
@@ -27,13 +28,33 @@ pub fn options() -> Options {
         | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
 }
 
-/// Parse markdown into the IR. Never panics, whatever the input.
+/// Parse markdown into the IR. Never panics, whatever the input: when pulldown-cmark panics, or
+/// makes events out of all proportion to the text, the text shows as plain (F-05).
 pub fn parse(text: &str) -> Doc {
+    guard::catch(|| markdown(text))
+        .flatten()
+        .unwrap_or_else(|| super::file::code(text, None))
+}
+
+/// The most events a text of `len` bytes may make. Notes make up to 0.22 a byte, and dense markup
+/// (an empty table cell per `|`) about 2; pulldown-cmark 0.13.4 doubles its events with each
+/// `[[a|]]` (pulldown-cmark#1102).
+fn max_events(len: usize) -> usize {
+    8 * len + 4096
+}
+
+/// [`parse`], or `None` once the text makes more than [`max_events`].
+fn markdown(text: &str) -> Option<Doc> {
+    let max = max_events(text.len());
     let mut b = Builder::new(text);
-    for (event, range) in Parser::new_ext(text, options()).into_offset_iter() {
+    let events = Parser::new_ext(text, options()).into_offset_iter();
+    for (n, (event, range)) in events.enumerate() {
+        if n == max {
+            return None;
+        }
         b.event(event, range);
     }
-    b.finish()
+    Some(b.finish())
 }
 
 /// The byte offset of the start of each line.
@@ -810,6 +831,26 @@ mod tests {
         match &b.kind {
             BlockKind::List(l) => l,
             _ => panic!("not a list"),
+        }
+    }
+
+    #[test]
+    fn markup_that_blows_up_in_the_parser_shows_as_plain_text() {
+        // pulldown-cmark#1102: each `[[a|]]` doubles the events; 40 of them would be 2⁴⁰
+        let text = "[[a|]] ".repeat(40);
+        let doc = parse(&text);
+        assert_eq!(kinds(&doc.blocks), ["code"]);
+        assert!(doc.links.is_empty());
+        // a few stay markdown
+        assert_eq!(kinds(&parse("[[a|]] [[b|]]\n").blocks), ["paragraph"]);
+    }
+
+    #[test]
+    fn a_parser_panic_shows_the_text_as_plain() {
+        // pulldown-cmark#1129: `into_offset_iter` unwraps an empty tight paragraph
+        for text in ["- [o]:u\n    \t", "> - [o]:u\n>     \t", "+\t[\0]:d\n\u{b}"] {
+            let doc = parse(text);
+            assert_eq!(kinds(&doc.blocks), ["code"], "{text:?}");
         }
     }
 

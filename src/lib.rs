@@ -9,6 +9,7 @@ pub mod doc;
 pub mod filetype;
 pub mod git;
 pub mod grid;
+pub mod guard;
 pub mod highlight;
 pub mod images;
 pub mod kitty;

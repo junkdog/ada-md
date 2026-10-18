@@ -16,6 +16,7 @@ use ratatui::layout::Size as Cells;
 
 use super::{Bindings, Cmd, Effects, Keymap, Msg, Size, State, editor_command, osc52, update};
 use crate::grid::Screen;
+use crate::guard;
 use crate::images;
 use crate::record::Recorder;
 use crate::ui;
@@ -30,6 +31,10 @@ pub(crate) fn init_terminal() -> io::Result<Term> {
     // ratatui's hook leaves the alternate screen; the frames hid the cursor, so show it after.
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        // a panic `guard::catch` handles leaves the terminal as it is
+        if guard::catching() {
+            return;
+        }
         hook(info);
         let _ = execute!(io::stdout(), Show);
     }));
