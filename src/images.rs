@@ -10,8 +10,8 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::UNIX_EPOCH;
 
@@ -23,6 +23,9 @@ use ratatui::widgets::Widget;
 use ratatui_image::Resize;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::sliced::{SignedPosition, SlicedImage, SlicedProtocol};
+
+/// The character kitty draws an image's cells with (unicode placeholders).
+pub const KITTY_PLACEHOLDER: char = '\u{10EEEE}';
 
 use crate::grid::Grid;
 use crate::pixels;
@@ -239,11 +242,29 @@ pub struct ImageKey {
 
 /// An image encoded for the terminal, ready to paint.
 #[derive(Clone)]
-pub struct Encoded(Arc<SlicedProtocol>);
+pub struct Encoded {
+    proto: Arc<SlicedProtocol>,
+    /// A kitty image's transmission, kept from the first frame that painted it. The protocol
+    /// sends it once, but the main screen has an image store of its own, which a frame kept on
+    /// quit has to send it to again.
+    transmit: Arc<OnceLock<Transmit>>,
+}
+
+/// What transmits a kitty image to the terminal.
+#[derive(Debug)]
+pub struct Transmit {
+    /// The image id's low 24 bits: its placeholders' foreground color.
+    pub color: u32,
+    pub seq: Box<str>,
+}
 
 impl Encoded {
     pub fn size(&self) -> Size {
-        self.0.size()
+        self.proto.size()
+    }
+
+    pub fn transmit(&self) -> Option<&Transmit> {
+        self.transmit.get()
     }
 }
 
@@ -256,7 +277,7 @@ impl fmt::Debug for Encoded {
 
 impl PartialEq for Encoded {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        Arc::ptr_eq(&self.proto, &other.proto)
     }
 }
 
@@ -274,7 +295,10 @@ pub fn encode(picker: &Picker, key: &ImageKey) -> Result<Encoded, String> {
     let image = pixels::decode(&key.path, max)?;
     let resize = Resize::Fit(Some(FilterType::Triangle));
     SlicedProtocol::new_with_resize(picker, image, key.size, resize)
-        .map(|p| Encoded(Arc::new(p)))
+        .map(|p| Encoded {
+            proto: Arc::new(p),
+            transmit: Arc::default(),
+        })
         .map_err(|e| e.to_string())
 }
 
@@ -353,6 +377,14 @@ impl ImageCache {
         self.map.get(key)
     }
 
+    /// The kitty transmissions of the images painted so far.
+    pub fn transmits(&self) -> impl Iterator<Item = &Transmit> {
+        self.map.values().filter_map(|e| match e {
+            Entry::Ready(image) => image.transmit(),
+            _ => None,
+        })
+    }
+
     /// Whether `key` needs a decode job, marking it pending if so. Images on screen are
     /// requested again as the view changes, which keeps them from being dropped.
     pub fn request(&mut self, key: &ImageKey) -> bool {
@@ -401,8 +433,30 @@ pub fn render(image: &Encoded, grid: &mut Grid, area: Rect, x: u16, y: i32) {
     let top = area.y.saturating_add(y.max(0) as u16);
     let covered = Rect::new(area.x + x, top, size.width, size.height).intersection(area);
     grid.lend(covered, |buf| {
-        SlicedImage::new(&image.0, position).render(area, buf);
+        SlicedImage::new(&image.proto, position).render(area, buf);
     });
+
+    if image.transmit.get().is_none()
+        && matches!(*image.proto, SlicedProtocol::Kitty(_))
+        && !covered.is_empty()
+        && let Some(transmit) = kitty_transmit(grid.symbol((covered.x, covered.y)))
+    {
+        let _ = image.transmit.set(transmit);
+    }
+}
+
+/// The transmission at the start of a kitty image's first cell, which holds it the first time the
+/// image is painted: `q=2,i=ID,a=T,…` chunks, then the placeholder.
+fn kitty_transmit(symbol: &str) -> Option<Transmit> {
+    let seq = &symbol[..symbol.find(KITTY_PLACEHOLDER)?];
+    let id = seq
+        .strip_prefix("\x1b_G")?
+        .split([',', ';'])
+        .find_map(|p| p.strip_prefix("i="))?;
+    Some(Transmit {
+        color: id.parse::<u32>().ok()? & 0xFF_FFFF,
+        seq: seq.into(),
+    })
 }
 
 #[cfg(test)]
@@ -534,6 +588,47 @@ pub(crate) mod tests {
         render(&image, &mut grid, area, 2, -2);
         let painted = |y| (0..10).filter(|&x| grid.symbol((x, y)) != " ").count();
         assert_eq!((painted(0), painted(1)), (4, 0));
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    /// A kitty image's transmission is kept from the first frame that paints it, when the
+    /// protocol sends it, under the color its placeholders take.
+    #[test]
+    fn the_kitty_transmission_is_kept() {
+        let path = png("kitty", 40, 60);
+        let mut picker = Picker::halfblocks();
+        picker.set_protocol_type(ProtocolType::Kitty);
+        let key = ImageKey {
+            path: path.clone(),
+            mtime: None,
+            size: Size::new(4, 3),
+        };
+        let image = encode(&picker, &key).unwrap();
+        assert!(image.transmit().is_none());
+        let area = Rect::new(0, 0, 10, 4);
+        let mut grid = Grid::empty(area);
+        render(&image, &mut grid, area, 2, 1);
+        let first = grid.symbol((2, 1)).to_owned();
+        let transmit = image.transmit().expect("kept");
+        assert!(transmit.seq.starts_with("\x1b_G") && transmit.seq.contains("a=T"));
+        assert_eq!(
+            first,
+            format!("{}{}", transmit.seq, &first[transmit.seq.len()..])
+        );
+        assert!(first[transmit.seq.len()..].starts_with(KITTY_PLACEHOLDER));
+        let ratatui::style::Color::Rgb(r, g, b) = grid[(3, 2)].fg() else {
+            panic!("a placeholder's color is its id");
+        };
+        assert_eq!(transmit.color, u32::from_be_bytes([0, r, g, b]));
+
+        // painted again, the protocol sends nothing, and the kept one stays
+        let mut grid = Grid::empty(area);
+        render(&image, &mut grid, area, 2, 1);
+        assert!(!grid.symbol((2, 1)).contains("\x1b_G"));
+        assert!(image.clone().transmit().is_some());
+        let mut cache = ImageCache::default();
+        cache.insert(key, Ok(image));
+        assert_eq!(cache.transmits().count(), 1);
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 

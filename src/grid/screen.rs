@@ -11,6 +11,7 @@ use ratatui::layout::{Rect, Size};
 use ratatui::style::Modifier;
 
 use super::{Cell, Grid, LONG};
+use crate::images::KITTY_PLACEHOLDER;
 
 /// Styles that show on a blank cell: a blank with none of them shows only its background.
 const VISIBLE_ON_BLANK: u16 = Modifier::REVERSED
@@ -111,8 +112,9 @@ impl<W: Write> Screen<W> {
 
 /// Rows of `grid` as lines from the cursor, which is where the shell's next line would go, so
 /// nothing about where they land is known. Each line is its cells left to right, with the style
-/// reset before the newline so that a scroll brings in a default blank row. The images' cells go
-/// as blanks on their background; then, from the saved cursor below the last line, each image's
+/// reset before the newline so that a scroll brings in a default blank row. Kitty images' cells
+/// are text like the rest (the image goes to the terminal before). Other images' cells go as
+/// blanks on their background; then, from the saved cursor below the last line, each image's
 /// escape sequence is written up and across at its first cell.
 fn keep(grid: &Grid, rows: u16, out: &mut Vec<u8>) {
     let w = usize::from(grid.area.width);
@@ -124,7 +126,9 @@ fn keep(grid: &Grid, rows: u16, out: &mut Vec<u8>) {
         while x < w {
             let i = y * w + x;
             let c = &grid.cells[i];
-            if c.is_image() {
+            // a kitty image's cells are text, which takes its id from the foreground color
+            let placeholder = c.forced() && grid.symbol_at(i).contains(KITTY_PLACEHOLDER);
+            if c.is_image() && !placeholder {
                 if c.forced() {
                     images.push(i);
                 }
@@ -1310,5 +1314,30 @@ mod tests {
         );
         let lines: Vec<_> = out.split("\r\n").collect();
         assert_eq!(lines[1], "      ", "the image's cells as blanks");
+    }
+
+    /// A kitty image's cells are text in its color, which names the image: they're kept in the
+    /// lines, with nothing drawn over them after.
+    #[test]
+    fn kept_kitty_placeholders_are_text_in_their_color() {
+        let mut screen = Screen::new(Vec::new(), Size::new(4, 2));
+        let id = Color::Rgb(1, 2, 3);
+        screen
+            .draw(|g| {
+                g.lend(Rect::new(1, 0, 2, 1), |buf| {
+                    let width = CellDiffOption::ForcedWidth(NonZeroU16::new(1).unwrap());
+                    for (x, s) in [(1, "\u{10EEEE}\u{305}\u{305}"), (2, "\u{10EEEE}")] {
+                        buf[(x, 0)].set_symbol(s).set_fg(id).diff_option = width;
+                    }
+                });
+            })
+            .unwrap();
+        screen.out.clear();
+        screen.keep(1).unwrap();
+        let out = String::from_utf8(screen.out).unwrap();
+        assert_eq!(
+            out,
+            " \x1b[38;2;1;2;3m\u{10EEEE}\u{305}\u{305}\u{10EEEE} \x1b[39m\r\n"
+        );
     }
 }

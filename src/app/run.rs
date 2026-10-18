@@ -1,7 +1,7 @@
 //! The interactive loop (ADR-04, ADR-05): an input thread and the workers feed one channel;
 //! the main thread blocks in `recv()`, so idle costs nothing, then drains, updates and draws once.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::io::{self, Stdout, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -13,6 +13,7 @@ use ratatui::crossterm::event::{self, Event};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{self, Clear, ClearType, EnterAlternateScreen, enable_raw_mode};
 use ratatui::layout::{Rect, Size as Cells};
+use ratatui::style::Color;
 
 use super::{Bindings, Cmd, Effects, Keymap, Msg, Size, State, editor_command, osc52, update};
 use crate::grid::{Grid, Screen};
@@ -100,7 +101,8 @@ pub fn run_tui(
 
 /// Leave the last frame on the screen ada just gave back, below the command that ran it: the
 /// document's rows, without the status bar or the blank rows under a short document. Not when
-/// the terminal changed size since the frame, which would wrap or cut its rows.
+/// the terminal changed size since the frame, which would wrap or cut its rows. Kitty images go to
+/// the main screen's image store first: the alternate screen's held them.
 fn keep_screen(terminal: &mut Term, state: &State) {
     let size = terminal.size();
     if terminal::size().ok() != Some((size.width, size.height)) {
@@ -112,6 +114,29 @@ fn keep_screen(terminal: &mut Term, state: &State) {
     let mut rows = size.height.saturating_sub(1);
     while rows > 0 && (0..size.width).all(|x| shown[(x, rows - 1)] == blank[(0, 0)]) {
         rows -= 1;
+    }
+    // the kitty images in the kept rows, sent to the main screen's image store first, but for those
+    // the frame sends itself: the frame that first painted an image holds its transmission
+    let (mut colors, mut sent) = (HashSet::new(), HashSet::new());
+    for y in 0..rows {
+        for x in 0..size.width {
+            if let (true, Color::Rgb(r, g, b)) = (shown[(x, y)].is_image(), shown[(x, y)].fg()) {
+                let color = u32::from_be_bytes([0, r, g, b]);
+                colors.insert(color);
+                if shown.symbol((x, y)).starts_with("\x1b_G") {
+                    sent.insert(color);
+                }
+            }
+        }
+    }
+    colors.retain(|c| !sent.contains(c));
+    let mut out = io::stdout();
+    for t in state
+        .images
+        .transmits()
+        .filter(|t| colors.contains(&t.color))
+    {
+        let _ = out.write_all(t.seq.as_bytes());
     }
     let _ = terminal.keep(rows);
 }
