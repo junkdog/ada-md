@@ -7,14 +7,15 @@
 //! `(end byte, rule)` runs, and paint resolves each rule against the ada theme (ADR-03).
 //! Results are cached by [`key`], a hash of the language and the code.
 
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::Path;
 use std::str::FromStr;
-use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread;
+use std::time::Duration;
 
 use ratatui::style::Style;
 use syntect::highlighting::{
@@ -33,6 +34,15 @@ const MAX_LINE: usize = 4096;
 
 /// Cached blocks before the cache starts over.
 const CACHE_CAP: usize = 4096;
+
+/// Lines highlighted so far, by every thread. When it stands still for [`STALL`] while a block
+/// is being highlighted, syntect is stuck on a line: its parser can loop forever on a
+/// non-consuming push (syntect#656), as on the Scala line `:s| < @@@` (F-06).
+static LINES: AtomicU64 = AtomicU64::new(0);
+
+/// How long syntect may take on one line before its block is given up as plain. Real lines take
+/// microseconds, and the slowest grammar found so far (O-37) about a second.
+const STALL: Duration = Duration::from_millis(if cfg!(test) { 300 } else { 2000 });
 
 /// bat's syntax set, loaded once. Loading is ~1 ms; syntect compiles each syntax's regexes on
 /// first use, which is the expensive part: ~1 ms a language on Oniguruma, up to ~200 ms
@@ -206,6 +216,34 @@ impl CodeSpans {
     pub fn line_count(&self) -> u32 {
         self.lines.len() as u32
     }
+
+    /// A block left plain, as a whole.
+    fn plain(key: u64, rules: u64) -> Self {
+        Self {
+            key,
+            rules,
+            ..Self::default()
+        }
+    }
+}
+
+/// Wait on `rx` for as long as syntect gets somewhere: `None` once no line was highlighted for
+/// [`STALL`], or the sender is gone.
+fn recv_watched<T>(rx: &Receiver<T>) -> Option<T> {
+    let mut seen = LINES.load(Ordering::Relaxed);
+    loop {
+        match rx.recv_timeout(STALL) {
+            Ok(t) => return Some(t),
+            Err(RecvTimeoutError::Disconnected) => return None,
+            Err(RecvTimeoutError::Timeout) => {
+                let now = LINES.load(Ordering::Relaxed);
+                if now == seen {
+                    return None;
+                }
+                seen = now;
+            }
+        }
+    }
 }
 
 /// Highlight a code block's text. Deterministic, so replays recompute it (ADR-19).
@@ -258,6 +296,7 @@ impl LineState {
         buf.push_str(&line);
         buf.push('\n');
         let ops = self.parse.parse_line(buf, syntaxes()).ok()?;
+        LINES.fetch_add(1, Ordering::Relaxed);
         let mut runs: Vec<Run> = Vec::new();
         let mut end = 0;
         for (style, piece) in HighlightIterator::new(&mut self.scopes, &ops, buf, highlighter) {
@@ -663,15 +702,46 @@ impl Highlights {
         self.done.insert(spans.key, spans);
     }
 
-    /// Highlight every block of a document, synchronously (print mode).
-    pub fn compute_all(blocks: &[&CodeBlock], theme: &SyntaxTheme) -> Self {
+    /// Highlight every block of a document before returning (print mode). The blocks go on a
+    /// thread of their own: a block syntect gets stuck on is left plain, and the thread left to
+    /// it, while a new one takes the rest (F-06).
+    pub fn compute_all(blocks: &[&CodeBlock], theme: &Arc<SyntaxTheme>) -> Self {
         let mut out = Self::default();
+        let mut todo: Vec<(u64, Box<str>, Arc<str>)> = Vec::new();
         for code in blocks {
-            let (Some(key), Some(lang)) = (key(code), code.lang.as_deref()) else {
+            let (Some(key), Some(lang)) = (key(code), &code.lang) else {
                 continue;
             };
-            if let Entry::Vacant(slot) = out.done.entry(key) {
-                slot.insert(Arc::new(highlight_parallel(key, lang, &code.text, theme)));
+            if !todo.iter().any(|t| t.0 == key) {
+                todo.push((key, lang.clone(), code.text.clone()));
+            }
+        }
+        let todo = Arc::new(todo);
+        let mut next = 0;
+        while next < todo.len() {
+            let (tx, rx) = mpsc::channel();
+            let (blocks, rules) = (Arc::clone(&todo), Arc::clone(theme));
+            thread::spawn(move || {
+                for (key, lang, text) in &blocks[next..] {
+                    if tx
+                        .send(highlight_parallel(*key, lang, text, &rules))
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            });
+            while next < todo.len() {
+                let Some(spans) = recv_watched(&rx) else {
+                    break;
+                };
+                out.done.insert(spans.key, Arc::new(spans));
+                next += 1;
+            }
+            if let Some((key, ..)) = todo.get(next) {
+                out.done
+                    .insert(*key, Arc::new(CodeSpans::plain(*key, theme.id)));
+                next += 1;
             }
         }
         out
@@ -741,33 +811,109 @@ const STEP: usize = 256;
 /// `STEP` lines at a time: in between, the worker takes new requests, and stops the block when
 /// another document or theme came along. A long block posts its first lines when 256, 512,
 /// 1,024 … are done, so the top shows highlighted long before the rest (O-05).
+///
+/// A watcher thread stands by while a block is highlighted. When syntect gets stuck on a line
+/// (F-06), it posts the block as plain and starts a new worker on the same queue; the stuck
+/// thread is left to spin, since a thread can't be stopped from outside, and quits if it ever
+/// gets free. While the worker is idle, so is the watcher.
 pub fn spawn_worker(tx: Sender<Msg>) -> Sender<Request> {
     let (requests, rx) = mpsc::channel::<Request>();
-    thread::spawn(move || {
+    let shared = Arc::new(Worker {
+        inbox: Mutex::new((rx, Queue::default())),
+        busy: Mutex::new(Busy::default()),
+        changed: Condvar::new(),
+        tx,
+    });
+    let first = Arc::clone(&shared);
+    thread::spawn(move || first.work(0));
+    thread::spawn(move || shared.watch());
+    requests
+}
+
+/// The worker's state, shared by the worker that runs and the watcher that stands in for it.
+struct Worker {
+    /// The requests and the queue, held only between two steps of a block.
+    inbox: Mutex<(Receiver<Request>, Queue)>,
+    busy: Mutex<Busy>,
+    changed: Condvar,
+    tx: Sender<Msg>,
+}
+
+/// What the worker is on.
+#[derive(Default)]
+struct Busy {
+    /// The block being highlighted, by the worker of which generation, numbered by `started`.
+    job: Option<(Job, u64)>,
+    started: u64,
+    /// The worker of this generation is the one that counts; an older one got stuck.
+    generation: u64,
+    /// The app is gone.
+    done: bool,
+}
+
+impl Worker {
+    fn busy(&self) -> MutexGuard<'_, Busy> {
+        self.busy.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Mark the worker of generation `generation` on `job`, or done with it. False when that
+    /// worker is no longer the one that counts.
+    fn set_job(&self, generation: u64, job: Option<&Job>) -> bool {
+        let mut busy = self.busy();
+        if busy.generation != generation {
+            return false;
+        }
+        busy.started += u64::from(job.is_some());
+        busy.job = job.map(|j| (j.clone(), busy.started));
+        self.changed.notify_all();
+        true
+    }
+
+    fn post(&self, generation: u64, msg: Msg) -> bool {
+        self.busy().generation == generation && self.tx.send(msg).is_ok()
+    }
+
+    /// The worker of generation `generation`.
+    fn work(&self, generation: u64) {
         syntaxes();
-        let mut queue = Queue::default();
         loop {
-            let mut batch = Vec::new();
-            if queue.jobs.is_empty() {
-                let Ok(request) = rx.recv() else {
-                    return;
-                };
-                batch.push(request);
-            }
-            batch.extend(rx.try_iter());
-            queue.add(batch);
-            let Some(job) = queue.jobs.pop_front() else {
+            let job = {
+                let mut inbox = self.inbox.lock().unwrap_or_else(PoisonError::into_inner);
+                let (rx, queue) = &mut *inbox;
+                let mut batch = Vec::new();
+                if queue.jobs.is_empty() {
+                    let Ok(request) = rx.recv() else {
+                        self.busy().done = true;
+                        self.changed.notify_all();
+                        return;
+                    };
+                    batch.push(request);
+                }
+                batch.extend(rx.try_iter());
+                queue.add(batch);
+                queue.jobs.pop_front()
+            };
+            let Some(job) = job else {
                 continue;
             };
+            if !self.set_job(generation, Some(&job)) {
+                return;
+            }
             let mut h = Highlighter::new(job.key, &job.lang, &job.text, &job.theme);
             let mut post_at = STEP as u32;
             let mut stopped = false;
             while h.step(STEP) {
+                let mut inbox = self.inbox.lock().unwrap_or_else(PoisonError::into_inner);
+                if self.busy().generation != generation {
+                    return;
+                }
+                let (rx, queue) = &mut *inbox;
                 queue.add(rx.try_iter().collect());
                 if queue.epoch != Some(job.epoch()) {
                     stopped = true;
                     break;
                 }
+                drop(inbox);
                 if h.line_count() >= post_at {
                     post_at = h.line_count() * 2;
                     let msg = Msg::Highlighted {
@@ -776,10 +922,13 @@ pub fn spawn_worker(tx: Sender<Msg>) -> Sender<Request> {
                         lines: Some(h.line_count()),
                         spans: Computed(Some(Arc::new(h.partial()))),
                     };
-                    if tx.send(msg).is_err() {
+                    if !self.post(generation, msg) {
                         return;
                     }
                 }
+            }
+            if !self.set_job(generation, None) {
+                return;
             }
             if stopped {
                 continue;
@@ -790,12 +939,54 @@ pub fn spawn_worker(tx: Sender<Msg>) -> Sender<Request> {
                 lines: None,
                 spans: Computed(Some(Arc::new(h.finish()))),
             };
-            if tx.send(msg).is_err() {
+            if !self.post(generation, msg) {
                 return;
             }
         }
-    });
-    requests
+    }
+
+    /// Stand by while a block is highlighted: if no line gets done for [`STALL`], post the
+    /// block as plain and start a worker of the next generation.
+    fn watch(self: Arc<Self>) {
+        let mut busy = self.busy();
+        loop {
+            busy = self
+                .changed
+                .wait_while(busy, |b| b.job.is_none() && !b.done)
+                .unwrap_or_else(PoisonError::into_inner);
+            if busy.done {
+                return;
+            }
+            let started = busy.started;
+            let seen = LINES.load(Ordering::Relaxed);
+            let (guard, wait) = self
+                .changed
+                .wait_timeout_while(busy, STALL, |b| {
+                    b.job.as_ref().is_some_and(|j| j.1 == started) && !b.done
+                })
+                .unwrap_or_else(PoisonError::into_inner);
+            busy = guard;
+            if !wait.timed_out() || LINES.load(Ordering::Relaxed) != seen {
+                continue;
+            }
+            let Some((job, _)) = busy.job.take() else {
+                continue;
+            };
+            busy.generation += 1;
+            let generation = busy.generation;
+            let msg = Msg::Highlighted {
+                doc_gen: job.doc_gen,
+                block: job.block,
+                lines: None,
+                spans: Computed(Some(Arc::new(CodeSpans::plain(job.key, job.theme.id)))),
+            };
+            if self.tx.send(msg).is_err() {
+                return;
+            }
+            let next = Arc::clone(&self);
+            thread::spawn(move || next.work(generation));
+        }
+    }
 }
 
 /// The worker's queue, and the epoch its jobs are for.
@@ -1116,5 +1307,56 @@ mod tests {
                 assert!(many == one, "{lang} on {threads} threads");
             }
         }
+    }
+
+    /// syntect's parser never returns on this Scala line (syntect#656); the stuck thread spins on
+    /// until the tests end.
+    const STUCK: &str = ":s| < @@@\n";
+
+    /// A block syntect gets stuck on prints plain, and the blocks after it still highlight (F-06).
+    #[test]
+    fn print_leaves_a_block_syntect_is_stuck_on_plain() {
+        let theme = Arc::new(SyntaxTheme::new(&Theme::builtin().syntax));
+        let doc = crate::doc::parse(&format!(
+            "```scala\n{STUCK}```\n\n```rust\nfn main() {{}}\n```\n"
+        ));
+        let blocks = doc.code_blocks();
+        let all = Highlights::compute_all(&blocks, &theme);
+        let [scala, rust] = [0, 1].map(|i| all.get(key(blocks[i]).unwrap()).unwrap());
+        assert_eq!(scala.line_count(), 0);
+        assert!(rust.line(0).len() > 1);
+    }
+
+    /// The worker posts a block syntect gets stuck on as plain, and a new worker takes the next
+    /// one (F-06).
+    #[test]
+    fn the_worker_gives_up_on_a_stuck_block_and_goes_on() {
+        let theme = Arc::new(SyntaxTheme::new(&Theme::builtin().syntax));
+        let (tx, rx) = mpsc::channel();
+        let worker = spawn_worker(tx);
+        let job = |block, lang: &str, text: &str| Job {
+            doc_gen: 1,
+            block,
+            key: u64::from(block),
+            lang: lang.into(),
+            text: text.into(),
+            theme: theme.clone(),
+            urgent: false,
+            first: None,
+        };
+        worker.send(Request::Job(job(0, "scala", STUCK))).unwrap();
+        worker
+            .send(Request::Job(job(1, "rust", "fn main() {}\n")))
+            .unwrap();
+        let mut posted = Vec::new();
+        while posted.len() < 2 {
+            let Ok(Msg::Highlighted { block, spans, .. }) =
+                rx.recv_timeout(Duration::from_secs(20))
+            else {
+                panic!("no highlight");
+            };
+            posted.push((block, spans.0.unwrap().line_count()));
+        }
+        assert_eq!(posted, [(0, 0), (1, 1)]);
     }
 }

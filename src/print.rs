@@ -3,6 +3,7 @@
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use image::DynamicImage;
 use ratatui::layout::Size;
@@ -112,7 +113,8 @@ fn write(
     let layout = layout::layout_measured(doc, &measure, &theme.glyphs, params);
     drop(measure);
     let (skip, pad) = opts.align.map_or((0, 0), |line| alignment(&layout, line));
-    let highlights = Highlights::compute_all(&doc.code_blocks(), &SyntaxTheme::new(&theme.syntax));
+    let syntax = Arc::new(SyntaxTheme::new(&theme.syntax));
+    let highlights = Highlights::compute_all(&doc.code_blocks(), &syntax);
     let painter = Painter {
         theme,
         layout: &layout,
