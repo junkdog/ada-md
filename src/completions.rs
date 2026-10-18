@@ -50,9 +50,13 @@ fn zsh() -> String {
 # zsh completion for ada, from `ada --completions zsh`
 
 _ada_themes() {{
+  if [[ $PREFIX == (./|../|/)* ]]; then
+    _alternative 'files:theme file:_path_files -g \"*.toml(-.)\"' 'directories:directory:_path_files -/'
+    return
+  fi
   local -a themes
   themes=({} {THEMES_DIR}/*.toml(N:t:r))
-  _alternative 'themes:theme:compadd -a themes' 'files:theme file:_files -g \"*.toml\"'
+  _describe -t themes theme themes
 }}
 
 _ada_languages() {{
@@ -152,7 +156,7 @@ fn bash() -> String {
             Value::None => continue,
             Value::Number => "return".to_owned(),
             Value::Theme => format!(
-                "local themes=\"{}\" f\n      for f in \"{THEMES_DIR}\"/*.toml; do\n        [[ -e $f ]] && f=${{f##*/}} && themes+=\" ${{f%.toml}}\"\n      done\n      COMPREPLY=($(compgen -W \"$themes\" -- \"$cur\") $(compgen -f -X '!*.toml' -- \"$cur\") $(compgen -d -- \"$cur\"))\n      return",
+                "if [[ $cur == ./* || $cur == ../* || $cur == /* ]]; then\n        COMPREPLY=($(compgen -f -X '!*.toml' -- \"$cur\") $(compgen -d -- \"$cur\"))\n        return\n      fi\n      compopt +o filenames 2>/dev/null\n      local themes=\"{}\" f\n      for f in \"{THEMES_DIR}\"/*.toml; do\n        [[ -e $f ]] && f=${{f##*/}} && themes+=\" ${{f%.toml}}\"\n      done\n      COMPREPLY=($(compgen -W \"$themes\" -- \"$cur\"))\n      return",
                 builtin_themes()
             ),
             Value::Language => format!(
@@ -195,6 +199,17 @@ fn fish() -> String {
 # fish completion for ada, from `ada --completions fish`
 
 function __ada_themes
+    set -l token (commandline -ct | string replace -r -- '^--theme=' '')
+    if string match -qr -- '^[.]{{0,2}}/' $token
+        for f in $token*
+            if test -d $f
+                echo $f/
+            else if string match -q -- '*.toml' $f
+                echo $f
+            end
+        end
+        return
+    end
     printf '%s\\n' {}
     set -l config $XDG_CONFIG_HOME
     test -n \"$config\"; or set config ~/.config
@@ -225,7 +240,7 @@ end
         match f.value.1 {
             Value::None => {}
             Value::Number => line.push_str(" -x"),
-            Value::Theme => line.push_str(" -r -a '(__ada_themes)'"),
+            Value::Theme => line.push_str(" -x -a '(__ada_themes)'"),
             Value::Language => line.push_str(" -x -a '(__ada_languages)'"),
             Value::File => line.push_str(" -r -F"),
             Value::Rec => line.push_str(" -r -k -a '(__fish_complete_suffix .rec)'"),
@@ -282,6 +297,64 @@ mod tests {
             let stderr = String::from_utf8_lossy(&out.stderr);
             assert!(out.status.success() && stderr.is_empty(), "{how}: {stderr}");
             assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "_ada", "{how}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A theme completes to the theme names alone, not to the files and directories around it,
+    /// and to `.toml` files and directories only after `./`, `../` or `/`; when bash and fish
+    /// are installed.
+    #[test]
+    fn themes_complete_to_names_and_paths_to_files() {
+        let dir = std::env::temp_dir().join(format!("ada-themes-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("x.toml"), "").unwrap();
+        std::fs::write(dir.join("notes.md"), "").unwrap();
+        let bash = |line: &str| {
+            let cmd = format!(
+                "{}\nCOMP_WORDS=({line}); COMP_CWORD=2; _ada; printf '%s\\n' \"${{COMPREPLY[@]}}\" | sort",
+                script("bash").unwrap()
+            );
+            Command::new("bash")
+                .args(["--norc", "-c", &cmd])
+                .current_dir(&dir)
+                .output()
+        };
+        let fish = |line: &str| {
+            let cmd = format!(
+                "{}\ncomplete -C '{line}' | cut -f1 | sort",
+                script("fish").unwrap()
+            );
+            Command::new("fish")
+                .args(["--no-config", "-c", &cmd])
+                .current_dir(&dir)
+                .output()
+        };
+        type Run<'a> = &'a dyn Fn(&str) -> std::io::Result<std::process::Output>;
+        let shells: [(&str, Run, &str, &str); 2] = [
+            ("bash", &bash, "ada -t ''", "ada -t ./"),
+            ("fish", &fish, "ada -t ", "ada -t ./"),
+        ];
+        for (shell, run, names, paths) in shells {
+            let Ok(out) = run(names) else {
+                continue;
+            };
+            let names = String::from_utf8_lossy(&out.stdout).into_owned();
+            assert!(names.contains("gruvbox-dark\n"), "{shell}: {names}");
+            assert!(
+                !names.contains("sub") && !names.contains(".md"),
+                "{shell}: {names}"
+            );
+            let out = run(paths).unwrap();
+            let paths = String::from_utf8_lossy(&out.stdout).into_owned();
+            assert!(
+                paths.starts_with("./sub") && paths.contains("./x.toml\n"),
+                "{shell}: {paths}"
+            );
+            assert!(
+                !paths.contains("notes") && !paths.contains("gruvbox"),
+                "{shell}: {paths}"
+            );
         }
         std::fs::remove_dir_all(&dir).unwrap();
     }

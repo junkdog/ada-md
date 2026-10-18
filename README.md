@@ -169,6 +169,7 @@ max_width = 100            # wrap prose at most 100 columns wide; tables may use
 images = true              # or false for text only
 image_protocol = "auto"    # or kitty, sixel, iterm2, halfblocks
 live_reload = true         # read the file again when it changes
+keep_screen = true         # leave what ada showed in the terminal when it quits
 tables = "auto"            # the table layout to start with: auto, grid or records
 code_wrap = true
 line_numbers = "code"      # number rows by source line: off, code (code and text files) or all
@@ -290,7 +291,8 @@ ada --completions fish > ${XDG_CONFIG_HOME:-~/.config}/fish/completions/ada.fish
 ```
 
 Or source it from `~/.zshrc`, after `compinit`: `source <(ada --completions zsh)`. Theme names
-complete from the built-ins and your themes directory.
+complete from the built-ins and your themes directory, and a word that starts with `./`, `../`
+or `/` to `.toml` files.
 
 ## Recording sessions
 
