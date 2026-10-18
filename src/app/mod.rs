@@ -30,7 +30,7 @@ use crate::links::{LocalTarget, Resolved};
 use crate::search::SearchMap;
 use crate::theme::{Glyphs, Theme};
 
-pub use effects::{Effects, editor_command, load_doc, osc52};
+pub use effects::{Effects, Head, editor_command, load_doc, load_doc_head, osc52};
 pub use find::{Listing, Outline, OutlineEntry, Prompt, Search};
 pub use imaging::{ImageFile, ImageView};
 pub use keymap::{Action, Bindings, Key, KeySeq, Keymap};

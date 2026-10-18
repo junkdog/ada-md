@@ -3,6 +3,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -191,6 +192,20 @@ fn open_with_system(target: &OsStr) -> std::io::Result<()> {
 /// Read a document: `DocLoaded` with its text, or `DocFailed`. An image has no text, and a
 /// binary file fails.
 pub fn load_doc(path: &Path, stdin: Option<&Arc<str>>) -> Msg {
+    load_doc_head(path, stdin, None)
+}
+
+/// How much of a code or text file a preview reads: its first `lines` lines, and no more than
+/// `bytes` of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Head {
+    pub lines: usize,
+    pub bytes: usize,
+}
+
+/// [`load_doc`], reading only the `head` of a file that isn't markdown. A note is read whole: a
+/// link's reference definition or a footnote can come after everything that uses it.
+pub fn load_doc_head(path: &Path, stdin: Option<&Arc<str>>, head: Option<Head>) -> Msg {
     if path == Path::new("-") {
         return Msg::DocLoaded {
             path: path.to_owned(),
@@ -203,9 +218,10 @@ pub fn load_doc(path: &Path, stdin: Option<&Arc<str>>) -> Msg {
     let mtime = mtime_of(path);
     let filetype = FileType::by_path(path);
     // An image is read by the image worker; its document is only its name.
-    let read = match filetype {
-        Some(FileType::Image) => fs::metadata(path).map(|_| Vec::new()),
-        _ => fs::read(path),
+    let read = match (&filetype, head) {
+        (Some(FileType::Image), _) => fs::metadata(path).map(|_| Vec::new()),
+        (Some(FileType::Markdown), _) | (_, None) => fs::read(path),
+        (_, Some(head)) => read_head(path, head),
     };
     match read {
         Ok(bytes) if filetype != Some(FileType::Markdown) && filetype::is_binary(&bytes) => {
@@ -231,6 +247,28 @@ pub fn load_doc(path: &Path, stdin: Option<&Arc<str>>) -> Msg {
             error: e.to_string(),
         },
     }
+}
+
+/// The first `head.lines` lines of a file, at most `head.bytes` of it, ending on a whole
+/// character.
+fn read_head(path: &Path, head: Head) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take(head.bytes as u64)
+        .read_to_end(&mut bytes)?;
+    if let Some((end, _)) = bytes
+        .iter()
+        .enumerate()
+        .filter(|&(_, &b)| b == b'\n')
+        .nth(head.lines.saturating_sub(1))
+    {
+        bytes.truncate(end + 1);
+    } else if let Err(e) = std::str::from_utf8(&bytes)
+        && e.error_len().is_none()
+    {
+        bytes.truncate(e.valid_up_to());
+    }
+    Ok(bytes)
 }
 
 /// Split an editor setting the way a shell would: words, `'single'` and `"double"` quotes,
@@ -337,6 +375,30 @@ fn base64(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_preview_reads_the_head_of_a_text_file() {
+        let dir = std::env::temp_dir().join(format!("ada-head-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let text = |path: &Path, head| match load_doc_head(path, None, Some(head)) {
+            Msg::DocLoaded { text, .. } => text.to_string(),
+            other => panic!("{other:?}"),
+        };
+        let log = dir.join("a.log");
+        fs::write(&log, "one\ntwo\nthree\n").unwrap();
+        let head = |lines, bytes| Head { lines, bytes };
+        assert_eq!(text(&log, head(2, 100)), "one\ntwo\n");
+        assert_eq!(text(&log, head(9, 100)), "one\ntwo\nthree\n");
+        assert_eq!(text(&log, head(9, 6)), "one\ntw");
+        // cut on a whole character
+        fs::write(&log, "ab✓").unwrap();
+        assert_eq!(text(&log, head(9, 4)), "ab");
+        // a note is read whole
+        let note = dir.join("a.md");
+        fs::write(&note, "one\ntwo\n\n[x]: y\n").unwrap();
+        assert_eq!(text(&note, head(1, 1)), "one\ntwo\n\n[x]: y\n");
+        fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn editors_get_the_line_the_way_they_take_it() {

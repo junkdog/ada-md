@@ -106,11 +106,17 @@ ada -n all notes/today.md
 ada --print --width 100 notes/today.md | less -R
 ```
 
-As an fzf preview, which prints at the pane's width (`$FZF_PREVIEW_COLUMNS`):
+As an fzf preview, which prints at the pane's size (`$FZF_PREVIEW_COLUMNS` and
+`$FZF_PREVIEW_LINES`), images included, so it can stand in for both `bat` and `kitten icat`:
 
 ```zsh
 fzf --preview 'ada --print {}'
+# from rg matches: the matched line lands mid-pane
+rg -n . | fzf -d : --preview 'ada --print --line {2} {1}' --preview-window '+{2}-/2'
 ```
+
+A preview stops 2,000 rows past the line it starts at, and reads no more of a code or log file
+than that, so a huge file previews as fast as a small one.
 
 Press `?` in ada for the keys. See `ada --help` for every option.
 
@@ -250,6 +256,11 @@ terminal what it supports:
 Inside tmux, ada uses half-blocks: kitty graphics don't work there, and sixel and iTerm2 images
 get misplaced and lost on tmux's redraws ([KNOWN_ISSUES.md](KNOWN_ISSUES.md)). `--image-protocol`
 overrides what ada picks, and `--no-images` turns images off.
+
+`--print` draws images too when its output reaches a terminal: stdout is one, or it's an fzf
+preview pane (or `--height N` gives the rows a preview has). It can't ask the terminal there, so
+it goes by the environment: kitty and Ghostty get kitty images, everything else, and tmux,
+half-blocks. Printed images are text cells, so fzf clips, scrolls and clears them with the pane.
 
 ## Editing
 

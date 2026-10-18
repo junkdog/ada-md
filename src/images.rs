@@ -17,7 +17,7 @@ use std::time::UNIX_EPOCH;
 
 use image::imageops::FilterType;
 use image::metadata::Orientation;
-use image::{DynamicImage, ImageDecoder, ImageReader};
+use image::{ImageDecoder, ImageReader};
 use ratatui::layout::{Rect, Size};
 use ratatui::widgets::Widget;
 use ratatui_image::Resize;
@@ -25,6 +25,7 @@ use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::sliced::{SignedPosition, SlicedImage, SlicedProtocol};
 
 use crate::grid::Grid;
+use crate::pixels;
 
 use crate::app::{self, Computed, Msg};
 
@@ -114,6 +115,44 @@ pub fn choose(found: Proto, tmux: bool) -> Proto {
     if tmux { Proto::Halfblocks } else { found }
 }
 
+/// The protocol for printed images, from the environment alone: under fzf, which owns the
+/// terminal, there is no asking it. Kitty (and Ghostty) get unicode placeholders, everything else
+/// half-blocks, and inside tmux half-blocks only, as in the TUI. Printing has no sixel or iTerm2:
+/// forcing one prints half-blocks.
+pub fn print_proto(mode: ImageMode, env: impl Fn(&str) -> Option<String>) -> Option<Proto> {
+    let set = |name| env(name).is_some_and(|v| !v.is_empty());
+    let proto = match mode {
+        ImageMode::Off => return None,
+        ImageMode::Force(p) => p,
+        ImageMode::Auto if set("TMUX") => Proto::Halfblocks,
+        ImageMode::Auto => {
+            let term = env("TERM").unwrap_or_default();
+            let kitty = set("KITTY_WINDOW_ID") || term == "xterm-kitty";
+            let ghostty = set("GHOSTTY_RESOURCES_DIR") || term == "xterm-ghostty";
+            if kitty || ghostty {
+                Proto::Kitty
+            } else {
+                Proto::Halfblocks
+            }
+        }
+    };
+    Some(match proto {
+        Proto::Kitty => Proto::Kitty,
+        _ => Proto::Halfblocks,
+    })
+}
+
+/// The font's cell size, from the terminal's size in cells and pixels (`TIOCGWINSZ` on
+/// `/dev/tty`, as `kitten icat` reads it), or 10×20 when it reports no pixels.
+pub fn cell_size() -> Size {
+    ratatui::crossterm::terminal::window_size()
+        .ok()
+        .filter(|s| s.columns > 0 && s.rows > 0 && s.width > 0 && s.height > 0)
+        .map_or(Size::new(10, 20), |s| {
+            Size::new((s.width / s.columns).max(1), (s.height / s.rows).max(1))
+        })
+}
+
 /// The message that tells `update` what the picker found.
 pub fn graphics_msg(picker: &Picker) -> Msg {
     let font = picker.font_size();
@@ -176,14 +215,6 @@ fn reader(path: &Path) -> Result<ImageReader<std::io::BufReader<fs::File>>, Stri
         .map_err(|e| e.to_string())
 }
 
-fn decode(path: &Path) -> Result<DynamicImage, String> {
-    let mut decoder = reader(path)?.into_decoder().map_err(|e| e.to_string())?;
-    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
-    let mut image = DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
-    image.apply_orientation(orientation);
-    Ok(image)
-}
-
 /// The cells an image of `px` pixels takes: its natural size at the font's `cell` size, scaled
 /// down to fit `max` cells if it must, keeping its aspect ratio.
 pub fn fit(px: (u32, u32), cell: Size, max: Size) -> Size {
@@ -231,9 +262,16 @@ impl PartialEq for Encoded {
 
 impl Eq for Encoded {}
 
-/// Decode an image and encode it for the terminal, fitted to `key.size` cells.
+/// Decode an image and encode it for the terminal, fitted to `key.size` cells. It's decoded
+/// straight to the pixels those cells hold ([`pixels::decode`]), so the protocol has nothing
+/// left to resize.
 pub fn encode(picker: &Picker, key: &ImageKey) -> Result<Encoded, String> {
-    let image = decode(&key.path)?;
+    let font = picker.font_size();
+    let max = (
+        u32::from(key.size.width) * u32::from(font.width),
+        u32::from(key.size.height) * u32::from(font.height),
+    );
+    let image = pixels::decode(&key.path, max)?;
     let resize = Resize::Fit(Some(FilterType::Triangle));
     SlicedProtocol::new_with_resize(picker, image, key.size, resize)
         .map(|p| Encoded(Arc::new(p)))
@@ -388,6 +426,44 @@ pub(crate) mod tests {
             assert_eq!(choose(p, false), p);
             assert_eq!(choose(p, true), Proto::Halfblocks);
         }
+    }
+
+    #[test]
+    fn printed_images_take_their_protocol_from_the_environment() {
+        let print = |mode, vars: &[(&str, &str)]| {
+            let vars: Vec<(String, String)> = vars
+                .iter()
+                .map(|&(k, v)| (k.to_owned(), v.to_owned()))
+                .collect();
+            print_proto(mode, |name| {
+                vars.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())
+            })
+        };
+        let auto = ImageMode::Auto;
+        assert_eq!(print(auto, &[("KITTY_WINDOW_ID", "3")]), Some(Proto::Kitty));
+        assert_eq!(print(auto, &[("TERM", "xterm-kitty")]), Some(Proto::Kitty));
+        assert_eq!(
+            print(auto, &[("TERM", "xterm-ghostty")]),
+            Some(Proto::Kitty)
+        );
+        assert_eq!(
+            print(auto, &[("TERM", "xterm-256color")]),
+            Some(Proto::Halfblocks)
+        );
+        let tmux = [
+            ("KITTY_WINDOW_ID", "3"),
+            ("TMUX", "/tmp/tmux-1000/default,1,0"),
+        ];
+        assert_eq!(print(auto, &tmux), Some(Proto::Halfblocks));
+        assert_eq!(
+            print(auto, &[("TMUX", ""), ("TERM", "xterm-kitty")]),
+            Some(Proto::Kitty)
+        );
+        // forced, but print has only these two
+        let force = ImageMode::Force;
+        assert_eq!(print(force(Proto::Kitty), &tmux), Some(Proto::Kitty));
+        assert_eq!(print(force(Proto::Sixel), &[]), Some(Proto::Halfblocks));
+        assert_eq!(print(ImageMode::Off, &[("TERM", "xterm-kitty")]), None);
     }
 
     #[test]

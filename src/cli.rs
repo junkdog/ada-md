@@ -63,6 +63,12 @@ pub const FLAGS: &[Flag] = &[
     ),
     flag(
         None,
+        "height",
+        ("N", Value::Number),
+        "print for a preview N rows high: images fit it, and a long\nfile is cut (default: $FZF_PREVIEW_LINES)",
+    ),
+    flag(
+        None,
         "max-width",
         ("N", Value::Number),
         "wrap prose at most N columns wide",
@@ -191,6 +197,7 @@ pub struct Args {
     pub input: Option<Input>,
     pub print: bool,
     pub width: Option<u16>,
+    pub height: Option<u16>,
     pub max_width: Option<u16>,
     pub line: Option<u32>,
     pub theme: Option<String>,
@@ -242,6 +249,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
         match flag.as_str() {
             "-p" | "--print" => out.print = true,
             "-w" | "--width" => out.width = Some(number(&flag, &value(&flag)?)?),
+            "--height" => out.height = Some(number(&flag, &value(&flag)?)?),
             "--max-width" => out.max_width = Some(number(&flag, &value(&flag)?)?),
             "-l" | "--line" => out.line = Some(number(&flag, &value(&flag)?)?),
             "-t" | "--theme" => out.theme = Some(value(&flag)?),
@@ -316,10 +324,13 @@ mod tests {
             "notes/a.md",
             "--max-width",
             "90",
+            "--height",
+            "30",
         ])
         .unwrap();
         assert_eq!(a.input, Some(Input::Path("notes/a.md".into())));
         assert_eq!(a.width, Some(100));
+        assert_eq!(a.height, Some(30));
         assert_eq!(a.max_width, Some(90));
         assert_eq!(a.theme.as_deref(), Some("mine"));
         assert_eq!(args(&["-"]).unwrap().input, Some(Input::Stdin));

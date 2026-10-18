@@ -4,11 +4,11 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::{env, fs};
 
-use ada::app::{self, Config, Effects, Msg, State};
+use ada::app::{self, Config, Effects, Head, Msg, State};
 use ada::cli::{self, Args, Input};
 use ada::filetype::FileType;
-use ada::images::ImageMode;
-use ada::layout::LayoutParams;
+use ada::images::{self, ImageMode};
+use ada::layout::{ImageFit, LayoutParams};
 use ada::record::{self, Recorder, ReplayOptions};
 use ada::theme::Theme;
 use ada::{completions, config, print, theme};
@@ -112,6 +112,10 @@ fn run() -> Result<(), String> {
     app::run_tui(state, path, Effects::new(stdin), recorder)
 }
 
+/// Rows a preview prints past the line it starts at, when its pane is shorter: room to scroll,
+/// and a bound on a huge file, which isn't read past them (plan, "ada as the only fzf previewer").
+const PREVIEW_ROWS: usize = 2000;
+
 fn print_doc(
     args: &Args,
     config: &Config,
@@ -119,25 +123,46 @@ fn print_doc(
     path: &Path,
     stdin: Option<&Arc<str>>,
 ) -> Result<(), String> {
-    let text = match app::load_doc(path, stdin) {
+    // fzf exports the whole terminal as $COLUMNS, and the preview pane as $FZF_PREVIEW_COLUMNS.
+    let env_number = |name| env::var(name).ok()?.trim().parse().ok();
+    let tty = io::stdout().is_terminal();
+    let screen = || {
+        tty.then(|| ratatui::crossterm::terminal::size().ok())
+            .flatten()
+    };
+    let width = args
+        .width
+        .or_else(|| env_number("FZF_PREVIEW_COLUMNS"))
+        .or_else(|| env_number("COLUMNS"))
+        .or_else(|| screen().map(|(w, _)| w))
+        .unwrap_or(80)
+        .max(1);
+    // A preview pane's height bounds what's read and printed.
+    let preview: Option<u16> = args
+        .height
+        .or_else(|| env_number("FZF_PREVIEW_LINES"))
+        .map(|h| h.max(1));
+    let rows = preview.map(|h| usize::from(h).max(PREVIEW_ROWS));
+    let head = rows.map(|rows| {
+        // each line takes a row at least, and a row's text is rarely over 4 bytes a column
+        let lines = args.line.map_or(0, |l| l as usize) + rows;
+        Head {
+            lines,
+            bytes: (lines * (usize::from(width) + 1) * 4).max(1 << 16),
+        }
+    });
+    let text = match app::load_doc_head(path, stdin, head) {
         Msg::DocLoaded { text, .. } => text,
         Msg::DocFailed { path, error } => return Err(format!("{}: {error}", path.display())),
         other => return Err(format!("unexpected {other:?}")),
     };
-    // fzf exports the whole terminal as $COLUMNS, and the preview pane as $FZF_PREVIEW_COLUMNS.
-    let env_width = |name| env::var(name).ok()?.trim().parse().ok();
-    let width = args
-        .width
-        .or_else(|| env_width("FZF_PREVIEW_COLUMNS"))
-        .or_else(|| env_width("COLUMNS"))
-        .or_else(|| {
-            io::stdout()
-                .is_terminal()
-                .then(|| ratatui::crossterm::terminal::size().ok().map(|(w, _)| w))
-                .flatten()
-        })
-        .unwrap_or(80)
-        .max(1);
+    // Images only where they reach a terminal, or when asked for by name.
+    let to_terminal = tty || preview.is_some() || matches!(args.images, ImageMode::Force(_));
+    let proto = to_terminal
+        .then(|| images::print_proto(config.images, |name| env::var(name).ok()))
+        .flatten();
+    let height = preview.or_else(|| screen().map(|(_, h)| h)).unwrap_or(24);
+    let cell = proto.map(|_| images::cell_size());
     // Printed code always wraps: there is no scrolling sideways on paper.
     let params = LayoutParams {
         width,
@@ -146,11 +171,25 @@ fn print_doc(
         code_wrap: true,
         line_numbers: config.line_numbers,
         glyphs_gen: theme.glyphs.generation(),
-        images: None,
+        images: cell.map(|cell| ImageFit {
+            cell,
+            max_rows: (height * 3 / 5).max(1),
+            screen_rows: height,
+        }),
     };
     let filetype = FileType::of(path, &text);
     let doc = filetype.parse(path, &text);
-    let result = print::run(&doc, theme, filetype.params(params), args.line);
+    // fzf redraws its preview pane for every file: its images can replace the last file's
+    let reuse_ids = env::var_os("FZF_PREVIEW_LINES").is_some();
+    let pictures = proto
+        .zip(cell)
+        .map(|(proto, cell)| print::Pictures::find(&doc, path, proto, cell, reuse_ids));
+    let opts = print::Options {
+        align: args.line,
+        rows,
+        images: pictures.as_ref(),
+    };
+    let result = print::run(&doc, theme, filetype.params(params), opts);
     // ada exits next: the document is left for the OS to reclaim instead of freed (O-31).
     std::mem::forget(doc);
     std::mem::forget(text);

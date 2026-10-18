@@ -107,7 +107,7 @@ fn main() {
             glyphs_gen: 0,
             images: None,
         };
-        let printed = print::render(&doc::parse(&text), &theme, params, None);
+        let printed = print::render(&doc::parse(&text), &theme, params, Default::default());
         report("print -w 100", printed.as_bytes());
         println!();
     }

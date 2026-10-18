@@ -8,9 +8,11 @@ version = "0.1.0"
 dependencies = [
  "anpa",
  "crossterm",
+ "flate2",
  "image",
  "insta",
  "libc",
+ "png",
  "pulldown-cmark",
  "ratatui",
  "ratatui-image",
