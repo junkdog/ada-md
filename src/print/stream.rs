@@ -64,7 +64,7 @@ pub struct Stream {
 }
 
 /// Read the start of `path` (`-` for stdin) and tell whether it streams: a log, JSON or text
-/// file of [`FIRST`] bytes or more, shown as `forced` or as what it holds. With line numbers
+/// file of 1 MiB (`FIRST`) or more, shown as `forced` or as what it holds. With line numbers
 /// (`numbered`) the lines are counted first, which stdin can't do.
 pub fn start(path: &Path, forced: Option<FileType>, numbered: bool) -> Start {
     let stdin = path == Path::new("-");
