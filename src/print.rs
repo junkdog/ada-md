@@ -13,11 +13,13 @@ use crate::doc::{Doc, LinkId};
 use crate::highlight::{Highlights, SyntaxTheme};
 use crate::images::{self, Probe, Proto};
 use crate::kitty;
-use crate::layout::{self, ImageSlot, Layout, LayoutParams, Measure, RowKind};
+use crate::layout::{self, ImageSlot, Layout, LayoutParams, Measure, Row, RowKind};
 use crate::links::{self, BuiltinResolver, Resolved, Resolver, Target};
 use crate::pixels;
 use crate::theme::{StyleKey, Theme};
 use crate::ui::Painter;
+
+pub mod stream;
 
 /// How to print, besides the layout.
 #[derive(Clone, Copy, Debug, Default)]
@@ -128,12 +130,7 @@ fn write(
     let mut image: Option<(u32, Drawn)> = None;
     let rows = layout.rows.iter().enumerate().skip(skip);
     for (r, row) in rows.take(opts.rows.unwrap_or(usize::MAX)) {
-        let mut line = Line::default();
-        let mut emit = |text: &str, style| {
-            line.span(text, Pen::of(style), &mut out, &mut scratch);
-        };
-        painter.number(r as u32, &mut emit);
-        painter.row(row, &mut emit);
+        let mut line = start_line(&painter, r, row, &mut out, &mut scratch);
         if let (RowKind::Image { slot }, Some(pictures)) = (row.kind, opts.images)
             && let Some(at) = layout.images.get(slot as usize)
         {
@@ -148,16 +145,38 @@ fn write(
                 drawn.row(r as u32 - at.row, frame, &mut line, &mut out, &mut scratch);
             }
         }
-        if line.pen != Pen::default() {
-            out.push_str("\x1b[0m");
-        }
-        out.push('\n');
+        end_line(&line, &mut out);
         if out.len() >= PIECE {
             w.write_all(out.as_bytes())?;
             out.clear();
         }
     }
     w.write_all(out.as_bytes())
+}
+
+/// Row `r` of the painter's layout, numbered, as the start of an output line.
+fn start_line(
+    painter: &Painter,
+    r: usize,
+    row: &Row,
+    out: &mut String,
+    scratch: &mut String,
+) -> Line {
+    let mut line = Line::default();
+    let mut emit = |text: &str, style| {
+        line.span(text, Pen::of(style), out, scratch);
+    };
+    painter.number(r as u32, &mut emit);
+    painter.row(row, &mut emit);
+    line
+}
+
+/// End an output line with no style left on.
+fn end_line(line: &Line, out: &mut String) {
+    if line.pen != Pen::default() {
+        out.push_str("\x1b[0m");
+    }
+    out.push('\n');
 }
 
 /// A block image, ready for its rows.

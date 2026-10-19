@@ -8,7 +8,8 @@ use ada::app::{self, Config, Effects, Head, Msg, State};
 use ada::cli::{self, Args, Input};
 use ada::filetype::{self, FileType};
 use ada::images::{self, ImageMode};
-use ada::layout::{ImageFit, LayoutParams};
+use ada::layout::{ImageFit, LayoutParams, LineNumbers};
+use ada::print::stream::Start;
 use ada::record::{self, Recorder, ReplayOptions};
 use ada::theme::Theme;
 use ada::{completions, config, print, theme};
@@ -95,7 +96,7 @@ fn run() -> Result<(), String> {
     }
 
     let stdin = (path == Path::new("-"))
-        .then(|| read_stdin(None, forced))
+        .then(|| read_stdin(Vec::new(), None, forced))
         .transpose()?;
     if stdin.is_none() {
         fs::metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -122,16 +123,20 @@ fn run() -> Result<(), String> {
 /// and a bound on a huge file, which isn't read past them (plan, "ada as the only fzf previewer").
 const PREVIEW_ROWS: usize = 2000;
 
-/// Read stdin, as [`app::load_doc_head`] reads a file: whole, or with a `head` only the head of
-/// what isn't markdown, which the first bytes tell. Input with a NUL in it isn't shown, unless
-/// `-l` names its type.
-fn read_stdin(head: Option<Head>, forced: Option<FileType>) -> Result<Arc<str>, String> {
+/// Read stdin, after the bytes `read` of it already, as [`app::load_doc_head`] reads a file:
+/// whole, or with a `head` only the head of what isn't markdown, which the first bytes tell.
+/// Input with a NUL in it isn't shown, unless `-l` names its type.
+fn read_stdin(
+    read: Vec<u8>,
+    head: Option<Head>,
+    forced: Option<FileType>,
+) -> Result<Arc<str>, String> {
     let err = |e: io::Error| format!("stdin: {e}");
     let mut stdin = io::stdin().lock();
-    let mut bytes = Vec::new();
+    let mut bytes = read;
     if let Some(head) = head {
         (&mut stdin)
-            .take(head.bytes as u64)
+            .take(head.bytes.saturating_sub(bytes.len()) as u64)
             .read_to_end(&mut bytes)
             .map_err(err)?;
         let sniffed = || FileType::of(Path::new("-"), &String::from_utf8_lossy(&bytes));
@@ -188,15 +193,6 @@ fn print_doc(args: &Args, config: &Config, theme: &Theme, path: &Path) -> Result
                 bytes: (lines * (usize::from(width) + 1) * 4).max(1 << 16),
             }
         });
-    let text = if path == Path::new("-") {
-        read_stdin(head, forced)?
-    } else {
-        match app::load_doc_head(path, None, head) {
-            Msg::DocLoaded { text, .. } => text,
-            Msg::DocFailed { path, error } => return Err(format!("{}: {error}", path.display())),
-            other => return Err(format!("unexpected {other:?}")),
-        }
-    };
     // Images only where they reach a terminal, or when asked for by name.
     let to_terminal = tty || preview.is_some() || matches!(args.images, ImageMode::Force(_));
     let proto = to_terminal
@@ -217,6 +213,25 @@ fn print_doc(args: &Args, config: &Config, theme: &Theme, path: &Path) -> Result
             max_rows: (height * 3 / 5).max(1),
             screen_rows: height,
         }),
+    };
+    // A whole log, JSON or text file prints a piece at a time (O-52); a preview reads only its
+    // head, and `--line` needs the rows above the line.
+    let mut read = Vec::new();
+    if rows.is_none() && args.line.is_none() && forced != Some(FileType::Markdown) {
+        let numbered = FileType::Text { lang: None }.params(params).line_numbers;
+        match print::stream::start(path, forced, numbered != LineNumbers::Off) {
+            Start::Stream(stream) => return stream.run(theme, params).map_err(|e| e.to_string()),
+            Start::Whole(bytes) => read = bytes,
+        }
+    }
+    let text = if path == Path::new("-") {
+        read_stdin(read, head, forced)?
+    } else {
+        match app::load_doc_head(path, None, head) {
+            Msg::DocLoaded { text, .. } => text,
+            Msg::DocFailed { path, error } => return Err(format!("{}: {error}", path.display())),
+            other => return Err(format!("unexpected {other:?}")),
+        }
     };
     let filetype = forced.unwrap_or_else(|| FileType::of(path, &text));
     let doc = filetype.parse(path, &text);

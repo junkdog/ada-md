@@ -366,6 +366,27 @@ pub struct Layout {
 }
 
 impl Layout {
+    /// A layout with nothing in it, as a spare for [`relayout`].
+    pub fn empty(params: LayoutParams) -> Self {
+        Self {
+            params,
+            numbers: 0,
+            margin: 0,
+            text: String::new(),
+            spans: Vec::new(),
+            rows: Vec::new(),
+            block_rows: Vec::new(),
+            anchor_rows: Vec::new(),
+            headings: Vec::new(),
+            hits: Vec::new(),
+            search: Vec::new(),
+            grids: Vec::new(),
+            tables: Vec::new(),
+            code: Vec::new(),
+            images: Vec::new(),
+        }
+    }
+
     pub fn row_count(&self) -> u32 {
         self.rows.len() as u32
     }
@@ -411,24 +432,7 @@ pub fn layout_measured(
     glyphs: &Glyphs,
     params: LayoutParams,
 ) -> Layout {
-    let spare = Layout {
-        params,
-        numbers: 0,
-        margin: 0,
-        text: String::new(),
-        spans: Vec::new(),
-        rows: Vec::new(),
-        block_rows: Vec::new(),
-        anchor_rows: Vec::new(),
-        headings: Vec::new(),
-        hits: Vec::new(),
-        search: Vec::new(),
-        grids: Vec::new(),
-        tables: Vec::new(),
-        code: Vec::new(),
-        images: Vec::new(),
-    };
-    relayout(doc, measure, glyphs, params, spare)
+    relayout(doc, measure, glyphs, params, Layout::empty(params))
 }
 
 /// Lay out a document measured with the same glyphs, reusing the buffers of `spare`, a layout
@@ -440,7 +444,37 @@ pub fn relayout(
     params: LayoutParams,
     spare: Layout,
 ) -> Layout {
-    let numbers = number_width(doc, params);
+    relayout_lines(doc, measure, glyphs, params, spare, doc.line_count())
+}
+
+/// [`relayout`] for a piece of a longer file printed a piece at a time (O-52): its line numbers
+/// take the width the whole file's `lines` need, as they do in the other pieces.
+pub fn relayout_piece(
+    doc: &Doc,
+    glyphs: &Glyphs,
+    params: LayoutParams,
+    lines: u32,
+    spare: Layout,
+) -> Layout {
+    relayout_lines(
+        doc,
+        &Measure::new(doc, glyphs),
+        glyphs,
+        params,
+        spare,
+        lines,
+    )
+}
+
+fn relayout_lines(
+    doc: &Doc,
+    measure: &Measure,
+    glyphs: &Glyphs,
+    params: LayoutParams,
+    spare: Layout,
+    lines: u32,
+) -> Layout {
+    let numbers = number_width(lines, params);
     // the rows lay out beside the numbers; `out.params` keeps the width asked for, which is
     // what relayouts compare
     let inner = LayoutParams {
@@ -532,11 +566,11 @@ pub fn relayout(
 
 /// The columns line numbers take: the last line's digits and a space, when they're on and leave
 /// the document as much room as the margin needs.
-fn number_width(doc: &Doc, params: LayoutParams) -> u16 {
+fn number_width(lines: u32, params: LayoutParams) -> u16 {
     if params.line_numbers == LineNumbers::Off {
         return 0;
     }
-    let width = doc.line_count().max(1).ilog10() as u16 + 2;
+    let width = lines.max(1).ilog10() as u16 + 2;
     if params.width >= width + 24 { width } else { 0 }
 }
 

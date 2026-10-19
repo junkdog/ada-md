@@ -372,7 +372,7 @@ fn span_runs(len: usize, spans: impl Iterator<Item = (u32, u32, Rule)>) -> Box<[
 }
 
 /// The theme's rule for each log [`Kind`].
-struct LogRules([Rule; Kind::ALL.len()]);
+pub struct LogRules([Rule; Kind::ALL.len()]);
 
 impl LogRules {
     fn new(theme: &SyntaxTheme) -> Self {
@@ -389,7 +389,7 @@ impl LogRules {
 }
 
 /// The theme's rule for each JSON [`json::Kind`].
-struct JsonRules([Rule; json::Kind::ALL.len()]);
+pub struct JsonRules([Rule; json::Kind::ALL.len()]);
 
 impl JsonRules {
     fn new(theme: &SyntaxTheme) -> Self {
@@ -404,6 +404,106 @@ impl JsonRules {
         json::tokens(&line, comment, spans);
         let rule = |s: &json::Span| (s.start, s.end, self.0[s.kind as usize]);
         span_runs(line.len(), spans.iter().map(rule))
+    }
+}
+
+/// How a file printed a piece at a time is highlighted (O-52): not at all, or by one of ada's
+/// own lexers, whose lines don't depend on each other but for JSON's open `/* */`. A syntect
+/// syntax's state carries from line to line and can't move between threads, so none streams.
+pub enum Lexer {
+    Plain,
+    Log(LogRules),
+    Json(JsonRules),
+}
+
+impl Lexer {
+    /// Whether a file in `lang`, or plain text with none, has a lexer.
+    pub fn exists(lang: Option<&str>) -> bool {
+        lang.is_none_or(|l| is_plain(l) || is_log(l) || is_json(l))
+    }
+
+    /// The lexer for a file in `lang`, or plain text with none; `None` when syntect would
+    /// highlight it.
+    pub fn new(lang: Option<&str>, theme: &SyntaxTheme) -> Option<Self> {
+        match lang {
+            None => Some(Lexer::Plain),
+            Some(lang) if is_plain(lang) => Some(Lexer::Plain),
+            Some(lang) if is_log(lang) => Some(Lexer::Log(LogRules::new(theme))),
+            Some(lang) if is_json(lang) => Some(Lexer::Json(JsonRules::new(theme))),
+            Some(_) => None,
+        }
+    }
+
+    /// Highlight `code`'s lines as [`highlight`] would, after a line that left a `/* */`
+    /// comment open or not. Also returns whether its last line leaves one open. `None` when the
+    /// block is plain.
+    pub fn highlight(
+        &self,
+        code: &CodeBlock,
+        theme: &SyntaxTheme,
+        mut comment: bool,
+    ) -> (Option<CodeSpans>, bool) {
+        let Some(key) = key(code) else {
+            return (None, comment);
+        };
+        let lines = match self {
+            Lexer::Plain => return (None, comment),
+            Lexer::Log(rules) => {
+                let mut spans = Vec::new();
+                code.lines().map(|l| rules.line(l, &mut spans)).collect()
+            }
+            Lexer::Json(rules) => {
+                let mut spans = Vec::new();
+                code.lines()
+                    .map(|l| rules.line(l, &mut comment, &mut spans))
+                    .collect()
+            }
+        };
+        let spans = CodeSpans {
+            key,
+            rules: theme.id,
+            partial: false,
+            lines,
+        };
+        (Some(spans), comment)
+    }
+
+    /// Whether `text`'s lines leave a JSON comment open, after a line that left one open or
+    /// not, as [`Lexer::highlight`] would find. A comment opens only on a line with `/*` in it
+    /// and closes only on one with `*/`, so only the next such line is scanned, and the text
+    /// between is skipped.
+    pub fn comment_after(&self, text: &str, mut comment: bool) -> bool {
+        if !matches!(self, Lexer::Json(_)) {
+            return false;
+        }
+        let mut spans = Vec::new();
+        let mut rest = text;
+        // both marks hold a `*`, which JSON hardly has otherwise
+        let mark = |rest: &str, comment: bool| {
+            let b = rest.as_bytes();
+            let mut from = 0;
+            while let Some(i) = rest[from..].find('*').map(|i| from + i) {
+                let found = if comment {
+                    b.get(i + 1) == Some(&b'/')
+                } else {
+                    i > 0 && b[i - 1] == b'/'
+                };
+                if found {
+                    return Some(i);
+                }
+                from = i + 1;
+            }
+            None
+        };
+        while let Some(at) = mark(rest, comment) {
+            let start = rest[..at].rfind('\n').map_or(0, |i| i + 1);
+            let end = rest[at..].find('\n').map_or(rest.len(), |i| at + i);
+            let line = &rest[start..end];
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            json::tokens(&expand_tabs(line), &mut comment, &mut spans);
+            rest = rest.get(end + 1..).unwrap_or_default();
+        }
+        comment
     }
 }
 

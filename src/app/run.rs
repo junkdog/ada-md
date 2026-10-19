@@ -160,6 +160,21 @@ pub fn one_arena() {
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
 pub fn one_arena() {}
 
+/// Up to `n` malloc arenas (glibc), set before the threads that use them start. A print streamed
+/// a piece at a time (O-52) gives its workers an arena each: on one, they waited on its lock and
+/// on the kernel's for the blocks it maps, ~1.7× the CPU of a whole print on a JSON file, for
+/// 1–2 MiB of peak.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub fn arenas(n: usize) {
+    // SAFETY: as in `one_arena`; only threads started after this get the new arenas.
+    unsafe {
+        libc::mallopt(libc::M_ARENA_MAX, n.try_into().unwrap_or(i32::MAX));
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+pub fn arenas(_: usize) {}
+
 fn event_loop(
     terminal: &mut Term,
     state: &mut State,

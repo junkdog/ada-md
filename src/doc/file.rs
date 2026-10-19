@@ -2,6 +2,7 @@
 //! one image block, so that everything downstream treats them the way it treats a note.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::Arc;
 
 use super::parse::line_starts;
 use super::{Block, BlockKind, CodeBlock, Doc, LineRange, LinkKind, LinkRef, UnitId, code_lines};
@@ -25,6 +26,30 @@ pub fn code(text: &str, lang: Option<&str>) -> Doc {
             src: LineRange::new(1, lines),
         }],
         line_starts: line_starts(text),
+        code_count: 1,
+        unit_count: lines,
+        ..Doc::default()
+    }
+}
+
+/// A piece of a longer file of code or text, printed a piece at a time (O-52): its lines, the
+/// first of them line `first_line` of the file. `hash` stands in for a hash of the text, which
+/// only has to tell the pieces apart.
+pub fn code_piece(text: Arc<str>, lang: Option<&str>, first_line: u32, hash: u64) -> Doc {
+    let lines = code_lines(&text).count() as UnitId;
+    Doc {
+        blocks: vec![Block {
+            kind: BlockKind::Code(CodeBlock {
+                id: 0,
+                lang: lang.map(Into::into),
+                text,
+                hash,
+                first_line,
+                fenced: false,
+                first_unit: 0,
+            }),
+            src: LineRange::new(first_line, first_line + lines.max(1) - 1),
+        }],
         code_count: 1,
         unit_count: lines,
         ..Doc::default()
