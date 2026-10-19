@@ -1,0 +1,68 @@
+#!/usr/bin/env zsh
+# b2-bench-profile on CPUS PID | off: hold the bench cores ready for the length of a benchmark, then restore them.
+#   on:  for each CPU in CPUS (e.g. 0,2,4,6): EPP `performance`, and every idle state deeper than C1 disabled (here
+#        C2, 18 µs to wake, and C3, 350 µs, against a B2 key's 0.1–0.4 ms; ada-optimization experiment 27). The
+#        rest of the machine is left alone, and nothing loads a core. A detached watcher restores the saved values
+#        once PID (the benchmark) exits, however it exits
+#   off: restore now
+# Runs as root from the benchmark, through a password-free sudoers rule, as oxasm-drop-caches does:
+#   sudo install -m 755 -o root -g root bench/b2/b2-bench-profile /usr/local/sbin/b2-bench-profile
+#   echo "$USER ALL=(root) NOPASSWD: /usr/local/sbin/b2-bench-profile" | sudo tee /etc/sudoers.d/b2-bench-profile
+#   sudo chmod 440 /etc/sudoers.d/b2-bench-profile
+setopt no_unset
+D=/run/b2-bench-profile; SYS=/sys/devices/system/cpu
+
+restore() {   # write back what `on` saved, "path value" per line; idempotent
+  [[ -f $D/saved ]] || return 0
+  local p v
+  while read -r p v; do print -r -- $v > $p; done < $D/saved
+  rm -f $D/saved
+}
+
+stop_watcher() {
+  [[ -f $D/watcher ]] || return 0
+  local w=$(<$D/watcher)
+  rm -f $D/watcher
+  [[ $w =~ '^[0-9]+$' ]] || return 0
+  kill $w 2>/dev/null
+  # wait (up to 3 s) for its restore to finish, so it can't land on a profile set after this
+  local i
+  for i in {1..30}; do kill -0 $w 2>/dev/null || break; sleep 0.1; done
+  return 0
+}
+
+case ${1:-} in
+  on)
+    [[ ${2:-} =~ '^[0-9]+(,[0-9]+)*$' && ${3:-} =~ '^[0-9]+$' ]] || { echo "usage: b2-bench-profile on CPUS PID" >&2; exit 2 }
+    kill -0 $3 2>/dev/null || { echo "b2-bench-profile: no process $3" >&2; exit 2 }
+    cpus=(${(s:,:)2})
+    for c in $cpus; do
+      [[ -w $SYS/cpu$c/cpufreq/energy_performance_preference ]] || { echo "b2-bench-profile: no cpu$c" >&2; exit 2 }
+    done
+    stop_watcher; restore   # an earlier profile still held
+    mkdir -p $D; : > $D/saved
+    for c in $cpus; do
+      f=$SYS/cpu$c/cpufreq/energy_performance_preference
+      print -r -- "$f $(<$f)" >> $D/saved
+      for s in $SYS/cpu$c/cpuidle/state<2->(N); do print -r -- "$s/disable $(<$s/disable)" >> $D/saved; done
+    done
+    for c in $cpus; do
+      print performance > $SYS/cpu$c/cpufreq/energy_performance_preference
+      for s in $SYS/cpu$c/cpuidle/state<2->(N); do print 1 > $s/disable; done
+    done
+    setsid -f $0 watch $3 < /dev/null > /dev/null 2>&1
+    ;;
+  watch)   # internal: restore once PID exits, or when `off` sends TERM
+    [[ ${2:-} =~ '^[0-9]+$' ]] || exit 2
+    print $$ > $D/watcher
+    trap 'restore; exit 0' TERM
+    while kill -0 $2 2>/dev/null; do sleep 1; done   # ends with the benchmark
+    [[ -f $D/watcher && $(<$D/watcher) == $$ ]] && rm -f $D/watcher
+    restore
+    ;;
+  off)
+    stop_watcher; restore
+    ;;
+  *)
+    echo "usage: b2-bench-profile on CPUS PID | off" >&2; exit 2 ;;
+esac

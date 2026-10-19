@@ -21,6 +21,10 @@ cargo build --release --manifest-path bench/b2/Cargo.toml   # the pty driver, be
 
 ## Run
 
+`B2_ROOT=~/b2 ADA=<release ada> zsh bench/b2/full.zsh ~/b2/results/<date>-<sha>-all` runs all of it (the lanes,
+print mode, the previewer files, images and the tables) into a record set that `rerun.zsh` takes as REF, with
+the bench cores held ready (below). The steps one by one:
+
 ```zsh
 B2=bench/b2/target/release/b2
 python3 -I bench/b2/lanes.py   # writes lane0..3.json
@@ -92,6 +96,17 @@ rule. `B2_DROP_CACHES` names another script, or `off` skips it. Runs and floods 
 with no program on the slave. Run it under `taskset` on a lane's cores, alone and beside a run, to see what a
 difference has to exceed. `b2 probe CWD KEY... -- CMD...` dumps the emulated screen after each key.
 
+### Holding the cores ready
+
+B2 times one key at a time after the screen held still, so between keys an idle core drops to its floor clock and
+into deep idle (C3 exits in 350 µs, against a key's 0.1–0.4 ms): without help, a cell moves with how busy the rest
+of the machine is (two busy lanes read 1.24× four) and with the CCD's ramp. `b2-bench-profile on CPUS PID` holds
+the listed cores at EPP `performance` with no idle state deeper than C1, and restores them when PID exits; with
+it, two busy lanes read as four (median 1.001) and CCD1 as CCD0, at 27–28 °C (ada-optimization, experiment 28). It
+runs as root through a password-free sudoers rule (its header has the install lines). `full.zsh`, `rerun.zsh` and
+`stress.zsh` hold it for their cores unless `B2_PROFILE=off`, and write `profile.txt`: records with and without it
+don't mix, and `rerun.zsh` refuses a REF made the other way (no `profile.txt`: off).
+
 ### ada-only rerun
 
 ```zsh
@@ -99,10 +114,11 @@ B2_ROOT=~/b2 ADA=<new build> ADA_REF=<the build REF measured> zsh bench/b2/rerun
 ```
 
 Reruns ada's cells (the lanes, print, the previewer files and images) beside the ada that REF measured, both built
-fresh from `git archive`, without rerunning the other viewers; about 21 minutes. REF is a full record set
-(`b2/all.jsonl`, `lane0..3.json`, `b2a/`, `b2p/`, `b2i/`; `merge.py` builds one from a run and its reruns), and OUT
-becomes one, the next rerun's REF. ada's jobs run on their lanes in REF, one run per job with `adaref` in turn,
-the order flipping each round. `abcmp.py` writes `OUT/compare.md`: each cell's new/old, the A/B, and the reference
+fresh from `git archive`, without rerunning the other viewers. REF is a full record set (`b2/all.jsonl`,
+`lane0..3.json`, `b2a/`, `b2p/`, `b2i/`; `full.zsh` writes one, `merge.py` builds one from a run and its reruns),
+and OUT becomes one, the next rerun's REF. ada's jobs are split into one-run jobs, five rounds: with the profile,
+ada on its lanes in REF and `adaref` on the same lanes of the other CCD at once, swapping sides each round; with
+`B2_PROFILE=off`, the two in turn on ada's lanes (about 21 minutes). `abcmp.py` writes `OUT/compare.md`: each cell's new/old, the A/B, and the reference
 build's old/REF, the machine's drift since REF. A part or measure whose drift is beyond ±3% (`OUT/keep.txt`)
 keeps REF's ada cells in the merge, since the other viewers' cells no longer compare with ada's new ones: in an
 ada-only rerun usually the interactive cells (two busy lanes against a full run's four: idle clocks) and peak RSS
@@ -139,7 +155,10 @@ done
 | `b2i.zsh` | image previews against kitten icat, chafa, viu and mcat |
 | `runcmp.py` | two runs' interactive cells side by side, for regressions |
 | `timeouts.py` | the cells that always hit their cap, skipped while the tool is still that version |
+| `full.zsh` | the whole run into one record set, the bench cores held ready |
 | `rerun.zsh`, `abcmp.py`, `merge.py` | ada's cells rerun beside the build the last run measured, compared, and merged over that run's records |
+| `stress.zsh` | two ada builds A/B'd under steady load, at once on matched cores: `b2 flood` at 20,000 keys a second and `examples/bench.rs`; for regression checks |
+| `b2-bench-profile` | root helper: EPP `performance` and no deep idle on the bench cores for a run, restored after |
 | `pick.py` | picking search terms |
 | `printcmp.zsh`, `sgrcmp.py` | print mode, two builds compared by what each character shows (SGR interpreted, blanks by background), over the vault and the corpus at four widths |
 | `termcmp.zsh`, `relay.py` | two builds live in tmux, kitty or alacritty through one key script, compared screen by screen (`sgrcmp.py --screen`, or pixels for alacritty); `relay.py` feeds keys to ada inside alacritty |
