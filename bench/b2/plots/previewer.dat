@@ -1,12 +1,12 @@
-# B2 previewer files at ada 137570c, logs e9ec3b7, JSON 72f4fa4 + O-48: hyperfine medians, ms (peak RSS in MiB); cap at 60 s; written by bench/b2/plot.py
+# B2 previewer files at ada 137570c, logs and JSON 0994ae2: hyperfine medians, ms (peak RSS in MiB); cap at 60 s; written by bench/b2/plot.py
 # previewer, a preview, wall
 # doc ada bat rich
 code-s.rs 5.50705 8.72641 136.992
 code-m.rs 25.2374 34.1709 216.245
 code-l.rs 24.8976 31.0994 194.784
-log.log 5.07345 1049.48 235.865
-huge.json 9.10124 30.7796 4308.05
-huge.log 5.35584 1069.88 9173.24
+log.log 5.27249 1049.48 235.865
+huge.json 9.18443 30.1804 4308.05
+huge.log 5.47445 1069.88 9173.24
 
 
 # previewer, the whole file, wall
@@ -14,9 +14,9 @@ huge.log 5.35584 1069.88 9173.24
 code-s.rs 5.49781 8.71833 137.093 8.13274
 code-m.rs 25.0354 34.2757 215.435 30.9849
 code-l.rs 116.574 147.114 516.893 39.246
-log.log 15.5706 3285.55 391.205 3232.7
-huge.json 75.5948 35.2172 4221.65 cap
-huge.log 950.557 cap 24171 cap
+log.log 16.0429 3285.55 391.205 3232.7
+huge.json 54.4645 30.2514 4221.65 cap
+huge.log 327.086 cap 24171 cap
 
 
 # previewer, a preview, peak RSS
@@ -24,9 +24,9 @@ huge.log 950.557 cap 24171 cap
 code-s.rs 9.49219 15.0176 42.9453
 code-m.rs 10.1719 15.5 48.3711
 code-l.rs 10.3613 15.3496 46.8711
-log.log 9.9668 14.4062 48.4238
-huge.json 17.4043 26.291 580.109
-huge.log 10.0527 14.3184 348.477
+log.log 9.27148 14.4062 48.4238
+huge.json 16.8164 25.8594 580.109
+huge.log 9.50586 14.3184 348.477
 
 
 # previewer, the whole file, peak RSS
@@ -34,6 +34,6 @@ huge.log 10.0527 14.3184 348.477
 code-s.rs 9.61719 15.0703 42.9238 19.3984
 code-m.rs 10.1914 15.3652 48.2578 20.6367
 code-l.rs 12.9082 15.457 64.0059 23.0957
-log.log 13.4141 14.293 53.9668 36.8711
-huge.json 52.7422 26.043 579.711 cap
-huge.log 468.133 cap 899.062 cap
+log.log 12.8184 14.293 53.9668 36.8711
+huge.json 52.4102 25.4414 579.711 cap
+huge.log 15.8242 cap 899.062 cap

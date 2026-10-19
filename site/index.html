@@ -182,7 +182,7 @@
         protocol in kitty and Ghostty and in half-blocks elsewhere. <strong>It stands in for both
         <code>bat</code> and <code>kitten icat</code>.</strong></p>
       <p>A preview stops 2,000 rows in and reads no further, so an 80 MB log previews as fast as a small file:
-        <a href="#previewer-perf">5.4 ms, where bat takes a second</a>.</p>
+        <a href="#previewer-perf">5.5 ms, where bat takes a second</a>.</p>
       <pre><code>fzf --preview 'ada --print {}'
 <span class="c"># from rg matches: the matched line lands mid-pane</span>
 rg -n . | fzf -d : --preview-window '+{2}-/2' \
@@ -633,72 +633,72 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
 </div></div>
 <div class="perf-panel" data-prev="3"><div class="charts">
 <figure class="chart"><figcaption>a preview <span>ms</span> <em class="kind wall">wall</em><small>the first 2,000 rows (bat and rich: 2,000 source lines), to a pipe</small></figcaption><ol>
-<li class="ada" style="--w:14.7%"><span class="name">ada</span><span class="bar"></span><span class="val">5.1</span></li>
-<li style="--w:76.1%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">236 <small>46×</small></span></li>
-<li style="--w:100.0%"><span class="name">bat</span><span class="bar"></span><span class="val">1,049 <small>207×</small></span></li>
+<li class="ada" style="--w:14.8%"><span class="name">ada</span><span class="bar"></span><span class="val">5.3</span></li>
+<li style="--w:76.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">236 <small>45×</small></span></li>
+<li style="--w:100.0%"><span class="name">bat</span><span class="bar"></span><span class="val">1,049 <small>199×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>the whole file <span>ms</span> <em class="kind wall">wall</em><small>all of it, to a pipe at 100 columns</small></figcaption><ol>
-<li class="ada" style="--w:14.6%"><span class="name">ada</span><span class="bar"></span><span class="val">15.6</span></li>
-<li style="--w:66.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">391 <small>25×</small></span></li>
-<li style="--w:99.7%"><span class="name">mcat</span><span class="bar"></span><span class="val">3,233 <small>208×</small></span></li>
-<li style="--w:100.0%"><span class="name">bat</span><span class="bar"></span><span class="val">3,286 <small>211×</small></span></li>
+<li class="ada" style="--w:14.7%"><span class="name">ada</span><span class="bar"></span><span class="val">16.0</span></li>
+<li style="--w:65.9%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">391 <small>24×</small></span></li>
+<li style="--w:99.7%"><span class="name">mcat</span><span class="bar"></span><span class="val">3,233 <small>202×</small></span></li>
+<li style="--w:100.0%"><span class="name">bat</span><span class="bar"></span><span class="val">3,286 <small>205×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, a preview <span>MiB</span><small>the most resident at once, for a preview</small></figcaption><ol>
-<li class="ada" style="--w:36.7%"><span class="name">ada</span><span class="bar"></span><span class="val">10.0</span></li>
-<li style="--w:51.4%"><span class="name">bat</span><span class="bar"></span><span class="val">14.4 <small>1.4×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">48.4 <small>4.9×</small></span></li>
+<li class="ada" style="--w:35.7%"><span class="name">ada</span><span class="bar"></span><span class="val">9.3</span></li>
+<li style="--w:52.8%"><span class="name">bat</span><span class="bar"></span><span class="val">14.4 <small>1.6×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">48.4 <small>5.2×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, the whole file <span>MiB</span><small>the most resident at once, for the whole file</small></figcaption><ol>
-<li class="ada" style="--w:39.7%"><span class="name">ada</span><span class="bar"></span><span class="val">13.4</span></li>
-<li style="--w:42.4%"><span class="name">bat</span><span class="bar"></span><span class="val">14.3 <small>1.1×</small></span></li>
-<li style="--w:83.5%"><span class="name">mcat</span><span class="bar"></span><span class="val">36.9 <small>2.7×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">54.0 <small>4.0×</small></span></li>
+<li class="ada" style="--w:38.9%"><span class="name">ada</span><span class="bar"></span><span class="val">12.8</span></li>
+<li style="--w:43.6%"><span class="name">bat</span><span class="bar"></span><span class="val">14.3 <small>1.1×</small></span></li>
+<li style="--w:83.8%"><span class="name">mcat</span><span class="bar"></span><span class="val">36.9 <small>2.9×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">54.0 <small>4.2×</small></span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-prev="4"><div class="charts">
 <figure class="chart"><figcaption>a preview <span>ms</span> <em class="kind wall">wall</em><small>the first 2,000 rows (bat and rich: 2,000 source lines), to a pipe</small></figcaption><ol>
-<li class="ada" style="--w:12.9%"><span class="name">ada</span><span class="bar"></span><span class="val">9.1</span></li>
-<li style="--w:30.2%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">30.8 <small>3.4×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">4,308 <small>473×</small></span></li>
+<li class="ada" style="--w:13.0%"><span class="name">ada</span><span class="bar"></span><span class="val">9.2</span></li>
+<li style="--w:29.8%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">30.2 <small>3.3×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">4,308 <small>469×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>the whole file <span>ms</span> <em class="kind wall">wall</em><small>all of it, to a pipe at 100 columns</small></figcaption><ol>
-<li style="--w:16.1%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">35.2 <small>0.5×</small></span></li>
-<li class="ada" style="--w:29.5%"><span class="name">ada</span><span class="bar"></span><span class="val">75.6</span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">4,222 <small>56×</small></span></li>
+<li style="--w:15.7%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">30.3 <small>0.6×</small></span></li>
+<li class="ada" style="--w:25.7%"><span class="name">ada</span><span class="bar"></span><span class="val">54.5</span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">4,222 <small>78×</small></span></li>
 <li class="missing"><span class="name">mcat</span><span class="why">stopped after 60 s</span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, a preview <span>MiB</span><small>the most resident at once, for a preview</small></figcaption><ol>
-<li class="ada" style="--w:20.7%"><span class="name">ada</span><span class="bar"></span><span class="val">17.4</span></li>
-<li style="--w:30.0%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">26.3 <small>1.5×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">580 <small>33×</small></span></li>
+<li class="ada" style="--w:20.6%"><span class="name">ada</span><span class="bar"></span><span class="val">16.8</span></li>
+<li style="--w:30.2%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">25.9 <small>1.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">580 <small>34×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, the whole file <span>MiB</span><small>the most resident at once, for the whole file</small></figcaption><ol>
-<li style="--w:22.8%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">26.0 <small>0.5×</small></span></li>
-<li class="ada" style="--w:40.4%"><span class="name">ada</span><span class="bar"></span><span class="val">52.7</span></li>
+<li style="--w:22.7%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">25.4 <small>0.5×</small></span></li>
+<li class="ada" style="--w:40.5%"><span class="name">ada</span><span class="bar"></span><span class="val">52.4</span></li>
 <li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">580 <small>11×</small></span></li>
 <li class="missing"><span class="name">mcat</span><span class="why">stopped after 60 s</span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-prev="5"><div class="charts">
 <figure class="chart"><figcaption>a preview <span>ms</span> <em class="kind wall">wall</em><small>the first 2,000 rows (bat and rich: 2,000 source lines), to a pipe</small></figcaption><ol>
-<li class="ada" style="--w:11.0%"><span class="name">ada</span><span class="bar"></span><span class="val">5.4</span></li>
-<li style="--w:74.3%"><span class="name">bat</span><span class="bar"></span><span class="val">1,070 <small>200×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">9,173 <small>1,713×</small></span></li>
+<li class="ada" style="--w:11.0%"><span class="name">ada</span><span class="bar"></span><span class="val">5.5</span></li>
+<li style="--w:74.2%"><span class="name">bat</span><span class="bar"></span><span class="val">1,070 <small>195×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">9,173 <small>1,676×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>the whole file <span>ms</span> <em class="kind wall">wall</em><small>all of it, to a pipe at 100 columns</small></figcaption><ol>
-<li class="ada" style="--w:22.1%"><span class="name">ada</span><span class="bar"></span><span class="val">951</span></li>
-<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">24,171 <small>25×</small></span></li>
+<li class="ada" style="--w:17.6%"><span class="name">ada</span><span class="bar"></span><span class="val">327</span></li>
+<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">24,171 <small>74×</small></span></li>
 <li class="missing"><span class="name">bat</span><span class="why">stopped after 60 s</span></li>
 <li class="missing"><span class="name">mcat</span><span class="why">stopped after 60 s</span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, a preview <span>MiB</span><small>the most resident at once, for a preview</small></figcaption><ol>
-<li class="ada" style="--w:20.5%"><span class="name">ada</span><span class="bar"></span><span class="val">10.1</span></li>
-<li style="--w:28.5%"><span class="name">bat</span><span class="bar"></span><span class="val">14.3 <small>1.4×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">348 <small>35×</small></span></li>
+<li class="ada" style="--w:20.3%"><span class="name">ada</span><span class="bar"></span><span class="val">9.5</span></li>
+<li style="--w:29.3%"><span class="name">bat</span><span class="bar"></span><span class="val">14.3 <small>1.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">348 <small>37×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, the whole file <span>MiB</span><small>the most resident at once, for the whole file</small></figcaption><ol>
-<li class="ada" style="--w:58.4%"><span class="name">ada</span><span class="bar"></span><span class="val">468</span></li>
-<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">899 <small>1.9×</small></span></li>
+<li class="ada" style="--w:18.5%"><span class="name">ada</span><span class="bar"></span><span class="val">15.8</span></li>
+<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">899 <small>57×</small></span></li>
 <li class="missing"><span class="name">bat</span><span class="why">stopped after 60 s</span></li>
 <li class="missing"><span class="name">mcat</span><span class="why">stopped after 60 s</span></li>
 </ol></figure>
@@ -958,7 +958,7 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
 <li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">96.7 <small>1.2×</small></span></li>
 </ol></figure>
 </div></div>
-<p class="stamp">B2 at ada <code>137570c</code>, 2026-10-18; previewer files at ada <code>137570c, logs e9ec3b7, JSON 72f4fa4 + O-48</code></p>
+<p class="stamp">B2 at ada <code>137570c</code>, 2026-10-18; previewer files at ada <code>137570c, logs and JSON 0994ae2</code></p>
 <!-- perf:end -->
   <p class="caveats">Where ada isn't first: glow writes about a third fewer bytes per page, and md-tui uses less
     memory on the smallest note. As a previewer, bat prints the whole 3.75 MB JSON line faster and in less

@@ -63,7 +63,7 @@ writes about a third fewer bytes per page, and md-tui and leaf peak lower on the
 
 Printing to a pipe, it's the fastest of the printers that render and highlight, on every note.
 As a previewer it beats bat on code, on pretty-printed JSON (6.5 MB in 160 ms, bat 1.9 s) and on
-logs (1 MB in 16 ms, bat 3.3 s), though a single 3.75 MB line of JSON takes it twice bat's time,
+logs (1 MB in 16 ms, bat 3.3 s), though a single 3.75 MB line of JSON takes it 1.8× bat's time,
 which leaves such lines uncolored. Image previews are 1.5–20× faster than `kitten icat`, in
 1.2–13× less memory.
 
