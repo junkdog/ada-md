@@ -34,6 +34,7 @@ for f in ${=B2P_FILES:-code-s.rs code-m.rs code-l.rs log.log huge.json huge.log}
   for mode in whole preview; do
     if [[ $mode == whole ]]; then P=($WHOLE); else P=($PREVIEW); fi
     [[ -n $B2P_ONLY ]] && P=(${(M)P:#(${(~j:|:)${=B2P_ONLY}}):*})
+    [[ -n $ADA_REF ]] && P+=(${${(M)P:#ada:*}/#ada:$ADA/adaref:$ADA_REF})   # rerun.zsh: the reference ada, beside ada
     for c in ${(M)SKIP:#$f $mode *}; do P=(${P:#${c##* }:*}); done
     (( $#P )) || continue
     pre=(); runs=(--warmup 2 --min-runs 15)

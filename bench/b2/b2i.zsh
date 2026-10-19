@@ -34,6 +34,7 @@ for img in ${=B2I_FILES:-fit.png diagram.png photo-12mp.png photo.jpg photo-12mp
   for t in kitty text; do
     if [[ $t == kitty ]]; then P=($KITTY); else P=($TEXT); fi
     [[ -n $B2I_ONLY ]] && P=(${(M)P:#(${(~j:|:)${=B2I_ONLY}}):*})   # B2I_ONLY="ada icat", as B2P_ONLY
+    [[ -n $ADA_REF ]] && P+=(${${(M)P:#ada:*}/#ada:$ADA/adaref:$ADA_REF})   # rerun.zsh: the reference ada, beside ada
     args=(); for c in $P; do args+=(-n ${c%%:*} "${c#*:} $img"); done
     : > $OUT/.start
     taskset -c 2,4,6,8 $B/hyperfine -N --input=null --output=pipe --warmup 2 --min-runs 20 \
