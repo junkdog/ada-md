@@ -112,12 +112,29 @@ pub struct Span {
     pub kind: Kind,
 }
 
-/// The parsers' state: the line, the spans found so far, and the quotes known not to close.
+/// The parsers' state: the line, the spans found so far, the quotes known not to close, and
+/// where the runs that scanners failed on end.
 struct Out<'a> {
     line: &'a str,
     spans: Vec<Span>,
     /// One bit per [`QUOTES`] entry.
     open: u8,
+    /// By [`Dead`]: the offset the last run that scanner failed on ends at.
+    dead: [usize; 3],
+}
+
+/// Scanners that read a run of characters, then fail or not by what comes after it. A start
+/// later in the same run reads it to the same end and fails the same way, so it fails at once
+/// instead of reading it again: without this, a line of `a.a.a…` read the rest of the line
+/// from each word (O-50).
+#[derive(Clone, Copy)]
+enum Dead {
+    /// [`url`]'s scheme.
+    Url,
+    /// [`pair`]'s key.
+    Pair,
+    /// [`number`]'s decimal: its digits and dotted parts.
+    Decimal,
 }
 
 const QUOTES: [char; 3] = ['"', '\'', '`'];
@@ -131,6 +148,7 @@ pub fn tokens(line: &str, spans: &mut Vec<Span>) {
         line,
         spans: std::mem::take(spans),
         open: 0,
+        dead: [0; 3],
     };
     right(lead(), message()).parse_state(line, &mut out);
     *spans = out.spans;
@@ -187,6 +205,27 @@ fn atomic<'a, O>(p: impl StrParser<'a, O, Out<'a>>) -> impl StrParser<'a, O, Out
 
 fn opt<'a, O>(p: impl StrParser<'a, O, Out<'a>>) -> impl StrParser<'a, Option<O>, Out<'a>> {
     succeed(atomic(p))
+}
+
+/// `p`, failing at once inside a run it failed on before: `run` is the length of the run at
+/// the input, which decides how `p` ends.
+fn dead_end<'a, O>(
+    which: Dead,
+    run: fn(&str) -> usize,
+    p: impl StrParser<'a, O, Out<'a>>,
+) -> impl StrParser<'a, O, Out<'a>> {
+    move |s: &mut State<'_, 'a>| {
+        let at = offset(s);
+        if at < s.user_state.dead[which as usize] {
+            return None;
+        }
+        let input = s.input;
+        let o = p(s);
+        if o.is_none() {
+            s.user_state.dead[which as usize] = at + run(input);
+        }
+        o
+    }
 }
 
 /// Succeeds, consuming nothing, when `ok`.
@@ -609,7 +648,20 @@ fn number<'a>() -> impl StrParser<'a, (), Out<'a>> {
     );
     let unit = item_while(|c: char| c.is_alphabetic()).filter(|u| UNITS.contains(u));
     let decimal = mark(Kind::Number, right(some_digits(), right(dotted, opt(unit))));
-    left_end(or(atomic(hex).map(|_| ()), decimal.map(|_| ())))
+    // a decimal can't follow `0x`, so the hex's end of a word goes with it alone
+    let decimal = dead_end(Dead::Decimal, decimal_len, left_end(decimal));
+    or(atomic(left_end(hex)).map(|_| ()), decimal)
+}
+
+/// The length of the digits `s` starts with and the dotted parts after them, `1.2.3`.
+fn decimal_len(s: &str) -> usize {
+    let b = s.as_bytes();
+    let digits = |i: usize| b[i..].iter().take_while(|c| c.is_ascii_digit()).count();
+    let mut i = digits(0);
+    while b.get(i) == Some(&b'.') && b.get(i + 1).is_some_and(u8::is_ascii_digit) {
+        i += 1 + digits(i + 1);
+    }
+    i
 }
 
 /// A hash, a digest or an id: 7 or more hex digits, with a digit among them and letters all in
@@ -674,19 +726,27 @@ fn ipv6<'a>() -> impl StrParser<'a, (), Out<'a>> {
             && a.bytes().any(|b| b.is_ascii_digit())
             && !a.contains(":::")
     };
-    mark(
-        Kind::Ip,
-        left_end(not_empty(item_while(|c: char| c.is_ascii_hexdigit() || c == ':')).filter(valid)),
-    )
+    // groups and colons, read no further than a valid address could reach (7 colons and 8
+    // groups of 4: 39 bytes), so a long run of them isn't read again from each word (O-50)
+    let groups = |s: &mut State<'_, 'a>| {
+        let n = s
+            .input
+            .bytes()
+            .take(40)
+            .take_while(|&b| b.is_ascii_hexdigit() || b == b':')
+            .count();
+        let a = &s.input[..n];
+        s.input = &s.input[n..];
+        (1..40).contains(&n).then_some(a)
+    };
+    mark(Kind::Ip, left_end(groups.filter(valid)))
 }
 
 /// `https://example.com/x?y`, short of trailing punctuation and of a `)` it doesn't open.
 fn url<'a>() -> impl StrParser<'a, (), Out<'a>> {
-    |s: &mut State<'_, 'a>| {
+    let url = |s: &mut State<'_, 'a>| {
         let input = s.input;
-        let scheme = input
-            .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-')))
-            .unwrap_or(input.len());
+        let scheme = scheme_len(input);
         if scheme == 0 || !input[scheme..].starts_with("://") {
             return None;
         }
@@ -714,12 +774,28 @@ fn url<'a>() -> impl StrParser<'a, (), Out<'a>> {
         s.input = &input[scheme + 3 + url.len()..];
         push(s, start, Kind::Url);
         Some(())
-    }
+    };
+    dead_end(Dead::Url, scheme_len, url)
+}
+
+/// The length of the URL scheme's characters `s` starts with.
+fn scheme_len(s: &str) -> usize {
+    s.find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-')))
+        .unwrap_or(s.len())
+}
+
+fn is_key(c: char) -> bool {
+    is_word(c) || matches!(c, '.' | '-')
+}
+
+/// The length of the key characters `s` starts with.
+fn key_len(s: &str) -> usize {
+    s.find(|c: char| !is_key(c)).unwrap_or(s.len())
 }
 
 /// `key=value`'s key and `=`; a level's value (`level=warn`) as its level.
 fn pair<'a>() -> impl StrParser<'a, (), Out<'a>> {
-    let name = not_empty(item_while(|c: char| is_word(c) || matches!(c, '.' | '-')));
+    let name = not_empty(item_while(is_key));
     let key = move |s: &mut State<'_, 'a>| {
         let start = offset(s);
         let key = name(s)?;
@@ -727,7 +803,7 @@ fn pair<'a>() -> impl StrParser<'a, (), Out<'a>> {
         Some(key)
     };
     let assign = mark(Kind::Assign, left_end_not_eq());
-    bind(key, move |k: &str| {
+    let pair = bind(key, move |k: &str| {
         let leveled = ["level", "lvl", "severity", "loglevel"]
             .iter()
             .any(|l| k.eq_ignore_ascii_case(l));
@@ -735,7 +811,8 @@ fn pair<'a>() -> impl StrParser<'a, (), Out<'a>> {
             item_while(|c: char| c.is_ascii_alphabetic()).map_if(level),
         ));
         right(assign, opt(right(guard(leveled), value)).map(|_| ()))
-    })
+    });
+    dead_end(Dead::Pair, key_len, pair)
 }
 
 /// A `=` that isn't `==`.
@@ -1068,6 +1145,24 @@ mod tests {
                 ("5", Number),
             ]
         );
+    }
+
+    /// A long run of word characters and `.`, `-` or `:` with no space in it is read once, not
+    /// once from each word (O-50: 16 KiB of `a.` took 217 ms, and `1.` up to a `1x` 437). What
+    /// the scanners mark inside such runs stays: an address from a later group, hex after a
+    /// dotted number, a key after one that failed.
+    #[test]
+    fn long_runs_are_read_once() {
+        assert_eq!(marked("f:f:f:f:f:f:f:f:1"), [("f:f:f:f:f:f:f:1", Ip)]);
+        assert_eq!(marked("1.0x1f"), [("0x1f", Hex)]);
+        assert_eq!(
+            marked("a.b.c==d.e=1"),
+            [("d.e", Key), ("=", Assign), ("1", Number)]
+        );
+        for run in ["a.", "a-", "a:", "f:", "a::", "a1b2c3d4-", "1."] {
+            let line = run.repeat((1 << 16) / run.len()) + "1x";
+            marked(&line);
+        }
     }
 
     #[test]
