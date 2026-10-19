@@ -150,6 +150,9 @@ fn turn(mut image: DynamicImage, orientation: Orientation) -> DynamicImage {
     image
 }
 
+/// The most rows `Shrink::columns` takes before it's folded: 257 × 255 is `u16::MAX`.
+const SPILL: u32 = 257;
+
 /// A box filter fed one row at a time: every source pixel adds to the one output pixel it falls
 /// in, and each output pixel is the mean of its box. For shrinking, it's as good as a resampling
 /// filter, and it needs only one output row of sums.
@@ -162,6 +165,11 @@ struct Shrink {
     channels: usize,
     /// Where each output column starts, in source columns, and one past the last.
     cols: Vec<u32>,
+    /// The source rows not yet folded into `sums`, added up byte by byte: a flat add the
+    /// compiler vectorizes, where summing each box a row at a time went a pixel at a time.
+    columns: Vec<u16>,
+    /// Source rows in `columns`, at most `SPILL`.
+    pending: u32,
     /// One output row's sums, by output column and source channel.
     sums: Vec<u64>,
     /// Source rows taken.
@@ -183,6 +191,8 @@ impl Shrink {
             dst,
             channels,
             cols,
+            columns: vec![0; src.0 as usize * channels],
+            pending: 0,
             sums: vec![0; dst.0 as usize * channels],
             rows: 0,
             y: 0,
@@ -200,40 +210,61 @@ impl Shrink {
         if self.rows >= self.src.1 {
             return;
         }
-        match self.channels {
-            1 => self.add::<1>(row),
-            2 => self.add::<2>(row),
-            3 => self.add::<3>(row),
-            _ => self.add::<4>(row),
+        // the first row is copied rather than added, so `columns` needs no clearing
+        if self.pending == 0 {
+            for (s, &v) in self.columns.iter_mut().zip(row) {
+                *s = u16::from(v);
+            }
+            if let Some(rest) = self.columns.get_mut(row.len()..) {
+                rest.fill(0);
+            }
+        } else {
+            for (s, &v) in self.columns.iter_mut().zip(row) {
+                *s += u16::from(v);
+            }
         }
+        self.pending += 1;
         self.rows += 1;
         if self.rows == self.row_start(self.y + 1) {
             self.flush();
+        } else if self.pending == SPILL {
+            self.fold();
         }
     }
 
-    /// `push` for `CH` channels, a number the compiler can unroll a pixel by.
-    fn add<const CH: usize>(&mut self, row: &[u8]) {
+    /// Add `columns` to the sums, box by box, and empty it.
+    fn fold(&mut self) {
+        match self.channels {
+            1 => self.fold_by::<1>(),
+            2 => self.fold_by::<2>(),
+            3 => self.fold_by::<3>(),
+            _ => self.fold_by::<4>(),
+        }
+        self.pending = 0;
+    }
+
+    /// `fold` for `CH` channels, a number the compiler can unroll a pixel by.
+    fn fold_by<const CH: usize>(&mut self) {
+        let columns = self.columns.as_chunks::<CH>().0;
         let sums = self.sums.as_chunks_mut::<CH>().0;
         for (sums, cols) in sums.iter_mut().zip(self.cols.windows(2)) {
-            let Some(pixels) = row.get(cols[0] as usize * CH..cols[1] as usize * CH) else {
-                break;
-            };
-            // a row of the box in u32, which no row of pixels can overflow, then into the sums
-            let mut acc = [0u32; CH];
-            for px in pixels.as_chunks::<CH>().0 {
+            let mut acc = [0u64; CH];
+            for px in &columns[cols[0] as usize..cols[1] as usize] {
                 for (a, &v) in acc.iter_mut().zip(px) {
-                    *a += u32::from(v);
+                    *a += u64::from(v);
                 }
             }
             for (s, a) in sums.iter_mut().zip(acc) {
-                *s += u64::from(a);
+                *s += a;
             }
         }
     }
 
     /// Write the output row summed so far, and start the next.
     fn flush(&mut self) {
+        if self.pending > 0 {
+            self.fold();
+        }
         match self.channels {
             1 => self.write::<1, 3>(),
             2 => self.write::<2, 4>(),
@@ -350,6 +381,54 @@ mod tests {
         assert_eq!(shrink((3, 1), (2, 1), 3, &[9; 9]), [9; 6]);
         // never larger than the source
         assert_eq!(shrink((1, 1), (4, 4), 3, &[1, 2, 3]), [1, 2, 3]);
+    }
+
+    #[test]
+    fn shrinking_is_a_naive_box_mean() {
+        // uneven boxes both ways, and boxes over SPILL rows tall, at every channel count
+        let sizes = [
+            ((7, 5), (3, 2)),
+            ((13, 600), (4, 2)),
+            ((5, 1000), (2, 3)),
+            ((9, 9), (9, 9)),
+        ];
+        let mut seed = 0x2545_f491_u32;
+        for ((src, dst), channels) in sizes.into_iter().flat_map(|s| (1..=4).map(move |c| (s, c))) {
+            let px: Vec<u8> = (0..src.0 * src.1 * channels as u32)
+                .map(|_| {
+                    seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    (seed >> 24) as u8
+                })
+                .collect();
+            let at =
+                |x: u32, y: u32, c: usize| u64::from(px[(y * src.0 + x) as usize * channels + c]);
+            let mut want = vec![];
+            for y in 0..dst.1 {
+                let ys = y * src.1 / dst.1..(y + 1) * src.1 / dst.1;
+                for x in 0..dst.0 {
+                    let xs = x * src.0 / dst.0..(x + 1) * src.0 / dst.0;
+                    let n = u64::from(xs.len() as u32 * ys.len() as u32);
+                    let mean = |c| {
+                        let s: u64 = ys
+                            .clone()
+                            .flat_map(|y| xs.clone().map(move |x| (x, y)))
+                            .map(|(x, y)| at(x, y, c))
+                            .sum();
+                        ((s + n / 2) / n) as u8
+                    };
+                    match channels {
+                        1 => want.extend([mean(0); 3]),
+                        2 => want.extend([mean(0), mean(0), mean(0), mean(1)]),
+                        _ => want.extend((0..channels).map(mean)),
+                    }
+                }
+            }
+            assert_eq!(
+                shrink(src, dst, channels, &px),
+                want,
+                "{src:?} → {dst:?}, {channels} channels"
+            );
+        }
     }
 
     #[test]
