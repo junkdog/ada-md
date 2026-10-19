@@ -976,7 +976,7 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
   <p class="lede">ada is fuzzed as <strong>whole sessions</strong>, not one function at a time: a document, then up to
     64 things a reader, the file system, git or the terminal can do, in any order.</p>
   <div class="tiles">
-    <div class="tile"><b>23.0 M</b><p>fuzzed sessions</p><small>whole scripted sessions, over 12.5 h in eight runs; and 32.1 M runs of <code>--print</code></small></div>
+    <div class="tile"><b>31.4 M</b><p>fuzzed sessions</p><small>whole scripted sessions, over 17.5 h in nine runs; and 74.8 M runs of <code>--print</code>, 178.8 M of the log and JSON scanners</small></div>
     <div class="tile"><b>7</b><p>bugs found, all fixed</p><small>an overflow on a git hunk real git can't make; four frame bugs with wide glyphs and emoji; a markdown parser that blows up on wiki links and a highlighter that loops forever, both now bounded</small></div>
     <div class="tile"><b>0</b><p>crashes, hangs or OOMs</p><small>in every run since the fixes</small></div>
     <div class="tile"><b>1</b><p><code>unsafe</code> block</p><small>a malloc option at startup, out of the fuzzer's reach</small></div>
@@ -984,13 +984,15 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
   <ul class="fuzz">
     <li><h3>Any document</h3><p>Markdown, code, config, plain text and images, built from random bytes and a
       dictionary of the parts markdown parsers find hardest. A second target prints them with
-      <code>--print</code>, images and previews included.</p></li>
+      <code>--print</code>, images and previews included, and a third feeds lines of up to 64 KiB to the
+      log and JSON scanners.</p></li>
     <li><h3>Any input</h3><p>Every action, through the real keymap or directly: scrolling, links, search, sorting,
-      the outline, themes, and resizes at any size.</p></li>
+      the outline, themes, saving the config, and resizes at any size.</p></li>
     <li><h3>A world that answers badly</h3><p>Links to missing or corrupt files, fuzzed git hunks, images that
       report zero or huge sizes, and results that arrive late, out of order, or after their document is gone.</p></li>
     <li><h3>Every frame checked</h3><p>Each step paints through ada's real diff and encoder into a vt100 terminal
-      emulator, which must show exactly what ada meant to draw, cell by cell: glyphs, colors and attributes.</p></li>
+      emulator, which must show exactly what ada meant to draw, cell by cell: glyphs, colors and attributes.
+      So must the screen ada leaves in the terminal when it quits.</p></li>
   </ul>
   <p>Every interaction is a message, so a recorded session replays to identical frames: <code>--record</code>
     makes a bug report that reproduces. A deterministic stand-in for the fuzzer runs with every
