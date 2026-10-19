@@ -30,10 +30,9 @@ anpa = "0.12"
 # byte arrives, or for good when the writer is blocked on a full tty (crossterm#1142).
 crossterm = { version = "0.29", default-features = false, features = ["use-dev-tty"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-# Both already in the tree through image. png decodes a row at a time, so a PNG is shrunk as it
-# decodes and never held whole (`pixels`); flate2 deflates printed kitty images (`kitty`).
+# Already in the tree through image. It decodes a row at a time, so a PNG is shrunk as it decodes
+# and never held whole (`pixels`), and it encodes printed kitty images (`kitty`).
 png = "0.18"
-flate2 = "1.1"
 pulldown-cmark = { version = "0.13", default-features = false }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm", "underline-color"] }
 ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"] }

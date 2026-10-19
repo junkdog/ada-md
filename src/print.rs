@@ -757,9 +757,13 @@ mod tests {
             assert_eq!(row.matches('\u{10EEEE}').count(), 6, "{row:?}");
         }
         assert!(out.contains("a cat") && out.contains("after"));
-        // too large for its cells: decoded, shrunk and deflated
+        // too large for its cells: decoded, shrunk and sent as a new PNG, whose header (signature
+        // and IHDR, in base64) says 360×72
         let out = with_image("![big](pic.png)\n", 2000, 400, Proto::Kitty, None);
-        assert!(out.contains(",c=36,r=4,f=24,o=z,s=360,v=72,"), "{out:?}");
+        assert!(
+            out.contains(",c=36,r=4,f=100,m=0;iVBORw0KGgoAAAANSUhEUgAAAWgAAABI"),
+            "{out:?}"
+        );
     }
 
     #[test]

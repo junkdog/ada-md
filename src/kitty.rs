@@ -21,7 +21,7 @@ const CHUNK: usize = 4096 / 4 * 3;
 pub enum Payload<'a> {
     /// A PNG file, sent as it is: kitty decodes it.
     Png(&'a Path),
-    /// Pixels, RGB or RGBA, deflated.
+    /// Pixels, RGB or RGBA, encoded as a PNG.
     Pixels(&'a DynamicImage),
 }
 
@@ -64,15 +64,58 @@ pub fn transmit(
             chunks.finish()
         }
         Payload::Pixels(image) => {
-            let f = if image.color().has_alpha() { 32 } else { 24 };
-            let (sw, sh) = (image.width(), image.height());
-            let header = format!("{place},f={f},o=z,s={sw},v={sh}");
-            let chunks = Chunks::new(w, header);
-            let mut z = flate2::write::ZlibEncoder::new(chunks, flate2::Compression::fast());
-            z.write_all(image.as_bytes())?;
-            z.finish()?.finish()
+            let mut chunks = Chunks::new(w, format!("{place},f=100"));
+            png(image, &mut chunks)?;
+            chunks.finish()
         }
     }
+}
+
+/// `image`, RGB or RGBA, as a PNG streamed to `w`. png's fast level (fdeflate) behind the Paeth
+/// filter: 3–4× faster than zlib's fast level on the pixels and, on photos, smaller (experiment
+/// 24). An image whose every pixel is gray goes as gray: fdeflate, unlike zlib, doesn't fold
+/// the gray's three copies back into one.
+fn png(image: &DynamicImage, w: impl Write) -> io::Result<()> {
+    use png::ColorType;
+    let alpha = image.color().has_alpha();
+    let ch = if alpha { 4 } else { 3 };
+    let gray = image
+        .as_bytes()
+        .chunks_exact(ch)
+        .all(|p| p[0] == p[1] && p[1] == p[2]);
+    let color = match (gray, alpha) {
+        (false, false) => ColorType::Rgb,
+        (false, true) => ColorType::Rgba,
+        (true, false) => ColorType::Grayscale,
+        (true, true) => ColorType::GrayscaleAlpha,
+    };
+    let mut encoder = png::Encoder::new(w, image.width(), image.height());
+    encoder.set_color(color);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_compression(png::Compression::Fast);
+    encoder.set_filter(png::Filter::Paeth);
+    let mut png = encoder.write_header().map_err(io::Error::other)?;
+    let mut stream = png
+        .stream_writer_with_size(64 << 10)
+        .map_err(io::Error::other)?;
+    if gray {
+        // a row at a time, so the gray copy is never whole
+        let mut row = Vec::with_capacity(image.width() as usize * 2);
+        for pixels in image.as_bytes().chunks(image.width() as usize * ch) {
+            row.clear();
+            for p in pixels.chunks_exact(ch) {
+                row.push(p[0]);
+                if alpha {
+                    row.push(p[3]);
+                }
+            }
+            stream.write_all(&row)?;
+        }
+    } else {
+        stream.write_all(image.as_bytes())?;
+    }
+    stream.finish().map_err(io::Error::other)?;
+    png.finish().map_err(io::Error::other)
 }
 
 /// Row `row` of image `id`, `cols` cells wide: each cell names its row and column, so the cells
@@ -489,7 +532,6 @@ static DIACRITICS: [char; 297] = [
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
 
     use super::*;
 
@@ -533,9 +575,7 @@ mod tests {
         let cmds = commands(&out);
         assert!(cmds.len() > 1, "{} commands", cmds.len());
         let first = &cmds[0].0;
-        for p in [
-            "a=T", "U=1", "q=2", "i=42", "c=30", "r=10", "f=24", "o=z", "s=300", "v=200",
-        ] {
+        for p in ["a=T", "U=1", "q=2", "i=42", "c=30", "r=10", "f=100"] {
             assert!(first.split(',').any(|kv| kv == p), "{p} in {first}");
         }
         for (i, (p, data)) in cmds.iter().enumerate() {
@@ -544,14 +584,39 @@ mod tests {
             assert!(i == 0 || p == "q=2,m=1" || p == "q=2,m=0", "{p}");
             assert!(!data.is_empty() && data.len() <= 4096);
         }
-        // the payloads, joined and decoded, inflate to the pixels
+        // the payloads, joined and decoded, are a PNG of the pixels
         let b64: String = cmds.iter().map(|c| c.1.as_str()).collect();
-        let z = decode64(&b64);
-        let mut raw = Vec::new();
-        flate2::read::ZlibDecoder::new(&z[..])
-            .read_to_end(&mut raw)
-            .unwrap();
-        assert_eq!(raw, image.as_bytes());
+        let png = image::load_from_memory_with_format(&decode64(&b64), image::ImageFormat::Png);
+        assert_eq!(png.unwrap(), image);
+    }
+
+    #[test]
+    fn gray_pixels_go_as_a_gray_png() {
+        let sent = |image: &DynamicImage| {
+            let mut out = Vec::new();
+            transmit(&mut out, 1, &Payload::Pixels(image), 2, 1).unwrap();
+            let b64: String = commands(&out).iter().map(|c| c.1.clone()).collect();
+            image::load_from_memory_with_format(&decode64(&b64), image::ImageFormat::Png).unwrap()
+        };
+        let rgb = DynamicImage::ImageRgb8(image::RgbImage::from_fn(20, 10, |x, y| {
+            let g = (x * 12 + y) as u8;
+            image::Rgb([g, g, g])
+        }));
+        let png = sent(&rgb);
+        assert_eq!(png.color(), image::ColorType::L8);
+        assert_eq!(png.to_rgb8(), *rgb.as_rgb8().unwrap());
+        let rgba = DynamicImage::ImageRgba8(image::RgbaImage::from_fn(20, 10, |x, y| {
+            let g = (x * 12) as u8;
+            image::Rgba([g, g, g, (y * 25) as u8])
+        }));
+        let png = sent(&rgba);
+        assert_eq!(png.color(), image::ColorType::La8);
+        assert_eq!(png.to_rgba8(), *rgba.as_rgba8().unwrap());
+        // one pixel of color, and it's color
+        let mut color = rgb.to_rgb8();
+        color.put_pixel(19, 9, image::Rgb([1, 2, 3]));
+        let color = DynamicImage::ImageRgb8(color);
+        assert_eq!(sent(&color), color);
     }
 
     #[test]

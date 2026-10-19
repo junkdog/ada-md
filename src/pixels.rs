@@ -200,15 +200,28 @@ impl Shrink {
         if self.rows >= self.src.1 {
             return;
         }
-        let ch = self.channels;
-        for (x, sums) in self.sums.chunks_exact_mut(ch).enumerate() {
-            let (from, to) = (self.cols[x] as usize, self.cols[x + 1] as usize);
-            let Some(pixels) = row.get(from * ch..to * ch) else {
+        match self.channels {
+            1 => self.add::<1>(row),
+            2 => self.add::<2>(row),
+            3 => self.add::<3>(row),
+            _ => self.add::<4>(row),
+        }
+        self.rows += 1;
+        if self.rows == self.row_start(self.y + 1) {
+            self.flush();
+        }
+    }
+
+    /// `push` for `CH` channels, a number the compiler can unroll a pixel by.
+    fn add<const CH: usize>(&mut self, row: &[u8]) {
+        let sums = self.sums.as_chunks_mut::<CH>().0;
+        for (sums, cols) in sums.iter_mut().zip(self.cols.windows(2)) {
+            let Some(pixels) = row.get(cols[0] as usize * CH..cols[1] as usize * CH) else {
                 break;
             };
             // a row of the box in u32, which no row of pixels can overflow, then into the sums
-            let mut acc = [0u32; 4];
-            for px in pixels.chunks_exact(ch) {
+            let mut acc = [0u32; CH];
+            for px in pixels.as_chunks::<CH>().0 {
                 for (a, &v) in acc.iter_mut().zip(px) {
                     *a += u32::from(v);
                 }
@@ -217,30 +230,38 @@ impl Shrink {
                 *s += u64::from(a);
             }
         }
-        self.rows += 1;
-        if self.rows == self.row_start(self.y + 1) {
-            self.flush();
-        }
     }
 
     /// Write the output row summed so far, and start the next.
     fn flush(&mut self) {
-        let rows = u64::from(self.rows - self.row_start(self.y));
-        let ch = self.channels;
-        for (x, sums) in self.sums.chunks_exact_mut(ch).enumerate() {
-            let n = rows * u64::from(self.cols[x + 1] - self.cols[x]);
-            let mean = |s: u64| ((s + n / 2) / n.max(1)) as u8;
-            match ch {
-                1 => self.out.extend([mean(sums[0]); 3]),
-                2 => {
-                    let g = mean(sums[0]);
-                    self.out.extend([g, g, g, mean(sums[1])]);
-                }
-                _ => self.out.extend(sums.iter().map(|&s| mean(s))),
-            }
-            sums.fill(0);
+        match self.channels {
+            1 => self.write::<1, 3>(),
+            2 => self.write::<2, 4>(),
+            3 => self.write::<3, 3>(),
+            _ => self.write::<4, 4>(),
         }
+        self.sums.fill(0);
         self.y += 1;
+    }
+
+    /// `flush` from `CH` source channels to `OUT` output ones: gray is spread over RGB.
+    fn write<const CH: usize, const OUT: usize>(&mut self) {
+        let rows = u64::from(self.rows - self.row_start(self.y));
+        // a box is as wide as the source over the output, rounded down or up
+        let narrow = self.src.0 / self.dst.0;
+        let means = [narrow, narrow + 1].map(|w| Mean::new(rows * u64::from(w)));
+        let start = self.out.len();
+        self.out.resize(start + self.dst.0 as usize * OUT, 0);
+        let out = self.out[start..].as_chunks_mut::<OUT>().0;
+        let sums = self.sums.as_chunks::<CH>().0;
+        for ((px, sums), cols) in out.iter_mut().zip(sums).zip(self.cols.windows(2)) {
+            let mean = means[(cols[1] - cols[0] - narrow) as usize];
+            for (i, v) in px.iter_mut().enumerate() {
+                // gray and alpha: the gray three times, then the alpha
+                let from = if CH > 2 { i } else { usize::from(i == 3) };
+                *v = mean.of(sums[from]);
+            }
+        }
     }
 
     fn finish(mut self) -> DynamicImage {
@@ -257,6 +278,37 @@ impl Shrink {
         } else {
             DynamicImage::ImageRgb8(RgbImage::from_raw(w, h, self.out).expect("sized"))
         }
+    }
+}
+
+/// The rounded mean of `n` bytes from their sum, by a multiply rather than a divide: `flush`
+/// takes one for every output channel.
+#[derive(Clone, Copy)]
+struct Mean {
+    n: u64,
+    /// ⌈2⁴⁰ / n⌉, or 0 when `n` is too large for it to be exact.
+    m: u64,
+}
+
+impl Mean {
+    fn new(n: u64) -> Mean {
+        let n = n.max(1);
+        // t = s + n/2 is below 256n, so t·n < 2⁴⁰ while n ≤ 2¹⁶: then t·m >> 40 is ⌊t / n⌋
+        let m = if n <= 1 << 16 {
+            (1u64 << 40).div_ceil(n)
+        } else {
+            0
+        };
+        Mean { n, m }
+    }
+
+    fn of(self, sum: u64) -> u8 {
+        let t = sum + self.n / 2;
+        (if self.m == 0 {
+            t / self.n
+        } else {
+            (t * self.m) >> 40
+        }) as u8
     }
 }
 
@@ -298,6 +350,22 @@ mod tests {
         assert_eq!(shrink((3, 1), (2, 1), 3, &[9; 9]), [9; 6]);
         // never larger than the source
         assert_eq!(shrink((1, 1), (4, 4), 3, &[1, 2, 3]), [1, 2, 3]);
+    }
+
+    #[test]
+    fn a_mean_rounds_as_dividing_would() {
+        // where the rounding turns, for every mean, and either side of the multiply's limit
+        for n in (1..=2048).chain(65_000..=66_000) {
+            let mean = Mean::new(n);
+            for q in 0..=255 {
+                for s in [q * n, q * n + n / 2, (q + 1) * n - 1] {
+                    let s = s.saturating_sub(n / 2);
+                    for s in s.saturating_sub(1)..=(s + 1).min(255 * n) {
+                        assert_eq!(u64::from(mean.of(s)), (s + n / 2) / n, "{s} / {n}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]
