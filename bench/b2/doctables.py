@@ -10,6 +10,8 @@ scripted runs can't measure (md-tui on XL, mdfried's XL search) come out empty; 
 runs, with a footnote."""
 import json, math, os, sys, statistics as st
 from collections import defaultdict
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I leaves the script's directory out
+import timeouts
 
 S = os.environ["B2_ROOT"]
 V = ["ada", "treemd", "treemd-head", "leaf", "mdfried", "mdtui", "glow"]
@@ -351,7 +353,7 @@ IMAGES = ["fit.png", "diagram.png", "photo-12mp.png", "photo.jpg", "photo-12mp.j
 def loader(d):
     """Records from $B2_ROOT/<dir> for each dir in $<D>_DIRS (default: d), a later one replacing an earlier one's
     tools: a rerun of some tools (B2P_ONLY, B2P_OUT) merges into the full run. Peak RSS comes from each command's
-    own short call (*.rss.NAME.json) where there is one."""
+    own short call (*.rss.NAME.json) where there is one. A cell timeouts.py lists, with no record, shows as killed."""
     dirs = os.environ.get(f"{d.upper()}_DIRS", d).split()
 
     def load(f, mode):
@@ -364,6 +366,10 @@ def loader(d):
                         own = hyperfine(rss).get(n)
                         r["rss"] = own["rss"] if own and not own["killed"] else r["rss"]
                     out[n] = r
+        for c in timeouts.listed(d):  # skipped by b2p.zsh because it always hits the cap: "> cap" as when killed
+            cf, cm, n = c.split()
+            if (cf, cm) == (f, mode):
+                out.setdefault(n, dict(n=0, killed=True))
         return out
     load.bytes = {}
     for x in dirs:

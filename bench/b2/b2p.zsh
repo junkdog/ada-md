@@ -8,10 +8,12 @@
 # The huge files run under `timeout` (B2P_CAP seconds, 60 by default), fewer times: bat takes minutes to print
 # 80 MB. A killed run exits non-zero, which hyperfine records (-i); doctables.py shows it as "> cap". Its CPU
 # and RSS are lost: timeout signals its own process group too, so it never reaps the child.
-# B2P_ONLY="ada rich" runs only those tools, for a rerun merged into the earlier records.
+# B2P_ONLY="ada rich" runs only those tools, for a rerun merged into the earlier records. The cells in timeouts.py
+# always hit the cap: they're skipped while the tool is still that version (B2_TIMEOUTS=off runs them).
 S=${B2_ROOT:?set B2_ROOT}
 B=$S/tools/bin; ADA=${ADA:-ada}; CAP=${B2P_CAP:-60}
 OUT=${B2P_OUT:-$S/b2p}   # B2P_OUT: another directory, for a rerun
+SKIP=("${(@f)$(python3 -I ${0:A:h}/timeouts.py b2p)}")   # "input mode tool"
 # COLUMNS: rich lays out at -w but crops each line at its console's width, 80 to a pipe (b2a.zsh)
 export XDG_CONFIG_HOME=$S/home/x/config BAT_CONFIG_PATH=$S/home/x/config/bat/none BAT_CACHE_PATH=$S/home/x/cache/bat COLUMNS=100
 # Peak RSS comes from a short hyperfine call per command (*.rss.NAME.json): a child's ru_maxrss counts what
@@ -32,6 +34,8 @@ for f in ${=B2P_FILES:-code-s.rs code-m.rs code-l.rs log.log huge.json huge.log}
   for mode in whole preview; do
     if [[ $mode == whole ]]; then P=($WHOLE); else P=($PREVIEW); fi
     [[ -n $B2P_ONLY ]] && P=(${(M)P:#(${(~j:|:)${=B2P_ONLY}}):*})
+    for c in ${(M)SKIP:#$f $mode *}; do P=(${P:#${c##* }:*}); done
+    (( $#P )) || continue
     pre=(); runs=(--warmup 2 --min-runs 15)
     if [[ $f == huge.* ]]; then
       pre=(/usr/bin/timeout -s KILL $CAP)

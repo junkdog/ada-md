@@ -2,8 +2,10 @@
 
 One number per cell, in the unit its header names, so that a table sorts by any column; a cell
 without a number is empty, and what it lacks is listed under its table."""
-import json, sys, statistics as st
+import json, os, sys, statistics as st
 from collections import defaultdict
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I leaves the script's directory out
+import timeouts
 
 V = ["ada", "treemd", "treemd-head", "leaf", "mdfried", "mdtui", "glow"]
 NAME = {"ada": "**ada**", "treemd": "treemd 0.9.1", "treemd-head": "treemd HEAD", "leaf": "leaf", "mdfried": "mdfried",
@@ -78,6 +80,8 @@ for v in V:
         f = agg(v, d, lambda r: r.get("first_ms"))
         if f is None and runs.get((v, d)):
             notes.append(f"{NAME[v]} {d.upper()}: never painted (90 s cap)")
+        elif f"{v}-{d}" in timeouts.listed("b2") and not runs.get((v, d)):
+            notes.append(f"{NAME[v]} {d.upper()}: not run (timeouts.py: it never paints in the 90 s cap)")
         row.append(ms(f))
     row += [ms(agg(v, d, lambda r: r.get("settle_ms"))) for d in DOCS]
     row += [ms(agg(v, d, lambda r: r.get("paint_cpu_ms"))) for d in DOCS]

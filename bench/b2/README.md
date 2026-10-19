@@ -38,8 +38,19 @@ python3 -I bench/b2/plot.py $(git rev-parse --short HEAD) && gnuplot bench/b2/pl
 python3 -I site/perf.py   # the site's perf section, from the same .dat files
 ```
 
-The four lanes take about 25 minutes (md-tui's XL runs, each at the 90 s cap, set the length), print mode
-another 3, the previewer files about 25 (the huge files' runs are capped at 60 s each, `B2P_CAP`), and images 3.
+The four lanes take about 18 minutes, print mode another 3, the previewer files about 13 (the huge files' runs are
+capped at 60 s each, `B2P_CAP`), and images 3: the lanes and the previewer files estimated from the 2026-10-18
+run's times, without the cells that always hit their cap.
+
+### Known timeouts
+
+`timeouts.py` lists the cells that always hit their cap: md-tui 0.11.0 on XL (284 s to paint, against 90 s), bat
+0.26.1 on `huge.log` and mcat 0.6.5 on both huge files, printed whole (over 60 s). They're skipped while the
+installed tool's `--version` still names that version: `mkspec.py` leaves the job out and `b2p.zsh` the command,
+which saves 11 minutes of lane time (about 5 of wall time) and 12 of the previewer files. The tables don't change:
+`doctables.py` shows a skipped b2p cell as `> 60 s`, as when it was killed, and md-tui's XL cells were empty
+already (the notes fill them from separate runs). Another version runs them again, with a note on stderr; update
+or drop its entry once they finish in time. `B2_TIMEOUTS=off` runs everything.
 
 ### Print, previewer files and images
 
@@ -109,6 +120,7 @@ done
 | `b2p.zsh` | the previewer files (code, logs, huge files) printed whole and under a preview's budget |
 | `b2i.zsh` | image previews against kitten icat, chafa, viu and mcat |
 | `runcmp.py` | two runs' interactive cells side by side, for regressions |
+| `timeouts.py` | the cells that always hit their cap, skipped while the tool is still that version |
 | `pick.py` | picking search terms |
 | `printcmp.zsh`, `sgrcmp.py` | print mode, two builds compared by what each character shows (SGR interpreted, blanks by background), over the vault and the corpus at four widths |
 | `termcmp.zsh`, `relay.py` | two builds live in tmux, kitty or alacritty through one key script, compared screen by screen (`sgrcmp.py --screen`, or pixels for alacritty); `relay.py` feeds keys to ada inside alacritty |

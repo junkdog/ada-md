@@ -1,4 +1,6 @@
 import json, os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I leaves the script's directory out
+import timeouts
 S = os.environ["B2_ROOT"]  # corpus/, tools/bin/, home/<viewer>/, b2/, b2a/
 B = S + "/tools/bin"
 DOCS = {
@@ -28,8 +30,11 @@ ALL = ["paint", "idle", "line", "page", "end", "search", "burst", "reload", "res
 runs = int(sys.argv[1]); docs = sys.argv[2].split(","); viewers = sys.argv[3].split(",")
 scen = sys.argv[4].split(",") if len(sys.argv) > 4 else ALL
 jobs = []
+skip = timeouts.skipped("b2")  # jobs that always hit the paint cap, while the viewer is still that version
 for v in viewers:
     for d in docs:
+        if f"{v}-{d}" in skip:
+            continue
         vv = VIEWERS[v]
         sc = [x for x in scen if not (x == "search" and vv["keys"]["search"] is None)]
         home = f"{S}/home/{v}"
