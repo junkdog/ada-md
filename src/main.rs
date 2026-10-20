@@ -78,6 +78,7 @@ fn run() -> Result<(), String> {
         let opts = ReplayOptions {
             live: args.replay_live,
             headless: args.headless,
+            fast: args.replay_fast,
         };
         for w in &warnings {
             eprintln!("ada: warning: {w}");

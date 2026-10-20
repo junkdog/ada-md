@@ -24,12 +24,13 @@ use anpa::core::{ParserExtNoState, StrParser};
 use anpa::number::integer;
 use anpa::parsers::{empty, item, item_if, item_while, skip};
 use anpa::{or, tuplify};
+use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{self, Computed, Dir, Effects, Msg, ScrollBy, Size, State};
 use crate::grid::Grid;
-use crate::images::{Probe, Proto};
+use crate::images::{self, Probe, Proto};
 use crate::links::Resolved;
 use crate::ui;
 
@@ -645,6 +646,9 @@ pub struct ReplayOptions {
     pub live: bool,
     /// Render without a terminal and print the final frame.
     pub headless: bool,
+    /// In a terminal: don't wait between messages, and keep the last frame on the screen until
+    /// a key is pressed.
+    pub fast: bool,
 }
 
 /// `--replay FILE`.
@@ -663,15 +667,20 @@ pub fn replay(
         }
         Ok(())
     } else {
-        replay_terminal(&entries, &mut state, &mut effects, opts.live)
+        replay_terminal(&entries, &mut state, &mut effects, opts)
     }
 }
 
 /// Apply one message, and in live mode the messages its commands produce. Otherwise only a
-/// highlighting marker's job runs, inline, so its frame shows the highlighting (ADR-19).
+/// highlighting marker's job runs, inline, so its frame shows the highlighting (ADR-19). Live,
+/// images are encoded inline for the protocol and cell size that `Msg::Graphics` gives.
 fn step(state: &mut State, msg: Msg, effects: &mut Effects, live: bool) {
     let mut queue = VecDeque::from([msg]);
     while let Some(msg) = queue.pop_front() {
+        if live && let Msg::Graphics { proto, cell } = &msg {
+            let cell = ratatui::layout::Size::new(cell.w, cell.h);
+            effects.set_encoder(images::Encoder::new(*proto, cell));
+        }
         let marker = matches!(msg, Msg::Highlighted { .. });
         for cmd in app::update(state, msg) {
             if live || marker {
@@ -710,23 +719,34 @@ pub fn replay_headless(
     Ok(frames)
 }
 
+/// Replay in the terminal. Live, the images are drawn for this terminal, not the one recorded: it
+/// is asked, as ada asks it, and its answer stands in for the recorded `Msg::Graphics` (none
+/// with images off).
 fn replay_terminal(
     entries: &[Entry],
     state: &mut State,
     effects: &mut Effects,
-    live: bool,
+    opts: ReplayOptions,
 ) -> Result<(), String> {
     let mut terminal = app::init_terminal().map_err(|e| format!("terminal: {e}"))?;
+    let here = opts.live.then(|| images::detect(state.config.images));
     let start = Instant::now();
     let mut result = Ok(());
     for entry in entries {
-        if live && entry.msg.is_result() {
+        if opts.live && entry.msg.is_result() {
             continue;
         }
-        if let Some(wait) = Duration::from_millis(entry.at_ms).checked_sub(start.elapsed()) {
+        let msg = match (&entry.msg, here) {
+            (Msg::Graphics { .. }, Some(None)) => continue,
+            (Msg::Graphics { .. }, Some(Some(graphics))) => graphics.msg(),
+            (msg, _) => msg.clone(),
+        };
+        if !opts.fast
+            && let Some(wait) = Duration::from_millis(entry.at_ms).checked_sub(start.elapsed())
+        {
             thread::sleep(wait);
         }
-        step(state, entry.msg.clone(), effects, live);
+        step(state, msg, effects, opts.live);
         if state.quit {
             break;
         }
@@ -734,6 +754,10 @@ fn replay_terminal(
             result = Err(e.to_string());
             break;
         }
+    }
+    if opts.fast && result.is_ok() {
+        // over before it could be watched: the last frame stays until a key
+        while !matches!(event::read(), Ok(Event::Key(k)) if k.kind == KeyEventKind::Press) {}
     }
     app::restore_terminal();
     result
@@ -1020,6 +1044,37 @@ mod tests {
             .get(key)
             .expect("highlighted by the replay");
         assert!(!spans.line(0).is_empty());
+    }
+
+    /// Replayed live, images are encoded for the protocol the replay's `Msg::Graphics` gives,
+    /// not as half-blocks whatever it says.
+    #[test]
+    fn live_replays_draw_images_by_the_graphics_message() {
+        let png = crate::images::tests::png("replay-live", 40, 60);
+        let doc = png.with_file_name("doc.md");
+        fs::write(&doc, "# Pet\n\n![a pet](replay-live.png)\n").unwrap();
+        let frame = |proto| {
+            let session = [
+                Msg::Init {
+                    size: Size { w: 40, h: 12 },
+                },
+                Msg::Graphics {
+                    proto,
+                    cell: Size { w: 10, h: 20 },
+                },
+                Msg::Open { path: doc.clone() },
+            ]
+            .map(|msg| Entry { at_ms: 0, msg });
+            let mut state = State::new(Theme::builtin(), Config::default());
+            let frames =
+                replay_headless(&session, &mut state, &mut Effects::new(None), true).unwrap();
+            frames.last().cloned().unwrap_or_default()
+        };
+        let sixel = frame(Proto::Sixel);
+        assert!(sixel.contains("\x1bP9;1;0q"), "{sixel:?}");
+        assert!(!sixel.contains('▀'), "{sixel:?}");
+        assert!(frame(Proto::Halfblocks).contains('▀'));
+        fs::remove_dir_all(png.parent().unwrap()).unwrap();
     }
 
     #[test]

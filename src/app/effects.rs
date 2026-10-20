@@ -28,8 +28,8 @@ pub struct Effects {
     resolver: Box<dyn Resolver>,
     /// Where git runs post their results; without it, git runs inline.
     git: Option<Sender<Msg>>,
-    /// The terminal's image support, as the probe found it. Without it, images are encoded as
-    /// half-blocks, as `--replay-live` does.
+    /// The terminal's image support, as the probe found it (or, replaying live, `Msg::Graphics`
+    /// gave it). Without it, images are encoded as half-blocks.
     encoder: Option<images::Encoder>,
     /// The image worker's queue; without a worker, images are decoded inline.
     images: Option<Sender<images::Job>>,

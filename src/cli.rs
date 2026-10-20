@@ -139,6 +139,12 @@ pub const FLAGS: &[Flag] = &[
     ),
     flag(
         None,
+        "replay-fast",
+        SWITCH,
+        "with --replay: don't wait between messages; the last frame stays until a key",
+    ),
+    flag(
+        None,
         "headless",
         SWITCH,
         "with --replay: render off-screen and print the final frame",
@@ -217,6 +223,7 @@ pub struct Args {
     pub record: Option<PathBuf>,
     pub replay: Option<PathBuf>,
     pub replay_live: bool,
+    pub replay_fast: bool,
     pub headless: bool,
     pub completions: Option<String>,
     pub help: bool,
@@ -282,6 +289,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
             "--record" => out.record = Some(value(&flag)?.into()),
             "--replay" => out.replay = Some(value(&flag)?.into()),
             "--replay-live" => out.replay_live = true,
+            "--replay-fast" => out.replay_fast = true,
             "--headless" => out.headless = true,
             "--completions" => {
                 let shell = value(&flag)?;
@@ -301,8 +309,8 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
             return Err(format!("{flag} takes no value"));
         }
     }
-    if (out.replay_live || out.headless) && out.replay.is_none() {
-        return Err("--replay-live and --headless need --replay FILE".into());
+    if (out.replay_live || out.replay_fast || out.headless) && out.replay.is_none() {
+        return Err("--replay-live, --replay-fast and --headless need --replay FILE".into());
     }
     if out.replay.is_some() && out.record.is_some() {
         return Err("--record and --replay can't be combined".into());
@@ -370,7 +378,7 @@ mod tests {
             assert!(usage.contains(&format!("--{}", f.long)), "{}", f.long);
             let value = (f.value.1 != Value::None).then_some("zsh");
             let parsed = match f.long {
-                "replay-live" | "headless" => {
+                "replay-live" | "replay-fast" | "headless" => {
                     args(&["--replay", "x.rec", &format!("--{}", f.long)])
                 }
                 long => args(
