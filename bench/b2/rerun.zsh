@@ -9,8 +9,8 @@
 #            since a binary file's page-cache state moves peak RSS (O-23)
 # B2_PROFILE (on by default) holds the bench cores ready for the run (b2-bench-profile: EPP performance, no idle
 # state deeper than C1; ada-optimization experiment 28), which makes the lanes' load and CCD not matter: then the two
-# run at once, one run per job per round, ada on the lanes it took in REF and adaref on the same lanes of the other
-# CCD (lane i + 2), swapping sides each round: 6 rounds (4 for XL), so each build has each side equally often, since
+# run at once, one run per job per round, ada on the lanes it took in REF (lanes 2 and 3 folded onto 0 and 1) and
+# adaref on the same lanes of the other CCD (lane i + 2), swapping sides each round: 6 rounds (4 for XL), so each build has each side equally often, since
 # even held ready a lane moves single cells by 20–40% (experiment 28). abcmp.py takes each cell's A/B from the
 # rounds' paired ratios, balanced over the sides. With B2_PROFILE=off they take turns on ada's lanes instead (ABBA).
 # Records made with and without the profile don't mix: OUT/profile.txt says which, and a REF made the other way is
@@ -55,8 +55,11 @@ lane = {j["name"]: i for i in range(4) for j in json.load(open(f"{ref}/lane{i}.j
 rounds = (6, 4) if profile == "on" else (5, 3)
 new = mk(os.environ["ADA"], "ada", rounds[0], "s,m,l") + mk(os.environ["ADA"], "ada", rounds[1], "xl")
 old = mk(os.environ["ADA_REF"], "adaref", rounds[0], "s,m,l") + mk(os.environ["ADA_REF"], "adaref", rounds[1], "xl")
-if any(lane.get(j["name"]) not in (0, 1) for j, _ in new) and profile == "on":
-    sys.exit("rerun: side by side needs ada's REF lanes on 0 and 1 (CCD0), to mirror them on 2 and 3")
+if any(j["name"] not in lane for j, _ in new):
+    sys.exit("rerun: a job of ada's isn't on REF's lanes")
+if profile == "on":   # side by side, ada's lanes on CCD0 mirrored on CCD1: a job REF ran on lane 2 or 3 takes 0 or 1,
+    # the same place on the other CCD, since each build takes each side every other round anyway
+    lane = {name: i % 2 for name, i in lane.items()}
 for r in range(rounds[0]):
     lanes = [[] for _ in range(4)]
     for (a, n), (b, _) in zip(new, old):

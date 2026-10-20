@@ -126,7 +126,7 @@ Reruns ada's cells (the lanes, print, the previewer files and images) beside the
 fresh from `git archive`, without rerunning the other viewers. REF is a full record set (`b2/all.jsonl`,
 `lane0..3.json`, `b2a/`, `b2p/`, `b2i/`; `full.zsh` writes one, `merge.py` builds one from a run and its reruns),
 and OUT becomes one, the next rerun's REF. ada's jobs are split into one-run jobs, one per round. With the
-profile, ada on its lanes in REF (which must be lanes 0 and 1, CCD0) and `adaref` on the same lanes of the other
+profile, ada on its lanes in REF (a job REF ran on lane 2 or 3 takes lane 0 or 1, CCD0) and `adaref` on the same lanes of the other
 CCD at once, swapping sides each round, for 6 rounds (4 for XL): an even count, so each build has each side
 equally often, since even held ready a lane moves single cells by 20–40% (experiment 28, BEN-02). Five rounds of
 that took 15 minutes. With `B2_PROFILE=off`, the two take turns on ada's lanes, 5 rounds (3 for XL; 24 minutes).
