@@ -29,6 +29,7 @@ the bench cores held ready (below). The steps one by one:
 B2=bench/b2/target/release/b2
 python3 -I bench/b2/lanes.py   # writes lane0..3.json
 L=(0,2,4,6 8,10,12,14 16,18,20,22 24,26,28,30)   # one thread per physical core, a CCD per pair
+sudo -n /usr/local/sbin/b2-bench-profile on ${(j:,:)L} $$   # hold the cores ready, as full.zsh does (below)
 for i in 0 1 2 3; do
   taskset -c ${L[$((i+1))]} $B2 run bench/b2/lane$i.json $B2_ROOT/b2/lane$i.jsonl &
 done; wait
@@ -42,9 +43,9 @@ python3 -I bench/b2/plot.py $(git rev-parse --short HEAD) && gnuplot bench/b2/pl
 python3 -I site/perf.py   # the site's perf section, from the same .dat files
 ```
 
-The four lanes take about 18 minutes, print mode another 3, the previewer files about 13 (the huge files' runs are
-capped at 60 s each, `B2P_CAP`), and images 3: the lanes and the previewer files estimated from the 2026-10-18
-run's times, without the cells that always hit their cap.
+The four lanes take about 18 minutes, print mode another 4.5, the previewer files about 13 (the huge files' runs
+are capped at 60 s each, `B2P_CAP`), and images 3.5: about 40 minutes in all, as `full.zsh` ran on 2026-10-20,
+without the cells that always hit their cap.
 
 ### Known timeouts
 
@@ -61,7 +62,10 @@ or drop its entry once they finish in time. `B2_TIMEOUTS=off` runs everything.
 All three use `hyperfine -N` to a pipe at 100 columns, pinned to CPUs 2,4,6,8, one hyperfine call per input with
 every tool in it, and take peak RSS from a short call of its own per command: a child's `ru_maxrss` counts what
 hyperfine held when it spawned it, and hyperfine grows with every run it keeps, so in a long call a small tool
-reports hyperfine's size.
+reports hyperfine's size. Those cores are held ready under `full.zsh` and `rerun.zsh`, but not when the scripts
+are run on their own; `hyperfine` runs each command back to back after its warmup, so the cores have no time to
+idle down between runs, and their times hardly move either way (print S 2.55 → 2.51 ms; ada-optimization,
+experiment 28).
 
 - `b2a.zsh`: the four notes. bat highlights the source and lowdown doesn't highlight, so neither is ranked.
   `COLUMNS=100` is exported because rich lays out at `-w` but crops each line at its console's width (80 to a pipe).
@@ -116,13 +120,21 @@ B2_ROOT=~/b2 ADA=<new build> ADA_REF=<the build REF measured> zsh bench/b2/rerun
 Reruns ada's cells (the lanes, print, the previewer files and images) beside the ada that REF measured, both built
 fresh from `git archive`, without rerunning the other viewers. REF is a full record set (`b2/all.jsonl`,
 `lane0..3.json`, `b2a/`, `b2p/`, `b2i/`; `full.zsh` writes one, `merge.py` builds one from a run and its reruns),
-and OUT becomes one, the next rerun's REF. ada's jobs are split into one-run jobs, five rounds: with the profile,
-ada on its lanes in REF and `adaref` on the same lanes of the other CCD at once, swapping sides each round; with
-`B2_PROFILE=off`, the two in turn on ada's lanes (about 21 minutes). `abcmp.py` writes `OUT/compare.md`: each cell's new/old, the A/B, and the reference
-build's old/REF, the machine's drift since REF. A part or measure whose drift is beyond ±3% (`OUT/keep.txt`)
-keeps REF's ada cells in the merge, since the other viewers' cells no longer compare with ada's new ones: in an
-ada-only rerun usually the interactive cells (two busy lanes against a full run's four: idle clocks) and peak RSS
-(the binary file's page-cache state). `B2_MERGE_ONLY=1` redoes only the merge, `compare.md` and `doctables.md`.
+and OUT becomes one, the next rerun's REF. ada's jobs are split into one-run jobs, one per round. With the
+profile, ada on its lanes in REF (which must be lanes 0 and 1, CCD0) and `adaref` on the same lanes of the other
+CCD at once, swapping sides each round, for 6 rounds (4 for XL): an even count, so each build has each side
+equally often, since even held ready a lane moves single cells by 20–40% (experiment 28, BEN-02). Five rounds of
+that took 15 minutes. With `B2_PROFILE=off`, the two take turns on ada's lanes, 5 rounds (3 for XL; 24 minutes).
+Print, the previewer files and images run both in one `hyperfine` call.
+
+`abcmp.py` writes `OUT/compare.md`: each cell's new/old, the A/B, taken from the rounds' paired ratios and
+balanced over the sides (the mean of each side's mean log ratio), and the reference build's old/REF, the
+machine's drift since REF. A part or measure whose drift is beyond ±3% (`OUT/keep.txt`) keeps REF's ada cells in
+the merge, since the other viewers' cells no longer compare with ada's new ones: usually peak RSS (the binary
+file's page-cache state), and without the profile the interactive cells too (two busy lanes against a full run's
+four: idle clocks). `B2_MERGE_ONLY=1` redoes only the merge, `compare.md` and `doctables.md`. `B2_AB_ONLY=1` runs
+the A/B and writes `compare.md` with no merge and no `doctables.md`, so it takes a REF made with or without the
+profile; old/REF then compares across the two and isn't drift.
 
 ### Flood: scrolling at full speed
 
@@ -131,8 +143,13 @@ viewers on crossterm's default event source stall on; ada's fix is in the vault 
 second, keys per frame, bytes and `write` calls per frame, CPU per frame and per thread, and key-to-frame latency.
 Frames are counted by ratatui's per-draw cursor hide, so those columns mean something only for ratatui viewers.
 
+A flood run by hand doesn't take the profile, and at low rates the cores idle between keys: at 1,000 keys a second
+ada's cores stayed ~8% busy and a run swung ±40%. Hold the cores ready as `stress.zsh` does, and for an A/B of two
+builds use `stress.zsh`, which floods both at once at 20,000 keys a second.
+
 ```zsh
 cd $B2_ROOT/corpus
+sudo -n /usr/local/sbin/b2-bench-profile on 0,2,4,6,8,10 $$   # until this shell exits, or `b2-bench-profile off`
 for r in 30 1000 5000 20000; do   # RATE SECS DOWN UP N: N x DOWN, then N x UP, repeating
   taskset -c 8,10 $B2 flood . $r 2 j k 300 -- taskset -c 0,2,4,6 $ADA l.md
   taskset -c 8,10 $B2 flood . $r 2 '\e[6~' '\e[5~' 20 -- taskset -c 0,2,4,6 $ADA l.md
