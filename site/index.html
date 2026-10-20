@@ -977,16 +977,15 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
   <p class="lede">ada is fuzzed as <strong>whole sessions</strong>, not one function at a time: a document, then up to
     64 things a reader, the file system, git or the terminal can do, in any order.</p>
   <div class="tiles">
-    <div class="tile"><b>31.4 M</b><p>fuzzed sessions</p><small>whole scripted sessions, over 17.5 h in nine runs; and 74.8 M runs of <code>--print</code>, 178.8 M of the log and JSON scanners</small></div>
-    <div class="tile"><b>7</b><p>bugs found, all fixed</p><small>an overflow on a git hunk real git can't make; four frame bugs with wide glyphs and emoji; a markdown parser that blows up on wiki links and a highlighter that loops forever, both now bounded</small></div>
+    <div class="tile"><b>31.4 M</b><p>fuzzed sessions</p><small>whole scripted sessions, plus 339 M runs of the printer, log scanners and image decoder; over 23 h in ten runs</small></div>
+    <div class="tile"><b>10</b><p>bugs found, all fixed</p><small>an overflow on an impossible git hunk; four frame bugs with wide glyphs; a parser blow-up and a highlighter loop, now bounded; three malformed images that took it down</small></div>
     <div class="tile"><b>0</b><p>crashes, hangs or OOMs</p><small>in every run since the fixes</small></div>
     <div class="tile"><b>1</b><p><code>unsafe</code> block</p><small>a malloc option at startup, out of the fuzzer's reach</small></div>
   </div>
   <ul class="fuzz">
     <li><h3>Any document</h3><p>Markdown, code, config, plain text and images, built from random bytes and a
-      dictionary of the parts markdown parsers find hardest. A second target prints them with
-      <code>--print</code>, images and previews included, and a third feeds lines of up to 64 KiB to the
-      log and JSON scanners.</p></li>
+      dictionary of the parts markdown parsers find hardest. Other targets fuzz <code>--print</code>, whole
+      and streamed (which must match byte for byte), the log and JSON scanners, and image decoding.</p></li>
     <li><h3>Any input</h3><p>Every action, through the real keymap or directly: scrolling, links, search, sorting,
       the outline, themes, saving the config, and resizes at any size.</p></li>
     <li><h3>A world that answers badly</h3><p>Links to missing or corrupt files, fuzzed git hunks, images that
