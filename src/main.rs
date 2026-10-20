@@ -14,6 +14,13 @@ use ada::record::{self, Recorder, ReplayOptions};
 use ada::theme::Theme;
 use ada::{completions, config, links, print, theme};
 
+// libc named before std's libm, so `ldexp` (syntect's one libm call) binds to libc's copy and
+// `--as-needed` drops libm: ld.so no longer maps it and runs its IFUNC resolvers (~0.3–0.5 MiB of
+// every peak, MEM-04)
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[link(name = "c")]
+unsafe extern "C" {}
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
