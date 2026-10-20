@@ -1,0 +1,998 @@
+ada-rec 1
++0 init size=130x45
++0 open path="image-scroll.md"
++0 doc-loaded path="image-scroll.md" mtime=1792525109789 text:4665
+# Image scroll check
+
+A document for recording one session and replaying it in every terminal (CS-3 of the clean-slate
+plan): sixel in foot and xterm, iTerm2 in wezterm, kitty as the reference. Record and replay it
+from this directory (`bench/images`), so the replay finds the images at the same relative paths.
+They are B2's corpus images (`bench/b2/root`, built by B2) and the repo's `ada.jpg`. `scroll.rec`
+is the session the user recorded in kitty at 130×45 (2026-10-20): line by line down to the end and
+back up, twice; replay it in a window of that size:
+
+```zsh
+ada --record scroll.rec image-scroll.md
+ada --replay scroll.rec --replay-live --replay-fast
+```
+
+`frame_dump --proto kitty,sixel,iterm2,halfblocks bench/images/image-scroll.md` dumps every frame
+of its own script on this document for each protocol, to compare two builds byte for byte.
+
+Scroll down line by line past every image, then page down and up, jump to the end and back to the
+top, and quit. Things to look for while it plays: pixels left behind where an image was, an image
+drawn a row off from its frame, text showing through a transparent image, the status bar drawn
+over, and an image that never comes back after scrolling away.
+
+## Text before the first image
+
+The first image enters from the bottom of the window, a row at a time. Each row it shows is drawn
+again from its first cell, so this is where a cut that ends inside a band of six pixels shows up.
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore
+et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut
+aliquip ex ea commodo consequat.
+
+Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
+pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit
+anim id est laborum.
+
+## A tall photo
+
+A 1500 × 2000 JPEG: taller than the window, so it is cut at the top and the bottom at once while it
+passes.
+
+![a tall photo](../b2/root/corpus/img/photo.jpg)
+
+Text right under the photo. When the photo has scrolled up and away, this line should be clean,
+with nothing of the photo's last band left on it.
+
+## A wide diagram
+
+A 2473 × 1808 PNG with flat colors, fitted to the window's width.
+
+![a wide diagram](../b2/root/corpus/img/diagram.png)
+
+- an item under the diagram
+- a second item
+- a third item, a little longer than the others, so that it wraps in a narrow window and moves
+  where the diagram ends
+
+```rust
+fn main() {
+    // a code block between two images: its background should be untouched by either
+    println!("hello, sixel");
+}
+```
+
+## A transparent image
+
+An RGBA PNG (686 × 811): its transparent pixels should show the document's background, never the
+text that was on those cells before the image scrolled over them.
+
+![an image with transparent pixels](../b2/root/corpus/img/fit.png)
+
+| column | what it shows |
+|---|---|
+| left | a table right after the transparent image |
+| right | its borders should be whole once the image has scrolled past |
+
+## Two images back to back
+
+The small one directly under the large one: each erases and draws its own cells only.
+
+![a 12 megapixel photo](../b2/root/corpus/img/photo-12mp.png)
+
+![a small image](../../ada.jpg)
+
+## A missing image
+
+![this file does not exist](../b2/root/corpus/img/missing.png)
+
+The frame for an image that can't be read: text only, nothing drawn by a protocol.
+
+## Text after the last image
+
+Enough text to scroll every image off the top of the window.
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer nec odio. Praesent libero. Sed
+cursus ante dapibus diam. Sed nisi. Nulla quis sem at nibh elementum imperdiet. Duis sagittis ipsum.
+Praesent mauris.
+
+Fusce nec tellus sed augue semper porta. Mauris massa. Vestibulum lacinia arcu eget nulla. Class
+aptent taciti sociosqu ad litora torquent per conubia nostra, per inceptos himenaeos.
+
+Curabitur sodales ligula in libero. Sed dignissim lacinia nunc. Curabitur tortor. Pellentesque
+nibh. Aenean quam. In scelerisque sem at dolor. Maecenas mattis. Sed convallis tristique sem.
+
+Proin ut ligula vel nunc egestas porttitor. Morbi lectus risus, iaculis vel, suscipit quis, luctus
+non, massa. Fusce ac turpis quis ligula lacinia aliquet. Mauris ipsum.
+
+Nulla metus metus, ullamcorper vel, tincidunt sed, euismod in, nibh. Quisque volutpat condimentum
+velit. Class aptent taciti sociosqu ad litora torquent per conubia nostra.
+
+Nam nec ante. Sed lacinia, urna non tincidunt mattis, tortor neque adipiscing diam, a cursus ipsum
+ante quis turpis. Nulla facilisi. Ut fringilla. Suspendisse potenti.
+
+The end.
+
++0 links-resolved doc_gen=1 resolved:253
+found "bench/b2/root/corpus/img/photo.jpg"
+found "bench/b2/root/corpus/img/diagram.png"
+found "bench/b2/root/corpus/img/fit.png"
+found "bench/b2/root/corpus/img/photo-12mp.png"
+found "ada.jpg"
+broken "no such file: bench/b2/root/corpus/img/missing.png"
+
++3 graphics proto=kitty cell=9x20
++4 images-probed doc_gen=1 probes:176
+image 1500x2000 mtime=1792336980357
+image 2473x1808 mtime=1792336980303
+image 686x811 mtime=1792336980302
+image 3000x4000 mtime=1792336983867
+image 560x340 mtime=1792086277542
+
++4 highlighted doc_gen=1 block=0
++4 git-diff doc_gen=1 untracked=true total:0 unstaged:0
++5 highlighted doc_gen=1 block=1
++16 image-ready path="../b2/root/corpus/img/photo.jpg" mtime=1792336980357 size=44x26
++24 image-ready path="../b2/root/corpus/img/diagram.png" mtime=1792336980303 size=80x26
++367 scroll by=1
++788 scroll by=1
++796 scroll by=1
++805 scroll by=1
++814 scroll by=1
++822 scroll by=1
++831 scroll by=1
++839 scroll by=1
++847 scroll by=1
++856 scroll by=1
++864 scroll by=1
++872 scroll by=1
++880 scroll by=1
++889 scroll by=1
++897 scroll by=1
++905 scroll by=1
++913 scroll by=1
++921 scroll by=1
++929 scroll by=1
++937 scroll by=1
++945 scroll by=1
++953 scroll by=1
++963 scroll by=1
++964 image-ready path="../b2/root/corpus/img/fit.png" mtime=1792336980302 size=49x26
++970 scroll by=1
++978 scroll by=1
++986 scroll by=1
++994 scroll by=1
++1002 scroll by=1
++1010 scroll by=1
++1018 scroll by=1
++1026 scroll by=1
++1034 scroll by=1
++1043 scroll by=1
++1051 scroll by=1
++1059 scroll by=1
++1067 scroll by=1
++1075 scroll by=1
++1083 scroll by=1
++1091 scroll by=1
++1099 scroll by=1
++1107 scroll by=1
++1115 scroll by=1
++1124 scroll by=1
++1132 scroll by=1
++1140 scroll by=1
++1148 scroll by=1
++1156 scroll by=1
++1164 scroll by=1
++1172 scroll by=1
++1180 scroll by=1
++1189 scroll by=1
++1197 scroll by=1
++1206 scroll by=1
++1215 scroll by=1
++1224 scroll by=1
++1232 scroll by=1
++1240 scroll by=1
++1249 scroll by=1
++1257 scroll by=1
++1265 scroll by=1
++1274 scroll by=1
++1282 scroll by=1
++1291 scroll by=1
++1300 scroll by=1
++1308 scroll by=1
++1316 scroll by=1
++1326 scroll by=1
++1332 scroll by=1
++1340 scroll by=1
++1348 scroll by=1
++1356 scroll by=1
++1364 scroll by=1
++1372 scroll by=1
++1380 scroll by=1
++1389 scroll by=1
++1393 image-ready path="../b2/root/corpus/img/photo-12mp.png" mtime=1792336983867 size=44x26
++1398 scroll by=1
++1406 scroll by=1
++1414 scroll by=1
++1422 scroll by=1
++1431 scroll by=1
++1439 scroll by=1
++1448 scroll by=1
++1457 scroll by=1
++1465 scroll by=1
++1473 scroll by=1
++1482 scroll by=1
++1491 scroll by=1
++1499 scroll by=1
++1507 scroll by=1
++1511 image-ready path="../../ada.jpg" mtime=1792086277542 size=63x17
++1515 scroll by=1
++1523 scroll by=1
++1531 scroll by=1
++1539 scroll by=1
++1548 scroll by=1
++1556 scroll by=1
++1564 scroll by=1
++1572 scroll by=1
++1580 scroll by=1
++1588 scroll by=1
++1596 scroll by=1
++1604 scroll by=1
++1612 scroll by=1
++1620 scroll by=1
++1628 scroll by=1
++1636 scroll by=1
++1645 scroll by=1
++1652 scroll by=1
++1660 scroll by=1
++1668 scroll by=1
++1676 scroll by=1
++1685 scroll by=1
++1694 scroll by=1
++1702 scroll by=1
++1710 scroll by=1
++1718 scroll by=1
++1727 scroll by=1
++1735 scroll by=1
++1744 scroll by=1
++1752 scroll by=1
++1760 scroll by=1
++1769 scroll by=1
++1777 scroll by=1
++1785 scroll by=1
++1793 scroll by=1
++1802 scroll by=1
++1810 scroll by=1
++1819 scroll by=1
++1827 scroll by=1
++1835 scroll by=1
++1843 scroll by=1
++1851 scroll by=1
++1860 scroll by=1
++1868 scroll by=1
++1876 scroll by=1
++1884 scroll by=1
++1892 scroll by=1
++1900 scroll by=1
++1908 scroll by=1
++1916 scroll by=1
++1924 scroll by=1
++1933 scroll by=1
++1941 scroll by=1
++1949 scroll by=1
++1957 scroll by=1
++1965 scroll by=1
++1973 scroll by=1
++1981 scroll by=1
++1990 scroll by=1
++1998 scroll by=1
++2007 scroll by=1
++2016 scroll by=1
++2024 scroll by=1
++2033 scroll by=1
++2042 scroll by=1
++2050 scroll by=1
++2058 scroll by=1
++2067 scroll by=1
++2076 scroll by=1
++2084 scroll by=1
++2093 scroll by=1
++2101 scroll by=1
++2110 scroll by=1
++2118 scroll by=1
++2126 scroll by=1
++2134 scroll by=1
++2142 scroll by=1
++2150 scroll by=1
++2158 scroll by=1
++2166 scroll by=1
++2174 scroll by=1
++2182 scroll by=1
++2190 scroll by=1
++2198 scroll by=1
++2207 scroll by=1
++2215 scroll by=1
++2224 scroll by=1
++2233 scroll by=1
++2241 scroll by=1
++2250 scroll by=1
++2258 scroll by=1
++2267 scroll by=1
++2276 scroll by=1
++2284 scroll by=1
++2292 scroll by=1
++2301 scroll by=1
++2310 scroll by=1
++2319 scroll by=1
++2327 scroll by=1
++2335 scroll by=1
++2344 scroll by=1
++2352 scroll by=1
++2362 scroll by=1
++2370 scroll by=1
++2379 scroll by=1
++2388 scroll by=1
++2396 scroll by=1
++2405 scroll by=1
++2413 scroll by=1
++2423 scroll by=1
++2431 scroll by=1
++2440 scroll by=1
++2449 scroll by=1
++2458 scroll by=1
++2466 scroll by=1
++2474 scroll by=1
++2482 scroll by=1
++2491 scroll by=1
++2499 scroll by=1
++2508 scroll by=1
++2517 scroll by=1
++2526 scroll by=1
++2535 scroll by=1
++2543 scroll by=1
++2551 scroll by=1
++2559 scroll by=1
++2568 scroll by=1
++2577 scroll by=1
++2586 scroll by=1
++2686 scroll by=-1
++3067 scroll by=-1
++3075 scroll by=-1
++3084 scroll by=-1
++3092 scroll by=-1
++3101 scroll by=-1
++3109 scroll by=-1
++3118 scroll by=-1
++3127 scroll by=-1
++3135 scroll by=-1
++3143 scroll by=-1
++3151 scroll by=-1
++3159 scroll by=-1
++3167 scroll by=-1
++3175 scroll by=-1
++3183 scroll by=-1
++3191 scroll by=-1
++3200 scroll by=-1
++3209 scroll by=-1
++3217 scroll by=-1
++3226 scroll by=-1
++3235 scroll by=-1
++3244 scroll by=-1
++3252 scroll by=-1
++3260 scroll by=-1
++3269 scroll by=-1
++3277 scroll by=-1
++3286 scroll by=-1
++3295 scroll by=-1
++3303 scroll by=-1
++3311 scroll by=-1
++3320 scroll by=-1
++3328 scroll by=-1
++3336 scroll by=-1
++3344 scroll by=-1
++3352 scroll by=-1
++3360 scroll by=-1
++3368 scroll by=-1
++3376 scroll by=-1
++3384 scroll by=-1
++3392 scroll by=-1
++3400 scroll by=-1
++3409 scroll by=-1
++3417 scroll by=-1
++3425 scroll by=-1
++3434 scroll by=-1
++3442 scroll by=-1
++3451 scroll by=-1
++3460 scroll by=-1
++3468 scroll by=-1
++3476 scroll by=-1
++3485 scroll by=-1
++3494 scroll by=-1
++3502 scroll by=-1
++3511 scroll by=-1
++3519 scroll by=-1
++3527 scroll by=-1
++3535 scroll by=-1
++3543 scroll by=-1
++3551 scroll by=-1
++3560 scroll by=-1
++3568 scroll by=-1
++3576 scroll by=-1
++3584 scroll by=-1
++3592 scroll by=-1
++3600 scroll by=-1
++3608 scroll by=-1
++3616 scroll by=-1
++3624 scroll by=-1
++3633 scroll by=-1
++3641 scroll by=-1
++3649 scroll by=-1
++3657 scroll by=-1
++3665 scroll by=-1
++3673 scroll by=-1
++3681 scroll by=-1
++3689 scroll by=-1
++3697 scroll by=-1
++3705 scroll by=-1
++3713 scroll by=-1
++3722 scroll by=-1
++3730 scroll by=-1
++3738 scroll by=-1
++3747 scroll by=-1
++3756 scroll by=-1
++3764 scroll by=-1
++3773 scroll by=-1
++3781 scroll by=-1
++3790 scroll by=-1
++3798 scroll by=-1
++3806 scroll by=-1
++3815 scroll by=-1
++3823 scroll by=-1
++3831 scroll by=-1
++3840 scroll by=-1
++3848 scroll by=-1
++3856 scroll by=-1
++3864 scroll by=-1
++3872 scroll by=-1
++3880 scroll by=-1
++3888 scroll by=-1
++3896 scroll by=-1
++3904 scroll by=-1
++3913 scroll by=-1
++3921 scroll by=-1
++3929 scroll by=-1
++3937 scroll by=-1
++3945 scroll by=-1
++3953 scroll by=-1
++3961 scroll by=-1
++3969 scroll by=-1
++3977 scroll by=-1
++3985 scroll by=-1
++3993 scroll by=-1
++4002 scroll by=-1
++4010 scroll by=-1
++4018 scroll by=-1
++4026 scroll by=-1
++4034 scroll by=-1
++4042 scroll by=-1
++4050 scroll by=-1
++4058 scroll by=-1
++4066 scroll by=-1
++4075 scroll by=-1
++4083 scroll by=-1
++4091 scroll by=-1
++4099 scroll by=-1
++4107 scroll by=-1
++4115 scroll by=-1
++4123 scroll by=-1
++4131 scroll by=-1
++4139 scroll by=-1
++4147 scroll by=-1
++4156 scroll by=-1
++4164 scroll by=-1
++4172 scroll by=-1
++4181 scroll by=-1
++4189 scroll by=-1
++4198 scroll by=-1
++4206 scroll by=-1
++4215 scroll by=-1
++4224 scroll by=-1
++4232 scroll by=-1
++4240 scroll by=-1
++4249 scroll by=-1
++4258 scroll by=-1
++4266 scroll by=-1
++4275 scroll by=-1
++4283 scroll by=-1
++4292 scroll by=-1
++4300 scroll by=-1
++4308 scroll by=-1
++4316 scroll by=-1
++4324 scroll by=-1
++4332 scroll by=-1
++4340 scroll by=-1
++4349 scroll by=-1
++4357 scroll by=-1
++4366 scroll by=-1
++4374 scroll by=-1
++4383 scroll by=-1
++4392 scroll by=-1
++4400 scroll by=-1
++4408 scroll by=-1
++4417 scroll by=-1
++4425 scroll by=-1
++4434 scroll by=-1
++4442 scroll by=-1
++4450 scroll by=-1
++4458 scroll by=-1
++4466 scroll by=-1
++4474 scroll by=-1
++4482 scroll by=-1
++4490 scroll by=-1
++4498 scroll by=-1
++4507 scroll by=-1
++4515 scroll by=-1
++4523 scroll by=-1
++4531 scroll by=-1
++4539 scroll by=-1
++4547 scroll by=-1
++4555 scroll by=-1
++4563 scroll by=-1
++4571 scroll by=-1
++4580 scroll by=-1
++4588 scroll by=-1
++4597 scroll by=-1
++4606 scroll by=-1
++4615 scroll by=-1
++4624 scroll by=-1
++4632 scroll by=-1
++4641 scroll by=-1
++4650 scroll by=-1
++4658 scroll by=-1
++4667 scroll by=-1
++4675 scroll by=-1
++4683 scroll by=-1
++4691 scroll by=-1
++4700 scroll by=-1
++4710 scroll by=-1
++4718 scroll by=-1
++4728 scroll by=-1
++4738 scroll by=-1
++4746 scroll by=-1
++4755 scroll by=-1
++4763 scroll by=-1
++4772 scroll by=-1
++4781 scroll by=-1
++4789 scroll by=-1
++4798 scroll by=-1
++4808 scroll by=-1
++4927 scroll by=1
++5308 scroll by=1
++5316 scroll by=1
++5325 scroll by=1
++5333 scroll by=1
++5341 scroll by=1
++5351 scroll by=1
++5359 scroll by=1
++5367 scroll by=1
++5375 scroll by=1
++5383 scroll by=1
++5391 scroll by=1
++5399 scroll by=1
++5407 scroll by=1
++5415 scroll by=1
++5424 scroll by=1
++5432 scroll by=1
++5440 scroll by=1
++5448 scroll by=1
++5456 scroll by=1
++5464 scroll by=1
++5472 scroll by=1
++5480 scroll by=1
++5488 scroll by=1
++5496 scroll by=1
++5504 scroll by=1
++5512 scroll by=1
++5520 scroll by=1
++5529 scroll by=1
++5537 scroll by=1
++5546 scroll by=1
++5555 scroll by=1
++5563 scroll by=1
++5572 scroll by=1
++5580 scroll by=1
++5589 scroll by=1
++5597 scroll by=1
++5606 scroll by=1
++5614 scroll by=1
++5622 scroll by=1
++5630 scroll by=1
++5638 scroll by=1
++5647 scroll by=1
++5655 scroll by=1
++5663 scroll by=1
++5672 scroll by=1
++5680 scroll by=1
++5688 scroll by=1
++5696 scroll by=1
++5704 scroll by=1
++5712 scroll by=1
++5720 scroll by=1
++5728 scroll by=1
++5736 scroll by=1
++5744 scroll by=1
++5752 scroll by=1
++5760 scroll by=1
++5768 scroll by=1
++5776 scroll by=1
++5784 scroll by=1
++5792 scroll by=1
++5800 scroll by=1
++5809 scroll by=1
++5817 scroll by=1
++5825 scroll by=1
++5834 scroll by=1
++5842 scroll by=1
++5851 scroll by=1
++5860 scroll by=1
++5868 scroll by=1
++5877 scroll by=1
++5885 scroll by=1
++5893 scroll by=1
++5901 scroll by=1
++5910 scroll by=1
++5918 scroll by=1
++5927 scroll by=1
++5935 scroll by=1
++5944 scroll by=1
++5952 scroll by=1
++5960 scroll by=1
++5968 scroll by=1
++5976 scroll by=1
++5984 scroll by=1
++5992 scroll by=1
++6000 scroll by=1
++6009 scroll by=1
++6018 scroll by=1
++6026 scroll by=1
++6034 scroll by=1
++6042 scroll by=1
++6051 scroll by=1
++6059 scroll by=1
++6068 scroll by=1
++6077 scroll by=1
++6085 scroll by=1
++6093 scroll by=1
++6102 scroll by=1
++6110 scroll by=1
++6119 scroll by=1
++6128 scroll by=1
++6136 scroll by=1
++6144 scroll by=1
++6153 scroll by=1
++6161 scroll by=1
++6169 scroll by=1
++6177 scroll by=1
++6185 scroll by=1
++6193 scroll by=1
++6201 scroll by=1
++6209 scroll by=1
++6217 scroll by=1
++6226 scroll by=1
++6234 scroll by=1
++6243 scroll by=1
++6251 scroll by=1
++6259 scroll by=1
++6268 scroll by=1
++6277 scroll by=1
++6286 scroll by=1
++6294 scroll by=1
++6302 scroll by=1
++6311 scroll by=1
++6319 scroll by=1
++6327 scroll by=1
++6336 scroll by=1
++6345 scroll by=1
++6353 scroll by=1
++6361 scroll by=1
++6369 scroll by=1
++6377 scroll by=1
++6385 scroll by=1
++6394 scroll by=1
++6402 scroll by=1
++6410 scroll by=1
++6418 scroll by=1
++6426 scroll by=1
++6435 scroll by=1
++6443 scroll by=1
++6452 scroll by=1
++6461 scroll by=1
++6469 scroll by=1
++6477 scroll by=1
++6486 scroll by=1
++6494 scroll by=1
++6503 scroll by=1
++6511 scroll by=1
++6519 scroll by=1
++6528 scroll by=1
++6536 scroll by=1
++6544 scroll by=1
++6552 scroll by=1
++6560 scroll by=1
++6569 scroll by=1
++6577 scroll by=1
++6585 scroll by=1
++6593 scroll by=1
++6601 scroll by=1
++6610 scroll by=1
++6618 scroll by=1
++6627 scroll by=1
++6636 scroll by=1
++6644 scroll by=1
++6653 scroll by=1
++6661 scroll by=1
++6670 scroll by=1
++6678 scroll by=1
++6686 scroll by=1
++6694 scroll by=1
++6703 scroll by=1
++6711 scroll by=1
++6719 scroll by=1
++6728 scroll by=1
++6736 scroll by=1
++6745 scroll by=1
++6753 scroll by=1
++6761 scroll by=1
++6769 scroll by=1
++6777 scroll by=1
++6785 scroll by=1
++6794 scroll by=1
++6802 scroll by=1
++6810 scroll by=1
++6819 scroll by=1
++6827 scroll by=1
++6836 scroll by=1
++6844 scroll by=1
++6853 scroll by=1
++6862 scroll by=1
++6870 scroll by=1
++6879 scroll by=1
++6887 scroll by=1
++6895 scroll by=1
++6904 scroll by=1
++6913 scroll by=1
++6922 scroll by=1
++6931 scroll by=1
++6939 scroll by=1
++6948 scroll by=1
++6956 scroll by=1
++6964 scroll by=1
++6973 scroll by=1
++6981 scroll by=1
++6989 scroll by=1
++6998 scroll by=1
++7006 scroll by=1
++7015 scroll by=1
++7023 scroll by=1
++7032 scroll by=1
++7040 scroll by=1
++7049 scroll by=1
++7057 scroll by=1
++7159 scroll by=-1
++7540 scroll by=-1
++7548 scroll by=-1
++7556 scroll by=-1
++7564 scroll by=-1
++7572 scroll by=-1
++7581 scroll by=-1
++7590 scroll by=-1
++7598 scroll by=-1
++7606 scroll by=-1
++7615 scroll by=-1
++7623 scroll by=-1
++7631 scroll by=-1
++7640 scroll by=-1
++7648 scroll by=-1
++7656 scroll by=-1
++7664 scroll by=-1
++7672 scroll by=-1
++7680 scroll by=-1
++7688 scroll by=-1
++7696 scroll by=-1
++7704 scroll by=-1
++7712 scroll by=-1
++7720 scroll by=-1
++7729 scroll by=-1
++7737 scroll by=-1
++7745 scroll by=-1
++7754 scroll by=-1
++7762 scroll by=-1
++7771 scroll by=-1
++7780 scroll by=-1
++7788 scroll by=-1
++7797 scroll by=-1
++7806 scroll by=-1
++7815 scroll by=-1
++7823 scroll by=-1
++7831 scroll by=-1
++7839 scroll by=-1
++7847 scroll by=-1
++7855 scroll by=-1
++7863 scroll by=-1
++7872 scroll by=-1
++7880 scroll by=-1
++7888 scroll by=-1
++7896 scroll by=-1
++7904 scroll by=-1
++7912 scroll by=-1
++7920 scroll by=-1
++7928 scroll by=-1
++7936 scroll by=-1
++7944 scroll by=-1
++7952 scroll by=-1
++7960 scroll by=-1
++7968 scroll by=-1
++7976 scroll by=-1
++7984 scroll by=-1
++7992 scroll by=-1
++8000 scroll by=-1
++8008 scroll by=-1
++8017 scroll by=-1
++8026 scroll by=-1
++8034 scroll by=-1
++8043 scroll by=-1
++8052 scroll by=-1
++8060 scroll by=-1
++8069 scroll by=-1
++8077 scroll by=-1
++8086 scroll by=-1
++8094 scroll by=-1
++8102 scroll by=-1
++8111 scroll by=-1
++8120 scroll by=-1
++8128 scroll by=-1
++8137 scroll by=-1
++8146 scroll by=-1
++8154 scroll by=-1
++8163 scroll by=-1
++8171 scroll by=-1
++8179 scroll by=-1
++8188 scroll by=-1
++8197 scroll by=-1
++8205 scroll by=-1
++8214 scroll by=-1
++8222 scroll by=-1
++8230 scroll by=-1
++8239 scroll by=-1
++8247 scroll by=-1
++8255 scroll by=-1
++8263 scroll by=-1
++8271 scroll by=-1
++8280 scroll by=-1
++8288 scroll by=-1
++8296 scroll by=-1
++8304 scroll by=-1
++8312 scroll by=-1
++8320 scroll by=-1
++8328 scroll by=-1
++8336 scroll by=-1
++8344 scroll by=-1
++8352 scroll by=-1
++8360 scroll by=-1
++8368 scroll by=-1
++8376 scroll by=-1
++8384 scroll by=-1
++8392 scroll by=-1
++8401 scroll by=-1
++8410 scroll by=-1
++8418 scroll by=-1
++8427 scroll by=-1
++8435 scroll by=-1
++8445 scroll by=-1
++8453 scroll by=-1
++8461 scroll by=-1
++8469 scroll by=-1
++8478 scroll by=-1
++8487 scroll by=-1
++8496 scroll by=-1
++8504 scroll by=-1
++8512 scroll by=-1
++8520 scroll by=-1
++8528 scroll by=-1
++8536 scroll by=-1
++8544 scroll by=-1
++8552 scroll by=-1
++8560 scroll by=-1
++8568 scroll by=-1
++8577 scroll by=-1
++8585 scroll by=-1
++8593 scroll by=-1
++8601 scroll by=-1
++8610 scroll by=-1
++8619 scroll by=-1
++8627 scroll by=-1
++8635 scroll by=-1
++8644 scroll by=-1
++8653 scroll by=-1
++8661 scroll by=-1
++8670 scroll by=-1
++8678 scroll by=-1
++8687 scroll by=-1
++8696 scroll by=-1
++8704 scroll by=-1
++8712 scroll by=-1
++8720 scroll by=-1
++8728 scroll by=-1
++8736 scroll by=-1
++8744 scroll by=-1
++8752 scroll by=-1
++8760 scroll by=-1
++8768 scroll by=-1
++8776 scroll by=-1
++8785 scroll by=-1
++8793 scroll by=-1
++8802 scroll by=-1
++8810 scroll by=-1
++8819 scroll by=-1
++8828 scroll by=-1
++8836 scroll by=-1
++8845 scroll by=-1
++8853 scroll by=-1
++8862 scroll by=-1
++8870 scroll by=-1
++8879 scroll by=-1
++8887 scroll by=-1
++8896 scroll by=-1
++8905 scroll by=-1
++8914 scroll by=-1
++8922 scroll by=-1
++8931 scroll by=-1
++8939 scroll by=-1
++8948 scroll by=-1
++8957 scroll by=-1
++8965 scroll by=-1
++8973 scroll by=-1
++8982 scroll by=-1
++8990 scroll by=-1
++8998 scroll by=-1
++9007 scroll by=-1
++9016 scroll by=-1
++9024 scroll by=-1
++9032 scroll by=-1
++9040 scroll by=-1
++9048 scroll by=-1
++9056 scroll by=-1
++9064 scroll by=-1
++9072 scroll by=-1
++9081 scroll by=-1
++9089 scroll by=-1
++9097 scroll by=-1
++9105 scroll by=-1
++9113 scroll by=-1
++9122 scroll by=-1
++9131 scroll by=-1
++9140 scroll by=-1
++9148 scroll by=-1
++9157 scroll by=-1
++9165 scroll by=-1
++9174 scroll by=-1
++9183 scroll by=-1
++9193 scroll by=-1
++9201 scroll by=-1
++9210 scroll by=-1
++9219 scroll by=-1
++9227 scroll by=-1
++9235 scroll by=-1
++9243 scroll by=-1
++9252 scroll by=-1
++9260 scroll by=-1
++9268 scroll by=-1
++9276 scroll by=-1
++9285 scroll by=-1
++9293 scroll by=-1
++9302 scroll by=-1
++9311 scroll by=-1
++9416 quit
