@@ -5,10 +5,13 @@
 
 use std::fs::File;
 use std::io::BufReader;
+use std::panic::AssertUnwindSafe;
 use std::path::Path;
 
 use image::metadata::Orientation;
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, RgbImage, RgbaImage};
+
+use crate::guard;
 
 /// The largest size, in pixels, that fits `max` keeping `px`'s aspect ratio, and no larger than
 /// `px`: images are only ever shrunk.
@@ -27,8 +30,17 @@ pub fn decode(path: &Path, max: (u32, u32)) -> Result<DynamicImage, String> {
 }
 
 /// Decode the image at `path`, upright, at the size `size` picks from its upright pixel size. A
-/// size larger than the image's stays the image's.
+/// size larger than the image's stays the image's. A decoder's panic on a malformed file (zune-jpeg
+/// and png each had one, fuzz round 7) is an error like any other (F-05).
 pub fn decode_to(
+    path: &Path,
+    size: impl FnOnce((u32, u32)) -> (u32, u32),
+) -> Result<DynamicImage, String> {
+    guard::catch(AssertUnwindSafe(|| decode_file(path, size)))
+        .unwrap_or_else(|| Err("the image failed to decode".into()))
+}
+
+fn decode_file(
     path: &Path,
     size: impl FnOnce((u32, u32)) -> (u32, u32),
 ) -> Result<DynamicImage, String> {
@@ -39,6 +51,11 @@ pub fn decode_to(
         return png(path, size);
     }
     let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
+    // held whole as decoded: a header can claim any size, 65,498 × 65,256 in 384 bytes (fuzz round 7)
+    if decoder.total_bytes() > MAX_WHOLE as u64 {
+        let (w, h) = decoder.dimensions();
+        return Err(format!("the image is too large to decode: {w} × {h}"));
+    }
     let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
     let image = DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
     let (w, h) = (image.width(), image.height());
@@ -78,7 +95,8 @@ pub fn is_plain_png(path: &Path) -> bool {
     matches!(orientation, None | Some(Orientation::NoTransforms))
 }
 
-/// The most bytes an interlaced PNG may take decoded, as image's default limit allows any image.
+/// The most bytes an image held whole may take decoded (a JPEG, an interlaced PNG), and the most a
+/// PNG's row of column sums may take, as image's default limit would allow any image.
 const MAX_WHOLE: usize = 512 << 20;
 
 /// A PNG, a row at a time: only the rows being summed are held, never the whole image.
@@ -103,6 +121,10 @@ fn png(path: &Path, size: impl FnOnce((u32, u32)) -> (u32, u32)) -> Result<Dynam
         png::ColorType::Rgba => 4,
         png::ColorType::Indexed => return Err("an indexed PNG that didn't expand".into()),
     };
+    // the column sums take two bytes a sample of a row: a header can claim a row of 2³¹ pixels
+    if w as usize * channels * 2 > MAX_WHOLE {
+        return Err(format!("the image is too wide to decode: {w} × {h}"));
+    }
     let mut shrink = Shrink::new((w, h), target, channels);
     if interlaced {
         // Adam7 delivers its rows in seven passes: the image has to be whole before it's shrunk.
@@ -444,6 +466,18 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn malformed_files_are_errors_not_panics_or_huge_allocations() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/images");
+        // 384 bytes of JPEG whose header claims 65,498 × 65,256 pixels: 12.8 GB held whole (round 7)
+        let err = decode(&dir.join("huge-sof.jpg"), (100, 100)).unwrap_err();
+        assert!(err.contains("too large"), "{err}");
+        // zune-jpeg 0.5.15's IDCT and png 0.18.1's palette expansion panicked on these (round 7)
+        for file in ["zune-idct-panic.jpg", "png-palette-panic.png"] {
+            let _ = decode(&dir.join(file), (100, 100));
         }
     }
 
