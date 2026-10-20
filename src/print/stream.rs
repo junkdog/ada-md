@@ -44,6 +44,24 @@ const PIECE: usize = 128 << 10;
 /// background and all.
 const LINES: usize = 1024;
 
+/// Where the reader cuts: [`PIECE`] and [`LINES`], or smaller for the fuzzer (F-07), whose inputs
+/// stay far under a piece.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug)]
+pub struct Limits {
+    /// About how many bytes a piece holds.
+    pub piece: usize,
+    /// The most lines a piece holds.
+    pub lines: usize,
+}
+
+impl Limits {
+    const DEFAULT: Limits = Limits {
+        piece: PIECE,
+        lines: LINES,
+    };
+}
+
 /// How much is read at a time.
 const READ: usize = 64 << 10;
 
@@ -61,6 +79,7 @@ pub struct Stream {
     lang: Option<&'static str>,
     /// The file's line count, which sets the width of line numbers; 0 without them.
     lines: u32,
+    limits: Limits,
 }
 
 /// Read the start of `path` (`-` for stdin) and tell whether it streams: a log, JSON or text
@@ -115,7 +134,37 @@ pub fn start(path: &Path, forced: Option<FileType>, numbered: bool) -> Start {
         rest,
         lang,
         lines,
+        limits: Limits::DEFAULT,
     })
+}
+
+/// Print `bytes`, a file of `lang`, as [`start`] would stream it, but cut at `limits`, `first`
+/// bytes of it read before the rest, and line numbers counted as the whole print counts them. The fuzzer's way in (F-07): it checks the
+/// output against [`super::render`] of the whole file. `lang` must be one a lexer highlights
+/// (`None`, `"log"` or `"JSON"`).
+#[doc(hidden)]
+pub fn write_bytes(
+    bytes: &[u8],
+    lang: Option<&'static str>,
+    first: usize,
+    limits: Limits,
+    theme: &Theme,
+    params: LayoutParams,
+    w: &mut impl Write,
+) -> io::Result<()> {
+    assert!(Lexer::exists(lang), "no lexer streams {lang:?}");
+    let first = first.min(bytes.len());
+    Stream {
+        first: bytes[..first].to_vec(),
+        rest: Box::new(io::Cursor::new(bytes[first..].to_vec())),
+        lang,
+        lines: count_lines(bytes)?,
+        limits: Limits {
+            piece: limits.piece.max(1),
+            lines: limits.lines.max(1),
+        },
+    }
+    .write(theme, params, w)
 }
 
 /// Read into `buf` until it holds `n` bytes or the input ends. Whether it holds them.
@@ -161,27 +210,28 @@ fn count_lines(mut file: impl Read) -> io::Result<u32> {
     Ok((1 + newlines - usize::from(last == Some(b'\n'))) as u32)
 }
 
-/// Where the next piece of `buf` ends: on the newline that ends its [`LINES`]th line, or else
-/// the last newline in its first [`PIECE`] bytes, or else the first one after them (`scanned`
-/// bytes past them are known to hold none). Never on the first byte, which would make a piece
-/// of a lone empty line. `None` until `buf` holds a piece.
-fn cut(buf: &[u8], scanned: usize) -> Option<usize> {
-    let head = &buf[..buf.len().min(PIECE)];
+/// Where the next piece of `buf` ends: on the newline that ends its `lines`th line, or else the
+/// last newline in its first `piece` bytes, or else the first one after them (`scanned` bytes
+/// past them are known to hold none). Never on the first byte, which would make a piece of a
+/// lone empty line. `None` until `buf` holds a piece.
+fn cut(buf: &[u8], scanned: usize, limits: Limits) -> Option<usize> {
+    let head = &buf[..buf.len().min(limits.piece)];
     let mut last = None;
     let newlines = head.iter().enumerate().filter(|&(_, &b)| b == b'\n');
     for (n, (i, _)) in newlines.enumerate() {
-        if n + 1 == LINES {
+        // at the first byte only with `lines` 1, which the fuzzer sets: take the next newline
+        if n + 1 >= limits.lines && i > 0 {
             return Some(i);
         }
         last = Some(i);
     }
-    if buf.len() < PIECE {
+    if buf.len() < limits.piece {
         return None;
     }
     if let Some(c) = last.filter(|&c| c > 0) {
         return Some(c);
     }
-    let from = scanned.max(PIECE);
+    let from = scanned.max(limits.piece);
     buf[from..]
         .iter()
         .position(|&b| b == b'\n')
@@ -282,7 +332,15 @@ impl Stream {
         app::arenas(workers);
         // pieces read and not yet written: bounds the memory
         let in_flight = 2 * workers;
-        let (Stream { first, rest, .. }, paint) = (self, &paint);
+        let (
+            Stream {
+                first,
+                rest,
+                limits,
+                ..
+            },
+            paint,
+        ) = (self, &paint);
         let (jobs_tx, jobs) = mpsc::sync_channel::<Piece>(in_flight);
         let jobs = Mutex::new(jobs);
         let (done_tx, done) = mpsc::channel();
@@ -294,7 +352,8 @@ impl Stream {
                 let _ = tokens_tx.send(());
             }
             let lexer = &paint.lexer;
-            let reader = s.spawn(move || read_pieces(rest, first, lexer, &tokens, &jobs_tx));
+            let reader =
+                s.spawn(move || read_pieces(rest, first, limits, lexer, &tokens, &jobs_tx));
             for _ in 0..workers {
                 let (jobs, done_tx) = (&jobs, done_tx.clone());
                 s.spawn(move || {
@@ -361,6 +420,7 @@ fn write_in_order(
 fn read_pieces(
     mut input: impl Read,
     mut buf: Vec<u8>,
+    limits: Limits,
     lexer: &Lexer,
     tokens: &Receiver<()>,
     jobs: &SyncSender<Piece>,
@@ -386,15 +446,15 @@ fn read_pieces(
         p
     };
     let mut pending: Option<Piece> = None;
-    // bytes of `buf` past PIECE known to hold no newline
+    // bytes of `buf` past `limits.piece` known to hold no newline
     let mut scanned = 0;
     let mut eof = false;
     loop {
         let cut = loop {
-            if let Some(c) = cut(&buf, scanned) {
+            if let Some(c) = cut(&buf, scanned, limits) {
                 break Some(c);
             }
-            if buf.len() >= PIECE {
+            if buf.len() >= limits.piece {
                 scanned = buf.len();
             }
             if eof {
@@ -471,6 +531,7 @@ mod tests {
             rest: Box::new(Cursor::new(bytes[split..].to_vec())),
             lang,
             lines,
+            limits: Limits::DEFAULT,
         };
         let mut out = Vec::new();
         stream.write(&theme, params, &mut out).unwrap();
