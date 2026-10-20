@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::Path;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread;
@@ -36,6 +36,10 @@ const MAX_LINE: usize = 4096;
 
 /// Cached blocks before the cache starts over.
 const CACHE_CAP: usize = 4096;
+
+/// Code a print highlights on each thread of its own: below it, the blocks' time is mostly
+/// compiling their grammars' regexes, which a second thread barely shortens (PRN-01).
+const CODE_PER_THREAD: usize = 16 * 1024;
 
 /// Lines highlighted so far, by every thread. When it stands still for [`STALL`] while a block
 /// is being highlighted, syntect is stuck on a line: its parser can loop forever on a
@@ -979,9 +983,12 @@ impl Highlights {
         self.done.insert(spans.key, spans);
     }
 
-    /// Highlight every block of a document before returning (print mode). The blocks go on a
-    /// thread of their own: a block syntect gets stuck on is left plain, and the thread left to
-    /// it, while a new one takes the rest (F-06).
+    /// Highlight every block of a document before returning (print mode). The blocks go on
+    /// threads of their own, one for each [`CODE_PER_THREAD`] of code up to one a core, each
+    /// taking the next block as it's done with one. When no line gets done for [`STALL`], the
+    /// blocks taken and not done are left plain, and their threads left to them, while new ones
+    /// take the rest (F-06). On one malloc arena those threads wait on its lock: give the
+    /// process an arena a thread first ([`print::start`](crate::print::start)).
     pub fn compute_all(blocks: &[&CodeBlock], theme: &Arc<SyntaxTheme>) -> Self {
         let mut out = Self::default();
         let mut todo: Vec<(u64, Box<str>, Arc<str>)> = Vec::new();
@@ -993,32 +1000,53 @@ impl Highlights {
                 todo.push((key, lang.clone(), code.text.clone()));
             }
         }
-        let todo = Arc::new(todo);
-        let mut next = 0;
-        while next < todo.len() {
+        let code: usize = todo.iter().map(|t| t.2.len()).sum();
+        let cores = thread::available_parallelism().map_or(1, |n| n.get().min(8));
+        let threads = cores.min(1 + code / CODE_PER_THREAD);
+        while !todo.is_empty() {
+            let jobs = Arc::new(todo);
+            let next = Arc::new(AtomicUsize::new(0));
             let (tx, rx) = mpsc::channel();
-            let (blocks, rules) = (Arc::clone(&todo), Arc::clone(theme));
-            thread::spawn(move || {
-                for (key, lang, text) in &blocks[next..] {
-                    if tx
-                        .send(highlight_parallel(*key, lang, text, &rules))
-                        .is_err()
+            for _ in 0..threads.min(jobs.len()) {
+                let (jobs, next, tx, rules) = (
+                    Arc::clone(&jobs),
+                    Arc::clone(&next),
+                    tx.clone(),
+                    Arc::clone(theme),
+                );
+                thread::spawn(move || {
+                    while let Some((key, lang, text)) =
+                        jobs.get(next.fetch_add(1, Ordering::Relaxed))
                     {
-                        return;
+                        let spans = highlight_parallel(*key, lang, text, &rules);
+                        if tx.send(spans).is_err() {
+                            return;
+                        }
                     }
-                }
-            });
-            while next < todo.len() {
+                });
+            }
+            drop(tx);
+            let mut left = jobs.len();
+            while left > 0 {
                 let Some(spans) = recv_watched(&rx) else {
                     break;
                 };
                 out.done.insert(spans.key, Arc::new(spans));
-                next += 1;
+                left -= 1;
             }
-            if let Some((key, ..)) = todo.get(next) {
-                out.done
-                    .insert(*key, Arc::new(CodeSpans::plain(*key, theme.id)));
-                next += 1;
+            // what the stuck threads took goes plain; they take no more
+            let taken = next.swap(jobs.len(), Ordering::Relaxed).min(jobs.len());
+            todo = Vec::new();
+            for (i, job) in jobs.iter().enumerate() {
+                if out.done.contains_key(&job.0) {
+                    continue;
+                }
+                if i < taken {
+                    out.done
+                        .insert(job.0, Arc::new(CodeSpans::plain(job.0, theme.id)));
+                } else {
+                    todo.push(job.clone());
+                }
             }
         }
         out
@@ -1634,6 +1662,37 @@ mod tests {
         let [scala, rust] = [0, 1].map(|i| all.get(key(blocks[i]).unwrap()).unwrap());
         assert_eq!(scala.line_count(), 0);
         assert!(rust.line(0).len() > 1);
+    }
+
+    /// With code enough for several threads, the block syntect gets stuck on prints plain, and
+    /// every other block as one thread highlights it (F-06, PRN-01).
+    #[test]
+    fn print_on_several_threads_leaves_only_the_stuck_block_plain() {
+        let theme = Arc::new(SyntaxTheme::new(&Theme::builtin().syntax));
+        let mut text = format!("```rust\nfn first() {{}}\n```\n\n```scala\n{STUCK}```\n\n");
+        for i in 0..800 {
+            let pad = "x".repeat(i % 90);
+            text.push_str(&format!(
+                "```rust\nfn f{i}() {{ let s = \"{pad}\"; }}\n```\n\n"
+            ));
+        }
+        let doc = crate::doc::parse(&text);
+        let blocks = doc.code_blocks();
+        let code: usize = blocks.iter().map(|b| b.text.len()).sum();
+        assert!(code > 2 * CODE_PER_THREAD);
+        let all = Highlights::compute_all(&blocks, &theme);
+        for (i, block) in blocks.iter().enumerate() {
+            let key = key(block).unwrap();
+            let spans = all.get(key).unwrap();
+            if i == 1 {
+                assert_eq!(spans.line_count(), 0);
+            } else {
+                assert!(
+                    *spans == highlight(key, "rust", &block.text, &theme),
+                    "block {i}"
+                );
+            }
+        }
     }
 
     /// The worker posts a block syntect gets stuck on as plain, and a new worker takes the next

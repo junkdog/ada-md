@@ -1,16 +1,20 @@
 //! `--print`, and output to a pipe (ADR-15): the same [`Layout`], written
 //! as SGR-styled text, so ada can stand in for glow in pipes and fzf preview panes.
 
-use std::io::{self, Write};
+use std::fs::File;
+use std::io::{self, Read, Write};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Once, mpsc};
+use std::{panic, thread};
 
 use image::DynamicImage;
 use ratatui::layout::Size;
 use ratatui::style::{Color, Modifier, Style};
 
+use crate::app;
 use crate::doc::{Doc, LinkId};
-use crate::highlight::{Highlights, SyntaxTheme};
+use crate::highlight::{self, Highlights, SyntaxTheme};
 use crate::images::{self, Probe, Proto};
 use crate::kitty;
 use crate::layout::{self, ImageSlot, Layout, LayoutParams, Measure, Row, RowKind};
@@ -108,15 +112,29 @@ fn write(
     opts: Options,
     w: &mut impl Write,
 ) -> io::Result<()> {
-    let mut measure = Measure::new(doc, &theme.glyphs);
-    for (id, file) in opts.images.map_or(&[][..], |p| &p.files).iter().enumerate() {
-        measure.set_image(id as LinkId, file.as_ref().map(|f| f.1));
-    }
-    let layout = layout::layout_measured(doc, &measure, &theme.glyphs, params);
-    drop(measure);
-    let (skip, pad) = opts.align.map_or((0, 0), |line| alignment(&layout, line));
+    let lay_out = || {
+        let mut measure = Measure::new(doc, &theme.glyphs);
+        for (id, file) in opts.images.map_or(&[][..], |p| &p.files).iter().enumerate() {
+            measure.set_image(id as LinkId, file.as_ref().map(|f| f.1));
+        }
+        layout::layout_measured(doc, &measure, &theme.glyphs, params)
+    };
     let syntax = Arc::new(SyntaxTheme::new(&theme.syntax));
-    let highlights = Highlights::compute_all(&doc.code_blocks(), &syntax);
+    let blocks = doc.code_blocks();
+    // the code is highlighted while the rest is laid out
+    let (layout, highlights) = if blocks.iter().any(|&b| highlight::key(b).is_some()) {
+        thread::scope(|s| {
+            let highlights = s.spawn(|| Highlights::compute_all(&blocks, &syntax));
+            let layout = lay_out();
+            let highlights = highlights
+                .join()
+                .unwrap_or_else(|e| panic::resume_unwind(e));
+            (layout, highlights)
+        })
+    } else {
+        (lay_out(), Highlights::default())
+    };
+    let (skip, pad) = opts.align.map_or((0, 0), |line| alignment(&layout, line));
     let painter = Painter {
         theme,
         layout: &layout,
@@ -124,6 +142,14 @@ fn write(
         code_x: 0,
         links: &[],
     };
+    let end = skip
+        .saturating_add(opts.rows.unwrap_or(usize::MAX))
+        .min(layout.rows.len());
+    let painters = cores().min(end.saturating_sub(skip) / BATCH);
+    if painters > 1 && opts.images.is_none() {
+        w.write_all("\n".repeat(pad).as_bytes())?;
+        return paint_on(&painter, skip..end, painters, w);
+    }
     let mut out = String::with_capacity(PIECE * 2);
     out.extend(std::iter::repeat_n('\n', pad));
     let mut scratch = String::new();
@@ -152,6 +178,48 @@ fn write(
         }
     }
     w.write_all(out.as_bytes())
+}
+
+/// Rows a painting thread takes at a time: about 80 KB of output on XL.
+const BATCH: usize = 512;
+
+/// Paint `rows` on `n` threads, and write them in order (PRN-01). Thread `i` takes every `n`th
+/// batch of [`BATCH`] rows from the `i`th on, and paints its next only once the writer has
+/// taken all but its last, so the output is held a few batches at a time, not whole (O-16).
+fn paint_on(painter: &Painter, rows: Range<usize>, n: usize, w: &mut impl Write) -> io::Result<()> {
+    let batches = rows.len().div_ceil(BATCH);
+    thread::scope(|s| {
+        let painted: Vec<_> = (0..n)
+            .map(|i| {
+                let (tx, rx) = mpsc::sync_channel::<String>(1);
+                let rows = rows.clone();
+                s.spawn(move || {
+                    let mut scratch = String::new();
+                    for b in (i..batches).step_by(n) {
+                        let from = rows.start + b * BATCH;
+                        let mut out = String::with_capacity(PIECE * 2);
+                        for r in from..(from + BATCH).min(rows.end) {
+                            let row = &painter.layout.rows[r];
+                            let line = start_line(painter, r, row, &mut out, &mut scratch);
+                            end_line(&line, &mut out);
+                        }
+                        if tx.send(out).is_err() {
+                            return;
+                        }
+                    }
+                });
+                rx
+            })
+            .collect();
+        for b in 0..batches {
+            // none when its thread panicked, which the scope then passes on
+            let Ok(out) = painted[b % n].recv() else {
+                break;
+            };
+            w.write_all(out.as_bytes())?;
+        }
+        Ok(())
+    })
 }
 
 /// Row `r` of the painter's layout, numbered, as the start of an output line.
@@ -454,6 +522,53 @@ fn alignment(layout: &Layout, line: u32) -> (usize, usize) {
     };
     let (row, target) = (row as usize, line.saturating_sub(1) as usize);
     (row.saturating_sub(target), target.saturating_sub(row))
+}
+
+/// Get ready to print a whole file, before any other thread starts. glibc fixes how many malloc
+/// arenas there are when a thread first allocates, and the threads that highlight and paint
+/// need one each: on one, XL's 231 blocks took 1.7× the CPU, and M's layout and highlighting
+/// side by side 1.2× (PRN-01; ADR-27 amended). Then, once, start loading the syntax set when a
+/// `note` has a fence that names a language, on a thread of its own: what's done before the
+/// note is highlighted hides the ~0.5 ms it takes.
+pub fn start(note: Option<&str>) {
+    // the main thread, the one loading the syntax set, the one waiting on the highlighting,
+    // then one a core
+    app::arenas(cores() + 3);
+    static LOADING: Once = Once::new();
+    let Some(note) = note else {
+        return;
+    };
+    let named = |fence| {
+        note.match_indices(fence).any(|(i, _)| {
+            note[i..]
+                .trim_start_matches(['`', '~', ' ', '\t'])
+                .starts_with(char::is_alphanumeric)
+        })
+    };
+    if !LOADING.is_completed() && (named("```") || named("~~~")) {
+        LOADING.call_once(|| {
+            thread::spawn(highlight::syntaxes);
+        });
+    }
+}
+
+/// [`start`] on the first [`HEAD`] bytes of a note file, as soon as ada knows it prints one:
+/// reading the config and the theme then hides more of the syntax set's loading (on S, 2.49 →
+/// 2.32 ms). A file that can't be read is left to the read that reports it.
+pub fn start_file(path: &Path) {
+    let mut head = Vec::new();
+    if let Ok(file) = File::open(path) {
+        let _ = file.take(HEAD).read_to_end(&mut head);
+    }
+    start(Some(&String::from_utf8_lossy(&head)));
+}
+
+/// How much of a note [`start_file`] reads.
+const HEAD: u64 = 64 * 1024;
+
+/// The cores to highlight and paint on, eight at most.
+fn cores() -> usize {
+    thread::available_parallelism().map_or(1, |n| n.get().min(8))
 }
 
 /// Print a document to stdout. A closed pipe (fzf moving on) is not an error.
@@ -812,5 +927,75 @@ mod tests {
                 && out.contains(&format!("\x1b[38;2;{r};{g};{b}m\"hi\"\x1b")),
             "{out:?}"
         );
+    }
+
+    /// A long note, with code, laid out and highlighted, ready to paint.
+    fn painted(f: impl FnOnce(&Painter, usize)) {
+        let mut text = String::new();
+        for i in 0..1500 {
+            text.push_str(&format!("paragraph {i}, with *some* `code` in it\n\n"));
+            if i % 100 == 0 {
+                text.push_str("```rust\nfn main() {}\n```\n\n");
+            }
+        }
+        let doc = crate::doc::parse(&text);
+        let theme = Theme::builtin();
+        let params = LayoutParams {
+            width: 30,
+            max_width: None,
+            table_mode: Default::default(),
+            code_wrap: true,
+            line_numbers: crate::layout::LineNumbers::All,
+            glyphs_gen: 0,
+            images: None,
+        };
+        let layout = layout::layout(&doc, &theme.glyphs, params);
+        let syntax = Arc::new(SyntaxTheme::new(&theme.syntax));
+        let highlights = Highlights::compute_all(&doc.code_blocks(), &syntax);
+        let painter = Painter {
+            theme: &theme,
+            layout: &layout,
+            highlights: &highlights,
+            code_x: 0,
+            links: &[],
+        };
+        f(&painter, layout.rows.len());
+    }
+
+    /// Rows painted on several threads are written as one thread writes them (PRN-01).
+    #[test]
+    fn rows_painted_on_threads_come_out_in_order() {
+        painted(|painter, len| {
+            let rows = 7..len;
+            assert!(rows.len() > 3 * BATCH);
+            let (mut one, mut scratch) = (String::new(), String::new());
+            for r in rows.clone() {
+                let line = start_line(painter, r, &painter.layout.rows[r], &mut one, &mut scratch);
+                end_line(&line, &mut one);
+            }
+            for n in [2, 3, 5] {
+                let mut out = Vec::new();
+                paint_on(painter, rows.clone(), n, &mut out).unwrap();
+                assert!(out == one.as_bytes(), "{n} threads");
+            }
+        });
+    }
+
+    /// A pipe closed while rows are painted (fzf moving on) ends the print, threads and all.
+    #[test]
+    fn a_closed_pipe_stops_the_painting_threads() {
+        struct Closed;
+        impl Write for Closed {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::ErrorKind::BrokenPipe.into())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        painted(|painter, len| {
+            let err = paint_on(painter, 0..len, 3, &mut Closed).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+        });
     }
 }

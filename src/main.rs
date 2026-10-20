@@ -12,7 +12,7 @@ use ada::layout::{ImageFit, LayoutParams, LineNumbers};
 use ada::print::stream::Start;
 use ada::record::{self, Recorder, ReplayOptions};
 use ada::theme::Theme;
-use ada::{completions, config, print, theme};
+use ada::{completions, config, links, print, theme};
 
 fn main() -> ExitCode {
     match run() {
@@ -38,6 +38,14 @@ fn run() -> Result<(), String> {
     if let Some(shell) = &args.completions {
         print!("{}", completions::script(shell).unwrap_or_default());
         return Ok(());
+    }
+
+    let printing = args.print || !io::stdout().is_terminal();
+    if let (true, None, None, Some(Input::Path(path))) =
+        (printing, &args.replay, &args.language, &args.input)
+        && links::is_markdown(path)
+    {
+        print::start_file(path);
     }
 
     let forced = match &args.language {
@@ -88,7 +96,7 @@ fn run() -> Result<(), String> {
     };
     config.language = forced.map(|t| (path.clone(), t));
 
-    if args.print || !io::stdout().is_terminal() {
+    if printing {
         for w in &warnings {
             eprintln!("ada: warning: {w}");
         }
@@ -234,6 +242,7 @@ fn print_doc(args: &Args, config: &Config, theme: &Theme, path: &Path) -> Result
         }
     };
     let filetype = forced.unwrap_or_else(|| FileType::of(path, &text));
+    print::start((filetype == FileType::Markdown).then_some(&*text));
     let doc = filetype.parse(path, &text);
     // fzf redraws its preview pane for every file: its images can replace the last file's
     let reuse_ids = env::var_os("FZF_PREVIEW_LINES").is_some();
