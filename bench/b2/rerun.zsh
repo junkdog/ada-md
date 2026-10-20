@@ -10,12 +10,16 @@
 # B2_PROFILE (on by default) holds the bench cores ready for the run (b2-bench-profile: EPP performance, no idle
 # state deeper than C1; ada-optimization experiment 28), which makes the lanes' load and CCD not matter: then the two
 # run at once, one run per job per round, ada on the lanes it took in REF and adaref on the same lanes of the other
-# CCD (lane i + 2), swapping sides each round. With B2_PROFILE=off they take turns on ada's lanes instead (ABBA).
+# CCD (lane i + 2), swapping sides each round: 6 rounds (4 for XL), so each build has each side equally often, since
+# even held ready a lane moves single cells by 20–40% (experiment 28). abcmp.py takes each cell's A/B from the
+# rounds' paired ratios, balanced over the sides. With B2_PROFILE=off they take turns on ada's lanes instead (ABBA).
 # Records made with and without the profile don't mix: OUT/profile.txt says which, and a REF made the other way is
 # refused (a REF without the file is from before the profile: off). Elsewhere both run in one hyperfine call. The reference ada ("adaref") stays out of the merge: its new/old
 # against REF is the machine's drift, and ada's against it the A/B. Writes OUT/compare.md (abcmp.py),
 # OUT/doctables.md (the vault notes' tables from the merged records) and OUT/run.log (times, Tctl and clocks).
-# B2_MERGE_ONLY=1 redoes only the merge, compare.md and doctables.md of an existing OUT.
+# B2_MERGE_ONLY=1 redoes only the merge, compare.md and doctables.md of an existing OUT. B2_AB_ONLY=1 runs the A/B
+# and writes compare.md, with no merge and no doctables.md, so it takes a REF made with or without the profile;
+# old/REF then compares across the two, which isn't drift.
 S=${B2_ROOT:?set B2_ROOT}; REF=${1:?usage: rerun.zsh REF OUT}; OUT=${2:?usage: rerun.zsh REF OUT}
 H=${0:A:h}; B2=$H/target/release/b2
 L=(0,2,4,6 8,10,12,14 16,18,20,22 24,26,28,30)   # as lanes.py
@@ -27,7 +31,7 @@ mark() {
 if [[ -z $B2_MERGE_ONLY ]]; then
 [[ -e $OUT ]] && { echo "rerun: $OUT exists" >&2; exit 1 }
 PROFILE=${B2_PROFILE:-on}; REF_PROFILE=$(cat $REF/profile.txt 2>/dev/null || print off)
-[[ $PROFILE == $REF_PROFILE ]] || { echo "rerun: REF was measured with the profile $REF_PROFILE, this run $PROFILE" >&2; exit 1 }
+[[ $PROFILE == $REF_PROFILE || -n ${B2_AB_ONLY:-} ]] || { echo "rerun: REF was measured with the profile $REF_PROFILE, this run $PROFILE" >&2; exit 1 }
 mkdir -p $OUT/{run,b2}; print $PROFILE > $OUT/profile.txt
 if [[ $PROFILE == on ]]; then   # restored when this script exits
   sudo -n /usr/local/sbin/b2-bench-profile on ${(j:,:)L} $$ || exit 1
@@ -47,11 +51,13 @@ def mk(binary, name, runs, docs):
     jobs = json.loads(subprocess.check_output([sys.executable, "-I", f"{h}/mkspec.py", str(runs), docs, "ada"], env=env))
     return [(j | {"name": j["name"].replace("ada-", name + "-", 1), "runs": 1}, runs) for j in jobs]
 lane = {j["name"]: i for i in range(4) for j in json.load(open(f"{ref}/lane{i}.json"))}
-new = mk(os.environ["ADA"], "ada", 5, "s,m,l") + mk(os.environ["ADA"], "ada", 3, "xl")
-old = mk(os.environ["ADA_REF"], "adaref", 5, "s,m,l") + mk(os.environ["ADA_REF"], "adaref", 3, "xl")
+# even round counts, so that side by side each build takes each CCD equally often
+rounds = (6, 4) if profile == "on" else (5, 3)
+new = mk(os.environ["ADA"], "ada", rounds[0], "s,m,l") + mk(os.environ["ADA"], "ada", rounds[1], "xl")
+old = mk(os.environ["ADA_REF"], "adaref", rounds[0], "s,m,l") + mk(os.environ["ADA_REF"], "adaref", rounds[1], "xl")
 if any(lane.get(j["name"]) not in (0, 1) for j, _ in new) and profile == "on":
     sys.exit("rerun: side by side needs ada's REF lanes on 0 and 1 (CCD0), to mirror them on 2 and 3")
-for r in range(5):
+for r in range(rounds[0]):
     lanes = [[] for _ in range(4)]
     for (a, n), (b, _) in zip(new, old):
         if r >= n:
@@ -78,7 +84,14 @@ for rd in $OUT/run/r<->(n); do
   rc=0; for p in $pids; do wait $p || rc=1; done
   mark "b2 ${rd:t} rc=$rc"
 done
-cat $OUT/run/r<->/lane?.jsonl > $OUT/run/new.jsonl
+# each record tagged with its round, for abcmp.py's paired ratios
+python3 -I - $OUT/run/r<->/lane?.jsonl > $OUT/run/new.jsonl <<'EOF'
+import json, sys
+for path in sys.argv[1:]:
+    rnd = int(path.rsplit("/", 2)[-2][1:])
+    for line in open(path):
+        print(json.dumps(json.loads(line) | {"round": rnd}))
+EOF
 
 # print mode, previewer files, images: ada and adaref in one hyperfine call per input
 for part in b2a b2p b2i; do
@@ -86,6 +99,13 @@ for part in b2a b2p b2i; do
   env ${(U)part}_ONLY=ada ${(U)part}_OUT=$OUT/run/$part zsh $H/$part.zsh > $OUT/run/$part.log 2>&1
   mark "$part end rc=$?"
 done
+fi
+
+if [[ -n ${B2_AB_ONLY:-} ]]; then
+  python3 -I $H/abcmp.py $OUT $REF > $OUT/compare.md
+  [[ $PROFILE == $REF_PROFILE ]] || print "\nold/REF: REF was measured with the profile $REF_PROFILE, this run $PROFILE: not drift" >> $OUT/compare.md
+  mark "done (A/B only)"
+  exit 0
 fi
 
 # the merge: ada's new cells over REF's, except where adaref drifted from REF (OUT/keep.txt): those keep REF's

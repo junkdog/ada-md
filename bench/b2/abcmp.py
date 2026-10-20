@@ -9,7 +9,7 @@ outside 1 ± THRESHOLD (0.05) is listed; below each table, the medians. new/old 
 sides alike. A drift far from 1 means REF's other viewers no longer compare with ada's new cells as they stand:
 OUT/keep.txt lists each part and measure whose median drift is beyond 1 ± 0.03 ("lanes", "b2a rss", ...), whose
 ada cells rerun.zsh then takes from REF, as the other viewers'."""
-import glob, json, os, statistics as st, sys
+import glob, json, math, os, statistics as st, sys
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -51,18 +51,42 @@ def show(head, rows):
     summary(rows)
 
 
+def paired(rounds, d, f):
+    """new/old from the rounds' paired ratios: rerun.zsh's side-by-side rounds put ada on one CCD and adaref on the
+    other, swapping each round, so a lane's own pull (20–40% on single cells) multiplies one way in the odd rounds
+    and the other in the even ones; the mean of each side's mean log ratio cancels it."""
+    logs = {0: [], 1: []}
+    for rnd, runs in rounds.items():
+        dt.runs = runs
+        a, b = dt.val("ada", d, f), dt.val("adaref", d, f)
+        if a and b:
+            logs[rnd % 2].append(math.log(a / b))
+    if not (logs[0] and logs[1]):
+        return None
+    return math.exp((st.mean(logs[0]) + st.mean(logs[1])) / 2)
+
+
 print(f"## Lanes: cells where ada's new/old is outside 1 ± {th}\n")
 now, before = load(f"{out}/run/new.jsonl"), load(f"{ref}/b2/all.jsonl")
+by_round = defaultdict(lambda: defaultdict(list))
+for line in open(f"{out}/run/new.jsonl"):
+    r = json.loads(line)
+    if "round" in r:
+        v, d = r["name"].rsplit("-", 1)
+        by_round[r["round"]][(v, d)].append(r)
+if by_round:
+    print("new/old: each cell's paired per-round ratios, balanced over the two sides\n")
 rows = []
 for d in dt.DOCS:
     for f in dt.RANKED:
         dt.runs = now
         new, old = dt.val("ada", d, f), dt.val("adaref", d, f)
+        ab = paired(by_round, d, f) if by_round else ratio(new, old)
         dt.runs = before
         was = dt.val("ada", d, f)
         if new is None and old is None:
             continue
-        rows.append((ratio(new, old), ratio(old, was), f, d.upper(), dt.fmt(was), dt.fmt(old), dt.fmt(new)))
+        rows.append((ab, ratio(old, was), f, d.upper(), dt.fmt(was), dt.fmt(old), dt.fmt(new)))
 show(["facet", "doc", "REF ada", "old now", "new now"], rows)
 if abs(st.median(r[1] for r in rows if r[1] is not None) - 1) > DRIFT:
     keep.append("lanes")
