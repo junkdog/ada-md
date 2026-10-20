@@ -17,11 +17,11 @@ allow = ["MIT", "Apache-2.0", "Zlib", "Unicode-3.0"]
 confidence-threshold = 0.93
 
 [bans]
-# Two versions of one crate warn until the clean-slate plan's CS-3 and CS-4 take ratatui-image
-# and ratatui out, with most of today's pairs (2026-10-20): hashbrown 0.16/0.17 (ratatui),
-# rand 0.8/0.10, rand_core, rustix 0.38/1 and linux-raw-sys (ratatui-image), thiserror 1/2 and
-# syn 2/3 (proc-macros on both sides). miniz_oxide 0.8/0.9 (png and flate2) stays. After CS-4,
-# deny, with a `skip` for each pair left.
+# Two versions of one crate warn until the clean-slate plan's CS-4 takes ratatui out. CS-3 took
+# ratatui-image out with its pairs (rand, rand_core, rustix 0.38/1, linux-raw-sys); left
+# (2026-10-20): hashbrown 0.16/0.17 (ratatui), thiserror 1/2 and syn 2/3 (proc-macros on both
+# sides), and miniz_oxide 0.8/0.9 (png and flate2), which stays. After CS-4, deny, with a `skip`
+# for each pair left.
 multiple-versions = "warn"
 wildcards = "deny"
 

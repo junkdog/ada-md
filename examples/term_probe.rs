@@ -1,8 +1,7 @@
-//! CS-2's terminal survey (the clean-slate plan): in the terminal it runs in, what
-//! ratatui-image's `Picker::from_query_stdio` finds (what ada used before CS-2), then the raw
-//! replies to ada's own probe (`probe::QUERY`), what `probe::Replies` reads from them, and what
-//! ada decides from that (`images::plan` and `images::decide`, as the TUI does). The report goes
-//! to a file, since the terminal's window may close when it ends.
+//! CS-2's terminal survey (the clean-slate plan): in the terminal it runs in, the raw replies
+//! to ada's own probe (`probe::QUERY`), what `probe::Replies` reads from them, and what ada
+//! decides from that (`images::plan` and `images::decide`, as the TUI does). The report goes to
+//! a file, since the terminal's window may close when it ends.
 //!
 //! ```zsh
 //! cargo build --release --example term_probe
@@ -22,7 +21,6 @@ use ada::images::{self, ImageMode};
 use ada::probe::{QUERY, Replies};
 use ratatui::crossterm::terminal::{self, disable_raw_mode, enable_raw_mode};
 use ratatui::layout::Size;
-use ratatui_image::picker::Picker;
 
 /// How long the probe waits for the `CSI 5n` reply, as CS-2 plans it.
 const DEADLINE: Duration = Duration::from_secs(2);
@@ -69,22 +67,6 @@ fn main() {
     }
 
     enable_raw_mode().expect("raw mode");
-
-    let t = Instant::now();
-    match Picker::from_query_stdio() {
-        Ok(p) => writeln!(
-            report,
-            "picker {:?}, font {}x{}, tmux {}, {:?} ({} ms)",
-            p.protocol_type(),
-            p.font_size().width,
-            p.font_size().height,
-            p.tmux_detected(),
-            p.capabilities(),
-            t.elapsed().as_millis()
-        ),
-        Err(e) => writeln!(report, "picker error: {e}"),
-    }
-    .unwrap();
 
     let mut tty = OpenOptions::new()
         .read(true)

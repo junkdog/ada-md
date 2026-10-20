@@ -34,7 +34,7 @@ pub enum Dither {
     /// Each pixel takes its nearest color.
     None,
     /// Floyd–Steinberg, scanning rows in alternate directions, with 7/8 of the error passed
-    /// on: icy_sixel's default, as ratatui-image encodes.
+    /// on: icy_sixel's default, as ratatui-image encoded.
     FloydSteinberg,
 }
 

@@ -30,7 +30,7 @@ pub fn transmit(w: &mut impl Write, image: &DynamicImage, cols: u16, rows: u16) 
 
 /// `image` cut into its rows of cells, `cell` pixels each, as a sequence a row that draws it over
 /// `cols` cells from the cursor, so that a scroll draws the rows it shows without encoding them
-/// again (as ratatui-image slices them). Each row erases its cells first, as the image's
+/// again (as ratatui-image sliced them). Each row erases its cells first, as the image's
 /// transparent pixels would show what was there, and an image that doesn't fill its last row or
 /// column of cells is padded to them with transparent pixels, never stretched.
 pub fn rows(
