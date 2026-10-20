@@ -10,7 +10,7 @@
 
 use std::time::{Duration, Instant};
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// How long the probe waits for the replies (Q2 of the clean-slate plan): generous, since only
 /// images and the keys typed meanwhile wait for it, and fixed, so keys don't extend it.

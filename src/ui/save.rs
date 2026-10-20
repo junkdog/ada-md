@@ -1,8 +1,8 @@
 //! The save box (`S`): the file it saves to, one row per option saving changes, `key  from →
 //! to`, and the answers it takes. Static, like the help: there is nothing to pick.
 
+use crate::geom::Rect;
 use crate::grid::Grid;
-use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
 use super::elide_start;

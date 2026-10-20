@@ -6,7 +6,7 @@ use std::fs;
 use std::ops::Range;
 use std::path::PathBuf;
 
-use ratatui::style::{Color, Modifier, Style};
+use crate::style::{Color, Modifier, Style};
 use toml::de::{DeTable, DeValue};
 
 use super::{StyleKey, TableBorder, Theme};

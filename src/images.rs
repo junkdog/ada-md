@@ -1,6 +1,6 @@
 //! Images (ADR-09, architecture §9), all of them ada's own: kitty and half-blocks as print draws
 //! them ([`kitty`], [`pixels::HalfBlock`]; CS-1 of the clean-slate plan), the terminal's query
-//! ([`probe`], CS-2), and sixel and iTerm2 ([`sixel`], [`iterm`]; CS-3).
+//! ([`probe`](mod@crate::probe), CS-2), and sixel and iTerm2 ([`sixel`], [`iterm`]; CS-3).
 //!
 //! The terminal is queried once at startup, and answers on the input thread while the text paints
 //! (O-06); its protocol and font cell size reach `update` as `Msg::Graphics`, and start the image
@@ -21,10 +21,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Instant, UNIX_EPOCH};
 
+use crate::geom::{Rect, Size};
+use crate::style::{Color, Style};
 use image::metadata::Orientation;
 use image::{ImageDecoder, ImageReader};
-use ratatui::layout::{Rect, Size};
-use ratatui::style::{Color, Style};
 
 use crate::grid::Grid;
 use crate::pixels::{self, HalfBlock};
@@ -194,7 +194,7 @@ pub fn detect(mode: ImageMode) -> Option<Graphics> {
     } else {
         probe::Found::default()
     };
-    let (w, h) = ratatui::crossterm::terminal::size().unwrap_or((0, 0));
+    let (w, h) = crossterm::terminal::size().unwrap_or((0, 0));
     Some(decide(plan, &found, env, Size::new(w, h), winsize_cell()))
 }
 
@@ -252,7 +252,7 @@ pub fn cell_size() -> Size {
 
 /// The font's cell size by `TIOCGWINSZ`, if the terminal reports pixels.
 pub fn winsize_cell() -> Option<Size> {
-    ratatui::crossterm::terminal::window_size()
+    crossterm::terminal::window_size()
         .ok()
         .filter(|s| s.columns > 0 && s.rows > 0 && s.width > 0 && s.height > 0)
         .map(|s| Size::new((s.width / s.columns).max(1), (s.height / s.rows).max(1)))
@@ -677,7 +677,13 @@ pub fn render(image: &Encoded, grid: &mut Grid, area: Rect, x: u16, y: i32) {
                     let (top, bottom) = (px(rows.start, cell.height), px(rows.end, cell.height));
                     pixels.encode(top..bottom, px(cols, cell.width), &mut seq);
                     let seq = String::from_utf8(seq).unwrap_or_default();
-                    &shown.insert(Shown { rows: rows.clone(), cols, seq }).seq
+                    &shown
+                        .insert(Shown {
+                            rows: rows.clone(),
+                            cols,
+                            seq,
+                        })
+                        .seq
                 }
             };
             let (x, y) = at(rows.start, 0);
@@ -1046,10 +1052,7 @@ pub(crate) mod tests {
         // scrolled up a row: the bottom row alone, 20 pixels high, at the top
         let next = frame(&mut screen, &out, |g| render(&image, g, area, 1, -1));
         assert!(next.contains("\x1b[1;2H"), "{next:?}");
-        assert!(
-            next.contains("\x1b[3X\x1bP9;1;0q\"1;1;30;20#"),
-            "{next:?}"
-        );
+        assert!(next.contains("\x1b[3X\x1bP9;1;0q\"1;1;30;20#"), "{next:?}");
         // the image's old cells on the second row are text again
         assert!(next.contains("\x1b[2;"), "{next:?}");
         // cut on the right: 20 pixels of its 30

@@ -25,16 +25,16 @@ onig = ["syntect/regex-onig", "two-face/syntect-onig"]
 
 [dependencies]
 anpa = "0.12"
-# Only for `use-dev-tty`: its event source waits with level-triggered poll(2). The default mio one is
+# `events` for keys and resizes (ratatui turned it on until CS-4); `windows` is the default's, only for
+# Windows targets. `use-dev-tty`: its event source waits with level-triggered poll(2). The default mio one is
 # edge-triggered and returns before draining the tty, so input over 1 KB in one burst stalls until the next
 # byte arrives, or for good when the writer is blocked on a full tty (crossterm#1142).
-crossterm = { version = "0.29", default-features = false, features = ["use-dev-tty"] }
+crossterm = { version = "0.29", default-features = false, features = ["events", "use-dev-tty", "windows"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # Already in the tree through image. It decodes a row at a time, so a PNG is shrunk as it decodes
 # and never held whole (`pixels`), and it encodes printed kitty images (`kitty`).
 png = "0.18"
 pulldown-cmark = { version = "0.13", default-features = false }
-ratatui = { version = "0.30", default-features = false, features = ["crossterm", "underline-color"] }
 regex = "1"
 syntect = { version = "5.3", default-features = false, features = ["parsing", "regex-fancy", "dump-load"] }
 toml = { version = "1.1", default-features = false, features = ["std", "parse"] }

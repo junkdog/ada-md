@@ -16,6 +16,7 @@ use std::sync::OnceLock;
 
 use ada::app::{Head, cut_to_head};
 use ada::filetype::{self, FileType};
+use ada::geom::Size;
 use ada::images::Proto;
 use ada::layout::{ImageFit, LayoutParams, LineNumbers, TableMode};
 use ada::print::{self, Options, Pictures};
@@ -23,7 +24,6 @@ use ada::theme::Theme;
 use image::{DynamicImage, ImageFormat};
 use libfuzzer_sys::arbitrary::{self, Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
-use ratatui::layout::Size;
 
 /// `main`'s `PREVIEW_ROWS`.
 const PREVIEW_ROWS: usize = 2000;

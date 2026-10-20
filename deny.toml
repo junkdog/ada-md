@@ -10,18 +10,19 @@ yanked = "deny"
 ignore = []
 
 [licenses]
-# What today's tree needs, and no more: every crate offers MIT or Apache-2.0, except foldhash
-# (Zlib, through ratatui) and unicode-ident's Unicode data (Unicode-3.0, alongside MIT or Apache).
+# What today's tree needs, and no more: every crate offers MIT or Apache-2.0, alongside
+# unicode-ident's Unicode data (Unicode-3.0). Zlib was for foldhash, which left with ratatui (CS-4);
+# CS-5 decides whether it goes.
 version = 2
 allow = ["MIT", "Apache-2.0", "Zlib", "Unicode-3.0"]
 confidence-threshold = 0.93
 
 [bans]
-# Two versions of one crate warn until the clean-slate plan's CS-4 takes ratatui out. CS-3 took
-# ratatui-image out with its pairs (rand, rand_core, rustix 0.38/1, linux-raw-sys); left
-# (2026-10-20): hashbrown 0.16/0.17 (ratatui), thiserror 1/2 and syn 2/3 (proc-macros on both
-# sides), and miniz_oxide 0.8/0.9 (png and flate2), which stays. After CS-4, deny, with a `skip`
-# for each pair left.
+# Two versions of one crate warn, for now. CS-3 took ratatui-image out with its pairs (rand,
+# rand_core, rustix 0.38/1, linux-raw-sys), CS-4 ratatui with hashbrown 0.16/0.17. Left
+# (2026-10-20): thiserror 1/2 (filedescriptor, through crossterm's `use-dev-tty`, against
+# syntect), syn 2/3 (thiserror-impl 1 against serde_derive), and miniz_oxide 0.8/0.9 (png and
+# flate2), which stays. CS-5 turns this to deny, with a `skip` for each pair left.
 multiple-versions = "warn"
 wildcards = "deny"
 

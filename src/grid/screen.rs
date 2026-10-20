@@ -7,8 +7,8 @@
 use std::io::{self, Write};
 use std::ops::Range;
 
-use ratatui::layout::{Rect, Size};
-use ratatui::style::Modifier;
+use crate::geom::{Rect, Size};
+use crate::style::Modifier;
 
 use super::{Cell, Grid, LONG};
 use crate::kitty::{self, PLACEHOLDER as KITTY_PLACEHOLDER};
@@ -721,7 +721,7 @@ fn number(out: &mut Vec<u8>, n: u16) {
 mod tests {
     use super::*;
 
-    use ratatui::style::{Color, Style};
+    use crate::style::{Color, Style};
 
     /// What the encoder wrote, replayed over the terminal's cells, within the scroll margins
     /// the terminal kept from the frame before.

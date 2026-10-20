@@ -18,9 +18,9 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use ada::app::{Computed, Msg};
+use ada::geom::{Rect, Size};
 use ada::grid::{Grid, Screen};
 use ada::images::{self, Encoder, ImageKey, Job, Probe, Proto};
-use ratatui::layout::{Rect, Size};
 
 fn main() {
     let mut paths = Vec::new();

@@ -17,7 +17,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread;
 use std::time::Duration;
 
-use ratatui::style::Style;
+use crate::style::Style;
 use syntect::highlighting::{
     Color, HighlightIterator, HighlightState, Highlighter as SynHighlighter, ScopeSelectors,
     StyleModifier, Theme as SynTheme, ThemeItem, ThemeSettings,
@@ -984,8 +984,8 @@ impl Highlights {
     }
 
     /// Highlight every block of a document before returning (print mode). The blocks go on
-    /// threads of their own, one for each [`CODE_PER_THREAD`] of code up to one a core, each
-    /// taking the next block as it's done with one. When no line gets done for [`STALL`], the
+    /// threads of their own, one for each `CODE_PER_THREAD` of code up to one a core, each
+    /// taking the next block as it's done with one. When no line gets done for `STALL`, the
     /// blocks taken and not done are left plain, and their threads left to them, while new ones
     /// take the rest (F-06). On one malloc arena those threads wait on its lock: give the
     /// process an arena a thread first ([`print::start`](crate::print::start)).

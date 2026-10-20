@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use ratatui::layout::Size as Cells;
+use crate::geom::Size as Cells;
 
 use super::{Cmd, Document, LinkState, ScrollAnchor, State};
 use crate::doc::LinkId;

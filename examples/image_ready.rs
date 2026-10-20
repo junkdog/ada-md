@@ -18,9 +18,9 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use ada::app::{Computed, Msg};
+use ada::geom::{Rect, Size};
 use ada::grid::{Grid, Screen};
 use ada::images::{self, ImageKey, ImageMode, Job, Probe};
-use ratatui::layout::{Rect, Size};
 
 fn main() {
     let mut paths = Vec::new();
@@ -37,9 +37,9 @@ fn main() {
             _ => paths.push(PathBuf::from(arg)),
         }
     }
-    let _ = ratatui::crossterm::terminal::enable_raw_mode();
+    let _ = crossterm::terminal::enable_raw_mode();
     let graphics = images::detect(ImageMode::Auto).expect("images on");
-    let _ = ratatui::crossterm::terminal::disable_raw_mode();
+    let _ = crossterm::terminal::disable_raw_mode();
     eprintln!("terminal: {graphics:?}");
     let encoder = images::Encoder::new(graphics.proto, graphics.cell);
     let font = graphics.cell;

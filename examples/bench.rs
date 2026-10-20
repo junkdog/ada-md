@@ -13,12 +13,12 @@ use std::time::{Duration, Instant};
 use std::{env, fs, process};
 
 use ada::app::{Cmd, Computed, Config, Dir, Msg, ScrollBy, Size, State, update};
+use ada::geom::Size as Cells;
 use ada::grid::Screen;
 use ada::layout::{self, LayoutParams, TableMode};
 use ada::search::SearchMap;
 use ada::theme::Theme;
 use ada::{doc, ui};
-use ratatui::layout::Size as Cells;
 
 const ITERATIONS: usize = 15;
 const FIRST_PAINT: Duration = Duration::from_millis(30);

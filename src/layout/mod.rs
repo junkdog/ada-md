@@ -12,7 +12,7 @@ mod tests;
 
 use std::ops::Range;
 
-use ratatui::layout::Size;
+use crate::geom::Size;
 use unicode_width::UnicodeWidthStr;
 
 use crate::doc::{

@@ -13,7 +13,7 @@
 
 use std::fmt;
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::{CODE_X_STEP, Dir, Msg, ScrollBy};
 

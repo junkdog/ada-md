@@ -10,12 +10,15 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Instant;
 use std::{env, thread};
 
-use ratatui::crossterm::cursor::Show;
-use ratatui::crossterm::event::{self, Event};
-use ratatui::crossterm::execute;
-use ratatui::crossterm::terminal::{self, Clear, ClearType, EnterAlternateScreen, enable_raw_mode};
-use ratatui::layout::{Rect, Size as Cells};
-use ratatui::style::Color;
+use crate::geom::{Rect, Size as Cells};
+use crate::style::Color;
+use crossterm::cursor::Show;
+use crossterm::event::{self, Event};
+use crossterm::execute;
+use crossterm::terminal::{
+    self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+    enable_raw_mode,
+};
 
 use super::{Bindings, Cmd, Effects, Keymap, Msg, Size, State, editor_command, osc52, update};
 use crate::config;
@@ -30,27 +33,30 @@ use crate::ui;
 /// The terminal: each frame diffed against the last and written to stdout in one write.
 type Term = Screen<Stdout>;
 
-/// Take the terminal: raw mode, the alternate screen, and a panic hook that gives it back. ada
-/// draws with its own grid, not ratatui's.
+/// Take the terminal: a panic hook that gives it back, raw mode and the alternate screen, as
+/// ratatui's `try_init` took it.
 pub(crate) fn init_terminal() -> io::Result<Term> {
-    ratatui::try_init()?;
-    // ratatui's hook leaves the alternate screen; the frames hid the cursor, so show it after.
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         // a panic `guard::catch` handles leaves the terminal as it is
         if guard::catching() {
             return;
         }
+        restore_terminal();
         hook(info);
-        let _ = execute!(io::stdout(), Show);
     }));
+    enable_raw_mode()?;
+    execute!(io::stdout(), EnterAlternateScreen)?;
     new_screen()
 }
 
-/// Give the terminal back as it was: ratatui's `restore`, and the cursor every frame hid, which
-/// ratatui's `Terminal` showed on drop but ada's `Screen` doesn't.
+/// Give the terminal back as it was: raw mode off first (it does more than the screen), the
+/// main screen, and the cursor every frame hid.
 pub(crate) fn restore_terminal() {
-    ratatui::restore();
+    let restored = disable_raw_mode().and_then(|()| execute!(io::stdout(), LeaveAlternateScreen));
+    if let Err(e) = restored {
+        eprintln!("Failed to restore terminal: {e}");
+    }
     let _ = execute!(io::stdout(), Show);
 }
 

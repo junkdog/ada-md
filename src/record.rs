@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::geom::Rect;
 use anpa::combinators::{
     attempt, fold, left, map, map_if, middle, no_separator, not_empty, or, or_diff, peek, right,
 };
@@ -24,8 +25,7 @@ use anpa::core::{ParserExtNoState, StrParser};
 use anpa::number::integer;
 use anpa::parsers::{empty, item, item_if, item_while, skip};
 use anpa::{or, tuplify};
-use ratatui::crossterm::event::{self, Event, KeyEventKind};
-use ratatui::layout::Rect;
+use crossterm::event::{self, Event, KeyEventKind};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{self, Computed, Dir, Effects, Msg, ScrollBy, Size, State};
@@ -678,7 +678,7 @@ fn step(state: &mut State, msg: Msg, effects: &mut Effects, live: bool) {
     let mut queue = VecDeque::from([msg]);
     while let Some(msg) = queue.pop_front() {
         if live && let Msg::Graphics { proto, cell } = &msg {
-            let cell = ratatui::layout::Size::new(cell.w, cell.h);
+            let cell = crate::geom::Size::new(cell.w, cell.h);
             effects.set_encoder(images::Encoder::new(*proto, cell));
         }
         let marker = matches!(msg, Msg::Highlighted { .. });

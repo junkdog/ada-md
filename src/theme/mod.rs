@@ -5,7 +5,7 @@ mod load;
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use ratatui::style::{Color, Style};
+use crate::style::{Color, Style};
 
 use crate::doc::{Callout, InlineStyle};
 

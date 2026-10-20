@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use ratatui::layout::Size;
+use crate::geom::Size;
 
 use super::{
     ImageFit, Layout, LayoutParams, LineNumbers, Measure, RowKind, TableMode, layout,

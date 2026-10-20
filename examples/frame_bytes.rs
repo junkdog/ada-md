@@ -11,11 +11,11 @@ use std::rc::Rc;
 use std::{env, fs};
 
 use ada::app::{Cmd, Computed, Config, Dir, Msg, ScrollBy, Size, State, update};
+use ada::geom::Size as Cells;
 use ada::grid::Screen;
 use ada::layout::{LayoutParams, TableMode};
 use ada::theme::Theme;
 use ada::{doc, print, ui};
-use ratatui::layout::Size as Cells;
 
 #[derive(Clone, Default)]
 struct Shared(Rc<RefCell<Vec<u8>>>);

@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Once, mpsc};
 use std::{panic, thread};
 
+use crate::geom::Size;
+use crate::style::{Color, Modifier, Style};
 use image::DynamicImage;
-use ratatui::layout::Size;
-use ratatui::style::{Color, Modifier, Style};
 
 use crate::app;
 use crate::doc::{Doc, LinkId};
@@ -532,7 +532,7 @@ pub fn start(note: Option<&str>) {
     }
 }
 
-/// [`start`] on the first [`HEAD`] bytes of a note file, as soon as ada knows it prints one:
+/// [`start`] on the first `HEAD` bytes of a note file, as soon as ada knows it prints one:
 /// reading the config and the theme then hides more of the syntax set's loading (on S, 2.49 →
 /// 2.32 ms). A file that can't be read is left to the read that reports it.
 pub fn start_file(path: &Path) {

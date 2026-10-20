@@ -1092,7 +1092,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.visible_jobs()
         }
         Msg::Graphics { proto, cell } => {
-            let cell = ratatui::layout::Size::new(cell.w.max(1), cell.h.max(1));
+            let cell = crate::geom::Size::new(cell.w.max(1), cell.h.max(1));
             let first = state.graphics.replace(Graphics { proto, cell }).is_none();
             state.relayout();
             let mut cmds = state.visible_jobs();
@@ -1132,7 +1132,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             size,
             image,
         } => {
-            let size = ratatui::layout::Size::new(size.w, size.h);
+            let size = crate::geom::Size::new(size.w, size.h);
             state.image_ready(ImageKey { path, mtime, size }, image.0);
             Vec::new()
         }
@@ -2594,7 +2594,7 @@ mod tests {
         let key = ImageKey {
             path: "ada.png".into(),
             mtime: Some(7),
-            size: ratatui::layout::Size::new(30, 10),
+            size: crate::geom::Size::new(30, 10),
         };
         assert_eq!(state.images.get(&key), Some(&Entry::Pending));
         let ready = |image| Msg::ImageReady {

@@ -11,8 +11,8 @@ pub use screen::Screen;
 
 use std::ops::{Index, IndexMut, Range};
 
-use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use crate::geom::Rect;
+use crate::style::{Color, Modifier, Style};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -559,25 +559,112 @@ fn unpack(c: u32) -> Color {
 mod tests {
     use super::*;
 
-    use ratatui::buffer::Buffer;
-
-    /// The same calls on a ratatui buffer and a grid leave the same symbols and styles.
+    /// The same calls on ratatui's buffer (its model, below) and a grid leave the same symbols
+    /// and styles.
     fn same_as_ratatui(paint: impl Fn(&mut dyn Canvas)) {
         let area = Rect::new(0, 0, 12, 3);
-        let mut buf = Buffer::empty(area);
+        let mut model = Model::new(area);
         let mut grid = Grid::empty(area);
-        paint(&mut buf);
+        paint(&mut model);
         paint(&mut grid);
         for y in 0..3 {
             for x in 0..12 {
-                let (b, g) = (&buf[(x, y)], &grid[(x, y)]);
+                let (m, g) = (&model.cells[usize::from(y * 12 + x)], &grid[(x, y)]);
                 let at = format!("at ({x}, {y})");
-                assert_eq!(b.symbol(), grid.symbol((x, y)), "{at}");
-                assert_eq!(
-                    (b.fg, b.bg, b.modifier),
-                    (g.fg(), g.bg(), g.modifier()),
-                    "{at}"
-                );
+                assert_eq!(m.0, grid.symbol((x, y)), "{at}");
+                assert_eq!((m.1, m.2, m.3), (g.fg(), g.bg(), g.modifier()), "{at}");
+            }
+        }
+    }
+
+    /// ratatui 0.30's `Buffer` as the tests use it, a cell a `String`: `set_stringn` and
+    /// `set_style` as ratatui-core 0.1 writes them, kept to check the grid against since ratatui
+    /// left (CS-4; it matched the buffer on these tests before it went). Independent of the grid's
+    /// code, widths included.
+    struct Model {
+        area: Rect,
+        cells: Vec<(String, Color, Color, Modifier)>,
+    }
+
+    impl Model {
+        fn new(area: Rect) -> Model {
+            let blank = (
+                " ".to_owned(),
+                Color::Reset,
+                Color::Reset,
+                Modifier::empty(),
+            );
+            Model {
+                area,
+                cells: vec![blank; area.area() as usize],
+            }
+        }
+
+        fn cell(&mut self, x: u16, y: u16) -> &mut (String, Color, Color, Modifier) {
+            let i = (y - self.area.y) * self.area.width + x - self.area.x;
+            &mut self.cells[usize::from(i)]
+        }
+
+        fn patch(cell: &mut (String, Color, Color, Modifier), style: Style) {
+            cell.1 = style.fg.unwrap_or(cell.1);
+            cell.2 = style.bg.unwrap_or(cell.2);
+            cell.3.insert(style.add_modifier);
+            cell.3.remove(style.sub_modifier);
+        }
+    }
+
+    impl Canvas for Model {
+        fn stringn(&mut self, mut x: u16, y: u16, s: &str, max: usize, style: Style) -> (u16, u16) {
+            let width = |g: &str| -> u16 {
+                let marks = g
+                    .chars()
+                    .filter(|c| matches!(c, '\u{FF9E}' | '\u{FF9F}'))
+                    .count();
+                if g.len() == 1 {
+                    1
+                } else {
+                    (g.width() + marks) as u16
+                }
+            };
+            let mut left = self
+                .area
+                .right()
+                .saturating_sub(x)
+                .min(max.try_into().unwrap_or(u16::MAX));
+            let graphemes = s
+                .graphemes(true)
+                .filter(|g| !g.contains(char::is_control))
+                .map(|g| (g, width(g)))
+                .filter(|&(_, w)| w > 0)
+                .map_while(|(g, w)| {
+                    left = left.checked_sub(w)?;
+                    Some((g, w))
+                });
+            for (g, w) in graphemes {
+                let cell = self.cell(x, y);
+                cell.0 = g.to_owned();
+                Model::patch(cell, style);
+                let next = x + w;
+                x += 1;
+                while x < next {
+                    *self.cell(x, y) = (
+                        " ".to_owned(),
+                        Color::Reset,
+                        Color::Reset,
+                        Modifier::empty(),
+                    );
+                    x += 1;
+                }
+            }
+            (x, y)
+        }
+
+        fn style(&mut self, area: Rect, style: Style) {
+            let area = self.area.intersection(area);
+            for y in area.top()..area.bottom() {
+                for x in area.left()..area.right() {
+                    Model::patch(self.cell(x, y), style);
+                }
             }
         }
     }
@@ -585,15 +672,6 @@ mod tests {
     trait Canvas {
         fn stringn(&mut self, x: u16, y: u16, s: &str, max: usize, style: Style) -> (u16, u16);
         fn style(&mut self, area: Rect, style: Style);
-    }
-
-    impl Canvas for Buffer {
-        fn stringn(&mut self, x: u16, y: u16, s: &str, max: usize, style: Style) -> (u16, u16) {
-            self.set_stringn(x, y, s, max, style)
-        }
-        fn style(&mut self, area: Rect, style: Style) {
-            self.set_style(area, style);
-        }
     }
 
     impl Canvas for Grid {

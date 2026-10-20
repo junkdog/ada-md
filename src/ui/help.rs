@@ -1,8 +1,8 @@
 //! The help overlay (`?`): every action with its keys, from the bindings in use, so rebound keys
 //! show as they are. It scrolls when it doesn't fit.
 
+use crate::geom::Rect;
 use crate::grid::Grid;
-use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::State;

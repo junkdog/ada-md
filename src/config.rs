@@ -427,7 +427,7 @@ fn commented(text: &str, key: &str) -> Option<Range<usize>> {
 mod tests {
     use super::*;
     use crate::app::Keymap;
-    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
     fn the_default_file_reads_as_the_defaults() {

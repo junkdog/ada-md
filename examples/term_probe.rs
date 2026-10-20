@@ -17,10 +17,10 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use ada::geom::Size;
 use ada::images::{self, ImageMode};
 use ada::probe::{QUERY, Replies};
-use ratatui::crossterm::terminal::{self, disable_raw_mode, enable_raw_mode};
-use ratatui::layout::Size;
+use crossterm::terminal::{self, disable_raw_mode, enable_raw_mode};
 
 /// How long the probe waits for the `CSI 5n` reply, as CS-2 plans it.
 const DEADLINE: Duration = Duration::from_secs(2);

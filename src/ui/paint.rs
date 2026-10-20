@@ -2,9 +2,9 @@
 //! real work: syntax colors are overlaid on the code span, and in no-wrap mode the span is a
 //! window into its line, shifted by the shared offset (ADR-20).
 
+use crate::geom::Rect;
 use crate::grid::Grid;
-use ratatui::layout::Rect;
-use ratatui::style::Style;
+use crate::style::Style;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::LinkState;
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn stripes_split_pieces_at_their_edges() {
-        let bg = Style::new().bg(ratatui::style::Color::Red);
+        let bg = Style::new().bg(crate::style::Color::Red);
         let mut out = Vec::new();
         stripe_piece(
             "ab日cd",

@@ -1,9 +1,9 @@
 //! The outline popup: the headings (`o`), indented by level, the links (`l`), each with where it
 //! leads, the themes (`T`), or the columns to sort a table by (`s`); filtered by what's typed.
 
+use crate::geom::Rect;
 use crate::grid::Grid;
-use ratatui::layout::Rect;
-use ratatui::style::Modifier;
+use crate::style::Modifier;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{Listing, OutlineEntry, State};

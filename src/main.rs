@@ -173,10 +173,7 @@ fn print_doc(args: &Args, config: &Config, theme: &Theme, path: &Path) -> Result
     // fzf exports the whole terminal as $COLUMNS, and the preview pane as $FZF_PREVIEW_COLUMNS.
     let env_number = |name| env::var(name).ok()?.trim().parse().ok();
     let tty = io::stdout().is_terminal();
-    let screen = || {
-        tty.then(|| ratatui::crossterm::terminal::size().ok())
-            .flatten()
-    };
+    let screen = || tty.then(|| crossterm::terminal::size().ok()).flatten();
     let width = args
         .width
         .or_else(|| env_number("FZF_PREVIEW_COLUMNS"))

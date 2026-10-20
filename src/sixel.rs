@@ -250,7 +250,11 @@ impl Indexed {
             let last = (rows.end - offset) / 6;
             (last, offset + last * 6..rows.end)
         };
-        let start = if first == 0 { 0 } else { banded.ends[first - 1] };
+        let start = if first == 0 {
+            0
+        } else {
+            banded.ends[first - 1]
+        };
         if last > first {
             out.extend_from_slice(&banded.data[start..banded.ends[last - 1]]);
         }
@@ -831,7 +835,10 @@ mod tests {
             out.clear();
             indexed.encode(rows.clone(), width, &mut out);
             let (w, h, px) = decode(&out);
-            let (rows, width) = (rows.start as usize..rows.end.min(30) as usize, width.min(9) as usize);
+            let (rows, width) = (
+                rows.start as usize..rows.end.min(30) as usize,
+                width.min(9) as usize,
+            );
             assert_eq!((w, h), (width, rows.len()));
             for (k, p) in px.iter().enumerate() {
                 let (x, y) = (k % w, k / w + rows.start);

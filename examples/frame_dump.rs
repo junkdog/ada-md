@@ -21,11 +21,11 @@ use std::rc::Rc;
 use std::{env, fs};
 
 use ada::app::{Cmd, Computed, Config, Dir, Effects, Msg, ScrollBy, Size, State, update};
+use ada::geom::Size as Cells;
 use ada::grid::Screen;
 use ada::images::{Encoder, Proto};
 use ada::theme::Theme;
 use ada::ui;
-use ratatui::layout::Size as Cells;
 use regex::bytes::{Captures, Regex};
 
 /// The cell size images are drawn for: 10×20 px, as `image_scroll` draws them.
@@ -70,9 +70,11 @@ fn renumber_kitty(frames: &[u8]) -> Vec<u8> {
         });
     Regex::new(r"(\x1b_G[^;\x1b]*\bi=)(\d+)")
         .unwrap()
-        .replace_all(&frames, |c: &Captures| match num(&c[2]).and_then(|id| ids.get(&id)) {
-            Some(n) => [&c[1], format!("id{n}").as_bytes()].concat(),
-            None => c[0].to_vec(),
+        .replace_all(&frames, |c: &Captures| {
+            match num(&c[2]).and_then(|id| ids.get(&id)) {
+                Some(n) => [&c[1], format!("id{n}").as_bytes()].concat(),
+                None => c[0].to_vec(),
+            }
         })
         .into_owned()
 }

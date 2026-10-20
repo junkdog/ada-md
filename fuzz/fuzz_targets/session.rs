@@ -26,17 +26,17 @@ use std::sync::{Arc, OnceLock};
 
 use ada::app::{self, Cmd, Computed, Config, Dir, Effects, Keymap, Msg, ScrollBy, Size, State};
 use ada::config;
+use ada::geom::Size as Cells;
 use ada::grid::{Grid, Screen};
 use ada::highlight;
 use ada::images::{Probe, Proto};
 use ada::layout::{LineNumbers, TableMode};
 use ada::links::Resolved;
+use ada::style::{Color, Modifier};
 use ada::theme::Theme;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use libfuzzer_sys::arbitrary::{self, Arbitrary, Result, Unstructured};
 use libfuzzer_sys::fuzz_target;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::layout::Size as Cells;
-use ratatui::style::{Color, Modifier};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 

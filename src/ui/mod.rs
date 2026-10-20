@@ -8,9 +8,9 @@ mod save;
 
 use std::ops::Range;
 
+use crate::geom::Rect;
 use crate::grid::Grid;
-use ratatui::layout::Rect;
-use ratatui::style::Style;
+use crate::style::Style;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{Document, ImageView, State};
@@ -152,7 +152,7 @@ fn frame(
     area: Rect,
     theme: &Theme,
     at: (u16, i32),
-    size: ratatui::layout::Size,
+    size: crate::geom::Size,
     label: &str,
 ) {
     let (w, h) = (usize::from(size.width), i32::from(size.height));
