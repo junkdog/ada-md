@@ -91,7 +91,7 @@ pub fn transmit(
 /// filter: 3–4× faster than zlib's fast level on the pixels and, on photos, smaller (experiment
 /// 24). An image whose every pixel is gray goes as gray: fdeflate, unlike zlib, doesn't fold
 /// the gray's three copies back into one.
-fn png(image: &DynamicImage, w: impl Write) -> io::Result<()> {
+pub(crate) fn png(image: &DynamicImage, w: impl Write) -> io::Result<()> {
     use png::ColorType;
     let alpha = image.color().has_alpha();
     let ch = if alpha { 4 } else { 3 };
@@ -224,7 +224,7 @@ impl<W: Write> Write for Chunks<'_, W> {
     }
 }
 
-fn base64(data: &[u8], out: &mut Vec<u8>) {
+pub(crate) fn base64(data: &[u8], out: &mut Vec<u8>) {
     const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let (triples, rest) = data.as_chunks::<3>();
     for &[a, b, c] in triples {
