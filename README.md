@@ -56,16 +56,17 @@ you can remap.
 
 ## Performance
 
-Against other terminal markdown viewers, ada is first in 79 of the 84 interactive measurements
+Against other terminal markdown viewers, ada is first in 77 of the 84 interactive measurements
 of time, CPU and memory: four notes from 13 KB to 2 MB in a 120×40 pty, four pinned cores of an
-AMD Ryzen AI MAX+ PRO 395, medians of 3–5 runs (ada `137570c`, 2026-10-18). The exceptions: glow
-writes about a third fewer bytes per page, and md-tui and leaf peak lower on the smallest note.
+AMD Ryzen AI MAX+ PRO 395 held at full clock, medians of 3–5 runs (ada `101ce07`, 2026-10-20). The
+exceptions: glow writes about a third fewer bytes per page, md-tui and leaf peak lower on the
+smallest note and md-tui on the 86 KB one, and md-tui jumps to that note's end 7 µs sooner.
 
 Printing to a pipe, it's the fastest of the printers that render and highlight, on every note.
 As a previewer it beats bat on code, on pretty-printed JSON (6.5 MB in 160 ms, bat 1.9 s) and on
 logs (1 MB in 16 ms, bat 3.3 s), though a single 3.75 MB line of JSON takes it 1.8× bat's time,
-which leaves such lines uncolored. Image previews are 1.5–20× faster than `kitten icat`, in
-1.2–13× less memory.
+which leaves such lines uncolored. Image previews are the fastest of every tool measured, 3.3–19×
+faster than `kitten icat`, in 1.2–12× less memory.
 
 Charts are on [the site](https://junkdog.github.io/ada-md/#performance), the medians in
 [`interactive.dat`](bench/b2/plots/interactive.dat) and [`print.dat`](bench/b2/plots/print.dat),

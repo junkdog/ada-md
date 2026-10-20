@@ -40,7 +40,7 @@
     <h1>ada</h1>
     <p class="pitch">The fastest terminal markdown viewer, for one file or a whole vault of notes.</p>
 <!-- proof:begin -->
-<p class="proof"><a href="#performance">First in 79 of 84 measurements</a> against five other terminal viewers, on time, CPU and memory.</p>
+<p class="proof"><a href="#performance">First in 77 of 84 measurements</a> against five other terminal viewers, on time, CPU and memory.</p>
 <!-- proof:end -->
     <p class="sub">Follow links and come back to where you were, see what git says changed, read wide tables at
       any width, and look at the pictures.</p>
@@ -255,10 +255,10 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
 <!-- perf:begin -->
 <p class="lede">Measured on the 238 KB note, the largest in the vault:</p>
 <div class="tiles">
-<div class="tile"><b>8.0 <span>ms</span></b><p>first paint <em class="kind wall">wall</em></p><small>next: leaf, 29.4 ms (3.7×)</small></div>
-<div class="tile"><b>0.10 <span>ms</span></b><p>CPU per line scrolled <em class="kind cpu">CPU</em></p><small>next: mdfried, 0.87 ms (8.7×)</small></div>
-<div class="tile"><b>3.7 <span>ms</span></b><p>re-layout after a resize <em class="kind wall">wall</em></p><small>next: treemd, 28.0 ms (7.6×)</small></div>
-<div class="tile"><b>17.7 <span>MiB</span></b><p>peak memory</p><small>next: treemd, 24.0 MiB (1.4×)</small></div>
+<div class="tile"><b>7.7 <span>ms</span></b><p>first paint <em class="kind wall">wall</em></p><small>next: leaf, 22.8 ms (3.0×)</small></div>
+<div class="tile"><b>0.07 <span>ms</span></b><p>CPU per line scrolled <em class="kind cpu">CPU</em></p><small>next: leaf, 0.71 ms (9.9×)</small></div>
+<div class="tile"><b>3.3 <span>ms</span></b><p>re-layout after a resize <em class="kind wall">wall</em></p><small>next: treemd, 20.5 ms (6.2×)</small></div>
+<div class="tile"><b>18.1 <span>MiB</span></b><p>peak memory</p><small>next: treemd, 22.8 MiB (1.3×)</small></div>
 </div>
 <div class="doc-tabs" role="radiogroup" aria-label="document">
 <input type="radio" name="doc" id="doc-s"><label for="doc-s"><b>S</b> 13 KB, the median note</label>
@@ -268,286 +268,286 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
 </div>
 <div class="perf-panel" data-doc="s"><h3>In a 120×40 terminal</h3><div class="charts">
 <figure class="chart"><figcaption>first paint <span>ms</span> <em class="kind wall">wall</em><small>from launch until the document&#x27;s first line is on screen</small></figcaption><ol>
-<li class="ada" style="--w:21.6%"><span class="name">ada</span><span class="bar"></span><span class="val">3.7</span></li>
-<li style="--w:35.6%"><span class="name">leaf</span><span class="bar"></span><span class="val">6.7 <small>1.8×</small></span></li>
-<li style="--w:48.8%"><span class="name">treemd</span><span class="bar"></span><span class="val">11.7 <small>3.2×</small></span></li>
-<li style="--w:71.6%"><span class="name">md-tui</span><span class="bar"></span><span class="val">30.8 <small>8.4×</small></span></li>
-<li style="--w:79.1%"><span class="name">glow</span><span class="bar"></span><span class="val">42.2 <small>11×</small></span></li>
-<li style="--w:100.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">103 <small>28×</small></span></li>
+<li class="ada" style="--w:20.5%"><span class="name">ada</span><span class="bar"></span><span class="val">2.9</span></li>
+<li style="--w:31.2%"><span class="name">leaf</span><span class="bar"></span><span class="val">4.7 <small>1.6×</small></span></li>
+<li style="--w:41.6%"><span class="name">treemd</span><span class="bar"></span><span class="val">7.5 <small>2.6×</small></span></li>
+<li style="--w:65.7%"><span class="name">md-tui</span><span class="bar"></span><span class="val">22.1 <small>7.6×</small></span></li>
+<li style="--w:76.5%"><span class="name">glow</span><span class="bar"></span><span class="val">35.7 <small>12×</small></span></li>
+<li style="--w:100.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">102 <small>35×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU per line scrolled <span>ms</span> <em class="kind cpu">CPU</em><small>for one line down, from the key until the screen holds still; the median</small></figcaption><ol>
-<li class="ada" style="--w:19.4%"><span class="name">ada</span><span class="bar"></span><span class="val">0.10</span></li>
-<li style="--w:67.8%"><span class="name">mdfried</span><span class="bar"></span><span class="val">0.93 <small>9.8×</small></span></li>
-<li style="--w:69.5%"><span class="name">leaf</span><span class="bar"></span><span class="val">1.0 <small>11×</small></span></li>
-<li style="--w:76.0%"><span class="name">treemd</span><span class="bar"></span><span class="val">1.4 <small>14×</small></span></li>
-<li style="--w:81.3%"><span class="name">md-tui</span><span class="bar"></span><span class="val">1.8 <small>18×</small></span></li>
-<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">4.3 <small>45×</small></span></li>
+<li class="ada" style="--w:22.0%"><span class="name">ada</span><span class="bar"></span><span class="val">0.07</span></li>
+<li style="--w:79.2%"><span class="name">leaf</span><span class="bar"></span><span class="val">0.72 <small>11×</small></span></li>
+<li style="--w:86.7%"><span class="name">mdfried</span><span class="bar"></span><span class="val">0.98 <small>15×</small></span></li>
+<li style="--w:94.5%"><span class="name">treemd</span><span class="bar"></span><span class="val">1.4 <small>21×</small></span></li>
+<li style="--w:96.3%"><span class="name">glow</span><span class="bar"></span><span class="val">1.5 <small>22×</small></span></li>
+<li style="--w:100.0%"><span class="name">md-tui</span><span class="bar"></span><span class="val">1.7 <small>26×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>search <span>ms</span> <em class="kind wall">wall</em><small>from the term and Enter until the match is on screen</small></figcaption><ol>
-<li class="ada" style="--w:16.3%"><span class="name">ada</span><span class="bar"></span><span class="val">0.92</span></li>
-<li style="--w:35.3%"><span class="name">md-tui</span><span class="bar"></span><span class="val">2.7 <small>2.9×</small></span></li>
-<li style="--w:38.9%"><span class="name">leaf</span><span class="bar"></span><span class="val">3.3 <small>3.6×</small></span></li>
-<li style="--w:69.1%"><span class="name">treemd</span><span class="bar"></span><span class="val">18.1 <small>20×</small></span></li>
-<li style="--w:100.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">104 <small>112×</small></span></li>
+<li class="ada" style="--w:15.7%"><span class="name">ada</span><span class="bar"></span><span class="val">0.76</span></li>
+<li style="--w:31.8%"><span class="name">md-tui</span><span class="bar"></span><span class="val">1.9 <small>2.5×</small></span></li>
+<li style="--w:34.3%"><span class="name">leaf</span><span class="bar"></span><span class="val">2.2 <small>2.9×</small></span></li>
+<li style="--w:64.3%"><span class="name">treemd</span><span class="bar"></span><span class="val">12.9 <small>17×</small></span></li>
+<li style="--w:100.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">103 <small>135×</small></span></li>
 <li class="missing"><span class="name">glow</span><span class="why">has no search</span></li>
 </ol></figure>
 <figure class="chart"><figcaption>re-layout after a resize <span>ms</span> <em class="kind wall">wall</em><small>from the first resize until the screen stops changing</small></figcaption><ol>
-<li class="ada" style="--w:15.0%"><span class="name">ada</span><span class="bar"></span><span class="val">0.70</span></li>
-<li style="--w:41.2%"><span class="name">treemd</span><span class="bar"></span><span class="val">3.5 <small>4.9×</small></span></li>
-<li style="--w:76.7%"><span class="name">md-tui</span><span class="bar"></span><span class="val">30.0 <small>43×</small></span></li>
-<li style="--w:96.6%"><span class="name">mdfried</span><span class="bar"></span><span class="val">101 <small>145×</small></span></li>
-<li style="--w:100.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">124 <small>177×</small></span></li>
+<li class="ada" style="--w:14.7%"><span class="name">ada</span><span class="bar"></span><span class="val">0.60</span></li>
+<li style="--w:36.6%"><span class="name">treemd</span><span class="bar"></span><span class="val">2.4 <small>3.9×</small></span></li>
+<li style="--w:71.8%"><span class="name">md-tui</span><span class="bar"></span><span class="val">21.1 <small>35×</small></span></li>
+<li style="--w:96.8%"><span class="name">mdfried</span><span class="bar"></span><span class="val">100 <small>166×</small></span></li>
+<li style="--w:100.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">123 <small>203×</small></span></li>
 <li class="missing"><span class="name">glow</span><span class="why">blank after a resize</span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU over a held page-down <span>ms</span> <em class="kind cpu">CPU</em><small>for 60 page-downs at 30 a second, until the screen catches up</small></figcaption><ol>
-<li class="ada" style="--w:23.2%"><span class="name">ada</span><span class="bar"></span><span class="val">5.3</span></li>
-<li style="--w:67.3%"><span class="name">mdfried</span><span class="bar"></span><span class="val">30.3 <small>5.7×</small></span></li>
-<li style="--w:74.8%"><span class="name">md-tui</span><span class="bar"></span><span class="val">40.8 <small>7.7×</small></span></li>
-<li style="--w:76.9%"><span class="name">leaf</span><span class="bar"></span><span class="val">44.2 <small>8.3×</small></span></li>
-<li style="--w:87.5%"><span class="name">treemd</span><span class="bar"></span><span class="val">67.2 <small>13×</small></span></li>
-<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">110 <small>21×</small></span></li>
+<li class="ada" style="--w:25.4%"><span class="name">ada</span><span class="bar"></span><span class="val">3.3</span></li>
+<li style="--w:73.3%"><span class="name">mdfried</span><span class="bar"></span><span class="val">18.5 <small>5.6×</small></span></li>
+<li style="--w:80.7%"><span class="name">md-tui</span><span class="bar"></span><span class="val">24.2 <small>7.4×</small></span></li>
+<li style="--w:83.8%"><span class="name">leaf</span><span class="bar"></span><span class="val">27.0 <small>8.2×</small></span></li>
+<li style="--w:98.4%"><span class="name">treemd</span><span class="bar"></span><span class="val">45.7 <small>14×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">48.4 <small>15×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory <span>MiB</span><small>the most resident at once, over the whole session</small></figcaption><ol>
-<li style="--w:39.8%"><span class="name">md-tui</span><span class="bar"></span><span class="val">9.3 <small>0.8×</small></span></li>
-<li style="--w:46.4%"><span class="name">leaf</span><span class="bar"></span><span class="val">10.9 <small>1.0×</small></span></li>
-<li class="ada" style="--w:47.7%"><span class="name">ada</span><span class="bar"></span><span class="val">11.2</span></li>
-<li style="--w:59.7%"><span class="name">treemd</span><span class="bar"></span><span class="val">14.7 <small>1.3×</small></span></li>
-<li style="--w:69.2%"><span class="name">mdfried</span><span class="bar"></span><span class="val">18.3 <small>1.6×</small></span></li>
-<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">37.3 <small>3.3×</small></span></li>
+<li style="--w:38.6%"><span class="name">md-tui</span><span class="bar"></span><span class="val">8.4 <small>0.7×</small></span></li>
+<li style="--w:48.3%"><span class="name">leaf</span><span class="bar"></span><span class="val">10.5 <small>0.9×</small></span></li>
+<li class="ada" style="--w:52.5%"><span class="name">ada</span><span class="bar"></span><span class="val">11.7</span></li>
+<li style="--w:58.7%"><span class="name">treemd</span><span class="bar"></span><span class="val">13.5 <small>1.2×</small></span></li>
+<li style="--w:66.6%"><span class="name">mdfried</span><span class="bar"></span><span class="val">16.3 <small>1.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">36.0 <small>3.1×</small></span></li>
 </ol></figure>
 </div><h3>Printing, <code>--print</code> and the other printers</h3><div class="charts">
 <figure class="chart"><figcaption>print to a pipe <span>ms</span> <em class="kind wall">wall</em><small>to print the whole document to a pipe</small></figcaption><ol>
-<li style="--w:16.6%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">0.64 <small>0.3×</small></span></li>
-<li class="ada" style="--w:41.3%"><span class="name">ada</span><span class="bar"></span><span class="val">2.5</span></li>
-<li style="--w:46.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">3.3 <small>1.3×</small></span></li>
-<li style="--w:55.8%"><span class="name">mdcat</span><span class="bar"></span><span class="val">5.6 <small>2.2×</small></span></li>
-<li style="--w:56.2%"><span class="name">mcat</span><span class="bar"></span><span class="val">5.7 <small>2.3×</small></span></li>
-<li style="--w:75.8%"><span class="name">glow</span><span class="bar"></span><span class="val">17.0 <small>6.7×</small></span></li>
-<li style="--w:98.9%"><span class="name">bat <small>source, not rendered</small></span><span class="bar"></span><span class="val">60.8 <small>24×</small></span></li>
+<li style="--w:16.5%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">0.63 <small>0.3×</small></span></li>
+<li class="ada" style="--w:41.4%"><span class="name">ada</span><span class="bar"></span><span class="val">2.5</span></li>
+<li style="--w:45.7%"><span class="name">leaf</span><span class="bar"></span><span class="val">3.2 <small>1.3×</small></span></li>
+<li style="--w:54.8%"><span class="name">mdcat</span><span class="bar"></span><span class="val">5.3 <small>2.1×</small></span></li>
+<li style="--w:56.7%"><span class="name">mcat</span><span class="bar"></span><span class="val">5.9 <small>2.3×</small></span></li>
+<li style="--w:75.8%"><span class="name">glow</span><span class="bar"></span><span class="val">17.0 <small>6.8×</small></span></li>
+<li style="--w:98.8%"><span class="name">bat <small>source, not rendered</small></span><span class="bar"></span><span class="val">60.6 <small>24×</small></span></li>
 <li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">64.8 <small>26×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, printing <span>MiB</span><small>the most resident at once while printing</small></figcaption><ol>
-<li style="--w:34.9%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">4.9 <small>0.5×</small></span></li>
-<li style="--w:58.4%"><span class="name">leaf</span><span class="bar"></span><span class="val">9.1 <small>1.0×</small></span></li>
-<li class="ada" style="--w:59.6%"><span class="name">ada</span><span class="bar"></span><span class="val">9.4</span></li>
-<li style="--w:79.4%"><span class="name">bat <small>source, not rendered</small></span><span class="bar"></span><span class="val">15.9 <small>1.7×</small></span></li>
-<li style="--w:86.4%"><span class="name">mcat</span><span class="bar"></span><span class="val">19.1 <small>2.0×</small></span></li>
-<li style="--w:91.7%"><span class="name">mdcat</span><span class="bar"></span><span class="val">22.0 <small>2.3×</small></span></li>
-<li style="--w:98.6%"><span class="name">rich</span><span class="bar"></span><span class="val">26.3 <small>2.8×</small></span></li>
-<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">27.3 <small>2.9×</small></span></li>
+<li style="--w:35.5%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">4.9 <small>0.5×</small></span></li>
+<li style="--w:57.8%"><span class="name">leaf</span><span class="bar"></span><span class="val">8.8 <small>0.9×</small></span></li>
+<li class="ada" style="--w:63.0%"><span class="name">ada</span><span class="bar"></span><span class="val">10.0</span></li>
+<li style="--w:81.2%"><span class="name">bat <small>source, not rendered</small></span><span class="bar"></span><span class="val">16.0 <small>1.6×</small></span></li>
+<li style="--w:83.0%"><span class="name">mcat</span><span class="bar"></span><span class="val">16.7 <small>1.7×</small></span></li>
+<li style="--w:91.3%"><span class="name">mdcat</span><span class="bar"></span><span class="val">20.8 <small>2.1×</small></span></li>
+<li style="--w:99.6%"><span class="name">glow</span><span class="bar"></span><span class="val">25.7 <small>2.6×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">26.0 <small>2.6×</small></span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-doc="m"><h3>In a 120×40 terminal</h3><div class="charts">
 <figure class="chart"><figcaption>first paint <span>ms</span> <em class="kind wall">wall</em><small>from launch until the document&#x27;s first line is on screen</small></figcaption><ol>
-<li class="ada" style="--w:16.9%"><span class="name">ada</span><span class="bar"></span><span class="val">7.2</span></li>
-<li style="--w:34.3%"><span class="name">leaf</span><span class="bar"></span><span class="val">18.6 <small>2.6×</small></span></li>
-<li style="--w:40.4%"><span class="name">treemd</span><span class="bar"></span><span class="val">25.8 <small>3.6×</small></span></li>
-<li style="--w:65.8%"><span class="name">mdfried</span><span class="bar"></span><span class="val">103 <small>14×</small></span></li>
-<li style="--w:71.9%"><span class="name">glow</span><span class="bar"></span><span class="val">143 <small>20×</small></span></li>
-<li style="--w:100.0%"><span class="name">md-tui</span><span class="bar"></span><span class="val">658 <small>91×</small></span></li>
+<li class="ada" style="--w:15.8%"><span class="name">ada</span><span class="bar"></span><span class="val">5.1</span></li>
+<li style="--w:33.3%"><span class="name">leaf</span><span class="bar"></span><span class="val">14.1 <small>2.8×</small></span></li>
+<li style="--w:37.9%"><span class="name">treemd</span><span class="bar"></span><span class="val">18.4 <small>3.6×</small></span></li>
+<li style="--w:67.4%"><span class="name">mdfried</span><span class="bar"></span><span class="val">102 <small>20×</small></span></li>
+<li style="--w:68.9%"><span class="name">glow</span><span class="bar"></span><span class="val">112 <small>22×</small></span></li>
+<li style="--w:100.0%"><span class="name">md-tui</span><span class="bar"></span><span class="val">682 <small>134×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU per line scrolled <span>ms</span> <em class="kind cpu">CPU</em><small>for one line down, from the key until the screen holds still; the median</small></figcaption><ol>
-<li class="ada" style="--w:22.6%"><span class="name">ada</span><span class="bar"></span><span class="val">0.22</span></li>
-<li style="--w:59.7%"><span class="name">leaf</span><span class="bar"></span><span class="val">0.98 <small>4.5×</small></span></li>
-<li style="--w:62.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">1.1 <small>4.9×</small></span></li>
-<li style="--w:72.5%"><span class="name">treemd</span><span class="bar"></span><span class="val">1.6 <small>7.5×</small></span></li>
-<li style="--w:72.7%"><span class="name">md-tui</span><span class="bar"></span><span class="val">1.7 <small>7.6×</small></span></li>
-<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">5.0 <small>23×</small></span></li>
+<li class="ada" style="--w:21.6%"><span class="name">ada</span><span class="bar"></span><span class="val">0.06</span></li>
+<li style="--w:81.6%"><span class="name">leaf</span><span class="bar"></span><span class="val">0.77 <small>13×</small></span></li>
+<li style="--w:89.3%"><span class="name">mdfried</span><span class="bar"></span><span class="val">1.1 <small>18×</small></span></li>
+<li style="--w:97.0%"><span class="name">md-tui</span><span class="bar"></span><span class="val">1.5 <small>24×</small></span></li>
+<li style="--w:98.9%"><span class="name">treemd</span><span class="bar"></span><span class="val">1.6 <small>27×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">1.7 <small>28×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>search <span>ms</span> <em class="kind wall">wall</em><small>from the term and Enter until the match is on screen</small></figcaption><ol>
-<li class="ada" style="--w:17.3%"><span class="name">ada</span><span class="bar"></span><span class="val">1.4</span></li>
-<li style="--w:39.1%"><span class="name">md-tui</span><span class="bar"></span><span class="val">4.5 <small>3.2×</small></span></li>
-<li style="--w:41.6%"><span class="name">leaf</span><span class="bar"></span><span class="val">5.2 <small>3.6×</small></span></li>
-<li style="--w:96.2%"><span class="name">treemd</span><span class="bar"></span><span class="val">92.4 <small>64×</small></span></li>
-<li style="--w:100.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">113 <small>79×</small></span></li>
+<li class="ada" style="--w:15.9%"><span class="name">ada</span><span class="bar"></span><span class="val">0.87</span></li>
+<li style="--w:41.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">3.7 <small>4.2×</small></span></li>
+<li style="--w:42.8%"><span class="name">md-tui</span><span class="bar"></span><span class="val">4.1 <small>4.7×</small></span></li>
+<li style="--w:91.3%"><span class="name">treemd</span><span class="bar"></span><span class="val">66.2 <small>76×</small></span></li>
+<li style="--w:100.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">109 <small>126×</small></span></li>
 <li class="missing"><span class="name">glow</span><span class="why">has no search</span></li>
 </ol></figure>
 <figure class="chart"><figcaption>re-layout after a resize <span>ms</span> <em class="kind wall">wall</em><small>from the first resize until the screen stops changing</small></figcaption><ol>
-<li class="ada" style="--w:19.5%"><span class="name">ada</span><span class="bar"></span><span class="val">3.0</span></li>
-<li style="--w:53.4%"><span class="name">treemd</span><span class="bar"></span><span class="val">14.6 <small>4.9×</small></span></li>
-<li style="--w:94.8%"><span class="name">mdfried</span><span class="bar"></span><span class="val">102 <small>35×</small></span></li>
-<li style="--w:100.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">131 <small>44×</small></span></li>
+<li class="ada" style="--w:17.7%"><span class="name">ada</span><span class="bar"></span><span class="val">1.8</span></li>
+<li style="--w:51.2%"><span class="name">treemd</span><span class="bar"></span><span class="val">10.2 <small>5.7×</small></span></li>
+<li style="--w:95.6%"><span class="name">mdfried</span><span class="bar"></span><span class="val">101 <small>56×</small></span></li>
+<li style="--w:100.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">128 <small>71×</small></span></li>
 <li class="missing"><span class="name">md-tui</span><span class="why">re-parses for seconds</span></li>
 <li class="missing"><span class="name">glow</span><span class="why">blank after a resize</span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU over a held page-down <span>ms</span> <em class="kind cpu">CPU</em><small>for 60 page-downs at 30 a second, until the screen catches up</small></figcaption><ol>
-<li class="ada" style="--w:30.3%"><span class="name">ada</span><span class="bar"></span><span class="val">18.3</span></li>
-<li style="--w:61.5%"><span class="name">mdfried</span><span class="bar"></span><span class="val">47.0 <small>2.6×</small></span></li>
-<li style="--w:64.8%"><span class="name">md-tui</span><span class="bar"></span><span class="val">51.9 <small>2.8×</small></span></li>
-<li style="--w:75.4%"><span class="name">leaf</span><span class="bar"></span><span class="val">71.5 <small>3.9×</small></span></li>
-<li style="--w:81.8%"><span class="name">treemd</span><span class="bar"></span><span class="val">86.8 <small>4.7×</small></span></li>
-<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">150 <small>8.2×</small></span></li>
+<li class="ada" style="--w:25.9%"><span class="name">ada</span><span class="bar"></span><span class="val">4.8</span></li>
+<li style="--w:76.4%"><span class="name">mdfried</span><span class="bar"></span><span class="val">28.8 <small>6.0×</small></span></li>
+<li style="--w:83.0%"><span class="name">md-tui</span><span class="bar"></span><span class="val">36.3 <small>7.5×</small></span></li>
+<li style="--w:90.2%"><span class="name">leaf</span><span class="bar"></span><span class="val">47.0 <small>9.7×</small></span></li>
+<li style="--w:99.9%"><span class="name">treemd</span><span class="bar"></span><span class="val">66.0 <small>14×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">66.3 <small>14×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory <span>MiB</span><small>the most resident at once, over the whole session</small></figcaption><ol>
-<li class="ada" style="--w:38.9%"><span class="name">ada</span><span class="bar"></span><span class="val">14.0</span></li>
-<li style="--w:42.1%"><span class="name">md-tui</span><span class="bar"></span><span class="val">15.1 <small>1.1×</small></span></li>
-<li style="--w:47.2%"><span class="name">leaf</span><span class="bar"></span><span class="val">17.0 <small>1.2×</small></span></li>
-<li style="--w:52.0%"><span class="name">treemd</span><span class="bar"></span><span class="val">19.0 <small>1.4×</small></span></li>
-<li style="--w:62.3%"><span class="name">mdfried</span><span class="bar"></span><span class="val">24.3 <small>1.7×</small></span></li>
-<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">59.1 <small>4.2×</small></span></li>
+<li style="--w:39.6%"><span class="name">md-tui</span><span class="bar"></span><span class="val">14.1 <small>1.0×</small></span></li>
+<li class="ada" style="--w:40.4%"><span class="name">ada</span><span class="bar"></span><span class="val">14.4</span></li>
+<li style="--w:47.1%"><span class="name">leaf</span><span class="bar"></span><span class="val">16.8 <small>1.2×</small></span></li>
+<li style="--w:49.8%"><span class="name">treemd</span><span class="bar"></span><span class="val">17.9 <small>1.2×</small></span></li>
+<li style="--w:58.7%"><span class="name">mdfried</span><span class="bar"></span><span class="val">22.0 <small>1.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">57.2 <small>4.0×</small></span></li>
 </ol></figure>
 </div><h3>Printing, <code>--print</code> and the other printers</h3><div class="charts">
 <figure class="chart"><figcaption>print to a pipe <span>ms</span> <em class="kind wall">wall</em><small>to print the whole document to a pipe</small></figcaption><ol>
-<li style="--w:20.1%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">3.3 <small>0.7×</small></span></li>
-<li class="ada" style="--w:28.3%"><span class="name">ada</span><span class="bar"></span><span class="val">4.8</span></li>
-<li style="--w:41.0%"><span class="name">mdcat</span><span class="bar"></span><span class="val">8.6 <small>1.8×</small></span></li>
-<li style="--w:42.3%"><span class="name">leaf</span><span class="bar"></span><span class="val">9.1 <small>1.9×</small></span></li>
-<li style="--w:56.8%"><span class="name">mcat</span><span class="bar"></span><span class="val">17.6 <small>3.7×</small></span></li>
-<li style="--w:69.1%"><span class="name">bat <small>source, not rendered</small></span><span class="bar"></span><span class="val">30.9 <small>6.4×</small></span></li>
-<li style="--w:87.3%"><span class="name">glow</span><span class="bar"></span><span class="val">70.8 <small>15×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">126 <small>26×</small></span></li>
+<li style="--w:19.9%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">3.2 <small>0.7×</small></span></li>
+<li class="ada" style="--w:28.8%"><span class="name">ada</span><span class="bar"></span><span class="val">4.8</span></li>
+<li style="--w:40.5%"><span class="name">mdcat</span><span class="bar"></span><span class="val">8.2 <small>1.7×</small></span></li>
+<li style="--w:40.8%"><span class="name">leaf</span><span class="bar"></span><span class="val">8.3 <small>1.7×</small></span></li>
+<li style="--w:56.5%"><span class="name">mcat</span><span class="bar"></span><span class="val">17.1 <small>3.6×</small></span></li>
+<li style="--w:68.9%"><span class="name">bat <small>source, not rendered</small></span><span class="bar"></span><span class="val">30.3 <small>6.3×</small></span></li>
+<li style="--w:86.6%"><span class="name">glow</span><span class="bar"></span><span class="val">68.6 <small>14×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">127 <small>26×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, printing <span>MiB</span><small>the most resident at once while printing</small></figcaption><ol>
-<li style="--w:34.9%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">6.1 <small>0.6×</small></span></li>
-<li class="ada" style="--w:55.2%"><span class="name">ada</span><span class="bar"></span><span class="val">10.4</span></li>
-<li style="--w:56.7%"><span class="name">leaf</span><span class="bar"></span><span class="val">10.9 <small>1.0×</small></span></li>
-<li style="--w:71.1%"><span class="name">bat <small>source, not rendered</small></span><span class="bar"></span><span class="val">15.9 <small>1.5×</small></span></li>
-<li style="--w:83.4%"><span class="name">mcat</span><span class="bar"></span><span class="val">21.9 <small>2.1×</small></span></li>
-<li style="--w:84.0%"><span class="name">mdcat</span><span class="bar"></span><span class="val">22.2 <small>2.1×</small></span></li>
-<li style="--w:95.1%"><span class="name">rich</span><span class="bar"></span><span class="val">29.8 <small>2.9×</small></span></li>
-<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">33.9 <small>3.2×</small></span></li>
+<li style="--w:34.4%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">5.9 <small>0.5×</small></span></li>
+<li style="--w:56.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">10.5 <small>1.0×</small></span></li>
+<li class="ada" style="--w:57.9%"><span class="name">ada</span><span class="bar"></span><span class="val">11.1</span></li>
+<li style="--w:71.8%"><span class="name">bat <small>source, not rendered</small></span><span class="bar"></span><span class="val">16.0 <small>1.5×</small></span></li>
+<li style="--w:79.7%"><span class="name">mcat</span><span class="bar"></span><span class="val">19.8 <small>1.8×</small></span></li>
+<li style="--w:82.0%"><span class="name">mdcat</span><span class="bar"></span><span class="val">21.0 <small>1.9×</small></span></li>
+<li style="--w:95.0%"><span class="name">rich</span><span class="bar"></span><span class="val">29.8 <small>2.7×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">34.0 <small>3.1×</small></span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-doc="l"><h3>In a 120×40 terminal</h3><div class="charts">
 <figure class="chart"><figcaption>first paint <span>ms</span> <em class="kind wall">wall</em><small>from launch until the document&#x27;s first line is on screen</small></figcaption><ol>
-<li class="ada" style="--w:12.8%"><span class="name">ada</span><span class="bar"></span><span class="val">8.0</span></li>
-<li style="--w:31.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">29.4 <small>3.7×</small></span></li>
-<li style="--w:36.8%"><span class="name">treemd</span><span class="bar"></span><span class="val">44.7 <small>5.6×</small></span></li>
-<li style="--w:48.4%"><span class="name">mdfried</span><span class="bar"></span><span class="val">103 <small>13×</small></span></li>
-<li style="--w:64.0%"><span class="name">glow</span><span class="bar"></span><span class="val">315 <small>39×</small></span></li>
-<li style="--w:100.0%"><span class="name">md-tui</span><span class="bar"></span><span class="val">4,140 <small>517×</small></span></li>
+<li class="ada" style="--w:12.8%"><span class="name">ada</span><span class="bar"></span><span class="val">7.7</span></li>
+<li style="--w:27.9%"><span class="name">leaf</span><span class="bar"></span><span class="val">22.8 <small>3.0×</small></span></li>
+<li style="--w:32.4%"><span class="name">treemd</span><span class="bar"></span><span class="val">31.4 <small>4.1×</small></span></li>
+<li style="--w:48.8%"><span class="name">mdfried</span><span class="bar"></span><span class="val">102 <small>13×</small></span></li>
+<li style="--w:63.5%"><span class="name">glow</span><span class="bar"></span><span class="val">292 <small>38×</small></span></li>
+<li style="--w:100.0%"><span class="name">md-tui</span><span class="bar"></span><span class="val">4,016 <small>523×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU per line scrolled <span>ms</span> <em class="kind cpu">CPU</em><small>for one line down, from the key until the screen holds still; the median</small></figcaption><ol>
-<li class="ada" style="--w:19.1%"><span class="name">ada</span><span class="bar"></span><span class="val">0.10</span></li>
-<li style="--w:64.2%"><span class="name">mdfried</span><span class="bar"></span><span class="val">0.87 <small>8.7×</small></span></li>
-<li style="--w:65.4%"><span class="name">leaf</span><span class="bar"></span><span class="val">0.92 <small>9.2×</small></span></li>
-<li style="--w:78.1%"><span class="name">treemd</span><span class="bar"></span><span class="val">1.7 <small>17×</small></span></li>
-<li style="--w:79.1%"><span class="name">md-tui</span><span class="bar"></span><span class="val">1.8 <small>18×</small></span></li>
-<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">4.8 <small>48×</small></span></li>
+<li class="ada" style="--w:21.9%"><span class="name">ada</span><span class="bar"></span><span class="val">0.07</span></li>
+<li style="--w:76.6%"><span class="name">leaf</span><span class="bar"></span><span class="val">0.71 <small>9.9×</small></span></li>
+<li style="--w:84.8%"><span class="name">mdfried</span><span class="bar"></span><span class="val">1.00 <small>14×</small></span></li>
+<li style="--w:94.3%"><span class="name">md-tui</span><span class="bar"></span><span class="val">1.5 <small>21×</small></span></li>
+<li style="--w:96.7%"><span class="name">treemd</span><span class="bar"></span><span class="val">1.6 <small>23×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">1.9 <small>26×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>search <span>ms</span> <em class="kind wall">wall</em><small>from the term and Enter until the match is on screen</small></figcaption><ol>
-<li class="ada" style="--w:15.7%"><span class="name">ada</span><span class="bar"></span><span class="val">1.0</span></li>
-<li style="--w:36.2%"><span class="name">leaf</span><span class="bar"></span><span class="val">3.3 <small>3.3×</small></span></li>
-<li style="--w:49.7%"><span class="name">md-tui</span><span class="bar"></span><span class="val">7.3 <small>7.2×</small></span></li>
-<li style="--w:96.6%"><span class="name">mdfried</span><span class="bar"></span><span class="val">113 <small>112×</small></span></li>
-<li style="--w:100.0%"><span class="name">treemd</span><span class="bar"></span><span class="val">137 <small>137×</small></span></li>
+<li class="ada" style="--w:16.5%"><span class="name">ada</span><span class="bar"></span><span class="val">1.0</span></li>
+<li style="--w:31.5%"><span class="name">leaf</span><span class="bar"></span><span class="val">2.4 <small>2.3×</small></span></li>
+<li style="--w:48.2%"><span class="name">md-tui</span><span class="bar"></span><span class="val">6.1 <small>5.9×</small></span></li>
+<li style="--w:98.0%"><span class="name">treemd</span><span class="bar"></span><span class="val">97.5 <small>94×</small></span></li>
+<li style="--w:100.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">109 <small>105×</small></span></li>
 <li class="missing"><span class="name">glow</span><span class="why">has no search</span></li>
 </ol></figure>
 <figure class="chart"><figcaption>re-layout after a resize <span>ms</span> <em class="kind wall">wall</em><small>from the first resize until the screen stops changing</small></figcaption><ol>
-<li class="ada" style="--w:18.6%"><span class="name">ada</span><span class="bar"></span><span class="val">3.7</span></li>
-<li style="--w:59.7%"><span class="name">treemd</span><span class="bar"></span><span class="val">28.0 <small>7.6×</small></span></li>
-<li style="--w:92.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">137 <small>37×</small></span></li>
-<li style="--w:100.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">203 <small>55×</small></span></li>
+<li class="ada" style="--w:18.2%"><span class="name">ada</span><span class="bar"></span><span class="val">3.3</span></li>
+<li style="--w:54.5%"><span class="name">treemd</span><span class="bar"></span><span class="val">20.5 <small>6.2×</small></span></li>
+<li style="--w:91.6%"><span class="name">leaf</span><span class="bar"></span><span class="val">132 <small>40×</small></span></li>
+<li style="--w:100.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">201 <small>61×</small></span></li>
 <li class="missing"><span class="name">md-tui</span><span class="why">re-parses for seconds</span></li>
 <li class="missing"><span class="name">glow</span><span class="why">blank after a resize</span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU over a held page-down <span>ms</span> <em class="kind cpu">CPU</em><small>for 60 page-downs at 30 a second, until the screen catches up</small></figcaption><ol>
-<li class="ada" style="--w:23.4%"><span class="name">ada</span><span class="bar"></span><span class="val">9.3</span></li>
-<li style="--w:67.5%"><span class="name">mdfried</span><span class="bar"></span><span class="val">52.4 <small>5.6×</small></span></li>
-<li style="--w:70.4%"><span class="name">leaf</span><span class="bar"></span><span class="val">58.7 <small>6.3×</small></span></li>
-<li style="--w:75.1%"><span class="name">md-tui</span><span class="bar"></span><span class="val">70.7 <small>7.6×</small></span></li>
-<li style="--w:82.0%"><span class="name">treemd</span><span class="bar"></span><span class="val">92.9 <small>10×</small></span></li>
-<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">188 <small>20×</small></span></li>
+<li class="ada" style="--w:24.8%"><span class="name">ada</span><span class="bar"></span><span class="val">6.3</span></li>
+<li style="--w:71.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">34.3 <small>5.5×</small></span></li>
+<li style="--w:76.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">41.3 <small>6.6×</small></span></li>
+<li style="--w:82.2%"><span class="name">md-tui</span><span class="bar"></span><span class="val">52.0 <small>8.3×</small></span></li>
+<li style="--w:89.6%"><span class="name">treemd</span><span class="bar"></span><span class="val">68.2 <small>11×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">100 <small>16×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory <span>MiB</span><small>the most resident at once, over the whole session</small></figcaption><ol>
-<li class="ada" style="--w:35.1%"><span class="name">ada</span><span class="bar"></span><span class="val">17.7</span></li>
-<li style="--w:46.9%"><span class="name">treemd</span><span class="bar"></span><span class="val">24.0 <small>1.4×</small></span></li>
-<li style="--w:47.6%"><span class="name">leaf</span><span class="bar"></span><span class="val">24.5 <small>1.4×</small></span></li>
-<li style="--w:56.1%"><span class="name">md-tui</span><span class="bar"></span><span class="val">30.6 <small>1.7×</small></span></li>
-<li style="--w:93.4%"><span class="name">mdfried</span><span class="bar"></span><span class="val">81.0 <small>4.6×</small></span></li>
-<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">96.2 <small>5.4×</small></span></li>
+<li class="ada" style="--w:35.3%"><span class="name">ada</span><span class="bar"></span><span class="val">18.1</span></li>
+<li style="--w:44.3%"><span class="name">treemd</span><span class="bar"></span><span class="val">22.8 <small>1.3×</small></span></li>
+<li style="--w:46.7%"><span class="name">leaf</span><span class="bar"></span><span class="val">24.3 <small>1.3×</small></span></li>
+<li style="--w:55.5%"><span class="name">md-tui</span><span class="bar"></span><span class="val">30.5 <small>1.7×</small></span></li>
+<li style="--w:92.1%"><span class="name">mdfried</span><span class="bar"></span><span class="val">78.8 <small>4.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">96.8 <small>5.4×</small></span></li>
 </ol></figure>
 </div><h3>Printing, <code>--print</code> and the other printers</h3><div class="charts">
 <figure class="chart"><figcaption>print to a pipe <span>ms</span> <em class="kind wall">wall</em><small>to print the whole document to a pipe</small></figcaption><ol>
-<li style="--w:19.8%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">6.8 <small>0.9×</small></span></li>
-<li class="ada" style="--w:22.7%"><span class="name">ada</span><span class="bar"></span><span class="val">7.8</span></li>
-<li style="--w:32.8%"><span class="name">mdcat</span><span class="bar"></span><span class="val">12.5 <small>1.6×</small></span></li>
-<li style="--w:33.7%"><span class="name">leaf</span><span class="bar"></span><span class="val">13.0 <small>1.7×</small></span></li>
-<li style="--w:55.9%"><span class="name">mcat</span><span class="bar"></span><span class="val">36.4 <small>4.7×</small></span></li>
-<li style="--w:69.1%"><span class="name">bat <small>source, not rendered</small></span><span class="bar"></span><span class="val">67.0 <small>8.6×</small></span></li>
-<li style="--w:85.2%"><span class="name">glow</span><span class="bar"></span><span class="val">141 <small>18×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">280 <small>36×</small></span></li>
+<li style="--w:19.3%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">6.1 <small>0.8×</small></span></li>
+<li class="ada" style="--w:24.5%"><span class="name">ada</span><span class="bar"></span><span class="val">7.8</span></li>
+<li style="--w:32.8%"><span class="name">leaf</span><span class="bar"></span><span class="val">11.6 <small>1.5×</small></span></li>
+<li style="--w:33.7%"><span class="name">mdcat</span><span class="bar"></span><span class="val">12.0 <small>1.5×</small></span></li>
+<li style="--w:56.7%"><span class="name">mcat</span><span class="bar"></span><span class="val">36.0 <small>4.6×</small></span></li>
+<li style="--w:69.8%"><span class="name">bat <small>source, not rendered</small></span><span class="bar"></span><span class="val">67.0 <small>8.6×</small></span></li>
+<li style="--w:85.3%"><span class="name">glow</span><span class="bar"></span><span class="val">140 <small>18×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">282 <small>36×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, printing <span>MiB</span><small>the most resident at once while printing</small></figcaption><ol>
-<li style="--w:35.0%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">8.1 <small>0.7×</small></span></li>
-<li style="--w:48.1%"><span class="name">leaf</span><span class="bar"></span><span class="val">11.4 <small>1.0×</small></span></li>
-<li class="ada" style="--w:48.7%"><span class="name">ada</span><span class="bar"></span><span class="val">11.6</span></li>
-<li style="--w:60.6%"><span class="name">bat <small>source, not rendered</small></span><span class="bar"></span><span class="val">15.9 <small>1.4×</small></span></li>
-<li style="--w:73.8%"><span class="name">mdcat</span><span class="bar"></span><span class="val">22.4 <small>1.9×</small></span></li>
-<li style="--w:80.4%"><span class="name">mcat</span><span class="bar"></span><span class="val">26.6 <small>2.3×</small></span></li>
-<li style="--w:95.9%"><span class="name">rich</span><span class="bar"></span><span class="val">40.0 <small>3.4×</small></span></li>
-<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">44.5 <small>3.8×</small></span></li>
+<li style="--w:35.7%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">8.1 <small>0.7×</small></span></li>
+<li style="--w:47.7%"><span class="name">leaf</span><span class="bar"></span><span class="val">11.1 <small>0.9×</small></span></li>
+<li class="ada" style="--w:51.4%"><span class="name">ada</span><span class="bar"></span><span class="val">12.2</span></li>
+<li style="--w:61.7%"><span class="name">bat <small>source, not rendered</small></span><span class="bar"></span><span class="val">15.8 <small>1.3×</small></span></li>
+<li style="--w:73.4%"><span class="name">mdcat</span><span class="bar"></span><span class="val">21.4 <small>1.8×</small></span></li>
+<li style="--w:79.0%"><span class="name">mcat</span><span class="bar"></span><span class="val">24.7 <small>2.0×</small></span></li>
+<li style="--w:97.6%"><span class="name">rich</span><span class="bar"></span><span class="val">39.8 <small>3.3×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">42.4 <small>3.5×</small></span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-doc="xl"><h3>In a 120×40 terminal</h3><div class="charts">
 <figure class="chart"><figcaption>first paint <span>ms</span> <em class="kind wall">wall</em><small>from launch until the document&#x27;s first line is on screen</small></figcaption><ol>
-<li class="ada" style="--w:20.2%"><span class="name">ada</span><span class="bar"></span><span class="val">89.8</span></li>
-<li style="--w:51.1%"><span class="name">leaf</span><span class="bar"></span><span class="val">363 <small>4.0×</small></span></li>
-<li style="--w:53.4%"><span class="name">mdfried</span><span class="bar"></span><span class="val">404 <small>4.5×</small></span></li>
-<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">3,329 <small>37×</small></span></li>
+<li class="ada" style="--w:19.3%"><span class="name">ada</span><span class="bar"></span><span class="val">69.4</span></li>
+<li style="--w:54.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">359 <small>5.2×</small></span></li>
+<li style="--w:61.1%"><span class="name">mdfried</span><span class="bar"></span><span class="val">503 <small>7.2×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">3,172 <small>46×</small></span></li>
 <li class="missing"><span class="name">md-tui</span><span class="why">never finished parsing</span></li>
 <li class="missing"><span class="name">treemd</span><span class="why">shows one section at a time</span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU per line scrolled <span>ms</span> <em class="kind cpu">CPU</em><small>for one line down, from the key until the screen holds still; the median</small></figcaption><ol>
-<li class="ada" style="--w:24.3%"><span class="name">ada</span><span class="bar"></span><span class="val">0.25</span></li>
-<li style="--w:60.6%"><span class="name">mdfried</span><span class="bar"></span><span class="val">0.97 <small>3.9×</small></span></li>
-<li style="--w:65.3%"><span class="name">leaf</span><span class="bar"></span><span class="val">1.2 <small>4.7×</small></span></li>
-<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">4.3 <small>17×</small></span></li>
+<li class="ada" style="--w:23.6%"><span class="name">ada</span><span class="bar"></span><span class="val">0.08</span></li>
+<li style="--w:82.3%"><span class="name">mdfried</span><span class="bar"></span><span class="val">0.82 <small>9.7×</small></span></li>
+<li style="--w:83.5%"><span class="name">leaf</span><span class="bar"></span><span class="val">0.86 <small>10×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">1.6 <small>19×</small></span></li>
 <li class="missing"><span class="name">md-tui</span><span class="why">never finished parsing</span></li>
 <li class="missing"><span class="name">treemd</span><span class="why">shows one section at a time</span></li>
 </ol></figure>
 <figure class="chart"><figcaption>search <span>ms</span> <em class="kind wall">wall</em><small>from the term and Enter until the match is on screen</small></figcaption><ol>
-<li class="ada" style="--w:44.4%"><span class="name">ada</span><span class="bar"></span><span class="val">3.1</span></li>
-<li style="--w:100.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">9.6 <small>3.1×</small></span></li>
+<li class="ada" style="--w:41.9%"><span class="name">ada</span><span class="bar"></span><span class="val">2.1</span></li>
+<li style="--w:100.0%"><span class="name">leaf</span><span class="bar"></span><span class="val">7.6 <small>3.6×</small></span></li>
 <li class="missing"><span class="name">mdfried</span><span class="why">match off-screen</span></li>
 <li class="missing"><span class="name">md-tui</span><span class="why">never finished parsing</span></li>
 <li class="missing"><span class="name">treemd</span><span class="why">shows one section at a time</span></li>
 <li class="missing"><span class="name">glow</span><span class="why">has no search</span></li>
 </ol></figure>
 <figure class="chart"><figcaption>re-layout after a resize <span>ms</span> <em class="kind wall">wall</em><small>from the first resize until the screen stops changing</small></figcaption><ol>
-<li class="ada" style="--w:20.9%"><span class="name">ada</span><span class="bar"></span><span class="val">38.0</span></li>
-<li style="--w:51.5%"><span class="name">leaf</span><span class="bar"></span><span class="val">145 <small>3.8×</small></span></li>
-<li style="--w:100.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">1,222 <small>32×</small></span></li>
+<li class="ada" style="--w:19.9%"><span class="name">ada</span><span class="bar"></span><span class="val">27.5</span></li>
+<li style="--w:47.7%"><span class="name">leaf</span><span class="bar"></span><span class="val">99.4 <small>3.6×</small></span></li>
+<li style="--w:100.0%"><span class="name">mdfried</span><span class="bar"></span><span class="val">1,106 <small>40×</small></span></li>
 <li class="missing"><span class="name">md-tui</span><span class="why">never finished parsing</span></li>
 <li class="missing"><span class="name">treemd</span><span class="why">shows one section at a time</span></li>
 <li class="missing"><span class="name">glow</span><span class="why">blank after a resize</span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU over a held page-down <span>ms</span> <em class="kind cpu">CPU</em><small>for 60 page-downs at 30 a second, until the screen catches up</small></figcaption><ol>
-<li class="ada" style="--w:27.7%"><span class="name">ada</span><span class="bar"></span><span class="val">18.4</span></li>
-<li style="--w:58.2%"><span class="name">mdfried</span><span class="bar"></span><span class="val">50.4 <small>2.7×</small></span></li>
-<li style="--w:68.9%"><span class="name">leaf</span><span class="bar"></span><span class="val">72.0 <small>3.9×</small></span></li>
-<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">201 <small>11×</small></span></li>
+<li class="ada" style="--w:24.1%"><span class="name">ada</span><span class="bar"></span><span class="val">6.0</span></li>
+<li style="--w:68.3%"><span class="name">mdfried</span><span class="bar"></span><span class="val">32.1 <small>5.4×</small></span></li>
+<li style="--w:76.9%"><span class="name">leaf</span><span class="bar"></span><span class="val">44.4 <small>7.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">107 <small>18×</small></span></li>
 <li class="missing"><span class="name">md-tui</span><span class="why">never finished parsing</span></li>
 <li class="missing"><span class="name">treemd</span><span class="why">shows one section at a time</span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory <span>MiB</span><small>the most resident at once, over the whole session</small></figcaption><ol>
-<li class="ada" style="--w:26.2%"><span class="name">ada</span><span class="bar"></span><span class="val">100</span></li>
-<li style="--w:45.7%"><span class="name">leaf</span><span class="bar"></span><span class="val">198 <small>2.0×</small></span></li>
-<li style="--w:66.4%"><span class="name">mdfried</span><span class="bar"></span><span class="val">408 <small>4.1×</small></span></li>
-<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">1,316 <small>13×</small></span></li>
+<li class="ada" style="--w:28.3%"><span class="name">ada</span><span class="bar"></span><span class="val">103</span></li>
+<li style="--w:48.2%"><span class="name">leaf</span><span class="bar"></span><span class="val">196 <small>1.9×</small></span></li>
+<li style="--w:72.3%"><span class="name">mdfried</span><span class="bar"></span><span class="val">428 <small>4.2×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">1,050 <small>10×</small></span></li>
 <li class="missing"><span class="name">md-tui</span><span class="why">never finished parsing</span></li>
 <li class="missing"><span class="name">treemd</span><span class="why">shows one section at a time</span></li>
 </ol></figure>
 </div><h3>Printing, <code>--print</code> and the other printers</h3><div class="charts">
 <figure class="chart"><figcaption>print to a pipe <span>ms</span> <em class="kind wall">wall</em><small>to print the whole document to a pipe</small></figcaption><ol>
-<li style="--w:20.0%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">74.7 <small>0.7×</small></span></li>
-<li class="ada" style="--w:29.1%"><span class="name">ada</span><span class="bar"></span><span class="val">113</span></li>
-<li style="--w:31.8%"><span class="name">mdcat</span><span class="bar"></span><span class="val">128 <small>1.1×</small></span></li>
-<li style="--w:45.8%"><span class="name">leaf</span><span class="bar"></span><span class="val">242 <small>2.1×</small></span></li>
-<li style="--w:71.2%"><span class="name">mcat</span><span class="bar"></span><span class="val">775 <small>6.9×</small></span></li>
-<li style="--w:95.6%"><span class="name">glow</span><span class="bar"></span><span class="val">2,357 <small>21×</small></span></li>
-<li style="--w:97.3%"><span class="name">rich</span><span class="bar"></span><span class="val">2,553 <small>23×</small></span></li>
-<li style="--w:100.0%"><span class="name">bat <small>source, not rendered</small></span><span class="bar"></span><span class="val">2,886 <small>26×</small></span></li>
+<li style="--w:19.8%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">71.8 <small>0.6×</small></span></li>
+<li class="ada" style="--w:29.6%"><span class="name">ada</span><span class="bar"></span><span class="val">113</span></li>
+<li style="--w:32.5%"><span class="name">mdcat</span><span class="bar"></span><span class="val">129 <small>1.1×</small></span></li>
+<li style="--w:45.2%"><span class="name">leaf</span><span class="bar"></span><span class="val">233 <small>2.1×</small></span></li>
+<li style="--w:71.4%"><span class="name">mcat</span><span class="bar"></span><span class="val">778 <small>6.9×</small></span></li>
+<li style="--w:95.4%"><span class="name">glow</span><span class="bar"></span><span class="val">2,361 <small>21×</small></span></li>
+<li style="--w:97.0%"><span class="name">rich</span><span class="bar"></span><span class="val">2,549 <small>23×</small></span></li>
+<li style="--w:100.0%"><span class="name">bat <small>source, not rendered</small></span><span class="bar"></span><span class="val">2,922 <small>26×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, printing <span>MiB</span><small>the most resident at once while printing</small></figcaption><ol>
-<li style="--w:26.0%"><span class="name">bat <small>source, not rendered</small></span><span class="bar"></span><span class="val">22.1 <small>0.5×</small></span></li>
-<li style="--w:44.2%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">42.0 <small>1.0×</small></span></li>
-<li class="ada" style="--w:45.2%"><span class="name">ada</span><span class="bar"></span><span class="val">43.5</span></li>
-<li style="--w:46.2%"><span class="name">mdcat</span><span class="bar"></span><span class="val">45.1 <small>1.0×</small></span></li>
-<li style="--w:61.4%"><span class="name">leaf</span><span class="bar"></span><span class="val">77.1 <small>1.8×</small></span></li>
-<li style="--w:68.9%"><span class="name">mcat</span><span class="bar"></span><span class="val">100 <small>2.3×</small></span></li>
-<li style="--w:78.5%"><span class="name">rich</span><span class="bar"></span><span class="val">141 <small>3.2×</small></span></li>
-<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">300 <small>6.9×</small></span></li>
+<li style="--w:26.1%"><span class="name">bat <small>source, not rendered</small></span><span class="bar"></span><span class="val">22.3 <small>0.5×</small></span></li>
+<li style="--w:44.1%"><span class="name">lowdown <small>no highlighting</small></span><span class="bar"></span><span class="val">42.1 <small>1.0×</small></span></li>
+<li style="--w:45.0%"><span class="name">mdcat</span><span class="bar"></span><span class="val">43.5 <small>1.0×</small></span></li>
+<li class="ada" style="--w:45.5%"><span class="name">ada</span><span class="bar"></span><span class="val">44.2</span></li>
+<li style="--w:61.1%"><span class="name">leaf</span><span class="bar"></span><span class="val">76.6 <small>1.7×</small></span></li>
+<li style="--w:68.1%"><span class="name">mcat</span><span class="bar"></span><span class="val">97.8 <small>2.2×</small></span></li>
+<li style="--w:78.4%"><span class="name">rich</span><span class="bar"></span><span class="val">141 <small>3.2×</small></span></li>
+<li style="--w:100.0%"><span class="name">glow</span><span class="bar"></span><span class="val">301 <small>6.8×</small></span></li>
 </ol></figure>
 </div></div>
 <h3 class="perf-sub" id="previewer-perf">As a previewer: code, logs and JSON <a class="anchor" href="#previewer-perf" aria-label="link to this section">#</a></h3><p class="lede">What fzf&#x27;s preview pane shows besides markdown, against the tools ada replaces there: bat, rich and mcat. A preview stops at a budget; the whole file is printed, all of it, to a pipe.</p>
@@ -561,144 +561,144 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
 </div>
 <div class="perf-panel" data-prev="0"><div class="charts">
 <figure class="chart"><figcaption>a preview <span>ms</span> <em class="kind wall">wall</em><small>the first 2,000 rows (bat and rich: 2,000 source lines), to a pipe</small></figcaption><ol>
-<li class="ada" style="--w:22.2%"><span class="name">ada</span><span class="bar"></span><span class="val">5.5</span></li>
-<li style="--w:33.3%"><span class="name">bat</span><span class="bar"></span><span class="val">8.7 <small>1.6×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">137 <small>25×</small></span></li>
+<li class="ada" style="--w:22.1%"><span class="name">ada</span><span class="bar"></span><span class="val">5.4</span></li>
+<li style="--w:33.5%"><span class="name">bat</span><span class="bar"></span><span class="val">8.7 <small>1.6×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">138 <small>25×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>the whole file <span>ms</span> <em class="kind wall">wall</em><small>all of it, to a pipe at 100 columns</small></figcaption><ol>
-<li class="ada" style="--w:22.2%"><span class="name">ada</span><span class="bar"></span><span class="val">5.5</span></li>
+<li class="ada" style="--w:22.0%"><span class="name">ada</span><span class="bar"></span><span class="val">5.4</span></li>
 <li style="--w:31.6%"><span class="name">mcat</span><span class="bar"></span><span class="val">8.1 <small>1.5×</small></span></li>
-<li style="--w:33.3%"><span class="name">bat</span><span class="bar"></span><span class="val">8.7 <small>1.6×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">137 <small>25×</small></span></li>
+<li style="--w:33.5%"><span class="name">bat</span><span class="bar"></span><span class="val">8.7 <small>1.6×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">138 <small>26×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, a preview <span>MiB</span><small>the most resident at once, for a preview</small></figcaption><ol>
-<li class="ada" style="--w:37.8%"><span class="name">ada</span><span class="bar"></span><span class="val">9.5</span></li>
-<li style="--w:56.7%"><span class="name">bat</span><span class="bar"></span><span class="val">15.0 <small>1.6×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">42.9 <small>4.5×</small></span></li>
+<li class="ada" style="--w:39.2%"><span class="name">ada</span><span class="bar"></span><span class="val">10.4</span></li>
+<li style="--w:55.1%"><span class="name">bat</span><span class="bar"></span><span class="val">15.0 <small>1.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">42.9 <small>4.1×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, the whole file <span>MiB</span><small>the most resident at once, for the whole file</small></figcaption><ol>
-<li class="ada" style="--w:38.0%"><span class="name">ada</span><span class="bar"></span><span class="val">9.6</span></li>
-<li style="--w:56.6%"><span class="name">bat</span><span class="bar"></span><span class="val">15.1 <small>1.6×</small></span></li>
-<li style="--w:67.1%"><span class="name">mcat</span><span class="bar"></span><span class="val">19.4 <small>2.0×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">42.9 <small>4.5×</small></span></li>
+<li class="ada" style="--w:38.8%"><span class="name">ada</span><span class="bar"></span><span class="val">10.1</span></li>
+<li style="--w:55.9%"><span class="name">bat</span><span class="bar"></span><span class="val">15.1 <small>1.5×</small></span></li>
+<li style="--w:61.6%"><span class="name">mcat</span><span class="bar"></span><span class="val">17.3 <small>1.7×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">42.8 <small>4.3×</small></span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-prev="1"><div class="charts">
 <figure class="chart"><figcaption>a preview <span>ms</span> <em class="kind wall">wall</em><small>the first 2,000 rows (bat and rich: 2,000 source lines), to a pipe</small></figcaption><ol>
-<li class="ada" style="--w:29.9%"><span class="name">ada</span><span class="bar"></span><span class="val">25.2</span></li>
-<li style="--w:39.8%"><span class="name">bat</span><span class="bar"></span><span class="val">34.2 <small>1.4×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">216 <small>8.6×</small></span></li>
+<li class="ada" style="--w:29.4%"><span class="name">ada</span><span class="bar"></span><span class="val">24.1</span></li>
+<li style="--w:40.1%"><span class="name">bat</span><span class="bar"></span><span class="val">33.8 <small>1.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">218 <small>9.0×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>the whole file <span>ms</span> <em class="kind wall">wall</em><small>all of it, to a pipe at 100 columns</small></figcaption><ol>
-<li class="ada" style="--w:29.9%"><span class="name">ada</span><span class="bar"></span><span class="val">25.0</span></li>
-<li style="--w:36.8%"><span class="name">mcat</span><span class="bar"></span><span class="val">31.0 <small>1.2×</small></span></li>
-<li style="--w:40.1%"><span class="name">bat</span><span class="bar"></span><span class="val">34.3 <small>1.4×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">215 <small>8.6×</small></span></li>
+<li class="ada" style="--w:29.5%"><span class="name">ada</span><span class="bar"></span><span class="val">24.1</span></li>
+<li style="--w:36.7%"><span class="name">mcat</span><span class="bar"></span><span class="val">30.2 <small>1.3×</small></span></li>
+<li style="--w:40.2%"><span class="name">bat</span><span class="bar"></span><span class="val">33.7 <small>1.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">216 <small>9.0×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, a preview <span>MiB</span><small>the most resident at once, for a preview</small></figcaption><ol>
-<li class="ada" style="--w:37.0%"><span class="name">ada</span><span class="bar"></span><span class="val">10.2</span></li>
-<li style="--w:54.0%"><span class="name">bat</span><span class="bar"></span><span class="val">15.5 <small>1.5×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">48.4 <small>4.8×</small></span></li>
+<li class="ada" style="--w:38.2%"><span class="name">ada</span><span class="bar"></span><span class="val">11.0</span></li>
+<li style="--w:52.3%"><span class="name">bat</span><span class="bar"></span><span class="val">15.4 <small>1.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">48.4 <small>4.4×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, the whole file <span>MiB</span><small>the most resident at once, for the whole file</small></figcaption><ol>
-<li class="ada" style="--w:37.1%"><span class="name">ada</span><span class="bar"></span><span class="val">10.2</span></li>
-<li style="--w:53.7%"><span class="name">bat</span><span class="bar"></span><span class="val">15.4 <small>1.5×</small></span></li>
-<li style="--w:65.6%"><span class="name">mcat</span><span class="bar"></span><span class="val">20.6 <small>2.0×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">48.3 <small>4.7×</small></span></li>
+<li class="ada" style="--w:38.0%"><span class="name">ada</span><span class="bar"></span><span class="val">10.8</span></li>
+<li style="--w:52.3%"><span class="name">bat</span><span class="bar"></span><span class="val">15.3 <small>1.4×</small></span></li>
+<li style="--w:60.1%"><span class="name">mcat</span><span class="bar"></span><span class="val">18.5 <small>1.7×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">48.3 <small>4.5×</small></span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-prev="2"><div class="charts">
 <figure class="chart"><figcaption>a preview <span>ms</span> <em class="kind wall">wall</em><small>the first 2,000 rows (bat and rich: 2,000 source lines), to a pipe</small></figcaption><ol>
-<li class="ada" style="--w:30.8%"><span class="name">ada</span><span class="bar"></span><span class="val">24.9</span></li>
-<li style="--w:38.3%"><span class="name">bat</span><span class="bar"></span><span class="val">31.1 <small>1.2×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">195 <small>7.8×</small></span></li>
+<li class="ada" style="--w:30.3%"><span class="name">ada</span><span class="bar"></span><span class="val">24.0</span></li>
+<li style="--w:38.4%"><span class="name">bat</span><span class="bar"></span><span class="val">30.6 <small>1.3×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">196 <small>8.2×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>the whole file <span>ms</span> <em class="kind wall">wall</em><small>all of it, to a pipe at 100 columns</small></figcaption><ol>
-<li style="--w:26.2%"><span class="name">mcat <small>most of it as markdown</small></span><span class="bar"></span><span class="val">39.2 <small>0.3×</small></span></li>
-<li class="ada" style="--w:57.4%"><span class="name">ada</span><span class="bar"></span><span class="val">117</span></li>
-<li style="--w:64.0%"><span class="name">bat</span><span class="bar"></span><span class="val">147 <small>1.3×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">517 <small>4.4×</small></span></li>
+<li style="--w:26.0%"><span class="name">mcat <small>most of it as markdown</small></span><span class="bar"></span><span class="val">38.1 <small>0.3×</small></span></li>
+<li class="ada" style="--w:57.9%"><span class="name">ada</span><span class="bar"></span><span class="val">118</span></li>
+<li style="--w:64.3%"><span class="name">bat</span><span class="bar"></span><span class="val">148 <small>1.3×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">521 <small>4.4×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, a preview <span>MiB</span><small>the most resident at once, for a preview</small></figcaption><ol>
-<li class="ada" style="--w:37.8%"><span class="name">ada</span><span class="bar"></span><span class="val">10.4</span></li>
-<li style="--w:54.0%"><span class="name">bat</span><span class="bar"></span><span class="val">15.3 <small>1.5×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">46.9 <small>4.5×</small></span></li>
+<li class="ada" style="--w:38.7%"><span class="name">ada</span><span class="bar"></span><span class="val">11.0</span></li>
+<li style="--w:52.8%"><span class="name">bat</span><span class="bar"></span><span class="val">15.3 <small>1.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">46.8 <small>4.3×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, the whole file <span>MiB</span><small>the most resident at once, for the whole file</small></figcaption><ol>
-<li class="ada" style="--w:36.4%"><span class="name">ada</span><span class="bar"></span><span class="val">12.9</span></li>
-<li style="--w:43.6%"><span class="name">bat</span><span class="bar"></span><span class="val">15.5 <small>1.2×</small></span></li>
-<li style="--w:59.5%"><span class="name">mcat <small>most of it as markdown</small></span><span class="bar"></span><span class="val">23.1 <small>1.8×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">64.0 <small>5.0×</small></span></li>
+<li class="ada" style="--w:37.5%"><span class="name">ada</span><span class="bar"></span><span class="val">13.8</span></li>
+<li style="--w:42.0%"><span class="name">bat</span><span class="bar"></span><span class="val">15.5 <small>1.1×</small></span></li>
+<li style="--w:54.9%"><span class="name">mcat <small>most of it as markdown</small></span><span class="bar"></span><span class="val">21.2 <small>1.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">63.9 <small>4.6×</small></span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-prev="3"><div class="charts">
 <figure class="chart"><figcaption>a preview <span>ms</span> <em class="kind wall">wall</em><small>the first 2,000 rows (bat and rich: 2,000 source lines), to a pipe</small></figcaption><ol>
-<li class="ada" style="--w:14.8%"><span class="name">ada</span><span class="bar"></span><span class="val">5.3</span></li>
-<li style="--w:76.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">236 <small>45×</small></span></li>
-<li style="--w:100.0%"><span class="name">bat</span><span class="bar"></span><span class="val">1,049 <small>199×</small></span></li>
+<li class="ada" style="--w:14.7%"><span class="name">ada</span><span class="bar"></span><span class="val">5.1</span></li>
+<li style="--w:76.3%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">239 <small>46×</small></span></li>
+<li style="--w:100.0%"><span class="name">bat</span><span class="bar"></span><span class="val">1,048 <small>204×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>the whole file <span>ms</span> <em class="kind wall">wall</em><small>all of it, to a pipe at 100 columns</small></figcaption><ol>
-<li class="ada" style="--w:14.7%"><span class="name">ada</span><span class="bar"></span><span class="val">16.0</span></li>
-<li style="--w:65.9%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">391 <small>24×</small></span></li>
-<li style="--w:99.7%"><span class="name">mcat</span><span class="bar"></span><span class="val">3,233 <small>202×</small></span></li>
-<li style="--w:100.0%"><span class="name">bat</span><span class="bar"></span><span class="val">3,286 <small>205×</small></span></li>
+<li class="ada" style="--w:14.6%"><span class="name">ada</span><span class="bar"></span><span class="val">15.5</span></li>
+<li style="--w:66.2%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">394 <small>25×</small></span></li>
+<li style="--w:99.9%"><span class="name">mcat</span><span class="bar"></span><span class="val">3,258 <small>210×</small></span></li>
+<li style="--w:100.0%"><span class="name">bat</span><span class="bar"></span><span class="val">3,272 <small>211×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, a preview <span>MiB</span><small>the most resident at once, for a preview</small></figcaption><ol>
-<li class="ada" style="--w:35.7%"><span class="name">ada</span><span class="bar"></span><span class="val">9.3</span></li>
-<li style="--w:52.8%"><span class="name">bat</span><span class="bar"></span><span class="val">14.4 <small>1.6×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">48.4 <small>5.2×</small></span></li>
+<li class="ada" style="--w:37.6%"><span class="name">ada</span><span class="bar"></span><span class="val">10.6</span></li>
+<li style="--w:49.5%"><span class="name">bat</span><span class="bar"></span><span class="val">14.1 <small>1.3×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">48.4 <small>4.6×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, the whole file <span>MiB</span><small>the most resident at once, for the whole file</small></figcaption><ol>
-<li class="ada" style="--w:38.9%"><span class="name">ada</span><span class="bar"></span><span class="val">12.8</span></li>
-<li style="--w:43.6%"><span class="name">bat</span><span class="bar"></span><span class="val">14.3 <small>1.1×</small></span></li>
-<li style="--w:83.8%"><span class="name">mcat</span><span class="bar"></span><span class="val">36.9 <small>2.9×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">54.0 <small>4.2×</small></span></li>
+<li style="--w:40.6%"><span class="name">bat</span><span class="bar"></span><span class="val">14.1 <small>1.0×</small></span></li>
+<li class="ada" style="--w:40.8%"><span class="name">ada</span><span class="bar"></span><span class="val">14.2</span></li>
+<li style="--w:81.4%"><span class="name">mcat</span><span class="bar"></span><span class="val">35.5 <small>2.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">54.0 <small>3.8×</small></span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-prev="4"><div class="charts">
 <figure class="chart"><figcaption>a preview <span>ms</span> <em class="kind wall">wall</em><small>the first 2,000 rows (bat and rich: 2,000 source lines), to a pipe</small></figcaption><ol>
-<li class="ada" style="--w:13.0%"><span class="name">ada</span><span class="bar"></span><span class="val">9.2</span></li>
-<li style="--w:29.8%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">30.2 <small>3.3×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">4,308 <small>469×</small></span></li>
+<li class="ada" style="--w:12.9%"><span class="name">ada</span><span class="bar"></span><span class="val">8.8</span></li>
+<li style="--w:29.7%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">29.3 <small>3.3×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">4,347 <small>492×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>the whole file <span>ms</span> <em class="kind wall">wall</em><small>all of it, to a pipe at 100 columns</small></figcaption><ol>
-<li style="--w:15.7%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">30.3 <small>0.6×</small></span></li>
+<li style="--w:15.6%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">30.2 <small>0.6×</small></span></li>
 <li class="ada" style="--w:25.7%"><span class="name">ada</span><span class="bar"></span><span class="val">54.5</span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">4,222 <small>78×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">4,275 <small>78×</small></span></li>
 <li class="missing"><span class="name">mcat</span><span class="why">stopped after 60 s</span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, a preview <span>MiB</span><small>the most resident at once, for a preview</small></figcaption><ol>
-<li class="ada" style="--w:20.6%"><span class="name">ada</span><span class="bar"></span><span class="val">16.8</span></li>
-<li style="--w:30.2%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">25.9 <small>1.5×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">580 <small>34×</small></span></li>
+<li class="ada" style="--w:20.9%"><span class="name">ada</span><span class="bar"></span><span class="val">18.1</span></li>
+<li style="--w:29.0%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">25.8 <small>1.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">580 <small>32×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, the whole file <span>MiB</span><small>the most resident at once, for the whole file</small></figcaption><ol>
-<li style="--w:22.7%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">25.4 <small>0.5×</small></span></li>
-<li class="ada" style="--w:40.5%"><span class="name">ada</span><span class="bar"></span><span class="val">52.4</span></li>
-<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">580 <small>11×</small></span></li>
+<li style="--w:22.5%"><span class="name">bat <small>no color on lines over 16 KB</small></span><span class="bar"></span><span class="val">24.7 <small>0.5×</small></span></li>
+<li class="ada" style="--w:41.6%"><span class="name">ada</span><span class="bar"></span><span class="val">53.5</span></li>
+<li style="--w:100.0%"><span class="name">rich</span><span class="bar"></span><span class="val">577 <small>11×</small></span></li>
 <li class="missing"><span class="name">mcat</span><span class="why">stopped after 60 s</span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-prev="5"><div class="charts">
 <figure class="chart"><figcaption>a preview <span>ms</span> <em class="kind wall">wall</em><small>the first 2,000 rows (bat and rich: 2,000 source lines), to a pipe</small></figcaption><ol>
-<li class="ada" style="--w:11.0%"><span class="name">ada</span><span class="bar"></span><span class="val">5.5</span></li>
-<li style="--w:74.2%"><span class="name">bat</span><span class="bar"></span><span class="val">1,070 <small>195×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">9,173 <small>1,676×</small></span></li>
+<li class="ada" style="--w:11.0%"><span class="name">ada</span><span class="bar"></span><span class="val">5.3</span></li>
+<li style="--w:74.2%"><span class="name">bat</span><span class="bar"></span><span class="val">1,052 <small>197×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">9,114 <small>1,708×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>the whole file <span>ms</span> <em class="kind wall">wall</em><small>all of it, to a pipe at 100 columns</small></figcaption><ol>
-<li class="ada" style="--w:17.6%"><span class="name">ada</span><span class="bar"></span><span class="val">327</span></li>
-<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">24,171 <small>74×</small></span></li>
+<li class="ada" style="--w:17.5%"><span class="name">ada</span><span class="bar"></span><span class="val">327</span></li>
+<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">24,347 <small>75×</small></span></li>
 <li class="missing"><span class="name">bat</span><span class="why">stopped after 60 s</span></li>
 <li class="missing"><span class="name">mcat</span><span class="why">stopped after 60 s</span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, a preview <span>MiB</span><small>the most resident at once, for a preview</small></figcaption><ol>
-<li class="ada" style="--w:20.3%"><span class="name">ada</span><span class="bar"></span><span class="val">9.5</span></li>
-<li style="--w:29.3%"><span class="name">bat</span><span class="bar"></span><span class="val">14.3 <small>1.5×</small></span></li>
-<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">348 <small>37×</small></span></li>
+<li class="ada" style="--w:20.8%"><span class="name">ada</span><span class="bar"></span><span class="val">10.5</span></li>
+<li style="--w:27.4%"><span class="name">bat</span><span class="bar"></span><span class="val">14.2 <small>1.3×</small></span></li>
+<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">348 <small>33×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, the whole file <span>MiB</span><small>the most resident at once, for the whole file</small></figcaption><ol>
-<li class="ada" style="--w:18.5%"><span class="name">ada</span><span class="bar"></span><span class="val">15.8</span></li>
-<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">899 <small>57×</small></span></li>
+<li class="ada" style="--w:18.8%"><span class="name">ada</span><span class="bar"></span><span class="val">17.1</span></li>
+<li style="--w:100.0%"><span class="name">rich <small>no color</small></span><span class="bar"></span><span class="val">898 <small>52×</small></span></li>
 <li class="missing"><span class="name">bat</span><span class="why">stopped after 60 s</span></li>
 <li class="missing"><span class="name">mcat</span><span class="why">stopped after 60 s</span></li>
 </ol></figure>
@@ -714,259 +714,260 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
 </div>
 <div class="perf-panel" data-img="0"><div class="charts">
 <figure class="chart"><figcaption>kitty graphics <span>ms</span> <em class="kind wall">wall</em><small>a 100×50-cell preview in kitty&#x27;s graphics protocol, to a pipe</small></figcaption><ol>
-<li class="ada" style="--w:23.5%"><span class="name">ada</span><span class="bar"></span><span class="val">1.1</span></li>
-<li style="--w:91.0%"><span class="name">mcat</span><span class="bar"></span><span class="val">15.5 <small>14×</small></span></li>
-<li style="--w:99.5%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">21.7 <small>19×</small></span></li>
-<li style="--w:99.7%"><span class="name">chafa</span><span class="bar"></span><span class="val">21.8 <small>20×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">22.1 <small>20×</small></span></li>
+<li class="ada" style="--w:23.6%"><span class="name">ada</span><span class="bar"></span><span class="val">1.2</span></li>
+<li style="--w:91.1%"><span class="name">mcat</span><span class="bar"></span><span class="val">15.7 <small>14×</small></span></li>
+<li style="--w:99.5%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">21.8 <small>19×</small></span></li>
+<li style="--w:99.9%"><span class="name">chafa</span><span class="bar"></span><span class="val">22.2 <small>19×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">22.3 <small>19×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>half-blocks and symbols <span>ms</span> <em class="kind wall">wall</em><small>the same preview drawn in characters, for any terminal</small></figcaption><ol>
-<li class="ada" style="--w:44.1%"><span class="name">ada</span><span class="bar"></span><span class="val">5.9</span></li>
-<li style="--w:49.6%"><span class="name">viu</span><span class="bar"></span><span class="val">6.6 <small>1.1×</small></span></li>
-<li style="--w:98.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">18.1 <small>3.1×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">18.9 <small>3.2×</small></span></li>
+<li class="ada" style="--w:41.0%"><span class="name">ada</span><span class="bar"></span><span class="val">5.0</span></li>
+<li style="--w:53.6%"><span class="name">viu</span><span class="bar"></span><span class="val">6.7 <small>1.3×</small></span></li>
+<li style="--w:97.6%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">17.8 <small>3.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">18.8 <small>3.7×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, kitty graphics <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the kitty preview, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:22.6%"><span class="name">ada</span><span class="bar"></span><span class="val">1.1</span></li>
-<li style="--w:88.1%"><span class="name">mcat</span><span class="bar"></span><span class="val">15.4 <small>14×</small></span></li>
-<li style="--w:98.9%"><span class="name">chafa</span><span class="bar"></span><span class="val">23.9 <small>22×</small></span></li>
-<li style="--w:99.0%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">24.0 <small>22×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">25.0 <small>23×</small></span></li>
+<li class="ada" style="--w:22.7%"><span class="name">ada</span><span class="bar"></span><span class="val">1.1</span></li>
+<li style="--w:88.1%"><span class="name">mcat</span><span class="bar"></span><span class="val">15.6 <small>14×</small></span></li>
+<li style="--w:98.9%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">24.2 <small>22×</small></span></li>
+<li style="--w:99.1%"><span class="name">chafa</span><span class="bar"></span><span class="val">24.3 <small>22×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">25.3 <small>23×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, half-blocks and symbols <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the preview in characters, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:39.4%"><span class="name">ada</span><span class="bar"></span><span class="val">5.8</span></li>
-<li style="--w:44.8%"><span class="name">viu</span><span class="bar"></span><span class="val">6.6 <small>1.1×</small></span></li>
-<li style="--w:96.9%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">22.2 <small>3.8×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">23.9 <small>4.1×</small></span></li>
+<li class="ada" style="--w:37.0%"><span class="name">ada</span><span class="bar"></span><span class="val">5.0</span></li>
+<li style="--w:48.6%"><span class="name">viu</span><span class="bar"></span><span class="val">6.6 <small>1.3×</small></span></li>
+<li style="--w:96.9%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">22.0 <small>4.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">23.7 <small>4.8×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, kitty graphics <span>MiB</span><small>the most resident at once, kitty graphics</small></figcaption><ol>
-<li class="ada" style="--w:33.9%"><span class="name">ada</span><span class="bar"></span><span class="val">6.3</span></li>
-<li style="--w:91.4%"><span class="name">mcat</span><span class="bar"></span><span class="val">29.8 <small>4.7×</small></span></li>
-<li style="--w:95.4%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">33.2 <small>5.3×</small></span></li>
-<li style="--w:97.4%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">35.0 <small>5.6×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">37.6 <small>6.0×</small></span></li>
+<li class="ada" style="--w:34.6%"><span class="name">ada</span><span class="bar"></span><span class="val">6.7</span></li>
+<li style="--w:88.8%"><span class="name">mcat</span><span class="bar"></span><span class="val">28.2 <small>4.2×</small></span></li>
+<li style="--w:95.2%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">33.4 <small>5.0×</small></span></li>
+<li style="--w:95.2%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">33.5 <small>5.0×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">38.0 <small>5.7×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, half-blocks and symbols <span>MiB</span><small>the most resident at once, in characters</small></figcaption><ol>
-<li class="ada" style="--w:37.9%"><span class="name">ada</span><span class="bar"></span><span class="val">6.4</span></li>
-<li style="--w:46.1%"><span class="name">viu</span><span class="bar"></span><span class="val">7.8 <small>1.2×</small></span></li>
-<li style="--w:99.9%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">28.8 <small>4.5×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">28.9 <small>4.5×</small></span></li>
+<li class="ada" style="--w:38.8%"><span class="name">ada</span><span class="bar"></span><span class="val">6.9</span></li>
+<li style="--w:42.5%"><span class="name">viu</span><span class="bar"></span><span class="val">7.5 <small>1.1×</small></span></li>
+<li style="--w:99.8%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">29.2 <small>4.2×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">29.4 <small>4.3×</small></span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-img="1"><div class="charts">
 <figure class="chart"><figcaption>kitty graphics <span>ms</span> <em class="kind wall">wall</em><small>a 100×50-cell preview in kitty&#x27;s graphics protocol, to a pipe</small></figcaption><ol>
-<li style="--w:38.7%"><span class="name">mcat</span><span class="bar"></span><span class="val">11.9 <small>0.7×</small></span></li>
-<li class="ada" style="--w:53.7%"><span class="name">ada</span><span class="bar"></span><span class="val">17.0</span></li>
-<li style="--w:82.2%"><span class="name">chafa</span><span class="bar"></span><span class="val">33.4 <small>2.0×</small></span></li>
-<li style="--w:95.8%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">46.1 <small>2.7×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">50.9 <small>3.0×</small></span></li>
+<li class="ada" style="--w:31.7%"><span class="name">ada</span><span class="bar"></span><span class="val">7.1</span></li>
+<li style="--w:50.1%"><span class="name">mcat</span><span class="bar"></span><span class="val">12.1 <small>1.7×</small></span></li>
+<li style="--w:85.4%"><span class="name">chafa</span><span class="bar"></span><span class="val">33.5 <small>4.7×</small></span></li>
+<li style="--w:96.4%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">46.1 <small>6.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">51.1 <small>7.2×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>half-blocks and symbols <span>ms</span> <em class="kind wall">wall</em><small>the same preview drawn in characters, for any terminal</small></figcaption><ol>
-<li class="ada" style="--w:45.2%"><span class="name">ada</span><span class="bar"></span><span class="val">9.9</span></li>
-<li style="--w:81.4%"><span class="name">viu</span><span class="bar"></span><span class="val">20.6 <small>2.1×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">30.1 <small>3.0×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">30.1 <small>3.0×</small></span></li>
+<li class="ada" style="--w:32.0%"><span class="name">ada</span><span class="bar"></span><span class="val">4.3</span></li>
+<li style="--w:85.5%"><span class="name">viu</span><span class="bar"></span><span class="val">20.0 <small>4.6×</small></span></li>
+<li style="--w:99.8%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">30.2 <small>6.9×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">30.3 <small>7.0×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, kitty graphics <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the kitty preview, over all threads</small></figcaption><ol>
-<li style="--w:28.1%"><span class="name">mcat</span><span class="bar"></span><span class="val">11.8 <small>0.7×</small></span></li>
-<li class="ada" style="--w:39.2%"><span class="name">ada</span><span class="bar"></span><span class="val">16.9</span></li>
-<li style="--w:66.5%"><span class="name">chafa</span><span class="bar"></span><span class="val">41.2 <small>2.4×</small></span></li>
-<li style="--w:98.6%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">118 <small>7.0×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">123 <small>7.3×</small></span></li>
+<li class="ada" style="--w:24.2%"><span class="name">ada</span><span class="bar"></span><span class="val">7.0</span></li>
+<li style="--w:38.4%"><span class="name">mcat</span><span class="bar"></span><span class="val">12.0 <small>1.7×</small></span></li>
+<li style="--w:71.1%"><span class="name">chafa</span><span class="bar"></span><span class="val">41.4 <small>5.9×</small></span></li>
+<li style="--w:98.6%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">117 <small>17×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">123 <small>18×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, half-blocks and symbols <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the preview in characters, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:39.5%"><span class="name">ada</span><span class="bar"></span><span class="val">9.8</span></li>
-<li style="--w:71.3%"><span class="name">viu</span><span class="bar"></span><span class="val">20.5 <small>2.1×</small></span></li>
-<li style="--w:99.3%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">39.3 <small>4.0×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">40.0 <small>4.1×</small></span></li>
+<li class="ada" style="--w:29.1%"><span class="name">ada</span><span class="bar"></span><span class="val">4.3</span></li>
+<li style="--w:77.8%"><span class="name">viu</span><span class="bar"></span><span class="val">20.0 <small>4.6×</small></span></li>
+<li style="--w:99.4%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">39.4 <small>9.2×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">40.1 <small>9.3×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, kitty graphics <span>MiB</span><small>the most resident at once, kitty graphics</small></figcaption><ol>
-<li class="ada" style="--w:30.0%"><span class="name">ada</span><span class="bar"></span><span class="val">8.1</span></li>
-<li style="--w:80.0%"><span class="name">mcat</span><span class="bar"></span><span class="val">37.2 <small>4.6×</small></span></li>
-<li style="--w:91.9%"><span class="name">chafa</span><span class="bar"></span><span class="val">53.6 <small>6.6×</small></span></li>
-<li style="--w:99.6%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">67.7 <small>8.4×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">68.6 <small>8.5×</small></span></li>
+<li class="ada" style="--w:31.0%"><span class="name">ada</span><span class="bar"></span><span class="val">8.9</span></li>
+<li style="--w:77.9%"><span class="name">mcat</span><span class="bar"></span><span class="val">35.6 <small>4.0×</small></span></li>
+<li style="--w:91.8%"><span class="name">chafa</span><span class="bar"></span><span class="val">53.6 <small>6.0×</small></span></li>
+<li style="--w:98.9%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">66.2 <small>7.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">68.3 <small>7.7×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, half-blocks and symbols <span>MiB</span><small>the most resident at once, in characters</small></figcaption><ol>
-<li class="ada" style="--w:30.2%"><span class="name">ada</span><span class="bar"></span><span class="val">6.4</span></li>
-<li style="--w:69.5%"><span class="name">viu</span><span class="bar"></span><span class="val">21.2 <small>3.3×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">53.5 <small>8.3×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">53.5 <small>8.3×</small></span></li>
+<li class="ada" style="--w:31.0%"><span class="name">ada</span><span class="bar"></span><span class="val">7.0</span></li>
+<li style="--w:68.2%"><span class="name">viu</span><span class="bar"></span><span class="val">21.0 <small>3.0×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">53.6 <small>7.7×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">53.6 <small>7.7×</small></span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-img="2"><div class="charts">
 <figure class="chart"><figcaption>kitty graphics <span>ms</span> <em class="kind wall">wall</em><small>a 100×50-cell preview in kitty&#x27;s graphics protocol, to a pipe</small></figcaption><ol>
-<li style="--w:44.6%"><span class="name">mcat</span><span class="bar"></span><span class="val">102 <small>0.9×</small></span></li>
-<li class="ada" style="--w:48.2%"><span class="name">ada</span><span class="bar"></span><span class="val">110</span></li>
-<li style="--w:64.7%"><span class="name">chafa</span><span class="bar"></span><span class="val">154 <small>1.4×</small></span></li>
-<li style="--w:95.8%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">292 <small>2.7×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">319 <small>2.9×</small></span></li>
+<li class="ada" style="--w:41.4%"><span class="name">ada</span><span class="bar"></span><span class="val">87.6</span></li>
+<li style="--w:47.7%"><span class="name">mcat</span><span class="bar"></span><span class="val">101 <small>1.2×</small></span></li>
+<li style="--w:66.9%"><span class="name">chafa</span><span class="bar"></span><span class="val">154 <small>1.8×</small></span></li>
+<li style="--w:95.9%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">292 <small>3.3×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">320 <small>3.7×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>half-blocks and symbols <span>ms</span> <em class="kind wall">wall</em><small>the same preview drawn in characters, for any terminal</small></figcaption><ol>
-<li class="ada" style="--w:65.7%"><span class="name">ada</span><span class="bar"></span><span class="val">95.0</span></li>
-<li style="--w:95.1%"><span class="name">viu</span><span class="bar"></span><span class="val">143 <small>1.5×</small></span></li>
-<li style="--w:99.2%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">152 <small>1.6×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">153 <small>1.6×</small></span></li>
+<li class="ada" style="--w:59.5%"><span class="name">ada</span><span class="bar"></span><span class="val">81.4</span></li>
+<li style="--w:95.3%"><span class="name">viu</span><span class="bar"></span><span class="val">141 <small>1.7×</small></span></li>
+<li style="--w:99.9%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">152 <small>1.9×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">152 <small>1.9×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, kitty graphics <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the kitty preview, over all threads</small></figcaption><ol>
-<li style="--w:37.2%"><span class="name">mcat</span><span class="bar"></span><span class="val">102 <small>0.9×</small></span></li>
-<li class="ada" style="--w:40.3%"><span class="name">ada</span><span class="bar"></span><span class="val">110</span></li>
-<li style="--w:58.8%"><span class="name">chafa</span><span class="bar"></span><span class="val">173 <small>1.6×</small></span></li>
-<li style="--w:97.6%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">451 <small>4.1×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">478 <small>4.4×</small></span></li>
+<li class="ada" style="--w:35.0%"><span class="name">ada</span><span class="bar"></span><span class="val">87.4</span></li>
+<li style="--w:40.3%"><span class="name">mcat</span><span class="bar"></span><span class="val">100 <small>1.1×</small></span></li>
+<li style="--w:61.1%"><span class="name">chafa</span><span class="bar"></span><span class="val">173 <small>2.0×</small></span></li>
+<li style="--w:97.7%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">451 <small>5.2×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">479 <small>5.5×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, half-blocks and symbols <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the preview in characters, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:58.9%"><span class="name">ada</span><span class="bar"></span><span class="val">94.6</span></li>
-<li style="--w:85.4%"><span class="name">viu</span><span class="bar"></span><span class="val">143 <small>1.5×</small></span></li>
-<li style="--w:99.3%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">177 <small>1.9×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">179 <small>1.9×</small></span></li>
+<li class="ada" style="--w:53.9%"><span class="name">ada</span><span class="bar"></span><span class="val">81.1</span></li>
+<li style="--w:86.3%"><span class="name">viu</span><span class="bar"></span><span class="val">141 <small>1.7×</small></span></li>
+<li style="--w:99.5%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">177 <small>2.2×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">178 <small>2.2×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, kitty graphics <span>MiB</span><small>the most resident at once, kitty graphics</small></figcaption><ol>
-<li class="ada" style="--w:26.0%"><span class="name">ada</span><span class="bar"></span><span class="val">8.3</span></li>
-<li style="--w:86.9%"><span class="name">mcat</span><span class="bar"></span><span class="val">70.7 <small>8.6×</small></span></li>
-<li style="--w:98.2%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">105 <small>13×</small></span></li>
-<li style="--w:99.1%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">109 <small>13×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">112 <small>14×</small></span></li>
+<li class="ada" style="--w:26.6%"><span class="name">ada</span><span class="bar"></span><span class="val">9.0</span></li>
+<li style="--w:85.9%"><span class="name">mcat</span><span class="bar"></span><span class="val">69.1 <small>7.7×</small></span></li>
+<li style="--w:98.3%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">106 <small>12×</small></span></li>
+<li style="--w:99.1%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">109 <small>12×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">112 <small>12×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, half-blocks and symbols <span>MiB</span><small>the most resident at once, in characters</small></figcaption><ol>
-<li class="ada" style="--w:24.0%"><span class="name">ada</span><span class="bar"></span><span class="val">6.2</span></li>
-<li style="--w:75.3%"><span class="name">viu</span><span class="bar"></span><span class="val">43.7 <small>7.1×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">112 <small>18×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">112 <small>18×</small></span></li>
+<li class="ada" style="--w:24.6%"><span class="name">ada</span><span class="bar"></span><span class="val">6.7</span></li>
+<li style="--w:74.4%"><span class="name">viu</span><span class="bar"></span><span class="val">43.2 <small>6.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">112 <small>17×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">112 <small>17×</small></span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-img="3"><div class="charts">
 <figure class="chart"><figcaption>kitty graphics <span>ms</span> <em class="kind wall">wall</em><small>a 100×50-cell preview in kitty&#x27;s graphics protocol, to a pipe</small></figcaption><ol>
-<li style="--w:38.4%"><span class="name">mcat</span><span class="bar"></span><span class="val">15.8 <small>0.6×</small></span></li>
-<li style="--w:48.2%"><span class="name">chafa</span><span class="bar"></span><span class="val">20.0 <small>0.7×</small></span></li>
-<li class="ada" style="--w:63.2%"><span class="name">ada</span><span class="bar"></span><span class="val">28.6</span></li>
-<li style="--w:79.9%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">42.6 <small>1.5×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">68.7 <small>2.4×</small></span></li>
+<li class="ada" style="--w:35.7%"><span class="name">ada</span><span class="bar"></span><span class="val">13.0</span></li>
+<li style="--w:43.6%"><span class="name">mcat</span><span class="bar"></span><span class="val">16.0 <small>1.2×</small></span></li>
+<li style="--w:52.2%"><span class="name">chafa</span><span class="bar"></span><span class="val">19.9 <small>1.5×</small></span></li>
+<li style="--w:81.9%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">42.7 <small>3.3×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">67.8 <small>5.2×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>half-blocks and symbols <span>ms</span> <em class="kind wall">wall</em><small>the same preview drawn in characters, for any terminal</small></figcaption><ol>
-<li class="ada" style="--w:64.0%"><span class="name">ada</span><span class="bar"></span><span class="val">10.4</span></li>
-<li style="--w:96.9%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">16.6 <small>1.6×</small></span></li>
-<li style="--w:98.7%"><span class="name">viu</span><span class="bar"></span><span class="val">17.1 <small>1.6×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">17.4 <small>1.7×</small></span></li>
+<li class="ada" style="--w:49.6%"><span class="name">ada</span><span class="bar"></span><span class="val">6.6</span></li>
+<li style="--w:97.7%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">16.1 <small>2.4×</small></span></li>
+<li style="--w:98.5%"><span class="name">viu</span><span class="bar"></span><span class="val">16.4 <small>2.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">16.8 <small>2.5×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, kitty graphics <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the kitty preview, over all threads</small></figcaption><ol>
-<li style="--w:32.3%"><span class="name">mcat</span><span class="bar"></span><span class="val">15.7 <small>0.6×</small></span></li>
-<li style="--w:48.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">24.5 <small>0.9×</small></span></li>
-<li class="ada" style="--w:53.3%"><span class="name">ada</span><span class="bar"></span><span class="val">28.4</span></li>
-<li style="--w:90.1%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">80.6 <small>2.8×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">107 <small>3.8×</small></span></li>
+<li class="ada" style="--w:30.4%"><span class="name">ada</span><span class="bar"></span><span class="val">13.0</span></li>
+<li style="--w:37.1%"><span class="name">mcat</span><span class="bar"></span><span class="val">15.9 <small>1.2×</small></span></li>
+<li style="--w:51.5%"><span class="name">chafa</span><span class="bar"></span><span class="val">24.5 <small>1.9×</small></span></li>
+<li style="--w:91.1%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">80.8 <small>6.2×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">106 <small>8.1×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, half-blocks and symbols <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the preview in characters, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:50.1%"><span class="name">ada</span><span class="bar"></span><span class="val">10.3</span></li>
-<li style="--w:77.5%"><span class="name">viu</span><span class="bar"></span><span class="val">17.0 <small>1.7×</small></span></li>
-<li style="--w:96.7%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">24.2 <small>2.3×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">25.7 <small>2.5×</small></span></li>
+<li class="ada" style="--w:40.4%"><span class="name">ada</span><span class="bar"></span><span class="val">6.6</span></li>
+<li style="--w:80.6%"><span class="name">viu</span><span class="bar"></span><span class="val">16.3 <small>2.5×</small></span></li>
+<li style="--w:97.1%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">23.7 <small>3.6×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">25.4 <small>3.9×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, kitty graphics <span>MiB</span><small>the most resident at once, kitty graphics</small></figcaption><ol>
-<li class="ada" style="--w:45.7%"><span class="name">ada</span><span class="bar"></span><span class="val">17.4</span></li>
-<li style="--w:76.1%"><span class="name">mcat</span><span class="bar"></span><span class="val">32.0 <small>1.8×</small></span></li>
-<li style="--w:88.4%"><span class="name">chafa</span><span class="bar"></span><span class="val">41.0 <small>2.4×</small></span></li>
-<li style="--w:96.1%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">47.8 <small>2.7×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">51.7 <small>3.0×</small></span></li>
+<li class="ada" style="--w:46.4%"><span class="name">ada</span><span class="bar"></span><span class="val">17.9</span></li>
+<li style="--w:73.6%"><span class="name">mcat</span><span class="bar"></span><span class="val">30.7 <small>1.7×</small></span></li>
+<li style="--w:88.6%"><span class="name">chafa</span><span class="bar"></span><span class="val">41.2 <small>2.3×</small></span></li>
+<li style="--w:95.9%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">47.7 <small>2.7×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">51.7 <small>2.9×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, half-blocks and symbols <span>MiB</span><small>the most resident at once, in characters</small></figcaption><ol>
-<li class="ada" style="--w:53.1%"><span class="name">ada</span><span class="bar"></span><span class="val">15.6</span></li>
-<li style="--w:54.4%"><span class="name">viu</span><span class="bar"></span><span class="val">15.9 <small>1.0×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">34.9 <small>2.2×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">34.9 <small>2.2×</small></span></li>
+<li style="--w:52.8%"><span class="name">viu</span><span class="bar"></span><span class="val">15.5 <small>1.0×</small></span></li>
+<li class="ada" style="--w:54.3%"><span class="name">ada</span><span class="bar"></span><span class="val">15.9</span></li>
+<li style="--w:99.9%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">35.1 <small>2.2×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">35.2 <small>2.2×</small></span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-img="4"><div class="charts">
 <figure class="chart"><figcaption>kitty graphics <span>ms</span> <em class="kind wall">wall</em><small>a 100×50-cell preview in kitty&#x27;s graphics protocol, to a pipe</small></figcaption><ol>
-<li style="--w:41.2%"><span class="name">chafa</span><span class="bar"></span><span class="val">38.9 <small>0.7×</small></span></li>
-<li style="--w:43.6%"><span class="name">mcat</span><span class="bar"></span><span class="val">41.1 <small>0.8×</small></span></li>
-<li class="ada" style="--w:55.1%"><span class="name">ada</span><span class="bar"></span><span class="val">53.0</span></li>
-<li style="--w:90.2%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">116 <small>2.2×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">144 <small>2.7×</small></span></li>
+<li class="ada" style="--w:37.0%"><span class="name">ada</span><span class="bar"></span><span class="val">30.1</span></li>
+<li style="--w:47.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">38.6 <small>1.3×</small></span></li>
+<li style="--w:47.8%"><span class="name">mcat</span><span class="bar"></span><span class="val">39.3 <small>1.3×</small></span></li>
+<li style="--w:91.1%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">115 <small>3.8×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">143 <small>4.8×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>half-blocks and symbols <span>ms</span> <em class="kind wall">wall</em><small>the same preview drawn in characters, for any terminal</small></figcaption><ol>
-<li style="--w:53.2%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">35.6 <small>1.0×</small></span></li>
-<li style="--w:54.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">36.1 <small>1.0×</small></span></li>
-<li class="ada" style="--w:55.1%"><span class="name">ada</span><span class="bar"></span><span class="val">36.8</span></li>
-<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">79.7 <small>2.2×</small></span></li>
+<li class="ada" style="--w:42.5%"><span class="name">ada</span><span class="bar"></span><span class="val">22.8</span></li>
+<li style="--w:62.3%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">34.9 <small>1.5×</small></span></li>
+<li style="--w:62.6%"><span class="name">chafa</span><span class="bar"></span><span class="val">35.1 <small>1.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">78.7 <small>3.5×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, kitty graphics <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the kitty preview, over all threads</small></figcaption><ol>
-<li style="--w:33.6%"><span class="name">mcat</span><span class="bar"></span><span class="val">40.8 <small>0.8×</small></span></li>
-<li class="ada" style="--w:43.0%"><span class="name">ada</span><span class="bar"></span><span class="val">52.8</span></li>
-<li style="--w:44.1%"><span class="name">chafa</span><span class="bar"></span><span class="val">54.4 <small>1.0×</small></span></li>
-<li style="--w:95.7%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">222 <small>4.2×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">250 <small>4.7×</small></span></li>
+<li class="ada" style="--w:30.1%"><span class="name">ada</span><span class="bar"></span><span class="val">29.9</span></li>
+<li style="--w:39.1%"><span class="name">mcat</span><span class="bar"></span><span class="val">39.2 <small>1.3×</small></span></li>
+<li style="--w:49.5%"><span class="name">chafa</span><span class="bar"></span><span class="val">53.9 <small>1.8×</small></span></li>
+<li style="--w:95.8%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">220 <small>7.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">250 <small>8.4×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, half-blocks and symbols <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the preview in characters, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:54.0%"><span class="name">ada</span><span class="bar"></span><span class="val">36.4</span></li>
-<li style="--w:80.2%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">56.8 <small>1.6×</small></span></li>
-<li style="--w:81.9%"><span class="name">chafa</span><span class="bar"></span><span class="val">58.5 <small>1.6×</small></span></li>
-<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">79.5 <small>2.2×</small></span></li>
+<li class="ada" style="--w:42.4%"><span class="name">ada</span><span class="bar"></span><span class="val">22.6</span></li>
+<li style="--w:84.4%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">55.9 <small>2.5×</small></span></li>
+<li style="--w:85.4%"><span class="name">chafa</span><span class="bar"></span><span class="val">57.2 <small>2.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">78.4 <small>3.5×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, kitty graphics <span>MiB</span><small>the most resident at once, kitty graphics</small></figcaption><ol>
-<li class="ada" style="--w:65.4%"><span class="name">ada</span><span class="bar"></span><span class="val">44.3</span></li>
-<li style="--w:91.0%"><span class="name">mcat</span><span class="bar"></span><span class="val">63.3 <small>1.4×</small></span></li>
-<li style="--w:95.9%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">67.8 <small>1.5×</small></span></li>
-<li style="--w:95.9%"><span class="name">chafa</span><span class="bar"></span><span class="val">67.8 <small>1.5×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">71.8 <small>1.6×</small></span></li>
+<li class="ada" style="--w:67.3%"><span class="name">ada</span><span class="bar"></span><span class="val">44.9</span></li>
+<li style="--w:90.6%"><span class="name">mcat</span><span class="bar"></span><span class="val">61.6 <small>1.4×</small></span></li>
+<li style="--w:97.2%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">67.5 <small>1.5×</small></span></li>
+<li style="--w:97.7%"><span class="name">chafa</span><span class="bar"></span><span class="val">67.9 <small>1.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">70.1 <small>1.6×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, half-blocks and symbols <span>MiB</span><small>the most resident at once, in characters</small></figcaption><ol>
-<li class="ada" style="--w:71.1%"><span class="name">ada</span><span class="bar"></span><span class="val">42.4</span></li>
-<li style="--w:73.6%"><span class="name">viu</span><span class="bar"></span><span class="val">43.8 <small>1.0×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">61.5 <small>1.4×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">61.5 <small>1.5×</small></span></li>
+<li class="ada" style="--w:71.4%"><span class="name">ada</span><span class="bar"></span><span class="val">42.9</span></li>
+<li style="--w:72.3%"><span class="name">viu</span><span class="bar"></span><span class="val">43.4 <small>1.0×</small></span></li>
+<li style="--w:99.9%"><span class="name">chafa</span><span class="bar"></span><span class="val">61.8 <small>1.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">61.9 <small>1.4×</small></span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-img="5"><div class="charts">
 <figure class="chart"><figcaption>kitty graphics <span>ms</span> <em class="kind wall">wall</em><small>a 100×50-cell preview in kitty&#x27;s graphics protocol, to a pipe</small></figcaption><ol>
-<li style="--w:41.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">60.2 <small>0.8×</small></span></li>
-<li style="--w:41.7%"><span class="name">mcat</span><span class="bar"></span><span class="val">61.1 <small>0.8×</small></span></li>
-<li class="ada" style="--w:53.1%"><span class="name">ada</span><span class="bar"></span><span class="val">78.9</span></li>
-<li style="--w:95.0%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">201 <small>2.5×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">225 <small>2.9×</small></span></li>
+<li class="ada" style="--w:37.1%"><span class="name">ada</span><span class="bar"></span><span class="val">47.4</span></li>
+<li style="--w:46.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">59.1 <small>1.2×</small></span></li>
+<li style="--w:46.3%"><span class="name">mcat</span><span class="bar"></span><span class="val">59.7 <small>1.3×</small></span></li>
+<li style="--w:95.4%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">201 <small>4.2×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">225 <small>4.7×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>half-blocks and symbols <span>ms</span> <em class="kind wall">wall</em><small>the same preview drawn in characters, for any terminal</small></figcaption><ol>
-<li style="--w:51.5%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">56.5 <small>0.8×</small></span></li>
-<li style="--w:52.5%"><span class="name">chafa</span><span class="bar"></span><span class="val">57.6 <small>0.8×</small></span></li>
-<li class="ada" style="--w:63.3%"><span class="name">ada</span><span class="bar"></span><span class="val">69.7</span></li>
-<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">134 <small>1.9×</small></span></li>
+<li class="ada" style="--w:43.8%"><span class="name">ada</span><span class="bar"></span><span class="val">41.5</span></li>
+<li style="--w:58.1%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">56.0 <small>1.3×</small></span></li>
+<li style="--w:58.6%"><span class="name">chafa</span><span class="bar"></span><span class="val">56.5 <small>1.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">134 <small>3.2×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, kitty graphics <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the kitty preview, over all threads</small></figcaption><ol>
-<li style="--w:32.5%"><span class="name">mcat</span><span class="bar"></span><span class="val">60.7 <small>0.8×</small></span></li>
-<li class="ada" style="--w:41.6%"><span class="name">ada</span><span class="bar"></span><span class="val">78.6</span></li>
-<li style="--w:46.9%"><span class="name">chafa</span><span class="bar"></span><span class="val">91.1 <small>1.2×</small></span></li>
-<li style="--w:97.9%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">385 <small>4.9×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">408 <small>5.2×</small></span></li>
+<li class="ada" style="--w:29.8%"><span class="name">ada</span><span class="bar"></span><span class="val">47.2</span></li>
+<li style="--w:37.3%"><span class="name">mcat</span><span class="bar"></span><span class="val">59.4 <small>1.3×</small></span></li>
+<li style="--w:50.7%"><span class="name">chafa</span><span class="bar"></span><span class="val">89.8 <small>1.9×</small></span></li>
+<li style="--w:97.9%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">384 <small>8.1×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">409 <small>8.7×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, half-blocks and symbols <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the preview in characters, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:58.2%"><span class="name">ada</span><span class="bar"></span><span class="val">69.3</span></li>
-<li style="--w:75.8%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">91.4 <small>1.3×</small></span></li>
-<li style="--w:76.7%"><span class="name">chafa</span><span class="bar"></span><span class="val">92.8 <small>1.3×</small></span></li>
-<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">134 <small>1.9×</small></span></li>
+<li class="ada" style="--w:43.7%"><span class="name">ada</span><span class="bar"></span><span class="val">41.2</span></li>
+<li style="--w:81.4%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">90.8 <small>2.2×</small></span></li>
+<li style="--w:82.2%"><span class="name">chafa</span><span class="bar"></span><span class="val">92.2 <small>2.2×</small></span></li>
+<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">134 <small>3.3×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, kitty graphics <span>MiB</span><small>the most resident at once, kitty graphics</small></figcaption><ol>
-<li class="ada" style="--w:76.9%"><span class="name">ada</span><span class="bar"></span><span class="val">77.8</span></li>
-<li style="--w:92.9%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">94.1 <small>1.2×</small></span></li>
-<li style="--w:94.6%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">96.0 <small>1.2×</small></span></li>
-<li style="--w:98.3%"><span class="name">mcat</span><span class="bar"></span><span class="val">100 <small>1.3×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">102 <small>1.3×</small></span></li>
+<li class="ada" style="--w:77.4%"><span class="name">ada</span><span class="bar"></span><span class="val">78.5</span></li>
+<li style="--w:92.2%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">93.5 <small>1.2×</small></span></li>
+<li style="--w:95.9%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">97.7 <small>1.2×</small></span></li>
+<li style="--w:96.9%"><span class="name">mcat</span><span class="bar"></span><span class="val">98.9 <small>1.3×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">103 <small>1.3×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, half-blocks and symbols <span>MiB</span><small>the most resident at once, in characters</small></figcaption><ol>
-<li class="ada" style="--w:80.8%"><span class="name">ada</span><span class="bar"></span><span class="val">77.8</span></li>
-<li style="--w:82.9%"><span class="name">viu</span><span class="bar"></span><span class="val">79.7 <small>1.0×</small></span></li>
-<li style="--w:99.9%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">96.6 <small>1.2×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">96.7 <small>1.2×</small></span></li>
+<li class="ada" style="--w:81.1%"><span class="name">ada</span><span class="bar"></span><span class="val">78.3</span></li>
+<li style="--w:82.1%"><span class="name">viu</span><span class="bar"></span><span class="val">79.2 <small>1.0×</small></span></li>
+<li style="--w:99.9%"><span class="name">chafa</span><span class="bar"></span><span class="val">96.8 <small>1.2×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">96.9 <small>1.2×</small></span></li>
 </ol></figure>
 </div></div>
-<p class="stamp">B2 at ada <code>137570c</code>, 2026-10-18; previewer files at ada <code>137570c, logs and JSON 0994ae2</code></p>
+<p class="stamp">B2 at ada <code>101ce07</code>, 2026-10-20</p>
 <!-- perf:end -->
-  <p class="caveats">Where ada isn't first: glow writes about a third fewer bytes per page, and md-tui uses less
-    memory on the smallest note. As a previewer, bat prints the whole 3.75 MB JSON line faster and in less
+  <p class="caveats">Where ada isn't first: glow writes about a third fewer bytes per page; md-tui uses less
+    memory on the two smallest notes (leaf too on the smallest), and jumps to the end of the 86 KB note 7 µs
+    sooner, inside the harness's noise. As a previewer, bat prints the whole 3.75 MB JSON line faster and in less
     memory, because it doesn't color it: bat skips highlighting any line over 16 KB. ada colors it, every key
     and value, and writes 15.5 MB to bat's 5.8; left plain, ada printed it faster than bat (rich prints logs
-    without color, having no lexer for them). In kitty's graphics protocol, mcat or chafa preview five of the six
-    images faster (mcat five on CPU too), and chafa the two largest photos in characters, on wall time only: its
-    threads spend 1.3–1.6× ada's CPU there. ada uses the least memory on every one. Each viewer ran pinned to four physical cores of the same machine, in a 120×40
+    without color, having no lexer for them). ada previews every image fastest, in kitty's graphics protocol and in
+    characters, and uses the least memory on every one. Each viewer ran pinned to four physical cores of the same
+    machine, held at full clock with their deep idle states off for the run, in a 120×40
     pty; the numbers are medians of 3–5 runs. The harness is in
     <a href="https://github.com/junkdog/ada-md/tree/main/bench/b2">bench/b2</a>.</p>
 </section>
