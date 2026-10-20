@@ -63,7 +63,7 @@ impl Effects {
     /// Encode images with `encoder`: on a worker, once [`Effects::spawn_workers`] has run.
     pub fn set_encoder(&mut self, encoder: images::Encoder) {
         if let Some(tx) = &self.image_results {
-            self.images = Some(images::spawn_worker(encoder.clone(), tx.clone()));
+            self.images = Some(images::spawn_worker(encoder, tx.clone()));
         }
         self.encoder = Some(encoder);
     }

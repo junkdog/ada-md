@@ -721,9 +721,6 @@ fn number(out: &mut Vec<u8>, n: u16) {
 mod tests {
     use super::*;
 
-    use std::num::NonZeroU16;
-
-    use ratatui::buffer::CellDiffOption;
     use ratatui::style::{Color, Style};
 
     /// What the encoder wrote, replayed over the terminal's cells, within the scroll margins
@@ -1314,22 +1311,13 @@ mod tests {
     fn kept_images_are_drawn_over_their_cells() {
         let mut screen = Screen::new(Vec::new(), Size::new(6, 3));
         screen
-            .draw(|g| {
-                g.lend(Rect::new(1, 1, 3, 1), |buf| {
-                    let width = NonZeroU16::new(3).unwrap();
-                    buf[(1, 1)].set_symbol("\x1b_Gimg\x1b\\").diff_option =
-                        CellDiffOption::ForcedWidth(width);
-                    for x in 2..4 {
-                        buf[(x, 1)].diff_option = CellDiffOption::Skip;
-                    }
-                });
-            })
+            .draw(|g| g.image(Rect::new(1, 1, 3, 1), "\x1bPq#0!3~\x1b\\"))
             .unwrap();
         screen.out.clear();
         screen.keep(3).unwrap();
         let out = String::from_utf8(screen.out).unwrap();
         assert!(
-            out.ends_with("\x1b7\x1b8\x1b[2A\x1b[2G\x1b_Gimg\x1b\\\x1b8"),
+            out.ends_with("\x1b7\x1b8\x1b[2A\x1b[2G\x1bPq#0!3~\x1b\\\x1b8"),
             "{out:?}"
         );
         let lines: Vec<_> = out.split("\r\n").collect();

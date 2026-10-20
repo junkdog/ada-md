@@ -3,12 +3,14 @@
 //!
 //! The palette is made once per image ([`Palette::new`]) and each encoding maps pixels to it
 //! ([`Palette::encode`]), so a scroll that shows other rows of the image encodes those rows
-//! again without choosing colors again.
+//! again without choosing colors again. [`Indexed`] maps the whole image once, which leaves a
+//! scroll only the bands to write: the TUI's images.
 //!
 //! <https://vt100.net/docs/vt3xx-gp/chapter14.html>
 
 use std::borrow::Cow;
 use std::ops::Range;
+use std::sync::{Mutex, PoisonError};
 
 use image::DynamicImage;
 
@@ -85,20 +87,24 @@ impl Palette {
         let (bytes, ch) = rgb_or_rgba(image);
         let bytes = &bytes[rows.start as usize * w * ch..rows.end as usize * w * ch];
         let indices = self.map(bytes, ch, w, dither);
+        self.write(&indices, w, out);
+    }
 
+    /// `indices`, rows of `w` pixels, as a sixel image.
+    fn write(&self, indices: &[u8], w: usize, out: &mut Vec<u8>) {
+        self.header(w, indices.len() / w, &used(indices), out);
+        bands(indices, w, self.colors.len(), out);
+        out.extend_from_slice(b"\x1b\\");
+    }
+
+    /// A sixel image's start, up to its first band: its size, `w` × `h`, and the colors `used`.
+    fn header(&self, w: usize, h: usize, used: &[bool; MAX_COLORS], out: &mut Vec<u8>) {
         // P1 = 9: square pixels, which Windows Terminal reads from P1 alone; P2 = 1: pixels not
         // drawn keep what's beneath them. The raster attributes say the same, and the size.
         out.extend_from_slice(b"\x1bP9;1;0q\"1;1;");
         push_num(out, w);
         out.push(b';');
         push_num(out, h);
-
-        let mut used = [false; MAX_COLORS];
-        for &i in &indices {
-            if i != TRANSPARENT {
-                used[usize::from(i)] = true;
-            }
-        }
         for (i, c) in self.colors.iter().enumerate().filter(|&(i, _)| used[i]) {
             out.push(b'#');
             push_num(out, i);
@@ -108,9 +114,6 @@ impl Palette {
                 push_num(out, percent(v).into());
             }
         }
-
-        bands(&indices, w, self.colors.len(), out);
-        out.extend_from_slice(b"\x1b\\");
     }
 
     /// Each pixel's color index, or [`TRANSPARENT`].
@@ -167,6 +170,140 @@ impl Palette {
     }
 }
 
+/// An image mapped to its palette once, so that any part of it is drawn as sixels without
+/// mapping it again. Dithered, the rows are the same pixels wherever the image is cut, so a
+/// scroll doesn't make them shimmer.
+///
+/// A scroll by whole cells starts the image at a row a cell's height further on, so its bands
+/// start at one of a few offsets from the top: a cell's height steps through at most six. Each
+/// offset's bands are written once, by [`Indexed::prepare`] or the first cut that needs them,
+/// and a cut joins those it shows, writing only its last band cut short.
+pub struct Indexed {
+    palette: Palette,
+    width: u32,
+    height: u32,
+    indices: Vec<u8>,
+    /// The colors the image uses.
+    used: [bool; MAX_COLORS],
+    /// The bands that start at each offset from the top.
+    banded: Mutex<[Option<Banded>; 6]>,
+}
+
+/// The image's bands from a row, each one followed by `-` in `data`, where `ends` has the end
+/// of each.
+struct Banded {
+    data: Vec<u8>,
+    ends: Vec<usize>,
+}
+
+impl Indexed {
+    /// `image` in a palette of at most `colors` colors of its own.
+    pub fn new(image: &DynamicImage, colors: usize, dither: Dither) -> Indexed {
+        let palette = Palette::new(image, colors);
+        let (bytes, ch) = rgb_or_rgba(image);
+        let indices = palette.map(&bytes, ch, image.width() as usize, dither);
+        Indexed {
+            palette,
+            width: image.width(),
+            height: image.height(),
+            used: used(&indices),
+            indices,
+            banded: Mutex::default(),
+        }
+    }
+
+    /// The size in pixels.
+    pub fn size(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    /// Rows `rows` of the image, cut to its first `width` columns, as a sixel image appended to
+    /// `out`: the pixels [`Palette::encode`] writes for them. Nothing is written when there are
+    /// no pixels.
+    pub fn encode(&self, rows: Range<u32>, width: u32, out: &mut Vec<u8>) {
+        let rows = rows.start.min(self.height) as usize..rows.end.min(self.height) as usize;
+        let (full, w) = (self.width as usize, width.min(self.width) as usize);
+        if w == 0 || rows.is_empty() {
+            return;
+        }
+        let indices = &self.indices[rows.start * full..rows.end * full];
+        // cut on the right, which only a window narrower than the image does: written whole
+        if w < full {
+            let cut: Vec<u8> = indices
+                .chunks_exact(full)
+                .flat_map(|row| &row[..w])
+                .copied()
+                .collect();
+            self.palette.write(&cut, w, out);
+            return;
+        }
+        self.palette.header(w, rows.len(), &self.used, out);
+        let offset = rows.start % 6;
+        let mut banded = self.banded.lock().unwrap_or_else(PoisonError::into_inner);
+        let banded = banded[offset].get_or_insert_with(|| self.bands_from(offset));
+        // the bands that end inside the rows, the image's last however short; then the rest,
+        // cut short at the rows' end
+        let first = rows.start / 6;
+        let (last, rest) = if rows.end == self.height as usize {
+            (banded.ends.len(), rows.end..rows.end)
+        } else {
+            let last = (rows.end - offset) / 6;
+            (last, offset + last * 6..rows.end)
+        };
+        let start = if first == 0 { 0 } else { banded.ends[first - 1] };
+        if last > first {
+            out.extend_from_slice(&banded.data[start..banded.ends[last - 1]]);
+        }
+        if rest.is_empty() {
+            // the last band's `-`
+            out.pop_if(|b| *b == b'-');
+        } else {
+            let mut sixels = Sixels::new(w, self.palette.colors.len());
+            sixels.band(&self.indices[rest.start * full..rest.end * full], out);
+        }
+        out.extend_from_slice(b"\x1b\\");
+    }
+
+    /// Write the bands of every cut that starts on a multiple of `every` rows (a cell's height),
+    /// so that a scroll by cells writes none: each offset of `every`'s multiples from a band.
+    pub fn prepare(&self, every: u32) {
+        let every = every.max(1) as usize;
+        let mut banded = self.banded.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut offset = 0;
+        loop {
+            banded[offset].get_or_insert_with(|| self.bands_from(offset));
+            offset = (offset + every) % 6;
+            if offset == 0 || every >= self.height as usize {
+                break;
+            }
+        }
+    }
+
+    /// The bands that start at row `offset`, each followed by `-`.
+    fn bands_from(&self, offset: usize) -> Banded {
+        let w = self.width as usize;
+        let mut sixels = Sixels::new(w, self.palette.colors.len());
+        let (mut data, mut ends) = (Vec::new(), Vec::new());
+        for rows in self.indices[(offset * w).min(self.indices.len())..].chunks(w * 6) {
+            sixels.band(rows, &mut data);
+            data.push(b'-');
+            ends.push(data.len());
+        }
+        Banded { data, ends }
+    }
+}
+
+/// The colors `indices` uses.
+fn used(indices: &[u8]) -> [bool; MAX_COLORS] {
+    let mut used = [false; MAX_COLORS];
+    for &i in indices {
+        if i != TRANSPARENT {
+            used[usize::from(i)] = true;
+        }
+    }
+    used
+}
+
 /// `image`'s bytes and channels: RGB or RGBA as they are, anything else as RGBA.
 fn rgb_or_rgba(image: &DynamicImage) -> (Cow<'_, [u8]>, usize) {
     match image {
@@ -180,35 +317,60 @@ fn rgb_or_rgba(image: &DynamicImage) -> (Cow<'_, [u8]>, usize) {
 /// it's in to the last, the passes joined by `$` (back to the band's first column) and the bands
 /// by `-`.
 fn bands(indices: &[u8], w: usize, colors: usize, out: &mut Vec<u8>) {
-    // each color's six bits per column in the band at hand, and the columns it spans
-    let mut sixels = vec![0u8; colors * w];
-    let mut span = vec![(usize::MAX, 0); colors];
-    let mut used = Vec::with_capacity(colors);
-    let bands = (indices.len() / w).div_ceil(6);
+    let mut sixels = Sixels::new(w, colors);
     for (band, rows) in indices.chunks(w * 6).enumerate() {
+        if band > 0 {
+            out.push(b'-');
+        }
+        sixels.band(rows, out);
+    }
+}
+
+/// Bands of `w` pixels, one at a time: each color's six bits per column in the band at hand,
+/// and the columns it spans.
+struct Sixels {
+    w: usize,
+    sixels: Vec<u8>,
+    span: Vec<(usize, usize)>,
+    used: Vec<usize>,
+}
+
+impl Sixels {
+    fn new(w: usize, colors: usize) -> Sixels {
+        Sixels {
+            w,
+            sixels: vec![0; colors * w],
+            span: vec![(usize::MAX, 0); colors],
+            used: Vec::with_capacity(colors),
+        }
+    }
+
+    /// One band: up to six rows of indices, each color in them as one pass.
+    fn band(&mut self, rows: &[u8], out: &mut Vec<u8>) {
+        let w = self.w;
         for (bit, row) in rows.chunks_exact(w).enumerate() {
             for (x, &i) in row.iter().enumerate() {
                 if i == TRANSPARENT {
                     continue;
                 }
                 let i = usize::from(i);
-                sixels[i * w + x] |= 1 << bit;
-                let s = &mut span[i];
+                self.sixels[i * w + x] |= 1 << bit;
+                let s = &mut self.span[i];
                 if s.0 == usize::MAX {
-                    used.push(i);
+                    self.used.push(i);
                 }
                 *s = (s.0.min(x), s.1.max(x));
             }
         }
-        for (n, &i) in used.iter().enumerate() {
+        for (n, &i) in self.used.iter().enumerate() {
             if n > 0 {
                 out.push(b'$');
             }
             out.push(b'#');
             push_num(out, i);
-            let (first, last) = span[i];
+            let (first, last) = self.span[i];
             run(out, 0, first);
-            let row = &mut sixels[i * w + first..=i * w + last];
+            let row = &mut self.sixels[i * w + first..=i * w + last];
             let mut x = 0;
             while x < row.len() {
                 let bits = row[x];
@@ -217,12 +379,9 @@ fn bands(indices: &[u8], w: usize, colors: usize, out: &mut Vec<u8>) {
                 x += n;
             }
             row.fill(0);
-            span[i] = (usize::MAX, 0);
+            self.span[i] = (usize::MAX, 0);
         }
-        used.clear();
-        if band + 1 < bands {
-            out.push(b'-');
-        }
+        self.used.clear();
     }
 }
 
@@ -649,6 +808,42 @@ mod tests {
         out.clear();
         palette.encode(&image, 40..50, Dither::None, &mut out);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn an_indexed_image_draws_any_rows_and_columns_of_it() {
+        let image = DynamicImage::ImageRgb8(RgbImage::from_fn(9, 30, |x, y| {
+            Rgb([EXACT[(x % 6) as usize], EXACT[(y % 6) as usize], 0])
+        }));
+        let indexed = Indexed::new(&image, 64, Dither::FloydSteinberg);
+        assert_eq!(indexed.size(), (9, 30));
+        // a cell 4 rows high starts the bands at offsets 0, 4 and 2; the rest come when asked for
+        indexed.prepare(4);
+        let ready = |i: &Indexed| i.banded.lock().unwrap().each_ref().map(Option::is_some);
+        assert_eq!(ready(&indexed), [true, false, true, false, true, false]);
+        // the same pixels as the whole image's, wherever it's cut
+        let mut out = Vec::new();
+        indexed.encode(0..30, 9, &mut out);
+        let (_, _, whole) = decode(&out);
+        // every cut: each offset of the bands, ends on a band and inside one, the image's end
+        let all = (0..30).flat_map(|s| (s + 1..=30).map(move |e| (s..e, 9)));
+        for (rows, width) in all.chain([(7..19, 9), (0..5, 4), (25..40, 20), (7..19, 9)]) {
+            out.clear();
+            indexed.encode(rows.clone(), width, &mut out);
+            let (w, h, px) = decode(&out);
+            let (rows, width) = (rows.start as usize..rows.end.min(30) as usize, width.min(9) as usize);
+            assert_eq!((w, h), (width, rows.len()));
+            for (k, p) in px.iter().enumerate() {
+                let (x, y) = (k % w, k / w + rows.start);
+                assert_eq!(*p, whole[y * 9 + x], "({x}, {y})");
+                assert_eq!(*p, Some([EXACT[x % 6], EXACT[y % 6], 0]));
+            }
+        }
+        for (rows, width) in [(30..40, 9), (3..3, 9), (0..6, 0)] {
+            out.clear();
+            indexed.encode(rows, width, &mut out);
+            assert!(out.is_empty());
+        }
     }
 
     #[test]

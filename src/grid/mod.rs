@@ -9,10 +9,8 @@ mod screen;
 
 pub use screen::Screen;
 
-use std::num::NonZeroU16;
 use std::ops::{Index, IndexMut, Range};
 
-use ratatui::buffer::{Buffer, CellDiffOption};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use unicode_segmentation::UnicodeSegmentation;
@@ -431,53 +429,25 @@ impl Grid {
         self.images = true;
     }
 
-    /// Let ratatui code draw on `area` of the grid: the cells go out as a ratatui buffer, `draw`
-    /// paints on it, and they come back with whatever it changed. For sixel and iTerm2 images,
-    /// whose protocols write escape sequences into cells. A kitty placeholder goes out without its
-    /// row and column, as no protocol here draws over one.
-    pub fn lend(&mut self, area: Rect, draw: impl FnOnce(&mut Buffer)) {
+    /// Cover `area` with an image that `seq` draws from its first cell: a sixel or iTerm2 image,
+    /// whose escape sequence is written as is there, in the cell's style, and moves the cursor
+    /// its own way. The terminal leaves the rest of the area alone, as the image covers it.
+    pub fn image(&mut self, area: Rect, seq: &str) {
         let area = self.area.intersection(area);
         if area.is_empty() {
             return;
         }
-        let mut buf = Buffer::empty(area);
         for y in area.top()..area.bottom() {
-            for x in area.left()..area.right() {
-                let i = self.index(x, y);
-                let c = self.cells[i];
-                let out = &mut buf[(x, y)];
-                out.set_symbol(self.symbol_at(i));
-                out.fg = c.fg();
-                out.bg = c.bg();
-                out.modifier = c.modifier();
-                out.diff_option = match NonZeroU16::new(c.width()) {
-                    _ if c.skip() => CellDiffOption::Skip,
-                    Some(w) if c.forced() => CellDiffOption::ForcedWidth(w),
-                    _ => CellDiffOption::None,
-                };
+            let row = self.index(area.x, y);
+            for c in &mut self.cells[row..row + usize::from(area.width)] {
+                c.meta = c.meta & WIDTH | SKIP;
             }
         }
-        draw(&mut buf);
-        for y in area.top()..area.bottom() {
-            for x in area.left()..area.right() {
-                let i = self.index(x, y);
-                let from = &buf[(x, y)];
-                let symbol = from.symbol();
-                let (flags, width) = match from.diff_option {
-                    CellDiffOption::Skip => (SKIP, cell_width(symbol)),
-                    CellDiffOption::ForcedWidth(w) => (FORCED, w.get()),
-                    _ => (0, cell_width(symbol)),
-                };
-                self.images |= flags != 0;
-                self.cells[i].meta = 0;
-                self.put(i, symbol, width);
-                let c = &mut self.cells[i];
-                c.meta = flags | width.min(u16::from(WIDTH)) as u8;
-                c.fg = pack(from.fg);
-                c.bg = pack(from.bg);
-                c.modifier = from.modifier.bits();
-            }
-        }
+        let first = self.index(area.x, area.y);
+        self.cells[first].meta = 0;
+        self.put(first, seq, 1);
+        self.cells[first].meta = FORCED | 1;
+        self.images = true;
     }
 }
 
@@ -588,6 +558,8 @@ fn unpack(c: u32) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use ratatui::buffer::Buffer;
 
     /// The same calls on a ratatui buffer and a grid leave the same symbols and styles.
     fn same_as_ratatui(paint: impl Fn(&mut dyn Canvas)) {

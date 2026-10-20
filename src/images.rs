@@ -1,7 +1,6 @@
-//! Images (ADR-09, architecture §9). Everything that knows about ratatui-image lives here: sixel
-//! and iTerm2. Kitty and half-blocks are ada's own, as print draws them ([`kitty`],
-//! [`pixels::HalfBlock`]; CS-1 of the clean-slate plan), and so is the terminal's query
-//! ([`probe`], CS-2).
+//! Images (ADR-09, architecture §9), all of them ada's own: kitty and half-blocks as print draws
+//! them ([`kitty`], [`pixels::HalfBlock`]; CS-1 of the clean-slate plan), the terminal's query
+//! ([`probe`], CS-2), and sixel and iTerm2 ([`sixel`], [`iterm`]; CS-3).
 //!
 //! The terminal is queried once at startup, and answers on the input thread while the text paints
 //! (O-06); its protocol and font cell size reach `update` as `Msg::Graphics`, and start the image
@@ -14,27 +13,23 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::fs;
 use std::io::Write;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Instant, UNIX_EPOCH};
 
-use image::imageops::FilterType;
 use image::metadata::Orientation;
 use image::{ImageDecoder, ImageReader};
 use ratatui::layout::{Rect, Size};
 use ratatui::style::{Color, Style};
-use ratatui::widgets::Widget;
-use ratatui_image::picker::{Picker, ProtocolType};
-use ratatui_image::sliced::{SignedPosition, SlicedImage, SlicedProtocol};
-use ratatui_image::{FontSize, Resize};
 
 use crate::grid::Grid;
-use crate::kitty;
 use crate::pixels::{self, HalfBlock};
-use crate::probe;
+use crate::sixel::{self, Dither};
+use crate::{iterm, kitty, probe};
 
 use crate::app::{self, Computed, Msg};
 
@@ -64,15 +59,6 @@ impl Proto {
 
     pub fn parse(name: &str) -> Option<Proto> {
         Proto::ALL.into_iter().find(|p| p.name() == name)
-    }
-
-    fn protocol_type(self) -> ProtocolType {
-        match self {
-            Proto::Kitty => ProtocolType::Kitty,
-            Proto::Sixel => ProtocolType::Sixel,
-            Proto::Iterm2 => ProtocolType::Iterm2,
-            Proto::Halfblocks => ProtocolType::Halfblocks,
-        }
     }
 }
 
@@ -213,29 +199,16 @@ pub fn detect(mode: ImageMode) -> Option<Graphics> {
 }
 
 /// What encodes images for the terminal: its protocol and the font's cell size.
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug)]
 pub struct Encoder {
     proto: Proto,
     cell: Size,
-    /// ratatui-image's, which draws sixel and iTerm2 until CS-3. Only for those: building one
-    /// runs `tmux set -p allow-passthrough on` inside tmux, a change to the user's pane.
-    picker: Option<Picker>,
 }
 
 impl Encoder {
-    #[allow(deprecated)] // `from_fontsize`: ratatui-image would rather ask the terminal itself
     pub fn new(proto: Proto, cell: Size) -> Encoder {
         let cell = Size::new(cell.width.max(1), cell.height.max(1));
-        let picker = matches!(proto, Proto::Sixel | Proto::Iterm2).then(|| {
-            let mut picker = Picker::from_fontsize(FontSize::new(cell.width, cell.height));
-            picker.set_protocol_type(proto.protocol_type());
-            picker
-        });
-        Encoder {
-            proto,
-            cell,
-            picker,
-        }
+        Encoder { proto, cell }
     }
 
     /// Half-blocks at 10×20, for a terminal that wasn't asked.
@@ -371,8 +344,25 @@ enum Image {
     },
     /// Row by row.
     Halfblocks { size: Size, cells: Box<[HalfBlock]> },
-    /// Sixel and iTerm2, by ratatui-image.
-    Sliced(SlicedProtocol),
+    /// Mapped to its palette once; the rows on screen are written as one sixel image from their
+    /// first cell, again whenever the rows on screen change.
+    Sixel {
+        size: Size,
+        /// The font's cell size in pixels.
+        cell: Size,
+        pixels: Box<sixel::Indexed>,
+        shown: Mutex<Option<Shown>>,
+    },
+    /// A PNG a row, each written from the row's first cell.
+    Iterm2 { size: Size, rows: Box<[Box<str>]> },
+}
+
+/// The sixel sequence last painted: the cells erased, then the image's `rows` and first `cols`
+/// columns. A frame that shows the same part again writes it again, without encoding it.
+struct Shown {
+    rows: Range<u16>,
+    cols: u16,
+    seq: String,
 }
 
 /// What transmits a kitty image to the terminal. The first frame that paints the image sends it,
@@ -388,8 +378,10 @@ pub struct Transmit {
 impl Encoded {
     pub fn size(&self) -> Size {
         match &*self.0 {
-            Image::Kitty { size, .. } | Image::Halfblocks { size, .. } => *size,
-            Image::Sliced(proto) => proto.size(),
+            Image::Kitty { size, .. }
+            | Image::Halfblocks { size, .. }
+            | Image::Sixel { size, .. }
+            | Image::Iterm2 { size, .. } => *size,
         }
     }
 
@@ -421,10 +413,16 @@ static KITTY_IMAGES: AtomicU32 = AtomicU32::new(0);
 
 /// Decode an image and encode it for the terminal, fitted to `key.size` cells. It's decoded
 /// straight to the pixels those cells hold ([`pixels::decode`]), so there is nothing left to
-/// resize. Kitty and half-blocks are drawn as print draws them.
+/// resize. Kitty and half-blocks are drawn as print draws them. A sixel image is mapped to its
+/// palette here and written by the paint, which knows which rows are on screen; iTerm2's rows are
+/// all encoded here.
 pub fn encode(encoder: &Encoder, key: &ImageKey) -> Result<Encoded, String> {
     let font = encoder.cell;
     let (cols, rows) = (key.size.width, key.size.height);
+    let max = (
+        u32::from(cols) * u32::from(font.width),
+        u32::from(rows) * u32::from(font.height),
+    );
     let image = match encoder.proto {
         Proto::Kitty => {
             let (cols, rows) = (cols.min(kitty::MAX_CELLS), rows.min(kitty::MAX_CELLS));
@@ -465,17 +463,28 @@ pub fn encode(encoder: &Encoder, key: &ImageKey) -> Result<Encoded, String> {
                 cells,
             }
         }
-        Proto::Sixel | Proto::Iterm2 => {
-            let picker = encoder.picker.as_ref().ok_or("no picker")?;
-            let max = (
-                u32::from(cols) * u32::from(font.width),
-                u32::from(rows) * u32::from(font.height),
-            );
+        Proto::Sixel => {
+            // undithered: the best match to the source, and the fastest (the plan's Q1)
             let image = pixels::decode(&key.path, max)?;
-            let resize = Resize::Fit(Some(FilterType::Triangle));
-            let proto = SlicedProtocol::new_with_resize(picker, image, key.size, resize)
-                .map_err(|e| e.to_string())?;
-            Image::Sliced(proto)
+            let pixels = sixel::Indexed::new(&image, sixel::MAX_COLORS, Dither::None);
+            // the bands of every scroll by cells, so that the paint only joins them
+            pixels.prepare(u32::from(font.height));
+            Image::Sixel {
+                size: key.size,
+                cell: Size::new(font.width, font.height),
+                pixels: Box::new(pixels),
+                shown: Mutex::new(None),
+            }
+        }
+        Proto::Iterm2 => {
+            let image = pixels::decode(&key.path, max)?;
+            let cell = (u32::from(font.width), u32::from(font.height));
+            Image::Iterm2 {
+                size: key.size,
+                rows: iterm::rows(&image, cell, cols, rows)
+                    .map_err(|e| e.to_string())?
+                    .into(),
+            }
         }
     };
     Ok(Encoded(Arc::new(image)))
@@ -649,15 +658,55 @@ pub fn render(image: &Encoded, grid: &mut Grid, area: Rect, x: u16, y: i32) {
                 }
             }
         }
-        Image::Sliced(proto) => {
-            let y = y.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
-            let position = SignedPosition::from((x as i16, y));
-            let top = area.y.saturating_add(y.max(0) as u16);
-            let covered = Rect::new(area.x + x, top, size.width, size.height).intersection(area);
-            grid.lend(covered, |buf| {
-                SlicedImage::new(proto, position).render(area, buf);
-            });
+        Image::Sixel {
+            cell,
+            pixels,
+            shown,
+            ..
+        } => {
+            if rows.is_empty() || cols == 0 {
+                return;
+            }
+            let mut shown = shown.lock().unwrap_or_else(PoisonError::into_inner);
+            let seq = match &*shown {
+                Some(s) if (&s.rows, s.cols) == (&rows, cols) => &s.seq,
+                _ => {
+                    let mut seq = Vec::new();
+                    erase(&mut seq, cols, rows.len() as u16);
+                    let px = |n: u16, by: u16| u32::from(n) * u32::from(by);
+                    let (top, bottom) = (px(rows.start, cell.height), px(rows.end, cell.height));
+                    pixels.encode(top..bottom, px(cols, cell.width), &mut seq);
+                    let seq = String::from_utf8(seq).unwrap_or_default();
+                    &shown.insert(Shown { rows: rows.clone(), cols, seq }).seq
+                }
+            };
+            let (x, y) = at(rows.start, 0);
+            grid.image(Rect::new(x, y, cols, rows.len() as u16), seq);
         }
+        // a row cut on the right would need encoding again: such a row is left as it is, as
+        // ratatui-image left it
+        Image::Iterm2 { size, rows: seqs } if cols == size.width => {
+            for row in rows {
+                let (x, y) = at(row, 0);
+                grid.image(Rect::new(x, y, cols, 1), &seqs[usize::from(row)]);
+            }
+        }
+        Image::Iterm2 { .. } => {}
+    }
+}
+
+/// Erase `cols` × `rows` cells from the cursor and leave it where it was: what an image's
+/// transparent pixels show, and what was drawn where it leaves no pixel. The last row moves
+/// nowhere, so that an image on the screen's bottom row doesn't come back a row too far.
+fn erase(out: &mut Vec<u8>, cols: u16, rows: u16) {
+    for row in 0..rows {
+        out.extend_from_slice(format!("\x1b[{cols}X").as_bytes());
+        if row + 1 < rows {
+            out.extend_from_slice(b"\x1b[B");
+        }
+    }
+    if rows > 1 {
+        out.extend_from_slice(format!("\x1b[{}A", rows - 1).as_bytes());
     }
 }
 
@@ -962,6 +1011,69 @@ pub(crate) mod tests {
         let mut cache = ImageCache::default();
         cache.insert(key, Ok(image));
         assert_eq!(cache.transmits().count(), 1);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    /// A `px` PNG encoded for `proto` at `size` cells of 10×20.
+    fn encoded(proto: Proto, name: &str, px: (u32, u32), size: Size) -> (PathBuf, Encoded) {
+        let path = png(name, px.0, px.1);
+        let key = ImageKey {
+            path: path.clone(),
+            mtime: None,
+            size,
+        };
+        let encoder = Encoder::new(proto, Size::new(10, 20));
+        (path, encode(&encoder, &key).unwrap())
+    }
+
+    /// A sixel image is the rows on screen, written from their first cell over the cells it
+    /// erases first; a scroll writes the rows it shows then, and a frame that shows the same rows
+    /// writes nothing.
+    #[test]
+    fn sixel_images_are_the_rows_on_screen() {
+        let (path, image) = encoded(Proto::Sixel, "sixel", (30, 40), Size::new(3, 2));
+        assert_eq!(image.size(), Size::new(3, 2));
+        let area = Rect::new(0, 0, 6, 3);
+        let out = Shared::default();
+        let mut screen = Screen::new(out.clone(), Size::new(6, 3));
+        let first = frame(&mut screen, &out, |g| render(&image, g, area, 1, 1));
+        let both = "\x1b[3X\x1b[B\x1b[3X\x1b[1A\x1bP9;1;0q\"1;1;30;40#";
+        assert!(first.contains("\x1b[2;2H"), "{first:?}");
+        assert!(first.contains(both), "{first:?}");
+        assert_eq!(first.matches("\x1bP").count(), 1);
+        let again = frame(&mut screen, &out, |g| render(&image, g, area, 1, 1));
+        assert!(!again.contains("\x1bP"), "the same rows again: {again:?}");
+        // scrolled up a row: the bottom row alone, 20 pixels high, at the top
+        let next = frame(&mut screen, &out, |g| render(&image, g, area, 1, -1));
+        assert!(next.contains("\x1b[1;2H"), "{next:?}");
+        assert!(
+            next.contains("\x1b[3X\x1bP9;1;0q\"1;1;30;20#"),
+            "{next:?}"
+        );
+        // the image's old cells on the second row are text again
+        assert!(next.contains("\x1b[2;"), "{next:?}");
+        // cut on the right: 20 pixels of its 30
+        let cut = frame(&mut screen, &out, |g| render(&image, g, area, 4, 0));
+        assert!(cut.contains("\x1bP9;1;0q\"1;1;20;40#"), "{cut:?}");
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    /// An iTerm2 image is a PNG a row, each written from its row's first cell; a row cut on the
+    /// right isn't drawn.
+    #[test]
+    fn iterm2_images_are_a_png_a_row() {
+        let (path, image) = encoded(Proto::Iterm2, "iterm", (30, 40), Size::new(3, 2));
+        let area = Rect::new(0, 0, 6, 3);
+        let out = Shared::default();
+        let mut screen = Screen::new(out.clone(), Size::new(6, 3));
+        let osc = "\x1b[3X\x1b]1337;File=inline=1;";
+        let first = frame(&mut screen, &out, |g| render(&image, g, area, 1, 1));
+        assert_eq!(first.matches(osc).count(), 2, "{first:?}");
+        let next = frame(&mut screen, &out, |g| render(&image, g, area, 1, -1));
+        assert_eq!(next.matches(osc).count(), 1, "{next:?}");
+        assert!(next.contains(&format!("\x1b[1;2H{osc}")), "{next:?}");
+        let cut = frame(&mut screen, &out, |g| render(&image, g, area, 4, 0));
+        assert!(!cut.contains("1337"), "{cut:?}");
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
