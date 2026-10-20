@@ -7,7 +7,9 @@
 # so does a yanked one.
 version = 2
 yanked = "deny"
-ignore = []
+ignore = [
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1 unmaintained; syntect 5.3 (the latest) loads two-face's syntax dumps with it, data built into ada, not input" },
+]
 
 [licenses]
 # What today's tree needs, and no more: every crate offers MIT or Apache-2.0, alongside
