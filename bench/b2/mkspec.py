@@ -1,7 +1,7 @@
 import json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I leaves the script's directory out
 import timeouts
-S = os.environ["B2_ROOT"]  # corpus/, tools/bin/, home/<viewer>/, b2/, b2a/
+S = os.environ.get("B2_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "root")  # corpus/, tools/bin/, home/<viewer>/, b2/, b2a/
 B = S + "/tools/bin"
 DOCS = {
     "s": dict(first="Hook", end_sentinel="alt-tab", search_term="consulted", search_sentinel="happened"),

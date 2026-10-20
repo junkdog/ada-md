@@ -6,7 +6,7 @@
 #   text:  ada's half-blocks; viu's (-b); chafa's default symbols, and chafa limited to half-blocks (vhalf)
 # viu can't be told to use kitty without a terminal to ask; mcat has no half-blocks (only --ascii).
 # icat's shared-memory runs leave their /dev/shm files behind with no terminal to read them; they are removed.
-S=${B2_ROOT:?set B2_ROOT}
+S=${B2_ROOT:-${0:A:h}/root}
 B=$S/tools/bin; ADA=${ADA:-ada}
 OUT=${B2I_OUT:-$S/b2i}   # B2I_OUT: another directory, for a rerun
 export XDG_CONFIG_HOME=$S/home/x/config

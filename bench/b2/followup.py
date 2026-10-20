@@ -3,7 +3,7 @@ import os, sys, json
 sys.path.insert(0, os.path.dirname(__file__))
 import b2
 
-S = os.environ["B2_ROOT"]  # corpus/, tools/bin/, home/<viewer>/, b2/, b2a/
+S = os.environ.get("B2_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "root")  # corpus/, tools/bin/, home/<viewer>/, b2/, b2a/
 B = S + "/tools/bin"
 env = dict(os.environ, TERM="xterm-256color", COLORTERM="truecolor")
 for k in ("TMUX", "KITTY_WINDOW_ID", "TERM_PROGRAM"):

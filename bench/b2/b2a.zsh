@@ -2,7 +2,7 @@
 # B2a: print to a pipe at 100 columns, stdin /dev/null. Pinned to four physical cores of CCD0.
 # bat highlights the markdown source, as it does in an fzf preview, and lowdown doesn't highlight: both are floors,
 # not rivals. rich (rich-cli) and mcat render it.
-S=${B2_ROOT:?set B2_ROOT}
+S=${B2_ROOT:-${0:A:h}/root}
 B=$S/tools/bin; ADA=${ADA:-ada}
 OUT=${B2A_OUT:-$S/b2a}   # B2A_OUT and B2A_ONLY="ada": a rerun of some tools, as b2p.zsh's; merge.py merges it
 # COLUMNS: rich lays out at -w but crops each line at its console's width, 80 to a pipe, which lost 18% of L's words

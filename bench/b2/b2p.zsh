@@ -10,7 +10,7 @@
 # and RSS are lost: timeout signals its own process group too, so it never reaps the child.
 # B2P_ONLY="ada rich" runs only those tools, for a rerun merged into the earlier records. The cells in timeouts.py
 # always hit the cap: they're skipped while the tool is still that version (B2_TIMEOUTS=off runs them).
-S=${B2_ROOT:?set B2_ROOT}
+S=${B2_ROOT:-${0:A:h}/root}
 B=$S/tools/bin; ADA=${ADA:-ada}; CAP=${B2P_CAP:-60}
 OUT=${B2P_OUT:-$S/b2p}   # B2P_OUT: another directory, for a rerun
 SKIP=("${(@f)$(python3 -I ${0:A:h}/timeouts.py b2p)}")   # "input mode tool"

@@ -2,7 +2,7 @@
 //! encoder at B2's 120×40, and `--print` at 100 columns, split into cursor moves, SGR and text.
 //!
 //! ```zsh
-//! cargo run --release --example frame_bytes -- ~/b2/corpus/{s,m,l}.md
+//! cargo run --release --example frame_bytes -- bench/b2/root/corpus/{s,m,l}.md
 //! ```
 
 use std::cell::RefCell;

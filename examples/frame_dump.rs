@@ -3,7 +3,7 @@
 //! search, the outline, help and a resize, on each file at 120×40 and 60×20.
 //!
 //! ```zsh
-//! cargo run --release --example frame_dump -- ~/b2/corpus/*.md > new.bin
+//! cargo run --release --example frame_dump -- bench/b2/root/corpus/*.md > new.bin
 //! cmp base.bin new.bin
 //! ```
 

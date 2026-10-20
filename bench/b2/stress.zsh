@@ -11,7 +11,7 @@
 # Each DIR holds `ada` and `bench` (the example) built from one tree (`git archive`, own CARGO_TARGET_DIR). The two
 # run at once for STRESS_ROUNDS rounds (6), on matched cores they swap each round (below). Writes OUT/flood.jsonl,
 # OUT/bench/, OUT/run.log and OUT/compare.md.
-S=${B2_ROOT:?set B2_ROOT}; OUT=${1:?usage: stress.zsh OUT OLD_DIR NEW_DIR}
+S=${B2_ROOT:-${0:A:h}/root}; OUT=${1:?usage: stress.zsh OUT OLD_DIR NEW_DIR}
 OLD=${2:?usage: stress.zsh OUT OLD_DIR NEW_DIR}; NEW=${3:?usage: stress.zsh OUT OLD_DIR NEW_DIR}
 H=${0:A:h}; B2=$H/target/release/b2; R=${STRESS_ROUNDS:-6}; RATE=${STRESS_RATE:-20000}
 [[ -e $OUT ]] && { echo "stress: $OUT exists" >&2; exit 1 }

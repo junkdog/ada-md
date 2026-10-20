@@ -1,5 +1,5 @@
 import json, os, sys, statistics as st
-S = os.environ["B2_ROOT"]  # corpus/, tools/bin/, home/<viewer>/, b2/, b2a/
+S = os.environ.get("B2_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "root")  # corpus/, tools/bin/, home/<viewer>/, b2/, b2a/
 nbytes = {}
 for l in open(f"{S}/b2a/bytes.txt"):
     d, n, b = l.split(); nbytes[(d, n)] = int(b.split("=")[1])

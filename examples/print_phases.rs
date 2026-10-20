@@ -4,7 +4,7 @@
 //!
 //! ```zsh
 //! cargo build --release --example print_phases
-//! for i in 1 2 3; do taskset -c 2 target/release/examples/print_phases ~/b2/corpus/s.md; done
+//! for i in 1 2 3; do taskset -c 2 target/release/examples/print_phases bench/b2/root/corpus/s.md; done
 //! ```
 
 use std::sync::Arc;

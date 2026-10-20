@@ -10,7 +10,7 @@
 #   FIFO and logs the bytes; screens by ImageMagick's `import -window`, compared pixel for pixel.
 # kitty and alacritty open a window for ~25 s per build. Output goes to OUT (default $TMPDIR).
 term=$1 doc=$2 base=${3:A} new=${4:A} out=${5:-${TMPDIR:-/tmp}/termcmp}
-here=${0:A:h} corpus=${B2_ROOT:-~/b2}/corpus
+here=${0:A:h} corpus=${B2_ROOT:-$here/root}/corpus
 out=${out:A}
 
 keys_m=(j j j k k d u / 'eight lines' ENTER j j j j j j j j j j j j k k k k k k d j u k n j j G k k k u g j j

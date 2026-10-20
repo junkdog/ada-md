@@ -2,3 +2,5 @@
 lane*.json
 /jobs
 __pycache__/
+# B2_ROOT: the corpus, the viewers, the records (moved from ~/b2 on 2026-10-20; ~/b2 links here)
+/root

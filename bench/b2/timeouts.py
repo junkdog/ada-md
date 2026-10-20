@@ -8,7 +8,7 @@ mkspec.py leaves skipped interactive jobs out (cells "viewer-doc"); doctables.py
 killed, "> cap", when no directory in B2P_DIRS has a record of it."""
 import os, subprocess, sys
 
-B = os.environ["B2_ROOT"] + "/tools/bin"
+B = (os.environ.get("B2_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "root")) + "/tools/bin"
 KNOWN = [
     # 284 s and 283 s of CPU to paint the 2 MB document, against the 90 s cap (feature-matrix-comparison)
     dict(bench="b2", tool="mdtui", bin=B + "/mdt", version="0.11.0", cells=["mdtui-xl"]),

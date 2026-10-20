@@ -13,7 +13,7 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I leaves the script's directory out
 import timeouts
 
-S = os.environ["B2_ROOT"]
+S = os.environ.get("B2_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "root")
 V = ["ada", "treemd", "treemd-head", "leaf", "mdfried", "mdtui", "glow"]
 NAME = {"ada": "**ada**", "treemd": "treemd 0.9.1", "treemd-head": "treemd HEAD", "leaf": "leaf", "mdfried": "mdfried",
         "mdtui": "md-tui", "glow": "glow"}

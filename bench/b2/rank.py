@@ -3,7 +3,7 @@ import json, os, sys, statistics as st
 from collections import defaultdict
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
-S = os.environ["B2_ROOT"]  # corpus/, tools/bin/, home/<viewer>/, b2/, b2a/
+S = os.environ.get("B2_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "root")  # corpus/, tools/bin/, home/<viewer>/, b2/, b2a/
 runs = defaultdict(list)
 for l in open(f"{S}/b2/all.jsonl"):
     r = json.loads(l)

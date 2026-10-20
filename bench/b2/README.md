@@ -5,8 +5,13 @@ latency, CPU and memory for interactive viewers, plus `hyperfine` for print mode
 
 ## Setup
 
+Everything B2 installs and records lives in `B2_ROOT`, by default `bench/b2/root` (git-ignored; the
+scripts use it when `B2_ROOT` isn't set). Until 2026-10-20 it was `~/b2`, which now links here, so the records'
+old paths in the vault notes still resolve, and so do the installed viewers that recorded where they live
+(rich's uv venv).
+
 ```zsh
-export B2_ROOT=~/b2 ADA=$PWD/target/release/ada
+export B2_ROOT=$PWD/bench/b2/root ADA=$PWD/target/release/ada
 mkdir -p $B2_ROOT/{corpus,tools,b2}
 # viewers, into a prefix of their own
 cargo install --locked --root $B2_ROOT/tools treemd@0.9.1 leaf-markdown-viewer@1.29.1 md-tui@0.11.0 mdcat@2.18.0 hyperfine
@@ -21,7 +26,7 @@ cargo build --release --manifest-path bench/b2/Cargo.toml   # the pty driver, be
 
 ## Run
 
-`B2_ROOT=~/b2 ADA=<release ada> zsh bench/b2/full.zsh ~/b2/results/<date>-<sha>-all` runs all of it (the lanes,
+`ADA=<release ada> zsh bench/b2/full.zsh bench/b2/root/results/<date>-<sha>-all` runs all of it (the lanes,
 print mode, the previewer files, images and the tables) into a record set that `rerun.zsh` takes as REF, with
 the bench cores held ready (below). The steps one by one:
 
@@ -114,7 +119,7 @@ don't mix, and `rerun.zsh` refuses a REF made the other way (no `profile.txt`: o
 ### ada-only rerun
 
 ```zsh
-B2_ROOT=~/b2 ADA=<new build> ADA_REF=<the build REF measured> zsh bench/b2/rerun.zsh REF OUT
+ADA=<new build> ADA_REF=<the build REF measured> zsh bench/b2/rerun.zsh REF OUT
 ```
 
 Reruns ada's cells (the lanes, print, the previewer files and images) beside the ada that REF measured, both built
