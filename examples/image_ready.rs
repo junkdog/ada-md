@@ -38,15 +38,11 @@ fn main() {
         }
     }
     let _ = ratatui::crossterm::terminal::enable_raw_mode();
-    let picker = images::detect(ImageMode::Auto).expect("images on");
+    let graphics = images::detect(ImageMode::Auto).expect("images on");
     let _ = ratatui::crossterm::terminal::disable_raw_mode();
-    let graphics = images::graphics_msg(&picker);
-    eprintln!(
-        "terminal: {graphics:?} capabilities {:?}",
-        picker.capabilities()
-    );
-    let font = picker.font_size();
-    let font = Size::new(font.width, font.height);
+    eprintln!("terminal: {graphics:?}");
+    let encoder = images::Encoder::new(graphics.proto, graphics.cell);
+    let font = graphics.cell;
     for path in paths {
         let Probe::Image { w, h, .. } = images::probe(&path) else {
             eprintln!("{}: not an image", path.display());
@@ -64,7 +60,7 @@ fn main() {
         let (mut ms, mut cpu): (Vec<f64>, Vec<f64>) = (0..runs)
             .map(|_| {
                 let (t, c) = (Instant::now(), cpu_ms());
-                std::hint::black_box(job.run(&picker));
+                std::hint::black_box(job.run(&encoder));
                 (t.elapsed().as_secs_f64() * 1e3, cpu_ms() - c)
             })
             .unzip();
@@ -73,7 +69,7 @@ fn main() {
         let Msg::ImageReady {
             image: Computed(Some(Ok(image))),
             ..
-        } = job.run(&picker)
+        } = job.run(&encoder)
         else {
             panic!("{}: no image", path.display());
         };

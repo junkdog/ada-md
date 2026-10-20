@@ -8,7 +8,13 @@
 //! would have made of them (printable ASCII, Enter, Tab, Backspace, Ctrl-letters); escape
 //! sequences, the arrows and function keys among them, are dropped with the replies.
 
+use std::time::{Duration, Instant};
+
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+/// How long the probe waits for the replies (Q2 of the clean-slate plan): generous, since only
+/// images and the keys typed meanwhile wait for it, and fixed, so keys don't extend it.
+pub const WAIT: Duration = Duration::from_secs(2);
 
 /// The queries, in order: kitty's graphics query (a 1×1 RGB image, id 31, `a=q`: checked, not
 /// stored), the primary device attributes, the cell's size in pixels, the text area's, and the
@@ -194,6 +200,59 @@ fn string_end(b: &[u8]) -> Option<(usize, usize)> {
             _ => i += 1,
         }
     }
+}
+
+/// Read the replies to [`QUERY`], written already, from the tty until the device status reply
+/// arrives or `deadline` passes. Each key typed meanwhile goes to `key` as it's read, which says
+/// whether to go on. Call it in raw mode, before crossterm reads anything.
+#[cfg(unix)]
+pub fn read(deadline: Instant, mut key: impl FnMut(KeyEvent) -> bool) -> Found {
+    use std::fs::File;
+    use std::io::{ErrorKind, Read};
+
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+    use rustix::io::Errno;
+
+    let mut replies = Replies::new();
+    // the terminal even when stdin is a pipe (`ada -`), and what crossterm reads (`use-dev-tty`)
+    let Ok(mut tty) = File::open("/dev/tty") else {
+        return replies.found();
+    };
+    let (mut buf, mut keys) = ([0; 1024], Vec::new());
+    while !replies.done() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        let timeout = Timespec::try_from(left).unwrap_or(Timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        });
+        match poll(&mut [PollFd::new(&tty, PollFlags::IN)], Some(&timeout)) {
+            Ok(0) | Err(Errno::INTR) => continue,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+        let n = match tty.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+        replies.feed(&buf[..n], &mut keys);
+        for k in keys.drain(..) {
+            if !key(k) {
+                return replies.found();
+            }
+        }
+    }
+    replies.found()
+}
+
+/// Without a tty to poll, there is no asking: [`crate::images::plan`] doesn't.
+#[cfg(not(unix))]
+pub fn read(_deadline: Instant, _key: impl FnMut(KeyEvent) -> bool) -> Found {
+    Found::default()
 }
 
 /// The key a byte typed on its own is, as crossterm reads it in raw mode, if it's one the probe

@@ -7,6 +7,7 @@ use std::mem;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::Instant;
 use std::{env, thread};
 
 use ratatui::crossterm::cursor::Show;
@@ -21,6 +22,7 @@ use crate::config;
 use crate::grid::{Grid, Screen};
 use crate::guard;
 use crate::images;
+use crate::probe::{self, Found};
 use crate::record::Recorder;
 use crate::theme::StyleKey;
 use crate::ui;
@@ -183,20 +185,23 @@ fn event_loop(
     mut recorder: Option<&mut Recorder>,
 ) -> Result<(), String> {
     let size = terminal_size()?;
-    // The query reads the terminal's answers from stdin, so it goes before the input thread.
-    let picker = images::detect(state.config.images);
-    let graphics = picker.as_ref().map(images::graphics_msg);
-    if let Some(picker) = picker {
-        effects.set_picker(picker);
+    // The terminal is asked for its image support before the first frame, and its answer read on
+    // the input thread, so the text paints without waiting for it (O-06).
+    let plan = images::plan(state.config.images, |name| env::var(name).ok());
+    if plan.is_some_and(|p| p.ask) {
+        let mut out = io::stdout();
+        out.write_all(probe::QUERY)
+            .and_then(|()| out.flush())
+            .map_err(|e| format!("terminal: {e}"))?;
     }
+    let deadline = Instant::now() + probe::WAIT;
     let (tx, rx) = mpsc::channel();
     effects.spawn_workers(&tx);
     let (resume, resumed) = mpsc::channel();
-    spawn_input(tx, state.config.keys.clone(), resumed);
+    let keys = state.config.keys.clone();
+    spawn_input(tx, keys, resumed, plan.map(|p| (p, deadline)));
 
-    let init = Msg::Init { size };
-    let mut queue: VecDeque<Msg> = [init].into_iter().chain(graphics).collect();
-    queue.push_back(Msg::Open { path });
+    let mut queue = VecDeque::from([Msg::Init { size }, Msg::Open { path }]);
     // What waits for a navigation's document, which loads off this thread (O-32): keys and
     // resizes answer from the document on screen meanwhile, but `Back Back` still goes back
     // twice, and a save during a reload is read once it is in.
@@ -211,6 +216,9 @@ fn event_loop(
             }
             if let Some(rec) = recorder.as_deref_mut() {
                 rec.log(&msg).map_err(|e| format!("recording: {e}"))?;
+            }
+            if let Msg::Graphics { proto, cell } = msg {
+                effects.set_encoder(images::Encoder::new(proto, Cells::new(cell.w, cell.h)));
             }
             let edit = msg == Msg::Edit;
             saving |= msg == Msg::SaveConfig;
@@ -319,11 +327,21 @@ fn edit(terminal: &mut Term, file: &Path, line: u32) -> Result<Option<Msg>, Stri
     }))
 }
 
-/// Read the terminal's events into messages. After `Edit` and `SaveConfig` it waits on `resume`
-/// for the main loop: until the editor quits, and to hear whether the save box opened.
-fn spawn_input(tx: Sender<Msg>, keys: Bindings, resume: Receiver<bool>) {
+/// Read the terminal's events into messages: first, when images are on, its answer to the image
+/// probe, by [`ask_terminal`] and until `deadline`; then crossterm's events.
+fn spawn_input(
+    tx: Sender<Msg>,
+    keys: Bindings,
+    resume: Receiver<bool>,
+    images: Option<(images::Plan, Instant)>,
+) {
     thread::spawn(move || {
         let mut keymap = Keymap::new(keys);
+        if let Some((plan, deadline)) = images
+            && !ask_terminal(plan, deadline, &tx, &resume, &mut keymap)
+        {
+            return;
+        }
         loop {
             let msg = match event::read() {
                 Ok(Event::Key(key)) => keymap.map(key),
@@ -333,24 +351,74 @@ fn spawn_input(tx: Sender<Msg>, keys: Bindings, resume: Receiver<bool>) {
                 Ok(_) => None,
                 Err(_) => return,
             };
-            let Some(msg) = msg else {
-                continue;
-            };
-            let (edit, save) = (msg == Msg::Edit, msg == Msg::SaveConfig);
-            if tx.send(msg).is_err() {
+            if let Some(msg) = msg
+                && !send(msg, &tx, &resume, &mut keymap)
+            {
                 return;
-            }
-            // While the editor runs, the terminal's input is the editor's.
-            if edit && resume.recv().is_err() {
-                return;
-            }
-            if save {
-                match resume.recv() {
-                    Ok(true) => {}
-                    Ok(false) => keymap.no_confirm(),
-                    Err(_) => return,
-                }
             }
         }
     });
+}
+
+/// Read the terminal's answer to the probe's query, written before the first frame, and send what
+/// it can show as `Graphics` (CS-2). It reads the tty itself, since crossterm would take the
+/// replies for keys; plain keys typed meanwhile go on as they're read. crossterm hasn't started
+/// listening for resizes yet, so a resize meanwhile is sent after. False when the main loop is
+/// gone.
+fn ask_terminal(
+    plan: images::Plan,
+    deadline: Instant,
+    tx: &Sender<Msg>,
+    resume: &Receiver<bool>,
+    keymap: &mut Keymap,
+) -> bool {
+    let before = terminal::size().ok();
+    let mut gone = false;
+    let found = if plan.ask {
+        probe::read(deadline, |key| {
+            gone = keymap
+                .map(key)
+                .is_some_and(|msg| !send(msg, tx, resume, keymap));
+            !gone
+        })
+    } else {
+        Found::default()
+    };
+    if gone {
+        return false;
+    }
+    let now = terminal::size().unwrap_or((0, 0));
+    let cells = Cells::new(now.0, now.1);
+    let env = |name: &str| env::var(name).ok();
+    let graphics = images::decide(plan, &found, env, cells, images::winsize_cell());
+    if tx.send(graphics.msg()).is_err() {
+        return false;
+    }
+    if before.is_none_or(|b| b == now) || now == (0, 0) {
+        return true;
+    }
+    let size = Size { w: now.0, h: now.1 };
+    send(Msg::Resize { size }, tx, resume, keymap)
+}
+
+/// Send `msg` to the main loop. After `Edit` and `SaveConfig` it waits on `resume` for the main
+/// loop: until the editor quits, and to hear whether the save box opened. False when the main
+/// loop is gone.
+fn send(msg: Msg, tx: &Sender<Msg>, resume: &Receiver<bool>, keymap: &mut Keymap) -> bool {
+    let (edit, save) = (msg == Msg::Edit, msg == Msg::SaveConfig);
+    if tx.send(msg).is_err() {
+        return false;
+    }
+    // While the editor runs, the terminal's input is the editor's.
+    if edit && resume.recv().is_err() {
+        return false;
+    }
+    if save {
+        match resume.recv() {
+            Ok(true) => {}
+            Ok(false) => keymap.no_confirm(),
+            Err(_) => return false,
+        }
+    }
+    true
 }

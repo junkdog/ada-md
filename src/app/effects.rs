@@ -10,8 +10,6 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 
-use ratatui_image::picker::Picker;
-
 use super::load;
 use super::watch::{Watcher, mtime_of};
 use super::{Cmd, Computed, Msg};
@@ -30,11 +28,13 @@ pub struct Effects {
     resolver: Box<dyn Resolver>,
     /// Where git runs post their results; without it, git runs inline.
     git: Option<Sender<Msg>>,
-    /// The terminal's image support, as queried at startup. Without it, images are encoded as
+    /// The terminal's image support, as the probe found it. Without it, images are encoded as
     /// half-blocks, as `--replay-live` does.
-    picker: Option<Picker>,
+    encoder: Option<images::Encoder>,
     /// The image worker's queue; without a worker, images are decoded inline.
     images: Option<Sender<images::Job>>,
+    /// Where the image worker, started once the probe has answered, posts its results.
+    image_results: Option<Sender<Msg>>,
     /// The live-reload watcher; without it, nothing is watched.
     watcher: Option<Watcher>,
     /// Where the loader posts documents; without it, documents are read inline and parsed in
@@ -51,29 +51,34 @@ impl Effects {
             highlight: None,
             resolver: Box::new(BuiltinResolver),
             git: None,
-            picker: None,
+            encoder: None,
             images: None,
+            image_results: None,
             watcher: None,
             loads: None,
             loader: None,
         }
     }
 
-    /// Encode images for the terminal `picker` describes.
-    pub fn set_picker(&mut self, picker: Picker) {
-        self.picker = Some(picker);
+    /// Encode images with `encoder`: on a worker, once [`Effects::spawn_workers`] has run.
+    pub fn set_encoder(&mut self, encoder: images::Encoder) {
+        if let Some(tx) = &self.image_results {
+            self.images = Some(images::spawn_worker(encoder.clone(), tx.clone()));
+        }
+        self.encoder = Some(encoder);
     }
 
-    fn picker(&mut self) -> &Picker {
-        self.picker.get_or_insert_with(Picker::halfblocks)
+    fn encoder(&mut self) -> &images::Encoder {
+        self.encoder.get_or_insert_with(images::Encoder::halfblocks)
     }
 
     /// Start the worker threads, which post their results to `tx`.
     pub fn spawn_workers(&mut self, tx: &Sender<Msg>) {
         self.highlight = Some(highlight::spawn_worker(tx.clone()));
         self.git = Some(tx.clone());
-        if let Some(picker) = &self.picker {
-            self.images = Some(images::spawn_worker(picker.clone(), tx.clone()));
+        self.image_results = Some(tx.clone());
+        if let Some(encoder) = self.encoder.take() {
+            self.set_encoder(encoder);
         }
         self.watcher = Some(Watcher::new(tx.clone()));
         self.loads = Some(tx.clone());
@@ -158,7 +163,7 @@ impl Effects {
                     Some(worker) => worker.send(job).err()?.0,
                     None => job,
                 };
-                Some(job.run(self.picker()))
+                Some(job.run(self.encoder()))
             }
             Cmd::Watch { path, mtime } => {
                 if let Some(watcher) = &mut self.watcher {

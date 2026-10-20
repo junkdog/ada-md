@@ -1,9 +1,11 @@
-//! Images (ADR-09, architecture §9). Everything that knows about ratatui-image lives here: the
-//! terminal's query, and sixel and iTerm2. Kitty and half-blocks are ada's own, as print draws
-//! them ([`kitty`], [`pixels::HalfBlock`]; CS-1 of the clean-slate plan).
+//! Images (ADR-09, architecture §9). Everything that knows about ratatui-image lives here: sixel
+//! and iTerm2. Kitty and half-blocks are ada's own, as print draws them ([`kitty`],
+//! [`pixels::HalfBlock`]; CS-1 of the clean-slate plan), and so is the terminal's query
+//! ([`probe`], CS-2).
 //!
-//! The terminal is queried once at startup; its protocol and font cell size reach `update` as
-//! `Msg::Graphics`. Reading an image's header touches the filesystem, so it is a world effect
+//! The terminal is queried once at startup, and answers on the input thread while the text paints
+//! (O-06); its protocol and font cell size reach `update` as `Msg::Graphics`, and start the image
+//! worker. Reading an image's header touches the filesystem, so it is a world effect
 //! (`Cmd::ProbeImages`) whose result is recorded. Decoding and encoding run on a worker
 //! (`Cmd::DecodeImage`) and are cached by `(path, mtime, cells)`. Hermetic replay has no image
 //! bytes to recompute them from, so replayed images stay placeholders.
@@ -11,12 +13,13 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
-use std::time::UNIX_EPOCH;
+use std::time::{Instant, UNIX_EPOCH};
 
 use image::imageops::FilterType;
 use image::metadata::Orientation;
@@ -24,13 +27,14 @@ use image::{ImageDecoder, ImageReader};
 use ratatui::layout::{Rect, Size};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
-use ratatui_image::Resize;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::sliced::{SignedPosition, SlicedImage, SlicedProtocol};
+use ratatui_image::{FontSize, Resize};
 
 use crate::grid::Grid;
 use crate::kitty;
 use crate::pixels::{self, HalfBlock};
+use crate::probe;
 
 use crate::app::{self, Computed, Msg};
 
@@ -62,15 +66,6 @@ impl Proto {
         Proto::ALL.into_iter().find(|p| p.name() == name)
     }
 
-    fn of(t: ProtocolType) -> Proto {
-        match t {
-            ProtocolType::Kitty => Proto::Kitty,
-            ProtocolType::Sixel => Proto::Sixel,
-            ProtocolType::Iterm2 => Proto::Iterm2,
-            ProtocolType::Halfblocks => Proto::Halfblocks,
-        }
-    }
-
     fn protocol_type(self) -> ProtocolType {
         match self {
             Proto::Kitty => ProtocolType::Kitty,
@@ -98,26 +93,155 @@ pub struct Graphics {
     pub cell: Size,
 }
 
-/// Query the terminal for its graphics protocol and font size. Call it in raw mode, before
-/// anything else reads stdin. `None` when images are off.
-pub fn detect(mode: ImageMode) -> Option<Picker> {
+impl Graphics {
+    /// The message that tells `update`.
+    pub fn msg(self) -> Msg {
+        Msg::Graphics {
+            proto: self.proto,
+            cell: app::Size {
+                w: self.cell.width,
+                h: self.cell.height,
+            },
+        }
+    }
+}
+
+/// What the environment decides before the terminal is asked anything.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Plan {
+    /// Write [`probe::QUERY`] and read the replies.
+    pub ask: bool,
+    /// The protocol, whatever the terminal says: the cell size is still asked for.
+    pub forced: Option<Proto>,
+}
+
+/// How to find the terminal's image support: `None` when images are off. Inside tmux, half-blocks
+/// without asking: kitty graphics don't work there (plan Q10), sixel and iTerm2 reach the terminal
+/// only through tmux's passthrough, which misplaces them and loses them on tmux's redraws
+/// (KNOWN_ISSUES.md), and a detached tmux answers no query (O-20).
+pub fn plan(mode: ImageMode, env: impl Fn(&str) -> Option<String>) -> Option<Plan> {
     let forced = match mode {
         ImageMode::Off => return None,
         ImageMode::Auto => None,
         ImageMode::Force(p) => Some(p),
     };
-    let mut picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
-    let tmux = picker.tmux_detected() || std::env::var_os("TMUX").is_some_and(|v| !v.is_empty());
-    let proto = forced.unwrap_or_else(|| choose(Proto::of(picker.protocol_type()), tmux));
-    picker.set_protocol_type(proto.protocol_type());
-    Some(picker)
+    let tmux = env("TMUX").is_some_and(|v| !v.is_empty())
+        || env("TERM").is_some_and(|t| t.starts_with("tmux"))
+        || env("TERM_PROGRAM").is_some_and(|t| t == "tmux");
+    Some(if tmux {
+        Plan {
+            ask: false,
+            forced: Some(forced.unwrap_or(Proto::Halfblocks)),
+        }
+    } else {
+        Plan {
+            ask: cfg!(unix),
+            forced,
+        }
+    })
 }
 
-/// The protocol to use, given what the query found. Inside tmux, half-blocks only: kitty graphics
-/// don't work there (plan Q10), and sixel and iTerm2 reach the terminal only through tmux's
-/// passthrough, which misplaces them and loses them on tmux's redraws (KNOWN_ISSUES.md).
-pub fn choose(found: Proto, tmux: bool) -> Proto {
-    if tmux { Proto::Halfblocks } else { found }
+/// The terminal's image support, from what it `found` to say, with ratatui-image 11.1's rules:
+/// kitty, then sixel, then iTerm2 from the environment, else half-blocks. WezTerm and Konsole
+/// answer kitty's query but draw no Unicode placeholders, and Konsole's sixel is buggy
+/// (ratatui-image's compatibility matrix), so neither is taken from them. The cell size comes
+/// from `CSI 16t`, else `CSI 14t` over the terminal's `cells`, else `TIOCGWINSZ` (`winsize`);
+/// with none of them, half-blocks at 10×20.
+pub fn decide(
+    plan: Plan,
+    found: &probe::Found,
+    env: impl Fn(&str) -> Option<String>,
+    cells: Size,
+    winsize: Option<Size>,
+) -> Graphics {
+    let set = |name| env(name).is_some_and(|v| !v.is_empty());
+    let area = |(w, h): (u16, u16)| {
+        (cells.width > 0 && cells.height > 0).then(|| Size::new(w / cells.width, h / cells.height))
+    };
+    let cell = found
+        .cell
+        .map(|(w, h)| Size::new(w, h))
+        .filter(|c| c.width > 0 && c.height > 0)
+        .or_else(|| found.text_area.and_then(area))
+        .filter(|c| c.width > 0 && c.height > 0)
+        .or(winsize);
+    let trusted = !set("WEZTERM_EXECUTABLE") && !set("KONSOLE_VERSION");
+    let iterm2 = env("TERM_PROGRAM").is_some_and(|t| {
+        [
+            "iTerm",
+            "WezTerm",
+            "mintty",
+            "vscode",
+            "Tabby",
+            "Hyper",
+            "rio",
+            "Bobcat",
+            "WarpTerminal",
+        ]
+        .iter()
+        .any(|name| t.contains(name))
+    }) || env("LC_TERMINAL").is_some_and(|t| t.contains("iTerm"));
+    let proto = plan.forced.unwrap_or(match cell {
+        None => Proto::Halfblocks,
+        Some(_) if trusted && found.kitty == Some(true) => Proto::Kitty,
+        Some(_) if trusted && found.sixel() => Proto::Sixel,
+        Some(_) if iterm2 => Proto::Iterm2,
+        Some(_) => Proto::Halfblocks,
+    });
+    Graphics {
+        proto,
+        cell: cell.unwrap_or(Size::new(10, 20)),
+    }
+}
+
+/// Ask the terminal and wait for its answer, for a tool that reads nothing else meanwhile (the TUI
+/// reads the answer on its input thread instead). Call it in raw mode. `None` when images are off.
+pub fn detect(mode: ImageMode) -> Option<Graphics> {
+    let env = |name: &str| std::env::var(name).ok();
+    let plan = plan(mode, env)?;
+    let found = if plan.ask {
+        let mut out = std::io::stdout();
+        out.write_all(probe::QUERY)
+            .and_then(|()| out.flush())
+            .ok()?;
+        probe::read(Instant::now() + probe::WAIT, |_| true)
+    } else {
+        probe::Found::default()
+    };
+    let (w, h) = ratatui::crossterm::terminal::size().unwrap_or((0, 0));
+    Some(decide(plan, &found, env, Size::new(w, h), winsize_cell()))
+}
+
+/// What encodes images for the terminal: its protocol and the font's cell size.
+#[derive(Clone)]
+pub struct Encoder {
+    proto: Proto,
+    cell: Size,
+    /// ratatui-image's, which draws sixel and iTerm2 until CS-3. Only for those: building one
+    /// runs `tmux set -p allow-passthrough on` inside tmux, a change to the user's pane.
+    picker: Option<Picker>,
+}
+
+impl Encoder {
+    #[allow(deprecated)] // `from_fontsize`: ratatui-image would rather ask the terminal itself
+    pub fn new(proto: Proto, cell: Size) -> Encoder {
+        let cell = Size::new(cell.width.max(1), cell.height.max(1));
+        let picker = matches!(proto, Proto::Sixel | Proto::Iterm2).then(|| {
+            let mut picker = Picker::from_fontsize(FontSize::new(cell.width, cell.height));
+            picker.set_protocol_type(proto.protocol_type());
+            picker
+        });
+        Encoder {
+            proto,
+            cell,
+            picker,
+        }
+    }
+
+    /// Half-blocks at 10×20, for a terminal that wasn't asked.
+    pub fn halfblocks() -> Encoder {
+        Encoder::new(Proto::Halfblocks, Size::new(10, 20))
+    }
 }
 
 /// The protocol for printed images, from the environment alone: under fzf, which owns the
@@ -150,24 +274,15 @@ pub fn print_proto(mode: ImageMode, env: impl Fn(&str) -> Option<String>) -> Opt
 /// The font's cell size, from the terminal's size in cells and pixels (`TIOCGWINSZ` on
 /// `/dev/tty`, as `kitten icat` reads it), or 10×20 when it reports no pixels.
 pub fn cell_size() -> Size {
+    winsize_cell().unwrap_or(Size::new(10, 20))
+}
+
+/// The font's cell size by `TIOCGWINSZ`, if the terminal reports pixels.
+pub fn winsize_cell() -> Option<Size> {
     ratatui::crossterm::terminal::window_size()
         .ok()
         .filter(|s| s.columns > 0 && s.rows > 0 && s.width > 0 && s.height > 0)
-        .map_or(Size::new(10, 20), |s| {
-            Size::new((s.width / s.columns).max(1), (s.height / s.rows).max(1))
-        })
-}
-
-/// The message that tells `update` what the picker found.
-pub fn graphics_msg(picker: &Picker) -> Msg {
-    let font = picker.font_size();
-    Msg::Graphics {
-        proto: Proto::of(picker.protocol_type()),
-        cell: app::Size {
-            w: font.width,
-            h: font.height,
-        },
-    }
+        .map(|s| Size::new((s.width / s.columns).max(1), (s.height / s.rows).max(1)))
 }
 
 /// What reading an image's header found.
@@ -307,10 +422,10 @@ static KITTY_IMAGES: AtomicU32 = AtomicU32::new(0);
 /// Decode an image and encode it for the terminal, fitted to `key.size` cells. It's decoded
 /// straight to the pixels those cells hold ([`pixels::decode`]), so there is nothing left to
 /// resize. Kitty and half-blocks are drawn as print draws them.
-pub fn encode(picker: &Picker, key: &ImageKey) -> Result<Encoded, String> {
-    let font = picker.font_size();
+pub fn encode(encoder: &Encoder, key: &ImageKey) -> Result<Encoded, String> {
+    let font = encoder.cell;
     let (cols, rows) = (key.size.width, key.size.height);
-    let image = match Proto::of(picker.protocol_type()) {
+    let image = match encoder.proto {
         Proto::Kitty => {
             let (cols, rows) = (cols.min(kitty::MAX_CELLS), rows.min(kitty::MAX_CELLS));
             let max = (
@@ -351,6 +466,7 @@ pub fn encode(picker: &Picker, key: &ImageKey) -> Result<Encoded, String> {
             }
         }
         Proto::Sixel | Proto::Iterm2 => {
+            let picker = encoder.picker.as_ref().ok_or("no picker")?;
             let max = (
                 u32::from(cols) * u32::from(font.width),
                 u32::from(rows) * u32::from(font.height),
@@ -374,7 +490,7 @@ pub struct Job {
 }
 
 impl Job {
-    pub fn run(&self, picker: &Picker) -> Msg {
+    pub fn run(&self, encoder: &Encoder) -> Msg {
         let ImageKey { path, mtime, size } = self.key.clone();
         Msg::ImageReady {
             path,
@@ -383,13 +499,13 @@ impl Job {
                 w: size.width,
                 h: size.height,
             },
-            image: Computed(Some(encode(picker, &self.key))),
+            image: Computed(Some(encode(encoder, &self.key))),
         }
     }
 }
 
 /// Start the image worker. Jobs on screen jump the queue; the rest run in order.
-pub fn spawn_worker(picker: Picker, tx: Sender<Msg>) -> Sender<Job> {
+pub fn spawn_worker(encoder: Encoder, tx: Sender<Msg>) -> Sender<Job> {
     let (jobs_tx, jobs) = mpsc::channel::<Job>();
     thread::spawn(move || {
         let mut queue: VecDeque<Job> = VecDeque::new();
@@ -411,7 +527,7 @@ pub fn spawn_worker(picker: Picker, tx: Sender<Msg>) -> Sender<Job> {
             let Some(job) = queue.pop_front() else {
                 continue;
             };
-            if tx.send(job.run(&picker)).is_err() {
+            if tx.send(job.run(&encoder)).is_err() {
                 return;
             }
         }
@@ -561,25 +677,114 @@ pub(crate) mod tests {
         path
     }
 
+    /// An environment of `vars`.
+    fn env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let vars: Vec<(String, String)> = vars
+            .iter()
+            .map(|&(k, v)| (k.to_owned(), v.to_owned()))
+            .collect();
+        move |name| vars.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())
+    }
+
     #[test]
-    fn only_half_blocks_inside_tmux() {
-        for p in Proto::ALL {
-            assert_eq!(choose(p, false), p);
-            assert_eq!(choose(p, true), Proto::Halfblocks);
-        }
+    fn inside_tmux_half_blocks_without_asking() {
+        let auto = ImageMode::Auto;
+        let ask = Plan {
+            ask: true,
+            forced: None,
+        };
+        assert_eq!(plan(auto, env(&[("TERM", "xterm-kitty")])), Some(ask));
+        assert_eq!(plan(auto, env(&[("TMUX", "")])), Some(ask));
+        let half = Some(Plan {
+            ask: false,
+            forced: Some(Proto::Halfblocks),
+        });
+        assert_eq!(plan(auto, env(&[("TMUX", "/tmp/tmux-1000/d,1,0")])), half);
+        assert_eq!(plan(auto, env(&[("TERM", "tmux-256color")])), half);
+        assert_eq!(plan(auto, env(&[("TERM_PROGRAM", "tmux")])), half);
+        // forced: asked for the cell size, but not inside tmux
+        let force = ImageMode::Force(Proto::Sixel);
+        assert_eq!(
+            plan(force, env(&[])),
+            Some(Plan {
+                ask: true,
+                forced: Some(Proto::Sixel)
+            })
+        );
+        assert_eq!(
+            plan(force, env(&[("TMUX", "x")])),
+            Some(Plan {
+                ask: false,
+                forced: Some(Proto::Sixel)
+            })
+        );
+        assert_eq!(plan(ImageMode::Off, env(&[])), None);
+    }
+
+    #[test]
+    fn deciding_from_the_replies() {
+        let ask = Plan {
+            ask: true,
+            forced: None,
+        };
+        let cells = Size::new(100, 40);
+        let found = |kitty, attributes: &[u16], cell, text_area| probe::Found {
+            kitty,
+            attributes: Some(attributes.to_vec()),
+            cell,
+            text_area,
+        };
+        let decide = |found: &probe::Found, vars: &[(&str, &str)], winsize| {
+            let g = decide(ask, found, env(vars), cells, winsize);
+            (g.proto, (g.cell.width, g.cell.height))
+        };
+        let kitty = found(Some(true), &[62, 4], Some((9, 18)), None);
+        let sixel = found(None, &[65, 4], None, Some((1000, 800)));
+        let neither = found(Some(false), &[62], Some((8, 16)), None);
+        // kitty over sixel; the cell by 16t, else 14t over the cells, else TIOCGWINSZ
+        assert_eq!(decide(&kitty, &[], None), (Proto::Kitty, (9, 18)));
+        assert_eq!(decide(&sixel, &[], None), (Proto::Sixel, (10, 20)));
+        let ioctl = Some(Size::new(7, 14));
+        assert_eq!(
+            decide(&found(None, &[4], None, None), &[], ioctl),
+            (Proto::Sixel, (7, 14))
+        );
+        assert_eq!(decide(&neither, &[], None), (Proto::Halfblocks, (8, 16)));
+        // no pixel size anywhere: half-blocks at 10×20, whatever was found
+        assert_eq!(
+            decide(&found(Some(true), &[4], None, None), &[], None),
+            (Proto::Halfblocks, (10, 20))
+        );
+        // iTerm2 from the environment, after what the terminal said
+        let wez = [("TERM_PROGRAM", "WezTerm")];
+        assert_eq!(decide(&neither, &wez, None), (Proto::Iterm2, (8, 16)));
+        assert_eq!(
+            decide(&kitty, &[("LC_TERMINAL", "iTerm2")], None).0,
+            Proto::Kitty
+        );
+        // WezTerm and Konsole: kitty and sixel aren't taken from them
+        let wez = [("WEZTERM_EXECUTABLE", "/usr/bin/wezterm-gui"), wez[0]];
+        assert_eq!(decide(&kitty, &wez, None).0, Proto::Iterm2);
+        let konsole = [("KONSOLE_VERSION", "260802")];
+        assert_eq!(decide(&kitty, &konsole, None).0, Proto::Halfblocks);
+        assert_eq!(decide(&sixel, &konsole, None).0, Proto::Halfblocks);
+        // no answer at all, as after the deadline
+        assert_eq!(
+            decide(&probe::Found::default(), &[], ioctl),
+            (Proto::Halfblocks, (7, 14))
+        );
+        // forced: the protocol as given, the cell as found
+        let forced = Plan {
+            ask: true,
+            forced: Some(Proto::Iterm2),
+        };
+        let g = super::decide(forced, &kitty, env(&[]), cells, None);
+        assert_eq!((g.proto, g.cell), (Proto::Iterm2, Size::new(9, 18)));
     }
 
     #[test]
     fn printed_images_take_their_protocol_from_the_environment() {
-        let print = |mode, vars: &[(&str, &str)]| {
-            let vars: Vec<(String, String)> = vars
-                .iter()
-                .map(|&(k, v)| (k.to_owned(), v.to_owned()))
-                .collect();
-            print_proto(mode, |name| {
-                vars.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())
-            })
-        };
+        let print = |mode, vars: &[(&str, &str)]| print_proto(mode, env(vars));
         let auto = ImageMode::Auto;
         assert_eq!(print(auto, &[("KITTY_WINDOW_ID", "3")]), Some(Proto::Kitty));
         assert_eq!(print(auto, &[("TERM", "xterm-kitty")]), Some(Proto::Kitty));
@@ -653,17 +858,16 @@ pub(crate) mod tests {
         fs::write(&text, "not an image").unwrap();
         assert!(matches!(probe(&text), Probe::Failed(_)));
 
-        let mut picker = Picker::halfblocks();
-        picker.set_protocol_type(ProtocolType::Halfblocks);
+        let encoder = Encoder::halfblocks();
         let key = ImageKey {
             path: path.clone(),
             mtime: None,
-            size: fit((40, 60), picker.font_size().into_size(), Size::new(80, 10)),
+            size: fit((40, 60), Size::new(10, 20), Size::new(80, 10)),
         };
         let Msg::ImageReady {
             image: Computed(Some(Ok(image))),
             ..
-        } = (Job { key, urgent: true }).run(&picker)
+        } = (Job { key, urgent: true }).run(&encoder)
         else {
             panic!("no image");
         };
@@ -708,14 +912,13 @@ pub(crate) mod tests {
     #[test]
     fn kitty_images_are_sent_once_and_drawn_by_placeholders() {
         let path = png("kitty", 30, 40);
-        let mut picker = Picker::halfblocks();
-        picker.set_protocol_type(ProtocolType::Kitty);
+        let encoder = Encoder::new(Proto::Kitty, Size::new(10, 20));
         let key = ImageKey {
             path: path.clone(),
             mtime: None,
             size: Size::new(3, 2),
         };
-        let image = encode(&picker, &key).unwrap();
+        let image = encode(&encoder, &key).unwrap();
         let transmit = image.transmit().expect("kitty");
         let params = transmit
             .seq
@@ -764,16 +967,6 @@ pub(crate) mod tests {
 
     fn cells_of(frame: &str) -> usize {
         frame.matches('\u{10EEEE}').count()
-    }
-
-    trait IntoSize {
-        fn into_size(self) -> Size;
-    }
-
-    impl IntoSize for ratatui_image::FontSize {
-        fn into_size(self) -> Size {
-            Size::new(self.width, self.height)
-        }
     }
 
     #[test]

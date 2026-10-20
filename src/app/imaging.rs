@@ -67,6 +67,16 @@ impl State {
         (!paths.is_empty()).then_some(Cmd::ProbeImages { doc_gen, paths })
     }
 
+    /// The terminal can show images: read the image headers of the documents whose links were
+    /// resolved before it said so, since the first paint doesn't wait for it (O-06).
+    pub(super) fn probe_cmds(&self) -> Vec<Cmd> {
+        self.doc
+            .iter()
+            .chain(self.cache.iter())
+            .filter_map(|d| self.probe_cmd(d.generation))
+            .collect()
+    }
+
     /// The headers have been read, in the order [`State::probe_cmd`] asked: lay out again with
     /// the block images' sizes.
     pub(super) fn images_probed(&mut self, doc_gen: u64, probes: &[Probe]) {

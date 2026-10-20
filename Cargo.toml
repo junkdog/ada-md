@@ -25,8 +25,6 @@ onig = ["syntect/regex-onig", "two-face/syntect-onig"]
 
 [dependencies]
 anpa = "0.12"
-cargo-deny = "0.20.2"
-component = "0.1.1"
 # Only for `use-dev-tty`: its event source waits with level-triggered poll(2). The default mio one is
 # edge-triggered and returns before draining the tty, so input over 1 KB in one burst stalls until the next
 # byte arrives, or for good when the writer is blocked on a full tty (crossterm#1142).
@@ -45,8 +43,9 @@ two-face = { version = "0.5", default-features = false, features = ["syntect-fan
 unicode-segmentation = "1.13"
 unicode-width = "0.2"
 
-# Live reload by inotify (ADR-26); already in the tree through crossterm.
-[target.'cfg(target_os = "linux")'.dependencies]
+# Live reload by inotify (ADR-26), and the image probe's wait for the terminal's replies (CS-2);
+# already in the tree through crossterm.
+[target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1", default-features = false, features = ["std", "fs", "event"] }
 
 # One glibc malloc arena for the TUI (`mallopt`, ADR-27); already in the tree through crossterm.

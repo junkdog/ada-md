@@ -17,8 +17,8 @@ resize ([tmux#4213](https://github.com/tmux/tmux/issues/4213)), so ada can't use
 ([tmux#5445](https://github.com/tmux/tmux/pull/5445), on the
 [3.9 roadmap](https://github.com/tmux/tmux/issues/5406)). ada will revisit this once it's released.
 
-**Side effect.** Detecting the terminal's graphics support runs
-`tmux set -p allow-passthrough on` for ada's pane, and the option stays on after ada exits.
+**Side effect.** Forcing sixel or iTerm2 inside tmux runs `tmux set -p allow-passthrough on` for
+ada's pane, and the option stays on after ada exits.
 
 **Workaround.** Open the note outside tmux, or press `Enter` on the image's link and `Enter` again
 to open the image in your viewer.

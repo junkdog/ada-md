@@ -1,6 +1,7 @@
 //! CS-2's terminal survey (the clean-slate plan): in the terminal it runs in, what
-//! ratatui-image's `Picker::from_query_stdio` finds (what ada uses today), then the raw replies
-//! to ada's own probe (`probe::QUERY`) and what `probe::Replies` reads from them. The report goes
+//! ratatui-image's `Picker::from_query_stdio` finds (what ada used before CS-2), then the raw
+//! replies to ada's own probe (`probe::QUERY`), what `probe::Replies` reads from them, and what
+//! ada decides from that (`images::plan` and `images::decide`, as the TUI does). The report goes
 //! to a file, since the terminal's window may close when it ends.
 //!
 //! ```zsh
@@ -17,8 +18,10 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use ada::images::{self, ImageMode};
 use ada::probe::{QUERY, Replies};
 use ratatui::crossterm::terminal::{self, disable_raw_mode, enable_raw_mode};
+use ratatui::layout::Size;
 use ratatui_image::picker::Picker;
 
 /// How long the probe waits for the `CSI 5n` reply, as CS-2 plans it.
@@ -128,6 +131,19 @@ fn main() {
     let found = replies.found();
     writeln!(report, "found {found:?}, sixel {}", found.sixel()).unwrap();
     writeln!(report, "keys {keys:?}").unwrap();
+    let env = |name: &str| std::env::var(name).ok();
+    if let Some(plan) = images::plan(ImageMode::Auto, env) {
+        let (w, h) = terminal::size().unwrap_or((0, 0));
+        let g = images::decide(plan, &found, env, Size::new(w, h), images::winsize_cell());
+        writeln!(
+            report,
+            "ada {plan:?}: {} at {}x{}",
+            g.proto.name(),
+            g.cell.width,
+            g.cell.height
+        )
+        .unwrap();
+    }
     std::fs::write(&out, &report).expect("write the report");
     print!("{report}");
 }

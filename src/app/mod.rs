@@ -1083,9 +1083,13 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
         }
         Msg::Graphics { proto, cell } => {
             let cell = ratatui::layout::Size::new(cell.w.max(1), cell.h.max(1));
-            state.graphics = Some(Graphics { proto, cell });
+            let first = state.graphics.replace(Graphics { proto, cell }).is_none();
             state.relayout();
-            state.visible_jobs()
+            let mut cmds = state.visible_jobs();
+            if first {
+                cmds.extend(state.probe_cmds());
+            }
+            cmds
         }
         Msg::Open { path } => vec![state.load_cmd(crate::links::normalize(&path))],
         Msg::DocLoaded {
@@ -2658,6 +2662,27 @@ mod tests {
             [Cmd::OpenWithSystem("neumann.jpeg".into())]
         );
         assert!(state.view.is_none());
+    }
+
+    /// The probe answers after the first paint (O-06), often after the document's links are
+    /// resolved: its headers are read then, once.
+    #[test]
+    fn graphics_after_the_links_read_the_headers_then() {
+        let (mut state, cmds) = pets(false);
+        assert!(cmds.is_empty());
+        let graphics = Msg::Graphics {
+            proto: Proto::Halfblocks,
+            cell: Size { w: 10, h: 20 },
+        };
+        let cmds = update(&mut state, graphics.clone());
+        assert_eq!(
+            cmds,
+            [Cmd::ProbeImages {
+                doc_gen: state.generation,
+                paths: vec!["ada.png".into(), "neumann.jpeg".into()]
+            }]
+        );
+        assert!(update(&mut state, graphics).is_empty());
     }
 
     // --- files that aren't markdown ------------------------------------------------------------
