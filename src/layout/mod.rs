@@ -293,6 +293,11 @@ impl Measure {
         }
     }
 
+    /// Some image's size is known.
+    pub fn has_images(&self) -> bool {
+        self.images.iter().any(Option::is_some)
+    }
+
     /// Measure again for new glyphs, keeping the image sizes and the sorted tables.
     pub fn remeasure(&mut self, doc: &Doc, glyphs: &Glyphs) {
         let images = std::mem::take(&mut self.images);

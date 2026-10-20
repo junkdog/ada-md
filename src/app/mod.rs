@@ -480,6 +480,16 @@ impl Document {
         if self.layout.params == params {
             return;
         }
+        // The images' fit shapes no row until an image is measured, so the probe's answer after the
+        // first paint (O-06) keeps the rows: laying out again cost XL 38 ms and 16 MiB there.
+        let images = LayoutParams {
+            images: params.images,
+            ..self.layout.params
+        };
+        if images == params && !self.measure.has_images() {
+            self.layout.params = params;
+            return;
+        }
         if let Some(prev) = &mut self.prev
             && prev.params == params
         {
@@ -2683,6 +2693,44 @@ mod tests {
             }]
         );
         assert!(update(&mut state, graphics).is_empty());
+    }
+
+    /// Until an image is measured, the images' fit changes no row: the probe's answer keeps the
+    /// layout it finds, and the headers' sizes lay it out again.
+    #[test]
+    fn graphics_keep_the_layout_until_an_image_is_measured() {
+        let (mut state, _) = pets(false);
+        let rows = state.doc.as_ref().unwrap().layout.row_count();
+        let graphics = Msg::Graphics {
+            proto: Proto::Halfblocks,
+            cell: Size { w: 10, h: 20 },
+        };
+        update(&mut state, graphics);
+        let doc = state.doc.as_ref().unwrap();
+        assert!(doc.prev.is_none(), "laid out again");
+        assert_eq!(doc.layout.params, state.params());
+        assert_eq!(doc.layout.row_count(), rows);
+        let doc_gen = state.generation;
+        let probes = vec![
+            Probe::Image {
+                w: 300,
+                h: 200,
+                mtime: Some(7),
+            },
+            Probe::Failed("gone".into()),
+        ];
+        update(&mut state, Msg::ImagesProbed { doc_gen, probes });
+        let doc = state.doc.as_ref().unwrap();
+        assert_eq!(doc.layout.images.len(), 1);
+        assert!(doc.layout.row_count() > rows);
+        // measured: a height-only resize lays out again, for the images' fit
+        update(
+            &mut state,
+            Msg::Resize {
+                size: Size { w: 80, h: 30 },
+            },
+        );
+        assert!(state.doc.as_ref().unwrap().prev.is_some());
     }
 
     // --- files that aren't markdown ------------------------------------------------------------
