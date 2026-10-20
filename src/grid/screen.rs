@@ -11,7 +11,7 @@ use ratatui::layout::{Rect, Size};
 use ratatui::style::Modifier;
 
 use super::{Cell, Grid, LONG};
-use crate::images::KITTY_PLACEHOLDER;
+use crate::kitty::{self, PLACEHOLDER as KITTY_PLACEHOLDER};
 
 /// Styles that show on a blank cell: a blank with none of them shows only its background.
 const VISIBLE_ON_BLANK: u16 = Modifier::REVERSED
@@ -445,8 +445,10 @@ impl Pen {
         symbol(grid, i, out);
         // Terminals disagree on how wide some graphemes are (emoji with modifiers, ZWJ sequences,
         // halfwidth sound marks), and an image's escape sequence moves the cursor its own way, so
-        // after anything but a narrow cell the next one is placed explicitly, as ratatui does.
-        self.cursor = (c.width() == 1 && !c.forced()).then_some((x + 1, y));
+        // after anything but a narrow cell the next one is placed explicitly, as ratatui does. A
+        // kitty placeholder is a narrow character in the terminals that draw them.
+        let narrow = c.width() == 1 && (!c.forced() || c.placed().is_some());
+        self.cursor = narrow.then_some((x + 1, y));
     }
 
     /// Write the changed cells from `i` up to `end` that follow a narrow cell just written, while
@@ -579,8 +581,26 @@ fn symbol(grid: &Grid, i: usize, out: &mut Vec<u8>) {
     let c = &grid.cells[i];
     if c.len == 1 {
         out.push(c.sym[0]);
+    } else if let Some(at) = c.placed() {
+        placeholder(grid, i, at, out);
     } else {
         out.extend_from_slice(grid.symbol_bytes(i));
+    }
+}
+
+/// A kitty placeholder at `row` and `col` of its image, with the diacritics that number them
+/// unless kitty can tell both from the cell to its left. Once the frame is written the terminal
+/// shows the grid's cell there, and when that's the same image's previous column, the placeholder
+/// alone is this one; anything else there, such as a popup's border, and it's numbered.
+fn placeholder(grid: &Grid, i: usize, (row, col): (u16, u16), out: &mut Vec<u8>) {
+    let follows = !i.is_multiple_of(usize::from(grid.area.width)) && col > 0 && {
+        let left = &grid.cells[i - 1];
+        left.fg == grid.cells[i].fg && left.placed() == Some((row, col - 1))
+    };
+    let chars = kitty::placeholder(row, col);
+    let mut buf = [0; 4];
+    for c in &chars[..if follows { 1 } else { 3 }] {
+        out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
     }
 }
 
@@ -1324,12 +1344,8 @@ mod tests {
         let id = Color::Rgb(1, 2, 3);
         screen
             .draw(|g| {
-                g.lend(Rect::new(1, 0, 2, 1), |buf| {
-                    let width = CellDiffOption::ForcedWidth(NonZeroU16::new(1).unwrap());
-                    for (x, s) in [(1, "\u{10EEEE}\u{305}\u{305}"), (2, "\u{10EEEE}")] {
-                        buf[(x, 0)].set_symbol(s).set_fg(id).diff_option = width;
-                    }
-                });
+                g.placeholder((1, 0), (0, 0), id);
+                g.placeholder((2, 0), (0, 1), id);
             })
             .unwrap();
         screen.out.clear();
@@ -1339,5 +1355,39 @@ mod tests {
             out,
             " \x1b[38;2;1;2;3m\u{10EEEE}\u{305}\u{305}\u{10EEEE} \x1b[39m\r\n"
         );
+    }
+
+    /// A kitty placeholder is numbered unless the cell to its left is the same image's previous
+    /// column in the same row, which kitty numbers it from: not after a popup's border over the
+    /// image, a gap, another image, or at the start of a row. The cursor follows them.
+    #[test]
+    fn placeholders_are_numbered_where_kitty_cant_tell() {
+        let mut screen = Screen::new(Vec::new(), Size::new(7, 2));
+        let (a, b) = (Color::Rgb(0, 0, 1), Color::Rgb(0, 0, 2));
+        screen
+            .draw(|g| {
+                for x in 0..7 {
+                    g.placeholder((x, 0), (0, x), a);
+                    g.placeholder((x, 1), (1, x), a);
+                }
+                // a popup's border, which keeps the image cell's width, and a gap
+                g.set_string(2, 0, "│", Style::new());
+                g.placeholder((5, 0), (0, 6), a);
+                g.placeholder((6, 0), (0, 7), a);
+                g.placeholder((6, 1), (0, 6), b);
+            })
+            .unwrap();
+        let out = String::from_utf8(screen.out).unwrap();
+        let p = |row: u16, col: u16| {
+            let d = |n| crate::kitty::placeholder(0, n)[2];
+            format!("\u{10EEEE}{}{}", d(row), d(col))
+        };
+        let q = "\u{10EEEE}";
+        let rows = [
+            format!("{}{q}│\x1b[1;4H{}{q}{}{q}", p(0, 0), p(0, 3), p(0, 6)),
+            format!("{}{q}{q}{q}{q}{q}\x1b[38;2;0;0;2m{}", p(1, 0), p(0, 6)),
+        ];
+        let frame = format!("\x1b[1H\x1b[38;2;0;0;1m{}\r\n{}\x1b[0m", rows[0], rows[1]);
+        assert!(out.contains(&frame), "{out:?}");
     }
 }

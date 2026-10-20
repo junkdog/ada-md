@@ -1,4 +1,6 @@
-//! Images (ADR-09, architecture §9). Everything that knows about ratatui-image lives here.
+//! Images (ADR-09, architecture §9). Everything that knows about ratatui-image lives here: the
+//! terminal's query, and sixel and iTerm2. Kitty and half-blocks are ada's own, as print draws
+//! them ([`kitty`], [`pixels::HalfBlock`]; CS-1 of the clean-slate plan).
 //!
 //! The terminal is queried once at startup; its protocol and font cell size reach `update` as
 //! `Msg::Graphics`. Reading an image's header touches the filesystem, so it is a world effect
@@ -10,8 +12,9 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::UNIX_EPOCH;
 
@@ -19,16 +22,15 @@ use image::imageops::FilterType;
 use image::metadata::Orientation;
 use image::{ImageDecoder, ImageReader};
 use ratatui::layout::{Rect, Size};
+use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
 use ratatui_image::Resize;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::sliced::{SignedPosition, SlicedImage, SlicedProtocol};
 
-/// The character kitty draws an image's cells with (unicode placeholders).
-pub const KITTY_PLACEHOLDER: char = '\u{10EEEE}';
-
 use crate::grid::Grid;
-use crate::pixels;
+use crate::kitty;
+use crate::pixels::{self, HalfBlock};
 
 use crate::app::{self, Computed, Msg};
 
@@ -242,29 +244,45 @@ pub struct ImageKey {
 
 /// An image encoded for the terminal, ready to paint.
 #[derive(Clone)]
-pub struct Encoded {
-    proto: Arc<SlicedProtocol>,
-    /// A kitty image's transmission, kept from the first frame that painted it. The protocol
-    /// sends it once, but the main screen has an image store of its own, which a frame kept on
-    /// quit has to send it to again.
-    transmit: Arc<OnceLock<Transmit>>,
+pub struct Encoded(Arc<Image>);
+
+enum Image {
+    /// Sent to the terminal once, by the first frame that paints it; its cells are placeholders.
+    Kitty {
+        size: Size,
+        transmit: Transmit,
+        /// A frame has carried the transmission.
+        sent: AtomicBool,
+    },
+    /// Row by row.
+    Halfblocks { size: Size, cells: Box<[HalfBlock]> },
+    /// Sixel and iTerm2, by ratatui-image.
+    Sliced(SlicedProtocol),
 }
 
-/// What transmits a kitty image to the terminal.
+/// What transmits a kitty image to the terminal. The first frame that paints the image sends it,
+/// but the main screen has an image store of its own, which a frame kept on quit has to send it
+/// to again.
 #[derive(Debug)]
 pub struct Transmit {
-    /// The image id's low 24 bits: its placeholders' foreground color.
+    /// The image's id: its placeholders' foreground color.
     pub color: u32,
     pub seq: Box<str>,
 }
 
 impl Encoded {
     pub fn size(&self) -> Size {
-        self.proto.size()
+        match &*self.0 {
+            Image::Kitty { size, .. } | Image::Halfblocks { size, .. } => *size,
+            Image::Sliced(proto) => proto.size(),
+        }
     }
 
     pub fn transmit(&self) -> Option<&Transmit> {
-        self.transmit.get()
+        match &*self.0 {
+            Image::Kitty { transmit, .. } => Some(transmit),
+            _ => None,
+        }
     }
 }
 
@@ -277,29 +295,74 @@ impl fmt::Debug for Encoded {
 
 impl PartialEq for Encoded {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.proto, &other.proto)
+        Arc::ptr_eq(&self.0, &other.0)
     }
 }
 
 impl Eq for Encoded {}
 
+/// Kitty images encoded so far, which number the next one's id.
+static KITTY_IMAGES: AtomicU32 = AtomicU32::new(0);
+
 /// Decode an image and encode it for the terminal, fitted to `key.size` cells. It's decoded
-/// straight to the pixels those cells hold ([`pixels::decode`]), so the protocol has nothing
-/// left to resize.
+/// straight to the pixels those cells hold ([`pixels::decode`]), so there is nothing left to
+/// resize. Kitty and half-blocks are drawn as print draws them.
 pub fn encode(picker: &Picker, key: &ImageKey) -> Result<Encoded, String> {
     let font = picker.font_size();
-    let max = (
-        u32::from(key.size.width) * u32::from(font.width),
-        u32::from(key.size.height) * u32::from(font.height),
-    );
-    let image = pixels::decode(&key.path, max)?;
-    let resize = Resize::Fit(Some(FilterType::Triangle));
-    SlicedProtocol::new_with_resize(picker, image, key.size, resize)
-        .map(|p| Encoded {
-            proto: Arc::new(p),
-            transmit: Arc::default(),
-        })
-        .map_err(|e| e.to_string())
+    let (cols, rows) = (key.size.width, key.size.height);
+    let image = match Proto::of(picker.protocol_type()) {
+        Proto::Kitty => {
+            let (cols, rows) = (cols.min(kitty::MAX_CELLS), rows.min(kitty::MAX_CELLS));
+            let max = (
+                u32::from(cols) * u32::from(font.width),
+                u32::from(rows) * u32::from(font.height),
+            );
+            let px = match probe(&key.path) {
+                Probe::Image { w, h, .. } => (w, h),
+                Probe::Failed(why) => return Err(why),
+            };
+            let pixels = kitty::pixels(&key.path, px, max)?;
+            let payload = match &pixels {
+                Some(image) => kitty::Payload::Pixels(image),
+                None => kitty::Payload::Png(&key.path),
+            };
+            let id = kitty::image_id(KITTY_IMAGES.fetch_add(1, Ordering::Relaxed), false);
+            let mut seq = Vec::new();
+            kitty::transmit(&mut seq, id, &payload, cols, rows).map_err(|e| e.to_string())?;
+            let seq = String::from_utf8(seq).map_err(|e| e.to_string())?;
+            Image::Kitty {
+                size: Size::new(cols, rows),
+                transmit: Transmit {
+                    color: id,
+                    seq: seq.into(),
+                },
+                sent: AtomicBool::new(false),
+            }
+        }
+        Proto::Halfblocks => {
+            let image = pixels::decode_to(&key.path, |_| (u32::from(cols), 2 * u32::from(rows)))?;
+            let cells = (0..u32::from(rows))
+                .flat_map(|y| (0..u32::from(cols)).map(move |x| (x, y)))
+                .map(|at| HalfBlock::of(&image, (cols, rows), at))
+                .collect();
+            Image::Halfblocks {
+                size: key.size,
+                cells,
+            }
+        }
+        Proto::Sixel | Proto::Iterm2 => {
+            let max = (
+                u32::from(cols) * u32::from(font.width),
+                u32::from(rows) * u32::from(font.height),
+            );
+            let image = pixels::decode(&key.path, max)?;
+            let resize = Resize::Fit(Some(FilterType::Triangle));
+            let proto = SlicedProtocol::new_with_resize(picker, image, key.size, resize)
+                .map_err(|e| e.to_string())?;
+            Image::Sliced(proto)
+        }
+    };
+    Ok(Encoded(Arc::new(image)))
 }
 
 /// A decode job for the image worker.
@@ -377,7 +440,7 @@ impl ImageCache {
         self.map.get(key)
     }
 
-    /// The kitty transmissions of the images painted so far.
+    /// The kitty images' transmissions.
     pub fn transmits(&self) -> impl Iterator<Item = &Transmit> {
         self.map.values().filter_map(|e| match e {
             Entry::Ready(image) => image.transmit(),
@@ -421,47 +484,71 @@ impl ImageCache {
 }
 
 /// Paint `image` with its top-left corner at column `x` and row `y` of `area`. Rows outside
-/// `area` are clipped, so `y` may be negative. The protocols write ratatui cells, so the grid
-/// lends them the cells the image covers.
+/// `area` are clipped, so `y` may be negative.
 pub fn render(image: &Encoded, grid: &mut Grid, area: Rect, x: u16, y: i32) {
     if x >= area.width {
         return;
     }
-    let y = y.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
-    let position = SignedPosition::from((x as i16, y));
     let size = image.size();
-    let top = area.y.saturating_add(y.max(0) as u16);
-    let covered = Rect::new(area.x + x, top, size.width, size.height).intersection(area);
-    grid.lend(covered, |buf| {
-        SlicedImage::new(&image.proto, position).render(area, buf);
-    });
-
-    if image.transmit.get().is_none()
-        && matches!(*image.proto, SlicedProtocol::Kitty(_))
-        && !covered.is_empty()
-        && let Some(transmit) = kitty_transmit(grid.symbol((covered.x, covered.y)))
-    {
-        let _ = image.transmit.set(transmit);
+    // the image's rows and columns inside the area, and its cell (0, 0) on the grid
+    let rows = (-y).clamp(0, i32::from(size.height))
+        ..(i32::from(area.height) - y).clamp(0, i32::from(size.height));
+    let (rows, cols) = (
+        rows.start as u16..rows.end as u16,
+        size.width.min(area.width - x),
+    );
+    let at = |row: u16, col: u16| {
+        let y = i32::from(area.y) + y + i32::from(row);
+        (area.x + x + col, y as u16)
+    };
+    match &*image.0 {
+        Image::Kitty { transmit, sent, .. } => {
+            let [_, r, g, b] = transmit.color.to_be_bytes();
+            let color = Color::Rgb(r, g, b);
+            for row in rows.clone() {
+                for col in 0..cols {
+                    grid.placeholder(at(row, col), (row, col), color);
+                }
+            }
+            // the first cell painted carries the transmission, the first time
+            if !rows.is_empty() && cols > 0 && !sent.swap(true, Ordering::Relaxed) {
+                let mut first = String::from(&*transmit.seq);
+                first.extend(kitty::placeholder(rows.start, 0));
+                grid.image_cell(at(rows.start, 0), &first, color);
+            }
+        }
+        Image::Halfblocks { size, cells } => {
+            let rgb = |c: Option<pixels::Rgb>| c.map(|(r, g, b)| Color::Rgb(r, g, b));
+            for row in rows.clone() {
+                let line = &cells[usize::from(row) * usize::from(size.width)..];
+                for (col, cell) in line.iter().take(usize::from(cols)).enumerate() {
+                    let (text, fg, bg) = cell.cell();
+                    let (x, y) = at(row, col as u16);
+                    let style = Style {
+                        fg: rgb(fg),
+                        bg: rgb(bg),
+                        ..Style::new()
+                    };
+                    grid.set_stringn(x, y, text, 1, style);
+                }
+            }
+        }
+        Image::Sliced(proto) => {
+            let y = y.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+            let position = SignedPosition::from((x as i16, y));
+            let top = area.y.saturating_add(y.max(0) as u16);
+            let covered = Rect::new(area.x + x, top, size.width, size.height).intersection(area);
+            grid.lend(covered, |buf| {
+                SlicedImage::new(proto, position).render(area, buf);
+            });
+        }
     }
-}
-
-/// The transmission at the start of a kitty image's first cell, which holds it the first time the
-/// image is painted: `q=2,i=ID,a=T,…` chunks, then the placeholder.
-fn kitty_transmit(symbol: &str) -> Option<Transmit> {
-    let seq = &symbol[..symbol.find(KITTY_PLACEHOLDER)?];
-    let id = seq
-        .strip_prefix("\x1b_G")?
-        .split([',', ';'])
-        .find_map(|p| p.strip_prefix("i="))?;
-    Some(Transmit {
-        color: id.parse::<u32>().ok()? & 0xFF_FFFF,
-        seq: seq.into(),
-    })
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::grid::Screen;
 
     /// A `w`×`h` PNG in a fresh temporary directory.
     pub(crate) fn png(name: &str, w: u32, h: u32) -> PathBuf {
@@ -591,45 +678,92 @@ pub(crate) mod tests {
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
-    /// A kitty image's transmission is kept from the first frame that paints it, when the
-    /// protocol sends it, under the color its placeholders take.
+    /// The next frame `paint` draws, as written to the terminal.
+    fn frame(screen: &mut Screen<Shared>, out: &Shared, paint: impl FnOnce(&mut Grid)) -> String {
+        screen.draw(paint).unwrap();
+        String::from_utf8(std::mem::take(&mut *out.0.borrow_mut())).unwrap()
+    }
+
+    #[derive(Clone, Default)]
+    struct Shared(std::rc::Rc<std::cell::RefCell<Vec<u8>>>);
+
+    impl std::io::Write for Shared {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.borrow_mut().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn placeholder(row: u16, col: u16) -> String {
+        kitty::placeholder(row, col).iter().collect()
+    }
+
+    /// A kitty image is sent once, by the first frame that paints it, as print sends it: a PNG
+    /// that fits goes as the file. Its cells are placeholders in the color that names it, numbered
+    /// where kitty can't tell their row and column from the cell to the left, and clipped with
+    /// their rows.
     #[test]
-    fn the_kitty_transmission_is_kept() {
-        let path = png("kitty", 40, 60);
+    fn kitty_images_are_sent_once_and_drawn_by_placeholders() {
+        let path = png("kitty", 30, 40);
         let mut picker = Picker::halfblocks();
         picker.set_protocol_type(ProtocolType::Kitty);
         let key = ImageKey {
             path: path.clone(),
             mtime: None,
-            size: Size::new(4, 3),
+            size: Size::new(3, 2),
         };
         let image = encode(&picker, &key).unwrap();
-        assert!(image.transmit().is_none());
-        let area = Rect::new(0, 0, 10, 4);
-        let mut grid = Grid::empty(area);
-        render(&image, &mut grid, area, 2, 1);
-        let first = grid.symbol((2, 1)).to_owned();
-        let transmit = image.transmit().expect("kept");
-        assert!(transmit.seq.starts_with("\x1b_G") && transmit.seq.contains("a=T"));
-        assert_eq!(
-            first,
-            format!("{}{}", transmit.seq, &first[transmit.seq.len()..])
-        );
-        assert!(first[transmit.seq.len()..].starts_with(KITTY_PLACEHOLDER));
-        let ratatui::style::Color::Rgb(r, g, b) = grid[(3, 2)].fg() else {
-            panic!("a placeholder's color is its id");
-        };
-        assert_eq!(transmit.color, u32::from_be_bytes([0, r, g, b]));
+        let transmit = image.transmit().expect("kitty");
+        let params = transmit
+            .seq
+            .strip_prefix("\x1b_G")
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap();
+        for p in ["a=T", "U=1", "q=2", "c=3", "r=2", "f=100"] {
+            assert!(params.split(',').any(|kv| kv == p), "{p} in {params}");
+        }
+        assert!(params.contains(&format!("i={}", transmit.color)));
+        let [_, r, g, b] = transmit.color.to_be_bytes();
+        let color = format!("\x1b[38;2;{r};{g};{b}m");
 
-        // painted again, the protocol sends nothing, and the kept one stays
-        let mut grid = Grid::empty(area);
-        render(&image, &mut grid, area, 2, 1);
-        assert!(!grid.symbol((2, 1)).contains("\x1b_G"));
+        let (p, (r0, r1)) = ('\u{10EEEE}', (placeholder(0, 0), placeholder(1, 0)));
+        let area = Rect::new(0, 0, 6, 2);
+        let out = Shared::default();
+        let mut screen = Screen::new(out.clone(), Size::new(6, 2));
+        // the first frame: row 1 clipped off the bottom; the transmission in the first cell, which
+        // moves the cursor its own way, then the next placed explicitly and numbered
+        let first = frame(&mut screen, &out, |g| render(&image, g, area, 1, 1));
+        assert_eq!(
+            first.matches("\x1b_G").count(),
+            transmit.seq.matches("\x1b_G").count()
+        );
+        let cells = format!("{}{r0}\x1b[2;3H{}{p}", transmit.seq, placeholder(0, 1));
+        assert!(
+            first.contains(&format!("\x1b[2;2H{color}{cells}\x1b[0m")),
+            "{first:?}"
+        );
+        // scrolled up a row: row 0 clipped off the top, row 1 moves up, and nothing is sent again
+        let next = frame(&mut screen, &out, |g| render(&image, g, area, 1, -1));
+        assert!(!next.contains("\x1b_G"), "{next:?}");
+        assert!(
+            next.contains(&format!("\x1b[1;2H{color}{r1}{p}{p}")),
+            "{next:?}"
+        );
+        assert_eq!(cells_of(&next), 3);
         assert!(image.clone().transmit().is_some());
         let mut cache = ImageCache::default();
         cache.insert(key, Ok(image));
         assert_eq!(cache.transmits().count(), 1);
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    fn cells_of(frame: &str) -> usize {
+        frame.matches('\u{10EEEE}').count()
     }
 
     trait IntoSize {

@@ -25,6 +25,8 @@ onig = ["syntect/regex-onig", "two-face/syntect-onig"]
 
 [dependencies]
 anpa = "0.12"
+cargo-deny = "0.20.2"
+component = "0.1.1"
 # Only for `use-dev-tty`: its event source waits with level-triggered poll(2). The default mio one is
 # edge-triggered and returns before draining the tty, so input over 1 KB in one burst stalls until the next
 # byte arrives, or for good when the writer is blocked on a full tty (crossterm#1142).

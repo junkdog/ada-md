@@ -78,6 +78,47 @@ fn decode_file(
     Ok(turn(shrink.finish(), orientation))
 }
 
+/// One cell of an image drawn in half-blocks, two pixels a cell: `▀` with the top pixel in the
+/// foreground and the bottom one in the background, `▄` when only the bottom one shows, a blank
+/// when neither does. A pixel under half alpha doesn't show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HalfBlock {
+    pub top: Option<Rgb>,
+    pub bottom: Option<Rgb>,
+}
+
+/// A pixel's color.
+pub type Rgb = (u8, u8, u8);
+
+impl HalfBlock {
+    /// Cell `(x, y)` of `image` drawn in `cols` × `rows` cells. The image is no larger than its own
+    /// pixels, so a small one repeats them.
+    pub fn of(image: &DynamicImage, (cols, rows): (u16, u16), (x, y): (u32, u32)) -> HalfBlock {
+        let (w, h) = (image.width(), image.height());
+        let channels = usize::from(image.color().channel_count());
+        let alpha = image.color().has_alpha();
+        let at = |x: u32, y: u32| {
+            let (x, y) = (x * w / u32::from(cols), y * h / (2 * u32::from(rows)));
+            let p = &image.as_bytes()[(y * w + x) as usize * channels..];
+            let a = if alpha { p[3] } else { 255 };
+            (a >= 128).then_some((p[0], p[1], p[2]))
+        };
+        HalfBlock {
+            top: at(x, 2 * y),
+            bottom: at(x, 2 * y + 1),
+        }
+    }
+
+    /// The cell's symbol, foreground and background.
+    pub fn cell(self) -> (&'static str, Option<Rgb>, Option<Rgb>) {
+        match (self.top, self.bottom) {
+            (None, None) => (" ", None, None),
+            (Some(t), b) => ("▀", Some(t), b),
+            (None, b) => ("▄", b, None),
+        }
+    }
+}
+
 /// Whether `path` is a PNG that shows as it's stored, with no EXIF turn: a terminal that decodes
 /// PNG can be sent the file itself. Only the header is read.
 pub fn is_plain_png(path: &Path) -> bool {

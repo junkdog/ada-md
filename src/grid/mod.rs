@@ -20,6 +20,11 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// `Cell::len` when the symbol doesn't fit in `sym`, which then holds its index in `Grid::long`.
 const LONG: u8 = u8::MAX;
+/// `Cell::len` for a kitty image's placeholder: `sym` holds its row and column in the image, two
+/// bytes each, and the encoder writes the diacritics that number them.
+const PLACED: u8 = LONG - 1;
+/// A placeholder's symbol, as it reads: kitty's placeholder character, without its diacritics.
+const PLACEHOLDER: &str = "\u{10EEEE}";
 /// `Cell::meta`: the low four bits are the width in columns.
 const WIDTH: u8 = 0b1111;
 /// The terminal leaves the cell alone: an image covers it.
@@ -98,6 +103,12 @@ impl Cell {
     /// Part of an image: the terminal draws it, or leaves it alone, by the protocol's rules.
     pub fn is_image(&self) -> bool {
         self.meta & (SKIP | FORCED) != 0
+    }
+
+    /// A kitty placeholder's row and column in its image.
+    fn placed(&self) -> Option<(u16, u16)> {
+        let [r0, r1, c0, c1] = self.sym;
+        (self.len == PLACED).then_some((u16::from_le_bytes([r0, r1]), u16::from_le_bytes([c0, c1])))
     }
 }
 
@@ -231,6 +242,8 @@ impl Grid {
         let c = &self.cells[i];
         if c.len == LONG {
             &self.long[u32::from_le_bytes(c.sym) as usize]
+        } else if c.len == PLACED {
+            PLACEHOLDER
         } else {
             std::str::from_utf8(&c.sym[..usize::from(c.len)]).unwrap_or(" ")
         }
@@ -241,6 +254,8 @@ impl Grid {
         let c = &self.cells[i];
         if c.len == LONG {
             self.long[u32::from_le_bytes(c.sym) as usize].as_bytes()
+        } else if c.len == PLACED {
+            PLACEHOLDER.as_bytes()
         } else {
             &c.sym[..usize::from(c.len)]
         }
@@ -390,9 +405,36 @@ impl Grid {
         }
     }
 
+    /// Make cell `(x, y)` the one at `row` and `col` of the kitty image that `color` names: a
+    /// placeholder one column wide, on the cell's background.
+    pub fn placeholder(&mut self, (x, y): (u16, u16), (row, col): (u16, u16), color: Color) {
+        let i = self.index(x, y);
+        let ([r0, r1], [c0, c1]) = (row.to_le_bytes(), col.to_le_bytes());
+        let c = &mut self.cells[i];
+        c.sym = [r0, r1, c0, c1];
+        c.len = PLACED;
+        c.meta = FORCED | 1;
+        c.fg = pack(color);
+        self.images = true;
+    }
+
+    /// Make cell `(x, y)` an image's, which `symbol` draws as it is in one column, in the
+    /// foreground `fg`: the first cell of a kitty image's first frame, which carries its
+    /// transmission before its placeholder.
+    pub fn image_cell(&mut self, (x, y): (u16, u16), symbol: &str, fg: Color) {
+        let i = self.index(x, y);
+        self.cells[i].meta = 0;
+        self.put(i, symbol, 1);
+        let c = &mut self.cells[i];
+        c.meta = FORCED | 1;
+        c.fg = pack(fg);
+        self.images = true;
+    }
+
     /// Let ratatui code draw on `area` of the grid: the cells go out as a ratatui buffer, `draw`
-    /// paints on it, and they come back with whatever it changed. For images, whose protocols
-    /// write escape sequences into cells.
+    /// paints on it, and they come back with whatever it changed. For sixel and iTerm2 images,
+    /// whose protocols write escape sequences into cells. A kitty placeholder goes out without its
+    /// row and column, as no protocol here draws over one.
     pub fn lend(&mut self, area: Rect, draw: impl FnOnce(&mut Buffer)) {
         let area = self.area.intersection(area);
         if area.is_empty() {

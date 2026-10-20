@@ -19,7 +19,7 @@ use crate::images::{self, Probe, Proto};
 use crate::kitty;
 use crate::layout::{self, ImageSlot, Layout, LayoutParams, Measure, Row, RowKind};
 use crate::links::{self, BuiltinResolver, Resolved, Resolver, Target};
-use crate::pixels;
+use crate::pixels::{self, HalfBlock};
 use crate::theme::{StyleKey, Theme};
 use crate::ui::Painter;
 
@@ -282,20 +282,16 @@ impl Drawn {
                     u32::from(rows) * u32::from(cell.height),
                 );
                 let id = kitty::image_id(slot, pictures.reuse_ids);
-                // a PNG small enough already goes as it is, undecoded: kitty decodes it
-                let fits = px.0 <= max.0 && px.1 <= max.1;
-                if fits && pixels::is_plain_png(path) {
-                    kitty::transmit(w, id, &kitty::Payload::Png(path), cols, rows)?;
-                    Drawn::Kitty { id, cols }
-                } else {
-                    match pixels::decode(path, max) {
-                        Ok(image) => {
-                            let payload = kitty::Payload::Pixels(&image);
-                            kitty::transmit(w, id, &payload, cols, rows)?;
-                            Drawn::Kitty { id, cols }
-                        }
-                        Err(why) => Drawn::Failed(why),
+                match kitty::pixels(path, *px, max) {
+                    Ok(image) => {
+                        let payload = match &image {
+                            Some(image) => kitty::Payload::Pixels(image),
+                            None => kitty::Payload::Png(path),
+                        };
+                        kitty::transmit(w, id, &payload, cols, rows)?;
+                        Drawn::Kitty { id, cols }
                     }
+                    Err(why) => Drawn::Failed(why),
                 }
             }
             _ => match pixels::decode_to(path, |_| (u32::from(cols), 2 * u32::from(rows))) {
@@ -319,26 +315,14 @@ impl Drawn {
                 line.span(&cells, pen, out, scratch);
             }
             Drawn::Halfblocks { image, cols, rows } => {
-                // the image is no larger than its own pixels: a small one repeats them
-                let (w, h) = (image.width(), image.height());
-                let at = |x: u32, y: u32| {
-                    let (x, y) = (x * w / u32::from(*cols), y * h / (2 * u32::from(*rows)));
-                    let p = &image.as_bytes()[(y * w + x) as usize * channels(image)..];
-                    let alpha = if image.color().has_alpha() { p[3] } else { 255 };
-                    (alpha >= 128).then_some(Color::Rgb(p[0], p[1], p[2]))
-                };
+                let rgb = |c: Option<pixels::Rgb>| c.map(|(r, g, b)| Color::Rgb(r, g, b));
                 for x in 0..u32::from(*cols) {
-                    let (top, bottom) = (at(x, 2 * y), at(x, 2 * y + 1));
-                    let (text, fg, bg) = match (top, bottom) {
-                        (None, None) => (" ", None, None),
-                        (Some(t), b) => ("▀", Some(t), b),
-                        (None, b) => ("▄", b, None),
-                    };
+                    let (text, fg, bg) = HalfBlock::of(image, (*cols, *rows), (x, y)).cell();
                     line.span(
                         text,
                         Pen {
-                            fg,
-                            bg,
+                            fg: rgb(fg),
+                            bg: rgb(bg),
                             ..Pen::default()
                         },
                         out,
@@ -350,10 +334,6 @@ impl Drawn {
             Drawn::Failed(_) => {}
         }
     }
-}
-
-fn channels(image: &DynamicImage) -> usize {
-    usize::from(image.color().channel_count())
 }
 
 /// One output line as it's written. A line starts with no style and ends with none, so a

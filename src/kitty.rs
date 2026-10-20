@@ -1,7 +1,7 @@
-//! The kitty graphics protocol's wire format, for printed images (architecture §12): an image
-//! sent as a virtual placement, then shown by unicode placeholder cells. Placeholders are text,
-//! so a pager or an fzf preview pane clips, scrolls and clears them with the rest of the output.
-//! The TUI's images go through ratatui-image instead ([`crate::images`]).
+//! The kitty graphics protocol's wire format, for printed images (architecture §12) and the TUI's
+//! ([`crate::images`]): an image sent as a virtual placement, then shown by unicode placeholder
+//! cells. Placeholders are text, so a pager or an fzf preview pane clips, scrolls and clears them
+//! with the rest of the output, and the TUI's frames move them with their rows.
 //!
 //! <https://sw.kovidgoyal.net/kitty/graphics-protocol/#unicode-placeholders>
 
@@ -11,8 +11,10 @@ use std::path::Path;
 
 use image::DynamicImage;
 
+use crate::pixels;
+
 /// The character kitty reserves for image placeholders.
-const PLACEHOLDER: char = '\u{10EEEE}';
+pub const PLACEHOLDER: char = '\u{10EEEE}';
 
 /// Raw bytes in one chunk: 4096 base64 characters, the most the protocol allows.
 const CHUNK: usize = 4096 / 4 * 3;
@@ -44,6 +46,20 @@ pub fn image_id(n: u32, reuse: bool) -> u32 {
     x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     x ^= x >> 31;
     (x as u32 & 0xff_ffff).max(1)
+}
+
+/// The pixels to send for the image at `path`, `px` pixels upright, shown in `max` pixels, or
+/// `None` when the file itself can go: a PNG small enough already, which kitty decodes.
+pub fn pixels(
+    path: &Path,
+    px: (u32, u32),
+    max: (u32, u32),
+) -> Result<Option<DynamicImage>, String> {
+    let fits = px.0 <= max.0 && px.1 <= max.1;
+    if fits && pixels::is_plain_png(path) {
+        return Ok(None);
+    }
+    pixels::decode(path, max).map(Some)
 }
 
 /// Send image `id` as a virtual placement of `cols` × `rows` cells, which kitty fits the image
@@ -123,10 +139,15 @@ fn png(image: &DynamicImage, w: impl Write) -> io::Result<()> {
 /// foreground to [`id_color`].
 pub fn placeholders(row: u16, cols: u16, out: &mut String) {
     for col in 0..cols {
-        out.push(PLACEHOLDER);
-        out.push(diacritic(row));
-        out.push(diacritic(col));
+        out.extend(placeholder(row, col));
     }
+}
+
+/// The cell at row `row` and column `col` of an image: the placeholder, then the diacritics that
+/// number them. Kitty can tell both from the cell to the left, when that's the same image's
+/// previous column: the placeholder alone is that cell.
+pub fn placeholder(row: u16, col: u16) -> [char; 3] {
+    [PLACEHOLDER, diacritic(row), diacritic(col)]
 }
 
 /// The foreground color that names image `id` (below 2²⁴) in its placeholders.
