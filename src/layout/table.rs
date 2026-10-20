@@ -155,10 +155,10 @@ pub struct Sort {
     pub desc: bool,
 }
 
-/// The body rows of `t` sorted by `sort.col`, as indices into `t.rows`: by [`compare_cells`],
-/// with empty cells last either way, and rows that compare equal in source order.
+/// The body rows of `t` sorted by `sort.col`, as indices into `t.rows`: by each cell's [`Key`],
+/// with blank cells last either way, and rows that compare equal in source order.
 pub fn order(t: &Table, sort: Sort) -> Vec<u32> {
-    let keys: Vec<String> = t
+    let cells: Vec<String> = t
         .rows
         .iter()
         .map(|r| {
@@ -168,55 +168,210 @@ pub fn order(t: &Table, sort: Sort) -> Vec<u32> {
                 .unwrap_or_default()
         })
         .collect();
+    let keys = keys(&cells);
     let mut order: Vec<u32> = (0..t.rows.len() as u32).collect();
-    order.sort_by(|&a, &b| {
-        let (a, b) = (&keys[a as usize], &keys[b as usize]);
-        match (a.is_empty(), b.is_empty()) {
-            (false, false) if sort.desc => compare_cells(b, a),
-            (false, false) => compare_cells(a, b),
-            (empty_a, empty_b) => empty_a.cmp(&empty_b),
-        }
-    });
+    order.sort_by(|&a, &b| keys[a as usize].compare(&keys[b as usize], sort.desc));
     order
 }
 
-/// Cells that are numbers (`-1.5`, `1,024`, `$3`, `12 %`) compare as numbers, and durations
-/// (`12ms`, `1.5 s`, `1h 30m`) as durations, whatever their units; any other text compares
-/// naturally: runs of digits by value, the rest ignoring case, so `v1.9` < `v1.10`.
-fn compare_cells(a: &str, b: &str) -> Ordering {
-    match (quantity(a), quantity(b)) {
-        (Some((da, x)), Some((db, y))) if da == db => x.total_cmp(&y),
-        _ => natural(a, b),
+/// The [`Key`] of each of a column's cells, read in the column's [`Style`].
+fn keys(cells: &[String]) -> Vec<Key<'_>> {
+    let style = Style::of(cells);
+    cells.iter().map(|c| Key::of(c, style)).collect()
+}
+
+/// What a cell sorts by. Cells sort in groups, in the order of the variants, and of [`Dim`]
+/// within values; the direction only applies within a group, so text in a column of numbers
+/// stays after them either way, as blanks do.
+#[derive(Debug, PartialEq)]
+enum Key<'a> {
+    /// A value, then the text after it naturally (`12 cores`).
+    Value(Dim, f64, &'a str),
+    /// Anything else, compared naturally: runs of digits by value, the rest ignoring case,
+    /// so `v1.9` < `v1.10`.
+    Text(&'a str),
+    /// Empty, or a placeholder such as `-`, `?` or `n/a`.
+    Blank,
+}
+
+/// What a [`Key::Value`] measures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Dim {
+    /// A number, perhaps with a currency or percent sign, or `k`/`M`.
+    Plain,
+    /// A size, in bytes.
+    Size,
+    /// A duration, in seconds.
+    Time,
+    /// A time of day, in seconds from midnight.
+    Clock,
+    /// A date, perhaps with a time of day, in seconds.
+    Date,
+}
+
+impl<'a> Key<'a> {
+    fn of(s: &'a str, style: Style) -> Self {
+        if blank(s) {
+            return Key::Blank;
+        }
+        if let Some(t) = date(s, style) {
+            return Key::Value(Dim::Date, t, "");
+        }
+        if let Some((t, "")) = clock(s).map(|(t, rest)| (t, rest.trim())) {
+            return Key::Value(Dim::Clock, t, "");
+        }
+        match quantity(s, style) {
+            Some((dim, n, rest)) => Key::Value(dim, n, rest),
+            None => Key::Text(s),
+        }
+    }
+
+    fn group(&self) -> (u8, Option<Dim>) {
+        match self {
+            Key::Value(dim, ..) => (0, Some(*dim)),
+            Key::Text(_) => (1, None),
+            Key::Blank => (2, None),
+        }
+    }
+
+    fn compare(&self, other: &Self, desc: bool) -> Ordering {
+        let within = match (self, other) {
+            (Key::Value(da, x, ra), Key::Value(db, y, rb)) if da == db => {
+                x.total_cmp(y).then_with(|| natural(ra, rb))
+            }
+            (Key::Text(a), Key::Text(b)) => natural(a, b),
+            _ => return self.group().cmp(&other.group()),
+        };
+        if desc { within.reverse() } else { within }
     }
 }
 
-/// What a cell's [`quantity`] measures.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Dim {
-    /// A number, perhaps with a currency or percent sign.
-    Plain,
-    /// A duration, in seconds.
-    Time,
+/// How a column writes its numbers and dates, going by all of its cells.
+#[derive(Clone, Copy, Debug, Default)]
+struct Style {
+    /// `1.234,5` rather than `1,234.5`.
+    decimal_comma: bool,
+    /// `14/10/2026` rather than `10/14/2026`.
+    day_first: bool,
 }
 
-/// The value of a cell that is a number, perhaps with thousands separators, a currency sign or
-/// a percent sign; or a duration, perhaps of several parts (`1m 30s`).
-fn quantity(s: &str) -> Option<(Dim, f64)> {
-    let (neg, s) = match s.trim().strip_prefix(['-', '−']) {
-        Some(rest) => (true, rest),
-        None => (false, s.trim().strip_prefix('+').unwrap_or(s.trim())),
+impl Style {
+    /// A decimal comma when some cell has one (`3,5`, `1.234,5`, `1.234.567`) and none has a
+    /// decimal point; day first when some date can't be month first (`14/10/2026`) and none
+    /// can't be day first.
+    fn of(cells: &[String]) -> Self {
+        let (mut comma, mut point, mut day, mut month) = (false, false, false, false);
+        for c in cells {
+            if let Some(([a, b, _], sep, _)) = triple(c)
+                && sep != '.'
+                && a.len() <= 2
+            {
+                let (a, b) = (a.parse().unwrap_or(0u32), b.parse().unwrap_or(0u32));
+                day |= a > 12;
+                month |= b > 12;
+                continue;
+            }
+            let Some(i) = c.find(|ch: char| ch.is_ascii_digit()) else {
+                continue;
+            };
+            let run = &c[i..];
+            let end = run
+                .find(|ch: char| !(ch.is_ascii_digit() || ch == '.' || ch == ','))
+                .unwrap_or(run.len());
+            let run = run[..end].trim_end_matches(['.', ',']);
+            let after = |at: usize| run.len() - at - 1;
+            match (run.rfind('.'), run.rfind(',')) {
+                (Some(p), Some(q)) if q > p => comma = true,
+                (Some(_), Some(_)) => point = true,
+                (None, Some(q)) if run.matches(',').count() == 1 && after(q) != 3 => comma = true,
+                (Some(p), None) if run.matches('.').count() == 1 => point |= after(p) != 3,
+                (Some(_), None) => comma |= run.split('.').skip(1).all(|g| g.len() == 3),
+                _ => {}
+            }
+        }
+        Style {
+            decimal_comma: comma && !point,
+            day_first: day && !month,
+        }
+    }
+}
+
+/// Empty, dashes, or a placeholder such as `?`, `n/a` or `TBD`.
+fn blank(s: &str) -> bool {
+    s.chars()
+        .all(|c| matches!(c, '-' | '–' | '—' | '?' | '…' | ' '))
+        || ["n/a", "na", "tbd", "tba"]
+            .iter()
+            .any(|p| s.eq_ignore_ascii_case(p))
+}
+
+/// The value of a cell that is a number: perhaps signed, approximate (`~5`, `<1`), in money
+/// (`$3`, `US$3`, `(1,234)` as a negative, `85 €`), a percentage, or `1.2k`; or a size (`1.5 GiB`);
+/// or a duration, perhaps of several parts (`1m 30s`). A number followed by any other text is a
+/// plain number, with that text after it.
+fn quantity(s: &str, style: Style) -> Option<(Dim, f64, &str)> {
+    if let Some(inner) = s.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+        return match signed(inner, style)? {
+            (Dim::Plain, n, "") => Some((Dim::Plain, -n, "")),
+            _ => None,
+        };
+    }
+    signed(s, style)
+}
+
+fn signed(s: &str, style: Style) -> Option<(Dim, f64, &str)> {
+    let s = s
+        .trim_start_matches(['~', '≈', '<', '>', '≤', '≥'])
+        .trim_start();
+    let (neg, s) = sign(s);
+    let s = currency(s);
+    let (neg, s) = match neg {
+        false => sign(s),
+        true => (true, s),
     };
-    let s = s.strip_prefix(['$', '€', '£', '¥']).unwrap_or(s);
-    let (n, rest) = leading_number(s)?;
-    let (dim, n) = match rest.trim() {
-        "" | "%" => (Dim::Plain, n),
-        rest => (Dim::Time, duration(n, rest)?),
+    let (n, rest) = leading_number(s, style)?;
+    // more of a number than it reads as: a version, an address
+    if rest.starts_with(|c: char| c.is_ascii_digit() || matches!(c, '.' | ',' | ':')) {
+        return None;
+    }
+    let (dim, n, rest) = match rest.trim_start() {
+        "" | "%" => (Dim::Plain, n, ""),
+        "‰" => (Dim::Plain, n / 10.0, ""),
+        "k" | "K" => (Dim::Plain, n * 1e3, ""),
+        "M" => (Dim::Plain, n * 1e6, ""),
+        "bn" => (Dim::Plain, n * 1e9, ""),
+        unit => match (bytes(unit), duration(n, unit, style)) {
+            (Some(b), _) => (Dim::Size, n * b, ""),
+            (None, Some(t)) => (Dim::Time, t, ""),
+            (None, None) => (Dim::Plain, n, unit),
+        },
     };
-    Some((dim, if neg { -n } else { n }))
+    Some((dim, if neg { -n } else { n }, rest))
+}
+
+fn sign(s: &str) -> (bool, &str) {
+    match s.strip_prefix(['-', '−']) {
+        Some(rest) => (true, rest.trim_start()),
+        None => (false, s.strip_prefix('+').unwrap_or(s)),
+    }
+}
+
+/// `s` past a currency sign it starts with, perhaps after up to three capitals (`US$`, `R$`).
+fn currency(s: &str) -> &str {
+    let caps = s.find(|c: char| !c.is_ascii_uppercase()).unwrap_or(s.len());
+    let rest = &s[caps..];
+    match rest.chars().next() {
+        Some(c) if caps <= 3 && is_currency(c) => rest[c.len_utf8()..].trim_start(),
+        _ => s,
+    }
+}
+
+fn is_currency(c: char) -> bool {
+    matches!(c, '$' | '¢' | '£' | '¤' | '¥' | '฿') || ('\u{20a0}'..='\u{20cf}').contains(&c)
 }
 
 /// `n` of the unit `rest` starts with, plus any further parts, in seconds.
-fn duration(mut n: f64, mut rest: &str) -> Option<f64> {
+fn duration(mut n: f64, mut rest: &str, style: Style) -> Option<f64> {
     let mut total = 0.0;
     loop {
         let end = rest
@@ -228,7 +383,7 @@ fn duration(mut n: f64, mut rest: &str) -> Option<f64> {
         if rest.is_empty() {
             return Some(total);
         }
-        (n, rest) = leading_number(rest)?;
+        (n, rest) = leading_number(rest, style)?;
         rest = rest.trim_start();
     }
 }
@@ -243,32 +398,305 @@ fn seconds(unit: &str) -> Option<f64> {
         "m" | "min" | "mins" | "minute" | "minutes" => 60.0,
         "h" | "hr" | "hrs" | "hour" | "hours" => 3600.0,
         "d" | "day" | "days" => 86400.0,
+        "w" | "wk" | "wks" | "week" | "weeks" => 7.0 * 86400.0,
+        "mo" | "month" | "months" => 30.436875 * 86400.0,
+        "y" | "yr" | "yrs" | "year" | "years" => 365.2425 * 86400.0,
         _ => return None,
     })
 }
 
-/// The number `s` starts with, with thousands separators and an exponent, and what follows it.
-fn leading_number(s: &str) -> Option<(f64, &str)> {
-    let b = s.as_bytes();
-    let digits_from = |mut i: usize| {
-        while i < b.len() && b[i].is_ascii_digit() {
-            i += 1;
-        }
-        i
+/// Bytes in a size unit: `B`, `kB`, `MB` and on in thousands, `KiB`, `MiB` and on in 1024s.
+/// Bits are taken for bytes (`Mb`), which only matters when a column mixes the two.
+fn bytes(unit: &str) -> Option<f64> {
+    if matches!(unit, "B" | "byte" | "bytes") {
+        return Some(1.0);
+    }
+    let prefix = unit.strip_suffix(['B', 'b'])?;
+    let (prefix, base) = match prefix.strip_suffix('i') {
+        Some(p) => (p, 1024f64),
+        None => (prefix, 1000f64),
     };
-    let mut end = 0;
-    while end < b.len() && (b[end].is_ascii_digit() || matches!(b[end], b',' | b'_' | b'.')) {
-        end += 1;
+    let power = match prefix {
+        "k" | "K" => 1,
+        "m" | "M" => 2,
+        "g" | "G" => 3,
+        "t" | "T" => 4,
+        "p" | "P" => 5,
+        "e" | "E" => 6,
+        _ => return None,
+    };
+    Some(base.powi(power))
+}
+
+/// The number `s` starts with, and what follows it: digits, perhaps in groups (`1,024`,
+/// `1'024`, `1 024`, `1_024`, `1.024` with a decimal comma, `1,00,000`), a fraction after the
+/// column's decimal mark, and an exponent.
+fn leading_number(s: &str, style: Style) -> Option<(f64, &str)> {
+    let (mark, group) = match style.decimal_comma {
+        true => (',', '.'),
+        false => ('.', ','),
+    };
+    let (int, mut rest) = split_digits(s);
+    let mut digits = int.to_owned();
+    while !int.is_empty()
+        && let Some(sep) = rest.chars().next()
+    {
+        let (run, tail) = split_digits(&rest[sep.len_utf8()..]);
+        let grouped = match sep {
+            '_' => !run.is_empty(),
+            ',' if sep == group => matches!(run.len(), 2 | 3),
+            '\'' | '’' | ' ' | '\u{a0}' | '\u{2009}' | '\u{202f}' => run.len() == 3,
+            _ => sep == group && run.len() == 3,
+        };
+        if !grouped {
+            break;
+        }
+        digits.push_str(run);
+        rest = tail;
     }
-    if matches!(b.get(end), Some(b'e' | b'E')) {
-        let sign = usize::from(matches!(b.get(end + 1), Some(b'+' | b'-')));
-        if b.get(end + 1 + sign).is_some_and(u8::is_ascii_digit) {
-            end = digits_from(end + 1 + sign);
+    if let Some((frac, tail)) = rest.strip_prefix(mark).map(split_digits)
+        && !frac.is_empty()
+    {
+        digits.push('.');
+        digits.push_str(frac);
+        rest = tail;
+    }
+    if digits.is_empty() {
+        return None;
+    }
+    if let Some(e) = rest.strip_prefix(['e', 'E']) {
+        let (sign, e) = match e.strip_prefix(['+', '-']) {
+            Some(tail) => (&e[..1], tail),
+            None => ("", e),
+        };
+        let (exp, tail) = split_digits(e);
+        if !exp.is_empty() {
+            digits.push('e');
+            digits.push_str(sign);
+            digits.push_str(exp);
+            rest = tail;
         }
     }
-    let digits: String = s[..end].chars().filter(|&c| c != ',' && c != '_').collect();
     let n: f64 = digits.parse().ok().filter(|n: &f64| n.is_finite())?;
-    Some((n, &s[end..]))
+    Some((n, rest))
+}
+
+/// A date, perhaps with a time of day and `Z`/`UTC`, as seconds: `2026-10-14`, `2026/10/14`,
+/// `14.10.2026`, `10/14/2026` or `14/10/26` as `style` says, `14 Oct 2026`, `14-Oct-2026`,
+/// `Oct 14, 2026`, `October 14th`, `Oct 2026`, each perhaps after a weekday (`Tue, `).
+/// Without a year, the date sorts before any that has one.
+fn date(s: &str, style: Style) -> Option<f64> {
+    let s = weekday(s);
+    let (y, m, d, rest) = numeric_date(s, style)
+        .or_else(|| day_month(s))
+        .or_else(|| month_day(s))?;
+    let rest = rest.trim_start_matches([',', ' ']);
+    let rest = rest.strip_prefix('T').unwrap_or(rest);
+    let (secs, rest) = match rest {
+        "" => (0.0, ""),
+        rest => clock(rest)?,
+    };
+    if !matches!(rest.trim(), "" | "Z" | "UTC" | "GMT") {
+        return None;
+    }
+    Some(days(y, m, d) as f64 * 86400.0 + secs)
+}
+
+type Ymd<'a> = (i64, u32, u32, &'a str);
+
+fn numeric_date(s: &str, style: Style) -> Option<Ymd<'_>> {
+    let ([a, b, c], sep, rest) = triple(s)?;
+    let (y, m, d) = match (a.len(), c.len()) {
+        (4, _) => (a, b, c),
+        (1 | 2, 2 | 4) if c.len() == 4 || sep == '/' => match sep == '.' || style.day_first {
+            true => (c, b, a),
+            false => (c, a, b),
+        },
+        _ => return None,
+    };
+    let (m, d) = (day_or_month(m, 12)?, day_or_month(d, 31)?);
+    let y = match (y.len(), y.parse::<i64>().ok()?) {
+        (2, y) if y < 70 => 2000 + y,
+        (2, y) => 1900 + y,
+        (_, y) => y,
+    };
+    Some((y, m, d, rest))
+}
+
+/// `a-b-c`, `a/b/c` or `a.b.c`: three runs of digits between the same separator, and what
+/// follows them.
+fn triple(s: &str) -> Option<([&str; 3], char, &str)> {
+    let (a, rest) = split_digits(s);
+    let sep = rest
+        .chars()
+        .next()
+        .filter(|c| matches!(c, '-' | '/' | '.'))?;
+    let (b, rest) = split_digits(&rest[1..]);
+    let (c, rest) = split_digits(rest.strip_prefix(sep)?);
+    [a, b, c]
+        .iter()
+        .all(|p| !p.is_empty())
+        .then_some(([a, b, c], sep, rest))
+}
+
+fn day_or_month(s: &str, max: u32) -> Option<u32> {
+    (s.len() <= 2)
+        .then(|| s.parse().ok())
+        .flatten()
+        .filter(|n| (1..=max).contains(n))
+}
+
+/// `14 Oct 2026`, `14th October`, `14-Oct-2026`, `14. Oct`.
+fn day_month(s: &str) -> Option<Ymd<'_>> {
+    let (d, rest) = day(s)?;
+    let (m, rest) = month(rest.trim_start_matches([' ', '-']))?;
+    let rest = rest.trim_start_matches([' ', ',', '-']);
+    Some(match year(rest) {
+        Some((y, rest)) => (y, m, d, rest),
+        None => (0, m, d, rest),
+    })
+}
+
+/// `Oct 14, 2026`, `October 14th`, `Oct 2026`.
+fn month_day(s: &str) -> Option<Ymd<'_>> {
+    let (m, rest) = month(s)?;
+    let rest = rest.trim_start_matches([' ', ',', '-']);
+    if let Some((y, rest)) = year(rest) {
+        return Some((y, m, 1, rest));
+    }
+    let (d, rest) = day(rest)?;
+    let rest = rest.trim_start_matches([' ', ',']);
+    Some(match year(rest) {
+        Some((y, rest)) => (y, m, d, rest),
+        None => (0, m, d, rest),
+    })
+}
+
+/// A day of the month, perhaps as an ordinal (`14th`) or with a dot (`14.`).
+fn day(s: &str) -> Option<(u32, &str)> {
+    let (d, rest) = split_digits(s);
+    let d = day_or_month(d, 31)?;
+    let rest = match rest.get(..2) {
+        Some(o)
+            if ["st", "nd", "rd", "th"]
+                .iter()
+                .any(|x| o.eq_ignore_ascii_case(x)) =>
+        {
+            &rest[2..]
+        }
+        _ => rest,
+    };
+    Some((d, rest.strip_prefix('.').unwrap_or(rest)))
+}
+
+fn year(s: &str) -> Option<(i64, &str)> {
+    let (y, rest) = split_digits(s);
+    Some((y.parse().ok().filter(|_| y.len() == 4)?, rest))
+}
+
+const MONTHS: [&str; 12] = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+];
+
+const WEEKDAYS: [&str; 7] = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+];
+
+/// A month from 1, by its English name or the first three or more letters of it (`Sept.`).
+fn month(s: &str) -> Option<(u32, &str)> {
+    let (i, rest) = name(s, &MONTHS)?;
+    Some((i as u32 + 1, rest.strip_prefix('.').unwrap_or(rest)))
+}
+
+/// `s` past a weekday it starts with (`Tue, `, `Tuesday `), when something follows.
+fn weekday(s: &str) -> &str {
+    match name(s, &WEEKDAYS) {
+        Some((_, rest)) => match rest.trim_start_matches(['.', ',']).trim_start() {
+            "" => s,
+            rest => rest,
+        },
+        None => s,
+    }
+}
+
+/// Which of `names` the word `s` starts with is, or the first three or more letters of.
+fn name<'a>(s: &'a str, names: &[&str]) -> Option<(usize, &'a str)> {
+    let end = s
+        .find(|c: char| !c.is_ascii_alphabetic())
+        .unwrap_or(s.len());
+    let (word, rest) = s.split_at(end);
+    let i = names.iter().position(|n| {
+        word.len() >= 3 && n.len() >= word.len() && n[..word.len()].eq_ignore_ascii_case(word)
+    })?;
+    Some((i, rest))
+}
+
+/// A time of day, in seconds from midnight, and what follows it: `9:30`, `21:05:10`,
+/// `9:30 pm`, `9 a.m.`. Without minutes it needs the `am`/`pm`.
+fn clock(s: &str) -> Option<(f64, &str)> {
+    let (h, mut rest) = split_digits(s);
+    let h: u32 = (1..=2).contains(&h.len()).then(|| h.parse().ok())??;
+    let mut secs = 0;
+    let mut parts = 0;
+    for scale in [60, 1] {
+        let Some((n, tail)) = rest.strip_prefix(':').map(split_digits) else {
+            break;
+        };
+        let n: u32 = (n.len() == 2).then(|| n.parse().ok())??;
+        if n >= 60 {
+            return None;
+        }
+        secs += n * scale;
+        parts += 1;
+        rest = tail;
+    }
+    let h = match meridiem(rest.trim_start()) {
+        Some((pm, tail)) if (1..=12).contains(&h) => {
+            rest = tail;
+            h % 12 + if pm { 12 } else { 0 }
+        }
+        Some(_) => return None,
+        None if parts == 0 || h > 24 => return None,
+        None => h,
+    };
+    Some((f64::from(h * 3600 + secs), rest))
+}
+
+/// Whether `s` starts with `pm` rather than `am` (or `p.m.`, any case), and what follows.
+fn meridiem(s: &str) -> Option<(bool, &str)> {
+    ["am", "a.m.", "pm", "p.m."].iter().find_map(|m| {
+        let rest = s.get(m.len()..)?;
+        (s[..m.len()].eq_ignore_ascii_case(m) && !rest.starts_with(char::is_alphabetic))
+            .then(|| (m.starts_with('p'), rest))
+    })
+}
+
+/// Days from 1970-01-01 to a date in the proleptic Gregorian calendar.
+fn days(y: i64, m: u32, d: u32) -> i64 {
+    let (m, d) = (i64::from(m), i64::from(d));
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
 fn natural(a: &str, b: &str) -> Ordering {
@@ -681,6 +1109,22 @@ mod tests {
         }
     }
 
+    /// `a` against `b`, ascending, in a column of the two.
+    fn compare_cells(a: &str, b: &str) -> Ordering {
+        let cells = [a.to_owned(), b.to_owned()];
+        let keys = keys(&cells);
+        keys[0].compare(&keys[1], false)
+    }
+
+    /// A column's cells, sorted ascending.
+    fn sorted(cells: &[&str]) -> Vec<String> {
+        let cells: Vec<String> = cells.iter().map(|&c| c.to_owned()).collect();
+        let keys = keys(&cells);
+        let mut order: Vec<usize> = (0..cells.len()).collect();
+        order.sort_by(|&a, &b| keys[a].compare(&keys[b], false));
+        order.into_iter().map(|i| cells[i].clone()).collect()
+    }
+
     #[test]
     fn cells_compare_as_numbers_or_naturally() {
         use Ordering::{Equal, Greater, Less};
@@ -712,10 +1156,54 @@ mod tests {
             ("1h2m", "61 min", Greater),
             ("2 days", "47 h", Greater),
             ("-5ms", "1ns", Less),
-            // a duration and a plain number, or an unknown unit, compare as text
+            // a plain number before a duration; an unknown unit by its number, then as text
             ("12ms", "12", Greater),
             ("5 parsecs", "4 parsecs", Greater),
             ("3 ms ago", "20 ms ago", Less),
+            ("5 parsecs", "5 lightyears", Greater),
+            // thousands in groups, money, approximations, accounting negatives
+            ("1'024", "999", Greater),
+            ("1’000’000", "999 999", Greater),
+            ("1 000 000", "2 000", Greater),
+            ("1\u{202f}000", "999", Greater),
+            ("(1,234)", "-5", Less),
+            ("~5", "<4", Greater),
+            ("US$ 30", "€4", Greater),
+            ("85 €", "310 €", Less),
+            ("1.5k", "999", Greater),
+            ("2M", "1500k", Greater),
+            ("3‰", "1%", Less),
+            // sizes
+            ("1.5 GB", "300 MB", Greater),
+            ("1 KiB", "1000 B", Greater),
+            ("1 MiB", "1.05 MB", Less),
+            ("1 GiB", "1000 MiB", Greater),
+            ("2 TiB", "2048 GiB", Equal),
+            ("512 MiB", "1.5 GiB", Less),
+            ("2 bytes", "1kB", Less),
+            // durations in weeks, months, years
+            ("2 weeks", "13 days", Greater),
+            ("1 mo", "4 w", Greater),
+            ("1y", "11 months", Greater),
+            // dates, in any of their formats
+            ("14 Oct 2026", "3 Nov 2025", Greater),
+            ("Oct 14, 2026", "Nov 3, 2025", Greater),
+            ("October 14th 2026", "2026-10-14", Equal),
+            ("14-Oct-2026", "Tue, 14 Oct 2026", Equal),
+            ("Sept 2026", "2026-09-01", Equal),
+            ("14.10.2026", "2026/10/13", Greater),
+            ("10/14/2026", "2026-10-14", Equal),
+            ("2026-10-14T09:30Z", "2026-10-14 13:05", Less),
+            ("Oct 14, 2026 9:30 PM", "2026-10-14 21:30", Equal),
+            ("Oct 14", "Jan 2, 1999", Less),
+            // times of day
+            ("9:30 PM", "10:15 AM", Greater),
+            ("12am", "1 a.m.", Less),
+            ("21:05:10", "9:30 pm", Less),
+            // text that only looks like a date or a number
+            ("May 5 tasks", "April showers", Greater),
+            ("10.0.0.2", "10.0.0.10", Less),
+            ("3.12.10", "3.9.18", Greater),
         ];
         for (a, b, expected) in cases {
             assert_eq!(compare_cells(a, b), expected, "{a} vs {b}");
@@ -723,6 +1211,93 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_column_says_how_it_writes_numbers_and_dates() {
+        // a decimal comma, once a cell can't be read any other way
+        assert_eq!(
+            sorted(&["1.234,5", "3,5", "1.000"]),
+            ["3,5", "1.000", "1.234,5"]
+        );
+        assert_eq!(sorted(&["0,25", "0,3"]), ["0,25", "0,3"]);
+        // or a point, and grouping commas, by default
+        assert_eq!(
+            sorted(&["1,234", "3.5", "1,000"]),
+            ["3.5", "1,000", "1,234"]
+        );
+        // day first once a date can't be month first, month first by default
+        assert_eq!(
+            sorted(&["01/02/2026", "13/01/2026"]),
+            ["13/01/2026", "01/02/2026"]
+        );
+        assert_eq!(
+            sorted(&["01/13/2026", "01/02/2026"]),
+            ["01/02/2026", "01/13/2026"]
+        );
+    }
+
+    #[test]
+    fn mixed_columns_sort_in_groups_with_text_and_blanks_last() {
+        let cells = [
+            "n/a", "b", "2 s", "", "3", "500 ms", "a", "-", "Oct 2026", "10",
+        ];
+        assert_eq!(
+            sorted(&cells),
+            [
+                "3", "10", "500 ms", "2 s", "Oct 2026", "a", "b", "n/a", "", "-"
+            ]
+        );
+        let cells: Vec<String> = cells.iter().map(|&c| c.to_owned()).collect();
+        let keys = keys(&cells);
+        let mut order: Vec<usize> = (0..cells.len()).collect();
+        order.sort_by(|&a, &b| keys[a].compare(&keys[b], true));
+        let desc: Vec<&str> = order.iter().map(|&i| cells[i].as_str()).collect();
+        assert_eq!(
+            desc,
+            [
+                "10", "3", "2 s", "500 ms", "Oct 2026", "b", "a", "n/a", "", "-"
+            ]
+        );
+    }
+
+    #[test]
+    fn keys_compare_in_a_total_order() {
+        let cells: Vec<String> = [
+            "2 s",
+            "3",
+            "500 ms",
+            "10",
+            "1 min",
+            "n/a",
+            "45",
+            "7 ms",
+            "1 MB",
+            "x",
+            "9:30",
+            "2026-10-14",
+            "1.2.3",
+            "3 cores",
+            "-",
+            "1e3",
+            "Oct 14",
+        ]
+        .iter()
+        .map(|&c| c.to_owned())
+        .collect();
+        let keys = keys(&cells);
+        for desc in [false, true] {
+            let cmp = |a: &Key<'_>, b: &Key<'_>| a.compare(b, desc);
+            for a in &keys {
+                for b in &keys {
+                    assert_eq!(cmp(a, b), cmp(b, a).reverse(), "{a:?} vs {b:?}");
+                    for c in &keys {
+                        if cmp(a, b).is_le() && cmp(b, c).is_le() {
+                            assert!(cmp(a, c).is_le(), "{a:?} <= {b:?} <= {c:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn rows_sort_both_ways_with_blanks_last() {
         let doc = parse(
