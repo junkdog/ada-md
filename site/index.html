@@ -980,7 +980,7 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
     <div class="tile"><b>31.4 M</b><p>fuzzed sessions</p><small>whole scripted sessions, plus 339 M runs of the printer, log scanners and image decoder; over 23 h in ten runs</small></div>
     <div class="tile"><b>10</b><p>bugs found, all fixed</p><small>an overflow on an impossible git hunk; four frame bugs with wide glyphs; a parser blow-up and a highlighter loop, now bounded; three malformed images that took it down</small></div>
     <div class="tile"><b>0</b><p>crashes, hangs or OOMs</p><small>in every run since the fixes</small></div>
-    <div class="tile"><b>1</b><p><code>unsafe</code> block</p><small>a malloc option at startup, out of the fuzzer's reach</small></div>
+    <div class="tile"><b>2</b><p><code>unsafe</code> blocks</p><small>both set glibc's malloc arena count, before the threads that use it start</small></div>
   </div>
   <ul class="fuzz">
     <li><h3>Any document</h3><p>Markdown, code, config, plain text and images, built from random bytes and a
