@@ -61,7 +61,7 @@ task_open = { fg = "comment" }
 rule = { fg = "comment" }
 table_border = { fg = "current_line" }
 table_header = { fg = "purple", bold = true }
-table_row_alt = { bg = "background_dark" }
+table_row_alt = { bg = "background_darker" }
 footnote_label = { fg = "purple" }
 html = { fg = "comment" }
 image_frame = {}

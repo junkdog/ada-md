@@ -6,6 +6,7 @@ name = "tokyonight-moon"
 [palette]
 bg = "#222436"
 bg_dark = "#1e2030"
+bg_darker = "#141627"    # not upstream: a step below the page, for table row stripes
 bg_highlight = "#2f334d"
 fg = "#c8d3f5"
 fg_dark = "#828bb8"
@@ -69,7 +70,7 @@ task_open = { fg = "comment" }
 rule = { fg = "dark3" }
 table_border = { fg = "fg_gutter" }
 table_header = { fg = "magenta", bold = true }
-table_row_alt = { bg = "bg_dark" }
+table_row_alt = { bg = "bg_darker" }
 footnote_label = { fg = "cyan" }
 html = { fg = "comment" }
 image_frame = {}

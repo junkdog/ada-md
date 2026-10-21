@@ -6,6 +6,7 @@ name = "tokyonight-storm"
 [palette]
 bg = "#24283b"
 bg_dark = "#1f2335"
+bg_darker = "#161a2c"    # not upstream: a step below the page, for table row stripes
 bg_highlight = "#292e42"
 fg = "#c0caf5"
 fg_dark = "#a9b1d6"
@@ -69,7 +70,7 @@ task_open = { fg = "comment" }
 rule = { fg = "dark3" }
 table_border = { fg = "fg_gutter" }
 table_header = { fg = "magenta", bold = true }
-table_row_alt = { bg = "bg_dark" }
+table_row_alt = { bg = "bg_darker" }
 footnote_label = { fg = "cyan" }
 html = { fg = "comment" }
 image_frame = {}

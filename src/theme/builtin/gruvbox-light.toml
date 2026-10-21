@@ -7,6 +7,7 @@ bg0_h = "#f9f5d7"
 bg = "#fbf1c7"
 bg0_s = "#f2e5bc"
 bg1 = "#ebdbb2"
+bg1_2 = "#dcd2a9"    # not upstream: between bg1 and bg2, for table row stripes
 bg2 = "#d5c4a1"
 bg3 = "#bdae93"
 bg4 = "#a89984"
@@ -66,7 +67,7 @@ task_open = { fg = "gray" }
 rule = { fg = "bg3" }
 table_border = { fg = "bg3" }
 table_header = { fg = "yellow", bold = true }
-table_row_alt = { bg = "bg0_s" }   # every other body row or record card
+table_row_alt = { bg = "bg1_2" }   # every other body row or record card; darker than inline code (bg1)
 footnote_label = { fg = "blue" }
 html = { fg = "gray" }
 image_frame = {}         # an image's frame until it has decoded; inherits block.table_border

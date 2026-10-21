@@ -74,7 +74,7 @@ task_open = { fg = "overlay1" }
 rule = { fg = "overlay0" }
 table_border = { fg = "surface2" }
 table_header = { fg = "mauve", bold = true }
-table_row_alt = { bg = "mantle" }
+table_row_alt = { bg = "crust" }
 footnote_label = { fg = "lavender" }
 html = { fg = "overlay1" }
 image_frame = {}

@@ -17,6 +17,7 @@ pine = "#286983"
 foam = "#56949f"
 iris = "#907aa9"
 highlight_low = "#f4ede8"
+overlay_dark = "#e5dfd8"    # not upstream: a step below the page, for table row stripes
 highlight_med = "#dfdad9"
 highlight_high = "#cecacd"
 
@@ -63,7 +64,7 @@ task_open = { fg = "muted" }
 rule = { fg = "highlight_high" }
 table_border = { fg = "highlight_high" }
 table_header = { fg = "iris", bold = true }
-table_row_alt = { bg = "surface" }
+table_row_alt = { bg = "overlay_dark" }
 footnote_label = { fg = "iris" }
 html = { fg = "muted" }
 image_frame = {}

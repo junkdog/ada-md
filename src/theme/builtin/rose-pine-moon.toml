@@ -5,6 +5,7 @@ name = "rose-pine-moon"
 
 [palette]
 base = "#232136"
+base_dark = "#151327"    # not upstream: a step below the page, for table row stripes
 surface = "#2a273f"
 overlay = "#393552"
 muted = "#6e6a86"
@@ -63,7 +64,7 @@ task_open = { fg = "muted" }
 rule = { fg = "highlight_high" }
 table_border = { fg = "highlight_high" }
 table_header = { fg = "iris", bold = true }
-table_row_alt = { bg = "surface" }
+table_row_alt = { bg = "base_dark" }
 footnote_label = { fg = "iris" }
 html = { fg = "muted" }
 image_frame = {}
