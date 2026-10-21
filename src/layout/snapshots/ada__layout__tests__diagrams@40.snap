@@ -55,17 +55,57 @@ expression: render(&l)
 27-31│  │   │◀┄┄┄┄┄┄┄┤
 27-31│  │   │        │
      │
-   33│  A kind ada doesn't draw yet stays
-   33│  source:
+   33│  A flowchart, with a subgraph:
      │
-   35│   mermaid
-   36│   flowchart LR
-   37│       A --> B
-   38│
+35-45│                                              ┌───────────┐
+35-45│                                              │ pulldown- │
+35-45│  ┌─ Parse ───────────────────────┐        ┌─▶│   cmark   ├┐
+35-45│  │ ┌───────────┐   ╱───────────╲ │        │  └───────────┘│  ┌────────┐   ╭───────╮
+35-45│  │ │ read file ├──▶│ markdown? ├┬┼─── yes ┘               ├─▶│ layout ├┄┄▶( paint )
+35-45│  │ └───────────┘   ╲───────────╱││            ┌─────────┐ │  └────────┘   ╰───────╯
+35-45│  │                              └┼─── no ────▶│ syntect ├─┘
+35-45│  └───────────────────────────────┘            └─────────┘
      │
-   40│  So does one that doesn't parse:
+   47│  A state diagram:
      │
-   42│   mermaid
-   43│   sequenceDiagram
-   44│       this is not a statement
-   45│
+49-57│                  ●
+49-57│                  │
+49-57│                  ▼
+49-57│             ╭──────╮
+49-57│             │ Idle │
+49-57│             ╰┬─────╯
+49-57│              │    ▲
+49-57│              │    └─┐
+49-57│            open   retry
+49-57│              │      │
+49-57│              ▼      │
+49-57│       ╭─────────╮   │
+49-57│       │ Loading │   │
+49-57│       ╰┬───────┬╯   │
+49-57│        │       │    │
+49-57│        │       │    │
+49-57│     parsed   error  │
+49-57│        │       │    │
+49-57│        ▼       ▼    │
+49-57│  ╭───────╮   ╭──────┴─╮
+49-57│  │ Ready │   │ Failed │
+49-57│  ╰───┬───╯   ╰────────╯
+49-57│      │
+49-57│      ▼
+49-57│      ◉
+     │
+   59│  A kind ada doesn't draw stays
+   59│  source:
+     │
+   61│   mermaid
+   62│   pie title Frame time
+   63│       "Layout" : 40
+   64│       "Paint" : 60
+   65│
+     │
+   67│  So does one that doesn't parse:
+     │
+   69│   mermaid
+   70│   sequenceDiagram
+   71│       this is not a statement
+   72│

@@ -1,0 +1,23 @@
+---
+source: src/diagram/graph/tests.rs
+expression: "drawn(\"flowchart TD\\nA --> B --> C --> A\\nC --> D\")"
+---
+   ┌───┐
+   │ A │
+   └┬──┘
+    │ ▲
+   ┌┘ │
+   ▼  │
+┌───┐ │
+│ B │ │
+└──┬┘ │
+   └┐ │
+    ▼ │
+   ┌──┴┐
+   │ C │
+   └┬──┘
+    │
+    ▼
+  ┌───┐
+  │ D │
+  └───┘

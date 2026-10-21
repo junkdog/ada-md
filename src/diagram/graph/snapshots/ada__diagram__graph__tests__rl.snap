@@ -1,0 +1,10 @@
+---
+source: src/diagram/graph/tests.rs
+expression: "drawn(\"graph RL\\na --> b --> c\\na --> c\")"
+---
+        ┌───┐
+       ┌┤ b │◀─┐
+       │└───┘  │
+┌───┐  │       │┌───┐
+│ c │◀─┴───────┴┤ a │
+└───┘           └───┘

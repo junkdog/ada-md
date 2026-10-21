@@ -15,6 +15,8 @@ const DASHED: u8 = 1 << 4;
 const ROUND: u8 = 1 << 5;
 /// Vertical lines drawn heavy: an active lifeline.
 const HEAVY: u8 = 1 << 6;
+/// Every line in the cell heavy: a flowchart's thick edge (`==>`).
+const THICK: u8 = 1 << 7;
 
 /// How a line is drawn.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -22,24 +24,35 @@ pub struct Pen {
     pub dashed: bool,
     /// Rounded corners.
     pub round: bool,
+    pub thick: bool,
 }
 
 impl Pen {
     pub const SOLID: Pen = Pen {
         dashed: false,
         round: false,
+        thick: false,
     };
     pub const DASHED: Pen = Pen {
         dashed: true,
         round: false,
+        thick: false,
     };
     pub const ROUND: Pen = Pen {
         dashed: false,
         round: true,
+        thick: false,
+    };
+    pub const THICK: Pen = Pen {
+        dashed: false,
+        round: false,
+        thick: true,
     };
 
     fn flags(self) -> u8 {
-        (if self.dashed { DASHED } else { 0 }) | if self.round { ROUND } else { 0 }
+        (if self.dashed { DASHED } else { 0 })
+            | (if self.round { ROUND } else { 0 })
+            | if self.thick { THICK } else { 0 }
     }
 }
 
@@ -173,6 +186,18 @@ impl Canvas {
         self.bits(row, col, DOWN, key);
     }
 
+    /// Extend the line at `(row, col)` one way, as a corner reaching up into a label above it:
+    /// `(up, down, left, right)`. Nothing happens where there is no line.
+    pub fn extend(&mut self, row: usize, col: usize, way: (bool, bool, bool, bool)) {
+        let bits = (if way.0 { UP } else { 0 })
+            | (if way.1 { DOWN } else { 0 })
+            | (if way.2 { LEFT } else { 0 })
+            | if way.3 { RIGHT } else { 0 };
+        if let Some(Cell::Lines(b, _)) = self.at(row, col) {
+            *b |= bits;
+        }
+    }
+
     /// Write `text` from `col`, over whatever is there; it stops at the right edge. Returns the
     /// column after it.
     pub fn text(&mut self, row: usize, col: usize, text: &str, key: StyleKey) -> usize {
@@ -269,6 +294,32 @@ fn heavy(dirs: u8, ascii: bool) -> char {
     }
 }
 
+/// The glyph for a cell whose lines are all heavy.
+fn thick(dirs: u8, ascii: bool) -> char {
+    let vertical = dirs & !(UP | DOWN) == 0;
+    let horizontal = dirs & !(LEFT | RIGHT) == 0;
+    if ascii {
+        return match () {
+            _ if vertical => '|',
+            _ if horizontal => '=',
+            _ => '+',
+        };
+    }
+    match dirs {
+        _ if vertical => '┃',
+        _ if horizontal => '━',
+        d if d == DOWN | RIGHT => '┏',
+        d if d == DOWN | LEFT => '┓',
+        d if d == UP | RIGHT => '┗',
+        d if d == UP | LEFT => '┛',
+        d if d == UP | DOWN | RIGHT => '┣',
+        d if d == UP | DOWN | LEFT => '┫',
+        d if d == DOWN | LEFT | RIGHT => '┳',
+        d if d == UP | LEFT | RIGHT => '┻',
+        _ => '╋',
+    }
+}
+
 /// The glyph for a cell's line bits.
 fn glyph(bits: u8, ascii: bool) -> char {
     let dashed = bits & DASHED != 0;
@@ -278,6 +329,9 @@ fn glyph(bits: u8, ascii: bool) -> char {
     let horizontal = dirs & !(LEFT | RIGHT) == 0;
     if bits & HEAVY != 0 && dirs & (UP | DOWN) != 0 {
         return heavy(dirs, ascii);
+    }
+    if bits & THICK != 0 && dirs != 0 {
+        return thick(dirs, ascii);
     }
     if ascii {
         return match () {

@@ -361,7 +361,7 @@ mod tests {
     fn seq(src: &str) -> Sequence {
         match parse_diagram(src) {
             Some(Diagram::Sequence(s)) => s,
-            None => panic!("didn't parse: {src}"),
+            _ => panic!("didn't parse: {src}"),
         }
     }
 

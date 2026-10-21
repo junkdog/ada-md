@@ -1,0 +1,32 @@
+---
+source: src/diagram/graph/tests.rs
+expression: drawn(src)
+---
+                       ●
+                       │
+                       ▼
+                 ╭──────╮
+                 │ Idle │
+                 ╰┬─────╯
+                  │    ▲
+                  │    └──────┐
+                open        retry
+                  │           │
+                  ▼           │
+          ╭─────────╮         │
+          │ Loading │         │
+          ╰┬───────┬╯         │
+           │   ▲   │          │
+   ┌───────┘   │   └──────┐   └┐
+parsed   file changed   error  │
+   │     ┌─────┘          │    │
+   ▼     │                ▼    │
+  ╭──────┴╮            ╭───────┴╮
+  │ Ready │            │ Failed │
+  ╰──────┬╯            ╰────────╯
+         │
+         │
+       quit
+         │
+         ▼
+         ◉

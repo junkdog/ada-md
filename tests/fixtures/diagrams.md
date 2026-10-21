@@ -30,11 +30,38 @@ Inside a quote:
 >     B-->>A: hi
 > ```
 
-A kind ada doesn't draw yet stays source:
+A flowchart, with a subgraph:
 
 ```mermaid
 flowchart LR
-    A --> B
+    subgraph parse[Parse]
+        A[read file] --> B{markdown?}
+    end
+    B -->|yes| C[pulldown-cmark]
+    B -->|no| D[syntect]
+    C --> E[layout]
+    D --> E
+    E -.-> F((paint))
+```
+
+A state diagram:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Loading: open
+    Loading --> Ready: parsed
+    Loading --> Failed: error
+    Failed --> Idle: retry
+    Ready --> [*]
+```
+
+A kind ada doesn't draw stays source:
+
+```mermaid
+pie title Frame time
+    "Layout" : 40
+    "Paint" : 60
 ```
 
 So does one that doesn't parse:

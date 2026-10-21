@@ -469,8 +469,9 @@ impl<'a> Painter<'a> {
         if let (0, Some(n)) = (k, m.number) {
             x = self
                 .canvas
-                .text(row, x, &n.to_string(), StyleKey::DiagramNumber)
-                + 1;
+                .text(row, x, &n.to_string(), StyleKey::DiagramNumber);
+            // written, so a lifeline under it doesn't show through
+            x = self.canvas.text(row, x, " ", StyleKey::DiagramLabel);
         }
         self.canvas.text(row, x, line, StyleKey::DiagramLabel);
     }

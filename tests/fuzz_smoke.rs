@@ -151,6 +151,68 @@ fn random_diagrams_never_panic() {
     }
 }
 
+/// Statements flowcharts and state diagrams are made of, and odd ones (DG-3).
+const GRAPH_STATEMENTS: &[&str] = &[
+    "A[Start] --> B{ok?}\n",
+    "B -->|yes| C(round)\n",
+    "B -- no --> D([stadium])\n",
+    "C -.-> A\n",
+    "D ==> E((circle)) --- A\n",
+    "E --o F[\"quoted [x]\"] --x A\n",
+    "A & B --> G & H\n",
+    "G <--> G\n",
+    "H ---> I[日本語のラベル that is long enough to wrap]\n",
+    "subgraph one [One]\n",
+    "subgraph two\n",
+    "end\n",
+    "one --> two\n",
+    "A ~~~ H\n",
+    "classDef x fill:#f00\n",
+    "%% comment\n",
+    "\n",
+    "not --> a --> [statement\n",
+];
+
+const STATE_STATEMENTS: &[&str] = &[
+    "[*] --> Idle\n",
+    "Idle --> Busy : work\n",
+    "Busy --> Idle\n",
+    "Busy --> Busy : again\n",
+    "Busy --> [*]\n",
+    "state Busy {\n",
+    "state \"A long name\" as L\n",
+    "state F <<fork>>\n",
+    "state C <<choice>>\n",
+    "L --> F\n",
+    "F --> C\n",
+    "--\n",
+    "}\n",
+    "note right of Idle : a note\n",
+    "note left of L\n",
+    "end note\n",
+    "direction LR\n",
+    "Idle : waiting\n",
+];
+
+#[test]
+fn random_graphs_never_panic() {
+    let mut rng = Rng(0x00ad_a5ee_d000_0003);
+    for i in 0..300 {
+        let (header, statements) = match i % 3 {
+            0 => ("flowchart TD", GRAPH_STATEMENTS),
+            1 => ("graph LR", GRAPH_STATEMENTS),
+            _ => ("stateDiagram-v2", STATE_STATEMENTS),
+        };
+        let len = rng.below(40);
+        let body: String = (0..len)
+            .map(|_| statements[rng.below(statements.len() as u64) as usize])
+            .collect();
+        let text =
+            format!("> ```mermaid\n> {header}\n{body}```\n```mermaid\n{header}\n{body}```\n");
+        replay(&mut rng, &text);
+    }
+}
+
 fn replay(rng: &mut Rng, text: &str) {
     {
         let mut msgs = vec![

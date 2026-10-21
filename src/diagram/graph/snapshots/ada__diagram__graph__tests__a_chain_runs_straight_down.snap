@@ -1,0 +1,17 @@
+---
+source: src/diagram/graph/tests.rs
+expression: "drawn(\"flowchart TD\\nA[Start] --> B[Middle] --> C[End]\")"
+---
+ ┌───────┐
+ │ Start │
+ └───┬───┘
+     │
+     ▼
+┌────────┐
+│ Middle │
+└────┬───┘
+     │
+     ▼
+  ┌─────┐
+  │ End │
+  └─────┘

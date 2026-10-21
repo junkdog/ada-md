@@ -1,0 +1,17 @@
+---
+source: src/diagram/graph/tests.rs
+expression: "drawn(\"graph BT\\na --> b --> c\\na --> c\")"
+---
+   ┌───┐
+   │ c │
+   └───┘
+    ▲ ▲
+   ┌┘ │
+┌──┴┐ │
+│ b │ │
+└───┘ │
+   ▲  │
+   └┐ │
+   ┌┴─┴┐
+   │ a │
+   └───┘

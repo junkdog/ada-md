@@ -1,0 +1,20 @@
+---
+source: src/diagram/graph/tests.rs
+expression: drawn(src)
+---
+    ╱─────╲
+    │ ok? │
+    ╲┬───┬╱
+     │   └─┐
+     │     │
+    yes   no
+    ┌┘     │
+    ▼      ▼
+┌────┐   ┌──────┐
+│ go │   │ stop │
+└───┬┘   └┬─────┘
+    └┐    │
+     ▼    ▼
+    ┌──────┐
+    │ done │
+    └──────┘

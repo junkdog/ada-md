@@ -1,0 +1,17 @@
+---
+source: src/diagram/graph/tests.rs
+expression: rows
+---
++---+
+| A |
++-+-+
+  |
+  v
+/---\
+| q |
+\-+-/
+  :
+  v
++---+
+| C |
++---+

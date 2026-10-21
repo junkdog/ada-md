@@ -4,6 +4,7 @@
 //! source, highlighted like any code block.
 
 mod canvas;
+pub mod graph;
 pub mod sequence;
 
 use unicode_width::UnicodeWidthChar;
@@ -16,6 +17,8 @@ use crate::theme::Glyphs;
 #[derive(Debug)]
 pub enum Diagram {
     Sequence(sequence::Sequence),
+    /// A flowchart or a state diagram.
+    Graph(graph::Graph),
 }
 
 /// The most cells a drawn diagram may have; a bigger one shows as source.
@@ -32,6 +35,9 @@ pub fn parse(src: &str) -> Option<Diagram> {
     let kind = header.split_whitespace().next()?;
     match kind {
         "sequenceDiagram" => sequence::parse(lines).map(Diagram::Sequence),
+        "flowchart" | "flowchart-elk" | "graph" | "stateDiagram" | "stateDiagram-v2" => {
+            graph::parse(kind, header, lines).map(Diagram::Graph)
+        }
         _ => None,
     }
 }
@@ -52,6 +58,7 @@ pub fn draw(diagram: &Diagram, width: u16, glyphs: &Glyphs) -> Option<Drawn> {
     let ascii = glyphs.table_border == crate::theme::TableBorder::Ascii;
     let drawn = match diagram {
         Diagram::Sequence(s) => sequence::draw(s, usize::from(width), ascii)?,
+        Diagram::Graph(g) => graph::draw(g, usize::from(width), ascii)?,
     };
     (drawn.canvas.cells() <= MAX_CELLS).then_some(drawn)
 }
@@ -294,6 +301,7 @@ mod tests {
     #[test]
     fn unknown_kinds_are_left_as_source() {
         assert!(parse("pie\n \"a\": 1").is_none());
+        assert!(parse("classDiagram\n class A").is_none());
         assert!(parse("").is_none());
         assert!(parse("%% only a comment").is_none());
     }

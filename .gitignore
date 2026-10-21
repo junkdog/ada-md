@@ -4,3 +4,4 @@
 /fuzz/artifacts
 /fuzz/coverage
 /demo/demo.gif
+*.pending-snap
