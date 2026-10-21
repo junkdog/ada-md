@@ -73,6 +73,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "roots"
+path = "fuzz_targets/roots.rs"
+test = false
+doc = false
+bench = false
+
 # not part of ada's own build
 [workspace]
 members = ["."]
