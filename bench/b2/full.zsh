@@ -5,7 +5,7 @@
 # B2_PROFILE (on by default) holds every lane core ready for the run (b2-bench-profile: EPP performance, no idle
 # state deeper than C1; ada-optimization experiment 28) and writes OUT/profile.txt: cells with and without it don't
 # mix. ADA is copied into OUT and run from there.
-S=${B2_ROOT:-${0:A:h}/root}; OUT=${1:?usage: full.zsh OUT}
+S=${B2_ROOT:-${0:A:h}/root}; OUT=${${1:?usage: full.zsh OUT}:A}   # absolute: the lane specs run ADA from the corpus
 H=${0:A:h}; B2=$H/target/release/b2
 L=(0,2,4,6 8,10,12,14 16,18,20,22 24,26,28,30)   # as lanes.py
 [[ -e $OUT ]] && { echo "full: $OUT exists" >&2; exit 1 }

@@ -20,7 +20,7 @@
 # B2_MERGE_ONLY=1 redoes only the merge, compare.md and doctables.md of an existing OUT. B2_AB_ONLY=1 runs the A/B
 # and writes compare.md, with no merge and no doctables.md, so it takes a REF made with or without the profile;
 # old/REF then compares across the two, which isn't drift.
-S=${B2_ROOT:-${0:A:h}/root}; REF=${1:?usage: rerun.zsh REF OUT}; OUT=${2:?usage: rerun.zsh REF OUT}
+S=${B2_ROOT:-${0:A:h}/root}; REF=${${1:?usage: rerun.zsh REF OUT}:A}; OUT=${${2:?usage: rerun.zsh REF OUT}:A}   # absolute, as in full.zsh
 H=${0:A:h}; B2=$H/target/release/b2
 L=(0,2,4,6 8,10,12,14 16,18,20,22 24,26,28,30)   # as lanes.py
 mark() {
