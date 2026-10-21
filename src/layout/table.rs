@@ -740,18 +740,21 @@ pub(super) fn layout(b: &mut Builder<'_>, t: &Table) {
         return;
     }
     let sorted = b.measure.sorted(t.id);
-    let mark = sorted
-        .map(|s| &b.g.sort_mark[usize::from(s.sort.desc)])
-        .filter(|m| !m.is_empty())
-        .map(|m| format!(" {m}"));
-    if let (Some(s), Some(mark)) = (sorted, &mark) {
-        // the mark is glued to the header's last word
-        let w = mark.width() as u16;
-        if let Some(col) = cols.to_mut().get_mut(usize::from(s.sort.col)) {
-            col.header = col.header.saturating_add(w);
-            col.max = col.max.max(col.header);
-            col.min = col.min.saturating_add(w).min(col.max);
-        }
+    let glyph = sorted
+        .map(|s| b.g.sort_mark[usize::from(s.sort.desc)].clone())
+        .filter(|m| !m.is_empty());
+    let mark = sorted.zip(glyph.as_deref()).map(|(s, glyph)| Mark {
+        col: usize::from(s.sort.col),
+        glyph,
+        extra: (glyph.width() as u16).saturating_sub(1),
+    });
+    // a mark wider than the padding it sits in widens its column by the rest
+    if let Some(m) = mark.filter(|m| m.extra > 0)
+        && let Some(col) = cols.to_mut().get_mut(m.col)
+    {
+        col.header = col.header.saturating_add(m.extra);
+        col.max = col.max.max(col.header);
+        col.min = col.min.saturating_add(m.extra).min(col.max);
     }
     let rows: Vec<&TableRow> = match sorted {
         Some(s) => s
@@ -763,7 +766,7 @@ pub(super) fn layout(b: &mut Builder<'_>, t: &Table) {
     };
     let header = Header {
         row: &t.header,
-        mark: sorted.map(|s| usize::from(s.sort.col)).zip(mark.as_deref()),
+        mark,
     };
     let border = match b.g.table_border {
         TableBorder::Rounded => Some(&ROUNDED),
@@ -796,36 +799,56 @@ pub(super) fn layout(b: &mut Builder<'_>, t: &Table) {
 /// The header row, and the sort mark of the column the table is sorted by.
 struct Header<'a> {
     row: &'a TableRow,
-    mark: Option<(usize, &'a str)>,
+    mark: Option<Mark<'a>>,
 }
 
 impl Header<'_> {
+    /// The marked cell wraps short of its width by the mark's `extra`.
     fn cells(&self, b: &Builder<'_>, widths: &[u16]) -> Vec<Wrapped> {
-        cells(b, self.row, widths, StyleKey::TableHeader, self.mark)
+        let mut widths = widths.to_vec();
+        if let Some(m) = self.mark
+            && let Some(w) = widths.get_mut(m.col)
+        {
+            *w = w.saturating_sub(m.extra).max(1);
+        }
+        cells(b, self.row, &widths, StyleKey::TableHeader)
     }
 }
 
-/// `mark` is glued to the end of the cell in its column.
-fn cells(
-    b: &Builder<'_>,
-    row: &TableRow,
-    widths: &[u16],
-    key: StyleKey,
-    mark: Option<(usize, &str)>,
-) -> Vec<Wrapped> {
+/// The sort mark sits in the padding after the last line of its header, so a mark one cell wide
+/// leaves the column as wide as it was; what's wider than that is `extra`.
+#[derive(Clone, Copy)]
+struct Mark<'a> {
+    col: usize,
+    glyph: &'a str,
+    extra: u16,
+}
+
+impl Mark<'_> {
+    /// `pad` cells of padding after the header's text, the mark in them: a space off the text
+    /// when there's room for one, and `keep` cells clear after it.
+    fn pad(self, b: &mut Builder<'_>, pad: u16, keep: u16) {
+        let width = self.extra + 1;
+        let gap = u16::from(pad.saturating_sub(keep) > width);
+        b.text(&" ".repeat(gap as usize), StyleKey::Text);
+        b.text(self.glyph, StyleKey::TableHeader);
+        b.text(
+            &" ".repeat(pad.saturating_sub(gap + width) as usize),
+            StyleKey::Text,
+        );
+    }
+}
+
+fn cells(b: &Builder<'_>, row: &TableRow, widths: &[u16], key: StyleKey) -> Vec<Wrapped> {
     widths
         .iter()
         .enumerate()
-        .map(|(c, &w)| {
-            let suffix = mark.filter(|&(col, _)| col == c).map(|(_, m)| m);
-            match (row.cells.get(c), suffix) {
-                (Some(inl), _) => {
-                    let into = Wrapped::new(Some(inl.unit));
-                    wrap::wrap(into, &inl.runs, key, w, b.doc, b.g, suffix)
-                }
-                (None, Some(_)) => wrap::wrap(Wrapped::new(None), &[], key, w, b.doc, b.g, suffix),
-                (None, None) => Wrapped::default(),
+        .map(|(c, &w)| match row.cells.get(c) {
+            Some(inl) => {
+                let into = Wrapped::new(Some(inl.unit));
+                wrap::wrap(into, &inl.runs, key, w, b.doc, b.g, None)
             }
+            None => Wrapped::default(),
         })
         .collect()
 }
@@ -843,7 +866,7 @@ fn grid(
     }
     let header_start = b.out.row_count();
     let head = header.cells(b, widths);
-    grid_row(b, header.row, &head, widths, &t.aligns, border);
+    grid_row(b, header.row, &head, widths, &t.aligns, border, header.mark);
     if let Some(bd) = border
         && !rows.is_empty()
     {
@@ -851,9 +874,9 @@ fn grid(
     }
     let header = header_start..b.out.row_count();
     for (i, row) in rows.iter().enumerate() {
-        let cells = cells(b, row, widths, b.text_key, None);
+        let cells = cells(b, row, widths, b.text_key);
         b.striped = i % 2 == 1;
-        grid_row(b, row, &cells, widths, &t.aligns, border);
+        grid_row(b, row, &cells, widths, &t.aligns, border, None);
         b.striped = false;
     }
     if !rows.is_empty() {
@@ -887,6 +910,7 @@ fn grid_row(
     widths: &[u16],
     aligns: &[Align],
     border: Option<&Border>,
+    mark: Option<Mark<'_>>,
 ) {
     let height = cells
         .iter()
@@ -907,7 +931,11 @@ fn grid_row(
                 b.text(bd.vert, StyleKey::TableBorder);
             }
             let line = cell.lines.get(k);
-            let slack = widths[c].saturating_sub(line.map_or(0, |l| l.width));
+            let mark = mark.filter(|m| m.col == c);
+            let extra = mark.map_or(0, |m| m.extra);
+            let slack = widths[c]
+                .saturating_sub(extra)
+                .saturating_sub(line.map_or(0, |l| l.width));
             let (left, right) = match aligns.get(c) {
                 Some(Align::Center) => (slack / 2, slack - slack / 2),
                 Some(Align::Right) => (slack, 0),
@@ -917,7 +945,11 @@ fn grid_row(
             if let Some(line) = line {
                 b.emit_line(cell, line);
             }
-            b.text(&" ".repeat(1 + right as usize), StyleKey::Text);
+            let pad = 1 + right + extra;
+            match mark {
+                Some(m) if k == cell.lines.len().saturating_sub(1) => m.pad(b, pad, 0),
+                _ => b.text(&" ".repeat(pad as usize), StyleKey::Text),
+            }
         }
         if b.striped {
             b.stripe = Some(start..b.col);
@@ -961,8 +993,9 @@ fn records(
             None => b.text(&format!("{}.", i + 1), StyleKey::TableBorder),
         }
         b.end_row(row.src, RowKind::Decor);
-        let values = cells(b, row, &value_widths, b.text_key, None);
-        for (key, value) in keys.iter().zip(&values) {
+        let values = cells(b, row, &value_widths, b.text_key);
+        for (c, (key, value)) in keys.iter().zip(&values).enumerate() {
+            let mark = header.mark.filter(|m| m.col == c);
             let height = key.lines.len().max(value.lines.len()).max(1);
             for k in 0..height {
                 b.begin_row();
@@ -977,10 +1010,12 @@ fn records(
                     }
                     None => 0,
                 };
-                b.text(
-                    &" ".repeat((key_width.saturating_sub(used) + 2) as usize),
-                    StyleKey::Text,
-                );
+                let pad = key_width.saturating_sub(used) + 2;
+                match mark {
+                    // one space kept before the value
+                    Some(m) if k == key.lines.len().saturating_sub(1) => m.pad(b, pad, 1),
+                    _ => b.text(&" ".repeat(pad as usize), StyleKey::Text),
+                }
                 if let Some(line) = value.lines.get(k) {
                     b.emit_line(value, line);
                 }

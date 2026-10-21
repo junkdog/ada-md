@@ -313,6 +313,7 @@ mod tests {
     fn each_column_sorts_either_way_in_one_pick() {
         let mut state = loaded(TABLE);
         assert_eq!(names(&state), ["beta", "alpha", "gamma"]);
+        let unsorted = header(&state);
         update(&mut state, Msg::SortOpen);
         assert_eq!(state.sorting(), Some(0));
         assert_eq!(
@@ -330,7 +331,9 @@ mod tests {
         assert_eq!(state.outline, None);
         assert_eq!(names(&state), ["gamma", "beta", "alpha"]);
         assert_eq!(state.status.as_deref(), Some("sorted by Size ▼"));
-        assert!(header(&state).contains("Size ▼"), "{}", header(&state));
+        // the mark sits in the header's padding: the table stays as wide as it was
+        assert!(header(&state).contains("Size▼│"), "{}", header(&state));
+        assert_eq!(header(&state).width(), unsorted.width());
 
         // the list marks the current order and opens on its reverse, so `Enter` turns it around
         update(&mut state, Msg::SortOpen);
@@ -345,7 +348,7 @@ mod tests {
         assert_eq!(selected(&state), "Size  ▲ ascending");
         update(&mut state, Msg::OutlinePick);
         assert_eq!(names(&state), ["alpha", "beta", "gamma"]);
-        assert!(header(&state).contains("Size ▲"));
+        assert!(header(&state).contains("Size▲│"));
 
         // picking the current order keeps it
         sort(&mut state, "size asc");
@@ -353,6 +356,9 @@ mod tests {
 
         sort(&mut state, "name desc");
         assert_eq!(names(&state), ["gamma", "beta", "alpha"]);
+        // spaced off the header when the column has room to spare
+        assert!(header(&state).contains("Name ▼│"), "{}", header(&state));
+        assert_eq!(header(&state).width(), unsorted.width());
         sort(&mut state, "source");
         assert_eq!(names(&state), ["beta", "alpha", "gamma"]);
         assert_eq!(state.status.as_deref(), Some("table in source order"));

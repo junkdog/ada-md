@@ -7,24 +7,24 @@ expression: frames.last().unwrap()
   The ported modules, with t│ › ▏                           │
                             │ Suite  ▲ ascending            │
   ╭───────────────┬─────────│ Suite  ▼ descending           │──────────────────────────╮
-  │ Module        │       Ja│ Cases  ▲ ascending            │                          │
-  │               │     main│ Cases  ▼ descending · current │                          │
-  ├───────────────┼─────────│ source order                  │──────────────────────────┤
-  │  asm-commons  │      1,8╰─────────────── ← table 2/2 → ─╯LocalVariablesSorter,     │
-  │               │            │ remappers                                             │
-  │  asm-util     │      2,045 │ Textifier, CheckClassAdapter and the trace visitors   │
-  │  asm-         │      2,379 │ Control-flow and data-flow analysis over method       │
-  │ analysis      │            │ bodies                                                │
-  │  asm-tree     │      4,120 │ The tree API: ClassNode, MethodNode, InsnList and     │
-  │               │            │ friends                                               │
-  │  asm-core     │      9,812 │ ClassReader, ClassWriter and the visitor interfaces   │
-  ╰───────────────┴────────────┴───────────────────────────────────────────────────────╯
+  │ Module        │ Java mai│ Cases  ▲ ascending            │                          │
+  ├───────────────┼─────────│ Cases  ▼ descending · current │──────────────────────────┤
+  │  asm-commons  │     1,87│ source order                  │ocalVariablesSorter,      │
+  │               │         ╰─────────────── ← table 2/2 → ─╯                          │
+  │  asm-util     │     2,045 │ Textifier, CheckClassAdapter and the trace visitors    │
+  │  asm-         │     2,379 │ Control-flow and data-flow analysis over method bodies │
+  │ analysis      │           │                                                        │
+  │  asm-tree     │     4,120 │ The tree API: ClassNode, MethodNode, InsnList and      │
+  │               │           │ friends                                                │
+  │  asm-core     │     9,812 │ ClassReader, ClassWriter and the visitor interfaces    │
+  ╰───────────────┴───────────┴────────────────────────────────────────────────────────╯
 
   And the tests that cover them.
 
-  ╭──────────┬─────────╮
-  │ Suite    │ Cases ▼ │
-  ├──────────┼─────────┤
-  │  reader  │     412 │
-  │  writer  │     388 │
+  ╭──────────┬───────╮
+  │ Suite    │ Cases▼│
+  ├──────────┼───────┤
+  │  reader  │   412 │
+  │  writer  │   388 │
+  │  frames  │    97 │
  modules.md  Modules                                                                  Top

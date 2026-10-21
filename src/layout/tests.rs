@@ -6,11 +6,11 @@ use std::path::{Path, PathBuf};
 use crate::geom::Size;
 
 use super::{
-    ImageFit, Layout, LayoutParams, LineNumbers, Measure, RowKind, TableMode, layout,
+    ImageFit, Layout, LayoutParams, LineNumbers, Measure, RowKind, Sort, TableMode, layout,
     layout_measured, relayout,
 };
 use crate::doc::{BlockKind, parse};
-use crate::theme::Theme;
+use crate::theme::{Glyphs, Theme};
 
 fn fixtures() -> Vec<(String, String)> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
@@ -318,6 +318,59 @@ fn grid_rows_cover_header_and_body() {
     assert!(header[1].contains("├───┼───┤"));
     assert!(l.row_text(g.end as usize - 1).contains("│ 3 │ 4 │"));
     assert!(l.row_text(g.end as usize).contains("╰───┴───╯"));
+}
+
+/// The sort mark sits in the padding after its header, so sorting leaves the table as wide as it
+/// was; a mark wider than one cell widens its column by the rest.
+#[test]
+fn sort_marks_sit_in_the_header_padding() {
+    let doc = parse("| Name | Size |\n|---|--:|\n| beta | 10 |\n| alpha | 9 |\n");
+    let tables = doc.tables();
+    let rows = |glyphs: &Glyphs, sort: Option<Sort>, table_mode| {
+        let mut measure = Measure::new(&doc, glyphs);
+        measure.set_sort(tables[0], sort);
+        let p = LayoutParams {
+            table_mode,
+            ..params(40)
+        };
+        let l = layout_measured(&doc, &measure, glyphs, p);
+        let row = |r| l.row_text(r).trim().to_owned();
+        (0..l.rows.len()).map(row).collect::<Vec<_>>()
+    };
+    let by_size = Some(Sort { col: 1, desc: true });
+    let by_name = Some(Sort {
+        col: 0,
+        desc: false,
+    });
+    let mut glyphs = Theme::builtin().glyphs;
+    let unsorted = rows(&glyphs, None, TableMode::Grid);
+    assert_eq!(unsorted[1], "│ Name  │ Size │");
+    // snug when the header fills its column, a space off it when there's room
+    assert_eq!(
+        rows(&glyphs, by_size, TableMode::Grid)[1],
+        "│ Name  │ Size▼│"
+    );
+    assert_eq!(
+        rows(&glyphs, by_name, TableMode::Grid)[1],
+        "│ Name ▲│ Size │"
+    );
+    let cards = rows(&glyphs, by_name, TableMode::Records);
+    assert!(cards.contains(&"│ Name▲ alpha".to_owned()), "{cards:#?}");
+    assert!(cards.contains(&"│ Size  9".to_owned()), "{cards:#?}");
+
+    // the extra cell comes out of the slack when the column has some
+    glyphs.sort_mark = ["↑↑".into(), "↓↓".into()];
+    assert_eq!(
+        rows(&glyphs, by_size, TableMode::Grid)[1],
+        "│ Name  │ Size↓↓│"
+    );
+    assert_eq!(
+        rows(&glyphs, by_name, TableMode::Grid)[1],
+        "│ Name↑↑│ Size │"
+    );
+    let cards = rows(&glyphs, by_name, TableMode::Records);
+    assert!(cards.contains(&"│ Name↑↑ alpha".to_owned()), "{cards:#?}");
+    assert!(cards.contains(&"│ Size   9".to_owned()), "{cards:#?}");
 }
 
 /// Every other body row is striped, on every terminal row it takes, inside the outer borders.
