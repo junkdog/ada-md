@@ -156,7 +156,7 @@ fn keep(grid: &Grid, rows: u16, out: &mut Vec<u8>) {
         return;
     }
     out.extend_from_slice(b"\x1b7");
-    for i in images {
+    let to = |i: usize, out: &mut Vec<u8>| {
         let (x, y) = (i % w, i / w);
         out.extend_from_slice(b"\x1b8\x1b[");
         number(out, rows - y as u16);
@@ -166,7 +166,44 @@ fn keep(grid: &Grid, rows: u16, out: &mut Vec<u8>) {
             number(out, x as u16 + 1);
             out.push(b'G');
         }
+    };
+    for i in images {
+        to(i, out);
         symbol(grid, i, out);
+        // the image erased its area: what was drawn over parts of it goes over it again, from
+        // the restored cursor's style, the default
+        let Some(&(_, area)) = grid.covers.iter().rfind(|(first, _)| *first == i) else {
+            continue;
+        };
+        for y in area.top()..area.bottom().min(rows) {
+            // each row from the restored cursor, in its style, the default; then across it
+            let mut at = None;
+            let mut x = usize::from(area.x);
+            while x < usize::from(area.right()) {
+                let k = usize::from(y) * w + x;
+                let c = &grid.cells[k];
+                let width = usize::from(c.width()).max(1);
+                if !c.skip() && k != i {
+                    match at {
+                        None => {
+                            to(k, out);
+                            (pen.modifier, pen.fg, pen.bg) = (0, 0, 0);
+                        }
+                        Some(at) if at != x => {
+                            out.extend_from_slice(b"\x1b[");
+                            number(out, x as u16 + 1);
+                            out.push(b'G');
+                        }
+                        Some(_) => {}
+                    }
+                    pen.set(pen.wants(c), out);
+                    symbol(grid, k, out);
+                    // after a wide grapheme, the next cell goes where the grid has it
+                    at = Some(if width == 1 { x + 1 } else { usize::MAX });
+                }
+                x += width;
+            }
+        }
     }
     // an image's escape sequence may leave a style set, which the restore resets
     out.extend_from_slice(b"\x1b8");
@@ -322,8 +359,34 @@ fn encode(last: &Grid, next: &Grid, out: &mut Vec<u8>) {
         let width = usize::from(cur.width());
         if cur.forced() {
             i += width.saturating_sub(1);
-            if !same(next, last, at) {
-                pen.cell(next, at, out);
+            match next.covers.iter().rfind(|(first, _)| *first == at) {
+                // A sixel or iTerm2 image erases its whole area and draws over it, what was
+                // drawn over parts of it since included (a popup): when the image is written,
+                // so are they, after it, the same or not. And when any cell of its area changed,
+                // such as a popup over it closing, the image is written again.
+                Some(&(_, area)) => {
+                    let cells = |area: Rect| {
+                        (area.top()..area.bottom()).flat_map(move |y| {
+                            let row = usize::from(y) * w;
+                            row + usize::from(area.x)..row + usize::from(area.right())
+                        })
+                    };
+                    if !same(next, last, at) || cells(area).any(|k| !same(next, last, k)) {
+                        pen.cell(next, at, out);
+                        let mut k = at + 1;
+                        for k0 in cells(area).filter(|&k0| k0 > at) {
+                            if k0 < k {
+                                continue;
+                            }
+                            k = k0 + usize::from(next.cells[k0].width()).max(1);
+                            if !next.cells[k0].skip() {
+                                pen.cell(next, k0, out);
+                            }
+                        }
+                    }
+                }
+                None if !same(next, last, at) => pen.cell(next, at, out),
+                None => {}
             }
             continue;
         }
@@ -1322,6 +1385,45 @@ mod tests {
         );
         let lines: Vec<_> = out.split("\r\n").collect();
         assert_eq!(lines[1], "      ", "the image's cells as blanks");
+    }
+
+    /// A sixel or iTerm2 image erases its area and draws over it: what a popup drew over part of
+    /// it is written after it whenever it's written, though unchanged, and the image is written
+    /// again when the popup closes (fuzz round 8, 2026-10-21).
+    #[test]
+    fn what_is_drawn_over_an_image_goes_after_it() {
+        let mut screen = Screen::new(Vec::new(), Size::new(6, 3));
+        let draw = |screen: &mut Screen<Vec<u8>>, seq: &str, popup: bool| {
+            screen.out.clear();
+            screen
+                .draw(|g| {
+                    g.image(Rect::new(0, 1, 6, 2), seq);
+                    if popup {
+                        // a popup clears its cells first, which an image's skipped cells need
+                        g[(2, 1)].reset();
+                        g[(3, 1)].reset();
+                        g.set_stringn(2, 1, "ab", 2, Style::new());
+                    }
+                })
+                .unwrap();
+            String::from_utf8(std::mem::take(&mut screen.out)).unwrap()
+        };
+        let after = |out: &str, seq: &str| out.find(seq).is_some_and(|i| out[i..].contains("ab"));
+        let (a, b) = ("\x1bPq#0!6~\x1b\\", "\x1bPq#1!6~\x1b\\");
+        let first = draw(&mut screen, a, true);
+        assert!(after(&first, a), "{first:?}");
+        // the image written again, a scroll's other rows say, and the popup the same
+        assert!(after(&draw(&mut screen, b, true), b));
+        // nothing changed: nothing written
+        assert!(!draw(&mut screen, b, true).contains(b));
+        // the popup closed: the image again, over where it was
+        assert!(draw(&mut screen, b, false).contains(b));
+        // and kept on quit: the image, then the popup over it
+        draw(&mut screen, a, true);
+        screen.keep(3).unwrap();
+        let out = String::from_utf8(screen.out).unwrap();
+        assert!(after(&out, a), "{out:?}");
+        assert_eq!(out.matches(a).count(), 1, "{out:?}");
     }
 
     /// A kitty image's cells are text in its color, which names the image: they're kept in the

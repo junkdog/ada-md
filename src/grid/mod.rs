@@ -104,7 +104,7 @@ impl Cell {
     }
 
     /// A kitty placeholder's row and column in its image.
-    fn placed(&self) -> Option<(u16, u16)> {
+    pub fn placed(&self) -> Option<(u16, u16)> {
         let [r0, r1, c0, c1] = self.sym;
         (self.len == PLACED).then_some((u16::from_le_bytes([r0, r1]), u16::from_le_bytes([c0, c1])))
     }
@@ -150,6 +150,9 @@ pub struct Grid {
     /// An image protocol wrote escape sequences into cells, which the terminal may not move
     /// with its rows.
     images: bool,
+    /// The sixel and iTerm2 images: each one's first cell, where its escape sequence is, and the
+    /// area it covers. Written, the sequence erases the whole area and draws over it.
+    pub(crate) covers: Vec<(usize, Rect)>,
 }
 
 impl Grid {
@@ -160,6 +163,7 @@ impl Grid {
             long: Vec::new(),
             scrolled: None,
             images: false,
+            covers: Vec::new(),
         }
     }
 
@@ -173,6 +177,7 @@ impl Grid {
         self.long.clear();
         self.scrolled = None;
         self.images = false;
+        self.covers.clear();
     }
 
     /// Every cell blank in `style`: on a blank grid, the same as patching `style` over all of it,
@@ -194,6 +199,7 @@ impl Grid {
         self.long.clear();
         self.scrolled = None;
         self.images = false;
+        self.covers.clear();
     }
 
     /// The rows of `area` show a list from its row `top` on. When the next frame shows the same
@@ -448,6 +454,7 @@ impl Grid {
         self.put(first, seq, 1);
         self.cells[first].meta = FORCED | 1;
         self.images = true;
+        self.covers.push((first, area));
     }
 }
 
