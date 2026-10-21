@@ -1,6 +1,6 @@
 //! Gantt charts (DG-4): the IR and its line parser. Tasks are kept as written until the last
 //! line, since Mermaid reads every date by the final `dateFormat` and lets `after` name a task
-//! declared later; then their dates resolve to instants. Drawing is in [`draw`](mod@draw).
+//! declared later; then their dates resolve to instants. Drawing is in `draw`.
 
 mod draw;
 pub mod time;

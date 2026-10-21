@@ -1,6 +1,6 @@
 //! Flowcharts and state diagrams (ada-mermaid, DG-3): both parse into one graph IR, which
-//! [`topo`] lays out as far as it can without knowing the width, once, at parse. Drawing
-//! ([`place`], then [`paint`]) sizes the labels, places and routes everything, and draws it, for
+//! `topo` lays out as far as it can without knowing the width, once, at parse. Drawing
+//! (`place`, then `paint`) sizes the labels, places and routes everything, and draws it, for
 //! each width; labels wrap narrower until the drawing fits, then it scrolls.
 //!
 //! A subgraph (or composite state) is laid out on its own, as a block in its parent's layout,

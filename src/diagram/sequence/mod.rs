@@ -1,4 +1,4 @@
-//! Sequence diagrams: the IR and its line parser. Drawing is in [`draw`](mod@draw).
+//! Sequence diagrams: the IR and its line parser. Drawing is in `draw`.
 
 mod draw;
 
