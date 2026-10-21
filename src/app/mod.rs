@@ -906,24 +906,48 @@ impl State {
         }
     }
 
+    /// Shift no-wrap code and diagrams sideways. Diagrams can't wrap, so they scroll with `w`
+    /// on too (ADR-35).
     fn scroll_code_x(&mut self, by: i16) {
-        if self.code_wrap {
-            self.status = Some("code wraps: press w to scroll it sideways".to_owned());
-            return;
+        let mut blocks = self.visible_diagrams();
+        if !self.code_wrap {
+            blocks.extend(self.visible_code());
         }
         let Some(doc) = &self.doc else {
             return;
         };
-        let max = self
-            .visible_code()
+        let max = blocks
             .iter()
             .filter_map(|&b| doc.layout.code.get(b as usize))
             .map(layout::CodeInfo::max_x)
             .max();
-        if let Some(max) = max {
-            let x = i32::from(self.code_x.min(max)) + i32::from(by);
-            self.code_x = x.clamp(0, i32::from(max)) as u16;
+        match max {
+            None | Some(0) if self.code_wrap => {
+                self.status = Some("code wraps: press w to scroll it sideways".to_owned());
+            }
+            Some(max) => {
+                let x = i32::from(self.code_x.min(max)) + i32::from(by);
+                self.code_x = x.clamp(0, i32::from(max)) as u16;
+            }
+            None => {}
         }
+    }
+
+    /// The diagrams with a row on screen.
+    fn visible_diagrams(&self) -> Vec<CodeId> {
+        let Some(doc) = &self.doc else {
+            return Vec::new();
+        };
+        let rows = doc.layout.rows.iter().skip(self.scroll as usize);
+        let mut ids: Vec<CodeId> = rows
+            .take(self.viewport_height() as usize)
+            .filter_map(|row| match row.kind {
+                RowKind::Diagram { block, .. } => Some(block),
+                _ => None,
+            })
+            .collect();
+        ids.dedup();
+        ids
     }
 
     fn scroll_by(&mut self, by: ScrollBy) {
@@ -1693,6 +1717,22 @@ mod tests {
             .expect("a theme with other [syntax] rules");
         let cmds = state.set_theme(other);
         assert_eq!(cmds.first(), Some(&only(&state)));
+    }
+
+    /// Diagrams can't wrap, so they scroll sideways with code wrap on (ADR-35).
+    #[test]
+    fn diagrams_scroll_sideways_with_wrap_on() {
+        let labels: String = (0..6)
+            .map(|i| format!("P{i}->>P{}: message {i}\n", i + 1))
+            .collect();
+        let md = format!("```mermaid\nsequenceDiagram\n{labels}```\n");
+        let mut state = loaded(&md, 40, 20);
+        assert!(state.code_wrap);
+        let max = state.doc.as_ref().unwrap().layout.code[0].max_x();
+        assert!(max > 8, "the diagram is wider than the text: {max}");
+        update(&mut state, Msg::ScrollCodeX { by: 8 });
+        assert_eq!(state.code_x, 8);
+        assert!(state.status.is_none());
     }
 
     #[test]

@@ -9,6 +9,8 @@ pub mod slug;
 use std::ops::BitOr;
 use std::sync::Arc;
 
+use crate::diagram::Diagram;
+
 pub use parse::parse;
 
 pub type LinkId = u32;
@@ -166,6 +168,8 @@ pub struct CodeBlock {
     pub fenced: bool,
     /// The search unit of the first line; line `n` is unit `first_unit + n`.
     pub first_unit: UnitId,
+    /// A ```` ```mermaid ```` block ada draws (ADR-35); `None` shows the source.
+    pub diagram: Option<Arc<Diagram>>,
 }
 
 impl CodeBlock {

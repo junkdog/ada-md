@@ -101,22 +101,70 @@ fn random_documents_never_panic() {
     let mut rng = Rng(0x00ad_a5ee_d000_0001);
     for _ in 0..400 {
         let text = document(&mut rng);
+        replay(&mut rng, &text);
+    }
+}
+
+/// Statements a sequence diagram is made of, and the odd ones it must survive (ADR-35).
+const STATEMENTS: &[&str] = &[
+    "participant A\n",
+    "actor B as Bob<br/>Smith\n",
+    "A->>B: hi\n",
+    "B-->>A: a much longer reply that will have to wrap and then be cut short\n",
+    "A->>A: to itself\n",
+    "C-xA: 日本語のラベル\n",
+    "A<<->>C: both ways\n",
+    "B-)+C:\n",
+    "C--)-B: off\n",
+    "autonumber\n",
+    "autonumber 7 3\n",
+    "Note over A,C: a note across\n",
+    "note left of A: left\n",
+    "Note right of C: right\n",
+    "loop forever\n",
+    "alt yes\n",
+    "else no\n",
+    "par\n",
+    "and\n",
+    "end\n",
+    "box Aqua group\n",
+    "rect rgb(0,0,0)\n",
+    "activate A\n",
+    "title: T\n",
+    "%% comment\n",
+    "\n",
+    "not a statement\n",
+];
+
+#[test]
+fn random_diagrams_never_panic() {
+    let mut rng = Rng(0x00ad_a5ee_d000_0002);
+    for _ in 0..300 {
+        let len = rng.below(40);
+        let body: String = (0..len)
+            .map(|_| STATEMENTS[rng.below(STATEMENTS.len() as u64) as usize])
+            .collect();
+        let text = format!(
+            "> - ```mermaid\n>   sequenceDiagram\n{body}```\n```mermaid\nsequenceDiagram\n{body}```\n"
+        );
+        replay(&mut rng, &text);
+    }
+}
+
+fn replay(rng: &mut Rng, text: &str) {
+    {
         let mut msgs = vec![
-            Msg::Init {
-                size: size(&mut rng),
-            },
+            Msg::Init { size: size(rng) },
             Msg::DocLoaded {
                 path: "fuzz.md".into(),
                 mtime: None,
-                text: text.clone().into(),
+                text: text.into(),
                 doc: Computed(None),
             },
         ];
         for _ in 0..12 {
             msgs.push(match rng.below(10) {
-                0 => Msg::Resize {
-                    size: size(&mut rng),
-                },
+                0 => Msg::Resize { size: size(rng) },
                 1 => Msg::ToggleTableMode,
                 2 => Msg::ToggleCodeWrap,
                 3 => Msg::ScrollCodeX { by: 8 },

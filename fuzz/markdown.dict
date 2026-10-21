@@ -96,3 +96,4 @@
 "fn main() {"
 "[[table]]\x0a"
 "key: value\x0a"
+"```mermaid\x0asequenceDiagram\x0a"

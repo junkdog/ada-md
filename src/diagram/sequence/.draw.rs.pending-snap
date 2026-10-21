@@ -1,0 +1,30 @@
+{"run_id":"1792604178-721798847","line":578,"new":{"module_name":"ada__diagram__sequence__draw__tests","snapshot_name":"ascii_glyphs","metadata":{"source":"src/diagram/sequence/draw.rs","assertion_line":578,"expression":"rows.join(\"\\n\")"},"snapshot":"+---+  +---+\n| A |  | B |\n+-+-+  +-+-+\n  |      |\n  |  hi  |\n  +----->|\n  |      |"},"old":{"module_name":"ada__diagram__sequence__draw__tests","metadata":{},"snapshot":"+---+   +---+\n| A |   | B |\n+-+-+   +-+-+\n  |       |\n  |  hi   |\n  +------>|\n  |       |"}}
+{"run_id":"1792604178-721798847","line":528,"new":{"module_name":"ada__diagram__sequence__draw__tests","snapshot_name":"two_participants_and_a_reply","metadata":{"source":"src/diagram/sequence/draw.rs","assertion_line":528,"expression":"rows.join(\"\\n\")"},"snapshot":"╭───╮  ╭───╮\n│ A │  │ B │\n╰─┬─╯  ╰─┬─╯\n  │      │\n  │  hi  │\n  ├─────▶│\n  │  yo  │\n  │◀┄┄┄┄┄┤\n  │      │"},"old":{"module_name":"ada__diagram__sequence__draw__tests","metadata":{},"snapshot":"╭───╮   ╭───╮\n│ A │   │ B │\n╰─┬─╯   ╰─┬─╯\n  │       │\n  │  hi   │\n  ├──────▶│\n  │  yo   │\n  │◀┄┄┄┄┄┄┤\n  │       │"}}
+{"run_id":"1792604210-780495909","line":584,"new":null,"old":null}
+{"run_id":"1792604210-780495909","line":534,"new":null,"old":null}
+{"run_id":"1792604306-275251318","line":585,"new":null,"old":null}
+{"run_id":"1792604306-275251318","line":535,"new":null,"old":null}
+{"run_id":"1792604370-618443282","line":589,"new":null,"old":null}
+{"run_id":"1792604370-618443282","line":539,"new":null,"old":null}
+{"run_id":"1792604388-489612539","line":589,"new":null,"old":null}
+{"run_id":"1792604388-489612539","line":539,"new":null,"old":null}
+{"run_id":"1792604686-573453415","line":618,"new":null,"old":null}
+{"run_id":"1792604686-573453415","line":568,"new":null,"old":null}
+{"run_id":"1792604751-980165005","line":618,"new":null,"old":null}
+{"run_id":"1792604751-980165005","line":568,"new":null,"old":null}
+{"run_id":"1792604824-531720742","line":568,"new":null,"old":null}
+{"run_id":"1792604824-531720742","line":618,"new":null,"old":null}
+{"run_id":"1792604875-556229565","line":569,"new":null,"old":null}
+{"run_id":"1792604875-556229565","line":619,"new":null,"old":null}
+{"run_id":"1792604937-196707010","line":618,"new":null,"old":null}
+{"run_id":"1792604937-196707010","line":568,"new":null,"old":null}
+{"run_id":"1792604974-162635641","line":659,"new":null,"old":null}
+{"run_id":"1792604974-162635641","line":605,"new":null,"old":null}
+{"run_id":"1792604989-256204566","line":659,"new":null,"old":null}
+{"run_id":"1792604989-256204566","line":605,"new":null,"old":null}
+{"run_id":"1792605345-237337361","line":633,"new":null,"old":null}
+{"run_id":"1792605345-237337361","line":694,"new":null,"old":null}
+{"run_id":"1792605352-869867408","line":633,"new":null,"old":null}
+{"run_id":"1792605352-869867408","line":694,"new":null,"old":null}
+{"run_id":"1792605360-840777562","line":695,"new":null,"old":null}
+{"run_id":"1792605360-840777562","line":634,"new":null,"old":null}

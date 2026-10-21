@@ -1,0 +1,19 @@
+---
+source: src/diagram/sequence/draw.rs
+expression: "rows.join(\"\\n\")"
+---
+╭───╮    ╭───╮
+│ A │    │ B │
+╰─┬─╯    ╰─┬─╯
+  │        │
+  │  call  │
+  ├───────▶┃
+  │        ┝──┐ recurse
+  │        ┃◀─┘
+  │        ┝┄┄┐ done
+  │        ┃◀┄┘
+  │ reply  ┃
+  │◀┄┄┄┄┄┄┄┥
+  ┃  open  │
+  ┝───────▶│
+  ┃        │

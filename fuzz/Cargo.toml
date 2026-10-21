@@ -80,6 +80,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "diagram"
+path = "fuzz_targets/diagram.rs"
+test = false
+doc = false
+bench = false
+
 # not part of ada's own build
 [workspace]
 members = ["."]

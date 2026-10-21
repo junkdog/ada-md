@@ -5,6 +5,7 @@ pub mod app;
 pub mod cli;
 pub mod completions;
 pub mod config;
+pub mod diagram;
 pub mod doc;
 pub mod filetype;
 pub mod geom;

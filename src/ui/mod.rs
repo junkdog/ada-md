@@ -529,6 +529,34 @@ mod tests {
         assert_eq!(sticky_header(&l, 10, 4), None, "the viewport is too short");
     }
 
+    /// A sequence diagram's participants stay on screen like a table's header (ADR-35).
+    #[test]
+    fn sequence_participants_are_a_sticky_header() {
+        let mut md = String::from("intro\n\n```mermaid\nsequenceDiagram\n");
+        for i in 0..20 {
+            md.push_str(&format!("A->>B: message {i}\n"));
+        }
+        md.push_str("```\n");
+        let doc = crate::doc::parse(&md);
+        let params = LayoutParams {
+            width: 40,
+            max_width: None,
+            table_mode: Default::default(),
+            code_wrap: true,
+            line_numbers: Default::default(),
+            glyphs_gen: 0,
+            images: None,
+        };
+        let l = layout::layout(&doc, &Theme::builtin().glyphs, params);
+        // intro, blank, then the boxes (rows 2..5) over 20 messages of two rows each
+        let g = &l.grids[0];
+        assert_eq!(g.header, 2..5);
+        let sticky = |scroll| sticky_header(&l, scroll, 10);
+        assert_eq!(sticky(2), None, "the participants are on screen");
+        assert_eq!(sticky(20), Some(2..5));
+        assert_eq!(sticky(g.end - 3), None, "past the diagram");
+    }
+
     #[test]
     fn the_table_being_sorted_takes_the_sort_table_color() {
         use crate::app::{Computed, Config, Dir, Msg, Size, update};

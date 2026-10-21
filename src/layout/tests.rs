@@ -243,7 +243,15 @@ pub(crate) fn check_invariants(l: &Layout, footnote_block: Option<usize>, what: 
                 "{what} row {i}: span widths disagree with the text"
             );
         }
-        if l.params.width >= 20 {
+        // A diagram row holds its whole line; paint shows the block's window of it.
+        if let RowKind::Diagram { block, x } = row.kind {
+            let info = l.code[block as usize];
+            assert!(
+                l.params.width < 20 || x + info.window <= l.params.width,
+                "{what} row {i}: a {}-column window from column {x}",
+                info.window
+            );
+        } else if l.params.width >= 20 {
             assert!(
                 width <= l.params.width,
                 "{what} row {i} is {width} wide: {text:?}"

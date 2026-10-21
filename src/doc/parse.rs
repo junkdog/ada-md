@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::mem;
 use std::ops::Range;
+use std::sync::Arc;
 
 use pulldown_cmark::{
     Alignment, BlockQuoteKind, CodeBlockKind, Event, LinkType, Options, Parser, Tag, TagEnd,
@@ -16,7 +17,7 @@ use super::{
     FootnoteId, InlineStyle, Inlines, LineRange, LinkId, LinkKind, LinkRef, List, ListItem, Run,
     RunKind, Table, TableId, TableRow, UnitId, fence,
 };
-use crate::guard;
+use crate::{diagram, guard};
 
 pub fn options() -> Options {
     Options::ENABLE_TABLES
@@ -647,6 +648,10 @@ impl Builder {
                 self.code_blocks += 1;
                 let first_unit = self.units;
                 self.units += super::code_lines(&text).count() as UnitId;
+                let diagram = (lang.as_deref() == Some("mermaid"))
+                    .then(|| guard::catch(|| diagram::parse(&text)).flatten())
+                    .flatten()
+                    .map(Arc::new);
                 Block {
                     kind: BlockKind::Code(CodeBlock {
                         id: self.code_blocks - 1,
@@ -656,6 +661,7 @@ impl Builder {
                         first_line: src.start + u32::from(fenced),
                         fenced,
                         first_unit,
+                        diagram,
                     }),
                     src,
                 }

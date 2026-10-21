@@ -15,6 +15,11 @@ use crate::theme::StyleKey;
 const TAB_STOP: usize = 4;
 
 pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
+    if let Some(d) = &code.diagram
+        && super::diagram::layout(b, code, d, src)
+    {
+        return;
+    }
     let block = code.id;
     let g = b.g;
     let avail = b.avail();

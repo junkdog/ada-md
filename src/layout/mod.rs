@@ -2,6 +2,7 @@
 //! carries the source lines it renders (ADR-02); colors are resolved later, at paint (ADR-03).
 
 mod code;
+mod diagram;
 mod table;
 pub mod wrap;
 
@@ -166,6 +167,13 @@ pub enum RowKind {
     /// A row reserved for [`Layout::images`]`[slot]`, which paint draws over it.
     Image {
         slot: u32,
+    },
+    /// A row of a drawn mermaid diagram (ADR-35): its code block's [`CodeId`], and the column
+    /// the diagram starts at. The spans from there on are the whole line, which paint shows
+    /// through the block's window.
+    Diagram {
+        block: CodeId,
+        x: u16,
     },
 }
 

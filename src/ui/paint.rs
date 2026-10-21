@@ -8,6 +8,7 @@ use crate::style::Style;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::LinkState;
+use crate::doc::CodeId;
 use crate::highlight::{Highlights, Run};
 use crate::layout::{Layout, Row, RowKind, Span};
 use crate::theme::{StyleKey, Theme};
@@ -64,6 +65,10 @@ impl Painter<'_> {
 
     /// A row's styled pieces, left to right. Their widths add up to the row's.
     pub fn row(&self, row: &Row, emit: &mut impl FnMut(&str, Style)) {
+        if let RowKind::Diagram { block, x } = row.kind {
+            self.diagram_row(row, block, x, emit);
+            return;
+        }
         let RowKind::Code { block, line, from } = row.kind else {
             let Some(stripe) = &row.stripe else {
                 for (text, span) in self.layout.spans(row) {
@@ -130,6 +135,55 @@ impl Painter<'_> {
         }
     }
 
+    /// A diagram row (ADR-35): what's left of column `start` as it is, the diagram through its
+    /// block's window at the shared offset, with the clip marks on a clipped edge's column.
+    fn diagram_row(
+        &self,
+        row: &Row,
+        block: CodeId,
+        start: u16,
+        emit: &mut impl FnMut(&str, Style),
+    ) {
+        let info = self
+            .layout
+            .code
+            .get(block as usize)
+            .copied()
+            .unwrap_or_default();
+        let x = usize::from(self.code_x.min(info.max_x()));
+        let window = usize::from(info.window);
+        let mut col = 0;
+        let mut shown: Vec<(String, Style)> = Vec::new();
+        for (text, span) in self.layout.spans(row) {
+            let style = self.style(span);
+            let at = usize::from(col);
+            col += span.width;
+            if at < usize::from(start) {
+                emit(text, style);
+                continue;
+            }
+            let local = at - usize::from(start);
+            let (lead, piece, trail) = slice(text, local, x, x + window);
+            for part in [" ".repeat(lead), piece.to_owned(), " ".repeat(trail)] {
+                if !part.is_empty() {
+                    shown.push((part, style));
+                }
+            }
+        }
+        let width = usize::from(col).saturating_sub(usize::from(start));
+        let g = &self.theme.glyphs;
+        let mark = self.theme.style(StyleKey::CodeWrapMark);
+        if x > 0 && width > x && drop_column(&mut shown, true) {
+            shown.insert(0, (g.code_clip[0].clone(), mark));
+        }
+        if width > x + window && drop_column(&mut shown, false) {
+            shown.push((g.code_clip[1].clone(), mark));
+        }
+        for (text, style) in &shown {
+            emit(text, *style);
+        }
+    }
+
     /// A span's style, with broken links styled as such.
     fn style(&self, span: &Span) -> Style {
         let broken = span
@@ -175,6 +229,71 @@ fn stripe_piece(
         c += ch.width().unwrap_or(0) as u16;
     }
     emit(&text[start..], if inside { style.patch(bg) } else { style });
+}
+
+/// The part of `text`, which starts at column `at`, inside columns `from..to`: blanks for a wide
+/// character cut by the left edge, the text, blanks for one cut by the right.
+fn slice(text: &str, at: usize, from: usize, to: usize) -> (usize, &str, usize) {
+    let mut col = at;
+    let (mut start, mut end) = (None, text.len());
+    let (mut lead, mut trail) = (0, 0);
+    for (i, c) in text.char_indices() {
+        let w = c.width().unwrap_or(0);
+        if col + w > to {
+            end = i;
+            trail = to.saturating_sub(col).min(w);
+            break;
+        }
+        if start.is_none() {
+            if col < from {
+                lead = (col + w).saturating_sub(from);
+                col += w;
+                continue;
+            }
+            start = Some(i);
+        }
+        col += w;
+    }
+    let start = start.unwrap_or(end);
+    (lead, &text[start..end.max(start)], trail)
+}
+
+/// Drop the first (`left`) or last column of `pieces`, a wide character there becoming a blank.
+/// `false` when there is nothing to drop.
+fn drop_column(pieces: &mut Vec<(String, Style)>, left: bool) -> bool {
+    while let Some(i) = if left {
+        (!pieces.is_empty()).then_some(0)
+    } else {
+        pieces.len().checked_sub(1)
+    } {
+        let text = &mut pieces[i].0;
+        let c = if left {
+            text.chars().next()
+        } else {
+            text.chars().next_back()
+        };
+        let Some(c) = c else {
+            pieces.remove(i);
+            continue;
+        };
+        if left {
+            text.drain(..c.len_utf8());
+        } else {
+            text.pop();
+        }
+        if c.width().unwrap_or(0) == 2 {
+            if left {
+                text.insert(0, ' ');
+            } else {
+                text.push(' ');
+            }
+        }
+        if text.is_empty() {
+            pieces.remove(i);
+        }
+        return true;
+    }
+    false
 }
 
 fn spaces(n: usize, style: Style, emit: &mut impl FnMut(&str, Style)) {
@@ -325,6 +444,92 @@ mod tests {
         ];
         assert_eq!(overlaid("cdefgh", 2, &runs), ["c", "def", "gh"]);
         assert_eq!(overlaid("abc", 0, &[]), ["abc"]);
+    }
+
+    #[test]
+    fn slices_cut_wide_characters_at_both_edges() {
+        assert_eq!(slice("abcdef", 0, 2, 4), (0, "cd", 0));
+        assert_eq!(
+            slice("abcdef", 3, 2, 5),
+            (0, "ab", 0),
+            "a span starting inside"
+        );
+        assert_eq!(slice("ab", 0, 5, 9), (0, "", 0), "left of the window");
+        assert_eq!(slice("ab", 9, 0, 5), (0, "", 0), "right of it");
+        // 日 spans columns 2-3
+        assert_eq!(slice("ab日c", 0, 3, 6), (1, "c", 0));
+        assert_eq!(slice("ab日c", 0, 0, 3), (0, "ab", 1));
+    }
+
+    fn dropped(pieces: &[&str], left: bool) -> (bool, Vec<String>) {
+        let mut v: Vec<_> = pieces
+            .iter()
+            .map(|p| (p.to_string(), Style::new()))
+            .collect();
+        let done = drop_column(&mut v, left);
+        (done, v.into_iter().map(|(t, _)| t).collect())
+    }
+
+    #[test]
+    fn dropping_a_column_for_a_clip_mark() {
+        assert_eq!(
+            dropped(&["ab", "cd"], true),
+            (true, vec!["b".into(), "cd".into()])
+        );
+        assert_eq!(dropped(&["ab", "c"], false), (true, vec!["ab".into()]));
+        assert_eq!(dropped(&["日x"], true), (true, vec![" x".into()]));
+        assert_eq!(dropped(&[], false), (false, vec![]));
+    }
+
+    #[test]
+    fn diagram_rows_show_through_the_window() {
+        use crate::layout::{LayoutParams, layout};
+        let md =
+            "```mermaid\nsequenceDiagram\nAlpha->>Bravo: a fairly long message label here\n```\n";
+        let doc = crate::doc::parse(md);
+        let theme = Theme::builtin();
+        let params = LayoutParams {
+            width: 30,
+            max_width: None,
+            table_mode: Default::default(),
+            code_wrap: true,
+            line_numbers: Default::default(),
+            glyphs_gen: theme.glyphs.generation(),
+            images: None,
+        };
+        let l = layout(&doc, &theme.glyphs, params);
+        let paint = |code_x: u16| -> Vec<String> {
+            let p = Painter {
+                theme: &theme,
+                layout: &l,
+                highlights: &Highlights::default(),
+                code_x,
+                links: &[],
+            };
+            l.rows
+                .iter()
+                .filter(|r| matches!(r.kind, RowKind::Diagram { .. }))
+                .map(|r| {
+                    let mut s = String::new();
+                    p.row(r, &mut |t: &str, _| s.push_str(t));
+                    s
+                })
+                .collect()
+        };
+        let info = l.code[0];
+        assert!(info.width > info.window, "{info:?}");
+        for x in [0, 3, info.max_x(), 999] {
+            for row in paint(x) {
+                assert!(row.width() <= 30, "x={x}: {row:?}");
+            }
+        }
+        let first = paint(0);
+        assert!(
+            first[0].ends_with('›') && !first[0].contains('‹'),
+            "{first:?}"
+        );
+        let last = paint(info.max_x());
+        assert!(last[0].contains('‹') && !last[0].ends_with('›'), "{last:?}");
     }
 
     fn window(line: &str, x: u16, width: u16) -> String {

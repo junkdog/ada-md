@@ -1,0 +1,65 @@
+---
+source: src/layout/tests.rs
+expression: render(&l)
+---
+    1│   Diagrams
+     │
+    3│  A sequence diagram, drawn:
+     │
+ 5-23│  ╭────────╮                    ╭─────────╮                        ╭─────────╮
+ 5-23│  │ Client │                    │ Gateway │                        │ Ledger  │
+ 5-23│  │        │                    │         │                        │ service │
+ 5-23│  ╰────┬───╯                    ╰────┬────╯                        ╰────┬────╯
+ 5-23│       │                             │                                  │
+ 5-23│       │    1 POST /v2/transfers     │                                  │
+ 5-23│       │    (amount, currency,…¹     │                                  │
+ 5-23│       ├────────────────────────────▶│                                  │
+ 5-23│       │                             ├──┐ 2 Validate the request        │
+ 5-23│       │                             │◀─┘ body against the…²            │
+ 5-23│       │                           ┌─ loop until the ledger answers ────┼─┐
+ 5-23│       │                           │ │ 3 Reserve funds for the transfer │ │
+ 5-23│       │                           │ │   and hold them for fifteen…³    │ │
+ 5-23│       │                           │ ├─────────────────────────────────▶│ │
+ 5-23│       │                           │ │   4 Reservation(id, expiresAt)   │ │
+ 5-23│       │                           │ │◀┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┤ │
+ 5-23│       │                           └─┼──────────────────────────────────┼─┘
+ 5-23│       │                           ╭─┼──────────────────────────────────┼─╮
+ 5-23│       │                           │      Holds expire on their own       │
+ 5-23│       │                           ╰─┼──────────────────────────────────┼─╯
+ 5-23│     ┌─ alt reserved ────────────────┼─┐                                │
+ 5-23│     │ │       5 202 Accepted        │ │                                │
+ 5-23│     │ │◀┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┤ │                                │
+ 5-23│     ├┄ else no funds ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┼┄┤                                │
+ 5-23│     │ │       6 409 Conflict        │ │                                │
+ 5-23│     │ │×┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┤ │                                │
+ 5-23│     └─┼─────────────────────────────┼─┘                                │
+ 5-23│       │                             │                                  │
+    5│  ¹ POST /v2/transfers (amount, currency, idempotency key)
+    5│  ² Validate the request body against the transfer schema
+    5│  ³ Reserve funds for the transfer and hold them for fifteen minutes
+     │
+   25│  Inside a quote:
+     │
+27-31│  │ ╭───╮    ╭───╮
+27-31│  │ │ A │    │ B │
+27-31│  │ ╰─┬─╯    ╰─┬─╯
+27-31│  │   │        │
+27-31│  │   │ hello  │
+27-31│  │   ├───────▶│
+27-31│  │   │   hi   │
+27-31│  │   │◀┄┄┄┄┄┄┄┤
+27-31│  │   │        │
+     │
+   33│  A kind ada doesn't draw yet stays source:
+     │
+   35│   mermaid
+   36│   flowchart LR
+   37│       A --> B
+   38│
+     │
+   40│  So does one that doesn't parse:
+     │
+   42│   mermaid
+   43│   sequenceDiagram
+   44│       this is not a statement
+   45│

@@ -68,6 +68,12 @@ style_keys! {
     FootnoteLabel => "block.footnote_label",
     Html => "block.html",
     ImageFrame => "block.image_frame",
+    DiagramLine => "block.diagram_line",
+    DiagramActor => "block.diagram_actor",
+    DiagramLabel => "block.diagram_label",
+    DiagramNote => "block.diagram_note",
+    DiagramFrame => "block.diagram_frame",
+    DiagramNumber => "block.diagram_number",
     GutterUnstagedAdded => "gutter.unstaged.added",
     GutterUnstagedModified => "gutter.unstaged.modified",
     GutterUnstagedDeleted => "gutter.unstaged.deleted",
@@ -120,6 +126,12 @@ impl StyleKey {
         match self {
             StyleKey::CodeText => Some(StyleKey::CodeBlock),
             StyleKey::ImageFrame => Some(StyleKey::TableBorder),
+            StyleKey::DiagramLine => Some(StyleKey::TableBorder),
+            StyleKey::DiagramActor => Some(StyleKey::TableHeader),
+            StyleKey::DiagramLabel => Some(StyleKey::Text),
+            StyleKey::DiagramNote => Some(StyleKey::Quote),
+            StyleKey::DiagramFrame => Some(StyleKey::CodeLabel),
+            StyleKey::DiagramNumber => Some(StyleKey::ListNumber),
             _ => None,
         }
     }
