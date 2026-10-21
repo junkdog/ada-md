@@ -190,12 +190,12 @@ fn parse_links(cx: &mut Cx<'_>, v: &toml_walk::Value<'_>) -> Result<Roots, Strin
                 if let Some(bad) = roots
                     .markers
                     .iter()
-                    .find(|m| m.is_empty() || m.contains('/'))
+                    .find(|m| matches!(m.as_str(), "" | "." | "..") || m.contains('/'))
                 {
                     return Err(cx.at(
                         v.span(),
                         format_args!(
-                            "a root marker is a file or directory name, without /: \"{bad}\""
+                            "a root marker is a file or directory name, without /, not . or ..: \"{bad}\""
                         ),
                     ));
                 }
@@ -547,6 +547,11 @@ mod tests {
             &mut Vec::new(),
         );
         assert!(err.unwrap_err().contains("without /"));
+        // either would make every directory a root
+        for bad in [".", ".."] {
+            let text = format!("[links]\nroot_markers = [\"{bad}\"]\n");
+            assert!(parse("c.toml", &text, &mut Vec::new()).is_err(), "{bad}");
+        }
         let mut warnings = Vec::new();
         parse("c.toml", "[links]\nroot = []\n", &mut warnings).unwrap();
         assert_eq!(warnings, ["c.toml:2:1: unknown key \"links.root\""]);

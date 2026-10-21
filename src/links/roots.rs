@@ -111,17 +111,11 @@ impl RootedResolver {
                 indexes.len() - 1
             }
         };
-        let index = &indexes[at];
-        let mut found = index
+        indexes[at]
             .names
             .get(&name.to_lowercase())
             .cloned()
-            .unwrap_or_default();
-        // an exact match wins over ones that differ in case
-        if found.len() > 1 && found.iter().any(|p| file_name(p) == name) {
-            found.retain(|p| file_name(p) == name);
-        }
-        found
+            .unwrap_or_default()
     }
 
     /// Look `target` up under the root of `source`, if it names a file rather than a path.
@@ -156,6 +150,10 @@ impl RootedResolver {
             names.iter().find_map(|n| {
                 let mut found = self.named(&root, n, fresh);
                 found.retain(under);
+                // an exact match wins over ones that differ in case, among those in the folders named
+                if found.len() > 1 && found.iter().any(|p| file_name(p) == n) {
+                    found.retain(|p| file_name(p) == n);
+                }
                 (!found.is_empty()).then_some((n, found))
             })
         };
@@ -442,6 +440,19 @@ mod tests {
         let Resolved::Broken(_) = r.resolve(&source, &wiki("gone")) else {
             panic!("found a note in a hidden folder");
         };
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn case_decides_only_among_the_folders_named() {
+        // fuzz `roots`, 2026-10-21: the exact-case `y/Note.md` hid `x/sub/note.md` before the
+        // folder was checked, and `[[sub/Note]]` came out broken
+        let dir = tree("case-folder", &["a/src.md", "x/sub/note.md", "y/Note.md"]);
+        let r = rooted(&[&dir]);
+        assert_eq!(
+            r.resolve(&dir.join("a/src.md"), &wiki("sub/Note")),
+            Resolved::Found(dir.join("x/sub/note.md"))
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
