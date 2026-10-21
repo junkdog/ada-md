@@ -18,7 +18,7 @@ use crate::highlight::{self, Highlights, SyntaxTheme};
 use crate::images::{self, Probe, Proto};
 use crate::kitty;
 use crate::layout::{self, ImageSlot, Layout, LayoutParams, Measure, Row, RowKind};
-use crate::links::{self, BuiltinResolver, Resolved, Resolver, Target};
+use crate::links::{self, LocalTarget, Resolved, Resolver, Target};
 use crate::pixels::{self, HalfBlock};
 use crate::theme::{StyleKey, Theme};
 use crate::ui::Painter;
@@ -52,9 +52,16 @@ pub struct Pictures {
 }
 
 impl Pictures {
-    /// Resolve `doc`'s links as the file `source` holds them, and read the headers of the
+    /// Resolve `doc`'s image links as the file `source` holds them, and read the headers of the
     /// images they lead to.
-    pub fn find(doc: &Doc, source: &Path, proto: Proto, cell: Size, reuse_ids: bool) -> Pictures {
+    pub fn find(
+        doc: &Doc,
+        source: &Path,
+        resolver: &dyn Resolver,
+        proto: Proto,
+        cell: Size,
+        reuse_ids: bool,
+    ) -> Pictures {
         let mut probed: Vec<(PathBuf, Option<(u32, u32)>)> = Vec::new();
         let files = doc
             .links
@@ -63,7 +70,12 @@ impl Pictures {
                 let Target::Local { target, .. } = Target::of(link) else {
                     return None;
                 };
-                let Resolved::Found(path) = BuiltinResolver.resolve(source, &target) else {
+                // only an image is drawn: other links aren't looked for, under a root or not
+                let (LocalTarget::Path(name) | LocalTarget::Wiki(name)) = &target;
+                if !links::is_image(Path::new(name)) {
+                    return None;
+                }
+                let Resolved::Found(path) = resolver.resolve(source, &target) else {
                     return None;
                 };
                 if !links::is_image(&path) {
@@ -810,7 +822,7 @@ mod tests {
         let note = dir.join("note.md");
         let doc = crate::doc::parse(text);
         let cell = Size::new(10, 20);
-        let pictures = Pictures::find(&doc, &note, proto, cell, false);
+        let pictures = Pictures::find(&doc, &note, &links::BuiltinResolver, proto, cell, false);
         let params = LayoutParams {
             width: 40,
             max_width: None,

@@ -9,6 +9,7 @@ use ada::cli::{self, Args, Input};
 use ada::filetype::{self, FileType};
 use ada::images::{self, ImageMode};
 use ada::layout::{ImageFit, LayoutParams, LineNumbers};
+use ada::links::{Resolver, RootedResolver};
 use ada::print::stream::Start;
 use ada::record::{self, Recorder, ReplayOptions};
 use ada::theme::Theme;
@@ -62,6 +63,7 @@ fn run() -> Result<(), String> {
         None => None,
     };
     let (settings, file, mut warnings) = config::load()?;
+    let resolver = RootedResolver::new(&settings.links);
     let (theme, theme_warnings) = theme::load(args.theme.as_deref().or(settings.theme.as_deref()))?;
     warnings.extend(theme_warnings);
     let mut config = Config {
@@ -90,7 +92,9 @@ fn run() -> Result<(), String> {
         for w in &warnings {
             eprintln!("ada: warning: {w}");
         }
-        return record::replay(path, State::new(theme, config), Effects::new(None), opts);
+        let mut effects = Effects::new(None);
+        effects.set_resolver(Box::new(resolver));
+        return record::replay(path, State::new(theme, config), effects, opts);
     }
 
     let input = match &args.input {
@@ -108,7 +112,7 @@ fn run() -> Result<(), String> {
         for w in &warnings {
             eprintln!("ada: warning: {w}");
         }
-        return print_doc(&args, &config, &theme, &path);
+        return print_doc(&args, &config, &theme, &resolver, &path);
     }
 
     let stdin = (path == Path::new("-"))
@@ -132,7 +136,9 @@ fn run() -> Result<(), String> {
     let mut state = State::new(theme, config);
     state.themes = themes;
     state.status = warnings.first().map(|w| format!("warning: {w}"));
-    app::run_tui(state, path, Effects::new(stdin), recorder)
+    let mut effects = Effects::new(stdin);
+    effects.set_resolver(Box::new(resolver));
+    app::run_tui(state, path, effects, recorder)
 }
 
 /// Rows a preview prints past the line it starts at, when its pane is shorter: room to scroll,
@@ -176,7 +182,13 @@ fn text_of(bytes: Vec<u8>, forced: Option<FileType>) -> Result<Arc<str>, String>
     Ok(text.into())
 }
 
-fn print_doc(args: &Args, config: &Config, theme: &Theme, path: &Path) -> Result<(), String> {
+fn print_doc(
+    args: &Args,
+    config: &Config,
+    theme: &Theme,
+    resolver: &dyn Resolver,
+    path: &Path,
+) -> Result<(), String> {
     // fzf exports the whole terminal as $COLUMNS, and the preview pane as $FZF_PREVIEW_COLUMNS.
     let env_number = |name| env::var(name).ok()?.trim().parse().ok();
     let tty = io::stdout().is_terminal();
@@ -253,7 +265,7 @@ fn print_doc(args: &Args, config: &Config, theme: &Theme, path: &Path) -> Result
     let reuse_ids = env::var_os("FZF_PREVIEW_LINES").is_some();
     let pictures = proto
         .zip(cell)
-        .map(|(proto, cell)| print::Pictures::find(&doc, path, proto, cell, reuse_ids));
+        .map(|(proto, cell)| print::Pictures::find(&doc, path, resolver, proto, cell, reuse_ids));
     let opts = print::Options {
         align: args.line,
         rows,

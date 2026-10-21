@@ -35,8 +35,9 @@ More of it, one feature at a time, on [the site](https://junkdog.github.io/ada-m
 
 - **Tables you can work with:** sort by any column, by value (`s`), with the header row kept on
   screen while a long table scrolls; too wide, and it turns into cards ([Tables](#tables))
-- **Links you can walk:** relative paths, `[[wiki links]]`, anchors and `src/main.rs#L42`, with
-  back and forward history that comes back to the same spot and the same focused link
+- **Links you can walk:** relative paths, `[[wiki links]]` (found by name across a vault),
+  anchors and `src/main.rs#L42`, with back and forward history that comes back to the same spot
+  and the same focused link
 - **Not only markdown:** code, config and other text files open whole and highlighted, in some
   200 languages, and png and jpeg files full screen, from the command line or through a link
   ([Other files](#other-files))
@@ -182,6 +183,10 @@ tables = "auto"            # the table layout to start with: auto, grid or recor
 code_wrap = true
 line_numbers = "code"      # number rows by source line: off, code (code and text files) or all
 
+[links]
+roots = ["~/notes"]       # where links are looked up by name; see Links in a vault
+root_markers = [".obsidian"]  # a directory holding one of these is a root too (the default)
+
 [keys]
 # setting an action replaces its keys; keys it takes from another action leave it
 scroll_down = ["j", "down", "ctrl-n"]
@@ -192,6 +197,19 @@ quit = "q"
 Keys are written like `j`, `G`, `ctrl-d`, `alt-x`, `shift-up`, `space`, `enter`, `esc`, `tab`,
 `shift-tab`, `pageup`, `f5`; two keys pressed in turn as `"]]"` or `"g g"`. The help (`?`) shows
 the keys in use.
+
+### Links in a vault
+
+A `[[wiki link]]` resolves beside its note first. When nothing is there, ada looks the name up
+in the whole tree of the note's root, as Obsidian does: the nearest directory above the note
+that `roots` lists, or that holds one of `root_markers`. An Obsidian vault is found by its
+`.obsidian` folder with no setup; any other folder of notes (a PARA layout, say) takes one line
+in `roots`. So links keep working when notes move between folders. A link that is only a file
+name, such as `![[cat.png]]`, is looked up the same way; a path with folders in it stays where it
+says. Names match ignoring case, and folders whose names start with a dot are skipped. When
+several files share a name, the one in a folder named like the note's wins (`10-projects/sift` →
+`40-archive/sift`); otherwise the link shows as broken and lists them, and `[[folder/name]]`
+picks one.
 
 ### Themes
 

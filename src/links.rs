@@ -1,11 +1,16 @@
 //! Link resolution (ADR-13, architecture §7). ada knows nothing about vaults: paths and
-//! `[[wiki]]` names resolve relative to the note's own directory.
+//! `[[wiki]]` names resolve relative to the note's own directory, and failing that, by name under
+//! the note's root, a directory the config names or marks ([`Roots`]).
 //!
 //! Classifying a link is pure. Finding the file it names reads the filesystem, so it runs in the
 //! effect runner through the [`Resolver`] trait, and the results come back as a message (ADR-19).
-//! The post-1.0 resolver hook will chain after [`BuiltinResolver`] without touching callers.
+//! [`RootedResolver`] chains after [`BuiltinResolver`] without touching callers.
+
+mod roots;
 
 use std::path::{Component, Path, PathBuf};
+
+pub use roots::{RootedResolver, Roots, expand_home};
 
 use crate::doc::{AnchorId, AnchorKind, Doc, FootnoteId, LinkKind, LinkRef, slug};
 

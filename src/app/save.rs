@@ -29,6 +29,8 @@ impl State {
             code_wrap: self.code_wrap,
             line_numbers: self.line_numbers,
             keys: self.config.keys.clone(),
+            // `S` saves neither keys nor links, and a session can't change the links
+            links: Default::default(),
         }
     }
 

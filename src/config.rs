@@ -15,6 +15,7 @@ use toml::de::DeTable;
 use crate::app::{Action, Bindings, KeySeq};
 use crate::images::{ImageMode, Proto};
 use crate::layout::{LineNumbers, TableMode};
+use crate::links::{self, Roots};
 use crate::theme::BUILTIN;
 use crate::toml_walk::{self, Cx};
 
@@ -29,6 +30,7 @@ pub struct Settings {
     pub code_wrap: bool,
     pub line_numbers: LineNumbers,
     pub keys: Bindings,
+    pub links: Roots,
 }
 
 impl Default for Settings {
@@ -43,6 +45,7 @@ impl Default for Settings {
             code_wrap: true,
             line_numbers: LineNumbers::Off,
             keys: Bindings::default(),
+            links: Roots::default(),
         }
     }
 }
@@ -129,6 +132,7 @@ pub fn parse(file: &str, text: &str, warnings: &mut Vec<String>) -> Result<Setti
                     )
                 })?;
             }
+            "links" => s.links = parse_links(&mut cx, v)?,
             "keys" => {
                 let mut set = Vec::new();
                 for (k, v) in cx.table(v)? {
@@ -159,6 +163,47 @@ pub fn parse(file: &str, text: &str, warnings: &mut Vec<String>) -> Result<Setti
         (true, None) => ImageMode::Auto,
     };
     Ok(s)
+}
+
+/// `[links]`: the roots links are looked up under ([`Roots`]).
+fn parse_links(cx: &mut Cx<'_>, v: &toml_walk::Value<'_>) -> Result<Roots, String> {
+    let mut roots = Roots::default();
+    for (k, v) in cx.table(v)? {
+        match k.get_ref().as_ref() {
+            "roots" => {
+                roots.roots = Vec::new();
+                for root in cx.strings(v)? {
+                    let path = links::expand_home(&root);
+                    if !path.is_absolute() {
+                        return Err(cx.at(
+                            v.span(),
+                            format_args!(
+                                "a root must be an absolute path or start with ~/: \"{root}\""
+                            ),
+                        ));
+                    }
+                    roots.roots.push(path);
+                }
+            }
+            "root_markers" => {
+                roots.markers = cx.strings(v)?;
+                if let Some(bad) = roots
+                    .markers
+                    .iter()
+                    .find(|m| m.is_empty() || m.contains('/'))
+                {
+                    return Err(cx.at(
+                        v.span(),
+                        format_args!(
+                            "a root marker is a file or directory name, without /: \"{bad}\""
+                        ),
+                    ));
+                }
+            }
+            other => cx.warn(k.span(), format_args!("unknown key \"links.{other}\"")),
+        }
+    }
+    Ok(roots)
 }
 
 /// The file ada writes when there is none: every option, commented out at its default.
@@ -200,6 +245,15 @@ pub fn default_text() -> String {
 # Number rows by source line (`#` toggles it for the kind of file shown): off, code for code
 # and other text files, or all for markdown too.
 # line_numbers = \"off\"
+
+# Where links are looked up by name. A [[wiki]] link, or a link that is just a file name, that
+# isn't beside its note is searched for in the whole tree of the note's root: the nearest
+# directory above the note that is listed in roots or holds one of root_markers. Folders whose
+# names start with a dot are skipped. When several files match, the one in a folder named like
+# the note's wins, else the link shows as broken; [[folder/name]] tells them apart.
+[links]
+# roots = []                     # e.g. [\"~/notes\"]
+# root_markers = [\".obsidian\"]
 
 # Keys: each action takes a key or a list of keys, and setting one replaces its defaults.
 # Keys look like j, G, ctrl-d, alt-x, shift-up, space, enter, esc, tab, shift-tab,
@@ -469,6 +523,33 @@ mod tests {
             &mut Vec::new(),
         );
         assert_eq!(off.unwrap().images, ImageMode::Off);
+    }
+
+    #[test]
+    fn link_roots() {
+        let text = "[links]\nroots = [\"/notes\", \"~/vault\"]\nroot_markers = [\"VAULT.md\"]\n";
+        let s = parse("c.toml", text, &mut Vec::new()).unwrap();
+        assert_eq!(s.links.roots[0], PathBuf::from("/notes"));
+        assert_eq!(s.links.roots[1], links::expand_home("~/vault"));
+        assert_eq!(s.links.markers, ["VAULT.md"]);
+        // the markers keep their default when only roots are set
+        let s = parse("c.toml", "[links]\nroots = []\n", &mut Vec::new()).unwrap();
+        assert_eq!(s.links, Roots::default());
+
+        let err = parse("c.toml", "[links]\nroots = [\"notes\"]\n", &mut Vec::new()).unwrap_err();
+        assert!(
+            err.starts_with("c.toml:2:9: a root must be an absolute path"),
+            "{err}"
+        );
+        let err = parse(
+            "c.toml",
+            "[links]\nroot_markers = [\"a/b\"]\n",
+            &mut Vec::new(),
+        );
+        assert!(err.unwrap_err().contains("without /"));
+        let mut warnings = Vec::new();
+        parse("c.toml", "[links]\nroot = []\n", &mut warnings).unwrap();
+        assert_eq!(warnings, ["c.toml:2:1: unknown key \"links.root\""]);
     }
 
     #[test]

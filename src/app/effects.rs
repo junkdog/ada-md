@@ -60,6 +60,11 @@ impl Effects {
         }
     }
 
+    /// Resolve links with `resolver` in place of the built-in rules.
+    pub fn set_resolver(&mut self, resolver: Box<dyn Resolver>) {
+        self.resolver = resolver;
+    }
+
     /// Encode images with `encoder`: on a worker, once [`Effects::spawn_workers`] has run.
     pub fn set_encoder(&mut self, encoder: images::Encoder) {
         if let Some(tx) = &self.image_results {
