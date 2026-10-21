@@ -9,7 +9,10 @@
 //! and links lead to code files at a `#L42` line. `S` reads a fuzzed config file, answered at
 //! once as the interactive loop does, and is never written: what it would write must read back
 //! with nothing left to save. Every step is painted, and the rows kept on quit replay to the
-//! last frame. Nothing may panic.
+//! last frame. Nothing may panic. A `Graphics` intent sets the image encoder too, as the
+//! interactive loop does, so images are drawn for kitty, sixel and iTerm2 as well as in
+//! half-blocks: a kitty placeholder must show its image's row and column, by its diacritics or
+//! its left neighbor's, in the color of an image the terminal was sent (CS-6).
 //!
 //! ```zsh
 //! cargo +nightly fuzz run -s none -a session -- -dict=fuzz/markdown.dict -max_len=16384
@@ -18,6 +21,7 @@
 #![no_main]
 
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -29,7 +33,8 @@ use ada::config;
 use ada::geom::Size as Cells;
 use ada::grid::{Grid, Screen};
 use ada::highlight;
-use ada::images::{Probe, Proto};
+use ada::images::{Encoder, Probe, Proto};
+use ada::kitty;
 use ada::layout::{LineNumbers, TableMode};
 use ada::links::Resolved;
 use ada::style::{Color, Modifier};
@@ -647,6 +652,15 @@ fn for_vt100(bytes: &[u8], grid: &Grid, rows: &mut [bool]) -> Vec<u8> {
                 let mut text = std::str::from_utf8(&bytes[i..end]).expect("ada writes UTF-8");
                 touch(rows, y);
                 while !text.is_empty() {
+                    // a kitty placeholder goes as it is, with the diacritics that number it
+                    let image = x < area.width && y < area.height && grid[(x, y)].is_image();
+                    let n = if image { numbered(text) } else { 0 };
+                    if n > 0 {
+                        out.extend_from_slice(&text.as_bytes()[..n]);
+                        text = &text[n..];
+                        x = x.saturating_add(1);
+                        continue;
+                    }
                     let here = (x < area.width && y < area.height)
                         .then(|| (grid.symbol((x, y)), grid[(x, y)].width()))
                         .filter(|(s, _)| !s.is_empty() && text.starts_with(s));
@@ -668,11 +682,81 @@ fn for_vt100(bytes: &[u8], grid: &Grid, rows: &mut [bool]) -> Vec<u8> {
     out
 }
 
+/// Kitty's row and column diacritics, each to the number it stands for.
+fn diacritics() -> &'static HashMap<char, u16> {
+    static MAP: OnceLock<HashMap<char, u16>> = OnceLock::new();
+    MAP.get_or_init(|| {
+        (0..kitty::MAX_CELLS)
+            .map(|n| (kitty::placeholder(n, 0)[1], n))
+            .collect()
+    })
+}
+
+/// The bytes of the kitty placeholder `text` starts with and the diacritics after it, if it
+/// starts with one; else 0.
+fn numbered(text: &str) -> usize {
+    let mut chars = text.chars();
+    if chars.next() != Some(kitty::PLACEHOLDER) {
+        return 0;
+    }
+    let marks: usize = chars
+        .take_while(|c| diacritics().contains_key(c))
+        .take(2)
+        .map(char::len_utf8)
+        .sum();
+    kitty::PLACEHOLDER.len_utf8() + marks
+}
+
+/// Add the ids of the kitty images `bytes` transmits to `sent`.
+fn transmitted(bytes: &[u8], sent: &mut HashSet<u32>) {
+    let mut at = 0;
+    while let Some(i) = bytes[at..].windows(3).position(|w| w == b"\x1b_G") {
+        let start = at + i + 3;
+        let end = bytes[start..]
+            .iter()
+            .position(|&b| b == b';' || b == 0x1b)
+            .map_or(bytes.len(), |j| start + j);
+        let keys = String::from_utf8_lossy(&bytes[start..end]);
+        sent.extend(
+            keys.split(',')
+                .filter_map(|kv| kv.strip_prefix("i=")?.parse::<u32>().ok()),
+        );
+        at = end;
+    }
+}
+
+/// The row and column a kitty placeholder in the terminal names, and its color: by its
+/// diacritics, or, with none, as the next column of `left`'s image when that's the same color.
+fn placed_at(
+    seen: &vt100::Cell,
+    left: Option<(vt100::Color, (u16, u16))>,
+) -> Option<(vt100::Color, (u16, u16))> {
+    let mut chars = seen.contents().chars();
+    if chars.next() != Some(kitty::PLACEHOLDER) {
+        return None;
+    }
+    let marks: Vec<u16> = chars
+        .map(|c| diacritics().get(&c).copied().unwrap_or(u16::MAX))
+        .collect();
+    let color = seen.fgcolor();
+    let at = match marks[..] {
+        [row, col] => (row, col),
+        [] => match left {
+            Some((c, (row, col))) if c == color => (row, col + 1),
+            _ => (u16::MAX, u16::MAX),
+        },
+        _ => (u16::MAX, u16::MAX),
+    };
+    Some((color, at))
+}
+
 /// The terminal shows what the grid holds, cell by cell: what the diff left out was already
 /// there, and what the encoder wrote, scroll moves included, lands where it should (F-04). A
 /// blank is compared by what shows of it, a grapheme by its [`stand_in`]. Image cells, and
-/// graphemes no or several columns wide, are left out. With `rows`, only the rows it marks.
-fn shows(term: &vt100::Screen, grid: &Grid, rows: Option<&[bool]>) {
+/// graphemes no or several columns wide, are left out, but a kitty placeholder must name its
+/// row and column in the image, in the color of an image the terminal was `sent`. With `rows`,
+/// only the rows it marks.
+fn shows(term: &vt100::Screen, grid: &Grid, rows: Option<&[bool]>, sent: &HashSet<u32>) {
     let area = grid.area();
     assert_eq!(term.size(), (area.height, area.width));
     for y in 0..area.height {
@@ -680,9 +764,46 @@ fn shows(term: &vt100::Screen, grid: &Grid, rows: Option<&[bool]>) {
             continue;
         }
         let mut x = 0;
+        let mut left = None;
         while x < area.width {
             let cell = &grid[(x, y)];
             let width = cell.width().max(1);
+            let seen = term.cell(y, x).expect("cell in the terminal");
+            let here = placed_at(seen, left);
+            if let Some(at) = cell.placed() {
+                let Color::Rgb(r, g, b) = cell.fg() else {
+                    panic!("placeholder ({x}, {y}) in {:?}", cell.fg());
+                };
+                let id = u32::from_be_bytes([0, r, g, b]);
+                assert_eq!(
+                    here,
+                    Some((vt100::Color::Rgb(r, g, b), at)),
+                    "placeholder ({x}, {y}) of {}×{}: the grid's, then the terminal's ({:?})",
+                    area.width,
+                    area.height,
+                    seen.contents(),
+                );
+                assert!(
+                    sent.contains(&id),
+                    "placeholder ({x}, {y}): image {id} never sent"
+                );
+                // and the image is numbered as it's laid out: the cell left of it, and the one
+                // above, if the same image's, are its previous column and row
+                let near = |x: u16, y: u16| Some(&grid[(x, y)]).filter(|c| c.fg() == cell.fg());
+                if at.1 > 0
+                    && let Some(left) = x.checked_sub(1).and_then(|l| near(l, y))
+                    && let Some(was) = left.placed()
+                {
+                    assert_eq!(was, (at.0, at.1 - 1), "placeholder ({x}, {y}) and its left");
+                }
+                if at.0 > 0
+                    && let Some(up) = y.checked_sub(1).and_then(|u| near(x, u))
+                    && let Some(was) = up.placed()
+                {
+                    assert_eq!(was, (at.0 - 1, at.1), "placeholder ({x}, {y}) and above");
+                }
+            }
+            left = here;
             let symbol = match grid.symbol((x, y)) {
                 // ASCII
                 s if s.len() == 1 => s,
@@ -704,7 +825,6 @@ fn shows(term: &vt100::Screen, grid: &Grid, rows: Option<&[bool]>) {
                     term_color(cell.bg()),
                     (!blank).then(|| (term_color(cell.fg()), styles)),
                 );
-                let seen = term.cell(y, x).expect("cell in the terminal");
                 let styles = [
                     seen.bold(),
                     seen.dim(),
@@ -748,6 +868,8 @@ struct Session<'a> {
     /// What the screen wrote since the last frame was checked.
     out: Rc<RefCell<Vec<u8>>>,
     term: vt100::Parser,
+    /// The kitty images sent to `term`.
+    sent: HashSet<u32>,
     paints: u32,
     u: Unstructured<'a>,
 }
@@ -757,6 +879,11 @@ impl Session<'_> {
     fn send(&mut self, msg: Msg) {
         if trace() {
             eprintln!("msg {msg:?}");
+        }
+        // the encoder follows the probe's answer, as in the interactive loop
+        if let Msg::Graphics { proto, cell } = msg {
+            self.effects
+                .set_encoder(Encoder::new(proto, Cells::new(cell.w, cell.h)));
         }
         let saving = msg == Msg::SaveConfig;
         let opens = matches!(msg, Msg::ConfigRead { .. });
@@ -813,6 +940,7 @@ impl Session<'_> {
         // the rows this frame touched, and every row now and then: a changed row the diff left
         // out entirely stays wrong until it's checked
         let mut rows = vec![false; usize::from(h)];
+        transmitted(&bytes, &mut self.sent);
         self.term
             .process(&for_vt100(&bytes, self.screen.shown(), &mut rows));
         self.paints += 1;
@@ -821,6 +949,7 @@ impl Session<'_> {
             self.term.screen(),
             self.screen.shown(),
             (!all).then_some(&rows[..]),
+            &self.sent,
         );
     }
 
@@ -836,9 +965,13 @@ impl Session<'_> {
         }
         let mut term = vt100::Parser::new(h, w, 0);
         term.process(&for_vt100(&bytes, self.screen.shown(), &mut []));
+        // the interactive loop sends the cache's kitty images to the main screen first
+        // (`keep_screen`)
+        let mut sent: HashSet<u32> = self.state.images.transmits().map(|t| t.color).collect();
+        transmitted(&bytes, &mut sent);
         let mut check = vec![true; usize::from(h)];
         check[usize::from(rows)..].fill(false);
-        shows(term.screen(), self.screen.shown(), Some(&check));
+        shows(term.screen(), self.screen.shown(), Some(&check), &sent);
     }
 
     fn deliver(&mut self, i: usize) {
@@ -1024,6 +1157,7 @@ fuzz_target!(|data: &[u8]| {
         screen,
         out,
         term,
+        sent: HashSet::new(),
         paints: 0,
         u,
     };
@@ -1057,6 +1191,6 @@ fuzz_target!(|data: &[u8]| {
         }
     }
     s.settle();
-    shows(s.term.screen(), s.screen.shown(), None);
+    shows(s.term.screen(), s.screen.shown(), None, &s.sent);
     s.kept();
 });

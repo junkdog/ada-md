@@ -59,6 +59,20 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "probe"
+path = "fuzz_targets/probe.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sixel"
+path = "fuzz_targets/sixel.rs"
+test = false
+doc = false
+bench = false
+
 # not part of ada's own build
 [workspace]
 members = ["."]
