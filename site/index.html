@@ -162,25 +162,38 @@
     </article>
   </div>
 
-  <article id="diagrams" class="card">
-    <div class="text">
-      <h2>Mermaid, drawn as text <a class="anchor" href="#diagrams" aria-label="link to this section">#</a></h2>
-      <p>Sequence diagrams, flowcharts and state diagrams in a <code>```mermaid</code> block are <strong>drawn
-        right in the note</strong>, in box-drawing characters and your theme's colors, in any terminal and in
-        <code>--print</code>. Long labels wrap to fit the width, and what still doesn't fit scrolls sideways.</p>
-      <p>Scroll through a long sequence diagram and <strong>its participants stay on top</strong>, like a table's
-        header. Subgraphs and composite states get frames of their own. Other kinds, and anything that doesn't
-        parse, show as highlighted source.</p>
-      <p class="keys"><kbd>←</kbd> <kbd>→</kbd> scroll a wide diagram</p>
-    </div>
-    <figure>
-      <a class="term term-wide" href="#zoom-diagrams">
-        <div class="term-bar"><i></i><i></i><i></i><span>ada diagrams.md</span></div>
-        <img src="media/diagrams.webp" width="1000" height="680" loading="lazy" alt="scrolling through a sequence diagram whose participants stay on top, then a flowchart with a subgraph and a state diagram with a composite state">
-      </a>
-      <figcaption>The cheese heist, what to do with a thing on the counter, and a day in the life.</figcaption>
-    </figure>
-  </article>
+  <div class="pair">
+    <article id="diagrams" class="card">
+      <div class="text">
+        <h2>Mermaid, drawn as text <a class="anchor" href="#diagrams" aria-label="link to this section">#</a></h2>
+        <p>Sequence diagrams, flowcharts and state diagrams in a <code>```mermaid</code> block are <strong>drawn in
+          the note</strong>, in your theme's colors, in any terminal and in <code>--print</code>. A sequence
+          diagram's cast stays on top as you scroll.</p>
+        <p class="keys"><kbd>←</kbd> <kbd>→</kbd> scroll a wide diagram</p>
+      </div>
+      <figure>
+        <a class="term" href="#zoom-diagrams">
+          <div class="term-bar"><i></i><i></i><i></i><span>ada diagrams.md</span></div>
+          <img src="media/diagrams.webp" width="680" height="420" loading="lazy" alt="scrolling through a sequence diagram whose participants stay on top, then a flowchart with a subgraph and a state diagram with a composite state">
+        </a>
+      </figure>
+    </article>
+
+    <article id="gantt" class="card">
+      <div class="text">
+        <h2>Mermaid gantt charts <a class="anchor" href="#gantt" aria-label="link to this section">#</a></h2>
+        <p>A <code>gantt</code> chart in a <code>```mermaid</code> block draws its tasks as bars on a date axis that
+          <strong>fits the width</strong>, colored by their tags: done, active, critical, milestones.
+          <code>after</code>, durations and excluded days work as in Mermaid.</p>
+      </div>
+      <figure>
+        <a class="term" href="#zoom-gantt">
+          <div class="term-bar"><i></i><i></i><i></i><span>ada week.md</span></div>
+          <img src="media/gantt.png" width="680" height="420" loading="lazy" alt="a gantt chart of a cat's week in two sections, with done, active and critical tasks and a milestone">
+        </a>
+      </figure>
+    </article>
+  </div>
 
   <article id="images" class="card side">
     <figure>
@@ -1062,6 +1075,7 @@ fzf --preview 'ada --print {}'</code></pre>
 <div class="zoom" id="zoom-search"><a href="#search" aria-label="close"></a><img src="media/search.webp" loading="lazy" alt=""></div>
 <div class="zoom" id="zoom-images"><a href="#images" aria-label="close"></a><img src="img/kitty-images.png" loading="lazy" alt=""></div>
 <div class="zoom" id="zoom-diagrams"><a href="#diagrams" aria-label="close"></a><img src="media/diagrams.webp" loading="lazy" alt=""></div>
+<div class="zoom" id="zoom-gantt"><a href="#gantt" aria-label="close"></a><img src="media/gantt.png" loading="lazy" alt=""></div>
 <div class="zoom" id="zoom-preview"><a href="#preview" aria-label="close"></a><img src="media/preview.webp" loading="lazy" alt=""></div>
 <div class="zoom" id="zoom-theme-gruvbox-dark"><a href="#themes" aria-label="close"></a><img src="media/theme-gruvbox-dark.png" loading="lazy" alt=""></div>
 <div class="zoom" id="zoom-theme-catppuccin-mocha"><a href="#themes" aria-label="close"></a><img src="media/theme-catppuccin-mocha.png" loading="lazy" alt=""></div>

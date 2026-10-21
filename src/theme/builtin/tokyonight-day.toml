@@ -12,6 +12,7 @@ fg_dark = "#6172b0"
 fg_gutter = "#a8aecb"
 comment = "#848cb5"
 dark3 = "#8990b3"
+dark5 = "#68709a"
 blue = "#2e7de9"
 blue1 = "#188092"
 blue5 = "#006a83"
@@ -73,6 +74,7 @@ table_row_alt = { bg = "bg_dark" }
 footnote_label = { fg = "cyan" }
 html = { fg = "comment" }
 image_frame = {}
+diagram_line = { fg = "dark5" }   # a diagram's lines, boxes and arrows; stronger than table_border
 
 [glyphs]
 bullets = ["•", "◦", "▪"]

@@ -1,0 +1,16 @@
+---
+source: src/diagram/gantt/draw.rs
+expression: "rows.join(\"\\n\")"
+---
+Release plan
+
+                                      2024-01-07       2024-01-14
+                             ──────────────┬────────────────┬───────────
+Build                                      ┆                ┆
+  Parser                     ███████████   ┆                ┆
+  Layout                                ███████████████     ┆
+  Paint                                    ┆           █████████
+Ship                                       ┆                ┆
+  Fuzz the whole thing for…¹               ┆           █████████████████
+  Release                                  ┆                ┆          ◆
+note: Fuzz the whole thing for a week

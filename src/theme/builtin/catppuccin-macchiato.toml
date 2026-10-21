@@ -78,6 +78,7 @@ table_row_alt = { bg = "crust" }
 footnote_label = { fg = "lavender" }
 html = { fg = "overlay1" }
 image_frame = {}
+diagram_line = { fg = "overlay2" }   # a diagram's lines, boxes and arrows; stronger than table_border
 
 [glyphs]
 bullets = ["•", "◦", "▪"]

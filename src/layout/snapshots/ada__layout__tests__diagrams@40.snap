@@ -94,18 +94,32 @@ expression: render(&l)
 49-57│      ▼
 49-57│      ◉
      │
-   59│  A kind ada doesn't draw stays
-   59│  source:
+   59│  A gantt chart:
      │
-   61│   mermaid
-   62│   pie title Frame time
-   63│       "Layout" : 40
-   64│       "Paint" : 60
-   65│
+61-72│  Release
+61-72│
+61-72│            2024-01-01
+61-72│                 ┌────────────────────
+61-72│  Build          ┆
+61-72│    Parser       ████
+61-72│    Layout       ┆     ███████
+61-72│  Ship           ┆
+61-72│    Fuzz every…¹ ┆            ████████
+61-72│    Release      ┆                   ◆
+   61│  ¹ Fuzz everything
      │
-   67│  So does one that doesn't parse:
+   74│  A kind ada doesn't draw stays
+   74│  source:
      │
-   69│   mermaid
-   70│   sequenceDiagram
-   71│       this is not a statement
-   72│
+   76│   mermaid
+   77│   pie title Frame time
+   78│       "Layout" : 40
+   79│       "Paint" : 60
+   80│
+     │
+   82│  So does one that doesn't parse:
+     │
+   84│   mermaid
+   85│   sequenceDiagram
+   86│       this is not a statement
+   87│

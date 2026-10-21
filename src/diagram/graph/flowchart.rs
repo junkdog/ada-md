@@ -218,7 +218,13 @@ fn shape(s: &mut &str) -> Option<Option<(Shape, Option<String>)>> {
             let after = q[end..].trim_start();
             (&q[..end], after.strip_prefix(close))
         } else {
-            match body.find(close) {
+            // `@{ label: "…" }` may hold the closer in its quotes
+            let found = if open == "@{" {
+                unquoted(body, close).next()
+            } else {
+                body.find(close)
+            };
+            match found {
                 Some(i) => (&body[..i], Some(&body[i + close.len()..])),
                 None => (body, None),
             }
@@ -239,10 +245,27 @@ fn shape(s: &mut &str) -> Option<Option<(Shape, Option<String>)>> {
     }
 }
 
+/// Where `pat` occurs in `s` outside double quotes.
+fn unquoted<'a>(s: &'a str, pat: &'a str) -> impl Iterator<Item = usize> + 'a {
+    let mut quoted = false;
+    s.char_indices().filter_map(move |(i, c)| {
+        if c == '"' {
+            quoted = !quoted;
+            None
+        } else {
+            (!quoted && s[i..].starts_with(pat)).then_some(i)
+        }
+    })
+}
+
 /// `@{ shape: rounded, label: "text" }`, Mermaid's newer shape syntax.
 fn shape_spec(spec: &str) -> (Shape, Option<String>) {
     let (mut shape, mut label) = (Shape::Rect, None);
-    for field in spec.split(',') {
+    let mut start = 0;
+    let ends = unquoted(spec, ",").chain(std::iter::once(spec.len()));
+    for end in ends {
+        let field = &spec[start..end];
+        start = (end + 1).min(spec.len());
         let Some((key, value)) = field.split_once(':') else {
             continue;
         };
@@ -513,6 +536,11 @@ mod tests {
             ("[\"a [b]\"]", Shape::Rect, "a [b]"),
             ("[\"`md`\"]", Shape::Rect, "md"),
             ("@{ shape: diamond, label: \"q\" }", Shape::Diamond, "q"),
+            (
+                "@{ label: \"a { b }, c\", shape: hex }",
+                Shape::Diamond,
+                "a { b }, c",
+            ),
         ];
         for (src, want, label) in cases {
             let mut s = src;

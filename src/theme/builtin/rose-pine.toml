@@ -68,6 +68,7 @@ table_row_alt = { bg = "base_dark" }
 footnote_label = { fg = "iris" }
 html = { fg = "muted" }
 image_frame = {}
+diagram_line = { fg = "subtle" }   # a diagram's lines, boxes and arrows; stronger than table_border
 
 [glyphs]
 bullets = ["•", "◦", "▪"]

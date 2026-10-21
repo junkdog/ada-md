@@ -70,6 +70,7 @@ table_row_alt = { bg = "bg0_s" }   # every other body row or record card
 footnote_label = { fg = "blue" }
 html = { fg = "gray" }
 image_frame = {}         # an image's frame until it has decoded; inherits block.table_border
+diagram_line = { fg = "fg4" }   # a diagram's lines, boxes and arrows; stronger than table_border
 
 [glyphs]
 bullets = ["•", "◦", "▪"]

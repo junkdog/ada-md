@@ -60,7 +60,8 @@ impl Pen {
 enum Cell {
     Empty,
     Text(char, StyleKey),
-    /// The right half of a wide character.
+    /// The columns after the first of a wide character (two for most, three for a few, such as
+    /// U+17D8).
     Wide,
     Lines(u8, StyleKey),
 }
@@ -201,6 +202,8 @@ impl Canvas {
     /// Write `text` from `col`, over whatever is there; it stops at the right edge. Returns the
     /// column after it.
     pub fn text(&mut self, row: usize, col: usize, text: &str, key: StyleKey) -> usize {
+        self.reach(row);
+        let base = row * self.width;
         let mut col = col;
         for c in text.chars() {
             let w = c.width().unwrap_or(0);
@@ -210,17 +213,62 @@ impl Canvas {
             if col + w > self.width {
                 break;
             }
-            if let Some(cell) = self.at(row, col) {
-                *cell = Cell::Text(c, key);
+            for k in 0..w {
+                self.clear(base, col + k);
             }
-            if w == 2
-                && let Some(cell) = self.at(row, col + 1)
-            {
-                *cell = Cell::Wide;
+            self.cells[base + col] = Cell::Text(c, key);
+            for k in 1..w {
+                self.cells[base + col + k] = Cell::Wide;
             }
             col += w;
         }
         col
+    }
+
+    /// Empty the character the cell at `base + col` is part of, every column of it, when it is
+    /// wider than one: writing over part of one must not leave the rest, or the row would come
+    /// out wider than the canvas. `base` is the row's first cell, and the row exists.
+    fn clear(&mut self, base: usize, col: usize) {
+        let row = &mut self.cells[base..base + self.width];
+        let mut start = col;
+        while start > 0 && row[start] == Cell::Wide {
+            start -= 1;
+        }
+        let wide = matches!(row[start], Cell::Text(c, _) if c.width().unwrap_or(0) > 1);
+        if !wide && start == col {
+            return;
+        }
+        row[start] = Cell::Empty;
+        for cell in row[start + 1..]
+            .iter_mut()
+            .take_while(|c| **c == Cell::Wide)
+        {
+            *cell = Cell::Empty;
+        }
+    }
+
+    /// `c` in every column of `from..to` on `row`, as [`text`](Self::text) would write it: a
+    /// gantt bar.
+    pub fn fill(&mut self, row: usize, from: usize, to: usize, c: char, key: StyleKey) {
+        if c.width() != Some(1) {
+            let mut buf = [0; 4];
+            let s = c.encode_utf8(&mut buf);
+            let mut col = from;
+            while col < to {
+                let next = self.text(row, col, s, key);
+                if next == col {
+                    break;
+                }
+                col = next;
+            }
+            return;
+        }
+        self.reach(row);
+        let base = row * self.width;
+        for col in from..to.min(self.width) {
+            self.clear(base, col);
+            self.cells[base + col] = Cell::Text(c, key);
+        }
     }
 
     /// One glyph, as text.
@@ -461,6 +509,30 @@ mod tests {
         // past the edge is dropped
         assert_eq!(c.text(1, 4, "abc", K), 6);
         assert_eq!(c.row_text(1), "    ab");
+    }
+
+    #[test]
+    fn writing_over_half_a_wide_character_clears_the_other_half() {
+        let mut c = Canvas::new(4, false);
+        c.text(0, 0, "日本", K);
+        c.text(0, 1, "x", K);
+        assert_eq!(c.row_text(0), " x本");
+        c.text(0, 2, "y", K);
+        assert_eq!(c.row_text(0), " xy");
+        c.text(0, 0, "語", K);
+        assert_eq!(c.row_text(0), "語y");
+        // unicode-width counts a few characters as three columns
+        let mut c = Canvas::new(5, false);
+        assert_eq!(c.text(0, 0, "\u{17D8}ab", K), 5);
+        c.text(0, 1, "x", K);
+        assert_eq!(c.row_text(0), " x ab");
+        // a fill over half of one clears the rest of it
+        let mut c = Canvas::new(5, false);
+        c.text(0, 1, "日", K);
+        c.fill(0, 0, 2, '█', K);
+        assert_eq!(c.row_text(0), "██");
+        c.fill(0, 3, 9, '本', K);
+        assert_eq!(c.row_text(0), "██ 本");
     }
 
     #[test]

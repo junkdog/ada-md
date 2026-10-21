@@ -9,12 +9,12 @@ sequenceDiagram
     participant Ada
     participant Neumann
     actor Human
-    participant Drawer as Cheese drawer
+    participant Drawer
     autonumber
     Ada ->> Neumann: distract the Human, I'll take care of the drawer
     Neumann -->> Ada: what's a drawer?
     Ada ->> Ada: sigh
-    Human ->>+ Drawer: open, for a midnight snack
+    Human ->>+ Drawer: a midnight snack
     Ada ->> Human: sit politely, eyes huge
     loop until the Human gives in
         Ada ->> Human: mrrp?

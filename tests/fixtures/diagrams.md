@@ -56,6 +56,21 @@ stateDiagram-v2
     Ready --> [*]
 ```
 
+A gantt chart:
+
+```mermaid
+gantt
+    title Release
+    dateFormat YYYY-MM-DD
+    excludes weekends
+    section Build
+        Parser          :done, p, 2024-01-01, 5d
+        Layout          :active, l, after p, 6d
+    section Ship
+        Fuzz everything :crit, f, after l, 1w
+        Release         :milestone, after f, 0d
+```
+
 A kind ada doesn't draw stays source:
 
 ```mermaid

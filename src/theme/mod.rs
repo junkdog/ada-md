@@ -74,6 +74,11 @@ style_keys! {
     DiagramNote => "block.diagram_note",
     DiagramFrame => "block.diagram_frame",
     DiagramNumber => "block.diagram_number",
+    DiagramBar => "block.diagram_bar",
+    DiagramActive => "block.diagram_active",
+    DiagramDone => "block.diagram_done",
+    DiagramCrit => "block.diagram_crit",
+    DiagramGrid => "block.diagram_grid",
     GutterUnstagedAdded => "gutter.unstaged.added",
     GutterUnstagedModified => "gutter.unstaged.modified",
     GutterUnstagedDeleted => "gutter.unstaged.deleted",
@@ -132,6 +137,11 @@ impl StyleKey {
             StyleKey::DiagramNote => Some(StyleKey::Quote),
             StyleKey::DiagramFrame => Some(StyleKey::CodeLabel),
             StyleKey::DiagramNumber => Some(StyleKey::ListNumber),
+            StyleKey::DiagramBar => Some(StyleKey::CalloutNote),
+            StyleKey::DiagramActive => Some(StyleKey::CalloutWarning),
+            StyleKey::DiagramDone => Some(StyleKey::CalloutTip),
+            StyleKey::DiagramCrit => Some(StyleKey::CalloutCaution),
+            StyleKey::DiagramGrid => Some(StyleKey::TableBorder),
             _ => None,
         }
     }

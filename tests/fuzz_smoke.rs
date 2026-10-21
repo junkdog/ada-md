@@ -213,6 +213,38 @@ fn random_graphs_never_panic() {
     }
 }
 
+/// Statements gantt charts are made of, and odd ones (DG-4).
+const GANTT_STATEMENTS: &[&str] = &[
+    "title A plan\n",
+    "dateFormat YYYY-MM-DD\n",
+    "dateFormat HH:mm\n",
+    "axisFormat %a %e\n",
+    "tickInterval 1day\n",
+    "excludes weekends, 2024-01-03\n",
+    "section Build\n",
+    "Parser : done, p, 2024-01-01, 3d\n",
+    "Layout : active, l, after p, 2d\n",
+    "Paint : crit, after l q, 1w\n",
+    "Quick : q, 09:30, 90m\n",
+    "Release : milestone, until p\n",
+    "A task with a name long enough to be cut short : 1d\n",
+    "Far : 9999-12-30, 1y\n",
+    "not a task\n",
+];
+
+#[test]
+fn random_gantts_never_panic() {
+    let mut rng = Rng(0x00ad_a5ee_d000_0005);
+    for _ in 0..300 {
+        let len = rng.below(30);
+        let body: String = (0..len)
+            .map(|_| GANTT_STATEMENTS[rng.below(GANTT_STATEMENTS.len() as u64) as usize])
+            .collect();
+        let text = format!("> ```mermaid\n> gantt\n{body}```\n```mermaid\ngantt\n{body}```\n");
+        replay(&mut rng, &text);
+    }
+}
+
 fn replay(rng: &mut Rng, text: &str) {
     {
         let mut msgs = vec![

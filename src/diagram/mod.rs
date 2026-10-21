@@ -4,6 +4,7 @@
 //! source, highlighted like any code block.
 
 mod canvas;
+pub mod gantt;
 pub mod graph;
 pub mod sequence;
 
@@ -19,6 +20,7 @@ pub enum Diagram {
     Sequence(sequence::Sequence),
     /// A flowchart or a state diagram.
     Graph(graph::Graph),
+    Gantt(gantt::Gantt),
 }
 
 /// The most cells a drawn diagram may have; a bigger one shows as source.
@@ -38,6 +40,7 @@ pub fn parse(src: &str) -> Option<Diagram> {
         "flowchart" | "flowchart-elk" | "graph" | "stateDiagram" | "stateDiagram-v2" => {
             graph::parse(kind, header, lines).map(Diagram::Graph)
         }
+        "gantt" => gantt::parse(lines).map(Diagram::Gantt),
         _ => None,
     }
 }
@@ -59,6 +62,7 @@ pub fn draw(diagram: &Diagram, width: u16, glyphs: &Glyphs) -> Option<Drawn> {
     let drawn = match diagram {
         Diagram::Sequence(s) => sequence::draw(s, usize::from(width), ascii)?,
         Diagram::Graph(g) => graph::draw(g, usize::from(width), ascii)?,
+        Diagram::Gantt(g) => gantt::draw(g, usize::from(width), ascii)?,
     };
     (drawn.canvas.cells() <= MAX_CELLS).then_some(drawn)
 }
