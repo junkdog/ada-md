@@ -1,0 +1,24 @@
+graph BT
+  oxasm["oxasm · oxasm-tree · oxasm-analysis · oxasm-util<br/>(git rev pin)"]
+  jcompat["sift-jcompat<br/>UTF-16 order/length · '?' output · char classes<br/>java_fmt · edit distances"]
+  term["sift-term<br/>styled spans (anstyle) · Gruvbox · AnsiLevel · SGR · Tree&lt;T&gt;"]
+  kmeta["sift-kmeta<br/>Kotlin @Metadata"]
+  cp["sift-classpath<br/>dir · jar · URI · Maven ladder · MR jars · services"]
+  core["sift-core<br/>types · elements · signatures · resolution · analysis<br/>capture · call graph · provenance · ScanIndex · census"]
+  action["sift-action (B)<br/>enum Action · value types · id()"]
+  codec["sift-codec<br/>AST · kt + rs front ends/printers · registry · driver · emitter"]
+  common["sift-cli-common<br/>clap commands · manifest projection · argv walkers<br/>.sift.toml · pager/viewer/dot · template discovery"]
+  scan["sift-scan (lib + bin)"]
+  engine["sift-engine (B)<br/>Action · Context · entities · traces · resolvers<br/>Deep provenance · SystemModel · JSON · DOT"]
+  tpl["sift-templates (B)<br/>embedded .template.rs + native hooks"]
+  sift["sift (bin, B)"]
+  core --> oxasm & kmeta & cp & jcompat
+  cp --> oxasm
+  term --> jcompat
+  action --> core & term
+  codec --> action & jcompat
+  common --> term & codec & cp
+  scan --> core & common & term
+  engine --> core & action & codec & term
+  tpl --> codec
+  sift --> engine & tpl & common

@@ -229,7 +229,7 @@ fn overlays(buf: &mut Grid, area: Rect, state: &State, doc: &Document, lines: &[
                     StyleKey::SearchMatch
                 };
                 let cols = match (cells.window, layout.rows[r as usize].kind) {
-                    (Some(start), RowKind::Code { block, .. }) => {
+                    (Some(start), RowKind::Code { block, .. } | RowKind::Diagram { block, .. }) => {
                         let info = layout.code.get(block as usize).copied().unwrap_or_default();
                         let x = state.code_x.min(info.max_x());
                         let end = start + info.window;

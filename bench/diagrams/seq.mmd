@@ -1,0 +1,12 @@
+sequenceDiagram
+    participant U as User
+    participant A as ada
+    participant W as Worker
+    U->>A: open note.md
+    A->>W: highlight blocks
+    W-->>A: spans
+    Note over A,W: off the UI thread
+    A-->>U: first frame
+    loop reload
+        A->>A: inotify event
+    end

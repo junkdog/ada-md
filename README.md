@@ -4,12 +4,11 @@
 
 _Named after Ada, regal matriarch, at her behest._
 
-The fastest terminal markdown viewer, for one file or a whole vault of notes: follow links and come
-back to where you were, see what git says changed, read wide tables at any width, and look at
-the pictures.
+The fastest terminal markdown viewer, for one note or a whole vault: walk its links and come
+back to where you were, read its tables at any width, and see its diagrams and pictures in place.
 
-`ada` renders CommonMark and GitHub-flavored markdown with `[[wiki links]]`, highlights code
-in some 200 languages, and shows images inline in terminals that can (kitty, sixel, iTerm2).
+`ada` renders CommonMark and GitHub-flavored markdown with `[[wiki links]]`, highlights code in
+some 200 languages, draws mermaid diagrams as text, and shows images over kitty, sixel or iTerm2.
 
 ![ada jumping to a heading from the outline, searching, following a link from the link list, sorting the second of two tables by how long things take, going back, and picking a dark theme](site/media/hero.webp)
 
@@ -21,10 +20,10 @@ More of it, one feature at a time, on [the site](https://junkdog.github.io/ada-m
   against the other terminal viewers and against ada's own budgets. A key draws its frame in
   well under a millisecond whatever the document's size, an idle ada sleeps until something
   happens, and a typical note takes about 11 MiB of memory.
-- **A curated feature set:** what a single markdown file needs, and what matters once files
-  link to each other, as in an
+- **A curated feature set:** what a single markdown file needs, mermaid diagrams included, and
+  what matters once files link to each other, as in an
   [LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) or an
-  Obsidian-style vault. The rest (a file browser, editing, mermaid, math) stays out.
+  Obsidian-style vault. The rest (a file browser, editing, math) stays out.
 - **No crashes, on any input.** Parsing, layout and drawing are safe Rust; ada's only `unsafe` is
   one call at startup that sets a malloc option. Every interaction is a message, so a
   recorded session replays to identical frames. Whole scripted sessions are fuzzed for hours at a
@@ -51,27 +50,27 @@ More of it, one feature at a time, on [the site](https://junkdog.github.io/ada-m
 - **`--print`** for pipes and fzf previews, and `--record` and `--replay` to make a bug report
   from a session
 
-Also: callouts, footnotes and task lists, a filterable outline and list of links, code that
-wraps or scrolls sideways, fourteen built-in themes and your own (`T` previews them), and keys
+Also: callouts, footnotes and task lists, mermaid sequence, flowchart, state and gantt diagrams
+in the theme's colors (their labels searchable), a filterable outline and list of links, code
+that wraps or scrolls sideways, fourteen built-in themes and your own (`T` previews them), and keys
 you can remap.
 
 ## Performance
 
-Against other terminal markdown viewers, ada is first in 79 of the 84 interactive measurements
-of time, CPU and memory: four notes from 13 KB to 2 MB in a 120×40 pty, four pinned cores of an
-AMD Ryzen AI MAX+ PRO 395 held at full clock, medians of 3–5 runs (ada `72ad907`, 2026-10-21). The
-exceptions: glow writes about a third fewer bytes per page, and md-tui peaks lower on the smallest
-note.
+ada is measured against ten other terminal markdown viewers on wall time, CPU and memory, and
+leads on nearly every measurement:
 
-Printing to a pipe, it's the fastest of the printers that render and highlight, on every note.
-As a previewer it beats bat on code, on pretty-printed JSON (6.5 MB in 160 ms, bat 1.9 s) and on
-logs (1 MB in 9 ms, bat 3.3 s), and it colors a single 3.75 MB line of JSON in bat's time (30 ms),
-on more CPU and memory, where bat leaves such lines uncolored. Image previews are the fastest of
-every tool measured, 3.6–19× faster than `kitten icat`, in 1.2–13× less memory.
+- **Reading:** first paint, scrolling, search, resize and reload, from a short note to a 2 MB
+  one. An idle ada doesn't wake at all.
+- **Printing and previews:** the fastest of the printers that render and highlight, and ahead of
+  bat as an fzf previewer on code, JSON and logs.
+- **Images:** the fastest previews of every tool measured, kitty's own `icat` included, in a
+  fraction of the memory.
+- **Diagrams:** a mermaid diagram is fitted to the width and drawn in microseconds; flowcharts
+  that take other renderers seconds take ada milliseconds.
 
-Charts are on [the site](https://junkdog.github.io/ada-md/#performance), the medians in
-[`interactive.dat`](bench/b2/plots/interactive.dat) and [`print.dat`](bench/b2/plots/print.dat),
-and the harness in [`bench/b2`](bench/b2/README.md).
+The charts are on [the site](https://junkdog.github.io/ada-md/#performance), the harnesses in
+[`bench/b2`](bench/b2/README.md) and [`examples/diagram_bench.rs`](examples/diagram_bench.rs).
 
 ## Install
 

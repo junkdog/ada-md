@@ -1,0 +1,8 @@
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Loading: open
+    Loading --> Ready: parsed
+    Loading --> Failed: error
+    Failed --> Idle: retry
+    Ready --> Loading: file changed
+    Ready --> [*]: quit

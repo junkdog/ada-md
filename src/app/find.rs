@@ -8,6 +8,7 @@ use regex::Regex;
 
 use super::{Cmd, Dir, Document, State};
 use crate::doc::{LinkId, LinkKind, TableId};
+use crate::layout::RowKind;
 use crate::search::{self, Match, Projection, UnitKind};
 
 #[derive(Debug)]
@@ -196,12 +197,36 @@ impl State {
 
     /// Bring match `at` on screen, a third of the way down, unless it already is.
     fn reveal_match(&mut self, at: u32) {
-        let Some(row) = self.search.as_ref().and_then(|s| s.projection.row_of(at)) else {
+        let Some(search) = &self.search else {
             return;
         };
+        let Some(cells) = search.projection.cells.iter().find(|c| c.at == at) else {
+            return;
+        };
+        let (row, window, cols) = (cells.row, cells.window, cells.cols.clone());
         let height = self.viewport_height();
         if !(self.scroll..self.scroll + height).contains(&row) {
             self.scroll = row.saturating_sub(height / 3).min(self.max_scroll());
+        }
+        // in a block that scrolls sideways, bring it into the window
+        let block = self
+            .doc
+            .as_ref()
+            .and_then(|d| match d.layout.rows[row as usize].kind {
+                RowKind::Code { block, .. } | RowKind::Diagram { block, .. } => {
+                    d.layout.code.get(block as usize).copied()
+                }
+                _ => None,
+            });
+        if let (Some(start), Some(info)) = (window, block) {
+            let (a, b) = (
+                cols.start.saturating_sub(start),
+                cols.end.saturating_sub(start),
+            );
+            let x = self.code_x.min(info.max_x());
+            if a < x || b > x + info.window {
+                self.code_x = a.saturating_sub(info.window / 3).min(info.max_x());
+            }
         }
     }
 

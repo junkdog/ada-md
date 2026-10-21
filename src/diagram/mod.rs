@@ -35,12 +35,13 @@ pub fn parse(src: &str) -> Option<Diagram> {
     let mut lines = statements(src);
     let (_, header) = lines.next()?;
     let kind = header.split_whitespace().next()?;
+    let source = Source::of(src);
     match kind {
-        "sequenceDiagram" => sequence::parse(lines).map(Diagram::Sequence),
+        "sequenceDiagram" => sequence::parse(lines, source).map(Diagram::Sequence),
         "flowchart" | "flowchart-elk" | "graph" | "stateDiagram" | "stateDiagram-v2" => {
-            graph::parse(kind, header, lines).map(Diagram::Graph)
+            graph::parse(kind, header, lines, source).map(Diagram::Graph)
         }
-        "gantt" => gantt::parse(lines).map(Diagram::Gantt),
+        "gantt" => gantt::parse(lines, source).map(Diagram::Gantt),
         _ => None,
     }
 }
@@ -53,7 +54,7 @@ pub struct Drawn {
     /// participants), if any.
     pub header: Option<std::ops::Range<usize>>,
     /// The full text of the labels cut to fit, in marker order: `…¹` is `notes[0]`.
-    pub notes: Vec<String>,
+    pub notes: Vec<Text>,
 }
 
 /// Draw `diagram` to fit `width` columns where it can. `None` when it would be too big.
@@ -85,27 +86,190 @@ fn statements(src: &str) -> impl Iterator<Item = (u32, &str)> {
         .take(MAX_STATEMENTS + 1)
 }
 
-/// A label's lines: split at `<br>`, `<br/>` and `<br />`, any case, with `#59;`-style
-/// entities decoded and control characters as spaces.
-pub fn label_lines(text: &str) -> Vec<String> {
-    let mut out = vec![String::new()];
-    let mut rest = text;
-    while !rest.is_empty() {
-        if let Some(after) = br(rest) {
-            out.push(String::new());
-            rest = after;
-            continue;
-        }
-        let (c, after) = entity(rest).unwrap_or_else(|| {
-            let mut chars = rest.chars();
-            (chars.next().unwrap_or(' '), chars.as_str())
+/// A line of label text, and where it came from in the block's source when it is a slice of it,
+/// so search can find it in the drawing. Equal by text alone.
+#[derive(Clone, Debug, Default)]
+pub struct Text {
+    pub s: String,
+    pub origin: Option<Origin>,
+}
+
+/// Where a [`Text`]'s first `len` bytes are in the block's source: from byte `at` on. A cut
+/// label's marker is past `len`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Origin {
+    pub at: u32,
+    pub len: u32,
+}
+
+impl Text {
+    /// Bytes `range` of it, keeping the part of its origin they cover.
+    fn slice(&self, range: std::ops::Range<usize>) -> Text {
+        let origin = self.origin.and_then(|o| {
+            let len = (o.len as usize).checked_sub(range.start)?.min(range.len());
+            (len > 0).then_some(Origin {
+                at: o.at + range.start as u32,
+                len: len as u32,
+            })
         });
-        if let Some(line) = out.last_mut() {
-            push_char(line, c);
+        Text {
+            s: self.s[range].to_owned(),
+            origin,
         }
-        rest = after;
     }
-    out.iter().map(|l| l.trim().to_owned()).collect()
+
+    /// `lines` on one line, a space between them; one line keeps its origin.
+    pub fn join(lines: &[Text]) -> Text {
+        match lines {
+            [one] => one.clone(),
+            lines => Text {
+                s: lines.iter().map(|l| &*l.s).collect::<Vec<_>>().join(" "),
+                origin: None,
+            },
+        }
+    }
+
+    /// It, then `tail`, which isn't from the source.
+    fn with(mut self, tail: &str) -> Text {
+        self.s.push_str(tail);
+        self
+    }
+}
+
+impl std::ops::Deref for Text {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.s
+    }
+}
+
+impl std::fmt::Display for Text {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.s)
+    }
+}
+
+impl PartialEq for Text {
+    fn eq(&self, other: &Text) -> bool {
+        self.s == other.s
+    }
+}
+
+impl Eq for Text {}
+
+impl PartialEq<&str> for Text {
+    fn eq(&self, other: &&str) -> bool {
+        self.s == *other
+    }
+}
+
+impl From<&str> for Text {
+    fn from(s: &str) -> Text {
+        Text {
+            s: s.to_owned(),
+            origin: None,
+        }
+    }
+}
+
+/// A diagram's source, to tell where in it a label sliced from it starts.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Source {
+    start: usize,
+    len: usize,
+}
+
+impl Source {
+    fn of(src: &str) -> Source {
+        Source {
+            start: src.as_ptr() as usize,
+            len: src.len(),
+        }
+    }
+
+    /// Where `s` starts in the source, when it is a slice of it.
+    fn offset(self, s: &str) -> Option<u32> {
+        let at = (s.as_ptr() as usize).checked_sub(self.start)?;
+        (at + s.len() <= self.len).then(|| u32::try_from(at).ok())?
+    }
+
+    /// A label's lines: split at `<br>`, `<br/>` and `<br />`, any case, with `#59;`-style
+    /// entities decoded and control characters as spaces. A line left as it was in `text`
+    /// keeps its origin.
+    pub fn label(self, text: &str) -> Vec<Text> {
+        let mut out = Vec::new();
+        let mut line = String::new();
+        // where the line being read starts in `text`, and whether it is still as written
+        let (mut from, mut verbatim) = (0, true);
+        let mut rest = text;
+        loop {
+            let at = text.len() - rest.len();
+            let after = br(rest);
+            if after.is_some() || rest.is_empty() {
+                out.push(self.line(&line, &text[from..at], verbatim));
+                let Some(after) = after else {
+                    return out;
+                };
+                line.clear();
+                rest = after;
+                (from, verbatim) = (text.len() - rest.len(), true);
+                continue;
+            }
+            let (c, after) = match entity(rest) {
+                Some(e) => {
+                    verbatim = false;
+                    e
+                }
+                None => {
+                    let mut chars = rest.chars();
+                    (chars.next().unwrap_or(' '), chars.as_str())
+                }
+            };
+            verbatim &= !c.is_control();
+            push_char(&mut line, c);
+            rest = after;
+        }
+    }
+
+    /// One line of a label, trimmed; `raw` is what it was read from.
+    fn line(self, line: &str, raw: &str, verbatim: bool) -> Text {
+        let s = line.trim();
+        let lead = line.len() - line.trim_start().len();
+        let origin = if verbatim {
+            self.offset(raw).map(|at| Origin {
+                at: at + lead as u32,
+                len: s.len() as u32,
+            })
+        } else {
+            None
+        };
+        Text {
+            s: s.to_owned(),
+            origin,
+        }
+    }
+
+    /// A label on one line, its breaks as spaces.
+    pub fn one_line(self, text: &str) -> Text {
+        let s = text.trim();
+        if !s.contains(['<', '#']) && !s.contains(char::is_control) {
+            // no break or entity: as written (a gantt chart has a name per task)
+            return Text {
+                s: s.to_owned(),
+                origin: self.offset(s).map(|at| Origin {
+                    at,
+                    len: s.len() as u32,
+                }),
+            };
+        }
+        Text::join(&self.label(s))
+    }
+}
+
+/// A label's lines, as [`Source::label`] reads them, with no origin.
+pub fn label_lines(text: &str) -> Vec<Text> {
+    Source::default().label(text)
 }
 
 fn push_char(line: &mut String, c: char) {
@@ -153,9 +317,11 @@ fn cut(s: &str, max: usize) -> &str {
 }
 
 /// Wrap `text` into lines of at most `max` columns, at spaces where it can.
-fn wrap(text: &str, max: usize) -> Vec<String> {
+fn wrap(text: &Text, max: usize) -> Vec<Text> {
     let mut out = Vec::new();
-    wrap_each(text, max, &mut |line, _| out.push(line.to_owned()));
+    wrap_each(text, max, &mut |at, line, _| {
+        out.push(text.slice(at..at + line.len()));
+    });
     out
 }
 
@@ -163,17 +329,17 @@ fn wrap(text: &str, max: usize) -> Vec<String> {
 /// which measures every label several times.
 fn wrap_size(text: &str, max: usize) -> (usize, usize) {
     let (mut rows, mut widest) = (0, 0);
-    wrap_each(text, max, &mut |_, w| {
+    wrap_each(text, max, &mut |_, _, w| {
         rows += 1;
         widest = widest.max(w);
     });
     (rows, widest)
 }
 
-/// [`wrap`], a line at a time: each a slice of `text`, and its width. Lines break at spaces, which go, and
-/// after `(`, `{`, `[`, `/`, `-` and `,`, which stay; a piece longer than a line breaks where
-/// it must.
-fn wrap_each<'a>(text: &'a str, max: usize, emit: &mut impl FnMut(&'a str, usize)) {
+/// [`wrap`], a line at a time: where it starts in `text`, the slice, and its width. Lines break
+/// at spaces, which go, and after `(`, `{`, `[`, `/`, `-` and `,`, which stay; a piece longer
+/// than a line breaks where it must.
+fn wrap_each<'a>(text: &'a str, max: usize, emit: &mut impl FnMut(usize, &'a str, usize)) {
     let max = max.max(1);
     // the line being filled: where it starts, ends and how wide it is
     let (mut start, mut end, mut used) = (None, 0, 0);
@@ -189,12 +355,12 @@ fn wrap_each<'a>(text: &'a str, max: usize, emit: &mut impl FnMut(&'a str, usize
                 break;
             }
             if let Some(s) = start.take() {
-                emit(&text[s..end], used);
+                emit(s, &text[s..end], used);
                 (emitted, used) = (true, 0);
                 continue;
             }
             let head = break_word(piece, max);
-            emit(head, width(head));
+            emit(at, head, width(head));
             emitted = true;
             (at, piece) = (at + head.len(), &piece[head.len()..]);
             if piece.is_empty() {
@@ -203,8 +369,8 @@ fn wrap_each<'a>(text: &'a str, max: usize, emit: &mut impl FnMut(&'a str, usize
         }
     }
     match start {
-        Some(s) => emit(&text[s..end], used),
-        None if !emitted => emit("", 0),
+        Some(s) => emit(s, &text[s..end], used),
+        None if !emitted => emit(0, "", 0),
         None => {}
     }
 }
@@ -278,21 +444,21 @@ mod tests {
 
     #[test]
     fn wrapping_at_spaces_then_inside_words() {
-        assert_eq!(wrap("one two three", 7), ["one two", "three"]);
-        assert_eq!(wrap("abcdefghij", 4), ["abcd", "efgh", "ij"]);
-        assert_eq!(wrap("", 4), [""]);
-        assert_eq!(wrap("日本語", 1), ["日", "本", "語"]);
+        assert_eq!(wrap(&"one two three".into(), 7), ["one two", "three"]);
+        assert_eq!(wrap(&"abcdefghij".into(), 4), ["abcd", "efgh", "ij"]);
+        assert_eq!(wrap(&"".into(), 4), [""]);
+        assert_eq!(wrap(&"日本語".into(), 1), ["日", "本", "語"]);
     }
 
     #[test]
     fn wrapping_after_brackets_and_separators() {
         assert_eq!(
-            wrap("PayloadRequest(public key)", 16),
+            wrap(&"PayloadRequest(public key)".into(), 16),
             ["PayloadRequest(", "public key)"]
         );
-        assert_eq!(wrap("a/b/c-d", 4), ["a/b/", "c-d"]);
-        assert_eq!(wrap("x,  y", 3), ["x,", "y"]);
-        assert_eq!(wrap("payload (mTLS)", 10), ["payload", "(mTLS)"]);
+        assert_eq!(wrap(&"a/b/c-d".into(), 4), ["a/b/", "c-d"]);
+        assert_eq!(wrap(&"x,  y".into(), 3), ["x,", "y"]);
+        assert_eq!(wrap(&"payload (mTLS)".into(), 10), ["payload", "(mTLS)"]);
         assert_eq!(wrap_size("PayloadRequest(public key)", 16), (2, 15));
     }
 

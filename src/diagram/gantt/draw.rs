@@ -79,7 +79,7 @@ pub fn draw(g: &Gantt, avail: usize, ascii: bool) -> Option<Drawn> {
     let mut canvas = Canvas::new(left + area, ascii);
     let mut row = 0;
     if !g.title.is_empty() {
-        canvas.text(row, 0, &g.title, StyleKey::DiagramActor);
+        canvas.label(row, 0, &g.title, StyleKey::DiagramActor);
         row += 2;
     }
     let header = row..row + 2;
@@ -107,17 +107,18 @@ pub fn draw(g: &Gantt, avail: usize, ascii: bool) -> Option<Drawn> {
         let row = axis + 1 + i;
         match r {
             Row::Section(name) => {
-                canvas.text(row, 0, name, StyleKey::DiagramFrame);
+                canvas.label(row, 0, name, StyleKey::DiagramFrame);
             }
             Row::Task(t) => {
                 let x = indent(t.in_section);
                 let room = names.saturating_sub(x);
                 if width(&t.name) <= room {
-                    canvas.text(row, x, &t.name, StyleKey::DiagramLabel);
+                    canvas.label(row, x, &t.name, StyleKey::DiagramLabel);
                 } else {
                     let mark = marker(notes.len() + 1);
-                    let head = cut(&t.name, room.saturating_sub(width(&mark)));
-                    let after = canvas.text(row, x, head.trim_end(), StyleKey::DiagramLabel);
+                    let head = cut(&t.name, room.saturating_sub(width(&mark))).trim_end();
+                    let head = t.name.slice(0..head.len());
+                    let after = canvas.label(row, x, &head, StyleKey::DiagramLabel);
                     canvas.text(row, after, &mark, StyleKey::DiagramNumber);
                     notes.push(t.name.clone());
                 }

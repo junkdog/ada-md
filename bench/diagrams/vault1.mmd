@@ -1,0 +1,11 @@
+graph BT
+  core["oxasm<br/>reader · writer · visitors · Type · signature"]
+  tree["oxasm-tree"] --> core
+  analysis["oxasm-analysis"] --> tree
+  commons["oxasm-commons"] --> core
+  commons --> tree
+  util["oxasm-util"] --> core
+  util --> tree
+  util --> analysis
+  testkit["oxasm-testkit (dev)"] -.-> core
+  xtask["xtask + oracle/Oracle.java"] -.-> testkit

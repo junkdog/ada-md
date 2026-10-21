@@ -1,0 +1,22 @@
+---
+source: src/record.rs
+expression: frames.last().unwrap()
+---
+   Diagrams
+
+  Search finds the labels a diagram draws.
+
+  ‹╭──────╮        ╭─────────╮    ╭──────╮       ╭───────╮
+  ‹│ Echo │        │ Foxtrot │    │ Golf │       │ Omega │
+  ‹╰───┬──╯        ╰────┬────╯    ╰───┬──╯       ╰───┬───╯
+  ‹    │                │             │              │
+  ‹    │                │             │              │
+  ‹    │                │             │              │
+  ‹    │                │             │              │
+  ‹    │                │             │              │
+  ‹    │                │             │              │
+  ‹    │                │             │              │
+  ‹ho  │                │             │              │
+  ‹───▶│                │             │              │
+  ‹    │ hello Foxtrot  │             │              │
+ d.md  Diagrams                                    1/2  Top

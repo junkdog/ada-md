@@ -224,7 +224,8 @@ pub struct Cells {
     pub at: u32,
     /// Painted on the owner of a hidden match.
     pub hidden: bool,
-    /// In no-wrap code: where the code window starts, for paint to shift by the offset.
+    /// In no-wrap code and diagrams: where the block's window starts, for paint to shift by
+    /// the offset.
     pub window: Option<u16>,
 }
 
@@ -268,14 +269,18 @@ impl Projection {
                             text.get(seg.start as usize..to as usize)
                                 .map_or(0, |t| t.width() as u16)
                         };
-                        let code =
-                            matches!(layout.rows[seg.row as usize].kind, RowKind::Code { .. });
+                        let window = match layout.rows[seg.row as usize].kind {
+                            RowKind::Code { .. } if nowrap => Some(seg.col),
+                            // a diagram scrolls sideways whether code wraps or not
+                            RowKind::Diagram { x, .. } => Some(x),
+                            _ => None,
+                        };
                         cells.push(Cells {
                             row: seg.row,
                             cols: seg.col + width(a)..seg.col + width(b),
                             at,
                             hidden: false,
-                            window: (nowrap && code).then_some(seg.col),
+                            window,
                         });
                     }
                 }
@@ -478,6 +483,61 @@ mod tests {
             "footnote numbers are decoration"
         );
         assert_eq!(found(md, "note", 80), ["note"]);
+    }
+
+    #[test]
+    fn diagram_labels_match_in_the_drawing() {
+        let md = "```mermaid\nsequenceDiagram\n    participant A as Alice\n    A ->> B: pay the bill\n    Note right of B: a bill note\n```\n";
+        assert_eq!(found(md, "bill", 80), ["bill", "bill"]);
+        assert_eq!(found(md, "Alice", 80), ["Alice"]);
+        assert_eq!(
+            found(md, "B", 80),
+            ["B"],
+            "the box, not the source's mentions"
+        );
+        assert!(
+            found(md, "participant", 80).is_empty(),
+            "keywords aren't drawn"
+        );
+        assert!(found(md, "->>", 80).is_empty());
+        let md = "```mermaid\nflowchart LR\n    A[start here] -->|go on| B{done?}\n```\n";
+        assert_eq!(found(md, "here|go|done", 80), ["here", "go", "done"]);
+        let md = "```mermaid\ngantt\n    dateFormat YYYY-MM-DD\n    section Build\n    Parse it : 2026-01-01, 3d\n```\n";
+        assert_eq!(found(md, "parse|build", 80), ["Build", "Parse"]);
+        let md = "```mermaid\nstateDiagram-v2\n    [*] --> Idle\n    Idle --> Busy : work\n```\n";
+        assert_eq!(found(md, "idle|busy|work", 80), ["Idle", "work", "Busy"]);
+    }
+
+    #[test]
+    fn diagram_labels_match_across_wraps_and_in_their_notes() {
+        let label = "a label long enough to wrap and then be cut short to fit the width";
+        let md =
+            format!("```mermaid\nsequenceDiagram\n    A ->> B: {label}\n    B ->> C: ok\n```\n");
+        let got = found(&md, "enough to wrap", 40);
+        assert!(
+            got.iter().any(|g| g.contains('|')),
+            "across the wrap: {got:?}"
+        );
+        // the cut part shows only in the note under the diagram
+        assert_eq!(found(&md, "the width", 40), ["the width"]);
+        let tabs = "```mermaid\nflowchart TD\n\tA[tabbed] --> B\n```\n";
+        assert_eq!(found(tabs, "tabbed", 80), ["tabbed"]);
+    }
+
+    #[test]
+    fn diagram_cells_know_their_window() {
+        let theme = Theme::builtin();
+        let doc = parse("> ```mermaid\n> flowchart LR\n>     A[one] --> B[two]\n> ```\n");
+        let map = SearchMap::build(&doc, &theme.glyphs);
+        let matches = map.find(&compile("two").unwrap());
+        let layout = crate::layout::layout(&doc, &theme.glyphs, params(80));
+        let proj = Projection::new(&map, &matches, &layout);
+        let c = &proj.cells[0];
+        let RowKind::Diagram { x, .. } = layout.rows[c.row as usize].kind else {
+            panic!("not a diagram row");
+        };
+        assert!(x > 0, "inside the quote");
+        assert_eq!(c.window, Some(x), "code wraps, but a diagram doesn't");
     }
 
     #[test]

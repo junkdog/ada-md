@@ -1,0 +1,7 @@
+stateDiagram-v2
+    [*] --> Reading
+    Reading --> Searching: /
+    Searching --> Reading: Esc
+    Reading --> Image: Enter
+    Image --> Reading: q
+    Reading --> [*]: q

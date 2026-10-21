@@ -1,0 +1,8 @@
+graph LR
+  P0 --> P1 --> P2 --> P3 --> P4 --> M1((M1 sift-ready))
+  P2 --> P5 --> P6 --> M2((M2 core))
+  M1 --> P7
+  M2 --> P7
+  M2 --> P8 --> M3((M3 parity)) --> P9 --> M4((1.0))
+  P7 --> M3
+  M1 -.-> SIFT[[sift port starts]]

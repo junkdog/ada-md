@@ -9,14 +9,14 @@ use anpa::{or, tuplify};
 
 pub use draw::draw;
 
-use super::{MAX_STATEMENTS, label_lines};
+use super::{MAX_STATEMENTS, Source, Text};
 
 /// The most participants a diagram may have.
 const MAX_PARTICIPANTS: usize = 64;
 
 #[derive(Debug, Default)]
 pub struct Sequence {
-    pub title: Vec<String>,
+    pub title: Vec<Text>,
     pub participants: Vec<Participant>,
     pub events: Vec<Event>,
 }
@@ -25,7 +25,7 @@ pub struct Sequence {
 pub struct Participant {
     pub id: String,
     /// The name shown, a line per `<br/>`.
-    pub label: Vec<String>,
+    pub label: Vec<Text>,
     pub actor: bool,
 }
 
@@ -36,17 +36,17 @@ pub enum Event {
     Message(Message),
     Note {
         at: NoteAt,
-        text: Vec<String>,
+        text: Vec<Text>,
     },
     /// A frame opens: `loop`, `alt`, `opt`, `par`, `critical` or `break`.
     Begin {
         kind: &'static str,
-        label: String,
+        label: Text,
     },
     /// A frame's next section: `else`, `and` or `option`.
     Divider {
         kind: &'static str,
-        label: String,
+        label: Text,
     },
     End,
     /// `activate`, `deactivate`, or `+`/`-` on an arrow: the lifeline is heavy while active.
@@ -61,7 +61,7 @@ pub struct Message {
     pub from: Who,
     pub to: Who,
     pub arrow: Arrow,
-    pub label: Vec<String>,
+    pub label: Vec<Text>,
     /// Its `autonumber`.
     pub number: Option<u32>,
 }
@@ -102,6 +102,7 @@ enum Open {
 
 #[derive(Default)]
 struct Parser {
+    src: Source,
     seq: Sequence,
     open: Vec<Open>,
     /// The next `autonumber` and its step, while numbering is on.
@@ -111,8 +112,14 @@ struct Parser {
 }
 
 /// Parse the statements after the `sequenceDiagram` line.
-pub(super) fn parse<'a>(lines: impl Iterator<Item = (u32, &'a str)>) -> Option<Sequence> {
-    let mut p = Parser::default();
+pub(super) fn parse<'a>(
+    lines: impl Iterator<Item = (u32, &'a str)>,
+    src: Source,
+) -> Option<Sequence> {
+    let mut p = Parser {
+        src,
+        ..Parser::default()
+    };
     for (n, (_, line)) in lines.enumerate() {
         if n >= MAX_STATEMENTS {
             return None;
@@ -157,7 +164,7 @@ impl Parser {
             "autonumber" => self.autonumber(rest),
             "title" => {
                 let text = rest.strip_prefix(':').unwrap_or(rest).trim();
-                self.seq.title = label_lines(text);
+                self.seq.title = self.src.label(text);
                 Some(())
             }
             "loop" | "alt" | "opt" | "par" | "critical" | "break" => {
@@ -165,7 +172,7 @@ impl Parser {
                 self.open.push(Open::Frame);
                 self.seq.events.push(Event::Begin {
                     kind,
-                    label: one_line(rest),
+                    label: self.src.one_line(rest),
                 });
                 Some(())
             }
@@ -177,7 +184,7 @@ impl Parser {
                 matches!(self.open.last(), Some(Open::Frame)).then_some(())?;
                 self.seq.events.push(Event::Divider {
                     kind: frame_kind(word)?,
-                    label: one_line(rest),
+                    label: self.src.one_line(rest),
                 });
                 Some(())
             }
@@ -212,7 +219,7 @@ impl Parser {
         let p = &mut self.seq.participants[usize::from(who)];
         p.actor = actor;
         if let Some(label) = label {
-            p.label = label_lines(label.trim());
+            p.label = self.src.label(label.trim());
         }
         Some(())
     }
@@ -232,7 +239,7 @@ impl Parser {
         }
         ps.push(Participant {
             id: id.to_owned(),
-            label: label_lines(id),
+            label: self.src.label(id),
             actor: false,
         });
         Some((ps.len() - 1) as Who)
@@ -281,7 +288,7 @@ impl Parser {
         };
         self.seq.events.push(Event::Note {
             at,
-            text: label_lines(text.trim()),
+            text: self.src.label(text.trim()),
         });
         Some(())
     }
@@ -300,7 +307,7 @@ impl Parser {
             from,
             to,
             arrow,
-            label: label_lines(text.trim()),
+            label: self.src.label(text.trim()),
             number,
         }));
         // `+` activates the receiver; `-` ends the sender's activation, as in Mermaid
@@ -317,11 +324,6 @@ fn frame_kind(word: &str) -> Option<&'static str> {
         "loop", "alt", "opt", "par", "critical", "break", "else", "and", "option",
     ];
     KINDS.into_iter().find(|k| *k == word)
-}
-
-/// A frame label: one line, its breaks as spaces.
-fn one_line(text: &str) -> String {
-    label_lines(text).join(" ")
 }
 
 /// A participant's id in a message: anything up to an arrow, `:` or `,`.

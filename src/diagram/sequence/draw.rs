@@ -6,7 +6,7 @@
 
 use super::{Event, Head, Message, NoteAt, Sequence, Who};
 use crate::diagram::canvas::{Canvas, Pen};
-use crate::diagram::{Drawn, cut, marker, width, wrap, wrap_size};
+use crate::diagram::{Drawn, Text, cut, marker, width, wrap, wrap_size};
 use crate::theme::StyleKey;
 
 /// Labels are never capped below this many columns; past it the diagram scrolls instead.
@@ -58,7 +58,7 @@ pub fn draw(s: &Sequence, avail: usize, ascii: bool) -> Option<Drawn> {
 /// A message's label or a note's text: its lines, and the columns its number takes in front
 /// of the first (`7 `), which never wrap away from it.
 struct Label<'a> {
-    lines: &'a [String],
+    lines: &'a [Text],
     number: usize,
     /// Columns it takes unfitted.
     natural: usize,
@@ -72,11 +72,11 @@ impl<'a> Label<'a> {
         Self::new(&m.label, number)
     }
 
-    fn note(lines: &'a [String]) -> Self {
+    fn note(lines: &'a [Text]) -> Self {
         Self::new(lines, 0)
     }
 
-    fn new(lines: &'a [String], number: usize) -> Self {
+    fn new(lines: &'a [Text], number: usize) -> Self {
         let natural = lines
             .iter()
             .enumerate()
@@ -119,12 +119,12 @@ impl<'a> Label<'a> {
     }
 
     /// Its lines fitted to `cap` (the number left out), and whether the last was cut.
-    fn fit(&self, cap: Option<usize>) -> (Vec<String>, bool) {
+    fn fit(&self, cap: Option<usize>) -> (Vec<Text>, bool) {
         let Some(cap) = cap.filter(|&c| self.natural > c) else {
             return (self.lines.to_vec(), false);
         };
         let inner = self.inner(cap);
-        let mut out: Vec<String> = self.lines.iter().flat_map(|l| wrap(l, inner)).collect();
+        let mut out: Vec<Text> = self.lines.iter().flat_map(|l| wrap(l, inner)).collect();
         let cut = out.len() > self.rows();
         out.truncate(self.rows());
         (out, cut)
@@ -327,7 +327,7 @@ struct Painter<'a> {
     s: &'a Sequence,
     plan: Plan,
     canvas: Canvas,
-    notes: Vec<String>,
+    notes: Vec<Text>,
     ascii: bool,
     row: usize,
 }
@@ -352,7 +352,7 @@ impl<'a> Painter<'a> {
     fn paint(mut self) -> Drawn {
         let s = self.s;
         for line in s.title.iter().filter(|l| !l.is_empty()) {
-            self.canvas.text(self.row, 0, line, StyleKey::DiagramActor);
+            self.canvas.label(self.row, 0, line, StyleKey::DiagramActor);
             self.row += 1;
         }
         if self.row > 0 {
@@ -374,7 +374,7 @@ impl<'a> Painter<'a> {
             for (k, line) in p.label.iter().enumerate() {
                 let x = l + (w - width(line)) / 2;
                 self.canvas
-                    .text(header_top + 1 + k, x, line, StyleKey::DiagramActor);
+                    .label(header_top + 1 + k, x, line, StyleKey::DiagramActor);
             }
         }
         self.row = bottom + 2;
@@ -450,21 +450,21 @@ impl<'a> Painter<'a> {
 
     /// Fit a message's label to `cap`, registering what was cut; the cut row ends in its
     /// marker. The number stays out: [`Painter::label_line`] puts it in front of row 0.
-    fn fitted(&mut self, m: &Message, cap: Option<usize>) -> Vec<String> {
+    fn fitted(&mut self, m: &Message, cap: Option<usize>) -> Vec<Text> {
         let label = Label::of(m);
         let (mut out, was_cut) = label.fit(cap);
-        if was_cut && let (Some(cap), Some(last)) = (cap, out.last_mut()) {
-            self.notes.push(m.label.join(" "));
+        if was_cut && let (Some(cap), Some(last)) = (cap, out.pop()) {
+            self.notes.push(Text::join(&m.label));
             let mark = marker(self.notes.len());
             let room = label.inner(cap).saturating_sub(width(&mark));
-            let keep = cut(last, room).trim_end_matches([' ', '(', '{', '[', '…']);
-            *last = keep.to_owned() + &mark;
+            let keep = cut(&last, room).trim_end_matches([' ', '(', '{', '[', '…']);
+            out.push(last.slice(0..keep.len()).with(&mark));
         }
         out
     }
 
     /// Write row `k` of a message's label from `x`, the number first on row 0.
-    fn label_line(&mut self, row: usize, x: usize, m: &Message, k: usize, line: &str) {
+    fn label_line(&mut self, row: usize, x: usize, m: &Message, k: usize, line: &Text) {
         let mut x = x;
         if let (0, Some(n)) = (k, m.number) {
             x = self
@@ -473,7 +473,7 @@ impl<'a> Painter<'a> {
             // written, so a lifeline under it doesn't show through
             x = self.canvas.text(row, x, " ", StyleKey::DiagramLabel);
         }
-        self.canvas.text(row, x, line, StyleKey::DiagramLabel);
+        self.canvas.label(row, x, line, StyleKey::DiagramLabel);
     }
 
     /// The columns row `k` of a message's label takes.
@@ -565,7 +565,7 @@ impl<'a> Painter<'a> {
         self.row += lines.len().max(2);
     }
 
-    fn note(&mut self, at: NoteAt, text: &[String]) {
+    fn note(&mut self, at: NoteAt, text: &[Text]) {
         let lines = self.fitted_note(text);
         let w = lines.iter().map(|l| width(l)).max().unwrap_or(0) + 4;
         let c = |who: Who| self.plan.centers[usize::from(who)] as isize;
@@ -582,13 +582,13 @@ impl<'a> Painter<'a> {
         for (k, line) in lines.iter().enumerate() {
             let x = l + 1 + (r - l - 1).saturating_sub(width(line)) / 2;
             self.canvas
-                .text(top + 1 + k, x, line, StyleKey::DiagramNote);
+                .label(top + 1 + k, x, line, StyleKey::DiagramNote);
         }
         self.row = bottom + 1;
     }
 
     /// Notes wrap at the cap but are never cut.
-    fn fitted_note(&self, text: &[String]) -> Vec<String> {
+    fn fitted_note(&self, text: &[Text]) -> Vec<Text> {
         match self.plan.cap {
             Some(cap) if Label::note(text).natural > cap => {
                 text.iter().flat_map(|l| wrap(l, cap)).collect()
@@ -598,7 +598,7 @@ impl<'a> Painter<'a> {
     }
 
     /// A frame's top edge with its kind and label, or (`divider`) a dashed line across it.
-    fn frame_label(&mut self, (l, r): (usize, usize), kind: &str, label: &str, divider: bool) {
+    fn frame_label(&mut self, (l, r): (usize, usize), kind: &str, label: &Text, divider: bool) {
         let row = self.row;
         if divider {
             self.canvas.hline(row, l, r, Pen::DASHED, LINE);
@@ -607,7 +607,7 @@ impl<'a> Painter<'a> {
         let x = self.canvas.text(row, x, kind, StyleKey::DiagramFrame);
         let x = self.canvas.text(row, x, " ", LINE);
         if !label.is_empty() {
-            let x = self.canvas.text(row, x, label, StyleKey::DiagramLabel);
+            let x = self.canvas.label(row, x, label, StyleKey::DiagramLabel);
             self.canvas.text(row, x, " ", LINE);
         }
     }

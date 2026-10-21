@@ -1,0 +1,34 @@
+ada-rec 1
++0 init size=60x18
++1 open path="d.md"
++2 doc-loaded path="d.md" mtime=1760535362123 text:384
+# Diagrams
+
+Search finds the labels a diagram draws.
+
+```mermaid
+sequenceDiagram
+    Alpha ->> Bravo: hello Bravo
+    Bravo ->> Charlie: hello Charlie
+    Charlie ->> Delta: hello Delta
+    Delta ->> Echo: hello Echo
+    Echo ->> Foxtrot: hello Foxtrot
+    Foxtrot ->> Golf: hello Golf
+    Golf ->> Omega: hello Omega
+```
+
+```mermaid
+flowchart LR
+    A[start] -->|hello| B{done?}
+```
+
++100 search-open
++110 search-input pattern="hel"
++120 search-input pattern="hello"
++130 search-submit
++200 search-next dir=next
++210 search-next dir=next
++300 search-open
++310 search-input pattern="Omega"
++320 search-submit
++900 quit

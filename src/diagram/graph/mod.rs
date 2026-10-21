@@ -14,7 +14,7 @@ mod topo;
 
 use std::collections::HashMap;
 
-use super::{Drawn, label_lines};
+use super::{Drawn, Source, Text};
 
 pub type NodeId = u32;
 pub type ClusterId = u32;
@@ -65,7 +65,7 @@ impl Dir {
 pub struct Node {
     pub id: String,
     /// A line per `<br/>`.
-    pub label: Vec<String>,
+    pub label: Vec<Text>,
     pub shape: Shape,
     pub parent: Option<ClusterId>,
     pub note: Option<Note>,
@@ -94,13 +94,13 @@ pub enum Shape {
 pub struct Note {
     /// `left of` (before, on the cross axis) or `right of`.
     pub after: bool,
-    pub text: Vec<String>,
+    pub text: Vec<Text>,
 }
 
 #[derive(Debug)]
 pub struct Cluster {
     pub id: String,
-    pub title: String,
+    pub title: Text,
     pub parent: Option<ClusterId>,
     pub frame: Frame,
 }
@@ -130,7 +130,7 @@ pub struct Edge {
     /// The mark at `from` (`<-->`, `o--o`).
     pub head_from: Mark,
     pub head_to: Mark,
-    pub label: Vec<String>,
+    pub label: Vec<Text>,
     /// Layers it spans at least: longer arrows (`--->`) span more.
     pub minlen: u8,
 }
@@ -159,10 +159,11 @@ pub(super) fn parse<'a>(
     kind: &str,
     header: &'a str,
     lines: impl Iterator<Item = (u32, &'a str)>,
+    src: Source,
 ) -> Option<Graph> {
     let b = match kind {
-        "stateDiagram" | "stateDiagram-v2" => state::parse(lines)?,
-        _ => flowchart::parse(header, lines)?,
+        "stateDiagram" | "stateDiagram-v2" => state::parse(lines, src)?,
+        _ => flowchart::parse(header, lines, src)?,
     };
     b.finish()
 }
@@ -207,6 +208,7 @@ pub(super) fn draw(g: &Graph, avail: usize, ascii: bool) -> Option<Drawn> {
 /// What both parsers build the graph with.
 #[derive(Default)]
 struct Builder {
+    src: Source,
     dir: Dir,
     nodes: Vec<Node>,
     edges: Vec<Edge>,
@@ -237,7 +239,7 @@ impl Builder {
         let n = self.nodes.len() as NodeId;
         self.nodes.push(Node {
             id: id.to_owned(),
-            label: label_lines(id),
+            label: self.src.label(id),
             shape: Shape::Rect,
             parent,
             note: None,
@@ -268,7 +270,7 @@ impl Builder {
         }
         self.clusters.push(Cluster {
             id: id.trim().to_owned(),
-            title: label_lines(title).join(" "),
+            title: self.src.one_line(title),
             parent: self.open.last().copied(),
             frame,
         });
@@ -310,8 +312,8 @@ impl Builder {
                 Some(&c) if !node.id.is_empty() => {
                     // a composite state's description is its title
                     let cluster = &mut self.clusters[c as usize];
-                    if cluster.title == cluster.id && node.label != [node.id.as_str()] {
-                        cluster.title = node.label.join(" ");
+                    if *cluster.title == cluster.id && node.label != [node.id.as_str()] {
+                        cluster.title = Text::join(&node.label);
                     }
                     remap.push(End::Cluster(c));
                 }

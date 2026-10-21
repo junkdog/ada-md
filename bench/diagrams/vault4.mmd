@@ -1,0 +1,12 @@
+graph LR
+  A0 --> A1 --> A2 --> A4
+  A1 --> A3
+  A2 --> A3g{{A3 gate}}
+  A3 --> A3g --> A5
+  A4 --> A5 --> A6 --> A7 --> A8 --> MA((MA drop-in))
+  A2 -.-> MA1((MA1 index))
+  A4 -.-> MA2((MA2 engine))
+  A3 --> B1 --> B2
+  A4 --> B2
+  B1 --> B4 --> B6
+  B2 --> B5 --> B6 --> B7 --> MB((MB))

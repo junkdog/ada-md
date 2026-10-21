@@ -1,0 +1,21 @@
+sequenceDiagram
+    participant Bank
+    participant Ledger
+    participant Orders
+    participant Gateway
+    participant Phone
+
+    autonumber
+
+    Orders ->> Gateway: open a session for the checkout, with the cart's id and the customer's region
+    Gateway -->> Orders: the session token, valid for fifteen minutes, and the allowed payment methods
+    Orders ->> Orders: price the cart again with today's rates, the coupons and the shipping zone
+    Orders ->> Ledger: reserve the amount against the customer's account, keyed by the cart's id
+    Ledger ->> Bank: authorize the card for the reserved amount, in the merchant's currency
+    Bank -->> Ledger: the authorization code, or a decline with its reason and a retry hint
+    Ledger -->> Orders: the reservation, held until it is captured or released by the order
+    Orders ->> Gateway: confirm the order with the reservation and the delivery window chosen
+    Gateway ->> Gateway: sign the receipt with the session key and stamp it with the server time
+    Phone ->> Gateway: poll for the receipt, sending the session token and the last event seen
+    Gateway ->> Gateway: check the token hasn't expired and the device is the one that opened it
+    Gateway -->> Phone: the signed receipt, the order's number and where to follow the delivery

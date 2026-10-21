@@ -2,22 +2,22 @@
 //! chains of edges (`A --> B -.-> C`, `A & B --> C`), labels on edges and subgraphs.
 //! Styling statements are accepted and ignored: colors come from the theme.
 
-use super::{
-    Builder, Dir, Edge, End, Frame, Line, Mark, NodeId, Shape, label_lines, split_statements,
-};
-use crate::diagram::MAX_STATEMENTS;
+use super::{Builder, Dir, Edge, End, Frame, Line, Mark, NodeId, Shape, split_statements};
+use crate::diagram::{MAX_STATEMENTS, Source, Text};
 
 /// Parse the statements after the `flowchart` line, `header`, which may hold statements of
 /// its own after a `;`.
 pub(super) fn parse<'a>(
     header: &'a str,
     lines: impl Iterator<Item = (u32, &'a str)>,
+    src: Source,
 ) -> Option<Builder> {
     let mut statements = split_statements(header);
     let mut words = statements.next()?.split_whitespace();
     words.next()?;
     let mut b = Builder {
         dir: words.next().map_or(Some(Dir::Down), Dir::parse)?,
+        src,
         ..Builder::default()
     };
     let mut p = Parser {
@@ -94,7 +94,7 @@ impl Parser<'_> {
             if s.is_empty() {
                 return Some(());
             }
-            let arrow = arrow(&mut s)?;
+            let arrow = arrow(&mut s, self.b.src)?;
             s = s.trim_start();
             let right = self.nodes(&mut s)?;
             for &a in &left {
@@ -139,7 +139,7 @@ impl Parser<'_> {
             let node = &mut self.b.nodes[n as usize];
             node.shape = shape;
             if let Some(label) = label {
-                node.label = label_lines(&label);
+                node.label = self.b.src.label(label);
             }
         }
         // `:::class`
@@ -206,7 +206,7 @@ const SHAPES: [(&str, &str, Shape); 15] = [
 /// A node's shape and label after its id, if it has one: `Some(None)` for no shape, `None`
 /// for one that doesn't close.
 #[allow(clippy::option_option)]
-fn shape(s: &mut &str) -> Option<Option<(Shape, Option<String>)>> {
+fn shape<'a>(s: &mut &'a str) -> Option<Option<(Shape, Option<&'a str>)>> {
     for (open, close, shape) in SHAPES {
         let Some(body) = s.strip_prefix(open) else {
             continue;
@@ -237,7 +237,7 @@ fn shape(s: &mut &str) -> Option<Option<(Shape, Option<String>)>> {
         if open == "@{" {
             return Some(Some(shape_spec(text)));
         }
-        return Some(Some((shape, Some(unquote(text).to_owned()))));
+        return Some(Some((shape, Some(unquote(text)))));
     }
     match s.chars().next() {
         Some('[' | '(' | '{') => None,
@@ -259,7 +259,7 @@ fn unquoted<'a>(s: &'a str, pat: &'a str) -> impl Iterator<Item = usize> + 'a {
 }
 
 /// `@{ shape: rounded, label: "text" }`, Mermaid's newer shape syntax.
-fn shape_spec(spec: &str) -> (Shape, Option<String>) {
+fn shape_spec(spec: &str) -> (Shape, Option<&str>) {
     let (mut shape, mut label) = (Shape::Rect, None);
     let mut start = 0;
     let ends = unquoted(spec, ",").chain(std::iter::once(spec.len()));
@@ -285,7 +285,7 @@ fn shape_spec(spec: &str) -> (Shape, Option<String>) {
                     _ => Shape::Rect,
                 }
             }
-            "label" => label = Some(value.to_owned()),
+            "label" => label = Some(value),
             _ => {}
         }
     }
@@ -298,13 +298,13 @@ struct Arrow {
     line: Line,
     from: Mark,
     to: Mark,
-    label: Vec<String>,
+    label: Vec<Text>,
     minlen: u8,
 }
 
 /// Parse the arrow at the start of `s`: `-->`, `---`, `-.->`, `==>`, `~~~`, `<-->`, `--o`,
 /// `--x`, longer ones, and a label in it (`-- text -->`) or after it (`-->|text|`).
-fn arrow(s: &mut &str) -> Option<Arrow> {
+fn arrow(s: &mut &str, src: Source) -> Option<Arrow> {
     let (from, body) = match s.as_bytes() {
         [b'<', ..] => (Mark::Arrow, &s[1..]),
         [b'x', b'-' | b'=' | b'.', ..] => (Mark::Cross, &s[1..]),
@@ -330,7 +330,7 @@ fn arrow(s: &mut &str) -> Option<Arrow> {
             };
             (a, &body[n..])
         }
-        _ => line_arrow(body, line)?,
+        _ => line_arrow(body, line, src)?,
     };
     arrow.from = if line == Line::Hidden {
         Mark::None
@@ -341,7 +341,7 @@ fn arrow(s: &mut &str) -> Option<Arrow> {
     let t = rest.trim_start();
     if let Some(after) = t.strip_prefix('|') {
         let end = after.find('|')?;
-        arrow.label = label_lines(unquote(&after[..end]));
+        arrow.label = src.label(unquote(&after[..end]));
         rest = &after[end + 1..];
     }
     *s = rest;
@@ -349,7 +349,7 @@ fn arrow(s: &mut &str) -> Option<Arrow> {
 }
 
 /// A solid, dotted or thick arrow, which may hold its label: `-- text -->`.
-fn line_arrow(body: &str, line: Line) -> Option<(Arrow, &str)> {
+fn line_arrow(body: &str, line: Line, src: Source) -> Option<(Arrow, &str)> {
     let (dash, inner) = match line {
         Line::Dotted => ('-', '.'),
         Line::Thick => ('=', '='),
@@ -405,7 +405,7 @@ fn line_arrow(body: &str, line: Line) -> Option<(Arrow, &str)> {
         line,
         from: Mark::None,
         to,
-        label: label_lines(unquote(text)),
+        label: src.label(unquote(text)),
         minlen: length(&close[..n], line, to != Mark::None),
     };
     Some((a, rest))
@@ -462,7 +462,7 @@ mod tests {
 
     fn arrow_of(s: &str) -> Option<(Arrow, String)> {
         let mut t = s;
-        let a = arrow(&mut t)?;
+        let a = arrow(&mut t, Source::default())?;
         Some((a, t.to_owned()))
     }
 
@@ -498,16 +498,16 @@ mod tests {
     #[test]
     fn labels_in_and_after_arrows() {
         let (a, rest) = arrow_of("-->|yes| B").unwrap();
-        assert_eq!((a.label, rest.as_str()), (vec!["yes".to_owned()], " B"));
+        assert_eq!((a.label, rest.as_str()), (vec!["yes".into()], " B"));
         let (a, rest) = arrow_of("-- some text -->B").unwrap();
         assert_eq!(
             (a.label, a.to, rest.as_str()),
-            (vec!["some text".to_owned()], Mark::Arrow, "B")
+            (vec!["some text".into()], Mark::Arrow, "B")
         );
         let (a, _) = arrow_of("-. maybe .-> B").unwrap();
-        assert_eq!((a.label, a.line), (vec!["maybe".to_owned()], Line::Dotted));
+        assert_eq!((a.label, a.line), (vec!["maybe".into()], Line::Dotted));
         let (a, _) = arrow_of("== sure ==> B").unwrap();
-        assert_eq!((a.label, a.line), (vec!["sure".to_owned()], Line::Thick));
+        assert_eq!((a.label, a.line), (vec!["sure".into()], Line::Thick));
         let (a, _) = arrow_of("---|\"quoted\"| B").unwrap();
         assert_eq!(a.label, ["quoted"]);
     }
@@ -545,7 +545,7 @@ mod tests {
         for (src, want, label) in cases {
             let mut s = src;
             let got = shape(&mut s).flatten().unwrap_or_else(|| panic!("{src}"));
-            assert_eq!((got.0, got.1.as_deref()), (want, Some(label)), "{src}");
+            assert_eq!((got.0, got.1), (want, Some(label)), "{src}");
             assert!(s.is_empty(), "{src}: {s:?} left");
         }
         let mut s = "[unclosed";

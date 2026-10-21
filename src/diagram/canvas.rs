@@ -4,6 +4,7 @@
 
 use unicode_width::UnicodeWidthChar;
 
+use super::Text;
 use crate::theme::StyleKey;
 
 const UP: u8 = 1;
@@ -66,11 +67,23 @@ enum Cell {
     Lines(u8, StyleKey),
 }
 
+/// Label text from the block's source, as written: `len` bytes from byte `at` of the source,
+/// from `(row, col)` on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Found {
+    pub row: u32,
+    pub col: u32,
+    pub at: u32,
+    pub len: u32,
+}
+
 #[derive(Debug)]
 pub struct Canvas {
     width: usize,
     cells: Vec<Cell>,
     ascii: bool,
+    /// Where labels went, for search; text written over later may have replaced some.
+    pub found: Vec<Found>,
 }
 
 impl Canvas {
@@ -79,6 +92,7 @@ impl Canvas {
             width: width.max(1),
             cells: Vec::new(),
             ascii,
+            found: Vec::new(),
         }
     }
 
@@ -202,15 +216,58 @@ impl Canvas {
     /// Write `text` from `col`, over whatever is there; it stops at the right edge. Returns the
     /// column after it.
     pub fn text(&mut self, row: usize, col: usize, text: &str, key: StyleKey) -> usize {
-        self.reach(row);
-        let base = row * self.width;
+        self.write(row, col, text, key).0
+    }
+
+    /// [`text`](Self::text) for label text, noting where it went when it is from the source.
+    pub fn label(&mut self, row: usize, col: usize, text: &Text, key: StyleKey) -> usize {
+        let (end, bytes) = self.write(row, col, text, key);
+        if let Some(o) = text.origin {
+            let len = o.len.min(bytes as u32);
+            if len > 0 {
+                self.found.push(Found {
+                    row: row as u32,
+                    col: col as u32,
+                    at: o.at,
+                    len,
+                });
+            }
+        }
+        end
+    }
+
+    /// Whether row `row` shows `text` from `col` on, as [`text`](Self::text) wrote it.
+    pub fn holds(&self, row: usize, col: usize, text: &str) -> bool {
+        let Some(cells) = self.cells.get(row * self.width..(row + 1) * self.width) else {
+            return false;
+        };
         let mut col = col;
         for c in text.chars() {
             let w = c.width().unwrap_or(0);
             if w == 0 {
                 continue;
             }
+            if !matches!(cells.get(col), Some(Cell::Text(t, _)) if *t == c) {
+                return false;
+            }
+            col += w;
+        }
+        true
+    }
+
+    /// [`text`](Self::text), returning the column after it and the bytes of `text` written.
+    fn write(&mut self, row: usize, col: usize, text: &str, key: StyleKey) -> (usize, usize) {
+        self.reach(row);
+        let base = row * self.width;
+        let mut col = col;
+        let mut bytes = text.len();
+        for (i, c) in text.char_indices() {
+            let w = c.width().unwrap_or(0);
+            if w == 0 {
+                continue;
+            }
             if col + w > self.width {
+                bytes = i;
                 break;
             }
             for k in 0..w {
@@ -222,7 +279,7 @@ impl Canvas {
             }
             col += w;
         }
-        col
+        (col, bytes)
     }
 
     /// Empty the character the cell at `base + col` is part of, every column of it, when it is

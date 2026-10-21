@@ -1,0 +1,11 @@
+classDiagram
+    class Doc {
+        +String path
+        +Vec~Line~ lines
+        +reload()
+    }
+    class Line {
+        +Vec~Span~ spans
+    }
+    Doc "1" --> "*" Line
+    Line <|-- CodeLine

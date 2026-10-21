@@ -7,7 +7,7 @@ use super::place::{ItemGeo, Placed};
 use super::topo::{Kind, Topo};
 use super::{Dir, Frame, Graph, Line, Mark, Shape};
 use crate::diagram::canvas::{Canvas, Pen};
-use crate::diagram::width;
+use crate::diagram::{Text, width};
 use crate::theme::StyleKey;
 
 const LINE: StyleKey = StyleKey::DiagramLine;
@@ -236,18 +236,18 @@ impl Painter<'_> {
         }
     }
 
-    fn title(&mut self, row: usize, x: usize, title: &str) {
+    fn title(&mut self, row: usize, x: usize, title: &Text) {
         let x = self.canvas.text(row, x, " ", LINE);
-        let x = self.canvas.text(row, x, title, StyleKey::DiagramFrame);
+        let x = self.canvas.label(row, x, title, StyleKey::DiagramFrame);
         self.canvas.text(row, x, " ", LINE);
     }
 
     /// Lines centered across `f`, `pad` columns in from each side, from its top.
-    fn text_block(&mut self, f: Rect, pad: usize, lines: &[String], key: StyleKey) {
+    fn text_block(&mut self, f: Rect, pad: usize, lines: &[Text], key: StyleKey) {
         let inner = f.w.saturating_sub(2 * pad);
         for (k, line) in lines.iter().enumerate() {
             let x = f.x + pad + inner.saturating_sub(width(line)) / 2;
-            self.canvas.text(f.y + k, x, line, key);
+            self.canvas.label(f.y + k, x, line, key);
         }
     }
 
@@ -341,7 +341,7 @@ impl Painter<'_> {
         let edge = &g.edges[e as usize];
         let pen = Self::pen(edge.line);
         let ascii = self.ascii;
-        let labels: Vec<&String> = loops
+        let labels: Vec<&Text> = loops
             .iter()
             .flat_map(|&e| p.edges[e as usize].iter())
             .collect();
@@ -357,7 +357,7 @@ impl Painter<'_> {
             }
             for (k, l) in labels.iter().enumerate() {
                 self.canvas
-                    .text(y0 + k, right + 4, l, StyleKey::DiagramLabel);
+                    .label(y0 + k, right + 4, l, StyleKey::DiagramLabel);
             }
         } else {
             let (x0, x1) = (b.x + 1, b.x + 4);
@@ -370,13 +370,13 @@ impl Painter<'_> {
             }
             for (k, l) in labels.iter().enumerate() {
                 self.canvas
-                    .text(bottom + 2 + k, x1 + 2, l, StyleKey::DiagramLabel);
+                    .label(bottom + 2 + k, x1 + 2, l, StyleKey::DiagramLabel);
             }
         }
     }
 
     /// A note beside a box, within the node's footprint `fp`, joined to it by a dotted line.
-    fn note(&mut self, fp: Rect, b: Rect, after: bool, text: &[String]) {
+    fn note(&mut self, fp: Rect, b: Rect, after: bool, text: &[Text]) {
         let w = text.iter().map(|l| l.width()).max().unwrap_or(0) + 4;
         let h = text.len().max(1) + 2;
         let n = if self.dir.vertical() {

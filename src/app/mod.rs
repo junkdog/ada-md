@@ -2077,6 +2077,27 @@ mod tests {
     }
 
     #[test]
+    fn matches_in_a_wide_diagram_scroll_it_sideways() {
+        let names = [
+            "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Omega",
+        ];
+        let mut md = String::from("# Wide\n\n```mermaid\nsequenceDiagram\n");
+        for pair in names.windows(2) {
+            md += &format!("    {} ->> {}: hello\n", pair[0], pair[1]);
+        }
+        md += "```\n";
+        let mut state = loaded(&md, 40, 20);
+        let info = state.doc.as_ref().unwrap().layout.code[0];
+        assert!(info.max_x() > 0, "it scrolls: {info:?}");
+        search(&mut state, "Omega");
+        assert_eq!(counter(&state), "1/1");
+        assert!(state.code_x > 0, "Omega is off to the right");
+        let x = state.code_x;
+        search(&mut state, "Alpha");
+        assert_eq!(state.code_x, 0, "back from {x}");
+    }
+
+    #[test]
     fn n_steps_through_matches_and_survives_resize() {
         let mut state = loaded(&sample(), 80, 20);
         search(&mut state, "heading 1\\b");

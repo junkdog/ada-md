@@ -1,0 +1,10 @@
+flowchart TD
+    subgraph parse[Parse]
+        A[read file] --> B{markdown?}
+    end
+    B -->|yes| C[pulldown-cmark]
+    B -->|no| D[syntect]
+    C --> E[layout]
+    D --> E
+    E --> F((paint))
+    E -.-> G[images worker]

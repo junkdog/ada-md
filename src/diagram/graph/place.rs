@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 use super::topo::{Kind, Level, Topo};
 use super::{Dir, Graph, Mark, Shape};
-use crate::diagram::{MAX_CELLS, width, wrap};
+use crate::diagram::{MAX_CELLS, Text, width, wrap};
 
 /// The label widths tried in turn until the drawing fits.
 pub(super) const CAPS: &[usize] = &[48, 36, 28, 22, 16, 12];
@@ -25,10 +25,10 @@ const SWEEPS: usize = 10;
 pub(super) struct Placed {
     pub levels: Vec<Geo>,
     /// Each node's label, wrapped.
-    pub nodes: Vec<Vec<String>>,
-    pub notes: Vec<Vec<String>>,
+    pub nodes: Vec<Vec<Text>>,
+    pub notes: Vec<Vec<Text>>,
     /// Each edge's label, wrapped.
-    pub edges: Vec<Vec<String>>,
+    pub edges: Vec<Vec<Text>>,
 }
 
 impl Placed {
@@ -100,8 +100,8 @@ struct Link {
 
 pub(super) fn place(g: &Graph, t: &Topo, cap: usize) -> Option<Placed> {
     let vertical = g.dir.vertical();
-    let nodes: Vec<Vec<String>> = g.nodes.iter().map(|n| wrap_lines(&n.label, cap)).collect();
-    let notes: Vec<Vec<String>> = g
+    let nodes: Vec<Vec<Text>> = g.nodes.iter().map(|n| wrap_lines(&n.label, cap)).collect();
+    let notes: Vec<Vec<Text>> = g
         .nodes
         .iter()
         .map(|n| {
@@ -110,7 +110,7 @@ pub(super) fn place(g: &Graph, t: &Topo, cap: usize) -> Option<Placed> {
                 .map_or_else(Vec::new, |n| wrap_lines(&n.text, cap))
         })
         .collect();
-    let edges: Vec<Vec<String>> = g.edges.iter().map(|e| wrap_lines(&e.label, cap)).collect();
+    let edges: Vec<Vec<Text>> = g.edges.iter().map(|e| wrap_lines(&e.label, cap)).collect();
     let mut p = Placed {
         levels: (0..t.levels.len()).map(|_| Geo::default()).collect(),
         nodes,
@@ -125,16 +125,16 @@ pub(super) fn place(g: &Graph, t: &Topo, cap: usize) -> Option<Placed> {
     (root.rs.saturating_mul(root.cs) <= MAX_CELLS).then_some(p)
 }
 
-fn wrap_lines(lines: &[String], cap: usize) -> Vec<String> {
-    let out: Vec<String> = lines.iter().flat_map(|l| wrap(l, cap)).collect();
-    if out.iter().all(String::is_empty) {
+fn wrap_lines(lines: &[Text], cap: usize) -> Vec<Text> {
+    let out: Vec<Text> = lines.iter().flat_map(|l| wrap(l, cap)).collect();
+    if out.iter().all(|l| l.is_empty()) {
         Vec::new()
     } else {
         out
     }
 }
 
-fn widest(lines: &[String]) -> usize {
+fn widest(lines: &[Text]) -> usize {
     lines.iter().map(|l| width(l)).max().unwrap_or(0)
 }
 
@@ -176,7 +176,7 @@ fn weight(a: Kind, b: Kind) -> f64 {
 /// The canvas size of a node's box: `(width, height)`.
 fn box_size(
     shape: Shape,
-    lines: &[String],
+    lines: &[Text],
     vertical: bool,
     degree: usize,
     loops: bool,
@@ -212,7 +212,7 @@ fn level(g: &Graph, t: &Topo, p: &Placed, l: usize, vertical: bool) -> Option<Ge
     for (i, item) in lv.items.iter().enumerate() {
         geo.push(match item.kind {
             Kind::Node(nd) => {
-                let loop_label: Vec<String> = item
+                let loop_label: Vec<Text> = item
                     .loops
                     .iter()
                     .flat_map(|&e| p.edges[e as usize].iter().cloned())
@@ -243,7 +243,7 @@ fn level(g: &Graph, t: &Topo, p: &Placed, l: usize, vertical: bool) -> Option<Ge
             Kind::Title => {
                 let title = lv
                     .cluster
-                    .map_or("", |c| g.clusters[c as usize].title.as_str());
+                    .map_or("", |c| g.clusters[c as usize].title.s.as_str());
                 square(1, width(title) + 4)
             }
             Kind::Dummy | Kind::Port => square(1, 1),
@@ -357,7 +357,7 @@ fn level(g: &Graph, t: &Topo, p: &Placed, l: usize, vertical: bool) -> Option<Ge
 /// Where a line meets a label `cs` wide, across, in `TD` and `BT`: the column nearest its middle with
 /// a character on both its first and last row (each centered), so the line never seems to run
 /// through a gap between words.
-fn label_anchor(lines: &[String], cs: usize) -> usize {
+fn label_anchor(lines: &[Text], cs: usize) -> usize {
     let mid = cs / 2;
     let (Some(first), Some(last)) = (lines.first(), lines.last()) else {
         return mid;
@@ -399,7 +399,7 @@ fn node_geo(
     vertical: bool,
     degree: usize,
     loops: &[u32],
-    loop_label: &[String],
+    loop_label: &[Text],
 ) -> ItemGeo {
     let node = &g.nodes[n];
     let lines = &p.nodes[n];

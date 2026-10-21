@@ -10,7 +10,7 @@ use std::collections::HashMap;
 pub use draw::draw;
 use time::{DAY, DateFormat, Duration, Ms};
 
-use super::{MAX_STATEMENTS, label_lines};
+use super::{MAX_STATEMENTS, Source, Text};
 
 /// The most days the `excludes` walk may step over in all, so a chart spanning millennia with
 /// weekends excluded shows its source rather than stalling.
@@ -18,7 +18,7 @@ const MAX_EXCLUDE_STEPS: usize = 200_000;
 
 #[derive(Debug, Default)]
 pub struct Gantt {
-    pub title: String,
+    pub title: Text,
     /// The `axisFormat`, if one is given.
     pub axis: Option<String>,
     /// The `tickInterval`, if one is given.
@@ -30,13 +30,13 @@ pub struct Gantt {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Row {
-    Section(String),
+    Section(Text),
     Task(Task),
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Task {
-    pub name: String,
+    pub name: Text,
     pub start: Ms,
     /// Where its bar ends: a duration stretched over excluded days ends before those at its end.
     pub end: Ms,
@@ -67,7 +67,7 @@ pub enum Step {
 
 #[derive(Debug)]
 struct RawTask {
-    name: String,
+    name: Text,
     tag: Tag,
     milestone: bool,
     id: Option<String>,
@@ -79,12 +79,13 @@ struct RawTask {
 
 #[derive(Debug)]
 enum RawRow {
-    Section(String),
+    Section(Text),
     Task(usize),
 }
 
 #[derive(Default)]
 struct Parser {
+    src: Source,
     gantt: Gantt,
     date_format: Option<String>,
     excludes: Vec<String>,
@@ -99,8 +100,11 @@ struct Parser {
 }
 
 /// Parse the statements after the `gantt` line.
-pub(super) fn parse<'a>(lines: impl Iterator<Item = (u32, &'a str)>) -> Option<Gantt> {
-    let mut p = Parser::default();
+pub(super) fn parse<'a>(lines: impl Iterator<Item = (u32, &'a str)>, src: Source) -> Option<Gantt> {
+    let mut p = Parser {
+        src,
+        ..Parser::default()
+    };
     for (n, (_, line)) in lines.enumerate() {
         if n >= MAX_STATEMENTS {
             return None;
@@ -141,8 +145,10 @@ impl Parser {
             }
             "todaymarker" | "topaxis" | "displaymode" | "click" | "acctitle" => {}
             "accdescr" => self.in_description = rest.starts_with('{') && !rest.contains('}'),
-            "title" => self.gantt.title = one_line(rest.strip_prefix(':').unwrap_or(rest)),
-            "section" => self.rows.push(RawRow::Section(one_line(rest))),
+            "title" => {
+                self.gantt.title = self.src.one_line(rest.strip_prefix(':').unwrap_or(rest));
+            }
+            "section" => self.rows.push(RawRow::Section(self.src.one_line(rest))),
             _ => self.task(line)?,
         }
         Some(())
@@ -151,7 +157,7 @@ impl Parser {
     /// `name : [tags,] [[id,] start,] end`, where the end is a date or a duration.
     fn task(&mut self, line: &str) -> Option<()> {
         let (name, data) = line.split_once(':')?;
-        let name = one_line(name);
+        let name = self.src.one_line(name);
         if name.is_empty() {
             return None;
         }
@@ -432,15 +438,6 @@ fn list(s: &str) -> impl Iterator<Item = String> + '_ {
         .map(str::to_owned)
 }
 
-/// A label on one line: `<br/>` and entities as elsewhere, the line breaks as spaces.
-fn one_line(s: &str) -> String {
-    let s = s.trim();
-    if !s.contains(['<', '#']) && !s.contains(char::is_control) {
-        return s.to_owned();
-    }
-    label_lines(s).join(" ")
-}
-
 /// `tickInterval 1day`: a count and a unit, `millisecond` to `month`.
 fn tick_interval(s: &str) -> Option<Step> {
     let split = s.find(|c: char| !c.is_ascii_digit())?;
@@ -480,7 +477,7 @@ mod tests {
         g.rows
             .iter()
             .filter_map(|r| match r {
-                Row::Task(t) => Some((t.name.as_str(), t.start, t.end)),
+                Row::Task(t) => Some((&*t.name, t.start, t.end)),
                 Row::Section(_) => None,
             })
             .collect()

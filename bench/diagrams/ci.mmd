@@ -1,0 +1,8 @@
+flowchart LR
+    PR[Pull request] --> Lint{clippy ok?}
+    Lint -->|no| Fail[Report]
+    Lint -->|yes| Test[cargo test]
+    Test --> Fuzz[fuzz smoke]
+    Test --> Bench[B2 bench]
+    Fuzz --> Merge((merge))
+    Bench --> Merge

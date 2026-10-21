@@ -4,13 +4,15 @@
 
 use std::collections::HashMap;
 
-use super::{
-    Builder, ClusterId, Dir, Edge, End, Frame, Line, Mark, NodeId, Note, Shape, label_lines,
-};
-use crate::diagram::MAX_STATEMENTS;
+use super::{Builder, ClusterId, Dir, Edge, End, Frame, Line, Mark, NodeId, Note, Shape};
+use crate::diagram::{MAX_STATEMENTS, Source, Text, label_lines};
 
-pub(super) fn parse<'a>(lines: impl Iterator<Item = (u32, &'a str)>) -> Option<Builder> {
+pub(super) fn parse<'a>(
+    lines: impl Iterator<Item = (u32, &'a str)>,
+    src: Source,
+) -> Option<Builder> {
     let mut p = Parser::default();
+    p.b.src = src;
     for (n, (_, line)) in lines.enumerate() {
         if n >= MAX_STATEMENTS {
             return None;
@@ -29,7 +31,7 @@ struct Parser {
     /// The start and end dots of each scope: the top level or a composite state.
     dots: HashMap<Option<ClusterId>, (Option<NodeId>, Option<NodeId>)>,
     /// A multi-line note being read: its state, its side and its lines so far.
-    note: Option<(NodeId, bool, Vec<String>)>,
+    note: Option<(NodeId, bool, Vec<Text>)>,
     in_description: bool,
 }
 
@@ -44,7 +46,7 @@ impl Parser {
                 self.b.nodes[*n as usize].note = Some(note);
                 self.note = None;
             } else {
-                text.extend(label_lines(line));
+                text.extend(self.b.src.label(line));
             }
             return Some(());
         }
@@ -123,7 +125,7 @@ impl Parser {
             line: Line::Solid,
             head_from: Mark::None,
             head_to: Mark::Arrow,
-            label: label_lines(label.trim()),
+            label: self.b.src.label(label.trim()),
             minlen: 1,
         })
     }
@@ -131,6 +133,11 @@ impl Parser {
     /// `A : description`: the first replaces the name, more add lines.
     fn description(&mut self, line: &str) -> Option<()> {
         let (id, text) = line.split_once(':').unwrap_or((line, ""));
+        self.describe(id, text)
+    }
+
+    /// State `id`'s description `text`.
+    fn describe(&mut self, id: &str, text: &str) -> Option<()> {
         let n = self.node(id, false)?;
         let text = text.trim();
         if text.is_empty() {
@@ -138,9 +145,9 @@ impl Parser {
         }
         let node = &mut self.b.nodes[n as usize];
         if node.label == label_lines(&node.id) {
-            node.label = label_lines(text);
+            node.label = self.b.src.label(text);
         } else {
-            node.label.extend(label_lines(text));
+            node.label.extend(self.b.src.label(text));
         }
         Some(())
     }
@@ -159,7 +166,7 @@ impl Parser {
             let (id, after) = body.split_once(char::is_whitespace).unwrap_or((body, ""));
             let after = after.trim();
             if let Some(text) = after.strip_prefix(':') {
-                self.description(&format!("{id}:{text}"))?;
+                self.describe(id, text)?;
                 return Some(());
             }
             let shape = match after {
@@ -186,7 +193,7 @@ impl Parser {
         }
         let n = self.node(id, false)?;
         if let Some(name) = name {
-            self.b.nodes[n as usize].label = label_lines(name);
+            self.b.nodes[n as usize].label = self.b.src.label(name);
         }
         Some(())
     }
@@ -210,7 +217,7 @@ impl Parser {
             Some(text) => {
                 self.b.nodes[n as usize].note = Some(Note {
                     after,
-                    text: label_lines(text),
+                    text: self.b.src.label(text),
                 });
             }
             None => self.note = Some((n, after, Vec::new())),
@@ -268,7 +275,7 @@ mod tests {
 
     fn parsed(src: &str) -> Builder {
         let lines = crate::diagram::statements(src).skip(1);
-        parse(lines).expect("parses")
+        parse(lines, crate::diagram::Source::default()).expect("parses")
     }
 
     #[test]
@@ -324,8 +331,8 @@ mod tests {
     #[test]
     fn what_doesnt_parse() {
         let lines = crate::diagram::statements("stateDiagram\n}").skip(1);
-        assert!(parse(lines).is_none());
+        assert!(parse(lines, crate::diagram::Source::default()).is_none());
         let lines = crate::diagram::statements("stateDiagram\nstate X <<bogus>>").skip(1);
-        assert!(parse(lines).is_none());
+        assert!(parse(lines, crate::diagram::Source::default()).is_none());
     }
 }
