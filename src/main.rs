@@ -119,7 +119,10 @@ fn run() -> Result<(), String> {
         .then(|| read_stdin(Vec::new(), None, forced))
         .transpose()?;
     if stdin.is_none() {
-        fs::metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let meta = fs::metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        if meta.is_dir() {
+            return Err(format!("{}: Is a directory", path.display()));
+        }
     }
     let recorder = args
         .record
