@@ -62,7 +62,8 @@ fn run() -> Result<(), String> {
         })?),
         None => None,
     };
-    let (settings, file, mut warnings) = config::load()?;
+    // a print is no session: it reads the config but doesn't write the defaults (REL-15)
+    let (settings, file, mut warnings) = config::load(!printing)?;
     let resolver = RootedResolver::new(&settings.links);
     let (theme, theme_warnings) = theme::load(args.theme.as_deref().or(settings.theme.as_deref()))?;
     warnings.extend(theme_warnings);

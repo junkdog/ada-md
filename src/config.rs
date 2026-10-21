@@ -1,5 +1,6 @@
 //! The config file, `$XDG_CONFIG_HOME/ada/config.toml` (P7). Optional: when it doesn't exist,
-//! ada writes it with every option commented out at its default, so the options can be found.
+//! the TUI writes it with every option commented out at its default, so the options can be
+//! found; `--print` leaves it unwritten (REL-15).
 //! Walked by hand like themes (ADR-08): unknown keys are warnings, bad values are errors that
 //! point at the value. Command-line flags win over it. `S` saves the session's settings back
 //! into it, changing only the values ([`save`]).
@@ -55,17 +56,24 @@ pub fn path() -> Option<PathBuf> {
     Some(toml_walk::config_dir()?.join("config.toml"))
 }
 
-/// Read the config file, or write the commented defaults when there is none. Returns the
-/// settings, the file, and warnings (a failed write is one).
-pub fn load() -> Result<(Settings, Option<PathBuf>, Vec<String>), String> {
+/// Read the config file, or, when there is none and `create` says so, write the commented
+/// defaults. Returns the settings, the file, and warnings (a failed write is one).
+pub fn load(create: bool) -> Result<(Settings, Option<PathBuf>, Vec<String>), String> {
+    match path() {
+        Some(path) => load_from(path, create),
+        None => Ok((Settings::default(), None, Vec::new())),
+    }
+}
+
+fn load_from(
+    path: PathBuf,
+    create: bool,
+) -> Result<(Settings, Option<PathBuf>, Vec<String>), String> {
     let mut warnings = Vec::new();
-    let Some(path) = path() else {
-        return Ok((Settings::default(), None, warnings));
-    };
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            if let Err(e) = write(&path, &default_text()) {
+            if create && let Err(e) = write(&path, &default_text()) {
                 warnings.push(format!("can't write {}: {e}", path.display()));
             }
             return Ok((Settings::default(), Some(path), warnings));
@@ -809,6 +817,20 @@ quit = \"x\"
         assert_eq!(read(&path).unwrap(), default_text());
         write(&path, "max_width = 1\n").unwrap();
         assert_eq!(read(&path).unwrap(), "max_width = 1\n");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_missing_file_is_written_only_when_asked() {
+        let dir = std::env::temp_dir().join(format!("ada-config-load-{}", std::process::id()));
+        let path = dir.join("ada/config.toml");
+        let (settings, file, warnings) = load_from(path.clone(), false).unwrap();
+        assert_eq!(settings, Settings::default());
+        assert_eq!(file.as_deref(), Some(path.as_path()));
+        assert!(warnings.is_empty());
+        assert!(!path.exists());
+        load_from(path.clone(), true).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), default_text());
         fs::remove_dir_all(&dir).unwrap();
     }
 }

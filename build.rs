@@ -15,9 +15,18 @@ use std::process::Command;
 
 /// The minor version of the rustc building ada: 88 for 1.88.0.
 fn rustc_minor() -> Option<u32> {
-    let out = Command::new(env::var_os("RUSTC")?).arg("-V").output().ok()?;
+    let out = Command::new(env::var_os("RUSTC")?)
+        .arg("-V")
+        .output()
+        .ok()?;
     let version = String::from_utf8(out.stdout).ok()?;
-    version.split_whitespace().nth(1)?.split('.').nth(1)?.parse().ok()
+    version
+        .split_whitespace()
+        .nth(1)?
+        .split('.')
+        .nth(1)?
+        .parse()
+        .ok()
 }
 
 fn main() {

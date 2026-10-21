@@ -79,8 +79,8 @@ and the harness in [`bench/b2`](bench/b2/README.md).
 cargo install --path .
 ```
 
-Rust 1.88 or newer, and a C compiler: syntax highlighting runs on
-[Oniguruma](https://github.com/kkos/oniguruma), which is built from source. For a pure-Rust
+ada runs on Linux and macOS; Windows isn't supported. Rust 1.88 or newer, and a C compiler:
+syntax highlighting runs on [Oniguruma](https://github.com/kkos/oniguruma), which is built from source. For a pure-Rust
 build, use `cargo install --path . --no-default-features`. Highlighting then runs on
 fancy-regex and looks the same, but each language costs 10–20 ms on first use instead of about
 1 ms. Git integration runs the `git` command.
@@ -163,9 +163,13 @@ columns lists.
 
 ## Configuration
 
-ada reads `~/.config/ada/config.toml` (or `$XDG_CONFIG_HOME/ada/config.toml`). The first time it
-runs it writes that file with every option commented out at its default, so it's a place to
-look as much as a place to change things. Flags on the command line win.
+ada reads `~/.config/ada/config.toml` (or `$XDG_CONFIG_HOME/ada/config.toml`). Flags on the
+command line win.
+
+**ada creates this file the first time it runs interactively**, with every option commented
+out at its default, so it's a place to look as much as a place to change things.
+`--print` and previews read it but never create it. It's the only file ada writes unasked.
+Deleted, it comes back on the next interactive run; an empty file in its place keeps it away.
 
 `S` saves the settings in effect back to it: the theme `T` picked, the `t`, `w` and `#` toggles, and
 flags such as `--theme`, `--max-width`, `-n`, `--no-images` and `--no-reload`. A box lists each option that
