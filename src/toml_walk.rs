@@ -41,7 +41,12 @@ pub fn entry<'v, 'i>(table: &'v DeTable<'i>, key: &str) -> Option<&'v Value<'i>>
 
 /// 1-based line and column of a byte offset.
 pub fn position(text: &str, offset: usize) -> (usize, usize) {
-    let before = &text[..text.floor_char_boundary(offset)];
+    // `str::floor_char_boundary`, stable only since 1.91.
+    let mut end = offset.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let before = &text[..end];
     let line = before.matches('\n').count() + 1;
     let col = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
     (line, col)
