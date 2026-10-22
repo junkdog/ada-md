@@ -148,6 +148,7 @@ Press `?` in ada for the keys. See `ada --help` for every option.
 | `s` | sort a table on screen by a column: ascending, descending, source order; `←` `→` pick another table |
 | `w`, `←` `→` | wrap code, or scroll it sideways |
 | `#` | show or hide line numbers, for code files or for markdown, whichever is shown |
+| `B` | the theme's background, or the terminal's |
 | `T` | pick a theme, previewing each: `Enter` keeps it, `Esc` goes back; `←` `→` list the dark or the light themes |
 | `r` | read the file again |
 | `e` | edit in `$VISUAL` or `$EDITOR` at the current line |
@@ -171,13 +172,14 @@ out at its default, so it's a place to look as much as a place to change things.
 `--print` and previews read it but never create it. It's the only file ada writes unasked.
 Deleted, it comes back on the next interactive run; an empty file in its place keeps it away.
 
-`S` saves the settings in effect back to it: the theme `T` picked, the `t`, `w` and `#` toggles, and
+`S` saves the settings in effect back to it: the theme `T` picked, the `t`, `w`, `#` and `B` toggles, and
 flags such as `--theme`, `--max-width`, `-n`, `--no-images` and `--no-reload`. A box lists each option that
 changes, `old → new`, before anything is written. Only the values change; comments and the lines around them
 stay as they are. A theme loaded from a path is saved as that path.
 
 ```toml
 theme = "gruvbox-light"
+theme_bg = true            # the theme's background, or false for the terminal's (`B`)
 max_width = 100            # wrap prose at most 100 columns wide; tables may use the rest
 images = true              # or false for text only
 image_protocol = "auto"    # or kitty, sixel, iterm2, halfblocks
@@ -226,6 +228,10 @@ These themes are built in:
 | tokyonight | `tokyonight-night`, `tokyonight-storm`, `tokyonight-moon`, `tokyonight-day` |
 | rosé pine | `rose-pine`, `rose-pine-moon`, `rose-pine-dawn` |
 | dracula | `dracula` |
+
+Each draws its own background. `B`, or `theme_bg = false` in the config, keeps the terminal's behind the text
+instead; code blocks, heading bars, table stripes, the status bar and popups keep theirs. `--print` always keeps
+the terminal's, since a pager or a preview pane shows a background only as far as the text goes.
 
 Your own go in `~/.config/ada/themes/NAME.toml` and are picked with `--theme NAME` or `theme = "NAME"`; `T`
 lists all of them, previewing each as it's selected: `Enter` keeps it, `Esc` goes back. It lists the dark themes or the

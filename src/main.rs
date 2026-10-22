@@ -76,6 +76,7 @@ fn run() -> Result<(), String> {
         },
         live_reload: settings.live_reload && !args.no_reload,
         keep_screen: settings.keep_screen,
+        theme_bg: settings.theme_bg,
         table_mode: settings.table_mode,
         code_wrap: settings.code_wrap,
         line_numbers: args.line_numbers.unwrap_or(settings.line_numbers),
@@ -113,7 +114,9 @@ fn run() -> Result<(), String> {
         for w in &warnings {
             eprintln!("ada: warning: {w}");
         }
-        return print_doc(&args, &config, &theme, &resolver, &path);
+        // a print lands in pagers, fzf panes and scrollback, where a background stops at the
+        // text: it keeps the terminal's, whatever `theme_bg` says
+        return print_doc(&args, &config, &theme.with_bg(false), &resolver, &path);
     }
 
     let stdin = (path == Path::new("-"))

@@ -4,18 +4,18 @@ expression: frames.last().unwrap()
 ---
    Code
            ╭─ keys ─────────────────────────────────────────────────╮
-   rust    │   n               the next match                       │
-   fn main(│   N               the previous match                   │
-       prin│   o               the outline of headings              │
-       let │   l               the list of links                    │ has to
-  ↪wrap whe│                                                        │
-   }       │ View                                                   │
-           │   t               tables: auto, grid, records          │
+   rust    │   N               the previous match                   │
+   fn main(│   o               the outline of headings              │
+       prin│   l               the list of links                    │
+       let │                                                        │ has to
+  ↪wrap whe│ View                                                   │
+   }       │   t               tables: auto, grid, records          │
            │   s               sort a table on screen by a column   │
-   kotlin  │   w               wrap code, or scroll it sideways     │
-   fun gree│   ←               scroll code left                     │
-           │   →               scroll code right                    │
+           │   w               wrap code, or scroll it sideways     │
+   kotlin  │   ←               scroll code left                     │
+   fun gree│   →               scroll code right                    │
            │   #               show or hide line numbers            │
+           │   B               theme background, or the terminal's  │
            │   T               pick a theme, previewing each        │
    untagged│                                                        │
            │ Other                                                  │

@@ -436,7 +436,7 @@ impl State {
         self.outline = Some(Outline {
             listing,
             theme: (listing == Listing::Themes).then(|| self.theme.name.clone()),
-            light: self.theme.is_light(),
+            light: self.designed.is_light(),
             ..Outline::default()
         });
         let (scroll, focus) = (self.scroll, self.visible_focus());

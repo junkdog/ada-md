@@ -106,6 +106,8 @@ pub enum Msg {
     ToggleCodeWrap,
     /// `#`: show or hide line numbers for the kind of file shown.
     ToggleLineNumbers,
+    /// `B`: the theme's background, or the terminal's.
+    ToggleThemeBg,
     /// Shift every code block sideways, in no-wrap mode.
     ScrollCodeX {
         by: i16,
@@ -361,6 +363,8 @@ pub struct Config {
     pub live_reload: bool,
     /// Leave the last frame on the screen on quit.
     pub keep_screen: bool,
+    /// Whether the theme draws its own background, or leaves the terminal's.
+    pub theme_bg: bool,
     /// The table layout, code wrapping and line numbers to start with.
     pub table_mode: TableMode,
     pub code_wrap: bool,
@@ -388,6 +392,7 @@ impl Default for Config {
         Self {
             max_width: None,
             start_line: None,
+            theme_bg: true,
             images: ImageMode::default(),
             live_reload: true,
             keep_screen: true,
@@ -520,7 +525,13 @@ impl Document {
 }
 
 pub struct State {
+    /// The theme in effect: [`designed`](Self::designed), on the terminal's background when
+    /// [`theme_bg`](Self::theme_bg) is off.
     pub theme: Theme,
+    /// The theme as it was loaded, with its own background.
+    designed: Theme,
+    /// Whether the theme draws its own background (`B`).
+    pub theme_bg: bool,
     /// The themes `T` lists, the current one among them. Until `T` first opens, only the user's
     /// own: the built-ins are parsed then (O-42).
     pub themes: Vec<Theme>,
@@ -573,7 +584,9 @@ impl State {
             // `main` adds the user's themes, and the first `T` the built-ins
             themes: Vec::new(),
             themes_listed: false,
-            theme,
+            theme: theme.with_bg(config.theme_bg),
+            designed: theme,
+            theme_bg: config.theme_bg,
             size: Size { w: 80, h: 24 },
             doc: None,
             scroll: 0,
@@ -967,7 +980,7 @@ impl State {
     /// twice over, they cost it ~1.8 ms (O-42).
     fn list_themes(&mut self) {
         if !self.themes_listed {
-            self.themes = Theme::with_builtins(&self.theme, mem::take(&mut self.themes));
+            self.themes = Theme::with_builtins(&self.designed, mem::take(&mut self.themes));
             self.themes_listed = true;
         }
     }
@@ -985,6 +998,7 @@ impl State {
 
     /// Switch themes. Colors resolve at paint, so only new glyphs lay the documents out again,
     /// and only new `[syntax]` rules highlight the code again (architecture §5).
+    /// `theme` is as designed; `theme_bg` decides its background here.
     fn set_theme(&mut self, theme: Theme) -> Vec<Cmd> {
         let same_rules = self
             .theme
@@ -993,7 +1007,8 @@ impl State {
             .map(|(scope, _)| scope)
             .eq(theme.syntax.iter().map(|(scope, _)| scope));
         let glyphs_gen = theme.glyphs.generation();
-        self.theme = theme;
+        self.theme = theme.with_bg(self.theme_bg);
+        self.designed = theme;
         let mut cmds = Vec::new();
         if !same_rules {
             self.syntax = Arc::new(SyntaxTheme::new(&self.theme.syntax));
@@ -1335,6 +1350,16 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.status = Some(format!("code: {mode}"));
             state.relayout();
             state.visible_jobs()
+        }
+        Msg::ToggleThemeBg => {
+            state.theme_bg = !state.theme_bg;
+            let bg = if state.theme_bg {
+                "the theme's"
+            } else {
+                "the terminal's"
+            };
+            state.status = Some(format!("background: {bg}"));
+            state.set_theme(state.designed.clone())
         }
         Msg::ToggleLineNumbers => {
             let code = state
@@ -1717,6 +1742,43 @@ mod tests {
             .expect("a theme with other [syntax] rules");
         let cmds = state.set_theme(other);
         assert_eq!(cmds.first(), Some(&only(&state)));
+    }
+
+    #[test]
+    fn b_trades_the_themes_background_for_the_terminals_across_switches() {
+        let mut state = loaded(&code_doc(), 80, 10);
+        let bg = |s: &State| s.theme.style(crate::theme::StyleKey::Text).bg;
+        let code = |s: &State| s.theme.style(crate::theme::StyleKey::CodeBlock).bg;
+        let (designed, code_bg) = (bg(&state), code(&state));
+        assert!(state.theme_bg && designed.is_some());
+        let (layout, rules) = (
+            state.doc.as_ref().unwrap().layout.rows.len(),
+            state.syntax.id,
+        );
+
+        // only a repaint: the same layout and highlighting, and code keeps its background
+        update(&mut state, Msg::ToggleThemeBg);
+        assert!(!state.theme_bg);
+        assert_eq!(bg(&state), None);
+        assert_eq!(code(&state), code_bg);
+        assert_eq!(state.status.as_deref(), Some("background: the terminal's"));
+        assert_eq!(state.doc.as_ref().unwrap().layout.rows.len(), layout);
+        assert_eq!(state.syntax.id, rules);
+
+        // a theme picked meanwhile comes without its background, and still counts as light
+        update(&mut state, Msg::OpenThemes);
+        update(&mut state, Msg::ThemesTone { dir: Dir::Next });
+        update(&mut state, Msg::OutlinePick);
+        assert_eq!(state.theme.name, "gruvbox-light");
+        assert_eq!(bg(&state), None);
+        update(&mut state, Msg::OpenThemes);
+        assert!(state.outline.as_ref().unwrap().light);
+        update(&mut state, Msg::OutlineClose);
+
+        update(&mut state, Msg::ToggleThemeBg);
+        assert!(state.theme_bg);
+        assert!(bg(&state).is_some_and(|b| Some(b) != designed));
+        assert!(state.active_settings().theme_bg);
     }
 
     /// Diagrams can't wrap, so they scroll sideways with code wrap on (ADR-35).

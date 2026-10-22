@@ -307,6 +307,31 @@ impl Theme {
             .unwrap_or(false)
     }
 
+    /// The theme with its own background, or (`theme_bg = false`) on the terminal's: the
+    /// document background goes, and with it every style's background that repeats it, so the
+    /// margins, the gutter and the blanks show the terminal's. Backgrounds that set something
+    /// apart (code, heading bars, stripes, the status bar, popups, matches) stay. Resolved
+    /// when the theme loads, so paint is as ever.
+    pub fn with_bg(&self, own: bool) -> Theme {
+        let mut theme = self.clone();
+        if own {
+            return theme;
+        }
+        let text = StyleKey::Text as usize;
+        let Some(bg) = theme.styles[text].bg.take() else {
+            return theme;
+        };
+        for &key in StyleKey::ALL {
+            if theme.styles[key as usize].bg != Some(bg) {
+                continue;
+            }
+            // a parent with a background of its own would show through: reset to the terminal's
+            let parent = key.parent().and_then(|p| self.styles[p as usize].bg);
+            theme.styles[key as usize].bg = parent.filter(|&p| p != bg).map(|_| Color::Reset);
+        }
+        theme
+    }
+
     /// A key's style on top of the document style, and of its parent's.
     pub fn style(&self, key: StyleKey) -> Style {
         let base = self.styles[StyleKey::Text as usize];
@@ -385,6 +410,60 @@ mod tests {
                 "rose-pine-dawn"
             ]
         );
+    }
+
+    #[test]
+    fn every_builtin_has_a_background_the_toggle_takes_away() {
+        for theme in Theme::builtins() {
+            let bg = theme.styles[StyleKey::Text as usize].bg;
+            assert!(bg.is_some(), "{} has no background", theme.name);
+            assert_eq!(theme.with_bg(true).styles, theme.styles, "{}", theme.name);
+
+            let off = theme.with_bg(false);
+            assert_eq!(off.is_light(), theme.is_light(), "{}", theme.name);
+            for &key in StyleKey::ALL {
+                let (was, now) = (theme.style(key), off.style(key));
+                assert_ne!(
+                    now.bg,
+                    bg,
+                    "{}: {} keeps the background",
+                    theme.name,
+                    key.path()
+                );
+                // only the document's background goes
+                if was.bg != bg {
+                    assert_eq!(now, was, "{}: {}", theme.name, key.path());
+                } else {
+                    assert_eq!(
+                        now,
+                        Style { bg: None, ..was },
+                        "{}: {}",
+                        theme.name,
+                        key.path()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_style_repeating_the_background_shows_the_terminals() {
+        let bg = Color::Rgb(1, 2, 3);
+        let mut theme = Theme::empty();
+        theme.styles[StyleKey::Text as usize].bg = Some(bg);
+        theme.styles[StyleKey::Emph as usize].bg = Some(bg);
+        theme.styles[StyleKey::CodeBlock as usize].bg = Some(Color::Blue);
+        theme.styles[StyleKey::CodeText as usize].bg = Some(bg);
+        let off = theme.with_bg(false);
+        assert_eq!(off.style(StyleKey::Text).bg, None);
+        assert_eq!(off.style(StyleKey::Emph).bg, None);
+        // over a parent of another color, the terminal's background is set outright
+        assert_eq!(off.style(StyleKey::CodeText).bg, Some(Color::Reset));
+        assert_eq!(off.style(StyleKey::CodeBlock).bg, Some(Color::Blue));
+
+        // a theme without a background is left as it is
+        let plain = Theme::empty();
+        assert_eq!(plain.with_bg(false).styles, plain.styles);
     }
 
     #[test]

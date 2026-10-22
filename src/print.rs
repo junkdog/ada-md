@@ -790,7 +790,13 @@ mod tests {
             glyphs_gen: 0,
             images: None,
         };
-        let out = render(&doc, &Theme::builtin(), params, Options::default());
+        // as `main` prints it: on the terminal's background
+        let out = render(
+            &doc,
+            &Theme::builtin().with_bg(false),
+            params,
+            Options::default(),
+        );
         let mut plain = String::new();
         let mut esc = false;
         for c in out.chars() {

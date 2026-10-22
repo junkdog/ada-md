@@ -1,0 +1,27 @@
+ada-rec 1
++0 init size=60x16
++3 doc-loaded path="tests/fixtures/quotes.md" mtime=none text:309
+# Quotes
+
+> A block quote with *emphasis* that is long enough to wrap when the terminal gets narrow, so the
+> bar repeats on every row.
+>
+> > A nested quote.
+>
+> Back to the outer quote.
+
+> [!NOTE]
+> A callout, as GitHub renders them.
+
+> [!WARNING]
+> Careful: this one has a list.
+>
+> - item one
+> - item two
+
++100 toggle-theme-bg
++200 open-themes
++300 themes-tone dir=next
++400 outline-pick
++500 toggle-theme-bg
++600 toggle-theme-bg

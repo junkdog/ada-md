@@ -21,6 +21,7 @@ impl State {
         let theme = self.theme.path.as_ref().unwrap_or(&self.theme.name);
         Settings {
             theme: Some(theme.clone()),
+            theme_bg: self.theme_bg,
             max_width: self.config.max_width,
             images: self.config.images,
             live_reload: self.config.live_reload,

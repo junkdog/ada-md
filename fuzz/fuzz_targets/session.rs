@@ -112,6 +112,7 @@ enum Op {
     SaveConfig,
     SaveConfirm,
     SaveCancel,
+    ToggleThemeBg,
 }
 
 /// A string of at most 24 chars, so search patterns and filters stay cheap.
@@ -1049,6 +1050,7 @@ impl Session<'_> {
             Op::SaveConfig => Msg::SaveConfig,
             Op::SaveConfirm => Msg::SaveConfirm,
             Op::SaveCancel => Msg::SaveCancel,
+            Op::ToggleThemeBg => Msg::ToggleThemeBg,
             Op::Open(i) => {
                 let files = &world().files;
                 Msg::Open {

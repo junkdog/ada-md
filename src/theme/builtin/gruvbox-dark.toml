@@ -25,7 +25,8 @@ aqua = "#8ec07c"
 orange = "#fe8019"
 
 [document]
-fg = "fg"          # bg unset = terminal default
+fg = "fg"
+bg = "bg"
 margin = 2
 
 [heading]                    # warm to cool as the levels drop
