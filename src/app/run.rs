@@ -20,7 +20,9 @@ use crossterm::terminal::{
     enable_raw_mode,
 };
 
-use super::{Bindings, Cmd, Effects, Keymap, Msg, Size, State, editor_command, osc52, update};
+use super::{
+    Bindings, Cmd, Effects, Keymap, Msg, ScrollBy, Size, State, editor_command, osc52, update,
+};
 use crate::config;
 use crate::grid::{Grid, Screen};
 use crate::guard;
@@ -51,13 +53,39 @@ pub(crate) fn init_terminal() -> io::Result<Term> {
 }
 
 /// Give the terminal back as it was: raw mode off first (it does more than the screen), the
-/// main screen, and the cursor every frame hid.
+/// main screen, the mouse, and the cursor every frame hid.
 pub(crate) fn restore_terminal() {
     let restored = disable_raw_mode().and_then(|()| execute!(io::stdout(), LeaveAlternateScreen));
     if let Err(e) = restored {
         eprintln!("Failed to restore terminal: {e}");
     }
+    let _ = capture_mouse(false);
     let _ = execute!(io::stdout(), Show);
+}
+
+/// Capture the mouse, or give it back to the terminal: presses, releases and drags, in SGR's
+/// encoding. crossterm's own capture also reports every motion with no button held, which
+/// ada has no use for.
+#[cfg(unix)]
+fn capture_mouse(on: bool) -> io::Result<()> {
+    let seq = if on {
+        "\x1b[?1000h\x1b[?1002h\x1b[?1006h"
+    } else {
+        "\x1b[?1006l\x1b[?1002l\x1b[?1000l"
+    };
+    let mut out = io::stdout();
+    out.write_all(seq.as_bytes()).and_then(|()| out.flush())
+}
+
+/// Windows' console takes the mouse by its input mode, which crossterm sets.
+#[cfg(not(unix))]
+fn capture_mouse(on: bool) -> io::Result<()> {
+    use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+    if on {
+        execute!(io::stdout(), EnableMouseCapture)
+    } else {
+        execute!(io::stdout(), DisableMouseCapture)
+    }
 }
 
 /// A screen over the alternate screen just entered, which is blank.
@@ -91,6 +119,9 @@ pub fn run_tui(
     mut recorder: Option<Recorder>,
 ) -> Result<(), String> {
     let mut terminal = init_terminal().map_err(|e| format!("terminal: {e}"))?;
+    if state.mouse {
+        capture_mouse(true).map_err(|e| format!("terminal: {e}"))?;
+    }
     let result = event_loop(
         &mut terminal,
         &mut state,
@@ -232,7 +263,7 @@ fn event_loop(
             // `Back Back` can't overtake the load the first one started.
             let mut results = Vec::new();
             for cmd in update(state, msg) {
-                results.extend(run_cmd(terminal, effects, cmd)?);
+                results.extend(run_cmd(terminal, effects, cmd, state.mouse)?);
             }
             if edit {
                 // the editor may have left the terminal another size
@@ -274,15 +305,65 @@ fn event_loop(
             if superseded {
                 queue.pop_back();
             }
-            queue.push_back(msg);
+            match queue
+                .back_mut()
+                .and_then(|last| coalesce(last, &msg).map(|m| (last, m)))
+            {
+                Some((last, merged)) => *last = merged,
+                None => queue.push_back(msg),
+            }
         }
     }
 }
 
-/// Run one command: the terminal's own here, the rest through the effect runner.
-fn run_cmd(terminal: &mut Term, effects: &mut Effects, cmd: Cmd) -> Result<Option<Msg>, String> {
+/// One message for two in a row that move the same way, so a burst of wheel notches scrolls
+/// once a frame. Every move clamps at its ends, so two the same way land where their sum does.
+fn coalesce(last: &Msg, next: &Msg) -> Option<Msg> {
+    let same = |a: i32, b: i32| a.signum() == b.signum();
+    Some(match (last, next) {
+        (
+            Msg::Scroll {
+                by: ScrollBy::Rows(a),
+            },
+            Msg::Scroll {
+                by: ScrollBy::Rows(b),
+            },
+        ) if same(*a, *b) => Msg::Scroll {
+            by: ScrollBy::Rows(a.saturating_add(*b)),
+        },
+        (Msg::ScrollCodeX { by: a }, Msg::ScrollCodeX { by: b })
+            if same(i32::from(*a), i32::from(*b)) =>
+        {
+            Msg::ScrollCodeX {
+                by: a.saturating_add(*b),
+            }
+        }
+        (Msg::OutlineMove { by: a }, Msg::OutlineMove { by: b }) if same(*a, *b) => {
+            Msg::OutlineMove {
+                by: a.saturating_add(*b),
+            }
+        }
+        (Msg::HelpScroll { by: a }, Msg::HelpScroll { by: b }) if same(*a, *b) => Msg::HelpScroll {
+            by: a.saturating_add(*b),
+        },
+        _ => return None,
+    })
+}
+
+/// Run one command: the terminal's own here, the rest through the effect runner. `mouse` says
+/// whether the mouse is captured, to take it again after the editor.
+fn run_cmd(
+    terminal: &mut Term,
+    effects: &mut Effects,
+    cmd: Cmd,
+    mouse: bool,
+) -> Result<Option<Msg>, String> {
     match cmd {
-        Cmd::SpawnEditor { file, line } => edit(terminal, &file, line),
+        Cmd::SpawnEditor { file, line } => edit(terminal, &file, line, mouse),
+        Cmd::Mouse(on) => {
+            capture_mouse(on).map_err(|e| format!("terminal: {e}"))?;
+            Ok(None)
+        }
         Cmd::Osc52(text) => {
             let mut out = io::stdout();
             let seq = osc52(&text, env::var_os("TMUX").is_some());
@@ -302,8 +383,9 @@ fn run_cmd(terminal: &mut Term, effects: &mut Effects, cmd: Cmd) -> Result<Optio
 }
 
 /// Hand the terminal to the editor (ADR-18): leave the alternate screen, run it in the
-/// foreground, then take the screen back and redraw all of it.
-fn edit(terminal: &mut Term, file: &Path, line: u32) -> Result<Option<Msg>, String> {
+/// foreground, then take the screen back, and the mouse when `mouse` says so, and redraw all
+/// of it.
+fn edit(terminal: &mut Term, file: &Path, line: u32, mouse: bool) -> Result<Option<Msg>, String> {
     let editor = ["VISUAL", "EDITOR"]
         .iter()
         .filter_map(env::var_os)
@@ -318,6 +400,9 @@ fn edit(terminal: &mut Term, file: &Path, line: u32) -> Result<Option<Msg>, Stri
     let back = || -> io::Result<Term> {
         enable_raw_mode()?;
         execute!(io::stdout(), EnterAlternateScreen, Clear(ClearType::All))?;
+        if mouse {
+            capture_mouse(true)?;
+        }
         // A new screen has a blank last frame, so the next draw paints every cell.
         new_screen()
     };
@@ -351,6 +436,7 @@ fn spawn_input(
         loop {
             let msg = match event::read() {
                 Ok(Event::Key(key)) => keymap.map(key),
+                Ok(Event::Mouse(mouse)) => keymap.mouse(mouse),
                 Ok(Event::Resize(w, h)) => Some(Msg::Resize {
                     size: Size { w, h },
                 }),
@@ -427,4 +513,40 @@ fn send(msg: Msg, tx: &Sender<Msg>, resume: &Receiver<bool>, keymap: &mut Keymap
         }
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::Dir;
+
+    #[test]
+    fn moves_the_same_way_coalesce() {
+        let rows = |n| Msg::Scroll {
+            by: ScrollBy::Rows(n),
+        };
+        assert_eq!(coalesce(&rows(3), &rows(3)), Some(rows(6)));
+        assert_eq!(coalesce(&rows(-3), &rows(-1)), Some(rows(-4)));
+        // back and forth at an end isn't their sum: each clamps
+        assert_eq!(coalesce(&rows(3), &rows(-3)), None);
+        assert_eq!(coalesce(&rows(i32::MAX), &rows(3)), Some(rows(i32::MAX)));
+        let page = Msg::Scroll {
+            by: ScrollBy::Page(Dir::Next),
+        };
+        assert_eq!(coalesce(&page, &page), None);
+        assert_eq!(coalesce(&rows(3), &page), None);
+        assert_eq!(
+            coalesce(&Msg::ScrollCodeX { by: 8 }, &Msg::ScrollCodeX { by: 8 }),
+            Some(Msg::ScrollCodeX { by: 16 })
+        );
+        assert_eq!(
+            coalesce(&Msg::OutlineMove { by: 1 }, &Msg::OutlineMove { by: 1 }),
+            Some(Msg::OutlineMove { by: 2 })
+        );
+        assert_eq!(
+            coalesce(&Msg::HelpScroll { by: -3 }, &Msg::HelpScroll { by: -3 }),
+            Some(Msg::HelpScroll { by: -6 })
+        );
+        assert_eq!(coalesce(&Msg::Click { col: 1, row: 1 }, &rows(3)), None);
+    }
 }

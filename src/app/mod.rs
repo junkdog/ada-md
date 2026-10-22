@@ -108,6 +108,8 @@ pub enum Msg {
     ToggleLineNumbers,
     /// `B`: the theme's background, or the terminal's.
     ToggleThemeBg,
+    /// `M`: capture the mouse, or leave it to the terminal's selection.
+    ToggleMouse,
     /// Shift every code block sideways, in no-wrap mode.
     ScrollCodeX {
         by: i16,
@@ -116,6 +118,12 @@ pub enum Msg {
         dir: Dir,
     },
     Follow,
+    /// A left click on the screen's cell `col`, `row`, released where it was pressed: the link
+    /// drawn there is followed, as `Enter` follows the focused one.
+    Click {
+        col: u16,
+        row: u16,
+    },
     Back,
     Forward,
     OpenOutline,
@@ -335,6 +343,8 @@ pub enum Cmd {
     },
     /// Put text on the system clipboard through the terminal (OSC 52).
     Osc52(String),
+    /// Capture the mouse, or give it back to the terminal.
+    Mouse(bool),
     /// Watch `path` for changes, through inotify or by polling its modification time (ADR-26).
     /// Replaces the file watched before.
     Watch {
@@ -365,6 +375,8 @@ pub struct Config {
     pub keep_screen: bool,
     /// Whether the theme draws its own background, or leaves the terminal's.
     pub theme_bg: bool,
+    /// Capture the mouse to start with: the wheel scrolls, and a click follows a link.
+    pub mouse: bool,
     /// The table layout, code wrapping and line numbers to start with.
     pub table_mode: TableMode,
     pub code_wrap: bool,
@@ -393,6 +405,7 @@ impl Default for Config {
             max_width: None,
             start_line: None,
             theme_bg: true,
+            mouse: true,
             images: ImageMode::default(),
             live_reload: true,
             keep_screen: true,
@@ -540,6 +553,8 @@ pub struct State {
     designed: Theme,
     /// Whether the theme draws its own background (`B`).
     pub theme_bg: bool,
+    /// Whether the mouse is captured (`M`).
+    pub mouse: bool,
     /// The themes `T` lists, the current one among them. Until `T` first opens, only the user's
     /// own: the built-ins are parsed then (O-42).
     pub themes: Vec<Theme>,
@@ -595,6 +610,7 @@ impl State {
             theme: theme.with_bg(config.theme_bg),
             designed: theme,
             theme_bg: config.theme_bg,
+            mouse: config.mouse,
             size: Size { w: 80, h: 24 },
             doc: None,
             scroll: 0,
@@ -1138,6 +1154,11 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
                 return state.visible_jobs();
             }
             Msg::Follow => return state.view_external(),
+            // a click closes the view, and follows nothing behind it
+            Msg::Click { .. } => {
+                state.view = None;
+                return state.visible_jobs();
+            }
             m if m.keeps_view() => {}
             _ => state.view = None,
         }
@@ -1277,6 +1298,11 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             cmds.extend(state.visible_jobs());
             cmds
         }
+        Msg::Click { col, row } => {
+            let mut cmds = state.click(col, row);
+            cmds.extend(state.visible_jobs());
+            cmds
+        }
         Msg::Back => {
             state.status = None;
             let mut cmds = state.go_back();
@@ -1378,6 +1404,15 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             };
             state.status = Some(format!("background: {bg}"));
             state.set_theme(state.designed.clone())
+        }
+        Msg::ToggleMouse => {
+            state.mouse = !state.mouse;
+            state.status = Some(if state.mouse {
+                "mouse: on, Shift-drag selects text".to_owned()
+            } else {
+                "mouse: off, the terminal selects text".to_owned()
+            });
+            vec![Cmd::Mouse(state.mouse)]
         }
         Msg::ToggleLineNumbers => {
             let code = state
@@ -1992,6 +2027,107 @@ mod tests {
         update(&mut state, Msg::Scroll { by: ScrollBy::Top });
         tab(&mut state, Dir::Next);
         assert_eq!(focused_dest(&state).as_deref(), Some("b.md#part-two"));
+    }
+
+    /// The screen cell of `link`'s first cell, as the view draws it from `state.scroll`.
+    fn cell_of(state: &State, link: LinkId) -> (u16, u16) {
+        let layout = &state.doc.as_ref().unwrap().layout;
+        let hit = layout.hits.iter().find(|h| h.link == link).unwrap();
+        let row = hit.row.checked_sub(state.scroll).expect("on screen");
+        (layout.numbers + hit.cols.start, row as u16)
+    }
+
+    #[test]
+    fn a_click_follows_the_link_under_it() {
+        let mut state = walker();
+        let click = |s: &mut State, (col, row)| update(s, Msg::Click { col, row });
+
+        // `[x](#later)`, link 2: a jump within the document, which Back undoes
+        let at = cell_of(&state, 2);
+        click(&mut state, at);
+        assert!(
+            state.scroll > 0 && top_line(&state) > 120,
+            "landed on Later"
+        );
+        update(&mut state, Msg::Back);
+        assert_eq!(state.scroll, 0);
+
+        // `[b](b.md#part-two)`, link 0: a load, with the link focused
+        let (col, row) = cell_of(&state, 0);
+        let cmds = click(&mut state, (col, row));
+        assert_eq!(only_load(&cmds), Some("b.md"));
+        assert_eq!(focused_dest(&state).as_deref(), Some("b.md#part-two"));
+        // a click meanwhile does nothing: the screen is about to change under it
+        assert!(only_load(&click(&mut state, (col, row))).is_none());
+        load_at(&mut state, "b.md", &b_doc());
+        assert_eq!(path(&state), "b.md");
+        update(&mut state, Msg::Back);
+        load_at(&mut state, "a.md", &linked());
+
+        // the cell after the link's text, the status bar, and a cell off the screen: nothing
+        let (col, row) = cell_of(&state, 0);
+        let before = (state.scroll, state.focus);
+        for at in [(col + 1, row), (col, 19), (col, 400)] {
+            assert!(click(&mut state, at).is_empty(), "{at:?}");
+            assert_eq!((state.scroll, state.focus), before, "{at:?}");
+        }
+        // nor one over a popup
+        update(&mut state, Msg::OpenOutline);
+        assert!(only_load(&click(&mut state, (col, row))).is_none());
+        update(&mut state, Msg::OutlineClose);
+
+        // line numbers move the link right
+        update(&mut state, Msg::ToggleLineNumbers);
+        let layout = &state.doc.as_ref().unwrap().layout;
+        assert!(layout.numbers > 0, "line numbers on for markdown");
+        assert!(
+            click(&mut state, (col, row)).is_empty(),
+            "left of the link now"
+        );
+        let at = cell_of(&state, 0);
+        assert_eq!(only_load(&click(&mut state, at)), Some("b.md"));
+    }
+
+    /// A link in a table's sticky header follows from where the header is drawn, at the top.
+    #[test]
+    fn a_click_on_a_sticky_header_follows_its_link() {
+        let mut md = String::from("# T\n\n| [name](#t) | value |\n|---|---|\n");
+        for i in 0..40 {
+            md.push_str(&format!("| row {i} | {i} |\n"));
+        }
+        let mut state = loaded(&md, 60, 12);
+        let (col, row) = cell_of(&state, 0);
+        update(
+            &mut state,
+            Msg::Scroll {
+                by: ScrollBy::Rows(10),
+            },
+        );
+        let layout = &state.doc.as_ref().unwrap().layout;
+        let header = crate::ui::sticky_header(layout, 10, 11).expect("the header sticks");
+        // drawn from the top of the screen, as many rows down as it is into the header
+        let row = row - header.start as u16;
+        assert!(state.link_at(col, row + 10).is_none(), "scrolled away");
+        update(&mut state, Msg::Click { col, row });
+        assert_eq!(state.scroll, 0, "followed #t to the top");
+        assert_eq!(state.back.len(), 1);
+    }
+
+    #[test]
+    fn m_toggles_the_mouse_and_s_saves_it() {
+        let mut state = loaded(&sample(), 80, 20);
+        assert!(state.mouse, "on by default");
+        assert_eq!(update(&mut state, Msg::ToggleMouse), [Cmd::Mouse(false)]);
+        assert!(
+            state
+                .status
+                .as_deref()
+                .unwrap()
+                .contains("terminal selects")
+        );
+        assert!(!state.active_settings().mouse);
+        assert_eq!(update(&mut state, Msg::ToggleMouse), [Cmd::Mouse(true)]);
+        assert!(state.active_settings().mouse);
     }
 
     #[test]
@@ -2832,6 +2968,13 @@ mod tests {
         update(&mut state, Msg::Scroll { by: ScrollBy::Top });
         assert!(state.view.is_none());
         assert!(state.scroll < scroll);
+
+        // a click closes it too, and follows nothing behind it
+        update(&mut state, Msg::Follow);
+        let scroll = state.scroll;
+        update(&mut state, Msg::Click { col: 0, row: 0 });
+        assert!(state.view.is_none() && state.nav.is_none());
+        assert_eq!(state.scroll, scroll);
     }
 
     #[test]

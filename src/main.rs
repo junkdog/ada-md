@@ -77,6 +77,7 @@ fn run() -> Result<(), String> {
         live_reload: settings.live_reload && !args.no_reload,
         keep_screen: settings.keep_screen,
         theme_bg: settings.theme_bg,
+        mouse: settings.mouse,
         table_mode: settings.table_mode,
         code_wrap: settings.code_wrap,
         line_numbers: args.line_numbers.unwrap_or(settings.line_numbers),

@@ -24,6 +24,7 @@ use crate::toml_walk::{self, Cx};
 pub struct Settings {
     pub theme: Option<String>,
     pub theme_bg: bool,
+    pub mouse: bool,
     pub max_width: Option<u16>,
     pub images: ImageMode,
     pub live_reload: bool,
@@ -40,6 +41,7 @@ impl Default for Settings {
         Self {
             theme: None,
             theme_bg: true,
+            mouse: true,
             max_width: None,
             images: ImageMode::Auto,
             live_reload: true,
@@ -100,6 +102,7 @@ pub fn parse(file: &str, text: &str, warnings: &mut Vec<String>) -> Result<Setti
         match k.get_ref().as_ref() {
             "theme" => s.theme = Some(cx.string(v)?.to_owned()),
             "theme_bg" => s.theme_bg = cx.bool(v)?,
+            "mouse" => s.mouse = cx.bool(v)?,
             "max_width" => s.max_width = Some(cx.u16(v)?).filter(|&w| w > 0),
             "images" => images = cx.bool(v)?,
             "image_protocol" => match cx.string(v)? {
@@ -235,6 +238,10 @@ pub fn default_text() -> String {
 # Code blocks, heading bars, table stripes, the status bar and popups keep theirs either way.
 # theme_bg = true
 
+# Take the mouse (`M` toggles it): the wheel scrolls, and a click follows a link. Most
+# terminals still select text with Shift held; false leaves the mouse to the terminal.
+# mouse = true
+
 # Wrap prose at most this many columns wide; 0 uses the terminal's width. Tables that need
 # more room still grow up to the terminal's width.
 # max_width = 0
@@ -313,9 +320,10 @@ pub fn write(path: &Path, text: &str) -> io::Result<()> {
 
 /// The options `S` saves, in the order its box lists them. `keep_screen` has no key or flag to
 /// change it in a session, and `[keys]` none at all.
-const SAVED: [&str; 9] = [
+const SAVED: [&str; 10] = [
     "theme",
     "theme_bg",
+    "mouse",
     "tables",
     "code_wrap",
     "line_numbers",
@@ -371,10 +379,11 @@ pub fn save(file: &str, text: &str, active: &Settings) -> Result<Save, String> {
 
 /// The options [`SAVED`] names, as `s` sets them, in TOML. With images off, `image_protocol` is
 /// `protocol`.
-fn values(s: &Settings, protocol: &str) -> [String; 9] {
+fn values(s: &Settings, protocol: &str) -> [String; 10] {
     [
         toml_string(s.theme.as_deref().unwrap_or(BUILTIN[0].0)),
         s.theme_bg.to_string(),
+        s.mouse.to_string(),
         toml_string(s.table_mode.name()),
         s.code_wrap.to_string(),
         toml_string(s.line_numbers.spelling()),
@@ -527,10 +536,10 @@ mod tests {
 
     #[test]
     fn options() {
-        let text = "max_width = 100\nimages = true\nimage_protocol = \"sixel\"\nlive_reload = false\nkeep_screen = false\ntables = \"records\"\ncode_wrap = false\nline_numbers = \"all\"\ntheme_bg = false\n";
+        let text = "max_width = 100\nimages = true\nimage_protocol = \"sixel\"\nlive_reload = false\nkeep_screen = false\ntables = \"records\"\ncode_wrap = false\nline_numbers = \"all\"\ntheme_bg = false\nmouse = false\n";
         let s = parse("c.toml", text, &mut Vec::new()).unwrap();
         assert_eq!(s.max_width, Some(100));
-        assert!(!s.theme_bg);
+        assert!(!s.theme_bg && !s.mouse);
         assert_eq!(s.images, ImageMode::Force(Proto::Sixel));
         assert!(!s.live_reload && !s.keep_screen && !s.code_wrap);
         assert_eq!(s.table_mode, TableMode::Records);

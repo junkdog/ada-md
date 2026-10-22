@@ -8,12 +8,17 @@
 //! know is the confirm box `S` opens, which opens only when saving would change the file: the
 //! input thread waits for the main loop's answer, and [`Keymap::no_confirm`] takes the box back.
 //!
+//! The mouse maps here too, by the same mode: the wheel scrolls what it shows, and a left click
+//! in normal mode is a [`Msg::Click`] that `update` resolves against the layout.
+//!
 //! Normal-mode keys come from [`Bindings`]: one table of actions with their default keys, which
 //! the config file's `[keys]` section overrides, and which the help overlay lists.
 
 use std::fmt;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 
 use super::{CODE_X_STEP, Dir, Msg, ScrollBy};
 
@@ -21,6 +26,8 @@ use super::{CODE_X_STEP, Dir, Msg, ScrollBy};
 const OUTLINE_PAGE: i32 = 10;
 /// Rows `PgUp` / `PgDn` scroll the help.
 const HELP_PAGE: i32 = 10;
+/// Rows a notch of the wheel scrolls the document or the help; in a list it moves one entry.
+const WHEEL_ROWS: i32 = 3;
 
 macro_rules! actions {
     ($($group:literal { $($variant:ident => $name:literal, $help:literal, [$($key:literal),*],)* })*) => {
@@ -96,6 +103,7 @@ actions! {
         Edit => "edit", "edit in $VISUAL or $EDITOR", ["e"],
         Yank => "yank", "copy the link or the code block", ["y"],
         SaveConfig => "save_config", "save the settings to the config file", ["S"],
+        Mouse => "mouse", "wheel and clicks, or text selection", ["M"],
         Help => "help", "this help", ["?"],
         Quit => "quit", "quit (so does C-c)", ["q", "esc"],
     }
@@ -143,6 +151,7 @@ impl Action {
             Action::Edit => Msg::Edit,
             Action::Yank => Msg::Yank,
             Action::SaveConfig => Msg::SaveConfig,
+            Action::Mouse => Msg::ToggleMouse,
             Action::Help => Msg::Help,
             Action::Quit => Msg::Quit,
         }
@@ -441,6 +450,8 @@ pub struct Keymap {
     bindings: Bindings,
     pending: Option<Key>,
     mode: Mode,
+    /// The cell the left button went down on, until it's released or dragged off.
+    pressed: Option<(u16, u16)>,
 }
 
 /// Edit `text` with a prompt key. `None` when the key isn't an edit.
@@ -579,6 +590,53 @@ impl Keymap {
                 Some(msg)
             }
         }
+    }
+
+    /// The wheel scrolls the document (under the search prompt too), moves through a list, or
+    /// scrolls the help; sideways, it scrolls code. A left button released on the cell it went
+    /// down on clicks there in normal mode; a drag isn't a click. The save box takes no mouse.
+    pub fn mouse(&mut self, event: MouseEvent) -> Option<Msg> {
+        let at = (event.column, event.row);
+        let wheel = |by: i32| match self.mode {
+            Mode::Normal | Mode::Search(_) => Some(Msg::Scroll {
+                by: ScrollBy::Rows(by * WHEEL_ROWS),
+            }),
+            Mode::Outline(_) | Mode::Sort(_) | Mode::Themes(_) => Some(Msg::OutlineMove { by }),
+            Mode::Help => Some(Msg::HelpScroll {
+                by: by * WHEEL_ROWS,
+            }),
+            Mode::Confirm => None,
+        };
+        let sideways = |by: i16| {
+            matches!(self.mode, Mode::Normal | Mode::Search(_)).then_some(Msg::ScrollCodeX { by })
+        };
+        let msg = match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.pressed = Some(at);
+                return None;
+            }
+            MouseEventKind::Drag(_) => {
+                self.pressed = None;
+                return None;
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                let clicked = self.pressed.take() == Some(at) && self.mode == Mode::Normal;
+                clicked.then_some(Msg::Click {
+                    col: at.0,
+                    row: at.1,
+                })
+            }
+            MouseEventKind::ScrollDown => wheel(1),
+            MouseEventKind::ScrollUp => wheel(-1),
+            MouseEventKind::ScrollRight => sideways(CODE_X_STEP),
+            MouseEventKind::ScrollLeft => sideways(-CODE_X_STEP),
+            _ => return None,
+        };
+        // as a key that completes no binding would, it drops a pending `]` or `[`
+        if msg.is_some() {
+            self.pending = None;
+        }
+        msg
     }
 
     /// The confirm box `S` asks for didn't open, since saving would change nothing (or
@@ -752,6 +810,92 @@ mod tests {
         );
         assert_eq!(press(&mut km, KeyCode::Char('q')), Some(Msg::HelpClose));
         assert_eq!(press(&mut km, KeyCode::Char('q')), Some(Msg::Quit));
+    }
+
+    fn mouse(km: &mut Keymap, kind: MouseEventKind, column: u16, row: u16) -> Option<Msg> {
+        km.mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    #[test]
+    fn the_wheel_scrolls_what_the_mode_shows() {
+        let mut km = Keymap::default();
+        let down = |km: &mut Keymap| mouse(km, MouseEventKind::ScrollDown, 5, 5);
+        let up = |km: &mut Keymap| mouse(km, MouseEventKind::ScrollUp, 5, 5);
+        let rows = |n| {
+            Some(Msg::Scroll {
+                by: ScrollBy::Rows(n),
+            })
+        };
+        assert_eq!(down(&mut km), rows(3));
+        assert_eq!(up(&mut km), rows(-3));
+        assert_eq!(
+            mouse(&mut km, MouseEventKind::ScrollRight, 5, 5),
+            Some(Msg::ScrollCodeX { by: CODE_X_STEP })
+        );
+        // a pending `]` is dropped, as another key would drop it
+        press(&mut km, KeyCode::Char(']'));
+        down(&mut km);
+        assert_eq!(press(&mut km, KeyCode::Char(']')), None, "pending again");
+        press(&mut km, KeyCode::Esc);
+
+        // the search prompt stays open over the document's scroll
+        press(&mut km, KeyCode::Char('/'));
+        assert_eq!(down(&mut km), rows(3));
+        assert_eq!(
+            typed(&mut km, "a"),
+            [Msg::SearchInput {
+                pattern: "a".into()
+            }]
+        );
+        press(&mut km, KeyCode::Esc);
+
+        press(&mut km, KeyCode::Char('o'));
+        assert_eq!(down(&mut km), Some(Msg::OutlineMove { by: 1 }));
+        assert_eq!(up(&mut km), Some(Msg::OutlineMove { by: -1 }));
+        assert_eq!(mouse(&mut km, MouseEventKind::ScrollLeft, 5, 5), None);
+        press(&mut km, KeyCode::Esc);
+
+        press(&mut km, KeyCode::Char('?'));
+        assert_eq!(down(&mut km), Some(Msg::HelpScroll { by: 3 }));
+        press(&mut km, KeyCode::Char('q'));
+
+        press(&mut km, KeyCode::Char('S'));
+        assert_eq!(down(&mut km), None, "the save box waits for an answer");
+        assert_eq!(press(&mut km, KeyCode::Char('n')), Some(Msg::SaveCancel));
+    }
+
+    #[test]
+    fn a_click_is_a_press_and_a_release_on_one_cell() {
+        let mut km = Keymap::default();
+        let left = MouseButton::Left;
+        assert_eq!(mouse(&mut km, MouseEventKind::Down(left), 7, 2), None);
+        assert_eq!(
+            mouse(&mut km, MouseEventKind::Up(left), 7, 2),
+            Some(Msg::Click { col: 7, row: 2 })
+        );
+        // released elsewhere, dragged, released with no press, or another button: no click
+        mouse(&mut km, MouseEventKind::Down(left), 7, 2);
+        assert_eq!(mouse(&mut km, MouseEventKind::Up(left), 8, 2), None);
+        mouse(&mut km, MouseEventKind::Down(left), 7, 2);
+        mouse(&mut km, MouseEventKind::Drag(left), 8, 2);
+        mouse(&mut km, MouseEventKind::Drag(left), 7, 2);
+        assert_eq!(mouse(&mut km, MouseEventKind::Up(left), 7, 2), None);
+        assert_eq!(mouse(&mut km, MouseEventKind::Up(left), 7, 2), None);
+        let right = MouseButton::Right;
+        mouse(&mut km, MouseEventKind::Down(right), 7, 2);
+        assert_eq!(mouse(&mut km, MouseEventKind::Up(right), 7, 2), None);
+        // only in normal mode: a popup takes no clicks
+        press(&mut km, KeyCode::Char('o'));
+        mouse(&mut km, MouseEventKind::Down(left), 7, 2);
+        assert_eq!(mouse(&mut km, MouseEventKind::Up(left), 7, 2), None);
+        // and `M` toggles the capture
+        press(&mut km, KeyCode::Esc);
+        assert_eq!(press(&mut km, KeyCode::Char('M')), Some(Msg::ToggleMouse));
     }
 
     #[test]

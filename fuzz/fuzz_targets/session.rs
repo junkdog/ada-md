@@ -4,7 +4,7 @@
 //! name, mostly, or to fuzz-chosen ones, git answers with fuzzed hunks, image probes report fuzzed
 //! sizes, and every result waits in a queue until the script delivers it, so results can arrive
 //! late, out of order, or after the document they were for is gone. Intents arrive directly or as
-//! keys through the default keymap, and `T` lists two extra themes with wide, empty and ASCII
+//! keys and mouse events through the default keymap, and `T` lists two extra themes with wide, empty and ASCII
 //! glyphs. The document is markdown, code, config, plain text or an image, as its name says, and
 //! links lead to code files at a `#L42` line. `S` reads a fuzzed config file, answered at once as
 //! the interactive loop does, and is never written: what it would write must read back with nothing
@@ -45,7 +45,7 @@ use ada::layout::{LineNumbers, TableMode};
 use ada::links::{LocalTarget, Resolved};
 use ada::style::{Color, Modifier};
 use ada::theme::Theme;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use libfuzzer_sys::arbitrary::{self, Arbitrary, Result, Unstructured};
 use libfuzzer_sys::fuzz_target;
 use unicode_segmentation::UnicodeSegmentation;
@@ -119,6 +119,17 @@ enum Op {
     SaveConfirm,
     SaveCancel,
     ToggleThemeBg,
+    Click {
+        col: u8,
+        row: u8,
+    },
+    /// A mouse event, through the default keymap: presses, releases, drags and the wheel.
+    Mouse {
+        kind: u8,
+        col: u8,
+        row: u8,
+    },
+    ToggleMouse,
 }
 
 /// A string of at most 24 chars, so search patterns and filters stay cheap.
@@ -279,6 +290,27 @@ fn key(code: u8, mods: u8) -> KeyEvent {
         _ => KeyModifiers::NONE,
     };
     KeyEvent::new(code, mods)
+}
+
+/// A mouse event at a cell: mostly the left button and the wheel, which the keymap maps.
+fn mouse(kind: u8, col: u8, row: u8) -> MouseEvent {
+    const KINDS: [MouseEventKind; 9] = [
+        MouseEventKind::Down(MouseButton::Left),
+        MouseEventKind::Up(MouseButton::Left),
+        MouseEventKind::Drag(MouseButton::Left),
+        MouseEventKind::ScrollDown,
+        MouseEventKind::ScrollUp,
+        MouseEventKind::ScrollLeft,
+        MouseEventKind::ScrollRight,
+        MouseEventKind::Down(MouseButton::Right),
+        MouseEventKind::Moved,
+    ];
+    MouseEvent {
+        kind: KINDS[usize::from(kind) % KINDS.len()],
+        column: u16::from(col),
+        row: u16::from(row),
+        modifiers: KeyModifiers::NONE,
+    }
 }
 
 fn size(w: u16, h: u8) -> Size {
@@ -515,7 +547,7 @@ fn answer(
                 error: "fuzz".into(),
             },
         }),
-        Cmd::Watch { .. } | Cmd::HighlightOnly(_) | Cmd::Quit => None,
+        Cmd::Watch { .. } | Cmd::HighlightOnly(_) | Cmd::Mouse(_) | Cmd::Quit => None,
     })
 }
 
@@ -1136,6 +1168,12 @@ impl Session<'_> {
             Op::SaveConfirm => Msg::SaveConfirm,
             Op::SaveCancel => Msg::SaveCancel,
             Op::ToggleThemeBg => Msg::ToggleThemeBg,
+            Op::Click { col, row } => Msg::Click {
+                col: u16::from(col),
+                row: u16::from(row),
+            },
+            Op::Mouse { kind, col, row } => return self.keymap.mouse(mouse(kind, col, row)),
+            Op::ToggleMouse => Msg::ToggleMouse,
             Op::Open(i) => {
                 let files = &world().files;
                 Msg::Open {

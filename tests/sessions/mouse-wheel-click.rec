@@ -1,0 +1,51 @@
+ada-rec 1
++0 init size=60x16
++1 open path="mouse.md"
++2 doc-loaded path="mouse.md" mtime=1760535362123 text:1107
+# Mouse
+
+Scroll with the wheel, or click [the end](#the-end) to jump there, and back.
+
+## Middle
+
+Line 1 of the middle, to give the wheel something to scroll.
+
+Line 2 of the middle, to give the wheel something to scroll.
+
+Line 3 of the middle, to give the wheel something to scroll.
+
+Line 4 of the middle, to give the wheel something to scroll.
+
+Line 5 of the middle, to give the wheel something to scroll.
+
+Line 6 of the middle, to give the wheel something to scroll.
+
+Line 7 of the middle, to give the wheel something to scroll.
+
+Line 8 of the middle, to give the wheel something to scroll.
+
+Line 9 of the middle, to give the wheel something to scroll.
+
+Line 10 of the middle, to give the wheel something to scroll.
+
+Line 11 of the middle, to give the wheel something to scroll.
+
+Line 12 of the middle, to give the wheel something to scroll.
+
+Line 13 of the middle, to give the wheel something to scroll.
+
+Line 14 of the middle, to give the wheel something to scroll.
+
+Line 15 of the middle, to give the wheel something to scroll.
+
+## The end
+
+Backspace goes back up; `M` gives the mouse to the terminal.
+
++300 scroll by=6
++600 scroll by=-3
++700 scroll by=-3
++900 click col=5 row=5
++1100 click col=36 row=2
++1500 toggle-mouse
++2000 quit

@@ -154,6 +154,7 @@ Press `?` in ada for the keys. See `ada --help` for every option.
 | `e` | edit in `$VISUAL` or `$EDITOR` at the current line |
 | `y` | copy the focused link, or the code block on screen |
 | `S` | save the settings in effect to the config file: a box lists what changes, `Enter` saves, `Esc` cancels |
+| `M` | the mouse: the wheel and clicks on links, or the terminal's own selection |
 | `?` | help |
 | `q` `Esc` | quit; `C-c` always quits |
 
@@ -161,6 +162,10 @@ In the search prompt, `Enter` keeps the matches, `Esc` puts the previous search 
 and `C-w` edit, and an empty pattern repeats the last search. Search is smart-case: it ignores case
 unless the pattern has an uppercase letter. So are the filters of the outline, links, themes and
 columns lists.
+
+The mouse is on by default: the wheel scrolls the document, the lists and the help, and a click on a
+link follows it. Most terminals (kitty, wezterm, foot, alacritty, xterm) still select text with `Shift`
+held. `M` gives the mouse to the terminal, and `mouse = false` in the config starts that way.
 
 ## Configuration
 
@@ -172,7 +177,7 @@ out at its default, so it's a place to look as much as a place to change things.
 `--print` and previews read it but never create it. It's the only file ada writes unasked.
 Deleted, it comes back on the next interactive run; an empty file in its place keeps it away.
 
-`S` saves the settings in effect back to it: the theme `T` picked, the `t`, `w`, `#` and `B` toggles, and
+`S` saves the settings in effect back to it: the theme `T` picked, the `t`, `w`, `#`, `B` and `M` toggles, and
 flags such as `--theme`, `--max-width`, `-n`, `--no-images` and `--no-reload`. A box lists each option that
 changes, `old → new`, before anything is written. Only the values change; comments and the lines around them
 stay as they are. A theme loaded from a path is saved as that path.
@@ -180,6 +185,7 @@ stay as they are. A theme loaded from a path is saved as that path.
 ```toml
 theme = "gruvbox-light"
 theme_bg = true            # the theme's background, or false for the terminal's (`B`)
+mouse = true               # the wheel and link clicks, or false for the terminal's selection (`M`)
 max_width = 100            # wrap prose at most 100 columns wide; tables may use the rest
 images = true              # or false for text only
 image_protocol = "auto"    # or kitty, sixel, iterm2, halfblocks

@@ -4,25 +4,25 @@ expression: frames.last().unwrap()
 ---
    Code
            ╭─ keys ─────────────────────────────────────────────────╮
-   rust    │   N               the previous match                   │
-   fn main(│   o               the outline of headings              │
-       prin│   l               the list of links                    │
-       let │                                                        │ has to
-  ↪wrap whe│ View                                                   │
-   }       │   t               tables: auto, grid, records          │
-           │   s               sort a table on screen by a column   │
+   rust    │   o               the outline of headings              │
+   fn main(│   l               the list of links                    │
+       prin│                                                        │
+       let │ View                                                   │ has to
+  ↪wrap whe│   t               tables: auto, grid, records          │
+   }       │   s               sort a table on screen by a column   │
            │   w               wrap code, or scroll it sideways     │
-   kotlin  │   ←               scroll code left                     │
-   fun gree│   →               scroll code right                    │
-           │   #               show or hide line numbers            │
+           │   ←               scroll code left                     │
+   kotlin  │   →               scroll code right                    │
+   fun gree│   #               show or hide line numbers            │
            │   B               theme background, or the terminal's  │
            │   T               pick a theme, previewing each        │
-   untagged│                                                        │
-           │ Other                                                  │
+           │                                                        │
+   untagged│ Other                                                  │
            │   r               read the file again                  │
            │   e               edit in $VISUAL or $EDITOR           │
-   indented│   y               copy the link or the code block      │
-   block   │   S               save the settings to the config file │
+           │   y               copy the link or the code block      │
+   indented│   S               save the settings to the config file │
+   block   │   M               wheel and clicks, or text selection  │
            ╰─────────────────────────────────────────── j/k scroll ─╯
 
  tests/fixtures/code.md  any other key closes the help                      Top

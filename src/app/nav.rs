@@ -280,8 +280,53 @@ impl State {
         if self.nav.is_some() {
             return Vec::new();
         }
-        let (Some(link), Some(doc)) = (self.visible_focus(), &self.doc) else {
+        let Some(link) = self.visible_focus() else {
             self.status = Some("no link focused: Tab picks one".into());
+            return Vec::new();
+        };
+        self.follow_link(link)
+    }
+
+    /// A click: focus the link drawn at the screen's cell `col`, `row`, and follow it. A click
+    /// off a link, over a popup, or while a navigation loads does nothing.
+    pub(super) fn click(&mut self, col: u16, row: u16) -> Vec<Cmd> {
+        let popup = self.outline.is_some() || self.help.is_some() || self.save.is_some();
+        if self.nav.is_some() || popup || self.prompt.is_some() {
+            return Vec::new();
+        }
+        let Some(link) = self.link_at(col, row) else {
+            return Vec::new();
+        };
+        self.status = None;
+        self.focus = Some(link);
+        self.follow_link(link)
+    }
+
+    /// The link drawn at the screen's cell `col`, `row`: the rows from the scroll position, or
+    /// the sticky header of a table straddling the top, as the view draws them.
+    pub(super) fn link_at(&self, col: u16, row: u16) -> Option<LinkId> {
+        let doc = self.doc.as_ref()?;
+        let (layout, height) = (&doc.layout, self.viewport_height());
+        let row = u32::from(row);
+        if row >= height {
+            return None;
+        }
+        let r = match crate::ui::sticky_header(layout, self.scroll, height) {
+            Some(header) if row < header.end - header.start => header.start + row,
+            _ => self.scroll + row,
+        };
+        // the rows' columns start right of the line numbers
+        let col = col.checked_sub(layout.numbers.min(self.size.w))?;
+        let first = layout.hits.partition_point(|h| h.row < r);
+        layout.hits[first..]
+            .iter()
+            .take_while(|h| h.row == r)
+            .find(|h| h.cols.contains(&col))
+            .map(|h| h.link)
+    }
+
+    fn follow_link(&mut self, link: LinkId) -> Vec<Cmd> {
+        let Some(doc) = &self.doc else {
             return Vec::new();
         };
         let state = doc.links.get(link as usize).cloned();

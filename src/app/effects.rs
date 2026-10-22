@@ -186,7 +186,11 @@ impl Effects {
                 },
             }),
             // The terminal's: the interactive loop runs them, and a replay never does.
-            Cmd::SpawnEditor { .. } | Cmd::Osc52(_) | Cmd::WriteConfig { .. } | Cmd::Quit => None,
+            Cmd::SpawnEditor { .. }
+            | Cmd::Osc52(_)
+            | Cmd::Mouse(_)
+            | Cmd::WriteConfig { .. }
+            | Cmd::Quit => None,
         }
     }
 }
