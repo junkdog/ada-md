@@ -64,7 +64,9 @@ pub(super) fn layout(
         };
     }
     let lines = Lines::of(code);
-    found_labels(b, &lines, canvas, first, x);
+    if b.screen {
+        found_labels(b, &lines, canvas, first, x);
+    }
     let marks = drawn.notes.len().to_string().len() + 1;
     for (i, note) in drawn.notes.iter().enumerate() {
         let mark = diagram::note_mark(i + 1);

@@ -457,11 +457,19 @@ pub fn relayout(
     params: LayoutParams,
     spare: Layout,
 ) -> Layout {
-    relayout_lines(doc, measure, glyphs, params, spare, doc.line_count())
+    relayout_lines(doc, measure, glyphs, params, spare, doc.line_count(), true)
 }
 
-/// [`relayout`] for a piece of a longer file printed a piece at a time (O-52): its line numbers
-/// take the width the whole file's `lines` need, as they do in the other pieces.
+/// [`layout_measured`] for print, which reads only the rows: without [`Layout::search`] and
+/// [`Layout::hits`], which only the TUI's search and link focus read (MEM-05: 2–3% of a print's
+/// instructions; XL's map is 1.6 MiB, though it sat in heap the peak held anyway).
+pub fn layout_print(doc: &Doc, measure: &Measure, glyphs: &Glyphs, params: LayoutParams) -> Layout {
+    let spare = Layout::empty(params);
+    relayout_lines(doc, measure, glyphs, params, spare, doc.line_count(), false)
+}
+
+/// [`layout_print`] for a piece of a longer file printed a piece at a time (O-52): its line
+/// numbers take the width the whole file's `lines` need, as they do in the other pieces.
 pub fn relayout_piece(
     doc: &Doc,
     glyphs: &Glyphs,
@@ -476,9 +484,11 @@ pub fn relayout_piece(
         params,
         spare,
         lines,
+        false,
     )
 }
 
+/// `screen`: also record what only the TUI reads ([`Builder::screen`]).
 fn relayout_lines(
     doc: &Doc,
     measure: &Measure,
@@ -486,6 +496,7 @@ fn relayout_lines(
     params: LayoutParams,
     spare: Layout,
     lines: u32,
+    screen: bool,
 ) -> Layout {
     let numbers = number_width(lines, params);
     // the rows lay out beside the numbers; `out.params` keeps the width asked for, which is
@@ -551,6 +562,7 @@ fn relayout_lines(
             code,
             images,
         },
+        screen,
         prefixes: Vec::new(),
         prefix_width: 0,
         right_margin: margin,
@@ -609,6 +621,8 @@ struct Builder<'a> {
     g: &'a Glyphs,
     params: LayoutParams,
     out: Layout,
+    /// Whether to record [`Layout::search`] and [`Layout::hits`]: not for print (MEM-05).
+    screen: bool,
     prefixes: Vec<Prefix>,
     prefix_width: u16,
     right_margin: u16,
@@ -797,7 +811,7 @@ impl Builder<'_> {
         for seg in w.line_segs(line) {
             let piece = &w.pieces[seg.piece as usize];
             let from = self.col;
-            if let Some(unit) = w.unit {
+            if let Some(unit) = w.unit.filter(|_| self.screen) {
                 let (a, b) = (seg.start.max(piece.body_start), seg.end.min(piece.body_end));
                 if a < b {
                     let (col, end) = if (a, b) == (seg.start, seg.end) {
@@ -834,6 +848,9 @@ impl Builder<'_> {
 
     /// Record that bytes `range` of `unit` render on the current row in columns `cols`.
     fn search_seg(&mut self, unit: UnitId, range: Range<u32>, cols: Range<u16>) {
+        if !self.screen {
+            return;
+        }
         let row = self.out.row_count();
         if let Some(last) = self.out.search.last_mut()
             && (last.unit, last.row, last.end) == (unit, row, range.start)
@@ -853,6 +870,9 @@ impl Builder<'_> {
     }
 
     fn hit(&mut self, from: u16, to: u16, link: LinkId) {
+        if !self.screen {
+            return;
+        }
         let row = self.out.row_count();
         if let Some(h) = self.out.hits.last_mut()
             && h.row == row

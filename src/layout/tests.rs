@@ -7,7 +7,7 @@ use crate::geom::Size;
 
 use super::{
     ImageFit, Layout, LayoutParams, LineNumbers, Measure, RowKind, Sort, TableMode, layout,
-    layout_measured, relayout,
+    layout_measured, layout_print, relayout,
 };
 use crate::doc::{BlockKind, parse};
 use crate::theme::{Glyphs, Theme};
@@ -77,6 +77,28 @@ fn relayout_in_spare_buffers_matches_a_fresh_layout() {
                 "{name} at {width}"
             );
             spare = reused;
+        }
+    }
+}
+
+/// Print's layout is the screen's without the search segments and link hits (MEM-05).
+#[test]
+fn print_layout_is_the_screen_layout_without_search_and_hits() {
+    let theme = Theme::builtin();
+    for (name, md) in &fixtures() {
+        let doc = parse(md);
+        let measure = Measure::new(&doc, &theme.glyphs);
+        for width in [24, 80] {
+            let mut screen = layout_measured(&doc, &measure, &theme.glyphs, params(width));
+            let print = layout_print(&doc, &measure, &theme.glyphs, params(width));
+            assert!(print.search.is_empty() && print.hits.is_empty(), "{name}");
+            screen.search.clear();
+            screen.hits.clear();
+            assert_eq!(
+                format!("{screen:?}"),
+                format!("{print:?}"),
+                "{name} at {width}"
+            );
         }
     }
 }

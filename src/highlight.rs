@@ -55,8 +55,62 @@ const STALL: Duration = Duration::from_millis(if cfg!(test) { 300 } else { 2000 
 /// (TypeScript) on fancy-regex.
 pub fn syntaxes() -> &'static SyntaxSet {
     static SET: OnceLock<SyntaxSet> = OnceLock::new();
-    SET.get_or_init(two_face::syntax::extra_newlines)
+    SET.get_or_init(|| {
+        let set = two_face::syntax::extra_newlines();
+        drop_read_only_pages();
+        set
+    })
 }
+
+/// Give back the executable's read-only pages, once the syntax set is loaded (MEM-06). two-face
+/// deserializes the set from a 0.94 MiB dump in the binary, read whole once and never again
+/// (syntect copies what it keeps), but its pages stay mapped. Nothing names where the dump lies,
+/// so this unmaps the whole read-only segment: the pages stay in the page cache, and those read
+/// again come back as minor faults.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn drop_read_only_pages() {
+    use std::ffi::{c_int, c_void};
+
+    /// The read-only `PT_LOAD` segments of the first object, the executable, into `out`.
+    unsafe extern "C" fn executable(
+        info: *mut libc::dl_phdr_info,
+        _: usize,
+        out: *mut c_void,
+    ) -> c_int {
+        // SAFETY: glibc passes a valid `info` whose `dlpi_phdr` holds `dlpi_phnum` headers, and
+        // `out` is the `Vec` below
+        let (info, out) = unsafe { (&*info, &mut *out.cast::<Vec<(usize, usize)>>()) };
+        let headers = unsafe { std::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum.into()) };
+        for h in headers {
+            if h.p_type == libc::PT_LOAD && h.p_flags == libc::PF_R {
+                let start = info.dlpi_addr as usize + h.p_vaddr as usize;
+                out.push((start, start + h.p_memsz as usize));
+            }
+        }
+        1
+    }
+    let mut segments: Vec<(usize, usize)> = Vec::new();
+    // SAFETY: the callback only reads the headers and writes `segments`
+    unsafe {
+        libc::dl_iterate_phdr(Some(executable), (&raw mut segments).cast());
+    }
+    // SAFETY: `sysconf` only reads a setting
+    let page = usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).unwrap_or(4096);
+    for (start, end) in segments {
+        // whole pages inside the segment only
+        let (start, end) = (start.next_multiple_of(page), end / page * page);
+        if start < end {
+            // SAFETY: the range is mapped read-only from the executable's file, which nothing
+            // writes; `MADV_DONTNEED` drops the process's pages, and reads fault them back in
+            unsafe {
+                libc::madvise(start as *mut c_void, end - start, libc::MADV_DONTNEED);
+            }
+        }
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn drop_read_only_pages() {}
 
 /// Languages that are deliberately plain.
 fn is_plain(lang: &str) -> bool {

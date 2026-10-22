@@ -63,7 +63,7 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
                     b.text(&g.wrap_mark, StyleKey::CodeWrapMark);
                     b.fill(lead, StyleKey::CodeBlock);
                 }
-                if !chunk.is_empty() {
+                if b.screen && !chunk.is_empty() {
                     let col = b.col;
                     let range = from..from + chunk.len() as u32;
                     b.search_seg(unit, range, col..col + chunk.width() as u16);

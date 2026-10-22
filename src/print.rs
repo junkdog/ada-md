@@ -129,7 +129,7 @@ fn write(
         for (id, file) in opts.images.map_or(&[][..], |p| &p.files).iter().enumerate() {
             measure.set_image(id as LinkId, file.as_ref().map(|f| f.1));
         }
-        layout::layout_measured(doc, &measure, &theme.glyphs, params)
+        layout::layout_print(doc, &measure, &theme.glyphs, params)
     };
     let syntax = Arc::new(SyntaxTheme::new(&theme.syntax));
     let blocks = doc.code_blocks();

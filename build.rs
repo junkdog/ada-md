@@ -7,6 +7,10 @@
 // `ADA_LINK_MAP=PATH` writes lld's map of the link, names mangled: the symbols of the binary as
 // built, stripped or not. Tracing reads them there: a build with other profile settings (`strip`)
 // hashes every symbol name differently, and lld would skip them all.
+// The same link packs the relative relocations (`-z pack-relative-relocs`, RELR; MEM-03): ld.so
+// reads ~4 KiB at start instead of ~350 KiB of `.rela.dyn`, so a run maps ~0.4 MiB less. Only an
+// ld.so of glibc 2.36 (2022) or later applies them, so only in a native build on such a glibc;
+// the binary then needs `GLIBC_ABI_DT_RELR`, and an older glibc refuses it at start by name.
 use std::env;
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -29,6 +33,22 @@ fn rustc_minor() -> Option<u32> {
         .ok()
 }
 
+/// The minor version of the glibc this build script runs on: 44 for 2.44.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn glibc_minor() -> Option<u32> {
+    unsafe extern "C" {
+        fn gnu_get_libc_version() -> *const std::ffi::c_char;
+    }
+    // SAFETY: glibc returns a static NUL-terminated string
+    let version = unsafe { std::ffi::CStr::from_ptr(gnu_get_libc_version()) };
+    version.to_str().ok()?.split('.').nth(1)?.parse().ok()
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn glibc_minor() -> Option<u32> {
+    None
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=bench/order");
     println!("cargo:rerun-if-env-changed=ADA_SYMBOL_ORDER");
@@ -41,6 +61,9 @@ fn main() {
         && rustc_minor().is_some_and(|minor| minor >= 90);
     if !lld {
         return;
+    }
+    if var("HOST") == var("TARGET") && glibc_minor().is_some_and(|minor| minor >= 36) {
+        println!("cargo:rustc-link-arg-bins=-Wl,-z,pack-relative-relocs");
     }
     let order = Path::new(&var("CARGO_MANIFEST_DIR")).join("bench/order/order.txt");
     if var("ADA_SYMBOL_ORDER") != "off" && order.is_file() {
