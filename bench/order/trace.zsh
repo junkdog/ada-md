@@ -30,5 +30,7 @@ for j in jobs:
     j["cmd"] = [lackey, f"{w}/traces/tui-{j['"'"'file'"'"'].split(".")[0]}.txt"] + j["cmd"]
 json.dump(jobs, open(f"{w}/tui.json", "w"), indent=1)' $W $H/lackey.zsh || exit 1
 $B2D/target/release/b2 run $W/tui.json $W/tui.jsonl > $W/tui.log 2>&1 || { print "b2 failed: $W/tui.log"; exit 1 }
-python3 -I $H/order.py $W/ada.map $W/traces/print-s.txt $W/traces/tui-s.txt $W/traces/tui-l.txt > $H/order.txt || exit 1
+# written beside the traces and moved in only when whole: a failed run keeps the last order.txt
+python3 -I $H/order.py $W/ada.map $W/traces/print-s.txt $W/traces/tui-s.txt $W/traces/tui-l.txt > $W/order.txt || exit 1
+mv $W/order.txt $H/order.txt
 python3 -I $H/check.py $W/ada.map $H/order.txt
