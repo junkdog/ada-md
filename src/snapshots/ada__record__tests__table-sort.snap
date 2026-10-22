@@ -22,8 +22,8 @@ expression: frames.last().unwrap()
   And the tests that cover them.
 
   ╭──────────┬───────╮
-  │ Suite    │ Cases▼│
-  ├──────────┼───────┤
+  │ Suite    │ Cases │
+  ├──────────┼─────▼─┤
   │  reader  │   412 │
   │  writer  │   388 │
   │  frames  │    97 │

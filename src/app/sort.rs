@@ -301,12 +301,13 @@ mod tests {
             .collect()
     }
 
+    /// The header row and the rule under it.
     fn header(state: &State) -> String {
         let layout = &state.doc.as_ref().unwrap().layout;
-        (0..layout.rows.len())
-            .map(|r| layout.row_text(r))
-            .find(|t| t.contains("Name"))
-            .unwrap()
+        let r = (0..layout.rows.len())
+            .find(|&r| layout.row_text(r).contains("Name"))
+            .unwrap();
+        format!("{}\n{}", layout.row_text(r), layout.row_text(r + 1))
     }
 
     #[test]
@@ -331,8 +332,8 @@ mod tests {
         assert_eq!(state.outline, None);
         assert_eq!(names(&state), ["gamma", "beta", "alpha"]);
         assert_eq!(state.status.as_deref(), Some("sorted by Size ▼"));
-        // the mark sits in the header's padding: the table stays as wide as it was
-        assert!(header(&state).contains("Size▼│"), "{}", header(&state));
+        // the mark sits on the rule under the header: the table stays as wide as it was
+        assert!(header(&state).contains("┼────▼─┤"), "{}", header(&state));
         assert_eq!(header(&state).width(), unsorted.width());
 
         // the list marks the current order and opens on its reverse, so `Enter` turns it around
@@ -348,7 +349,7 @@ mod tests {
         assert_eq!(selected(&state), "Size  ▲ ascending");
         update(&mut state, Msg::OutlinePick);
         assert_eq!(names(&state), ["alpha", "beta", "gamma"]);
-        assert!(header(&state).contains("Size▲│"));
+        assert!(header(&state).contains("┼────▲─┤"));
 
         // picking the current order keeps it
         sort(&mut state, "size asc");
@@ -356,8 +357,7 @@ mod tests {
 
         sort(&mut state, "name desc");
         assert_eq!(names(&state), ["gamma", "beta", "alpha"]);
-        // spaced off the header when the column has room to spare
-        assert!(header(&state).contains("Name ▼│"), "{}", header(&state));
+        assert!(header(&state).contains("├─────▼─┼"), "{}", header(&state));
         assert_eq!(header(&state).width(), unsorted.width());
         sort(&mut state, "source");
         assert_eq!(names(&state), ["beta", "alpha", "gamma"]);

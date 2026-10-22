@@ -748,8 +748,15 @@ pub(super) fn layout(b: &mut Builder<'_>, t: &Table) {
         glyph,
         extra: (glyph.width() as u16).saturating_sub(1),
     });
-    // a mark wider than the padding it sits in widens its column by the rest
+    let border = match b.g.table_border {
+        TableBorder::Rounded => Some(&ROUNDED),
+        TableBorder::Ascii => Some(&ASCII),
+        TableBorder::None => None,
+    };
+    // a mark wider than the padding it sits in widens its column by the rest; a bordered grid
+    // draws it on the rule under the header instead, and cards make room as they wrap the key
     if let Some(m) = mark.filter(|m| m.extra > 0)
+        && border.is_none()
         && let Some(col) = cols.to_mut().get_mut(m.col)
     {
         col.header = col.header.saturating_add(m.extra);
@@ -767,11 +774,6 @@ pub(super) fn layout(b: &mut Builder<'_>, t: &Table) {
     let header = Header {
         row: &t.header,
         mark,
-    };
-    let border = match b.g.table_border {
-        TableBorder::Rounded => Some(&ROUNDED),
-        TableBorder::Ascii => Some(&ASCII),
-        TableBorder::None => None,
     };
     // Padding of one cell on each side of a column, plus the vertical borders.
     let chrome = 2 * cols.len() as u16 + border.map_or(0, |_| cols.len() as u16 + 1);
@@ -815,8 +817,9 @@ impl Header<'_> {
     }
 }
 
-/// The sort mark sits in the padding after the last line of its header, so a mark one cell wide
-/// leaves the column as wide as it was; what's wider than that is `extra`.
+/// The sort mark sits on the rule under the header of a bordered grid, and otherwise in the
+/// padding after the last line of its header, so a mark one cell wide leaves the column as wide
+/// as it was; what's wider than that is `extra`.
 #[derive(Clone, Copy)]
 struct Mark<'a> {
     col: usize,
@@ -862,15 +865,24 @@ fn grid(
     border: Option<&Border>,
 ) {
     if let Some(bd) = border {
-        border_row(b, widths, bd.top, bd.horiz);
+        border_row(b, widths, bd.top, bd.horiz, None);
     }
     let header_start = b.out.row_count();
-    let head = header.cells(b, widths);
-    grid_row(b, header.row, &head, widths, &t.aligns, border, header.mark);
+    // a border draws the sort mark on the rule under the header, the header's padding otherwise
+    let (padded, ruled) = match border {
+        Some(_) => (None, header.mark),
+        None => (header.mark, None),
+    };
+    let head = Header {
+        row: header.row,
+        mark: padded,
+    }
+    .cells(b, widths);
+    grid_row(b, header.row, &head, widths, &t.aligns, border, padded);
     if let Some(bd) = border
         && !rows.is_empty()
     {
-        border_row(b, widths, bd.sep, bd.horiz);
+        border_row(b, widths, bd.sep, bd.horiz, ruled);
     }
     let header = header_start..b.out.row_count();
     for (i, row) in rows.iter().enumerate() {
@@ -886,18 +898,39 @@ fn grid(
         });
     }
     if let Some(bd) = border {
-        border_row(b, widths, bd.bottom, bd.horiz);
+        // a header alone has its sort mark on the bottom edge
+        let mark = ruled.filter(|_| rows.is_empty());
+        border_row(b, widths, bd.bottom, bd.horiz, mark);
     }
 }
 
-fn border_row(b: &mut Builder<'_>, widths: &[u16], [left, mid, right]: [&str; 3], horiz: &str) {
+/// `mark` sits at the right end of its column's stretch of the rule, a `horiz` clear of the
+/// junction when there's room for one; the rule goes without it when it's wider than the stretch.
+fn border_row(
+    b: &mut Builder<'_>,
+    widths: &[u16],
+    [left, mid, right]: [&str; 3],
+    horiz: &str,
+    mark: Option<Mark<'_>>,
+) {
     b.begin_row();
     b.text(left, StyleKey::TableBorder);
     for (i, &w) in widths.iter().enumerate() {
         if i > 0 {
             b.text(mid, StyleKey::TableBorder);
         }
-        b.text(&horiz.repeat(w as usize + 2), StyleKey::TableBorder);
+        let span = w + 2;
+        match mark.filter(|m| m.col == i && m.extra < span) {
+            Some(m) => {
+                let width = m.extra + 1;
+                let tail = u16::from(width < span);
+                let lead = span - width - tail;
+                b.text(&horiz.repeat(lead as usize), StyleKey::TableBorder);
+                b.text(m.glyph, StyleKey::TableHeader);
+                b.text(&horiz.repeat(tail as usize), StyleKey::TableBorder);
+            }
+            None => b.text(&horiz.repeat(span as usize), StyleKey::TableBorder),
+        }
     }
     b.text(right, StyleKey::TableBorder);
     b.end_row(LineRange::NONE, RowKind::Decor);

@@ -10,7 +10,7 @@ use super::{
     layout_measured, layout_print, relayout,
 };
 use crate::doc::{BlockKind, parse};
-use crate::theme::{Glyphs, Theme};
+use crate::theme::{Glyphs, TableBorder, Theme};
 
 fn fixtures() -> Vec<(String, String)> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
@@ -342,15 +342,15 @@ fn grid_rows_cover_header_and_body() {
     assert!(l.row_text(g.end as usize).contains("╰───┴───╯"));
 }
 
-/// The sort mark sits in the padding after its header, so sorting leaves the table as wide as it
-/// was; a mark wider than one cell widens its column by the rest.
+/// A bordered grid draws the sort mark on the rule under its header; without a border, and on
+/// cards, it sits in the padding after the header. Either way a one-cell mark leaves the table as
+/// wide as it was.
 #[test]
-fn sort_marks_sit_in_the_header_padding() {
-    let doc = parse("| Name | Size |\n|---|--:|\n| beta | 10 |\n| alpha | 9 |\n");
-    let tables = doc.tables();
-    let rows = |glyphs: &Glyphs, sort: Option<Sort>, table_mode| {
+fn sort_marks_sit_on_the_rule_or_in_the_header_padding() {
+    let rows = |md: &str, glyphs: &Glyphs, sort: Option<Sort>, table_mode| {
+        let doc = parse(md);
         let mut measure = Measure::new(&doc, glyphs);
-        measure.set_sort(tables[0], sort);
+        measure.set_sort(doc.tables()[0], sort);
         let p = LayoutParams {
             table_mode,
             ..params(40)
@@ -359,40 +359,85 @@ fn sort_marks_sit_in_the_header_padding() {
         let row = |r| l.row_text(r).trim().to_owned();
         (0..l.rows.len()).map(row).collect::<Vec<_>>()
     };
+    let md = "| Name | Size |\n|---|--:|\n| beta | 10 |\n| alpha | 9 |\n";
     let by_size = Some(Sort { col: 1, desc: true });
     let by_name = Some(Sort {
         col: 0,
         desc: false,
     });
     let mut glyphs = Theme::builtin().glyphs;
-    let unsorted = rows(&glyphs, None, TableMode::Grid);
-    assert_eq!(unsorted[1], "│ Name  │ Size │");
-    // snug when the header fills its column, a space off it when there's room
+    let unsorted = rows(md, &glyphs, None, TableMode::Grid);
+    assert_eq!(unsorted[1..3], ["│ Name  │ Size │", "├───────┼──────┤"]);
+    // at the right end of its column's stretch of the rule, the header row untouched
     assert_eq!(
-        rows(&glyphs, by_size, TableMode::Grid)[1],
-        "│ Name  │ Size▼│"
+        rows(md, &glyphs, by_size, TableMode::Grid)[1..3],
+        ["│ Name  │ Size │", "├───────┼────▼─┤"]
     );
     assert_eq!(
-        rows(&glyphs, by_name, TableMode::Grid)[1],
-        "│ Name ▲│ Size │"
+        rows(md, &glyphs, by_name, TableMode::Grid)[1..3],
+        ["│ Name  │ Size │", "├─────▲─┼──────┤"]
     );
-    let cards = rows(&glyphs, by_name, TableMode::Records);
+    // a header alone has it on the bottom edge
+    let alone = "| Name | Size |\n|---|--:|\n";
+    assert_eq!(
+        rows(alone, &glyphs, by_size, TableMode::Grid)[1..3],
+        ["│ Name │ Size │", "╰──────┴────▼─╯"]
+    );
+    // cards have no rule under the header
+    let cards = rows(md, &glyphs, by_name, TableMode::Records);
     assert!(cards.contains(&"│ Name▲ alpha".to_owned()), "{cards:#?}");
     assert!(cards.contains(&"│ Size  9".to_owned()), "{cards:#?}");
 
-    // the extra cell comes out of the slack when the column has some
+    glyphs.table_border = TableBorder::Ascii;
+    assert_eq!(
+        rows(md, &glyphs, by_size, TableMode::Grid)[1..3],
+        ["| Name  | Size |", "+-------+----▼-+"]
+    );
+
+    // snug when the header fills its column, a space off it when there's room
+    glyphs.table_border = TableBorder::None;
+    assert_eq!(rows(md, &glyphs, None, TableMode::Grid)[0], "Name   Size");
+    assert_eq!(
+        rows(md, &glyphs, by_size, TableMode::Grid)[0],
+        "Name   Size▼"
+    );
+    assert_eq!(
+        rows(md, &glyphs, by_name, TableMode::Grid)[0],
+        "Name ▲ Size"
+    );
+
+    // a wider mark comes out of the slack when the column has some, and widens it otherwise
     glyphs.sort_mark = ["↑↑".into(), "↓↓".into()];
     assert_eq!(
-        rows(&glyphs, by_size, TableMode::Grid)[1],
-        "│ Name  │ Size↓↓│"
+        rows(md, &glyphs, by_size, TableMode::Grid)[0],
+        "Name   Size↓↓"
     );
     assert_eq!(
-        rows(&glyphs, by_name, TableMode::Grid)[1],
-        "│ Name↑↑│ Size │"
+        rows(md, &glyphs, by_name, TableMode::Grid)[0],
+        "Name↑↑ Size"
     );
-    let cards = rows(&glyphs, by_name, TableMode::Records);
-    assert!(cards.contains(&"│ Name↑↑ alpha".to_owned()), "{cards:#?}");
-    assert!(cards.contains(&"│ Size   9".to_owned()), "{cards:#?}");
+    let cards = rows(md, &glyphs, by_name, TableMode::Records);
+    assert!(cards.contains(&"1.".to_owned()), "{cards:#?}");
+    assert!(cards.contains(&"Name↑↑ alpha".to_owned()), "{cards:#?}");
+    assert!(cards.contains(&"Size   9".to_owned()), "{cards:#?}");
+
+    // on the rule it gives up the cell clear of the junction before it widens anything
+    glyphs.table_border = TableBorder::Rounded;
+    assert_eq!(
+        rows(md, &glyphs, by_size, TableMode::Grid)[1..3],
+        ["│ Name  │ Size │", "├───────┼───↓↓─┤"]
+    );
+    glyphs.sort_mark = ["↑↑↑↑↑↑".into(), "↓↓↓↓↓↓".into()];
+    assert_eq!(
+        rows(md, &glyphs, by_size, TableMode::Grid)[1..3],
+        ["│ Name  │ Size │", "├───────┼↓↓↓↓↓↓┤"]
+    );
+    // and goes without it when it's wider than the stretch
+    glyphs.sort_mark = ["↑↑↑↑↑↑↑".into(), "↓↓↓↓↓↓↓".into()];
+    assert_eq!(
+        rows(md, &glyphs, by_size, TableMode::Grid)[1..3],
+        unsorted[1..3]
+    );
 }
 
 /// Every other body row is striped, on every terminal row it takes, inside the outer borders.
