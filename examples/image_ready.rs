@@ -22,6 +22,8 @@ use ada::geom::{Rect, Size};
 use ada::grid::{Grid, Screen};
 use ada::images::{self, ImageKey, ImageMode, Job, Probe};
 
+mod common;
+
 fn main() {
     let mut paths = Vec::new();
     let (mut cells, mut runs) = (Size::new(100, 50), 15);
@@ -59,9 +61,10 @@ fn main() {
         };
         let (mut ms, mut cpu): (Vec<f64>, Vec<f64>) = (0..runs)
             .map(|_| {
-                let (t, c) = (Instant::now(), cpu_ms());
+                let (t, c) = (Instant::now(), common::cpu());
                 std::hint::black_box(job.run(&encoder));
-                (t.elapsed().as_secs_f64() * 1e3, cpu_ms() - c)
+                let ms = t.elapsed().as_secs_f64() * 1e3;
+                (ms, common::cpu().saturating_sub(c).as_secs_f64() * 1e3)
             })
             .unzip();
         ms.sort_by(f64::total_cmp);
@@ -109,15 +112,4 @@ impl Write for Counted {
     fn flush(&mut self) -> io::Result<()> {
         self.0.flush()
     }
-}
-
-/// This thread's CPU time, in milliseconds.
-fn cpu_ms() -> f64 {
-    let mut t = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: `t` is a valid timespec for the call to fill.
-    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-    t.tv_sec as f64 * 1e3 + t.tv_nsec as f64 / 1e6
 }

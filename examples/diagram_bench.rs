@@ -19,6 +19,9 @@ use ada::diagram::{self, Diagram};
 use ada::doc;
 use ada::layout::{self, LayoutParams, TableMode};
 use ada::theme::Theme;
+use common::cpu;
+
+mod common;
 
 /// A diagram at one width, and mermaid-text's time for it, ada's goal.
 struct Case {
@@ -295,17 +298,6 @@ impl std::ops::Add for Timed {
             cpu: self.cpu + o.cpu,
         }
     }
-}
-
-/// This thread's CPU time.
-fn cpu() -> Duration {
-    let mut t = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: `t` is a valid timespec for the call to fill.
-    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-    Duration::new(t.tv_sec as u64, t.tv_nsec as u32)
 }
 
 /// Wall time, and CPU time after it in parentheses.

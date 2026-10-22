@@ -22,6 +22,8 @@ use ada::geom::{Rect, Size};
 use ada::grid::{Grid, Screen};
 use ada::images::{self, Encoder, ImageKey, Job, Probe, Proto};
 
+mod common;
+
 fn main() {
     let mut paths = Vec::new();
     let (mut cells, mut runs, mut proto) = (Size::new(100, 50), 7, Proto::Sixel);
@@ -91,10 +93,10 @@ fn main() {
             paint(&mut screen, 0);
             for y in 1..i32::from(size.height) {
                 out.0.borrow_mut().clear();
-                let (t, c) = (Instant::now(), cpu_ms());
+                let (t, c) = (Instant::now(), common::cpu());
                 paint(&mut screen, -y);
                 ms.push(t.elapsed().as_secs_f64() * 1e3);
-                cpu.push(cpu_ms() - c);
+                cpu.push(common::cpu().saturating_sub(c).as_secs_f64() * 1e3);
                 bytes.push(out.0.borrow().len());
             }
         }
@@ -130,15 +132,4 @@ impl Write for Shared {
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
-}
-
-/// This thread's CPU time, in milliseconds.
-fn cpu_ms() -> f64 {
-    let mut t = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: `t` is a valid timespec for the call to fill.
-    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-    t.tv_sec as f64 * 1e3 + t.tv_nsec as f64 / 1e6
 }

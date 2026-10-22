@@ -54,7 +54,7 @@ libc = "0.2.190"
 [dev-dependencies]
 insta = "1.49"
 
-# The thread CPU clock of the image_ready and image_scroll examples, on macOS too.
+# The thread CPU clock the examples share (examples/common), on macOS too.
 [target.'cfg(unix)'.dev-dependencies]
 libc = "0.2.190"
 
