@@ -246,3 +246,267 @@ fn concurrent_regions() {
                [*] --> Idle\nIdle --> Busy : job\n}";
     insta::assert_snapshot!(drawn(src));
 }
+
+/// The probe's flowchart series: `n` nodes in a chain, each with an edge further on.
+fn series(n: usize) -> String {
+    let mut s = String::from("graph TD\n");
+    for i in 1..=n {
+        s.push_str(&format!("n{i}[node {i}] --> n{}\n", i + 1));
+        s.push_str(&format!("n{i} --> n{}\n", (i * 13) % n + 1));
+    }
+    s
+}
+
+/// A sideways drawing turned to run down, glyphs and all.
+fn transposed(rows: &[String]) -> Vec<String> {
+    let grid: Vec<Vec<char>> = rows.iter().map(|r| r.chars().collect()).collect();
+    let cols = grid.iter().map(Vec::len).max().unwrap_or(0);
+    (0..cols)
+        .map(|c| {
+            grid.iter()
+                .map(|row| match row.get(c).copied().unwrap_or(' ') {
+                    '─' => '│',
+                    '│' => '─',
+                    '┐' => '└',
+                    '└' => '┐',
+                    '├' => '┬',
+                    '┬' => '├',
+                    '┤' => '┴',
+                    '┴' => '┤',
+                    '▶' => '▼',
+                    '◀' => '▲',
+                    '▼' => '▶',
+                    '▲' => '◀',
+                    ch => ch,
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// A line network's sources and targets, as box indices.
+type Network = (Vec<usize>, Vec<usize>);
+
+/// A drawing's line networks, read back from its glyphs alone (`TD` or `BT`; `LR` and `RL`
+/// transposed first): boxes found by their borders, each line cell joined to the neighbors its
+/// arms point at (a `┼` keeps its two lines apart), a `┬` on a bottom border or `┴` on a top
+/// border a network's source, a head against a border its target. Each network as
+/// `(sources, targets)`, box indices, and each box's text. A network with two or more of each
+/// is ambiguous: which source goes to which target is lost.
+fn networks(rows: &[String]) -> (Vec<Network>, Vec<String>) {
+    let grid: Vec<Vec<char>> = rows.iter().map(|r| r.chars().collect()).collect();
+    let height = grid.len();
+    let width = grid.iter().map(Vec::len).max().unwrap_or(0);
+    let at = |r: usize, c: usize| {
+        grid.get(r)
+            .and_then(|row| row.get(c))
+            .copied()
+            .unwrap_or(' ')
+    };
+    // up, down, left, right
+    let arms = |ch: char| match ch {
+        '│' => [true, true, false, false],
+        '─' => [false, false, true, true],
+        '┌' => [false, true, false, true],
+        '┐' => [false, true, true, false],
+        '└' => [true, false, false, true],
+        '┘' => [true, false, true, false],
+        '├' => [true, true, false, true],
+        '┤' => [true, true, true, false],
+        '┬' => [false, true, true, true],
+        '┴' => [true, false, true, true],
+        '┼' => [true, true, true, true],
+        '▼' => [true, false, false, false],
+        '▲' => [false, true, false, false],
+        _ => [false; 4],
+    };
+    // boxes: (top, left, bottom, right), borders included
+    let mut boxes: Vec<(usize, usize, usize, usize)> = Vec::new();
+    let mut texts = Vec::new();
+    let mut owner = vec![None; height * width];
+    for r in 0..height {
+        for c in 0..width {
+            if at(r, c) != '┌' || owner[r * width + c].is_some() {
+                continue;
+            }
+            let mut c2 = c + 1;
+            while matches!(at(r, c2), '─' | '┬' | '┴' | '┼') {
+                c2 += 1;
+            }
+            if at(r, c2) != '┐' || c2 == c + 1 {
+                continue;
+            }
+            let mut r2 = r + 1;
+            while matches!(at(r2, c), '│' | '├' | '┤' | '┼')
+                && matches!(at(r2, c2), '│' | '├' | '┤' | '┼')
+            {
+                r2 += 1;
+            }
+            if r2 == r + 1 || at(r2, c) != '└' || at(r2, c2) != '┘' {
+                continue;
+            }
+            let text: Vec<String> = (r + 1..r2)
+                .map(|y| {
+                    (c + 1..c2)
+                        .map(|x| at(y, x))
+                        .collect::<String>()
+                        .trim()
+                        .to_string()
+                })
+                .collect();
+            for y in r..=r2 {
+                for x in c..=c2 {
+                    owner[y * width + x] = Some(boxes.len());
+                }
+            }
+            texts.push(text.join(" "));
+            boxes.push((r, c, r2, c2));
+        }
+    }
+    let line = |r: usize, c: usize| {
+        r < height && c < width && owner[r * width + c].is_none() && arms(at(r, c)) != [false; 4]
+    };
+    // two parts per cell, vertical and horizontal
+    let id = |r: usize, c: usize, horizontal: bool| (r * width + c) * 2 + usize::from(horizontal);
+    let mut parent: Vec<usize> = (0..height * width * 2).collect();
+    fn find(p: &mut [usize], mut x: usize) -> usize {
+        while p[x] != x {
+            p[x] = p[p[x]];
+            x = p[x];
+        }
+        x
+    }
+    let join = |p: &mut [usize], a: usize, b: usize| {
+        let (x, y) = (find(p, a), find(p, b));
+        p[x] = y;
+    };
+    for r in 0..height {
+        for c in 0..width {
+            if !line(r, c) {
+                continue;
+            }
+            let [_, down, _, right] = arms(at(r, c));
+            if at(r, c) != '┼' {
+                join(&mut parent, id(r, c, false), id(r, c, true));
+            }
+            if down && line(r + 1, c) && arms(at(r + 1, c))[0] {
+                join(&mut parent, id(r, c, false), id(r + 1, c, false));
+            }
+            if right && line(r, c + 1) && arms(at(r, c + 1))[2] {
+                join(&mut parent, id(r, c, true), id(r, c + 1, true));
+            }
+        }
+    }
+    let mut nets: HashMap<usize, Network> = HashMap::new();
+    for (k, &(t, l, b, rt)) in boxes.iter().enumerate() {
+        for c in l..=rt {
+            // the line beyond each border: leaving through a tee, or arriving in a head
+            for (border, out, tee, head) in [(b, b + 1, '┬', '▲'), (t, t.wrapping_sub(1), '┴', '▼')]
+            {
+                if !line(out, c) {
+                    continue;
+                }
+                let net = nets
+                    .entry(find(&mut parent, id(out, c, false)))
+                    .or_default();
+                if matches!(at(border, c), '┼') || at(border, c) == tee {
+                    net.0.push(k);
+                } else if at(out, c) == head {
+                    net.1.push(k);
+                }
+            }
+        }
+    }
+    let mut out: Vec<Network> = nets.into_values().collect();
+    for (s, t) in &mut out {
+        s.sort_unstable();
+        s.dedup();
+        t.sort_unstable();
+        t.dedup();
+    }
+    (out, texts)
+}
+
+/// DG-8: no two edges run in one lane, so each line network is one box's fan-out or a fan-in
+/// to one box, and together they carry exactly the graph's edges.
+#[test]
+fn edges_keep_to_their_own_lanes() {
+    for n in [20, 40, 80, 120] {
+        let mut want: Vec<(usize, usize)> = (1..=n)
+            .flat_map(|i| [(i, i + 1), (i, i * 13 % n + 1)])
+            .collect();
+        want.sort_unstable();
+        want.dedup();
+        for avail in [60, 100, 200] {
+            let rows = rows_at(&series(n), avail, false);
+            let (nets, texts) = networks(&rows);
+            let node = |k: usize| {
+                let t = &texts[k];
+                t.strip_prefix("node ")
+                    .or_else(|| t.strip_prefix('n'))
+                    .and_then(|i| i.parse::<usize>().ok())
+                    .unwrap_or_else(|| panic!("a box reading {t:?}"))
+            };
+            let mut drawn = Vec::new();
+            for (s, t) in &nets {
+                let names = |ks: &[usize]| ks.iter().map(|&k| node(k)).collect::<Vec<_>>();
+                assert!(
+                    s.len() < 2 || t.len() < 2,
+                    "{n} nodes at {avail}: {:?} and {:?} share a lane\n{}",
+                    names(s),
+                    names(t),
+                    rows.join("\n")
+                );
+                drawn.extend(s.iter().flat_map(|&a| t.iter().map(move |&b| (a, b))));
+            }
+            let mut drawn: Vec<(usize, usize)> =
+                drawn.into_iter().map(|(a, b)| (node(a), node(b))).collect();
+            drawn.sort_unstable();
+            drawn.dedup();
+            assert_eq!(drawn, want, "{n} nodes at {avail}");
+        }
+    }
+}
+
+/// DG-8 in the probe set's graphs (vault3 had a shared lane): no network the checker reads (it
+/// knows square boxes only) is ambiguous, and vault3's, all square, carry its 24 edges.
+#[test]
+fn probe_graphs_keep_edges_to_their_own_lanes() {
+    let probes = [
+        ("vault1", include_str!("../../../bench/diagrams/vault1.mmd")),
+        ("vault2", include_str!("../../../bench/diagrams/vault2.mmd")),
+        ("vault3", include_str!("../../../bench/diagrams/vault3.mmd")),
+        ("vault4", include_str!("../../../bench/diagrams/vault4.mmd")),
+        (
+            "flow_sub",
+            include_str!("../../../bench/diagrams/flow_sub.mmd"),
+        ),
+        ("ci", include_str!("../../../bench/diagrams/ci.mmd")),
+        (
+            "lr_wide",
+            include_str!("../../../bench/diagrams/lr_wide.mmd"),
+        ),
+    ];
+    for (name, src) in probes {
+        let sideways = matches!(graph(src).dir, Dir::Right | Dir::Left);
+        for avail in [60, 100, 200] {
+            let rows = rows_at(src, avail, false);
+            let rows = if sideways { transposed(&rows) } else { rows };
+            let (nets, texts) = networks(&rows);
+            for (s, t) in &nets {
+                let names = |ks: &[usize]| ks.iter().map(|&k| texts[k].clone()).collect::<Vec<_>>();
+                assert!(
+                    s.len() < 2 || t.len() < 2,
+                    "{name} at {avail}: {:?} and {:?} share a lane\n{}",
+                    names(s),
+                    names(t),
+                    rows.join("\n")
+                );
+            }
+            if name == "vault3" {
+                let edges: usize = nets.iter().map(|(s, t)| s.len() * t.len()).sum();
+                assert_eq!(edges, 24, "vault3 at {avail}");
+            }
+        }
+    }
+}

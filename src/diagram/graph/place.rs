@@ -7,7 +7,8 @@
 //! their neighbors pull them (a weighted isotonic regression, solved exactly per layer by pooling
 //! adjacent violators), so chains run straight. Between two layers, edges bend once, on a track
 //! of their own in the channel; edges sharing a port share a track, and the tracks are ordered so
-//! a line leaving or entering a port doesn't cross another's track where it can help it.
+//! a line leaving or entering a port never runs in another's lane (a port moves when no order
+//! can manage it), and doesn't cross another's track where it can help it.
 
 use std::collections::HashMap;
 
@@ -748,7 +749,16 @@ fn route(
         .enumerate()
         .take(n_layers.saturating_sub(1))
     {
-        let tracks = assign_tracks(list, segs, &cu, &cv, &mut track);
+        let (mut tracks, mut lanes) = assign_tracks(list, segs, &cu, &cv, &mut track);
+        // a lane two legs would share whatever the order: a box's port there moves to a free
+        // column of its side, and the channel is routed again
+        for _ in 0..4 {
+            if lanes.is_empty() || !free_lanes(g, kinds, &geo, list, segs, &mut cu, &mut cv, &lanes)
+            {
+                break;
+            }
+            (tracks, lanes) = assign_tracks(list, segs, &cu, &cv, &mut track);
+        }
         let path_of = |s: usize| &lv.paths[segs[s].path as usize];
         let ends = |s: usize| {
             let path = path_of(s);
@@ -864,6 +874,56 @@ fn route(
     })
 }
 
+/// Move the first box's port found on one of `lanes` (columns where legs of two nets in one
+/// channel share a lane) to the nearest column of its side no leg in the channel uses. Whether
+/// one moved.
+#[allow(clippy::too_many_arguments)]
+fn free_lanes(
+    g: &Graph,
+    kinds: &[Kind],
+    geo: &[ItemGeo],
+    list: &[usize],
+    segs: &[Link],
+    cu: &mut [usize],
+    cv: &mut [usize],
+    lanes: &[usize],
+) -> bool {
+    for &c in lanes {
+        // the box whose port it is, and whether its legs leave or enter there
+        let port = list.iter().find_map(|&s| {
+            let Link { a, b, .. } = segs[s];
+            if cu[s] == c && matches!(kinds[a as usize], Kind::Node(_)) {
+                Some((a, true))
+            } else if cv[s] == c && matches!(kinds[b as usize], Kind::Node(_)) {
+                Some((b, false))
+            } else {
+                None
+            }
+        });
+        let Some((item, leaving)) = port else {
+            continue;
+        };
+        let (lo, hi) = port_range(kinds[item as usize], g, &geo[item as usize]);
+        let used = |x: usize| list.iter().any(|&s| cu[s] == x || cv[s] == x);
+        let Some(to) = (1..=hi - lo)
+            .flat_map(|d| [c.checked_sub(d), Some(c + d)])
+            .flatten()
+            .find(|&x| (lo..=hi).contains(&x) && !used(x))
+        else {
+            continue;
+        };
+        for &s in list {
+            if leaving && segs[s].a == item && cu[s] == c {
+                cu[s] = to;
+            } else if !leaving && segs[s].b == item && cv[s] == c {
+                cv[s] = to;
+            }
+        }
+        return true;
+    }
+    false
+}
+
 fn band_size(lv: &Level, geo: &[ItemGeo], l: usize) -> usize {
     lv.layers[l]
         .iter()
@@ -874,15 +934,16 @@ fn band_size(lv: &Level, geo: &[ItemGeo], l: usize) -> usize {
 }
 
 /// Give each net of segments in one channel (those sharing a port) a track, if it bends: the
-/// left-edge algorithm under the vertical constraints, so a leg into or out of a port stays off
-/// other tracks where it can. Returns the number of tracks.
+/// left-edge algorithm under the vertical constraints, so a leg into or out of a port keeps out
+/// of the lane of another net's leg the other way, and stays off other tracks where it can. Returns the number of tracks, and the columns where legs of two
+/// nets still share a lane.
 fn assign_tracks(
     list: &[usize],
     segs: &[Link],
     cu: &[usize],
     cv: &[usize],
     track: &mut [Option<usize>],
-) -> usize {
+) -> (usize, Vec<usize>) {
     let m = list.len();
     let mut parent: Vec<usize> = (0..m).collect();
     fn find(parent: &mut [usize], x: usize) -> usize {
@@ -942,56 +1003,99 @@ fn assign_tracks(
         .collect();
     let nb = bending.len();
     if nb == 0 {
-        return 0;
+        return (0, Vec::new());
     }
     let overlap = |a: &Net, b: &Net| a.lo <= b.hi + 1 && b.lo <= a.hi + 1;
     let within = |cols: &[usize], n: &Net| cols.iter().any(|&c| n.lo <= c && c <= n.hi);
-    // above[i]: nets that must be above bending[i]
-    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); nb];
-    let mut indeg = vec![0usize; nb];
+    let shared = |a: &[usize], b: &[usize]| a.iter().any(|c| b.contains(c));
+    // where a leg of one runs in the lane of a leg of the other the other way
+    fn lanes_of(x: &Net, y: &Net, out: &mut Vec<usize>) {
+        out.extend(x.up.iter().filter(|c| y.down.contains(c)));
+        out.extend(x.down.iter().filter(|c| y.up.contains(c)));
+    }
+    // preds[i]: nets that should be above bending[i], and whether they must; indeg counts
+    // (must, should) of those not yet placed
+    let mut preds: Vec<Vec<(usize, bool)>> = vec![Vec::new(); nb];
+    let mut indeg = vec![(0usize, 0usize); nb];
+    // the columns where two legs share a lane whatever the order: two nets trading columns, or
+    // a cycle of musts broken below
+    let mut lanes = Vec::new();
     for i in 0..nb {
         for j in i + 1..nb {
             let (x, y) = (&nets[bending[i]], &nets[bending[j]]);
             if !overlap(x, y) {
                 continue;
             }
-            let x_above = within(&x.up, y) || within(&y.down, x);
-            let x_below = within(&x.down, y) || within(&y.up, x);
-            match (x_above, x_below) {
-                (true, false) => {
-                    preds[j].push(i);
-                    indeg[j] += 1;
+            // a leg in the column of the other's leg the other way must stay clear of it, or
+            // the two run in one lane and read as a junction; a leg across the other's track
+            // only crosses it, which is better avoided
+            let lane_above = shared(&x.up, &y.down);
+            let lane_below = shared(&x.down, &y.up);
+            let must = lane_above || lane_below;
+            let (x_above, x_below) = if must {
+                (lane_above, lane_below)
+            } else {
+                (
+                    within(&x.up, y) || within(&y.down, x),
+                    within(&x.down, y) || within(&y.up, x),
+                )
+            };
+            let (above, below) = match (x_above, x_below) {
+                (true, false) => (i, j),
+                (false, true) => (j, i),
+                (true, true) if must => {
+                    lanes_of(x, y, &mut lanes);
+                    continue;
                 }
-                (false, true) => {
-                    preds[i].push(j);
-                    indeg[i] += 1;
-                }
-                _ => {}
+                _ => continue,
+            };
+            preds[below].push((above, must));
+            if must {
+                indeg[below].0 += 1;
+            } else {
+                indeg[below].1 += 1;
             }
         }
     }
-    let mut succs: Vec<Vec<usize>> = vec![Vec::new(); nb];
+    let mut succs: Vec<Vec<(usize, bool)>> = vec![Vec::new(); nb];
     for (j, ps) in preds.iter().enumerate() {
-        for &i in ps {
-            succs[i].push(j);
+        for &(i, must) in ps {
+            succs[i].push((j, must));
         }
     }
     let mut done = vec![false; nb];
     let mut tr: Vec<Option<usize>> = vec![None; nb];
+    let mut cycle = Vec::new();
     let mut on_track: Vec<Vec<usize>> = Vec::new();
     for _ in 0..nb {
-        // the leftmost ready net, or, in a cycle, the least constrained
+        // the leftmost ready net, or, in a cycle, the one breaking the fewest constraints,
+        // musts last
         let next = (0..nb)
             .filter(|&i| !done[i])
             .min_by_key(|&i| (indeg[i], nets[bending[i]].lo))
             .unwrap_or(0);
+        if indeg[next].0 > 0 {
+            // a cycle of musts: the lanes along it, where a port moved would break it
+            for i in (0..nb).filter(|&i| !done[i]) {
+                for &(j, must) in &preds[i] {
+                    if must && !done[j] {
+                        lanes_of(&nets[bending[j]], &nets[bending[i]], &mut cycle);
+                    }
+                }
+            }
+        }
         done[next] = true;
-        for &j in &succs[next] {
-            indeg[j] = indeg[j].saturating_sub(1);
+        for &(j, must) in &succs[next] {
+            let d = &mut indeg[j];
+            if must {
+                d.0 = d.0.saturating_sub(1);
+            } else {
+                d.1 = d.1.saturating_sub(1);
+            }
         }
         let floor = preds[next]
             .iter()
-            .filter_map(|&i| tr[i])
+            .filter_map(|&(i, _)| tr[i])
             .map(|t| t + 1)
             .max()
             .unwrap_or(0);
@@ -1014,7 +1118,16 @@ fn assign_tracks(
             track[s] = tr[i];
         }
     }
-    on_track.len()
+    for i in 0..nb {
+        for &(j, must) in &preds[i] {
+            if must && tr[j] >= tr[i] {
+                lanes_of(&nets[bending[j]], &nets[bending[i]], &mut lanes);
+            }
+        }
+    }
+    lanes.extend(cycle);
+    lanes.dedup();
+    (on_track.len(), lanes)
 }
 
 #[cfg(test)]
