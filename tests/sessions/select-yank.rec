@@ -1,0 +1,44 @@
+ada-rec 1
++0 init size=50x24
++1 open path="selecting.md"
++2 doc-loaded path="selecting.md" mtime=1760535362123 text:211
+# Selecting
+
+A paragraph that wraps over a few rows of the screen, to copy as one line.
+
+- first item
+- second item
+
+| tool | stars |
+|------|------:|
+| ada  | 12 |
+| glow | 15000 |
+
+```sh
+echo one
+echo two
+```
+
++300 press col=2 row=2 count=1
++350 drag col=20 row=2
++400 drag col=29 row=3
++450 release
++600 yank
++900 press col=6 row=6 count=1
++950 click col=6 row=6
++1100 press col=6 row=6 count=2
++1150 release
++1300 yank
++1600 press col=4 row=11 count=1
++1650 drag col=15 row=12
++1700 release
++1800 yank
++2100 press col=4 row=5 count=1
++2150 drag col=10 row=17
++2200 release
++2300 cancel
++2600 press col=3 row=16 count=1
++2650 drag col=10 row=17
++2700 release
++2800 yank
++3000 quit

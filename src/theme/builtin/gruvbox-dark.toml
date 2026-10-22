@@ -111,6 +111,7 @@ popup_border = { fg = "bg3", bg = "bg1" }
 popup_title = { fg = "orange", bg = "bg1", bold = true }
 popup_selected = { fg = "bg", bg = "orange", bold = true }
 sort_table = { fg = "orange" }                  # the borders and header of the table `s` sorts
+selection = { bg = "bg3" }                      # text selected with the mouse
 line_number = { fg = "bg4" }                    # line numbers (`#`)
 
 [ui.settings]                # the settings popup (`F2`): its rows, and the values they set

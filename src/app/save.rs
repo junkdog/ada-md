@@ -23,6 +23,7 @@ impl State {
             theme: Some(theme.clone()),
             theme_bg: self.theme_bg,
             mouse: self.mouse,
+            copy_on: self.config.copy_on,
             max_width: self.config.max_width,
             images: self.next_start.images,
             live_reload: self.next_start.live_reload,

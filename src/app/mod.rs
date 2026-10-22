@@ -11,6 +11,7 @@ mod load;
 mod nav;
 mod run;
 mod save;
+mod selecting;
 mod settings;
 mod sort;
 mod watch;
@@ -30,6 +31,7 @@ use crate::layout::{
 };
 use crate::links::{LocalTarget, Resolved};
 use crate::search::SearchMap;
+use crate::select::{self, CopyOn, Selection};
 use crate::theme::{Glyphs, Theme};
 
 pub use effects::{Effects, Head, cut_to_head, editor_command, load_doc, load_doc_head, osc52};
@@ -127,6 +129,25 @@ pub enum Msg {
         col: u16,
         row: u16,
     },
+    /// The left button pressed on the screen's cell `col`, `row` (ADR-38): a drag from here
+    /// selects text. `count` is 2 or 3 for the second or third press in quick succession on the
+    /// cell, which selects the word there, or the whole paragraph, code line or cell.
+    Press {
+        col: u16,
+        row: u16,
+        count: u8,
+    },
+    /// The left button dragged to the screen's cell `col`, `row`: the selection runs from the
+    /// press to here.
+    Drag {
+        col: u16,
+        row: u16,
+    },
+    /// The left button let go after a drag or a double or triple press: with
+    /// `copy_on = "select"`, the selection is copied.
+    Release,
+    /// `Esc`: clear the selection, or quit when there is none.
+    Cancel,
     Back,
     Forward,
     OpenOutline,
@@ -170,7 +191,8 @@ pub enum Msg {
     HelpClose,
     /// `e`: hand the file to `$VISUAL` / `$EDITOR` at the current line (ADR-18).
     Edit,
-    /// `y`: copy the focused link's target, or the code block on screen, through OSC 52.
+    /// `y`: copy the selection, or else the focused link's target, or the code block on screen,
+    /// through OSC 52.
     Yank,
     /// `S`: offer to save the settings in effect to the config file, listing what changes.
     SaveConfig,
@@ -419,6 +441,8 @@ pub struct Config {
     pub theme_bg: bool,
     /// Capture the mouse to start with: the wheel scrolls, and a click follows a link.
     pub mouse: bool,
+    /// When a selection is copied: on `y`, or as it's made.
+    pub copy_on: CopyOn,
     /// The table layout, code wrapping and line numbers to start with.
     pub table_mode: TableMode,
     pub code_wrap: bool,
@@ -448,6 +472,7 @@ impl Default for Config {
             start_line: None,
             theme_bg: true,
             mouse: true,
+            copy_on: CopyOn::Yank,
             images: ImageMode::default(),
             live_reload: true,
             keep_screen: true,
@@ -528,6 +553,29 @@ impl Document {
             .search_map
             .get_or_insert_with(|| SearchMap::build(&self.doc, &theme.glyphs));
         (map, &self.layout)
+    }
+
+    /// What a selection is measured against, the searchable text built if it isn't yet.
+    fn select_view(&mut self, theme: &Theme, code_x: u16) -> select::View<'_> {
+        let map = self
+            .search_map
+            .get_or_insert_with(|| SearchMap::build(&self.doc, &theme.glyphs));
+        select::View {
+            doc: &self.doc,
+            map,
+            layout: &self.layout,
+            code_x,
+        }
+    }
+
+    /// What a selection is measured against, once the searchable text is built.
+    pub fn built_select_view(&self, code_x: u16) -> Option<select::View<'_>> {
+        Some(select::View {
+            doc: &self.doc,
+            map: self.search_map.as_ref()?,
+            layout: &self.layout,
+            code_x,
+        })
     }
 
     /// Whether following `link` can't work.
@@ -645,6 +693,10 @@ pub struct State {
     config_for: Option<ConfigUse>,
     /// The options read only at start, as they'll be saved for the next one.
     pub next_start: NextStart,
+    /// Text selected with the mouse (ADR-38).
+    pub selection: Option<Selection>,
+    /// The press a drag selects from, while the button is down.
+    drag: Option<selecting::Drag>,
 }
 
 impl State {
@@ -693,6 +745,8 @@ impl State {
             settings: None,
             config_for: None,
             next_start,
+            selection: None,
+            drag: None,
         }
     }
 
@@ -788,6 +842,7 @@ impl State {
             self.stash(old);
         }
         self.focus = None;
+        self.clear_selection();
         self.scroll = 0;
         self.rematch();
         cmds.extend(self.highlight_all());
@@ -1110,6 +1165,8 @@ impl State {
             for doc in self.doc.iter_mut().chain(self.cache.iter_mut()) {
                 doc.search_map = None;
             }
+            // and the selection's places are in it
+            self.clear_selection();
             self.relayout();
             self.rematch();
         }
@@ -1203,17 +1260,18 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
     // goes ahead, so the keymap's idea of the mode stays right.
     if state.view.is_some() {
         match &msg {
-            Msg::Quit | Msg::Back => {
+            Msg::Quit | Msg::Cancel | Msg::Back => {
                 state.view = None;
                 state.status = None;
                 return state.visible_jobs();
             }
             Msg::Follow => return state.view_external(),
-            // a click closes the view, and follows nothing behind it
+            // a click closes the view, and follows nothing behind it; nothing there to select
             Msg::Click { .. } => {
                 state.view = None;
                 return state.visible_jobs();
             }
+            Msg::Press { .. } | Msg::Drag { .. } | Msg::Release => return Vec::new(),
             m if m.keeps_view() => {}
             _ => state.view = None,
         }
@@ -1379,6 +1437,13 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             cmds.extend(state.visible_jobs());
             cmds
         }
+        Msg::Press { col, row, count } => {
+            state.press(col, row, count);
+            Vec::new()
+        }
+        Msg::Drag { col, row } => state.drag_to(col, row),
+        Msg::Release => state.release(),
+        Msg::Cancel => state.cancel(),
         Msg::Back => {
             state.status = None;
             let mut cmds = state.go_back();
@@ -1439,6 +1504,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::Scroll { by } => {
             state.status = None;
             state.scroll_by(by);
+            state.follow_drag();
             state.visible_jobs()
         }
         Msg::JumpHeading { dir } => {
@@ -1462,6 +1528,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
         Msg::ScrollCodeX { by } => {
             state.status = None;
             state.scroll_code_x(by);
+            state.follow_drag();
             Vec::new()
         }
         Msg::Highlighted {

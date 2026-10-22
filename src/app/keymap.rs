@@ -18,6 +18,7 @@
 
 use std::fmt;
 use std::mem;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -31,6 +32,8 @@ const OUTLINE_PAGE: i32 = 10;
 const HELP_PAGE: i32 = 10;
 /// Rows a notch of the wheel scrolls the document or the help; in a list it moves one entry.
 const WHEEL_ROWS: i32 = 3;
+/// Presses on one cell this close together count as a double or triple click.
+pub const MULTI_CLICK: Duration = Duration::from_millis(500);
 
 macro_rules! actions {
     ($($group:literal { $($variant:ident => $name:literal, $help:literal, [$($key:literal),*],)* })*) => {
@@ -104,12 +107,12 @@ actions! {
     "Other" {
         Reload => "reload", "read the file again", ["r"],
         Edit => "edit", "edit in $VISUAL or $EDITOR", ["e"],
-        Yank => "yank", "copy the link or the code block", ["y"],
+        Yank => "yank", "copy a selection, link or code block", ["y"],
         Settings => "settings", "see, change and save the settings", ["f2", ","],
         SaveConfig => "save_config", "save the settings to the config file", ["S"],
-        Mouse => "mouse", "wheel and clicks, or text selection", ["M"],
+        Mouse => "mouse", "the mouse to ada, or to the terminal", ["M"],
         Help => "help", "this help", ["?"],
-        Quit => "quit", "quit (so does C-c)", ["q", "esc"],
+        Quit => "quit", "quit; Esc clears a selection first", ["q", "esc"],
     }
 }
 
@@ -461,6 +464,13 @@ pub struct Keymap {
     pressed: Option<(u16, u16)>,
     /// The theme list is open over the settings popup, which takes the keys back when it closes.
     over_settings: bool,
+    /// The left button went down in normal mode, so a drag selects, until it's released.
+    selecting: bool,
+    /// The button has been dragged since it went down.
+    dragged: bool,
+    /// The last press: its cell, when, and its count, which presses on the same cell in quick
+    /// succession raise.
+    last_press: Option<((u16, u16), Instant, u8)>,
 }
 
 /// Edit `text` with a prompt key. `None` when the key isn't an edit.
@@ -662,7 +672,12 @@ impl Keymap {
     /// settings, or scrolls the help; sideways, it scrolls code. A left button released on the
     /// cell it went down on clicks there in normal mode and in the settings; a drag isn't a click.
     /// The save box takes no mouse.
-    pub fn mouse(&mut self, event: MouseEvent) -> Option<Msg> {
+    ///
+    /// In normal mode, the left button selects text too (ADR-38): each press is a
+    /// [`Msg::Press`], counted 2 and 3 when it comes within [`MULTI_CLICK`] of the one before on
+    /// the same cell; a drag from it is [`Msg::Drag`], and letting go after a drag or a double
+    /// or triple press is [`Msg::Release`] rather than a click. `now` is when the event came.
+    pub fn mouse(&mut self, event: MouseEvent, now: Instant) -> Option<Msg> {
         let at = (event.column, event.row);
         let wheel = |by: i32| match self.mode {
             Mode::Normal | Mode::Search(_) => Some(Msg::Scroll {
@@ -681,18 +696,55 @@ impl Keymap {
         let msg = match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.pressed = Some(at);
-                return None;
+                self.dragged = false;
+                self.selecting = self.mode == Mode::Normal;
+                if !self.selecting {
+                    self.last_press = None;
+                    return None;
+                }
+                let count = match self.last_press {
+                    Some((cell, then, n))
+                        if cell == at && now.saturating_duration_since(then) <= MULTI_CLICK =>
+                    {
+                        n % 3 + 1
+                    }
+                    _ => 1,
+                };
+                self.last_press = Some((at, now, count));
+                Some(Msg::Press {
+                    col: at.0,
+                    row: at.1,
+                    count,
+                })
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.selecting => {
+                self.pressed = None;
+                self.dragged = true;
+                self.last_press = None;
+                // the prompt or a popup may have opened meanwhile
+                (self.mode == Mode::Normal).then_some(Msg::Drag {
+                    col: at.0,
+                    row: at.1,
+                })
             }
             MouseEventKind::Drag(_) => {
                 self.pressed = None;
                 return None;
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                let selecting = mem::take(&mut self.selecting);
+                let dragged = mem::take(&mut self.dragged);
+                let count = self.last_press.map_or(1, |(_, _, n)| n);
+                let clicked = self.pressed.take() == Some(at);
                 let (col, row) = at;
-                match (self.pressed.take() == Some(at), &self.mode) {
-                    (true, Mode::Normal) => Some(Msg::Click { col, row }),
-                    (true, Mode::Settings) => Some(Msg::SettingsClick { col, row }),
-                    _ => None,
+                if selecting && (dragged || count > 1) {
+                    Some(Msg::Release)
+                } else {
+                    match (clicked, &self.mode) {
+                        (true, Mode::Normal) => Some(Msg::Click { col, row }),
+                        (true, Mode::Settings) => Some(Msg::SettingsClick { col, row }),
+                        _ => None,
+                    }
                 }
             }
             MouseEventKind::ScrollDown => wheel(1),
@@ -741,6 +793,8 @@ impl Keymap {
             Action::Theme => self.mode = Mode::Themes(String::new()),
             Action::SaveConfig => self.mode = Mode::Confirm,
             Action::Settings => self.mode = Mode::Settings,
+            // `Esc` clears a selection before it quits
+            Action::Quit if key.code == KeyCode::Esc => return Some(Msg::Cancel),
             _ => {}
         }
         Some(action.msg())
@@ -883,12 +937,25 @@ mod tests {
     }
 
     fn mouse(km: &mut Keymap, kind: MouseEventKind, column: u16, row: u16) -> Option<Msg> {
-        km.mouse(MouseEvent {
+        // a second apart: never a double click
+        let then = km.last_press.map(|(_, t, _)| t + Duration::from_secs(1));
+        mouse_at(km, kind, column, row, then.unwrap_or_else(Instant::now))
+    }
+
+    fn mouse_at(
+        km: &mut Keymap,
+        kind: MouseEventKind,
+        column: u16,
+        row: u16,
+        now: Instant,
+    ) -> Option<Msg> {
+        let event = MouseEvent {
             kind,
             column,
             row,
             modifiers: KeyModifiers::NONE,
-        })
+        };
+        km.mouse(event, now)
     }
 
     #[test]
@@ -943,7 +1010,11 @@ mod tests {
     fn a_click_is_a_press_and_a_release_on_one_cell() {
         let mut km = Keymap::default();
         let left = MouseButton::Left;
-        assert_eq!(mouse(&mut km, MouseEventKind::Down(left), 7, 2), None);
+        let pressed = |col, row| Some(Msg::Press { col, row, count: 1 });
+        assert_eq!(
+            mouse(&mut km, MouseEventKind::Down(left), 7, 2),
+            pressed(7, 2)
+        );
         assert_eq!(
             mouse(&mut km, MouseEventKind::Up(left), 7, 2),
             Some(Msg::Click { col: 7, row: 2 })
@@ -954,18 +1025,60 @@ mod tests {
         mouse(&mut km, MouseEventKind::Down(left), 7, 2);
         mouse(&mut km, MouseEventKind::Drag(left), 8, 2);
         mouse(&mut km, MouseEventKind::Drag(left), 7, 2);
-        assert_eq!(mouse(&mut km, MouseEventKind::Up(left), 7, 2), None);
+        assert_eq!(
+            mouse(&mut km, MouseEventKind::Up(left), 7, 2),
+            Some(Msg::Release),
+            "a drag selects"
+        );
         assert_eq!(mouse(&mut km, MouseEventKind::Up(left), 7, 2), None);
         let right = MouseButton::Right;
-        mouse(&mut km, MouseEventKind::Down(right), 7, 2);
+        assert_eq!(mouse(&mut km, MouseEventKind::Down(right), 7, 2), None);
         assert_eq!(mouse(&mut km, MouseEventKind::Up(right), 7, 2), None);
-        // only in normal mode: a popup takes no clicks
+        // only in normal mode: a popup takes no clicks, and the left button selects nothing
         press(&mut km, KeyCode::Char('o'));
-        mouse(&mut km, MouseEventKind::Down(left), 7, 2);
+        assert_eq!(mouse(&mut km, MouseEventKind::Down(left), 7, 2), None);
+        assert_eq!(mouse(&mut km, MouseEventKind::Drag(left), 8, 2), None);
         assert_eq!(mouse(&mut km, MouseEventKind::Up(left), 7, 2), None);
         // and `M` toggles the capture
         press(&mut km, KeyCode::Esc);
         assert_eq!(press(&mut km, KeyCode::Char('M')), Some(Msg::ToggleMouse));
+    }
+
+    #[test]
+    fn presses_in_quick_succession_on_one_cell_count_up() {
+        let mut km = Keymap::default();
+        let left = MouseButton::Left;
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let down = |km: &mut Keymap, col, t| mouse_at(km, MouseEventKind::Down(left), col, 3, t);
+        let up = |km: &mut Keymap, col, t| mouse_at(km, MouseEventKind::Up(left), col, 3, t);
+        let count = |msg: Option<Msg>| match msg {
+            Some(Msg::Press { count, .. }) => count,
+            other => panic!("not a press: {other:?}"),
+        };
+        assert_eq!(count(down(&mut km, 4, ms(0))), 1);
+        assert_eq!(up(&mut km, 4, ms(50)), Some(Msg::Click { col: 4, row: 3 }));
+        assert_eq!(count(down(&mut km, 4, ms(200))), 2);
+        assert_eq!(up(&mut km, 4, ms(250)), Some(Msg::Release), "not a click");
+        assert_eq!(count(down(&mut km, 4, ms(400))), 3);
+        up(&mut km, 4, ms(450));
+        assert_eq!(count(down(&mut km, 4, ms(600))), 1, "a fourth starts over");
+        up(&mut km, 4, ms(650));
+        // too late, or on another cell
+        assert_eq!(count(down(&mut km, 4, ms(1200))), 1);
+        up(&mut km, 4, ms(1250));
+        assert_eq!(count(down(&mut km, 5, ms(1300))), 1);
+        // a drag in between starts over
+        mouse_at(&mut km, MouseEventKind::Drag(left), 6, 3, ms(1350));
+        up(&mut km, 6, ms(1400));
+        assert_eq!(count(down(&mut km, 6, ms(1450))), 1);
+    }
+
+    #[test]
+    fn esc_cancels_where_q_quits() {
+        let mut km = Keymap::default();
+        assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::Cancel));
+        assert_eq!(press(&mut km, KeyCode::Char('q')), Some(Msg::Quit));
     }
 
     #[test]
@@ -1137,7 +1250,7 @@ mod tests {
             Some(Msg::OutlineMove { by: 1 })
         );
         assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::OutlineClose));
-        assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::Quit));
+        assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::Cancel));
 
         // the link list shares the outline's keys
         assert_eq!(press(&mut km, KeyCode::Char('l')), Some(Msg::OpenLinks));
@@ -1273,7 +1386,7 @@ mod tests {
         assert_eq!(press(&mut km, KeyCode::Enter), Some(Msg::OutlinePick));
         typed(&mut km, "s");
         assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::OutlineClose));
-        assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::Quit));
+        assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::Cancel));
         // the other lists leave the arrows alone
         typed(&mut km, "o");
         assert_eq!(press(&mut km, KeyCode::Right), None);

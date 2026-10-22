@@ -105,6 +105,7 @@ popup_border = { fg = "purple", bg = "background_dark" }
 popup_title = { fg = "pink", bg = "background_dark", bold = true }
 popup_selected = { fg = "background", bg = "purple", bold = true }
 sort_table = { fg = "purple" }
+selection = { bg = "comment" }
 line_number = { fg = "comment" }
 
 [ui.settings]                # the settings popup (`F2`): its rows, and the values they set

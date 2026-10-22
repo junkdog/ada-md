@@ -25,6 +25,7 @@ pub mod print;
 pub mod probe;
 pub mod record;
 pub mod search;
+pub mod select;
 pub mod sixel;
 pub mod sniff;
 pub mod style;

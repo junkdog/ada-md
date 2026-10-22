@@ -1,21 +1,23 @@
 //! Fuzz round 2 (plan P7): a whole session, scripted by the input. The input is a document
 //! (`[len_lo, len_hi, ..len bytes]`), then bytes `arbitrary` turns into a terminal size, config,
-//! and up to 64 intents. Commands run against a stub world: links resolve to the scratch file they
-//! name, mostly, or to fuzz-chosen ones, git answers with fuzzed hunks, image probes report fuzzed
-//! sizes, and every result waits in a queue until the script delivers it, so results can arrive
-//! late, out of order, or after the document they were for is gone. Intents arrive directly or as
-//! keys and mouse events through the default keymap, and `T` lists two extra themes with wide, empty and ASCII
-//! glyphs. The document is markdown, code, config, plain text or an image, as its name says, and
-//! links lead to code files at a `#L42` line. `S` and the settings popup (`F2`, `,`) read a fuzzed
-//! config file, answered at once as the interactive loop does, and it is never written: what `S`
-//! would write, and what the popup's `s` writes, must read back with nothing left to save. Every step is painted, and the rows kept on quit replay to the last frame. Nothing
-//! may panic. A `Graphics` intent sets the image encoder too, as the interactive loop does, so
-//! images are drawn for kitty, sixel and iTerm2 as well as in half-blocks: a kitty placeholder must
-//! show its image's row and column, by its diacritics or its left neighbor's, in the color of an
-//! image the terminal was sent (CS-6). Drawn for those three, the scratch images nearly always
-//! decode, so the check has placeholders to look at (F-11), and once the script runs out, links,
-//! probes and decodes are answered as the real world would; `ADA_FUZZ_REACH=1` prints how far each
-//! input got.
+//! and up to 64 intents. Commands run against a stub world: links resolve to the scratch file
+//! they name, mostly, or to fuzz-chosen ones, git answers with fuzzed hunks, image probes
+//! report fuzzed sizes, and every result waits in a queue until the script delivers it, so
+//! results can arrive late, out of order, or after the document they were for is gone. Intents
+//! arrive directly or as keys and mouse events through the default keymap (a drag selects text,
+//! and presses an op or a few apart count as double and triple clicks), and `T` lists two extra
+//! themes with wide, empty and ASCII glyphs. The document is markdown, code, config, plain text
+//! or an image, as its name says, and links lead to code files at a `#L42` line. `S` and the
+//! settings popup (`F2`, `,`) read a fuzzed config file, answered at once as the interactive
+//! loop does, and it is never written: what `S` would write, and what the popup's `s` writes,
+//! must read back with nothing left to save. Every step is painted, and the rows kept on quit
+//! replay to the last frame. Nothing may panic. A `Graphics` intent sets the image encoder too,
+//! as the interactive loop does, so images are drawn for kitty, sixel and iTerm2 as well as in
+//! half-blocks: a kitty placeholder must show its image's row and column, by its diacritics or
+//! its left neighbor's, in the color of an image the terminal was sent (CS-6). Drawn for those
+//! three, the scratch images nearly always decode, so the check has placeholders to look at
+//! (F-11), and once the script runs out, links, probes and decodes are answered as the real
+//! world would; `ADA_FUZZ_REACH=1` prints how far each input got.
 //!
 //! ```zsh
 //! cargo +nightly fuzz run -s none -a session -- -dict=fuzz/markdown.dict -max_len=16384
@@ -33,6 +35,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
 
 use ada::app::{self, Cmd, Computed, Config, Dir, Effects, Keymap, Msg, ScrollBy, Size, State};
 use ada::config;
@@ -43,6 +46,7 @@ use ada::images::{Encoder, Probe, Proto};
 use ada::kitty;
 use ada::layout::{LineNumbers, TableMode};
 use ada::links::{LocalTarget, Resolved};
+use ada::select::CopyOn;
 use ada::style::{Color, Modifier};
 use ada::theme::Theme;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -143,6 +147,19 @@ enum Op {
     SettingsKeep,
     SettingsSave,
     SettingsCancel,
+    /// The left button pressed, directly: `count` 2 and 3 select a word and a unit.
+    Press {
+        col: u8,
+        row: u8,
+        count: u8,
+    },
+    Drag {
+        col: u8,
+        row: u8,
+    },
+    Release,
+    /// `Esc`: clears a selection, or quits.
+    Cancel,
 }
 
 /// A string of at most 24 chars, so search patterns and filters stay cheap.
@@ -969,6 +986,9 @@ struct Session<'a> {
     /// The protocol the last `Graphics` named.
     proto: Option<Proto>,
     reach: Reach,
+    /// When the keymap sees the next mouse event: a step on each op, so presses an op or a
+    /// few apart count as double and triple clicks.
+    now: Instant,
     u: Unstructured<'a>,
 }
 
@@ -1203,7 +1223,9 @@ impl Session<'_> {
                 col: u16::from(col),
                 row: u16::from(row),
             },
-            Op::Mouse { kind, col, row } => return self.keymap.mouse(mouse(kind, col, row)),
+            Op::Mouse { kind, col, row } => {
+                return self.keymap.mouse(mouse(kind, col, row), self.now);
+            }
             Op::ToggleMouse => Msg::ToggleMouse,
             Op::OpenSettings => Msg::OpenSettings,
             Op::SettingsMove(by) => Msg::SettingsMove { by: i32::from(by) },
@@ -1218,6 +1240,17 @@ impl Session<'_> {
             Op::SettingsKeep => Msg::SettingsKeep,
             Op::SettingsSave => Msg::SettingsSave,
             Op::SettingsCancel => Msg::SettingsCancel,
+            Op::Press { col, row, count } => Msg::Press {
+                col: u16::from(col),
+                row: u16::from(row),
+                count: count % 4,
+            },
+            Op::Drag { col, row } => Msg::Drag {
+                col: u16::from(col),
+                row: u16::from(row),
+            },
+            Op::Release => Msg::Release,
+            Op::Cancel => Msg::Cancel,
             Op::Open(i) => {
                 let files = &world().files;
                 Msg::Open {
@@ -1306,6 +1339,10 @@ fuzz_target!(|data: &[u8]| {
             .unwrap_or_default()
             .map(u32::from),
         file: Some(world().dir.join("config.toml")),
+        copy_on: match u.arbitrary().unwrap_or(false) {
+            true => CopyOn::Select,
+            false => CopyOn::Yank,
+        },
         ..Config::default()
     };
     let graphics: Option<(u8, u8, u8)> = u.arbitrary().unwrap_or_default();
@@ -1330,6 +1367,7 @@ fuzz_target!(|data: &[u8]| {
         paints: 0,
         proto: None,
         reach: Reach::default(),
+        now: Instant::now(),
         u,
     };
 
@@ -1357,6 +1395,7 @@ fuzz_target!(|data: &[u8]| {
         let Ok(op) = s.u.arbitrary::<Op>() else {
             break;
         };
+        s.now += Duration::from_millis(150);
         if let Some(msg) = s.intent(op) {
             s.send(msg);
         }

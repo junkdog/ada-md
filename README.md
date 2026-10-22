@@ -152,12 +152,12 @@ Press `?` in ada for the keys. See `ada --help` for every option.
 | `T` | pick a theme, previewing each: `Enter` keeps it, `Esc` goes back; `←` `→` list the dark or the light themes |
 | `r` | read the file again |
 | `e` | edit in `$VISUAL` or `$EDITOR` at the current line |
-| `y` | copy the focused link, or the code block on screen |
+| `y` | copy the selection, or else the focused link, or the code block on screen |
 | `F2` `,` | the settings: every option with its value, changed in place and shown at once; `a` keeps the changes, `s` saves them too, `Esc` undoes them |
 | `S` | save the settings in effect to the config file: a box lists what changes, `Enter` saves, `Esc` cancels |
-| `M` | the mouse: the wheel and clicks on links, or the terminal's own selection |
+| `M` | the mouse: the wheel, clicks on links and selecting text, or the terminal's own selection |
 | `?` | help |
-| `q` `Esc` | quit; `C-c` always quits |
+| `q` `Esc` | quit; `Esc` clears a selection first, and `C-c` always quits |
 
 In the search prompt, `Enter` keeps the matches, `Esc` puts the previous search back, `C-u`
 and `C-w` edit, and an empty pattern repeats the last search. Search is smart-case: it ignores case
@@ -165,8 +165,14 @@ unless the pattern has an uppercase letter. So are the filters of the outline, l
 columns lists.
 
 The mouse is on by default: the wheel scrolls the document, the lists and the help, and a click on a
-link follows it. Most terminals (kitty, wezterm, foot, alacritty, xterm) still select text with `Shift`
-held. `M` gives the mouse to the terminal, and `mouse = false` in the config starts that way.
+link follows it. A drag selects text, a double click a word, and a triple click a paragraph, a line of
+code or a table cell. What it copies is the document's text, not the screen's: a paragraph unwrapped,
+code without its padding, line numbers or wrap marks, list items with their markers. Cells across a
+table copy as tab-separated values, as a markdown table once whole rows and the header are in, and a
+record card's as `header: value` lines. `y` copies the selection (OSC 52, as for links), and `Esc`
+clears it; with `copy_on = "select"` in the config or the settings (`F2`), it's copied as it's made. Most terminals (kitty,
+wezterm, foot, alacritty, xterm) still select their own way with `Shift` held. `M` gives the mouse to
+the terminal, and `mouse = false` in the config starts that way.
 
 ## Configuration
 
@@ -192,7 +198,8 @@ stay as they are, whichever way they're saved. A theme loaded from a path is sav
 ```toml
 theme = "gruvbox-light"
 theme_bg = true            # the theme's background, or false for the terminal's (`B`)
-mouse = true               # the wheel and link clicks, or false for the terminal's selection (`M`)
+mouse = true               # the wheel, link clicks and selecting, or false for the terminal's selection (`M`)
+copy_on = "yank"           # copy a selection on `y`, or "select" as it's made
 max_width = 100            # wrap prose at most 100 columns wide; tables may use the rest
 images = true              # or false for text only
 image_protocol = "auto"    # or kitty, sixel, iterm2, halfblocks

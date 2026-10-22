@@ -299,13 +299,14 @@ fn event_loop(
             return Ok(());
         };
         for msg in std::iter::once(msg).chain(rx.try_iter()) {
-            // A resize drag produces a burst, and so does typing a search pattern quickly: only
-            // the last one matters.
+            // A resize drag produces a burst, and so do typing a search pattern quickly and
+            // dragging a selection: only the last one matters.
             let superseded = matches!(
                 (&msg, queue.back()),
                 (Msg::Resize { .. }, Some(Msg::Resize { .. }))
                     | (Msg::SearchInput { .. }, Some(Msg::SearchInput { .. }))
                     | (Msg::OutlineFilter { .. }, Some(Msg::OutlineFilter { .. }))
+                    | (Msg::Drag { .. }, Some(Msg::Drag { .. }))
             );
             if superseded {
                 queue.pop_back();
@@ -446,7 +447,7 @@ fn spawn_input(
         loop {
             let msg = match event::read() {
                 Ok(Event::Key(key)) => keymap.map(key),
-                Ok(Event::Mouse(mouse)) => keymap.mouse(mouse),
+                Ok(Event::Mouse(mouse)) => keymap.mouse(mouse, Instant::now()),
                 Ok(Event::Resize(w, h)) => Some(Msg::Resize {
                     size: Size { w, h },
                 }),

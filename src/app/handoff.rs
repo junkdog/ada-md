@@ -2,7 +2,7 @@
 //! the clipboard (`y`, OSC 52), and the file to a watcher that notices when it changes on disk
 //! (live reload, ADR-26). Each is a command; what comes back is a message.
 
-use super::{Cmd, LinkState, ScrollAnchor, State};
+use super::{Cmd, CopyOn, LinkState, ScrollAnchor, State};
 use crate::doc::LinkKind;
 use crate::filetype::FileType;
 use crate::images::ImageCache;
@@ -52,8 +52,15 @@ impl State {
         self.reload()
     }
 
-    /// `y`: the focused link's target, or else the first code block on screen.
+    /// `y`: the selection, which goes once copied when `copy_on` is `yank`; or else the focused
+    /// link's target, or else the first code block on screen.
     pub(super) fn yank(&mut self) -> Vec<Cmd> {
+        if let Some(cmds) = self.copy_selection() {
+            if self.config.copy_on == CopyOn::Yank {
+                self.selection = None;
+            }
+            return cmds;
+        }
         let Some(doc) = &self.doc else {
             return Vec::new();
         };

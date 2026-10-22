@@ -19,10 +19,10 @@ expression: frames.last().unwrap()
            │ Other                                                  │
    untagged│   r               read the file again                  │
            │   e               edit in $VISUAL or $EDITOR           │
-           │   y               copy the link or the code block      │
+           │   y               copy a selection, link or code block │
            │   F2 ,            see, change and save the settings    │
    indented│   S               save the settings to the config file │
-   block   │   M               wheel and clicks, or text selection  │
+   block   │   M               the mouse to ada, or to the terminal │
            ╰─────────────────────────────────────────── j/k scroll ─╯
 
  tests/fixtures/code.md  any other key closes the help                      Top

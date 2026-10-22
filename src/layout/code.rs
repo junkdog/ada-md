@@ -13,7 +13,7 @@ use crate::doc::{CodeBlock, InlineStyle, LineRange};
 use crate::highlight;
 use crate::theme::StyleKey;
 
-const TAB_STOP: usize = 4;
+pub const TAB_STOP: usize = 4;
 
 pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
     if let Some(d) = &code.diagram

@@ -109,6 +109,7 @@ style_keys! {
     SettingsChoice => "ui.settings.choice",
     SettingsChanged => "ui.settings.changed",
     SortTable => "ui.sort_table",
+    Selection => "ui.selection",
 }
 
 impl StyleKey {

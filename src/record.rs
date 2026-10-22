@@ -77,6 +77,10 @@ messages! {
     "focus-link" => FocusLink { dir },
     "follow" => Follow {},
     "click" => Click { col, row },
+    "press" => Press { col, row, count },
+    "drag" => Drag { col, row },
+    "release" => Release {},
+    "cancel" => Cancel {},
     "back" => Back {},
     "forward" => Forward {},
     "open-outline" => OpenOutline {},
@@ -844,6 +848,14 @@ mod tests {
             Msg::FocusLink { dir: Dir::Next },
             Msg::Follow,
             Msg::Click { col: 12, row: 3 },
+            Msg::Press {
+                col: 4,
+                row: 2,
+                count: 3,
+            },
+            Msg::Drag { col: 30, row: 9 },
+            Msg::Release,
+            Msg::Cancel,
             Msg::Back,
             Msg::Forward,
             Msg::OpenOutline,
@@ -1113,8 +1125,15 @@ mod tests {
                 continue;
             }
             let entries = parse(&fs::read(&path).unwrap()).unwrap();
+            // what a session needs from the config file, beside it as `<name>.toml`
+            let mut config = Config::default();
+            if let Ok(text) = fs::read_to_string(path.with_extension("toml")) {
+                let file = path.display().to_string();
+                let settings = crate::config::parse(&file, &text, &mut Vec::new()).unwrap();
+                config.copy_on = settings.copy_on;
+            }
             let run = || {
-                let mut state = State::new(Theme::builtin(), Config::default());
+                let mut state = State::new(Theme::builtin(), config.clone());
                 replay_headless(&entries, &mut state, &mut Effects::new(None), false).unwrap()
             };
             let frames = run();

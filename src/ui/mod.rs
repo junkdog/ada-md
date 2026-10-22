@@ -11,7 +11,7 @@ use std::ops::Range;
 
 use crate::geom::Rect;
 use crate::grid::Grid;
-use crate::style::Style;
+use crate::style::{Modifier, Style};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{Document, ImageView, Row, State};
@@ -214,8 +214,8 @@ fn gutter(buf: &mut Grid, area: Rect, state: &State, doc: &Document, lines: &[(u
     }
 }
 
-/// Search matches, the focused link, and the borders and header of the table the column list is
-/// for, patched over the painted rows (ADR-03).
+/// Search matches, the focused link, the borders and header of the table the column list is for,
+/// and the selection, patched over the painted rows (ADR-03).
 fn overlays(buf: &mut Grid, area: Rect, state: &State, doc: &Document, lines: &[(u16, u32)]) {
     let theme = &state.theme;
     let layout = &doc.layout;
@@ -270,6 +270,25 @@ fn overlays(buf: &mut Grid, area: Rect, state: &State, doc: &Document, lines: &[
                 x = cols.end;
                 if matches!(span.key, StyleKey::TableBorder | StyleKey::TableHeader) {
                     patch(buf, y, cols, StyleKey::SortTable);
+                }
+            }
+        }
+    }
+    // the selection over everything; a theme without the slot shows it in reverse
+    if let Some(sel) = &state.selection
+        && let Some(view) = doc.built_select_view(state.code_x)
+    {
+        let picked = view.pick(sel);
+        let style = match theme.styles[StyleKey::Selection as usize] {
+            s if s == Style::default() => Style::new().add_modifier(Modifier::REVERSED),
+            s => s,
+        };
+        for &(y, r) in lines {
+            for (_, cols) in view.cells(&picked, r..r + 1) {
+                let x = area.x.saturating_add(cols.start);
+                let right = area.x.saturating_add(cols.end).min(area.right());
+                if x < right {
+                    buf.set_style(Rect::new(x, y, right - x, 1), style);
                 }
             }
         }

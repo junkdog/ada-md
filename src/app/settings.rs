@@ -13,6 +13,7 @@ use crate::config::{Saved, Settings};
 use crate::filetype::FileType;
 use crate::images::{ImageMode, Proto};
 use crate::layout::{LineNumbers, TableMode};
+use crate::select::CopyOn;
 
 /// A row of the popup: one option.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,12 +27,13 @@ pub enum Row {
     Images,
     Protocol,
     Mouse,
+    CopyOn,
     LiveReload,
     KeepScreen,
 }
 
 impl Row {
-    pub const ALL: [Row; 11] = [
+    pub const ALL: [Row; 12] = [
         Row::Theme,
         Row::ThemeBg,
         Row::Width,
@@ -41,6 +43,7 @@ impl Row {
         Row::Images,
         Row::Protocol,
         Row::Mouse,
+        Row::CopyOn,
         Row::LiveReload,
         Row::KeepScreen,
     ];
@@ -52,7 +55,7 @@ impl Row {
             Row::Tables | Row::CodeWrap | Row::LineNumbers | Row::Images | Row::Protocol => {
                 "Content"
             }
-            Row::Mouse | Row::LiveReload | Row::KeepScreen => "Behavior",
+            Row::Mouse | Row::CopyOn | Row::LiveReload | Row::KeepScreen => "Behavior",
         }
     }
 
@@ -67,6 +70,7 @@ impl Row {
             Row::Images => "Images",
             Row::Protocol => "Image protocol",
             Row::Mouse => "Mouse",
+            Row::CopyOn => "Copy a selection",
             Row::LiveReload => "Live reload",
             Row::KeepScreen => "Keep screen on quit",
         }
@@ -84,6 +88,7 @@ impl Row {
             Row::Images => "images",
             Row::Protocol => "image_protocol",
             Row::Mouse => "mouse",
+            Row::CopyOn => "copy_on",
             Row::LiveReload => "live_reload",
             Row::KeepScreen => "keep_screen",
         }
@@ -111,6 +116,7 @@ impl Row {
 pub const TABLES: &[&str] = &["auto", "grid", "records"];
 pub const LINE_NUMBERS: &[&str] = &["off", "code", "all"];
 pub const PROTOCOLS: &[&str] = &["auto", "kitty", "sixel", "iterm2", "halfblocks"];
+pub const COPY_ON: &[&str] = &["yank", "select"];
 
 /// The narrowest prose width the popup sets: a typed number below it is a width on its way
 /// (`1`, `10`, then `100`), and lays nothing out until it gets there.
@@ -235,6 +241,10 @@ impl State {
                 Value::Choice(PROTOCOLS, index(PROTOCOLS, proto).unwrap_or(0))
             }
             Row::Mouse => Value::Switch(self.mouse),
+            Row::CopyOn => Value::Choice(
+                COPY_ON,
+                index(COPY_ON, self.config.copy_on.name()).unwrap_or(0),
+            ),
             Row::LiveReload => Value::Switch(self.next_start.live_reload),
             Row::KeepScreen => Value::Switch(self.config.keep_screen),
         }
@@ -425,6 +435,12 @@ impl State {
                 }
                 Vec::new()
             }
+            Row::CopyOn => {
+                if let Some(copy_on) = COPY_ON.get(i).and_then(|name| CopyOn::parse(name)) {
+                    self.set_copy_on(copy_on);
+                }
+                Vec::new()
+            }
             _ => Vec::new(),
         }
     }
@@ -476,6 +492,7 @@ impl State {
         if self.mouse != was.mouse {
             cmds.extend(self.set_mouse(was.mouse));
         }
+        self.config.copy_on = was.copy_on;
         self.config.max_width = was.max_width;
         self.table_mode = was.table_mode;
         self.code_wrap = was.code_wrap;
@@ -536,11 +553,20 @@ impl State {
     pub(super) fn set_mouse(&mut self, on: bool) -> Vec<Cmd> {
         self.mouse = on;
         self.status = Some(if on {
-            "mouse: on, Shift-drag selects text".to_owned()
+            "mouse: on, a drag selects in ada, Shift-drag in the terminal".to_owned()
         } else {
             "mouse: off, the terminal selects text".to_owned()
         });
+        self.clear_selection();
         vec![Cmd::Mouse(on)]
+    }
+
+    fn set_copy_on(&mut self, copy_on: CopyOn) {
+        self.config.copy_on = copy_on;
+        self.status = Some(match copy_on {
+            CopyOn::Yank => "copy a selection: on y".to_owned(),
+            CopyOn::Select => "copy a selection: as it's made".to_owned(),
+        });
     }
 
     pub(super) fn set_max_width(&mut self, width: Option<u16>) -> Vec<Cmd> {
@@ -597,6 +623,7 @@ fn differs_any(a: &Settings, b: &Settings, row: Row) -> bool {
         Row::CodeWrap => a.code_wrap != b.code_wrap,
         Row::LineNumbers => a.line_numbers != b.line_numbers,
         Row::Mouse => a.mouse != b.mouse,
+        Row::CopyOn => a.copy_on != b.copy_on,
         Row::KeepScreen => a.keep_screen != b.keep_screen,
         _ => differs(a, b, row),
     }
@@ -874,6 +901,24 @@ mod tests {
     }
 
     #[test]
+    fn copy_on_has_no_key_but_the_popup_sets_and_saves_it() {
+        let mut state = opened();
+        open(&mut state, "");
+        focus(&mut state, Row::CopyOn);
+        assert_eq!(state.setting(Row::CopyOn), Value::Choice(COPY_ON, 0));
+        update(&mut state, Msg::SettingsStep { dir: Dir::Next });
+        assert_eq!(state.config.copy_on, CopyOn::Select);
+        assert_eq!(marked(&state), ["copy_on"]);
+        update(&mut state, Msg::SettingsFlip);
+        assert_eq!(state.config.copy_on, CopyOn::Yank, "wraps");
+        update(&mut state, Msg::SettingsFlip);
+        let save = config::save("c.toml", "", &state.active_settings()).unwrap();
+        assert_eq!(save.text, "copy_on = \"select\"\n");
+        let back = config::parse("c.toml", &save.text, &mut Vec::new()).unwrap();
+        assert_eq!(back.copy_on, CopyOn::Select);
+    }
+
+    #[test]
     fn nothing_to_save_says_so() {
         let mut state = opened();
         open(&mut state, "");
@@ -931,6 +976,7 @@ mod tests {
             (Row::LineNumbers, 1),
             (Row::Images, 1),
             (Row::Mouse, 1),
+            (Row::CopyOn, 1),
             (Row::LiveReload, 1),
             (Row::KeepScreen, 1),
         ] {

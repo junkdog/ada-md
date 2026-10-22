@@ -1,0 +1,28 @@
+---
+source: src/record.rs
+expression: frames.last().unwrap()
+---
+   Selecting
+
+  A paragraph that wraps over a few rows of the
+  screen, to copy as one line.
+
+  • first item
+  • second item
+
+  ╭──────┬───────╮
+  │ tool │ stars │
+  ├──────┼───────┤
+  │ ada  │    12 │
+  │ glow │ 15000 │
+  ╰──────┴───────╯
+
+   sh
+   echo one
+   echo two
+
+
+
+
+
+ selecting.md  copied 2 lines, 17 characters  All

@@ -16,12 +16,12 @@ expression: frames.last().unwrap()
  │ • Image protocol       auto │ kitty │ sixel │ iterm2 │ halfblocks  restart │
  │ Behavior                                                                   │
  │   Mouse                ━━● on                                            M │
+ │   Copy a selection     yank │ select                                       │
  │   Live reload          ━━● on                                      restart │
  │ • Keep screen on quit  ━━● on                                              │
  ├────────────────────────────────────────────────────────────────────────────┤
  │            a keep for this session  s save to config  esc undo             │
  ╰────────────────────────────────────────────────────────────────────────────╯
-  │           │        │             │            │ method bodies            │
   │ asm-tree  │ 4,120  │ 14 classes  │ oxasm-tree │ The tree API: ClassNode, │
   │           │        │ · 5.1k      │            │ MethodNode, InsnList and │
   │           │        │ lines       │            │ friends                  │

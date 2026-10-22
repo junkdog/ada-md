@@ -6,7 +6,7 @@ mod diagram;
 mod table;
 pub mod wrap;
 
-pub use code::expand_tabs;
+pub use code::{TAB_STOP, expand_tabs};
 
 #[cfg(test)]
 mod tests;
@@ -366,7 +366,7 @@ pub struct Layout {
     pub anchor_rows: Vec<u32>,
     pub headings: Vec<HeadingRow>,
     pub hits: Vec<Hit>,
-    /// Search units → rows and columns, in row order.
+    /// Search units → rows and columns, in screen order: by row, then column.
     pub search: Vec<SearchSeg>,
     /// Grid tables with body rows, in row order.
     pub grids: Vec<GridRows>,

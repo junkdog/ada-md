@@ -138,9 +138,12 @@ impl<'a> Lines<'a> {
 }
 
 /// Register a search segment for each label `canvas` still shows: rows from `first`, columns
-/// from `x`.
+/// from `x`. In screen order, as the rest of [`Layout::search`](super::Layout::search) is, which
+/// the drawing order isn't.
 fn found_labels(b: &mut Builder<'_>, lines: &Lines<'_>, canvas: &Canvas, first: u32, x: u16) {
-    for f in &canvas.found {
+    let mut found: Vec<_> = canvas.found.iter().collect();
+    found.sort_by_key(|f| (f.row, f.col));
+    for f in found {
         let Some((unit, at, text)) = lines.unit(f.at, f.len) else {
             continue;
         };
