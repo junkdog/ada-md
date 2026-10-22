@@ -1,21 +1,27 @@
 //! Fuzz round 2 (plan P7): a whole session, scripted by the input. The input is a document
 //! (`[len_lo, len_hi, ..len bytes]`), then bytes `arbitrary` turns into a terminal size, config,
-//! and up to 64 intents. Commands run against a stub world: links resolve to fuzz-chosen files
-//! in a scratch directory, git answers with fuzzed hunks, image probes report fuzzed sizes, and
-//! every result waits in a queue until the script delivers it, so results can arrive late, out
-//! of order, or after the document they were for is gone. Intents arrive directly or as keys
-//! through the default keymap, and `T` lists two extra themes with wide, empty and ASCII
-//! glyphs. The document is markdown, code, config, plain text or an image, as its name says,
-//! and links lead to code files at a `#L42` line. `S` reads a fuzzed config file, answered at
-//! once as the interactive loop does, and is never written: what it would write must read back
-//! with nothing left to save. Every step is painted, and the rows kept on quit replay to the
-//! last frame. Nothing may panic. A `Graphics` intent sets the image encoder too, as the
-//! interactive loop does, so images are drawn for kitty, sixel and iTerm2 as well as in
-//! half-blocks: a kitty placeholder must show its image's row and column, by its diacritics or
-//! its left neighbor's, in the color of an image the terminal was sent (CS-6).
+//! and up to 64 intents. Commands run against a stub world: links resolve to the scratch file they
+//! name, mostly, or to fuzz-chosen ones, git answers with fuzzed hunks, image probes report fuzzed
+//! sizes, and every result waits in a queue until the script delivers it, so results can arrive
+//! late, out of order, or after the document they were for is gone. Intents arrive directly or as
+//! keys through the default keymap, and `T` lists two extra themes with wide, empty and ASCII
+//! glyphs. The document is markdown, code, config, plain text or an image, as its name says, and
+//! links lead to code files at a `#L42` line. `S` reads a fuzzed config file, answered at once as
+//! the interactive loop does, and is never written: what it would write must read back with nothing
+//! left to save. Every step is painted, and the rows kept on quit replay to the last frame. Nothing
+//! may panic. A `Graphics` intent sets the image encoder too, as the interactive loop does, so
+//! images are drawn for kitty, sixel and iTerm2 as well as in half-blocks: a kitty placeholder must
+//! show its image's row and column, by its diacritics or its left neighbor's, in the color of an
+//! image the terminal was sent (CS-6). Drawn for those three, the scratch images nearly always
+//! decode, so the check has placeholders to look at (F-11), and once the script runs out, links,
+//! probes and decodes are answered as the real world would; `ADA_FUZZ_REACH=1` prints how far each
+//! input got.
 //!
 //! ```zsh
 //! cargo +nightly fuzz run -s none -a session -- -dict=fuzz/markdown.dict -max_len=16384
+//! # the share of a corpus that paints kitty placeholders
+//! ADA_FUZZ_REACH=1 fuzz/target/x86_64-unknown-linux-gnu/release/session corpus/session/* 2>&1 |
+//!     grep -c '^reach .*placed=[1-9]'
 //! ```
 
 #![no_main]
@@ -24,7 +30,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
@@ -36,7 +42,7 @@ use ada::highlight;
 use ada::images::{Encoder, Probe, Proto};
 use ada::kitty;
 use ada::layout::{LineNumbers, TableMode};
-use ada::links::Resolved;
+use ada::links::{LocalTarget, Resolved};
 use ada::style::{Color, Modifier};
 use ada::theme::Theme;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -306,12 +312,14 @@ fn diff(u: &mut Unstructured) -> Result<Arc<str>> {
     Ok(out.into())
 }
 
-/// The stub world's answer to a command, if it has one.
+/// The stub world's answer to a command, if it has one. `drawn`: the encoder draws images for a
+/// terminal's protocol, kitty, sixel or iTerm2.
 fn answer(
     cmd: Cmd,
     u: &mut Unstructured,
     doc: &Arc<str>,
     effects: &mut Effects,
+    drawn: bool,
 ) -> Result<Option<Msg>> {
     let world = world();
     Ok(match cmd {
@@ -385,10 +393,24 @@ fn answer(
             doc_gen, targets, ..
         } => {
             let mut resolved = Vec::with_capacity(targets.len());
-            for _ in &targets {
-                resolved.push(match u.int_in_range(0..=world.files.len())? {
-                    0 => Resolved::Broken("fuzz".into()),
-                    i => Resolved::Found(world.files[i - 1].clone()),
+            for target in &targets {
+                // a path naming a world file finds it, mostly, so the dictionary's
+                // `![i](img.png)` shows that image (F-11); else any file, or none. Here and in
+                // the probes and decodes, an exhausted input (`int_in_range` gives its start)
+                // picks what the real world answers: `settle` delivers after the script ends
+                let named = match target {
+                    LocalTarget::Path(path) => world
+                        .files
+                        .iter()
+                        .find(|f| f.file_name() == Path::new(path).file_name()),
+                    LocalTarget::Wiki(_) => None,
+                };
+                resolved.push(match named {
+                    Some(file) if u.ratio(3, 4)? => Resolved::Found(file.clone()),
+                    _ => match u.int_in_range(0..=world.files.len())? {
+                        0 => Resolved::Broken("fuzz".into()),
+                        i => Resolved::Found(world.files[i - 1].clone()),
+                    },
                 });
             }
             // now and then, the wrong number of answers
@@ -415,13 +437,13 @@ fn answer(
             let mut probes = Vec::with_capacity(paths.len());
             for path in &paths {
                 probes.push(match u.int_in_range(0..=5)? {
-                    0 => Probe::Failed("fuzz".into()),
-                    1 => Probe::Image {
+                    3 => Probe::Failed("fuzz".into()),
+                    4 => Probe::Image {
                         w: u.arbitrary()?,
                         h: u.arbitrary()?,
                         mtime: u.arbitrary()?,
                     },
-                    2 => Probe::Image {
+                    5 => Probe::Image {
                         w: u32::from(u.arbitrary::<u16>()?),
                         h: u32::from(u.arbitrary::<u8>()?),
                         mtime: None,
@@ -432,10 +454,16 @@ fn answer(
             Some(Msg::ImagesProbed { doc_gen, probes })
         }
         Cmd::DecodeImage(job) => {
-            // real decodes only for the small files; others fail as the worker would report
+            // real decodes only for the small files; others fail as the worker would report.
+            // Drawn for a terminal, nearly always: only a real decode paints a kitty placeholder
+            // or a sixel or iTerm2 image, the frame oracle's to check (F-11)
             let key = &job.key;
             let cells = u32::from(key.size.width) * u32::from(key.size.height);
-            if key.path.starts_with(&world.dir) && cells <= 4096 && u.arbitrary()? {
+            let real = match drawn {
+                true => u.ratio(7, 8)?,
+                false => u.ratio(1, 2)?,
+            };
+            if key.path.starts_with(&world.dir) && cells <= 4096 && real {
                 effects.run(Cmd::DecodeImage(job))
             } else {
                 Some(Msg::ImageReady {
@@ -756,10 +784,11 @@ fn placed_at(
 /// blank is compared by what shows of it, a grapheme by its [`stand_in`]. Image cells, and
 /// graphemes no or several columns wide, are left out, but a kitty placeholder must name its
 /// row and column in the image, in the color of an image the terminal was `sent`. With `rows`,
-/// only the rows it marks.
-fn shows(term: &vt100::Screen, grid: &Grid, rows: Option<&[bool]>, sent: &HashSet<u32>) {
+/// only the rows it marks. Returns the placeholders it checked.
+fn shows(term: &vt100::Screen, grid: &Grid, rows: Option<&[bool]>, sent: &HashSet<u32>) -> u32 {
     let area = grid.area();
     assert_eq!(term.size(), (area.height, area.width));
+    let mut placed = 0;
     for y in 0..area.height {
         if rows.is_some_and(|r| !r[usize::from(y)]) {
             continue;
@@ -772,6 +801,7 @@ fn shows(term: &vt100::Screen, grid: &Grid, rows: Option<&[bool]>, sent: &HashSe
             let seen = term.cell(y, x).expect("cell in the terminal");
             let here = placed_at(seen, left);
             if let Some(at) = cell.placed() {
+                placed += 1;
                 let Color::Rgb(r, g, b) = cell.fg() else {
                     panic!("placeholder ({x}, {y}) in {:?}", cell.fg());
                 };
@@ -857,6 +887,24 @@ fn shows(term: &vt100::Screen, grid: &Grid, rows: Option<&[bool]>, sent: &HashSe
             x += width;
         }
     }
+    placed
+}
+
+/// `ADA_FUZZ_REACH=1` prints, as each input ends, how far it got into the TUI's images, to
+/// measure what share of a corpus the frame oracle checks placeholders on (F-11).
+fn reach() -> bool {
+    static REACH: OnceLock<bool> = OnceLock::new();
+    *REACH.get_or_init(|| std::env::var_os("ADA_FUZZ_REACH").is_some())
+}
+
+/// How far a session got: the images it asked the probe and the decoder for, the ones that
+/// arrived decoded, and the kitty placeholders [`shows`] checked.
+#[derive(Default)]
+struct Reach {
+    probes: u32,
+    decodes: u32,
+    ready: u32,
+    placed: u32,
 }
 
 struct Session<'a> {
@@ -872,7 +920,27 @@ struct Session<'a> {
     /// The kitty images sent to `term`.
     sent: HashSet<u32>,
     paints: u32,
+    /// The protocol the last `Graphics` named.
+    proto: Option<Proto>,
+    reach: Reach,
     u: Unstructured<'a>,
+}
+
+impl Drop for Session<'_> {
+    fn drop(&mut self) {
+        if reach() {
+            let Reach {
+                probes,
+                decodes,
+                ready,
+                placed,
+            } = self.reach;
+            let proto = self.proto.map_or("none", Proto::name);
+            eprintln!(
+                "reach {proto} probes={probes} decodes={decodes} ready={ready} placed={placed}"
+            );
+        }
+    }
 }
 
 impl Session<'_> {
@@ -885,6 +953,14 @@ impl Session<'_> {
         if let Msg::Graphics { proto, cell } = msg {
             self.effects
                 .set_encoder(Encoder::new(proto, Cells::new(cell.w, cell.h)));
+            self.proto = Some(proto);
+        }
+        if let Msg::ImageReady {
+            image: Computed(Some(Ok(_))),
+            ..
+        } = &msg
+        {
+            self.reach.ready += 1;
         }
         let saving = msg == Msg::SaveConfig;
         let opens = matches!(msg, Msg::ConfigRead { .. });
@@ -901,8 +977,17 @@ impl Session<'_> {
             let again = config::save("c.toml", text, &self.state.active_settings());
             assert_eq!(again.map(|s| s.changes), Ok(Vec::new()), "saving:\n{text}");
         }
+        let drawn = matches!(
+            self.proto,
+            Some(Proto::Kitty | Proto::Sixel | Proto::Iterm2)
+        );
         for cmd in cmds {
-            match answer(cmd, &mut self.u, &self.doc, &mut self.effects) {
+            match &cmd {
+                Cmd::ProbeImages { paths, .. } => self.reach.probes += paths.len() as u32,
+                Cmd::DecodeImage(_) => self.reach.decodes += 1,
+                _ => {}
+            }
+            match answer(cmd, &mut self.u, &self.doc, &mut self.effects, drawn) {
                 // the interactive loop reads the config file inline
                 Ok(Some(msg)) if saving => read.push(msg),
                 Ok(Some(msg)) => self.pending.push(msg),
@@ -946,7 +1031,7 @@ impl Session<'_> {
             .process(&for_vt100(&bytes, self.screen.shown(), &mut rows));
         self.paints += 1;
         let all = self.paints.is_multiple_of(8);
-        shows(
+        self.reach.placed += shows(
             self.term.screen(),
             self.screen.shown(),
             (!all).then_some(&rows[..]),
@@ -972,7 +1057,7 @@ impl Session<'_> {
         transmitted(&bytes, &mut sent);
         let mut check = vec![true; usize::from(h)];
         check[usize::from(rows)..].fill(false);
-        shows(term.screen(), self.screen.shown(), Some(&check), &sent);
+        self.reach.placed += shows(term.screen(), self.screen.shown(), Some(&check), &sent);
     }
 
     fn deliver(&mut self, i: usize) {
@@ -1161,6 +1246,8 @@ fuzz_target!(|data: &[u8]| {
         term,
         sent: HashSet::new(),
         paints: 0,
+        proto: None,
+        reach: Reach::default(),
         u,
     };
 
@@ -1193,6 +1280,6 @@ fuzz_target!(|data: &[u8]| {
         }
     }
     s.settle();
-    shows(s.term.screen(), s.screen.shown(), None, &s.sent);
+    s.reach.placed += shows(s.term.screen(), s.screen.shown(), None, &s.sent);
     s.kept();
 });
