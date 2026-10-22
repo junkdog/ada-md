@@ -730,13 +730,23 @@ impl State {
         })
     }
 
-    fn git_diff(&mut self, doc_gen: u64, total: &str, unstaged: &str, untracked: bool) {
-        let doc = self
-            .doc
+    /// The current or a cached document, by its generation.
+    fn doc_by_gen(&self, doc_gen: u64) -> Option<&Document> {
+        self.doc
+            .iter()
+            .chain(self.cache.iter())
+            .find(|d| d.generation == doc_gen)
+    }
+
+    fn doc_by_gen_mut(&mut self, doc_gen: u64) -> Option<&mut Document> {
+        self.doc
             .iter_mut()
             .chain(self.cache.iter_mut())
-            .find(|d| d.generation == doc_gen);
-        if let Some(doc) = doc {
+            .find(|d| d.generation == doc_gen)
+    }
+
+    fn git_diff(&mut self, doc_gen: u64, total: &str, unstaged: &str, untracked: bool) {
+        if let Some(doc) = self.doc_by_gen_mut(doc_gen) {
             doc.marks = Some(LineMarks::new(total, unstaged, untracked));
         }
     }

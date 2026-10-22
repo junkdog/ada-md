@@ -10,7 +10,7 @@ use std::collections::HashMap;
 pub use draw::draw;
 use time::{DAY, DateFormat, Duration, Ms};
 
-use super::{MAX_STATEMENTS, Source, Text};
+use super::{Description, Source, Text, each_statement, first_word};
 
 /// The most days the `excludes` walk may step over in all, so a chart spanning millennia with
 /// weekends excluded shows its source rather than stalling.
@@ -96,7 +96,7 @@ struct Parser {
     tasks: Vec<RawTask>,
     rows: Vec<RawRow>,
     /// Inside a multi-line `accDescr { … }`.
-    in_description: bool,
+    description: Description,
 }
 
 /// Parse the statements after the `gantt` line.
@@ -105,26 +105,16 @@ pub(super) fn parse<'a>(lines: impl Iterator<Item = (u32, &'a str)>, src: Source
         src,
         ..Parser::default()
     };
-    for (n, (_, line)) in lines.enumerate() {
-        if n >= MAX_STATEMENTS {
-            return None;
-        }
-        p.statement(line)?;
-    }
+    each_statement(lines, |line| p.statement(line))?;
     p.resolve()
 }
 
 impl Parser {
     fn statement(&mut self, line: &str) -> Option<()> {
-        if self.in_description {
-            self.in_description = !line.contains('}');
+        if self.description.skips(line) {
             return Some(());
         }
-        let word = line
-            .split(|c: char| c.is_whitespace() || c == ':')
-            .next()
-            .unwrap_or("");
-        let rest = line[word.len()..].trim();
+        let (word, rest) = first_word(line);
         match word.to_ascii_lowercase().as_str() {
             "dateformat" => self.date_format = Some(rest.to_owned()),
             "axisformat" => self.gantt.axis = Some(rest.to_owned()),
@@ -144,7 +134,7 @@ impl Parser {
                 }
             }
             "todaymarker" | "topaxis" | "displaymode" | "click" | "acctitle" => {}
-            "accdescr" => self.in_description = rest.starts_with('{') && !rest.contains('}'),
+            "accdescr" => self.description.start(rest),
             "title" => {
                 self.gantt.title = self.src.one_line(rest.strip_prefix(':').unwrap_or(rest));
             }

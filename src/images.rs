@@ -289,14 +289,15 @@ pub fn probe(path: &Path) -> Probe {
         Ok((w, h)) if w > 0 && h > 0 => Probe::Image {
             w,
             h,
-            mtime: mtime(path),
+            mtime: mtime_of(path),
         },
         Ok(_) => Probe::Failed("the image is empty".into()),
         Err(e) => Probe::Failed(e),
     }
 }
 
-fn mtime(path: &Path) -> Option<u64> {
+/// A file's modification time in milliseconds since the epoch.
+pub fn mtime_of(path: &Path) -> Option<u64> {
     let modified = fs::metadata(path).and_then(|m| m.modified()).ok()?;
     let since = modified.duration_since(UNIX_EPOCH).ok()?;
     Some(since.as_millis() as u64)
@@ -902,7 +903,7 @@ pub(crate) mod tests {
             Probe::Image {
                 w: 40,
                 h: 60,
-                mtime: mtime(&path)
+                mtime: mtime_of(&path)
             }
         );
         let Probe::Failed(why) = probe(&path.with_extension("gone")) else {

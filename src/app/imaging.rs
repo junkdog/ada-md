@@ -53,13 +53,6 @@ fn image_paths(doc: &Document) -> Vec<PathBuf> {
 }
 
 impl State {
-    fn doc_by_gen(&self, doc_gen: u64) -> Option<&Document> {
-        self.doc
-            .iter()
-            .chain(self.cache.iter())
-            .find(|d| d.generation == doc_gen)
-    }
-
     /// Read the headers of the images a document's links lead to, once they are resolved.
     pub(super) fn probe_cmd(&self, doc_gen: u64) -> Option<Cmd> {
         self.graphics?;
@@ -87,6 +80,7 @@ impl State {
             .as_ref()
             .filter(|_| current)
             .and_then(|d| ScrollAnchor::capture(&d.layout, self.scroll));
+        // not `doc_by_gen_mut`: the theme is read while `doc` is held
         let doc = self
             .doc
             .iter_mut()

@@ -9,7 +9,7 @@ use anpa::{or, tuplify};
 
 pub use draw::draw;
 
-use super::{MAX_STATEMENTS, Source, Text};
+use super::{Description, Source, Text, each_statement, first_word};
 
 /// The most participants a diagram may have.
 const MAX_PARTICIPANTS: usize = 64;
@@ -108,7 +108,7 @@ struct Parser {
     /// The next `autonumber` and its step, while numbering is on.
     numbering: Option<(u32, u32)>,
     /// Inside a multi-line `accDescr { … }`.
-    in_description: bool,
+    description: Description,
 }
 
 /// Parse the statements after the `sequenceDiagram` line.
@@ -120,12 +120,7 @@ pub(super) fn parse<'a>(
         src,
         ..Parser::default()
     };
-    for (n, (_, line)) in lines.enumerate() {
-        if n >= MAX_STATEMENTS {
-            return None;
-        }
-        p.statement(line)?;
-    }
+    each_statement(lines, |line| p.statement(line))?;
     // Mermaid wants every frame closed; ada closes them for it.
     for open in p.open.drain(..) {
         if let Open::Frame = open {
@@ -137,15 +132,10 @@ pub(super) fn parse<'a>(
 
 impl Parser {
     fn statement(&mut self, line: &str) -> Option<()> {
-        if self.in_description {
-            self.in_description = !line.contains('}');
+        if self.description.skips(line) {
             return Some(());
         }
-        let word = line
-            .split(|c: char| c.is_whitespace() || c == ':')
-            .next()
-            .unwrap_or("");
-        let rest = line[word.len()..].trim();
+        let (word, rest) = first_word(line);
         match word {
             "participant" | "actor" => self.declare(rest, word == "actor"),
             "create" => {
@@ -158,7 +148,7 @@ impl Parser {
             }
             "destroy" | "links" | "link" | "properties" | "details" | "accTitle" => Some(()),
             "accDescr" => {
-                self.in_description = rest.starts_with('{') && !rest.contains('}');
+                self.description.start(rest);
                 Some(())
             }
             "autonumber" => self.autonumber(rest),

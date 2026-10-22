@@ -12,6 +12,7 @@ use unicode_width::UnicodeWidthChar;
 
 pub use canvas::Canvas;
 
+use crate::layout::wrap::cut;
 use crate::theme::Glyphs;
 
 /// A parsed diagram, width-independent.
@@ -83,7 +84,52 @@ fn statements(src: &str) -> impl Iterator<Item = (u32, &str)> {
             !front && !l.is_empty() && !l.starts_with("%%")
         })
         .map(|(i, l)| (i, l.strip_suffix(';').unwrap_or(l).trim_end()))
-        .take(MAX_STATEMENTS + 1)
+        // the header, the most statements, and one more to tell there are too many
+        .take(MAX_STATEMENTS + 2)
+}
+
+/// Feed `f` the statements after the header. `None` when it fails on one, or when there are
+/// more than [`MAX_STATEMENTS`].
+fn each_statement<'a>(
+    lines: impl Iterator<Item = (u32, &'a str)>,
+    mut f: impl FnMut(&'a str) -> Option<()>,
+) -> Option<()> {
+    for (n, (_, line)) in lines.enumerate() {
+        if n >= MAX_STATEMENTS {
+            return None;
+        }
+        f(line)?;
+    }
+    Some(())
+}
+
+/// A statement's first word, which whitespace or a `:` ends, and the rest, trimmed.
+fn first_word(line: &str) -> (&str, &str) {
+    let word = line
+        .split(|c: char| c.is_whitespace() || c == ':')
+        .next()
+        .unwrap_or("");
+    (word, line[word.len()..].trim())
+}
+
+/// Whether a parser is inside a multi-line `accDescr { … }`, whose lines it skips.
+#[derive(Default)]
+struct Description(bool);
+
+impl Description {
+    /// Whether `line` is part of the description; its `}` ends it.
+    fn skips(&mut self, line: &str) -> bool {
+        let inside = self.0;
+        if inside {
+            self.0 = !line.contains('}');
+        }
+        inside
+    }
+
+    /// `accDescr` with `rest`: a `{` without its `}` opens a multi-line description.
+    fn start(&mut self, rest: &str) {
+        self.0 = rest.starts_with('{') && !rest.contains('}');
+    }
 }
 
 /// A line of label text, and where it came from in the block's source when it is a slice of it,
@@ -304,18 +350,6 @@ pub fn width(s: &str) -> usize {
     s.chars().map(|c| c.width().unwrap_or(0)).sum()
 }
 
-/// `s` cut to at most `max` columns.
-fn cut(s: &str, max: usize) -> &str {
-    let mut used = 0;
-    for (i, c) in s.char_indices() {
-        used += c.width().unwrap_or(0);
-        if used > max {
-            return &s[..i];
-        }
-    }
-    s
-}
-
 /// Wrap `text` into lines of at most `max` columns, at spaces where it can.
 fn wrap(text: &Text, max: usize) -> Vec<Text> {
     let mut out = Vec::new();
@@ -466,6 +500,22 @@ mod tests {
     fn markers_count_in_superscript() {
         assert_eq!(marker(1), "…¹");
         assert_eq!(marker(12), "…¹²");
+    }
+
+    #[test]
+    fn diagrams_over_the_statement_limit_are_left_as_source() {
+        // one statement that draws, then ones that don't, clear of the graphs' edge limit
+        for (header, first, filler) in [
+            ("sequenceDiagram", "A->>B: hi", "A->>B: hi"),
+            ("flowchart LR", "A --> B", "style A fill:#f00"),
+            ("stateDiagram-v2", "a --> b", "classDef x fill:#f00"),
+            ("gantt", "task : 2026-01-01, 1d", "task : 2026-01-01, 1d"),
+        ] {
+            let src =
+                |n: usize| format!("{header}\n{first}\n{}", format!("{filler}\n").repeat(n - 1));
+            assert!(parse(&src(MAX_STATEMENTS)).is_some(), "{header}");
+            assert!(parse(&src(MAX_STATEMENTS + 1)).is_none(), "{header}");
+        }
     }
 
     #[test]

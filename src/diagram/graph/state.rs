@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use super::{Builder, ClusterId, Dir, Edge, End, Frame, Line, Mark, NodeId, Note, Shape};
-use crate::diagram::{MAX_STATEMENTS, Source, Text, label_lines};
+use crate::diagram::{Description, Source, Text, each_statement, first_word, label_lines};
 
 pub(super) fn parse<'a>(
     lines: impl Iterator<Item = (u32, &'a str)>,
@@ -13,12 +13,7 @@ pub(super) fn parse<'a>(
 ) -> Option<Builder> {
     let mut p = Parser::default();
     p.b.src = src;
-    for (n, (_, line)) in lines.enumerate() {
-        if n >= MAX_STATEMENTS {
-            return None;
-        }
-        p.statement(line)?;
-    }
+    each_statement(lines, |line| p.statement(line))?;
     // Mermaid wants composite states closed; ada closes them for it
     Some(p.b)
 }
@@ -32,7 +27,7 @@ struct Parser {
     dots: HashMap<Option<ClusterId>, (Option<NodeId>, Option<NodeId>)>,
     /// A multi-line note being read: its state, its side and its lines so far.
     note: Option<(NodeId, bool, Vec<Text>)>,
-    in_description: bool,
+    description: Description,
 }
 
 impl Parser {
@@ -50,8 +45,7 @@ impl Parser {
             }
             return Some(());
         }
-        if self.in_description {
-            self.in_description = !line.contains('}');
+        if self.description.skips(line) {
             return Some(());
         }
         if line == "}" {
@@ -60,11 +54,7 @@ impl Parser {
         if line == "--" {
             return self.region();
         }
-        let word = line
-            .split(|c: char| c.is_whitespace() || c == ':')
-            .next()
-            .unwrap_or("");
-        let rest = line[word.len()..].trim();
+        let (word, rest) = first_word(line);
         match word {
             "direction" => {
                 if self.composites.is_empty() {
@@ -76,7 +66,7 @@ impl Parser {
             "note" => self.note(rest),
             "classDef" | "class" | "style" | "scale" | "accTitle" | "hide" => Some(()),
             "accDescr" => {
-                self.in_description = rest.starts_with('{') && !rest.contains('}');
+                self.description.start(rest);
                 Some(())
             }
             _ if line.contains("-->") => self.transition(line),

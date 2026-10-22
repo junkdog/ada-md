@@ -3,20 +3,13 @@
 //! and an idle ada doesn't wake at all. Elsewhere, on a network filesystem, or when inotify
 //! fails, it `stat`s the file every second (ADR-14).
 
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::Duration;
 
 use super::Msg;
-
-/// A file's modification time in milliseconds since the epoch.
-pub fn mtime_of(path: &Path) -> Option<u64> {
-    let modified = fs::metadata(path).and_then(|m| m.modified()).ok()?;
-    let since = modified.duration_since(UNIX_EPOCH).ok()?;
-    Some(since.as_millis() as u64)
-}
+use crate::images::mtime_of;
 
 /// A file to watch, with the time of the text on screen; `None` stops watching.
 type File = Option<(PathBuf, Option<u64>)>;
@@ -292,6 +285,7 @@ mod inotify {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::sync::mpsc::Receiver;
 
     use super::*;

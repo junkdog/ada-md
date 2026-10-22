@@ -14,10 +14,8 @@
 //! cargo run --release --example frame_dump -- --proto kitty,sixel,iterm2,halfblocks image-scroll.md
 //! ```
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::{self, Write};
-use std::rc::Rc;
 use std::{env, fs};
 
 use ada::app::{Cmd, Computed, Config, Dir, Effects, Msg, ScrollBy, Size, State, update};
@@ -28,21 +26,12 @@ use ada::theme::Theme;
 use ada::ui;
 use regex::bytes::{Captures, Regex};
 
+mod common;
+
+use common::Shared;
+
 /// The cell size images are drawn for: 10×20 px, as `image_scroll` draws them.
 const CELL: Cells = Cells::new(10, 20);
-
-#[derive(Clone, Default)]
-struct Shared(Rc<RefCell<Vec<u8>>>);
-
-impl Write for Shared {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.borrow_mut().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
 
 /// Kitty's image ids differ from run to run (`kitty::image_id`), so each is renumbered from 1 in
 /// the order the ids first show up, both in its transmission's `i=` and in its placeholders'

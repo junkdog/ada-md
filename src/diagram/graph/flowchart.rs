@@ -3,7 +3,7 @@
 //! Styling statements are accepted and ignored: colors come from the theme.
 
 use super::{Builder, Dir, Edge, End, Frame, Line, Mark, NodeId, Shape, split_statements};
-use crate::diagram::{MAX_STATEMENTS, Source, Text};
+use crate::diagram::{Description, Source, Text, each_statement, first_word};
 
 /// Parse the statements after the `flowchart` line, `header`, which may hold statements of
 /// its own after a `;`.
@@ -22,44 +22,34 @@ pub(super) fn parse<'a>(
     };
     let mut p = Parser {
         b: &mut b,
-        in_description: false,
+        description: Description::default(),
     };
     let rest = statements.map(|s| (0, s));
-    for (n, (_, line)) in rest.chain(lines).enumerate() {
-        if n >= MAX_STATEMENTS {
-            return None;
-        }
-        for statement in split_statements(line) {
-            p.statement(statement)?;
-        }
-    }
+    each_statement(rest.chain(lines), |line| {
+        split_statements(line).try_for_each(|statement| p.statement(statement))
+    })?;
     Some(b)
 }
 
 struct Parser<'b> {
     b: &'b mut Builder,
     /// Inside a multi-line `accDescr { … }`.
-    in_description: bool,
+    description: Description,
 }
 
 impl Parser<'_> {
     fn statement(&mut self, line: &str) -> Option<()> {
-        if self.in_description {
-            self.in_description = !line.contains('}');
+        if self.description.skips(line) {
             return Some(());
         }
-        let word = line
-            .split(|c: char| c.is_whitespace() || c == ':')
-            .next()
-            .unwrap_or("");
-        let rest = line[word.len()..].trim();
+        let (word, rest) = first_word(line);
         match word {
             "subgraph" => self.subgraph(rest),
             "end" => self.b.close().map(|_| ()),
             "direction" | "style" | "classDef" | "class" | "linkStyle" | "click" | "accTitle"
             | "callback" => Some(()),
             "accDescr" => {
-                self.in_description = rest.starts_with('{') && !rest.contains('}');
+                self.description.start(rest);
                 Some(())
             }
             _ => self.chain(line),

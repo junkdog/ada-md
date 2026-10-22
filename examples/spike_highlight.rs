@@ -12,7 +12,7 @@
 //! ```
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use std::{env, fs, process};
 
@@ -21,6 +21,10 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::Theme;
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 use syntect::util::LinesWithEndings;
+
+mod common;
+
+use common::{collect_markdown, ms};
 
 fn main() {
     let mut roots = Vec::new();
@@ -176,29 +180,6 @@ fn resolve<'a>(syntaxes: &'a SyntaxSet, lang: Option<&str>) -> Option<&'a Syntax
 fn usage() -> ! {
     eprintln!("usage: spike_highlight [--lang NAME] [<file-or-dir>...]");
     process::exit(2);
-}
-
-fn ms(d: Duration) -> f64 {
-    d.as_secs_f64() * 1000.0
-}
-
-fn collect_markdown(path: &Path, out: &mut Vec<PathBuf>) {
-    if path.is_dir() {
-        let Ok(entries) = fs::read_dir(path) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.file_name()
-                .is_some_and(|n| n.to_string_lossy().starts_with('.'))
-            {
-                continue;
-            }
-            collect_markdown(&p, out);
-        }
-    } else if path.extension().is_some_and(|e| e == "md") {
-        out.push(path.to_path_buf());
-    }
 }
 
 fn extract_code_blocks(text: &str, out: &mut Vec<CodeBlock>) {

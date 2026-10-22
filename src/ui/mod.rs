@@ -15,6 +15,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{Document, ImageView, State};
 use crate::images::{self, Entry};
+use crate::layout::wrap::cut;
 use crate::layout::{Layout, RowKind};
 use crate::theme::{StyleKey, Theme};
 
@@ -295,6 +296,28 @@ fn put(buf: &mut Grid, x: u16, y: u16, max: usize, pieces: &Pieces) -> u16 {
     x
 }
 
+/// A popup's frame: `rect` cleared to the popup style inside a rounded border. Returns the
+/// border's style.
+fn popup_frame(buf: &mut Grid, rect: Rect, theme: &Theme) -> Style {
+    for y in rect.top()..rect.bottom() {
+        for x in rect.left()..rect.right() {
+            buf[(x, y)].reset();
+        }
+    }
+    buf.set_style(rect, theme.style(StyleKey::Popup));
+
+    let border = theme.style(StyleKey::PopupBorder);
+    let inner = usize::from(rect.width - 2);
+    let (top, bottom) = (rect.top(), rect.bottom() - 1);
+    buf.set_string(rect.x, top, format!("╭{}╮", "─".repeat(inner)), border);
+    buf.set_string(rect.x, bottom, format!("╰{}╯", "─".repeat(inner)), border);
+    for y in top + 1..bottom {
+        buf.set_string(rect.x, y, "│", border);
+        buf.set_string(rect.right() - 1, y, "│", border);
+    }
+    border
+}
+
 fn status_bar(buf: &mut Grid, area: Rect, state: &State) {
     let theme = &state.theme;
     buf.set_style(area, theme.style(StyleKey::StatusBar));
@@ -420,17 +443,7 @@ fn elide_end(s: &str, max: usize) -> String {
     if max == 0 {
         return String::new();
     }
-    let mut used = 1;
-    let mut out = String::new();
-    for c in s.chars() {
-        used += c.width().unwrap_or(0);
-        if used > max {
-            break;
-        }
-        out.push(c);
-    }
-    out.push('…');
-    out
+    format!("{}…", cut(s, max - 1))
 }
 
 fn display_name(doc: &Document) -> String {

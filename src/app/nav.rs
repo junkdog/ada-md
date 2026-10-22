@@ -123,12 +123,7 @@ pub(super) fn resolve_cmd(doc: &Document) -> Option<Cmd> {
 
 impl State {
     pub(super) fn links_resolved(&mut self, doc_gen: u64, resolved: &[Resolved]) {
-        let doc = self
-            .doc
-            .iter_mut()
-            .chain(self.cache.iter_mut())
-            .find(|d| d.generation == doc_gen);
-        let Some(doc) = doc else {
+        let Some(doc) = self.doc_by_gen_mut(doc_gen) else {
             return;
         };
         let (_, index) = local_targets(&doc.doc);

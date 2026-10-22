@@ -5,9 +5,6 @@
 //! cargo run --release --example frame_bytes -- bench/b2/root/corpus/{s,m,l}.md
 //! ```
 
-use std::cell::RefCell;
-use std::io::{self, Write};
-use std::rc::Rc;
 use std::{env, fs};
 
 use ada::app::{Cmd, Computed, Config, Dir, Msg, ScrollBy, Size, State, update};
@@ -17,18 +14,9 @@ use ada::layout::{LayoutParams, TableMode};
 use ada::theme::Theme;
 use ada::{doc, print, ui};
 
-#[derive(Clone, Default)]
-struct Shared(Rc<RefCell<Vec<u8>>>);
+mod common;
 
-impl Write for Shared {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.borrow_mut().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
+use common::Shared;
 
 fn main() {
     let theme = Theme::builtin();

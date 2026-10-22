@@ -7,6 +7,7 @@ use std::borrow::Cow;
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use super::wrap::cut;
 use super::{Builder, CodeInfo, RowKind, push_span};
 use crate::doc::{CodeBlock, InlineStyle, LineRange};
 use crate::highlight;
@@ -36,7 +37,7 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
     b.begin_row();
     b.text(&pad, StyleKey::CodeBlock);
     if let Some(lang) = &code.lang {
-        b.text(truncate(lang, inner), StyleKey::CodeLabel);
+        b.text(cut(lang, usize::from(inner)), StyleKey::CodeLabel);
     }
     b.fill(avail, StyleKey::CodeBlock);
     let fence = if code.fenced {
@@ -157,17 +158,6 @@ fn chunks(line: &str, width: u16) -> Vec<&str> {
     }
     out.push(&line[start..]);
     out
-}
-
-fn truncate(s: &str, width: u16) -> &str {
-    let mut used = 0;
-    for (i, c) in s.char_indices() {
-        used += c.width().unwrap_or(0);
-        if used > width as usize {
-            return &s[..i];
-        }
-    }
-    s
 }
 
 #[cfg(test)]

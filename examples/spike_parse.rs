@@ -8,34 +8,20 @@
 //! cargo run --release --example spike_parse -- ~/opt/birb-vault --min-kb 100
 //! ```
 
-use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use std::{env, fs, process};
+use std::{fs, process};
 
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+
+mod common;
+
+use common::{collect_markdown, markdown_args, ms};
 
 const ITERATIONS: usize = 25;
 const BUDGET: Duration = Duration::from_millis(5);
 
 fn main() {
-    let mut roots = Vec::new();
-    let mut min_kb = 0u64;
-    let mut args = env::args().skip(1);
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--min-kb" => {
-                min_kb = args
-                    .next()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or_else(|| usage());
-            }
-            "-h" | "--help" => usage(),
-            _ => roots.push(PathBuf::from(arg)),
-        }
-    }
-    if roots.is_empty() {
-        usage();
-    }
+    let (roots, min_kb) = markdown_args(usage);
 
     let mut files = Vec::new();
     for root in &roots {
@@ -88,29 +74,6 @@ fn main() {
 fn usage() -> ! {
     eprintln!("usage: spike_parse [--min-kb N] <file-or-dir>...");
     process::exit(2);
-}
-
-fn ms(d: Duration) -> f64 {
-    d.as_secs_f64() * 1000.0
-}
-
-fn collect_markdown(path: &Path, out: &mut Vec<PathBuf>) {
-    if path.is_dir() {
-        let Ok(entries) = fs::read_dir(path) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.file_name()
-                .is_some_and(|n| n.to_string_lossy().starts_with('.'))
-            {
-                continue;
-            }
-            collect_markdown(&p, out);
-        }
-    } else if path.extension().is_some_and(|e| e == "md") {
-        out.push(path.to_path_buf());
-    }
 }
 
 // --- a stand-in IR ---------------------------------------------------------------------------

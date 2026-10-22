@@ -5,6 +5,7 @@ use crate::geom::Rect;
 use crate::grid::Grid;
 use unicode_width::UnicodeWidthStr;
 
+use super::popup_frame;
 use crate::app::State;
 use crate::theme::StyleKey;
 
@@ -72,22 +73,9 @@ pub fn draw(buf: &mut Grid, area: Rect, state: &State) {
     let Some(rect) = rect(area, &lines) else {
         return;
     };
-    for y in rect.top()..rect.bottom() {
-        for x in rect.left()..rect.right() {
-            buf[(x, y)].reset();
-        }
-    }
-    buf.set_style(rect, theme.style(StyleKey::Popup));
-
-    let border = theme.style(StyleKey::PopupBorder);
+    let border = popup_frame(buf, rect, theme);
     let inner = usize::from(rect.width - 2);
     let (top, bottom) = (rect.top(), rect.bottom() - 1);
-    buf.set_string(rect.x, top, format!("╭{}╮", "─".repeat(inner)), border);
-    buf.set_string(rect.x, bottom, format!("╰{}╯", "─".repeat(inner)), border);
-    for y in top + 1..bottom {
-        buf.set_string(rect.x, y, "│", border);
-        buf.set_string(rect.right() - 1, y, "│", border);
-    }
     let title = theme.style(StyleKey::PopupTitle);
     buf.set_stringn(rect.x + 2, top, " keys ", inner - 1, title);
 

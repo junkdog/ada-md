@@ -10,19 +10,18 @@
 //! taskset -c 30 target/release/examples/image_scroll --proto sixel bench/b2/root/corpus/img/*
 //! ```
 
-use std::cell::RefCell;
 use std::env;
-use std::io::{self, Write};
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::time::Instant;
 
 use ada::app::{Computed, Msg};
 use ada::geom::{Rect, Size};
 use ada::grid::{Grid, Screen};
-use ada::images::{self, Encoder, ImageKey, Job, Probe, Proto};
+use ada::images::{self, Encoder, Proto};
 
 mod common;
+
+use common::Shared;
 
 fn main() {
     let mut paths = Vec::new();
@@ -30,11 +29,7 @@ fn main() {
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--cells" => {
-                let v = args.next().unwrap_or_default();
-                let (w, h) = v.split_once('x').expect("--cells WxH");
-                cells = Size::new(w.parse().unwrap(), h.parse().unwrap());
-            }
+            "--cells" => cells = common::cells_arg(args.next()),
             "--runs" => runs = args.next().and_then(|n| n.parse().ok()).expect("--runs N"),
             "--proto" => {
                 proto = match args.next().as_deref() {
@@ -50,19 +45,10 @@ fn main() {
     let font = Size::new(10, 20);
     let encoder = Encoder::new(proto, font);
     for path in paths {
-        let Probe::Image { w, h, .. } = images::probe(&path) else {
-            eprintln!("{}: not an image", path.display());
+        let Some((job, (w, h))) = common::image_job(&path, font, cells) else {
             continue;
         };
-        let size = images::fit((w, h), font, cells);
-        let job = Job {
-            key: ImageKey {
-                path: path.clone(),
-                mtime: None,
-                size,
-            },
-            urgent: true,
-        };
+        let size = job.key.size;
         let mut worker: Vec<f64> = (0..runs)
             .map(|_| {
                 let t = Instant::now();
@@ -117,19 +103,5 @@ fn main() {
             bytes.last().copied().unwrap_or_default() / 1000,
             ms.len(),
         );
-    }
-}
-
-/// The frames written, kept for counting.
-#[derive(Clone, Default)]
-struct Shared(Rc<RefCell<Vec<u8>>>);
-
-impl Write for Shared {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.borrow_mut().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
     }
 }

@@ -196,6 +196,18 @@ pub fn text_width(s: &str) -> usize {
     }
 }
 
+/// `s` cut to at most `max` columns, counted a character at a time.
+pub fn cut(s: &str, max: usize) -> &str {
+    let mut used = 0;
+    for (i, c) in s.char_indices() {
+        used += c.width().unwrap_or(0);
+        if used > max {
+            return &s[..i];
+        }
+    }
+    s
+}
+
 /// What the buffer holds for `c`: tabs, carriage returns and other control characters, except
 /// newlines, become spaces.
 pub fn clean_char(c: char) -> char {

@@ -5,7 +5,7 @@ use crate::geom::Rect;
 use crate::grid::Grid;
 use unicode_width::UnicodeWidthStr;
 
-use super::elide_start;
+use super::{elide_start, popup_frame};
 use crate::app::{Saving, State};
 use crate::theme::StyleKey;
 
@@ -48,23 +48,10 @@ pub fn draw(buf: &mut Grid, area: Rect, state: &State) {
         width,
         height,
     };
-    for y in rect.top()..rect.bottom() {
-        for x in rect.left()..rect.right() {
-            buf[(x, y)].reset();
-        }
-    }
+    let border = popup_frame(buf, rect, theme);
     let text = theme.style(StyleKey::Popup);
-    buf.set_style(rect, text);
-
-    let border = theme.style(StyleKey::PopupBorder);
     let inner = usize::from(rect.width - 2);
     let (top, bottom) = (rect.top(), rect.bottom() - 1);
-    buf.set_string(rect.x, top, format!("╭{}╮", "─".repeat(inner)), border);
-    buf.set_string(rect.x, bottom, format!("╰{}╯", "─".repeat(inner)), border);
-    for y in top + 1..bottom {
-        buf.set_string(rect.x, y, "│", border);
-        buf.set_string(rect.right() - 1, y, "│", border);
-    }
     let title_style = theme.style(StyleKey::PopupTitle);
     // a long path loses its start, and the title keeps saying what it is
     let path = saving.path.display().to_string();

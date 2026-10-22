@@ -6,6 +6,7 @@ use crate::grid::Grid;
 use crate::style::Modifier;
 use unicode_width::UnicodeWidthStr;
 
+use super::popup_frame;
 use crate::app::{Listing, OutlineEntry, State};
 use crate::theme::StyleKey;
 
@@ -55,23 +56,10 @@ pub fn draw(buf: &mut Grid, area: Rect, state: &State) {
         width,
         height,
     };
-    for y in rect.top()..rect.bottom() {
-        for x in rect.left()..rect.right() {
-            buf[(x, y)].reset();
-        }
-    }
-    buf.set_style(rect, theme.style(StyleKey::Popup));
-
     // the border, with the title on top
-    let border = theme.style(StyleKey::PopupBorder);
+    popup_frame(buf, rect, theme);
     let inner = usize::from(width - 2);
     let (top, bottom) = (rect.top(), rect.bottom() - 1);
-    buf.set_string(rect.x, top, format!("╭{}╮", "─".repeat(inner)), border);
-    buf.set_string(rect.x, bottom, format!("╰{}╯", "─".repeat(inner)), border);
-    for y in top + 1..bottom {
-        buf.set_string(rect.x, y, "│", border);
-        buf.set_string(rect.right() - 1, y, "│", border);
-    }
     let title = format!(
         " {what} {}/{} ",
         entries.len().min(outline.selected + 1),

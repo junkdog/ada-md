@@ -20,7 +20,7 @@ use std::time::Instant;
 use ada::app::{Computed, Msg};
 use ada::geom::{Rect, Size};
 use ada::grid::{Grid, Screen};
-use ada::images::{self, ImageKey, ImageMode, Job, Probe};
+use ada::images::{self, ImageMode};
 
 mod common;
 
@@ -30,11 +30,7 @@ fn main() {
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--cells" => {
-                let v = args.next().unwrap_or_default();
-                let (w, h) = v.split_once('x').expect("--cells WxH");
-                cells = Size::new(w.parse().unwrap(), h.parse().unwrap());
-            }
+            "--cells" => cells = common::cells_arg(args.next()),
             "--runs" => runs = args.next().and_then(|n| n.parse().ok()).expect("--runs N"),
             _ => paths.push(PathBuf::from(arg)),
         }
@@ -46,19 +42,10 @@ fn main() {
     let encoder = images::Encoder::new(graphics.proto, graphics.cell);
     let font = graphics.cell;
     for path in paths {
-        let Probe::Image { w, h, .. } = images::probe(&path) else {
-            eprintln!("{}: not an image", path.display());
+        let Some((job, (w, h))) = common::image_job(&path, font, cells) else {
             continue;
         };
-        let size = images::fit((w, h), font, cells);
-        let job = Job {
-            key: ImageKey {
-                path: path.clone(),
-                mtime: None,
-                size,
-            },
-            urgent: true,
-        };
+        let size = job.key.size;
         let (mut ms, mut cpu): (Vec<f64>, Vec<f64>) = (0..runs)
             .map(|_| {
                 let (t, c) = (Instant::now(), common::cpu());

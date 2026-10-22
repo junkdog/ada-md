@@ -11,13 +11,13 @@ use std::sync::mpsc::{self, Sender};
 use std::thread;
 
 use super::load;
-use super::watch::{Watcher, mtime_of};
+use super::watch::Watcher;
 use super::{Cmd, Computed, Msg};
 use crate::config;
 use crate::filetype::{self, FileType};
 use crate::git;
 use crate::highlight::{self, Request};
-use crate::images;
+use crate::images::{self, mtime_of};
 use crate::links::{BuiltinResolver, Resolver};
 
 pub struct Effects {
