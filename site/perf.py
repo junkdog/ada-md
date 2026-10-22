@@ -1,12 +1,14 @@
 """The site's performance section, from the B2 data behind the README's charts: bench/b2/plots/{interactive,print}.dat,
-and the previewer files and image previews: bench/b2/plots/{previewer,images}.dat (plot.py writes all four).
+the previewer files and image previews: bench/b2/plots/{previewer,images}.dat (plot.py writes all four), and
+mermaid diagrams: bench/b2/plots/mermaid.dat (bench/diagrams/compare, stamped by plot.py).
 
     python3 -I site/perf.py          # rewrites site/index.html between <!-- perf:begin --> and <!-- perf:end -->,
                                      # and the hero's line between <!-- proof:begin --> and <!-- proof:end -->
     python3 -I site/perf.py --check  # exits 1 if index.html is out of date
 
 Writes headline tiles for one document, then CSS-only tabs (radio inputs, no script) with a small bar chart per
-metric for each document, then the same for each previewer file and each image. Bars are on a log scale and every bar carries its value; a viewer the run couldn't
+metric for each document, then the same for each previewer file and each image, then a chart per kind of mermaid
+diagram. Bars are on a log scale and every bar carries its value; a viewer the run couldn't
 measure gets the reason instead of a bar."""
 import math, os, re, subprocess, sys
 from html import escape
@@ -21,7 +23,8 @@ TILE_DOC = "L"
 NAMES = {"mdtui": "md-tui", "treemd-head": "treemd", "icat": "kitten icat", "icat-shm": "kitten icat"}
 UNITS = {"peak RSS": "MiB", "print to a pipe, peak RSS": "MiB", "previewer, a preview, peak RSS": "MiB",
          "previewer, the whole file, peak RSS": "MiB", "image, kitty graphics, peak RSS": "MiB",
-         "image, text, peak RSS": "MiB"}
+         "image, text, peak RSS": "MiB", "mermaid, sequence diagrams": "µs", "mermaid, flowcharts": "µs",
+         "mermaid, state diagrams": "µs", "mermaid, gantt charts": "µs"}
 # previewer.dat's and images.dat's rows: (tab label, description)
 FILES = {"code-s.rs": ("6 KB", "Rust"), "code-m.rs": ("47 KB", "Rust"), "code-l.rs": ("305 KB", "Rust"),
          "log.log": ("1 MB", "journal log"), "huge.json": ("3.75 MB", "JSON, one line"),
@@ -41,14 +44,18 @@ CAPTIONS = {"first paint": "first paint", "CPU per line scroll": "CPU per line s
             "image, kitty graphics, wall": "kitty graphics", "image, text, wall": "half-blocks and symbols",
             "image, kitty graphics, CPU": "CPU, kitty graphics", "image, text, CPU": "CPU, half-blocks and symbols",
             "image, kitty graphics, peak RSS": "peak memory, kitty graphics",
-            "image, text, peak RSS": "peak memory, half-blocks and symbols"}
+            "image, text, peak RSS": "peak memory, half-blocks and symbols",
+            "mermaid, sequence diagrams": "sequence diagrams", "mermaid, flowcharts": "flowcharts",
+            "mermaid, state diagrams": "state diagrams", "mermaid, gantt charts": "gantt charts",
+            "mermaid, a 120-node flowchart": "a 120-node flowchart"}
 # why a cell is missing, as the README explains it: (metric or None for any, viewer, doc or None for any)
 MISSING = [("search", "glow", None, "has no search"),
            ("resize, cold", "glow", None, "blank after a resize"),
            (None, "treemd-head", "XL", "shows one section at a time"),
            (None, "mdtui", "XL", "never finished parsing"),
            ("resize, cold", "mdtui", None, "re-parses for seconds"),
-           ("search", "mdfried", "XL", "match off-screen")]
+           ("search", "mdfried", "XL", "match off-screen"),
+           ("mermaid, gantt charts", "mmdflux", None, "draws no gantt charts")]
 NOTES = {"lowdown": "no highlighting", "bat": "source, not rendered"}
 # notes on the previewer files and images, by viewer and, where it's only one file, (viewer, file)
 PREV_NOTES = {("rich", "log.log"): "no color", ("rich", "huge.log"): "no color",
@@ -76,11 +83,20 @@ DESCS = {"first paint": "from launch until the document's first line is on scree
          "image, kitty graphics, CPU": "user and system time for the kitty preview, over all threads",
          "image, text, CPU": "user and system time for the preview in characters, over all threads",
          "image, kitty graphics, peak RSS": "the most resident at once, kitty graphics",
-         "image, text, peak RSS": "the most resident at once, in characters"}
+         "image, text, peak RSS": "the most resident at once, in characters",
+         "mermaid, sequence diagrams": "two at 100 columns, added up; mermaid-text leaves the one with long messages 357 wide",
+         "mermaid, flowcharts": "seven, from a vault and Mermaid's docs, at 100 columns; added up",
+         "mermaid, state diagrams": "two, at 100 columns; added up",
+         "mermaid, gantt charts": "Mermaid's example and another, at 100 columns; added up",
+         "mermaid, a 120-node flowchart": "generated: a chain, each node with an edge further on"}
 KINDS = {"first paint": "wall", "CPU per line scroll": "CPU", "search": "wall", "resize, cold": "wall",
          "held page-down CPU": "CPU", "print to a pipe, wall": "wall", "previewer, a preview, wall": "wall",
          "previewer, the whole file, wall": "wall", "image, kitty graphics, wall": "wall", "image, text, wall": "wall",
-         "image, kitty graphics, CPU": "CPU", "image, text, CPU": "CPU"}
+         "image, kitty graphics, CPU": "CPU", "image, text, CPU": "CPU", "mermaid, sequence diagrams": "wall",
+         "mermaid, flowcharts": "wall", "mermaid, state diagrams": "wall", "mermaid, gantt charts": "wall",
+         "mermaid, a 120-node flowchart": "wall"}
+# the viewers that draw mermaid with each crate
+MERMAID_NOTES = {"mermaid-text": "md-tui's", "mmdflux": "leaf's"}
 TILES = [("first paint", "first paint"), ("CPU per line scroll", "CPU per line scrolled"),
          ("resize, cold", "re-layout after a resize"), ("peak RSS", "peak memory")]
 
@@ -98,7 +114,7 @@ def parse(path):
         title, names = lines[0][2:], lines[1].split()[2:]
         panels[title] = {r.split()[0]: {n: None if v == "?" else v if v == "cap" else float(v)
                                         for n, v in zip(names, r.split()[1:])}
-                         for r in lines[2:]}
+                         for r in lines[2:] if not r.startswith("#")}
     return panels, commit
 
 
@@ -187,6 +203,7 @@ def section():
                   "A 100×50-cell preview of each image, printed to a pipe, against kitten icat, chafa, mcat and "
                   "viu: in kitty's graphics protocol, and drawn in characters for any other terminal.",
                   lambda f: IMAGE_NOTES.get)
+    out += mermaid()
     out.append(f'<p class="stamp">B2 at ada <code>{commit}</code>, {date}{stamps()}</p>')
     return "\n".join(out)
 
@@ -194,7 +211,7 @@ def section():
 def stamps():
     """The previewer files' and images' stamps, where they differ from the documents' commit."""
     extra = []
-    for name, label in (("previewer", "previewer files"), ("images", "images")):
+    for name, label in (("previewer", "previewer files"), ("images", "images"), ("mermaid", "mermaid")):
         if os.path.exists(path := f"{PLOTS}/{name}.dat"):
             commit = parse(path)[1]
             if commit != parse(f"{PLOTS}/interactive.dat")[1]:
@@ -221,6 +238,22 @@ def tabbed(key, anchor, path, inputs, checked, title, lede, notes):
         out.append(f'<div class="perf-panel" data-{key}="{i}"><div class="charts">')
         out += [chart(m, panels[m][f], f, notes(f), cap and cap[1]) for m in panels]
         out.append("</div></div>")
+    return out
+
+
+def mermaid():
+    """Mermaid diagrams, in process, against the crates md-tui and leaf draw them with: a chart per kind."""
+    if not os.path.exists(path := f"{PLOTS}/mermaid.dat"):
+        return []
+    panels, _ = parse(path)
+    out = ['<h3 class="perf-sub" id="mermaid-perf">Mermaid diagrams <a class="anchor" href="#mermaid-perf" '
+           'aria-label="link to this section">#</a></h3><p class="lede">A <code>```mermaid</code> block parsed and '
+           'drawn, against the crates two of the viewers above draw with: mermaid-text in md-tui and mmdflux in '
+           'leaf, called as they call them. ada draws to the cells it paints from, the crates to a string; in '
+           'process, the best of repeated runs on one core.</p>',
+           '<div class="charts">']
+    out += [chart(m, panels[m]["all"], None, MERMAID_NOTES.get) for m in panels]
+    out.append("</div>")
     return out
 
 
