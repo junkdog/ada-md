@@ -25,7 +25,8 @@ const VISIBLE_ON_BLANK: u16 = Modifier::REVERSED
 /// frame is never seen half drawn. Terminals without the mode ignore it.
 const BEGIN_SYNC: &[u8] = b"\x1b[?2026h";
 const END_SYNC: &[u8] = b"\x1b[?2026l";
-/// Hidden after every frame, as ratatui does; `b2 flood` counts frames by it.
+/// Hidden after every frame that changes something, as ratatui does after every frame, and by
+/// a screen's first; `b2 flood` counts frames by it.
 const HIDE_CURSOR: &[u8] = b"\x1b[?25l";
 
 /// The terminal, as the frames written to it left it.
@@ -37,6 +38,9 @@ pub struct Screen<W: Write> {
     bytes: Vec<u8>,
     /// The size changed: the next frame clears the terminal first.
     clear: bool,
+    /// A frame written has hidden the cursor. Nothing else shows it while the screen lives: the
+    /// editor's return makes a new one.
+    hidden: bool,
 }
 
 impl<W: Write> Screen<W> {
@@ -49,6 +53,7 @@ impl<W: Write> Screen<W> {
             next: Grid::empty(area),
             bytes: Vec::new(),
             clear: false,
+            hidden: false,
         }
     }
 
@@ -71,7 +76,8 @@ impl<W: Write> Screen<W> {
     }
 
     /// Paint a frame on a blank grid and write what differs from the last one, in one write and
-    /// one synchronized update.
+    /// one synchronized update. A frame that changes nothing writes nothing once the cursor is
+    /// hidden (TRM-01: each highlight result for a block off screen cost a write and a syscall).
     pub fn draw(&mut self, paint: impl FnOnce(&mut Grid)) -> io::Result<()> {
         self.next.reset();
         paint(&mut self.next);
@@ -85,9 +91,14 @@ impl<W: Write> Screen<W> {
             self.last.scroll_rows(scroll.rows, scroll.by);
         }
         encode(&self.last, &self.next, &mut self.bytes);
+        let changed = self.bytes.len() > BEGIN_SYNC.len();
+        if !changed && self.hidden {
+            std::mem::swap(&mut self.last, &mut self.next);
+            return Ok(());
+        }
         self.bytes.extend_from_slice(HIDE_CURSOR);
         // a frame that changes nothing needs no update around it
-        let frame = if self.bytes.len() > BEGIN_SYNC.len() + HIDE_CURSOR.len() {
+        let frame = if changed {
             self.bytes.extend_from_slice(END_SYNC);
             &self.bytes[..]
         } else {
@@ -95,6 +106,7 @@ impl<W: Write> Screen<W> {
         };
         self.out.write_all(frame)?;
         self.out.flush()?;
+        self.hidden = true;
         std::mem::swap(&mut self.last, &mut self.next);
         Ok(())
     }
@@ -971,7 +983,7 @@ mod tests {
             let screen = &mut self.screen;
             screen.out.clear();
             screen.draw(paint).unwrap();
-            if screen.out != HIDE_CURSOR {
+            if !screen.out.is_empty() && screen.out != HIDE_CURSOR {
                 let inner = screen
                     .out
                     .strip_prefix(BEGIN_SYNC)
@@ -1036,7 +1048,7 @@ mod tests {
     }
 
     /// A frame that changes anything is one synchronized update, a resize's clear inside it; one
-    /// that changes nothing only hides the cursor.
+    /// that changes nothing writes nothing once the cursor is hidden, and only hides it before.
     #[test]
     fn frames_are_synchronized_updates() {
         let mut screen = Screen::new(Vec::new(), Size::new(10, 3));
@@ -1047,11 +1059,13 @@ mod tests {
                 .unwrap();
             String::from_utf8(screen.out.clone()).unwrap()
         };
+        assert_eq!(draw(&mut screen, ""), "\x1b[?25l");
+        assert_eq!(draw(&mut screen, ""), "");
         assert_eq!(
             draw(&mut screen, "hi"),
             "\x1b[?2026h\x1b[1Hhi\x1b[?25l\x1b[?2026l"
         );
-        assert_eq!(draw(&mut screen, "hi"), "\x1b[?25l");
+        assert_eq!(draw(&mut screen, "hi"), "");
         screen.resize(Size::new(8, 3));
         assert_eq!(
             draw(&mut screen, "hi"),
