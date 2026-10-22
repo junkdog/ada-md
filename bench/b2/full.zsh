@@ -1,6 +1,7 @@
 #!/usr/bin/env zsh
-# full.zsh OUT: the whole B2 run, every viewer: the four lanes, print mode, the previewer files and images, then
-# the vault notes' tables. OUT is a full record set (b2/all.jsonl, lane0..3.json, b2a/, b2p/, b2i/, doctables.md),
+# full.zsh OUT: the whole B2 run, every viewer: the four lanes, print mode, the previewer files and images, mermaid
+# diagrams against the crates md-tui and leaf draw them with (bench/diagrams/compare, built from the same tree as ADA;
+# COMPARE overrides), then the vault notes' tables. OUT is a full record set (b2/all.jsonl, lane0..3.json, b2a/, b2p/, b2i/, doctables.md),
 # so it serves as REF for rerun.zsh as it is.
 # B2_PROFILE (on by default) holds every lane core ready for the run (b2-bench-profile: EPP performance, no idle
 # state deeper than C1; ada-optimization experiment 28) and writes OUT/profile.txt: cells with and without it don't
@@ -11,6 +12,9 @@ L=(0,2,4,6 8,10,12,14 16,18,20,22 24,26,28,30)   # as lanes.py
 [[ -e $OUT ]] && { echo "full: $OUT exists" >&2; exit 1 }
 mkdir -p $OUT/b2
 cp ${ADA:?set ADA} $OUT/ada; export ADA=$OUT/ada
+COMPARE=${COMPARE:-$H/../diagrams/compare/target/release/compare}
+[[ -x $COMPARE ]] || { echo "full: no $COMPARE (cargo build --release --manifest-path bench/diagrams/compare/Cargo.toml)" >&2; exit 1 }
+cp $COMPARE $OUT/compare
 PROFILE=${B2_PROFILE:-on}; print $PROFILE > $OUT/profile.txt
 if [[ $PROFILE == on ]]; then   # restored when this script exits
   sudo -n /usr/local/sbin/b2-bench-profile on ${(j:,:)L} $$ || exit 1
@@ -37,6 +41,9 @@ for part in b2a b2p b2i; do
   env ${(U)part}_OUT=$OUT/$part zsh $H/$part.zsh > $OUT/$part.log 2>&1
   mark "$part end rc=$?"
 done
+mark "diagrams start"   # one core, still held ready
+taskset -c 2 $OUT/compare --dat $OUT/mermaid.dat > $OUT/diagrams.md 2> $OUT/diagrams.log
+mark "diagrams end rc=$?"
 B2_ROOT=$OUT python3 -I $H/b2a_report.py > $OUT/b2a.md 2>&1
 B2_ROOT=$OUT python3 -I $H/doctables.py > $OUT/doctables.md
 B2_ROOT=$OUT python3 -I $H/rank.py > $OUT/rank.txt 2>&1

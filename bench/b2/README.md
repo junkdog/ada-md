@@ -27,7 +27,7 @@ cargo build --release --manifest-path bench/b2/Cargo.toml   # the pty driver, be
 ## Run
 
 `ADA=<release ada> zsh bench/b2/full.zsh bench/b2/root/results/<date>-<sha>-all` runs all of it (the lanes,
-print mode, the previewer files, images and the tables) into a record set that `rerun.zsh` takes as REF, with
+print mode, the previewer files, images, mermaid diagrams and the tables) into a record set that `rerun.zsh` takes as REF, with
 the bench cores held ready (below). The steps one by one:
 
 ```zsh
@@ -43,6 +43,9 @@ python3 -I bench/b2/report.py $B2_ROOT/b2/all.jsonl; python3 -I bench/b2/rank.py
 zsh bench/b2/b2a.zsh && python3 -I bench/b2/b2a_report.py
 zsh bench/b2/b2p.zsh   # the previewer files: code, a log, huge files; whole and under a preview's budget
 zsh bench/b2/b2i.zsh   # image previews: kitty graphics, half-blocks and symbols
+# mermaid diagrams against mermaid-text (md-tui's) and mmdflux (leaf's), in process, built from the same tree as ada
+cargo build --release --manifest-path bench/diagrams/compare/Cargo.toml
+taskset -c 2 bench/diagrams/compare/target/release/compare --dat $B2_ROOT/mermaid.dat > $B2_ROOT/diagrams.md
 python3 -I bench/b2/doctables.py > tables.md   # the vault notes' tables, × columns and ranks included
 python3 -I bench/b2/plot.py $(git rev-parse --short HEAD) && gnuplot bench/b2/plots/b2.gnuplot   # the README's charts
 python3 -I site/perf.py   # the site's perf section, from the same .dat files
@@ -171,10 +174,11 @@ done
 | `lanes.py` | splits the jobs into four CPU lanes |
 | `report.py`, `rank.py` | tables, and where ada isn't first |
 | `doctables.py` | the vault notes' B2 tables in their layout: × columns, the best value per column bold, ranks, the cold resize |
-| `plot.py`, `plots/b2.gnuplot` | the charts' data: `plots/interactive.dat` and `print.dat` (the README's `interactive.png` and `print.png`, and the site), `previewer.dat` and `images.dat` (the site only; `B2P_DIRS` and `B2I_DIRS` merge reruns as for `doctables.py`, and a second argument stamps `previewer.dat` when some files were rerun at another commit: `plot.py 137570c "137570c, logs e9ec3b7"`) |
+| `plot.py`, `plots/b2.gnuplot` | the charts' data: `plots/interactive.dat` and `print.dat` (the README's `interactive.png` and `print.png`, and the site), `previewer.dat`, `images.dat` and `mermaid.dat` (the site only; `mermaid.dat` is `compare`'s, from the record set, stamped; `B2P_DIRS` and `B2I_DIRS` merge reruns as for `doctables.py`, and a second argument stamps `previewer.dat` when some files were rerun at another commit: `plot.py 137570c "137570c, logs e9ec3b7"`) |
 | `b2a.zsh`, `b2a_report.py` | print mode with hyperfine 2 (wall, CPU, peak RSS, instructions) |
 | `b2p.zsh` | the previewer files (code, logs, huge files) printed whole and under a preview's budget |
 | `b2i.zsh` | image previews against kitten icat, chafa, viu and mcat |
+| `../diagrams/compare` | mermaid diagrams, parse and draw in process, against mermaid-text 0.57 (md-tui) and mmdflux 2.6 (leaf): the probe set per diagram, and the site's sums per kind (`--dat`) |
 | `runcmp.py` | two runs' interactive cells side by side, for regressions |
 | `timeouts.py` | the cells that always hit their cap, skipped while the tool is still that version |
 | `full.zsh` | the whole run into one record set, the bench cores held ready |

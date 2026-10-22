@@ -70,7 +70,8 @@ leads on nearly every measurement:
   that take other renderers seconds take ada milliseconds.
 
 The charts are on [the site](https://junkdog.github.io/ada-md/#performance), the harnesses in
-[`bench/b2`](bench/b2/README.md) and [`examples/diagram_bench.rs`](examples/diagram_bench.rs).
+[`bench/b2`](bench/b2/README.md), [`examples/diagram_bench.rs`](examples/diagram_bench.rs) and
+[`bench/diagrams/compare`](bench/diagrams/compare/src/main.rs) (against mermaid-text and mmdflux).
 
 ## Install
 

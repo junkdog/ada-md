@@ -1,5 +1,5 @@
 """The data behind the benchmark charts: bench/b2/plots/{interactive,print}.dat, for plots/b2.gnuplot and the
-site, and previewer.dat and images.dat, for the site only.
+site, and previewer.dat, images.dat and mermaid.dat (bench/diagrams/compare's, stamped), for the site only.
 
     python3 -I bench/b2/plot.py COMMIT [PREVIEWER] && gnuplot bench/b2/plots/b2.gnuplot
 
@@ -86,3 +86,10 @@ if os.path.exists(f"{S}/b2i"):
                 f"written by bench/b2/plot.py\n")
         f.write("\n\n\n".join(blocks) + "\n")
     print(f"wrote {OUT}/images.dat")
+
+if os.path.exists(f"{S}/mermaid.dat"):
+    lines = open(f"{S}/mermaid.dat").read().splitlines(True)
+    lines[0] = f"# B2 mermaid at ada {commit}:" + lines[0].split(":", 1)[1]   # perf.py skips a "# B2" header
+    with open(f"{OUT}/mermaid.dat", "w") as f:
+        f.write("".join(lines))
+    print(f"wrote {OUT}/mermaid.dat")

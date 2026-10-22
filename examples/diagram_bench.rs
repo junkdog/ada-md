@@ -26,7 +26,7 @@ struct Case {
     src: String,
     width: u16,
     /// mermaid-text 0.57's parse and render, the goal for ada's parse and draw.
-    rival: Option<Duration>,
+    goal: Option<Duration>,
     /// What else to say about mermaid-text's result.
     note: &'static str,
 }
@@ -110,7 +110,7 @@ fn main() {
             black_box(layout::layout(&parsed_doc, &theme.glyphs, params));
         });
         let total = draw.map(|d| parse + d);
-        let verdict = match (c.rival, total) {
+        let verdict = match (c.goal, total) {
             (Some(goal), Some(t)) if t.wall <= goal => {
                 format!(
                     "met, {:.1}× faster",
@@ -123,7 +123,7 @@ fn main() {
             }
             _ => "—".to_owned(),
         };
-        let rival = match c.rival {
+        let theirs = match c.goal {
             Some(t) => format!("{}{}", fmt(t), c.note),
             None if c.note.is_empty() => "—".to_owned(),
             None => c.note.to_owned(),
@@ -142,7 +142,7 @@ fn main() {
             both(lay),
             size,
             cut,
-            rival,
+            theirs,
             verdict,
         );
     }
@@ -157,9 +157,9 @@ fn time_draw(budget: Duration, d: &Diagram, width: u16, theme: &Theme) -> Timed 
     })
 }
 
-/// The probe set, then the scale series. mermaid-text's figures: `render_with_width` at 100
-/// columns, best of runs for a second, pinned (the probe in ada-mermaid, rerun 2026-10-21); the
-/// series' and `seq500`'s are the first probe's.
+/// The probe set, then the scale series. mermaid-text's figures: `render_with_width` at the
+/// case's width, as md-tui calls it, best of runs for a second, pinned (`bench/diagrams/compare`,
+/// 2026-10-22).
 fn cases() -> Vec<Case> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("bench/diagrams");
     let file = |name: &str| {
@@ -168,37 +168,37 @@ fn cases() -> Vec<Case> {
     };
     let us = |n: f64| Some(Duration::from_secs_f64(n / 1e6));
     let mut out = Vec::new();
-    let mut add = |name: &str, src: String, width: u16, rival, note| {
+    let mut add = |name: &str, src: String, width: u16, goal, note| {
         out.push(Case {
             name: name.to_owned(),
             src,
             width,
-            rival,
+            goal,
             note,
         });
     };
     // the stand-in for the work diagram: five participants, twelve long messages
     for width in [400, 120, 100] {
-        add("work", file("work"), width, us(19.2), ", 357 columns");
+        add("work", file("work"), width, us(20.2), ", 357 columns");
     }
     let probe = [
-        ("vault1", us(112.3)),
-        ("vault2", us(457.7)),
-        ("vault3", us(5_354.8)),
-        ("vault4", us(538.4)),
-        ("seq", us(6.33)),
-        ("ci", us(42.0)),
-        ("flow_sub", us(102.3)),
-        ("lr_wide", us(107.0)),
-        ("state", us(212.5)),
-        ("state2", us(148.3)),
-        ("gantt-probe", us(2.20)),
+        ("vault1", us(103.0)),
+        ("vault2", us(403.3)),
+        ("vault3", us(5_140.0)),
+        ("vault4", us(481.3)),
+        ("seq", us(6.23)),
+        ("ci", us(37.0)),
+        ("flow_sub", us(90.8)),
+        ("lr_wide", us(97.1)),
+        ("state", us(199.8)),
+        ("state2", us(139.7)),
+        ("gantt-probe", us(2.05)),
     ];
-    for (name, rival) in probe {
-        add(name, file(name), 100, rival, "");
+    for (name, goal) in probe {
+        add(name, file(name), 100, goal, "");
     }
-    add("gantt-probe", file("gantt-probe"), 60, us(2.20), "");
-    add("gantt-mermaid", file("gantt-mermaid"), 100, us(3.67), "");
+    add("gantt-probe", file("gantt-probe"), 60, us(2.05), "");
+    add("gantt-mermaid", file("gantt-mermaid"), 100, us(3.40), "");
     add(
         "gantt-docs",
         file("gantt-docs"),
@@ -218,16 +218,16 @@ fn cases() -> Vec<Case> {
         add(name, file(name), 100, None, "");
     }
     let series = [
-        (20, us(4_600.0)),
-        (40, us(54_000.0)),
-        (80, us(700_000.0)),
-        (120, us(2_900_000.0)),
+        (20, us(4_530.0)),
+        (40, us(298_210.0)),
+        (80, us(3_940_000.0)),
+        (120, us(16_700_000.0)),
     ];
-    for (n, rival) in series {
-        add(&format!("flow{n}"), flowchart(n), 100, rival, "");
+    for (n, goal) in series {
+        add(&format!("flow{n}"), flowchart(n), 100, goal, "");
     }
     add("flow300", flowchart(300), 100, None, "over 30 s");
-    add("seq500", sequence(500), 120, us(400.0), "");
+    add("seq500", sequence(500), 120, us(426.3), "");
     out
 }
 
