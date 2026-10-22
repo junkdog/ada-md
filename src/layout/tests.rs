@@ -669,3 +669,40 @@ fn line_numbers_take_columns_and_number_first_rows() {
     assert_eq!(layout(&doc, &theme.glyphs, numbered(26)).numbers, 0);
     assert_eq!(layout(&doc, &theme.glyphs, numbered(27)).numbers, 3);
 }
+
+/// ada's pads and the source's NBSPs show as spaces, and a pad never reaches the layout's text:
+/// a line is copied in one go, a run of spaces between words in more than one, and a paragraph
+/// with an NBSP a seg at a time (O-24).
+#[test]
+fn pads_and_nbsps_show_as_spaces() {
+    let theme = Theme::builtin();
+    let md = "# Head `h`\n\nsee `x`  then\u{a0}`y` ok\n\nplain `a`  b  c\n\n| k `v` |\n|---|\n| `w`  z |\n";
+    let l = layout(&parse(md), &theme.glyphs, params(40));
+    let rows: Vec<_> = (0..l.rows.len()).map(|i| l.row_text(i)).collect();
+    assert_eq!(
+        rows,
+        [
+            "   Head  h  ",
+            "  ",
+            "  see  x  then  y  ok",
+            "  ",
+            "  plain  a  b c",
+            "  ",
+            "  ╭───────╮",
+            "  │ k  v  │",
+            "  ├───────┤",
+            "  │  w  z │",
+            "  ╰───────╯",
+        ]
+    );
+    assert!(!l.text.contains(super::wrap::PAD), "{:?}", l.text);
+    for (i, row) in l.rows.iter().enumerate() {
+        let width: u16 = l.spans(row).map(|(_, s)| s.width).sum();
+        assert_eq!(
+            usize::from(width),
+            super::wrap::text_width(&rows[i]),
+            "{:?}",
+            rows[i]
+        );
+    }
+}

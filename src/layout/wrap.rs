@@ -9,7 +9,6 @@
 //! The bodies of a [`Wrapped`], in order, are its search unit's text (ADR-12), so layout can map
 //! every row back to the stretch of the unit it shows.
 
-use std::borrow::Cow;
 use std::ops::Range;
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -19,6 +18,12 @@ use crate::theme::{Glyphs, StyleKey};
 
 /// Non-breaking padding; rendered as a plain space.
 pub const NBSP: char = '\u{a0}';
+
+/// What the buffer holds for ada's own non-breaking padding (code padding, a heading's suffix,
+/// an image's icon): one byte, a column wide, shown as a space (O-24). Unlike an [`NBSP`], it
+/// takes as many bytes as the space it shows as, so a line's text is copied into the layout in
+/// one go. The source's control characters are spaces by then ([`clean_char`]), so none is a pad.
+pub const PAD: char = '\u{1f}';
 
 /// A styled stretch of the flattened buffer.
 #[derive(Clone, Copy, Debug)]
@@ -34,6 +39,8 @@ pub struct Piece {
     pub body_end: u32,
     /// Where the body starts in the unit's text.
     pub unit_off: u32,
+    /// Whether its decoration holds a [`PAD`].
+    pub pads: bool,
 }
 
 /// Part of a line: a slice of the buffer inside one piece.
@@ -63,9 +70,12 @@ pub struct Wrapped {
     pub lines: Vec<Line>,
     /// The search unit the bodies belong to.
     pub unit: Option<UnitId>,
+    /// Whether `buf` holds a [`PAD`].
+    pub pads: bool,
+    /// Whether `buf` holds an [`NBSP`] of the source's, which shows as a space a byte shorter.
+    pub nbsp: bool,
     /// The length of the unit's text so far.
     unit_len: u32,
-    toks: Vec<Tok>,
 }
 
 impl Wrapped {
@@ -83,8 +93,9 @@ impl Wrapped {
         self.pieces.clear();
         self.segs.clear();
         self.lines.clear();
-        self.toks.clear();
         self.unit = unit;
+        self.pads = false;
+        self.nbsp = false;
         self.unit_len = 0;
         self
     }
@@ -135,21 +146,18 @@ pub fn measure(runs: &[Run], doc: &Doc, glyphs: &Glyphs) -> (u16, u16) {
     flatten(runs, StyleKey::Text, doc, glyphs, &mut w);
     let (mut min, mut max, mut line) = (0u16, 0u16, 0u16);
     let (mut started, mut pending) = (false, false);
-    tokenize(&w.buf, &mut w.toks);
-    for &tok in &w.toks {
-        match tok {
-            Tok::Space { .. } => pending = started,
-            Tok::Newline => (line, started, pending) = (0, false, false),
-            Tok::Word { width, .. } => {
-                line = line
-                    .saturating_add(u16::from(pending))
-                    .saturating_add(width);
-                (started, pending) = (true, false);
-                min = min.max(width);
-                max = max.max(line);
-            }
+    tokenize(&w.buf, |tok| match tok {
+        Tok::Space { .. } => pending = started,
+        Tok::Newline => (line, started, pending) = (0, false, false),
+        Tok::Word { width, .. } => {
+            line = line
+                .saturating_add(u16::from(pending))
+                .saturating_add(width);
+            (started, pending) = (true, false);
+            min = min.max(width);
+            max = max.max(line);
         }
-    }
+    });
     (min, max)
 }
 
@@ -181,7 +189,7 @@ pub fn wrap_unit(
 ) -> Wrapped {
     let mut w = Wrapped::new(Some(unit));
     let look = (key, InlineStyle::NONE, None);
-    push_parts(&mut w, [pre, body, post], look, src_line);
+    push_parts(&mut w, [pre, body, post], look, src_line, false);
     pack(&mut w, avail.max(1));
     w
 }
@@ -221,24 +229,52 @@ pub fn clean_char(c: char) -> char {
 /// `text` as the buffer holds it.
 pub fn clean(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    push_clean(&mut out, text);
+    push_clean(&mut out, text, false);
     out
 }
 
-/// Append `s` as the buffer holds it, copied whole when [`clean_char`] would change nothing.
-fn push_clean(buf: &mut String, s: &str) {
-    if needs_clean(s) {
-        buf.extend(s.chars().map(clean_char));
+/// Append `s` as the buffer holds it, with its newlines as spaces too when `fold`; copied whole
+/// when that would change nothing, which one pass over its bytes tells (LAY-01). Returns whether
+/// `s` holds an [`NBSP`].
+fn push_clean(buf: &mut String, s: &str, fold: bool) -> bool {
+    if !suspect(s, fold) {
+        buf.push_str(s);
+        return false;
+    }
+    let unclean = |c: char| c.is_control() && (fold || c != '\n');
+    if s.chars().any(unclean) {
+        buf.extend(s.chars().map(|c| if unclean(c) { ' ' } else { c }));
     } else {
         buf.push_str(s);
     }
+    s.contains(NBSP)
 }
 
-/// Whether `s` has a control character other than `\n`. Every one starts with a byte below
-/// 0x20, 0x7f, or 0xc2 (C1 controls, but also `NBSP`, `©`, `°`), so only those look closer.
-fn needs_clean(s: &str) -> bool {
-    let suspect = |b: u8| (b < 0x20 && b != b'\n') || b == 0x7f || b == 0xc2;
-    s.bytes().any(suspect) && s.chars().any(|c| c != '\n' && c.is_control())
+/// Append decoration `s` as the buffer holds it: its [`NBSP`]s as [`PAD`]s, the rest as
+/// [`push_clean`] would. Returns whether it pushed a pad.
+fn push_deco(buf: &mut String, s: &str) -> bool {
+    if !suspect(s, false) {
+        buf.push_str(s);
+        return false;
+    }
+    buf.extend(
+        s.chars()
+            .map(|c| if c == NBSP { PAD } else { clean_char(c) }),
+    );
+    s.contains(NBSP)
+}
+
+/// Whether `s` may have a control character other than `\n` (or, when `fold`, a `\n`) or an
+/// [`NBSP`]. Every one starts with a byte below 0x20, 0x7f, or 0xc2 (C1 controls, but also
+/// `NBSP`, `©`, `°`), so only those look closer.
+fn suspect(s: &str, fold: bool) -> bool {
+    // folded, a newline is suspect too: tested against 0xff, which no byte of a str is
+    let nl = if fold { 0xff } else { b'\n' };
+    let hit = |b: u8| ((b < 0x20) & (b != nl)) | (b == 0x7f) | (b == 0xc2);
+    // a chunk at a time, not stopping inside one, so the test vectorizes (LAY-01)
+    s.as_bytes()
+        .chunks(32)
+        .any(|c| c.iter().fold(false, |acc, &b| acc | hit(b)))
 }
 
 fn push_piece(
@@ -249,25 +285,29 @@ fn push_piece(
     link: Option<LinkId>,
     src_line: u32,
 ) {
-    push_parts(w, [text, "", ""], (key, inline, link), src_line);
+    push_parts(w, [text, "", ""], (key, inline, link), src_line, false);
 }
 
-/// Push one piece: decoration, a searchable body, decoration.
+/// Push one piece: decoration, a searchable body, decoration. The decorations' [`NBSP`]s are
+/// ada's own and become [`PAD`]s; the body's are the source's and stay. `fold`: the body's
+/// newlines become spaces.
 fn push_parts(
     w: &mut Wrapped,
     [pre, body, post]: [&str; 3],
     (key, inline, link): (StyleKey, InlineStyle, Option<LinkId>),
     src_line: u32,
+    fold: bool,
 ) {
     if pre.is_empty() && body.is_empty() && post.is_empty() {
         return;
     }
     let start = w.buf.len() as u32;
-    push_clean(&mut w.buf, pre);
+    let mut pads = push_deco(&mut w.buf, pre);
     let body_start = w.buf.len() as u32;
-    push_clean(&mut w.buf, body);
+    w.nbsp |= push_clean(&mut w.buf, body, fold);
     let body_end = w.buf.len() as u32;
-    push_clean(&mut w.buf, post);
+    pads |= push_deco(&mut w.buf, post);
+    w.pads |= pads;
     w.pieces.push(Piece {
         start,
         end: w.buf.len() as u32,
@@ -278,17 +318,9 @@ fn push_parts(
         body_start,
         body_end,
         unit_off: w.unit_len,
+        pads,
     });
     w.unit_len += body_end - body_start;
-}
-
-/// `text` with its newlines as spaces, borrowed when it has none.
-fn unfold(text: &str) -> Cow<'_, str> {
-    if text.contains('\n') {
-        Cow::Owned(text.replace('\n', " "))
-    } else {
-        Cow::Borrowed(text)
-    }
 }
 
 fn flatten(runs: &[Run], key: StyleKey, doc: &Doc, glyphs: &Glyphs, w: &mut Wrapped) {
@@ -301,11 +333,11 @@ fn flatten(runs: &[Run], key: StyleKey, doc: &Doc, glyphs: &Glyphs, w: &mut Wrap
                 let pad = code_pad.get_or_insert_with(|| {
                     std::iter::repeat_n(NBSP, glyphs.code_pad as usize).collect()
                 });
-                push_parts(w, [pad, &unfold(&run.text), pad], look, line);
+                push_parts(w, [pad, &run.text, pad], look, line, true);
             }
-            RunKind::Text => push_parts(w, ["", &unfold(&run.text), ""], look, line),
-            RunKind::SoftBreak => push_parts(w, ["", " ", ""], look, line),
-            RunKind::HardBreak => push_parts(w, ["", "\n", ""], look, line),
+            RunKind::Text => push_parts(w, ["", &run.text, ""], look, line, true),
+            RunKind::SoftBreak => push_parts(w, ["", " ", ""], look, line, false),
+            RunKind::HardBreak => push_parts(w, ["", "\n", ""], look, line, false),
             RunKind::InlineImage(link) => {
                 let icon: String = glyphs
                     .image
@@ -318,12 +350,12 @@ fn flatten(runs: &[Run], key: StyleKey, doc: &Doc, glyphs: &Glyphs, w: &mut Wrap
                     &icon
                 };
                 let look = (StyleKey::Image, run.style, Some(link));
-                push_parts(w, [icon, &unfold(&run.text), ""], look, line);
+                push_parts(w, [icon, &run.text, ""], look, line, true);
             }
             RunKind::FootnoteRef(id) => {
                 let n = doc.footnotes.get(id as usize).map_or(0, |f| f.number);
                 let look = (StyleKey::FootnoteRef, InlineStyle::NONE, run.link);
-                push_parts(w, [&format!("[{n}]"), "", ""], look, line);
+                push_parts(w, [&format!("[{n}]"), "", ""], look, line, false);
             }
         }
     }
@@ -336,50 +368,87 @@ enum Tok {
     Newline,
 }
 
-/// Split `buf` into `toks`.
-fn tokenize(buf: &str, toks: &mut Vec<Tok>) {
-    toks.clear();
-    toks.reserve(buf.len() / 3 + 1);
-    let mut word: Option<u32> = None;
-    let close = |toks: &mut Vec<Tok>, word: &mut Option<u32>, end: usize| {
-        if let Some(start) = word.take() {
-            let width = text_width(&buf[start as usize..end]).min(u16::MAX as usize) as u16;
-            toks.push(Tok::Word {
-                start,
-                end: end as u32,
-                width,
-            });
-        }
-    };
+/// How [`tokenize`] sees a byte: a word's byte unless one of these.
+const SPACE: u8 = 1;
+const NEWLINE: u8 = 2;
+/// `-` and `/`, which a word may break after.
+const BREAK: u8 = 4;
+/// A byte of a character past ASCII.
+const WIDE: u8 = 8;
+
+const CLASS: [u8; 256] = {
+    let mut t = [0; 256];
+    t[b' ' as usize] = SPACE;
+    t[b'\n' as usize] = NEWLINE;
+    t[b'-' as usize] = BREAK;
+    t[b'/' as usize] = BREAK;
+    let mut b = 0x80;
+    while b < 256 {
+        t[b] = WIDE;
+        b += 1;
+    }
+    t
+};
+
+/// Split `buf` into tokens, handed to `f` in order: no vector of them is built, and a word's
+/// bytes are read in a loop of their own (LAY-01).
+fn tokenize(buf: &str, mut f: impl FnMut(Tok)) {
     // Every delimiter is ASCII, and no byte of a multi-byte character is, so bytes will do.
     let bytes = buf.as_bytes();
-    for (i, &c) in bytes.iter().enumerate() {
-        match c {
-            b' ' => {
-                close(toks, &mut word, i);
-                if !matches!(toks.last(), Some(Tok::Space { .. })) {
-                    toks.push(Tok::Space {
+    let mut spaced = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        match CLASS[bytes[i] as usize] {
+            SPACE => {
+                // a run of spaces is one
+                if !spaced {
+                    f(Tok::Space {
                         start: i as u32,
                         end: i as u32 + 1,
                     });
+                    spaced = true;
                 }
+                i += 1;
             }
-            b'\n' => {
-                close(toks, &mut word, i);
-                toks.push(Tok::Newline);
+            NEWLINE => {
+                f(Tok::Newline);
+                spaced = false;
+                i += 1;
             }
             _ => {
-                let start = *word.get_or_insert(i as u32);
-                let breaks_after = (c == b'-' || c == b'/')
-                    && start < i as u32
-                    && bytes.get(i + 1).is_some_and(|&n| n != b' ' && n != b'\n');
-                if breaks_after {
-                    close(toks, &mut word, i + 1);
+                let start = i;
+                // Whether the word has a byte past ASCII. Without one its width is its length,
+                // as in `text_width` (the buffer holds no `\r`: `clean_char`).
+                let mut wide = false;
+                while i < bytes.len() {
+                    let class = CLASS[bytes[i] as usize];
+                    if class & (SPACE | NEWLINE) != 0 {
+                        break;
+                    }
+                    wide |= class == WIDE;
+                    i += 1;
+                    // after a `-` or `/` inside a word that goes on
+                    let breaks_after = class == BREAK
+                        && i - 1 > start
+                        && bytes.get(i).is_some_and(|&n| n != b' ' && n != b'\n');
+                    if breaks_after {
+                        break;
+                    }
                 }
+                let width = if wide {
+                    text_width(&buf[start..i])
+                } else {
+                    i - start
+                };
+                f(Tok::Word {
+                    start: start as u32,
+                    end: i as u32,
+                    width: width.min(u16::MAX as usize) as u16,
+                });
+                spaced = false;
             }
         }
     }
-    close(toks, &mut word, buf.len());
 }
 
 struct Packer<'w> {
@@ -409,12 +478,20 @@ impl Packer<'_> {
                 text_width(&self.buf[start as usize..stop as usize]) as u16
             };
             whole = false;
-            self.segs.push(Seg {
-                start,
-                end: stop,
-                width,
-                piece: self.cursor as u32,
-            });
+            // a line's words of one piece are one seg (LAY-01)
+            let (piece_at, open) = (self.cursor as u32, !self.is_empty());
+            match self.segs.last_mut() {
+                Some(last) if open && last.piece == piece_at && last.end == start => {
+                    last.end = stop;
+                    last.width = last.width.saturating_add(width);
+                }
+                _ => self.segs.push(Seg {
+                    start,
+                    end: stop,
+                    width,
+                    piece: piece_at,
+                }),
+            }
             self.line.width = self.line.width.saturating_add(width);
             self.line.src = self.line.src.union(LineRange::line(piece.src_line));
             start = stop;
@@ -441,8 +518,6 @@ impl Packer<'_> {
 }
 
 fn pack(w: &mut Wrapped, avail: u16) {
-    let mut toks = std::mem::take(&mut w.toks);
-    tokenize(&w.buf, &mut toks);
     let mut p = Packer {
         pieces: &w.pieces,
         buf: &w.buf,
@@ -452,7 +527,7 @@ fn pack(w: &mut Wrapped, avail: u16) {
         lines: &mut w.lines,
     };
     let mut pending: Option<(u32, u32)> = None;
-    for &tok in &toks {
+    tokenize(&w.buf, |tok| {
         match tok {
             Tok::Space { start, end } => {
                 if !p.is_empty() {
@@ -480,23 +555,23 @@ fn pack(w: &mut Wrapped, avail: u16) {
                     }
                     let word = &w.buf[start as usize..end as usize];
                     for (i, c) in word.char_indices() {
-                        let cw = c.width().unwrap_or(0) as u16;
+                        let s = start + i as u32;
+                        let e = s + c.len_utf8() as u32;
+                        // `text_width`, not `c.width()`: a pad is a column wide
+                        let cw = text_width(&w.buf[s as usize..e as usize]) as u16;
                         if p.line.width + cw > avail && !p.is_empty() {
                             p.flush();
                         }
-                        let s = start + i as u32;
-                        let e = s + c.len_utf8() as u32;
-                        p.add(s, e, text_width(&w.buf[s as usize..e as usize]) as u16);
+                        p.add(s, e, cw);
                     }
                 }
                 pending = None;
             }
         }
-    }
+    });
     if !p.is_empty() || p.lines.is_empty() {
         p.flush();
     }
-    w.toks = toks;
 }
 
 #[cfg(test)]
@@ -505,6 +580,12 @@ mod tests {
     use crate::doc::parse;
 
     fn lines(md: &str, avail: u16) -> Vec<String> {
+        lines_with(md, avail, None)
+    }
+
+    /// The lines of `md`'s first paragraph at `avail` columns, a heading's `suffix` after it,
+    /// with pads as `·`.
+    fn lines_with(md: &str, avail: u16, suffix: Option<&str>) -> Vec<String> {
         let doc = parse(md);
         let crate::doc::BlockKind::Paragraph(inl) = &doc.blocks[0].kind else {
             panic!("not a paragraph")
@@ -520,14 +601,14 @@ mod tests {
             avail,
             &doc,
             &glyphs,
-            None,
+            suffix,
         );
         w.lines
             .iter()
             .map(|l| {
                 w.line_segs(l)
                     .iter()
-                    .map(|s| w.seg_text(s).replace(NBSP, "·"))
+                    .map(|s| w.seg_text(s).replace(PAD, "·"))
                     .collect()
             })
             .collect()
@@ -565,6 +646,44 @@ mod tests {
     }
 
     #[test]
+    fn a_pad_is_a_column_in_a_hard_break() {
+        assert_eq!(lines("`abcdefgh`", 4), ["·abc", "defg", "h·"]);
+        assert_eq!(lines("`日本語`", 4), ["·日", "本語", "·"]);
+    }
+
+    /// A theme's glyph: its spaces are ada's own padding and hold, a tab is a space and breaks.
+    #[test]
+    fn a_glyphs_spaces_hold_and_its_tabs_break() {
+        assert_eq!(lines_with("aaaa", 5, Some(" x")), ["aaaa·", "x"]);
+        assert_eq!(lines_with("aaaa", 5, Some("\tx")), ["aaaa", "x"]);
+    }
+
+    /// The source's NBSPs stay what they are, and set [`Wrapped::nbsp`]; ada's pads are [`PAD`]s.
+    #[test]
+    fn the_sources_nbsps_are_not_pads() {
+        let doc = parse("a\u{a0}b `c`");
+        let crate::doc::BlockKind::Paragraph(inl) = &doc.blocks[0].kind else {
+            panic!("not a paragraph")
+        };
+        let glyphs = Glyphs {
+            code_pad: 1,
+            ..Glyphs::default()
+        };
+        let w = wrap(
+            Wrapped::new(None),
+            &inl.runs,
+            StyleKey::Text,
+            80,
+            &doc,
+            &glyphs,
+            None,
+        );
+        assert_eq!(w.buf, "a\u{a0}b \u{1f}c\u{1f}");
+        assert!(w.nbsp && w.pads);
+        assert_eq!(unit_text(&inl.runs, &doc, &glyphs), "a\u{a0}b c");
+    }
+
+    #[test]
     fn hard_breaks_and_soft_breaks() {
         assert_eq!(lines("one\ntwo  \nthree", 80), ["one two", "three"]);
     }
@@ -595,11 +714,14 @@ mod tests {
     }
 
     #[test]
-    fn needs_clean_agrees_with_clean_char() {
+    fn push_clean_agrees_with_clean_char() {
         for c in (0..0x800).filter_map(char::from_u32) {
             let s = format!("a{c}b");
-            let changed = s.chars().map(clean_char).ne(s.chars());
-            assert_eq!(needs_clean(&s), changed, "{c:?}");
+            let (mut kept, mut folded) = (String::new(), String::new());
+            assert_eq!(push_clean(&mut kept, &s, false), c == NBSP, "{c:?}");
+            assert_eq!(kept, s.chars().map(clean_char).collect::<String>(), "{c:?}");
+            push_clean(&mut folded, &s, true);
+            assert_eq!(folded, kept.replace('\n', " "), "{c:?}");
         }
     }
 

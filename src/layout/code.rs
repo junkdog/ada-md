@@ -7,7 +7,7 @@ use std::borrow::Cow;
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::wrap::cut;
+use super::wrap::{cut, text_width};
 use super::{Builder, CodeInfo, RowKind, push_span};
 use crate::doc::{CodeBlock, InlineStyle, LineRange};
 use crate::highlight;
@@ -67,7 +67,7 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
                 if b.screen && !chunk.is_empty() {
                     let col = b.col;
                     let range = from..from + chunk.len() as u32;
-                    b.search_seg(unit, range, col..col + chunk.width() as u16);
+                    b.search_seg(unit, range, col..col + text_width(chunk) as u16);
                 }
                 b.text(chunk, StyleKey::CodeText);
                 b.fill(avail, StyleKey::CodeBlock);
@@ -97,7 +97,7 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
             };
             b.end_row(line_src, kind);
         }
-        widest = widest.max(line.width());
+        widest = widest.max(text_width(&line));
     }
     if let Some(info) = b.out.code.get_mut(block as usize) {
         *info = CodeInfo {
@@ -121,7 +121,9 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
 /// Tabs to spaces at stops of four, and other control characters to spaces. Layout and the
 /// highlighter both work on the expanded line, so their byte offsets agree.
 pub fn expand_tabs(line: &str) -> Cow<'_, str> {
-    if !line.contains(|c: char| c.is_control()) {
+    // every control character starts with a byte below 0x20, 0x7f, or 0xc2 (C1): bytes first
+    let suspect = |b: u8| b < 0x20 || b == 0x7f || b == 0xc2;
+    if !line.bytes().any(suspect) || !line.contains(|c: char| c.is_control()) {
         return Cow::Borrowed(line);
     }
     let mut out = String::with_capacity(line.len() + TAB_STOP);
@@ -144,6 +146,14 @@ pub fn expand_tabs(line: &str) -> Cow<'_, str> {
 
 /// Split a line into pieces at most `width` columns wide. An empty line is one empty chunk.
 fn chunks(line: &str, width: u16) -> Vec<&str> {
+    // ASCII past `expand_tabs` has no control characters: a column a byte (LAY-01)
+    if line.is_ascii() {
+        let (len, width) = (line.len(), usize::from(width.max(1)));
+        let starts = (0..len.max(1)).step_by(width);
+        return starts
+            .map(|i| &line[i.min(len)..(i + width).min(len)])
+            .collect();
+    }
     let mut out = Vec::new();
     let mut start = 0;
     let mut used = 0u16;

@@ -806,7 +806,7 @@ struct Header<'a> {
 
 impl Header<'_> {
     /// The marked cell wraps short of its width by the mark's `extra`.
-    fn cells(&self, b: &Builder<'_>, widths: &[u16]) -> Vec<Wrapped> {
+    fn cells(&self, b: &mut Builder<'_>, widths: &[u16]) -> Vec<Wrapped> {
         let mut widths = widths.to_vec();
         if let Some(m) = self.mark
             && let Some(w) = widths.get_mut(m.col)
@@ -833,27 +833,31 @@ impl Mark<'_> {
     fn pad(self, b: &mut Builder<'_>, pad: u16, keep: u16) {
         let width = self.extra + 1;
         let gap = u16::from(pad.saturating_sub(keep) > width);
-        b.text(&" ".repeat(gap as usize), StyleKey::Text);
+        b.spaces(gap, StyleKey::Text);
         b.text(self.glyph, StyleKey::TableHeader);
-        b.text(
-            &" ".repeat(pad.saturating_sub(gap + width) as usize),
-            StyleKey::Text,
-        );
+        b.spaces(pad.saturating_sub(gap + width), StyleKey::Text);
     }
 }
 
-fn cells(b: &Builder<'_>, row: &TableRow, widths: &[u16], key: StyleKey) -> Vec<Wrapped> {
-    widths
-        .iter()
-        .enumerate()
-        .map(|(c, &w)| match row.cells.get(c) {
+/// A row's cells wrapped, in buffers from [`Builder::cells`]; [`done`] hands them back.
+fn cells(b: &mut Builder<'_>, row: &TableRow, widths: &[u16], key: StyleKey) -> Vec<Wrapped> {
+    let mut out = Vec::with_capacity(widths.len());
+    for (c, &w) in widths.iter().enumerate() {
+        let into = b.cells.pop().unwrap_or_default();
+        out.push(match row.cells.get(c) {
             Some(inl) => {
-                let into = Wrapped::new(Some(inl.unit));
+                let into = into.recycle(Some(inl.unit));
                 wrap::wrap(into, &inl.runs, key, w, b.doc, b.g, None)
             }
-            None => Wrapped::default(),
-        })
-        .collect()
+            None => into.recycle(None),
+        });
+    }
+    out
+}
+
+/// Keep `cells`' buffers for the next row's (LAY-01: a fresh one per cell was 15% of XL's layout).
+fn done(b: &mut Builder<'_>, cells: Vec<Wrapped>) {
+    b.cells.extend(cells);
 }
 
 fn grid(
@@ -879,6 +883,7 @@ fn grid(
     }
     .cells(b, widths);
     grid_row(b, header.row, &head, widths, &t.aligns, border, padded);
+    done(b, head);
     if let Some(bd) = border
         && !rows.is_empty()
     {
@@ -886,9 +891,11 @@ fn grid(
     }
     let header = header_start..b.out.row_count();
     for (i, row) in rows.iter().enumerate() {
-        let cells = cells(b, row, widths, b.text_key);
+        let key = b.text_key;
+        let cells = cells(b, row, widths, key);
         b.striped = i % 2 == 1;
         grid_row(b, row, &cells, widths, &t.aligns, border, None);
+        done(b, cells);
         b.striped = false;
     }
     if !rows.is_empty() {
@@ -974,14 +981,14 @@ fn grid_row(
                 Some(Align::Right) => (slack, 0),
                 _ => (0, slack),
             };
-            b.text(&" ".repeat(1 + left as usize), StyleKey::Text);
+            b.spaces(1 + left, StyleKey::Text);
             if let Some(line) = line {
                 b.emit_line(cell, line);
             }
             let pad = 1 + right + extra;
             match mark {
                 Some(m) if k == cell.lines.len().saturating_sub(1) => m.pad(b, pad, 0),
-                _ => b.text(&" ".repeat(pad as usize), StyleKey::Text),
+                _ => b.spaces(pad, StyleKey::Text),
             }
         }
         if b.striped {
@@ -1026,7 +1033,8 @@ fn records(
             None => b.text(&format!("{}.", i + 1), StyleKey::TableBorder),
         }
         b.end_row(row.src, RowKind::Decor);
-        let values = cells(b, row, &value_widths, b.text_key);
+        let key = b.text_key;
+        let values = cells(b, row, &value_widths, key);
         for (c, (key, value)) in keys.iter().zip(&values).enumerate() {
             let mark = header.mark.filter(|m| m.col == c);
             let height = key.lines.len().max(value.lines.len()).max(1);
@@ -1047,7 +1055,7 @@ fn records(
                 match mark {
                     // one space kept before the value
                     Some(m) if k == key.lines.len().saturating_sub(1) => m.pad(b, pad, 1),
-                    _ => b.text(&" ".repeat(pad as usize), StyleKey::Text),
+                    _ => b.spaces(pad, StyleKey::Text),
                 }
                 if let Some(line) = value.lines.get(k) {
                     b.emit_line(value, line);
@@ -1059,7 +1067,9 @@ fn records(
                 b.end_row(row.src, RowKind::Text);
             }
         }
+        done(b, values);
     }
+    done(b, keys);
 }
 
 #[cfg(test)]

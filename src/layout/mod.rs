@@ -24,7 +24,7 @@ use crate::images;
 use crate::theme::{Glyphs, StyleKey};
 use table::ColMeasure;
 pub use table::Sort;
-use wrap::{Line, NBSP, Wrapped, text_width};
+use wrap::{Line, NBSP, PAD, Wrapped, text_width};
 
 /// How tables render; `t` cycles it for the whole session (ADR-11, plan Q12).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -526,6 +526,13 @@ fn relayout_lines(
         ..
     } = spare;
     text.clear();
+    // A layout's text is 1.0–3.2× its source (median 1.4 over the vault's notes past 20 KB): room
+    // for twice that up front, so it seldom grows. Grown by doubling, its capacity landed anywhere
+    // up to twice its length, set by how the first bytes came, and a large text held both copies
+    // while it moved (XL's print +2.7 MiB at O-24, which copies a line at a time). The room it
+    // doesn't fill is never touched, so it isn't resident.
+    let source = doc.line_starts.last().map_or(0, |&s| s as usize);
+    text.reserve(2 * source);
     spans.clear();
     rows.clear();
     block_rows.clear();
@@ -574,6 +581,7 @@ fn relayout_lines(
         stripe: None,
         striped: false,
         scratch: Wrapped::default(),
+        cells: Vec::new(),
     };
     if margin > 0 {
         b.push_prefix(&" ".repeat(margin as usize), StyleKey::Text);
@@ -641,13 +649,14 @@ struct Builder<'a> {
     striped: bool,
     /// The last paragraph's wrap, whose buffers the next one reuses.
     scratch: Wrapped,
+    /// Table cells' wraps done with, whose buffers the next row's reuse.
+    cells: Vec<Wrapped>,
 }
 
 /// A span's style: key, inline markup, link.
 type Look = (StyleKey, InlineStyle, Option<LinkId>);
 
 fn push_span(out: &mut Layout, row_start: u32, col: &mut u16, text: &str, width: u16, look: Look) {
-    let (key, inline, link) = look;
     if text.is_empty() {
         return;
     }
@@ -660,6 +669,34 @@ fn push_span(out: &mut Layout, row_start: u32, col: &mut u16, text: &str, width:
         out.text.push_str(text);
     }
     let end = out.text.len() as u32;
+    push_range(out, row_start, col, start..end, width, look);
+}
+
+/// Append `text` with its [`PAD`]s as spaces: as many bytes, so its offsets hold.
+fn push_padded(out: &mut String, text: &str, pads: bool) {
+    if !pads {
+        out.push_str(text);
+        return;
+    }
+    for (i, part) in text.split(PAD).enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        out.push_str(part);
+    }
+}
+
+/// A span over `start..end` of [`Layout::text`], already there; merged into the row's last span
+/// when that one has the same look and ends where it starts.
+fn push_range(
+    out: &mut Layout,
+    row_start: u32,
+    col: &mut u16,
+    Range { start, end }: Range<u32>,
+    width: u16,
+    look: Look,
+) {
+    let (key, inline, link) = look;
     *col = col.saturating_add(width);
     if out.spans.len() as u32 > row_start
         && let Some(last) = out.spans.last_mut()
@@ -794,8 +831,18 @@ impl Builder<'_> {
     /// Pad the row with spaces up to `width` columns past the prefixes.
     fn fill(&mut self, width: u16, key: StyleKey) {
         let target = self.prefix_width.saturating_add(width);
-        if self.col < target {
-            self.text(&" ".repeat((target - self.col) as usize), key);
+        self.spaces(target.saturating_sub(self.col), key);
+    }
+
+    /// `n` spaces, without building them (LAY-01: a table's cells are padded on every row).
+    fn spaces(&mut self, mut n: u16, key: StyleKey) {
+        const SPACES: &str = "                                                                ";
+        while n > 0 {
+            let k = n.min(SPACES.len() as u16);
+            let look = (key, InlineStyle::NONE, None);
+            let text = &SPACES[..k as usize];
+            push_span(&mut self.out, self.row_start, &mut self.col, text, k, look);
+            n -= k;
         }
     }
 
@@ -808,7 +855,14 @@ impl Builder<'_> {
     }
 
     fn emit_line(&mut self, w: &Wrapped, line: &Line) {
-        for seg in w.line_segs(line) {
+        let segs = w.line_segs(line);
+        // Segs that follow each other in the buffer are copied into the text in one go, and
+        // their spans are ranges of that copy (O-24): `copied` segs so far, and the last copy's
+        // start in the text and in the buffer. A run of spaces between words keeps only its
+        // first, so a line can take more than one copy. A buffer with an NBSP of the source's,
+        // shorter as a space, takes the copy a seg at a time.
+        let (mut copied, mut to, mut from_buf) = (0, 0, 0);
+        for (i, seg) in segs.iter().enumerate() {
             let piece = &w.pieces[seg.piece as usize];
             let from = self.col;
             if let Some(unit) = w.unit.filter(|_| self.screen) {
@@ -824,14 +878,44 @@ impl Builder<'_> {
                     self.search_seg(unit, at(a)..at(b), col..end);
                 }
             }
-            push_span(
-                &mut self.out,
-                self.row_start,
-                &mut self.col,
-                w.seg_text(seg),
-                seg.width,
-                (piece.key, piece.inline, piece.link),
-            );
+            let look = (piece.key, piece.inline, piece.link);
+            if w.nbsp {
+                let text = w.seg_text(seg);
+                let text = match w.pads {
+                    true => &text.replace(PAD, " "),
+                    false => text,
+                };
+                push_span(
+                    &mut self.out,
+                    self.row_start,
+                    &mut self.col,
+                    text,
+                    seg.width,
+                    look,
+                );
+            } else {
+                if i == copied {
+                    let (mut end, mut pads) = (i + 1, piece.pads);
+                    while end < segs.len() && segs[end].start == segs[end - 1].end {
+                        pads |= w.pieces[segs[end].piece as usize].pads;
+                        end += 1;
+                    }
+                    let text = &w.buf[seg.start as usize..segs[end - 1].end as usize];
+                    (to, from_buf) = (self.out.text.len() as u32, seg.start);
+                    push_padded(&mut self.out.text, text, pads);
+                    copied = end;
+                }
+                let start = to + (seg.start - from_buf);
+                let range = start..start + (seg.end - seg.start);
+                push_range(
+                    &mut self.out,
+                    self.row_start,
+                    &mut self.col,
+                    range,
+                    seg.width,
+                    look,
+                );
+            }
             if let Some(link) = piece.link {
                 self.hit(from, self.col, link);
             }
