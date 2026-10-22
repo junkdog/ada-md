@@ -5,6 +5,7 @@ mod help;
 mod outline;
 mod paint;
 mod save;
+mod settings;
 
 use std::ops::Range;
 
@@ -13,7 +14,7 @@ use crate::grid::Grid;
 use crate::style::Style;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{Document, ImageView, State};
+use crate::app::{Document, ImageView, Row, State};
 use crate::images::{self, Entry};
 use crate::layout::wrap::cut;
 use crate::layout::{Layout, RowKind};
@@ -21,6 +22,7 @@ use crate::theme::{StyleKey, Theme};
 
 pub use help::max_scroll as help_max_scroll;
 pub use paint::{Painter, span_style};
+pub use settings::hit as settings_hit;
 
 /// Paint the frame on `buf`, which is blank, as [`Screen::draw`](crate::grid::Screen::draw) hands
 /// it over.
@@ -75,10 +77,16 @@ pub fn view(state: &State, buf: &mut Grid) {
         gutter(buf, rows_area, state, doc, &lines);
         // A kitty image is sent once, with the first cell it paints; the popup would paint over
         // that cell and lose it. Sixel would draw over the popup. So images wait for it to close.
-        if state.outline.is_none() && state.help.is_none() && state.save.is_none() {
+        let popup = state.outline.is_some()
+            || state.help.is_some()
+            || state.save.is_some()
+            || state.settings.is_some();
+        if !popup {
             block_images(buf, rows_area, state, doc);
         }
     }
+    // the theme list opens over the settings
+    settings::draw(buf, doc_area, state);
     if state.outline.is_some() {
         outline::draw(buf, doc_area, state);
     }
@@ -385,6 +393,14 @@ fn status_text(state: &State, room: usize) -> Pieces {
     }
     if state.help.is_some() {
         let hint = "any other key closes the help";
+        return vec![(elide_end(hint, room), theme.style(StyleKey::StatusHeading))];
+    }
+    if let (Some(popup), None) = (&state.settings, &state.outline) {
+        let hint = match popup.focused() {
+            Row::Theme => "Enter lists the themes, previewing each",
+            Row::Width => "type the width in columns; none is the terminal's",
+            _ => "↑↓ move · Space or ←→ change",
+        };
         return vec![(elide_end(hint, room), theme.style(StyleKey::StatusHeading))];
     }
     if state.view.is_some() {

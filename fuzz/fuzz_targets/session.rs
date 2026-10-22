@@ -6,9 +6,9 @@
 //! late, out of order, or after the document they were for is gone. Intents arrive directly or as
 //! keys and mouse events through the default keymap, and `T` lists two extra themes with wide, empty and ASCII
 //! glyphs. The document is markdown, code, config, plain text or an image, as its name says, and
-//! links lead to code files at a `#L42` line. `S` reads a fuzzed config file, answered at once as
-//! the interactive loop does, and is never written: what it would write must read back with nothing
-//! left to save. Every step is painted, and the rows kept on quit replay to the last frame. Nothing
+//! links lead to code files at a `#L42` line. `S` and the settings popup (`F2`, `,`) read a fuzzed
+//! config file, answered at once as the interactive loop does, and it is never written: what `S`
+//! would write, and what the popup's `s` writes, must read back with nothing left to save. Every step is painted, and the rows kept on quit replay to the last frame. Nothing
 //! may panic. A `Graphics` intent sets the image encoder too, as the interactive loop does, so
 //! images are drawn for kitty, sixel and iTerm2 as well as in half-blocks: a kitty placeholder must
 //! show its image's row and column, by its diacritics or its left neighbor's, in the color of an
@@ -130,6 +130,19 @@ enum Op {
         row: u8,
     },
     ToggleMouse,
+    OpenSettings,
+    SettingsMove(i8),
+    SettingsFlip,
+    SettingsStep(bool),
+    SettingsDigit(u8),
+    SettingsErase,
+    SettingsClick {
+        col: u8,
+        row: u8,
+    },
+    SettingsKeep,
+    SettingsSave,
+    SettingsCancel,
 }
 
 /// A string of at most 24 chars, so search patterns and filters stay cheap.
@@ -533,7 +546,8 @@ fn answer(
                 path,
                 text: "theme = \"dracula\"\ntables = \"grid\"\ncode_wrap = false\n\
                        line_numbers = \"all\"\nmax_width = 70\nimages = false\n\
-                       image_protocol = \"sixel\"\nlive_reload = false\n\n[keys]\nquit = \"x\"\n"
+                       image_protocol = \"sixel\"\nlive_reload = false\nkeep_screen = false\n\n\
+                       [keys]\nquit = \"x\"\n"
                     .into(),
             },
             _ => Msg::ConfigRead {
@@ -996,13 +1010,29 @@ impl Session<'_> {
         }
         let saving = msg == Msg::SaveConfig;
         let opens = matches!(msg, Msg::ConfigRead { .. });
+        let listing = msg.may_list_themes();
+        let boxed = self.state.save.clone();
         let mut read = Vec::new();
         let cmds = app::update(&mut self.state, msg);
+        // the input thread hears whether a change in the settings opened the theme list
+        if listing {
+            self.keymap.theme_list(self.state.outline.is_some());
+        }
+        // what `s` in the settings writes, on reading the file, reads back with nothing left to
+        // save
+        for cmd in cmds.iter().filter(|_| opens) {
+            if let Cmd::WriteConfig { text, .. } = cmd {
+                let again = config::save("c.toml", text, &self.state.active_settings());
+                assert_eq!(again.map(|s| s.changes), Ok(Vec::new()), "writing:\n{text}");
+            }
+        }
         // what the box would write reads back with nothing left to save. Only a box this read
-        // opened, which clears the status: an older one can be stale, since a direct intent
-        // gets past the box the keymap would hold the keys for
+        // opened: an older one can be stale, since a direct intent gets past the box the keymap
+        // would hold the keys for (and the settings' `s` reads the file with it open, writing at
+        // once)
         if opens
             && self.state.status.is_none()
+            && self.state.save != boxed
             && let Some(box_) = &self.state.save
         {
             let text = &box_.save.text;
@@ -1019,9 +1049,10 @@ impl Session<'_> {
                 Cmd::DecodeImage(_) => self.reach.decodes += 1,
                 _ => {}
             }
+            let inline = matches!(cmd, Cmd::ReadConfig(_));
             match answer(cmd, &mut self.u, &self.doc, &mut self.effects, drawn) {
                 // the interactive loop reads the config file inline
-                Ok(Some(msg)) if saving => read.push(msg),
+                Ok(Some(msg)) if inline => read.push(msg),
                 Ok(Some(msg)) => self.pending.push(msg),
                 Ok(None) => {}
                 // out of input: the world goes quiet
@@ -1174,6 +1205,19 @@ impl Session<'_> {
             },
             Op::Mouse { kind, col, row } => return self.keymap.mouse(mouse(kind, col, row)),
             Op::ToggleMouse => Msg::ToggleMouse,
+            Op::OpenSettings => Msg::OpenSettings,
+            Op::SettingsMove(by) => Msg::SettingsMove { by: i32::from(by) },
+            Op::SettingsFlip => Msg::SettingsFlip,
+            Op::SettingsStep(next) => Msg::SettingsStep { dir: dir(next) },
+            Op::SettingsDigit(digit) => Msg::SettingsDigit { digit },
+            Op::SettingsErase => Msg::SettingsErase,
+            Op::SettingsClick { col, row } => Msg::SettingsClick {
+                col: u16::from(col),
+                row: u16::from(row),
+            },
+            Op::SettingsKeep => Msg::SettingsKeep,
+            Op::SettingsSave => Msg::SettingsSave,
+            Op::SettingsCancel => Msg::SettingsCancel,
             Op::Open(i) => {
                 let files = &world().files;
                 Msg::Open {

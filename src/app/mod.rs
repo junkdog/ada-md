@@ -11,6 +11,7 @@ mod load;
 mod nav;
 mod run;
 mod save;
+mod settings;
 mod sort;
 mod watch;
 
@@ -41,6 +42,8 @@ use nav::{Entry, Nav};
 pub use run::{arenas, one_arena, run_tui};
 pub(crate) use run::{draw_frame, init_terminal, restore_terminal};
 pub use save::Saving;
+use settings::{Change, ConfigUse};
+pub use settings::{Hit, MIN_WIDTH, NextStart, Row, SettingsPopup, Value};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Size {
@@ -175,6 +178,36 @@ pub enum Msg {
     SaveConfirm,
     /// In the save box: close it, writing nothing.
     SaveCancel,
+    /// `F2`, `,`: the settings popup, each option with its value, changed in place.
+    OpenSettings,
+    /// In the settings: focus another row.
+    SettingsMove {
+        by: i32,
+    },
+    /// In the settings, `Space`/`Enter`: flip the focused switch, take its next choice, or open
+    /// the theme list.
+    SettingsFlip,
+    /// In the settings, `←`/`→`: a switch off or on, the previous or the next choice.
+    SettingsStep {
+        dir: Dir,
+    },
+    /// In the settings: a digit typed into the prose width.
+    SettingsDigit {
+        digit: u8,
+    },
+    /// In the settings: `Backspace` in the prose width.
+    SettingsErase,
+    /// A left click in the settings, on the screen's cell `col`, `row`.
+    SettingsClick {
+        col: u16,
+        row: u16,
+    },
+    /// `a`: close the settings, keeping the changes for the session.
+    SettingsKeep,
+    /// `s`: close the settings, keeping the changes and saving them to the config file.
+    SettingsSave,
+    /// `Esc`: close the settings, putting back the settings they opened with.
+    SettingsCancel,
     Quit,
     // world → app: the payload is recorded, because these read the outside world
     DocLoaded {
@@ -290,6 +323,15 @@ impl Msg {
                 | Msg::Reload
                 | Msg::FileChanged { .. }
                 | Msg::EditorExited { .. }
+        )
+    }
+
+    /// Changes in the settings popup that may open the theme list: the input thread waits to
+    /// hear whether they did, to hand it the keys.
+    pub fn may_list_themes(&self) -> bool {
+        matches!(
+            self,
+            Msg::SettingsFlip | Msg::SettingsStep { .. } | Msg::SettingsClick { .. }
         )
     }
 
@@ -597,12 +639,22 @@ pub struct State {
     pub help: Option<u16>,
     /// The box `S` opens, asking whether to save the config, while it is open.
     pub save: Option<Saving>,
+    /// The settings popup, while it is open.
+    pub settings: Option<SettingsPopup>,
+    /// What the config file is being read for.
+    config_for: Option<ConfigUse>,
+    /// The options read only at start, as they'll be saved for the next one.
+    pub next_start: NextStart,
 }
 
 impl State {
     pub fn new(theme: Theme, config: Config) -> Self {
         let glyphs_gen = theme.glyphs.generation();
         let syntax = Arc::new(SyntaxTheme::new(&theme.syntax));
+        let next_start = NextStart {
+            images: config.images,
+            live_reload: config.live_reload,
+        };
         Self {
             // `main` adds the user's themes, and the first `T` the built-ins
             themes: Vec::new(),
@@ -638,6 +690,9 @@ impl State {
             view: None,
             help: None,
             save: None,
+            settings: None,
+            config_for: None,
+            next_start,
         }
     }
 
@@ -1266,10 +1321,17 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.status = None;
             state.save_config()
         }
-        Msg::ConfigRead { path, text } => {
-            state.config_read(path, &text);
-            Vec::new()
-        }
+        Msg::ConfigRead { path, text } => match state.config_for.take() {
+            Some(ConfigUse::Marks) => {
+                state.settings_file(&path.display().to_string(), &text);
+                Vec::new()
+            }
+            Some(ConfigUse::Save) => state.save_now(path, &text),
+            Some(ConfigUse::SaveBox) | None => {
+                state.config_read(path, &text);
+                Vec::new()
+            }
+        },
         Msg::SaveConfirm => state.save_confirm(),
         Msg::SaveCancel => {
             state.save = None;
@@ -1280,9 +1342,23 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             Vec::new()
         }
         Msg::ConfigFailed { error } => {
+            state.config_for = None;
             state.status = Some(error);
             Vec::new()
         }
+        Msg::OpenSettings => state.open_settings(),
+        Msg::SettingsMove { by } => {
+            state.settings_move(by);
+            Vec::new()
+        }
+        Msg::SettingsFlip => state.settings_change(Change::Flip),
+        Msg::SettingsStep { dir } => state.settings_change(Change::Step(dir)),
+        Msg::SettingsDigit { digit } => state.settings_width(Some(digit)),
+        Msg::SettingsErase => state.settings_width(None),
+        Msg::SettingsClick { col, row } => state.settings_click(col, row),
+        Msg::SettingsKeep => state.settings_keep(),
+        Msg::SettingsSave => state.settings_save(),
+        Msg::SettingsCancel => state.settings_cancel(),
         Msg::OpenFailed { target, error } => {
             state.status = Some(format!("can't open {target}: {error}"));
             Vec::new()
@@ -1370,12 +1446,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.jump_heading(dir);
             state.visible_jobs()
         }
-        Msg::ToggleTableMode => {
-            state.table_mode = state.table_mode.next();
-            state.status = Some(format!("tables: {}", state.table_mode.name()));
-            state.relayout();
-            state.visible_jobs()
-        }
+        Msg::ToggleTableMode => state.set_table_mode(state.table_mode.next()),
         Msg::SortOpen => {
             state.status = None;
             state.sort_open()
@@ -1384,46 +1455,10 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.sort_table(dir);
             Vec::new()
         }
-        Msg::ToggleCodeWrap => {
-            state.code_wrap = !state.code_wrap;
-            let mode = if state.code_wrap {
-                "wrap"
-            } else {
-                "no-wrap, ←/→ scroll"
-            };
-            state.status = Some(format!("code: {mode}"));
-            state.relayout();
-            state.visible_jobs()
-        }
-        Msg::ToggleThemeBg => {
-            state.theme_bg = !state.theme_bg;
-            let bg = if state.theme_bg {
-                "the theme's"
-            } else {
-                "the terminal's"
-            };
-            state.status = Some(format!("background: {bg}"));
-            state.set_theme(state.designed.clone())
-        }
-        Msg::ToggleMouse => {
-            state.mouse = !state.mouse;
-            state.status = Some(if state.mouse {
-                "mouse: on, Shift-drag selects text".to_owned()
-            } else {
-                "mouse: off, the terminal selects text".to_owned()
-            });
-            vec![Cmd::Mouse(state.mouse)]
-        }
-        Msg::ToggleLineNumbers => {
-            let code = state
-                .doc
-                .as_ref()
-                .is_some_and(|d| matches!(d.filetype, FileType::Text { .. }));
-            state.line_numbers = state.line_numbers.toggle(code);
-            state.status = Some(format!("line numbers: {}", state.line_numbers.name()));
-            state.relayout();
-            state.visible_jobs()
-        }
+        Msg::ToggleCodeWrap => state.set_code_wrap(!state.code_wrap),
+        Msg::ToggleThemeBg => state.set_theme_bg(!state.theme_bg),
+        Msg::ToggleMouse => state.set_mouse(!state.mouse),
+        Msg::ToggleLineNumbers => state.toggle_line_numbers(),
         Msg::ScrollCodeX { by } => {
             state.status = None;
             state.scroll_code_x(by);

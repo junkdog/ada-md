@@ -107,6 +107,15 @@ popup_selected = { fg = "background", bg = "purple", bold = true }
 sort_table = { fg = "purple" }
 line_number = { fg = "comment" }
 
+[ui.settings]                # the settings popup (`F2`): its rows, and the values they set
+label = { fg = "comment" }
+focus = { fg = "foreground", bg = "current_line", bold = true }  # the focused row
+field = { fg = "foreground", bg = "background_darker" }  # every value sits on it, as in an input
+switch_on = { fg = "purple", bold = true }
+switch_off = { fg = "comment" }
+choice = { fg = "background_darker", bg = "purple", bold = true }  # the current one of a row of choices
+changed = { fg = "orange", bold = true }        # the mark on a value the config file doesn't have
+
 [syntax]
 "comment" = { fg = "comment" }
 "meta.preprocessor" = { fg = "pink" }

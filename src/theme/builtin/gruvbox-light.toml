@@ -113,6 +113,15 @@ popup_selected = { fg = "bg", bg = "orange", bold = true }
 sort_table = { fg = "orange" }                  # the borders and header of the table `s` sorts
 line_number = { fg = "bg4" }                    # line numbers (`#`)
 
+[ui.settings]                # the settings popup (`F2`): its rows, and the values they set
+label = { fg = "fg4" }
+focus = { fg = "fg0", bg = "bg2", bold = true }  # the focused row
+field = { fg = "fg", bg = "bg0_h" }             # every value sits on it, as in an input
+switch_on = { fg = "orange", bold = true }
+switch_off = { fg = "bg4" }
+choice = { fg = "bg0_h", bg = "orange", bold = true }  # the current one of a row of choices
+changed = { fg = "yellow", bold = true }        # the mark on a value the config file doesn't have
+
 [syntax]                     # TextMate scope selector → style; the most specific match wins
 "comment" = { fg = "gray", italic = true }
 "meta.preprocessor" = { fg = "aqua" }

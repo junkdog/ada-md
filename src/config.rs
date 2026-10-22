@@ -225,8 +225,8 @@ pub fn default_text() -> String {
     let mut text = String::from(
         "\
 # ada's configuration. Every option is shown commented out, at its default value;
-# command-line flags win over what is set here. `S` saves the settings in effect to this file,
-# changing only the values.
+# command-line flags win over what is set here. `F2` or `,` shows the settings to change them in
+# place, and saves them here; so does `S`, for the settings in effect. Saving changes only the values.
 
 # The theme: a built-in name (gruvbox-dark, gruvbox-light, catppuccin-mocha, catppuccin-macchiato,
 # catppuccin-frappe, catppuccin-latte, tokyonight-night, tokyonight-storm, tokyonight-moon,
@@ -319,8 +319,8 @@ pub fn write(path: &Path, text: &str) -> io::Result<()> {
 }
 
 /// The options `S` saves, in the order its box lists them. `keep_screen` has no key or flag to
-/// change it in a session, and `[keys]` none at all.
-const SAVED: [&str; 10] = [
+/// change it in a session (only the settings popup does), and `[keys]` none at all.
+const SAVED: [&str; 11] = [
     "theme",
     "theme_bg",
     "mouse",
@@ -331,6 +331,7 @@ const SAVED: [&str; 10] = [
     "images",
     "image_protocol",
     "live_reload",
+    "keep_screen",
 ];
 
 /// What saving the session's settings does: each option whose active value differs from the
@@ -341,25 +342,55 @@ pub struct Save {
     pub text: String,
 }
 
+/// The values a config file gives the options [`SAVED`] names, an option it doesn't set at its
+/// default: what the settings in effect are compared with, by `S` and by the settings popup's
+/// marks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Saved {
+    values: [String; 11],
+    /// The file's `image_protocol`, which stays as it is while images are off.
+    protocol: String,
+}
+
+impl Saved {
+    /// The values of the config file's `text`, which `file` names in errors.
+    pub fn read(file: &str, text: &str) -> Result<Self, String> {
+        let parsed = toml_walk::parse(file, text)?;
+        Self::of(file, text, parsed.get_ref())
+    }
+
+    fn of(file: &str, text: &str, root: &DeTable<'_>) -> Result<Self, String> {
+        let saved = parse(file, text, &mut Vec::new())?;
+        // with images off, the protocol stays as the file names it
+        let protocol = toml_walk::entry(root, "image_protocol")
+            .and_then(|v| v.get_ref().as_str())
+            .map_or_else(|| toml_string("auto"), toml_string);
+        Ok(Self {
+            values: values(&saved, &protocol),
+            protocol,
+        })
+    }
+
+    /// Each option whose value in `active` isn't the file's, as `(key, from, to)`.
+    pub fn changes(&self, active: &Settings) -> Vec<(&'static str, String, String)> {
+        SAVED
+            .into_iter()
+            .zip(self.values.iter())
+            .zip(values(active, &self.protocol))
+            .filter(|((_, from), to)| *from != to)
+            .map(|((key, from), to)| (key, from.clone(), to))
+            .collect()
+    }
+}
+
 /// Compare the `active` settings with the config file's `text`, which `file` names in errors.
 /// An option the file doesn't set counts as its default. Only the values change: every comment
 /// and line around them stays as the user wrote it.
 pub fn save(file: &str, text: &str, active: &Settings) -> Result<Save, String> {
-    let saved = parse(file, text, &mut Vec::new())?;
     let parsed = toml_walk::parse(file, text)?;
     let root = parsed.get_ref();
-    // with images off, the protocol stays as the file names it
-    let protocol = toml_walk::entry(root, "image_protocol")
-        .and_then(|v| v.get_ref().as_str())
-        .map_or_else(|| toml_string("auto"), toml_string);
-    let to = values(active, &protocol);
-    let changes: Vec<_> = SAVED
-        .into_iter()
-        .zip(values(&saved, &protocol))
-        .zip(to.clone())
-        .filter(|((_, from), to)| from != to)
-        .map(|((key, from), to)| (key, from, to))
-        .collect();
+    let saved = Saved::of(file, text, root)?;
+    let changes = saved.changes(active);
     if changes.is_empty() {
         return Ok(Save {
             changes,
@@ -368,7 +399,8 @@ pub fn save(file: &str, text: &str, active: &Settings) -> Result<Save, String> {
     }
     let text = rewrite(text, root, &changes);
     // what's written must read back as the settings saved
-    let back = parse(file, &text, &mut Vec::new()).map(|s| values(&s, &protocol));
+    let to = values(active, &saved.protocol);
+    let back = parse(file, &text, &mut Vec::new()).map(|s| values(&s, &saved.protocol));
     if back != Ok(to) {
         return Err(format!(
             "{file}: can't save the settings without breaking the file"
@@ -379,7 +411,7 @@ pub fn save(file: &str, text: &str, active: &Settings) -> Result<Save, String> {
 
 /// The options [`SAVED`] names, as `s` sets them, in TOML. With images off, `image_protocol` is
 /// `protocol`.
-fn values(s: &Settings, protocol: &str) -> [String; 10] {
+fn values(s: &Settings, protocol: &str) -> [String; 11] {
     [
         toml_string(s.theme.as_deref().unwrap_or(BUILTIN[0].0)),
         s.theme_bg.to_string(),
@@ -395,6 +427,7 @@ fn values(s: &Settings, protocol: &str) -> [String; 10] {
             ImageMode::Force(proto) => toml_string(proto.name()),
         },
         s.live_reload.to_string(),
+        s.keep_screen.to_string(),
     ]
 }
 
@@ -826,6 +859,29 @@ quit = \"x\"
             changes(&super::save("c.toml", text, &kitty).unwrap()),
             ["images: false → true"]
         );
+    }
+
+    #[test]
+    fn keep_screen_is_saved_and_the_file_read_for_marks() {
+        let text = default_text();
+        let active = Settings {
+            keep_screen: false,
+            ..Settings::default()
+        };
+        let out = save("c.toml", &text, &active).unwrap();
+        assert_eq!(changes(&out), ["keep_screen: true → false"]);
+        assert!(out.text.contains("\nkeep_screen = false\n"));
+
+        // what the file now has counts as no change, and the default as one
+        let saved = Saved::read("c.toml", &out.text).unwrap();
+        assert!(saved.changes(&active).is_empty());
+        let keys: Vec<_> = saved
+            .changes(&Settings::default())
+            .into_iter()
+            .map(|(key, ..)| key)
+            .collect();
+        assert_eq!(keys, ["keep_screen"]);
+        assert!(Saved::read("c.toml", "tables = 1\n").is_err());
     }
 
     #[test]

@@ -102,6 +102,16 @@ messages! {
     "save-config" => SaveConfig {},
     "save-confirm" => SaveConfirm {},
     "save-cancel" => SaveCancel {},
+    "open-settings" => OpenSettings {},
+    "settings-move" => SettingsMove { by },
+    "settings-flip" => SettingsFlip {},
+    "settings-step" => SettingsStep { dir },
+    "settings-digit" => SettingsDigit { digit },
+    "settings-erase" => SettingsErase {},
+    "settings-click" => SettingsClick { col, row },
+    "settings-keep" => SettingsKeep {},
+    "settings-save" => SettingsSave {},
+    "settings-cancel" => SettingsCancel {},
     "quit" => Quit {},
     "doc-loaded" => DocLoaded { path, mtime, text, doc },
     "doc-failed" => DocFailed { path, error },
@@ -175,7 +185,7 @@ macro_rules! int_fields {
     )*};
 }
 
-int_fields!(i16, i32, u16, u32, u64);
+int_fields!(u8, i16, i32, u16, u32, u64);
 
 /// Computed results are never written: replay recomputes them (ADR-19).
 impl<T> Field for Computed<T> {
@@ -878,6 +888,16 @@ mod tests {
             },
             Msg::SaveConfirm,
             Msg::SaveCancel,
+            Msg::OpenSettings,
+            Msg::SettingsMove { by: -2 },
+            Msg::SettingsFlip,
+            Msg::SettingsStep { dir: Dir::Prev },
+            Msg::SettingsDigit { digit: 7 },
+            Msg::SettingsErase,
+            Msg::SettingsClick { col: 40, row: 9 },
+            Msg::SettingsKeep,
+            Msg::SettingsSave,
+            Msg::SettingsCancel,
             Msg::ConfigWritten {
                 path: "/home/u/.config/ada/config.toml".into(),
             },

@@ -4,23 +4,23 @@ expression: frames.last().unwrap()
 ---
    Code
            ╭─ keys ─────────────────────────────────────────────────╮
-   rust    │   o               the outline of headings              │
-   fn main(│   l               the list of links                    │
-       prin│                                                        │
-       let │ View                                                   │ has to
-  ↪wrap whe│   t               tables: auto, grid, records          │
-   }       │   s               sort a table on screen by a column   │
-           │   w               wrap code, or scroll it sideways     │
+   rust    │   l               the list of links                    │
+   fn main(│                                                        │
+       prin│ View                                                   │
+       let │   t               tables: auto, grid, records          │ has to
+  ↪wrap whe│   s               sort a table on screen by a column   │
+   }       │   w               wrap code, or scroll it sideways     │
            │   ←               scroll code left                     │
-   kotlin  │   →               scroll code right                    │
-   fun gree│   #               show or hide line numbers            │
-           │   B               theme background, or the terminal's  │
+           │   →               scroll code right                    │
+   kotlin  │   #               show or hide line numbers            │
+   fun gree│   B               theme background, or the terminal's  │
            │   T               pick a theme, previewing each        │
            │                                                        │
-   untagged│ Other                                                  │
-           │   r               read the file again                  │
+           │ Other                                                  │
+   untagged│   r               read the file again                  │
            │   e               edit in $VISUAL or $EDITOR           │
            │   y               copy the link or the code block      │
+           │   F2 ,            see, change and save the settings    │
    indented│   S               save the settings to the config file │
    block   │   M               wheel and clicks, or text selection  │
            ╰─────────────────────────────────────────── j/k scroll ─╯

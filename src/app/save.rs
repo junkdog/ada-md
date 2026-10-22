@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use super::{Cmd, State};
+use super::{Cmd, ConfigUse, State};
 use crate::config::{self, Save, Settings};
 
 /// The save box, while it is open: the file, and what saving changes in it.
@@ -24,8 +24,8 @@ impl State {
             theme_bg: self.theme_bg,
             mouse: self.mouse,
             max_width: self.config.max_width,
-            images: self.config.images,
-            live_reload: self.config.live_reload,
+            images: self.next_start.images,
+            live_reload: self.next_start.live_reload,
             keep_screen: self.config.keep_screen,
             table_mode: self.table_mode,
             code_wrap: self.code_wrap,
@@ -37,6 +37,8 @@ impl State {
     }
 
     pub(super) fn save_config(&mut self) -> Vec<Cmd> {
+        // what the read is for, file or not: a replay without one gets the recorded read
+        self.config_for = Some(ConfigUse::SaveBox);
         match &self.config.file {
             Some(path) => vec![Cmd::ReadConfig(path.clone())],
             None => {
@@ -62,6 +64,26 @@ impl State {
                 self.save = Some(Saving { path, save });
             }
         }
+    }
+
+    /// `s` in the settings popup: write what saving changes in the file's `text` at once.
+    pub(super) fn save_now(&mut self, path: PathBuf, text: &str) -> Vec<Cmd> {
+        match config::save(&path.display().to_string(), text, &self.active_settings()) {
+            Err(e) => self.status = Some(format!("can't save: {e}")),
+            Ok(save) if save.changes.is_empty() => {
+                self.status = Some(format!(
+                    "nothing to save: {} has these settings",
+                    path.display()
+                ));
+            }
+            Ok(save) => {
+                return vec![Cmd::WriteConfig {
+                    path,
+                    text: save.text,
+                }];
+            }
+        }
+        Vec::new()
     }
 
     pub(super) fn save_confirm(&mut self) -> Vec<Cmd> {

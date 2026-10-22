@@ -153,6 +153,7 @@ Press `?` in ada for the keys. See `ada --help` for every option.
 | `r` | read the file again |
 | `e` | edit in `$VISUAL` or `$EDITOR` at the current line |
 | `y` | copy the focused link, or the code block on screen |
+| `F2` `,` | the settings: every option with its value, changed in place and shown at once; `a` keeps the changes, `s` saves them too, `Esc` undoes them |
 | `S` | save the settings in effect to the config file: a box lists what changes, `Enter` saves, `Esc` cancels |
 | `M` | the mouse: the wheel and clicks on links, or the terminal's own selection |
 | `?` | help |
@@ -177,10 +178,16 @@ out at its default, so it's a place to look as much as a place to change things.
 `--print` and previews read it but never create it. It's the only file ada writes unasked.
 Deleted, it comes back on the next interactive run; an empty file in its place keeps it away.
 
+`F2` or `,` opens the settings: each option with its value, grouped, and the key that changes it outside the
+popup. `↑` `↓` move, `Space` or `←` `→` change the focused one, digits type the prose width, and `Enter` on the
+theme lists the themes. Every change shows behind the popup at once. A mark (`•`) flags each value the config
+file doesn't have; `a` keeps the changes for this session, `s` saves them to the file as well, and `Esc` puts
+back what it opened with. Images, their protocol and live reload are read at start, so their rows say `restart`.
+
 `S` saves the settings in effect back to it: the theme `T` picked, the `t`, `w`, `#`, `B` and `M` toggles, and
 flags such as `--theme`, `--max-width`, `-n`, `--no-images` and `--no-reload`. A box lists each option that
 changes, `old → new`, before anything is written. Only the values change; comments and the lines around them
-stay as they are. A theme loaded from a path is saved as that path.
+stay as they are, whichever way they're saved. A theme loaded from a path is saved as that path.
 
 ```toml
 theme = "gruvbox-light"

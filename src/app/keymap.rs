@@ -7,6 +7,8 @@
 //! and now, and the keys typed right after it can't race the main loop. The one mode it can't
 //! know is the confirm box `S` opens, which opens only when saving would change the file: the
 //! input thread waits for the main loop's answer, and [`Keymap::no_confirm`] takes the box back.
+//! Likewise, a change in the settings popup may open the theme list (its theme row): the input
+//! thread waits to hear, and [`Keymap::theme_list`] hands the keys to the list.
 //!
 //! The mouse maps here too, by the same mode: the wheel scrolls what it shows, and a left click
 //! in normal mode is a [`Msg::Click`] that `update` resolves against the layout.
@@ -15,6 +17,7 @@
 //! the config file's `[keys]` section overrides, and which the help overlay lists.
 
 use std::fmt;
+use std::mem;
 
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -102,6 +105,7 @@ actions! {
         Reload => "reload", "read the file again", ["r"],
         Edit => "edit", "edit in $VISUAL or $EDITOR", ["e"],
         Yank => "yank", "copy the link or the code block", ["y"],
+        Settings => "settings", "see, change and save the settings", ["f2", ","],
         SaveConfig => "save_config", "save the settings to the config file", ["S"],
         Mouse => "mouse", "wheel and clicks, or text selection", ["M"],
         Help => "help", "this help", ["?"],
@@ -150,6 +154,7 @@ impl Action {
             Action::Reload => Msg::Reload,
             Action::Edit => Msg::Edit,
             Action::Yank => Msg::Yank,
+            Action::Settings => Msg::OpenSettings,
             Action::SaveConfig => Msg::SaveConfig,
             Action::Mouse => Msg::ToggleMouse,
             Action::Help => Msg::Help,
@@ -443,6 +448,8 @@ enum Mode {
     Themes(String),
     /// The box asking whether to save the config: `Enter`/`y` or `Esc`/`n`/`q`.
     Confirm,
+    /// The settings popup: moving through its rows, changing the focused one, and the ways out.
+    Settings,
 }
 
 #[derive(Debug, Default)]
@@ -452,6 +459,8 @@ pub struct Keymap {
     mode: Mode,
     /// The cell the left button went down on, until it's released or dragged off.
     pressed: Option<(u16, u16)>,
+    /// The theme list is open over the settings popup, which takes the keys back when it closes.
+    over_settings: bool,
 }
 
 /// Edit `text` with a prompt key. `None` when the key isn't an edit.
@@ -533,15 +542,15 @@ impl Keymap {
                     KeyCode::Left if themes => Some(Msg::ThemesTone { dir: Dir::Prev }),
                     KeyCode::Right if themes => Some(Msg::ThemesTone { dir: Dir::Next }),
                     KeyCode::Enter => {
-                        self.mode = Mode::Normal;
+                        self.close_list();
                         Some(Msg::OutlinePick)
                     }
                     KeyCode::Esc => {
-                        self.mode = Mode::Normal;
+                        self.close_list();
                         Some(Msg::OutlineClose)
                     }
                     KeyCode::Char('c') if ctrl => {
-                        self.mode = Mode::Normal;
+                        self.close_list();
                         Some(Msg::OutlineClose)
                     }
                     KeyCode::Up | KeyCode::BackTab => by(-1),
@@ -589,12 +598,70 @@ impl Keymap {
                 self.mode = Mode::Normal;
                 Some(msg)
             }
+            Mode::Settings => self.settings(&key),
         }
     }
 
-    /// The wheel scrolls the document (under the search prompt too), moves through a list, or
-    /// scrolls the help; sideways, it scrolls code. A left button released on the cell it went
-    /// down on clicks there in normal mode; a drag isn't a click. The save box takes no mouse.
+    /// The settings popup's keys: `↑`/`↓` move, `Space`/`Enter` change, `←`/`→` choose, digits
+    /// type a width; `a` keeps, `s` saves, `Esc` undoes. Its own keys close it as `a` does.
+    fn settings(&mut self, event: &KeyEvent) -> Option<Msg> {
+        let key = Key::of(event);
+        let by = |by| Some(Msg::SettingsMove { by });
+        let step = |dir| Some(Msg::SettingsStep { dir });
+        let close = |keymap: &mut Self, msg| {
+            keymap.mode = Mode::Normal;
+            Some(msg)
+        };
+        if key.is_ctrl_c() {
+            return close(self, Msg::SettingsCancel);
+        }
+        if self.bindings.find(&[key]) == Some(Action::Settings) {
+            return close(self, Msg::SettingsKeep);
+        }
+        if !key.mods.difference(KeyModifiers::SHIFT).is_empty() {
+            return None;
+        }
+        match key.code {
+            KeyCode::Up | KeyCode::BackTab | KeyCode::Char('k') => by(-1),
+            KeyCode::Down | KeyCode::Tab | KeyCode::Char('j') => by(1),
+            KeyCode::PageUp | KeyCode::Home => by(i32::MIN / 2),
+            KeyCode::PageDown | KeyCode::End => by(i32::MAX / 2),
+            KeyCode::Char(' ') | KeyCode::Enter => Some(Msg::SettingsFlip),
+            KeyCode::Left | KeyCode::Char('h') => step(Dir::Prev),
+            KeyCode::Right | KeyCode::Char('l') => step(Dir::Next),
+            KeyCode::Char(c) if c.is_ascii_digit() => Some(Msg::SettingsDigit {
+                digit: c as u8 - b'0',
+            }),
+            KeyCode::Backspace => Some(Msg::SettingsErase),
+            KeyCode::Char('a') => close(self, Msg::SettingsKeep),
+            KeyCode::Char('s') => close(self, Msg::SettingsSave),
+            KeyCode::Esc | KeyCode::Char('q') => close(self, Msg::SettingsCancel),
+            _ => None,
+        }
+    }
+
+    /// A list closes: back to the settings popup when it opened over it.
+    fn close_list(&mut self) {
+        self.mode = if mem::take(&mut self.over_settings) {
+            Mode::Settings
+        } else {
+            Mode::Normal
+        };
+    }
+
+    /// The main loop's answer to a change in the settings popup: whether it opened the theme
+    /// list, which then takes the keys until it closes.
+    pub fn theme_list(&mut self, open: bool) {
+        if open && self.mode == Mode::Settings {
+            self.mode = Mode::Themes(String::new());
+            self.over_settings = true;
+        }
+    }
+
+    /// The wheel scrolls the document (under the search prompt too), moves through a list or the
+    /// settings, or scrolls the help; sideways, it scrolls code. A left button released on the
+    /// cell it went down on clicks there in normal mode and in the settings; a drag isn't a click.
+    /// The save box takes no mouse.
     pub fn mouse(&mut self, event: MouseEvent) -> Option<Msg> {
         let at = (event.column, event.row);
         let wheel = |by: i32| match self.mode {
@@ -605,6 +672,7 @@ impl Keymap {
             Mode::Help => Some(Msg::HelpScroll {
                 by: by * WHEEL_ROWS,
             }),
+            Mode::Settings => Some(Msg::SettingsMove { by }),
             Mode::Confirm => None,
         };
         let sideways = |by: i16| {
@@ -620,11 +688,12 @@ impl Keymap {
                 return None;
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                let clicked = self.pressed.take() == Some(at) && self.mode == Mode::Normal;
-                clicked.then_some(Msg::Click {
-                    col: at.0,
-                    row: at.1,
-                })
+                let (col, row) = at;
+                match (self.pressed.take() == Some(at), &self.mode) {
+                    (true, Mode::Normal) => Some(Msg::Click { col, row }),
+                    (true, Mode::Settings) => Some(Msg::SettingsClick { col, row }),
+                    _ => None,
+                }
             }
             MouseEventKind::ScrollDown => wheel(1),
             MouseEventKind::ScrollUp => wheel(-1),
@@ -671,6 +740,7 @@ impl Keymap {
             Action::Sort => self.mode = Mode::Sort(String::new()),
             Action::Theme => self.mode = Mode::Themes(String::new()),
             Action::SaveConfig => self.mode = Mode::Confirm,
+            Action::Settings => self.mode = Mode::Settings,
             _ => {}
         }
         Some(action.msg())
@@ -921,6 +991,110 @@ mod tests {
         assert_eq!(press(&mut km, KeyCode::Char('S')), Some(Msg::SaveConfig));
         km.no_confirm();
         assert_eq!(press(&mut km, KeyCode::Char('q')), Some(Msg::Quit));
+    }
+
+    #[test]
+    fn the_settings_take_their_keys() {
+        let mut km = Keymap::default();
+        assert_eq!(press(&mut km, KeyCode::F(2)), Some(Msg::OpenSettings));
+        let mv = |by| Some(Msg::SettingsMove { by });
+        assert_eq!(press(&mut km, KeyCode::Down), mv(1));
+        assert_eq!(press(&mut km, KeyCode::Char('k')), mv(-1));
+        assert_eq!(press(&mut km, KeyCode::Tab), mv(1));
+        assert_eq!(press(&mut km, KeyCode::Char(' ')), Some(Msg::SettingsFlip));
+        assert_eq!(press(&mut km, KeyCode::Enter), Some(Msg::SettingsFlip));
+        assert_eq!(
+            press(&mut km, KeyCode::Left),
+            Some(Msg::SettingsStep { dir: Dir::Prev })
+        );
+        assert_eq!(
+            typed(&mut km, "l90x"),
+            [
+                Msg::SettingsStep { dir: Dir::Next },
+                Msg::SettingsDigit { digit: 9 },
+                Msg::SettingsDigit { digit: 0 },
+            ]
+        );
+        assert_eq!(press(&mut km, KeyCode::Backspace), Some(Msg::SettingsErase));
+        // the document's keys mean nothing here
+        assert_eq!(press(&mut km, KeyCode::Char('t')), None);
+        assert_eq!(press(&mut km, KeyCode::Char('a')), Some(Msg::SettingsKeep));
+        assert_eq!(
+            press(&mut km, KeyCode::Char('j')),
+            Some(Msg::Scroll {
+                by: ScrollBy::Rows(1)
+            })
+        );
+
+        // the ways out, and `,` opens it too
+        for (key, out) in [
+            (KeyCode::Char('s'), Msg::SettingsSave),
+            (KeyCode::Esc, Msg::SettingsCancel),
+            (KeyCode::Char('q'), Msg::SettingsCancel),
+            (KeyCode::F(2), Msg::SettingsKeep),
+            (KeyCode::Char(','), Msg::SettingsKeep),
+        ] {
+            assert_eq!(press(&mut km, KeyCode::Char(',')), Some(Msg::OpenSettings));
+            assert_eq!(press(&mut km, key), Some(out));
+            assert_eq!(press(&mut km, KeyCode::Char('q')), Some(Msg::Quit));
+        }
+        press(&mut km, KeyCode::F(2));
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(km.map(ctrl_c), Some(Msg::SettingsCancel));
+    }
+
+    #[test]
+    fn the_theme_list_hands_the_keys_back_to_the_settings() {
+        let mut km = Keymap::default();
+        press(&mut km, KeyCode::F(2));
+        // a change that opened no list: still the settings
+        press(&mut km, KeyCode::Enter);
+        km.theme_list(false);
+        assert_eq!(
+            press(&mut km, KeyCode::Down),
+            Some(Msg::SettingsMove { by: 1 })
+        );
+        // one that did: the list's keys, then the settings' again, picked or not
+        for out in [KeyCode::Enter, KeyCode::Esc] {
+            press(&mut km, KeyCode::Enter);
+            km.theme_list(true);
+            assert_eq!(
+                typed(&mut km, "s"),
+                [Msg::OutlineFilter { text: "s".into() }]
+            );
+            assert_eq!(
+                press(&mut km, KeyCode::Right),
+                Some(Msg::ThemesTone { dir: Dir::Next })
+            );
+            press(&mut km, out);
+            assert_eq!(press(&mut km, KeyCode::Char('s')), Some(Msg::SettingsSave));
+            press(&mut km, KeyCode::F(2));
+        }
+        // `T` from the document goes back to it
+        press(&mut km, KeyCode::Esc);
+        press(&mut km, KeyCode::Char('T'));
+        press(&mut km, KeyCode::Esc);
+        assert_eq!(press(&mut km, KeyCode::Char('q')), Some(Msg::Quit));
+        // and an answer outside the settings changes nothing
+        km.theme_list(true);
+        assert_eq!(press(&mut km, KeyCode::Char('q')), Some(Msg::Quit));
+    }
+
+    #[test]
+    fn the_settings_take_the_wheel_and_clicks() {
+        let mut km = Keymap::default();
+        press(&mut km, KeyCode::Char(','));
+        assert_eq!(
+            mouse(&mut km, MouseEventKind::ScrollDown, 5, 5),
+            Some(Msg::SettingsMove { by: 1 })
+        );
+        assert_eq!(mouse(&mut km, MouseEventKind::ScrollRight, 5, 5), None);
+        let left = MouseButton::Left;
+        mouse(&mut km, MouseEventKind::Down(left), 30, 4);
+        assert_eq!(
+            mouse(&mut km, MouseEventKind::Up(left), 30, 4),
+            Some(Msg::SettingsClick { col: 30, row: 4 })
+        );
     }
 
     #[test]

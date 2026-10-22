@@ -101,6 +101,13 @@ style_keys! {
     PopupBorder => "ui.popup_border",
     PopupTitle => "ui.popup_title",
     PopupSelected => "ui.popup_selected",
+    SettingsLabel => "ui.settings.label",
+    SettingsFocus => "ui.settings.focus",
+    SettingsField => "ui.settings.field",
+    SettingsSwitchOn => "ui.settings.switch_on",
+    SettingsSwitchOff => "ui.settings.switch_off",
+    SettingsChoice => "ui.settings.choice",
+    SettingsChanged => "ui.settings.changed",
     SortTable => "ui.sort_table",
 }
 
@@ -142,6 +149,13 @@ impl StyleKey {
             StyleKey::DiagramDone => Some(StyleKey::CalloutTip),
             StyleKey::DiagramCrit => Some(StyleKey::CalloutCaution),
             StyleKey::DiagramGrid => Some(StyleKey::TableBorder),
+            StyleKey::SettingsLabel
+            | StyleKey::SettingsFocus
+            | StyleKey::SettingsField
+            | StyleKey::SettingsChanged => Some(StyleKey::Popup),
+            StyleKey::SettingsSwitchOn | StyleKey::SettingsSwitchOff | StyleKey::SettingsChoice => {
+                Some(StyleKey::SettingsField)
+            }
             _ => None,
         }
     }
@@ -464,6 +478,80 @@ mod tests {
         // a theme without a background is left as it is
         let plain = Theme::empty();
         assert_eq!(plain.with_bg(false).styles, plain.styles);
+    }
+
+    /// WCAG's contrast ratio between two colors, 1 to 21.
+    fn contrast(a: Color, b: Color) -> f64 {
+        let luminance = |c| {
+            let Color::Rgb(r, g, b) = c else {
+                panic!("{c:?} isn't RGB");
+            };
+            let lin = |v: u8| {
+                let v = f64::from(v) / 255.0;
+                if v <= 0.039_28 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+        };
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    /// The settings popup's slots, in every built-in with and without its background: values
+    /// read on their field, labels and marks on the popup and on the focused row, and the field,
+    /// the focused row and the popup tell apart.
+    #[test]
+    fn settings_slots_read_in_every_builtin() {
+        for designed in Theme::builtins() {
+            for theme in [designed.clone(), designed.with_bg(false)] {
+                let name = &theme.name;
+                let fg = |k| theme.style(k).fg.unwrap();
+                let bg = |k| theme.style(k).bg.unwrap();
+                let (popup, focus, field) = (
+                    bg(StyleKey::Popup),
+                    bg(StyleKey::SettingsFocus),
+                    bg(StyleKey::SettingsField),
+                );
+                assert_eq!(bg(StyleKey::SettingsSwitchOn), field, "{name}");
+                assert_eq!(bg(StyleKey::SettingsSwitchOff), field, "{name}");
+                for (what, a, b) in [
+                    ("field and popup", field, popup),
+                    ("field and focus", field, focus),
+                    ("focus and popup", focus, popup),
+                ] {
+                    assert!(contrast(a, b) > 1.05, "{name}: {what} {a:?} {b:?}");
+                }
+                for (what, key, on, min) in [
+                    ("value", StyleKey::SettingsField, field, 4.5),
+                    ("switch on", StyleKey::SettingsSwitchOn, field, 3.0),
+                    ("switch off", StyleKey::SettingsSwitchOff, field, 1.8),
+                    (
+                        "choice",
+                        StyleKey::SettingsChoice,
+                        bg(StyleKey::SettingsChoice),
+                        3.0,
+                    ),
+                    ("label", StyleKey::SettingsLabel, popup, 3.0),
+                    // bold: WCAG asks 3 of bold text; tokyonight-day's own popup text is at 3.99
+                    ("focused label", StyleKey::SettingsFocus, focus, 3.5),
+                    ("mark", StyleKey::SettingsChanged, popup, 2.5),
+                    ("focused mark", StyleKey::SettingsChanged, focus, 2.0),
+                ] {
+                    let ratio = contrast(fg(key), on);
+                    assert!(ratio >= min, "{name}: {what} {ratio:.2} < {min}");
+                }
+                // on and off differ in lightness, not only in hue; the knob's side and the word
+                // beside it say which, for eyes that tell neither
+                let (on, off) = (
+                    fg(StyleKey::SettingsSwitchOn),
+                    fg(StyleKey::SettingsSwitchOff),
+                );
+                assert!(contrast(on, off) > 1.2, "{name}: on and off look alike");
+            }
+        }
     }
 
     #[test]

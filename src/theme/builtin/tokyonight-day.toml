@@ -7,6 +7,7 @@ name = "tokyonight-day"
 bg = "#e1e2e7"
 bg_dark = "#d0d5e3"
 bg_highlight = "#c4c8da"
+bg_light = "#f2f3f7"    # not upstream: lighter than the page, for the settings' fields
 fg = "#3760bf"
 fg_dark = "#6172b0"
 fg_gutter = "#a8aecb"
@@ -115,6 +116,15 @@ popup_title = { fg = "blue", bg = "bg_dark", bold = true }
 popup_selected = { fg = "bg", bg = "blue", bold = true }
 sort_table = { fg = "magenta" }
 line_number = { fg = "fg_gutter" }
+
+[ui.settings]                # the settings popup (`F2`): its rows, and the values they set
+label = { fg = "fg_dark" }
+focus = { fg = "fg", bg = "bg_highlight", bold = true }  # the focused row
+field = { fg = "fg", bg = "bg_light" }          # every value sits on it, as in an input
+switch_on = { fg = "blue", bold = true }
+switch_off = { fg = "fg_gutter" }
+choice = { fg = "bg_light", bg = "blue", bold = true }  # the current one of a row of choices
+changed = { fg = "yellow", bold = true }        # the mark on a value the config file doesn't have
 
 [syntax]
 "comment" = { fg = "comment", italic = true }

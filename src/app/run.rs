@@ -258,6 +258,7 @@ fn event_loop(
                 effects.set_encoder(images::Encoder::new(proto, Cells::new(cell.w, cell.h)));
             }
             let edit = msg == Msg::Edit;
+            let listing = msg.may_list_themes();
             saving |= msg == Msg::SaveConfig;
             // An effect's results apply before any input queued behind the message, so a quick
             // `Back Back` can't overtake the load the first one started.
@@ -273,6 +274,10 @@ fn event_loop(
                 }
                 // the input thread waits after sending `Edit`, so it can't steal the editor's keys
                 let _ = resume.send(true);
+            }
+            if listing {
+                // and after a change in the settings, to hear whether the theme list opened
+                let _ = resume.send(state.outline.is_some());
             }
             if !state.loading() {
                 results.extend(held.drain(..));
@@ -346,6 +351,11 @@ fn coalesce(last: &Msg, next: &Msg) -> Option<Msg> {
         (Msg::HelpScroll { by: a }, Msg::HelpScroll { by: b }) if same(*a, *b) => Msg::HelpScroll {
             by: a.saturating_add(*b),
         },
+        (Msg::SettingsMove { by: a }, Msg::SettingsMove { by: b }) if same(*a, *b) => {
+            Msg::SettingsMove {
+                by: a.saturating_add(*b),
+            }
+        }
         _ => return None,
     })
 }
@@ -493,11 +503,12 @@ fn ask_terminal(
     send(Msg::Resize { size }, tx, resume, keymap)
 }
 
-/// Send `msg` to the main loop. After `Edit` and `SaveConfig` it waits on `resume` for the main
-/// loop: until the editor quits, and to hear whether the save box opened. False when the main
-/// loop is gone.
+/// Send `msg` to the main loop. After `Edit`, `SaveConfig` and a change in the settings it waits
+/// on `resume` for the main loop: until the editor quits, to hear whether the save box opened, and
+/// whether the theme list did. False when the main loop is gone.
 fn send(msg: Msg, tx: &Sender<Msg>, resume: &Receiver<bool>, keymap: &mut Keymap) -> bool {
     let (edit, save) = (msg == Msg::Edit, msg == Msg::SaveConfig);
+    let listing = msg.may_list_themes();
     if tx.send(msg).is_err() {
         return false;
     }
@@ -509,6 +520,12 @@ fn send(msg: Msg, tx: &Sender<Msg>, resume: &Receiver<bool>, keymap: &mut Keymap
         match resume.recv() {
             Ok(true) => {}
             Ok(false) => keymap.no_confirm(),
+            Err(_) => return false,
+        }
+    }
+    if listing {
+        match resume.recv() {
+            Ok(open) => keymap.theme_list(open),
             Err(_) => return false,
         }
     }

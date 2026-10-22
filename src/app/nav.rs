@@ -290,7 +290,10 @@ impl State {
     /// A click: focus the link drawn at the screen's cell `col`, `row`, and follow it. A click
     /// off a link, over a popup, or while a navigation loads does nothing.
     pub(super) fn click(&mut self, col: u16, row: u16) -> Vec<Cmd> {
-        let popup = self.outline.is_some() || self.help.is_some() || self.save.is_some();
+        let popup = self.outline.is_some()
+            || self.help.is_some()
+            || self.save.is_some()
+            || self.settings.is_some();
         if self.nav.is_some() || popup || self.prompt.is_some() {
             return Vec::new();
         }

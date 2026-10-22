@@ -1,0 +1,36 @@
+ada-rec 1
++0 init size=80x24
++3 doc-loaded path="tests/fixtures/tables.md" mtime=none text:540
+# Tables
+
+| Key | Value | Notes |
+|:----|------:|:-----:|
+| a   | 1     | short |
+| `b` | 22    | **bold** |
+| c   | 333   | line<br>break |
+
+A wide table that cannot fit narrow terminals:
+
+| Module | Java main | Tests | oxasm crate | Description |
+|---|---|---|---|---|
+| asm-analysis | 2,379 | 9 classes · 3.0k lines | oxasm-analysis | Control-flow and data-flow analysis over method bodies |
+| asm-tree | 4,120 | 14 classes · 5.1k lines | oxasm-tree | The tree API: ClassNode, MethodNode, InsnList and friends |
+
+| only header |
+|---|
+
++100 open-settings
++101 config-read path="c.toml" text:36
+tables = "grid"
+keep_screen = false
+
++200 settings-move by=3
++250 settings-step dir=next
++300 settings-move by=1
++350 settings-flip
++400 settings-move by=-2
++450 settings-digit digit=6
++500 settings-digit digit=0
++550 settings-move by=5
++600 settings-flip
++650 settings-move by=-1
