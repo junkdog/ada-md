@@ -516,9 +516,11 @@ mod tests {
         // 384 bytes of JPEG whose header claims 65,498 × 65,256 pixels: 12.8 GB held whole (round 7)
         let err = decode(&dir.join("huge-sof.jpg"), (100, 100)).unwrap_err();
         assert!(err.contains("too large"), "{err}");
-        // zune-jpeg 0.5.15's IDCT and png 0.18.1's palette expansion panicked on these (round 7)
+        // zune-jpeg 0.5.15's IDCT and png 0.18.1's palette expansion panicked on these (round 7);
+        // the PNG's CRCs are recomputed, or png refuses it at IHDR in a build with checksums on (F-10)
         for file in ["zune-idct-panic.jpg", "png-palette-panic.png"] {
-            let _ = decode(&dir.join(file), (100, 100));
+            let err = decode(&dir.join(file), (100, 100)).unwrap_err();
+            assert_eq!(err, "the image failed to decode", "{file}");
         }
     }
 
