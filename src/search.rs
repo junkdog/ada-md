@@ -242,8 +242,24 @@ pub struct Projection {
 
 impl Projection {
     pub fn new(map: &SearchMap, matches: &[Match], layout: &Layout) -> Self {
-        let mut by_unit: Vec<u32> = (0..layout.search.len() as u32).collect();
-        by_unit.sort_by_key(|&i| layout.search[i as usize].unit);
+        // Segments by unit, then by where they start in it. `reach[k]` is the furthest any
+        // segment of `by_unit[..=k]` in the same unit ends, so a match finds its first segment by
+        // binary search even where segments overlap (a diagram's label drawn twice). A scan of
+        // the unit's every segment for every match was quadratic: a paragraph has a segment a
+        // row (fuzz round 10: 1.6 KB at one column took 3.1 s).
+        // Sorted as (unit, start) packed in one key beside the segment's index, so neither the
+        // sort nor the searches look a segment up.
+        let key = |unit: UnitId, at: u32| (u64::from(unit) << 32) | u64::from(at);
+        let mut by_unit: Vec<(u64, u32)> = (layout.search.iter().enumerate())
+            .map(|(i, s)| (key(s.unit, s.start), i as u32))
+            .collect();
+        by_unit.sort_unstable();
+        let mut reach: Vec<u32> = Vec::with_capacity(by_unit.len());
+        for (k, &(at, i)) in by_unit.iter().enumerate() {
+            let end = layout.search[i as usize].end;
+            let same = k > 0 && by_unit[k - 1].0 >> 32 == at >> 32;
+            reach.push(if same { reach[k - 1].max(end) } else { end });
+        }
         let mut by_link: Vec<u32> = (0..layout.hits.len() as u32).collect();
         by_link.sort_by_key(|&i| layout.hits[i as usize].link);
         let nowrap = !layout.params.code_wrap;
@@ -254,13 +270,13 @@ impl Projection {
             match map.units.get(m.unit as usize).map(|u| u.kind) {
                 Some(UnitKind::Visible) => {
                     let text = map.unit_text(m.unit);
-                    let first =
-                        by_unit.partition_point(|&i| layout.search[i as usize].unit < m.unit);
-                    for &i in &by_unit[first..] {
+                    // the unit's segments that start before the match ends, from the first
+                    // whose reach passes its start
+                    let first = by_unit.partition_point(|&(k, _)| k < key(m.unit, 0));
+                    let end = by_unit.partition_point(|&(k, _)| k < key(m.unit, m.end));
+                    let from = first + reach[first..end].partition_point(|&r| r <= m.start);
+                    for &(_, i) in &by_unit[from..end] {
                         let seg = layout.search[i as usize];
-                        if seg.unit != m.unit {
-                            break;
-                        }
                         let (a, b) = (m.start.max(seg.start), m.end.min(seg.end));
                         if a >= b {
                             continue;
@@ -414,6 +430,51 @@ mod tests {
             "the heading has two spaces"
         );
         assert_eq!(found(md, "foo +bar", 80).len(), 4);
+    }
+
+    /// The binary search over a unit's segments finds what a scan of all of them finds, on every
+    /// fixture (diagrams draw some labels twice, so their segments overlap), down to one column.
+    #[test]
+    fn projection_finds_what_a_scan_of_every_segment_finds() {
+        let theme = Theme::builtin();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let mut paths: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|e| e == "md"))
+            .collect();
+        paths.sort();
+        for path in paths {
+            let doc = parse(&std::fs::read_to_string(&path).unwrap());
+            let map = SearchMap::build(&doc, &theme.glyphs);
+            for pattern in ["[a-z]+", "e", "a.*b", r"\w+ \w+"] {
+                let matches = map.find(&compile(pattern).unwrap());
+                for width in [1, 24, 80] {
+                    let layout = crate::layout::layout(&doc, &theme.glyphs, params(width));
+                    let mut scanned = Vec::new();
+                    for (at, m) in matches.iter().enumerate() {
+                        if map.units[m.unit as usize].kind != UnitKind::Visible {
+                            continue;
+                        }
+                        for seg in layout.search.iter().filter(|s| s.unit == m.unit) {
+                            if m.start.max(seg.start) < m.end.min(seg.end) {
+                                scanned.push((at as u32, seg.row));
+                            }
+                        }
+                    }
+                    let proj = Projection::new(&map, &matches, &layout);
+                    let mut found: Vec<_> = (proj.cells.iter())
+                        .filter(|c| !c.hidden)
+                        .map(|c| (c.at, c.row))
+                        .collect();
+                    scanned.sort_unstable();
+                    scanned.dedup();
+                    found.sort_unstable();
+                    found.dedup();
+                    assert_eq!(found, scanned, "{} /{pattern}/ at {width}", path.display());
+                }
+            }
+        }
     }
 
     #[test]
