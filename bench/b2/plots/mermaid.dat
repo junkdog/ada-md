@@ -1,0 +1,29 @@
+# B2 mermaid at ada 9306b42+dia01: parse and draw, best of runs, pinned; µs (the 120-node flowchart: ms); written by bench/diagrams/compare
+# mermaid, sequence diagrams
+# doc ada mermaid-text mmdflux
+# of work seq
+all 18.813000 26.444000 40.951000
+
+
+# mermaid, flowcharts
+# doc ada mermaid-text mmdflux
+# of vault1 vault2 vault3 vault4 ci flow_sub lr_wide
+all 300.145000 6348.933000 1720.079000
+
+
+# mermaid, state diagrams
+# doc ada mermaid-text mmdflux
+# of state state2
+all 24.286000 339.482000 217.803000
+
+
+# mermaid, gantt charts
+# doc ada mermaid-text mmdflux
+# of gantt-probe gantt-mermaid
+all 4.972000 5.455000 ?
+
+
+# mermaid, a 120-node flowchart
+# doc ada mermaid-text mmdflux
+# of flow120
+all 5.619341 16702.683496 6436.379172
