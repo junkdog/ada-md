@@ -4,9 +4,11 @@
 //! two rows, then are cut and listed under the diagram. The rows follow from the events, top to
 //! bottom, with the participants as the sticky header.
 
+use std::cell::OnceCell;
+
 use super::{Event, Head, Message, NoteAt, Sequence, Who};
 use crate::diagram::canvas::{Canvas, Pen};
-use crate::diagram::{Drawn, Text, cut, marker, width, wrap, wrap_size};
+use crate::diagram::{Drawn, Text, cut, marker, pieces, width, wrap, wrap_size};
 use crate::theme::StyleKey;
 
 /// Labels are never capped below this many columns; past it the diagram scrolls instead.
@@ -62,6 +64,71 @@ struct Label<'a> {
     number: usize,
     /// Columns it takes unfitted.
     natural: usize,
+    /// Its pieces, measured the first time the search caps it.
+    pieces: OnceCell<Pieces>,
+}
+
+/// A label's unbreakable pieces, measured once for every cap the search tries: each piece's
+/// columns since the last one's end (spaces) and its own width.
+struct Pieces {
+    pieces: Vec<(usize, usize)>,
+    /// Where each line's pieces end.
+    ends: Vec<usize>,
+    /// The widest piece: a cap narrower than it breaks a word, which [`wrap_size`] does.
+    longest: usize,
+}
+
+impl Pieces {
+    fn of(lines: &[Text]) -> Self {
+        let mut out = Pieces {
+            pieces: Vec::new(),
+            ends: Vec::with_capacity(lines.len()),
+            longest: 0,
+        };
+        for line in lines {
+            let mut end = None;
+            for (at, piece) in pieces(line) {
+                let w = width(piece);
+                out.pieces.push((end.map_or(0, |e| at - e), w));
+                out.longest = out.longest.max(w);
+                end = Some(at + piece.len());
+            }
+            out.ends.push(out.pieces.len());
+        }
+        out
+    }
+
+    /// [`wrap_size`] summed over the lines, when no piece is wider than `max`; it stops
+    /// counting once the rows pass `limit`.
+    fn wrap_size(&self, max: usize, limit: usize) -> (usize, usize) {
+        let (mut rows, mut widest) = (0, 0);
+        let mut from = 0;
+        for &to in &self.ends {
+            // the row being filled: its width, once a piece is on it
+            let mut used = None;
+            for &(gap, w) in &self.pieces[from..to] {
+                used = Some(match used {
+                    None => w,
+                    Some(u) if u + gap + w <= max => u + gap + w,
+                    Some(u) => {
+                        rows += 1;
+                        widest = widest.max(u);
+                        if rows > limit {
+                            return (rows, widest);
+                        }
+                        w
+                    }
+                });
+            }
+            from = to;
+            rows += 1;
+            widest = widest.max(used.unwrap_or(0));
+            if rows > limit {
+                break;
+            }
+        }
+        (rows, widest)
+    }
 }
 
 impl<'a> Label<'a> {
@@ -87,6 +154,7 @@ impl<'a> Label<'a> {
             lines,
             number,
             natural,
+            pieces: OnceCell::new(),
         }
     }
 
@@ -106,11 +174,15 @@ impl<'a> Label<'a> {
             return self.natural;
         };
         let inner = self.inner(cap);
-        let (rows, widest) = self
-            .lines
-            .iter()
-            .map(|l| wrap_size(l, inner))
-            .fold((0, 0), |(r, w), (r2, w2)| (r + r2, w.max(w2)));
+        let pieces = self.pieces.get_or_init(|| Pieces::of(self.lines));
+        let (rows, widest) = if pieces.longest <= inner {
+            pieces.wrap_size(inner, self.rows())
+        } else {
+            self.lines
+                .iter()
+                .map(|l| wrap_size(l, inner))
+                .fold((0, 0), |(r, w), (r2, w2)| (r + r2, w.max(w2)))
+        };
         if rows > self.rows() {
             cap
         } else {
@@ -627,6 +699,35 @@ mod tests {
             .map(|r| d.canvas.row_text(r))
             .collect();
         (rows, d)
+    }
+
+    #[test]
+    fn measured_pieces_wrap_as_wrap_size_does() {
+        let labels: &[&[&str]] = &[
+            &["Fetch the order (with its lines), then ask the warehouse"],
+            &["one", "", "two   spaced  out", "   "],
+            &["a/b/c-d,e [f] {g} (h)", "日本語のラベル と 幅"],
+            &["", "x"],
+            &["supercalifragilistic word"],
+        ];
+        for lines in labels {
+            let lines: Vec<Text> = lines.iter().map(|&l| Text::from(l)).collect();
+            let pieces = Pieces::of(&lines);
+            for max in pieces.longest.max(1)..80 {
+                let want = lines
+                    .iter()
+                    .map(|l| wrap_size(l, max))
+                    .fold((0, 0), |(r, w), (r2, w2)| (r + r2, w.max(w2)));
+                assert_eq!(
+                    pieces.wrap_size(max, usize::MAX),
+                    want,
+                    "{lines:?} at {max}"
+                );
+                // stopped early, it still counts past the limit
+                let (rows, _) = pieces.wrap_size(max, 1);
+                assert_eq!(rows > 1, want.0 > 1, "{lines:?} at {max}");
+            }
+        }
     }
 
     #[test]
