@@ -994,7 +994,7 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
 <li style="--w:100.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">96.7 <small>1.2×</small></span></li>
 </ol></figure>
 </div></div>
-<p class="stamp">B2 at ada <code>72ad907</code>, 2026-10-20</p>
+<p class="stamp">B2 at ada <code>72ad907</code>, 2026-10-21</p>
 <!-- perf:end -->
   <p class="caveats">Where ada isn't first: glow writes about a third fewer bytes per page, and md-tui uses less
     memory on the smallest note. As a previewer, bat prints the whole 3.75 MB JSON line on less CPU and in less
@@ -1012,19 +1012,20 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
   <p class="lede">ada is fuzzed as <strong>whole sessions</strong>, not one function at a time: a document, then up to
     64 things a reader, the file system, git or the terminal can do, in any order.</p>
   <div class="tiles">
-    <div class="tile"><b>34.4 M</b><p>fuzzed sessions</p><small>whole scripted sessions, plus 958 M runs of the printer, scanners, image codecs and terminal probe; over 27.5 h in eleven runs</small></div>
-    <div class="tile"><b>11</b><p>bugs found, all fixed</p><small>an overflow on an impossible git hunk; five frame bugs with wide glyphs or a popup over an image; a parser blow-up and a highlighter loop, now bounded; three malformed images that took it down</small></div>
+    <div class="tile"><b>35.8 M</b><p>fuzzed sessions</p><small>whole scripted sessions, plus 1.1 B runs of the printer, scanners, image codecs, terminal probe, link lookup and diagrams; over 30 h in fourteen runs</small></div>
+    <div class="tile"><b>12</b><p>bugs found, all fixed</p><small>an overflow on an impossible git hunk; five frame bugs with wide glyphs or a popup over an image; a parser blow-up and a highlighter loop, now bounded; three malformed images that took it down; a wiki link that lost its folder</small></div>
     <div class="tile"><b>0</b><p>crashes, hangs or OOMs</p><small>in every run since the fixes</small></div>
-    <div class="tile"><b>2</b><p><code>unsafe</code> blocks</p><small>both set glibc's malloc arena count, before the threads that use it start</small></div>
+    <div class="tile"><b>7</b><p><code>unsafe</code> blocks</p><small>two set glibc's malloc arena count, before the threads that use it start; five give back the binary's read-only pages once the syntax set has loaded</small></div>
   </div>
   <ul class="fuzz">
     <li><h3>Any document</h3><p>Markdown, code, config, plain text and images, built from random bytes and a
       dictionary of the parts markdown parsers find hardest. Other targets fuzz <code>--print</code>, whole
-      and streamed (which must match byte for byte), the log and JSON scanners, image decoding, the sixel encoder,
-      and the terminal's replies to ada's probe.</p></li>
+      and streamed (which must match byte for byte), the log and JSON scanners, image decoding, mermaid diagrams at
+      any width, the sixel encoder, and the terminal's replies to ada's probe.</p></li>
     <li><h3>Any input</h3><p>Every action, through the real keymap or directly: scrolling, links, search, sorting,
       the outline, themes, saving the config, and resizes at any size.</p></li>
-    <li><h3>A world that answers badly</h3><p>Links to missing or corrupt files, fuzzed git hunks, images that
+    <li><h3>A world that answers badly</h3><p>Links to missing or corrupt files, wiki links looked up by name in trees whose names collide by case
+      and folder, fuzzed git hunks, images that
       report zero or huge sizes, and results that arrive late, out of order, or after their document is gone.</p></li>
     <li><h3>Every frame checked</h3><p>Each step paints through ada's real diff and encoder into a vt100 terminal
       emulator, which must show exactly what ada meant to draw, cell by cell: glyphs, colors, attributes, and
