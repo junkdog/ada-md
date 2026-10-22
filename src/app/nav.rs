@@ -430,6 +430,9 @@ impl State {
             op: NavOp::Reload,
             land: Landing::Entry(entry.clone()),
         });
+        if let Some(doc) = &mut self.doc {
+            doc.release_caches();
+        }
         vec![self.load_cmd(entry.path)]
     }
 

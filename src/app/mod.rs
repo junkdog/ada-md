@@ -514,6 +514,14 @@ impl Document {
         self.layout = self.lay_out(glyphs, params);
     }
 
+    /// Drop what the document a reload brings builds for itself (O-36): the spare layout and the
+    /// searchable text. Until it arrives, a resize lays out again, and a search builds the map
+    /// again.
+    fn release_caches(&mut self) {
+        self.prev = None;
+        self.search_map = None;
+    }
+
     /// A new layout, in the buffers of the previous one when there is one.
     fn lay_out(&mut self, glyphs: &Glyphs, params: LayoutParams) -> Layout {
         let (doc, measure) = (&self.doc, &self.measure);
@@ -2617,6 +2625,44 @@ mod tests {
         update(&mut state, loader_answer(&cmds, &edited));
         assert_eq!(top_line(&state), line);
         assert_eq!(state.status.as_deref(), Some("reloaded"));
+    }
+
+    /// O-36: while a reload loads, the old document drops the caches the new one builds anyway,
+    /// and still answers keys and resizes.
+    #[test]
+    fn a_reload_releases_the_old_documents_caches() {
+        let mut state = loaded("", 80, 20);
+        load_at(&mut state, "a.md", &sample());
+        search(&mut state, "paragraph 4");
+        update(&mut state, Msg::SearchSubmit);
+        for w in [60, 80] {
+            update(
+                &mut state,
+                Msg::Resize {
+                    size: Size { w, h: 20 },
+                },
+            );
+        }
+        let doc = state.doc.as_ref().unwrap();
+        assert!(doc.prev.is_some() && doc.search_map.is_some());
+
+        let cmds = update(&mut state, Msg::Reload);
+        let doc = state.doc.as_ref().unwrap();
+        assert!(doc.prev.is_none() && doc.search_map.is_none());
+        update(&mut state, Msg::SearchNext { dir: Dir::Next });
+        assert_eq!(counter(&state), "2/11");
+        update(
+            &mut state,
+            Msg::Resize {
+                size: Size { w: 60, h: 20 },
+            },
+        );
+        assert_eq!(counter(&state), "2/11");
+        assert_eq!(state.doc.as_ref().unwrap().layout.params.width, 60);
+
+        let edited = format!("# New title\n\nNew intro.\n\n{}", sample());
+        update(&mut state, loader_answer(&cmds, &edited));
+        assert_eq!(state.search.as_ref().unwrap().matches.len(), 11);
     }
 
     #[test]
