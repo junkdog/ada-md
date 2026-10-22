@@ -89,35 +89,55 @@ pub fn add_months(t: Ms, n: i64) -> Option<Ms> {
     valid(days_from_civil(y, m, d) * DAY + t.rem_euclid(DAY))
 }
 
-/// An instant split into its calendar fields.
+/// An instant split into its civil date and the time into its day; the other fields are worked
+/// out when a format asks for them, since most print the date alone (DIA-02).
 struct Fields {
+    /// Days since 1970-01-01.
+    days: i64,
     year: i64,
     month: u32,
     day: u32,
-    hour: u32,
-    minute: u32,
-    second: u32,
-    milli: u32,
-    /// 0 for Sunday.
-    weekday: u32,
-    /// 0 for January 1st.
-    yday: u32,
+    /// Milliseconds into the day.
+    ms: i64,
 }
 
 fn fields(t: Ms) -> Fields {
-    let d = day(t);
-    let (year, month, dom) = civil_from_days(d);
-    let ms = t.rem_euclid(DAY);
+    let days = day(t);
+    let (year, month, dom) = civil_from_days(days);
     Fields {
+        days,
         year,
         month,
         day: dom,
-        hour: (ms / HOUR) as u32,
-        minute: (ms % HOUR / MINUTE) as u32,
-        second: (ms % MINUTE / SECOND) as u32,
-        milli: (ms % SECOND) as u32,
-        weekday: weekday(d),
-        yday: (d - days_from_civil(year, 1, 1)) as u32,
+        ms: t.rem_euclid(DAY),
+    }
+}
+
+impl Fields {
+    fn hour(&self) -> u32 {
+        (self.ms / HOUR) as u32
+    }
+
+    fn minute(&self) -> u32 {
+        (self.ms % HOUR / MINUTE) as u32
+    }
+
+    fn second(&self) -> u32 {
+        (self.ms % MINUTE / SECOND) as u32
+    }
+
+    fn milli(&self) -> u32 {
+        (self.ms % SECOND) as u32
+    }
+
+    /// 0 for Sunday.
+    fn weekday(&self) -> u32 {
+        weekday(self.days)
+    }
+
+    /// 0 for January 1st.
+    fn yday(&self) -> u32 {
+        (self.days - days_from_civil(self.year, 1, 1)) as u32
     }
 }
 
@@ -440,7 +460,6 @@ impl Duration {
 /// %H %I %p %M %S %L %j %U %W %V %u %w %x %X %c %%`, each with an optional `-` (no padding),
 /// `_` (spaces) or `0` modifier. Anything else is copied as written.
 pub fn format(fmt: &str, t: Ms, out: &mut String) {
-    use std::fmt::Write;
     let f = fields(t);
     let mut chars = fmt.chars().peekable();
     while let Some(c) = chars.next() {
@@ -460,47 +479,45 @@ pub fn format(fmt: &str, t: Ms, out: &mut String) {
             break;
         };
         let num = |out: &mut String, n: i64, width: usize, default: char| {
-            let _ = match pad.unwrap_or(default) {
-                '-' => write!(out, "{n}"),
-                '_' => write!(out, "{n:>width$}"),
-                _ => write!(out, "{n:0width$}"),
-            };
+            pad_num(out, n, width, pad.unwrap_or(default));
         };
-        let month = MONTHS[(f.month - 1) as usize];
-        let wday = WEEKDAYS[f.weekday as usize];
+        let month = || MONTHS[(f.month - 1) as usize];
+        let wday = || WEEKDAYS[f.weekday() as usize];
         match spec {
             'Y' => num(out, f.year, 4, '0'),
             'y' => num(out, f.year.rem_euclid(100), 2, '0'),
             'm' => num(out, f.month.into(), 2, '0'),
             'd' => num(out, f.day.into(), 2, '0'),
             'e' => num(out, f.day.into(), 2, '_'),
-            'b' => out.push_str(&month[..3]),
-            'B' => out.push_str(month),
+            'b' => out.push_str(&month()[..3]),
+            'B' => out.push_str(month()),
             'a' => {
+                let wday = wday();
                 out.push(wday.as_bytes()[0].to_ascii_uppercase().into());
                 out.push_str(&wday[1..3]);
             }
             'A' => {
+                let wday = wday();
                 out.push(wday.as_bytes()[0].to_ascii_uppercase().into());
                 out.push_str(&wday[1..]);
             }
-            'H' => num(out, f.hour.into(), 2, '0'),
-            'I' => num(out, ((f.hour + 11) % 12 + 1).into(), 2, '0'),
-            'p' => out.push_str(if f.hour < 12 { "AM" } else { "PM" }),
-            'M' => num(out, f.minute.into(), 2, '0'),
-            'S' => num(out, f.second.into(), 2, '0'),
-            'L' => num(out, f.milli.into(), 3, '0'),
-            'j' => num(out, i64::from(f.yday) + 1, 3, '0'),
-            'U' => num(out, i64::from((f.yday + 7 - f.weekday) / 7), 2, '0'),
+            'H' => num(out, f.hour().into(), 2, '0'),
+            'I' => num(out, ((f.hour() + 11) % 12 + 1).into(), 2, '0'),
+            'p' => out.push_str(if f.hour() < 12 { "AM" } else { "PM" }),
+            'M' => num(out, f.minute().into(), 2, '0'),
+            'S' => num(out, f.second().into(), 2, '0'),
+            'L' => num(out, f.milli().into(), 3, '0'),
+            'j' => num(out, i64::from(f.yday()) + 1, 3, '0'),
+            'U' => num(out, i64::from((f.yday() + 7 - f.weekday()) / 7), 2, '0'),
             'W' => num(
                 out,
-                i64::from((f.yday + 7 - (f.weekday + 6) % 7) / 7),
+                i64::from((f.yday() + 7 - (f.weekday() + 6) % 7) / 7),
                 2,
                 '0',
             ),
             'V' => num(out, iso_week(t), 2, '0'),
-            'u' => num(out, i64::from((f.weekday + 6) % 7 + 1), 1, '0'),
-            'w' => num(out, f.weekday.into(), 1, '0'),
+            'u' => num(out, i64::from((f.weekday() + 6) % 7 + 1), 1, '0'),
+            'w' => num(out, f.weekday().into(), 1, '0'),
             'x' => format("%-m/%-d/%Y", t, out),
             'X' => format("%-I:%M:%S %p", t, out),
             'c' => format("%-m/%-d/%Y, %-I:%M:%S %p", t, out),
@@ -514,6 +531,42 @@ pub fn format(fmt: &str, t: Ms, out: &mut String) {
             }
         }
     }
+}
+
+/// `n` in decimal, padded to `width` as `pad` says: `-` not at all, `_` with spaces before the
+/// sign, otherwise with zeros after it, as `{n}`, `{n:>width$}` and `{n:0width$}` do, without
+/// going through `fmt`, which took most of an axis label's time (DIA-02).
+fn pad_num(out: &mut String, n: i64, width: usize, pad: char) {
+    let mut buf = [0u8; 20];
+    let mut i = buf.len();
+    let mut u = n.unsigned_abs();
+    loop {
+        i -= 1;
+        buf[i] = b'0' + (u % 10) as u8;
+        u /= 10;
+        if u == 0 {
+            break;
+        }
+    }
+    let digits = &buf[i..];
+    let short = width.saturating_sub(digits.len() + usize::from(n < 0));
+    let sign = |out: &mut String| {
+        if n < 0 {
+            out.push('-');
+        }
+    };
+    match pad {
+        '-' => sign(out),
+        '_' => {
+            out.extend(std::iter::repeat_n(' ', short));
+            sign(out);
+        }
+        _ => {
+            sign(out);
+            out.extend(std::iter::repeat_n('0', short));
+        }
+    }
+    out.extend(digits.iter().map(|&b| char::from(b)));
 }
 
 /// The ISO 8601 week number of `t`'s day: weeks start on Monday, and week 1 holds the year's
@@ -626,5 +679,22 @@ mod tests {
         assert_eq!(fmt("100%% %q", t), "100% %q");
         assert_eq!(fmt("%V", date("2021-01-03")), "53");
         assert_eq!(fmt("%V", date("2024-12-30")), "01");
+    }
+
+    #[test]
+    fn numbers_pad_as_fmt_does() {
+        for n in [0, 5, -5, 42, -42, 999, 1000, -12_345, i64::MAX, i64::MIN] {
+            for width in [0, 1, 2, 3, 4, 7] {
+                for (pad, want) in [
+                    ('-', format!("{n}")),
+                    ('_', format!("{n:>width$}")),
+                    ('0', format!("{n:0width$}")),
+                ] {
+                    let mut got = String::new();
+                    pad_num(&mut got, n, width, pad);
+                    assert_eq!(got, want, "{n} {width} {pad}");
+                }
+            }
+        }
     }
 }

@@ -167,7 +167,16 @@ impl Scale {
 
     /// `t`'s offset in columns, unclamped, for spacing ticks.
     fn offset(&self, t: Ms) -> i128 {
-        i128::from(t - self.t0) * self.area as i128 / i128::from(self.span)
+        self.cols(t - self.t0)
+    }
+
+    /// How many columns `ms` spans: in `i64` when the product fits, as it does for any chart
+    /// short of millennia, since `i128` division is a library call (DIA-02).
+    fn cols(&self, ms: Ms) -> i128 {
+        match ms.checked_mul(self.area as i64) {
+            Some(p) => i128::from(p / self.span),
+            None => i128::from(ms) * self.area as i128 / i128::from(self.span),
+        }
     }
 
     fn end(&self) -> Ms {
@@ -198,7 +207,11 @@ fn ticks(g: &Gantt, scale: &Scale) -> Vec<Tick> {
     STEPS
         .iter()
         .filter(|&&step| {
-            let spacing = i128::from(step.shortest()) * scale.area as i128 / i128::from(scale.span);
+            let spacing = scale.cols(step.shortest());
+            // no label fits in less than a column past the gap: skip it before measuring one
+            if spacing <= LABEL_GAP as i128 {
+                return false;
+            }
             let fmt = axis_format(g, step);
             let w = match measured {
                 Some((f, w)) if f == fmt => w,
