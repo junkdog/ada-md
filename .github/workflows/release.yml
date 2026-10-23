@@ -94,10 +94,14 @@ jobs:
           out=$(target/release/ada --version)
           [ "$out" = "ada $VERSION" ] || { echo "::error::--version says '$out'"; exit 1; }
           target/release/ada --print --width 80 README.md > /dev/null
+      # the versions ld.so insists on: weak ones (flags 0x02, as std's pidfd_spawnp) may be missing,
+      # and GLIBC_ABI_DT_RELR (RELR, 2.36+) counts as 2.36
       - name: 📏 glibc floor
         if: runner.os == 'Linux'
         run: |
-          floor=$(objdump -T target/release/ada | grep -o 'GLIBC_[0-9][0-9.]*' | sort -uV | tail -1)
+          floor=$(objdump -p target/release/ada \
+            | awk '/required from libc\.so/ {f = 1; next} /required from/ {f = 0} f && $2 == "0x00" {print $4}' \
+            | sed 's/^GLIBC_ABI_DT_RELR$/GLIBC_2.36/' | sort -uV | tail -1)
           echo "**${{ matrix.target }}:** needs $floor" >> "$GITHUB_STEP_SUMMARY"
       - name: 📦 Package
         run: |
