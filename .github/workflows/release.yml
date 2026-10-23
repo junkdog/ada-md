@@ -1,0 +1,142 @@
+name: 📦 Release
+
+# Builds the Linux and macOS binaries of a version tag and drafts a GitHub release with them
+# (REL-01, REL-03). Pushing a `v*` tag starts it; run it by hand to build an existing tag again,
+# with `dry_run` to keep the archives as workflow artifacts and leave the releases alone. A tag
+# with a pre-release part (`v1.0.0-rc.1`) drafts a pre-release. Publishing the draft, and
+# `cargo publish`, stay manual.
+on:
+  push:
+    tags: [ 'v[0-9]+.[0-9]+.[0-9]+*' ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build, e.g. v1.0.0-rc.1
+        required: true
+      dry_run:
+        description: Build only, no release
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
+  # the toolchain bench/order/order.txt is traced on: names from any other match ~10% (MEM-02)
+  RUST_TOOLCHAIN: 1.99.1
+
+jobs:
+  version:
+    name: 🏷️ Tag and version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ env.TAG }}
+      - name: 🔍 Tag matches Cargo.toml
+        id: v
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::tag $TAG doesn't match Cargo.toml's version $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$version" in *-*) echo "prerelease=true" ;; *) echo "prerelease=false" ;; esac >> "$GITHUB_OUTPUT"
+
+  build:
+    name: 🔨 ${{ matrix.target }}
+    needs: version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # glibc 2.35: build.rs skips RELR there, so the binary needs no newer glibc than its
+          # symbols do (ADR-34); one built on ubuntu-24.04 wouldn't start on 22.04 or RHEL 9
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, order: true }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+          - { target: aarch64-apple-darwin, os: macos-15 }
+          - { target: x86_64-apple-darwin, os: macos-15-intel }
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ env.TAG }}
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      # native builds without --target: it would change every symbol's hash, and order.txt's
+      # names with them; lld's map lets check.py count the names the build still has
+      - name: 🔨 Build
+        run: |
+          if [ "${{ matrix.order }}" = true ]; then export ADA_LINK_MAP="$PWD/ada.map"; fi
+          cargo build --release --locked
+      - name: 🔗 Symbol order
+        if: matrix.order
+        run: |
+          report=$(python3 -I bench/order/check.py ada.map) && rc=0 || rc=$?
+          echo "$report"
+          echo "**Symbol order:** $report" >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+      - name: 🧪 Smoke test
+        run: |
+          out=$(target/release/ada --version)
+          [ "$out" = "ada $VERSION" ] || { echo "::error::--version says '$out'"; exit 1; }
+          target/release/ada --print --width 80 README.md > /dev/null
+      - name: 📏 glibc floor
+        if: runner.os == 'Linux'
+        run: |
+          floor=$(objdump -T target/release/ada | grep -o 'GLIBC_[0-9][0-9.]*' | sort -uV | tail -1)
+          echo "**${{ matrix.target }}:** needs $floor" >> "$GITHUB_STEP_SUMMARY"
+      - name: 📦 Package
+        run: |
+          name=ada-$VERSION-${{ matrix.target }}
+          mkdir -p "dist/$name"
+          cp target/release/ada README.md LICENSE KNOWN_ISSUES.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          rm -r "dist/$name"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ada-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: 🚀 Draft release
+    needs: [ version, build ]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: 🔐 Checksums
+        working-directory: dist
+        run: sha256sum *.tar.gz | tee SHA256SUMS
+      # a run on a tag that already has a release replaces its archives and keeps its text
+      - name: 🚀 Draft or update
+        run: |
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber -R "$GITHUB_REPOSITORY"
+          else
+            flags=(--draft --verify-tag --title "ada $VERSION" --notes "Release notes to come.")
+            if [ "${{ needs.version.outputs.prerelease }}" = true ]; then flags+=(--prerelease); fi
+            gh release create "$TAG" dist/* "${flags[@]}" -R "$GITHUB_REPOSITORY"
+          fi
