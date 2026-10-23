@@ -5,8 +5,11 @@ edition = "2024"
 rust-version = "1.88"
 description = "A terminal markdown viewer"
 license = "MIT"
+repository = "https://github.com/junkdog/ada-md"
+homepage = "https://junkdog.github.io/ada-md/"
 readme = "README.md"
-exclude = ["ada.jpg", "demo/"]
+# build.rs reads bench/order/order.txt, and the tests bench/diagrams and tests/
+exclude = ["ada.jpg", "demo/", "site/", ".github/", ".githooks/", "bench/images/"]
 keywords = ["markdown", "viewer", "terminal", "tui", "pager"]
 categories = ["command-line-utilities"]
 
