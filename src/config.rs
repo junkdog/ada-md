@@ -362,7 +362,7 @@ pub struct Save {
     pub text: String,
 }
 
-/// The values a config file gives the options [`SAVED`] names, an option it doesn't set at its
+/// The values a config file gives the options `SAVED` names, an option it doesn't set at its
 /// default: what the settings in effect are compared with, by `S` and by the settings popup's
 /// marks.
 #[derive(Clone, Debug, PartialEq, Eq)]

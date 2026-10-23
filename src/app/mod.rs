@@ -636,7 +636,7 @@ impl Document {
 }
 
 pub struct State {
-    /// The theme in effect: [`designed`](Self::designed), on the terminal's background when
+    /// The theme in effect: `designed`, on the terminal's background when
     /// [`theme_bg`](Self::theme_bg) is off.
     pub theme: Theme,
     /// The theme as it was loaded, with its own background.

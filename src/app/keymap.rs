@@ -674,7 +674,7 @@ impl Keymap {
     /// The save box takes no mouse.
     ///
     /// In normal mode, the left button selects text too (ADR-38): each press is a
-    /// [`Msg::Press`], counted 2 and 3 when it comes within [`MULTI_CLICK`] of the one before on
+    /// [`Msg::Press`], counted 2 and 3 when it comes within `MULTI_CLICK` of the one before on
     /// the same cell; a drag from it is [`Msg::Drag`], and letting go after a drag or a double
     /// or triple press is [`Msg::Release`] rather than a click. `now` is when the event came.
     pub fn mouse(&mut self, event: MouseEvent, now: Instant) -> Option<Msg> {
