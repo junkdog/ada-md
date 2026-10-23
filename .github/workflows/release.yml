@@ -52,6 +52,16 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           case "$version" in *-*) echo "prerelease=true" ;; *) echo "prerelease=false" ;; esac >> "$GITHUB_OUTPUT"
+      # the release commit runs `git cliff --tag vX.Y.Z -o CHANGELOG.md` (REL-03, REL-23); pre-releases fold into
+      # the release after them, so only a release needs its entry
+      - name: 📜 CHANGELOG.md has the release
+        if: steps.v.outputs.prerelease == 'false'
+        run: |
+          version=${{ steps.v.outputs.version }}
+          if ! grep -qF "## [$version](" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no entry for $version: run git cliff --tag $TAG -o CHANGELOG.md in the release commit"
+            exit 1
+          fi
 
   build:
     name: 🔨 ${{ matrix.target }}
@@ -133,6 +143,23 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.version.outputs.version }}
     steps:
+      # the history and tags, for git-cliff
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          fetch-depth: 0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+      # the release's commits, by cliff.toml (REL-23), which folds pre-releases into the release after them; a
+      # pre-release's notes are its own commits, so nothing is folded. The version heading goes: the title has it
+      - name: 📝 Release notes
+        run: |
+          fold=()
+          if [ "${{ needs.version.outputs.prerelease }}" = true ]; then fold=(--ignore-tags '^$'); fi
+          git cliff --current --strip all "${fold[@]}" | sed '1,/^## /d' > notes.md
+          grep -q '^- ' notes.md || echo "No user-facing changes since the last release." > notes.md
+          cat notes.md
       - uses: actions/download-artifact@v8
         with:
           path: dist
@@ -146,7 +173,7 @@ jobs:
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload "$TAG" dist/* --clobber -R "$GITHUB_REPOSITORY"
           else
-            flags=(--draft --verify-tag --title "ada $VERSION" --notes "Release notes to come.")
+            flags=(--draft --verify-tag --title "ada $VERSION" --notes-file notes.md)
             if [ "${{ needs.version.outputs.prerelease }}" = true ]; then flags+=(--prerelease); fi
             gh release create "$TAG" dist/* "${flags[@]}" -R "$GITHUB_REPOSITORY"
           fi
