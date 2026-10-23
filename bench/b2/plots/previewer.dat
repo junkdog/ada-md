@@ -1,39 +1,39 @@
-# B2 previewer files at ada 9306b42+dia01: hyperfine medians, ms (peak RSS in MiB); cap at 60 s; written by bench/b2/plot.py
+# B2 previewer files at ada 962fccc: hyperfine medians, ms (peak RSS in MiB); cap at 60 s; written by bench/b2/plot.py
 # previewer, a preview, wall
 # doc ada bat rich
-code-s.rs 5.35281 8.60953 138.044
-code-m.rs 23.2037 33.0063 216.874
-code-l.rs 22.7803 30.049 195.068
-log.log 3.92907 1046.48 235.17
-huge.json 6.12956 27.8627 4335.58
-huge.log 4.11285 1043.9 8969.73
+code-s.rs 5.50983 8.74484 138.7
+code-m.rs 23.5803 33.6466 219.163
+code-l.rs 23.1785 30.4695 196.513
+log.log 4.01372 1051.29 238.202
+huge.json 6.26063 29.7687 4364.56
+huge.log 4.23841 1048.78 9160.54
 
 
 # previewer, the whole file, wall
 # doc ada bat rich mcat
-code-s.rs 5.35297 8.63043 136.672 8.03161
-code-m.rs 23.0319 33.0689 213.594 30.3464
-code-l.rs 112.932 145.284 515.233 38.1242
-log.log 9.11704 3274.3 391.828 3232.51
-huge.json 26.5429 27.7424 4229.16 cap
-huge.log 305.804 cap 24138.1 cap
+code-s.rs 5.52094 8.80298 137.86 8.07459
+code-m.rs 23.425 33.7645 216.691 30.2713
+code-l.rs 114.191 146.868 523.602 38.0732
+log.log 9.19479 3262.06 393.808 3235.83
+huge.json 27.7053 30.4758 4290.99 cap
+huge.log 288.858 cap 24392.5 cap
 
 
 # previewer, a preview, peak RSS
 # doc ada bat rich
-code-s.rs 6.43945 15.3027 42.707
-code-m.rs 7.4043 15.6035 48.2422
-code-l.rs 7.46094 15.4473 46.7305
-log.log 7.61133 14.166 48.4277
-huge.json 15.5996 25.6113 579.984
-huge.log 7.57422 14.1914 348.568
+code-s.rs 6.48633 15.0371 42.7969
+code-m.rs 7.32422 15.459 48.3281
+code-l.rs 7.4668 15.3555 46.7109
+log.log 7.33398 14.1777 48.4043
+huge.json 15.4473 24.9727 579.926
+huge.log 7.36719 13.9512 348.426
 
 
 # previewer, the whole file, peak RSS
 # doc ada bat rich mcat
-code-s.rs 6.37695 15.168 42.8027 17.3066
-code-m.rs 7.63672 15.4121 48.1562 18.4512
-code-l.rs 11.0586 15.3691 63.8516 21.3379
-log.log 13.9844 14.1094 53.9512 35.6094
-huge.json 43.6992 24.957 580.035 cap
-huge.log 13.9961 cap 899.055 cap
+code-s.rs 6.375 15.1621 42.8906 17.2637
+code-m.rs 7.39844 15.4453 48.2402 18.5918
+code-l.rs 11.002 15.4551 63.8418 21.1719
+log.log 13.0996 14.125 53.8184 35.4453
+huge.json 51.6602 25.4141 580.32 cap
+huge.log 13.6797 cap 899.539 cap
