@@ -65,15 +65,32 @@ The charts are on [the site](https://junkdog.github.io/ada-md/#performance), the
 
 ## Install
 
+Binaries for Linux (x86_64 and aarch64, glibc 2.34 or newer) and macOS (Apple silicon and
+Intel) are on the [releases page](https://github.com/junkdog/ada-md/releases). The Linux
+binaries need glibc, so on Alpine and other musl distributions, build ada yourself. To build it:
+
 ```zsh
-cargo install --path .
+cargo install --locked --git https://github.com/junkdog/ada-md ada-md
 ```
 
-ada runs on Linux and macOS; Windows isn't supported. Rust 1.88 or newer, and a C compiler:
+Rust 1.88 or newer, and a C compiler:
 syntax highlighting runs on [Oniguruma](https://github.com/kkos/oniguruma), which is built from source. For a pure-Rust
-build, use `cargo install --path . --no-default-features`. Highlighting then runs on
+build, add `--no-default-features`. Highlighting then runs on
 fancy-regex and looks the same, but each language costs 10–20 ms on first use instead of about
 1 ms. Git integration runs the `git` command.
+
+**Windows** is mostly untested. ada builds there, and the pager has run on Windows 10, but it
+doesn't follow Windows' conventions yet:
+
+- The config and themes are read from `$XDG_CONFIG_HOME/ada` or `$HOME/.config/ada`, not
+  `%APPDATA%`. With neither variable set, ada reads no config and can't save one, and `~` in
+  `[links] roots` isn't expanded.
+- Links and images open with `xdg-open`, and the editor falls back to `vi` when `$VISUAL` and
+  `$EDITOR` are unset.
+- `--print` to a console can show raw escape codes, and images are half-blocks unless
+  `--image-protocol` names one.
+
+There are no Windows binaries; build it with `cargo install`. Windows support is planned for 1.1.
 
 ## Usage
 
