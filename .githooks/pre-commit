@@ -1,16 +1,31 @@
 #!/usr/bin/env zsh
-# Refuse a commit that CI's rustfmt steps would fail: the crate, the fuzz targets and the bench driver.
+# Refuse a commit that CI's rustfmt steps would fail (the crate, the fuzz targets and the bench driver), or that
+# leaves a lockfile cargo would rewrite: `--locked` fails on it in CI, as fuzz/Cargo.lock did after the version bump
+# to 1.0.0-rc.1. The nested crates lock ada-md and its dependencies too, so a version bump or a new dependency has to
+# reach every lockfile. Offline: a lockfile that needs the network to check is reported as one to update.
 # Enable once per clone: git config core.hooksPath .githooks
 cd "$(git rev-parse --show-toplevel)" || exit 1
-bad=()
+unformatted=() stale=()
 for manifest in Cargo.toml fuzz/Cargo.toml bench/b2/Cargo.toml; do
   [[ -f $manifest ]] || continue
-  cargo fmt --manifest-path $manifest --all -- --check > /dev/null 2>&1 || bad+=($manifest)
+  cargo fmt --manifest-path $manifest --all -- --check > /dev/null 2>&1 || unformatted+=($manifest)
 done
-(( ${#bad} == 0 )) && exit 0
-print -u2 "pre-commit: not rustfmt-clean: ${(j:, :)bad}"
-for manifest in $bad; do
-  print -u2 "  cargo fmt --manifest-path $manifest --all"
+for manifest in Cargo.toml fuzz/Cargo.toml bench/b2/Cargo.toml bench/diagrams/compare/Cargo.toml; do
+  [[ -f $manifest ]] || continue
+  cargo metadata --manifest-path $manifest --locked --offline --format-version 1 > /dev/null 2>&1 || stale+=($manifest)
 done
+(( ${#unformatted} + ${#stale} == 0 )) && exit 0
+if (( ${#unformatted} )); then
+  print -u2 "pre-commit: not rustfmt-clean: ${(j:, :)unformatted}"
+  for manifest in $unformatted; do
+    print -u2 "  cargo fmt --manifest-path $manifest --all"
+  done
+fi
+if (( ${#stale} )); then
+  print -u2 "pre-commit: lockfile out of date with its Cargo.toml: ${(j:, :)stale}"
+  for manifest in $stale; do
+    print -u2 "  cargo update --manifest-path $manifest --workspace"
+  done
+fi
 print -u2 "then stage the result; or commit with --no-verify to skip this check"
 exit 1
