@@ -80,6 +80,7 @@ figcaption { margin-top: .5rem; font-size: .88rem; color: var(--muted); }
   border-radius: 5px; padding: .3rem .7rem; cursor: pointer;
 }
 .cmd button:hover { border-color: var(--accent); }
+.alt { color: var(--muted); font-size: .9rem; margin: .6rem 0 0; }
 .hero .ada img { display: block; width: 100%; height: auto; border-radius: 12px; }
 .hero .ada figcaption { font-style: italic; text-align: center; }
 .term.term-hero { grid-column: 1 / -1; max-width: 1000px; margin-top: 1rem; }

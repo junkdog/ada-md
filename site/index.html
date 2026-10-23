@@ -45,9 +45,10 @@
     <p class="sub">Follow links and come back to where you were, see what git says changed, read wide tables at
       any width, and look at the pictures.</p>
     <div class="cmd">
-      <code id="install-cmd">cargo install --git https://github.com/junkdog/ada-md ada-md</code>
+      <code id="install-cmd">cargo install --locked --git https://github.com/junkdog/ada-md ada-md</code>
       <button type="button" data-copy="install-cmd" hidden>copy</button>
     </div>
+    <p class="alt">Or a <a href="https://github.com/junkdog/ada-md/releases">prebuilt binary</a> for Linux and macOS.</p>
   </div>
   <figure class="ada">
     <img src="media/ada.jpg" width="560" height="340" alt="Ada, a fluffy grey mixed-breed cat, lying on a shelf and looking at the camera">
@@ -1074,9 +1075,16 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
 
 <section id="install" class="install wrap">
   <h2>Install <a class="anchor" href="#install" aria-label="link to this section">#</a></h2>
-  <pre><code>cargo install --git https://github.com/junkdog/ada-md ada-md</code></pre>
+  <p>Binaries for Linux (x86_64 and aarch64, glibc 2.34 or newer) and macOS (Apple silicon and Intel) are on the
+    <a href="https://github.com/junkdog/ada-md/releases">releases page</a>: unpack one and put <code>ada</code> on
+    your <code>PATH</code>. The macOS binaries aren't signed, so if the archive came through a browser, run
+    <code>xattr -d com.apple.quarantine ada</code> first. Or build it:</p>
+  <pre><code>cargo install --locked --git https://github.com/junkdog/ada-md ada-md</code></pre>
   <p>Rust 1.88 or newer, and a C compiler: highlighting runs on Oniguruma, built from source. For a pure-Rust
-    build, add <code>--no-default-features</code>. Git integration runs the <code>git</code> command.</p>
+    build, add <code>--no-default-features</code>. On Alpine and other musl distributions, build it this way: the
+    Linux binaries need glibc. Git integration runs the <code>git</code> command.</p>
+  <p>Windows is mostly untested: ada builds and runs there but doesn't follow Windows' conventions yet. The
+    <a href="https://github.com/junkdog/ada-md#install">README</a> lists what's missing; support is planned for 1.1.</p>
   <pre><code><span class="c"># read a note</span>
 ada notes/today.md
 
