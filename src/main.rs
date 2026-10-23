@@ -121,9 +121,16 @@ fn run() -> Result<(), String> {
         return print_doc(&args, &config, &theme.with_bg(false), &resolver, &path);
     }
 
-    let stdin = (path == Path::new("-"))
+    let piped = (path == Path::new("-"))
         .then(|| read_stdin(Vec::new(), None, forced))
         .transpose()?;
+    // a piped image is shown from a file of its own, which goes when ada quits
+    let (stdin, image) = match piped {
+        Some(Piped::Text(text)) => (Some(text), None),
+        Some(Piped::Image(image)) => (None, Some(image)),
+        None => (None, None),
+    };
+    let path = image.as_ref().map_or(path, |image| image.path.clone());
     if stdin.is_none() {
         let meta = fs::metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         if meta.is_dir() {
@@ -154,17 +161,81 @@ fn run() -> Result<(), String> {
 /// and a bound on a huge file, which isn't read past them (plan, "ada as the only fzf previewer").
 const PREVIEW_ROWS: usize = 2000;
 
+/// What stdin holds.
+enum Piped {
+    Text(Arc<str>),
+    /// A PNG or JPEG, written to a file: ada's images are read from files.
+    Image(PipedImage),
+}
+
+/// A piped image's file, alone in a directory only its owner reads, both removed on drop.
+struct PipedImage {
+    dir: PathBuf,
+    path: PathBuf,
+}
+
+impl PipedImage {
+    /// Write `bytes`, an image of extension `ext` by its magic bytes, once its header shows it
+    /// is one: what isn't is an error, and nothing is written. The directory is under
+    /// `$XDG_RUNTIME_DIR`, a tmpfs cleared at logout, else the temporary directory.
+    fn write(bytes: &[u8], ext: &str) -> Result<PipedImage, String> {
+        images::header_of(bytes)
+            .map_err(|e| format!("stdin: starts as a {ext} but its header fails: {e}"))?;
+        let base = env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .filter(|dir| dir.is_absolute() && dir.is_dir())
+            .unwrap_or_else(env::temp_dir);
+        let mut builder = fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        let pid = std::process::id();
+        // a directory left by an ada of the same pid that didn't get to remove it is passed over
+        let dir = (0..100)
+            .map(|n| base.join(format!("ada-{pid}-{n}")))
+            .find_map(|dir| match builder.create(&dir) {
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => None,
+                created => Some(created.map(|()| dir)),
+            })
+            .unwrap_or_else(|| Err(io::ErrorKind::AlreadyExists.into()))
+            .map_err(|e| format!("stdin: {}: {e}", base.display()))?;
+        let image = PipedImage {
+            path: dir.join(format!("stdin.{ext}")),
+            dir,
+        };
+        fs::write(&image.path, bytes)
+            .map_err(|e| format!("stdin: {}: {e}", image.path.display()))?;
+        Ok(image)
+    }
+}
+
+impl Drop for PipedImage {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.dir);
+    }
+}
+
 /// Read stdin, after the bytes `read` of it already, as [`app::load_doc_head`] reads a file:
 /// whole, or with a `head` only the head of what isn't markdown, which the first bytes tell.
-/// Input with a NUL in it isn't shown, unless `-l` names its type.
+/// An image is told by its first bytes and read whole. Other input with a NUL in it isn't shown,
+/// unless `-l` names its type.
 fn read_stdin(
     read: Vec<u8>,
     head: Option<Head>,
     forced: Option<FileType>,
-) -> Result<Arc<str>, String> {
+) -> Result<Piped, String> {
     let err = |e: io::Error| format!("stdin: {e}");
     let mut stdin = io::stdin().lock();
     let mut bytes = read;
+    if forced.is_none() {
+        (&mut stdin)
+            .take(filetype::IMAGE_MAGIC.saturating_sub(bytes.len()) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(err)?;
+        if let Some(ext) = filetype::image_ext(&bytes) {
+            stdin.read_to_end(&mut bytes).map_err(err)?;
+            return PipedImage::write(&bytes, ext).map(Piped::Image);
+        }
+    }
     if let Some(head) = head {
         (&mut stdin)
             .take(head.bytes.saturating_sub(bytes.len()) as u64)
@@ -173,11 +244,11 @@ fn read_stdin(
         let sniffed = || FileType::of(Path::new("-"), &String::from_utf8_lossy(&bytes));
         if forced.unwrap_or_else(sniffed) != FileType::Markdown {
             app::cut_to_head(&mut bytes, head);
-            return text_of(bytes, forced);
+            return text_of(bytes, forced).map(Piped::Text);
         }
     }
     stdin.read_to_end(&mut bytes).map_err(err)?;
-    text_of(bytes, forced)
+    text_of(bytes, forced).map(Piped::Text)
 }
 
 fn text_of(bytes: Vec<u8>, forced: Option<FileType>) -> Result<Arc<str>, String> {
@@ -258,11 +329,16 @@ fn print_doc(
             Start::Whole(bytes) => read = bytes,
         }
     }
-    let text = if path == Path::new("-") {
-        read_stdin(read, head, forced)?
+    // a piped image prints from a file of its own, removed once it's printed
+    let mut image = None;
+    let (path, text) = if path == Path::new("-") {
+        match read_stdin(read, head, forced)? {
+            Piped::Text(text) => (path, text),
+            Piped::Image(piped) => (&*image.insert(piped).path, Arc::from("")),
+        }
     } else {
         match app::load_doc_head(path, None, head) {
-            Msg::DocLoaded { text, .. } => text,
+            Msg::DocLoaded { text, .. } => (path, text),
             Msg::DocFailed { path, error } => return Err(format!("{}: {error}", path.display())),
             other => return Err(format!("unexpected {other:?}")),
         }

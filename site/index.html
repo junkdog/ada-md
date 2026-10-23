@@ -103,12 +103,11 @@
   <article id="links" class="card">
     <div class="text">
       <h2>Links you can walk <a class="anchor" href="#links" aria-label="link to this section">#</a></h2>
-      <p>Relative paths, <code>[[wiki links]]</code>, anchors and <code>src/main.rs#L42</code>. <strong>Back and
-        forward return to the same spot</strong>, with the same link focused. The outline and the list of links
-        filter as you type, and take you there.</p>
-      <p><strong>Links that survive notes moving:</strong> in a vault, a wiki link that isn't beside its note is
-        found by name anywhere under the vault, as Obsidian does. An Obsidian vault needs no setup; any other folder
-        of notes takes one line, <code>roots</code> in <code>config.toml</code>.</p>
+      <p>Relative paths, <code>[[wiki links]]</code>, anchors and <code>src/main.rs#L42</code>. <strong>Back
+        returns to the same spot</strong>, with the same link focused.</p>
+      <p><strong>Links that survive moves:</strong> a wiki link is found by name anywhere in the vault, as in
+        Obsidian. An Obsidian vault needs no setup; any other folder of notes, one line in
+        <code>config.toml</code>.</p>
       <p class="keys"><kbd>Tab</kbd> focus <kbd>Enter</kbd> follow <kbd>BS</kbd> back <kbd>L</kbd> forward
         <kbd>o</kbd> outline <kbd>l</kbd> links</p>
     </div>
@@ -205,20 +204,21 @@
       <figcaption>In kitty.</figcaption>
     </figure>
     <div class="text">
-      <h2>Inline images <a class="anchor" href="#images" aria-label="link to this section">#</a></h2>
+      <h2>Images <a class="anchor" href="#images" aria-label="link to this section">#</a></h2>
       <p>png and jpeg, <strong>right in the note</strong>, over kitty, sixel or iTerm2, with half-blocks as the
         fallback, and inside tmux. A link to an image opens it full screen.</p>
+      <p><strong>Piped straight in:</strong> ada tells an image by its first bytes, so
+        <code>curl -s …/cat.png | ada --print</code> draws it right in the terminal, no format to name.</p>
     </div>
   </article>
 
   <article id="preview" class="card">
     <div class="text">
       <h2>One previewer for fzf <a class="anchor" href="#preview" aria-label="link to this section">#</a></h2>
-      <p><code>ada --print</code> fills fzf's preview pane at its size: notes rendered, tables and all, code
-        highlighted, logs and JSON colored by parsers of ada's own, and <strong>images too</strong>, in kitty's graphics
-        protocol in kitty and Ghostty and in half-blocks elsewhere. <strong>It stands in for both
-        <code>bat</code> and <code>kitten icat</code>.</strong></p>
-      <p>A preview stops 2,000 rows in and reads no further, so an 80 MB log previews as fast as a small file:
+      <p><strong>One tool in place of <code>bat</code> and <code>kitten icat</code>.</strong>
+        <code>ada --print</code> fills the pane at its size: notes rendered, tables and all, code, logs and JSON
+        highlighted, and images, in kitty's graphics protocol in kitty and Ghostty and in half-blocks elsewhere.</p>
+      <p>A preview stops 2,000 rows in, so an 80 MB log previews as fast as a small file:
         <a href="#previewer-perf">4.2 ms, where bat takes a second</a>.</p>
       <pre><code>fzf --preview 'ada --print {}'
 <span class="c"># from rg matches: the matched line lands mid-pane</span>
@@ -1025,14 +1025,20 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
 </div>
 <p class="stamp">B2 at ada <code>962fccc</code>, 2026-10-23</p>
 <!-- perf:end -->
-  <p class="caveats">Where ada isn't first: bytes per page, since it paints each theme's background and writes the blanks on it as spaces (glow writes about 40% fewer, its pager not wrapping, and md-tui, treemd and mdfried fewer on some notes); and md-tui reaches the end of one note 27 µs sooner. As a previewer, bat prints the whole 3.75 MB JSON line on less CPU and in less
-    memory, because it doesn't color it: bat skips highlighting any line over 16 KB. ada colors it, every key
-    and value, and writes 15.5 MB to bat's 5.2, and still finishes first, on several cores. ada previews every image fastest, in kitty's graphics protocol and in
-    characters, and uses the least memory on every one. Of the mermaid charts, gantt is the closest: ada is 1.3× ahead of
-    mermaid-text there. Each viewer ran pinned to four physical cores of the same
-    machine, held at full clock with their deep idle states off for the run, in a 120×40
-    pty; the numbers are medians of 3–5 runs. The harness is in
-    <a href="https://github.com/junkdog/ada-md/tree/main/bench/b2">bench/b2</a>.</p>
+  <aside class="caveats">
+    <h3>Where ada isn't first</h3>
+    <ul>
+      <li><b>Bytes per page.</b> ada paints the theme's background, blanks included: glow writes about 40% fewer,
+        and md-tui, treemd and mdfried fewer on some notes.</li>
+      <li><b>One jump.</b> md-tui reaches the end of one note 27 µs sooner.</li>
+      <li><b>A 3.75 MB JSON line.</b> bat prints it on less CPU and memory by leaving it uncolored (it skips
+        lines over 16 KB); ada colors every key and value and still finishes first.</li>
+      <li><b>Closest call:</b> gantt charts, 1.3× ahead of mermaid-text.</li>
+    </ul>
+    <p>Each viewer ran pinned to four physical cores, at full clock with deep idle states off, in a 120×40 pty;
+      medians of 3–5 runs. The harness is
+      <a href="https://github.com/junkdog/ada-md/tree/main/bench/b2">bench/b2</a>.</p>
+  </aside>
 </section>
 
 <section id="robust" class="robust wrap">

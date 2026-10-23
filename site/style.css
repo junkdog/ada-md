@@ -189,7 +189,12 @@ figcaption { margin-top: .5rem; font-size: .88rem; color: var(--muted); }
 .chart .ada .bar { background: var(--ada); }
 .chart .missing .why { grid-column: 2; font-size: .8rem; color: var(--muted); font-style: italic; }
 .stamp { font-size: .85rem; }
-.caveats { font-size: .95rem; }
+.caveats { font-size: .88rem; color: var(--muted); max-width: 46rem; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.perf .caveats h3 { font: 700 .9rem var(--mono); color: var(--fg); margin: 0 0 .5rem; }
+.caveats ul { margin: 0 0 .75rem; padding-left: 1.1rem; }
+.caveats li { margin: .2rem 0; }
+.caveats b { color: var(--fg); font-weight: 600; }
+.caveats p { margin: 0; }
 
 /* robustness */
 .robust { padding-block: 3rem; }

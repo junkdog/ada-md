@@ -4,11 +4,11 @@
 
 _Named after Ada, regal matriarch, at her behest._
 
-The fastest terminal markdown viewer, for one note or a whole vault: walk its links and come
-back to where you were, read its tables at any width, and see its diagrams and pictures in place.
+The fastest terminal markdown viewer, for one note or a whole vault.
 
-`ada` renders CommonMark and GitHub-flavored markdown with `[[wiki links]]`, highlights code in
-some 200 languages, draws mermaid diagrams as text, and shows images over kitty, sixel or iTerm2.
+Tables you can sort, mermaid diagrams drawn as text, images inline, a git gutter in the margin,
+and `[[wiki links]]` that find their note anywhere in the vault. Code, logs, JSON and pictures
+open too, so the viewer that reads your notes also pages your pipes and fills fzf's preview pane.
 
 ![ada jumping to a heading from the outline, searching, following a link from the link list, sorting the second of two tables by how long things take, going back, and picking a dark theme](site/media/hero.webp)
 
@@ -16,56 +16,46 @@ More of it, one feature at a time, on [the site](https://junkdog.github.io/ada-m
 
 ## Goals
 
-- **The fastest markdown viewer, and the leanest:** wall time, CPU and memory are all measured,
-  against the other terminal viewers and against ada's own budgets. A key draws its frame in
-  well under a millisecond whatever the document's size, an idle ada sleeps until something
-  happens, and a typical note takes about 11 MiB of memory.
-- **A curated feature set:** what a single markdown file needs, mermaid diagrams included, and
-  what matters once files link to each other, as in an
-  [LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) or an
-  Obsidian-style vault. The rest (a file browser, editing, math) stays out.
-- **No crashes, on any input.** Parsing, layout and drawing are safe Rust; ada's only `unsafe` is
-  one call at startup that sets a malloc option. Every interaction is a message, so a
-  recorded session replays to identical frames. Whole scripted sessions are fuzzed for hours at a
-  time: documents, keys, resizes, and file, git and image results that arrive late, out of order,
-  or after their document is gone.
+- **The fastest, and the leanest.** Not merely quick: first on wall time, CPU and memory, against
+  every other terminal viewer. An idle ada doesn't wake at all.
+- **Easy to live with.** Vim keys and the mouse both work, and every change shows at once:
+  themes preview as you move through them, settings apply behind their popup, and back returns
+  to the same spot with the same link focused.
+- **Small on purpose.** What a note needs, and what a vault of linked notes needs, from an
+  [LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) to Obsidian.
+  No file browser, no editor, no math.
+- **Never crashes.** Parsing, layout and drawing are safe Rust. Whole sessions are fuzzed for
+  hours, with files, git and images answering late or out of order.
 
 ## Standout features
 
-- **Tables you can work with:** sort by any column, by value (`s`), with the header row kept on
-  screen while a long table scrolls; too wide, and it turns into cards ([Tables](#tables))
-- **Links you can walk:** relative paths, `[[wiki links]]` (found by name across a vault),
-  anchors and `src/main.rs#L42`, with back and forward history that comes back to the same spot
-  and the same focused link
-- **Not only markdown:** code, config and other text files open whole and highlighted, in some
-  200 languages, and png and jpeg files full screen, from the command line or through a link
-  ([Other files](#other-files))
-- **A git gutter** that marks staged and unstaged changes in the rendered note; `]c` `[c` jump
-  between them
-- **Search that sees through markup:** a regex `foo bar` finds `**foo** _bar_`, and link
-  targets match too
-- **Inline images** over kitty, sixel or iTerm2, with half-blocks as the fallback, and inside
-  tmux
-- **Live reload** the moment the file changes, and `e` to edit at the line on screen
-- **`--print`** for pipes and fzf previews, and `--record` and `--replay` to make a bug report
-  from a session
+- **Tables that know their units.** `s` sorts by any column, and `350 µs`, `1m 30s` and `€420`
+  sort as the values they are. Too wide for the terminal, a table turns into cards
+  ([Tables and diagrams](#tables-and-diagrams)).
+- **The best-looking mermaid in a terminal.** Sequence diagrams, flowcharts, state diagrams and
+  gantt charts, drawn as text with cleanly joined lines, laid out to fit the width and colored by
+  the theme, in any terminal and in `--print`.
+- **Wiki links that survive moves.** A `[[link]]` is found by name anywhere in the vault, as
+  Obsidian does ([Links in a vault](#links-in-a-vault)).
+- **Search that sees through markup.** A regex `foo bar` finds `**foo** _bar_`.
+- **One previewer for fzf.** Notes, code, logs, JSON and images, at the pane's size: it stands in
+  for both `bat` and `kitten icat`.
 
-Also: callouts, footnotes and task lists, mermaid sequence, flowchart, state and gantt diagrams
-in the theme's colors (their labels searchable), a filterable outline and list of links, code
-that wraps or scrolls sideways, fourteen built-in themes and your own (`T` previews them), and keys
-you can remap.
+Also: inline images over kitty, sixel or iTerm2, a git gutter, live reload, callouts and
+footnotes, fourteen themes and your own, remappable keys, and `--record` and `--replay` to turn
+a session into a bug report.
 
 ## Performance
 
-ada is measured against ten other terminal markdown viewers on wall time, CPU and memory, and
-leads on nearly every measurement:
+ada is measured against nine other terminal markdown viewers, five of them interactive, and bat,
+on wall time, CPU and memory, and leads on nearly every measurement:
 
 - **Reading:** first paint, scrolling, search, resize and reload, from a short note to a 2 MB
   one. An idle ada doesn't wake at all.
 - **Printing and previews:** the fastest of the printers that render and highlight, and ahead of
   bat as an fzf previewer on code, JSON and logs.
-- **Images:** the fastest previews of every tool measured, kitty's own `icat` included, in a
-  fraction of the memory.
+- **Images:** the fastest previews of every image tool measured, `kitten icat`, chafa, viu and
+  mcat, in kitty's graphics protocol and in characters, in a fraction of the memory.
 - **Diagrams:** a mermaid diagram is fitted to the width and drawn in microseconds; flowcharts
   that take other renderers seconds take ada milliseconds.
 
@@ -274,16 +264,23 @@ Colors are `#rrggbb`, `#rgb`, a terminal color name or index, or a name from the
 [gruvbox-dark.toml](src/theme/builtin/gruvbox-dark.toml) lists every style there is. Mistakes
 are reported with the file, line and column.
 
-## Tables
+## Tables and diagrams
 
 - **Sort by any column.** `s` lists the columns of a table on screen, ascending and descending:
   type to filter, `Enter` sorts, `←` `→` pick another table. Numbers, money, percentages and
   durations sort by value (`€85` before `€310`, `1h 30m` after `80m`), other text naturally, and
   empty cells go last. Each table keeps its order through resizes, navigation and reloads.
-- **A sticky header** stays at the top while a long table scrolls past.
 - **Sized like a browser's.** Columns follow their content, and a table may grow past
   `max_width` to the terminal's width. One that still doesn't fit becomes cards, one per row.
   `t` cycles every table between auto, grid and records.
+- **Mermaid, drawn as text.** A ```` ```mermaid ```` block with a sequence diagram, flowchart,
+  state diagram or gantt chart is drawn in the note, in the theme's colors, fitted to the width.
+  One that still doesn't fit scrolls sideways with `←` `→`, and labels cut to fit are listed in
+  full under it. Search finds text in the labels and lights it up in the drawing. Other kinds
+  show as code.
+- **Headers that stay.** While a long table scrolls past, its header row stays at the top. A
+  sequence diagram does the same with its participants, so each lifeline keeps its name however
+  far down the messages go, and a gantt chart with its date axis.
 
 ## Other files
 
@@ -294,10 +291,11 @@ binary files aren't shown.
 
 Stdin and files with no extension go by their first 8 KB: a diff, JSON (JSON lines too), YAML,
 TOML, HTML, a log, or markdown. Piped text that's none of these is shown line for line, never
-reflowed; a file with no extension falls back to markdown, as a `README` should. Logs and JSON
-are highlighted by ada's own scanners, lines of any length included; a theme styles log levels
-with `markup.error`, `markup.warning`, `markup.info` and `markup.debug`. `-l NAME` overrides the
-guess, and completes to every language ada knows.
+reflowed; a file with no extension falls back to markdown, as a `README` should. A png or jpeg
+piped in (`curl -s …/cat.png | ada`) is told by its first bytes and shown as an image file is.
+Logs and JSON are highlighted by ada's own scanners, lines of any length included; a theme styles
+log levels with `markup.error`, `markup.warning`, `markup.info` and `markup.debug`. `-l NAME`
+overrides the guess, and completes to every language ada knows.
 
 ## Images
 

@@ -110,7 +110,9 @@ pub fn start(path: &Path, forced: Option<FileType>, numbered: bool) -> Start {
     let Ok(full) = fill(&mut rest, &mut first, want) else {
         return whole(first);
     };
-    if !full || filetype::is_binary(&first) || !first.contains(&b'\n') {
+    // a piped image is shown whole, as an image
+    let image = stdin && forced.is_none() && filetype::image_ext(&first).is_some();
+    if !full || image || filetype::is_binary(&first) || !first.contains(&b'\n') {
         return whole(first);
     }
     // the whole print's type: sniffing looks only at the first few KB and the first line

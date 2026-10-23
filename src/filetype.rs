@@ -168,6 +168,21 @@ pub fn is_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(8192).any(|&b| b == 0)
 }
 
+/// How many bytes [`image_ext`] looks at.
+pub const IMAGE_MAGIC: usize = 8;
+
+/// The extension of the image `bytes` start as, by its magic bytes: PNG's signature or a JPEG's
+/// start of image, the formats ada decodes. Stdin has no name to tell it by.
+pub fn image_ext(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("png")
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("jpg")
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,6 +243,18 @@ mod tests {
         // nothing stands out: stdin stays line for line, a README is still markdown
         assert_eq!(of("-", "Ada is a cat.\n"), FileType::Text { lang: None });
         assert_eq!(of("README", "Ada is a cat.\n"), FileType::Markdown);
+    }
+
+    #[test]
+    fn images_by_magic_bytes() {
+        assert_eq!(image_ext(b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR"), Some("png"));
+        assert_eq!(image_ext(b"\xff\xd8\xff\xe0\0\x10JFIF\0"), Some("jpg"));
+        assert_eq!(image_ext(b"\xff\xd8\xff\xe1\0\x18Exif\0\0"), Some("jpg"));
+        // cut before the signature ends, or mangled by a newline conversion
+        assert_eq!(image_ext(b"\x89PNG\r\n"), None);
+        assert_eq!(image_ext(b"\x89PNG\n\x1a\n"), None);
+        assert_eq!(image_ext(b"GIF89a"), None);
+        assert_eq!(image_ext(b""), None);
     }
 
     #[test]

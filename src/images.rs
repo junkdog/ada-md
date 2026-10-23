@@ -12,7 +12,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, Cursor, Seek, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -273,27 +273,40 @@ pub enum Probe {
 
 /// Read an image's header: cheap, as nothing is decoded.
 pub fn probe(path: &Path) -> Probe {
-    let header = || -> Result<(u32, u32), String> {
-        let mut decoder = reader(path)?.into_decoder().map_err(|e| e.to_string())?;
-        let (w, h) = decoder.dimensions();
-        let turned = matches!(
-            decoder.orientation().unwrap_or(Orientation::NoTransforms),
-            Orientation::Rotate90
-                | Orientation::Rotate270
-                | Orientation::Rotate90FlipH
-                | Orientation::Rotate270FlipH
-        );
-        Ok(if turned { (h, w) } else { (w, h) })
-    };
-    match header() {
-        Ok((w, h)) if w > 0 && h > 0 => Probe::Image {
+    match reader(path).and_then(header) {
+        Ok((w, h)) => Probe::Image {
             w,
             h,
             mtime: mtime_of(path),
         },
-        Ok(_) => Probe::Failed("the image is empty".into()),
         Err(e) => Probe::Failed(e),
     }
+}
+
+/// The upright size of the image `bytes` hold, from its header: a piped image is checked by it
+/// before it's written anywhere.
+pub fn header_of(bytes: &[u8]) -> Result<(u32, u32), String> {
+    ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| e.to_string())
+        .and_then(header)
+}
+
+/// The upright size `reader`'s header gives, which has to be some pixels.
+fn header<R: BufRead + Seek>(reader: ImageReader<R>) -> Result<(u32, u32), String> {
+    let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
+    let (w, h) = decoder.dimensions();
+    if w == 0 || h == 0 {
+        return Err("the image is empty".into());
+    }
+    let turned = matches!(
+        decoder.orientation().unwrap_or(Orientation::NoTransforms),
+        Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Rotate90FlipH
+            | Orientation::Rotate270FlipH
+    );
+    Ok(if turned { (h, w) } else { (w, h) })
 }
 
 /// A file's modification time in milliseconds since the epoch.
@@ -913,6 +926,12 @@ pub(crate) mod tests {
         let text = path.with_extension("txt");
         fs::write(&text, "not an image").unwrap();
         assert!(matches!(probe(&text), Probe::Failed(_)));
+        // a piped image's header, read from its bytes: whole, cut short, or only a signature
+        let bytes = fs::read(&path).unwrap();
+        assert_eq!(header_of(&bytes), Ok((40, 60)));
+        assert!(header_of(&bytes[..20]).is_err());
+        assert!(header_of(b"\x89PNG\r\n\x1a\n").is_err());
+        assert!(header_of(b"\xff\xd8\xff\xe0").is_err());
 
         let encoder = Encoder::halfblocks();
         let key = ImageKey {

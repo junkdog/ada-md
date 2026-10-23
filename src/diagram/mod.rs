@@ -140,8 +140,7 @@ pub struct Text {
     pub origin: Option<Origin>,
 }
 
-/// Where a [`Text`]'s first `len` bytes are in the block's source: from byte `at` on. A cut
-/// label's marker is past `len`.
+/// Where a [`Text`]'s first `len` bytes are in the block's source: from byte `at` on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Origin {
     pub at: u32,
@@ -173,12 +172,6 @@ impl Text {
                 origin: None,
             },
         }
-    }
-
-    /// It, then `tail`, which isn't from the source.
-    fn with(mut self, tail: &str) -> Text {
-        self.s.push_str(tail);
-        self
     }
 }
 

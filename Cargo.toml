@@ -24,7 +24,7 @@ default = ["onig"]
 onig = ["syntect/regex-onig", "two-face/syntect-onig"]
 
 [dependencies]
-anpa = "0.12"
+anpa = "0.13"
 # `events` for keys and resizes (ratatui turned it on until CS-4); `windows` is the default's, only for
 # Windows targets. `use-dev-tty`: its event source waits with level-triggered poll(2). The default mio one is
 # edge-triggered and returns before draining the tty, so input over 1 KB in one burst stalls until the next

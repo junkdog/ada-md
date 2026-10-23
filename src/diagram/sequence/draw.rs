@@ -520,23 +520,26 @@ impl<'a> Painter<'a> {
         }
     }
 
-    /// Fit a message's label to `cap`, registering what was cut; the cut row ends in its
-    /// marker. The number stays out: [`Painter::label_line`] puts it in front of row 0.
-    fn fitted(&mut self, m: &Message, cap: Option<usize>) -> Vec<Text> {
+    /// Fit a message's label to `cap`, registering what was cut, with the marker that ends the
+    /// cut row (empty when nothing was). The number stays out: [`Painter::label_line`] puts it
+    /// in front of row 0.
+    fn fitted(&mut self, m: &Message, cap: Option<usize>) -> (Vec<Text>, String) {
         let label = Label::of(m);
         let (mut out, was_cut) = label.fit(cap);
+        let mut mark = String::new();
         if was_cut && let (Some(cap), Some(last)) = (cap, out.pop()) {
             self.notes.push(Text::join(&m.label));
-            let mark = marker(self.notes.len());
+            mark = marker(self.notes.len());
             let room = label.inner(cap).saturating_sub(width(&mark));
             let keep = cut(&last, room).trim_end_matches([' ', '(', '{', '[', '…']);
-            out.push(last.slice(0..keep.len()).with(&mark));
+            out.push(last.slice(0..keep.len()));
         }
-        out
+        (out, mark)
     }
 
-    /// Write row `k` of a message's label from `x`, the number first on row 0.
-    fn label_line(&mut self, row: usize, x: usize, m: &Message, k: usize, line: &Text) {
+    /// Write row `k` of a message's label from `x`, the number first on row 0 and `mark`, in
+    /// the number's style like the note it points to, after it.
+    fn label_line(&mut self, row: usize, x: usize, m: &Message, k: usize, line: &Text, mark: &str) {
         let mut x = x;
         if let (0, Some(n)) = (k, m.number) {
             x = self
@@ -545,13 +548,14 @@ impl<'a> Painter<'a> {
             // written, so a lifeline under it doesn't show through
             x = self.canvas.text(row, x, " ", StyleKey::DiagramLabel);
         }
-        self.canvas.label(row, x, line, StyleKey::DiagramLabel);
+        x = self.canvas.label(row, x, line, StyleKey::DiagramLabel);
+        self.canvas.text(row, x, mark, StyleKey::DiagramNumber);
     }
 
-    /// The columns row `k` of a message's label takes.
-    fn label_width(m: &Message, k: usize, line: &str) -> usize {
+    /// The columns row `k` of a message's label takes, its marker included.
+    fn label_width(m: &Message, k: usize, line: &str, mark: &str) -> usize {
         let number = if k == 0 { Label::of(m).number } else { 0 };
-        number + width(line)
+        number + width(line) + width(mark)
     }
 
     fn message(&mut self, m: &Message) {
@@ -560,14 +564,15 @@ impl<'a> Painter<'a> {
         let span = hi - lo - 1;
         // the cap made the layout fit; between these two lifelines there may be more room
         let cap = self.plan.cap.map(|c| c.max(span.saturating_sub(2)));
-        let lines = self.fitted(m, cap);
+        let (lines, mark) = self.fitted(m, cap);
         for (k, line) in lines.iter().enumerate() {
-            let w = Self::label_width(m, k, line);
+            let mark = if k + 1 == lines.len() { &*mark } else { "" };
+            let w = Self::label_width(m, k, line, mark);
             if w == 0 {
                 continue;
             }
             let x = lo + 1 + span.saturating_sub(w) / 2;
-            self.label_line(self.row, x, m, k, line);
+            self.label_line(self.row, x, m, k, line, mark);
             self.row += 1;
         }
         let row = self.row;
@@ -614,7 +619,7 @@ impl<'a> Painter<'a> {
     }
 
     fn self_message(&mut self, m: &Message) {
-        let lines = self.fitted(m, self.plan.cap);
+        let (lines, mark) = self.fitted(m, self.plan.cap);
         let c = self.c(m.from);
         let (top, pen) = (
             self.row,
@@ -632,7 +637,8 @@ impl<'a> Painter<'a> {
                 .glyph(top + 1, c + 1, self.heads(m.arrow.head).1, LINE);
         }
         for (k, line) in lines.iter().enumerate() {
-            self.label_line(top + k, c + 5, m, k, line);
+            let mark = if k + 1 == lines.len() { &*mark } else { "" };
+            self.label_line(top + k, c + 5, m, k, line, mark);
         }
         self.row += lines.len().max(2);
     }
@@ -771,6 +777,16 @@ mod tests {
         assert_eq!(d.notes.len(), 1);
         assert!(d.notes[0].starts_with("POST /internal"));
         assert!(rows.iter().any(|r| r.contains("…¹")), "{rows:#?}");
+        // the marker takes the number's style, as the note it points to does
+        let mut marks = Vec::new();
+        for row in 0..d.canvas.height() {
+            d.canvas.pieces(row, LINE, &mut |t, _, k| {
+                if t.contains('¹') {
+                    marks.push((t.to_owned(), k));
+                }
+            });
+        }
+        assert_eq!(marks, [("…¹".to_owned(), StyleKey::DiagramNumber)]);
         // fits at its natural width: nothing cut
         let (_, d) = drawn(src, 400);
         assert!(d.notes.is_empty());
