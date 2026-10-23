@@ -102,7 +102,13 @@ jobs:
           floor=$(objdump -p target/release/ada \
             | awk '/required from libc\.so/ {f = 1; next} /required from/ {f = 0} f && $2 == "0x00" {print $4}' \
             | sed 's/^GLIBC_ABI_DT_RELR$/GLIBC_2.36/' | sort -uV | tail -1)
+          echo "${{ matrix.target }} needs $floor"
           echo "**${{ matrix.target }}:** needs $floor" >> "$GITHUB_STEP_SUMMARY"
+          # the floor the README and the release notes promise (REL-01, decided 2026-10-23)
+          if [ "$(printf '%s\n' "$floor" GLIBC_2.34 | sort -V | tail -1)" != GLIBC_2.34 ]; then
+            echo "::error::$floor is newer than the promised GLIBC_2.34"
+            exit 1
+          fi
       - name: 📦 Package
         run: |
           name=ada-$VERSION-${{ matrix.target }}
