@@ -51,9 +51,9 @@ dependencies = [
 
 [[package]]
 name = "anpa"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9bb4faf36bd7669e2ea7f1d9f4b94f863d8d563d260c2e27940e949196974404"
+checksum = "9dba913e2248baf6c398bfd4d19fdf0fe277fe9292514a589964e26918c13ff8"
 
 [[package]]
 name = "arbitrary"
