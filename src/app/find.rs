@@ -568,6 +568,8 @@ impl State {
             Listing::Links => {
                 if !self.visible(row) {
                     self.jump_local(row.saturating_sub(self.viewport_height() / 3));
+                    // a third of the way down can still be under a pinned header
+                    self.reveal(row);
                 }
                 self.focus = Some(id as LinkId);
             }

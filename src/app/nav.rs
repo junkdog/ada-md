@@ -2,6 +2,7 @@
 //! and the back and forward stacks. Documents loaded for a navigation arrive as `DocLoaded`; the
 //! history changes only once they have, so a failed load leaves it alone.
 
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -147,11 +148,24 @@ impl State {
         }
     }
 
-    pub(super) fn visible(&self, row: u32) -> bool {
-        (self.scroll..self.scroll + self.viewport_height()).contains(&row)
+    /// The header rows of a table pinned over the top of the viewport, as the view draws them.
+    fn pinned(&self) -> Option<Range<u32>> {
+        let doc = self.doc.as_ref()?;
+        crate::ui::sticky_header(&doc.layout, self.scroll, self.viewport_height())
     }
 
-    /// Scroll as little as possible to bring `row` on screen.
+    /// Whether `row` is drawn: the rows under a pinned header aren't, the header's rows are.
+    pub(super) fn visible(&self, row: u32) -> bool {
+        let bottom = self.scroll + self.viewport_height();
+        match self.pinned() {
+            Some(header) => {
+                header.contains(&row) || (self.scroll + header.len() as u32..bottom).contains(&row)
+            }
+            None => (self.scroll..bottom).contains(&row),
+        }
+    }
+
+    /// Scroll as little as possible to bring `row` on screen, below a pinned header.
     pub(super) fn reveal(&mut self, row: u32) {
         let height = self.viewport_height().max(1);
         if row < self.scroll {
@@ -160,6 +174,11 @@ impl State {
             self.scroll = row + 1 - height;
         }
         self.scroll = self.scroll.min(self.max_scroll());
+        if let Some(header) = self.pinned()
+            && !self.visible(row)
+        {
+            self.scroll = row.saturating_sub(header.len() as u32);
+        }
     }
 
     /// Each link once, at its first row, in row order.
@@ -209,11 +228,17 @@ impl State {
             (Some(_), Dir::Next) => (0, true),
             (Some(i), Dir::Prev) if i > 0 => (i - 1, false),
             (Some(_), Dir::Prev) => (last, true),
-            (None, Dir::Next) => match stops.iter().position(|&(r, _)| r >= self.scroll) {
+            (None, Dir::Next) => match stops
+                .iter()
+                .position(|&(r, _)| self.visible(r) || r >= bottom)
+            {
                 Some(i) => (i, false),
                 None => (0, true),
             },
-            (None, Dir::Prev) => match stops.iter().rposition(|&(r, _)| r < bottom) {
+            (None, Dir::Prev) => match stops
+                .iter()
+                .rposition(|&(r, _)| self.visible(r) || r < self.scroll)
+            {
                 Some(i) => (i, false),
                 None => (last, true),
             },

@@ -2215,6 +2215,49 @@ mod tests {
         assert_eq!(state.back.len(), 1);
     }
 
+    /// The rows a table's sticky header covers aren't on screen: a link there isn't focused by
+    /// `Tab`, and picked from the link list, it's scrolled out from under the header.
+    #[test]
+    fn a_link_under_a_sticky_header_is_not_on_screen() {
+        let mut md = String::from("# T\n\n| name | value |\n|---|---|\n");
+        for i in 0..40 {
+            md.push_str(&format!("| [r{i}x](#t) | {i} |\n"));
+        }
+        let mut state = loaded(&md, 60, 12);
+        update(
+            &mut state,
+            Msg::Scroll {
+                by: ScrollBy::Rows(10),
+            },
+        );
+        let layout = &state.doc.as_ref().unwrap().layout;
+        let header = crate::ui::sticky_header(layout, 10, 11).expect("the header sticks");
+        let covered = layout
+            .hits
+            .iter()
+            .find(|h| h.row == 10)
+            .expect("a link in the first row under the header");
+        let (row, link) = (covered.row, covered.link);
+        assert!(!state.visible(row), "drawn over by the header");
+        assert!(state.visible(10 + header.len() as u32), "the row below it");
+
+        update(&mut state, Msg::FocusLink { dir: Dir::Next });
+        let focus = state.visible_focus().expect("a link on screen is focused");
+        assert_ne!(focus, link);
+        assert_eq!(state.scroll, 10, "it was on screen already");
+
+        update(&mut state, Msg::OpenLinks);
+        update(
+            &mut state,
+            Msg::OutlineFilter {
+                text: format!("r{link}x"),
+            },
+        );
+        update(&mut state, Msg::OutlinePick);
+        assert_eq!(state.visible_focus(), Some(link), "scrolled into view");
+        assert!(state.visible(row));
+    }
+
     #[test]
     fn m_toggles_the_mouse_and_s_saves_it() {
         let mut state = loaded(&sample(), 80, 20);
