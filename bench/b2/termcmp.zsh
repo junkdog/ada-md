@@ -4,7 +4,8 @@
 # screen after every key, and compare the two builds screen by screen by what each cell shows.
 # Also prints the scroll sequences (DECSTBM, IL, DL) each build sent.
 #
-# tmux: a detached server of its own at 120x40, `capture-pane -e`, bytes by `pipe-pane`.
+# tmux: a detached server of its own at 120x40, `capture-pane -e -N` (-N keeps the cells an erase cleared on
+#   a background, TRM-02), bytes by `pipe-pane`.
 # kitty: remote control on an abstract socket, `get-text --ansi`, bytes by `--dump-bytes`.
 # alacritty: on XWayland (no WAYLAND_DISPLAY), ada inside relay.py, which takes the keys from a
 #   FIFO and logs the bytes; screens by ImageMagick's `import -window`, compared pixel for pixel.
@@ -33,7 +34,7 @@ drive() {
       $T pipe-pane -t t -o "cat > $dir/bytes"
       send() { case $1 in ENTER) $T send-keys -t t Enter;; PGDN) $T send-keys -t t NPage;;
                PGUP) $T send-keys -t t PPage;; *) $T send-keys -t t -l -- $1;; esac }
-      grab() { $T capture-pane -t t -p -e > $dir/$1.txt }
+      grab() { $T capture-pane -t t -p -e -N > $dir/$1.txt }
       painted() { $T capture-pane -t t -p | grep -q '[^ ]' }
       stop() { $T kill-server }
       ;;
