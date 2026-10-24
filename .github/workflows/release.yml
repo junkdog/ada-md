@@ -100,9 +100,11 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: ${{ matrix.musl && matrix.target || '' }}
-      # cc looks for aarch64-linux-musl-gcc on aarch64, and musl-tools has only musl-gcc. jemalloc
-      # (MEM-09) takes the build machine's page size and refuses to start on a larger one: on
-      # aarch64, 64 KiB, so it starts on 4, 16 and 64 KiB kernels
+      # cc looks for aarch64-linux-musl-gcc on aarch64, and musl-tools has only musl-gcc. On aarch64:
+      # jemalloc (MEM-09) takes the build machine's page size and refuses to start on a larger one,
+      # so 64 KiB, to start on 4, 16 and 64 KiB kernels; and gcc's atomics are inline, as libgcc's
+      # outline ones need `__getauxval`, which musl 1.2.2's libc.so doesn't export, so every
+      # atomics check in jemalloc's configure (linked dynamically) failed
       - name: 🧰 musl-tools
         if: matrix.musl
         run: |
@@ -110,7 +112,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends musl-tools
           target=${{ matrix.target }}
           echo "CC_${target//-/_}=musl-gcc" >> "$GITHUB_ENV"
-          if [ "${target%%-*}" = aarch64 ]; then echo "JEMALLOC_SYS_WITH_LG_PAGE=16" >> "$GITHUB_ENV"; fi
+          if [ "${target%%-*}" = aarch64 ]; then
+            echo "JEMALLOC_SYS_WITH_LG_PAGE=16" >> "$GITHUB_ENV"
+            echo "CFLAGS_${target//-/_}=-mno-outline-atomics" >> "$GITHUB_ENV"
+          fi
       # with the hot code first where lld links (MEM-02, MEM-08): two links, the second with order.txt's names
       # as this build has them; fails when it has under 90% of them (exit 2), and then trace.zsh runs again
       - name: 🔨 Build
