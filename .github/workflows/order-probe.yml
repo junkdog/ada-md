@@ -1,0 +1,57 @@
+name: 📐 Order probe
+
+# What the hot-code order is worth on each release target (MEM-08): a plain release build beside
+# bench/order/build.py's, peak RSS and wall time of print runs on files of the checkout, into the
+# job summary. By hand only; it measures, it ships nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Runs per binary and file
+        default: '20'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # the release's (release.yml)
+  RUST_TOOLCHAIN: 1.99.1
+
+jobs:
+  probe:
+    name: 📐 ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+          - { target: aarch64-apple-darwin, os: macos-15 }
+          - { target: x86_64-apple-darwin, os: macos-15-intel }
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: 🔨 Plain build
+        run: |
+          cargo build --release --locked
+          mkdir bin && cp target/release/ada bin/ada-plain
+      - name: 🔨 Ordered build
+        run: |
+          report=$(python3 -I bench/order/build.py --locked) && rc=0 || rc=$?
+          echo "$report"
+          echo "**Symbol order:** ${report#symbol order: }" >> "$GITHUB_STEP_SUMMARY"
+          cp target/release/ada bin/ada-ordered
+          exit $rc
+      # read back from disk, not from the pages the copy wrote (BEN-01)
+      - name: 🧹 Drop caches
+        run: |
+          sync
+          if [ "$RUNNER_OS" = macOS ]; then sudo purge; else echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null; fi
+      - name: 📐 Peak RSS
+        run: |
+          python3 -I bench/order/rss.py ${{ inputs.runs }} bin/ada-plain bin/ada-ordered \
+            -- demo/notes/feeding.md README.md src/app/mod.rs | tee -a "$GITHUB_STEP_SUMMARY"
