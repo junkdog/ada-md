@@ -194,6 +194,9 @@ pub struct Hit {
     pub row: u32,
     pub cols: Range<u16>,
     pub link: LinkId,
+    /// The row before ends inside the word this one starts with (a break after `-` or `/`, or
+    /// in a word too long for the line), so the link's text has no space there.
+    pub joined: bool,
 }
 
 /// Where a stretch of a search unit's text renders: bytes `start..end` of the unit, on `row`,
@@ -917,7 +920,12 @@ impl Builder<'_> {
                 );
             }
             if let Some(link) = piece.link {
-                self.hit(from, self.col, link);
+                // no bytes between the line before and this one: the break was inside a word
+                let joined = i == 0
+                    && (line.segs.start as usize)
+                        .checked_sub(1)
+                        .is_some_and(|before| w.segs[before].end == seg.start);
+                self.hit(from, self.col, link, joined);
             }
         }
     }
@@ -953,7 +961,7 @@ impl Builder<'_> {
         self.search_col = cols.end;
     }
 
-    fn hit(&mut self, from: u16, to: u16, link: LinkId) {
+    fn hit(&mut self, from: u16, to: u16, link: LinkId, joined: bool) {
         if !self.screen {
             return;
         }
@@ -970,6 +978,7 @@ impl Builder<'_> {
             row,
             cols: from..to,
             link,
+            joined,
         });
     }
 

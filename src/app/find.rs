@@ -140,7 +140,9 @@ fn link_entries(doc: &Document) -> Vec<OutlineEntry<'_>> {
             continue;
         };
         let text = entries[at].text.to_mut();
-        text.push(' ');
+        if !hit.joined {
+            text.push(' ');
+        }
         for (t, _) in layout.spans(row).filter(|(_, s)| s.link == Some(hit.link)) {
             text.push_str(t);
         }
@@ -564,7 +566,10 @@ impl State {
             return Vec::new();
         };
         match outline.listing {
-            Listing::Headings => self.jump_local(row),
+            Listing::Headings => {
+                self.jump_local(row);
+                self.land(row);
+            }
             Listing::Links => {
                 if !self.visible(row) {
                     self.jump_local(row.saturating_sub(self.viewport_height() / 3));
