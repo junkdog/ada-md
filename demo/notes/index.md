@@ -19,6 +19,7 @@ her schedule. They link to each other with `[[wiki links]]`, and they live in gi
 | Note | What's in it |
 |---|---|
 | [[feeding]] | portions, the schedule, and the feeder's config |
+| [[diagrams]] | the cheese heist and her other operations, in mermaid |
 | [[shenanigans]] | what she got up to, and what it cost |
 | [the feeder's firmware](feeder/src/main.rs#L24) | the code that runs the schedule |
 | [Ada on the rug](pics/ada.jpg) | the photo from the hallway |

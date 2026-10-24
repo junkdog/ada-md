@@ -44,11 +44,8 @@
 <!-- proof:end -->
     <p class="sub">Follow links and come back to where you were, see what git says changed, read wide tables at
       any width, and look at the pictures.</p>
-    <div class="cmd">
-      <code id="install-cmd">cargo install --locked --git https://github.com/junkdog/ada-md ada-md</code>
-      <button type="button" data-copy="install-cmd" hidden>copy</button>
-    </div>
-    <p class="alt">Or a <a href="https://github.com/junkdog/ada-md/releases">prebuilt binary</a> for Linux and macOS.</p>
+    <a class="download" href="https://github.com/junkdog/ada-md/releases">Download ada</a>
+    <p class="alt">Binaries for Linux and macOS, or <a href="#install">build it with cargo</a>.</p>
   </div>
   <figure class="ada">
     <img src="media/ada.jpg" width="560" height="340" alt="Ada, a fluffy grey mixed-breed cat, lying on a shelf and looking at the camera">
@@ -56,7 +53,7 @@
   </figure>
   <a class="term term-hero" id="tour" href="#zoom-hero">
     <div class="term-bar"><i></i><i></i><i></i><span>ada index.md</span></div>
-    <img src="media/hero.webp" width="1000" height="600" alt="ada jumping to a heading from the outline, searching, following a link from the link list, sorting the second of two tables by how long things take, going back, and picking a dark theme">
+    <img src="media/hero.webp" width="1000" height="600" alt="ada jumping to a heading from the outline, searching, following a link from the link list, picking a theme in the settings, sorting the second of two tables by how long things take, going back, and following a link to a mermaid sequence diagram whose cast stays on top as it scrolls">
   </a>
 </section>
 
@@ -1132,12 +1129,5 @@ fzf --preview 'ada --print {}'</code></pre>
 <div class="zoom" id="zoom-theme-rose-pine"><a href="#themes" aria-label="close"></a><img src="media/theme-rose-pine.png" loading="lazy" alt=""></div>
 <div class="zoom" id="zoom-theme-rose-pine-moon"><a href="#themes" aria-label="close"></a><img src="media/theme-rose-pine-moon.png" loading="lazy" alt=""></div>
 
-<script>
-for (const b of document.querySelectorAll("button[data-copy]")) {
-  b.hidden = false;
-  b.onclick = () => navigator.clipboard.writeText(document.getElementById(b.dataset.copy).textContent)
-    .then(() => { b.textContent = "copied"; setTimeout(() => b.textContent = "copy", 1500); });
-}
-</script>
 </body>
 </html>

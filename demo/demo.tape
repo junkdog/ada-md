@@ -53,9 +53,22 @@ Sleep 700ms
 Type "feed"
 Sleep 500ms
 Enter
-Sleep 900ms
+Sleep 700ms
 Enter
 Sleep 1.6s
+
+# , the settings: Enter on the theme lists the themes, and "mocha" previews catppuccin-mocha
+# behind the popup, the first match at every letter typed. Enter picks it, a keeps it.
+Type ","
+Sleep 1.4s
+Enter
+Sleep 900ms
+Type "mocha"
+Sleep 1s
+Enter
+Sleep 1.2s
+Type "a"
+Sleep 1.4s
 
 # two tables on screen: s lists the first's columns, → the second's; by how long things
 # take, longest first: 6 days, 2 min, 1m 30s, 45 s, …, 350 µs
@@ -76,24 +89,11 @@ Sleep 2.4s
 Backspace
 Sleep 1.2s
 
-# the dark themes, previewed as they're selected. Typing filters the list; each filter's first
-# letter is in the theme on show, so it stays, and only the second picks another: dracula,
-# catppuccin-mocha, tokyonight-night, rose-pine. Backspace widens the list again, keeping it.
-Type "T"
+# Tab: back on [[feeding]], the next link is [[diagrams]], the cheese heist as a mermaid sequence
+# diagram; scrolled through, its cast stays on top as a sticky header
+Tab
 Sleep 700ms
-Type "dr"
-Sleep 1s
-Backspace 2
-Sleep 300ms
-Type "ca"
-Sleep 1s
-Backspace 2
-Sleep 300ms
-Type "ni"
-Sleep 1s
-Backspace 2
-Sleep 300ms
-Type "os"
-Sleep 1s
 Enter
-Sleep 1.8s
+Sleep 1.4s
+Down@100ms 22
+Sleep 2.4s

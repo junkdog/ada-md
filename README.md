@@ -10,7 +10,7 @@ Tables you can sort, mermaid diagrams drawn as text, images inline, a git gutter
 and `[[wiki links]]` that find their note anywhere in the vault. Code, logs, JSON and pictures
 open too, so the viewer that reads your notes also pages your pipes and fills fzf's preview pane.
 
-![ada jumping to a heading from the outline, searching, following a link from the link list, sorting the second of two tables by how long things take, going back, and picking a dark theme](site/media/hero.webp)
+![ada jumping to a heading from the outline, searching, following a link from the link list, picking a theme in the settings, sorting the second of two tables by how long things take, going back, and following a link to a mermaid sequence diagram whose cast stays on top as it scrolls](site/media/hero.webp)
 
 More of it, one feature at a time, on [the site](https://junkdog.github.io/ada-md/).
 
