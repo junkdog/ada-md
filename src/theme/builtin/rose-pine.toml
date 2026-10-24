@@ -109,6 +109,7 @@ popup_title = { fg = "iris", bg = "surface", bold = true }
 popup_selected = { fg = "base", bg = "iris", bold = true }
 sort_table = { fg = "iris" }
 selection = { bg = "highlight_high" }
+landed = { bg = "highlight_med" }
 line_number = { fg = "muted" }
 
 [ui.settings]                # the settings popup (`F2`): its rows, and the values they set

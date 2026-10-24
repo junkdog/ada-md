@@ -110,6 +110,7 @@ style_keys! {
     SettingsChanged => "ui.settings.changed",
     SortTable => "ui.sort_table",
     Selection => "ui.selection",
+    Landed => "ui.landed",
 }
 
 impl StyleKey {
@@ -157,6 +158,8 @@ impl StyleKey {
             StyleKey::SettingsSwitchOn | StyleKey::SettingsSwitchOff | StyleKey::SettingsChoice => {
                 Some(StyleKey::SettingsField)
             }
+            // only its background is used, so a theme without it tints with this one's
+            StyleKey::Landed => Some(StyleKey::SearchMatchHidden),
             _ => None,
         }
     }
@@ -551,6 +554,37 @@ mod tests {
                     fg(StyleKey::SettingsSwitchOff),
                 );
                 assert!(contrast(on, off) > 1.2, "{name}: on and off look alike");
+            }
+        }
+    }
+
+    /// Where a jump landed shows against the page, and what lands there still reads on it: text,
+    /// headings, a footnote's label, a link. Each keeps WCAG's 4.5 (text) or 3 (the rest), or,
+    /// where the theme's own page gives it less (the light themes' headings), three quarters of
+    /// that. The first heading level paints its own background, which the tint leaves alone.
+    #[test]
+    fn landing_tint_reads_in_every_builtin() {
+        for theme in Theme::builtins() {
+            let name = &theme.name;
+            let page = theme.style(StyleKey::Text).bg.unwrap();
+            let tint = theme.style(StyleKey::Landed).bg.unwrap();
+            let shows = contrast(tint, page);
+            assert!(shows >= 1.15, "{name}: the tint barely shows, {shows:.2}");
+            for (key, min) in [
+                (StyleKey::Text, 4.5),
+                (StyleKey::H2, 3.0),
+                (StyleKey::H3, 3.0),
+                (StyleKey::FootnoteLabel, 3.0),
+                (StyleKey::Link, 3.0),
+            ] {
+                let fg = theme.style(key).fg.unwrap();
+                let (on_page, on_tint) = (contrast(fg, page), contrast(fg, tint));
+                let min = f64::min(min, 0.75 * on_page);
+                assert!(
+                    on_tint >= min,
+                    "{name}: {} {on_tint:.2} < {min:.2}",
+                    key.path()
+                );
             }
         }
     }

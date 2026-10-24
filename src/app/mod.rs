@@ -21,7 +21,7 @@ use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::doc::{CodeId, Doc, LinkId};
+use crate::doc::{CodeId, Doc, LineRange, LinkId};
 use crate::filetype::FileType;
 use crate::git::LineMarks;
 use crate::highlight::{self, CodeSpans, Epoch, Highlights, Job, SyntaxTheme};
@@ -668,6 +668,9 @@ pub struct State {
     generation: u64,
     /// The focused link, if any (architecture §7, "Focus").
     pub focus: Option<LinkId>,
+    /// The source lines of the heading, footnote or line a jump landed on, marked until the next
+    /// key, click or scroll. Lines, not rows, so a relayout can't move the mark.
+    pub landed: Option<LineRange>,
     back: Vec<Entry>,
     forward: Vec<Entry>,
     /// Recently visited documents, most recent last, without the current one.
@@ -730,6 +733,7 @@ impl State {
             glyphs_gen,
             generation: 0,
             focus: None,
+            landed: None,
             back: Vec::new(),
             forward: Vec::new(),
             cache: Vec::new(),
@@ -1256,6 +1260,10 @@ fn group_of(layout: &Layout, row: usize, line: u32) -> std::ops::Range<usize> {
 
 /// The only place state changes. Deterministic: no clock, environment or filesystem.
 pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
+    // a jump's mark lasts until the next thing the user does, so no timer wakes an idle ada
+    if !msg.keeps_view() {
+        state.landed = None;
+    }
     // The image view takes the keys that close it, and `Enter`; any other intent closes it and
     // goes ahead, so the keymap's idea of the mode stays right.
     if state.view.is_some() {
@@ -2276,6 +2284,68 @@ mod tests {
     }
 
     #[test]
+    fn a_jump_marks_where_it_landed_until_the_next_key() {
+        let mut state = walker();
+        let line_of = |md: &str, line: &str| md.lines().position(|l| l == line).unwrap() as u32 + 1;
+        let later = line_of(&linked(), "## Later");
+        let marked = |state: &State| state.landed.map(|l| (l.start, l.end));
+
+        // `[x](#later)`, within the document; painted across the row on the page's background
+        let at = cell_of(&state, 2);
+        update(
+            &mut state,
+            Msg::Click {
+                col: at.0,
+                row: at.1,
+            },
+        );
+        assert_eq!(marked(&state), Some((later, later)));
+        let mut grid = crate::grid::Grid::empty(crate::geom::Rect::new(0, 0, 80, 20));
+        crate::ui::view(&state, &mut grid);
+        let layout = &state.doc.as_ref().unwrap().layout;
+        let y = |src: u32| {
+            let row = layout.rows.iter().position(|r| r.src.start == src).unwrap() as u32;
+            (row - state.scroll) as u16
+        };
+        let style = |key| state.theme.style(key).bg.unwrap();
+        assert_eq!(
+            grid[(79, y(later))].bg(),
+            style(crate::theme::StyleKey::Landed)
+        );
+        assert_eq!(
+            grid[(79, y(later) + 1)].bg(),
+            style(crate::theme::StyleKey::Text)
+        );
+
+        // the next key takes it away
+        update(&mut state, Msg::Scroll { by: ScrollBy::Top });
+        assert_eq!(state.landed, None);
+
+        // a heading picked from the outline
+        update(&mut state, Msg::OpenOutline);
+        let text = "later".to_owned();
+        update(&mut state, Msg::OutlineFilter { text });
+        update(&mut state, Msg::OutlinePick);
+        assert_eq!(marked(&state), Some((later, later)));
+
+        // a link picked from the links list is focused, not jumped to: no mark
+        update(&mut state, Msg::Scroll { by: ScrollBy::Top });
+        update(&mut state, Msg::OpenLinks);
+        update(&mut state, Msg::OutlinePick);
+        assert_eq!(state.landed, None);
+
+        // into another document, marked once it has arrived; Back returns to a place, unmarked
+        update(&mut state, Msg::Follow);
+        assert_eq!(state.landed, None);
+        load_at(&mut state, "b.md", &b_doc());
+        let part_two = line_of(&b_doc(), "## Part two");
+        assert_eq!(marked(&state), Some((part_two, part_two)));
+        update(&mut state, Msg::Back);
+        load_at(&mut state, "a.md", &linked());
+        assert_eq!(state.landed, None);
+    }
+
+    #[test]
     fn follow_and_come_back() {
         let mut state = walker();
         update(
@@ -2741,6 +2811,37 @@ mod tests {
         assert_eq!(state.scroll, scroll);
         update(&mut state, Msg::Back);
         assert_eq!(state.scroll, 0);
+    }
+
+    #[test]
+    fn link_list_joins_a_link_wrapped_inside_a_word() {
+        // narrow enough that the first link breaks after its hyphen, the second at its space
+        let mut state = loaded(
+            "see [oxasm-verification](v.md) and [two words](w.md)",
+            18,
+            10,
+        );
+        let layout = &state.doc.as_ref().unwrap().layout;
+        assert!(layout.hits.iter().any(|h| h.joined), "{:?}", layout.hits);
+        assert!(
+            layout
+                .hits
+                .iter()
+                .any(|h| h.link == 1 && h.row > 0 && !h.joined)
+        );
+        update(&mut state, Msg::OpenLinks);
+        let shown: Vec<_> = state
+            .outline_entries()
+            .iter()
+            .map(|e| (e.text.to_string(), e.dest.clone()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("oxasm-verification".into(), Some("v.md".into())),
+                ("two words".into(), Some("w.md".into())),
+            ]
+        );
     }
 
     // --- P5: the git gutter and reload --------------------------------------------------------

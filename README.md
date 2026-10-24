@@ -172,6 +172,9 @@ and `C-w` edit, and an empty pattern repeats the last search. Search is smart-ca
 unless the pattern has an uppercase letter. So are the filters of the outline, links, themes and
 columns lists.
 
+Following a link to a heading, a footnote or a line, or picking a heading in the outline, tints the rows it
+landed on until the next key, so they stand out even where the end of the document stops the scroll short.
+
 The mouse is on by default: the wheel scrolls the document, the lists and the help, and a click on a
 link follows it. A drag selects text, a double click a word, and a triple click a paragraph, a line of
 code or a table cell. What it copies is the document's text, not the screen's: a paragraph unwrapped,

@@ -451,6 +451,21 @@ impl Grid {
         }
     }
 
+    /// Give the cells of `area` that are on background `from` background `to`, leaving those on
+    /// one of their own (a heading's bar, inline code) and images' alone.
+    pub fn recolor_bg(&mut self, area: Rect, from: Color, to: Color) {
+        let area = self.area.intersection(area);
+        let (from, to) = (from.bits(), to.bits());
+        for y in area.top()..area.bottom() {
+            let row = self.index(area.x, y);
+            for c in &mut self.cells[row..row + usize::from(area.width)] {
+                if c.bg == from && !c.is_image() {
+                    c.bg = to;
+                }
+            }
+        }
+    }
+
     /// Make cell `(x, y)` the one at `row` and `col` of the kitty image that `color` names: a
     /// placeholder one column wide, on the cell's background.
     pub fn placeholder(&mut self, (x, y): (u16, u16), (row, col): (u16, u16), color: Color) {
@@ -741,6 +756,20 @@ mod tests {
                 });
             }
         }
+    }
+
+    #[test]
+    fn recolor_bg_leaves_cells_on_their_own_background() {
+        let page = Color::rgb(1, 2, 3);
+        let mut grid = Grid::empty(Rect::new(0, 0, 6, 2));
+        grid.fill(Style::new().bg(page));
+        grid.set_string(1, 0, "ab", Style::new().bg(Color::RED));
+        grid.recolor_bg(Rect::new(0, 0, 6, 1), page, Color::BLUE);
+        let bg = |x: u16, y: u16| grid.cells[usize::from(y * 6 + x)].bg();
+        assert_eq!(bg(0, 0), Color::BLUE);
+        assert_eq!((bg(1, 0), bg(2, 0)), (Color::RED, Color::RED));
+        assert_eq!(bg(5, 0), Color::BLUE);
+        assert_eq!(bg(0, 1), page, "outside the area");
     }
 
     /// Writing into the right half of a wide grapheme blanks the grapheme, keeping its style,

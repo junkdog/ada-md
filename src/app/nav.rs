@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::{Cmd, Dir, Document, Prepared, ScrollAnchor, State};
-use crate::doc::{AnchorId, Doc, LinkId, LinkKind};
+use crate::doc::{AnchorId, Doc, LineRange, LinkId, LinkKind};
 use crate::filetype::FileType;
 use crate::links::{self, LocalTarget, Resolved, Target};
 
@@ -273,6 +273,17 @@ impl State {
         self.scroll = row.min(self.max_scroll());
     }
 
+    /// Mark where a jump to a heading, a footnote or a line landed: `row`'s source lines, so the
+    /// eye finds them however far the scroll had to stop short (a footnote near the end).
+    pub(super) fn land(&mut self, row: u32) {
+        self.landed = self
+            .doc
+            .as_ref()
+            .and_then(|d| d.layout.rows.get(row as usize))
+            .map(|r| r.src)
+            .filter(|&src| src != LineRange::NONE);
+    }
+
     /// The row a link's `#frag` leads to: a heading, or a line as GitHub numbers them in code
     /// (`#L42`, `#L42-L50`). A heading that isn't shown leads to the top.
     fn frag_row(&self, frag: &str) -> Result<u32, String> {
@@ -366,7 +377,10 @@ impl State {
             }
             Some(LinkState::Anchor(a)) => {
                 match self.anchor_row(a) {
-                    Some(row) => self.jump_local(row),
+                    Some(row) => {
+                        self.jump_local(row);
+                        self.land(row);
+                    }
                     None => self.status = Some("that heading isn't shown".into()),
                 }
                 Vec::new()
@@ -375,7 +389,10 @@ impl State {
                 match frag {
                     None => self.jump_local(0),
                     Some(frag) => match self.frag_row(&frag) {
-                        Ok(row) => self.jump_local(row),
+                        Ok(row) => {
+                            self.jump_local(row);
+                            self.land(row);
+                        }
                         Err(why) => self.status = Some(why),
                     },
                 }
@@ -544,7 +561,10 @@ impl State {
             Landing::Entry(entry) => self.restore(&entry),
             Landing::Frag(None) => {}
             Landing::Frag(Some(frag)) => match self.frag_row(&frag) {
-                Ok(row) => self.scroll = row.min(self.max_scroll()),
+                Ok(row) => {
+                    self.scroll = row.min(self.max_scroll());
+                    self.land(row);
+                }
                 Err(why) => self.status = Some(why),
             },
         }

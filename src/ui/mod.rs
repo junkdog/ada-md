@@ -11,7 +11,7 @@ use std::ops::Range;
 
 use crate::geom::Rect;
 use crate::grid::Grid;
-use crate::style::{Modifier, Style};
+use crate::style::{Color, Modifier, Style};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{Document, ImageView, Row, State};
@@ -214,8 +214,8 @@ fn gutter(buf: &mut Grid, area: Rect, state: &State, doc: &Document, lines: &[(u
     }
 }
 
-/// Search matches, the focused link, the borders and header of the table the column list is for,
-/// and the selection, patched over the painted rows (ADR-03).
+/// Where a jump landed, search matches, the focused link, the borders and header of the table the
+/// column list is for, and the selection, patched over the painted rows (ADR-03).
 fn overlays(buf: &mut Grid, area: Rect, state: &State, doc: &Document, lines: &[(u16, u32)]) {
     let theme = &state.theme;
     let layout = &doc.layout;
@@ -227,6 +227,20 @@ fn overlays(buf: &mut Grid, area: Rect, state: &State, doc: &Document, lines: &[
             buf.set_style(rect, theme.styles[key as usize]);
         }
     };
+    // where a jump landed: its rows on the page's background, under everything else, so a
+    // heading's bar or inline code keeps its own
+    if let (Some(src), Some(tint)) = (state.landed, theme.style(StyleKey::Landed).bg) {
+        let page = theme.style(StyleKey::Text).bg.unwrap_or(Color::RESET);
+        for &(y, r) in lines {
+            if layout
+                .rows
+                .get(r as usize)
+                .is_some_and(|row| row.src == src)
+            {
+                buf.recolor_bg(Rect::new(area.x, y, area.width, 1), page, tint);
+            }
+        }
+    }
     if let Some(search) = &state.search {
         for &(y, r) in lines {
             for cells in search.projection.on_rows(r..r + 1) {

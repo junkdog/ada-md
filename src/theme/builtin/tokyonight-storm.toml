@@ -8,6 +8,7 @@ bg = "#24283b"
 bg_dark = "#1f2335"
 bg_darker = "#161a2c"    # not upstream: a step below the page, for table row stripes
 bg_highlight = "#292e42"
+bg_landed = "#343a52"    # not upstream: brighter than bg_highlight, for where a jump landed
 fg = "#c0caf5"
 fg_dark = "#a9b1d6"
 fg_gutter = "#3b4261"
@@ -116,6 +117,7 @@ popup_title = { fg = "blue", bg = "bg_dark", bold = true }
 popup_selected = { fg = "bg", bg = "blue", bold = true }
 sort_table = { fg = "magenta" }
 selection = { bg = "fg_gutter" }
+landed = { bg = "bg_landed" }
 line_number = { fg = "fg_gutter" }
 
 [ui.settings]                # the settings popup (`F2`): its rows, and the values they set
