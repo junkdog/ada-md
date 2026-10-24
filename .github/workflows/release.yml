@@ -28,7 +28,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   TAG: ${{ inputs.tag || github.ref_name }}
-  # the toolchain bench/order/order.txt is traced on: names from any other match ~10% (MEM-02)
+  # the release toolchain; bench/order/order.txt's names hold on any (MEM-08)
   RUST_TOOLCHAIN: 1.99.1
 
 jobs:
@@ -73,7 +73,7 @@ jobs:
         include:
           # glibc 2.35: build.rs skips RELR there, so the binary needs no newer glibc than its
           # symbols do (ADR-34); one built on ubuntu-24.04 wouldn't start on 22.04 or RHEL 9
-          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, order: true }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
           - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
           - { target: aarch64-apple-darwin, os: macos-15 }
           - { target: x86_64-apple-darwin, os: macos-15-intel }
@@ -86,18 +86,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-      # native builds without --target: it would change every symbol's hash, and order.txt's
-      # names with them; lld's map lets check.py count the names the build still has
+      # with the hot code first where lld links (MEM-02, MEM-08): two links, the second with order.txt's names
+      # as this build has them; fails when it has under 90% of them (exit 2), and then trace.zsh runs again
       - name: 🔨 Build
         run: |
-          if [ "${{ matrix.order }}" = true ]; then export ADA_LINK_MAP="$PWD/ada.map"; fi
-          cargo build --release --locked
-      - name: 🔗 Symbol order
-        if: matrix.order
-        run: |
-          report=$(python3 -I bench/order/check.py ada.map) && rc=0 || rc=$?
+          report=$(python3 -I bench/order/build.py --locked) && rc=0 || rc=$?
           echo "$report"
-          echo "**Symbol order:** $report" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Symbol order:** ${report#symbol order: }" >> "$GITHUB_STEP_SUMMARY"
           exit $rc
       - name: 🧪 Smoke test
         run: |

@@ -6,11 +6,11 @@
 # Enable once per clone: git config core.hooksPath .githooks
 cd "$(git rev-parse --show-toplevel)" || exit 1
 unformatted=() stale=()
-for manifest in Cargo.toml fuzz/Cargo.toml bench/b2/Cargo.toml; do
+for manifest in Cargo.toml fuzz/Cargo.toml bench/b2/Cargo.toml bench/order/demangle/Cargo.toml; do
   [[ -f $manifest ]] || continue
   cargo fmt --manifest-path $manifest --all -- --check > /dev/null 2>&1 || unformatted+=($manifest)
 done
-for manifest in Cargo.toml fuzz/Cargo.toml bench/b2/Cargo.toml bench/diagrams/compare/Cargo.toml; do
+for manifest in Cargo.toml fuzz/Cargo.toml bench/b2/Cargo.toml bench/diagrams/compare/Cargo.toml bench/order/demangle/Cargo.toml; do
   [[ -f $manifest ]] || continue
   cargo metadata --manifest-path $manifest --locked --offline --format-version 1 > /dev/null 2>&1 || stale+=($manifest)
 done

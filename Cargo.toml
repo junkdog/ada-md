@@ -8,8 +8,8 @@ license = "MIT"
 repository = "https://github.com/junkdog/ada-md"
 homepage = "https://junkdog.github.io/ada-md/"
 readme = "README.md"
-# build.rs reads bench/order/order.txt, and the tests bench/diagrams and tests/
-exclude = ["ada.jpg", "demo/", "site/", ".github/", ".githooks/", "bench/images/", "cliff.toml"]
+# the tests read bench/diagrams and tests/; bench/order is for bench/order/build.py, run from the repo
+exclude = ["ada.jpg", "demo/", "site/", ".github/", ".githooks/", "bench/images/", "bench/order/", "cliff.toml"]
 keywords = ["markdown", "viewer", "terminal", "tui", "pager"]
 categories = ["command-line-utilities"]
 
