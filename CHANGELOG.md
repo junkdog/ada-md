@@ -2,6 +2,26 @@
 
 What changed in each release of ada, newest first. A release includes the changes of the pre-releases before it.
 
+## [1.0.0-rc.2](https://github.com/junkdog/ada-md/compare/v1.0.0-rc.1..v1.0.0-rc.2) (2026-10-24)
+
+### Features
+
+- *(filetype)* Draw .mmd/.mermaid files and piped mermaid diagrams
+- *(release)* Ship static musl binaries for x86_64 and aarch64 Linux
+
+### Fixes
+
+- *(nav)* Treat rows under a sticky table header as off screen when focusing links
+- *(order)* Read the traced build's link map from its target directory
+- *(order)* Read link maps as bytes and measure peak RSS through time
+- *(order)* Skip AArch64 mapping symbols in lld maps
+- *(release)* Compile aarch64 musl atomics inline for jemalloc
+
+### Performance
+
+- *(grid)* Compare plain rows as bytes and give styles the cell's color encoding
+- *(grid)* Erase blanks on the theme's background instead of writing spaces
+
 ## 1.0.0-rc.1 (2026-10-23)
 
 The first release: its [release notes](https://github.com/junkdog/ada-md/releases/tag/v1.0.0-rc.1) list the features
