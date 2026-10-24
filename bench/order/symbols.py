@@ -5,8 +5,9 @@
 import collections, os, re, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+# a map's bytes aren't all UTF-8: ld64's lists C string literals by their contents
 def text_symbols(path):
-    lines = open(path).read().splitlines()
+    lines = open(path, errors="replace").read().splitlines()
     if is_ld64(lines[0]):
         return ld64_text_symbols(lines)
     head = lines[0]
@@ -64,7 +65,7 @@ def demangle(names):
 # placed with it, as ld64's order file takes them.
 def place(map_path, order_path=f"{HERE}/order.txt"):
     have = [n for _, _, n in text_symbols(map_path)]
-    with open(map_path) as f:
+    with open(map_path, errors="replace") as f:
         bare = [n[1:] if n.startswith("_") else n for n in have] if is_ld64(f.readline()) else have
     funcs = collections.defaultdict(list)
     for mangled, name in zip(have, demangle(bare)):

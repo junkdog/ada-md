@@ -46,6 +46,17 @@ jobs:
           echo "**Symbol order:** ${report#symbol order: }" >> "$GITHUB_STEP_SUMMARY"
           cp target/release/ada bin/ada-ordered
           exit $rc
+      # the map, to see why when the order didn't place
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: link-map-${{ matrix.target }}
+          path: target/order/*/ada.map
+          retention-days: 3
+      # rss.py's peak comes from /usr/bin/time: GNU time on Linux, if the image lacks it
+      - name: 🔧 GNU time
+        if: runner.os == 'Linux'
+        run: '[ -x /usr/bin/time ] || { sudo apt-get update && sudo apt-get install -y time; }'
       # read back from disk, not from the pages the copy wrote (BEN-01)
       - name: 🧹 Drop caches
         run: |

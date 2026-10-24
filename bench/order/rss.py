@@ -1,19 +1,26 @@
 # python3 -I rss.py RUNS BIN... -- FILE...: each binary's `--print -w 100 FILE`, RUNS times after 2 warmups, the
 # binaries interleaved run by run; prints a markdown table of the medians, peak RSS in MiB and wall ms. The order
 # probe (order-probe.yml, MEM-08) puts a plain build beside build.py's, on runners valgrind and hyperfine don't
-# reach. Peak RSS from wait4's rusage: ru_maxrss is KiB on Linux, bytes on macOS.
-import os, statistics, subprocess, sys, time
+# reach. Peak RSS from /usr/bin/time, not from this process's wait4: on Linux, exec carries the forking process's
+# peak into the child's ru_maxrss, so a child of python starts at python's ~10 MiB. time is small, and reports its
+# child's: GNU's `%M` in KiB, BSD's `-l` in bytes.
+import os, re, statistics, subprocess, sys, time
 runs, rest = int(sys.argv[1]), sys.argv[2:]
 bins, files = rest[:rest.index("--")], rest[rest.index("--") + 1:]
-unit = 1 if sys.platform == "darwin" else 1024
+darwin = sys.platform == "darwin"
 
 def run(bin, file):
     t = time.perf_counter()
-    p = subprocess.Popen([bin, "--print", "-w", "100", file], stdout=subprocess.DEVNULL)
-    _, status, ru = os.wait4(p.pid, 0)
-    if status:
-        sys.exit(f"{bin} {file}: exit status {status:#x}")
-    return ru.ru_maxrss * unit / 2**20, (time.perf_counter() - t) * 1e3
+    p = subprocess.run(["/usr/bin/time", *(["-l"] if darwin else ["-f", "%M"]), bin, "--print", "-w", "100", file],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    ms = (time.perf_counter() - t) * 1e3
+    if p.returncode:
+        sys.exit(f"{bin} {file}: exit status {p.returncode}\n{p.stderr}")
+    if darwin:
+        peak = int(re.search(r"(\d+)\s+maximum resident set size", p.stderr)[1])
+    else:
+        peak = int(p.stderr.split()[-1]) * 1024
+    return peak / 2**20, ms
 
 print("| binary | " + " | ".join(f"{os.path.basename(f)} MiB | ms" for f in files) + " |")
 print("|---|" + "---|---|" * len(files))
