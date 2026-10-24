@@ -8,7 +8,7 @@ use std::io::{self, Write};
 use std::ops::Range;
 
 use crate::geom::{Rect, Size};
-use crate::style::Modifier;
+use crate::style::{Color, Kind, Modifier};
 
 use super::{Cell, Grid, LONG};
 use crate::kitty::{self, PLACEHOLDER as KITTY_PLACEHOLDER};
@@ -20,6 +20,9 @@ const VISIBLE_ON_BLANK: u16 = Modifier::REVERSED
     .union(Modifier::RAPID_BLINK)
     .union(Modifier::CROSSED_OUT)
     .bits();
+
+/// The pen's style when a frame starts and after SGR 0: no modifier, the default colors.
+const PLAIN: (u16, u32, u32) = (0, Color::RESET.bits(), Color::RESET.bits());
 
 /// Synchronized output (DEC mode 2026): the terminal shows nothing of a frame until its end, so a
 /// frame is never seen half drawn. Terminals without the mode ignore it.
@@ -161,7 +164,7 @@ fn keep(grid: &Grid, rows: u16, out: &mut Vec<u8>) {
                 out.push(b'G');
             }
         }
-        pen.set((0, 0, 0), out);
+        pen.set(PLAIN, out);
         out.extend_from_slice(b"\r\n");
     }
     if images.is_empty() {
@@ -199,7 +202,7 @@ fn keep(grid: &Grid, rows: u16, out: &mut Vec<u8>) {
                     match at {
                         None => {
                             to(k, out);
-                            (pen.modifier, pen.fg, pen.bg) = (0, 0, 0);
+                            (pen.modifier, pen.fg, pen.bg) = PLAIN;
                         }
                         Some(at) if at != x => {
                             out.extend_from_slice(b"\x1b[");
@@ -305,11 +308,47 @@ fn same_row(a: &Grid, ya: u16, b: &Grid, yb: u16) -> bool {
     let i = usize::from(ya - a.area.y) * w;
     let j = usize::from(yb - b.area.y) * w;
     let (x, y) = (&a.cells[i..i + w], &b.cells[j..j + w]);
-    // most rows have no long symbol, and compare as plain numbers
+    // most rows have no long symbol, and compare as plain bytes
+    if a.plain(usize::from(ya - a.area.y)) {
+        return bytes(x) == bytes(y);
+    }
     if alike(x, y, |x, y| (x.bits() == y.bits()) & (x.len != LONG)) == w {
         return true;
     }
     (0..w).all(|k| same_cell(a, i + k, b, j + k))
+}
+
+/// The cells as their bytes, which compare in a few wide loads.
+fn bytes(cells: &[Cell]) -> &[u8] {
+    // SAFETY: a `Cell` is `repr(C)` integers with no padding, 16 bytes, so every byte of the
+    // slice is initialized, and `u8` has no alignment to meet.
+    unsafe { std::slice::from_raw_parts(cells.as_ptr().cast(), size_of_val(cells)) }
+}
+
+/// The first cell of `next` from `i` up to `len` that changed or doesn't take one column alone,
+/// or `len`. A row of `next` with nothing but narrow, short symbols compares as plain bytes: a
+/// cell of `last` that is any other kind can't equal one of them (TRM-04).
+fn unchanged(next: &Grid, last: &Grid, mut i: usize, len: usize) -> usize {
+    let w = usize::from(next.area.width);
+    while i < len {
+        let y = i / w;
+        let end = ((y + 1) * w).min(len);
+        let (x, p) = (&next.cells[i..end], &last.cells[i..end]);
+        let n = if !next.plain(y) {
+            alike(x, p, |c, p| {
+                (c.bits() == p.bits()) & (c.meta == 1) & (c.len != LONG)
+            })
+        } else if bytes(x) == bytes(p) {
+            x.len()
+        } else {
+            alike(x, p, |c, p| c.bits() == p.bits())
+        };
+        i += n;
+        if n < x.len() {
+            break;
+        }
+    }
+    i
 }
 
 /// How many cells from the start of `a` and `b` are alike by `alike`, eight at a time while they
@@ -340,7 +379,7 @@ fn blank(c: &Cell) -> bool {
 /// so a theme's background erases as the default does (TRM-02).
 fn blank_tail(grid: &Grid, row: std::ops::Range<usize>) -> (usize, u32) {
     let cells = &grid.cells[row.clone()];
-    let bg = cells.last().map_or(0, |c| c.bg);
+    let bg = cells.last().map_or(PLAIN.2, |c| c.bg);
     let blanks = cells
         .iter()
         .rev()
@@ -368,9 +407,7 @@ fn encode(last: &Grid, next: &Grid, out: &mut Vec<u8>) {
     let mut i = 0;
     while i < len {
         // the cells that didn't change and take one column, most of them, in one sweep
-        i += alike(&next.cells[i..len], &last.cells[i..len], |c, p| {
-            (c.bits() == p.bits()) & (c.meta == 1) & (c.len != LONG)
-        });
+        i = unchanged(next, last, i, len);
         if i == len {
             break;
         }
@@ -492,14 +529,14 @@ impl Pen {
         Pen {
             area,
             cursor: None,
-            modifier: 0,
-            fg: 0,
-            bg: 0,
+            modifier: PLAIN.0,
+            fg: PLAIN.1,
+            bg: PLAIN.2,
         }
     }
 
     fn styled(&self) -> bool {
-        (self.modifier, self.fg, self.bg) != (0, 0, 0)
+        self.style() != PLAIN
     }
 
     fn at(&self, i: usize) -> (u16, u16) {
@@ -792,12 +829,11 @@ fn modifiers(out: &mut Vec<u8>, from: u16, to: u16) {
 }
 
 /// A color's SGR parameters, followed by `;`. `base` is 30 for the foreground and 40 for the
-/// background; named colors go as their 256-color index, as crossterm sends them.
+/// background; the 16 named colors (indexes 0 to 15) go as `3x` and `9x`, as print writes them.
 fn color(out: &mut Vec<u8>, base: u16, c: u32) {
-    let [kind, r, g, b] = c.to_be_bytes();
-    match kind {
-        0 => number(out, base + 9),
-        1 => {
+    match Color::from_bits(c).kind() {
+        Kind::Reset => number(out, base + 9),
+        Kind::Rgb(r, g, b) => {
             number(out, base + 8);
             out.extend_from_slice(b";2;");
             number(out, r.into());
@@ -806,10 +842,12 @@ fn color(out: &mut Vec<u8>, base: u16, c: u32) {
             out.push(b';');
             number(out, b.into());
         }
-        _ => {
+        Kind::Indexed(n @ 0..8) => number(out, base + u16::from(n)),
+        Kind::Indexed(n @ 8..16) => number(out, base + 60 + u16::from(n - 8)),
+        Kind::Indexed(n) => {
             number(out, base + 8);
             out.extend_from_slice(b";5;");
-            number(out, b.into());
+            number(out, n.into());
         }
     }
     out.push(b';');
@@ -834,7 +872,7 @@ fn number(out: &mut Vec<u8>, n: u16) {
 mod tests {
     use super::*;
 
-    use crate::style::{Color, Style};
+    use crate::style::Style;
 
     /// What the encoder wrote, replayed over the terminal's cells, within the scroll margins
     /// the terminal kept from the frame before.
@@ -943,8 +981,8 @@ mod tests {
         let p: Vec<u8> = params.split(';').map(|p| p.parse().unwrap()).collect();
         let mut it = p.iter().copied();
         let color = |it: &mut dyn Iterator<Item = u8>| match it.next() {
-            Some(2) => Color::Rgb(it.next().unwrap(), it.next().unwrap(), it.next().unwrap()),
-            _ => Color::Indexed(it.next().unwrap()),
+            Some(2) => Color::rgb(it.next().unwrap(), it.next().unwrap(), it.next().unwrap()),
+            _ => Color::indexed(it.next().unwrap()),
         };
         while let Some(n) = it.next() {
             let m = |m| style.add_modifier(m);
@@ -962,23 +1000,18 @@ mod tests {
                 24 => off(Modifier::UNDERLINED),
                 27 => off(Modifier::REVERSED),
                 29 => off(Modifier::CROSSED_OUT),
+                30..=37 => style.fg(Color::indexed(n - 30)),
+                90..=97 => style.fg(Color::indexed(n - 90 + 8)),
+                40..=47 => style.bg(Color::indexed(n - 40)),
+                100..=107 => style.bg(Color::indexed(n - 100 + 8)),
                 38 => style.fg(color(&mut it)),
-                39 => style.fg(Color::Reset),
+                39 => style.fg(Color::RESET),
                 48 => style.bg(color(&mut it)),
-                49 => style.bg(Color::Reset),
+                49 => style.bg(Color::RESET),
                 n => panic!("unexpected SGR {n}"),
             };
         }
         style
-    }
-
-    /// Named colors as their index, as the terminal sees them.
-    fn indexed(c: Color) -> Color {
-        let packed = super::super::pack(c);
-        match packed >> 24 {
-            3 => Color::Indexed(packed as u8),
-            _ => c,
-        }
     }
 
     fn seen(cells: &[(String, Style)]) -> Vec<(String, Option<Color>, Option<Color>, Modifier)> {
@@ -992,8 +1025,8 @@ mod tests {
                         .intersects(Modifier::from_bits_truncate(VISIBLE_ON_BLANK));
                 (
                     s.clone(),
-                    st.fg.map(indexed).filter(|_| !blank),
-                    st.bg.map(indexed),
+                    st.fg.filter(|_| !blank),
+                    st.bg,
                     if blank {
                         Modifier::empty()
                     } else {
@@ -1066,7 +1099,7 @@ mod tests {
 
     #[test]
     fn the_encoded_frames_replay_to_the_frames() {
-        let bg = Style::new().bg(Color::Rgb(40, 40, 40)).fg(Color::Gray);
+        let bg = Style::new().bg(Color::rgb(40, 40, 40)).fg(Color::GRAY);
         frames(&[
             &|g| {
                 g.set_style(g.area(), bg);
@@ -1075,18 +1108,18 @@ mod tests {
                     1,
                     1,
                     "x",
-                    Style::new().underlined().underline_color(Color::Red),
+                    Style::new().underlined().underline_color(Color::RED),
                 );
             },
             &|g| {
                 g.set_style(g.area(), bg);
                 g.set_string(0, 0, "hel", Style::new().italic());
                 g.set_string(6, 0, "ab", Style::new().reversed());
-                g.set_string(0, 2, "→ two", Style::new().fg(Color::Indexed(100)).dim());
+                g.set_string(0, 2, "→ two", Style::new().fg(Color::indexed(100)).dim());
             },
             &|g| {
                 g.set_style(g.area(), bg);
-                g.set_string(0, 2, "→ two", Style::new().fg(Color::Indexed(100)));
+                g.set_string(0, 2, "→ two", Style::new().fg(Color::indexed(100)));
             },
         ]);
     }
@@ -1096,8 +1129,8 @@ mod tests {
     /// it when the row goes on.
     #[test]
     fn blanks_on_a_background_are_erased() {
-        let theme = Style::new().bg(Color::Rgb(40, 40, 40)).fg(Color::Gray);
-        let code = Style::new().bg(Color::Rgb(60, 56, 54)).fg(Color::Green);
+        let theme = Style::new().bg(Color::rgb(40, 40, 40)).fg(Color::GRAY);
+        let code = Style::new().bg(Color::rgb(60, 56, 54)).fg(Color::GREEN);
         let mut term = Term::new(Rect::new(0, 0, 40, 3));
         let page = |text: &'static str| {
             move |g: &mut Grid| {
@@ -1123,6 +1156,27 @@ mod tests {
         });
         let out = String::from_utf8_lossy(&term.screen.out).into_owned();
         assert!(out.contains("26X\x1b[26C"), "erased, then past it: {out:?}");
+    }
+
+    /// The 16 named colors go as `3x`/`9x` and `4x`/`10x`, as print writes them, and other
+    /// indexes as `38;5;n`.
+    #[test]
+    fn named_colors_go_by_their_own_codes() {
+        let mut term = Term::new(Rect::new(0, 0, 12, 1));
+        term.draw(|g| {
+            g.set_string(0, 0, "a", Style::new().fg(Color::RED).bg(Color::BLACK));
+            g.set_string(
+                1,
+                0,
+                "b",
+                Style::new().fg(Color::WHITE).bg(Color::LIGHT_BLUE),
+            );
+            g.set_string(2, 0, "c", Style::new().fg(Color::indexed(16)));
+        });
+        let out = String::from_utf8_lossy(&term.screen.out).into_owned();
+        for sgr in ["\x1b[31;40ma", "\x1b[97;104mb", "\x1b[38;5;16;49mc"] {
+            assert!(out.contains(sgr), "{sgr:?} in {out:?}");
+        }
     }
 
     /// A frame that changes anything is one synchronized update, a resize's clear inside it; one
@@ -1160,7 +1214,7 @@ mod tests {
             .draw(|g| g.set_string(0, 0, "日x", Style::new()))
             .unwrap();
         screen.out.clear();
-        let border = Style::new().bg(Color::Rgb(60, 56, 54));
+        let border = Style::new().bg(Color::rgb(60, 56, 54));
         screen
             .draw(|g| {
                 g.set_string(0, 0, "│", border);
@@ -1180,7 +1234,7 @@ mod tests {
     #[test]
     fn a_wide_grapheme_over_half_a_wide_one_redraws_its_other_column() {
         let mut screen = Screen::new(Vec::new(), Size::new(10, 3));
-        let hit = Style::new().bg(Color::Rgb(254, 128, 25));
+        let hit = Style::new().bg(Color::rgb(254, 128, 25));
         let paint = |g: &mut Grid, x| {
             g.set_string(x, 0, "日", Style::new());
             g.set_style(Rect::new(2, 0, 1, 1), hit);
@@ -1201,7 +1255,7 @@ mod tests {
     #[test]
     fn a_redrawn_column_over_half_a_wide_one_redraws_its_other_column() {
         let mut screen = Screen::new(Vec::new(), Size::new(10, 3));
-        let hit = Style::new().bg(Color::Rgb(254, 128, 25));
+        let hit = Style::new().bg(Color::rgb(254, 128, 25));
         let paint = |g: &mut Grid, s| {
             g.set_string(1, 0, s, Style::new());
             g.set_style(Rect::new(4, 0, 1, 1), hit);
@@ -1267,13 +1321,13 @@ mod tests {
         ];
         let styles = [
             Style::new(),
-            Style::new().fg(Color::Rgb(200, 10, 10)),
-            Style::new().bg(Color::Rgb(40, 40, 40)),
-            Style::new().fg(Color::Blue).bg(Color::Rgb(40, 40, 40)),
+            Style::new().fg(Color::rgb(200, 10, 10)),
+            Style::new().bg(Color::rgb(40, 40, 40)),
+            Style::new().fg(Color::BLUE).bg(Color::rgb(40, 40, 40)),
             Style::new().underlined(),
             Style::new().reversed(),
             Style::new().bold().italic(),
-            Style::new().crossed_out().fg(Color::Indexed(100)),
+            Style::new().crossed_out().fg(Color::indexed(100)),
         ];
         let area = Rect::new(0, 0, 24, 8);
         let doc: Vec<Vec<(u16, &str, Style)>> = (0..40)
@@ -1321,7 +1375,7 @@ mod tests {
             move |g: &mut Grid| {
                 let rows = Rect::new(0, 0, 10, 5);
                 g.set_scroll(rows, top);
-                let red = Style::new().fg(Color::Rgb(200, 10, 10));
+                let red = Style::new().fg(Color::rgb(200, 10, 10));
                 for y in 0..5 {
                     g.set_string(0, y, format!("line {}", top + u32::from(y)), red);
                 }
@@ -1432,11 +1486,11 @@ mod tests {
     fn kept_rows_replay_to_the_frame() {
         let area = Rect::new(0, 0, 10, 3);
         let mut term = Term::new(area);
-        let bg = Style::new().bg(Color::Rgb(40, 40, 40)).fg(Color::Gray);
+        let bg = Style::new().bg(Color::rgb(40, 40, 40)).fg(Color::GRAY);
         term.draw(|g| {
             g.fill(bg);
             g.set_string(0, 0, "hello 日本", Style::new().bold());
-            g.set_string(1, 1, "→ ok", Style::new().fg(Color::Red));
+            g.set_string(1, 1, "→ ok", Style::new().fg(Color::RED));
             g.set_string(0, 2, "status", Style::new().reversed());
         });
         term.screen.out.clear();
@@ -1456,7 +1510,7 @@ mod tests {
         assert!(
             cells[20..]
                 .iter()
-                .all(|(s, st)| s == " " && st.bg == Some(Color::Reset))
+                .all(|(s, st)| s == " " && st.bg == Some(Color::RESET))
         );
     }
 
@@ -1523,7 +1577,7 @@ mod tests {
     #[test]
     fn kept_kitty_placeholders_are_text_in_their_color() {
         let mut screen = Screen::new(Vec::new(), Size::new(4, 2));
-        let id = Color::Rgb(1, 2, 3);
+        let id = Color::rgb(1, 2, 3);
         screen
             .draw(|g| {
                 g.placeholder((1, 0), (0, 0), id);
@@ -1545,7 +1599,7 @@ mod tests {
     #[test]
     fn placeholders_are_numbered_where_kitty_cant_tell() {
         let mut screen = Screen::new(Vec::new(), Size::new(7, 2));
-        let (a, b) = (Color::Rgb(0, 0, 1), Color::Rgb(0, 0, 2));
+        let (a, b) = (Color::rgb(0, 0, 1), Color::rgb(0, 0, 2));
         screen
             .draw(|g| {
                 for x in 0..7 {

@@ -47,7 +47,7 @@ use ada::kitty;
 use ada::layout::{LineNumbers, TableMode};
 use ada::links::{LocalTarget, Resolved};
 use ada::select::CopyOn;
-use ada::style::{Color, Modifier};
+use ada::style::{Color, Kind, Modifier};
 use ada::theme::Theme;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use libfuzzer_sys::arbitrary::{self, Arbitrary, Result, Unstructured};
@@ -612,29 +612,10 @@ const VISIBLE_ON_BLANK: Modifier = Modifier::REVERSED
 
 /// The terminal's color for one of ada's: named colors are the first 16 indexes.
 fn term_color(c: Color) -> vt100::Color {
-    const NAMED: [Color; 16] = [
-        Color::Black,
-        Color::Red,
-        Color::Green,
-        Color::Yellow,
-        Color::Blue,
-        Color::Magenta,
-        Color::Cyan,
-        Color::Gray,
-        Color::DarkGray,
-        Color::LightRed,
-        Color::LightGreen,
-        Color::LightYellow,
-        Color::LightBlue,
-        Color::LightMagenta,
-        Color::LightCyan,
-        Color::White,
-    ];
-    match c {
-        Color::Reset => vt100::Color::Default,
-        Color::Indexed(i) => vt100::Color::Idx(i),
-        Color::Rgb(r, g, b) => vt100::Color::Rgb(r, g, b),
-        named => vt100::Color::Idx(NAMED.iter().position(|&n| n == named).unwrap_or(0) as u8),
+    match c.kind() {
+        Kind::Reset => vt100::Color::Default,
+        Kind::Indexed(i) => vt100::Color::Idx(i),
+        Kind::Rgb(r, g, b) => vt100::Color::Rgb(r, g, b),
     }
 }
 
@@ -865,7 +846,7 @@ fn shows(term: &vt100::Screen, grid: &Grid, rows: Option<&[bool]>, sent: &HashSe
             let here = placed_at(seen, left);
             if let Some(at) = cell.placed() {
                 placed += 1;
-                let Color::Rgb(r, g, b) = cell.fg() else {
+                let Kind::Rgb(r, g, b) = cell.fg().kind() else {
                     panic!("placeholder ({x}, {y}) in {:?}", cell.fg());
                 };
                 let id = u32::from_be_bytes([0, r, g, b]);

@@ -11,7 +11,7 @@ use std::time::Instant;
 use std::{env, thread};
 
 use crate::geom::{Rect, Size as Cells};
-use crate::style::Color;
+use crate::style::Kind;
 use crossterm::cursor::Show;
 use crossterm::event::{self, Event};
 use crossterm::execute;
@@ -160,7 +160,9 @@ fn keep_screen(terminal: &mut Term, state: &State) {
     let (mut colors, mut sent) = (HashSet::new(), HashSet::new());
     for y in 0..rows {
         for x in 0..size.width {
-            if let (true, Color::Rgb(r, g, b)) = (shown[(x, y)].is_image(), shown[(x, y)].fg()) {
+            if let (true, Kind::Rgb(r, g, b)) =
+                (shown[(x, y)].is_image(), shown[(x, y)].fg().kind())
+            {
                 let color = u32::from_be_bytes([0, r, g, b]);
                 colors.insert(color);
                 if shown.symbol((x, y)).starts_with("\x1b_G") {

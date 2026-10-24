@@ -53,8 +53,8 @@ impl Cell {
         len: 1,
         meta: 1,
         modifier: 0,
-        fg: 0,
-        bg: 0,
+        fg: Color::RESET.bits(),
+        bg: Color::RESET.bits(),
     };
 
     pub fn reset(&mut self) {
@@ -62,11 +62,11 @@ impl Cell {
     }
 
     pub fn fg(&self) -> Color {
-        unpack(self.fg)
+        Color::from_bits(self.fg)
     }
 
     pub fn bg(&self) -> Color {
-        unpack(self.bg)
+        Color::from_bits(self.bg)
     }
 
     pub fn modifier(&self) -> Modifier {
@@ -111,7 +111,7 @@ impl Cell {
 }
 
 /// A style packed for patching cells: each field is kept where `keep` has bits and set from `set`,
-/// so patching a cell is three masks with no branch. A style's colors are packed once, not per cell.
+/// so patching a cell is three masks with no branch. A style's colors are already the cell's.
 #[derive(Clone, Copy)]
 struct Patch {
     keep: (u16, u32, u32),
@@ -120,7 +120,10 @@ struct Patch {
 
 impl Patch {
     fn new(style: Style) -> Patch {
-        let color = |c: Option<Color>| c.map_or((u32::MAX, 0), |c| (0, pack(c)));
+        let color = |c: Option<Color>| {
+            let bits = Color::bits_of(c);
+            (u32::from(bits == 0).wrapping_neg(), bits)
+        };
         let (keep_fg, fg) = color(style.fg);
         let (keep_bg, bg) = color(style.bg);
         let sub = style.sub_modifier.bits();
@@ -153,6 +156,10 @@ pub struct Grid {
     /// The sixel and iTerm2 images: each one's first cell, where its escape sequence is, and the
     /// area it covers. Written, the sequence erases the whole area and draws over it.
     pub(crate) covers: Vec<(usize, Rect)>,
+    /// Per row, whether a cell of it may be other than a narrow symbol of up to four bytes: a
+    /// wide or long one, or an image's. A row without one compares with another as plain bytes
+    /// (TRM-04). Set by what paints such a cell and kept until the grid is blank again.
+    odd: Vec<bool>,
 }
 
 impl Grid {
@@ -164,6 +171,7 @@ impl Grid {
             scrolled: None,
             images: false,
             covers: Vec::new(),
+            odd: vec![false; usize::from(area.height)],
         }
     }
 
@@ -178,6 +186,7 @@ impl Grid {
         self.scrolled = None;
         self.images = false;
         self.covers.clear();
+        self.odd.fill(false);
     }
 
     /// Every cell blank in `style`: on a blank grid, the same as patching `style` over all of it,
@@ -186,6 +195,7 @@ impl Grid {
         let mut blank = Cell::BLANK;
         Patch::new(style).apply(&mut blank);
         fill(&mut self.cells, blank);
+        self.odd.fill(false);
     }
 
     /// Blank, at a new size.
@@ -200,6 +210,8 @@ impl Grid {
         self.scrolled = None;
         self.images = false;
         self.covers.clear();
+        self.odd.clear();
+        self.odd.resize(usize::from(area.height), false);
     }
 
     /// The rows of `area` show a list from its row `top` on. When the next frame shows the same
@@ -216,16 +228,43 @@ impl Grid {
     /// insert line does: the rows left behind are blank.
     fn scroll_rows(&mut self, rows: Range<u16>, by: i32) {
         let w = usize::from(self.area.width);
-        let start = usize::from(rows.start - self.area.y) * w;
-        let end = usize::from(rows.end - self.area.y) * w;
-        let n = by.unsigned_abs() as usize * w;
+        let (top, bottom) = (
+            usize::from(rows.start - self.area.y),
+            usize::from(rows.end - self.area.y),
+        );
+        let (start, end) = (top * w, bottom * w);
+        let k = by.unsigned_abs() as usize;
+        let n = k * w;
         if by > 0 {
             self.cells.copy_within(start + n..end, start);
             self.cells[end - n..end].fill(Cell::BLANK);
+            self.odd.copy_within(top + k..bottom, top);
+            self.odd[bottom - k..bottom].fill(false);
         } else {
             self.cells.copy_within(start..end - n, start + n);
             self.cells[start..start + n].fill(Cell::BLANK);
+            self.odd.copy_within(top..bottom - k, top + k);
+            self.odd[top..top + k].fill(false);
         }
+    }
+
+    /// Mark the row of cell `i` as holding a cell that isn't plain.
+    fn odd_at(&mut self, i: usize) {
+        self.odd[i / usize::from(self.area.width)] = true;
+    }
+
+    /// Whether row `y`, counted from the grid's top, holds only narrow symbols of up to four
+    /// bytes, with no image's cell.
+    fn plain(&self, y: usize) -> bool {
+        let w = usize::from(self.area.width);
+        debug_assert!(
+            self.odd[y]
+                || self.cells[y * w..(y + 1) * w]
+                    .iter()
+                    .all(|c| c.meta == 1 && c.len != LONG && c.len != PLACED),
+            "row {y} has a cell that isn't plain"
+        );
+        !self.odd[y]
     }
 
     /// The index of cell `(x, y)`; panics outside the area, as ratatui's buffer does.
@@ -268,6 +307,9 @@ impl Grid {
     /// Set cell `i`'s symbol, keeping its style. An image's flags stay, as ratatui's diff option
     /// does, and a forced width with them.
     fn put(&mut self, i: usize, symbol: &str, width: u16) {
+        if symbol.len() > 4 || width != 1 {
+            self.odd_at(i);
+        }
         let long = self.long.len() as u32;
         let c = &mut self.cells[i];
         if symbol.len() <= 4 {
@@ -418,8 +460,9 @@ impl Grid {
         c.sym = [r0, r1, c0, c1];
         c.len = PLACED;
         c.meta = FORCED | 1;
-        c.fg = pack(color);
+        c.fg = color.bits();
         self.images = true;
+        self.odd_at(i);
     }
 
     /// Make cell `(x, y)` an image's, which `symbol` draws as it is in one column, in the
@@ -431,8 +474,9 @@ impl Grid {
         self.put(i, symbol, 1);
         let c = &mut self.cells[i];
         c.meta = FORCED | 1;
-        c.fg = pack(fg);
+        c.fg = fg.bits();
         self.images = true;
+        self.odd_at(i);
     }
 
     /// Cover `area` with an image that `seq` draws from its first cell: a sixel or iTerm2 image,
@@ -448,6 +492,7 @@ impl Grid {
             for c in &mut self.cells[row..row + usize::from(area.width)] {
                 c.meta = c.meta & WIDTH | SKIP;
             }
+            self.odd_at(row);
         }
         let first = self.index(area.x, area.y);
         self.cells[first].meta = 0;
@@ -521,47 +566,6 @@ fn cell_width(g: &str) -> u16 {
     (g.width() + marks) as u16
 }
 
-/// The sixteen named colors, by their ANSI index.
-const NAMED: [Color; 16] = [
-    Color::Black,
-    Color::Red,
-    Color::Green,
-    Color::Yellow,
-    Color::Blue,
-    Color::Magenta,
-    Color::Cyan,
-    Color::Gray,
-    Color::DarkGray,
-    Color::LightRed,
-    Color::LightGreen,
-    Color::LightYellow,
-    Color::LightBlue,
-    Color::LightMagenta,
-    Color::LightCyan,
-    Color::White,
-];
-
-/// A color in four bytes: the kind in the top byte (0 reset, 1 RGB, 2 indexed, 3 named), the
-/// value below.
-fn pack(c: Color) -> u32 {
-    match c {
-        Color::Reset => 0,
-        Color::Rgb(r, g, b) => 1 << 24 | u32::from(r) << 16 | u32::from(g) << 8 | u32::from(b),
-        Color::Indexed(i) => 2 << 24 | u32::from(i),
-        named => 3 << 24 | NAMED.iter().position(|&n| n == named).unwrap_or(0) as u32,
-    }
-}
-
-fn unpack(c: u32) -> Color {
-    let [kind, r, g, b] = c.to_be_bytes();
-    match kind {
-        1 => Color::Rgb(r, g, b),
-        2 => Color::Indexed(b),
-        3 => NAMED[usize::from(b & 15)],
-        _ => Color::Reset,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -597,8 +601,8 @@ mod tests {
         fn new(area: Rect) -> Model {
             let blank = (
                 " ".to_owned(),
-                Color::Reset,
-                Color::Reset,
+                Color::RESET,
+                Color::RESET,
                 Modifier::empty(),
             );
             Model {
@@ -656,8 +660,8 @@ mod tests {
                 while x < next {
                     *self.cell(x, y) = (
                         " ".to_owned(),
-                        Color::Reset,
-                        Color::Reset,
+                        Color::RESET,
+                        Color::RESET,
                         Modifier::empty(),
                     );
                     x += 1;
@@ -693,12 +697,12 @@ mod tests {
     #[test]
     fn strings_and_styles_paint_as_on_a_ratatui_buffer() {
         same_as_ratatui(|c| {
-            c.style(Rect::new(0, 0, 12, 3), Style::new().bg(Color::Rgb(1, 2, 3)));
+            c.style(Rect::new(0, 0, 12, 3), Style::new().bg(Color::rgb(1, 2, 3)));
             let end = c.stringn(1, 0, "ab\tc\u{301}d", 20, Style::new().red().bold());
             assert_eq!(end, (5, 0));
             // wide graphemes, one that doesn't fit, and a zero-width joiner sequence
-            c.stringn(0, 1, "日本語x", 5, Style::new().fg(Color::Indexed(3)));
-            c.stringn(6, 1, "👩‍🔬e", 6, Style::new().underline_color(Color::Blue));
+            c.stringn(0, 1, "日本語x", 5, Style::new().fg(Color::indexed(3)));
+            c.stringn(6, 1, "👩‍🔬e", 6, Style::new().underline_color(Color::BLUE));
             c.stringn(0, 2, "ﾊﾞ…›│", 12, Style::new().not_bold().italic());
             c.style(Rect::new(2, 0, 3, 3), Style::new().reversed().not_italic());
         });
@@ -739,28 +743,17 @@ mod tests {
         }
     }
 
-    #[test]
-    fn colors_survive_packing() {
-        let colors =
-            NAMED
-                .into_iter()
-                .chain([Color::Reset, Color::Indexed(200), Color::Rgb(9, 8, 7)]);
-        for c in colors {
-            assert_eq!(unpack(pack(c)), c);
-        }
-    }
-
     /// Writing into the right half of a wide grapheme blanks the grapheme, keeping its style,
     /// so what was written there shows (F-04).
     #[test]
     fn a_write_inside_a_wide_grapheme_blanks_it() {
         let mut grid = Grid::empty(Rect::new(0, 0, 6, 1));
-        let red = Style::new().bg(Color::Red);
+        let red = Style::new().bg(Color::RED);
         grid.set_string(0, 0, "日本x", red);
         grid.set_string(3, 0, "\u{2502}", Style::new());
         let row: Vec<_> = (0..6).map(|x| grid.symbol((x, 0))).collect();
         assert_eq!(row, ["日", " ", " ", "\u{2502}", "x", " "]);
-        assert_eq!((grid[(2, 0)].width(), grid[(2, 0)].bg()), (1, Color::Red));
+        assert_eq!((grid[(2, 0)].width(), grid[(2, 0)].bg()), (1, Color::RED));
         // a write that starts where one ends leaves it alone
         grid.set_string(2, 0, "ab", Style::new());
         assert_eq!(grid.symbol((0, 0)), "日");

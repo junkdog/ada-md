@@ -643,7 +643,7 @@ pub fn render(image: &Encoded, grid: &mut Grid, area: Rect, x: u16, y: i32) {
     match &*image.0 {
         Image::Kitty { transmit, sent, .. } => {
             let [_, r, g, b] = transmit.color.to_be_bytes();
-            let color = Color::Rgb(r, g, b);
+            let color = Color::rgb(r, g, b);
             for row in rows.clone() {
                 for col in 0..cols {
                     grid.placeholder(at(row, col), (row, col), color);
@@ -657,7 +657,7 @@ pub fn render(image: &Encoded, grid: &mut Grid, area: Rect, x: u16, y: i32) {
             }
         }
         Image::Halfblocks { size, cells } => {
-            let rgb = |c: Option<pixels::Rgb>| c.map(|(r, g, b)| Color::Rgb(r, g, b));
+            let rgb = |c: Option<pixels::Rgb>| c.map(|(r, g, b)| Color::rgb(r, g, b));
             for row in rows.clone() {
                 let line = &cells[usize::from(row) * usize::from(size.width)..];
                 for (col, cell) in line.iter().take(usize::from(cols)).enumerate() {

@@ -3,33 +3,101 @@
 //! or over a cell keeps the rest, and a color parses from the same names.
 
 use std::fmt;
+use std::num::NonZeroU32;
 use std::ops::{BitAnd, BitOr, BitOrAssign, Sub};
 use std::str::FromStr;
 
-/// A terminal color: the default, one of the 16 named ones, a 256-color index or RGB.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum Color {
+/// A terminal color: the default, a 256-color index or RGB, packed as a grid's cell holds it so
+/// that patching a style over a cell copies it as it is (TRM-05). The kind is in the top byte
+/// (1 the default, 2 RGB, 3 an index) and the value below; no color is 0, which leaves
+/// `Option<Color>` four bytes with `None` as 0. The 16 named colors are indexes 0 to 15.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Color(NonZeroU32);
+
+/// What a color is, to match on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
     /// The terminal's own foreground or background.
-    #[default]
     Reset,
-    Black,
-    Red,
-    Green,
-    Yellow,
-    Blue,
-    Magenta,
-    Cyan,
-    Gray,
-    DarkGray,
-    LightRed,
-    LightGreen,
-    LightYellow,
-    LightBlue,
-    LightMagenta,
-    LightCyan,
-    White,
     Rgb(u8, u8, u8),
     Indexed(u8),
+}
+
+impl Color {
+    pub const RESET: Color = Color::packed(1 << 24);
+    pub const BLACK: Color = Color::indexed(0);
+    pub const RED: Color = Color::indexed(1);
+    pub const GREEN: Color = Color::indexed(2);
+    pub const YELLOW: Color = Color::indexed(3);
+    pub const BLUE: Color = Color::indexed(4);
+    pub const MAGENTA: Color = Color::indexed(5);
+    pub const CYAN: Color = Color::indexed(6);
+    pub const GRAY: Color = Color::indexed(7);
+    pub const DARK_GRAY: Color = Color::indexed(8);
+    pub const LIGHT_RED: Color = Color::indexed(9);
+    pub const LIGHT_GREEN: Color = Color::indexed(10);
+    pub const LIGHT_YELLOW: Color = Color::indexed(11);
+    pub const LIGHT_BLUE: Color = Color::indexed(12);
+    pub const LIGHT_MAGENTA: Color = Color::indexed(13);
+    pub const LIGHT_CYAN: Color = Color::indexed(14);
+    pub const WHITE: Color = Color::indexed(15);
+
+    const fn packed(bits: u32) -> Color {
+        match NonZeroU32::new(bits) {
+            Some(bits) => Color(bits),
+            None => panic!("a color is never 0"),
+        }
+    }
+
+    pub const fn rgb(r: u8, g: u8, b: u8) -> Color {
+        Color::packed(2 << 24 | (r as u32) << 16 | (g as u32) << 8 | b as u32)
+    }
+
+    pub const fn indexed(i: u8) -> Color {
+        Color::packed(3 << 24 | i as u32)
+    }
+
+    pub const fn kind(self) -> Kind {
+        let [kind, r, g, b] = self.0.get().to_be_bytes();
+        match kind {
+            2 => Kind::Rgb(r, g, b),
+            3 => Kind::Indexed(b),
+            _ => Kind::Reset,
+        }
+    }
+
+    /// The color as a cell holds it.
+    pub(crate) const fn bits(self) -> u32 {
+        self.0.get()
+    }
+
+    /// The color a cell holds, from [`Color::bits`].
+    pub(crate) const fn from_bits(bits: u32) -> Color {
+        match NonZeroU32::new(bits) {
+            Some(bits) => Color(bits),
+            None => Color::RESET,
+        }
+    }
+
+    /// A style's color as patching packs it: 0 for none.
+    pub(crate) const fn bits_of(c: Option<Color>) -> u32 {
+        match c {
+            Some(c) => c.0.get(),
+            None => 0,
+        }
+    }
+}
+
+impl Default for Color {
+    fn default() -> Color {
+        Color::RESET
+    }
+}
+
+impl fmt::Debug for Color {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind().fmt(f)
+    }
 }
 
 /// A color name that isn't one.
@@ -58,34 +126,33 @@ impl FromStr for Color {
             .replace("lightblack", "darkgray")
             .replace("lightwhite", "white")
             .replace("lightgray", "white");
-        Ok(match name.as_str() {
-            "reset" => Color::Reset,
-            "black" => Color::Black,
-            "red" => Color::Red,
-            "green" => Color::Green,
-            "yellow" => Color::Yellow,
-            "blue" => Color::Blue,
-            "magenta" => Color::Magenta,
-            "cyan" => Color::Cyan,
-            "gray" => Color::Gray,
-            "darkgray" => Color::DarkGray,
-            "lightred" => Color::LightRed,
-            "lightgreen" => Color::LightGreen,
-            "lightyellow" => Color::LightYellow,
-            "lightblue" => Color::LightBlue,
-            "lightmagenta" => Color::LightMagenta,
-            "lightcyan" => Color::LightCyan,
-            "white" => Color::White,
-            _ => {
-                if let Ok(i) = s.parse::<u8>() {
-                    Color::Indexed(i)
-                } else if let Some(rgb) = hex(s) {
-                    rgb
-                } else {
-                    return Err(ParseColorError);
-                }
-            }
-        })
+        const NAMES: [&str; 16] = [
+            "black",
+            "red",
+            "green",
+            "yellow",
+            "blue",
+            "magenta",
+            "cyan",
+            "gray",
+            "darkgray",
+            "lightred",
+            "lightgreen",
+            "lightyellow",
+            "lightblue",
+            "lightmagenta",
+            "lightcyan",
+            "white",
+        ];
+        if name == "reset" {
+            Ok(Color::RESET)
+        } else if let Some(i) = NAMES.iter().position(|&n| n == name) {
+            Ok(Color::indexed(i as u8))
+        } else if let Ok(i) = s.parse::<u8>() {
+            Ok(Color::indexed(i))
+        } else {
+            hex(s).ok_or(ParseColorError)
+        }
     }
 }
 
@@ -93,7 +160,7 @@ impl FromStr for Color {
 fn hex(s: &str) -> Option<Color> {
     let digits = s.strip_prefix('#').filter(|d| d.len() == 6)?;
     let at = |i: usize| u8::from_str_radix(digits.get(i..i + 2)?, 16).ok();
-    Some(Color::Rgb(at(0)?, at(2)?, at(4)?))
+    Some(Color::rgb(at(0)?, at(2)?, at(4)?))
 }
 
 /// Text attributes as bits, numbered as ratatui numbers them.
@@ -254,9 +321,9 @@ impl Style {
     /// A style that sets everything back to the terminal's defaults.
     pub const fn reset() -> Style {
         Style {
-            fg: Some(Color::Reset),
-            bg: Some(Color::Reset),
-            underline_color: Some(Color::Reset),
+            fg: Some(Color::RESET),
+            bg: Some(Color::RESET),
+            underline_color: Some(Color::RESET),
             add_modifier: Modifier::empty(),
             sub_modifier: Modifier::all(),
         }
@@ -309,7 +376,7 @@ impl Style {
 
     #[must_use]
     pub const fn red(self) -> Style {
-        self.fg(Color::Red)
+        self.fg(Color::RED)
     }
 
     modifiers! {
@@ -329,17 +396,17 @@ mod tests {
     #[test]
     fn colors_parse_as_ratatui_parses_them() {
         let cases = [
-            ("Red", Ok(Color::Red)),
-            ("light-blue", Ok(Color::LightBlue)),
-            ("bright white", Ok(Color::White)),
-            ("bright_black", Ok(Color::DarkGray)),
-            ("light gray", Ok(Color::White)),
-            ("grey", Ok(Color::Gray)),
-            ("silver", Ok(Color::Gray)),
-            ("dark_grey", Ok(Color::DarkGray)),
-            ("RESET", Ok(Color::Reset)),
-            ("42", Ok(Color::Indexed(42))),
-            ("#0aFf10", Ok(Color::Rgb(10, 255, 16))),
+            ("Red", Ok(Color::RED)),
+            ("light-blue", Ok(Color::LIGHT_BLUE)),
+            ("bright white", Ok(Color::WHITE)),
+            ("bright_black", Ok(Color::DARK_GRAY)),
+            ("light gray", Ok(Color::WHITE)),
+            ("grey", Ok(Color::GRAY)),
+            ("silver", Ok(Color::GRAY)),
+            ("dark_grey", Ok(Color::DARK_GRAY)),
+            ("RESET", Ok(Color::RESET)),
+            ("42", Ok(Color::indexed(42))),
+            ("#0aFf10", Ok(Color::rgb(10, 255, 16))),
             ("256", Err(ParseColorError)),
             ("#abc", Err(ParseColorError)),
             ("#gg0000", Err(ParseColorError)),
@@ -351,11 +418,28 @@ mod tests {
     }
 
     #[test]
+    fn colors_are_what_they_were_made_of() {
+        let cases = [
+            (Color::RESET, Kind::Reset),
+            (Color::WHITE, Kind::Indexed(15)),
+            (Color::indexed(200), Kind::Indexed(200)),
+            (Color::rgb(9, 8, 7), Kind::Rgb(9, 8, 7)),
+        ];
+        for (c, kind) in cases {
+            assert_eq!(c.kind(), kind);
+            assert_eq!(Color::from_bits(c.bits()), c);
+        }
+        // no color is 0, so a style's unset one costs nothing
+        assert_eq!(size_of::<Option<Color>>(), 4);
+        assert_eq!(Color::bits_of(None), 0);
+    }
+
+    #[test]
     fn a_patch_keeps_what_it_doesnt_set() {
-        let base = Style::new().fg(Color::Red).bg(Color::Blue).bold().italic();
-        let over = Style::new().bg(Color::Green).not_bold().underlined();
+        let base = Style::new().fg(Color::RED).bg(Color::BLUE).bold().italic();
+        let over = Style::new().bg(Color::GREEN).not_bold().underlined();
         let both = base.patch(over);
-        assert_eq!((both.fg, both.bg), (Some(Color::Red), Some(Color::Green)));
+        assert_eq!((both.fg, both.bg), (Some(Color::RED), Some(Color::GREEN)));
         assert_eq!(both.add_modifier, Modifier::ITALIC | Modifier::UNDERLINED);
         assert_eq!(both.sub_modifier, Modifier::BOLD);
         // added after taken away, and the other way around

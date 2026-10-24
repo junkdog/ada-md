@@ -5,7 +5,7 @@ mod load;
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use crate::style::{Color, Style};
+use crate::style::{Color, Kind, Style};
 
 use crate::doc::{Callout, InlineStyle};
 
@@ -310,8 +310,8 @@ impl Theme {
     /// the terminal's, its text is dark. A theme with neither in RGB counts as dark.
     pub fn is_light(&self) -> bool {
         // relative luminance, roughly; light above the middle gray
-        let light = |c| match c {
-            Some(Color::Rgb(r, g, b)) => {
+        let light = |c: Option<Color>| match c.map(Color::kind) {
+            Some(Kind::Rgb(r, g, b)) => {
                 Some(299 * u32::from(r) + 587 * u32::from(g) + 114 * u32::from(b) > 128_000)
             }
             _ => None,
@@ -342,7 +342,7 @@ impl Theme {
             }
             // a parent with a background of its own would show through: reset to the terminal's
             let parent = key.parent().and_then(|p| self.styles[p as usize].bg);
-            theme.styles[key as usize].bg = parent.filter(|&p| p != bg).map(|_| Color::Reset);
+            theme.styles[key as usize].bg = parent.filter(|&p| p != bg).map(|_| Color::RESET);
         }
         theme
     }
@@ -392,7 +392,7 @@ mod tests {
 
         // a user theme named like a built-in takes its place; the others follow the built-ins
         let mine = Theme {
-            palette: vec![("mine".into(), Color::Reset)],
+            palette: vec![("mine".into(), Color::RESET)],
             ..named("dracula")
         };
         let themes = Theme::with_builtins(&Theme::builtin(), vec![mine, named("zzz")]);
@@ -401,7 +401,7 @@ mod tests {
             [&builtins[..], &["zzz".to_owned()]].concat()
         );
         let dracula = themes.iter().find(|t| t.name == "dracula").unwrap();
-        assert_eq!(dracula.palette, [("mine".to_owned(), Color::Reset)]);
+        assert_eq!(dracula.palette, [("mine".to_owned(), Color::RESET)]);
 
         // a current theme from a path is listed first
         let themes = Theme::with_builtins(&named("mine"), Vec::new());
@@ -463,18 +463,18 @@ mod tests {
 
     #[test]
     fn a_style_repeating_the_background_shows_the_terminals() {
-        let bg = Color::Rgb(1, 2, 3);
+        let bg = Color::rgb(1, 2, 3);
         let mut theme = Theme::empty();
         theme.styles[StyleKey::Text as usize].bg = Some(bg);
         theme.styles[StyleKey::Emph as usize].bg = Some(bg);
-        theme.styles[StyleKey::CodeBlock as usize].bg = Some(Color::Blue);
+        theme.styles[StyleKey::CodeBlock as usize].bg = Some(Color::BLUE);
         theme.styles[StyleKey::CodeText as usize].bg = Some(bg);
         let off = theme.with_bg(false);
         assert_eq!(off.style(StyleKey::Text).bg, None);
         assert_eq!(off.style(StyleKey::Emph).bg, None);
         // over a parent of another color, the terminal's background is set outright
-        assert_eq!(off.style(StyleKey::CodeText).bg, Some(Color::Reset));
-        assert_eq!(off.style(StyleKey::CodeBlock).bg, Some(Color::Blue));
+        assert_eq!(off.style(StyleKey::CodeText).bg, Some(Color::RESET));
+        assert_eq!(off.style(StyleKey::CodeBlock).bg, Some(Color::BLUE));
 
         // a theme without a background is left as it is
         let plain = Theme::empty();
@@ -483,8 +483,8 @@ mod tests {
 
     /// WCAG's contrast ratio between two colors, 1 to 21.
     fn contrast(a: Color, b: Color) -> f64 {
-        let luminance = |c| {
-            let Color::Rgb(r, g, b) = c else {
+        let luminance = |c: Color| {
+            let Kind::Rgb(r, g, b) = c.kind() else {
                 panic!("{c:?} isn't RGB");
             };
             let lin = |v: u8| {

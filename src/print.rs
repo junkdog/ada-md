@@ -9,7 +9,7 @@ use std::sync::{Arc, Once, mpsc};
 use std::{panic, thread};
 
 use crate::geom::Size;
-use crate::style::{Color, Modifier, Style};
+use crate::style::{Color, Kind, Modifier, Style};
 use image::DynamicImage;
 
 use crate::app;
@@ -321,13 +321,13 @@ impl Drawn {
                 let mut cells = String::new();
                 kitty::placeholders(y as u16, *cols, &mut cells);
                 let pen = Pen {
-                    fg: Some(Color::Rgb(r, g, b)),
+                    fg: Some(Color::rgb(r, g, b)),
                     ..Pen::default()
                 };
                 line.span(&cells, pen, out, scratch);
             }
             Drawn::Halfblocks { image, cols, rows } => {
-                let rgb = |c: Option<pixels::Rgb>| c.map(|(r, g, b)| Color::Rgb(r, g, b));
+                let rgb = |c: Option<pixels::Rgb>| c.map(|(r, g, b)| Color::rgb(r, g, b));
                 for x in 0..u32::from(*cols) {
                     let (text, fg, bg) = HalfBlock::of(image, (*cols, *rows), (x, y)).cell();
                     line.span(
@@ -436,13 +436,13 @@ const VISIBLE_ON_BLANK: Modifier = Modifier::UNDERLINED
 impl Pen {
     fn of(style: Style) -> Pen {
         let modifier = style.add_modifier & PRINTED;
-        let set = |c: Option<Color>| c.filter(|&c| c != Color::Reset);
+        let set = |c: Option<Color>| c.filter(|&c| c != Color::RESET);
         Pen {
             modifier,
             fg: set(style.fg),
             bg: set(style.bg),
-            underline: match style.underline_color {
-                Some(Color::Rgb(r, g, b)) if modifier.contains(Modifier::UNDERLINED) => {
+            underline: match style.underline_color.map(Color::kind) {
+                Some(Kind::Rgb(r, g, b)) if modifier.contains(Modifier::UNDERLINED) => {
                     Some((r, g, b))
                 }
                 _ => None,
@@ -485,11 +485,11 @@ fn diff(from: Pen, to: Pen, out: &mut String) -> bool {
     let mut off = !removed.is_empty();
     if from.fg != to.fg {
         off |= to.fg.is_none();
-        color(to.fg.unwrap_or(Color::Reset), 30, out);
+        color(to.fg.unwrap_or(Color::RESET), 30, out);
     }
     if from.bg != to.bg {
         off |= to.bg.is_none();
-        color(to.bg.unwrap_or(Color::Reset), 40, out);
+        color(to.bg.unwrap_or(Color::RESET), 40, out);
     }
     if from.underline != to.underline {
         match to.underline {
@@ -574,34 +574,21 @@ pub fn run(doc: &Doc, theme: &Theme, params: LayoutParams, opts: Options) -> io:
 
 fn color(c: Color, base: u8, out: &mut String) {
     out.push(';');
-    let n = match c {
-        Color::Reset => base + 9,
-        Color::Rgb(r, g, b) => {
+    // the 16 named colors go as `3x`/`9x` (and `4x`/`10x`), the rest by index
+    let n = match c.kind() {
+        Kind::Reset => base + 9,
+        Kind::Rgb(r, g, b) => {
             number(base + 8, out);
             out.push_str(";2");
             return rgb(r, g, b, out);
         }
-        Color::Indexed(n) => {
+        Kind::Indexed(n @ 0..8) => base + n,
+        Kind::Indexed(n @ 8..16) => base + 60 + n - 8,
+        Kind::Indexed(n) => {
             number(base + 8, out);
             out.push_str(";5;");
             return number(n, out);
         }
-        Color::Black => base,
-        Color::Red => base + 1,
-        Color::Green => base + 2,
-        Color::Yellow => base + 3,
-        Color::Blue => base + 4,
-        Color::Magenta => base + 5,
-        Color::Cyan => base + 6,
-        Color::Gray => base + 7,
-        Color::DarkGray => base + 60,
-        Color::LightRed => base + 61,
-        Color::LightGreen => base + 62,
-        Color::LightYellow => base + 63,
-        Color::LightBlue => base + 64,
-        Color::LightMagenta => base + 65,
-        Color::LightCyan => base + 66,
-        Color::White => base + 67,
     };
     number(n, out);
 }
@@ -641,16 +628,16 @@ mod tests {
 
     #[test]
     fn sgr_sequences() {
-        let rgb = Color::Rgb(1, 2, 3);
+        let rgb = Color::rgb(1, 2, 3);
         let to = Style::new()
             .fg(rgb)
-            .bg(Color::LightRed)
+            .bg(Color::LIGHT_RED)
             .add_modifier(Modifier::BOLD | Modifier::ITALIC);
         assert_eq!(sgr(Style::new(), to), "\x1b[1;3;38;2;1;2;3;101m");
         // only what changes
-        assert_eq!(sgr(to, to.fg(Color::Red)), "\x1b[31m");
+        assert_eq!(sgr(to, to.fg(Color::RED)), "\x1b[31m");
         assert_eq!(sgr(to, to.remove_modifier(Modifier::BOLD)), "\x1b[22m");
-        assert_eq!(sgr(to, to.bg(Color::Reset)), "\x1b[49m");
+        assert_eq!(sgr(to, to.bg(Color::RESET)), "\x1b[49m");
         assert_eq!(
             sgr(to.dim(), to.not_bold().not_italic().dim()),
             "\x1b[22;23;2m"
@@ -679,7 +666,7 @@ mod tests {
 
     #[test]
     fn blanks_show_only_their_background() {
-        let (a, b) = (Color::Rgb(1, 1, 1), Color::Rgb(2, 2, 2));
+        let (a, b) = (Color::rgb(1, 1, 1), Color::rgb(2, 2, 2));
         let code = Style::new().bg(b);
         // a margin and a space between words take no style of their own
         assert_eq!(
@@ -917,7 +904,7 @@ mod tests {
         let theme = Theme::builtin();
         let out = render(&doc, &theme, params, Options::default());
         let string = theme.syntax.iter().find(|(s, _)| s == "string").unwrap().1;
-        let Some(Color::Rgb(r, g, b)) = string.fg else {
+        let Some(Kind::Rgb(r, g, b)) = string.fg.map(Color::kind) else {
             panic!("strings have an rgb color");
         };
         assert!(

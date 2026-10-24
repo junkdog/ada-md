@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     fn stripes_split_pieces_at_their_edges() {
-        let bg = Style::new().bg(crate::style::Color::Red);
+        let bg = Style::new().bg(crate::style::Color::RED);
         let mut out = Vec::new();
         stripe_piece(
             "ab日cd",

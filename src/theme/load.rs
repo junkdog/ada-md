@@ -360,10 +360,10 @@ fn parse_color(s: &str, palette: &[(String, Color)]) -> Option<Color> {
         }
         let n = u32::from_str_radix(hex, 16).ok()?;
         return match hex.len() {
-            6 => Some(Color::Rgb((n >> 16) as u8, (n >> 8) as u8, n as u8)),
+            6 => Some(Color::rgb((n >> 16) as u8, (n >> 8) as u8, n as u8)),
             3 => {
                 let expand = |d: u32| (d * 17) as u8;
-                Some(Color::Rgb(
+                Some(Color::rgb(
                     expand(n >> 8),
                     expand((n >> 4) & 0xf),
                     expand(n & 0xf),
@@ -376,7 +376,7 @@ fn parse_color(s: &str, palette: &[(String, Color)]) -> Option<Color> {
         return Some(*c);
     }
     match s {
-        "default" | "reset" => Some(Color::Reset),
+        "default" | "reset" => Some(Color::RESET),
         _ => s.parse().ok(),
     }
 }
@@ -386,7 +386,7 @@ fn color(cx: &Cx<'_>, palette: &[(String, Color)], v: &Value<'_>) -> Result<Colo
         DeValue::String(s) => parse_color(s, palette)
             .ok_or_else(|| cx.at(v.span(), format_args!("unknown palette color \"{s}\""))),
         DeValue::Integer(_) => u8::try_from(cx.int(v)?)
-            .map(Color::Indexed)
+            .map(Color::indexed)
             .map_err(|_| cx.at(v.span(), "color index must be 0–255")),
         _ => Err(cx.expected("a color", v)),
     }
@@ -411,7 +411,7 @@ mod tests {
         assert_eq!(theme.glyphs.code_pad, 1);
         assert_eq!(
             theme.styles[StyleKey::Emph as usize].fg,
-            Some(Color::Rgb(0xd5, 0xc4, 0xa1))
+            Some(Color::rgb(0xd5, 0xc4, 0xa1))
         );
         assert!(!theme.syntax.is_empty());
     }
@@ -461,21 +461,21 @@ mod tests {
         let theme = load_str("t.toml", text, &mut Vec::new(), 0).unwrap();
         let emph = theme.styles[StyleKey::Emph as usize];
         assert_eq!(theme.name, "mine");
-        assert_eq!(emph.fg, Some(Color::Rgb(0xfb, 0x49, 0x34)));
+        assert_eq!(emph.fg, Some(Color::rgb(0xfb, 0x49, 0x34)));
         assert!(emph.add_modifier.contains(Modifier::ITALIC));
         assert_eq!(theme.glyphs.heading[1].0, "## ");
     }
 
     #[test]
     fn colors() {
-        let palette = [("x".to_owned(), Color::Rgb(1, 2, 3))];
-        assert_eq!(parse_color("x", &palette), Some(Color::Rgb(1, 2, 3)));
+        let palette = [("x".to_owned(), Color::rgb(1, 2, 3))];
+        assert_eq!(parse_color("x", &palette), Some(Color::rgb(1, 2, 3)));
         assert_eq!(
             parse_color("#abc", &palette),
-            Some(Color::Rgb(0xaa, 0xbb, 0xcc))
+            Some(Color::rgb(0xaa, 0xbb, 0xcc))
         );
         assert_eq!(parse_color("#+12345", &palette), None);
-        assert_eq!(parse_color("default", &palette), Some(Color::Reset));
-        assert_eq!(parse_color("blue", &palette), Some(Color::Blue));
+        assert_eq!(parse_color("default", &palette), Some(Color::RESET));
+        assert_eq!(parse_color("blue", &palette), Some(Color::BLUE));
     }
 }
