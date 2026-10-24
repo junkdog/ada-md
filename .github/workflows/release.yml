@@ -75,10 +75,15 @@ jobs:
           # symbols do (ADR-34); one built on ubuntu-24.04 wouldn't start on 22.04 or RHEL 9
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
           - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+          # static, for Alpine and any Linux (REL-22): built with --target, onig by musl-tools' musl-gcc
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-22.04, musl: true }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-22.04-arm, musl: true }
           - { target: aarch64-apple-darwin, os: macos-15 }
           - { target: x86_64-apple-darwin, os: macos-15-intel }
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      TARGET_ARGS: ${{ matrix.musl && format('--target {0}', matrix.target) || '' }}
+      BIN: target/${{ matrix.musl && format('{0}/', matrix.target) || '' }}release/ada
     steps:
       - uses: actions/checkout@v6
         with:
@@ -86,25 +91,37 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.musl && matrix.target || '' }}
+      # cc looks for aarch64-linux-musl-gcc on aarch64, and musl-tools has only musl-gcc. jemalloc
+      # (MEM-09) takes the build machine's page size and refuses to start on a larger one: on
+      # aarch64, 64 KiB, so it starts on 4, 16 and 64 KiB kernels
+      - name: 🧰 musl-tools
+        if: matrix.musl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+          target=${{ matrix.target }}
+          echo "CC_${target//-/_}=musl-gcc" >> "$GITHUB_ENV"
+          if [ "${target%%-*}" = aarch64 ]; then echo "JEMALLOC_SYS_WITH_LG_PAGE=16" >> "$GITHUB_ENV"; fi
       # with the hot code first where lld links (MEM-02, MEM-08): two links, the second with order.txt's names
       # as this build has them; fails when it has under 90% of them (exit 2), and then trace.zsh runs again
       - name: 🔨 Build
         run: |
-          report=$(python3 -I bench/order/build.py --locked) && rc=0 || rc=$?
+          report=$(python3 -I bench/order/build.py --locked $TARGET_ARGS) && rc=0 || rc=$?
           echo "$report"
           echo "**Symbol order:** ${report#symbol order: }" >> "$GITHUB_STEP_SUMMARY"
           exit $rc
       - name: 🧪 Smoke test
         run: |
-          out=$(target/release/ada --version)
+          out=$("$BIN" --version)
           [ "$out" = "ada $VERSION" ] || { echo "::error::--version says '$out'"; exit 1; }
-          target/release/ada --print --width 80 README.md > /dev/null
+          "$BIN" --print --width 80 README.md > /dev/null
       # the versions ld.so insists on: weak ones (flags 0x02, as std's pidfd_spawnp) may be missing,
       # and GLIBC_ABI_DT_RELR (RELR, 2.36+) counts as 2.36
       - name: 📏 glibc floor
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && !matrix.musl
         run: |
-          floor=$(objdump -p target/release/ada \
+          floor=$(objdump -p "$BIN" \
             | awk '/required from libc\.so/ {f = 1; next} /required from/ {f = 0} f && $2 == "0x00" {print $4}' \
             | sed 's/^GLIBC_ABI_DT_RELR$/GLIBC_2.36/' | sort -uV | tail -1)
           echo "${{ matrix.target }} needs $floor"
@@ -114,11 +131,21 @@ jobs:
             echo "::error::$floor is newer than the promised GLIBC_2.34"
             exit 1
           fi
+      # a musl binary needs no library at all, so it starts on Alpine and on any glibc
+      - name: 📏 Static
+        if: matrix.musl
+        run: |
+          file "$BIN"
+          if readelf -d "$BIN" | grep -q NEEDED; then
+            echo "::error::$BIN needs a shared library"
+            exit 1
+          fi
+          echo "**${{ matrix.target }}:** static" >> "$GITHUB_STEP_SUMMARY"
       - name: 📦 Package
         run: |
           name=ada-$VERSION-${{ matrix.target }}
           mkdir -p "dist/$name"
-          cp target/release/ada README.md LICENSE KNOWN_ISSUES.md "dist/$name/"
+          cp "$BIN" README.md LICENSE KNOWN_ISSUES.md "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           rm -r "dist/$name"
       - uses: actions/upload-artifact@v7

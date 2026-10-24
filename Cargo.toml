@@ -21,10 +21,12 @@ name = "ada"
 path = "src/main.rs"
 
 [features]
-default = ["onig"]
+default = ["onig", "jemalloc"]
 # Oniguruma (C, built with `cc`) for syntect's regexes: 10-25x faster first use per language, 3x
 # faster parsing and ~5x less memory than fancy-regex. Without it, highlighting stays pure Rust.
 onig = ["syntect/regex-onig", "two-face/syntect-onig"]
+# jemalloc (C, built with `make`) for musl targets, below; nothing elsewhere.
+jemalloc = ["dep:tikv-jemallocator"]
 
 [dependencies]
 anpa = "0.13"
@@ -53,6 +55,12 @@ rustix = { version = "1.1", default-features = false, features = ["std", "fs", "
 # One glibc malloc arena for the TUI (`mallopt`, ADR-27); already in the tree through crossterm.
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
 libc = "0.2.190"
+
+# jemalloc for the static musl binary (REL-22, MEM-09): musl's malloc has one lock for the process,
+# and Oniguruma (C) allocates through it on every search, so print's highlighting threads queue on
+# it. Unprefixed, it serves C's malloc too, which a Rust allocator alone doesn't.
+[target.'cfg(target_env = "musl")'.dependencies]
+tikv-jemallocator = { version = "0.7.0", optional = true, features = ["unprefixed_malloc_on_supported_platforms"] }
 
 [dev-dependencies]
 insta = "1.49"

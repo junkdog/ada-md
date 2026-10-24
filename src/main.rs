@@ -22,6 +22,19 @@ use ada::{completions, config, links, print, theme};
 #[link(name = "c")]
 unsafe extern "C" {}
 
+// jemalloc instead of musl's malloc, for Rust and C alike (MEM-09)
+#[cfg(all(target_env = "musl", feature = "jemalloc"))]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+// One arena, read by jemalloc before main: as fast as its default of four a CPU (each thread's
+// cache keeps the lock off the fast path), with a peak up to 36 MiB lower (experiment 47).
+// `MALLOC_CONF` still overrides it
+#[cfg(all(target_env = "musl", feature = "jemalloc"))]
+#[unsafe(no_mangle)]
+#[allow(non_upper_case_globals)]
+static malloc_conf: &[u8; 10] = b"narenas:1\0";
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
