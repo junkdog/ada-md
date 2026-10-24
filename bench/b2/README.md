@@ -115,10 +115,14 @@ B2 times one key at a time after the screen held still, so between keys an idle 
 into deep idle (C3 exits in 350 µs, against a key's 0.1–0.4 ms): without help, a cell moves with how busy the rest
 of the machine is (two busy lanes read 1.24× four) and with the CCD's ramp. `b2-bench-profile on CPUS PID` holds
 the listed cores at EPP `performance` with no idle state deeper than C1, and restores them when PID exits; with
-it, two busy lanes read as four (median 1.001) and CCD1 as CCD0, at 27–28 °C (ada-optimization, experiment 28). It
-runs as root through a password-free sudoers rule (its header has the install lines). `full.zsh`, `rerun.zsh` and
-`stress.zsh` hold it for their cores unless `B2_PROFILE=off`, and write `profile.txt`: records with and without it
-don't mix, and `rerun.zsh` refuses a REF made the other way (no `profile.txt`: off).
+it, two busy lanes read as four (median 1.001) and CCD1 as CCD0, at 27–28 °C (ada-optimization, experiment 28).
+Since BEN-04 it also raises the cores' `scaling_min_freq` to `scaling_max_freq`: EPP alone left them falling to
+the 2.0 GHz floor between keys, and a key ended before the clock had ramped (1.8–2.1 GHz while taking one key at a
+time, against 5.19). It runs as root through a password-free sudoers rule (its header has the install lines).
+`full.zsh`, `rerun.zsh` and `stress.zsh` hold it for their cores unless `B2_PROFILE=off`, and write the profile's
+id to `profile.txt` (`on` before BEN-04, `on+clock` since, or `off`): records made under different profiles don't
+mix, and `rerun.zsh` refuses a REF made another way (no `profile.txt`: off). An installed helper older than this
+directory's writes no id, and the scripts stop: reinstall it.
 
 ### ada-only rerun
 

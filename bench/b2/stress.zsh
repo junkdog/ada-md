@@ -28,8 +28,13 @@ fi
 export B2_DROP_CACHES=off
 # B2_PROFILE (on by default): hold the cores used here ready for the run (b2-bench-profile, ada-optimization
 # experiment 28); restored when this script exits
-[[ ${B2_PROFILE:-on} == on ]] && { sudo -n /usr/local/sbin/b2-bench-profile on 4,6,8,10,16,18,20,22 $$ || exit 1 }
-print ${B2_PROFILE:-on} > $OUT/profile.txt
+PROFILE_ID=off
+if [[ ${B2_PROFILE:-on} == on ]]; then
+  sudo -n /usr/local/sbin/b2-bench-profile on 4,6,8,10,16,18,20,22 $$ || exit 1
+  PROFILE_ID=$(cat /run/b2-bench-profile/id 2>/dev/null)
+  [[ -n $PROFILE_ID ]] || { echo "stress: the installed b2-bench-profile is older than bench/b2's (no id): reinstall it" >&2; exit 1 }
+fi
+print $PROFILE_ID > $OUT/profile.txt
 mark() {
   local c clocks=()
   for c in 8 10 16; do clocks+=$(( $(</sys/devices/system/cpu/cpu$c/cpufreq/scaling_cur_freq) / 1000 )); done

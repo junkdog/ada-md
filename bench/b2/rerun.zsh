@@ -8,13 +8,14 @@
 #            CARGO_TARGET_DIR: "Comparing two ada builds" in ada-optimization). Both are copied into OUT together,
 #            since a binary file's page-cache state moves peak RSS (O-23)
 # B2_PROFILE (on by default) holds the bench cores ready for the run (b2-bench-profile: EPP performance, no idle
-# state deeper than C1; ada-optimization experiment 28), which makes the lanes' load and CCD not matter: then the two
+# state deeper than C1, the clock floor at the top; ada-optimization experiment 28, BEN-04), which makes the lanes' load and CCD not matter: then the two
 # run at once, one run per job per round, ada on the lanes it took in REF (lanes 2 and 3 folded onto 0 and 1) and
 # adaref on the same lanes of the other CCD (lane i + 2), swapping sides each round: 6 rounds (4 for XL), so each build has each side equally often, since
 # even held ready a lane moves single cells by 20–40% (experiment 28). abcmp.py takes each cell's A/B from the
 # rounds' paired ratios, balanced over the sides. With B2_PROFILE=off they take turns on ada's lanes instead (ABBA).
-# Records made with and without the profile don't mix: OUT/profile.txt says which, and a REF made the other way is
-# refused (a REF without the file is from before the profile: off). Elsewhere both run in one hyperfine call. The reference ada ("adaref") stays out of the merge: its new/old
+# Records made under different profiles don't mix: OUT/profile.txt holds the profile's id ("on" before BEN-04's clock
+# floor, "on+clock" since; off without it), and a REF made another way is refused (a REF without the file is from
+# before the profile: off). Elsewhere both run in one hyperfine call. The reference ada ("adaref") stays out of the merge: its new/old
 # against REF is the machine's drift, and ada's against it the A/B. Writes OUT/compare.md (abcmp.py),
 # OUT/doctables.md (the vault notes' tables from the merged records) and OUT/run.log (times, Tctl and clocks).
 # B2_MERGE_ONLY=1 redoes only the merge, compare.md and doctables.md of an existing OUT. B2_AB_ONLY=1 runs the A/B
@@ -31,11 +32,14 @@ mark() {
 if [[ -z $B2_MERGE_ONLY ]]; then
 [[ -e $OUT ]] && { echo "rerun: $OUT exists" >&2; exit 1 }
 PROFILE=${B2_PROFILE:-on}; REF_PROFILE=$(cat $REF/profile.txt 2>/dev/null || print off)
-[[ $PROFILE == $REF_PROFILE || -n ${B2_AB_ONLY:-} ]] || { echo "rerun: REF was measured with the profile $REF_PROFILE, this run $PROFILE" >&2; exit 1 }
-mkdir -p $OUT/{run,b2}; print $PROFILE > $OUT/profile.txt
+mkdir -p $OUT/{run,b2}; PROFILE_ID=off
 if [[ $PROFILE == on ]]; then   # restored when this script exits
   sudo -n /usr/local/sbin/b2-bench-profile on ${(j:,:)L} $$ || exit 1
+  PROFILE_ID=$(cat /run/b2-bench-profile/id 2>/dev/null)
+  [[ -n $PROFILE_ID ]] || { echo "rerun: the installed b2-bench-profile is older than bench/b2's (no id): reinstall it" >&2; exit 1 }
 fi
+[[ $PROFILE_ID == $REF_PROFILE || -n ${B2_AB_ONLY:-} ]] || { echo "rerun: REF was measured with the profile $REF_PROFILE, this run $PROFILE_ID" >&2; exit 1 }
+print $PROFILE_ID > $OUT/profile.txt
 cp ${ADA:?set ADA} $OUT/ada; cp ${ADA_REF:?set ADA_REF} $OUT/ada-ref
 export ADA=$OUT/ada ADA_REF=$OUT/ada-ref
 cp $REF/lane?.json $OUT/
@@ -106,7 +110,7 @@ fi
 
 if [[ -n ${B2_AB_ONLY:-} ]]; then
   python3 -I $H/abcmp.py $OUT $REF > $OUT/compare.md
-  [[ $PROFILE == $REF_PROFILE ]] || print "\nold/REF: REF was measured with the profile $REF_PROFILE, this run $PROFILE: not drift" >> $OUT/compare.md
+  [[ $PROFILE_ID == $REF_PROFILE ]] || print "\nold/REF: REF was measured with the profile $REF_PROFILE, this run $PROFILE_ID: not drift" >> $OUT/compare.md
   mark "done (A/B only)"
   exit 0
 fi

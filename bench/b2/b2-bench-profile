@@ -1,9 +1,12 @@
 #!/usr/bin/env zsh
 # b2-bench-profile on CPUS PID | off: hold the bench cores ready for the length of a benchmark, then restore them.
-#   on:  for each CPU in CPUS (e.g. 0,2,4,6): EPP `performance`, and every idle state deeper than C1 disabled (here
-#        C2, 18 µs to wake, and C3, 350 µs, against a B2 key's 0.1–0.4 ms; ada-optimization experiment 27). The
-#        rest of the machine is left alone, and nothing loads a core. A detached watcher restores the saved values
-#        once PID (the benchmark) exits, however it exits
+#   on:  for each CPU in CPUS (e.g. 0,2,4,6): EPP `performance`, every idle state deeper than C1 disabled (here
+#        C2, 18 µs to wake, and C3, 350 µs, against a B2 key's 0.1–0.4 ms; ada-optimization experiment 27), and
+#        `scaling_min_freq` raised to `scaling_max_freq`, so a key doesn't start at the 2.0 GHz floor and end before
+#        the clock has ramped (BEN-04). The rest of the machine is left alone, and nothing loads a core. Writes the
+#        profile's id ($ID) to /run/b2-bench-profile/id, for the benchmark's profile.txt: records made under
+#        different profiles don't mix. A detached watcher restores the saved values once PID (the benchmark)
+#        exits, however it exits
 #   off: restore now
 # Runs as root from the benchmark, through a password-free sudoers rule, as oxasm-drop-caches does:
 #   sudo install -m 755 -o root -g root bench/b2/b2-bench-profile /usr/local/sbin/b2-bench-profile
@@ -11,8 +14,10 @@
 #   sudo chmod 440 /etc/sudoers.d/b2-bench-profile
 setopt no_unset
 D=/run/b2-bench-profile; SYS=/sys/devices/system/cpu
+ID=on+clock   # "on" before BEN-04: EPP and idle states only
 
 restore() {   # write back what `on` saved, "path value" per line; idempotent
+  rm -f $D/id
   [[ -f $D/saved ]] || return 0
   local p v
   while read -r p v; do print -r -- $v > $p; done < $D/saved
@@ -44,13 +49,17 @@ case ${1:-} in
     for c in $cpus; do
       f=$SYS/cpu$c/cpufreq/energy_performance_preference
       print -r -- "$f $(<$f)" >> $D/saved
+      f=$SYS/cpu$c/cpufreq/scaling_min_freq
+      print -r -- "$f $(<$f)" >> $D/saved
       for s in $SYS/cpu$c/cpuidle/state<2->(N); do print -r -- "$s/disable $(<$s/disable)" >> $D/saved; done
     done
     for c in $cpus; do
       print performance > $SYS/cpu$c/cpufreq/energy_performance_preference
+      print $(<$SYS/cpu$c/cpufreq/scaling_max_freq) > $SYS/cpu$c/cpufreq/scaling_min_freq
       for s in $SYS/cpu$c/cpuidle/state<2->(N); do print 1 > $s/disable; done
     done
     setsid -f $0 watch $3 < /dev/null > /dev/null 2>&1
+    print $ID > $D/id
     ;;
   watch)   # internal: restore once PID exits, or when `off` sends TERM
     [[ ${2:-} =~ '^[0-9]+$' ]] || exit 2
