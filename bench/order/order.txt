@@ -143,7 +143,6 @@ __do_global_dtors_aux
 frame_dummy
 __powidf2
 check_called_node_in_look_behind.isra.0
-alloc::boxed::box_new_uninit
 <bool as core::fmt::Debug>::fmt
 <std::path::Components as core::cmp::PartialEq>::eq
 <alloc::string::String as core::fmt::Display>::fmt
@@ -154,8 +153,6 @@ alloc::boxed::box_new_uninit
 <std::sync::mpmc::waker::SyncWaker>::register
 <std::sync::mpmc::waker::SyncWaker>::unregister
 unicode_width::tables::lookup_width
-unicode_width::tables::is_emoji_modifier_base
-<syntect::highlighting::highlighter::HighlightState as core::fmt::Debug>::fmt
 <syntect::parsing::syntax_definition::ContextId as core::fmt::Debug>::fmt
 <i64>::from_ascii_bytes_radix_impl
 <std::io::stdio::Stdin as alloc::io::read::Read>::is_read_vectored
@@ -195,7 +192,6 @@ core::unicode::unicode_data::conversions::to_lower
 core::unicode::unicode_data::case_ignorable::lookup_slow
 core::unicode::unicode_data::n::lookup_slow
 core::unicode::unicode_data::lt::lookup_slow
-<core::str::lossy::Debug as core::fmt::Debug>::fmt
 <core::str::lossy::Utf8Chunks as core::iter::traits::iterator::Iterator>::next
 <u8 as core::fmt::UpperHex>::fmt
 <core::bstr::ByteStr as core::fmt::Display>::fmt
@@ -208,12 +204,9 @@ core::unicode::unicode_data::lt::lookup_slow
 crossterm::terminal::enable_raw_mode
 __rustc::__rust_alloc
 <image::error::ImageFormatHint as core::fmt::Display>::fmt
-<&alloc::boxed::Box<dyn core::error::Error + core::marker::Send + core::marker::Sync> as core::fmt::Display>::fmt
-<&image::error::ImageFormatHint as core::fmt::Display>::fmt
 memchr::arch::x86_64::memchr::memchr_raw::detect
 memchr::arch::x86_64::memchr::memchr_raw::find_avx2
 memchr::arch::x86_64::memchr::memchr_raw::find_sse2
-<miniz_oxide::deflate::core::HuffmanOxide>::optimize_table
 <core::iter::adapters::take::Take<core::iter::adapters::enumerate::Enumerate<core::slice::iter::Iter<i32>>> as core::iter::traits::iterator::Iterator>::nth
 miniz_oxide::inflate::core::decompress_with_limit
 miniz_oxide::inflate::core::init_tree
@@ -236,7 +229,6 @@ core::ptr::drop_glue::<pulldown_cmark::parse::HeadingAttributes>
 core::ptr::drop_glue::<pulldown_cmark::firstpass::FirstPass>
 pulldown_cmark::parse::scan_containers
 <pulldown_cmark::scanners::LineStart>::finish_list_marker
-<pulldown_cmark::firstpass::FirstPass>::parse_refdef_label
 <pulldown_cmark::firstpass::FirstPass>::parse_footnote::{closure#0}
 pulldown_cmark::linklabel::scan_link_label_rest
 <pulldown_cmark::firstpass::FirstPass>::finish_list
@@ -248,11 +240,8 @@ pulldown_cmark::linklabel::scan_link_label_rest
 <alloc::raw_vec::RawVec<pulldown_cmark::tree::Node<pulldown_cmark::parse::Item>>>::grow_one
 <pulldown_cmark::firstpass::FirstPass>::append_code_text
 pulldown_cmark::scanners::scan_closing_metadata_block
-pulldown_cmark::firstpass::get_html_end_tag
 pulldown_cmark::scanners::scan_html_type_7
 <pulldown_cmark::firstpass::FirstPass>::parse_line
-<pulldown_cmark::firstpass::FirstPass>::extract_and_parse_heading_attribute_block
-<alloc::raw_vec::RawVec<pulldown_cmark::parse::HeadingAttributes>>::grow_one
 pulldown_cmark::scanners::scan_code_fence
 <pulldown_cmark::firstpass::FirstPass>::parse_fenced_code_block
 pulldown_cmark::scanners::scan_link_dest
@@ -260,8 +249,6 @@ pulldown_cmark::scanners::unescape::<&str>
 pulldown_cmark::scanners::scan_setext_heading
 pulldown_cmark::scanners::scan_blank_line
 <pulldown_cmark::tree::Tree<pulldown_cmark::parse::Item>>::is_in_table
-pulldown_cmark::scanners::scan_entity
-core::ptr::drop_glue::<alloc::vec::Vec<(pulldown_cmark::strings::CowStr, core::option::Option<pulldown_cmark::strings::CowStr>)>>
 <pulldown_cmark::parse::Allocations>::allocate_alignment
 pulldown_cmark::firstpass::delim_run_can_open
 pulldown_cmark::firstpass::delim_run_can_close
@@ -296,9 +283,6 @@ simd_adler32::imp::avx2::imp::update
 simd_adler32::imp::sse2::imp::update
 simd_adler32::imp::avx2::imp::update_imp
 simd_adler32::imp::ssse3::imp::update_imp
-std::panic::get_backtrace_style
-std::panicking::panic_count::is_zero_slow_path
-<std::sys::sync::mutex::futex::Mutex>::lock_contended
 <std::backtrace_rs::symbolize::SymbolName as core::fmt::Display>::fmt
 <std::sys::fs::unix::File>::open_c
 <&std::fs::File as alloc::io::read::Read>::read_to_string
@@ -317,7 +301,6 @@ core::ptr::drop_glue::<core::result::Result<&core::result::Result<addr2line::lin
 std::sys::fs::unix::try_statx
 core::ptr::drop_glue::<core::io::error::Error>
 <std::path::Components>::parse_next_component_back
-std::sys::helpers::small_c_string::run_with_cstr_allocating::<std::sys::fs::unix::File>
 <u8 as <[_]>::to_vec_in::ConvertVec>::to_vec::<alloc::alloc::Global>
 std::fs::buffer_capacity_required
 alloc::io::read::default_read_to_end::<&std::fs::File>
@@ -332,7 +315,6 @@ std::sys::thread_local::guard::key::enable::run
 std::sys::env::unix::getenv::{closure#0}
 std::sys::args::unix::imp::ARGV_INIT_ARRAY::init_wrapper
 core::panicking::assert_failed::<[u8; 4], &[u8]>
-<&&[u8] as core::fmt::Debug>::fmt
 __rustc::rust_begin_unwind
 __rustc::__rust_foreign_exception
 __rustc::__rust_alloc_error_handler
@@ -348,7 +330,6 @@ std::thread::current::init_current
 <std::sys::thread::unix::Thread>::new
 core::ptr::drop_glue::<core::mem::drop_guard::DropGuard<&mut core::mem::maybe_uninit::MaybeUninit<libc::unix::linux_like::linux::gnu::b64::x86_64::pthread_attr_t>, <std::sys::thread::unix::Thread>::new::{closure#0}>>
 <std::sys::thread::unix::Thread>::new::thread_start
-core::ptr::drop_glue::<alloc::boxed::Box<std::thread::lifecycle::ThreadInit>>
 std::sys::pal::unix::stack_overflow::imp::make_handler
 core::ptr::drop_glue::<alloc::boxed::Box<dyn core::ops::function::FnOnce<(), Output = ()> + core::marker::Send>>
 core::ptr::drop_glue::<std::sys::pal::unix::stack_overflow::Handler>
@@ -378,10 +359,6 @@ std::sys::thread_local::native::eager::destroy::<core::cell::Cell<std::thread::s
 <std::process::Command>::output
 <std::fs::OpenOptions>::_open
 <alloc::sync::Arc<std::sys::fs::unix::InnerReadDir>>::drop_slow
-std::panicking::resume_unwind
-core::ptr::drop_glue::<std::panicking::resume_unwind::RewrapBox>
-<std::panicking::resume_unwind::RewrapBox as core::fmt::Display>::fmt
-<std::panicking::resume_unwind::RewrapBox as core::panic::PanicPayload>::take_box
 <std::panicking::resume_unwind::RewrapBox as core::panic::PanicPayload>::get
 <() as core::any::Any>::type_id
 std::panicking::set_hook
@@ -461,9 +438,6 @@ syntect::parsing::scope::lock_global_scope_repo
 <*mut onig_sys::ffi::OnigEncodingTypeST as core::fmt::Debug>::fmt
 <<once_cell::imp::OnceCell<syntect::parsing::regex::regex_impl::Regex>>::initialize<<once_cell::sync::OnceCell<syntect::parsing::regex::regex_impl::Regex>>::get_or_init<<syntect::parsing::regex::Regex>::regex::{closure#0}>::{closure#0}, <once_cell::sync::OnceCell<_>>::get_or_init::Void>::{closure#0} as core::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}
 <once_cell::imp::OnceCell<syntect::parsing::regex::regex_impl::Regex>>::initialize::<<once_cell::sync::OnceCell<syntect::parsing::regex::regex_impl::Regex>>::get_or_init<<syntect::parsing::regex::Regex>::regex::{closure#0}>::{closure#0}, <once_cell::sync::OnceCell<_>>::get_or_init::Void>::{closure#0}
-<alloc::boxed::Box<dyn core::error::Error + core::marker::Send + core::marker::Sync> as core::fmt::Debug>::fmt
-core::ptr::drop_glue::<onig::Error>
-<onig::Error as core::error::Error>::type_id
 <onig::Error as core::error::Error>::description
 <onig::Error as core::error::Error>::cause
 <onig::Error as core::error::Error>::provide
@@ -526,7 +500,6 @@ core::ptr::drop_glue::<toml::de::parser::inline_table::State>
 core::ptr::drop_glue::<alloc::vec::Vec<toml_parser::parser::event::Event>>
 core::ptr::drop_glue::<toml::de::error::TomlSink<core::option::Option<toml::de::error::Error>>>
 <toml_datetime::datetime::Datetime as core::str::traits::FromStr>::from_str::{closure#19}
-<alloc::raw_vec::RawVec<toml_parser::parser::event::Event>>::grow_one
 toml_parser::decoder::string::decode_literal_string
 toml_parser::decoder::string::decode_basic_string
 toml_parser::decoder::scalar::decode_invalid
@@ -595,11 +568,9 @@ toml_parser::parser::document::on_expression_key
 <pulldown_cmark::strings::CowStr as core::convert::From<alloc::string::String>>::from
 <core::option::Option<&ada::PipedImage>>::map_or::<std::path::PathBuf, ada::run::{closure#3}>
 ada::cli::number::<u16>
-core::ptr::drop_glue::<core::option::Option<std::sync::mpsc::Sender<core::option::Option<(std::path::PathBuf, core::option::Option<u64>)>>>>
 core::ptr::drop_glue::<ada::doc::BlockKind>
 core::ptr::drop_glue::<ada::theme::Theme>
 core::ptr::drop_glue::<ada::theme::Glyphs>
-core::ptr::drop_glue::<ada::images::ImageCache>
 core::ptr::drop_glue::<ada::app::effects::Effects>
 core::ptr::drop_glue::<ada::links::roots::RootedResolver>
 core::ptr::drop_glue::<ada::links::roots::Roots>
@@ -622,7 +593,6 @@ ada::print_doc
 <&u16 as core::fmt::Debug>::fmt
 <&str as core::fmt::Display>::fmt
 <ada::app::Size as core::fmt::Debug>::fmt
-<std::sync::poison::PoisonError<std::sync::poison::mutex::MutexGuard<std::sync::mpmc::zero::Inner>> as core::fmt::Debug>::fmt
 <ada::images::Proto as core::fmt::Debug>::fmt
 <alloc::vec::Vec<u8> as core::clone::Clone>::clone
 <alloc::borrow::Cow<str> as core::fmt::Display>::fmt
@@ -638,14 +608,9 @@ __rustc::__rust_realloc
 <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&(u32, usize)>
 <hashbrown::raw::RawTable<(usize, usize)>>::reserve_rehash::<hashbrown::map::make_hasher<usize, usize, std::hash::random::RandomState>::{closure#0}>
 <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&usize>
-<hashbrown::raw::RawTable<(u32, alloc::vec::Vec<ada::diagram::graph::topo::PortSpec>)>>::reserve_rehash::<hashbrown::map::make_hasher<u32, alloc::vec::Vec<ada::diagram::graph::topo::PortSpec>, std::hash::random::RandomState>::{closure#0}>
 <hashbrown::raw::RawTable<(u32, ())>>::reserve_rehash::<hashbrown::map::make_hasher<u32, (), std::hash::random::RandomState>::{closure#0}>
 <alloc::sync::Arc<ada::highlight::CodeSpans>>::drop_slow
 <hashbrown::raw::RawTable<(u64, ())>>::reserve_rehash::<hashbrown::map::make_hasher<u64, (), std::hash::random::RandomState>::{closure#0}>
-anpa::combinators::many_internal::<&str, (&str, ada::record::Raw), (), (), (), anpa::combinators::right<&str, (), (), (&str, ada::record::Raw), anpa::parsers::skip<&str, char, (), char>::{closure#0}, ada::record::field::{closure#0}>::{closure#0}, anpa::combinators::fold<&str, (&str, ada::record::Raw), (), (), alloc::vec::Vec<(&str, ada::record::Raw)>, (), anpa::combinators::right<&str, (), (), (&str, ada::record::Raw), anpa::parsers::skip<&str, char, (), char>::{closure#0}, ada::record::field::{closure#0}>::{closure#0}, <alloc::vec::Vec<(&str, ada::record::Raw)>>::new, ada::record::line::{closure#0}, anpa::parsers::success<&str, ()>::{closure#0}>::{closure#0}::{closure#0}, anpa::parsers::success<&str, ()>::{closure#0}>
-anpa::combinators::right::<&str, (), (), alloc::string::String, anpa::parsers::skip<&str, char, (), char>::{closure#0}, anpa::combinators::left<&str, (), alloc::string::String, (), anpa::combinators::fold<&str, char, (), (), alloc::string::String, (), anpa::combinators::or<&str, char, (), anpa::combinators::right<&str, (), (), char, anpa::parsers::skip<&str, char, (), char>::{closure#0}, anpa::combinators::map_if<&str, char, char, (), anpa::parsers::item_if<&str, (), anpa::parsers::item<&str, ()>::{closure#0}>::{closure#0}, ada::record::quoted::{closure#0}>::{closure#0}>::{closure#0}, anpa::parsers::item_if<&str, (), ada::record::quoted::{closure#1}>::{closure#0}>::{closure#0}, <alloc::string::String>::new, ada::record::quoted::{closure#2}, anpa::parsers::success<&str, ()>::{closure#0}>::{closure#0}, anpa::parsers::skip<&str, char, (), char>::{closure#0}>::{closure#0}>::{closure#0}::{closure#0}
-anpa::combinators::many_internal::<&str, char, (), (), (), anpa::combinators::or<&str, char, (), anpa::combinators::right<&str, (), (), char, anpa::parsers::skip<&str, char, (), char>::{closure#0}, anpa::combinators::map_if<&str, char, char, (), anpa::parsers::item_if<&str, (), anpa::parsers::item<&str, ()>::{closure#0}>::{closure#0}, ada::record::quoted::{closure#0}>::{closure#0}>::{closure#0}, anpa::parsers::item_if<&str, (), ada::record::quoted::{closure#1}>::{closure#0}>::{closure#0}, anpa::combinators::fold<&str, char, (), (), alloc::string::String, (), anpa::combinators::or<&str, char, (), anpa::combinators::right<&str, (), (), char, anpa::parsers::skip<&str, char, (), char>::{closure#0}, anpa::combinators::map_if<&str, char, char, (), anpa::parsers::item_if<&str, (), anpa::parsers::item<&str, ()>::{closure#0}>::{closure#0}, ada::record::quoted::{closure#0}>::{closure#0}>::{closure#0}, anpa::parsers::item_if<&str, (), ada::record::quoted::{closure#1}>::{closure#0}>::{closure#0}, <alloc::string::String>::new, ada::record::quoted::{closure#2}, anpa::parsers::success<&str, ()>::{closure#0}>::{closure#0}::{closure#0}, anpa::parsers::success<&str, ()>::{closure#0}>
-core::ptr::drop_glue::<std::sync::mpsc::SyncSender<ada::print::stream::Piece>>
 core::ptr::drop_glue::<std::sync::poison::mutex::Mutex<std::sync::mpmc::zero::Inner>>
 core::ptr::drop_glue::<alloc::vec::Vec<std::sync::mpmc::waker::Entry>>
 core::ptr::drop_glue::<alloc::vec::drain::Drain<std::sync::mpmc::waker::Entry>>
@@ -659,18 +624,14 @@ std::sys::thread_local::native::lazy::destroy::<core::cell::Cell<core::option::O
 <core::io::write::default_write_fmt::Adapter<std::sys::stdio::unix::Stderr> as core::fmt::Write>::write_char
 <core::io::write::default_write_fmt::Adapter<std::sys::stdio::unix::Stderr> as core::fmt::Write>::write_fmt
 ada::layout::code::expand_tabs
-ada::json::tokens
-core::ptr::drop_glue::<std::sync::mpsc::Sender<(usize, core::option::Option<alloc::string::String>)>>
 core::ptr::drop_glue::<ada::layout::Layout>
 core::ptr::drop_glue::<std::sync::mpmc::counter::Counter<std::sync::mpmc::list::Channel<(usize, core::option::Option<alloc::string::String>)>>>
-core::ptr::drop_glue::<alloc::sync::ArcInner<ada::highlight::CodeSpans>>
 <ada::layout::Measure>::new
 ada::layout::relayout_lines
 core::ptr::drop_glue::<ada::layout::Measure>
 core::ptr::drop_glue::<ada::highlight::Highlights>
 <ada::highlight::Highlights>::insert
 ada::print::start_line
-core::ptr::drop_glue::<ada::highlight::CodeSpans>
 <ada::theme::Theme>::style
 <ada::print::Line>::span
 ada::ui::paint::spaces::<ada::print::start_line::{closure#0}>
@@ -759,12 +720,10 @@ core::ptr::drop_glue::<std::thread::lifecycle::Packet<alloc::vec::Vec<alloc::box
 <alloc::sync::Arc<std::thread::lifecycle::Packet<alloc::vec::Vec<alloc::boxed::Box<[ada::highlight::Run]>>>>>::drop_slow
 <alloc::sync::Arc<std::thread::scoped::ScopeData>>::drop_slow
 core::ptr::drop_glue::<std::thread::scoped::ScopedJoinHandle<alloc::vec::Vec<alloc::boxed::Box<[ada::highlight::Run]>>>>
-core::ptr::drop_glue::<alloc::vec::into_iter::IntoIter<std::thread::scoped::ScopedJoinHandle<alloc::vec::Vec<alloc::boxed::Box<[ada::highlight::Run]>>>>>
 core::ptr::drop_glue::<syntect::parsing::parser::ParseState>
 <ada::highlight::LineState>::line
 <alloc::raw_vec::RawVec<alloc::boxed::Box<[ada::highlight::Run]>>>::grow_one
 <alloc::raw_vec::RawVec<core::option::Option<alloc::string::String>>>::grow_one
-core::ptr::drop_glue::<core::option::Option<alloc::vec::Vec<core::option::Option<alloc::string::String>>>>
 <ada::highlight::Seams>::fail
 core::ptr::drop_glue::<alloc::vec::Vec<core::option::Option<alloc::string::String>>>
 core::ptr::drop_glue::<syntect::highlighting::highlighter::HighlightState>
@@ -788,14 +747,11 @@ std::sys::backtrace::__rust_begin_short_backtrace::<<ada::app::watch::inotify::I
 ada::images::mtime_of
 <alloc::sync::Arc<std::os::fd::owned::OwnedFd>>::drop_slow
 <alloc::sync::Arc<std::sync::poison::mutex::Mutex<core::option::Option<ada::app::watch::inotify::Target>>>>::drop_slow
-std::sys::backtrace::__rust_begin_short_backtrace::<<ada::highlight::Worker>::watch::{closure#2}, ()>
 core::slice::sort::shared::smallsort::insertion_sort_shift_left::<ada::sixel::Point, <[ada::sixel::Point]>::sort_unstable_by<ada::sixel::median_cut::{closure#2}>::{closure#0}>
 <alloc::raw_vec::RawVec<ada::sixel::Moments>>::grow_one
 core::slice::sort::unstable::quicksort::quicksort::<ada::sixel::Point, <[ada::sixel::Point]>::sort_unstable_by<ada::sixel::median_cut::{closure#2}>::{closure#0}>
 <alloc::string::String as core::fmt::Write>::write_str
-<alloc::string::String as core::fmt::Write>::write_char
 <core::iter::adapters::map::Map<core::str::iter::Split<char>, <ada::probe::Replies>::csi::{closure#0}> as core::iter::traits::iterator::Iterator>::next
-<alloc::raw_vec::RawVec<crossterm::event::KeyEvent>>::grow_one
 <ada::app::keymap::Bindings as core::default::Default>::default
 core::ptr::drop_glue::<ada::app::keymap::Bindings>
 <ada::app::keymap::KeySeq>::parse
@@ -804,7 +760,6 @@ core::ptr::drop_glue::<alloc::vec::Vec<(ada::app::keymap::Action, alloc::vec::Ve
 <ada::app::keymap::Key>::parse
 <core::str::iter::Split<core::str::IsWhitespace> as core::iter::traits::iterator::Iterator>::try_fold::<(), core::iter::traits::iterator::Iterator::find::check<&str, &mut core::str::IsNotEmpty>::{closure#0}, core::ops::control_flow::ControlFlow<&str>>
 std::sys::backtrace::__rust_begin_short_backtrace::<ada::app::load::spawn_worker::{closure#0}, ()>
-core::ptr::drop_glue::<std::sync::mpsc::Receiver<(std::path::PathBuf, alloc::boxed::Box<ada::app::load::Prepare>)>>
 ada::app::effects::load_doc_head
 <ada::app::Document>::lay_out
 <ada::doc::Inlines>::plain_text
@@ -824,7 +779,6 @@ core::ptr::drop_glue::<core::iter::adapters::enumerate::Enumerate<pulldown_cmark
 <ada::doc::parse::Builder>::pop_block
 core::ptr::drop_glue::<ada::doc::parse::Frame>
 <alloc::raw_vec::RawVec<ada::doc::Block>>::grow_one
-core::ptr::drop_glue::<std::collections::hash::map::HashMap<alloc::boxed::Box<str>, u32>>
 core::ptr::drop_glue::<ada::doc::parse::Builder>
 <alloc::raw_vec::RawVec<ada::doc::parse::Frame>>::grow_one
 anpa::combinators::filter::<&str, &str, (), anpa::parsers::item_while<&str, (), ada::doc::fence::word::{closure#0}>::{closure#0}, anpa::combinators::not_empty<&str, &str, (), anpa::parsers::item_while<&str, (), ada::doc::fence::word::{closure#0}>::{closure#0}>::{closure#0}>::{closure#0}
@@ -849,11 +803,9 @@ core::ptr::drop_glue::<ada::doc::Inlines>
 <alloc::vec::Vec<ada::doc::Anchor>>::push_mut
 core::ptr::drop_glue::<alloc::vec::into_iter::IntoIter<ada::doc::Block>>
 ada::doc::parse::paragraph
-ada::guard::catch::<core::option::Option<ada::diagram::Diagram>, <ada::doc::parse::Builder>::pop_block::{closure#2}::{closure#0}>
 core::ptr::drop_glue::<ada::diagram::graph::Edge>
 <hashbrown::map::HashMap<alloc::string::String, u32, std::hash::random::RandomState>>::insert
 core::ptr::drop_glue::<std::collections::hash::map::HashMap<alloc::string::String, u32>>
-<std::sync::once::Once>::call_once::<ada::guard::catch<core::option::Option<ada::diagram::Diagram>, <ada::doc::parse::Builder>::pop_block::{closure#2}::{closure#0}>::{closure#0}>::{closure#0}
 core::ptr::drop_glue::<ada::doc::Anchor>
 <pulldown_cmark::parse::Parser>::make_code_span
 <<std::sync::once::Once>::call_once<ada::guard::catch<core::option::Option<ada::doc::Doc>, ada::doc::parse::parse::{closure#0}>::{closure#0}>::{closure#0} as core::ops::function::FnOnce<(&std::sync::once::OnceState,)>>::call_once::{shim:vtable#0}
@@ -869,8 +821,6 @@ alloc::io::read::default_read_to_end::small_probe_read::<core::io::util::Take<st
 core::ptr::drop_glue::<std::sync::mpmc::counter::Counter<std::sync::mpmc::list::Channel<(std::path::PathBuf, alloc::boxed::Box<ada::app::load::Prepare>)>>>
 <std::sync::mpmc::context::Context>::with::<<std::sync::mpmc::zero::Channel<core::option::Option<(std::path::PathBuf, core::option::Option<u64>)>>>::recv::{closure#1}, core::result::Result<core::option::Option<(std::path::PathBuf, core::option::Option<u64>)>, std::sync::mpsc::RecvTimeoutError>>::{closure#2}
 <std::sync::mpmc::list::Channel<core::option::Option<(std::path::PathBuf, core::option::Option<u64>)>>>::recv::{closure#1}
-<std::sync::mpmc::context::Context>::with::<<std::sync::mpmc::list::Channel<core::option::Option<(std::path::PathBuf, core::option::Option<u64>)>>>::recv::{closure#1}, ()>::{closure#2}
-<std::sync::mpmc::array::Channel<core::option::Option<(std::path::PathBuf, core::option::Option<u64>)>>>::recv::{closure#1}
 std::sys::backtrace::__rust_begin_short_backtrace::<ada::app::effects::open_with_system::{closure#0}, core::result::Result<std::process::ExitStatus, core::io::error::Error>>
 core::ptr::drop_glue::<ada::app::effects::open_with_system::{closure#0}>
 std::sys::backtrace::__rust_begin_short_backtrace::<ada::highlight::syntaxes, &syntect::parsing::syntax_set::SyntaxSet>
@@ -900,7 +850,6 @@ ada::theme::load::color
 <ada::toml_walk::Cx>::strings
 <ada::toml_walk::Cx>::glyph
 ada::toml_walk::position
-core::ptr::drop_glue::<core::result::Result<[alloc::string::String; 2], alloc::vec::Vec<alloc::string::String>>>
 <ada::toml_walk::Cx>::at::<&str>
 ada::theme::load::parse_style
 ada::theme::load::styles
@@ -914,7 +863,6 @@ ada::theme::load::find::{closure#0}
 <ada::toml_walk::Cx>::bool
 <core::iter::adapters::GenericShunt<core::iter::adapters::map::Map<core::slice::iter::Iter<serde_spanned::spanned::Spanned<toml::de::parser::devalue::DeValue>>, <ada::toml_walk::Cx>::strings::{closure#1}>, core::result::Result<core::convert::Infallible, alloc::string::String>> as core::iter::traits::iterator::Iterator>::next
 <str>::replace::<&str>
-<<alloc::collections::btree::map::IntoIter<_, _, _> as core::ops::drop::Drop>::drop::DropGuard<serde_spanned::spanned::Spanned<alloc::borrow::Cow<str>>, serde_spanned::spanned::Spanned<toml::de::parser::devalue::DeValue>, alloc::alloc::Global> as core::ops::drop::Drop>::drop
 core::ptr::drop_glue::<toml::de::error::Error>
 <ada::theme::Theme>::with_bg
 <ada::config::Saved>::changes
@@ -943,7 +891,6 @@ ada::print::start
 ada::print::start::{closure#0}
 <<std::sync::once::Once>::call_once<ada::print::start::{closure#1}>::{closure#0} as core::ops::function::FnOnce<(&std::sync::once::OnceState,)>>::call_once::{shim:vtable#0}
 <std::sync::once::Once>::call_once::<ada::print::start::{closure#1}>::{closure#0}
-core::ptr::drop_glue::<std::thread::lifecycle::spawn_unchecked<ada::highlight::syntaxes, &syntect::parsing::syntax_set::SyntaxSet>::{closure#1}>
 <std::thread::lifecycle::spawn_unchecked<ada::highlight::syntaxes, &syntect::parsing::syntax_set::SyntaxSet>::{closure#1} as core::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}
 ada::print::run
 ada::print::write::<std::io::stdio::StdoutLock>::{closure#0}
@@ -955,17 +902,29 @@ core::ptr::drop_glue::<core::option::Option<(u32, ada::print::Drawn)>>
 ada::config::load
 <std::fs::File as alloc::io::read::Read>::read_buf_exact
 ada::theme::load::load
-<alloc::vec::Vec<_, _>>::remove::assert_failed
-<alloc::vec::Vec<_, _>>::split_off::assert_failed
-<core::fmt::Error as core::fmt::Debug>::fmt
 <hashbrown::raw::RawTable<(alloc::sync::Arc<str>, regex_automata::util::primitives::SmallIndex)>>::reserve_rehash::<hashbrown::map::make_hasher<alloc::sync::Arc<str>, regex_automata::util::primitives::SmallIndex, std::hash::random::RandomState>::{closure#0}>
 <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write
 core::panicking::assert_failed::<regex_automata::util::primitives::PatternID, regex_automata::util::primitives::PatternID>
 <&regex_automata::util::primitives::PatternID as core::fmt::Debug>::fmt
-<std::path::StripPrefixError as core::fmt::Debug>::fmt
 std::sys::io::error::unix::decode_error_kind
 std::sys::io::error::unix::is_interrupted
 roundf
+<std::sync::mpmc::zero::Channel<ada::print::stream::Piece>>::send::{closure#0}
+core::ptr::drop_glue::<core::option::Option<<std::sync::mpmc::zero::Channel<ada::print::stream::Piece>>::send::{closure#0}>>
+<core::io::write::default_write_fmt::Adapter<std::sys::stdio::unix::Stderr> as core::fmt::Write>::write_str
+<alloc::raw_vec::RawVec<ada::json::Span>>::grow_one
+ada::json::next_special
+ada::doc::file::code
+ada::doc::diagram
+round
+__divti3
+alloc::boxed::box_new_uninit
+std::panicking::panic_count::is_zero_slow_path
+<std::sys::sync::mutex::futex::Mutex>::lock_contended
+core::ptr::drop_glue::<ada::images::ImageCache>
+anpa::combinators::many_internal::<&str, (&str, ada::record::Raw), (), (), (), anpa::combinators::right<&str, (), (), (&str, ada::record::Raw), anpa::parsers::skip<&str, char, (), char>::{closure#0}, ada::record::field::{closure#0}>::{closure#0}, anpa::combinators::fold<&str, (&str, ada::record::Raw), (), (), alloc::vec::Vec<(&str, ada::record::Raw)>, (), anpa::combinators::right<&str, (), (), (&str, ada::record::Raw), anpa::parsers::skip<&str, char, (), char>::{closure#0}, ada::record::field::{closure#0}>::{closure#0}, <alloc::vec::Vec<(&str, ada::record::Raw)>>::new, ada::record::line::{closure#0}, anpa::parsers::success<&str, ()>::{closure#0}>::{closure#0}::{closure#0}, anpa::parsers::success<&str, ()>::{closure#0}>
+core::ptr::drop_glue::<ada::highlight::CodeSpans>
+<alloc::string::String as core::fmt::Write>::write_char
 ceil
 <aho_corasick::nfa::noncontiguous::NFA>::add_match
 <alloc::sync::Arc<dyn aho_corasick::ahocorasick::AcAutomaton>>::drop_slow
@@ -999,10 +958,8 @@ core::ptr::drop_glue::<alloc::sync::ArcInner<aho_corasick::packed::pattern::Patt
 <aho_corasick::packed::teddy::builder::x86_64::SlimSSSE3<1>>::new_unchecked
 <aho_corasick::packed::teddy::builder::x86_64::SlimAVX2<4>>::new
 <aho_corasick::packed::teddy::builder::x86_64::FatAVX2<4>>::new
-core::ptr::drop_glue::<aho_corasick::packed::pattern::Patterns>
 <&alloc::vec::Vec<aho_corasick::util::primitives::PatternID> as core::fmt::Debug>::fmt
 <alloc::vec::Vec<aho_corasick::util::primitives::PatternID> as alloc::vec::spec_from_elem::SpecFromElem>::from_elem::<alloc::alloc::Global>
-core::ptr::drop_glue::<alloc::vec::Vec<alloc::vec::Vec<aho_corasick::util::primitives::PatternID>>>
 core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<alloc::boxed::Box<[u8]>, usize>>
 <alloc::collections::btree::map::IntoIter<alloc::boxed::Box<[u8]>, usize>>::dying_next
 <alloc::collections::btree::map::BTreeMap<alloc::boxed::Box<[u8]>, usize>>::insert
@@ -1046,14 +1003,12 @@ core::ptr::drop_glue::<core::option::Option<aho_corasick::packed::api::Builder>>
 <alloc::ffi::c_str::CString>::_from_vec_unchecked
 alloc::io::error::custom_owner_from_box::drop_box_raw::<dyn core::error::Error + core::marker::Send + core::marker::Sync>
 alloc::io::error::custom_owner_from_box::drop_box_raw::<core::io::error::Custom>
-<alloc::vec::Vec<_, _>>::insert_mut::assert_failed
 <core::num::imp::bignum::Big32x40>::mul_pow2
 <core::ffi::c_str::CStr>::from_bytes_with_nul
 core::num::from_ascii_bytes_radix_panic
 <u32 as core::fmt::Display>::fmt
 core::str::slice_error_fail
 core::str::slice_error_fail_rt
-<alloc::raw_vec::RawVec<crossterm::event::InternalEvent>>::grow_one
 <alloc::collections::vec_deque::VecDeque<crossterm::event::InternalEvent>>::grow
 core::ptr::drop_glue::<crossterm::event::source::unix::tty::UnixInternalEventSource>
 core::ptr::drop_glue::<core::option::Option<alloc::boxed::Box<dyn crossterm::event::source::EventSource>>>
@@ -1067,8 +1022,6 @@ crossterm::event::sys::unix::parse::parse_csi
 crossterm::event::sys::unix::parse::char_code_to_event
 crossterm::event::sys::unix::parse::next_parsed::<u8>
 crossterm::event::sys::unix::parse::next_parsed::<u16>
-crossterm::event::sys::unix::parse::parse_csi_modifier_key_code
-crossterm::event::sys::unix::parse::parse_csi_primary_device_attributes
 crossterm::event::sys::unix::parse::parse_csi_rxvt_mouse
 crossterm::event::sys::unix::parse::parse_csi_special_key_code
 crossterm::event::sys::unix::parse::parse_csi_u_encoded_key_code
@@ -1088,13 +1041,10 @@ regex_automata::dfa::search::find_overlapping_fwd::<regex_automata::dfa::dense::
 <regex_automata::dfa::dense::DFA<alloc::vec::Vec<u32>> as regex_automata::dfa::automaton::Automaton>::start_state_forward
 <regex_automata::util::search::MatchError>::quit
 regex_automata::dfa::search::find_fwd::<&regex_automata::dfa::dense::DFA<alloc::vec::Vec<u32>>>
-<regex_automata::util::search::Input>::set_span::<regex_automata::util::search::Span>
 <&regex_automata::dfa::dense::DFA<alloc::vec::Vec<u32>> as regex_automata::dfa::automaton::Automaton>::next_eoi_state
 regex_automata::dfa::search::find_rev::<regex_automata::dfa::dense::DFA<alloc::vec::Vec<u32>>>
 <regex_automata::dfa::dense::DFA<alloc::vec::Vec<u32>> as regex_automata::dfa::automaton::Automaton>::start_state_reverse
 <regex_automata::util::look::LookMatcher>::is_word_end_half_unicode
-core::str::validations::next_code_point::<core::slice::iter::Iter<u8>>
-<regex_automata::hybrid::dfa::DFA>::next_eoi_state
 <regex_automata::hybrid::dfa::DFA>::next_state
 regex_automata::util::determinize::next
 <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&[u8]>
@@ -1104,7 +1054,6 @@ regex_automata::util::determinize::next
 <regex_automata::util::determinize::state::StateBuilderMatches>::into_nfa
 regex_automata::util::determinize::epsilon_closure
 regex_automata::util::determinize::add_nfa_states
-<alloc::raw_vec::RawVec<regex_automata::util::primitives::StateID>>::grow_one
 regex_automata::util::determinize::set_lookbehind_from_start
 core::ptr::drop_glue::<regex_automata::dfa::dense::Config>
 <alloc::sync::Arc<dyn regex_automata::util::prefilter::PrefilterI>>::drop_slow
@@ -1133,9 +1082,7 @@ core::ptr::drop_glue::<regex_automata::dfa::dense::BuildError>
 <alloc::collections::btree::map::BTreeMap<regex_automata::util::primitives::StateID, regex_automata::dfa::accel::Accel>>::insert
 <alloc::collections::btree::map::BTreeMap<regex_automata::util::primitives::StateID, alloc::vec::Vec<regex_automata::util::primitives::PatternID>>>::remove::<regex_automata::util::primitives::StateID>
 <alloc::collections::btree::map::BTreeMap<regex_automata::util::primitives::StateID, alloc::vec::Vec<regex_automata::util::primitives::PatternID>>>::insert
-<&regex_syntax::hir::Error as core::fmt::Debug>::fmt
 <alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections::btree::node::marker::Mut, regex_automata::util::primitives::StateID, regex_automata::dfa::accel::Accel, alloc::collections::btree::node::marker::Leaf>, alloc::collections::btree::node::marker::KV>>::remove_leaf_kv::<<alloc::collections::btree::map::entry::OccupiedEntry<regex_automata::util::primitives::StateID, regex_automata::dfa::accel::Accel>>::remove_kv::{closure#0}, alloc::alloc::Global>
-<alloc::collections::btree::node::BalancingContext<regex_automata::util::primitives::StateID, regex_automata::dfa::accel::Accel>>::bulk_steal_right
 <regex_automata::dfa::dense::MatchStates<alloc::vec::Vec<u32>>>::match_state_id
 <&core::option::Option<u8> as core::fmt::Debug>::fmt
 <alloc::raw_vec::RawVec<alloc::vec::Vec<alloc::vec::Vec<regex_automata::util::primitives::StateID>>>>::grow_one
@@ -1177,7 +1124,6 @@ core::ptr::drop_glue::<alloc::sync::ArcInner<regex_automata::nfa::thompson::nfa:
 core::ptr::drop_glue::<regex_automata::nfa::thompson::nfa::Inner>
 core::ptr::drop_glue::<regex_automata::nfa::thompson::nfa::State>
 <alloc::raw_vec::RawVec<std::collections::hash::map::HashMap<alloc::sync::Arc<str>, regex_automata::util::primitives::SmallIndex>>>::grow_one
-core::ptr::drop_glue::<std::collections::hash::map::HashMap<alloc::sync::Arc<str>, regex_automata::util::primitives::SmallIndex>>
 <regex_automata::util::primitives::SmallIndexError as core::fmt::Debug>::fmt
 <regex_automata::nfa::thompson::compiler::Compiler>::c_cap
 <regex_automata::nfa::thompson::compiler::Compiler>::c
@@ -1191,19 +1137,15 @@ core::ptr::drop_glue::<std::collections::hash::map::HashMap<alloc::sync::Arc<str
 <regex_automata::nfa::thompson::compiler::Utf8Compiler>::compile_from
 <regex_automata::nfa::thompson::compiler::Utf8Compiler>::compile
 <regex_automata::nfa::thompson::map::Utf8BoundedEntry as alloc::vec::spec_from_elem::SpecFromElem>::from_elem::<alloc::alloc::Global>
-<regex_automata::nfa::thompson::compiler::Compiler>::add_union_reverse
-<regex_automata::nfa::thompson::compiler::Compiler>::add_union
 <regex_automata::nfa::thompson::compiler::Compiler>::add_empty
 <alloc::raw_vec::RawVec<regex_automata::nfa::thompson::builder::State>>::grow_one
 core::ptr::drop_glue::<regex_automata::nfa::thompson::builder::State>
 core::ptr::drop_glue::<alloc::boxed::Box<regex_syntax::hir::Hir>>
 core::ptr::drop_glue::<alloc::vec::Vec<regex_syntax::ast::Ast>>
 core::ptr::drop_glue::<regex_syntax::ast::Ast>
-core::ptr::drop_glue::<alloc::boxed::Box<regex_syntax::ast::ClassUnicode>>
 <regex_automata::meta::regex::Builder>::build
 regex_automata::meta::strategy::new
 <alloc::sync::Arc<regex_automata::meta::regex::RegexInfoI>>::drop_slow
-core::ptr::drop_glue::<regex_automata::util::pool::inner::Pool<regex_automata::meta::regex::Cache, alloc::boxed::Box<dyn core::ops::function::Fn<(), Output = regex_automata::meta::regex::Cache> + core::panic::unwind_safe::RefUnwindSafe + core::marker::Send + core::marker::Sync + core::panic::unwind_safe::UnwindSafe>>>
 core::ptr::drop_glue::<regex_automata::util::pool::inner::CacheLine<std::sync::poison::mutex::Mutex<alloc::vec::Vec<alloc::boxed::Box<regex_automata::meta::regex::Cache>>>>>
 core::ptr::drop_glue::<<regex_automata::meta::regex::Builder>::build_many_from_hir<regex_syntax::hir::Hir>::{closure#1}>
 <<regex_automata::meta::regex::Builder>::build_many_from_hir<regex_syntax::hir::Hir>::{closure#1} as core::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}
@@ -1234,7 +1176,6 @@ core::ptr::drop_glue::<regex_automata::meta::strategy::Core>
 <regex_automata::meta::strategy::Core as regex_automata::meta::strategy::Strategy>::group_info
 <regex_automata::meta::strategy::Core as regex_automata::meta::strategy::Strategy>::create_cache
 <regex_automata::meta::strategy::Core as regex_automata::meta::strategy::Strategy>::search
-<regex_automata::meta::strategy::Core as regex_automata::meta::strategy::Strategy>::search_half
 <regex_automata::util::search::PatternSetInsertError as core::fmt::Debug>::fmt
 <regex_automata::dfa::regex::Regex>::try_search
 <regex_automata::util::prefilter::Prefilter>::from_choice
@@ -1252,7 +1193,6 @@ core::ptr::drop_glue::<alloc::vec::drain::Drain<regex_syntax::hir::literal::Lite
 regex_automata::hybrid::dfa::minimum_cache_capacity
 <regex_automata::dfa::onepass::InternalBuilder>::compile_transition
 <core::iter::adapters::map::Map<core::slice::iter::Iter<&regex_syntax::hir::Hir>, <regex_automata::nfa::thompson::compiler::Compiler>::compile<&regex_syntax::hir::Hir>::{closure#1}> as core::iter::traits::iterator::Iterator>::next
-core::ptr::drop_glue::<alloc::sync::ArcInner<regex_automata::meta::strategy::Pre<regex_automata::util::prefilter::teddy::Teddy>>>
 core::ptr::drop_glue::<alloc::sync::ArcInner<regex_automata::meta::strategy::Pre<regex_automata::util::prefilter::memmem::Memmem>>>
 <aho_corasick::nfa::noncontiguous::Builder>::build::<&[regex_syntax::hir::literal::Literal], &regex_syntax::hir::literal::Literal>
 <aho_corasick::nfa::noncontiguous::Compiler>::build_trie::<&[regex_syntax::hir::literal::Literal], &regex_syntax::hir::literal::Literal>
@@ -1302,8 +1242,6 @@ core::ptr::drop_glue::<alloc::boxed::Box<regex_syntax::ast::Concat>>
 <alloc::vec::drain::Drain<regex_syntax::ast::Ast> as core::ops::drop::Drop>::drop
 <regex_syntax::ast::parse::Primitive>::into_class_literal::<&mut regex_syntax::ast::parse::Parser>
 <regex_syntax::ast::Concat>::into_ast
-<alloc::raw_vec::RawVec<regex_syntax::ast::parse::GroupState>>::grow_one
-core::ptr::drop_glue::<<alloc::vec::drain::Drain<_, _> as core::ops::drop::Drop>::drop::DropGuard<regex_syntax::ast::ClassSetItem, alloc::alloc::Global>>
 <regex_syntax::hir::Hir>::into_kind
 <regex_syntax::hir::literal::Seq>::optimize_by_preference
 <regex_syntax::hir::literal::PreferenceTrie>::minimize
@@ -1317,8 +1255,6 @@ core::ptr::drop_glue::<regex_syntax::hir::literal::PreferenceTrie>
 core::ptr::drop_glue::<signal_hook_registry::register<signal_hook::low_level::pipe::register_raw::{closure#0}>::{closure#0}>
 <signal_hook_registry::register<signal_hook::low_level::pipe::register_raw::{closure#0}>::{closure#0} as core::ops::function::FnOnce<(&libc::new::glibc::sysdeps::unix::linux::bits::types::siginfo_t::siginfo_t,)>>::call_once::{shim:vtable#0}
 signal_hook_registry::register::<signal_hook::low_level::pipe::register_raw::{closure#0}>::{closure#0}
-core::ptr::drop_glue::<alloc::vec::Vec<(i32, signal_hook_registry::Slot)>>
-core::ptr::drop_glue::<alloc::sync::Weak<dyn for<'a> core::ops::function::Fn<(&'a libc::new::glibc::sysdeps::unix::linux::bits::types::siginfo_t::siginfo_t,), Output = ()> + core::marker::Send + core::marker::Sync, &alloc::alloc::Global>>
 <<std::sync::once::Once>::call_once<<signal_hook_registry::GlobalData>::ensure::{closure#0}>::{closure#0} as core::ops::function::FnOnce<(&std::sync::once::OnceState,)>>::call_once::{shim:vtable#0}
 <std::sync::once::Once>::call_once::<<signal_hook_registry::GlobalData>::ensure::{closure#0}>::{closure#0}
 core::ptr::drop_glue::<signal_hook_registry::half_lock::WriteGuard<core::option::Option<signal_hook_registry::Prev>>>
@@ -1345,13 +1281,11 @@ core::ptr::drop_glue::<std::io::stdio::StdinLock>
 std::sync::lazy_lock::panic_poisoned
 <alloc::raw_vec::RawVec<*const i8>>::grow_one
 <std::fs::DirBuilder>::_create
-<std::sync::once::Once>::call_once_force::<<std::sync::once_lock::OnceLock<std::sync::reentrant_lock::ReentrantLock<core::cell::RefCell<alloc::io::buffered::linewriter::LineWriter<std::io::stdio::StdoutRaw>>>>>::initialize<<std::sync::once_lock::OnceLock<std::sync::reentrant_lock::ReentrantLock<core::cell::RefCell<alloc::io::buffered::linewriter::LineWriter<std::io::stdio::StdoutRaw>>>>>::get_or_init<std::io::stdio::cleanup::{closure#0}>::{closure#0}, !>::{closure#0}>::{closure#0}
 core::ptr::drop_glue::<std::process::Child>
 <std::sys::process::unix::common::Command>::arg
 <std::sys::process::unix::common::Command>::new
 core::ptr::drop_glue::<std::sys::process::unix::common::cstring_array::CStringArray>
 core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<std::ffi::os_str::OsString, std::ffi::os_str::OsString>>
-core::ptr::drop_glue::<std::env::VarsOs>
 <alloc::collections::btree::map::BTreeMap<std::ffi::os_str::OsString, std::ffi::os_str::OsString>>::insert
 <alloc::collections::btree::node::BalancingContext<std::ffi::os_str::OsString, std::ffi::os_str::OsString>>::bulk_steal_right
 <alloc::collections::btree::map::IntoIter<std::ffi::os_str::OsString, std::ffi::os_str::OsString>>::dying_next
@@ -1365,15 +1299,9 @@ core::ptr::drop_glue::<alloc::collections::btree::map::IntoIter<std::ffi::os_str
 <std::io::stdio::Stdout as core::io::write::Write>::flush
 <unicode_segmentation::grapheme::GraphemeCursor>::grapheme_category
 unicode_width::tables::is_transparent_zero_width
-core::ptr::drop_glue::<alloc::vec::Vec<ada::images::Probe>>
-core::ptr::drop_glue::<alloc::vec::Vec<ada::app::nav::Entry>>
-anpa::combinators::many_internal::<&str, &str, (), ada::logs::Out, (), ada::logs::atomic<&str, anpa::combinators::right<&str, ada::logs::Out, (), &str, anpa::parsers::skip<&str, char, ada::logs::Out, char>::{closure#0}, anpa::combinators::filter<&str, &str, ada::logs::Out, anpa::parsers::item_while<&str, ada::logs::Out, ada::logs::some_digits::{closure#0}>::{closure#0}, anpa::combinators::not_empty<&str, &str, ada::logs::Out, anpa::parsers::item_while<&str, ada::logs::Out, ada::logs::some_digits::{closure#0}>::{closure#0}>::{closure#0}>::{closure#0}>::{closure#0}>::{closure#0}, anpa::combinators::many<&str, &str, (), ada::logs::Out, ada::logs::atomic<&str, anpa::combinators::right<&str, ada::logs::Out, (), &str, anpa::parsers::skip<&str, char, ada::logs::Out, char>::{closure#0}, anpa::combinators::filter<&str, &str, ada::logs::Out, anpa::parsers::item_while<&str, ada::logs::Out, ada::logs::some_digits::{closure#0}>::{closure#0}, anpa::combinators::not_empty<&str, &str, ada::logs::Out, anpa::parsers::item_while<&str, ada::logs::Out, ada::logs::some_digits::{closure#0}>::{closure#0}>::{closure#0}>::{closure#0}>::{closure#0}>::{closure#0}, anpa::parsers::success<&str, ada::logs::Out>::{closure#0}>::{closure#0}::{closure#0}, anpa::parsers::success<&str, ada::logs::Out>::{closure#0}>
 core::ptr::drop_glue::<ada::doc::Doc>
 <ada::diagram::Text>::join
 alloc::str::join_generic_copy::<str, u8, &str>
-<core::cell::once::OnceCell<ada::diagram::sequence::draw::Pieces>>::try_init::<<core::cell::once::OnceCell<ada::diagram::sequence::draw::Pieces>>::get_or_init<<ada::diagram::sequence::draw::Label>::width::{closure#1}>::{closure#0}, !>
-core::ptr::drop_glue::<alloc::vec::Vec<ada::doc::LinkRef>>
-core::ptr::drop_glue::<alloc::vec::Vec<ada::doc::Anchor>>
 core::ptr::drop_glue::<alloc::vec::Vec<ada::doc::Footnote>>
 core::ptr::drop_glue::<ada::doc::Footnote>
 core::ptr::drop_glue::<[ada::doc::ListItem]>
@@ -1388,8 +1316,6 @@ core::ptr::drop_glue::<<ada::app::effects::Effects>::run::{closure#4}>
 <std::sync::mpmc::Sender<ada::app::Msg>>::send
 core::ptr::drop_glue::<std::sync::mpsc::Sender<ada::app::Msg>>
 core::ptr::drop_glue::<ada::app::Msg>
-<alloc::sync::Arc<ada::app::Document>>::drop_slow
-core::ptr::drop_glue::<ada::app::Computed<core::result::Result<ada::images::Encoded, alloc::string::String>>>
 core::ptr::drop_glue::<ada::app::Document>
 core::ptr::drop_glue::<alloc::vec::Vec<ada::app::nav::LinkState>>
 core::ptr::drop_glue::<core::option::Option<ada::search::SearchMap>>
@@ -1397,20 +1323,15 @@ core::ptr::drop_glue::<alloc::vec::Vec<core::option::Option<ada::app::imaging::I
 std::panicking::catch_unwind::do_call::<core::panic::unwind_safe::AssertUnwindSafe<std::thread::lifecycle::spawn_unchecked<ada::git::run::{closure#1}::{closure#0}, core::option::Option<alloc::string::String>>::{closure#1}::{closure#0}>, core::option::Option<alloc::string::String>>
 core::ptr::drop_glue::<core::cell::UnsafeCell<core::option::Option<core::result::Result<core::option::Option<alloc::string::String>, alloc::boxed::Box<dyn core::any::Any + core::marker::Send>>>>>
 <ada::highlight::Worker>::work
-core::ptr::drop_glue::<ada::highlight::Queue>
-core::ptr::drop_glue::<std::sync::poison::mutex::Mutex<ada::highlight::Busy>>
 core::ptr::drop_glue::<ada::highlight::Job>
 <std::sync::mpsc::TryIter<ada::highlight::Request> as core::iter::traits::iterator::Iterator>::next
 <std::sync::mpmc::array::Channel<ada::highlight::Request>>::start_recv
 <std::sync::mpmc::list::Channel<ada::highlight::Request>>::read
-<std::sync::mpmc::zero::Channel<ada::highlight::Request>>::read
-<std::sync::mpmc::zero::Channel<ada::highlight::Request>>::recv::{closure#1}
 <std::sync::mpmc::context::Context>::with::<<std::sync::mpmc::zero::Channel<ada::highlight::Request>>::recv::{closure#1}, core::result::Result<ada::highlight::Request, std::sync::mpsc::RecvTimeoutError>>::{closure#2}
 <ada::highlight::Queue>::add
 <ada::highlight::Worker>::set_job
 <ada::highlight::Worker>::post
 core::ptr::drop_glue::<alloc::vec::Vec<ada::highlight::Request>>
-core::ptr::drop_glue::<std::sync::mpmc::zero::Packet<ada::highlight::Request>>
 std::sys::backtrace::__rust_begin_short_backtrace::<ada::images::spawn_worker::{closure#0}, ()>
 core::ptr::drop_glue::<std::sync::mpmc::counter::Counter<std::sync::mpmc::list::Channel<ada::images::Job>>>
 std::sys::backtrace::__rust_begin_short_backtrace::<ada::highlight::spawn_worker::{closure#0}, ()>
@@ -1426,7 +1347,6 @@ core::ptr::drop_glue::<ada::probe::Replies>
 ada::images::winsize_cell
 <ada::probe::Found>::sixel
 core::ptr::drop_glue::<ada::app::keymap::Keymap>
-core::ptr::drop_glue::<std::sync::mpsc::Receiver<bool>>
 core::ptr::drop_glue::<std::sync::mpmc::counter::Counter<std::sync::mpmc::list::Channel<bool>>>
 <ada::app::Msg as core::cmp::PartialEq>::eq
 <std::sync::mpmc::Receiver<bool>>::recv
@@ -1440,14 +1360,7 @@ core::ptr::drop_glue::<ada::app::keymap::Mode>
 core::ptr::drop_glue::<alloc::boxed::Box<ada::app::load::Prepare>>
 core::ptr::drop_glue::<[(alloc::string::String, alloc::string::String); 6]>
 <ada::app::Document>::new
-<ada::layout::Measure>::set_sort
-core::ptr::drop_glue::<alloc::sync::ArcInner<ada::diagram::Diagram>>
-core::ptr::drop_glue::<alloc::vec::Vec<ada::doc::Inlines>>
-<ada::sniff::YAML_KEY::{closure#0} as core::ops::function::FnOnce<()>>::call_once
-<regex_automata::util::pool::inner::Pool<regex_automata::meta::regex::Cache, alloc::boxed::Box<dyn core::ops::function::Fn<(), Output = regex_automata::meta::regex::Cache> + core::panic::unwind_safe::RefUnwindSafe + core::marker::Send + core::marker::Sync + core::panic::unwind_safe::UnwindSafe>>>::get_slow
-<regex_automata::util::pool::inner::Pool<regex_automata::meta::regex::Cache, alloc::boxed::Box<dyn core::ops::function::Fn<(), Output = regex_automata::meta::regex::Cache> + core::panic::unwind_safe::RefUnwindSafe + core::marker::Send + core::marker::Sync + core::panic::unwind_safe::UnwindSafe>>>::put_value
 core::ptr::drop_glue::<regex_automata::meta::regex::Cache>
-core::ptr::drop_glue::<regex_automata::util::pool::PoolGuard<regex_automata::meta::regex::Cache, alloc::boxed::Box<dyn core::ops::function::Fn<(), Output = regex_automata::meta::regex::Cache> + core::panic::unwind_safe::RefUnwindSafe + core::marker::Send + core::marker::Sync + core::panic::unwind_safe::UnwindSafe>>>
 core::slice::sort::shared::pivot::median3_rec::<(u32, usize), <[(u32, usize)]>::sort_unstable_by_key<u32, <ada::select::Shown>::of::{closure#5}>::{closure#0}>
 core::slice::sort::unstable::ipnsort::<(u64, u32), <(u64, u32) as core::cmp::PartialOrd>::lt>
 core::slice::sort::unstable::quicksort::quicksort::<(u64, u32), <(u64, u32) as core::cmp::PartialOrd>::lt>
@@ -1457,13 +1370,11 @@ core::slice::sort::unstable::quicksort::quicksort::<(u64, u32), <(u64, u32) as c
 ada::search::collect
 <ada::search::SearchMap>::push
 ada::layout::wrap::unit_text
-<ada::search::SearchMap>::unit_text
 <ada::filetype::FileType>::named
 <ada::grid::Grid>::set_stringn::<&str>
 ada::ui::paint::spaces::<<ada::ui::paint::Painter>::row_into::{closure#0}>
 ada::ui::paint::overlay::<<ada::ui::paint::Painter>::row_into::{closure#0}>
 <ada::geom::Rect as core::fmt::Debug>::fmt
-<ada::grid::Patch>::new
 ada::grid::lone
 <ada::grid::Grid>::put
 <unicode_segmentation::grapheme::GraphemeIncomplete as core::fmt::Debug>::fmt
@@ -1471,8 +1382,6 @@ ada::grid::lone
 ada::app::nav::written_dest
 <ada::app::State>::active_settings
 <ada::app::effects::Effects>::set_encoder
-core::ptr::drop_glue::<std::sync::mpsc::Sender<ada::images::Job>>
-core::ptr::drop_glue::<std::thread::lifecycle::spawn_unchecked<ada::images::spawn_worker::{closure#0}, ()>::{closure#1}>
 <std::thread::lifecycle::spawn_unchecked<ada::images::spawn_worker::{closure#0}, ()>::{closure#1} as core::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}
 <ada::app::effects::Effects>::set_resolver
 core::ptr::drop_glue::<std::sync::mpsc::Sender<ada::highlight::Request>>
@@ -1489,7 +1398,6 @@ ada::links::normalize
 <std::sync::mpmc::Sender<ada::highlight::Request>>::send
 core::ptr::drop_glue::<alloc::vec::Vec<ada::links::LocalTarget>>
 core::ptr::drop_glue::<std::thread::lifecycle::Packet<core::option::Option<core::result::Result<(), std::sync::mpsc::SendError<ada::app::Msg>>>>>
-core::ptr::drop_glue::<std::thread::lifecycle::spawn_unchecked<<ada::app::effects::Effects>::run::{closure#4}, core::option::Option<core::result::Result<(), std::sync::mpsc::SendError<ada::app::Msg>>>>::{closure#1}>
 <alloc::sync::Arc<std::thread::lifecycle::Packet<core::option::Option<core::result::Result<(), std::sync::mpsc::SendError<ada::app::Msg>>>>>>::drop_slow
 <std::sync::mpmc::zero::Channel<ada::images::Job>>::send::{closure#0}
 core::ptr::drop_glue::<core::option::Option<<std::sync::mpmc::zero::Channel<ada::images::Job>>::send::{closure#0}>>
@@ -1505,7 +1413,6 @@ core::ptr::drop_glue::<alloc::sync::ArcInner<std::sync::poison::mutex::Mutex<cor
 <ada::grid::Grid>::resize
 <ada::grid::Grid>::symbol_at
 <ada::grid::Grid>::set_style
-<ada::app::State>::outline_all
 <ada::app::State>::setting
 <ada::app::State>::new
 <ada::app::keymap::KeySeq as core::fmt::Display>::fmt
@@ -1520,11 +1427,8 @@ ada::config::parse::{closure#0}
 <ada::select::View>::word
 <ada::app::State>::view_key
 ada::grid::screen::same_row
-<core::iter::adapters::filter::Filter<core::ops::range::Range<u16>, <ada::grid::screen::Scroll>::between::{closure#2}> as core::iter::traits::iterator::Iterator>::count
 <alloc::io::buffered::bufwriter::BufWriter<std::fs::File>>::flush_buf
 <hashbrown::map::HashMap<u64, (), std::hash::random::RandomState>>::insert
-<alloc::vec::Vec<u8>>::append_elements
-<ada::images::Proto as ada::record::Field>::write
 core::slice::sort::shared::smallsort::insertion_sort_shift_left::<(alloc::string::String, &str), <(alloc::string::String, &str) as core::cmp::PartialOrd>::lt>
 ada::ui::heading_path
 ada::ui::view
@@ -1564,7 +1468,6 @@ core::ptr::drop_glue::<ada::app::nav::Nav>
 <ada::app::State>::probe_cmd
 <alloc::vec::Vec<ada::app::Cmd> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<ada::app::Cmd, core::option::IntoIter<ada::app::Cmd>>>::from_iter
 <ada::app::State>::config_read
-core::slice::sort::shared::smallsort::insertion_sort_shift_left::<(core::ops::range::Range<usize>, alloc::string::String), <[(core::ops::range::Range<usize>, alloc::string::String)]>::sort_by_key<(usize, usize), ada::config::rewrite::{closure#0}>::{closure#0}>
 core::ptr::drop_glue::<alloc::vec::into_iter::IntoIter<(core::ops::range::Range<usize>, alloc::string::String)>>
 core::ptr::drop_glue::<core::result::Result<[alloc::string::String; 12], alloc::string::String>>
 ada::app::imaging::image_paths
@@ -1584,11 +1487,8 @@ core::ptr::drop_glue::<ada::app::nav::resolve_cmd::{closure#0}>
 core::ptr::drop_glue::<alloc::vec::Vec<(ada::images::ImageKey, bool)>>
 <ada::app::State>::visible_code
 <ada::app::State>::copy_selection
-<alloc::boxed::Box<str> as alloc::string::SpecToString>::spec_to_string
 core::ptr::drop_glue::<core::option::Option<ada::app::find::Search>>
 core::ptr::drop_glue::<regex::regex::string::Regex>
-core::ptr::drop_glue::<ada::search::Projection>
-core::ptr::drop_glue::<regex_automata::util::pool::Pool<regex_automata::meta::regex::Cache, alloc::boxed::Box<dyn core::ops::function::Fn<(), Output = regex_automata::meta::regex::Cache> + core::panic::unwind_safe::RefUnwindSafe + core::marker::Send + core::marker::Sync + core::panic::unwind_safe::UnwindSafe>>>
 core::ptr::drop_glue::<alloc::vec::Vec<regex_automata::util::pool::inner::CacheLine<std::sync::poison::mutex::Mutex<alloc::vec::Vec<alloc::boxed::Box<regex_automata::meta::regex::Cache>>>>>>
 <ada::app::State>::step_match
 core::ptr::drop_glue::<alloc::vec::into_iter::IntoIter<ada::app::Cmd>>
@@ -1609,7 +1509,6 @@ ada::app::run::run_tui
 ada::app::run::event_loop
 ada::grid::screen::keep::{closure#0}
 ada::app::run::terminal_size
-core::ptr::drop_glue::<std::sync::mpsc::Receiver<ada::app::Msg>>
 <std::sync::mpmc::Sender<bool>>::send
 core::ptr::drop_glue::<alloc::collections::vec_deque::drain::Drain<ada::app::Msg>>
 core::ptr::drop_glue::<core::iter::adapters::rev::Rev<alloc::vec::into_iter::IntoIter<ada::app::Msg>>>
@@ -1622,16 +1521,34 @@ ada::theme::load::load_user
 <alloc::collections::btree::map::IntoIter<std::ffi::os_str::OsString, core::option::Option<std::ffi::os_str::OsString>>>::dying_next
 core::ptr::drop_glue::<alloc::vec::Vec<alloc::boxed::Box<dyn core::ops::function::FnMut<(), Output = core::result::Result<(), core::io::error::Error>> + core::marker::Send + core::marker::Sync>>>
 core::ptr::drop_glue::<alloc::boxed::Box<dyn core::ops::function::FnMut<(), Output = core::result::Result<(), core::io::error::Error>> + core::marker::Send + core::marker::Sync>>
-<flate2::mem::CompressError as core::fmt::Display>::fmt
-<flate2::mem::CompressError as core::error::Error>::type_id
-<flate2::mem::CompressError as core::error::Error>::description
-<flate2::mem::CompressError as core::error::Error>::cause
-<flate2::mem::CompressError as core::error::Error>::provide
-<flate2::mem::Compress>::new
-<regex_syntax::hir::literal::Extractor>::union
-core::ptr::drop_glue::<regex_syntax::hir::literal::Seq>
-<char>::is_assigned
-<regex_syntax::hir::ClassUnicode>::negate
+core::ptr::drop_glue::<core::iter::adapters::rev::Rev<alloc::vec::into_iter::IntoIter<ada::highlight::Job>>>
+<alloc::collections::vec_deque::VecDeque<ada::highlight::Job>>::truncate
+<core::str::iter::Lines as core::iter::traits::iterator::Iterator>::try_fold::<(), <core::iter::adapters::enumerate::Enumerate<_> as core::iter::traits::iterator::Iterator>::try_fold::enumerate<&str, (), core::ops::control_flow::ControlFlow<(u32, &str)>, core::iter::adapters::map::map_try_fold<(usize, &str), (u32, &str), (), core::ops::control_flow::ControlFlow<(u32, &str)>, ada::diagram::statements::{closure#0}, core::iter::traits::iterator::Iterator::find::check<(u32, &str), &mut ada::diagram::statements::{closure#1}>::{closure#0}>::{closure#0}>::{closure#0}, core::ops::control_flow::ControlFlow<(u32, &str)>>
+<regex_automata::util::pool::inner::Pool<regex_automata::meta::regex::Cache, alloc::boxed::Box<dyn core::ops::function::Fn<(), Output = regex_automata::meta::regex::Cache> + core::panic::unwind_safe::UnwindSafe + core::marker::Send + core::marker::Sync + core::panic::unwind_safe::RefUnwindSafe>>>::get_slow
+<regex_automata::util::pool::inner::Pool<regex_automata::meta::regex::Cache, alloc::boxed::Box<dyn core::ops::function::Fn<(), Output = regex_automata::meta::regex::Cache> + core::panic::unwind_safe::UnwindSafe + core::marker::Send + core::marker::Sync + core::panic::unwind_safe::RefUnwindSafe>>>::put_value
+<unicode_segmentation::grapheme::GraphemeCursor>::handle_emoji
+<ada::app::State>::visible_focus
+core::ptr::drop_glue::<std::thread::lifecycle::Packet<core::result::Result<std::process::ExitStatus, core::io::error::Error>>>
+<ada::grid::Grid>::image_cell
+<ada::grid::Grid>::empty
+core::ptr::drop_glue::<ada::config::Save>
+core::ptr::drop_glue::<core::iter::adapters::map::Map<core::iter::adapters::filter::Filter<alloc::vec::into_iter::IntoIter<(ada::images::ImageKey, bool)>, <ada::app::State>::image_jobs::{closure#2}>, <ada::app::State>::image_jobs::{closure#3}>>
+core::ptr::drop_glue::<regex_automata::util::pool::Pool<regex_automata::meta::regex::Cache, alloc::boxed::Box<dyn core::ops::function::Fn<(), Output = regex_automata::meta::regex::Cache> + core::panic::unwind_safe::UnwindSafe + core::marker::Send + core::marker::Sync + core::panic::unwind_safe::RefUnwindSafe>>>
+<ada::app::State>::switch_theme
+core::ptr::drop_glue::<core::option::Option<ada::app::find::Prompt>>
+ada::grid::screen::forward_by
+<aho_corasick::dfa::DFA as aho_corasick::automaton::Automaton>::pattern_len
+<aho_corasick::dfa::DFA as aho_corasick::automaton::Automaton>::min_pattern_len
+<aho_corasick::dfa::DFA as aho_corasick::automaton::Automaton>::max_pattern_len
+<aho_corasick::dfa::DFA as aho_corasick::automaton::Automaton>::memory_usage
+<aho_corasick::dfa::DFA as aho_corasick::automaton::Automaton>::prefilter
+<aho_corasick::dfa::DFA as aho_corasick::automaton::Automaton>::try_find
+<aho_corasick::dfa::DFA as aho_corasick::automaton::Automaton>::try_find_overlapping
+<alloc::raw_vec::RawVec<aho_corasick::util::primitives::SmallIndex>>::grow_one
+pulldown_cmark::scanners::scan_entity
+core::ptr::drop_glue::<alloc::vec::Vec<(pulldown_cmark::strings::CowStr, core::option::Option<pulldown_cmark::strings::CowStr>)>>
+<alloc::vec::Vec<u8>>::append_elements
+<ada::images::Proto as ada::record::Field>::write
 <serde_core::de::WithDecimalPoint as core::fmt::Display>::fmt
 <&str as core::fmt::Debug>::fmt
 core::ptr::drop_glue::<alloc::vec::Vec<pulldown_cmark::strings::CowStr>>
@@ -1666,5 +1583,3 @@ core::slice::sort::shared::smallsort::sort8_stable::<(u64, u32), <(u64, u32) as 
 core::slice::sort::unstable::heapsort::heapsort::<(u64, u32), <(u64, u32) as core::cmp::PartialOrd>::lt>
 core::slice::sort::shared::pivot::median3_rec::<(u64, u32), <(u64, u32) as core::cmp::PartialOrd>::lt>
 core::ptr::drop_glue::<alloc::vec::Vec<(std::path::PathBuf, core::option::Option<(u32, u32)>)>>
-<<core::io::error::OsFunctions>::DEFAULT::{closure#0} as core::ops::function::FnOnce<(i32, &mut core::fmt::Formatter)>>::call_once
-<<core::io::error::OsFunctions>::DEFAULT::{closure#1} as core::ops::function::FnOnce<(i32,)>>::call_once
