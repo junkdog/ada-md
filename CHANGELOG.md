@@ -2,6 +2,16 @@
 
 What changed in each release of ada, newest first. A release includes the changes of the pre-releases before it.
 
+## Unreleased
+
+### Features
+
+- *(ui)* Tint where a jump landed until the next key
+
+### Fixes
+
+- *(app)* List a link wrapped inside a word without a space
+
 ## [1.0.0-rc.2](https://github.com/junkdog/ada-md/compare/v1.0.0-rc.1..v1.0.0-rc.2) (2026-10-24)
 
 ### Features
@@ -26,3 +36,7 @@ What changed in each release of ada, newest first. A release includes the change
 
 The first release: its [release notes](https://github.com/junkdog/ada-md/releases/tag/v1.0.0-rc.1) list the features
 it shipped with.
+
+---
+
+*Generated from the commit messages by [git-cliff](https://git-cliff.org) ❤️*

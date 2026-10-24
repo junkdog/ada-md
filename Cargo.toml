@@ -9,7 +9,7 @@ repository = "https://github.com/junkdog/ada-md"
 homepage = "https://junkdog.github.io/ada-md/"
 readme = "README.md"
 # the tests read bench/diagrams and tests/; bench/order is for bench/order/build.py, run from the repo
-exclude = ["ada.jpg", "demo/", "site/", ".github/", ".githooks/", "bench/images/", "bench/order/", "cliff.toml"]
+exclude = ["ada.jpg", "demo/", "site/", ".github/", ".githooks/", "bench/images/", "bench/order/", "cliff.toml", "changelog.zsh"]
 keywords = ["markdown", "viewer", "terminal", "tui", "pager"]
 categories = ["command-line-utilities"]
 

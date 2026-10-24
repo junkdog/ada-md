@@ -2,9 +2,10 @@
 # its notes, the feature summary, are the first release's. A commit's type and scope decide whether it shows:
 # feat, fix and perf do, docs unscoped or as docs(readme); the bench, site and fuzz scopes, ci, chore, test,
 # refactor, style and build don't. So a subject that shows is written for users.
-#   git cliff --tag v1.0.0 -o CHANGELOG.md   # the release commit: the changelog with the new version
-#   git cliff --current --strip all          # a release's notes (the release workflow)
-#   git cliff --current --strip all --ignore-tags '^$'   # a pre-release's own notes
+# changelog.zsh runs it: a pre-release has its own section until its release is tagged, then folds into it, and
+# which tags fold depends on the tags there are, so it's worked out there (--ignore-tags) rather than here.
+#   ./changelog.zsh v1.0.0 -o CHANGELOG.md   # the release commit: the changelog with the new version
+#   ./changelog.zsh --current --strip all    # a tag's notes (the release workflow)
 
 [changelog]
 header = """
@@ -40,7 +41,11 @@ footer = """
 ## 1.0.0-rc.1 (2026-10-23)
 
 The first release: its [release notes](https://github.com/junkdog/ada-md/releases/tag/v1.0.0-rc.1) list the features
-it shipped with."""
+it shipped with.
+
+---
+
+*Generated from the commit messages by [git-cliff](https://git-cliff.org) ❤️*"""
 # untrimmed: the templates place every newline. Each release starts with the blank line before it, so the file
 # ends with one newline
 trim = false
@@ -61,8 +66,6 @@ commit_parsers = [
 tag_pattern = "^v[0-9]"
 # rc.1's commits are the whole history before it: dropped, and the footer stands in for its entry
 skip_tags = '^v1\.0\.0-rc\.1$'
-# later pre-releases fold into the release that follows them, as git-cliff's own changelog does (a pre-release's own
-# notes: --ignore-tags '^$')
-ignore_tags = '-rc\.[0-9]+$'
+# no ignore_tags: changelog.zsh folds a released version's pre-releases into it
 # newest first; in a group the template sorts by scope (stable, so newest first within one), unscoped last
 sort_commits = "newest"

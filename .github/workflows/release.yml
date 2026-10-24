@@ -59,15 +59,14 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           case "$version" in *-*) echo "prerelease=true" ;; *) echo "prerelease=false" ;; esac >> "$GITHUB_OUTPUT"
-      # the release commit runs `git cliff --tag vX.Y.Z -o CHANGELOG.md` (REL-03, REL-23); pre-releases fold into
-      # the release after them, so only a release needs its entry
+      # the release commit runs `./changelog.zsh vX.Y.Z -o CHANGELOG.md` (REL-03, REL-23); a pre-release has its
+      # own entry until its release folds it in, so every version needs one
       - name: 📜 CHANGELOG.md has the release
-        if: steps.v.outputs.prerelease == 'false'
         run: |
           version=${{ steps.v.outputs.version }}
           if ! grep -qF "## [$version](" CHANGELOG.md; then
             level=error; [ "$DRY_RUN" = true ] && level=warning
-            echo "::$level::CHANGELOG.md has no entry for $version: run git cliff --tag v$version -o CHANGELOG.md in the release commit"
+            echo "::$level::CHANGELOG.md has no entry for $version: run ./changelog.zsh v$version -o CHANGELOG.md in the release commit"
             [ "$DRY_RUN" = true ]
           fi
 
@@ -186,13 +185,13 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: git-cliff
-      # the release's commits, by cliff.toml (REL-23), which folds pre-releases into the release after them; a
-      # pre-release's notes are its own commits, so nothing is folded. The version heading goes: the title has it
+      # the tag's commits, by changelog.zsh (REL-23): a release's include its pre-releases', a pre-release's are its
+      # own. The version heading goes: the title has it
       - name: 📝 Release notes
         run: |
-          fold=()
-          if [ "${{ needs.version.outputs.prerelease }}" = true ]; then fold=(--ignore-tags '^$'); fi
-          git cliff --current --strip all "${fold[@]}" | sed '1,/^## /d' > notes.md
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zsh
+          ./changelog.zsh --current --strip all | sed '1,/^## /d' > notes.md
           grep -q '^- ' notes.md || echo "No user-facing changes since the last release." > notes.md
           cat notes.md
       - uses: actions/download-artifact@v8
