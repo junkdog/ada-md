@@ -335,16 +335,28 @@ fn blank(c: &Cell) -> bool {
     c.len == 1 && c.sym[0] == b' ' && c.meta == 1 && c.modifier & VISIBLE_ON_BLANK == 0
 }
 
-/// Where the row's run of blank cells on the default background starts, which an erase to the
-/// end of the line can draw.
-fn blank_tail(grid: &Grid, row: std::ops::Range<usize>) -> usize {
+/// Where the row's run of blank cells on one background starts, and the background, which an
+/// erase to the end of the line can draw: terminals erase with the current background (bce),
+/// so a theme's background erases as the default does (TRM-02).
+fn blank_tail(grid: &Grid, row: std::ops::Range<usize>) -> (usize, u32) {
     let cells = &grid.cells[row.clone()];
+    let bg = cells.last().map_or(0, |c| c.bg);
     let blanks = cells
         .iter()
         .rev()
-        .take_while(|c| blank(c) && c.bg == 0)
+        .take_while(|c| blank(c) && c.bg == bg)
         .count();
-    row.end - blanks
+    (row.end - blanks, bg)
+}
+
+/// How many cells from `i` up to `end` an erase on background `bg` can draw: blanks of `next`
+/// on it, over narrow cells of `last`, changed or not.
+fn blanks(next: &Grid, last: &Grid, i: usize, end: usize, bg: u32) -> usize {
+    next.cells[i..end]
+        .iter()
+        .zip(&last.cells[i..end])
+        .take_while(|(c, p)| blank(c) && c.bg == bg && p.width() <= 1)
+        .count()
 }
 
 /// The cells of `next` that differ from `last`, as ratatui's `BufferDiff` picks them, encoded.
@@ -352,7 +364,7 @@ fn encode(last: &Grid, next: &Grid, out: &mut Vec<u8>) {
     let mut pen = Pen::new(next.area);
     let len = next.cells.len().min(last.cells.len());
     let w = usize::from(next.area.width).max(1);
-    let mut tail = (usize::MAX, 0);
+    let mut tail = (usize::MAX, 0, 0);
     let mut i = 0;
     while i < len {
         // the cells that didn't change and take one column, most of them, in one sweep
@@ -409,11 +421,12 @@ fn encode(last: &Grid, next: &Grid, out: &mut Vec<u8>) {
         // The rest of the row is blank: erase it in one go, if more than this cell changed.
         let row = at / w;
         if tail.0 != row {
-            tail = (row, blank_tail(next, row * w..(row + 1) * w));
+            let (start, bg) = blank_tail(next, row * w..(row + 1) * w);
+            tail = (row, start, bg);
         }
         let end = ((row + 1) * w).min(len);
         if at >= tail.1 && (at + 1..end).any(|k| !same(next, last, k)) {
-            pen.erase_line(at, out);
+            pen.erase_line(at, tail.2, out);
             i = end;
             continue;
         }
@@ -528,7 +541,9 @@ impl Pen {
 
     /// Write the changed cells from `i` up to `end` that follow a narrow cell just written, while
     /// they are narrow too: the cursor is already at each, so each is what changed of its style
-    /// and its symbol, as [`Pen::cell`] writes it. Returns where the run stopped.
+    /// and its symbol, as [`Pen::cell`] writes it. A long run of blanks on one background is
+    /// erased instead, with the cursor moved past it when the run goes on. Returns where the run
+    /// stopped.
     fn run(
         &mut self,
         next: &Grid,
@@ -538,11 +553,25 @@ impl Pen {
         out: &mut Vec<u8>,
     ) -> usize {
         let start = i;
+        // cells erased ahead of the cursor
+        let mut erased = 0;
         while i < end {
             let (c, p) = (&next.cells[i], &last.cells[i]);
             // a wide cell, a long symbol, or the leftovers of a wide one go the long way
             if c.meta != 1 || c.len == LONG || p.width() > 1 || c.bits() == p.bits() {
                 break;
+            }
+            if erased > 0 {
+                forward_by(out, erased as u16);
+                erased = 0;
+            }
+            if blank(c) {
+                let n = blanks(next, last, i, end, c.bg);
+                if n > 2 * (3 + digits(n as u16)) {
+                    self.erase(n as u16, c.bg, out);
+                    (i, erased) = (i + n, n);
+                    continue;
+                }
             }
             let wants = self.wants(c);
             if wants != self.style() {
@@ -556,16 +585,25 @@ impl Pen {
             i += 1;
         }
         if let Some((x, _)) = &mut self.cursor {
-            *x += (i - start) as u16;
+            *x += (i - start - erased) as u16;
         }
         i
     }
 
-    /// Clear from cell `i` to the end of its row, to the default background.
-    fn erase_line(&mut self, i: usize, out: &mut Vec<u8>) {
+    /// Clear from cell `i` to the end of its row, to background `bg`.
+    fn erase_line(&mut self, i: usize, bg: u32, out: &mut Vec<u8>) {
         self.goto_cup(self.at(i), out);
-        self.set((self.modifier & !VISIBLE_ON_BLANK, self.fg, 0), out);
+        self.set((self.modifier & !VISIBLE_ON_BLANK, self.fg, bg), out);
         out.extend_from_slice(b"\x1b[K");
+    }
+
+    /// Clear `n` cells from the cursor, to background `bg` (`ECH`), leaving the cursor where it
+    /// is.
+    fn erase(&mut self, n: u16, bg: u32, out: &mut Vec<u8>) {
+        self.set((self.modifier & !VISIBLE_ON_BLANK, self.fg, bg), out);
+        out.extend_from_slice(b"\x1b[");
+        number(out, n);
+        out.push(b'X');
     }
 
     /// Move the cursor to cell `i` by the shortest way the pen knows: from where it is, by
@@ -835,9 +873,15 @@ mod tests {
                     }
                     "C" => x += params.parse::<usize>().unwrap(),
                     "G" => x = params.parse::<usize>().unwrap() - 1,
-                    "K" => {
+                    "K" | "X" => {
                         let row = y * usize::from(area.width);
-                        for c in &mut cells[row + x..row + usize::from(area.width)] {
+                        let end = match kind {
+                            "K" => usize::from(area.width),
+                            _ => {
+                                (x + params.parse::<usize>().unwrap()).min(usize::from(area.width))
+                            }
+                        };
+                        for c in &mut cells[row + x..row + end] {
                             *c = (" ".to_owned(), Style::reset().bg(style.bg.unwrap()));
                         }
                     }
@@ -1045,6 +1089,40 @@ mod tests {
                 g.set_string(0, 2, "→ two", Style::new().fg(Color::Indexed(100)));
             },
         ]);
+    }
+
+    /// Blanks on a theme's background are erased with it set, as on the default one (TRM-02):
+    /// a row's tail to the end of the line, a long run inside it in place, the cursor moved past
+    /// it when the row goes on.
+    #[test]
+    fn blanks_on_a_background_are_erased() {
+        let theme = Style::new().bg(Color::Rgb(40, 40, 40)).fg(Color::Gray);
+        let code = Style::new().bg(Color::Rgb(60, 56, 54)).fg(Color::Green);
+        let mut term = Term::new(Rect::new(0, 0, 40, 3));
+        let page = |text: &'static str| {
+            move |g: &mut Grid| {
+                g.set_style(g.area(), theme);
+                g.set_style(Rect::new(2, 1, 30, 1), code);
+                g.set_string(2, 0, text, theme);
+                g.set_string(3, 1, text, code);
+                g.set_string(34, 1, "end", theme);
+            }
+        };
+        term.draw(page("a paragraph's line"));
+        term.draw(page("x"));
+        let out = String::from_utf8_lossy(&term.screen.out).into_owned();
+        assert!(out.contains("\x1b[K"), "the row's tail erased: {out:?}");
+        assert!(out.contains("X\x1b["), "the code's padding erased: {out:?}");
+        assert!(!out.contains("    "), "no run of spaces: {out:?}");
+        // a run that ends the changed cells leaves the cursor where it erased from (above);
+        // one that goes on moves it past the erased cells
+        term.draw(page("a paragraph's line"));
+        term.draw(|g| {
+            page("x")(g);
+            g.set_string(32, 1, "END", theme);
+        });
+        let out = String::from_utf8_lossy(&term.screen.out).into_owned();
+        assert!(out.contains("26X\x1b[26C"), "erased, then past it: {out:?}");
     }
 
     /// A frame that changes anything is one synchronized update, a resize's clear inside it; one

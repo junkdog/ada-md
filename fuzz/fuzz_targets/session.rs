@@ -708,7 +708,7 @@ fn for_vt100(bytes: &[u8], grid: &Grid, rows: &mut [bool]) -> Vec<u8> {
                             rows.fill(true);
                         }
                         b'J' => rows.fill(true),
-                        b'K' => touch(rows, y),
+                        b'K' | b'X' => touch(rows, y),
                         _ => {}
                     }
                     end
