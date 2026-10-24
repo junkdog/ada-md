@@ -30,6 +30,31 @@ const MAX_CELLS: usize = 2_000_000;
 /// The most statements a diagram may have.
 const MAX_STATEMENTS: usize = 2_000;
 
+/// A mermaid block's fence language, and the language a `.mmd` file or sniffed stdin is shown in.
+pub const LANG: &str = "mermaid";
+
+/// Whether `src` starts as a diagram of a kind ada draws: the kind's header (front matter and
+/// `%%` comments aside), then a statement. How stdin and files with no extension are told to be
+/// mermaid, so the header stands alone, and `graph` must name its direction: no line of prose
+/// reads as one.
+pub fn is_diagram(src: &str) -> bool {
+    let mut lines = statements(src);
+    let Some((_, header)) = lines.next() else {
+        return false;
+    };
+    let (header, inline) = header.split_once(';').unwrap_or((header, ""));
+    let mut words = header.split_whitespace();
+    let (kind, dir) = (words.next(), words.next());
+    let directed = dir.is_some_and(|d| graph::Dir::parse(d).is_some());
+    let kind = match kind {
+        Some("sequenceDiagram" | "gantt" | "stateDiagram" | "stateDiagram-v2") => dir.is_none(),
+        Some("flowchart" | "flowchart-elk") => dir.is_none() || directed,
+        Some("graph") => directed,
+        _ => false,
+    };
+    kind && words.next().is_none() && (!inline.trim().is_empty() || lines.next().is_some())
+}
+
 /// Parse a mermaid block's text. `None` for the kinds ada doesn't draw and for anything that
 /// doesn't parse.
 pub fn parse(src: &str) -> Option<Diagram> {
@@ -460,6 +485,32 @@ mod tests {
         assert_eq!(label_lines("List<WrappingKey>"), ["List<WrappingKey>"]);
         assert_eq!(label_lines("#notanentity;"), ["#notanentity;"]);
         assert_eq!(label_lines(""), [""]);
+    }
+
+    #[test]
+    fn diagrams_told_by_their_header() {
+        for src in [
+            "flowchart LR\n  A --> B\n",
+            "graph TD;\nA-->B;\n",
+            "graph TD; A-->B\n",
+            "---\ntitle: Flow\n---\n%%{init: {}}%%\nflowchart\n  A --> B\n",
+            "sequenceDiagram\n  A->>B: hi\n",
+            "stateDiagram-v2\n  [*] --> Idle\n",
+            "gantt\n  dateFormat YYYY-MM-DD\n",
+        ] {
+            assert!(is_diagram(src), "{src:?}");
+        }
+        for src in [
+            "",
+            "flowchart LR\n",
+            "graph\nof the week\n",
+            "graph theory is fun\nreally\n",
+            "gantt charts, a primer\nchapter one\n",
+            "classDiagram\n  A <|-- B\n",
+            "# flowchart LR\nA --> B\n",
+        ] {
+            assert!(!is_diagram(src), "{src:?}");
+        }
     }
 
     #[test]

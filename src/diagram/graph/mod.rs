@@ -45,7 +45,7 @@ pub enum Dir {
 }
 
 impl Dir {
-    fn parse(word: &str) -> Option<Dir> {
+    pub(super) fn parse(word: &str) -> Option<Dir> {
         match word {
             "TB" | "TD" => Some(Dir::Down),
             "BT" => Some(Dir::Up),

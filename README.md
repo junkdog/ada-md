@@ -295,7 +295,8 @@ are reported with the file, line and column.
   state diagram or gantt chart is drawn in the note, in the theme's colors, fitted to the width.
   One that still doesn't fit scrolls sideways with `←` `→`, and labels cut to fit are listed in
   full under it. Search finds text in the labels and lights it up in the drawing. Other kinds
-  show as code.
+  show as code. A `.mmd` or `.mermaid` file, or a diagram piped in, is drawn the same way, at
+  the terminal's width.
 - **Headers that stay.** While a long table scrolls past, its header row stays at the top. A
   sequence diagram does the same with its participants, so each lifeline keeps its name however
   far down the messages go, and a gantt chart with its date axis.
@@ -307,8 +308,8 @@ Markdown is rendered, a png or jpeg is shown full screen, and code and config fi
 the git gutter, search, `e` and `--line` working on their lines. Other text is shown plain;
 binary files aren't shown.
 
-Stdin and files with no extension go by their first 8 KB: a diff, JSON (JSON lines too), YAML,
-TOML, HTML, a log, or markdown. Piped text that's none of these is shown line for line, never
+Stdin and files with no extension go by their first 8 KB: a diff, a mermaid diagram, JSON, 
+YAML, TOML, HTML, a log, or markdown. Piped text that's none of these is shown line for line, never
 reflowed; a file with no extension falls back to markdown, as a `README` should. A png or jpeg
 piped in (`curl -s …/cat.png | ada`) is told by its first bytes and shown as an image file is.
 Logs and JSON are highlighted by ada's own scanners, lines of any length included; a theme styles

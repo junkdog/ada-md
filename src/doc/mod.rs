@@ -179,6 +179,14 @@ impl CodeBlock {
     }
 }
 
+/// The diagram a code block in `lang` draws: mermaid of a kind ada draws (ADR-35), parsed.
+fn diagram(lang: Option<&str>, text: &str) -> Option<Arc<Diagram>> {
+    (lang == Some(crate::diagram::LANG))
+        .then(|| crate::guard::catch(|| crate::diagram::parse(text)).flatten())
+        .flatten()
+        .map(Arc::new)
+}
+
 /// The lines of a code block's text, without the final newline.
 pub fn code_lines(text: &str) -> impl Iterator<Item = &str> {
     let text = text.strip_suffix('\n').unwrap_or(text);

@@ -7,7 +7,8 @@ use std::sync::Arc;
 use super::parse::line_starts;
 use super::{Block, BlockKind, CodeBlock, Doc, LineRange, LinkKind, LinkRef, UnitId, code_lines};
 
-/// A whole file of code in `lang`, or of plain text when there is none.
+/// A whole file of code in `lang`, or of plain text when there is none. A mermaid file draws
+/// its diagram, as a mermaid block in a note does.
 pub fn code(text: &str, lang: Option<&str>) -> Doc {
     let mut h = DefaultHasher::new();
     text.hash(&mut h);
@@ -22,7 +23,7 @@ pub fn code(text: &str, lang: Option<&str>) -> Doc {
                 first_line: 1,
                 fenced: false,
                 first_unit: 0,
-                diagram: None,
+                diagram: super::diagram(lang, text),
             }),
             src: LineRange::new(1, lines),
         }],

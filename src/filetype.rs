@@ -11,6 +11,9 @@ use crate::{links, sniff};
 /// Text files no syntax claims, shown plain rather than handed to the system's opener.
 const PLAIN: &[&str] = &["txt", "text", "log", "out", "conf", "cfg", "env", "list"];
 
+/// Mermaid files, by extension or as `-l` names them: drawn like a mermaid block (ADR-35).
+const MERMAID: &[&str] = &["mmd", "mermaid"];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileType {
     Markdown,
@@ -22,6 +25,11 @@ pub enum FileType {
 }
 
 impl FileType {
+    /// A mermaid file: one code block in mermaid, drawn when ada draws its kind.
+    pub const MERMAID: FileType = FileType::Text {
+        lang: Some(crate::diagram::LANG),
+    };
+
     /// What the path alone says, or `None` when only the contents can tell, as for stdin (`-`).
     pub fn by_path(path: &Path) -> Option<FileType> {
         if path.as_os_str() == "-" {
@@ -33,13 +41,14 @@ impl FileType {
         if links::is_image(path) {
             return Some(FileType::Image);
         }
+        let ext = path.extension().and_then(|e| e.to_str());
+        if ext.is_some_and(is_mermaid) {
+            return Some(FileType::MERMAID);
+        }
         if let Some(lang) = highlight::file_language(path) {
             return Some(FileType::Text { lang: Some(lang) });
         }
-        let plain = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| PLAIN.iter().any(|p| e.eq_ignore_ascii_case(p)));
+        let plain = ext.is_some_and(|e| PLAIN.iter().any(|p| e.eq_ignore_ascii_case(p)));
         plain.then_some(FileType::Text { lang: None })
     }
 
@@ -65,14 +74,17 @@ impl FileType {
         }
     }
 
-    /// The type `-l NAME` asks for: `md` or `markdown`, a plain-text name (`txt`, `text`), or a
-    /// syntax by its name or an extension (`Rust`, `rs`, `yaml`).
+    /// The type `-l NAME` asks for: `md` or `markdown`, a plain-text name (`txt`, `text`),
+    /// `mmd` or `mermaid`, or a syntax by its name or an extension (`Rust`, `rs`, `yaml`).
     pub fn named(name: &str) -> Option<FileType> {
         if ["txt", "text", "plain"]
             .iter()
             .any(|p| name.eq_ignore_ascii_case(p))
         {
             return Some(FileType::Text { lang: None });
+        }
+        if is_mermaid(name) {
+            return Some(FileType::MERMAID);
         }
         let syntax = highlight::find_syntax(name)?;
         Some(match &*syntax.name {
@@ -139,6 +151,7 @@ pub fn language_names() -> Vec<(String, &'static str)> {
         ("md".to_owned(), "Markdown"),
         ("txt".to_owned(), "Plain Text"),
     ];
+    names.extend(MERMAID.iter().map(|&m| (m.to_owned(), "Mermaid")));
     for syntax in highlight::syntaxes().syntaxes() {
         if syntax.hidden {
             continue;
@@ -161,6 +174,10 @@ pub fn language_names() -> Vec<(String, &'static str)> {
     names.sort();
     names.dedup_by(|a, b| a.0 == b.0);
     names
+}
+
+fn is_mermaid(name: &str) -> bool {
+    MERMAID.iter().any(|m| name.eq_ignore_ascii_case(m))
 }
 
 /// Whether `bytes` look like a binary file: a NUL among the first 8 KiB, as git and grep judge.
@@ -208,6 +225,8 @@ mod tests {
         assert_eq!(by_path("App.kt"), lang("Kotlin"));
         assert_eq!(by_path("ci.yml"), lang("YAML"));
         assert_eq!(by_path("notes.txt"), Some(FileType::Text { lang: None }));
+        assert_eq!(by_path("flow.mmd"), Some(FileType::MERMAID));
+        assert_eq!(by_path("docs/flow.Mermaid"), Some(FileType::MERMAID));
         assert_eq!(by_path("data.bin"), None);
         assert_eq!(by_path("README"), None);
     }
@@ -243,6 +262,24 @@ mod tests {
         // nothing stands out: stdin stays line for line, a README is still markdown
         assert_eq!(of("-", "Ada is a cat.\n"), FileType::Text { lang: None });
         assert_eq!(of("README", "Ada is a cat.\n"), FileType::Markdown);
+        // a diagram, its front matter not a note's
+        let flow = "---\ntitle: Flow\n---\nflowchart LR\n  A --> B\n";
+        assert_eq!(of("-", flow), FileType::MERMAID);
+        assert_eq!(of("flow", flow), FileType::MERMAID);
+    }
+
+    #[test]
+    fn a_mermaid_file_draws_its_diagram() {
+        let doc = FileType::MERMAID.parse(Path::new("flow.mmd"), "graph TD\n  A --> B\n");
+        let [block] = &doc.blocks[..] else {
+            panic!("{:?}", doc.blocks);
+        };
+        let doc::BlockKind::Code(code) = &block.kind else {
+            panic!("{block:?}");
+        };
+        assert!(code.diagram.is_some());
+        let classes = FileType::MERMAID.parse(Path::new("c.mmd"), "classDiagram\n  A <|-- B\n");
+        assert!(matches!(&classes.blocks[0].kind, doc::BlockKind::Code(c) if c.diagram.is_none()));
     }
 
     #[test]
@@ -268,6 +305,8 @@ mod tests {
         assert_eq!(named("yaml"), lang("YAML"));
         assert_eq!(named("zsh"), lang("Bourne Again Shell (bash)"));
         assert_eq!(named("diff"), lang("Diff"));
+        assert_eq!(named("mmd"), Some(FileType::MERMAID));
+        assert_eq!(named("Mermaid"), Some(FileType::MERMAID));
         assert_eq!(named("nope"), None);
     }
 
@@ -275,7 +314,8 @@ mod tests {
     fn every_completed_language_is_taken() {
         let names = language_names();
         for want in [
-            "md", "txt", "rs", "json", "yaml", "yml", "toml", "diff", "log", "zsh",
+            "md", "txt", "rs", "json", "yaml", "yml", "toml", "diff", "log", "zsh", "mmd",
+            "mermaid",
         ] {
             assert!(names.iter().any(|(n, _)| n == want), "{want}");
         }

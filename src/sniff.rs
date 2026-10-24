@@ -8,7 +8,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use crate::filetype::FileType;
-use crate::highlight;
+use crate::{diagram, highlight};
 
 /// How much of the text is looked at.
 const SAMPLE: usize = 8 * 1024;
@@ -26,6 +26,10 @@ pub fn sniff(text: &str) -> Option<FileType> {
     }
     if is_git_patch(&lines) {
         return code("Diff");
+    }
+    // before front matter: a diagram's `---` holds its config, not a note's
+    if diagram::is_diagram(sample) {
+        return code(diagram::LANG);
     }
     if let Some(lang) = highlight::first_line_language(first) {
         return code(lang);
