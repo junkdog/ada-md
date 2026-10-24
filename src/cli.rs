@@ -100,6 +100,12 @@ pub const FLAGS: &[Flag] = &[
     ),
     flag(
         None,
+        "code-wrap",
+        ("WHEN", Value::Choice(&["on", "off"])),
+        "wrap long lines of code, or (off) cut them at the edge: the\nviewer scrolls them sideways, a print or preview clips them",
+    ),
+    flag(
+        None,
         "no-images",
         SWITCH,
         "show images as text, without asking the terminal what it supports",
@@ -218,6 +224,7 @@ pub struct Args {
     pub line: Option<u32>,
     pub theme: Option<String>,
     pub line_numbers: Option<LineNumbers>,
+    pub code_wrap: Option<bool>,
     pub images: ImageMode,
     pub no_reload: bool,
     pub record: Option<PathBuf>,
@@ -276,6 +283,14 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
                 let numbers = LineNumbers::parse(&when)
                     .ok_or_else(|| format!("{flag}: `{when}` is not off, code or all"))?;
                 out.line_numbers = Some(numbers);
+            }
+            "--code-wrap" => {
+                let when = value(&flag)?;
+                out.code_wrap = Some(match when.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Err(format!("{flag}: `{when}` is not on or off")),
+                });
             }
             "--no-images" => out.images = ImageMode::Off,
             "--image-protocol" => {
@@ -420,6 +435,17 @@ mod tests {
             args(&["--line-numbers=off"]).unwrap().line_numbers,
             Some(LineNumbers::Off)
         );
+    }
+
+    #[test]
+    fn code_wrap() {
+        assert_eq!(args(&[]).unwrap().code_wrap, None);
+        assert_eq!(
+            args(&["--code-wrap", "off"]).unwrap().code_wrap,
+            Some(false)
+        );
+        assert_eq!(args(&["--code-wrap=on"]).unwrap().code_wrap, Some(true));
+        assert!(args(&["--code-wrap", "no"]).is_err());
     }
 
     #[test]

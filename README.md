@@ -132,7 +132,9 @@ rg -n . | fzf -d : --preview 'ada --print --line {2} {1}' --preview-window '+{2}
 ```
 
 A preview stops 2,000 rows past the line it starts at, and reads no more of a code or log file
-than that, so a huge file previews as fast as a small one.
+than that, so a huge file previews as fast as a small one. Long lines of code wrap in the pane;
+`--code-wrap off` cuts them at its edge instead (as `code_wrap = false` in the config does for a
+preview), so the previewer needn't follow the viewer's setting.
 
 Press `?` in ada for the keys. See `ada --help` for every option.
 

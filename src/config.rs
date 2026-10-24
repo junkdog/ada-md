@@ -279,7 +279,8 @@ pub fn default_text() -> String {
 # The table layout to start with (`t` cycles it): auto, grid or records.
 # tables = \"auto\"
 
-# Wrap long lines of code (`w` toggles it); false scrolls them sideways with ←/→.
+# Wrap long lines of code (`w` toggles it); false scrolls them sideways with ←/→, and cuts
+# them at the edge of an fzf preview.
 # code_wrap = true
 
 # Number rows by source line (`#` toggles it for the kind of file shown): off, code for code

@@ -93,7 +93,7 @@ fn run() -> Result<(), String> {
         mouse: settings.mouse,
         copy_on: settings.copy_on,
         table_mode: settings.table_mode,
-        code_wrap: settings.code_wrap,
+        code_wrap: args.code_wrap.unwrap_or(settings.code_wrap),
         line_numbers: args.line_numbers.unwrap_or(settings.line_numbers),
         keys: settings.keys,
         file,
@@ -318,12 +318,15 @@ fn print_doc(
         .flatten();
     let height = preview.or_else(|| screen().map(|(_, h)| h)).unwrap_or(24);
     let cell = proto.map(|_| images::cell_size());
-    // Printed code always wraps: there is no scrolling sideways on paper.
+    // Printed code wraps, as there is no scrolling sideways on paper; a preview pane clips it
+    // instead when code_wrap is off, and --code-wrap off clips any print.
     let params = LayoutParams {
         width,
         max_width: config.max_width,
         table_mode: config.table_mode,
-        code_wrap: true,
+        code_wrap: args
+            .code_wrap
+            .unwrap_or(config.code_wrap || preview.is_none()),
         line_numbers: config.line_numbers,
         glyphs_gen: theme.glyphs.generation(),
         images: cell.map(|cell| ImageFit {
