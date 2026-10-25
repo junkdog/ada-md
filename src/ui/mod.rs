@@ -664,6 +664,42 @@ mod tests {
         assert_eq!(border(&state), [plain, lit]);
     }
 
+    /// Past `u16::MAX` headings, or a heading that many columns wide, the popup's size saturates.
+    #[test]
+    fn the_outline_of_more_headings_than_u16_holds() {
+        use crate::app::{Computed, Config, Msg, Size, update};
+
+        let open = |text: String| {
+            let mut state = State::new(Theme::builtin(), Config::default());
+            update(
+                &mut state,
+                Msg::Init {
+                    size: Size { w: 60, h: 30 },
+                },
+            );
+            update(
+                &mut state,
+                Msg::DocLoaded {
+                    path: "t.md".into(),
+                    mtime: None,
+                    text: text.into(),
+                    doc: Computed(None),
+                },
+            );
+            update(&mut state, Msg::OpenOutline);
+            let mut grid = Grid::empty(Rect::new(0, 0, 60, 30));
+            view(&state, &mut grid);
+            (0..30)
+                .map(|y| (0..60).map(|x| grid.symbol((x, y))).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let many = "# h\n\n".repeat(usize::from(u16::MAX) - 2);
+        assert!(open(many).contains(" outline 1/65533 "));
+        let wide = format!("# {}\n", "x".repeat(usize::from(u16::MAX) - 3));
+        assert!(open(wide).contains(" outline 1/1 "));
+    }
+
     #[test]
     fn eliding() {
         assert_eq!(elide_start("abcdef", 6), "abcdef");

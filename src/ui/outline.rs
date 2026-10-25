@@ -43,10 +43,15 @@ pub fn draw(buf: &mut Grid, area: Rect, state: &State) {
         Listing::Themes => (MAX_WIDTH, "themes"),
         Listing::Columns(_) => (MAX_WIDTH, "sort by"),
     };
-    let width = (widest as u16 + 4)
+    // saturating: a heading or a count past u16::MAX would wrap
+    let fit = |n: usize| u16::try_from(n).unwrap_or(u16::MAX);
+    let width = fit(widest)
+        .saturating_add(4)
         .clamp(32, max_width)
         .min(area.width.saturating_sub(2));
-    let height = (all.len().max(1) as u16 + 3).min(area.height.saturating_sub(2));
+    let height = fit(all.len().max(1))
+        .saturating_add(3)
+        .min(area.height.saturating_sub(2));
     if width < 8 || height < 4 {
         return;
     }
