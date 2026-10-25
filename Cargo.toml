@@ -39,7 +39,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 # Already in the tree through image. It decodes a row at a time, so a PNG is shrunk as it decodes
 # and never held whole (`pixels`), and it encodes printed kitty images (`kitty`).
 png = "0.18"
-pulldown-cmark = { version = "0.13", default-features = false }
+pulldown-cmark = { version = "0.13.5", default-features = false }
 regex = "1"
 syntect = { version = "5.3", default-features = false, features = ["parsing", "regex-fancy", "dump-load"] }
 toml = { version = "1.1", default-features = false, features = ["std", "parse"] }

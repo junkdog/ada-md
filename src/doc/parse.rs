@@ -37,8 +37,8 @@ pub fn parse(text: &str) -> Doc {
 }
 
 /// The most events a text of `len` bytes may make. Notes make up to 0.22 a byte, and dense markup
-/// (an empty table cell per `|`) about 2; pulldown-cmark 0.13.4 doubles its events with each
-/// `[[a|]]` (pulldown-cmark#1102).
+/// (an empty table cell per `|`) about 2; before 0.13.5, pulldown-cmark doubled its events with
+/// each `[[a|]]` (pulldown-cmark#1102). Kept as a net for the next such bug.
 fn max_events(len: usize) -> usize {
     8 * len + 4096
 }
@@ -837,22 +837,26 @@ mod tests {
     }
 
     #[test]
-    fn markup_that_blows_up_in_the_parser_shows_as_plain_text() {
-        // pulldown-cmark#1102: each `[[a|]]` doubles the events; 40 of them would be 2⁴⁰
+    fn wikilinks_with_empty_text_stay_markdown() {
+        // pulldown-cmark#1102, fixed in 0.13.5: each `[[a|]]` doubled the events, so 40 of them
+        // went over `max_events` and the text showed as plain
         let text = "[[a|]] ".repeat(40);
         let doc = parse(&text);
-        assert_eq!(kinds(&doc.blocks), ["code"]);
-        assert!(doc.links.is_empty());
-        // a few stay markdown
-        assert_eq!(kinds(&parse("[[a|]] [[b|]]\n").blocks), ["paragraph"]);
+        assert_eq!(kinds(&doc.blocks), ["paragraph"]);
+        assert_eq!(doc.links.len(), 40);
     }
 
     #[test]
-    fn a_parser_panic_shows_the_text_as_plain() {
-        // pulldown-cmark#1129: `into_offset_iter` unwraps an empty tight paragraph
-        for text in ["- [o]:u\n    \t", "> - [o]:u\n>     \t", "+\t[\0]:d\n\u{b}"] {
+    fn a_blank_line_after_a_link_reference_item_stays_markdown() {
+        // pulldown-cmark#1129, fixed in 0.13.5: `into_offset_iter` unwrapped an empty tight
+        // paragraph, and the caught panic showed the text as plain
+        for (text, kind) in [
+            ("- [o]:u\n    \t", "list"),
+            ("> - [o]:u\n>     \t", "quote"),
+            ("+\t[\0]:d\n\u{b}", "list"),
+        ] {
             let doc = parse(text);
-            assert_eq!(kinds(&doc.blocks), ["code"], "{text:?}");
+            assert_eq!(kinds(&doc.blocks), [kind], "{text:?}");
         }
     }
 
