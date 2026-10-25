@@ -3,11 +3,12 @@
 
 use unicode_width::UnicodeWidthStr;
 
-use super::place::{ItemGeo, Placed};
+use super::place::{ItemGeo, Placed, Row};
 use super::topo::{Kind, Topo};
-use super::{Dir, Frame, Graph, Line, Mark, Shape};
+use super::{Classifier, Dir, Frame, Graph, Line, Mark, Part, Shape};
 use crate::diagram::canvas::{Canvas, Pen};
 use crate::diagram::{Text, width};
+use crate::doc::InlineStyle;
 use crate::theme::StyleKey;
 
 const LINE: StyleKey = StyleKey::DiagramLine;
@@ -127,7 +128,11 @@ impl Painter<'_> {
             (Mark::Circle, true) => 'o',
             (Mark::Cross, false) => '×',
             (Mark::Cross, true) => 'x',
-            (Mark::Arrow, ascii) => {
+            (Mark::Diamond, false) => '◆',
+            (Mark::Diamond, true) => '*',
+            (Mark::HollowDiamond, false) => '◇',
+            (Mark::HollowDiamond, true) => 'o',
+            (Mark::Arrow | Mark::Triangle, ascii) => {
                 // the canvas direction it points in: down, up, right, left
                 let d = match (self.dir, toward) {
                     (Dir::Down, Toward::Along) | (Dir::Up, Toward::Back) => 0,
@@ -135,10 +140,11 @@ impl Painter<'_> {
                     (Dir::Right, Toward::Along) | (Dir::Left, Toward::Back) => 2,
                     (Dir::Left, Toward::Along) | (Dir::Right, Toward::Back) => 3,
                 };
-                let set = if ascii {
-                    ['v', '^', '>', '<']
-                } else {
-                    ['▼', '▲', '▶', '◀']
+                let set = match (mark, ascii) {
+                    (Mark::Triangle, false) => ['▽', '△', '▷', '◁'],
+                    (Mark::Triangle, true) => ['V', 'A', '>', '<'],
+                    (_, false) => ['▼', '▲', '▶', '◀'],
+                    (_, true) => ['v', '^', '>', '<'],
                 };
                 set[d]
             }
@@ -160,12 +166,12 @@ impl Painter<'_> {
         let (t, p, g) = (self.t, self.p, self.g);
         let lv = &t.levels[l];
         let geo = &p.levels[l];
-        if let Some(c) = lv.cluster {
-            let cluster = &g.clusters[c as usize];
+        let cluster = lv.cluster.map(|c| &g.clusters[c as usize]);
+        if let Some(cluster) = cluster.filter(|c| c.frame != Frame::Hidden) {
             let pen = match cluster.frame {
-                Frame::Square => Pen::SOLID,
                 Frame::Round => Pen::ROUND,
                 Frame::Dashed => Pen::DASHED,
+                _ => Pen::SOLID,
             };
             let f = self.rect(r0, c0, geo.rs, geo.cs);
             if f.w > 0 && f.h > 0 {
@@ -217,6 +223,19 @@ impl Painter<'_> {
         for s in &geo.segs {
             self.mark(r0 + s.r0, c0 + s.cu, s.start, Toward::Back);
             self.mark(r0 + s.r1, c0 + s.cv, s.end, Toward::Along);
+            let edge = &g.edges[lv.paths[s.path as usize].edge as usize];
+            for (k, end) in s.cards.into_iter().enumerate() {
+                let Some(text) = end.map(|e| &edge.cards[usize::from(e)]) else {
+                    continue;
+                };
+                // the cell just outside the box
+                let at = if k == 0 {
+                    (r0 + s.r0 + usize::from(s.start == Mark::None), c0 + s.cu)
+                } else {
+                    (r0 + s.r1 - usize::from(s.end == Mark::None), c0 + s.cv)
+                };
+                self.card(at, text, k == 0);
+            }
         }
         // what the edges meet
         for (i, item) in lv.items.iter().enumerate() {
@@ -234,6 +253,27 @@ impl Painter<'_> {
                 _ => {}
             }
         }
+    }
+
+    /// A cardinality at abstract `at`, the end of a line by its box: right of the line in
+    /// `TD` and `BT`, above it running away from the box in `LR` and `RL`.
+    fn card(&mut self, at: (usize, usize), text: &Text, start: bool) {
+        if text.is_empty() {
+            return;
+        }
+        let (row, col) = self.cell(at.0, at.1);
+        let (row, x) = if self.dir.vertical() {
+            (row, col + 2)
+        } else {
+            let rightward = matches!((self.dir, start), (Dir::Right, true) | (Dir::Left, false));
+            let x = if rightward {
+                col
+            } else {
+                (col + 1).saturating_sub(width(text))
+            };
+            (row.saturating_sub(1), x)
+        };
+        self.canvas.label(row, x, text, StyleKey::DiagramLabel);
     }
 
     fn title(&mut self, row: usize, x: usize, title: &Text) {
@@ -281,6 +321,7 @@ impl Painter<'_> {
                     }
                 }
             }
+            Shape::Class => self.class(n, b),
             shape => {
                 let pen = match shape {
                     Shape::Round | Shape::Stadium => Pen::ROUND,
@@ -331,6 +372,84 @@ impl Painter<'_> {
         if let Some(note) = &node.note {
             let fp = self.rect(r, c, it.rs, it.cs);
             self.note(fp, b, note.after, &p.notes[n]);
+        }
+    }
+
+    /// A class: its annotation and name centered, then each compartment under a rule, its
+    /// members from the left.
+    fn class(&mut self, n: usize, b: Rect) {
+        let p = self.p;
+        let (right, bottom) = (b.x + b.w - 1, b.y + b.h - 1);
+        let class = p.classes.get(n).and_then(Option::as_ref);
+        // blank inside, so nothing shows through, but for the rules
+        let mut y = b.y + 1;
+        let head = class.map_or(0, |c| c.annotation.len()) + p.nodes[n].len().max(1);
+        let rows = (0..head).map(|_| false).chain(
+            class
+                .iter()
+                .flat_map(|c| &c.rows)
+                .map(|r| matches!(r, Row::Rule)),
+        );
+        for (k, rule) in rows.enumerate() {
+            if !rule {
+                self.canvas
+                    .fill(y + k, b.x + 1, right, ' ', StyleKey::DiagramLabel);
+            }
+        }
+        self.canvas.rect(b.y, b.x, bottom, right, Pen::SOLID, LINE);
+        if let Some(c) = class {
+            self.text_block(Rect { y, ..b }, 2, &c.annotation, StyleKey::DiagramFrame);
+            y += c.annotation.len();
+        }
+        let name = &p.nodes[n];
+        self.text_block(Rect { y, ..b }, 2, name, StyleKey::DiagramActor);
+        y += name.len().max(1);
+        let members = self.g.nodes[n].class.as_deref();
+        for row in class.iter().flat_map(|c| &c.rows) {
+            match (row, members) {
+                (Row::Rule, _) => self.canvas.hline(y, b.x, right, Pen::SOLID, LINE),
+                (
+                    Row::Member {
+                        member,
+                        range,
+                        indent,
+                        ..
+                    },
+                    Some(members),
+                ) => {
+                    let m = members.member(*member);
+                    self.canvas.inline = match m.classifier {
+                        Classifier::None => InlineStyle::NONE,
+                        Classifier::Static => InlineStyle::STATIC,
+                        Classifier::Abstract => InlineStyle::ABSTRACT,
+                    };
+                    let x = b.x + 2 + indent;
+                    // its types and parameters in their styles, the rest a label: each byte's
+                    // part found by a cursor, since the parts are in order
+                    let (parts, from) = (self.g.parts_of(m), range.start);
+                    let mut k = 0;
+                    let key = |i: usize| {
+                        let at = (from + i) as u32;
+                        while parts.get(k).is_some_and(|p| p.1 <= at) {
+                            k += 1;
+                        }
+                        match parts.get(k) {
+                            Some(&(start, _, Part::Type)) if start <= at => StyleKey::DiagramType,
+                            Some(&(start, _, Part::Param)) if start <= at => StyleKey::DiagramParam,
+                            _ => StyleKey::DiagramLabel,
+                        }
+                    };
+                    if range.len() == m.text.len() {
+                        self.canvas.label_keyed(y, x, &m.text, key);
+                    } else {
+                        let line = m.text.slice(range.clone());
+                        self.canvas.label_keyed(y, x, &line, key);
+                    }
+                    self.canvas.inline = InlineStyle::NONE;
+                }
+                _ => {}
+            }
+            y += 1;
         }
     }
 

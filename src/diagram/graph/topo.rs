@@ -67,6 +67,9 @@ pub(super) struct Path {
     /// The marks drawn at the first and last item, where those are what the edge connects.
     pub start: Mark,
     pub end: Mark,
+    /// Which of the edge's cardinalities (0 at `from`, 1 at `to`) goes at the first and the
+    /// last item, under the same rule.
+    pub cards: [Option<u8>; 2],
 }
 
 /// A port a parent asks a child level for.
@@ -78,6 +81,8 @@ struct PortSpec {
     edge: u32,
     /// The mark at `inner`.
     mark: Mark,
+    /// The cardinality at `inner`: 0 the edge's `from`, 1 its `to`.
+    card: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -129,7 +134,7 @@ fn level(
         cluster,
         ..Level::default()
     });
-    let framed = cluster.is_some();
+    let framed = super::Frame::drawn(cluster.map(|c| g.clusters[c as usize].frame));
     let mut members = Vec::new();
     let mut node_item = HashMap::new();
     let mut cluster_item = HashMap::new();
@@ -240,16 +245,17 @@ fn level(
                 EKind::Graph(i) => {
                     let edge = &g.edges[i as usize];
                     let from_inside = item_of(edge.from) == Some(item);
-                    let (inner, mark) = if from_inside {
-                        (edge.from, edge.head_from)
+                    let (inner, mark, card) = if from_inside {
+                        (edge.from, edge.head_from, 0)
                     } else {
-                        (edge.to, edge.head_to)
+                        (edge.to, edge.head_to, 1)
                     };
                     PortSpec {
                         exit,
                         inner: Some(inner),
                         edge: i,
                         mark,
+                        card,
                     }
                 }
                 EKind::PortIn(k) | EKind::PortOut(k) => {
@@ -259,6 +265,7 @@ fn level(
                         inner: outer.inner,
                         edge: outer.edge,
                         mark: outer.mark,
+                        card: outer.card,
                     }
                 }
             };
@@ -297,18 +304,18 @@ fn level(
     // an item per layer a long edge crosses, and each edge's path
     let mut paths = Vec::new();
     for e in &edges {
-        let (edge, start, end) = match e.kind {
+        let (edge, start, end, cards) = match e.kind {
             EKind::Graph(i) => {
                 let edge = &g.edges[i as usize];
                 if edge.line == Line::Hidden {
                     continue;
                 }
-                let (s_end, t_end) = if e.reversed {
-                    ((edge.to, edge.head_to), (edge.from, edge.head_from))
+                let (s_end, t_end, cards) = if e.reversed {
+                    ((edge.to, edge.head_to), (edge.from, edge.head_from), [1, 0])
                 } else {
-                    ((edge.from, edge.head_from), (edge.to, edge.head_to))
+                    ((edge.from, edge.head_from), (edge.to, edge.head_to), [0, 1])
                 };
-                (i, s_end, t_end)
+                (i, s_end, t_end, cards)
             }
             EKind::PortIn(k) => {
                 let spec = &specs[k as usize];
@@ -316,6 +323,7 @@ fn level(
                     spec.edge,
                     BORDER,
                     (spec.inner.unwrap_or(BORDER.0), spec.mark),
+                    [0, spec.card],
                 )
             }
             EKind::PortOut(k) => {
@@ -324,6 +332,7 @@ fn level(
                     spec.edge,
                     (spec.inner.unwrap_or(BORDER.0), spec.mark),
                     BORDER,
+                    [spec.card, 0],
                 )
             }
         };
@@ -333,10 +342,13 @@ fn level(
             (e.u, e.v, e.u_port, e.v_port)
         };
         // a mark is drawn here when its end is this item: a node, or a subgraph itself
-        let mark_at = |item: u32, (end, mark): (End, Mark)| match (members[item as usize], end) {
-            (Member::Node(n), End::Node(m)) if n == m => mark,
-            (Member::Cluster(c), End::Cluster(d)) if c == d => mark,
-            _ => Mark::None,
+        let here = |item: u32, end: End| match (members[item as usize], end) {
+            (Member::Node(n), End::Node(m)) => n == m,
+            (Member::Cluster(c), End::Cluster(d)) => c == d,
+            _ => false,
+        };
+        let mark_at = |item: u32, (end, mark): (End, Mark)| {
+            if here(item, end) { mark } else { Mark::None }
         };
         let labeled = matches!(e.kind, EKind::Graph(i) if g.edges[i as usize].label.iter().any(|l| !l.is_empty()));
         let (ls, lt) = (items[s as usize].layer, items[tgt as usize].layer);
@@ -366,6 +378,10 @@ fn level(
             last_port: t_port,
             start: mark_at(s, start),
             end: mark_at(tgt, end),
+            cards: [
+                here(s, start.0).then_some(cards[0]),
+                here(tgt, end.0).then_some(cards[1]),
+            ],
         });
     }
 

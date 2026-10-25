@@ -1,0 +1,29 @@
+---
+source: src/diagram/graph/tests.rs
+assertion_line: 130
+expression: "drawn(&src.replace(\"direction LR\", \"direction TB\"))"
+---
+┌─ Shapes ─────────────┐
+│ ┌──────────────────┐ │
+│ │   «interface»    │ │
+│ │      Shape       │ │
+│ ├──────────────────┤ │
+│ │ +area() : double │ │
+│ │ +origin()        │ │
+│ └──────────────────┘ │
+│           △          │
+│           ┆          │
+│      ┌────┴───┐      │
+│      │ Circle │      │
+│      └────────┘      │
+│           ◆ 1        │
+└───────────┼──────────┘
+            │
+            │
+         center
+            │
+            │ 1..*
+        ┌───┴───┐  ╭───────────╮
+        │ Point │┄┄│  x and y  │
+        └───────┘  │ in pixels │
+                   ╰───────────╯

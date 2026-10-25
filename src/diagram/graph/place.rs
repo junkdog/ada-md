@@ -13,11 +13,13 @@
 use std::collections::HashMap;
 
 use super::topo::{Kind, Level, Topo};
-use super::{Dir, Graph, Mark, Shape};
-use crate::diagram::{MAX_CELLS, Text, width, wrap};
+use super::{Dir, Graph, Line, Mark, Shape, longest_piece};
+use crate::diagram::{MAX_CELLS, Text, width, wrap, wrap_each};
 
 /// The label widths tried in turn until the drawing fits.
 pub(super) const CAPS: &[usize] = &[48, 36, 28, 22, 16, 12];
+/// The narrowest a class diagram's members wrap at: narrower reads worse than scrolling.
+pub(super) const CLASS_CAP: usize = 22;
 /// Sweeps placing the layers across.
 const SWEEPS: usize = 10;
 
@@ -30,6 +32,94 @@ pub(super) struct Placed {
     pub notes: Vec<Vec<Text>>,
     /// Each edge's label, wrapped.
     pub edges: Vec<Vec<Text>>,
+    /// Each class's box, wrapped.
+    pub classes: Vec<Option<ClassBox>>,
+    /// Given up on: once its boxes were sized, the root was sure to be wider than allowed.
+    pub over: bool,
+}
+
+/// What a class's box shows besides its name, at one cap.
+#[derive(Debug, Default)]
+pub(super) struct ClassBox {
+    pub annotation: Vec<Text>,
+    /// The rows under the name.
+    pub rows: Vec<Row>,
+}
+
+#[derive(Debug)]
+pub(super) enum Row {
+    /// The rule over a compartment.
+    Rule,
+    /// A line of member `member` ([`Class::member`](super::Class::member)): its bytes `range`,
+    /// `width` columns, indented when it continues one that wrapped.
+    Member {
+        member: usize,
+        range: std::ops::Range<usize>,
+        width: usize,
+        indent: usize,
+    },
+}
+
+impl ClassBox {
+    /// The compartments that have members, each under a rule. A member wider than `cap` wraps
+    /// at the box's width (its name, `cap`, or what a word that can't break needs), its lines
+    /// after the first indented, never inside a word (nor after its visibility).
+    fn new(class: &super::Class, name: &[Text], cap: usize) -> ClassBox {
+        let members = class.attributes.len() + class.methods.len();
+        let fit = (0..members)
+            .map(|i| match class.member(i) {
+                m if m.width <= cap => m.width,
+                m => cap.max(m.piece + 2),
+            })
+            .max()
+            .unwrap_or(0)
+            .max(widest(name));
+        let mut rows = Vec::with_capacity(members + 2);
+        let mut i = 0;
+        for list in [&class.attributes, &class.methods] {
+            if list.is_empty() {
+                continue;
+            }
+            rows.push(Row::Rule);
+            for m in list {
+                if m.width <= fit {
+                    rows.push(Row::Member {
+                        member: i,
+                        range: 0..m.text.len(),
+                        width: m.width,
+                        indent: 0,
+                    });
+                } else {
+                    let mut indent = 0;
+                    wrap_each(&m.text, fit - 2, &mut |at, line, width| {
+                        let range = at..at + line.len();
+                        rows.push(Row::Member {
+                            member: i,
+                            range,
+                            width,
+                            indent,
+                        });
+                        indent = 2;
+                    });
+                }
+                i += 1;
+            }
+        }
+        let annotation = class
+            .annotation
+            .iter()
+            .flat_map(|a| wrap(a, cap.max(longest_piece(a))))
+            .collect();
+        ClassBox { annotation, rows }
+    }
+
+    fn widest(&self) -> usize {
+        let rows = self.rows.iter().map(|r| match r {
+            Row::Rule => 0,
+            Row::Member { width, indent, .. } => indent + width,
+        });
+        rows.max().unwrap_or(0).max(widest(&self.annotation))
+    }
 }
 
 impl Placed {
@@ -86,6 +176,8 @@ pub(super) struct Seg {
     pub r1: usize,
     pub start: Mark,
     pub end: Mark,
+    /// The edge's cardinality (0 at `from`, 1 at `to`) written beside each end, if any.
+    pub cards: [Option<u8>; 2],
 }
 
 /// One edge of a path between two adjacent layers, before routing: from item `a` to item `b`,
@@ -99,9 +191,24 @@ struct Link {
     path: u32,
 }
 
-pub(super) fn place(g: &Graph, t: &Topo, cap: usize) -> Option<Placed> {
+/// Place `g` with labels wrapped at `cap`, a class diagram's parts in rows `avail` wide. With
+/// `bail`, it gives up (marked [`Placed::over`]) as soon as the root's widest layer of boxes
+/// alone is wider than `avail`.
+pub(super) fn place(g: &Graph, t: &Topo, cap: usize, avail: usize, bail: bool) -> Option<Placed> {
     let vertical = g.dir.vertical();
-    let nodes: Vec<Vec<Text>> = g.nodes.iter().map(|n| wrap_lines(&n.label, cap)).collect();
+    let nodes: Vec<Vec<Text>> = g
+        .nodes
+        .iter()
+        .map(|n| match n.shape {
+            // a class's name doesn't break inside a word
+            Shape::Class => {
+                let wide = n.label.iter().filter(|l| width(l) > cap);
+                let words = wide.map(|l| longest_piece(l)).max().unwrap_or(0);
+                wrap_lines(&n.label, cap.max(words))
+            }
+            _ => wrap_lines(&n.label, cap),
+        })
+        .collect();
     let notes: Vec<Vec<Text>> = g
         .nodes
         .iter()
@@ -112,14 +219,34 @@ pub(super) fn place(g: &Graph, t: &Topo, cap: usize) -> Option<Placed> {
         })
         .collect();
     let edges: Vec<Vec<Text>> = g.edges.iter().map(|e| wrap_lines(&e.label, cap)).collect();
+    let classes = if g.classes {
+        let boxes = g.nodes.iter().zip(&nodes);
+        boxes
+            .map(|(n, name)| n.class.as_ref().map(|c| ClassBox::new(c, name, cap)))
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut p = Placed {
         levels: (0..t.levels.len()).map(|_| Geo::default()).collect(),
         nodes,
         notes,
         edges,
+        classes,
+        over: false,
     };
     for l in (0..t.levels.len()).rev() {
-        let geo = level(g, t, &p, l, vertical)?;
+        let bail = (bail && l == 0).then_some(avail);
+        let geo = match rows_of_parts(g, t, &p, l, avail) {
+            Some(geo) => geo,
+            None => match level(g, t, &p, l, vertical, bail)? {
+                Some(geo) => geo,
+                None => {
+                    p.over = true;
+                    return Some(p);
+                }
+            },
+        };
         p.levels[l] = geo;
     }
     let root = &p.levels[0];
@@ -127,7 +254,12 @@ pub(super) fn place(g: &Graph, t: &Topo, cap: usize) -> Option<Placed> {
 }
 
 fn wrap_lines(lines: &[Text], cap: usize) -> Vec<Text> {
-    let out: Vec<Text> = lines.iter().flat_map(|l| wrap(l, cap)).collect();
+    // a line that fits is what wrapping it would give, without measuring its pieces
+    let out: Vec<Text> = if lines.iter().all(|l| width(l) <= cap) {
+        lines.to_vec()
+    } else {
+        lines.iter().flat_map(|l| wrap(l, cap)).collect()
+    };
     if out.iter().all(|l| l.is_empty()) {
         Vec::new()
     } else {
@@ -178,11 +310,16 @@ fn weight(a: Kind, b: Kind) -> f64 {
 fn box_size(
     shape: Shape,
     lines: &[Text],
+    class: Option<&ClassBox>,
     vertical: bool,
     degree: usize,
     loops: bool,
 ) -> (usize, usize) {
     match shape {
+        Shape::Class => {
+            let c = class.map_or((0, 0), |c| (c.widest(), c.annotation.len() + c.rows.len()));
+            (widest(lines).max(c.0) + 4, lines.len().max(1) + c.1 + 2)
+        }
         Shape::Start | Shape::End | Shape::Choice => (1, 1),
         Shape::Fork => {
             let len = (2 * degree + 1).max(if vertical { 5 } else { 3 });
@@ -196,9 +333,17 @@ fn box_size(
     }
 }
 
-fn level(g: &Graph, t: &Topo, p: &Placed, l: usize, vertical: bool) -> Option<Geo> {
+/// Level `l`'s geometry; `Some(None)` when, given `bail`, its boxes alone are wider than that.
+fn level(
+    g: &Graph,
+    t: &Topo,
+    p: &Placed,
+    l: usize,
+    vertical: bool,
+    bail: Option<usize>,
+) -> Option<Option<Geo>> {
     let lv = &t.levels[l];
-    let framed = lv.cluster.is_some();
+    let framed = super::Frame::drawn(lv.cluster.map(|c| g.clusters[c as usize].frame));
     let n = lv.items.len();
     let kinds: Vec<Kind> = lv.items.iter().map(|i| i.kind).collect();
     // how many edges meet each item, on its busier side
@@ -249,6 +394,11 @@ fn level(g: &Graph, t: &Topo, p: &Placed, l: usize, vertical: bool) -> Option<Ge
             }
             Kind::Dummy | Kind::Port => square(1, 1),
         });
+    }
+    if let Some(avail) = bail
+        && least_width(lv, &geo, &kinds, vertical) > avail
+    {
+        return Some(None);
     }
     // where an edge meets an item, across, relative to the item
     let anchor = |item: u32, port: u32| -> usize {
@@ -310,6 +460,7 @@ fn level(g: &Graph, t: &Topo, p: &Placed, l: usize, vertical: bool) -> Option<Ge
             }
         };
         list.sort_by_key(|&s| other(s));
+        let groups = sharing(&list, |s| shared_end(g, lv, &segs[s], out), |s| other(s).0);
         let it = &geo[item as usize];
         let fork = matches!(kinds[item as usize], Kind::Node(nd) if g.nodes[nd as usize].shape == Shape::Fork);
         let (lo, room) = match it.box_cs {
@@ -317,13 +468,15 @@ fn level(g: &Graph, t: &Topo, p: &Placed, l: usize, vertical: bool) -> Option<Ge
             w if w >= 3 => (it.box_c + 1, w - 2),
             _ => continue,
         };
-        let m = list.len();
-        for (k, &s) in list.iter().enumerate() {
+        let m = groups.as_ref().map_or(list.len(), Vec::len);
+        for k in 0..m {
             let off = lo + (2 * k + 1) * room / (2 * m);
-            if out {
-                segs[s].oa = off;
-            } else {
-                segs[s].ob = off;
+            for &s in group(&groups, &list, k) {
+                if out {
+                    segs[s].oa = off;
+                } else {
+                    segs[s].ob = off;
+                }
             }
         }
     }
@@ -352,7 +505,76 @@ fn level(g: &Graph, t: &Topo, p: &Placed, l: usize, vertical: bool) -> Option<Ge
         it.c = usize::try_from(pos[i] - min).ok()? + pad;
     }
     let cs = geo.iter().map(|it| it.c + it.cs).max().unwrap_or(0) + pad;
-    route(g, lv, geo, &kinds, &segs, framed, vertical, cs)
+    route(g, lv, geo, &kinds, &segs, framed, vertical, cs).map(Some)
+}
+
+/// The fewest columns an unframed level's items can be drawn in: across (`TD`, `BT`), its
+/// widest layer packed; along (`LR`, `RL`), its layers end to end with the least channel
+/// between.
+fn least_width(lv: &Level, geo: &[ItemGeo], kinds: &[Kind], vertical: bool) -> usize {
+    if vertical {
+        let packed = |layer: &Vec<u32>| {
+            let gaps = layer.windows(2).map(|w| {
+                let (a, b) = (w[0] as usize, w[1] as usize);
+                gap(vertical, kinds[a], kinds[b])
+            });
+            layer.iter().map(|&it| geo[it as usize].cs).sum::<usize>() + gaps.sum::<usize>()
+        };
+        lv.layers.iter().map(packed).max().unwrap_or(0)
+    } else {
+        let bands: usize = (0..lv.layers.len()).map(|l| band_size(lv, geo, l)).sum();
+        bands + 3 * lv.layers.len().saturating_sub(1)
+    }
+}
+
+/// The root of a class diagram whose unrelated parts are hidden frames: in `TD` and `BT`, the
+/// parts in rows as wide as `avail`, in order, a blank row between rows; `None` for any other
+/// level, which is laid out in layers (in `LR` and `RL` the parts are stacked already).
+fn rows_of_parts(g: &Graph, t: &Topo, p: &Placed, l: usize, avail: usize) -> Option<Geo> {
+    const GAP: usize = 3;
+    let lv = &t.levels[l];
+    if l != 0 || !g.classes || !g.dir.vertical() || lv.items.len() < 2 {
+        return None;
+    }
+    let mut parts = Vec::with_capacity(lv.items.len());
+    for (i, item) in lv.items.iter().enumerate() {
+        let Kind::Child(child) = item.kind else {
+            return None;
+        };
+        let c = t.levels[child as usize].cluster?;
+        if g.clusters[c as usize].frame != super::Frame::Hidden {
+            return None;
+        }
+        parts.push((c, i));
+    }
+    parts.sort_unstable();
+    let mut items = vec![ItemGeo::default(); lv.items.len()];
+    let (mut r, mut c, mut tallest, mut cs) = (0, 0, 0, 0);
+    for (_, i) in parts {
+        let Kind::Child(child) = lv.items[i].kind else {
+            continue;
+        };
+        let part = &p.levels[child as usize];
+        if c > 0 && c + part.cs > avail {
+            (r, c, tallest) = (r + tallest + 1, 0, 0);
+        }
+        items[i] = ItemGeo {
+            r,
+            c,
+            ..square(part.rs, part.cs)
+        };
+        cs = cs.max(c + part.cs);
+        tallest = tallest.max(part.rs);
+        c += part.cs + GAP;
+    }
+    let rs = r + tallest;
+    Some(Geo {
+        rs,
+        cs,
+        items,
+        bands: vec![(0, rs)],
+        ..Geo::default()
+    })
 }
 
 /// Where a line meets a label `cs` wide, across, in `TD` and `BT`: the column nearest its middle with
@@ -405,7 +627,8 @@ fn node_geo(
     let node = &g.nodes[n];
     let lines = &p.nodes[n];
     let has_loops = !loops.is_empty();
-    let (w, h) = box_size(node.shape, lines, vertical, degree, has_loops);
+    let class = p.classes.get(n).and_then(Option::as_ref);
+    let (w, h) = box_size(node.shape, lines, class, vertical, degree, has_loops);
     let (w, h) = if has_loops && vertical {
         (w, h.max(loop_label.len() + 2))
     } else {
@@ -642,6 +865,63 @@ fn pava(sep: &[i64], desired: &[(f64, f64)]) -> Vec<i64> {
     out
 }
 
+/// What edges leaving (`out`) or entering a box share a port by: a class diagram's UML mark at
+/// that end (a hollow triangle or a diamond) and their line, so they meet the box as one, under
+/// one mark, the way UML draws a tree of subclasses.
+fn shared_end(g: &Graph, lv: &Level, link: &Link, out: bool) -> Option<(Mark, Line)> {
+    let path = &lv.paths[link.path as usize];
+    let mark = if out {
+        (path.items[0] == link.a).then_some(path.start)
+    } else {
+        (path.items.last() == Some(&link.b)).then_some(path.end)
+    }?;
+    matches!(mark, Mark::Triangle | Mark::Diamond | Mark::HollowDiamond)
+        .then(|| (mark, g.edges[path.edge as usize].line))
+}
+
+/// The edges on one side of a box, `list`, in the groups that share a port (by `key`), the
+/// others alone; ordered by where their other ends are on average, `other`. `None` when no edge
+/// shares, as in every flowchart: each is its own group, in `list`'s order.
+fn sharing(
+    list: &[usize],
+    key: impl Fn(usize) -> Option<(Mark, Line)>,
+    other: impl Fn(usize) -> usize,
+) -> Option<Vec<Vec<usize>>> {
+    if list.iter().all(|&s| key(s).is_none()) {
+        return None;
+    }
+    let mut groups: Vec<Vec<usize>> = Vec::with_capacity(list.len());
+    let mut keyed: Vec<((Mark, Line), usize)> = Vec::new();
+    for &s in list {
+        let Some(k) = key(s) else {
+            groups.push(vec![s]);
+            continue;
+        };
+        match keyed.iter().find(|(kk, _)| *kk == k) {
+            Some(&(_, at)) => groups[at].push(s),
+            None => {
+                keyed.push((k, groups.len()));
+                groups.push(vec![s]);
+            }
+        }
+    }
+    groups.sort_by_key(|group| mean(group, &other));
+    Some(groups)
+}
+
+/// Group `k` of [`sharing`]'s groups, or of `list`'s edges one by one when it found none.
+fn group<'a>(groups: &'a Option<Vec<Vec<usize>>>, list: &'a [usize], k: usize) -> &'a [usize] {
+    match groups {
+        Some(groups) => &groups[k],
+        None => std::slice::from_ref(&list[k]),
+    }
+}
+
+/// Where a group's other ends are on average.
+fn mean(group: &[usize], other: impl Fn(usize) -> usize) -> usize {
+    group.iter().map(|&s| other(s)).sum::<usize>() / group.len().max(1)
+}
+
 /// The span of columns a node's box offers edges on one side.
 fn port_range(kind: Kind, g: &Graph, it: &ItemGeo) -> (usize, usize) {
     let lo = it.c + it.box_c;
@@ -715,25 +995,33 @@ fn route(
             None => entries.entry(b).or_default().push(s),
         }
     }
-    let assign =
-        |list: &HashMap<u32, Vec<usize>>, out: &mut [usize], other: &dyn Fn(usize) -> usize| {
-            for (&item, ss) in list {
-                let mut ss = ss.clone();
-                ss.sort_by_key(|&s| other(s));
-                let (lo, hi) = port_range(kinds[item as usize], g, &geo[item as usize]);
-                let ideal: Vec<usize> = ss.iter().map(|&s| other(s)).collect();
-                for (k, c) in spread(&ideal, lo, hi).into_iter().enumerate() {
-                    out[ss[k]] = c;
+    let assign = |list: &HashMap<u32, Vec<usize>>,
+                  exits: bool,
+                  out: &mut [usize],
+                  other: &dyn Fn(usize) -> usize| {
+        for (&item, ss) in list {
+            let mut ss = ss.clone();
+            ss.sort_by_key(|&s| other(s));
+            let groups = sharing(&ss, |s| shared_end(g, lv, &segs[s], exits), other);
+            let (lo, hi) = port_range(kinds[item as usize], g, &geo[item as usize]);
+            let m = groups.as_ref().map_or(ss.len(), Vec::len);
+            let ideal: Vec<usize> = (0..m)
+                .map(|k| mean(group(&groups, &ss, k), other))
+                .collect();
+            for (k, c) in spread(&ideal, lo, hi).into_iter().enumerate() {
+                for &s in group(&groups, &ss, k) {
+                    out[s] = c;
                 }
             }
-        };
+        }
+    };
     let target = |s: usize| {
         let Link { b, ob, .. } = segs[s];
         fixed(b, ob, &geo).unwrap_or_else(|| center(b, ob, &geo))
     };
-    assign(&exits, &mut cu, &target);
+    assign(&exits, true, &mut cu, &target);
     let cu_now = cu.clone();
-    assign(&entries, &mut cv, &|s: usize| cu_now[s]);
+    assign(&entries, false, &mut cv, &|s: usize| cu_now[s]);
 
     // tracks, channel by channel
     let n_layers = lv.layers.len();
@@ -760,13 +1048,15 @@ fn route(
             (tracks, lanes) = assign_tracks(list, segs, &cu, &cv, &mut track);
         }
         let path_of = |s: usize| &lv.paths[segs[s].path as usize];
+        // a mark, or a cardinality, at either end: a row each
         let ends = |s: usize| {
             let path = path_of(s);
             let first = path.items[0] == segs[s].a;
             let last = *path.items.last().unwrap_or(&0) == segs[s].b;
+            let [ws, we] = card_widths(g, path, first, last);
             (
-                first && path.start != Mark::None,
-                last && path.end != Mark::None,
+                first && (path.start != Mark::None || ws > 0),
+                last && (path.end != Mark::None || we > 0),
             )
         };
         let has_start = list.iter().any(|&s| ends(s).0);
@@ -778,8 +1068,27 @@ fn route(
             (false, true) => 2,
             (false, false) => 3,
         };
-        let need = usize::from(has_start) + tracks + usize::from(has_end);
-        let rows = min.max(need);
+        // a straight edge marked at both ends shows a line between them
+        let both = tracks == 0 && list.iter().any(|&s| ends(s) == (true, true));
+        let need = usize::from(has_start) + tracks + usize::from(has_end) + usize::from(both);
+        // across `LR`, cardinalities run along above their line: room for both, apart
+        let cards = if vertical || !g.classes {
+            0
+        } else {
+            list.iter()
+                .map(|&s| {
+                    let path = path_of(s);
+                    let first = path.items[0] == segs[s].a;
+                    let last = *path.items.last().unwrap_or(&0) == segs[s].b;
+                    match card_widths(g, path, first, last) {
+                        [0, 0] => 0,
+                        [a, b] => a + b + 2,
+                    }
+                })
+                .max()
+                .unwrap_or(0)
+        };
+        let rows = min.max(need).max(cards);
         channels[ch] = (rows, usize::from(has_start) + (rows - need) / 2);
     }
     // a frame across `LR` needs room for its title along
@@ -832,18 +1141,25 @@ fn route(
         }
     };
     let mut out = Vec::with_capacity(ns);
+    let mut cs = cs;
     for (s, &Link { a, b, path: pi, .. }) in segs.iter().enumerate() {
         let path = &lv.paths[pi as usize];
-        let start = if path.items[0] == a {
-            path.start
-        } else {
-            Mark::None
-        };
-        let end = if *path.items.last()? == b {
-            path.end
-        } else {
-            Mark::None
-        };
+        let (first, last) = (path.items[0] == a, *path.items.last()? == b);
+        let start = if first { path.start } else { Mark::None };
+        let end = if last { path.end } else { Mark::None };
+        let cards = [
+            path.cards[0].filter(|_| first),
+            path.cards[1].filter(|_| last),
+        ];
+        // in `TD` and `BT` a cardinality is written right of its line, which may need room
+        if vertical && g.classes {
+            let [ws, we] = card_widths(g, path, first, last);
+            for (w, c) in [(ws, cu[s]), (we, cv[s])] {
+                if w > 0 {
+                    cs = cs.max(c + 2 + w);
+                }
+            }
+        }
         let r0 = exit(a, &geo) + usize::from(start != Mark::None);
         let r1 = entry(b, &geo).saturating_sub(usize::from(end != Mark::None));
         let ch = lv.items[a as usize].layer as usize;
@@ -861,6 +1177,7 @@ fn route(
             r1: r1.max(r0),
             start,
             end,
+            cards,
         });
     }
     let ports = lv.ports.iter().map(|&it| geo[it as usize].c).collect();
@@ -922,6 +1239,20 @@ fn free_lanes(
         return true;
     }
     false
+}
+
+/// The widths of the cardinalities a path shows at its first item (when `first`) and its last
+/// (when `last`).
+fn card_widths(g: &Graph, path: &super::topo::Path, first: bool, last: bool) -> [usize; 2] {
+    if !g.classes {
+        return [0, 0];
+    }
+    let cards = &g.edges[path.edge as usize].cards;
+    let w = |on: bool, end: Option<u8>| match end {
+        Some(e) if on => width(&cards[usize::from(e)]),
+        _ => 0,
+    };
+    [w(first, path.cards[0]), w(last, path.cards[1])]
 }
 
 fn band_size(lv: &Level, geo: &[ItemGeo], l: usize) -> usize {

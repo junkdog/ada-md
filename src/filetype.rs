@@ -278,8 +278,8 @@ mod tests {
             panic!("{block:?}");
         };
         assert!(code.diagram.is_some());
-        let classes = FileType::MERMAID.parse(Path::new("c.mmd"), "classDiagram\n  A <|-- B\n");
-        assert!(matches!(&classes.blocks[0].kind, doc::BlockKind::Code(c) if c.diagram.is_none()));
+        let er = FileType::MERMAID.parse(Path::new("er.mmd"), "erDiagram\n  A ||--o{ B : has\n");
+        assert!(matches!(&er.blocks[0].kind, doc::BlockKind::Code(c) if c.diagram.is_none()));
     }
 
     #[test]

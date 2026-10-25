@@ -1,0 +1,74 @@
+---
+source: src/diagram/graph/tests.rs
+assertion_line: 113
+expression: "rows_at(include_str!(\"../../../bench/diagrams/class_terminal.mmd\"), 100,\nfalse).join(\"\\n\")"
+---
+                                                            ┌──────────────────────────┐
+                                                            │     TerminalBuilder      │
+                                                            ├──────────────────────────┤
+                                                            │ canvas: id or element    │
+                                                            │ atlas_kind: Static /     │
+                                                            │   Dynamic / DebugDynamic │
+                                                            │ fallback_glyph,          │
+                                                            │   padding color          │
+                                                            │ input_handler:           │
+                                                            │   callback or selection  │
+                                                            │ enable_debug_api,        │
+                                                            │   auto_resize_canvas_css │
+                                                            ├──────────────────────────┤
+                                                            │ +build() : Terminal      │
+                                                            └─────────────┬────────────┘
+                                                                          ┆
+                                                                          ┆
+                                           ┌────────────────────────┐     ┆
+                                           │ «wasm_bindgen, js-api» │  builds
+                                           │    BeamtermRenderer    │     ┆
+                                           └────────────────────────┘     ┆
+                                                                   ◆      ┆
+                                                                   │      ▼
+                                                              ┌────┴───────────────────────────┐
+                                                              │            Terminal            │
+                                                              ├────────────────────────────────┤
+                                                              │ -renderer: Renderer            │
+                                                              │ -grid:                         │
+                                                              │   Rc<RefCell<TerminalGrid>>    │
+                                                              │ -mouse_handler:                │
+                                                              │   Option<TerminalMouseHandler> │
+                                                              │ -context_loss_handler:         │
+                                                              │   Option<ContextLossHandler>   │
+                                                              │ -current_pixel_ratio: f32      │
+                                                              │ +update_cells / _by_index /    │
+                                                              │   _by_position                 │
+                                                              │ +replace_with_static_atlas /   │
+                                                              │   replace_with_dynamic_atlas   │
+                                                              │ +get_text / find_url_at /      │
+                                                              │   missing_glyphs               │
+                                                              ├────────────────────────────────┤
+                                                              │ +builder(canvas) :             │
+                                                              │   TerminalBuilder              │
+                                                              │ +render_frame()                │
+                                                              │ +resize(w, h)                  │
+                                                              └────────────────────────────────┘
+                                                               ◆                              ◇
+                          ┌───────────────────────────┬────────┤                              │
+┌─────────────────────────┴┐                          │        │                              │
+│         Renderer         │                          │        │                              │
+├──────────────────────────┤                          │        │                              │
+│ -gl: glow::Context       │   ┌──────────────────────┴┐       │                              │
+│ -raw_gl:                 │   │  ContextLossHandler   │       │                              │
+│   WebGl2RenderingContext │   ├───────────────────────┤       │                              │
+│ -canvas:                 │   │ webglcontextlost:     │   ┌───┴──────────────────┐           │
+│   HtmlCanvasElement      │   │   preventDefault,     │   │ TerminalMouseHandler │  Rc RefCell, shared
+│ -state: GlState          │   │   is_lost             │   └──────────────────────┘  with mouse closures
+│ -logical_size_px         │   │ webglcontextrestored: │                                      │
+│ -pixel_ratio             │   │   pending_rebuild     │                                      │
+├──────────────────────────┤   └───────────────────────┘                                      │
+│ +begin_frame / render(   │                                                                  │
+│   drawable) / end_frame  │                                                                  │
+│ +restore_context()       │                                                                  │
+└──────────────────────────┘                                                                  │
+                                                                                              │
+                                                                                              │
+                                                                                      ┌───────┴──────┐
+                                                                                      │ TerminalGrid │
+                                                                                      └──────────────┘

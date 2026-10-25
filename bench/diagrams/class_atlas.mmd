@@ -1,0 +1,55 @@
+classDiagram
+    class Atlas {
+        <<sealed trait>>
+        +resolve_glyph_slot(key, style_bits) Option~GlyphSlot~
+        +get_glyph_id / get_base_glyph_id(key)
+        +get_symbol(id) / get_ascii_char(id)
+        +flush(gl)
+        +bind(gl) / delete(gl) / recreate_texture(gl)
+        +update_pixel_ratio(gl, dpr) f32
+        +cell_scale_for_dpr(dpr) f32
+        +cell_size() / texture_cell_size()
+        +emoji_bit() u32
+        +underline() / strikethrough()
+        +glyph_tracker() GlyphTracker
+    }
+    class FontAtlas {
+        -inner: Box~dyn Atlas~
+    }
+    class StaticFontAtlas {
+        -texture: Texture
+        -glyph_coords: HashMap~str, u16~
+        -symbol_lookup: HashMap~u16, str~
+        -last_halfwidth_base_glyph_id: u16
+        -atlas_data: FontAtlasData
+    }
+    class DynamicFontAtlas~R~ {
+        -texture: Texture
+        -rasterizer: R
+        -cache: GlyphCache
+        -symbol_lookup: HashMap~u16, str~
+        -glyphs_pending_upload: PendingUploads
+    }
+    class GlyphRasterizer {
+        <<trait, doc hidden>>
+        +rasterize_batch(glyphs) Vec~RasterizedGlyph~
+        +max_batch_size() usize
+        +cell_size()
+        +is_double_width(grapheme) bool
+        +update_font_size(size)
+    }
+    class NativeGlyphRasterizer
+    class CanvasGlyphRasterizer
+    class GlyphSlot {
+        <<enum>>
+        Normal(u16)
+        Wide(u16)
+        Emoji(u16)
+    }
+    Atlas <|.. StaticFontAtlas
+    Atlas <|.. DynamicFontAtlas
+    FontAtlas o-- Atlas
+    DynamicFontAtlas --> GlyphRasterizer
+    GlyphRasterizer <|.. NativeGlyphRasterizer : beamterm-core, feature-gated
+    GlyphRasterizer <|.. CanvasGlyphRasterizer : beamterm-renderer
+    Atlas ..> GlyphSlot

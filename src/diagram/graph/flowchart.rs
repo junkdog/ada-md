@@ -97,6 +97,7 @@ impl Parser<'_> {
                         head_to: arrow.to,
                         label: arrow.label.clone(),
                         minlen: arrow.minlen,
+                        cards: Default::default(),
                     })?;
                 }
             }

@@ -5,6 +5,7 @@
 use unicode_width::UnicodeWidthChar;
 
 use super::Text;
+use crate::doc::InlineStyle;
 use crate::theme::StyleKey;
 
 const UP: u8 = 1;
@@ -60,7 +61,7 @@ impl Pen {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Cell {
     Empty,
-    Text(char, StyleKey),
+    Text(char, StyleKey, InlineStyle),
     /// The columns after the first of a wide character (two for most, three for a few, such as
     /// U+17D8).
     Wide,
@@ -84,6 +85,8 @@ pub struct Canvas {
     ascii: bool,
     /// Where labels went, for search; text written over later may have replaced some.
     pub found: Vec<Found>,
+    /// The inline markup on text written while it is set: a class member's UML classifier.
+    pub inline: InlineStyle,
 }
 
 impl Canvas {
@@ -93,6 +96,7 @@ impl Canvas {
             cells: Vec::new(),
             ascii,
             found: Vec::new(),
+            inline: InlineStyle::NONE,
         }
     }
 
@@ -216,11 +220,22 @@ impl Canvas {
     /// Write `text` from `col`, over whatever is there; it stops at the right edge. Returns the
     /// column after it.
     pub fn text(&mut self, row: usize, col: usize, text: &str, key: StyleKey) -> usize {
-        self.write(row, col, text, key).0
+        self.write(row, col, text, |_| key).0
     }
 
     /// [`text`](Self::text) for label text, noting where it went when it is from the source.
     pub fn label(&mut self, row: usize, col: usize, text: &Text, key: StyleKey) -> usize {
+        self.label_keyed(row, col, text, |_| key)
+    }
+
+    /// [`label`](Self::label), each character in the style `key` gives the byte it starts at.
+    pub fn label_keyed(
+        &mut self,
+        row: usize,
+        col: usize,
+        text: &Text,
+        key: impl FnMut(usize) -> StyleKey,
+    ) -> usize {
         let (end, bytes) = self.write(row, col, text, key);
         if let Some(o) = text.origin {
             let len = o.len.min(bytes as u32);
@@ -247,7 +262,7 @@ impl Canvas {
             if w == 0 {
                 continue;
             }
-            if !matches!(cells.get(col), Some(Cell::Text(t, _)) if *t == c) {
+            if !matches!(cells.get(col), Some(Cell::Text(t, ..)) if *t == c) {
                 return false;
             }
             col += w;
@@ -256,7 +271,13 @@ impl Canvas {
     }
 
     /// [`text`](Self::text), returning the column after it and the bytes of `text` written.
-    fn write(&mut self, row: usize, col: usize, text: &str, key: StyleKey) -> (usize, usize) {
+    fn write(
+        &mut self,
+        row: usize,
+        col: usize,
+        text: &str,
+        mut key: impl FnMut(usize) -> StyleKey,
+    ) -> (usize, usize) {
         self.reach(row);
         let base = row * self.width;
         let mut col = col;
@@ -273,7 +294,7 @@ impl Canvas {
             for k in 0..w {
                 self.clear(base, col + k);
             }
-            self.cells[base + col] = Cell::Text(c, key);
+            self.cells[base + col] = Cell::Text(c, key(i), self.inline);
             for k in 1..w {
                 self.cells[base + col + k] = Cell::Wide;
             }
@@ -291,7 +312,7 @@ impl Canvas {
         while start > 0 && row[start] == Cell::Wide {
             start -= 1;
         }
-        let wide = matches!(row[start], Cell::Text(c, _) if c.width().unwrap_or(0) > 1);
+        let wide = matches!(row[start], Cell::Text(c, ..) if c.width().unwrap_or(0) > 1);
         if !wide && start == col {
             return;
         }
@@ -324,7 +345,7 @@ impl Canvas {
         let base = row * self.width;
         for col in from..to.min(self.width) {
             self.clear(base, col);
-            self.cells[base + col] = Cell::Text(c, key);
+            self.cells[base + col] = Cell::Text(c, key, self.inline);
         }
     }
 
@@ -334,13 +355,13 @@ impl Canvas {
         self.text(row, col, c.encode_utf8(&mut buf), key);
     }
 
-    /// Row `row` as pieces of one style each, trailing blanks left out. `blank` styles the
-    /// gaps.
+    /// Row `row` as pieces of one style each, with the inline markup on them, trailing blanks
+    /// left out. `blank` styles the gaps.
     pub fn pieces(
         &self,
         row: usize,
         blank: StyleKey,
-        emit: &mut impl FnMut(&str, usize, StyleKey),
+        emit: &mut impl FnMut(&str, usize, (StyleKey, InlineStyle)),
     ) {
         let cells = &self.cells[row * self.width..(row + 1) * self.width];
         let end = cells
@@ -349,13 +370,14 @@ impl Canvas {
             .map_or(0, |i| i + 1);
         let mut buf = String::new();
         let mut cols = 0;
-        let mut key = blank;
+        let none = InlineStyle::NONE;
+        let mut key = (blank, none);
         for cell in &cells[..end] {
             let (c, k) = match *cell {
-                Cell::Empty => (' ', blank),
-                Cell::Text(c, k) => (c, k),
+                Cell::Empty => (' ', (blank, none)),
+                Cell::Text(c, k, inline) => (c, (k, inline)),
                 Cell::Wide => continue,
-                Cell::Lines(bits, k) => (glyph(bits, self.ascii), k),
+                Cell::Lines(bits, k) => (glyph(bits, self.ascii), (k, none)),
             };
             if k != key && !buf.is_empty() {
                 emit(&buf, cols, key);
@@ -598,7 +620,7 @@ mod tests {
         c.text(0, 0, "ab", StyleKey::DiagramLabel);
         c.hline(0, 3, 4, Pen::SOLID, K);
         let mut got = Vec::new();
-        c.pieces(0, K, &mut |t, w, k| got.push((t.to_owned(), w, k)));
+        c.pieces(0, K, &mut |t, w, (k, _)| got.push((t.to_owned(), w, k)));
         assert_eq!(
             got,
             [

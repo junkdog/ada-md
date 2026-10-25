@@ -1,0 +1,46 @@
+classDiagram
+    class Terminal {
+        -renderer: Renderer
+        -grid: Rc~RefCell~TerminalGrid~~
+        -mouse_handler: Option~TerminalMouseHandler~
+        -context_loss_handler: Option~ContextLossHandler~
+        -current_pixel_ratio: f32
+        +builder(canvas) TerminalBuilder
+        +update_cells / _by_index / _by_position
+        +render_frame()
+        +resize(w, h)
+        +replace_with_static_atlas / replace_with_dynamic_atlas
+        +get_text / find_url_at / missing_glyphs
+    }
+    class Renderer {
+        -gl: glow::Context
+        -raw_gl: WebGl2RenderingContext
+        -canvas: HtmlCanvasElement
+        -state: GlState
+        -logical_size_px
+        -pixel_ratio
+        +begin_frame / render(drawable) / end_frame
+        +restore_context()
+    }
+    class TerminalBuilder {
+        canvas: id or element
+        atlas_kind: Static / Dynamic / DebugDynamic
+        fallback_glyph, padding color
+        input_handler: callback or selection
+        enable_debug_api, auto_resize_canvas_css
+        +build() Terminal
+    }
+    class ContextLossHandler {
+        webglcontextlost: preventDefault, is_lost
+        webglcontextrestored: pending_rebuild
+    }
+    class TerminalMouseHandler
+    class BeamtermRenderer {
+        <<wasm_bindgen, js-api>>
+    }
+    TerminalBuilder ..> Terminal : builds
+    Terminal *-- Renderer
+    Terminal *-- ContextLossHandler
+    Terminal *-- TerminalMouseHandler
+    Terminal o-- TerminalGrid : Rc RefCell, shared with mouse closures
+    BeamtermRenderer *-- Terminal

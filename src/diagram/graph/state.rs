@@ -117,6 +117,7 @@ impl Parser {
             head_to: Mark::Arrow,
             label: self.b.src.label(label.trim()),
             minlen: 1,
+            cards: Default::default(),
         })
     }
 

@@ -24,7 +24,7 @@ NAMES = {"mdtui": "md-tui", "treemd-head": "treemd", "icat": "kitten icat", "ica
 UNITS = {"peak RSS": "MiB", "print to a pipe, peak RSS": "MiB", "previewer, a preview, peak RSS": "MiB",
          "previewer, the whole file, peak RSS": "MiB", "image, kitty graphics, peak RSS": "MiB",
          "image, text, peak RSS": "MiB", "mermaid, sequence diagrams": "µs", "mermaid, flowcharts": "µs",
-         "mermaid, state diagrams": "µs", "mermaid, gantt charts": "µs"}
+         "mermaid, state diagrams": "µs", "mermaid, gantt charts": "µs", "mermaid, class diagrams": "µs"}
 # previewer.dat's and images.dat's rows: (tab label, description)
 FILES = {"code-s.rs": ("6 KB", "Rust"), "code-m.rs": ("47 KB", "Rust"), "code-l.rs": ("305 KB", "Rust"),
          "log.log": ("1 MB", "journal log"), "huge.json": ("3.75 MB", "JSON, one line"),
@@ -47,7 +47,7 @@ CAPTIONS = {"first paint": "first paint", "CPU per line scroll": "CPU per line s
             "image, text, peak RSS": "peak memory, half-blocks and symbols",
             "mermaid, sequence diagrams": "sequence diagrams", "mermaid, flowcharts": "flowcharts",
             "mermaid, state diagrams": "state diagrams", "mermaid, gantt charts": "gantt charts",
-            "mermaid, a 120-node flowchart": "a 120-node flowchart"}
+            "mermaid, class diagrams": "class diagrams", "mermaid, a 120-node flowchart": "a 120-node flowchart"}
 # why a cell is missing, as the README explains it: (metric or None for any, viewer, doc or None for any)
 MISSING = [("search", "glow", None, "has no search"),
            ("resize, cold", "glow", None, "blank after a resize"),
@@ -55,7 +55,8 @@ MISSING = [("search", "glow", None, "has no search"),
            (None, "mdtui", "XL", "never finished parsing"),
            ("resize, cold", "mdtui", None, "re-parses for seconds"),
            ("search", "mdfried", "XL", "match off-screen"),
-           ("mermaid, gantt charts", "mmdflux", None, "draws no gantt charts")]
+           ("mermaid, gantt charts", "mmdflux", None, "draws no gantt charts"),
+           ("mermaid, class diagrams", "mermaid-text", None, "fails on two of the three")]
 NOTES = {"lowdown": "no highlighting", "bat": "source, not rendered"}
 # notes on the previewer files and images, by viewer and, where it's only one file, (viewer, file)
 PREV_NOTES = {("rich", "log.log"): "no color", ("rich", "huge.log"): "no color",
@@ -88,12 +89,14 @@ DESCS = {"first paint": "from launch until the document's first line is on scree
          "mermaid, flowcharts": "seven, from a vault and Mermaid's docs, at 100 columns; added up",
          "mermaid, state diagrams": "two, at 100 columns; added up",
          "mermaid, gantt charts": "Mermaid's example and another, at 100 columns; added up",
+         "mermaid, class diagrams": "Mermaid's example and two from a vault, at 100 columns; added up",
          "mermaid, a 120-node flowchart": "generated: a chain, each node with an edge further on"}
 KINDS = {"first paint": "wall", "CPU per line scroll": "CPU", "search": "wall", "resize, cold": "wall",
          "held page-down CPU": "CPU", "print to a pipe, wall": "wall", "previewer, a preview, wall": "wall",
          "previewer, the whole file, wall": "wall", "image, kitty graphics, wall": "wall", "image, text, wall": "wall",
          "image, kitty graphics, CPU": "CPU", "image, text, CPU": "CPU", "mermaid, sequence diagrams": "wall",
          "mermaid, flowcharts": "wall", "mermaid, state diagrams": "wall", "mermaid, gantt charts": "wall",
+         "mermaid, class diagrams": "wall",
          "mermaid, a 120-node flowchart": "wall"}
 # the viewers that draw mermaid with each crate
 MERMAID_NOTES = {"mermaid-text": "md-tui's", "mmdflux": "leaf's"}

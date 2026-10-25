@@ -5,7 +5,7 @@ mod load;
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use crate::style::{Color, Kind, Style};
+use crate::style::{Color, Kind, Modifier, Style};
 
 use crate::doc::{Callout, InlineStyle};
 
@@ -79,6 +79,10 @@ style_keys! {
     DiagramDone => "block.diagram_done",
     DiagramCrit => "block.diagram_crit",
     DiagramGrid => "block.diagram_grid",
+    DiagramType => "block.diagram_type",
+    DiagramParam => "block.diagram_param",
+    DiagramStatic => "block.diagram_static",
+    DiagramAbstract => "block.diagram_abstract",
     GutterUnstagedAdded => "gutter.unstaged.added",
     GutterUnstagedModified => "gutter.unstaged.modified",
     GutterUnstagedDeleted => "gutter.unstaged.deleted",
@@ -151,6 +155,10 @@ impl StyleKey {
             StyleKey::DiagramDone => Some(StyleKey::CalloutTip),
             StyleKey::DiagramCrit => Some(StyleKey::CalloutCaution),
             StyleKey::DiagramGrid => Some(StyleKey::TableBorder),
+            StyleKey::DiagramType
+            | StyleKey::DiagramParam
+            | StyleKey::DiagramStatic
+            | StyleKey::DiagramAbstract => Some(StyleKey::DiagramLabel),
             StyleKey::SettingsLabel
             | StyleKey::SettingsFocus
             | StyleKey::SettingsField
@@ -262,11 +270,15 @@ pub struct Theme {
 
 impl Theme {
     pub fn empty() -> Self {
+        let mut styles = [Style::new(); StyleKey::COUNT];
+        // UML's: static members underlined, abstract ones italic, whatever a theme's colors
+        styles[StyleKey::DiagramStatic as usize] = Style::new().add_modifier(Modifier::UNDERLINED);
+        styles[StyleKey::DiagramAbstract as usize] = Style::new().add_modifier(Modifier::ITALIC);
         Self {
             name: String::new(),
             path: None,
             palette: Vec::new(),
-            styles: [Style::new(); StyleKey::COUNT],
+            styles,
             glyphs: Glyphs::default(),
             syntax: Vec::new(),
         }
@@ -368,6 +380,8 @@ impl Theme {
             (InlineStyle::EMPH, StyleKey::Emph),
             (InlineStyle::STRONG, StyleKey::Strong),
             (InlineStyle::STRIKE, StyleKey::Strike),
+            (InlineStyle::STATIC, StyleKey::DiagramStatic),
+            (InlineStyle::ABSTRACT, StyleKey::DiagramAbstract),
         ] {
             if inline.contains(flag) {
                 style = style.patch(self.styles[key as usize]);

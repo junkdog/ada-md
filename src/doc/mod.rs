@@ -283,6 +283,10 @@ impl InlineStyle {
     pub const CODE: Self = Self(1 << 3);
     pub const SUP: Self = Self(1 << 4);
     pub const SUB: Self = Self(1 << 5);
+    /// A class diagram member's UML classifier, static (`$`) or abstract (`*`), over whatever
+    /// colors its parts.
+    pub const STATIC: Self = Self(1 << 6);
+    pub const ABSTRACT: Self = Self(1 << 7);
 
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0

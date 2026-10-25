@@ -780,7 +780,7 @@ mod tests {
         // the marker takes the number's style, as the note it points to does
         let mut marks = Vec::new();
         for row in 0..d.canvas.height() {
-            d.canvas.pieces(row, LINE, &mut |t, _, k| {
+            d.canvas.pieces(row, LINE, &mut |t, _, (k, _)| {
                 if t.contains('¹') {
                     marks.push((t.to_owned(), k));
                 }

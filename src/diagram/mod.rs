@@ -19,7 +19,7 @@ use crate::theme::Glyphs;
 #[derive(Debug)]
 pub enum Diagram {
     Sequence(sequence::Sequence),
-    /// A flowchart or a state diagram.
+    /// A flowchart, a state or a class diagram.
     Graph(graph::Graph),
     Gantt(gantt::Gantt),
 }
@@ -47,7 +47,10 @@ pub fn is_diagram(src: &str) -> bool {
     let (kind, dir) = (words.next(), words.next());
     let directed = dir.is_some_and(|d| graph::Dir::parse(d).is_some());
     let kind = match kind {
-        Some("sequenceDiagram" | "gantt" | "stateDiagram" | "stateDiagram-v2") => dir.is_none(),
+        Some(
+            "sequenceDiagram" | "gantt" | "stateDiagram" | "stateDiagram-v2" | "classDiagram"
+            | "classDiagram-v2",
+        ) => dir.is_none(),
         Some("flowchart" | "flowchart-elk") => dir.is_none() || directed,
         Some("graph") => directed,
         _ => false,
@@ -64,7 +67,8 @@ pub fn parse(src: &str) -> Option<Diagram> {
     let source = Source::of(src);
     match kind {
         "sequenceDiagram" => sequence::parse(lines, source).map(Diagram::Sequence),
-        "flowchart" | "flowchart-elk" | "graph" | "stateDiagram" | "stateDiagram-v2" => {
+        "flowchart" | "flowchart-elk" | "graph" | "stateDiagram" | "stateDiagram-v2"
+        | "classDiagram" | "classDiagram-v2" => {
             graph::parse(kind, header, lines, source).map(Diagram::Graph)
         }
         "gantt" => gantt::parse(lines, source).map(Diagram::Gantt),
@@ -262,6 +266,10 @@ impl Source {
     /// entities decoded and control characters as spaces. A line left as it was in `text`
     /// keeps its origin.
     pub fn label(self, text: &str) -> Vec<Text> {
+        if plain(text) {
+            // no break, entity or control character: one line, as written
+            return vec![self.one_line(text)];
+        }
         let mut out = Vec::new();
         let mut line = String::new();
         // where the line being read starts in `text`, and whether it is still as written
@@ -317,7 +325,7 @@ impl Source {
     /// A label on one line, its breaks as spaces.
     pub fn one_line(self, text: &str) -> Text {
         let s = text.trim();
-        if !s.contains(['<', '#']) && !s.contains(char::is_control) {
+        if plain(s) {
             // no break or entity: as written (a gantt chart has a name per task)
             return Text {
                 s: s.to_owned(),
@@ -329,6 +337,18 @@ impl Source {
         }
         Text::join(&self.label(s))
     }
+}
+
+/// Whether label text reads as written: no break or entity (`<`, `#`) and no control character.
+/// One pass over the bytes for printable ASCII, as nearly every label is.
+fn plain(text: &str) -> bool {
+    if text
+        .bytes()
+        .all(|b| (b' '..=b'~').contains(&b) && b != b'<' && b != b'#')
+    {
+        return true;
+    }
+    !text.contains(['<', '#']) && !text.contains(char::is_control)
 }
 
 /// A label's lines, as [`Source::label`] reads them, with no origin.
@@ -365,6 +385,10 @@ fn entity(s: &str) -> Option<(char, &str)> {
 
 /// Columns `s` takes, as the canvas counts them.
 pub fn width(s: &str) -> usize {
+    // printable ASCII, as most diagram text is: a byte a column
+    if s.bytes().all(|b| (b' '..=b'~').contains(&b)) {
+        return s.len();
+    }
     s.chars().map(|c| c.width().unwrap_or(0)).sum()
 }
 
@@ -497,6 +521,8 @@ mod tests {
             "sequenceDiagram\n  A->>B: hi\n",
             "stateDiagram-v2\n  [*] --> Idle\n",
             "gantt\n  dateFormat YYYY-MM-DD\n",
+            "classDiagram\n  A <|-- B\n",
+            "classDiagram-v2\n  class A\n",
         ] {
             assert!(is_diagram(src), "{src:?}");
         }
@@ -506,7 +532,8 @@ mod tests {
             "graph\nof the week\n",
             "graph theory is fun\nreally\n",
             "gantt charts, a primer\nchapter one\n",
-            "classDiagram\n  A <|-- B\n",
+            "erDiagram\n  A ||--o{ B : has\n",
+            "classDiagram LR\n  A <|-- B\n",
             "# flowchart LR\nA --> B\n",
         ] {
             assert!(!is_diagram(src), "{src:?}");
@@ -554,6 +581,7 @@ mod tests {
             ("flowchart LR", "A --> B", "style A fill:#f00"),
             ("stateDiagram-v2", "a --> b", "classDef x fill:#f00"),
             ("gantt", "task : 2026-01-01, 1d", "task : 2026-01-01, 1d"),
+            ("classDiagram", "A <|-- B", "style A fill:#f00"),
         ] {
             let src =
                 |n: usize| format!("{header}\n{first}\n{}", format!("{filler}\n").repeat(n - 1));
@@ -565,7 +593,7 @@ mod tests {
     #[test]
     fn unknown_kinds_are_left_as_source() {
         assert!(parse("pie\n \"a\": 1").is_none());
-        assert!(parse("classDiagram\n class A").is_none());
+        assert!(parse("erDiagram\n A ||--o{ B : has").is_none());
         assert!(parse("").is_none());
         assert!(parse("%% only a comment").is_none());
     }

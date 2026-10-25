@@ -194,13 +194,39 @@ const STATE_STATEMENTS: &[&str] = &[
     "Idle : waiting\n",
 ];
 
+/// Statements class diagrams are made of, and odd ones (DG-11).
+const CLASS_STATEMENTS: &[&str] = &[
+    "class Shape {\n",
+    "<<interface>>\n",
+    "+area() double*\n",
+    "-Rc~RefCell~T~~ grid\n",
+    "+count()$ int\n",
+    "}\n",
+    "Shape <|-- Square\n",
+    "Shape <|.. Circle : realizes\n",
+    "Square \"1\" *-- \"4..*\" Side : 日本語のラベル that is long enough to wrap\n",
+    "Circle o-- Point\n",
+    "Side ..> Point\n",
+    "Side <|--|> Square\n",
+    "Lone ()-- Shape\n",
+    "Shape --> Shape : self\n",
+    "namespace Geometry {\n",
+    "class Vec~T~\n",
+    "note for Square \"four\\nsides\"\n",
+    "direction LR\n",
+    "Island\n",
+    "cssClass \"Shape\" hot\n",
+    "not a class\n",
+];
+
 #[test]
 fn random_graphs_never_panic() {
     let mut rng = Rng(0x00ad_a5ee_d000_0003);
-    for i in 0..300 {
-        let (header, statements) = match i % 3 {
+    for i in 0..400 {
+        let (header, statements) = match i % 4 {
             0 => ("flowchart TD", GRAPH_STATEMENTS),
             1 => ("graph LR", GRAPH_STATEMENTS),
+            2 => ("classDiagram", CLASS_STATEMENTS),
             _ => ("stateDiagram-v2", STATE_STATEMENTS),
         };
         let len = rng.below(40);

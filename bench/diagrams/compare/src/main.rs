@@ -10,6 +10,7 @@
 //! cargo build --release --manifest-path bench/diagrams/compare/Cargo.toml
 //! taskset -c 2 bench/diagrams/compare/target/release/compare --dat bench/b2/plots/mermaid.dat --stamp $(git rev-parse --short HEAD)
 //! taskset -c 2 bench/diagrams/compare/target/release/compare --secs 0.2 vault   # names matching "vault"
+//! bench/diagrams/compare/target/release/compare --show class   # each renderer's drawing, untimed
 //! ```
 
 use std::hint::black_box;
@@ -48,7 +49,7 @@ enum Outcome {
 
 fn main() {
     let mut secs = 1.0;
-    let (mut dat, mut stamp, mut filter) = (None, None, None);
+    let (mut dat, mut stamp, mut filter, mut show) = (None, None, None, false);
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -60,6 +61,7 @@ fn main() {
             }
             "--dat" => dat = Some(args.next().unwrap_or_else(|| usage())),
             "--stamp" => stamp = Some(args.next().unwrap_or_else(|| usage())),
+            "--show" => show = true,
             "-h" | "--help" => usage(),
             _ => filter = Some(arg),
         }
@@ -76,6 +78,19 @@ fn main() {
     panic::set_hook(Box::new(|_| {}));
     let budget = Duration::from_secs_f64(secs);
     let theme = Theme::builtin();
+    if show {
+        for c in &cases {
+            for tool in TOOLS {
+                println!("== {} at {}: {tool}", c.name, c.width);
+                match panic::catch_unwind(AssertUnwindSafe(|| draw(tool, c, &theme))) {
+                    Ok(Some(s)) => println!("{s}"),
+                    Ok(None) => println!("(not drawn)\n"),
+                    Err(_) => println!("(panicked)\n"),
+                }
+            }
+        }
+        return;
+    }
 
     println!("| Diagram | Width | ada: parse + draw (CPU) | mermaid-text (CPU) | mmdflux (CPU) |");
     println!("|---|---|---|---|---|");
@@ -102,22 +117,7 @@ fn run(tool: &str, c: &Case, budget: Duration, theme: &Theme) -> Outcome {
     let width = c.width as usize;
     let src = c.src.as_str();
     // one untimed call first: whether it draws, and how big
-    let first = panic::catch_unwind(AssertUnwindSafe(|| -> Option<String> {
-        match tool {
-            "ada" => {
-                let d = diagram::parse(src)?;
-                let drawn = diagram::draw(&d, c.width, glyphs)?;
-                Some(text(&drawn))
-            }
-            "mermaid-text" => mermaid_text::render_with_width(src, Some(width)).ok(),
-            _ => mmdflux::render_diagram(
-                src,
-                mmdflux::OutputFormat::Text,
-                &mmdflux::RenderConfig::default(),
-            )
-            .ok(),
-        }
-    }));
+    let first = panic::catch_unwind(AssertUnwindSafe(|| draw(tool, c, theme)));
     let drawing = match first {
         Err(_) => return Outcome::Panicked,
         Ok(None) if tool == "ada" => return Outcome::Source,
@@ -148,6 +148,25 @@ fn run(tool: &str, c: &Case, budget: Duration, theme: &Theme) -> Outcome {
         t,
         cols: lines.iter().map(|l| diagram::width(l)).max().unwrap_or(0),
         rows: lines.len(),
+    }
+}
+
+/// One renderer's drawing of a case, as text; `None` when it doesn't draw it.
+fn draw(tool: &str, c: &Case, theme: &Theme) -> Option<String> {
+    let src = c.src.as_str();
+    match tool {
+        "ada" => {
+            let d = diagram::parse(src)?;
+            let drawn = diagram::draw(&d, c.width, &theme.glyphs)?;
+            Some(text(&drawn))
+        }
+        "mermaid-text" => mermaid_text::render_with_width(src, Some(c.width as usize)).ok(),
+        _ => mmdflux::render_diagram(
+            src,
+            mmdflux::OutputFormat::Text,
+            &mmdflux::RenderConfig::default(),
+        )
+        .ok(),
     }
 }
 
@@ -243,6 +262,7 @@ fn cases() -> Vec<Case> {
     const FLOW: Option<&str> = Some("mermaid, flowcharts");
     const STATE: Option<&str> = Some("mermaid, state diagrams");
     const GANTT: Option<&str> = Some("mermaid, gantt charts");
+    const CLASS: Option<&str> = Some("mermaid, class diagrams");
     add("work", file("work"), 400, None);
     add("work", file("work"), 100, SEQ);
     add("seq", file("seq"), 100, SEQ);
@@ -261,8 +281,13 @@ fn cases() -> Vec<Case> {
     for name in ["gantt-docs", "gantt-week"] {
         add(name, file(name), 100, None);
     }
-    for name in ["class", "er", "pie"] {
+    for name in ["er", "pie"] {
         add(name, file(name), 100, None);
+    }
+    // mermaid-text fails on `class`'s cardinality: out of the sum, as above
+    add("class", file("class"), 100, None);
+    for name in ["class_docs", "class_atlas", "class_terminal"] {
+        add(name, file(name), 100, CLASS);
     }
     for n in [20, 40, 80, 120] {
         add(&format!("flow{n}"), flowchart(n), 100, None);
@@ -352,6 +377,6 @@ fn fmt(d: Duration) -> String {
 }
 
 fn usage() -> ! {
-    eprintln!("usage: compare [--secs S] [--dat PATH] [--stamp STR] [NAME]");
+    eprintln!("usage: compare [--secs S] [--dat PATH] [--stamp STR] [--show] [NAME]");
     process::exit(2);
 }

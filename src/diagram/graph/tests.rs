@@ -86,6 +86,118 @@ fn composite_states_forks_notes_and_loops() {
 }
 
 #[test]
+fn class_relations_and_their_marks() {
+    let src = "classDiagram\nA <|-- B : inherits\nC *-- D\nE o-- F\nG <-- H\nI -- J\nK <.. L\n\
+               M <|.. N\nO .. P\nQ ()-- R\nS <|--|> T\nU \"1\" --> \"0..*\" V : owns";
+    insta::assert_snapshot!("unicode", rows_at(src, 100, false).join("\n"));
+    let ascii = rows_at(src, 100, true).join("\n");
+    assert!(ascii.is_ascii(), "{ascii}");
+    insta::assert_snapshot!("ascii", ascii);
+}
+
+#[test]
+fn class_boxes_compartments_and_shared_marks() {
+    insta::assert_snapshot!(
+        "docs",
+        drawn(include_str!("../../../bench/diagrams/class_docs.mmd"))
+    );
+    insta::assert_snapshot!(
+        "atlas",
+        rows_at(
+            include_str!("../../../bench/diagrams/class_atlas.mmd"),
+            100,
+            false
+        )
+        .join("\n")
+    );
+    insta::assert_snapshot!(
+        "terminal",
+        rows_at(
+            include_str!("../../../bench/diagrams/class_terminal.mmd"),
+            100,
+            false
+        )
+        .join("\n")
+    );
+}
+
+#[test]
+fn class_namespaces_notes_and_directions() {
+    let src = "classDiagram\ndirection LR\nnamespace Shapes {\nclass Shape {\n<<interface>>\n+area() double*\n\
+               +origin()$\n}\nclass Circle\n}\nShape <|.. Circle\nCircle \"1\" *-- \"1..*\" Point : center\n\
+               note for Point \"x and y\\nin pixels\"";
+    insta::assert_snapshot!("lr", drawn(src));
+    insta::assert_snapshot!("td", drawn(&src.replace("direction LR", "direction TB")));
+}
+
+#[test]
+fn unrelated_classes_are_set_in_rows() {
+    let src: String = std::iter::once("classDiagram".to_owned())
+        .chain((0..12).map(|i| format!("Base{i} <|-- Derived{i}")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let rows = rows_at(&src, 60, false);
+    assert!(rows.iter().all(|r| width(r) <= 60), "{}", rows.join("\n"));
+    insta::assert_snapshot!(rows.join("\n"));
+    // sideways, the parts stack already
+    let lr = rows_at(
+        &src.replace("classDiagram", "classDiagram\ndirection LR"),
+        60,
+        false,
+    );
+    assert!(lr.iter().all(|r| width(r) <= 60), "{}", lr.join("\n"));
+}
+
+#[test]
+fn class_members_wrap_between_words() {
+    let src = "classDiagram\nclass Terminal {\n-context_loss_handler: Option~ContextLossHandler~\n\
+               +replace_with_static_atlas / replace_with_dynamic_atlas\n}\nTerminal <|-- A\nTerminal <|-- B\n\
+               Terminal <|-- C\nTerminal <|-- D";
+    let rows = rows_at(src, 30, false);
+    let text = rows.join("\n");
+    for word in [
+        "-context_loss_handler:",
+        "Option<ContextLossHandler>",
+        "replace_with_dynamic_atlas",
+    ] {
+        assert!(text.contains(word), "{word}\n{text}");
+    }
+}
+
+#[test]
+fn class_members_style_their_types_and_parameters() {
+    use crate::doc::InlineStyle;
+    use crate::theme::StyleKey;
+    // narrow enough that the return type wraps onto a line of its own
+    let src =
+        "classDiagram\nclass Atlas {\n-grid: Rc~Grid~\n+resolve(key, bits) Option~GlyphSlot~$\n}";
+    let g = graph(src);
+    let d = draw(&g, 30, false).expect("draws");
+    let mut pieces = Vec::new();
+    for row in 0..d.canvas.height() {
+        d.canvas
+            .pieces(row, StyleKey::DiagramLine, &mut |t, _, look| {
+                if look.0 != StyleKey::DiagramLine {
+                    pieces.push((t.trim().to_owned(), look));
+                }
+            });
+    }
+    let (none, st) = (InlineStyle::NONE, InlineStyle::STATIC);
+    let (label, ty, param) = (
+        StyleKey::DiagramLabel,
+        StyleKey::DiagramType,
+        StyleKey::DiagramParam,
+    );
+    let at = |s: &str| pieces.iter().find(|(t, _)| t == s).map(|(_, l)| *l);
+    assert_eq!(at("-grid:"), Some((label, none)), "{pieces:#?}");
+    assert_eq!(at("Rc<Grid>"), Some((ty, none)), "{pieces:#?}");
+    assert_eq!(at("+resolve("), Some((label, st)), "{pieces:#?}");
+    assert_eq!(at("key"), Some((param, st)), "{pieces:#?}");
+    assert_eq!(at("bits"), Some((param, st)), "{pieces:#?}");
+    assert_eq!(at("Option<GlyphSlot>"), Some((ty, st)), "{pieces:#?}");
+}
+
+#[test]
 fn ascii_glyphs() {
     let rows = rows_at("flowchart TD\nA --> B{q}\nB -.-> C", 80, true).join("\n");
     assert!(rows.is_ascii(), "{rows}");
@@ -200,17 +312,45 @@ fn random_graphs_draw_without_panicking() {
             .wrapping_add(1_442_695_040_888_963_407);
         (seed >> 33) as usize % n
     };
+    const CLASS: &[&str] = &[
+        "class Shape {",
+        "<<interface>>",
+        "+area() double*",
+        "+String name",
+        "+count()$",
+        "}",
+        "Shape <|-- Square",
+        "Shape <|.. Circle : realizes",
+        "Square \"1\" *-- \"4..*\" Side : 日本語のラベル that is long enough to wrap",
+        "Circle o-- Point",
+        "Point --> Shape",
+        "Side ..> Point",
+        "Side <|--|> Square",
+        "Lone ()-- Shape",
+        "Shape --> Shape : self",
+        "namespace Geometry {",
+        "class Vec~T~",
+        "}",
+        "note for Square \"four<br>sides\"",
+        "Vec : +T x",
+        "class Island",
+    ];
     let headers = [
         "flowchart TD",
         "graph LR",
         "graph BT",
         "flowchart RL",
         "stateDiagram-v2",
+        "classDiagram",
+        "classDiagram\ndirection LR",
+        "classDiagram\ndirection BT",
     ];
     for i in 0..500 {
         let header = headers[i % headers.len()];
         let list = if header.starts_with("state") {
             STATE
+        } else if header.starts_with("class") {
+            CLASS
         } else {
             FLOW
         };
@@ -508,5 +648,40 @@ fn probe_graphs_keep_edges_to_their_own_lanes() {
                 assert_eq!(edges, 24, "vault3 at {avail}");
             }
         }
+    }
+}
+
+/// The one-pass `longest_piece` against its definition over `pieces`.
+#[test]
+fn longest_piece_matches_the_pieces() {
+    fn reference(text: &str) -> usize {
+        let mut widths = crate::diagram::pieces(text).map(|(_, p)| width(p));
+        let first = widths.next().unwrap_or(0);
+        let visibility = first == 1 && text.starts_with(['+', '-', '#', '~']);
+        let first = if visibility {
+            first + widths.next().unwrap_or(0)
+        } else {
+            first
+        };
+        widths.fold(first, usize::max)
+    }
+    for text in [
+        "",
+        " ",
+        "+",
+        "-",
+        "-context_loss_handler: Option<ContextLossHandler>",
+        "+replace_with_static_atlas / replace_with_dynamic_atlas",
+        "+resolve_glyph_slot(key, style_bits) : Option<GlyphSlot>",
+        "+(a)",
+        "(x) [y] {z}",
+        "#a-b,c/d",
+        "~ x",
+        "+  spaced   out ",
+        "日本語のラベル that is long",
+        "a((b",
+        "--x--",
+    ] {
+        assert_eq!(longest_piece(text), reference(text), "{text:?}");
     }
 }

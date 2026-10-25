@@ -216,8 +216,19 @@ fn cases() -> Vec<Case> {
         None,
         "a parse error (a 0d milestone)",
     );
+    // class diagrams: mermaid-text fails on all but the last (`class` on its cardinality)
+    for name in ["class", "class_docs", "class_atlas"] {
+        add(name, file(name), 100, None, "a parse error");
+    }
+    add(
+        "class_terminal",
+        file("class_terminal"),
+        100,
+        us(26.5),
+        ", 137 columns",
+    );
     // kinds ada leaves as source
-    for name in ["class", "er", "pie"] {
+    for name in ["er", "pie"] {
         add(name, file(name), 100, None, "");
     }
     let series = [

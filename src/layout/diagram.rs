@@ -11,7 +11,7 @@ use std::panic::AssertUnwindSafe;
 
 use super::{Builder, CodeInfo, GridRows, RowKind, SearchSeg, expand_tabs, push_span, wrap};
 use crate::diagram::{self, Canvas, Diagram};
-use crate::doc::{CodeBlock, InlineStyle, LineRange, UnitId, code_lines};
+use crate::doc::{CodeBlock, LineRange, UnitId, code_lines};
 use crate::guard;
 use crate::theme::StyleKey;
 
@@ -36,17 +36,14 @@ pub(super) fn layout(
         b.begin_row();
         x = b.col;
         let (out, col, row_start) = (&mut b.out, &mut b.col, b.row_start);
-        canvas.pieces(row, StyleKey::DiagramLine, &mut |text, width, key| {
-            let width = width.min(usize::from(u16::MAX)) as u16;
-            push_span(
-                out,
-                row_start,
-                col,
-                text,
-                width,
-                (key, InlineStyle::NONE, None),
-            );
-        });
+        canvas.pieces(
+            row,
+            StyleKey::DiagramLine,
+            &mut |text, width, (key, inline)| {
+                let width = width.min(usize::from(u16::MAX)) as u16;
+                push_span(out, row_start, col, text, width, (key, inline, None));
+            },
+        );
         b.end_row(src, RowKind::Diagram { block: code.id, x });
     }
     let end = b.out.row_count();

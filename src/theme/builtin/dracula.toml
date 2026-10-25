@@ -66,6 +66,8 @@ footnote_label = { fg = "purple" }
 html = { fg = "comment" }
 image_frame = {}
 diagram_line = { fg = "comment" }   # a diagram's lines, boxes and arrows; stronger than table_border
+diagram_type = { fg = "cyan" }   # a class member's types: an attribute's, a parameter's, a return type
+diagram_param = { fg = "orange" }   # a class method's parameters
 
 [glyphs]
 bullets = ["•", "◦", "▪"]

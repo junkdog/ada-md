@@ -32,9 +32,9 @@ More of it, one feature at a time, on [the site](https://junkdog.github.io/ada-m
 - **Tables that know their units.** `s` sorts by any column, and `350 µs`, `1m 30s` and `€420`
   sort as the values they are. Too wide for the terminal, a table turns into cards
   ([Tables and diagrams](#tables-and-diagrams)).
-- **The best-looking mermaid in a terminal.** Sequence diagrams, flowcharts, state diagrams and
-  gantt charts, drawn as text with cleanly joined lines, laid out to fit the width and colored by
-  the theme, in any terminal and in `--print`.
+- **The best-looking mermaid in a terminal.** Sequence diagrams, flowcharts, state diagrams,
+  class diagrams and gantt charts, drawn as text with cleanly joined lines, laid out to fit the
+  width and colored by the theme, in any terminal and in `--print`.
 - **Wiki links that survive moves.** A `[[link]]` is found by name anywhere in the vault, as
   Obsidian does ([Links in a vault](#links-in-a-vault)).
 - **Search that sees through markup.** A regex `foo bar` finds `**foo** _bar_`.
@@ -297,7 +297,8 @@ are reported with the file, line and column.
   `max_width` to the terminal's width. One that still doesn't fit becomes cards, one per row.
   `t` cycles every table between auto, grid and records.
 - **Mermaid, drawn as text.** A ```` ```mermaid ```` block with a sequence diagram, flowchart,
-  state diagram or gantt chart is drawn in the note, in the theme's colors, fitted to the width.
+  state diagram, class diagram or gantt chart is drawn in the note, in the theme's colors, fitted
+  to the width.
   One that still doesn't fit scrolls sideways with `←` `→`, and labels cut to fit are listed in
   full under it. Search finds text in the labels and lights it up in the drawing. Other kinds
   show as code. A `.mmd` or `.mermaid` file, or a diagram piped in, is drawn the same way, at
