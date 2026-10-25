@@ -96,8 +96,9 @@ pub(super) fn layout(
 
 /// A block's source lines, to find the search unit a label came from.
 struct Lines<'a> {
-    /// Each line, and the byte of the block's text it starts at.
-    lines: Vec<(u32, &'a str)>,
+    /// Each line, the byte of the block's text it starts at, and whether it holds a control
+    /// character (checked once: a long line's every label scanning it again was quadratic, F-012).
+    lines: Vec<(u32, &'a str, bool)>,
     first_unit: UnitId,
 }
 
@@ -105,7 +106,10 @@ impl<'a> Lines<'a> {
     fn of(code: &'a CodeBlock) -> Self {
         let text = &*code.text;
         let lines = code_lines(text)
-            .map(|l| ((l.as_ptr() as usize - text.as_ptr() as usize) as u32, l))
+            .map(|l| {
+                let at = (l.as_ptr() as usize - text.as_ptr() as usize) as u32;
+                (at, l, l.contains(|c: char| c.is_control()))
+            })
             .collect();
         Self {
             lines,
@@ -118,14 +122,14 @@ impl<'a> Lines<'a> {
     fn unit(&self, at: u32, len: u32) -> Option<(UnitId, u32, &'a str)> {
         let i = self
             .lines
-            .partition_point(|&(s, _)| s <= at)
+            .partition_point(|&(s, ..)| s <= at)
             .checked_sub(1)?;
-        let (start, line) = self.lines[i];
+        let (start, line, control) = self.lines[i];
         let from = (at - start) as usize;
         let text = line.get(from..from + len as usize)?;
         // the unit's text has its tabs expanded; a label has none of its own
         let before = &line[..from];
-        let off = if before.contains(|c: char| c.is_control()) {
+        let off = if control && before.contains(|c: char| c.is_control()) {
             expand_tabs(before).len()
         } else {
             from

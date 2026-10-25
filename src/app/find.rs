@@ -202,7 +202,7 @@ impl State {
         let Some(search) = &self.search else {
             return;
         };
-        let Some(cells) = search.projection.cells.iter().find(|c| c.at == at) else {
+        let Some(cells) = search.projection.first_cells(at) else {
             return;
         };
         let (row, window, cols) = (cells.row, cells.window, cells.cols.clone());

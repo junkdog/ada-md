@@ -11,6 +11,7 @@ use unicode_width::UnicodeWidthStr;
 use super::wrap::{self, Wrapped};
 use super::{Builder, GridRows, RowKind, TableMode, TableRows};
 use crate::doc::{Align, Doc, LineRange, Table, TableRow};
+use crate::geom;
 use crate::theme::{Glyphs, StyleKey, TableBorder};
 
 struct Border {
@@ -775,8 +776,12 @@ pub(super) fn layout(b: &mut Builder<'_>, t: &Table) {
         row: &t.header,
         mark,
     };
-    // Padding of one cell on each side of a column, plus the vertical borders.
-    let chrome = 2 * cols.len() as u16 + border.map_or(0, |_| cols.len() as u16 + 1);
+    // Padding of one cell on each side of a column, plus the vertical borders; saturating, as
+    // 32,768 columns pass u16::MAX (F-012).
+    let n = geom::cells(cols.len());
+    let chrome = n
+        .saturating_mul(2)
+        .saturating_add(border.map_or(0, |_| n.saturating_add(1)));
     let avail = b.table_avail().saturating_sub(chrome);
     let mode = match b.params.table_mode {
         // There is nothing to put on a card without body rows.

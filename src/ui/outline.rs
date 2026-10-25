@@ -1,7 +1,7 @@
 //! The outline popup: the headings (`o`), indented by level, the links (`l`), each with where it
 //! leads, the themes (`T`), or the columns to sort a table by (`s`); filtered by what's typed.
 
-use crate::geom::Rect;
+use crate::geom::{Rect, cells};
 use crate::grid::Grid;
 use crate::style::Modifier;
 use unicode_width::UnicodeWidthStr;
@@ -44,12 +44,11 @@ pub fn draw(buf: &mut Grid, area: Rect, state: &State) {
         Listing::Columns(_) => (MAX_WIDTH, "sort by"),
     };
     // saturating: a heading or a count past u16::MAX would wrap
-    let fit = |n: usize| u16::try_from(n).unwrap_or(u16::MAX);
-    let width = fit(widest)
+    let width = cells(widest)
         .saturating_add(4)
         .clamp(32, max_width)
         .min(area.width.saturating_sub(2));
-    let height = fit(all.len().max(1))
+    let height = cells(all.len().max(1))
         .saturating_add(3)
         .min(area.height.saturating_sub(2));
     if width < 8 || height < 4 {

@@ -16,6 +16,7 @@ use std::ops::Range;
 use unicode_width::UnicodeWidthChar;
 
 use crate::doc::{Align, Block, BlockKind, CodeBlock, CodeId, Doc, Table, UnitId};
+use crate::geom;
 use crate::layout::{Layout, RowKind, SearchSeg, TAB_STOP};
 use crate::search::SearchMap;
 
@@ -458,12 +459,10 @@ impl<'a> View<'a> {
             let text = self.map.unit_text(s.unit);
             let width = |to: u32| {
                 (text.get(s.start as usize..to as usize)).map_or(0, |t| {
-                    t.chars()
-                        .map(|c| c.width().unwrap_or(0) as u16)
-                        .sum::<u16>()
+                    geom::cells(t.chars().map(|c| c.width().unwrap_or(0)).sum())
                 })
             };
-            let mut cols = s.col + width(r.start)..s.col + width(r.end);
+            let mut cols = s.col.saturating_add(width(r.start))..s.col.saturating_add(width(r.end));
             if let Some((start, x)) = self.window(s) {
                 let info = match self.layout.rows[s.row as usize].kind {
                     RowKind::Code { block, .. } | RowKind::Diagram { block, .. } => {
@@ -826,7 +825,7 @@ impl<'a> Shown<'a> {
         ) {
             by_line.push((r.src.start, row));
             for (col, cell) in r.cells.iter().enumerate() {
-                cells.push((cell.unit, row, col as u16));
+                cells.push((cell.unit, row, geom::cells(col)));
             }
         }
         cells.sort_unstable_by_key(|c| c.0);

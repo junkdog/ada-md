@@ -421,10 +421,11 @@ fn wrap_each<'a>(text: &'a str, max: usize, emit: &mut impl FnMut(usize, &'a str
     let (mut start, mut end, mut used) = (None, 0, 0);
     let mut emitted = false;
     for (at, piece) in pieces(text) {
-        let (mut at, mut piece) = (at, piece);
+        // measured once: a word longer than a line loses each line's width as it's broken, where
+        // measuring what's left after each line was quadratic (a 280 KB word took 1.6 s, F-012)
+        let (mut at, mut piece, mut w) = (at, piece, width(piece));
         loop {
             let gap = start.map_or(0, |_| at - end);
-            let w = width(piece);
             if used + gap + w <= max {
                 start = start.or(Some(at));
                 (end, used) = (at + piece.len(), used + gap + w);
@@ -436,9 +437,10 @@ fn wrap_each<'a>(text: &'a str, max: usize, emit: &mut impl FnMut(usize, &'a str
                 continue;
             }
             let head = break_word(piece, max);
-            emit(at, head, width(head));
+            let head_w = width(head);
+            emit(at, head, head_w);
             emitted = true;
-            (at, piece) = (at + head.len(), &piece[head.len()..]);
+            (at, piece, w) = (at + head.len(), &piece[head.len()..], w - head_w);
             if piece.is_empty() {
                 break;
             }

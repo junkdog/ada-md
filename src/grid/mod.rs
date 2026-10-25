@@ -11,7 +11,7 @@ pub use screen::Screen;
 
 use std::ops::{Index, IndexMut, Range};
 
-use crate::geom::Rect;
+use crate::geom::{self, Rect};
 use crate::style::{Color, Modifier, Style};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -578,7 +578,7 @@ fn cell_width(g: &str) -> u16 {
         .chars()
         .filter(|c| matches!(c, '\u{FF9E}' | '\u{FF9F}'))
         .count();
-    (g.width() + marks) as u16
+    geom::cells(g.width() + marks)
 }
 
 #[cfg(test)]

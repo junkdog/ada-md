@@ -96,6 +96,12 @@ impl Rect {
     }
 }
 
+/// A count of cells as `u16`, saturating: a width, or a count of rows or entries, taken from the
+/// document can pass `u16::MAX`, where `as u16` would wrap it (F-012).
+pub fn cells(n: usize) -> u16 {
+    u16::try_from(n).unwrap_or(u16::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

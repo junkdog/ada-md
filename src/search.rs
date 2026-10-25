@@ -11,6 +11,7 @@ use regex::{Regex, RegexBuilder};
 use unicode_width::UnicodeWidthStr;
 
 use crate::doc::{Block, BlockKind, Doc, LinkId, LinkKind, UnitId, code_lines};
+use crate::geom;
 use crate::layout::{self, Layout, RowKind, expand_tabs, wrap};
 use crate::theme::Glyphs;
 
@@ -236,6 +237,10 @@ pub struct Projection {
     pub cells: Vec<Cells>,
     /// Match indices in screen order; matches that don't render are left out.
     pub order: Vec<u32>,
+    /// Beside `order`: the index of each match's first cells. Looking a match's row up by a scan
+    /// of the cells, for each match in turn, took 1 s a key on XL scrolled to its end (100k
+    /// matches above the screen, F-012).
+    first: Vec<u32>,
     /// Match index → its position in `order`.
     rank: Vec<Option<u32>>,
 }
@@ -265,6 +270,8 @@ impl Projection {
         let nowrap = !layout.params.code_wrap;
 
         let mut cells = Vec::new();
+        // (segment, byte, columns from the segment's start to the byte)
+        let mut measured = (u32::MAX, 0, 0);
         for (at, m) in matches.iter().enumerate() {
             let at = at as u32;
             match map.units.get(m.unit as usize).map(|u| u.kind) {
@@ -281,9 +288,18 @@ impl Projection {
                         if a >= b {
                             continue;
                         }
-                        let width = |to: u32| {
-                            text.get(seg.start as usize..to as usize)
-                                .map_or(0, |t| t.width() as u16)
+                        // columns from the segment's start, carried on from the last match
+                        // measured in it: a no-wrap line of n matches is measured once, not n
+                        // times (70k matches on a line took 3 s a frame, F-012)
+                        let mut width = |to: u32| {
+                            let (from, cols) = match measured {
+                                (s, from, cols) if s == i && from <= to => (from, cols),
+                                _ => (seg.start, 0),
+                            };
+                            let cols =
+                                cols + text.get(from as usize..to as usize).map_or(0, str::width);
+                            measured = (i, to, cols);
+                            geom::cells(cols)
                         };
                         let window = match layout.rows[seg.row as usize].kind {
                             RowKind::Code { .. } if nowrap => Some(seg.col),
@@ -293,7 +309,8 @@ impl Projection {
                         };
                         cells.push(Cells {
                             row: seg.row,
-                            cols: seg.col + width(a)..seg.col + width(b),
+                            cols: seg.col.saturating_add(width(a))
+                                ..seg.col.saturating_add(width(b)),
                             at,
                             hidden: false,
                             window,
@@ -329,17 +346,23 @@ impl Projection {
             same
         });
 
-        let mut order = Vec::new();
+        let (mut order, mut first) = (Vec::new(), Vec::new());
         let mut rank = vec![None; matches.len()];
-        for c in &cells {
+        for (k, c) in cells.iter().enumerate() {
             if let Some(slot) = rank.get_mut(c.at as usize)
                 && slot.is_none()
             {
                 *slot = Some(order.len() as u32);
                 order.push(c.at);
+                first.push(k as u32);
             }
         }
-        Self { cells, order, rank }
+        Self {
+            cells,
+            order,
+            first,
+            rank,
+        }
     }
 
     /// The position of match `at` in screen order.
@@ -347,9 +370,15 @@ impl Projection {
         self.rank.get(at as usize).copied().flatten()
     }
 
+    /// The first cells match `at` shows on.
+    pub fn first_cells(&self, at: u32) -> Option<&Cells> {
+        let rank = self.rank(at)?;
+        self.cells.get(self.first[rank as usize] as usize)
+    }
+
     /// The first row match `at` shows on.
     pub fn row_of(&self, at: u32) -> Option<u32> {
-        self.cells.iter().find(|c| c.at == at).map(|c| c.row)
+        self.first_cells(at).map(|c| c.row)
     }
 
     /// The cells on rows `rows`.

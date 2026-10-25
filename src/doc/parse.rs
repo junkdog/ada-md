@@ -57,6 +57,12 @@ fn markdown(text: &str) -> Option<Doc> {
     Some(b.finish())
 }
 
+/// The most quotes and lists nested in each other. Deeper ones fold into the last, as
+/// [`Container::Other`] does: layout, search and selection walk the blocks recursively, and
+/// 10,000 `>` (10 KB) overflowed the main thread's stack (F-012). 100 levels take 200 columns
+/// of bars before any text; markdown-it stops at 100 too (`maxNesting`).
+const MAX_NESTING: usize = 100;
+
 /// The byte offset of the start of each line.
 pub(super) fn line_starts(text: &str) -> Vec<u32> {
     std::iter::once(0)
@@ -149,6 +155,8 @@ struct Builder {
     tables: TableId,
     code_blocks: CodeId,
     units: UnitId,
+    /// Quotes and lists open on the stack, up to [`MAX_NESTING`].
+    nesting: usize,
 }
 
 impl Builder {
@@ -173,6 +181,7 @@ impl Builder {
             tables: 0,
             code_blocks: 0,
             units: 0,
+            nesting: 0,
         }
     }
 
@@ -208,15 +217,14 @@ impl Builder {
                 src,
             }),
             Event::TaskListMarker(done) => {
+                // the innermost container's, unless it's an item folded into its parent
                 let item = self.stack.iter_mut().rev().find_map(|f| match f {
-                    Frame::Blocks {
-                        kind: Container::Item,
-                        task,
-                        ..
-                    } => Some(task),
+                    Frame::Blocks { kind, task, .. } => {
+                        Some(matches!(kind, Container::Item).then_some(task))
+                    }
                     _ => None,
                 });
-                if let Some(task) = item {
+                if let Some(Some(task)) = item {
                     *task = Some(done);
                 }
             }
@@ -234,7 +242,13 @@ impl Builder {
                 self.close_implicit();
                 self.push_inline(InlineKind::Heading(level as u8), src);
             }
-            Tag::BlockQuote(kind) => self.push_blocks(Container::Quote(kind.map(callout)), src),
+            Tag::BlockQuote(_) if self.nesting == MAX_NESTING => {
+                self.push_blocks(Container::Other, src);
+            }
+            Tag::BlockQuote(kind) => {
+                self.nesting += 1;
+                self.push_blocks(Container::Quote(kind.map(callout)), src);
+            }
             Tag::CodeBlock(kind) => {
                 self.close_implicit();
                 let (lang, fenced) = match kind {
@@ -255,8 +269,12 @@ impl Builder {
                     src,
                 });
             }
+            Tag::List(_) if self.nesting == MAX_NESTING => {
+                self.push_blocks(Container::Other, src);
+            }
             Tag::List(start) => {
                 self.close_implicit();
+                self.nesting += 1;
                 self.stack.push(Frame::List {
                     start,
                     loose: false,
@@ -264,7 +282,15 @@ impl Builder {
                     src,
                 });
             }
-            Tag::Item => self.push_blocks(Container::Item, src),
+            Tag::Item => {
+                self.close_implicit();
+                // an item of a list folded into its parent folds with it
+                let kind = match self.stack.last() {
+                    Some(Frame::List { .. }) => Container::Item,
+                    _ => Container::Other,
+                };
+                self.push_blocks(kind, src);
+            }
             Tag::FootnoteDefinition(label) => {
                 let id = self.footnote_id(&label);
                 self.push_blocks(Container::Footnote(id), src);
@@ -611,10 +637,13 @@ impl Builder {
                     note.src = src;
                     return;
                 }
-                Container::Quote(callout) => Block {
-                    kind: BlockKind::Quote { callout, blocks },
-                    src,
-                },
+                Container::Quote(callout) => {
+                    self.nesting -= 1;
+                    Block {
+                        kind: BlockKind::Quote { callout, blocks },
+                        src,
+                    }
+                }
                 Container::Other => {
                     for b in blocks {
                         self.push_block(b);
@@ -628,14 +657,17 @@ impl Builder {
                 loose,
                 items,
                 src,
-            } => Block {
-                kind: BlockKind::List(List {
-                    start,
-                    tight: !loose,
-                    items,
-                }),
-                src,
-            },
+            } => {
+                self.nesting -= 1;
+                Block {
+                    kind: BlockKind::List(List {
+                        start,
+                        tight: !loose,
+                        items,
+                    }),
+                    src,
+                }
+            }
             Frame::Code {
                 lang,
                 text,
@@ -989,6 +1021,39 @@ mod tests {
         let doc = parse("---\ntitle: x\n---\n\n# Body\n");
         assert_eq!(kinds(&doc.blocks), ["heading"]);
         assert_eq!(doc.blocks[0].src, LineRange::line(5));
+    }
+
+    /// Quotes and lists past `MAX_NESTING` fold into the last, keeping what they hold.
+    #[test]
+    fn nesting_stops_at_its_limit() {
+        fn depth(blocks: &[Block]) -> usize {
+            (blocks.iter())
+                .map(|b| match &b.kind {
+                    BlockKind::Quote { blocks, .. } => 1 + depth(blocks),
+                    BlockKind::List(l) => {
+                        1 + l.items.iter().map(|i| depth(&i.blocks)).max().unwrap_or(0)
+                    }
+                    _ => 0,
+                })
+                .max()
+                .unwrap_or(0)
+        }
+        let quotes = parse(&format!("{}a\n", ">".repeat(10_000)));
+        assert_eq!(depth(&quotes.blocks), MAX_NESTING);
+        let mixed = parse(&format!("{}[ ] a\n", "> - ".repeat(10_000)));
+        assert_eq!(depth(&mixed.blocks), MAX_NESTING);
+        for doc in [quotes, mixed] {
+            let mut tasks = 0;
+            let mut text = String::new();
+            doc.each_block(&mut |b| match &b.kind {
+                BlockKind::List(l) => tasks += l.items.iter().filter(|i| i.task.is_some()).count(),
+                BlockKind::Paragraph(inl) => text.push_str(&inl.plain_text()),
+                _ => {}
+            });
+            // the folded item's marker is its text's, not an outer item's
+            assert_eq!(tasks, 0);
+            assert!(text.ends_with('a'), "{text:?}");
+        }
     }
 
     #[test]

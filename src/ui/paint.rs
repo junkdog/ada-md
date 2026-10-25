@@ -226,7 +226,7 @@ fn stripe_piece(
             start = i;
             inside = now;
         }
-        c += ch.width().unwrap_or(0) as u16;
+        c = c.saturating_add(ch.width().unwrap_or(0) as u16);
     }
     emit(&text[start..], if inside { style.patch(bg) } else { style });
 }
