@@ -22,6 +22,7 @@ use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+use ada::images::{self, Probe};
 use ada::kitty::{self, Payload};
 use ada::pixels;
 use image::metadata::Orientation;
@@ -126,6 +127,16 @@ fuzz_target!(|data: &[u8]| {
     let (a, b) = (u32::from(*a), u32::from(*b));
     std::fs::write(scratch(), file).expect("scratch file");
     let _ = pixels::is_plain_png(scratch());
+    // a piped image's header reads as the same bytes' file does
+    let probed = match images::probe(scratch()) {
+        Probe::Image { w, h, .. } => Some((w, h)),
+        Probe::Failed(_) => None,
+    };
+    assert_eq!(
+        images::header_of(file).ok(),
+        probed,
+        "piped and probed headers disagree"
+    );
     let mut asked = None;
     let decoded = pixels::decode_to(scratch(), |px| {
         // fitted into a box, as print and the TUI ask; or a size of its own, past the image's too

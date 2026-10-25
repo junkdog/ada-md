@@ -1,15 +1,17 @@
 //! `--print` as `main` runs it (ADR-15): a document read from stdin or a file, its type
 //! sniffed or forced by `-l`, cut to a preview's head, laid out and written as SGR text, with
-//! line numbers, `--line` alignment, a bound on the rows, and block images drawn with kitty
-//! placeholders or half-blocks. Links lead to fixed images (PNG of each color type, JPEG,
-//! truncated, not an image at all, missing) or to one file whose bytes the input holds, with
-//! sizes true or not, as a file changed since its probe. Nothing may panic.
+//! line numbers, code wrapped or cut, `--line` alignment, a bound on the rows, and block images
+//! drawn with kitty placeholders or half-blocks. Links lead to fixed images (PNG of each color
+//! type, JPEG, truncated, not an image at all, missing) or to one file whose bytes the input
+//! holds, with sizes true or not, as a file changed since its probe. Nothing may panic.
 //!
 //! ```zsh
 //! cargo +nightly fuzz run -s none -a print -- -dict=fuzz/markdown.dict -max_len=16384
 //! ```
 
 #![no_main]
+
+mod skip;
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -40,6 +42,7 @@ struct Setup {
     name: u8,
     /// `-l`, as an index into [`FORCED`].
     forced: u8,
+    /// The low bits pick the line numbers; the top bit turns `--code-wrap` off.
     line_numbers: u8,
     table_mode: u8,
     /// Images on, by protocol: kitty or half-blocks.
@@ -57,7 +60,7 @@ struct Setup {
 const NAMES: [&str; 8] = [
     "-",
     "-",
-    "-",
+    "fuzz.mmd",
     "NOTES",
     "fuzz.md",
     "fuzz.txt",
@@ -66,7 +69,7 @@ const NAMES: [&str; 8] = [
 ];
 
 const FORCED: [&str; 12] = [
-    "", "", "", "", "md", "txt", "rs", "yaml", "diff", "log", "toml", "html",
+    "", "", "", "mmd", "md", "txt", "rs", "yaml", "diff", "log", "toml", "html",
 ];
 
 /// The scratch directory, and each fixture with its true size.
@@ -173,6 +176,9 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     let text = String::from_utf8_lossy(&bytes);
+    if skip::makefile(&text) {
+        return;
+    }
 
     let theme = Theme::builtin();
     let proto = setup.images.map(|kitty| {
@@ -192,7 +198,7 @@ fuzz_target!(|data: &[u8]| {
         max_width: setup.max_width.map(u16::from),
         table_mode: [TableMode::Auto, TableMode::Grid, TableMode::Records]
             [usize::from(setup.table_mode) % 3],
-        code_wrap: true,
+        code_wrap: setup.line_numbers & 0x80 == 0,
         line_numbers: [LineNumbers::Off, LineNumbers::Code, LineNumbers::All]
             [usize::from(setup.line_numbers) % 3],
         glyphs_gen: theme.glyphs.generation(),
