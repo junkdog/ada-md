@@ -2,15 +2,19 @@
 
 What changed in each release of ada, newest first. A release includes the changes of the pre-releases before it.
 
-## Unreleased
+## [1.0.0-rc.3](https://github.com/junkdog/ada-md/compare/v1.0.0-rc.2..v1.0.0-rc.3) (2026-10-25)
 
 ### Features
 
+- *(cli)* Add --code-wrap on|off, and let fzf previews cut code at the pane's edge
+- *(diagram)* Draw mermaid class diagrams as text, fitted to the width and styled by the theme
 - *(ui)* Tint where a jump landed until the next key
 
 ### Fixes
 
 - *(app)* List a link wrapped inside a word without a space
+- *(ui)* Keep the outline popup's size from wrapping past 65,535 headings or columns
+- Hold documents past 65,535 columns or entries, and nesting 10,000 deep.
 
 ## [1.0.0-rc.2](https://github.com/junkdog/ada-md/compare/v1.0.0-rc.1..v1.0.0-rc.2) (2026-10-24)
 
