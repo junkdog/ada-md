@@ -10,7 +10,7 @@ Writes headline tiles for one document, then CSS-only tabs (radio inputs, no scr
 metric for each document, then the same for each previewer file and each image, then a chart per kind of mermaid
 diagram. Bars are on a log scale and every bar carries its value; a viewer the run couldn't
 measure gets the reason instead of a bar."""
-import math, os, re, subprocess, sys
+import datetime, math, os, re, subprocess, sys
 from html import escape
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -181,8 +181,11 @@ def tiles(panels):
 def section():
     inter, commit = parse(f"{PLOTS}/interactive.dat")
     prints, _ = parse(f"{PLOTS}/print.dat")
-    date = subprocess.run(["git", "-C", ROOT, "log", "-1", "--format=%cs", "--", "bench/b2/plots/interactive.dat"],
-                          capture_output=True, text=True).stdout.strip() or "?"
+    # the commit that last changed the data, or today while the new data isn't committed yet
+    git = lambda *args: subprocess.run(["git", "-C", ROOT, *args, "--", "bench/b2/plots/interactive.dat"],
+                                       capture_output=True, text=True)
+    date = (str(datetime.date.today()) if git("diff", "--quiet", "HEAD").returncode
+            else git("log", "-1", "--format=%cs").stdout.strip() or "?")
     out = [f'<p class="lede">Measured on the {DOCS[TILE_DOC].split(",")[0]} note, the largest in the vault:</p>',
            tiles(inter), '<div class="doc-tabs" role="radiogroup" aria-label="document">']
     for doc, desc in DOCS.items():
@@ -207,7 +210,10 @@ def section():
                   "viu: in kitty's graphics protocol, and drawn in characters for any other terminal.",
                   lambda f: IMAGE_NOTES.get)
     out += mermaid()
-    out.append(f'<p class="stamp">B2 at ada <code>{commit}</code>, {date}{stamps()}</p>')
+    # an ada-only rerun's records: the other tools' cells are the full run's under it (plot.py's B2_OTHERS)
+    others = re.search(r"; the other tools at ada (\S+) (\S+);", open(f"{PLOTS}/interactive.dat").readline())
+    others = f"; the other tools from the full run at ada <code>{others[1]}</code>, {others[2]}" if others else ""
+    out.append(f'<p class="stamp">B2 at ada <code>{commit}</code>, {date}{stamps()}{others}</p>')
     return "\n".join(out)
 
 

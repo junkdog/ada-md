@@ -8,7 +8,9 @@ with $B2P_DIRS and $B2I_DIRS) and takes its cell values, so a chart shows exactl
 (gnuplot's `index`), a row per document or file, a column per viewer; `?` is a cell the run couldn't measure,
 `cap` a run b2p.zsh stopped at its cap. interactive.dat's header also counts how often ada is first over every
 ranked measurement ("ada first in 79 of 84"), which site/perf.py puts in the hero. PREVIEWER stamps previewer.dat (default COMMIT), for a rerun of some files
-at another commit merged over the full run: "137570c, logs e9ec3b7"."""
+at another commit merged over the full run: "137570c, logs e9ec3b7". The records of an ada-only rerun (rerun.zsh, whose
+OUT holds ada-ref) carry the other tools' cells from the full run under it: B2_OTHERS="COMMIT DATE" names that run
+for the site's stamp, and is required there."""
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from doctables import DOCS, IMAGES, PREV_FILES, RANKED, S, b2a, loader, rank, val
@@ -16,6 +18,10 @@ from doctables import DOCS, IMAGES, PREV_FILES, RANKED, S, b2a, loader, rank, va
 OUT = os.path.dirname(os.path.abspath(__file__)) + "/plots"
 commit = sys.argv[1] if len(sys.argv) > 1 else "?"
 prev_stamp = sys.argv[2] if len(sys.argv) > 2 else commit
+others = os.environ.get("B2_OTHERS", "")
+if os.path.exists(f"{S}/ada-ref") and len(others.split()) != 2:
+    sys.exit("plot: these are an ada-only rerun's records: set B2_OTHERS='COMMIT DATE', the full run the other "
+             "tools' cells are from")
 # treemd HEAD rather than 0.9.1: it is the faster of the two, and 0.9.1's search lands on the wrong row
 VIEWERS = ["ada", "leaf", "mdfried", "mdtui", "treemd-head", "glow"]
 PANELS = [("first paint", "first", 1), ("CPU per line scroll", "line CPU", 1), ("search", "search", 1),
@@ -42,7 +48,8 @@ for title, facet, scale in PANELS:
 ranks = [k for f in RANKED for d in DOCS if (k := rank(d, f)[0]) is not None]
 with open(f"{OUT}/interactive.dat", "w") as f:
     f.write(f"# B2 at ada {commit}: medians, ms (peak RSS in MiB); ada first in {ranks.count(1)} of {len(ranks)} "
-            f"ranked measurements; written by bench/b2/plot.py\n")
+            f"ranked measurements; {f'the other tools at ada {others}; ' if others else ''}written by "
+            f"bench/b2/plot.py\n")
     f.write("\n\n\n".join(blocks) + "\n")
 
 res = b2a()
