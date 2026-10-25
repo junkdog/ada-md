@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "ada-md"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "anpa",
  "crossterm",

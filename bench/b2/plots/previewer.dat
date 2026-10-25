@@ -1,39 +1,39 @@
-# B2 previewer files at ada 2f5fa5e: hyperfine medians, ms (peak RSS in MiB); cap at 60 s; written by bench/b2/plot.py
+# B2 previewer files at ada cde85ff: hyperfine medians, ms (peak RSS in MiB); cap at 60 s; written by bench/b2/plot.py
 # previewer, a preview, wall
 # doc ada bat rich
-code-s.rs 5.35112 8.66213 138.878
-code-m.rs 23.1263 33.1925 218.202
-code-l.rs 22.6029 30.1882 196.435
-log.log 3.81527 1049.01 237.903
-huge.json 5.93673 27.7143 4368.42
-huge.log 4.04664 1049.47 9102.95
+code-s.rs 5.47487 8.66213 138.878
+code-m.rs 23.271 33.1925 218.202
+code-l.rs 22.7816 30.1882 196.435
+log.log 3.96268 1049.01 237.903
+huge.json 6.07366 27.7143 4368.42
+huge.log 4.1937 1049.47 9102.95
 
 
 # previewer, the whole file, wall
 # doc ada bat rich mcat
-code-s.rs 5.33794 8.66375 138.375 8.11282
-code-m.rs 23.0493 33.2886 217.326 30.4169
-code-l.rs 112.889 145.624 521.551 38.3744
-log.log 8.88261 3263.5 397.548 3236
-huge.json 26.4321 27.1126 4281.17 cap
-huge.log 291.335 cap 24637.7 cap
+code-s.rs 5.47355 8.66375 138.375 8.11282
+code-m.rs 23.163 33.2886 217.326 30.4169
+code-l.rs 113.058 145.624 521.551 38.3744
+log.log 9.10227 3263.5 397.548 3236
+huge.json 25.3898 27.1126 4281.17 cap
+huge.log 301.88 cap 24637.7 cap
 
 
 # previewer, a preview, peak RSS
 # doc ada bat rich
-code-s.rs 6.7793 15.168 42.8711
-code-m.rs 7.7168 15.4746 48.1426
-code-l.rs 7.82422 15.3496 46.7617
-log.log 7.73438 14.1816 48.3594
-huge.json 15.6543 25.1836 580.061
-huge.log 7.54492 14.0781 348.33
+code-s.rs 6.79688 15.168 42.8711
+code-m.rs 7.70898 15.4746 48.1426
+code-l.rs 7.69727 15.3496 46.7617
+log.log 7.72461 14.1816 48.3594
+huge.json 15.7344 25.1836 580.061
+huge.log 7.69727 14.0781 348.33
 
 
 # previewer, the whole file, peak RSS
 # doc ada bat rich mcat
-code-s.rs 6.61133 15.1445 42.7598 17.4688
-code-m.rs 7.63672 15.5898 48.2559 18.7812
-code-l.rs 11.1582 15.5059 63.7871 21.3379
-log.log 13.6328 14.1953 53.9219 34.7559
-huge.json 50.7227 25.5547 579.645 cap
-huge.log 14.1875 cap 898.445 cap
+code-s.rs 6.61914 15.1445 42.7598 17.4688
+code-m.rs 7.60352 15.5898 48.2559 18.7812
+code-l.rs 11.1348 15.5059 63.7871 21.3379
+log.log 13.5312 14.1953 53.9219 34.7559
+huge.json 52.0703 25.5547 579.645 cap
+huge.log 14.7969 cap 898.445 cap
