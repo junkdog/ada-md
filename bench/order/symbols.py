@@ -2,8 +2,31 @@
 # (address, size, mangled name), sorted. The map holds the binary's own names whether or not it was stripped.
 # order.txt holds them demangled (MEM-08): the mangled names' crate hashes change with the toolchain, the target and
 # ada's version, so `place` maps the order onto a build's own names, for its second link (build.py).
-import collections, os, re, subprocess
+import bisect, collections, os, re, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# What lackey traces (lackey.zsh) of the build MAP maps fetched: (syms, lines, hits). syms is text_symbols(MAP),
+# lines each trace's fetched 256-byte lines as addresses in the binary, hits the traces that fetched each function,
+# by its index in syms. Where valgrind loaded the binary isn't in the trace, and differs between versions (0x108000,
+# 0x4000000 in 3.25 for a PIE): the candidate that puts the most fetches inside the binary's `.text` is taken.
+def fetched(map_path, traces):
+    syms = text_symbols(map_path)
+    starts = [s[0] for s in syms]
+    raw = [[int(l.split()[1], 16) << 8 for l in open(path) if l.startswith("I ")] for path in traces]
+    lo, hi = syms[0][0], syms[-1][0] + syms[-1][1]
+    inside = {b: sum(lo <= a - b < hi for a in raw[0]) for b in (0, 0x108000, 0x400000, 0x4000000)}
+    base = max(inside, key=inside.get)
+    sys.stderr.write(f"base {base:#x}: {inside[base]} of {len(raw[0])} fetched lines in the binary's functions\n")
+    lines = [[a - base for a in t] for t in raw]
+    hits = collections.defaultdict(set)
+    for t, fetched in enumerate(lines):
+        for v in fetched:
+            # a 256-byte line can hold several small functions: take every one it overlaps
+            i = bisect.bisect_right(starts, v + 255) - 1
+            while i >= 0 and syms[i][0] + max(syms[i][1], 1) > v:
+                hits[i].add(t); i -= 1
+                if syms[i + 1][0] <= v: break
+    return syms, lines, hits
 
 # a map's bytes aren't all UTF-8: ld64's lists C string literals by their contents
 def text_symbols(path):
