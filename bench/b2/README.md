@@ -11,7 +11,7 @@ old paths in the vault notes still resolve, and so do the installed viewers that
 (rich's uv venv).
 
 ```zsh
-python3 -I bench/order/build.py   # ada as released, its hot code first; a plain `cargo build` isn't ordered (MEM-08)
+cargo ordered   # ada as released, its hot code first; a plain `cargo build` isn't ordered (MEM-08)
 export B2_ROOT=$PWD/bench/b2/root ADA=$PWD/target/release/ada
 mkdir -p $B2_ROOT/{corpus,tools,b2}
 # viewers, into a prefix of their own

@@ -1,10 +1,10 @@
 #!/usr/bin/env zsh
-# trace.zsh [WORK]: regenerate order.txt, the functions build.py links first in ada's `.text` (MEM-02, MEM-08,
+# trace.zsh [WORK]: regenerate order.txt, the functions `cargo ordered` links first in ada's `.text` (MEM-02, MEM-08,
 # ada-optimization experiments 30 and 34). The functions a typical run fetches go first, so a run maps ~1 MiB less
 # of the binary: the kernel maps the pages around each fault, and with the hot code together there is less around
 # it. The names are demangled without their crate hashes, so they hold across toolchains, targets and ada's
-# version; build.py maps them onto each build's own. The traced binary is the release build itself, ordered, its
-# symbols from lld's map. Rerun when `--check` (below) fails, or when build.py says it matched under 90% of the
+# version; `cargo ordered` maps them onto each build's own. The traced binary is the release build itself, ordered, its
+# symbols from lld's map. Rerun when `--check` (below) fails, or when `cargo ordered` says it matched under 90% of the
 # names.
 # What runs, each under valgrind's lackey (every fetch traced; ~3 min): print S to a pipe, and B2's full TUI
 # sessions on S and L (bench/b2: paint, scrolls, search, reload, resize). WORK (default: a temp dir) keeps the
@@ -17,7 +17,7 @@ H=${0:A:h}; R=${H:h:h}; B2D=$R/bench/b2; S=${B2_ROOT:-$B2D/root}
 W=${1:-$(mktemp -d)}; mkdir -p $W/traces
 print "work: $W"
 # the release build of the working tree, as shipped (stripped, ordered), with lld's map for its symbols
-CARGO_TARGET_DIR=$W/target python3 -I $H/build.py --locked -q; rc=$?
+CARGO_TARGET_DIR=$W/target cargo run -q --locked --manifest-path $R/Cargo.toml -p xtask -- ordered --locked -q; rc=$?
 (( rc == 0 || rc == 2 )) || exit 1
 EXE=$W/target/release/ada
 print "print S"

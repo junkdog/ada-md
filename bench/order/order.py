@@ -1,6 +1,6 @@
 # python3 -I order.py MAP TRACE... > order.txt
 # The hot-code order from lackey traces (lackey.zsh): the functions each trace fetched from, demangled (MEM-08:
-# build.py maps them onto a build's own names), by the first trace that fetched them, then in address order (keeps the original neighbors together). So the
+# `cargo ordered` maps them onto a build's own names), by the first trace that fetched them, then in address order (keeps the original neighbors together). So the
 # first trace's code is one block at the start of `.text`, and the next trace's what it adds after it: give the
 # smallest run first (print), and a run touches only a prefix (sorted by how many traces fetched a function
 # instead, print S spread over all 1.6 MiB: experiment 34). MAP is the traced build's lld map (symbols.py).

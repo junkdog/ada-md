@@ -119,7 +119,7 @@ jobs:
       # as this build has them; fails when it has under 90% of them (exit 2), and then trace.zsh runs again
       - name: 🔨 Build
         run: |
-          report=$(python3 -I bench/order/build.py --locked $TARGET_ARGS) && rc=0 || rc=$?
+          report=$(cargo ordered --locked $TARGET_ARGS) && rc=0 || rc=$?
           echo "$report"
           echo "**Symbol order:** ${report#symbol order: }" >> "$GITHUB_STEP_SUMMARY"
           exit $rc

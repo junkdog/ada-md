@@ -1,9 +1,9 @@
-# python3 -I stale.py MAP PLACED TRACE...: whether order.txt has gone stale (BEN-005). build.py's match rate counts
+# python3 -I stale.py MAP PLACED TRACE...: whether order.txt has gone stale (BEN-005). `cargo ordered`'s match rate counts
 # order.txt's names found in a build, so a hot function added or renamed since the trace, never listed, can't fail
 # it: it links into cold `.text`, where a fault maps the 64 KiB around it (fault-around). rc.2's TRM-002, TRM-004
 # and TRM-005 cost 0.3–0.5 MiB that way at 99.4% matched (experiment 51). This lists the functions the traces
 # fetched that the build didn't place, and counts the 64 KiB windows of `.text` they fetch from that the placed
-# block doesn't already cover. MAP and PLACED are build.py's (ada.map, ada.order), the traces lackey.zsh's of that
+# block doesn't already cover. MAP and PLACED are `cargo ordered`'s (ada.map, ada.order), the traces lackey.zsh's of that
 # build (trace.zsh --check). Exits 1 past ADA_ORDER_COLD cold windows (default 2).
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I leaves the script's directory out

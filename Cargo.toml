@@ -8,8 +8,8 @@ license = "MIT"
 repository = "https://github.com/junkdog/ada-md"
 homepage = "https://junkdog.github.io/ada-md/"
 readme = "README.md"
-# the tests read bench/diagrams and tests/; bench/order is for bench/order/build.py, run from the repo
-exclude = ["ada.jpg", "demo/", "site/", ".github/", ".githooks/", "bench/images/", "bench/order/", "cliff.toml", "changelog.zsh"]
+# the tests read bench/diagrams and tests/; bench/order and .cargo are for `cargo ordered` (xtask/), run from the repo
+exclude = ["ada.jpg", "demo/", "site/", ".github/", ".githooks/", ".cargo/", "bench/images/", "bench/order/", "cliff.toml", "changelog.zsh"]
 keywords = ["markdown", "viewer", "terminal", "tui", "pager"]
 categories = ["command-line-utilities"]
 
@@ -68,6 +68,12 @@ insta = "1.49"
 # The thread CPU clock the examples share (examples/common), on macOS too.
 [target.'cfg(unix)'.dev-dependencies]
 libc = "0.2.190"
+
+# xtask: `cargo ordered`, the release build (.cargo/config.toml). bench/ and fuzz/ hold crates of their
+# own, and B2's checkouts of ada (bench/b2/root/build)
+[workspace]
+members = ["xtask"]
+exclude = ["bench", "fuzz"]
 
 [profile.release]
 lto = "fat"

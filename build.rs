@@ -1,7 +1,7 @@
 // Links the `ada` binary with the functions a typical run fetches first in `.text` (MEM-02), so a
 // run maps ~1 MiB less of the binary: `ADA_SYMBOL_ORDER=PATH` names them, as this build's own
 // symbols. `bench/order/order.txt` holds them demangled, for any toolchain and target, and
-// `bench/order/build.py` builds with it: it links once with a map, maps the names onto the map's,
+// `cargo ordered` (xtask/) builds with it: it links once with a map, maps the names onto the map's,
 // and links again with them (MEM-08). A plain build isn't ordered. On Linux the file is lld's
 // `--symbol-ordering-file`: rustc links x86_64 glibc builds through rust-lld by default since
 // 1.90; elsewhere (aarch64, musl, an older rustc) `cc` is told to use the toolchain's own, as

@@ -76,6 +76,15 @@ cargo install --locked ada-md
 
 or the latest from git: `cargo install --locked --git https://github.com/junkdog/ada-md ada-md`.
 
+The release binaries are linked with the code a typical run needs first, so a run takes up to about
+1 MiB less memory on Linux, and less than half that on macOS. That takes two links, which
+`cargo install` can't do. To build ada the way the releases are, on Linux (x86_64 and aarch64) and
+macOS, from a clone:
+
+```zsh
+cargo ordered --locked   # target/release/ada, as released
+```
+
 Rust 1.88 or newer, and a C compiler:
 syntax highlighting runs on [Oniguruma](https://github.com/kkos/oniguruma), which is built from source. For a pure-Rust
 build, add `--no-default-features`. Highlighting then runs on

@@ -1,0 +1,5 @@
+# ada's build tasks (xtask/). `cargo ordered [CARGO_ARGS...]`: `cargo build --release` with the hot
+# code first in `.text`, as the release builds it (MEM-08)
+[alias]
+xtask = "run -q -p xtask --"
+ordered = "xtask ordered"

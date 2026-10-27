@@ -1,6 +1,6 @@
 # python3 -I rss.py RUNS BIN... -- FILE...: each binary's `--print -w 100 FILE`, RUNS times after 2 warmups, the
 # binaries interleaved run by run; prints a markdown table of the medians, peak RSS in MiB and wall ms. The order
-# probe (order-probe.yml, MEM-08) puts a plain build beside build.py's, on runners valgrind and hyperfine don't
+# probe (order-probe.yml, MEM-08) puts a plain build beside `cargo ordered`'s, on runners valgrind and hyperfine don't
 # reach. Peak RSS from /usr/bin/time, not from this process's wait4: on Linux, exec carries the forking process's
 # peak into the child's ru_maxrss, so a child of python starts at python's ~10 MiB. time is small, and reports its
 # child's: GNU's `%M` in KiB, BSD's `-l` in bytes.

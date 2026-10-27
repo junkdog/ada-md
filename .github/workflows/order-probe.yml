@@ -1,7 +1,7 @@
 name: 📐 Order probe
 
 # What the hot-code order is worth on each release target (MEM-08): a plain release build beside
-# bench/order/build.py's, peak RSS and wall time of print runs on files of the checkout, into the
+# `cargo ordered`'s, peak RSS and wall time of print runs on files of the checkout, into the
 # job summary. By hand only; it measures, it ships nothing.
 on:
   workflow_dispatch:
@@ -41,7 +41,7 @@ jobs:
           mkdir bin && cp target/release/ada bin/ada-plain
       - name: 🔨 Ordered build
         run: |
-          report=$(python3 -I bench/order/build.py --locked) && rc=0 || rc=$?
+          report=$(cargo ordered --locked) && rc=0 || rc=$?
           echo "$report"
           echo "**Symbol order:** ${report#symbol order: }" >> "$GITHUB_STEP_SUMMARY"
           cp target/release/ada bin/ada-ordered
