@@ -68,11 +68,13 @@ The charts are on [the site](https://junkdog.github.io/ada-md/#performance), the
 Binaries for Linux (x86_64 and aarch64) and macOS (Apple silicon and Intel) are on the
 [releases page](https://github.com/junkdog/ada-md/releases). The Linux `gnu` binaries need glibc
 2.34 or newer; the `musl` ones are static and run on any Linux, Alpine included, but print large
-files in up to 1.4× the time. To build it:
+files in up to 1.4× the time. To build it from [crates.io](https://crates.io/crates/ada-md):
 
 ```zsh
-cargo install --locked --git https://github.com/junkdog/ada-md ada-md
+cargo install --locked ada-md
 ```
+
+or the latest from git: `cargo install --locked --git https://github.com/junkdog/ada-md ada-md`.
 
 Rust 1.88 or newer, and a C compiler:
 syntax highlighting runs on [Oniguruma](https://github.com/kkos/oniguruma), which is built from source. For a pure-Rust

@@ -1079,8 +1079,10 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
     any Linux, Alpine included, printing large files in up to 1.4× the time) and macOS (Apple silicon and Intel) are on the
     <a href="https://github.com/junkdog/ada-md/releases">releases page</a>: unpack one and put <code>ada</code> on
     your <code>PATH</code>. The macOS binaries aren't signed, so if the archive came through a browser, run
-    <code>xattr -d com.apple.quarantine ada</code> first. Or build it:</p>
-  <pre><code>cargo install --locked --git https://github.com/junkdog/ada-md ada-md</code></pre>
+    <code>xattr -d com.apple.quarantine ada</code> first. Or build it from
+    <a href="https://crates.io/crates/ada-md">crates.io</a>:</p>
+  <pre><code>cargo install --locked ada-md</code></pre>
+  <p>or the latest from git: <code>cargo install --locked --git https://github.com/junkdog/ada-md ada-md</code>.</p>
   <p>Rust 1.88 or newer, and a C compiler: highlighting runs on Oniguruma, built from source. For a pure-Rust
     build, add <code>--no-default-features</code>. Git integration runs the <code>git</code> command.</p>
   <p>Windows is mostly untested: ada builds and runs there but doesn't follow Windows' conventions yet. The
