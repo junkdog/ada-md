@@ -1,8 +1,7 @@
-//! bat's shell grammar (`Bash.sublime-syntax` and its generated `commands-builtin-shell-bash`,
-//! reached as `scope:source.shell` through `Shell-Unix-Generic`), as Makefile recipes, `!=` and
-//! `$(shell …)` embed it. Left out: function definitions, `coproc`, here-documents, and the
-//! substitution and substring forms of `${…}`; make takes `$(`, `${` and `$x` before the shell
-//! sees them anyway.
+//! bat's shell grammar (`Bash.sublime-syntax` and its generated `commands-builtin-shell-bash`),
+//! context for context: on its own from [`START`] (G-003), and as Makefile recipes, `!=` and
+//! `$(shell …)` embed it, as `scope:source.shell` through `Shell-Unix-Generic` ([`SOURCE`]).
+//! In a Makefile, make takes `$(`, `${` and `$x` before the shell sees them.
 
 use super::grammar::{ahead, bol, byte, empty, eol, escape_any};
 use super::scan::{Line, M, R, eol_at, find, find_str, non_ws, ws, ws_back, ws_end};
@@ -77,7 +76,7 @@ fn keyword_break(l: &Line, i: usize) -> bool {
     !matches!(l.at(i), b'-' | b'=') && !l.word_at(i)
 }
 
-const KEYWORDS: [&[u8]; 16] = [
+const KEYWORDS: [&[u8]; 17] = [
     b"if",
     b"then",
     b"elif",
@@ -94,6 +93,7 @@ const KEYWORDS: [&[u8]; 16] = [
     b"esac",
     b"in",
     b"let",
+    b"coproc",
 ];
 
 /// `\bKEYWORD{{keyword_break}}`, the keyword [`KEYWORDS`]`[k]`
@@ -1335,6 +1335,12 @@ static CONTINUATION_OR_POP: Ctx = Ctx::new(&[I(&POP_AT_END), I(&LINE_CONTINUATIO
 /// `Shell-Unix-Generic`'s `main`, which a reference by scope pushes.
 pub static SOURCE: Ctx = Ctx::new(&[I(&MAIN)]).content(&[Source]).sh();
 
+/// Bash on its own (G-003): syntect's `__start`, which pushes `__main`, a copy of `main`
+/// without the scope a reference to it gives.
+pub static START: Ctx = Ctx::new(&[P(&p(empty).push(&[&BASH_MAIN]))]);
+
+static BASH_MAIN: Ctx = Ctx::new(&[I(&MAIN)]).sh();
+
 static MAIN: Ctx = Ctx::new(&[
     I(&FUNCDEF),
     I(&VARDEF),
@@ -2270,17 +2276,67 @@ fn empty_parens(l: &Line, pos: usize, _: u16) -> R {
     None
 }
 
-static FUNCDEF: Ctx = Ctx::new(&[P(&p(is_function).caps(&[(1, &[FunctionKw])]).push(&[
-    &FUNCDEF_BODY,
-    &FUNCDEF_PARENS,
-    &FUNCDEF_NAME,
-]))]);
+static FUNCDEF: Ctx = Ctx::new(&[
+    P(&p(is_function).caps(&[(1, &[FunctionKw])]).push(&[
+        &FUNCDEF_BODY,
+        &FUNCDEF_PARENS,
+        &FUNCDEF_NAME,
+    ])),
+    P(&kw(16, &[Coproc]).push(&[&CMD_POST, &CMD_ARGS, &COPROC_BODY])),
+]);
 
-static FUNCDEF_BT: Ctx = Ctx::new(&[P(&p(is_function).caps(&[(1, &[FunctionKw])]).push(&[
-    &FUNCDEF_BODY_BT,
-    &FUNCDEF_PARENS,
-    &FUNCDEF_NAME,
-]))]);
+static FUNCDEF_BT: Ctx = Ctx::new(&[
+    P(&p(is_function).caps(&[(1, &[FunctionKw])]).push(&[
+        &FUNCDEF_BODY_BT,
+        &FUNCDEF_PARENS,
+        &FUNCDEF_NAME,
+    ])),
+    P(&kw(16, &[Coproc]).push(&[&CMD_POST, &CMD_ARGS_BT, &COPROC_BODY])),
+]);
+
+/// `\s*(?=\S+\s*\{)`: from a run of whitespace, or none, before a word that a `{` ends or
+/// follows. Every start in a word but its first gives a shorter word, so a word is tried once.
+fn coproc_name_ahead(l: &Line, pos: usize, _: u16) -> R {
+    let b = l.b;
+    let mut s = pos;
+    while s < l.len() {
+        let j = ws_end(b, s);
+        let k = (j..l.len()).find(|&i| ws(b[i])).unwrap_or(l.len());
+        if k > j && (find(&b[..k], j + 1, b'{').is_some() || l.at(ws_end(b, k)) == b'{') {
+            return Some(M::at(s, j));
+        }
+        s = k.max(s + 1);
+    }
+    None
+}
+
+/// `(?=\s*\{)`
+fn brace_ahead(l: &Line, pos: usize, _: u16) -> R {
+    find(l.b, pos, b'{').map(|i| {
+        let s = ws_back(l.b, pos, i);
+        M::at(s, s)
+    })
+}
+
+static COPROC_BODY: Ctx = Ctx::new(&[
+    P(&p(coproc_name_ahead).set(&[&COPROC_NAME])),
+    P(&p(empty).set(&[&MAIN_WITH_POP_AT_END])),
+])
+.sh();
+
+static COPROC_NAME: Ctx = Ctx::new(&[P(&p(brace_ahead).set(&[&COPROC_BRACE]))])
+    .content(&[CoprocName])
+    .sh();
+
+static COPROC_BRACE: Ctx = Ctx::new(&[P(&p(byte::<b'{'>)
+    .sc(&[SectionBracesBegin])
+    .set(&[&COPROC_BRACES]))])
+.sh();
+
+static COPROC_BRACES: Ctx =
+    Ctx::new(&[P(&p(byte::<b'}'>).sc(&[SectionBracesEnd]).pop()), I(&MAIN)])
+        .meta(&[CoprocMeta])
+        .sh();
 
 static FUNCDEF_NAME: Ctx = Ctx::new(&[P(&p(spaces).set(&[&FUNCDEF_NAME_BODY]))]).sh();
 

@@ -1,7 +1,8 @@
-//! Makefile lines (G-002): bat's `Makefile` grammar, and the shell its recipes embed, run by a
-//! stack machine of ada's own in place of syntect on Oniguruma. The grammar decides whether a
-//! line is a rule or a variable by a lookahead of nested optional groups (`just_eat`) that
-//! backtracks ~n³ on unbalanced parens: a fuzzed line of 305 bytes took 3.1 s.
+//! Makefile and shell lines (G-002, G-003): bat's `Makefile` grammar, and the bash its recipes
+//! embed, run by a stack machine of ada's own in place of syntect on Oniguruma; bash runs on
+//! its own too ([`Grammar`]). The Makefile grammar decides whether a line is a rule or a
+//! variable by a lookahead of nested optional groups (`just_eat`) that backtracks ~n³ on
+//! unbalanced parens: a fuzzed line of 305 bytes took 3.1 s.
 //!
 //! The machine is syntect's (`ParseState`): a stack of contexts, each a list of patterns; at
 //! each step the pattern whose match starts leftmost wins, ties going to the first; a match
@@ -11,9 +12,9 @@
 //! `just_eat` is decided from the line's paren groups ([`scan::Parens`]). So a line gets the
 //! scopes syntect gives it, and themes color it as before.
 //!
-//! Recipe lines are shell (bat's `Bourne Again Shell`, with make's `$(VAR)` on top). Its
-//! contexts are ported but for function definitions, coprocesses and here-documents, and some
-//! of `${…}`'s operators, which recipes hardly use: those lines may color differently.
+//! Recipe lines are shell (bat's `Bourne Again Shell`, with make's `$(VAR)` on top), and so
+//! are shell scripts and `sh`, `bash` and `zsh` blocks: the same contexts under bash's own
+//! base scope.
 
 mod grammar;
 mod scan;
@@ -267,10 +268,42 @@ scopes! {
     BuiltinReadarray = "support.function.readarray.shell",
     BuiltinShopt = "support.function.shopt.shell",
     BuiltinUnset = "support.function.unset.shell",
+    Coproc = "keyword.other.coproc.shell",
+    CoprocName = "entity.name.function.coproc.shell",
+    CoprocMeta = "meta.function.coproc.shell",
 }
 
-/// The base scope of every stack, which [`State::stack`] leaves out.
-pub const BASE: &str = "source.makefile";
+/// A grammar the machine runs: bat's Makefile, or its bash on its own (G-003).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Grammar {
+    Make,
+    Bash,
+}
+
+impl Grammar {
+    /// The base scope of every stack, which [`State::stack`] leaves out.
+    pub fn base(self) -> &'static str {
+        match self {
+            Grammar::Make => "source.makefile",
+            Grammar::Bash => "source.shell.bash",
+        }
+    }
+
+    /// The name of bat's syntax for it.
+    pub fn syntax(self) -> &'static str {
+        match self {
+            Grammar::Make => "Makefile",
+            Grammar::Bash => "Bourne Again Shell (bash)",
+        }
+    }
+
+    fn start(self) -> &'static Ctx {
+        match self {
+            Grammar::Make => &grammar::START,
+            Grammar::Bash => &shell::START,
+        }
+    }
+}
 
 /// Finds a pattern's leftmost match at or after a position; the `u16` is the pattern's own
 /// argument.
@@ -506,17 +539,11 @@ const CACHE: usize = 1024;
 /// How deep the stack may grow, as syntect allows.
 const MAX_DEPTH: usize = 100;
 
-impl Default for State {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl State {
-    pub fn new() -> Self {
+    pub fn new(grammar: Grammar) -> Self {
         Self {
             levels: vec![Level {
-                ctx: &grammar::START,
+                ctx: grammar.start(),
                 protos: [None; 2],
                 cap: 0,
                 arg: 0,
@@ -539,7 +566,7 @@ impl State {
         }
     }
 
-    /// The scopes, under [`BASE`], of a span's `stack`.
+    /// The scopes, under its grammar's [`Grammar::base`], of a span's `stack`.
     pub fn stack(&self, id: u32) -> &[Sc] {
         &self.stacks[id as usize]
     }

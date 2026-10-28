@@ -394,10 +394,13 @@ fn is_json(lang: &str) -> bool {
     find_syntax(lang).is_some_and(|s| s.name == "JSON")
 }
 
-/// Whether a language is bat's `Makefile`, which ada highlights with a lexer of its own
-/// (G-002).
-fn is_make(lang: &str) -> bool {
-    find_syntax(lang).is_some_and(|s| s.name == "Makefile")
+/// The grammar of ada's copy of syntect's machine that highlights a language: bat's
+/// `Makefile` (G-002) or its bash (G-003).
+fn lexer_grammar(lang: &str) -> Option<make::Grammar> {
+    let name = find_syntax(lang)?.name.as_str();
+    [make::Grammar::Make, make::Grammar::Bash]
+        .into_iter()
+        .find(|g| g.syntax() == name)
 }
 
 /// The theme's rule for each of a lexer's kinds, as syntect would pick it for the kind's
@@ -477,14 +480,23 @@ impl JsonRules {
     }
 }
 
-/// The theme's rule for each scope stack a Makefile's lines name, found as they come: the
-/// lexer gives the grammar's nested stacks, not a fixed set of kinds.
-#[derive(Default)]
-pub struct MakeRules(Vec<Rule>);
+/// The theme's rule for each scope stack a Makefile's or a shell script's lines name, found as
+/// they come: the lexer gives the grammar's nested stacks, not a fixed set of kinds.
+pub struct MakeRules {
+    base: Scope,
+    rules: Vec<Rule>,
+}
 
 impl MakeRules {
-    /// Highlight one Makefile line, after the lines before it left `state`; `spans` is scratch
-    /// space. Long lines are colored too: the lexer is linear.
+    fn new(grammar: make::Grammar) -> Self {
+        Self {
+            base: Scope::new(grammar.base()).expect("scope"),
+            rules: Vec::new(),
+        }
+    }
+
+    /// Highlight one line, after the lines before it left `state`; `spans` is scratch space.
+    /// Long lines are colored too: the lexer is linear.
     fn line(
         &mut self,
         line: &str,
@@ -494,23 +506,23 @@ impl MakeRules {
     ) -> Box<[Run]> {
         let line = expand_tabs(line);
         make::tokens(&line, state, spans);
-        for id in self.0.len()..state.stack_count() {
-            self.0.push(stack_rule(state.stack(id as u32), highlighter));
+        for id in self.rules.len()..state.stack_count() {
+            let rule = stack_rule(self.base, state.stack(id as u32), highlighter);
+            self.rules.push(rule);
         }
-        let rule = |s: &make::Span| (s.start, s.end, self.0[s.stack as usize]);
+        let rule = |s: &make::Span| (s.start, s.end, self.rules[s.stack as usize]);
         span_runs(line.len(), spans.iter().map(rule))
     }
 }
 
-/// The rule for a scope stack under `source.makefile`, as syntect's highlighter reaches it
+/// The rule for a scope stack under `base`, as syntect's highlighter reaches it
 /// (`style_for_stack`): a one-scope selector scores by the depth of the scope it matches as
 /// that scope is pushed, so `variable` takes `$@` in a string in a command name's scope.
 /// `style_mod_for_stack` would match it at its first `variable.*` scope instead, below the
 /// string.
-fn stack_rule(stack: &[make::Sc], highlighter: &SynHighlighter) -> Rule {
-    let path: Vec<Scope> = std::iter::once(make::BASE)
-        .chain(stack.iter().map(|sc| sc.name()))
-        .map(|s| Scope::new(s).expect("scope"))
+fn stack_rule(base: Scope, stack: &[make::Sc], highlighter: &SynHighlighter) -> Rule {
+    let path: Vec<Scope> = std::iter::once(base)
+        .chain(stack.iter().map(|sc| Scope::new(sc.name()).expect("scope")))
         .collect();
     Rule::decode(highlighter.style_for_stack(&path).foreground)
 }
@@ -668,10 +680,10 @@ impl<'a> Highlighter<'a> {
             Some(Engine::Log(LogRules::new(theme), Vec::new()))
         } else if is_json(lang) {
             Some(Engine::Json(JsonRules::new(theme), Vec::new(), false))
-        } else if is_make(lang) {
+        } else if let Some(grammar) = lexer_grammar(lang) {
             Some(Engine::Make(
-                MakeRules::default(),
-                Box::default(),
+                MakeRules::new(grammar),
+                Box::new(make::State::new(grammar)),
                 Vec::new(),
             ))
         } else {
@@ -783,8 +795,8 @@ pub fn highlight_parallel(key: u64, lang: &str, text: &str, theme: &SyntaxTheme)
         // a `/* */` comment carries over lines: rare in JSON this big, and fast on one thread
         "JSON" if text.contains("/*") => highlight(key, lang, text, theme),
         "JSON" => highlight_json_on(key, text, theme, threads),
-        // its lines depend on the ones before, and one thread does ~100 MB/s
-        "Makefile" => highlight(key, lang, text, theme),
+        // their lines depend on the ones before, and one thread does ~100 MB/s
+        "Makefile" | "Bourne Again Shell (bash)" => highlight(key, lang, text, theme),
         _ => highlight_on(key, syntax, text, theme, threads),
     }
 }
@@ -1548,8 +1560,49 @@ mod tests {
             "endef\n",
             "a((m)    ((g)    (i)    : b\n",
         );
-        let grammar = find_syntax("make").unwrap();
-        assert_eq!(grammar.name, "Makefile");
+        rules_match_the_grammar("make", "Makefile", text);
+    }
+
+    /// The shell lexer picks the rules bat's bash grammar picks, in every built-in theme
+    /// (G-003).
+    #[test]
+    fn bash_rules_match_the_grammar() {
+        let text = concat!(
+            "#!/usr/bin/env bash\n",
+            "set -euo pipefail # strict\n",
+            "readonly DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\n",
+            "declare -A seen=([a]=1 [b]=2)\n",
+            "export PATH=\"$HOME/bin:$PATH\" LANG=C\n",
+            "usage() {\n",
+            "  printf 'usage: %s [-v] file...\\n' \"${0##*/}\" >&2\n",
+            "  exit \"${1:-1}\"\n",
+            "}\n",
+            "function log { echo \"[$(date +%T)] $*\"; }\n",
+            "while getopts 'vh' opt; do\n",
+            "  case $opt in\n",
+            "    v) verbose=1 ;;\n",
+            "    h|*) usage 0 ;;\n",
+            "  esac\n",
+            "done\n",
+            "shift $((OPTIND - 1))\n",
+            "for f in \"$@\" *.txt; do\n",
+            "  [[ -f $f && $f != *.bak ]] || continue\n",
+            "  if (( ${#f} > 3 )); then echo \"${f%.txt}\" | tr a-z A-Z; fi\n",
+            "done 2>/dev/null\n",
+            "cat <<-EOF > \"$DIR/out\"\n",
+            "\tname: ${USER}\n",
+            "\tEOF\n",
+            "coproc worker { while read -r l; do echo \"$l\"; done; }\n",
+            "x=`basename $PWD` y=$'tab\\there' z=~/src\n",
+            "arr+=( \"${arr[@]/#/-I}\" ) && echo ${arr[*]:1:2} {a,b}{1..3}\n",
+            "trap 'rm -f \"$tmp\"' EXIT; wait $!; exit $?\n",
+        );
+        rules_match_the_grammar("bash", "Bourne Again Shell (bash)", text);
+    }
+
+    fn rules_match_the_grammar(lang: &str, name: &str, text: &str) {
+        let grammar = find_syntax(lang).unwrap();
+        assert_eq!(grammar.name, name);
         for theme in Theme::builtins() {
             let theme = SyntaxTheme::new(&theme.syntax);
             let highlighter = SynHighlighter::new(&theme.theme);
@@ -1558,7 +1611,7 @@ mod tests {
             let want: Vec<_> = Lines::new(text)
                 .map(|l| state.line(l, &highlighter, &mut buf).unwrap())
                 .collect();
-            assert_eq!(highlight(1, "make", text, &theme).lines, want);
+            assert_eq!(highlight(1, lang, text, &theme).lines, want);
         }
     }
 
@@ -1569,11 +1622,23 @@ mod tests {
     #[test]
     #[ignore]
     fn make_corpus_matches_the_grammar() {
-        let Some(list) = std::env::var_os("ADA_MAKE_CORPUS") else {
+        corpus_matches_the_grammar("ADA_MAKE_CORPUS", "make");
+    }
+
+    /// G-003 on real shell scripts, as [`make_corpus_matches_the_grammar`]:
+    /// `ADA_BASH_CORPUS=list cargo test --release bash_corpus -- --ignored`.
+    #[test]
+    #[ignore]
+    fn bash_corpus_matches_the_grammar() {
+        corpus_matches_the_grammar("ADA_BASH_CORPUS", "bash");
+    }
+
+    fn corpus_matches_the_grammar(var: &str, lang: &str) {
+        let Some(list) = std::env::var_os(var) else {
             return;
         };
         let list = std::fs::read_to_string(list).unwrap();
-        let grammar = find_syntax("make").unwrap();
+        let grammar = find_syntax(lang).unwrap();
         let themes: Vec<SyntaxTheme> = Theme::builtins()
             .iter()
             .map(|t| SyntaxTheme::new(&t.syntax))
@@ -1597,7 +1662,7 @@ mod tests {
                 let Some(want) = want else {
                     break;
                 };
-                let got = highlight(1, "make", &text, theme).lines;
+                let got = highlight(1, lang, &text, theme).lines;
                 // a line with no rule but none is one run in syntect's form, none in the lexer's
                 let plain = |runs: &[Run]| runs.iter().all(|r| r.rule.0 == Rule::NONE);
                 let same = |n: usize| match got.get(n) {
