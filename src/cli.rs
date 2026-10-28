@@ -46,7 +46,7 @@ const fn flag(
 
 const SWITCH: (&str, Value) = ("", Value::None);
 
-pub const SHELLS: &[&str] = &["zsh", "bash", "fish"];
+pub const SHELLS: &[&str] = &["zsh", "bash", "fish", "powershell"];
 /// Every flag, in the order the usage lists them. The parser, the usage and the completion
 /// scripts all follow this table.
 pub const FLAGS: &[Flag] = &[
@@ -159,7 +159,7 @@ pub const FLAGS: &[Flag] = &[
         None,
         "completions",
         ("SHELL", Value::Choice(SHELLS)),
-        "print a completion script for zsh, bash or fish",
+        "print a completion script for zsh, bash, fish or powershell",
     ),
     flag(Some('h'), "help", SWITCH, "show this help"),
     flag(Some('V'), "version", SWITCH, "show the version"),
@@ -182,6 +182,10 @@ Prints instead of paging when stdout is not a terminal. Options are also read fr
 options:
 ",
     );
+    // `toml_walk::config_dir` (WIN-002)
+    if cfg!(windows) {
+        out = out.replace("~/.config/ada/config.toml", "%APPDATA%\\ada\\config.toml");
+    }
     for f in FLAGS {
         let short = f
             .short
@@ -309,7 +313,9 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
             "--completions" => {
                 let shell = value(&flag)?;
                 if !SHELLS.contains(&shell.as_str()) {
-                    return Err(format!("{flag}: `{shell}` is not zsh, bash or fish"));
+                    return Err(format!(
+                        "{flag}: `{shell}` is not zsh, bash, fish or powershell"
+                    ));
                 }
                 out.completions = Some(shell);
             }

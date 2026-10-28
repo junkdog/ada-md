@@ -1,6 +1,6 @@
 //! Shell completion scripts, generated from the CLI's flag table (`ada --completions SHELL`).
-//! ada has no clap (ADR-10), so instead of clap_complete these few lines write the zsh, bash and
-//! fish scripts from [`cli::FLAGS`](crate::cli::FLAGS): a new flag completes without touching this file. Themes
+//! ada has no clap (ADR-10), so instead of clap_complete these few lines write the zsh, bash,
+//! fish and PowerShell scripts from [`cli::FLAGS`](crate::cli::FLAGS): a new flag completes without touching this file. Themes
 //! complete to the built-ins, the user's themes directory (read when completing) and `.toml`
 //! paths; languages to the names the bundled syntaxes take, listed in the script; the file to any
 //! file.
@@ -16,6 +16,7 @@ pub fn script(shell: &str) -> Option<String> {
         "zsh" => Some(zsh()),
         "bash" => Some(bash()),
         "fish" => Some(fish()),
+        "powershell" => Some(powershell()),
         _ => None,
     }
 }
@@ -254,6 +255,125 @@ end
     out
 }
 
+/// PowerShell's, for Windows PowerShell 5.1 and pwsh alike (WIN-009). A native completer gets
+/// the word and the line, and finds the flag before the word itself; a value it has nothing for
+/// (a number, a file) completes nothing, and PowerShell falls back to paths. The themes
+/// directory is `ada`'s: `%APPDATA%` before `$HOME/.config`, which only pwsh off Windows reaches.
+fn powershell() -> String {
+    // single-quoted, where only `'` is special, doubled
+    let quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
+    let pair = |a: &str, b: &str| format!("        ,({}, {})\n", quote(a), quote(b));
+    let mut out = String::from(
+        "\
+# PowerShell completion for ada, from `ada --completions powershell`
+
+Register-ArgumentCompleter -Native -CommandName ada, ada.exe -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+
+",
+    );
+    let themes: Vec<String> = BUILTIN.iter().map(|(n, _)| quote(n)).collect();
+    let _ = writeln!(out, "    $themes = @({})", themes.join(", "));
+    out.push_str("    $languages = @(\n");
+    for (n, syntax) in language_names() {
+        out.push_str(&pair(&n, syntax));
+    }
+    out.push_str("    )\n    $flags = @(\n");
+    for f in FLAGS {
+        if let Some(c) = f.short {
+            out.push_str(&pair(&format!("-{c}"), summary(f)));
+        }
+        out.push_str(&pair(&format!("--{}", f.long), summary(f)));
+    }
+    out.push_str(
+        "    )
+
+    # `--theme=NAME` completes as `--theme NAME` does
+    $word, $prefix = \"$wordToComplete\", ''
+    if ($word -match '^(--[^=]+)=(.*)$') {
+        $prev, $prefix, $word = $Matches[1], \"$($Matches[1])=\", $Matches[2]
+    } else {
+        $before = @($commandAst.CommandElements | Where-Object { $_.Extent.EndOffset -lt $cursorPosition })
+        $prev = if ($before.Count -gt 1) { $before[-1].Extent.Text } else { '' }
+    }
+    $like = [System.Management.Automation.WildcardPattern]::Escape($word) + '*'
+
+    # -l and -L are different flags
+    $kind, $choices = '', @()
+    switch -CaseSensitive ($prev) {
+",
+    );
+    for f in FLAGS {
+        let kind = match f.value.1 {
+            Value::None => continue,
+            Value::Number => "$kind = 'number'".to_owned(),
+            Value::Theme => "$kind = 'theme'".to_owned(),
+            Value::Language => "$kind = 'language'".to_owned(),
+            Value::File => "$kind = 'file'".to_owned(),
+            Value::Rec => "$kind = 'rec'".to_owned(),
+            Value::Choice(values) => {
+                let values: Vec<String> = values.iter().map(|v| quote(v)).collect();
+                format!("$kind = 'choice'; $choices = {}", values.join(", "))
+            }
+        };
+        let long = quote(&format!("--{}", f.long));
+        let names = f.short.map_or(long.clone(), |c| format!("'-{c}', {long}"));
+        let _ = writeln!(out, "        {{ $_ -cin {names} }} {{ {kind} }}");
+    }
+    out.push_str(
+        "    }
+
+    $complete = {
+        param($text, $tip, $type)
+        $quoted = if ($text -match '\\s') { \"'$($text -replace \"'\", \"''\")'\" } else { $text }
+        [System.Management.Automation.CompletionResult]::new(\"$prefix$quoted\", $text, $type, $tip)
+    }
+    # the entries under the word's directory: directories, and files ending in $ext
+    $paths = {
+        param($ext)
+        $dir = $word.Substring(0, $word.LastIndexOfAny([char[]]'\\/') + 1)
+        $sep = if ($word.Contains('\\')) { '\\' } else { '/' }
+        foreach ($item in @(Get-ChildItem -Path \"$word*\" -ErrorAction Ignore)) {
+            if ($item.PSIsContainer) {
+                & $complete \"$dir$($item.Name)$sep\" $item.Name 'ProviderContainer'
+            } elseif ($item.Name.EndsWith($ext)) {
+                & $complete \"$dir$($item.Name)\" $item.Name 'ProviderItem'
+            }
+        }
+    }
+
+    switch ($kind) {
+        'theme' {
+            if ($word -match '^(\\.{0,2}[\\\\/]|[A-Za-z]:)') {
+                & $paths '.toml'
+                break
+            }
+            $config = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME }
+                elseif ($env:APPDATA) { $env:APPDATA }
+                else { Join-Path $HOME '.config' }
+            $user = @(Get-ChildItem -Path (Join-Path $config 'ada/themes') -Filter '*.toml' -ErrorAction Ignore |
+                ForEach-Object BaseName)
+            @($themes) + $user | Where-Object { $_ -like $like } | ForEach-Object { & $complete $_ $_ 'ParameterValue' }
+        }
+        'language' {
+            $languages | Where-Object { $_[0] -like $like } | ForEach-Object { & $complete $_[0] $_[1] 'ParameterValue' }
+        }
+        'choice' {
+            $choices | Where-Object { $_ -like $like } | ForEach-Object { & $complete $_ $_ 'ParameterValue' }
+        }
+        'rec' { & $paths '.rec' }
+        '' {
+            if ($word.StartsWith('-')) {
+                $flags | Where-Object { $_[0] -clike $like } | ForEach-Object { & $complete $_[0] $_[1] 'ParameterName' }
+            }
+        }
+    }
+}
+",
+    );
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use std::process::Command;
@@ -274,11 +394,18 @@ mod tests {
             assert!(text.contains("yml"), "{shell}: the languages");
         }
         assert_eq!(script("tcsh"), None);
+        // Windows PowerShell reads `ada --completions powershell | Invoke-Expression` in the
+        // console's code page
+        assert!(script("powershell").unwrap().is_ascii());
     }
+
+    // zsh, bash and fish run on unix only: on Windows, `bash` is System32's WSL launcher before
+    // Git Bash, as `Command` looks there before `PATH`
 
     /// Both ways of installing the zsh script register it without running it: sourced after
     /// compinit, and autoloaded from `$fpath`.
     #[test]
+    #[cfg(unix)]
     fn zsh_sources_and_autoloads() {
         let dir = std::env::temp_dir().join(format!("ada-zsh-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -305,6 +432,7 @@ mod tests {
     /// and to `.toml` files and directories only after `./`, `../` or `/`; when bash and fish
     /// are installed.
     #[test]
+    #[cfg(unix)]
     fn themes_complete_to_names_and_paths_to_files() {
         let dir = std::env::temp_dir().join(format!("ada-themes-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("sub")).unwrap();
@@ -361,6 +489,7 @@ mod tests {
 
     /// The scripts parse, when the shell is installed.
     #[test]
+    #[cfg(unix)]
     fn the_shells_read_them() {
         for (shell, args) in [
             ("zsh", ["-n", "-c"]),
@@ -380,5 +509,76 @@ mod tests {
                 String::from_utf8_lossy(&out.stderr)
             );
         }
+    }
+
+    /// Flags, values and paths complete in PowerShell, when pwsh is installed (as on every CI
+    /// runner): asked as TabExpansion2 asks, after `-l` and `-L` alike.
+    #[test]
+    fn powershell_completes() {
+        let dir = std::env::temp_dir().join(format!("ada-pwsh-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        for f in ["x.toml", "notes.md", "a.rec"] {
+            std::fs::write(dir.join(f), "").unwrap();
+        }
+        std::fs::write(dir.join("ada.ps1"), script("powershell").unwrap()).unwrap();
+        let lines = [
+            "ada -",
+            "ada -L",
+            "ada -t ",
+            "ada -t ./",
+            "ada --theme=gruvbox-l",
+            "ada -l yam",
+            "ada -L 4",
+            "ada -n ",
+            "ada --replay ",
+            "ada --completions p",
+        ];
+        let mut cmd = String::from("$ErrorActionPreference = 'Stop'; . ./ada.ps1\n");
+        for line in lines {
+            let _ = writeln!(
+                cmd,
+                "(TabExpansion2 -inputScript '{line}' -cursorColumn {}).CompletionMatches.CompletionText -join ' '",
+                line.len()
+            );
+        }
+        // one line per completion
+        let Ok(out) = Command::new("pwsh")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &cmd])
+            .current_dir(&dir)
+            .output()
+        else {
+            std::fs::remove_dir_all(&dir).unwrap();
+            return;
+        };
+        std::fs::remove_dir_all(&dir).unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success(),
+            "{stdout}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let got: Vec<&str> = stdout.lines().collect();
+        assert_eq!(got.len(), lines.len(), "{stdout}");
+        let words = |i: usize| got[i].split(' ').collect::<Vec<_>>();
+        assert!(
+            words(0).contains(&"--print") && words(0).contains(&"-l"),
+            "{}",
+            got[0]
+        );
+        assert_eq!(words(1), ["-L"], "-L, not -l");
+        assert!(words(2).contains(&"gruvbox-dark"), "{}", got[2]);
+        assert!(
+            !got[2].contains("sub") && !got[2].contains(".md"),
+            "{}",
+            got[2]
+        );
+        assert_eq!(words(3), ["./sub/", "./x.toml"], "directories and themes");
+        assert_eq!(words(4), ["--theme=gruvbox-light"]);
+        assert!(words(5).contains(&"yaml"), "{}", got[5]);
+        // a number has nothing to complete: PowerShell's own paths, not a language
+        assert!(!words(6).contains(&"yaml"), "{}", got[6]);
+        assert_eq!(words(7), ["off", "code", "all"]);
+        assert_eq!(words(8), ["sub/", "a.rec"]);
+        assert_eq!(words(9), ["powershell"]);
     }
 }
