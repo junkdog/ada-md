@@ -365,9 +365,15 @@ ada --completions bash > ${XDG_DATA_HOME:-~/.local/share}/bash-completion/comple
 ada --completions fish > ${XDG_CONFIG_HOME:-~/.config}/fish/completions/ada.fish
 ```
 
-Or source it from `~/.zshrc`, after `compinit`: `source <(ada --completions zsh)`. Theme names
-complete from the built-ins and your themes directory, and a word that starts with `./`, `../`
-or `/` to `.toml` files.
+Or source it from `~/.zshrc`, after `compinit`: `source <(ada --completions zsh)`. In
+PowerShell, add this line to `$PROFILE`:
+
+```powershell
+ada --completions powershell | Out-String | Invoke-Expression
+```
+
+Theme names complete from the built-ins and your themes directory, and a word that starts with
+`./`, `../` or `/` (or `.\`, `..\`, `\` and a drive in PowerShell) to `.toml` files.
 
 ## Recording sessions
 
