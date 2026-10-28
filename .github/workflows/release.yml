@@ -1,6 +1,6 @@
 name: 📦 Release
 
-# Builds the Linux and macOS binaries of a version tag and drafts a GitHub release with them
+# Builds the Linux, macOS and Windows binaries of a version tag and drafts a GitHub release with them
 # (REL-01, REL-03). Pushing a `v*` tag starts it; run it by hand to build an existing tag again,
 # with `dry_run` to keep the archives as workflow artifacts and leave the releases alone. A dry run
 # also builds any branch or commit, whatever its version (`gh workflow run release.yml -f tag=main
@@ -87,10 +87,16 @@ jobs:
           - { target: aarch64-unknown-linux-musl, os: ubuntu-22.04-arm, musl: true }
           - { target: aarch64-apple-darwin, os: macos-15 }
           - { target: x86_64-apple-darwin, os: macos-15-intel }
+          # MSVC, with the default onig feature (WIN-010); a .zip, not a tarball
+          - { target: x86_64-pc-windows-msvc, os: windows-2025, windows: true }
     env:
       VERSION: ${{ needs.version.outputs.version }}
       TARGET_ARGS: ${{ matrix.musl && format('--target {0}', matrix.target) || '' }}
-      BIN: target/${{ matrix.musl && format('{0}/', matrix.target) || '' }}release/ada
+      BIN: target/${{ matrix.musl && format('{0}/', matrix.target) || '' }}release/ada${{ matrix.windows && '.exe' || '' }}
+    # Git Bash on Windows
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v6
         with:
@@ -158,12 +164,16 @@ jobs:
           name=ada-$VERSION-${{ matrix.target }}
           mkdir -p "dist/$name"
           cp "$BIN" README.md LICENSE KNOWN_ISSUES.md "dist/$name/"
-          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          if [ "${{ matrix.windows }}" = true ]; then
+            (cd dist && 7z a -tzip "$name.zip" "$name")
+          else
+            tar -C dist -czf "dist/$name.tar.gz" "$name"
+          fi
           rm -r "dist/$name"
       - uses: actions/upload-artifact@v7
         with:
           name: ada-${{ matrix.target }}
-          path: dist/*.tar.gz
+          path: dist/ada-*
           if-no-files-found: error
 
   release:
@@ -200,7 +210,7 @@ jobs:
           merge-multiple: true
       - name: 🔐 Checksums
         working-directory: dist
-        run: sha256sum *.tar.gz | tee SHA256SUMS
+        run: sha256sum *.tar.gz *.zip | tee SHA256SUMS
       # a run on a tag that already has a release replaces its archives and keeps its text
       - name: 🚀 Draft or update
         run: |
