@@ -35,17 +35,24 @@ impl Default for Roots {
     }
 }
 
-/// `~` and `~/…` as under `$HOME`; other paths as given.
+/// `~` and `~/…` as under `$HOME`, and `~\…` too on Windows, where home is `%USERPROFILE%`;
+/// other paths as given.
 pub fn expand_home(path: &str) -> PathBuf {
-    let home = || env::var_os("HOME").map(PathBuf::from);
     match path.strip_prefix('~') {
         Some("") => home().unwrap_or_else(|| path.into()),
-        Some(rest) if rest.starts_with('/') => match home() {
+        Some(rest) if rest.starts_with(std::path::is_separator) => match home() {
             Some(home) => home.join(&rest[1..]),
             None => path.into(),
         },
         _ => path.into(),
     }
+}
+
+fn home() -> Option<PathBuf> {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    env::var_os(var)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Files a walk indexes at most: a root marker high up (`~/.obsidian`) shouldn't index a disk.
@@ -505,7 +512,7 @@ mod tests {
 
     #[test]
     fn home_expands() {
-        let Some(home) = env::var_os("HOME").map(PathBuf::from) else {
+        let Some(home) = home() else {
             return;
         };
         assert_eq!(expand_home("~"), home);

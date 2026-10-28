@@ -978,7 +978,10 @@ mod tests {
     }
 
     fn sgr(mut style: Style, params: &str) -> Style {
-        let p: Vec<u8> = params.split(';').map(|p| p.parse().unwrap()).collect();
+        let p: Vec<u8> = params
+            .split(';')
+            .map(|p| p.parse::<u8>().unwrap())
+            .collect();
         let mut it = p.iter().copied();
         let color = |it: &mut dyn Iterator<Item = u8>| match it.next() {
             Some(2) => Color::rgb(it.next().unwrap(), it.next().unwrap(), it.next().unwrap()),

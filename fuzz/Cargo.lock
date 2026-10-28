@@ -20,6 +20,7 @@ dependencies = [
  "two-face",
  "unicode-segmentation",
  "unicode-width",
+ "windows-sys",
 ]
 
 [[package]]

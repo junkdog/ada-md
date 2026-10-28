@@ -5,7 +5,6 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
@@ -196,7 +195,10 @@ impl Effects {
 }
 
 /// Hand a file or URL to the desktop's opener, detached from the terminal.
+#[cfg(not(windows))]
 fn open_with_system(target: &OsStr) -> std::io::Result<()> {
+    use std::process::{Command, Stdio};
+
     let opener = if cfg!(target_os = "macos") {
         "open"
     } else {
@@ -210,6 +212,50 @@ fn open_with_system(target: &OsStr) -> std::io::Result<()> {
         .spawn()?;
     // Reap it whenever it exits, so it doesn't linger as a zombie.
     thread::spawn(move || child.wait());
+    Ok(())
+}
+
+/// Hand a file or URL to the shell's opener, `ShellExecuteW`, on a thread of its own: it can
+/// take a moment, and the handler it starts may need COM. Like `xdg-open`'s exit status, its
+/// result goes unread.
+#[cfg(windows)]
+fn open_with_system(target: &OsStr) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr::{null, null_mut};
+    use windows_sys::Win32::System::Com::{
+        COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize,
+    };
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    // a file in Windows' separators: a link's `img/a.png` joins its note's `C:\notes` as is
+    let file = Path::new(target).is_absolute();
+    let (slash, backslash) = (u16::from(b'/'), u16::from(b'\\'));
+    let target: Vec<u16> = target
+        .encode_wide()
+        .map(|c| if file && c == slash { backslash } else { c })
+        .chain([0])
+        .collect();
+    thread::Builder::new().name("open".into()).spawn(move || {
+        let com = (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32;
+        // SAFETY: `target` is NUL-terminated UTF-16 that outlives the call, the other pointers
+        // may be null (the default verb, no parameters, no directory), and COM is released
+        // only when this thread's initialization succeeded.
+        unsafe {
+            let init = CoInitializeEx(null(), com);
+            ShellExecuteW(
+                null_mut(),
+                null(),
+                target.as_ptr(),
+                null(),
+                null(),
+                SW_SHOWNORMAL,
+            );
+            if init >= 0 {
+                CoUninitialize();
+            }
+        }
+    })?;
     Ok(())
 }
 
@@ -302,7 +348,8 @@ pub fn cut_to_head(bytes: &mut Vec<u8>, head: Head) {
 }
 
 /// Split an editor setting the way a shell would: words, `'single'` and `"double"` quotes,
-/// and backslash escapes, so `EDITOR="code --wait"` works (ADR-18).
+/// and backslash escapes, so `EDITOR="code --wait"` works (ADR-18). On Windows a backslash is
+/// a path's separator, not an escape.
 fn shell_words(s: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut word: Option<String> = None;
@@ -316,7 +363,7 @@ fn shell_words(s: &str) -> Vec<String> {
                 word.get_or_insert_default();
             }
             (Some(q), c) if c == q => quote = None,
-            (None | Some('"'), '\\') => {
+            (None | Some('"'), '\\') if !cfg!(windows) => {
                 if let Some(next) = chars.next() {
                     word.get_or_insert_default().push(next);
                 }
@@ -336,7 +383,14 @@ pub fn editor_command(editor: &str, file: &Path, line: u32) -> Option<Vec<OsStri
         .into_iter()
         .map(OsString::from)
         .collect();
-    let program = Path::new(argv.first()?).file_name()?.to_string_lossy();
+    let program = Path::new(argv.first()?);
+    // `nvim.exe` is nvim
+    let program = if cfg!(windows) {
+        program.file_stem()
+    } else {
+        program.file_name()
+    }?
+    .to_string_lossy();
     let plus = [
         "vi",
         "vim",
@@ -454,13 +508,33 @@ mod tests {
             ["/opt/My Editor/bin/edit", "-w", "notes/a b.md"]
         );
         assert_eq!(cmd("   "), None);
+        #[cfg(windows)]
+        assert_eq!(
+            cmd(r#""C:\Program Files\Neovim\bin\nvim.exe" --clean"#).unwrap(),
+            [
+                r"C:\Program Files\Neovim\bin\nvim.exe",
+                "--clean",
+                "+42",
+                "notes/a b.md"
+            ]
+        );
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn shell_words_quote_and_escape() {
         assert_eq!(
             shell_words(r#"a "b c" 'd "e"' f\ g "h\"i" '' x"#),
             ["a", "b c", "d \"e\"", "f g", "h\"i", "", "x"]
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn shell_words_keep_backslashes_on_windows() {
+        assert_eq!(
+            shell_words(r#"C:\bin\ed.exe "C:\a b\c" 'd "e"' '' x"#),
+            [r"C:\bin\ed.exe", r"C:\a b\c", "d \"e\"", "", "x"]
         );
     }
 

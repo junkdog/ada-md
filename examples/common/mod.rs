@@ -14,6 +14,7 @@ use ada::geom::Size;
 use ada::images::{self, ImageKey, Job, Probe};
 
 /// This thread's CPU time.
+#[cfg(unix)]
 pub fn cpu() -> Duration {
     let mut t = libc::timespec {
         tv_sec: 0,
@@ -22,6 +23,14 @@ pub fn cpu() -> Duration {
     // SAFETY: `t` is a valid timespec for the call to fill.
     unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
     Duration::new(t.tv_sec as u64, t.tv_nsec as u32)
+}
+
+/// Wall time since the first call, off unix, where the examples have no thread CPU clock: the
+/// figures they print as CPU are then wall time.
+#[cfg(not(unix))]
+pub fn cpu() -> Duration {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed()
 }
 
 pub fn ms(d: Duration) -> f64 {

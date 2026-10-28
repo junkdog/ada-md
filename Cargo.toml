@@ -56,6 +56,10 @@ rustix = { version = "1.1", default-features = false, features = ["std", "fs", "
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
 libc = "0.2.190"
 
+# Windows' opener, `ShellExecuteW` (WIN-003); already in the tree through walkdir's winapi-util.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
 # jemalloc for the static musl binary (REL-22, MEM-09): musl's malloc has one lock for the process,
 # and Oniguruma (C) allocates through it on every search, so print's highlighting threads queue on
 # it. Unprefixed, it serves C's malloc too, which a Rust allocator alone doesn't.

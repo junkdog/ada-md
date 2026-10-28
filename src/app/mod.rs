@@ -387,7 +387,8 @@ pub enum Cmd {
         source: PathBuf,
         targets: Vec<LocalTarget>,
     },
-    /// Hand a file or URL to the desktop's opener (`xdg-open`).
+    /// Hand a file or URL to the desktop's opener: `xdg-open`, `open` on macOS, `ShellExecuteW`
+    /// on Windows.
     OpenWithSystem(OsString),
     /// Diff a document's file against the index and `HEAD`, off the UI thread.
     RunGit {

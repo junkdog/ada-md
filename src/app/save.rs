@@ -43,7 +43,8 @@ impl State {
         match &self.config.file {
             Some(path) => vec![Cmd::ReadConfig(path.clone())],
             None => {
-                self.status = Some("no config file to save to: $HOME isn't set".into());
+                let unset = if cfg!(windows) { "%APPDATA%" } else { "$HOME" };
+                self.status = Some(format!("no config file to save to: {unset} isn't set"));
                 Vec::new()
             }
         }

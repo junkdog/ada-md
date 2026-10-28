@@ -91,16 +91,13 @@ build, add `--no-default-features`. Highlighting then runs on
 fancy-regex and looks the same, but each language costs 10–20 ms on first use instead of about
 1 ms. Git integration runs the `git` command.
 
-**Windows** is mostly untested. ada builds there, and the pager has run on Windows 10, but it
-doesn't follow Windows' conventions yet:
+**Windows** is mostly untested. ada builds there, and the pager has run on Windows 10. The config
+and themes are in `%APPDATA%\ada` (or `$XDG_CONFIG_HOME\ada`), `~` in `[links] roots` is
+`%USERPROFILE%`, links and images open in their default apps, and the editor falls back to
+`notepad`. Not yet:
 
-- The config and themes are read from `$XDG_CONFIG_HOME/ada` or `$HOME/.config/ada`, not
-  `%APPDATA%`. With neither variable set, ada reads no config and can't save one, and `~` in
-  `[links] roots` isn't expanded.
-- Links and images open with `xdg-open`, and the editor falls back to `vi` when `$VISUAL` and
-  `$EDITOR` are unset.
-- `--print` to a console can show raw escape codes, and images are half-blocks unless
-  `--image-protocol` names one.
+- Images are half-blocks unless `--image-protocol` names one: ada doesn't ask the terminal.
+- Live reload checks the file once a second instead of being told when it changes.
 
 There are no Windows binaries; build it with `cargo install`. Windows support is planned for 1.1.
 
@@ -200,8 +197,8 @@ the terminal, and `mouse = false` in the config starts that way.
 
 ## Configuration
 
-ada reads `~/.config/ada/config.toml` (or `$XDG_CONFIG_HOME/ada/config.toml`). Flags on the
-command line win.
+ada reads `~/.config/ada/config.toml` (or `$XDG_CONFIG_HOME/ada/config.toml`; on Windows,
+`%APPDATA%\ada\config.toml`). Flags on the command line win.
 
 **ada creates this file the first time it runs interactively**, with every option commented
 out at its default, so it's a place to look as much as a place to change things.
@@ -354,10 +351,11 @@ half-blocks. Printed images are text cells, so fzf clips, scrolls and clears the
 
 ## Editing
 
-`e` opens the file in `$VISUAL`, then `$EDITOR`, then `vi`, at the first line on screen: as
-`+LINE FILE` for vi, vim, neovim, nano, emacs, kakoune and micro, as `FILE:LINE` for helix, and
-as just `FILE` for anything else. The setting is split like a shell would, so
-`EDITOR="code --wait"` works. ada reads the file again when the editor exits.
+`e` opens the file in `$VISUAL`, then `$EDITOR`, then `vi` (`notepad` on Windows), at the first
+line on screen: as `+LINE FILE` for vi, vim, neovim, nano, emacs, kakoune and micro, as
+`FILE:LINE` for helix, and as just `FILE` for anything else. The setting is split like a shell
+would, so `EDITOR="code --wait"` works; on Windows, `\` in it is a path's separator, not an
+escape. ada reads the file again when the editor exits.
 
 ## Shell completions
 
