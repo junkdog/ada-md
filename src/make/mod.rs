@@ -9,7 +9,7 @@
 //! pushes, sets or pops contexts and gives its text scopes; `with_prototype` patterns ride
 //! along the contexts above the one that brought them. Each regex is a matcher of its own
 //! (`grammar.rs`, `shell.rs`) that finds its leftmost match by scanning, in linear time, and
-//! `just_eat` is decided from the line's paren groups ([`scan::Parens`]). So a line gets the
+//! `just_eat` is decided from the line's paren groups (`Parens`, `scan.rs`). So a line gets the
 //! scopes syntect gives it, and themes color it as before.
 //!
 //! Recipe lines are shell (bat's `Bourne Again Shell`, with make's `$(VAR)` on top), and so
