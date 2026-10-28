@@ -29,6 +29,7 @@ use crate::doc::{CodeBlock, CodeId};
 use crate::json;
 use crate::layout::expand_tabs;
 use crate::logs::{self, Kind, Span};
+use crate::make;
 
 /// Longer lines are left plain: backtracking regexes can be slow on them, and nobody reads them
 /// anyway.
@@ -393,6 +394,12 @@ fn is_json(lang: &str) -> bool {
     find_syntax(lang).is_some_and(|s| s.name == "JSON")
 }
 
+/// Whether a language is bat's `Makefile`, which ada highlights with a lexer of its own
+/// (G-002).
+fn is_make(lang: &str) -> bool {
+    find_syntax(lang).is_some_and(|s| s.name == "Makefile")
+}
+
 /// The theme's rule for each of a lexer's kinds, as syntect would pick it for the kind's
 /// scopes under `base`.
 fn kind_rules<const N: usize>(theme: &SyntaxTheme, base: &str, scopes: [&str; N]) -> [Rule; N] {
@@ -468,6 +475,44 @@ impl JsonRules {
         let rule = |s: &json::Span| (s.start, s.end, self.0[s.kind as usize]);
         span_runs(line.len(), spans.iter().map(rule))
     }
+}
+
+/// The theme's rule for each scope stack a Makefile's lines name, found as they come: the
+/// lexer gives the grammar's nested stacks, not a fixed set of kinds.
+#[derive(Default)]
+pub struct MakeRules(Vec<Rule>);
+
+impl MakeRules {
+    /// Highlight one Makefile line, after the lines before it left `state`; `spans` is scratch
+    /// space. Long lines are colored too: the lexer is linear.
+    fn line(
+        &mut self,
+        line: &str,
+        state: &mut make::State,
+        spans: &mut Vec<make::Span>,
+        highlighter: &SynHighlighter,
+    ) -> Box<[Run]> {
+        let line = expand_tabs(line);
+        make::tokens(&line, state, spans);
+        for id in self.0.len()..state.stack_count() {
+            self.0.push(stack_rule(state.stack(id as u32), highlighter));
+        }
+        let rule = |s: &make::Span| (s.start, s.end, self.0[s.stack as usize]);
+        span_runs(line.len(), spans.iter().map(rule))
+    }
+}
+
+/// The rule for a scope stack under `source.makefile`, as syntect's highlighter reaches it
+/// (`style_for_stack`): a one-scope selector scores by the depth of the scope it matches as
+/// that scope is pushed, so `variable` takes `$@` in a string in a command name's scope.
+/// `style_mod_for_stack` would match it at its first `variable.*` scope instead, below the
+/// string.
+fn stack_rule(stack: &[make::Sc], highlighter: &SynHighlighter) -> Rule {
+    let path: Vec<Scope> = std::iter::once(make::BASE)
+        .chain(stack.iter().map(|sc| sc.name()))
+        .map(|s| Scope::new(s).expect("scope"))
+        .collect();
+    Rule::decode(highlighter.style_for_stack(&path).foreground)
 }
 
 /// How a file printed a piece at a time is highlighted (O-52): not at all, or by one of ada's
@@ -576,6 +621,7 @@ enum Engine {
     Log(LogRules, Vec<Span>),
     /// Whether a `/* */` comment is open.
     Json(JsonRules, Vec<json::Span>, bool),
+    Make(MakeRules, Box<make::State>, Vec<make::Span>),
 }
 
 /// The lines of a code block, split as [`crate::doc::code_lines`] splits them.
@@ -622,6 +668,12 @@ impl<'a> Highlighter<'a> {
             Some(Engine::Log(LogRules::new(theme), Vec::new()))
         } else if is_json(lang) {
             Some(Engine::Json(JsonRules::new(theme), Vec::new(), false))
+        } else if is_make(lang) {
+            Some(Engine::Make(
+                MakeRules::default(),
+                Box::default(),
+                Vec::new(),
+            ))
         } else {
             find_syntax(lang).map(|s| Engine::Syntect(LineState::new(s, &highlighter)))
         };
@@ -654,6 +706,10 @@ impl<'a> Highlighter<'a> {
                 Engine::Json(rules, spans, comment) => {
                     LINES.fetch_add(1, Ordering::Relaxed);
                     Some(rules.line(line, comment, spans))
+                }
+                Engine::Make(rules, state, spans) => {
+                    LINES.fetch_add(1, Ordering::Relaxed);
+                    Some(rules.line(line, state, spans, &self.highlighter))
                 }
             };
             match runs {
@@ -727,6 +783,8 @@ pub fn highlight_parallel(key: u64, lang: &str, text: &str, theme: &SyntaxTheme)
         // a `/* */` comment carries over lines: rare in JSON this big, and fast on one thread
         "JSON" if text.contains("/*") => highlight(key, lang, text, theme),
         "JSON" => highlight_json_on(key, text, theme, threads),
+        // its lines depend on the ones before, and one thread does ~100 MB/s
+        "Makefile" => highlight(key, lang, text, theme),
         _ => highlight_on(key, syntax, text, theme, threads),
     }
 }
@@ -1449,6 +1507,115 @@ mod tests {
                 .collect();
             assert_eq!(highlight(1, "json", text, &theme).lines, want);
         }
+    }
+
+    /// The Makefile lexer picks the rules bat's grammar picks, in every built-in theme (G-002).
+    #[test]
+    fn make_rules_match_the_grammar() {
+        let text = concat!(
+            "# build \\\n",
+            "  continued comment\n",
+            "include config.mk\n",
+            "-include $(wildcard *.d)\n",
+            "vpath %.c src\n",
+            "CC ?= gcc\n",
+            "CFLAGS := -O2 -Wall # flags\n",
+            "OBJS = $(patsubst %.c,%.o,$(SRCS)) ${EXTRA:.c=.o}\n",
+            "override LDFLAGS += -lm\n",
+            "export PATH := $(HOME)/bin:$(PATH)\n",
+            "REV != git rev-parse --short HEAD\n",
+            "RUN = sh -c 'echo \"$$1\" && exit 0'\n",
+            "define HELP =\n",
+            "  usage: make [target]\n",
+            "endef\n",
+            "ifeq ($(CC),gcc)\n",
+            "  WARN = -Wextra\n",
+            "else ifneq \"$(CC)\" 'clang'\n",
+            "endif\n",
+            "all: $(OBJS) | dirs ; @echo inline\n",
+            "%.o: %.c config.h\n",
+            "\t@$(CC) $(CFLAGS) -c $< -o $@\n",
+            "\t-rm -f \"$@.tmp\" 2>/dev/null || true\n",
+            "\tfor f in $^; do [ -e \"$$f\" ] && echo `basename $$f`; done\n",
+            "\tf() { printf '%s\\n' $$1; }; f x\n",
+            "test: CFLAGS += -g\n",
+            "test:: all\n",
+            "\t$(info $(call show,$(OBJS),\"quoted\"))\n",
+            "\t$(Q)$(kecho) \"  SYNC    $@\"\n",
+            "\tVAR=1 cd build && $(MAKE) -C sub $(shell uname -s)\n",
+            "\tif [ -n \"$${HOME}\" ]; then echo ok; else exit 1; fi\n",
+            "\tcase $$x in a|b) echo $$((1 + 2));; esac\n",
+            "endef\n",
+            "a((m)    ((g)    (i)    : b\n",
+        );
+        let grammar = find_syntax("make").unwrap();
+        assert_eq!(grammar.name, "Makefile");
+        for theme in Theme::builtins() {
+            let theme = SyntaxTheme::new(&theme.syntax);
+            let highlighter = SynHighlighter::new(&theme.theme);
+            let mut state = LineState::new(grammar, &highlighter);
+            let mut buf = String::new();
+            let want: Vec<_> = Lines::new(text)
+                .map(|l| state.line(l, &highlighter, &mut buf).unwrap())
+                .collect();
+            assert_eq!(highlight(1, "make", text, &theme).lines, want);
+        }
+    }
+
+    /// G-002 on real Makefiles: `ADA_MAKE_CORPUS` names a file of paths, one a line, and each
+    /// file's runs must be syntect's in every built-in theme. Files with a line over
+    /// `MAX_LINE` are left out, as syntect leaves those lines plain and the lexer doesn't.
+    /// Slow: `ADA_MAKE_CORPUS=list cargo test --release make_corpus -- --ignored`.
+    #[test]
+    #[ignore]
+    fn make_corpus_matches_the_grammar() {
+        let Some(list) = std::env::var_os("ADA_MAKE_CORPUS") else {
+            return;
+        };
+        let list = std::fs::read_to_string(list).unwrap();
+        let grammar = find_syntax("make").unwrap();
+        let themes: Vec<SyntaxTheme> = Theme::builtins()
+            .iter()
+            .map(|t| SyntaxTheme::new(&t.syntax))
+            .collect();
+        let (mut files, mut bad) = (0, Vec::new());
+        for path in list.lines() {
+            let Ok(text) = std::fs::read_to_string(path) else {
+                continue;
+            };
+            if Lines::new(&text).any(|l| expand_tabs(l).len() > MAX_LINE) {
+                continue;
+            }
+            files += 1;
+            for (t, theme) in themes.iter().enumerate() {
+                let highlighter = SynHighlighter::new(&theme.theme);
+                let mut state = LineState::new(grammar, &highlighter);
+                let mut buf = String::new();
+                let want: Option<Vec<_>> = Lines::new(&text)
+                    .map(|l| state.line(l, &highlighter, &mut buf))
+                    .collect();
+                let Some(want) = want else {
+                    break;
+                };
+                let got = highlight(1, "make", &text, theme).lines;
+                // a line with no rule but none is one run in syntect's form, none in the lexer's
+                let plain = |runs: &[Run]| runs.iter().all(|r| r.rule.0 == Rule::NONE);
+                let same = |n: usize| match got.get(n) {
+                    Some(g) => g == &want[n] || (plain(g) && plain(&want[n])),
+                    None => false,
+                };
+                if let Some(n) = (0..want.len()).find(|&n| !same(n)) {
+                    bad.push(format!("{path}:{} in theme {t}", n + 1));
+                    break;
+                }
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "{} of {files} files differ: {bad:?}",
+            bad.len()
+        );
+        eprintln!("{files} files match in {} themes", themes.len());
     }
 
     fn rule_names(theme: &Theme, spans: &CodeSpans, line: &str, n: u32) -> Vec<(String, String)> {
