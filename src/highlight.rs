@@ -125,19 +125,34 @@ fn is_plain(lang: &str) -> bool {
         .any(|p| lang.eq_ignore_ascii_case(p))
 }
 
+/// Fence languages the vault needs that the syntax set doesn't name, and the token each stands
+/// for. `fuzz/markdown.dict` names them all (F-013).
+pub const ALIASES: &[(&str, &str)] = &[
+    ("zsh", "bash"),
+    ("sh", "bash"),
+    ("shell", "bash"),
+    ("console", "bash"),
+    ("shellsession", "bash"),
+    ("kt", "kotlin"),
+    ("kts", "kotlin"),
+    ("ts", "typescript"),
+    ("mts", "typescript"),
+    ("cts", "typescript"),
+    ("jsonl", "json"),
+    ("jsonc", "json"),
+    ("json5", "json"),
+];
+
 /// The syntax for a fence language, with the aliases the vault needs.
 pub fn find_syntax(lang: &str) -> Option<&'static SyntaxReference> {
     if is_plain(lang) {
         return None;
     }
     let lower = lang.to_ascii_lowercase();
-    let token = match lower.as_str() {
-        "zsh" | "sh" | "shell" | "console" | "shellsession" => "bash",
-        "kt" | "kts" => "kotlin",
-        "ts" | "mts" | "cts" => "typescript",
-        "jsonl" | "jsonc" | "json5" => "json",
-        other => other,
-    };
+    let token = ALIASES
+        .iter()
+        .find(|&&(alias, _)| alias == lower)
+        .map_or(lower.as_str(), |&(_, token)| token);
     // a syntax's own name, as a whole file's language is given (`Rust`, `TOML`)
     syntaxes()
         .find_syntax_by_name(lang)
