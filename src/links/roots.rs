@@ -411,12 +411,12 @@ mod tests {
         let Resolved::Broken(why) = r.resolve(&source, &wiki("todo")) else {
             panic!("picked one of three");
         };
+        // in the system's separators, as the root before them
+        let list = "10-projects/x/todo.md, 20-areas/y/sub/todo.md, 20-areas/y/todo.md"
+            .replace('/', std::path::MAIN_SEPARATOR_STR);
         assert_eq!(
             why,
-            format!(
-                "3 files named todo.md under {}: 10-projects/x/todo.md, 20-areas/y/sub/todo.md, 20-areas/y/todo.md",
-                dir.display()
-            )
+            format!("3 files named todo.md under {}: {list}", dir.display())
         );
         // the message names what matched: `arch.puml`, not `arch.puml.md`
         let Resolved::Broken(why) = r.resolve(&source, &wiki("arch.puml")) else {

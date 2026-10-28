@@ -615,9 +615,12 @@ mod tests {
 
     #[test]
     fn link_roots() {
-        let text = "[links]\nroots = [\"/notes\", \"~/vault\"]\nroot_markers = [\"VAULT.md\"]\n";
-        let s = parse("c.toml", text, &mut Vec::new()).unwrap();
-        assert_eq!(s.links.roots[0], PathBuf::from("/notes"));
+        // absolute on Windows too, where `/notes` lacks a drive
+        let abs = if cfg!(windows) { "C:/notes" } else { "/notes" };
+        let text =
+            format!("[links]\nroots = [\"{abs}\", \"~/vault\"]\nroot_markers = [\"VAULT.md\"]\n");
+        let s = parse("c.toml", &text, &mut Vec::new()).unwrap();
+        assert_eq!(s.links.roots[0], PathBuf::from(abs));
         assert_eq!(s.links.roots[1], links::expand_home("~/vault"));
         assert_eq!(s.links.markers, ["VAULT.md"]);
         // the markers keep their default when only roots are set
