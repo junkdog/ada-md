@@ -30,6 +30,7 @@ dependencies = [
  "crossterm",
  "image",
  "libfuzzer-sys",
+ "syntect",
  "unicode-segmentation",
  "unicode-width",
  "vt100",

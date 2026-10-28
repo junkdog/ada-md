@@ -7,8 +7,6 @@
 
 #![no_main]
 
-mod skip;
-
 use ada::app::{Computed, Config, Effects, Msg, ScrollBy, Size, State};
 use ada::record::{Entry, replay_headless};
 use ada::theme::Theme;
@@ -23,9 +21,6 @@ fuzz_target!(|data: &[u8]| {
         h: u16::from(h % 64).max(1),
     };
     let text = String::from_utf8_lossy(rest);
-    if skip::makefile(&text) {
-        return;
-    }
     let msgs = [
         Msg::Init { size: size(*w, *h) },
         Msg::DocLoaded {

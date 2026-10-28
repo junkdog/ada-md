@@ -28,8 +28,6 @@
 
 #![no_main]
 
-mod skip;
-
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -1308,9 +1306,6 @@ fuzz_target!(|data: &[u8]| {
     let len = usize::from(u16::from_le_bytes([*lo, *hi])).min(rest.len());
     let (doc, script) = rest.split_at(len);
     let doc: Arc<str> = String::from_utf8_lossy(doc).into();
-    if skip::makefile(&doc) {
-        return;
-    }
     let mut u = Unstructured::new(script);
 
     let (w, h): (u16, u8) = u.arbitrary().unwrap_or((79, 23));

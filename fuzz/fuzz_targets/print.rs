@@ -11,8 +11,6 @@
 
 #![no_main]
 
-mod skip;
-
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -176,10 +174,6 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     let text = String::from_utf8_lossy(&bytes);
-    if skip::makefile(&text) {
-        return;
-    }
-
     let theme = Theme::builtin();
     let proto = setup.images.map(|kitty| {
         if kitty {
