@@ -198,6 +198,7 @@ impl PipedImage {
             .map(PathBuf::from)
             .filter(|dir| dir.is_absolute() && dir.is_dir())
             .unwrap_or_else(env::temp_dir);
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut builder = fs::DirBuilder::new();
         #[cfg(unix)]
         std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
@@ -285,6 +286,12 @@ fn print_doc(
     // fzf exports the whole terminal as $COLUMNS, and the preview pane as $FZF_PREVIEW_COLUMNS.
     let env_number = |name| env::var(name).ok()?.trim().parse().ok();
     let tty = io::stdout().is_terminal();
+    // Windows' console shows escapes as text until VT processing is on; the TUI gets it from
+    // crossterm's first command, and a print calls crossterm for nothing else.
+    #[cfg(windows)]
+    if tty {
+        crossterm::ansi_support::supports_ansi();
+    }
     let screen = || tty.then(|| crossterm::terminal::size().ok()).flatten();
     let width = args
         .width

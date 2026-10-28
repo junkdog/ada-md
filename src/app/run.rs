@@ -2,6 +2,7 @@
 //! the main thread blocks in `recv()`, so idle costs nothing, then drains, updates and draws once.
 
 use std::collections::{HashSet, VecDeque};
+use std::ffi::{OsStr, OsString};
 use std::io::{self, Stdout, Write};
 use std::mem;
 use std::path::{Path, PathBuf};
@@ -404,12 +405,12 @@ fn edit(terminal: &mut Term, file: &Path, line: u32, mouse: bool) -> Result<Opti
         .filter_map(env::var_os)
         .map(|v| v.to_string_lossy().into_owned())
         .find(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| "vi".to_owned());
+        .unwrap_or_else(|| if cfg!(windows) { "notepad" } else { "vi" }.to_owned());
     let Some(argv) = editor_command(&editor, file, line) else {
         return Ok(None);
     };
     restore_terminal();
-    let status = Command::new(&argv[0]).args(&argv[1..]).status();
+    let status = Command::new(program(&argv[0])).args(&argv[1..]).status();
     let back = || -> io::Result<Term> {
         enable_raw_mode()?;
         execute!(io::stdout(), EnterAlternateScreen, Clear(ClearType::All))?;
@@ -429,6 +430,37 @@ fn edit(terminal: &mut Term, file: &Path, line: u32, mouse: bool) -> Result<Opti
             error: e.to_string(),
         },
     }))
+}
+
+/// The program a command line names. On Windows, a bare name is looked up on `%PATH%` with each
+/// of `%PATHEXT%`'s extensions, as a shell does: `Command` looks only for `.exe`, and VS Code's
+/// `code` is `code.cmd`.
+#[cfg(windows)]
+fn program(name: &OsStr) -> OsString {
+    let path = Path::new(name);
+    if path.extension().is_some() || path.components().count() != 1 {
+        return name.to_owned();
+    }
+    let exts = env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+    env::var_os("PATH")
+        .iter()
+        .flat_map(env::split_paths)
+        .flat_map(|dir| {
+            exts.split(';')
+                .filter(|ext| !ext.is_empty())
+                .map(move |ext| {
+                    let mut file = dir.join(name).into_os_string();
+                    file.push(ext);
+                    PathBuf::from(file)
+                })
+        })
+        .find(|file| file.is_file())
+        .map_or_else(|| name.to_owned(), PathBuf::into_os_string)
+}
+
+#[cfg(not(windows))]
+fn program(name: &OsStr) -> OsString {
+    name.to_owned()
 }
 
 /// Read the terminal's events into messages: first, when images are on, its answer to the image

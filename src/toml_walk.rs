@@ -12,12 +12,21 @@ use toml::de::{DeTable, DeValue};
 
 pub type Value<'i> = Spanned<DeValue<'i>>;
 
-/// `$XDG_CONFIG_HOME/ada`, falling back to `~/.config/ada`.
+/// `$XDG_CONFIG_HOME/ada`, falling back to `~/.config/ada`; on Windows to `%APPDATA%\ada`,
+/// whatever `$HOME` a Git Bash sets, so each shell finds the same config.
 pub fn config_dir() -> Option<PathBuf> {
-    let config = env::var_os("XDG_CONFIG_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
+    let var = |name| {
+        env::var_os(name)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+    };
+    let config = var("XDG_CONFIG_HOME").or_else(|| {
+        if cfg!(windows) {
+            var("APPDATA")
+        } else {
+            var("HOME").map(|home| home.join(".config"))
+        }
+    })?;
     Some(config.join("ada"))
 }
 
