@@ -34,6 +34,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
+use std::num::NonZeroU16;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
@@ -612,6 +613,15 @@ const VISIBLE_ON_BLANK: Modifier = Modifier::REVERSED
     .union(Modifier::RAPID_BLINK)
     .union(Modifier::CROSSED_OUT);
 
+/// A vt100 terminal of `h` rows and `w` columns; [`size`] makes both at least 1.
+fn term(h: u16, w: u16) -> vt100::Parser {
+    vt100::Parser::new(dim(h), dim(w), 0)
+}
+
+fn dim(n: u16) -> NonZeroU16 {
+    NonZeroU16::new(n).expect("terminal size")
+}
+
 /// The terminal's color for one of ada's: named colors are the first 16 indexes.
 fn term_color(c: Color) -> vt100::Color {
     match c.kind() {
@@ -833,7 +843,7 @@ fn placed_at(
 /// only the rows it marks. Returns the placeholders it checked.
 fn shows(term: &vt100::Screen, grid: &Grid, rows: Option<&[bool]>, sent: &HashSet<u32>) -> u32 {
     let area = grid.area();
-    assert_eq!(term.size(), (area.height, area.width));
+    assert_eq!(term.size(), (dim(area.height), dim(area.width)));
     let mut placed = 0;
     for y in 0..area.height {
         if rows.is_some_and(|r| !r[usize::from(y)]) {
@@ -1079,7 +1089,7 @@ impl Session<'_> {
         let Size { w, h } = self.state.size;
         if self.screen.size() != Cells::new(w, h) {
             self.screen.resize(Cells::new(w, h));
-            self.term.screen_mut().set_size(h, w);
+            self.term.screen_mut().set_size(dim(h), dim(w));
         }
         let state = &self.state;
         self.screen
@@ -1115,7 +1125,7 @@ impl Session<'_> {
         if trace() {
             eprintln!("kept {}", bytes.escape_ascii());
         }
-        let mut term = vt100::Parser::new(h, w, 0);
+        let mut term = term(h, w);
         term.process(&for_vt100(&bytes, self.screen.shown(), &mut []));
         // the interactive loop sends the cache's kitty images to the main screen first
         // (`keep_screen`)
@@ -1339,7 +1349,7 @@ fuzz_target!(|data: &[u8]| {
     state.themes.extend_from_slice(extra_themes());
     let out = Rc::new(RefCell::new(Vec::new()));
     let screen = Screen::new(Tap(out.clone()), Cells::new(state.size.w, state.size.h));
-    let term = vt100::Parser::new(state.size.h, state.size.w, 0);
+    let term = term(state.size.h, state.size.w);
     let mut s = Session {
         state,
         keymap: Keymap::default(),

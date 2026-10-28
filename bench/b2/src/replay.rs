@@ -1,6 +1,7 @@
 //! Feeds recorded chunks through vt100 in order, to answer "when did the screen first show X after t".
 
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::num::NonZeroU16;
 
 use crate::pty::{COLS, Chunk, ROWS};
 
@@ -20,26 +21,31 @@ pub struct Scan {
     pub changed: bool,
 }
 
+/// vt100 takes a terminal size as nonzero rows and columns.
+fn dim(n: u16) -> NonZeroU16 {
+    NonZeroU16::new(n).expect("terminal size")
+}
+
 /// Chunks can split a frame; a frame boundary is where the next chunk is more than 2 ms away.
 const FRAME_GAP: f64 = 0.002;
 
 impl Replay {
     pub fn new() -> Replay {
         Replay {
-            parser: vt100::Parser::new(ROWS, COLS, 0),
+            parser: vt100::Parser::new(dim(ROWS), dim(COLS), 0),
             i: 0,
         }
     }
 
     pub fn text(&self) -> String {
         let sc = self.parser.screen();
-        sc.rows(0, sc.size().1).collect::<Vec<_>>().join("\n")
+        sc.rows(0, sc.size().1.get()).collect::<Vec<_>>().join("\n")
     }
 
     pub fn sig(&self) -> u64 {
         let sc = self.parser.screen();
         let mut h = DefaultHasher::new();
-        sc.rows_formatted(0, sc.size().1)
+        sc.rows_formatted(0, sc.size().1.get())
             .for_each(|r| r.hash(&mut h));
         h.finish()
     }
@@ -52,7 +58,7 @@ impl Replay {
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) {
-        self.parser.screen_mut().set_size(rows, cols);
+        self.parser.screen_mut().set_size(dim(rows), dim(cols));
     }
 
     /// Feeds the chunks in [t_from, t_to).
