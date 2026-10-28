@@ -15,7 +15,7 @@ unicode-segmentation = "1.13"
 unicode-width = "0.2"
 # the terminal the frames are checked on (F-04)
 vt100 = "0.18.1"
-# the grammar the `make` target checks the Makefile lexer against (G-002); already in the tree
+# the grammars the `make` and `bash` targets check the lexer against (G-002, G-003); already in the tree
 syntect = { version = "5.3", default-features = false, features = ["parsing"] }
 ada-md = { path = ".." }
 
@@ -92,6 +92,13 @@ bench = false
 [[bin]]
 name = "make"
 path = "fuzz_targets/make.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bash"
+path = "fuzz_targets/bash.rs"
 test = false
 doc = false
 bench = false

@@ -1,4 +1,5 @@
-//! G-002: ada's Makefile lexer (`src/make`) against syntect on bat's grammar, byte for byte.
+//! G-002 and G-003: ada's Makefile and shell lexer (`src/make`) against syntect on bat's
+//! grammars, byte for byte; `--bash` takes the files as shell scripts.
 //!
 //! Each line is expanded as the highlighter expands it, then parsed by both, carrying their
 //! state from line to line; every byte whose scope stack differs is counted, and the first
@@ -9,6 +10,7 @@
 //! cargo run --release --example make_parity -- Makefile src/*.mk
 //! cargo run --release --example make_parity -- --show 40 Makefile
 //! cargo run --release --example make_parity -- --time $(cat corpus.txt)
+//! cargo run --release --example make_parity -- --bash $(cat scripts.txt)
 //! ```
 
 use std::time::{Duration, Instant};
@@ -16,7 +18,7 @@ use std::{env, fs};
 
 use ada::highlight::syntaxes;
 use ada::layout::expand_tabs;
-use ada::make::{self, Span, State};
+use ada::make::{self, Grammar, Span, State};
 use syntect::parsing::{ParseState, ScopeStack};
 
 mod common;
@@ -27,6 +29,7 @@ fn main() {
     let mut show = 10usize;
     let mut time = false;
     let mut dump = false;
+    let mut grammar = Grammar::Make;
     let mut files = Vec::new();
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -34,6 +37,7 @@ fn main() {
             "--show" => show = args.next().and_then(|n| n.parse().ok()).unwrap_or(10),
             "--time" => time = true,
             "--dump" => dump = true,
+            "--bash" => grammar = Grammar::Bash,
             _ => files.push(arg),
         }
     }
@@ -42,17 +46,17 @@ fn main() {
         .filter_map(|f| fs::read_to_string(&f).ok().map(|t| (f, t)))
         .collect();
     if time {
-        return timing(&texts);
+        return timing(grammar, &texts);
     }
     if dump {
         for (_, text) in &texts {
-            dump_file(text);
+            dump_file(grammar, text);
         }
         return;
     }
     let (mut bytes, mut differ, mut files_differ) = (0usize, 0usize, 0usize);
     for (name, text) in &texts {
-        let (b, d, shown) = compare(name, text, show);
+        let (b, d, shown) = compare(grammar, name, text, show);
         bytes += b;
         differ += d;
         files_differ += usize::from(d > 0);
@@ -71,7 +75,7 @@ fn lines(text: &str) -> impl Iterator<Item = String> + '_ {
         .map(|l| expand_tabs(l.strip_suffix('\r').unwrap_or(l)).into_owned())
 }
 
-/// The stack under `source.makefile` of each byte of `line`, from syntect.
+/// The stack under the base scope of each byte of `line`, from syntect.
 fn syntect_line(ps: &mut ParseState, stack: &mut ScopeStack, line: &str) -> Vec<String> {
     let buf = format!("{line}\n");
     let ops = ps.parse_line(&buf, syntaxes()).expect("parse");
@@ -110,13 +114,13 @@ fn ours_line(state: &mut State, spans: &mut Vec<Span>, line: &str) -> Vec<String
 }
 
 /// Bytes, differing bytes, and how many differences were shown.
-fn compare(name: &str, text: &str, show: usize) -> (usize, usize, usize) {
+fn compare(grammar: Grammar, name: &str, text: &str, show: usize) -> (usize, usize, usize) {
     let syntax = syntaxes()
-        .find_syntax_by_name("Makefile")
-        .expect("Makefile");
+        .find_syntax_by_name(grammar.syntax())
+        .expect("syntax");
     let mut ps = ParseState::new(syntax);
     let mut stack = ScopeStack::new();
-    let mut state = State::new();
+    let mut state = State::new(grammar);
     let mut spans = Vec::new();
     let (mut bytes, mut differ, mut shown) = (0, 0, 0);
     for (n, line) in lines(text).enumerate() {
@@ -154,12 +158,12 @@ fn compare(name: &str, text: &str, show: usize) -> (usize, usize, usize) {
     (bytes, differ, shown)
 }
 
-fn timing(texts: &[(String, String)]) {
+fn timing(grammar: Grammar, texts: &[(String, String)]) {
     let all: Vec<Vec<String>> = texts.iter().map(|(_, t)| lines(t).collect()).collect();
     let n_bytes: usize = all.iter().flatten().map(|l| l.len() + 1).sum();
     let syntax = syntaxes()
-        .find_syntax_by_name("Makefile")
-        .expect("Makefile");
+        .find_syntax_by_name(grammar.syntax())
+        .expect("syntax");
     // the fastest of five rounds by wall time, with its CPU time; the first round compiles
     // syntect's regexes
     let best = |f: &mut dyn FnMut()| {
@@ -187,7 +191,7 @@ fn timing(texts: &[(String, String)]) {
     let mut spans = Vec::new();
     let ours = best(&mut || {
         for file in &all {
-            let mut state = State::new();
+            let mut state = State::new(grammar);
             for line in file {
                 make::tokens(line, &mut state, &mut spans);
                 std::hint::black_box(&spans);
@@ -209,13 +213,13 @@ fn timing(texts: &[(String, String)]) {
 }
 
 /// Every line's stacks from both, a run of equal stacks a row.
-fn dump_file(text: &str) {
+fn dump_file(grammar: Grammar, text: &str) {
     let syntax = syntaxes()
-        .find_syntax_by_name("Makefile")
-        .expect("Makefile");
+        .find_syntax_by_name(grammar.syntax())
+        .expect("syntax");
     let mut ps = ParseState::new(syntax);
     let mut stack = ScopeStack::new();
-    let mut state = State::new();
+    let mut state = State::new(grammar);
     let mut spans = Vec::new();
     for (n, line) in lines(text).enumerate() {
         let want = syntect_line(&mut ps, &mut stack, &line);

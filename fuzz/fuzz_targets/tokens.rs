@@ -1,6 +1,7 @@
 //! The scanners that took the place of bat's grammars: log lines (O-43, `logs`), JSON lines
-//! (O-48, `json`) and Makefile lines (G-002, `make`), each given every line of the input, JSON
-//! with the `/* */` comment state one line leaves the next, the Makefile with its whole state.
+//! (O-48, `json`), and Makefile and shell lines (G-002 and G-003, `make`), each given every
+//! line of the input, JSON with the `/* */` comment state one line leaves the next, the
+//! Makefile and the shell script with their whole state.
 //! Their spans go to `highlight`'s runs, which slice the line at them: they must come in order,
 //! not overlap, not be empty, and start and end on characters of the line.
 //! Nothing may panic, and a long line must not take long. An input that starts with a NUL is a
@@ -46,9 +47,10 @@ fuzz_target!(|data: &[u8]| {
     };
     let text = String::from_utf8_lossy(data);
     let trace = std::env::var_os("ADA_FUZZ_TRACE").is_some();
-    let (mut log, mut js, mut mk) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut log, mut js, mut mk, mut sh) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut comment = false;
-    let mut state = make::State::new();
+    let mut state = make::State::new(make::Grammar::Make);
+    let mut bash = make::State::new(make::Grammar::Bash);
     for line in text.split('\n') {
         logs::tokens(line, &mut log);
         check("log", line, log.iter().map(|s| (s.start, s.end)));
@@ -57,8 +59,12 @@ fuzz_target!(|data: &[u8]| {
         check("json", line, js.iter().map(|s| (s.start, s.end)));
         make::tokens(line, &mut state, &mut mk);
         check("make", line, mk.iter().map(|s| (s.start, s.end)));
+        make::tokens(line, &mut bash, &mut sh);
+        check("bash", line, sh.iter().map(|s| (s.start, s.end)));
         if trace {
-            eprintln!("{line:?}\n  log {log:?}\n  json {open} -> {comment} {js:?}\n  make {mk:?}");
+            eprintln!(
+                "{line:?}\n  log {log:?}\n  json {open} -> {comment} {js:?}\n  make {mk:?}\n  bash {sh:?}"
+            );
         }
     }
 });
