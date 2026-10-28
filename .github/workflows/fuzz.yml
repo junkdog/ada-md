@@ -1,0 +1,147 @@
+name: 🐛 Fuzz
+
+# A fuzz round on GitHub's runners (F-014): free on a public repo, 4 CPUs and 16 GB a job, at most
+# 6 h a job. One build, then one worker per shard, each on every CPU of its runner
+# (`fuzz/ci.zsh run`), then one job per target that adds the shards' new inputs to its corpus.
+# The corpus is kept as the `corpus-TARGET` artifact, 90 days: a round starts from the newest,
+# else from the `fuzz-corpus` release's TARGET.tar.zst (`fuzz/ci.zsh pack` makes them from the
+# local corpora), else empty. A crash, timeout or OOM fails its worker; the inputs and the log
+# are its `findings-TARGET-SHARD` artifact. By hand only:
+#
+#   gh workflow run fuzz.yml -f minutes=15 -f workers='print=1 make=1'
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: Minutes each worker fuzzes (a job stops at 6 h, loading the corpus included)
+        default: '240'
+      workers:
+        description: Workers per target
+        default: 'session=5 print=3 render=2 diagram=2 make=2 bash=2 stream=1 images=1 tokens=1 roots=1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: 🔨 Build
+    runs-on: ubuntu-24.04
+    outputs:
+      workers: ${{ steps.plan.outputs.workers }}
+      targets: ${{ steps.plan.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: 🔧 zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: 📋 Plan
+        id: plan
+        run: zsh fuzz/ci.zsh plan "$WORKERS" | tee -a "$GITHUB_OUTPUT"
+        env:
+          WORKERS: ${{ inputs.workers }}
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz@0.13.2
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      # as the local rounds build them: no sanitizer, debug assertions on
+      - name: 🔨 Build the targets
+        working-directory: fuzz
+        run: |
+          cargo fuzz build -s none -a
+          tar -C target/x86_64-unknown-linux-gnu/release -cf - $(jq -r '.[]' <<< "$TARGETS") | zstd -3 -T0 > fuzzers.tar.zst
+        env:
+          TARGETS: ${{ steps.plan.outputs.targets }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: fuzzers
+          path: fuzz/fuzzers.tar.zst
+          compression-level: 0
+          retention-days: 7
+
+  fuzz:
+    name: 🐛 ${{ matrix.target }} ${{ matrix.shard }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.build.outputs.workers) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: 🔧 zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      - uses: actions/download-artifact@v8
+        with:
+          name: fuzzers
+          path: fuzz/target/ci
+      - name: 📥 Corpus
+        run: zsh fuzz/ci.zsh fetch "$TARGET"
+      - name: 🐛 Fuzz
+        run: zsh fuzz/ci.zsh run "$TARGET" "$(( MINUTES * 60 ))"
+        env:
+          MINUTES: ${{ inputs.minutes }}
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: new-${{ matrix.target }}-${{ matrix.shard }}
+          path: fuzz/out/new/
+          if-no-files-found: ignore
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: findings-${{ matrix.target }}-${{ matrix.shard }}
+          path: |
+            fuzz/out/findings/
+            fuzz/out/${{ matrix.target }}.log
+          retention-days: 30
+
+  corpus:
+    name: 📦 Corpus ${{ matrix.target }}
+    needs: [ build, fuzz ]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.build.outputs.targets) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: 🔧 zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      # none when no worker added an input
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: new-${{ matrix.target }}-*
+          path: shards
+      - name: 📦 Union
+        run: zsh fuzz/ci.zsh union "$TARGET" shards
+      - uses: actions/upload-artifact@v7
+        with:
+          name: corpus-${{ matrix.target }}
+          path: fuzz/out/${{ matrix.target }}.tar.zst
+          compression-level: 0
+          retention-days: 90
