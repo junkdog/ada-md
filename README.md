@@ -94,10 +94,9 @@ fancy-regex and looks the same, but each language costs 10–20 ms on first use 
 **Windows** is mostly untested. ada builds there, and the pager has run on Windows 10. The config
 and themes are in `%APPDATA%\ada` (or `$XDG_CONFIG_HOME\ada`), `~` in `[links] roots` is
 `%USERPROFILE%`, links and images open in their default apps, and the editor falls back to
-`notepad`. Not yet:
-
-- Images are half-blocks unless `--image-protocol` names one: ada doesn't ask the terminal.
-- Live reload checks the file once a second instead of being told when it changes.
+`notepad`. ada asks the terminal what images it draws, as elsewhere: Windows Terminal 1.22 and
+later answers sixel. Not yet: live reload checks the file once a second instead of being told when
+it changes.
 
 There are no Windows binaries; build it with `cargo install`. Windows support is planned for 1.1.
 

@@ -121,7 +121,7 @@ pub fn plan(mode: ImageMode, env: impl Fn(&str) -> Option<String>) -> Option<Pla
         }
     } else {
         Plan {
-            ask: cfg!(unix),
+            ask: cfg!(any(unix, windows)),
             forced,
         }
     })

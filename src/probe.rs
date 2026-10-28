@@ -249,8 +249,125 @@ pub fn read(deadline: Instant, mut key: impl FnMut(KeyEvent) -> bool) -> Found {
     replies.found()
 }
 
+/// Read the replies to [`QUERY`], as on unix, from the console's input: `CONIN$`, the console's
+/// even when stdin is a pipe, as crossterm opens it. The console hands input over as records,
+/// not bytes; with VT input on, its key records carry the terminal's replies and the keys typed
+/// meanwhile as the bytes a unix tty would give, Backspace as 0x7f among them. VT input goes off
+/// again at the end, a bit at a time: the mouse's capture (crossterm's) sets the whole mode,
+/// and may meanwhile.
+#[cfg(windows)]
+pub fn read(deadline: Instant, mut key: impl FnMut(KeyEvent) -> bool) -> Found {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
+        WAIT_TIMEOUT,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    use windows_sys::Win32::System::Console::{
+        ENABLE_VIRTUAL_TERMINAL_INPUT, GetConsoleMode, INPUT_RECORD, KEY_EVENT, ReadConsoleInputW,
+        SetConsoleMode,
+    };
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+    /// The console's input, with VT input on while it's held.
+    struct Input(HANDLE);
+    impl Drop for Input {
+        fn drop(&mut self) {
+            let mut mode = 0;
+            // SAFETY: the handle is open until `CloseHandle` here; `mode` outlives the call
+            unsafe {
+                if GetConsoleMode(self.0, &mut mode) != 0 {
+                    SetConsoleMode(self.0, mode & !ENABLE_VIRTUAL_TERMINAL_INPUT);
+                }
+                CloseHandle(self.0);
+            }
+        }
+    }
+
+    let mut replies = Replies::new();
+    let name: Vec<u16> = "CONIN$\0".encode_utf16().collect();
+    // SAFETY: `name` is NUL-terminated and outlives the call; no security attributes or template
+    let handle = unsafe {
+        CreateFileW(
+            name.as_ptr(),
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            0,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return replies.found();
+    }
+    let input = Input(handle);
+    let mut mode = 0;
+    // SAFETY: the handle is open while `input` lives; `mode` outlives the call. Should VT input
+    // not go on (a console older than Windows 10's), the replies' characters come as keys still.
+    unsafe {
+        if GetConsoleMode(input.0, &mut mode) != 0 {
+            SetConsoleMode(input.0, mode | ENABLE_VIRTUAL_TERMINAL_INPUT);
+        }
+    }
+    let mut records = [INPUT_RECORD::default(); 64];
+    let (mut bytes, mut keys) = (Vec::new(), Vec::new());
+    while !replies.done() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        let ms = u32::try_from(left.as_millis()).unwrap_or(u32::MAX).max(1);
+        // SAFETY: the handle is open while `input` lives
+        match unsafe { WaitForSingleObject(input.0, ms) } {
+            WAIT_OBJECT_0 => {}
+            WAIT_TIMEOUT => continue,
+            _ => break,
+        }
+        let mut n = 0;
+        // SAFETY: `records` holds `len` records and outlives the call, as does `n`; input is
+        // waiting, so the call doesn't block
+        let read = unsafe {
+            ReadConsoleInputW(input.0, records.as_mut_ptr(), records.len() as u32, &mut n)
+        };
+        if read == 0 {
+            break;
+        }
+        bytes.clear();
+        for record in &records[..n as usize] {
+            if u32::from(record.EventType) != KEY_EVENT {
+                continue;
+            }
+            // SAFETY: a `KEY_EVENT` record's event is a key event, whose character is UTF-16
+            let (down, repeat, unit) = unsafe {
+                let k = record.Event.KeyEvent;
+                (k.bKeyDown != 0, k.wRepeatCount, k.uChar.UnicodeChar)
+            };
+            if !down || unit == 0 {
+                continue;
+            }
+            // a lone surrogate half is dropped, as the bytes of anything but ASCII are
+            let Some(Ok(c)) = char::decode_utf16([unit]).next() else {
+                continue;
+            };
+            let mut utf8 = [0; 4];
+            for _ in 0..repeat.max(1) {
+                bytes.extend_from_slice(c.encode_utf8(&mut utf8).as_bytes());
+            }
+        }
+        replies.feed(&bytes, &mut keys);
+        for k in keys.drain(..) {
+            if !key(k) {
+                return replies.found();
+            }
+        }
+    }
+    replies.found()
+}
+
 /// Without a tty to poll, there is no asking: [`crate::images::plan`] doesn't.
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub fn read(_deadline: Instant, _key: impl FnMut(KeyEvent) -> bool) -> Found {
     Found::default()
 }
