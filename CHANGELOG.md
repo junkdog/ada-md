@@ -2,6 +2,19 @@
 
 What changed in each release of ada, newest first. A release includes the changes of the pre-releases before it.
 
+## Unreleased
+
+### Features
+
+- *(completions)* Add PowerShell completions
+- *(windows)* Live reload through ReadDirectoryChangesW instead of the 1 s poll
+- *(windows)* Probe the terminal for image support through the console input
+- *(windows)* Read the config from %APPDATA%, open links with ShellExecuteW, fall back to notepad
+
+### Performance
+
+- *(highlight)* Highlight Makefiles with a port of bat's grammar instead of syntect
+
 ## [1.0.0](https://github.com/junkdog/ada-md/compare/v1.0.0-rc.1..v1.0.0) (2026-10-27)
 
 ### Features
