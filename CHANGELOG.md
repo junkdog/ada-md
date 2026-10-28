@@ -13,6 +13,7 @@ What changed in each release of ada, newest first. A release includes the change
 
 ### Performance
 
+- *(highlight)* Highlight shell scripts with the port of bat's bash grammar instead of syntect
 - *(highlight)* Highlight Makefiles with a port of bat's grammar instead of syntect
 
 ## [1.0.0](https://github.com/junkdog/ada-md/compare/v1.0.0-rc.1..v1.0.0) (2026-10-27)
