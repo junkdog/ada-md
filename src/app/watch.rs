@@ -40,8 +40,12 @@ impl Watcher {
     }
 
     /// Watch `path` instead of the file watched until now; `mtime` is the time of the text
-    /// on screen.
-    pub fn watch(&mut self, path: PathBuf, mtime: Option<u64>) {
+    /// on screen. A file already past it is posted at once, as the poll's first look would:
+    /// it changed while live reload was off, or between its read and the watch.
+    pub fn watch(&mut self, path: PathBuf, mut mtime: Option<u64>) {
+        if !post_if_changed(&path, &mut mtime, &self.tx) {
+            return;
+        }
         #[cfg(any(target_os = "linux", windows))]
         {
             let tx = &self.tx;
@@ -61,6 +65,17 @@ impl Watcher {
         let tx = &self.tx;
         let poll = self.poll.get_or_insert_with(|| spawn_poll(tx.clone()));
         let _ = poll.send(Some((path, mtime)));
+    }
+
+    /// Stop watching, with live reload turned off; the threads stay for the next watch.
+    pub fn unwatch(&mut self) {
+        #[cfg(any(target_os = "linux", windows))]
+        if let Some(Some(native)) = &self.native {
+            native.stop();
+        }
+        if let Some(poll) = &self.poll {
+            let _ = poll.send(None);
+        }
     }
 }
 
@@ -795,6 +810,35 @@ mod tests {
         #[cfg(target_os = "linux")]
         drop(file);
         // the watch ends with it, and the directories can go
+        drop(watcher);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A file already past the time on screen is posted as the watch begins, as live reload
+    /// turned back on finds it; `unwatch` stops the posts until the next watch.
+    #[cfg(any(target_os = "linux", windows))]
+    #[test]
+    fn a_watch_catches_up_and_unwatch_stops_it() {
+        let dir = temp_dir("catch-up");
+        let path = dir.join("w.md");
+        fs::write(&path, "a").unwrap();
+        let (tx, rx) = mpsc::channel();
+        let mut watcher = Watcher::new(tx);
+        watcher.watch(path.clone(), Some(1));
+        assert_eq!(rx.try_recv().ok(), Some(changed(&path)), "posted at once");
+        // the time it posted is the one known: the next write is posted, once
+        thread::sleep(Duration::from_millis(5));
+        fs::write(&path, "b").unwrap();
+        assert_eq!(next(&rx, Duration::from_millis(400)), Some(changed(&path)));
+        assert_eq!(next(&rx, Duration::from_millis(200)), None);
+
+        watcher.unwatch();
+        thread::sleep(Duration::from_millis(5));
+        fs::write(&path, "c").unwrap();
+        assert_eq!(next(&rx, Duration::from_millis(400)), None, "not watched");
+        // watched again, from the time on screen: the write meanwhile is posted
+        watcher.watch(path.clone(), Some(1));
+        assert_eq!(rx.try_recv().ok(), Some(changed(&path)));
         drop(watcher);
         fs::remove_dir_all(&dir).unwrap();
     }

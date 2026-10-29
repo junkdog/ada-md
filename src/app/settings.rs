@@ -4,9 +4,8 @@
 //! with. A row whose value isn't the config file's is marked, so the marks are what `s` saves.
 //!
 //! A change runs the setter the option's own key runs (`B`, `t`, `w`, `#`, `M`), so the popup
-//! adds no second way to change one; the popup's own messages are what a recording keeps. Images,
-//! their protocol and live reload are read at start: changed here, they are only saved, for the
-//! next start.
+//! adds no second way to change one; the popup's own messages are what a recording keeps. Images
+//! and their protocol are read at start: changed here, they are only saved, for the next start.
 
 use super::{Action, Cmd, Dir, Listing, State};
 use crate::config::{LiveReload, Saved, Settings};
@@ -109,7 +108,7 @@ impl Row {
 
     /// Read only at start: a change counts from the next start, once saved.
     pub fn at_start(self) -> bool {
-        matches!(self, Row::Images | Row::Protocol | Row::LiveReload)
+        matches!(self, Row::Images | Row::Protocol)
     }
 }
 
@@ -162,7 +161,6 @@ impl SettingsPopup {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NextStart {
     pub images: ImageMode,
-    pub live_reload: LiveReload,
 }
 
 /// What the config file is read for: the save box (`S`), the settings popup's marks, or saving
@@ -247,7 +245,7 @@ impl State {
             ),
             Row::LiveReload => Value::Choice(
                 LiveReload::NAMES,
-                index(LiveReload::NAMES, self.next_start.live_reload.name()).unwrap_or(0),
+                index(LiveReload::NAMES, self.config.live_reload.name()).unwrap_or(0),
             ),
             Row::KeepScreen => Value::Switch(self.config.keep_screen),
         }
@@ -440,15 +438,10 @@ impl State {
                 }
                 Vec::new()
             }
-            Row::LiveReload => {
-                if let Some(mode) = LiveReload::NAMES
-                    .get(i)
-                    .and_then(|name| LiveReload::parse(name))
-                {
-                    self.set_live_reload(mode);
-                }
-                Vec::new()
-            }
+            Row::LiveReload => LiveReload::NAMES
+                .get(i)
+                .and_then(|name| LiveReload::parse(name))
+                .map_or_else(Vec::new, |mode| self.set_live_reload(mode)),
             _ => Vec::new(),
         }
     }
@@ -506,7 +499,7 @@ impl State {
         self.code_wrap = was.code_wrap;
         self.line_numbers = was.line_numbers;
         self.set_images(was.images);
-        self.set_live_reload(was.live_reload);
+        cmds.extend(self.set_live_reload(was.live_reload));
         self.set_keep_screen(was.keep_screen);
         self.relayout();
         self.status = None;
@@ -603,12 +596,25 @@ impl State {
         self.status = Some(format!("images: {what}, once saved and restarted"));
     }
 
-    fn set_live_reload(&mut self, mode: LiveReload) {
-        self.next_start.live_reload = mode;
-        self.status = Some(format!(
-            "live reload: {}, once saved and restarted",
-            mode.name()
-        ));
+    /// Live reload for this session too: off stops the watch and takes a change's mark away, on
+    /// watches the file again (the watcher posts a change made meanwhile), and `auto` reads in
+    /// a change `notify` marked.
+    fn set_live_reload(&mut self, mode: LiveReload) -> Vec<Cmd> {
+        let was = std::mem::replace(&mut self.config.live_reload, mode);
+        self.status = Some(format!("live reload: {}", mode.name()));
+        let marked = self.doc.as_ref().is_some_and(|d| d.changed);
+        match (was, mode) {
+            _ if was == mode => Vec::new(),
+            (_, LiveReload::Off) => {
+                if let Some(doc) = &mut self.doc {
+                    doc.changed = false;
+                }
+                vec![Cmd::Unwatch]
+            }
+            (LiveReload::Off, _) => self.watch_cmd().into_iter().collect(),
+            (_, LiveReload::Auto) if marked => self.reload(),
+            _ => Vec::new(),
+        }
     }
 
     /// Read at quit, so it counts for this session too.
@@ -634,6 +640,7 @@ fn differs_any(a: &Settings, b: &Settings, row: Row) -> bool {
         Row::LineNumbers => a.line_numbers != b.line_numbers,
         Row::Mouse => a.mouse != b.mouse,
         Row::CopyOn => a.copy_on != b.copy_on,
+        Row::LiveReload => a.live_reload != b.live_reload,
         Row::KeepScreen => a.keep_screen != b.keep_screen,
         _ => differs(a, b, row),
     }
@@ -646,7 +653,6 @@ fn differs(a: &Settings, b: &Settings, row: Row) -> bool {
         Row::Protocol => {
             a.images != b.images && a.images != ImageMode::Off && b.images != ImageMode::Off
         }
-        Row::LiveReload => a.live_reload != b.live_reload,
         _ => false,
     }
 }
@@ -1049,7 +1055,7 @@ mod tests {
     fn start_only_options_are_saved_not_applied() {
         let mut state = opened();
         open(&mut state, "");
-        let session = (state.config.images, state.config.live_reload);
+        let session = state.config.images;
         focus(&mut state, Row::Protocol);
         update(&mut state, Msg::SettingsStep { dir: Dir::Next });
         assert_eq!(state.next_start.images, ImageMode::Force(Proto::Kitty));
@@ -1069,28 +1075,87 @@ mod tests {
         focus(&mut state, Row::Images);
         update(&mut state, Msg::SettingsFlip);
         assert_eq!(state.next_start.images, ImageMode::Force(Proto::Kitty));
-        focus(&mut state, Row::LiveReload);
-        update(&mut state, Msg::SettingsFlip);
-        assert_eq!(state.next_start.live_reload, LiveReload::Notify);
-        assert_eq!(
-            state.status.as_deref(),
-            Some("live reload: notify, once saved and restarted")
-        );
         update(&mut state, Msg::SettingsKeep);
-        assert_eq!((state.config.images, state.config.live_reload), session);
+        assert_eq!(state.config.images, session);
         let status = state.status.clone().unwrap();
         assert!(
-            status.ends_with("; image_protocol, live_reload once saved and restarted"),
+            status.ends_with("; image_protocol once saved and restarted"),
             "{status}"
         );
-        // a reload watches the file as the session started
-        let cmds = update(&mut state, Msg::Reload);
-        update(&mut state, crate::app::loader_answer(&cmds, &sample()));
-        assert!(state.watch_cmd().is_some());
-        // and `S` saves them
+        // and `S` saves it
         let save = config::save("c.toml", "", &state.active_settings()).unwrap();
         let keys: Vec<_> = save.changes.iter().map(|(k, ..)| *k).collect();
-        assert_eq!(keys, ["image_protocol", "live_reload"]);
+        assert_eq!(keys, ["image_protocol"]);
+    }
+
+    /// Live reload counts at once: off stops the watch, on watches again, and `auto` reads in
+    /// the change `notify` marked; `a` keeps it, and `S` saves it.
+    #[test]
+    fn live_reload_changes_for_this_session() {
+        let mut state = opened();
+        let changed = |mtime| Msg::FileChanged {
+            path: "t.md".into(),
+            mtime: Some(mtime),
+        };
+        open(&mut state, "");
+        focus(&mut state, Row::LiveReload);
+        assert!(update(&mut state, Msg::SettingsFlip).is_empty(), "watched");
+        assert_eq!(state.config.live_reload, LiveReload::Notify);
+        assert_eq!(state.status.as_deref(), Some("live reload: notify"));
+        update(&mut state, changed(9));
+        assert!(
+            state.doc.as_ref().unwrap().changed,
+            "marked, behind the popup"
+        );
+
+        // off: no watch, and no mark
+        assert_eq!(update(&mut state, Msg::SettingsFlip), [Cmd::Unwatch]);
+        assert!(!state.doc.as_ref().unwrap().changed);
+        assert!(state.watch_cmd().is_none());
+        assert!(update(&mut state, changed(10)).is_empty());
+
+        // on again: the file is watched from the time of the text on screen
+        let cmds = update(&mut state, Msg::SettingsFlip);
+        assert_eq!(state.config.live_reload, LiveReload::Auto);
+        assert_eq!(
+            cmds,
+            [Cmd::Watch {
+                path: "t.md".into(),
+                mtime: None
+            }]
+        );
+
+        // `notify`'s mark, read in by `auto`
+        update(&mut state, Msg::SettingsFlip);
+        update(&mut state, changed(11));
+        let cmds = update(&mut state, Msg::SettingsStep { dir: Dir::Prev });
+        assert_eq!(state.config.live_reload, LiveReload::Auto);
+        assert!(
+            cmds.iter().any(|c| matches!(c, Cmd::LoadDoc { .. })),
+            "{cmds:?}"
+        );
+
+        update(&mut state, Msg::SettingsStep { dir: Dir::Prev });
+        update(&mut state, Msg::SettingsKeep);
+        assert_eq!(state.config.live_reload, LiveReload::Off);
+        assert_eq!(
+            state.status.as_deref(),
+            Some("settings kept for this session")
+        );
+        let save = config::save("c.toml", "", &state.active_settings()).unwrap();
+        assert_eq!(changes_of(&save), ["live_reload"]);
+
+        // `Esc` puts off back, and stops the watch again
+        open(&mut state, "");
+        focus(&mut state, Row::LiveReload);
+        update(&mut state, Msg::SettingsFlip);
+        let cmds = update(&mut state, Msg::SettingsCancel);
+        assert_eq!(state.config.live_reload, LiveReload::Off);
+        assert!(cmds.contains(&Cmd::Unwatch), "{cmds:?}");
+    }
+
+    fn changes_of(save: &config::Save) -> Vec<&'static str> {
+        save.changes.iter().map(|(k, ..)| *k).collect()
     }
 
     #[test]

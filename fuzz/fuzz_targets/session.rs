@@ -579,7 +579,9 @@ fn answer(
                 error: "fuzz".into(),
             },
         }),
-        Cmd::Watch { .. } | Cmd::HighlightOnly(_) | Cmd::Mouse(_) | Cmd::Quit => None,
+        Cmd::Watch { .. } | Cmd::Unwatch | Cmd::HighlightOnly(_) | Cmd::Mouse(_) | Cmd::Quit => {
+            None
+        }
     })
 }
 

@@ -217,7 +217,7 @@ Deleted, it comes back on the next interactive run; an empty file in its place k
 popup. `↑` `↓` move, `Space` or `←` `→` change the focused one, digits type the prose width, and `Enter` on the
 theme lists the themes. Every change shows behind the popup at once. A mark (`•`) flags each value the config
 file doesn't have; `a` keeps the changes for this session, `s` saves them to the file as well, and `Esc` puts
-back what it opened with. Images, their protocol and live reload are read at start, so their rows say `restart`.
+back what it opened with. Images and their protocol are read at start, so their rows say `restart`.
 
 `S` saves the settings in effect back to it: the theme `T` picked, the `t`, `w`, `#`, `B` and `M` toggles, and
 flags such as `--theme`, `--max-width`, `-n`, `--no-images` and `--no-reload`. A box lists each option that

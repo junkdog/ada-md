@@ -175,6 +175,12 @@ impl Effects {
                 }
                 None
             }
+            Cmd::Unwatch => {
+                if let Some(watcher) = &mut self.watcher {
+                    watcher.unwatch();
+                }
+                None
+            }
             Cmd::ReadConfig(path) => Some(match config::read(&path) {
                 Ok(text) => Msg::ConfigRead {
                     path,

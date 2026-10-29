@@ -417,6 +417,8 @@ pub enum Cmd {
         path: PathBuf,
         mtime: Option<u64>,
     },
+    /// Stop watching, with live reload turned off.
+    Unwatch,
     /// Read the config file, for `S` to compare the settings in effect with.
     ReadConfig(PathBuf),
     /// Write the config file. Only the interactive loop does: a replay never touches it.
@@ -435,7 +437,8 @@ pub struct Config {
     pub start_line: Option<u32>,
     /// Whether to query the terminal for image support. Only the TUI reads it.
     pub images: ImageMode,
-    /// What a change to the file on disk does: reload, mark it, or nothing.
+    /// What a change to the file on disk does: reload, mark it, or nothing. The settings popup
+    /// changes it for the session.
     pub live_reload: LiveReload,
     /// Leave the last frame on the screen on quit.
     pub keep_screen: bool,
@@ -714,7 +717,6 @@ impl State {
         let syntax = Arc::new(SyntaxTheme::new(&theme.syntax));
         let next_start = NextStart {
             images: config.images,
-            live_reload: config.live_reload,
         };
         Self {
             // `main` adds the user's themes, and the first `T` the built-ins

@@ -17,7 +17,7 @@ expression: frames.last().unwrap()
  │ Behavior                                                                   │
  │   Mouse                ━━● on                                            M │
  │   Copy a selection     yank │ select                                       │
- │   Live reload          auto │ notify │ off                         restart │
+ │   Live reload          auto │ notify │ off                                 │
  │ • Keep screen on quit  ━━● on                                              │
  ├────────────────────────────────────────────────────────────────────────────┤
  │            a keep for this session  s save to config  esc undo             │

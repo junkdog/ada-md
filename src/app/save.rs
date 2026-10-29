@@ -26,7 +26,7 @@ impl State {
             copy_on: self.config.copy_on,
             max_width: self.config.max_width,
             images: self.next_start.images,
-            live_reload: self.next_start.live_reload,
+            live_reload: self.config.live_reload,
             keep_screen: self.config.keep_screen,
             table_mode: self.table_mode,
             code_wrap: self.code_wrap,
