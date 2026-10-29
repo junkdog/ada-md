@@ -203,7 +203,7 @@
     </figure>
     <div class="text">
       <h2>Images <a class="anchor" href="#images" aria-label="link to this section">#</a></h2>
-      <p>png and jpeg, <strong>right in the note</strong>, over kitty, sixel or iTerm2, with half-blocks as the
+      <p>png, jpeg and gif (its first frame), <strong>right in the note</strong>, over kitty, sixel or iTerm2, with half-blocks as the
         fallback, and inside tmux. A link to an image opens it full screen.</p>
       <p><strong>Piped straight in:</strong> ada tells an image by its first bytes, so
         <code>curl -s …/cat.png | ada --print</code> draws it right in the terminal, no format to name.</p>
@@ -738,7 +738,7 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
 <li class="missing"><span class="name">mcat</span><span class="why">stopped after 60 s</span></li>
 </ol></figure>
 </div></div>
-<h3 class="perf-sub" id="image-perf">Image previews <a class="anchor" href="#image-perf" aria-label="link to this section">#</a></h3><p class="lede">A 100×50-cell preview of each image, printed to a pipe, against kitten icat, chafa, mcat and viu: in kitty&#x27;s graphics protocol, and drawn in characters for any other terminal.</p>
+<h3 class="perf-sub" id="image-perf">Image previews <a class="anchor" href="#image-perf" aria-label="link to this section">#</a></h3><p class="lede">A 100×50-cell preview of each image, printed to a pipe, against kitten icat, chafa, mcat and viu: in kitty&#x27;s graphics protocol, and drawn in characters for any other terminal. A GIF is its first frame, the others told to stop there.</p>
 <div class="doc-tabs" role="radiogroup" aria-label="img">
 <input type="radio" name="img" id="img-0"><label for="img-0"><b>686×811</b> PNG that fits as it is</label>
 <input type="radio" name="img" id="img-1"><label for="img-1"><b>2473×1808</b> PNG diagram</label>
@@ -746,251 +746,419 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
 <input type="radio" name="img" id="img-3" checked><label for="img-3"><b>1500×2000</b> JPEG photo</label>
 <input type="radio" name="img" id="img-4"><label for="img-4"><b>12 MP</b> JPEG photo</label>
 <input type="radio" name="img" id="img-5"><label for="img-5"><b>24 MP</b> JPEG photo</label>
+<input type="radio" name="img" id="img-6"><label for="img-6"><b>1000×600</b> GIF, 851 frames</label>
+<input type="radio" name="img" id="img-7"><label for="img-7"><b>1500×2000</b> GIF photo</label>
+<input type="radio" name="img" id="img-8"><label for="img-8"><b>12 MP</b> GIF photo</label>
+<input type="radio" name="img" id="img-9"><label for="img-9"><b>12 MP</b> GIF photo, interlaced</label>
 </div>
 <div class="perf-panel" data-img="0"><div class="charts">
 <figure class="chart"><figcaption>kitty graphics <span>ms</span> <em class="kind wall">wall</em><small>a 100×50-cell preview in kitty&#x27;s graphics protocol, to a pipe</small></figcaption><ol>
-<li class="ada" style="--w:24.0%"><span class="name">ada</span><span class="bar"></span><span class="val">1.2</span></li>
-<li style="--w:90.6%"><span class="name">mcat</span><span class="bar"></span><span class="val">15.4 <small>13×</small></span></li>
-<li style="--w:99.5%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">21.8 <small>18×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">22.2 <small>18×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">22.2 <small>18×</small></span></li>
+<li class="ada" style="--w:23.9%"><span class="name">ada</span><span class="bar"></span><span class="val">1.3</span></li>
+<li style="--w:89.0%"><span class="name">mcat</span><span class="bar"></span><span class="val">15.8 <small>12×</small></span></li>
+<li style="--w:98.2%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">22.5 <small>17×</small></span></li>
+<li style="--w:98.7%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">22.9 <small>18×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">24.1 <small>19×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>half-blocks and symbols <span>ms</span> <em class="kind wall">wall</em><small>the same preview drawn in characters, for any terminal</small></figcaption><ol>
-<li class="ada" style="--w:41.4%"><span class="name">ada</span><span class="bar"></span><span class="val">5.1</span></li>
-<li style="--w:53.6%"><span class="name">viu</span><span class="bar"></span><span class="val">6.7 <small>1.3×</small></span></li>
-<li style="--w:98.2%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">17.9 <small>3.5×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">18.7 <small>3.7×</small></span></li>
+<li class="ada" style="--w:40.3%"><span class="name">ada</span><span class="bar"></span><span class="val">5.2</span></li>
+<li style="--w:51.7%"><span class="name">viu</span><span class="bar"></span><span class="val">6.8 <small>1.3×</small></span></li>
+<li style="--w:98.7%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">19.7 <small>3.8×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">20.3 <small>3.9×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, kitty graphics <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the kitty preview, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:23.0%"><span class="name">ada</span><span class="bar"></span><span class="val">1.2</span></li>
-<li style="--w:87.6%"><span class="name">mcat</span><span class="bar"></span><span class="val">15.4 <small>13×</small></span></li>
-<li style="--w:98.8%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">24.0 <small>20×</small></span></li>
-<li style="--w:99.1%"><span class="name">chafa</span><span class="bar"></span><span class="val">24.3 <small>21×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">25.2 <small>21×</small></span></li>
+<li class="ada" style="--w:23.2%"><span class="name">ada</span><span class="bar"></span><span class="val">1.3</span></li>
+<li style="--w:87.1%"><span class="name">mcat</span><span class="bar"></span><span class="val">15.7 <small>12×</small></span></li>
+<li style="--w:98.6%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">24.8 <small>20×</small></span></li>
+<li style="--w:99.7%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">25.9 <small>21×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">26.2 <small>21×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, half-blocks and symbols <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the preview in characters, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:37.3%"><span class="name">ada</span><span class="bar"></span><span class="val">5.1</span></li>
-<li style="--w:48.5%"><span class="name">viu</span><span class="bar"></span><span class="val">6.7 <small>1.3×</small></span></li>
-<li style="--w:96.9%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">21.9 <small>4.3×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">23.7 <small>4.7×</small></span></li>
+<li class="ada" style="--w:36.5%"><span class="name">ada</span><span class="bar"></span><span class="val">5.2</span></li>
+<li style="--w:47.1%"><span class="name">viu</span><span class="bar"></span><span class="val">6.7 <small>1.3×</small></span></li>
+<li style="--w:97.3%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">23.8 <small>4.6×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">25.4 <small>4.9×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, kitty graphics <span>MiB</span><small>the most resident at once, kitty graphics</small></figcaption><ol>
-<li class="ada" style="--w:33.0%"><span class="name">ada</span><span class="bar"></span><span class="val">5.7</span></li>
-<li style="--w:90.5%"><span class="name">mcat</span><span class="bar"></span><span class="val">28.2 <small>4.9×</small></span></li>
-<li style="--w:95.3%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">32.1 <small>5.6×</small></span></li>
-<li style="--w:98.5%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">35.2 <small>6.2×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">36.7 <small>6.4×</small></span></li>
+<li class="ada" style="--w:33.4%"><span class="name">ada</span><span class="bar"></span><span class="val">6.1</span></li>
+<li style="--w:89.4%"><span class="name">mcat</span><span class="bar"></span><span class="val">28.1 <small>4.6×</small></span></li>
+<li style="--w:95.2%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">32.9 <small>5.4×</small></span></li>
+<li style="--w:97.1%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">34.7 <small>5.7×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">37.6 <small>6.2×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, half-blocks and symbols <span>MiB</span><small>the most resident at once, in characters</small></figcaption><ol>
-<li class="ada" style="--w:36.0%"><span class="name">ada</span><span class="bar"></span><span class="val">5.7</span></li>
-<li style="--w:47.1%"><span class="name">viu</span><span class="bar"></span><span class="val">7.5 <small>1.3×</small></span></li>
-<li style="--w:99.6%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">28.8 <small>5.1×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">29.0 <small>5.1×</small></span></li>
+<li class="ada" style="--w:37.0%"><span class="name">ada</span><span class="bar"></span><span class="val">6.1</span></li>
+<li style="--w:45.5%"><span class="name">viu</span><span class="bar"></span><span class="val">7.5 <small>1.2×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">28.9 <small>4.8×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">28.9 <small>4.8×</small></span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-img="1"><div class="charts">
 <figure class="chart"><figcaption>kitty graphics <span>ms</span> <em class="kind wall">wall</em><small>a 100×50-cell preview in kitty&#x27;s graphics protocol, to a pipe</small></figcaption><ol>
-<li class="ada" style="--w:31.7%"><span class="name">ada</span><span class="bar"></span><span class="val">7.1</span></li>
-<li style="--w:49.9%"><span class="name">mcat</span><span class="bar"></span><span class="val">12.0 <small>1.7×</small></span></li>
-<li style="--w:85.3%"><span class="name">chafa</span><span class="bar"></span><span class="val">33.3 <small>4.7×</small></span></li>
-<li style="--w:96.4%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">45.9 <small>6.5×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">50.9 <small>7.2×</small></span></li>
+<li class="ada" style="--w:31.9%"><span class="name">ada</span><span class="bar"></span><span class="val">7.3</span></li>
+<li style="--w:49.9%"><span class="name">mcat</span><span class="bar"></span><span class="val">12.3 <small>1.7×</small></span></li>
+<li style="--w:85.2%"><span class="name">chafa</span><span class="bar"></span><span class="val">33.9 <small>4.6×</small></span></li>
+<li style="--w:96.3%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">46.6 <small>6.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">51.8 <small>7.1×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>half-blocks and symbols <span>ms</span> <em class="kind wall">wall</em><small>the same preview drawn in characters, for any terminal</small></figcaption><ol>
-<li class="ada" style="--w:32.2%"><span class="name">ada</span><span class="bar"></span><span class="val">4.4</span></li>
-<li style="--w:85.4%"><span class="name">viu</span><span class="bar"></span><span class="val">19.9 <small>4.6×</small></span></li>
-<li style="--w:99.5%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">29.8 <small>6.8×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">30.2 <small>6.9×</small></span></li>
+<li class="ada" style="--w:32.2%"><span class="name">ada</span><span class="bar"></span><span class="val">4.5</span></li>
+<li style="--w:85.8%"><span class="name">viu</span><span class="bar"></span><span class="val">20.6 <small>4.6×</small></span></li>
+<li style="--w:99.6%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">30.5 <small>6.8×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">30.9 <small>6.9×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, kitty graphics <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the kitty preview, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:24.2%"><span class="name">ada</span><span class="bar"></span><span class="val">7.0</span></li>
-<li style="--w:38.2%"><span class="name">mcat</span><span class="bar"></span><span class="val">11.9 <small>1.7×</small></span></li>
-<li style="--w:71.1%"><span class="name">chafa</span><span class="bar"></span><span class="val">41.3 <small>5.9×</small></span></li>
-<li style="--w:98.6%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">117 <small>17×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">123 <small>18×</small></span></li>
+<li class="ada" style="--w:24.4%"><span class="name">ada</span><span class="bar"></span><span class="val">7.3</span></li>
+<li style="--w:38.1%"><span class="name">mcat</span><span class="bar"></span><span class="val">12.2 <small>1.7×</small></span></li>
+<li style="--w:70.8%"><span class="name">chafa</span><span class="bar"></span><span class="val">41.6 <small>5.7×</small></span></li>
+<li style="--w:98.6%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">118 <small>16×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">125 <small>17×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, half-blocks and symbols <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the preview in characters, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:29.2%"><span class="name">ada</span><span class="bar"></span><span class="val">4.3</span></li>
-<li style="--w:77.7%"><span class="name">viu</span><span class="bar"></span><span class="val">19.9 <small>4.6×</small></span></li>
-<li style="--w:99.6%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">39.4 <small>9.1×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">40.0 <small>9.2×</small></span></li>
+<li class="ada" style="--w:29.3%"><span class="name">ada</span><span class="bar"></span><span class="val">4.4</span></li>
+<li style="--w:78.2%"><span class="name">viu</span><span class="bar"></span><span class="val">20.5 <small>4.6×</small></span></li>
+<li style="--w:99.4%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">39.9 <small>9.0×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">40.6 <small>9.1×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, kitty graphics <span>MiB</span><small>the most resident at once, kitty graphics</small></figcaption><ol>
-<li class="ada" style="--w:29.3%"><span class="name">ada</span><span class="bar"></span><span class="val">7.5</span></li>
-<li style="--w:79.1%"><span class="name">mcat</span><span class="bar"></span><span class="val">35.7 <small>4.7×</small></span></li>
-<li style="--w:92.1%"><span class="name">chafa</span><span class="bar"></span><span class="val">53.5 <small>7.1×</small></span></li>
-<li style="--w:99.6%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">67.6 <small>9.0×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">68.5 <small>9.1×</small></span></li>
+<li class="ada" style="--w:29.9%"><span class="name">ada</span><span class="bar"></span><span class="val">7.9</span></li>
+<li style="--w:78.5%"><span class="name">mcat</span><span class="bar"></span><span class="val">35.3 <small>4.4×</small></span></li>
+<li style="--w:92.1%"><span class="name">chafa</span><span class="bar"></span><span class="val">53.5 <small>6.7×</small></span></li>
+<li style="--w:99.6%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">67.4 <small>8.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">68.2 <small>8.6×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, half-blocks and symbols <span>MiB</span><small>the most resident at once, in characters</small></figcaption><ol>
-<li class="ada" style="--w:28.9%"><span class="name">ada</span><span class="bar"></span><span class="val">5.6</span></li>
-<li style="--w:70.5%"><span class="name">viu</span><span class="bar"></span><span class="val">21.0 <small>3.8×</small></span></li>
-<li style="--w:99.9%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">53.4 <small>9.5×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">53.5 <small>9.6×</small></span></li>
+<li class="ada" style="--w:29.7%"><span class="name">ada</span><span class="bar"></span><span class="val">6.1</span></li>
+<li style="--w:69.7%"><span class="name">viu</span><span class="bar"></span><span class="val">20.9 <small>3.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">53.3 <small>8.8×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">53.3 <small>8.8×</small></span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-img="2"><div class="charts">
 <figure class="chart"><figcaption>kitty graphics <span>ms</span> <em class="kind wall">wall</em><small>a 100×50-cell preview in kitty&#x27;s graphics protocol, to a pipe</small></figcaption><ol>
-<li class="ada" style="--w:41.6%"><span class="name">ada</span><span class="bar"></span><span class="val">88.0</span></li>
-<li style="--w:47.4%"><span class="name">mcat</span><span class="bar"></span><span class="val">100 <small>1.1×</small></span></li>
-<li style="--w:66.6%"><span class="name">chafa</span><span class="bar"></span><span class="val">153 <small>1.7×</small></span></li>
-<li style="--w:96.0%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">292 <small>3.3×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">319 <small>3.6×</small></span></li>
+<li class="ada" style="--w:41.6%"><span class="name">ada</span><span class="bar"></span><span class="val">89.2</span></li>
+<li style="--w:47.4%"><span class="name">mcat</span><span class="bar"></span><span class="val">101 <small>1.1×</small></span></li>
+<li style="--w:66.4%"><span class="name">chafa</span><span class="bar"></span><span class="val">154 <small>1.7×</small></span></li>
+<li style="--w:95.7%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">293 <small>3.3×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">323 <small>3.6×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>half-blocks and symbols <span>ms</span> <em class="kind wall">wall</em><small>the same preview drawn in characters, for any terminal</small></figcaption><ol>
-<li class="ada" style="--w:59.6%"><span class="name">ada</span><span class="bar"></span><span class="val">81.7</span></li>
-<li style="--w:95.0%"><span class="name">viu</span><span class="bar"></span><span class="val">141 <small>1.7×</small></span></li>
-<li style="--w:99.6%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">151 <small>1.8×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">152 <small>1.9×</small></span></li>
+<li class="ada" style="--w:59.9%"><span class="name">ada</span><span class="bar"></span><span class="val">82.5</span></li>
+<li style="--w:95.9%"><span class="name">viu</span><span class="bar"></span><span class="val">143 <small>1.7×</small></span></li>
+<li style="--w:99.7%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">152 <small>1.8×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">153 <small>1.8×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, kitty graphics <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the kitty preview, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:35.1%"><span class="name">ada</span><span class="bar"></span><span class="val">87.7</span></li>
-<li style="--w:40.0%"><span class="name">mcat</span><span class="bar"></span><span class="val">99.8 <small>1.1×</small></span></li>
-<li style="--w:60.6%"><span class="name">chafa</span><span class="bar"></span><span class="val">171 <small>1.9×</small></span></li>
-<li style="--w:97.7%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">450 <small>5.1×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">478 <small>5.4×</small></span></li>
+<li class="ada" style="--w:35.2%"><span class="name">ada</span><span class="bar"></span><span class="val">88.9</span></li>
+<li style="--w:40.0%"><span class="name">mcat</span><span class="bar"></span><span class="val">101 <small>1.1×</small></span></li>
+<li style="--w:60.5%"><span class="name">chafa</span><span class="bar"></span><span class="val">172 <small>1.9×</small></span></li>
+<li style="--w:97.6%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">451 <small>5.1×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">481 <small>5.4×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, half-blocks and symbols <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the preview in characters, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:54.1%"><span class="name">ada</span><span class="bar"></span><span class="val">81.5</span></li>
-<li style="--w:86.2%"><span class="name">viu</span><span class="bar"></span><span class="val">140 <small>1.7×</small></span></li>
-<li style="--w:99.4%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">176 <small>2.2×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">177 <small>2.2×</small></span></li>
+<li class="ada" style="--w:54.3%"><span class="name">ada</span><span class="bar"></span><span class="val">82.2</span></li>
+<li style="--w:87.1%"><span class="name">viu</span><span class="bar"></span><span class="val">143 <small>1.7×</small></span></li>
+<li style="--w:99.6%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">176 <small>2.1×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">178 <small>2.2×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, kitty graphics <span>MiB</span><small>the most resident at once, kitty graphics</small></figcaption><ol>
-<li class="ada" style="--w:25.6%"><span class="name">ada</span><span class="bar"></span><span class="val">7.8</span></li>
-<li style="--w:86.5%"><span class="name">mcat</span><span class="bar"></span><span class="val">69.1 <small>8.8×</small></span></li>
-<li style="--w:98.1%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">105 <small>13×</small></span></li>
-<li style="--w:98.7%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">107 <small>14×</small></span></li>
+<li class="ada" style="--w:25.9%"><span class="name">ada</span><span class="bar"></span><span class="val">8.1</span></li>
+<li style="--w:86.3%"><span class="name">mcat</span><span class="bar"></span><span class="val">68.9 <small>8.5×</small></span></li>
+<li style="--w:98.6%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">107 <small>13×</small></span></li>
+<li style="--w:99.2%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">109 <small>13×</small></span></li>
 <li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">112 <small>14×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, half-blocks and symbols <span>MiB</span><small>the most resident at once, in characters</small></figcaption><ol>
-<li class="ada" style="--w:23.5%"><span class="name">ada</span><span class="bar"></span><span class="val">5.6</span></li>
-<li style="--w:75.7%"><span class="name">viu</span><span class="bar"></span><span class="val">43.4 <small>7.7×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">112 <small>20×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">112 <small>20×</small></span></li>
+<li class="ada" style="--w:23.8%"><span class="name">ada</span><span class="bar"></span><span class="val">6.0</span></li>
+<li style="--w:75.3%"><span class="name">viu</span><span class="bar"></span><span class="val">43.4 <small>7.2×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">112 <small>19×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">112 <small>19×</small></span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-img="3"><div class="charts">
 <figure class="chart"><figcaption>kitty graphics <span>ms</span> <em class="kind wall">wall</em><small>a 100×50-cell preview in kitty&#x27;s graphics protocol, to a pipe</small></figcaption><ol>
-<li class="ada" style="--w:35.8%"><span class="name">ada</span><span class="bar"></span><span class="val">13.1</span></li>
-<li style="--w:43.4%"><span class="name">mcat</span><span class="bar"></span><span class="val">15.9 <small>1.2×</small></span></li>
-<li style="--w:51.8%"><span class="name">chafa</span><span class="bar"></span><span class="val">19.8 <small>1.5×</small></span></li>
-<li style="--w:81.7%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">42.4 <small>3.2×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">67.8 <small>5.2×</small></span></li>
+<li class="ada" style="--w:35.8%"><span class="name">ada</span><span class="bar"></span><span class="val">13.3</span></li>
+<li style="--w:43.8%"><span class="name">mcat</span><span class="bar"></span><span class="val">16.3 <small>1.2×</small></span></li>
+<li style="--w:53.5%"><span class="name">chafa</span><span class="bar"></span><span class="val">20.8 <small>1.6×</small></span></li>
+<li style="--w:82.0%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">43.2 <small>3.3×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">68.5 <small>5.2×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>half-blocks and symbols <span>ms</span> <em class="kind wall">wall</em><small>the same preview drawn in characters, for any terminal</small></figcaption><ol>
-<li class="ada" style="--w:50.0%"><span class="name">ada</span><span class="bar"></span><span class="val">6.7</span></li>
-<li style="--w:97.2%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">15.8 <small>2.4×</small></span></li>
-<li style="--w:99.1%"><span class="name">viu</span><span class="bar"></span><span class="val">16.4 <small>2.5×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">16.7 <small>2.5×</small></span></li>
+<li class="ada" style="--w:48.1%"><span class="name">ada</span><span class="bar"></span><span class="val">6.8</span></li>
+<li style="--w:95.3%"><span class="name">viu</span><span class="bar"></span><span class="val">16.7 <small>2.5×</small></span></li>
+<li style="--w:97.1%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">17.2 <small>2.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">18.2 <small>2.7×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, kitty graphics <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the kitty preview, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:30.5%"><span class="name">ada</span><span class="bar"></span><span class="val">13.0</span></li>
-<li style="--w:37.0%"><span class="name">mcat</span><span class="bar"></span><span class="val">15.9 <small>1.2×</small></span></li>
-<li style="--w:51.3%"><span class="name">chafa</span><span class="bar"></span><span class="val">24.4 <small>1.9×</small></span></li>
-<li style="--w:90.8%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">79.9 <small>6.1×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">105 <small>8.1×</small></span></li>
+<li class="ada" style="--w:30.5%"><span class="name">ada</span><span class="bar"></span><span class="val">13.2</span></li>
+<li style="--w:37.4%"><span class="name">mcat</span><span class="bar"></span><span class="val">16.2 <small>1.2×</small></span></li>
+<li style="--w:52.3%"><span class="name">chafa</span><span class="bar"></span><span class="val">25.3 <small>1.9×</small></span></li>
+<li style="--w:91.1%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">81.0 <small>6.2×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">106 <small>8.0×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, half-blocks and symbols <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the preview in characters, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:40.7%"><span class="name">ada</span><span class="bar"></span><span class="val">6.6</span></li>
-<li style="--w:80.9%"><span class="name">viu</span><span class="bar"></span><span class="val">16.4 <small>2.5×</small></span></li>
-<li style="--w:97.1%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">23.6 <small>3.6×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">25.2 <small>3.8×</small></span></li>
+<li class="ada" style="--w:39.9%"><span class="name">ada</span><span class="bar"></span><span class="val">6.7</span></li>
+<li style="--w:79.4%"><span class="name">viu</span><span class="bar"></span><span class="val">16.6 <small>2.5×</small></span></li>
+<li style="--w:97.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">24.9 <small>3.7×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">26.6 <small>4.0×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, kitty graphics <span>MiB</span><small>the most resident at once, kitty graphics</small></figcaption><ol>
-<li class="ada" style="--w:44.8%"><span class="name">ada</span><span class="bar"></span><span class="val">16.7</span></li>
-<li style="--w:74.3%"><span class="name">mcat</span><span class="bar"></span><span class="val">30.6 <small>1.8×</small></span></li>
-<li style="--w:88.6%"><span class="name">chafa</span><span class="bar"></span><span class="val">41.0 <small>2.5×</small></span></li>
-<li style="--w:95.8%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">47.5 <small>2.8×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">51.7 <small>3.1×</small></span></li>
+<li class="ada" style="--w:45.0%"><span class="name">ada</span><span class="bar"></span><span class="val">16.9</span></li>
+<li style="--w:74.2%"><span class="name">mcat</span><span class="bar"></span><span class="val">30.5 <small>1.8×</small></span></li>
+<li style="--w:88.8%"><span class="name">chafa</span><span class="bar"></span><span class="val">41.0 <small>2.4×</small></span></li>
+<li style="--w:96.2%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">47.7 <small>2.8×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">51.6 <small>3.1×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, half-blocks and symbols <span>MiB</span><small>the most resident at once, in characters</small></figcaption><ol>
-<li class="ada" style="--w:51.1%"><span class="name">ada</span><span class="bar"></span><span class="val">14.7</span></li>
-<li style="--w:54.0%"><span class="name">viu</span><span class="bar"></span><span class="val">15.4 <small>1.1×</small></span></li>
-<li style="--w:99.7%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">35.0 <small>2.4×</small></span></li>
+<li class="ada" style="--w:51.4%"><span class="name">ada</span><span class="bar"></span><span class="val">14.8</span></li>
+<li style="--w:54.3%"><span class="name">viu</span><span class="bar"></span><span class="val">15.6 <small>1.1×</small></span></li>
+<li style="--w:99.5%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">34.9 <small>2.4×</small></span></li>
 <li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">35.2 <small>2.4×</small></span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-img="4"><div class="charts">
 <figure class="chart"><figcaption>kitty graphics <span>ms</span> <em class="kind wall">wall</em><small>a 100×50-cell preview in kitty&#x27;s graphics protocol, to a pipe</small></figcaption><ol>
-<li class="ada" style="--w:36.9%"><span class="name">ada</span><span class="bar"></span><span class="val">29.7</span></li>
-<li style="--w:46.8%"><span class="name">chafa</span><span class="bar"></span><span class="val">37.9 <small>1.3×</small></span></li>
-<li style="--w:47.9%"><span class="name">mcat</span><span class="bar"></span><span class="val">39.0 <small>1.3×</small></span></li>
-<li style="--w:91.4%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">115 <small>3.9×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">142 <small>4.8×</small></span></li>
+<li class="ada" style="--w:36.9%"><span class="name">ada</span><span class="bar"></span><span class="val">30.0</span></li>
+<li style="--w:47.3%"><span class="name">chafa</span><span class="bar"></span><span class="val">38.8 <small>1.3×</small></span></li>
+<li style="--w:47.9%"><span class="name">mcat</span><span class="bar"></span><span class="val">39.4 <small>1.3×</small></span></li>
+<li style="--w:91.4%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">116 <small>3.9×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">144 <small>4.8×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>half-blocks and symbols <span>ms</span> <em class="kind wall">wall</em><small>the same preview drawn in characters, for any terminal</small></figcaption><ol>
-<li class="ada" style="--w:42.2%"><span class="name">ada</span><span class="bar"></span><span class="val">22.5</span></li>
-<li style="--w:61.8%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">34.5 <small>1.5×</small></span></li>
-<li style="--w:62.9%"><span class="name">chafa</span><span class="bar"></span><span class="val">35.3 <small>1.6×</small></span></li>
-<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">78.9 <small>3.5×</small></span></li>
+<li class="ada" style="--w:42.1%"><span class="name">ada</span><span class="bar"></span><span class="val">22.7</span></li>
+<li style="--w:62.9%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">35.7 <small>1.6×</small></span></li>
+<li style="--w:63.8%"><span class="name">chafa</span><span class="bar"></span><span class="val">36.4 <small>1.6×</small></span></li>
+<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">80.0 <small>3.5×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, kitty graphics <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the kitty preview, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:30.2%"><span class="name">ada</span><span class="bar"></span><span class="val">29.5</span></li>
-<li style="--w:39.2%"><span class="name">mcat</span><span class="bar"></span><span class="val">38.8 <small>1.3×</small></span></li>
-<li style="--w:49.5%"><span class="name">chafa</span><span class="bar"></span><span class="val">53.2 <small>1.8×</small></span></li>
-<li style="--w:96.1%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">219 <small>7.4×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">246 <small>8.3×</small></span></li>
+<li class="ada" style="--w:30.2%"><span class="name">ada</span><span class="bar"></span><span class="val">29.8</span></li>
+<li style="--w:39.2%"><span class="name">mcat</span><span class="bar"></span><span class="val">39.2 <small>1.3×</small></span></li>
+<li style="--w:49.6%"><span class="name">chafa</span><span class="bar"></span><span class="val">53.8 <small>1.8×</small></span></li>
+<li style="--w:96.1%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">221 <small>7.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">248 <small>8.3×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, half-blocks and symbols <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the preview in characters, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:42.2%"><span class="name">ada</span><span class="bar"></span><span class="val">22.4</span></li>
-<li style="--w:83.8%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">55.3 <small>2.5×</small></span></li>
-<li style="--w:85.2%"><span class="name">chafa</span><span class="bar"></span><span class="val">57.1 <small>2.5×</small></span></li>
-<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">78.7 <small>3.5×</small></span></li>
+<li class="ada" style="--w:42.0%"><span class="name">ada</span><span class="bar"></span><span class="val">22.5</span></li>
+<li style="--w:84.3%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">56.6 <small>2.5×</small></span></li>
+<li style="--w:85.5%"><span class="name">chafa</span><span class="bar"></span><span class="val">58.1 <small>2.6×</small></span></li>
+<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">79.8 <small>3.5×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, kitty graphics <span>MiB</span><small>the most resident at once, kitty graphics</small></figcaption><ol>
-<li class="ada" style="--w:64.5%"><span class="name">ada</span><span class="bar"></span><span class="val">43.6</span></li>
-<li style="--w:89.3%"><span class="name">mcat</span><span class="bar"></span><span class="val">61.9 <small>1.4×</small></span></li>
-<li style="--w:95.7%"><span class="name">chafa</span><span class="bar"></span><span class="val">67.8 <small>1.6×</small></span></li>
-<li style="--w:95.8%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">67.9 <small>1.6×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">72.0 <small>1.7×</small></span></li>
+<li class="ada" style="--w:66.2%"><span class="name">ada</span><span class="bar"></span><span class="val">43.8</span></li>
+<li style="--w:90.9%"><span class="name">mcat</span><span class="bar"></span><span class="val">61.7 <small>1.4×</small></span></li>
+<li style="--w:97.5%"><span class="name">chafa</span><span class="bar"></span><span class="val">67.5 <small>1.5×</small></span></li>
+<li style="--w:97.6%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">67.7 <small>1.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">69.9 <small>1.6×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, half-blocks and symbols <span>MiB</span><small>the most resident at once, in characters</small></figcaption><ol>
-<li class="ada" style="--w:69.7%"><span class="name">ada</span><span class="bar"></span><span class="val">41.5</span></li>
+<li class="ada" style="--w:69.9%"><span class="name">ada</span><span class="bar"></span><span class="val">41.6</span></li>
 <li style="--w:73.0%"><span class="name">viu</span><span class="bar"></span><span class="val">43.3 <small>1.0×</small></span></li>
-<li style="--w:99.8%"><span class="name">chafa</span><span class="bar"></span><span class="val">61.6 <small>1.5×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">61.8 <small>1.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">61.7 <small>1.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">61.7 <small>1.5×</small></span></li>
 </ol></figure>
 </div></div>
 <div class="perf-panel" data-img="5"><div class="charts">
 <figure class="chart"><figcaption>kitty graphics <span>ms</span> <em class="kind wall">wall</em><small>a 100×50-cell preview in kitty&#x27;s graphics protocol, to a pipe</small></figcaption><ol>
-<li class="ada" style="--w:36.9%"><span class="name">ada</span><span class="bar"></span><span class="val">47.2</span></li>
-<li style="--w:45.5%"><span class="name">chafa</span><span class="bar"></span><span class="val">58.4 <small>1.2×</small></span></li>
-<li style="--w:46.3%"><span class="name">mcat</span><span class="bar"></span><span class="val">59.5 <small>1.3×</small></span></li>
-<li style="--w:95.2%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">201 <small>4.2×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">226 <small>4.8×</small></span></li>
+<li class="ada" style="--w:37.1%"><span class="name">ada</span><span class="bar"></span><span class="val">48.0</span></li>
+<li style="--w:45.5%"><span class="name">chafa</span><span class="bar"></span><span class="val">59.1 <small>1.2×</small></span></li>
+<li style="--w:46.0%"><span class="name">mcat</span><span class="bar"></span><span class="val">59.8 <small>1.2×</small></span></li>
+<li style="--w:95.5%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">203 <small>4.2×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">227 <small>4.7×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>half-blocks and symbols <span>ms</span> <em class="kind wall">wall</em><small>the same preview drawn in characters, for any terminal</small></figcaption><ol>
-<li class="ada" style="--w:43.7%"><span class="name">ada</span><span class="bar"></span><span class="val">41.3</span></li>
-<li style="--w:57.8%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">55.5 <small>1.3×</small></span></li>
-<li style="--w:58.3%"><span class="name">chafa</span><span class="bar"></span><span class="val">56.0 <small>1.4×</small></span></li>
-<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">134 <small>3.3×</small></span></li>
+<li class="ada" style="--w:43.7%"><span class="name">ada</span><span class="bar"></span><span class="val">41.5</span></li>
+<li style="--w:58.6%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">56.6 <small>1.4×</small></span></li>
+<li style="--w:59.2%"><span class="name">chafa</span><span class="bar"></span><span class="val">57.4 <small>1.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">135 <small>3.3×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, kitty graphics <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the kitty preview, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:29.8%"><span class="name">ada</span><span class="bar"></span><span class="val">47.0</span></li>
-<li style="--w:37.3%"><span class="name">mcat</span><span class="bar"></span><span class="val">59.3 <small>1.3×</small></span></li>
-<li style="--w:50.4%"><span class="name">chafa</span><span class="bar"></span><span class="val">88.8 <small>1.9×</small></span></li>
-<li style="--w:97.9%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">382 <small>8.1×</small></span></li>
-<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">407 <small>8.7×</small></span></li>
+<li class="ada" style="--w:29.9%"><span class="name">ada</span><span class="bar"></span><span class="val">47.7</span></li>
+<li style="--w:37.1%"><span class="name">mcat</span><span class="bar"></span><span class="val">59.5 <small>1.2×</small></span></li>
+<li style="--w:50.4%"><span class="name">chafa</span><span class="bar"></span><span class="val">89.6 <small>1.9×</small></span></li>
+<li style="--w:98.1%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">386 <small>8.1×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">410 <small>8.6×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>CPU, half-blocks and symbols <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the preview in characters, over all threads</small></figcaption><ol>
-<li class="ada" style="--w:43.7%"><span class="name">ada</span><span class="bar"></span><span class="val">41.1</span></li>
-<li style="--w:80.9%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">89.7 <small>2.2×</small></span></li>
-<li style="--w:81.6%"><span class="name">chafa</span><span class="bar"></span><span class="val">91.1 <small>2.2×</small></span></li>
-<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">134 <small>3.3×</small></span></li>
+<li class="ada" style="--w:43.6%"><span class="name">ada</span><span class="bar"></span><span class="val">41.2</span></li>
+<li style="--w:81.3%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">90.8 <small>2.2×</small></span></li>
+<li style="--w:81.9%"><span class="name">chafa</span><span class="bar"></span><span class="val">91.9 <small>2.2×</small></span></li>
+<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">135 <small>3.3×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, kitty graphics <span>MiB</span><small>the most resident at once, kitty graphics</small></figcaption><ol>
-<li class="ada" style="--w:76.4%"><span class="name">ada</span><span class="bar"></span><span class="val">77.0</span></li>
-<li style="--w:93.0%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">94.0 <small>1.2×</small></span></li>
-<li style="--w:94.9%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">96.1 <small>1.2×</small></span></li>
-<li style="--w:97.4%"><span class="name">mcat</span><span class="bar"></span><span class="val">99.0 <small>1.3×</small></span></li>
+<li class="ada" style="--w:76.5%"><span class="name">ada</span><span class="bar"></span><span class="val">77.2</span></li>
+<li style="--w:92.8%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">93.9 <small>1.2×</small></span></li>
+<li style="--w:96.3%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">97.9 <small>1.3×</small></span></li>
+<li style="--w:97.1%"><span class="name">mcat</span><span class="bar"></span><span class="val">98.8 <small>1.3×</small></span></li>
 <li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">102 <small>1.3×</small></span></li>
 </ol></figure>
 <figure class="chart"><figcaption>peak memory, half-blocks and symbols <span>MiB</span><small>the most resident at once, in characters</small></figcaption><ol>
-<li class="ada" style="--w:80.1%"><span class="name">ada</span><span class="bar"></span><span class="val">77.0</span></li>
-<li style="--w:82.6%"><span class="name">viu</span><span class="bar"></span><span class="val">79.3 <small>1.0×</small></span></li>
-<li style="--w:99.9%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">96.5 <small>1.3×</small></span></li>
-<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">96.7 <small>1.3×</small></span></li>
+<li class="ada" style="--w:80.5%"><span class="name">ada</span><span class="bar"></span><span class="val">77.3</span></li>
+<li style="--w:82.7%"><span class="name">viu</span><span class="bar"></span><span class="val">79.3 <small>1.0×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">96.5 <small>1.2×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">96.5 <small>1.2×</small></span></li>
+</ol></figure>
+</div></div>
+<div class="perf-panel" data-img="6"><div class="charts">
+<figure class="chart"><figcaption>kitty graphics <span>ms</span> <em class="kind wall">wall</em><small>a 100×50-cell preview in kitty&#x27;s graphics protocol, to a pipe</small></figcaption><ol>
+<li class="ada" style="--w:17.4%"><span class="name">ada</span><span class="bar"></span><span class="val">3.2</span></li>
+<li style="--w:43.6%"><span class="name">chafa</span><span class="bar"></span><span class="val">12.9 <small>4.0×</small></span></li>
+<li style="--w:82.8%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">102 <small>31×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">253 <small>78×</small></span></li>
+<li class="missing"><span class="name">mcat</span><span class="why">plays a GIF as a video, without end</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>half-blocks and symbols <span>ms</span> <em class="kind wall">wall</em><small>the same preview drawn in characters, for any terminal</small></figcaption><ol>
+<li class="ada" style="--w:10.9%"><span class="name">ada</span><span class="bar"></span><span class="val">1.3</span></li>
+<li style="--w:34.8%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">9.7 <small>7.5×</small></span></li>
+<li style="--w:35.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">9.8 <small>7.6×</small></span></li>
+<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">2,307 <small>1,782×</small></span></li>
+</ol></figure>
+<figure class="chart"><figcaption>CPU, kitty graphics <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the kitty preview, over all threads</small></figcaption><ol>
+<li class="ada" style="--w:17.0%"><span class="name">ada</span><span class="bar"></span><span class="val">3.2</span></li>
+<li style="--w:43.1%"><span class="name">chafa</span><span class="bar"></span><span class="val">13.1 <small>4.1×</small></span></li>
+<li style="--w:85.3%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">128 <small>40×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">283 <small>89×</small></span></li>
+<li class="missing"><span class="name">mcat</span><span class="why">plays a GIF as a video, without end</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>CPU, half-blocks and symbols <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the preview in characters, over all threads</small></figcaption><ol>
+<li class="ada" style="--w:10.9%"><span class="name">ada</span><span class="bar"></span><span class="val">1.3</span></li>
+<li style="--w:38.2%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">12.6 <small>10×</small></span></li>
+<li style="--w:38.5%"><span class="name">chafa</span><span class="bar"></span><span class="val">13.0 <small>10×</small></span></li>
+<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">2,301 <small>1,829×</small></span></li>
+</ol></figure>
+<figure class="chart"><figcaption>peak memory, kitty graphics <span>MiB</span><small>the most resident at once, kitty graphics</small></figcaption><ol>
+<li class="ada" style="--w:22.2%"><span class="name">ada</span><span class="bar"></span><span class="val">8.1</span></li>
+<li style="--w:57.2%"><span class="name">chafa</span><span class="bar"></span><span class="val">34.3 <small>4.3×</small></span></li>
+<li style="--w:92.0%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">145 <small>18×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">201 <small>25×</small></span></li>
+<li class="missing"><span class="name">mcat</span><span class="why">plays a GIF as a video, without end</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>peak memory, half-blocks and symbols <span>MiB</span><small>the most resident at once, in characters</small></figcaption><ol>
+<li class="ada" style="--w:13.6%"><span class="name">ada</span><span class="bar"></span><span class="val">5.8</span></li>
+<li style="--w:37.6%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">29.1 <small>5.0×</small></span></li>
+<li style="--w:37.6%"><span class="name">chafa</span><span class="bar"></span><span class="val">29.2 <small>5.1×</small></span></li>
+<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">1,957 <small>339×</small></span></li>
+</ol></figure>
+</div></div>
+<div class="perf-panel" data-img="7"><div class="charts">
+<figure class="chart"><figcaption>kitty graphics <span>ms</span> <em class="kind wall">wall</em><small>a 100×50-cell preview in kitty&#x27;s graphics protocol, to a pipe</small></figcaption><ol>
+<li class="ada" style="--w:53.1%"><span class="name">ada</span><span class="bar"></span><span class="val">27.9</span></li>
+<li style="--w:62.9%"><span class="name">chafa</span><span class="bar"></span><span class="val">33.1 <small>1.2×</small></span></li>
+<li style="--w:76.0%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">41.5 <small>1.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">62.7 <small>2.2×</small></span></li>
+<li class="missing"><span class="name">mcat</span><span class="why">plays a GIF as a video, without end</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>half-blocks and symbols <span>ms</span> <em class="kind wall">wall</em><small>the same preview drawn in characters, for any terminal</small></figcaption><ol>
+<li class="ada" style="--w:63.2%"><span class="name">ada</span><span class="bar"></span><span class="val">18.1</span></li>
+<li style="--w:95.7%"><span class="name">viu</span><span class="bar"></span><span class="val">29.0 <small>1.6×</small></span></li>
+<li style="--w:98.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">30.0 <small>1.7×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">30.9 <small>1.7×</small></span></li>
+</ol></figure>
+<figure class="chart"><figcaption>CPU, kitty graphics <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the kitty preview, over all threads</small></figcaption><ol>
+<li class="ada" style="--w:42.0%"><span class="name">ada</span><span class="bar"></span><span class="val">27.8</span></li>
+<li style="--w:56.5%"><span class="name">chafa</span><span class="bar"></span><span class="val">38.1 <small>1.4×</small></span></li>
+<li style="--w:87.8%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">75.5 <small>2.7×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">98.5 <small>3.5×</small></span></li>
+<li class="missing"><span class="name">mcat</span><span class="why">plays a GIF as a video, without end</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>CPU, half-blocks and symbols <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the preview in characters, over all threads</small></figcaption><ol>
+<li class="ada" style="--w:53.2%"><span class="name">ada</span><span class="bar"></span><span class="val">18.0</span></li>
+<li style="--w:80.6%"><span class="name">viu</span><span class="bar"></span><span class="val">28.9 <small>1.6×</small></span></li>
+<li style="--w:97.2%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">38.4 <small>2.1×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa</span><span class="bar"></span><span class="val">40.4 <small>2.2×</small></span></li>
+</ol></figure>
+<figure class="chart"><figcaption>peak memory, kitty graphics <span>MiB</span><small>the most resident at once, kitty graphics</small></figcaption><ol>
+<li class="ada" style="--w:34.0%"><span class="name">ada</span><span class="bar"></span><span class="val">8.6</span></li>
+<li style="--w:95.5%"><span class="name">chafa</span><span class="bar"></span><span class="val">45.1 <small>5.2×</small></span></li>
+<li style="--w:96.1%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">45.8 <small>5.3×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">50.9 <small>5.9×</small></span></li>
+<li class="missing"><span class="name">mcat</span><span class="why">plays a GIF as a video, without end</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>peak memory, half-blocks and symbols <span>MiB</span><small>the most resident at once, in characters</small></figcaption><ol>
+<li class="ada" style="--w:32.0%"><span class="name">ada</span><span class="bar"></span><span class="val">5.6</span></li>
+<li style="--w:90.4%"><span class="name">viu</span><span class="bar"></span><span class="val">29.8 <small>5.3×</small></span></li>
+<li style="--w:99.9%"><span class="name">chafa</span><span class="bar"></span><span class="val">39.1 <small>7.0×</small></span></li>
+<li style="--w:100.0%"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="bar"></span><span class="val">39.2 <small>7.0×</small></span></li>
+</ol></figure>
+</div></div>
+<div class="perf-panel" data-img="8"><div class="charts">
+<figure class="chart"><figcaption>kitty graphics <span>ms</span> <em class="kind wall">wall</em><small>a 100×50-cell preview in kitty&#x27;s graphics protocol, to a pipe</small></figcaption><ol>
+<li class="ada" style="--w:56.6%"><span class="name">ada</span><span class="bar"></span><span class="val">66.6</span></li>
+<li style="--w:85.2%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">106 <small>1.6×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">134 <small>2.0×</small></span></li>
+<li class="missing"><span class="name">chafa</span><span class="why">draws nothing</span></li>
+<li class="missing"><span class="name">mcat</span><span class="why">plays a GIF as a video, without end</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>half-blocks and symbols <span>ms</span> <em class="kind wall">wall</em><small>the same preview drawn in characters, for any terminal</small></figcaption><ol>
+<li class="ada" style="--w:59.3%"><span class="name">ada</span><span class="bar"></span><span class="val">56.9</span></li>
+<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">107 <small>1.9×</small></span></li>
+<li class="missing"><span class="name">chafa</span><span class="why">draws nothing</span></li>
+<li class="missing"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="why">draws nothing</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>CPU, kitty graphics <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the kitty preview, over all threads</small></figcaption><ol>
+<li class="ada" style="--w:42.9%"><span class="name">ada</span><span class="bar"></span><span class="val">66.3</span></li>
+<li style="--w:93.6%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">196 <small>3.0×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">225 <small>3.4×</small></span></li>
+<li class="missing"><span class="name">chafa</span><span class="why">draws nothing</span></li>
+<li class="missing"><span class="name">mcat</span><span class="why">plays a GIF as a video, without end</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>CPU, half-blocks and symbols <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the preview in characters, over all threads</small></figcaption><ol>
+<li class="ada" style="--w:59.2%"><span class="name">ada</span><span class="bar"></span><span class="val">56.7</span></li>
+<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">107 <small>1.9×</small></span></li>
+<li class="missing"><span class="name">chafa</span><span class="why">draws nothing</span></li>
+<li class="missing"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="why">draws nothing</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>peak memory, kitty graphics <span>MiB</span><small>the most resident at once, kitty graphics</small></figcaption><ol>
+<li class="ada" style="--w:30.7%"><span class="name">ada</span><span class="bar"></span><span class="val">8.6</span></li>
+<li style="--w:98.7%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">65.5 <small>7.6×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">68.1 <small>7.9×</small></span></li>
+<li class="missing"><span class="name">chafa</span><span class="why">draws nothing</span></li>
+<li class="missing"><span class="name">mcat</span><span class="why">plays a GIF as a video, without end</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>peak memory, half-blocks and symbols <span>MiB</span><small>the most resident at once, in characters</small></figcaption><ol>
+<li class="ada" style="--w:23.7%"><span class="name">ada</span><span class="bar"></span><span class="val">5.6</span></li>
+<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">107 <small>19×</small></span></li>
+<li class="missing"><span class="name">chafa</span><span class="why">draws nothing</span></li>
+<li class="missing"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="why">draws nothing</span></li>
+</ol></figure>
+</div></div>
+<div class="perf-panel" data-img="9"><div class="charts">
+<figure class="chart"><figcaption>kitty graphics <span>ms</span> <em class="kind wall">wall</em><small>a 100×50-cell preview in kitty&#x27;s graphics protocol, to a pipe</small></figcaption><ol>
+<li class="ada" style="--w:58.6%"><span class="name">ada</span><span class="bar"></span><span class="val">70.8</span></li>
+<li style="--w:85.2%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">107 <small>1.5×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">135 <small>1.9×</small></span></li>
+<li class="missing"><span class="name">chafa</span><span class="why">draws nothing</span></li>
+<li class="missing"><span class="name">mcat</span><span class="why">plays a GIF as a video, without end</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>half-blocks and symbols <span>ms</span> <em class="kind wall">wall</em><small>the same preview drawn in characters, for any terminal</small></figcaption><ol>
+<li class="ada" style="--w:62.4%"><span class="name">ada</span><span class="bar"></span><span class="val">61.4</span></li>
+<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">107 <small>1.7×</small></span></li>
+<li class="missing"><span class="name">chafa</span><span class="why">draws nothing</span></li>
+<li class="missing"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="why">draws nothing</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>CPU, kitty graphics <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the kitty preview, over all threads</small></figcaption><ol>
+<li class="ada" style="--w:44.0%"><span class="name">ada</span><span class="bar"></span><span class="val">70.5</span></li>
+<li style="--w:93.5%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">198 <small>2.8×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">227 <small>3.2×</small></span></li>
+<li class="missing"><span class="name">chafa</span><span class="why">draws nothing</span></li>
+<li class="missing"><span class="name">mcat</span><span class="why">plays a GIF as a video, without end</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>CPU, half-blocks and symbols <span>ms</span> <em class="kind cpu">CPU</em><small>user and system time for the preview in characters, over all threads</small></figcaption><ol>
+<li class="ada" style="--w:62.4%"><span class="name">ada</span><span class="bar"></span><span class="val">61.1</span></li>
+<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">106 <small>1.7×</small></span></li>
+<li class="missing"><span class="name">chafa</span><span class="why">draws nothing</span></li>
+<li class="missing"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="why">draws nothing</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>peak memory, kitty graphics <span>MiB</span><small>the most resident at once, kitty graphics</small></figcaption><ol>
+<li class="ada" style="--w:70.0%"><span class="name">ada</span><span class="bar"></span><span class="val">53.9</span></li>
+<li style="--w:98.0%"><span class="name">kitten icat <small>shared memory</small></span><span class="bar"></span><span class="val">77.7 <small>1.4×</small></span></li>
+<li style="--w:100.0%"><span class="name">kitten icat <small>streamed, as ada</small></span><span class="bar"></span><span class="val">79.7 <small>1.5×</small></span></li>
+<li class="missing"><span class="name">chafa</span><span class="why">draws nothing</span></li>
+<li class="missing"><span class="name">mcat</span><span class="why">plays a GIF as a video, without end</span></li>
+</ol></figure>
+<figure class="chart"><figcaption>peak memory, half-blocks and symbols <span>MiB</span><small>the most resident at once, in characters</small></figcaption><ol>
+<li class="ada" style="--w:59.4%"><span class="name">ada</span><span class="bar"></span><span class="val">51.1</span></li>
+<li style="--w:100.0%"><span class="name">viu</span><span class="bar"></span><span class="val">95.6 <small>1.9×</small></span></li>
+<li class="missing"><span class="name">chafa</span><span class="why">draws nothing</span></li>
+<li class="missing"><span class="name">chafa-vhalf <small>half-blocks only</small></span><span class="why">draws nothing</span></li>
 </ol></figure>
 </div></div>
 <h3 class="perf-sub" id="mermaid-perf">Mermaid diagrams <a class="anchor" href="#mermaid-perf" aria-label="link to this section">#</a></h3><p class="lede">A <code>```mermaid</code> block parsed and drawn, against the crates two of the viewers above draw with: mermaid-text in md-tui and mmdflux in leaf, called as they call them. ada draws to the cells it paints from, the crates to a string; in process, the best of repeated runs on one core.</p>
@@ -1026,7 +1194,7 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
 <li style="--w:100.0%"><span class="name">mermaid-text <small>md-tui&#x27;s</small></span><span class="bar"></span><span class="val">16,846 <small>2,949×</small></span></li>
 </ol></figure>
 </div>
-<p class="stamp">B2 at ada <code>cde85ff</code>, 2026-10-25; the other tools from the full run at ada <code>2f5fa5e</code>, 2026-10-24</p>
+<p class="stamp">B2 at ada <code>cde85ff</code>, 2026-10-25; images at ada <code>bea4960-dirty, 2026-10-29</code>; the other tools from the full run at ada <code>2f5fa5e</code>, 2026-10-24</p>
 <!-- perf:end -->
   <aside class="caveats">
     <h3>Where ada isn't first</h3>

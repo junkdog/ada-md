@@ -32,7 +32,9 @@ FILES = {"code-s.rs": ("6 KB", "Rust"), "code-m.rs": ("47 KB", "Rust"), "code-l.
 FILE_TAB = "huge.log"
 IMAGES = {"fit.png": ("686×811", "PNG that fits as it is"), "diagram.png": ("2473×1808", "PNG diagram"),
           "photo-12mp.png": ("12 MP", "PNG photo"), "photo.jpg": ("1500×2000", "JPEG photo"),
-          "photo-12mp.jpg": ("12 MP", "JPEG photo"), "photo-24mp.jpg": ("24 MP", "JPEG photo")}
+          "photo-12mp.jpg": ("12 MP", "JPEG photo"), "photo-24mp.jpg": ("24 MP", "JPEG photo"),
+          "demo.gif": ("1000×600", "GIF, 851 frames"), "photo.gif": ("1500×2000", "GIF photo"),
+          "photo-12mp.gif": ("12 MP", "GIF photo"), "photo-12mp-i.gif": ("12 MP", "GIF photo, interlaced")}
 IMAGE_TAB = "photo.jpg"  # an ordinary photo, not fit.png, ada's best case
 CAPTIONS = {"first paint": "first paint", "CPU per line scroll": "CPU per line scrolled", "search": "search",
             "resize, cold": "re-layout after a resize", "held page-down CPU": "CPU over a held page-down",
@@ -57,6 +59,9 @@ MISSING = [("search", "glow", None, "has no search"),
            ("search", "mdfried", "XL", "match off-screen"),
            ("mermaid, gantt charts", "mmdflux", None, "draws no gantt charts"),
            ("mermaid, class diagrams", "mermaid-text", None, "fails on two of the three")]
+MISSING += [(None, "mcat", f, "plays a GIF as a video, without end")
+            for f in ("demo.gif", "photo.gif", "photo-12mp.gif", "photo-12mp-i.gif")]
+MISSING += [(None, v, f, "draws nothing") for f in ("photo-12mp.gif", "photo-12mp-i.gif") for v in ("chafa", "chafa-vhalf")]
 NOTES = {"lowdown": "no highlighting", "bat": "source, not rendered"}
 # notes on the previewer files and images, by viewer and, where it's only one file, (viewer, file)
 PREV_NOTES = {("rich", "log.log"): "no color", ("rich", "huge.log"): "no color",
@@ -207,7 +212,8 @@ def section():
     out += tabbed("img", "image-perf", f"{PLOTS}/images.dat", IMAGES, IMAGE_TAB,
                   "Image previews",
                   "A 100×50-cell preview of each image, printed to a pipe, against kitten icat, chafa, mcat and "
-                  "viu: in kitty's graphics protocol, and drawn in characters for any other terminal.",
+                  "viu: in kitty's graphics protocol, and drawn in characters for any other terminal. A GIF is its "
+                  "first frame, the others told to stop there.",
                   lambda f: IMAGE_NOTES.get)
     out += mermaid()
     # an ada-only rerun's records: the other tools' cells are the full run's under it (plot.py's B2_OTHERS)

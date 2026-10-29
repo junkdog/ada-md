@@ -158,13 +158,15 @@ figcaption { margin-top: .5rem; font-size: .88rem; color: var(--muted); }
 .perf-panel { display: none; }
 .perf:has(#doc-s:checked) [data-doc="s"], .perf:has(#doc-m:checked) [data-doc="m"],
 .perf:has(#doc-l:checked) [data-doc="l"], .perf:has(#doc-xl:checked) [data-doc="xl"] { display: block; }
-/* the previewer files' and the images' tabs (perf.py's tabbed): six each */
+/* the previewer files' tabs (perf.py's tabbed): six; the images': ten */
 .perf:has(#prev-0:checked) [data-prev="0"], .perf:has(#prev-1:checked) [data-prev="1"],
 .perf:has(#prev-2:checked) [data-prev="2"], .perf:has(#prev-3:checked) [data-prev="3"],
 .perf:has(#prev-4:checked) [data-prev="4"], .perf:has(#prev-5:checked) [data-prev="5"],
 .perf:has(#img-0:checked) [data-img="0"], .perf:has(#img-1:checked) [data-img="1"],
 .perf:has(#img-2:checked) [data-img="2"], .perf:has(#img-3:checked) [data-img="3"],
-.perf:has(#img-4:checked) [data-img="4"], .perf:has(#img-5:checked) [data-img="5"] { display: block; }
+.perf:has(#img-4:checked) [data-img="4"], .perf:has(#img-5:checked) [data-img="5"],
+.perf:has(#img-6:checked) [data-img="6"], .perf:has(#img-7:checked) [data-img="7"],
+.perf:has(#img-8:checked) [data-img="8"], .perf:has(#img-9:checked) [data-img="9"] { display: block; }
 .perf h3 { font-size: 1rem; color: var(--muted); font-weight: 400; margin: 0 0 1rem; }
 .perf h3.perf-sub { font: 700 1.15rem var(--mono); color: var(--fg); margin: 1rem 0 .5rem; }
 .perf h3 code { font-size: .95em; }
