@@ -2,7 +2,10 @@
 //! the clipboard (`y`, OSC 52), and the file to a watcher that notices when it changes on disk
 //! (live reload, ADR-26). Each is a command; what comes back is a message.
 
-use super::{Cmd, CopyOn, LinkState, ScrollAnchor, State};
+use std::path::Path;
+
+use super::{Action, Cmd, CopyOn, LinkState, ScrollAnchor, State};
+use crate::config::LiveReload;
 use crate::doc::LinkKind;
 use crate::filetype::FileType;
 use crate::images::ImageCache;
@@ -13,11 +16,35 @@ impl State {
         let doc = self
             .doc
             .as_ref()
-            .filter(|d| self.config.live_reload && d.path.as_os_str() != "-")?;
+            .filter(|d| self.config.live_reload != LiveReload::Off && d.path.as_os_str() != "-")?;
         Some(Cmd::Watch {
             path: doc.path.clone(),
             mtime: doc.mtime,
         })
+    }
+
+    /// The watched file changed on disk: read it again, or, with `notify` (FEAT-014), mark it
+    /// until `r` does. A change back to the time of the text on screen takes the mark away.
+    pub(super) fn file_changed(&mut self, path: &Path, mtime: Option<u64>) -> Vec<Cmd> {
+        let Some(doc) = self.doc.as_mut().filter(|d| d.path == path) else {
+            return Vec::new();
+        };
+        let changed = doc.mtime != mtime;
+        match self.config.live_reload {
+            LiveReload::Auto if changed => self.reload(),
+            LiveReload::Notify => {
+                if changed && !doc.changed {
+                    let key = self.config.keys.keys(Action::Reload).first();
+                    self.status = Some(match key {
+                        Some(key) => format!("changed on disk: {key} reloads"),
+                        None => "changed on disk".to_owned(),
+                    });
+                }
+                doc.changed = changed;
+                Vec::new()
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// `e`: edit the file at the first source line on screen.
@@ -103,6 +130,7 @@ impl State {
 #[cfg(test)]
 mod tests {
     use crate::app::{Cmd, Computed, Config, Dir, Msg, ScrollBy, Size, State, only_load, update};
+    use crate::config::LiveReload;
     use crate::theme::Theme;
 
     fn loaded(path: &str, text: &str) -> State {
@@ -151,21 +179,24 @@ mod tests {
             mtime: Some(5)
         }));
 
-        let config = Config {
-            live_reload: false,
-            ..Config::default()
-        };
-        let mut state = State::new(Theme::builtin(), config);
-        let cmds = update(
-            &mut state,
-            Msg::DocLoaded {
-                path: "a.md".into(),
-                mtime: Some(5),
-                text: "# a\n".into(),
-                doc: Computed(None),
-            },
-        );
-        assert!(!cmds.iter().any(|c| matches!(c, Cmd::Watch { .. })));
+        for (live_reload, watched) in [(LiveReload::Notify, true), (LiveReload::Off, false)] {
+            let config = Config {
+                live_reload,
+                ..Config::default()
+            };
+            let mut state = State::new(Theme::builtin(), config);
+            let cmds = update(
+                &mut state,
+                Msg::DocLoaded {
+                    path: "a.md".into(),
+                    mtime: Some(5),
+                    text: "# a\n".into(),
+                    doc: Computed(None),
+                },
+            );
+            let watch = cmds.iter().any(|c| matches!(c, Cmd::Watch { .. }));
+            assert_eq!(watch, watched, "{live_reload:?}");
+        }
     }
 
     #[test]
@@ -185,6 +216,70 @@ mod tests {
             only_load(&update(&mut state, changed(Some(9)))),
             Some("a.md")
         );
+    }
+
+    /// FEAT-014: with `notify`, a change marks the file and loads nothing until `r`; a change
+    /// back to the time on screen takes the mark away, and so does reading the file again.
+    #[test]
+    fn a_changed_file_is_marked_until_r_with_notify() {
+        let mut state = State::new(
+            Theme::builtin(),
+            Config {
+                live_reload: LiveReload::Notify,
+                ..Config::default()
+            },
+        );
+        update(
+            &mut state,
+            Msg::Init {
+                size: Size { w: 80, h: 12 },
+            },
+        );
+        let loaded = |mtime, text: &str| Msg::DocLoaded {
+            path: "a.md".into(),
+            mtime: Some(mtime),
+            text: text.into(),
+            doc: Computed(None),
+        };
+        update(&mut state, loaded(5, &note()));
+        let changed = |mtime| Msg::FileChanged {
+            path: "a.md".into(),
+            mtime: Some(mtime),
+        };
+        let marked = |state: &State| state.doc.as_ref().unwrap().changed;
+
+        assert!(update(&mut state, changed(9)).is_empty(), "no load");
+        assert!(marked(&state));
+        assert_eq!(state.status.as_deref(), Some("changed on disk: r reloads"));
+        // a key clears the message; the mark stays, and a second change says nothing new
+        update(
+            &mut state,
+            Msg::Scroll {
+                by: ScrollBy::Rows(1),
+            },
+        );
+        assert!(update(&mut state, changed(10)).is_empty());
+        assert!(marked(&state) && state.status.is_none());
+        let other = Msg::FileChanged {
+            path: "b.md".into(),
+            mtime: Some(5),
+        };
+        update(&mut state, other);
+        assert!(marked(&state), "not the current file");
+
+        assert!(update(&mut state, changed(5)).is_empty());
+        assert!(!marked(&state), "back to the text on screen");
+
+        // `r` reads it again, the same text or a new one
+        update(&mut state, changed(11));
+        assert_eq!(only_load(&update(&mut state, Msg::Reload)), Some("a.md"));
+        update(&mut state, loaded(11, &note()));
+        assert!(!marked(&state), "the same text");
+        update(&mut state, changed(12));
+        assert_eq!(only_load(&update(&mut state, Msg::Reload)), Some("a.md"));
+        update(&mut state, loaded(12, "# a new note\n"));
+        assert!(!marked(&state), "a new text");
+        assert_eq!(state.status.as_deref(), Some("reloaded"));
     }
 
     #[test]

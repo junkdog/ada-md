@@ -100,6 +100,7 @@ status_heading = { fg = "iris", bg = "surface" }
 status_pos = { fg = "subtle", bg = "overlay" }
 status_message = { fg = "gold", bg = "surface" }
 status_link = { fg = "iris", bg = "surface" }
+status_changed = { fg = "love", bold = true }   # the mark on the file name once it changed on disk (live_reload = "notify")
 search_match = { fg = "base", bg = "rose" }
 search_match_hidden = { underline = true, bg = "highlight_med" }
 search_current = { fg = "base", bg = "gold", bold = true }

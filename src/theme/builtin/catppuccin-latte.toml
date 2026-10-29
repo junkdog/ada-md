@@ -111,6 +111,7 @@ status_heading = { fg = "mauve", bg = "mantle" }
 status_pos = { fg = "subtext0", bg = "surface0" }
 status_message = { fg = "yellow", bg = "mantle" }
 status_link = { fg = "blue", bg = "mantle" }
+status_changed = { fg = "red", bold = true }   # the mark on the file name once it changed on disk (live_reload = "notify")
 search_match = { fg = "base", bg = "peach" }
 search_match_hidden = { underline = true, bg = "surface1" }
 search_current = { fg = "base", bg = "yellow", bold = true }

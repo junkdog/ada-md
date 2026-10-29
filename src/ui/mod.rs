@@ -361,6 +361,9 @@ fn popup_frame(buf: &mut Grid, rect: Rect, theme: &Theme) -> Style {
     border
 }
 
+/// After the file name once the file changed on disk: ascii, so every font has it.
+const CHANGED_MARK: &str = "* ";
+
 fn status_bar(buf: &mut Grid, area: Rect, state: &State) {
     let theme = &state.theme;
     buf.set_style(area, theme.style(StyleKey::StatusBar));
@@ -406,13 +409,15 @@ fn status_bar(buf: &mut Grid, area: Rect, state: &State) {
         (None, None) => String::new(),
     };
     let name = format!(" {} ", elide_start(&name, width / 2));
-    let (x, _) = buf.set_stringn(
-        area.x,
-        area.y,
-        &name,
-        usize::from(pos_x - area.x),
-        theme.style(StyleKey::StatusFile),
-    );
+    let mut pieces = vec![(name, theme.style(StyleKey::StatusFile))];
+    // changed on disk since it was read, with `live_reload = "notify"` (FEAT-014)
+    if state.view.is_none() && state.doc.as_ref().is_some_and(|d| d.changed) {
+        pieces.push((
+            CHANGED_MARK.to_owned(),
+            theme.style(StyleKey::StatusChanged),
+        ));
+    }
+    let x = put(buf, area.x, area.y, usize::from(pos_x - area.x), &pieces);
     let room = usize::from(pos_x.saturating_sub(x)).saturating_sub(2);
     if room > 0 {
         put(buf, x + 1, area.y, room, &status_text(state, room));

@@ -545,6 +545,7 @@ impl State {
                 && doc.text == text
             {
                 doc.mtime = mtime;
+                doc.changed = false;
                 // images may have changed even if the note hasn't
                 let doc_gen = doc.generation;
                 return self

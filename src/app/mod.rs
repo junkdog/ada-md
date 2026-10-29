@@ -21,6 +21,7 @@ use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::config::LiveReload;
 use crate::doc::{CodeId, Doc, LineRange, LinkId};
 use crate::filetype::FileType;
 use crate::git::LineMarks;
@@ -434,8 +435,8 @@ pub struct Config {
     pub start_line: Option<u32>,
     /// Whether to query the terminal for image support. Only the TUI reads it.
     pub images: ImageMode,
-    /// Reload when the file changes on disk.
-    pub live_reload: bool,
+    /// What a change to the file on disk does: reload, mark it, or nothing.
+    pub live_reload: LiveReload,
     /// Leave the last frame on the screen on quit.
     pub keep_screen: bool,
     /// Whether the theme draws its own background, or leaves the terminal's.
@@ -475,7 +476,7 @@ impl Default for Config {
             mouse: true,
             copy_on: CopyOn::Yank,
             images: ImageMode::default(),
-            live_reload: true,
+            live_reload: LiveReload::Auto,
             keep_screen: true,
             table_mode: TableMode::Auto,
             code_wrap: true,
@@ -508,6 +509,9 @@ pub struct Document {
     pub marks: Option<LineMarks>,
     /// The image files links lead to, indexed by [`LinkId`], once their headers are read.
     pub images: Vec<Option<ImageFile>>,
+    /// The file changed on disk since it was read, with `live_reload = "notify"` (FEAT-014):
+    /// the status bar marks it until it is read again.
+    pub changed: bool,
 }
 
 impl Document {
@@ -541,6 +545,7 @@ impl Document {
             search_map: None,
             marks: None,
             images,
+            changed: false,
         }
     }
 
@@ -1354,10 +1359,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.status = None;
             state.reload()
         }
-        Msg::FileChanged { path, mtime } => match &state.doc {
-            Some(doc) if doc.path == path && doc.mtime != mtime => state.reload(),
-            _ => Vec::new(),
-        },
+        Msg::FileChanged { path, mtime } => state.file_changed(&path, mtime),
         Msg::Edit => {
             state.status = None;
             state.edit()

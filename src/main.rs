@@ -6,6 +6,7 @@ use std::{env, fs, thread};
 
 use ada::app::{self, Config, Effects, Head, Msg, State};
 use ada::cli::{self, Args, Input};
+use ada::config::LiveReload;
 use ada::filetype::{self, FileType};
 use ada::git::{self, LineMarks};
 use ada::images::{self, ImageMode};
@@ -89,7 +90,11 @@ fn run() -> Result<(), String> {
             ImageMode::Auto => settings.images,
             flag => flag,
         },
-        live_reload: settings.live_reload && !args.no_reload,
+        live_reload: if args.no_reload {
+            LiveReload::Off
+        } else {
+            settings.live_reload
+        },
         keep_screen: settings.keep_screen,
         theme_bg: settings.theme_bg,
         mouse: settings.mouse,

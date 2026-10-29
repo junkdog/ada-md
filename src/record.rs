@@ -1131,6 +1131,7 @@ mod tests {
                 let file = path.display().to_string();
                 let settings = crate::config::parse(&file, &text, &mut Vec::new()).unwrap();
                 config.copy_on = settings.copy_on;
+                config.live_reload = settings.live_reload;
             }
             let run = || {
                 let mut state = State::new(Theme::builtin(), config.clone());

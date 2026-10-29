@@ -9,7 +9,7 @@
 //! next start.
 
 use super::{Action, Cmd, Dir, Listing, State};
-use crate::config::{Saved, Settings};
+use crate::config::{LiveReload, Saved, Settings};
 use crate::filetype::FileType;
 use crate::images::{ImageMode, Proto};
 use crate::layout::{LineNumbers, TableMode};
@@ -162,7 +162,7 @@ impl SettingsPopup {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NextStart {
     pub images: ImageMode,
-    pub live_reload: bool,
+    pub live_reload: LiveReload,
 }
 
 /// What the config file is read for: the save box (`S`), the settings popup's marks, or saving
@@ -245,7 +245,10 @@ impl State {
                 COPY_ON,
                 index(COPY_ON, self.config.copy_on.name()).unwrap_or(0),
             ),
-            Row::LiveReload => Value::Switch(self.next_start.live_reload),
+            Row::LiveReload => Value::Choice(
+                LiveReload::NAMES,
+                index(LiveReload::NAMES, self.next_start.live_reload.name()).unwrap_or(0),
+            ),
             Row::KeepScreen => Value::Switch(self.config.keep_screen),
         }
     }
@@ -344,10 +347,6 @@ impl State {
                 Vec::new()
             }
             (Row::Mouse, Value::Switch(on)) => self.set_mouse(change.switch(on)),
-            (Row::LiveReload, Value::Switch(on)) => {
-                self.set_live_reload(change.switch(on));
-                Vec::new()
-            }
             (Row::KeepScreen, Value::Switch(on)) => {
                 self.set_keep_screen(change.switch(on));
                 Vec::new()
@@ -438,6 +437,15 @@ impl State {
             Row::CopyOn => {
                 if let Some(copy_on) = COPY_ON.get(i).and_then(|name| CopyOn::parse(name)) {
                     self.set_copy_on(copy_on);
+                }
+                Vec::new()
+            }
+            Row::LiveReload => {
+                if let Some(mode) = LiveReload::NAMES
+                    .get(i)
+                    .and_then(|name| LiveReload::parse(name))
+                {
+                    self.set_live_reload(mode);
                 }
                 Vec::new()
             }
@@ -595,10 +603,12 @@ impl State {
         self.status = Some(format!("images: {what}, once saved and restarted"));
     }
 
-    fn set_live_reload(&mut self, on: bool) {
-        self.next_start.live_reload = on;
-        let on = if on { "on" } else { "off" };
-        self.status = Some(format!("live reload: {on}, once saved and restarted"));
+    fn set_live_reload(&mut self, mode: LiveReload) {
+        self.next_start.live_reload = mode;
+        self.status = Some(format!(
+            "live reload: {}, once saved and restarted",
+            mode.name()
+        ));
     }
 
     /// Read at quit, so it counts for this session too.
@@ -894,10 +904,11 @@ mod tests {
         assert!(state.save.is_none());
         assert_eq!(
             want,
-            "tables = \"grid\"\nkeep_screen = false\nlive_reload = false\n"
+            "tables = \"grid\"\nkeep_screen = false\nlive_reload = \"notify\"\n"
         );
         let back = config::parse("c.toml", &want, &mut Vec::new()).unwrap();
-        assert!(!back.keep_screen && !back.live_reload);
+        assert!(!back.keep_screen);
+        assert_eq!(back.live_reload, LiveReload::Notify);
     }
 
     #[test]
@@ -1060,6 +1071,11 @@ mod tests {
         assert_eq!(state.next_start.images, ImageMode::Force(Proto::Kitty));
         focus(&mut state, Row::LiveReload);
         update(&mut state, Msg::SettingsFlip);
+        assert_eq!(state.next_start.live_reload, LiveReload::Notify);
+        assert_eq!(
+            state.status.as_deref(),
+            Some("live reload: notify, once saved and restarted")
+        );
         update(&mut state, Msg::SettingsKeep);
         assert_eq!((state.config.images, state.config.live_reload), session);
         let status = state.status.clone().unwrap();

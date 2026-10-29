@@ -105,6 +105,7 @@ impl State {
 mod tests {
     use super::*;
     use crate::app::{Config, Msg, update};
+    use crate::config::LiveReload;
     use crate::images::{ImageMode, Proto};
     use crate::theme::Theme;
 
@@ -199,7 +200,7 @@ mod tests {
         let config = Config {
             max_width: Some(90),
             images: ImageMode::Force(Proto::Kitty),
-            live_reload: false,
+            live_reload: LiveReload::Off,
             ..with_file()
         };
         let mut state = State::new(theme, config);
@@ -209,7 +210,7 @@ mod tests {
                 "theme: \"gruvbox-light\" → \"dracula\"",
                 "max_width: 0 → 90",
                 "image_protocol: \"auto\" → \"kitty\"",
-                "live_reload: true → false",
+                "live_reload: \"auto\" → \"off\"",
             ]
         );
     }

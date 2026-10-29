@@ -96,6 +96,7 @@ style_keys! {
     StatusPos => "ui.status_pos",
     StatusMessage => "ui.status_message",
     StatusLink => "ui.status_link",
+    StatusChanged => "ui.status_changed",
     SearchMatch => "ui.search_match",
     SearchMatchHidden => "ui.search_match_hidden",
     SearchCurrent => "ui.search_current",
@@ -166,6 +167,8 @@ impl StyleKey {
             StyleKey::SettingsSwitchOn | StyleKey::SettingsSwitchOff | StyleKey::SettingsChoice => {
                 Some(StyleKey::SettingsField)
             }
+            // the mark sits on the file name
+            StyleKey::StatusChanged => Some(StyleKey::StatusFile),
             // only its background is used, so a theme without it tints with this one's
             StyleKey::Landed => Some(StyleKey::SearchMatchHidden),
             _ => None,
@@ -568,6 +571,25 @@ mod tests {
                     fg(StyleKey::SettingsSwitchOff),
                 );
                 assert!(contrast(on, off) > 1.2, "{name}: on and off look alike");
+            }
+        }
+    }
+
+    /// The mark on a file changed on disk (FEAT-014) reads on the file name's background, and
+    /// isn't the name's own color, in every built-in with and without its background.
+    #[test]
+    fn changed_mark_reads_on_the_file_name_in_every_builtin() {
+        for designed in Theme::builtins() {
+            for theme in [designed.clone(), designed.with_bg(false)] {
+                let name = &theme.name;
+                let (file, mark) = (
+                    theme.style(StyleKey::StatusFile),
+                    theme.style(StyleKey::StatusChanged),
+                );
+                assert_eq!(mark.bg, file.bg, "{name}: the mark sits on the file name");
+                let ratio = contrast(mark.fg.unwrap(), file.bg.unwrap());
+                assert!(ratio >= 3.0, "{name}: mark {ratio:.2} < 3");
+                assert_ne!(mark.fg, file.fg, "{name}: the mark looks like the name");
             }
         }
     }

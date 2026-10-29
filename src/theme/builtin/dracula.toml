@@ -97,6 +97,7 @@ status_heading = { fg = "purple", bg = "background_darker" }
 status_pos = { fg = "foreground", bg = "current_line" }
 status_message = { fg = "yellow", bg = "background_darker" }
 status_link = { fg = "cyan", bg = "background_darker" }
+status_changed = { fg = "orange", bold = true }   # the mark on the file name once it changed on disk (live_reload = "notify")
 search_match = { fg = "background", bg = "orange" }
 search_match_hidden = { underline = true, bg = "current_line" }
 search_current = { fg = "background", bg = "yellow", bold = true }

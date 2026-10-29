@@ -262,7 +262,7 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
         wraps code or scrolls it sideways, <kbd>#</kbd> shows line numbers.</p></li>
       <li id="callouts"><h3>Callouts, footnotes, task lists <a class="anchor" href="#callouts" aria-label="link to this section">#</a></h3><p>GitHub's five callout kinds, footnotes you can follow, and
         checkboxes.</p></li>
-      <li id="live-reload"><h3>Live reload <a class="anchor" href="#live-reload" aria-label="link to this section">#</a></h3><p>Reads the file again the moment it changes, keeping its place. <kbd>e</kbd> opens
+      <li id="live-reload"><h3>Live reload <a class="anchor" href="#live-reload" aria-label="link to this section">#</a></h3><p>Reads the file again the moment it changes, keeping its place, or with <code>live_reload = "notify"</code> marks the change until <kbd>r</kbd>. <kbd>e</kbd> opens
         <code>$EDITOR</code> at the line on screen.</p></li>
       <li id="pipes"><h3>From a pipe <a class="anchor" href="#pipes" aria-label="link to this section">#</a></h3><p>ada tells markdown, code, JSON, YAML, diffs and logs apart by what they hold:
         <code>journalctl -b | ada</code>. <code>-l json</code> names the language when the guess is wrong.</p></li>

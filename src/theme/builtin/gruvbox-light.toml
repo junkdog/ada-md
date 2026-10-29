@@ -104,6 +104,7 @@ status_heading = { fg = "orange", bg = "bg1" }
 status_pos = { fg = "fg4", bg = "bg2" }
 status_message = { fg = "yellow", bg = "bg1" }
 status_link = { fg = "blue", bg = "bg1" }        # the focused link's target
+status_changed = { fg = "orange", bold = true }   # the mark on the file name once it changed on disk (live_reload = "notify")
 search_match = { fg = "bg", bg = "orange" }
 search_match_hidden = { underline = true, bg = "bg2" }   # matched in a link target
 search_current = { fg = "bg", bg = "yellow", bold = true }

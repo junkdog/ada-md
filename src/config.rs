@@ -29,13 +29,44 @@ pub struct Settings {
     pub copy_on: CopyOn,
     pub max_width: Option<u16>,
     pub images: ImageMode,
-    pub live_reload: bool,
+    pub live_reload: LiveReload,
     pub keep_screen: bool,
     pub table_mode: TableMode,
     pub code_wrap: bool,
     pub line_numbers: LineNumbers,
     pub keys: Bindings,
     pub links: Roots,
+}
+
+/// What a change to the open file on disk does (`live_reload`, ADR-26): read it again, mark it
+/// in the status bar until `r` reads it again (FEAT-014), or nothing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LiveReload {
+    #[default]
+    Auto,
+    Notify,
+    Off,
+}
+
+impl LiveReload {
+    pub const NAMES: &[&str] = &["auto", "notify", "off"];
+
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "auto" => Some(LiveReload::Auto),
+            "notify" => Some(LiveReload::Notify),
+            "off" => Some(LiveReload::Off),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            LiveReload::Auto => "auto",
+            LiveReload::Notify => "notify",
+            LiveReload::Off => "off",
+        }
+    }
 }
 
 impl Default for Settings {
@@ -47,7 +78,7 @@ impl Default for Settings {
             copy_on: CopyOn::Yank,
             max_width: None,
             images: ImageMode::Auto,
-            live_reload: true,
+            live_reload: LiveReload::Auto,
             keep_screen: true,
             table_mode: TableMode::Auto,
             code_wrap: true,
@@ -131,7 +162,24 @@ pub fn parse(file: &str, text: &str, warnings: &mut Vec<String>) -> Result<Setti
                     protocol = Some(proto);
                 }
             },
-            "live_reload" => s.live_reload = cx.bool(v)?,
+            // `true` and `false` from before `notify`
+            "live_reload" => {
+                s.live_reload = match v.get_ref().as_bool() {
+                    Some(true) => LiveReload::Auto,
+                    Some(false) => LiveReload::Off,
+                    None => {
+                        let name = cx.string(v)?;
+                        LiveReload::parse(name).ok_or_else(|| {
+                            cx.at(
+                                v.span(),
+                                format_args!(
+                                    "unknown live_reload \"{name}\" (auto, notify or off)"
+                                ),
+                            )
+                        })?
+                    }
+                };
+            }
             "keep_screen" => s.keep_screen = cx.bool(v)?,
             "tables" => {
                 s.table_mode = match cx.string(v)? {
@@ -269,8 +317,9 @@ pub fn default_text() -> String {
 # Which protocol: auto asks the terminal, or kitty, sixel, iterm2, halfblocks.
 # image_protocol = \"auto\"
 
-# Read the file again when it changes on disk.
-# live_reload = true
+# When the file changes on disk: \"auto\" reads it again, \"notify\" marks the file name in the
+# status bar until `r` reads it again, \"off\" does nothing.
+# live_reload = \"auto\"
 
 # Leave what ada showed in the terminal when it quits, below the command that ran it, so it
 # can still be read (and scrolled back to); false clears it, as most full-screen programs do.
@@ -448,7 +497,7 @@ fn values(s: &Settings, protocol: &str) -> [String; 12] {
             ImageMode::Auto => toml_string("auto"),
             ImageMode::Force(proto) => toml_string(proto.name()),
         },
-        s.live_reload.to_string(),
+        toml_string(s.live_reload.name()),
         s.keep_screen.to_string(),
     ]
 }
@@ -602,7 +651,8 @@ mod tests {
             "{bad}"
         );
         assert_eq!(s.images, ImageMode::Force(Proto::Sixel));
-        assert!(!s.live_reload && !s.keep_screen && !s.code_wrap);
+        assert_eq!(s.live_reload, LiveReload::Off);
+        assert!(!s.keep_screen && !s.code_wrap);
         assert_eq!(s.table_mode, TableMode::Records);
         assert_eq!(s.line_numbers, LineNumbers::All);
         let off = parse(
@@ -611,6 +661,48 @@ mod tests {
             &mut Vec::new(),
         );
         assert_eq!(off.unwrap().images, ImageMode::Off);
+    }
+
+    /// FEAT-014: the three modes by name, and the booleans from before them still read.
+    #[test]
+    fn live_reload_reads_its_names_and_the_old_booleans() {
+        let read = |value: &str| {
+            parse(
+                "c.toml",
+                &format!("live_reload = {value}\n"),
+                &mut Vec::new(),
+            )
+            .map(|s| s.live_reload)
+        };
+        assert_eq!(read("true"), Ok(LiveReload::Auto));
+        assert_eq!(read("false"), Ok(LiveReload::Off));
+        assert_eq!(read("\"auto\""), Ok(LiveReload::Auto));
+        assert_eq!(read("\"notify\""), Ok(LiveReload::Notify));
+        assert_eq!(read("\"off\""), Ok(LiveReload::Off));
+        let bad = read("\"ask\"").unwrap_err();
+        assert!(
+            bad.contains("unknown live_reload \"ask\" (auto, notify or off)"),
+            "{bad}"
+        );
+        assert!(read("1").unwrap_err().contains("expected a string"));
+
+        // an old boolean stays as it is until the mode changes
+        let active = Settings {
+            live_reload: LiveReload::Notify,
+            ..Settings::default()
+        };
+        let out = save("c.toml", "live_reload = true\n", &active).unwrap();
+        assert_eq!(changes(&out), ["live_reload: \"auto\" → \"notify\""]);
+        assert_eq!(out.text, "live_reload = \"notify\"\n");
+        let same = save(
+            "c.toml",
+            "live_reload = false\n",
+            &Settings {
+                live_reload: LiveReload::Off,
+                ..Settings::default()
+            },
+        );
+        assert_eq!(same.unwrap().text, "live_reload = false\n");
     }
 
     #[test]
@@ -730,7 +822,7 @@ mod tests {
             theme_bg: false,
             max_width: Some(100),
             images: ImageMode::Force(Proto::Sixel),
-            live_reload: false,
+            live_reload: LiveReload::Off,
             table_mode: TableMode::Records,
             code_wrap: false,
             line_numbers: LineNumbers::All,
@@ -747,7 +839,7 @@ mod tests {
                 "line_numbers: \"off\" → \"all\"",
                 "max_width: 0 → 100",
                 "image_protocol: \"auto\" → \"sixel\"",
-                "live_reload: true → false",
+                "live_reload: \"auto\" → \"off\"",
             ]
         );
         let (added, gone) = diff(&text, &out.text);
@@ -758,7 +850,7 @@ mod tests {
                 "theme_bg = false",
                 "max_width = 100",
                 "image_protocol = \"sixel\"",
-                "live_reload = false",
+                "live_reload = \"off\"",
                 "tables = \"records\"",
                 "code_wrap = false",
                 "line_numbers = \"all\"",
@@ -771,7 +863,7 @@ mod tests {
                 "# theme_bg = true",
                 "# max_width = 0",
                 "# image_protocol = \"auto\"",
-                "# live_reload = true",
+                "# live_reload = \"auto\"",
                 "# tables = \"auto\"",
                 "# code_wrap = true",
                 "# line_numbers = \"off\"",
@@ -832,13 +924,13 @@ quit = \"x\"
         let text = "code_wrap = false\n\n# my keys\n[keys]\nquit = \"x\"\n";
         let active = Settings {
             max_width: Some(90),
-            live_reload: false,
+            live_reload: LiveReload::Off,
             ..parse("c.toml", text, &mut Vec::new()).unwrap()
         };
         let out = save("c.toml", text, &active).unwrap();
         assert_eq!(
             out.text,
-            "code_wrap = false\n\nmax_width = 90\nlive_reload = false\n\n# my keys\n[keys]\nquit = \"x\"\n"
+            "code_wrap = false\n\nmax_width = 90\nlive_reload = \"off\"\n\n# my keys\n[keys]\nquit = \"x\"\n"
         );
         // with no table, at the end
         for text in ["", "code_wrap = false", "code_wrap = false\n"] {

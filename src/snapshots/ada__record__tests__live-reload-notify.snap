@@ -1,0 +1,20 @@
+---
+source: src/record.rs
+expression: frames.last().unwrap()
+---
+
+  │ A block quote with emphasis that is long enough to
+  │ wrap when the terminal gets narrow, so the bar repeats
+  │ on every row.
+  │
+  │ │ A nested quote.
+  │
+  │ Back to the outer quote.
+
+  │ Note
+  │ A callout, as GitHub renders them.
+
+  │ Warning
+  │ Careful: this one has a list.
+  │
+ tests/fixtures/quotes.md *  Quotes                     88%

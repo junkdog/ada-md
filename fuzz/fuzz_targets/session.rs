@@ -1334,6 +1334,11 @@ fuzz_target!(|data: &[u8]| {
             true => CopyOn::Select,
             false => CopyOn::Yank,
         },
+        // a `FileChanged` reloads, or marks the file until `r` (FEAT-014)
+        live_reload: match u.arbitrary().unwrap_or(false) {
+            true => config::LiveReload::Notify,
+            false => config::LiveReload::Auto,
+        },
         ..Config::default()
     };
     let graphics: Option<(u8, u8, u8)> = u.arbitrary().unwrap_or_default();
