@@ -398,14 +398,10 @@ impl Line {
             scratch.clear();
             scratch.push('0');
             diff(Pen::default(), to, scratch);
-            if scratch.len() < out.len() - start - 3 {
+            if scratch.len() < out.len() - start - 2 {
                 out.truncate(start + 2);
                 out.push_str(scratch);
             }
-        }
-        // the first parameter has no separator before it
-        if out.as_bytes()[start + 2] == b';' {
-            out.remove(start + 2);
         }
         out.push('m');
         self.pen = to;
@@ -451,13 +447,14 @@ impl Pen {
     }
 }
 
-/// SGR parameters from `from` to `to`, each after a `;`. Returns whether any turns something off.
+/// SGR parameters from `from` to `to`, separated by `;`. Returns whether any turns something off.
+/// One right after the `[` takes no `;`, so none needs removing later.
 fn diff(from: Pen, to: Pen, out: &mut String) -> bool {
     let removed = from.modifier - to.modifier;
     let mut added = to.modifier - from.modifier;
     if removed.intersects(Modifier::BOLD | Modifier::DIM) {
         // 22 ends both bold and dim
-        out.push_str(";22");
+        param(";22", out);
         added |= to.modifier & (Modifier::BOLD | Modifier::DIM);
     }
     for (flag, code) in [
@@ -467,7 +464,7 @@ fn diff(from: Pen, to: Pen, out: &mut String) -> bool {
         (Modifier::CROSSED_OUT, ";29"),
     ] {
         if removed.contains(flag) {
-            out.push_str(code);
+            param(code, out);
         }
     }
     for (flag, code) in [
@@ -479,7 +476,7 @@ fn diff(from: Pen, to: Pen, out: &mut String) -> bool {
         (Modifier::CROSSED_OUT, ";9"),
     ] {
         if added.contains(flag) {
-            out.push_str(code);
+            param(code, out);
         }
     }
     let mut off = !removed.is_empty();
@@ -494,12 +491,12 @@ fn diff(from: Pen, to: Pen, out: &mut String) -> bool {
     if from.underline != to.underline {
         match to.underline {
             Some((r, g, b)) => {
-                out.push_str(";58;2");
+                param(";58;2", out);
                 rgb(r, g, b, out);
             }
             None => {
                 off = true;
-                out.push_str(";59");
+                param(";59", out);
             }
         }
     }
@@ -573,7 +570,9 @@ pub fn run(doc: &Doc, theme: &Theme, params: LayoutParams, opts: Options) -> io:
 }
 
 fn color(c: Color, base: u8, out: &mut String) {
-    out.push(';');
+    if !out.ends_with('[') {
+        out.push(';');
+    }
     // the 16 named colors go as `3x`/`9x` (and `4x`/`10x`), the rest by index
     let n = match c.kind() {
         Kind::Reset => base + 9,
@@ -599,6 +598,11 @@ fn rgb(r: u8, g: u8, b: u8, out: &mut String) {
         out.push(';');
         number(n, out);
     }
+}
+
+/// A parameter `code`, which starts with its `;`: left out when it's the sequence's first.
+fn param(code: &str, out: &mut String) {
+    out.push_str(if out.ends_with('[') { &code[1..] } else { code });
 }
 
 fn number(n: u8, out: &mut String) {
