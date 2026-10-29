@@ -117,7 +117,7 @@ union() {
   local -a all=(corpus/$t/*(N))
   local n=${#all}
   if [[ -n $shards && -d $shards ]]; then
-    find $shards -type f -exec cp -n -t corpus/$t -- {} +
+    find $shards -type f -exec cp --update=none -t corpus/$t -- {} +
   fi
   all=(corpus/$t/*(N))
   local m=${#all}
