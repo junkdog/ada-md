@@ -8,6 +8,7 @@ What changed in each release of ada, newest first. A release includes the change
 
 - *(cli)* Name the commit, build time and symbol order in --version
 - *(completions)* Add PowerShell completions
+- *(images)* Show a gif's first frame, inline, full screen, in --print and piped in
 - *(print)* Mark the --line row, --match's matches and the git gutter (--gutter)
 - *(reload)* Mark a changed file until r with live_reload = "notify"
 - *(windows)* Live reload through ReadDirectoryChangesW instead of the 1 s poll
