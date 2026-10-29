@@ -184,7 +184,7 @@ const PREVIEW_ROWS: usize = 2000;
 /// What stdin holds.
 enum Piped {
     Text(Arc<str>),
-    /// A PNG or JPEG, written to a file: ada's images are read from files.
+    /// A PNG, JPEG or GIF, written to a file: ada's images are read from files.
     Image(PipedImage),
 }
 

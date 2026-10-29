@@ -188,13 +188,15 @@ pub fn is_binary(bytes: &[u8]) -> bool {
 /// How many bytes [`image_ext`] looks at.
 pub const IMAGE_MAGIC: usize = 8;
 
-/// The extension of the image `bytes` start as, by its magic bytes: PNG's signature or a JPEG's
-/// start of image, the formats ada decodes. Stdin has no name to tell it by.
+/// The extension of the image `bytes` start as, by its magic bytes: PNG's signature, a JPEG's
+/// start of image or a GIF's header, the formats ada decodes. Stdin has no name to tell it by.
 pub fn image_ext(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         Some("png")
     } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
         Some("jpg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("gif")
     } else {
         None
     }
@@ -287,10 +289,12 @@ mod tests {
         assert_eq!(image_ext(b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR"), Some("png"));
         assert_eq!(image_ext(b"\xff\xd8\xff\xe0\0\x10JFIF\0"), Some("jpg"));
         assert_eq!(image_ext(b"\xff\xd8\xff\xe1\0\x18Exif\0\0"), Some("jpg"));
+        assert_eq!(image_ext(b"GIF89a\x01\0\x01\0"), Some("gif"));
+        assert_eq!(image_ext(b"GIF87a"), Some("gif"));
         // cut before the signature ends, or mangled by a newline conversion
         assert_eq!(image_ext(b"\x89PNG\r\n"), None);
         assert_eq!(image_ext(b"\x89PNG\n\x1a\n"), None);
-        assert_eq!(image_ext(b"GIF89a"), None);
+        assert_eq!(image_ext(b"GIF88a"), None);
         assert_eq!(image_ext(b""), None);
     }
 

@@ -325,14 +325,14 @@ are reported with the file, line and column.
 
 ## Other files
 
-Markdown is rendered, a png or jpeg is shown full screen, and code and config files (`main.rs`,
+Markdown is rendered, a png, jpeg or gif is shown full screen, and code and config files (`main.rs`,
 `Cargo.lock`, `Makefile`, `.zshrc`, or a `#!` first line) are shown whole and highlighted, with
 the git gutter, search, `e` and `--line` working on their lines. Other text is shown plain;
 binary files aren't shown.
 
 Stdin and files with no extension go by their first 8 KB: a diff, a mermaid diagram, JSON, 
 YAML, TOML, HTML, a log, or markdown. Piped text that's none of these is shown line for line, never
-reflowed; a file with no extension falls back to markdown, as a `README` should. A png or jpeg
+reflowed; a file with no extension falls back to markdown, as a `README` should. A png, jpeg or gif
 piped in (`curl -s …/cat.png | ada`) is told by its first bytes and shown as an image file is.
 Logs and JSON are highlighted by ada's own scanners, lines of any length included; a theme styles
 log levels with `markup.error`, `markup.warning`, `markup.info` and `markup.debug`. `-l NAME`
@@ -341,8 +341,8 @@ overrides the guess, and completes to every language ada knows.
 ## Images
 
 Block images, the ones alone in their paragraph, are drawn inline, and `Enter` on any link to a
-png or jpeg shows it full screen (`Enter` again opens it in your image viewer). ada asks the
-terminal what it supports:
+png, jpeg or gif shows it full screen (`Enter` again opens it in your image viewer). A gif shows
+its first frame. ada asks the terminal what it supports:
 
 - kitty, and terminals with its graphics protocol, get crisp images that scroll cleanly
 - foot, wezterm, and other sixel terminals get sixel

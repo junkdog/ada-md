@@ -1,12 +1,14 @@
 //! The image path (F-08): a file of any bytes decoded upright and box-filtered to the size it's
 //! shown at (`pixels::decode_to`), then sent to kitty as a PNG of those pixels
-//! (`kitty::transmit`). ada decodes whatever PNG or JPEG an fzf preview lands on, so:
-//!   - nothing may panic, and a lying header (a huge IHDR or SOF, a truncated IDAT, an interlaced
-//!     PNG near `MAX_WHOLE`) must cost bounded memory and time (`-rss_limit_mb`, `-timeout`)
+//! (`kitty::transmit`). ada decodes whatever PNG, JPEG or GIF an fzf preview lands on, so:
+//!   - nothing may panic, and a lying header (a huge IHDR, SOF or logical screen, a truncated IDAT or
+//!     LZW stream, an interlaced PNG or GIF frame near `MAX_WHOLE`) must cost bounded memory and
+//!     time (`-rss_limit_mb`, `-timeout`)
 //!   - the output is the size asked for, no larger than the image, turned by its EXIF orientation
 //!   - for an 8-bit source, every output pixel is the rounded mean of its box over a whole decode
 //!     by `image` (16-bit samples differ: `image` scales them, png's `normalize_to_color8` strips
 //!     them), shrunk as stored and then turned, as ada does
+//!   - a GIF is its first frame on its logical screen, transparent around it, as `image` composes it
 //!   - kitty's payload, base64 and PNG decoded back, is the pixels
 //!
 //! The first three bytes pick the size: a box the image is fitted into (as print and the TUI ask),

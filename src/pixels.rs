@@ -1,7 +1,7 @@
 //! Decoding an image straight to the size it's shown at (architecture §9). A photo is decoded
 //! once and box-filtered down as its rows arrive, so memory goes to the size shown, not to the
-//! file's: a PNG is shrunk a row at a time and never held whole, and a JPEG is held once, as
-//! decoded. Both TUI images and printed ones go through here.
+//! file's: a PNG and a GIF's first frame are shrunk a row at a time and never held whole, and a
+//! JPEG is held once, as decoded. Both TUI images and printed ones go through here.
 
 use std::fs::File;
 use std::io::BufReader;
@@ -47,8 +47,10 @@ fn decode_file(
     let reader = ImageReader::open(path)
         .and_then(ImageReader::with_guessed_format)
         .map_err(|e| e.to_string())?;
-    if reader.format() == Some(ImageFormat::Png) {
-        return png(path, size);
+    match reader.format() {
+        Some(ImageFormat::Png) => return png(path, size),
+        Some(ImageFormat::Gif) => return gif(path, size),
+        _ => {}
     }
     let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
     let (w, h) = decoder.dimensions();
@@ -148,7 +150,7 @@ pub fn is_plain_png(path: &Path) -> bool {
 /// PNG's row of column sums may take, as image's default limit would allow any image.
 const MAX_WHOLE: usize = 512 << 20;
 
-/// The most pixels a byte of JPEG can hold. Past the PNG, only JPEGs reach a decoder, and zune
+/// The most pixels a byte of JPEG can hold. Past the PNG and the GIF, only JPEGs reach a decoder, and zune
 /// decodes only Huffman-coded ones, where every 8 × 8 block of the largest component costs at least
 /// a bit, its DC's shortest code: 64 pixels a bit. A flat gray from cjpeg takes 2× that optimized,
 /// 8× in color with the standard tables.
@@ -201,6 +203,74 @@ fn png(path: &Path, size: impl FnOnce((u32, u32)) -> (u32, u32)) -> Result<Dynam
         return Err("the PNG ends early".into());
     }
     Ok(turn(shrink.finish(), orientation))
+}
+
+/// A GIF's first frame on its logical screen, a row at a time: the screen around the frame is
+/// transparent, and the part of the frame past the screen is cut, as `image` composes it. An
+/// interlaced frame comes in four passes, so it's held whole, alone, before it's shrunk.
+fn gif(path: &Path, size: impl FnOnce((u32, u32)) -> (u32, u32)) -> Result<DynamicImage, String> {
+    let file = File::open(path).map_err(|e| e.to_string())?;
+    let mut options = gif::DecodeOptions::new();
+    options.set_color_output(gif::ColorOutput::RGBA);
+    let mut decoder = options
+        .read_info(BufReader::new(file))
+        .map_err(|e| e.to_string())?;
+    let (w, h) = (u32::from(decoder.width()), u32::from(decoder.height()));
+    if w == 0 || h == 0 {
+        return Err("the image is empty".into());
+    }
+    // never held, but summed as if it were: a few bytes can claim a 65,535 × 65,535 screen
+    if w as usize * h as usize * 4 > MAX_WHOLE {
+        return Err(format!("the image is too large to decode: {w} × {h}"));
+    }
+    let frame = decoder
+        .next_frame_info()
+        .map_err(|e| e.to_string())?
+        .ok_or("the GIF has no frame")?;
+    let (left, top) = (usize::from(frame.left), u32::from(frame.top));
+    let (fw, fh) = (usize::from(frame.width), u32::from(frame.height));
+    let interlaced = frame.interlaced;
+    let mut shrink = Shrink::new((w, h), size((w, h)), 4);
+    // the frame's columns on the screen, in bytes, and the screen row they're copied into
+    let on_screen = left.min(w as usize) * 4..(left + fw).min(w as usize) * 4;
+    let mut row = vec![0; w as usize * 4];
+    let blank = vec![0; w as usize * 4];
+    let line = fw * 4;
+    let mut whole = Vec::new();
+    if interlaced && fw > 0 {
+        let bytes = line
+            .checked_mul(fh as usize)
+            .filter(|&n| n <= MAX_WHOLE)
+            .ok_or("the interlaced GIF is too large")?;
+        whole = vec![0; bytes];
+        decoder
+            .read_into_buffer(&mut whole)
+            .map_err(|e| e.to_string())?;
+    }
+    let mut frame_row = vec![0; if interlaced { 0 } else { line }];
+    for y in 0..h {
+        let f = y.wrapping_sub(top);
+        if f >= fh || fw == 0 {
+            shrink.push(&blank);
+            continue;
+        }
+        let pixels = if interlaced {
+            &whole[f as usize * line..][..line]
+        } else {
+            // a palette index past the palette leaves its pixel as it was: transparent black
+            frame_row.fill(0);
+            if !decoder
+                .fill_buffer(&mut frame_row)
+                .map_err(|e| e.to_string())?
+            {
+                return Err("the GIF ends early".into());
+            }
+            &frame_row
+        };
+        row[on_screen.clone()].copy_from_slice(&pixels[..on_screen.len()]);
+        shrink.push(&row);
+    }
+    Ok(shrink.finish())
 }
 
 fn turned(orientation: Orientation) -> bool {
@@ -568,6 +638,108 @@ mod tests {
             (20, 10, false)
         );
         assert!(decode(&dir.join("gone.png"), (1, 1)).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A GIF of a `screen` and one frame of palette indices, `rows` in display order, at `at`.
+    /// An interlaced frame's rows are stored in its four passes.
+    fn gif_bytes(screen: (u16, u16), at: (u16, u16), rows: &[&[u8]], interlaced: bool) -> Vec<u8> {
+        // red, green, blue, and white, the transparent one
+        let palette = [255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
+        let mut out = vec![];
+        let mut encoder = gif::Encoder::new(&mut out, screen.0, screen.1, &palette).unwrap();
+        let mut order: Vec<usize> = (0..rows.len()).collect();
+        if interlaced {
+            order = [(0, 8), (4, 8), (2, 4), (1, 2)]
+                .into_iter()
+                .flat_map(|(from, step)| (from..rows.len()).step_by(step))
+                .collect();
+        }
+        let frame = gif::Frame {
+            left: at.0,
+            top: at.1,
+            width: rows[0].len() as u16,
+            height: rows.len() as u16,
+            interlaced,
+            transparent: Some(3),
+            buffer: order.iter().flat_map(|&y| rows[y]).copied().collect(),
+            ..gif::Frame::default()
+        };
+        encoder.write_frame(&frame).unwrap();
+        drop(encoder);
+        out
+    }
+
+    #[test]
+    fn a_gifs_first_frame_on_its_screen_as_image_composes_it() {
+        let dir = std::env::temp_dir().join(format!("ada-pixels-gif-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rows: Vec<Vec<u8>> = (0..10)
+            .map(|y| (0..3).map(|x| (x + y) % 4).collect())
+            .collect();
+        let rows: Vec<&[u8]> = rows.iter().map(Vec::as_slice).collect();
+        let cases = [
+            ("whole", (3, 10), (0, 0), false),
+            ("interlaced", (3, 10), (0, 0), true),
+            // transparent around the frame
+            ("inset", (8, 14), (2, 3), false),
+            // cut at the screen's right and bottom edges
+            ("past", (4, 6), (2, 1), false),
+            ("past-interlaced", (4, 6), (2, 1), true),
+            ("off-screen", (4, 6), (5, 0), false),
+        ];
+        for (name, screen, at, interlaced) in cases {
+            let path = dir.join(format!("{name}.gif"));
+            std::fs::write(&path, gif_bytes(screen, at, &rows, interlaced)).unwrap();
+            let want = image::open(&path).unwrap().to_rgba8();
+            let out = decode(&path, (100, 100)).unwrap();
+            assert_eq!(out.color(), image::ColorType::Rgba8, "{name}");
+            assert_eq!(out.as_bytes(), want.as_raw().as_slice(), "{name}");
+            // shrunk as it's read: the screen's size in, the asked size out
+            let out = decode(&path, (2, 2)).unwrap();
+            assert_eq!(
+                (out.width(), out.height()),
+                fitted((u32::from(screen.0), u32::from(screen.1)), (2, 2))
+            );
+        }
+        // the interlaced frame's rows land where the plain one's do
+        let plain = decode(&dir.join("whole.gif"), (3, 10)).unwrap();
+        assert_eq!(decode(&dir.join("interlaced.gif"), (3, 10)).unwrap(), plain);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_gif_that_lies_is_an_error() {
+        let dir = std::env::temp_dir().join(format!("ada-pixels-gif-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rows: [&[u8]; 4] = [&[0; 4]; 4];
+        let mut cut = gif_bytes((4, 4), (0, 0), &rows, false);
+        cut.truncate(cut.len() - 6);
+        // a frame whose descriptor claims 4 rows, its data holding 2: the image descriptor's
+        // height is the 9th byte from its separator
+        let mut short = gif_bytes((4, 4), (0, 0), &rows[..2], false);
+        let at = short.iter().rposition(|&b| b == 0x2c).unwrap();
+        short[at + 7] = 4;
+        let mut bare = vec![];
+        drop(gif::Encoder::new(&mut bare, 4, 4, &[0; 6]).unwrap());
+        let cases = [
+            // a 65,535 × 65,535 screen in a few bytes: 17 GB, were it held
+            (
+                gif_bytes((u16::MAX, u16::MAX), (0, 0), &rows, false),
+                "too large",
+            ),
+            (gif_bytes((0, 4), (0, 0), &rows, false), "empty"),
+            (cut, "End of File"),
+            (short, "ends early"),
+            // a header and a palette, no frame: gif reads up to the first one before anything else
+            (bare, "End of File"),
+        ];
+        for (n, (bytes, want)) in cases.into_iter().enumerate() {
+            let path = dir.join(format!("{n}.gif"));
+            std::fs::write(&path, bytes).unwrap();
+            let err = decode(&path, (100, 100)).unwrap_err();
+            assert!(err.contains(want), "{n}: {err}");
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
