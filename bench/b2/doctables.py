@@ -335,9 +335,11 @@ def grid(title, inputs, modes, names, load, floors=(), cap=None, flags=None):
             for k in ("rss", "out"):
                 for f in inputs:
                     x = load.bytes.get((f, mode, n)) if k == "out" else cell(f, n, k)
-                    best = min((y for m in ns if m not in floors and (y := (load.bytes.get((f, mode, m)) if k == "out"
+                    best = min((y for m in ns if m not in floors and (f, m) not in (flags or {})
+                                and (y := (load.bytes.get((f, mode, m)) if k == "out"
                                 else cell(f, m, k))) is not None), default=None)
-                    row.append("" if x is None else f"**{fmt(x)}**" if n not in floors and x == best else fmt(x))
+                    ranked = n not in floors and (f, n) not in (flags or {})
+                    row.append("" if x is None else f"**{fmt(x)}**" if ranked and x == best else fmt(x))
             rows.append(row)
         print(f"\n{title}, {label}: peak RSS (MiB) and output (KB):\n")
         print(table(["Tool"] + [f"{h} {f}" for h in ("RSS", "Output") for f in inputs], rows))
@@ -347,7 +349,11 @@ def grid(title, inputs, modes, names, load, floors=(), cap=None, flags=None):
 
 
 PREV_FILES = ["code-s.rs", "code-m.rs", "code-l.rs", "log.log", "huge.json", "huge.log"]
-IMAGES = ["fit.png", "diagram.png", "photo-12mp.png", "photo.jpg", "photo-12mp.jpg", "photo-24mp.jpg"]
+IMAGES = ["fit.png", "diagram.png", "photo-12mp.png", "photo.jpg", "photo-12mp.jpg", "photo-24mp.jpg",
+          "demo.gif", "photo.gif", "photo-12mp.gif", "photo-12mp-i.gif"]
+# chafa 1.18.3 on a 12 MP GIF: a blank 10×20 px image, or 42 bytes of symbols; not ranked
+CHAFA_GIF = "it draws nothing: a blank 10×20 px image in kitty, 42 bytes of symbols"
+IMAGE_FLAGS = {(f, n): CHAFA_GIF for f in ("photo-12mp.gif", "photo-12mp-i.gif") for n in ("chafa", "chafa-vhalf")}
 
 
 def loader(d):
@@ -388,9 +394,11 @@ def previewer():
 
 
 def images():
-    """b2i.zsh: 100×50-cell previews of each image, kitty graphics and text."""
+    """b2i.zsh: 100×50-cell previews of each image, kitty graphics and text; a GIF's first frame."""
     grid("Images", IMAGES, [("kitty", "kitty graphics"), ("text", "half-blocks and symbols")],
-         ["ada", "icat", "icat-shm", "chafa", "mcat", "viu", "chafa-vhalf"], loader("b2i"))
+         ["ada", "icat", "icat-shm", "chafa", "mcat", "viu", "chafa-vhalf"], loader("b2i"), flags=IMAGE_FLAGS)
+    print("\nGIFs: the first frame, the others told to stop there (icat --loop 0, chafa --animate off, viu -s); "
+          "mcat plays a GIF as a video with no way to stop at a frame, so it has no GIF cells.")
 
 
 if __name__ == "__main__":

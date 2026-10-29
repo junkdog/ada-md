@@ -6,10 +6,16 @@
 #   text:  ada's half-blocks; viu's (-b); chafa's default symbols, and chafa limited to half-blocks (vhalf)
 # viu can't be told to use kitty without a terminal to ask; mcat has no half-blocks (only --ascii).
 # icat's shared-memory runs leave their /dev/shm files behind with no terminal to read them; they are removed.
+# A GIF is its first frame, as ada shows it: the others are told to stop there (STILL), or they play it to the pipe
+# for good (chafa, viu). mcat plays a GIF as a video with no way to stop at a frame, so it has no GIF cells.
 S=${B2_ROOT:-${0:A:h}/root}
 B=$S/tools/bin; ADA=${ADA:-ada}
 OUT=${B2I_OUT:-$S/b2i}   # B2I_OUT: another directory, for a rerun
 export XDG_CONFIG_HOME=$S/home/x/config
+# viu writes 24-bit color under COLORTERM=truecolor, as ada and `chafa -c full` do, and 256 colors without it
+# (144 KB against 213 for fit.png): set here, so a run doesn't depend on the shell it starts from (before
+# 2026-10-29 the runs had none)
+export COLORTERM=truecolor
 cd $S/corpus/img; mkdir -p $OUT; : > $OUT/bytes.txt
 DROP=${B2_DROP_CACHES:-/usr/local/sbin/oxasm-drop-caches}   # as b2a.zsh
 free_kib=$(awk '/^MemFree:/ { print $2 }' /proc/meminfo)
@@ -26,15 +32,21 @@ TEXT=("ada:$ADA -p -w 100 --height 50 --image-protocol halfblocks"
       "viu:$B/viu -b -w 100 -h 50"
       "chafa:/usr/bin/chafa -f symbols -c full -s 100x50 --view-size 100x50"
       "chafa-vhalf:/usr/bin/chafa -f symbols -c full --symbols vhalf -s 100x50 --view-size 100x50")
+typeset -A STILL=(icat "--loop 0" icat-shm "--loop 0" chafa "--animate off" chafa-vhalf "--animate off" viu -s)
 # Peak RSS comes from a short hyperfine call per command (*.rss.NAME.json): a child's ru_maxrss counts what
 # hyperfine held when it spawned it, and hyperfine grows with every run it keeps, so a small tool late in a
 # long call reports hyperfine's size (ada-optimization, experiment 20)
 shm() { find /dev/shm -maxdepth 1 -user $USER -name 'icat-*' -newer $OUT/.start -delete 2>/dev/null }
-for img in ${=B2I_FILES:-fit.png diagram.png photo-12mp.png photo.jpg photo-12mp.jpg photo-24mp.jpg}; do
+FILES="fit.png diagram.png photo-12mp.png photo.jpg photo-12mp.jpg photo-24mp.jpg"
+FILES+=" demo.gif photo.gif photo-12mp.gif photo-12mp-i.gif"
+for img in ${=B2I_FILES:-$FILES}; do
   for t in kitty text; do
     if [[ $t == kitty ]]; then P=($KITTY); else P=($TEXT); fi
     [[ -n $B2I_ONLY ]] && P=(${(M)P:#(${(~j:|:)${=B2I_ONLY}}):*})   # B2I_ONLY="ada icat", as B2P_ONLY
     [[ -n $ADA_REF ]] && P+=(${${(M)P:#ada:*}/#ada:$ADA/adaref:$ADA_REF})   # rerun.zsh: the reference ada, beside ada
+    if [[ $img == *.gif ]]; then
+      Q=(); for c in ${P:#mcat:*}; do n=${c%%:*}; Q+=("$c${STILL[$n]:+ $STILL[$n]}"); done; P=($Q)
+    fi
     args=(); for c in $P; do args+=(-n ${c%%:*} "${c#*:} $img"); done
     : > $OUT/.start
     taskset -c 2,4,6,8 $B/hyperfine -N --input=null --output=pipe --warmup 2 --min-runs 20 \

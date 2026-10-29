@@ -89,6 +89,12 @@ experiment 28).
   (1500×2000), `photo-12mp.png`/`.jpg` and `photo-24mp.jpg` (a vault photo resized with ImageMagick), each as a
   100×50-cell preview at 10×20 px. kitty: ada, `kitten icat` streamed and through shared memory (its leftover
   `/dev/shm/icat-*` files are removed), chafa and mcat; text: ada's half-blocks, viu's, and chafa's symbols.
+  GIFs: `demo.gif` (the repository's `demo/demo.gif`, 1000×600, 851 frames), `photo.gif` and `photo-12mp.gif`
+  (`magick photo.jpg -auto-orient photo.gif`, the same from `photo-12mp.jpg`) and `photo-12mp-i.gif` (the same with
+  `-interlace GIF`, the frame ada holds whole). Each is its first frame: icat runs with `--loop 0`, chafa with
+  `--animate off` and viu with `-s`, without which chafa and viu play it to the pipe for good. mcat plays a GIF as a
+  video with no way to stop, so it has no GIF cells; chafa 1.18.3 draws nothing for the 12 MP GIFs (a blank
+  10×20 px image, 42 bytes of symbols), flagged and not ranked.
 - `B2P_ONLY="ada rich"` with `B2P_OUT=<dir>` reruns some tools into another directory, and
   `B2P_DIRS="b2p <dir>"` merges it over the full run in `doctables.py`; `B2I_ONLY`, `B2I_OUT` and `B2I_DIRS` the
   same for images, `B2A_ONLY` and `B2A_OUT` for print. `merge.py OUT IN...` merges such directories into one, a
