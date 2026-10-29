@@ -1,5 +1,6 @@
 //! Where a frame's bytes go (O-10, O-14): one page-down and one line scroll through the TUI's
-//! encoder at B2's 120×40, and `--print` at 100 columns, split into cursor moves, SGR and text.
+//! encoder at B2's 120×40, and `--print` at 100 columns, split into cursor moves, SGR and text;
+//! then the time and bytes per frame of 6,000 line and page scrolls.
 //!
 //! ```zsh
 //! cargo run --release --example frame_bytes -- bench/b2/root/corpus/{s,m,l}.md
@@ -70,6 +71,7 @@ fn main() {
         for (name, by) in [("line", 1), ("page", 40)] {
             update(&mut state, Msg::Scroll { by: ScrollBy::Top });
             let frames = 6000;
+            let mut written = 0;
             let start = std::time::Instant::now();
             for f in 0..frames {
                 let dir = if f / 300 % 2 == 0 { by } else { -by };
@@ -80,10 +82,13 @@ fn main() {
                     },
                 );
                 screen.draw(|g| ui::view(&state, g)).expect("draw");
-                out.0.borrow_mut().clear();
+                let mut bytes = out.0.borrow_mut();
+                written += bytes.len();
+                bytes.clear();
             }
             let us = start.elapsed().as_secs_f64() * 1e6 / f64::from(frames);
-            println!("  {name} scroll: {us:.1} µs per frame");
+            let bytes = written as f64 / f64::from(frames);
+            println!("  {name} scroll: {us:.1} µs per frame, {bytes:.1} B per frame");
         }
 
         let params = LayoutParams {

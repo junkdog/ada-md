@@ -263,7 +263,9 @@ impl Scroll {
     /// Set the margins to the rows unless they end at the screen's, then delete or insert lines
     /// from the first row, and reset the margins. `DECSTBM`, `DL` and `IL` are VT100 and VT102,
     /// unlike `SU` and `SD`, which the Linux console lacks. The style is the default when a frame
-    /// starts, so the blank rows come in on the default background, with bce or without.
+    /// starts, so the blank rows come in on the default background, with bce or without. Not on
+    /// the theme's: kitty fills the lines a move brings in with default cells, though it erases
+    /// with the current background (TRM-03).
     fn encode(&self, screen_bottom: u16, out: &mut Vec<u8>) {
         let margins = self.rows.end < screen_bottom;
         if margins {
