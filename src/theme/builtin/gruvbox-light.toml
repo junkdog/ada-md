@@ -8,6 +8,7 @@ bg = "#fbf1c7"
 bg0_s = "#f2e5bc"
 bg1 = "#ebdbb2"
 bg1_2 = "#dcd2a9"    # not upstream: between bg1 and bg2, for table row stripes
+bg_landed = "#e6d5ae"    # not upstream: between bg1 and bg2, for where a jump landed, on the page and on code
 bg2 = "#d5c4a1"
 bg3 = "#bdae93"
 bg4 = "#a89984"
@@ -114,7 +115,7 @@ popup_title = { fg = "orange", bg = "bg1", bold = true }
 popup_selected = { fg = "bg", bg = "orange", bold = true }
 sort_table = { fg = "orange" }                  # the borders and header of the table `s` sorts
 selection = { bg = "bg3" }                      # text selected with the mouse
-landed = { bg = "bg1" }                         # where a link or the outline jumped to, until the next key
+landed = { bg = "bg_landed" }                   # where a link or the outline jumped to, until the next key
 line_number = { fg = "bg4" }                    # line numbers (`#`)
 
 [ui.settings]                # the settings popup (`F2`): its rows, and the values they set

@@ -2,18 +2,19 @@ use std::io::{self, IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::{env, fs};
+use std::{env, fs, thread};
 
 use ada::app::{self, Config, Effects, Head, Msg, State};
 use ada::cli::{self, Args, Input};
 use ada::filetype::{self, FileType};
+use ada::git::{self, LineMarks};
 use ada::images::{self, ImageMode};
 use ada::layout::{ImageFit, LayoutParams, LineNumbers};
 use ada::links::{Resolver, RootedResolver};
 use ada::print::stream::Start;
 use ada::record::{self, Recorder, ReplayOptions};
 use ada::theme::Theme;
-use ada::{completions, config, links, print, theme};
+use ada::{completions, config, links, print, search, theme};
 
 // libc named before std's libm, so `ldexp` (syntect's one libm call) binds to libc's copy and
 // `--as-needed` drops libm: ld.so no longer maps it and runs its IFUNC resolvers (~0.3–0.5 MiB of
@@ -342,10 +343,22 @@ fn print_doc(
             screen_rows: height,
         }),
     };
+    // an empty pattern (fzf's query before a key) marks nothing; a bad one, typed halfway, warns
+    let matches = match args.matching.as_deref().filter(|p| !p.is_empty()) {
+        Some(pattern) => search::compile(pattern)
+            .inspect_err(|e| eprintln!("ada: warning: --match: {e}"))
+            .ok(),
+        None => None,
+    };
     // A whole log, JSON or text file prints a piece at a time (O-52); a preview reads only its
-    // head, and `--line` needs the rows above the line.
+    // head, and `--line`, `--match` and `--gutter` need the whole layout.
     let mut read = Vec::new();
-    if rows.is_none() && args.line.is_none() && forced != Some(FileType::Markdown) {
+    if rows.is_none()
+        && args.line.is_none()
+        && matches.is_none()
+        && !args.gutter
+        && forced != Some(FileType::Markdown)
+    {
         let numbered = FileType::Text { lang: None }.params(params).line_numbers;
         match print::stream::start(path, forced, numbered != LineNumbers::Off) {
             Start::Stream(stream) => return stream.run(theme, params).map_err(|e| e.to_string()),
@@ -354,7 +367,8 @@ fn print_doc(
     }
     // a piped image prints from a file of its own, removed once it's printed
     let mut image = None;
-    let (path, text) = if path == Path::new("-") {
+    let piped = path == Path::new("-");
+    let (path, text) = if piped {
         match read_stdin(read, head, forced)? {
             Piped::Text(text) => (path, text),
             Piped::Image(piped) => (&*image.insert(piped).path, Arc::from("")),
@@ -368,16 +382,29 @@ fn print_doc(
     };
     let filetype = forced.unwrap_or_else(|| FileType::of(path, &text));
     print::start((filetype == FileType::Markdown).then_some(&*text));
+    // git runs while the document is parsed and laid out; never for stdin or an image
+    // (architecture §8)
+    let diffs = (args.gutter && !piped && filetype != FileType::Image).then(|| {
+        thread::spawn({
+            let path = path.to_owned();
+            move || git::run(&path)
+        })
+    });
     let doc = filetype.parse(path, &text);
     // fzf redraws its preview pane for every file: its images can replace the last file's
     let reuse_ids = env::var_os("FZF_PREVIEW_LINES").is_some();
     let pictures = proto
         .zip(cell)
         .map(|(proto, cell)| print::Pictures::find(&doc, path, resolver, proto, cell, reuse_ids));
+    let gutter = diffs
+        .and_then(|git| git.join().ok().flatten())
+        .map(|d| LineMarks::new(&d.total, &d.unstaged, d.untracked));
     let opts = print::Options {
         align: args.line,
         rows,
         images: pictures.as_ref(),
+        matches: matches.as_ref(),
+        gutter: gutter.as_ref(),
     };
     let result = print::run(&doc, theme, filetype.params(params), opts);
     // ada exits next: the document is left for the OS to reclaim instead of freed (O-31).

@@ -134,9 +134,18 @@ As an fzf preview, which prints at the pane's size (`$FZF_PREVIEW_COLUMNS` and
 
 ```zsh
 fzf --preview 'ada --print {}'
-# from rg matches: the matched line lands mid-pane
+# from rg matches: the matched line lands mid-pane, marked
 rg -n . | fzf -d : --preview 'ada --print --line {2} {1}' --preview-window '+{2}-/2'
+# a live grep: rg reruns as you type, and the preview marks what the query matches
+fzf --disabled --ansi -d : --bind 'change:reload:rg -n --color=always --smart-case -- {q} || true' \
+    --preview 'ada --print --line {2} --match {q} {1}' --preview-window '+{2}-/2'
+# with the git gutter, as the viewer draws it
+git ls-files -m | fzf --preview 'ada --print --gutter {}'
 ```
+
+`--line` marks its line's rows as the viewer marks where a jump landed, and `--match` marks
+matches as `/` does, smart-case, those on that line as the current one; a query typed halfway
+to a valid regex prints unmarked, with a warning on stderr.
 
 A preview stops 2,000 rows past the line it starts at, and reads no more of a code or log file
 than that, so a huge file previews as fast as a small one. Long lines of code wrap in the pane;

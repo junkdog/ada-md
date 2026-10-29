@@ -27,7 +27,7 @@ use crate::layout::{self, Layout, LayoutParams, LineNumbers};
 use crate::theme::Theme;
 use crate::ui::Painter;
 
-use super::{end_line, start_line};
+use super::{Overlay, end_line, start_line};
 
 /// Inputs smaller than this print whole: streaming them saves little.
 const FIRST: usize = 1 << 20;
@@ -292,7 +292,14 @@ impl Paint<'_> {
         let mut out = String::with_capacity(piece.text.len() * 2);
         let mut scratch = String::new();
         for (r, row) in layout.rows.iter().enumerate().take(to).skip(from) {
-            let line = start_line(&painter, r, row, &mut out, &mut scratch);
+            let line = start_line(
+                &painter,
+                &Overlay::default(),
+                r,
+                row,
+                &mut out,
+                &mut scratch,
+            );
             end_line(&line, &mut out);
         }
         (out, layout)

@@ -572,10 +572,11 @@ mod tests {
         }
     }
 
-    /// Where a jump landed shows against the page, and what lands there still reads on it: text,
-    /// headings, a footnote's label, a link. Each keeps WCAG's 4.5 (text) or 3 (the rest), or,
-    /// where the theme's own page gives it less (the light themes' headings), three quarters of
-    /// that. The first heading level paints its own background, which the tint leaves alone.
+    /// Where a jump landed shows against the page and a code block's background, and what lands
+    /// there still reads on it: text, headings, a footnote's label, a link. Each keeps WCAG's 4.5
+    /// (text) or 3 (the rest), or, where the theme's own page gives it less (the light themes'
+    /// headings), three quarters of that. The first heading level paints its own background,
+    /// which the tint leaves alone.
     #[test]
     fn landing_tint_reads_in_every_builtin() {
         for theme in Theme::builtins() {
@@ -584,6 +585,13 @@ mod tests {
             let tint = theme.style(StyleKey::Landed).bg.unwrap();
             let shows = contrast(tint, page);
             assert!(shows >= 1.15, "{name}: the tint barely shows, {shows:.2}");
+            // a code line is tinted on its block's background
+            let block = theme.style(StyleKey::CodeBlock).bg.unwrap();
+            let on_code = contrast(tint, block);
+            assert!(
+                on_code >= 1.15,
+                "{name}: on code the tint barely shows, {on_code:.2}"
+            );
             for (key, min) in [
                 (StyleKey::Text, 4.5),
                 (StyleKey::H2, 3.0),

@@ -227,17 +227,19 @@ fn overlays(buf: &mut Grid, area: Rect, state: &State, doc: &Document, lines: &[
             buf.set_style(rect, theme.styles[key as usize]);
         }
     };
-    // where a jump landed: its rows on the page's background, under everything else, so a
-    // heading's bar or inline code keeps its own
+    // where a jump landed: its rows on the page's background, and a code line on its block's,
+    // under everything else, so a heading's bar or inline code keeps its own
     if let (Some(src), Some(tint)) = (state.landed, theme.style(StyleKey::Landed).bg) {
         let page = theme.style(StyleKey::Text).bg.unwrap_or(Color::RESET);
+        let block = theme.style(StyleKey::CodeBlock).bg.unwrap_or(Color::RESET);
         for &(y, r) in lines {
-            if layout
-                .rows
-                .get(r as usize)
-                .is_some_and(|row| row.src == src)
-            {
-                buf.recolor_bg(Rect::new(area.x, y, area.width, 1), page, tint);
+            let Some(row) = layout.rows.get(r as usize).filter(|row| row.src == src) else {
+                continue;
+            };
+            let line = Rect::new(area.x, y, area.width, 1);
+            buf.recolor_bg(line, page, tint);
+            if matches!(row.kind, RowKind::Code { .. }) {
+                buf.recolor_bg(line, block, tint);
             }
         }
     }

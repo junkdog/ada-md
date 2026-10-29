@@ -7,6 +7,7 @@ name = "tokyonight-day"
 bg = "#e1e2e7"
 bg_dark = "#d0d5e3"
 bg_highlight = "#c4c8da"
+bg_landed = "#c2c6d9"    # not upstream: a step below bg_highlight, for where a jump landed, on the page and on code
 bg_light = "#f2f3f7"    # not upstream: lighter than the page, for the settings' fields
 fg = "#3760bf"
 fg_dark = "#6172b0"
@@ -118,7 +119,7 @@ popup_title = { fg = "blue", bg = "bg_dark", bold = true }
 popup_selected = { fg = "bg", bg = "blue", bold = true }
 sort_table = { fg = "magenta" }
 selection = { bg = "fg_gutter" }
-landed = { bg = "bg_highlight" }
+landed = { bg = "bg_landed" }
 line_number = { fg = "fg_gutter" }
 
 [ui.settings]                # the settings popup (`F2`): its rows, and the values they set

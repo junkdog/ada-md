@@ -2346,6 +2346,26 @@ mod tests {
         assert_eq!(state.landed, None);
     }
 
+    /// A code line is marked on its block's background, which covers all but the margins.
+    #[test]
+    fn a_landed_code_line_is_tinted_on_its_block() {
+        let mut state = loaded("", 80, 20);
+        load_at(&mut state, "c.rs", "fn a() {}\nfn b() {}\n");
+        let layout = &state.doc.as_ref().unwrap().layout;
+        let row = |line| layout.row_for_line(line).unwrap();
+        let (b, a, x) = (row(2), row(1), layout.margin + 1);
+        state.land(b);
+        let mut grid = crate::grid::Grid::empty(crate::geom::Rect::new(0, 0, 80, 20));
+        crate::ui::view(&state, &mut grid);
+        let bg = |key| state.theme.style(key).bg.unwrap();
+        let landed = bg(crate::theme::StyleKey::Landed);
+        assert_eq!(grid[(x, (b - state.scroll) as u16)].bg(), landed);
+        assert_eq!(
+            grid[(x, (a - state.scroll) as u16)].bg(),
+            bg(crate::theme::StyleKey::CodeBlock)
+        );
+    }
+
     #[test]
     fn follow_and_come_back() {
         let mut state = walker();

@@ -30,6 +30,7 @@ surface0 = "#ccd0da"
 base = "#eff1f5"
 mantle = "#e6e9ef"
 crust = "#dce0e8"
+bg_landed = "#d6dae3"    # not upstream: a step below crust, for where a jump landed, on the page and on code
 
 [document]
 fg = "text"
@@ -121,7 +122,7 @@ popup_title = { fg = "mauve", bg = "mantle", bold = true }
 popup_selected = { fg = "base", bg = "mauve", bold = true }
 sort_table = { fg = "mauve" }
 selection = { bg = "surface2" }
-landed = { bg = "crust" }
+landed = { bg = "bg_landed" }
 line_number = { fg = "surface1" }
 
 [ui.settings]                # the settings popup (`F2`): its rows, and the values they set

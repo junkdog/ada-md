@@ -262,7 +262,7 @@ fn large_documents_hold_in_print() {
             let opts = Options {
                 align: Some(N as u32 / 2),
                 rows: Some(2000),
-                images: None,
+                ..Options::default()
             };
             let out = print::render(&doc, &theme, filetype.params(params), opts);
             assert!(!out.is_empty(), "{name} at {width}");

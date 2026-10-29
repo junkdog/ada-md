@@ -11,15 +11,19 @@ use std::{panic, thread};
 use crate::geom::Size;
 use crate::style::{Color, Kind, Modifier, Style};
 use image::DynamicImage;
+use regex::Regex;
+use unicode_width::UnicodeWidthChar;
 
 use crate::app;
-use crate::doc::{Doc, LinkId};
+use crate::doc::{Doc, LineRange, LinkId};
+use crate::git::LineMarks;
 use crate::highlight::{self, Highlights, SyntaxTheme};
 use crate::images::{self, Probe, Proto};
 use crate::kitty;
 use crate::layout::{self, ImageSlot, Layout, LayoutParams, Measure, Row, RowKind};
 use crate::links::{self, LocalTarget, Resolved, Resolver, Target};
 use crate::pixels::{self, HalfBlock};
+use crate::search::{Projection, SearchMap};
 use crate::theme::{StyleKey, Theme};
 use crate::ui::Painter;
 
@@ -30,12 +34,17 @@ pub mod stream;
 pub struct Options<'a> {
     /// Shift the output so that the row rendering this source line is output line `align`. A
     /// pager or fzf preview that scrolls by source line, as it would for `bat`, then lands on
-    /// the right row.
+    /// the right row, which is marked as the viewer marks where a jump landed (FEAT-008).
     pub align: Option<u32>,
     /// The most rows to write, after the ones `align` drops.
     pub rows: Option<usize>,
     /// Draw block images, which are otherwise `🖼 alt (path)` lines.
     pub images: Option<&'a Pictures>,
+    /// Mark what this matches, as the viewer's search does; on `align`'s row as the current
+    /// match (FEAT-007).
+    pub matches: Option<&'a Regex>,
+    /// The git gutter, in the left margin (FEAT-006).
+    pub gutter: Option<&'a LineMarks>,
 }
 
 /// The images a printed document shows, and how to draw them (architecture §12).
@@ -129,7 +138,11 @@ fn write(
         for (id, file) in opts.images.map_or(&[][..], |p| &p.files).iter().enumerate() {
             measure.set_image(id as LinkId, file.as_ref().map(|f| f.1));
         }
-        layout::layout_print(doc, &measure, &theme.glyphs, params)
+        // matches are projected through the search segments, which only they need
+        match opts.matches {
+            Some(_) => layout::layout_measured(doc, &measure, &theme.glyphs, params),
+            None => layout::layout_print(doc, &measure, &theme.glyphs, params),
+        }
     };
     let syntax = Arc::new(SyntaxTheme::new(&theme.syntax));
     let blocks = doc.code_blocks();
@@ -154,13 +167,14 @@ fn write(
         code_x: 0,
         links: &[],
     };
+    let overlay = Overlay::new(doc, &layout, theme, opts);
     let end = skip
         .saturating_add(opts.rows.unwrap_or(usize::MAX))
         .min(layout.rows.len());
     let painters = cores().min(end.saturating_sub(skip) / BATCH);
     if painters > 1 && opts.images.is_none() {
         w.write_all("\n".repeat(pad).as_bytes())?;
-        return paint_on(&painter, skip..end, painters, w);
+        return paint_on(&painter, &overlay, skip..end, painters, w);
     }
     let mut out = String::with_capacity(PIECE * 2);
     out.extend(std::iter::repeat_n('\n', pad));
@@ -168,7 +182,7 @@ fn write(
     let mut image: Option<(u32, Drawn)> = None;
     let rows = layout.rows.iter().enumerate().skip(skip);
     for (r, row) in rows.take(opts.rows.unwrap_or(usize::MAX)) {
-        let mut line = start_line(&painter, r, row, &mut out, &mut scratch);
+        let mut line = start_line(&painter, &overlay, r, row, &mut out, &mut scratch);
         if let (RowKind::Image { slot }, Some(pictures)) = (row.kind, opts.images)
             && let Some(at) = layout.images.get(slot as usize)
         {
@@ -198,7 +212,13 @@ const BATCH: usize = 512;
 /// Paint `rows` on `n` threads, and write them in order (PRN-01). Thread `i` takes every `n`th
 /// batch of [`BATCH`] rows from the `i`th on, and paints its next only once the writer has
 /// taken all but its last, so the output is held a few batches at a time, not whole (O-16).
-fn paint_on(painter: &Painter, rows: Range<usize>, n: usize, w: &mut impl Write) -> io::Result<()> {
+fn paint_on(
+    painter: &Painter,
+    overlay: &Overlay,
+    rows: Range<usize>,
+    n: usize,
+    w: &mut impl Write,
+) -> io::Result<()> {
     let batches = rows.len().div_ceil(BATCH);
     thread::scope(|s| {
         let painted: Vec<_> = (0..n)
@@ -212,7 +232,7 @@ fn paint_on(painter: &Painter, rows: Range<usize>, n: usize, w: &mut impl Write)
                         let mut out = String::with_capacity(PIECE * 2);
                         for r in from..(from + BATCH).min(rows.end) {
                             let row = &painter.layout.rows[r];
-                            let line = start_line(painter, r, row, &mut out, &mut scratch);
+                            let line = start_line(painter, overlay, r, row, &mut out, &mut scratch);
                             end_line(&line, &mut out);
                         }
                         if tx.send(out).is_err() {
@@ -234,9 +254,10 @@ fn paint_on(painter: &Painter, rows: Range<usize>, n: usize, w: &mut impl Write)
     })
 }
 
-/// Row `r` of the painter's layout, numbered, as the start of an output line.
+/// Row `r` of the painter's layout, numbered and marked, as the start of an output line.
 fn start_line(
     painter: &Painter,
+    overlay: &Overlay,
     r: usize,
     row: &Row,
     out: &mut String,
@@ -247,8 +268,142 @@ fn start_line(
         line.span(text, Pen::of(style), out, scratch);
     };
     painter.number(r as u32, &mut emit);
-    painter.row(row, &mut emit);
+    overlay.row(painter, r as u32, row, &mut emit);
     line
+}
+
+/// What a print marks over the painted rows, as the viewer patches them over its grid
+/// (`ui::overlays`, `ui::gutter`): where `--line` landed, `--match`'s matches and the git gutter.
+#[derive(Default)]
+struct Overlay<'a> {
+    /// The source lines of the row `--line` lands on, tinted `ui.landed` (FEAT-008).
+    landed: Option<LineRange>,
+    /// `--match`'s matches on this layout (FEAT-007).
+    matches: Projection,
+    /// `--gutter`'s marks, when the layout has a margin to draw them in (FEAT-006).
+    gutter: Option<&'a LineMarks>,
+}
+
+impl<'a> Overlay<'a> {
+    fn new(doc: &Doc, layout: &Layout, theme: &Theme, opts: Options<'a>) -> Self {
+        let landed = opts
+            .align
+            .and_then(|line| layout.row_for_line(line))
+            .and_then(|r| layout.rows.get(r as usize))
+            .map(|row| row.src)
+            .filter(|&src| src != LineRange::NONE);
+        let matches = opts.matches.map_or_else(Projection::default, |re| {
+            let map = SearchMap::build(doc, &theme.glyphs);
+            Projection::new(&map, &map.find(re), layout)
+        });
+        let gutter = opts
+            .gutter
+            .filter(|marks| !marks.is_empty() && layout.margin > 0);
+        Overlay {
+            landed,
+            matches,
+            gutter,
+        }
+    }
+
+    /// Row `r`'s styled pieces from `painter`, with the marks on it patched over them: the
+    /// landed tint on the page's background (and a code line's block's), out to the edge, then
+    /// matches, then the gutter's glyph in place of the margin's first column.
+    fn row(&self, painter: &Painter, r: u32, row: &Row, emit: &mut impl FnMut(&str, Style)) {
+        let (theme, layout) = (painter.theme, painter.layout);
+        let landed = self.landed.is_some_and(|src| row.src == src);
+        let tint = landed.then(|| theme.style(StyleKey::Landed).bg).flatten();
+        // a code line is tinted on its block's background too, or only its margins would show it
+        let block = matches!(row.kind, RowKind::Code { .. })
+            .then(|| theme.style(StyleKey::CodeBlock).bg)
+            .flatten()
+            .filter(|&bg| bg != Color::RESET);
+        let patches: Vec<(Range<u16>, Style)> = (self.matches.on_rows(r..r + 1).iter())
+            .map(|cells| {
+                let key = if landed {
+                    StyleKey::SearchCurrent
+                } else if cells.hidden {
+                    StyleKey::SearchMatchHidden
+                } else {
+                    StyleKey::SearchMatch
+                };
+                // no-wrap code and diagrams show from their window's start, never scrolled
+                let cols = match (cells.window, row.kind) {
+                    (Some(start), RowKind::Code { block, .. } | RowKind::Diagram { block, .. }) => {
+                        let info = layout.code.get(block as usize).copied().unwrap_or_default();
+                        let end = start + info.window;
+                        cells.cols.start.clamp(start, end)..cells.cols.end.clamp(start, end)
+                    }
+                    _ => cells.cols.clone(),
+                };
+                (cols, theme.styles[key as usize])
+            })
+            .collect();
+        let glyph = self
+            .gutter
+            .and_then(|marks| marks.row_mark(layout, r))
+            .map(|mark| {
+                (
+                    &theme.glyphs.gutter[mark.index()],
+                    StyleKey::gutter(mark.index()),
+                )
+            })
+            .filter(|(glyph, _)| !glyph.is_empty())
+            .map(|(glyph, key)| (glyph.as_str(), theme.style(key)));
+        if tint.is_none() && patches.is_empty() && glyph.is_none() {
+            return painter.row(row, emit);
+        }
+        // each character's style, patched, in runs of the same
+        let mut x = 0u16;
+        let mut run = String::new();
+        let mut run_style = Style::default();
+        let flush = |run: &mut String, style: Style, emit: &mut dyn FnMut(&str, Style)| {
+            if !run.is_empty() {
+                emit(run, style);
+                run.clear();
+            }
+        };
+        painter.row(row, &mut |text, style| {
+            for c in text.chars() {
+                let w = c.width().unwrap_or(0) as u16;
+                // a zero-width character joins the one before it
+                let at = if w == 0 { x.saturating_sub(1) } else { x };
+                let mut s = style;
+                if let Some(tint) = tint
+                    && (s.bg.is_none_or(|bg| bg == Color::RESET) || s.bg == block)
+                {
+                    s.bg = Some(tint);
+                }
+                for (cols, patch) in &patches {
+                    if cols.contains(&at) {
+                        s = s.patch(*patch);
+                    }
+                }
+                if let (0, 1, Some((glyph, gs))) = (x, w, glyph) {
+                    flush(&mut run, run_style, emit);
+                    emit(glyph, s.patch(gs));
+                    x = 1;
+                    continue;
+                }
+                if s != run_style {
+                    flush(&mut run, run_style, emit);
+                    run_style = s;
+                }
+                run.push(c);
+                x += w;
+            }
+        });
+        flush(&mut run, run_style, emit);
+        // out to the edge, as the viewer tints the whole line; not beside an image, whose
+        // cells follow
+        let width = layout.params.width.saturating_sub(layout.numbers);
+        if let (Some(tint), false) = (tint, matches!(row.kind, RowKind::Image { .. }))
+            && x < width
+        {
+            let blank = theme.style(StyleKey::Text).bg(tint);
+            emit(&" ".repeat(usize::from(width - x)), blank);
+        }
+    }
 }
 
 /// End an output line with no style left on.
@@ -918,6 +1073,114 @@ mod tests {
         );
     }
 
+    /// `md` printed 40 columns wide with `opts`, a line each.
+    fn marked(md: &str, opts: Options) -> Vec<String> {
+        let params = LayoutParams {
+            width: 40,
+            max_width: None,
+            table_mode: Default::default(),
+            code_wrap: true,
+            line_numbers: Default::default(),
+            glyphs_gen: 0,
+            images: None,
+        };
+        let theme = Theme::builtin().with_bg(false);
+        let out = render(&crate::doc::parse(md), &theme, params, opts);
+        out.lines().map(str::to_owned).collect()
+    }
+
+    /// The SGR parameters of color `c`, as a print writes them: base 30 a foreground, 40 a
+    /// background.
+    fn sgr_of(c: Color, base: u8) -> String {
+        let mut out = String::new();
+        color(c, base, &mut out);
+        out.trim_start_matches(';').to_owned()
+    }
+
+    fn bg_of(key: StyleKey) -> String {
+        sgr_of(Theme::builtin().style(key).bg.unwrap(), 40)
+    }
+
+    /// A line without its SGR sequences.
+    fn plain(line: &str) -> String {
+        let mut out = String::new();
+        let mut rest = line;
+        while let Some(at) = rest.find('\x1b') {
+            out.push_str(&rest[..at]);
+            rest = rest[at..].split_once('m').map_or("", |(_, r)| r);
+        }
+        out + rest
+    }
+
+    /// `--line`'s rows are marked as the viewer marks where a jump landed, out to the edge: a
+    /// code line on its block's background too (FEAT-008).
+    #[test]
+    fn the_line_asked_for_is_tinted_to_the_edge() {
+        let landed = bg_of(StyleKey::Landed);
+        let opts = |line| Options {
+            align: Some(line),
+            ..Options::default()
+        };
+        let out = marked("one\n\ntwo\n\nthree\n", opts(3));
+        assert!(out[2].contains(&landed), "{out:?}");
+        assert_eq!(plain(&out[2]).len(), 40, "{:?}", out[2]);
+        assert!(out.iter().filter(|l| l.contains(&landed)).count() == 1);
+
+        let out = marked("```rust\nlet a = 1;\nlet b = 2;\n```\n", opts(3));
+        let row = out.iter().position(|l| l.contains("let")).unwrap() + 1;
+        assert!(!out[row - 1].contains(&landed), "{out:?}");
+        // between the margins, where the block's background would be
+        let inside = out[row].find("let").unwrap();
+        assert!(out[row][..inside].contains(&landed), "{:?}", out[row]);
+        assert!(!out[row][..inside].contains(&bg_of(StyleKey::CodeBlock)));
+    }
+
+    /// `--match` marks what the search would, the matches on `--line`'s row as the current
+    /// one (FEAT-007).
+    #[test]
+    fn matches_are_marked_and_the_current_line_s_as_current() {
+        let re = Regex::new("foo").unwrap();
+        let (hit, current) = (bg_of(StyleKey::SearchMatch), bg_of(StyleKey::SearchCurrent));
+        let out = marked(
+            "foo bar\n\nbar [foo](x.md) baz\n\n[link](foo.md)\n",
+            Options {
+                align: Some(3),
+                matches: Some(&re),
+                ..Options::default()
+            },
+        );
+        assert!(out[0].contains(&format!("{hit}mfoo")), "{out:?}");
+        assert!(out[2].contains(&format!("{current}mfoo")), "{out:?}");
+        assert!(!out[2].contains(&hit));
+        // a hidden match, in a link's destination, on the link
+        let hidden = bg_of(StyleKey::SearchMatchHidden);
+        assert!(out[4].contains(&format!("{hidden}mlink")), "{out:?}");
+        // what the marks cut stays whole
+        assert_eq!(plain(&out[0]), "  foo bar");
+    }
+
+    /// `--gutter` draws the viewer's gutter in the left margin, and needs one (FEAT-006).
+    #[test]
+    fn the_gutter_takes_the_margin_s_first_column() {
+        let marks = LineMarks::new("@@ -3 +3 @@\n", "", false);
+        let opts = Options {
+            gutter: Some(&marks),
+            ..Options::default()
+        };
+        let out = marked("one\n\ntwo\n\nthree\n", opts);
+        let theme = Theme::builtin();
+        let staged = crate::git::Mark {
+            stage: crate::git::Stage::Staged,
+            kind: crate::git::Kind::Modified,
+        };
+        let glyph = &theme.glyphs.gutter[staged.index()];
+        assert_eq!(plain(&out[2]), format!("{glyph} two"));
+        let fg = theme.style(StyleKey::gutter(staged.index())).fg.unwrap();
+        assert!(out[2].contains(&sgr_of(fg, 30)), "{:?}", out[2]);
+        assert_eq!(plain(&out[0]), "  one");
+        assert_eq!(plain(&out[4]), "  three");
+    }
+
     /// A long note, with code, laid out and highlighted, ready to paint.
     fn painted(f: impl FnOnce(&Painter, usize)) {
         let mut text = String::new();
@@ -951,20 +1214,26 @@ mod tests {
         f(&painter, layout.rows.len());
     }
 
-    /// Rows painted on several threads are written as one thread writes them (PRN-01).
+    /// Rows painted on several threads are written as one thread writes them (PRN-01), marks
+    /// and all.
     #[test]
     fn rows_painted_on_threads_come_out_in_order() {
         painted(|painter, len| {
             let rows = 7..len;
             assert!(rows.len() > 3 * BATCH);
+            let overlay = Overlay {
+                landed: Some(painter.layout.rows[7 + BATCH].src),
+                ..Overlay::default()
+            };
             let (mut one, mut scratch) = (String::new(), String::new());
             for r in rows.clone() {
-                let line = start_line(painter, r, &painter.layout.rows[r], &mut one, &mut scratch);
+                let row = &painter.layout.rows[r];
+                let line = start_line(painter, &overlay, r, row, &mut one, &mut scratch);
                 end_line(&line, &mut one);
             }
             for n in [2, 3, 5] {
                 let mut out = Vec::new();
-                paint_on(painter, rows.clone(), n, &mut out).unwrap();
+                paint_on(painter, &overlay, rows.clone(), n, &mut out).unwrap();
                 assert!(out == one.as_bytes(), "{n} threads");
             }
         });
@@ -983,7 +1252,7 @@ mod tests {
             }
         }
         painted(|painter, len| {
-            let err = paint_on(painter, 0..len, 3, &mut Closed).unwrap_err();
+            let err = paint_on(painter, &Overlay::default(), 0..len, 3, &mut Closed).unwrap_err();
             assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
         });
     }

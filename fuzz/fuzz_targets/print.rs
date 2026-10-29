@@ -1,7 +1,8 @@
 //! `--print` as `main` runs it (ADR-15): a document read from stdin or a file, its type
 //! sniffed or forced by `-l`, cut to a preview's head, laid out and written as SGR text, with
-//! line numbers, code wrapped or cut, `--line` alignment, a bound on the rows, and block images
-//! drawn with kitty placeholders or half-blocks. Links lead to fixed images (PNG of each color
+//! line numbers, code wrapped or cut, `--line` alignment and its mark, a bound on the rows,
+//! `--match`'s matches, the git gutter from made-up hunks, and block images drawn with kitty
+//! placeholders or half-blocks. Links lead to fixed images (PNG of each color
 //! type, JPEG, truncated, not an image at all, missing) or to one file whose bytes the input
 //! holds, with sizes true or not, as a file changed since its probe. Nothing may panic.
 //!
@@ -17,9 +18,11 @@ use std::sync::OnceLock;
 use ada::app::{Head, cut_to_head};
 use ada::filetype::{self, FileType};
 use ada::geom::Size;
+use ada::git::LineMarks;
 use ada::images::Proto;
 use ada::layout::{ImageFit, LayoutParams, LineNumbers, TableMode};
 use ada::print::{self, Options, Pictures};
+use ada::search;
 use ada::theme::Theme;
 use image::{DynamicImage, ImageFormat};
 use libfuzzer_sys::arbitrary::{self, Arbitrary, Unstructured};
@@ -53,6 +56,11 @@ struct Setup {
     lies: Vec<(u16, u16)>,
     /// Bytes of the one image the input holds.
     image_len: u16,
+    /// `--match`, compiled as the search compiles it; most fail to.
+    pattern: Option<String>,
+    /// `--gutter`: hunks as `(line, lines, how)`, added, deleted or modified by `how % 3`, in the
+    /// unstaged diff too when its top bit is set; and whether the file is untracked.
+    gutter: Option<(Vec<(u16, u8, u8)>, bool)>,
 }
 
 const NAMES: [&str; 8] = [
@@ -227,10 +235,28 @@ fuzz_target!(|data: &[u8]| {
             reuse_ids: setup.reuse_ids,
         }
     });
+    let matches = (setup.pattern.as_deref()).and_then(|p| search::compile(p).ok());
+    let gutter = setup.gutter.as_ref().map(|(hunks, untracked)| {
+        let (mut total, mut unstaged) = (String::new(), String::new());
+        for &(line, lines, how) in hunks {
+            let hunk = match how % 3 {
+                0 => format!("@@ -{line},0 +{line},{lines} @@\n"),
+                1 => format!("@@ -{line},{lines} +{line},0 @@\n"),
+                _ => format!("@@ -{line},{lines} +{line},{lines} @@\n"),
+            };
+            total.push_str(&hunk);
+            if how & 0x80 != 0 {
+                unstaged.push_str(&hunk);
+            }
+        }
+        LineMarks::new(&total, &unstaged, *untracked)
+    });
     let opts = Options {
         align: setup.line.map(u32::from),
         rows,
         images: pictures.as_ref(),
+        matches: matches.as_ref(),
+        gutter: gutter.as_ref(),
     };
     let trace = std::env::var_os("ADA_FUZZ_TRACE").is_some();
     if trace {

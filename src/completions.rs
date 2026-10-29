@@ -89,7 +89,7 @@ _ada() {{
             .replace('\'', "'\\''");
         let action = match f.value.1 {
             Value::None => String::new(),
-            Value::Number => format!(":{}:", f.value.0.to_lowercase()),
+            Value::Number | Value::Text => format!(":{}:", f.value.0.to_lowercase()),
             Value::Theme => ":theme:_ada_themes".to_owned(),
             Value::Language => ":language:_ada_languages".to_owned(),
             Value::File => ":file:_files".to_owned(),
@@ -155,7 +155,7 @@ fn bash() -> String {
     for f in FLAGS {
         let reply = match f.value.1 {
             Value::None => continue,
-            Value::Number => "return".to_owned(),
+            Value::Number | Value::Text => "return".to_owned(),
             Value::Theme => format!(
                 "if [[ $cur == ./* || $cur == ../* || $cur == /* ]]; then\n        COMPREPLY=($(compgen -f -X '!*.toml' -- \"$cur\") $(compgen -d -- \"$cur\"))\n        return\n      fi\n      compopt +o filenames 2>/dev/null\n      local themes=\"{}\" f\n      for f in \"{THEMES_DIR}\"/*.toml; do\n        [[ -e $f ]] && f=${{f##*/}} && themes+=\" ${{f%.toml}}\"\n      done\n      COMPREPLY=($(compgen -W \"$themes\" -- \"$cur\"))\n      return",
                 builtin_themes()
@@ -240,7 +240,7 @@ end
         let _ = write!(line, " -l {}", f.long);
         match f.value.1 {
             Value::None => {}
-            Value::Number => line.push_str(" -x"),
+            Value::Number | Value::Text => line.push_str(" -x"),
             Value::Theme => line.push_str(" -x -a '(__ada_themes)'"),
             Value::Language => line.push_str(" -x -a '(__ada_languages)'"),
             Value::File => line.push_str(" -r -F"),
@@ -306,7 +306,7 @@ Register-ArgumentCompleter -Native -CommandName ada, ada.exe -ScriptBlock {
     for f in FLAGS {
         let kind = match f.value.1 {
             Value::None => continue,
-            Value::Number => "$kind = 'number'".to_owned(),
+            Value::Number | Value::Text => "$kind = 'number'".to_owned(),
             Value::Theme => "$kind = 'theme'".to_owned(),
             Value::Language => "$kind = 'language'".to_owned(),
             Value::File => "$kind = 'file'".to_owned(),

@@ -12,6 +12,8 @@ pub enum Value {
     /// No value: a switch.
     None,
     Number,
+    /// Free text, such as a pattern: nothing to complete.
+    Text,
     Theme,
     /// A language: what [`language_names`](crate::filetype::language_names) lists.
     Language,
@@ -84,7 +86,19 @@ pub const FLAGS: &[Flag] = &[
         Some('L'),
         "line",
         ("N", Value::Number),
-        "start at source line N; when printing, shift the output so\nthat line N renders on output line N (for fzf previews)",
+        "start at source line N; when printing, shift the output so\nthat line N renders on output line N (for fzf previews), and\nmark its rows",
+    ),
+    flag(
+        Some('m'),
+        "match",
+        ("REGEX", Value::Text),
+        "when printing, mark what REGEX matches, as / would (smart-case;\nthe matches on the --line row as the current one)",
+    ),
+    flag(
+        None,
+        "gutter",
+        SWITCH,
+        "when printing, draw the git gutter, as the viewer does",
     ),
     flag(
         Some('t'),
@@ -226,6 +240,9 @@ pub struct Args {
     /// A language name, checked when it's used: the syntaxes load then.
     pub language: Option<String>,
     pub line: Option<u32>,
+    /// A search pattern, compiled when it's used.
+    pub matching: Option<String>,
+    pub gutter: bool,
     pub theme: Option<String>,
     pub line_numbers: Option<LineNumbers>,
     pub code_wrap: Option<bool>,
@@ -281,6 +298,8 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Args, String> {
             "--max-width" => out.max_width = Some(number(&flag, &value(&flag)?)?),
             "-l" | "--language" => out.language = Some(value(&flag)?),
             "-L" | "--line" => out.line = Some(number(&flag, &value(&flag)?)?),
+            "-m" | "--match" => out.matching = Some(value(&flag)?),
+            "--gutter" => out.gutter = true,
             "-t" | "--theme" => out.theme = Some(value(&flag)?),
             "-n" | "--line-numbers" => {
                 let when = value(&flag)?;
@@ -374,6 +393,11 @@ mod tests {
         assert_eq!(a.max_width, Some(90));
         assert_eq!(a.theme.as_deref(), Some("mine"));
         assert_eq!(args(&["-"]).unwrap().input, Some(Input::Stdin));
+        // a pattern is taken as it is, a leading dash too
+        let a = args(&["-p", "--gutter", "-m", "-foo", "-L", "3", "x.rs"]).unwrap();
+        assert_eq!(a.matching.as_deref(), Some("-foo"));
+        assert!(a.gutter && a.print);
+        assert_eq!(args(&["--match="]).unwrap().matching.as_deref(), Some(""));
         assert_eq!(
             args(&["--", "-dash.md"]).unwrap().input,
             Some(Input::Path("-dash.md".into()))
