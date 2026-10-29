@@ -60,7 +60,7 @@ struct Setup {
     pattern: Option<String>,
     /// `--gutter`: hunks as `(line, lines, how)`, added, deleted or modified by `how % 3`, in the
     /// unstaged diff too when its top bit is set; and whether the file is untracked.
-    gutter: Option<(Vec<(u16, u8, u8)>, bool)>,
+    gutter: Option<(Vec<Hunk>, bool)>,
 }
 
 const NAMES: [&str; 8] = [
@@ -77,6 +77,9 @@ const NAMES: [&str; 8] = [
 const FORCED: [&str; 12] = [
     "", "", "", "mmd", "md", "txt", "rs", "yaml", "diff", "log", "toml", "html",
 ];
+
+/// A made-up hunk: `(line, lines, how)`.
+type Hunk = (u16, u8, u8);
 
 /// The scratch directory, and each fixture with its true size.
 type Fixtures = (PathBuf, Vec<(PathBuf, (u32, u32))>);
