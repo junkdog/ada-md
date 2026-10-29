@@ -51,10 +51,18 @@ fn decode_file(
         return png(path, size);
     }
     let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
+    let (w, h) = decoder.dimensions();
     // held whole as decoded: a header can claim any size, 65,498 × 65,256 in 384 bytes (fuzz round 7)
     if decoder.total_bytes() > MAX_WHOLE as u64 {
-        let (w, h) = decoder.dimensions();
         return Err(format!("the image is too large to decode: {w} × {h}"));
+    }
+    // under the cap, a size the file can't hold costs as much as one it can: 65,498 × 2,537 in 603
+    // bytes took 1.73 s and 821 MB, zune filling the missing scans with gray (IMG-001)
+    let len = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
+    if u64::from(w) * u64::from(h) > len * JPEG_PX_PER_BYTE {
+        return Err(format!(
+            "the JPEG is too short for its size: {w} × {h} in {len} bytes"
+        ));
     }
     let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
     let image = DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
@@ -139,6 +147,12 @@ pub fn is_plain_png(path: &Path) -> bool {
 /// The most bytes an image held whole may take decoded (a JPEG, an interlaced PNG), and the most a
 /// PNG's row of column sums may take, as image's default limit would allow any image.
 const MAX_WHOLE: usize = 512 << 20;
+
+/// The most pixels a byte of JPEG can hold. Past the PNG, only JPEGs reach a decoder, and zune
+/// decodes only Huffman-coded ones, where every 8 × 8 block of the largest component costs at least
+/// a bit, its DC's shortest code: 64 pixels a bit. A flat gray from cjpeg takes 2× that optimized,
+/// 8× in color with the standard tables.
+const JPEG_PX_PER_BYTE: u64 = 8 * 64;
 
 /// A PNG, a row at a time: only the rows being summed are held, never the whole image.
 fn png(path: &Path, size: impl FnOnce((u32, u32)) -> (u32, u32)) -> Result<DynamicImage, String> {
@@ -516,6 +530,10 @@ mod tests {
         // 384 bytes of JPEG whose header claims 65,498 × 65,256 pixels: 12.8 GB held whole (round 7)
         let err = decode(&dir.join("huge-sof.jpg"), (100, 100)).unwrap_err();
         assert!(err.contains("too large"), "{err}");
+        // 600 bytes of progressive JPEG claiming 65,498 × 2,537, under the cap: 821 MB and 1.73 s
+        // decoded (round 11, IMG-001)
+        let err = decode(&dir.join("short-progressive.jpg"), (100, 100)).unwrap_err();
+        assert!(err.contains("too short"), "{err}");
         // zune-jpeg 0.5.15's IDCT and png 0.18.1's palette expansion panicked on these (round 7);
         // the PNG's CRCs are recomputed, or png refuses it at IHDR in a build with checksums on (F-10)
         for file in ["zune-idct-panic.jpg", "png-palette-panic.png"] {
