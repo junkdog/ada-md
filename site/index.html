@@ -1215,15 +1215,15 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
   <p class="lede">ada is fuzzed as <strong>whole sessions</strong>, not one function at a time: a document, then up to
     64 things a reader, the file system, git or the terminal can do, in any order.</p>
   <div class="tiles">
-    <div class="tile"><b>42.5 M</b><p>fuzzed sessions</p><small>whole scripted sessions, plus 1.2 B runs of the printer, scanners, image codecs, terminal probe, link lookup and diagrams; over 39 h in sixteen runs</small></div>
+    <div class="tile"><b>45.8 M</b><p>fuzzed sessions</p><small>whole scripted sessions, plus 1.5 B runs of the printer, scanners, highlighting lexers, image codecs, terminal probe, link lookup and diagrams; over 43 h in eighteen runs</small></div>
     <div class="tile"><b>12</b><p>bugs found, all fixed</p><small>an overflow on an impossible git hunk; five frame bugs with wide glyphs or a popup over an image; a parser blow-up and a highlighter loop, now bounded; three malformed images that took it down; a wiki link that lost its folder</small></div>
     <div class="tile"><b>0</b><p>crashes, hangs or OOMs</p><small>in every run since the fixes</small></div>
-    <div class="tile"><b>5</b><p><code>unsafe</code> blocks</p><small>two set glibc's malloc arena count, before the threads that use it start; two give back the binary's read-only pages once the syntax set has loaded; one reads a row of screen cells as bytes, to compare rows in wide loads</small></div>
+    <div class="tile"><b>5</b><p><code>unsafe</code> blocks</p><small>two set glibc's malloc arena count, before the threads that use it start; two give back the binary's read-only pages once the syntax set has loaded; one reads a row of screen cells as bytes, to compare rows in wide loads. Plus 17 for Windows interop, in the Windows build only: calls into the Win32 console, file-watch and shell APIs</small></div>
   </div>
   <ul class="fuzz">
     <li><h3>Any document</h3><p>Markdown, code, config, plain text and images, built from random bytes and a
       dictionary of the parts markdown parsers find hardest. Other targets fuzz <code>--print</code>, whole
-      and streamed (which must match byte for byte), the log and JSON scanners, image decoding, mermaid diagrams at
+      and streamed (which must match byte for byte), the log and JSON scanners, the Makefile and shell lexers (checked against syntect line for line), image decoding, mermaid diagrams at
       any width, the sixel encoder, and the terminal's replies to ada's probe.</p></li>
     <li><h3>Any input</h3><p>Every action, through the real keymap or directly: scrolling, links, search, sorting,
       the outline, themes, the settings popup, saving the config, the mouse (wheel, clicks, selecting text by
