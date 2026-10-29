@@ -224,6 +224,15 @@ options:
     out
 }
 
+/// What `--version` prints (FEAT-013): the version, the commit (`-dirty` when the build's sources
+/// had changed since it) and when it was built, then the layout, `ordered` when the hot code went
+/// first (MEM-08), where the build could order it (build.rs).
+pub fn version(commit: Option<&str>, built: &str, layout: Option<&str>) -> String {
+    let built = commit.map_or_else(|| built.to_owned(), |c| format!("{c} {built}"));
+    let layout = layout.map(|l| format!(", {l}")).unwrap_or_default();
+    format!("ada {} ({built}{layout})", env!("CARGO_PKG_VERSION"))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
     Stdin,
@@ -401,6 +410,24 @@ mod tests {
         assert_eq!(
             args(&["--", "-dash.md"]).unwrap().input,
             Some(Input::Path("-dash.md".into()))
+        );
+    }
+
+    #[test]
+    fn version() {
+        let v = env!("CARGO_PKG_VERSION");
+        let built = "2026-10-25 14:02 UTC";
+        assert_eq!(
+            super::version(Some("ac74c85"), built, Some("ordered")),
+            format!("ada {v} (ac74c85 2026-10-25 14:02 UTC, ordered)")
+        );
+        assert_eq!(
+            super::version(Some("ac74c85-dirty"), built, None),
+            format!("ada {v} (ac74c85-dirty 2026-10-25 14:02 UTC)")
+        );
+        assert_eq!(
+            super::version(None, built, Some("unordered")),
+            format!("ada {v} (2026-10-25 14:02 UTC, unordered)")
         );
     }
 

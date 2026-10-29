@@ -54,7 +54,8 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
     if args.version {
-        println!("ada {}", env!("CARGO_PKG_VERSION"));
+        let (commit, built) = (option_env!("ADA_GIT_COMMIT"), env!("ADA_BUILD_TIME"));
+        println!("{}", cli::version(commit, built, option_env!("ADA_LAYOUT")));
         return Ok(());
     }
     if let Some(shell) = &args.completions {

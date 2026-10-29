@@ -129,10 +129,16 @@ jobs:
           echo "$report"
           echo "**Symbol order:** ${report#symbol order: }" >> "$GITHUB_STEP_SUMMARY"
           exit $rc
+      # --version names the tag's commit, not dirty, and the hot code first wherever lld or ld64 linked (FEAT-013)
       - name: 🧪 Smoke test
         run: |
           out=$("$BIN" --version)
-          [ "$out" = "ada $VERSION" ] || { echo "::error::--version says '$out'"; exit 1; }
+          commit=$(git rev-parse HEAD | cut -c1-7)
+          layout=", ordered"; [ "${{ matrix.windows }}" = true ] && layout=
+          case "$out" in
+            "ada $VERSION ($commit "*" UTC$layout)") ;;
+            *) echo "::error::--version says '$out', not ada $VERSION ($commit … UTC$layout)"; exit 1 ;;
+          esac
           "$BIN" --print --width 80 README.md > /dev/null
       # the versions ld.so insists on: weak ones (flags 0x02, as std's pidfd_spawnp) may be missing,
       # and GLIBC_ABI_DT_RELR (RELR, 2.36+) counts as 2.36

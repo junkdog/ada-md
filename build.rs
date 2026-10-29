@@ -16,11 +16,18 @@
 // less. Only an ld.so of glibc 2.36 (2022) or later applies them, so only in a native build on
 // such a glibc; the binary then needs `GLIBC_ABI_DT_RELR`, and an older glibc refuses it at start
 // by name.
+// `--version` (FEAT-013) names the commit, `-dirty` when what the build reads (src/, the manifest,
+// the lockfile, this script) differs from it, and when this script last ran (`SOURCE_DATE_EPOCH`,
+// when set): from git in the repository, from cargo's `.cargo_vcs_info.json` in a package (a
+// crates.io install). In the repository the script then reruns when HEAD moves or src/ changes,
+// which recompiles the lib too: a change to main.rs alone costs the lib's compile. Where lld or
+// ld64 links, it also says whether the hot code went first: `ordered` or `unordered`.
 use std::env;
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::Path;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The minor version of the rustc building ada: 88 for 1.88.0.
 fn rustc_minor() -> Option<u32> {
@@ -67,6 +74,76 @@ fn gcc_ld() -> Option<String> {
     Path::new(&dir).join("ld.lld").is_file().then_some(dir)
 }
 
+fn git(args: &[&str]) -> Option<String> {
+    let out = Command::new("git")
+        .args(args)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+}
+
+/// The commit being built, 7 digits and `-dirty` when what the build reads has changed since it;
+/// also the files that say when it does, to rerun on.
+fn commit() -> Option<String> {
+    const READ: [&str; 4] = ["src", "Cargo.toml", "Cargo.lock", "build.rs"];
+    let root = env::var("CARGO_MANIFEST_DIR").ok()?;
+    // cargo packages the crate with the commit it was packaged from
+    if let Ok(info) = fs::read_to_string(Path::new(&root).join(".cargo_vcs_info.json")) {
+        let sha1 = info.split_once("\"sha1\"")?.1.split('"').nth(1)?;
+        return short(sha1, info.contains("\"dirty\": true"));
+    }
+    // not a repository the crate sits in, as one it's vendored into
+    let top = git(&["rev-parse", "--show-toplevel"])?;
+    if fs::canonicalize(top).ok()? != fs::canonicalize(&root).ok()? {
+        return None;
+    }
+    let sha1 = git(&["rev-parse", "HEAD"])?;
+    let head = git(&["rev-parse", "--symbolic-full-name", "HEAD"])?;
+    // a missing file reruns every build, so only the ones there: a new commit moves HEAD's ref
+    // (loose, or packed by gc) and appends to HEAD's reflog
+    for file in ["HEAD", "logs/HEAD", "packed-refs", head.as_str()] {
+        if let Some(path) = git(&["rev-parse", "--git-path", file])
+            && Path::new(&path).is_file()
+        {
+            println!("cargo:rerun-if-changed={path}");
+        }
+    }
+    for path in READ {
+        println!("cargo:rerun-if-changed={path}");
+    }
+    let mut status = vec!["status", "--porcelain", "--untracked-files=no", "--"];
+    status.extend(READ);
+    let dirty = !git(&status)?.is_empty();
+    short(&sha1, dirty)
+}
+
+fn short(sha1: &str, dirty: bool) -> Option<String> {
+    let mark = if dirty { "-dirty" } else { "" };
+    Some(format!("{}{mark}", sha1.get(..7)?))
+}
+
+/// `secs` since the epoch as `2026-10-25 14:02 UTC`.
+fn utc(secs: u64) -> String {
+    let (days, rem) = (secs / 86_400, secs % 86_400);
+    // days to a date in the proleptic Gregorian calendar (Howard Hinnant's `civil_from_days`)
+    let z = days + 719_468;
+    let (era, doe) = (z / 146_097, z % 146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + u64::from(month <= 2);
+    format!(
+        "{year}-{month:02}-{day:02} {:02}:{:02} UTC",
+        rem / 3600,
+        rem % 3600 / 60
+    )
+}
+
 enum Linker {
     Lld,
     Ld64,
@@ -76,6 +153,16 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=ADA_SYMBOL_ORDER");
     println!("cargo:rerun-if-env-changed=ADA_LINK_MAP");
+    println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
+    if let Some(commit) = commit() {
+        println!("cargo:rustc-env=ADA_GIT_COMMIT={commit}");
+    }
+    let built = env::var("SOURCE_DATE_EPOCH")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .or_else(|| Some(SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs()))
+        .unwrap_or_default();
+    println!("cargo:rustc-env=ADA_BUILD_TIME={}", utc(built));
     let var = |k: &str| env::var(k).unwrap_or_default();
     let (arch, os, target_env) = (
         var("CARGO_CFG_TARGET_ARCH"),
@@ -114,7 +201,10 @@ fn main() {
     if !order.is_empty() {
         println!("cargo:rerun-if-changed={order}");
     }
-    if Path::new(&order).is_file() {
+    let ordered = Path::new(&order).is_file();
+    let layout = if ordered { "ordered" } else { "unordered" };
+    println!("cargo:rustc-env=ADA_LAYOUT={layout}");
+    if ordered {
         match linker {
             Linker::Lld => {
                 println!("cargo:rustc-link-arg-bins=-Wl,--symbol-ordering-file={order}");
