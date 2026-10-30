@@ -26,6 +26,8 @@ What changed in each release of ada, newest first. A release includes the change
 
 - *(highlight)* Highlight shell scripts with the port of bat's bash grammar instead of syntect
 - *(highlight)* Highlight Makefiles with a port of bat's grammar instead of syntect
+- *(parse)* Find line starts with AVX2, count code lines with memchr, hash with foldhash (PAR-003)
+- *(parse)* Find each event's lines with a cursor, not two binary searches (PAR-002)
 - *(print)* Write the SGR's first parameter without its separator, instead of removing it
 
 ## [1.0.0](https://github.com/junkdog/ada-md/compare/v1.0.0-rc.1..v1.0.0) (2026-10-27)
