@@ -11,6 +11,8 @@ What changed in each release of ada, newest first. A release includes the change
 - *(images)* Show a gif's first frame, inline, full screen, in --print and piped in
 - *(print)* Mark the --line row, --match's matches and the git gutter (--gutter)
 - *(reload)* Mark a changed file until r with live_reload = "notify"
+- *(search)* Walk the session's searches with ↑ ↓ in the prompt, and move a cursor in every input field
+- *(tables)* Keep words whole before breaking after - and /, and cut long words at . _ : or camelCase
 - *(windows)* Live reload through ReadDirectoryChangesW instead of the 1 s poll
 - *(windows)* Probe the terminal for image support through the console input
 - *(windows)* Read the config from %APPDATA%, open links with ShellExecuteW, fall back to notepad
