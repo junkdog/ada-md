@@ -2,13 +2,19 @@
 """report.py OUT [OUT2]: the vault's ada-throughput tables from a run.zsh record set (BEN-009).
 
 MB/s are source bytes (10^6) a second of the measuring thread's CPU time; cyc/B and ins/B are the core's
-counters per source byte. A stage's share of a ceiling is its MB/s over the ceiling's. With OUT2, a run of
-the same build, it prints how far each cell moved between the two instead (the first run's review: are the
-medians stable).
+counters per source byte. A stage's share of a ceiling is its MB/s over the ceiling's. A record set holds
+the cells' runs (cells.N.jsonl; cells.jsonl before there were several): each figure is its median over
+them, and the spread of ada's cells is printed after the tables. With OUT2, a run of the same build, it
+prints how far each cell moved between the two instead.
 """
+import glob
 import json
 import os
+import statistics
 import sys
+
+METRICS = ("cpu_ns", "wall_ns", "cycles", "instructions")
+ADA = ("parse", "layout", "print", "tokens", "highlight")
 
 STAGES = {"whole": ("parse", "layout", "print"), "syntax": ("parse", "layout", "print"), "lexer": ("tokens", "highlight")}
 C1 = {"parse": "c1-parse", "layout": "c1-layout", "print": "c1-print", "tokens": "c1-lex", "highlight": "c1-lex"}
@@ -22,16 +28,44 @@ def sig(x, n=3):
     return f"{x:,.{digits}f}"
 
 
+def runs(out):
+    """Each run's cells by (input, stage), and the first run's meta line."""
+    files = sorted(glob.glob(os.path.join(out, "cells.*.jsonl")), key=lambda f: int(f.split(".")[-2])) \
+        or [os.path.join(out, "cells.jsonl")]
+    sets, meta = [], {}
+    for path in files:
+        cells = {}
+        with open(path) as f:
+            for line in f:
+                c = json.loads(line)
+                if "meta" in c:
+                    meta = meta or c["meta"]
+                    continue
+                cells[(c["input"], c["stage"])] = c
+        sets.append(cells)
+    return sets, meta
+
+
 def load(out):
-    cells, meta = {}, {}
-    with open(os.path.join(out, "cells.jsonl")) as f:
-        for line in f:
-            c = json.loads(line)
-            if "meta" in c:
-                meta = c["meta"]
-                continue
-            cells[(c["input"], c["stage"])] = c
-    return cells, meta
+    """The cells with each metric the median of its runs, and the meta line with the number of runs."""
+    sets, meta = runs(out)
+    cells = {}
+    for key, c in sets[0].items():
+        cells[key] = dict(c, **{m: statistics.median(r[key][m] for r in sets if key in r) for m in METRICS})
+    return cells, dict(meta, runs=len(sets))
+
+
+def spread(out):
+    """How far ada's cells' CPU times spread over the runs: the fastest run over the slowest."""
+    sets, _ = runs(out)
+    if len(sets) < 2:
+        return
+    sp = sorted(((max(r[k]["cpu_ns"] for r in sets) / min(r[k]["cpu_ns"] for r in sets) - 1, k)
+                 for k in sets[0] if k[1] in ADA and all(k in r for r in sets)), reverse=True)
+    within = sum(1 for s, _ in sp if s <= 0.033)
+    print(f"### Spread over {len(sets)} runs\n")
+    print(f"CPU time, slowest run over fastest: {within} of {len(sp)} cells within 3.3%; furthest "
+          + ", ".join(f"{i} {s} {x:.1%}" for x, (i, s) in sp[:5]) + "\n")
 
 
 def mbs(c):
@@ -118,7 +152,7 @@ def compare(a, b):
     head = ["input", "stage", "CPU", "wall", "cycles", "instructions"]
     row(*head)
     row(*["---"] * len(head))
-    worst = {k: (1, None) for k in ("cpu_ns", "wall_ns", "cycles", "instructions")}
+    worst = {k: (1, None) for k in METRICS}
     for key, x in a.items():
         y = b.get(key)
         if not y:
@@ -142,7 +176,8 @@ def main():
         compare(cells, load(sys.argv[2])[0])
         return
     print(open(os.path.join(out, "meta.txt")).read().rstrip())
-    print(f"classifier {meta.get('classifier')}, {meta.get('samples')} samples of ≥ {meta.get('sample_ms')} ms, width {meta.get('width')}\n")
+    print(f"classifier {meta.get('classifier')}, {meta.get('samples')} samples of ≥ {meta.get('sample_ms')} ms, width {meta.get('width')}, "
+          f"medians of {meta['runs']} run{'s' if meta['runs'] > 1 else ''}\n")
     for group, title in (("whole", "Whole documents"), ("syntax", "Constructs"), ("lexer", "Lexers")):
         if inputs(cells, group):
             print(f"### {title}\n")
@@ -151,6 +186,7 @@ def main():
     ceilings(cells)
     print("### End to end\n")
     e2e(out, cells)
+    spread(out)
 
 
 if __name__ == "__main__":

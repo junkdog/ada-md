@@ -3,7 +3,8 @@
 # method. Builds COMMIT from `git archive` with this tree's harness laid over it (examples/throughput*, and
 # examples/common), so every commit is measured by the same harness; then, under the bench profile:
 #   cells:      examples/throughput pinned to one CPU ($THROUGHPUT_CPU, 2): every input and stage, with the
-#               ceiling kernels and the core's counters, as JSON lines (cells.jsonl); the vault's notes too
+#               ceiling kernels and the core's counters, as JSON lines (cells.N.jsonl), $THROUGHPUT_RUNS times (3),
+#               each in a process of its own, which report.py takes the medians of; the vault's notes too
 #               ($THROUGHPUT_VAULT, ~/opt/birb-vault; skipped when it isn't there)
 #   end to end: `ada -p -w 100` under hyperfine on B2's four physical cores (e2e.*.json, and the inputs'
 #               sizes in e2e.bytes)
@@ -11,6 +12,7 @@
 # Aborts unless kernel.perf_event_paranoid is 1 and every input matches inputs.sha256.
 #   THROUGHPUT_ONLY=xl,prose   only these inputs (examples/throughput's --only); no end-to-end cells unless listed
 #   THROUGHPUT_SAMPLES=N       samples a cell (15)
+#   THROUGHPUT_RUNS=N          runs of the cells (3): a run's CPU times scatter up to 13.5% with the heap's layout
 #   B2_PROFILE=off             without the bench profile (records under different profiles don't mix)
 setopt err_exit no_unset pipe_fail
 H=${0:A:h}; REPO=${H:h:h}; S=${B2_ROOT:-$REPO/bench/b2/root}
@@ -78,7 +80,7 @@ mark() {
   print "commit $COMMIT$ADDED"
   print "harness $HARNESS ($DIRTY files uncommitted)"
   print "profile $PROFILE_ID"
-  print "cpu $CPU, end to end $E2E_CPUS"
+  print "cpu $CPU, end to end $E2E_CPUS, cells ${THROUGHPUT_RUNS:-3} runs"
   print "date $(date -Is)"
   print "kernel $(uname -r)"
   print "rustc $(cd $BUILD && rustc -V)"
@@ -90,9 +92,11 @@ args=($CORPUS)
 [[ -d $VAULT ]] && args+=(--vault $VAULT)
 [[ -n ${THROUGHPUT_ONLY:-} ]] && args+=(--only $THROUGHPUT_ONLY)
 [[ -n ${THROUGHPUT_SAMPLES:-} ]] && args+=(--samples $THROUGHPUT_SAMPLES)
-taskset -c $CPU $OUT/throughput $args > $OUT/cells.jsonl 2> $OUT/cells.log \
-  || { echo "run: throughput failed, $OUT/cells.log" >&2; exit 1 }
-mark cells
+for r in {1..${THROUGHPUT_RUNS:-3}}; do
+  taskset -c $CPU $OUT/throughput $args > $OUT/cells.$r.jsonl 2> $OUT/cells.$r.log \
+    || { echo "run: throughput failed, $OUT/cells.$r.log" >&2; exit 1 }
+  mark cells.$r
+done
 
 # end to end, as b2a.zsh and b2p.zsh run print mode: B2's config, stdin /dev/null, stdout a pipe. id:file:flags;
 # huge.log (80 MB) streams (O-052), a few runs of it
