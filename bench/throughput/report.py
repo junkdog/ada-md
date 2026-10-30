@@ -74,15 +74,18 @@ def stages(cells, group):
 
 
 def ceilings(cells):
-    head = ["input", "bytes", "C0 read", "C1 parse / lex", "C1 layout", "C1 print", "C2 events", "print out bytes"]
+    """The ceilings, and pulldown-cmark's HTML renderer beside them: a reference, not a ceiling."""
+    head = ["input", "bytes", "C0 read", "C1 parse / lex", "C1 layout", "C1 print", "C2 events", "HTML ref", "print out bytes"]
     row(*head)
     row(*["---"] * len(head))
     for group in ("whole", "syntax", "lexer"):
         for i in inputs(cells, group):
             get = lambda s: sig(mbs(cells[(i, s)])) if (i, s) in cells else ""
+            c0 = cells[(i, "c0")]
+            name = f"{i} ({c0['notes']} notes)" if "notes" in c0 else i
             out = cells.get((i, "print"), {}).get("out_bytes")
-            row(i, f"{cells[(i, 'c0')]['bytes']:,}", get("c0"), get("c1-parse") or get("c1-lex"), get("c1-layout"), get("c1-print"), get("c2"),
-                f"{out:,}" if out else "")
+            row(name, f"{c0['bytes']:,}", get("c0"), get("c1-parse") or get("c1-lex"), get("c1-layout"), get("c1-print"), get("c2"),
+                get("html"), f"{out:,}" if out else "")
     print()
 
 
@@ -93,10 +96,17 @@ def e2e(out, cells):
     head = ["input", "wall ms", "CPU ms", "MB/s wall", "MB/s CPU", "cyc/B", "ins/B", "peak RSS MiB"]
     row(*head)
     row(*["---"] * len(head))
-    for f in files:
-        i = f[4:-5]
+    # the inputs' sizes, as run.zsh found them; a record set from before e2e.bytes has its cells' only
+    sizes = {}
+    if os.path.exists(os.path.join(out, "e2e.bytes")):
+        sizes = dict(line.split() for line in open(os.path.join(out, "e2e.bytes")))
+    order = list(sizes) or [f[4:-5] for f in files]
+    for i in order:
+        f = f"e2e.{i}.json"
+        if f not in files:
+            continue
         s = json.load(open(os.path.join(out, f)))["results"][0]["summary"]
-        b = next(c["bytes"] for (j, _), c in cells.items() if j == i)
+        b = int(sizes[i]) if i in sizes else next(c["bytes"] for (j, _), c in cells.items() if j == i)
         wall, cpu = s["time_wall_clock"]["median"], s["time_cpu"]["median"]
         row(i, sig(wall * 1e3), sig(cpu * 1e3), sig(b / wall / 1e6), sig(b / cpu / 1e6),
             f"{s['cpu_cycles']['median'] / b:.2f}", f"{s['instructions']['median'] / b:.2f}",

@@ -4,7 +4,7 @@
 use std::hint::black_box;
 
 use ada::doc::{BlockKind, Doc, Inlines};
-use pulldown_cmark::{Options, Parser};
+use pulldown_cmark::{Options, Parser, html};
 use unicode_width::UnicodeWidthStr;
 
 /// C0: the input summed as `u64` words, once. Nothing that reads its input beats it.
@@ -36,6 +36,12 @@ pub const MARKDOWN: &[u8] = b"\n!\"#&'()*+-.0123456789:<=>[\\]_`|~";
 pub const JSON: &[u8] = b"\n\",-.0123456789:[\\]{}";
 /// A log's, as `logs.rs` tokenizes: dates, numbers, brackets, quotes, keys and paths.
 pub const LOG: &[u8] = b"\n\"'()-./0123456789:=[]|";
+/// A Makefile's: recipes' tabs, comments, variables and functions, rules' and assignments'
+/// operators, quotes, escapes, patterns, and the shell its recipes embed.
+pub const MAKE: &[u8] = b"\t\n!\"#$%&'()*+,-.:;<=>?@[\\]`{|}";
+/// A shell script's: comments, expansions, quotes, escapes, redirections, operators, tests,
+/// groups and heredocs.
+pub const BASH: &[u8] = b"\t\n!\"#$%&'()*;<=>?[\\]`{|}";
 
 impl Set {
     /// The two nibble tables of the SIMD classifier (simdjson's): byte `b` is in the set when
@@ -207,4 +213,12 @@ pub fn events(text: &str) -> usize {
         n += 1;
     }
     n
+}
+
+/// pulldown-cmark's own HTML renderer over the same events: a reference beside ada's stages, a
+/// full renderer, not a ceiling.
+pub fn html(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() * 3 / 2);
+    html::push_html(&mut out, Parser::new_ext(text, options()));
+    out
 }

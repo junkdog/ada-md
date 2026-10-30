@@ -12,6 +12,7 @@
 //! cargo build --release --example throughput
 //! taskset -c 2 target/release/examples/throughput ~/b2/corpus > cells.jsonl
 //! taskset -c 2 target/release/examples/throughput ~/b2/corpus --only xl,prose --samples 5
+//! taskset -c 2 target/release/examples/throughput ~/b2/corpus --vault ~/opt/birb-vault --only vault
 //! ```
 
 #[cfg(target_os = "linux")]
@@ -47,9 +48,9 @@ mod linux {
 
     use ada::doc::{self, Block, BlockKind, Doc};
     use ada::highlight::{self, SyntaxTheme};
-    use ada::layout::{self, LayoutParams};
+    use ada::layout::{self, LayoutParams, TableMode};
     use ada::theme::Theme;
-    use ada::{json, logs, print};
+    use ada::{json, logs, make, print};
     use syntect::parsing::ParseState;
     use syntect::util::LinesWithEndings;
 
@@ -67,36 +68,54 @@ mod linux {
     /// B2's print width.
     const WIDTH: u16 = 100;
 
-    /// The markdown inputs: B2's documents, then the generated ones.
-    const MARKDOWN: [(&str, Option<&str>); 7] = [
+    /// The markdown inputs: B2's documents, then the generated ones. The vault, when given,
+    /// comes after them.
+    const MARKDOWN: [(&str, Option<&str>); 18] = [
         ("s", Some("s.md")),
         ("m", Some("m.md")),
         ("l", Some("l.md")),
         ("xl", Some("xl.md")),
         ("prose", None),
-        ("tables", None),
+        ("unicode", None),
+        ("emphasis", None),
+        ("code-span", None),
         ("links", None),
+        ("footnotes", None),
+        ("headings", None),
+        ("lists", None),
+        ("quotes", None),
+        ("tables", None),
+        ("table-wide", None),
+        ("fences", None),
+        ("html", None),
+        ("long-lines", None),
     ];
 
     /// ada's own lexers: id, input file, language, the format's set for C1.
-    const LEXERS: [(&str, &str, &str, &[u8]); 2] = [
+    const LEXERS: [(&str, &str, &str, &[u8]); 6] = [
         ("log", "log.log", "log", ceilings::LOG),
         ("json", "huge.json", "json", ceilings::JSON),
+        ("make", "linux.mk", "make", ceilings::MAKE),
+        ("make-4m", "kernel-4m.mk", "make", ceilings::MAKE),
+        ("bash", "ltmain.sh", "bash", ceilings::BASH),
+        ("bash-4m", "scripts-4m.sh", "bash", ceilings::BASH),
     ];
 
     struct Args {
         corpus: PathBuf,
+        vault: Option<PathBuf>,
         only: Option<Vec<String>>,
         samples: usize,
     }
 
     fn usage() -> ! {
-        eprintln!("usage: throughput CORPUS_DIR [--only ID,ID…] [--samples N]");
+        eprintln!("usage: throughput CORPUS_DIR [--vault DIR] [--only ID,ID…] [--samples N]");
         process::exit(2);
     }
 
     fn args() -> Args {
         let mut corpus = None;
+        let mut vault = None;
         let mut only = None;
         let mut samples = SAMPLES;
         let mut args = env::args().skip(1);
@@ -106,6 +125,7 @@ mod linux {
                     let ids = args.next().unwrap_or_else(|| usage());
                     only = Some(ids.split(',').map(str::to_owned).collect());
                 }
+                "--vault" => vault = Some(PathBuf::from(args.next().unwrap_or_else(|| usage()))),
                 "--samples" => {
                     samples = args
                         .next()
@@ -118,6 +138,7 @@ mod linux {
         }
         Args {
             corpus: corpus.unwrap_or_else(|| usage()),
+            vault,
             only,
             samples,
         }
@@ -202,6 +223,8 @@ mod linux {
         bytes: usize,
         /// The generator's version, for a generated input.
         version: Option<u32>,
+        /// How many notes, for the vault.
+        notes: Option<usize>,
         hash: u64,
     }
 
@@ -212,6 +235,9 @@ mod linux {
         );
         if let Some(v) = input.version {
             write!(line, ",\"gen\":{v}").unwrap();
+        }
+        if let Some(n) = input.notes {
+            write!(line, ",\"notes\":{n}").unwrap();
         }
         write!(
             line,
@@ -261,6 +287,133 @@ mod linux {
         fs::read_to_string(&path).unwrap_or_else(|e| fail(&format!("{}: {e}", path.display())))
     }
 
+    /// Every note under `dir`, `*.md` outside hidden directories, in path order.
+    fn notes(dir: &Path) -> Vec<String> {
+        fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+            let entries = fs::read_dir(dir)
+                .unwrap_or_else(|e| fail(&format!("{}: {e}", dir.display())))
+                .filter_map(Result::ok);
+            for entry in entries {
+                let path = entry.path();
+                if entry.file_name().to_string_lossy().starts_with('.') {
+                    continue;
+                }
+                match entry.file_type() {
+                    Ok(t) if t.is_dir() => walk(&path, out),
+                    Ok(t) if t.is_file() && path.extension().is_some_and(|e| e == "md") => {
+                        out.push(path);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut paths = Vec::new();
+        walk(dir, &mut paths);
+        paths.sort();
+        paths
+            .iter()
+            .map(|p| match fs::read(p) {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                Err(e) => fail(&format!("{}: {e}", p.display())),
+            })
+            .collect()
+    }
+
+    /// What every markdown input's cells share.
+    struct Markdown<'a> {
+        counters: &'a Counters,
+        samples: usize,
+        theme: &'a Theme,
+        set: &'a Set,
+    }
+
+    impl Markdown<'_> {
+        /// An input's cells over each of `texts` in turn, one document or the vault's notes: the
+        /// ceilings, pulldown-cmark's HTML renderer, and ada's stages. A call's result is the
+        /// results for every text, freed after the sample.
+        fn cells(&self, input: &Input, texts: &[String], params: LayoutParams) {
+            let (counters, n, theme) = (self.counters, self.samples, self.theme);
+            let bytes = || texts.iter().map(String::as_bytes);
+            emit(
+                input,
+                "c0",
+                &measure(counters, n, || {
+                    bytes().map(ceilings::read).fold(0, u64::wrapping_add)
+                }),
+                "",
+            );
+            emit(
+                input,
+                "c1-parse",
+                &measure(counters, n, || {
+                    bytes()
+                        .map(|b| self.set.classify(b))
+                        .fold((0, 0), |a, c| (a.0 + c.0, a.1 + c.1))
+                }),
+                "",
+            );
+            emit(
+                input,
+                "c2",
+                &measure(counters, n, || {
+                    texts.iter().map(|t| ceilings::events(t)).sum::<usize>()
+                }),
+                "",
+            );
+            emit(
+                input,
+                "html",
+                &measure(counters, n, || {
+                    texts.iter().map(|t| ceilings::html(t)).collect::<Vec<_>>()
+                }),
+                "",
+            );
+            emit(
+                input,
+                "parse",
+                &measure(counters, n, || {
+                    texts.iter().map(|t| doc::parse(t)).collect::<Vec<_>>()
+                }),
+                "",
+            );
+
+            let docs: Vec<Doc> = texts.iter().map(|t| doc::parse(t)).collect();
+            let runs: Vec<&str> = docs.iter().flat_map(ceilings::text_of).collect();
+            let words = ceilings::Text::new(&runs);
+            let extra = format!(",\"text_bytes\":{}", words.len());
+            emit(
+                input,
+                "c1-layout",
+                &measure(counters, n, || ceilings::widths(&words)),
+                &extra,
+            );
+            let lay = || {
+                docs.iter()
+                    .map(|d| layout::layout(d, &theme.glyphs, params))
+                    .collect::<Vec<_>>()
+            };
+            let rows: usize = lay().iter().map(|l| l.rows.len()).sum();
+            let extra = format!(",\"rows\":{rows}");
+            emit(input, "layout", &measure(counters, n, lay), &extra);
+
+            let mut docs: Vec<Doc> = texts.iter().map(|t| doc::parse(t)).collect();
+            docs.iter_mut().for_each(plain);
+            let render = || {
+                docs.iter()
+                    .map(|d| print::render(d, theme, params, print::Options::default()))
+                    .collect::<Vec<_>>()
+            };
+            let out = render().concat();
+            let extra = format!(",\"out_bytes\":{}", out.len());
+            let mut into = vec![0u8; out.len()];
+            let s = measure(counters, n, || ceilings::write(out.as_bytes(), &mut into));
+            emit(input, "c1-print", &s, &extra);
+            // `render` copies its output into a String once more than a print to stdout does:
+            // about a C1 print's worth, a few percent of the stage
+            emit(input, "print", &measure(counters, n, render), &extra);
+        }
+    }
+
     pub fn main() {
         let args = args();
         counters::check_paranoid().unwrap_or_else(|e| fail(&e));
@@ -286,7 +439,13 @@ mod linux {
             glyphs_gen: theme.glyphs.generation(),
             images: None,
         };
-        let markdown = Set::new(ceilings::MARKDOWN);
+        let set = Set::new(ceilings::MARKDOWN);
+        let markdown = Markdown {
+            counters: &counters,
+            samples: n,
+            theme: &theme,
+            set: &set,
+        };
 
         for (id, file) in MARKDOWN.into_iter().filter(|(id, _)| wanted(id)) {
             let (text, group, version) = match file {
@@ -303,62 +462,34 @@ mod linux {
                 group,
                 bytes: text.len(),
                 version,
+                notes: None,
                 hash: generate::fnv1a(text.as_bytes()),
             };
             eprintln!("{id}: {} bytes", text.len());
+            // the distribution under pressure: a grid however wide, not record cards
+            let params = match id {
+                "table-wide" => LayoutParams {
+                    table_mode: TableMode::Grid,
+                    ..params
+                },
+                _ => params,
+            };
+            markdown.cells(&input, &[text], params);
+        }
 
-            emit(
-                &input,
-                "c0",
-                &measure(&counters, n, || ceilings::read(text.as_bytes())),
-                "",
-            );
-            emit(
-                &input,
-                "c1-parse",
-                &measure(&counters, n, || markdown.classify(text.as_bytes())),
-                "",
-            );
-            emit(
-                &input,
-                "c2",
-                &measure(&counters, n, || ceilings::events(&text)),
-                "",
-            );
-            emit(
-                &input,
-                "parse",
-                &measure(&counters, n, || doc::parse(&text)),
-                "",
-            );
-
-            let doc = doc::parse(&text);
-            let words = ceilings::Text::new(&ceilings::text_of(&doc));
-            let extra = format!(",\"text_bytes\":{}", words.len());
-            emit(
-                &input,
-                "c1-layout",
-                &measure(&counters, n, || ceilings::widths(&words)),
-                &extra,
-            );
-            let rows = layout::layout(&doc, &theme.glyphs, params).rows.len();
-            let extra = format!(",\"rows\":{rows}");
-            let s = measure(&counters, n, || layout::layout(&doc, &theme.glyphs, params));
-            emit(&input, "layout", &s, &extra);
-
-            let mut doc = doc::parse(&text);
-            plain(&mut doc);
-            let out = print::render(&doc, &theme, params, print::Options::default());
-            let extra = format!(",\"out_bytes\":{}", out.len());
-            let mut into = vec![0u8; out.len()];
-            let s = measure(&counters, n, || ceilings::write(out.as_bytes(), &mut into));
-            emit(&input, "c1-print", &s, &extra);
-            // `render` copies its output into a String once more than a print to stdout does:
-            // about a C1 print's worth, a few percent of the stage
-            let s = measure(&counters, n, || {
-                print::render(&doc, &theme, params, print::Options::default())
-            });
-            emit(&input, "print", &s, &extra);
+        if let Some(dir) = args.vault.as_deref().filter(|_| wanted("vault")) {
+            let texts = notes(dir);
+            let all = texts.concat();
+            let input = Input {
+                id: "vault",
+                group: "whole",
+                bytes: all.len(),
+                version: None,
+                notes: Some(texts.len()),
+                hash: generate::fnv1a(all.as_bytes()),
+            };
+            eprintln!("vault: {} notes, {} bytes", texts.len(), all.len());
+            markdown.cells(&input, &texts, params);
         }
 
         let syntax_theme = SyntaxTheme::new(&theme.syntax);
@@ -370,6 +501,7 @@ mod linux {
                 group: "lexer",
                 bytes: text.len(),
                 version: None,
+                notes: None,
                 hash: generate::fnv1a(text.as_bytes()),
             };
             eprintln!("{id}: {} bytes", text.len());
@@ -388,7 +520,7 @@ mod linux {
             );
             let tokens = || {
                 let mut count = 0;
-                match id {
+                match lang {
                     "log" => {
                         let mut spans = Vec::new();
                         text.lines().for_each(|line| {
@@ -396,11 +528,23 @@ mod linux {
                             count += spans.len();
                         });
                     }
-                    _ => {
+                    "json" => {
                         let mut spans = Vec::new();
                         let mut comment = false;
                         text.lines().for_each(|line| {
                             json::tokens(line, &mut comment, &mut spans);
+                            count += spans.len();
+                        });
+                    }
+                    _ => {
+                        let grammar = match lang {
+                            "make" => make::Grammar::Make,
+                            _ => make::Grammar::Bash,
+                        };
+                        let mut state = make::State::new(grammar);
+                        let mut spans = Vec::new();
+                        text.lines().for_each(|line| {
+                            make::tokens(line, &mut state, &mut spans);
                             count += spans.len();
                         });
                     }
