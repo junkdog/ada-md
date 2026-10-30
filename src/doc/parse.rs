@@ -2,7 +2,6 @@
 //! owned blocks, resolves inline markup into styled runs, and converts byte offsets to lines.
 
 use std::collections::HashMap;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::mem;
 use std::ops::Range;
 
@@ -10,6 +9,7 @@ use pulldown_cmark::{
     Alignment, BlockQuoteKind, CodeBlockKind, Event, LinkType, Options, Parser, Tag, TagEnd,
 };
 
+use super::lines::{code_line_count, line_starts};
 use super::slug::Slugger;
 use super::{
     Align, Anchor, AnchorKind, Block, BlockKind, Callout, CodeBlock, CodeId, Doc, Footnote,
@@ -62,19 +62,6 @@ fn markdown(text: &str) -> Option<Doc> {
 /// 10,000 `>` (10 KB) overflowed the main thread's stack (F-012). 100 levels take 200 columns
 /// of bars before any text; markdown-it stops at 100 too (`maxNesting`).
 const MAX_NESTING: usize = 100;
-
-/// The byte offset of the start of each line.
-pub(super) fn line_starts(text: &str) -> Vec<u32> {
-    std::iter::once(0)
-        .chain(
-            text.bytes()
-                .enumerate()
-                .filter(|&(_, b)| b == b'\n')
-                .map(|(i, _)| i as u32 + 1),
-        )
-        .filter(|&s| s < text.len() as u32 || s == 0)
-        .collect()
-}
 
 /// The line (from 1) `offset` is on, sought forward from `line`, which starts at or before it: a
 /// gallop, so the next line costs a comparison and a line `n` further a search over `2n`.
@@ -713,17 +700,15 @@ impl Builder {
                 src,
                 fenced,
             } => {
-                let mut h = DefaultHasher::new();
-                text.hash(&mut h);
                 self.code_blocks += 1;
                 let first_unit = self.units;
-                self.units += super::code_lines(&text).count() as UnitId;
+                self.units += code_line_count(&text) as UnitId;
                 let diagram = super::diagram(lang.as_deref(), &text);
                 Block {
                     kind: BlockKind::Code(CodeBlock {
                         id: self.code_blocks - 1,
                         lang,
-                        hash: h.finish(),
+                        hash: super::content_hash(&text),
                         text: text.into(),
                         first_line: src.start + u32::from(fenced),
                         fenced,

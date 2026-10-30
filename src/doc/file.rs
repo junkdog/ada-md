@@ -1,25 +1,22 @@
 //! Documents that aren't markdown: a code or text file becomes one code block, and an image file
 //! one image block, so that everything downstream treats them the way it treats a note.
 
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
-use super::parse::line_starts;
-use super::{Block, BlockKind, CodeBlock, Doc, LineRange, LinkKind, LinkRef, UnitId, code_lines};
+use super::lines::{code_line_count, line_starts};
+use super::{Block, BlockKind, CodeBlock, Doc, LineRange, LinkKind, LinkRef, UnitId, content_hash};
 
 /// A whole file of code in `lang`, or of plain text when there is none. A mermaid file draws
 /// its diagram, as a mermaid block in a note does.
 pub fn code(text: &str, lang: Option<&str>) -> Doc {
-    let mut h = DefaultHasher::new();
-    text.hash(&mut h);
-    let lines = code_lines(text).count() as UnitId;
+    let lines = code_line_count(text) as UnitId;
     Doc {
         blocks: vec![Block {
             kind: BlockKind::Code(CodeBlock {
                 id: 0,
                 lang: lang.map(Into::into),
                 text: text.into(),
-                hash: h.finish(),
+                hash: content_hash(text),
                 first_line: 1,
                 fenced: false,
                 first_unit: 0,
@@ -38,7 +35,7 @@ pub fn code(text: &str, lang: Option<&str>) -> Doc {
 /// first of them line `first_line` of the file. `hash` stands in for a hash of the text, which
 /// only has to tell the pieces apart.
 pub fn code_piece(text: Arc<str>, lang: Option<&str>, first_line: u32, hash: u64) -> Doc {
-    let lines = code_lines(&text).count() as UnitId;
+    let lines = code_line_count(&text) as UnitId;
     Doc {
         blocks: vec![Block {
             kind: BlockKind::Code(CodeBlock {

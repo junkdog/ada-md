@@ -1,43 +1,48 @@
 //! Heading anchors (architecture §2, "Anchors and slugs").
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 
 /// GitHub's slug: lowercase, keep alphanumerics, `-` and `_`, turn spaces into `-`, drop the rest.
 pub fn github(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.trim().chars() {
-        if c.is_alphanumeric() {
-            out.extend(c.to_lowercase());
-        } else if c == '-' || c == '_' {
-            out.push(c);
-        } else if c == ' ' {
-            out.push('-');
+        // ASCII first, without the Unicode tables: 2.6–5× on headings (experiment 65)
+        match c {
+            'a'..='z' | '0'..='9' | '-' | '_' => out.push(c),
+            'A'..='Z' => out.push(c.to_ascii_lowercase()),
+            ' ' => out.push('-'),
+            c if c.is_ascii() => {}
+            c if c.is_alphanumeric() => out.extend(c.to_lowercase()),
+            _ => {}
         }
     }
     out
 }
 
-/// Hands out unique slugs, deduplicating with `-1`, `-2`, … like GitHub.
+/// Hands out unique slugs, deduplicating with `-1`, `-2`, … like GitHub. Its map hashes with
+/// foldhash: slugs are short, and a document's headings needn't resist crafted collisions.
 #[derive(Default)]
 pub struct Slugger {
-    seen: HashMap<String, u32>,
+    seen: HashMap<String, u32, foldhash::fast::FixedState>,
 }
 
 impl Slugger {
     pub fn slug(&mut self, text: &str) -> String {
-        let base = github(text);
-        match self.seen.get_mut(&base) {
-            None => {
-                self.seen.insert(base.clone(), 0);
-                base
+        // one lookup for a new slug, the usual case
+        let slug = match self.seen.entry(github(text)) {
+            Entry::Vacant(e) => {
+                let slug = e.key().clone();
+                e.insert(0);
+                return slug;
             }
-            Some(n) => {
-                *n += 1;
-                let slug = format!("{base}-{n}");
-                self.seen.insert(slug.clone(), 0);
-                slug
+            Entry::Occupied(mut e) => {
+                *e.get_mut() += 1;
+                format!("{}-{}", e.key(), e.get())
             }
-        }
+        };
+        self.seen.insert(slug.clone(), 0);
+        slug
     }
 }
 
@@ -67,6 +72,7 @@ mod tests {
         );
         assert_eq!(github("Ünïcödé Heading"), "ünïcödé-heading");
         assert_eq!(github("`code` in heading"), "code-in-heading");
+        assert_eq!(github("ΣΊΣΥΦΟΣ İstanbul ǅ 9½"), "σίσυφοσ-i̇stanbul-ǆ-9½");
     }
 
     #[test]
@@ -76,6 +82,8 @@ mod tests {
         assert_eq!(s.slug("Notes"), "notes-1");
         assert_eq!(s.slug("Notes"), "notes-2");
         assert_eq!(s.slug("Other"), "other");
+        // a heading that reads as an earlier one's suffix
+        assert_eq!(s.slug("Notes 1"), "notes-1-1");
     }
 
     #[test]

@@ -3,9 +3,11 @@
 
 mod fence;
 pub mod file;
+mod lines;
 mod parse;
 pub mod slug;
 
+use std::hash::BuildHasher;
 use std::ops::BitOr;
 use std::sync::Arc;
 
@@ -185,6 +187,13 @@ fn diagram(lang: Option<&str>, text: &str) -> Option<Arc<Diagram>> {
         .then(|| crate::guard::catch(|| crate::diagram::parse(text)).flatten())
         .flatten()
         .map(Arc::new)
+}
+
+/// A code block's content hash, the highlight cache's key: foldhash's quality hasher, about 6×
+/// SipHash on code (experiment 65). The key needs no defense against crafted collisions, only
+/// to tell texts apart, and a fixed seed keeps it the same from one run to the next.
+pub fn content_hash(text: &str) -> u64 {
+    foldhash::quality::FixedState::with_seed(0).hash_one(text)
 }
 
 /// The lines of a code block's text, without the final newline.
