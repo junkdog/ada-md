@@ -1,4 +1,4 @@
-# B2 image previews at ada <sha>, 2026-10-29: hyperfine medians, ms (CPU: user + system; peak RSS in MiB); written by bench/b2/plot.py
+# B2 image previews at ada 2b604ad, 2026-10-29: hyperfine medians, ms (CPU: user + system; peak RSS in MiB); written by bench/b2/plot.py
 # image, kitty graphics, wall
 # doc ada icat icat-shm chafa mcat
 fit.png 1.29967 22.9092 22.5199 24.1154 15.8359

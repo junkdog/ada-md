@@ -6,8 +6,8 @@ Inside tmux, ada draws images with half-block characters, even in terminals that
 images. `--image-protocol` (or `image_protocol` in the config) still forces a protocol, at your
 own risk.
 
-**Why.** Kitty graphics don't work inside tmux. Sixel and iTerm2 images reach the terminal through
-tmux's passthrough, so they land where tmux last left its cursor rather than where ada drew them,
+**Why.** Kitty graphics don't work inside tmux. Sixel and iTerm2 images sent through tmux's
+passthrough land where tmux last left its cursor rather than where ada drew them,
 and they vanish whenever tmux redraws the pane (switching windows, copy mode, popups, resizing).
 Scrolling and resizing flicker and leave pieces of images behind, sometimes in another pane.
 tmux 3.4+ can handle sixel itself, but it drops images whenever their rows are erased and on every
@@ -17,8 +17,11 @@ resize ([tmux#4213](https://github.com/tmux/tmux/issues/4213)), so ada can't use
 ([tmux#5445](https://github.com/tmux/tmux/pull/5445), on the
 [3.9 roadmap](https://github.com/tmux/tmux/issues/5406)). ada will revisit this once it's released.
 
-**Side effect.** Forcing sixel or iTerm2 inside tmux runs `tmux set -p allow-passthrough on` for
-ada's pane, and the option stays on after ada exits.
+**Forcing a protocol inside tmux.** ada never uses tmux's passthrough for images and doesn't
+change your tmux options. A forced sixel goes to tmux itself: a tmux 3.4+ built with sixel draws
+it, within the limits above (it can disappear when its rows are erased or the pane resizes), and
+other builds show nothing. Forced iTerm2 and kitty images also go to tmux unwrapped, and tmux
+draws neither itself.
 
 **Workaround.** Open the note outside tmux, or press `Enter` on the image's link and `Enter` again
 to open the image in your viewer.
