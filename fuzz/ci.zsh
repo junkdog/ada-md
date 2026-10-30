@@ -91,7 +91,8 @@ run() {
   mkdir -p corpus/$t out/new out/findings
   local -a before=(corpus/$t/*(N:t)) after
   # the runner's size, still unconfirmed by a run (CHK-03)
-  print "$(nproc) CPUs, $(free -g | awk '/^Mem/ {print $2}') GB, $(lscpu | sed -n 's/^Model name: *//p')"
+  print "$(nproc) CPUs ($(lscpu | sed -n 's/^Thread(s) per core: *//p') a core)," \
+    "$(free -g | awk '/^Mem/ {print $2}') GB, $(lscpu | sed -n 's/^Model name: *//p')"
   $bin $args -fork=$(nproc) -timeout=30 -rss_limit_mb=3072 -ignore_crashes=1 -ignore_timeouts=1 \
     -ignore_ooms=1 -max_total_time=$secs -artifact_prefix=out/findings/ corpus/$t $dirs \
     > out/$t.log 2>&1 || rc=$?
