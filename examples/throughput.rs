@@ -13,6 +13,8 @@
 //! taskset -c 2 target/release/examples/throughput ~/b2/corpus > cells.jsonl
 //! taskset -c 2 target/release/examples/throughput ~/b2/corpus --only xl,prose --samples 5
 //! taskset -c 2 target/release/examples/throughput ~/b2/corpus --vault ~/opt/birb-vault --only vault
+//! # one stage alone, to profile it
+//! taskset -c 2 target/release/examples/throughput ~/b2/corpus --only tables --stages layout --samples 100
 //! ```
 
 #[cfg(target_os = "linux")]
@@ -105,11 +107,23 @@ mod linux {
         corpus: PathBuf,
         vault: Option<PathBuf>,
         only: Option<Vec<String>>,
+        /// The stages to run, all when `None`: one alone is what a profile wants.
+        stages: Option<Vec<String>>,
         samples: usize,
     }
 
+    impl Args {
+        fn stage(&self, stage: &str) -> bool {
+            self.stages
+                .as_ref()
+                .is_none_or(|s| s.iter().any(|w| w == stage))
+        }
+    }
+
     fn usage() -> ! {
-        eprintln!("usage: throughput CORPUS_DIR [--vault DIR] [--only ID,ID…] [--samples N]");
+        eprintln!(
+            "usage: throughput CORPUS_DIR [--vault DIR] [--only ID,ID…] [--stages STAGE,…] [--samples N]"
+        );
         process::exit(2);
     }
 
@@ -117,6 +131,7 @@ mod linux {
         let mut corpus = None;
         let mut vault = None;
         let mut only = None;
+        let mut stages = None;
         let mut samples = SAMPLES;
         let mut args = env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -124,6 +139,10 @@ mod linux {
                 "--only" => {
                     let ids = args.next().unwrap_or_else(|| usage());
                     only = Some(ids.split(',').map(str::to_owned).collect());
+                }
+                "--stages" => {
+                    let ids = args.next().unwrap_or_else(|| usage());
+                    stages = Some(ids.split(',').map(str::to_owned).collect());
                 }
                 "--vault" => vault = Some(PathBuf::from(args.next().unwrap_or_else(|| usage()))),
                 "--samples" => {
@@ -140,6 +159,7 @@ mod linux {
             corpus: corpus.unwrap_or_else(|| usage()),
             vault,
             only,
+            stages,
             samples,
         }
     }
@@ -325,76 +345,70 @@ mod linux {
         samples: usize,
         theme: &'a Theme,
         set: &'a Set,
+        args: &'a Args,
     }
 
     impl Markdown<'_> {
+        /// Measure `f` as `input`'s `stage` and emit it, unless `--stages` leaves it out.
+        fn cell<T>(&self, input: &Input, stage: &str, extra: &str, f: impl FnMut() -> T) {
+            if self.args.stage(stage) {
+                emit(
+                    input,
+                    stage,
+                    &measure(self.counters, self.samples, f),
+                    extra,
+                );
+            }
+        }
+
         /// An input's cells over each of `texts` in turn, one document or the vault's notes: the
         /// ceilings, pulldown-cmark's HTML renderer, and ada's stages. A call's result is the
         /// results for every text, freed after the sample.
         fn cells(&self, input: &Input, texts: &[String], params: LayoutParams) {
-            let (counters, n, theme) = (self.counters, self.samples, self.theme);
+            let theme = self.theme;
             let bytes = || texts.iter().map(String::as_bytes);
-            emit(
-                input,
-                "c0",
-                &measure(counters, n, || {
-                    bytes().map(ceilings::read).fold(0, u64::wrapping_add)
-                }),
-                "",
-            );
-            emit(
-                input,
-                "c1-parse",
-                &measure(counters, n, || {
-                    bytes()
-                        .map(|b| self.set.classify(b))
-                        .fold((0, 0), |a, c| (a.0 + c.0, a.1 + c.1))
-                }),
-                "",
-            );
-            emit(
-                input,
-                "c2",
-                &measure(counters, n, || {
-                    texts.iter().map(|t| ceilings::events(t)).sum::<usize>()
-                }),
-                "",
-            );
-            emit(
-                input,
-                "html",
-                &measure(counters, n, || {
-                    texts.iter().map(|t| ceilings::html(t)).collect::<Vec<_>>()
-                }),
-                "",
-            );
-            emit(
-                input,
-                "parse",
-                &measure(counters, n, || {
-                    texts.iter().map(|t| doc::parse(t)).collect::<Vec<_>>()
-                }),
-                "",
-            );
+            self.cell(input, "c0", "", || {
+                bytes().map(ceilings::read).fold(0, u64::wrapping_add)
+            });
+            self.cell(input, "c1-parse", "", || {
+                bytes()
+                    .map(|b| self.set.classify(b))
+                    .fold((0, 0), |a, c| (a.0 + c.0, a.1 + c.1))
+            });
+            self.cell(input, "c2", "", || {
+                texts.iter().map(|t| ceilings::events(t)).sum::<usize>()
+            });
+            self.cell(input, "html", "", || {
+                texts.iter().map(|t| ceilings::html(t)).collect::<Vec<_>>()
+            });
+            self.cell(input, "parse", "", || {
+                texts.iter().map(|t| doc::parse(t)).collect::<Vec<_>>()
+            });
+            if !["c1-layout", "layout", "c1-print", "print"]
+                .iter()
+                .any(|s| self.args.stage(s))
+            {
+                return;
+            }
 
             let docs: Vec<Doc> = texts.iter().map(|t| doc::parse(t)).collect();
             let runs: Vec<&str> = docs.iter().flat_map(ceilings::text_of).collect();
             let words = ceilings::Text::new(&runs);
             let extra = format!(",\"text_bytes\":{}", words.len());
-            emit(
-                input,
-                "c1-layout",
-                &measure(counters, n, || ceilings::widths(&words)),
-                &extra,
-            );
+            self.cell(input, "c1-layout", &extra, || ceilings::widths(&words));
             let lay = || {
                 docs.iter()
                     .map(|d| layout::layout(d, &theme.glyphs, params))
                     .collect::<Vec<_>>()
             };
-            let rows: usize = lay().iter().map(|l| l.rows.len()).sum();
-            let extra = format!(",\"rows\":{rows}");
-            emit(input, "layout", &measure(counters, n, lay), &extra);
+            if self.args.stage("layout") {
+                let rows: usize = lay().iter().map(|l| l.rows.len()).sum();
+                let extra = format!(",\"rows\":{rows}");
+                self.cell(input, "layout", &extra, lay);
+            }
+            if !self.args.stage("c1-print") && !self.args.stage("print") {
+                return;
+            }
 
             let mut docs: Vec<Doc> = texts.iter().map(|t| doc::parse(t)).collect();
             docs.iter_mut().for_each(plain);
@@ -406,11 +420,12 @@ mod linux {
             let out = render().concat();
             let extra = format!(",\"out_bytes\":{}", out.len());
             let mut into = vec![0u8; out.len()];
-            let s = measure(counters, n, || ceilings::write(out.as_bytes(), &mut into));
-            emit(input, "c1-print", &s, &extra);
-            // `render` copies its output into a String once more than a print to stdout does:
-            // about a C1 print's worth, a few percent of the stage
-            emit(input, "print", &measure(counters, n, render), &extra);
+            self.cell(input, "c1-print", &extra, || {
+                ceilings::write(out.as_bytes(), &mut into);
+            });
+            // `render` ends with `String::from_utf8_lossy` over its output, which a print to stdout
+            // doesn't: UTF-8 validation and a copy, 6-7% of the stage (BEN-010)
+            self.cell(input, "print", &extra, render);
         }
     }
 
@@ -445,6 +460,7 @@ mod linux {
             samples: n,
             theme: &theme,
             set: &set,
+            args: &args,
         };
 
         for (id, file) in MARKDOWN.into_iter().filter(|(id, _)| wanted(id)) {
@@ -506,18 +522,14 @@ mod linux {
             };
             eprintln!("{id}: {} bytes", text.len());
             let set = Set::new(set);
-            emit(
-                &input,
-                "c0",
-                &measure(&counters, n, || ceilings::read(text.as_bytes())),
-                "",
-            );
-            emit(
-                &input,
-                "c1-lex",
-                &measure(&counters, n, || set.classify(text.as_bytes())),
-                "",
-            );
+            if args.stage("c0") {
+                let s = measure(&counters, n, || ceilings::read(text.as_bytes()));
+                emit(&input, "c0", &s, "");
+            }
+            if args.stage("c1-lex") {
+                let s = measure(&counters, n, || set.classify(text.as_bytes()));
+                emit(&input, "c1-lex", &s, "");
+            }
             let tokens = || {
                 let mut count = 0;
                 match lang {
@@ -551,12 +563,16 @@ mod linux {
                 }
                 count
             };
-            emit(&input, "tokens", &measure(&counters, n, tokens), "");
-            let s = measure(&counters, n, || {
-                highlight::highlight(1, lang, &text, &syntax_theme)
-            });
-            emit(&input, "highlight", &s, "");
-            if let Some(syntax) = highlight::find_syntax(lang) {
+            if args.stage("tokens") {
+                emit(&input, "tokens", &measure(&counters, n, tokens), "");
+            }
+            if args.stage("highlight") {
+                let s = measure(&counters, n, || {
+                    highlight::highlight(1, lang, &text, &syntax_theme)
+                });
+                emit(&input, "highlight", &s, "");
+            }
+            if let Some(syntax) = highlight::find_syntax(lang).filter(|_| args.stage("syntect")) {
                 let s = measure_cold(&counters, SYNTECT_SAMPLES.min(n), || {
                     let mut state = ParseState::new(syntax);
                     LinesWithEndings::from(&text)
