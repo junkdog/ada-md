@@ -43,8 +43,8 @@ expression: render(&l)
    14│  │      │     │ line │      │ Metho │
    14│  │      │     │ s    │      │ dNode │
    14│  │      │     │      │      │ ,     │
-   14│  │      │     │      │      │ InsnL │
-   14│  │      │     │      │      │ ist   │
+   14│  │      │     │      │      │ Insn  │
+   14│  │      │     │      │      │ List  │
    14│  │      │     │      │      │ and   │
    14│  │      │     │      │      │ frien │
    14│  │      │     │      │      │ ds    │

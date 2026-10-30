@@ -50,6 +50,8 @@ pub const MIN_CAP: u16 = 24;
 pub struct ColMeasure {
     /// The widest unbreakable word.
     pub min: u16,
+    /// The widest word between spaces, unbroken at `-` and `/` too.
+    pub whole: u16,
     /// The widest cell laid out on one line.
     pub max: u16,
     /// The header cell laid out on one line: the key column of the record cards.
@@ -61,8 +63,9 @@ pub fn measure(t: &Table, doc: &Doc, glyphs: &Glyphs) -> Vec<ColMeasure> {
     let mut cols = vec![ColMeasure::default(); t.column_count()];
     for (r, row) in std::iter::once(&t.header).chain(&t.rows).enumerate() {
         for (col, cell) in cols.iter_mut().zip(&row.cells) {
-            let (min, max) = wrap::measure(&cell.runs, doc, glyphs);
+            let (min, whole, max) = wrap::measure(&cell.runs, doc, glyphs);
             col.min = col.min.max(min);
+            col.whole = col.whole.max(whole);
             col.max = col.max.max(max);
             if r == 0 {
                 col.header = max;
@@ -72,6 +75,7 @@ pub fn measure(t: &Table, doc: &Doc, glyphs: &Glyphs) -> Vec<ColMeasure> {
     for col in &mut cols {
         col.max = col.max.max(1);
         col.min = col.min.clamp(1, col.max);
+        col.whole = col.whole.clamp(col.min, col.max);
     }
     cols
 }
@@ -79,21 +83,26 @@ pub fn measure(t: &Table, doc: &Doc, glyphs: &Glyphs) -> Vec<ColMeasure> {
 /// Content widths for `cols` sharing `avail` cells, or `None` for records.
 ///
 /// 1. Everything fits on one line: each column gets `max`.
-/// 2. Every word fits: each column starts at `min`, and the rest is shared in proportion to
-///    `max − min`, as in CSS automatic table layout.
-/// 3. Every word up to [`MIN_CAP`] fits: the same from `min` capped, hard-breaking only the words
+/// 2. Every word fits whole: each column starts at `whole`, and the rest is shared in proportion
+///    to `max − whole`, as in CSS automatic table layout.
+/// 3. Every word fits, broken after `-` and `/` where it must: the same from `min` (FEAT-015).
+/// 4. Every word up to [`MIN_CAP`] fits: the same from `min` capped, hard-breaking only the words
 ///    that are longer than what their column ends up with.
-/// 4. Otherwise `auto` gives up on the grid, while a forced grid shrinks in proportion to the
+/// 5. Otherwise `auto` gives up on the grid, while a forced grid shrinks in proportion to the
 ///    capped `min`, down to two cells a column (one would split wide characters).
 pub fn distribute(cols: &[ColMeasure], avail: u16, mode: TableMode) -> Option<Vec<u16>> {
     let avail = u32::from(avail);
     let total = |f: &dyn Fn(&ColMeasure) -> u16| cols.iter().map(|c| u32::from(f(c))).sum::<u32>();
     let max = |c: &ColMeasure| c.max;
+    let whole = |c: &ColMeasure| c.whole;
     let min = |c: &ColMeasure| c.min;
     let capped = |c: &ColMeasure| c.min.min(MIN_CAP);
     let forced = |c: &ColMeasure| c.max.min(2);
     if total(&max) <= avail {
         return Some(cols.iter().map(max).collect());
+    }
+    if total(&whole) <= avail {
+        return Some(grow(cols, avail, whole, max));
     }
     if total(&min) <= avail {
         return Some(grow(cols, avail, min, max));
@@ -763,6 +772,7 @@ pub(super) fn layout(b: &mut Builder<'_>, t: &Table) {
         col.header = col.header.saturating_add(m.extra);
         col.max = col.max.max(col.header);
         col.min = col.min.saturating_add(m.extra).min(col.max);
+        col.whole = col.whole.saturating_add(m.extra).clamp(col.min, col.max);
     }
     let rows: Vec<&TableRow> = match sorted {
         Some(s) => s
@@ -1085,6 +1095,7 @@ mod tests {
     fn col(min: u16, max: u16) -> ColMeasure {
         ColMeasure {
             min,
+            whole: min,
             max,
             header: 0,
         }
@@ -1107,9 +1118,31 @@ mod tests {
         let cols = measured(
             "| Name | Notes |\n|---|---|\n| `x` | see ../a-b/c.md now |\n| y | line<br>longer line |\n",
         );
-        let pairs: Vec<_> = cols.iter().map(|c| (c.min, c.max, c.header)).collect();
+        let tuples: Vec<_> = cols
+            .iter()
+            .map(|c| (c.min, c.whole, c.max, c.header))
+            .collect();
         // `x` is 3 wide with its padding, and the path can break after every `/` and `-`.
-        assert_eq!(pairs, [(4, 4, 4), (6, 19, 5)]);
+        assert_eq!(tuples, [(4, 4, 4, 4), (6, 11, 19, 5)]);
+    }
+
+    /// FEAT-015: a date, a version or a flag isn't broken after its `-` while the prose column
+    /// can give up the room.
+    #[test]
+    fn whole_words_before_breaks_after_hyphens() {
+        let cols = measured(
+            "| Date | Version | Change |\n|---|---|---|\n\
+             | 2026-10-27 | 1.0.0-rc.1 | First release candidate, with the gutter, search and sorting |\n",
+        );
+        let tuples: Vec<_> = cols.iter().map(|c| (c.min, c.whole, c.max)).collect();
+        assert_eq!(tuples, [(5, 10, 10), (7, 10, 10), (10, 10, 60)]);
+        // Shared from `min` by `max − min`, the date would get 5 + 48·5/58, 9.
+        assert_eq!(
+            distribute(&cols, 70, TableMode::Auto),
+            Some(vec![10, 10, 50])
+        );
+        // No room for every word whole: the breaks after `-` and `/` come back.
+        assert_eq!(distribute(&cols, 28, TableMode::Auto), Some(vec![6, 7, 15]));
     }
 
     #[test]
@@ -1148,8 +1181,9 @@ mod tests {
         assert_eq!(distribute(&cols, 3, TableMode::Grid), None);
     }
 
-    /// Architecture §13: widths sum to at most `avail`, and no column falls below `min` (capped,
-    /// when the words don't all fit) unless the grid is forced.
+    /// Architecture §13: widths sum to at most `avail`, no column falls below `whole` when every
+    /// word fits whole, and none below `min` (capped, when the words don't all fit) unless the
+    /// grid is forced.
     #[test]
     fn distribution_properties() {
         let mut seed = 0x2545_f491_4f6c_dd1du64;
@@ -1163,7 +1197,11 @@ mod tests {
             let cols: Vec<_> = (0..1 + next(8))
                 .map(|_| {
                     let min = 1 + next(40) as u16;
-                    col(min, min + next(60) as u16)
+                    let max = min + next(60) as u16;
+                    ColMeasure {
+                        whole: min + next(u64::from(max - min) + 1) as u16,
+                        ..col(min, max)
+                    }
                 })
                 .collect();
             let avail = next(200) as u16;
@@ -1171,6 +1209,7 @@ mod tests {
                 let sum = |f: fn(&ColMeasure) -> u16| -> u32 {
                     cols.iter().map(|c| u32::from(f(c))).sum()
                 };
+                let whole_fits = sum(|c| c.whole) <= u32::from(avail);
                 let fits = sum(|c| c.min) <= u32::from(avail);
                 let capped_fits = sum(|c| c.min.min(MIN_CAP)) <= u32::from(avail);
                 let Some(widths) = distribute(&cols, avail, mode) else {
@@ -1185,6 +1224,7 @@ mod tests {
                 for (&w, c) in widths.iter().zip(&cols) {
                     let what = format!("{cols:?} → {widths:?} at {avail}");
                     assert!(w <= c.max, "{what}");
+                    assert!(!whole_fits || w >= c.whole, "{what}");
                     assert!(!fits || w >= c.min, "{what}");
                     assert!(!capped_fits || w >= c.min.min(MIN_CAP), "{what}");
                 }

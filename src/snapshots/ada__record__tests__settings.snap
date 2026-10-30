@@ -22,7 +22,7 @@ expression: frames.last().unwrap()
  ├────────────────────────────────────────────────────────────────────────────┤
  │            a keep for this session  s save to config  esc undo             │
  ╰────────────────────────────────────────────────────────────────────────────╯
-  │ asm-tree  │ 4,120  │ 14 classes  │ oxasm-tree │ The tree API: ClassNode, │
-  │           │        │ · 5.1k      │            │ MethodNode, InsnList and │
-  │           │        │ lines       │            │ friends                  │
+  │ asm-tree     │ 4,120  │ 14        │ oxasm-tree     │ The tree API:       │
+  │              │        │ classes · │                │ ClassNode,          │
+  │              │        │ 5.1k      │                │ MethodNode,         │
  tests/fixtures/tables.md  images: kitty, once saved and restarted          Top

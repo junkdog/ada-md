@@ -2,6 +2,8 @@
 source: src/record.rs
 expression: frames.last().unwrap()
 ---
+  │ Module        asm-tree
+  │ Java main    4,120
   │ Description  The tree API: ClassNode,
   │              MethodNode, InsnList and
   │              friends
@@ -15,6 +17,4 @@ expression: frames.last().unwrap()
   │ Module        asm-util
   │ Java main    2,045
   │ Description  Textifier, CheckClassAdapter
-  │              and the trace visitors
-  ╭─ 5 ───────────────────────────────────────
- modules.md  tables: records                40%
+ modules.md  tables: records                37%

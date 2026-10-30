@@ -2,19 +2,19 @@
 source: src/record.rs
 expression: frames.last().unwrap()
 ---
-  │ Module      │   Java │ Description                   │
-  │             │   main │                               │
-  ├─────────────┼────────┼───────────────────────────────┤
-  │             │        │ remappers                     │
-  │  asm-util   │  2,045 │ Textifier, CheckClassAdapter  │
-  │             │        │ and the trace visitors        │
-  │  asm-core   │  9,812 │ ClassReader, ClassWriter and  │
-  │             │        │ the visitor interfaces        │
-  │  asm-test   │    610 │ Shared fixtures for the       │
-  │             │        │ module test suites            │
-  │  asm-bench  │    455 │ JMH benchmarks against the    │
-  │             │        │ previous release              │
-  │  asm-       │  1,204 │ Frame computation and the     │
-  │ verify      │        │ bytecode verifier             │
-  │  asm-attrs  │    388 │ Custom attribute prototypes   │
- modules.md  Modules                                    72%
+  │ Module          │  Java │ Description                │
+  │                 │  main │                            │
+  ├─────────────────┼───────┼────────────────────────────┤
+  │                 │       │ GeneratorAdapter,          │
+  │                 │       │ LocalVariablesSorter,      │
+  │                 │       │ remappers                  │
+  │  asm-util       │ 2,045 │ Textifier,                 │
+  │                 │       │ CheckClassAdapter and the  │
+  │                 │       │ trace visitors             │
+  │  asm-core       │ 9,812 │ ClassReader, ClassWriter   │
+  │                 │       │ and the visitor interfaces │
+  │  asm-test       │   610 │ Shared fixtures for the    │
+  │                 │       │ module test suites         │
+  │  asm-bench      │   455 │ JMH benchmarks against the │
+  │                 │       │ previous release           │
+ modules.md  Modules                                    65%

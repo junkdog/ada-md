@@ -138,27 +138,31 @@ pub fn wrap(
     w
 }
 
-/// The widths `runs` can wrap to: `(min, max)`. `min` is the widest unbreakable word and `max`
+/// The widths `runs` can wrap to: `(min, whole, max)`. `min` is the widest unbreakable word,
+/// `whole` the widest word between spaces (which may also break after `-` and `/`), and `max`
 /// the widest line when nothing wraps. Agrees with [`wrap`]: at `avail >= min` no word is
-/// hard-broken, and at `avail >= max` no line wraps.
-pub fn measure(runs: &[Run], doc: &Doc, glyphs: &Glyphs) -> (u16, u16) {
+/// hard-broken, at `avail >= whole` every word fits a line of its own unbroken, and at
+/// `avail >= max` no line wraps.
+pub fn measure(runs: &[Run], doc: &Doc, glyphs: &Glyphs) -> (u16, u16, u16) {
     let mut w = Wrapped::default();
     flatten(runs, StyleKey::Text, doc, glyphs, &mut w);
-    let (mut min, mut max, mut line) = (0u16, 0u16, 0u16);
+    let (mut min, mut whole, mut max, mut line, mut glued) = (0u16, 0u16, 0u16, 0u16, 0u16);
     let (mut started, mut pending) = (false, false);
     tokenize(&w.buf, |tok| match tok {
-        Tok::Space { .. } => pending = started,
-        Tok::Newline => (line, started, pending) = (0, false, false),
+        Tok::Space { .. } => (pending, glued) = (started, 0),
+        Tok::Newline => (line, glued, started, pending) = (0, 0, false, false),
         Tok::Word { width, .. } => {
             line = line
                 .saturating_add(u16::from(pending))
                 .saturating_add(width);
+            glued = glued.saturating_add(width);
             (started, pending) = (true, false);
             min = min.max(width);
+            whole = whole.max(glued);
             max = max.max(line);
         }
     });
-    (min, max)
+    (min, whole, max)
 }
 
 /// The text of a search unit made of `runs`: the bodies [`wrap`] gives them, in order.
@@ -553,16 +557,19 @@ fn pack(w: &mut Wrapped, avail: u16) {
                     if !p.is_empty() {
                         p.flush();
                     }
-                    let word = &w.buf[start as usize..end as usize];
-                    for (i, c) in word.char_indices() {
-                        let s = start + i as u32;
-                        let e = s + c.len_utf8() as u32;
-                        // `text_width`, not `c.width()`: a pad is a column wide
-                        let cw = text_width(&w.buf[s as usize..e as usize]) as u16;
-                        if p.line.width + cw > avail && !p.is_empty() {
+                    let mut at = start;
+                    while at < end {
+                        let rest = &w.buf[at as usize..end as usize];
+                        let len = hard_cut(rest, avail);
+                        for (i, c) in rest[..len].char_indices() {
+                            let s = at + i as u32;
+                            let e = s + c.len_utf8() as u32;
+                            p.add(s, e, text_width(&w.buf[s as usize..e as usize]) as u16);
+                        }
+                        at += len as u32;
+                        if at < end {
                             p.flush();
                         }
-                        p.add(s, e, cw);
                     }
                 }
                 pending = None;
@@ -572,6 +579,32 @@ fn pack(w: &mut Wrapped, avail: u16) {
     if !p.is_empty() || p.lines.is_empty() {
         p.flush();
     }
+}
+
+/// The bytes of `word` that go on a line of `avail` columns: all of it when it fits, otherwise
+/// as many characters as fit (one at least), cut back to the last point that reads as a break
+/// when that keeps at least half the line (FEAT-015): after a `.`, `_` or `:`, and before a
+/// capital that follows a lowercase letter or a digit. Scans no further than the line, so a
+/// long word is cut in linear time.
+fn hard_cut(word: &str, avail: u16) -> usize {
+    let (mut used, mut soft, mut prev) = (0u16, None, None);
+    for (i, c) in word.char_indices() {
+        // `text_width`, not `c.width()`: a pad is a column wide
+        let cw = text_width(&word[i..i + c.len_utf8()]) as u16;
+        if used.saturating_add(cw) > avail && i > 0 {
+            return soft.unwrap_or(i);
+        }
+        let breaks = prev.is_some_and(|p: char| {
+            (matches!(p, '.' | '_' | ':') && !matches!(c, '.' | '_' | ':'))
+                || ((p.is_lowercase() || p.is_ascii_digit()) && c.is_uppercase())
+        });
+        if breaks && used >= avail.div_ceil(2) {
+            soft = Some(i);
+        }
+        used = used.saturating_add(cw);
+        prev = Some(c);
+    }
+    word.len()
 }
 
 #[cfg(test)]
@@ -638,6 +671,34 @@ mod tests {
     #[test]
     fn long_words_are_hard_broken() {
         assert_eq!(lines("x abcdefghij y", 4), ["x", "abcd", "efgh", "ij y"]);
+    }
+
+    /// FEAT-015: a hard break goes back to a `.`, `_`, `:` or a camelCase hump when that keeps at
+    /// least half the line.
+    #[test]
+    fn hard_breaks_cut_where_a_word_reads_as_parts() {
+        assert_eq!(
+            lines("com.example.billing.InvoiceReconciliationService", 26),
+            ["com.example.billing.", "InvoiceReconciliation", "Service"]
+        );
+        assert_eq!(
+            lines("AbstractSingletonProxyFactoryBean", 26),
+            ["AbstractSingletonProxy", "FactoryBean"]
+        );
+        assert_eq!(
+            lines("MAX_POOL_SIZE_LIMIT", 12),
+            ["MAX_POOL_", "SIZE_LIMIT"]
+        );
+        assert_eq!(
+            lines("std::collections::HashMap", 20),
+            ["std::collections::", "HashMap"]
+        );
+        assert_eq!(lines("v2Beta", 4), ["v2", "Beta"]);
+        // a run of separators stays together
+        assert_eq!(lines("aaaa..bbbb", 7), ["aaaa..", "bbbb"]);
+        // the last point is under half the line: cut where it fills up
+        assert_eq!(lines("a.bcdefghij", 6), ["a.bcde", "fghij"]);
+        assert_eq!(lines("aBcdefghij", 6), ["aBcdef", "ghij"]);
     }
 
     #[test]

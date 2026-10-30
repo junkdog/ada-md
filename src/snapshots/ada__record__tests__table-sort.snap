@@ -6,18 +6,18 @@ expression: frames.last().unwrap()
                             ╭─ sort by 3/5 ─────────────────╮
   The ported modules, with t│ › ▏                           │
                             │ Suite  ▲ ascending            │
-  ╭───────────────┬─────────│ Suite  ▼ descending           │──────────────────────────╮
-  │ Module        │ Java mai│ Cases  ▲ ascending            │                          │
-  ├───────────────┼─────────│ Cases  ▼ descending · current │──────────────────────────┤
-  │  asm-commons  │     1,87│ source order                  │ocalVariablesSorter,      │
-  │               │         ╰─────────────── ← table 2/2 → ─╯                          │
-  │  asm-util     │     2,045 │ Textifier, CheckClassAdapter and the trace visitors    │
-  │  asm-         │     2,379 │ Control-flow and data-flow analysis over method bodies │
-  │ analysis      │           │                                                        │
-  │  asm-tree     │     4,120 │ The tree API: ClassNode, MethodNode, InsnList and      │
-  │               │           │ friends                                                │
-  │  asm-core     │     9,812 │ ClassReader, ClassWriter and the visitor interfaces    │
-  ╰───────────────┴───────────┴────────────────────────────────────────────────────────╯
+  ╭────────────────┬────────│ Suite  ▼ descending           │──────────────────────────╮
+  │ Module         │     Jav│ Cases  ▲ ascending            │                          │
+  │                │     mai│ Cases  ▼ descending · current │                          │
+  ├────────────────┼────────│ source order                  │──────────────────────────┤
+  │  asm-commons   │    1,87╰─────────────── ← table 2/2 → ─╯ocalVariablesSorter,      │
+  │                │          │ remappers                                              │
+  │  asm-util      │    2,045 │ Textifier, CheckClassAdapter and the trace visitors    │
+  │  asm-analysis  │    2,379 │ Control-flow and data-flow analysis over method bodies │
+  │  asm-tree      │    4,120 │ The tree API: ClassNode, MethodNode, InsnList and      │
+  │                │          │ friends                                                │
+  │  asm-core      │    9,812 │ ClassReader, ClassWriter and the visitor interfaces    │
+  ╰────────────────┴──────────┴────────────────────────────────────────────────────────╯
 
   And the tests that cover them.
 

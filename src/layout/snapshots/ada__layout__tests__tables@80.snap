@@ -15,17 +15,19 @@ expression: render(&l)
      │
     9│  A wide table that cannot fit narrow terminals:
      │
-     │  ╭───────────┬────────┬─────────────┬────────────┬──────────────────────────╮
-   11│  │ Module    │ Java   │ Tests       │ oxasm      │ Description              │
-   11│  │           │ main   │             │ crate      │                          │
-     │  ├───────────┼────────┼─────────────┼────────────┼──────────────────────────┤
-   13│  │ asm-      │ 2,379  │ 9 classes · │ oxasm-     │ Control-flow and data-   │
-   13│  │ analysis  │        │ 3.0k lines  │ analysis   │ flow analysis over       │
-   13│  │           │        │             │            │ method bodies            │
-   14│  │ asm-tree  │ 4,120  │ 14 classes  │ oxasm-tree │ The tree API: ClassNode, │
-   14│  │           │        │ · 5.1k      │            │ MethodNode, InsnList and │
-   14│  │           │        │ lines       │            │ friends                  │
-     │  ╰───────────┴────────┴─────────────┴────────────┴──────────────────────────╯
+     │  ╭──────────────┬────────┬───────────┬────────────────┬─────────────────────╮
+   11│  │ Module       │ Java   │ Tests     │ oxasm crate    │ Description         │
+   11│  │              │ main   │           │                │                     │
+     │  ├──────────────┼────────┼───────────┼────────────────┼─────────────────────┤
+   13│  │ asm-analysis │ 2,379  │ 9 classes │ oxasm-analysis │ Control-flow and    │
+   13│  │              │        │ · 3.0k    │                │ data-flow analysis  │
+   13│  │              │        │ lines     │                │ over method bodies  │
+   14│  │ asm-tree     │ 4,120  │ 14        │ oxasm-tree     │ The tree API:       │
+   14│  │              │        │ classes · │                │ ClassNode,          │
+   14│  │              │        │ 5.1k      │                │ MethodNode,         │
+   14│  │              │        │ lines     │                │ InsnList and        │
+   14│  │              │        │           │                │ friends             │
+     │  ╰──────────────┴────────┴───────────┴────────────────┴─────────────────────╯
      │
      │  ╭─────────────╮
    16│  │ only header │
