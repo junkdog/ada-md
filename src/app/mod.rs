@@ -6,6 +6,7 @@ mod effects;
 mod find;
 mod handoff;
 mod imaging;
+mod input;
 mod keymap;
 mod load;
 mod nav;
@@ -38,6 +39,7 @@ use crate::theme::{Glyphs, Theme};
 pub use effects::{Effects, Head, cut_to_head, editor_command, load_doc, load_doc_head, osc52};
 pub use find::{Listing, Outline, OutlineEntry, Prompt, Search};
 pub use imaging::{ImageFile, ImageView};
+pub use input::{Cursor, Input};
 pub use keymap::{Action, Bindings, Key, KeySeq, Keymap};
 pub use load::{Prepare, Prepared, prepare};
 pub use nav::LinkState;
@@ -156,6 +158,7 @@ pub enum Msg {
     OpenLinks,
     OutlineFilter {
         text: String,
+        cursor: Cursor,
     },
     OutlineMove {
         by: i32,
@@ -163,9 +166,10 @@ pub enum Msg {
     OutlinePick,
     OutlineClose,
     SearchOpen,
-    /// The whole pattern typed so far.
+    /// The whole pattern typed so far, and where the cursor is in it.
     SearchInput {
         pattern: String,
+        cursor: Cursor,
     },
     SearchSubmit,
     SearchCancel,
@@ -1483,8 +1487,8 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.open_outline(Listing::Themes)
         }
         Msg::ThemesTone { dir } => state.themes_tone(dir),
-        Msg::OutlineFilter { text } => {
-            state.outline_filter(text);
+        Msg::OutlineFilter { text, cursor } => {
+            state.outline_filter(Input::new(text, cursor));
             state.preview_theme()
         }
         Msg::OutlineMove { by } => {
@@ -1497,8 +1501,8 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Cmd> {
             state.status = None;
             state.search_open()
         }
-        Msg::SearchInput { pattern } => {
-            state.search_input(pattern);
+        Msg::SearchInput { pattern, cursor } => {
+            state.search_input(Input::new(pattern, cursor));
             state.visible_jobs()
         }
         Msg::SearchSubmit => {
@@ -2264,6 +2268,7 @@ mod tests {
             &mut state,
             Msg::OutlineFilter {
                 text: format!("r{link}x"),
+                cursor: Cursor::END,
             },
         );
         update(&mut state, Msg::OutlinePick);
@@ -2329,7 +2334,13 @@ mod tests {
         // a heading picked from the outline
         update(&mut state, Msg::OpenOutline);
         let text = "later".to_owned();
-        update(&mut state, Msg::OutlineFilter { text });
+        update(
+            &mut state,
+            Msg::OutlineFilter {
+                text,
+                cursor: Cursor::END,
+            },
+        );
         update(&mut state, Msg::OutlinePick);
         assert_eq!(marked(&state), Some((later, later)));
 
@@ -2492,6 +2503,7 @@ mod tests {
             state,
             Msg::SearchInput {
                 pattern: pattern.into(),
+                cursor: Cursor::END,
             },
         );
     }
@@ -2515,6 +2527,7 @@ mod tests {
             &mut state,
             Msg::SearchInput {
                 pattern: "paragraph 50".into(),
+                cursor: Cursor::END,
             },
         );
         assert_eq!(counter(&state), "1/1");
@@ -2634,6 +2647,7 @@ mod tests {
             &mut state,
             Msg::OutlineFilter {
                 text: "heading 4".into(),
+                cursor: Cursor::END,
             },
         );
         assert_eq!(state.outline_entries().len(), 15);
@@ -2643,6 +2657,7 @@ mod tests {
             &mut state,
             Msg::OutlineFilter {
                 text: "heading 34".into(),
+                cursor: Cursor::END,
             },
         );
         assert_eq!(
@@ -2692,6 +2707,7 @@ mod tests {
             &mut state,
             Msg::OutlineFilter {
                 text: "mocha".into(),
+                cursor: Cursor::END,
             },
         );
         assert_eq!(name(&state), "catppuccin-mocha");
@@ -2699,6 +2715,7 @@ mod tests {
             &mut state,
             Msg::OutlineFilter {
                 text: "nope".into(),
+                cursor: Cursor::END,
             },
         );
         assert_eq!(name(&state), dark);
@@ -2752,6 +2769,7 @@ mod tests {
             &mut state,
             Msg::OutlineFilter {
                 text: "moon".into(),
+                cursor: Cursor::END,
             },
         );
         assert_eq!(name(&state), "tokyonight-moon");
@@ -2759,6 +2777,7 @@ mod tests {
             &mut state,
             Msg::OutlineFilter {
                 text: String::new(),
+                cursor: Cursor::END,
             },
         );
         update(&mut state, Msg::OutlineMove { by: 2 });
@@ -2783,7 +2802,13 @@ mod tests {
         );
 
         // the filter stays, and `Esc` still puts the old theme back
-        update(&mut state, Msg::OutlineFilter { text: "cat".into() });
+        update(
+            &mut state,
+            Msg::OutlineFilter {
+                text: "cat".into(),
+                cursor: Cursor::END,
+            },
+        );
         assert_eq!(name(&state), "catppuccin-latte");
         assert_eq!(tone(&mut state, Dir::Prev), "catppuccin-mocha");
         assert_eq!(listed(&state).len(), 3);
@@ -2814,6 +2839,7 @@ mod tests {
             &mut state,
             Msg::OutlineFilter {
                 text: "later".into(),
+                cursor: Cursor::END,
             },
         );
         assert_eq!(state.outline_entries().len(), 1);
@@ -2821,6 +2847,7 @@ mod tests {
             &mut state,
             Msg::OutlineFilter {
                 text: String::new(),
+                cursor: Cursor::END,
             },
         );
         update(&mut state, Msg::OutlineMove { by: 3 });

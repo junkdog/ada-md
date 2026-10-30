@@ -14,7 +14,7 @@ use crate::grid::Grid;
 use crate::style::{Color, Modifier, Style};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{Document, ImageView, Row, State};
+use crate::app::{Document, ImageView, Input, Row, State};
 use crate::images::{self, Entry};
 use crate::layout::wrap::cut;
 use crate::layout::{Layout, RowKind};
@@ -394,8 +394,8 @@ fn status_bar(buf: &mut Grid, area: Rect, state: &State) {
 
     if let Some(prompt) = &state.prompt {
         let room = usize::from(pos_x - area.x);
-        let mut pieces = vec![(format!("/{}", prompt.input), theme.style(StyleKey::Prompt))];
-        pieces.push(("▏".to_owned(), theme.style(StyleKey::Prompt)));
+        let input = field(&prompt.input, room.saturating_sub(1));
+        let mut pieces = vec![(format!("/{input}"), theme.style(StyleKey::Prompt))];
         if let Some(e) = &prompt.error {
             pieces.push((format!("  {e}"), theme.style(StyleKey::PromptError)));
         }
@@ -543,6 +543,13 @@ pub fn heading_path(doc: &Document, top: u32) -> Vec<&str> {
 }
 
 /// Keep the end of `s`, which is the interesting part of a path, within `max` columns.
+/// A text field with its cursor drawn as `▏`, in `room` columns: when the cursor would pass the
+/// right edge, the start gives way to an `…` (FEAT-018). Past the cursor, the caller cuts.
+fn field(input: &Input, room: usize) -> String {
+    let (before, after) = input.split();
+    format!("{}▏{after}", elide_start(before, room.saturating_sub(1)))
+}
+
 fn elide_start(s: &str, max: usize) -> String {
     if s.width() <= max {
         return s.to_owned();
@@ -717,5 +724,16 @@ mod tests {
         assert_eq!(around(80), "../30-resources/ratatui/|README|.md");
         assert_eq!(around(16), "…tatui/|README|.md");
         assert_eq!(around(4), "|REA…|");
+    }
+
+    #[test]
+    fn a_long_field_keeps_its_cursor_in_view() {
+        let at = |cursor| Input::new("abcdefgh".into(), crate::app::Cursor(cursor));
+        assert_eq!(field(&at(3), 20), "abc▏defgh");
+        // the end in 6 columns: the start gives way
+        assert_eq!(field(&at(8), 6), "…efgh▏");
+        // the start: the rest is the caller's to cut
+        assert_eq!(field(&at(0), 6), "▏abcdefgh");
+        assert_eq!(field(&at(5), 4), "…de▏fgh");
     }
 }

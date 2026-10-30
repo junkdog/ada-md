@@ -171,11 +171,11 @@ Press `?` in ada for the keys. See `ada --help` for every option.
 | `o` | the outline: type to filter, `Enter` to jump |
 | `l` | the links: type to filter, `Enter` to focus one |
 | `t` | tables: auto, grid, records |
-| `s` | sort a table on screen by a column: ascending, descending, source order; `←` `→` pick another table |
+| `s` | sort a table on screen by a column: ascending, descending, source order; `C-←` `C-→` pick another table |
 | `w`, `←` `→` | wrap code, or scroll it sideways |
 | `#` | show or hide line numbers, for code files or for markdown, whichever is shown |
 | `B` | the theme's background, or the terminal's |
-| `T` | pick a theme, previewing each: `Enter` keeps it, `Esc` goes back; `←` `→` list the dark or the light themes |
+| `T` | pick a theme, previewing each: `Enter` keeps it, `Esc` goes back; `C-←` `C-→` list the dark or the light themes |
 | `r` | read the file again |
 | `e` | edit in `$VISUAL` or `$EDITOR` at the current line |
 | `y` | copy the selection, or else the focused link, or the code block on screen |
@@ -185,10 +185,12 @@ Press `?` in ada for the keys. See `ada --help` for every option.
 | `?` | help |
 | `q` `Esc` | quit; `Esc` clears a selection first, and `C-c` always quits |
 
-In the search prompt, `Enter` keeps the matches, `Esc` puts the previous search back, `C-u`
-and `C-w` edit, and an empty pattern repeats the last search. Search is smart-case: it ignores case
-unless the pattern has an uppercase letter. So are the filters of the outline, links, themes and
-columns lists.
+In the search prompt, `Enter` keeps the matches, `Esc` puts the previous search back, and an empty
+pattern repeats the last search. `↑` `↓` walk the searches made this session. In the prompt and the
+lists' filters, `←` `→` move the cursor, `C-a` `C-e` jump to either end (`Home` `End` too, in the
+prompt), `BS` and `Del` delete before and under it, `C-u` deletes all before it and `C-w` the word
+before it. Search is smart-case: it ignores case unless the pattern has an uppercase letter. So are
+the filters of the outline, links, themes and columns lists.
 
 Following a link to a heading, a footnote or a line, or picking a heading in the outline, tints the rows it
 landed on until the next key, so they stand out even where the end of the document stops the scroll short.
@@ -284,7 +286,7 @@ the terminal's, since a pager or a preview pane shows a background only as far a
 
 Your own go in `~/.config/ada/themes/NAME.toml` and are picked with `--theme NAME` or `theme = "NAME"`; `T`
 lists all of them, previewing each as it's selected: `Enter` keeps it, `Esc` goes back. It lists the dark themes or the
-light ones, whichever the current theme is, and `←` `→` switch, landing on the counterpart (`gruvbox-dark` ↔ `gruvbox-light`). A theme can start from another and change only some of it:
+light ones, whichever the current theme is, and `C-←` `C-→` switch, landing on the counterpart (`gruvbox-dark` ↔ `gruvbox-light`). A theme can start from another and change only some of it:
 
 ```toml
 extends = "gruvbox-dark"
@@ -306,7 +308,7 @@ are reported with the file, line and column.
 ## Tables and diagrams
 
 - **Sort by any column.** `s` lists the columns of a table on screen, ascending and descending:
-  type to filter, `Enter` sorts, `←` `→` pick another table. Numbers, money, percentages and
+  type to filter, `Enter` sorts, `C-←` `C-→` pick another table. Numbers, money, percentages and
   durations sort by value (`€85` before `€310`, `1h 30m` after `80m`), other text naturally, and
   empty cells go last. Each table keeps its order through resizes, navigation and reloads.
 - **Sized like a browser's.** Columns follow their content, and a table may grow past

@@ -1,7 +1,7 @@
 //! Keys → semantic messages (plan §6). Pure: the only state is a pending prefix key for the
-//! two-key bindings like `]]` and `]c`, and the mode with what has been typed into the search
-//! prompt or the outline filter. Recordings log the messages, not the keys, so they survive keymap
-//! changes.
+//! two-key bindings like `]]` and `]c`, the mode with what has been typed into the search prompt
+//! or the outline filter and where its cursor is, and the searches made, which `↑`/`↓` walk in the
+//! prompt. Recordings log the messages, not the keys, so they survive keymap changes.
 //!
 //! The keymap runs on the input thread, so it tracks the mode itself: `/` opens the prompt here
 //! and now, and the keys typed right after it can't race the main loop. The one mode it can't
@@ -24,7 +24,8 @@ use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 
-use super::{CODE_X_STEP, Dir, Msg, ScrollBy};
+use super::{CODE_X_STEP, Dir, Input, Msg, ScrollBy};
+use crate::search;
 
 /// Rows `PgUp` / `PgDn` move the outline selection.
 const OUTLINE_PAGE: i32 = 10;
@@ -32,6 +33,8 @@ const OUTLINE_PAGE: i32 = 10;
 const HELP_PAGE: i32 = 10;
 /// Rows a notch of the wheel scrolls the document or the help; in a list it moves one entry.
 const WHEEL_ROWS: i32 = 3;
+/// Searches the history keeps (FEAT-017).
+const HISTORY: usize = 100;
 /// Presses on one cell this close together count as a double or triple click.
 pub const MULTI_CLICK: Duration = Duration::from_millis(500);
 
@@ -440,15 +443,15 @@ impl Bindings {
 enum Mode {
     #[default]
     Normal,
-    /// The search prompt, with the pattern typed so far.
-    Search(String),
+    /// The search prompt.
+    Search(SearchPrompt),
     /// The outline popup, of headings, links or themes, with its filter.
-    Outline(String),
+    Outline(Input),
     Help,
-    /// The outline popup listing a table's columns, which `←`/`→` trade for another table's.
-    Sort(String),
-    /// The outline popup listing the themes, which `←`/`→` trade for the dark or light ones.
-    Themes(String),
+    /// The outline popup listing a table's columns, which `Ctrl-←`/`→` trade for another table's.
+    Sort(Input),
+    /// The outline popup listing the themes, which `Ctrl-←`/`→` trade for the dark or light ones.
+    Themes(Input),
     /// The box asking whether to save the config: `Enter`/`y` or `Esc`/`n`/`q`.
     Confirm,
     /// The settings popup: moving through its rows, changing the focused one, and the ways out.
@@ -471,27 +474,80 @@ pub struct Keymap {
     /// The last press: its cell, when, and its count, which presses on the same cell in quick
     /// succession raise.
     last_press: Option<((u16, u16), Instant, u8)>,
+    /// The searches made, oldest first, each once.
+    history: Vec<String>,
 }
 
-/// Edit `text` with a prompt key. `None` when the key isn't an edit.
-fn edit(text: &mut String, key: &KeyEvent) -> Option<()> {
+/// The search prompt: the pattern typed so far, and the walk through the history.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct SearchPrompt {
+    input: Input,
+    walk: Option<Walk>,
+}
+
+/// `↑`/`↓` in the prompt (FEAT-017): the search shown, and what was typed before the first `↑`,
+/// which `↓` past the newest brings back.
+#[derive(Debug, PartialEq, Eq)]
+struct Walk {
+    at: usize,
+    draft: String,
+}
+
+/// Edit a field with a key, the same in the prompt and the lists' filters (FEAT-018). `None` when
+/// the key isn't an edit; `Some(false)` when it changes nothing, as `←` at the start does.
+fn edit(input: &mut Input, key: &KeyEvent) -> Option<bool> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    match key.code {
-        KeyCode::Char('u') if ctrl => text.clear(),
-        KeyCode::Char('w') if ctrl => {
-            let trimmed = text.trim_end().len();
-            let start = text[..trimmed]
-                .rfind(char::is_whitespace)
-                .map_or(0, |i| i + 1);
-            text.truncate(start);
+    Some(match key.code {
+        KeyCode::Char('u') if ctrl => input.kill_start(),
+        KeyCode::Char('w') if ctrl => input.kill_word(),
+        KeyCode::Char('a') if ctrl => input.home(),
+        KeyCode::Char('e') if ctrl => input.end(),
+        KeyCode::Char(c) if !ctrl => {
+            input.insert(c);
+            true
         }
-        KeyCode::Char(c) if !ctrl => text.push(c),
-        KeyCode::Backspace => {
-            text.pop();
-        }
+        KeyCode::Backspace => input.backspace(),
+        KeyCode::Delete => input.delete(),
+        KeyCode::Left if !ctrl => input.left(),
+        KeyCode::Right if !ctrl => input.right(),
         _ => return None,
+    })
+}
+
+/// A submitted search joins the end of the history (FEAT-017): not an empty one, which repeats
+/// the last search, nor one that doesn't compile; a repeat moves to the end.
+fn remember(history: &mut Vec<String>, pattern: &str) {
+    if pattern.is_empty() || search::compile(pattern).is_err() {
+        return;
     }
-    Some(())
+    history.retain(|p| p != pattern);
+    if history.len() == HISTORY {
+        history.remove(0);
+    }
+    history.push(pattern.to_owned());
+}
+
+/// `↑` (`newer` false) or `↓` in the prompt: the next older or newer search, and past the newest,
+/// what was typed before the walk began, as shells and vim do. Whether the text changed.
+fn walk(history: &[String], prompt: &mut SearchPrompt, newer: bool) -> bool {
+    let at = match (prompt.walk.as_ref().map(|w| w.at), newer) {
+        (None, false) if !history.is_empty() => history.len() - 1,
+        (Some(at), false) if at > 0 => at - 1,
+        (Some(at), true) if at + 1 < history.len() => at + 1,
+        (Some(_), true) => {
+            let draft = prompt.walk.take().map(|w| w.draft).unwrap_or_default();
+            prompt.input.set(&draft);
+            return true;
+        }
+        _ => return false,
+    };
+    let draft = match prompt.walk.take() {
+        Some(walk) => walk.draft,
+        None => prompt.input.text().to_owned(),
+    };
+    prompt.walk = Some(Walk { at, draft });
+    prompt.input.set(&history[at]);
+    true
 }
 
 impl Keymap {
@@ -510,47 +566,51 @@ impl Keymap {
         let themes = matches!(self.mode, Mode::Themes(_));
         match &mut self.mode {
             Mode::Normal => self.normal(&key),
-            Mode::Search(text) => {
+            Mode::Search(prompt) => {
                 let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-                match key.code {
+                let changed = match key.code {
                     KeyCode::Enter => {
+                        remember(&mut self.history, prompt.input.text());
                         self.mode = Mode::Normal;
-                        Some(Msg::SearchSubmit)
+                        return Some(Msg::SearchSubmit);
                     }
                     KeyCode::Esc => {
                         self.mode = Mode::Normal;
-                        Some(Msg::SearchCancel)
+                        return Some(Msg::SearchCancel);
                     }
                     KeyCode::Char('c') if ctrl => {
                         self.mode = Mode::Normal;
-                        Some(Msg::SearchCancel)
+                        return Some(Msg::SearchCancel);
                     }
                     // Backspace on an empty prompt closes it, like vim.
-                    KeyCode::Backspace if text.is_empty() => {
+                    KeyCode::Backspace if prompt.input.is_empty() => {
                         self.mode = Mode::Normal;
-                        Some(Msg::SearchCancel)
+                        return Some(Msg::SearchCancel);
                     }
-                    _ => {
-                        edit(text, &key)?;
-                        Some(Msg::SearchInput {
-                            pattern: text.clone(),
-                        })
-                    }
-                }
+                    KeyCode::Up => walk(&self.history, prompt, false),
+                    KeyCode::Down => walk(&self.history, prompt, true),
+                    KeyCode::Home => prompt.input.home(),
+                    KeyCode::End => prompt.input.end(),
+                    _ => edit(&mut prompt.input, &key)?,
+                };
+                changed.then(|| Msg::SearchInput {
+                    pattern: prompt.input.text().to_owned(),
+                    cursor: prompt.input.cursor(),
+                })
             }
-            Mode::Outline(text) | Mode::Sort(text) | Mode::Themes(text) => {
+            Mode::Outline(input) | Mode::Sort(input) | Mode::Themes(input) => {
                 let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
                 let by = |by| Some(Msg::OutlineMove { by });
                 // another table's columns: the filter starts over
-                let table = |text: &mut String, dir| {
-                    text.clear();
+                let table = |input: &mut Input, dir| {
+                    input.clear();
                     Some(Msg::SortTable { dir })
                 };
                 match key.code {
-                    KeyCode::Left if sorting => table(text, Dir::Prev),
-                    KeyCode::Right if sorting => table(text, Dir::Next),
-                    KeyCode::Left if themes => Some(Msg::ThemesTone { dir: Dir::Prev }),
-                    KeyCode::Right if themes => Some(Msg::ThemesTone { dir: Dir::Next }),
+                    KeyCode::Left if ctrl && sorting => table(input, Dir::Prev),
+                    KeyCode::Right if ctrl && sorting => table(input, Dir::Next),
+                    KeyCode::Left if ctrl && themes => Some(Msg::ThemesTone { dir: Dir::Prev }),
+                    KeyCode::Right if ctrl && themes => Some(Msg::ThemesTone { dir: Dir::Next }),
                     KeyCode::Enter => {
                         self.close_list();
                         Some(Msg::OutlinePick)
@@ -571,10 +631,10 @@ impl Keymap {
                     KeyCode::PageDown => by(OUTLINE_PAGE),
                     KeyCode::Home => by(i32::MIN / 2),
                     KeyCode::End => by(i32::MAX / 2),
-                    _ => {
-                        edit(text, &key)?;
-                        Some(Msg::OutlineFilter { text: text.clone() })
-                    }
+                    _ => edit(input, &key)?.then(|| Msg::OutlineFilter {
+                        text: input.text().to_owned(),
+                        cursor: input.cursor(),
+                    }),
                 }
             }
             // The help scrolls with the usual keys; any other key closes it.
@@ -663,7 +723,7 @@ impl Keymap {
     /// list, which then takes the keys until it closes.
     pub fn theme_list(&mut self, open: bool) {
         if open && self.mode == Mode::Settings {
-            self.mode = Mode::Themes(String::new());
+            self.mode = Mode::Themes(Input::default());
             self.over_settings = true;
         }
     }
@@ -785,12 +845,12 @@ impl Keymap {
         };
         match action {
             Action::Outline | Action::Links => {
-                self.mode = Mode::Outline(String::new());
+                self.mode = Mode::Outline(Input::default());
             }
-            Action::Search => self.mode = Mode::Search(String::new()),
+            Action::Search => self.mode = Mode::Search(SearchPrompt::default()),
             Action::Help => self.mode = Mode::Help,
-            Action::Sort => self.mode = Mode::Sort(String::new()),
-            Action::Theme => self.mode = Mode::Themes(String::new()),
+            Action::Sort => self.mode = Mode::Sort(Input::default()),
+            Action::Theme => self.mode = Mode::Themes(Input::default()),
             Action::SaveConfig => self.mode = Mode::Confirm,
             Action::Settings => self.mode = Mode::Settings,
             // `Esc` clears a selection before it quits
@@ -804,6 +864,7 @@ impl Keymap {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Cursor;
 
     fn press(km: &mut Keymap, code: KeyCode) -> Option<Msg> {
         km.map(KeyEvent::new(code, KeyModifiers::NONE))
@@ -813,6 +874,30 @@ mod tests {
         text.chars()
             .filter_map(|c| press(km, KeyCode::Char(c)))
             .collect()
+    }
+
+    fn ctrl(km: &mut Keymap, code: KeyCode) -> Option<Msg> {
+        km.map(KeyEvent::new(code, KeyModifiers::CONTROL))
+    }
+
+    /// `text` with the cursor at the `‸`, or at the end without one.
+    fn split(text: &str) -> (String, Cursor) {
+        match text.find('‸') {
+            Some(i) => (text.replacen('‸', "", 1), Cursor(i as u32)),
+            None => (text.to_owned(), Cursor(text.len() as u32)),
+        }
+    }
+
+    /// What the prompt sends: the pattern, and the cursor as [`split`] has it.
+    fn input(text: &str) -> Msg {
+        let (pattern, cursor) = split(text);
+        Msg::SearchInput { pattern, cursor }
+    }
+
+    /// What a list's filter sends.
+    fn filter(text: &str) -> Msg {
+        let (text, cursor) = split(text);
+        Msg::OutlineFilter { text, cursor }
     }
 
     #[test]
@@ -983,12 +1068,7 @@ mod tests {
         // the search prompt stays open over the document's scroll
         press(&mut km, KeyCode::Char('/'));
         assert_eq!(down(&mut km), rows(3));
-        assert_eq!(
-            typed(&mut km, "a"),
-            [Msg::SearchInput {
-                pattern: "a".into()
-            }]
-        );
+        assert_eq!(typed(&mut km, "a"), [input("a")]);
         press(&mut km, KeyCode::Esc);
 
         press(&mut km, KeyCode::Char('o'));
@@ -1171,12 +1251,9 @@ mod tests {
         for out in [KeyCode::Enter, KeyCode::Esc] {
             press(&mut km, KeyCode::Enter);
             km.theme_list(true);
+            assert_eq!(typed(&mut km, "s"), [filter("s")]);
             assert_eq!(
-                typed(&mut km, "s"),
-                [Msg::OutlineFilter { text: "s".into() }]
-            );
-            assert_eq!(
-                press(&mut km, KeyCode::Right),
+                ctrl(&mut km, KeyCode::Right),
                 Some(Msg::ThemesTone { dir: Dir::Next })
             );
             press(&mut km, out);
@@ -1214,7 +1291,6 @@ mod tests {
     fn the_search_prompt_takes_every_key() {
         let mut km = Keymap::default();
         assert_eq!(press(&mut km, KeyCode::Char('/')), Some(Msg::SearchOpen));
-        let input = |p: &str| Msg::SearchInput { pattern: p.into() };
         assert_eq!(
             typed(&mut km, "q n"),
             [input("q"), input("q "), input("q n")]
@@ -1235,16 +1311,118 @@ mod tests {
     }
 
     #[test]
+    fn the_prompt_cursor_moves_and_edits_where_it_stands() {
+        let mut km = Keymap::default();
+        press(&mut km, KeyCode::Char('/'));
+        typed(&mut km, "abc");
+        assert_eq!(press(&mut km, KeyCode::Left), Some(input("ab‸c")));
+        assert_eq!(press(&mut km, KeyCode::Left), Some(input("a‸bc")));
+        assert_eq!(typed(&mut km, "x"), [input("ax‸bc")]);
+        assert_eq!(press(&mut km, KeyCode::Delete), Some(input("ax‸c")));
+        assert_eq!(press(&mut km, KeyCode::Backspace), Some(input("a‸c")));
+        assert_eq!(press(&mut km, KeyCode::Home), Some(input("‸ac")));
+        assert_eq!(press(&mut km, KeyCode::Left), None, "already at the start");
+        assert_eq!(
+            press(&mut km, KeyCode::Backspace),
+            None,
+            "nothing before the cursor, and the prompt stays open"
+        );
+        assert_eq!(press(&mut km, KeyCode::Right), Some(input("a‸c")));
+        assert_eq!(press(&mut km, KeyCode::End), Some(input("ac")));
+        assert_eq!(
+            press(&mut km, KeyCode::Delete),
+            None,
+            "nothing under the end"
+        );
+        assert_eq!(ctrl(&mut km, KeyCode::Char('a')), Some(input("‸ac")));
+        assert_eq!(ctrl(&mut km, KeyCode::Char('e')), Some(input("ac")));
+        // `C-u` and `C-w` delete before the cursor
+        typed(&mut km, " de");
+        press(&mut km, KeyCode::Left);
+        assert_eq!(ctrl(&mut km, KeyCode::Char('w')), Some(input("ac ‸e")));
+        assert_eq!(ctrl(&mut km, KeyCode::Char('u')), Some(input("‸e")));
+        assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::SearchCancel));
+    }
+
+    #[test]
+    fn up_and_down_walk_the_searches_made() {
+        let mut km = Keymap::default();
+        let search = |km: &mut Keymap, pattern: &str| {
+            press(km, KeyCode::Char('/'));
+            typed(km, pattern);
+            press(km, KeyCode::Enter)
+        };
+        search(&mut km, "foo");
+        search(&mut km, "bar");
+        search(&mut km, "(");
+        assert_eq!(search(&mut km, ""), Some(Msg::SearchSubmit));
+        search(&mut km, "foo");
+        // cancelled, so not made
+        press(&mut km, KeyCode::Char('/'));
+        typed(&mut km, "baz");
+        press(&mut km, KeyCode::Esc);
+
+        press(&mut km, KeyCode::Char('/'));
+        typed(&mut km, "dr");
+        press(&mut km, KeyCode::Left);
+        // the newest first, a repeat moved to the end, a bad pattern and an empty one left out
+        assert_eq!(press(&mut km, KeyCode::Up), Some(input("foo")));
+        assert_eq!(press(&mut km, KeyCode::Up), Some(input("bar")));
+        assert_eq!(press(&mut km, KeyCode::Up), None, "the oldest");
+        assert_eq!(press(&mut km, KeyCode::Down), Some(input("foo")));
+        // past the newest, what was typed comes back, the cursor at its end
+        assert_eq!(press(&mut km, KeyCode::Down), Some(input("dr")));
+        assert_eq!(press(&mut km, KeyCode::Down), None);
+        // an edited entry is a draft no longer: the walk goes on from it
+        press(&mut km, KeyCode::Up);
+        typed(&mut km, "d");
+        assert_eq!(press(&mut km, KeyCode::Up), Some(input("bar")));
+        assert_eq!(press(&mut km, KeyCode::Enter), Some(Msg::SearchSubmit));
+
+        // a fresh prompt walks from the newest again
+        press(&mut km, KeyCode::Char('/'));
+        assert_eq!(press(&mut km, KeyCode::Up), Some(input("bar")));
+        assert_eq!(press(&mut km, KeyCode::Down), Some(input("")));
+    }
+
+    #[test]
+    fn the_history_keeps_the_latest_searches() {
+        let mut km = Keymap::default();
+        for i in 0..=HISTORY {
+            press(&mut km, KeyCode::Char('/'));
+            typed(&mut km, &i.to_string());
+            press(&mut km, KeyCode::Enter);
+        }
+        assert_eq!(km.history.len(), HISTORY);
+        assert_eq!(km.history.first().map(String::as_str), Some("1"));
+        assert_eq!(km.history.last(), Some(&HISTORY.to_string()));
+    }
+
+    #[test]
+    fn every_filter_has_the_cursor() {
+        let mut km = Keymap::default();
+        for open in ['o', 'l', 's', 'T'] {
+            press(&mut km, KeyCode::Char(open));
+            typed(&mut km, "ab");
+            assert_eq!(press(&mut km, KeyCode::Left), Some(filter("a‸b")), "{open}");
+            assert_eq!(press(&mut km, KeyCode::Delete), Some(filter("a‸")));
+            assert_eq!(press(&mut km, KeyCode::Right), None);
+            assert_eq!(ctrl(&mut km, KeyCode::Char('a')), Some(filter("‸a")));
+            assert_eq!(ctrl(&mut km, KeyCode::Char('e')), Some(filter("a")));
+            // `Home`/`End` still move the selection
+            assert_eq!(
+                press(&mut km, KeyCode::Home),
+                Some(Msg::OutlineMove { by: i32::MIN / 2 })
+            );
+            assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::OutlineClose));
+        }
+    }
+
+    #[test]
     fn the_outline_filters_and_moves() {
         let mut km = Keymap::default();
         assert_eq!(press(&mut km, KeyCode::Char('o')), Some(Msg::OpenOutline));
-        assert_eq!(
-            typed(&mut km, "jk"),
-            [
-                Msg::OutlineFilter { text: "j".into() },
-                Msg::OutlineFilter { text: "jk".into() }
-            ]
-        );
+        assert_eq!(typed(&mut km, "jk"), [filter("j"), filter("jk")]);
         assert_eq!(
             press(&mut km, KeyCode::Down),
             Some(Msg::OutlineMove { by: 1 })
@@ -1254,31 +1432,28 @@ mod tests {
 
         // the link list shares the outline's keys
         assert_eq!(press(&mut km, KeyCode::Char('l')), Some(Msg::OpenLinks));
-        assert_eq!(
-            typed(&mut km, "q"),
-            [Msg::OutlineFilter { text: "q".into() }]
-        );
+        assert_eq!(typed(&mut km, "q"), [filter("q")]);
         assert_eq!(press(&mut km, KeyCode::Enter), Some(Msg::OutlinePick));
 
-        // and so does the theme list, whose `←`/`→` list the dark or light themes
+        // and so does the theme list, whose `C-←`/`C-→` list the dark or light themes
         assert_eq!(press(&mut km, KeyCode::Char('T')), Some(Msg::OpenThemes));
         assert_eq!(
             press(&mut km, KeyCode::Down),
             Some(Msg::OutlineMove { by: 1 })
         );
         assert_eq!(
-            press(&mut km, KeyCode::Right),
+            ctrl(&mut km, KeyCode::Right),
             Some(Msg::ThemesTone { dir: Dir::Next })
         );
         assert_eq!(
-            press(&mut km, KeyCode::Left),
+            ctrl(&mut km, KeyCode::Left),
             Some(Msg::ThemesTone { dir: Dir::Prev })
         );
         assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::OutlineClose));
 
         // the outline has no use for them
         assert_eq!(press(&mut km, KeyCode::Char('o')), Some(Msg::OpenOutline));
-        assert_eq!(press(&mut km, KeyCode::Right), None);
+        assert_eq!(ctrl(&mut km, KeyCode::Right), None);
         assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::OutlineClose));
     }
 
@@ -1360,23 +1535,17 @@ mod tests {
     }
 
     #[test]
-    fn sort_lists_columns_and_trades_tables_with_left_and_right() {
+    fn sort_lists_columns_and_trades_tables_with_ctrl_left_and_right() {
         let mut km = Keymap::default();
+        assert_eq!(typed(&mut km, "sj"), [Msg::SortOpen, filter("j")]);
         assert_eq!(
-            typed(&mut km, "sj"),
-            [Msg::SortOpen, Msg::OutlineFilter { text: "j".into() }]
-        );
-        assert_eq!(
-            press(&mut km, KeyCode::Right),
+            ctrl(&mut km, KeyCode::Right),
             Some(Msg::SortTable { dir: Dir::Next })
         );
         // the filter started over with the other table
+        assert_eq!(typed(&mut km, "x"), [filter("x")]);
         assert_eq!(
-            typed(&mut km, "x"),
-            [Msg::OutlineFilter { text: "x".into() }]
-        );
-        assert_eq!(
-            press(&mut km, KeyCode::Left),
+            ctrl(&mut km, KeyCode::Left),
             Some(Msg::SortTable { dir: Dir::Prev })
         );
         assert_eq!(
@@ -1389,7 +1558,7 @@ mod tests {
         assert_eq!(press(&mut km, KeyCode::Esc), Some(Msg::Cancel));
         // the other lists leave the arrows alone
         typed(&mut km, "o");
-        assert_eq!(press(&mut km, KeyCode::Right), None);
+        assert_eq!(ctrl(&mut km, KeyCode::Right), None);
     }
 
     #[test]

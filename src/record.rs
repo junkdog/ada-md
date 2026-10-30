@@ -28,7 +28,7 @@ use anpa::{or, tuplify};
 use crossterm::event::{self, Event, KeyEventKind};
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{self, Computed, Dir, Effects, Msg, ScrollBy, Size, State};
+use crate::app::{self, Computed, Cursor, Dir, Effects, Msg, ScrollBy, Size, State};
 use crate::grid::Grid;
 use crate::images::{self, Probe, Proto};
 use crate::links::Resolved;
@@ -85,12 +85,12 @@ messages! {
     "forward" => Forward {},
     "open-outline" => OpenOutline {},
     "open-links" => OpenLinks {},
-    "outline-filter" => OutlineFilter { text },
+    "outline-filter" => OutlineFilter { text, cursor },
     "outline-move" => OutlineMove { by },
     "outline-pick" => OutlinePick {},
     "outline-close" => OutlineClose {},
     "search-open" => SearchOpen {},
-    "search-input" => SearchInput { pattern },
+    "search-input" => SearchInput { pattern, cursor },
     "search-submit" => SearchSubmit {},
     "search-cancel" => SearchCancel {},
     "search-next" => SearchNext { dir },
@@ -190,6 +190,23 @@ macro_rules! int_fields {
 }
 
 int_fields!(u8, i16, i32, u16, u32, u64);
+
+/// Left out at the end of the text, as a recording from before the cursor has it (FEAT-018).
+impl Field for Cursor {
+    fn write(&self, key: &str, line: &mut String, blobs: &mut Vec<u8>) {
+        if *self != Cursor::END {
+            self.0.write(key, line, blobs);
+        }
+    }
+
+    fn read(value: Value) -> Option<Self> {
+        u32::read(value).map(Cursor)
+    }
+
+    fn absent() -> Option<Self> {
+        Some(Cursor::END)
+    }
+}
 
 /// Computed results are never written: replay recomputes them (ADR-19).
 impl<T> Field for Computed<T> {
@@ -862,6 +879,7 @@ mod tests {
             Msg::OpenLinks,
             Msg::OutlineFilter {
                 text: "p4 \"links\"".into(),
+                cursor: Cursor(2),
             },
             Msg::OutlineMove { by: -3 },
             Msg::OutlinePick,
@@ -869,6 +887,7 @@ mod tests {
             Msg::SearchOpen,
             Msg::SearchInput {
                 pattern: "foo\\s+bar".into(),
+                cursor: Cursor::END,
             },
             Msg::SearchSubmit,
             Msg::SearchCancel,

@@ -11,7 +11,7 @@
 use std::time::{Duration, Instant};
 use std::{fs, process};
 
-use ada::app::{Cmd, Computed, Config, Dir, Msg, ScrollBy, Size, State, update};
+use ada::app::{Cmd, Computed, Config, Cursor, Dir, Msg, ScrollBy, Size, State, update};
 use ada::geom::Size as Cells;
 use ada::grid::Screen;
 use ada::layout::{self, LayoutParams, TableMode};
@@ -182,7 +182,13 @@ fn measure(theme: &Theme, text: &str) -> Measured {
     let search_key = median(|| {
         i += 1;
         let pattern = patterns[i % patterns.len()].to_owned();
-        update(&mut state, Msg::SearchInput { pattern });
+        update(
+            &mut state,
+            Msg::SearchInput {
+                pattern,
+                cursor: Cursor::END,
+            },
+        );
         terminal.draw(|g| ui::view(&state, g)).expect("draw");
     });
 

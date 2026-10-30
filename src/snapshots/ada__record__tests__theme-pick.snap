@@ -15,7 +15,7 @@ expression: frames.last().unwrap()
    untagged block       │ rose-pine                    │
                         │ rose-pine-moon               │
                         │ dracula                      │
-                        ╰─────────── ← dark · light → ─╯
+                        ╰─────── C-← dark · light C-→ ─╯
    indented code
    block
 

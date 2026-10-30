@@ -3,7 +3,7 @@
 //! through parse → layout → paint at random sizes, with the toggles and a search in between.
 //! None may panic. The real fuzzer lives in `fuzz/`.
 
-use ada::app::{Computed, Config, Dir, Effects, Msg, ScrollBy, Size, State};
+use ada::app::{Computed, Config, Cursor, Dir, Effects, Msg, ScrollBy, Size, State};
 use ada::record::{Entry, replay_headless};
 use ada::theme::Theme;
 
@@ -292,6 +292,7 @@ fn replay(rng: &mut Rng, text: &str) {
                 5 => Msg::SearchOpen,
                 6 => Msg::SearchInput {
                     pattern: "a|w".into(),
+                    cursor: Cursor::END,
                 },
                 7 => Msg::SearchSubmit,
                 8 => Msg::Scroll {

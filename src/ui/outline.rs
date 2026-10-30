@@ -6,7 +6,7 @@ use crate::grid::Grid;
 use crate::style::Modifier;
 use unicode_width::UnicodeWidthStr;
 
-use super::popup_frame;
+use super::{field, popup_frame};
 use crate::app::{Listing, OutlineEntry, State};
 use crate::theme::StyleKey;
 
@@ -84,7 +84,7 @@ pub fn draw(buf: &mut Grid, area: Rect, state: &State) {
             .and_then(|t| tables.iter().position(|&s| s == t)),
         tables.len() > 1,
     ) {
-        let hint = format!(" ← table {}/{} → ", i + 1, tables.len());
+        let hint = format!(" C-← table {}/{} C-→ ", i + 1, tables.len());
         let x = rect.right().saturating_sub(hint.width() as u16 + 2);
         if x > rect.x + 1 {
             buf.set_string(x, bottom, &hint, theme.style(StyleKey::PopupTitle));
@@ -98,11 +98,11 @@ pub fn draw(buf: &mut Grid, area: Rect, state: &State) {
         );
         let lit = |on: bool| if on { title } else { border };
         let parts = [
-            (" ← ", border),
+            (" C-← ", border),
             ("dark", lit(!outline.light)),
             (" · ", border),
             ("light", lit(outline.light)),
-            (" → ", border),
+            (" C-→ ", border),
         ];
         let width: usize = parts.iter().map(|(s, _)| s.width()).sum();
         let mut x = rect.right().saturating_sub(width as u16 + 2);
@@ -116,7 +116,7 @@ pub fn draw(buf: &mut Grid, area: Rect, state: &State) {
 
     // the filter, then as many entries as fit, keeping the selection in view
     let x = rect.x + 1;
-    let filter = format!(" › {}▏", outline.filter);
+    let filter = format!(" › {}", field(&outline.filter, inner.saturating_sub(3)));
     buf.set_stringn(x, top + 1, &filter, inner, theme.style(StyleKey::Prompt));
     let rows = usize::from(bottom - top - 2);
     if entries.is_empty() {

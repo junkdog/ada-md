@@ -7,7 +7,7 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use ada::app::{Computed, Config, Dir, Effects, Msg, ScrollBy, Size, State};
+use ada::app::{Computed, Config, Cursor, Dir, Effects, Msg, ScrollBy, Size, State};
 use ada::filetype::FileType;
 use ada::layout::{LayoutParams, LineNumbers, TableMode};
 use ada::print::{self, Options};
@@ -158,6 +158,7 @@ fn session(size: Size) -> Vec<Msg> {
         Msg::SearchOpen,
         Msg::SearchInput {
             pattern: "x|a|b|1".into(),
+            cursor: Cursor::END,
         },
         Msg::SearchSubmit,
         Msg::SearchNext { dir: Dir::Prev },

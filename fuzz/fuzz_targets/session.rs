@@ -38,7 +38,9 @@ use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use ada::app::{self, Cmd, Computed, Config, Dir, Effects, Keymap, Msg, ScrollBy, Size, State};
+use ada::app::{
+    self, Cmd, Computed, Config, Cursor, Dir, Effects, Keymap, Msg, ScrollBy, Size, State,
+};
 use ada::config;
 use ada::geom::Size as Cells;
 use ada::grid::{Grid, Screen};
@@ -87,12 +89,12 @@ enum Op {
     Forward,
     OpenOutline,
     OpenLinks,
-    OutlineFilter(Short),
+    OutlineFilter(Short, u8),
     OutlineMove(i8),
     OutlinePick,
     OutlineClose,
     SearchOpen,
-    SearchInput(Short),
+    SearchInput(Short, u8),
     SearchSubmit,
     SearchCancel,
     SearchNext(bool),
@@ -295,12 +297,13 @@ image = ""
 
 /// A key the keymap might care about: printable ASCII, or a named key.
 fn key(code: u8, mods: u8) -> KeyEvent {
-    const NAMED: [KeyCode; 14] = [
+    const NAMED: [KeyCode; 15] = [
         KeyCode::Enter,
         KeyCode::Esc,
         KeyCode::Tab,
         KeyCode::BackTab,
         KeyCode::Backspace,
+        KeyCode::Delete,
         KeyCode::Up,
         KeyCode::Down,
         KeyCode::Left,
@@ -1190,12 +1193,18 @@ impl Session<'_> {
             Op::Forward => Msg::Forward,
             Op::OpenOutline => Msg::OpenOutline,
             Op::OpenLinks => Msg::OpenLinks,
-            Op::OutlineFilter(text) => Msg::OutlineFilter { text: text.0 },
+            Op::OutlineFilter(text, cursor) => Msg::OutlineFilter {
+                text: text.0,
+                cursor: Cursor(u32::from(cursor)),
+            },
             Op::OutlineMove(by) => Msg::OutlineMove { by: i32::from(by) },
             Op::OutlinePick => Msg::OutlinePick,
             Op::OutlineClose => Msg::OutlineClose,
             Op::SearchOpen => Msg::SearchOpen,
-            Op::SearchInput(pattern) => Msg::SearchInput { pattern: pattern.0 },
+            Op::SearchInput(pattern, cursor) => Msg::SearchInput {
+                pattern: pattern.0,
+                cursor: Cursor(u32::from(cursor)),
+            },
             Op::SearchSubmit => Msg::SearchSubmit,
             Op::SearchCancel => Msg::SearchCancel,
             Op::SearchNext(next) => Msg::SearchNext { dir: dir(next) },

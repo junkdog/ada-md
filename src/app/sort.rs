@@ -227,7 +227,7 @@ fn header_name(table: &crate::doc::Table, col: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Computed, Config, Msg, ScrollBy, Size, loader_answer, update};
+    use super::super::{Computed, Config, Cursor, Msg, ScrollBy, Size, loader_answer, update};
     use super::*;
     use crate::layout::TableMode;
     use crate::theme::Theme;
@@ -266,6 +266,7 @@ mod tests {
             state,
             Msg::OutlineFilter {
                 text: filter.into(),
+                cursor: Cursor::END,
             },
         );
         update(state, Msg::OutlinePick);
@@ -455,7 +456,13 @@ mod tests {
         assert_eq!(state.tables_on_screen(), [1, 2]);
         update(&mut state, Msg::SortOpen);
         assert_eq!(state.sorting(), Some(1));
-        update(&mut state, Msg::OutlineFilter { text: "z".into() });
+        update(
+            &mut state,
+            Msg::OutlineFilter {
+                text: "z".into(),
+                cursor: Cursor::END,
+            },
+        );
         update(&mut state, Msg::SortTable { dir: Dir::Next });
         assert_eq!(state.sorting(), Some(2));
         assert_eq!(columns(&state).len(), 4, "the filter starts over");

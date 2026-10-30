@@ -19,8 +19,8 @@ for i in {1..$n}; do
         printf "\\x$(printf %02x $((len & 255)))\\x$(printf %02x $((len >> 8)))"
         printf %s $doc
         # size (u16, u8), max_width None, tables auto, code wrap, line numbers off, no start
-        # line, Some((kitty, cell w, cell h)), not stdin, fuzz.md
-        printf "\x77\x00\x27\x00\x00\x01\x00\x00\x01\x00${cells[i % 4 + 1]}\x01\x00"
+        # line, copy on yank, live reload auto, Some((kitty, cell w, cell h)), not stdin, fuzz.md
+        printf "\x77\x00\x27\x00\x00\x01\x00\x00\x00\x00\x01\x00${cells[i % 4 + 1]}\x01\x00"
         head -c $((RANDOM % 160 + 16)) /dev/urandom
     } > $tmp/$i
 done

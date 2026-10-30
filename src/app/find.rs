@@ -6,7 +6,7 @@ use std::borrow::Cow;
 
 use regex::Regex;
 
-use super::{Cmd, Dir, Document, State};
+use super::{Cmd, Dir, Document, Input, State};
 use crate::doc::{LinkId, LinkKind, TableId};
 use crate::layout::RowKind;
 use crate::search::{self, Match, Projection, UnitKind};
@@ -37,7 +37,7 @@ impl Search {
 /// The search prompt, while it is open.
 #[derive(Debug)]
 pub struct Prompt {
-    pub input: String,
+    pub input: Input,
     /// Why the input doesn't compile; the previous matches stay meanwhile.
     pub error: Option<String>,
     /// The search before the prompt opened, for `Esc`.
@@ -65,7 +65,7 @@ pub enum Listing {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Outline {
     pub listing: Listing,
-    pub filter: String,
+    pub filter: Input,
     /// An index into the filtered entries.
     pub selected: usize,
     /// The theme before the theme list opened, put back unless another one is picked.
@@ -235,7 +235,7 @@ impl State {
     pub(super) fn search_open(&mut self) -> Vec<Cmd> {
         let cmds = self.outline_close();
         self.prompt = Some(Prompt {
-            input: String::new(),
+            input: Input::default(),
             error: None,
             saved: self.search.take(),
             origin: self.scroll,
@@ -243,12 +243,18 @@ impl State {
         cmds
     }
 
-    /// Incremental search: match as the pattern is typed, from where the prompt opened.
-    pub(super) fn search_input(&mut self, pattern: String) {
+    /// Incremental search: match as the pattern is typed, from where the prompt opened. A move
+    /// of the cursor alone searches nothing.
+    pub(super) fn search_input(&mut self, input: Input) {
         let Some(prompt) = &mut self.prompt else {
             return;
         };
-        prompt.input.clone_from(&pattern);
+        let unchanged = prompt.input.text() == input.text();
+        let pattern = input.text().to_owned();
+        prompt.input = input;
+        if unchanged {
+            return;
+        }
         let origin = prompt.origin;
         if pattern.is_empty() {
             prompt.error = None;
@@ -424,7 +430,7 @@ impl State {
 
     /// What the outline lists, filtered.
     pub fn outline_entries(&self) -> Vec<OutlineEntry<'_>> {
-        let filter = self.outline.as_ref().map_or("", |o| &o.filter);
+        let filter = self.outline.as_ref().map_or("", |o| o.filter.text());
         let mut entries = self.outline_all();
         entries.retain(|e| e.matches(filter));
         entries
@@ -529,15 +535,20 @@ impl State {
         self.preview_theme()
     }
 
-    pub(super) fn outline_filter(&mut self, text: String) {
-        let selected = self
-            .outline_entries()
-            .get(self.outline.as_ref().map_or(0, |o| o.selected))
-            .map(|e| e.id);
+    /// The filter typed so far, or only its cursor moved.
+    pub(super) fn outline_filter(&mut self, filter: Input) {
         let Some(outline) = &mut self.outline else {
             return;
         };
-        outline.filter = text;
+        if outline.filter.text() == filter.text() {
+            outline.filter = filter;
+            return;
+        }
+        let at = outline.selected;
+        let selected = self.outline_entries().get(at).map(|e| e.id);
+        if let Some(outline) = &mut self.outline {
+            outline.filter = filter;
+        }
         let keep = self
             .outline_entries()
             .iter()

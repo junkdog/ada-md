@@ -7,7 +7,7 @@
 
 #![no_main]
 
-use ada::app::{Computed, Config, Effects, Msg, ScrollBy, Size, State};
+use ada::app::{Computed, Config, Cursor, Effects, Msg, ScrollBy, Size, State};
 use ada::record::{Entry, replay_headless};
 use ada::theme::Theme;
 use libfuzzer_sys::fuzz_target;
@@ -41,6 +41,7 @@ fuzz_target!(|data: &[u8]| {
         Msg::SearchOpen,
         Msg::SearchInput {
             pattern: "[a-z]+".into(),
+            cursor: Cursor::END,
         },
         Msg::SearchSubmit,
         Msg::Scroll {

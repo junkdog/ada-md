@@ -70,13 +70,13 @@ Sleep 1.2s
 Type "a"
 Sleep 1.4s
 
-# two tables on screen: s lists the first's columns, → the second's; by how long things
+# two tables on screen: s lists the first's columns, C-→ the second's; by how long things
 # take, longest first: 6 days, 2 min, 1m 30s, 45 s, …, 350 µs
 Type@150ms "jjj"
 Sleep 400ms
 Type "s"
 Sleep 1s
-Right
+Ctrl+Right
 Sleep 1s
 Type "takes"
 Sleep 400ms

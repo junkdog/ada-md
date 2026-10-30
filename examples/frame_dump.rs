@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::io::{self, Write};
 use std::{env, fs};
 
-use ada::app::{Cmd, Computed, Config, Dir, Effects, Msg, ScrollBy, Size, State, update};
+use ada::app::{Cmd, Computed, Config, Cursor, Dir, Effects, Msg, ScrollBy, Size, State, update};
 use ada::geom::Size as Cells;
 use ada::grid::Screen;
 use ada::images::{Encoder, Proto};
@@ -169,9 +169,11 @@ fn main() {
                 Msg::SearchOpen,
                 Msg::SearchInput {
                     pattern: "th".into(),
+                    cursor: Cursor::END,
                 },
                 Msg::SearchInput {
                     pattern: "the".into(),
+                    cursor: Cursor::END,
                 },
                 Msg::SearchSubmit,
                 Msg::SearchNext { dir: Dir::Next },

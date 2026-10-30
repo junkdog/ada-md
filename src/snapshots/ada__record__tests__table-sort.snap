@@ -10,7 +10,7 @@ expression: frames.last().unwrap()
   │ Module         │     Jav│ Cases  ▲ ascending            │                          │
   │                │     mai│ Cases  ▼ descending · current │                          │
   ├────────────────┼────────│ source order                  │──────────────────────────┤
-  │  asm-commons   │    1,87╰─────────────── ← table 2/2 → ─╯ocalVariablesSorter,      │
+  │  asm-commons   │    1,87╰─────────── C-← table 2/2 C-→ ─╯ocalVariablesSorter,      │
   │                │          │ remappers                                              │
   │  asm-util      │    2,045 │ Textifier, CheckClassAdapter and the trace visitors    │
   │  asm-analysis  │    2,379 │ Control-flow and data-flow analysis over method bodies │
