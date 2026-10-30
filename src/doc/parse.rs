@@ -76,6 +76,23 @@ pub(super) fn line_starts(text: &str) -> Vec<u32> {
         .collect()
 }
 
+/// The line (from 1) `offset` is on, sought forward from `line`, which starts at or before it: a
+/// gallop, so the next line costs a comparison and a line `n` further a search over `2n`.
+fn line_from(starts: &[u32], line: u32, offset: usize) -> u32 {
+    // the first `base` lines start at or before `offset`
+    let mut base = line as usize;
+    let mut step = 1;
+    loop {
+        let probe = base + step - 1;
+        if probe >= starts.len() || starts[probe] as usize > offset {
+            let end = probe.min(starts.len());
+            return (base + starts[base..end].partition_point(|&s| s as usize <= offset)) as u32;
+        }
+        base = probe + 1;
+        step *= 2;
+    }
+}
+
 enum Container {
     Root,
     Quote(Option<Callout>),
@@ -142,6 +159,8 @@ struct ImageDraft {
 
 struct Builder {
     line_starts: Vec<u32>,
+    /// The line the last event started on, from 1.
+    line: u32,
     stack: Vec<Frame>,
     links: Vec<LinkRef>,
     anchors: Vec<Anchor>,
@@ -163,6 +182,7 @@ impl Builder {
     fn new(text: &str) -> Self {
         Self {
             line_starts: line_starts(text),
+            line: 1,
             stack: vec![Frame::Blocks {
                 kind: Container::Root,
                 blocks: Vec::new(),
@@ -185,18 +205,37 @@ impl Builder {
         }
     }
 
-    fn line_of(&self, offset: usize) -> u32 {
-        self.line_starts
-            .partition_point(|&s| s as usize <= offset)
-            .max(1) as u32
+    /// The line an event starts on, sought from the last event's: events come in source order,
+    /// nearly, so most are on its line or the next (PAR-002).
+    fn line_of(&mut self, offset: usize) -> u32 {
+        self.line = if self.line_starts[self.line as usize - 1] as usize <= offset {
+            line_from(&self.line_starts, self.line, offset)
+        } else {
+            self.line_starts
+                .partition_point(|&s| s as usize <= offset)
+                .max(1) as u32
+        };
+        self.line
     }
 
     fn event(&mut self, event: Event<'_>, range: Range<usize>) {
         let line = self.line_of(range.start);
         let src = LineRange::new(
             line,
-            self.line_of(range.end.saturating_sub(1).max(range.start)),
+            line_from(
+                &self.line_starts,
+                line,
+                range.end.saturating_sub(1).max(range.start),
+            ),
         );
+        // the search the cursor replaced, in debug builds (the fuzzers', `cargo test`)
+        debug_assert_eq!(src, {
+            let search = |o: usize| self.line_starts.partition_point(|&s| s as usize <= o) as u32;
+            LineRange::new(
+                search(range.start),
+                search(range.end.saturating_sub(1).max(range.start)),
+            )
+        });
         match event {
             Event::Start(tag) => self.start(tag, src),
             Event::End(end) => self.end(end),
@@ -929,6 +968,27 @@ mod tests {
             panic!()
         };
         assert_eq!(inl.runs.last().map(|r| r.src_line), Some(4));
+    }
+
+    #[test]
+    fn lines_found_forward_match_a_search() {
+        let text = "a\n\nbb\nccc\n\n\n\ndddd\ne\nf\ng\nh\ni\nj\nk\nl\nm\n";
+        let starts = line_starts(text);
+        let search = |offset: usize| starts.partition_point(|&s| s as usize <= offset) as u32;
+        for offset in 0..=text.len() {
+            for line in 1..=search(offset) {
+                assert_eq!(
+                    line_from(&starts, line, offset),
+                    search(offset),
+                    "{line} {offset}"
+                );
+            }
+        }
+        // the cursor, offsets in any order
+        let mut b = Builder::new(text);
+        for offset in [0, 5, 3, 3, 20, 4, 0, text.len(), 1, 9, 9, 30] {
+            assert_eq!(b.line_of(offset), search(offset), "{offset}");
+        }
     }
 
     #[test]
