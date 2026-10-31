@@ -6,7 +6,8 @@
 //! `[[:alpha:]]` take Unicode classes where the lexer reads ASCII whitespace, a known
 //! difference.
 
-use ada::highlight::syntaxes;
+// bat's whole set: ada's own has these grammars emptied (ADR-40)
+use ada::highlight::reference_syntaxes as syntaxes;
 use ada::layout::expand_tabs;
 use ada::make::{self, Grammar, State};
 use syntect::parsing::{ParseState, ScopeStack};

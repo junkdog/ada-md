@@ -30,6 +30,9 @@ jemalloc = ["dep:tikv-jemallocator"]
 
 [dependencies]
 anpa = "0.13"
+# ada's own lexers and the language table that names them without loading syntect's set
+# (ADR-40)
+ada-parse = { version = "0.1.0", path = "ada-parse" }
 # `events` for keys and resizes (ratatui turned it on until CS-4); `windows` is the default's, only for
 # Windows targets. `use-dev-tty`: its event source waits with level-triggered poll(2). The default mio one is
 # edge-triggered and returns before draining the tty, so input over 1 KB in one burst stalls until the next
@@ -90,7 +93,7 @@ libc = "0.2.190"
 # xtask: `cargo ordered`, the release build (.cargo/config.toml). bench/ and fuzz/ hold crates of their
 # own, and B2's checkouts of ada (bench/b2/root/build)
 [workspace]
-members = ["xtask"]
+members = ["ada-parse", "xtask"]
 exclude = ["bench", "fuzz"]
 
 [profile.release]

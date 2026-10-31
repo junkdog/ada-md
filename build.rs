@@ -16,12 +16,13 @@
 // less. Only an ld.so of glibc 2.36 (2022) or later applies them, so only in a native build on
 // such a glibc; the binary then needs `GLIBC_ABI_DT_RELR`, and an older glibc refuses it at start
 // by name.
-// `--version` (FEAT-013) names the commit, `-dirty` when what the build reads (src/, the manifest,
-// the lockfile, this script) differs from it, and when this script last ran (`SOURCE_DATE_EPOCH`,
-// when set): from git in the repository, from cargo's `.cargo_vcs_info.json` in a package (a
-// crates.io install). In the repository the script then reruns when HEAD moves or src/ changes,
-// which recompiles the lib too: a change to main.rs alone costs the lib's compile. Where lld or
-// ld64 links, it also says whether the hot code went first: `ordered` or `unordered`.
+// `--version` (FEAT-013) names the commit, `-dirty` when what the build reads (src/, ada-parse/,
+// assets/, the manifest, the lockfile, this script) differs from it, and when this script last
+// ran (`SOURCE_DATE_EPOCH`, when set): from git in the repository, from cargo's
+// `.cargo_vcs_info.json` in a package (a crates.io install). In the repository the script then
+// reruns when HEAD moves or what it reads changes, which recompiles the lib too: a change to
+// main.rs alone costs the lib's compile. Where lld or ld64 links, it also says whether the hot
+// code went first: `ordered` or `unordered`.
 use std::env;
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -88,7 +89,14 @@ fn git(args: &[&str]) -> Option<String> {
 /// The commit being built, 7 digits and `-dirty` when what the build reads has changed since it;
 /// also the files that say when it does, to rerun on.
 fn commit() -> Option<String> {
-    const READ: [&str; 4] = ["src", "Cargo.toml", "Cargo.lock", "build.rs"];
+    const READ: [&str; 6] = [
+        "src",
+        "ada-parse",
+        "assets",
+        "Cargo.toml",
+        "Cargo.lock",
+        "build.rs",
+    ];
     let root = env::var("CARGO_MANIFEST_DIR").ok()?;
     // cargo packages the crate with the commit it was packaged from
     if let Ok(info) = fs::read_to_string(Path::new(&root).join(".cargo_vcs_info.json")) {

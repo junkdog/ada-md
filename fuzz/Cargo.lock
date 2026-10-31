@@ -6,6 +6,7 @@ version = 4
 name = "ada-md"
 version = "1.0.0"
 dependencies = [
+ "ada-parse",
  "anpa",
  "crossterm",
  "foldhash",
@@ -39,6 +40,10 @@ dependencies = [
  "unicode-width",
  "vt100",
 ]
+
+[[package]]
+name = "ada-parse"
+version = "0.1.0"
 
 [[package]]
 name = "adler2"

@@ -48,8 +48,7 @@ pub fn sniff(text: &str) -> Option<FileType> {
     }
     // before markdown: a log line can hold a link, but no note has a timestamp on every line
     if is_log(&lines) {
-        let log = highlight::find_syntax("log").map(|s| &*s.name);
-        return Some(FileType::Text { lang: log });
+        return code(ada_parse::Lang::Log.name());
     }
     is_markdown(&lines).then_some(FileType::Markdown)
 }

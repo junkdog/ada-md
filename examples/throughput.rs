@@ -546,7 +546,8 @@ mod linux {
         }
 
         let syntax_theme = SyntaxTheme::new(&theme.syntax);
-        let syntaxes = highlight::syntaxes();
+        // bat's whole set: ada's own has the grammars of its lexers emptied (ADR-40)
+        let syntaxes = highlight::reference_syntaxes();
         for (id, file, lang, set) in LEXERS.into_iter().filter(|(id, ..)| wanted(id)) {
             let text = read(&args.corpus, file);
             let input = Input {
@@ -609,7 +610,9 @@ mod linux {
                 });
                 emit(&input, "highlight", &s, "");
             }
-            if let Some(syntax) = highlight::find_syntax(lang).filter(|_| args.stage("syntect")) {
+            let syntax =
+                highlight::find_syntax(lang).and_then(|s| syntaxes.find_syntax_by_name(s.name()));
+            if let Some(syntax) = syntax.filter(|_| args.stage("syntect")) {
                 let s = measure_cold(&counters, SYNTECT_SAMPLES.min(n), || {
                     let mut state = ParseState::new(syntax);
                     LinesWithEndings::from(&text)

@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use crate::diagram::Diagram;
 
+pub use fence::language as fence_language;
 pub use parse::parse;
 
 pub type LinkId = u32;

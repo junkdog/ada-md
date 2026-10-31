@@ -1,4 +1,4 @@
-//! Syntax highlighting (ADR-07): syntect with two-face's syntax set, run on a worker thread so
+//! Syntax highlighting (ADR-07): syntect with bat's syntax set, run on a worker thread so
 //! the first paint never waits for it. The regexes run on Oniguruma by default; building without
 //! the `onig` feature keeps them on fancy-regex, pure Rust.
 //!
@@ -30,6 +30,7 @@ use crate::json;
 use crate::layout::expand_tabs;
 use crate::logs::{self, Kind, Span};
 use crate::make;
+use ada_parse::Lang;
 
 /// Longer lines are left plain: backtracking regexes can be slow on them, and nobody reads them
 /// anyway.
@@ -51,20 +52,41 @@ static LINES: AtomicU64 = AtomicU64::new(0);
 /// microseconds, and the slowest grammar found so far (O-37) about a second.
 const STALL: Duration = Duration::from_millis(if cfg!(test) { 300 } else { 2000 });
 
-/// bat's syntax set, loaded once. Loading is ~1 ms; syntect compiles each syntax's regexes on
-/// first use, which is the expensive part: ~1 ms a language on Oniguruma, up to ~200 ms
-/// (TypeScript) on fancy-regex.
+/// The syntax set ada highlights with, once loaded.
+static SET: OnceLock<SyntaxSet> = OnceLock::new();
+
+/// bat's syntax set, as ada ships it (`assets/`, built by `cargo xtask dump`, ADR-40): two-face's,
+/// with the grammars ada's own lexers stand in for emptied. Loaded once, only for a language
+/// none of them covers: ~1 ms; syntect compiles each syntax's regexes on first use, which is
+/// the expensive part: ~1 ms a language on Oniguruma, up to ~200 ms (TypeScript) on
+/// fancy-regex.
 pub fn syntaxes() -> &'static SyntaxSet {
-    static SET: OnceLock<SyntaxSet> = OnceLock::new();
     SET.get_or_init(|| {
-        let set = two_face::syntax::extra_newlines();
+        #[cfg(feature = "onig")]
+        let dump = include_bytes!("../assets/syntaxes-onig.bin");
+        #[cfg(not(feature = "onig"))]
+        let dump = include_bytes!("../assets/syntaxes-fancy.bin");
+        let set = syntect::dumps::from_uncompressed_data(dump).expect("ada's syntax dump");
         drop_read_only_pages();
         set
     })
 }
 
-/// Give back the executable's read-only pages, once the syntax set is loaded (MEM-06). two-face
-/// deserializes the set from a 0.94 MiB dump in the binary, read whole once and never again
+/// Whether [`syntaxes`] has been loaded in this process.
+pub fn syntaxes_loaded() -> bool {
+    SET.get().is_some()
+}
+
+/// bat's whole syntax set, as two-face ships it, the grammars ada's own lexers stand in for
+/// still in it: what those lexers are checked against (tests, examples, fuzzing). ada never
+/// highlights with it.
+pub fn reference_syntaxes() -> &'static SyntaxSet {
+    static FULL: OnceLock<SyntaxSet> = OnceLock::new();
+    FULL.get_or_init(two_face::syntax::extra_newlines)
+}
+
+/// Give back the executable's read-only pages, once the syntax set is loaded (MEM-06). syntect
+/// deserializes the set from a 0.92 MiB dump in the binary, read whole once and never again
 /// (syntect copies what it keeps), but its pages stay mapped. Nothing names where the dump lies,
 /// so this unmaps the whole read-only segment: the pages stay in the page cache, and those read
 /// again come back as minor faults. The executable's program headers and the page size come from
@@ -125,28 +147,40 @@ fn is_plain(lang: &str) -> bool {
         .any(|p| lang.eq_ignore_ascii_case(p))
 }
 
-/// Fence languages the vault needs that the syntax set doesn't name, and the token each stands
-/// for. `fuzz/markdown.dict` names them all (F-013).
-pub const ALIASES: &[(&str, &str)] = &[
-    ("zsh", "bash"),
-    ("sh", "bash"),
-    ("shell", "bash"),
-    ("console", "bash"),
-    ("shellsession", "bash"),
-    ("kt", "kotlin"),
-    ("kts", "kotlin"),
-    ("ts", "typescript"),
-    ("mts", "typescript"),
-    ("cts", "typescript"),
-    ("jsonl", "json"),
-    ("jsonc", "json"),
-    ("json5", "json"),
-];
+pub use ada_parse::ALIASES;
 
-/// The syntax for a fence language, with the aliases the vault needs.
-pub fn find_syntax(lang: &str) -> Option<&'static SyntaxReference> {
+/// A language ada highlights: by a lexer of its own, which ada-parse's table names without the
+/// syntax set, or by a syntax of the set.
+#[derive(Clone, Copy, Debug)]
+pub enum Syntax {
+    Own(Lang),
+    Set(&'static SyntaxReference),
+}
+
+impl Syntax {
+    /// The syntax's name, as syntect names it (`Rust`, `JSON`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Syntax::Own(lang) => lang.name(),
+            Syntax::Set(syntax) => &syntax.name,
+        }
+    }
+
+    /// A syntax of the set, or the lexer that stands in for it: the set still names the
+    /// languages ada's lexers cover, but their grammars in it are empty.
+    fn of(syntax: &'static SyntaxReference) -> Self {
+        Lang::from_name(&syntax.name).map_or(Syntax::Set(syntax), Syntax::Own)
+    }
+}
+
+/// The syntax for a fence language, with the aliases the vault needs. A language ada-parse's
+/// table covers doesn't load the set.
+pub fn find_syntax(lang: &str) -> Option<Syntax> {
     if is_plain(lang) {
         return None;
+    }
+    if let Some(lang) = Lang::from_token(lang) {
+        return Some(Syntax::Own(lang));
     }
     let lower = lang.to_ascii_lowercase();
     let token = ALIASES
@@ -157,29 +191,41 @@ pub fn find_syntax(lang: &str) -> Option<&'static SyntaxReference> {
     syntaxes()
         .find_syntax_by_name(lang)
         .or_else(|| syntaxes().find_syntax_by_token(token))
+        .map(Syntax::of)
+}
+
+/// Whether highlighting a fence in `lang` needs the syntax set: neither plain nor covered by
+/// ada-parse's table.
+pub fn needs_syntaxes(lang: &str) -> bool {
+    !is_plain(lang) && Lang::from_token(lang).is_none()
 }
 
 /// The language of a whole file, by its name alone: the name itself (`Makefile`, `.zshrc`,
 /// `Cargo.lock`), then its extension. `None` when that says nothing, or says plain text.
 pub fn file_language(path: &Path) -> Option<&'static str> {
+    let name = path.file_name().and_then(|n| n.to_str());
+    if let Some(lang) = name.and_then(Lang::from_file_name) {
+        return Some(lang.name());
+    }
     let set = syntaxes();
-    let by_name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .and_then(|n| set.find_syntax_by_extension(n));
+    let by_name = name.and_then(|n| set.find_syntax_by_extension(n).map(Syntax::of));
     let by_ext = || find_syntax(path.extension()?.to_str()?);
     by_name.or_else(by_ext).and_then(language)
 }
 
 /// The language a file's first line declares: a `#!` line, `<?xml`, a vim modeline.
 pub fn first_line_language(line: &str) -> Option<&'static str> {
+    if let Some(lang) = Lang::from_first_line(line) {
+        return Some(lang.name());
+    }
     syntaxes()
         .find_syntax_by_first_line(line)
+        .map(Syntax::of)
         .and_then(language)
 }
 
-fn language(syntax: &'static SyntaxReference) -> Option<&'static str> {
-    Some(&*syntax.name).filter(|&n| n != "Plain Text")
+fn language(syntax: Syntax) -> Option<&'static str> {
+    Some(syntax.name()).filter(|&n| n != "Plain Text")
 }
 
 /// The cache key of a code block, or `None` when it has no language worth highlighting.
@@ -442,16 +488,46 @@ pub fn highlight_first(
     h.partial()
 }
 
+/// A code block's text highlighted by syntect with `set`'s syntax `name`, line by line as
+/// [`highlight`] goes; `None` when the set has no such syntax or syntect fails on a line. For
+/// holding ada's own lexers against bat's grammars ([`reference_syntaxes`]).
+pub fn highlight_syntect(
+    set: &'static SyntaxSet,
+    name: &str,
+    text: &str,
+    theme: &SyntaxTheme,
+) -> Option<CodeSpans> {
+    let syntax = set.find_syntax_by_name(name)?;
+    let highlighter = SynHighlighter::new(&theme.theme);
+    let mut state = LineState::new(set, syntax, &highlighter);
+    let (mut buf, mut lines) = (String::new(), LineRuns::default());
+    for line in Lines::new(text) {
+        state.line(line, &highlighter, &mut buf, &mut lines)?;
+    }
+    Some(CodeSpans {
+        key: 0,
+        rules: theme.id,
+        partial: false,
+        lines: lines.shrink(),
+    })
+}
+
 /// Where syntect is between two lines: what the next line's highlighting depends on, besides
 /// the line.
 struct LineState {
+    set: &'static SyntaxSet,
     parse: ParseState,
     scopes: HighlightState,
 }
 
 impl LineState {
-    fn new(syntax: &SyntaxReference, highlighter: &SynHighlighter) -> Self {
+    fn new(
+        set: &'static SyntaxSet,
+        syntax: &SyntaxReference,
+        highlighter: &SynHighlighter,
+    ) -> Self {
         Self {
+            set,
             parse: ParseState::new(syntax),
             scopes: HighlightState::new(highlighter, ScopeStack::new()),
         }
@@ -474,7 +550,7 @@ impl LineState {
         buf.clear();
         buf.push_str(&line);
         buf.push('\n');
-        let ops = self.parse.parse_line(buf, syntaxes()).ok()?;
+        let ops = self.parse.parse_line(buf, self.set).ok()?;
         LINES.fetch_add(1, Ordering::Relaxed);
         let mut out = out.open_line();
         let mut end = 0;
@@ -491,23 +567,22 @@ impl LineState {
     }
 }
 
-/// Whether a language is bat's `Log`, which ada highlights with its own parser (O-43).
-fn is_log(lang: &str) -> bool {
-    find_syntax(lang).is_some_and(|s| s.name == "log")
+/// The lexer of ada's own that highlights a language, if one does: logs (O-43), JSON (O-48),
+/// Makefile (G-002) or bash (G-003).
+fn own(lang: &str) -> Option<Lang> {
+    match find_syntax(lang)? {
+        Syntax::Own(lang) => Some(lang),
+        Syntax::Set(_) => None,
+    }
 }
 
-/// Whether a language is bat's `JSON`, which ada highlights with its own scanner (O-48).
-fn is_json(lang: &str) -> bool {
-    find_syntax(lang).is_some_and(|s| s.name == "JSON")
-}
-
-/// The grammar of ada's copy of syntect's machine that highlights a language: bat's
-/// `Makefile` (G-002) or its bash (G-003).
-fn lexer_grammar(lang: &str) -> Option<make::Grammar> {
-    let name = find_syntax(lang)?.name.as_str();
-    [make::Grammar::Make, make::Grammar::Bash]
-        .into_iter()
-        .find(|g| g.syntax() == name)
+/// The grammar of ada's copy of syntect's machine that highlights bat's `Makefile` or its bash.
+fn make_grammar(lang: Lang) -> Option<make::Grammar> {
+    match lang {
+        Lang::Makefile => Some(make::Grammar::Make),
+        Lang::Bash => Some(make::Grammar::Bash),
+        Lang::Json | Lang::Log => None,
+    }
 }
 
 /// The theme's rule for each of a lexer's kinds, as syntect would pick it for the kind's
@@ -647,7 +722,7 @@ pub enum Lexer {
 impl Lexer {
     /// Whether a file in `lang`, or plain text with none, has a lexer.
     pub fn exists(lang: Option<&str>) -> bool {
-        lang.is_none_or(|l| is_plain(l) || is_log(l) || is_json(l))
+        lang.is_none_or(|l| is_plain(l) || matches!(own(l), Some(Lang::Log | Lang::Json)))
     }
 
     /// The lexer for a file in `lang`, or plain text with none; `None` when syntect would
@@ -656,9 +731,11 @@ impl Lexer {
         match lang {
             None => Some(Lexer::Plain),
             Some(lang) if is_plain(lang) => Some(Lexer::Plain),
-            Some(lang) if is_log(lang) => Some(Lexer::Log(LogRules::new(theme))),
-            Some(lang) if is_json(lang) => Some(Lexer::Json(JsonRules::new(theme))),
-            Some(_) => None,
+            Some(lang) => match own(lang)? {
+                Lang::Log => Some(Lexer::Log(LogRules::new(theme))),
+                Lang::Json => Some(Lexer::Json(JsonRules::new(theme))),
+                Lang::Makefile | Lang::Bash => None,
+            },
         }
     }
 
@@ -787,19 +864,16 @@ pub struct Highlighter<'a> {
 impl<'a> Highlighter<'a> {
     pub fn new(key: u64, lang: &str, text: &'a str, theme: &'a SyntaxTheme) -> Self {
         let highlighter = SynHighlighter::new(&theme.theme);
-        let state = if is_log(lang) {
-            Some(Engine::Log(LogRules::new(theme), Vec::new()))
-        } else if is_json(lang) {
-            Some(Engine::Json(JsonRules::new(theme), Vec::new(), false))
-        } else if let Some(grammar) = lexer_grammar(lang) {
-            Some(Engine::Make(
-                MakeRules::new(grammar),
-                Box::new(make::State::new(grammar)),
-                Vec::new(),
-            ))
-        } else {
-            find_syntax(lang).map(|s| Engine::Syntect(LineState::new(s, &highlighter)))
-        };
+        let state = find_syntax(lang).map(|syntax| match syntax {
+            Syntax::Own(Lang::Log) => Engine::Log(LogRules::new(theme), Vec::new()),
+            Syntax::Own(Lang::Json) => Engine::Json(JsonRules::new(theme), Vec::new(), false),
+            Syntax::Own(lang @ (Lang::Makefile | Lang::Bash)) => {
+                let grammar = make_grammar(lang).expect("a make grammar");
+                let state = Box::new(make::State::new(grammar));
+                Engine::Make(MakeRules::new(grammar), state, Vec::new())
+            }
+            Syntax::Set(s) => Engine::Syntect(LineState::new(syntaxes(), s, &highlighter)),
+        });
         Self {
             key,
             rules: theme.id,
@@ -905,14 +979,14 @@ pub fn highlight_parallel(key: u64, lang: &str, text: &str, theme: &SyntaxTheme)
     if threads < 2 {
         return highlight(key, lang, text, theme);
     }
-    match &*syntax.name {
-        "log" => highlight_log_on(key, text, theme, threads),
+    match syntax {
+        Syntax::Own(Lang::Log) => highlight_log_on(key, text, theme, threads),
         // a `/* */` comment carries over lines: rare in JSON this big, and fast on one thread
-        "JSON" if text.contains("/*") => highlight(key, lang, text, theme),
-        "JSON" => highlight_json_on(key, text, theme, threads),
+        Syntax::Own(Lang::Json) if text.contains("/*") => highlight(key, lang, text, theme),
+        Syntax::Own(Lang::Json) => highlight_json_on(key, text, theme, threads),
         // their lines depend on the ones before, and one thread does ~100 MB/s
-        "Makefile" | "Bourne Again Shell (bash)" => highlight(key, lang, text, theme),
-        _ => highlight_on(key, syntax, text, theme, threads),
+        Syntax::Own(Lang::Makefile | Lang::Bash) => highlight(key, lang, text, theme),
+        Syntax::Set(syntax) => highlight_on(key, syntax, text, theme, threads),
     }
 }
 
@@ -1109,7 +1183,7 @@ fn chunk(
     seams: &Seams,
 ) -> Option<Chunk> {
     let highlighter = SynHighlighter::new(&theme.theme);
-    let mut state = LineState::new(syntax, &highlighter);
+    let mut state = LineState::new(syntaxes(), syntax, &highlighter);
     let mut buf = String::new();
     let mut lines = LineRuns::default();
     lines.ends.reserve_exact(chunks[k].len());
@@ -1440,7 +1514,8 @@ impl Worker {
 
     /// The worker of generation `generation`.
     fn work(&self, generation: u64) {
-        syntaxes();
+        // the syntax set loads with the first block ada's own lexers don't cover, not before:
+        // a note with none never loads it (ADR-40)
         loop {
             let job = {
                 let mut inbox = self.inbox.lock().unwrap_or_else(PoisonError::into_inner);
@@ -1626,6 +1701,154 @@ mod tests {
         }
     }
 
+    /// `find_syntax` as it was before ada-parse (ADR-40): on the whole set.
+    fn find_in_full(lang: &str) -> Option<&'static str> {
+        let set = reference_syntaxes();
+        if is_plain(lang) {
+            return None;
+        }
+        let lower = lang.to_ascii_lowercase();
+        let token = ALIASES
+            .iter()
+            .find(|&&(alias, _)| alias == lower)
+            .map_or(lower.as_str(), |&(_, token)| token);
+        let found = set.find_syntax_by_name(lang);
+        found
+            .or_else(|| set.find_syntax_by_token(token))
+            .map(|s| &*s.name)
+    }
+
+    /// `file_language` as it was before ada-parse: on the whole set.
+    fn file_in_full(path: &str) -> Option<&'static str> {
+        let path = Path::new(path);
+        let name = path.file_name().and_then(|n| n.to_str());
+        let by_name = name.and_then(|n| reference_syntaxes().find_syntax_by_extension(n));
+        let by_ext = || find_in_full(path.extension()?.to_str()?);
+        by_name.map(|s| &*s.name).or_else(by_ext)
+    }
+
+    /// Every name and extension the set knows and every alias, in its own case, lowercase and
+    /// uppercase.
+    fn words() -> Vec<String> {
+        let mut words: Vec<String> = ALIASES
+            .iter()
+            .flat_map(|&(a, t)| [a.to_owned(), t.to_owned()])
+            .collect();
+        for s in reference_syntaxes().syntaxes() {
+            words.push(s.name.clone());
+            words.extend(s.file_extensions.iter().cloned());
+        }
+        for w in words.clone() {
+            words.push(w.to_ascii_lowercase());
+            words.push(w.to_ascii_uppercase());
+        }
+        words
+    }
+
+    /// ada-parse's table names a language only where syntect on the whole set names the same,
+    /// and misses none of the ones it covers; and ada, the table first and its trimmed set
+    /// after, names what the whole set names: as a fence's token, a file's whole name and its
+    /// extension.
+    #[test]
+    fn the_language_table_agrees_with_the_set() {
+        let covered = |name: Option<&str>| name.and_then(Lang::from_name);
+        for w in words() {
+            let full = find_in_full(&w);
+            match Lang::from_token(&w) {
+                Some(lang) => assert_eq!(full, Some(lang.name()), "token {w:?}"),
+                None => assert_eq!(covered(full), None, "token {w:?}: not in the table"),
+            }
+            assert_eq!(find_syntax(&w).map(Syntax::name), full, "token {w:?}");
+            for file in [w.clone(), format!("x.{w}")] {
+                let full = file_in_full(&file);
+                let name = Path::new(&file).file_name().and_then(|n| n.to_str());
+                match name.and_then(Lang::from_file_name) {
+                    Some(lang) => assert_eq!(full, Some(lang.name()), "file {file:?}"),
+                    None => assert_eq!(covered(full), None, "file {file:?}: not in the table"),
+                }
+                let full = full.filter(|&n| n != "Plain Text");
+                assert_eq!(file_language(Path::new(&file)), full, "file {file:?}");
+            }
+        }
+    }
+
+    /// The table's first lines are syntect's on the whole set, and ada's answer is too.
+    #[test]
+    fn first_lines_agree_with_the_set() {
+        let full = |l: &str| {
+            let found = reference_syntaxes().find_syntax_by_first_line(l);
+            found.map(|s| &*s.name).filter(|&n| n != "Plain Text")
+        };
+        let interpreters = [
+            "sh", "bash", "zsh", "dash", "ksh", "tcsh", "ash", "fish", "python3", "perl", "ruby",
+            "node", "make", "php", "lua", "awk", "jq", "swift", "julia", "pip", "shell",
+        ];
+        let paths = [
+            "/bin/",
+            "/usr/bin/env ",
+            "/usr/bin/env -S ",
+            "/opt/ls/",
+            "/home/js/",
+        ];
+        let args = ["", " -e", " -f", " -x python", " # make"];
+        let mut lines: Vec<String> = Vec::new();
+        for i in interpreters {
+            for p in paths {
+                for a in args {
+                    lines.push(format!("#!{p}{i}{a}"));
+                    lines.push(format!("#! {p}{}{a}", i.to_ascii_uppercase()));
+                }
+            }
+        }
+        lines.extend(
+            [
+                "# -*- mode: shell-script -*-",
+                "# -*- mode:shell-script; x: 1 -*-",
+                "# -*- Mode: shell-script -*-",
+                "# -*- makefile -*-",
+                "#-*- GNUMakefile -*-",
+                "# -*- mode: python -*-",
+                "\u{feff}#!/bin/sh",
+                "#!/bin/sh é",
+                "echo",
+                "",
+            ]
+            .map(str::to_owned),
+        );
+        let mut claimed = 0;
+        for l in &lines {
+            let want = full(l);
+            if let Some(lang) = Lang::from_first_line(l) {
+                assert_eq!(want, Some(lang.name()), "{l:?}");
+                claimed += 1;
+            }
+            assert_eq!(first_line_language(l), want, "{l:?}");
+        }
+        assert!(claimed > 100, "the table claims {claimed} lines");
+    }
+
+    /// The syntaxes whose first-line regexes syntect tries before Makefile's, and so before
+    /// bash's: ada-parse's `from_first_line` names a word for each that can match a line starting
+    /// with `#`. A new one, or a changed regex, needs a look at those words.
+    #[test]
+    fn the_first_lines_tried_before_the_tables() {
+        let set = reference_syntaxes().syntaxes();
+        let make = set.iter().position(|s| s.name == "Makefile").unwrap();
+        let later: Vec<String> = set[make + 1..]
+            .iter()
+            .filter_map(|s| Some(format!("{}: {}", s.name, s.first_line_match.as_ref()?)))
+            .collect();
+        // two-face rewrites a few regexes for fancy-regex
+        let flavor = if cfg!(feature = "onig") {
+            "onig"
+        } else {
+            "fancy"
+        };
+        insta::with_settings!({ snapshot_suffix => flavor }, {
+            insta::assert_snapshot!(later.join("\n"));
+        });
+    }
+
     /// On valid JSON, the scanner picks the rules bat's grammar picks, in every built-in theme
     /// (O-48).
     #[test]
@@ -1639,18 +1862,7 @@ mod tests {
             "     over lines */ \"k\\\"ey\": \"//\" /* inline */\n",
             "}\n",
         );
-        let grammar = find_syntax("json").unwrap();
-        for theme in Theme::builtins() {
-            let theme = SyntaxTheme::new(&theme.syntax);
-            let highlighter = SynHighlighter::new(&theme.theme);
-            let mut state = LineState::new(grammar, &highlighter);
-            let mut buf = String::new();
-            let mut want = LineRuns::default();
-            for l in Lines::new(text) {
-                state.line(l, &highlighter, &mut buf, &mut want).unwrap();
-            }
-            assert_eq!(highlight(1, "json", text, &theme).lines, want);
-        }
+        rules_match_the_grammar("json", "JSON", text);
     }
 
     /// The Makefile lexer picks the rules bat's grammar picks, in every built-in theme (G-002).
@@ -1733,18 +1945,11 @@ mod tests {
     }
 
     fn rules_match_the_grammar(lang: &str, name: &str, text: &str) {
-        let grammar = find_syntax(lang).unwrap();
-        assert_eq!(grammar.name, name);
+        assert_eq!(find_syntax(lang).unwrap().name(), name);
         for theme in Theme::builtins() {
             let theme = SyntaxTheme::new(&theme.syntax);
-            let highlighter = SynHighlighter::new(&theme.theme);
-            let mut state = LineState::new(grammar, &highlighter);
-            let mut buf = String::new();
-            let mut want = LineRuns::default();
-            for l in Lines::new(text) {
-                state.line(l, &highlighter, &mut buf, &mut want).unwrap();
-            }
-            assert_eq!(highlight(1, lang, text, &theme).lines, want);
+            let want = highlight_syntect(reference_syntaxes(), name, text, &theme).unwrap();
+            assert_eq!(highlight(1, lang, text, &theme).lines, want.lines);
         }
     }
 
@@ -1771,7 +1976,7 @@ mod tests {
             return;
         };
         let list = std::fs::read_to_string(list).unwrap();
-        let grammar = find_syntax(lang).unwrap();
+        let name = find_syntax(lang).unwrap().name();
         let themes: Vec<SyntaxTheme> = Theme::builtins()
             .iter()
             .map(|t| SyntaxTheme::new(&t.syntax))
@@ -1786,15 +1991,10 @@ mod tests {
             }
             files += 1;
             for (t, theme) in themes.iter().enumerate() {
-                let highlighter = SynHighlighter::new(&theme.theme);
-                let mut state = LineState::new(grammar, &highlighter);
-                let mut buf = String::new();
-                let mut want = LineRuns::default();
-                let failed = Lines::new(&text)
-                    .any(|l| state.line(l, &highlighter, &mut buf, &mut want).is_none());
-                if failed {
+                let Some(want) = highlight_syntect(reference_syntaxes(), name, &text, theme) else {
                     break;
-                }
+                };
+                let want = want.lines;
                 let got = highlight(1, lang, &text, theme).lines;
                 // a line with no rule but none is one run in syntect's form, none in the lexer's
                 let plain = |runs: &[Run]| runs.iter().all(|r| r.rule.0 == Rule::NONE);
@@ -2040,14 +2240,12 @@ mod tests {
         let theme = Theme::builtin();
         let syntax = SyntaxTheme::new(&theme.syntax);
         let rust = "fn main() {\n    let s = r#\"a \"quoted\"\n line\"#;\n    // note\n    let n = 0x1f;\n}\n";
-        let bash = "cat <<EOF\nhello $USER\nEOF\nfor f in *; do echo \"$f\"; done\n";
         let log =
             "2026-10-17 12:00:01 INFO started pid=42\n2026-10-17 12:00:02 ERROR failed: \"x\"\n";
         let c = "int x = 1; // note\n";
         let json = "  {\"k\": [1, -2.5e3, true, \"s\\\"\"], \"open\": \"x\n  \"n\": null},\n";
         for (lang, unit, reps) in [
             ("rust", rust, 60),
-            ("bash", bash, 80),
             ("log", log, 150),
             ("c", c, 300),
             ("json", json, 150),
@@ -2058,12 +2256,12 @@ mod tests {
             }
             let one = highlight(1, lang, &text, &syntax);
             assert!(one.line_count() > 200, "{lang}: highlighted at all");
-            let found = find_syntax(lang).unwrap();
             for threads in 2..=5 {
-                let many = match lang {
-                    "log" => highlight_log_on(1, &text, &syntax, threads),
-                    "json" => highlight_json_on(1, &text, &syntax, threads),
-                    _ => highlight_on(1, found, &text, &syntax, threads),
+                let many = match find_syntax(lang).unwrap() {
+                    Syntax::Own(Lang::Log) => highlight_log_on(1, &text, &syntax, threads),
+                    Syntax::Own(Lang::Json) => highlight_json_on(1, &text, &syntax, threads),
+                    Syntax::Own(_) => panic!("{lang}: on one thread"),
+                    Syntax::Set(found) => highlight_on(1, found, &text, &syntax, threads),
                 };
                 assert!(many == one, "{lang} on {threads} threads");
             }

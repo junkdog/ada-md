@@ -35,7 +35,7 @@ fn fence_language(tag: &str) -> Option<Box<str>> {
 fn tag_for(syntax: &SyntaxReference) -> Option<&str> {
     let reaches = |tag: &str| {
         fence_language(tag).as_deref() == Some(tag)
-            && highlight::find_syntax(tag).is_some_and(|s| std::ptr::eq(s, syntax))
+            && highlight::find_syntax(tag).is_some_and(|s| s.name() == syntax.name)
     };
     syntax
         .file_extensions

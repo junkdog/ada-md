@@ -1,0 +1,27 @@
+[package]
+name = "ada-parse"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "ada-md's own lexers for the most used languages, and the table that names them"
+license = "MIT"
+repository = "https://github.com/junkdog/ada-md"
+
+# std only: no syntect types (ADR-40). ada checks the table against bat's
+# grammars in its own tests, where syntect is.
+[dependencies]
+
+[lints.rust]
+unused_variables = "deny"
+unused_imports = "deny"
+
+[lints.clippy]
+cloned_instead_of_copied = "warn"
+implicit_clone = "warn"
+manual_let_else = "warn"
+map_unwrap_or = "warn"
+needless_pass_by_value = "warn"
+redundant_closure_for_method_calls = "warn"
+semicolon_if_nothing_returned = "warn"
+trivially_copy_pass_by_ref = "warn"
+uninlined_format_args = "warn"

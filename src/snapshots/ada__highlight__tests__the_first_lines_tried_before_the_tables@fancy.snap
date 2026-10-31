@@ -1,0 +1,59 @@
+---
+source: src/highlight.rs
+expression: "later.join(\"\\n\")"
+---
+MultiMarkdown: (?i)^format:\s*complete\s*$
+PHP: ^(#!.*[^-]php[0-9]?|<\?php)\b
+Perl: (?xi:
+  ^\#! .* \bperl\b |                     # shebang
+  ^\# \s* -\*- [^*]* perl [^*]* -\*-     # editorconfig
+)
+Python: ^#!\s*/.*\bpython(\d(\.\d)?)?\b
+Ruby: (?xi:
+  ^\#! .* \bj?ruby\b |                # shebang
+  ^\# \s* -\*- [^*]* ruby [^*]* -\*-  # editorconfig
+)
+Bourne Again Shell (bash): (?x)
+  ^\#! .* \b(bash|zsh|sh|tcsh|ash|dash|ksh)\b
+| ^\# \s* -\*- [^*]* mode: \s* shell-script [^*]* -\*-
+
+Textile: textile
+XML: (?x:
+  ^(?:
+      <\?xml\s
+    | \s*<([\w-]+):Envelope\s+xmlns:\1\s*=\s*"http://schemas.xmlsoap.org/soap/envelope/"\s*>
+    | \s*(?i:<!DOCTYPE\s+(?!html[ \t\n\f>]))
+  )
+)
+YAML: ^%YAML( ?1.\d+)?
+CMakeCache: # This is the CMakeCache file.
+CoffeeScript: ^#!.*\bcoffee
+Crystal: ^#!/.*\bcrystal
+Dockerfile: ^\s*(?i:(from(?!\s+\S+\s+import)|arg))\s+
+Elixir: ^#!/.*\b(?:elixirc?|iex)
+Fish: ^#!.*\b(fish)\b
+GLSL: -[*]-( Mode:)? GLSL -[*]-
+HTML (Jinja2): ^{% extends ["'][^"']+["'] %}
+Julia: ^#!.*\bjulia\s*$
+LiveScript: ^#!.*\bls
+Protocol Buffer: ^(syntax)\s*(=)\s*("proto\d")\s*(;)\s*$
+Requirements.txt: (?xi:
+  ^ \#! .* \bpip                                        # shebang
+| ^ \s* \# .*? -\*- .*? \bpip-requirements\b .*? -\*-   # editorconfig
+| ^ \s* \# (vim?|ex): .*? \brequirements\b              # modeline
+)
+JQ: (?xi:
+  ^ \#! .* \b(jq|gojq|jaq|yq|xq)\b  # shebang
+)
+Svelte: (?i)<(!DOCTYPE\s*)?html
+Swift: ^#!/.*\bswift
+HTTP Request and Response: (?x:
+  ^
+  (?:
+    (?:GET|HEAD|POST|PUT|DELETE|CONNECT|OPTIONS|TRACE|PATCH)\ .+\ HTTP/\d(?:\.\d)?$
+    |
+    (?:HTTP/\d(?:\.\d)?\ \d{3}\ )
+  )
+)
+Private Key: ^-----BEGIN [\w ]+ PRIVATE KEY-----
+Odin: -[*]-( Mode:)? Odin -[*]-

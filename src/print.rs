@@ -15,7 +15,7 @@ use regex::Regex;
 use unicode_width::UnicodeWidthChar;
 
 use crate::app;
-use crate::doc::{Doc, LineRange, LinkId};
+use crate::doc::{self, Doc, LineRange, LinkId};
 use crate::git::LineMarks;
 use crate::highlight::{self, Highlights, SyntaxTheme};
 use crate::images::{self, Probe, Proto};
@@ -672,8 +672,8 @@ fn alignment(layout: &Layout, line: u32) -> (usize, usize) {
 /// arenas there are when a thread first allocates, and the threads that highlight and paint
 /// need one each: on one, XL's 231 blocks took 1.7× the CPU, and M's layout and highlighting
 /// side by side 1.2× (PRN-01; ADR-27 amended). Then, once, start loading the syntax set when a
-/// `note` has a fence that names a language, on a thread of its own: what's done before the
-/// note is highlighted hides the ~0.5 ms it takes.
+/// `note` has a fence that names a language ada's own lexers don't cover (ADR-40), on a thread
+/// of its own: what's done before the note is highlighted hides the ~0.5 ms it takes.
 pub fn start(note: Option<&str>) {
     // the main thread, the one loading the syntax set, the one waiting on the highlighting,
     // then one a core
@@ -682,11 +682,13 @@ pub fn start(note: Option<&str>) {
     let Some(note) = note else {
         return;
     };
+    // a fence in a language ada's own lexers cover doesn't need the set (ADR-40)
     let named = |fence| {
         note.match_indices(fence).any(|(i, _)| {
-            note[i..]
-                .trim_start_matches(['`', '~', ' ', '\t'])
-                .starts_with(char::is_alphanumeric)
+            let info = note[i..].trim_start_matches(['`', '~', ' ', '\t']);
+            let info = info.split_once('\n').map_or(info, |(line, _)| line);
+            info.starts_with(char::is_alphanumeric)
+                && doc::fence_language(info).is_some_and(|l| highlight::needs_syntaxes(&l))
         })
     };
     if !LOADING.is_completed() && (named("```") || named("~~~")) {
