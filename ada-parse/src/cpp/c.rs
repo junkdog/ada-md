@@ -54,7 +54,7 @@ impl Scan<'_, '_> {
                     return Some(self.close(p, 2, COMMENT_MARK | C));
                 }
                 if p == 0 {
-                    let q = skip_spaces(b, 0);
+                    let q = self.lead;
                     if at(b, q) == b'*' && q < b.len() && at(b, q + 1) != b'/' {
                         return Some(self.token(q, 1, COMMENT_MARK | C));
                     }
@@ -444,7 +444,13 @@ impl Scan<'_, '_> {
             C_NUM_HEX_FLOAT | C_NUM_HEX | C_NUM_OCT | C_NUM_DEC | C_TYPEDEF | C_UPPER_IDENT => {
                 next(b, p)
             }
-            _ if is_space(c) => skip_spaces(b, p),
+            _ if is_space(c) => {
+                if p == 0 {
+                    self.lead
+                } else {
+                    skip_spaces(b, p)
+                }
+            }
             _ if is_word(b, p) && !word_before(b, p) => {
                 let e = word_end(b, p);
                 b[p + 1..e]

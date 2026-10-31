@@ -528,14 +528,19 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
 const MAX: usize = 128;
 /// How many the state keeps between lines: [`State`]'s levels and withs.
 const KEPT: usize = 2 * HALF;
+/// Matches that take nothing in a row at one place before the scan steps on.
+const STUCK: usize = 64;
 /// A raw string's longest delimiter.
 const DELIM: usize = 16;
 
 /// Lex `b`, a line without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
+    let lead = crate::skip_spaces(b, 0);
     let mut s = Scan {
         b,
+        lead,
+        dir: pp::directive(b, lead),
         stack: [MAIN; MAX],
         depth: 1,
         exact: state.is_exact(),
@@ -545,6 +550,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         at: 0,
         loop_at: (usize::MAX, 0),
         halt: false,
+        stuck: 0,
         delim: [0; DELIM],
         delim_len: 0,
         word_at: std::cell::Cell::new((usize::MAX, 0)),
@@ -608,6 +614,10 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
 
 struct Scan<'b, 'c> {
     b: &'b [u8],
+    /// Where the line's indentation ends.
+    lead: usize,
+    /// The line's directive, `^\s*#\s*` and a word: where the `#` is and the word's bounds.
+    dir: Option<(usize, usize, usize)>,
     stack: [u8; MAX],
     depth: usize,
     exact: bool,
@@ -625,6 +635,8 @@ struct Scan<'b, 'c> {
     loop_at: (usize, usize),
     /// Nothing more to match: the line's `\n` was taken, or a loop at its end.
     halt: bool,
+    /// Matches that took nothing, in a row at one place: past syntect's guard, a step on.
+    stuck: usize,
     /// The open raw string's delimiter.
     delim: [u8; DELIM],
     delim_len: usize,
@@ -825,6 +837,7 @@ impl<'b> Scan<'b, '_> {
     }
 
     /// The whole word at `p`, `\bw\b`, if `p` starts one.
+    #[inline]
     fn word(&self, p: usize) -> &'b [u8] {
         let b = self.b;
         let (at, end) = self.word_at.get();
@@ -864,17 +877,15 @@ impl<'b> Scan<'b, '_> {
 
     fn run(&mut self) {
         let mut p = 0;
-        // matches that take nothing, in a row at one place: past syntect's guard, a step on
-        let mut stuck = 0;
         loop {
             if let Some(q) = self.at(p) {
-                stuck = if q == p { stuck + 1 } else { 0 };
+                self.stuck = if q == p { self.stuck + 1 } else { 0 };
                 p = q;
                 if self.halt {
                     return;
                 }
-                if stuck > 64 {
-                    stuck = 0;
+                if self.stuck > STUCK {
+                    self.stuck = 0;
                     if p >= self.b.len() {
                         return;
                     }
@@ -885,6 +896,18 @@ impl<'b> Scan<'b, '_> {
             } else {
                 return;
             }
+            p = self.past_spaces(p);
+        }
+    }
+
+    /// Past the spaces at `p`, where the top context has no pattern that can start at a space
+    /// past the line's start: what a miss there and its advance would do, without them.
+    fn past_spaces(&self, p: usize) -> usize {
+        let b = self.b;
+        if p > 0 && p < b.len() && crate::is_space(b[p]) && cxx::spaces_inert(self.top()) {
+            crate::skip_spaces(b, p)
+        } else {
+            p
         }
     }
 

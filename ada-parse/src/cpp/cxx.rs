@@ -166,12 +166,37 @@ fn forward_decl_after(b: &[u8], e: usize) -> bool {
     }
 }
 
+/// Whether no pattern of C++'s context `c` can start at a space past the line's start: those
+/// whose arms try their line-start rules at 0 only, single bytes that aren't spaces, words, and
+/// `expressions`, which starts no pattern at such a space.
+pub(super) fn spaces_inert(c: u8) -> bool {
+    matches!(
+        c,
+        BLOCK
+            | PAREN
+            | BRACKETS
+            | BRACE_EXPR
+            | FN_BLOCK
+            | FN_PARAMS_IN
+            | METHOD_PARAMS_IN
+            | FN_PARAM_DEFAULT
+            | METHOD_PARAM_DEFAULT
+            | ANGLE
+            | CAST_ARGS
+            | CASE
+            | ENUM_BODY
+            | FRIEND_BLOCK
+            | NEGATED
+            | TEMPLATE_ARGS
+    )
+}
+
 /// `\b[\p{Lu}_][\p{Lu}\p{Nd}_]{2,}\b` at `p`: where it ends.
 fn upper_macro(b: &[u8], p: usize) -> Option<usize> {
     if word_before(b, p) || !(super::text::is_upper(b, p) || at(b, p) == b'_') {
         return None;
     }
-    let e = run_of(b, next(b, p), is_upper_rest);
+    let e = super::text::upper_rest_end(b, next(b, p));
     (e >= p + 3 && !is_word(b, e)).then_some(e)
 }
 
@@ -199,7 +224,7 @@ impl Scan<'_, '_> {
                     && p == 0
                     && let Some(e) = self.ifdef_cplusplus()
                 {
-                    let q = skip_spaces(b, 0);
+                    let q = self.lead;
                     let k = skip_spaces(b, q + 1) + 5;
                     self.put(0, q, PRE);
                     self.put(q, k, IMPORT | PRE);
@@ -827,10 +852,22 @@ impl Scan<'_, '_> {
             PP_INC_DQ => find_any(b, p + 1, *b"\""),
             PP_INC_LT => find_any(b, p + 1, *b">"),
             IF_COMMENT | ELSE_COMMENT => b.len(),
-            NUM_HEX_FLOAT | NUM_BIN | NUM_HEX | NUM_OCT | NUM_DEC | G_OPERATOR | TYPEDEF => {
-                next(b, p)
+            // a number's digits (and `'`s) start none of its context's patterns: past them whole
+            NUM_HEX_FLOAT => run_of(b, next(b, p), |b, i| b[i].is_ascii_hexdigit()),
+            NUM_HEX => run_of(b, next(b, p), |b, i| {
+                b[i].is_ascii_hexdigit() || b[i] == b'\''
+            }),
+            NUM_DEC => run_of(b, next(b, p), |b, i| b[i].is_ascii_digit() || b[i] == b'\''),
+            NUM_OCT => run_of(b, next(b, p), |b, i| matches!(b[i], b'0'..=b'7' | b'\'')),
+            NUM_BIN => run_of(b, next(b, p), |b, i| matches!(b[i], b'0' | b'1' | b'\'')),
+            G_OPERATOR | TYPEDEF => next(b, p),
+            _ if is_space(c) => {
+                if p == 0 {
+                    self.lead
+                } else {
+                    skip_spaces(b, p)
+                }
             }
-            _ if is_space(c) => skip_spaces(b, p),
             // a word that nothing took at its start: its middle can only start a string's
             // prefix (`1fL"x"`)
             _ if is_word(b, p) && !word_before(b, p) => {
@@ -1097,6 +1134,14 @@ impl Scan<'_, '_> {
         }
         let x = at(b, p + 1);
         if c == b'0' && matches!(x, b'x' | b'X') && p + 1 < b.len() {
+            // digits, then a byte that ends the number and no float's: `NUM_HEX`'s text, and
+            // its pop, which takes nothing (and can't loop where the scan hasn't been)
+            let q = run_of(b, p + 2, |b, i| b[i].is_ascii_hexdigit() || b[i] == b'\'');
+            if q > p + 2 && !is_ident(b, q) && at(b, q) != b'.' && self.depth < MAX {
+                self.put(p, p + 2, HEX_BASE);
+                self.put(p + 2, q, HEX);
+                return Some(q);
+            }
             if hex_float_ahead(b, p + 2, true) {
                 return Some(self.open(p, 2, NUM_HEX_FLOAT, HEX_FLOAT_BASE));
             }
@@ -1110,6 +1155,10 @@ impl Scan<'_, '_> {
         }
         let e = run_of(b, p, |b, i| b[i].is_ascii_digit());
         self.put(p, e, DEC);
+        // `NUM_DEC` would pop at once, taking nothing
+        if !is_ident(b, e) && at(b, e) != b'\'' && self.depth < MAX {
+            return Some(e);
+        }
         self.push(e, NUM_DEC);
         Some(e)
     }
@@ -1117,13 +1166,15 @@ impl Scan<'_, '_> {
     /// `expressions` and its variants: with `generic-type` or plain `angle-brackets`, with
     /// `function-call` or not.
     pub(super) fn exprs(&mut self, p: usize, c: u8, generic: bool, call: bool) -> Option<usize> {
-        // past the line's start, no pattern of expressions starts with a space
-        if p > 0 && is_space(c) {
-            return None;
+        // no pattern of expressions starts with a space (or at the line's end) but the
+        // preprocessor's, `^\s*…`, at the line's start
+        if is_space(c) {
+            return (p == 0 && p < self.b.len())
+                .then(|| self.preprocessor_expressions())
+                .flatten();
         }
-        if let Some(e) = self.plain_name(p, c) {
-            self.fill(e);
-            return Some(e);
+        if let Some(r) = self.name(p, c, call) {
+            return Some(r);
         }
         // past the line's start, a byte of punctuation that starts no comment, number, `<`,
         // `::` or string can only be one of `early-expressions-after-generic-type`'s, or `;`
@@ -1134,6 +1185,13 @@ impl Scan<'_, '_> {
             return self
                 .early_after(p, c)
                 .or_else(|| (c == b';').then(|| self.token(p, 1, TERMINATOR)));
+        }
+        // a digit starts nothing of `early-expressions-before-generic-type` before `numbers`
+        // (the line-start ones want a `#` or a name)
+        if c.is_ascii_digit()
+            && let Some(r) = self.numbers(p, c)
+        {
+            return Some(r);
         }
         if let Some(r) = self.early_before(p, c) {
             return Some(r);
@@ -1160,27 +1218,62 @@ impl Scan<'_, '_> {
         (c == b';' && p < self.b.len()).then(|| self.token(p, 1, TERMINATOR))
     }
 
-    /// An ASCII name past the line's start that no keyword list holds and nothing after it
-    /// (`<`, `(`, `{`, `::`, a string's quote) can make more of: every pattern of
-    /// `expressions` before `identifiers` misses it, and `identifiers` takes it alone. Where it
-    /// ends.
-    fn plain_name(&self, p: usize, c: u8) -> Option<usize> {
+    /// An ASCII name past the line's start that no keyword list holds, in `expressions`, the
+    /// common cases at once. With nothing after it that can make more of it (`<`, `(`, `{`,
+    /// `::`, a string's quote), every pattern before `identifiers` misses it, and `identifiers`
+    /// takes it alone. Followed by spaces and `(` or `{`, every pattern before `function-call`
+    /// misses it, and `function-call`'s context (which colors nothing around) takes the name as
+    /// a function, C99's or any, and the bracket, which sets a group or a braced expression:
+    /// done here without the push that matches nothing (unless that push would be the one
+    /// where the scan steps on). Where the scan goes on.
+    fn name(&mut self, p: usize, c: u8, call: bool) -> Option<usize> {
         let b = self.b;
         if p == 0 || !(c.is_ascii_alphabetic() || c == b'_') || word_before(b, p) {
             return None;
         }
-        let e = p + b[p..]
-            .iter()
-            .position(|&x| !(x.is_ascii_alphanumeric() || x == b'_'))
-            .unwrap_or(b.len() - p);
+        let e = super::text::ascii_word_end(b, p + 1);
         if e < b.len() && b[e] >= 0x80 {
             return None;
         }
         let q = skip_spaces(b, e);
-        if q < b.len() && matches!(b[q], b'<' | b'(' | b'{' | b':' | b'"' | b'\'') {
+        let open = if q < b.len() { b[q] } else { b'\n' };
+        if matches!(open, b'<' | b':' | b'"' | b'\'') {
             return None;
         }
-        (self.kw(p) == Kw::Other).then_some(e)
+        // `\w` is the name's bytes here: the whole word ends where it does
+        self.word_at.set((p, e));
+        // the words whose group takes them whatever follows (but `<`, `::`, a quote): those of
+        // `keywords`, the values of `early-expressions-after-generic-type`, `modifiers` and
+        // `types` in `late-expressions-before-function-call`
+        let leaf = match self.kw(p) {
+            Kw::Other => None,
+            Kw::Flow(leaf) | Kw::Value(leaf) | Kw::Support(leaf) => Some(leaf),
+            Kw::Control => Some(CONTROL),
+            Kw::WordOp => Some(WORD_OP),
+            Kw::Modifier => Some(MODIFIER),
+            Kw::CxxType => Some(STORAGE_TYPE),
+            Kw::CType => Some(STORAGE_TYPE | C),
+            _ => return None,
+        };
+        if let Some(leaf) = leaf {
+            return Some(self.token(p, e - p, leaf));
+        }
+        if !matches!(open, b'(' | b'{') {
+            self.fill(e);
+            return Some(e);
+        }
+        if !call || self.stuck >= STUCK || starts(b, p, b"template") {
+            return None;
+        }
+        let leaf = if super::words::is_c99(&b[p..e]) {
+            C99 | C
+        } else {
+            FUNCTION
+        };
+        self.put(p, e, leaf);
+        self.put(q, q + 1, GROUP_BEGIN);
+        self.push(q + 1, if open == b'(' { PAREN } else { BRACE_EXPR });
+        Some(q + 1)
     }
 
     /// `early-expressions-before-generic-type`.
@@ -1459,6 +1552,15 @@ impl Scan<'_, '_> {
     /// `statements`: the `#if` rules, C's `label`, expressions.
     pub(super) fn statements(&mut self, p: usize, c: u8) -> Option<usize> {
         if p == 0 {
+            // at a space, only the rules (a directive), `label` and the workarounds (a name
+            // first) can start: none without a `#` or a name's first byte past the indentation
+            if is_space(c)
+                && self.dir.is_none()
+                && !at(self.b, self.lead).is_ascii_alphabetic()
+                && !matches!(at(self.b, self.lead), b'_' | 0x80..)
+            {
+                return None;
+            }
             if let Some(r) = self.rules(0, Rule::Statements) {
                 return Some(r);
             }
@@ -1472,8 +1574,13 @@ impl Scan<'_, '_> {
     /// C's `label`: `^\s*((?!default)\bID\b)(:)(?!:)`.
     pub(super) fn label(&mut self) -> Option<usize> {
         let b = self.b;
-        let q = skip_spaces(b, 0);
+        let q = self.lead;
         if starts(b, q, b"default") {
+            return None;
+        }
+        // a name's ASCII run ending on another ASCII byte than `:` is no label's
+        let a = super::text::ascii_word_end(b, q);
+        if a < b.len() && b[a] < 0x80 && b[a] != b':' {
             return None;
         }
         let e = self.id_at(q)?;
@@ -1533,7 +1640,7 @@ impl Scan<'_, '_> {
             return Some(r);
         }
         if p == 0 {
-            let q = skip_spaces(b, 0);
+            let q = self.lead;
             if is_kw(b, q, b"extern") {
                 let s = skip_spaces(b, q + 6);
                 if s > q + 6 && starts(b, s, b"\"C") {
@@ -1969,7 +2076,7 @@ impl Scan<'_, '_> {
     /// Whether the line is `^\s*#\s*` and one of `words` then `\b`.
     pub(super) fn directive_is(&self, words: &[&[u8]]) -> bool {
         let b = self.b;
-        let q = skip_spaces(b, 0);
+        let q = self.lead;
         if at(b, q) != b'#' || q >= b.len() {
             return false;
         }
@@ -2152,7 +2259,7 @@ impl Scan<'_, '_> {
             }
         }
         if p == 0 {
-            let q = skip_spaces(b, 0);
+            let q = self.lead;
             let t = if at(b, q) == b'~' { q + 1 } else { q };
             if is_word(b, t) || starts(b, q, b"::") {
                 // `^\s*` took nothing without indentation: a push that matched nothing
@@ -2294,7 +2401,10 @@ impl Scan<'_, '_> {
                 return Some(s);
             }
         }
-        if let Some(e) = id(b, p) {
+        // `id` at `p` is the one above, or none at a `~`
+        if t == p
+            && let Some(e) = e
+        {
             let s = skip_spaces(b, e);
             if starts(b, s, b"::") {
                 self.put(p, e, BASE_CLASS);
@@ -2326,7 +2436,7 @@ impl Scan<'_, '_> {
     /// `^\s*(#\s*ifdef)\s*__cplusplus\s*` on the line: where it ends.
     fn ifdef_cplusplus(&self) -> Option<usize> {
         let b = self.b;
-        let q = skip_spaces(b, 0);
+        let q = self.lead;
         if at(b, q) != b'#' || q >= b.len() {
             return None;
         }

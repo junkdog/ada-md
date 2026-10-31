@@ -3,14 +3,14 @@
 //! little else).
 
 use super::cxx::Rule;
-use super::text::{at, id, is_upper_rest, is_word, path, path_then, run_of, starts, word_before};
+use super::text::{at, id, is_word, path, path_then, run_of, starts, word_before};
 use super::words::c99_at;
 use super::*;
 use crate::skip_spaces;
 
-/// `^\s*#\s*` then a word: where the `#` is and the word's bounds.
-pub(super) fn directive(b: &[u8]) -> Option<(usize, usize, usize)> {
-    let q = skip_spaces(b, 0);
+/// `^\s*#\s*` then a word in `b`, whose indentation ends at `q`: where the `#` is and the
+/// word's bounds.
+pub(super) fn directive(b: &[u8], q: usize) -> Option<(usize, usize, usize)> {
     if at(b, q) != b'#' || q >= b.len() {
         return None;
     }
@@ -24,7 +24,7 @@ fn upper_word(b: &[u8], p: usize) -> Option<usize> {
     if word_before(b, p) || !(super::text::is_upper(b, p) || at(b, p) == b'_') {
         return None;
     }
-    let e = run_of(b, super::text::next(b, p), is_upper_rest);
+    let e = super::text::upper_rest_end(b, super::text::next(b, p));
     (e >= p + 3 && !is_word(b, e)).then_some(e)
 }
 
@@ -46,7 +46,7 @@ impl Scan<'_, '_> {
         if p != 0 {
             return None;
         }
-        let (q, s, e) = directive(b)?;
+        let (q, s, e) = self.dir?;
         let lang = if cl { C } else { 0 };
         if starts(b, q, b"#if") {
             let t = skip_spaces(b, q + 3);
@@ -97,7 +97,7 @@ impl Scan<'_, '_> {
     pub(super) fn pp_expressions(&mut self, cl: bool) -> Option<usize> {
         let b = self.b;
         let lang = if cl { C } else { 0 };
-        if let Some((q, s, e)) = directive(b) {
+        if let Some((q, s, e)) = self.dir {
             let w = &b[s..e];
             // `^\s*(#i(nc?)?)\b\s*`: no space after the `#`
             if s == q + 1 && matches!(w, b"i" | b"in" | b"inc") {
@@ -120,7 +120,7 @@ impl Scan<'_, '_> {
     /// C's `pragma-mark`: `^\s*((#\s*pragma\s+mark)\s+(.*))`.
     pub(super) fn pragma_mark(&mut self) -> Option<usize> {
         let b = self.b;
-        let (q, s, e) = directive(b)?;
+        let (q, s, e) = self.dir?;
         if &b[s..e] != b"pragma" {
             return None;
         }
@@ -150,7 +150,7 @@ impl Scan<'_, '_> {
     pub(super) fn pp_other(&mut self, cl: bool) -> Option<usize> {
         let b = self.b;
         let lang = if cl { C } else { 0 };
-        if let Some((q, s, e)) = directive(b) {
+        if let Some((q, s, e)) = self.dir {
             let w = &b[s..e];
             let push = match w {
                 b"if" | b"ifdef" | b"ifndef" | b"elif" | b"else" | b"line" | b"pragma"
@@ -208,14 +208,14 @@ impl Scan<'_, '_> {
     /// both workarounds need.
     fn upper_line_start(&self) -> bool {
         let b = self.b;
-        let q = skip_spaces(b, 0);
+        let q = self.lead;
         q < b.len() && (b[q].is_ascii_uppercase() || b[q] == b'_' || b[q] >= 0x80)
     }
 
     /// `^(\s*\b[\p{Lu}_][\p{Lu}\p{Nd}_]{2,}\b)+\s*(?m:$)`.
     fn upper_ident_line(&self) -> bool {
         let b = self.b;
-        let mut q = skip_spaces(b, 0);
+        let mut q = self.lead;
         let mut words = 0;
         while let Some(e) = upper_word(b, q) {
             words += 1;
@@ -227,7 +227,7 @@ impl Scan<'_, '_> {
     /// `^\s*(\b[\p{Lu}_][\p{Lu}\p{Nd}_]{2,}\b)\s*(\()(?=[^)]*\)\s*(?m:$))`.
     fn uppercase_call(&mut self) -> Option<usize> {
         let b = self.b;
-        let q = skip_spaces(b, 0);
+        let q = self.lead;
         let e = upper_word(b, q)?;
         let s = skip_spaces(b, e);
         if at(b, s) != b'(' || s >= b.len() {
@@ -423,7 +423,7 @@ impl Scan<'_, '_> {
             }
             EN_G | EN_S | EN_D | C_EN_S | C_EN_D | DIS_G | DIS_S | DIS_D | C_DIS_S | C_DIS_D => {
                 if p == 0
-                    && let Some((q, s, e)) = directive(b)
+                    && let Some((q, s, e)) = self.dir
                 {
                     let w = &b[s..e];
                     if w == b"endif" {
@@ -498,7 +498,7 @@ impl Scan<'_, '_> {
                 if p != 0 {
                     return None;
                 }
-                let (q, s, e) = directive(b)?;
+                let (q, s, e) = self.dir?;
                 let w = &b[s..e];
                 match top {
                     ELSE_COMMENT | C_ELSE_COMMENT if w == b"endif" && self.can_pop(0) => {
@@ -544,7 +544,7 @@ impl Scan<'_, '_> {
             }
             IF_G | IF_S | C_IF_S => {
                 if p == 0
-                    && let Some((q, s, e)) = directive(b)
+                    && let Some((q, s, e)) = self.dir
                 {
                     let w = &b[s..e];
                     if w == b"endif" {
@@ -625,7 +625,7 @@ impl Scan<'_, '_> {
                     _ => (C_FINISH_S, C_ELIF_S, C_IF_S),
                 };
                 if p == 0
-                    && let Some((q, s, e)) = directive(b)
+                    && let Some((q, s, e)) = self.dir
                 {
                     let w = &b[s..e];
                     if w == b"endif" {
@@ -648,7 +648,7 @@ impl Scan<'_, '_> {
             }
             FINISH_G | FINISH_S | C_FINISH_S => {
                 if p == 0
-                    && let Some((q, s, e)) = directive(b)
+                    && let Some((q, s, e)) = self.dir
                     && matches!(&b[s..e], b"if" | b"ifdef" | b"ifndef")
                 {
                     self.put(q, e, IMPORT | PRE | lang);
@@ -671,7 +671,7 @@ impl Scan<'_, '_> {
             }
             FINISH_IF_G | FINISH_IF_S | C_FINISH_IF_S => {
                 if p == 0
-                    && let Some((q, s, e)) = directive(b)
+                    && let Some((q, s, e)) = self.dir
                     && &b[s..e] == b"endif"
                 {
                     self.put(q, e, IMPORT | lang);
@@ -733,7 +733,7 @@ impl Scan<'_, '_> {
                     return Some(self.then(p, 1, &[pick(cl, IF_S, C_IF_S)], GROUP_END | lang));
                 }
                 if p == 0
-                    && let Some((q, s, e)) = directive(b)
+                    && let Some((q, s, e)) = self.dir
                 {
                     let w = &b[s..e];
                     if matches!(w, b"elif" | b"else") {

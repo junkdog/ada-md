@@ -126,6 +126,23 @@ pub fn is_upper_rest(b: &[u8], i: usize) -> bool {
     }
 }
 
+/// Where the run of `[\p{Lu}\p{Nd}_]` at `p` ends: ASCII's bytes at once, the rest by
+/// character.
+#[inline]
+pub fn upper_rest_end(b: &[u8], mut p: usize) -> usize {
+    while p < b.len() {
+        let c = b[p];
+        if c >= 0x80 {
+            return run_of(b, p, is_upper_rest);
+        }
+        if !(c.is_ascii_uppercase() || c.is_ascii_digit() || c == b'_') {
+            break;
+        }
+        p += 1;
+    }
+    p
+}
+
 /// The character after the one at `i`.
 #[inline]
 pub fn next(b: &[u8], i: usize) -> usize {
@@ -162,6 +179,15 @@ pub fn word_end(b: &[u8], mut p: usize) -> usize {
         } else {
             break;
         }
+    }
+    p
+}
+
+/// Where the run of ASCII `\w` at `p` ends.
+#[inline]
+pub fn ascii_word_end(b: &[u8], mut p: usize) -> usize {
+    while p < b.len() && CLASSES[usize::from(b[p])] & W != 0 {
+        p += 1;
     }
     p
 }
@@ -224,6 +250,12 @@ pub fn path<T>(b: &[u8], p: usize, mut f: impl FnMut(usize, usize) -> Option<T>)
     let mut s = p;
     if starts(b, p, b"::") {
         s = skip_spaces(b, p + 2);
+    } else if !starts(b, p, b"template") {
+        // the common case, one name: its end is the only one
+        let e = id(b, p)?;
+        if !starts(b, skip_spaces(b, e), b"::") {
+            return f(p, e);
+        }
     }
     // the segments' ends: after each `ID ::` and the spaces after
     let mut ends = [0usize; 32];
