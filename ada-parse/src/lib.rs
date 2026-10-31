@@ -26,6 +26,7 @@ mod lang;
 mod logs;
 mod machine;
 mod properties;
+mod rust;
 // the port: the scanner's reference in tests, and the source of helpers it shares
 #[allow(dead_code)]
 mod toml;
@@ -143,6 +144,7 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::Toml => toml_scan::line(line.as_bytes(), state, &mut out),
         Lang::Yaml => yaml_scan::line(line.as_bytes(), state, &mut out),
         Lang::Xml => xml_scan::line(line.as_bytes(), state, &mut out),
+        Lang::Rust => rust::line(line.as_bytes(), state, &mut out),
         _ => {
             if let Some(g) = lang.grammar() {
                 machine::line(g, line.as_bytes(), state, &mut out);

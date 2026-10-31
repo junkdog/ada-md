@@ -25,6 +25,7 @@ const LANGS: &[(&str, Lang)] = &[
     ("gitignore", Lang::GitIgnore),
     ("gitattributes", Lang::GitAttributes),
     ("mailmap", Lang::GitMailmap),
+    ("rust", Lang::Rust),
 ];
 
 #[test]

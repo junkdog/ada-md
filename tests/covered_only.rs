@@ -80,6 +80,12 @@ RUN cargo build \\
     --release
 ```
 
+```rust
+#[derive(Debug)]
+struct S<T>(Vec<T>);
+fn main() { println!(\"{}\", r#\"raw\"#); }
+```
+
 ```text
 plain
 ```
@@ -143,6 +149,7 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         ".gitignore",
         ".gitattributes",
         ".mailmap",
+        "main.rs",
     ] {
         let t = FileType::by_path(Path::new(name));
         assert!(
@@ -158,6 +165,6 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         assert!(!highlight::syntaxes_loaded(), "{first} loaded the set");
     }
 
-    print(&format!("{NOTE}\n```rust\nfn main() {{}}\n```\n"));
-    assert!(highlight::syntaxes_loaded(), "a Rust fence needs the set");
+    print(&format!("{NOTE}\n```python\ndef main(): pass\n```\n"));
+    assert!(highlight::syntaxes_loaded(), "a Python fence needs the set");
 }

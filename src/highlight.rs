@@ -2070,6 +2070,45 @@ mod tests {
         rules_match_the_grammar("yaml", "YAML", text);
     }
 
+    /// ada-parse's Rust lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (ADR-40): its odd corners included (a one-digit width in a placeholder, `write!`'s
+    /// first argument, a tuple struct's first `)`, `impl` names past `for`).
+    #[test]
+    fn rust_rules_match_the_grammar() {
+        let text = concat!(
+            "//! crate docs $x\n",
+            "#![allow(dead_code)]\n",
+            "#[derive(Debug, Clone)] #[cfg(not(feature = \"x\"))]\n",
+            "pub(crate) struct S<'a, T: ?Sized> { pub a: &'a T, b: Vec<[u8; 4]> }\n",
+            "struct Tuple(pub u32, Option<(u8, u16)>);\n",
+            "enum E<T> { A(T), B { x: i32 }, C = 3 }\n",
+            "trait Tr: Clone + Send { type Out; fn f(&self) -> Self::Out; }\n",
+            "impl<'a, T> fmt::Display for S<'a, T> where T: Copy {\n",
+            "    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n",
+            "        write!(f.out(), \"{:>8} {:10} {0:.2} {name:?} {{}}\", self.a)?;\n",
+            "        println!(\"{:#?} {x:08x}\", 1u8);\n",
+            "        let r = r##\"raw \"# still\"##; let b = b\"\\x00\\q\"; let c = ['\\n', b'a', '\\u{1F600}'];\n",
+            "        let f = |x: u32, (a, b): (u8, u8)| -> u32 { x + 1 };\n",
+            "        'outer: loop { break 'outer; }\n",
+            "        let v: Vec<_> = xs.iter().map(|x| x * 2).collect::<Vec<_>>();\n",
+            "        match self { Self::A if a >= 0x1F_u8 => 1.5e-3f64, _ => 0o17 as f64 + 0b1010 as f64 };\n",
+            "        unsafe { *ptr = MAX_LEN << 2; std::mem::drop(x); }\n",
+            "        /* block /* nested */ still */ /** doc\n",
+            "          * star\n",
+            "          */ x..=y; a != b && !c || d\n",
+            "    }\n",
+            "}\n",
+            "macro_rules! m { ($x:expr, $($y:ident),*) => { $x + 1 }; }\n",
+            "type Alias = fn(u8) -> u8;\n",
+            "mod tests { use super::*; }\n",
+            "const C_T: c_int = 0; static mut size_t: usize = 1.;\n",
+            "fn g<T>(\n",
+            "    a: impl Iterator<Item = u8>,\n",
+            ") -> Box<dyn Fn() -> u8 + Send> where T: Default {}\n",
+        );
+        rules_match_the_grammar("rust", "Rust", text);
+    }
+
     /// ada-parse's Dockerfile lexer picks the rules bat's grammar picks, in every built-in
     /// theme (ADR-40).
     #[test]
@@ -2583,7 +2622,7 @@ mod tests {
     fn parallel_highlighting_matches_one_thread() {
         let theme = Theme::builtin();
         let syntax = SyntaxTheme::new(&theme.syntax);
-        let rust = "fn main() {\n    let s = r#\"a \"quoted\"\n line\"#;\n    // note\n    let n = 0x1f;\n}\n";
+        let cpp = "int main() {\n    auto s = R\"x(a \"quoted\"\n line)x\";\n    // note\n    int n = 0x1f;\n}\n";
         let log =
             "2026-10-17 12:00:01 INFO started pid=42\n2026-10-17 12:00:02 ERROR failed: \"x\"\n";
         let c = "int x = 1; // note\n";
@@ -2591,7 +2630,7 @@ mod tests {
         let diff = "--- a/x\n+++ b/x\n@@ -1 +1 @@ fn main\n-old\n+new\n same\n";
         let ini = "[core]\n; note\neditor = \"vim\" ; the one\n";
         for (lang, unit, reps) in [
-            ("rust", rust, 60),
+            ("cpp", cpp, 60),
             ("log", log, 150),
             ("c", c, 300),
             ("json", json, 150),

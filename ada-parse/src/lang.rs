@@ -41,6 +41,8 @@ pub enum Lang {
     GitMailmap,
     /// bat's `Git Link`.
     GitLink,
+    /// bat's `Rust`.
+    Rust,
 }
 
 /// Fence languages that no syntax names, and the token each stands for (`zsh` for bash's).
@@ -202,10 +204,11 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     ),
     (Lang::GitMailmap, &[".mailmap", "mailmap"]),
     (Lang::GitLink, &[".git"]),
+    (Lang::Rust, &["rs"]),
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 16] = [
+    pub const ALL: [Lang; 17] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -222,6 +225,7 @@ impl Lang {
         Lang::GitAttributes,
         Lang::GitMailmap,
         Lang::GitLink,
+        Lang::Rust,
     ];
 
     /// The name of the syntax it stands in for, as syntect names it.
@@ -243,6 +247,7 @@ impl Lang {
             Lang::GitAttributes => "Git Attributes",
             Lang::GitMailmap => "Git Mailmap",
             Lang::GitLink => "Git Link",
+            Lang::Rust => "Rust",
         }
     }
 
@@ -265,6 +270,7 @@ impl Lang {
             Lang::GitAttributes => "text.git.attributes",
             Lang::GitMailmap => "text.git.mailmap",
             Lang::GitLink => "text.git.link",
+            Lang::Rust => "source.rust",
         }
     }
 
@@ -288,6 +294,7 @@ impl Lang {
             Lang::Toml => crate::toml_scan::scopes(kind),
             Lang::Yaml => crate::yaml_scan::scopes(kind),
             Lang::Xml => crate::xml_scan::scopes(kind),
+            Lang::Rust => crate::rust::scopes(kind),
             _ if self.grammar().is_some() => {
                 self.grammar().map_or_else(Vec::new, |g| g.scopes(kind))
             }
@@ -316,7 +323,8 @@ impl Lang {
             | Lang::Ini
             | Lang::Toml
             | Lang::Xml
-            | Lang::Yaml => {
+            | Lang::Yaml
+            | Lang::Rust => {
                 return None;
             }
         })
@@ -532,7 +540,8 @@ mod tests {
         assert_eq!(Lang::from_token("Makefile"), Some(Lang::Makefile));
         assert_eq!(Lang::from_token("mk"), Some(Lang::Makefile));
         assert_eq!(Lang::from_token("log"), Some(Lang::Log));
-        assert_eq!(Lang::from_token("rust"), None);
+        assert_eq!(Lang::from_token("rust"), Some(Lang::Rust));
+        assert_eq!(Lang::from_token("rs"), Some(Lang::Rust));
         assert_eq!(Lang::from_token("kt"), None);
     }
 
