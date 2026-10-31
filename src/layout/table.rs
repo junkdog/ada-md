@@ -1,5 +1,6 @@
-//! Tables (ADR-11, architecture §4). Columns are measured once per Doc ([`measure`]), then
-//! distributed per width the way CSS automatic table layout does it ([`distribute`]). A grid that
+//! Tables (ADR-11, architecture §4). Columns are measured once per Doc, by the first layout, from
+//! the cells it flattens to wrap them ([`Cells`]), then distributed per width the way CSS
+//! automatic table layout does it ([`distribute`]). A grid that
 //! can't fit without breaking words becomes one card per row in `auto` mode; `t` forces either.
 //! `s` sorts the body rows by a column ([`order`]); the layout lays them out in that order.
 
@@ -14,6 +15,8 @@ use crate::doc::{Align, Doc, LineRange, Table, TableRow};
 use crate::geom;
 use crate::theme::{Glyphs, StyleKey, TableBorder};
 
+/// A table's border glyphs: every one a column wide (LAY-004: drawn at that width, unmeasured),
+/// but `card`, two.
 struct Border {
     top: [&'static str; 3],
     sep: [&'static str; 3],
@@ -59,25 +62,64 @@ pub struct ColMeasure {
 }
 
 /// Measure every column of `t`. Inline styles don't change widths; inline code counts its padding.
+#[cfg(test)]
 pub fn measure(t: &Table, doc: &Doc, glyphs: &Glyphs) -> Vec<ColMeasure> {
-    let mut cols = vec![ColMeasure::default(); t.column_count()];
-    for (r, row) in std::iter::once(&t.header).chain(&t.rows).enumerate() {
-        for (col, cell) in cols.iter_mut().zip(&row.cells) {
-            let (min, whole, max) = wrap::measure(&cell.runs, doc, glyphs);
-            col.min = col.min.max(min);
-            col.whole = col.whole.max(whole);
-            col.max = col.max.max(max);
-            if r == 0 {
-                col.header = max;
+    let mut cells = Cells::default();
+    cells.flatten(t, StyleKey::Text, doc, glyphs);
+    cells.measure(t.column_count())
+}
+
+/// A table's cells flattened once, for both its measure and its wraps (LAY-003): the header's
+/// as row 0, then the body's in source order, each row's up to the column count.
+#[derive(Debug, Default)]
+pub(super) struct Cells {
+    flat: wrap::Flat,
+    /// Where each row's cells start in `flat`, and where the last row's end.
+    rows: Vec<u32>,
+}
+
+impl Cells {
+    /// Flatten `t`'s cells, the header's in [`StyleKey::TableHeader`] and the body's in `key`.
+    fn flatten(&mut self, t: &Table, key: StyleKey, doc: &Doc, glyphs: &Glyphs) {
+        self.flat.clear();
+        self.rows.clear();
+        let n = t.column_count();
+        for (r, row) in std::iter::once(&t.header).chain(&t.rows).enumerate() {
+            self.rows.push(self.flat.len() as u32);
+            let key = if r == 0 { StyleKey::TableHeader } else { key };
+            for cell in row.cells.iter().take(n) {
+                self.flat.push(&cell.runs, cell.unit, key, doc, glyphs);
             }
         }
+        self.rows.push(self.flat.len() as u32);
     }
-    for col in &mut cols {
-        col.max = col.max.max(1);
-        col.min = col.min.clamp(1, col.max);
-        col.whole = col.whole.clamp(col.min, col.max);
+
+    /// Row `r`'s cells, as indices into `flat`.
+    fn row(&self, r: usize) -> std::ops::Range<usize> {
+        self.rows[r] as usize..self.rows[r + 1] as usize
     }
-    cols
+
+    /// The `n` columns' measurements.
+    fn measure(&self, n: usize) -> Vec<ColMeasure> {
+        let mut cols = vec![ColMeasure::default(); n];
+        for r in 0..self.rows.len() - 1 {
+            for (col, i) in cols.iter_mut().zip(self.row(r)) {
+                let (min, whole, max) = self.flat.measure(i);
+                col.min = col.min.max(min);
+                col.whole = col.whole.max(whole);
+                col.max = col.max.max(max);
+                if r == 0 {
+                    col.header = max;
+                }
+            }
+        }
+        for col in &mut cols {
+            col.max = col.max.max(1);
+            col.min = col.min.clamp(1, col.max);
+            col.whole = col.whole.clamp(col.min, col.max);
+        }
+        cols
+    }
 }
 
 /// Content widths for `cols` sharing `avail` cells, or `None` for records.
@@ -742,13 +784,18 @@ fn split_digits(s: &str) -> (&str, &str) {
 }
 
 pub(super) fn layout(b: &mut Builder<'_>, t: &Table) {
-    let mut cols: Cow<'_, [ColMeasure]> = match b.measure.tables.get(t.id as usize) {
-        Some(m) if m.len() == t.column_count() => Cow::Borrowed(m),
-        _ => Cow::Owned(measure(t, b.doc, b.g)),
-    };
-    if cols.is_empty() {
+    if t.column_count() == 0 {
         return;
     }
+    let mut flat = std::mem::take(&mut b.flat);
+    flat.flatten(t, b.text_key, b.doc, b.g);
+    let n = t.column_count();
+    let measured = b.measure.tables.get(t.id as usize);
+    let mut cols: Cow<'_, [ColMeasure]> =
+        match measured.map(|m| m.get_or_init(|| flat.measure(n).into())) {
+            Some(m) if m.len() == n => Cow::Borrowed(m),
+            _ => Cow::Owned(flat.measure(n)),
+        };
     let sorted = b.measure.sorted(t.id);
     let glyph = sorted
         .map(|s| b.g.sort_mark[usize::from(s.sort.desc)].clone())
@@ -774,13 +821,14 @@ pub(super) fn layout(b: &mut Builder<'_>, t: &Table) {
         col.min = col.min.saturating_add(m.extra).min(col.max);
         col.whole = col.whole.saturating_add(m.extra).clamp(col.min, col.max);
     }
-    let rows: Vec<&TableRow> = match sorted {
+    // each body row with its row in `flat`
+    let rows: Vec<(usize, &TableRow)> = match sorted {
         Some(s) => s
             .order
             .iter()
-            .filter_map(|&i| t.rows.get(i as usize))
+            .filter_map(|&i| Some((i as usize + 1, t.rows.get(i as usize)?)))
             .collect(),
-        None => t.rows.iter().collect(),
+        None => t.rows.iter().enumerate().map(|(i, r)| (i + 1, r)).collect(),
     };
     let header = Header {
         row: &t.header,
@@ -804,13 +852,14 @@ pub(super) fn layout(b: &mut Builder<'_>, t: &Table) {
     };
     let start = b.out.row_count();
     match widths {
-        Some(widths) => grid(b, t, &header, &rows, &widths, border),
-        None => records(b, &header, &rows, &cols, border),
+        Some(widths) => grid(b, &flat, t, &header, &rows, &widths, border),
+        None => records(b, &flat, &header, &rows, &cols, border),
     }
     b.out.tables.push(TableRows {
         table: t.id,
         rows: start..b.out.row_count(),
     });
+    b.flat = flat;
 }
 
 /// The header row, and the sort mark of the column the table is sorted by.
@@ -821,14 +870,14 @@ struct Header<'a> {
 
 impl Header<'_> {
     /// The marked cell wraps short of its width by the mark's `extra`.
-    fn cells(&self, b: &mut Builder<'_>, widths: &[u16]) -> Vec<Wrapped> {
+    fn cells(&self, b: &mut Builder<'_>, flat: &Cells, widths: &[u16]) -> Vec<Wrapped> {
         let mut widths = widths.to_vec();
         if let Some(m) = self.mark
             && let Some(w) = widths.get_mut(m.col)
         {
             *w = w.saturating_sub(m.extra).max(1);
         }
-        cells(b, self.row, &widths, StyleKey::TableHeader)
+        cells(b, flat, 0, &widths)
     }
 }
 
@@ -854,16 +903,15 @@ impl Mark<'_> {
     }
 }
 
-/// A row's cells wrapped, in buffers from [`Builder::cells`]; [`done`] hands them back.
-fn cells(b: &mut Builder<'_>, row: &TableRow, widths: &[u16], key: StyleKey) -> Vec<Wrapped> {
+/// Row `r` of `flat`'s cells wrapped, in buffers from [`Builder::cells`]; [`done`] hands them
+/// back.
+fn cells(b: &mut Builder<'_>, flat: &Cells, r: usize, widths: &[u16]) -> Vec<Wrapped> {
     let mut out = Vec::with_capacity(widths.len());
-    for (c, &w) in widths.iter().enumerate() {
+    let mut row = flat.row(r);
+    for &w in widths {
         let into = b.cells.pop().unwrap_or_default();
-        out.push(match row.cells.get(c) {
-            Some(inl) => {
-                let into = into.recycle(Some(inl.unit));
-                wrap::wrap(into, &inl.runs, key, w, b.doc, b.g, None)
-            }
+        out.push(match row.next() {
+            Some(i) => flat.flat.wrap(i, into, w),
             None => into.recycle(None),
         });
     }
@@ -877,9 +925,10 @@ fn done(b: &mut Builder<'_>, cells: Vec<Wrapped>) {
 
 fn grid(
     b: &mut Builder<'_>,
+    flat: &Cells,
     t: &Table,
     header: &Header<'_>,
-    rows: &[&TableRow],
+    rows: &[(usize, &TableRow)],
     widths: &[u16],
     border: Option<&Border>,
 ) {
@@ -896,7 +945,7 @@ fn grid(
         row: header.row,
         mark: padded,
     }
-    .cells(b, widths);
+    .cells(b, flat, widths);
     grid_row(b, header.row, &head, widths, &t.aligns, border, padded);
     done(b, head);
     if let Some(bd) = border
@@ -905,9 +954,8 @@ fn grid(
         border_row(b, widths, bd.sep, bd.horiz, ruled);
     }
     let header = header_start..b.out.row_count();
-    for (i, row) in rows.iter().enumerate() {
-        let key = b.text_key;
-        let cells = cells(b, row, widths, key);
+    for (i, &(r, row)) in rows.iter().enumerate() {
+        let cells = cells(b, flat, r, widths);
         b.striped = i % 2 == 1;
         grid_row(b, row, &cells, widths, &t.aligns, border, None);
         done(b, cells);
@@ -936,10 +984,10 @@ fn border_row(
     mark: Option<Mark<'_>>,
 ) {
     b.begin_row();
-    b.text(left, StyleKey::TableBorder);
+    b.glyph(left, 1, StyleKey::TableBorder);
     for (i, &w) in widths.iter().enumerate() {
         if i > 0 {
-            b.text(mid, StyleKey::TableBorder);
+            b.glyph(mid, 1, StyleKey::TableBorder);
         }
         let span = w + 2;
         match mark.filter(|m| m.col == i && m.extra < span) {
@@ -947,14 +995,14 @@ fn border_row(
                 let width = m.extra + 1;
                 let tail = u16::from(width < span);
                 let lead = span - width - tail;
-                b.text(&horiz.repeat(lead as usize), StyleKey::TableBorder);
+                b.repeat(horiz, 1, lead, StyleKey::TableBorder);
                 b.text(m.glyph, StyleKey::TableHeader);
-                b.text(&horiz.repeat(tail as usize), StyleKey::TableBorder);
+                b.repeat(horiz, 1, tail, StyleKey::TableBorder);
             }
-            None => b.text(&horiz.repeat(span as usize), StyleKey::TableBorder),
+            None => b.repeat(horiz, 1, span, StyleKey::TableBorder),
         }
     }
-    b.text(right, StyleKey::TableBorder);
+    b.glyph(right, 1, StyleKey::TableBorder);
     b.end_row(LineRange::NONE, RowKind::Decor);
 }
 
@@ -976,14 +1024,14 @@ fn grid_row(
     for k in 0..height {
         b.begin_row();
         if let Some(bd) = border {
-            b.text(bd.vert, StyleKey::TableBorder);
+            b.glyph(bd.vert, 1, StyleKey::TableBorder);
         }
         let start = b.col;
         for (c, cell) in cells.iter().enumerate() {
             if c > 0
                 && let Some(bd) = border
             {
-                b.text(bd.vert, StyleKey::TableBorder);
+                b.glyph(bd.vert, 1, StyleKey::TableBorder);
             }
             let line = cell.lines.get(k);
             let mark = mark.filter(|m| m.col == c);
@@ -1010,7 +1058,7 @@ fn grid_row(
             b.stripe = Some(start..b.col);
         }
         if let Some(bd) = border {
-            b.text(bd.vert, StyleKey::TableBorder);
+            b.glyph(bd.vert, 1, StyleKey::TableBorder);
         }
         b.end_row(row.src, RowKind::Text);
     }
@@ -1020,8 +1068,9 @@ fn grid_row(
 /// as the widest header, capped at a third of the width.
 fn records(
     b: &mut Builder<'_>,
+    flat: &Cells,
     header: &Header<'_>,
-    rows: &[&TableRow],
+    rows: &[(usize, &TableRow)],
     cols: &[ColMeasure],
     border: Option<&Border>,
 ) {
@@ -1036,9 +1085,9 @@ fn records(
         .min(avail / 3)
         .max(1);
     let value_width = avail.saturating_sub(bar_width + key_width + 2).max(1);
-    let keys = header.cells(b, &vec![key_width; cols.len()]);
+    let keys = header.cells(b, flat, &vec![key_width; cols.len()]);
     let value_widths = vec![value_width; cols.len()];
-    for (i, row) in rows.iter().enumerate() {
+    for (i, &(r, row)) in rows.iter().enumerate() {
         b.begin_row();
         match border {
             Some(bd) => {
@@ -1048,16 +1097,15 @@ fn records(
             None => b.text(&format!("{}.", i + 1), StyleKey::TableBorder),
         }
         b.end_row(row.src, RowKind::Decor);
-        let key = b.text_key;
-        let values = cells(b, row, &value_widths, key);
+        let values = cells(b, flat, r, &value_widths);
         for (c, (key, value)) in keys.iter().zip(&values).enumerate() {
             let mark = header.mark.filter(|m| m.col == c);
             let height = key.lines.len().max(value.lines.len()).max(1);
             for k in 0..height {
                 b.begin_row();
                 if !bar.is_empty() {
-                    b.text(bar, StyleKey::TableBorder);
-                    b.text(" ", StyleKey::Text);
+                    b.glyph(bar, 1, StyleKey::TableBorder);
+                    b.spaces(1, StyleKey::Text);
                 }
                 let used = match key.lines.get(k) {
                     Some(line) => {
@@ -1111,6 +1159,20 @@ mod tests {
             ..Glyphs::default()
         };
         measure(t, &doc, &glyphs)
+    }
+
+    /// LAY-004: the borders are drawn at these widths, unmeasured.
+    #[test]
+    fn border_glyphs_are_a_column_wide() {
+        for bd in [&ROUNDED, &ASCII] {
+            for g in bd.top.iter().chain(&bd.sep).chain(&bd.bottom) {
+                assert_eq!(g.width(), 1, "{g}");
+            }
+            assert_eq!(
+                (bd.horiz.width(), bd.vert.width(), bd.card.width()),
+                (1, 1, 2)
+            );
+        }
     }
 
     #[test]

@@ -12,6 +12,7 @@ pub use code::{TAB_STOP, expand_tabs};
 mod tests;
 
 use std::ops::Range;
+use std::sync::OnceLock;
 
 use crate::geom::Size;
 use unicode_width::UnicodeWidthStr;
@@ -310,8 +311,9 @@ struct Sorted {
 #[derive(Debug, Default)]
 pub struct Measure {
     pub glyphs_gen: u64,
-    /// Column measurements, indexed by [`Table::id`].
-    tables: Vec<Vec<ColMeasure>>,
+    /// Column measurements, indexed by [`Table::id`]: taken by the first layout that reaches the
+    /// table, from the cells it flattens to wrap them (LAY-003).
+    tables: Vec<OnceLock<Box<[ColMeasure]>>>,
     /// Image sizes in pixels, indexed by [`LinkId`]; known once their headers have been read.
     images: Vec<Option<(u32, u32)>>,
     /// The order of sorted tables' rows, indexed by [`Table::id`]; `None` keeps the source order.
@@ -320,14 +322,9 @@ pub struct Measure {
 
 impl Measure {
     pub fn new(doc: &Doc, glyphs: &Glyphs) -> Self {
-        let tables = doc
-            .tables()
-            .into_iter()
-            .map(|t| table::measure(t, doc, glyphs))
-            .collect();
         Self {
             glyphs_gen: glyphs.generation(),
-            tables,
+            tables: (0..doc.table_count).map(|_| OnceLock::new()).collect(),
             images: vec![None; doc.links.len()],
             sorts: vec![None; doc.table_count as usize],
         }
@@ -627,6 +624,7 @@ fn relayout_lines(
         striped: false,
         scratch: Wrapped::default(),
         cells: Vec::new(),
+        flat: table::Cells::default(),
     };
     if margin > 0 {
         b.push_prefix(&" ".repeat(margin as usize), StyleKey::Text);
@@ -701,6 +699,8 @@ struct Builder<'a> {
     scratch: Wrapped,
     /// Table cells' wraps done with, whose buffers the next row's reuse.
     cells: Vec<Wrapped>,
+    /// The table being laid out's cells, flattened (LAY-003); its buffers are the next table's.
+    flat: table::Cells,
 }
 
 /// A span's style: key, inline markup, link.
@@ -894,23 +894,90 @@ impl Builder<'_> {
         self.spaces(target.saturating_sub(self.col), key);
     }
 
-    /// `n` spaces, without building them (LAY-01: a table's cells are padded on every row).
-    fn spaces(&mut self, mut n: u16, key: StyleKey) {
+    /// `n` spaces, without building them (LAY-01: a table's cells are padded on every row), or
+    /// looking for an NBSP in them (LAY-004).
+    fn spaces(&mut self, n: u16, key: StyleKey) {
         const SPACES: &str = "                                                                ";
-        while n > 0 {
-            let k = n.min(SPACES.len() as u16);
-            let look = (key, InlineStyle::NONE, None);
-            let text = &SPACES[..k as usize];
-            push_span(&mut self.out, self.row_start, &mut self.col, text, k, look);
-            n -= k;
+        if n == 0 {
+            return;
         }
+        let start = self.out.text.len() as u32;
+        let mut left = usize::from(n);
+        while left > 0 {
+            let k = left.min(SPACES.len());
+            self.out.text.push_str(&SPACES[..k]);
+            left -= k;
+        }
+        let end = self.out.text.len() as u32;
+        let look = (key, InlineStyle::NONE, None);
+        push_range(
+            &mut self.out,
+            self.row_start,
+            &mut self.col,
+            start..end,
+            n,
+            look,
+        );
     }
 
+    /// `text`, `width` columns wide and without an [`NBSP`]: a glyph of ada's own, whose width is
+    /// known (LAY-004: a table measured every border it drew).
+    fn glyph(&mut self, text: &str, width: u16, key: StyleKey) {
+        debug_assert!(!text.contains(NBSP) && text_width(text) == usize::from(width));
+        let start = self.out.text.len() as u32;
+        self.out.text.push_str(text);
+        let end = self.out.text.len() as u32;
+        let look = (key, InlineStyle::NONE, None);
+        push_range(
+            &mut self.out,
+            self.row_start,
+            &mut self.col,
+            start..end,
+            width,
+            look,
+        );
+    }
+
+    /// `glyph`, `width` columns wide, `n` times, written into the text as it goes (LAY-004).
+    fn repeat(&mut self, glyph: &str, width: u16, n: u16, key: StyleKey) {
+        if n == 0 || glyph.is_empty() {
+            return;
+        }
+        // 0xa0 ends NBSP's encoding, as in `push_span`
+        if glyph.as_bytes().contains(&0xa0) {
+            self.text(&glyph.repeat(usize::from(n)), key);
+            return;
+        }
+        let text = &mut self.out.text;
+        let (start, len, count) = (text.len(), glyph.len(), usize::from(n));
+        text.reserve(len * count);
+        text.push_str(glyph);
+        // doubling: a copy a power of two, not a copy a glyph
+        let mut have = 1;
+        while have < count {
+            let k = have.min(count - have);
+            text.extend_from_within(start..start + k * len);
+            have += k;
+        }
+        let (start, end) = (start as u32, text.len() as u32);
+        let look = (key, InlineStyle::NONE, None);
+        let width = width.saturating_mul(n);
+        push_range(
+            &mut self.out,
+            self.row_start,
+            &mut self.col,
+            start..end,
+            width,
+            look,
+        );
+    }
+
+    /// Repeat `glyph` up to `width` columns past the prefixes.
     fn fill_with(&mut self, glyph: &str, width: u16, key: StyleKey) {
         let target = self.prefix_width.saturating_add(width);
-        let gw = glyph.width().max(1) as u16;
+        let gw = text_width(glyph) as u16;
         if self.col < target {
-            self.text(&glyph.repeat(((target - self.col) / gw) as usize), key);
+            self.repeat(glyph, gw, (target - self.col) / gw.max(1), key);
         }
     }
 

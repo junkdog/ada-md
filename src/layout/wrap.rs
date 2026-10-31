@@ -143,12 +143,18 @@ pub fn wrap(
 /// the widest line when nothing wraps. Agrees with [`wrap`]: at `avail >= min` no word is
 /// hard-broken, at `avail >= whole` every word fits a line of its own unbroken, and at
 /// `avail >= max` no line wraps.
+#[cfg(test)]
 pub fn measure(runs: &[Run], doc: &Doc, glyphs: &Glyphs) -> (u16, u16, u16) {
     let mut w = Wrapped::default();
     flatten(runs, StyleKey::Text, doc, glyphs, &mut w);
+    measure_buf(&w.buf)
+}
+
+/// [`measure`] of a flattened buffer.
+fn measure_buf(buf: &str) -> (u16, u16, u16) {
     let (mut min, mut whole, mut max, mut line, mut glued) = (0u16, 0u16, 0u16, 0u16, 0u16);
     let (mut started, mut pending) = (false, false);
-    tokenize(&w.buf, |tok| match tok {
+    tokenize(buf, |tok| match tok {
         Tok::Space { .. } => (pending, glued) = (started, 0),
         Tok::Newline => (line, glued, started, pending) = (0, 0, false, false),
         Tok::Word { width, .. } => {
@@ -163,6 +169,83 @@ pub fn measure(runs: &[Run], doc: &Doc, glyphs: &Glyphs) -> (u16, u16, u16) {
         }
     });
     (min, whole, max)
+}
+
+/// Cells flattened once, into one buffer, for both their measure and their wraps (LAY-003: a
+/// table's cells were flattened to be measured, then again to be wrapped, each half of its
+/// layout).
+#[derive(Debug, Default)]
+pub(crate) struct Flat {
+    all: Wrapped,
+    cells: Vec<FlatCell>,
+}
+
+/// One cell of a [`Flat`]: its bytes and pieces there.
+#[derive(Clone, Copy, Debug)]
+struct FlatCell {
+    start: u32,
+    end: u32,
+    first: u32,
+    last: u32,
+    unit: UnitId,
+    pads: bool,
+    nbsp: bool,
+}
+
+impl Flat {
+    /// Empty again, keeping the buffers.
+    pub fn clear(&mut self) {
+        self.all.buf.clear();
+        self.all.pieces.clear();
+        self.cells.clear();
+    }
+
+    /// The number of cells.
+    pub fn len(&self) -> usize {
+        self.cells.len()
+    }
+
+    /// Flatten a cell of `runs`, the text of search unit `unit`, in base style `key`.
+    pub fn push(&mut self, runs: &[Run], unit: UnitId, key: StyleKey, doc: &Doc, glyphs: &Glyphs) {
+        let w = &mut self.all;
+        let (start, first) = (w.buf.len() as u32, w.pieces.len() as u32);
+        (w.pads, w.nbsp, w.unit_len) = (false, false, 0);
+        flatten(runs, key, doc, glyphs, w);
+        self.cells.push(FlatCell {
+            start,
+            end: w.buf.len() as u32,
+            first,
+            last: w.pieces.len() as u32,
+            unit,
+            pads: w.pads,
+            nbsp: w.nbsp,
+        });
+    }
+
+    /// [`measure`] of cell `i`.
+    pub fn measure(&self, i: usize) -> (u16, u16, u16) {
+        let c = self.cells[i];
+        measure_buf(&self.all.buf[c.start as usize..c.end as usize])
+    }
+
+    /// [`wrap`] of cell `i` to `avail` columns, into `into`'s buffers.
+    pub fn wrap(&self, i: usize, into: Wrapped, avail: u16) -> Wrapped {
+        let c = self.cells[i];
+        let mut w = into.recycle(Some(c.unit));
+        w.buf
+            .push_str(&self.all.buf[c.start as usize..c.end as usize]);
+        let pieces = &self.all.pieces[c.first as usize..c.last as usize];
+        w.pieces.extend(pieces.iter().map(|p| Piece {
+            start: p.start - c.start,
+            end: p.end - c.start,
+            body_start: p.body_start - c.start,
+            body_end: p.body_end - c.start,
+            ..*p
+        }));
+        (w.pads, w.nbsp) = (c.pads, c.nbsp);
+        pack(&mut w, avail.max(1));
+        w
+    }
 }
 
 /// The text of a search unit made of `runs`: the bodies [`wrap`] gives them, in order.
