@@ -283,6 +283,8 @@ impl Lang {
     /// first; none for a kind no span has had.
     pub fn scopes(self, kind: u16) -> Vec<&'static str> {
         match self {
+            #[cfg(feature = "toml-scan")]
+            Lang::Toml => crate::toml_scan::scopes(kind),
             _ if self.grammar().is_some() => {
                 self.grammar().map_or_else(Vec::new, |g| g.scopes(kind))
             }
@@ -296,7 +298,10 @@ impl Lang {
     /// The context grammar it runs on, for the languages not read line by line.
     pub(crate) fn grammar(self) -> Option<&'static crate::machine::Grammar> {
         Some(match self {
+            #[cfg(not(feature = "toml-scan"))]
             Lang::Toml => &crate::toml::GRAMMAR,
+            #[cfg(feature = "toml-scan")]
+            Lang::Toml => return None,
             Lang::Xml => &crate::xml::GRAMMAR,
             Lang::Yaml => &crate::yaml::GRAMMAR,
             Lang::Dockerfile => &crate::dockerfile::GRAMMAR,

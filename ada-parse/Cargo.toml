@@ -11,6 +11,11 @@ repository = "https://github.com/junkdog/ada-md"
 # grammars in its own tests, where syntect is.
 [dependencies]
 
+[features]
+# TOML by the hand-compiled scanner (toml_scan.rs) in place of the port on the machine; an A/B
+# for the ADR-40 review, 2026-10-31
+toml-scan = []
+
 [lints.rust]
 unused_variables = "deny"
 unused_imports = "deny"

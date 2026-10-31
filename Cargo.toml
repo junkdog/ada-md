@@ -27,6 +27,8 @@ default = ["onig", "jemalloc"]
 onig = ["syntect/regex-onig", "two-face/syntect-onig"]
 # jemalloc (C, built with `make`) for musl targets, below; nothing elsewhere.
 jemalloc = ["dep:tikv-jemallocator"]
+# ada-parse's TOML scanner in place of its port (an A/B, ADR-40 review)
+toml-scan = ["ada-parse/toml-scan"]
 
 [dependencies]
 anpa = "0.13"

@@ -10,49 +10,49 @@ use crate::machine::{
 };
 
 // the contexts
-const ARRAY_SEP_0: u8 = 0;
-const BASIC_STRING_0: u8 = 1;
-const INLINE_KEYVALS_0: u8 = 2;
-const INLINE_TABLE_0: u8 = 3;
-const STRING_0: u8 = 4;
-const STRING_1: u8 = 5;
-const MAIN_0: u8 = 6;
-const START: u8 = 7;
-const ARRAY: u8 = 8;
-const ARRAY_SEP: u8 = 9;
-const BASIC_STRING: u8 = 10;
-const BOOLEAN: u8 = 11;
-const COMMENTS: u8 = 12;
-const DATA_TYPES: u8 = 13;
-const DATE_TIME: u8 = 14;
-const FLOAT: u8 = 15;
-const ILLEGAL: u8 = 16;
-const INLINE_KEYVAL_SEP: u8 = 17;
-const INLINE_TABLE: u8 = 18;
-const INLINE_KEYVALS: u8 = 19;
-const INTEGER: u8 = 20;
-const KEY: u8 = 21;
-const KEY_QUOTED: u8 = 22;
-const KEY_SIMPLE: u8 = 23;
-const KEYVAL: u8 = 24;
-const KEYVAL_SEP: u8 = 25;
-const LITERAL_STRING: u8 = 26;
-const MAIN: u8 = 27;
-const MAYBE_ARRAY_COMMENTS: u8 = 28;
-const MAYBE_COMMENT_EOL: u8 = 29;
-const MAYBE_DOT_KEY: u8 = 30;
-const MAYBE_DOT_TABLE: u8 = 31;
-const MAYBE_EMPTY_ARRAY: u8 = 32;
-const STRING: u8 = 33;
-const STRING_ESCAPE: u8 = 34;
-const TABLE_ARRAY_NAME: u8 = 35;
-const TABLE_NAME: u8 = 36;
-const TABLE_NAME_INC: u8 = 37;
-const TABLE_NAME_SIMPLE: u8 = 38;
-const TABLES: u8 = 39;
+pub(crate) const ARRAY_SEP_0: u8 = 0;
+pub(crate) const BASIC_STRING_0: u8 = 1;
+pub(crate) const INLINE_KEYVALS_0: u8 = 2;
+pub(crate) const INLINE_TABLE_0: u8 = 3;
+pub(crate) const STRING_0: u8 = 4;
+pub(crate) const STRING_1: u8 = 5;
+pub(crate) const MAIN_0: u8 = 6;
+pub(crate) const START: u8 = 7;
+pub(crate) const ARRAY: u8 = 8;
+pub(crate) const ARRAY_SEP: u8 = 9;
+pub(crate) const BASIC_STRING: u8 = 10;
+pub(crate) const BOOLEAN: u8 = 11;
+pub(crate) const COMMENTS: u8 = 12;
+pub(crate) const DATA_TYPES: u8 = 13;
+pub(crate) const DATE_TIME: u8 = 14;
+pub(crate) const FLOAT: u8 = 15;
+pub(crate) const ILLEGAL: u8 = 16;
+pub(crate) const INLINE_KEYVAL_SEP: u8 = 17;
+pub(crate) const INLINE_TABLE: u8 = 18;
+pub(crate) const INLINE_KEYVALS: u8 = 19;
+pub(crate) const INTEGER: u8 = 20;
+pub(crate) const KEY: u8 = 21;
+pub(crate) const KEY_QUOTED: u8 = 22;
+pub(crate) const KEY_SIMPLE: u8 = 23;
+pub(crate) const KEYVAL: u8 = 24;
+pub(crate) const KEYVAL_SEP: u8 = 25;
+pub(crate) const LITERAL_STRING: u8 = 26;
+pub(crate) const MAIN: u8 = 27;
+pub(crate) const MAYBE_ARRAY_COMMENTS: u8 = 28;
+pub(crate) const MAYBE_COMMENT_EOL: u8 = 29;
+pub(crate) const MAYBE_DOT_KEY: u8 = 30;
+pub(crate) const MAYBE_DOT_TABLE: u8 = 31;
+pub(crate) const MAYBE_EMPTY_ARRAY: u8 = 32;
+pub(crate) const STRING: u8 = 33;
+pub(crate) const STRING_ESCAPE: u8 = 34;
+pub(crate) const TABLE_ARRAY_NAME: u8 = 35;
+pub(crate) const TABLE_NAME: u8 = 36;
+pub(crate) const TABLE_NAME_INC: u8 = 37;
+pub(crate) const TABLE_NAME_SIMPLE: u8 = 38;
+pub(crate) const TABLES: u8 = 39;
 
 /// The scopes, as indices into [`ATOMS`].
-mod s {
+pub(crate) mod s {
     use crate::machine::Atom;
     pub const ARRAY_END: Atom = 0;
     pub const BASIC: Atom = 1;
@@ -100,7 +100,7 @@ mod s {
     pub const TABLE_BEGIN: Atom = 43;
 }
 
-const ATOMS: &[&str] = &[
+pub(crate) const ATOMS: &[&str] = &[
     "punctuation.definition.array.end.toml",
     "string.quoted.double.basic.toml",
     "punctuation.definition.string.end.toml",
@@ -393,12 +393,12 @@ pub static GRAMMAR: Grammar = Grammar {
 // the matchers: each finds its regex's leftmost match at or after `from`
 
 /// `[A-Za-z0-9_'"-]`, what a key or a table name starts with.
-fn is_key_start(c: u8) -> bool {
+pub(crate) fn is_key_start(c: u8) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, b'_' | b'\'' | b'"' | b'-')
 }
 
 /// `[A-Za-z0-9_-]`.
-fn is_bare(c: u8) -> bool {
+pub(crate) fn is_bare(c: u8) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-')
 }
 
@@ -724,17 +724,17 @@ fn digit(l: &Line, i: usize) -> bool {
 }
 
 /// `(?<!\w)` at `p`.
-fn word_start(l: &Line, p: usize) -> bool {
+pub(crate) fn word_start(l: &Line, p: usize) -> bool {
     p == 0 || l.at(p - 1).is_none_or(|c| !is_word(c) || c == b'\n')
 }
 
 /// `(?!\w)` at `p`.
-fn word_end(l: &Line, p: usize) -> bool {
+pub(crate) fn word_end(l: &Line, p: usize) -> bool {
     l.at(p).is_none_or(|c| !is_word(c) || c == b'\n')
 }
 
 /// The end of `d(?:d|_d)*` from `at`, its first `d` there already.
-fn digits_from(l: &Line, mut at: usize, d: impl Fn(u8) -> bool) -> usize {
+pub(crate) fn digits_from(l: &Line, mut at: usize, d: impl Fn(u8) -> bool) -> usize {
     loop {
         if l.is(at, &d) {
             at += 1;
@@ -762,7 +762,7 @@ fn exponent(l: &Line, at: usize) -> Option<usize> {
 
 /// The decimal integer part from `q`, in the regex's order: one digit, then a run that
 /// doesn't start with `0`; each end `then` accepts.
-fn int_part(l: &Line, q: usize, then: impl Fn(usize) -> Option<usize>) -> Option<usize> {
+pub(crate) fn int_part(l: &Line, q: usize, then: impl Fn(usize) -> Option<usize>) -> Option<usize> {
     if digit(l, q)
         && let Some(e) = then(q + 1)
     {
@@ -778,12 +778,12 @@ fn int_part(l: &Line, q: usize, then: impl Fn(usize) -> Option<usize>) -> Option
 }
 
 /// A sign at `p`, `[\+\-]?`: where the number after it starts.
-fn sign(l: &Line, p: usize) -> usize {
+pub(crate) fn sign(l: &Line, p: usize) -> usize {
     p + usize::from(l.is(p, |c| c == b'+' || c == b'-'))
 }
 
 /// The float regex's fraction or exponent at `r`, then `(?!\w)`.
-fn fraction(l: &Line, r: usize) -> Option<usize> {
+pub(crate) fn fraction(l: &Line, r: usize) -> Option<usize> {
     if l.at(r) == Some(b'.')
         && let Some(e) = decimals(l, r + 1)
     {
@@ -849,7 +849,7 @@ fn integer(l: &Line, from: usize) -> Option<M> {
 }
 
 /// A class of digits.
-type Digit = fn(u8) -> bool;
+pub(crate) type Digit = fn(u8) -> bool;
 
 /// `[0-9]{n}` at `at`.
 fn fixed_digits(l: &Line, at: usize, n: usize) -> bool {
@@ -862,7 +862,7 @@ fn pair(l: &Line, at: usize, hi: u8) -> bool {
 }
 
 /// `[0-9]{4}-[0-1][0-9]-[0-3][0-9]` at `at`: its end.
-fn date(l: &Line, at: usize) -> Option<usize> {
+pub(crate) fn date(l: &Line, at: usize) -> Option<usize> {
     let ok = fixed_digits(l, at, 4)
         && l.at(at + 4) == Some(b'-')
         && pair(l, at + 5, b'1')
@@ -872,7 +872,7 @@ fn date(l: &Line, at: usize) -> Option<usize> {
 }
 
 /// `[0-2][0-9]:[0-5][0-9]:[0-6][0-9](?:\.[0-9]+)?` at `at`: its end.
-fn time(l: &Line, at: usize) -> Option<usize> {
+pub(crate) fn time(l: &Line, at: usize) -> Option<usize> {
     let ok = pair(l, at, b'2')
         && l.at(at + 2) == Some(b':')
         && pair(l, at + 3, b'5')
@@ -889,7 +889,7 @@ fn time(l: &Line, at: usize) -> Option<usize> {
 }
 
 /// `[zZ]|[+-][0-2][0-9]:[0-5][0-9]` at `at`: its end.
-fn offset(l: &Line, at: usize) -> Option<usize> {
+pub(crate) fn offset(l: &Line, at: usize) -> Option<usize> {
     match l.at(at)? {
         b'z' | b'Z' => Some(at + 1),
         b'+' | b'-'

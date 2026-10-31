@@ -487,10 +487,10 @@ pub fn is_space(b: u8) -> bool {
 
 /// How many levels a line's stack holds, more than syntect lets a push reach; past it the
 /// bottom ones are dropped, still counted toward the depth.
-const DEPTH: usize = 128;
+pub(crate) const DEPTH: usize = 128;
 
 /// How deep syntect lets a push take the stack.
-const MAX_PUSH: usize = 100;
+pub(crate) const MAX_PUSH: usize = 100;
 
 /// The levels a [`State`] keeps between lines.
 pub const KEPT: usize = 14;

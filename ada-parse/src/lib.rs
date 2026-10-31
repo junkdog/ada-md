@@ -22,7 +22,11 @@ mod ini;
 mod lang;
 mod machine;
 mod properties;
+// the port stays the reference for the scanner, in tests, when the scanner ships
+#[cfg_attr(feature = "toml-scan", allow(dead_code))]
 mod toml;
+#[cfg(any(test, feature = "toml-scan"))]
+mod toml_scan;
 mod xml;
 mod yaml;
 
@@ -104,6 +108,8 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
     match lang {
         Lang::Diff => diff::line(line.as_bytes(), &mut out),
         Lang::Ini => ini::line(line.as_bytes(), &mut out),
+        #[cfg(feature = "toml-scan")]
+        Lang::Toml => toml_scan::line(line.as_bytes(), state, &mut out),
         _ => {
             if let Some(g) = lang.grammar() {
                 machine::line(g, line.as_bytes(), state, &mut out);
