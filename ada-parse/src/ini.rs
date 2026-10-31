@@ -4,20 +4,20 @@
 
 use crate::{Out, skip_spaces, trim_end};
 
-const COMMENT: u8 = 0;
-const COMMENT_MARK: u8 = 1;
-const SECTION: u8 = 2;
-const SECTION_MARK: u8 = 3;
-const SECTION_NAME: u8 = 4;
-const SECTION_COMMENT: u8 = 5;
-const DECLARATION: u8 = 6;
-const PROPERTY: u8 = 7;
-const KEY_QUOTE: u8 = 8;
-const KEY: u8 = 9;
-const EQUALS: u8 = 10;
-const VALUE_QUOTE: u8 = 11;
-const VALUE: u8 = 12;
-const COMMENT_AFTER: u8 = 13;
+const COMMENT: u16 = 0;
+const COMMENT_MARK: u16 = 1;
+const SECTION: u16 = 2;
+const SECTION_MARK: u16 = 3;
+const SECTION_NAME: u16 = 4;
+const SECTION_COMMENT: u16 = 5;
+const DECLARATION: u16 = 6;
+const PROPERTY: u16 = 7;
+const KEY_QUOTE: u16 = 8;
+const KEY: u16 = 9;
+const EQUALS: u16 = 10;
+const VALUE_QUOTE: u16 = 11;
+const VALUE: u16 = 12;
+const COMMENT_AFTER: u16 = 13;
 
 /// Each kind's scopes under `source.ini`, as bat's grammar gives them.
 pub const KINDS: &[&str] = &[
@@ -44,7 +44,7 @@ pub fn line(b: &[u8], out: &mut Out) {
     let len = b.len();
     let start = skip_spaces(b, 0);
     let mut at = 0;
-    let mut put = |end: usize, kind: u8| {
+    let mut put = |end: usize, kind: u16| {
         out.push(at, end, kind);
         at = end;
     };

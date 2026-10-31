@@ -57,14 +57,20 @@ pub fn check(grammar: Grammar, data: &[u8], max: usize) {
     let mut state = State::new(grammar);
     let mut spans = Vec::new();
     compare(grammar.syntax(), data, max, |line| {
-        ours_line(&mut state, &mut spans, line)
+        Some(ours_line(&mut state, &mut spans, line))
     });
 }
 
 /// Panics at the first byte of `data`'s lines, each cut to `max` bytes, whose stack from
 /// syntect's grammar `name` differs from `ours`, which gives each byte's stack under the base
-/// scope for a line, its state carried from the line before.
-pub fn compare(name: &str, data: &[u8], max: usize, mut ours: impl FnMut(&str) -> Vec<String>) {
+/// scope for a line, its state carried from the line before, or `None` when the lexer no
+/// longer claims syntect's scopes (a stack deeper than it keeps).
+pub fn compare(
+    name: &str,
+    data: &[u8],
+    max: usize,
+    mut ours: impl FnMut(&str) -> Option<Vec<String>>,
+) {
     let ascii: Vec<u8> = data.iter().map(|b| b & 0x7f).collect();
     let text = String::from_utf8(ascii).expect("ascii");
     let trace = std::env::var_os("ADA_FUZZ_TRACE").is_some();
@@ -75,7 +81,9 @@ pub fn compare(name: &str, data: &[u8], max: usize, mut ours: impl FnMut(&str) -
         let line = expand_tabs(&line[..line.len().min(max)]).into_owned();
         let line = &line[..line.len().min(max)];
         let want = syntect_line(&mut ps, &mut stack, line);
-        let got = ours(line);
+        let Some(got) = ours(line) else {
+            return;
+        };
         if trace {
             eprintln!("{}: {line:?}", n + 1);
         }

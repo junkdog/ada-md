@@ -67,9 +67,8 @@ fuzz_target!(|data: &[u8]| {
         for (lang, state) in &mut parsed {
             ada_parse::lex(*lang, line, state, &mut ps);
             check(lang.name(), line, ps.iter().map(|s| (s.start, s.end)));
-            let kinds = lang.kinds().len();
             assert!(
-                ps.iter().all(|s| (s.kind as usize) < kinds),
+                ps.iter().all(|s| !lang.scopes(s.kind).is_empty()),
                 "{lang:?}: {ps:?}"
             );
         }

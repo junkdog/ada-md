@@ -42,6 +42,44 @@ all: ada
 editor = vim ; the one
 ```
 
+```toml
+[package]
+name = \"ada-md\" # why
+deps = [1, { a = 2 }]
+```
+
+```xml
+<?xml version=\"1.0\"?>
+<root a='1'><!-- c --></root>
+```
+
+```yaml
+name: ada
+list: [1, two, {k: v}]
+text: |
+  block
+```
+
+```properties
+key = value \\
+  continued
+```
+
+```env
+export NAME=\"ada\" # why
+```
+
+```gitignore
+/target/
+!keep.me
+```
+
+```dockerfile
+FROM rust:1.88 AS build
+RUN cargo build \\
+    --release
+```
+
 ```text
 plain
 ```
@@ -91,6 +129,20 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         "a.diff",
         "setup.cfg",
         ".editorconfig",
+        "Cargo.toml",
+        "Cargo.lock",
+        "pom.xml",
+        "feed.rss",
+        "ci.yml",
+        "config.yaml",
+        "Dockerfile",
+        "app.dockerfile",
+        "app.properties",
+        ".env",
+        ".env.local",
+        ".gitignore",
+        ".gitattributes",
+        ".mailmap",
     ] {
         let t = FileType::by_path(Path::new(name));
         assert!(

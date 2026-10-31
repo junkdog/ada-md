@@ -663,27 +663,49 @@ impl JsonRules {
 }
 
 /// The theme's rule for each kind of an ada-parse language (ADR-40), as syntect would pick it
-/// for the kind's scopes.
+/// for the kind's scopes: all of them up front for a language with a fixed set
+/// ([`ParseRules::new`]), else each the first time a span has it ([`ParseRules::lazy`]).
 pub struct ParseRules {
     lang: Lang,
-    rules: Vec<Rule>,
+    base: Scope,
+    /// By `Span::kind`; `None` until resolved.
+    rules: Vec<Option<Rule>>,
 }
 
 impl ParseRules {
+    /// Every kind's rule, for a language whose kinds are fixed (`Lang::kinds`).
     fn new(lang: Lang, theme: &SyntaxTheme) -> Self {
         let highlighter = SynHighlighter::new(&theme.theme);
-        let base = Scope::new(lang.base()).expect("scope");
-        let rule = |scopes: &&str| {
-            let mut stack = vec![base];
-            stack.extend(scopes.split(' ').map(|s| Scope::new(s).expect("scope")));
-            Rule::decode(highlighter.style_for_stack(&stack).foreground)
-        };
-        let rules = lang.kinds().iter().map(rule).collect();
-        Self { lang, rules }
+        let mut rules = Self::lazy(lang);
+        rules.rules = (0..lang.kinds().len() as u16)
+            .map(|k| Some(rules.resolve(k, &highlighter)))
+            .collect();
+        rules
+    }
+
+    /// No rule yet: each is resolved when a span first has its kind.
+    fn lazy(lang: Lang) -> Self {
+        Self {
+            lang,
+            base: Scope::new(lang.base()).expect("scope"),
+            rules: Vec::new(),
+        }
+    }
+
+    fn resolve(&self, kind: u16, highlighter: &SynHighlighter) -> Rule {
+        let mut stack = vec![self.base];
+        stack.extend(
+            self.lang
+                .scopes(kind)
+                .iter()
+                .map(|s| Scope::new(s).expect("scope")),
+        );
+        Rule::decode(highlighter.style_for_stack(&stack).foreground)
     }
 
     /// Highlight one line into `out`, after the lines before it left `state`; `spans` is
-    /// scratch space. Called from each way a block is highlighted, so never inlined into them.
+    /// scratch space. Every kind's rule must be resolved ([`ParseRules::new`]). Called from
+    /// each way a block is highlighted, so never inlined into them.
     #[inline(never)]
     fn line(
         &self,
@@ -694,8 +716,39 @@ impl ParseRules {
     ) {
         let line = expand_tabs(line);
         ada_parse::lex(self.lang, &line, state, spans);
-        let rule = |s: &ada_parse::Span| (s.start, s.end, self.rules[s.kind as usize]);
-        span_runs(line.len(), spans.iter().map(rule), out);
+        self.runs(line.len(), spans, out);
+    }
+
+    /// As [`ParseRules::line`], resolving the rules of kinds met for the first time.
+    #[inline(never)]
+    fn line_resolving(
+        &mut self,
+        line: &str,
+        state: &mut ada_parse::State,
+        spans: &mut Vec<ada_parse::Span>,
+        highlighter: &SynHighlighter,
+        out: &mut LineRuns,
+    ) {
+        let line = expand_tabs(line);
+        ada_parse::lex(self.lang, &line, state, spans);
+        for s in spans.iter() {
+            let k = usize::from(s.kind);
+            if self.rules.get(k).is_none_or(Option::is_none) {
+                if k >= self.rules.len() {
+                    self.rules.resize(k + 1, None);
+                }
+                self.rules[k] = Some(self.resolve(s.kind, highlighter));
+            }
+        }
+        self.runs(line.len(), spans, out);
+    }
+
+    fn runs(&self, len: usize, spans: &[ada_parse::Span], out: &mut LineRuns) {
+        let rule = |s: &ada_parse::Span| {
+            let rule = self.rules.get(usize::from(s.kind)).copied().flatten();
+            (s.start, s.end, rule.unwrap_or(Rule(Rule::NONE)))
+        };
+        span_runs(len, spans.iter().map(rule), out);
     }
 }
 
@@ -920,10 +973,11 @@ impl<'a> Highlighter<'a> {
                 let state = Box::new(make::State::new(grammar));
                 Engine::Make(MakeRules::new(grammar), state, Vec::new())
             }
-            Syntax::Own(lang) => {
-                let rules = ParseRules::new(lang, theme);
-                Engine::Parse(rules, ada_parse::State::default(), Vec::new())
-            }
+            Syntax::Own(lang) => Engine::Parse(
+                ParseRules::lazy(lang),
+                ada_parse::State::default(),
+                Vec::new(),
+            ),
             Syntax::Set(s) => Engine::Syntect(LineState::new(syntaxes(), s, &highlighter)),
         });
         Self {
@@ -969,7 +1023,7 @@ impl<'a> Highlighter<'a> {
                 }
                 Engine::Parse(rules, state, spans) => {
                     LINES.fetch_add(1, Ordering::Relaxed);
-                    rules.line(line, state, spans, out);
+                    rules.line_resolving(line, state, spans, &self.highlighter, out);
                     true
                 }
             };
@@ -1995,6 +2049,252 @@ mod tests {
             "\n",
         );
         rules_match_the_grammar("ini", "INI", text);
+    }
+
+    /// ada-parse's TOML lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (ADR-40).
+    #[test]
+    fn toml_rules_match_the_grammar() {
+        let text = concat!(
+            "# comment\n",
+            "[package]\n",
+            "name = \"ada-md\" # why\n",
+            "version.workspace = true\n",
+            "\"quoted key\" = 'literal'\n",
+            "[[bin]] # array of tables\n",
+            "[ a . \"b\" . 'c' ]\n",
+            "dates = [1979-05-27T07:32:00Z, 1979-05-27 07:32:00.999, 1979-05-27, 07:32:00]\n",
+            "nums = [ +1, -0x_1, 0xdead_BEEF, 0o17, 0b101, 1_000, 3.14, -2e-3, 6.0E+2, inf, -nan, 01 ]\n",
+            "odd = [ 0o0k, 0x1g, x0b1, 1a ]\n",
+            "inline = { a = 1, b.c = \"x\\n\\q\", d = [ ] }\n",
+            "multi = \"\"\"\n",
+            "  a \\u00e9 b\n",
+            "  \"\"\"\n",
+            "lit = '''\n",
+            "raw \\n'''\n",
+            "nested = [\n",
+            "  [1, 2], # c\n",
+            "  { x = 1 },\n",
+            "  \"s\",\n",
+            "]\n",
+            "bad = ] x\n",
+            "[]\n",
+            "key\n",
+            "= 1\n",
+            "a = \"unterminated\n",
+            "b = truex falsey\n",
+        );
+        rules_match_the_grammar("toml", "TOML", text);
+    }
+
+    /// ada-parse's XML lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (ADR-40).
+    #[test]
+    fn xml_rules_match_the_grammar() {
+        let text = concat!(
+            "<?xml version=\"1.0\" encoding='UTF-8'?>\n",
+            "<?xml-stylesheet href=\"a.xsl\"?>\n",
+            "<?php echo 1; ?>\n",
+            "<!DOCTYPE note SYSTEM \"note.dtd\" [\n",
+            "  <!ELEMENT note (to,from?,(a|b)*)>\n",
+            "  <!ELEMENT br EMPTY>\n",
+            "  <!ATTLIST note id ID #REQUIRED kind (x|y) \"x\" ref IDREFS #IMPLIED>\n",
+            "  <!ENTITY % param \"value\">\n",
+            "  <!ENTITY pic SYSTEM \"p.gif\" NDATA gif>\n",
+            "  <!NOTATION gif PUBLIC \"image/gif\">\n",
+            "  %param;\n",
+            "  <!BOGUS x>\n",
+            "]>\n",
+            "<!doctype html>\n",
+            "<ns:root xmlns:ns=\"urn:x\" a='1' b=bare c = \"&amp;&#65;&#x41;&bad\">\n",
+            "  <!-- a comment -- with -- dashes -->\n",
+            "  <![CDATA[ raw <text> ]]>\n",
+            "  <item key=\"v\"/>text &lt; & more < x\n",
+            "  <a:b:c d:e:f=\"1\" ?>\n",
+            "  <bad$name 1x=\"2\" / >\n",
+            "  <multi\n",
+            "    attr=\"v\"\n",
+            "  >\n",
+            "</ns:root>\n",
+            "<!-- open\n",
+            "comment -->\n",
+        );
+        rules_match_the_grammar("xml", "XML", text);
+    }
+
+    /// ada-parse's YAML lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (ADR-40).
+    #[test]
+    fn yaml_rules_match_the_grammar() {
+        let text = concat!(
+            "%YAML 1.2\n",
+            "%TAG !e! tag:example.com,2000:app/\n",
+            "%FOO bar baz # c\n",
+            "---\n",
+            "# a comment\n",
+            "name: ada # trailing\n",
+            "on: yes\n",
+            "nums: [0b101, 0o17, 017, 019, -42, 0x_ff, 1:30, 1_000, .5, -1.5e+3, 1.2.3, .inf, -.Inf, .NaN, 1:30.5]\n",
+            "misc: {a: ~, b: null, c: =, <<: *base, ? d : e}\n",
+            "when: 2001-12-14t21:59:43.10-05:00\n",
+            "day: 2002-12-14\n",
+            "spaced: 2001-12-14 21:59:43.10 -5 # tz\n",
+            "loose: 2001-1-2 3:04:05   \n",
+            "anchor: &base !!map\n",
+            "  key with spaces: value with: colon\n",
+            "  \"quoted\": 'it''s'\n",
+            "  - item\n",
+            "  - \"esc \\n \\x41 \\q\"\n",
+            "  -not a dash\n",
+            "tagged: !<tag:x> v\n",
+            "local: !e!thing v\n",
+            "bad: &a[b *c]d !\n",
+            "literal: |2-\n",
+            "    indented\n",
+            "\n",
+            "   still\n",
+            "  back\n",
+            "folded: >\n",
+            "  text\n",
+            "  # not a comment\n",
+            "next: x\n",
+            "flow: [a, {b: c}, d: e, \"f\": g\n",
+            "  , h]\n",
+            "multi: \"line one\n",
+            "  line two\\\n",
+            "  end\"\n",
+            "? complex\n",
+            ": value\n",
+            "...\n",
+        );
+        rules_match_the_grammar("yaml", "YAML", text);
+    }
+
+    /// ada-parse's Dockerfile lexer picks the rules bat's grammar picks, in every built-in
+    /// theme (ADR-40).
+    #[test]
+    fn dockerfile_rules_match_the_grammar() {
+        let text = concat!(
+            "# syntax=docker/dockerfile:1\n",
+            "ARG BASE=alpine\n",
+            "FROM rust:1.88-slim@sha256:abc AS build\n",
+            "  # indented comment\n",
+            "WORKDIR /src\n",
+            "COPY --from=deps /cache /cache\n",
+            "copy . .\n",
+            "RUN apt-get update && \\\n",
+            "    apt-get install -y \"curl\" 'jq' \\\n",
+            "\n",
+            "    && echo \"a \\\" b\"\n",
+            "ENV PATH=\"/x:$PATH\" \\ \n",
+            "ONBUILD RUN make\n",
+            "MAINTAINER someone\n",
+            "EXPOSE 8080\n",
+            "RUN\n",
+            "echo continues\n",
+            "CMD [\"ada\", \"--help\"]\n",
+            "ENTRYPOINT [\"ada\"]\n",
+            "LABEL x=\"open\n",
+            "lower case line\n",
+            "HEALTHCHECK CMD true\n",
+            "FROM scratch\n",
+            "garbage here\n",
+        );
+        rules_match_the_grammar("dockerfile", "Dockerfile", text);
+    }
+
+    /// ada-parse's Java properties lexer picks the rules bat's grammar picks, in every
+    /// built-in theme (ADR-40).
+    #[test]
+    fn properties_rules_match_the_grammar() {
+        let text = concat!(
+            "# comment\n",
+            "  ! another\n",
+            "key = value\n",
+            "key2:value2\n",
+            "key3 value3\n",
+            "a\\ b = c\\td \\u00e9 \\uZZ\n",
+            "multi = one, \\\n",
+            "  two, \\\n",
+            "  three\n",
+            "cont\\\n",
+            "inued = x\n",
+            "empty=\n",
+            "   \n",
+            "lone\n",
+        );
+        rules_match_the_grammar("properties", "Java Properties", text);
+    }
+
+    /// ada-parse's `.env` lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (ADR-40).
+    #[test]
+    fn dotenv_rules_match_the_grammar() {
+        let text = concat!(
+            "# comment\n",
+            "export DATABASE_URL=\"postgres://${USER}:$PASS@host/db\\n\" # c\n",
+            "DEBUG = true\n",
+            "N=0x1F\n",
+            "F=1.5e+3\n",
+            "G=.5\n",
+            "H=1. 2.x\n",
+            "S='single $NOT'\n",
+            "M=\"multi\n",
+            "line {x} $$y\"\n",
+            "EXPORTER=null\n",
+            "a=b=c\n",
+        );
+        rules_match_the_grammar("env", "DotENV", text);
+    }
+
+    /// ada-parse's Git lexers pick the rules bat's grammars pick, in every built-in theme
+    /// (ADR-40).
+    #[test]
+    fn git_rules_match_the_grammar() {
+        let ignore = concat!(
+            "# build output\n",
+            "/target/\n",
+            "!keep.me\n",
+            "*.log ; not a comment\n",
+            "**/node_modules\n",
+            "docs/[!a-c]*.md\n",
+            "a[]b]c\n",
+            "a[x\n",
+            "\\#literal \\ \n",
+            "$HOME/../.cache/./x\n",
+            "C:/drive ~/home\n",
+            "   \n",
+        );
+        rules_match_the_grammar("gitignore", "Git Ignore", ignore);
+        let attributes = concat!(
+            "# attributes\n",
+            "* text=auto eol=lf\n",
+            "*.png binary -diff\n",
+            "*.rs diff=rust merge=union filter=lfs encoding=UTF-16 whitespace=tab-in-indent,trailing-space\n",
+            "\"quoted path\" -text !eol custom=a,b, x=\"q\\\"v\"\n",
+            "[attr]binary -diff -merge -text\n",
+            "-bad op\n",
+            "path/[ab]*.c foo= bar\n",
+        );
+        rules_match_the_grammar("gitattributes", "Git Attributes", attributes);
+        let mailmap = concat!(
+            "# mailmap\n",
+            "Proper Name <proper@email.xx>\n",
+            "<proper@email.xx> <commit@email.xx>\n",
+            "Proper Name <proper@email.xx> Commit Name <commit@email.xx>\n",
+            "Name Only\n",
+            "<bad email> x\n",
+        );
+        rules_match_the_grammar("mailmap", "Git Mailmap", mailmap);
+        let link = concat!(
+            "gitdir: ../.git/modules/sub\n",
+            "  gitdir :C:\\repo\\.git.\n",
+            "gitdir: ~/x/*\n",
+            "notgitdir: x\n",
+            "# comment\n",
+            "gitdir\n",
+        );
+        rules_match_the_grammar(".git", "Git Link", link);
     }
 
     /// The Makefile lexer picks the rules bat's grammar picks, in every built-in theme (G-002).

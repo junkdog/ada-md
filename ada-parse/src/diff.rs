@@ -4,27 +4,27 @@
 
 use crate::{Out, skip_spaces, trim_end};
 
-const SEPARATOR: u8 = 0;
-const RANGE_NORMAL: u8 = 1;
-const RANGE: u8 = 2;
-const RANGE_MARK: u8 = 3;
-const RANGE_LINES: u8 = 4;
-const RANGE_SECTION: u8 = 5;
-const RANGE_CONTEXT: u8 = 6;
-const RANGE_CONTEXT_MARK: u8 = 7;
-const FROM_FILE: u8 = 8;
-const FROM_FILE_MARK: u8 = 9;
-const TO_FILE: u8 = 10;
-const TO_FILE_MARK: u8 = 11;
-const INSERTED: u8 = 12;
-const INSERTED_MARK: u8 = 13;
-const CHANGED: u8 = 14;
-const CHANGED_MARK: u8 = 15;
-const DELETED: u8 = 16;
-const DELETED_MARK: u8 = 17;
-const INDEX: u8 = 18;
-const INDEX_SEPARATOR: u8 = 19;
-const INDEX_FILE: u8 = 20;
+const SEPARATOR: u16 = 0;
+const RANGE_NORMAL: u16 = 1;
+const RANGE: u16 = 2;
+const RANGE_MARK: u16 = 3;
+const RANGE_LINES: u16 = 4;
+const RANGE_SECTION: u16 = 5;
+const RANGE_CONTEXT: u16 = 6;
+const RANGE_CONTEXT_MARK: u16 = 7;
+const FROM_FILE: u16 = 8;
+const FROM_FILE_MARK: u16 = 9;
+const TO_FILE: u16 = 10;
+const TO_FILE_MARK: u16 = 11;
+const INSERTED: u16 = 12;
+const INSERTED_MARK: u16 = 13;
+const CHANGED: u16 = 14;
+const CHANGED_MARK: u16 = 15;
+const DELETED: u16 = 16;
+const DELETED_MARK: u16 = 17;
+const INDEX: u16 = 18;
+const INDEX_SEPARATOR: u16 = 19;
+const INDEX_FILE: u16 = 20;
 
 /// Each kind's scopes under `source.diff`, as bat's grammar gives them.
 pub const KINDS: &[&str] = &[
@@ -58,7 +58,7 @@ type Stretch = (usize, usize);
 #[inline(never)]
 pub fn line(b: &[u8], out: &mut Out) {
     let len = b.len();
-    let whole = |out: &mut Out, kind: u8, mark: usize, mark_kind: u8| {
+    let whole = |out: &mut Out, kind: u16, mark: usize, mark_kind: u16| {
         out.push(0, mark, mark_kind);
         out.push(mark, len, kind);
     };

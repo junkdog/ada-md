@@ -21,6 +21,26 @@ pub enum Lang {
     Diff,
     /// bat's `INI`.
     Ini,
+    /// bat's `TOML`.
+    Toml,
+    /// bat's `XML`.
+    Xml,
+    /// bat's `YAML`.
+    Yaml,
+    /// bat's `Dockerfile`.
+    Dockerfile,
+    /// bat's `Java Properties`.
+    Properties,
+    /// bat's `DotENV`.
+    DotEnv,
+    /// bat's `Git Ignore`.
+    GitIgnore,
+    /// bat's `Git Attributes`.
+    GitAttributes,
+    /// bat's `Git Mailmap`.
+    GitMailmap,
+    /// bat's `Git Link`.
+    GitLink,
 }
 
 /// Fence languages that no syntax names, and the token each stands for (`zsh` for bash's).
@@ -123,16 +143,85 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
             "hgrc",
         ],
     ),
+    (
+        Lang::Toml,
+        &[
+            "toml",
+            "tml",
+            "cargo.lock",
+            "gopkg.lock",
+            "pipfile",
+            "pdm.lock",
+            "poetry.lock",
+            "uv.lock",
+        ],
+    ),
+    (
+        Lang::Xml,
+        &[
+            "xml", "xsd", "xslt", "tld", "dtml", "rng", "rss", "opml", "svg", "xaml",
+        ],
+    ),
+    (Lang::Yaml, &["yaml", "yml", "sublime-syntax"]),
+    (Lang::Dockerfile, &["dockerfile", ".dockerfile"]),
+    (Lang::Properties, &["properties"]),
+    (
+        Lang::DotEnv,
+        &[
+            ".env",
+            ".env.dist",
+            ".env.local",
+            ".env.sample",
+            ".env.example",
+            ".env.template",
+            ".env.test",
+            ".env.test.local",
+            ".env.testing",
+            ".env.dev",
+            ".env.development",
+            ".env.development.local",
+            ".env.prod",
+            ".env.production",
+            ".env.production.local",
+            ".env.dusk.local",
+            ".env.staging",
+            ".env.default",
+            ".env.defaults",
+            ".envrc",
+            ".flaskenv",
+            "env",
+            "env.example",
+            "env.sample",
+            "env.template",
+        ],
+    ),
+    (Lang::GitIgnore, &["exclude", "gitignore", ".gitignore"]),
+    (
+        Lang::GitAttributes,
+        &["attributes", "gitattributes", ".gitattributes"],
+    ),
+    (Lang::GitMailmap, &[".mailmap", "mailmap"]),
+    (Lang::GitLink, &[".git"]),
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 6] = [
+    pub const ALL: [Lang; 16] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
         Lang::Bash,
         Lang::Diff,
         Lang::Ini,
+        Lang::Toml,
+        Lang::Xml,
+        Lang::Yaml,
+        Lang::Dockerfile,
+        Lang::Properties,
+        Lang::DotEnv,
+        Lang::GitIgnore,
+        Lang::GitAttributes,
+        Lang::GitMailmap,
+        Lang::GitLink,
     ];
 
     /// The name of the syntax it stands in for, as syntect names it.
@@ -144,6 +233,16 @@ impl Lang {
             Lang::Bash => "Bourne Again Shell (bash)",
             Lang::Diff => "Diff",
             Lang::Ini => "INI",
+            Lang::Toml => "TOML",
+            Lang::Xml => "XML",
+            Lang::Yaml => "YAML",
+            Lang::Dockerfile => "Dockerfile",
+            Lang::Properties => "Java Properties",
+            Lang::DotEnv => "DotENV",
+            Lang::GitIgnore => "Git Ignore",
+            Lang::GitAttributes => "Git Attributes",
+            Lang::GitMailmap => "Git Mailmap",
+            Lang::GitLink => "Git Link",
         }
     }
 
@@ -156,22 +255,66 @@ impl Lang {
             Lang::Bash => "source.shell.bash",
             Lang::Diff => "source.diff",
             Lang::Ini => "source.ini",
+            Lang::Toml => "source.toml",
+            Lang::Xml => "text.xml",
+            Lang::Yaml => "source.yaml",
+            Lang::Dockerfile => "source.dockerfile",
+            Lang::Properties => "source.java-props",
+            Lang::DotEnv => "source.env",
+            Lang::GitIgnore => "text.git.ignore",
+            Lang::GitAttributes => "text.git.attributes",
+            Lang::GitMailmap => "text.git.mailmap",
+            Lang::GitLink => "text.git.link",
         }
     }
 
-    /// The scopes under [`Lang::base`] each kind of [`crate::lex`]'s spans carries, innermost
-    /// last, by [`crate::Span::kind`]; empty for a language ada lexes itself.
+    /// The scopes under [`Lang::base`] each kind of a language read line by line carries,
+    /// space-separated, by [`crate::Span::kind`]: a fixed set. Empty for the others, whose
+    /// kinds are the stacks of scopes met so far ([`Lang::scopes`]).
     pub fn kinds(self) -> &'static [&'static str] {
         match self {
             Lang::Diff => crate::diff::KINDS,
             Lang::Ini => crate::ini::KINDS,
-            Lang::Json | Lang::Log | Lang::Makefile | Lang::Bash => &[],
+            _ => &[],
         }
+    }
+
+    /// The scopes under [`Lang::base`] a kind of [`crate::lex`]'s spans carries, outermost
+    /// first; none for a kind no span has had.
+    pub fn scopes(self, kind: u16) -> Vec<&'static str> {
+        match self {
+            _ if self.grammar().is_some() => {
+                self.grammar().map_or_else(Vec::new, |g| g.scopes(kind))
+            }
+            _ => self
+                .kinds()
+                .get(usize::from(kind))
+                .map_or_else(Vec::new, |k| k.split(' ').collect()),
+        }
+    }
+
+    /// The context grammar it runs on, for the languages not read line by line.
+    pub(crate) fn grammar(self) -> Option<&'static crate::machine::Grammar> {
+        Some(match self {
+            Lang::Toml => &crate::toml::GRAMMAR,
+            Lang::Xml => &crate::xml::GRAMMAR,
+            Lang::Yaml => &crate::yaml::GRAMMAR,
+            Lang::Dockerfile => &crate::dockerfile::GRAMMAR,
+            Lang::Properties => &crate::properties::GRAMMAR,
+            Lang::DotEnv => &crate::dotenv::GRAMMAR,
+            Lang::GitIgnore => &crate::git::IGNORE,
+            Lang::GitAttributes => &crate::git::ATTRIBUTES,
+            Lang::GitMailmap => &crate::git::MAILMAP,
+            Lang::GitLink => &crate::git::LINK,
+            Lang::Json | Lang::Log | Lang::Makefile | Lang::Bash | Lang::Diff | Lang::Ini => {
+                return None;
+            }
+        })
     }
 
     /// Whether [`crate::lex`] lexes it: false for the languages ada lexes itself.
     pub fn lexed(self) -> bool {
-        !self.kinds().is_empty()
+        !matches!(self, Lang::Json | Lang::Log | Lang::Makefile | Lang::Bash)
     }
 
     /// Whether a line's spans never depend on the lines before it, so that lines can be lexed
@@ -393,7 +536,8 @@ mod tests {
         assert_eq!(Lang::from_file_name("Pipfile.lock"), Some(Lang::Json));
         assert_eq!(Lang::from_file_name("x.log"), Some(Lang::Log));
         assert_eq!(Lang::from_file_name(".json"), None);
-        assert_eq!(Lang::from_file_name("Cargo.lock"), None);
+        assert_eq!(Lang::from_file_name("Cargo.lock"), Some(Lang::Toml));
+        assert_eq!(Lang::from_file_name("Cargo.toml"), Some(Lang::Toml));
     }
 
     #[test]
