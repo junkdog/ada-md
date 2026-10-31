@@ -20,6 +20,8 @@ print "work: $W"
 CARGO_TARGET_DIR=$W/target cargo run -q --locked --manifest-path $R/Cargo.toml -p xtask -- ordered --locked -q; rc=$?
 (( rc == 0 || rc == 2 )) || exit 1
 EXE=$W/target/release/ada
+# lackey.zsh's filter, built before the first trace: built inside one, it would stall the traced run behind the fifo
+cargo build -q --release --locked --manifest-path $R/Cargo.toml -p xtask || exit 1
 print "print S"
 $H/lackey.zsh $W/traces/print-s.txt $EXE -p -w 100 $S/corpus/s.md < /dev/null > /dev/null || exit 1
 DOCS=${CHECK:+s}; DOCS=${DOCS:-s,l}

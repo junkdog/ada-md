@@ -13,7 +13,11 @@
 //!
 //! `cargo xtask demangle`: symbol names on stdin, one per line, to the same lines as order.txt
 //! keeps them (`symbols::demangle`); `bench/order/symbols.py` reads names through it.
+//!
+//! `cargo xtask lackey`: a valgrind lackey trace on stdin to the 256-byte lines it touched
+//! (`lackey::filter`), for `bench/order/lackey.zsh`.
 
+mod lackey;
 mod symbols;
 
 use std::env;
@@ -30,7 +34,13 @@ fn main() -> ExitCode {
         Some("demangle") => demangle()
             .map(|()| ExitCode::SUCCESS)
             .map_err(|e| e.to_string()),
-        _ => Err("usage: cargo ordered [CARGO_ARGS...] | cargo xtask demangle < NAMES".into()),
+        Some("lackey") => lackey::filter(io::stdin().lock(), BufWriter::new(io::stdout().lock()))
+            .map(|()| ExitCode::SUCCESS)
+            .map_err(|e| e.to_string()),
+        _ => Err(
+            "usage: cargo ordered [CARGO_ARGS...] | cargo xtask demangle < NAMES | cargo xtask lackey < LOG"
+                .into(),
+        ),
     };
     done.unwrap_or_else(|e| {
         eprintln!("{e}");
