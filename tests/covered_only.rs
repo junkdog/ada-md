@@ -97,6 +97,12 @@ data class P<T : Any>(val x: Int) : Q() { fun <R> List<T>.f(r: R): String = \"$x
 @Override public <T> List<T> f(final int x) { return x -> new Foo<>(\"y\"); }
 ```
 
+```cpp
+#include <vector>
+template <typename T> class Box { public: explicit Box(T v) : v_(v) {} T v_; };
+int main() { auto s = R\"x(raw)x\"; return std::vector<int>{1, 2}.size(); }
+```
+
 ```text
 plain
 ```
@@ -164,6 +170,8 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         "Main.kt",
         "build.gradle.kts",
         "Main.java",
+        "main.cpp",
+        "widget.hpp",
     ] {
         let t = FileType::by_path(Path::new(name));
         assert!(

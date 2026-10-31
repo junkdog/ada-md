@@ -2202,6 +2202,79 @@ mod tests {
         rules_match_the_grammar("java", "Java", text);
     }
 
+    /// ada-parse's C++ lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (ADR-40): the preprocessor's rules (a disabled branch a comment, `#if 1`'s else
+    /// branch), an upper-case macro call on its own line handing its arguments to C's grammar,
+    /// raw strings across lines, the class, method and function definitions' corners.
+    #[test]
+    fn cpp_rules_match_the_grammar() {
+        let text = concat!(
+            "#include <vector>\n",
+            "#include \"local.h\" // why\n",
+            "#define MAX(a, b) ((a) > (b) ? (a) : (b))\n",
+            "#define NAME \"x\" \\\n",
+            "  \"continued\"\n",
+            "#if 0\n",
+            "int disabled(); #if nested\n",
+            "#endif\n",
+            "#else\n",
+            "int enabled;\n",
+            "#endif\n",
+            "#if 1\n",
+            "int on;\n",
+            "#else\n",
+            "int off;\n",
+            "#endif\n",
+            "#ifdef __cplusplus\n",
+            "extern \"C\" {\n",
+            "#endif\n",
+            "/* = banner = */\n",
+            "namespace foo::bar {\n",
+            "using namespace std;\n",
+            "using Alias = std::map<int, std::string>;\n",
+            "template <typename T, class... Rest> class Widget final : public Base<T>, private virtual Other {\n",
+            " public:\n",
+            "  Widget(int x) : x_(x), y_{2} {}\n",
+            "  ~Widget() override;\n",
+            "  explicit operator bool() const noexcept { return mFlag && m_ready; }\n",
+            "  Widget& operator=(const Widget&) = delete;\n",
+            "  static_assert(sizeof(T) > 0, \"size\");\n",
+            "  friend class Other;\n",
+            "  virtual void run() = 0;\n",
+            "  auto get() const -> decltype(x_) { return this->x_; }\n",
+            " private:\n",
+            "  int x_ = 0b1010'1010, y_ = 0x1.8p3, z_ = 017, w_ = 1'000'000ull;\n",
+            "  double d_ = 1.5e-3f, e_ = .5L;\n",
+            "};\n",
+            "struct Point { int x, y; };\n",
+            "enum class Color : uint8_t { Red, Green = 2 };\n",
+            "union U { int i; float f; };\n",
+            "typedef struct node node_t;\n",
+            "int Widget::count = 0;\n",
+            "std::vector<int> make(size_t n, const char* s = nullptr) {\n",
+            "  auto raw = R\"delim(one\n",
+            ")\" still )delim\";\n",
+            "  auto lam = [&](int a) mutable { return a * 2; };\n",
+            "  if (n <= 0 || !s) { throw std::runtime_error(\"bad %d\\n\"); }\n",
+            "  for (auto& v : list) v.push_back(static_cast<int>(n));\n",
+            "  switch (n) { case 1: break; default: goto done; }\n",
+            "done:\n",
+            "  printf(\"%5.2f %s %%\", 1.0, u8\"x\");\n",
+            "  ptr->member.call<int>(1)->field;\n",
+            "  delete[] arr; new int[3];\n",
+            "  TEST_MACRO(a, sizeof(b), \"c\")\n",
+            "  return std::move(n);\n",
+            "}\n",
+            "}  // namespace foo::bar\n",
+            "#ifdef __cplusplus\n",
+            "}\n",
+            "#endif\n",
+            "#pragma mark Section\n",
+            "#error \"stop\" here\n",
+        );
+        rules_match_the_grammar("cpp", "C++", text);
+    }
+
     /// ada-parse's Dockerfile lexer picks the rules bat's grammar picks, in every built-in
     /// theme (ADR-40).
     #[test]
@@ -2715,7 +2788,7 @@ mod tests {
     fn parallel_highlighting_matches_one_thread() {
         let theme = Theme::builtin();
         let syntax = SyntaxTheme::new(&theme.syntax);
-        let cpp = "int main() {\n    auto s = R\"x(a \"quoted\"\n line)x\";\n    // note\n    int n = 0x1f;\n}\n";
+        let lua = "local function f()\n  local s = [==[a \"quoted\"\n line]==]\n  -- note\n  local n = 0x1f\nend\n";
         let log =
             "2026-10-17 12:00:01 INFO started pid=42\n2026-10-17 12:00:02 ERROR failed: \"x\"\n";
         let c = "int x = 1; // note\n";
@@ -2723,7 +2796,7 @@ mod tests {
         let diff = "--- a/x\n+++ b/x\n@@ -1 +1 @@ fn main\n-old\n+new\n same\n";
         let ini = "[core]\n; note\neditor = \"vim\" ; the one\n";
         for (lang, unit, reps) in [
-            ("cpp", cpp, 60),
+            ("lua", lua, 60),
             ("log", log, 150),
             ("c", c, 300),
             ("json", json, 150),

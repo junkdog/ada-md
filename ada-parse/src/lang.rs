@@ -47,6 +47,8 @@ pub enum Lang {
     Kotlin,
     /// bat's `Java`.
     Java,
+    /// bat's `C++`, with the parts of `C` it reaches.
+    Cpp,
 }
 
 /// Fence languages that no syntax names, and the token each stands for (`zsh` for bash's).
@@ -211,10 +213,16 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::Rust, &["rs"]),
     (Lang::Kotlin, &["kt", "kts"]),
     (Lang::Java, &["java", "bsh"]),
+    (
+        Lang::Cpp,
+        &[
+            "cpp", "cc", "cp", "cxx", "c++", "hh", "hpp", "hxx", "h++", "inl", "ipp",
+        ],
+    ),
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 19] = [
+    pub const ALL: [Lang; 20] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -234,6 +242,7 @@ impl Lang {
         Lang::Rust,
         Lang::Kotlin,
         Lang::Java,
+        Lang::Cpp,
     ];
 
     /// The name of the syntax it stands in for, as syntect names it.
@@ -258,6 +267,7 @@ impl Lang {
             Lang::Rust => "Rust",
             Lang::Kotlin => "Kotlin",
             Lang::Java => "Java",
+            Lang::Cpp => "C++",
         }
     }
 
@@ -283,6 +293,7 @@ impl Lang {
             Lang::Rust => "source.rust",
             Lang::Kotlin => "source.Kotlin",
             Lang::Java => "source.java",
+            Lang::Cpp => "source.c++",
         }
     }
 
@@ -309,6 +320,7 @@ impl Lang {
             Lang::Rust => crate::rust::scopes(kind),
             Lang::Kotlin => crate::kotlin::scopes(kind),
             Lang::Java => crate::java::scopes(kind),
+            Lang::Cpp => crate::cpp::scopes(kind),
             _ if self.grammar().is_some() => {
                 self.grammar().map_or_else(Vec::new, |g| g.scopes(kind))
             }
@@ -340,7 +352,8 @@ impl Lang {
             | Lang::Yaml
             | Lang::Rust
             | Lang::Kotlin
-            | Lang::Java => {
+            | Lang::Java
+            | Lang::Cpp => {
                 return None;
             }
         })

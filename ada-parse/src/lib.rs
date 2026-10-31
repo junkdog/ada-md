@@ -16,6 +16,7 @@
 //! link files) still run on a port of syntect's parse machine (`machine.rs`), their grammars bat's
 //! context for context, until scanners replace them. Makefiles and bash are still lexed in ada.
 
+mod cpp;
 mod diff;
 mod dockerfile;
 mod dotenv;
@@ -149,6 +150,7 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::Rust => rust::line(line.as_bytes(), state, &mut out),
         Lang::Kotlin => kotlin::line(line.as_bytes(), state, &mut out),
         Lang::Java => java::line(line.as_bytes(), state, &mut out),
+        Lang::Cpp => cpp::line(line.as_bytes(), state, &mut out),
         _ => {
             if let Some(g) = lang.grammar() {
                 machine::line(g, line.as_bytes(), state, &mut out);
