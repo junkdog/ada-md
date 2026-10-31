@@ -21,6 +21,7 @@ mod dockerfile;
 mod dotenv;
 mod git;
 mod ini;
+mod java;
 mod json;
 mod kotlin;
 mod lang;
@@ -147,6 +148,7 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::Xml => xml_scan::line(line.as_bytes(), state, &mut out),
         Lang::Rust => rust::line(line.as_bytes(), state, &mut out),
         Lang::Kotlin => kotlin::line(line.as_bytes(), state, &mut out),
+        Lang::Java => java::line(line.as_bytes(), state, &mut out),
         _ => {
             if let Some(g) = lang.grammar() {
                 machine::line(g, line.as_bytes(), state, &mut out);

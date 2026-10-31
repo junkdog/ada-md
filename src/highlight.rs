@@ -2150,6 +2150,58 @@ mod tests {
         rules_match_the_grammar("kotlin", "Kotlin", text);
     }
 
+    /// ada-parse's Java lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (ADR-40): its odd corners included (an annotation's line end and the next line's indent,
+    /// `default ->` a lambda's parameter, `%>` emptying the stack, Javadoc's HTML, an unknown
+    /// block tag and a tag at a line's first byte leaving the comment plain).
+    #[test]
+    fn java_rules_match_the_grammar() {
+        let text = concat!(
+            "package org.example.app; // the app\n",
+            "import java.util.*;\n",
+            "import static org.junit.Assert.assertEquals;\n",
+            "/** Doc with <a href=\"x\" id=y class='z'>link</a>, <my-tag Bad>x</my-tag>, <!-- c -->\n",
+            " * &amp; &#169; &bad <> a<b List<String> {@code a {b} c} {@inheritDoc} {@value Foo#BAR}\n",
+            " * {@linkplain java.util.List#add(Object, int) the add}\n",
+            " * @see Foo#bar(int, String)\n",
+            " * @hidden unknown\n",
+            " *   so this stays <b>plain</b>\n",
+            " * @param <T> the type\n",
+            "@param at the line's start\n",
+            " * @return the {@code value\n",
+            " *   across} lines */\n",
+            "@SuppressWarnings({\"unchecked\", \"rawtypes\"})\n",
+            "@org.example.Ann(value = 1, other = @Inner(x = \"y\"), arr = {1, 2})\n",
+            "public abstract class Foo<T extends Comparable<? super T> & Serializable> extends com.x.Bar<T> implements Baz {\n",
+            "    private static final long A = 0x1FL, B = 0b1010_1010L, C = 0_17, D = 09, E = 1.5e-3f, F = .5d, G = 0x1.8p3;\n",
+            "    protected int[] arr = new int[] {1, 2}, more[] = {};\n",
+            "    char c = '\\'', d = '\\u00e9'; String s = \"unterminated\n",
+            "    static { init(); }\n",
+            "    @Override\n",
+            "    public <R> List<R> map(final java.util.function.Function<? super T, ? extends R> f, int... xs) throws IOException {\n",
+            "        var list = new ArrayList<String>(10); Runnable r = () -> { System.out.println(\"x\"); };\n",
+            "        list.forEach(e -> f(e)); list.stream().map(String::valueOf); Foo.<String>bar(); Foo.class; T.x;\n",
+            "        int x = a < b ? -1 : 1, y = x >>> 2; x >>= 1; x %= 2; boolean q = !(x != y) && x == y || ~x > 0;\n",
+            "        if (o instanceof String s) { return null; } else { }\n",
+            "        switch (x) { case 1: break; case FOO -> g(); default -> {} default: continue; }\n",
+            "        for (int i = 0; i < 10; i++) { } try (var in = open(f)) { } catch (IOException | RuntimeException e) { } finally { }\n",
+            "        assert x > 0 : \"msg\"; synchronized (this) { this.x = super.y; }\n",
+            "        Object o = new Object() { @Override public String toString() { return \"\"; } };\n",
+            "        goto label; const int K = 1; 1abc(); $x = 1; foo$bar(); x = 1.foo;\n",
+            "    }\n",
+            "    public @interface Ann { String value() default \"x\"; Class<?> c() default Object.class; }\n",
+            "    enum Color { RED, GREEN(\"g\") { void x() {} }, BLUE;\n",
+            "        private final int v;\n",
+            "    }\n",
+            "    record P(int x, int y) implements I { }\n",
+            "    x = y %> z;\n",
+            "}\n",
+            "/* block /* not nested */ /** doc */ /***/ /**/ // line /* with a block\n",
+            "module com.example.mod { requires transitive java.base; exports com.example.api to other.mod; provides a.Spi with a.Impl; }\n",
+        );
+        rules_match_the_grammar("java", "Java", text);
+    }
+
     /// ada-parse's Dockerfile lexer picks the rules bat's grammar picks, in every built-in
     /// theme (ADR-40).
     #[test]

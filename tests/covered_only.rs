@@ -92,6 +92,11 @@ import x.Y as Z
 data class P<T : Any>(val x: Int) : Q() { fun <R> List<T>.f(r: R): String = \"$x ${r}\" }
 ```
 
+```java
+/** A <b>doc</b> {@link Foo#bar(int)}. @param x the x */
+@Override public <T> List<T> f(final int x) { return x -> new Foo<>(\"y\"); }
+```
+
 ```text
 plain
 ```
@@ -158,6 +163,7 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         "main.rs",
         "Main.kt",
         "build.gradle.kts",
+        "Main.java",
     ] {
         let t = FileType::by_path(Path::new(name));
         assert!(

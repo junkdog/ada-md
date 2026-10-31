@@ -45,6 +45,8 @@ pub enum Lang {
     Rust,
     /// bat's `Kotlin`.
     Kotlin,
+    /// bat's `Java`.
+    Java,
 }
 
 /// Fence languages that no syntax names, and the token each stands for (`zsh` for bash's).
@@ -208,10 +210,11 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::GitLink, &[".git"]),
     (Lang::Rust, &["rs"]),
     (Lang::Kotlin, &["kt", "kts"]),
+    (Lang::Java, &["java", "bsh"]),
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 18] = [
+    pub const ALL: [Lang; 19] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -230,6 +233,7 @@ impl Lang {
         Lang::GitLink,
         Lang::Rust,
         Lang::Kotlin,
+        Lang::Java,
     ];
 
     /// The name of the syntax it stands in for, as syntect names it.
@@ -253,6 +257,7 @@ impl Lang {
             Lang::GitLink => "Git Link",
             Lang::Rust => "Rust",
             Lang::Kotlin => "Kotlin",
+            Lang::Java => "Java",
         }
     }
 
@@ -277,6 +282,7 @@ impl Lang {
             Lang::GitLink => "text.git.link",
             Lang::Rust => "source.rust",
             Lang::Kotlin => "source.Kotlin",
+            Lang::Java => "source.java",
         }
     }
 
@@ -302,6 +308,7 @@ impl Lang {
             Lang::Xml => crate::xml_scan::scopes(kind),
             Lang::Rust => crate::rust::scopes(kind),
             Lang::Kotlin => crate::kotlin::scopes(kind),
+            Lang::Java => crate::java::scopes(kind),
             _ if self.grammar().is_some() => {
                 self.grammar().map_or_else(Vec::new, |g| g.scopes(kind))
             }
@@ -332,7 +339,8 @@ impl Lang {
             | Lang::Xml
             | Lang::Yaml
             | Lang::Rust
-            | Lang::Kotlin => {
+            | Lang::Kotlin
+            | Lang::Java => {
                 return None;
             }
         })
@@ -552,6 +560,7 @@ mod tests {
         assert_eq!(Lang::from_token("rs"), Some(Lang::Rust));
         assert_eq!(Lang::from_token("kt"), Some(Lang::Kotlin));
         assert_eq!(Lang::from_token("kotlin"), Some(Lang::Kotlin));
+        assert_eq!(Lang::from_token("java"), Some(Lang::Java));
     }
 
     #[test]
