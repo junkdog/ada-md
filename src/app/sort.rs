@@ -59,7 +59,7 @@ impl State {
             broken: false,
         };
         let names: Vec<String> = (0..table.column_count())
-            .map(|c| header_name(table, c))
+            .map(|c| header_name(&doc.doc, table, c))
             .collect();
         // padded, so the directions line up
         let width = names.iter().map(|n| n.width()).max().unwrap_or(0);
@@ -148,12 +148,12 @@ impl State {
             Some(s) => {
                 let [asc, desc] = &self.theme.glyphs.sort_mark;
                 let mark = if s.desc { desc } else { asc };
-                let name = header_name(table, usize::from(s.col));
+                let name = header_name(&doc.doc, table, usize::from(s.col));
                 format!("sorted by {name} {mark}")
             }
             None => "table in source order".into(),
         });
-        doc.measure.set_sort(table, sort);
+        doc.measure.set_sort(&doc.doc, table, sort);
         // only this table's rows change, so the rows above it stay where they are
         doc.relayout_now(&self.theme.glyphs, params);
         self.scroll = self.scroll.min(self.max_scroll());
@@ -178,7 +178,7 @@ impl Document {
         for table in self.doc.tables() {
             let sort = sort_of(table.id).filter(|s| usize::from(s.col) < table.column_count());
             if sort != self.measure.sort(table.id) {
-                self.measure.set_sort(table, sort);
+                self.measure.set_sort(&self.doc, table, sort);
                 changed = true;
             }
         }
@@ -211,12 +211,12 @@ fn entry_sort(entry: u32) -> Option<Option<Sort>> {
 }
 
 /// A header cell's text, or `column N` for an empty one.
-fn header_name(table: &crate::doc::Table, col: usize) -> String {
+fn header_name(doc: &crate::doc::Doc, table: &crate::doc::Table, col: usize) -> String {
     let name = table
         .header
         .cells
         .get(col)
-        .map(|c| c.plain_text().trim().to_owned())
+        .map(|c| c.plain_text(&doc.text).trim().to_owned())
         .unwrap_or_default();
     if name.is_empty() {
         format!("column {}", col + 1)

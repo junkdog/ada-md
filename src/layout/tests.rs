@@ -351,7 +351,7 @@ fn sort_marks_sit_on_the_rule_or_in_the_header_padding() {
     let rows = |md: &str, glyphs: &Glyphs, sort: Option<Sort>, table_mode| {
         let doc = parse(md);
         let mut measure = Measure::new(&doc, glyphs);
-        measure.set_sort(doc.tables()[0], sort);
+        measure.set_sort(&doc, doc.tables()[0], sort);
         let p = LayoutParams {
             table_mode,
             ..params(40)

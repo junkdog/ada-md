@@ -79,11 +79,19 @@ pub struct Doc {
     pub code_count: u32,
     /// Search units are numbered `0..unit_count`.
     pub unit_count: u32,
+    /// Every run's text, in source order: a run holds its range (PAR-004), one heap block for
+    /// the document's inline text instead of one a run.
+    pub text: String,
 }
 
 impl Doc {
     pub fn line_count(&self) -> u32 {
         self.line_starts.len() as u32
+    }
+
+    /// `run`'s text: what is rendered and searched.
+    pub fn run_text(&self, run: &Run) -> &str {
+        run.text.of(&self.text)
     }
 }
 
@@ -246,12 +254,12 @@ pub struct Inlines {
 }
 
 impl Inlines {
-    /// The visible text, with breaks as spaces.
-    pub fn plain_text(&self) -> String {
+    /// The visible text, with breaks as spaces; `text` is the document's [`Doc::text`].
+    pub fn plain_text(&self, text: &str) -> String {
         let mut out = String::new();
         for run in &self.runs {
             match run.kind {
-                RunKind::Text | RunKind::InlineImage(_) => out.push_str(&run.text),
+                RunKind::Text | RunKind::InlineImage(_) => out.push_str(run.text.of(text)),
                 RunKind::SoftBreak | RunKind::HardBreak => out.push(' '),
                 RunKind::FootnoteRef(_) => {}
             }
@@ -262,13 +270,36 @@ impl Inlines {
 
 #[derive(Debug)]
 pub struct Run {
-    /// Unescaped text: what is rendered and searched.
-    pub text: Box<str>,
+    /// Unescaped text: what is rendered and searched, a range of [`Doc::text`] (read it with
+    /// [`Doc::run_text`]).
+    pub text: TextRange,
     pub style: InlineStyle,
     pub link: Option<LinkId>,
     /// The source line this run starts on.
     pub src_line: u32,
     pub kind: RunKind,
+}
+
+/// A run's text: bytes `start..end` of its document's [`Doc::text`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TextRange {
+    pub start: u32,
+    pub end: u32,
+}
+
+impl TextRange {
+    /// This range of `text`, the document's [`Doc::text`].
+    pub fn of(self, text: &str) -> &str {
+        &text[self.start as usize..self.end as usize]
+    }
+
+    pub fn len(self) -> usize {
+        (self.end - self.start) as usize
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.start == self.end
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

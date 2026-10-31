@@ -360,7 +360,7 @@ impl Measure {
 
     /// Sort `table`'s rows, or put them back in source order. A column the table doesn't have
     /// leaves it in source order.
-    pub fn set_sort(&mut self, table: &Table, sort: Option<Sort>) {
+    pub fn set_sort(&mut self, doc: &Doc, table: &Table, sort: Option<Sort>) {
         let Some(slot) = self.sorts.get_mut(table.id as usize) else {
             return;
         };
@@ -368,7 +368,7 @@ impl Measure {
             .filter(|s| usize::from(s.col) < table.column_count())
             .map(|sort| Sorted {
                 sort,
-                order: table::order(table, sort),
+                order: table::order(doc, table, sort),
             });
     }
 

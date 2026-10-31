@@ -167,14 +167,14 @@ pub struct Sort {
 
 /// The body rows of `t` sorted by `sort.col`, as indices into `t.rows`: by each cell's [`Key`],
 /// with blank cells last either way, and rows that compare equal in source order.
-pub fn order(t: &Table, sort: Sort) -> Vec<u32> {
+pub fn order(doc: &Doc, t: &Table, sort: Sort) -> Vec<u32> {
     let cells: Vec<String> = t
         .rows
         .iter()
         .map(|r| {
             r.cells
                 .get(usize::from(sort.col))
-                .map(|c| c.plain_text().trim().to_owned())
+                .map(|c| c.plain_text(&doc.text).trim().to_owned())
                 .unwrap_or_default()
         })
         .collect();
@@ -1430,18 +1430,22 @@ mod tests {
             panic!("not a table")
         };
         let asc = order(
+            &doc,
             t,
             Sort {
                 col: 1,
                 desc: false,
             },
         );
-        let desc = order(t, Sort { col: 1, desc: true });
+        let desc = order(&doc, t, Sort { col: 1, desc: true });
         // ties (c, d) and blanks (b, e) keep their source order either way
         assert_eq!(asc, [2, 3, 0, 5, 1, 4]);
         assert_eq!(desc, [5, 0, 2, 3, 1, 4]);
         // a column past the row's cells is blank
-        assert_eq!(order(t, Sort { col: 7, desc: true }), [0, 1, 2, 3, 4, 5]);
+        assert_eq!(
+            order(&doc, t, Sort { col: 7, desc: true }),
+            [0, 1, 2, 3, 4, 5]
+        );
     }
 
     #[test]

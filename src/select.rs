@@ -1048,7 +1048,7 @@ mod tests {
             let doc = parse(md);
             let mut measure = Measure::new(&doc, &theme.glyphs);
             if let Some(t) = doc.tables().first() {
-                measure.set_sort(t, sort);
+                measure.set_sort(&doc, t, sort);
             }
             let map = SearchMap::build(&doc, &theme.glyphs);
             let layout = layout_measured(&doc, &measure, &theme.glyphs, p);

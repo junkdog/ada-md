@@ -14,7 +14,7 @@ use super::slug::Slugger;
 use super::{
     Align, Anchor, AnchorKind, Block, BlockKind, Callout, CodeBlock, CodeId, Doc, Footnote,
     FootnoteId, InlineStyle, Inlines, LineRange, LinkId, LinkKind, LinkRef, List, ListItem, Run,
-    RunKind, Table, TableId, TableRow, UnitId, fence,
+    RunKind, Table, TableId, TableRow, TextRange, UnitId, fence,
 };
 use crate::guard;
 
@@ -138,14 +138,17 @@ enum Frame {
     Skip,
 }
 
+/// An image's alt text is written into [`Builder::text`] from `start` on as it comes.
 struct ImageDraft {
     link: LinkId,
-    alt: String,
+    start: u32,
     line: u32,
 }
 
 struct Builder {
     line_starts: Vec<u32>,
+    /// Every run's text, in source order: the [`Doc::text`] the runs' ranges are of (PAR-004).
+    text: String,
     /// The line the last event started on, from 1.
     line: u32,
     stack: Vec<Frame>,
@@ -169,6 +172,10 @@ impl Builder {
     fn new(text: &str) -> Self {
         Self {
             line_starts: line_starts(text),
+            // the source's length, which inline text rarely passes: grown by doubling instead,
+            // a long run's text was copied at each step (long lines' parse +5–10%, experiment
+            // 71); the room left over is never touched, and `finish` gives it back
+            text: String::with_capacity(text.len()),
             line: 1,
             stack: vec![Frame::Blocks {
                 kind: Container::Root,
@@ -366,7 +373,7 @@ impl Builder {
                 let link = self.add_link(&dest_url, &title, LinkKind::Image, src.start);
                 self.image = Some(ImageDraft {
                     link,
-                    alt: String::new(),
+                    start: self.text_end(),
                     line: src.start,
                 });
             }
@@ -391,7 +398,10 @@ impl Builder {
             TagEnd::Image => {
                 if let Some(img) = self.image.take() {
                     self.push_run(Run {
-                        text: img.alt.into(),
+                        text: TextRange {
+                            start: img.start,
+                            end: self.text_end(),
+                        },
                         style: self.style,
                         link: Some(img.link),
                         src_line: img.line,
@@ -450,8 +460,8 @@ impl Builder {
     }
 
     fn text(&mut self, text: &str, line: u32) {
-        if let Some(img) = &mut self.image {
-            img.alt.push_str(text);
+        if self.image.is_some() {
+            self.text.push_str(text);
             return;
         }
         match self.stack.last_mut() {
@@ -463,13 +473,30 @@ impl Builder {
         }
     }
 
+    /// The end of [`Builder::text`], where the next run's text starts. A document of 4 GiB of
+    /// inline text or more panics here, and shows as plain.
+    fn text_end(&self) -> u32 {
+        u32::try_from(self.text.len()).expect("inline text under 4 GiB")
+    }
+
+    /// `text`'s range once written to the end of [`Builder::text`].
+    fn add_text(&mut self, text: &str) -> TextRange {
+        let start = self.text_end();
+        self.text.push_str(text);
+        TextRange {
+            start,
+            end: self.text_end(),
+        }
+    }
+
     fn push_text(&mut self, text: &str, style: InlineStyle, line: u32) {
-        if let Some(img) = &mut self.image {
-            img.alt.push_str(text);
+        if self.image.is_some() {
+            self.text.push_str(text);
             return;
         }
+        let text = self.add_text(text);
         self.push_run(Run {
-            text: text.into(),
+            text,
             style,
             link: self.link,
             src_line: line,
@@ -478,12 +505,13 @@ impl Builder {
     }
 
     fn push_break(&mut self, kind: RunKind, line: u32) {
-        if let Some(img) = &mut self.image {
-            img.alt.push(' ');
+        if self.image.is_some() {
+            self.text.push(' ');
             return;
         }
+        let text = self.add_text("");
         self.push_run(Run {
-            text: "".into(),
+            text,
             style: self.style,
             link: self.link,
             src_line: line,
@@ -506,8 +534,9 @@ impl Builder {
         let id = self.footnote_id(label);
         self.ref_order.push(id);
         let link = self.add_link(label, "", LinkKind::Footnote(id), line);
+        let text = self.add_text("");
         self.push_run(Run {
-            text: "".into(),
+            text,
             style: self.style,
             link: Some(link),
             src_line: line,
@@ -515,9 +544,13 @@ impl Builder {
         });
     }
 
+    /// Push `run`, whose text is the end of [`Builder::text`]; where no run can go, its text
+    /// goes too.
     fn push_run(&mut self, run: Run) {
         if !matches!(self.stack.last(), Some(Frame::Inline { .. })) {
             if !matches!(self.stack.last(), Some(Frame::Blocks { .. })) {
+                debug_assert_eq!(run.text.end, self.text_end());
+                self.text.truncate(run.text.start as usize);
                 return;
             }
             self.push_inline(InlineKind::Implicit, LineRange::line(run.src_line));
@@ -614,7 +647,7 @@ impl Builder {
                         runs,
                         unit: self.next_unit(),
                     };
-                    let text = inlines.plain_text();
+                    let text = inlines.plain_text(&self.text);
                     let slug = self.slugs.slug(&text);
                     self.anchors.push(Anchor {
                         slug: slug.into(),
@@ -633,9 +666,13 @@ impl Builder {
                 InlineKind::Implicit => {
                     let first = runs.first().map_or(src.start, |r| r.src_line);
                     let last = runs.last().map_or(src.end, |r| r.src_line);
-                    paragraph(runs, LineRange::new(first, last), self.next_unit())
+                    let unit = self.next_unit();
+                    paragraph(runs, &self.text, LineRange::new(first, last), unit)
                 }
-                InlineKind::Paragraph | InlineKind::Cell => paragraph(runs, src, self.next_unit()),
+                InlineKind::Paragraph | InlineKind::Cell => {
+                    let unit = self.next_unit();
+                    paragraph(runs, &self.text, src, unit)
+                }
             },
             Frame::Blocks {
                 kind,
@@ -802,8 +839,10 @@ impl Builder {
             });
         }
 
+        self.text.shrink_to_fit();
         Doc {
             blocks,
+            text: self.text,
             links: self.links,
             anchors: self.anchors,
             footnotes: self.footnotes,
@@ -815,16 +854,17 @@ impl Builder {
     }
 }
 
-/// A paragraph that holds nothing but one image becomes an image block.
-fn paragraph(runs: Vec<Run>, src: LineRange, unit: UnitId) -> Block {
-    let mut images = runs.iter().filter(|r| !is_blank(r));
+/// A paragraph that holds nothing but one image becomes an image block. `text` is the
+/// document's [`Builder::text`].
+fn paragraph(runs: Vec<Run>, text: &str, src: LineRange, unit: UnitId) -> Block {
+    let mut images = runs.iter().filter(|r| !is_blank(r, text));
     if let (Some(run), None) = (images.next(), images.next())
         && let RunKind::InlineImage(link) = run.kind
     {
         return Block {
             kind: BlockKind::Image {
                 link,
-                alt: run.text.clone(),
+                alt: run.text.of(text).into(),
                 unit,
             },
             src,
@@ -836,9 +876,9 @@ fn paragraph(runs: Vec<Run>, src: LineRange, unit: UnitId) -> Block {
     }
 }
 
-fn is_blank(run: &Run) -> bool {
+fn is_blank(run: &Run, text: &str) -> bool {
     match run.kind {
-        RunKind::Text => run.text.trim().is_empty(),
+        RunKind::Text => run.text.of(text).trim().is_empty(),
         RunKind::SoftBreak | RunKind::HardBreak => true,
         RunKind::InlineImage(_) | RunKind::FootnoteRef(_) => false,
     }
@@ -917,12 +957,51 @@ mod tests {
     }
 
     #[test]
+    fn runs_hold_their_text_as_ranges_of_the_docs() {
+        let doc = parse(
+            "# Head `x`\n\na ![alt *em*\nnext](i.png) b[^n]\\\nc<br>d\n\n![lone](j.png)\n\n[^n]: note\n",
+        );
+        let BlockKind::Heading { inlines, .. } = &doc.blocks[0].kind else {
+            panic!()
+        };
+        assert_eq!(inlines.plain_text(&doc.text), "Head x");
+        assert_eq!(&*doc.anchors[0].text, "Head x");
+        let BlockKind::Paragraph(inl) = &doc.blocks[1].kind else {
+            panic!()
+        };
+        let runs: Vec<_> = inl.runs.iter().map(|r| (doc.run_text(r), r.kind)).collect();
+        assert_eq!(
+            runs,
+            [
+                ("a ", RunKind::Text),
+                // the alt's markup and break flattened, as it was written into the text
+                ("alt em next", RunKind::InlineImage(0)),
+                (" b", RunKind::Text),
+                ("", RunKind::FootnoteRef(0)),
+                ("", RunKind::HardBreak),
+                ("c", RunKind::Text),
+                ("", RunKind::HardBreak),
+                ("d", RunKind::Text),
+            ]
+        );
+        assert!(matches!(&doc.blocks[2].kind, BlockKind::Image { alt, .. } if &**alt == "lone"));
+        let BlockKind::Paragraph(note) = &doc.footnotes[0].blocks[0].kind else {
+            panic!()
+        };
+        assert_eq!(note.plain_text(&doc.text), "note");
+    }
+
+    #[test]
     fn inline_markup_is_resolved_into_runs() {
         let doc = parse("some **bold** and _emph_ and `code`\n");
         let BlockKind::Paragraph(inl) = &doc.blocks[0].kind else {
             panic!()
         };
-        let runs: Vec<_> = inl.runs.iter().map(|r| (&*r.text, r.style)).collect();
+        let runs: Vec<_> = inl
+            .runs
+            .iter()
+            .map(|r| (doc.run_text(r), r.style))
+            .collect();
         assert_eq!(
             runs,
             [
@@ -1092,7 +1171,7 @@ mod tests {
             let mut text = String::new();
             doc.each_block(&mut |b| match &b.kind {
                 BlockKind::List(l) => tasks += l.items.iter().filter(|i| i.task.is_some()).count(),
-                BlockKind::Paragraph(inl) => text.push_str(&inl.plain_text()),
+                BlockKind::Paragraph(inl) => text.push_str(&inl.plain_text(&doc.text)),
                 _ => {}
             });
             // the folded item's marker is its text's, not an outer item's

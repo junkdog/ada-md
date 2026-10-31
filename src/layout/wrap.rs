@@ -332,14 +332,15 @@ fn flatten(runs: &[Run], key: StyleKey, doc: &Doc, glyphs: &Glyphs, w: &mut Wrap
     for run in runs {
         let line = run.src_line;
         let look = (key, run.style, run.link);
+        let text = doc.run_text(run);
         match run.kind {
             RunKind::Text if run.style.contains(InlineStyle::CODE) => {
                 let pad = code_pad.get_or_insert_with(|| {
                     std::iter::repeat_n(NBSP, glyphs.code_pad as usize).collect()
                 });
-                push_parts(w, [pad, &run.text, pad], look, line, true);
+                push_parts(w, [pad, text, pad], look, line, true);
             }
-            RunKind::Text => push_parts(w, ["", &run.text, ""], look, line, true),
+            RunKind::Text => push_parts(w, ["", text, ""], look, line, true),
             RunKind::SoftBreak => push_parts(w, ["", " ", ""], look, line, false),
             RunKind::HardBreak => push_parts(w, ["", "\n", ""], look, line, false),
             RunKind::InlineImage(link) => {
@@ -348,13 +349,13 @@ fn flatten(runs: &[Run], key: StyleKey, doc: &Doc, glyphs: &Glyphs, w: &mut Wrap
                     .chars()
                     .map(|c| if c == ' ' { NBSP } else { c })
                     .collect();
-                let icon = if run.text.is_empty() {
+                let icon = if text.is_empty() {
                     icon.trim_end_matches(NBSP)
                 } else {
                     &icon
                 };
                 let look = (StyleKey::Image, run.style, Some(link));
-                push_parts(w, [icon, &run.text, ""], look, line, true);
+                push_parts(w, [icon, text, ""], look, line, true);
             }
             RunKind::FootnoteRef(id) => {
                 let n = doc.footnotes.get(id as usize).map_or(0, |f| f.number);
