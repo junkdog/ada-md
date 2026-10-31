@@ -122,19 +122,25 @@ pub fn classifier() -> &'static str {
 
 /// The text a layout wraps: every run's and code block's, in order.
 pub fn text_of(doc: &Doc) -> Vec<&str> {
-    fn inlines<'a>(i: &'a Inlines, out: &mut Vec<&'a str>) {
-        out.extend(i.runs.iter().map(|r| &*r.text));
+    fn inlines<'a>(doc: &'a Doc, i: &'a Inlines, out: &mut Vec<&'a str>) {
+        out.extend(i.runs.iter().map(|r| doc.run_text(r)));
     }
-    fn walk<'a>(blocks: &'a [ada::doc::Block], out: &mut Vec<&'a str>) {
+    fn walk<'a>(doc: &'a Doc, blocks: &'a [ada::doc::Block], out: &mut Vec<&'a str>) {
         for block in blocks {
             match &block.kind {
-                BlockKind::Heading { inlines: i, .. } | BlockKind::Paragraph(i) => inlines(i, out),
-                BlockKind::List(list) => list.items.iter().for_each(|item| walk(&item.blocks, out)),
-                BlockKind::Quote { blocks, .. } => walk(blocks, out),
+                BlockKind::Heading { inlines: i, .. } | BlockKind::Paragraph(i) => {
+                    inlines(doc, i, out);
+                }
+                BlockKind::List(list) => {
+                    list.items
+                        .iter()
+                        .for_each(|item| walk(doc, &item.blocks, out));
+                }
+                BlockKind::Quote { blocks, .. } => walk(doc, blocks, out),
                 BlockKind::Code(code) => out.push(&code.text),
                 BlockKind::Table(t) => {
                     for row in std::iter::once(&t.header).chain(&t.rows) {
-                        row.cells.iter().for_each(|c| inlines(c, out));
+                        row.cells.iter().for_each(|c| inlines(doc, c, out));
                     }
                 }
                 BlockKind::Image { alt, .. } => out.push(alt),
@@ -144,9 +150,9 @@ pub fn text_of(doc: &Doc) -> Vec<&str> {
         }
     }
     let mut out = Vec::new();
-    walk(&doc.blocks, &mut out);
+    walk(doc, &doc.blocks, &mut out);
     for note in &doc.footnotes {
-        walk(&note.blocks, &mut out);
+        walk(doc, &note.blocks, &mut out);
     }
     out
 }

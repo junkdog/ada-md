@@ -199,6 +199,37 @@ mod linux {
         sample(counters, samples, reps, f)
     }
 
+    /// Time freeing what `make` returns: one to warm up and size the samples, then `samples`
+    /// samples, each making `reps` of them untimed and freeing them under the counters.
+    fn measure_drop<T>(counters: &Counters, samples: usize, mut make: impl FnMut() -> T) -> Sample {
+        let first = make();
+        let t = Instant::now();
+        drop(black_box(first));
+        let once = t.elapsed().max(Duration::from_nanos(1));
+        let reps = (SAMPLE.as_nanos() / once.as_nanos()).clamp(1, 10_000) as usize;
+        let (mut cpus, mut walls, mut cycles, mut instructions) = (vec![], vec![], vec![], vec![]);
+        for _ in 0..samples {
+            let keep: Vec<T> = (0..reps).map(|_| make()).collect();
+            counters.start();
+            let (c, w) = (cpu(), Instant::now());
+            drop(black_box(keep));
+            let (w, c) = (w.elapsed(), cpu() - c);
+            let count = counters.stop();
+            let per = reps as f64;
+            cpus.push(c.as_nanos() as f64 / per);
+            walls.push(w.as_nanos() as f64 / per);
+            cycles.push(count.cycles as f64 / per);
+            instructions.push(count.instructions as f64 / per);
+        }
+        Sample {
+            reps,
+            cpu_ns: median(cpus),
+            wall_ns: median(walls),
+            cycles: median(cycles),
+            instructions: median(instructions),
+        }
+    }
+
     /// [`measure`] without the warm-up: one call a sample, for a reference that takes seconds.
     fn measure_cold<T>(counters: &Counters, samples: usize, f: impl FnMut() -> T) -> Sample {
         sample(counters, samples, 1, f)
@@ -384,6 +415,12 @@ mod linux {
             self.cell(input, "parse", "", || {
                 texts.iter().map(|t| doc::parse(t)).collect::<Vec<_>>()
             });
+            if self.args.stage("drop") {
+                let s = measure_drop(self.counters, self.samples, || {
+                    texts.iter().map(|t| doc::parse(t)).collect::<Vec<_>>()
+                });
+                emit(input, "drop", &s, "");
+            }
             if !["c1-layout", "layout", "c1-print", "print"]
                 .iter()
                 .any(|s| self.args.stage(s))

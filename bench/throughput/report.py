@@ -16,8 +16,9 @@ import sys
 METRICS = ("cpu_ns", "wall_ns", "cycles", "instructions")
 ADA = ("parse", "layout", "print", "tokens", "highlight")
 
-STAGES = {"whole": ("parse", "layout", "print"), "syntax": ("parse", "layout", "print"), "lexer": ("tokens", "highlight")}
-C1 = {"parse": "c1-parse", "layout": "c1-layout", "print": "c1-print", "tokens": "c1-lex", "highlight": "c1-lex"}
+STAGES = {"whole": ("parse", "drop", "layout", "print"), "syntax": ("parse", "drop", "layout", "print"), "lexer": ("tokens", "highlight")}
+# freeing the parsed documents (PAR-004) has no ceiling
+C1 = {"parse": "c1-parse", "drop": None, "layout": "c1-layout", "print": "c1-print", "tokens": "c1-lex", "highlight": "c1-lex"}
 
 
 def sig(x, n=3):
@@ -96,7 +97,7 @@ def stages(cells, group):
             if not c:
                 continue
             b = c["bytes"]
-            c1, r = cells.get((i, C1[s])), cells.get((i, ref))
+            c1, r = cells.get((i, C1[s])) if C1[s] else None, cells.get((i, ref))
             # C2 bounds parse only; syntect stands beside both lexer stages
             r = r if (lexer or s == "parse") else None
             share = (lambda x: f"{mbs(c) / mbs(x):.0%}") if not lexer else None
