@@ -287,6 +287,7 @@ impl Lang {
         match self {
             Lang::Toml => crate::toml_scan::scopes(kind),
             Lang::Yaml => crate::yaml_scan::scopes(kind),
+            Lang::Xml => crate::xml_scan::scopes(kind),
             _ if self.grammar().is_some() => {
                 self.grammar().map_or_else(Vec::new, |g| g.scopes(kind))
             }
@@ -300,7 +301,6 @@ impl Lang {
     /// The context grammar it runs on, for the languages not read line by line.
     pub(crate) fn grammar(self) -> Option<&'static crate::machine::Grammar> {
         Some(match self {
-            Lang::Xml => &crate::xml::GRAMMAR,
             Lang::Dockerfile => &crate::dockerfile::GRAMMAR,
             Lang::Properties => &crate::properties::GRAMMAR,
             Lang::DotEnv => &crate::dotenv::GRAMMAR,
@@ -315,6 +315,7 @@ impl Lang {
             | Lang::Diff
             | Lang::Ini
             | Lang::Toml
+            | Lang::Xml
             | Lang::Yaml => {
                 return None;
             }

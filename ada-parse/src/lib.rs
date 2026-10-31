@@ -10,10 +10,10 @@
 //! The lexers are scanners of ada's own, speed first (ADR-40): one pass over a line's bytes,
 //! a fixed set of kinds carrying bat's scopes for the common case, syntect a guideline.
 //! Diff and INI are line lexers, each line on its own; logs (O-043) and JSON (O-048) came
-//! from ada; TOML's scanner is bat's grammar compiled by hand, exact against its port; YAML's
-//! reads YAML as bat's grammar does on well-formed text. The other formats whose lines carry
-//! state (XML, Dockerfile, Java properties, `.env`, Git's ignore, attributes, mailmap and link
-//! files) still run on a port of syntect's parse machine (`machine.rs`), their grammars bat's
+//! from ada; TOML's and XML's scanners are bat's grammars compiled by hand, exact against their
+//! ports; YAML's reads YAML as bat's grammar does on well-formed text. The other formats whose
+//! lines carry state (Dockerfile, Java properties, `.env`, Git's ignore, attributes, mailmap and
+//! link files) still run on a port of syntect's parse machine (`machine.rs`), their grammars bat's
 //! context for context, until scanners replace them. Makefiles and bash are still lexed in ada.
 
 mod diff;
@@ -30,7 +30,10 @@ mod properties;
 #[allow(dead_code)]
 mod toml;
 mod toml_scan;
+// the port: the scanner's reference in tests, and the source of the matchers it shares
+#[allow(dead_code)]
 mod xml;
+mod xml_scan;
 // the port, replaced by the scanner (speed first, ADR-40); kept for the matchers the scanner
 // shares, until they move into it
 #[allow(dead_code)]
@@ -139,6 +142,7 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::Ini => ini::line(line.as_bytes(), &mut out),
         Lang::Toml => toml_scan::line(line.as_bytes(), state, &mut out),
         Lang::Yaml => yaml_scan::line(line.as_bytes(), state, &mut out),
+        Lang::Xml => xml_scan::line(line.as_bytes(), state, &mut out),
         _ => {
             if let Some(g) = lang.grammar() {
                 machine::line(g, line.as_bytes(), state, &mut out);

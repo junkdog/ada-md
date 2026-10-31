@@ -4,7 +4,9 @@
 //! properties, `.env`, and Git's ignore, attributes, mailmap and link files. Each kind's scopes must be
 //! syntect's stack on every byte of every line, as long as the lexer's state holds its whole
 //! stack and each stack of scopes has its own kind (nested deeper than either, the lexer keeps
-//! the top and the innermost scopes). YAML's scanner keeps only the innermost flow collection's
+//! the top and the innermost scopes). XML's scanner keeps each meta scope once where bat's nest
+//! repeats them (a group in a group, a conditional section in one), so its stacks are compared
+//! with each scope once. YAML's scanner keeps only the innermost flow collection's
 //! meta scope, by design (ADR-40, speed first): it is held by `tokens` and by `examples/parity.rs`.
 //!
 //! Lines are cut to 256 bytes, which keeps Oniguruma's backtracking short.
@@ -44,7 +46,9 @@ fuzz_target!(|data: &[u8]| {
     };
     let lang = EXACT[pick as usize % EXACT.len()];
     let (mut state, mut spans) = (State::default(), Vec::new());
-    lexer_parity::compare(lang.name(), data, LINE, |line| {
+    // XML's scanner keeps a nested group's or conditional section's meta scopes once
+    let once = lang == Lang::Xml;
+    lexer_parity::compare(lang.name(), data, LINE, once, |line| {
         ada_parse::lex(lang, line, &mut state, &mut spans);
         if !state.is_exact() {
             return None;

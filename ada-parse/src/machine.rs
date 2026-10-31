@@ -437,11 +437,11 @@ macro_rules! atoms {
         }
 
         /// The scopes, as indices into [`ATOMS`].
-        mod s {
+        pub(crate) mod s {
             $(pub const $name: crate::machine::Atom = super::Atoms::$name as u8;)*
         }
 
-        const ATOMS: &[&str] = &[$($scope,)*];
+        pub(crate) const ATOMS: &[&str] = &[$($scope,)*];
     };
 }
 

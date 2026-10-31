@@ -11,15 +11,16 @@
 //! color it.
 //!
 //! The files are compared on `-j N` threads (all cores by default), each file on one, and
-//! merged in the list's order, so the report is the same on any number. With `-j 1` it also
-//! gives both highlighters' speed on the corpus in the first theme, in MB of source a second
+//! merged in the list's order, so the report is the same on any number. `--speed` compares
+//! nothing and gives both highlighters' speed alone, on one thread (run it pinned): the corpus
+//! in the first theme, in MB of source a second
 //! of wall time (one call a file, syntect's on a set already loaded, so its first use of a
 //! grammar counts once; run it pinned to a core).
 //!
 //! ```zsh
 //! cargo run --release --example parity -- json $(cat lists/json.txt)
 //! cargo run --release --example parity -- bash --show 40 @lists/bash.txt
-//! taskset -c 2 target/release/examples/parity yaml -j 1 @lists/yaml.txt
+//! taskset -c 2 target/release/examples/parity yaml --speed @lists/yaml.txt
 //! ```
 //! `LANG` is a fence token one of ada's own lexers takes; `@FILE` names a file of paths, one a
 //! line.
@@ -70,12 +71,14 @@ fn main() {
     let mut args = env::args().skip(1);
     let lang = args
         .next()
-        .expect("usage: parity LANG [--show N] [-j THREADS] FILE... | @LIST");
+        .expect("usage: parity LANG [--show N] [-j THREADS | --speed] FILE... | @LIST");
     let mut show = 20;
     let mut threads = thread::available_parallelism().map_or(1, std::num::NonZero::get);
     let mut files = Vec::new();
+    let mut speed_only = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--speed" => speed_only = true,
             "--show" => show = args.next().and_then(|n| n.parse().ok()).unwrap_or(show),
             "-j" => threads = args.next().and_then(|n| n.parse().ok()).unwrap_or(threads),
             list if list.starts_with('@') => {
@@ -93,6 +96,9 @@ fn main() {
     let rules: Vec<SyntaxTheme> = themes.iter().map(|t| SyntaxTheme::new(&t.syntax)).collect();
     // loaded once, before the threads race to
     highlight::reference_syntaxes();
+    if speed_only {
+        return speed(&files, &lang, name, &rules[0]);
+    }
 
     // a task is a file in one theme (one big file in 14 themes spreads over 14 threads),
     // taken as they come and kept by its place: file by file, each theme in order
@@ -207,8 +213,45 @@ fn main() {
             rate(ada_time),
             rate(syntect_time)
         ),
-        _ => println!("speed: on {threads} threads; -j 1, pinned to a core, measures it"),
+        _ => println!("speed: on {threads} threads; --speed, pinned to a core, measures it"),
     }
+}
+
+/// Both highlighters' speed on `files` in one theme, on this thread, as `-j 1` times them: the
+/// files syntect fails on count for syntect alone, those with a line past `MAX_LINE` for neither.
+fn speed(files: &[String], lang: &str, name: &str, rule: &SyntaxTheme) {
+    let (mut bytes, mut ada, mut syntect) = (0usize, Duration::ZERO, Duration::ZERO);
+    let mut timed = 0;
+    for path in files {
+        let Ok(text) = fs::read_to_string(path) else {
+            continue;
+        };
+        let lines = || text.strip_suffix('\n').unwrap_or(&text).split('\n');
+        if lines().any(|l| expand_tabs(l).len() > MAX_LINE) {
+            continue;
+        }
+        let start = Instant::now();
+        let theirs =
+            highlight::highlight_syntect(highlight::reference_syntaxes(), name, &text, rule);
+        syntect += start.elapsed();
+        if theirs.is_none() {
+            continue;
+        }
+        let start = Instant::now();
+        let ours = highlight::highlight(1, lang, &text, rule);
+        ada += start.elapsed();
+        std::hint::black_box((ours, theirs));
+        timed += 1;
+        bytes += lines()
+            .map(|l| expand_tabs(l.strip_suffix('\r').unwrap_or(l)).len())
+            .sum::<usize>();
+    }
+    let rate = |t: Duration| bytes as f64 / 1e6 / t.as_secs_f64().max(1e-9);
+    println!(
+        "{lang} ({name}): {timed} files, {bytes} bytes\nspeed: ada {:.1} MB/s, syntect {:.2} MB/s",
+        rate(ada),
+        rate(syntect)
+    );
 }
 
 /// One file of ada's highlighting against syntect's, in theme `t`.

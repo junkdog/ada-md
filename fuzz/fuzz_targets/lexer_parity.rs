@@ -56,7 +56,7 @@ fn ours_line(state: &mut State, spans: &mut Vec<make::Span>, line: &str) -> Vec<
 pub fn check(grammar: Grammar, data: &[u8], max: usize) {
     let mut state = State::new(grammar);
     let mut spans = Vec::new();
-    compare(grammar.syntax(), data, max, |line| {
+    compare(grammar.syntax(), data, max, false, |line| {
         Some(ours_line(&mut state, &mut spans, line))
     });
 }
@@ -64,11 +64,13 @@ pub fn check(grammar: Grammar, data: &[u8], max: usize) {
 /// Panics at the first byte of `data`'s lines, each cut to `max` bytes, whose stack from
 /// syntect's grammar `name` differs from `ours`, which gives each byte's stack under the base
 /// scope for a line, its state carried from the line before, or `None` when the lexer no
-/// longer claims syntect's scopes (a stack deeper than it keeps).
+/// longer claims syntect's scopes (a stack deeper than it keeps). With `once`, syntect's
+/// stacks count each scope once, as a lexer that keeps a repeated meta scope once gives them.
 pub fn compare(
     name: &str,
     data: &[u8],
     max: usize,
+    once: bool,
     mut ours: impl FnMut(&str) -> Option<Vec<String>>,
 ) {
     let ascii: Vec<u8> = data.iter().map(|b| b & 0x7f).collect();
@@ -80,7 +82,18 @@ pub fn compare(
     for (n, line) in text.split('\n').enumerate() {
         let line = expand_tabs(&line[..line.len().min(max)]).into_owned();
         let line = &line[..line.len().min(max)];
-        let want = syntect_line(&mut ps, &mut stack, line);
+        let mut want = syntect_line(&mut ps, &mut stack, line);
+        if once {
+            for w in &mut want {
+                let mut seen: Vec<&str> = Vec::new();
+                for s in w.split(' ') {
+                    if !seen.contains(&s) {
+                        seen.push(s);
+                    }
+                }
+                *w = seen.join(" ");
+            }
+        }
         let Some(got) = ours(line) else {
             return;
         };
