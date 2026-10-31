@@ -43,6 +43,8 @@ pub enum Lang {
     GitLink,
     /// bat's `Rust`.
     Rust,
+    /// bat's `Kotlin`.
+    Kotlin,
 }
 
 /// Fence languages that no syntax names, and the token each stands for (`zsh` for bash's).
@@ -205,10 +207,11 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::GitMailmap, &[".mailmap", "mailmap"]),
     (Lang::GitLink, &[".git"]),
     (Lang::Rust, &["rs"]),
+    (Lang::Kotlin, &["kt", "kts"]),
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 17] = [
+    pub const ALL: [Lang; 18] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -226,6 +229,7 @@ impl Lang {
         Lang::GitMailmap,
         Lang::GitLink,
         Lang::Rust,
+        Lang::Kotlin,
     ];
 
     /// The name of the syntax it stands in for, as syntect names it.
@@ -248,6 +252,7 @@ impl Lang {
             Lang::GitMailmap => "Git Mailmap",
             Lang::GitLink => "Git Link",
             Lang::Rust => "Rust",
+            Lang::Kotlin => "Kotlin",
         }
     }
 
@@ -271,6 +276,7 @@ impl Lang {
             Lang::GitMailmap => "text.git.mailmap",
             Lang::GitLink => "text.git.link",
             Lang::Rust => "source.rust",
+            Lang::Kotlin => "source.Kotlin",
         }
     }
 
@@ -295,6 +301,7 @@ impl Lang {
             Lang::Yaml => crate::yaml_scan::scopes(kind),
             Lang::Xml => crate::xml_scan::scopes(kind),
             Lang::Rust => crate::rust::scopes(kind),
+            Lang::Kotlin => crate::kotlin::scopes(kind),
             _ if self.grammar().is_some() => {
                 self.grammar().map_or_else(Vec::new, |g| g.scopes(kind))
             }
@@ -324,7 +331,8 @@ impl Lang {
             | Lang::Toml
             | Lang::Xml
             | Lang::Yaml
-            | Lang::Rust => {
+            | Lang::Rust
+            | Lang::Kotlin => {
                 return None;
             }
         })
@@ -542,7 +550,8 @@ mod tests {
         assert_eq!(Lang::from_token("log"), Some(Lang::Log));
         assert_eq!(Lang::from_token("rust"), Some(Lang::Rust));
         assert_eq!(Lang::from_token("rs"), Some(Lang::Rust));
-        assert_eq!(Lang::from_token("kt"), None);
+        assert_eq!(Lang::from_token("kt"), Some(Lang::Kotlin));
+        assert_eq!(Lang::from_token("kotlin"), Some(Lang::Kotlin));
     }
 
     #[test]

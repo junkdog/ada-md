@@ -2109,6 +2109,47 @@ mod tests {
         rules_match_the_grammar("rust", "Rust", text);
     }
 
+    /// ada-parse's Kotlin lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (ADR-40): its odd corners included (`type` inside a word opening a typedef, a word before
+    /// `<` opening type arguments, a function's `}` closing its class, a header's every word its
+    /// class's name, backtick names past ASCII).
+    #[test]
+    fn kotlin_rules_match_the_grammar() {
+        let text = concat!(
+            "package sift.core.api // the api\n",
+            "import kotlin.reflect.KClass as K\n",
+            "import java.util.*\n",
+            "/* block\n",
+            "   comment */ @Suppress(\"UNCHECKED_CAST\")\n",
+            "data class Foo<T : Comparable<T>, out R>(val x: Int, var y: List<String> = listOf()) : Bar(x), Baz {\n",
+            "    companion object { const val MAX = 0x1FL; private val e = 1.5e-3f }\n",
+            "    override fun <R> List<T>.map(f: (T) -> R, vararg n: Int): Map<String, R>? = TODO()\n",
+            "    val name: String get() = \"x\"\n",
+            "    var size: Int\n",
+            "        get() { return field }\n",
+            "        set(value) { field = value }\n",
+            "    fun `a name — with an arrow → too`() {\n",
+            "        val s = \"a $x ${y.z} \\n \\u00e9\" + \"\"\"raw $w\n",
+            "            still\"\"\".trimIndent() + 'c' + '\\t'\n",
+            "        if (a?.b ?: 0 >= 1 && c !is D || !e) return null else x++\n",
+            "        for (i in 0 until n) if (i<n) y += i * 2 % 3 / 4 - 1\n",
+            "        when (val v = q) { is Int -> v; else -> throw IllegalStateException() }\n",
+            "        try { a::class.java; Foo::bar } catch (e: Exception) { } finally { }\n",
+            "        val prototype = isPrototype && a < b; 1.toString(); 1..10; x.5\n",
+            "        typealias Fn = (Int) -> Unit\n",
+            "        val lazyValue: String by lazy { \"v\" }; array[0] = `weird name`\n",
+            "    }\n",
+            "    interface I { fun f(a: Array<Int>, b: IntArray): Unit }\n",
+            "}\n",
+            "enum class E { A, B; fun x() = A }\n",
+            "sealed interface S\n",
+            "fun interface Op { fun run() }\n",
+            "object Single : Any() { suspend inline fun <reified T> t(): T? = null }\n",
+            "val x = 100<200; val y = 1_000; val z = 1e10; val w = .5\n",
+        );
+        rules_match_the_grammar("kotlin", "Kotlin", text);
+    }
+
     /// ada-parse's Dockerfile lexer picks the rules bat's grammar picks, in every built-in
     /// theme (ADR-40).
     #[test]

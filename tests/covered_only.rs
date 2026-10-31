@@ -86,6 +86,12 @@ struct S<T>(Vec<T>);
 fn main() { println!(\"{}\", r#\"raw\"#); }
 ```
 
+```kotlin
+package a.b
+import x.Y as Z
+data class P<T : Any>(val x: Int) : Q() { fun <R> List<T>.f(r: R): String = \"$x ${r}\" }
+```
+
 ```text
 plain
 ```
@@ -150,6 +156,8 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         ".gitattributes",
         ".mailmap",
         "main.rs",
+        "Main.kt",
+        "build.gradle.kts",
     ] {
         let t = FileType::by_path(Path::new(name));
         assert!(

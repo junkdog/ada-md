@@ -26,6 +26,7 @@ const LANGS: &[(&str, Lang)] = &[
     ("gitattributes", Lang::GitAttributes),
     ("mailmap", Lang::GitMailmap),
     ("rust", Lang::Rust),
+    ("kotlin", Lang::Kotlin),
 ];
 
 #[test]
