@@ -1,7 +1,7 @@
 //! The scanners that took the place of bat's grammars: log lines (O-43, `logs`), JSON lines
-//! (O-48, `json`), and Makefile and shell lines (G-002 and G-003, `make`), each given every
-//! line of the input, JSON with the `/* */` comment state one line leaves the next, the
-//! Makefile and the shell script with their whole state.
+//! (O-48, `json`), Makefile and shell lines (G-002 and G-003, `make`), and ada-parse's lexers
+//! (ADR-40), each given every line of the input, JSON with the `/* */` comment state one line
+//! leaves the next, the others with their whole state.
 //! Their spans go to `highlight`'s runs, which slice the line at them: they must come in order,
 //! not overlap, not be empty, and start and end on characters of the line.
 //! Nothing may panic, and a long line must not take long. An input that starts with a NUL is a
@@ -51,6 +51,9 @@ fuzz_target!(|data: &[u8]| {
     let mut comment = false;
     let mut state = make::State::new(make::Grammar::Make);
     let mut bash = make::State::new(make::Grammar::Bash);
+    let langs = ada_parse::Lang::ALL.into_iter().filter(|l| l.lexed());
+    let mut parsed: Vec<_> = langs.map(|l| (l, ada_parse::State::default())).collect();
+    let mut ps = Vec::new();
     for line in text.split('\n') {
         logs::tokens(line, &mut log);
         check("log", line, log.iter().map(|s| (s.start, s.end)));
@@ -61,6 +64,15 @@ fuzz_target!(|data: &[u8]| {
         check("make", line, mk.iter().map(|s| (s.start, s.end)));
         make::tokens(line, &mut bash, &mut sh);
         check("bash", line, sh.iter().map(|s| (s.start, s.end)));
+        for (lang, state) in &mut parsed {
+            ada_parse::lex(*lang, line, state, &mut ps);
+            check(lang.name(), line, ps.iter().map(|s| (s.start, s.end)));
+            let kinds = lang.kinds().len();
+            assert!(
+                ps.iter().all(|s| (s.kind as usize) < kinds),
+                "{lang:?}: {ps:?}"
+            );
+        }
         if trace {
             eprintln!(
                 "{line:?}\n  log {log:?}\n  json {open} -> {comment} {js:?}\n  make {mk:?}\n  bash {sh:?}"

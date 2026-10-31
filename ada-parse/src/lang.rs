@@ -17,6 +17,10 @@ pub enum Lang {
     Makefile,
     /// bat's `Bourne Again Shell (bash)` (G-003).
     Bash,
+    /// bat's `Diff`.
+    Diff,
+    /// bat's `INI`.
+    Ini,
 }
 
 /// Fence languages that no syntax names, and the token each stands for (`zsh` for bash's).
@@ -37,8 +41,99 @@ pub const ALIASES: &[(&str, &str)] = &[
     ("json5", "json"),
 ];
 
+/// The extensions and whole file names each language's syntax claims, lowercase: syntect
+/// compares them ignoring ASCII case.
+static EXTENSIONS: &[(Lang, &[&str])] = &[
+    (
+        Lang::Json,
+        &[
+            "json",
+            "sublime-settings",
+            "sublime-menu",
+            "sublime-keymap",
+            "sublime-mousemap",
+            "sublime-theme",
+            "sublime-build",
+            "sublime-project",
+            "sublime-completions",
+            "sublime-commands",
+            "sublime-macro",
+            "sublime-color-scheme",
+            "ipynb",
+            "pipfile.lock",
+        ],
+    ),
+    (Lang::Log, &["log"]),
+    (
+        Lang::Makefile,
+        &[
+            "make",
+            "gnumakefile",
+            "makefile",
+            "makefile.am",
+            "makefile.in",
+            "ocamlmakefile",
+            "mak",
+            "mk",
+        ],
+    ),
+    (
+        Lang::Bash,
+        &[
+            "sh",
+            "bash",
+            "zsh",
+            "ash",
+            ".bash_aliases",
+            ".bash_completions",
+            ".bash_functions",
+            ".bash_login",
+            ".bash_logout",
+            ".bash_profile",
+            ".bash_variables",
+            ".bashrc",
+            ".profile",
+            ".textmate_init",
+            ".zlogin",
+            ".zlogout",
+            ".zprofile",
+            ".zshenv",
+            ".zshrc",
+            "pkgbuild",
+            "ebuild",
+            "eclass",
+        ],
+    ),
+    (Lang::Diff, &["diff", "patch"]),
+    (
+        Lang::Ini,
+        &[
+            "ini",
+            "inf",
+            "reg",
+            "lng",
+            "cfg",
+            "desktop",
+            "url",
+            ".editorconfig",
+            ".coveragerc",
+            ".pylintrc",
+            ".gitlint",
+            ".hgrc",
+            "hgrc",
+        ],
+    ),
+];
+
 impl Lang {
-    pub const ALL: [Lang; 4] = [Lang::Json, Lang::Log, Lang::Makefile, Lang::Bash];
+    pub const ALL: [Lang; 6] = [
+        Lang::Json,
+        Lang::Log,
+        Lang::Makefile,
+        Lang::Bash,
+        Lang::Diff,
+        Lang::Ini,
+    ];
 
     /// The name of the syntax it stands in for, as syntect names it.
     pub fn name(self) -> &'static str {
@@ -47,65 +142,42 @@ impl Lang {
             Lang::Log => "log",
             Lang::Makefile => "Makefile",
             Lang::Bash => "Bourne Again Shell (bash)",
+            Lang::Diff => "Diff",
+            Lang::Ini => "INI",
         }
     }
 
-    /// The extensions and whole file names its syntax claims, lowercase: syntect compares them
-    /// ignoring ASCII case.
-    fn extensions(self) -> &'static [&'static str] {
+    /// The scope a whole block is in, as bat's grammar names it.
+    pub fn base(self) -> &'static str {
         match self {
-            Lang::Json => &[
-                "json",
-                "sublime-settings",
-                "sublime-menu",
-                "sublime-keymap",
-                "sublime-mousemap",
-                "sublime-theme",
-                "sublime-build",
-                "sublime-project",
-                "sublime-completions",
-                "sublime-commands",
-                "sublime-macro",
-                "sublime-color-scheme",
-                "ipynb",
-                "pipfile.lock",
-            ],
-            Lang::Log => &["log"],
-            Lang::Makefile => &[
-                "make",
-                "gnumakefile",
-                "makefile",
-                "makefile.am",
-                "makefile.in",
-                "ocamlmakefile",
-                "mak",
-                "mk",
-            ],
-            Lang::Bash => &[
-                "sh",
-                "bash",
-                "zsh",
-                "ash",
-                ".bash_aliases",
-                ".bash_completions",
-                ".bash_functions",
-                ".bash_login",
-                ".bash_logout",
-                ".bash_profile",
-                ".bash_variables",
-                ".bashrc",
-                ".profile",
-                ".textmate_init",
-                ".zlogin",
-                ".zlogout",
-                ".zprofile",
-                ".zshenv",
-                ".zshrc",
-                "pkgbuild",
-                "ebuild",
-                "eclass",
-            ],
+            Lang::Json => "source.json",
+            Lang::Log => "text.log",
+            Lang::Makefile => "source.makefile",
+            Lang::Bash => "source.shell.bash",
+            Lang::Diff => "source.diff",
+            Lang::Ini => "source.ini",
         }
+    }
+
+    /// The scopes under [`Lang::base`] each kind of [`crate::lex`]'s spans carries, innermost
+    /// last, by [`crate::Span::kind`]; empty for a language ada lexes itself.
+    pub fn kinds(self) -> &'static [&'static str] {
+        match self {
+            Lang::Diff => crate::diff::KINDS,
+            Lang::Ini => crate::ini::KINDS,
+            Lang::Json | Lang::Log | Lang::Makefile | Lang::Bash => &[],
+        }
+    }
+
+    /// Whether [`crate::lex`] lexes it: false for the languages ada lexes itself.
+    pub fn lexed(self) -> bool {
+        !self.kinds().is_empty()
+    }
+
+    /// Whether a line's spans never depend on the lines before it, so that lines can be lexed
+    /// in any order, on any thread, from `State::default()`.
+    pub fn line_by_line(self) -> bool {
+        matches!(self, Lang::Diff | Lang::Ini)
     }
 
     /// The language a syntax's own name gives, as `find_syntax_by_name` matches it: exactly.
@@ -116,9 +188,10 @@ impl Lang {
     /// The language an extension or a whole file name gives, as `find_syntax_by_extension`
     /// matches it: ignoring ASCII case.
     pub fn from_extension(ext: &str) -> Option<Lang> {
-        Lang::ALL
-            .into_iter()
-            .find(|l| l.extensions().iter().any(|e| e.eq_ignore_ascii_case(ext)))
+        EXTENSIONS
+            .iter()
+            .find(|(_, exts)| any_eq(exts, ext))
+            .map(|&(l, _)| l)
     }
 
     /// The language a fence's token gives (`json`, `zsh`, `Makefile`), as ada looks one up in
@@ -214,6 +287,13 @@ const AFTER_BASH: &[&str] = &[
 /// The same for the syntaxes between Makefile's and bash's: PHP, Perl, Python, Ruby, and
 /// bash itself, whose shell names and `shell-script` all hold `sh`.
 const AFTER_MAKE: &[&str] = &["php", "perl", "python", "ruby", "sh"];
+
+/// Whether `word` is one of `words`, ignoring ASCII case. Never inlined: inlined, the compiler
+/// unrolls the search over every word of the table into a compare of its own.
+#[inline(never)]
+fn any_eq(words: &[&str], word: &str) -> bool {
+    words.iter().any(|w| w.eq_ignore_ascii_case(word))
+}
 
 /// A byte `\b` counts as part of a word. Every non-ASCII byte is one, so that a boundary
 /// found here is one for Oniguruma too.

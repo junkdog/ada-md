@@ -1,5 +1,5 @@
-//! `--print` of a big log, JSON or text file a piece at a time (O-52) must write what the whole
-//! print writes, byte for byte (F-07). The input is a file of one of the three kinds a lexer
+//! `--print` of a big log, JSON, diff, INI or text file a piece at a time (O-52) must write what
+//! the whole print writes, byte for byte (F-07). The input is a file of one of the kinds a lexer
 //! streams; the reader cuts it at fuzzed limits, far under the real 128 KiB and 1,024 lines, so a
 //! piece's edges are where the fuzzer's short inputs are: a cut after an empty line, the file's
 //! last empty line joining the piece before it, a JSON comment open across a cut, CRLF and
@@ -22,7 +22,7 @@ use ada::print::{Options, render};
 use ada::theme::Theme;
 use libfuzzer_sys::fuzz_target;
 
-const LANGS: [Option<&str>; 3] = [None, Some("log"), Some("JSON")];
+const LANGS: [Option<&str>; 5] = [None, Some("log"), Some("JSON"), Some("Diff"), Some("INI")];
 
 fn theme() -> &'static Theme {
     static THEME: OnceLock<Theme> = OnceLock::new();

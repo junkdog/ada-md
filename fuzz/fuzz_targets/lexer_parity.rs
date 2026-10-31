@@ -1,6 +1,6 @@
-//! What the `make` and `bash` targets share: a text's lines through ada's lexer (`ada::make`)
-//! and through syntect on bat's grammar, each with its state carried from line to line, and
-//! the first byte whose scope stack differs.
+//! What the `make`, `bash` and `parse` targets share: a text's lines through ada's lexer
+//! (`ada::make`, `ada_parse`) and through syntect on bat's grammar, each with its state carried
+//! from line to line, and the first byte whose scope stack differs.
 //!
 //! The input is made ASCII (each byte's high bit dropped): Oniguruma's `\s`, `\w` and
 //! `[[:alpha:]]` take Unicode classes where the lexer reads ASCII whitespace, a known
@@ -37,6 +37,7 @@ fn syntect_line(ps: &mut ParseState, stack: &mut ScopeStack, line: &str) -> Vec<
     out
 }
 
+#[allow(dead_code)]
 fn ours_line(state: &mut State, spans: &mut Vec<make::Span>, line: &str) -> Vec<String> {
     make::tokens(line, state, spans);
     let mut out = vec![String::new(); line.len()];
@@ -51,22 +52,30 @@ fn ours_line(state: &mut State, spans: &mut Vec<make::Span>, line: &str) -> Vec<
 }
 
 /// Panics at the first byte of `data`'s lines, each cut to `max` bytes, whose stack differs.
+#[allow(dead_code)]
 pub fn check(grammar: Grammar, data: &[u8], max: usize) {
+    let mut state = State::new(grammar);
+    let mut spans = Vec::new();
+    compare(grammar.syntax(), data, max, |line| {
+        ours_line(&mut state, &mut spans, line)
+    });
+}
+
+/// Panics at the first byte of `data`'s lines, each cut to `max` bytes, whose stack from
+/// syntect's grammar `name` differs from `ours`, which gives each byte's stack under the base
+/// scope for a line, its state carried from the line before.
+pub fn compare(name: &str, data: &[u8], max: usize, mut ours: impl FnMut(&str) -> Vec<String>) {
     let ascii: Vec<u8> = data.iter().map(|b| b & 0x7f).collect();
     let text = String::from_utf8(ascii).expect("ascii");
     let trace = std::env::var_os("ADA_FUZZ_TRACE").is_some();
-    let syntax = syntaxes()
-        .find_syntax_by_name(grammar.syntax())
-        .expect("syntax");
+    let syntax = syntaxes().find_syntax_by_name(name).expect("syntax");
     let mut ps = ParseState::new(syntax);
     let mut stack = ScopeStack::new();
-    let mut state = State::new(grammar);
-    let mut spans = Vec::new();
     for (n, line) in text.split('\n').enumerate() {
         let line = expand_tabs(&line[..line.len().min(max)]).into_owned();
         let line = &line[..line.len().min(max)];
         let want = syntect_line(&mut ps, &mut stack, line);
-        let got = ours_line(&mut state, &mut spans, line);
+        let got = ours(line);
         if trace {
             eprintln!("{}: {line:?}", n + 1);
         }

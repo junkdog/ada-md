@@ -6,6 +6,9 @@
 //! For each theme, the share of bytes whose rule (the theme's `[syntax]` entry that colors it)
 //! is syntect's; then the differences grouped by token: the stretch of text, its bytes over all
 //! themes, how many themes differ on it, where it is first, and both rules in one of them.
+//! Last, both highlighters' speed on the corpus in the first theme, in MB of source a second of
+//! wall time (one call a file, syntect's on a set already loaded, so its first use of a grammar
+//! counts once; run it pinned to a core).
 //! Files with a line over 4096 bytes are left out: ada leaves such a line plain on syntect
 //! (`MAX_LINE`) without parsing it, so syntect's state after it is wrong, and its own lexers
 //! color it.
@@ -18,6 +21,7 @@
 //! file of paths, one a line.
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use std::{env, fs};
 
 use ada::highlight::{self, CodeSpans, Rule, Syntax, SyntaxTheme};
@@ -64,6 +68,7 @@ fn main() {
     let (mut read, mut bytes, mut failed, mut long) = (0, 0usize, Vec::new(), 0usize);
     let mut agree = vec![0usize; themes.len()];
     let mut diffs: HashMap<String, Diff> = HashMap::new();
+    let (mut ada_time, mut syntect_time) = (Duration::ZERO, Duration::ZERO);
     for path in &files {
         let Ok(text) = fs::read_to_string(path) else {
             continue;
@@ -74,8 +79,13 @@ fn main() {
         }
         let reference = highlight::reference_syntaxes();
         let mut theirs = Vec::with_capacity(rules.len());
-        for r in &rules {
-            match highlight::highlight_syntect(reference, name, &text, r) {
+        for (t, r) in rules.iter().enumerate() {
+            let start = Instant::now();
+            let spans = highlight::highlight_syntect(reference, name, &text, r);
+            if t == 0 {
+                syntect_time += start.elapsed();
+            }
+            match spans {
                 Some(spans) => theirs.push(spans),
                 None => break,
             }
@@ -92,7 +102,11 @@ fn main() {
             .map(|l| expand_tabs(l.strip_suffix('\r').unwrap_or(l)).into_owned())
             .collect();
         for (t, r) in rules.iter().enumerate() {
+            let start = Instant::now();
             let ours = highlight::highlight(1, &lang, &text, r);
+            if t == 0 {
+                ada_time += start.elapsed();
+            }
             for (n, line) in lines.iter().enumerate() {
                 if t == 0 {
                     bytes += line.len();
@@ -162,6 +176,12 @@ fn main() {
     for path in failed.iter().take(5) {
         println!("  syntect failed: {path}");
     }
+    let rate = |t: Duration| bytes as f64 / 1e6 / t.as_secs_f64().max(1e-9);
+    println!(
+        "speed: ada {:.1} MB/s, syntect {:.2} MB/s",
+        rate(ada_time),
+        rate(syntect_time)
+    );
 }
 
 /// Line `n`'s rule for each of its `len` bytes; [`Rule::NONE`] where no run covers one.

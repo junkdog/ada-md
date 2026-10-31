@@ -31,6 +31,17 @@ all: ada
 2026-10-31 12:00:01 INFO started pid=42
 ```
 
+```diff
+@@ -1 +1 @@ fn main
+-old
++new
+```
+
+```ini
+[core]
+editor = vim ; the one
+```
+
 ```text
 plain
 ```
@@ -76,6 +87,10 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         "rows.jsonl",
         "app.log",
         "config.mk",
+        "fix.patch",
+        "a.diff",
+        "setup.cfg",
+        ".editorconfig",
     ] {
         let t = FileType::by_path(Path::new(name));
         assert!(

@@ -568,7 +568,7 @@ impl LineState {
 }
 
 /// The lexer of ada's own that highlights a language, if one does: logs (O-43), JSON (O-48),
-/// Makefile (G-002) or bash (G-003).
+/// Makefile (G-002), bash (G-003), or one of ada-parse's (ADR-40).
 fn own(lang: &str) -> Option<Lang> {
     match find_syntax(lang)? {
         Syntax::Own(lang) => Some(lang),
@@ -581,7 +581,7 @@ fn make_grammar(lang: Lang) -> Option<make::Grammar> {
     match lang {
         Lang::Makefile => Some(make::Grammar::Make),
         Lang::Bash => Some(make::Grammar::Bash),
-        Lang::Json | Lang::Log => None,
+        _ => None,
     }
 }
 
@@ -662,6 +662,43 @@ impl JsonRules {
     }
 }
 
+/// The theme's rule for each kind of an ada-parse language (ADR-40), as syntect would pick it
+/// for the kind's scopes.
+pub struct ParseRules {
+    lang: Lang,
+    rules: Vec<Rule>,
+}
+
+impl ParseRules {
+    fn new(lang: Lang, theme: &SyntaxTheme) -> Self {
+        let highlighter = SynHighlighter::new(&theme.theme);
+        let base = Scope::new(lang.base()).expect("scope");
+        let rule = |scopes: &&str| {
+            let mut stack = vec![base];
+            stack.extend(scopes.split(' ').map(|s| Scope::new(s).expect("scope")));
+            Rule::decode(highlighter.style_for_stack(&stack).foreground)
+        };
+        let rules = lang.kinds().iter().map(rule).collect();
+        Self { lang, rules }
+    }
+
+    /// Highlight one line into `out`, after the lines before it left `state`; `spans` is
+    /// scratch space. Called from each way a block is highlighted, so never inlined into them.
+    #[inline(never)]
+    fn line(
+        &self,
+        line: &str,
+        state: &mut ada_parse::State,
+        spans: &mut Vec<ada_parse::Span>,
+        out: &mut LineRuns,
+    ) {
+        let line = expand_tabs(line);
+        ada_parse::lex(self.lang, &line, state, spans);
+        let rule = |s: &ada_parse::Span| (s.start, s.end, self.rules[s.kind as usize]);
+        span_runs(line.len(), spans.iter().map(rule), out);
+    }
+}
+
 /// The theme's rule for each scope stack a Makefile's or a shell script's lines name, found as
 /// they come: the lexer gives the grammar's nested stacks, not a fixed set of kinds.
 pub struct MakeRules {
@@ -717,12 +754,15 @@ pub enum Lexer {
     Plain,
     Log(LogRules),
     Json(JsonRules),
+    /// An ada-parse language whose lines don't depend on each other (`Lang::line_by_line`).
+    Parse(ParseRules),
 }
 
 impl Lexer {
     /// Whether a file in `lang`, or plain text with none, has a lexer.
     pub fn exists(lang: Option<&str>) -> bool {
-        lang.is_none_or(|l| is_plain(l) || matches!(own(l), Some(Lang::Log | Lang::Json)))
+        let streams = |l: Lang| matches!(l, Lang::Log | Lang::Json) || l.line_by_line();
+        lang.is_none_or(|l| is_plain(l) || own(l).is_some_and(streams))
     }
 
     /// The lexer for a file in `lang`, or plain text with none; `None` when syntect would
@@ -734,7 +774,8 @@ impl Lexer {
             Some(lang) => match own(lang)? {
                 Lang::Log => Some(Lexer::Log(LogRules::new(theme))),
                 Lang::Json => Some(Lexer::Json(JsonRules::new(theme))),
-                Lang::Makefile | Lang::Bash => None,
+                l if l.line_by_line() => Some(Lexer::Parse(ParseRules::new(l, theme))),
+                _ => None,
             },
         }
     }
@@ -764,6 +805,12 @@ impl Lexer {
                 let mut spans = Vec::new();
                 for l in code.lines() {
                     rules.line(l, &mut comment, &mut spans, &mut lines);
+                }
+            }
+            Lexer::Parse(rules) => {
+                let mut spans = Vec::new();
+                for l in code.lines() {
+                    rules.line(l, &mut ada_parse::State::default(), &mut spans, &mut lines);
                 }
             }
         }
@@ -822,6 +869,7 @@ enum Engine {
     /// Whether a `/* */` comment is open.
     Json(JsonRules, Vec<json::Span>, bool),
     Make(MakeRules, Box<make::State>, Vec<make::Span>),
+    Parse(ParseRules, ada_parse::State, Vec<ada_parse::Span>),
 }
 
 /// The lines of a code block, split as [`crate::doc::code_lines`] splits them.
@@ -872,6 +920,10 @@ impl<'a> Highlighter<'a> {
                 let state = Box::new(make::State::new(grammar));
                 Engine::Make(MakeRules::new(grammar), state, Vec::new())
             }
+            Syntax::Own(lang) => {
+                let rules = ParseRules::new(lang, theme);
+                Engine::Parse(rules, ada_parse::State::default(), Vec::new())
+            }
             Syntax::Set(s) => Engine::Syntect(LineState::new(syntaxes(), s, &highlighter)),
         });
         Self {
@@ -913,6 +965,11 @@ impl<'a> Highlighter<'a> {
                 Engine::Make(rules, state, spans) => {
                     LINES.fetch_add(1, Ordering::Relaxed);
                     rules.line(line, state, spans, &self.highlighter, out);
+                    true
+                }
+                Engine::Parse(rules, state, spans) => {
+                    LINES.fetch_add(1, Ordering::Relaxed);
+                    rules.line(line, state, spans, out);
                     true
                 }
             };
@@ -986,6 +1043,10 @@ pub fn highlight_parallel(key: u64, lang: &str, text: &str, theme: &SyntaxTheme)
         Syntax::Own(Lang::Json) => highlight_json_on(key, text, theme, threads),
         // their lines depend on the ones before, and one thread does ~100 MB/s
         Syntax::Own(Lang::Makefile | Lang::Bash) => highlight(key, lang, text, theme),
+        Syntax::Own(own) if own.line_by_line() => {
+            highlight_parse_on(key, own, text, theme, threads)
+        }
+        Syntax::Own(_) => highlight(key, lang, text, theme),
         Syntax::Set(syntax) => highlight_on(key, syntax, text, theme, threads),
     }
 }
@@ -993,36 +1054,61 @@ pub fn highlight_parallel(key: u64, lang: &str, text: &str, theme: &SyntaxTheme)
 /// A log on `threads` threads: its lines don't depend on each other.
 fn highlight_log_on(key: u64, text: &str, theme: &SyntaxTheme, threads: usize) -> CodeSpans {
     let rules = LogRules::new(theme);
-    lines_on(key, text, theme, threads, |line, spans, out| {
-        rules.line(line, spans, out);
+    lines_on(key, text, theme, threads, &|line, scratch, out| {
+        rules.line(line, &mut scratch.log, out);
     })
 }
 
 /// JSON with no `/* */` comment on `threads` threads: its lines don't depend on each other.
 fn highlight_json_on(key: u64, text: &str, theme: &SyntaxTheme, threads: usize) -> CodeSpans {
     let rules = JsonRules::new(theme);
-    lines_on(key, text, theme, threads, |line, spans, out| {
-        rules.line(line, &mut false, spans, out);
+    lines_on(key, text, theme, threads, &|line, scratch, out| {
+        rules.line(line, &mut false, &mut scratch.json, out);
     })
+}
+
+/// An ada-parse language read line by line (`Lang::line_by_line`) on `threads` threads.
+fn highlight_parse_on(
+    key: u64,
+    lang: Lang,
+    text: &str,
+    theme: &SyntaxTheme,
+    threads: usize,
+) -> CodeSpans {
+    let rules = ParseRules::new(lang, theme);
+    lines_on(key, text, theme, threads, &|line, scratch, out| {
+        let state = &mut ada_parse::State::default();
+        rules.line(line, state, &mut scratch.parse, out);
+    })
+}
+
+/// A thread's scratch space for [`lines_on`]: the spans of a line, for each lexer.
+#[derive(Default)]
+struct Scratch {
+    log: Vec<Span>,
+    json: Vec<json::Span>,
+    parse: Vec<ada_parse::Span>,
 }
 
 /// A block whose lines don't depend on each other on `threads` threads, each taking a chunk of
 /// them as it comes; `line` highlights one, with scratch space of its own.
-fn lines_on<S: Default>(
+// one copy for every lexer: the thread scope it builds is a few KB a copy (ADR-40's size
+// discipline)
+#[inline(never)]
+fn lines_on(
     key: u64,
     text: &str,
     theme: &SyntaxTheme,
     threads: usize,
-    line: impl Fn(&str, &mut S, &mut LineRuns) + Sync,
+    line: &(dyn Fn(&str, &mut Scratch, &mut LineRuns) + Sync),
 ) -> CodeSpans {
     let all: Vec<&str> = Lines::new(text).collect();
     let chunks: Vec<LineRuns> = thread::scope(|s| {
         let handles: Vec<_> = all
             .chunks(all.len().div_ceil(threads))
             .map(|chunk| {
-                let line = &line;
                 s.spawn(move || {
-                    let mut scratch = S::default();
+                    let mut scratch = Scratch::default();
                     let mut lines = LineRuns::default();
                     lines.ends.reserve_exact(chunk.len());
                     // the watch in print mode sees progress (F-06)
@@ -1865,6 +1951,52 @@ mod tests {
         rules_match_the_grammar("json", "JSON", text);
     }
 
+    /// ada-parse's diff lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (ADR-40).
+    #[test]
+    fn diff_rules_match_the_grammar() {
+        let text = concat!(
+            "diff --git a/src/x.rs b/src/x.rs\n",
+            "Index: src/x.rs\n",
+            "===================================================================\n",
+            "--- a/src/x.rs\t2026-10-31\n",
+            "+++ b/src/x.rs\n",
+            "@@ -1,3 +1,4 @@ fn main() {\n",
+            " context\n",
+            "-removed\n",
+            "+added\n",
+            "@@  @@\n",
+            "***************\n",
+            "*** 1,5 ****\n",
+            "! changed\n",
+            "--- 1,5 ----\n",
+            "12,15c12\n",
+            "< old\n",
+            "---\n",
+            "> new\n",
+            "==== //depot/a.c#3 - /home/a.c ====\n",
+        );
+        rules_match_the_grammar("diff", "Diff", text);
+    }
+
+    /// ada-parse's INI lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (ADR-40).
+    #[test]
+    fn ini_rules_match_the_grammar() {
+        let text = concat!(
+            "; comment\n",
+            "  # another\n",
+            "[section] ; why\n",
+            "[a]b]\n",
+            "key = value ; note\n",
+            "\"quoted key\" = 'quoted ; value' ; c\n",
+            "  = x\n",
+            "bare words\n",
+            "\n",
+        );
+        rules_match_the_grammar("ini", "INI", text);
+    }
+
     /// The Makefile lexer picks the rules bat's grammar picks, in every built-in theme (G-002).
     #[test]
     fn make_rules_match_the_grammar() {
@@ -1949,8 +2081,20 @@ mod tests {
         for theme in Theme::builtins() {
             let theme = SyntaxTheme::new(&theme.syntax);
             let want = highlight_syntect(reference_syntaxes(), name, text, &theme).unwrap();
-            assert_eq!(highlight(1, lang, text, &theme).lines, want.lines);
+            assert_eq!(painted(&highlight(1, lang, text, &theme)), painted(&want));
         }
+    }
+
+    /// A block's runs line by line, a line of plain runs as none: syntect's way gives a plain
+    /// line its run, a lexer's leaves it empty, and both paint it plain.
+    fn painted(spans: &CodeSpans) -> Vec<&[Run]> {
+        (0..spans.line_count())
+            .map(|n| spans.line(n))
+            .map(|l| match l.iter().all(|r| r.rule.0 == Rule::NONE) {
+                true => &[][..],
+                false => l,
+            })
+            .collect()
     }
 
     /// G-002 on real Makefiles: `ADA_MAKE_CORPUS` names a file of paths, one a line, and each
@@ -2244,11 +2388,15 @@ mod tests {
             "2026-10-17 12:00:01 INFO started pid=42\n2026-10-17 12:00:02 ERROR failed: \"x\"\n";
         let c = "int x = 1; // note\n";
         let json = "  {\"k\": [1, -2.5e3, true, \"s\\\"\"], \"open\": \"x\n  \"n\": null},\n";
+        let diff = "--- a/x\n+++ b/x\n@@ -1 +1 @@ fn main\n-old\n+new\n same\n";
+        let ini = "[core]\n; note\neditor = \"vim\" ; the one\n";
         for (lang, unit, reps) in [
             ("rust", rust, 60),
             ("log", log, 150),
             ("c", c, 300),
             ("json", json, 150),
+            ("diff", diff, 60),
+            ("ini", ini, 100),
         ] {
             let mut text = unit.repeat(reps);
             if lang == "c" {
@@ -2260,6 +2408,9 @@ mod tests {
                 let many = match find_syntax(lang).unwrap() {
                     Syntax::Own(Lang::Log) => highlight_log_on(1, &text, &syntax, threads),
                     Syntax::Own(Lang::Json) => highlight_json_on(1, &text, &syntax, threads),
+                    Syntax::Own(l) if l.line_by_line() => {
+                        highlight_parse_on(1, l, &text, &syntax, threads)
+                    }
                     Syntax::Own(_) => panic!("{lang}: on one thread"),
                     Syntax::Set(found) => highlight_on(1, found, &text, &syntax, threads),
                 };

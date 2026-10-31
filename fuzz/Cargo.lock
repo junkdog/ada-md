@@ -32,6 +32,7 @@ name = "ada-md-fuzz"
 version = "0.0.0"
 dependencies = [
  "ada-md",
+ "ada-parse",
  "crossterm",
  "image",
  "libfuzzer-sys",
