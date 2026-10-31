@@ -290,22 +290,114 @@ const C_UNION_AFTER: u8 = 200;
 const C_STRUCT_BODY: u8 = 201;
 const C_ENUM_BODY: u8 = 202;
 const C_UNION_BODY: u8 = 203;
+// C's own top level, which C++ never reaches: a C file's.
+/// `main`, the root of a C file: `preprocessor-global`, then `global`.
+const C_MAIN: u8 = 204;
+const C_G_MODIFIER: u8 = 205;
+const C_G_TYPE: u8 = 206;
+/// `#anon_global-type_1`: `function-call`, then a pop.
+const C_G_TYPE_CALL: u8 = 207;
+const C_G_MAYBE_FN: u8 = 208;
+/// The global `#if` rules and branches, C's, as C++'s `OTHER_G` to `DIS_ELSE_G`.
+const C_OTHER_G: u8 = 209;
+const C_IF_G: u8 = 210;
+const C_ELIF_G: u8 = 211;
+const C_BLOCK_IF_G: u8 = 212;
+const C_FINISH_G: u8 = 213;
+const C_FINISH_IF_G: u8 = 214;
+const C_EN_G: u8 = 215;
+const C_EN_IN_G: u8 = 216;
+const C_DIS_G: u8 = 217;
+const C_DIS_ELSE_G: u8 = 218;
 
 /// Which contexts hold `meta.preprocessor`: in their meta scope (the tokens that open and
 /// close them carry it too), or in their meta content scope only.
-fn pre_flags(c: u8) -> u8 {
+const fn is_pre(c: u8) -> bool {
+    matches!(
+        c,
+        PP_PARAMS
+            | PP_DIRECTIVE
+            | PP_DIAGNOSTIC
+            | PP_INCLUDE
+            | OTHER_G
+            | OTHER_S
+            | C_PP_PARAMS
+            | C_PP_DIRECTIVE
+            | C_PP_DIAGNOSTIC
+            | C_PP_INCLUDE
+            | C_OTHER_S
+            | C_OTHER_G
+            | PP_DEFINE
+            | PP_MACRO
+            | C_PP_DEFINE
+            | C_PP_MACRO
+    )
+}
+
+/// The kind of the text no pattern of context `c` matches, before its wrap and
+/// `meta.preprocessor`.
+const fn text_of(c: u8) -> u16 {
     match c {
-        PP_PARAMS | PP_DIRECTIVE | PP_DIAGNOSTIC | PP_INCLUDE | OTHER_G | OTHER_S | C_PP_PARAMS
-        | C_PP_DIRECTIVE | C_PP_DIAGNOSTIC | C_PP_INCLUDE | C_OTHER_S => META,
-        PP_DEFINE | PP_MACRO | C_PP_DEFINE | C_PP_MACRO => CONTENT,
-        _ => 0,
+        C_COMMENT | C_PP_COMMENT => BLOCK_TEXT | C,
+        C_LINE_COMMENT | C_PP_LINE_COMMENT => LINE_TEXT | C,
+        C_STRING => DQ | C,
+        C_CHAR => SQ | C,
+        RAW_STRING => DQ,
+        PP_INC_DQ => INC_DQ,
+        PP_INC_LT => INC_LT,
+        C_PP_INC_DQ => INC_DQ | C,
+        C_PP_INC_LT => INC_LT | C,
+        NUM_HEX_FLOAT => HEX_FLOAT,
+        NUM_BIN => BIN,
+        NUM_HEX => HEX,
+        NUM_OCT => OCT,
+        NUM_DEC => DEC,
+        C_NUM_HEX_FLOAT => HEX_FLOAT | C,
+        C_NUM_HEX => HEX | C,
+        C_NUM_OCT => OCT | C,
+        C_NUM_DEC => DEC | C,
+        c if c >= C_FIRST => C,
+        _ => PLAIN,
     }
 }
-const META: u8 = 1;
-const CONTENT: u8 = 2;
+
+/// A context's [`text_of`] (bits 0–8), whether it is [`cxx::spaces_inert`] (bit 13) and
+/// [`cxx::comma_inert`] (14), whether [`cxx::expr_direct`] (12 for C++'s, 11 for C's), its [`wrap_of`] (16–30) and
+/// [`is_pre`] (31), by its id:
+/// what a push or a pop reads.
+static INFO: [u32; 256] = {
+    const fn bit(on: bool, b: u32) -> u32 {
+        if on { b } else { 0 }
+    }
+    let mut t = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+        let c = i as u8;
+        t[i] = text_of(c) as u32
+            | bit(cxx::spaces_inert(c), SPACES_INERT)
+            | bit(cxx::comma_inert(c), COMMA_INERT)
+            | bit(cxx::expr_direct(c) && c < C_FIRST, EXPR_DIRECT)
+            | bit(cxx::expr_direct(c) && c >= C_FIRST, C_EXPR_DIRECT)
+            | ((wrap_of(c) as u32) << 16)
+            | ((is_pre(c) as u32) << 31);
+        i += 1;
+    }
+    t
+};
+
+/// [`INFO`]'s bits.
+const TEXT: u16 = 0x1ff;
+const SPACES_INERT: u32 = 1 << 13;
+const COMMA_INERT: u32 = 1 << 14;
+const EXPR_DIRECT: u32 = 1 << 12;
+const C_EXPR_DIRECT: u32 = 1 << 11;
+
+fn info(c: u8) -> u32 {
+    INFO[usize::from(c)]
+}
 
 /// The scope of a context that colors what it holds, as a kind's wrap.
-fn wrap_of(c: u8) -> u16 {
+const fn wrap_of(c: u8) -> u16 {
     match c {
         IF_COMMENT => W_IF,
         ELSE_COMMENT => W_ELSE,
@@ -533,15 +625,25 @@ const STUCK: usize = 64;
 /// A raw string's longest delimiter.
 const DELIM: usize = 16;
 
-/// Lex `b`, a line without its `\n`, from `state`.
-#[inline(never)]
+/// Lex `b`, a line of C++ without its `\n`, from `state`.
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let lead = crate::skip_spaces(b, 0);
+    scan(b, state, out, MAIN);
+}
+
+/// Lex `b`, a line of C without its `\n`, from `state`: the same contexts, from C's root.
+pub fn line_c(b: &[u8], state: &mut State, out: &mut Out) {
+    scan(b, state, out, C_MAIN);
+}
+
+/// Lex `b` from `state`, the stack's bottom `root`.
+#[inline(never)]
+fn scan(b: &[u8], state: &mut State, out: &mut Out, root: u8) {
+    let lead = text::indent_end(b);
     let mut s = Scan {
         b,
         lead,
         dir: pp::directive(b, lead),
-        stack: [MAIN; MAX],
+        stack: [root; MAX],
         depth: 1,
         exact: state.is_exact(),
         pre: 0,
@@ -582,7 +684,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     s.wrap = s.stack[..s.depth]
         .iter()
         .rev()
-        .map(|&c| wrap_of(c))
+        .map(|&c| ((info(c) >> 16) as u16) & 0x7fff)
         .find(|&w| w != 0)
         .unwrap_or(0);
     s.refresh();
@@ -690,37 +792,15 @@ impl<'b> Scan<'b, '_> {
     }
 
     fn refresh(&mut self) {
-        let t = match self.top() {
-            C_COMMENT | C_PP_COMMENT => BLOCK_TEXT | C,
-            C_LINE_COMMENT | C_PP_LINE_COMMENT => LINE_TEXT | C,
-            C_STRING => DQ | C,
-            C_CHAR => SQ | C,
-            RAW_STRING => DQ,
-            PP_INC_DQ => INC_DQ,
-            PP_INC_LT => INC_LT,
-            C_PP_INC_DQ => INC_DQ | C,
-            C_PP_INC_LT => INC_LT | C,
-            NUM_HEX_FLOAT => HEX_FLOAT,
-            NUM_BIN => BIN,
-            NUM_HEX => HEX,
-            NUM_OCT => OCT,
-            NUM_DEC => DEC,
-            C_NUM_HEX_FLOAT => HEX_FLOAT | C,
-            C_NUM_HEX => HEX | C,
-            C_NUM_OCT => OCT | C,
-            C_NUM_DEC => DEC | C,
-            c if c >= C_FIRST => C,
-            _ => PLAIN,
-        };
-        self.text = self.kind(t);
+        self.text = self.kind(info(self.top()) as u16 & TEXT);
     }
 
     fn count_in(&mut self, c: u8) {
-        self.pre += usize::from(pre_flags(c) != 0);
+        self.pre += (info(c) >> 31) as usize;
     }
 
     fn count_out(&mut self, c: u8) {
-        self.pre -= usize::from(pre_flags(c) != 0);
+        self.pre -= (info(c) >> 31) as usize;
     }
 
     fn push(&mut self, at: usize, c: u8) {
@@ -734,21 +814,22 @@ impl<'b> Scan<'b, '_> {
         }
         self.stack[self.depth] = c;
         self.depth += 1;
-        self.count_in(c);
-        let w = wrap_of(c);
+        let i = info(c);
+        self.pre += (i >> 31) as usize;
+        let w = (i >> 16) as u16 & 0x7fff;
         if w != 0 {
             self.wrap = w;
         }
-        self.refresh();
+        self.text = self.kind(i as u16 & TEXT);
     }
 
     fn pop(&mut self, at: usize) {
         self.fill(at);
         if self.depth > 1 {
             self.depth -= 1;
-            let c = self.stack[self.depth];
-            self.count_out(c);
-            if wrap_of(c) != 0 {
+            let i = info(self.stack[self.depth]);
+            self.pre -= (i >> 31) as usize;
+            if i & 0x7fff_0000 != 0 {
                 self.wrap = 0;
             }
         }
@@ -876,7 +957,7 @@ impl<'b> Scan<'b, '_> {
     }
 
     fn run(&mut self) {
-        let mut p = 0;
+        let mut p = self.first();
         loop {
             if let Some(q) = self.at(p) {
                 self.stuck = if q == p { self.stuck + 1 } else { 0 };
@@ -897,14 +978,55 @@ impl<'b> Scan<'b, '_> {
                 return;
             }
             p = self.past_spaces(p);
+            // a `,` past the line's start in an expression's context: what its dispatch would
+            // give, `expressions`' separator
+            if p > 0 && self.b.get(p) == Some(&b',') && info(self.top()) & COMMA_INERT != 0 {
+                p = self.token(p, 1, SEPARATOR | (self.text & C));
+                self.stuck = 0;
+                p = self.past_spaces(p);
+            }
+            // past the line's start, its end is a space too: where none starts a pattern
+            if p >= self.b.len() && p > 0 && info(self.top()) & SPACES_INERT != 0 {
+                return;
+            }
         }
+    }
+
+    /// Where the scan starts: past the indentation where the top context has no pattern that
+    /// can start at a space past the line's start, and the line has none of the line-start
+    /// ones (`^\s*` and a directive, an upper-case workaround or a label), whose miss at 0
+    /// and its advance would land there.
+    fn first(&self) -> usize {
+        let b = self.b;
+        let q = self.lead;
+        if q == 0 || self.dir.is_some() || info(self.top()) & SPACES_INERT == 0 {
+            return 0;
+        }
+        let Some(&c) = b.get(q) else {
+            return q;
+        };
+        if c >= 0x80 {
+            return 0;
+        }
+        let upper = c == b'_' || c.is_ascii_uppercase();
+        if upper || c.is_ascii_lowercase() {
+            // a label's name ends on its `:`, not a `::`
+            let a = text::ascii_word_end(b, q);
+            if a < b.len() && (b[a] >= 0x80 || (b[a] == b':' && text::at(b, a + 1) != b':')) {
+                return 0;
+            }
+        }
+        if upper && (self.upper_ident_line() || self.upper_call().is_some()) {
+            return 0;
+        }
+        q
     }
 
     /// Past the spaces at `p`, where the top context has no pattern that can start at a space
     /// past the line's start: what a miss there and its advance would do, without them.
     fn past_spaces(&self, p: usize) -> usize {
         let b = self.b;
-        if p > 0 && p < b.len() && crate::is_space(b[p]) && cxx::spaces_inert(self.top()) {
+        if p > 0 && p < b.len() && crate::is_space(b[p]) && info(self.top()) & SPACES_INERT != 0 {
             crate::skip_spaces(b, p)
         } else {
             p
@@ -916,6 +1038,31 @@ impl<'b> Scan<'b, '_> {
     fn at(&mut self, p: usize) -> Option<usize> {
         let top = self.top();
         let c = self.b.get(p).copied().unwrap_or(b'\n');
+        // past the line's start, these contexts give a name or a number straight to
+        // `expressions`, whose first patterns for them these are
+        if p > 0 && info(top) & EXPR_DIRECT != 0 {
+            let r = if c.is_ascii_digit() {
+                self.numbers(p, c)
+            } else if c.is_ascii_alphabetic() || c == b'_' {
+                self.name(p, c, true)
+            } else {
+                None
+            };
+            if r.is_some() {
+                return r;
+            }
+        } else if p > 0 && info(top) & C_EXPR_DIRECT != 0 {
+            let r = if c.is_ascii_digit() {
+                self.c_numbers(p, c)
+            } else if c.is_ascii_alphabetic() || c == b'_' {
+                self.c_name(p, c)
+            } else {
+                None
+            };
+            if r.is_some() {
+                return r;
+            }
+        }
         if top >= C_FIRST {
             self.c_context(top, p, c)
         } else if (PP_DEFINE..=UPPER_IDENT).contains(&top) {

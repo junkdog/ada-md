@@ -183,6 +183,21 @@ pub fn word_end(b: &[u8], mut p: usize) -> usize {
     p
 }
 
+/// Where the line's indentation ends: [`skip_spaces`] from 0, eight bytes at a time while
+/// they're all ` `.
+pub fn indent_end(b: &[u8]) -> usize {
+    let mut p = 0;
+    while let Some(chunk) = b.get(p..p + 8) {
+        let x = u64::from_le_bytes(chunk.try_into().unwrap()) ^ 0x2020_2020_2020_2020;
+        if x != 0 {
+            p += (x.trailing_zeros() / 8) as usize;
+            break;
+        }
+        p += 8;
+    }
+    skip_spaces(b, p)
+}
+
 /// Where the run of ASCII `\w` at `p` ends.
 #[inline]
 pub fn ascii_word_end(b: &[u8], mut p: usize) -> usize {

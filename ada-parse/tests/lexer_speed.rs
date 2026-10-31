@@ -29,6 +29,7 @@ const LANGS: &[(&str, Lang)] = &[
     ("kotlin", Lang::Kotlin),
     ("java", Lang::Java),
     ("cpp", Lang::Cpp),
+    ("c", Lang::C),
 ];
 
 #[test]

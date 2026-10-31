@@ -46,167 +46,130 @@ pub enum Kw {
     Value(u16),
     /// A word of C's support lists: its leaf, with [`C`].
     Support(u16),
+    /// One of C99's functions, which only a call colors.
+    C99,
 }
 
-/// The word `w` to C++'s expressions.
-pub fn lookup(w: &[u8]) -> Kw {
+/// The words [`lookup`] classes by themselves, whatever their shape.
+static KEYWORDS: [(&[u8], Kw); 98] = {
     use Kw::*;
-    let Some(&c) = w.first() else {
-        return Other;
-    };
-    let k = match c {
-        b'_' => match w {
-            b"_Pragma" => Control,
-            b"__attribute__" => Attribute,
-            b"__declspec" => Declspec,
-            b"__restrict__" | b"__restrict" => Modifier,
-            b"__asm__" | b"_Bool" | b"_Complex" | b"_Imaginary" => CType,
-            b"__func__" => Value(LANGUAGE | C),
-            b"__FILE__" | b"__FUNCTION__" | b"__LINE__" => Value(SUPPORT_CONSTANT | C),
-            _ => Other,
-        },
-        b'a' => match w {
-            b"alignof" => Parens,
-            b"and" | b"and_eq" => WordOp,
-            b"alignas" => Alignas,
-            b"asm" | b"auto" => CType,
-            _ => Other,
-        },
-        b'b' => match w {
-            b"break" => Flow(BREAK_KW),
-            b"bitand" | b"bitor" => WordOp,
-            b"bool" => CType,
-            _ => Other,
-        },
-        b'c' => match w {
-            b"case" => Case,
-            b"const_cast" => Cast,
-            b"continue" => Flow(CONTINUE_KW),
-            b"catch" => Control,
-            b"compl" => WordOp,
-            b"const" | b"constexpr" => Modifier,
-            b"char16_t" | b"char32_t" | b"class" => CxxType,
-            b"char" => CType,
-            _ => Other,
-        },
-        b'd' => match w {
-            b"default" => Case,
-            b"dynamic_cast" => Cast,
-            b"do" => Control,
-            b"delete" => Delete,
-            b"decltype" => Decltype,
-            b"double" => CType,
-            _ => Other,
-        },
-        b'e' => match w {
-            b"else" => Control,
-            b"export" | b"extern" | b"explicit" => Modifier,
-            b"enum" => CType,
-            _ => Other,
-        },
-        b'f' => match w {
-            b"for" => Control,
-            b"friend" => Modifier,
-            b"float" => CType,
-            b"false" => Value(LANGUAGE | C),
-            _ => Other,
-        },
-        b'g' => match w {
-            b"goto" => Flow(GOTO_KW),
-            _ => Other,
-        },
-        b'i' => match w {
-            b"if" => Control,
-            b"inline" => Modifier,
-            b"int" => CType,
-            _ => Other,
-        },
-        b'l' => match w {
-            b"long" => CType,
-            _ => Other,
-        },
-        b'm' => match w {
-            b"mutable" => Modifier,
-            _ => Other,
-        },
-        b'n' => match w {
-            b"new" => New,
-            b"not" | b"not_eq" | b"noexcept" => WordOp,
-            b"nullptr_t" => CxxType,
-            b"nullptr" => Value(LANGUAGE),
-            b"noErr" => Value(MAC_SUPPORT_CONSTANT | C),
-            _ => Other,
-        },
-        b'N' => match w {
-            b"NULL" => Value(LANGUAGE | C),
-            _ => Other,
-        },
-        b'o' => match w {
-            b"or" | b"or_eq" => WordOp,
-            b"operator" => Operator,
-            _ => Other,
-        },
-        b'r' => match w {
-            b"reinterpret_cast" => Cast,
-            b"return" => Flow(RETURN_KW),
-            b"register" | b"restrict" => Modifier,
-            _ => Other,
-        },
-        b's' => match w {
-            b"static_cast" => Cast,
-            b"sizeof" => Sizeof,
-            b"static_assert" => Parens,
-            b"switch" => Control,
-            b"static" => Modifier,
-            b"short" | b"signed" | b"struct" => CType,
-            _ => Other,
-        },
-        b't' => match w {
-            b"typedef" => Typedef,
-            b"typeid" => Parens,
-            b"throw" => Flow(THROW_KW),
-            b"try" => Control,
-            b"thread_local" | b"typename" => Modifier,
-            b"this" => Value(VAR_LANGUAGE),
-            b"true" => Value(LANGUAGE | C),
-            _ => Other,
-        },
-        b'T' => match w {
-            b"TRUE" => Value(LANGUAGE | C),
-            _ => Other,
-        },
-        b'F' => match w {
-            b"FALSE" => Value(LANGUAGE | C),
-            _ => Other,
-        },
-        b'u' => match w {
-            b"using" => Using,
-            b"union" | b"unsigned" => CType,
-            _ => Other,
-        },
-        b'v' => match w {
-            b"virtual" | b"volatile" => Modifier,
-            b"void" => CType,
-            _ => Other,
-        },
-        b'w' => match w {
-            b"while" => Control,
-            b"wchar_t" => CxxType,
-            _ => Other,
-        },
-        b'x' => match w {
-            b"xor" | b"xor_eq" => WordOp,
-            _ => Other,
-        },
-        _ => Other,
-    };
-    if k != Other {
-        return k;
+    [
+        (b"_Pragma", Control),
+        (b"__attribute__", Attribute),
+        (b"__declspec", Declspec),
+        (b"__restrict__", Modifier),
+        (b"__restrict", Modifier),
+        (b"__asm__", CType),
+        (b"_Bool", CType),
+        (b"_Complex", CType),
+        (b"_Imaginary", CType),
+        (b"__func__", Value(LANGUAGE | C)),
+        (b"__FILE__", Value(SUPPORT_CONSTANT | C)),
+        (b"__FUNCTION__", Value(SUPPORT_CONSTANT | C)),
+        (b"__LINE__", Value(SUPPORT_CONSTANT | C)),
+        (b"alignof", Parens),
+        (b"and", WordOp),
+        (b"and_eq", WordOp),
+        (b"alignas", Alignas),
+        (b"asm", CType),
+        (b"auto", CType),
+        (b"break", Flow(BREAK_KW)),
+        (b"bitand", WordOp),
+        (b"bitor", WordOp),
+        (b"bool", CType),
+        (b"case", Case),
+        (b"const_cast", Cast),
+        (b"continue", Flow(CONTINUE_KW)),
+        (b"catch", Control),
+        (b"compl", WordOp),
+        (b"const", Modifier),
+        (b"constexpr", Modifier),
+        (b"char16_t", CxxType),
+        (b"char32_t", CxxType),
+        (b"class", CxxType),
+        (b"char", CType),
+        (b"default", Case),
+        (b"dynamic_cast", Cast),
+        (b"do", Control),
+        (b"delete", Delete),
+        (b"decltype", Decltype),
+        (b"double", CType),
+        (b"else", Control),
+        (b"export", Modifier),
+        (b"extern", Modifier),
+        (b"explicit", Modifier),
+        (b"enum", CType),
+        (b"for", Control),
+        (b"friend", Modifier),
+        (b"float", CType),
+        (b"false", Value(LANGUAGE | C)),
+        (b"goto", Flow(GOTO_KW)),
+        (b"if", Control),
+        (b"inline", Modifier),
+        (b"int", CType),
+        (b"long", CType),
+        (b"mutable", Modifier),
+        (b"new", New),
+        (b"not", WordOp),
+        (b"not_eq", WordOp),
+        (b"noexcept", WordOp),
+        (b"nullptr_t", CxxType),
+        (b"nullptr", Value(LANGUAGE)),
+        (b"noErr", Value(MAC_SUPPORT_CONSTANT | C)),
+        (b"NULL", Value(LANGUAGE | C)),
+        (b"or", WordOp),
+        (b"or_eq", WordOp),
+        (b"operator", Operator),
+        (b"reinterpret_cast", Cast),
+        (b"return", Flow(RETURN_KW)),
+        (b"register", Modifier),
+        (b"restrict", Modifier),
+        (b"static_cast", Cast),
+        (b"sizeof", Sizeof),
+        (b"static_assert", Parens),
+        (b"switch", Control),
+        (b"static", Modifier),
+        (b"short", CType),
+        (b"signed", CType),
+        (b"struct", CType),
+        (b"typedef", Typedef),
+        (b"typeid", Parens),
+        (b"throw", Flow(THROW_KW)),
+        (b"try", Control),
+        (b"thread_local", Modifier),
+        (b"typename", Modifier),
+        (b"this", Value(VAR_LANGUAGE)),
+        (b"true", Value(LANGUAGE | C)),
+        (b"TRUE", Value(LANGUAGE | C)),
+        (b"FALSE", Value(LANGUAGE | C)),
+        (b"using", Using),
+        (b"union", CType),
+        (b"unsigned", CType),
+        (b"virtual", Modifier),
+        (b"volatile", Modifier),
+        (b"void", CType),
+        (b"while", Control),
+        (b"wchar_t", CxxType),
+        (b"xor", WordOp),
+        (b"xor_eq", WordOp),
+    ]
+};
+
+/// The word `w` to C++'s expressions: a keyword's class, else a variable's or constant's by
+/// its shape, else a support list's.
+pub fn lookup(w: &[u8]) -> Kw {
+    let i = find_word(w);
+    match i {
+        Some(i) if i < KEYWORDS.len() => return KEYWORDS[i].1,
+        _ => {}
     }
     if let Some(v) = value_shape(w) {
-        return Value(v);
+        return Kw::Value(v);
     }
-    support(w).map_or(Other, Support)
+    match i {
+        Some(i) => support_leaf(i - KEYWORDS.len()).map_or(Kw::C99, Kw::Support),
+        None => Kw::Other,
+    }
 }
 
 /// The variables and constants a word's shape gives, in the grammar's order: `\b(f|m)
@@ -216,21 +179,17 @@ fn value_shape(w: &[u8]) -> Option<u16> {
     if w.len() < 2 {
         return None;
     }
-    let all_word = |from: usize| word_end(w, from) == w.len();
-    match w[0] {
+    let leaf = match w[0] {
         b'f' | b'm' if is_upper(w, 1) => return Some(MEMBER_VAR),
-        _ => {}
-    }
-    if w.starts_with(b"m_") && w.len() > 2 && super::text::ident_end(w, 2) == w.len() {
-        return Some(MEMBER_VAR);
-    }
-    let ascii_upper = w[1].is_ascii_uppercase() && all_word(2);
-    match w[0] {
-        b'g' if ascii_upper => Some(GLOBAL_MAC | C),
-        b's' if ascii_upper => Some(STATIC_MAC | C),
-        b'k' if ascii_upper => Some(MAC_CONSTANT | C),
-        _ => None,
-    }
+        b'm' if w[1] == b'_' && w.len() > 2 && super::text::ident_end(w, 2) == w.len() => {
+            return Some(MEMBER_VAR);
+        }
+        b'g' => GLOBAL_MAC | C,
+        b's' => STATIC_MAC | C,
+        b'k' => MAC_CONSTANT | C,
+        _ => return None,
+    };
+    (w[1].is_ascii_uppercase() && word_end(w, 2) == w.len()).then_some(leaf)
 }
 
 /// C's own value words, for C's expressions: `\bg[A-Z]\w*\b`, `\bs[A-Z]\w*\b`, then its
@@ -318,46 +277,69 @@ pub fn is_c_control(w: &[u8]) -> bool {
 }
 
 /// Which lengths (a bit each, up to 31) the support words starting with a byte have: most
-/// words are none of them, and miss here before the search.
+/// Which lengths (a bit each, up to 31) the words of [`TABLE`] starting with a byte have: most
+/// names are none of them, and miss here before the hash.
 static FIRST_LEN: [u32; 128] = {
     let mut t = [0u32; 128];
     let mut i = 0;
-    while i < SUPPORT.len() {
-        let w = SUPPORT[i].0;
+    while i < WORDS {
+        let w = word(i);
         t[w[0] as usize] |= 1 << w.len();
         i += 1;
     }
     t
 };
 
-/// Whether `w` can be a support word, by its first byte and length.
-fn maybe_support(w: &[u8]) -> bool {
+/// Whether `w` can be a word of [`TABLE`], by its first byte and length.
+fn maybe_word(w: &[u8]) -> bool {
     match w.first() {
         Some(&c) if c < 0x80 && w.len() < 32 => FIRST_LEN[usize::from(c)] & (1 << w.len()) != 0,
         _ => false,
     }
 }
 
-/// FNV-1a, for [`TABLE`].
-const fn hash(w: &[u8]) -> usize {
-    let mut h: u32 = 0x811c_9dc5;
-    let mut i = 0;
-    while i < w.len() {
-        h ^= w[i] as u32;
-        h = h.wrapping_mul(0x0100_0193);
-        i += 1;
+/// How many words [`TABLE`] holds: the keywords, then the support words.
+const WORDS: usize = KEYWORDS.len() + SUPPORT.len();
+
+/// Word `i` of [`TABLE`]'s numbering.
+const fn word(i: usize) -> &'static [u8] {
+    if i < KEYWORDS.len() {
+        KEYWORDS[i].0
+    } else {
+        SUPPORT[i - KEYWORDS.len()].0
     }
-    h as usize
 }
 
-const SLOTS: usize = 2048;
+/// A hash of fixed cost: the first and last four bytes (or the bytes of a shorter word) and
+/// the length, multiplied, the top bits a slot.
+const fn hash(w: &[u8]) -> usize {
+    let n = w.len();
+    let x = if n >= 4 {
+        let a = u32::from_le_bytes([w[0], w[1], w[2], w[3]]) as u64;
+        let z = u32::from_le_bytes([w[n - 4], w[n - 3], w[n - 2], w[n - 1]]) as u64;
+        a | z << 32
+    } else {
+        let mut x = 0u64;
+        let mut i = 0;
+        while i < n {
+            x |= (w[i] as u64) << (8 * i);
+            i += 1;
+        }
+        x
+    };
+    ((x ^ n as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - SLOT_BITS)) as usize
+}
 
-/// [`SUPPORT`]'s words by their hash, open addressing: an index plus 1 a slot, 0 for none.
+const SLOT_BITS: u32 = 11;
+const SLOTS: usize = 1 << SLOT_BITS;
+
+/// The keywords and [`SUPPORT`]'s words by their hash, open addressing: a word's number plus 1
+/// a slot, 0 for none.
 static TABLE: [u16; SLOTS] = {
     let mut t = [0u16; SLOTS];
     let mut i = 0;
-    while i < SUPPORT.len() {
-        let mut k = hash(SUPPORT[i].0) % SLOTS;
+    while i < WORDS {
+        let mut k = hash(word(i));
         while t[k] != 0 {
             k = (k + 1) % SLOTS;
         }
@@ -367,27 +349,32 @@ static TABLE: [u16; SLOTS] = {
     t
 };
 
-/// Where `w` is in [`SUPPORT`].
-fn find(w: &[u8]) -> Option<usize> {
-    if !maybe_support(w) {
+/// `w`'s number in [`TABLE`].
+#[inline]
+fn find_word(w: &[u8]) -> Option<usize> {
+    if !maybe_word(w) {
         return None;
     }
-    let mut k = hash(w) % SLOTS;
+    let mut k = hash(w);
     loop {
         let i = usize::from(TABLE[k]);
         if i == 0 {
             return None;
         }
-        if SUPPORT[i - 1].0 == w {
+        if word(i - 1) == w {
             return Some(i - 1);
         }
         k = (k + 1) % SLOTS;
     }
 }
 
-/// A word of C's support lists: its leaf, with [`C`].
-pub fn support(w: &[u8]) -> Option<u16> {
-    let i = find(w)?;
+/// Where `w` is in [`SUPPORT`].
+fn find(w: &[u8]) -> Option<usize> {
+    find_word(w)?.checked_sub(KEYWORDS.len())
+}
+
+/// The leaf, with [`C`], of [`SUPPORT`]'s word `i` (none for C99's functions).
+fn support_leaf(i: usize) -> Option<u16> {
     Some(
         match SUPPORT[i].1 {
             Support::C99 => return None,
@@ -399,6 +386,11 @@ pub fn support(w: &[u8]) -> Option<u16> {
             Support::Mac => MAC_TYPE,
         } | C,
     )
+}
+
+/// A word of C's support lists: its leaf, with [`C`].
+pub fn support(w: &[u8]) -> Option<u16> {
+    support_leaf(find(w)?)
 }
 
 /// Whether `w` is one of C99's functions (`support.function.C99.c`).

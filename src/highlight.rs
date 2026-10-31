@@ -2275,6 +2275,61 @@ mod tests {
         rules_match_the_grammar("cpp", "C++", text);
     }
 
+    /// ada-parse's C lexer (C++'s scanner from C's root) picks the rules bat's grammar picks, in
+    /// every built-in theme (ADR-40): C's top level (a type, a function's name before its
+    /// parameters, a call's group, a struct and an enum), the global `#if` rules and branches,
+    /// a continued define, a float ending on its `.`, a hex number before a name, and C's
+    /// strings, escapes and placeholders.
+    #[test]
+    fn c_rules_match_the_grammar() {
+        let text = concat!(
+            "#include <stdio.h>\n",
+            "#include \"local.h\" /* why */\n",
+            "#define MAX(a, b) ((a) > (b) ? (a) : (b))\n",
+            "#define NAME \\\n",
+            "          OTHER_NAME\n",
+            "#define HALF 1.\n",
+            "#if 0\n",
+            "int disabled(void); #if nested\n",
+            "#endif\n",
+            "#else\n",
+            "int enabled;\n",
+            "#endif\n",
+            "#if 1\n",
+            "static int on;\n",
+            "#else\n",
+            "int off;\n",
+            "#endif\n",
+            "#ifdef HAVE_X\n",
+            "{ int braced; }\n",
+            "#elif defined(Y)\n",
+            "extern long y;\n",
+            "#endif\n",
+            "typedef struct node { struct node *next; int value; } node_t;\n",
+            "enum color { RED, GREEN = 2 };\n",
+            "union u { int i; float f; };\n",
+            "static const char *names[] = { \"a\", \"b\\n\", L\"wide\" };\n",
+            "GType qmi_get_type (void) G_GNUC_CONST;\n",
+            "API_EXPORT int\n",
+            "count_items(const struct list *l, size_t n)\n",
+            "{\n",
+            "  int total = 0x1fUL + 017 + 1e3 + .5f + 0x__bad;\n",
+            "  for (size_t i = 0; i < n; i++) {\n",
+            "    if (l->items[i].ok && !l->skip) total += sizeof(l->items[i]);\n",
+            "    else continue;\n",
+            "  }\n",
+            "  switch (total) { case 1: break; default: goto done; }\n",
+            "done:\n",
+            "  printf(\"%5.2f %s %%\\n\", 1.0, u8\"x\");\n",
+            "  memcpy(dst, src, n); FOO_BAR(x)\n",
+            "  return total > 0 ? total : -1;\n",
+            "}\n",
+            "#pragma mark Section\n",
+            "#error \"stop\" here\n",
+        );
+        rules_match_the_grammar("c", "C", text);
+    }
+
     /// ada-parse's Dockerfile lexer picks the rules bat's grammar picks, in every built-in
     /// theme (ADR-40).
     #[test]
@@ -2791,20 +2846,20 @@ mod tests {
         let lua = "local function f()\n  local s = [==[a \"quoted\"\n line]==]\n  -- note\n  local n = 0x1f\nend\n";
         let log =
             "2026-10-17 12:00:01 INFO started pid=42\n2026-10-17 12:00:02 ERROR failed: \"x\"\n";
-        let c = "int x = 1; // note\n";
+        let swift = "let x = 1 // note\n";
         let json = "  {\"k\": [1, -2.5e3, true, \"s\\\"\"], \"open\": \"x\n  \"n\": null},\n";
         let diff = "--- a/x\n+++ b/x\n@@ -1 +1 @@ fn main\n-old\n+new\n same\n";
         let ini = "[core]\n; note\neditor = \"vim\" ; the one\n";
         for (lang, unit, reps) in [
             ("lua", lua, 60),
             ("log", log, 150),
-            ("c", c, 300),
+            ("swift", swift, 300),
             ("json", json, 150),
             ("diff", diff, 60),
             ("ini", ini, 100),
         ] {
             let mut text = unit.repeat(reps);
-            if lang == "c" {
+            if lang == "swift" {
                 text.insert_str(0, "/* never closed\n");
             }
             let one = highlight(1, lang, &text, &syntax);

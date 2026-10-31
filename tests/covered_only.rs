@@ -103,6 +103,11 @@ template <typename T> class Box { public: explicit Box(T v) : v_(v) {} T v_; };
 int main() { auto s = R\"x(raw)x\"; return std::vector<int>{1, 2}.size(); }
 ```
 
+```c
+#include <stdio.h>
+static int count(const char *s, size_t n) { return printf(\"%s %zu\\n\", s, n); }
+```
+
 ```text
 plain
 ```
@@ -172,6 +177,7 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         "Main.java",
         "main.cpp",
         "widget.hpp",
+        "main.c",
     ] {
         let t = FileType::by_path(Path::new(name));
         assert!(

@@ -60,12 +60,14 @@ impl Scan<'_, '_> {
                     self.put(q + 3, t, PRE | lang);
                     self.put(t, n, DEC | PRE | lang);
                     let c = match (enabled, rule, cl) {
-                        (true, Rule::Global, _) => EN_G,
+                        (true, Rule::Global, false) => EN_G,
+                        (true, Rule::Global, true) => C_EN_G,
                         (true, Rule::Statements, false) => EN_S,
                         (true, Rule::Data, false) => EN_D,
                         (true, Rule::Statements, true) => C_EN_S,
                         (true, Rule::Data, true) => C_EN_D,
-                        (false, Rule::Global, _) => DIS_G,
+                        (false, Rule::Global, false) => DIS_G,
+                        (false, Rule::Global, true) => C_DIS_G,
                         (false, Rule::Statements, false) => DIS_S,
                         (false, Rule::Data, false) => DIS_D,
                         (false, Rule::Statements, true) => C_DIS_S,
@@ -78,7 +80,8 @@ impl Scan<'_, '_> {
         }
         if rule != Rule::Data && matches!(&b[s..e], b"if" | b"ifdef" | b"ifndef") {
             let c = match (rule, cl) {
-                (Rule::Global, _) => OTHER_G,
+                (Rule::Global, false) => OTHER_G,
+                (Rule::Global, true) => C_OTHER_G,
                 (_, false) => OTHER_S,
                 (_, true) => C_OTHER_S,
             };
@@ -213,7 +216,7 @@ impl Scan<'_, '_> {
     }
 
     /// `^(\s*\b[\p{Lu}_][\p{Lu}\p{Nd}_]{2,}\b)+\s*(?m:$)`.
-    fn upper_ident_line(&self) -> bool {
+    pub(super) fn upper_ident_line(&self) -> bool {
         let b = self.b;
         let mut q = self.lead;
         let mut words = 0;
@@ -224,8 +227,8 @@ impl Scan<'_, '_> {
         words > 0 && q >= b.len()
     }
 
-    /// `^\s*(\b[\p{Lu}_][\p{Lu}\p{Nd}_]{2,}\b)\s*(\()(?=[^)]*\)\s*(?m:$))`.
-    fn uppercase_call(&mut self) -> Option<usize> {
+    /// [`Self::uppercase_call`]'s match: where its name ends and where its `(` is.
+    pub(super) fn upper_call(&self) -> Option<(usize, usize)> {
         let b = self.b;
         let q = self.lead;
         let e = upper_word(b, q)?;
@@ -234,9 +237,13 @@ impl Scan<'_, '_> {
             return None;
         }
         let close = b[s + 1..].iter().position(|&x| x == b')')? + s + 1;
-        if skip_spaces(b, close + 1) < b.len() {
-            return None;
-        }
+        (skip_spaces(b, close + 1) >= b.len()).then_some((e, s))
+    }
+
+    /// `^\s*(\b[\p{Lu}_][\p{Lu}\p{Nd}_]{2,}\b)\s*(\()(?=[^)]*\)\s*(?m:$))`.
+    fn uppercase_call(&mut self) -> Option<usize> {
+        let (e, s) = self.upper_call()?;
+        let q = self.lead;
         self.put(q, e, MACRO_FUNCTION | C);
         self.put(s, s + 1, GROUP_BEGIN | C);
         self.push(s + 1, C_MACRO_CALL);
@@ -421,7 +428,8 @@ impl Scan<'_, '_> {
             PP_INC_LT | C_PP_INC_LT => {
                 (c == b'>' && p < b.len()).then(|| self.close(p, 1, INC_LT_END | lang))
             }
-            EN_G | EN_S | EN_D | C_EN_S | C_EN_D | DIS_G | DIS_S | DIS_D | C_DIS_S | C_DIS_D => {
+            EN_G | EN_S | EN_D | C_EN_G | C_EN_S | C_EN_D | DIS_G | DIS_S | DIS_D | C_DIS_G
+            | C_DIS_S | C_DIS_D => {
                 if p == 0
                     && let Some((q, s, e)) = self.dir
                 {
@@ -435,8 +443,9 @@ impl Scan<'_, '_> {
                         self.put(q, e, IMPORT_ELSE | PRE | lang);
                         let next = match top {
                             EN_G | EN_S | EN_D => ELSE_COMMENT,
-                            C_EN_S | C_EN_D => C_ELSE_COMMENT,
+                            C_EN_G | C_EN_S | C_EN_D => C_ELSE_COMMENT,
                             DIS_G => DIS_ELSE_G,
+                            C_DIS_G => C_DIS_ELSE_G,
                             DIS_S => DIS_ELSE_S,
                             DIS_D => DIS_ELSE_D,
                             C_DIS_S => C_DIS_ELSE_S,
@@ -450,6 +459,7 @@ impl Scan<'_, '_> {
                     EN_G => EN_IN_G,
                     EN_S => EN_IN_S,
                     EN_D => EN_IN_D,
+                    C_EN_G => C_EN_IN_G,
                     C_EN_S => C_EN_IN_S,
                     C_EN_D => C_EN_IN_D,
                     DIS_G | DIS_S | DIS_D => IF_COMMENT,
@@ -457,11 +467,16 @@ impl Scan<'_, '_> {
                 };
                 Some(self.enter(p, &[inner]))
             }
-            EN_IN_G | EN_IN_S | EN_IN_D | DIS_ELSE_G | DIS_ELSE_S | DIS_ELSE_D | C_EN_IN_S
-            | C_EN_IN_D | C_DIS_ELSE_S | C_DIS_ELSE_D => {
+            EN_IN_G | EN_IN_S | EN_IN_D | DIS_ELSE_G | DIS_ELSE_S | DIS_ELSE_D | C_EN_IN_G
+            | C_EN_IN_S | C_EN_IN_D | C_DIS_ELSE_G | C_DIS_ELSE_S | C_DIS_ELSE_D => {
                 let dis = matches!(
                     top,
-                    DIS_ELSE_G | DIS_ELSE_S | DIS_ELSE_D | C_DIS_ELSE_S | C_DIS_ELSE_D
+                    DIS_ELSE_G
+                        | DIS_ELSE_S
+                        | DIS_ELSE_D
+                        | C_DIS_ELSE_G
+                        | C_DIS_ELSE_S
+                        | C_DIS_ELSE_D
                 );
                 let ends: &[&[u8]] = if dis {
                     &[b"endif"]
@@ -470,6 +485,15 @@ impl Scan<'_, '_> {
                 };
                 if p == 0 && self.directive_is(ends) && self.can_pop(0) {
                     return Some(self.leave(0));
+                }
+                if matches!(top, C_EN_IN_G | C_DIS_ELSE_G) {
+                    if let Some(r) = self.c_rules(p, Rule::Global) {
+                        return Some(r);
+                    }
+                    if c == b'}' {
+                        return Some(self.open_after(p, 1, C_NEGATED, BLOCK_END | C));
+                    }
+                    return self.c_global(p, c);
                 }
                 if cl {
                     if c == b'}' {
@@ -523,7 +547,7 @@ impl Scan<'_, '_> {
                 }
                 self.pragma_mark()
             }
-            OTHER_G | OTHER_S | C_OTHER_S => {
+            OTHER_G | OTHER_S | C_OTHER_G | C_OTHER_S => {
                 if let Some(r) = self.continuation(p, c).or_else(|| self.pp_comments(p, c)) {
                     return Some(r);
                 }
@@ -533,6 +557,7 @@ impl Scan<'_, '_> {
                 if p >= b.len() {
                     let next = match top {
                         OTHER_G => IF_G,
+                        C_OTHER_G => C_IF_G,
                         OTHER_S => IF_S,
                         _ => C_IF_S,
                     };
@@ -542,7 +567,7 @@ impl Scan<'_, '_> {
                 }
                 None
             }
-            IF_G | IF_S | C_IF_S => {
+            IF_G | IF_S | C_IF_G | C_IF_S => {
                 if p == 0
                     && let Some((q, s, e)) = self.dir
                 {
@@ -555,6 +580,7 @@ impl Scan<'_, '_> {
                     if matches!(w, b"elif" | b"else") {
                         let elif = match top {
                             IF_G => ELIF_G,
+                            C_IF_G => C_ELIF_G,
                             IF_S => ELIF_S,
                             _ => C_ELIF_S,
                         };
@@ -564,6 +590,7 @@ impl Scan<'_, '_> {
                 if c == b'{' {
                     let block = match top {
                         IF_G => BLOCK_IF_G,
+                        C_IF_G => C_BLOCK_IF_G,
                         IF_S => BLOCK_IF_S,
                         _ => C_BLOCK_IF_S,
                     };
@@ -577,6 +604,15 @@ impl Scan<'_, '_> {
                         return Some(self.open_after(p, 1, NEGATED, BLOCK_END));
                     }
                     return self.global_in(p, c);
+                }
+                if top == C_IF_G {
+                    if let Some(r) = self.c_rules(p, Rule::Global) {
+                        return Some(r);
+                    }
+                    if c == b'}' {
+                        return Some(self.open_after(p, 1, C_NEGATED, BLOCK_END | C));
+                    }
+                    return self.c_global(p, c);
                 }
                 if self.pp_call_ahead(p, cl) {
                     return Some(self.shift(p, &[pick(cl, PP_FC, C_PP_FC)]));
@@ -595,12 +631,17 @@ impl Scan<'_, '_> {
                     self.statements(p, c)
                 }
             }
-            ELIF_G | ELIF_S | C_ELIF_S => {
+            ELIF_G | ELIF_S | C_ELIF_G | C_ELIF_S => {
                 if p == 0 && self.directive_is(&[b"endif"]) && self.can_pop(0) {
                     return Some(self.leave(0));
                 }
                 if top == ELIF_G
                     && let Some(r) = self.rules(p, Rule::Global)
+                {
+                    return Some(r);
+                }
+                if top == C_ELIF_G
+                    && let Some(r) = self.c_rules(p, Rule::Global)
                 {
                     return Some(r);
                 }
@@ -614,14 +655,16 @@ impl Scan<'_, '_> {
                 }
                 match top {
                     ELIF_G => self.global_in(p, c),
+                    C_ELIF_G => self.c_global(p, c),
                     ELIF_S => self.statements(p, c),
                     _ => self.c_statements(p, c),
                 }
             }
-            BLOCK_IF_G | BLOCK_IF_S | C_BLOCK_IF_S => {
+            BLOCK_IF_G | BLOCK_IF_S | C_BLOCK_IF_G | C_BLOCK_IF_S => {
                 let (finish, elif, if_branch) = match top {
                     BLOCK_IF_G => (FINISH_G, ELIF_G, IF_G),
                     BLOCK_IF_S => (FINISH_S, ELIF_S, IF_S),
+                    C_BLOCK_IF_G => (C_FINISH_G, C_ELIF_G, C_IF_G),
                     _ => (C_FINISH_S, C_ELIF_S, C_IF_S),
                 };
                 if p == 0
@@ -646,7 +689,7 @@ impl Scan<'_, '_> {
                     self.statements(p, c)
                 }
             }
-            FINISH_G | FINISH_S | C_FINISH_S => {
+            FINISH_G | FINISH_S | C_FINISH_G | C_FINISH_S => {
                 if p == 0
                     && let Some((q, s, e)) = self.dir
                     && matches!(&b[s..e], b"if" | b"ifdef" | b"ifndef")
@@ -654,6 +697,7 @@ impl Scan<'_, '_> {
                     self.put(q, e, IMPORT | PRE | lang);
                     let next = match top {
                         FINISH_G => FINISH_IF_G,
+                        C_FINISH_G => C_FINISH_IF_G,
                         FINISH_S => FINISH_IF_S,
                         _ => C_FINISH_IF_S,
                     };
@@ -669,18 +713,20 @@ impl Scan<'_, '_> {
                     self.statements(p, c)
                 }
             }
-            FINISH_IF_G | FINISH_IF_S | C_FINISH_IF_S => {
+            FINISH_IF_G | FINISH_IF_S | C_FINISH_IF_G | C_FINISH_IF_S => {
                 if p == 0
                     && let Some((q, s, e)) = self.dir
                     && &b[s..e] == b"endif"
                 {
-                    self.put(q, e, IMPORT | lang);
+                    // C's capture is in `meta.preprocessor`, C++'s isn't
+                    self.put(q, e, IMPORT | if cl { PRE | C } else { 0 });
                     self.pop(e);
                     return Some(e);
                 }
                 if c == b'}' {
                     let next = match top {
                         FINISH_IF_G => IF_G,
+                        C_FINISH_IF_G => C_IF_G,
                         FINISH_IF_S => IF_S,
                         _ => C_IF_S,
                     };

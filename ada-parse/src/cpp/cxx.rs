@@ -166,10 +166,10 @@ fn forward_decl_after(b: &[u8], e: usize) -> bool {
     }
 }
 
-/// Whether no pattern of C++'s context `c` can start at a space past the line's start: those
+/// Whether no pattern of context `c` (C++'s or C's) can start at a space past the line's start: those
 /// whose arms try their line-start rules at 0 only, single bytes that aren't spaces, words, and
 /// `expressions`, which starts no pattern at such a space.
-pub(super) fn spaces_inert(c: u8) -> bool {
+pub(super) const fn spaces_inert(c: u8) -> bool {
     matches!(
         c,
         BLOCK
@@ -188,6 +188,47 @@ pub(super) fn spaces_inert(c: u8) -> bool {
             | FRIEND_BLOCK
             | NEGATED
             | TEMPLATE_ARGS
+            // C's
+            | C_PAREN
+            | C_MACRO_CALL
+            | C_BRACKETS
+            | C_BLOCK
+            | C_CASE
+            | C_FN_BLOCK
+            | C_NEGATED
+            | C_STRUCT_BODY
+            | C_ENUM_BODY
+            | C_UNION_BODY
+            | C_FN_PARAMS_IN
+    )
+}
+
+/// Whether context `c` (C++'s or C's) takes a `,` past the line's start as `expressions` does, a
+/// separator that leaves it open: [`spaces_inert`]'s but those that pop before a `,`.
+pub(super) const fn comma_inert(c: u8) -> bool {
+    spaces_inert(c) && !matches!(c, CASE | FN_PARAM_DEFAULT | METHOD_PARAM_DEFAULT)
+}
+
+/// Whether context `c` (C++'s or C's), past the line's start, gives a name or a digit to
+/// `expressions` with `function-call` before any pattern of its own: its patterns before are a
+/// closing bracket's and a branch directive's (at the line's start only).
+pub(super) const fn expr_direct(c: u8) -> bool {
+    matches!(
+        c,
+        BLOCK
+            | PAREN
+            | BRACKETS
+            | BRACE_EXPR
+            | ENUM_BODY
+            | FRIEND_BLOCK
+            | NEGATED
+            // C's, to C's `expressions`
+            | C_PAREN
+            | C_MACRO_CALL
+            | C_BRACKETS
+            | C_BLOCK
+            | C_CASE
+            | C_NEGATED
     )
 }
 
@@ -1082,6 +1123,21 @@ impl Scan<'_, '_> {
             }
         };
         let exp = |q: usize| exponent(b, q, *b"eE", digits_quoted);
+        // a hex number: no decimal float starts with `0x`
+        if c == b'0' && at_word && matches!(at(b, p + 1), b'x' | b'X') && p + 1 < b.len() {
+            // digits, then a byte that ends the number and no float's: `NUM_HEX`'s text, and
+            // its pop, which takes nothing (and can't loop where the scan hasn't been)
+            let q = run_of(b, p + 2, |b, i| b[i].is_ascii_hexdigit() || b[i] == b'\'');
+            if q > p + 2 && !is_ident(b, q) && at(b, q) != b'.' && self.depth < MAX {
+                self.put(p, p + 2, HEX_BASE);
+                self.put(p + 2, q, HEX);
+                return Some(q);
+            }
+            if hex_float_ahead(b, p + 2, true) {
+                return Some(self.open(p, 2, NUM_HEX_FLOAT, HEX_FLOAT_BASE));
+            }
+            return Some(self.open(p, 2, NUM_HEX, HEX_BASE));
+        }
         if c.is_ascii_digit() && at_word {
             let d = digits_quoted(b, p).unwrap_or(p + 1);
             let mut dot = None;
@@ -1133,20 +1189,6 @@ impl Scan<'_, '_> {
             return None;
         }
         let x = at(b, p + 1);
-        if c == b'0' && matches!(x, b'x' | b'X') && p + 1 < b.len() {
-            // digits, then a byte that ends the number and no float's: `NUM_HEX`'s text, and
-            // its pop, which takes nothing (and can't loop where the scan hasn't been)
-            let q = run_of(b, p + 2, |b, i| b[i].is_ascii_hexdigit() || b[i] == b'\'');
-            if q > p + 2 && !is_ident(b, q) && at(b, q) != b'.' && self.depth < MAX {
-                self.put(p, p + 2, HEX_BASE);
-                self.put(p + 2, q, HEX);
-                return Some(q);
-            }
-            if hex_float_ahead(b, p + 2, true) {
-                return Some(self.open(p, 2, NUM_HEX_FLOAT, HEX_FLOAT_BASE));
-            }
-            return Some(self.open(p, 2, NUM_HEX, HEX_BASE));
-        }
         if c == b'0' && matches!(x, b'b' | b'B') && p + 1 < b.len() {
             return Some(self.open(p, 2, NUM_BIN, BIN_BASE));
         }
@@ -1226,7 +1268,7 @@ impl Scan<'_, '_> {
     /// a function, C99's or any, and the bracket, which sets a group or a braced expression:
     /// done here without the push that matches nothing (unless that push would be the one
     /// where the scan steps on). Where the scan goes on.
-    fn name(&mut self, p: usize, c: u8, call: bool) -> Option<usize> {
+    pub(super) fn name(&mut self, p: usize, c: u8, call: bool) -> Option<usize> {
         let b = self.b;
         if p == 0 || !(c.is_ascii_alphabetic() || c == b'_') || word_before(b, p) {
             return None;
@@ -1237,6 +1279,9 @@ impl Scan<'_, '_> {
         }
         let q = skip_spaces(b, e);
         let open = if q < b.len() { b[q] } else { b'\n' };
+        if open == b':' && at(b, q + 1) == b':' && call {
+            return self.qualified_call(p, e, q);
+        }
         if matches!(open, b'<' | b':' | b'"' | b'\'') {
             return None;
         }
@@ -1245,8 +1290,9 @@ impl Scan<'_, '_> {
         // the words whose group takes them whatever follows (but `<`, `::`, a quote): those of
         // `keywords`, the values of `early-expressions-after-generic-type`, `modifiers` and
         // `types` in `late-expressions-before-function-call`
-        let leaf = match self.kw(p) {
-            Kw::Other => None,
+        let kw = self.kw(p);
+        let leaf = match kw {
+            Kw::Other | Kw::C99 => None,
             Kw::Flow(leaf) | Kw::Value(leaf) | Kw::Support(leaf) => Some(leaf),
             Kw::Control => Some(CONTROL),
             Kw::WordOp => Some(WORD_OP),
@@ -1265,15 +1311,69 @@ impl Scan<'_, '_> {
         if !call || self.stuck >= STUCK || starts(b, p, b"template") {
             return None;
         }
-        let leaf = if super::words::is_c99(&b[p..e]) {
-            C99 | C
-        } else {
-            FUNCTION
-        };
+        let leaf = if kw == Kw::C99 { C99 | C } else { FUNCTION };
         self.put(p, e, leaf);
         self.put(q, q + 1, GROUP_BEGIN);
         self.push(q + 1, if open == b'(' { PAREN } else { BRACE_EXPR });
         Some(q + 1)
+    }
+
+    /// A qualified call past the line's start in `expressions` with `function-call`, `a::b(`
+    /// or `{`, its names ASCII, the `::` at `q` after the first name, `p..e`. Every pattern
+    /// before `function-call` misses it (the first name is no keyword's, value's or support
+    /// word's, no `<` follows a name, none is `template`), and `function-call`'s context, a
+    /// dispatch a name, gives the `::`s, the last name as a function and the bracket, which
+    /// sets a group or a braced expression: done here at once, unless a later name is C99's
+    /// (that context takes one first) or the push would be the one where the scan steps on.
+    /// Where the scan goes on.
+    fn qualified_call(&mut self, p: usize, e: usize, q: usize) -> Option<usize> {
+        let b = self.b;
+        if self.stuck >= STUCK || starts(b, p, b"template") {
+            return None;
+        }
+        self.word_at.set((p, e));
+        if self.kw(p) != Kw::Other {
+            return None;
+        }
+        let mut colons = [0usize; 8];
+        let mut n = 0;
+        let mut d = q;
+        let (s, t, r) = loop {
+            if n == colons.len() {
+                return None;
+            }
+            colons[n] = d;
+            n += 1;
+            let s = skip_spaces(b, d + 2);
+            let c = at(b, s);
+            if !(c.is_ascii_alphabetic() || c == b'_') {
+                return None;
+            }
+            let t = super::text::ascii_word_end(b, s + 1);
+            if t < b.len() && b[t] >= 0x80 {
+                return None;
+            }
+            let w = &b[s..t];
+            if w.starts_with(b"template") || super::words::is_c99(w) {
+                return None;
+            }
+            let r = skip_spaces(b, t);
+            if starts(b, r, b"::") {
+                d = r;
+                continue;
+            }
+            if r < b.len() && matches!(b[r], b'(' | b'{') {
+                break (s, t, r);
+            }
+            return None;
+        };
+        for &d in &colons[..n] {
+            self.put(d, d + 2, DOUBLE_COLON);
+        }
+        self.put(s, t, FUNCTION);
+        self.put(r, r + 1, GROUP_BEGIN);
+        self.push(r + 1, if b[r] == b'(' { PAREN } else { BRACE_EXPR });
+        Some(r + 1)
     }
 
     /// `early-expressions-before-generic-type`.
@@ -2481,14 +2581,19 @@ fn line_banner(b: &[u8]) -> bool {
 
 /// `(?=[\p{L}\p{N}_'.]+?[pP])` at `q` (or `[\p{L}\p{N}.]` for C's): a `p` after one byte of
 /// the class at least, all of them in it.
-pub(super) fn hex_float_ahead(b: &[u8], q: usize, quotes: bool) -> bool {
+pub(super) fn hex_float_ahead(b: &[u8], q: usize, cxx: bool) -> bool {
     let mut i = q;
     while i < b.len() {
         let c = b[i];
         if i > q && matches!(c, b'p' | b'P') {
             return true;
         }
-        if !(is_ident(b, i) || c == b'.' || (quotes && c == b'\'')) {
+        let class = if cxx {
+            is_ident(b, i) || c == b'.' || c == b'\''
+        } else {
+            (is_ident(b, i) && c != b'_') || c == b'.'
+        };
+        if !class {
             return false;
         }
         i = next(b, i);

@@ -151,6 +151,7 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::Kotlin => kotlin::line(line.as_bytes(), state, &mut out),
         Lang::Java => java::line(line.as_bytes(), state, &mut out),
         Lang::Cpp => cpp::line(line.as_bytes(), state, &mut out),
+        Lang::C => cpp::line_c(line.as_bytes(), state, &mut out),
         _ => {
             if let Some(g) = lang.grammar() {
                 machine::line(g, line.as_bytes(), state, &mut out);

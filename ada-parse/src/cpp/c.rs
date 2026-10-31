@@ -5,9 +5,9 @@
 use super::cxx::Rule;
 use super::text::{
     at, digits_plain, exponent, find_any, id, ident_end, is_ident, is_kw, is_word, next,
-    paren_after, run_of, starts, word_before, word_end,
+    paren_after, paren_or_eol, run_of, space_at, starts, word_before, word_end,
 };
-use super::words::{c_value, c99_at, is_c_control, is_c_modifier, is_c_type, support};
+use super::words::{Kw, c_value, c99_at, is_c_control, is_c_modifier, is_c_type, support};
 use super::*;
 use crate::{is_space, skip_spaces};
 
@@ -290,9 +290,29 @@ impl Scan<'_, '_> {
                 }
                 self.c_statements(p, c)
             }
-            C_PP_DEFINE..=C_PP_INC_LT | C_EN_S..=C_PP_FC_ARGS | C_UPPER_IDENT | C_DISABLED => {
-                self.pp_context(top, p, c)
+            C_PP_DEFINE..=C_PP_INC_LT
+            | C_EN_S..=C_PP_FC_ARGS
+            | C_UPPER_IDENT
+            | C_DISABLED
+            | C_OTHER_G..=C_DIS_ELSE_G => self.pp_context(top, p, c),
+            C_MAIN => self
+                .c_rules(p, Rule::Global)
+                .or_else(|| self.c_global(p, c)),
+            C_G_MODIFIER => self
+                .c_comments(p, c)
+                .or_else(|| self.c_modifiers_parens(p))
+                .or_else(|| self.c_modifiers(p))
+                .or_else(|| self.any_set(p, &[C_G_TYPE])),
+            C_G_TYPE => self.c_global_type(p, c),
+            C_G_TYPE_CALL => {
+                if let Some(e) = id(b, p)
+                    && paren_after(b, e)
+                {
+                    return Some(self.enter(p, &[C_FC]));
+                }
+                self.can_pop(p).then(|| self.leave(p))
             }
+            C_G_MAYBE_FN => self.c_maybe_function(p, c),
             C_FN_PARAMS => {
                 if let Some(r) = self.c_comments(p, c) {
                     return Some(r);
@@ -451,12 +471,20 @@ impl Scan<'_, '_> {
                     skip_spaces(b, p)
                 }
             }
+            // a word that nothing took at its start: inside it, only a string's prefix can
+            // start a pattern (`L`, `u8`, `u`, `U`), and only the one that ends it, before a quote
             _ if is_word(b, p) && !word_before(b, p) => {
                 let e = word_end(b, p);
-                b[p + 1..e]
-                    .iter()
-                    .position(|&x| matches!(x, b'L' | b'u' | b'U'))
-                    .map_or(e, |k| p + 1 + k)
+                if !matches!(at(b, e), b'"' | b'\'') || e >= b.len() {
+                    return e;
+                }
+                if e >= p + 3 && &b[e - 2..e] == b"u8" {
+                    e - 2
+                } else if e >= p + 2 && matches!(b[e - 1], b'L' | b'u' | b'U') {
+                    e - 1
+                } else {
+                    e
+                }
             }
             _ => next(b, p),
         }
@@ -521,7 +549,8 @@ impl Scan<'_, '_> {
                     end = Some(exp(g).unwrap_or(g));
                 } else if let Some(g) = exp(f) {
                     end = Some(g);
-                } else if f < b.len() && b[f] != b'.' {
+                } else if f >= b.len() || b[f] != b'.' {
+                    // `(?=[^.])`: the line's `\n` too
                     end = Some(f);
                 }
                 if end.is_some() {
@@ -632,8 +661,185 @@ impl Scan<'_, '_> {
         self.c_modifiers_parens(p).or_else(|| self.c_modifiers(p))
     }
 
+    /// C's `global`: `early-expressions`, a name's line pushing `global-modifier`,
+    /// `late-expressions`.
+    pub(super) fn c_global(&mut self, p: usize, c: u8) -> Option<usize> {
+        if let Some(r) = self.c_early(p, c) {
+            return Some(r);
+        }
+        // `^\s*(?=\w+)`
+        if p == 0 && is_word(self.b, self.lead) {
+            let q = self.lead;
+            if q == 0 {
+                // `^\s*` took nothing: a push that matched nothing
+                return Some(self.enter(0, &[C_G_MODIFIER]));
+            }
+            self.push(q, C_G_MODIFIER);
+            return Some(q);
+        }
+        self.c_late(p, c)
+    }
+
+    /// C's `global-type`.
+    fn c_global_type(&mut self, p: usize, c: u8) -> Option<usize> {
+        let b = self.b;
+        if let Some(r) = self.c_comments(p, c) {
+            return Some(r);
+        }
+        if c == b'*' && p < b.len() {
+            return Some(self.token(p, 1, OPERATOR | C));
+        }
+        // `(struct|union|enum)\s+(?=\bID\b(\s+\bID\b(?!\s*[{=;])|\s*\*+))`
+        for w in [&b"struct"[..], b"union", b"enum"] {
+            if !starts(b, p, w) {
+                continue;
+            }
+            let n = p + w.len();
+            let s = skip_spaces(b, n);
+            let ahead = s > n
+                && id(b, s).is_some_and(|e1| {
+                    let t = skip_spaces(b, e1);
+                    let named = t > e1
+                        && id(b, t).is_some_and(|e2| {
+                            let u = skip_spaces(b, e2);
+                            !(u < b.len() && matches!(b[u], b'{' | b'=' | b';'))
+                        });
+                    named || (t < b.len() && b[t] == b'*')
+                });
+            if ahead {
+                self.put(p, n, STORAGE_TYPE | C);
+                self.set(s, &[C_G_MAYBE_FN]);
+                return Some(s);
+            }
+        }
+        let w = self.word(p);
+        if matches!(w, b"struct" | b"union" | b"enum") {
+            return Some(self.shift(p, &[C_DS]));
+        }
+        if is_c_control(w) && self.can_pop(p) {
+            return Some(self.leave(p));
+        }
+        if space_at(b, p) {
+            return Some(self.shift(p, &[C_G_MAYBE_FN]));
+        }
+        if let Some(e) = id(b, p) {
+            let s = skip_spaces(b, e);
+            if at(b, s) == b'(' && s < b.len() {
+                // `(?=[^\)]+\))`
+                let close = b[s + 1..].iter().position(|&x| x == b')');
+                if close.is_some_and(|k| k > 0) {
+                    self.put(p, e, FUNCTION | C);
+                    self.put(s, s + 1, GROUP_BEGIN | C);
+                    self.push(s + 1, C_PAREN);
+                    return Some(s + 1);
+                }
+                return Some(self.shift(p, &[C_G_TYPE_CALL]));
+            }
+        }
+        if let Some(r) = self.c_types(p) {
+            return Some(r);
+        }
+        if let Some(e) = id(b, p) {
+            self.fill(e);
+            return Some(e);
+        }
+        (!is_word(b, p) && self.can_pop(p)).then(|| self.leave(p))
+    }
+
+    /// C's `global-maybe-function`.
+    fn c_maybe_function(&mut self, p: usize, c: u8) -> Option<usize> {
+        let b = self.b;
+        if let Some(r) = self.c_comments(p, c) {
+            return Some(r);
+        }
+        if c == b'*' && p < b.len() {
+            return Some(self.token(p, 1, OPERATOR | C));
+        }
+        if let Some(r) = self
+            .c_types(p)
+            .or_else(|| self.c_modifiers_parens(p))
+            .or_else(|| self.c_modifiers(p))
+        {
+            return Some(r);
+        }
+        // `[\p{Lu}\p{Nd}_]+\s*(?m:$)`
+        let caps = run_of(b, p, super::text::is_upper_rest);
+        if caps > p && skip_spaces(b, caps) >= b.len() {
+            let e = skip_spaces(b, caps);
+            self.fill(e);
+            return Some(e);
+        }
+        if let Some(e) = id(b, p) {
+            if paren_or_eol(b, e) {
+                return Some(self.then(p, e - p, &[C_FN_PARAMS], ENTITY_FUNCTION | C));
+            }
+            self.fill(e);
+            return Some(e);
+        }
+        self.any_pop(p)
+    }
+
+    /// C's `types`: its `storage.type` words, then the support lists'.
+    fn c_types(&mut self, p: usize) -> Option<usize> {
+        let w = self.word(p);
+        if w.is_empty() {
+            return None;
+        }
+        if is_c_type(w) {
+            return Some(self.token(p, w.len(), STORAGE_TYPE | C));
+        }
+        support(w).map(|leaf| self.token(p, w.len(), leaf))
+    }
+
     /// C's `expressions`.
     pub(super) fn c_exprs(&mut self, p: usize, c: u8) -> Option<usize> {
+        if let Some(r) = self.c_name(p, c) {
+            return Some(r);
+        }
+        self.c_early(p, c).or_else(|| self.c_late(p, c))
+    }
+
+    /// An ASCII name past the line's start in C's `expressions`, the common cases at once.
+    /// One that no word pattern takes (no keyword's, type's, modifier's, value's or support
+    /// word's: `lookup` classes a superset of them), with no quote after it, matches nothing:
+    /// a miss and its advance land at its end, done here when they'd leave the run of
+    /// matches that took nothing as it is (none). Followed by spaces and `(`, `function-call`
+    /// pushes its context, which takes the name (C99's or any) and sets a group at the
+    /// bracket: done here without the push that matches nothing (unless that push would be
+    /// the one where the scan steps on). Where the scan goes on.
+    pub(super) fn c_name(&mut self, p: usize, c: u8) -> Option<usize> {
+        let b = self.b;
+        if p == 0 || !(c.is_ascii_alphabetic() || c == b'_') || word_before(b, p) {
+            return None;
+        }
+        let e = super::text::ascii_word_end(b, p + 1);
+        if e < b.len() && (b[e] >= 0x80 || b[e] == b'"' || b[e] == b'\'') {
+            return None;
+        }
+        self.word_at.set((p, e));
+        let kw = self.kw(p);
+        if !matches!(kw, Kw::Other | Kw::C99) {
+            return None;
+        }
+        let q = skip_spaces(b, e);
+        if q < b.len() && b[q] == b'(' {
+            if self.stuck >= STUCK {
+                return None;
+            }
+            self.put(p, e, if kw == Kw::C99 { C99 } else { FUNCTION } | C);
+            self.put(q, q + 1, GROUP_BEGIN | C);
+            self.push(q + 1, C_PAREN);
+            return Some(q + 1);
+        }
+        if self.stuck != 0 {
+            return None;
+        }
+        self.fill(e);
+        Some(e)
+    }
+
+    /// C's `early-expressions`.
+    fn c_early(&mut self, p: usize, c: u8) -> Option<usize> {
         let b = self.b;
         if p >= b.len() {
             return None;
@@ -718,7 +924,15 @@ impl Scan<'_, '_> {
             b')' | b'}' => return Some(self.token(p, 1, STRAY_BRACKET | C)),
             _ => {}
         }
-        // late
+        None
+    }
+
+    /// C's `late-expressions`.
+    fn c_late(&mut self, p: usize, c: u8) -> Option<usize> {
+        let b = self.b;
+        if p >= b.len() {
+            return None;
+        }
         if is_word(b, p) {
             if let Some(r) = self.c_modifiers_parens(p).or_else(|| self.c_modifiers(p)) {
                 return Some(r);

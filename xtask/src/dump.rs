@@ -81,8 +81,9 @@ pub fn trim(set: SyntaxSet) -> SyntaxSet {
 
 /// Covered grammars that a grammar ada keeps is built on, not just embeds a block of: emptied,
 /// it would lose them. Objective-C++ links to C++'s contexts 45 times (its classes, templates,
-/// expressions); every other grammar's links to a covered one are 1–3, an embedded block.
-const BUILT_ON: &[&str] = &["C++"];
+/// expressions), and C++ (so kept) to 127 of C's, on which Objective-C is built too; every
+/// other grammar's links to a covered one are 1–3, an embedded block.
+const BUILT_ON: &[&str] = &["C++", "C"];
 
 /// The grammars to empty, by index: the ones ada-parse covers but [`BUILT_ON`]'s, then every
 /// hidden one no file is named for (no extensions, no first line) that only emptied ones link
