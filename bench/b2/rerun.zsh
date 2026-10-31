@@ -21,9 +21,17 @@
 # B2_MERGE_ONLY=1 redoes only the merge, compare.md and doctables.md of an existing OUT. B2_AB_ONLY=1 runs the A/B
 # and writes compare.md, with no merge and no doctables.md, so it takes a REF made with or without the profile;
 # old/REF then compares across the two, which isn't drift.
+# B2_AB_PAR=1, with B2_AB_ONLY and the profile, runs the lanes' rounds two at a time (2026-10-31): the lanes mostly
+# wait out their quiet windows (load ~0.1), so each even round runs beside the odd one before it, on the same lanes'
+# SMT siblings (1,3,5,7 …, held ready too). Each build then has a job on every core at once, so contention lands on
+# both sides alike and the paired ratios hold; the even round's lanes run their jobs in reverse order, so that the
+# two builds' bursts on a core don't line up document for document, and copy their documents under OUT/run/par/
+# (b2 keeps a job's copy by its name, and the reload test rewrites it). A/B only: cells measured this way don't
+# compare with a round-at-a-time run's, so they're never merged.
 S=${B2_ROOT:-${0:A:h}/root}; REF=${${1:?usage: rerun.zsh REF OUT}:A}; OUT=${${2:?usage: rerun.zsh REF OUT}:A}   # absolute, as in full.zsh
 H=${0:A:h}; B2=$H/target/release/b2
 L=(0,2,4,6 8,10,12,14 16,18,20,22 24,26,28,30)   # as lanes.py
+L2=(1,3,5,7 9,11,13,15 17,19,21,23 25,27,29,31)   # their SMT siblings, for B2_AB_PAR
 mark() {
   local c clocks=()
   for c in 0 2 8 16 24; do clocks+=$(( $(</sys/devices/system/cpu/cpu$c/cpufreq/scaling_cur_freq) / 1000 )); done
@@ -32,9 +40,11 @@ mark() {
 if [[ -z $B2_MERGE_ONLY ]]; then
 [[ -e $OUT ]] && { echo "rerun: $OUT exists" >&2; exit 1 }
 PROFILE=${B2_PROFILE:-on}; REF_PROFILE=$(cat $REF/profile.txt 2>/dev/null || print off)
+PAR=${B2_AB_PAR:-}
+[[ -z $PAR || ( -n ${B2_AB_ONLY:-} && $PROFILE == on ) ]] || { echo "rerun: B2_AB_PAR needs B2_AB_ONLY and the profile" >&2; exit 1 }
 mkdir -p $OUT/{run,b2}; PROFILE_ID=off
 if [[ $PROFILE == on ]]; then   # restored when this script exits
-  sudo -n /usr/local/sbin/b2-bench-profile on ${(j:,:)L} $$ || exit 1
+  sudo -n /usr/local/sbin/b2-bench-profile on ${(j:,:)L}${PAR:+,${(j:,:)L2}} $$ || exit 1
   PROFILE_ID=$(cat /run/b2-bench-profile/id 2>/dev/null)
   [[ -n $PROFILE_ID ]] || { echo "rerun: the installed b2-bench-profile is older than bench/b2's (no id): reinstall it" >&2; exit 1 }
 fi
@@ -43,13 +53,13 @@ print $PROFILE_ID > $OUT/profile.txt
 cp ${ADA:?set ADA} $OUT/ada; cp ${ADA_REF:?set ADA_REF} $OUT/ada-ref
 export ADA=$OUT/ada ADA_REF=$OUT/ada-ref
 cp $REF/lane?.json $OUT/
-print "ada $(sha256sum < $ADA | cut -c1-16), adaref $(sha256sum < $ADA_REF | cut -c1-16); ref $REF" > $OUT/run.log
+print "ada $(sha256sum < $ADA | cut -c1-16), adaref $(sha256sum < $ADA_REF | cut -c1-16); ref $REF${PAR:+; rounds two at a time (B2_AB_PAR)}" > $OUT/run.log
 
 # the lanes: each of ada's jobs from REF's lanes, as mkspec.py writes it now, split into one-run jobs, one spec per
 # round and lane (OUT/run/r<round>/lane<i>.json)
-python3 -I - $H $REF $OUT/run $PROFILE <<'EOF' || exit 1
-import json, os, subprocess, sys
-h, ref, out, profile = sys.argv[1:]
+python3 -I - $H $REF $OUT/run $PROFILE "$PAR" <<'EOF' || exit 1
+import json, os, shutil, subprocess, sys
+h, ref, out, profile, par = sys.argv[1:]
 def mk(binary, name, runs, docs):
     env = os.environ | {"ADA": binary}
     jobs = json.loads(subprocess.check_output([sys.executable, "-I", f"{h}/mkspec.py", str(runs), docs, "ada"], env=env))
@@ -74,6 +84,11 @@ for r in range(rounds[0]):
             lanes[i].append(a if r % 2 == 0 else b); lanes[i + 2].append(b if r % 2 == 0 else a)
         else:                 # in turn on ada's lanes, the order flipping each round
             lanes[i] += [a, b] if r % 2 == 0 else [b, a]
+    if par and r % 2 == 1:   # beside the round before: the jobs reversed, their documents copied from par/corpus
+        os.makedirs(f"{out}/par/corpus", exist_ok=True)
+        for j, _ in new:
+            shutil.copy(f"{j['cwd']}/{j['file']}", f"{out}/par/corpus/")
+        lanes = [[j | {"cwd": f"{out}/par/corpus"} for j in reversed(l)] for l in lanes]
     os.makedirs(f"{out}/r{r + 1}", exist_ok=True)
     for i, l in enumerate(lanes):
         if l:
@@ -81,15 +96,20 @@ for r in range(rounds[0]):
     print(f"round {r + 1}:", "; ".join(f"lane {i}: " + " ".join(j["name"] for j in l) for i, l in enumerate(lanes) if l))
 EOF
 mark "b2 start"
-for rd in $OUT/run/r<->(n); do
-  pids=()
-  for i in 0 1 2 3; do
-    [[ -s $rd/lane$i.json ]] || continue
-    taskset -c $L[i+1] $B2 run $rd/lane$i.json $rd/lane$i.jsonl > $rd/lane$i.log 2>&1 &
-    pids+=$!
+rounds=($OUT/run/r<->(n)); step=${PAR:+2}; step=${step:-1}
+for (( k = 1; k <= $#rounds; k += step )); do
+  pids=(); names=()
+  for (( j = 0; j < step && k + j <= $#rounds; j++ )); do
+    rd=$rounds[k+j]; names+=${rd:t}
+    for i in 0 1 2 3; do
+      [[ -s $rd/lane$i.json ]] || continue
+      cpus=$L[i+1]; (( j )) && cpus=$L2[i+1]
+      taskset -c $cpus $B2 run $rd/lane$i.json $rd/lane$i.jsonl > $rd/lane$i.log 2>&1 &
+      pids+=$!
+    done
   done
   rc=0; for p in $pids; do wait $p || rc=1; done
-  mark "b2 ${rd:t} rc=$rc"
+  mark "b2 ${(j:+:)names} rc=$rc"
 done
 # each record tagged with its round, for abcmp.py's paired ratios
 python3 -I - $OUT/run/r<->/lane?.jsonl > $OUT/run/new.jsonl <<'EOF'
