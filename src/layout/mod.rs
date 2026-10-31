@@ -140,15 +140,30 @@ impl LayoutParams {
     }
 }
 
-/// A styled slice of [`Layout::text`].
+/// A styled slice of [`Layout::text`], from `start` to where the next span starts (the text's end
+/// for the last): spans cover the text in order, without gaps, so they don't keep their ends
+/// (MEM-010: 20 bytes to 12, XL's TUI held 212k of them).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Span {
     pub start: u32,
-    pub end: u32,
+    /// The [`LinkId`], or [`NO_LINK`].
+    link: u32,
     pub width: u16,
     pub key: StyleKey,
     pub inline: InlineStyle,
-    pub link: Option<LinkId>,
+}
+
+/// [`Span`]'s link for none: an `Option<LinkId>` took 8 of its bytes.
+const NO_LINK: u32 = u32::MAX;
+
+// MEM-010: XL's layout holds 212k spans and 39k rows, so a field added here is a regression to
+// measure first.
+const _: () = assert!(size_of::<Span>() == 12 && size_of::<Row>() == 32);
+
+impl Span {
+    pub fn link(&self) -> Option<LinkId> {
+        (self.link != NO_LINK).then_some(self.link)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -175,6 +190,12 @@ pub enum RowKind {
         block: CodeId,
         x: u16,
     },
+    /// A [`RowKind::Text`] row of a table whose columns `from..to` take the alternate table-row
+    /// background: in the kind, which had the room, rather than a field of [`Row`]'s (MEM-010).
+    Striped {
+        from: u16,
+        to: u16,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -184,8 +205,16 @@ pub struct Row {
     /// The source lines this row renders; `LineRange::NONE` for decoration.
     pub src: LineRange,
     pub kind: RowKind,
+}
+
+impl Row {
     /// Columns painted with the alternate table-row background.
-    pub stripe: Option<Range<u16>>,
+    pub fn stripe(&self) -> Option<Range<u16>> {
+        match self.kind {
+            RowKind::Striped { from, to } => Some(from..to),
+            _ => None,
+        }
+    }
 }
 
 /// A link's cells on one row, for keyboard focus (and a future mouse).
@@ -362,6 +391,9 @@ pub struct Layout {
     /// The arena all spans point into.
     pub text: String,
     pub spans: Vec<Span>,
+    /// Where the last span ends: the text's length once laid out. While a line is laid out, the
+    /// text can run ahead of it ([`Builder::emit_line`] copies a run of segs before their spans).
+    spans_end: u32,
     pub rows: Vec<Row>,
     /// Top-level block index → its rows.
     pub block_rows: Vec<Range<u32>>,
@@ -390,6 +422,7 @@ impl Layout {
             margin: 0,
             text: String::new(),
             spans: Vec::new(),
+            spans_end: 0,
             rows: Vec::new(),
             block_rows: Vec::new(),
             anchor_rows: Vec::new(),
@@ -408,9 +441,17 @@ impl Layout {
     }
 
     pub fn spans<'a>(&'a self, row: &Row) -> impl Iterator<Item = (&'a str, &'a Span)> + 'a {
-        self.spans[row.spans.start as usize..row.spans.end as usize]
+        let (first, last) = (row.spans.start as usize, row.spans.end as usize);
+        self.spans[first..last]
             .iter()
-            .map(|s| (&self.text[s.start as usize..s.end as usize], s))
+            .enumerate()
+            .map(move |(k, s)| {
+                let end = self
+                    .spans
+                    .get(first + k + 1)
+                    .map_or(self.text.len(), |next| next.start as usize);
+                (&self.text[s.start as usize..end], s)
+            })
     }
 
     /// A row's text, without styles.
@@ -561,6 +602,7 @@ fn relayout_lines(
             margin,
             text,
             spans,
+            spans_end: 0,
             rows,
             block_rows,
             anchor_rows,
@@ -597,6 +639,11 @@ fn relayout_lines(
         b.block(block);
         b.out.block_rows.push(first..b.out.row_count());
     }
+    debug_assert_eq!(
+        b.out.spans_end as usize,
+        b.out.text.len(),
+        "text past the last span"
+    );
     b.out
 }
 
@@ -689,8 +736,8 @@ fn push_padded(out: &mut String, text: &str, pads: bool) {
     }
 }
 
-/// A span over `start..end` of [`Layout::text`], already there; merged into the row's last span
-/// when that one has the same look and ends where it starts.
+/// A span over `start..end` of [`Layout::text`], already there, which starts where the last span
+/// ends; merged into the row's last span when that one has the same look.
 fn push_range(
     out: &mut Layout,
     row_start: u32,
@@ -700,23 +747,24 @@ fn push_range(
     look: Look,
 ) {
     let (key, inline, link) = look;
+    let link = link.unwrap_or(NO_LINK);
     *col = col.saturating_add(width);
+    // the spans keep only their starts (MEM-010), so a gap would show in the span before it
+    debug_assert_eq!(start, out.spans_end, "a gap between spans");
+    out.spans_end = end;
     if out.spans.len() as u32 > row_start
         && let Some(last) = out.spans.last_mut()
         && (last.key, last.inline, last.link) == (key, inline, link)
-        && last.end == start
     {
-        last.end = end;
         last.width = last.width.saturating_add(width);
         return;
     }
     out.spans.push(Span {
         start,
-        end,
+        link,
         width,
         key,
         inline,
-        link,
     });
 }
 
@@ -788,11 +836,20 @@ impl Builder<'_> {
     }
 
     fn end_row(&mut self, src: LineRange, kind: RowKind) {
+        let kind = match (self.stripe.take(), kind) {
+            (Some(cols), RowKind::Text) => RowKind::Striped {
+                from: cols.start,
+                to: cols.end,
+            },
+            (stripe, kind) => {
+                debug_assert!(stripe.is_none(), "a stripe on a {kind:?} row");
+                kind
+            }
+        };
         self.out.rows.push(Row {
             spans: self.row_start..self.out.spans.len() as u32,
             src,
             kind,
-            stripe: self.stripe.take(),
         });
     }
 

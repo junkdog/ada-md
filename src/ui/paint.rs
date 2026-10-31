@@ -16,7 +16,8 @@ use crate::theme::{StyleKey, Theme};
 /// A laid-out span's style.
 pub fn span_style(theme: &Theme, span: &Span) -> Style {
     // Images and footnote references have their own link-like styles.
-    let link = span.link.is_some() && !matches!(span.key, StyleKey::Image | StyleKey::FootnoteRef);
+    let link =
+        span.link().is_some() && !matches!(span.key, StyleKey::Image | StyleKey::FootnoteRef);
     theme.span_style(span.key, span.inline, link)
 }
 
@@ -70,7 +71,7 @@ impl Painter<'_> {
             return;
         }
         let RowKind::Code { block, line, from } = row.kind else {
-            let Some(stripe) = &row.stripe else {
+            let Some(stripe) = &row.stripe() else {
                 for (text, span) in self.layout.spans(row) {
                     emit(text, self.style(span));
                 }
@@ -187,7 +188,7 @@ impl Painter<'_> {
     /// A span's style, with broken links styled as such.
     fn style(&self, span: &Span) -> Style {
         let broken = span
-            .link
+            .link()
             .and_then(|l| self.links.get(l as usize))
             .is_some_and(|s| matches!(s, LinkState::Broken(_)));
         if broken {

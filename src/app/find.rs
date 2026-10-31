@@ -143,7 +143,10 @@ fn link_entries(doc: &Document) -> Vec<OutlineEntry<'_>> {
         if !hit.joined {
             text.push(' ');
         }
-        for (t, _) in layout.spans(row).filter(|(_, s)| s.link == Some(hit.link)) {
+        for (t, _) in layout
+            .spans(row)
+            .filter(|(_, s)| s.link() == Some(hit.link))
+        {
             text.push_str(t);
         }
     }

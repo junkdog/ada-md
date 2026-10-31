@@ -280,7 +280,8 @@ pub(crate) fn check_invariants(l: &Layout, footnote_block: Option<usize>, what: 
             );
         }
         if matches!(row.kind, RowKind::Code { .. })
-            || (row.kind == RowKind::Text && !text.trim().is_empty())
+            || (matches!(row.kind, RowKind::Text | RowKind::Striped { .. })
+                && !text.trim().is_empty())
         {
             assert!(!row.src.is_none(), "{what} row {i} has no source: {text:?}");
         }
@@ -451,7 +452,7 @@ fn alternate_rows_are_striped() {
             .iter()
             .enumerate()
             .filter_map(|(i, r)| {
-                let cols = r.stripe.clone()?;
+                let cols = r.stripe()?;
                 let text: String = l
                     .row_text(i)
                     .chars()
