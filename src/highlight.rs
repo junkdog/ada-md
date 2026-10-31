@@ -26,9 +26,7 @@ use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet
 
 use crate::app::{Computed, Msg};
 use crate::doc::{CodeBlock, CodeId};
-use crate::json;
 use crate::layout::expand_tabs;
-use crate::logs::{self, Kind, Span};
 use crate::make;
 use ada_parse::Lang;
 
@@ -585,21 +583,6 @@ fn make_grammar(lang: Lang) -> Option<make::Grammar> {
     }
 }
 
-/// The theme's rule for each of a lexer's kinds, as syntect would pick it for the kind's
-/// scopes under `base`.
-fn kind_rules<const N: usize>(theme: &SyntaxTheme, base: &str, scopes: [&str; N]) -> [Rule; N] {
-    let highlighter = SynHighlighter::new(&theme.theme);
-    let base = Scope::new(base).expect("scope");
-    scopes.map(|scopes| {
-        let mut stack = vec![base];
-        stack.extend(scopes.split(' ').map(|s| Scope::new(s).expect("scope")));
-        highlighter
-            .style_mod_for_stack(&stack)
-            .foreground
-            .map_or(Rule(Rule::NONE), Rule::decode)
-    })
-}
-
 /// A line's runs from its spans, `(start, end, rule)` in order, as a line of `out`; empty when
 /// no span has a rule.
 fn span_runs(len: usize, spans: impl Iterator<Item = (u32, u32, Rule)>, out: &mut LineRuns) {
@@ -618,48 +601,6 @@ fn span_runs(len: usize, spans: impl Iterator<Item = (u32, u32, Rule)>, out: &mu
         out.push(len as u32, Rule(Rule::NONE));
     }
     out.end();
-}
-
-/// The theme's rule for each log [`Kind`].
-pub struct LogRules([Rule; Kind::ALL.len()]);
-
-impl LogRules {
-    fn new(theme: &SyntaxTheme) -> Self {
-        Self(kind_rules(theme, "text.log", Kind::ALL.map(Kind::scopes)))
-    }
-
-    /// Highlight one log line into `out`; `spans` is scratch space.
-    fn line(&self, line: &str, spans: &mut Vec<Span>, out: &mut LineRuns) {
-        let line = expand_tabs(line);
-        logs::tokens(&line, spans);
-        let rule = |s: &Span| (s.start, s.end, self.0[s.kind as usize]);
-        span_runs(line.len(), spans.iter().map(rule), out);
-    }
-}
-
-/// The theme's rule for each JSON [`json::Kind`].
-pub struct JsonRules([Rule; json::Kind::ALL.len()]);
-
-impl JsonRules {
-    fn new(theme: &SyntaxTheme) -> Self {
-        let scopes = json::Kind::ALL.map(json::Kind::scopes);
-        Self(kind_rules(theme, "source.json", scopes))
-    }
-
-    /// Highlight one JSON line into `out`, after one that left a `/* */` comment open or not;
-    /// `spans` is scratch space.
-    fn line(
-        &self,
-        line: &str,
-        comment: &mut bool,
-        spans: &mut Vec<json::Span>,
-        out: &mut LineRuns,
-    ) {
-        let line = expand_tabs(line);
-        json::tokens(&line, comment, spans);
-        let rule = |s: &json::Span| (s.start, s.end, self.0[s.kind as usize]);
-        span_runs(line.len(), spans.iter().map(rule), out);
-    }
 }
 
 /// The theme's rule for each kind of an ada-parse language (ADR-40), as syntect would pick it
@@ -805,16 +746,14 @@ fn stack_rule(base: Scope, stack: &[make::Sc], highlighter: &SynHighlighter) -> 
 /// syntax's state carries from line to line and can't move between threads, so none streams.
 pub enum Lexer {
     Plain,
-    Log(LogRules),
-    Json(JsonRules),
-    /// An ada-parse language whose lines don't depend on each other (`Lang::line_by_line`).
+    /// An ada-parse language whose lines don't depend on each other (`Lang::line_by_line`),
+    /// or JSON.
     Parse(ParseRules),
 }
 
 impl Lexer {
     /// Whether a file in `lang`, or plain text with none, has a lexer.
     pub fn exists(lang: Option<&str>) -> bool {
-        let streams = |l: Lang| matches!(l, Lang::Log | Lang::Json) || l.line_by_line();
         lang.is_none_or(|l| is_plain(l) || own(l).is_some_and(streams))
     }
 
@@ -825,45 +764,31 @@ impl Lexer {
             None => Some(Lexer::Plain),
             Some(lang) if is_plain(lang) => Some(Lexer::Plain),
             Some(lang) => match own(lang)? {
-                Lang::Log => Some(Lexer::Log(LogRules::new(theme))),
-                Lang::Json => Some(Lexer::Json(JsonRules::new(theme))),
-                l if l.line_by_line() => Some(Lexer::Parse(ParseRules::new(l, theme))),
+                l if streams(l) => Some(Lexer::Parse(ParseRules::new(l, theme))),
                 _ => None,
             },
         }
     }
 
-    /// Highlight `code`'s lines as [`highlight`] would, after a line that left a `/* */`
-    /// comment open or not. Also returns whether its last line leaves one open. `None` when the
-    /// block is plain.
+    /// Highlight `code`'s lines as [`highlight`] would, after the lines before it left
+    /// `state` (JSON's open `/* */`; a line-by-line language's is always the default). Also
+    /// returns the state its last line leaves. `None` when the block is plain.
     pub fn highlight(
         &self,
         code: &CodeBlock,
         theme: &SyntaxTheme,
-        mut comment: bool,
-    ) -> (Option<CodeSpans>, bool) {
+        mut state: ada_parse::State,
+    ) -> (Option<CodeSpans>, ada_parse::State) {
         let Some(key) = key(code) else {
-            return (None, comment);
+            return (None, state);
         };
         let mut lines = LineRuns::default();
         match self {
-            Lexer::Plain => return (None, comment),
-            Lexer::Log(rules) => {
-                let mut spans = Vec::new();
-                for l in code.lines() {
-                    rules.line(l, &mut spans, &mut lines);
-                }
-            }
-            Lexer::Json(rules) => {
-                let mut spans = Vec::new();
-                for l in code.lines() {
-                    rules.line(l, &mut comment, &mut spans, &mut lines);
-                }
-            }
+            Lexer::Plain => return (None, state),
             Lexer::Parse(rules) => {
                 let mut spans = Vec::new();
                 for l in code.lines() {
-                    rules.line(l, &mut ada_parse::State::default(), &mut spans, &mut lines);
+                    rules.line(l, &mut state, &mut spans, &mut lines);
                 }
             }
         }
@@ -873,16 +798,16 @@ impl Lexer {
             partial: false,
             lines: lines.shrink(),
         };
-        (Some(spans), comment)
+        (Some(spans), state)
     }
 
-    /// Whether `text`'s lines leave a JSON comment open, after a line that left one open or
-    /// not, as [`Lexer::highlight`] would find. A comment opens only on a line with `/*` in it
-    /// and closes only on one with `*/`, so only the next such line is scanned, and the text
-    /// between is skipped.
-    pub fn comment_after(&self, text: &str, mut comment: bool) -> bool {
-        if !matches!(self, Lexer::Json(_)) {
-            return false;
+    /// The state `text`'s lines leave, after the lines before them left `state`, as
+    /// [`Lexer::highlight`] would find: only JSON's carries anything, a `/* */` comment open.
+    /// A comment opens only on a line with `/*` in it and closes only on one with `*/`, so
+    /// only the next such line is scanned, and the text between is skipped.
+    pub fn state_after(&self, text: &str, mut state: ada_parse::State) -> ada_parse::State {
+        if !matches!(self, Lexer::Parse(r) if r.lang == Lang::Json) {
+            return state;
         }
         let mut spans = Vec::new();
         let mut rest = text;
@@ -903,24 +828,28 @@ impl Lexer {
             }
             None
         };
-        while let Some(at) = mark(rest, comment) {
+        // JSON's state is a comment open, or the default
+        while let Some(at) = mark(rest, state != ada_parse::State::default()) {
             let start = rest[..at].rfind('\n').map_or(0, |i| i + 1);
             let end = rest[at..].find('\n').map_or(rest.len(), |i| at + i);
             let line = &rest[start..end];
             let line = line.strip_suffix('\r').unwrap_or(line);
-            json::tokens(&expand_tabs(line), &mut comment, &mut spans);
+            ada_parse::lex(Lang::Json, &expand_tabs(line), &mut state, &mut spans);
             rest = rest.get(end + 1..).unwrap_or_default();
         }
-        comment
+        state
     }
+}
+
+/// Whether a print streams `lang` a piece at a time: its lines don't depend on each other, or
+/// it is JSON, whose one state (a `/* */` open) the stream carries.
+fn streams(lang: Lang) -> bool {
+    lang == Lang::Json || lang.line_by_line()
 }
 
 /// What highlights a block's lines.
 enum Engine {
     Syntect(LineState),
-    Log(LogRules, Vec<Span>),
-    /// Whether a `/* */` comment is open.
-    Json(JsonRules, Vec<json::Span>, bool),
     Make(MakeRules, Box<make::State>, Vec<make::Span>),
     Parse(ParseRules, ada_parse::State, Vec<ada_parse::Span>),
 }
@@ -966,8 +895,6 @@ impl<'a> Highlighter<'a> {
     pub fn new(key: u64, lang: &str, text: &'a str, theme: &'a SyntaxTheme) -> Self {
         let highlighter = SynHighlighter::new(&theme.theme);
         let state = find_syntax(lang).map(|syntax| match syntax {
-            Syntax::Own(Lang::Log) => Engine::Log(LogRules::new(theme), Vec::new()),
-            Syntax::Own(Lang::Json) => Engine::Json(JsonRules::new(theme), Vec::new(), false),
             Syntax::Own(lang @ (Lang::Makefile | Lang::Bash)) => {
                 let grammar = make_grammar(lang).expect("a make grammar");
                 let state = Box::new(make::State::new(grammar));
@@ -1005,16 +932,6 @@ impl<'a> Highlighter<'a> {
                 Engine::Syntect(state) => {
                     let done = state.line(line, &self.highlighter, &mut self.buf, out);
                     done.is_some()
-                }
-                Engine::Log(rules, spans) => {
-                    LINES.fetch_add(1, Ordering::Relaxed);
-                    rules.line(line, spans, out);
-                    true
-                }
-                Engine::Json(rules, spans, comment) => {
-                    LINES.fetch_add(1, Ordering::Relaxed);
-                    rules.line(line, comment, spans, out);
-                    true
                 }
                 Engine::Make(rules, state, spans) => {
                     LINES.fetch_add(1, Ordering::Relaxed);
@@ -1091,10 +1008,10 @@ pub fn highlight_parallel(key: u64, lang: &str, text: &str, theme: &SyntaxTheme)
         return highlight(key, lang, text, theme);
     }
     match syntax {
-        Syntax::Own(Lang::Log) => highlight_log_on(key, text, theme, threads),
         // a `/* */` comment carries over lines: rare in JSON this big, and fast on one thread
         Syntax::Own(Lang::Json) if text.contains("/*") => highlight(key, lang, text, theme),
-        Syntax::Own(Lang::Json) => highlight_json_on(key, text, theme, threads),
+        // without one, its lines don't depend on each other
+        Syntax::Own(Lang::Json) => highlight_parse_on(key, Lang::Json, text, theme, threads),
         // their lines depend on the ones before, and one thread does ~100 MB/s
         Syntax::Own(Lang::Makefile | Lang::Bash) => highlight(key, lang, text, theme),
         Syntax::Own(own) if own.line_by_line() => {
@@ -1105,23 +1022,8 @@ pub fn highlight_parallel(key: u64, lang: &str, text: &str, theme: &SyntaxTheme)
     }
 }
 
-/// A log on `threads` threads: its lines don't depend on each other.
-fn highlight_log_on(key: u64, text: &str, theme: &SyntaxTheme, threads: usize) -> CodeSpans {
-    let rules = LogRules::new(theme);
-    lines_on(key, text, theme, threads, &|line, scratch, out| {
-        rules.line(line, &mut scratch.log, out);
-    })
-}
-
-/// JSON with no `/* */` comment on `threads` threads: its lines don't depend on each other.
-fn highlight_json_on(key: u64, text: &str, theme: &SyntaxTheme, threads: usize) -> CodeSpans {
-    let rules = JsonRules::new(theme);
-    lines_on(key, text, theme, threads, &|line, scratch, out| {
-        rules.line(line, &mut false, &mut scratch.json, out);
-    })
-}
-
-/// An ada-parse language read line by line (`Lang::line_by_line`) on `threads` threads.
+/// An ada-parse language read line by line (`Lang::line_by_line`), or JSON with no `/* */`,
+/// on `threads` threads.
 fn highlight_parse_on(
     key: u64,
     lang: Lang,
@@ -1136,11 +1038,9 @@ fn highlight_parse_on(
     })
 }
 
-/// A thread's scratch space for [`lines_on`]: the spans of a line, for each lexer.
+/// A thread's scratch space for [`lines_on`]: the spans of a line.
 #[derive(Default)]
 struct Scratch {
-    log: Vec<Span>,
-    json: Vec<json::Span>,
     parse: Vec<ada_parse::Span>,
 }
 
@@ -2706,9 +2606,7 @@ mod tests {
             assert!(one.line_count() > 200, "{lang}: highlighted at all");
             for threads in 2..=5 {
                 let many = match find_syntax(lang).unwrap() {
-                    Syntax::Own(Lang::Log) => highlight_log_on(1, &text, &syntax, threads),
-                    Syntax::Own(Lang::Json) => highlight_json_on(1, &text, &syntax, threads),
-                    Syntax::Own(l) if l.line_by_line() => {
+                    Syntax::Own(l) if streams(l) => {
                         highlight_parse_on(1, l, &text, &syntax, threads)
                     }
                     Syntax::Own(_) => panic!("{lang}: on one thread"),

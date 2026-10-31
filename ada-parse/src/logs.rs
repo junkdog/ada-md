@@ -7,6 +7,7 @@
 //! scopes bat's grammar gave the same text where it had one, so `[syntax]` rules written for it
 //! still apply.
 
+use crate::Span;
 use anpa::combinators::{
     bind, many, no_separator, not_empty, or, or_diff, peek, right, succeed, times,
 };
@@ -72,7 +73,7 @@ impl Kind {
     ];
 
     /// The scopes under `text.log`, innermost last.
-    pub fn scopes(self) -> &'static str {
+    pub const fn scopes(self) -> &'static str {
         match self {
             Kind::Date => {
                 "meta.date.log meta.number.integer.decimal.log constant.numeric.value.log"
@@ -104,13 +105,16 @@ impl Kind {
     }
 }
 
-/// Bytes `start..end` of a line are a `kind`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Span {
-    pub start: u32,
-    pub end: u32,
-    pub kind: Kind,
-}
+/// Each kind's scopes, by its number, for [`crate::Lang::kinds`].
+pub const KINDS: [&str; Kind::ALL.len()] = {
+    let mut out = [""; Kind::ALL.len()];
+    let mut i = 0;
+    while i < out.len() {
+        out[i] = Kind::ALL[i].scopes();
+        i += 1;
+    }
+    out
+};
 
 /// The parsers' state: the line, the spans found so far, the quotes known not to close, and
 /// where the runs that scanners failed on end.
@@ -164,7 +168,7 @@ fn push(s: &mut State, start: usize, kind: Kind) {
         s.user_state.spans.push(Span {
             start: start as u32,
             end: end as u32,
-            kind,
+            kind: kind as u16,
         });
     }
 }
@@ -902,7 +906,12 @@ mod tests {
         assert!(last as usize <= line.len());
         spans
             .iter()
-            .map(|s| (&line[s.start as usize..s.end as usize], s.kind))
+            .map(|s| {
+                (
+                    &line[s.start as usize..s.end as usize],
+                    Kind::ALL[usize::from(s.kind)],
+                )
+            })
             .collect()
     }
 

@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use ada_parse::{Lang, State, lex};
 
 const LANGS: &[(&str, Lang)] = &[
+    ("json", Lang::Json),
     ("diff", Lang::Diff),
     ("ini", Lang::Ini),
     ("toml", Lang::Toml),

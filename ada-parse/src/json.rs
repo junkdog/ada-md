@@ -8,6 +8,7 @@
 //! `[syntax]` rules written for it still apply. What the grammar marks as invalid by where it
 //! stands (`foo`, `NaN`, a missing `,`) is left plain; an unknown escape is still invalid.
 
+use crate::Span;
 use anpa::core::parse;
 use anpa::findbyte::{eq, find_byte};
 
@@ -74,7 +75,7 @@ impl Kind {
     ];
 
     /// The scopes under `source.json`, innermost last.
-    pub fn scopes(self) -> &'static str {
+    pub const fn scopes(self) -> &'static str {
         match self {
             Kind::KeyBegin => {
                 "meta.mapping.key.json string.quoted.double.json punctuation.definition.string.begin.json"
@@ -119,13 +120,16 @@ impl Kind {
     }
 }
 
-/// Bytes `start..end` of a line are a `kind`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Span {
-    pub start: u32,
-    pub end: u32,
-    pub kind: Kind,
-}
+/// Each kind's scopes, by its number, for [`crate::Lang::kinds`].
+pub const KINDS: [&str; Kind::ALL.len()] = {
+    let mut out = [""; Kind::ALL.len()];
+    let mut i = 0;
+    while i < out.len() {
+        out[i] = Kind::ALL[i].scopes();
+        i += 1;
+    }
+    out
+};
 
 /// The spans of one line, in order, into `spans` (cleared first). `comment` says whether a
 /// `/* */` comment is open at the line's start, and is left saying whether one is at its end.
@@ -136,7 +140,7 @@ pub fn tokens(line: &str, comment: &mut bool, spans: &mut Vec<Span>) {
         spans.push(Span {
             start: start as u32,
             end: end as u32,
-            kind,
+            kind: kind as u16,
         });
     };
     let mut i = 0;
@@ -363,11 +367,12 @@ mod tests {
                 last = s.end;
             }
             assert!(last as usize <= line.len());
-            out.extend(
-                spans
-                    .iter()
-                    .map(|s| (&line[s.start as usize..s.end as usize], s.kind)),
-            );
+            out.extend(spans.iter().map(|s| {
+                (
+                    &line[s.start as usize..s.end as usize],
+                    Kind::ALL[usize::from(s.kind)],
+                )
+            }));
         }
         out
     }

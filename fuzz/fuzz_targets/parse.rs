@@ -1,10 +1,11 @@
 //! ADR-40: ada-parse's lexers against what they replaced, syntect on bat's grammars, as the
 //! `make` target checks Makefiles (`lexer_parity`). The first byte picks the language, of the
-//! ones whose lexers give bat's scopes exactly: Diff, INI, TOML, XML, YAML, Dockerfile, Java
+//! ones whose lexers give bat's scopes exactly: Diff, INI, TOML, XML, Dockerfile, Java
 //! properties, `.env`, and Git's ignore, attributes, mailmap and link files. Each kind's scopes must be
 //! syntect's stack on every byte of every line, as long as the lexer's state holds its whole
 //! stack and each stack of scopes has its own kind (nested deeper than either, the lexer keeps
-//! the top and the innermost scopes).
+//! the top and the innermost scopes). YAML's scanner keeps only the innermost flow collection's
+//! meta scope, by design (ADR-40, speed first): it is held by `tokens` and by `examples/parity.rs`.
 //!
 //! Lines are cut to 256 bytes, which keeps Oniguruma's backtracking short.
 //!
@@ -23,12 +24,11 @@ use libfuzzer_sys::fuzz_target;
 const LINE: usize = 256;
 
 /// The languages whose kinds carry bat's scopes exactly.
-const EXACT: [Lang; 12] = [
+const EXACT: [Lang; 11] = [
     Lang::Diff,
     Lang::Ini,
     Lang::Toml,
     Lang::Xml,
-    Lang::Yaml,
     Lang::Dockerfile,
     Lang::Properties,
     Lang::DotEnv,

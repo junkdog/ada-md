@@ -249,8 +249,8 @@ struct Piece {
     /// Whether it starts or ends the file, and so draws the top or bottom row of the block.
     first: bool,
     last: bool,
-    /// Whether it starts inside a JSON comment.
-    comment: bool,
+    /// The lexer's state at its start: JSON's `/* */` left open, else the default.
+    state: ada_parse::State,
 }
 
 /// What every piece is painted with.
@@ -271,7 +271,7 @@ impl Paint<'_> {
         let BlockKind::Code(code) = &doc.blocks[0].kind else {
             unreachable!("a piece is one code block");
         };
-        let (spans, _) = self.lexer.highlight(code, &self.syntax, piece.comment);
+        let (spans, _) = self.lexer.highlight(code, &self.syntax, piece.state);
         let mut highlights = Highlights::default();
         if let Some(spans) = spans {
             highlights.insert(Arc::new(spans));
@@ -435,7 +435,7 @@ fn read_pieces(
     jobs: &SyncSender<Piece>,
 ) -> io::Result<()> {
     let send = |piece: Piece| tokens.recv().is_ok() && jobs.send(piece).is_ok();
-    let (mut index, mut line, mut comment) = (0, 1, false);
+    let (mut index, mut line, mut state) = (0, 1, ada_parse::State::default());
     let mut piece = |text: &[u8], last: bool| {
         let text: Arc<str> = match std::str::from_utf8(text) {
             Ok(text) => Arc::from(text),
@@ -446,12 +446,12 @@ fn read_pieces(
             first_line: line,
             first: index == 0,
             last,
-            comment,
+            state,
             text,
         };
         index += 1;
         line += p.text.bytes().filter(|&b| b == b'\n').count() as u32;
-        comment = lexer.comment_after(&p.text, comment);
+        state = lexer.state_after(&p.text, state);
         p
     };
     let mut pending: Option<Piece> = None;

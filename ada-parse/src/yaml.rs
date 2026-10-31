@@ -478,7 +478,7 @@ fn plain_in_start(l: &Line, from: usize) -> Option<M> {
 
 /// Where a plain scalar ends, out of flow collections: `\s*$`, `\s+\#`, or `\s*:(\s|$)`
 /// after `p`.
-fn out_end_at(l: &Line, p: usize) -> bool {
+pub(crate) fn out_end_at(l: &Line, p: usize) -> bool {
     let q = ws(l, p);
     q == l.end()
         || (q > p && l.at(q) == Some(b'#'))
@@ -486,7 +486,7 @@ fn out_end_at(l: &Line, p: usize) -> bool {
 }
 
 /// And in them: also `\s*:[\[\]{},]` and `\s*[\[\]{},]`.
-fn in_end_at(l: &Line, p: usize) -> bool {
+pub(crate) fn in_end_at(l: &Line, p: usize) -> bool {
     out_end_at(l, p) || {
         let q = ws(l, p);
         l.is(q, is_flow) || (l.at(q) == Some(b':') && l.is(q + 1, is_flow))
@@ -689,7 +689,7 @@ fn comment_ahead(l: &Line, from: usize) -> Option<M> {
 }
 
 /// `(YAML)[ \t]+(\d+\.\d+)`
-fn directive_yaml(l: &Line, from: usize) -> Option<M> {
+pub(crate) fn directive_yaml(l: &Line, from: usize) -> Option<M> {
     let digits = |p: usize| l.run(p, |c| c.is_ascii_digit());
     let mut at = from;
     while let Some(m) = l.lit(at, b"YAML") {
@@ -742,7 +742,7 @@ fn handles(l: &Line, p: usize) -> Option<(usize, Option<usize>)> {
 }
 
 /// `(TAG)(?:[ \t]+(!(?:[0-9A-Za-z\-]*!)?)(?:[ \t]+(URI))?)?`
-fn directive_tag(l: &Line, from: usize) -> Option<M> {
+pub(crate) fn directive_tag(l: &Line, from: usize) -> Option<M> {
     let k = l.lit(from, b"TAG")?.s as usize;
     let mut m = M::new(k, k + 3).g(1, k, k + 3);
     let h = l.run(k + 3, is_blank);
@@ -774,7 +774,7 @@ fn directive_tag(l: &Line, from: usize) -> Option<M> {
 }
 
 /// `(\w+)(?:[ \t]+(\w+)(?:[ \t]+(\w+))?)?`
-fn directive_reserved(l: &Line, from: usize) -> Option<M> {
+pub(crate) fn directive_reserved(l: &Line, from: usize) -> Option<M> {
     let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c >= 0x80;
     let hay = l.b.get(from..)?;
     let k = from + hay.iter().position(|&c| word(c))?;
@@ -911,7 +911,7 @@ fn alias(l: &Line, from: usize) -> Option<M> {
 const TAG: &[u8] = b"-#;/?:@&=+$_.~*'()";
 
 /// `(?:!<URI+>|HANDLE(?:%HH|TAG)+|!)(?=\ |\t|$)`
-fn tag_handle(l: &Line, from: usize) -> Option<M> {
+pub(crate) fn tag_handle(l: &Line, from: usize) -> Option<M> {
     let ahead = |e: usize| l.is(e, is_blank) || l.eol(e);
     let mut at = from;
     while let Some(p) = first(l, at, b'!') {
@@ -1013,7 +1013,7 @@ fn run_of(l: &Line, p: usize, min: usize, set: impl Fn(u8) -> bool) -> Option<us
 /// blanks and zone can end a match early to meet it; elsewhere a shorter end is followed by
 /// a digit, a letter, `_` or `.`, which the look-ahead never takes, so the greedy end is the
 /// only one.
-fn implicit_at(l: &Line, p: usize, end: fn(&Line, usize) -> bool) -> Option<M> {
+pub(crate) fn implicit_at(l: &Line, p: usize, end: fn(&Line, usize) -> bool) -> Option<M> {
     let ok = |e: usize| end(l, e);
     let words = |words: &[&[u8]]| {
         words

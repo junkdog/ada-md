@@ -268,13 +268,15 @@ impl Lang {
         }
     }
 
-    /// The scopes under [`Lang::base`] each kind of a language read line by line carries,
-    /// space-separated, by [`crate::Span::kind`]: a fixed set. Empty for the others, whose
-    /// kinds are the stacks of scopes met so far ([`Lang::scopes`]).
+    /// The scopes under [`Lang::base`] each kind of a scanned language carries, space-separated,
+    /// by [`crate::Span::kind`]: a fixed set. Empty for those on the machine, whose kinds are
+    /// the stacks of scopes met so far ([`Lang::scopes`]).
     pub fn kinds(self) -> &'static [&'static str] {
         match self {
             Lang::Diff => crate::diff::KINDS,
             Lang::Ini => crate::ini::KINDS,
+            Lang::Json => &crate::json::KINDS,
+            Lang::Log => &crate::logs::KINDS,
             _ => &[],
         }
     }
@@ -283,8 +285,8 @@ impl Lang {
     /// first; none for a kind no span has had.
     pub fn scopes(self, kind: u16) -> Vec<&'static str> {
         match self {
-            #[cfg(feature = "toml-scan")]
             Lang::Toml => crate::toml_scan::scopes(kind),
+            Lang::Yaml => crate::yaml_scan::scopes(kind),
             _ if self.grammar().is_some() => {
                 self.grammar().map_or_else(Vec::new, |g| g.scopes(kind))
             }
@@ -298,12 +300,7 @@ impl Lang {
     /// The context grammar it runs on, for the languages not read line by line.
     pub(crate) fn grammar(self) -> Option<&'static crate::machine::Grammar> {
         Some(match self {
-            #[cfg(not(feature = "toml-scan"))]
-            Lang::Toml => &crate::toml::GRAMMAR,
-            #[cfg(feature = "toml-scan")]
-            Lang::Toml => return None,
             Lang::Xml => &crate::xml::GRAMMAR,
-            Lang::Yaml => &crate::yaml::GRAMMAR,
             Lang::Dockerfile => &crate::dockerfile::GRAMMAR,
             Lang::Properties => &crate::properties::GRAMMAR,
             Lang::DotEnv => &crate::dotenv::GRAMMAR,
@@ -311,7 +308,14 @@ impl Lang {
             Lang::GitAttributes => &crate::git::ATTRIBUTES,
             Lang::GitMailmap => &crate::git::MAILMAP,
             Lang::GitLink => &crate::git::LINK,
-            Lang::Json | Lang::Log | Lang::Makefile | Lang::Bash | Lang::Diff | Lang::Ini => {
+            Lang::Json
+            | Lang::Log
+            | Lang::Makefile
+            | Lang::Bash
+            | Lang::Diff
+            | Lang::Ini
+            | Lang::Toml
+            | Lang::Yaml => {
                 return None;
             }
         })
@@ -319,13 +323,13 @@ impl Lang {
 
     /// Whether [`crate::lex`] lexes it: false for the languages ada lexes itself.
     pub fn lexed(self) -> bool {
-        !matches!(self, Lang::Json | Lang::Log | Lang::Makefile | Lang::Bash)
+        !matches!(self, Lang::Makefile | Lang::Bash)
     }
 
     /// Whether a line's spans never depend on the lines before it, so that lines can be lexed
     /// in any order, on any thread, from `State::default()`.
     pub fn line_by_line(self) -> bool {
-        matches!(self, Lang::Diff | Lang::Ini)
+        matches!(self, Lang::Diff | Lang::Ini | Lang::Log)
     }
 
     /// The language a syntax's own name gives, as `find_syntax_by_name` matches it: exactly.

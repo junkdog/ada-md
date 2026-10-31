@@ -52,7 +52,7 @@ mod linux {
     use ada::highlight::{self, SyntaxTheme};
     use ada::layout::{self, LayoutParams, TableMode};
     use ada::theme::Theme;
-    use ada::{json, logs, make, print};
+    use ada::{make, print};
     use syntect::parsing::ParseState;
     use syntect::util::LinesWithEndings;
 
@@ -571,18 +571,14 @@ mod linux {
             let tokens = || {
                 let mut count = 0;
                 match lang {
-                    "log" => {
-                        let mut spans = Vec::new();
+                    "log" | "json" => {
+                        let lang = match lang {
+                            "log" => ada_parse::Lang::Log,
+                            _ => ada_parse::Lang::Json,
+                        };
+                        let (mut spans, mut state) = (Vec::new(), ada_parse::State::default());
                         text.lines().for_each(|line| {
-                            logs::tokens(line, &mut spans);
-                            count += spans.len();
-                        });
-                    }
-                    "json" => {
-                        let mut spans = Vec::new();
-                        let mut comment = false;
-                        text.lines().for_each(|line| {
-                            json::tokens(line, &mut comment, &mut spans);
+                            ada_parse::lex(lang, line, &mut state, &mut spans);
                             count += spans.len();
                         });
                     }

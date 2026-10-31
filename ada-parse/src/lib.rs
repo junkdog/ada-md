@@ -7,28 +7,35 @@
 //! [`Span`]s, each a kind of the language, and [`Lang::scopes`] gives the scopes each kind
 //! carries, bat's scopes for the same text, so that themes written for bat's grammars apply.
 //!
-//! Diff and INI are line lexers, each line on its own. The formats whose lines carry state
-//! (TOML, XML, YAML, Dockerfile, Java properties, `.env`, Git's ignore, attributes, mailmap and
-//! link files) run on a port of syntect's parse machine (`machine.rs`), their grammars bat's
-//! context for context, so their scopes are syntect's exactly. JSON, logs, Makefiles and bash
-//! are still lexed in ada itself: their lexers predate the crate and move in when a phase needs
-//! them here.
+//! The lexers are scanners of ada's own, speed first (ADR-40): one pass over a line's bytes,
+//! a fixed set of kinds carrying bat's scopes for the common case, syntect a guideline.
+//! Diff and INI are line lexers, each line on its own; logs (O-043) and JSON (O-048) came
+//! from ada; TOML's scanner is bat's grammar compiled by hand, exact against its port; YAML's
+//! reads YAML as bat's grammar does on well-formed text. The other formats whose lines carry
+//! state (XML, Dockerfile, Java properties, `.env`, Git's ignore, attributes, mailmap and link
+//! files) still run on a port of syntect's parse machine (`machine.rs`), their grammars bat's
+//! context for context, until scanners replace them. Makefiles and bash are still lexed in ada.
 
 mod diff;
 mod dockerfile;
 mod dotenv;
 mod git;
 mod ini;
+mod json;
 mod lang;
+mod logs;
 mod machine;
 mod properties;
-// the port stays the reference for the scanner, in tests, when the scanner ships
-#[cfg_attr(feature = "toml-scan", allow(dead_code))]
+// the port: the scanner's reference in tests, and the source of helpers it shares
+#[allow(dead_code)]
 mod toml;
-#[cfg(any(test, feature = "toml-scan"))]
 mod toml_scan;
 mod xml;
+// the port, replaced by the scanner (speed first, ADR-40); kept for the matchers the scanner
+// shares, until they move into it
+#[allow(dead_code)]
 mod yaml;
+mod yaml_scan;
 
 pub use lang::{ALIASES, Lang};
 
@@ -70,6 +77,18 @@ impl State {
         !self.inexact
     }
 
+    /// A scanner's state (a language not on the machine): a word of its own, 0 at a block's
+    /// start, kept in the bytes the machine's stack would take.
+    fn word(&self) -> u64 {
+        let mut b = [0; 8];
+        b.copy_from_slice(&self.levels[..8]);
+        u64::from_le_bytes(b)
+    }
+
+    fn set_word(&mut self, word: u64) {
+        self.levels[..8].copy_from_slice(&word.to_le_bytes());
+    }
+
     fn levels(&self) -> &[u8] {
         &self.levels[..usize::from(self.depth)]
     }
@@ -98,18 +117,28 @@ impl State {
 /// Lex one `line`, without its newline, into `spans` (cleared first), after the lines before
 /// it left `state`; `state` is left as this line leaves it. The spans come in order, don't
 /// overlap, aren't empty, and start and end on characters of the line; bytes no span covers
-/// are plain. A language ada lexes itself (JSON, logs, Makefile, bash) gives no spans.
+/// are plain. A language ada lexes itself (Makefile, bash) gives no spans.
 // one copy, called from each place that highlights; never inlined into those (ADR-40's size
 // discipline)
 #[inline(never)]
 pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
+    match lang {
+        Lang::Log => return logs::tokens(line, spans),
+        Lang::Json => {
+            // the only state a JSON line hands on: a `/* */` comment left open
+            let mut comment = state.word() != 0;
+            json::tokens(line, &mut comment, spans);
+            return state.set_word(u64::from(comment));
+        }
+        _ => {}
+    }
     spans.clear();
     let mut out = Out(spans);
     match lang {
         Lang::Diff => diff::line(line.as_bytes(), &mut out),
         Lang::Ini => ini::line(line.as_bytes(), &mut out),
-        #[cfg(feature = "toml-scan")]
         Lang::Toml => toml_scan::line(line.as_bytes(), state, &mut out),
+        Lang::Yaml => yaml_scan::line(line.as_bytes(), state, &mut out),
         _ => {
             if let Some(g) = lang.grammar() {
                 machine::line(g, line.as_bytes(), state, &mut out);

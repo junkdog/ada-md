@@ -331,6 +331,15 @@ impl M {
         self
     }
 
+    /// The groups that took part, as `(number, start, end)`, in the order they were set.
+    pub fn groups(&self) -> impl Iterator<Item = (u8, usize, usize)> + '_ {
+        let n = usize::from(self.n);
+        self.nums[..n]
+            .iter()
+            .zip(&self.spans[..n])
+            .map(|(&g, &(s, e))| (g, s as usize, e as usize))
+    }
+
     /// Where group `n` (from 1; 0 for the whole match) spans, if it took part.
     pub fn group(&self, n: u8) -> Option<(usize, usize)> {
         if n == 0 {
