@@ -284,13 +284,13 @@ pub struct CodeSpans {
     pub rules: u64,
     /// Only the first lines, while the worker is still on the rest (O-05).
     pub partial: bool,
-    lines: Vec<Box<[Run]>>,
+    lines: LineRuns,
 }
 
 impl CodeSpans {
     /// Line `n`'s runs; empty when the line is plain.
     pub fn line(&self, n: u32) -> &[Run] {
-        self.lines.get(n as usize).map_or(&[], |l| l)
+        self.lines.line(n as usize).unwrap_or_default()
     }
 
     /// How many lines are highlighted.
@@ -305,6 +305,101 @@ impl CodeSpans {
             rules,
             ..Self::default()
         }
+    }
+}
+
+/// Lines' runs end to end: line `n`'s are `runs[ends[n - 1]..ends[n]]`, from the first run for
+/// line 0. One heap block for all of them, not one a line (HL-002: a box per line held 2–3×
+/// the runs on code, and each partial result copied every box).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct LineRuns {
+    runs: Vec<Run>,
+    ends: Vec<u32>,
+}
+
+impl LineRuns {
+    fn len(&self) -> usize {
+        self.ends.len()
+    }
+
+    /// Where line `n`'s runs start: where the line before it ended.
+    fn start(&self, n: usize) -> usize {
+        n.checked_sub(1).map_or(0, |p| self.ends[p] as usize)
+    }
+
+    fn line(&self, n: usize) -> Option<&[Run]> {
+        let end = *self.ends.get(n)? as usize;
+        Some(&self.runs[self.start(n)..end])
+    }
+
+    /// A new line after the last, to push runs to until it ends.
+    fn open_line(&mut self) -> OpenLine<'_> {
+        OpenLine {
+            open: self.runs.len(),
+            runs: &mut self.runs,
+            ends: &mut self.ends,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.runs.clear();
+        self.ends.clear();
+    }
+
+    /// Append `other`'s lines from line `from` on.
+    fn append(&mut self, other: LineRuns, from: usize) {
+        if self.ends.is_empty() && from == 0 {
+            *self = other;
+            return;
+        }
+        let (skip, base) = (other.start(from), self.runs.len());
+        self.runs.extend_from_slice(&other.runs[skip..]);
+        let ends = other.ends[from..].iter().map(|&e| e as usize - skip + base);
+        self.ends
+            .extend(ends.map(|e| u32::try_from(e).expect("a block of under 2³² runs")));
+    }
+
+    /// Give back what the vectors grew by beyond their length.
+    fn shrink(mut self) -> Self {
+        self.runs.shrink_to_fit();
+        self.ends.shrink_to_fit();
+        self
+    }
+}
+
+/// A line of [`LineRuns`] being written: its runs are those from `open` on. Where the line
+/// starts is read once, not for each run from `ends` through `&mut LineRuns`, which highlighted
+/// the one-line 3.75 MB JSON (906,077 runs) ~10% slower than the box per line had.
+struct OpenLine<'a> {
+    runs: &'a mut Vec<Run>,
+    ends: &'a mut Vec<u32>,
+    open: usize,
+}
+
+impl OpenLine<'_> {
+    /// Add a run, or stretch the line's last run when the rule is the same.
+    fn push(&mut self, end: u32, rule: Rule) {
+        let n = self.runs.len();
+        if n > self.open && self.runs[n - 1].rule == rule {
+            self.runs[n - 1].end = end;
+        } else {
+            self.runs.push(Run { end, rule });
+        }
+    }
+
+    fn runs(&self) -> &[Run] {
+        &self.runs[self.open..]
+    }
+
+    /// Leave the line plain: no runs.
+    fn clear(&mut self) {
+        self.runs.truncate(self.open);
+    }
+
+    fn end(self) {
+        // a run is a byte or more of the text, so this takes a block of over 4 GiB
+        let end = u32::try_from(self.runs.len()).expect("a block of under 2³² runs");
+        self.ends.push(end);
     }
 }
 
@@ -362,23 +457,26 @@ impl LineState {
         }
     }
 
-    /// Highlight one line, moving to the state after it. `None` when syntect fails.
+    /// Highlight one line into `out`, moving to the state after it. `None` when syntect fails,
+    /// with `out` as it was.
     fn line(
         &mut self,
         line: &str,
         highlighter: &SynHighlighter,
         buf: &mut String,
-    ) -> Option<Box<[Run]>> {
+        out: &mut LineRuns,
+    ) -> Option<()> {
         let line = expand_tabs(line);
         if line.len() > MAX_LINE {
-            return Some(Box::default());
+            out.open_line().end();
+            return Some(());
         }
         buf.clear();
         buf.push_str(&line);
         buf.push('\n');
         let ops = self.parse.parse_line(buf, syntaxes()).ok()?;
         LINES.fetch_add(1, Ordering::Relaxed);
-        let mut runs: Vec<Run> = Vec::new();
+        let mut out = out.open_line();
         let mut end = 0;
         for (style, piece) in HighlightIterator::new(&mut self.scopes, &ops, buf, highlighter) {
             let start = end;
@@ -386,16 +484,10 @@ impl LineState {
             if end == start {
                 continue;
             }
-            let rule = Rule::decode(style.foreground);
-            match runs.last_mut() {
-                Some(last) if last.rule == rule => last.end = end as u32,
-                _ => runs.push(Run {
-                    end: end as u32,
-                    rule,
-                }),
-            }
+            out.push(end as u32, Rule::decode(style.foreground));
         }
-        Some(runs.into_boxed_slice())
+        out.end();
+        Some(())
     }
 }
 
@@ -433,30 +525,24 @@ fn kind_rules<const N: usize>(theme: &SyntaxTheme, base: &str, scopes: [&str; N]
     })
 }
 
-/// A line's runs from its spans, `(start, end, rule)` in order; empty when no span has a rule.
-fn span_runs(len: usize, spans: impl Iterator<Item = (u32, u32, Rule)>) -> Box<[Run]> {
-    fn push(runs: &mut Vec<Run>, end: u32, rule: Rule) {
-        match runs.last_mut() {
-            Some(last) if last.rule == rule => last.end = end,
-            _ => runs.push(Run { end, rule }),
-        }
-    }
-    let mut runs: Vec<Run> = Vec::new();
+/// A line's runs from its spans, `(start, end, rule)` in order, as a line of `out`; empty when
+/// no span has a rule.
+fn span_runs(len: usize, spans: impl Iterator<Item = (u32, u32, Rule)>, out: &mut LineRuns) {
+    let mut out = out.open_line();
     let mut at = 0;
     for (start, end, rule) in spans {
         if start > at {
-            push(&mut runs, start, Rule(Rule::NONE));
+            out.push(start, Rule(Rule::NONE));
         }
-        push(&mut runs, end, rule);
+        out.push(end, rule);
         at = end;
     }
-    if runs.iter().all(|r| r.rule.0 == Rule::NONE) {
-        return Box::default();
+    if out.runs().iter().all(|r| r.rule.0 == Rule::NONE) {
+        out.clear();
+    } else if (at as usize) < len {
+        out.push(len as u32, Rule(Rule::NONE));
     }
-    if (at as usize) < len {
-        push(&mut runs, len as u32, Rule(Rule::NONE));
-    }
-    runs.into_boxed_slice()
+    out.end();
 }
 
 /// The theme's rule for each log [`Kind`].
@@ -467,12 +553,12 @@ impl LogRules {
         Self(kind_rules(theme, "text.log", Kind::ALL.map(Kind::scopes)))
     }
 
-    /// Highlight one log line; `spans` is scratch space.
-    fn line(&self, line: &str, spans: &mut Vec<Span>) -> Box<[Run]> {
+    /// Highlight one log line into `out`; `spans` is scratch space.
+    fn line(&self, line: &str, spans: &mut Vec<Span>, out: &mut LineRuns) {
         let line = expand_tabs(line);
         logs::tokens(&line, spans);
         let rule = |s: &Span| (s.start, s.end, self.0[s.kind as usize]);
-        span_runs(line.len(), spans.iter().map(rule))
+        span_runs(line.len(), spans.iter().map(rule), out);
     }
 }
 
@@ -485,13 +571,19 @@ impl JsonRules {
         Self(kind_rules(theme, "source.json", scopes))
     }
 
-    /// Highlight one JSON line, after one that left a `/* */` comment open or not; `spans` is
-    /// scratch space.
-    fn line(&self, line: &str, comment: &mut bool, spans: &mut Vec<json::Span>) -> Box<[Run]> {
+    /// Highlight one JSON line into `out`, after one that left a `/* */` comment open or not;
+    /// `spans` is scratch space.
+    fn line(
+        &self,
+        line: &str,
+        comment: &mut bool,
+        spans: &mut Vec<json::Span>,
+        out: &mut LineRuns,
+    ) {
         let line = expand_tabs(line);
         json::tokens(&line, comment, spans);
         let rule = |s: &json::Span| (s.start, s.end, self.0[s.kind as usize]);
-        span_runs(line.len(), spans.iter().map(rule))
+        span_runs(line.len(), spans.iter().map(rule), out);
     }
 }
 
@@ -510,15 +602,16 @@ impl MakeRules {
         }
     }
 
-    /// Highlight one line, after the lines before it left `state`; `spans` is scratch space.
-    /// Long lines are colored too: the lexer is linear.
+    /// Highlight one line into `out`, after the lines before it left `state`; `spans` is
+    /// scratch space. Long lines are colored too: the lexer is linear.
     fn line(
         &mut self,
         line: &str,
         state: &mut make::State,
         spans: &mut Vec<make::Span>,
         highlighter: &SynHighlighter,
-    ) -> Box<[Run]> {
+        out: &mut LineRuns,
+    ) {
         let line = expand_tabs(line);
         make::tokens(&line, state, spans);
         for id in self.rules.len()..state.stack_count() {
@@ -526,7 +619,7 @@ impl MakeRules {
             self.rules.push(rule);
         }
         let rule = |s: &make::Span| (s.start, s.end, self.rules[s.stack as usize]);
-        span_runs(line.len(), spans.iter().map(rule))
+        span_runs(line.len(), spans.iter().map(rule), out);
     }
 }
 
@@ -581,24 +674,27 @@ impl Lexer {
         let Some(key) = key(code) else {
             return (None, comment);
         };
-        let lines = match self {
+        let mut lines = LineRuns::default();
+        match self {
             Lexer::Plain => return (None, comment),
             Lexer::Log(rules) => {
                 let mut spans = Vec::new();
-                code.lines().map(|l| rules.line(l, &mut spans)).collect()
+                for l in code.lines() {
+                    rules.line(l, &mut spans, &mut lines);
+                }
             }
             Lexer::Json(rules) => {
                 let mut spans = Vec::new();
-                code.lines()
-                    .map(|l| rules.line(l, &mut comment, &mut spans))
-                    .collect()
+                for l in code.lines() {
+                    rules.line(l, &mut comment, &mut spans, &mut lines);
+                }
             }
-        };
+        }
         let spans = CodeSpans {
             key,
             rules: theme.id,
             partial: false,
-            lines,
+            lines: lines.shrink(),
         };
         (Some(spans), comment)
     }
@@ -684,7 +780,7 @@ pub struct Highlighter<'a> {
     /// `None` once the block turns out plain, or syntect fails on it.
     state: Option<Engine>,
     rest: Lines<'a>,
-    lines: Vec<Box<[Run]>>,
+    lines: LineRuns,
     buf: String,
 }
 
@@ -710,7 +806,7 @@ impl<'a> Highlighter<'a> {
             state,
             highlighter,
             rest: Lines::new(text),
-            lines: Vec::new(),
+            lines: LineRuns::default(),
             buf: String::new(),
         }
     }
@@ -724,29 +820,33 @@ impl<'a> Highlighter<'a> {
             let Some(line) = self.rest.next() else {
                 return false;
             };
-            let runs = match state {
-                Engine::Syntect(state) => state.line(line, &self.highlighter, &mut self.buf),
+            let out = &mut self.lines;
+            let done = match state {
+                Engine::Syntect(state) => {
+                    let done = state.line(line, &self.highlighter, &mut self.buf, out);
+                    done.is_some()
+                }
                 Engine::Log(rules, spans) => {
                     LINES.fetch_add(1, Ordering::Relaxed);
-                    Some(rules.line(line, spans))
+                    rules.line(line, spans, out);
+                    true
                 }
                 Engine::Json(rules, spans, comment) => {
                     LINES.fetch_add(1, Ordering::Relaxed);
-                    Some(rules.line(line, comment, spans))
+                    rules.line(line, comment, spans, out);
+                    true
                 }
                 Engine::Make(rules, state, spans) => {
                     LINES.fetch_add(1, Ordering::Relaxed);
-                    Some(rules.line(line, state, spans, &self.highlighter))
+                    rules.line(line, state, spans, &self.highlighter, out);
+                    true
                 }
             };
-            match runs {
-                Some(runs) => self.lines.push(runs),
-                None => {
-                    // plain, as a whole
-                    self.state = None;
-                    self.lines.clear();
-                    return false;
-                }
+            if !done {
+                // plain, as a whole
+                self.state = None;
+                self.lines = LineRuns::default();
+                return false;
             }
         }
         self.state.is_some() && self.rest.0.is_some()
@@ -772,7 +872,7 @@ impl<'a> Highlighter<'a> {
             key: self.key,
             rules: self.rules,
             partial: false,
-            lines: self.lines,
+            lines: self.lines.shrink(),
         }
     }
 }
@@ -819,16 +919,16 @@ pub fn highlight_parallel(key: u64, lang: &str, text: &str, theme: &SyntaxTheme)
 /// A log on `threads` threads: its lines don't depend on each other.
 fn highlight_log_on(key: u64, text: &str, theme: &SyntaxTheme, threads: usize) -> CodeSpans {
     let rules = LogRules::new(theme);
-    lines_on(key, text, theme, threads, |line, spans| {
-        rules.line(line, spans)
+    lines_on(key, text, theme, threads, |line, spans, out| {
+        rules.line(line, spans, out);
     })
 }
 
 /// JSON with no `/* */` comment on `threads` threads: its lines don't depend on each other.
 fn highlight_json_on(key: u64, text: &str, theme: &SyntaxTheme, threads: usize) -> CodeSpans {
     let rules = JsonRules::new(theme);
-    lines_on(key, text, theme, threads, |line, spans| {
-        rules.line(line, &mut false, spans)
+    lines_on(key, text, theme, threads, |line, spans, out| {
+        rules.line(line, &mut false, spans, out);
     })
 }
 
@@ -839,20 +939,23 @@ fn lines_on<S: Default>(
     text: &str,
     theme: &SyntaxTheme,
     threads: usize,
-    line: impl Fn(&str, &mut S) -> Box<[Run]> + Sync,
+    line: impl Fn(&str, &mut S, &mut LineRuns) + Sync,
 ) -> CodeSpans {
     let all: Vec<&str> = Lines::new(text).collect();
-    let chunks: Vec<Vec<Box<[Run]>>> = thread::scope(|s| {
+    let chunks: Vec<LineRuns> = thread::scope(|s| {
         let handles: Vec<_> = all
             .chunks(all.len().div_ceil(threads))
             .map(|chunk| {
                 let line = &line;
                 s.spawn(move || {
                     let mut scratch = S::default();
-                    let mut lines = Vec::with_capacity(chunk.len());
+                    let mut lines = LineRuns::default();
+                    lines.ends.reserve_exact(chunk.len());
                     // the watch in print mode sees progress (F-06)
                     for part in chunk.chunks(4096) {
-                        lines.extend(part.iter().map(|l| line(l, &mut scratch)));
+                        for l in part {
+                            line(l, &mut scratch, &mut lines);
+                        }
                         LINES.fetch_add(part.len() as u64, Ordering::Relaxed);
                     }
                     lines
@@ -864,11 +967,19 @@ fn lines_on<S: Default>(
             .map(|h| h.join().expect("highlight thread"))
             .collect()
     });
+    let mut lines = LineRuns::default();
+    lines
+        .runs
+        .reserve_exact(chunks.iter().map(|c| c.runs.len()).sum());
+    lines.ends.reserve_exact(all.len());
+    for chunk in chunks {
+        lines.append(chunk, 0);
+    }
     CodeSpans {
         key,
         rules: theme.id,
         partial: false,
-        lines: chunks.into_iter().flatten().collect(),
+        lines: lines.shrink(),
     }
 }
 
@@ -895,7 +1006,7 @@ fn highlight_on(
             .map(|h| h.join().expect("highlight thread"))
             .collect()
     });
-    let mut lines = Vec::with_capacity(all.len());
+    let mut lines = LineRuns::default();
     let mut k = 0;
     loop {
         let Some(out) = outs.get_mut(k).and_then(Option::take) else {
@@ -903,8 +1014,8 @@ fn highlight_on(
             lines.clear();
             break;
         };
-        lines.extend(out.lines.into_iter().skip(out.from));
-        lines.extend(out.over);
+        lines.append(out.lines, out.from);
+        lines.append(out.over, 0);
         match out.meet {
             Some(m) => k = m,
             None => break,
@@ -914,7 +1025,7 @@ fn highlight_on(
         key,
         rules: theme.id,
         partial: false,
-        lines,
+        lines: lines.shrink(),
     }
 }
 
@@ -922,8 +1033,8 @@ fn highlight_on(
 /// highlighted after its chunk, run up to chunk `meet`'s checkpoint, or to the block's end.
 struct Chunk {
     from: usize,
-    lines: Vec<Box<[Run]>>,
-    over: Vec<Box<[Run]>>,
+    lines: LineRuns,
+    over: LineRuns,
     meet: Option<usize>,
 }
 
@@ -1000,18 +1111,21 @@ fn chunk(
     let highlighter = SynHighlighter::new(&theme.theme);
     let mut state = LineState::new(syntax, &highlighter);
     let mut buf = String::new();
-    let mut lines = Vec::with_capacity(chunks[k].len());
+    let mut lines = LineRuns::default();
+    lines.ends.reserve_exact(chunks[k].len());
     let mut checkpoints = Vec::new();
     let mut failed = false;
     for (i, line) in chunks[k].iter().enumerate() {
         if i > 0 && i % CHECKPOINT_EVERY == 0 {
             checkpoints.push(fingerprint(&state));
         }
-        let Some(runs) = state.line(line, &highlighter, &mut buf) else {
+        if state
+            .line(line, &highlighter, &mut buf, &mut lines)
+            .is_none()
+        {
             failed = true;
             break;
-        };
-        lines.push(runs);
+        }
     }
     if failed {
         checkpoints.clear();
@@ -1025,8 +1139,8 @@ fn chunk(
         // the true state ran past this chunk: the guess isn't used
         return Some(Chunk {
             from: 0,
-            lines: Vec::new(),
-            over: Vec::new(),
+            lines: LineRuns::default(),
+            over: LineRuns::default(),
             meet: None,
         });
     };
@@ -1035,7 +1149,7 @@ fn chunk(
         seams.fail();
         return None;
     }
-    let mut over = Vec::new();
+    let mut over = LineRuns::default();
     for (m, chunk) in chunks.iter().enumerate().skip(k + 1) {
         let theirs = seams.wait(|s| s[m].checkpoints.clone())?;
         for (i, line) in chunk.iter().enumerate() {
@@ -1051,11 +1165,13 @@ fn chunk(
                     });
                 }
             }
-            let Some(runs) = state.line(line, &highlighter, &mut buf) else {
+            if state
+                .line(line, &highlighter, &mut buf, &mut over)
+                .is_none()
+            {
                 seams.fail();
                 return None;
-            };
-            over.push(runs);
+            }
         }
         seams.update(|s, _| s[m].from = Some(None));
     }
@@ -1529,9 +1645,10 @@ mod tests {
             let highlighter = SynHighlighter::new(&theme.theme);
             let mut state = LineState::new(grammar, &highlighter);
             let mut buf = String::new();
-            let want: Vec<_> = Lines::new(text)
-                .map(|l| state.line(l, &highlighter, &mut buf).unwrap())
-                .collect();
+            let mut want = LineRuns::default();
+            for l in Lines::new(text) {
+                state.line(l, &highlighter, &mut buf, &mut want).unwrap();
+            }
             assert_eq!(highlight(1, "json", text, &theme).lines, want);
         }
     }
@@ -1623,9 +1740,10 @@ mod tests {
             let highlighter = SynHighlighter::new(&theme.theme);
             let mut state = LineState::new(grammar, &highlighter);
             let mut buf = String::new();
-            let want: Vec<_> = Lines::new(text)
-                .map(|l| state.line(l, &highlighter, &mut buf).unwrap())
-                .collect();
+            let mut want = LineRuns::default();
+            for l in Lines::new(text) {
+                state.line(l, &highlighter, &mut buf, &mut want).unwrap();
+            }
             assert_eq!(highlight(1, lang, text, &theme).lines, want);
         }
     }
@@ -1671,18 +1789,18 @@ mod tests {
                 let highlighter = SynHighlighter::new(&theme.theme);
                 let mut state = LineState::new(grammar, &highlighter);
                 let mut buf = String::new();
-                let want: Option<Vec<_>> = Lines::new(&text)
-                    .map(|l| state.line(l, &highlighter, &mut buf))
-                    .collect();
-                let Some(want) = want else {
+                let mut want = LineRuns::default();
+                let failed = Lines::new(&text)
+                    .any(|l| state.line(l, &highlighter, &mut buf, &mut want).is_none());
+                if failed {
                     break;
-                };
+                }
                 let got = highlight(1, lang, &text, theme).lines;
                 // a line with no rule but none is one run in syntect's form, none in the lexer's
                 let plain = |runs: &[Run]| runs.iter().all(|r| r.rule.0 == Rule::NONE);
-                let same = |n: usize| match got.get(n) {
-                    Some(g) => g == &want[n] || (plain(g) && plain(&want[n])),
-                    None => false,
+                let same = |n: usize| match (got.line(n), want.line(n)) {
+                    (Some(g), Some(w)) => g == w || (plain(g) && plain(w)),
+                    _ => false,
                 };
                 if let Some(n) = (0..want.len()).find(|&n| !same(n)) {
                     bad.push(format!("{path}:{} in theme {t}", n + 1));
@@ -1950,6 +2068,44 @@ mod tests {
                 assert!(many == one, "{lang} on {threads} threads");
             }
         }
+    }
+
+    /// A run never stretches into the line before it, a plain line holds no runs, and appending
+    /// from a line on shifts that line's ends to the runs already there (HL-002).
+    #[test]
+    fn line_runs_keep_their_lines_apart() {
+        let (a, b) = (Rule(3), Rule(5));
+        let mut lines = LineRuns::default();
+        let mut line = lines.open_line();
+        line.push(2, a);
+        line.push(4, a);
+        line.end();
+        let mut line = lines.open_line();
+        line.push(1, a);
+        line.push(3, b);
+        line.end();
+        span_runs(4, std::iter::once((0, 4, Rule(Rule::NONE))), &mut lines);
+        span_runs(5, std::iter::once((1, 3, a)), &mut lines);
+        let none = Rule(Rule::NONE);
+        let run = |end, rule| Run { end, rule };
+        let want = [
+            vec![run(4, a)],
+            vec![run(1, a), run(3, b)],
+            vec![],
+            vec![run(1, none), run(3, a), run(5, none)],
+        ];
+        let got: Vec<_> = (0..lines.len()).map(|n| lines.line(n).unwrap()).collect();
+        assert_eq!(got, want);
+        assert_eq!(lines.line(4), None);
+
+        let mut joined = LineRuns::default();
+        let mut line = joined.open_line();
+        line.push(9, b);
+        line.end();
+        joined.append(lines, 1);
+        let got: Vec<_> = (0..joined.len()).map(|n| joined.line(n).unwrap()).collect();
+        assert_eq!(got[0], [run(9, b)]);
+        assert_eq!(got[1..], want[1..]);
     }
 
     /// syntect's parser never returns on this Scala line (syntect#656); the stuck thread spins on

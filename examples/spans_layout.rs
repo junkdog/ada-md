@@ -1,13 +1,14 @@
-//! Probe: what `CodeSpans`' line-per-box layout (`Vec<Box<[Run]>>`) costs next to a flat one
-//! (one `Vec<Run>` plus a `u32` start per line).
+//! Probe: what a line-per-box layout of the highlight runs (`Vec<Box<[Run]>>`, `CodeSpans`'
+//! until HL-002) costs next to a flat one (one `Vec<Run>` plus a `u32` start per line, which
+//! `CodeSpans` holds since).
 //!
 //! For each input it highlights the way the TUI does (`highlight::highlight`, the first built-in
 //! theme), then reports:
 //! - **memory:** the heap the finished `CodeSpans` holds (`malloc_usable_size`, so glibc's
 //!   rounding is counted) and its allocation count, beside the same runs laid out flat;
-//! - **build:** pushing the runs line by line into each layout, the same pattern
-//!   `LineState::line` uses (a `Vec` per line, then `into_boxed_slice`), as a share of the
-//!   highlighting time;
+//! - **build:** pushing the runs line by line into each layout, the boxed one as
+//!   `LineState::line` did before HL-002 (a `Vec` per line, then `into_boxed_slice`), as a
+//!   share of the highlighting time;
 //! - **partials:** the TUI worker's partial results (a copy of every line so far at 256, 512,
 //!   1,024 … lines, then dropped when the next arrives), for each layout;
 //! - **drop:** freeing the finished spans.
@@ -105,7 +106,7 @@ impl Heap {
     }
 }
 
-/// Lines boxed one by one, as `CodeSpans` holds them.
+/// Lines boxed one by one, as `CodeSpans` held them before HL-002.
 type Boxed = Vec<Box<[Run]>>;
 
 /// The flat layout: line `n`'s runs are `runs[starts[n]..starts[n + 1]]`.
@@ -132,8 +133,8 @@ struct Totals {
     runs: u64,
     hl_wall: Duration,
     hl_cpu: Duration,
-    heap_boxed: isize,
-    blocks_boxed: isize,
+    heap_held: isize,
+    blocks_held: isize,
     heap_flat: isize,
     blocks_flat: isize,
     hl_allocs: usize,
@@ -168,7 +169,7 @@ fn main() {
         "lines",
         "nonempty",
         "runs",
-        "heap box",
+        "heap held",
         "heap flat",
         "blocks",
         "hl ms",
@@ -245,8 +246,8 @@ fn measure(blocks: &[Block], syntax: &SyntaxTheme, reps: usize) -> Totals {
         t.bytes += b.text.len() as u64;
         t.hl_wall += best.0;
         t.hl_cpu += best.1;
-        t.heap_boxed += held.bytes;
-        t.blocks_boxed += held.blocks;
+        t.heap_held += held.bytes;
+        t.blocks_held += held.blocks;
         t.hl_allocs += held.allocs;
 
         let lines: Vec<&[Run]> = (0..spans.line_count()).map(|n| spans.line(n)).collect();
@@ -254,7 +255,7 @@ fn measure(blocks: &[Block], syntax: &SyntaxTheme, reps: usize) -> Totals {
         t.nonempty += lines.iter().filter(|l| !l.is_empty()).count() as u64;
         t.runs += lines.iter().map(|l| l.len() as u64).sum::<u64>();
 
-        // the flat layout's heap, at exact capacity as `into_boxed_slice` leaves the boxed one
+        // the flat layout's heap, at exact capacity as `into_boxed_slice` left the boxed one
         let before = heap();
         let flat = shrink(build_flat(&lines));
         let h = heap().since(before);
@@ -334,7 +335,7 @@ impl Timed for Duration {
     }
 }
 
-/// `LineState::line`'s pattern: a `Vec` per line, boxed at its length.
+/// `LineState::line`'s pattern before HL-002: a `Vec` per line, boxed at its length.
 fn build_boxed(lines: &[&[Run]]) -> Boxed {
     let mut out = Vec::new();
     for line in lines {
@@ -405,9 +406,9 @@ fn report(path: &Path, t: &Totals) {
         t.lines,
         t.nonempty,
         t.runs,
-        mib(t.heap_boxed),
+        mib(t.heap_held),
         mib(t.heap_flat),
-        t.blocks_boxed,
+        t.blocks_held,
         hl,
         ms(t.build_boxed),
         ms(t.build_flat),
