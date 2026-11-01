@@ -1788,20 +1788,37 @@ mod tests {
     /// ada-parse's table names a language only where syntect on the whole set names the same,
     /// and misses none of the ones it covers; and ada, the table first and its trimmed set
     /// after, names what the whole set names: as a fence's token, a file's whole name and its
-    /// extension.
+    /// extension. One departure is by design (ADR-40's phase 5): ada's JavaScript is Babel's
+    /// grammar whatever the token, where the set gives Sublime's `JavaScript` (```` ```JavaScript
+    /// ````, and in the fancy build, whose set has no Babel, `js` itself) or nothing (the fancy
+    /// build's `mjs`, `jsx`, …).
     #[test]
     fn the_language_table_agrees_with_the_set() {
         let covered = |name: Option<&str>| name.and_then(Lang::from_name);
+        let departs = |ours: Option<&str>, full: Option<&str>| {
+            ours == Some(Lang::JavaScript.name())
+                && (full == Some("JavaScript") || (!cfg!(feature = "onig") && full.is_none()))
+        };
         for w in words() {
             let full = find_in_full(&w);
-            match Lang::from_token(&w) {
-                Some(lang) => assert_eq!(full, Some(lang.name()), "token {w:?}"),
-                None => assert_eq!(covered(full), None, "token {w:?}: not in the table"),
+            let ours = Lang::from_token(&w).map(Lang::name);
+            if departs(ours, full) {
+                assert_eq!(find_syntax(&w).map(Syntax::name), ours, "token {w:?}");
+            } else {
+                match Lang::from_token(&w) {
+                    Some(lang) => assert_eq!(full, Some(lang.name()), "token {w:?}"),
+                    None => assert_eq!(covered(full), None, "token {w:?}: not in the table"),
+                }
+                assert_eq!(find_syntax(&w).map(Syntax::name), full, "token {w:?}");
             }
-            assert_eq!(find_syntax(&w).map(Syntax::name), full, "token {w:?}");
             for file in [w.clone(), format!("x.{w}")] {
                 let full = file_in_full(&file);
                 let name = Path::new(&file).file_name().and_then(|n| n.to_str());
+                let ours = name.and_then(Lang::from_file_name).map(Lang::name);
+                if departs(ours, full) {
+                    assert_eq!(file_language(Path::new(&file)), ours, "file {file:?}");
+                    continue;
+                }
                 match name.and_then(Lang::from_file_name) {
                     Some(lang) => assert_eq!(full, Some(lang.name()), "file {file:?}"),
                     None => assert_eq!(covered(full), None, "file {file:?}: not in the table"),
@@ -2540,6 +2557,57 @@ mod tests {
             "local f = function(a, end) return a end\n",
         );
         rules_match_the_grammar("lua", "Lua", text);
+    }
+
+    /// ada-parse's JavaScript lexer picks the rules bat's `JavaScript (Babel)` picks, in every
+    /// built-in theme (ADR-40's phase 5): its corners included (a shebang, labels and quoted keys
+    /// with functions and arrows, a ternary's `:` read as a key's in `core`, classes with
+    /// properties, accessors, static and async methods, prototype assignments, a regex after
+    /// `(` and `=` but a division after a name, a template with a substitution, escapes and a
+    /// line continuation, JSX across lines with attributes, entities and expressions, a Flow
+    /// annotation, `-Infinity`, octal and hex floats, `{{`, `switch` and `for`, a constructor,
+    /// node's and the console's objects). A regex's body is one kind by design, so the regexes
+    /// here hold no token bat's regex grammar colors.
+    #[test]
+    fn javascript_rules_match_the_grammar() {
+        let text = concat!(
+            "#!/usr/bin/env node\n",
+            "/** The module. */\n",
+            "import React, { useState } from 'react'; // a comment\n",
+            "export default class Foo extends Bar {\n",
+            "  static count = 0;\n",
+            "  state = { open: false, 'quoted': \"x\\ty\\u00e9\" };\n",
+            "  @observable value: string = 'v';\n",
+            "  get size() { return this.items.length; }\n",
+            "  static async *load(id, ...rest) { await fetch(`/api/${id}?q=${rest[0]}`); }\n",
+            "  render() {\n",
+            "    const { a, b } = this.props, n = a ? b : 1;\n",
+            "    return (\n",
+            "      <div className=\"box\" onClick={() => this.toggle(n)}>\n",
+            "        &amp; {n > 1 && <Item key={n} label='one' />}\n",
+            "      </div>\n",
+            "    );\n",
+            "  }\n",
+            "}\n",
+            "Foo.prototype.reset = function reset() { this.n = 0x1F + 07.5 + 1e-3 + -Infinity; };\n",
+            "Foo.prototype.add = (a, b = 2) => a + b;\n",
+            "const re = /abc/gi, half = total / 2, ok = re.test(s) && !(x instanceof Y);\n",
+            "const obj = {\n",
+            "  method: function (x) { return typeof x === 'number'; },\n",
+            "  arrow: async (y) => y * 2,\n",
+            "  'key': value,\n",
+            "  [computed]: null,\n",
+            "};\n",
+            "switch (kind) { case 'a': break; default: console.log(process.env.HOME); }\n",
+            "for (let i = 0; i < 10; i++) { module.exports[i] = new Map(); }\n",
+            "const s = \"line \\\n",
+            "next\"; const t = `multi\n",
+            "line ${ {{ }} }`;\n",
+            "function* gen(a: number, b?: string): Promise<void> { yield* other(); }\n",
+            "if (x) { throw new TypeError('bad'); } else { debugger; }\n",
+            "<!-- legacy -->\n",
+        );
+        rules_match_the_grammar("js", "JavaScript (Babel)", text);
     }
 
     /// ada-parse's Dockerfile lexer picks the rules bat's grammar picks, in every built-in

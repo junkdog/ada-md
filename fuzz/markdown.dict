@@ -316,5 +316,6 @@
 "```jsonl\x0a"
 "```jsonc\x0a"
 "```json5\x0a"
+"```javascript\x0a"
 "```c++\x0a"
 # end of the generated fence tags

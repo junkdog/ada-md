@@ -131,6 +131,14 @@ function M.run(a, ...) --[==[ long
 ]==] return string.format('%d\\n', #a) .. [[x]] end
 ```
 
+```js
+export default class A extends B { get n() { return /ab+c/gi.test(`x ${this.y}`) ? <div a=\"1\">{n}</div> : 0x1F; } }
+```
+
+```javascript
+const f = async (a, b = 2) => console.log(a / b);
+```
+
 ```text
 plain
 ```
@@ -207,6 +215,10 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         "main.py",
         "stubs.pyi",
         "init.lua",
+        "app.js",
+        "lib.mjs",
+        "view.jsx",
+        "config.cjs",
     ] {
         let t = FileType::by_path(Path::new(name));
         assert!(

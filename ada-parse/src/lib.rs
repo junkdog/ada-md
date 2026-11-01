@@ -25,6 +25,7 @@ mod git;
 mod go;
 mod ini;
 mod java;
+mod javascript;
 mod json;
 mod kotlin;
 mod lang;
@@ -160,6 +161,7 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::Go => go::line(line.as_bytes(), state, &mut out),
         Lang::Python => python::line(line.as_bytes(), state, &mut out),
         Lang::Lua => lua::line(line.as_bytes(), state, &mut out),
+        Lang::JavaScript => javascript::line(line.as_bytes(), state, &mut out),
         _ => {
             if let Some(g) = lang.grammar() {
                 machine::line(g, line.as_bytes(), state, &mut out);

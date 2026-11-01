@@ -59,6 +59,9 @@ pub enum Lang {
     Python,
     /// bat's `Lua`.
     Lua,
+    /// bat's `JavaScript (Babel)`, for every JavaScript token (ADR-40's phase 5): Sublime's
+    /// `JavaScript` too, which ```` ```javascript ```` names.
+    JavaScript,
 }
 
 /// Fence languages that no syntax names, and the token each stands for (`zsh` for bash's).
@@ -77,6 +80,8 @@ pub const ALIASES: &[(&str, &str)] = &[
     ("jsonl", "json"),
     ("jsonc", "json"),
     ("json5", "json"),
+    // Sublime's `JavaScript` by name; ada's JavaScript is Babel's, whatever the token (ADR-40)
+    ("javascript", "js"),
 ];
 
 /// The extensions and whole file names each language's syntax claims, lowercase: syntect
@@ -233,6 +238,10 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::CSharp, &["cs", "csx"]),
     (Lang::Go, &["go"]),
     (
+        Lang::JavaScript,
+        &["js", "mjs", "jsx", "babel", "es6", "cjs"],
+    ),
+    (
         Lang::Python,
         &[
             "py",
@@ -262,7 +271,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 25] = [
+    pub const ALL: [Lang; 26] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -288,6 +297,7 @@ impl Lang {
         Lang::Go,
         Lang::Python,
         Lang::Lua,
+        Lang::JavaScript,
     ];
 
     /// The name of the syntax it stands in for, as syntect names it.
@@ -318,6 +328,7 @@ impl Lang {
             Lang::Go => "Go",
             Lang::Python => "Python",
             Lang::Lua => "Lua",
+            Lang::JavaScript => "JavaScript (Babel)",
         }
     }
 
@@ -349,6 +360,7 @@ impl Lang {
             Lang::Go => "source.go",
             Lang::Python => "source.python",
             Lang::Lua => "source.lua",
+            Lang::JavaScript => "source.js",
         }
     }
 
@@ -381,6 +393,7 @@ impl Lang {
             Lang::Go => crate::go::scopes(kind),
             Lang::Python => crate::python::scopes(kind),
             Lang::Lua => crate::lua::scopes(kind),
+            Lang::JavaScript => crate::javascript::scopes(kind),
             _ if self.grammar().is_some() => {
                 self.grammar().map_or_else(Vec::new, |g| g.scopes(kind))
             }
@@ -418,7 +431,8 @@ impl Lang {
             | Lang::CSharp
             | Lang::Go
             | Lang::Python
-            | Lang::Lua => {
+            | Lang::Lua
+            | Lang::JavaScript => {
                 return None;
             }
         })

@@ -34,6 +34,7 @@ const LANGS: &[(&str, Lang)] = &[
     ("go", Lang::Go),
     ("python", Lang::Python),
     ("lua", Lang::Lua),
+    ("javascript", Lang::JavaScript),
 ];
 
 #[test]

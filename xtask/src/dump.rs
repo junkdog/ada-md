@@ -85,14 +85,24 @@ pub fn trim(set: SyntaxSet) -> SyntaxSet {
 /// other grammar's links to a covered one are 1–3, an embedded block.
 const BUILT_ON: &[&str] = &["C++", "C"];
 
-/// The grammars to empty, by index: the ones ada-parse covers but [`BUILT_ON`]'s, then every
+/// Covered grammars kept for the blocks of them other grammars embed, where those blocks are
+/// common enough that going plain would be a loss: `JavaScript (Babel)` is what
+/// `scope:source.js` resolves to in the onig set, so HTML's, Vue's and Svelte's `<script>`
+/// (and PHP's, Ruby's, Markdown's …) run on it (ADR-40's phase 5; until phase 6 covers HTML).
+const EMBEDDED: &[&str] = &["JavaScript (Babel)"];
+
+/// The grammars to empty, by index: the ones ada-parse covers but [`BUILT_ON`]'s and
+/// [`EMBEDDED`]'s, then every
 /// hidden one no file is named for (no extensions, no first line) that only emptied ones link
 /// to, such as bash's `commands-builtin-shell-bash`.
 fn emptied(defs: &[SyntaxDefinition]) -> Vec<bool> {
     let covered = Lang::ALL.map(Lang::name);
     let mut empty: Vec<bool> = defs
         .iter()
-        .map(|d| covered.contains(&d.name.as_str()) && !BUILT_ON.contains(&d.name.as_str()))
+        .map(|d| {
+            let name = d.name.as_str();
+            covered.contains(&name) && !BUILT_ON.contains(&name) && !EMBEDDED.contains(&name)
+        })
         .collect();
     let links: Vec<BTreeMap<usize, usize>> = defs.iter().map(links).collect();
     let unnamed = |d: &SyntaxDefinition| {
