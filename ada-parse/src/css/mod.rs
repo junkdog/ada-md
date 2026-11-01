@@ -1480,6 +1480,8 @@ fn lex<const S: bool>(
         isel_end: std::cell::Cell::new(usize::MAX),
         class_runs: [const { Run::new((usize::MAX, 0)) }; 3],
         nm_ends: std::cell::RefCell::new(Vec::new()),
+        swrap: W_NONE,
+        shape_run: std::cell::Cell::new((usize::MAX, 0, 0)),
     };
     let n = usize::from(state.depth);
     for i in 0..n {
@@ -1490,6 +1492,9 @@ fn lex<const S: bool>(
         };
     }
     s.depth = 1 + n;
+    if S {
+        s.rewrap();
+    }
     let exact = state.is_exact();
     run(&mut s);
     let n = s.depth - 1;
@@ -1542,6 +1547,11 @@ struct Scan<'b, 'o, 's, const S: bool = false> {
     /// SCSS's, on a long line: where `{{nmchar}}*` from each place ends, as read (`u32::MAX` not
     /// yet).
     nm_ends: std::cell::RefCell<Vec<u32>>,
+    /// SCSS's: the wrap of the innermost context that has one, kept as the stack changes.
+    swrap: u8,
+    /// SCSS's: the last run of `[a-z0-9-]` a property's shape read: where it starts and ends,
+    /// and its last `-` that no letter or `-` follows (`usize::MAX` for none).
+    shape_run: std::cell::Cell<(usize, usize, usize)>,
 }
 
 impl<const S: bool> Scan<'_, '_, '_, S> {
@@ -1550,17 +1560,18 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
     }
 
     fn wrap(&self) -> u16 {
-        let w = if S {
-            self.stack[..self.depth]
-                .iter()
-                .rev()
-                .map(|&c| own_wrap(c))
-                .find(|&w| w != W_NONE)
-                .unwrap_or(W_NONE)
-        } else {
-            own_wrap(self.top())
-        };
+        let w = if S { self.swrap } else { own_wrap(self.top()) };
         u16::from(w) << LEAF_BITS
+    }
+
+    /// SCSS's wrap read from the stack again ([`Scan::swrap`]).
+    fn rewrap(&mut self) {
+        self.swrap = self.stack[..self.depth]
+            .iter()
+            .rev()
+            .map(|&c| own_wrap(c))
+            .find(|&w| w != W_NONE)
+            .unwrap_or(W_NONE);
     }
 
     /// Fill the top context's text up to `to`.
@@ -1598,6 +1609,12 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         self.fill(at);
         self.stack[self.depth] = c;
         self.depth += 1;
+        if S {
+            let w = own_wrap(c);
+            if w != W_NONE {
+                self.swrap = w;
+            }
+        }
     }
 
     /// Pop the top context at `at`, its text before it filled first.
@@ -1605,6 +1622,9 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         self.fill(at);
         if self.depth > 1 {
             self.depth -= 1;
+            if S && own_wrap(self.stack[self.depth]) != W_NONE {
+                self.rewrap();
+            }
         }
     }
 
@@ -1668,6 +1688,10 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
 
     /// Where `\s*` at `i` ends (the `\n` at `n` is a space).
     fn spaces(&self, i: usize) -> usize {
+        if i < self.n && !matches!(self.b[i], b' ' | b'\t' | b'\r' | 0x0b | 0x0c | 0x80..) {
+            // no space here
+            return i;
+        }
         let (a, e) = self.spaces_run.get();
         if a <= i && i <= e {
             return e;
