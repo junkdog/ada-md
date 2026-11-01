@@ -27,7 +27,7 @@ mod words;
 use std::cell::Cell;
 
 use crate::machine::KEPT as HALF;
-use crate::{Out, State};
+use crate::{Out, State, regex};
 
 macro_rules! leaves {
     ($($name:ident = [$($s:literal),*] $([$($p:literal),*])?,)*) => {
@@ -136,34 +136,6 @@ leaves! {
     RE_BEGIN = ["string.regexp", "punctuation.definition.string.begin"],
     RE_END = ["string.regexp", "punctuation.definition.string.end"],
     RE_FLAGS = ["string.regexp", "keyword.other"],
-    RE_ANCHOR = ["string.regexp"] ["keyword.control.anchor.regexp"],
-    RE_BACKREF = ["string.regexp"] ["keyword.other.back-reference.regexp"],
-    RE_BACKREF_NAME = ["string.regexp"] ["keyword.other.back-reference.regexp", "variable.other.regexp"],
-    RE_QUANT = ["string.regexp"] ["keyword.operator.quantifier.regexp"],
-    RE_OR = ["string.regexp"] ["keyword.operator.or.regexp"],
-    RE_GROUP = ["string.regexp"] ["punctuation.definition.group.regexp"],
-    RE_GROUP_ASSERT = ["string.regexp"] ["punctuation.definition.group.assertion.regexp"],
-    RE_LOOKAHEAD = ["string.regexp"] ["punctuation.definition.group.assertion.regexp", "meta.assertion.look-ahead.regexp"],
-    RE_NEG_LOOKAHEAD = ["string.regexp"] ["punctuation.definition.group.assertion.regexp", "meta.assertion.negative-look-ahead.regexp"],
-    RE_LOOKBEHIND = ["string.regexp"] ["punctuation.definition.group.assertion.regexp", "meta.assertion.look-behind.regexp"],
-    RE_NEG_LOOKBEHIND = ["string.regexp"] ["punctuation.definition.group.assertion.regexp", "meta.assertion.negative-look-behind.regexp"],
-    RE_NO_CAPTURE = ["string.regexp"] ["punctuation.definition.group.regexp", "punctuation.definition.group.no-capture.regexp"],
-    RE_GROUP_NAME = ["string.regexp"] ["punctuation.definition.group.regexp", "variable.other.regexp"],
-    RE_SET = ["string.regexp"] ["constant.other.character-class.set.regexp"],
-    RE_SET_MARK = ["string.regexp"] ["constant.other.character-class.set.regexp", "punctuation.definition.character-class.regexp"],
-    RE_SET_NEG = ["string.regexp"] ["constant.other.character-class.set.regexp", "keyword.operator.negation.regexp"],
-    RE_RANGE = ["string.regexp"] ["constant.other.character-class.set.regexp", "constant.other.character-class.range.regexp"],
-    RE_RANGE_NUM = ["string.regexp"] ["constant.other.character-class.set.regexp", "constant.other.character-class.range.regexp", "constant.character.numeric.regexp"],
-    RE_RANGE_CTRL = ["string.regexp"] ["constant.other.character-class.set.regexp", "constant.other.character-class.range.regexp", "constant.character.control.regexp"],
-    RE_RANGE_ESC = ["string.regexp"] ["constant.other.character-class.set.regexp", "constant.other.character-class.range.regexp", "constant.character.escape.backslash.regexp"],
-    RE_SET_CLASS = ["string.regexp"] ["constant.other.character-class.set.regexp", "constant.other.character-class.regexp"],
-    RE_SET_NUM = ["string.regexp"] ["constant.other.character-class.set.regexp", "constant.character.numeric.regexp"],
-    RE_SET_CTRL = ["string.regexp"] ["constant.other.character-class.set.regexp", "constant.character.control.regexp"],
-    RE_SET_ESC = ["string.regexp"] ["constant.other.character-class.set.regexp", "constant.character.escape.backslash.regexp"],
-    RE_CLASS = ["string.regexp"] ["constant.other.character-class.regexp"],
-    RE_NUM = ["string.regexp"] ["constant.character.numeric.regexp"],
-    RE_CTRL = ["string.regexp"] ["constant.character.control.regexp"],
-    RE_ESC = ["string.regexp"] ["constant.character.escape.backslash.regexp"],
     // numbers and constants
     HEX = ["constant.numeric.hex"],
     BINARY = ["constant.numeric.binary"],
@@ -350,11 +322,30 @@ leaves! {
 /// A kind's bit for a token inside a template's `${…}`: under `string.template` too.
 pub(crate) const WRAP: u16 = 0x8000;
 
+/// The kinds of a regex's tokens (ADR-40's phase 4, [`crate::regex`]'s, ECMAScript's
+/// dialect): from here, [`regex::KINDS`] for each host, under the host's scope: a literal's
+/// (`string.regexp`), then `RegExp('…')`'s, `RegExp("…")`'s and ``RegExp(`…`)``'s.
+const RE_KINDS: u16 = 512;
+const _: () = assert!(TS.len() <= RE_KINDS as usize);
+/// The leaf each host's regex kinds are under, by [`RE_KINDS`]' order.
+const RE_HOSTS: [u16; 4] = [RE, STR_S, STR_D, TPL];
+
 /// The scopes under `source.ts` (`source.tsx` for TSX) a kind carries, outermost first.
 pub fn scopes(kind: u16, tsx: bool) -> Vec<&'static str> {
     let table = if tsx { TSX } else { TS };
-    let Some(leaf) = table.get(usize::from(kind & !WRAP)) else {
-        return Vec::new();
+    let k = kind & !WRAP;
+    let (leaf, re) = if k >= RE_KINDS {
+        let n = regex::KINDS as u16;
+        let (host, re) = ((k - RE_KINDS) / n, (k - RE_KINDS) % n);
+        let Some(&host) = RE_HOSTS.get(usize::from(host)) else {
+            return Vec::new();
+        };
+        (table[usize::from(host)], Some(re))
+    } else {
+        let Some(leaf) = table.get(usize::from(k)) else {
+            return Vec::new();
+        };
+        (*leaf, None)
     };
     let mut v = Vec::with_capacity(leaf.len() + 1);
     if kind & WRAP != 0 {
@@ -364,6 +355,9 @@ pub fn scopes(kind: u16, tsx: bool) -> Vec<&'static str> {
         if v.last() != Some(&s) {
             v.push(s);
         }
+    }
+    if let Some(re) = re {
+        v.extend(regex::scopes(re));
     }
     v
 }
@@ -602,13 +596,16 @@ const TPL_F: u8 = 113;
 const BLOCK_F: u8 = 114;
 /// A `/** … */` comment.
 const DOC_F: u8 = 115;
-/// A regex literal's body.
+/// A regex literal's body, its state in [`Scan::re`] ([`regex::ECMA_STATE`]: its groups open
+/// and whether a class is).
 const REGEX_F: u8 = 116;
-/// A regex group.
+/// A group the regex below has open, kept as a frame where something sits above the regex or
+/// the line ends ([`Scan::spill`]).
 const RE_GROUP_F: u8 = 117;
-/// A regex assertion group.
-const RE_ASSERT_F: u8 = 118;
-/// A regex character class.
+/// A regex string, above the string's or template's frame: `RegExp('…')`, its state in
+/// [`Scan::re`] as a literal's.
+const RE_STR_F: u8 = 118;
+/// A class the regex below has open, kept as [`RE_GROUP_F`].
 const RE_SET_F: u8 = 119;
 /// JSDoc's `@example`, up to `@` or `*/`.
 const DOC_EXAMPLE: u8 = 120;
@@ -722,6 +719,7 @@ pub fn line(b: &[u8], tsx: bool, state: &mut State, out: &mut Out) {
         g_type_open: false,
         g_type_brace: false,
         var_kw_eol: false,
+        re: 0,
         out,
     };
     s.stack[1..=HALF].copy_from_slice(&state.levels);
@@ -733,6 +731,9 @@ pub fn line(b: &[u8], tsx: bool, state: &mut State, out: &mut Out) {
     s.tpl = s.stack[1..s.depth].iter().filter(|&&f| is_tpl(f)).count();
     s.refresh();
     s.run();
+    if s.re != 0 && matches!(s.top(), REGEX_F | RE_STR_F) {
+        s.spill();
+    }
     let mut n = s.depth - 1;
     state.arg = 0;
     if n > KEPT {
@@ -862,6 +863,8 @@ struct Scan<'a, 'o, 'p> {
     g_type_brace: bool,
     /// A `var`, `let` or `const` keyword took the line's end (its `\s*` the `\n`).
     var_kw_eol: bool,
+    /// The state of the regex in the top frame ([`REGEX_F`], [`RE_STR_F`]).
+    re: u8,
     out: &'o mut Out<'p>,
 }
 
@@ -1127,7 +1130,10 @@ impl Scan<'_, '_, '_> {
         &self.b[i..e] == w
     }
 
-    /// One frame's turn at the place: whether it matched something.
+    /// One frame's turn at the place: whether it matched something. Inlined into the scan's loop
+    /// with [`family`] (they stopped being on their own when phase 4 grew the text turns: +9% of
+    /// TSX's instructions).
+    #[inline(always)]
     fn step(&mut self, f: u8) -> bool {
         match family(f) {
             Family::Text => self.text_step(f),
@@ -1152,9 +1158,10 @@ enum Family {
 }
 
 /// Frame `f`'s family.
+#[inline(always)]
 fn family(f: u8) -> Family {
     match f {
-        STR_S_F | STR_D_F | TPL_F | BLOCK_F | DOC_F | REGEX_F | RE_GROUP_F | RE_ASSERT_F
+        STR_S_F | STR_D_F | TPL_F | BLOCK_F | DOC_F | REGEX_F | RE_GROUP_F | RE_STR_F
         | RE_SET_F | DOC_EXAMPLE | DOC_CAPTION | DOC_TYPE | DOC_BRACKETS | DOC_BRACKETS_SQ
         | DOC_TYPEDEF | DOC_PARAM | DOC_TYPED | DOC_STRING_S | DOC_STRING_D | DOC_INLINE
         | DIRECTIVE_F | DIRECTIVE_TAG_F | DIRECTIVE_STR_S_F | DIRECTIVE_STR_D_F | LINE_EOL
@@ -1216,8 +1223,7 @@ fn text_of(f: u8) -> Option<u16> {
         DOC_TYPE | DOC_BRACKETS | DOC_BRACKETS_SQ => JD_TYPE,
         DOC_STRING_S | DOC_STRING_D => JD_VAR,
         DOC_INLINE => JD_INLINE,
-        REGEX_F | RE_GROUP_F | RE_ASSERT_F => RE,
-        RE_SET_F => RE_SET,
+        REGEX_F => RE,
         DIRECTIVE_F | DIRECTIVE_TAG_F => DIRECTIVE,
         DIRECTIVE_STR_S_F => DIRECTIVE_STR_S,
         DIRECTIVE_STR_D_F => DIRECTIVE_STR_D,
@@ -1326,5 +1332,105 @@ mod tests {
             );
             assert_eq!(state, State::default(), "{lang:?}");
         }
+    }
+
+    fn has(m: &[(&str, &str)], text: &str, scopes: &str) {
+        assert!(m.contains(&(text, scopes)), "{text:?} {scopes:?} in {m:?}");
+    }
+
+    /// A literal's body is the regex scanner's, in ECMAScript's dialect (phase 4), as
+    /// JavaScript's: its fixes over bat's grammar (a `.` in a class, `\u{…}`, the `v` flag) too.
+    #[test]
+    fn regex_literals_are_ecmascripts() {
+        let m = crate::tests::marked(
+            Lang::TypeScript,
+            &[r"x = /^a[/.]b\/(?<n>c)\k<n>{2,}\u{1F600}/gv;", "y = /(a/"],
+        );
+        has(&m, "^", "string.regexp.ts keyword.control.anchor.regexp");
+        has(
+            &m,
+            "/.",
+            "string.regexp.ts constant.other.character-class.set.regexp",
+        );
+        has(&m, "n", "string.regexp.ts entity.name.other.group.regexp");
+        has(
+            &m,
+            r"\u{1F600}",
+            "string.regexp.ts constant.character.escape.backslash.regexp",
+        );
+        has(&m, "gv", "string.regexp.ts keyword.other.ts");
+        // a group open at the line's end: the literal goes on, its `/` the regex's
+        let (mut state, mut spans) = (State::default(), Vec::new());
+        lex(Lang::TypeScript, "y = /(a/", &mut state, &mut spans);
+        lex(Lang::TypeScript, "b)/; z = 1", &mut state, &mut spans);
+        let k = spans.iter().find(|s| s.start == 1).unwrap().kind;
+        assert!(
+            Lang::TypeScript
+                .scopes(k)
+                .contains(&"punctuation.definition.group.end.regexp")
+        );
+        assert_eq!(state, State::default());
+    }
+
+    /// `RegExp(…)`'s first argument, a string or a template, is a regex (as WebStorm colors it):
+    /// the string's escapes, end and `${…}` come first, and a group open over a `${…}` or a
+    /// line's end is kept.
+    #[test]
+    fn regexes_in_regexp_strings() {
+        const D: &str = "string.quoted.double.ts";
+        const T: &str = "string.template.ts";
+        let m = crate::tests::marked(
+            Lang::TypeScript,
+            &[
+                r#"r = new RegExp("^(\\d+)\"x$", 'g'), s = RegExp('a\'(');"#,
+                r"t = new RegExp(`^(${p}|x)[0-9]\\${q}`);",
+                "u = foo(\"(a)\"), v = RegExp(`(a",
+                "b)c`);",
+            ],
+        );
+        has(&m, "^", &format!("{D} keyword.control.anchor.regexp"));
+        has(
+            &m,
+            r"\\d",
+            &format!("{D} constant.other.character-class.escape.backslash.regexp"),
+        );
+        has(&m, "\\\"", &format!("{D} constant.character.escape.ts"));
+        has(
+            &m,
+            "\"",
+            &format!("{D} punctuation.definition.string.end.ts"),
+        );
+        has(
+            &m,
+            "(",
+            "string.quoted.single.ts punctuation.definition.group.begin.regexp",
+        );
+        // the flags are a plain string
+        has(&m, "g", "string.quoted.single.ts");
+        has(
+            &m,
+            "${",
+            &format!("{T} punctuation.definition.template-expression.begin.ts"),
+        );
+        has(&m, "|", &format!("{T} keyword.operator.or.regexp"));
+        // `\\` before a `${`: the regex's `\`, escaping what the substitution starts with
+        has(
+            &m,
+            r"\\",
+            &format!("{T} constant.character.escape.backslash.regexp"),
+        );
+        // not a regex
+        has(&m, "(a)", D);
+        // a group across the line's end
+        has(
+            &m,
+            ")",
+            &format!("{T} punctuation.definition.group.end.regexp"),
+        );
+        let (mut state, mut spans) = (State::default(), Vec::new());
+        for line in ["v = RegExp(`(a", "b)c`);"] {
+            lex(Lang::TypeScript, line, &mut state, &mut spans);
+        }
+        assert_eq!(state, State::default());
     }
 }

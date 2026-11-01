@@ -52,6 +52,11 @@ const SUBST: u8 = 9;
 const REGEX: u8 = 0x60;
 const RE_LAST: u8 = REGEX | regex::ECMA_STATE;
 const _: () = assert!(REGEX & regex::ECMA_STATE == 0 && RE_LAST < JSX_TAG);
+/// A regex string, above its string's or template's context: `RegExp("…")`'s first argument.
+/// Or'd with the regex's state, as [`REGEX`], up to [`RE_STR_LAST`].
+const RE_STR: u8 = 0x40;
+const RE_STR_LAST: u8 = RE_STR | regex::ECMA_STATE;
+const _: () = assert!(RE_STR & regex::ECMA_STATE == 0 && RE_STR_LAST < REGEX);
 /// After `for`, up to its `( … )`.
 const FOR: u8 = 13;
 /// Inside a `for`'s `( … )`.
@@ -302,15 +307,23 @@ leaves! {
     GROUP_END = "punctuation.definition.group.end.js",
 }
 
-/// The kinds of a regex literal's tokens: the regex's, from here.
+/// The kinds of a regex's tokens: the regex's, from here, [`regex::KINDS`] for each host: a
+/// literal, a quoted string, a template.
 const RE_KINDS: u16 = 256;
 const _: () = assert!(LEAVES.len() <= RE_KINDS as usize);
 
 /// The scopes under `source.js` a kind carries, outermost first.
 pub fn scopes(kind: u16) -> Vec<&'static str> {
     if kind >= RE_KINDS {
-        let mut out = vec!["string.regexp.js"];
-        out.extend(regex::scopes(kind - RE_KINDS));
+        let n = regex::KINDS as u16;
+        let host = match (kind - RE_KINDS) / n {
+            0 => "string.regexp.js",
+            1 => "string.quoted.js",
+            2 => "string.interpolated.js",
+            _ => return Vec::new(),
+        };
+        let mut out = vec![host];
+        out.extend(regex::scopes((kind - RE_KINDS) % n));
         return out;
     }
     LEAVES.get(usize::from(kind)).map_or_else(Vec::new, |l| {
@@ -1019,6 +1032,8 @@ static JSQ_STOPS: [bool; 256] = stops(b"'&");
 static MUSTACHE_STOPS: [bool; 256] = stops(b"}");
 static TEMPLATE_STOPS: [bool; 256] = stops(b"`$");
 static REGEX_STOPS: [bool; 256] = stops(b"/");
+/// A template's, with its escapes: where its patterns start in a regex template.
+static TEMPLATE_RE_STOPS: [bool; 256] = stops(b"`$\\");
 
 /// A regex literal's body: its `/` ends it where no group or class is open.
 static RE_EMBED: regex::Embed<'static> = regex::Embed {
@@ -1029,9 +1044,46 @@ static RE_EMBED: regex::Embed<'static> = regex::Embed {
     arg: 0,
     escape: regex::java_escape,
     top_only: true,
+    continues: false,
     base: RE_KINDS,
     text: RE,
 };
+
+/// A regex in a `"…"`, a `'…'` and a template ([`RE_STR`]): the host's end, its escapes and a
+/// template's `${` come first.
+static RE_STR_EMBED: [regex::Embed<'static>; 3] = [
+    re_str_embed(&DQ_STOPS, 1, STR),
+    re_str_embed(&SQ_STOPS, 1, STR),
+    regex::Embed {
+        stop: |b, p, _| b[p] == b'`' || b.get(p + 1) == Some(&b'{'),
+        // a `\` that isn't one of Babel's escapes is the `\` alone (`\${` is a substitution)
+        escape: |b, p| {
+            escape(b, p).unwrap_or(if b.get(p + 1) == Some(&b'`') {
+                p + 2
+            } else {
+                p + 1
+            })
+        },
+        ..re_str_embed(&TEMPLATE_RE_STOPS, 2, TPL_TEXT)
+    },
+];
+
+const fn re_str_embed(yields: &'static [bool; 256], host: u16, text: u16) -> regex::Embed<'static> {
+    regex::Embed {
+        dialect: regex::Dialect::Ecma,
+        cooked: true,
+        yields,
+        stop: |_, _, _| true,
+        arg: 0,
+        escape: |b, p| {
+            escape(b, p).unwrap_or_else(|| b.get(p + 1).map_or(p + 1, |&d| p + 1 + char_len(d)))
+        },
+        top_only: false,
+        continues: true,
+        base: RE_KINDS + host * regex::KINDS as u16,
+        text,
+    }
+}
 
 struct Scan<'b, 'c> {
     b: &'b [u8],
@@ -1399,6 +1451,7 @@ impl<'b> Scan<'b, '_> {
                 }
                 self.expression(p)
             }
+            RE_STR..=RE_STR_LAST => self.regex_string(p, top),
             REGEX..=RE_LAST => {
                 if top == REGEX && c == Some(b'/') {
                     let f = p
@@ -3373,7 +3426,91 @@ impl<'b> Scan<'b, '_> {
         if !self.is(p, b'`') {
             return None;
         }
-        self.tok_push(p, p + 1, TPL_BEGIN, TPL)
+        let e = self.tok_push(p, p + 1, TPL_BEGIN, TPL)?;
+        if after_paren(self.b, p) && self.regexp_arg(p) && self.can_push() {
+            self.push(RE_STR);
+        }
+        Some(e)
+    }
+
+    /// Whether the string or template opening at `p` is the first argument of `RegExp(`
+    /// (`new RegExp(…)` too): a regex, in ECMAScript's dialect, as WebStorm colors it.
+    #[inline(never)]
+    fn regexp_arg(&self, p: usize) -> bool {
+        let b = self.b;
+        let mut k = p;
+        while k > 0 && matches!(b[k - 1], b' ' | b'\t') {
+            k -= 1;
+        }
+        if k == 0 || b[k - 1] != b'(' {
+            return false;
+        }
+        k -= 1;
+        while k > 0 && matches!(b[k - 1], b' ' | b'\t') {
+            k -= 1;
+        }
+        k >= 6
+            && &b[k - 6..k] == b"RegExp"
+            && (k == 6 || !(b[k - 7].is_ascii_alphanumeric() || matches!(b[k - 7], b'_' | b'$')))
+    }
+
+    /// A regex string's turn ([`RE_STR`], in context `top`): the host string's or template's
+    /// patterns first (its end, an escape but `\\`, which is the regex's `\`, a `${`), then the
+    /// regex.
+    fn regex_string(&mut self, p: usize, top: u8) -> Option<usize> {
+        let host = self.stack[self.depth - 2];
+        let c = self.c(p);
+        let which = if host == TPL {
+            match c {
+                Some(b'`') => {
+                    self.pop();
+                    return self.close(p, p + 1, TPL_END);
+                }
+                Some(b'\\') if self.c(p + 1) != Some(b'\\') => {
+                    if let Some(q) = self.string_content(p, ESC, ESC_NL) {
+                        return Some(q);
+                    }
+                    if self.is(p + 1, b'`') {
+                        return self.tok(p, p + 2, ESC);
+                    }
+                }
+                Some(b'$') if self.is(p + 1, b'{') => {
+                    return self.tok_push(p, p + 2, SUBST_BEGIN, SUBST);
+                }
+                _ => {}
+            }
+            2
+        } else {
+            let q = if host == STR_D { b'"' } else { b'\'' };
+            if c == Some(q) {
+                self.pop();
+                return self.close(p, p + 1, STR_END);
+            }
+            if p == self.n {
+                // `(\n)`: the string ends with its line
+                self.fill(p);
+                self.pop();
+                self.pop();
+                return Some(p + 1);
+            }
+            if c == Some(b'\\')
+                && self.c(p + 1) != Some(b'\\')
+                && let Some(e) = self.string_content(p, STR_ESC, STR_ESC_NL)
+            {
+                return Some(e);
+            }
+            usize::from(host == STR_S)
+        };
+        let (q, st) = regex::embedded(
+            self.b,
+            p,
+            top & regex::ECMA_STATE,
+            &RE_STR_EMBED[which],
+            &mut self.at,
+            self.out,
+        )?;
+        self.stack[self.depth - 1] = RE_STR | st;
+        Some(q)
     }
 
     /// A template's text.
@@ -3426,6 +3563,10 @@ impl<'b> Scan<'b, '_> {
             _ => return None,
         };
         let e = self.tok_push(p, p + 1, STR_BEGIN, ctx)?;
+        if after_paren(self.b, p) && self.regexp_arg(p) && self.can_push() {
+            self.push(RE_STR);
+            return Some(e);
+        }
         // a string that closes on its line before any `\\`: its text and its end in this step,
         // as the string's own dispatches would give them
         let b = self.b;
@@ -4126,6 +4267,17 @@ impl<'b> Scan<'b, '_> {
     }
 }
 
+/// Whether a `(` is right before `p`, or one blank and a `(` (`RegExp( "…")`): where a string may
+/// be `RegExp(`'s argument, tested inline before [`Scan::regexp_arg`] reads further back.
+#[inline]
+fn after_paren(b: &[u8], p: usize) -> bool {
+    match p {
+        0 => false,
+        1 => b[0] == b'(',
+        _ => b[p - 1] == b'(' || (b[p - 1] == b' ' && b[p - 2] == b'('),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::Lang;
@@ -4358,6 +4510,67 @@ mod tests {
         assert!(
             m.contains(&(";", "punctuation.terminator.statement.js")),
             "{m:?}"
+        );
+    }
+
+    /// `RegExp(…)`'s first argument, a string or a template, is a regex (as WebStorm colors it):
+    /// the string's escapes, end and `${…}` come first, and a group open over a `${…}` or a
+    /// line's end is kept.
+    #[test]
+    fn regexes_in_regexp_strings() {
+        let has = |m: &[(&str, &str)], text: &str, scopes: &str| {
+            assert!(m.contains(&(text, scopes)), "{text:?} {scopes:?} in {m:?}");
+        };
+        const Q: &str = "string.quoted.js";
+        const T: &str = "string.interpolated.js";
+        let m = js(&[
+            r#"r = new RegExp("^(\\d+)\"x\d$", 'g'), s = RegExp('a\'(');"#,
+            r"t = new RegExp(`^(${p}|x)[0-9]\${q}`);",
+            "u = foo(\"(a)\"), v = RegExp(`(a",
+            "b)c`), w = RegExp(\"[\\",
+            "]\");",
+        ]);
+        has(&m, "^", &format!("{Q} keyword.control.anchor.regexp"));
+        has(
+            &m,
+            r"\\d",
+            &format!("{Q} constant.other.character-class.escape.backslash.regexp"),
+        );
+        has(&m, "\\\"", &format!("{Q} constant.character.escape.js"));
+        // `\d` is the string's `d`, no escape of Babel's
+        has(&m, "x\\d", Q);
+        has(
+            &m,
+            "(",
+            &format!("{Q} punctuation.definition.group.begin.regexp"),
+        );
+        has(&m, "g", Q);
+        has(&m, "|", &format!("{T} keyword.operator.or.regexp"));
+        // `\${` is a `\` and a substitution to Babel: the regex's `\` before it
+        has(
+            &m,
+            "\\",
+            &format!("{T} constant.character.escape.backslash.regexp"),
+        );
+        has(&m, "${", "keyword.other.substitution.begin.js");
+        has(&m, "(a)", Q);
+        has(
+            &m,
+            ")",
+            &format!("{T} punctuation.definition.group.end.regexp"),
+        );
+        // a `\` ending the line is the string's continuation, not the regex's
+        has(
+            &m,
+            "\\",
+            &format!("{Q} constant.character.escape.newline.js"),
+        );
+        has(
+            &m,
+            "]",
+            &format!(
+                "{Q} constant.other.character-class.set.regexp punctuation.definition.character-class.end.regexp"
+            ),
         );
     }
 }

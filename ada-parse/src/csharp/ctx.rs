@@ -732,6 +732,7 @@ impl Scan<'_, '_> {
             arg: 0,
             escape: escape_end,
             top_only: false,
+            continues: false,
             base: self.cur() | RE_LEAF,
             text: self.cur(),
         };

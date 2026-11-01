@@ -2658,7 +2658,9 @@ mod tests {
             "function over(a: any) { return <string>a; }\n",
             "const { a, b: [c, d] } = obj, n = a! + 0x1F + 1_000n;\n",
             "const pick = <T, K extends keyof T>(o: T, k: K): T[K] => o[k];\n",
-            "let re = /(?<year>\\d{4})-[a-z]+$/gi, half = total / 2;\n",
+            // a regex's body is ECMAScript's grammar's since phase 4 (ada-parse's `typescript`
+            // tests), not bat's TypeScript's: these few tokens color alike in both
+            "let re = /x+$/gi, half = total / 2;\n",
             "const tag = html`<p>${name}</p>`, plain = `a ${b ? 'c' : \"d\"}`;\n",
             "const conf = { mode: 'x', list: [1, 2] } as const;\n",
             "const\n",

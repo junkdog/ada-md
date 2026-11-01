@@ -2122,6 +2122,7 @@ impl Scan<'_, '_> {
             arg: if raw { h } else { 0 },
             escape: |b, p| escape(b, p, true).unwrap_or(p + 1),
             top_only: false,
+            continues: false,
             base: if raw { RE_RAW } else { RE_STRING },
             text: self.text,
         };

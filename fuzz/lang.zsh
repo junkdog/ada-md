@@ -155,6 +155,23 @@ smoke() {
   kill -TERM -- -$pid 2> /dev/null || true
   wait $pid || rc=$?
   trap - INT TERM EXIT
+  # a fork job that outlived the group's SIGTERM (2026-11-02: one, reparented to init, held bench/exclusive.zsh's
+  # lock for minutes after the smoke ended): this run's are the processes with its artifact prefix
+  local -a left
+  local p k
+  for k in {1..10}; do
+    left=()
+    for p in /proc/[0-9]*(N); do
+      [[ -r $p/cmdline && "$(tr '\0' ' ' < $p/cmdline 2> /dev/null)" == *-artifact_prefix=$o/findings/* ]] \
+        && left+=(${p:t})
+    done
+    (( $#left )) || break
+    sleep 1
+  done
+  if (( $#left )); then
+    print "fork jobs left after the smoke: ${left[*]}; SIGKILL"
+    kill -KILL $left 2> /dev/null || true
+  fi
   after=($dirs[1]/*(N:t))
   added=(${after:|before})
   print -rl -- ${added/#/$dirs[1]/} | xargs -r cp --update=none -t corpus/$t --

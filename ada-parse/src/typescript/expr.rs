@@ -1371,7 +1371,7 @@ impl Scan<'_, '_, '_> {
 
     /// A regex's body and end ahead from `i` (after its `/`):
     /// first: `(?:[^\/\\\[\()]|\\.|\[([^\]\\]|\\.)+\]|\(([^\)\\]|\\.)+\))+\/(flags)`;
-    /// second: `(?:[^\/\\\[]|\\.|\[([^\]\\]|\\.)*\])+\/(flags)`; then `([dgimsuy]+|(?![\/\*])|(?=\/\*))(?!\s*[a-zA-Z0-9_$])`.
+    /// second: `(?:[^\/\\\[]|\\.|\[([^\]\\]|\\.)*\])+\/(flags)`; then `([dgimsuvy]+|(?![\/\*])|(?=\/\*))(?!\s*[a-zA-Z0-9_$])` (ECMAScript's `v` too).
     pub(super) fn regex_body_ahead(&self, i: usize, first: bool) -> bool {
         let mut j = i;
         let mut any = false;
@@ -1441,7 +1441,10 @@ impl Scan<'_, '_, '_> {
         }
         let mut e = j + 1;
         let fs = e;
-        while matches!(self.c(e), b'd' | b'g' | b'i' | b'm' | b's' | b'u' | b'y') {
+        while matches!(
+            self.c(e),
+            b'd' | b'g' | b'i' | b'm' | b's' | b'u' | b'v' | b'y'
+        ) {
             e += 1;
         }
         if e == fs

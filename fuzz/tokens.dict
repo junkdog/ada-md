@@ -243,6 +243,19 @@
 "`\""
 "$($x)"
 "\xe2\x80\x99"
+# regexes in JavaScript's and TypeScript's `RegExp(…)` strings and templates (phase 4's step 4c): the
+# constructs, the hosts' escapes and `${…}` between the regex's tokens, a `\` ending a line
+"new RegExp(\""
+"new RegExp('"
+"new RegExp(`"
+"RegExp(`"
+"\\\\${"
+"\\${"
+"(${a}|"
+"\\\\\x0a"
+"\\\x0a"
+"/v"
+"/dgimsuvy"
 # Java (ADR-40): what changes the scanner's context, and its odd corners
 "/**"
 " * @param "

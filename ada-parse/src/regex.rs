@@ -39,8 +39,8 @@ use crate::Out;
 
 // The state, seven bits: the groups open (up to 15 kept), a class open and one nested in it,
 // `\Q…\E`.
-const DEPTH: u8 = 0x0f;
-const SET: u8 = 0x10;
+pub(crate) const DEPTH: u8 = 0x0f;
+pub(crate) const SET: u8 = 0x10;
 const NEST: u8 = 0x20;
 const NESTS: u8 = NEST;
 const QUOTE: u8 = 0x40;
@@ -177,6 +177,9 @@ pub(crate) struct Embed<'t> {
     /// The host's patterns are tried only where no group or class is open: a regex literal's,
     /// whose contexts a group or a class sits above (`/[/]/` is one literal).
     pub top_only: bool,
+    /// A `\` ending the line is the host's: its string goes on to the next line (JavaScript's),
+    /// so no token of the regex takes it.
+    pub continues: bool,
     /// Added to each of the regex's kinds: where they sit among the host's.
     pub base: u16,
     /// The kind of the regex's literal text, the host string's.
@@ -347,6 +350,9 @@ impl Scan<'_, '_, '_, '_> {
             });
         }
         let Some(&d) = self.b.get(p + 1) else {
+            if self.host.continues {
+                return None;
+            }
             return Some(Unit {
                 c,
                 end: p + 1,
@@ -360,8 +366,18 @@ impl Scan<'_, '_, '_, '_> {
                 host: false,
             });
         }
-        // the host's escape: a character to the regex, at least the `\` and the character after it
-        let end = (self.host.escape)(self.b, p).max(p + 1 + char_len(d));
+        // the host's escape: a character to the regex, at least the `\` and the character after it,
+        // but where the host's escape is the `\` alone and its end or `${` follows (Babel's
+        // template, where `\${` is a `\` and a substitution): the regex's `\`
+        let end = (self.host.escape)(self.b, p);
+        if end == p + 1 && self.host_stop(p + 1) {
+            return Some(Unit {
+                c: b'\\',
+                end,
+                host: false,
+            });
+        }
+        let end = end.max(p + 1 + char_len(d));
         // what the regex reads: a quote, `$` and the like as themselves, the rest a
         // character with no meaning to it
         let c = match d {
@@ -871,7 +887,11 @@ impl Scan<'_, '_, '_, '_> {
     #[inline(never)]
     fn backslash_ecma(&mut self, p: usize, e: usize) -> usize {
         let Some(u) = self.unit(e) else {
-            // at the line's end: no pattern takes a lone `\`
+            // at the line's end no pattern takes a lone `\` in a literal; in a string, and before
+            // the host's end or `${`, it is an escape (of what the substitution starts with)
+            if e < self.n || self.host.cooked {
+                return self.tok(p, e, L::Escape);
+            }
             return e;
         };
         if u.host {
@@ -1222,6 +1242,7 @@ mod tests {
             arg: 0,
             escape: java_escape,
             top_only: !java,
+            continues: false,
             base: 0,
             text: 0,
         };

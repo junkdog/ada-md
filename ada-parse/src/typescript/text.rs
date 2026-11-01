@@ -65,15 +65,23 @@ impl Scan<'_, '_, '_> {
     pub(super) fn string(&mut self) -> bool {
         match self.c(self.i) {
             b'\'' => {
-                self.tok(self.i, self.i + 1, STR_S_BEGIN);
+                let i = self.i;
+                self.tok(i, i + 1, STR_S_BEGIN);
                 self.i += 1;
                 self.push(STR_S_F);
+                if after_paren(self.b, i) && self.regexp_arg(i) {
+                    self.push_regex(RE_STR_F);
+                }
                 true
             }
             b'"' => {
-                self.tok(self.i, self.i + 1, STR_D_BEGIN);
+                let i = self.i;
+                self.tok(i, i + 1, STR_D_BEGIN);
                 self.i += 1;
                 self.push(STR_D_F);
+                if after_paren(self.b, i) && self.regexp_arg(i) {
+                    self.push_regex(RE_STR_F);
+                }
                 true
             }
             _ => self.template_call() || self.template(false),
@@ -97,43 +105,203 @@ impl Scan<'_, '_, '_> {
         self.tok(e, e + 1, TPL_BEGIN);
         self.i = e + 1;
         self.push(if in_type { TPL_TYPE } else { TPL_F });
+        if !in_type && e == i && after_paren(self.b, i) && self.regexp_arg(i) {
+            self.push_regex(RE_STR_F);
+        }
         true
+    }
+
+    /// Whether the string or template opening at `i` is the first argument of `RegExp(`
+    /// (`new RegExp(…)` too): a regex, in ECMAScript's dialect, as WebStorm colors it.
+    #[inline(never)]
+    pub(super) fn regexp_arg(&self, i: usize) -> bool {
+        let b = self.b;
+        let mut k = i;
+        while k > 0 && is_space(b[k - 1]) {
+            k -= 1;
+        }
+        if k == 0 || b[k - 1] != b'(' {
+            return false;
+        }
+        k -= 1;
+        while k > 0 && is_space(b[k - 1]) {
+            k -= 1;
+        }
+        k >= 6
+            && &b[k - 6..k] == b"RegExp"
+            && (k == 6 || !(b[k - 7].is_ascii_alphanumeric() || matches!(b[k - 7], b'_' | b'$')))
+    }
+
+    /// Push a regex's frame, its state empty.
+    pub(super) fn push_regex(&mut self, f: u8) {
+        self.push(f);
+        self.re = 0;
+    }
+
+    /// The regex from the place in host `host` ([`RE_HOSTS`]' order: a literal, a `'…'`, a
+    /// `"…"`, a template), up to where the host's patterns can next match, before `lim`, or past
+    /// the line.
+    #[inline(never)]
+    pub(super) fn regex_run(&mut self, host: usize, lim: usize) -> bool {
+        static YIELDS: [[bool; 256]; 4] = [
+            regex::table(b"/"),
+            regex::table(b"'\\"),
+            regex::table(b"\"\\"),
+            regex::table(b"`\\$"),
+        ];
+        fn quote(_: &[u8], _: usize, _: usize) -> bool {
+            true
+        }
+        fn tpl(b: &[u8], p: usize, _: usize) -> bool {
+            b[p] == b'`' || b.get(p + 1) == Some(&b'{')
+        }
+        let embed = regex::Embed {
+            dialect: regex::Dialect::Ecma,
+            cooked: host != 0,
+            yields: &YIELDS[host],
+            stop: match host {
+                0 => |_, _, _| false,
+                3 => tpl,
+                _ => quote,
+            },
+            arg: 0,
+            escape: escape_at,
+            top_only: host == 0,
+            continues: host != 0,
+            base: (RE_KINDS + host as u16 * regex::KINDS as u16) | self.wrap,
+            text: RE_HOSTS[host] | self.wrap,
+        };
+        let b = &self.b[..lim];
+        match regex::embedded(b, self.i, self.re, &embed, &mut self.done, self.out) {
+            Some((q, st)) => {
+                self.i = q;
+                self.re = st;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// A regex string's turn ([`RE_STR_F`]): the host string's or template's patterns first
+    /// (its end, an escape but `\\`, which is the regex's `\`, a `${`, a string's last character
+    /// on its line), then the regex.
+    #[inline(never)]
+    pub(super) fn regex_string(&mut self) -> bool {
+        let i = self.i;
+        let c = self.c(i);
+        let host = self.stack[self.depth - 2];
+        if host == TPL_F {
+            match c {
+                b'`' => {
+                    self.tok(i, i + 1, TPL_END);
+                    self.i = i + 1;
+                    return self.end_regex_string();
+                }
+                b'\\' if self.c(i + 1) != b'\\' => {
+                    let e = self.escape_end(i);
+                    self.tok(i, e, TPL_ESC);
+                    self.i = e;
+                    return true;
+                }
+                b'$' if self.c(i + 1) == b'{' => {
+                    self.tok(i, i + 2, SUBST_BEGIN);
+                    self.i = i + 2;
+                    self.spill();
+                    self.push(SUBST);
+                    return true;
+                }
+                _ => {}
+            }
+            if i >= self.n {
+                self.i = self.n + 1;
+                return true;
+            }
+            return self.regex_run(3, self.n);
+        }
+        let (q, h, end, esc, bad) = if host == STR_S_F {
+            (b'\'', 1, STR_S_END, STR_S_ESC, STR_S_BAD)
+        } else {
+            (b'"', 2, STR_D_END, STR_D_ESC, STR_D_BAD)
+        };
+        if c == q {
+            self.tok(i, i + 1, end);
+            self.i = i + 1;
+            return self.end_regex_string();
+        }
+        if c == b'\\' && self.c(i + 1) != b'\\' {
+            let e = self.escape_end(i);
+            self.tok(i, e, esc);
+            self.i = e;
+            return true;
+        }
+        if i >= self.n {
+            self.i = self.n + 1;
+            return true;
+        }
+        // `((?:[^\\\n])$)`: the line's last character ends the string
+        let mut last = self.n - 1;
+        while last > 0 && self.b[last] & 0xc0 == 0x80 {
+            last -= 1;
+        }
+        if i >= last {
+            self.tok(i, self.n, bad);
+            self.i = self.n;
+            return self.end_regex_string();
+        }
+        // a `\` last is an escape's (a `\\`, the regex's `\`, and the string goes on) or the line's
+        // continuation, never `[^\\\n]$`
+        let lim = if self.b[last] == b'\\' { self.n } else { last };
+        self.regex_run(h, lim)
+    }
+
+    /// The end of a regex string: its frame and the string's.
+    fn end_regex_string(&mut self) -> bool {
+        self.re = 0;
+        self.pop();
+        self.pop()
+    }
+
+    /// Keep the top regex's state as frames above its own, where something is pushed above it
+    /// or the line ends: [`RE_GROUP_F`] for each group open, then [`RE_SET_F`] for a class.
+    #[inline(never)]
+    pub(super) fn spill(&mut self) {
+        let st = self.re;
+        self.re = 0;
+        for _ in 0..st & regex::DEPTH {
+            self.push(RE_GROUP_F);
+        }
+        if st & regex::SET != 0 {
+            self.push(RE_SET_F);
+        }
+    }
+
+    /// Undo [`Scan::spill`], where its frames are the top again.
+    #[inline(never)]
+    pub(super) fn unspill(&mut self) {
+        let mut st = 0;
+        while self.depth > 1 && matches!(self.top(), RE_GROUP_F | RE_SET_F) {
+            st = if self.top() == RE_SET_F {
+                st | regex::SET
+            } else {
+                (st & regex::SET) | ((st & regex::DEPTH) + 1).min(regex::DEPTH)
+            };
+            self.depth -= 1;
+        }
+        self.re = if matches!(self.top(), REGEX_F | RE_STR_F) {
+            st
+        } else {
+            0
+        };
+        self.refresh();
     }
 
     /// `string-character-escape` at the place, `\` there: its end.
     pub(super) fn escape_end(&self, i: usize) -> usize {
-        let c = self.c(i + 1);
-        let hex = |k: usize| self.c(k).is_ascii_hexdigit();
-        let oct = |k: usize| matches!(self.c(k), b'0'..=b'7');
-        match c {
-            b'x' if hex(i + 2) && hex(i + 3) => i + 4,
-            b'u' if (2..6).all(|k| hex(i + k)) => i + 6,
-            b'u' if self.c(i + 2) == b'{' && hex(i + 3) => {
-                let mut k = i + 3;
-                while hex(k) {
-                    k += 1;
-                }
-                if self.c(k) == b'}' { k + 1 } else { i + 2 }
-            }
-            b'0'..=b'2' => {
-                let mut k = i + 2;
-                while k < i + 4 && oct(k) {
-                    k += 1;
-                }
-                k
-            }
-            b'3' => match self.c(i + 2) {
-                b'0'..=b'6' => i + 3 + usize::from(oct(i + 3)),
-                b'7' => i + 3 + usize::from(oct(i + 3)),
-                _ => i + 2,
-            },
-            b'4'..=b'7' => i + 2 + usize::from(oct(i + 2)),
-            b'\n' => i + 1,
-            c => (i + 1 + char_len(c)).min(self.n),
-        }
+        escape_at(&self.b[..self.n], i)
     }
 
-    /// A frame of text's turn.
+    /// A frame of text's turn. Out of the scan's loop, where its arms would crowd the code's.
+    #[inline(never)]
     pub(super) fn text_step(&mut self, f: u8) -> bool {
         let i = self.i;
         let c = self.c(i);
@@ -247,10 +415,13 @@ impl Scan<'_, '_, '_> {
                 self.i = j;
                 true
             }
-            REGEX_F | RE_GROUP_F | RE_ASSERT_F => {
-                if f == REGEX_F && c == b'/' {
+            REGEX_F => {
+                if c == b'/' && self.re == 0 {
                     let mut e = i + 1;
-                    while matches!(self.c(e), b'd' | b'g' | b'i' | b'm' | b's' | b'u' | b'y') {
+                    while matches!(
+                        self.c(e),
+                        b'd' | b'g' | b'i' | b'm' | b's' | b'u' | b'v' | b'y'
+                    ) {
                         e += 1;
                     }
                     self.tok(i, i + 1, RE_END);
@@ -258,42 +429,12 @@ impl Scan<'_, '_, '_> {
                     self.i = e;
                     return self.pop();
                 }
-                if f != REGEX_F && c == b')' {
-                    self.tok(i, i + 1, RE_GROUP);
-                    self.i = i + 1;
-                    return self.pop();
-                }
-                self.regexp()
+                self.regex_run(0, self.n)
             }
-            RE_SET_F => {
-                if c == b']' {
-                    self.tok(i, i + 1, RE_SET_MARK);
-                    self.i = i + 1;
-                    return self.pop();
-                }
-                if i >= self.n {
-                    return false;
-                }
-                // a range: (?:.|(\\num)|(\\c[A-Z])|(\\.))\-(?:[^\]\\]|…): the left side is any
-                // one character first, a `\` too
-                let plain = (i + char_len(c), None);
-                let left =
-                    if self.c(plain.0) == b'-' && self.re_set_atom(plain.0 + 1, false).is_some() {
-                        Some(plain)
-                    } else {
-                        self.re_set_atom(i, true)
-                    };
-                if let Some((e1, k1)) = left
-                    && self.c(e1) == b'-'
-                    && let Some((e2, k2)) = self.re_set_atom(e1 + 1, false)
-                {
-                    self.tok(i, e1, k1.unwrap_or(RE_RANGE));
-                    self.tok(e1, e1 + 1, RE_RANGE);
-                    self.tok(e1 + 1, e2, k2.unwrap_or(RE_RANGE));
-                    self.i = e2;
-                    return true;
-                }
-                self.re_char_class(true)
+            RE_STR_F => self.regex_string(),
+            RE_GROUP_F | RE_SET_F => {
+                self.unspill();
+                true
             }
             LINE_EOL => {
                 self.i = self.n + 1;
@@ -488,196 +629,6 @@ impl Scan<'_, '_, '_> {
             IF_REGEX => false,
             _ => false,
         }
-    }
-
-    /// `regexp`'s patterns at the place, in a regex's body or group.
-    pub(super) fn regexp(&mut self) -> bool {
-        let i = self.i;
-        let c = self.c(i);
-        match c {
-            b'^' | b'$' => self.take(i, i + 1, RE_ANCHOR),
-            b'\\' if matches!(self.c(i + 1), b'b' | b'B') => self.take(i, i + 2, RE_ANCHOR),
-            b'\\' if matches!(self.c(i + 1), b'1'..=b'9') => {
-                let mut e = i + 2;
-                while self.c(e).is_ascii_digit() {
-                    e += 1;
-                }
-                self.take(i, e, RE_BACKREF)
-            }
-            b'\\' if self.c(i + 1) == b'k' && self.c(i + 2) == b'<' => {
-                let s = i + 3;
-                let mut e = s;
-                if matches!(self.c(e), b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$') {
-                    e += 1;
-                    while matches!(self.c(e), b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$')
-                    {
-                        e += 1;
-                    }
-                }
-                if e > s && self.c(e) == b'>' {
-                    self.tok(i, s, RE_BACKREF);
-                    self.tok(s, e, RE_BACKREF_NAME);
-                    return self.take(e, e + 1, RE_BACKREF);
-                }
-                self.re_char_class(false)
-            }
-            b'?' | b'+' | b'*' => self.take(i, i + 1, RE_QUANT),
-            b'{' => {
-                // \{(\d+,\d+|\d+,|,\d+|\d+)\}\??
-                let mut j = i + 1;
-                let d1 = j;
-                while self.c(j).is_ascii_digit() {
-                    j += 1;
-                }
-                let had1 = j > d1;
-                let mut had2 = false;
-                if self.c(j) == b',' {
-                    j += 1;
-                    let d2 = j;
-                    while self.c(j).is_ascii_digit() {
-                        j += 1;
-                    }
-                    had2 = j > d2;
-                }
-                if (had1 || had2) && self.c(j) == b'}' {
-                    let mut e = j + 1;
-                    if self.c(e) == b'?' {
-                        e += 1;
-                    }
-                    return self.take(i, e, RE_QUANT);
-                }
-                false
-            }
-            b'|' => self.take(i, i + 1, RE_OR),
-            b'(' => {
-                let r = self.rest(i + 1);
-                let a = if r.starts_with(b"?<=") {
-                    Some((3, RE_LOOKBEHIND))
-                } else if r.starts_with(b"?<!") {
-                    Some((3, RE_NEG_LOOKBEHIND))
-                } else if r.starts_with(b"?=") {
-                    Some((2, RE_LOOKAHEAD))
-                } else if r.starts_with(b"?!") {
-                    Some((2, RE_NEG_LOOKAHEAD))
-                } else {
-                    None
-                };
-                if let Some((l, k)) = a {
-                    self.tok(i, i + 1, RE_GROUP);
-                    self.tok(i + 1, i + 1 + l, k);
-                    self.i = i + 1 + l;
-                    self.push(RE_ASSERT_F);
-                    return true;
-                }
-                if r.starts_with(b"?:") {
-                    self.tok(i, i + 1, RE_GROUP);
-                    self.tok(i + 1, i + 3, RE_NO_CAPTURE);
-                    self.i = i + 3;
-                } else if r.starts_with(b"?<") {
-                    let s = i + 3;
-                    let mut e = s;
-                    if matches!(self.c(e), b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$') {
-                        e += 1;
-                        while matches!(self.c(e), b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$')
-                        {
-                            e += 1;
-                        }
-                    }
-                    if e > s && self.c(e) == b'>' {
-                        self.tok(i, s, RE_GROUP);
-                        self.tok(s, e, RE_GROUP_NAME);
-                        self.tok(e, e + 1, RE_GROUP);
-                        self.i = e + 1;
-                    } else {
-                        self.tok(i, i + 1, RE_GROUP);
-                        self.i = i + 1;
-                    }
-                } else {
-                    self.tok(i, i + 1, RE_GROUP);
-                    self.i = i + 1;
-                }
-                self.push(RE_GROUP_F);
-                true
-            }
-            b'[' => {
-                self.tok(i, i + 1, RE_SET_MARK);
-                let mut e = i + 1;
-                if self.c(e) == b'^' {
-                    self.tok(e, e + 1, RE_SET_NEG);
-                    e += 1;
-                }
-                self.i = e;
-                self.push(RE_SET_F);
-                true
-            }
-            _ => self.re_char_class(false),
-        }
-    }
-
-    /// `regex-character-class` at the place.
-    pub(super) fn re_char_class(&mut self, in_set: bool) -> bool {
-        let i = self.i;
-        let c = self.c(i);
-        let k = |a: u16, b: u16| if in_set { b } else { a };
-        if c == b'.' {
-            return self.take(i, i + 1, k(RE_CLASS, RE_SET_CLASS));
-        }
-        if c != b'\\' || i + 1 >= self.n {
-            return false;
-        }
-        let d = self.c(i + 1);
-        if matches!(
-            d,
-            b'w' | b'W' | b's' | b'S' | b'd' | b'D' | b't' | b'r' | b'n' | b'v' | b'f'
-        ) {
-            return self.take(i, i + 2, k(RE_CLASS, RE_SET_CLASS));
-        }
-        if let Some(e) = self.re_numeric(i) {
-            return self.take(i, e, k(RE_NUM, RE_SET_NUM));
-        }
-        if d == b'c' && self.c(i + 2).is_ascii_uppercase() {
-            return self.take(i, i + 3, k(RE_CTRL, RE_SET_CTRL));
-        }
-        let e = (i + 1 + char_len(d)).min(self.n);
-        self.take(i, e, k(RE_ESC, RE_SET_ESC))
-    }
-
-    /// `\\([0-7]{3}|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4})` at `i`: its end.
-    pub(super) fn re_numeric(&self, i: usize) -> Option<usize> {
-        let oct = |k: usize| matches!(self.c(k), b'0'..=b'7');
-        let hex = |k: usize| self.c(k).is_ascii_hexdigit();
-        if (1..4).all(|k| oct(i + k)) || (self.c(i + 1) == b'x' && hex(i + 2) && hex(i + 3)) {
-            Some(i + 4)
-        } else if self.c(i + 1) == b'u' && (2..6).all(|k| hex(i + k)) {
-            Some(i + 6)
-        } else {
-            None
-        }
-    }
-
-    /// One side of a class's range at `i`: its end, and the kind of an escape (none for a
-    /// plain character). The right side can't be `]` or `\` alone.
-    pub(super) fn re_set_atom(&self, i: usize, left: bool) -> Option<(usize, Option<u16>)> {
-        let c = self.c(i);
-        if i >= self.n {
-            return None;
-        }
-        if c == b'\\' {
-            if let Some(e) = self.re_numeric(i) {
-                return Some((e, Some(RE_RANGE_NUM)));
-            }
-            if self.c(i + 1) == b'c' && self.c(i + 2).is_ascii_uppercase() {
-                return Some((i + 3, Some(RE_RANGE_CTRL)));
-            }
-            if i + 1 < self.n {
-                return Some((i + 1 + char_len(self.c(i + 1)), Some(RE_RANGE_ESC)));
-            }
-            return if left { Some((i + 1, None)) } else { None };
-        }
-        if !left && c == b']' {
-            return None;
-        }
-        Some((i + char_len(c), None))
     }
 
     /// `docblock`'s patterns at the place in a `/** … */`: `@`, `[` or `{` there.
@@ -1438,4 +1389,53 @@ fn find2(s: &[u8], i: usize, a: u8, b: u8) -> Option<usize> {
         j += 1;
     }
     None
+}
+
+/// `string-character-escape` at `p` in line `b`, `\` there: its end (a `\` ending the line is
+/// one, its `\n` the next line's continuation).
+fn escape_at(b: &[u8], p: usize) -> usize {
+    let n = b.len();
+    let c = |k: usize| match k.cmp(&n) {
+        std::cmp::Ordering::Less => b[k],
+        std::cmp::Ordering::Equal => b'\n',
+        std::cmp::Ordering::Greater => 0,
+    };
+    let hex = |k: usize| c(k).is_ascii_hexdigit();
+    let oct = |k: usize| matches!(c(k), b'0'..=b'7');
+    match c(p + 1) {
+        b'x' if hex(p + 2) && hex(p + 3) => p + 4,
+        b'u' if (2..6).all(|k| hex(p + k)) => p + 6,
+        b'u' if c(p + 2) == b'{' && hex(p + 3) => {
+            let mut k = p + 3;
+            while hex(k) {
+                k += 1;
+            }
+            if c(k) == b'}' { k + 1 } else { p + 2 }
+        }
+        b'0'..=b'2' => {
+            let mut k = p + 2;
+            while k < p + 4 && oct(k) {
+                k += 1;
+            }
+            k
+        }
+        b'3' => match c(p + 2) {
+            b'0'..=b'7' => p + 3 + usize::from(oct(p + 3)),
+            _ => p + 2,
+        },
+        b'4'..=b'7' => p + 2 + usize::from(oct(p + 2)),
+        b'\n' => p + 1,
+        d => (p + 1 + char_len(d)).min(n),
+    }
+}
+
+/// Whether a `(` is right before `p`, or one blank and a `(` (`RegExp( "…")`): where a string may
+/// be `RegExp(`'s argument, tested inline before [`Scan::regexp_arg`] reads further back.
+#[inline]
+fn after_paren(b: &[u8], p: usize) -> bool {
+    match p {
+        0 => false,
+        1 => b[0] == b'(',
+        _ => b[p - 1] == b'(' || (b[p - 1] == b' ' && b[p - 2] == b'('),
+    }
 }

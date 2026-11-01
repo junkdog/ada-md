@@ -1925,6 +1925,7 @@ impl<'b> Scan<'b, '_> {
             arg: 0,
             escape: regex::java_escape,
             top_only: false,
+            continues: false,
             base: self.kind(W_RE),
             text: self.text,
         };
