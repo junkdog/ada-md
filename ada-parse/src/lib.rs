@@ -18,6 +18,7 @@
 //! earlier port of that machine (G-002, G-003, moved in from ada), behind an interface of its own
 //! until a scanner replaces it.
 
+mod bash;
 mod cpp;
 mod csharp;
 mod diff;
@@ -165,6 +166,7 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::Python => python::line(line.as_bytes(), state, &mut out),
         Lang::Lua => lua::line(line.as_bytes(), state, &mut out),
         Lang::JavaScript => javascript::line(line.as_bytes(), state, &mut out),
+        Lang::Bash => bash::line(line.as_bytes(), state, &mut out),
         _ => {
             if let Some(g) = lang.grammar() {
                 machine::line(g, line.as_bytes(), state, &mut out);

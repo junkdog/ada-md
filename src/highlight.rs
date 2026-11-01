@@ -578,7 +578,6 @@ fn own(lang: &str) -> Option<Lang> {
 fn make_grammar(lang: Lang) -> Option<make::Grammar> {
     match lang {
         Lang::Makefile => Some(make::Grammar::Make),
-        Lang::Bash => Some(make::Grammar::Bash),
         _ => None,
     }
 }
@@ -895,7 +894,7 @@ impl<'a> Highlighter<'a> {
     pub fn new(key: u64, lang: &str, text: &'a str, theme: &'a SyntaxTheme) -> Self {
         let highlighter = SynHighlighter::new(&theme.theme);
         let state = find_syntax(lang).map(|syntax| match syntax {
-            Syntax::Own(lang @ (Lang::Makefile | Lang::Bash)) => {
+            Syntax::Own(lang @ Lang::Makefile) => {
                 let grammar = make_grammar(lang).expect("a make grammar");
                 let state = Box::new(make::State::new(grammar));
                 Engine::Make(MakeRules::new(grammar), state, Vec::new())
@@ -1012,8 +1011,8 @@ pub fn highlight_parallel(key: u64, lang: &str, text: &str, theme: &SyntaxTheme)
         Syntax::Own(Lang::Json) if text.contains("/*") => highlight(key, lang, text, theme),
         // without one, its lines don't depend on each other
         Syntax::Own(Lang::Json) => highlight_parse_on(key, Lang::Json, text, theme, threads),
-        // their lines depend on the ones before, and one thread does ~100 MB/s
-        Syntax::Own(Lang::Makefile | Lang::Bash) => highlight(key, lang, text, theme),
+        // its lines depend on the ones before, and one thread does ~50 MB/s
+        Syntax::Own(Lang::Makefile) => highlight(key, lang, text, theme),
         Syntax::Own(own) if own.line_by_line() => {
             highlight_parse_on(key, own, text, theme, threads)
         }

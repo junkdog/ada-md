@@ -394,6 +394,7 @@ impl Lang {
             Lang::Python => crate::python::scopes(kind),
             Lang::Lua => crate::lua::scopes(kind),
             Lang::JavaScript => crate::javascript::scopes(kind),
+            Lang::Bash => crate::bash::scopes(kind),
             _ if self.grammar().is_some() => {
                 self.grammar().map_or_else(Vec::new, |g| g.scopes(kind))
             }
@@ -440,7 +441,7 @@ impl Lang {
 
     /// Whether [`crate::lex`] lexes it: false for Makefile and bash, which [`crate::make`] lexes.
     pub fn lexed(self) -> bool {
-        !matches!(self, Lang::Makefile | Lang::Bash)
+        !matches!(self, Lang::Makefile)
     }
 
     /// Whether a line's spans never depend on the lines before it, so that lines can be lexed

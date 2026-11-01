@@ -36,10 +36,10 @@ const LANGS: &[(&str, Lang)] = &[
     ("python", Lang::Python),
     ("lua", Lang::Lua),
     ("javascript", Lang::JavaScript),
-    // on [`make`], the port of syntect's machine (G-002, G-003), not `lex`; `make.txt`
-    // phase 0's Makefiles
-    ("make", Lang::Makefile),
     ("bash", Lang::Bash),
+    // on [`make`], the port of syntect's machine (G-002), not `lex`; `make.txt` phase 0's
+    // Makefiles
+    ("make", Lang::Makefile),
 ];
 
 #[test]
@@ -67,7 +67,6 @@ fn lexer_speed() {
         let repeat = (4_000_000 / bytes).max(1);
         let grammar = match lang {
             Lang::Makefile => Some(Grammar::Make),
-            Lang::Bash => Some(Grammar::Bash),
             _ => None,
         };
         let mut best = Duration::MAX;
