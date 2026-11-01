@@ -1,13 +1,17 @@
 //! Regular expressions in other languages' strings (ADR-40, phase 4): one scanner with a
 //! dialect per family, embedded where a host's construct makes a string a regex though bat's
-//! grammar leaves it plain (Kotlin's `Regex("…")`, Java's `Pattern.compile("…")`, …).
+//! grammar leaves it plain (Kotlin's `Regex("…")`, Java's `Pattern.compile("…")`, …), and in
+//! JavaScript's regex literals.
 //!
 //! The kinds carry the scopes of bat's `Regular Expressions (Javascript)` (anchors, back
 //! references, quantifiers, groups and assertions, character classes and their sets, escapes),
 //! with a few of its own for what JavaScript lacks (inline options, atomic groups, `\Q…\E`).
-//! The dialect is **Java's** (`java.util.regex`, Kotlin's too), which adds possessive quantifiers, `(?>…)`,
-//! `(?idmsux-idmsux)` and `(?idmsux-idmsux:…)`, nested classes and `&&`, `\Q…\E`, `\pL`,
-//! `\h\H\v\V\R\X`, `\A\G\Z\z` and its escapes.
+//! Two dialects ([`Dialect`]):
+//! - **Java's** (`java.util.regex`, Kotlin's too) adds possessive quantifiers, `(?>…)`,
+//!   `(?idmsux-idmsux)` and `(?idmsux-idmsux:…)`, nested classes and `&&`, `\Q…\E`, `\pL`,
+//!   `\h\H\v\V\R\X`, `\A\G\Z\z` and its escapes.
+//! - **ECMAScript's** is bat's grammar, but where it is wrong: a `.` in a class is a
+//!   character, not a class escape, and `\u{…}` is one escape, not `\u` and a quantifier.
 //!
 //! **A host's string spells the regex.** In a cooked string (Java's `"…"`, Kotlin's `"…"`)
 //! `\\` is the regex's `\`, so `"\\d+"` is `\d+`, and any other `\` starts the host's escape, a
@@ -31,6 +35,31 @@ const NESTS: u8 = NEST;
 const QUOTE: u8 = 0x40;
 /// The bits of the state: a host keeping it in a byte of its own has the top bit free.
 pub(crate) const STATE: u8 = 0x7f;
+/// The bits of an ECMAScript regex's state: it has no nested class and no `\Q…\E`.
+pub(crate) const ECMA_STATE: u8 = DEPTH | SET;
+
+/// The bytes a token of `main` (or a group in it) starts on, and of a class.
+static MAIN_BYTES: [bool; 256] = table(b"\\^$?*+{|().[");
+static SET_BYTES: [bool; 256] = table(b"\\[]&");
+
+const fn table(bytes: &[u8]) -> [bool; 256] {
+    let mut t = [false; 256];
+    let mut i = 0;
+    while i < bytes.len() {
+        t[bytes[i] as usize] = true;
+        i += 1;
+    }
+    t
+}
+
+/// Which regexes a host's are.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Dialect {
+    /// `java.util.regex`, Kotlin's too.
+    Java,
+    /// ECMAScript's, as bat's `Regular Expressions (Javascript)` reads it.
+    Ecma,
+}
 
 macro_rules! leaves {
     ($($name:ident = $scope:literal,)*) => {
@@ -104,6 +133,7 @@ pub(crate) fn scopes(kind: u16) -> Vec<&'static str> {
 
 /// A regex in a host's string: what the host gives the scan.
 pub(crate) struct Embed<'t> {
+    pub dialect: Dialect,
     /// `\\` is the regex's `\`, and another `\` the host's escape (Java's and Kotlin's `"…"`);
     /// false where the string's text is the regex's.
     pub cooked: bool,
@@ -113,6 +143,9 @@ pub(crate) struct Embed<'t> {
     /// Whether a pattern of the host's but its escape matches at a byte of `yields`: a token of
     /// the regex doesn't run over it.
     pub stop: fn(&[u8], usize) -> bool,
+    /// The host's patterns are tried only where no group or class is open: a regex literal's,
+    /// whose contexts a group or a class sits above (`/[/]/` is one literal).
+    pub top_only: bool,
     /// Added to each of the regex's kinds: where they sit among the host's.
     pub base: u16,
     /// The kind of the regex's literal text, the host string's.
@@ -157,6 +190,8 @@ pub(crate) fn embedded(
             s.main(p)
         };
     }
+    // the text to where the host takes over is the regex's: a class's, in one
+    s.fill(p.min(n));
     *at = s.at;
     Some((p.min(n), s.st))
 }
@@ -191,9 +226,7 @@ impl Scan<'_, '_, '_, '_> {
 
     fn put(&mut self, s: usize, e: usize, kind: u16) -> usize {
         let e = e.min(self.n);
-        if s > self.at && self.host.text != 0 {
-            self.out.push_merged(self.at, s, self.host.text);
-        }
+        self.fill(s);
         if e > s {
             self.out.push(s, e, self.host.base + kind);
             self.at = e;
@@ -201,11 +234,38 @@ impl Scan<'_, '_, '_, '_> {
         e
     }
 
+    /// The text up to `s`, after the spans so far: a class's if one is open, else the host
+    /// string's.
+    fn fill(&mut self, s: usize) {
+        if s > self.at {
+            let kind = if self.st & SET != 0 {
+                self.host.base + IN_SET
+            } else {
+                self.host.text
+            };
+            if kind != 0 {
+                self.out.push_merged(self.at, s, kind);
+            }
+            self.at = s;
+        }
+    }
+
     /// Whether the host's patterns get place `p`: a byte they start on, but a cooked `\\`.
     fn host_at(&self, p: usize) -> bool {
         let c = self.b[p];
         self.host.yields[usize::from(c)]
             && !(c == b'\\' && self.host.cooked && self.b.get(p + 1) == Some(&b'\\'))
+            && !(self.host.top_only && self.st & STATE != 0)
+    }
+
+    /// Whether byte `p` is one of `bytes` or one a pattern of the host's can start on.
+    fn special(&self, bytes: &[bool; 256], p: usize) -> bool {
+        let c = usize::from(self.b[p]);
+        bytes[c] || self.host.yields[c]
+    }
+
+    fn java(&self) -> bool {
+        self.host.dialect == Dialect::Java
     }
 
     /// The regex's character at `p`. Past where the scan took over, a place where the host's
@@ -268,6 +328,14 @@ impl Scan<'_, '_, '_, '_> {
 
     /// One token or one character of `main` (or a group in it) at `p`: where the scan goes on.
     fn main(&mut self, p: usize) -> usize {
+        // a run of characters with no meaning to the regex or the host: text
+        if !self.special(&MAIN_BYTES, p) {
+            let mut q = p + 1;
+            while q < self.n && !self.special(&MAIN_BYTES, q) {
+                q += 1;
+            }
+            return q;
+        }
         let Some(u) = self.unit(p) else {
             return p + 1;
         };
@@ -358,30 +426,26 @@ impl Scan<'_, '_, '_, '_> {
                     open(self);
                     return self.tok(e, q + 1, L::NoCapture);
                 }
-                Some(b'>') => {
+                Some(b'>') if self.java() => {
                     self.tok(p, e, L::GroupBegin);
                     open(self);
                     return self.tok(e, q + 1, L::Atomic);
                 }
                 Some(b'<') => {
-                    // `(?<name>`, a name `[a-zA-Z][a-zA-Z0-9]*`
+                    // `(?<name>`
                     let s = q + 1;
-                    if self.b.get(s).is_some_and(u8::is_ascii_alphabetic) {
-                        let mut t = s + 1;
-                        while t < self.n && self.b[t].is_ascii_alphanumeric() {
-                            t += 1;
-                        }
-                        if let Some(g) = self.is(t, b'>') {
-                            self.tok(p, e, L::GroupBegin);
-                            open(self);
-                            self.tok(e, q, L::GroupBegin);
-                            self.tok(q, s, L::NamedBegin);
-                            self.tok(s, t, L::GroupName);
-                            return self.tok(t, g, L::NamedEnd);
-                        }
+                    if let Some(t) = self.group_name(s)
+                        && let Some(g) = self.is(t, b'>')
+                    {
+                        self.tok(p, e, L::GroupBegin);
+                        open(self);
+                        self.tok(e, q, L::GroupBegin);
+                        self.tok(q, s, L::NamedBegin);
+                        self.tok(s, t, L::GroupName);
+                        return self.tok(t, g, L::NamedEnd);
                     }
                 }
-                _ => {
+                _ if self.java() => {
                     // `(?idmsuxU-idmsuxU)` and `(?idmsuxU-idmsuxU:`
                     let flag = |c: u8| b"idmsuxU".contains(&c);
                     let mut t = q;
@@ -408,14 +472,36 @@ impl Scan<'_, '_, '_, '_> {
                         }
                     }
                 }
+                _ => {}
             }
         }
         open(self);
         self.tok(p, e, L::GroupBegin)
     }
 
+    /// A group's name from `s`: Java's `[a-zA-Z][a-zA-Z0-9]*`, ECMAScript's
+    /// `[_$\p{L}][_$\p{L}\p{N}]*` (any character past ASCII taken as a letter). Where it ends.
+    fn group_name(&self, s: usize) -> Option<usize> {
+        let java = self.java();
+        let ecma = |c: u8| !java && matches!(c, b'_' | b'$' | 0x80..);
+        if !self
+            .b
+            .get(s)
+            .is_some_and(|&c| c.is_ascii_alphabetic() || ecma(c))
+        {
+            return None;
+        }
+        let mut t = s + 1;
+        while t < self.n && (self.b[t].is_ascii_alphanumeric() || ecma(self.b[t])) {
+            t += 1;
+        }
+        Some(t)
+    }
+
     /// `[` at `p` to `e`, or `[^`.
     fn open_set(&mut self, p: usize, e: usize) -> usize {
+        // the text before it isn't the class's
+        self.fill(p);
         self.st |= SET;
         self.tok(p, e, L::SetBegin);
         match self.is(e, b'^') {
@@ -426,6 +512,13 @@ impl Scan<'_, '_, '_, '_> {
 
     /// One token or one character in a class at `p`.
     fn set(&mut self, p: usize) -> usize {
+        // a character with no meaning to the class or the host, and no range's `-` after it
+        if !self.special(&SET_BYTES, p) {
+            let e = p + char_len(self.b[p]);
+            if self.b.get(e) != Some(&b'-') {
+                return e;
+            }
+        }
         let Some(u) = self.unit(p) else {
             return p + 1;
         };
@@ -443,7 +536,7 @@ impl Scan<'_, '_, '_, '_> {
                 }
                 r
             }
-            b'[' => {
+            b'[' if self.java() => {
                 if self.st & NESTS != NESTS {
                     self.st += NEST;
                 }
@@ -453,7 +546,9 @@ impl Scan<'_, '_, '_, '_> {
                     None => e,
                 }
             }
-            b'&' if self.is(e, b'&').is_some() => self.tok(p, e + 1, L::Intersection),
+            b'&' if self.java() && self.is(e, b'&').is_some() => {
+                self.tok(p, e + 1, L::Intersection)
+            }
             _ => {
                 if let Some(r) = self.range(p, u) {
                     return r;
@@ -472,11 +567,20 @@ impl Scan<'_, '_, '_, '_> {
         let end = |s: &Self, q: usize, first: bool| -> Option<(usize, Option<L>)> {
             let v = s.unit(q)?;
             if !v.host && v.c == b'\\' {
-                let w = s.unit(v.end)?;
-                if !w.host && b"wWsSdDhHvV".contains(&w.c) {
+                let Some(w) = s.unit(v.end) else {
+                    // ECMAScript: a `\` at the line's end is a character
+                    return (!s.java()).then_some((v.end, None));
+                };
+                let classes: &[u8] = if s.java() { b"wWsSdDhHvV" } else { b"wWsSdD" };
+                if !w.host && classes.contains(&w.c) {
                     return Some((w.end, Some(L::RangeClassEscape)));
                 }
-                return Some((w.end, Some(L::RangeEscape)));
+                let e = if s.java() || w.host {
+                    w.end
+                } else {
+                    s.ecma_escape(w.end, w.c)
+                };
+                return Some((e, Some(L::RangeEscape)));
             }
             if v.host {
                 return Some((v.end, None));
@@ -500,6 +604,9 @@ impl Scan<'_, '_, '_, '_> {
 
     /// `\…`, its `\` at `p` to `e`: where it ends.
     fn backslash(&mut self, p: usize, e: usize) -> usize {
+        if !self.java() {
+            return self.backslash_ecma(p, e);
+        }
         let Some(u) = self.unit(e) else {
             // at the line's end, or before the host's end or template
             return self.tok(p, e, L::Escape);
@@ -583,11 +690,84 @@ impl Scan<'_, '_, '_, '_> {
         }
     }
 
-    /// `\p` or `\P` at `p` to `e`: `{name}`, `{key=value}`, or a letter.
+    /// `\…` in ECMAScript, its `\` at `p` to `e`: where it ends.
+    #[inline(never)]
+    fn backslash_ecma(&mut self, p: usize, e: usize) -> usize {
+        let Some(u) = self.unit(e) else {
+            // at the line's end: no pattern takes a lone `\`
+            return e;
+        };
+        if u.host {
+            return self.tok(p, u.end, L::Escape);
+        }
+        let n = u.end;
+        let in_set = self.st & SET != 0;
+        match u.c {
+            b'b' | b'B' if !in_set => self.tok(p, n, L::Anchor),
+            b'1'..=b'9' if !in_set => {
+                let mut q = n;
+                while q < self.n && self.b[q].is_ascii_digit() {
+                    q += 1;
+                }
+                self.tok(p, q, L::BackReference)
+            }
+            b'k' if !in_set => {
+                if let Some(s) = self.is(n, b'<')
+                    && let Some(t) = self.group_name(s)
+                    && let Some(g) = self.is(t, b'>')
+                {
+                    self.tok(p, n, L::BackReference);
+                    self.tok(n, s, L::NamedBegin);
+                    self.tok(s, t, L::BackReferenceName);
+                    return self.tok(t, g, L::NamedEnd);
+                }
+                self.tok(p, n, L::Escape)
+            }
+            b'w' | b'W' | b's' | b'S' | b'd' | b'D' => self.tok(p, n, L::ClassEscape),
+            b'p' | b'P' => self.property(p, n),
+            c => {
+                let q = self.ecma_escape(n, c);
+                self.tok(p, q, L::Escape)
+            }
+        }
+    }
+
+    /// Where ECMAScript's escape `\c…` ends, `c` the character after its `\`, ending at `n`:
+    /// `\cX`, `\xHH`, `\uHHHH` and `\u{H…}` take more.
+    fn ecma_escape(&self, n: usize, c: u8) -> usize {
+        let hex = |q: usize| q < self.n && self.b[q].is_ascii_hexdigit();
+        match c {
+            b'c' if n < self.n && self.b[n].is_ascii_uppercase() => n + 1,
+            b'x' if hex(n) && hex(n + 1) => n + 2,
+            b'u' => {
+                if self.b.get(n) == Some(&b'{')
+                    && let Some(c) = (n + 1..self.n).find(|&q| !hex(q))
+                    && c > n + 1
+                    && self.b[c] == b'}'
+                {
+                    return c + 1;
+                }
+                if (n..n + 4).all(hex) { n + 4 } else { n }
+            }
+            _ => n,
+        }
+    }
+
+    /// `\p` or `\P` at `p` to `e`: `{name}`, `{key=value}`, or (Java's) a letter.
     fn property(&mut self, p: usize, e: usize) -> usize {
+        // Java's `[a-zA-Z0-9_]+`, ECMAScript's `[\p{L}_]+`
+        let java = self.java();
         let name = |s: &Self, q: usize| {
             let mut t = q;
-            while t < s.n && (s.b[t].is_ascii_alphanumeric() || s.b[t] == b'_') {
+            while t < s.n
+                && (s.b[t].is_ascii_alphabetic()
+                    || s.b[t] == b'_'
+                    || if java {
+                        s.b[t].is_ascii_digit()
+                    } else {
+                        s.b[t] >= 0x80
+                    })
+            {
                 t += 1;
             }
             t
@@ -612,7 +792,7 @@ impl Scan<'_, '_, '_, '_> {
             }
             return self.tok(p, e, L::Escape);
         }
-        if self.b.get(e).is_some_and(u8::is_ascii_alphabetic) {
+        if java && self.b.get(e).is_some_and(u8::is_ascii_alphabetic) {
             self.tok(p, e, L::Property);
             return self.tok(e, e + 1, L::PropertyName);
         }
@@ -651,16 +831,29 @@ mod tests {
 
     /// `text`'s tokens as a cooked (or raw) Java string's regex, `(text, scopes)`.
     fn lex(text: &str, cooked: bool) -> Vec<(&str, String)> {
+        lex_in(text, cooked, Dialect::Java)
+    }
+
+    /// `text`'s tokens as a regex of `dialect` in a cooked (or raw) string, `(text, scopes)`.
+    fn lex_in(text: &str, cooked: bool, dialect: Dialect) -> Vec<(&str, String)> {
+        // a Java string's end and escapes; a JavaScript literal's `/`
+        let java = dialect == Dialect::Java;
         let yields = {
             let mut t = [false; 256];
-            t[usize::from(b'"')] = true;
-            t[usize::from(b'\\')] = true;
+            if java {
+                t[usize::from(b'"')] = true;
+                t[usize::from(b'\\')] = true;
+            } else {
+                t[usize::from(b'/')] = true;
+            }
             t
         };
         let host = Embed {
+            dialect,
             cooked,
             yields: &yields,
             stop: |b, p| b[p] == b'"',
+            top_only: !java,
             base: 0,
             text: 0,
         };
@@ -750,5 +943,44 @@ mod tests {
             "constant.other.character-class.escape.backslash.regexp",
         );
         has(&t, "?i", "keyword.other.option-toggle.regexp");
+    }
+
+    #[test]
+    fn ecmascripts_dialect() {
+        let t = lex_in(
+            r"\cA\cz\x41\x4\0123\N[\x41-\u005A.\w-][-\d]\h\R\Q",
+            false,
+            Dialect::Ecma,
+        );
+        let esc = "constant.character.escape.backslash.regexp";
+        for e in [
+            r"\cA", r"\c", r"\x41", r"\x", r"\0", r"\N", r"\h", r"\R", r"\Q",
+        ] {
+            has(&t, e, esc);
+        }
+        has(
+            &t,
+            r"\x41",
+            "constant.other.character-class.set.regexp constant.other.character-class.range.regexp constant.character.escape.backslash.regexp",
+        );
+        has(
+            &t,
+            r"\u005A",
+            "constant.other.character-class.set.regexp constant.other.character-class.range.regexp constant.character.escape.backslash.regexp",
+        );
+        has(
+            &t,
+            r"\w",
+            "constant.other.character-class.set.regexp constant.other.character-class.escape.backslash.regexp",
+        );
+        has(&t, ".", "constant.other.character-class.set.regexp");
+        // `\pL` is Java's; a property's name has no digit; a lone `\` at the end is a character
+        let t = lex_in(r"\pL\p{L1}\p{Script=}x\", false, Dialect::Ecma);
+        has(&t, r"\p", esc);
+        assert!(!t.iter().any(|(x, _)| *x == "L" || *x == "\\"), "{t:?}");
+        has(&t, "Script", "support.constant.unicode-property.regexp");
+        // `(?<名>…)`: a name past ASCII
+        let t = lex_in("(?<名>a)", false, Dialect::Ecma);
+        has(&t, "名", "entity.name.other.group.regexp");
     }
 }

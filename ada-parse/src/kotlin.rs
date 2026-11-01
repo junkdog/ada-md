@@ -367,16 +367,20 @@ static RE_YIELDS: [[bool; 256]; 2] = {
 /// A regex in a `"…"` string, then in a `"""…"""` one.
 static RE_EMBEDS: [regex::Embed<'static>; 2] = [
     regex::Embed {
+        dialect: regex::Dialect::Java,
         cooked: true,
         yields: &RE_YIELDS[0],
         stop: |b, p| b[p] == b'"' || template(b, p).is_some(),
+        top_only: false,
         base: RE_STRING,
         text: STRING_TEXT,
     },
     regex::Embed {
+        dialect: regex::Dialect::Java,
         cooked: false,
         yields: &RE_YIELDS[1],
         stop: |b, p| raw_end(b, p) || (b[p] == b'$' && template(b, p).is_some()),
+        top_only: false,
         base: RE_RAW,
         text: RAW_TEXT,
     },

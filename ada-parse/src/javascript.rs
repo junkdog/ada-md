@@ -12,10 +12,10 @@
 //! only in a meta scope no theme can see are one here (the four class methods' heads, the
 //! functions', the arrows'); the anonymous ones are named by what they read.
 //!
-//! **Not followed, by design:** a regex literal's body is one kind, `string.regexp.js`; the
-//! scan follows its escapes, groups and classes only to find where it ends (phase 4's
-//! ECMAScript dialect is to fill it). GraphQL in a ``gql`…` `` template is plain text (bat
-//! embeds its GraphQL grammar). A kind is a leaf, bat's scopes for a token ([`scopes`]); of
+//! A regex literal's body is [`crate::regex`]'s ECMAScript dialect (bat's `Regular Expressions
+//! (Javascript)`, which Babel's grammar includes), its state in the literal's context byte; its
+//! flags are ECMAScript's, `[dgimsuvy]`, where bat's grammar takes `[gimy]`. **Not followed, by
+//! design:** GraphQL in a ``gql`…` `` template is plain text (bat embeds its GraphQL grammar). A kind is a leaf, bat's scopes for a token ([`scopes`]); of
 //! the meta scopes only those a theme can see are kept (a string's, a regex's, a comment's).
 //!
 //! The stack between lines is the contexts open above the top level, up to 28 (the bytes of
@@ -23,6 +23,7 @@
 //! a closing tag on a later line is matched by its hash; on its own line, by its text.
 
 use crate::machine::KEPT as HALF;
+use crate::regex;
 use crate::{Out, State};
 
 // The contexts, by bat's names where they have one.
@@ -46,12 +47,11 @@ const STR_S: u8 = 7;
 const TPL: u8 = 8;
 /// A template's `${ … }`: `expression`.
 const SUBST: u8 = 9;
-/// A regex literal's body.
-const REGEX: u8 = 10;
-/// A group of the regex, `( … )`.
-const RE_GROUP: u8 = 11;
-/// A character class of the regex, `[ … ]`.
-const RE_CLASS: u8 = 12;
+/// A regex literal's body: this, or'd with the regex's state ([`regex::ECMA_STATE`], its
+/// groups open and whether a class is), up to [`RE_LAST`].
+const REGEX: u8 = 0x60;
+const RE_LAST: u8 = REGEX | regex::ECMA_STATE;
+const _: () = assert!(REGEX & regex::ECMA_STATE == 0 && RE_LAST < JSX_TAG);
 /// After `for`, up to its `( … )`.
 const FOR: u8 = 13;
 /// Inside a `for`'s `( … )`.
@@ -302,8 +302,17 @@ leaves! {
     GROUP_END = "punctuation.definition.group.end.js",
 }
 
+/// The kinds of a regex literal's tokens: the regex's, from here.
+const RE_KINDS: u16 = 256;
+const _: () = assert!(LEAVES.len() <= RE_KINDS as usize);
+
 /// The scopes under `source.js` a kind carries, outermost first.
 pub fn scopes(kind: u16) -> Vec<&'static str> {
+    if kind >= RE_KINDS {
+        let mut out = vec!["string.regexp.js"];
+        out.extend(regex::scopes(kind - RE_KINDS));
+        return out;
+    }
     LEAVES.get(usize::from(kind)).map_or_else(Vec::new, |l| {
         l.split(' ').filter(|s| !s.is_empty()).collect()
     })
@@ -1009,7 +1018,18 @@ static JDQ_STOPS: [bool; 256] = stops(b"\"&");
 static JSQ_STOPS: [bool; 256] = stops(b"'&");
 static MUSTACHE_STOPS: [bool; 256] = stops(b"}");
 static TEMPLATE_STOPS: [bool; 256] = stops(b"`$");
-static REGEX_STOPS: [bool; 256] = stops(b"/()[]\\");
+static REGEX_STOPS: [bool; 256] = stops(b"/");
+
+/// A regex literal's body: its `/` ends it where no group or class is open.
+static RE_EMBED: regex::Embed<'static> = regex::Embed {
+    dialect: regex::Dialect::Ecma,
+    cooked: false,
+    yields: &REGEX_STOPS,
+    stop: |_, _| false,
+    top_only: true,
+    base: RE_KINDS,
+    text: RE,
+};
 
 struct Scan<'b, 'c> {
     b: &'b [u8],
@@ -1068,7 +1088,7 @@ impl<'b> Scan<'b, '_> {
             DOC => DOC_TEXT,
             BLOCK => BLOCK_TEXT,
             STR_D | STR_S => STR,
-            REGEX | RE_GROUP | RE_CLASS => RE,
+            REGEX..=RE_LAST => RE,
             JSTR_D | JSTR_S => JSTR,
             _ => PLAIN,
         };
@@ -1284,7 +1304,7 @@ impl<'b> Scan<'b, '_> {
             JSTR_S => &JSQ_STOPS,
             MUSTACHE => &MUSTACHE_STOPS,
             STYLED | GRAPHQL => &TEMPLATE_STOPS,
-            REGEX | RE_GROUP | RE_CLASS => &REGEX_STOPS,
+            REGEX..=RE_LAST => &REGEX_STOPS,
             // Flow's brackets and annotation: at a blank only `flowtype-tokens`' `\s*([|&])` and
             // `(?<=[:?|&=])(?=\s*{)` can start, the first at every blank of a run alike, the
             // second only at its first
@@ -1377,30 +1397,20 @@ impl<'b> Scan<'b, '_> {
                 }
                 self.expression(p)
             }
-            REGEX => {
-                if c == Some(b'/') {
+            REGEX..=RE_LAST => {
+                if top == REGEX && c == Some(b'/') {
                     let f = p
                         + 1
                         + self.b[p + 1..]
                             .iter()
-                            .take_while(|c| matches!(c, b'g' | b'i' | b'm' | b'y'))
+                            .take_while(|c| {
+                                matches!(c, b'd' | b'g' | b'i' | b'm' | b's' | b'u' | b'v' | b'y')
+                            })
                             .count();
                     self.put(p, p + 1, RE_END);
                     return self.close(p + 1, f, RE_FLAGS);
                 }
-                self.regex(p)
-            }
-            RE_GROUP => {
-                if c == Some(b')') {
-                    return self.close(p, p + 1, RE);
-                }
-                self.regex(p)
-            }
-            RE_CLASS => {
-                if c == Some(b']') {
-                    return self.close(p, p + 1, RE);
-                }
-                self.regex_escape(p)
+                self.regex(p, top)
             }
             FOR => {
                 if c == Some(b')') {
@@ -4098,26 +4108,19 @@ impl<'b> Scan<'b, '_> {
 
     // --- regex literals ---
 
-    /// A regex's `main`, as far as where it ends goes: an escape, a group, a class.
-    fn regex(&mut self, p: usize) -> Option<usize> {
-        match self.c(p)? {
-            b'(' => self.tok_push(p, p + 1, RE, RE_GROUP),
-            b'[' => {
-                let e = if self.is(p + 1, b'^') { p + 2 } else { p + 1 };
-                self.tok_push(p, e, RE, RE_CLASS)
-            }
-            _ => self.regex_escape(p),
-        }
-    }
-
-    /// `\\.` (and the escapes that take more, which hold nothing that ends a group, a class or
-    /// the literal).
-    fn regex_escape(&mut self, p: usize) -> Option<usize> {
-        if !self.is(p, b'\\') || p + 1 >= self.n {
-            return None;
-        }
-        let e = p + 1 + char_len(self.b[p + 1]);
-        self.tok(p, e, RE)
+    /// A regex literal's body from `p`, where its end didn't match, in context `top`: the
+    /// regex to where its end can (a `/` outside its groups and classes) or past the line.
+    fn regex(&mut self, p: usize, top: u8) -> Option<usize> {
+        let (q, st) = regex::embedded(
+            self.b,
+            p,
+            top & regex::ECMA_STATE,
+            &RE_EMBED,
+            &mut self.at,
+            self.out,
+        )?;
+        self.stack[self.depth - 1] = REGEX | st;
+        Some(q)
     }
 }
 
@@ -4267,23 +4270,70 @@ mod tests {
     }
 
     #[test]
-    fn a_regex_literal_is_one_kind_to_its_end() {
-        let m = js(&["x = /a[/]b\\/(c/d)/gi;"]);
-        assert!(
-            m.contains(&(
-                "/",
-                "string.regexp.js punctuation.definition.string.begin.js"
-            )),
-            "{m:?}"
+    fn a_regex_literals_body_is_ecmascripts_regex() {
+        let has = |m: &[(&str, &str)], text: &str, scopes: &str| {
+            assert!(m.contains(&(text, scopes)), "{text:?} {scopes:?} in {m:?}");
+        };
+        // a `/` in a class, escaped or in a group doesn't end it
+        let m = js(&[r"x = /^a[/.]b\/(?<n>c/d)\k<n>{2,}?\u{1F600}\p{L}\A/gsu;"]);
+        has(
+            &m,
+            "/",
+            "string.regexp.js punctuation.definition.string.begin.js",
         );
-        assert!(
-            m.contains(&("gi", "string.regexp.js keyword.other.js")),
-            "{m:?}"
+        has(&m, "^", "string.regexp.js keyword.control.anchor.regexp");
+        has(
+            &m,
+            "[",
+            "string.regexp.js constant.other.character-class.set.regexp punctuation.definition.character-class.begin.regexp",
         );
-        assert!(
-            m.contains(&(";", "punctuation.terminator.statement.js")),
-            "{m:?}"
+        // a `.` in a class is a character, the class's text as the `/` is
+        has(
+            &m,
+            "/.",
+            "string.regexp.js constant.other.character-class.set.regexp",
         );
+        has(
+            &m,
+            r"\/",
+            "string.regexp.js constant.character.escape.backslash.regexp",
+        );
+        has(&m, "n", "string.regexp.js entity.name.other.group.regexp");
+        has(&m, "n", "string.regexp.js variable.other.group.regexp");
+        has(
+            &m,
+            "2",
+            "string.regexp.js keyword.operator.quantifier.regexp constant.literal.numeric.regexp",
+        );
+        has(
+            &m,
+            r"\u{1F600}",
+            "string.regexp.js constant.character.escape.backslash.regexp",
+        );
+        has(
+            &m,
+            "L",
+            "string.regexp.js support.constant.unicode-property.regexp",
+        );
+        // not Java's anchor
+        has(
+            &m,
+            r"\A",
+            "string.regexp.js constant.character.escape.backslash.regexp",
+        );
+        has(&m, "gsu", "string.regexp.js keyword.other.js");
+        has(&m, ";", "punctuation.terminator.statement.js");
+        // Java's constructs are none of ECMAScript's
+        let m = js(&[r"x = /(?i)a++[a-z&&[^q]]/;"]);
+        assert!(!m.iter().any(|(t, _)| *t == "?i" || *t == "&&"), "{m:?}");
+        // an open group carries to the next line, as bat's contexts do
+        let m = js(&["x = /(a/;", "b)/g; y"]);
+        has(
+            &m,
+            ")",
+            "string.regexp.js punctuation.definition.group.end.regexp",
+        );
+        has(&m, "g", "string.regexp.js keyword.other.js");
     }
 
     #[test]

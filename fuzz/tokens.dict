@@ -495,6 +495,14 @@
 # JavaScript (ADR-40's phase 5, Babel's grammar): regex literals and what may come before one,
 # templates, JSX, Flow, labels and the lookaheads' arrows and methods
 "/ab+c/gi"
+# their bodies, ECMAScript's regex dialect (phase 4's step 3)
+"/[/]/"
+"/(a/b)/"
+"/(?<n>.)\\k<n>/dgimsuvy"
+"\\u{1F600}"
+"\\cA"
+"\\p{Script=Latn}"
+"(?<\xe5\x90\x8d>"
 "= /"
 "(/"
 "return /"

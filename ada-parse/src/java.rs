@@ -1914,9 +1914,11 @@ impl<'b> Scan<'b, '_> {
             return Some(self.token(p, e - p, DQ_ESCAPE));
         }
         let host = regex::Embed {
+            dialect: regex::Dialect::Java,
             cooked: true,
             yields: &RE_YIELDS,
             stop: |b, p| b[p] == b'"',
+            top_only: false,
             base: self.kind(W_RE),
             text: self.text,
         };
