@@ -44,8 +44,8 @@ mod sql;
 // the port: the scanner's reference in tests, and the source of helpers it shares
 #[allow(dead_code)]
 mod toml;
-mod typescript;
 mod toml_scan;
+mod typescript;
 // the port: the scanner's reference in tests, and the source of the matchers it shares
 #[allow(dead_code)]
 mod xml;

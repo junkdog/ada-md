@@ -5,7 +5,8 @@
 //! For each input it highlights the way the TUI does (`highlight::highlight`, the first built-in
 //! theme), then reports:
 //! - **memory:** the heap the finished `CodeSpans` holds (`malloc_usable_size`, so glibc's
-//!   rounding is counted) and its allocation count, beside the same runs laid out flat;
+//!   rounding is counted; elsewhere the bytes asked for) and its allocation count, beside the same
+//!   runs laid out flat;
 //! - **build:** pushing the runs line by line into each layout, the boxed one as
 //!   `LineState::line` did before HL-002 (a `Vec` per line, then `into_boxed_slice`), as a
 //!   share of the highlighting time;
@@ -35,16 +36,25 @@ mod common;
 
 use common::{cpu, ms};
 
-/// Counts live heap bytes as malloc rounds them, and allocations.
+/// Counts live heap bytes as malloc rounds them (on glibc), and allocations.
 struct Counting;
 
 static LIVE: AtomicIsize = AtomicIsize::new(0);
 static LIVE_BLOCKS: AtomicIsize = AtomicIsize::new(0);
 static ALLOCS: AtomicUsize = AtomicUsize::new(0);
 
-fn usable(p: *mut u8) -> isize {
+/// The bytes block `p`, of `size` bytes asked for, holds: as glibc's malloc rounds it.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn usable(p: *mut u8, _size: usize) -> isize {
     // SAFETY: `p` came from System's malloc family and is still live.
     unsafe { libc::malloc_usable_size(p.cast()) as isize }
+}
+
+/// The bytes block `p`, of `size` bytes asked for, holds: off glibc, the bytes asked for, without
+/// the allocator's rounding.
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn usable(_p: *mut u8, size: usize) -> isize {
+    size as isize
 }
 
 unsafe impl GlobalAlloc for Counting {
@@ -52,7 +62,7 @@ unsafe impl GlobalAlloc for Counting {
         // SAFETY: forwarded as is.
         let p = unsafe { System.alloc(layout) };
         if !p.is_null() {
-            LIVE.fetch_add(usable(p), Ordering::Relaxed);
+            LIVE.fetch_add(usable(p, layout.size()), Ordering::Relaxed);
             LIVE_BLOCKS.fetch_add(1, Ordering::Relaxed);
             ALLOCS.fetch_add(1, Ordering::Relaxed);
         }
@@ -60,18 +70,18 @@ unsafe impl GlobalAlloc for Counting {
     }
 
     unsafe fn dealloc(&self, p: *mut u8, layout: Layout) {
-        LIVE.fetch_sub(usable(p), Ordering::Relaxed);
+        LIVE.fetch_sub(usable(p, layout.size()), Ordering::Relaxed);
         LIVE_BLOCKS.fetch_sub(1, Ordering::Relaxed);
         // SAFETY: forwarded as is.
         unsafe { System.dealloc(p, layout) }
     }
 
     unsafe fn realloc(&self, p: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let old = usable(p);
+        let old = usable(p, layout.size());
         // SAFETY: forwarded as is.
         let q = unsafe { System.realloc(p, layout, new_size) };
         if !q.is_null() {
-            LIVE.fetch_add(usable(q) - old, Ordering::Relaxed);
+            LIVE.fetch_add(usable(q, new_size) - old, Ordering::Relaxed);
             ALLOCS.fetch_add(1, Ordering::Relaxed);
         }
         q

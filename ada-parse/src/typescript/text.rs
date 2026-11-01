@@ -139,7 +139,11 @@ impl Scan<'_, '_, '_> {
         let c = self.c(i);
         match f {
             STR_S_F | STR_D_F | DIRECTIVE_STR_S_F | DIRECTIVE_STR_D_F => {
-                let q = if matches!(f, STR_S_F | DIRECTIVE_STR_S_F) { b'\'' } else { b'"' };
+                let q = if matches!(f, STR_S_F | DIRECTIVE_STR_S_F) {
+                    b'\''
+                } else {
+                    b'"'
+                };
                 let (end, esc, bad) = match f {
                     STR_S_F => (STR_S_END, STR_S_ESC, STR_S_BAD),
                     STR_D_F => (STR_D_END, STR_D_ESC, STR_D_BAD),
@@ -215,19 +219,17 @@ impl Scan<'_, '_, '_> {
                     }
                 }
             }
-            BLOCK_F => {
-                match find2(self.b, i, b'*', b'/') {
-                    Some(j) => {
-                        self.tok(j, j + 2, BLOCK_MARK);
-                        self.i = j + 2;
-                        self.pop()
-                    }
-                    None => {
-                        self.i = self.n + 1;
-                        true
-                    }
+            BLOCK_F => match find2(self.b, i, b'*', b'/') {
+                Some(j) => {
+                    self.tok(j, j + 2, BLOCK_MARK);
+                    self.i = j + 2;
+                    self.pop()
                 }
-            }
+                None => {
+                    self.i = self.n + 1;
+                    true
+                }
+            },
             DOC_F => {
                 if c == b'*' && self.c(i + 1) == b'/' {
                     self.tok(i, i + 2, DOC_MARK);
@@ -275,11 +277,12 @@ impl Scan<'_, '_, '_> {
                 // a range: (?:.|(\\num)|(\\c[A-Z])|(\\.))\-(?:[^\]\\]|…): the left side is any
                 // one character first, a `\` too
                 let plain = (i + char_len(c), None);
-                let left = if self.c(plain.0) == b'-' && self.re_set_atom(plain.0 + 1, false).is_some() {
-                    Some(plain)
-                } else {
-                    self.re_set_atom(i, true)
-                };
+                let left =
+                    if self.c(plain.0) == b'-' && self.re_set_atom(plain.0 + 1, false).is_some() {
+                        Some(plain)
+                    } else {
+                        self.re_set_atom(i, true)
+                    };
                 if let Some((e1, k1)) = left
                     && self.c(e1) == b'-'
                     && let Some((e2, k2)) = self.re_set_atom(e1 + 1, false)
@@ -399,7 +402,8 @@ impl Scan<'_, '_, '_> {
                     DOC_PARAM => {
                         if matches!(c, b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'$') {
                             let mut e = i + 1;
-                            while matches!(self.c(e), b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'$' | b'.' | b'[' | b']') {
+                            while matches!(self.c(e), b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'$' | b'.' | b'[' | b']')
+                            {
                                 e += 1;
                             }
                             return self.take(i, e, JD_VAR);
@@ -505,7 +509,8 @@ impl Scan<'_, '_, '_> {
                 let mut e = s;
                 if matches!(self.c(e), b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$') {
                     e += 1;
-                    while matches!(self.c(e), b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$') {
+                    while matches!(self.c(e), b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$')
+                    {
                         e += 1;
                     }
                 }
@@ -573,7 +578,8 @@ impl Scan<'_, '_, '_> {
                     let mut e = s;
                     if matches!(self.c(e), b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$') {
                         e += 1;
-                        while matches!(self.c(e), b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$') {
+                        while matches!(self.c(e), b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$')
+                        {
                             e += 1;
                         }
                     }
@@ -620,7 +626,10 @@ impl Scan<'_, '_, '_> {
             return false;
         }
         let d = self.c(i + 1);
-        if matches!(d, b'w' | b'W' | b's' | b'S' | b'd' | b'D' | b't' | b'r' | b'n' | b'v' | b'f') {
+        if matches!(
+            d,
+            b'w' | b'W' | b's' | b'S' | b'd' | b'D' | b't' | b'r' | b'n' | b'v' | b'f'
+        ) {
             return self.take(i, i + 2, k(RE_CLASS, RE_SET_CLASS));
         }
         if let Some(e) = self.re_numeric(i) {
@@ -702,7 +711,11 @@ impl Scan<'_, '_, '_> {
             }
         }
         // ((@)author)\s+([^@\s<>*/](?:[^@<>*/]|\*[^/])*)(?:\s*(<)([^>\s]+)(>))?
-        if at_word(b"author") && gap && after < self.n && !matches!(self.c(after), b'@' | b'<' | b'>' | b'*' | b'/') {
+        if at_word(b"author")
+            && gap
+            && after < self.n
+            && !matches!(self.c(after), b'@' | b'<' | b'>' | b'*' | b'/')
+        {
             let mut k = after + 1;
             while k < self.n {
                 match self.b[k] {
@@ -735,7 +748,10 @@ impl Scan<'_, '_, '_> {
         if at_word(b"borrows") && gap {
             let k = doc_run(self.b, after, b"@/");
             let m = self.ws(k);
-            if k > after && m > k && let Some(ae) = self.word_b(m, b"as") {
+            if k > after
+                && m > k
+                && let Some(ae) = self.word_b(m, b"as")
+            {
                 let q = self.ws(ae);
                 let r = doc_run(self.b, q, b"@/");
                 if q > ae && r > q {
@@ -754,7 +770,19 @@ impl Scan<'_, '_, '_> {
         }
         // @kind
         if at_word(b"kind") && gap {
-            for w in [&b"class"[..], b"constant", b"event", b"external", b"file", b"function", b"member", b"mixin", b"module", b"namespace", b"typedef"] {
+            for w in [
+                &b"class"[..],
+                b"constant",
+                b"event",
+                b"external",
+                b"file",
+                b"function",
+                b"member",
+                b"mixin",
+                b"module",
+                b"namespace",
+                b"typedef",
+            ] {
                 if let Some(we) = self.word_b(after, w) {
                     tag_tok(self, e);
                     return self.take(after, we, JD_SYMBOL);
@@ -762,11 +790,15 @@ impl Scan<'_, '_, '_> {
             }
         }
         // @template A, B
-        if at_word(b"template") && gap && matches!(self.c(after), b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'$') {
+        if at_word(b"template")
+            && gap
+            && matches!(self.c(after), b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'$')
+        {
             let mut k = after;
             loop {
                 k += 1;
-                while matches!(self.c(k), b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'$' | b'.' | b'[' | b']') {
+                while matches!(self.c(k), b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'$' | b'.' | b'[' | b']')
+                {
                     k += 1;
                 }
                 let m = self.ws(k);
@@ -782,10 +814,23 @@ impl Scan<'_, '_, '_> {
             tag_tok(self, e);
             return self.take(after, k.min(self.n), JD_VAR);
         }
-        let param_like = [&b"arg"[..], b"argument", b"const", b"constant", b"member", b"namespace", b"param", b"var"];
-        if param_like.contains(&tag) && gap && matches!(self.c(after), b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'$') {
+        let param_like = [
+            &b"arg"[..],
+            b"argument",
+            b"const",
+            b"constant",
+            b"member",
+            b"namespace",
+            b"param",
+            b"var",
+        ];
+        if param_like.contains(&tag)
+            && gap
+            && matches!(self.c(after), b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'$')
+        {
             let mut k = after + 1;
-            while matches!(self.c(k), b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'$' | b'.' | b'[' | b']') {
+            while matches!(self.c(k), b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'$' | b'.' | b'[' | b']')
+            {
                 k += 1;
             }
             tag_tok(self, e);
@@ -797,22 +842,87 @@ impl Scan<'_, '_, '_> {
             self.push(DOC_TYPEDEF);
             return true;
         }
-        let param_typed = [&b"arg"[..], b"argument", b"const", b"constant", b"member", b"namespace", b"param", b"prop", b"property", b"var"];
+        let param_typed = [
+            &b"arg"[..],
+            b"argument",
+            b"const",
+            b"constant",
+            b"member",
+            b"namespace",
+            b"param",
+            b"prop",
+            b"property",
+            b"var",
+        ];
         if param_typed.contains(&tag) && gap && self.c(after) == b'{' {
             tag_tok(self, e);
             self.i = after;
             self.push(DOC_PARAM);
             return true;
         }
-        let typed = [&b"define"[..], b"enum", b"exception", b"export", b"extends", b"lends", b"implements", b"modifies", b"namespace", b"private", b"protected", b"returns", b"return", b"suppress", b"this", b"throws", b"type", b"yields", b"yield"];
+        let typed = [
+            &b"define"[..],
+            b"enum",
+            b"exception",
+            b"export",
+            b"extends",
+            b"lends",
+            b"implements",
+            b"modifies",
+            b"namespace",
+            b"private",
+            b"protected",
+            b"returns",
+            b"return",
+            b"suppress",
+            b"this",
+            b"throws",
+            b"type",
+            b"yields",
+            b"yield",
+        ];
         if typed.contains(&tag) && gap && self.c(after) == b'{' {
             tag_tok(self, e);
             self.i = after;
             self.push(DOC_TYPED);
             return true;
         }
-        let named = [&b"alias"[..], b"augments", b"callback", b"constructs", b"emits", b"event", b"fires", b"exports", b"export", b"extends", b"external", b"function", b"func", b"host", b"lends", b"listens", b"interface", b"memberof", b"memberof!", b"method", b"module", b"mixes", b"mixin", b"name", b"requires", b"see", b"this", b"typedef", b"uses"];
-        let tag_x = if self.c(e) == b'!' && tag == b"memberof" { &self.b[s..e + 1] } else { tag };
+        let named = [
+            &b"alias"[..],
+            b"augments",
+            b"callback",
+            b"constructs",
+            b"emits",
+            b"event",
+            b"fires",
+            b"exports",
+            b"export",
+            b"extends",
+            b"external",
+            b"function",
+            b"func",
+            b"host",
+            b"lends",
+            b"listens",
+            b"interface",
+            b"memberof",
+            b"memberof!",
+            b"method",
+            b"module",
+            b"mixes",
+            b"mixin",
+            b"name",
+            b"requires",
+            b"see",
+            b"this",
+            b"typedef",
+            b"uses",
+        ];
+        let tag_x = if self.c(e) == b'!' && tag == b"memberof" {
+            &self.b[s..e + 1]
+        } else {
+            tag
+        };
         let e_x = s + tag_x.len();
         let after_x = self.ws(e_x);
         if named.contains(&tag_x) && after_x > e_x {
@@ -836,24 +946,47 @@ impl Scan<'_, '_, '_> {
             }
             let k = doc_run(self.b, after, b"@/");
             // not before an inline tag, a `[description]` before it or not
-            let inline = inline_tag_len(r).is_some() || (r.starts_with(b"[") && {
-                let e = r.iter().position(|&c| c == b']');
-                e.is_some_and(|e| !r[1..e].contains(&b'[') && inline_tag_len(&r[e + 1..]).is_some())
-            });
+            let inline = inline_tag_len(r).is_some()
+                || (r.starts_with(b"[") && {
+                    let e = r.iter().position(|&c| c == b']');
+                    e.is_some_and(|e| {
+                        !r[1..e].contains(&b'[') && inline_tag_len(&r[e + 1..]).is_some()
+                    })
+                });
             if k > after && !inline {
                 tag_tok(self, e);
                 return self.take(after, k, JD_TYPE);
             }
         }
         // @default '…'
-        if (at_word(b"default") || at_word(b"defaultvalue") || at_word(b"license") || at_word(b"version")) && gap && matches!(self.c(after), b'\'' | b'"') {
+        if (at_word(b"default")
+            || at_word(b"defaultvalue")
+            || at_word(b"license")
+            || at_word(b"version"))
+            && gap
+            && matches!(self.c(after), b'\'' | b'"')
+        {
             tag_tok(self, e);
             self.tok(after, after + 1, JD_STR_BEGIN);
             self.i = after + 1;
-            self.push(if self.c(after) == b'\'' { DOC_STRING_S } else { DOC_STRING_D });
+            self.push(if self.c(after) == b'\'' {
+                DOC_STRING_S
+            } else {
+                DOC_STRING_D
+            });
             return true;
         }
-        if [&b"default"[..], b"defaultvalue", b"license", b"tutorial", b"variation", b"version"].contains(&tag) && gap {
+        if [
+            &b"default"[..],
+            b"defaultvalue",
+            b"license",
+            b"tutorial",
+            b"variation",
+            b"version",
+        ]
+        .contains(&tag)
+            && gap
+        {
             let mut k = after;
             while k < self.n && !is_space(self.b[k]) && self.b[k] != b'*' {
                 k += 1;
@@ -1056,7 +1189,9 @@ impl Scan<'_, '_, '_> {
             if self.rest(k).starts_with(b"[]") {
                 k += 2;
             }
-            if self.c(k) == b'.' && (self.c(k + 1).is_ascii_alphanumeric() || matches!(self.c(k + 1), b'_' | b'$')) {
+            if self.c(k) == b'.'
+                && (self.c(k + 1).is_ascii_alphanumeric() || matches!(self.c(k + 1), b'_' | b'$'))
+            {
                 k += 1;
                 while self.c(k).is_ascii_alphanumeric() || matches!(self.c(k), b'_' | b'$') {
                     k += 1;
@@ -1165,28 +1300,131 @@ fn doc_run(b: &[u8], mut i: usize, stop: &[u8]) -> usize {
 fn doc_tag(t: &[u8]) -> bool {
     matches!(
         t,
-        b"abstract" | b"access" | b"alias" | b"api" | b"arg" | b"argument" | b"async"
-            | b"attribute" | b"augments" | b"author" | b"beta" | b"borrows" | b"bubbles"
-            | b"callback" | b"chainable" | b"class" | b"classdesc" | b"code" | b"config"
-            | b"const" | b"constant" | b"constructor" | b"constructs" | b"copyright"
-            | b"default" | b"defaultvalue" | b"define" | b"deprecated" | b"desc"
-            | b"description" | b"dict" | b"emits" | b"enum" | b"event" | b"example"
-            | b"exception" | b"exports" | b"export" | b"extends" | b"extension"
-            | b"extension_for" | b"extensionfor" | b"external" | b"externs" | b"file"
-            | b"fileoverview" | b"final" | b"fires" | b"for" | b"func" | b"function"
-            | b"generator" | b"global" | b"hideconstructor" | b"host" | b"ignore"
-            | b"implements" | b"implicitCast" | b"inheritDoc" | b"inheritdoc" | b"inner"
-            | b"instance" | b"interface" | b"internal" | b"kind" | b"lends" | b"license"
-            | b"listens" | b"main" | b"member" | b"memberof" | b"method" | b"mixes"
-            | b"mixin" | b"mixins" | b"modifies" | b"module" | b"name" | b"namespace"
-            | b"noalias" | b"nocollapse" | b"nocompile" | b"nosideeffects" | b"override"
-            | b"overview" | b"package" | b"param" | b"polymer" | b"polymerBehavior"
-            | b"preserve" | b"private" | b"prop" | b"property" | b"protected" | b"public"
-            | b"readOnly" | b"readonly" | b"record" | b"required" | b"requires" | b"returns"
-            | b"return" | b"see" | b"since" | b"static" | b"struct" | b"submodule"
-            | b"summary" | b"suppress" | b"template" | b"this" | b"throws" | b"todo"
-            | b"tutorial" | b"type" | b"typedef" | b"unrestricted" | b"uses" | b"var"
-            | b"variation" | b"version" | b"virtual" | b"writeOnce" | b"yields" | b"yield"
+        b"abstract"
+            | b"access"
+            | b"alias"
+            | b"api"
+            | b"arg"
+            | b"argument"
+            | b"async"
+            | b"attribute"
+            | b"augments"
+            | b"author"
+            | b"beta"
+            | b"borrows"
+            | b"bubbles"
+            | b"callback"
+            | b"chainable"
+            | b"class"
+            | b"classdesc"
+            | b"code"
+            | b"config"
+            | b"const"
+            | b"constant"
+            | b"constructor"
+            | b"constructs"
+            | b"copyright"
+            | b"default"
+            | b"defaultvalue"
+            | b"define"
+            | b"deprecated"
+            | b"desc"
+            | b"description"
+            | b"dict"
+            | b"emits"
+            | b"enum"
+            | b"event"
+            | b"example"
+            | b"exception"
+            | b"exports"
+            | b"export"
+            | b"extends"
+            | b"extension"
+            | b"extension_for"
+            | b"extensionfor"
+            | b"external"
+            | b"externs"
+            | b"file"
+            | b"fileoverview"
+            | b"final"
+            | b"fires"
+            | b"for"
+            | b"func"
+            | b"function"
+            | b"generator"
+            | b"global"
+            | b"hideconstructor"
+            | b"host"
+            | b"ignore"
+            | b"implements"
+            | b"implicitCast"
+            | b"inheritDoc"
+            | b"inheritdoc"
+            | b"inner"
+            | b"instance"
+            | b"interface"
+            | b"internal"
+            | b"kind"
+            | b"lends"
+            | b"license"
+            | b"listens"
+            | b"main"
+            | b"member"
+            | b"memberof"
+            | b"method"
+            | b"mixes"
+            | b"mixin"
+            | b"mixins"
+            | b"modifies"
+            | b"module"
+            | b"name"
+            | b"namespace"
+            | b"noalias"
+            | b"nocollapse"
+            | b"nocompile"
+            | b"nosideeffects"
+            | b"override"
+            | b"overview"
+            | b"package"
+            | b"param"
+            | b"polymer"
+            | b"polymerBehavior"
+            | b"preserve"
+            | b"private"
+            | b"prop"
+            | b"property"
+            | b"protected"
+            | b"public"
+            | b"readOnly"
+            | b"readonly"
+            | b"record"
+            | b"required"
+            | b"requires"
+            | b"returns"
+            | b"return"
+            | b"see"
+            | b"since"
+            | b"static"
+            | b"struct"
+            | b"submodule"
+            | b"summary"
+            | b"suppress"
+            | b"template"
+            | b"this"
+            | b"throws"
+            | b"todo"
+            | b"tutorial"
+            | b"type"
+            | b"typedef"
+            | b"unrestricted"
+            | b"uses"
+            | b"var"
+            | b"variation"
+            | b"version"
+            | b"virtual"
+            | b"writeOnce"
+            | b"yields"
+            | b"yield"
     )
 }
 

@@ -595,7 +595,7 @@ fn span_runs(len: usize, spans: impl Iterator<Item = (u32, u32, Rule)>, out: &mu
 
 /// The theme's rule for each kind of an ada-parse language (ADR-40), as syntect would pick it
 /// for the kind's scopes: all of them up front for a language with a fixed set
-/// ([`ParseRules::new`]), else each the first time a span has it ([`ParseRules::lazy`]).
+/// (`ParseRules::new`), else each the first time a span has it (`ParseRules::lazy`).
 pub struct ParseRules {
     lang: Lang,
     base: Scope,

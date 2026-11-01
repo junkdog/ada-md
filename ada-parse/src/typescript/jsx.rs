@@ -30,7 +30,12 @@ impl Scan<'_, '_, '_> {
 
     /// The tag's name from `i` (after `<` and its blanks), ending where `ok` holds: the regex's
     /// alternatives in order, `[a-z][a-z0-9]*` first.
-    fn tag_name(&self, i: usize, ok: &dyn Fn(&Self, usize) -> bool, optional: bool) -> Option<Option<TagName>> {
+    fn tag_name(
+        &self,
+        i: usize,
+        ok: &dyn Fn(&Self, usize) -> bool,
+        optional: bool,
+    ) -> Option<Option<TagName>> {
         // an optional namespace: «alpha»[-_$[:alpha:][:digit:].]*(?<!\.|-)(:)
         let mut starts = Vec::with_capacity(2);
         if look::alpha(self.b, i) > 0 {
@@ -53,7 +58,11 @@ impl Scan<'_, '_, '_> {
                 let mut k = e;
                 while k > s {
                     if ok(self, k) {
-                        return Some(Some(TagName { ns, name: (s, k), component: false }));
+                        return Some(Some(TagName {
+                            ns,
+                            name: (s, k),
+                            component: false,
+                        }));
                     }
                     k -= 1;
                 }
@@ -64,7 +73,11 @@ impl Scan<'_, '_, '_> {
                 let mut k = self.tag_run(s + a);
                 while k > s {
                     if !matches!(self.b[k - 1], b'.' | b'-') && ok(self, k) {
-                        return Some(Some(TagName { ns, name: (s, k), component: true }));
+                        return Some(Some(TagName {
+                            ns,
+                            name: (s, k),
+                            component: true,
+                        }));
                     }
                     k -= 1;
                     while k > s && self.b[k - 1] & 0xc0 == 0x80 {
@@ -74,7 +87,11 @@ impl Scan<'_, '_, '_> {
             }
             // the name is optional after a namespace too (`<svg:>`)
             if optional && ok(self, s) {
-                return Some(ns.map(|_| TagName { ns, name: (s, s), component: false }));
+                return Some(ns.map(|_| TagName {
+                    ns,
+                    name: (s, s),
+                    component: false,
+                }));
             }
         }
         None
@@ -100,7 +117,15 @@ impl Scan<'_, '_, '_> {
                 self.tok(e, e + 1, JSX_NS_SEP);
             }
             if t.name.1 > t.name.0 {
-                self.tok(t.name.0, t.name.1, if t.component { JSX_COMPONENT } else { JSX_TAG_NAME });
+                self.tok(
+                    t.name.0,
+                    t.name.1,
+                    if t.component {
+                        JSX_COMPONENT
+                    } else {
+                        JSX_TAG_NAME
+                    },
+                );
             }
         }
     }
@@ -114,8 +139,10 @@ impl Scan<'_, '_, '_> {
         if i >= 2 && (&b[i - 2..i] == b"++" || &b[i - 2..i] == b"--") {
             return false;
         }
-        matches!(b[i - 1], b'(' | b'{' | b'[' | b',' | b'?' | b'=' | b'>' | b':' | b'*')
-            || (i >= 2 && matches!(&b[i - 2..i], b"&&" | b"||" | b"*/"))
+        matches!(
+            b[i - 1],
+            b'(' | b'{' | b'[' | b',' | b'?' | b'=' | b'>' | b':' | b'*'
+        ) || (i >= 2 && matches!(&b[i - 2..i], b"&&" | b"||" | b"*/"))
             || self.word_ends_at(i, &[b"await", b"return", b"default", b"yield"])
     }
 
@@ -131,9 +158,14 @@ impl Scan<'_, '_, '_> {
         }
         let m = self.ws(k + 1);
         // without attributes: <name?\s*>
-        if self.tag_name(m, &|me, e| me.c(me.ws(e)) == b'>', true).is_some() {
+        if self
+            .tag_name(m, &|me, e| me.c(me.ws(e)) == b'>', true)
+            .is_some()
+        {
             self.i = k.min(self.n);
-            return if k == i { self.push_zero(JSX_WA_EXPR) } else {
+            return if k == i {
+                self.push_zero(JSX_WA_EXPR)
+            } else {
                 self.push(JSX_WA_EXPR);
                 true
             };
@@ -145,7 +177,9 @@ impl Scan<'_, '_, '_> {
             if self.c(g) == b',' {
                 return false;
             }
-            if g > ne && let Some(x) = self.word_b(g, b"extends") {
+            if g > ne
+                && let Some(x) = self.word_b(g, b"extends")
+            {
                 let h = self.ws(x);
                 if h > x && !matches!(self.c(h), b'=' | b'>') && h < self.n {
                     return false;
@@ -154,7 +188,9 @@ impl Scan<'_, '_, '_> {
         }
         if self.tag_name(m, &|me, e| me.tag_follow(e), false).is_some() {
             self.i = k.min(self.n);
-            return if k == i { self.push_zero(JSX_EXPR) } else {
+            return if k == i {
+                self.push_zero(JSX_EXPR)
+            } else {
                 self.push(JSX_EXPR);
                 true
             };
@@ -172,7 +208,8 @@ impl Scan<'_, '_, '_> {
                 let m = self.ws(i + 1);
                 let another = c == b'<'
                     && if f == JSX_WA_EXPR {
-                        self.tag_name(m, &|me, e| me.c(me.ws(e)) == b'>', true).is_some()
+                        self.tag_name(m, &|me, e| me.c(me.ws(e)) == b'>', true)
+                            .is_some()
                     } else {
                         self.tag_name(m, &|me, e| me.tag_follow(e), false).is_some()
                     };
@@ -294,7 +331,9 @@ impl Scan<'_, '_, '_> {
             return false;
         }
         let m = self.ws(i + 1);
-        let Some(t) = self.tag_name(m, &|me, e| me.c(me.ws(e)) == b'>', true) else { return false };
+        let Some(t) = self.tag_name(m, &|me, e| me.c(me.ws(e)) == b'>', true) else {
+            return false;
+        };
         let e = t.as_ref().map_or(m, |t| t.name.1);
         let g = self.ws(e);
         self.tag_toks(i, i + 1, &t);
@@ -397,7 +436,10 @@ impl Scan<'_, '_, '_> {
                     }
                 }
                 let d = self.c(e);
-                let follows = is_space(d) || d == b'=' || d == b'>' || (d == b'/' && matches!(self.c(e + 1), b'>' | b'*' | b'/'));
+                let follows = is_space(d)
+                    || d == b'='
+                    || d == b'>'
+                    || (d == b'/' && matches!(self.c(e + 1), b'>' | b'*' | b'/'));
                 if follows {
                     if let Some((a, b)) = ns {
                         self.tok(a, b, JSX_ATTR_NS);
@@ -410,7 +452,10 @@ impl Scan<'_, '_, '_> {
         match c {
             b'=' => {
                 let k = self.ws(i + 1);
-                if matches!(self.c(k), b'\'' | b'"' | b'{') || (self.c(k) == b'/' && matches!(self.c(k + 1), b'*' | b'/')) || k >= self.n {
+                if matches!(self.c(k), b'\'' | b'"' | b'{')
+                    || (self.c(k) == b'/' && matches!(self.c(k + 1), b'*' | b'/'))
+                    || k >= self.n
+                {
                     return self.take(i, i + 1, ASSIGN);
                 }
             }

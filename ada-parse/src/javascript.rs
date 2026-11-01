@@ -1295,7 +1295,10 @@ impl<'b> Scan<'b, '_> {
                     .iter()
                     .take_while(|&&c| c == b' ' || c == b'\t')
                     .count();
-                return if matches!(self.c(q), Some(b'|' | b'&' | b'\x0b' | b'\x0c' | b'\r' | 0x80..)) {
+                return if matches!(
+                    self.c(q),
+                    Some(b'|' | b'&' | b'\x0b' | b'\x0c' | b'\r' | 0x80..)
+                ) {
                     p + 1
                 } else {
                     q
@@ -2021,8 +2024,7 @@ impl<'b> Scan<'b, '_> {
                 None
             }
             Some(b'(')
-                if b[p].is_ascii_uppercase()
-                    && (before(b, p) == Some(b'.') || boundary(b, p)) =>
+                if b[p].is_ascii_uppercase() && (before(b, p) == Some(b'.') || boundary(b, p)) =>
             {
                 self.put(p, e, CLASS_VAR);
                 self.put(e, e + 1, ACCESSOR);
@@ -2186,7 +2188,9 @@ impl<'b> Scan<'b, '_> {
                 .or_else(|| self.number(p))
                 .or_else(|| self.operators(p)),
             // `literal-method`'s quoted key only before `(`
-            b'"' | b'\'' if !quoted(self.b, p).is_some_and(|e| self.is(spaces(self.b, e), b'(')) => {
+            b'"' | b'\''
+                if !quoted(self.b, p).is_some_and(|e| self.is(spaces(self.b, e), b'(')) =>
+            {
                 self.string(p)
             }
             b'"' | b'\'' => self.method(p).or_else(|| self.string(p)),

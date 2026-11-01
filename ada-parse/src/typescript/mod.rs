@@ -789,7 +789,11 @@ const _: () = assert!(PAIR as usize + PAIRS.len() <= 256 && JSX_STR_S < PAIR);
 fn pack(stack: &mut [u8; MAX], n: usize) -> usize {
     let (mut i, mut o) = (1, 1);
     while i <= n {
-        let pair = if i < n { PAIRS.binary_search(&(stack[i], stack[i + 1])).ok() } else { None };
+        let pair = if i < n {
+            PAIRS.binary_search(&(stack[i], stack[i + 1])).ok()
+        } else {
+            None
+        };
         if let Some(k) = pair {
             stack[o] = PAIR + k as u8;
             i += 2;
@@ -876,7 +880,9 @@ impl Scan<'_, '_, '_> {
                     if q & Q_END != 0 {
                         break;
                     }
-                } else if is_space(self.b[self.i]) && (q & Q_BLANK != 0 || (q & Q_BLANK_IN != 0 && self.i > 0)) {
+                } else if is_space(self.b[self.i])
+                    && (q & Q_BLANK != 0 || (q & Q_BLANK_IN != 0 && self.i > 0))
+                {
                     let k = self.ws(self.i);
                     let d = self.c(k);
                     if !(matches!(d, b'<' | b'/' | b'(' | b'[' | b'{' | b':' | b'?' | b'!')
@@ -892,22 +898,37 @@ impl Scan<'_, '_, '_> {
             }
             if self.step(top) {
                 failed = usize::MAX;
-            } else if self.i < self.n && matches!(self.b[self.i], b' ' | b'\t') && family(top) == Family::Code {
+            } else if self.i < self.n
+                && matches!(self.b[self.i], b' ' | b'\t')
+                && family(top) == Family::Code
+            {
                 // A turn that fails changes nothing, so when two in a row have failed at blanks,
                 // every blank after them sees what the second saw: a blank behind, and the same
                 // text ahead past blanks (no pattern counts the blanks before it). The run is
                 // passed.
                 let i = self.i;
-                self.i = if failed == i.wrapping_sub(1) { self.sp(i) } else { i + 1 };
+                self.i = if failed == i.wrapping_sub(1) {
+                    self.sp(i)
+                } else {
+                    i + 1
+                };
                 failed = i;
             } else {
                 failed = usize::MAX;
-                self.i += if self.i < self.n { char_len(self.b[self.i]) } else { 1 };
+                self.i += if self.i < self.n {
+                    char_len(self.b[self.i])
+                } else {
+                    1
+                };
             }
             if self.i == i0 {
                 self.stuck += 1;
                 if self.stuck > STUCK {
-                    self.i += if self.i < self.n { char_len(self.b[self.i]) } else { 1 };
+                    self.i += if self.i < self.n {
+                        char_len(self.b[self.i])
+                    } else {
+                        1
+                    };
                     self.stuck = 0;
                 }
             } else {
@@ -1075,7 +1096,8 @@ impl Scan<'_, '_, '_> {
     /// `«wb»`: `(?<![_$[:alnum:]])(?:(?<=\.\.\.)|(?<!\.))` at `i`.
     fn wb(&self, i: usize) -> bool {
         // `i` may be past the line's `\n` (after `ws`): `c` reads it there
-        !self.alnum_before(i) && (i == 0 || self.c(i - 1) != b'.' || (i >= 3 && &self.b[i - 3..i] == b"..."))
+        !self.alnum_before(i)
+            && (i == 0 || self.c(i - 1) != b'.' || (i >= 3 && &self.b[i - 3..i] == b"..."))
     }
 
     /// `«we»`: `(?![_$[:alnum:]])(?:(?=\.\.\.)|(?!\.))` at `i`.
@@ -1139,11 +1161,10 @@ fn family(f: u8) -> Family {
         | IF_REGEX | TPL_TYPE => Family::Text,
         TYPE_ANNOT | TYPE_ANNOT_EOL | TYPE_ARGS | TYPE_PARAMS | TYPE_NAME_ARGS | TUPLE
         | TYPE_OBJ | TYPE_PAREN | TYPE_FN | TYPE_CTOR | TYPE_CTOR_TP | TYPE_FN_RET
-        | TYPE_FN_RET_EOL | TYPE_RET_OBJ | TYPE_COND | TYPE_COND_Q | TYPE_OP_OBJ
-        | GAP | TYPE_SPREAD | SUBST_TYPE | TYPE_DECL_INTRINSIC | AS_F
-        | INSTANCEOF_F | CAST | PARAM_TYPE | RETURN_TYPE | RETURN_TYPE_EOL | ARROW_RET
-        | MAYBE_ARROW_RET | RET_OBJ | INDEXER | MAPPED | TYPE_DECL | TYPE_DECL_VALUE
-        | OBJ_AS => Family::Type,
+        | TYPE_FN_RET_EOL | TYPE_RET_OBJ | TYPE_COND | TYPE_COND_Q | TYPE_OP_OBJ | GAP
+        | TYPE_SPREAD | SUBST_TYPE | TYPE_DECL_INTRINSIC | AS_F | INSTANCEOF_F | CAST
+        | PARAM_TYPE | RETURN_TYPE | RETURN_TYPE_EOL | ARROW_RET | MAYBE_ARROW_RET | RET_OBJ
+        | INDEXER | MAPPED | TYPE_DECL | TYPE_DECL_VALUE | OBJ_AS => Family::Type,
         JSX_WA_EXPR..=JSX_STR_S => Family::Jsx,
         _ => Family::Code,
     }
@@ -1163,8 +1184,8 @@ fn family(f: u8) -> Family {
 /// `OBJ`'s turn is `object_member`, whose keys start at a blank too, but not at the line's end.
 fn quiet(f: u8) -> u8 {
     match f {
-        MAIN | BLOCK | CASE_BLOCK | LABEL_BLOCK | PAREN | IF_COND | SWITCH_EXPR | ARRAY | OBJ_VAL | OBJ_SPREAD | CALL_ARGS
-        | TERNARY_F => Q_END | Q_BLANK,
+        MAIN | BLOCK | CASE_BLOCK | LABEL_BLOCK | PAREN | IF_COND | SWITCH_EXPR | ARRAY
+        | OBJ_VAL | OBJ_SPREAD | CALL_ARGS | TERNARY_F => Q_END | Q_BLANK,
         OBJ => Q_END,
         RETURN | INIT => Q_BLANK_IN,
         _ => 0,
@@ -1250,7 +1271,14 @@ mod tests {
     #[test]
     fn a_rest_at_the_line_end_reads_no_further() {
         for lang in [Lang::TypeScript, Lang::TypeScriptReact] {
-            for text in ["function f(...", "type F = (...", "type F = (a, ...", "let x: (...", "class A { f(...", "type T = { f(..."] {
+            for text in [
+                "function f(...",
+                "type F = (...",
+                "type F = (a, ...",
+                "let x: (...",
+                "class A { f(...",
+                "type T = { f(...",
+            ] {
                 let (mut state, mut spans) = (State::default(), Vec::new());
                 lex(lang, text, &mut state, &mut spans);
                 lex(lang, "...", &mut state, &mut spans);
@@ -1268,20 +1296,34 @@ mod tests {
             (Lang::TypeScriptReact, "<div a={1}>", "</div>"),
         ] {
             let (mut state, mut spans) = (State::default(), Vec::new());
-            let start = if lang == Lang::TypeScriptReact { "x = (" } else { "const schema = {" };
+            let start = if lang == Lang::TypeScriptReact {
+                "x = ("
+            } else {
+                "const schema = {"
+            };
             lex(lang, start, &mut state, &mut spans);
             let mut ins = Vec::new();
             for _ in 0..24 {
                 lex(lang, open, &mut state, &mut spans);
                 assert!(state.is_exact(), "{lang:?}");
-                ins.push(spans.iter().map(|s| lang.scopes(s.kind)).collect::<Vec<_>>());
+                ins.push(
+                    spans
+                        .iter()
+                        .map(|s| lang.scopes(s.kind))
+                        .collect::<Vec<_>>(),
+                );
             }
             for _ in 0..24 {
                 lex(lang, close, &mut state, &mut spans);
                 assert!(state.is_exact(), "{lang:?}");
             }
             assert!(ins.windows(2).all(|w| w[0] == w[1]), "{lang:?}");
-            lex(lang, if lang == Lang::TypeScript { "};" } else { ");" }, &mut state, &mut spans);
+            lex(
+                lang,
+                if lang == Lang::TypeScript { "};" } else { ");" },
+                &mut state,
+                &mut spans,
+            );
             assert_eq!(state, State::default(), "{lang:?}");
         }
     }

@@ -85,7 +85,7 @@ macOS, from a clone:
 cargo ordered --locked   # target/release/ada, as released
 ```
 
-Rust 1.88 or newer, and a C compiler:
+Rust 1.95 or newer, and a C compiler:
 syntax highlighting runs on [Oniguruma](https://github.com/kkos/oniguruma), which is built from source. For a pure-Rust
 build, add `--no-default-features`. Highlighting then runs on
 fancy-regex and looks the same, but each language costs 10–20 ms on first use instead of about

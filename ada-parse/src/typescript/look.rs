@@ -41,7 +41,9 @@ fn wide(b: &[u8], i: usize) -> Option<char> {
 /// The character that ends just before `i`, past ASCII.
 #[cold]
 fn wide_before(b: &[u8], i: usize) -> Option<char> {
-    let s = (i.saturating_sub(4)..i).rev().find(|&s| b[s] & 0xc0 != 0x80)?;
+    let s = (i.saturating_sub(4)..i)
+        .rev()
+        .find(|&s| b[s] & 0xc0 != 0x80)?;
     wide(b, s)
 }
 
@@ -332,7 +334,11 @@ pub(super) fn arrow_sure(b: &[u8], i: usize) -> bool {
     if at(b, j) == b')' {
         return at(b, ws(b, j + 1)) == b':';
     }
-    let j = if b[j.min(b.len())..].starts_with(b"...") { ws(b, j + 3) } else { j };
+    let j = if b[j.min(b.len())..].starts_with(b"...") {
+        ws(b, j + 3)
+    } else {
+        j
+    };
     let e = name(b, j);
     e > j && at(b, ws(b, e)) == b':'
 }
@@ -393,8 +399,14 @@ pub(super) fn arrow_line(b: &[u8], i: usize) -> bool {
 
 /// `(«B{»|«B[»)\s*((:\s*[{[]?$)|((\s*«RT»+\s*)?=\s*))` at `i`, a destructured parameter.
 fn destructured(b: &[u8], i: usize) -> bool {
-    let (open, close) = if at(b, i) == b'{' { (b'{', b'}') } else { (b'[', b']') };
-    let Some(e) = bal(b, i, open, close, 3) else { return false };
+    let (open, close) = if at(b, i) == b'{' {
+        (b'{', b'}')
+    } else {
+        (b'[', b']')
+    };
+    let Some(e) = bal(b, i, open, close, 3) else {
+        return false;
+    };
     let j = ws(b, e);
     if at(b, j) == b':' {
         let mut k = ws(b, j + 1);
@@ -432,7 +444,9 @@ fn open_params(b: &[u8], i: usize, tsx: bool) -> bool {
     if at(b, i) == b'<' && ws(b, i + 1) >= b.len() {
         return true;
     }
-    let Some(j) = (if tsx { Some(i) } else { tp_opt(b, i) }) else { return false };
+    let Some(j) = (if tsx { Some(i) } else { tp_opt(b, i) }) else {
+        return false;
+    };
     at(b, j) == b'(' && open_tail(b, ws(b, j + 1))
 }
 
@@ -486,7 +500,9 @@ pub(super) fn fn_value(b: &[u8], i: usize, tsx: bool) -> bool {
     if first(i) || after_async(true).is_some_and(first) {
         return true;
     }
-    let second = |k: usize| open_params(b, k, tsx) || arrow_sure(b, k) || (tsx && tp_extends(b, k)) || arrow_line(b, k);
+    let second = |k: usize| {
+        open_params(b, k, tsx) || arrow_sure(b, k) || (tsx && tp_extends(b, k)) || arrow_line(b, k)
+    };
     second(i) || after_async(false).is_some_and(second)
 }
 
@@ -519,7 +535,9 @@ pub(super) fn fn_type_head(b: &[u8], j: usize) -> bool {
         }
         if e > k {
             let f = ws(b, e);
-            if matches!(at(b, f), b':' | b',' | b'?' | b'=') || (at(b, f) == b')' && arrow_at(b, f + 1)) {
+            if matches!(at(b, f), b':' | b',' | b'?' | b'=')
+                || (at(b, f) == b')' && arrow_at(b, f + 1))
+            {
                 return true;
             }
         }
@@ -537,7 +555,10 @@ pub(super) fn fn_colon(b: &[u8], i: usize, tsx: bool, value: bool) -> bool {
                 return true;
             }
             // :\s*«wb»Function«we»
-            if b[j.min(b.len())..].starts_with(b"Function") && !alnum_at(b, j + 8) && (at(b, j + 8) != b'.' || b[j + 8..].starts_with(b"...")) {
+            if b[j.min(b.len())..].starts_with(b"Function")
+                && !alnum_at(b, j + 8)
+                && (at(b, j + 8) != b'.' || b[j + 8..].starts_with(b"..."))
+            {
                 return true;
             }
             if open_params(b, j, tsx) {

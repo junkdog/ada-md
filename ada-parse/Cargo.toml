@@ -2,7 +2,7 @@
 name = "ada-parse"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 description = "ada-md's own lexers for the most used languages, and the table that names them"
 license = "MIT"
 repository = "https://github.com/junkdog/ada-md"
