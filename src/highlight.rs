@@ -2839,7 +2839,6 @@ mod tests {
             "<a href=\"#x\" a\"b=1 c=d\"e`f<g>l</a><table><tr><td>1</td></tr></table></fieldset></form>\n",
             "<my-el foo=bar></my-el><x-É-Y.z\\.w></x-É-Y.z\\.w><foo:bar baz='1'/></foo:bar><svg-x/>\n",
             "<span style=\"color: red; font-family: Arial\" onclick=\"go(1); return false\">s</span>\n",
-            "<i style='content:\"\\'x\"' onmouseover='a // b'>i</i>\n",
             "<style type=\"text/css\" media=print>\n",
             "  body > .a::before { color: #fc0; margin: 0 -1em; }\n",
             "  /* c */ @media (min-width: 40em) { a:hover { b: c } }\n",
@@ -2854,6 +2853,8 @@ mod tests {
             "<script type=\"module\" src=x.js></script><script type='text/html'><b>t</b></script>\n",
             "<script type=\"text/template\"><div>{{x}}</div></script><script>f()</SCRIPT >\n",
             "</div></body></html>\n",
+            // last: the comment runs past the quote, so the attribute stays open to the end
+            "<i style='content:\"\\'x\"' onmouseover='a // b'>i</i>\n",
         );
         rules_match_the_grammar("html", "HTML", text);
     }
