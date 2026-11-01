@@ -53,7 +53,6 @@ mod linux {
     use ada::layout::{self, LayoutParams, TableMode};
     use ada::print;
     use ada::theme::Theme;
-    use ada_parse::make;
     use syntect::parsing::ParseState;
     use syntect::util::LinesWithEndings;
 
@@ -571,31 +570,17 @@ mod linux {
             }
             let tokens = || {
                 let mut count = 0;
-                match lang {
-                    "log" | "json" => {
-                        let lang = match lang {
-                            "log" => ada_parse::Lang::Log,
-                            _ => ada_parse::Lang::Json,
-                        };
-                        let (mut spans, mut state) = (Vec::new(), ada_parse::State::default());
-                        text.lines().for_each(|line| {
-                            ada_parse::lex(lang, line, &mut state, &mut spans);
-                            count += spans.len();
-                        });
-                    }
-                    _ => {
-                        let grammar = match lang {
-                            "make" => make::Grammar::Make,
-                            _ => make::Grammar::Bash,
-                        };
-                        let mut state = make::State::new(grammar);
-                        let mut spans = Vec::new();
-                        text.lines().for_each(|line| {
-                            make::tokens(line, &mut state, &mut spans);
-                            count += spans.len();
-                        });
-                    }
-                }
+                let lang = match lang {
+                    "log" => ada_parse::Lang::Log,
+                    "json" => ada_parse::Lang::Json,
+                    "make" => ada_parse::Lang::Makefile,
+                    _ => ada_parse::Lang::Bash,
+                };
+                let (mut spans, mut state) = (Vec::new(), ada_parse::State::default());
+                text.lines().for_each(|line| {
+                    ada_parse::lex(lang, line, &mut state, &mut spans);
+                    count += spans.len();
+                });
                 count
             };
             if args.stage("tokens") {

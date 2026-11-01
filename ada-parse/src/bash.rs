@@ -34,6 +34,10 @@ use anpa::findbyte::{eq, find_byte};
 use crate::machine::KEPT as HALF;
 use crate::{Out, State};
 
+mod makefile;
+
+pub use makefile::{line as make_line, scopes as make_scopes};
+
 macro_rules! kinds {
     ($($k:ident = $s:literal,)*) => {
         #[allow(non_camel_case_types, clippy::upper_case_acronyms, dead_code)]
@@ -245,7 +249,7 @@ fn is_variable(kind: u16) -> bool {
             | k::SWITCH
             | k::TILDE
             | k::JOB_VAR
-    )
+    ) || makefile::is_variable(kind)
 }
 
 // ---- contexts: bat's, by its names; `_BT` the backtick copies, which also end at a `` ` ``
@@ -356,7 +360,20 @@ const BUILTIN_ARGS_BT: u8 = 102;
 const BUILTIN_ARGS_BODY: u8 = 103;
 const BUILTIN_ARGS_BODY_BT: u8 = 104;
 const BUILTIN_END_OF_OPTIONS: u8 = 105;
-const CONTEXTS: usize = 106;
+// in a Makefile: `main` as the recipe, `$(shell …)`, `!=` and `bash -c '…'` embed it, each
+// under make patterns of its own ([`makefile`])
+const SRC_RECIPE: u8 = 106;
+const SRC_CALL: u8 = 107;
+const SRC_ASSIGN: u8 = 108;
+const SRC_EMBED_SQ: u8 = 109;
+const SRC_EMBED_DQ: u8 = 110;
+const SRC_EMBED_BT: u8 = 111;
+// a comment and a continuation that a recipe's make patterns pushed, which see none of them
+const COMMENT_BODY_NW: u8 = 112;
+const CONTINUED_NW: u8 = 113;
+/// The first of the Makefile grammar's own contexts.
+const MK_FIRST: u8 = 114;
+const CONTEXTS: usize = MK_FIRST as usize + makefile::COUNT;
 
 /// Per context: whether it takes the prototype, its meta scope's kind and its meta content
 /// scope's kind (a non-meta leaf, or [`PLAIN`]).
@@ -408,6 +425,33 @@ static INFO: [Info; CONTEXTS] = {
     t[HEREDOC_TABS_LITERAL as usize] = info(false, k::HEREDOC, PLAIN);
     t[COPROC_NAME_CTX as usize] = info(true, PLAIN, k::COPROC_NAME);
     t[FUNCDEF_NAME_BODY as usize] = info(true, PLAIN, k::FUNCTION_NAME);
+    t[COMMENT_BODY_NW as usize] = info(false, PLAIN, k::COMMENT);
+    t[CONTINUED_NW as usize] = N;
+    makefile::info(t)
+};
+
+/// Per context, how a frame's [`Frame::flags`] come from the one below: the bits it keeps, and
+/// the bits it sets. A shell context keeps its embedding; one that a Makefile embeds the shell
+/// with sets its own; a make context, and what a recipe's make patterns push, has none.
+static FLAGS: [(u8, u8); CONTEXTS] = {
+    let mut t = [(0xff, 0); CONTEXTS];
+    let twins = IN_OPTION | IN_PARAM;
+    t[OPTION as usize] = (0xff, IN_OPTION);
+    t[OPTION_BT as usize] = (0xff, IN_OPTION);
+    t[COMMENT_BODY_NW as usize] = (twins, 0);
+    t[CONTINUED_NW as usize] = (twins, 0);
+    let mut c = MK_FIRST as usize;
+    while c < CONTEXTS {
+        t[c] = (twins, 0);
+        c += 1;
+    }
+    t[makefile::SUBSTITUTION_PAREN as usize] = (twins, IN_PARAM);
+    t[makefile::SUBSTITUTION_BRACE as usize] = (twins, IN_PARAM);
+    let mut src = SRC_RECIPE;
+    while src <= SRC_EMBED_BT {
+        t[src as usize] = (twins, makefile::with_of(src));
+        src += 1;
+    }
     t
 };
 
@@ -672,19 +716,33 @@ const KEPT: usize = 2 * HALF;
 #[derive(Clone, Copy)]
 struct Frame {
     ctx: u8,
+    /// The embedding whose make patterns come first in it (`makefile::W_*`, 0 for none) in
+    /// the low bits; [`IN_OPTION`] and [`IN_PARAM`] above.
+    flags: u8,
     /// The kind of the text in it that no pattern takes: its meta content scope's, its meta
     /// scope's, or the one below's.
     base: u16,
-    /// Inside an option ([`TWIN`]).
-    opt: bool,
     /// A builtin's index, or a here-document's end word's hash ([`tag`]).
     arg: u32,
 }
 
+/// [`Frame::flags`]: inside an option ([`TWIN`]).
+const IN_OPTION: u8 = 0x40;
+/// [`Frame::flags`]: inside a make substitution's `variable.parameter` ([`makefile::TWIN_MK`]).
+const IN_PARAM: u8 = 0x80;
+/// [`Frame::flags`]: the embedding.
+const WITH: u8 = 0x0f;
+
+impl Frame {
+    fn with(self) -> u8 {
+        self.flags & WITH
+    }
+}
+
 const FRAME: Frame = Frame {
     ctx: MAIN,
+    flags: 0,
     base: PLAIN,
-    opt: false,
     arg: 0,
 };
 
@@ -700,22 +758,10 @@ fn hash(word: &[u8]) -> u32 {
 /// Lex `b`, a line of bash without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut s = Scan {
-        b,
-        n: b.len(),
-        stack: [const { MaybeUninit::uninit() }; MAX],
-        depth: 1,
-        emitted: 0,
-        push_at: (0, 0),
-        guard: false,
-        exact: state.is_exact(),
-        last_bracket: None,
-        last_close: None,
-        out,
-    };
+    let mut s = Scan::new(b, state, out, None);
     s.stack[0] = MaybeUninit::new(FRAME);
     s.load(state);
-    s.run();
+    s.run::<false>();
     s.fill(s.n);
     *state = s.save();
 }
@@ -723,7 +769,6 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
 struct Scan<'a, 'o, 'p> {
     b: &'a [u8],
     n: usize,
-    /// The frames below `depth` are written; those above are not.
     /// The frames below `depth` are written; those above are not.
     stack: [MaybeUninit<Frame>; MAX],
     depth: usize,
@@ -740,6 +785,40 @@ struct Scan<'a, 'o, 'p> {
     /// Where the line's last `))` starts, once looked for.
     last_close: Option<Option<usize>>,
     out: &'o mut Out<'p>,
+    /// A Makefile's line as its make patterns read it; `None` for a shell script. Behind a
+    /// pointer, so that a shell script's scan stays small.
+    mk: Option<&'o mut makefile::Mk<'a>>,
+    /// Whether the match being done is a make pattern a shell context took first.
+    from_with: bool,
+    /// The next place an embedding's make patterns may match: `(embedding, from, at)`.
+    with_next: (u8, usize, usize),
+}
+
+impl<'a, 'o, 'p> Scan<'a, 'o, 'p> {
+    #[inline(always)]
+    fn new(
+        b: &'a [u8],
+        state: &State,
+        out: &'o mut Out<'p>,
+        mk: Option<&'o mut makefile::Mk<'a>>,
+    ) -> Self {
+        Scan {
+            b,
+            n: b.len(),
+            stack: [const { MaybeUninit::uninit() }; MAX],
+            depth: 1,
+            emitted: 0,
+            push_at: (0, 0),
+            guard: false,
+            exact: state.is_exact(),
+            last_bracket: None,
+            last_close: None,
+            out,
+            mk,
+            from_with: false,
+            with_next: (0, 0, 0),
+        }
+    }
 }
 
 /// What a pattern does to the stack.
@@ -944,6 +1023,9 @@ impl Scan<'_, '_, '_> {
         let base = if ctx == HEREDOC_LINE {
             // `clear_scopes: 1`: the here-document's string, below it
             self.at_frame(self.depth.saturating_sub(2)).base
+        } else if ctx == makefile::EAT_WHITESPACE {
+            // `clear_scopes: 1`, where what it clears is all there is
+            PLAIN
         } else if info.content != PLAIN {
             info.content
         } else if info.meta != PLAIN {
@@ -951,10 +1033,12 @@ impl Scan<'_, '_, '_> {
         } else {
             below.base
         };
+        let (keep, set) = FLAGS[usize::from(ctx)];
+        let flags = below.flags & keep | set;
         Frame {
             ctx,
+            flags,
             base,
-            opt: below.opt || matches!(ctx, OPTION | OPTION_BT),
             arg,
         }
     }
@@ -973,6 +1057,9 @@ impl Scan<'_, '_, '_> {
             BUILTIN_ARGS => BUILTIN_ARGS_BODY,
             BUILTIN_ARGS_BT => BUILTIN_ARGS_BODY_BT,
             HEREDOC_PREAMBLE => HEREDOC_LINE,
+            // what a recipe's make patterns push sees none of them (syntect's `proto_starts`)
+            COMMENT_BODY if self.from_with => COMMENT_BODY_NW,
+            CONTINUED if self.from_with => CONTINUED_NW,
             c => c,
         };
         let f = self.frame(ctx, arg);
@@ -994,10 +1081,13 @@ impl Scan<'_, '_, '_> {
     // ---- spans
 
     fn map(&self, kind: u16) -> u16 {
-        if self.top().opt && is_variable(kind) {
-            kind + TWIN
-        } else {
+        let flags = self.top().flags;
+        if flags & (IN_OPTION | IN_PARAM) == 0 || !is_variable(kind) {
             kind
+        } else if flags & IN_PARAM != 0 {
+            kind | makefile::TWIN_MK
+        } else {
+            kind | TWIN
         }
     }
 
@@ -1078,8 +1168,12 @@ impl Scan<'_, '_, '_> {
                 .find(|&m| m != PLAIN)
                 .unwrap_or(self.top().base),
             Op::Pop => {
-                let meta = INFO[usize::from(self.top().ctx)].meta;
-                if meta != PLAIN {
+                let ctx = self.top().ctx;
+                let meta = INFO[usize::from(ctx)].meta;
+                if ctx == makefile::EAT_WHITESPACE {
+                    // what it cleared comes back after the match
+                    PLAIN
+                } else if meta != PLAIN {
                     meta
                 } else {
                     self.at_frame(self.depth.saturating_sub(2)).base
@@ -1128,11 +1222,14 @@ impl Scan<'_, '_, '_> {
 
     // ---- the run
 
-    fn run(&mut self) {
+    #[inline(always)]
+    /// The line, from its start; `MAKE` for a Makefile's, whose make contexts and embedded
+    /// shell a shell script's scan never checks for.
+    fn run<const MAKE: bool>(&mut self) {
         let mut p = 0;
         loop {
             self.guard = self.push_at == (p, self.depth);
-            match self.step(p) {
+            match self.step::<MAKE>(p) {
                 Ok(e) => p = e,
                 Err(next) => {
                     if p > self.n || next > self.n + 1 {
@@ -1146,8 +1243,32 @@ impl Scan<'_, '_, '_> {
 
     /// Match at `p` in the top context: `Ok` with where the match ends, or `Err` with the
     /// next place that may match.
-    fn step(&mut self, p: usize) -> Result<usize, usize> {
-        let ctx = self.top().ctx;
+    fn step<const MAKE: bool>(&mut self, p: usize) -> Result<usize, usize> {
+        let top = *self.top();
+        if !MAKE {
+            return self.step_shell(p, top.ctx);
+        }
+        let with = top.with();
+        if with != 0 {
+            // a shell context a Makefile embeds: make's patterns first, and no run passed
+            // over where one of them may start
+            if let Some(e) = self.with_proto(p, with) {
+                return Ok(e);
+            }
+        } else if top.ctx >= MK_FIRST {
+            return self.make_step(p, top.ctx);
+        }
+        let done = self.step_shell(p, top.ctx);
+        if with != 0
+            && let Err(next) = done
+        {
+            return Err(next.min(self.next_with(p + 1, with)));
+        }
+        done
+    }
+
+    /// [`Scan::step`] in a shell context.
+    fn step_shell(&mut self, p: usize, ctx: u8) -> Result<usize, usize> {
         if INFO[usize::from(ctx)].proto
             && let Some(e) = self.proto(p)
         {
@@ -1162,20 +1283,21 @@ impl Scan<'_, '_, '_> {
         }
         let c = self.at(p);
         match ctx {
-            MAIN => {
+            MAIN | SRC_RECIPE | SRC_CALL | SRC_ASSIGN | SRC_EMBED_SQ | SRC_EMBED_DQ
+            | SRC_EMBED_BT => {
                 t!(self.main(p, false));
             }
             MAIN_POP_AT_END => {
                 t!(self.continuation_or_pop(p));
                 t!(self.main(p, false));
             }
-            COMMENT_BODY => {
+            COMMENT_BODY | COMMENT_BODY_NW => {
                 if p == self.n {
                     t!(self.pop(p, p + 1, k::COMMENT));
                 }
                 return Err(self.n);
             }
-            CONTINUED => {
+            CONTINUED | CONTINUED_NW => {
                 if p == 0 {
                     t!(self.pop(0, 0, PLAIN));
                 }
@@ -1825,6 +1947,7 @@ impl Scan<'_, '_, '_> {
     // ---- the prototype and the line's end
 
     /// `comment`, `line-continuation`, `any-escape`.
+    #[inline(always)]
     fn proto(&mut self, p: usize) -> Option<usize> {
         let c = self.at(p);
         // `(?:^\s*|\s+)(\#)`
@@ -2981,6 +3104,7 @@ impl Scan<'_, '_, '_> {
 
     // ---- the state
 
+    #[inline(always)]
     fn load(&mut self, state: &State) {
         let len = usize::from(state.depth).min(KEPT);
         let byte = |i: usize| {
@@ -3008,6 +3132,7 @@ impl Scan<'_, '_, '_> {
         }
     }
 
+    #[inline(always)]
     fn save(&self) -> State {
         // whole frames from the top, as many as fit: a context's byte and its argument's
         let size = |f: &Frame| 1 + has_arg(f.ctx).unwrap_or(0);
@@ -3053,7 +3178,13 @@ impl Scan<'_, '_, '_> {
 fn ends_with_main(ctx: u8) -> bool {
     matches!(
         ctx,
-        MAIN | CMD_PAREN
+        MAIN | SRC_RECIPE
+            | SRC_CALL
+            | SRC_ASSIGN
+            | SRC_EMBED_SQ
+            | SRC_EMBED_DQ
+            | SRC_EMBED_BT
+            | CMD_PAREN
             | CMD_PAREN_BT
             | CMD_BRACE
             | CMD_BRACE_BT
@@ -3074,7 +3205,13 @@ fn ends_with_main(ctx: u8) -> bool {
 fn skips_spaces(ctx: u8) -> bool {
     matches!(
         ctx,
-        MAIN | MAIN_POP_AT_END
+        MAIN | SRC_RECIPE
+            | SRC_CALL
+            | SRC_ASSIGN
+            | SRC_EMBED_SQ
+            | SRC_EMBED_DQ
+            | SRC_EMBED_BT
+            | MAIN_POP_AT_END
             | CMD
             | CMD_BT
             | CMD_PAREN

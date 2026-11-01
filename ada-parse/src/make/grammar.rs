@@ -32,7 +32,7 @@ pub fn eol(l: &Line, pos: usize, _: u16) -> R {
 }
 
 /// `$\n?`
-fn eol_nl(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn eol_nl(l: &Line, pos: usize, _: u16) -> R {
     let at = eol_at(l, pos);
     let end = if l.at(at) == b'\n' { at + 1 } else { at };
     Some(M::at(at, end))
@@ -49,26 +49,26 @@ pub fn ahead<const C: u8>(l: &Line, pos: usize, _: u16) -> R {
 }
 
 /// `\s`
-fn ws1(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn ws1(l: &Line, pos: usize, _: u16) -> R {
     (pos..l.len())
         .find(|&i| ws(l.b[i]))
         .map(|i| M::at(i, i + 1))
 }
 
 /// `\n`
-fn nl(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn nl(l: &Line, pos: usize, _: u16) -> R {
     byte::<b'\n'>(l, pos, 0)
 }
 
 /// `\s*`
-fn eat_ws(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn eat_ws(l: &Line, pos: usize, _: u16) -> R {
     Some(M::at(pos, ws_end(l.b, pos)))
 }
 
 // ---- the line's start ----
 
 /// `^\s*` then `kw`, at the start of the line: where `kw` starts and ends.
-fn bol_kw(l: &Line, pos: usize, kw: &[u8]) -> Option<(usize, usize)> {
+pub(crate) fn bol_kw(l: &Line, pos: usize, kw: &[u8]) -> Option<(usize, usize)> {
     if pos != 0 {
         return None;
     }
@@ -77,56 +77,56 @@ fn bol_kw(l: &Line, pos: usize, kw: &[u8]) -> Option<(usize, usize)> {
 }
 
 /// `^\s*(KW)\b`
-fn bol_word(l: &Line, pos: usize, kw: &[u8]) -> R {
+pub(crate) fn bol_word(l: &Line, pos: usize, kw: &[u8]) -> R {
     let (i, e) = bol_kw(l, pos, kw)?;
     (!l.word_at(e)).then(|| M::at(0, e).cap(1, i, e))
 }
 
 /// `^\s*(endef)`
-fn endef_stray(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn endef_stray(l: &Line, pos: usize, _: u16) -> R {
     let (i, e) = bol_kw(l, pos, b"endef")?;
     Some(M::at(0, e).cap(1, i, e))
 }
 
 /// `^\s*(endef)\b`
-fn endef(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn endef(l: &Line, pos: usize, _: u16) -> R {
     bol_word(l, pos, b"endef")
 }
 
 /// `^\s*define\b`
-fn define_nested(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn define_nested(l: &Line, pos: usize, _: u16) -> R {
     bol_word(l, pos, b"define")
 }
 
 /// `^\s*(else)\b`
-fn else_kw(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn else_kw(l: &Line, pos: usize, _: u16) -> R {
     bol_word(l, pos, b"else")
 }
 
 /// `^\s*(endif)\b`
-fn endif_kw(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn endif_kw(l: &Line, pos: usize, _: u16) -> R {
     bol_word(l, pos, b"endif")
 }
 
 /// `^\s*(export)\b`
-fn export_kw(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn export_kw(l: &Line, pos: usize, _: u16) -> R {
     bol_word(l, pos, b"export")
 }
 
 /// `^\s*(vpath)\s`
-fn vpath_ws(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn vpath_ws(l: &Line, pos: usize, _: u16) -> R {
     let (i, e) = bol_kw(l, pos, b"vpath")?;
     ws(l.at(e)).then(|| M::at(0, e + 1).cap(1, i, e))
 }
 
 /// `^\s*(vpath)$`
-fn vpath_eol(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn vpath_eol(l: &Line, pos: usize, _: u16) -> R {
     let (_, e) = bol_kw(l, pos, b"vpath")?;
     (e == l.len() || l.at(e) == b'\n').then(|| M::at(0, e))
 }
 
 /// `^\s*([s-]?include)\s+`
-fn include_kw(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn include_kw(l: &Line, pos: usize, _: u16) -> R {
     if pos != 0 {
         return None;
     }
@@ -145,7 +145,7 @@ fn include_kw(l: &Line, pos: usize, _: u16) -> R {
 }
 
 /// `ifn?(def|eq)` at `i`: where it ends.
-fn if_directive(l: &Line, i: usize) -> Option<usize> {
+pub(crate) fn if_directive(l: &Line, i: usize) -> Option<usize> {
     if !l.b[i..].starts_with(b"if") {
         return None;
     }
@@ -157,7 +157,7 @@ fn if_directive(l: &Line, i: usize) -> Option<usize> {
 }
 
 /// `\bifn?(def|eq)\b`
-fn ifdef(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn ifdef(l: &Line, pos: usize, _: u16) -> R {
     let mut at = pos;
     while let Some(i) = find_str(l.b, at, b"if") {
         if !l.word_before(i) {
@@ -177,7 +177,7 @@ fn ifdef(l: &Line, pos: usize, _: u16) -> R {
 }
 
 /// `(def|eq)` at `j`: where it ends.
-fn if_tail(l: &Line, j: usize) -> Option<usize> {
+pub(crate) fn if_tail(l: &Line, j: usize) -> Option<usize> {
     if l.b[j..].starts_with(b"def") {
         Some(j + 3)
     } else if l.b[j..].starts_with(b"eq") {
@@ -188,7 +188,7 @@ fn if_tail(l: &Line, j: usize) -> Option<usize> {
 }
 
 /// `^\s*(ifn?(def|eq))`
-fn recipe_if(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn recipe_if(l: &Line, pos: usize, _: u16) -> R {
     if pos != 0 {
         return None;
     }
@@ -198,14 +198,14 @@ fn recipe_if(l: &Line, pos: usize, _: u16) -> R {
 }
 
 /// `(?=^\s*#)`
-fn comment_ahead(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn comment_ahead(l: &Line, pos: usize, _: u16) -> R {
     (pos == 0 && l.at(ws_end(l.b, 0)) == b'#').then(|| M::at(0, 0))
 }
 
 // ---- continuations and escapes ----
 
 /// `(\\)([ ]*)$\n?`: only the last `\` before the trailing spaces can match.
-fn line_cont(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn line_cont(l: &Line, pos: usize, _: u16) -> R {
     let b = l.b;
     let n = b.len();
     let end = if b.last() == Some(&b'\n') { n - 1 } else { n };
@@ -217,7 +217,7 @@ fn line_cont(l: &Line, pos: usize, _: u16) -> R {
 }
 
 /// `(?=\S|^\s*$)`
-fn cont_end(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn cont_end(l: &Line, pos: usize, _: u16) -> R {
     match non_ws(l.b, pos) {
         Some(i) => Some(M::at(i, i)),
         None if pos == 0 => Some(M::at(0, 0)),
@@ -240,28 +240,28 @@ pub fn escape_any(l: &Line, pos: usize, _: u16) -> R {
 // ---- `just_eat`: is the line a rule, or a variable? ----
 
 /// The next paren at or after `q`, or the line's end.
-fn next_paren(b: &[u8], q: usize) -> usize {
+pub(crate) fn next_paren(b: &[u8], q: usize) -> usize {
     find2(b, q, b'(', b')').unwrap_or(b.len())
 }
 
 /// A `:` not followed by `=` in `b[a..r]`.
-fn colon_in(b: &[u8], a: usize, r: usize) -> bool {
+pub(crate) fn colon_in(b: &[u8], a: usize, r: usize) -> bool {
     last_colon(b, a, r).is_some()
 }
 
-fn last_colon(b: &[u8], a: usize, r: usize) -> Option<usize> {
+pub(crate) fn last_colon(b: &[u8], a: usize, r: usize) -> Option<usize> {
     (a..r)
         .rev()
         .find(|&c| b[c] == b':' && b.get(c + 1) != Some(&b'='))
 }
 
-fn first_eq(b: &[u8], a: usize, r: usize) -> Option<usize> {
+pub(crate) fn first_eq(b: &[u8], a: usize, r: usize) -> Option<usize> {
     find(&b[..r], a, b'=')
 }
 
 /// The group opened at `r`, when `just_eat` takes it: where it closes, and where the text
 /// after it runs to.
-fn group_at(l: &Line, r: usize) -> Option<(usize, usize)> {
+pub(crate) fn group_at(l: &Line, r: usize) -> Option<(usize, usize)> {
     if l.at(r) != b'(' {
         return None;
     }
@@ -273,7 +273,7 @@ fn group_at(l: &Line, r: usize) -> Option<(usize, usize)> {
 /// without parens, or that, one group of the shapes it allows, and more text: so from `q` the
 /// colon is in the run of text up to the next paren, or in the run after the group that paren
 /// opens. Within a run a later start only loses text, so the first start of each run decides.
-fn rule_ahead(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn rule_ahead(l: &Line, pos: usize, _: u16) -> R {
     let b = l.b;
     let mut q = pos;
     while q < b.len() {
@@ -291,7 +291,7 @@ fn rule_ahead(l: &Line, pos: usize, _: u16) -> R {
 /// colon is. On Oniguruma the `(?x)` that starts `var_lookahead_base` takes the rest of the
 /// group, the `|` included, so `(?!{{rule_lookahead}})` guards both branches; and where no rule
 /// colon is, an `=` and then a colon is an `=` too.
-fn var_ahead(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn var_ahead(l: &Line, pos: usize, _: u16) -> R {
     let b = l.b;
     let mut q = pos;
     while q < b.len() {
@@ -317,7 +317,7 @@ fn var_ahead(l: &Line, pos: usize, _: u16) -> R {
 // ---- rules ----
 
 /// `(?= *::?[^=]+[!:?]?=)`
-fn colon_then_eq_ahead(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn colon_then_eq_ahead(l: &Line, pos: usize, _: u16) -> R {
     let b = l.b;
     let last = l.last_eq()?;
     let mut at = pos;
@@ -334,32 +334,32 @@ fn colon_then_eq_ahead(l: &Line, pos: usize, _: u16) -> R {
 }
 
 /// `(?= *::?)`
-fn colon_ahead(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn colon_ahead(l: &Line, pos: usize, _: u16) -> R {
     let c = find(l.b, pos, b':')?;
     let q = spaces_back(l.b, pos, c);
     Some(M::at(q, q))
 }
 
 /// `::?` at `c`: where it ends.
-fn colons_end(l: &Line, c: usize) -> usize {
+pub(crate) fn colons_end(l: &Line, c: usize) -> usize {
     if l.at(c + 1) == b':' { c + 2 } else { c + 1 }
 }
 
 /// `(::?)\s*`
-fn colons_ws(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn colons_ws(l: &Line, pos: usize, _: u16) -> R {
     let c = find(l.b, pos, b':')?;
     let e = colons_end(l, c);
     Some(M::at(c, ws_end(l.b, e)).cap(1, c, e))
 }
 
 /// `::?`
-fn colons(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn colons(l: &Line, pos: usize, _: u16) -> R {
     let c = find(l.b, pos, b':')?;
     Some(M::at(c, colons_end(l, c)))
 }
 
 /// `(?=\s*;)`
-fn semicolon_ahead(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn semicolon_ahead(l: &Line, pos: usize, _: u16) -> R {
     let c = find(l.b, pos, b';')?;
     let q = ws_back(l.b, pos, c);
     Some(M::at(q, q))
@@ -368,17 +368,17 @@ fn semicolon_ahead(l: &Line, pos: usize, _: u16) -> R {
 // ---- recipes ----
 
 /// `^(?=[ ]+([-@]{1,2})?)`
-fn spaces_ahead(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn spaces_ahead(l: &Line, pos: usize, _: u16) -> R {
     (pos == 0 && l.at(0) == b' ').then(|| M::at(0, 0))
 }
 
 /// `^(?=\t([-@]{1,2})?)`
-fn tab_ahead(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn tab_ahead(l: &Line, pos: usize, _: u16) -> R {
     (pos == 0 && l.at(0) == b'\t').then(|| M::at(0, 0))
 }
 
 /// `([-@]{1,2})?` from `i`: where it ends.
-fn prefix_end(l: &Line, i: usize) -> usize {
+pub(crate) fn prefix_end(l: &Line, i: usize) -> usize {
     let mut e = i;
     while e < i + 2 && matches!(l.at(e), b'-' | b'@') {
         e += 1;
@@ -387,7 +387,7 @@ fn prefix_end(l: &Line, i: usize) -> usize {
 }
 
 /// `^([ ]+)([-@]{1,2})?`
-fn recipe_spaces(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn recipe_spaces(l: &Line, pos: usize, _: u16) -> R {
     if pos != 0 || l.at(0) != b' ' {
         return None;
     }
@@ -397,7 +397,7 @@ fn recipe_spaces(l: &Line, pos: usize, _: u16) -> R {
 }
 
 /// `^(\t)([-@]{1,2})?`; group 1 is the prefix when `ONE` is false, `^\t([-@]{1,2})?`
-fn recipe_tab<const ONE: bool>(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn recipe_tab<const ONE: bool>(l: &Line, pos: usize, _: u16) -> R {
     if pos != 0 || l.at(0) != b'\t' {
         return None;
     }
@@ -410,29 +410,29 @@ fn recipe_tab<const ONE: bool>(l: &Line, pos: usize, _: u16) -> R {
 }
 
 /// `^(?![ ]+)`
-fn not_spaces(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn not_spaces(l: &Line, pos: usize, _: u16) -> R {
     (pos == 0 && l.at(0) != b' ').then(|| M::at(0, 0))
 }
 
 /// `^(?!\t)`
-fn not_tab(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn not_tab(l: &Line, pos: usize, _: u16) -> R {
     (pos == 0 && l.at(0) != b'\t').then(|| M::at(0, 0))
 }
 
 /// `^\n`
-fn blank(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn blank(l: &Line, pos: usize, _: u16) -> R {
     (pos == 0 && l.b == b"\n").then(|| M::at(0, 1))
 }
 
 /// `\s*(#)`
-fn hash_ws(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn hash_ws(l: &Line, pos: usize, _: u16) -> R {
     let c = find(l.b, pos, b'#')?;
     Some(M::at(ws_back(l.b, pos, c), c + 1).cap(1, c, c + 1))
 }
 
 // ---- functions and variables ----
 
-const CALL_NAMES: [&[&[u8]]; 6] = [
+pub(crate) const CALL_NAMES: [&[&[u8]]; 6] = [
     &[b"call"],
     &[b"patsubst", b"filter"],
     &[b"wildcard"],
@@ -472,7 +472,7 @@ const CALL_NAMES: [&[&[u8]]; 6] = [
 ];
 
 /// `(\$\$?\()(NAME)\s`, for the names of group `g` of [`CALL_NAMES`].
-fn call(l: &Line, pos: usize, g: u16) -> R {
+pub(crate) fn call(l: &Line, pos: usize, g: u16) -> R {
     let b = l.b;
     let mut at = pos;
     while let Some(i) = find(b, at, b'$') {
@@ -492,7 +492,7 @@ fn call(l: &Line, pos: usize, g: u16) -> R {
 }
 
 /// `\\['"]|['"](?=\s*,)`
-fn call_quote(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn call_quote(l: &Line, pos: usize, _: u16) -> R {
     let b = l.b;
     for i in pos..b.len() {
         match b[i] {
@@ -505,7 +505,7 @@ fn call_quote(l: &Line, pos: usize, _: u16) -> R {
 }
 
 /// `\$\$?` then a byte `pred` takes.
-fn dollar(l: &Line, pos: usize, pred: fn(u8) -> bool) -> R {
+pub(crate) fn dollar(l: &Line, pos: usize, pred: fn(u8) -> bool) -> R {
     let mut at = pos;
     while let Some(i) = find(l.b, at, b'$') {
         if l.at(i + 1) == b'$' && pred(l.at(i + 2)) {
@@ -520,27 +520,27 @@ fn dollar(l: &Line, pos: usize, pred: fn(u8) -> bool) -> R {
 }
 
 /// `\$\$?\(`
-fn dollar_paren(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn dollar_paren(l: &Line, pos: usize, _: u16) -> R {
     dollar(l, pos, |c| c == b'(')
 }
 
 /// `\$\$?{`
-fn dollar_brace(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn dollar_brace(l: &Line, pos: usize, _: u16) -> R {
     dollar(l, pos, |c| c == b'{')
 }
 
 /// `\$\$?[@%<?^+|*]`
-fn automatic(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn automatic(l: &Line, pos: usize, _: u16) -> R {
     dollar(l, pos, |c| b"@%<?^+|*".contains(&c))
 }
 
 /// `\$\$`
-fn dollars(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn dollars(l: &Line, pos: usize, _: u16) -> R {
     find_str(l.b, pos, b"$$").map(|i| M::at(i, i + 2))
 }
 
 /// `(\$)[[:alpha:]]`
-fn single_char(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn single_char(l: &Line, pos: usize, _: u16) -> R {
     let mut at = pos;
     while let Some(i) = find(l.b, at, b'$') {
         if let Some(n) = l.alpha_at(i + 1) {
@@ -552,7 +552,7 @@ fn single_char(l: &Line, pos: usize, _: u16) -> R {
 }
 
 /// `\s*(WORD)\b`
-fn ws_word(l: &Line, pos: usize, word: &[u8]) -> R {
+pub(crate) fn ws_word(l: &Line, pos: usize, word: &[u8]) -> R {
     let mut at = pos;
     while let Some(k) = find_str(l.b, at, word) {
         let e = k + word.len();
@@ -565,17 +565,17 @@ fn ws_word(l: &Line, pos: usize, word: &[u8]) -> R {
 }
 
 /// `\s*(override)\b`
-fn override_kw(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn override_kw(l: &Line, pos: usize, _: u16) -> R {
     ws_word(l, pos, b"override")
 }
 
 /// `\s*(define)\b`
-fn define_ws(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn define_ws(l: &Line, pos: usize, _: u16) -> R {
     ws_word(l, pos, b"define")
 }
 
 /// `\bdefine\b`
-fn define_word(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn define_word(l: &Line, pos: usize, _: u16) -> R {
     let mut at = pos;
     while let Some(k) = find_str(l.b, at, b"define") {
         if !l.word_before(k) && !l.word_at(k + 6) {
@@ -588,7 +588,7 @@ fn define_word(l: &Line, pos: usize, _: u16) -> R {
 
 /// Where `(\?|\+|::?)?=` (with `!` too when `BANG`) ending at the `=` at `f` starts, not
 /// before `pos`.
-fn op_start<const BANG: bool>(b: &[u8], pos: usize, f: usize) -> usize {
+pub(crate) fn op_start<const BANG: bool>(b: &[u8], pos: usize, f: usize) -> usize {
     if f >= pos + 2 && b[f - 2] == b':' && b[f - 1] == b':' {
         f - 2
     } else if f > pos && (matches!(b[f - 1], b'?' | b'+' | b':') || (BANG && b[f - 1] == b'!')) {
@@ -599,32 +599,32 @@ fn op_start<const BANG: bool>(b: &[u8], pos: usize, f: usize) -> usize {
 }
 
 /// `(\?|\+|::?)?=`, or `(!|\?|\+|::?)?=` when `BANG`
-fn assign_op<const BANG: bool>(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn assign_op<const BANG: bool>(l: &Line, pos: usize, _: u16) -> R {
     let f = find(l.b, pos, b'=')?;
     Some(M::at(op_start::<BANG>(l.b, pos, f), f + 1))
 }
 
 /// `(?=\s*(!|\?|\+|::?)?=)`
-fn assign_ahead(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn assign_ahead(l: &Line, pos: usize, _: u16) -> R {
     let s = assign_op::<true>(l, pos, 0)?.s();
     let q = ws_back(l.b, pos, s);
     Some(M::at(q, q))
 }
 
 /// `(?=\s*!=)`
-fn shell_assign_ahead(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn shell_assign_ahead(l: &Line, pos: usize, _: u16) -> R {
     let k = find_str(l.b, pos, b"!=")?;
     let q = ws_back(l.b, pos, k);
     Some(M::at(q, q))
 }
 
 /// `!=`
-fn bang_eq(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn bang_eq(l: &Line, pos: usize, _: u16) -> R {
     find_str(l.b, pos, b"!=").map(|k| M::at(k, k + 2))
 }
 
 /// `((?:bash|sh|zsh)\s+-c\s+)(['"`])`
-fn shell_c(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn shell_c(l: &Line, pos: usize, _: u16) -> R {
     let b = l.b;
     for i in pos..b.len() {
         let Some(word) = [&b"bash"[..], b"sh", b"zsh"]
@@ -647,31 +647,31 @@ fn shell_c(l: &Line, pos: usize, _: u16) -> R {
 }
 
 /// `(?!<\\)\2`: the quote the script started with.
-fn quote_back(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn quote_back(l: &Line, pos: usize, _: u16) -> R {
     let &q = l.cap.borrow().first()?;
     find(l.b, pos, q).map(|i| M::at(i, i + 1))
 }
 
 /// `(?=(?!<\\)\2)`
-fn quote_back_ahead(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn quote_back_ahead(l: &Line, pos: usize, _: u16) -> R {
     quote_back(l, pos, 0).map(|m| M::at(m.s(), m.s()))
 }
 
 /// The line's last character but whitespace, when it is an `=`: the assignment that ends a
 /// `define` line, `(!|\?|\+|::?)?=\s*\n`.
-fn define_op(l: &Line, pos: usize) -> Option<(usize, usize)> {
+pub(crate) fn define_op(l: &Line, pos: usize) -> Option<(usize, usize)> {
     let t = (0..l.len()).rev().find(|&i| !ws(l.b[i]))?;
     (t >= pos && l.b[t] == b'=').then(|| (op_start::<true>(l.b, pos, t), t + 1))
 }
 
 /// `(?=(!|\?|\+|::?)?=\s*\n)`
-fn define_op_ahead(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn define_op_ahead(l: &Line, pos: usize, _: u16) -> R {
     let (s, _) = define_op(l, pos)?;
     Some(M::at(s, s))
 }
 
 /// `((!|\?|\+|::?)?=)\s*\n`
-fn define_assign(l: &Line, pos: usize, _: u16) -> R {
+pub(crate) fn define_assign(l: &Line, pos: usize, _: u16) -> R {
     let (s, e) = define_op(l, pos)?;
     Some(M::at(s, l.len()).cap(1, s, e))
 }

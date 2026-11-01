@@ -16,8 +16,8 @@
 //! are shell scripts and `sh`, `bash` and `zsh` blocks: the same contexts under bash's own
 //! base scope.
 
-mod grammar;
-mod scan;
+pub(crate) mod grammar;
+pub(crate) mod scan;
 mod shell;
 
 use std::collections::HashMap;
@@ -441,7 +441,7 @@ enum It {
 
 /// A context: its patterns, the scopes it gives what it holds, and whether the shell's
 /// prototype (comments, continuations, escapes) applies in it.
-struct Ctx {
+pub(crate) struct Ctx {
     meta: Scopes,
     content: Scopes,
     clear: u8,

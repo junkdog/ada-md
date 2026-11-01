@@ -28,7 +28,6 @@ use crate::app::{Computed, Msg};
 use crate::doc::{CodeBlock, CodeId};
 use crate::layout::expand_tabs;
 use ada_parse::Lang;
-use ada_parse::make;
 
 /// Longer lines are left plain: backtracking regexes can be slow on them, and nobody reads them
 /// anyway.
@@ -574,14 +573,6 @@ fn own(lang: &str) -> Option<Lang> {
     }
 }
 
-/// The grammar of ada's copy of syntect's machine that highlights bat's `Makefile` or its bash.
-fn make_grammar(lang: Lang) -> Option<make::Grammar> {
-    match lang {
-        Lang::Makefile => Some(make::Grammar::Make),
-        _ => None,
-    }
-}
-
 /// A line's runs from its spans, `(start, end, rule)` in order, as a line of `out`; empty when
 /// no span has a rule.
 fn span_runs(len: usize, spans: impl Iterator<Item = (u32, u32, Rule)>, out: &mut LineRuns) {
@@ -690,54 +681,6 @@ impl ParseRules {
         };
         span_runs(len, spans.iter().map(rule), out);
     }
-}
-
-/// The theme's rule for each scope stack a Makefile's or a shell script's lines name, found as
-/// they come: the lexer gives the grammar's nested stacks, not a fixed set of kinds.
-pub struct MakeRules {
-    base: Scope,
-    rules: Vec<Rule>,
-}
-
-impl MakeRules {
-    fn new(grammar: make::Grammar) -> Self {
-        Self {
-            base: Scope::new(grammar.base()).expect("scope"),
-            rules: Vec::new(),
-        }
-    }
-
-    /// Highlight one line into `out`, after the lines before it left `state`; `spans` is
-    /// scratch space. Long lines are colored too: the lexer is linear.
-    fn line(
-        &mut self,
-        line: &str,
-        state: &mut make::State,
-        spans: &mut Vec<make::Span>,
-        highlighter: &SynHighlighter,
-        out: &mut LineRuns,
-    ) {
-        let line = expand_tabs(line);
-        make::tokens(&line, state, spans);
-        for id in self.rules.len()..state.stack_count() {
-            let rule = stack_rule(self.base, state.stack(id as u32), highlighter);
-            self.rules.push(rule);
-        }
-        let rule = |s: &make::Span| (s.start, s.end, self.rules[s.stack as usize]);
-        span_runs(line.len(), spans.iter().map(rule), out);
-    }
-}
-
-/// The rule for a scope stack under `base`, as syntect's highlighter reaches it
-/// (`style_for_stack`): a one-scope selector scores by the depth of the scope it matches as
-/// that scope is pushed, so `variable` takes `$@` in a string in a command name's scope.
-/// `style_mod_for_stack` would match it at its first `variable.*` scope instead, below the
-/// string.
-fn stack_rule(base: Scope, stack: &[make::Sc], highlighter: &SynHighlighter) -> Rule {
-    let path: Vec<Scope> = std::iter::once(base)
-        .chain(stack.iter().map(|sc| Scope::new(sc.name()).expect("scope")))
-        .collect();
-    Rule::decode(highlighter.style_for_stack(&path).foreground)
 }
 
 /// How a file printed a piece at a time is highlighted (O-52): not at all, or by one of ada's
@@ -849,7 +792,6 @@ fn streams(lang: Lang) -> bool {
 /// What highlights a block's lines.
 enum Engine {
     Syntect(LineState),
-    Make(MakeRules, Box<make::State>, Vec<make::Span>),
     Parse(ParseRules, ada_parse::State, Vec<ada_parse::Span>),
 }
 
@@ -894,11 +836,6 @@ impl<'a> Highlighter<'a> {
     pub fn new(key: u64, lang: &str, text: &'a str, theme: &'a SyntaxTheme) -> Self {
         let highlighter = SynHighlighter::new(&theme.theme);
         let state = find_syntax(lang).map(|syntax| match syntax {
-            Syntax::Own(lang @ Lang::Makefile) => {
-                let grammar = make_grammar(lang).expect("a make grammar");
-                let state = Box::new(make::State::new(grammar));
-                Engine::Make(MakeRules::new(grammar), state, Vec::new())
-            }
             Syntax::Own(lang) => Engine::Parse(
                 ParseRules::lazy(lang),
                 ada_parse::State::default(),
@@ -931,11 +868,6 @@ impl<'a> Highlighter<'a> {
                 Engine::Syntect(state) => {
                     let done = state.line(line, &self.highlighter, &mut self.buf, out);
                     done.is_some()
-                }
-                Engine::Make(rules, state, spans) => {
-                    LINES.fetch_add(1, Ordering::Relaxed);
-                    rules.line(line, state, spans, &self.highlighter, out);
-                    true
                 }
                 Engine::Parse(rules, state, spans) => {
                     LINES.fetch_add(1, Ordering::Relaxed);
@@ -1011,8 +943,6 @@ pub fn highlight_parallel(key: u64, lang: &str, text: &str, theme: &SyntaxTheme)
         Syntax::Own(Lang::Json) if text.contains("/*") => highlight(key, lang, text, theme),
         // without one, its lines don't depend on each other
         Syntax::Own(Lang::Json) => highlight_parse_on(key, Lang::Json, text, theme, threads),
-        // its lines depend on the ones before, and one thread does ~50 MB/s
-        Syntax::Own(Lang::Makefile) => highlight(key, lang, text, theme),
         Syntax::Own(own) if own.line_by_line() => {
             highlight_parse_on(key, own, text, theme, threads)
         }

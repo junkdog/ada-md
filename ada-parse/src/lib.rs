@@ -14,9 +14,9 @@
 //! ports; YAML's reads YAML as bat's grammar does on well-formed text. The other formats whose
 //! lines carry state (Dockerfile, Java properties, `.env`, Git's ignore, attributes, mailmap and
 //! link files) still run on a port of syntect's parse machine (`machine.rs`), their grammars bat's
-//! context for context, until scanners replace them. Makefiles and bash run on [`make`], an
-//! earlier port of that machine (G-002, G-003, moved in from ada), behind an interface of its own
-//! until a scanner replaces it.
+//! context for context, until scanners replace them. bash and Makefiles share a scanner, bat's
+//! contexts matched in place; [`make`], the earlier port of syntect's machine that ran them
+//! (G-002, G-003), stays as their reference in tests.
 
 mod bash;
 mod cpp;
@@ -133,7 +133,7 @@ impl State {
 /// Lex one `line`, without its newline, into `spans` (cleared first), after the lines before
 /// it left `state`; `state` is left as this line leaves it. The spans come in order, don't
 /// overlap, aren't empty, and start and end on characters of the line; bytes no span covers
-/// are plain. Makefile and bash give no spans here: [`make::tokens`] lexes them.
+/// are plain.
 // one copy, called from each place that highlights; never inlined into those (ADR-40's size
 // discipline)
 #[inline(never)]
@@ -167,6 +167,7 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::Lua => lua::line(line.as_bytes(), state, &mut out),
         Lang::JavaScript => javascript::line(line.as_bytes(), state, &mut out),
         Lang::Bash => bash::line(line.as_bytes(), state, &mut out),
+        Lang::Makefile => bash::make_line(line.as_bytes(), state, &mut out),
         _ => {
             if let Some(g) = lang.grammar() {
                 machine::line(g, line.as_bytes(), state, &mut out);
