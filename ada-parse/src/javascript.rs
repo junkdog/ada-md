@@ -350,6 +350,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
             },
         )),
         parens: std::cell::Cell::new((usize::MAX, None)),
+        member: usize::MAX,
         out,
     };
     // the levels kept, whole: those above the depth are never read
@@ -1039,6 +1040,8 @@ struct Scan<'b, 'c> {
     names: std::cell::Cell<(usize, Name)>,
     /// The last `(` [`Scan::balanced`] was asked about, and its answer.
     parens: std::cell::Cell<(usize, Option<usize>)>,
+    /// Where the last member after a `.` [`Scan::after_object`] took starts.
+    member: usize,
     out: &'b mut Out<'c>,
 }
 
@@ -1090,7 +1093,14 @@ impl<'b> Scan<'b, '_> {
         if p >= self.n || !boundary(self.b, p) || !is_word(self.b, p) {
             return None;
         }
-        Some(&self.b[p..word_end(self.b, p)])
+        // the name read there ([`Scan::name_at`]) knows where its `\w` run ends
+        let (at, name) = self.names.get();
+        let we = if at == p {
+            name.word_end
+        } else {
+            word_end(self.b, p)
+        };
+        Some(&self.b[p..we])
     }
 
     /// `(?<!\.)\b(?>…)\b` for one of `words`: where it ends.
@@ -1202,6 +1212,12 @@ impl<'b> Scan<'b, '_> {
         let end = self.n + 1;
         let mut p = 0;
         loop {
+            // at the line's `\n` and past it no pattern of code, of a comment or of a template's
+            // text can match (`core` and `expression` take nothing there, nor these contexts'
+            // own patterns): the dispatches there would fail
+            if p >= self.n && (is_code(self.top()) || matches!(self.top(), DOC | BLOCK | TPL)) {
+                return;
+            }
             self.looped = false;
             // a run of blanks in code where no pattern can start, skipped whole: none of these
             // contexts' own patterns starts at a blank, and `core`'s and `expression`'s only
@@ -1211,13 +1227,17 @@ impl<'b> Scan<'b, '_> {
                     .iter()
                     .take_while(|&&c| c == b' ' || c == b'\t')
                     .count();
-                // past them, a space only `\s` takes ends the shortcut (the line's `\n` doesn't)
+                // past them, a space only `\s` takes ends the shortcut (the line's `\n` doesn't);
+                // a comment's `/`, a `g` not of `gql``, a `<` before no name start none
                 let next = self.c(q);
-                if !matches!(
-                    next,
-                    Some(b'\x0b' | b'\x0c' | b'\r' | b':' | b'g' | b'`' | b'/' | b'<' | 0x80..)
-                ) && before(self.b, p) != Some(b'.')
-                {
+                let may = match next {
+                    Some(b'\x0b' | b'\x0c' | b'\r' | b':' | b'`' | 0x80..) => true,
+                    Some(b'/') => !matches!(self.c(q + 1), Some(b'/' | b'*')),
+                    Some(b'g') => has(self.b, q, b"gql`"),
+                    Some(b'<') => ident_start(self.c(q + 1)),
+                    _ => false,
+                };
+                if !may && before(self.b, p) != Some(b'.') {
                     p = q;
                     self.stuck = 0;
                     continue;
@@ -1265,6 +1285,22 @@ impl<'b> Scan<'b, '_> {
             MUSTACHE => &MUSTACHE_STOPS,
             STYLED | GRAPHQL => &TEMPLATE_STOPS,
             REGEX | RE_GROUP | RE_CLASS => &REGEX_STOPS,
+            // Flow's brackets and annotation: at a blank only `flowtype-tokens`' `\s*([|&])` and
+            // `(?<=[:?|&=])(?=\s*{)` can start, the first at every blank of a run alike, the
+            // second only at its first
+            FLOW_ANNOT | FLOW_BRACES | FLOW_ANGLE | FLOW_SQUARE | FLOW_ROUND
+                if matches!(b[p], b' ' | b'\t') =>
+            {
+                let q = p + b[p..]
+                    .iter()
+                    .take_while(|&&c| c == b' ' || c == b'\t')
+                    .count();
+                return if matches!(self.c(q), Some(b'|' | b'&' | b'\x0b' | b'\x0c' | b'\r' | 0x80..)) {
+                    p + 1
+                } else {
+                    q
+                };
+            }
             // code: inside a run of blanks only `literal-labels`' `\s*:` can start, and only
             // where a `:` ends the run (its other patterns' lookbehinds see the blank)
             c if is_code(c) && matches!(b[p], b' ' | b'\t') => {
@@ -1725,8 +1761,14 @@ impl<'b> Scan<'b, '_> {
         if p >= self.n {
             return None;
         }
+        // no pattern before `literal-punctuation`'s can start at `;` or `,`
+        match self.b[p] {
+            b';' => return self.tok(p, p + 1, TERMINATOR),
+            b',' => return self.tok(p, p + 1, COMMA),
+            _ => {}
+        }
         // only the patterns that can start with the byte at `p`, in the grammar's order
-        if let Some(q) = self.plain_name(p) {
+        if let Some(q) = self.plain_name(p, true) {
             return Some(q);
         }
         let r = match self.b[p] {
@@ -1756,7 +1798,19 @@ impl<'b> Scan<'b, '_> {
                     }
                 })
             }
-            b'\'' | b'"' | 0x80.. => self
+            // a string the keys' patterns can't take (no `:` after it, nor `literal-method`'s
+            // `(`): `literal-string`'s
+            b'\'' | b'"' => match quoted(self.b, p).map(|e| self.c(spaces(self.b, e))) {
+                Some(Some(b':')) => self
+                    .function_labels(p)
+                    .or_else(|| self.arrow_labels(p))
+                    .or_else(|| self.labels(p)),
+                Some(Some(b'(')) => None,
+                _ => return self.string(p),
+            },
+            // past ASCII, only a space or a digit can start one of these
+            0x80.. if !self.wide_space_or_digit(p) => None,
+            0x80.. => self
                 .function_labels(p)
                 .or_else(|| self.arrow_labels(p))
                 .or_else(|| self.labels(p))
@@ -1818,25 +1872,290 @@ impl<'b> Scan<'b, '_> {
         name
     }
 
-    /// A name that only `literal-variable` can take, taken: one starting lowercase (or `$`),
-    /// not one of the grammar's words, and followed by none of `=:(`.[`.
-    fn plain_name(&mut self, p: usize) -> Option<usize> {
+    /// A name that no pattern keys on ([`word_mask`]), classified once by the byte after it
+    /// instead of through the patterns, each of which would fail on it but the one whose output
+    /// this gives: `literal-variable`'s, `literal-method-call`'s and `literal-function-call`'s,
+    /// or in `core` (`core`) `literal-labels`'. `None` where a function, an arrow, a method's
+    /// body or `prototype` may follow, for the patterns in order.
+    fn plain_name(&mut self, p: usize, core: bool) -> Option<usize> {
+        let mut q = self.plain_name_one(p, core)?;
+        // a member after a `.` this step took ([`Scan::after_object`]): the dispatch at it, in
+        // the same context, would start here
+        while self.member == q {
+            let core = matches!(self.top(), MAIN | CURLY | SWITCH_BODY | GQL_SUBST);
+            match self.plain_name_one(q, core) {
+                Some(r) => q = r,
+                None => break,
+            }
+        }
+        Some(q)
+    }
+
+    /// [`Scan::plain_name`] for the name at `p` alone.
+    fn plain_name_one(&mut self, p: usize, core: bool) -> Option<usize> {
         let b = self.b;
-        if !(b[p].is_ascii_lowercase() || b[p] == b'$') {
+        // one starting uppercase or with `_` can be a constant or a class
+        let upper = b[p].is_ascii_uppercase() || b[p] == b'_';
+        if !(upper || b[p].is_ascii_lowercase() || b[p] == b'$') {
             return None;
         }
         let Name {
             end: e, next, mask, ..
         } = self.name_at(p);
-        if mask != 0 || matches!(next, Some(b'=' | b':' | b'(' | b'`' | b'.' | b'[')) {
+        if mask != 0 {
+            return if upper {
+                None
+            } else {
+                self.keyword_name(p, e, next, mask, core)
+            };
+        }
+        let after_dot = before(b, p) == Some(b'.');
+        // `literal-variable`'s: a property after a `.`, else a variable
+        let var = if after_dot { PROPERTY } else { READWRITE };
+        match next {
+            Some(b'=') => {
+                let s = spaces(b, e);
+                let assign = match self.c(s + 1) {
+                    // `literal-arrow-function`'s parameter
+                    Some(b'>') => return None,
+                    Some(b'=') => false,
+                    // `literal-function`'s or `literal-arrow-function`'s name
+                    _ if self.function_value(spaces(b, s + 1)) => return None,
+                    _ => true,
+                };
+                let q = self.variable_at(p, e, upper, var)?;
+                // the `=` after blanks the run loop passes: `literal-operators`' assignment
+                if q == e
+                    && assign
+                    && self.straight()
+                    && b[e..s].iter().all(|&c| c == b' ' || c == b'\t')
+                {
+                    return self.tok(s, s + 1, ASSIGN);
+                }
+                Some(q)
+            }
+            Some(b'(') => {
+                // `literal-method`'s key
+                let s = spaces(b, e);
+                if self.body_follows(s) {
+                    return None;
+                }
+                self.put(p, e, FUNCTION);
+                let c = spaces(b, s + 1);
+                if self.is(c, b')') {
+                    return self.tok(s, c + 1, CALL_PARENS);
+                }
+                // the `(`: `brackets`', where no arrow follows
+                if self.straight() && !self.arrow_follows(s) && self.can_push() {
+                    return self.tok_push(s, s + 1, ROUND_BEGIN, ROUND);
+                }
+                Some(s)
+            }
+            Some(b'.' | b'[') if upper => self.upper_member(p, e),
+            Some(b'.' | b'[') => {
+                if self.is(e, b'.') && has(b, e + 1, b"prototype") {
+                    return None;
+                }
+                let s = spaces(b, e);
+                if after_dot {
+                    self.put(p, e, PROPERTY);
+                    if s != e {
+                        return Some(e);
+                    }
+                } else {
+                    self.put(p, s, OBJECT);
+                }
+                Some(self.after_object(s))
+            }
+            Some(b':') if core => {
+                // the labels' functions and arrows, then `literal-labels`' key
+                let s = spaces(b, e);
+                if self.function_value(spaces(b, s + 1)) {
+                    return None;
+                }
+                let after_q = before(b, p) == Some(b'?')
+                    || space_before(b, p).is_some_and(|s| s > 0 && b[s - 1] == b'?');
+                if after_q || after_dot {
+                    return self.variable_at(p, e, upper, var);
+                }
+                self.put(p, e, OBJ_KEY_LABEL);
+                self.put(e, s, OBJ_KEY);
+                self.tok(s, s + 1, OBJ_KEY_SEP)
+            }
+            Some(b'`') => None,
+            _ => self.variable_at(p, e, upper, var),
+        }
+    }
+
+    /// `literal-variable` at the name `p..e`: for one starting uppercase or with `_` (`upper`) its
+    /// own (a constant, a class's static property), else `var`.
+    fn variable_at(&mut self, p: usize, e: usize, upper: bool, var: u16) -> Option<usize> {
+        if upper {
+            self.variable(p)
+        } else {
+            self.tok(p, e, var)
+        }
+    }
+
+    /// [`Scan::plain_name`] for a name `p..e` starting uppercase or with `_` before `.` or `[`:
+    /// `literal-method-call`'s class before `.name(`, else `literal-variable`'s, but where a
+    /// function or an arrow may be assigned to the member, `prototype` follows, or blanks or no
+    /// name come before the member.
+    fn upper_member(&mut self, p: usize, e: usize) -> Option<usize> {
+        let b = self.b;
+        if self.is(spaces(b, e), b'[') {
+            return self.variable(p);
+        }
+        if !self.is(e, b'.') {
             return None;
         }
-        let leaf = if before(b, p) == Some(b'.') {
-            PROPERTY
-        } else {
-            READWRITE
-        };
-        self.tok(p, e, leaf)
+        let m = ident(b, e + 1)?;
+        if &b[e + 1..m] == b"prototype" {
+            return None;
+        }
+        let ms = spaces(b, m);
+        match self.c(ms) {
+            Some(b'=')
+                if self.c(ms + 1) != Some(b'=') && self.function_value(spaces(b, ms + 1)) =>
+            {
+                None
+            }
+            Some(b'(')
+                if b[p].is_ascii_uppercase()
+                    && (before(b, p) == Some(b'.') || boundary(b, p)) =>
+            {
+                self.put(p, e, CLASS_VAR);
+                self.put(e, e + 1, ACCESSOR);
+                self.put(e + 1, m, FUNCTION);
+                let c = spaces(b, ms + 1);
+                if self.is(c, b')') {
+                    return self.tok(ms, c + 1, CALL_PARENS);
+                }
+                Some(ms)
+            }
+            _ => self.variable(p),
+        }
+    }
+
+    /// [`Scan::plain_name`] for a word of `literal-keywords`', `literal-language-constant`'s or
+    /// `literal-language-variable`'s alone (`mask`): the patterns before theirs take one only
+    /// after a `.`, as a function's name before `=`, a label before `:` in `core`, a class
+    /// before `.prototype` or, but for a keyword, a method's name before `(…) {`. `None` for
+    /// those, and for a word of other patterns.
+    fn keyword_name(
+        &mut self,
+        p: usize,
+        e: usize,
+        next: Option<u8>,
+        mask: u16,
+        core: bool,
+    ) -> Option<usize> {
+        let b = self.b;
+        if before(b, p) == Some(b'.')
+            || next == Some(b'=')
+            || (core && next == Some(b':'))
+            || (self.is(e, b'.') && has(b, e + 1, b"prototype"))
+        {
+            return None;
+        }
+        match mask {
+            W_KEYWORD => self.keywords(p),
+            // `default`: `literal-keywords` comes first
+            m if m == W_KEYWORD | W_MODULE => self.keywords(p),
+            W_MODULE => {
+                if next == Some(b'(') && self.body_follows(spaces(b, e)) {
+                    return None;
+                }
+                self.module(p)
+            }
+            W_CONSTANT | W_LANG_VAR => {
+                if next == Some(b'(') && self.body_follows(spaces(b, e)) {
+                    return None;
+                }
+                let q = if mask == W_CONSTANT {
+                    self.language_constant(p)
+                } else {
+                    self.language_variable(p)
+                }?;
+                // `this.`: the `.` in the same step
+                if q == e && next == Some(b'.') {
+                    return Some(self.after_object(e));
+                }
+                Some(q)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether the top context's dispatch at a `(`, `[`, `.` or `=` (not `==`) after a name goes
+    /// straight to `expression`'s patterns for it: those of code that only close at another byte.
+    fn straight(&self) -> bool {
+        matches!(
+            self.top(),
+            MAIN | CURLY
+                | ROUND
+                | SQUARE
+                | SUBST
+                | JSX_EXPR
+                | SWITCH_BODY
+                | CASE
+                | PARAM_DEFAULT
+                | FOR_IN
+                | GQL_SUBST
+                | STYLED_ARGS
+        )
+    }
+
+    /// After a name at `s`, a `.` or `[`, taken in the same step where the top context's
+    /// dispatch would give it [`Scan::straight`]: the `.` before a member that no `=` follows,
+    /// `expression`'s accessor, or `brackets`' `[`. Where the scan goes on.
+    fn after_object(&mut self, s: usize) -> usize {
+        if !self.straight() {
+            return s;
+        }
+        if self.is(s, b'.') {
+            if self.plain_dot(s) {
+                self.put(s, s + 1, ACCESSOR);
+                self.member = s + 1;
+                return s + 1;
+            }
+            return s;
+        }
+        if self.is(s, b'[') && self.can_push() {
+            self.put(s, s + 1, SQUARE_BEGIN);
+            self.push(SQUARE);
+            return s + 1;
+        }
+        s
+    }
+
+    /// Whether the `.` at `p` before a name can only be `literal-operators`' accessor: no
+    /// `prototype` follows, nor a `=` that may assign a function or an arrow to the member
+    /// (`literal-function`'s and `literal-arrow-function`'s members), and a number needs a digit.
+    fn plain_dot(&self, p: usize) -> bool {
+        let b = self.b;
+        if !ident_start(self.c(p + 1)) {
+            return false;
+        }
+        let n = self.name_at(p + 1);
+        if &b[p + 1..n.end] == b"prototype" {
+            return false;
+        }
+        if n.next != Some(b'=') {
+            return true;
+        }
+        let t = spaces(b, n.end);
+        matches!(self.c(t + 1), Some(b'=' | b'>')) || !self.function_value(spaces(b, t + 1))
+    }
+
+    /// Whether what starts at `q`, after a name's `=` or `:`, may be a function or an arrow's head:
+    /// `async`, `function`, `(…) =>` or a name before `=>`.
+    fn function_value(&self, q: usize) -> bool {
+        let b = self.b;
+        has(b, q, b"async")
+            || has(b, q, b"function")
+            || self.arrow_follows(q)
+            || ident(b, q).is_some_and(|e| has(b, spaces(b, e), b"=>"))
     }
 
     /// Whether a pattern of `core` or `expression` can start at the blank at `p`: one after a
@@ -1860,18 +2179,16 @@ impl<'b> Scan<'b, '_> {
             b'0'..=b'9' => self.method(p).or_else(|| self.number(p)),
             // `.name` that no `=` follows: only the accessor (`function`'s and
             // `literal-arrow-function`'s members want `=`, and a number a digit)
-            b'.' if ident_start(self.c(p + 1)) && {
-                let n = self.name_at(p + 1);
-                n.next != Some(b'=') && &self.b[p + 1..n.end] != b"prototype"
-            } =>
-            {
-                self.tok(p, p + 1, ACCESSOR)
-            }
+            b'.' if self.plain_dot(p) => self.tok(p, p + 1, ACCESSOR),
             b'.' => self
                 .function(p)
                 .or_else(|| self.arrow_function(p))
                 .or_else(|| self.number(p))
                 .or_else(|| self.operators(p)),
+            // `literal-method`'s quoted key only before `(`
+            b'"' | b'\'' if !quoted(self.b, p).is_some_and(|e| self.is(spaces(self.b, e), b'(')) => {
+                self.string(p)
+            }
             b'"' | b'\'' => self.method(p).or_else(|| self.string(p)),
             b'`' => self.template_start(p),
             // `literal-variable`'s `(?<=\.)\s*(…)` starts at a space too
@@ -1911,6 +2228,7 @@ impl<'b> Scan<'b, '_> {
             b'=' | b'|' | b'>' => self.merge_conflict(p).or_else(|| self.operators(p)),
             b'#' => self.comments(p),
             b'!' | b'%' | b'&' | b'^' | b'~' | b'?' | b':' => self.operators(p),
+            0x80.. if !self.wide_space_or_digit(p) => None,
             0x80.. => self.expression_all(p),
             _ => None,
         }
@@ -1919,7 +2237,7 @@ impl<'b> Scan<'b, '_> {
     /// `expression` at a name: the name read once, and only the patterns that can take it
     /// tried, in the grammar's order.
     fn name_patterns(&mut self, p: usize) -> Option<usize> {
-        if let Some(q) = self.plain_name(p) {
+        if let Some(q) = self.plain_name(p, false) {
             return Some(q);
         }
         let b = self.b;
@@ -2020,6 +2338,14 @@ impl<'b> Scan<'b, '_> {
             return Some(q);
         }
         self.variable(p)
+    }
+
+    /// Whether the character at `p`, past ASCII, is `\s` or `\d`: where a pattern of `core` or
+    /// `expression` can start at one (a key's digits, `literal-labels`' `\s*:`, `literal-regexp`'s
+    /// and `literal-jsx`'s spaces, `literal-variable`'s after a `.`).
+    #[cold]
+    fn wide_space_or_digit(&self, p: usize) -> bool {
+        wide_space(self.b, p).is_some() || wide_digit(self.b, p).is_some()
     }
 
     /// `expression` with every pattern tried, for a byte past ASCII.
@@ -2406,6 +2732,10 @@ impl<'b> Scan<'b, '_> {
     /// `support-class`.
     fn support_class(&mut self, p: usize) -> Option<usize> {
         let w = self.word(p)?;
+        // the lists' words only ([`word_mask`]), before searching them
+        if word_mask(w) & W_SUPPORT_CLASS == 0 {
+            return None;
+        }
         let e = p + w.len();
         if self.not_after_dot(p) {
             if BUILTIN_CLASSES.contains(&w) {
@@ -2429,6 +2759,9 @@ impl<'b> Scan<'b, '_> {
             return None;
         }
         let w = self.word(p)?;
+        if word_mask(w) & W_SUPPORT_OTHER == 0 {
+            return None;
+        }
         let e = p + w.len();
         let leaf = if BUILTIN_FNS.contains(&w) {
             BUILTIN_FN
@@ -3071,11 +3404,23 @@ impl<'b> Scan<'b, '_> {
 
     /// `literal-string`.
     fn string(&mut self, p: usize) -> Option<usize> {
-        match self.c(p)? {
-            b'"' => self.tok_push(p, p + 1, STR_BEGIN, STR_D),
-            b'\'' => self.tok_push(p, p + 1, STR_BEGIN, STR_S),
-            _ => None,
+        let (q, ctx) = match self.c(p)? {
+            b'"' => (b'"', STR_D),
+            b'\'' => (b'\'', STR_S),
+            _ => return None,
+        };
+        let e = self.tok_push(p, p + 1, STR_BEGIN, ctx)?;
+        // a string that closes on its line before any `\\`: its text and its end in this step,
+        // as the string's own dispatches would give them
+        let b = self.b;
+        let mut i = e;
+        while i < self.n && b[i] != q && b[i] != b'\\' {
+            i += 1;
         }
+        if i < self.n && b[i] == q {
+            return self.close(i, i + 1, STR_END);
+        }
+        Some(e)
     }
 
     /// `literal-language-constant`.
