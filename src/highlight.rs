@@ -2488,6 +2488,39 @@ mod tests {
         rules_match_the_grammar("lua", "Lua", text);
     }
 
+    /// ada-parse's SQL lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (ADR-40): its corners included (`create`'s name popped at the line's end, `drop`'s
+    /// objects as prefixes, `drop table` at a word's end, `comment on … is` with the spaces
+    /// before it, `alter`'s spaces ending its match, the types' sizes and time zones,
+    /// `is not null`, the multi-word DML, quotes doubled and escaped, interpolation, `%{}` and
+    /// `%r{}`, a block comment's `*` lines, `#` and `--` comments).
+    #[test]
+    fn sql_rules_match_the_grammar() {
+        let text = concat!(
+            "-- schema\n",
+            "CREATE OR REPLACE FUNCTION s.\"f\"(a int) RETURNS text AS $$ SELECT 1 $$;\n",
+            "CREATE UNIQUE INDEX\n",
+            "  idx ON t (a);\n",
+            "create table if not exists `t` (id bigint primary key, n varchar(255) not null,\n",
+            "  p numeric(10,2) default 0, d timestamp(3) with time zone, c character varying(10),\n",
+            "  x double precision, y bit varying(3), z var char(2), f float(8), g float,\n",
+            "  FOREIGN KEY (a) REFERENCES u(id) ON DELETE CASCADE, CHECK (n <> ''));\n",
+            "drop tables; DROP TABLE x CASCADE; backdrop table y; drop index_x;\n",
+            "ALTER TABLE t COMMENT ON COLUMN a.b IS 'x';\n",
+            "  COMMENT ON TABLE t IS 'it''s \\'q\\'';\n",
+            "/* block\n",
+            " * star\n",
+            " */ SELECT DISTINCT a.b, count(*), COUNT (x), counter(y), current_user, lower(n)\n",
+            "FROM t NATURAL LEFT OUTER JOIN u INNER JOIN v USING (id) # mysql\n",
+            "WHERE x IS NOT NULL AND y not null OR z IS null AND q <=> 1 AND r != 2 || 'a'\n",
+            "GROUP BY a ORDER  BY b DESC LIMIT 10 UNION ALL SELECT TOP 5 * FROM w;\n",
+            "INSERT IGNORE INTO t VALUES (1, \"a\"\"b #{x} c\", %{p #{q} r}, %r{s}, ());\n",
+            "BEGIN WORK; START TRANSACTION; GRANT WITH GRANT OPTION; REVOKE; COMMIT;\n",
+            "SELECT 1 AS one, true, FALSE, 1.5, 12ab, ٣, x.y.z ASC;\n",
+        );
+        rules_match_the_grammar("sql", "SQL", text);
+    }
+
     /// ada-parse's JavaScript lexer picks the rules bat's `JavaScript (Babel)` picks, in every
     /// built-in theme (ADR-40's phase 5): its corners included (a shebang, labels and quoted keys
     /// with functions and arrows, a ternary's `:` read as a key's in `core`, classes with

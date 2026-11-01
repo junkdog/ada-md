@@ -59,6 +59,8 @@ pub enum Lang {
     Python,
     /// bat's `Lua`.
     Lua,
+    /// bat's `SQL`.
+    Sql,
     /// bat's `JavaScript (Babel)`, for every JavaScript token (ADR-40's phase 5): Sublime's
     /// `JavaScript` too, which ```` ```javascript ```` names.
     JavaScript,
@@ -268,10 +270,11 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
         ],
     ),
     (Lang::Lua, &["lua"]),
+    (Lang::Sql, &["sql", "ddl", "dml"]),
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 26] = [
+    pub const ALL: [Lang; 27] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -298,6 +301,7 @@ impl Lang {
         Lang::Python,
         Lang::Lua,
         Lang::JavaScript,
+        Lang::Sql,
     ];
 
     /// The name of the syntax it stands in for, as syntect names it.
@@ -328,6 +332,7 @@ impl Lang {
             Lang::Go => "Go",
             Lang::Python => "Python",
             Lang::Lua => "Lua",
+            Lang::Sql => "SQL",
             Lang::JavaScript => "JavaScript (Babel)",
         }
     }
@@ -360,6 +365,7 @@ impl Lang {
             Lang::Go => "source.go",
             Lang::Python => "source.python",
             Lang::Lua => "source.lua",
+            Lang::Sql => "source.sql",
             Lang::JavaScript => "source.js",
         }
     }
@@ -393,6 +399,7 @@ impl Lang {
             Lang::Go => crate::go::scopes(kind),
             Lang::Python => crate::python::scopes(kind),
             Lang::Lua => crate::lua::scopes(kind),
+            Lang::Sql => crate::sql::scopes(kind),
             Lang::JavaScript => crate::javascript::scopes(kind),
             Lang::Bash => crate::bash::scopes(kind),
             Lang::Makefile => crate::bash::make_scopes(kind),
@@ -434,6 +441,7 @@ impl Lang {
             | Lang::Go
             | Lang::Python
             | Lang::Lua
+            | Lang::Sql
             | Lang::JavaScript => {
                 return None;
             }
@@ -662,6 +670,7 @@ mod tests {
         assert_eq!(Lang::from_token("python"), Some(Lang::Python));
         assert_eq!(Lang::from_token("py"), Some(Lang::Python));
         assert_eq!(Lang::from_token("lua"), Some(Lang::Lua));
+        assert_eq!(Lang::from_token("sql"), Some(Lang::Sql));
         assert_eq!(Lang::from_token("java"), Some(Lang::Java));
     }
 

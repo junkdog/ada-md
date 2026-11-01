@@ -39,6 +39,7 @@ pub mod make;
 mod properties;
 mod python;
 mod rust;
+mod sql;
 // the port: the scanner's reference in tests, and the source of helpers it shares
 #[allow(dead_code)]
 mod toml;
@@ -165,6 +166,7 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::Go => go::line(line.as_bytes(), state, &mut out),
         Lang::Python => python::line(line.as_bytes(), state, &mut out),
         Lang::Lua => lua::line(line.as_bytes(), state, &mut out),
+        Lang::Sql => sql::line(line.as_bytes(), state, &mut out),
         Lang::JavaScript => javascript::line(line.as_bytes(), state, &mut out),
         Lang::Bash => bash::line(line.as_bytes(), state, &mut out),
         Lang::Makefile => bash::make_line(line.as_bytes(), state, &mut out),
