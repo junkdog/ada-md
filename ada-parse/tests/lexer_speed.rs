@@ -35,6 +35,7 @@ const LANGS: &[(&str, Lang)] = &[
     ("python", Lang::Python),
     ("lua", Lang::Lua),
     ("sql", Lang::Sql),
+    ("powershell", Lang::PowerShell),
     ("javascript", Lang::JavaScript),
     ("bash", Lang::Bash),
     // `make.txt` phase 0's Makefiles

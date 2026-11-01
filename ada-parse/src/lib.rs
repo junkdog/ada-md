@@ -36,6 +36,7 @@ mod logs;
 mod lua;
 mod machine;
 pub mod make;
+mod powershell;
 mod properties;
 mod python;
 mod rust;
@@ -167,6 +168,7 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::Python => python::line(line.as_bytes(), state, &mut out),
         Lang::Lua => lua::line(line.as_bytes(), state, &mut out),
         Lang::Sql => sql::line(line.as_bytes(), state, &mut out),
+        Lang::PowerShell => powershell::line(line.as_bytes(), state, &mut out),
         Lang::JavaScript => javascript::line(line.as_bytes(), state, &mut out),
         Lang::Bash => bash::line(line.as_bytes(), state, &mut out),
         Lang::Makefile => bash::make_line(line.as_bytes(), state, &mut out),

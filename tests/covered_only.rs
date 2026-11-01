@@ -136,6 +136,12 @@ CREATE TABLE t (id bigint PRIMARY KEY, n varchar(20) NOT NULL); -- note
 SELECT a.b, count(*) FROM t WHERE n LIKE 'it''s' /* c */ GROUP BY a.b;
 ```
 
+```powershell
+function Get-X([Parameter(Mandatory)][string]$Name) { Get-ChildItem $env:TEMP | % { \"$($_.Name) `n\" } } # x
+<# .SYNOPSIS #> $h = @{ a = 1; b = @'
+'@ }
+```
+
 ```js
 export default class A extends B { get n() { return /ab+c/gi.test(`x ${this.y}`) ? <div a=\"1\">{n}</div> : 0x1F; } }
 ```
@@ -221,6 +227,8 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         "stubs.pyi",
         "init.lua",
         "schema.sql",
+        "profile.ps1",
+        "Module.psm1",
         "app.js",
         "lib.mjs",
         "view.jsx",

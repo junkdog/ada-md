@@ -1717,18 +1717,25 @@ mod tests {
     /// ada-parse's table names a language only where syntect on the whole set names the same,
     /// and misses none of the ones it covers; and ada, the table first and its trimmed set
     /// after, names what the whole set names: as a fence's token, a file's whole name and its
-    /// extension. One departure is by design (ADR-40's phase 5): ada's JavaScript is Babel's
-    /// grammar whatever the token, where the set gives Sublime's `JavaScript` (```` ```JavaScript
-    /// ````, and in the fancy build, whose set has no Babel, `js` itself) or nothing (the fancy
-    /// build's `mjs`, `jsx`, …).
+    /// extension. Two departures are by design (ADR-40): ada's JavaScript is Babel's grammar
+    /// whatever the token, where the set gives Sublime's `JavaScript` (```` ```JavaScript ````,
+    /// and in the fancy build, whose set has no Babel, `js` itself) or nothing (the fancy
+    /// build's `mjs`, `jsx`, …); and the fancy build's set has no PowerShell (its regexes need
+    /// Oniguruma), where ada's own lexer needs none.
     #[test]
     fn the_language_table_agrees_with_the_set() {
         let covered = |name: Option<&str>| name.and_then(Lang::from_name);
-        let departs = |ours: Option<&str>, full: Option<&str>| {
-            ours == Some(Lang::JavaScript.name())
-                && (full == Some("JavaScript") || (!cfg!(feature = "onig") && full.is_none()))
+        let fancy_only = |ours: Option<&str>, full: Option<&str>| {
+            !cfg!(feature = "onig") && full.is_none() && ours == Some(Lang::PowerShell.name())
         };
-        for w in words() {
+        let departs = |ours: Option<&str>, full: Option<&str>| {
+            fancy_only(ours, full)
+                || ours == Some(Lang::JavaScript.name())
+                    && (full == Some("JavaScript") || (!cfg!(feature = "onig") && full.is_none()))
+        };
+        let mut words = words();
+        words.extend(["PowerShell", "powershell", "ps1", "PSM1", "psd1"].map(String::from));
+        for w in words {
             let full = find_in_full(&w);
             let ours = Lang::from_token(&w).map(Lang::name);
             if departs(ours, full) {
@@ -2519,6 +2526,45 @@ mod tests {
             "SELECT 1 AS one, true, FALSE, 1.5, 12ab, ٣, x.y.z ASC;\n",
         );
         rules_match_the_grammar("sql", "SQL", text);
+    }
+
+    /// ada-parse's PowerShell lexer picks the rules bat's grammar picks, in every built-in
+    /// theme (ADR-40): its corners included (`#requires` with a hashtable, `using namespace`,
+    /// a block comment's docs, `function` with a scope, attributes and their parameters, types,
+    /// commands with a path before them, every variable form, operators after `-`, numbers with
+    /// suffixes and units, strings with escapes and interpolation, here-strings, `--%`, `class`,
+    /// `%` and `?`, dot-sourcing, a range, a type's name after a digit).
+    #[test]
+    fn powershell_rules_match_the_grammar() {
+        let text = concat!(
+            "#requires -Version 5.1 -Modules @{ ModuleName = 'x'; RequiredVersion = '1.0' }\n",
+            "using namespace System.IO.\n",
+            "<# .SYNOPSIS\n",
+            "  Does x.\n",
+            ".PARAMETER Name\n",
+            "  The name.  #> <# .NOTES\n",
+            "#>\n",
+            "function global:Get-Thing {\n",
+            "    [CmdletBinding(SupportsShouldProcess = $true)]\n",
+            "    param([Parameter(Mandatory, Position=0)][ValidateSet('a', 'b')][string[]] $Name, [int]$N = 0x1FUL)\n",
+            "    begin { $ErrorActionPreference = 'Stop' } process {\n",
+            "        Get-ChildItem C:\\x\\Get-Foo.ps1 -Path $env:TEMP 2>&1 | ForEach-Object { $_.FullName } | Where-Object Length -gt 10mb\n",
+            "        $h = @{ 'k' = 1; Name = \"a $x `n $($y.z) `u{1F600} `u{ \"\"q\"\" ${env:path}.Length\" }; $a = @(1, 2..3, -.5, 1.5e3d, 1e10, _)\n",
+            "        $s = @\"\n",
+            "text $v `t $(Get-Date) \"\" ${global:x}\n",
+            "\"@\n",
+            "        $t = @'\n",
+            "raw $v ''\n",
+            "'@\n",
+            "        if ($global:x -is [string] -and -not $script:y.Count -ceq 1 -or $z -bxor 2) { cmd.exe /c x --% raw %PATH% } elseif ($?) { return $null } else { throw }\n",
+            "        $x.foreach({ $PSItem }) ; $y | % { $_ } ; x.% foo ; 'it''s' + \u{2018}smart\u{2019} -f $Host.UI.RawUI\n",
+            "    }\n",
+            "}\n",
+            "class Foo : Bar { hidden static [string] $Name }  # done ## x `\n",
+            "filter f { $input }; .\\x.ps1 ; . $p; [System.IO.File]::Exists($p) ; [2abc] ; a2>> b ; \"x `\n",
+            "y\"\n",
+        );
+        rules_match_the_grammar("powershell", "PowerShell", text);
     }
 
     /// ada-parse's JavaScript lexer picks the rules bat's `JavaScript (Babel)` picks, in every

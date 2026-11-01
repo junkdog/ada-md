@@ -61,6 +61,8 @@ pub enum Lang {
     Lua,
     /// bat's `SQL`.
     Sql,
+    /// bat's `PowerShell`.
+    PowerShell,
     /// bat's `JavaScript (Babel)`, for every JavaScript token (ADR-40's phase 5): Sublime's
     /// `JavaScript` too, which ```` ```javascript ```` names.
     JavaScript,
@@ -271,10 +273,11 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     ),
     (Lang::Lua, &["lua"]),
     (Lang::Sql, &["sql", "ddl", "dml"]),
+    (Lang::PowerShell, &["ps1", "psm1", "psd1"]),
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 27] = [
+    pub const ALL: [Lang; 28] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -302,6 +305,7 @@ impl Lang {
         Lang::Lua,
         Lang::JavaScript,
         Lang::Sql,
+        Lang::PowerShell,
     ];
 
     /// The name of the syntax it stands in for, as syntect names it.
@@ -333,6 +337,7 @@ impl Lang {
             Lang::Python => "Python",
             Lang::Lua => "Lua",
             Lang::Sql => "SQL",
+            Lang::PowerShell => "PowerShell",
             Lang::JavaScript => "JavaScript (Babel)",
         }
     }
@@ -366,6 +371,7 @@ impl Lang {
             Lang::Python => "source.python",
             Lang::Lua => "source.lua",
             Lang::Sql => "source.sql",
+            Lang::PowerShell => "source.powershell",
             Lang::JavaScript => "source.js",
         }
     }
@@ -400,6 +406,7 @@ impl Lang {
             Lang::Python => crate::python::scopes(kind),
             Lang::Lua => crate::lua::scopes(kind),
             Lang::Sql => crate::sql::scopes(kind),
+            Lang::PowerShell => crate::powershell::scopes(kind),
             Lang::JavaScript => crate::javascript::scopes(kind),
             Lang::Bash => crate::bash::scopes(kind),
             Lang::Makefile => crate::bash::make_scopes(kind),
@@ -442,6 +449,7 @@ impl Lang {
             | Lang::Python
             | Lang::Lua
             | Lang::Sql
+            | Lang::PowerShell
             | Lang::JavaScript => {
                 return None;
             }
@@ -671,6 +679,8 @@ mod tests {
         assert_eq!(Lang::from_token("py"), Some(Lang::Python));
         assert_eq!(Lang::from_token("lua"), Some(Lang::Lua));
         assert_eq!(Lang::from_token("sql"), Some(Lang::Sql));
+        assert_eq!(Lang::from_token("powershell"), Some(Lang::PowerShell));
+        assert_eq!(Lang::from_token("ps1"), Some(Lang::PowerShell));
         assert_eq!(Lang::from_token("java"), Some(Lang::Java));
     }
 
