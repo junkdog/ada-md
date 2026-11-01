@@ -11,12 +11,17 @@
 //!
 //! Lines are cut to 256 bytes, which keeps Oniguruma's backtracking short.
 //!
+//! `ADA_FUZZ_LANGS` limits it to some of these (`xml`, `toml,ini`; `langs.rs`): the first byte
+//! still picks from all of them, so an input means the same language with the filter or
+//! without, and the others' inputs return at once.
+//!
 //! ```zsh
 //! cargo +nightly fuzz run -s none parse -- -dict=fuzz/parse.dict -max_len=4096
 //! ```
 
 #![no_main]
 
+mod langs;
 mod lexer_parity;
 
 use ada_parse::{Lang, State};
@@ -45,6 +50,9 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let lang = EXACT[pick as usize % EXACT.len()];
+    if !langs::selected(&EXACT).contains(&lang) {
+        return;
+    }
     let (mut state, mut spans) = (State::default(), Vec::new());
     // XML's scanner keeps a nested group's or conditional section's meta scopes once
     let once = lang == Lang::Xml;

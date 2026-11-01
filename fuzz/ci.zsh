@@ -131,7 +131,8 @@ union() {
 pack() {
   local d
   mkdir -p target/ci-seed
-  for d in corpus/*(/:t); do
+  # not lang.zsh's corpus/TARGET-LANG, a target's inputs again
+  for d in corpus/^*-*(/:t); do
     tar -C corpus -cf - $d | zstd -19 -T0 -q > target/ci-seed/$d.tar.zst
   done
   /usr/bin/ls -la target/ci-seed
