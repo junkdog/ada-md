@@ -6,7 +6,7 @@
 //! The kinds carry the scopes of bat's `Regular Expressions (Javascript)` (anchors, back
 //! references, quantifiers, groups and assertions, character classes and their sets, escapes),
 //! with a few of its own for what JavaScript lacks (inline options, atomic groups, `\Q…\E`).
-//! Four dialects ([`Dialect`]):
+//! Five dialects ([`Dialect`]):
 //! - **Java's** (`java.util.regex`, Kotlin's too) adds possessive quantifiers, `(?>…)`,
 //!   `(?idmsux-idmsux)` and `(?idmsux-idmsux:…)`, nested classes and `&&`, `\Q…\E`, `\pL`,
 //!   `\h\H\v\V\R\X`, `\A\G\Z\z` and its escapes.
@@ -18,6 +18,11 @@
 //! - **Rust's** (the `regex` crate): RE2's without `\Q…\E` or octal, with nested classes and
 //!   `&&`, `--`, `~~`, `(?imsRUux)`, `\b{start}`, `\<`, `\>`, `\u{…}`, `\U{…}` and
 //!   `\p{sc=Greek}`.
+//! - **.NET's** (`System.Text.RegularExpressions`, C#'s and PowerShell's): `(?<name>…)` and
+//!   `(?'name'…)`, balancing groups (`(?<a-b>…)`, `(?<-b>…)`), `(?>…)`, `(?imnsx-imnsx)`,
+//!   `(?#…)` comments, `(?(name)…)` conditionals, class subtraction (`[a-z-[aeiou]]`), `\k'name'`,
+//!   `\p{IsGreek}` (braces only); a `]` first in a class is a character, and no possessive
+//!   quantifiers or `\Q…\E`.
 //!
 //! **A host's string spells the regex.** In a cooked string (Java's `"…"`, Kotlin's `"…"`)
 //! `\\` is the regex's `\`, so `"\\d+"` is `\d+`, and any other `\` starts the host's escape, a
@@ -43,12 +48,14 @@ const QUOTE: u8 = 0x40;
 pub(crate) const STATE: u8 = 0x7f;
 /// The bits of an ECMAScript regex's state: it has no nested class and no `\Q…\E`.
 pub(crate) const ECMA_STATE: u8 = DEPTH | SET;
+/// The bits of a .NET regex's state: it has no `\Q…\E`.
+pub(crate) const NET_STATE: u8 = DEPTH | SET | NEST;
 
 /// The bytes a token of `main` (or a group in it) starts on, and of a class.
 static MAIN_BYTES: [bool; 256] = table(b"\\^$?*+{|().[");
 static SET_BYTES: [bool; 256] = table(b"\\[]&~");
 
-const fn table(bytes: &[u8]) -> [bool; 256] {
+pub(crate) const fn table(bytes: &[u8]) -> [bool; 256] {
     let mut t = [false; 256];
     let mut i = 0;
     while i < bytes.len() {
@@ -69,6 +76,8 @@ pub(crate) enum Dialect {
     Re2,
     /// The Rust `regex` crate's.
     Rust,
+    /// .NET's, C#'s and PowerShell's.
+    DotNet,
 }
 
 macro_rules! leaves {
@@ -120,6 +129,11 @@ leaves! {
     PosixClass = "constant.other.character-class.posix.regexp",
     Difference = "keyword.operator.difference.regexp",
     SymmetricDifference = "keyword.operator.symmetric-difference.regexp",
+    Comment = "comment.block.regexp",
+    CommentBegin = "comment.block.regexp punctuation.definition.comment.begin.regexp",
+    CommentEnd = "comment.block.regexp punctuation.definition.comment.end.regexp",
+    Conditional = "punctuation.definition.group.assertion.conditional.regexp",
+    Balancing = "keyword.operator.balancing-group.regexp",
 }
 
 /// A kind's bit for a token in a class: under `constant.other.character-class.set.regexp`.
@@ -275,6 +289,16 @@ impl Scan<'_, '_, '_, '_> {
             && !(self.host.top_only && self.st & STATE != 0)
     }
 
+    /// Whether a pattern of the host's but its escape matches at `p`, past where the scan took
+    /// over: a token of the regex doesn't run over it.
+    fn host_stop(&self, p: usize) -> bool {
+        let c = self.b[p];
+        p > self.from
+            && c != b'\\'
+            && self.host.yields[usize::from(c)]
+            && (self.host.stop)(self.b, p, self.host.arg)
+    }
+
     /// Whether byte `p` is one of `bytes` or one a pattern of the host's can start on.
     fn special(&self, bytes: &[bool; 256], p: usize) -> bool {
         let c = usize::from(self.b[p]);
@@ -298,16 +322,21 @@ impl Scan<'_, '_, '_, '_> {
         self.host.dialect == Dialect::Rust
     }
 
+    fn dotnet(&self) -> bool {
+        self.host.dialect == Dialect::DotNet
+    }
+
+    /// Java's and ECMAScript's have possessive quantifiers (ECMAScript's as bat colors them).
+    fn possessive(&self) -> bool {
+        matches!(self.host.dialect, Dialect::Java | Dialect::Ecma)
+    }
+
     /// The regex's character at `p`. Past where the scan took over, a place where the host's
     /// end or template matches is theirs: none, so no token of the regex runs over it (`"\\"` is
     /// a lone `\` and the string's end, `"\\$"` an escaped `$`).
     fn unit(&self, p: usize) -> Option<Unit> {
         let &c = self.b.get(p).filter(|_| p < self.n)?;
-        if p > self.from
-            && c != b'\\'
-            && self.host.yields[usize::from(c)]
-            && (self.host.stop)(self.b, p, self.host.arg)
-        {
+        if self.host_stop(p) {
             return None;
         }
         if c != b'\\' || !self.host.cooked {
@@ -389,10 +418,11 @@ impl Scan<'_, '_, '_, '_> {
     }
 
     /// A quantifier's `?` (lazy) or `+` (possessive; one token in ECMAScript too, the same
-    /// colors as bat's two) after it ends at `e`: where it ends. RE2 and Rust have no possessive.
+    /// colors as bat's two) after it ends at `e`: where it ends. RE2, Rust and .NET have no
+    /// possessive.
     fn lazy(&self, e: usize) -> usize {
         self.is(e, b'?')
-            .or_else(|| self.is(e, b'+').filter(|_| !self.re2()))
+            .or_else(|| self.is(e, b'+').filter(|_| self.possessive()))
             .unwrap_or(e)
     }
 
@@ -410,7 +440,8 @@ impl Scan<'_, '_, '_, '_> {
             Some(c) => (Some(d1), digits(c)),
             None => (None, d1),
         };
-        if d1 == e && (comma.is_none() || d2 == d1 + 1) {
+        // .NET's `{,n}` is text
+        if d1 == e && (comma.is_none() || d2 == d1 + 1 || self.dotnet()) {
             return None;
         }
         let close = self.is(d2, b'}')?;
@@ -454,7 +485,7 @@ impl Scan<'_, '_, '_, '_> {
                     open(self);
                     return self.tok(e, q + 1, L::NoCapture);
                 }
-                Some(b'>') if self.java() => {
+                Some(b'>') if self.java() || self.dotnet() => {
                     self.tok(p, e, L::GroupBegin);
                     open(self);
                     return self.tok(e, q + 1, L::Atomic);
@@ -468,16 +499,46 @@ impl Scan<'_, '_, '_, '_> {
                     };
                     if let Some(lt) = lt
                         && let Some(s) = self.is(lt, b'<')
-                        && let Some(t) = self.group_name(s)
-                        && let Some(g) = self.is(t, b'>')
                     {
-                        self.tok(p, e, L::GroupBegin);
-                        open(self);
-                        self.tok(e, lt, L::GroupBegin);
-                        self.tok(lt, s, L::NamedBegin);
-                        self.tok(s, t, L::GroupName);
-                        return self.tok(t, g, L::NamedEnd);
+                        if self.dotnet() {
+                            if let Some(r) = self.net_group(p, e, lt, s, b'>') {
+                                return r;
+                            }
+                        } else if let Some(t) = self.group_name(s)
+                            && let Some(g) = self.is(t, b'>')
+                        {
+                            self.tok(p, e, L::GroupBegin);
+                            open(self);
+                            self.tok(e, lt, L::GroupBegin);
+                            self.tok(lt, s, L::NamedBegin);
+                            self.tok(s, t, L::GroupName);
+                            return self.tok(t, g, L::NamedEnd);
+                        }
                     }
+                }
+                // .NET's `(?'name'`
+                Some(b'\'') if self.dotnet() => {
+                    if let Some(s) = self.is(q, b'\'')
+                        && let Some(r) = self.net_group(p, e, q, s, b'\'')
+                    {
+                        return r;
+                    }
+                }
+                // .NET's `(?#…)`, a comment to the next `)`
+                Some(b'#') if self.dotnet() => return self.net_comment(p, q),
+                // .NET's `(?(name)` or `(?(1)`; else `(?` before a group, the condition
+                Some(b'(') if self.dotnet() => {
+                    self.tok(p, e, L::GroupBegin);
+                    open(self);
+                    if let Some(r) = self.is(q, b'(')
+                        && let Some(t) = self.group_name(r)
+                        && let Some(c) = self.is(t, b')')
+                    {
+                        self.tok(e, r, L::Conditional);
+                        self.tok(r, t, L::BackReferenceName);
+                        return self.tok(t, c, L::Conditional);
+                    }
+                    return self.tok(e, q, L::Conditional);
                 }
                 _ => {}
             }
@@ -487,6 +548,7 @@ impl Scan<'_, '_, '_, '_> {
                     let flags: &[u8] = match self.host.dialect {
                         Dialect::Re2 => b"imsU",
                         Dialect::Rust => b"imsRUux",
+                        Dialect::DotNet => b"imnsx",
                         _ => b"idmsuxU",
                     };
                     let flag = |c: u8| flags.contains(&c);
@@ -522,7 +584,8 @@ impl Scan<'_, '_, '_, '_> {
 
     /// A group's name from `s`: Java's `[a-zA-Z][a-zA-Z0-9]*`, ECMAScript's
     /// `[_$\p{L}][_$\p{L}\p{N}]*` (any character past ASCII taken as a letter), RE2's
-    /// `\w+`, Rust's `[_a-zA-Z][_a-zA-Z0-9.\[\]]*`. Where it ends.
+    /// `\w+`, Rust's `[_a-zA-Z][_a-zA-Z0-9.\[\]]*`, .NET's `\w+` (past ASCII a letter). Where
+    /// it ends.
     fn group_name(&self, s: usize) -> Option<usize> {
         type Class = fn(u8) -> bool;
         let (first, rest): (Class, Class) = match self.host.dialect {
@@ -539,12 +602,17 @@ impl Scan<'_, '_, '_, '_> {
                 |c| c.is_ascii_alphabetic() || c == b'_',
                 |c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'[' | b']'),
             ),
+            Dialect::DotNet => (
+                |c| c.is_ascii_alphanumeric() || matches!(c, b'_' | 0x80..),
+                |c| c.is_ascii_alphanumeric() || matches!(c, b'_' | 0x80..),
+            ),
         };
-        if !self.b.get(s).is_some_and(|&c| first(c)) {
+        // a name doesn't run over the host's end (PowerShell's `’`, a byte past ASCII)
+        if s >= self.n || !first(self.b[s]) || self.host_stop(s) {
             return None;
         }
         let mut t = s + 1;
-        while t < self.n && rest(self.b[t]) {
+        while t < self.n && rest(self.b[t]) && !self.host_stop(t) {
             t += 1;
         }
         Some(t)
@@ -560,8 +628,8 @@ impl Scan<'_, '_, '_, '_> {
             Some(n) => self.tok(e, n, L::Negation),
             None => e,
         };
-        // RE2's and Rust's `[]a]`: a `]` first is a character
-        match self.is(e, b']').filter(|_| self.re2()) {
+        // RE2's, Rust's and .NET's `[]a]`: a `]` first is a character
+        match self.is(e, b']').filter(|_| self.re2() || self.dotnet()) {
             Some(n) => n,
             None => e,
         }
@@ -570,10 +638,13 @@ impl Scan<'_, '_, '_, '_> {
     /// One token or one character in a class at `p`.
     fn set(&mut self, p: usize) -> usize {
         // a character with no meaning to the class or the host, and no range's `-` after it
+        // (nor .NET's `-[`, a subtraction)
         if !self.special(&SET_BYTES, p) {
             let e = p + char_len(self.b[p]);
-            if self.b.get(e) != Some(&b'-') {
-                return e;
+            match self.b.get(e) {
+                Some(b'-') => {}
+                Some(b'[') if self.b[p] == b'-' => {}
+                _ => return e,
             }
         }
         let Some(u) = self.unit(p) else {
@@ -614,6 +685,20 @@ impl Scan<'_, '_, '_, '_> {
             b'-' if self.rust() && self.is(e, b'-').is_some() => self.tok(p, e + 1, L::Difference),
             b'~' if self.rust() && self.is(e, b'~').is_some() => {
                 self.tok(p, e + 1, L::SymmetricDifference)
+            }
+            // .NET's `-[…]`, a class subtracted
+            b'-' if self.dotnet()
+                && let Some(n) = self.is(e, b'[') =>
+            {
+                self.tok(p, e, L::Difference);
+                if self.st & NESTS != NESTS {
+                    self.st += NEST;
+                }
+                self.tok(e, n, L::SetBegin);
+                match self.is(n, b'^') {
+                    Some(m) => self.tok(n, m, L::Negation),
+                    None => n,
+                }
             }
             _ => {
                 if let Some(r) = self.range(p, u) {
@@ -662,8 +747,10 @@ impl Scan<'_, '_, '_, '_> {
             end(self, p, true)?
         };
         let dash = self.is(d, b'-')?;
-        // Rust's `--` is a difference, not a range's dash
-        if self.rust() && self.is(dash, b'-').is_some() {
+        // Rust's `--` is a difference, not a range's dash, and .NET's `-[` a subtraction
+        if (self.rust() && self.is(dash, b'-').is_some())
+            || (self.dotnet() && self.is(dash, b'[').is_some())
+        {
             return None;
         }
         let (e, l2) = end(self, dash, false)?;
@@ -690,6 +777,9 @@ impl Scan<'_, '_, '_, '_> {
     fn backslash(&mut self, p: usize, e: usize) -> usize {
         if self.re2() {
             return self.backslash_re2(p, e);
+        }
+        if self.dotnet() {
+            return self.backslash_net(p, e);
         }
         if !self.java() {
             return self.backslash_ecma(p, e);
@@ -879,6 +969,108 @@ impl Scan<'_, '_, '_, '_> {
         }
     }
 
+    /// `\…` in .NET, its `\` at `p` to `e`: where it ends.
+    #[inline(never)]
+    fn backslash_net(&mut self, p: usize, e: usize) -> usize {
+        let Some(u) = self.unit(e) else {
+            return self.tok(p, e, L::Escape);
+        };
+        if u.host {
+            return self.tok(p, u.end, L::Escape);
+        }
+        let n = u.end;
+        let in_set = self.st & SET != 0;
+        let hex = |q: usize| q < self.n && self.b[q].is_ascii_hexdigit();
+        match u.c {
+            b'b' | b'B' | b'A' | b'G' | b'Z' | b'z' if !in_set => self.tok(p, n, L::Anchor),
+            b'1'..=b'9' if !in_set => {
+                let mut q = n;
+                while q < self.n && self.b[q].is_ascii_digit() {
+                    q += 1;
+                }
+                self.tok(p, q, L::BackReference)
+            }
+            // `\k<name>`, `\k'name'`, `\k<1>`
+            b'k' if !in_set => {
+                let close = match self.unit(n).filter(|v| !v.host).map(|v| v.c) {
+                    Some(b'<') => b'>',
+                    Some(b'\'') => b'\'',
+                    _ => return self.tok(p, n, L::Escape),
+                };
+                if let Some(t) = self.group_name(n + 1)
+                    && let Some(g) = self.is(t, close)
+                {
+                    self.tok(p, n, L::BackReference);
+                    self.tok(n, n + 1, L::NamedBegin);
+                    self.tok(n + 1, t, L::BackReferenceName);
+                    return self.tok(t, g, L::NamedEnd);
+                }
+                self.tok(p, n, L::Escape)
+            }
+            b'w' | b'W' | b's' | b'S' | b'd' | b'D' => self.tok(p, n, L::ClassEscape),
+            b'p' | b'P' => self.property(p, n),
+            b'0' => {
+                let mut q = n;
+                while q < n + 2 && q < self.n && matches!(self.b[q], b'0'..=b'7') {
+                    q += 1;
+                }
+                self.tok(p, q, L::Escape)
+            }
+            b'x' => {
+                let q = if hex(n) && hex(n + 1) { n + 2 } else { n };
+                self.tok(p, q, L::Escape)
+            }
+            b'u' => {
+                let q = if (n..n + 4).all(hex) { n + 4 } else { n };
+                self.tok(p, q, L::Escape)
+            }
+            b'c' if n < self.n && self.b[n].is_ascii_alphabetic() => self.tok(p, n + 1, L::Escape),
+            _ => self.tok(p, n, L::Escape),
+        }
+    }
+
+    /// .NET's named group, `(` at `p` to `e`, its `<` or `'` at `lt` to `s`: a name, or a
+    /// balancing group's (`<a-b>`, `<-b>`), then `close`. Where it ends, if it is one.
+    fn net_group(&mut self, p: usize, e: usize, lt: usize, s: usize, close: u8) -> Option<usize> {
+        let t = self.group_name(s).unwrap_or(s);
+        let bal = self
+            .is(t, b'-')
+            .and_then(|d| self.group_name(d).map(|t2| (d, t2)));
+        let end = bal.map_or(t, |(_, t2)| t2);
+        if t == s && bal.is_none() {
+            return None;
+        }
+        let g = self.is(end, close)?;
+        self.tok(p, e, L::GroupBegin);
+        if self.st & DEPTH < DEPTH {
+            self.st += 1;
+        }
+        self.tok(e, lt, L::GroupBegin);
+        self.tok(lt, s, L::NamedBegin);
+        self.tok(s, t, L::GroupName);
+        if let Some((d, t2)) = bal {
+            self.tok(t, d, L::Balancing);
+            self.tok(d, t2, L::BackReferenceName);
+        }
+        Some(self.tok(end, g, L::NamedEnd))
+    }
+
+    /// .NET's `(?#…)`, `(` at `p`, its `#` at `q`: a comment to the next `)`, or to where the
+    /// host takes over. Where it ends.
+    fn net_comment(&mut self, p: usize, q: usize) -> usize {
+        let mut t = q + 1;
+        while let Some(u) = self.unit(t) {
+            if !u.host && u.c == b')' {
+                self.tok(p, q + 1, L::CommentBegin);
+                self.tok(q + 1, t, L::Comment);
+                return self.tok(t, u.end, L::CommentEnd);
+            }
+            t = u.end;
+        }
+        self.tok(p, q + 1, L::CommentBegin);
+        self.tok(q + 1, t, L::Comment)
+    }
+
     /// Where ECMAScript's escape `\c…` ends, `c` the character after its `\`, ending at `n`:
     /// `\cX`, `\xHH`, `\uHHHH` and `\u{H…}` take more.
     fn ecma_escape(&self, n: usize, c: u8) -> usize {
@@ -902,7 +1094,8 @@ impl Scan<'_, '_, '_, '_> {
 
     /// `\p` or `\P` at `p` to `e`: `{name}`, `{key=value}`, or (but ECMAScript's) a letter.
     fn property(&mut self, p: usize, e: usize) -> usize {
-        // Java's and RE2's `[a-zA-Z0-9_]+`, ECMAScript's `[\p{L}_]+`, Rust's with ` `, `-`, `.`
+        // Java's and RE2's `[a-zA-Z0-9_]+`, ECMAScript's `[\p{L}_]+`, Rust's with ` `, `-`, `.`,
+        // .NET's with `-`
         let dialect = self.host.dialect;
         let name = |s: &Self, q: usize| {
             let mut t = q;
@@ -914,6 +1107,8 @@ impl Scan<'_, '_, '_, '_> {
                         Dialect::Rust => {
                             s.b[t].is_ascii_digit() || matches!(s.b[t], b' ' | b'-' | b'.')
                         }
+                        // `IsLatin-1Supplement`
+                        Dialect::DotNet => s.b[t].is_ascii_digit() || s.b[t] == b'-',
                         _ => s.b[t].is_ascii_digit(),
                     })
             {
@@ -952,7 +1147,7 @@ impl Scan<'_, '_, '_, '_> {
             }
             return self.tok(p, e, L::Escape);
         }
-        if !self.ecma() && self.b.get(e).is_some_and(u8::is_ascii_alphabetic) {
+        if !self.ecma() && !self.dotnet() && self.b.get(e).is_some_and(u8::is_ascii_alphabetic) {
             self.tok(p, e, L::Property);
             return self.tok(e, e + 1, L::PropertyName);
         }
@@ -1170,6 +1365,48 @@ mod tests {
         // no `\Q…\E` in Rust's; its `R` option
         has(&t, r"\Q", "constant.character.escape.backslash.regexp");
         has(&t, "?R", "keyword.other.option-toggle.regexp");
+    }
+
+    #[test]
+    fn dotnets_dialect() {
+        let t = lex_in(
+            r"(?<a-b>x)(?'-b'y)(?#c)(?(a)z|w)(?(?=q)r)[]a-z-[^aeiou]]{,3}*+\k'a'\k<1>\pL\p{IsGreek}\Q",
+            false,
+            Dialect::DotNet,
+        );
+        let set = "constant.other.character-class.set.regexp";
+        has(&t, "a", "entity.name.other.group.regexp");
+        has(&t, "-", "keyword.operator.balancing-group.regexp");
+        has(&t, "b", "variable.other.group.regexp");
+        has(&t, "'", "punctuation.definition.group.named.begin.regexp");
+        has(&t, "c", "comment.block.regexp");
+        has(
+            &t,
+            "?(",
+            "punctuation.definition.group.assertion.conditional.regexp",
+        );
+        has(
+            &t,
+            "?",
+            "punctuation.definition.group.assertion.conditional.regexp",
+        );
+        // `]` first is a character; `-[` a subtraction, its class negated
+        has(&t, "]", set);
+        has(
+            &t,
+            "-",
+            &format!("{set} keyword.operator.difference.regexp"),
+        );
+        has(&t, "^", &format!("{set} keyword.operator.negation.regexp"));
+        // `{,3}` is text, `*+` two quantifiers; `\pL` and `\Q` are escapes
+        assert!(!t.iter().any(|(x, _)| *x == "*+" || *x == "3"), "{t:?}");
+        has(&t, "+", "keyword.operator.quantifier.regexp");
+        has(&t, r"\k", "keyword.other.back-reference.regexp");
+        has(&t, "1", "variable.other.group.regexp");
+        for e in [r"\p", r"\Q"] {
+            has(&t, e, "constant.character.escape.backslash.regexp");
+        }
+        has(&t, "IsGreek", "support.constant.unicode-property.regexp");
     }
 
     #[test]

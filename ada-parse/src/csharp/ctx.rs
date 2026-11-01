@@ -690,7 +690,72 @@ impl Scan<'_, '_> {
                 }
                 self.line_in(p)
             }
-            _ => None,
+            _ => self.in_regex(p, top),
+        }
+    }
+
+    /// In a regex in a string (`top` from [`REGEX`]), at `p`: the string's end and escapes (a
+    /// verbatim one's `""`) but `\\`, which is the regex's, else the regex to the next place
+    /// they can start.
+    #[cold]
+    #[inline(never)]
+    fn in_regex(&mut self, p: usize, top: u8) -> Option<usize> {
+        if top < REGEX {
+            return None;
+        }
+        let verbatim = self.stack[self.depth - 2] == LONG_STRING;
+        if p >= self.n {
+            if verbatim {
+                return None;
+            }
+            // unclosed at the line's end: the string's
+            self.pop();
+            return self.string(p);
+        }
+        let b = self.b;
+        match b[p] {
+            b'"' if verbatim && b.get(p + 1) == Some(&b'"') => return self.tok(p, p + 2, ESCAPE),
+            b'"' => {
+                self.pop();
+                return self.close(p, p + 1, STRING_END);
+            }
+            b'\\' if !verbatim && b.get(p + 1) != Some(&b'\\') => return self.string_escaped(p),
+            _ => {}
+        }
+        static YIELDS: [[bool; 256]; 2] =
+            [crate::regex::table(b"\"\\"), crate::regex::table(b"\"")];
+        let host = crate::regex::Embed {
+            dialect: crate::regex::Dialect::DotNet,
+            cooked: !verbatim,
+            yields: &YIELDS[usize::from(verbatim)],
+            stop: |b, p, _| b[p] == b'"',
+            arg: 0,
+            escape: escape_end,
+            top_only: false,
+            base: self.cur() | RE_LEAF,
+            text: self.cur(),
+        };
+        let (q, st) = crate::regex::embedded(b, p, top - REGEX, &host, &mut self.at, self.out)?;
+        self.stack[self.depth - 1] = REGEX + st;
+        Some(q)
+    }
+
+    /// A string opened at `p` (its `"`, or the `@` of `@"`): a regex in it where a call makes
+    /// it one, by the `(` or `,` before it.
+    fn regex_in(&mut self, p: usize) {
+        let b = self.b;
+        let q = blank_back(b, p);
+        let regex = q > 0
+            && match b[q - 1] {
+                b'(' => regex_first_argument(b, q),
+                b',' => self
+                    .regex_calls
+                    .get_or_insert_with(|| RegexCalls::find(b))
+                    .has_comma(q - 1),
+                _ => false,
+            };
+        if regex && self.depth < SYNTECT_DEPTH {
+            self.push(REGEX);
         }
     }
 
@@ -2879,7 +2944,9 @@ impl Scan<'_, '_> {
             return self.open(p, p + 2, STRING_BEGIN, &[FORMAT_STRING]);
         }
         if c == b'@' && self.ch(p + 1) == b'"' && p + 1 < self.n {
-            return self.open(p, p + 2, STRING_BEGIN, &[LONG_STRING]);
+            let q = self.open(p, p + 2, STRING_BEGIN, &[LONG_STRING]);
+            self.regex_in(p);
+            return q;
         }
         if (self.lit(p, b"@$\"") || self.lit(p, b"$@\"")) && p + 2 < self.n {
             return self.open(p, p + 3, STRING_BEGIN, &[LONG_FORMAT_STRING]);
@@ -3237,7 +3304,11 @@ impl Scan<'_, '_> {
             }
             b'\'' => self.char_literal(p),
             b'0'..=b'9' => self.number(p),
-            b'"' => self.open(p, p + 1, STRING_BEGIN, &[STRING]),
+            b'"' => {
+                let q = self.open(p, p + 1, STRING_BEGIN, &[STRING]);
+                self.regex_in(p);
+                q
+            }
             // `{{dec_digits}}` can start with `_`, and `\d` is Unicode's: a float only
             b'_' => self.float(p),
             0x80.. if self.digit(p).is_some() => self.float(p),

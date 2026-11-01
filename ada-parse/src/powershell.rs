@@ -20,6 +20,9 @@
 //! **wrap**: the string or comment the token sits in, the one scope above it a theme can select
 //! (themes key on single scopes; the brackets' `meta.*` scopes are left out). The stack between
 //! lines is the contexts open above `main`, up to 28 (the bytes of [`State`]'s levels).
+//! A string that `-match`, `-replace`, `-split`, `[regex]` or `-Pattern` takes is colored as
+//! .NET's regex (ADR-40, phase 4; [`crate::regex`]): its text is the regex's, and the string's
+//! quotes, escapes and variables are the host's, the regex's state a byte above the string.
 //! `\w` past ASCII is a letter or a decimal digit (Oniguruma's Latin-1 table also takes
 //! `²³¹¼½¾`; not followed), `\p{L}` a letter, `\p{N}` a number, `\s` Unicode's spaces; `(?i)` folds ASCII case only (Oniguruma's `ſ` for `s` isn't followed).
 
@@ -65,6 +68,9 @@ const HERE_S: u8 = 17;
 /// After `--%`, to the line's end.
 const STOP: u8 = 18;
 const CONTEXTS: usize = 19;
+/// A regex in the string below (ADR-40, phase 4): this bit, and the regex's state.
+const REGEX: u8 = 0x80;
+const _: () = assert!(CONTEXTS <= REGEX as usize);
 
 /// The byte that closes each context that includes `main`, 0 for none.
 static CLOSE: [u8; CONTEXTS] = [
@@ -79,6 +85,9 @@ const W_SINGLE: u8 = 3;
 const W_DOUBLE: u8 = 4;
 const W_HERE_S: u8 = 5;
 const W_HERE_D: u8 = 6;
+/// A regex's tokens in a single-quoted string, then a double-quoted one: their kinds only.
+const W_RE_SINGLE: u16 = 7;
+const W_RE_DOUBLE: u16 = 8;
 
 /// Each wrap's scope.
 static WRAPS: [&str; 7] = [
@@ -268,6 +277,16 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
         usize::from(kind >> LEAF_BITS),
         usize::from(kind & ((1 << LEAF_BITS) - 1)),
     );
+    if wrap >= usize::from(W_RE_SINGLE) {
+        let host = if wrap == usize::from(W_RE_SINGLE) {
+            W_SINGLE
+        } else {
+            W_DOUBLE
+        };
+        let mut out = vec![WRAPS[usize::from(host)]];
+        out.extend(crate::regex::scopes(leaf as u16));
+        return out;
+    }
     let (Some(w), Some(l)) = (WRAPS.get(wrap), LEAVES.get(leaf)) else {
         return Vec::new();
     };
@@ -305,6 +324,8 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         exe: (usize::MAX, 0, usize::MAX),
         brace: (usize::MAX, 0),
         word: (usize::MAX, 0, 0),
+        regex_at: usize::MAX,
+        regex_type: false,
     };
     let n = usize::from(state.depth);
     for i in 0..n {
@@ -314,7 +335,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
             state.withs[i - HALF]
         };
         s.stack[1 + i] = c;
-        s.wraps[1 + i] = match OWN_WRAP[usize::from(c)] {
+        s.wraps[1 + i] = match OWN_WRAP.get(usize::from(c)).copied().unwrap_or(W_NONE) {
             W_NONE => s.wraps[i],
             w => w,
         };
@@ -380,6 +401,9 @@ const OP_BITWISE: u32 = 1 << 21;
 const OP_FORMAT: u32 = 1 << 22;
 /// Any operator after `-`.
 const OPERATOR: u32 = OP_IS | OP_COMPARISON | OP_UNARY | OP_LOGICAL | OP_BITWISE | OP_FORMAT;
+/// After `-`, a regex's operator (`match`, `replace`, `split` and their forms) or `pattern`:
+/// the string after it is a regex (ADR-40, phase 4), none of bat's classes.
+const REGEX_OP: u32 = 1 << 23;
 
 /// Every word a pattern names, lowercase, with its classes.
 const ENTRIES: &[(&[u8], u32)] = &[
@@ -462,7 +486,10 @@ const ENTRIES: &[(&[u8], u32)] = &[
     (b"set", VERB),
     (b"show", VERB),
     (b"skip", VERB),
-    (b"split", VERB | OP_UNARY),
+    (b"split", VERB | OP_UNARY | REGEX_OP),
+    (b"csplit", REGEX_OP),
+    (b"isplit", REGEX_OP),
+    (b"pattern", REGEX_OP),
     (b"start", VERB),
     (b"step", VERB),
     (b"stop", VERB),
@@ -660,12 +687,12 @@ const ENTRIES: &[(&[u8], u32)] = &[
     (b"notlike", OP_COMPARISON),
     (b"inotlike", OP_COMPARISON),
     (b"cnotlike", OP_COMPARISON),
-    (b"match", OP_COMPARISON),
-    (b"imatch", OP_COMPARISON),
-    (b"cmatch", OP_COMPARISON),
-    (b"notmatch", OP_COMPARISON),
-    (b"inotmatch", OP_COMPARISON),
-    (b"cnotmatch", OP_COMPARISON),
+    (b"match", OP_COMPARISON | REGEX_OP),
+    (b"imatch", OP_COMPARISON | REGEX_OP),
+    (b"cmatch", OP_COMPARISON | REGEX_OP),
+    (b"notmatch", OP_COMPARISON | REGEX_OP),
+    (b"inotmatch", OP_COMPARISON | REGEX_OP),
+    (b"cnotmatch", OP_COMPARISON | REGEX_OP),
     (b"contains", OP_COMPARISON),
     (b"icontains", OP_COMPARISON),
     (b"ccontains", OP_COMPARISON),
@@ -677,9 +704,9 @@ const ENTRIES: &[(&[u8], u32)] = &[
     (b"notin", OP_COMPARISON),
     (b"inotin", OP_COMPARISON),
     (b"cnotin", OP_COMPARISON),
-    (b"replace", OP_COMPARISON),
-    (b"ireplace", OP_COMPARISON),
-    (b"creplace", OP_COMPARISON),
+    (b"replace", OP_COMPARISON | REGEX_OP),
+    (b"ireplace", OP_COMPARISON | REGEX_OP),
+    (b"creplace", OP_COMPARISON | REGEX_OP),
     (b"and", OP_LOGICAL),
     (b"or", OP_LOGICAL),
     (b"not", OP_LOGICAL),
@@ -861,6 +888,11 @@ struct Scan<'b, 'o, 's> {
     brace: (usize, usize),
     /// The last word looked up: where it starts, ends, and its classes.
     word: (usize, usize, u32),
+    /// Where the last regex's operator or `-Pattern` on the line ends: a string after it, past
+    /// spaces, is a regex.
+    regex_at: usize,
+    /// Whether the line has had the type `[regex]`, for its casts and calls.
+    regex_type: bool,
 }
 
 impl Scan<'_, '_, '_> {
@@ -934,7 +966,9 @@ impl Scan<'_, '_, '_> {
                 SINGLE => self.single(p),
                 DOUBLE | HERE_D => self.double(p),
                 HERE_S => self.here_single(p),
-                _ => self.stop(p),
+                STOP => self.stop(p),
+                // past the contexts: a regex in a string
+                _ => self.in_regex(p),
             };
             match next {
                 Some(q) => p = q,
@@ -1335,7 +1369,11 @@ impl Scan<'_, '_, '_> {
                 }
                 // `(?!\p{L})`: the letters run whole
                 if !(e < self.n && b[e] >= 0x80 && is_letter(b, e)) {
-                    let bits = self.classes(p + 1, e) & OPERATOR;
+                    let bits = self.classes(p + 1, e);
+                    if bits & REGEX_OP != 0 {
+                        self.regex_operator(p, e);
+                    }
+                    let bits = bits & OPERATOR;
                     let leaf = if bits & OP_IS != 0 {
                         // `\b` after
                         (!is_word(b, e)).then_some(COMPARISON)
@@ -1480,7 +1518,127 @@ impl Scan<'_, '_, '_> {
         }
         self.push(ctx, p);
         self.tok(p, p + len, STRING_BEGIN);
+        self.regex_in(p);
         Go::Changed(p + len)
+    }
+
+    /// A string opened at `p`: a regex in it where an operator or a call makes it one: right
+    /// after a regex's operator or `-Pattern` (marked where the scan read it), after
+    /// `Select-String` or `sls`, and on a line with the type `[regex]`, its casts and calls.
+    fn regex_in(&mut self, p: usize) {
+        let b = self.b;
+        let q = blank_back(b, p);
+        if q == 0 {
+            return;
+        }
+        let regex = q == self.regex_at
+            || match b[q - 1] {
+                b']' | b'(' | b',' => self.regex_type && regex_typed(b, q),
+                c => {
+                    matches!(c | 0x20, b'g' | b's')
+                        && (ends_word_ci(b, q, b"select-string") || ends_word_ci(b, q, b"sls"))
+                }
+            };
+        if regex && self.can_push() {
+            let w = self.wraps[self.depth - 1];
+            self.stack[self.depth] = REGEX;
+            self.wraps[self.depth] = w;
+            self.depth += 1;
+        }
+    }
+
+    /// A regex's operator or `-Pattern` from `p`, its `-`, to `e`: a string after it is a regex,
+    /// but after a `-split` with no operand before it, which splits on spaces.
+    #[cold]
+    fn regex_operator(&mut self, p: usize, e: usize) {
+        let b = self.b;
+        if b[e - 5..e].eq_ignore_ascii_case(b"split") {
+            let v = blank_back(b, p);
+            let binary = v > 0
+                && (WORD[usize::from(b[v - 1])]
+                    || b[v - 1] >= 0x80
+                    || matches!(b[v - 1], b')' | b']' | b'}' | b'\'' | b'"' | b'$'));
+            if !binary {
+                return;
+            }
+        }
+        self.regex_at = e;
+    }
+
+    /// In a regex in a string, at `p`: the string's patterns (its end and `''` or `""`, in
+    /// `"…"` its escapes and variables) where they match, else the regex to the next place
+    /// they can start.
+    #[cold]
+    #[inline(never)]
+    fn in_regex(&mut self, mut p: usize) -> Option<Step> {
+        let double = self.stack[self.depth - 2] != SINGLE;
+        let b = self.b;
+        loop {
+            if p >= self.n {
+                return None;
+            }
+            if double {
+                match b[p] {
+                    b'$' => {
+                        if let Some(q) = self.variable(p, false) {
+                            p = q;
+                            continue;
+                        }
+                        if b.get(p + 1) == Some(&b'(') && self.can_push() {
+                            self.push(INTERP, p);
+                            self.tok(p, p + 1, INTERP_DOLLAR);
+                            self.tok(p + 1, p + 2, INTERP_BEGIN);
+                            return Some(p + 2);
+                        }
+                    }
+                    b'`' => {
+                        if let Some((q, leaf)) = escape(b, p) {
+                            self.tok(p, q, leaf);
+                            p = q;
+                            continue;
+                        }
+                        if self.spaces_to_end(p + 1) {
+                            self.tok(p, self.n, KEYWORD_OTHER);
+                            return None;
+                        }
+                    }
+                    _ => {
+                        if let Some(l) = double_quote(b, p) {
+                            if let Some(l2) = double_quote(b, p + l) {
+                                self.tok(p, p + l + l2, ESCAPE);
+                                p += l + l2;
+                                continue;
+                            }
+                            self.pop();
+                            self.tok(p, p + l, STRING_END);
+                            self.pop();
+                            return Some(p + l);
+                        }
+                    }
+                }
+            } else if let Some(l) = single_quote(b, p) {
+                if let Some(l2) = single_quote(b, p + l) {
+                    self.tok(p, p + l + l2, ESCAPE);
+                    p += l + l2;
+                    continue;
+                }
+                self.pop();
+                self.tok(p, p + l, STRING_END);
+                self.pop();
+                return Some(p + l);
+            }
+            let w = self.wrap();
+            let host = &RE_EMBEDS[usize::from(double)];
+            let host = crate::regex::Embed {
+                base: if double { W_RE_DOUBLE } else { W_RE_SINGLE } << LEAF_BITS,
+                text: w | PLAIN,
+                ..*host
+            };
+            let st = self.top() & crate::regex::NET_STATE;
+            let (q, st) = crate::regex::embedded(b, p, st, &host, &mut self.at, self.out)?;
+            self.stack[self.depth - 1] = REGEX | st;
+            p = q;
+        }
     }
 
     /// `#` at `p` and the `#`s after it, pushing a line comment: where it goes on.
@@ -1879,6 +2037,10 @@ impl Scan<'_, '_, '_> {
         }
         if q == p {
             return None;
+        }
+        let name = &b[p..q];
+        if name.len() >= 5 && name[name.len() - 5..].eq_ignore_ascii_case(b"regex") {
+            self.regex_type |= name.len() == 5 || name[name.len() - 6] == b'.';
         }
         self.tok(p, q, STORAGE_TYPE);
         Some(q)
@@ -2649,6 +2811,111 @@ fn escape(b: &[u8], p: usize) -> Option<(usize, u16)> {
     }
 }
 
+/// The bytes a string's patterns start on, around a regex: `'…'`'s, then `"…"`'s.
+static RE_YIELDS: [[bool; 256]; 2] = [
+    crate::regex::table(b"'\xe2"),
+    crate::regex::table(b"\"$`\xe2"),
+];
+
+/// A regex in a `'…'` string, then in a `"…"` one; `base` and `text` set where it is used.
+static RE_EMBEDS: [crate::regex::Embed<'static>; 2] = [
+    crate::regex::Embed {
+        dialect: crate::regex::Dialect::DotNet,
+        cooked: false,
+        yields: &RE_YIELDS[0],
+        stop: |b, p, _| single_quote(b, p).is_some(),
+        arg: 0,
+        escape: |_, p| p + 1,
+        top_only: false,
+        base: 0,
+        text: 0,
+    },
+    crate::regex::Embed {
+        dialect: crate::regex::Dialect::DotNet,
+        cooked: false,
+        yields: &RE_YIELDS[1],
+        stop: |b, p, _| match b[p] {
+            b'`' => true,
+            // a variable's `$`, or `$(`
+            b'$' => b.get(p + 1).is_some_and(|&c| {
+                WORD[usize::from(c)] || c >= 0x80 || matches!(c, b'$' | b'^' | b'?' | b'{' | b'(')
+            }),
+            _ => double_quote(b, p).is_some(),
+        },
+        arg: 0,
+        escape: |_, p| p + 1,
+        top_only: false,
+        base: 0,
+        text: 0,
+    },
+];
+
+/// Where the blanks before `p` start.
+fn blank_back(b: &[u8], p: usize) -> usize {
+    let mut q = p;
+    while q > 0 && matches!(b[q - 1], b' ' | b'\t') {
+        q -= 1;
+    }
+    q
+}
+
+/// Whether `b[..e]` ends with `name`, any case, with no word character before it.
+fn ends_word_ci(b: &[u8], e: usize, name: &[u8]) -> bool {
+    e >= name.len()
+        && b[e - name.len()..e].eq_ignore_ascii_case(name)
+        && (e == name.len() || !WORD[usize::from(b[e - name.len() - 1])])
+}
+
+/// The static methods of `[regex]` that take the regex second, after the input.
+const REGEX_METHODS: [&[u8]; 5] = [b"ismatch", b"match", b"matches", b"replace", b"split"];
+
+/// Whether a string opening after `b[..q]` (its blanks before it passed), on a line with the
+/// type `[regex]`, is a regex: after `[regex]` (or `[System.Text.RegularExpressions.Regex]`), a
+/// cast; the first argument of `[regex]::new(`; the second of `[regex]::Match(` and the like.
+#[cold]
+#[inline(never)]
+fn regex_typed(b: &[u8], q: usize) -> bool {
+    match b[q - 1] {
+        b']' => ends_word_ci(b, q, b"[regex]") || ends_word_ci(b, q, b".regex]"),
+        b'(' => {
+            let w = blank_back(b, q - 1);
+            ends_word_ci(b, w, b"regex]::new")
+        }
+        _ => {
+            // the call's `(`, over its first argument (up to 512 bytes back)
+            let mut depth = 0usize;
+            let mut i = q - 1;
+            let stop = i.saturating_sub(512);
+            loop {
+                if i <= stop {
+                    return false;
+                }
+                i -= 1;
+                match b[i] {
+                    b')' | b']' | b'}' => depth += 1,
+                    b'(' if depth == 0 => break,
+                    b'(' | b'[' | b'{' => match depth.checked_sub(1) {
+                        Some(d) => depth = d,
+                        None => return false,
+                    },
+                    b',' if depth == 0 => return false,
+                    _ => {}
+                }
+            }
+            let w = blank_back(b, i);
+            let mut s = w;
+            while s > 0 && b[s - 1].is_ascii_alphabetic() {
+                s -= 1;
+            }
+            REGEX_METHODS
+                .iter()
+                .any(|m| b[s..w].eq_ignore_ascii_case(m))
+                && s >= 9
+                && b[s - 9..s].eq_ignore_ascii_case(b"[regex]::")
+        }
+    }
+}
+
 /// A single quote, `['‘-‛]`, at `p`: its length.
 fn single_quote(b: &[u8], p: usize) -> Option<usize> {
     match *b.get(p)? {
@@ -2851,6 +3118,8 @@ mod tests {
             format!("{}x", "1".repeat(60000)),
             "$x.".repeat(20000),
             "`u{".repeat(20000),
+            "[regex]::Match((a), 'x', ".repeat(5000),
+            "$a -match '(?<n>(x)' ".repeat(5000),
         ];
         let t = std::time::Instant::now();
         let (mut state, mut spans) = (State::default(), Vec::new());
@@ -2897,6 +3166,64 @@ mod tests {
 
     /// Here-strings and block comments carry their state between lines; a `#` comment and
     /// `#requires` end with theirs.
+    #[test]
+    fn regexes_in_strings() {
+        const S: &str = "string.quoted.single.powershell";
+        const D: &str = "string.quoted.double.powershell";
+        let m = kinds(&[
+            r#"if ($a -match '^(?<y>\d{4})''s$') { $b -CReplace "\s+$x`t(?#c)$", '$1' }"#,
+            r#"$p = [regex]'[a-z-[aeiou]]'; [regex]::Matches($s, "(\w)\1"); -split 'a b'"#,
+            r#"$s -split '\s*,\s*' | Select-String -Pattern "^$($n)(\d"#,
+            r#"x+)" -NotMatch; $t -like '^a*'"#,
+        ]);
+        let has = |text: &str, scopes: &str| {
+            assert!(
+                m.iter().any(|&(t, s)| t == text && s == scopes),
+                "{text:?} as {scopes:?} in {m:#?}"
+            );
+        };
+        has("^", &format!("{S} keyword.control.anchor.regexp"));
+        has("y", &format!("{S} entity.name.other.group.regexp"));
+        has(
+            r"\d",
+            &format!("{S} constant.other.character-class.escape.backslash.regexp"),
+        );
+        // the host's `''`, then the regex's `$`
+        has("''", &format!("{S} constant.character.escape.powershell"));
+        has("$", &format!("{S} keyword.control.anchor.regexp"));
+        // `"…"`: a variable and an escape are the host's, a `$` before `"` the regex's
+        has("x", &format!("{D} variable.other.readwrite.powershell"));
+        has("`t", &format!("{D} constant.character.escape.powershell"));
+        has(
+            "(?#",
+            &format!("{D} comment.block.regexp punctuation.definition.comment.begin.regexp"),
+        );
+        has("$", &format!("{D} keyword.control.anchor.regexp"));
+        // a cast, a subtraction; `[regex]::Matches(`'s second argument
+        has(
+            "-",
+            &format!(
+                "{S} constant.other.character-class.set.regexp keyword.operator.difference.regexp"
+            ),
+        );
+        has(r"\1", &format!("{D} keyword.other.back-reference.regexp"));
+        // a binary `-split`, `-Pattern`, a regex across `$( )` and lines
+        has("*", &format!("{S} keyword.operator.quantifier.regexp"));
+        has(
+            "(",
+            &format!("{D} punctuation.definition.group.begin.regexp"),
+        );
+        has("+", &format!("{D} keyword.operator.quantifier.regexp"));
+        has(")", &format!("{D} punctuation.definition.group.end.regexp"));
+        // not regexes: `-replace`'s second operand, a unary `-split`, `-like`
+        for t in ["$1", "a b", "^a*"] {
+            assert!(
+                m.iter().any(|&(x, s)| x == t && (s == S || s == D)),
+                "{t:?} in {m:#?}"
+            );
+        }
+    }
+
     #[test]
     fn state_between_lines() {
         assert_eq!(

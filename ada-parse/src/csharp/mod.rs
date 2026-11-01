@@ -21,6 +21,11 @@
 //! A kind is a leaf (a token's scopes, bat's) with what the stack around it adds that themes
 //! key on: the string it is in (a chain of string, placeholder and format spec), a doc
 //! comment's or a namespace name's scope, `meta.annotation`, `meta.preprocessor`.
+//!
+//! A string that `new Regex(`, `Regex.IsMatch(input, …)` and the like take is colored as
+//! .NET's regex (ADR-40, phase 4; [`crate::regex`]), as Rider colors it: its text is the
+//! regex's, and placeholders (`{0}`) aren't looked for in it; the string's end and escapes are
+//! the host's, and in a verbatim one `""`.
 
 mod ctx;
 mod re;
@@ -192,12 +197,20 @@ pub(crate) mod c {
     /// for its token, then pops those two in place of the interpolation's own.
     pub const FORMAT_STRING_LOST: u8 = 162;
     pub const LONG_FORMAT_STRING_LOST: u8 = 163;
+    /// A regex in the string below (ADR-40, phase 4): from here, plus the regex's state.
+    pub const REGEX: u8 = 192;
+    const _: () = assert!(LONG_FORMAT_STRING_LOST < REGEX);
+    const _: () = assert!(REGEX as usize + crate::regex::NET_STATE as usize <= 255);
 }
 
 use c::*;
 
 /// Bits of a kind past its leaf (bits 0–8).
 const LEAF: u16 = 0x1ff;
+/// The leaves of a regex in a string: the regex's kinds from here.
+const RE_LEAF: u16 = 256;
+const _: () = assert!(Leaf::Count as u16 <= RE_LEAF);
+const _: () = assert!(RE_LEAF as usize + crate::regex::KINDS <= LEAF as usize + 1);
 /// The string around (`chain_scopes`), bits 9–11.
 const CHAIN: u16 = 7 << 9;
 const CH_S: u16 = 1 << 9;
@@ -520,7 +533,10 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
         W_PRE_IN => out.push("meta.preprocessor.cs"),
         _ => {}
     }
-    if let Some(leaf) = LEAVES.get(usize::from(kind & LEAF)) {
+    let leaf = kind & LEAF;
+    if leaf >= RE_LEAF {
+        out.extend(crate::regex::scopes(leaf - RE_LEAF));
+    } else if let Some(leaf) = LEAVES.get(usize::from(leaf)) {
         out.extend(leaf.split(' ').filter(|s| !s.is_empty()));
     }
     out
@@ -598,6 +614,7 @@ const fn has_proto(ctx: u8) -> bool {
             | S_PH
             | FS_S
             | FS_I
+            | REGEX..
     )
 }
 
@@ -756,6 +773,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         stuck: 0,
         wcache: std::cell::Cell::new((usize::MAX, 0)),
         ncache: std::cell::Cell::new((usize::MAX, None)),
+        regex_calls: None,
         out,
     };
     let n = usize::from(state.depth);
@@ -819,7 +837,179 @@ pub(crate) struct Scan<'b, 'c> {
     wcache: std::cell::Cell<(usize, usize)>,
     /// The last place [`Scan::ascii_name`] looked at, and what it found.
     ncache: std::cell::Cell<(usize, Option<usize>)>,
+    /// The line's regex calls, found at its first string ([`RegexCalls`]).
+    regex_calls: Option<RegexCalls>,
     out: &'b mut Out<'c>,
+}
+
+/// The commas after the first argument of `Regex.IsMatch(` and the like on a line (up to
+/// eight), found once a line, at its first string after a comma, so that a string's check
+/// stays short.
+pub(crate) struct RegexCalls {
+    commas: [u32; 8],
+    len: u8,
+}
+
+/// The static methods of `Regex` that take the regex second, after the input.
+const REGEX_METHODS: [&[u8]; 8] = [
+    b"IsMatch",
+    b"Match",
+    b"Matches",
+    b"Replace",
+    b"Split",
+    b"Count",
+    b"EnumerateMatches",
+    b"EnumerateSplits",
+];
+
+/// Where a string's escape at `p` (a `\\` not before another) ends: `{{escaped_char}}`, or the
+/// `\\` alone.
+fn escape_end(b: &[u8], p: usize) -> usize {
+    let hex = |q: usize| b.get(q).is_some_and(u8::is_ascii_hexdigit);
+    match b.get(p + 1) {
+        Some(b'u') if (p + 2..p + 6).all(hex) => p + 6,
+        Some(b'U') if (p + 2..p + 10).all(hex) => p + 10,
+        Some(b'x') if hex(p + 2) => (p + 3..p + 6).find(|&q| !hex(q)).unwrap_or(p + 6),
+        Some(b'0'..=b'9') => (p + 2..p + 4)
+            .find(|&q| !b.get(q).is_some_and(u8::is_ascii_digit))
+            .unwrap_or(p + 4),
+        Some(b'a' | b'b' | b'f' | b'n' | b'r' | b't' | b'v' | b'"' | b'\'') => p + 2,
+        _ => p + 1,
+    }
+}
+
+/// Whether `c` can be in a name.
+fn word_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_' || c >= 0x80
+}
+
+/// Where the blanks before `p` start.
+fn blank_back(b: &[u8], p: usize) -> usize {
+    let mut q = p;
+    while q > 0 && matches!(b[q - 1], b' ' | b'\t') {
+        q -= 1;
+    }
+    q
+}
+
+/// Whether `b[..w]` ends with the word `name`.
+fn ends_word(b: &[u8], w: usize, name: &[u8]) -> bool {
+    b[..w].ends_with(name) && (w == name.len() || !word_byte(b[w - name.len() - 1]))
+}
+
+impl RegexCalls {
+    /// The line `b`'s.
+    #[cold]
+    fn find(b: &[u8]) -> Self {
+        let mut calls = RegexCalls {
+            commas: [0; 8],
+            len: 0,
+        };
+        let mut i = 0;
+        while usize::from(calls.len) < calls.commas.len()
+            && let Some(at) = b[i..].iter().position(|&c| c == b'R')
+        {
+            let s = i + at;
+            i = s + 1;
+            if !b[s..].starts_with(b"Regex.") {
+                continue;
+            }
+            i = s + 6;
+            if s > 0 && word_byte(b[s - 1]) {
+                continue;
+            }
+            let mut e = i;
+            while e < b.len() && word_byte(b[e]) {
+                e += 1;
+            }
+            if !REGEX_METHODS.contains(&&b[i..e]) {
+                continue;
+            }
+            let mut o = e;
+            while o < b.len() && matches!(b[o], b' ' | b'\t') {
+                o += 1;
+            }
+            if b.get(o) == Some(&b'(')
+                && let Some(c) = first_argument(b, o + 1)
+            {
+                calls.commas[usize::from(calls.len)] = c as u32;
+                calls.len += 1;
+            }
+        }
+        calls
+    }
+
+    fn has_comma(&self, c: usize) -> bool {
+        self.commas[..usize::from(self.len)]
+            .iter()
+            .any(|&x| x as usize == c)
+    }
+}
+
+/// The comma after a call's first argument, which starts at `s`: `None` if the call has one
+/// argument, or its first runs past the line.
+fn first_argument(b: &[u8], s: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut i = s;
+    while i < b.len() {
+        match b[i] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.checked_sub(1)?,
+            b',' if depth == 0 => return Some(i),
+            b'/' if b.get(i + 1) == Some(&b'/') => return None,
+            b'"' => {
+                // a verbatim string's `""`, any other's `\"`
+                let verbatim = i > 0 && (b[i - 1] == b'@' || (i > 1 && b[i - 2] == b'@'));
+                i += 1;
+                loop {
+                    match b.get(i)? {
+                        b'"' if verbatim && b.get(i + 1) == Some(&b'"') => i += 1,
+                        b'"' => break,
+                        b'\\' if !verbatim => i += 1,
+                        _ => {}
+                    }
+                    i += 1;
+                }
+            }
+            b'\'' => {
+                i += 1;
+                loop {
+                    match b.get(i)? {
+                        b'\'' => break,
+                        b'\\' => i += 1,
+                        _ => {}
+                    }
+                    i += 1;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Whether the string after `b[..q]`, its `(`, is a regex: the first argument of `new Regex(`
+/// (`new System.Text.RegularExpressions.Regex(`), `[GeneratedRegex(` or
+/// `[RegularExpression(`, looked back on its line. The second argument of `Regex.IsMatch(`,
+/// `Regex.Replace(` and the like ([`REGEX_METHODS`]) is found by the line's [`RegexCalls`].
+fn regex_first_argument(b: &[u8], q: usize) -> bool {
+    let w = blank_back(b, q - 1);
+    if b[..w].ends_with(b"Regex") {
+        let mut s = w - 5;
+        if s > 0 && word_byte(b[s - 1]) {
+            return ends_word(b, w, b"GeneratedRegex");
+        }
+        // the namespace before it, then `new`
+        while s > 0 && (b[s - 1] == b'.' || word_byte(b[s - 1])) {
+            s -= 1;
+        }
+        let t = blank_back(b, s);
+        return t < s && ends_word(b, t, b"new");
+    }
+    ends_word(b, w, b"RegularExpression")
+        || ends_word(b, w, b"GeneratedRegexAttribute")
+        || ends_word(b, w, b"RegularExpressionAttribute")
 }
 
 impl Scan<'_, '_> {
@@ -1141,5 +1331,106 @@ mod tests {
         let m = marked(Lang::CSharp, &["#region Things", "[Obsolete(\"x\")]"]);
         assert!(m.contains(&("Things", "meta.preprocessor.cs entity.name.section.cs")));
         assert!(m.contains(&("Obsolete", "meta.annotation.cs variable.annotation.cs")));
+    }
+
+    #[test]
+    fn regex_calls_stay_linear() {
+        let lines = [
+            "Regex.Match(a, \"(x\", ".repeat(5000),
+            "Regex.Match(Regex.Match(".repeat(4000),
+            format!("Regex.Split({}", "(".repeat(60000)),
+            "new Regex(@\"[a-[b]]\", ".repeat(5000),
+            "f(a, \"x\"), Regex".repeat(5000),
+        ];
+        let t = std::time::Instant::now();
+        let (mut state, mut spans) = (crate::State::default(), Vec::new());
+        for line in &lines {
+            crate::lex(Lang::CSharp, line, &mut state, &mut spans);
+        }
+        assert!(t.elapsed().as_secs() < 2, "{:?}", t.elapsed());
+    }
+
+    #[test]
+    fn regexes_in_strings() {
+        const S: &str = "string.quoted.double.cs";
+        const R: &str = "string.quoted.double.raw.cs";
+        const A: &str = "meta.annotation.cs string.quoted.double.raw.cs";
+        let lines = [
+            r#"var r = new Regex("^(?<y>\\d{4})\t[]a-z-[aeiou]]{2,}$", RegexOptions.None);"#,
+            r#"if (Regex.IsMatch(Get(a, b), @"(?'n'x)(?<-n>y)(?#note)\k'n'""q""", o)) {"#,
+            r#"  var s = System.Text.RegularExpressions.Regex.Replace(s, @"(?(n)a|b)(?>c)*+", "$1");"#,
+            r#"[GeneratedRegex(@"\p{IsLatin-1Supplement}\pL(?imnsx-i:z)")]"#,
+            r#"var v = new Regex(@"multi"#,
+            r#"(a)+", "{0}"); var w = myRegex.Replace(x, "{0}+");"#,
+        ];
+        let m = marked(Lang::CSharp, &lines);
+        let has = |text: &str, scopes: &str| {
+            assert!(
+                m.iter().any(|&(t, s)| t == text && s == scopes),
+                "{text:?} as {scopes:?} in {m:#?}"
+            );
+        };
+        has("^", &format!("{S} keyword.control.anchor.regexp"));
+        has("y", &format!("{S} entity.name.other.group.regexp"));
+        has(
+            r"\\d",
+            &format!("{S} constant.other.character-class.escape.backslash.regexp"),
+        );
+        // the host's escape, and no placeholder: `{2,}` is a quantifier
+        has(r"\t", &format!("{S} constant.character.escape.cs"));
+        has(
+            "2",
+            &format!("{S} keyword.operator.quantifier.regexp constant.literal.numeric.regexp"),
+        );
+        // `]` first is a character; a subtraction
+        has(
+            "-",
+            &format!(
+                "{S} constant.other.character-class.set.regexp keyword.operator.difference.regexp"
+            ),
+        );
+        // the second argument, a verbatim string: `""` is the host's
+        has("n", &format!("{R} entity.name.other.group.regexp"));
+        has("-", &format!("{R} keyword.operator.balancing-group.regexp"));
+        has("note", &format!("{R} comment.block.regexp"));
+        has(r"\k", &format!("{R} keyword.other.back-reference.regexp"));
+        has(r#""""#, &format!("{R} constant.character.escape.cs"));
+        has(
+            "?(",
+            &format!("{R} punctuation.definition.group.assertion.conditional.regexp"),
+        );
+        has(
+            "?>",
+            &format!("{R} punctuation.definition.group.atomic.regexp"),
+        );
+        // no possessive quantifier: `*`, then `+`
+        has("*", &format!("{R} keyword.operator.quantifier.regexp"));
+        has(
+            "IsLatin-1Supplement",
+            &format!("{A} support.constant.unicode-property.regexp"),
+        );
+        has(
+            r"\p",
+            &format!("{A} constant.character.escape.backslash.regexp"),
+        );
+        has(
+            "?imnsx-i",
+            &format!("{A} keyword.other.option-toggle.regexp"),
+        );
+        // across lines in a verbatim string
+        has(
+            "(",
+            &format!("{R} punctuation.definition.group.begin.regexp"),
+        );
+        has("+", &format!("{R} keyword.operator.quantifier.regexp"));
+        // not regexes: a third argument, an instance's call
+        assert!(
+            !m.iter().any(|&(t, s)| t == "$1" && s.contains("regexp")),
+            "{m:#?}"
+        );
+        has(
+            "0",
+            &format!("{S} constant.other.placeholder.cs constant.numeric.integer.decimal.cs"),
+        );
     }
 }
