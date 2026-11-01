@@ -167,6 +167,11 @@ enum E { A = 1 } namespace N { export type K = keyof typeof E; }
 /* note */ @font-face { font-family: \"X\"; src: url(x.woff2) format(\"woff2\"); }
 ```
 
+```scss
+@use \"sass:math\"; $gap: math.div(10px, 2) !default; // note
+.btn-#{$k} { &:hover { margin: -$gap auto; } @include mx($a: 1) { b: c; } }
+```
+
 ```text
 plain
 ```
@@ -255,6 +260,7 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         "conf.cts",
         "view.tsx",
         "site.css",
+        "_variables.scss",
     ] {
         let t = FileType::by_path(Path::new(name));
         assert!(

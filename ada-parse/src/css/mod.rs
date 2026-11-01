@@ -24,6 +24,7 @@
 //! `\w` past ASCII is a letter or a decimal digit, `{{nonascii}}` (`[\p{L}\p{M}\p{S}\p{N}]`) any
 //! character past ASCII but spaces, controls and punctuation; `(?i)` folds ASCII case only.
 
+pub(crate) mod scss;
 mod words;
 
 use crate::machine::KEPT as HALF;
@@ -723,13 +724,16 @@ const W_NONE: u8 = 0;
 const W_COMMENT: u8 = 1;
 const W_SINGLE: u8 = 2;
 const W_DOUBLE: u8 = 3;
+/// SCSS's `//`.
+const W_LINE: u8 = 4;
 
 /// Each wrap's scope.
-static WRAPS: [&str; 4] = [
+static WRAPS: [&str; 5] = [
     "",
     "comment.block.css",
     "string.quoted.single.css",
     "string.quoted.double.css",
+    "comment.line.double-slash.sass",
 ];
 
 /// The wrap a context gives the tokens in it.
@@ -738,6 +742,7 @@ fn own_wrap(ctx: u8) -> u8 {
         COMMENT => W_COMMENT,
         STR_S => W_SINGLE,
         STR_D => W_DOUBLE,
+        scss::LINE => W_LINE,
         _ => W_NONE,
     }
 }
@@ -867,7 +872,8 @@ const AT_MEDIA: u16 = 119;
 const AT_NAMESPACE: u16 = 121;
 const AT_PAGE: u16 = 123;
 const AT_SUPPORTS: u16 = 125;
-const LEAF_COUNT: usize = 127;
+/// CSS's leaves end here; SCSS's follow ([`scss::LEAVES`]).
+const LEAF_COUNT_CSS: u16 = 127;
 
 /// Each leaf's scopes under the wrap, below `FN_FIRST` ([`FN_SCOPES`] and [`AT_SCOPES`] give
 /// the rest).
@@ -961,8 +967,14 @@ static LEAVES: [&str; FN_FIRST as usize] = [
     "keyword.operator.logic.css",
 ];
 
-/// The scopes under `source.css` kind `kind` carries, outermost first.
+/// The scopes under `source.css` (or `source.scss`) kind `kind` carries, outermost first.
 pub fn scopes(kind: u16) -> Vec<&'static str> {
+    if kind & scss::YAML_KIND != 0 {
+        // SCSS's front matter's YAML
+        let mut v = vec!["frontmatter.jekyll", "source.yaml"];
+        v.extend(crate::yaml_scan::scopes(kind & !scss::YAML_KIND));
+        return v;
+    }
     let (wrap, leaf) = (
         usize::from(kind >> LEAF_BITS),
         kind & ((1 << LEAF_BITS) - 1),
@@ -971,10 +983,12 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
         return Vec::new();
     };
     let mut v: Vec<&'static str> = w.split(' ').filter(|s| !s.is_empty()).collect();
-    if usize::from(leaf) >= LEAF_COUNT {
-        return Vec::new();
-    }
-    if leaf < FN_FIRST {
+    if leaf >= scss::SCSS_FIRST {
+        match scss::LEAVES.get(usize::from(leaf - scss::SCSS_FIRST)) {
+            Some(l) => v.extend(l.split(' ')),
+            None => return Vec::new(),
+        }
+    } else if leaf < FN_FIRST {
         v.extend(LEAVES[usize::from(leaf)].split(' ').filter(|s| !s.is_empty()));
     } else if leaf < AT_FIRST {
         v.push(FN_SCOPES[usize::from(leaf - FN_FIRST)]);
@@ -1036,6 +1050,14 @@ const EXT_COLOR: u16 = 1 << 4;
 const SPECIAL_COLOR: u16 = 1 << 5;
 const FONT_NAME: u16 = 1 << 6;
 const COUNTER_STYLE: u16 = 1 << 7;
+/// SCSS's property names: CSS's and `backdrop-filter`.
+const SCSS_PROP: u16 = 1 << 8;
+/// SCSS's partial property names (nested properties), ranked.
+const PARTIAL: u16 = 1 << 9;
+/// Sass's functions.
+const SASS_FN: u16 = 1 << 10;
+/// CSS's lists: the bits below SCSS's.
+const CSS_LISTS: u16 = SCSS_PROP - 1;
 
 const SIZE: usize = 4096;
 
@@ -1101,6 +1123,8 @@ struct Word {
     counter_rank: u16,
     /// In the property names.
     prop_rank: u16,
+    /// In SCSS's partial property names.
+    partial_rank: u16,
 }
 
 const NO_WORD: Word = Word {
@@ -1108,6 +1132,7 @@ const NO_WORD: Word = Word {
     rank: u16::MAX,
     counter_rank: u16::MAX,
     prop_rank: u16::MAX,
+    partial_rank: u16::MAX,
 };
 
 /// Word `w`: its case-sensitive lists if spelled as listed, its case-insensitive ones if not.
@@ -1133,6 +1158,7 @@ fn lookup_hashed(w: &[u8], mut h: usize) -> Word {
                     rank: e.rank.min(e.rank_folded),
                     counter_rank: e.rank_folded,
                     prop_rank: e.prop_rank,
+                    partial_rank: e.partial_rank,
                 }
             } else {
                 Word {
@@ -1140,6 +1166,7 @@ fn lookup_hashed(w: &[u8], mut h: usize) -> Word {
                     rank: e.rank_folded,
                     counter_rank: e.rank_folded,
                     prop_rank: u16::MAX,
+                    partial_rank: u16::MAX,
                 }
             };
         }
@@ -1422,6 +1449,22 @@ const SYNTECT_DEPTH: usize = 99;
 /// Lex `b`, a line of CSS without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
+    #[allow(
+        clippy::redundant_closure_for_method_calls,
+        reason = "the method itself isn't general over the scan's lifetimes"
+    )]
+    lex::<false>(b, state, out, |s| s.run());
+}
+
+/// Lex `b` from `state` with `run`: CSS's scan or SCSS's ([`scss`]), the stack kept between lines
+/// in `state` either way.
+#[inline(always)]
+fn lex<const S: bool>(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    run: impl FnOnce(&mut Scan<'_, '_, '_, S>),
+) {
     let mut s = Scan {
         b,
         n: b.len(),
@@ -1434,6 +1477,9 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         letters_run: Run::new((usize::MAX, 0)),
         names_run: Run::new((usize::MAX, 0)),
         custom_failed: std::cell::Cell::new(0),
+        isel_end: std::cell::Cell::new(usize::MAX),
+        class_runs: [const { Run::new((usize::MAX, 0)) }; 3],
+        nm_ends: std::cell::RefCell::new(Vec::new()),
     };
     let n = usize::from(state.depth);
     for i in 0..n {
@@ -1445,7 +1491,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     }
     s.depth = 1 + n;
     let exact = state.is_exact();
-    s.run();
+    run(&mut s);
     let n = s.depth - 1;
     let from = n.saturating_sub(KEPT);
     let mut packed = State {
@@ -1470,7 +1516,9 @@ type Span = (usize, usize);
 /// so a scan from anywhere in it is answered at once (a run passed a place at a time stays linear).
 type Run = std::cell::Cell<(usize, usize)>;
 
-struct Scan<'b, 'o, 's> {
+/// A line's scan; `S` for SCSS ([`scss`]), whose text takes the wrap of the innermost context
+/// that has one (a string's interpolation is the string's), where CSS's takes its top's.
+struct Scan<'b, 'o, 's, const S: bool = false> {
     b: &'b [u8],
     n: usize,
     out: &'o mut Out<'s>,
@@ -1486,15 +1534,33 @@ struct Scan<'b, 'o, 's> {
     /// Where the run of custom element characters a failed custom element read ends: a custom
     /// element starting in it fails too.
     custom_failed: std::cell::Cell<usize>,
+    /// SCSS's: the last `}` of the line an interpolated selector's lookahead takes, once read
+    /// (`usize::MAX` before, 0 for none).
+    isel_end: std::cell::Cell<usize>,
+    /// SCSS's runs of `[a-zA-Z0-9_-]`, `[a-zA-Z_-]` and `[a-z_-]`.
+    class_runs: [Run; 3],
+    /// SCSS's, on a long line: where `{{nmchar}}*` from each place ends, as read (`u32::MAX` not
+    /// yet).
+    nm_ends: std::cell::RefCell<Vec<u32>>,
 }
 
-impl Scan<'_, '_, '_> {
+impl<const S: bool> Scan<'_, '_, '_, S> {
     fn top(&self) -> u8 {
         self.stack[self.depth - 1]
     }
 
     fn wrap(&self) -> u16 {
-        u16::from(own_wrap(self.top())) << LEAF_BITS
+        let w = if S {
+            self.stack[..self.depth]
+                .iter()
+                .rev()
+                .map(|&c| own_wrap(c))
+                .find(|&w| w != W_NONE)
+                .unwrap_or(W_NONE)
+        } else {
+            own_wrap(self.top())
+        };
+        u16::from(w) << LEAF_BITS
     }
 
     /// Fill the top context's text up to `to`.
@@ -3615,7 +3681,7 @@ impl Scan<'_, '_, '_> {
         while e <= end {
             if self.boundary(e) {
                 let w = lookup(&b[p..e]);
-                if w.lists != 0 {
+                if w.lists & CSS_LISTS != 0 {
                     return Some((e, w));
                 }
             }

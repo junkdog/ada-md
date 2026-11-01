@@ -176,6 +176,7 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::TypeScript => typescript::line(line.as_bytes(), false, state, &mut out),
         Lang::TypeScriptReact => typescript::line(line.as_bytes(), true, state, &mut out),
         Lang::Css => css::line(line.as_bytes(), state, &mut out),
+        Lang::Scss => css::scss::line(line.as_bytes(), state, &mut out),
         Lang::Bash => bash::line(line.as_bytes(), state, &mut out),
         Lang::Makefile => bash::make_line(line.as_bytes(), state, &mut out),
         _ => {

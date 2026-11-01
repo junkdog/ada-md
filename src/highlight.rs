@@ -2769,6 +2769,55 @@ mod tests {
         rules_match_the_grammar("css", "CSS", text);
     }
 
+    /// ada-parse's SCSS lexer (CSS's scanner with SCSS's contexts) picks the rules bat's grammar
+    /// picks, in every built-in theme (ADR-40's phase 6): the front matter's YAML, `//` comments,
+    /// variables (namespaced, declared, with flags), maps with keys of both kinds, interpolation
+    /// in selectors, property names, strings and values, every Sass at-rule with its prelude,
+    /// mixins with parameters and includes with arguments, `&` and placeholders, nested and
+    /// partial property names, Sass's functions and custom ones, operators, numbers with the sign
+    /// after them read as an illegal operator, the CSS at-rules in SCSS's form, css-modules.
+    #[test]
+    fn scss_rules_match_the_grammar() {
+        let text = concat!(
+            "---\n",
+            "title: x\n",
+            "---\n",
+            "@use \"sass:math\" as m;\n",
+            "@use \"a\" as *; @forward \"b\" show f, $g; @use \"c\" with ($d: 1);\n",
+            "@import \"x\", url(y) screen; @import (reference) \"z\";\n",
+            "// a line comment\n",
+            "$map: (key: 1px, 'k2': (a: #fff, $v: red), b: math.$pi) !default;\n",
+            "$x: 10px - 2 * 3 / 4 !global;\n",
+            "@mixin m($a, $b: 10px) { width: $a + $b; @content; }\n",
+            "@function f($x) { @return math.div($x, 2) * 1%; }\n",
+            "@each $k, $v in $map { .icon-#{$k} { color: map-get($map, $k); } }\n",
+            "@for $i from 1 through 3 { .m-#{$i} { margin: #{$i * 4}px -2px; } }\n",
+            "@if $a == b and not $c { @warn \"w #{$d}\"; } @else if $a != c { @debug $x; } @else { @error 'e'; }\n",
+            "@while $i > 0 { $i: $i - 1; }\n",
+            "%ph { a: b; } .a { @extend %ph; @extend .b !optional; }\n",
+            ".btn, #id > a:hover::before, my-el:not(.x, y), &__el, & + &, [data-x=\"y\" i] {\n",
+            "  @include ns.mx(1px, $b: 2) { c: d; }\n",
+            "  @include bp(md);\n",
+            "  font: { family: \"X\", sans-serif; size: 12px; }\n",
+            "  border: { top-width: 1px; }\n",
+            "  margin-#{$side}: 0; --#{$v}: 1; --custom: #{$z};\n",
+            "  -webkit-transition: opacity .3s, transform 0.5s cubic-bezier(.17, .67, .83, .67);\n",
+            "  background: url(#{$p}/img.png) no-repeat, linear-gradient(to right, rgba($c, .5) 0%, darken($c, 10%) 100%);\n",
+            "  width: calc(100% - #{$gutter}) clamp(1px, 2vw, 3px); color: Red; content: \"a#{$b}c\\\"\" + d;\n",
+            "  transform: translate(-50%, 1px) rotate(45deg); grid: repeat(auto-fill, minmax(10px, 1fr)) / auto;\n",
+            "  @at-root .x { y: z; }\n",
+            "}\n",
+            "@media screen and (min-width: $bp) and (orientation: landscape), print { .p { q: r } }\n",
+            "@keyframes #{$n} { from { a: b } 50% { c: d } to { e: f } }\n",
+            "@supports (display: grid) and (not (x: y)) { .s { t: u } }\n",
+            "@font-face { src: url(x.woff2) format(\"woff2\"); } @charset \"utf-8\";\n",
+            "@page :first { margin: 1in } @counter-style thumbs { system: cyclic; }\n",
+            ":export { primary: $primary; } :global(.g) { h: i }\n",
+            "a { b: if(true, null, false) nth($l, 1) e(\"x\") my-fn(1) ns.fn(2) 1px+2px; }\n",
+        );
+        rules_match_the_grammar("scss", "SCSS", text);
+    }
+
     /// ada-parse's Dockerfile lexer picks the rules bat's grammar picks, in every built-in
     /// theme (ADR-40).
     #[test]

@@ -93,8 +93,9 @@ const BUILT_ON: &[&str] = &["C++", "C"];
 /// Typst's fences embed it. `SQL`, for Ruby's and PHP's SQL strings and heredocs, Perl's,
 /// CFML's and Crystal's, and `SQL (Rails)`, which is SQL whole: 2,250 bytes of the dump. `CSS`,
 /// for HTML's `<style>` and `style=` (and PHP's, Perl's, Ruby's, Crystal's, Twig's, MediaWiki's),
-/// until phase 6 covers HTML.
-const EMBEDDED: &[&str] = &["JavaScript (Babel)", "TypeScript", "SQL", "CSS"];
+/// until phase 6 covers HTML. `SCSS`, for Vue's `<style lang="scss">`, as `TypeScript` for its
+/// `<script lang="ts">`: 5,831 bytes of the onig dump.
+const EMBEDDED: &[&str] = &["JavaScript (Babel)", "TypeScript", "SQL", "CSS", "SCSS"];
 
 /// The grammars to empty, by index: the ones ada-parse covers but [`BUILT_ON`]'s and
 /// [`EMBEDDED`]'s, then every
