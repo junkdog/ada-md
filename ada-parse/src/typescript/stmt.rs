@@ -32,6 +32,10 @@ impl Scan<'_, '_, '_> {
     pub(super) fn statements(&mut self) -> bool {
         let i = self.i;
         let c = self.c(i);
+        // no pattern before the terminator's can start at a `;`
+        if c == b';' {
+            return self.take(i, i + 1, TERMINATOR);
+        }
         if self.alpha_or_at(c) && (self.declaration() || self.control()) {
             return true;
         }
@@ -1926,7 +1930,7 @@ impl Scan<'_, '_, '_> {
             j = self.ws(j + 3);
         }
         // (?<!=|:)«wb»(this|name)«we»\s*(\??)
-        if j > 0 && matches!(self.b[j - 1], b'=' | b':') {
+        if j > 0 && matches!(self.c(j - 1), b'=' | b':') {
             return false;
         }
         if !self.wb(j) {

@@ -122,6 +122,13 @@ pub(super) fn name(b: &[u8], i: usize) -> usize {
     }
     let mut j = i + a;
     loop {
+        // ASCII's name characters first, the commonest by far
+        while j < b.len() && NAME_ASCII[usize::from(b[j])] {
+            j += 1;
+        }
+        if j >= b.len() || b[j] < 0x80 {
+            return j;
+        }
         let k = alnum(b, j);
         if k == 0 {
             return j;
@@ -129,6 +136,17 @@ pub(super) fn name(b: &[u8], i: usize) -> usize {
         j += k;
     }
 }
+
+/// `[_$[:alnum:]]` for each ASCII byte (none past it).
+static NAME_ASCII: [bool; 256] = {
+    let mut t = [false; 256];
+    let mut c = 0;
+    while c < 128 {
+        t[c] = matches!(c as u8, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$');
+        c += 1;
+    }
+    t
+};
 
 /// `[[:upper:]][_$[:digit:][:upper:]]*` at `i`, ASCII's: its end, `i` if none.
 pub(super) fn upper(b: &[u8], i: usize) -> usize {

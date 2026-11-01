@@ -84,6 +84,9 @@ impl Scan<'_, '_, '_> {
     /// holds a type.
     pub(super) fn template(&mut self, in_type: bool) -> bool {
         let i = self.i;
+        if self.tick <= i {
+            return false;
+        }
         let e = self.name(i);
         if self.c(e) != b'`' {
             return false;

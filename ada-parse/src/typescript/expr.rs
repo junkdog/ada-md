@@ -7,6 +7,10 @@ use super::*;
 impl Scan<'_, '_, '_> {
     /// `expression` at the place.
     pub(super) fn expression(&mut self) -> bool {
+        // no pattern before the comma's can start at a `,`
+        if self.c(self.i) == b',' {
+            return self.take(self.i, self.i + 1, COMMA);
+        }
         self.expression_without_identifiers() || self.identifiers() || self.expression_punctuations()
     }
 
@@ -527,6 +531,9 @@ impl Scan<'_, '_, '_> {
     /// `template-call`'s two: a tag, through dots, and type arguments maybe, before a template.
     pub(super) fn template_call(&mut self) -> bool {
         let i = self.i;
+        if self.tick <= i {
+            return false;
+        }
         // (?=((name\s*\??\.\s*)*|(\??\.\s*)?)(name)(«TA»)?`)
         let mut j = i;
         let mut chain = true;
@@ -1410,7 +1417,17 @@ impl Scan<'_, '_, '_> {
             (me.rest(k).starts_with(w) && me.boundary(k) && me.boundary(e) && me.ws(e) > e).then(|| me.ws(e))
         };
         let mut found = None;
+        // without `a`, `g`, `s` or `*` at the place, only the bare key can match
+        if !matches!(self.c(i), b'a' | b'g' | b's' | b'*') {
+            if !self.method_key_ahead(i) {
+                return false;
+            }
+            found = Some((None, None, None, i));
+        }
         'search: for asy in [true, false] {
+            if found.is_some() {
+                break;
+            }
             let k1 = match (asy, word(self, i, b"async")) {
                 (true, Some(m)) => m,
                 (true, None) => continue,
@@ -1627,7 +1644,7 @@ impl Scan<'_, '_, '_> {
             rest = Some(j);
             j = self.ws(j + 3);
         }
-        if j > 0 && matches!(self.b[j - 1], b'=' | b':') {
+        if j > 0 && matches!(self.c(j - 1), b'=' | b':') {
             return false;
         }
         if !self.wb(j) {

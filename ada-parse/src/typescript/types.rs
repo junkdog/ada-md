@@ -893,7 +893,7 @@ impl Scan<'_, '_, '_> {
             rest = Some(j);
             j = self.ws(j + 3);
         }
-        if j > 0 && matches!(self.b[j - 1], b'=' | b':') {
+        if j > 0 && matches!(self.c(j - 1), b'=' | b':') {
             return false;
         }
         if !self.wb(j) {

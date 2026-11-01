@@ -24,6 +24,8 @@ mod text;
 mod types;
 mod words;
 
+use std::cell::Cell;
+
 use crate::machine::KEPT as HALF;
 use crate::{Out, State};
 
@@ -708,6 +710,9 @@ pub fn line(b: &[u8], tsx: bool, state: &mut State, out: &mut Out) {
         exact: state.is_exact(),
         text: PLAIN,
         wrap: 0,
+        tpl: 0,
+        tick: b.iter().rposition(|&c| c == b'`').map_or(0, |k| k + 1),
+        last_name: Cell::new((usize::MAX, 0)),
         done: 0,
         zero: (usize::MAX, 0),
         stuck: 0,
@@ -725,6 +730,7 @@ pub fn line(b: &[u8], tsx: bool, state: &mut State, out: &mut Out) {
     if state.arg == PACKED {
         s.depth = 1 + unpack(&mut s.stack, s.depth - 1);
     }
+    s.tpl = s.stack[1..s.depth].iter().filter(|&&f| is_tpl(f)).count();
     s.refresh();
     s.run();
     let mut n = s.depth - 1;
@@ -827,6 +833,13 @@ struct Scan<'a, 'o, 'p> {
     text: u16,
     /// [`WRAP`] inside a template.
     wrap: u16,
+    /// The template frames open above the top level ([`is_tpl`]).
+    tpl: usize,
+    /// Just past the line's last `` ` ``, 0 if it has none: no template starts at or after it.
+    tick: usize,
+    /// The last name read ([`Scan::name`]): where it starts and ends. Pattern after pattern
+    /// reads the name at the place.
+    last_name: Cell<(usize, usize)>,
     /// Where the spans pushed so far end.
     done: usize,
     /// Where and at what depth the last push that took nothing happened: a pop that takes
@@ -850,10 +863,42 @@ struct Scan<'a, 'o, 'p> {
 
 impl Scan<'_, '_, '_> {
     fn run(&mut self) {
+        // where the last turn failed at a space or tab in code, `usize::MAX` if the last one didn't
+        let mut failed = usize::MAX;
         while self.i <= self.n {
             let i0 = self.i;
             let top = self.stack[self.depth - 1];
-            if !self.step(top) {
+            let q = quiet(top);
+            if q != 0 {
+                // the turns that can't match in these frames ([`quiet`]): at the line's end, and
+                // at blanks before anything but the bytes their blank-led patterns look for
+                if self.i == self.n {
+                    if q & Q_END != 0 {
+                        break;
+                    }
+                } else if is_space(self.b[self.i]) && (q & Q_BLANK != 0 || (q & Q_BLANK_IN != 0 && self.i > 0)) {
+                    let k = self.ws(self.i);
+                    if !matches!(self.c(k), b'<' | b'/' | b'(' | b'[' | b'{' | b':' | b'?' | b'!' | b'a') {
+                        self.i = k.min(self.n);
+                        self.stuck = 0;
+                        self.zero.0 = usize::MAX;
+                        failed = usize::MAX;
+                        continue;
+                    }
+                }
+            }
+            if self.step(top) {
+                failed = usize::MAX;
+            } else if self.i < self.n && matches!(self.b[self.i], b' ' | b'\t') && family(top) == Family::Code {
+                // A turn that fails changes nothing, so when two in a row have failed at blanks,
+                // every blank after them sees what the second saw: a blank behind, and the same
+                // text ahead past blanks (no pattern counts the blanks before it). The run is
+                // passed.
+                let i = self.i;
+                self.i = if failed == i.wrapping_sub(1) { self.sp(i) } else { i + 1 };
+                failed = i;
+            } else {
+                failed = usize::MAX;
                 self.i += if self.i < self.n { char_len(self.b[self.i]) } else { 1 };
             }
             if self.i == i0 {
@@ -922,12 +967,14 @@ impl Scan<'_, '_, '_> {
     fn push(&mut self, f: u8) {
         self.fill(self.i);
         if self.depth == MAX {
+            self.tpl -= usize::from(is_tpl(self.stack[1]));
             self.stack.copy_within(2.., 1);
             self.depth -= 1;
             self.exact = false;
         }
         self.stack[self.depth] = f;
         self.depth += 1;
+        self.tpl += usize::from(is_tpl(f));
         self.refresh();
     }
 
@@ -942,6 +989,7 @@ impl Scan<'_, '_, '_> {
         self.fill(self.i);
         if self.depth > 1 {
             self.depth -= 1;
+            self.tpl -= usize::from(is_tpl(self.stack[self.depth]));
         }
         self.refresh();
         true
@@ -958,6 +1006,10 @@ impl Scan<'_, '_, '_> {
     /// Replace the top frame.
     fn set(&mut self, f: u8) {
         self.fill(self.i);
+        if self.depth > 1 {
+            self.tpl -= usize::from(is_tpl(self.stack[self.depth - 1]));
+            self.tpl += usize::from(is_tpl(f));
+        }
         self.stack[self.depth - 1] = f;
         self.refresh();
     }
@@ -966,14 +1018,7 @@ impl Scan<'_, '_, '_> {
     /// inside its `${…}` is under its scope too).
     fn refresh(&mut self) {
         self.text = text_of(self.top()).unwrap_or(PLAIN);
-        self.wrap = if self.stack[1..self.depth]
-            .iter()
-            .any(|&f| matches!(f, TPL_F | TPL_TYPE | TPL_CALL))
-        {
-            WRAP
-        } else {
-            0
-        };
+        self.wrap = if self.tpl > 0 { WRAP } else { 0 };
     }
 
     /// The line from `i`, empty past its end.
@@ -1005,7 +1050,13 @@ impl Scan<'_, '_, '_> {
 
     /// The end of a name `[_$[:alpha:]][_$[:alnum:]]*` at `i`, `i` if none starts there.
     fn name(&self, i: usize) -> usize {
-        look::name(self.b, i)
+        let (s, e) = self.last_name.get();
+        if s == i {
+            return e;
+        }
+        let e = look::name(self.b, i);
+        self.last_name.set((i, e));
+        e
     }
 
     /// Whether a name character `[_$[:alnum:]]` ends at `i` (is just before it).
@@ -1020,7 +1071,8 @@ impl Scan<'_, '_, '_> {
 
     /// `«wb»`: `(?<![_$[:alnum:]])(?:(?<=\.\.\.)|(?<!\.))` at `i`.
     fn wb(&self, i: usize) -> bool {
-        !self.alnum_before(i) && (i == 0 || self.b[i - 1] != b'.' || (i >= 3 && &self.b[i - 3..i] == b"..."))
+        // `i` may be past the line's `\n` (after `ws`): `c` reads it there
+        !self.alnum_before(i) && (i == 0 || self.c(i - 1) != b'.' || (i >= 3 && &self.b[i - 3..i] == b"..."))
     }
 
     /// `«we»`: `(?![_$[:alnum:]])(?:(?=\.\.\.)|(?!\.))` at `i`.
@@ -1052,23 +1104,80 @@ impl Scan<'_, '_, '_> {
 
     /// One frame's turn at the place: whether it matched something.
     fn step(&mut self, f: u8) -> bool {
-        match f {
-            STR_S_F | STR_D_F | TPL_F | BLOCK_F | DOC_F | REGEX_F | RE_GROUP_F | RE_ASSERT_F
-            | RE_SET_F | DOC_EXAMPLE | DOC_CAPTION | DOC_TYPE | DOC_BRACKETS | DOC_BRACKETS_SQ
-            | DOC_TYPEDEF | DOC_PARAM | DOC_TYPED | DOC_STRING_S | DOC_STRING_D | DOC_INLINE
-            | DIRECTIVE_F | DIRECTIVE_TAG_F | DIRECTIVE_STR_S_F | DIRECTIVE_STR_D_F | LINE_EOL
-            | IF_REGEX | TPL_TYPE => self.text_step(f),
-            TYPE_ANNOT | TYPE_ANNOT_EOL | TYPE_ARGS | TYPE_PARAMS | TYPE_NAME_ARGS | TUPLE
-            | TYPE_OBJ | TYPE_PAREN | TYPE_FN | TYPE_CTOR | TYPE_CTOR_TP | TYPE_FN_RET
-            | TYPE_FN_RET_EOL | TYPE_RET_OBJ | TYPE_COND | TYPE_COND_Q | TYPE_OP_OBJ
-            | GAP | TYPE_SPREAD | SUBST_TYPE | TYPE_DECL_INTRINSIC | AS_F
-            | INSTANCEOF_F | CAST | PARAM_TYPE | RETURN_TYPE | RETURN_TYPE_EOL | ARROW_RET
-            | MAYBE_ARROW_RET | RET_OBJ | INDEXER | MAPPED | TYPE_DECL | TYPE_DECL_VALUE
-            | OBJ_AS => self.type_step(f),
-            JSX_WA_EXPR..=JSX_STR_S => self.jsx_step(f),
-            _ => self.code_step(f),
+        match family(f) {
+            Family::Text => self.text_step(f),
+            Family::Type => self.type_step(f),
+            Family::Jsx => self.jsx_step(f),
+            Family::Code => self.code_step(f),
         }
     }
+}
+
+/// Which turn a frame takes.
+#[derive(Clone, Copy, PartialEq)]
+enum Family {
+    /// Comments, strings, templates, regexes, JSDoc ([`Scan::text_step`]).
+    Text,
+    /// Types ([`Scan::type_step`]).
+    Type,
+    /// TSX's JSX ([`Scan::jsx_step`]).
+    Jsx,
+    /// Statements and expressions ([`Scan::code_step`]).
+    Code,
+}
+
+/// Frame `f`'s family.
+fn family(f: u8) -> Family {
+    match f {
+        STR_S_F | STR_D_F | TPL_F | BLOCK_F | DOC_F | REGEX_F | RE_GROUP_F | RE_ASSERT_F
+        | RE_SET_F | DOC_EXAMPLE | DOC_CAPTION | DOC_TYPE | DOC_BRACKETS | DOC_BRACKETS_SQ
+        | DOC_TYPEDEF | DOC_PARAM | DOC_TYPED | DOC_STRING_S | DOC_STRING_D | DOC_INLINE
+        | DIRECTIVE_F | DIRECTIVE_TAG_F | DIRECTIVE_STR_S_F | DIRECTIVE_STR_D_F | LINE_EOL
+        | IF_REGEX | TPL_TYPE => Family::Text,
+        TYPE_ANNOT | TYPE_ANNOT_EOL | TYPE_ARGS | TYPE_PARAMS | TYPE_NAME_ARGS | TUPLE
+        | TYPE_OBJ | TYPE_PAREN | TYPE_FN | TYPE_CTOR | TYPE_CTOR_TP | TYPE_FN_RET
+        | TYPE_FN_RET_EOL | TYPE_RET_OBJ | TYPE_COND | TYPE_COND_Q | TYPE_OP_OBJ
+        | GAP | TYPE_SPREAD | SUBST_TYPE | TYPE_DECL_INTRINSIC | AS_F
+        | INSTANCEOF_F | CAST | PARAM_TYPE | RETURN_TYPE | RETURN_TYPE_EOL | ARROW_RET
+        | MAYBE_ARROW_RET | RET_OBJ | INDEXER | MAPPED | TYPE_DECL | TYPE_DECL_VALUE
+        | OBJ_AS => Family::Type,
+        JSX_WA_EXPR..=JSX_STR_S => Family::Jsx,
+        _ => Family::Code,
+    }
+}
+
+/// Frames of code whose turn can't match at the line's end, nor at a blank unless the next
+/// non-blank is `<`, `/`, `(`, `[`, `{`, `:`, `?`, `!` or `a`. Their turns are `statements` or
+/// `expression` and a closing bracket or two, each pattern of which needs a particular byte at the
+/// place, `\s*` then one of those bytes (`\s*<` a cast, type arguments or JSX, `\s*/` a regex, a
+/// division or a comment, `\s*\(` and `\s*<` an arrow's head or a call after `)`, `\s*\[` an
+/// array, `\s*\{` an object after an operator, `\s*:` a return type or a ternary's end, `\?\.`
+/// and `!` a call after `)`, `\s*async` an arrow's head), or a name, a digit, a quote or an
+/// operator at the place; past the line's `\n` every byte reads 0.
+///
+/// Which of the two hold: [`Q_END`] and [`Q_BLANK`]; [`Q_BLANK_IN`] the blanks' past the line's
+/// start, for frames that pop at `i == 0` (`RETURN`'s blank line and declaration, `INIT`'s `^`).
+/// `OBJ`'s turn is `object_member`, whose keys start at a blank too, but not at the line's end.
+fn quiet(f: u8) -> u8 {
+    match f {
+        MAIN | BLOCK | CASE_BLOCK | LABEL_BLOCK | PAREN | IF_COND | SWITCH_EXPR | ARRAY | OBJ_VAL | OBJ_SPREAD | CALL_ARGS
+        | TERNARY_F => Q_END | Q_BLANK,
+        OBJ => Q_END,
+        RETURN | INIT => Q_BLANK_IN,
+        _ => 0,
+    }
+}
+
+/// [`quiet`]: no turn matches at the line's end.
+const Q_END: u8 = 1;
+/// No turn matches at a blank before other bytes than those listed.
+const Q_BLANK: u8 = 2;
+/// The same past the line's start.
+const Q_BLANK_IN: u8 = 4;
+
+/// A template's frame: what is open inside it is under `string.template` too.
+fn is_tpl(f: u8) -> bool {
+    matches!(f, TPL_F | TPL_TYPE | TPL_CALL)
 }
 
 /// The kind of the bytes no token covers in frame `f`, if it has its own.
@@ -1118,6 +1227,20 @@ mod tests {
     fn the_pairs_are_sorted_frames() {
         assert!(PAIRS.windows(2).all(|w| w[0] < w[1]));
         assert!(PAIRS.iter().all(|&(a, b)| a < PAIR && b < PAIR));
+    }
+
+    /// A `...` at a line's end, where a parameter's name is looked for past it: the blanks after
+    /// it take the line's `\n`, and the lookbehind there read past the line (a panic until
+    /// 2026-11-01, found by the whole-corpus digests over the scrambled sets).
+    #[test]
+    fn a_rest_at_the_line_end_reads_no_further() {
+        for lang in [Lang::TypeScript, Lang::TypeScriptReact] {
+            for text in ["function f(...", "type F = (...", "type F = (a, ...", "let x: (...", "class A { f(...", "type T = { f(..."] {
+                let (mut state, mut spans) = (State::default(), Vec::new());
+                lex(lang, text, &mut state, &mut spans);
+                lex(lang, "...", &mut state, &mut spans);
+            }
+        }
     }
 
     /// Objects and JSX nested past the 28 frames a state keeps unpacked: every line's state
