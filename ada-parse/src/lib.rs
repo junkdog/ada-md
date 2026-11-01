@@ -39,6 +39,7 @@ pub mod make;
 mod powershell;
 mod properties;
 mod python;
+mod regex;
 mod rust;
 mod sql;
 // the port: the scanner's reference in tests, and the source of helpers it shares
@@ -187,6 +188,16 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
 struct Out<'a>(&'a mut Vec<Span>);
 
 impl Out<'_> {
+    /// How many spans there are.
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Drops the spans past the first `len`.
+    fn truncate(&mut self, len: usize) {
+        self.0.truncate(len);
+    }
+
     /// Bytes `start..end` are `kind`; an empty stretch is skipped.
     fn push(&mut self, start: usize, end: usize, kind: u16) {
         if end > start {

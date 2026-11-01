@@ -25,7 +25,8 @@
 //! [`State`]'s levels).
 
 use crate::machine::KEPT as HALF;
-use crate::{Out, State, is_space, skip_spaces};
+use crate::regex;
+use crate::{Out, State, is_space, skip_spaces, trim_end};
 
 // The contexts. Java's first, those with its prototype (comments, `goto`, `const`, `%>`)
 // before `STRING`.
@@ -210,6 +211,8 @@ const H_EMBED_SQ: u8 = 138;
 /// `<style …>` and `<script …>`, then their text to the closing tag.
 const H_EMBED_TAG: u8 = 139;
 const H_EMBED_TEXT: u8 = 140;
+/// A string that holds a regex (ADR-40, phase 4), the regex's state in [`Scan::re`].
+const STRING_RE: u8 = 141;
 
 /// Bits of a kind past its leaf: the HTML string or comment that holds it in Javadoc.
 const WRAP: u16 = 1 << 8;
@@ -220,6 +223,9 @@ const W_SQ: u16 = 3 * WRAP;
 const W_UNQ: u16 = 4 * WRAP;
 const W_HCOMMENT: u16 = 5 * WRAP;
 const W_ATTR: u16 = 6 * WRAP;
+/// In a regex in a string: the leaf is the regex's kind.
+const W_RE: u16 = 7 * WRAP;
+const _: () = assert!(regex::KINDS <= WRAP as usize);
 /// In an annotation (`meta.annotation`).
 const ANNOT: u16 = 8 * WRAP;
 
@@ -460,6 +466,11 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
         out.push("meta.annotation.java");
     }
     let wrap = (kind & (ANNOT - WRAP)) / WRAP;
+    if wrap * WRAP == W_RE {
+        out.push("string.quoted.double.java");
+        out.extend(regex::scopes(kind % WRAP));
+        return out;
+    }
     if wrap != 0 {
         out.extend(["comment.block.documentation.javadoc", "text.html.javadoc"]);
         out.extend(match wrap * WRAP {
@@ -499,6 +510,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         arrow: None,
         tag_line: None,
         word_at: std::cell::Cell::new((usize::MAX, 0)),
+        re: 0,
         out,
     };
     let n = usize::from(state.depth);
@@ -557,7 +569,45 @@ struct Scan<'b, 'c> {
     tag_line: Option<bool>,
     /// The last whole word looked up: where it starts and ends.
     word_at: std::cell::Cell<(usize, usize)>,
+    /// The state of the regex in [`STRING_RE`], which ends with its line.
+    re: u8,
     out: &'b mut Out<'c>,
+}
+
+/// The bytes a string's patterns start on, around a regex: its end and its escapes.
+static RE_YIELDS: [bool; 256] = {
+    let mut t = [false; 256];
+    t[b'"' as usize] = true;
+    t[b'\\' as usize] = true;
+    t
+};
+
+/// Whether the string whose quote opens at `p` is a regex: right after `Pattern.compile(`,
+/// `.matches(`, `.replaceAll(`, `.replaceFirst(` or `.split(` (their first argument), or
+/// `regexp =` (Bean Validation's `@Pattern(regexp = …)`).
+fn regex_string(b: &[u8], p: usize) -> bool {
+    let q = trim_end(b, 0, p);
+    let Some(&c) = q.checked_sub(1).map(|i| &b[i]) else {
+        return false;
+    };
+    let w = trim_end(b, 0, q - 1);
+    let named = |name: &[u8]| {
+        b[..w].ends_with(name)
+            && (name[0] == b'.' || w == name.len() || !word_before(b, w - name.len()))
+    };
+    match c {
+        b'(' => [
+            &b"Pattern.compile"[..],
+            b".matches",
+            b".replaceAll",
+            b".replaceFirst",
+            b".split",
+        ]
+        .into_iter()
+        .any(named),
+        b'=' => named(b"regexp"),
+        _ => false,
+    }
 }
 
 /// The bytes of the UTF-8 character that starts with `c`.
@@ -1113,7 +1163,7 @@ impl<'b> Scan<'b, '_> {
 
     fn refresh(&mut self) {
         let t = match self.top() {
-            STRING => DQ,
+            STRING | STRING_RE => DQ,
             CHAR => SQ,
             COMMENT => BLOCK_TEXT,
             LINE_COMMENT => LINE_TEXT,
@@ -1302,7 +1352,7 @@ impl<'b> Scan<'b, '_> {
         let c = b[p];
         let top = self.top();
         match top {
-            STRING => find_any(b, p + 1, *b"\"\\"),
+            STRING | STRING_RE => find_any(b, p + 1, *b"\"\\"),
             CHAR => find_any(b, p + 1, *b"'\\"),
             COMMENT | JD_MAIN | JD_HOLD => find_any(b, p + 1, *b"*"),
             LINE_COMMENT => find_any(b, p + 1, *b"%"),
@@ -1368,6 +1418,9 @@ impl<'b> Scan<'b, '_> {
             return Some(r);
         }
         if top >= JD_MAIN {
+            if top == STRING_RE {
+                return self.in_regex(p, c);
+            }
             return self.javadoc(p, c, top);
         }
         match top {
@@ -1840,14 +1893,36 @@ impl<'b> Scan<'b, '_> {
     fn eol(&mut self, top: u8) -> Option<usize> {
         let n = self.b.len();
         match top {
-            STRING | CHAR | LINE_COMMENT | DOTTED_NS | DOTTED_MODULE | DOTTED_PKG | DOTTED_SMOD
-            | JD_REF_AFTER | JD_IREF_AFTER | H_OTHER_NAME | H_CUSTOM_NAME | H_ATTR_NAME | H_UNQ => {
-                Some(self.leave(n))
-            }
+            STRING | STRING_RE | CHAR | LINE_COMMENT | DOTTED_NS | DOTTED_MODULE | DOTTED_PKG
+            | DOTTED_SMOD | JD_REF_AFTER | JD_IREF_AFTER | H_OTHER_NAME | H_CUSTOM_NAME
+            | H_ATTR_NAME | H_UNQ => Some(self.leave(n)),
             JD_CONTENTS => Some(self.enter(n, &[JD_TEXT])),
             JD_LINK_LABEL => Some(self.shift(n, &[JD_LABEL])),
             _ => None,
         }
+    }
+
+    /// In a regex in a string, at `p`: the string's end and its escapes but `\\`, which is the
+    /// regex's, else the regex to the next place they can start.
+    fn in_regex(&mut self, p: usize, c: u8) -> Option<usize> {
+        let b = self.b;
+        if c == b'"' {
+            return Some(self.close(p, 1, DQ_END));
+        }
+        if c == b'\\' && p + 1 < b.len() && b[p + 1] != b'\\' {
+            let e = next(b, p + 1);
+            return Some(self.token(p, e - p, DQ_ESCAPE));
+        }
+        let host = regex::Embed {
+            cooked: true,
+            yields: &RE_YIELDS,
+            stop: |b, p| b[p] == b'"',
+            base: self.kind(W_RE),
+            text: self.text,
+        };
+        let (q, st) = regex::embedded(b, p, self.re, &host, &mut self.at, self.out)?;
+        self.re = st;
+        Some(q)
     }
 
     /// The prototype: comments, `goto` and `const`, `%>`.
@@ -2410,6 +2485,10 @@ impl<'b> Scan<'b, '_> {
                     return Some(self.enter(p, &[LAMBDA_PARAMS]));
                 }
                 return Some(self.open(p, 1, PARENS, PAREN_BEGIN));
+            }
+            b'"' if regex_string(b, p) => {
+                self.re = 0;
+                return Some(self.open(p, 1, STRING_RE, DQ_BEGIN));
             }
             b'"' => return Some(self.open(p, 1, STRING, DQ_BEGIN)),
             b'\'' => return Some(self.open(p, 1, CHAR, SQ_BEGIN)),
@@ -3836,6 +3915,78 @@ mod tests {
             &l,
             "*/",
             "comment.block.documentation.javadoc punctuation.definition.comment.end.javadoc",
+        );
+    }
+
+    #[test]
+    fn regexes_in_strings() {
+        const RE: &str = "string.quoted.double.java";
+        let l = [
+            "class A {",
+            r#"  static final Pattern P = Pattern.compile("^(?<y>\\d{4})\\.\"[\\w&&[^_]]++$", Pattern.CASE_INSENSITIVE);"#,
+            r#"  @Pattern(regexp = "[a-z]+(?i:x)")"#,
+            r#"  String f(String s) { return s.replaceAll("\\s{2,}", "\\$1").split("\\\\")[0] + s.concat("a+"); }"#,
+            "}",
+        ];
+        has(&l, "^", &format!("{RE} keyword.control.anchor.regexp"));
+        has(&l, "y", &format!("{RE} entity.name.other.group.regexp"));
+        has(
+            &l,
+            r"\\d",
+            &format!("{RE} constant.other.character-class.escape.backslash.regexp"),
+        );
+        has(
+            &l,
+            "4",
+            &format!("{RE} keyword.operator.quantifier.regexp constant.literal.numeric.regexp"),
+        );
+        // the host's escape between the regex's tokens
+        has(&l, r#"\""#, &format!("{RE} constant.character.escape.java"));
+        has(
+            &l,
+            "&&",
+            &format!(
+                "{RE} constant.other.character-class.set.regexp keyword.operator.intersection.regexp"
+            ),
+        );
+        has(
+            &l,
+            "++",
+            &format!("{RE} keyword.operator.quantifier.regexp"),
+        );
+        has(&l, "$", &format!("{RE} keyword.control.anchor.regexp"));
+        // in an annotation
+        has(
+            &l,
+            "z",
+            &format!(
+                "meta.annotation.java {RE} constant.other.character-class.set.regexp constant.other.character-class.range.regexp"
+            ),
+        );
+        has(
+            &l,
+            "?i",
+            &format!("meta.annotation.java {RE} keyword.other.option-toggle.regexp"),
+        );
+        // the first argument only; an escaped `\`; not any call's
+        has(
+            &l,
+            "2",
+            &format!("{RE} keyword.operator.quantifier.regexp constant.literal.numeric.regexp"),
+        );
+        let got = of(&[l[3]]);
+        assert!(
+            !got.iter().any(|(t, s)| t == "$1" && s.contains("regexp")),
+            "{got:?}"
+        );
+        has(
+            &l,
+            r"\\\\",
+            &format!("{RE} constant.character.escape.backslash.regexp"),
+        );
+        assert!(
+            !got.iter().any(|(t, s)| t == "+" && s.contains("regexp")),
+            "{got:?}"
         );
     }
 }

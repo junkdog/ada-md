@@ -15,11 +15,16 @@
 //! its name, and a function's every word before `(`. Names past ASCII are approximated: every
 //! byte past ASCII is a letter, and `\s` is ASCII's.
 //!
+//! **Where Kotlin reads it otherwise, Kotlin wins** (ADR-40): a `"""…"""` string has no escapes,
+//! and ends at the last three quotes of a run; a string a construct makes a regex
+//! (`Regex("…")`, `"…".toRegex()`) is colored as one ([`crate::regex`]).
+//!
 //! The stack between lines is the contexts open above the top level, up to 28 (the bytes of
 //! [`State`]'s levels).
 
 use crate::machine::KEPT as HALF;
-use crate::{Out, State, is_space, skip_spaces};
+use crate::regex;
+use crate::{Out, State, is_space, skip_spaces, trim_end};
 
 // The contexts, by bat's names where one is one of them.
 /// The top level (`main`).
@@ -76,6 +81,8 @@ const CHAR: u8 = 27;
 /// `` `name` ``.
 const BACKTICK: u8 = 28;
 const COMMENT: u8 = 29;
+/// A regex in the string below (ADR-40, phase 4): this bit, and the regex's state.
+const REGEX: u8 = 0x80;
 
 /// The leaves: a token's scopes.
 static LEAVES: [&str; 49] = [
@@ -175,8 +182,24 @@ const ARRAY: u16 = 46;
 const COLLECTION: u16 = 47;
 const VARIABLE_LEAF: u16 = 48;
 
+/// The kinds of a regex in a `"…"` string and in a `"""…"""` one: the regex's, from each.
+const RE_STRING: u16 = 64;
+const RE_RAW: u16 = 192;
+const _: () = assert!(LEAVES.len() <= RE_STRING as usize);
+const _: () = assert!(RE_STRING as usize + regex::KINDS <= RE_RAW as usize);
+
 /// The scopes under `source.Kotlin` a kind carries, outermost first.
 pub fn scopes(kind: u16) -> Vec<&'static str> {
+    if kind >= RE_STRING {
+        let (text, base) = if kind >= RE_RAW {
+            (RAW_TEXT, RE_RAW)
+        } else {
+            (STRING_TEXT, RE_STRING)
+        };
+        let mut out = scopes(text);
+        out.extend(regex::scopes(kind - base));
+        return out;
+    }
     LEAVES.get(usize::from(kind)).map_or_else(Vec::new, |l| {
         l.split(' ').filter(|s| !s.is_empty()).collect()
     })
@@ -198,6 +221,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         text: PLAIN,
         at: 0,
         nodot: 0,
+        opened: None,
         out,
     };
     let n = usize::from(state.depth);
@@ -241,6 +265,9 @@ struct Scan<'b, 'c> {
     /// Below it, no dotted prefix of a name ends in the run of name bytes there
     /// ([`Scan::dotted`]).
     nodot: usize,
+    /// The last string opened on the line, not as a regex: where its text starts, and how many
+    /// spans there were then ([`Scan::string_end`]).
+    opened: Option<(usize, usize)>,
     out: &'b mut Out<'c>,
 }
 
@@ -304,6 +331,74 @@ fn next_of(b: &[u8], from: usize, stop: impl Fn(u8) -> bool) -> usize {
     b.get(from..)
         .and_then(|rest| rest.iter().position(|&c| stop(c)))
         .map_or(b.len(), |i| from + i)
+}
+
+/// A string's template at `p`, `(\$\w+|\$\{[^\}]+\})`: where it ends.
+fn template(b: &[u8], p: usize) -> Option<usize> {
+    match b.get(p + 1) {
+        Some(_) if is_word(b, p + 1) => Some(word_end(b, p + 1)),
+        Some(b'{') => {
+            let close = next_of(b, p + 2, |c| c == b'}');
+            (close < b.len() && close > p + 2).then_some(close + 1)
+        }
+        _ => None,
+    }
+}
+
+/// Whether a `"""…"""` string ends at `p`: the last three quotes of a run, as Kotlin reads
+/// them. bat's grammar ends it at the first three, and the quote left over opens a string that
+/// colors the rest of the file (`""""a":1""""`).
+fn raw_end(b: &[u8], p: usize) -> bool {
+    b[p..].starts_with(b"\"\"\"") && b.get(p + 3) != Some(&b'"')
+}
+
+/// The bytes a string's patterns start on, around a regex: `"…"`'s, then `"""…"""`'s (no
+/// escape: the regex reads its `\`).
+static RE_YIELDS: [[bool; 256]; 2] = {
+    let mut t = [[false; 256]; 2];
+    t[0][b'"' as usize] = true;
+    t[0][b'$' as usize] = true;
+    t[0][b'\\' as usize] = true;
+    t[1][b'"' as usize] = true;
+    t[1][b'$' as usize] = true;
+    t
+};
+
+/// A regex in a `"…"` string, then in a `"""…"""` one.
+static RE_EMBEDS: [regex::Embed<'static>; 2] = [
+    regex::Embed {
+        cooked: true,
+        yields: &RE_YIELDS[0],
+        stop: |b, p| b[p] == b'"' || template(b, p).is_some(),
+        base: RE_STRING,
+        text: STRING_TEXT,
+    },
+    regex::Embed {
+        cooked: false,
+        yields: &RE_YIELDS[1],
+        stop: |b, p| raw_end(b, p) || (b[p] == b'$' && template(b, p).is_some()),
+        base: RE_RAW,
+        text: RAW_TEXT,
+    },
+];
+
+/// Whether the string whose quote opens at `p` is a regex: right after `Regex(`,
+/// `Pattern.compile(` or `Pattern.matches(`. One right before `.toRegex(` or `.toPattern(` is
+/// found at its end ([`Scan::string_end`]).
+fn regex_string(b: &[u8], p: usize) -> bool {
+    let q = trim_end(b, 0, p);
+    if q == 0 || b[q - 1] != b'(' {
+        return false;
+    }
+    let w = trim_end(b, 0, q - 1);
+    // the name's last byte first: most calls end in none of the three
+    let name: &[u8] = match w.checked_sub(1).map(|i| b[i]) {
+        Some(b'x') => b"Regex",
+        Some(b'e') => b"Pattern.compile",
+        Some(b's') => b"Pattern.matches",
+        _ => return false,
+    };
+    b[..w].ends_with(name) && (w == name.len() || !is_word(b, w - name.len() - 1))
 }
 
 /// `[A-Z][A-Z0-9_]+`, a whole word: a constant's name.
@@ -585,12 +680,26 @@ impl Scan<'_, '_> {
     }
 
     fn refresh(&mut self) {
-        self.text = match self.top() {
+        let top = self.top();
+        if top >= REGEX {
+            return self.refresh_regex();
+        }
+        self.text = match top {
             RAW => RAW_TEXT,
             STRING => STRING_TEXT,
             CHAR | BACKTICK => CHAR_TEXT,
             COMMENT => BLOCK_COMMENT,
             _ => PLAIN,
+        };
+    }
+
+    /// [`Scan::refresh`] in a regex: its string's text.
+    #[cold]
+    fn refresh_regex(&mut self) {
+        self.text = if self.stack[self.depth - 2] == RAW {
+            RAW_TEXT
+        } else {
+            STRING_TEXT
         };
     }
 
@@ -667,7 +776,9 @@ impl Scan<'_, '_> {
     fn advance(&self, p: usize) -> usize {
         let b = self.b;
         match self.top() {
-            RAW | STRING => next_of(b, p + 1, |c| matches!(c, b'"' | b'$' | b'\\')),
+            // a raw string has no escapes
+            RAW => next_of(b, p + 1, |c| c == b'"' || c == b'$'),
+            STRING => next_of(b, p + 1, |c| matches!(c, b'"' | b'$' | b'\\')),
             CHAR => next_of(b, p + 1, |c| c == b'\'' || c == b'\\'),
             BACKTICK => next_of(b, p + 1, |c| c == b'`'),
             COMMENT => next_of(b, p + 1, |c| c == b'*'),
@@ -829,11 +940,14 @@ impl Scan<'_, '_> {
                 _ => None,
             },
             RAW => match c {
-                b'"' if b[p..].starts_with(b"\"\"\"") => Some(self.close(p, 3, RAW_TEXT + END)),
-                _ => self.in_string(p, c, RAW_TEXT),
+                b'"' if raw_end(b, p) => Some(self.string_end(p, 3, RAW_TEXT)),
+                // a template; no escape, which Kotlin's raw strings don't have (bat's grammar has
+                // `\\.`, so `\"` before the end took one of its quotes)
+                b'$' => self.in_string(p, c, RAW_TEXT),
+                _ => None,
             },
             STRING => match c {
-                b'"' => Some(self.close(p, 1, STRING_TEXT + END)),
+                b'"' => Some(self.string_end(p, 1, STRING_TEXT)),
                 _ => self.in_string(p, c, STRING_TEXT),
             },
             CHAR => match c {
@@ -842,6 +956,7 @@ impl Scan<'_, '_> {
                 _ => None,
             },
             BACKTICK => (c == b'`').then(|| self.close(p, 1, CHAR_TEXT + END)),
+            REGEX.. => self.in_regex(p, c, top),
             _ => (c == b'*' && b.get(p + 1) == Some(&b'/')).then(|| self.close(p, 2, BLOCK_MARK)),
         }
     }
@@ -962,8 +1077,8 @@ impl Scan<'_, '_> {
             b'(' => Some(self.open(p, 1, PAREN, PLAIN)),
             b'{' => Some(self.open(p, 1, BRACE, PLAIN)),
             b'-' if b.get(p + 1) == Some(&b'>') => Some(self.token(p, 2, DECLARATION)),
-            b'"' if b[p..].starts_with(b"\"\"\"") => Some(self.open(p, 3, RAW, RAW_TEXT + BEGIN)),
-            b'"' => Some(self.open(p, 1, STRING, STRING_TEXT + BEGIN)),
+            b'"' if b[p..].starts_with(b"\"\"\"") => Some(self.string(p, 3, RAW, RAW_TEXT)),
+            b'"' => Some(self.string(p, 1, STRING, STRING_TEXT)),
             b'\'' => Some(self.open(p, 1, CHAR, CHAR_TEXT + BEGIN)),
             b'`' => Some(self.open(p, 1, BACKTICK, CHAR_TEXT + BEGIN)),
             // `\b\.[0-9]+…`, after a word
@@ -1153,23 +1268,87 @@ impl Scan<'_, '_> {
         is_word(b, p).then(|| (p, word_end(b, p)))
     }
 
+    /// A string, its quote `n` bytes at `p`, that opens `c`, with a regex in it where it is
+    /// one (phase 4): where the scan goes on.
+    // out of line, so that `expressions` keeps its words' paths inlined
+    #[inline(never)]
+    fn string(&mut self, p: usize, n: usize, c: u8, text: u16) -> usize {
+        let e = self.open(p, n, c, text + BEGIN);
+        if regex_string(self.b, p) {
+            self.push(e, REGEX);
+        } else {
+            self.opened = Some((e, self.out.len()));
+        }
+        e
+    }
+
+    /// A string's end, its quote `n` bytes at `p`. Right before `.toRegex(` or `.toPattern(`, a
+    /// string opened on the line is a regex: its spans are dropped and it is lexed again as one
+    /// (rare, so a string's open costs no lookahead).
+    fn string_end(&mut self, p: usize, n: usize, text: u16) -> usize {
+        let rest = &self.b[p + n..];
+        if rest.first() == Some(&b'.')
+            && (rest.starts_with(b".toRegex(") || rest.starts_with(b".toPattern("))
+            && let Some((s, len)) = self.opened.take()
+        {
+            return self.relex(s, len);
+        }
+        self.close(p, n, text + END)
+    }
+
+    /// [`Scan::string_end`]'s regex: the string from `s`, its spans from the `len`th, again.
+    #[cold]
+    #[inline(never)]
+    fn relex(&mut self, s: usize, len: usize) -> usize {
+        self.out.truncate(len);
+        self.at = s;
+        self.push(s, REGEX);
+        s
+    }
+
+    /// In a regex in a string, at `p`: the string's patterns first (its end, a template, an
+    /// escape but `\\`, which is the regex's), else the regex's to the next place they can
+    /// start.
+    // rare, and kept out of `at`'s inlined body
+    #[cold]
+    #[inline(never)]
+    fn in_regex(&mut self, p: usize, c: u8, top: u8) -> Option<usize> {
+        let raw = self.stack[self.depth - 2] == RAW;
+        let text = if raw { RAW_TEXT } else { STRING_TEXT };
+        let r = match c {
+            b'"' if !raw => {
+                self.pop(p);
+                return Some(self.close(p, 1, text + END));
+            }
+            b'"' if raw_end(self.b, p) => {
+                self.pop(p);
+                return Some(self.close(p, 3, text + END));
+            }
+            b'$' => self.in_string(p, c, text),
+            b'\\' if !raw && self.b.get(p + 1) != Some(&b'\\') => self.escape(p, text),
+            _ => None,
+        };
+        if r.is_some() {
+            return r;
+        }
+        let (q, st) = regex::embedded(
+            self.b,
+            p,
+            top & regex::STATE,
+            &RE_EMBEDS[usize::from(raw)],
+            &mut self.at,
+            self.out,
+        )?;
+        self.stack[self.depth - 1] = REGEX | st;
+        Some(q)
+    }
+
     /// A string's patterns but its end, at `p`: a template, then an escape.
     fn in_string(&mut self, p: usize, c: u8, text: u16) -> Option<usize> {
         let b = self.b;
         match c {
-            // `(\$\w+|\$\{[^\}]+\})`
             b'$' => {
-                let e = match b.get(p + 1) {
-                    Some(_) if is_word(b, p + 1) => word_end(b, p + 1),
-                    Some(b'{') => {
-                        let close = next_of(b, p + 2, |c| c == b'}');
-                        if close == b.len() || close == p + 2 {
-                            return None;
-                        }
-                        close + 1
-                    }
-                    _ => return None,
-                };
+                let e = template(b, p)?;
                 Some(self.token(p, e - p, text + TEMPLATE))
             }
             b'\\' => self.escape(p, text),
@@ -1306,5 +1485,124 @@ mod tests {
             "constructor",
             "entity.name.type.class.kotlin",
         );
+    }
+
+    #[test]
+    fn regexes_in_strings() {
+        const RE: &str = "string.quoted.double.kotlin";
+        const RAW: &str = "string.quoted.third.kotlin";
+        let l = [
+            r#"val a = Regex("^(?<y>\\d{4})[a-z&&[^q]]$x\\$")"#,
+            r#"val b = "\\w+\"\\".toRegex() + Pattern.compile("""(\d+)\Q*\E""")"#,
+            r#"val c = "(\\d+".toPattern(); val d = Regex.fromLiteral("a+"); f("a+")"#,
+            r#"val e = Regex(""""#,
+            r#"  (a|b)+ ${x}$"""+"x*")"#,
+            r#"val f = """q\"""".toRegex()"#,
+        ];
+        has(&l, "^", &format!("{RE} keyword.control.anchor.regexp"));
+        has(&l, "y", &format!("{RE} entity.name.other.group.regexp"));
+        has(
+            &l,
+            r"\\d",
+            &format!("{RE} constant.other.character-class.escape.backslash.regexp"),
+        );
+        has(
+            &l,
+            "&&",
+            &format!(
+                "{RE} constant.other.character-class.set.regexp keyword.operator.intersection.regexp"
+            ),
+        );
+        // a template, then an escaped `$`
+        has(
+            &l,
+            "$x",
+            &format!("{RE} variable.parameter.template.kotlin"),
+        );
+        has(
+            &l,
+            r"\\$",
+            &format!("{RE} constant.character.escape.backslash.regexp"),
+        );
+        // the host's escape, then the regex's lone `\` before the string's end
+        has(
+            &l,
+            r#"\""#,
+            &format!("{RE} constant.character.escape.kotlin"),
+        );
+        has(
+            &l,
+            r"\\",
+            &format!("{RE} constant.character.escape.backslash.regexp"),
+        );
+        has(&l, "+", &format!("{RE} keyword.operator.quantifier.regexp"));
+        has(
+            &l,
+            r#"""""#,
+            &format!("{RAW} punctuation.definition.string.end.kotlin"),
+        );
+        // raw: `\d` as it reads, `\Q…\E`
+        has(
+            &l,
+            r"\d",
+            &format!("{RAW} constant.other.character-class.escape.backslash.regexp"),
+        );
+        has(
+            &l,
+            r"\Q",
+            &format!("{RAW} constant.character.escape.backslash.regexp"),
+        );
+        // `.toPattern()`
+        has(
+            &l,
+            "(",
+            &format!("{RE} punctuation.definition.group.begin.regexp"),
+        );
+        // a `"""` regex across lines, its template and anchor
+        has(&l, "|", &format!("{RAW} keyword.operator.or.regexp"));
+        has(
+            &l,
+            "${x}",
+            &format!("{RAW} variable.parameter.template.kotlin"),
+        );
+        has(&l, "$", &format!("{RAW} keyword.control.anchor.regexp"));
+        // not a regex: `Regex.fromLiteral`, any other call, a string after a regex
+        let got = of(&[&l[2][36..]]);
+        assert!(!got.iter().any(|(_, s)| s.contains("regexp")), "{got:?}");
+        has(&l[3..], "x*", RE);
+        // a run of quotes ends a raw regex at its last three, as Kotlin reads it
+        has(
+            &l[5..],
+            r#"\""#,
+            &format!("{RAW} constant.character.escape.backslash.regexp"),
+        );
+        has(
+            &l[5..],
+            r#"""""#,
+            &format!("{RAW} punctuation.definition.string.end.kotlin"),
+        );
+    }
+
+    #[test]
+    fn raw_strings_as_kotlin_reads_them() {
+        const RAW: &str = "string.quoted.third.kotlin";
+        // no escapes; a run of quotes ends at its last three, and nothing after it is a string
+        let l = [r#"val j = """{"a":"C:\new\"""" + x"#];
+        has(&l, r#"{"a":"C:\new\""#, RAW);
+        has(
+            &l,
+            r#"""""#,
+            &format!("{RAW} punctuation.definition.string.end.kotlin"),
+        );
+        has(&l, "+", "keyword.operator.arithmetic.kotlin");
+        // across lines, with a template
+        let l = [r#"val s = """a $x \"#, r#"""""""#];
+        has(
+            &l,
+            "$x",
+            &format!("{RAW} variable.parameter.template.kotlin"),
+        );
+        // five quotes: two of text, then the end
+        has(&l, r#""""#, RAW);
     }
 }
