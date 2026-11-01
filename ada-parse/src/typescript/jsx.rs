@@ -72,8 +72,9 @@ impl Scan<'_, '_, '_> {
                     }
                 }
             }
-            if optional && ns.is_none() && ok(self, s) {
-                return Some(None);
+            // the name is optional after a namespace too (`<svg:>`)
+            if optional && ok(self, s) {
+                return Some(ns.map(|_| TagName { ns, name: (s, s), component: false }));
             }
         }
         None
@@ -98,7 +99,9 @@ impl Scan<'_, '_, '_> {
                 self.tok(s, e, JSX_TAG_NS);
                 self.tok(e, e + 1, JSX_NS_SEP);
             }
-            self.tok(t.name.0, t.name.1, if t.component { JSX_COMPONENT } else { JSX_TAG_NAME });
+            if t.name.1 > t.name.0 {
+                self.tok(t.name.0, t.name.1, if t.component { JSX_COMPONENT } else { JSX_TAG_NAME });
+            }
         }
     }
 

@@ -99,6 +99,17 @@ impl Scan<'_, '_, '_> {
             && self.c(self.ws(i)) == b'{'
     }
 
+    /// A type annotation's pop by `(?<=[\}>\]\)]|[_$[:alpha:]])\s*(?=\{)` where it takes blanks: the
+    /// match ends at the `{`, so the frame below starts there (`object-literal` before
+    /// `destructuring-parameter`'s `\s*`). No other alternative of the pop can match at a blank.
+    fn blanks_to_brace(&mut self, i: usize) -> bool {
+        if !(i < self.n && is_space(self.c(i)) && self.not_after_op(i) && self.before_brace(i)) {
+            return false;
+        }
+        self.i = self.ws(i);
+        self.pop()
+    }
+
     /// `(?<=\S)(?=\s*$)` at `i`.
     pub(super) fn last_token_end(&self, i: usize) -> bool {
         i > 0 && !is_space(self.b[i - 1]) && self.ws(i) >= self.n
@@ -110,6 +121,9 @@ impl Scan<'_, '_, '_> {
         let c = self.c(i);
         match f {
             TYPE_ANNOT => {
+                if self.blanks_to_brace(i) {
+                    return true;
+                }
                 if self.not_after_op(i)
                     && (i >= self.n || i == 0 || matches!(c, b',' | b')' | b';' | b'}' | b']') || (c == b'/' && self.c(i + 1) == b'/')
                         || (c == b'=' && self.c(i + 1) != b'>' && i < self.n) || self.before_brace(i))
@@ -120,6 +134,9 @@ impl Scan<'_, '_, '_> {
                 self.type_()
             }
             TYPE_ANNOT_EOL => {
+                if self.blanks_to_brace(i) {
+                    return true;
+                }
                 if self.not_after_op(i)
                     && (matches!(c, b',' | b')' | b';' | b'}' | b']') || (c == b'/' && self.c(i + 1) == b'/')
                         || (c == b'=' && self.c(i + 1) != b'>') || self.blank_at(i) || self.last_token_end(i) || self.before_brace(i))
@@ -579,12 +596,23 @@ impl Scan<'_, '_, '_> {
     pub(super) fn type_(&mut self) -> bool {
         let i = self.i;
         let c = self.c(i);
+        // `template-call`'s second, `(name)?\s*(?=«TA»\s*`)`, starts at the blanks before its `<`
+        // (they are the template's)
+        if is_space(c) && i < self.n && self.c(self.ws(i)) == b'<' && self.template_call() {
+            return true;
+        }
+        // and its first at `(\??\.\s*)?name`: `.tag`…`` (before `numeric-literal`)
+        if matches!(c, b'.' | b'?') && self.template_call() {
+            return true;
+        }
         match c {
             b'/' => return self.comment(false),
             b'\'' | b'"' => return self.string(),
             b'`' => return self.template(true),
             b'0'..=b'9' | b'.' if self.numeric() => return true,
-            b'<' => return self.type_parameters(),
+            // `type-string`'s `template-call` before `type-parameters`: its second pattern's tag is
+            // optional (`<T>`x``)
+            b'<' => return self.template_call() || self.type_parameters(),
             b'[' => {
                 self.tok(i, i + 1, SQUARE);
                 self.i = i + 1;
@@ -840,10 +868,12 @@ impl Scan<'_, '_, '_> {
     /// A type paren's parameter: a name that is a function, or one before `:`.
     pub(super) fn type_paren_param(&mut self) -> bool {
         let i = self.i;
-        if !self.wb(i) {
+        // the modifiers need a word's start; `...` doesn't
+        let at_word = self.wb(i);
+        if !at_word && !self.rest(i).starts_with(b"...") {
             return false;
         }
-        let mods: &[&[u8]] = &[b"public", b"private", b"protected", b"readonly"];
+        let mods: &[&[u8]] = if at_word { &[b"public", b"private", b"protected", b"readonly"] } else { &[] };
         let mut j = i;
         let mut modifier = None;
         for m in mods {
@@ -877,7 +907,16 @@ impl Scan<'_, '_, '_> {
         let q = self.ws(ne);
         let opt = if self.c(q) == b'?' { Some(q) } else { None };
         let after = opt.map_or(q, |o| o + 1);
-        let fun = self.we(ne) && look::fn_decl(self.b, after, self.tsx);
+        // both patterns need a `:` after the name: the function's lookahead here is only the
+        // `:` alternatives of `fn_decl` (no `= function`, `= () =>`), its first (`fn_type_head`) after
+        // blanks too, as `(?=\s*(:\s*(…)) | (:\s*…) | …)` gives the `\s*` to that one alone
+        let w = self.ws(after);
+        let fun = self.we(ne)
+            && if self.c(after) == b':' {
+                look::fn_colon(self.b, after, self.tsx, false)
+            } else {
+                self.c(w) == b':' && look::fn_type_head(self.b, self.ws(w + 1))
+            };
         let plain = self.c(after) == b':';
         if !fun && !plain {
             return false;

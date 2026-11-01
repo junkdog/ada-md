@@ -186,7 +186,18 @@ impl Scan<'_, '_, '_> {
                 j = k;
             }
         }
-        let ne = self.name(j);
+        let mut ne = self.name(j);
+        if asy.is_some() && !(ne > j && self.c(self.ws(ne)) == b'=' && self.c(self.ws(ne) + 1) == b'>') {
+            // backtracking: no name after `async`, or none before `=>`: `async` is the name
+            // (`async => x`)
+            let e = self.name(i);
+            let k = self.ws(e);
+            if self.c(k) == b'=' && self.c(k + 1) == b'>' {
+                asy = None;
+                j = i;
+                ne = e;
+            }
+        }
         if ne > j {
             let k = self.ws(ne);
             if self.c(k) == b'=' && self.c(k + 1) == b'>' {
@@ -665,8 +676,10 @@ impl Scan<'_, '_, '_> {
                 return true;
             }
         }
-        // the inner push: another target (before the optionals, as the grammar orders them)
-        if look::call_target(self.b, i).is_some() || (matches!(c, b'.' | b'?') && self.dot(i).is_some() && {
+        // the inner push: another target (before the optionals, as the grammar orders them), its
+        // lookahead only a name, not the call after it (`f<typeof o<d>S>(x)`: `S`, the type
+        // arguments closed at `d>`)
+        if self.name(i) > i || (matches!(c, b'.' | b'?') && self.dot(i).is_some() && {
             let s = self.ws(self.dot(i).map_or(i, |d| d.0));
             let s = if self.c(s) == b'#' { s + 1 } else { s };
             self.name(s) > s

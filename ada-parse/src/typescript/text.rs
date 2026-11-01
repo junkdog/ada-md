@@ -381,8 +381,8 @@ impl Scan<'_, '_, '_> {
                 {
                     return self.pop_zero();
                 }
-                if c == b'{' {
-                    return self.jsdoctype();
+                if self.jsdoctype() {
+                    return true;
                 }
                 match f {
                     DOC_TYPEDEF => {
@@ -833,9 +833,9 @@ impl Scan<'_, '_, '_> {
             }
             let k = doc_run(self.b, after, b"@/");
             // not before an inline tag, a `[description]` before it or not
-            let inline = is_inline_tag(r) || (r.starts_with(b"[") && {
+            let inline = inline_tag_len(r).is_some() || (r.starts_with(b"[") && {
                 let e = r.iter().position(|&c| c == b']');
-                e.is_some_and(|e| !r[1..e].contains(&b'[') && is_inline_tag(&r[e + 1..]))
+                e.is_some_and(|e| !r[1..e].contains(&b'[') && inline_tag_len(&r[e + 1..]).is_some())
             });
             if k > after && !inline {
                 tag_tok(self, e);
@@ -860,9 +860,14 @@ impl Scan<'_, '_, '_> {
                 return self.take(after, k, JD_VAR);
             }
         }
-        if doc_tag(tag) && self.boundary(e) {
-            tag_tok(self, e);
-            self.i = e;
+        // (@)(?:abstract|…)\b: `$` is no word character, so `@return$s` is `@return` and `$s`
+        let mut w = s;
+        while self.c(w).is_ascii_alphanumeric() || self.c(w) == b'_' {
+            w += 1;
+        }
+        if doc_tag(&self.b[s..w.min(self.n)]) && self.boundary(w) {
+            tag_tok(self, w);
+            self.i = w;
             return true;
         }
         // ((@)(?:[_$[:alpha:]][_$[:alnum:]]*))(?=\s+)
@@ -884,21 +889,17 @@ impl Scan<'_, '_, '_> {
             while e < self.n && self.b[e] != b']' {
                 e += 1;
             }
-            if e > i + 1 && e < self.n && is_inline_tag(self.rest(e + 1)) {
+            if e > i + 1 && e < self.n && inline_tag_len(self.rest(e + 1)).is_some() {
                 self.tok(i, i + 1, JD_DESC_BEGIN);
                 self.tok(i + 1, e, JD_DESC);
                 return self.take(e, e + 1, JD_DESC_END);
             }
             return false;
         }
-        if !is_inline_tag(self.rest(i)) {
+        let Some(len) = inline_tag_len(self.rest(i)) else {
             return false;
-        }
-        let s = i + 2;
-        let mut e = s;
-        while self.c(e).is_ascii_alphabetic() {
-            e += 1;
-        }
+        };
+        let e = i + 2 + len;
         self.tok(i, i + 1, JD_INLINE_BEGIN);
         self.tok(i + 1, i + 2, JD_INLINE_TAG_AT);
         self.tok(i + 2, e, JD_INLINE_TAG);
@@ -975,27 +976,48 @@ impl Scan<'_, '_, '_> {
     }
 
     /// `jsdoctype` at `{`.
+    ///
+    /// syntect caches a pattern's failed search for the rest of the line, and the cache is the
+    /// pattern's, shared by the three tag contexts that include `jsdoctype`: a `\G` pattern
+    /// searched where it doesn't match (after a type's `}`, at the description) doesn't match
+    /// again on the line, so a second `@type {T}` on it has no type (as [`Scan::inline_g`]).
+    /// Reached only where the tag's pop didn't match, so both were searched.
     pub(super) fn jsdoctype(&mut self) -> bool {
         let i = self.i;
-        // \G{(?:[^}*]|\*[^/}])+$: a type left open at the line's end
-        let mut j = i + 1;
-        let mut any = false;
-        while j < self.n {
-            match self.b[j] {
-                b'}' => break,
-                b'*' if matches!(self.c(j + 1), b'/' | b'}') || j + 1 >= self.n => break,
-                b'*' => j += 2,
-                _ => j += 1,
-            }
-            any = true;
+        if self.c(i) != b'{' {
+            self.g_type_open = true;
+            self.g_type_brace = true;
+            return false;
         }
-        if any && j >= self.n {
-            return self.take(i, self.n, JD_TYPE_BAD);
+        if !self.g_type_open {
+            if let Some(e) = self.jsdoctype_open(i) {
+                return self.take(i, e, JD_TYPE_BAD);
+            }
+            self.g_type_open = true;
+        }
+        if self.g_type_brace {
+            return false;
         }
         self.tok(i, i + 1, JD_TYPE_BEGIN);
         self.i = i + 1;
         self.push(DOC_TYPE);
         true
+    }
+
+    /// `\G{(?:[^}*]|\*[^/}])+$` at the `{` at `i`: the line's end if it matches.
+    fn jsdoctype_open(&self, i: usize) -> Option<usize> {
+        // \G{(?:[^}*]|\*[^/}])+$: a type left open at the line's end. syntect's line ends in `\n`,
+        // which the class takes: a `{` or `*` last on the line is open too (`{\n`, `{x*\n`)
+        let mut j = i + 1;
+        while j < self.n {
+            match self.b[j] {
+                b'}' => break,
+                b'*' if j + 1 < self.n && matches!(self.b[j + 1], b'/' | b'}') => break,
+                b'*' => j += 2,
+                _ => j += 1,
+            }
+        }
+        (j >= self.n).then_some(self.n)
     }
 
     /// `brackets`, in a JSDoc type.
@@ -1100,23 +1122,21 @@ impl Scan<'_, '_, '_> {
     }
 }
 
-/// `{@link`, `{@linkcode`, `{@linkplain` or `{@tutorial` at the start of `r`, a word after.
-fn is_inline_tag(r: &[u8]) -> bool {
-    if !r.starts_with(b"{@") {
-        return false;
-    }
-    let r = &r[2..];
-    let w = if r.starts_with(b"linkcode") || r.starts_with(b"linkplain") {
-        r.len().min(if r.starts_with(b"linkcode") { 8 } else { 9 })
+/// `{@link`, `{@linkcode`, `{@linkplain` or `{@tutorial` at the start of `r`: the tag's length,
+/// `link(?:code|plain)?|tutorial` with no `\b` after it (`{@linkn` is `link` and `n`).
+fn inline_tag_len(r: &[u8]) -> Option<usize> {
+    let r = r.strip_prefix(b"{@")?;
+    if r.starts_with(b"linkcode") {
+        Some(8)
+    } else if r.starts_with(b"linkplain") {
+        Some(9)
     } else if r.starts_with(b"link") {
-        4
+        Some(4)
     } else if r.starts_with(b"tutorial") {
-        8
+        Some(8)
     } else {
-        return false;
-    };
-    let _ = w;
-    true
+        None
+    }
 }
 
 /// `(?:[^<stop>\s*]|\*[^/])+` from `i`, with the extra stops in `stop`: its end.

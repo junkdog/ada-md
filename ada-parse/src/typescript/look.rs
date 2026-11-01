@@ -369,7 +369,8 @@ pub(super) fn arrow_line(b: &[u8], i: usize) -> bool {
         return true;
     }
     let k = ws(b, j);
-    at(b, k) == b':' && rt_then(b, ws(b, k + 1), |e| arrow_at(b, e))
+    // `:\s*«RT»+`: a blank is a `«RT»` too, so the units start at once (`(a): => x`)
+    at(b, k) == b':' && rt_then(b, k + 1, |e| arrow_at(b, e))
 }
 
 /// `(«B{»|«B[»)\s*((:\s*[{[]?$)|((\s*«RT»+\s*)?=\s*))` at `i`, a destructured parameter.
@@ -433,7 +434,8 @@ pub(super) fn tp_extends(b: &[u8], i: usize) -> bool {
 
 /// `\s*«RT»+\s*=>` at `i`.
 pub(super) fn rt_arrow(b: &[u8], i: usize) -> bool {
-    rt_then(b, ws(b, i), |e| arrow_at(b, e))
+    // `\s*«RT»+\s*=>`: a blank is a `«RT»` too (`[^<>\(\)\{\}]`), so `: =>` matches
+    rt_then(b, i, |e| arrow_at(b, e))
 }
 
 /// `FNV`, a value that is a function, at `i`:
@@ -471,32 +473,50 @@ pub(super) fn fn_value(b: &[u8], i: usize, tsx: bool) -> bool {
 }
 
 /// After a name being declared (`var-single-variable`'s, a parameter's, a field's): whether it
-/// is a function, `(?=\s*(=\s*FNV|:\s*…))`, from `i` (after the name and its `?` or `!`).
+/// is a function, `(?=\s*(=\s*FNV)|(:\s*…)|…)`, from `i` (after the name and its `?` or `!`). The
+/// lookahead's `\s*` is its first alternative's alone (the `|` are at its top level), so only `=`
+/// may follow blanks; each `:` alternative needs the `:` at `i` (`a : () => void` is no function).
 pub(super) fn fn_decl(b: &[u8], i: usize, tsx: bool) -> bool {
-    let i = ws(b, i);
-    match at(b, i) {
-        b'=' => fn_value(b, ws(b, i + 1), tsx),
-        b':' => {
-            let j = ws(b, i + 1);
-            // (<) | ([(]\s*(([)])|(\.\.\.)|([_$[:alnum:]]+\s*(([:,?=])|([)]\s*=>)))))
-            if at(b, j) == b'<' {
+    let w = ws(b, i);
+    if at(b, w) == b'=' {
+        return fn_value(b, ws(b, w + 1), tsx);
+    }
+    at(b, i) == b':' && fn_colon(b, i, tsx, true)
+}
+
+/// `(<) | ([(]\s*(([)])|(\.\.\.)|([_$[:alnum:]]+\s*(([:,?=])|([)]\s*=>)))))` at `j` (after a `:` and
+/// blanks): a function type's start, the one `:` alternative a type's `( … )` lets blanks precede.
+pub(super) fn fn_type_head(b: &[u8], j: usize) -> bool {
+    if at(b, j) == b'<' {
+        return true;
+    }
+    if at(b, j) == b'(' {
+        let k = ws(b, j + 1);
+        if at(b, k) == b')' || b[k.min(b.len())..].starts_with(b"...") {
+            return true;
+        }
+        let mut e = k;
+        while alnum(b, e) > 0 {
+            e += alnum(b, e);
+        }
+        if e > k {
+            let f = ws(b, e);
+            if matches!(at(b, f), b':' | b',' | b'?' | b'=') || (at(b, f) == b')' && arrow_at(b, f + 1)) {
                 return true;
             }
-            if at(b, j) == b'(' {
-                let k = ws(b, j + 1);
-                if at(b, k) == b')' || b[k.min(b.len())..].starts_with(b"...") {
-                    return true;
-                }
-                let mut e = k;
-                while alnum(b, e) > 0 {
-                    e += alnum(b, e);
-                }
-                if e > k {
-                    let f = ws(b, e);
-                    if matches!(at(b, f), b':' | b',' | b'?' | b'=') || (at(b, f) == b')' && arrow_at(b, f + 1)) {
-                        return true;
-                    }
-                }
+        }
+    }
+    false
+}
+
+/// The `:` alternatives of [`fn_decl`]'s lookahead, at the `:` at `i`; with `value`, the last
+/// one too, `:\s*(…)+=\s*FNV`, which a type's `( … )` leaves out (no initializer there).
+pub(super) fn fn_colon(b: &[u8], i: usize, tsx: bool, value: bool) -> bool {
+    match at(b, i) {
+        b':' => {
+            let j = ws(b, i + 1);
+            if fn_type_head(b, j) {
+                return true;
             }
             // :\s*«wb»Function«we»
             if b[j.min(b.len())..].starts_with(b"Function") && !alnum_at(b, j + 8) && (at(b, j + 8) != b'.' || b[j + 8..].starts_with(b"...")) {
@@ -504,6 +524,9 @@ pub(super) fn fn_decl(b: &[u8], i: usize, tsx: bool) -> bool {
             }
             if open_params(b, j, tsx) {
                 return true;
+            }
+            if !value {
+                return false;
             }
             // :\s*(=>|«B(»|(<[^<>]*>)|[^<>(),=])+=\s*FNV
             let mut k = j;

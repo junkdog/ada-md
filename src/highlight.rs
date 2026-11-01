@@ -2667,6 +2667,22 @@ mod tests {
             "for (const [k, v] of Object.entries(map)) { if (k in v) continue; }\n",
             "switch (kind) { case 'a': break; default: throw new Error(`bad ${kind}`); }\n",
             "export default async function main(): Promise<void> { await Promise.all([]); }\n",
+            // the regexes' backtracking and lookahead scopes met in scrambled input
+            "function spread(a, undefined...more) {}\n",
+            "if (a : B) { go(); }\n",
+            "if (a) /x+/.test(b);\n",
+            "const p = (\n",
+            "  \"s\" :as  { a: 1 });\n",
+            "type F = (cb = () => void, d? : () => void) => void;\n",
+            "interface I { a : () => void; b? : () => void; c: () => void }\n",
+            "type R = { -readonly\n",
+            "};\n",
+            "let t: <T>`x${K}`, u: .tag`y`;\n",
+            "x = async => 1, y = (a): => 2, z = f<typeof o<d>S>(o);\n",
+            "import type = x;\n",
+            "import type import y from 'z';\n",
+            "/** @return$s x @type {T} y @type {U} z {@linkx Bar} @returns {\n",
+            " */\n",
         ));
         // objects nested past 28 frames: the state packs them between lines
         for _ in 0..20 {
@@ -2700,6 +2716,7 @@ mod tests {
             "    <p>text</p>\n",
             "  </Layout.Main>;\n",
             "}\n",
+            "const ns = <svg:>y</svg:>;\n",
         );
         rules_match_the_grammar("tsx", "TypeScriptReact", text);
     }

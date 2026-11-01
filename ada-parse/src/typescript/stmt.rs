@@ -193,40 +193,46 @@ impl Scan<'_, '_, '_> {
             }
         }
         if word == b"import" && self.boundary(w) {
-            // (\s+(type))?
-            let mut k = w;
-            let mut ty = None;
+            // (\s+(type))?: optional, so each pattern is tried with it, then (backtracking) without
+            // it, `type` then the name (`import type = x` is the alias `type`)
             let t = self.ws(w);
-            if t > w && let Some(te) = self.word_b(t, b"type") {
-                ty = Some((t, te));
-                k = te;
-            }
-            // import-equals-declaration
-            let m = self.ws(k);
-            let ne = self.name(m);
-            if m > k && ne > m {
-                let q = self.ws(ne);
-                if self.c(q) == b'=' {
+            let ty = (t > w).then(|| self.word_b(t, b"type").map(|te| (t, te))).flatten();
+            let tries = if ty.is_some() { [ty, None] } else { [None, None] };
+            let tries = &tries[..if ty.is_some() { 2 } else { 1 }];
+            // import-equals-declaration: `= require(` first, then `=` without `require`
+            for require in [true, false] {
+                for &ty in tries {
+                    let k = ty.map_or(w, |(_, te)| te);
+                    let m = self.ws(k);
+                    let ne = self.name(m);
+                    if !(m > k && ne > m) {
+                        continue;
+                    }
+                    let q = self.ws(ne);
+                    if self.c(q) != b'=' {
+                        continue;
+                    }
                     let r = self.ws(q + 1);
                     let req = self.word_b(r, b"require");
-                    let p = req.map(|e| self.ws(e));
-                    if let (Some(re), Some(p)) = (req, p)
-                        && self.c(p) == b'('
-                    {
-                        self.prefix_toks(i, export, declare, j);
-                        self.tok(j, w, IMPORT);
-                        if let Some((t, te)) = ty {
-                            self.tok(t, te, TYPE_CONTROL);
+                    if require {
+                        let p = req.map(|e| self.ws(e));
+                        if let (Some(re), Some(p)) = (req, p)
+                            && self.c(p) == b'('
+                        {
+                            self.prefix_toks(i, export, declare, j);
+                            self.tok(j, w, IMPORT);
+                            if let Some((t, te)) = ty {
+                                self.tok(t, te, TYPE_CONTROL);
+                            }
+                            self.tok(m, ne, ALIAS);
+                            self.tok(q, q + 1, ASSIGN);
+                            self.tok(r, re, REQUIRE);
+                            self.tok(p, p + 1, ROUND);
+                            self.i = p + 1;
+                            self.push(IMPORT_REQUIRE);
+                            return true;
                         }
-                        self.tok(m, ne, ALIAS);
-                        self.tok(q, q + 1, ASSIGN);
-                        self.tok(r, re, REQUIRE);
-                        self.tok(p, p + 1, ROUND);
-                        self.i = p + 1;
-                        self.push(IMPORT_REQUIRE);
-                        return true;
-                    }
-                    if req.is_none() {
+                    } else if req.is_none() {
                         self.prefix_toks(i, export, declare, j);
                         self.tok(j, w, IMPORT);
                         if let Some((t, te)) = ty {
@@ -241,30 +247,28 @@ impl Scan<'_, '_, '_> {
                 }
             }
             // import-declaration: (?:\s+(type)(?!\s+from))?(?!\s*[:\(])«we»
-            let mut k = w;
-            let mut ty = None;
-            let t = self.ws(w);
-            if t > w && let Some(te) = self.word_b(t, b"type") {
+            let ty = ty.filter(|&(_, te)| {
                 let f = self.ws(te);
-                if !(f > te && self.word_b(f, b"from").is_some()) {
-                    ty = Some((t, te));
-                    k = te;
+                !(f > te && self.word_b(f, b"from").is_some())
+            });
+            let tries = if ty.is_some() { [ty, None] } else { [None, None] };
+            for &ty in &tries[..if ty.is_some() { 2 } else { 1 }] {
+                let k = ty.map_or(w, |(_, te)| te);
+                let q = self.ws(k);
+                if !matches!(self.c(q), b':' | b'(') && self.we(k) {
+                    self.prefix_toks(i, export, declare, j);
+                    self.tok(j, w, IMPORT);
+                    if let Some((t, te)) = ty {
+                        self.tok(t, te, TYPE_CONTROL);
+                    }
+                    self.i = k;
+                    self.push(IMPORT_F);
+                    // (?<=^import|[^\._$[:alnum:]]import)(?!\s*["'])
+                    if ty.is_none() && !matches!(self.c(self.ws(k)), b'"' | b'\'') {
+                        self.push(IMPORT_CLAUSE);
+                    }
+                    return true;
                 }
-            }
-            let q = self.ws(k);
-            if !matches!(self.c(q), b':' | b'(') && self.we(k) {
-                self.prefix_toks(i, export, declare, j);
-                self.tok(j, w, IMPORT);
-                if let Some((t, te)) = ty {
-                    self.tok(t, te, TYPE_CONTROL);
-                }
-                self.i = k;
-                self.push(IMPORT_F);
-                // (?<=^import|[^\._$[:alnum:]]import)(?!\s*["'])
-                if ty.is_none() && !matches!(self.c(self.ws(k)), b'"' | b'\'') {
-                    self.push(IMPORT_CLAUSE);
-                }
-                return true;
             }
         }
         // export-declaration
@@ -483,10 +487,20 @@ impl Scan<'_, '_, '_> {
             b"case" | b"default" | b"switch" => return self.take(i, w, SWITCH),
             b"if" => {
                 // (?=\bif\s*(«B(»)\s*(?!\{))
+                // `\s*` backtracks, so only a `{` right after the `)` fails it
                 let k = self.ws(w);
                 if let Some(e) = look::bal(self.b, k, b'(', b')', 3)
-                    && self.c(self.ws(e)) != b'{'
+                    && self.c(e) != b'{'
                 {
+                    if self.c(self.ws(e)) == b'{' {
+                        // `if (…) {`: the `if-statement`'s condition (an expression, never an arrow's
+                        // parameters) without its frame, as the block after it is the parent's anyway
+                        self.tok(i, w, CONDITIONAL);
+                        self.tok(k, k + 1, ROUND);
+                        self.i = k + 1;
+                        self.push(IF_COND);
+                        return true;
+                    }
                     return self.push_zero(IF);
                 }
                 return self.take(i, w, CONDITIONAL);
@@ -840,12 +854,13 @@ impl Scan<'_, '_, '_> {
         let mut ro = None;
         if let Some(e) = self.kw(i, b"readonly") {
             let k = self.ws(e);
-            if k > e {
+            if k > e && self.field_ahead(k, true) {
                 ro = Some(e);
                 j = k;
             }
         }
-        if !self.field_ahead(j, true) {
+        // without the optional `readonly\s+` (backtracking: `+readonly` at the line's end is the key)
+        if ro.is_none() && !self.field_ahead(j, true) {
             return false;
         }
         if let Some(e) = ro {
@@ -1491,6 +1506,11 @@ impl Scan<'_, '_, '_> {
                 if self.comment(true) || self.string() {
                     return true;
                 }
+                // (?<=^import|[^\._$[:alnum:]]import)(?!\s*["']): after any word `import` in the
+                // declaration, not only its keyword (`import type import x` waits for `from`)
+                if self.word_ends_at(i, &[b"import"]) && !matches!(self.c(self.ws(i)), b'"' | b'\'') {
+                    return self.push_zero(IMPORT_CLAUSE);
+                }
                 self.import_export_declaration()
             }
             IMPORT_CLAUSE => {
@@ -1871,10 +1891,12 @@ impl Scan<'_, '_, '_> {
     /// `parameter-name` at the place.
     pub(super) fn parameter_name(&mut self) -> bool {
         let i = self.i;
-        if !self.wb(i) {
-            return self.rest_param_prefix_only();
+        // the modifiers need a word's start; `...` doesn't (`undefined...rest` is a rest parameter)
+        let at_word = self.wb(i);
+        if !at_word && !self.rest(i).starts_with(b"...") {
+            return false;
         }
-        let mods: &[&[u8]] = &[b"override", b"public", b"protected", b"private", b"readonly"];
+        let mods: &[&[u8]] = if at_word { &[b"override", b"public", b"protected", b"private", b"readonly"] } else { &[] };
         // a modifier before another
         for m in mods {
             if self.rest(i).starts_with(m) && self.boundary(i + m.len()) {
@@ -1939,11 +1961,6 @@ impl Scan<'_, '_, '_> {
             self.i = q.min(self.n);
         }
         true
-    }
-
-    /// `...` before a parameter's name that isn't at a word's start (none: the pattern needs it).
-    pub(super) fn rest_param_prefix_only(&mut self) -> bool {
-        false
     }
 
     /// `destructuring-parameter`: `(?<!=|:)\s*(?:(\.\.\.)\s*)?(\{|\[)`.
@@ -2399,8 +2416,20 @@ impl Scan<'_, '_, '_> {
         false
     }
 
-    /// The `if`'s regex right after its `)` (`if-statement`'s).
+    /// The `if`'s regex right after its `)` (`if-statement`'s):
+    /// `(?<=\))\s*\/(?![\/*])(?=«second body»)`, its whole match (the blanks too) the begin.
     pub(super) fn if_regex(&mut self) -> bool {
-        false
+        let i = self.i;
+        if i == 0 || self.b[i - 1] != b')' {
+            return false;
+        }
+        let k = self.ws(i);
+        if self.c(k) != b'/' || matches!(self.c(k + 1), b'/' | b'*') || !self.regex_body_ahead(k + 1, false) {
+            return false;
+        }
+        self.tok(i, k + 1, RE_BEGIN);
+        self.i = k + 1;
+        self.push(REGEX_F);
+        true
     }
 }

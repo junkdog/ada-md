@@ -714,6 +714,8 @@ pub fn line(b: &[u8], tsx: bool, state: &mut State, out: &mut Out) {
         g_link: false,
         g_desc: false,
         g_caption: false,
+        g_type_open: false,
+        g_type_brace: false,
         var_kw_eol: false,
         out,
     };
@@ -837,6 +839,10 @@ struct Scan<'a, 'o, 'p> {
     g_desc: bool,
     /// `@example`'s `\G(<)caption(>)` failed on this line (as [`Scan::inline_g`]'s).
     g_caption: bool,
+    /// `jsdoctype`'s `\G{(?:[^}*]|\*[^/}])+$` failed on this line ([`Scan::jsdoctype`]).
+    g_type_open: bool,
+    /// Its `\G({)` failed on this line.
+    g_type_brace: bool,
     /// A `var`, `let` or `const` keyword took the line's end (its `\s*` the `\n`).
     var_kw_eol: bool,
     out: &'o mut Out<'p>,
