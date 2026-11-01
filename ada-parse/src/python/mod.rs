@@ -22,7 +22,6 @@
 //! [`State`]'s levels and withs).
 
 mod regex;
-mod sql;
 mod strings;
 mod words;
 
@@ -303,44 +302,9 @@ leaves! {
     ReSetEnd = "punctuation.definition.character-class.end.regexp",
     ReRange = "constant.other.character-class.range.regexp",
     ReRangeEscape = "constant.other.character-class.range.regexp constant.character.escape.backslash.regexp",
-    // SQL
-    SqlCommentMark = "punctuation.definition.comment.sql",
-    SqlCreate = "keyword.other.create.sql",
-    SqlKeyword = "keyword.other.sql",
-    SqlTable = "keyword.other.table.sql",
-    SqlName = "entity.name.function.sql",
-    SqlCascade = "keyword.other.cascade.sql",
-    SqlType = "storage.type.sql",
-    SqlNumber = "constant.numeric.sql",
-    SqlModifier = "storage.modifier.sql",
-    SqlBoolean = "constant.boolean.sql",
-    SqlDml = "keyword.other.DML.sql",
-    SqlLogical = "keyword.operator.logical.sql",
-    SqlNull = "constant.language.sql",
-    SqlDml2 = "keyword.other.DML.II.sql",
-    SqlLuw = "keyword.other.LUW.sql",
-    SqlAuthorization = "keyword.other.authorization.sql",
-    SqlObjectComments = "keyword.other.object-comments.sql",
-    SqlAlias = "keyword.operator.assignment.alias.sql",
-    SqlOrder = "keyword.other.order.sql",
-    SqlStar = "variable.language.star.sql",
-    SqlComparison = "keyword.operator.comparison.sql",
-    SqlMath = "keyword.operator.math.sql",
-    SqlConcatenator = "keyword.operator.concatenator.sql",
-    SqlScalar = "support.function.scalar.sql",
-    SqlAggregate = "support.function.aggregate.sql",
-    SqlStringFunction = "support.function.string.sql",
-    SqlDatabase = "constant.other.database-name.sql",
-    SqlTableName = "constant.other.table-name.sql",
-    SqlScopeBegin = "punctuation.section.scope.begin.sql",
-    SqlScopeEnd = "punctuation.section.scope.end.sql",
-    SqlStringBegin = "punctuation.definition.string.begin.sql",
-    SqlStringEnd = "punctuation.definition.string.end.sql",
-    SqlEscape = "constant.character.escape.sql",
-    SqlInterpolated = "string.interpolated.sql",
-    SqlInterpolatedBegin = "string.interpolated.sql punctuation.definition.string.begin.sql",
-    SqlInterpolatedEnd = "string.interpolated.sql punctuation.definition.string.end.sql",
-    SqlDot = "punctuation.accessor.dot.sql",
+    // SQL's kinds, from here on: `Sql` and the next `sql::KINDS - 1` leaves are SQL's kinds in
+    // order, whose scopes `sql::scopes` gives (Python's SQL runs on SQL's scanner, embedded)
+    Sql = "",
 }
 
 /// A wrap, what the stack around a token adds to its leaf, as bits: `meta.annotation`, then
@@ -456,14 +420,26 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
     if kind >> LEAF_BITS >= 2 * WRAPS {
         return Vec::new();
     }
-    let (Some(leaf), Some(host)) = (LEAVES.get(leaf), HOSTS.get(usize::from(host))) else {
+    let ann = if ann { "meta.annotation.python" } else { "" };
+    let Some(host) = HOSTS.get(usize::from(host)) else {
         return Vec::new();
     };
-    let inner = usize::from(inner);
-    let ann = if ann { "meta.annotation.python" } else { "" };
-    [ann, host, INNERS[inner], leaf]
-        .iter()
-        .flat_map(|s| s.split(' '))
+    let inner = INNERS[usize::from(inner)];
+    let pre = [ann, host, inner].into_iter().flat_map(|s| s.split(' '));
+    if leaf >= L::Sql as usize {
+        let k = (leaf - L::Sql as usize) as u16;
+        if usize::from(k) >= crate::sql::KINDS {
+            return Vec::new();
+        }
+        return pre
+            .chain(crate::sql::scopes(k))
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
+    let Some(leaf) = LEAVES.get(leaf) else {
+        return Vec::new();
+    };
+    pre.chain(leaf.split(' '))
         .filter(|s| !s.is_empty())
         .collect()
 }
@@ -638,7 +614,7 @@ const SQL_SINGLE: u8 = SQL_MAIN + 5;
 const SQL_BACKTICK: u8 = SQL_MAIN + 6;
 const SQL_DOUBLE: u8 = SQL_MAIN + 7;
 const SQL_BRACKETS: u8 = SQL_MAIN + 8;
-const SQL_CREATE: u8 = SQL_MAIN + 9;
+// `SQL_MAIN + 9`: `identifier_create` (named only in `TO_SQL`)
 /// The regex grammar's contexts.
 const RE_MAIN: u8 = SQL_MAIN + 10;
 const RE_COMMENT: u8 = RE_MAIN + 1;
@@ -719,6 +695,31 @@ fn wrap(c: u8, w: u16) -> u16 {
     }
 }
 
+/// The bytes a `"` string's prototype can start on in the SQL it holds: its end, an escape
+/// or a line continuation, a placeholder.
+static SQL_YIELDS_DQ: [bool; 256] = stops(b"\"\\%{}");
+/// A `'` string's.
+static SQL_YIELDS_SQ: [bool; 256] = stops(b"'\\%{}");
+
+/// SQL's context for each of the SQL's contexts here, from [`SQL_MAIN`].
+const TO_SQL: [u8; 10] = {
+    use crate::sql::*;
+    [
+        MAIN, DASHES, HASHES, BLOCK, MODR, SINGLE, BACKTICK, DOUBLE, BRACKETS, CREATE,
+    ]
+};
+
+/// The context here for each of SQL's.
+const FROM_SQL: [u8; 10] = {
+    let mut t = [SQL_MAIN; 10];
+    let mut i = 0;
+    while i < TO_SQL.len() {
+        t[TO_SQL[i] as usize] = SQL_MAIN + i as u8;
+        i += 1;
+    }
+    t
+};
+
 /// How many places [`Scan::info`] keeps what it found for.
 const WCACHE: usize = 8;
 
@@ -748,6 +749,10 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         looped: false,
         stuck: 0,
         wcache: [const { std::cell::Cell::new((usize::MAX, Word::NONE)) }; WCACHE],
+        sql: crate::sql::Embedded {
+            is_end: usize::MAX,
+            at: 0,
+        },
         out,
     };
     let n = usize::from(state.depth);
@@ -846,7 +851,6 @@ const fn stops(bytes: &[u8]) -> [bool; 256] {
 static DOC_STOPS: [bool; 256] = stops(b"\\\"'");
 static QUOTE_STOPS: [bool; 256] = stops(b"\"'");
 static STRING_STOPS: [bool; 256] = stops(b"\"'\\{}%");
-static SQL_TEXT_STOPS: [bool; 256] = stops(b"\"'\\{}%#`*");
 static RE_COMMENT_STOPS: [bool; 256] = stops(b"\"'\\{}%)");
 static RE_STOPS: [bool; 256] = stops(b"\"'\\{}%#^$?+*|()[].");
 
@@ -1315,6 +1319,8 @@ struct Scan<'b, 'c> {
     stuck: usize,
     /// The places [`Scan::info`] looked at last, and what it found, by the place's low bits.
     wcache: [std::cell::Cell<(usize, Word)>; WCACHE],
+    /// The SQL's scan between the string's turns on this line.
+    sql: crate::sql::Embedded,
     out: &'b mut Out<'c>,
 }
 
@@ -1722,8 +1728,6 @@ impl Scan<'_, '_> {
             DOC_DQ | DOC_SQ => &DOC_STOPS,
             DOC_RAW_DQ | DOC_RAW_SQ => &QUOTE_STOPS,
             RE_COMMENT => &RE_COMMENT_STOPS,
-            SQL_DASHES | SQL_HASH | SQL_SINGLE | SQL_DOUBLE | SQL_BACKTICK | SQL_BRACKETS
-            | SQL_MODR => &SQL_TEXT_STOPS,
             RE_MAIN | RE_GROUP => &RE_STOPS,
             c if (STR..SQL_MAIN).contains(&c)
                 && !matches!((c - STR) % VARIANTS, V_RDETECT | V_DETECT) =>
@@ -1744,6 +1748,45 @@ impl Scan<'_, '_> {
             q += 1;
         }
         q
+    }
+
+    /// The SQL's context `c` on top at `p`, where its string's prototype didn't match: SQL's
+    /// scanner, embedded, up to the next place the prototype can start, or past the line.
+    fn sql(&mut self, p: usize, c: u8) -> Option<usize> {
+        // `SQL_MAIN`'s level: the SQL keeps at most one context above it
+        let d = if c == SQL_MAIN {
+            self.depth - 1
+        } else {
+            self.depth - 2
+        };
+        let host = self.host();
+        let dq = host < STR || ((host - STR) / VARIANTS).is_multiple_of(2);
+        let w = BASES[usize::from(self.raws[d])];
+        let embed = crate::sql::Embed {
+            yields: if dq { &SQL_YIELDS_DQ } else { &SQL_YIELDS_SQ },
+            base: w + L::Sql as u16,
+            text: w,
+        };
+        self.fill(p);
+        self.sql.at = self.at;
+        let ctx = TO_SQL[usize::from(c - SQL_MAIN)];
+        let (q, ctx) = crate::sql::embedded(
+            &self.b[..self.n],
+            p,
+            ctx,
+            &embed,
+            &mut self.sql,
+            &mut *self.out,
+        )?;
+        self.at = self.sql.at;
+        // the stack as the SQL leaves it
+        self.depth = d + 1;
+        if ctx == crate::sql::MAIN {
+            self.refresh();
+        } else {
+            self.push(FROM_SQL[usize::from(ctx)]);
+        }
+        Some(q)
     }
 
     /// The top context's patterns at `p`.
@@ -3737,6 +3780,62 @@ mod tests {
         assert!(t.contains(&("a".into(), vec!["variable.parameter.python"])));
         assert!(t.contains(&("int".into(), vec!["support.type.python"])));
         assert!(t.contains(&("return".into(), vec!["keyword.control.flow.return.python"])));
+    }
+
+    /// The SQL in a string runs on SQL's scanner, embedded: the string's own patterns come
+    /// first at each place they can start, and SQL's take the rest.
+    #[test]
+    fn sql_in_strings_takes_turns_with_the_string() {
+        let has = |t: &[(String, Vec<&str>)], text: &str, scopes: &[&str]| {
+            assert!(
+                t.iter()
+                    .any(|(x, s)| x == text && s.iter().copied().eq(scopes.iter().copied())),
+                "{text:?} {scopes:?} in {t:?}"
+            );
+        };
+        let dq = "string.quoted.double.python";
+        // an escape ending in a word's byte leaves no `\b` before `FROM`
+        let t = lex(r#"q = "SELECT a\nFROM b WHERE c = %s""#);
+        has(&t, "SELECT", &[dq, "keyword.other.DML.sql"]);
+        has(&t, r"\n", &[dq, "constant.character.escape.python"]);
+        has(&t, "WHERE", &[dq, "keyword.other.DML.sql"]);
+        has(&t, "%s", &[dq, "constant.other.placeholder.python"]);
+        assert!(!t.iter().any(|(x, _)| x == "FROM"), "{t:?}");
+        // the string's end inside a SQL string and a SQL comment
+        let t = lex(r#"q = "SELECT 'a" + "INSERT INTO t -- c" + x"#);
+        has(
+            &t,
+            "'",
+            &[
+                dq,
+                "string.quoted.single.sql",
+                "punctuation.definition.string.begin.sql",
+            ],
+        );
+        has(&t, " c", &[dq, "comment.line.double-dash.sql"]);
+        has(&t, "+", &["keyword.operator.arithmetic.python"]);
+        // an escape in a SQL string takes the SQL string's scope too
+        let t = lex(r#"q = "SELECT 'a\tb'""#);
+        has(
+            &t,
+            r"\t",
+            &[
+                dq,
+                "string.quoted.single.sql",
+                "constant.character.escape.python",
+            ],
+        );
+        // `create … view\s*` takes the line's `\n`; the next line's name is plain
+        let t = lex("q = \"\"\"CREATE VIEW \nv AS SELECT 1\"\"\"");
+        assert!(!t.iter().any(|(x, _)| x == "v"), "{t:?}");
+        has(
+            &t,
+            "AS",
+            &[
+                "string.quoted.double.block.python",
+                "keyword.operator.assignment.alias.sql",
+            ],
+        );
     }
 
     #[test]

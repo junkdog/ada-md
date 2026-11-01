@@ -22,21 +22,25 @@
 use crate::{Out, State};
 
 // The contexts above `main`, by what they read; the line comments end with their line.
-const MAIN: u8 = 0;
+pub(crate) const MAIN: u8 = 0;
 /// `/* … */`.
-const BLOCK: u8 = 1;
+pub(crate) const BLOCK: u8 = 1;
 /// `'…'`.
-const SINGLE: u8 = 2;
+pub(crate) const SINGLE: u8 = 2;
 /// `"…"`.
-const DOUBLE: u8 = 3;
+pub(crate) const DOUBLE: u8 = 3;
 /// `` `…` ``.
-const BACKTICK: u8 = 4;
+pub(crate) const BACKTICK: u8 = 4;
 /// `%{…}`.
-const BRACKETS: u8 = 5;
+pub(crate) const BRACKETS: u8 = 5;
 /// `%r{…}`.
-const MODR: u8 = 6;
+pub(crate) const MODR: u8 = 6;
 /// `identifier_create`: the name after `create table`.
-const CREATE: u8 = 7;
+pub(crate) const CREATE: u8 = 7;
+/// Embedded only: `--` and `#` to the line's end, where a host's pattern can still end them
+/// (on its own, a line comment is one token to the line's end).
+pub(crate) const DASHES: u8 = 8;
+pub(crate) const HASHES: u8 = 9;
 
 // The kinds: an index into [`LEAVES`].
 const DASH: u16 = 1;
@@ -91,9 +95,12 @@ const TABLE: u16 = 74;
 const SCOPE_BEGIN: u16 = 75;
 const SCOPE_END: u16 = 76;
 
+/// How many kinds there are.
+pub(crate) const KINDS: usize = 77;
+
 /// Each kind's scopes under `source.sql`: bat's for the token, with the meta scope of the
 /// pattern that matched it.
-static LEAVES: [&str; 77] = [
+static LEAVES: [&str; KINDS] = [
     "",
     "comment.line.double-dash.sql",
     "comment.line.double-dash.sql punctuation.definition.comment.sql",
@@ -195,6 +202,9 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         out,
         mark: 0,
         is_end: usize::MAX,
+        from: 0,
+        embed: None,
+        at: 0,
     };
     let mut ctx = state.word() as u8;
     // a context's lexing up to the line's end, or to where it hands over to another
@@ -213,6 +223,92 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         }
     }
     state.set_word(u64::from(ctx));
+}
+
+/// SQL in a host language's string (phase 4): what the host gives the scan.
+///
+/// The host's patterns (the string's end, its escapes and placeholders) come before SQL's at
+/// every place, as syntect's `with_prototype` and `embed … escape` have them, so the scan hands
+/// each place one of them can start back to the host ([`embedded`]). A SQL token that starts
+/// before such a place may run past it, as syntect's leftmost match does.
+pub(crate) struct Embed<'t> {
+    /// The bytes a pattern of the host's can start on; the line's end is always one.
+    pub yields: &'t [bool; 256],
+    /// Added to each of SQL's kinds: where they sit among the host's.
+    pub base: u16,
+    /// The kind of the text no SQL pattern takes in `main`: the host string's.
+    pub text: u16,
+}
+
+/// What the scan of a line keeps between the host's turns.
+pub(crate) struct Embedded {
+    /// [`Scan::is_end`]: `usize::MAX` at a line's start.
+    pub is_end: usize,
+    /// Where the spans so far end; the text before a SQL token, past it, is
+    /// [`Embed::text`].
+    pub at: usize,
+}
+
+/// Lex SQL embedded in a host's string, in context `ctx`, from `p`, where the host's patterns
+/// didn't match: up to the next place they could (a byte of [`Embed::yields`] or the line's
+/// end), or past the line. Where it stopped and the context there; `None` from past the line.
+pub(crate) fn embedded(
+    b: &[u8],
+    p: usize,
+    ctx: u8,
+    host: &Embed,
+    keep: &mut Embedded,
+    out: &mut Out,
+) -> Option<(usize, u8)> {
+    let n = b.len();
+    if p > n {
+        return None;
+    }
+    let mut s = Scan {
+        b,
+        n,
+        out,
+        mark: p,
+        is_end: keep.is_end,
+        from: p,
+        embed: Some(host),
+        at: keep.at,
+    };
+    let (mut p, mut ctx) = (p, ctx);
+    loop {
+        let next = match ctx {
+            MAIN => s.main(p),
+            BLOCK => s.block(p),
+            SINGLE..=MODR => s.string(ctx, p),
+            CREATE => s.create(p),
+            DASHES | HASHES => s.line_comment(ctx, p),
+            _ => None,
+        };
+        match next {
+            Some((q, c)) => {
+                (p, ctx) = (q, c);
+                if q > n {
+                    // past the `\n` a match took, `{{end_identifier}}`'s `$` holds, and
+                    // `identifier_create` pops (as `create` does past the line on its own)
+                    if ctx == CREATE {
+                        ctx = MAIN;
+                    }
+                    break;
+                }
+                if q > s.from && (q == n || host.yields[usize::from(b[q])]) {
+                    break;
+                }
+            }
+            // the context ran to the line's end: the host's turn there, then past it
+            None => {
+                p = if s.from < n { n } else { n + 1 };
+                break;
+            }
+        }
+    }
+    keep.is_end = s.is_end;
+    keep.at = s.at;
+    Some((p, ctx))
 }
 
 // The words a pattern of `main` starts with, by the pattern (or the part of one) they start.
@@ -569,6 +665,18 @@ static STOP: [bool; 256] = {
     t
 };
 
+/// [`STOP`] and the bytes a host's pattern can start on, for an embedded scan.
+static EMBED_STOP: [bool; 256] = {
+    let mut t = STOP;
+    let mut i = 0;
+    let host = b"\\{}$\"'`%";
+    while i < host.len() {
+        t[host[i] as usize] = true;
+        i += 1;
+    }
+    t
+};
+
 /// `[A-Za-z0-9_]`.
 static WORD: [bool; 256] = {
     let mut t = [false; 256];
@@ -580,7 +688,7 @@ static WORD: [bool; 256] = {
     t
 };
 
-struct Scan<'b, 'o, 's> {
+struct Scan<'b, 'o, 's, 'e> {
     b: &'b [u8],
     n: usize,
     out: &'o mut Out<'s>,
@@ -590,12 +698,40 @@ struct Scan<'b, 'o, 's> {
     /// Where the line's last `\s+(is)\s+` has its `is`, for `comment on`: 0 for none,
     /// `usize::MAX` until asked.
     is_end: usize,
+    /// Embedded: where the scan took over from the host, whose patterns had their turn there.
+    from: usize,
+    /// The host, when embedded.
+    embed: Option<&'e Embed<'e>>,
+    /// Embedded: where the spans so far end.
+    at: usize,
 }
 
-impl Scan<'_, '_, '_> {
+impl Scan<'_, '_, '_, '_> {
     fn tok(&mut self, start: usize, end: usize, kind: u16) {
-        self.out.push(start, end.min(self.n), kind);
+        let e = end.min(self.n);
+        match self.embed {
+            None => self.out.push(start, e, kind),
+            Some(host) => {
+                if start > self.at && host.text != 0 {
+                    self.out.push_merged(self.at, start, host.text);
+                }
+                if e > start {
+                    self.out.push(start, e, host.base + kind);
+                    self.at = e;
+                } else {
+                    self.at = self.at.max(start);
+                }
+            }
+        }
         self.mark = end;
+    }
+
+    /// Whether the host's patterns get the place `p`, past where the scan took over.
+    fn yields(&self, p: usize) -> bool {
+        match self.embed {
+            None => false,
+            Some(host) => p > self.from && p < self.n && host.yields[usize::from(self.b[p])],
+        }
     }
 
     /// Where the `\s` before `p` starts, not before [`Scan::mark`]: a pattern's `\s*` takes
@@ -619,8 +755,17 @@ impl Scan<'_, '_, '_> {
     fn main(&mut self, mut p: usize) -> Option<(usize, u8)> {
         let (b, n) = (self.b, self.n);
         self.mark = p;
+        let stop = if self.embed.is_some() {
+            // a word the host's token ended in the middle of: no `\b` before its rest
+            if p > 0 && p < n && is_word(b, p) && is_word_before(b, p) {
+                p = self.rest_of_word(p, word_end(b, p));
+            }
+            &EMBED_STOP
+        } else {
+            &STOP
+        };
         while p < n {
-            if !STOP[usize::from(b[p])] {
+            if !stop[usize::from(b[p])] {
                 p += 1;
                 continue;
             }
@@ -632,15 +777,24 @@ impl Scan<'_, '_, '_> {
                 }
                 continue;
             }
+            if self.yields(p) {
+                return Some((p, MAIN));
+            }
             let next = b.get(p + 1).copied();
             match c {
                 b'-' if next == Some(b'-') => {
                     self.tok(p, p + 2, DASH_MARK);
+                    if self.embed.is_some() {
+                        return Some((p + 2, DASHES));
+                    }
                     self.tok(p + 2, n, DASH);
                     return None;
                 }
                 b'#' => {
                     self.tok(p, p + 1, HASH_MARK);
+                    if self.embed.is_some() {
+                        return Some((p + 1, HASHES));
+                    }
                     self.tok(p + 1, n, HASH);
                     return None;
                 }
@@ -701,7 +855,26 @@ impl Scan<'_, '_, '_> {
                 _ => p += char_len(c),
             }
         }
+        // a token took the line's `\n`: the host gets no turn at it
+        if p > n && self.embed.is_some() {
+            return Some((p, MAIN));
+        }
         None
+    }
+
+    /// Embedded, a line comment from `p` (its mark's end): its text up to the host's next
+    /// place, or to the line's end, where it pops.
+    fn line_comment(&mut self, ctx: u8, p: usize) -> Option<(usize, u8)> {
+        let n = self.n;
+        if p >= n {
+            return Some((n + 1, MAIN));
+        }
+        let mut q = p;
+        while q < n && !self.yields(q) {
+            q += 1;
+        }
+        self.tok(p, q, if ctx == DASHES { DASH } else { HASH });
+        if q < n { Some((q, ctx)) } else { None }
     }
 
     /// The patterns of `main` at `p`, a word's start: where the scan goes on in `main`, or
@@ -1219,8 +1392,10 @@ impl Scan<'_, '_, '_> {
                 p = q + 1;
             }
         }
+        // the host's next place: its patterns come first there
+        let lim = self.host_next(p);
         let mut q = p;
-        while let Some(i) = b[q.min(n)..].iter().position(|&c| c == b'*') {
+        while let Some(i) = b[q.min(lim)..lim].iter().position(|&c| c == b'*') {
             let star = q + i;
             if b.get(star + 1) == Some(&b'/') {
                 self.tok(p, star + 2, COMMENT);
@@ -1228,8 +1403,20 @@ impl Scan<'_, '_, '_> {
             }
             q = star + 1;
         }
-        self.tok(p, n, COMMENT);
-        None
+        self.tok(p, lim, COMMENT);
+        if lim < n { Some((lim, BLOCK)) } else { None }
+    }
+
+    /// The first place from `p` the host's patterns get, or the line's end.
+    fn host_next(&self, p: usize) -> usize {
+        if self.embed.is_none() {
+            return self.n;
+        }
+        let mut q = p;
+        while q < self.n && !self.yields(q) {
+            q += 1;
+        }
+        q
     }
 
     /// String `ctx` from `p`: `None` at the line's end, or `main` past its end.
@@ -1247,12 +1434,25 @@ impl Scan<'_, '_, '_> {
             _ => b'#',
         };
         let mut text = p;
-        while p < n {
-            let c = b[p];
-            if c != quote && c != other {
+        // the host's next place (the line's end on its own), where its patterns come first
+        let mut lim = self.host_next(p);
+        loop {
+            while p < lim && b[p] != quote && b[p] != other {
                 p += 1;
+            }
+            if p >= lim {
+                if p >= n {
+                    break;
+                }
+                if p == lim {
+                    self.tok(text, p, string_kind(ctx, TEXT));
+                    return Some((p, ctx));
+                }
+                // an escape took the host's place: the next one from here
+                lim = self.host_next(p);
                 continue;
             }
+            let c = b[p];
             if c == quote {
                 if matches!(ctx, SINGLE | DOUBLE) && b.get(p + 1) == Some(&quote) {
                     self.tok(text, p, string_kind(ctx, TEXT));
@@ -1303,6 +1503,9 @@ impl Scan<'_, '_, '_> {
         loop {
             if p > n {
                 return Some((p, MAIN));
+            }
+            if self.yields(p) {
+                return Some((p, CREATE));
             }
             if let Some((s, e, end)) = self.create_name(p) {
                 // `(?:(\w+)|'([^']+)'|"([^"]+)"|`([^`]+)`){{end_identifier}}`
@@ -1399,6 +1602,15 @@ fn is_word(b: &[u8], i: usize) -> bool {
         Some(_) => wide_char(b, i).is_some_and(|c| c.is_alphabetic() || is_nd(c)),
         None => false,
     }
+}
+
+/// Whether the character before byte `p` of `b` is a word's.
+fn is_word_before(b: &[u8], p: usize) -> bool {
+    let mut s = p - 1;
+    while s > 0 && b[s] & 0xc0 == 0x80 {
+        s -= 1;
+    }
+    is_word(b, s)
 }
 
 /// Where the word at `p` ends.
