@@ -878,7 +878,10 @@ impl Scan<'_, '_, '_> {
                     }
                 } else if is_space(self.b[self.i]) && (q & Q_BLANK != 0 || (q & Q_BLANK_IN != 0 && self.i > 0)) {
                     let k = self.ws(self.i);
-                    if !matches!(self.c(k), b'<' | b'/' | b'(' | b'[' | b'{' | b':' | b'?' | b'!' | b'a') {
+                    let d = self.c(k);
+                    if !(matches!(d, b'<' | b'/' | b'(' | b'[' | b'{' | b':' | b'?' | b'!')
+                        || (d == b'a' && self.rest(k).starts_with(b"async")))
+                    {
                         self.i = k.min(self.n);
                         self.stuck = 0;
                         self.zero.0 = usize::MAX;
@@ -1147,7 +1150,7 @@ fn family(f: u8) -> Family {
 }
 
 /// Frames of code whose turn can't match at the line's end, nor at a blank unless the next
-/// non-blank is `<`, `/`, `(`, `[`, `{`, `:`, `?`, `!` or `a`. Their turns are `statements` or
+/// non-blank is `<`, `/`, `(`, `[`, `{`, `:`, `?`, `!` or `async`. Their turns are `statements` or
 /// `expression` and a closing bracket or two, each pattern of which needs a particular byte at the
 /// place, `\s*` then one of those bytes (`\s*<` a cast, type arguments or JSX, `\s*/` a regex, a
 /// division or a comment, `\s*\(` and `\s*<` an arrow's head or a call after `)`, `\s*\[` an
@@ -1200,6 +1203,18 @@ fn text_of(f: u8) -> Option<u16> {
         LINE_EOL => LINE,
         _ => return None,
     })
+}
+
+/// Whether name `w` holds a `$`: a byte loop, as names are short (`<[u8]>::contains` calls
+/// memchr, which took 4% of the scan's time on the census, 2026-11-01).
+#[allow(clippy::manual_contains)]
+fn has_dollar(w: &[u8]) -> bool {
+    w.iter().any(|&c| c == b'$')
+}
+
+/// An ASCII byte that starts a name, `[_$[:alpha:]]`.
+fn is_name_start(c: u8) -> bool {
+    c.is_ascii_alphabetic() || c == b'_' || c == b'$'
 }
 
 /// `\s`: a blank, the line's `\n` too.

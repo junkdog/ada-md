@@ -36,6 +36,11 @@ impl Scan<'_, '_, '_> {
         if c == b';' {
             return self.take(i, i + 1, TERMINATOR);
         }
+        if is_name_start(c)
+            && let Some(r) = self.plain_name(true)
+        {
+            return r;
+        }
         if self.alpha_or_at(c) && (self.declaration() || self.control()) {
             return true;
         }
@@ -551,6 +556,10 @@ impl Scan<'_, '_, '_> {
 
     /// `(?<=^w|[^\._$[:alnum:]]w)` at `i` for one of `ws`.
     pub(super) fn word_ends_at(&self, i: usize, ws: &[&[u8]]) -> bool {
+        // each word ends in a lowercase letter: most places have none before them
+        if i == 0 || i > self.n || !self.b[i - 1].is_ascii_lowercase() {
+            return false;
+        }
         ws.iter().any(|w| {
             i >= w.len() && &self.b[i - w.len()..i] == *w && {
                 let s = i - w.len();
@@ -637,6 +646,33 @@ impl Scan<'_, '_, '_> {
         match c {
             b',' => self.take(i, i + 1, COMMA),
             b';' => self.take(i, i + 1, TERMINATOR),
+            _ => false,
+        }
+    }
+
+    /// Whether no pattern of a class body matches at the blank `i` (not after a `:`), so the blanks
+    /// are passed: at a blank, the members' patterns look past the blanks for a key and what
+    /// follows it (`(`, `<`, `?`, `!`, `=`, `:`, `;`, `,`, `}` or the line's end), or
+    /// `constructor`, `new` or `async`; the expression's for `<`, `(`, `[`, `{`, `:`, a regex or a
+    /// division, and a template. Before a modifier (`private x`), a decorator, a `}` or a `/*` none
+    /// can.
+    pub(super) fn class_blank_passes(&self, i: usize) -> bool {
+        let k = self.ws(i);
+        match self.c(k) {
+            b'@' | b'}' => true,
+            b'/' => self.c(k + 1) == b'*' || (self.c(k + 1) == b'/' && i > 0),
+            c if is_name_start(c) => {
+                if self.tick > i {
+                    return false;
+                }
+                let e = look::name(self.b, k);
+                let w = &self.b[k..e];
+                if matches!(w, b"constructor" | b"new" | b"async") || has_dollar(w) {
+                    return false;
+                }
+                let r = self.ws(e);
+                r < self.n && !matches!(self.c(r), b'?' | b'(' | b'<' | b'!' | b'=' | b':' | b';' | b',' | b'}')
+            }
             _ => false,
         }
     }
@@ -1063,6 +1099,33 @@ impl Scan<'_, '_, '_> {
                     self.i = i + 1;
                     return self.pop();
                 }
+                // at a blank before a name, `object_member` can match only a method's key (the
+                // name, then `(`, `<` or `?`), or a key's method after a quote or `]`: otherwise
+                // the blanks are passed
+                if i < self.n && is_space(c) {
+                    let k = self.ws(i);
+                    if is_name_start(self.c(k))
+                        && !matches!(self.c(self.ws(self.name(k))), b'(' | b'<' | b'?')
+                        && !(i > 0 && matches!(self.b[i - 1], b']' | b'\'' | b'"' | b'`'))
+                    {
+                        self.i = k;
+                        return true;
+                    }
+                }
+                // a name and `:`, a key: `object_member`'s other patterns all need something else
+                // after the name (a method's `(` or `<`, a key after `async`, `get` or `set`)
+                if is_name_start(c) {
+                    let e = self.name(i);
+                    let k = self.ws(e);
+                    if self.c(k) == b':' && !has_dollar(&self.b[i..e]) {
+                        let v = look::comments(self.b, self.ws(k + 1));
+                        if look::fn_value(self.b, self.ws(v), self.tsx) {
+                            return self.take(i, e, ENTITY_FN);
+                        }
+                        self.i = k.min(self.n);
+                        return true;
+                    }
+                }
                 self.object_member()
             }
             OBJ_VAL | OBJ_SPREAD => {
@@ -1412,6 +1475,15 @@ impl Scan<'_, '_, '_> {
                     self.tok(i, i + 1, BLOCK_BRACE);
                     self.i = i + 1;
                     return self.pop();
+                }
+                // at the line's end only `(?<=:)\s*` can match: every other pattern needs a byte
+                // ahead, past blanks
+                if i == self.n && !(i > 0 && self.b[i - 1] == b':') {
+                    return false;
+                }
+                if i < self.n && is_space(c) && !(i > 0 && self.b[i - 1] == b':') && self.class_blank_passes(i) {
+                    self.i = self.ws(i).min(self.n);
+                    return true;
                 }
                 self.class_body()
             }

@@ -4,14 +4,299 @@
 use super::words;
 use super::*;
 
+/// `support-objects`' first pattern, a member `w` (its [`words::class`] `cl`) after a `.`: its
+/// kind, `call` if a `(` follows it past blanks and `no_call` unless a `(` follows it or its type
+/// parameters. (`PLAIN` for `Number`'s constants: the grammar's capture 4 is in its lookahead.)
+fn member_support(w: &[u8], cl: u32, call: bool, no_call: bool) -> Option<u16> {
+    Some(if matches!(w, b"constructor" | b"length" | b"prototype" | b"__proto__") && no_call {
+        SUPPORT_PROP
+    } else if matches!(w, b"EPSILON" | b"MAX_SAFE_INTEGER" | b"MAX_VALUE" | b"MIN_SAFE_INTEGER" | b"MIN_VALUE" | b"NEGATIVE_INFINITY" | b"POSITIVE_INFINITY") {
+        PLAIN
+    } else if cl & words::DOM_CONST != 0 && no_call {
+        DOM_CONST
+    } else if cl & words::DOM_PROP != 0 && no_call {
+        DOM_PROP
+    } else if call && cl & words::EVENT_HANDLER != 0 {
+        EVENT_HANDLER
+    } else if call && cl & words::BROWSER_FN != 0 {
+        SUPPORT_FN
+    } else if call && cl & words::DOM_FN != 0 {
+        SUPPORT_FN_DOM
+    } else if call && matches!(w, b"all" | b"catch" | b"finally" | b"race" | b"reject" | b"resolve" | b"then") {
+        PROMISE_FN
+    } else {
+        return None;
+    })
+}
+
+/// [`Scan::call_chain`]'s answer.
+enum Chain {
+    /// The call's tokens taken, its arguments' frame pushed.
+    Call,
+    /// No call of any target from the name.
+    NoCall,
+    /// Not shown either way.
+    Unknown,
+}
+
 impl Scan<'_, '_, '_> {
     /// `expression` at the place.
     pub(super) fn expression(&mut self) -> bool {
+        let c = self.c(self.i);
         // no pattern before the comma's can start at a `,`
-        if self.c(self.i) == b',' {
+        if c == b',' {
             return self.take(self.i, self.i + 1, COMMA);
         }
+        if is_name_start(c)
+            && let Some(r) = self.plain_name(false)
+        {
+            return r;
+        }
+        if matches!(c, b'.' | b'?')
+            && let Some(r) = self.plain_member()
+        {
+            return r;
+        }
         self.expression_without_identifiers() || self.identifiers() || self.expression_punctuations()
+    }
+
+    /// A name at the place that no pattern keys on ([`words::AT_NAME`]), classified once by the
+    /// byte after it instead of through `expression`'s patterns, each of which would fail on it
+    /// but `identifiers`' (and an arrow's parameter before `=>`): `None` where something else
+    /// may follow it (a call, a property, a template, a label in `statements`), for the patterns
+    /// in order.
+    pub(super) fn plain_name(&mut self, stmt: bool) -> Option<bool> {
+        let i = self.i;
+        if self.tick > i || !self.wb(i) {
+            return None;
+        }
+        let e = self.name(i);
+        let w = &self.b[i..e];
+        // `\b` falls before a `$` (`function$x` is `function` then `$x`), so a name with one is
+        // left to the patterns
+        if has_dollar(w) {
+            return None;
+        }
+        let cl = words::class(w);
+        if cl & (words::LITERAL | words::OP_WORD) != 0 {
+            return self.keyword_name(i, e, cl, stmt);
+        }
+        if cl & words::AT_NAME != 0 {
+            return None;
+        }
+        let k = self.ws(e);
+        match self.c(k) {
+            // `function-call` with its target and `(` in one step: the target's turn would find
+            // only the name, and the call's only the `(`; the frames' depth as theirs would be
+            b'(' if k == e && self.depth + 2 < MAX => {
+                self.tok(i, e, ENTITY_FN);
+                self.tok(e, e + 1, ROUND);
+                self.i = e + 1;
+                self.push(CALL_ARGS);
+                Some(true)
+            }
+            // a call's target through dots, else `object-identifiers`
+            b'.' => Some(match if k == e { self.call_chain(i, e, READWRITE) } else { Chain::Unknown } {
+                Chain::Call => true,
+                Chain::NoCall => self.plain_object(i, e),
+                Chain::Unknown => self.function_call() || self.plain_object(i, e),
+            }),
+            b'(' | b'<' | b'?' | b'!' | b'`' => None,
+            b':' if stmt => None,
+            b'=' if self.c(k + 1) == b'>' => {
+                // arrow-function's first: `name\s*(?==>)`
+                self.tok(i, e, PARAM);
+                self.i = k.min(self.n);
+                Some(true)
+            }
+            b'=' if self.c(k + 1) != b'=' && look::fn_value(self.b, self.ws(k + 1), self.tsx) => Some(self.take(i, e, ENTITY_FN)),
+            _ => {
+                let u = look::upper(self.b, i);
+                Some(self.take(i, e, if u == e { CONSTANT } else { READWRITE }))
+            }
+        }
+    }
+
+    /// [`Scan::plain_name`] for a keyword `i..e` of `literal`'s or an operator word that takes
+    /// only itself (`await`, `delete`, `void`, `new`): the patterns before them can take one only
+    /// as an arrow's parameter or a label, or as a call's target.
+    fn keyword_name(&mut self, i: usize, e: usize, cl: u32, stmt: bool) -> Option<bool> {
+        let k = self.ws(e);
+        let d = self.c(k);
+        if (d == b'=' && self.c(k + 1) == b'>') || (d == b':' && stmt) {
+            return None;
+        }
+        if cl & words::OP_WORD != 0 {
+            if !self.we(e) {
+                return None;
+            }
+            return Some(match &self.b[i..e] {
+                b"new" => {
+                    self.tok(i, e, NEW);
+                    self.i = e;
+                    self.push(NEW_F);
+                    true
+                }
+                b"await" => self.take(i, e, FLOW),
+                b"delete" => self.take(i, e, DELETE),
+                _ => self.take(i, e, VOID),
+            });
+        }
+        match d {
+            b'(' | b'<' | b'?' | b'!' | b'`' => return None,
+            b'.' if k == e && &self.b[i..e] == b"this" && self.boundary(e) => match self.call_chain(i, e, THIS) {
+                Chain::Call => return Some(true),
+                Chain::NoCall => {}
+                Chain::Unknown => {
+                    if self.function_call() {
+                        return Some(true);
+                    }
+                }
+            },
+            b'.' if self.function_call() => return Some(true),
+            _ => {}
+        }
+        let kind = match &self.b[i..e] {
+            b"this" => THIS,
+            b"super" => SUPER,
+            b"true" => TRUE,
+            b"false" => FALSE,
+            b"null" => NULL,
+            b"undefined" => UNDEFINED,
+            b"NaN" => NAN,
+            _ => INFINITY,
+        };
+        let end_ok = if matches!(kind, THIS | SUPER) { self.boundary(e) } else { self.we(e) };
+        if !end_ok {
+            return None;
+        }
+        Some(self.take(i, e, kind))
+    }
+
+    /// `function-call` of a target `i..e` (a plain name, or `this`: `first` its kind) then plain
+    /// members, `.name` each, and `(` right after the last, in one step: the target's turns
+    /// would give the first its kind (as an object before a `.`), each middle one an object's
+    /// property, the last a function, and the call's turn take the `(`. `None` for any other
+    /// shape (a blank, `?.`, `#`, a `$`), left to the patterns, but where the members end before
+    /// a byte no call can follow ([`Chain::NoCall`]).
+    fn call_chain(&mut self, i: usize, e: usize, first: u16) -> Chain {
+        let mut segs = [(0, 0); 8];
+        let mut n = 0;
+        let mut j = e;
+        while self.c(j) == b'.' {
+            let s = j + 1;
+            if !is_name_start(self.c(s)) || n == segs.len() {
+                return Chain::Unknown;
+            }
+            let ne = self.name(s);
+            let w = &self.b[s..ne];
+            if has_dollar(w) {
+                return Chain::Unknown;
+            }
+            segs[n] = (s, ne);
+            n += 1;
+            j = ne;
+        }
+        if n == 0 {
+            return Chain::Unknown;
+        }
+        if self.c(j) != b'(' || self.depth + 2 >= MAX {
+            // `function-call`'s targets end only where these members do, at a `.` or here: a
+            // call needs `(`, `<`, `?.` or `!` after one
+            return if matches!(self.c(self.ws(j)), b'(' | b'<' | b'?' | b'!' | b'.') { Chain::Unknown } else { Chain::NoCall };
+        }
+        let kind = match first {
+            THIS => THIS,
+            _ if &self.b[segs[0].0..segs[0].1] == b"prototype" => SUPPORT_CLASS,
+            _ if look::upper(self.b, i) == e => CONSTANT_OBJ,
+            _ => OBJECT,
+        };
+        self.tok(i, e, kind);
+        for (k, &(s, ne)) in segs[..n].iter().enumerate() {
+            self.tok(s - 1, s, ACCESSOR);
+            // `support-objects` first, at the `.`; the last one's name in its own turn after the
+            // accessor (no pattern but the name's after a `.`), each other one's with its `.`
+            let w = &self.b[s..ne];
+            let last = k + 1 == n;
+            let cl = words::class(w);
+            let support = if cl & words::AT_DOT != 0 { member_support(w, cl, last, !last) } else { None };
+            let kind = if let Some(kind) = support {
+                kind
+            } else if last {
+                ENTITY_FN
+            } else if look::upper(self.b, s) == ne {
+                CONSTANT_OBJ_PROP
+            } else {
+                OBJECT_PROP
+            };
+            self.tok(s, ne, kind);
+        }
+        self.tok(j, j + 1, ROUND);
+        self.i = j + 1;
+        self.push(CALL_ARGS);
+        Chain::Call
+    }
+
+    /// `identifiers` for a plain name `i..e` before a `.` that no call follows:
+    /// `object-identifiers`' `prototype` and object, else the name.
+    pub(super) fn plain_object(&mut self, i: usize, e: usize) -> bool {
+        // name(?=\s*\??\.\s*prototype\b(?!\$))
+        let mut k = self.ws(e);
+        if self.c(k) == b'?' {
+            k += 1;
+        }
+        if self.c(k) == b'.'
+            && let Some(p) = self.word_b(self.ws(k + 1), b"prototype")
+            && self.c(p) != b'$'
+        {
+            return self.take(i, e, SUPPORT_CLASS);
+        }
+        let u = look::upper(self.b, i);
+        let kind = if self.dot_name_after(e) {
+            if u == e { CONSTANT_OBJ } else { OBJECT }
+        } else if u == e {
+            CONSTANT
+        } else {
+            READWRITE
+        };
+        self.take(i, e, kind)
+    }
+
+    /// A `.` or `?.` and a member name at the place that no pattern keys on ([`words::AT_DOT`]),
+    /// as [`Scan::plain_name`] does a name: `object-identifiers`' property before another
+    /// `.`, `identifiers`' function or property; `None` before a call and the like.
+    pub(super) fn plain_member(&mut self) -> Option<bool> {
+        let i = self.i;
+        if self.tick > i || (self.c(i) == b'.' && self.c(i + 1) == b'.') {
+            return None;
+        }
+        let (de, dk) = self.dot(i)?;
+        let s = self.ws(de);
+        let s2 = if self.c(s) == b'#' { s + 1 } else { s };
+        let ne = self.name(s2);
+        if ne == s2 {
+            return None;
+        }
+        let w = &self.b[s2..ne];
+        if has_dollar(w) {
+            return None;
+        }
+        let cl = words::class(w);
+        let k = self.ws(ne);
+        let kind = match self.c(k) {
+            b'(' | b'<' | b'?' | b'!' | b'`' => return None,
+            // `support-objects` (not after `#`), no call after it
+            _ if s2 == s && cl & words::AT_DOT != 0 && let Some(kind) = member_support(w, cl, false, true) => kind,
+            b'.' if self.dot_name_after(ne) => {
+                if look::upper(self.b, s2) == ne { CONSTANT_OBJ_PROP } else { OBJECT_PROP }
+            }
+            b'=' if s2 == s && self.c(k + 1) != b'=' && look::fn_value(self.b, self.ws(k + 1), self.tsx) => ENTITY_FN,
+            _ => {
+                if look::upper(self.b, s2) == ne { CONSTANT_PROP } else { PROPERTY }
+            }
+        };
+        self.tok(i, de, dk);
+        Some(self.take(s, ne, kind))
     }
 
     /// `expressionPunctuations`: `,`, `.` and `?.`.
@@ -1056,26 +1341,11 @@ impl Scan<'_, '_, '_> {
                 !(t.is_some_and(|t| me.c(t) == b'('))
             };
             let call = self.c(self.ws(ne)) == b'(';
-            let kind = if matches!(w, b"constructor" | b"length" | b"prototype" | b"__proto__") && no_call(self) {
-                SUPPORT_PROP
-            } else if matches!(w, b"EPSILON" | b"MAX_SAFE_INTEGER" | b"MAX_VALUE" | b"MIN_SAFE_INTEGER" | b"MIN_VALUE" | b"NEGATIVE_INFINITY" | b"POSITIVE_INFINITY") {
-                // the grammar's capture 4 is in its lookahead: these words get no scope
-                PLAIN
-            } else if words::dom_const(w) && no_call(self) {
-                DOM_CONST
-            } else if words::dom_prop(w) && no_call(self) {
-                DOM_PROP
-            } else if call && words::event_handler(w) {
-                EVENT_HANDLER
-            } else if call && words::browser_fn(w) {
-                SUPPORT_FN
-            } else if call && words::dom_fn(w) {
-                SUPPORT_FN_DOM
-            } else if call && matches!(w, b"all" | b"catch" | b"finally" | b"race" | b"reject" | b"resolve" | b"then") {
-                PROMISE_FN
-            } else {
+            let cl = words::class(w);
+            if cl & words::AT_DOT == 0 {
                 return false;
-            };
+            }
+            let Some(kind) = member_support(w, cl, call, no_call(self)) else { return false };
             self.tok(i, de, dk);
             return self.take(s, ne, kind);
         }
@@ -1088,10 +1358,14 @@ impl Scan<'_, '_, '_> {
         if !bend {
             return false;
         }
+        let cl = words::class(w);
+        if cl == 0 {
+            return false;
+        }
         if w == b"arguments" {
             return self.take(i, ne, ARGUMENTS);
         }
-        if words::builtin_class(w) {
+        if cl & words::BUILTIN_CLASS != 0 {
             return self.take(i, ne, BUILTIN_CLASS);
         }
         if w.ends_with(b"Error") && matches!(&w[..w.len() - 5], b"" | b"Eval" | b"Internal" | b"Range" | b"Reference" | b"Syntax" | b"Type" | b"URI") {
@@ -1100,7 +1374,7 @@ impl Scan<'_, '_, '_> {
         if w == b"Promise" {
             return self.take(i, ne, PROMISE);
         }
-        if words::support_fn(w) && self.c(self.ws(ne)) == b'(' {
+        if cl & words::SUPPORT_FN != 0 && self.c(self.ws(ne)) == b'(' {
             return self.take(i, ne, SUPPORT_FN);
         }
         // (Math|console|JSON)(?:\s*(\.|\?\.)\s*(member))?\b(?!\$)
@@ -1128,16 +1402,16 @@ impl Scan<'_, '_, '_> {
         match w {
             b"Math" => {
                 return with_member(self, MATH, &|m| {
-                    if words::math_fn(m) {
+                    if words::class(m) & words::MATH_FN != 0 {
                         Some(MATH_FN)
-                    } else if words::math_const(m) {
+                    } else if words::class(m) & words::MATH_CONST != 0 {
                         Some(MATH_CONST)
                     } else {
                         None
                     }
                 });
             }
-            b"console" => return with_member(self, CONSOLE, &|m| words::console_fn(m).then_some(CONSOLE_FN)),
+            b"console" => return with_member(self, CONSOLE, &|m| (words::class(m) & words::CONSOLE_FN != 0).then_some(CONSOLE_FN)),
             b"JSON" => return with_member(self, JSON, &|m| matches!(m, b"parse" | b"stringify").then_some(JSON_FN)),
             b"import" | b"new" => {
                 let (k1, want, kind) = if w == b"import" { (IMPORT, &b"meta"[..], IMPORT_META) } else { (NEW, &b"target"[..], NEW_TARGET) };
@@ -1153,13 +1427,13 @@ impl Scan<'_, '_, '_> {
             }
             _ => {}
         }
-        if words::dom_var(w) {
+        if cl & words::DOM_VAR != 0 {
             return self.take(i, ne, DOM_VAR);
         }
-        if words::dom_class(w) {
+        if cl & words::DOM_CLASS != 0 {
             return self.take(i, ne, DOM_CLASS);
         }
-        if words::node_class(w) {
+        if cl & words::NODE_CLASS != 0 {
             return self.take(i, ne, NODE_CLASS);
         }
         if w == b"process" {
@@ -1170,9 +1444,9 @@ impl Scan<'_, '_, '_> {
                 let e = self.name(de);
                 let m = &self.b[de..e];
                 if e > de && self.boundary(e) && self.c(e) != b'$' {
-                    let mk = if words::process_prop(m) {
+                    let mk = if words::class(m) & words::PROCESS_PROP != 0 {
                         Some(PROCESS_PROP)
-                    } else if words::process_fn(m) {
+                    } else if words::class(m) & words::PROCESS_FN != 0 {
                         Some(PROCESS_FN)
                     } else {
                         None
