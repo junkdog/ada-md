@@ -6,3 +6,5 @@
 /fuzz/out
 /demo/demo.gif
 *.pending-snap
+/.bench-lock
+/.bench-running

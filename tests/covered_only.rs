@@ -118,6 +118,13 @@ static int count(const char *s, size_t n) { return printf(\"%s %zu\\n\", s, n); 
 func (p *Pair[K, V]) Swap(a int) (r Pair[V, K]) { x := map[string][]byte{}; return fmt.Sprintf(\"%v {{.X}}\", x) }
 ```
 
+```python
+@app.route(\"/x\", methods=['GET'])
+async def f(a, *b, c: int = 1) -> dict[str, int]:
+    \"\"\"Doc.\"\"\"
+    return {k: rf\"\\d{v!r:>4}\" for k, v in re.findall(r\"(?P<n>[a-z]+)\", \"SELECT 1\")}
+```
+
 ```text
 plain
 ```
@@ -191,6 +198,8 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         "Program.cs",
         "build.csx",
         "main.go",
+        "main.py",
+        "stubs.pyi",
     ] {
         let t = FileType::by_path(Path::new(name));
         assert!(
@@ -206,6 +215,6 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         assert!(!highlight::syntaxes_loaded(), "{first} loaded the set");
     }
 
-    print(&format!("{NOTE}\n```python\ndef main(): pass\n```\n"));
-    assert!(highlight::syntaxes_loaded(), "a Python fence needs the set");
+    print(&format!("{NOTE}\n```lua\nlocal x = 1\n```\n"));
+    assert!(highlight::syntaxes_loaded(), "a Lua fence needs the set");
 }

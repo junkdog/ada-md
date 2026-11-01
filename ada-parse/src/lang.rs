@@ -55,6 +55,8 @@ pub enum Lang {
     CSharp,
     /// bat's `Go`.
     Go,
+    /// bat's `Python`.
+    Python,
 }
 
 /// Fence languages that no syntax names, and the token each stands for (`zsh` for bash's).
@@ -228,10 +230,36 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::C, &["c"]),
     (Lang::CSharp, &["cs", "csx"]),
     (Lang::Go, &["go"]),
+    (
+        Lang::Python,
+        &[
+            "py",
+            "py3",
+            "pyw",
+            "pyi",
+            "pyx",
+            "pyx.in",
+            "pxd",
+            "pxd.in",
+            "pxi",
+            "pxi.in",
+            "rpy",
+            "cpy",
+            "sconstruct",
+            "sconscript",
+            "gyp",
+            "gypi",
+            "snakefile",
+            "vpy",
+            "wscript",
+            "bazel",
+            "bzl",
+        ],
+    ),
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 23] = [
+    pub const ALL: [Lang; 24] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -255,6 +283,7 @@ impl Lang {
         Lang::C,
         Lang::CSharp,
         Lang::Go,
+        Lang::Python,
     ];
 
     /// The name of the syntax it stands in for, as syntect names it.
@@ -283,6 +312,7 @@ impl Lang {
             Lang::C => "C",
             Lang::CSharp => "C#",
             Lang::Go => "Go",
+            Lang::Python => "Python",
         }
     }
 
@@ -312,6 +342,7 @@ impl Lang {
             Lang::C => "source.c",
             Lang::CSharp => "source.cs",
             Lang::Go => "source.go",
+            Lang::Python => "source.python",
         }
     }
 
@@ -342,6 +373,7 @@ impl Lang {
             Lang::C => crate::cpp::scopes(kind),
             Lang::CSharp => crate::csharp::scopes(kind),
             Lang::Go => crate::go::scopes(kind),
+            Lang::Python => crate::python::scopes(kind),
             _ if self.grammar().is_some() => {
                 self.grammar().map_or_else(Vec::new, |g| g.scopes(kind))
             }
@@ -377,7 +409,8 @@ impl Lang {
             | Lang::Cpp
             | Lang::C
             | Lang::CSharp
-            | Lang::Go => {
+            | Lang::Go
+            | Lang::Python => {
                 return None;
             }
         })
@@ -601,6 +634,8 @@ mod tests {
         assert_eq!(Lang::from_token("c#"), Some(Lang::CSharp));
         assert_eq!(Lang::from_token("csharp"), None);
         assert_eq!(Lang::from_token("go"), Some(Lang::Go));
+        assert_eq!(Lang::from_token("python"), Some(Lang::Python));
+        assert_eq!(Lang::from_token("py"), Some(Lang::Python));
         assert_eq!(Lang::from_token("java"), Some(Lang::Java));
     }
 

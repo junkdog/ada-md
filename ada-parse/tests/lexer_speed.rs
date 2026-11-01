@@ -32,6 +32,7 @@ const LANGS: &[(&str, Lang)] = &[
     ("c", Lang::C),
     ("csharp", Lang::CSharp),
     ("go", Lang::Go),
+    ("python", Lang::Python),
 ];
 
 #[test]

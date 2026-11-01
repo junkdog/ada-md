@@ -2459,6 +2459,59 @@ mod tests {
         rules_match_the_grammar("go", "Go", text);
     }
 
+    /// ada-parse's Python lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (ADR-40): its corners included (a docstring, decorators with and without a call, a
+    /// lookahead's dict, set and tuple, f-strings with a conversion, a format spec and a
+    /// nested replacement, a raw string's regex, a raw f-string's regex with a replacement
+    /// that clears every scope, SQL in a triple-quoted string with the string's escapes and
+    /// placeholders in it, printf and `str.format` placeholders, py2 numbers, a line
+    /// continuation, `print` as a statement and as a call, and a docstring-like string after a
+    /// continuation).
+    #[test]
+    fn python_rules_match_the_grammar() {
+        let text = concat!(
+            "#!/usr/bin/env python3\n",
+            "\"\"\"A module's docstring, \\N{BULLET} \\x41.\"\"\"\n",
+            "from __future__ import annotations\n",
+            "from .pkg import (a as b, c)  # names\n",
+            "import os.path, re\n",
+            "\n",
+            "@dataclass\n",
+            "@app.route(\"/x/<id>\", methods=['GET', \"POST\"])\n",
+            "class Point(Base, metaclass=ABCMeta):\n",
+            "    '''Raw: \\n stays.'''\n",
+            "    x: int = 0\n",
+            "    MAX_SIZE = 0x1F + 0o17 + 0b101 + 017 + 10L + 1_000j + .5e-3 + 1.\n",
+            "\n",
+            "    async def go(self, a, /, *args, b: str = \"x\", **kw) -> dict[str, int]:\n",
+            "        global count; nonlocal_ = lambda x, *y: x + y\n",
+            "        d = {k: v for k, v in kw.items() if k != 'z'}; s = {1, 2}; t = (1, 2)\n",
+            "        e = {'a': 1, **d}; f = {*s}; g = [*t]; h = {}; i = ()\n",
+            "        msg = f\"{a!r:>{width}} {b=} {{literal}} {x['k']}\" + rf'\\d{{2}}{a}\\w+'\n",
+            "        rx = re.compile(r\"^(?P<name>[a-z_]\\w*)\\s*(?:=|:)\\s*(?#c)(.+?)$\", re.I)\n",
+            "        sql = \"\"\"\n",
+            "            SELECT a.id, COUNT(*) FROM t AS a -- the rows\n",
+            "            WHERE a.name = '%s' AND b IS NOT NULL ORDER BY 1 DESC\n",
+            "        \"\"\"\n",
+            "        old = \"%(name)-10s %5.2f %%\" % vars() + \"{0:>{1}} {name!s}\".format(1, 2)\n",
+            "        when = time.strftime('%Y-%m-%d %-H') + b'\\x00\\777' + u'\\u00e9'\n",
+            "        print >> sys.stderr, \"x\"\n",
+            "        print(x, end=\"\")\n",
+            "        x = y if z else \\\n",
+            "            \"\"\"not a docstring\"\"\"\n",
+            "        with open(p) as fh, lock: pass\n",
+            "        try:\n",
+            "            yield from gen()\n",
+            "        except (KeyError, ValueError) as err:\n",
+            "            raise RuntimeError(\"x\") from err\n",
+            "        finally:\n",
+            "            return await x[1:2], ..., None, __name__, __init__\n",
+            "    for i in range(10): del i\n",
+            "    while not done: break\n",
+        );
+        rules_match_the_grammar("python", "Python", text);
+    }
+
     /// ada-parse's Dockerfile lexer picks the rules bat's grammar picks, in every built-in
     /// theme (ADR-40).
     #[test]
