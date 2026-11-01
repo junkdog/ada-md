@@ -87,15 +87,23 @@ const BUILT_ON: &[&str] = &["C++", "C"];
 
 /// Covered grammars kept for the blocks of them other grammars embed, where those blocks are
 /// common enough that going plain would be a loss: `JavaScript (Babel)` is what
-/// `scope:source.js` resolves to in the onig set, so HTML's, Vue's and Svelte's `<script>`
-/// (and PHP's, Ruby's, Markdown's …) run on it (ADR-40's phase 5; until phase 6 covers HTML);
+/// `scope:source.js` resolves to in the onig set, so Vue's and Svelte's `<script>` (and PHP's,
+/// Ruby's, Markdown's …) run on it (ADR-40's phase 5);
 /// `TypeScript` is Vue's and Svelte's `<script lang="ts">`. `TypeScriptReact` goes: only
 /// Typst's fences embed it. `SQL`, for Ruby's and PHP's SQL strings and heredocs, Perl's,
 /// CFML's and Crystal's, and `SQL (Rails)`, which is SQL whole: 2,250 bytes of the dump. `CSS`,
-/// for HTML's `<style>` and `style=` (and PHP's, Perl's, Ruby's, Crystal's, Twig's, MediaWiki's),
-/// until phase 6 covers HTML. `SCSS`, for Vue's `<style lang="scss">`, as `TypeScript` for its
-/// `<script lang="ts">`: 5,831 bytes of the onig dump.
-const EMBEDDED: &[&str] = &["JavaScript (Babel)", "TypeScript", "SQL", "CSS", "SCSS"];
+/// for PHP's, Perl's, Ruby's, Crystal's, Twig's and MediaWiki's CSS, and the `HTML` they embed.
+/// `SCSS`, for Vue's `<style lang="scss">`, as `TypeScript` for its `<script lang="ts">`: 5,831
+/// bytes of the onig dump. `HTML` (ADR-40's phase 6), for PHP, Markdown, Vue, Svelte, ASP,
+/// templates and the other grammars that host it or embed its blocks.
+const EMBEDDED: &[&str] = &[
+    "JavaScript (Babel)",
+    "TypeScript",
+    "SQL",
+    "CSS",
+    "SCSS",
+    "HTML",
+];
 
 /// The grammars to empty, by index: the ones ada-parse covers but [`BUILT_ON`]'s and
 /// [`EMBEDDED`]'s, then every

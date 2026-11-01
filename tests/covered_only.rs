@@ -172,6 +172,11 @@ enum E { A = 1 } namespace N { export type K = keyof typeof E; }
 .btn-#{$k} { &:hover { margin: -$gap auto; } @include mx($a: 1) { b: c; } }
 ```
 
+```html
+<!DOCTYPE html><p class=\"a\" style=\"color: red\" onclick=\"go(1)\">x &amp; y<br/></p><!-- c -->
+<style>a:hover { color: #fc0 }</style><script>const x = `t ${1 < 2}`; // </script>
+```
+
 ```text
 plain
 ```
@@ -261,6 +266,8 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         "view.tsx",
         "site.css",
         "_variables.scss",
+        "index.html",
+        "page.htm",
     ] {
         let t = FileType::by_path(Path::new(name));
         assert!(

@@ -1248,7 +1248,7 @@ mod tests {
         };
         let b = text.as_bytes();
         let mut spans = Vec::new();
-        let mut out = Out(&mut spans);
+        let mut out = Out::new(&mut spans);
         let (mut p, mut st, mut at) = (0, 0, 0);
         while let Some((q, s)) = embedded(b, p, st, &host, &mut at, &mut out) {
             // the host's turn: its escape is two bytes, here unmarked

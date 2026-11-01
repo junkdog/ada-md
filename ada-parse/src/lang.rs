@@ -74,6 +74,8 @@ pub enum Lang {
     Css,
     /// bat's `SCSS`: CSS's scanner with SCSS's contexts.
     Scss,
+    /// bat's `HTML`, with its CSS and JavaScript on their scanners.
+    Html,
 }
 
 /// Fence languages that no syntax names, and the token each stands for (`zsh` for bash's).
@@ -286,10 +288,11 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::PowerShell, &["ps1", "psm1", "psd1"]),
     (Lang::Css, &["css", "css.erb", "css.liquid"]),
     (Lang::Scss, &["scss"]),
+    (Lang::Html, &["html", "htm", "shtml", "xhtml"]),
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 32] = [
+    pub const ALL: [Lang; 33] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -322,6 +325,7 @@ impl Lang {
         Lang::TypeScriptReact,
         Lang::Css,
         Lang::Scss,
+        Lang::Html,
     ];
 
     /// The name of the syntax it stands in for, as syntect names it.
@@ -359,6 +363,7 @@ impl Lang {
             Lang::TypeScriptReact => "TypeScriptReact",
             Lang::Css => "CSS",
             Lang::Scss => "SCSS",
+            Lang::Html => "HTML",
         }
     }
 
@@ -397,6 +402,7 @@ impl Lang {
             Lang::TypeScriptReact => "source.tsx",
             Lang::Css => "source.css",
             Lang::Scss => "source.scss",
+            Lang::Html => "text.html.basic",
         }
     }
 
@@ -435,6 +441,7 @@ impl Lang {
             Lang::TypeScript => crate::typescript::scopes(kind, false),
             Lang::TypeScriptReact => crate::typescript::scopes(kind, true),
             Lang::Css | Lang::Scss => crate::css::scopes(kind),
+            Lang::Html => crate::html::scopes(kind),
             Lang::Bash => crate::bash::scopes(kind),
             Lang::Makefile => crate::bash::make_scopes(kind),
             _ if self.grammar().is_some() => {
@@ -481,7 +488,8 @@ impl Lang {
             | Lang::TypeScript
             | Lang::TypeScriptReact
             | Lang::Css
-            | Lang::Scss => {
+            | Lang::Scss
+            | Lang::Html => {
                 return None;
             }
         })
@@ -718,6 +726,9 @@ mod tests {
         assert_eq!(Lang::from_token("scss"), Some(Lang::Scss));
         assert_eq!(Lang::from_token("SCSS"), Some(Lang::Scss));
         assert_eq!(Lang::from_file_name("_variables.scss"), Some(Lang::Scss));
+        assert_eq!(Lang::from_token("html"), Some(Lang::Html));
+        assert_eq!(Lang::from_token("HTML"), Some(Lang::Html));
+        assert_eq!(Lang::from_file_name("index.html"), Some(Lang::Html));
         assert_eq!(Lang::from_token("java"), Some(Lang::Java));
     }
 

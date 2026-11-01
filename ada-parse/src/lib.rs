@@ -27,6 +27,7 @@ mod dockerfile;
 mod dotenv;
 mod git;
 mod go;
+mod html;
 mod ini;
 mod java;
 mod javascript;
@@ -154,7 +155,7 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         _ => {}
     }
     spans.clear();
-    let mut out = Out(spans);
+    let mut out = Out::new(spans);
     match lang {
         Lang::Diff => diff::line(line.as_bytes(), &mut out),
         Lang::Ini => ini::line(line.as_bytes(), &mut out),
@@ -177,6 +178,7 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::TypeScriptReact => typescript::line(line.as_bytes(), true, state, &mut out),
         Lang::Css => css::line(line.as_bytes(), state, &mut out),
         Lang::Scss => css::scss::line(line.as_bytes(), state, &mut out),
+        Lang::Html => html::line(line.as_bytes(), state, &mut out),
         Lang::Bash => bash::line(line.as_bytes(), state, &mut out),
         Lang::Makefile => bash::make_line(line.as_bytes(), state, &mut out),
         _ => {
@@ -187,10 +189,15 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
     }
 }
 
-/// A line's spans as a lexer pushes them.
-struct Out<'a>(&'a mut Vec<Span>);
+/// A line's spans as a lexer pushes them; with `false`, [`Out::push_merged`] joins none (HTML's
+/// embeds, which tell a token from a context's text by its span).
+struct Out<'a>(&'a mut Vec<Span>, bool);
 
-impl Out<'_> {
+impl<'a> Out<'a> {
+    fn new(spans: &'a mut Vec<Span>) -> Out<'a> {
+        Out(spans, true)
+    }
+
     /// How many spans there are.
     fn len(&self) -> usize {
         self.0.len()
@@ -217,6 +224,7 @@ impl Out<'_> {
         if let Some(last) = self.0.last_mut()
             && last.end as usize == start
             && last.kind == kind
+            && self.1
         {
             last.end = end as u32;
             return;

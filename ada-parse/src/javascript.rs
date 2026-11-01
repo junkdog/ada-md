@@ -347,6 +347,25 @@ const SYNTECT_DEPTH: usize = 99;
 /// Lex `b`, a line of JavaScript without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
+    lex(b, 0, state, out);
+}
+
+/// Lex `b`, a line holding JavaScript from `from` (HTML's `<script>` and `on…="…"`), from `state`.
+#[inline(never)]
+pub(crate) fn line_from(b: &[u8], from: usize, state: &mut State, out: &mut Out) {
+    lex(b, from, state, out);
+}
+
+/// Whether a span of kind `kind` is a context's text (a comment's, a string's, a regex
+/// literal's), or a template's, which Babel matches a character at a time, not a token: an HTML
+/// embed's escape cuts text, where a token that started before it runs past it (a `//` comment
+/// takes a `</script>` after it, `\"` an attribute's quote).
+pub(crate) fn is_text(kind: u16) -> bool {
+    matches!(kind, DOC_TEXT | BLOCK_TEXT | STR | RE | JSTR | TPL_TEXT)
+}
+
+#[inline(always)]
+fn lex(b: &[u8], from: usize, state: &mut State, out: &mut Out) {
     let mut s = Scan {
         b,
         n: b.len(),
@@ -358,7 +377,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         low: 1,
         exact: state.is_exact(),
         text: PLAIN,
-        at: 0,
+        at: from,
         loop_at: (usize::MAX, 0),
         looped: false,
         stuck: 0,
@@ -1284,7 +1303,7 @@ impl<'b> Scan<'b, '_> {
 
     fn run(&mut self) {
         let end = self.n + 1;
-        let mut p = 0;
+        let mut p = self.at;
         loop {
             // at the line's `\n` and past it no pattern of code, of a comment or of a template's
             // text can match (`core` and `expression` take nothing there, nor these contexts'

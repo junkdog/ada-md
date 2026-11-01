@@ -3762,7 +3762,7 @@ mod tests {
         let mut out = Vec::new();
         for l in text.lines() {
             let mut spans = Vec::new();
-            line(l.as_bytes(), &mut state, &mut Out(&mut spans));
+            line(l.as_bytes(), &mut state, &mut Out::new(&mut spans));
             for s in spans {
                 out.push((
                     l[s.start as usize..s.end as usize].to_string(),

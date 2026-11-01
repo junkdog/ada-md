@@ -2818,6 +2818,46 @@ mod tests {
         rules_match_the_grammar("scss", "SCSS", text);
     }
 
+    /// ada-parse's HTML lexer, with CSS's and JavaScript's for what HTML embeds, picks the rules
+    /// bat's grammar picks, in every built-in theme (ADR-40's phase 6): the doctype with its
+    /// external id and internal subset, `<?xml`, comments good and bad, CDATA, every tag list
+    /// and its end (`/>` where it may self-close), custom tags with bad characters, other tags,
+    /// attributes of each kind with quoted, unquoted and bad values, character references in
+    /// text, strings and unquoted values, `<style>` and `<script>` of each type with their closing
+    /// tags (`<!--`, `-->`, `</style >`'s escape alone), `style="…"` and `on…='…'` with an
+    /// escaped quote and a `//` comment past the quote, a `//` comment past `</script>`.
+    #[test]
+    fn html_rules_match_the_grammar() {
+        let text = concat!(
+            "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0//EN\" 'x.dtd' [ <!-- s --> ]>\n",
+            "<?xml version=\"1.0\" encoding='utf-8'?>\n",
+            "<!doctype html><!-- a <!-- b --!> c --> <!--> x --> <![CDATA[ <b> ]]> <>\n",
+            "<html lang=en><head><meta charset=\"utf-8\"><title>T &amp; &#169; &#x1F600; &x</title>\n",
+            "<link rel=stylesheet href='a.css'/><base href=/x/></head>\n",
+            "<body class=\"a b\" id='main' data-x=\"1\" hidden><div><p>x<br/><hr/><HR>\n",
+            "<form action=\"/go\"><fieldset><input type=text value=\"a&quot;b\" disabled/><button>b</button>\n",
+            "<a href=\"#x\" a\"b=1 c=d\"e`f<g>l</a><table><tr><td>1</td></tr></table></fieldset></form>\n",
+            "<my-el foo=bar></my-el><x-É-Y.z\\.w></x-É-Y.z\\.w><foo:bar baz='1'/></foo:bar><svg-x/>\n",
+            "<span style=\"color: red; font-family: Arial\" onclick=\"go(1); return false\">s</span>\n",
+            "<i style='content:\"\\'x\"' onmouseover='a // b'>i</i>\n",
+            "<style type=\"text/css\" media=print>\n",
+            "  body > .a::before { color: #fc0; margin: 0 -1em; }\n",
+            "  /* c */ @media (min-width: 40em) { a:hover { b: c } }\n",
+            "</style><style type=text/less>@x: 1;</style><style>a { b: c }</style >x\n",
+            "y</style><style/>\n",
+            "<script>\n",
+            "<!--\n",
+            "  var x = 1 < 2 ? \"a\" : 'b'; // </script> stays a comment\n",
+            "  function f(a) { return `t ${a}` / 2; }\n",
+            "-->\n",
+            "</script>\n",
+            "<script type=\"module\" src=x.js></script><script type='text/html'><b>t</b></script>\n",
+            "<script type=\"text/template\"><div>{{x}}</div></script><script>f()</SCRIPT >\n",
+            "</div></body></html>\n",
+        );
+        rules_match_the_grammar("html", "HTML", text);
+    }
+
     /// ada-parse's Dockerfile lexer picks the rules bat's grammar picks, in every built-in
     /// theme (ADR-40).
     #[test]

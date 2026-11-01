@@ -112,6 +112,8 @@ const MEDIA_BODY: u8 = 37;
 const SUPPORTS: u8 = 38;
 /// `@supports`' `( … )`.
 const SUP_PAREN: u8 = 39;
+/// `rule-list-body` alone: HTML's `style="…"` embeds it.
+const RLB: u8 = 40;
 
 // A function's group (`meta.group`, its arguments) is a context from 64; the function call
 // around it (`meta.function-call`: its `(` and `)`) is the group's id with `WRAP` set.
@@ -458,6 +460,7 @@ fn ops(ctx: u8) -> &'static [u8] {
         ATTR_VAL => &[P_ATTR_UNQUOTED, P_STRING, P_ATTR_VAL_END],
         PL => &[P_PL_END, P_RULE_LIST],
         PL_BODY => &[P_PL_BODY_END, P_COMMENT, P_PROP_NAME, P_VALUE],
+        RLB => &[P_COMMENT, P_PROP_NAME, P_VALUE],
         PROP_NAME => &[
             P_PROP_NAME_END,
             P_VENDOR,
@@ -1453,7 +1456,33 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         clippy::redundant_closure_for_method_calls,
         reason = "the method itself isn't general over the scan's lifetimes"
     )]
-    lex::<false>(b, state, out, |s| s.run());
+    lex::<false>(b, 0, state, out, |s| s.run());
+}
+
+/// Lex `b`, a line holding CSS from `from` (HTML's `<style>` and `style="…"`), from `state`.
+#[inline(never)]
+pub(crate) fn line_from(b: &[u8], from: usize, state: &mut State, out: &mut Out) {
+    #[allow(
+        clippy::redundant_closure_for_method_calls,
+        reason = "the method itself isn't general over the scan's lifetimes"
+    )]
+    lex::<false>(b, from, state, out, |s| s.run());
+}
+
+/// Whether a span of kind `kind` is a context's text (a comment's, a string's), not a token: an
+/// HTML embed's escape cuts text, where a token that started before it runs past it.
+pub(crate) fn is_text(kind: u16) -> bool {
+    kind & ((1 << LEAF_BITS) - 1) == PLAIN
+}
+
+/// The state of CSS's `rule-list-body` alone, where HTML's `style="…"` starts.
+pub(crate) fn rule_list_body() -> State {
+    let mut s = State {
+        depth: 1,
+        ..State::default()
+    };
+    s.levels[0] = RLB;
+    s
 }
 
 /// Lex `b` from `state` with `run`: CSS's scan or SCSS's ([`scss`]), the stack kept between lines
@@ -1461,6 +1490,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
 #[inline(always)]
 fn lex<const S: bool>(
     b: &[u8],
+    from: usize,
     state: &mut State,
     out: &mut Out,
     run: impl FnOnce(&mut Scan<'_, '_, '_, S>),
@@ -1471,7 +1501,7 @@ fn lex<const S: bool>(
         out,
         stack: [MAIN; MAX],
         depth: 1,
-        at: 0,
+        at: from,
         spaces_run: Run::new((usize::MAX, 0)),
         digits_run: Run::new((usize::MAX, 0)),
         letters_run: Run::new((usize::MAX, 0)),
@@ -1881,7 +1911,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
     /// has reached; when none matches, the next character.
     fn run(&mut self) {
         let n = self.n;
-        let mut p = 0;
+        let mut p = self.at;
         // whether a search starts at `p`: the line's start, or right after a match
         let mut fresh = true;
         let mut guard = 0u32;

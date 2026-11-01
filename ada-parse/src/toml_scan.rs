@@ -863,8 +863,8 @@ mod tests {
         for (n, text) in block.split('\n').enumerate() {
             a.clear();
             b.clear();
-            machine::line(&toml::GRAMMAR, text.as_bytes(), &mut port, &mut Out(&mut a));
-            line(text.as_bytes(), &mut scan, &mut Out(&mut b));
+            machine::line(&toml::GRAMMAR, text.as_bytes(), &mut port, &mut Out::new(&mut a));
+            line(text.as_bytes(), &mut scan, &mut Out::new(&mut b));
             let want = bytes(text.len(), &a, |k| toml::GRAMMAR.scopes(k));
             let got = bytes(text.len(), &b, scopes);
             if want != got {
@@ -1019,7 +1019,7 @@ mod tests {
                         let mut state = State::default();
                         for line in text.lines() {
                             spans.clear();
-                            lex(line.as_bytes(), &mut state, &mut Out(&mut spans));
+                            lex(line.as_bytes(), &mut state, &mut Out::new(&mut spans));
                         }
                     }
                     t.elapsed()

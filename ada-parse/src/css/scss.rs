@@ -53,7 +53,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         clippy::redundant_closure_for_method_calls,
         reason = "the method itself isn't general over the scan's lifetimes"
     )]
-    lex::<true>(b, state, out, |s| s.scss_run());
+    lex::<true>(b, 0, state, out, |s| s.scss_run());
 }
 
 /// A kind of the front matter's embedded YAML: YAML's kind with this bit set.
@@ -74,7 +74,7 @@ fn front_matter_line(b: &[u8], state: &mut State, out: &mut Out) {
     let mut y = State::default();
     y.levels[..8].copy_from_slice(&w);
     let mut spans = Vec::new();
-    crate::yaml_scan::line(b, &mut y, &mut Out(&mut spans));
+    crate::yaml_scan::line(b, &mut y, &mut Out::new(&mut spans));
     // YAML's spans, the gaps between them `frontmatter.jekyll source.yaml` (YAML's kind 0)
     let mut at = 0;
     for sp in spans {
