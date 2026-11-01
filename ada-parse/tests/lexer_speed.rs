@@ -30,6 +30,7 @@ const LANGS: &[(&str, Lang)] = &[
     ("java", Lang::Java),
     ("cpp", Lang::Cpp),
     ("c", Lang::C),
+    ("csharp", Lang::CSharp),
 ];
 
 #[test]

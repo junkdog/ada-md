@@ -2330,6 +2330,67 @@ mod tests {
         rules_match_the_grammar("c", "C", text);
     }
 
+    /// ada-parse's C# lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (ADR-40): its corners included (comments the prototype doesn't reach into, a line
+    /// comment's `/*` opening a block comment, a placeholder's format spec, an interpolation
+    /// clearing its string, a verbatim string across lines, `_3D` and `٠m` as floats, a
+    /// preprocessor line's rest invalid, doc comments' tags, a property's accessors).
+    #[test]
+    fn csharp_rules_match_the_grammar() {
+        let text = concat!(
+            "// a note // nested /* opens a block\n",
+            "still the block */ after\n",
+            "using System; using static System.Math; using Alias = Some.Name<int>;\n",
+            "#region Things\n",
+            "#if DEBUG && !RELEASE // why\n",
+            "#pragma warning disable CS0168, IDE0001\n",
+            "#nullable enable\n",
+            "#endif\n",
+            "namespace A.B.C\n",
+            "{\n",
+            "    /// <summary>A <see cref=\"Foo\"/> thing, TODO: https://x.y/z</summary>\n",
+            "    /// <param name=\"x\">the x</param>\n",
+            "    [Serializable, Obsolete(\"old\", error: true)]\n",
+            "    [assembly: global::Xunit.Auto._47DEQ.Attr]\n",
+            "    public sealed partial class Foo<T, in U> : Bar<T>, IBaz where T : class, new()\n",
+            "    {\n",
+            "        private readonly int _x = 0x1F_FF, _y = 0b1010;\n",
+            "        public event EventHandler<int> Changed;\n",
+            "        public string Name { get; private set; } = \"n\";\n",
+            "        public int this[int i] => i * 2;\n",
+            "        static Foo() : base() { }\n",
+            "        ~Foo() { }\n",
+            "        public static Foo operator +(Foo a, Foo b) => a;\n",
+            "        internal async Task<List<int>> GetAsync(ref int a, out var b, params object[] c)\n",
+            "        {\n",
+            "            var s = $\"a {x,-10:N2} {{b}} {(y ? 1 : 2)}\" + @\"c:\\dir\"\" {0}\" + $@\"{z}\";\n",
+            "            var f = string.Format(\"{0:D3} {1}\", 1.5e-3f, 'c') + '\\u0041' + 10UL + .5m;\n",
+            "            Texture.Create(TextureType._3D, x٠m, 1_000);\n",
+            "            if (a is int n && b as string != null) { return; } else if (x) y++; else z--;\n",
+            "            foreach (var (k, v) in dict) { switch (k) { case 1: case Kind.A when v > 0: break; default: goto done; } }\n",
+            "            for (int i = 0; i < 10; i++) while (true) do { } while (false);\n",
+            "            try { throw new InvalidOperationException(nameof(x)); }\n",
+            "            catch (Exception e) when (e.Message != null) { }\n",
+            "            finally { lock (o) { } }\n",
+            "            using (var r = new StreamReader(p)) { }\n",
+            "            Func<int, int> sq = x => x * x; var t = (a: 1, b: 2); (int q, string w) = (1, \"\");\n",
+            "            var list = new List<int> { 1, 2 }; var anon = new { A = 1, B = \"b\" };\n",
+            "            var arr = new int[] { 1 }; int? m = null; var c = (Foo)obj; checked(x + 1);\n",
+            "            var q2 = from c in list where c > 1 select c;\n",
+            "            yield return default(T); typeof(List<>); unsafe { int* p = &x; }\n",
+            "        done:\n",
+            "            return await Task.FromResult(new List<int>());\n",
+            "        }\n",
+            "    }\n",
+            "    public enum Color : byte { Red = 1, Green, }\n",
+            "    public delegate void Handler<T>(object sender, T args);\n",
+            "    interface IBaz { void Do(); }\n",
+            "    public readonly ref struct Span2 { }\n",
+            "}\n",
+        );
+        rules_match_the_grammar("cs", "C#", text);
+    }
+
     /// ada-parse's Dockerfile lexer picks the rules bat's grammar picks, in every built-in
     /// theme (ADR-40).
     #[test]

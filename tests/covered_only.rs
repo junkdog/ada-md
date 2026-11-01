@@ -108,6 +108,11 @@ int main() { auto s = R\"x(raw)x\"; return std::vector<int>{1, 2}.size(); }
 static int count(const char *s, size_t n) { return printf(\"%s %zu\\n\", s, n); }
 ```
 
+```cs
+/// <summary>A class.</summary>
+[Serializable] public class P<T> { public string N { get; } = $\"x {y:N2}\"; }
+```
+
 ```text
 plain
 ```
@@ -178,6 +183,8 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         "main.cpp",
         "widget.hpp",
         "main.c",
+        "Program.cs",
+        "build.csx",
     ] {
         let t = FileType::by_path(Path::new(name));
         assert!(

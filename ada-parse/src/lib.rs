@@ -17,6 +17,7 @@
 //! context for context, until scanners replace them. Makefiles and bash are still lexed in ada.
 
 mod cpp;
+mod csharp;
 mod diff;
 mod dockerfile;
 mod dotenv;
@@ -152,6 +153,7 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::Java => java::line(line.as_bytes(), state, &mut out),
         Lang::Cpp => cpp::line(line.as_bytes(), state, &mut out),
         Lang::C => cpp::line_c(line.as_bytes(), state, &mut out),
+        Lang::CSharp => csharp::line(line.as_bytes(), state, &mut out),
         _ => {
             if let Some(g) = lang.grammar() {
                 machine::line(g, line.as_bytes(), state, &mut out);
