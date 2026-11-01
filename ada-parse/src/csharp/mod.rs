@@ -24,6 +24,7 @@
 
 mod ctx;
 mod re;
+pub(crate) use re::ND;
 
 use crate::machine::KEPT as HALF;
 use crate::{Out, State};

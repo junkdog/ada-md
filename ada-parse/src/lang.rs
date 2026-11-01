@@ -53,6 +53,8 @@ pub enum Lang {
     C,
     /// bat's `C#`.
     CSharp,
+    /// bat's `Go`.
+    Go,
 }
 
 /// Fence languages that no syntax names, and the token each stands for (`zsh` for bash's).
@@ -225,10 +227,11 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     ),
     (Lang::C, &["c"]),
     (Lang::CSharp, &["cs", "csx"]),
+    (Lang::Go, &["go"]),
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 22] = [
+    pub const ALL: [Lang; 23] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -251,6 +254,7 @@ impl Lang {
         Lang::Cpp,
         Lang::C,
         Lang::CSharp,
+        Lang::Go,
     ];
 
     /// The name of the syntax it stands in for, as syntect names it.
@@ -278,6 +282,7 @@ impl Lang {
             Lang::Cpp => "C++",
             Lang::C => "C",
             Lang::CSharp => "C#",
+            Lang::Go => "Go",
         }
     }
 
@@ -306,6 +311,7 @@ impl Lang {
             Lang::Cpp => "source.c++",
             Lang::C => "source.c",
             Lang::CSharp => "source.cs",
+            Lang::Go => "source.go",
         }
     }
 
@@ -335,6 +341,7 @@ impl Lang {
             Lang::Cpp => crate::cpp::scopes(kind),
             Lang::C => crate::cpp::scopes(kind),
             Lang::CSharp => crate::csharp::scopes(kind),
+            Lang::Go => crate::go::scopes(kind),
             _ if self.grammar().is_some() => {
                 self.grammar().map_or_else(Vec::new, |g| g.scopes(kind))
             }
@@ -369,7 +376,8 @@ impl Lang {
             | Lang::Java
             | Lang::Cpp
             | Lang::C
-            | Lang::CSharp => {
+            | Lang::CSharp
+            | Lang::Go => {
                 return None;
             }
         })
@@ -592,6 +600,7 @@ mod tests {
         assert_eq!(Lang::from_token("cs"), Some(Lang::CSharp));
         assert_eq!(Lang::from_token("c#"), Some(Lang::CSharp));
         assert_eq!(Lang::from_token("csharp"), None);
+        assert_eq!(Lang::from_token("go"), Some(Lang::Go));
         assert_eq!(Lang::from_token("java"), Some(Lang::Java));
     }
 

@@ -2391,6 +2391,74 @@ mod tests {
         rules_match_the_grammar("cs", "C#", text);
     }
 
+    /// ada-parse's Go lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (ADR-40): its corners included (a `//go:` line's annotation, `&^=` read as `&` and `^=`
+    /// since the grammar's `\&^` holds a line-start anchor, a template in a string clearing
+    /// its scope, a raw string across lines, a call in parentheses closing them, `make`'s type
+    /// argument, a method's receiver, embedded types and tags, `iota`, a type switch, Unicode
+    /// digits, a `(?=\S)` pop passed over by syntect's loop guard).
+    #[test]
+    fn go_rules_match_the_grammar() {
+        let text = concat!(
+            "//go:build linux && !cgo\n",
+            "// Package x does things.\n",
+            "package x\n",
+            "\n",
+            "import (\n",
+            "\t\"fmt\"\n",
+            "\tstr \"strings\"\n",
+            ")\n",
+            "\n",
+            "//go:generate stringer -type=Op\n",
+            "type Op int\n",
+            "\n",
+            "const (\n",
+            "\tA Op = iota // first\n",
+            "\tB, C\n",
+            "\t_ = 1 << 2\n",
+            ")\n",
+            "\n",
+            "var (\n",
+            "\tm   = map[string][]*Op{\"a\": nil}\n",
+            "\tch  chan<- struct{}\n",
+            "\tfn  func(int, ...string) (bool, error)\n",
+            ")\n",
+            "\n",
+            "type (\n",
+            "\tPair[K comparable, V any] struct {\n",
+            "\t\tKey K `json:\"key\"`\n",
+            "\t\tVal V /* the value */\n",
+            "\t\tio.Reader\n",
+            "\t\t*Embedded\n",
+            "\t}\n",
+            "\tAlias = Pair[string, int]\n",
+            "\tI     interface {\n",
+            "\t\tfmt.Stringer\n",
+            "\t\tRead(p []byte) (n int, err error)\n",
+            "\t\tClose() error\n",
+            "\t}\n",
+            ")\n",
+            "\n",
+            "func (p *Pair[K, V]) Swap(a, b int, rest ...float64) (r Pair[V, K]) {\n",
+            "\tx, y := 0x1F, 0o17i + 1.5e-3 + .5 + 0x1p-2 + 089 + 1_000 + '\\n' + '\\x41' + 'é'\n",
+            "\tx &^= y; x <<= 1; x >>= 2; ok := x != y && !(x <= y) || x >= y\n",
+            "\ts := \"%5.2f %[1]q %% {{.Name | printf \\\"%v\\\" | html}} \\u00e9\\t\" + `raw {{ $v := .X }}\n",
+            "still raw %d`\n",
+            "\tv := make([]map[string]int, 3); w := new(Pair[int, int]); n := len(v) + cap(v)\n",
+            "\tswitch t := any(v).(type) { case int, string: fallthrough; default: _ = t }\n",
+            "\tfor i := range v { if i > 0 { continue } else { break } }\n",
+            "\tgo func() { defer close(ch2) }(); select { case <-done: return }\n",
+            "\tf := func(a int) int { return a * 2 }; _ = (f(1)); goto end\n",
+            "end:\n",
+            "\tfmt.Println(str.ToUpper(\"x\"), int64(x), []byte(s), true, false, nil, ٣, x.y.z)\n",
+            "\tvar q struct{ a, b int }; var e error = nil; const k, l = 1, 2\n",
+            "\tm := map[string]\n",
+            "\treturn\n",
+            "}\n",
+        );
+        rules_match_the_grammar("go", "Go", text);
+    }
+
     /// ada-parse's Dockerfile lexer picks the rules bat's grammar picks, in every built-in
     /// theme (ADR-40).
     #[test]

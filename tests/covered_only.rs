@@ -113,6 +113,11 @@ static int count(const char *s, size_t n) { return printf(\"%s %zu\\n\", s, n); 
 [Serializable] public class P<T> { public string N { get; } = $\"x {y:N2}\"; }
 ```
 
+```go
+//go:generate stringer -type=Op
+func (p *Pair[K, V]) Swap(a int) (r Pair[V, K]) { x := map[string][]byte{}; return fmt.Sprintf(\"%v {{.X}}\", x) }
+```
+
 ```text
 plain
 ```
@@ -185,6 +190,7 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         "main.c",
         "Program.cs",
         "build.csx",
+        "main.go",
     ] {
         let t = FileType::by_path(Path::new(name));
         assert!(
