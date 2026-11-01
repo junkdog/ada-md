@@ -15,6 +15,10 @@
 #                                           to the first language's corpus and are copied to corpus/TARGET
 #                                           (the whole one, the CI rounds' seed); findings and the log in
 #                                           out/lang/TARGET-LANGS/; its RC is 72, libFuzzer's on SIGTERM
+#   lang.zsh cmin TARGET LANGS              each language's corpus/TARGET-LANG minimized (libFuzzer's
+#                                           -merge=1 into an empty dir, filtered to the language), the
+#                                           old one replaced; 12 languages at a time, logs in out/lang/.
+#                                           Its inputs are all in corpus/TARGET too, so nothing is lost
 #   lang.zsh names TARGET                   the languages TARGET takes
 #
 # Each builds the target first, as `cargo fuzz run -s none -a` does. A language new to the target starts
@@ -81,6 +85,38 @@ merge1() {
   print -r -- "$l: ${#was} → ${#now} inputs, $(du -sh $d | cut -f1), rc $rc, $(date +%T)"
 }
 
+# cmin1 TARGET LANG: one language's corpus minimized, as `cmin` runs them side by side.
+cmin1() {
+  local t=$1 l=$2
+  setup $t
+  local d=corpus/$t-$l log=out/lang/cmin-$t-$l.log
+  [[ -d $d ]] || return 0
+  local m=$TMPDIR/cmin-$t-$l
+  rm -rf $m
+  mkdir -p $m
+  local -a was=($d/*(N))
+  local rc=0
+  ADA_FUZZ_LANGS=$l $bin $args -merge=1 -timeout=30 -rss_limit_mb=3072 -artifact_prefix=out/lang/cmin-$t-$l- \
+    $m $d > $log 2>&1 || rc=$?
+  local -a now=($m/*(N))
+  if (( rc == 0 && ${#now} > 0 )); then
+    rm -rf $d
+    mv $m $d
+  else
+    rm -rf $m
+  fi
+  print -r -- "$l: ${#was} → ${#now} inputs, $(du -sh $d | cut -f1), rc $rc, $(date +%T)"
+}
+
+cmin() {
+  t=$1
+  setup $t
+  build $t
+  pick $2
+  print "$t: minimizing ${#langs} languages' corpora, $(date +%T)"
+  print -rl -- $langs | taskset -c $CORES xargs -P 12 -I{} zsh $F/lang.zsh cmin1 $t {}
+}
+
 corpus() {
   t=$1
   setup $t
@@ -133,7 +169,9 @@ typeset t
 case ${1:-} in
   corpus) (( $# >= 3 )) || die "corpus TARGET LANGS [SEEDS…]"; shift; corpus $@ ;;
   smoke) (( $# >= 4 )) || die "smoke TARGET LANGS SECONDS [SEEDS…]"; shift; smoke $@ ;;
+  cmin) (( $# == 3 )) || die "cmin TARGET LANGS"; shift; cmin $@ ;;
   names) (( $# == 2 )) || die "names TARGET"; setup $2; build $2; names ;;
   merge1) shift; merge1 $@ ;;
-  *) die "corpus, smoke or names" ;;
+  cmin1) shift; cmin1 $@ ;;
+  *) die "corpus, cmin, smoke or names" ;;
 esac

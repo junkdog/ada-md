@@ -16,8 +16,13 @@
 //!
 //! The stack between lines is the contexts open above the top level, up to 28 (the bytes of
 //! [`State`]'s levels), and an open raw string's `#`s.
+//!
+//! A string that `Regex::new(`, `RegexBuilder::new(` or `regex!(` takes is colored as the
+//! `regex` crate's regex (ADR-40, phase 4; [`crate::regex`]), as RustRover colors it: its text
+//! is the regex's, but for the string's end and (in `"…"`) its escapes.
 
 use crate::machine::KEPT as HALF;
+use crate::regex;
 use crate::{Out, State, is_space, skip_spaces};
 
 // The contexts, by bat's names where one is one of them.
@@ -117,6 +122,8 @@ const FMT_RAW: u8 = 62;
 const RAW_BYTES: u8 = 63;
 const BLOCK_COMMENT: u8 = 64;
 const DOC_COMMENT: u8 = 65;
+/// A regex in the string below (ADR-40, phase 4): this bit, and the regex's state.
+const REGEX: u8 = 0x80;
 
 /// The leaves: a token's scopes. A kind is a leaf, plus [`NLEAVES`] in an attribute.
 static LEAVES: [&str; 112] = [
@@ -345,8 +352,23 @@ const PATH_SUPER: u16 = 111;
 
 const NLEAVES: u16 = LEAVES.len() as u16;
 
+/// The kinds of a regex in a `"…"` string and in a raw one: the regex's, from each.
+const RE_STRING: u16 = 256;
+const RE_RAW: u16 = RE_STRING + regex::KINDS as u16;
+const _: () = assert!(2 * NLEAVES <= RE_STRING);
+
 /// The scopes under `source.rust` a kind carries, outermost first.
 pub fn scopes(kind: u16) -> Vec<&'static str> {
+    if kind >= RE_STRING {
+        let (text, base) = if kind >= RE_RAW {
+            (RAW, RE_RAW)
+        } else {
+            (STR, RE_STRING)
+        };
+        let mut out = scopes(text);
+        out.extend(regex::scopes(kind - base));
+        return out;
+    }
     let mut out = Vec::new();
     if kind >= NLEAVES {
         out.push("meta.annotation.rust");
@@ -388,6 +410,9 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     }
     s.depth = 1 + n;
     s.refresh();
+    if s.top() >= REGEX {
+        s.text = s.regex_text();
+    }
     s.run();
     s.fill(b.len());
     let n = s.depth - 1;
@@ -395,7 +420,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     let mut packed = State {
         depth: (n - from) as u8,
         inexact: !s.exact || from > 0,
-        arg: if matches!(s.top(), RAW_STRING | FMT_RAW | RAW_BYTES) {
+        arg: if matches!(s.string_top(), RAW_STRING | FMT_RAW | RAW_BYTES) {
             s.hashes as u16
         } else {
             0
@@ -746,6 +771,42 @@ fn escape(b: &[u8], p: usize, unicode: bool) -> Option<usize> {
     }
 }
 
+/// The bytes a string's patterns start on, around a regex: `"…"`'s end and escapes, then a raw
+/// string's end.
+static RE_YIELDS: [[bool; 256]; 2] = {
+    let mut t = [[false; 256]; 2];
+    t[0][b'"' as usize] = true;
+    t[0][b'\\' as usize] = true;
+    t[1][b'"' as usize] = true;
+    t
+};
+
+/// Whether the string whose prefix or quote is at `p` is a regex: the first argument of
+/// `Regex::new(`, `RegexBuilder::new(` (`bytes::` ones too) or `regex!(`, looked back on its
+/// line.
+fn regex_string(b: &[u8], p: usize) -> bool {
+    let mut q = p;
+    while q > 0 && is_space(b[q - 1]) {
+        q -= 1;
+    }
+    if q == 0 || b[q - 1] != b'(' {
+        return false;
+    }
+    let mut w = q - 1;
+    while w > 0 && is_space(b[w - 1]) {
+        w -= 1;
+    }
+    // the name's last byte first: most calls end in neither
+    let names: &[&[u8]] = match w.checked_sub(1).map(|i| b[i]) {
+        Some(b'w') => &[b"Regex::new", b"RegexBuilder::new"],
+        Some(b'!') => &[b"regex!"],
+        _ => return false,
+    };
+    names
+        .iter()
+        .any(|name| b[..w].ends_with(name) && (w == name.len() || !is_word(b[w - name.len() - 1])))
+}
+
 /// A character literal's body at `p`, `[^'\\]` or an escape: where it ends, and whether it
 /// is an escape.
 fn char_body(b: &[u8], p: usize, unicode: bool) -> Option<(usize, bool)> {
@@ -895,6 +956,7 @@ fn proto(c: u8) -> bool {
             | RAW_BYTES
             | MATCHER
             | MATCHER_GROUP
+            | REGEX..
     )
 }
 
@@ -945,7 +1007,25 @@ impl Scan<'_, '_> {
     }
 
     fn refresh(&mut self) {
+        // a regex's text is set where one is pushed, and where a line starts in one
         self.text = self.kind(text_of(self.top()));
+    }
+
+    /// [`Scan::refresh`] in a regex: its string's text.
+    #[cold]
+    #[inline(never)]
+    fn regex_text(&self) -> u16 {
+        self.kind(text_of(self.string_top()))
+    }
+
+    /// The top context, or under a regex the string it is in.
+    fn string_top(&self) -> u8 {
+        let top = self.top();
+        if top >= REGEX && self.depth >= 2 {
+            self.stack[self.depth - 2]
+        } else {
+            top
+        }
     }
 
     /// Count the open attributes and tuple structs' fields.
@@ -1625,7 +1705,7 @@ impl Scan<'_, '_> {
                 None
             }
             BLOCK_COMMENT | DOC_COMMENT => self.in_comment(top, p, c),
-            _ => None,
+            _ => self.in_regex(p, c, top),
         }
     }
 
@@ -1792,7 +1872,9 @@ impl Scan<'_, '_> {
             b'\'' => self.quote(p),
             b'"' => {
                 self.push(p, STRING);
-                self.token(p, 1, STR_BEGIN)
+                let e = self.token(p, 1, STR_BEGIN);
+                self.regex_in(p, e);
+                e
             }
             b'/' => match self.comment(p) {
                 Some(e) => e,
@@ -1974,8 +2056,83 @@ impl Scan<'_, '_> {
         (self.b.get(e) != Some(&b'\'')).then(|| self.token(p, e - p, LIFETIME))
     }
 
-    /// A string at `p`, `strings`: `"`, `b"`, `br#"`, `r#"`; with `chars`, `b'` too.
+    /// A string at `p`, `strings`: `"`, `b"`, `br#"`, `r#"`; with `chars`, `b'` too. A regex in
+    /// it where a call makes it one.
     fn string(&mut self, p: usize, chars: bool) -> Option<usize> {
+        let e = self.string_open(p, chars)?;
+        if b"\"br".contains(&self.b[p]) {
+            self.regex_in(p, e);
+        }
+        Some(e)
+    }
+
+    /// A string opened at `p`, its text from `e`: a regex in it where a call makes it one.
+    // out of line, so that the callers' hot paths stay inlined
+    #[inline(never)]
+    fn regex_in(&mut self, p: usize, e: usize) {
+        if regex_string(self.b, p) {
+            self.push(e, REGEX);
+            self.text = self.regex_text();
+        }
+    }
+
+    /// In a regex in a string, at `p`: the string's end and (in `"…"`) its escapes but `\\`,
+    /// which is the regex's, else the regex to the next place they can start.
+    #[cold]
+    #[inline(never)]
+    fn in_regex(&mut self, p: usize, c: u8, top: u8) -> Option<usize> {
+        if top < REGEX {
+            return None;
+        }
+        let b = self.b;
+        let string = self.string_top();
+        let raw = matches!(string, RAW_STRING | RAW_BYTES);
+        let h = self.hashes;
+        if raw {
+            if c == b'"' && b.len() > p + h && b[p + 1..p + 1 + h].iter().all(|&c| c == b'#') {
+                self.pop(p);
+                return Some(self.close_n(p, 1 + h, RAW_END));
+            }
+        } else {
+            match c {
+                b'"' => {
+                    self.pop(p);
+                    return Some(self.close(p, STR_END));
+                }
+                b'\\' if b.get(p + 1) != Some(&b'\\') => {
+                    if let Some(e) = escape(b, p, string != BYTE_STRING) {
+                        return Some(self.token(p, e - p, STR_ESCAPE));
+                    }
+                    if string != BYTE_STRING && p + 1 == b.len() {
+                        return Some(self.token(p, 1, STR_CONTINUATION));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let host = regex::Embed {
+            dialect: regex::Dialect::Rust,
+            cooked: !raw,
+            yields: &RE_YIELDS[usize::from(raw)],
+            stop: |b, p, h| {
+                b[p] == b'"'
+                    && b.len() >= p + 1 + h
+                    && b[p + 1..p + 1 + h].iter().all(|&c| c == b'#')
+            },
+            arg: if raw { h } else { 0 },
+            escape: |b, p| escape(b, p, true).unwrap_or(p + 1),
+            top_only: false,
+            base: if raw { RE_RAW } else { RE_STRING },
+            text: self.text,
+        };
+        let (q, st) = regex::embedded(b, p, top & regex::STATE, &host, &mut self.at, self.out)?;
+        let d = self.depth - 1;
+        self.stack[d] = REGEX | st;
+        Some(q)
+    }
+
+    /// [`Scan::string`]'s string, opened.
+    fn string_open(&mut self, p: usize, chars: bool) -> Option<usize> {
         let b = self.b;
         if b[p] == b'"' {
             self.push(p, STRING);
@@ -2684,6 +2841,92 @@ mod tests {
             got.iter().any(|(t, s)| t == text && s == scopes),
             "{text:?} as {scopes:?} in {got:#?}"
         );
+    }
+
+    #[test]
+    fn regexes_in_strings() {
+        const RE: &str = "string.quoted.double.rust";
+        const RAW: &str = "string.quoted.double.raw.rust";
+        let l = [
+            r##"let a = Regex::new("^(?<y>\\d+)\n[\\pL--\\p{Greek}&&[^x]]\"$x\"##,
+            r#"  (x|y)\\b{start}x$").unwrap();"#,
+            r##"let b = regex!(r#"["a-z]+"(?x)\x{41}\u{1F600}\<"#);"##,
+            r#"let c = RegexBuilder::new(r"(?P<a.b>\p{sc!=Greek})[a-g~~b-h]");"#,
+            r#"println!("^\\d+ {x}"); MyRegex::new("a+")"#,
+        ];
+        has(&l, "^", &format!("{RE} keyword.control.anchor.regexp"));
+        has(&l, "y", &format!("{RE} entity.name.other.group.regexp"));
+        has(
+            &l,
+            r"\\d",
+            &format!("{RE} constant.other.character-class.escape.backslash.regexp"),
+        );
+        has(&l, r"\n", &format!("{RE} constant.character.escape.rust"));
+        has(
+            &l,
+            "--",
+            &format!(
+                "{RE} constant.other.character-class.set.regexp keyword.operator.difference.regexp"
+            ),
+        );
+        has(
+            &l,
+            "&&",
+            &format!(
+                "{RE} constant.other.character-class.set.regexp keyword.operator.intersection.regexp"
+            ),
+        );
+        // the prototype's `$x` doesn't reach a regex; a line continued
+        has(&l, "$", &format!("{RE} keyword.control.anchor.regexp"));
+        has(
+            &l,
+            "\\",
+            &format!("{RE} punctuation.separator.continuation.line.rust"),
+        );
+        has(&l, "|", &format!("{RE} keyword.operator.or.regexp"));
+        has(
+            &l,
+            r"\\b{start}",
+            &format!("{RE} keyword.control.anchor.regexp"),
+        );
+        // a raw string: its `"` aren't its end but before its `#`s
+        has(
+            &l,
+            "\"",
+            &format!("{RAW} constant.other.character-class.set.regexp"),
+        );
+        has(
+            &l,
+            "?x",
+            &format!("{RAW} keyword.other.option-toggle.regexp"),
+        );
+        has(
+            &l,
+            r"\u{1F600}",
+            &format!("{RAW} constant.character.escape.backslash.regexp"),
+        );
+        has(&l, r"\<", &format!("{RAW} keyword.control.anchor.regexp"));
+        has(
+            &l,
+            "\"#",
+            &format!("{RAW} punctuation.definition.string.end.rust"),
+        );
+        has(&l, "a.b", &format!("{RAW} entity.name.other.group.regexp"));
+        has(
+            &l,
+            "!=",
+            &format!("{RAW} punctuation.separator.key-value.unicode-property.regexp"),
+        );
+        has(
+            &l,
+            "~~",
+            &format!(
+                "{RAW} constant.other.character-class.set.regexp keyword.operator.symmetric-difference.regexp"
+            ),
+        );
+        // not a regex: any other call
+        let got = of(&l[4..]);
+        assert!(!got.iter().any(|(_, s)| s.contains("regexp")), "{got:?}");
     }
 
     #[test]

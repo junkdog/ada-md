@@ -18,8 +18,14 @@
 //!
 //! The stack between lines is the contexts open above the top level, up to 28 (the bytes of
 //! [`State`]'s levels).
+//!
+//! A string that `regexp.MustCompile(` and the like take is colored as RE2's regex (ADR-40,
+//! phase 4; [`crate::regex`]), as GoLand colors it: its text is the regex's, but for the
+//! string's end and (in `"…"`) its escapes. Where bat's grammar sees a template or a `%` verb
+//! in it, the regex has its own reading.
 
 use crate::machine::KEPT as HALF;
+use crate::regex;
 use crate::{Out, State};
 
 // The contexts, by bat's names where they have one.
@@ -119,6 +125,9 @@ const STRING: u8 = 50;
 const RAW: u8 = 51;
 /// A template's `{{ … }}` in a string.
 const INTERP: u8 = 52;
+/// A regex in the string below (ADR-40, phase 4): this bit, and the regex's state.
+const REGEX: u8 = 0x80;
+const _: () = assert!(INTERP < REGEX);
 
 /// The leaves: a token's scopes.
 static LEAVES: [&str; 105] = [
@@ -325,8 +334,23 @@ const INVALID: u16 = 102;
 const RUNE: u16 = 103;
 const RUNE_ESCAPE: u16 = 104;
 
+/// The kinds of a regex in a `"…"` string and in a `` `…` `` one: the regex's, from each.
+const RE_STRING: u16 = 128;
+const RE_RAW: u16 = RE_STRING + regex::KINDS as u16;
+const _: () = assert!(LEAVES.len() <= RE_STRING as usize);
+
 /// The scopes under `source.go` a kind carries, outermost first.
 pub fn scopes(kind: u16) -> Vec<&'static str> {
+    if kind >= RE_STRING {
+        let (text, base) = if kind >= RE_RAW {
+            (OTHER, RE_RAW)
+        } else {
+            (DOUBLE, RE_STRING)
+        };
+        let mut out = scopes(text);
+        out.extend(regex::scopes(kind - base));
+        return out;
+    }
     LEAVES.get(usize::from(kind)).map_or_else(Vec::new, |l| {
         l.split(' ').filter(|s| !s.is_empty()).collect()
     })
@@ -371,6 +395,9 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     }
     s.depth = 1 + n;
     s.refresh();
+    if s.top() >= REGEX {
+        s.text = s.regex_text();
+    }
     s.run();
     s.fill(s.n);
     let n = s.depth - 1;
@@ -548,6 +575,65 @@ const fn stops(bytes: &[u8]) -> [bool; 256] {
 static COMMENT_STOPS: [bool; 256] = stops(b"*");
 static STRING_STOPS: [bool; 256] = stops(b"\"{\\%");
 static RAW_STOPS: [bool; 256] = stops(b"`{%");
+
+/// The bytes a string's patterns start on, around a regex: `"…"`'s end and escapes, then
+/// `` `…` ``'s end.
+static RE_YIELDS: [[bool; 256]; 2] = [stops(b"\"\\"), stops(b"`")];
+
+/// A regex in a `"…"` string, then in a `` `…` `` one.
+static RE_EMBEDS: [regex::Embed<'static>; 2] = [
+    regex::Embed {
+        dialect: regex::Dialect::Re2,
+        cooked: true,
+        yields: &RE_YIELDS[0],
+        stop: |b, p, _| b[p] == b'"',
+        arg: 0,
+        escape: |b, p| char_escape(b, p).unwrap_or(p + 1),
+        top_only: false,
+        base: RE_STRING,
+        text: DOUBLE,
+    },
+    regex::Embed {
+        dialect: regex::Dialect::Re2,
+        cooked: false,
+        yields: &RE_YIELDS[1],
+        stop: |b, p, _| b[p] == b'`',
+        arg: 0,
+        escape: |_, p| p + 1,
+        top_only: false,
+        base: RE_RAW,
+        text: OTHER,
+    },
+];
+
+/// Whether the string whose quote opens at `p` is a regex: the first argument of
+/// `regexp.MustCompile(`, `regexp.Compile(`, `regexp.MatchString(`, `regexp.Match(`,
+/// `regexp.MatchReader(` or their `POSIX` twins, looked back on its line.
+fn regex_string(b: &[u8], p: usize) -> bool {
+    let mut q = p;
+    while q > 0 && is_blank(b[q - 1]) {
+        q -= 1;
+    }
+    if q == 0 || b[q - 1] != b'(' {
+        return false;
+    }
+    let mut w = q - 1;
+    while w > 0 && is_blank(b[w - 1]) {
+        w -= 1;
+    }
+    // the name's last byte first: most calls end in none of these
+    let names: &[&[u8]] = match w.checked_sub(1).map(|i| b[i]) {
+        Some(b'e') => &[b"regexp.MustCompile", b"regexp.Compile"],
+        Some(b'X') => &[b"regexp.MustCompilePOSIX", b"regexp.CompilePOSIX"],
+        Some(b'g') => &[b"regexp.MatchString"],
+        Some(b'h') => &[b"regexp.Match"],
+        Some(b'r') => &[b"regexp.MatchReader"],
+        _ => return false,
+    };
+    names
+        .iter()
+        .any(|name| b[..w].ends_with(name) && (w == name.len() || !is_word(b, w - name.len() - 1)))
+}
 
 /// What a whole word is among bat's keywords.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -934,8 +1020,19 @@ impl Scan<'_, '_> {
             STRING => DOUBLE,
             RAW => OTHER,
             INTERP => INTERP_TEXT,
+            // a regex's is set where one is pushed, and where a line starts in one
             _ => PLAIN,
         };
+    }
+
+    /// The text of the string a regex is in.
+    #[cold]
+    fn regex_text(&self) -> u16 {
+        if self.depth >= 2 && self.stack[self.depth - 2] == RAW {
+            OTHER
+        } else {
+            DOUBLE
+        }
     }
 
     /// The text up to `p` is the top context's.
@@ -1431,7 +1528,66 @@ impl Scan<'_, '_> {
                 self.tok(p, e, text + PLACEHOLDER)
             }
             INTERP => self.interpolation(p),
-            _ => None,
+            _ => self.in_regex(p, top),
+        }
+    }
+
+    /// In a regex in a string, at `p`: the string's end and (in `"…"`) its escapes but `\\`,
+    /// which is the regex's, else the regex to the next place they can start.
+    #[cold]
+    #[inline(never)]
+    fn in_regex(&mut self, p: usize, top: u8) -> Option<usize> {
+        if top < REGEX || p >= self.n {
+            return None;
+        }
+        let raw = self.regex_text() == OTHER;
+        let text = if raw { OTHER } else { DOUBLE };
+        let b = self.b;
+        match b[p] {
+            b'`' if raw => {
+                self.pop();
+                return self.close(p, p + 1, text + END);
+            }
+            b'"' if !raw => {
+                self.pop();
+                return self.close(p, p + 1, text + END);
+            }
+            b'\\'
+                if !raw
+                    && b.get(p + 1) != Some(&b'\\')
+                    && let Some(e) = char_escape(b, p) =>
+            {
+                return self.tok(p, e, text + ESCAPE);
+            }
+            _ => {}
+        }
+        let (q, st) = regex::embedded(
+            b,
+            p,
+            top & regex::STATE,
+            &RE_EMBEDS[usize::from(raw)],
+            &mut self.at,
+            self.out,
+        )?;
+        self.stack[self.depth - 1] = REGEX | st;
+        Some(q)
+    }
+
+    /// A string at `p`, `"` or `` ` ``, with a regex in it where a call makes it one.
+    fn string(&mut self, p: usize, raw: bool) -> Option<usize> {
+        let (leaf, c) = if raw { (OTHER, RAW) } else { (DOUBLE, STRING) };
+        let e = self.tok_push(p, p + 1, leaf + BEGIN, &[c])?;
+        self.regex_in(p);
+        Some(e)
+    }
+
+    /// A string opened at `p`: a regex in it where a call makes it one.
+    // out of line, so that `literals` keeps its inlined paths
+    #[inline(never)]
+    fn regex_in(&mut self, p: usize) {
+        if regex_string(self.b, p) && self.depth < SYNTECT_DEPTH {
+            self.push(REGEX);
+            self.text = self.regex_text();
         }
     }
 
@@ -1833,8 +1989,8 @@ impl Scan<'_, '_> {
                 let e = (p + 1..self.n).find(|&q| b[q] == b'\'')?;
                 self.tok(p, e + 1, RUNE)
             }
-            b'"' => self.tok_push(p, p + 1, DOUBLE + BEGIN, &[STRING]),
-            b'`' => self.tok_push(p, p + 1, OTHER + BEGIN, &[RAW]),
+            b'"' => self.string(p, false),
+            b'`' => self.string(p, true),
             c if c.is_ascii_digit() || c == b'.' || (c >= 0x80 && digit(b, p).is_some()) => {
                 let (e, leaf, caps) = number(b, p)?;
                 for (s, ce, cl) in caps {
@@ -2224,6 +2380,82 @@ mod tests {
             got.iter().any(|(t, s)| t == text && s == scopes),
             "{text:?} as {scopes:?} in {got:#?}"
         );
+    }
+
+    #[test]
+    fn regexes_in_strings() {
+        const RE: &str = "string.quoted.double.go";
+        const RAW: &str = "string.quoted.other.go";
+        let l = [
+            r#"var a = regexp.MustCompile("^(?P<y>\\d{4})\t[]a-z]%d{{x}}$")"#,
+            "ok, _ := regexp.MatchString(`(?i:[[:alpha:]]+|\\p{^Greek})*?",
+            "\\Q*\\E\\x{41}\\101`, s)",
+            r#"fmt.Printf("%d{2}\\d", x); f := myregexp.MustCompile("a+")"#,
+        ];
+        has(&l, "^", &format!("{RE} keyword.control.anchor.regexp"));
+        has(
+            &l,
+            "?P",
+            &format!("{RE} punctuation.definition.group.begin.regexp"),
+        );
+        has(&l, "y", &format!("{RE} entity.name.other.group.regexp"));
+        has(
+            &l,
+            r"\\d",
+            &format!("{RE} constant.other.character-class.escape.backslash.regexp"),
+        );
+        // the host's escape between the regex's tokens
+        has(&l, r"\t", &format!("{RE} constant.character.escape.go"));
+        // a `]` first in a class is a character; `%d` and `{{` are the regex's text
+        has(
+            &l,
+            "]",
+            &format!("{RE} constant.other.character-class.set.regexp"),
+        );
+        let got = of(&l[..1]);
+        assert!(
+            !got.iter()
+                .any(|(_, s)| s.contains("placeholder") || s.contains("interpolation")),
+            "{got:?}"
+        );
+        // a raw regex across lines
+        has(
+            &l,
+            "?i",
+            &format!("{RAW} keyword.other.option-toggle.regexp"),
+        );
+        has(
+            &l,
+            "[:alpha:]",
+            &format!(
+                "{RAW} constant.other.character-class.set.regexp constant.other.character-class.posix.regexp"
+            ),
+        );
+        has(&l, "^", &format!("{RAW} keyword.operator.negation.regexp"));
+        has(
+            &l,
+            "Greek",
+            &format!("{RAW} support.constant.unicode-property.regexp"),
+        );
+        has(
+            &l,
+            r"\Q",
+            &format!("{RAW} constant.character.escape.backslash.regexp"),
+        );
+        has(
+            &l,
+            r"\x{41}",
+            &format!("{RAW} constant.character.escape.backslash.regexp"),
+        );
+        has(
+            &l,
+            r"\101",
+            &format!("{RAW} constant.character.escape.backslash.regexp"),
+        );
+        // not a regex: any other call
+        has(&l, "%d", &format!("{RE} constant.other.placeholder.go"));
+        let got = of(&l[3..]);
+        assert!(!got.iter().any(|(_, s)| s.contains("regexp")), "{got:?}");
     }
 
     #[test]

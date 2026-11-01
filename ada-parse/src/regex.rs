@@ -6,12 +6,18 @@
 //! The kinds carry the scopes of bat's `Regular Expressions (Javascript)` (anchors, back
 //! references, quantifiers, groups and assertions, character classes and their sets, escapes),
 //! with a few of its own for what JavaScript lacks (inline options, atomic groups, `\Q…\E`).
-//! Two dialects ([`Dialect`]):
+//! Four dialects ([`Dialect`]):
 //! - **Java's** (`java.util.regex`, Kotlin's too) adds possessive quantifiers, `(?>…)`,
 //!   `(?idmsux-idmsux)` and `(?idmsux-idmsux:…)`, nested classes and `&&`, `\Q…\E`, `\pL`,
 //!   `\h\H\v\V\R\X`, `\A\G\Z\z` and its escapes.
 //! - **ECMAScript's** is bat's grammar, but where it is wrong: a `.` in a class is a
 //!   character, not a class escape, and `\u{…}` is one escape, not `\u` and a quantifier.
+//! - **RE2's** (Go's `regexp`): `(?P<name>…)`, `(?imsU-imsU)`, `[[:alpha:]]`, `\pL`,
+//!   `\p{^Greek}`, `\Q…\E`, `\A\z`, octal and `\x{…}` escapes; no back references, and a `]`
+//!   first in a class is a character.
+//! - **Rust's** (the `regex` crate): RE2's without `\Q…\E` or octal, with nested classes and
+//!   `&&`, `--`, `~~`, `(?imsRUux)`, `\b{start}`, `\<`, `\>`, `\u{…}`, `\U{…}` and
+//!   `\p{sc=Greek}`.
 //!
 //! **A host's string spells the regex.** In a cooked string (Java's `"…"`, Kotlin's `"…"`)
 //! `\\` is the regex's `\`, so `"\\d+"` is `\d+`, and any other `\` starts the host's escape, a
@@ -40,7 +46,7 @@ pub(crate) const ECMA_STATE: u8 = DEPTH | SET;
 
 /// The bytes a token of `main` (or a group in it) starts on, and of a class.
 static MAIN_BYTES: [bool; 256] = table(b"\\^$?*+{|().[");
-static SET_BYTES: [bool; 256] = table(b"\\[]&");
+static SET_BYTES: [bool; 256] = table(b"\\[]&~");
 
 const fn table(bytes: &[u8]) -> [bool; 256] {
     let mut t = [false; 256];
@@ -59,6 +65,10 @@ pub(crate) enum Dialect {
     Java,
     /// ECMAScript's, as bat's `Regular Expressions (Javascript)` reads it.
     Ecma,
+    /// RE2's, Go's `regexp`.
+    Re2,
+    /// The Rust `regex` crate's.
+    Rust,
 }
 
 macro_rules! leaves {
@@ -107,6 +117,9 @@ leaves! {
     RangeClassEscape = "constant.other.character-class.range.regexp constant.other.character-class.escape.backslash.regexp",
     RangeEscape = "constant.other.character-class.range.regexp constant.character.escape.backslash.regexp",
     RangeDash = "constant.other.character-class.range.regexp punctuation.definition.range.regexp",
+    PosixClass = "constant.other.character-class.posix.regexp",
+    Difference = "keyword.operator.difference.regexp",
+    SymmetricDifference = "keyword.operator.symmetric-difference.regexp",
 }
 
 /// A kind's bit for a token in a class: under `constant.other.character-class.set.regexp`.
@@ -140,9 +153,13 @@ pub(crate) struct Embed<'t> {
     /// The bytes a pattern of the host's can start on (its end, an escape, a template); the
     /// line's end is always one.
     pub yields: &'t [bool; 256],
-    /// Whether a pattern of the host's but its escape matches at a byte of `yields`: a token of
-    /// the regex doesn't run over it.
-    pub stop: fn(&[u8], usize) -> bool,
+    /// Whether a pattern of the host's but its escape matches at a byte of `yields`, given
+    /// [`Embed::arg`]: a token of the regex doesn't run over it.
+    pub stop: fn(&[u8], usize, usize) -> bool,
+    /// What the host's [`Embed::stop`] needs beside the line (Rust's raw string's `#`s).
+    pub arg: usize,
+    /// Where the host's escape at `p` (a `\` that isn't a cooked `\\`) ends.
+    pub escape: fn(&[u8], usize) -> usize,
     /// The host's patterns are tried only where no group or class is open: a regex literal's,
     /// whose contexts a group or a class sits above (`/[/]/` is one literal).
     pub top_only: bool,
@@ -268,6 +285,19 @@ impl Scan<'_, '_, '_, '_> {
         self.host.dialect == Dialect::Java
     }
 
+    fn ecma(&self) -> bool {
+        self.host.dialect == Dialect::Ecma
+    }
+
+    /// RE2's or Rust's.
+    fn re2(&self) -> bool {
+        matches!(self.host.dialect, Dialect::Re2 | Dialect::Rust)
+    }
+
+    fn rust(&self) -> bool {
+        self.host.dialect == Dialect::Rust
+    }
+
     /// The regex's character at `p`. Past where the scan took over, a place where the host's
     /// end or template matches is theirs: none, so no token of the regex runs over it (`"\\"` is
     /// a lone `\` and the string's end, `"\\$"` an escaped `$`).
@@ -276,7 +306,7 @@ impl Scan<'_, '_, '_, '_> {
         if p > self.from
             && c != b'\\'
             && self.host.yields[usize::from(c)]
-            && (self.host.stop)(self.b, p)
+            && (self.host.stop)(self.b, p, self.host.arg)
         {
             return None;
         }
@@ -301,13 +331,8 @@ impl Scan<'_, '_, '_, '_> {
                 host: false,
             });
         }
-        // the host's escape: a character to the regex; `\uXXXX` is six bytes
-        let hex = |q: usize| self.b.get(q).is_some_and(u8::is_ascii_hexdigit);
-        let end = if d == b'u' && (2..6).all(|i| hex(p + i)) {
-            p + 6
-        } else {
-            p + 1 + char_len(d)
-        };
+        // the host's escape: a character to the regex, at least the `\` and the character after it
+        let end = (self.host.escape)(self.b, p).max(p + 1 + char_len(d));
         // what the regex reads: a quote, `$` and the like as themselves, the rest a
         // character with no meaning to it
         let c = match d {
@@ -363,9 +388,12 @@ impl Scan<'_, '_, '_, '_> {
         }
     }
 
-    /// A quantifier's `?` (lazy) or `+` (possessive) after it ends at `e`: where it ends.
+    /// A quantifier's `?` (lazy) or `+` (possessive; one token in ECMAScript too, the same
+    /// colors as bat's two) after it ends at `e`: where it ends. RE2 and Rust have no possessive.
     fn lazy(&self, e: usize) -> usize {
-        self.is(e, b'?').or_else(|| self.is(e, b'+')).unwrap_or(e)
+        self.is(e, b'?')
+            .or_else(|| self.is(e, b'+').filter(|_| !self.re2()))
+            .unwrap_or(e)
     }
 
     /// `\{(\d+)(?:(,)(\d+)?)?\}` or `\{(,)(\d+)\}`, `{` at `p` to `e`.
@@ -431,23 +459,37 @@ impl Scan<'_, '_, '_, '_> {
                     open(self);
                     return self.tok(e, q + 1, L::Atomic);
                 }
-                Some(b'<') => {
-                    // `(?<name>`
-                    let s = q + 1;
-                    if let Some(t) = self.group_name(s)
+                Some(b'<' | b'P') => {
+                    // `(?<name>`, and RE2's and Rust's `(?P<name>`
+                    let lt = if next == Some(b'P') {
+                        self.is(q, b'P').filter(|_| self.re2())
+                    } else {
+                        Some(q)
+                    };
+                    if let Some(lt) = lt
+                        && let Some(s) = self.is(lt, b'<')
+                        && let Some(t) = self.group_name(s)
                         && let Some(g) = self.is(t, b'>')
                     {
                         self.tok(p, e, L::GroupBegin);
                         open(self);
-                        self.tok(e, q, L::GroupBegin);
-                        self.tok(q, s, L::NamedBegin);
+                        self.tok(e, lt, L::GroupBegin);
+                        self.tok(lt, s, L::NamedBegin);
                         self.tok(s, t, L::GroupName);
                         return self.tok(t, g, L::NamedEnd);
                     }
                 }
-                _ if self.java() => {
-                    // `(?idmsuxU-idmsuxU)` and `(?idmsuxU-idmsuxU:`
-                    let flag = |c: u8| b"idmsuxU".contains(&c);
+                _ => {}
+            }
+            if !self.ecma() {
+                // `(?idmsuxU-idmsuxU)` and `(?idmsuxU-idmsuxU:`, RE2's `imsU`, Rust's `imsRUux`
+                {
+                    let flags: &[u8] = match self.host.dialect {
+                        Dialect::Re2 => b"imsU",
+                        Dialect::Rust => b"imsRUux",
+                        _ => b"idmsuxU",
+                    };
+                    let flag = |c: u8| flags.contains(&c);
                     let mut t = q;
                     while t < self.n && flag(self.b[t]) {
                         t += 1;
@@ -472,7 +514,6 @@ impl Scan<'_, '_, '_, '_> {
                         }
                     }
                 }
-                _ => {}
             }
         }
         open(self);
@@ -480,19 +521,30 @@ impl Scan<'_, '_, '_, '_> {
     }
 
     /// A group's name from `s`: Java's `[a-zA-Z][a-zA-Z0-9]*`, ECMAScript's
-    /// `[_$\p{L}][_$\p{L}\p{N}]*` (any character past ASCII taken as a letter). Where it ends.
+    /// `[_$\p{L}][_$\p{L}\p{N}]*` (any character past ASCII taken as a letter), RE2's
+    /// `\w+`, Rust's `[_a-zA-Z][_a-zA-Z0-9.\[\]]*`. Where it ends.
     fn group_name(&self, s: usize) -> Option<usize> {
-        let java = self.java();
-        let ecma = |c: u8| !java && matches!(c, b'_' | b'$' | 0x80..);
-        if !self
-            .b
-            .get(s)
-            .is_some_and(|&c| c.is_ascii_alphabetic() || ecma(c))
-        {
+        type Class = fn(u8) -> bool;
+        let (first, rest): (Class, Class) = match self.host.dialect {
+            Dialect::Java => (|c| c.is_ascii_alphabetic(), |c| c.is_ascii_alphanumeric()),
+            Dialect::Ecma => (
+                |c| c.is_ascii_alphabetic() || matches!(c, b'_' | b'$' | 0x80..),
+                |c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'$' | 0x80..),
+            ),
+            Dialect::Re2 => (
+                |c| c.is_ascii_alphanumeric() || c == b'_',
+                |c| c.is_ascii_alphanumeric() || c == b'_',
+            ),
+            Dialect::Rust => (
+                |c| c.is_ascii_alphabetic() || c == b'_',
+                |c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'[' | b']'),
+            ),
+        };
+        if !self.b.get(s).is_some_and(|&c| first(c)) {
             return None;
         }
         let mut t = s + 1;
-        while t < self.n && (self.b[t].is_ascii_alphanumeric() || ecma(self.b[t])) {
+        while t < self.n && rest(self.b[t]) {
             t += 1;
         }
         Some(t)
@@ -504,8 +556,13 @@ impl Scan<'_, '_, '_, '_> {
         self.fill(p);
         self.st |= SET;
         self.tok(p, e, L::SetBegin);
-        match self.is(e, b'^') {
+        let e = match self.is(e, b'^') {
             Some(n) => self.tok(e, n, L::Negation),
+            None => e,
+        };
+        // RE2's and Rust's `[]a]`: a `]` first is a character
+        match self.is(e, b']').filter(|_| self.re2()) {
+            Some(n) => n,
             None => e,
         }
     }
@@ -536,7 +593,12 @@ impl Scan<'_, '_, '_, '_> {
                 }
                 r
             }
-            b'[' if self.java() => {
+            b'[' if self.re2()
+                && let Some(q) = self.is(e, b':').and_then(|c| self.posix(c)) =>
+            {
+                self.tok(p, q, L::PosixClass)
+            }
+            b'[' if self.java() || self.rust() => {
                 if self.st & NESTS != NESTS {
                     self.st += NEST;
                 }
@@ -546,8 +608,12 @@ impl Scan<'_, '_, '_, '_> {
                     None => e,
                 }
             }
-            b'&' if self.java() && self.is(e, b'&').is_some() => {
+            b'&' if (self.java() || self.rust()) && self.is(e, b'&').is_some() => {
                 self.tok(p, e + 1, L::Intersection)
+            }
+            b'-' if self.rust() && self.is(e, b'-').is_some() => self.tok(p, e + 1, L::Difference),
+            b'~' if self.rust() && self.is(e, b'~').is_some() => {
+                self.tok(p, e + 1, L::SymmetricDifference)
             }
             _ => {
                 if let Some(r) = self.range(p, u) {
@@ -596,14 +662,35 @@ impl Scan<'_, '_, '_, '_> {
             end(self, p, true)?
         };
         let dash = self.is(d, b'-')?;
+        // Rust's `--` is a difference, not a range's dash
+        if self.rust() && self.is(dash, b'-').is_some() {
+            return None;
+        }
         let (e, l2) = end(self, dash, false)?;
         self.tok(p, d, l1.unwrap_or(L::Range));
         self.tok(d, dash, L::RangeDash);
         Some(self.tok(dash, e, l2.unwrap_or(L::Range)))
     }
 
+    /// `[:alpha:]` or `[:^alpha:]` in a class, from `s` past its `[:`: where it ends.
+    fn posix(&self, s: usize) -> Option<usize> {
+        let w = if self.b.get(s) == Some(&b'^') {
+            s + 1
+        } else {
+            s
+        };
+        let mut t = w;
+        while t < self.n && self.b[t].is_ascii_lowercase() {
+            t += 1;
+        }
+        (t > w && self.b[t..self.n].starts_with(b":]")).then_some(t + 2)
+    }
+
     /// `\…`, its `\` at `p` to `e`: where it ends.
     fn backslash(&mut self, p: usize, e: usize) -> usize {
+        if self.re2() {
+            return self.backslash_re2(p, e);
+        }
         if !self.java() {
             return self.backslash_ecma(p, e);
         }
@@ -732,6 +819,66 @@ impl Scan<'_, '_, '_, '_> {
         }
     }
 
+    /// `\…` in RE2 or Rust, its `\` at `p` to `e`: where it ends.
+    #[inline(never)]
+    fn backslash_re2(&mut self, p: usize, e: usize) -> usize {
+        let Some(u) = self.unit(e) else {
+            return self.tok(p, e, L::Escape);
+        };
+        if u.host {
+            return self.tok(p, u.end, L::Escape);
+        }
+        let n = u.end;
+        let in_set = self.st & SET != 0;
+        let rust = self.rust();
+        let hex = |q: usize| q < self.n && self.b[q].is_ascii_hexdigit();
+        // `{H…}`, from `n`: where it ends
+        let braced = |s: &Self, n: usize| {
+            if s.b.get(n) != Some(&b'{') {
+                return None;
+            }
+            let c = (n + 1..s.n).find(|&q| !hex(q))?;
+            (c > n + 1 && s.b[c] == b'}').then_some(c + 1)
+        };
+        match u.c {
+            b'A' | b'z' | b'b' | b'B' if !in_set => {
+                // Rust's `\b{start}`, `\b{end}`, `\b{start-half}`, `\b{end-half}`
+                if rust && u.c == b'b' && self.b.get(n) == Some(&b'{') {
+                    for w in [&b"{start}"[..], b"{end}", b"{start-half}", b"{end-half}"] {
+                        if self.b[n..self.n].starts_with(w) {
+                            return self.tok(p, n + w.len(), L::Anchor);
+                        }
+                    }
+                }
+                self.tok(p, n, L::Anchor)
+            }
+            b'<' | b'>' if rust && !in_set => self.tok(p, n, L::Anchor),
+            b'w' | b'W' | b's' | b'S' | b'd' | b'D' => self.tok(p, n, L::ClassEscape),
+            b'p' | b'P' => self.property(p, n),
+            b'Q' if !rust => {
+                self.st |= QUOTE;
+                self.tok(p, n, L::Escape)
+            }
+            b'0'..=b'7' if !rust => {
+                let mut q = n;
+                while q < n + 2 && q < self.n && matches!(self.b[q], b'0'..=b'7') {
+                    q += 1;
+                }
+                self.tok(p, q, L::Escape)
+            }
+            b'x' => {
+                let q = braced(self, n).unwrap_or(if hex(n) && hex(n + 1) { n + 2 } else { n });
+                self.tok(p, q, L::Escape)
+            }
+            b'u' | b'U' if rust => {
+                let len = if u.c == b'u' { 4 } else { 8 };
+                let q = braced(self, n).unwrap_or(if (n..n + len).all(hex) { n + len } else { n });
+                self.tok(p, q, L::Escape)
+            }
+            _ => self.tok(p, n, L::Escape),
+        }
+    }
+
     /// Where ECMAScript's escape `\c…` ends, `c` the character after its `\`, ending at `n`:
     /// `\cX`, `\xHH`, `\uHHHH` and `\u{H…}` take more.
     fn ecma_escape(&self, n: usize, c: u8) -> usize {
@@ -753,19 +900,21 @@ impl Scan<'_, '_, '_, '_> {
         }
     }
 
-    /// `\p` or `\P` at `p` to `e`: `{name}`, `{key=value}`, or (Java's) a letter.
+    /// `\p` or `\P` at `p` to `e`: `{name}`, `{key=value}`, or (but ECMAScript's) a letter.
     fn property(&mut self, p: usize, e: usize) -> usize {
-        // Java's `[a-zA-Z0-9_]+`, ECMAScript's `[\p{L}_]+`
-        let java = self.java();
+        // Java's and RE2's `[a-zA-Z0-9_]+`, ECMAScript's `[\p{L}_]+`, Rust's with ` `, `-`, `.`
+        let dialect = self.host.dialect;
         let name = |s: &Self, q: usize| {
             let mut t = q;
             while t < s.n
                 && (s.b[t].is_ascii_alphabetic()
                     || s.b[t] == b'_'
-                    || if java {
-                        s.b[t].is_ascii_digit()
-                    } else {
-                        s.b[t] >= 0x80
+                    || match dialect {
+                        Dialect::Ecma => s.b[t] >= 0x80,
+                        Dialect::Rust => {
+                            s.b[t].is_ascii_digit() || matches!(s.b[t], b' ' | b'-' | b'.')
+                        }
+                        _ => s.b[t].is_ascii_digit(),
                     })
             {
                 t += 1;
@@ -773,26 +922,37 @@ impl Scan<'_, '_, '_, '_> {
             t
         };
         if let Some(o) = self.is(e, b'{') {
-            let k = name(self, o);
-            if k > o {
-                let (eq, v) = match self.is(k, b'=') {
-                    Some(v) => (Some(k), name(self, v)),
+            // RE2's `\p{^Greek}`
+            let neg = self.is(o, b'^').filter(|_| self.re2());
+            let k0 = neg.unwrap_or(o);
+            let k = name(self, k0);
+            if k > k0 {
+                // `=`, and Rust's `:` and `!=`
+                let sep = match self.b.get(k) {
+                    Some(b'=') => Some(k + 1),
+                    Some(b':') if self.rust() => Some(k + 1),
+                    Some(b'!') if self.rust() && self.b.get(k + 1) == Some(&b'=') => Some(k + 2),
+                    _ => None,
+                };
+                let (eq, v) = match sep {
+                    Some(s) => (Some((k, s)), name(self, s)),
                     None => (None, k),
                 };
                 if let Some(c) = self.is(v, b'}') {
                     self.tok(p, e, L::Property);
                     self.tok(e, o, L::PropertyBegin);
-                    self.tok(o, k, L::PropertyName);
-                    if let Some(eq) = eq {
-                        self.tok(eq, eq + 1, L::PropertyEquals);
-                        self.tok(eq + 1, v, L::PropertyName);
+                    self.tok(o, k0, L::Negation);
+                    self.tok(k0, k, L::PropertyName);
+                    if let Some((eq, s)) = eq {
+                        self.tok(eq, s, L::PropertyEquals);
+                        self.tok(s, v, L::PropertyName);
                     }
                     return self.tok(v, c, L::PropertyEnd);
                 }
             }
             return self.tok(p, e, L::Escape);
         }
-        if java && self.b.get(e).is_some_and(u8::is_ascii_alphabetic) {
+        if !self.ecma() && self.b.get(e).is_some_and(u8::is_ascii_alphabetic) {
             self.tok(p, e, L::Property);
             return self.tok(e, e + 1, L::PropertyName);
         }
@@ -812,6 +972,17 @@ impl Scan<'_, '_, '_, '_> {
             return self.tok(p, e, L::Escape);
         }
         u.end
+    }
+}
+
+/// Where a Java or Kotlin string's escape at `p` ends: `\uXXXX` is six bytes, the rest a
+/// character after the `\`.
+pub(crate) fn java_escape(b: &[u8], p: usize) -> usize {
+    let hex = |q: usize| b.get(q).is_some_and(u8::is_ascii_hexdigit);
+    match b.get(p + 1) {
+        Some(b'u') if (2..6).all(|i| hex(p + i)) => p + 6,
+        Some(&d) => p + 1 + char_len(d),
+        None => p + 1,
     }
 }
 
@@ -852,7 +1023,9 @@ mod tests {
             dialect,
             cooked,
             yields: &yields,
-            stop: |b, p| b[p] == b'"',
+            stop: |b, p, _| b[p] == b'"',
+            arg: 0,
+            escape: java_escape,
             top_only: !java,
             base: 0,
             text: 0,
@@ -943,6 +1116,60 @@ mod tests {
             "constant.other.character-class.escape.backslash.regexp",
         );
         has(&t, "?i", "keyword.other.option-toggle.regexp");
+    }
+
+    #[test]
+    fn re2s_and_rusts_dialects() {
+        fn lex_raw(text: &str, dialect: Dialect) -> Vec<(&str, String)> {
+            lex_in(text, false, dialect)
+        }
+        let t = lex_raw(
+            r"(?P<n>a)(?<m>b)(?imsU-i:c)[[:^digit:]][]a]*+\Q*\E\101\pN\p{^L}",
+            Dialect::Re2,
+        );
+        has(&t, "?P", "punctuation.definition.group.begin.regexp");
+        has(&t, "n", "entity.name.other.group.regexp");
+        has(&t, "?imsU-i", "keyword.other.option-toggle.regexp");
+        has(
+            &t,
+            "[:^digit:]",
+            "constant.other.character-class.set.regexp constant.other.character-class.posix.regexp",
+        );
+        // `]` first is a character; no possessive quantifier
+        has(&t, "]a", "constant.other.character-class.set.regexp");
+        has(&t, "*", "keyword.operator.quantifier.regexp");
+        has(&t, r"\Q", "constant.character.escape.backslash.regexp");
+        has(&t, r"\101", "constant.character.escape.backslash.regexp");
+        has(&t, "N", "support.constant.unicode-property.regexp");
+        has(&t, "^", "keyword.operator.negation.regexp");
+        let t = lex_raw(
+            r"[a-y&&xyz--[^b]~~c][a--b]\b{end}\<\U{41}\u0041\Q(?R)",
+            Dialect::Rust,
+        );
+        has(
+            &t,
+            "[",
+            "constant.other.character-class.set.regexp punctuation.definition.character-class.begin.regexp",
+        );
+        has(
+            &t,
+            "--",
+            "constant.other.character-class.set.regexp keyword.operator.difference.regexp",
+        );
+        has(
+            &t,
+            "~~",
+            "constant.other.character-class.set.regexp keyword.operator.symmetric-difference.regexp",
+        );
+        // `a--b` is a difference, not a range
+        assert!(!t.iter().any(|(x, _)| *x == "a-"), "{t:?}");
+        has(&t, r"\b{end}", "keyword.control.anchor.regexp");
+        has(&t, r"\<", "keyword.control.anchor.regexp");
+        has(&t, r"\U{41}", "constant.character.escape.backslash.regexp");
+        has(&t, r"\u0041", "constant.character.escape.backslash.regexp");
+        // no `\Q…\E` in Rust's; its `R` option
+        has(&t, r"\Q", "constant.character.escape.backslash.regexp");
+        has(&t, "?R", "keyword.other.option-toggle.regexp");
     }
 
     #[test]

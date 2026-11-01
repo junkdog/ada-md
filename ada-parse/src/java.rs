@@ -510,6 +510,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         arrow: None,
         tag_line: None,
         word_at: std::cell::Cell::new((usize::MAX, 0)),
+        fqn: std::cell::Cell::new((usize::MAX, 0, false)),
         re: 0,
         out,
     };
@@ -569,6 +570,9 @@ struct Scan<'b, 'c> {
     tag_line: Option<bool>,
     /// The last whole word looked up: where it starts and ends.
     word_at: std::cell::Cell<(usize, usize)>,
+    /// The last chain [`Scan::fqn_ahead`] read: where it started, where it stopped, and its answer, the same for
+    /// each of its words (a long `a.a.a.…` read again from each was quadratic: X-003).
+    fqn: std::cell::Cell<(usize, usize, bool)>,
     /// The state of the regex in [`STRING_RE`], which ends with its line.
     re: u8,
     out: &'b mut Out<'c>,
@@ -1917,7 +1921,9 @@ impl<'b> Scan<'b, '_> {
             dialect: regex::Dialect::Java,
             cooked: true,
             yields: &RE_YIELDS,
-            stop: |b, p| b[p] == b'"',
+            stop: |b, p, _| b[p] == b'"',
+            arg: 0,
+            escape: regex::java_escape,
             top_only: false,
             base: self.kind(W_RE),
             text: self.text,
@@ -2443,20 +2449,27 @@ impl<'b> Scan<'b, '_> {
     /// `(?=\b(?:(?:[_$]*\p{Ll}[\p{Ll}\p{N}_$]*\b)\.)+\p{Lu})` at `p`.
     fn fqn_ahead(&self, p: usize) -> bool {
         let b = self.b;
+        // a word after a `.` of the last chain read: the chain's answer (its `.`s all part it)
+        let (from, to, known) = self.fqn.get();
+        if p > from && p < to && b[p - 1] == b'.' {
+            return known;
+        }
         let mut q = p;
         let mut n = 0;
-        loop {
+        let found = loop {
             if n > 0 && is_upper(b, q) {
-                return true;
+                break true;
             }
             match cased(b, q, is_lower, lower_rest) {
                 Some((_, e)) if b.get(e) == Some(&b'.') && word_before(b, e) => {
                     q = e + 1;
                     n += 1;
                 }
-                _ => return false,
+                _ => break false,
             }
-        }
+        };
+        self.fqn.set((p, q, found));
+        found
     }
 
     /// `code` at a byte that isn't a word's.
