@@ -44,6 +44,7 @@ mod sql;
 // the port: the scanner's reference in tests, and the source of helpers it shares
 #[allow(dead_code)]
 mod toml;
+mod typescript;
 mod toml_scan;
 // the port: the scanner's reference in tests, and the source of the matchers it shares
 #[allow(dead_code)]
@@ -170,6 +171,8 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::Sql => sql::line(line.as_bytes(), state, &mut out),
         Lang::PowerShell => powershell::line(line.as_bytes(), state, &mut out),
         Lang::JavaScript => javascript::line(line.as_bytes(), state, &mut out),
+        Lang::TypeScript => typescript::line(line.as_bytes(), false, state, &mut out),
+        Lang::TypeScriptReact => typescript::line(line.as_bytes(), true, state, &mut out),
         Lang::Bash => bash::line(line.as_bytes(), state, &mut out),
         Lang::Makefile => bash::make_line(line.as_bytes(), state, &mut out),
         _ => {

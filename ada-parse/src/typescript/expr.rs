@@ -1,0 +1,1684 @@
+//! Expressions: `expression`'s patterns in the grammar's order, tried by the byte at the place;
+//! names by what is around them (a call, an object, a property, a function assigned).
+
+use super::words;
+use super::*;
+
+impl Scan<'_, '_, '_> {
+    /// `expression` at the place.
+    pub(super) fn expression(&mut self) -> bool {
+        self.expression_without_identifiers() || self.identifiers() || self.expression_punctuations()
+    }
+
+    /// `expressionPunctuations`: `,`, `.` and `?.`.
+    pub(super) fn expression_punctuations(&mut self) -> bool {
+        let i = self.i;
+        match self.c(i) {
+            b',' => self.take(i, i + 1, COMMA),
+            _ => self.accessor(),
+        }
+    }
+
+    /// `punctuation-accessor`: `(?:(\.)|(\?\.(?!\s*[[:digit:]])))`.
+    pub(super) fn accessor(&mut self) -> bool {
+        let i = self.i;
+        match self.c(i) {
+            b'.' => self.take(i, i + 1, ACCESSOR),
+            b'?' if self.c(i + 1) == b'.' && !self.c(self.ws(i + 2)).is_ascii_digit() => self.take(i, i + 2, ACCESSOR_OPT),
+            _ => false,
+        }
+    }
+
+    /// `(\.)|(\?\.(?!\s*[[:digit:]]))` at `i`: its end and kind.
+    pub(super) fn dot(&self, i: usize) -> Option<(usize, u16)> {
+        match self.c(i) {
+            b'.' if self.c(i + 1) != b'.' || self.c(i + 2) != b'.' => Some((i + 1, ACCESSOR)),
+            b'.' => Some((i + 1, ACCESSOR)),
+            b'?' if self.c(i + 1) == b'.' && !self.c(self.ws(i + 2)).is_ascii_digit() => Some((i + 2, ACCESSOR_OPT)),
+            _ => None,
+        }
+    }
+
+    /// `expressionWithoutIdentifiers` at the place.
+    pub(super) fn expression_without_identifiers(&mut self) -> bool {
+        let i = self.i;
+        let c = self.c(i);
+        // string
+        if matches!(c, b'\'' | b'"' | b'`') {
+            return self.string();
+        }
+        let name_start = look::alpha(self.b, i) > 0;
+        if (name_start || matches!(c, b'.' | b'?' | b'<') || is_space(c)) && self.template_call() {
+            return true;
+        }
+        if name_start && self.template(false) {
+            return true;
+        }
+        // regex
+        if (c == b'/' || is_space(c)) && self.regex() {
+            return true;
+        }
+        if c == b'/' && self.comment(false) {
+            return true;
+        }
+        if i == 0 && is_space(c) && self.comment(false) {
+            return true;
+        }
+        if name_start {
+            // function-expression
+            if let Some(r) = self.function_head(i, false) {
+                return self.function_toks(r, FUNC_EXPR);
+            }
+            if self.class_expression() {
+                return true;
+            }
+        }
+        // arrow-function
+        if self.arrow_function() {
+            return true;
+        }
+        // paren-expression-possibly-arrow
+        if self.possibly_arrow() {
+            return true;
+        }
+        if (c == b':' || is_space(c)) && self.maybe_arrow_return() {
+            return true;
+        }
+        // cast
+        if !self.tsx && (c == b'<' || is_space(c)) && self.cast() {
+            return true;
+        }
+        if c == b'?' && self.ternary() {
+            return true;
+        }
+        if name_start {
+            if let Some(e) = self.kw(i, b"new") {
+                self.tok(i, e, NEW);
+                self.i = e;
+                self.push(NEW_F);
+                return true;
+            }
+            if let Some(e) = self.kw(i, b"instanceof") {
+                self.tok(i, e, INSTANCEOF);
+                self.i = e;
+                self.push(INSTANCEOF_F);
+                return true;
+            }
+        }
+        if c == b'{' {
+            self.tok(i, i + 1, BLOCK_BRACE);
+            self.i = i + 1;
+            self.push(OBJ);
+            return true;
+        }
+        if self.expression_operators() {
+            return true;
+        }
+        if (name_start || matches!(c, b'.' | b'?') || (i > 0 && self.b[i - 1] == b')')) && self.function_call() {
+            return true;
+        }
+        if self.literal() || self.support_objects() {
+            return true;
+        }
+        if c == b'(' {
+            self.tok(i, i + 1, ROUND);
+            self.i = i + 1;
+            self.push(PAREN);
+            return true;
+        }
+        false
+    }
+
+    /// `class-expression`: `«wb»(?:(abstract)\s+)?(class)\b(?=\s+|[<{]|\/[\/*])`.
+    pub(super) fn class_expression(&mut self) -> bool {
+        let i = self.i;
+        if !self.wb(i) {
+            return false;
+        }
+        let mut k = i;
+        let mut abs = None;
+        if let Some(e) = self.word_b(i, b"abstract") {
+            let m = self.ws(e);
+            if m > e {
+                abs = Some(e);
+                k = m;
+            }
+        }
+        let Some(e) = self.word_b(k, b"class") else { return false };
+        if !(k == i || self.boundary(k)) {
+            return false;
+        }
+        let d = self.c(e);
+        if !(is_space(d) || matches!(d, b'<' | b'{') || (d == b'/' && matches!(self.c(e + 1), b'/' | b'*'))) {
+            return false;
+        }
+        if let Some(a) = abs {
+            self.tok(i, a, MODIFIER);
+        }
+        self.tok(k, e, CLASS_KW);
+        self.i = e;
+        self.push(CLASS);
+        true
+    }
+
+    /// `arrow-function`'s three.
+    pub(super) fn arrow_function(&mut self) -> bool {
+        let i = self.i;
+        let c = self.c(i);
+        // =>
+        if c == b'=' && self.c(i + 1) == b'>' {
+            self.tok(i, i + 2, ARROW);
+            self.i = i + 2;
+            self.push(ARROW_F);
+            return true;
+        }
+        // (?:«wb»(\basync)\s+)?(name)\s*(?==>)
+        let mut j = i;
+        let mut asy = None;
+        if self.wb(i) && self.word_b(i, b"async").is_some() && self.boundary(i) {
+            let k = self.ws(i + 5);
+            if k > i + 5 {
+                asy = Some(i);
+                j = k;
+            }
+        }
+        let ne = self.name(j);
+        if ne > j {
+            let k = self.ws(ne);
+            if self.c(k) == b'=' && self.c(k + 1) == b'>' {
+                if let Some(a) = asy {
+                    self.tok(a, a + 5, ASYNC);
+                }
+                self.tok(j, ne, PARAM);
+                self.i = k.min(self.n);
+                return true;
+            }
+            if asy.is_none() {
+                // a name can't start the second pattern (but `async`)
+                if !self.is_name(i, ne, b"async") {
+                    return false;
+                }
+            }
+        }
+        // (?:«wb»(\basync))?((?<![})!\]])\s*(?=sure|line))
+        let mut s = i;
+        let mut asy = None;
+        if self.wb(i) && self.rest(i).starts_with(b"async") && self.boundary(i + 5) {
+            asy = Some(i);
+            s = i + 5;
+        }
+        if s > 0 && matches!(self.b[s - 1], b'}' | b')' | b'!' | b']') {
+            return false;
+        }
+        let k = self.ws(s);
+        if !matches!(self.c(k), b'(' | b'<') {
+            return false;
+        }
+        if !(look::arrow_sure(self.b, k) || look::arrow_line(self.b, k)) {
+            return false;
+        }
+        if let Some(a) = asy {
+            self.tok(a, a + 5, ASYNC);
+        }
+        self.i = k.min(self.n);
+        if self.i == i {
+            self.push_zero(ARROW_HEAD)
+        } else {
+            self.push(ARROW_HEAD);
+            true
+        }
+    }
+
+    /// `paren-expression-possibly-arrow`'s two.
+    pub(super) fn possibly_arrow(&mut self) -> bool {
+        let i = self.i;
+        let c = self.c(i);
+        if !(matches!(c, b'(' | b'<' | b'a') || is_space(c)) || i == 0 {
+            return false;
+        }
+        let p = self.b[i - 1];
+        let first = matches!(p, b'(' | b'=' | b',');
+        let second = first || (i >= 2 && &self.b[i - 2..i] == b"=>") || self.word_ends_at(i, &[b"return"]);
+        if !second {
+            return false;
+        }
+        let mut k = self.ws(i);
+        let mut asy = None;
+        if self.rest(k).starts_with(b"async") {
+            asy = Some(k);
+            k += 5;
+        }
+        let q = self.ws(k);
+        let ok = (first && {
+            // «TP»?\(\s*(OPEN)
+            let t = if self.c(q) == b'<' { look::tp(self.b, q) } else { Some(q) };
+            t.is_some_and(|t| self.c(t) == b'(' && look::open_tail(self.b, self.ws(t + 1)))
+        }) || {
+            // (((«TP»)?\()|(<))\s*$
+            let t = if self.c(q) == b'<' { look::tp(self.b, q) } else { Some(q) };
+            let a = t.is_some_and(|t| self.c(t) == b'(' && self.ws(t + 1) >= self.n);
+            a || (self.c(q) == b'<' && self.ws(q + 1) >= self.n)
+        };
+        if !ok {
+            return false;
+        }
+        if let Some(a) = asy {
+            self.tok(a, a + 5, ASYNC);
+            self.i = a + 5;
+        } else {
+            self.i = k.min(self.n);
+        }
+        if self.i == i {
+            self.push_zero(MAYBE_ARROW)
+        } else {
+            self.push(MAYBE_ARROW);
+            true
+        }
+    }
+
+    /// `possibly-arrow-return-type`: `(?<=\)|^)\s*(:)(?=\s*«RT»+\s*=>)`.
+    pub(super) fn maybe_arrow_return(&mut self) -> bool {
+        let i = self.i;
+        if !(i == 0 || self.b[i - 1] == b')') {
+            return false;
+        }
+        let k = self.ws(i);
+        if self.c(k) != b':' || !look::rt_arrow(self.b, k + 1) {
+            return false;
+        }
+        self.tok(k, k + 1, ANNOTATION);
+        self.i = k + 1;
+        self.push(MAYBE_ARROW_RET);
+        true
+    }
+
+    /// `cast`'s three.
+    pub(super) fn cast(&mut self) -> bool {
+        let i = self.i;
+        let k = self.ws(i);
+        if self.c(k) != b'<' {
+            return false;
+        }
+        // \s*(<)\s*(const)\s*(>)
+        let m = self.ws(k + 1);
+        if let Some(e) = self.word_b(m, b"const") {
+            let g = self.ws(e);
+            if self.c(g) == b'>' {
+                self.tok(k, k + 1, ANGLE);
+                self.tok(m, e, MODIFIER);
+                return self.take(g, g + 1, ANGLE);
+            }
+        }
+        // the lookbehind's operators, then \s*(<)(?!<?\=)(?!\s*$)
+        let before = i > 0 && {
+            let b = self.b;
+            let p = b[i - 1];
+            !(i >= 2 && (&b[i - 2..i] == b"++" || &b[i - 2..i] == b"--") && !(i >= 3 && !look::alnum_before(b, i - 2)))
+                && (self.word_ends_at(i, &[b"return", b"throw", b"yield", b"await", b"default"])
+                    || matches!(p, b'=' | b'(' | b',' | b':' | b'>' | b'*' | b'?' | b'&' | b'|' | b'^')
+                    || (i >= 3 && (&b[i - 2..i] == b"++" || &b[i - 2..i] == b"--") && !look::alnum_before(b, i - 2))
+                    || (p == b'+' && (i < 2 || b[i - 2] != b'+'))
+                    || (p == b'-' && (i < 2 || b[i - 2] != b'-')))
+        };
+        let not_eq = !(self.c(k + 1) == b'=' || (self.c(k + 1) == b'<' && self.c(k + 2) == b'='));
+        if before && not_eq && self.ws(k + 1) < self.n {
+            self.tok(k, k + 1, ANGLE);
+            self.i = k + 1;
+            self.push(CAST);
+            return true;
+        }
+        // (?<=^)\s*(<)(?=name\s*>)
+        if i == 0 {
+            let e = self.name(k + 1);
+            if e > k + 1 && self.c(self.ws(e)) == b'>' {
+                self.tok(k, k + 1, ANGLE);
+                self.i = k + 1;
+                self.push(CAST);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// `ternary-expression`: `(?!\?\.\s*[^[:digit:]])(\?)(?!\?)`.
+    pub(super) fn ternary(&mut self) -> bool {
+        let i = self.i;
+        if self.c(i + 1) == b'?' {
+            return false;
+        }
+        if self.c(i + 1) == b'.' {
+            let k = self.ws(i + 2);
+            if !self.c(k).is_ascii_digit() {
+                return false;
+            }
+        }
+        self.tok(i, i + 1, TERNARY);
+        self.i = i + 1;
+        self.push(TERNARY_F);
+        true
+    }
+
+    /// `expression-operators` at the place.
+    pub(super) fn expression_operators(&mut self) -> bool {
+        let i = self.i;
+        let c = self.c(i);
+        if look::alpha(self.b, i) > 0 {
+            if !self.wb(i) {
+                return false;
+            }
+            let w = self.name(i);
+            if !self.we(w) {
+                return false;
+            }
+            let word = &self.b[i..w];
+            return match word {
+                b"await" => self.take(i, w, FLOW),
+                b"yield" => {
+                    // a comment then `*`
+                    let k = self.ws(w);
+                    if self.c(k) == b'/' && self.c(k + 1) == b'*' {
+                        let e = look::comments(self.b, k);
+                        if e > k && self.c(e) == b'*' {
+                            self.tok(i, w, FLOW);
+                            self.i = w;
+                            self.push(YIELD_STAR);
+                            return true;
+                        }
+                    }
+                    self.tok(i, w, FLOW);
+                    if self.c(k) == b'*' {
+                        return self.take(k, k + 1, ASTERISK);
+                    }
+                    self.i = w;
+                    true
+                }
+                b"delete" => self.take(i, w, DELETE),
+                b"in" if self.c(w) != b'(' => self.take(i, w, IN),
+                b"of" if self.c(w) != b'(' => self.take(i, w, OF),
+                b"instanceof" => self.take(i, w, INSTANCEOF),
+                b"new" => self.take(i, w, NEW),
+                b"typeof" => {
+                    self.tok(i, w, TYPEOF);
+                    self.i = w;
+                    self.push(TYPEOF_F);
+                    true
+                }
+                b"void" => self.take(i, w, VOID),
+                b"as" => {
+                    let k = self.ws(w);
+                    if k == w {
+                        return false;
+                    }
+                    if let Some(e) = self.word_b(k, b"const") {
+                        let m = self.ws(e);
+                        if m >= self.n || matches!(self.c(m), b';' | b',' | b':' | b'}' | b')' | b']') {
+                            self.tok(i, w, AS);
+                            return self.take(k, e, MODIFIER);
+                        }
+                    }
+                    self.tok(i, w, AS);
+                    self.i = k.min(self.n);
+                    self.push(AS_F);
+                    true
+                }
+                _ => false,
+            };
+        }
+        let c1 = self.c(i + 1);
+        let c2 = self.c(i + 2);
+        let c3 = self.c(i + 3);
+        let (len, kind) = match c {
+            b'.' if c1 == b'.' && c2 == b'.' => (3, SPREAD),
+            b'*' if c1 == b'=' => (2, COMPOUND),
+            b'/' if c1 == b'=' && !(i > 0 && self.b[i - 1] == b'(') => (2, COMPOUND),
+            b'%' | b'+' | b'-' if c1 == b'=' => (2, COMPOUND),
+            b'&' | b'^' | b'|' if c1 == b'=' => (2, COMPOUND_BITWISE),
+            b'<' if c1 == b'<' && c2 == b'=' => (3, COMPOUND_BITWISE),
+            b'>' if c1 == b'>' && c2 == b'=' => (3, COMPOUND_BITWISE),
+            b'>' if c1 == b'>' && c2 == b'>' && c3 == b'=' => (4, COMPOUND_BITWISE),
+            b'<' if c1 == b'<' => (2, SHIFT),
+            b'>' if c1 == b'>' && c2 == b'>' => (3, SHIFT),
+            b'>' if c1 == b'>' => (2, SHIFT),
+            b'=' if c1 == b'=' && c2 == b'=' => (3, COMPARISON),
+            b'!' if c1 == b'=' && c2 == b'=' => (3, COMPARISON),
+            b'=' | b'!' if c1 == b'=' => (2, COMPARISON),
+            b'<' | b'>' if c1 == b'=' => (2, RELATIONAL),
+            b'<' if c1 == b'>' => (2, RELATIONAL),
+            b'<' | b'>' => (1, RELATIONAL),
+            b'!' if self.alnum_before(i) && {
+                let k = self.ws(i + 1);
+                self.c(k) == b'/' && (self.c(k + 1) == b'=' || !matches!(self.c(k + 1), b'/' | b'*'))
+            } =>
+            {
+                let k = self.ws(i + 1);
+                self.tok(i, i + 1, LOGICAL);
+                return if self.c(k + 1) == b'=' { self.take(k, k + 2, COMPOUND) } else { self.take(k, k + 1, ARITHMETIC) };
+            }
+            b'!' => (1, LOGICAL),
+            b'&' if c1 == b'&' => (2, LOGICAL),
+            b'|' if c1 == b'|' => (2, LOGICAL),
+            b'?' if c1 == b'?' => (2, LOGICAL),
+            b'&' | b'~' | b'^' | b'|' => (1, BITWISE),
+            b'=' => (1, ASSIGN),
+            b'-' if c1 == b'-' => (2, DECREMENT),
+            b'+' if c1 == b'+' => (2, INCREMENT),
+            b'%' | b'*' | b'/' | b'-' | b'+' => (1, ARITHMETIC),
+            _ => {
+                // (?<=[_$[:alnum:])\]])\s*(?:(/=)|(?:(/)(?![/*]))), with comments between
+                if is_space(c) && i > 0 && (self.alnum_before(i) || matches!(self.b[i - 1], b')' | b']')) {
+                    let k = self.ws(i);
+                    let k2 = look::comments(self.b, k);
+                    if self.c(k2) == b'/' && (self.c(k2 + 1) == b'=' || !matches!(self.c(k2 + 1), b'/' | b'*')) {
+                        if k2 > k {
+                            // comments between: their own tokens first
+                            return false;
+                        }
+                        return if self.c(k + 1) == b'=' { self.take(k, k + 2, COMPOUND) } else { self.take(k, k + 1, ARITHMETIC) };
+                    }
+                }
+                return false;
+            }
+        };
+        self.take(i, i + len, kind)
+    }
+
+    /// `function-call` at the place: a target and a call after it.
+    pub(super) fn function_call(&mut self) -> bool {
+        let i = self.i;
+        let c = self.c(i);
+        let target = if c == b'.' || c == b'?' || look::alpha(self.b, i) > 0 {
+            look::call_target(self.b, i)
+        } else {
+            None
+        };
+        if target.is_none() {
+            // (?<=[\)])\s*…\(: a call of what a `)` closed
+            let after_paren = i > 0 && self.b[i - 1] == b')' && look::call_after(self.b, i);
+            if !after_paren {
+                // the second: a target and `<` before `{`, `[` or `(` at the line's end
+                if self.call_eol_target(i).is_some() {
+                    self.push_zero(CALL_EOL);
+                    return self.push_zero(CALL_EOL_TARGET);
+                }
+                return false;
+            }
+        }
+        self.push_zero(CALL);
+        if target.is_some() {
+            self.push_zero(CALL_TARGET);
+        }
+        true
+    }
+
+    /// `template-call`'s two: a tag, through dots, and type arguments maybe, before a template.
+    pub(super) fn template_call(&mut self) -> bool {
+        let i = self.i;
+        // (?=((name\s*\??\.\s*)*|(\??\.\s*)?)(name)(«TA»)?`)
+        let mut j = i;
+        let mut chain = true;
+        if look::alpha(self.b, i) == 0 {
+            let mut k = i;
+            if self.c(k) == b'?' {
+                k += 1;
+            }
+            if self.c(k) == b'.' {
+                j = self.ws(k + 1);
+                // `(\??\.\s*)?` then one name: no more dots after it
+                let ne = self.name(j);
+                let after = if self.c(ne) == b'<' { look::type_args(self.b, ne).map(|e| self.ws(e)) } else { Some(ne) };
+                if !(ne > j && after.is_some_and(|a| self.c(a) == b'`')) {
+                    return false;
+                }
+            } else {
+                chain = false;
+            }
+        }
+        let mut last = None;
+        while chain && last.is_none() {
+            let ne = self.name(j);
+            if ne == j {
+                break;
+            }
+            let after = if self.c(ne) == b'<' { look::type_args(self.b, ne).map(|e| self.ws(e)) } else { Some(ne) };
+            if after.is_some_and(|a| self.c(a) == b'`') {
+                last = Some(ne);
+                break;
+            }
+            let mut k = self.ws(ne);
+            if self.c(k) == b'?' {
+                k += 1;
+            }
+            if self.c(k) != b'.' {
+                break;
+            }
+            j = self.ws(k + 1);
+        }
+        if last.is_some() {
+            self.push_zero(TPL_CALL);
+            return self.push_zero(TPL_CALL_TARGET);
+        }
+        // (name)?\s*(?=(«TA»)`)
+        let ne = self.name(i);
+        let k = self.ws(ne);
+        if self.c(k) == b'<' && look::type_args(self.b, k).is_some_and(|e| self.c(self.ws(e)) == b'`') {
+            self.push(TPL_CALL);
+            if ne > i {
+                self.tok(i, ne, TPL_TAG);
+            }
+            self.i = k;
+            return true;
+        }
+        false
+    }
+
+    /// `(<\s*[\{\[\(]\s*$)` at `i`.
+    pub(super) fn type_args_open_eol(&self, i: usize) -> bool {
+        self.c(i) == b'<' && {
+            let k = self.ws(i + 1);
+            matches!(self.c(k), b'{' | b'[' | b'(') && self.ws(k + 1) >= self.n
+        }
+    }
+
+    /// A call's target from `i` with `(<\s*[\{\[\(]\s*$)` right after it: its end.
+    pub(super) fn call_eol_target(&self, i: usize) -> Option<usize> {
+        let mut j = i;
+        let first = self.name(j);
+        if first == j {
+            let mut k = j;
+            if self.c(k) == b'?' {
+                k += 1;
+            }
+            if self.c(k) != b'.' {
+                return None;
+            }
+            k = self.ws(k + 1);
+            if self.c(k) == b'#' {
+                k += 1;
+            }
+            let e = self.name(k);
+            return (e > k && self.type_args_open_eol(e)).then_some(e);
+        }
+        j = first;
+        let mut best = self.type_args_open_eol(j).then_some(j);
+        loop {
+            let mut k = self.ws(j);
+            if self.c(k) == b'?' {
+                k += 1;
+            }
+            if self.c(k) != b'.' {
+                break;
+            }
+            k = self.ws(k + 1);
+            if self.c(k) == b'#' {
+                k += 1;
+            }
+            let e = self.name(k);
+            if e == k {
+                break;
+            }
+            j = e;
+            if self.type_args_open_eol(j) {
+                best = Some(j);
+            }
+        }
+        best
+    }
+
+    /// Whether a call's target ends at `i`: `(?=\s*(?:(\?\.\s*)|(\!))?(«TA»\s*)?\()`.
+    pub(super) fn call_target_end(&self, i: usize) -> bool {
+        look::call_after(self.b, i)
+    }
+
+    /// `function-call-target`'s patterns: `support-function-call-identifiers`, then a name.
+    pub(super) fn call_target_name(&mut self) -> bool {
+        let i = self.i;
+        if self.literal() || self.support_objects() || self.object_identifiers() || self.accessor() {
+            return true;
+        }
+        if let Some(e) = self.kw(i, b"import") {
+            let k = self.ws(e);
+            if self.c(k) == b'(' {
+                let q = self.ws(k + 1);
+                if matches!(self.c(q), b'"' | b'\'' | b'`') {
+                    return self.take(i, e, IMPORT_OP);
+                }
+            }
+        }
+        let s = if self.c(i) == b'#' { i + 1 } else { i };
+        let ne = self.name(s);
+        if ne > s {
+            return self.take(i, ne, ENTITY_FN);
+        }
+        false
+    }
+
+    /// A call's turn after its target.
+    pub(super) fn call_step(&mut self) -> bool {
+        let i = self.i;
+        let c = self.c(i);
+        if i > 0 && self.b[i - 1] == b')' {
+            let again = look::call_target(self.b, i).is_some() || look::call_after(self.b, i);
+            if !again && self.pop_zero() {
+                return true;
+            }
+        }
+        // the inner push: another target (before the optionals, as the grammar orders them)
+        if look::call_target(self.b, i).is_some() || (matches!(c, b'.' | b'?') && self.dot(i).is_some() && {
+            let s = self.ws(self.dot(i).map_or(i, |d| d.0));
+            let s = if self.c(s) == b'#' { s + 1 } else { s };
+            self.name(s) > s
+        }) {
+            return self.push_zero(CALL_TARGET);
+        }
+        if self.comment(false) {
+            return true;
+        }
+        match c {
+            b'?' if self.c(i + 1) == b'.' => return self.take(i, i + 2, ACCESSOR_OPT),
+            b'!' => return self.take(i, i + 1, DEFINITE),
+            b'<' => return self.type_arguments(),
+            b'(' => {
+                self.tok(i, i + 1, ROUND);
+                self.i = i + 1;
+                self.set(CALL_ARGS);
+                return true;
+            }
+            _ => {}
+        }
+        // the inner push: another target
+        if look::call_target(self.b, i).is_some() || (matches!(c, b'.' | b'?') && self.dot(i).is_some()) {
+            return self.push_zero(CALL_TARGET);
+        }
+        false
+    }
+
+    /// `literal` at the place.
+    pub(super) fn literal(&mut self) -> bool {
+        let i = self.i;
+        let c = self.c(i);
+        if c.is_ascii_digit() || c == b'.' {
+            if self.numeric() {
+                return true;
+            }
+        }
+        if look::alpha(self.b, i) > 0 && self.wb(i) {
+            let w = self.name(i);
+            let word = &self.b[i..w];
+            let we = self.we(w);
+            let kind = match word {
+                b"true" if we => TRUE,
+                b"false" if we => FALSE,
+                b"null" if we => NULL,
+                b"undefined" if we => UNDEFINED,
+                b"NaN" if we => NAN,
+                b"Infinity" if we => INFINITY,
+                b"this" if self.boundary(w) && self.c(w) != b'$' => THIS,
+                b"super" if self.boundary(w) && self.c(w) != b'$' => SUPER,
+                _ => PLAIN,
+            };
+            if kind != PLAIN {
+                return self.take(i, w, kind);
+            }
+        }
+        self.array_literal()
+    }
+
+    /// `array-literal`: `\s*(\[)`.
+    pub(super) fn array_literal(&mut self) -> bool {
+        let i = self.i;
+        let k = self.ws(i);
+        if self.c(k) != b'[' || k >= self.n {
+            return false;
+        }
+        self.tok(k, k + 1, SQUARE);
+        self.i = k + 1;
+        self.push(ARRAY);
+        true
+    }
+
+    /// `numeric-literal` at the place.
+    pub(super) fn numeric(&mut self) -> bool {
+        let i = self.i;
+        let Some((e, kind, big)) = self.number(i) else { return false };
+        if let Some(n) = big {
+            self.tok(i, n, kind);
+            let bk = match kind {
+                HEX => HEX_BIG,
+                BINARY => BINARY_BIG,
+                OCTAL => OCTAL_BIG,
+                _ => DECIMAL_BIG,
+            };
+            return self.take(n, e, bk);
+        }
+        self.take(i, e, kind)
+    }
+
+    /// A numeric key's turn: `numeric-literal` only.
+    pub(super) fn numeric_key(&mut self) -> bool {
+        self.numeric()
+    }
+
+    /// The end of a number at `i`, as `numeric-literal` reads it.
+    pub(super) fn number_end(&self, i: usize) -> Option<usize> {
+        self.number(i).map(|(e, _, _)| e)
+    }
+
+    /// A number at `i`: its end, kind, and where its `n` starts if a bigint.
+    pub(super) fn number(&self, i: usize) -> Option<(usize, u16, Option<usize>)> {
+        let b = self.b;
+        let dollar_before = i > 0 && b[i - 1] == b'$';
+        if dollar_before {
+            return None;
+        }
+        let digits = |mut k: usize, ok: &dyn Fn(u8) -> bool| {
+            while ok(self.c(k)) || self.c(k) == b'_' {
+                k += 1;
+            }
+            k
+        };
+        let wb_start = self.boundary(i);
+        // hex, binary, octal: \b(?<!\$)0(?:x|X)[0-9a-fA-F][0-9a-fA-F_]*(n)?\b(?!\$)
+        if wb_start && self.c(i) == b'0' {
+            let x = self.c(i + 1);
+            let pick: Option<(&dyn Fn(u8) -> bool, u16, usize)> = match x {
+                b'x' | b'X' => Some((&|c: u8| c.is_ascii_hexdigit(), HEX, i + 2)),
+                b'b' | b'B' => Some((&|c: u8| c == b'0' || c == b'1', BINARY, i + 2)),
+                b'o' | b'O' => Some((&|c: u8| (b'0'..=b'7').contains(&c), OCTAL, i + 2)),
+                b'0'..=b'7' => Some((&|c: u8| (b'0'..=b'7').contains(&c), OCTAL, i + 1)),
+                _ => None,
+            };
+            if let Some((ok, kind, s)) = pick
+                && ok(self.c(s))
+            {
+                let e = digits(s + 1, ok);
+                let (e2, big) = if self.c(e) == b'n' { (e + 1, Some(e)) } else { (e, None) };
+                if self.boundary(e2) && self.c(e2) != b'$' {
+                    return Some((e2, kind, big));
+                }
+            }
+        }
+        let dig = |c: u8| c.is_ascii_digit();
+        let end_ok = |e: usize| self.c(e) != b'$';
+        let with_n = |e: usize| -> (usize, Option<usize>) { if self.c(e) == b'n' { (e + 1, Some(e)) } else { (e, None) } };
+        let exp = |k: usize| -> Option<usize> {
+            if !matches!(self.c(k), b'e' | b'E') {
+                return None;
+            }
+            let mut m = k + 1;
+            if matches!(self.c(m), b'+' | b'-') {
+                m += 1;
+            }
+            if !dig(self.c(m)) {
+                return None;
+            }
+            Some(digits(m + 1, &dig))
+        };
+        let c = self.c(i);
+        if dig(c) && wb_start {
+            let int = digits(i + 1, &dig);
+            if self.c(int) == b'.' {
+                let f = int + 1;
+                // 1. 1.1E+3
+                if dig(self.c(f)) {
+                    let fe = digits(f + 1, &dig);
+                    if let Some(x) = exp(fe) {
+                        let (e, big) = with_n(x);
+                        if self.boundary(e) && end_ok(e) {
+                            return Some((e, DECIMAL, big));
+                        }
+                    }
+                }
+                // 2. 1.E+3
+                if let Some(x) = exp(f) {
+                    let (e, big) = with_n(x);
+                    if self.boundary(e) && end_ok(e) {
+                        return Some((e, DECIMAL, big));
+                    }
+                }
+            }
+            // 4. 1E+3
+            if let Some(x) = exp(int) {
+                let (e, big) = with_n(x);
+                if self.boundary(e) && end_ok(e) {
+                    return Some((e, DECIMAL, big));
+                }
+            }
+            if self.c(int) == b'.' {
+                let f = int + 1;
+                // 5. 1.1
+                if dig(self.c(f)) {
+                    let fe = digits(f + 1, &dig);
+                    let (e, big) = with_n(fe);
+                    if self.boundary(e) && end_ok(e) {
+                        return Some((e, DECIMAL, big));
+                    }
+                }
+                // 6. 1. then \B
+                let (e, big) = with_n(f);
+                if !self.boundary(e) && end_ok(e) {
+                    return Some((e, DECIMAL, big));
+                }
+            }
+            // 8. 1 then \b(?!\.)
+            let (e, big) = with_n(int);
+            if self.boundary(e) && self.c(e) != b'.' && end_ok(e) {
+                return Some((e, DECIMAL, big));
+            }
+            return None;
+        }
+        if c == b'.' && !wb_start && dig(self.c(i + 1)) {
+            let fe = digits(i + 2, &dig);
+            // 3. .1E+3
+            if let Some(x) = exp(fe) {
+                let (e, big) = with_n(x);
+                if self.boundary(e) && end_ok(e) {
+                    return Some((e, DECIMAL, big));
+                }
+            }
+            // 7. .1
+            let (e, big) = with_n(fe);
+            if self.boundary(e) && end_ok(e) {
+                return Some((e, DECIMAL, big));
+            }
+        }
+        None
+    }
+
+    /// `regex`'s two at the place.
+    pub(super) fn regex(&mut self) -> bool {
+        let i = self.i;
+        let k = self.ws(i);
+        if self.c(k) != b'/' || matches!(self.c(k + 1), b'/' | b'*') {
+            return false;
+        }
+        let b = self.b;
+        // the first: (?<!\+\+|--|})(?<=[=(:,\[?+!]|^return|…|^case|…|=>|&&|\|\||\*\/)\s*(\/)
+        let not_before = !(i >= 2 && (&b[i - 2..i] == b"++" || &b[i - 2..i] == b"--")) && !(i >= 1 && b[i - 1] == b'}');
+        let lb1 = i > 0
+            && not_before
+            && (matches!(b[i - 1], b'=' | b'(' | b':' | b',' | b'[' | b'?' | b'+' | b'!')
+                || self.word_ends_at(i, &[b"return", b"case"])
+                || (i >= 2 && matches!(&b[i - 2..i], b"=>" | b"&&" | b"||" | b"*/")));
+        if lb1 && self.regex_body_ahead(k + 1, true) {
+            // the blanks before the `/` are in the match, under the regex's scope
+            self.push(REGEX_F);
+            self.tok(k, k + 1, RE_BEGIN);
+            self.i = k + 1;
+            return true;
+        }
+        // the second: ((?<![_$[:alnum:])\]]|\+\+|--|}|\*\/)|((?<=^return|…|^case|…))\s*)\/
+        if k == i {
+            let blocked = i > 0
+                && (self.alnum_before(i)
+                    || matches!(b[i - 1], b')' | b']' | b'}')
+                    || (i >= 2 && matches!(&b[i - 2..i], b"++" | b"--" | b"*/")));
+            if !blocked && self.regex_body_ahead(k + 1, false) {
+                self.tok(k, k + 1, RE_BEGIN);
+                self.i = k + 1;
+                self.push(REGEX_F);
+                return true;
+            }
+        }
+        if self.word_ends_at(i, &[b"return", b"case"]) && self.regex_body_ahead(k + 1, false) {
+            // the blanks after `return` are the regex's begin too
+            self.tok(i, k + 1, RE_BEGIN);
+            self.i = k + 1;
+            self.push(REGEX_F);
+            return true;
+        }
+        false
+    }
+
+    /// A regex's body and end ahead from `i` (after its `/`):
+    /// first: `(?:[^\/\\\[\()]|\\.|\[([^\]\\]|\\.)+\]|\(([^\)\\]|\\.)+\))+\/(flags)`;
+    /// second: `(?:[^\/\\\[]|\\.|\[([^\]\\]|\\.)*\])+\/(flags)`; then `([dgimsuy]+|(?![\/\*])|(?=\/\*))(?!\s*[a-zA-Z0-9_$])`.
+    pub(super) fn regex_body_ahead(&self, i: usize, first: bool) -> bool {
+        let mut j = i;
+        let mut any = false;
+        loop {
+            match self.c(j) {
+                0 => return false,
+                b'/' => break,
+                b'\\' => {
+                    if j + 1 > self.n || self.c(j + 1) == b'\n' {
+                        return false;
+                    }
+                    j += 2;
+                }
+                b'[' => {
+                    let mut k = j + 1;
+                    let mut inner = false;
+                    loop {
+                        match self.c(k) {
+                            0 => return false,
+                            b']' if inner || !first => break,
+                            b']' => return false,
+                            b'\\' => {
+                                if self.c(k + 1) == b'\n' || self.c(k + 1) == 0 {
+                                    return false;
+                                }
+                                k += 2;
+                                inner = true;
+                                continue;
+                            }
+                            _ => k += 1,
+                        }
+                        inner = true;
+                    }
+                    j = k + 1;
+                }
+                b'(' if first => {
+                    let mut k = j + 1;
+                    let mut inner = false;
+                    loop {
+                        match self.c(k) {
+                            0 => return false,
+                            b')' if inner => break,
+                            b')' => return false,
+                            b'\\' => {
+                                if self.c(k + 1) == b'\n' || self.c(k + 1) == 0 {
+                                    return false;
+                                }
+                                k += 2;
+                            }
+                            _ => k += 1,
+                        }
+                        inner = true;
+                    }
+                    j = k + 1;
+                }
+                b')' if first => return false,
+                b'\n' => {
+                    // `[^…]` takes the `\n`, but no `/` can follow
+                    return false;
+                }
+                c => j += char_len(c),
+            }
+            any = true;
+        }
+        if !any {
+            return false;
+        }
+        let mut e = j + 1;
+        let fs = e;
+        while matches!(self.c(e), b'd' | b'g' | b'i' | b'm' | b's' | b'u' | b'y') {
+            e += 1;
+        }
+        if e == fs && matches!(self.c(e), b'/' | b'*') && !(self.c(e) == b'/' && self.c(e + 1) == b'*') {
+            return false;
+        }
+        let k = self.ws(e);
+        !matches!(self.c(k), b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$')
+    }
+
+    /// `support-objects` at the place.
+    pub(super) fn support_objects(&mut self) -> bool {
+        let i = self.i;
+        let c = self.c(i);
+        if let Some((de, dk)) = self.dot(i) {
+            if c == b'.' && self.c(i + 1) == b'.' {
+                return false;
+            }
+            let s = self.ws(de);
+            let ne = self.name(s);
+            if ne == s {
+                return false;
+            }
+            let w = &self.b[s..ne];
+            let no_call = |me: &Self| {
+                // \b(?!\$|\s*(«TP»)?\()
+                let k = me.ws(ne);
+                let t = if me.c(k) == b'<' { look::tp(me.b, k) } else { Some(k) };
+                !(t.is_some_and(|t| me.c(t) == b'('))
+            };
+            let call = self.c(self.ws(ne)) == b'(';
+            let kind = if matches!(w, b"constructor" | b"length" | b"prototype" | b"__proto__") && no_call(self) {
+                SUPPORT_PROP
+            } else if matches!(w, b"EPSILON" | b"MAX_SAFE_INTEGER" | b"MAX_VALUE" | b"MIN_SAFE_INTEGER" | b"MIN_VALUE" | b"NEGATIVE_INFINITY" | b"POSITIVE_INFINITY") {
+                // the grammar's capture 4 is in its lookahead: these words get no scope
+                PLAIN
+            } else if words::dom_const(w) && no_call(self) {
+                DOM_CONST
+            } else if words::dom_prop(w) && no_call(self) {
+                DOM_PROP
+            } else if call && words::event_handler(w) {
+                EVENT_HANDLER
+            } else if call && words::browser_fn(w) {
+                SUPPORT_FN
+            } else if call && words::dom_fn(w) {
+                SUPPORT_FN_DOM
+            } else if call && matches!(w, b"all" | b"catch" | b"finally" | b"race" | b"reject" | b"resolve" | b"then") {
+                PROMISE_FN
+            } else {
+                return false;
+            };
+            self.tok(i, de, dk);
+            return self.take(s, ne, kind);
+        }
+        if look::alpha(self.b, i) == 0 || !self.wb(i) {
+            return false;
+        }
+        let ne = self.name(i);
+        let w = &self.b[i..ne];
+        let bend = self.boundary(ne) && self.c(ne) != b'$';
+        if !bend {
+            return false;
+        }
+        if w == b"arguments" {
+            return self.take(i, ne, ARGUMENTS);
+        }
+        if words::builtin_class(w) {
+            return self.take(i, ne, BUILTIN_CLASS);
+        }
+        if w.ends_with(b"Error") && matches!(&w[..w.len() - 5], b"" | b"Eval" | b"Internal" | b"Range" | b"Reference" | b"Syntax" | b"Type" | b"URI") {
+            return self.take(i, ne, ERROR_CLASS);
+        }
+        if w == b"Promise" {
+            return self.take(i, ne, PROMISE);
+        }
+        if words::support_fn(w) && self.c(self.ws(ne)) == b'(' {
+            return self.take(i, ne, SUPPORT_FN);
+        }
+        // (Math|console|JSON)(?:\s*(\.|\?\.)\s*(member))?\b(?!\$)
+        let member = |me: &Self| -> Option<(usize, u16, usize, usize)> {
+            let k = me.ws(ne);
+            let (de, dk) = me.dot(k)?;
+            if me.c(k) == b'.' && me.c(k + 1) == b'.' {
+                return None;
+            }
+            let s = me.ws(de);
+            let e = me.name(s);
+            (e > s && me.boundary(e) && me.c(e) != b'$').then_some((k, dk, de, s)).map(|(k, dk, _de, s)| (k, dk, s, e))
+        };
+        let with_member = |me: &mut Self, kind: u16, check: &dyn Fn(&[u8]) -> Option<u16>| -> bool {
+            if let Some((k, dk, s, e)) = member(me)
+                && let Some(mk) = check(&me.b[s..e])
+            {
+                me.tok(i, ne, kind);
+                let de = if dk == ACCESSOR { k + 1 } else { k + 2 };
+                me.tok(k, de, dk);
+                return me.take(s, e, mk);
+            }
+            me.take(i, ne, kind)
+        };
+        match w {
+            b"Math" => {
+                return with_member(self, MATH, &|m| {
+                    if words::math_fn(m) {
+                        Some(MATH_FN)
+                    } else if words::math_const(m) {
+                        Some(MATH_CONST)
+                    } else {
+                        None
+                    }
+                });
+            }
+            b"console" => return with_member(self, CONSOLE, &|m| words::console_fn(m).then_some(CONSOLE_FN)),
+            b"JSON" => return with_member(self, JSON, &|m| matches!(m, b"parse" | b"stringify").then_some(JSON_FN)),
+            b"import" | b"new" => {
+                let (k1, want, kind) = if w == b"import" { (IMPORT, &b"meta"[..], IMPORT_META) } else { (NEW, &b"target"[..], NEW_TARGET) };
+                if let Some((k, dk, s, e)) = member(self)
+                    && &self.b[s..e] == want
+                {
+                    self.tok(i, ne, k1);
+                    let de = if dk == ACCESSOR { k + 1 } else { k + 2 };
+                    self.tok(k, de, dk);
+                    return self.take(s, e, kind);
+                }
+                return false;
+            }
+            _ => {}
+        }
+        if words::dom_var(w) {
+            return self.take(i, ne, DOM_VAR);
+        }
+        if words::dom_class(w) {
+            return self.take(i, ne, DOM_CLASS);
+        }
+        if words::node_class(w) {
+            return self.take(i, ne, NODE_CLASS);
+        }
+        if w == b"process" {
+            // (process)(?:(\.|\?\.)(?:(props)|(fns)))?\b(?!\$): no blanks around the dot
+            if let Some((de, dk)) = self.dot(ne)
+                && !(self.c(ne) == b'.' && self.c(ne + 1) == b'.')
+            {
+                let e = self.name(de);
+                let m = &self.b[de..e];
+                if e > de && self.boundary(e) && self.c(e) != b'$' {
+                    let mk = if words::process_prop(m) {
+                        Some(PROCESS_PROP)
+                    } else if words::process_fn(m) {
+                        Some(PROCESS_FN)
+                    } else {
+                        None
+                    };
+                    if let Some(mk) = mk {
+                        self.tok(i, ne, PROCESS);
+                        self.tok(ne, de, dk);
+                        return self.take(de, e, mk);
+                    }
+                }
+            }
+            return self.take(i, ne, PROCESS);
+        }
+        if w == b"exports" {
+            return self.take(i, ne, MODULE);
+        }
+        if w == b"module" {
+            if let Some((de, dk)) = self.dot(ne)
+                && !(self.c(ne) == b'.' && self.c(ne + 1) == b'.')
+            {
+                let e = self.name(de);
+                if e > de && matches!(&self.b[de..e], b"exports" | b"id" | b"filename" | b"loaded" | b"parent" | b"children") && self.boundary(e) && self.c(e) != b'$' {
+                    self.tok(i, ne, MODULE);
+                    self.tok(ne, de, dk);
+                    return self.take(de, e, MODULE);
+                }
+            }
+            return self.take(i, ne, MODULE);
+        }
+        if matches!(w, b"global" | b"GLOBAL" | b"root" | b"__dirname" | b"__filename") {
+            return self.take(i, ne, NODE_OBJ);
+        }
+        false
+    }
+
+    /// `object-identifiers` at the place.
+    pub(super) fn object_identifiers(&mut self) -> bool {
+        let i = self.i;
+        // a dot, then a name before another dot and name
+        if let Some((de, dk)) = self.dot(i) {
+            if self.c(i) == b'.' && self.c(i + 1) == b'.' {
+                return false;
+            }
+            let s = self.ws(de);
+            let s2 = if self.c(s) == b'#' { s + 1 } else { s };
+            let ne = self.name(s2);
+            if ne > s2 && self.dot_name_after(ne) {
+                let u = look::upper(self.b, s2);
+                let kind = if s2 == s && u == ne || s2 > s && u == ne { CONSTANT_OBJ_PROP } else { OBJECT_PROP };
+                self.tok(i, de, dk);
+                return self.take(s, ne, kind);
+            }
+            return false;
+        }
+        let ne = self.name(i);
+        if ne == i {
+            return false;
+        }
+        // name(?=\s*\??\.\s*prototype\b(?!\$))
+        {
+            let mut k = self.ws(ne);
+            if self.c(k) == b'?' {
+                k += 1;
+            }
+            if self.c(k) == b'.' {
+                let m = self.ws(k + 1);
+                if let Some(e) = self.word_b(m, b"prototype")
+                    && self.c(e) != b'$'
+                {
+                    return self.take(i, ne, SUPPORT_CLASS);
+                }
+            }
+        }
+        if self.dot_name_after(ne) {
+            let u = look::upper(self.b, i);
+            return self.take(i, ne, if u == ne { CONSTANT_OBJ } else { OBJECT });
+        }
+        false
+    }
+
+    /// `(?=\s*\??\.\s*\#?«name»)` at `i`.
+    pub(super) fn dot_name_after(&self, i: usize) -> bool {
+        let mut k = self.ws(i);
+        if self.c(k) == b'?' {
+            k += 1;
+        }
+        if self.c(k) != b'.' {
+            return false;
+        }
+        let mut m = self.ws(k + 1);
+        if self.c(m) == b'#' {
+            m += 1;
+        }
+        self.name(m) > m
+    }
+
+    /// `identifiers` at the place.
+    pub(super) fn identifiers(&mut self) -> bool {
+        if self.object_identifiers() {
+            return true;
+        }
+        let i = self.i;
+        // (?:(\.)|(\?\.(?!\s*[[:digit:]])))\s*)?(name)(?=\s*=\s*FNV)
+        let (s, dot) = match self.dot(i) {
+            Some((de, dk)) if !(self.c(i) == b'.' && self.c(i + 1) == b'.') => (self.ws(de), Some((de, dk))),
+            _ => (i, None),
+        };
+        let ne = self.name(s);
+        if ne > s {
+            let k = self.ws(ne);
+            if self.c(k) == b'=' && self.c(k + 1) != b'=' && look::fn_value(self.b, self.ws(k + 1)) {
+                if let Some((de, dk)) = dot {
+                    self.tok(i, de, dk);
+                }
+                return self.take(s, ne, ENTITY_FN);
+            }
+        }
+        if let Some((de, dk)) = dot {
+            let s2 = if self.c(s) == b'#' { s + 1 } else { s };
+            let ne = self.name(s2);
+            if ne == s2 {
+                return false;
+            }
+            let u = look::upper(self.b, s2);
+            self.tok(i, de, dk);
+            return self.take(s, ne, if u == ne { CONSTANT_PROP } else { PROPERTY });
+        }
+        if ne == i {
+            return false;
+        }
+        let u = look::upper(self.b, i);
+        self.take(i, ne, if u == ne { CONSTANT } else { READWRITE })
+    }
+
+    /// `object-member` at the place.
+    pub(super) fn object_member(&mut self) -> bool {
+        let i = self.i;
+        let c = self.c(i);
+        if self.comment(false) {
+            return true;
+        }
+        if self.obj_method_head(false) {
+            return true;
+        }
+        match c {
+            b'[' => return self.push_zero(OBJ_KEY_SQ),
+            b'\'' | b'"' | b'`' => return self.push_zero(OBJ_KEY_STR),
+            _ => {}
+        }
+        if (c.is_ascii_digit() || c == b'.') && self.number_end(i).is_some() {
+            return self.push_zero(OBJ_KEY_NUM);
+        }
+        // (?<=[\]\'\"\`])(?=\s*[\(\<])
+        if i > 0 && matches!(self.b[i - 1], b']' | b'\'' | b'"' | b'`') && matches!(self.c(self.ws(i)), b'(' | b'<') {
+            return self.push_zero(OBJ_KEY_METHOD);
+        }
+        // (?![_$[:alpha:]])([[:digit:]]+)\s*(?=«cm*»:)
+        if c.is_ascii_digit() {
+            let mut e = i;
+            while self.c(e).is_ascii_digit() {
+                e += 1;
+            }
+            let k = look::comments(self.b, self.ws(e));
+            if self.c(k) == b':' {
+                return self.take(i, e, DECIMAL);
+            }
+        }
+        let ne = self.name(i);
+        if ne > i {
+            let k = look::comments(self.b, self.ws(ne));
+            if self.c(k) == b':' {
+                // name\s*(?=«cm*»:(\s*«cm*»)*\s*FNV)
+                let v = look::comments(self.b, self.ws(k + 1));
+                if look::fn_value(self.b, self.ws(v)) {
+                    return self.take(i, ne, ENTITY_FN);
+                }
+                self.i = self.ws(ne).min(self.n);
+                return true;
+            }
+        }
+        if c == b'.' && self.c(i + 1) == b'.' && self.c(i + 2) == b'.' {
+            self.tok(i, i + 3, SPREAD);
+            self.i = i + 3;
+            self.push(OBJ_SPREAD);
+            return true;
+        }
+        if ne > i {
+            // name\s*(?=,|\}|$|\/\/|\/\*)
+            let k = self.ws(ne);
+            if matches!(self.c(k), b',' | b'}') || k >= self.n || (self.c(k) == b'/' && matches!(self.c(k + 1), b'/' | b'*')) {
+                self.tok(i, ne, READWRITE);
+                self.i = k.min(self.n);
+                return true;
+            }
+        }
+        if let Some(e) = self.kw(i, b"as") {
+            let k = self.ws(e);
+            if k > e {
+                if let Some(ce) = self.word_b(k, b"const") {
+                    let m = self.ws(ce);
+                    if m >= self.n || matches!(self.c(m), b',' | b'}') {
+                        self.tok(i, e, AS);
+                        return self.take(k, ce, MODIFIER);
+                    }
+                }
+                self.tok(i, e, AS);
+                self.i = k.min(self.n);
+                self.push(OBJ_AS);
+                return true;
+            }
+        }
+        if ne > i {
+            let k = self.ws(ne);
+            if self.c(k) == b'=' {
+                return self.push_zero(OBJ_ASSIGN);
+            }
+        }
+        match c {
+            b':' => {
+                self.tok(i, i + 1, KEY_VALUE);
+                self.i = i + 1;
+                self.push(OBJ_VAL);
+                true
+            }
+            b',' => self.take(i, i + 1, COMMA),
+            _ => false,
+        }
+    }
+
+    /// `object-literal-method-declaration`'s head: `«wb»(async\s+)?(get|set\s+)?(\*\s*)?` before a
+    /// key and `(`. In the method's frame (`again`) it doesn't push.
+    pub(super) fn obj_method_head(&mut self, again: bool) -> bool {
+        let i = self.i;
+        if !self.wb(i) {
+            return false;
+        }
+        let mut k = i;
+        let mut asy = None;
+        if self.rest(k).starts_with(b"async") && self.boundary(k + 5) {
+            let m = self.ws(k + 5);
+            if m > k + 5 {
+                asy = Some(k);
+                k = m;
+            }
+        }
+        let mut acc = None;
+        for w in [&b"get"[..], b"set"] {
+            if self.rest(k).starts_with(w) && self.boundary(k) && self.boundary(k + 3) {
+                let m = self.ws(k + 3);
+                if m > k + 3 {
+                    acc = Some(k);
+                    k = m;
+                    break;
+                }
+            }
+        }
+        let mut star = None;
+        if self.c(k) == b'*' {
+            star = Some(k);
+            k = self.ws(k + 1);
+        }
+        if !self.method_key_ahead(k) {
+            return false;
+        }
+        if let Some(a) = asy {
+            self.tok(a, a + 5, ASYNC);
+        }
+        if let Some(a) = acc {
+            self.tok(a, a + 3, PROPERTY_KW);
+        }
+        if let Some(s) = star {
+            self.tok(s, s + 1, ASTERISK);
+        }
+        self.i = k.min(self.n);
+        if again {
+            if k == i {
+                return self.method_name_here();
+            }
+            return true;
+        }
+        if k == i { self.push_zero(OBJ_METHOD) } else {
+            self.push(OBJ_METHOD);
+            true
+        }
+    }
+
+    /// The method name pushed at the place, in an object's method.
+    pub(super) fn method_name_here(&mut self) -> bool {
+        self.push_zero(METHOD_NAME)
+    }
+
+    /// An object member's value that starts an arrow's parameters (`object-member`'s value's own).
+    pub(super) fn obj_value_arrow(&mut self) -> bool {
+        let i = self.i;
+        let after_colon = i > 0 && self.b[i - 1] == b':';
+        let after_angle = i > 0 && self.b[i - 1] == b'>';
+        if !after_colon && !after_angle {
+            return false;
+        }
+        let mut k = self.ws(i);
+        let mut asy = None;
+        if after_colon && self.rest(k).starts_with(b"async") {
+            asy = Some(k);
+            k = self.ws(k + 5);
+        }
+        if after_colon {
+            // (?=\s*«TP»\(\s*OPEN)
+            if self.c(k) == b'<' && let Some(t) = look::tp(self.b, k)
+                && self.c(t) == b'('
+                && look::open_tail(self.b, self.ws(t + 1))
+            {
+                if let Some(a) = asy {
+                    self.tok(a, a + 5, ASYNC);
+                    self.i = a + 5;
+                }
+                if self.i == i {
+                    return self.push_zero(MAYBE_ARROW);
+                }
+                self.push(MAYBE_ARROW);
+                return true;
+            }
+            // \s*(async)?\s*(\()(?=\s*OPEN)
+            if self.c(k) == b'(' && look::open_tail(self.b, self.ws(k + 1)) {
+                if let Some(a) = asy {
+                    self.tok(a, a + 5, ASYNC);
+                }
+                self.tok(k, k + 1, ROUND);
+                self.i = k + 1;
+                self.push(OBJ_ARROW_PARENS);
+                return true;
+            }
+            // \s*(async)?\s*(?=\<\s*$)
+            if self.c(k) == b'<' && self.ws(k + 1) >= self.n {
+                if let Some(a) = asy {
+                    self.tok(a, a + 5, ASYNC);
+                }
+                self.i = k;
+                self.push(OBJ_ARROW_TP);
+                return true;
+            }
+            return false;
+        }
+        // (?<=\>)\s*(\()(?=\s*OPEN)
+        if self.c(k) == b'(' && look::open_tail(self.b, self.ws(k + 1)) {
+            self.tok(k, k + 1, ROUND);
+            self.i = k + 1;
+            self.push(OBJ_ARROW_PARENS);
+            return true;
+        }
+        false
+    }
+
+    /// `expression-inside-possibly-arrow-parens` at the place.
+    pub(super) fn inside_arrow_parens(&mut self) -> bool {
+        let i = self.i;
+        let c = self.c(i);
+        if self.expression_without_identifiers() {
+            return true;
+        }
+        if self.comment(false) || self.string() || self.decorator_expr() {
+            return true;
+        }
+        if self.destructuring_param_here() {
+            return true;
+        }
+        if self.inside_param_name() {
+            return true;
+        }
+        match c {
+            b':' if self.type_annotation() => return true,
+            b'=' if self.initializer() => return true,
+            b',' => return self.take(i, i + 1, PARAM_SEP),
+            _ => {}
+        }
+        self.identifiers() || self.expression_punctuations()
+    }
+
+    /// `decorator` in an expression's parameters.
+    pub(super) fn decorator_expr(&mut self) -> bool {
+        let i = self.i;
+        if self.c(i) != b'@' || !self.wb(i) {
+            return false;
+        }
+        self.tok(i, i + 1, DECORATOR);
+        self.i = i + 1;
+        self.push(DECORATOR_F);
+        true
+    }
+
+    /// `destructuring-parameter` in an expression's parameters.
+    pub(super) fn destructuring_param_here(&mut self) -> bool {
+        let i = self.i;
+        if i > 0 && matches!(self.b[i - 1], b'=' | b':') {
+            return false;
+        }
+        let mut j = self.ws(i);
+        let mut rest = None;
+        if self.rest(j).starts_with(b"...") {
+            rest = Some(j);
+            j = self.ws(j + 3);
+        }
+        let c = self.c(j);
+        if !matches!(c, b'{' | b'[') {
+            return false;
+        }
+        if let Some(r) = rest {
+            self.tok(r, r + 3, REST);
+        }
+        if c == b'{' {
+            self.tok(j, j + 1, BIND_OBJ);
+            self.i = j + 1;
+            self.push(PBIND_OBJ);
+        } else {
+            self.tok(j, j + 1, BIND_ARR);
+            self.i = j + 1;
+            self.push(PBIND_ARR);
+        }
+        true
+    }
+
+    /// The parameter names of `expression-inside-possibly-arrow-parens`: a modifier before
+    /// another, a name that is a function, a name before `:` or `,` or the line's end.
+    pub(super) fn inside_param_name(&mut self) -> bool {
+        let i = self.i;
+        if !self.wb(i) {
+            return false;
+        }
+        let mods: &[&[u8]] = &[b"override", b"public", b"protected", b"private", b"readonly"];
+        for m in mods {
+            if self.rest(i).starts_with(m) && self.boundary(i + m.len()) {
+                let k = self.ws(i + m.len());
+                if k > i + m.len() && mods.iter().any(|m2| self.rest(k).starts_with(m2) && is_space(self.c(k + m2.len()))) {
+                    return self.take(i, i + m.len(), MODIFIER);
+                }
+            }
+        }
+        let mut j = i;
+        let mut modifier = None;
+        for m in mods {
+            if self.rest(j).starts_with(m) && self.boundary(j + m.len()) {
+                let k = self.ws(j + m.len());
+                // the modifier only before a name (else it is the name)
+                let r = if self.rest(k).starts_with(b"...") { self.ws(k + 3) } else { k };
+                if k > j + m.len() && self.name(r) > r {
+                    modifier = Some((j, j + m.len()));
+                    j = k;
+                    break;
+                }
+            }
+        }
+        let mut rest = None;
+        if self.rest(j).starts_with(b"...") {
+            rest = Some(j);
+            j = self.ws(j + 3);
+        }
+        if j > 0 && matches!(self.b[j - 1], b'=' | b':') {
+            return false;
+        }
+        if !self.wb(j) {
+            return false;
+        }
+        let ne = self.name(j);
+        if ne == j || !self.we(ne) {
+            return false;
+        }
+        let this = self.is_name(j, ne, b"this");
+        let q = self.ws(ne);
+        let opt = if self.c(q) == b'?' { Some(q) } else { None };
+        let after = opt.map_or(q, |o| o + 1);
+        let fun = look::fn_decl(self.b, after);
+        let plain = {
+            let k = self.ws(after);
+            matches!(self.c(k), b':' | b',') || after >= self.n
+        };
+        if !fun && !plain {
+            return false;
+        }
+        if let Some((s, e)) = modifier {
+            self.tok(s, e, MODIFIER);
+        }
+        if let Some(r) = rest {
+            self.tok(r, r + 3, REST);
+        }
+        let kind = match (fun, this) {
+            (true, true) => THIS_FN,
+            (true, false) => ENTITY_FN,
+            (false, true) => THIS_PARAM,
+            (false, false) => PARAM,
+        };
+        self.tok(j, ne, kind);
+        if let Some(o) = opt {
+            self.tok(o, o + 1, OPTIONAL);
+            self.i = o + 1;
+        } else {
+            self.i = q.min(self.n);
+        }
+        true
+    }
+
+    /// Whether a numeric key's frame ends at `i` before `as`: `(\s+as\s+)`.
+    pub(super) fn as_ahead(&self, i: usize) -> bool {
+        let k = self.ws(i);
+        k > i && self.word_b(k, b"as").is_some_and(|e| is_space(self.c(e)))
+    }
+
+    /// A quoted key's end after its quote: `(?=((\s*[\(\<,}])|(\s+(as)\s+)))`.
+    pub(super) fn key_str_end(&self, i: usize) -> bool {
+        matches!(self.c(self.ws(i)), b'(' | b'<' | b',' | b'}') || self.as_ahead(i)
+    }
+
+    /// `new-expr`'s end at `i`: `(?=[;),}\]:?\-\+\>]|\|\||\&\&|\!\=\=|$|(«wb»new«we»)|(«wb»function((\s+name)|(\s*[\(]))))`.
+    pub(super) fn new_end(&self, i: usize) -> bool {
+        let c = self.c(i);
+        if matches!(c, b';' | b')' | b',' | b'}' | b']' | b':' | b'?' | b'-' | b'+' | b'>') || i >= self.n {
+            return true;
+        }
+        let r = self.rest(i);
+        if r.starts_with(b"||") || r.starts_with(b"&&") || r.starts_with(b"!==") {
+            return true;
+        }
+        if self.kw(i, b"new").is_some() {
+            return true;
+        }
+        if self.wb(i) && r.starts_with(b"function") {
+            let e = i + 8;
+            let k = self.ws(e);
+            if (k > e && self.name(k) > k) || self.c(k) == b'(' {
+                return true;
+            }
+        }
+        false
+    }
+}

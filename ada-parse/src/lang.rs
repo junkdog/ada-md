@@ -66,6 +66,10 @@ pub enum Lang {
     /// bat's `JavaScript (Babel)`, for every JavaScript token (ADR-40's phase 5): Sublime's
     /// `JavaScript` too, which ```` ```javascript ```` names.
     JavaScript,
+    /// bat's `TypeScript`.
+    TypeScript,
+    /// bat's `TypeScriptReact`, TSX: TypeScript's scanner with JSX.
+    TypeScriptReact,
 }
 
 /// Fence languages that no syntax names, and the token each stands for (`zsh` for bash's).
@@ -245,6 +249,8 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
         Lang::JavaScript,
         &["js", "mjs", "jsx", "babel", "es6", "cjs"],
     ),
+    (Lang::TypeScript, &["ts", "mts", "cts"]),
+    (Lang::TypeScriptReact, &["tsx"]),
     (
         Lang::Python,
         &[
@@ -277,7 +283,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 28] = [
+    pub const ALL: [Lang; 30] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -306,6 +312,8 @@ impl Lang {
         Lang::JavaScript,
         Lang::Sql,
         Lang::PowerShell,
+        Lang::TypeScript,
+        Lang::TypeScriptReact,
     ];
 
     /// The name of the syntax it stands in for, as syntect names it.
@@ -339,6 +347,8 @@ impl Lang {
             Lang::Sql => "SQL",
             Lang::PowerShell => "PowerShell",
             Lang::JavaScript => "JavaScript (Babel)",
+            Lang::TypeScript => "TypeScript",
+            Lang::TypeScriptReact => "TypeScriptReact",
         }
     }
 
@@ -373,6 +383,8 @@ impl Lang {
             Lang::Sql => "source.sql",
             Lang::PowerShell => "source.powershell",
             Lang::JavaScript => "source.js",
+            Lang::TypeScript => "source.ts",
+            Lang::TypeScriptReact => "source.tsx",
         }
     }
 
@@ -408,6 +420,8 @@ impl Lang {
             Lang::Sql => crate::sql::scopes(kind),
             Lang::PowerShell => crate::powershell::scopes(kind),
             Lang::JavaScript => crate::javascript::scopes(kind),
+            Lang::TypeScript => crate::typescript::scopes(kind, false),
+            Lang::TypeScriptReact => crate::typescript::scopes(kind, true),
             Lang::Bash => crate::bash::scopes(kind),
             Lang::Makefile => crate::bash::make_scopes(kind),
             _ if self.grammar().is_some() => {
@@ -450,7 +464,9 @@ impl Lang {
             | Lang::Lua
             | Lang::Sql
             | Lang::PowerShell
-            | Lang::JavaScript => {
+            | Lang::JavaScript
+            | Lang::TypeScript
+            | Lang::TypeScriptReact => {
                 return None;
             }
         })
