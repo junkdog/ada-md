@@ -43,6 +43,10 @@ impl Scan<'_, '_, '_> {
     pub(super) fn expression_without_identifiers(&mut self) -> bool {
         let i = self.i;
         let c = self.c(i);
+        // TSX: jsx, first
+        if self.tsx && self.jsx() {
+            return true;
+        }
         // string
         if matches!(c, b'\'' | b'"' | b'`') {
             return self.string();
@@ -214,7 +218,7 @@ impl Scan<'_, '_, '_> {
         if !matches!(self.c(k), b'(' | b'<') {
             return false;
         }
-        if !(look::arrow_sure(self.b, k) || look::arrow_line(self.b, k)) {
+        if !(look::arrow_sure(self.b, k) || (self.tsx && look::tp_extends(self.b, k)) || look::arrow_line(self.b, k)) {
             return false;
         }
         if let Some(a) = asy {
@@ -309,16 +313,15 @@ impl Scan<'_, '_, '_> {
                 return self.take(g, g + 1, ANGLE);
             }
         }
-        // the lookbehind's operators, then \s*(<)(?!<?\=)(?!\s*$)
+        // the lookbehind's operators, then \s*(<)(?!<?\=)(?!\s*$): `(?<!\+\+|--)` holds for every
+        // alternative, so its `[^_$[:alnum:]](?:\+\+|\-\-)` never does
         let before = i > 0 && {
             let b = self.b;
             let p = b[i - 1];
-            !(i >= 2 && (&b[i - 2..i] == b"++" || &b[i - 2..i] == b"--") && !(i >= 3 && !look::alnum_before(b, i - 2)))
+            !(i >= 2 && (&b[i - 2..i] == b"++" || &b[i - 2..i] == b"--"))
                 && (self.word_ends_at(i, &[b"return", b"throw", b"yield", b"await", b"default"])
                     || matches!(p, b'=' | b'(' | b',' | b':' | b'>' | b'*' | b'?' | b'&' | b'|' | b'^')
-                    || (i >= 3 && (&b[i - 2..i] == b"++" || &b[i - 2..i] == b"--") && !look::alnum_before(b, i - 2))
-                    || (p == b'+' && (i < 2 || b[i - 2] != b'+'))
-                    || (p == b'-' && (i < 2 || b[i - 2] != b'-')))
+                    || (i >= 2 && matches!(p, b'+' | b'-')))
         };
         let not_eq = !(self.c(k + 1) == b'=' || (self.c(k + 1) == b'<' && self.c(k + 2) == b'='));
         if before && not_eq && self.ws(k + 1) < self.n {
@@ -696,11 +699,10 @@ impl Scan<'_, '_, '_> {
     pub(super) fn literal(&mut self) -> bool {
         let i = self.i;
         let c = self.c(i);
-        if c.is_ascii_digit() || c == b'.' {
-            if self.numeric() {
+        if (c.is_ascii_digit() || c == b'.')
+            && self.numeric() {
                 return true;
             }
-        }
         if look::alpha(self.b, i) > 0 && self.wb(i) {
             let w = self.name(i);
             let word = &self.b[i..w];
@@ -780,17 +782,19 @@ impl Scan<'_, '_, '_> {
         // hex, binary, octal: \b(?<!\$)0(?:x|X)[0-9a-fA-F][0-9a-fA-F_]*(n)?\b(?!\$)
         if wb_start && self.c(i) == b'0' {
             let x = self.c(i + 1);
-            let pick: Option<(&dyn Fn(u8) -> bool, u16, usize)> = match x {
-                b'x' | b'X' => Some((&|c: u8| c.is_ascii_hexdigit(), HEX, i + 2)),
-                b'b' | b'B' => Some((&|c: u8| c == b'0' || c == b'1', BINARY, i + 2)),
-                b'o' | b'O' => Some((&|c: u8| (b'0'..=b'7').contains(&c), OCTAL, i + 2)),
-                b'0'..=b'7' => Some((&|c: u8| (b'0'..=b'7').contains(&c), OCTAL, i + 1)),
+            // a digit's test, the kind, the first digit's place
+            type Radix = (fn(u8) -> bool, u16, usize);
+            let pick: Option<Radix> = match x {
+                b'x' | b'X' => Some((|c| c.is_ascii_hexdigit(), HEX, i + 2)),
+                b'b' | b'B' => Some((|c| c == b'0' || c == b'1', BINARY, i + 2)),
+                b'o' | b'O' => Some((|c| (b'0'..=b'7').contains(&c), OCTAL, i + 2)),
+                b'0'..=b'7' => Some((|c| (b'0'..=b'7').contains(&c), OCTAL, i + 1)),
                 _ => None,
             };
             if let Some((ok, kind, s)) = pick
                 && ok(self.c(s))
             {
-                let e = digits(s + 1, ok);
+                let e = digits(s + 1, &ok);
                 let (e2, big) = if self.c(e) == b'n' { (e + 1, Some(e)) } else { (e, None) };
                 if self.boundary(e2) && self.c(e2) != b'$' {
                     return Some((e2, kind, big));
@@ -1259,7 +1263,7 @@ impl Scan<'_, '_, '_> {
         let ne = self.name(s);
         if ne > s {
             let k = self.ws(ne);
-            if self.c(k) == b'=' && self.c(k + 1) != b'=' && look::fn_value(self.b, self.ws(k + 1)) {
+            if self.c(k) == b'=' && self.c(k + 1) != b'=' && look::fn_value(self.b, self.ws(k + 1), self.tsx) {
                 if let Some((de, dk)) = dot {
                     self.tok(i, de, dk);
                 }
@@ -1322,7 +1326,7 @@ impl Scan<'_, '_, '_> {
             if self.c(k) == b':' {
                 // name\s*(?=«cm*»:(\s*«cm*»)*\s*FNV)
                 let v = look::comments(self.b, self.ws(k + 1));
-                if look::fn_value(self.b, self.ws(v)) {
+                if look::fn_value(self.b, self.ws(v), self.tsx) {
                     return self.take(i, ne, ENTITY_FN);
                 }
                 self.i = self.ws(ne).min(self.n);
@@ -1385,34 +1389,40 @@ impl Scan<'_, '_, '_> {
         if !self.wb(i) {
             return false;
         }
-        let mut k = i;
-        let mut asy = None;
-        if self.rest(k).starts_with(b"async") && self.boundary(k + 5) {
-            let m = self.ws(k + 5);
-            if m > k + 5 {
-                asy = Some(k);
-                k = m;
-            }
-        }
-        let mut acc = None;
-        for w in [&b"get"[..], b"set"] {
-            if self.rest(k).starts_with(w) && self.boundary(k) && self.boundary(k + 3) {
-                let m = self.ws(k + 3);
-                if m > k + 3 {
-                    acc = Some(k);
-                    k = m;
-                    break;
+        // (async\s+)?((get|set)\s+)?(\*\s*)? before a key and `(`, each optional group taken
+        // where it matches and dropped when the key isn't found after it, the regex's
+        // backtracking: `async (x)` is a method named `async`
+        let word = |me: &Self, k: usize, w: &[u8]| {
+            let e = k + w.len();
+            (me.rest(k).starts_with(w) && me.boundary(k) && me.boundary(e) && me.ws(e) > e).then(|| me.ws(e))
+        };
+        let mut found = None;
+        'search: for asy in [true, false] {
+            let k1 = match (asy, word(self, i, b"async")) {
+                (true, Some(m)) => m,
+                (true, None) => continue,
+                (false, _) => i,
+            };
+            for acc in [true, false] {
+                let k2 = match (acc, word(self, k1, b"get").or_else(|| word(self, k1, b"set"))) {
+                    (true, Some(m)) => m,
+                    (true, None) => continue,
+                    (false, _) => k1,
+                };
+                for star in [true, false] {
+                    let k3 = match (star, self.c(k2) == b'*') {
+                        (true, true) => self.ws(k2 + 1),
+                        (true, false) => continue,
+                        (false, _) => k2,
+                    };
+                    if self.method_key_ahead(k3) {
+                        found = Some((asy.then_some(i), acc.then_some(k1), star.then_some(k2), k3));
+                        break 'search;
+                    }
                 }
             }
         }
-        let mut star = None;
-        if self.c(k) == b'*' {
-            star = Some(k);
-            k = self.ws(k + 1);
-        }
-        if !self.method_key_ahead(k) {
-            return false;
-        }
+        let Some((asy, acc, star, k)) = found else { return false };
         if let Some(a) = asy {
             self.tok(a, a + 5, ASYNC);
         }
@@ -1618,7 +1628,7 @@ impl Scan<'_, '_, '_> {
         let q = self.ws(ne);
         let opt = if self.c(q) == b'?' { Some(q) } else { None };
         let after = opt.map_or(q, |o| o + 1);
-        let fun = look::fn_decl(self.b, after);
+        let fun = look::fn_decl(self.b, after, self.tsx);
         let plain = {
             let k = self.ws(after);
             matches!(self.c(k), b':' | b',') || after >= self.n

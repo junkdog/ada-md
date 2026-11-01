@@ -95,7 +95,7 @@ pub(super) fn alnum_before(b: &[u8], i: usize) -> bool {
 pub(super) fn is_word_at(b: &[u8], i: usize) -> bool {
     match at(b, i) {
         b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' => true,
-        c if c >= 0x80 && i < b.len() => wide(b, i).is_some_and(|c| c.is_alphanumeric()),
+        c if c >= 0x80 && i < b.len() => wide(b, i).is_some_and(char::is_alphanumeric),
         _ => false,
     }
 }
@@ -108,7 +108,7 @@ pub(super) fn is_word_before(b: &[u8], i: usize) -> bool {
     }
     match b[i - 1] {
         b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' => true,
-        c if c >= 0x80 => wide_before(b, i).is_some_and(|c| c.is_alphanumeric()),
+        c if c >= 0x80 => wide_before(b, i).is_some_and(char::is_alphanumeric),
         _ => false,
     }
 }
@@ -407,13 +407,28 @@ pub(super) fn open_tail(b: &[u8], j: usize) -> bool {
     false
 }
 
-/// `(<\s*$)|(«TP»?[\(]\s*OPEN)` at `i`: a value whose parameters go on past the line.
-fn open_params(b: &[u8], i: usize) -> bool {
+/// `(<\s*$)|(«TP»?[\(]\s*OPEN)` at `i`: a value whose parameters go on past the line. TSX's has no
+/// `«TP»?` (a `<` there may be an element).
+fn open_params(b: &[u8], i: usize, tsx: bool) -> bool {
     if at(b, i) == b'<' && ws(b, i + 1) >= b.len() {
         return true;
     }
-    let Some(j) = tp_opt(b, i) else { return false };
+    let Some(j) = (if tsx { Some(i) } else { tp_opt(b, i) }) else { return false };
     at(b, j) == b'(' && open_tail(b, ws(b, j + 1))
+}
+
+/// TSX's `[<]\s*«name»\s+extends\s*[^=>]` at `i`: type parameters, not an element.
+pub(super) fn tp_extends(b: &[u8], i: usize) -> bool {
+    if at(b, i) != b'<' {
+        return false;
+    }
+    let j = ws(b, i + 1);
+    let e = name(b, j);
+    if e == j || ws(b, e) == e {
+        return false;
+    }
+    let k = ws(b, e);
+    b[k.min(b.len())..].starts_with(b"extends") && !matches!(at(b, k + 7), b'=' | b'>' | 0)
 }
 
 /// `\s*«RT»+\s*=>` at `i`.
@@ -422,8 +437,9 @@ pub(super) fn rt_arrow(b: &[u8], i: usize) -> bool {
 }
 
 /// `FNV`, a value that is a function, at `i`:
-/// `(async\s+)?((function\s*[(<*])|(function\s+)|(«name»\s*=>))|(async\s*)?(open|sure|line)`.
-pub(super) fn fn_value(b: &[u8], i: usize) -> bool {
+/// `(async\s+)?((function\s*[(<*])|(function\s+)|(«name»\s*=>))|(async\s*)?(open|sure|line)`;
+/// TSX's `(open|sure|extends|line)`.
+pub(super) fn fn_value(b: &[u8], i: usize, tsx: bool) -> bool {
     let rest = &b[i.min(b.len())..];
     let after_async = |gap_needed: bool| -> Option<usize> {
         if rest.starts_with(b"async") {
@@ -450,16 +466,16 @@ pub(super) fn fn_value(b: &[u8], i: usize) -> bool {
     if first(i) || after_async(true).is_some_and(first) {
         return true;
     }
-    let second = |k: usize| open_params(b, k) || arrow_sure(b, k) || arrow_line(b, k);
+    let second = |k: usize| open_params(b, k, tsx) || arrow_sure(b, k) || (tsx && tp_extends(b, k)) || arrow_line(b, k);
     second(i) || after_async(false).is_some_and(second)
 }
 
 /// After a name being declared (`var-single-variable`'s, a parameter's, a field's): whether it
 /// is a function, `(?=\s*(=\s*FNV|:\s*…))`, from `i` (after the name and its `?` or `!`).
-pub(super) fn fn_decl(b: &[u8], i: usize) -> bool {
+pub(super) fn fn_decl(b: &[u8], i: usize, tsx: bool) -> bool {
     let i = ws(b, i);
     match at(b, i) {
-        b'=' => fn_value(b, ws(b, i + 1)),
+        b'=' => fn_value(b, ws(b, i + 1), tsx),
         b':' => {
             let j = ws(b, i + 1);
             // (<) | ([(]\s*(([)])|(\.\.\.)|([_$[:alnum:]]+\s*(([:,?=])|([)]\s*=>)))))
@@ -486,7 +502,7 @@ pub(super) fn fn_decl(b: &[u8], i: usize) -> bool {
             if b[j.min(b.len())..].starts_with(b"Function") && !alnum_at(b, j + 8) && (at(b, j + 8) != b'.' || b[j + 8..].starts_with(b"...")) {
                 return true;
             }
-            if open_params(b, j) {
+            if open_params(b, j, tsx) {
                 return true;
             }
             // :\s*(=>|«B(»|(<[^<>]*>)|[^<>(),=])+=\s*FNV
@@ -496,7 +512,7 @@ pub(super) fn fn_decl(b: &[u8], i: usize) -> bool {
                 match at(b, k) {
                     0 => return false,
                     b'=' if at(b, k + 1) == b'>' => k += 2,
-                    b'=' => return any && fn_value(b, ws(b, k + 1)),
+                    b'=' => return any && fn_value(b, ws(b, k + 1), tsx),
                     b'(' => match bal(b, k, b'(', b')', 3) {
                         Some(e) => k = e,
                         None => return false,

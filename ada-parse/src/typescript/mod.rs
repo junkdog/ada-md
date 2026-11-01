@@ -17,6 +17,7 @@
 //! [`State`]'s levels).
 
 mod expr;
+mod jsx;
 mod look;
 mod stmt;
 mod text;
@@ -321,6 +322,27 @@ leaves! {
     PROMISE_FN = ["support.function.promise"],
     PRIMITIVE = ["support.type.primitive"],
     BUILTIN_TYPE = ["support.type.builtin"],
+    // TSX's JSX
+    JSX_TAG_BEGIN = ["punctuation.definition.tag.begin"],
+    JSX_TAG_END = ["punctuation.definition.tag.end"],
+    JSX_TAG_NS = ["entity.name.tag.namespace"],
+    JSX_NS_SEP = ["punctuation.separator.namespace"],
+    JSX_TAG_NAME = ["entity.name.tag"],
+    JSX_COMPONENT = ["entity.name.tag", "support.class.component"],
+    JSX_ATTR_NS = ["entity.other.attribute-name.namespace"],
+    JSX_ATTR = ["entity.other.attribute-name"],
+    JSX_ILLEGAL = ["invalid.illegal.attribute"],
+    JSX_EMBED_BEGIN = ["punctuation.section.embedded.begin"],
+    JSX_EMBED_END = ["punctuation.section.embedded.end"],
+    JSX_ENTITY = ["constant.character.entity"],
+    JSX_ENTITY_MARK = ["constant.character.entity", "punctuation.definition.entity"],
+    JSX_BAD_AMP = ["invalid.illegal.bad-ampersand"],
+    JSX_STR_D_ENTITY = ["string.quoted.double", "constant.character.entity"],
+    JSX_STR_D_ENTITY_MARK = ["string.quoted.double", "constant.character.entity", "punctuation.definition.entity"],
+    JSX_STR_D_BAD_AMP = ["string.quoted.double", "invalid.illegal.bad-ampersand"],
+    JSX_STR_S_ENTITY = ["string.quoted.single", "constant.character.entity"],
+    JSX_STR_S_ENTITY_MARK = ["string.quoted.single", "constant.character.entity", "punctuation.definition.entity"],
+    JSX_STR_S_BAD_AMP = ["string.quoted.single", "invalid.illegal.bad-ampersand"],
 }
 
 /// A kind's bit for a token inside a template's `${…}`: under `string.template` too.
@@ -391,9 +413,9 @@ const VAR_NAME: u8 = 20;
 const INIT: u8 = 21;
 /// `variable-initializer` at the line's end.
 const INIT_EOL: u8 = 22;
-/// `destructuring-variable`'s, a `{ … }` or `[ … ]` declared.
+/// `destructuring-variable`'s first, a `{ … }` declared.
 const DESTRUCT: u8 = 23;
-/// `destructuring-const`'s.
+/// `destructuring-const`'s first.
 const DESTRUCT_CONST: u8 = 24;
 /// `object-binding-pattern`'s `{ … }`.
 const BIND_OBJ_F: u8 = 25;
@@ -557,8 +579,9 @@ const TYPE_COND: u8 = 103;
 const TYPE_COND_Q: u8 = 104;
 /// `&` or `|` before `{`, a type object up to after its `}`.
 const TYPE_OP_OBJ: u8 = 105;
-/// After `&` or `|`, blanks up to the next character (lines included).
-const TYPE_OP_GAP: u8 = 106;
+/// Blanks up to the next character, lines included: after a type's `&` or `|`, and after `var`'s,
+/// `let`'s or `const`'s `\s*` that took the line's end.
+const GAP: u8 = 106;
 /// A type object's `...`.
 const TYPE_SPREAD: u8 = 107;
 /// `template-type`'s template.
@@ -621,8 +644,6 @@ const LINE_EOL: u8 = 135;
 const TPL_CALL: u8 = 136;
 /// An `if`'s regex after its `)`.
 const IF_REGEX: u8 = 137;
-/// `export default` before `interface`, and such: `meta.export.default`'s interface.
-const OBJ_KEY_ARROW: u8 = 138;
 /// The value of an object member that is an arrow's parameters.
 const OBJ_ARROW_PARENS: u8 = 139;
 /// `object-member`'s `(?<=:)\s*(async)?(?=\<\s*$)` type parameters.
@@ -641,6 +662,31 @@ const CALL_ARGS: u8 = 145;
 const CALL_EOL: u8 = 146;
 /// Its target.
 const CALL_EOL_TARGET: u8 = 147;
+/// `destructuring-variable`'s second, before `[` (`DESTRUCT` is its first, before `{`).
+const DESTRUCT_ARR: u8 = 148;
+/// `destructuring-const`'s second.
+const DESTRUCT_ARR_CONST: u8 = 149;
+// TSX's JSX ([`jsx`]).
+/// `jsx-tag-without-attributes-in-expression`: elements without attributes, one after another.
+const JSX_WA_EXPR: u8 = 150;
+/// `jsx-tag-in-expression`: elements, one after another.
+const JSX_EXPR: u8 = 151;
+/// An element without attributes, `<name>`, up to its closing tag: its children.
+const JSX_WA: u8 = 152;
+/// An element (`jsx-tag`), from its `<` to `/>` or its closing tag.
+const JSX_TAG_F: u8 = 153;
+/// After the tag's name: type arguments and the attributes, up to `>` or `/>`.
+const JSX_ATTRS: u8 = 154;
+/// The attributes, after their first blank.
+const JSX_ATTRS2: u8 = 155;
+/// The element's children, after its `>`.
+const JSX_CHILDREN: u8 = 156;
+/// `{ … }` among the children or as an attribute's value.
+const JSX_EMBED: u8 = 157;
+/// An attribute's `"` string.
+const JSX_STR_D: u8 = 158;
+/// An attribute's `'` string.
+const JSX_STR_S: u8 = 159;
 
 /// How many frames a line can hold; one pushed past it drops the bottom one.
 const MAX: usize = 128;
@@ -667,15 +713,24 @@ pub fn line(b: &[u8], tsx: bool, state: &mut State, out: &mut Out) {
         stuck: 0,
         g_link: false,
         g_desc: false,
+        g_caption: false,
         var_kw_eol: false,
         out,
     };
     s.stack[1..=HALF].copy_from_slice(&state.levels);
     s.stack[1 + HALF..=KEPT].copy_from_slice(&state.withs);
     s.depth = 1 + usize::from(state.depth);
+    if state.arg == PACKED {
+        s.depth = 1 + unpack(&mut s.stack, s.depth - 1);
+    }
     s.refresh();
     s.run();
-    let n = s.depth - 1;
+    let mut n = s.depth - 1;
+    state.arg = 0;
+    if n > KEPT {
+        n = pack(&mut s.stack, n);
+        state.arg = PACKED;
+    }
     let from = n.saturating_sub(KEPT);
     let kept = n - from;
     let mut levels = [0; KEPT];
@@ -684,7 +739,77 @@ pub fn line(b: &[u8], tsx: bool, state: &mut State, out: &mut Out) {
     state.withs.copy_from_slice(&levels[HALF..]);
     state.depth = kept as u8;
     state.inexact = !s.exact || from > 0;
-    state.arg = 0;
+}
+
+/// [`State`]'s `arg` when its levels are packed ([`pack`]).
+const PACKED: u16 = 1;
+/// The pairs of frames, the lower first, that pack into one byte between lines when a line ends
+/// deeper than the state keeps: nested object literals, arrays, calls, callbacks' blocks and JSX
+/// elements, which deep data, tests and components are made of. The 96 commonest in a row in the
+/// corpora's stacks over 20 deep, sorted: of the 460 distinct in `.ts` (up to 41 deep) and the 2,557
+/// in `.tsx` (up to 58), every one but one fits in 28 bytes once packed.
+#[rustfmt::skip]
+static PAIRS: [(u8, u8); 96] = [
+    (BLOCK, BLOCK), (BLOCK, RETURN), (BLOCK, VAR), (BLOCK, VAR_CONST), (BLOCK, CLASS_BODY), (BLOCK, CALL_ARGS),
+    (PAREN, BLOCK), (PAREN, OBJ), (PAREN, TERNARY_F), (PAREN, CALL_ARGS), (PAREN, JSX_WA_EXPR), (PAREN, JSX_EXPR),
+    (ARRAY, BLOCK), (ARRAY, PAREN), (ARRAY, OBJ), (ARRAY, CALL_ARGS), (OBJ, BLOCK), (OBJ, OBJ_VAL),
+    (OBJ, OBJ_SPREAD), (OBJ, OBJ_METHOD), (OBJ_VAL, BLOCK), (OBJ_VAL, PAREN), (OBJ_VAL, ARRAY), (OBJ_VAL, OBJ),
+    (OBJ_VAL, TERNARY_F), (OBJ_VAL, TPL_F), (OBJ_VAL, OBJ_ARROW_PARENS), (OBJ_VAL, CALL_ARGS), (OBJ_SPREAD, PAREN),
+    (OBJ_SPREAD, CALL_ARGS), (OBJ_METHOD, PARAMS), (TERNARY_F, PAREN), (TERNARY_F, OBJ), (TERNARY_F, CALL_ARGS),
+    (NEW_F, CLASS_BODY), (NEW_F, CALL_ARGS), (RETURN, OBJ), (RETURN, NEW_F), (RETURN, MAYBE_ARROW),
+    (RETURN, CALL_ARGS), (VAR, INIT), (VAR_CONST, INIT), (INIT, BLOCK), (INIT, PAREN), (INIT, ARRAY), (INIT, OBJ),
+    (INIT, NEW_F), (INIT, ARROW_F), (INIT, MAYBE_ARROW), (INIT, CALL_ARGS), (PBIND_OBJ, INIT),
+    (PBIND_OBJ, PBIND_OBJ), (ARROW_F, MAYBE_ARROW), (MAYBE_ARROW, ARROW_PARENS), (ARROW_PARENS, OBJ),
+    (ARROW_PARENS, PBIND_OBJ), (ARROW_PARENS, JSX_WA_EXPR), (ARROW_PARENS, JSX_EXPR), (PARAMS, PBIND_OBJ),
+    (CLASS_BODY, BLOCK), (FIELD, INIT), (EXPORT_DEFAULT, BLOCK), (TYPE_NAME_ARGS, TYPE_PAREN),
+    (TYPE_PAREN, TYPE_COND), (TYPE_COND, TYPE_NAME_ARGS), (TPL_F, SUBST), (OBJ_ARROW_PARENS, JSX_EXPR),
+    (CALL_ARGS, BLOCK), (CALL_ARGS, PAREN), (CALL_ARGS, ARRAY), (CALL_ARGS, OBJ), (CALL_ARGS, NEW_F),
+    (CALL_ARGS, ARROW_F), (CALL_ARGS, CLASS_BODY), (CALL_ARGS, CALL_ARGS), (JSX_WA_EXPR, JSX_WA),
+    (JSX_EXPR, JSX_TAG_F), (JSX_WA, JSX_WA), (JSX_WA, JSX_TAG_F), (JSX_WA, JSX_EMBED), (JSX_TAG_F, JSX_ATTRS),
+    (JSX_TAG_F, JSX_CHILDREN), (JSX_ATTRS, JSX_ATTRS2), (JSX_ATTRS2, JSX_EMBED), (JSX_CHILDREN, JSX_WA),
+    (JSX_CHILDREN, JSX_TAG_F), (JSX_CHILDREN, JSX_EMBED), (JSX_EMBED, BLOCK), (JSX_EMBED, PAREN),
+    (JSX_EMBED, ARRAY), (JSX_EMBED, OBJ), (JSX_EMBED, TERNARY_F), (JSX_EMBED, ARROW_F), (JSX_EMBED, CALL_ARGS),
+    (JSX_EMBED, JSX_WA_EXPR), (JSX_EMBED, JSX_EXPR),
+];
+/// The first pair's byte: `PAIR + k` is `PAIRS[k]`.
+const PAIR: u8 = 160;
+const _: () = assert!(PAIR as usize + PAIRS.len() <= 256 && JSX_STR_S < PAIR);
+
+/// Pack `stack[1..=n]` in place, bottom up, each two frames in a row that [`PAIRS`] has as one
+/// byte; the packed length.
+#[cold]
+fn pack(stack: &mut [u8; MAX], n: usize) -> usize {
+    let (mut i, mut o) = (1, 1);
+    while i <= n {
+        let pair = if i < n { PAIRS.binary_search(&(stack[i], stack[i + 1])).ok() } else { None };
+        if let Some(k) = pair {
+            stack[o] = PAIR + k as u8;
+            i += 2;
+        } else {
+            stack[o] = stack[i];
+            i += 1;
+        }
+        o += 1;
+    }
+    o - 1
+}
+
+/// Undo [`pack`] on `stack[1..=n]`; the frames' count.
+#[cold]
+fn unpack(stack: &mut [u8; MAX], n: usize) -> usize {
+    let mut packed = [0; KEPT];
+    packed[..n].copy_from_slice(&stack[1..=n]);
+    let mut o = 1;
+    for &f in &packed[..n] {
+        if f >= PAIR {
+            (stack[o], stack[o + 1]) = PAIRS[usize::from(f - PAIR)];
+            o += 2;
+        } else {
+            stack[o] = f;
+            o += 1;
+        }
+    }
+    o - 1
 }
 
 struct Scan<'a, 'o, 'p> {
@@ -710,6 +835,8 @@ struct Scan<'a, 'o, 'p> {
     g_link: bool,
     /// Its description pattern failed on this line.
     g_desc: bool,
+    /// `@example`'s `\G(<)caption(>)` failed on this line (as [`Scan::inline_g`]'s).
+    g_caption: bool,
     /// A `var`, `let` or `const` keyword took the line's end (its `\s*` the `\n`).
     var_kw_eol: bool,
     out: &'o mut Out<'p>,
@@ -843,21 +970,6 @@ impl Scan<'_, '_, '_> {
         };
     }
 
-    /// The frame below the top, `MAIN` if none.
-    fn under(&self) -> u8 {
-        if self.depth >= 2 { self.stack[self.depth - 2] } else { MAIN }
-    }
-
-    /// Whether the place is at a line's start, `^`.
-    fn bol(&self, i: usize) -> bool {
-        i == 0
-    }
-
-    /// `$`: the line's end, before or after its `\n`.
-    fn eol(&self, i: usize) -> bool {
-        i >= self.n
-    }
-
     /// The line from `i`, empty past its end.
     #[inline]
     fn rest(&self, i: usize) -> &[u8] {
@@ -943,10 +1055,11 @@ impl Scan<'_, '_, '_> {
             TYPE_ANNOT | TYPE_ANNOT_EOL | TYPE_ARGS | TYPE_PARAMS | TYPE_NAME_ARGS | TUPLE
             | TYPE_OBJ | TYPE_PAREN | TYPE_FN | TYPE_CTOR | TYPE_CTOR_TP | TYPE_FN_RET
             | TYPE_FN_RET_EOL | TYPE_RET_OBJ | TYPE_COND | TYPE_COND_Q | TYPE_OP_OBJ
-            | TYPE_OP_GAP | TYPE_SPREAD | SUBST_TYPE | TYPE_DECL_INTRINSIC | AS_F
+            | GAP | TYPE_SPREAD | SUBST_TYPE | TYPE_DECL_INTRINSIC | AS_F
             | INSTANCEOF_F | CAST | PARAM_TYPE | RETURN_TYPE | RETURN_TYPE_EOL | ARROW_RET
             | MAYBE_ARROW_RET | RET_OBJ | INDEXER | MAPPED | TYPE_DECL | TYPE_DECL_VALUE
             | OBJ_AS => self.type_step(f),
+            JSX_WA_EXPR..=JSX_STR_S => self.jsx_step(f),
             _ => self.code_step(f),
         }
     }
@@ -955,8 +1068,8 @@ impl Scan<'_, '_, '_> {
 /// The kind of the bytes no token covers in frame `f`, if it has its own.
 fn text_of(f: u8) -> Option<u16> {
     Some(match f {
-        STR_S_F => STR_S,
-        STR_D_F => STR_D,
+        STR_S_F | JSX_STR_S => STR_S,
+        STR_D_F | JSX_STR_D => STR_D,
         TPL_F | TPL_TYPE => TPL,
         BLOCK_F => BLOCK_TEXT,
         DOC_F | DOC_EXAMPLE | DOC_TYPEDEF | DOC_PARAM | DOC_TYPED => DOC,
@@ -986,5 +1099,46 @@ fn char_len(c: u8) -> usize {
         0xe0.. => 3,
         0xc0.. => 2,
         _ => 1,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Lang, lex};
+
+    /// [`pack`] looks pairs up by a binary search, and each pair is two frames, not a pair's byte.
+    #[test]
+    fn the_pairs_are_sorted_frames() {
+        assert!(PAIRS.windows(2).all(|w| w[0] < w[1]));
+        assert!(PAIRS.iter().all(|&(a, b)| a < PAIR && b < PAIR));
+    }
+
+    /// Objects and JSX nested past the 28 frames a state keeps unpacked: every line's state
+    /// exact, the same scopes at each depth on the way out as on the way in, and the top level
+    /// again at the end.
+    #[test]
+    fn deep_nesting_stays_exact() {
+        for (lang, open, close) in [
+            (Lang::TypeScript, "key: {", "},"),
+            (Lang::TypeScriptReact, "<div a={1}>", "</div>"),
+        ] {
+            let (mut state, mut spans) = (State::default(), Vec::new());
+            let start = if lang == Lang::TypeScriptReact { "x = (" } else { "const schema = {" };
+            lex(lang, start, &mut state, &mut spans);
+            let mut ins = Vec::new();
+            for _ in 0..24 {
+                lex(lang, open, &mut state, &mut spans);
+                assert!(state.is_exact(), "{lang:?}");
+                ins.push(spans.iter().map(|s| lang.scopes(s.kind)).collect::<Vec<_>>());
+            }
+            for _ in 0..24 {
+                lex(lang, close, &mut state, &mut spans);
+                assert!(state.is_exact(), "{lang:?}");
+            }
+            assert!(ins.windows(2).all(|w| w[0] == w[1]), "{lang:?}");
+            lex(lang, if lang == Lang::TypeScript { "};" } else { ");" }, &mut state, &mut spans);
+            assert_eq!(state, State::default(), "{lang:?}");
+        }
     }
 }

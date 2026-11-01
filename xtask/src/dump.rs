@@ -88,10 +88,11 @@ const BUILT_ON: &[&str] = &["C++", "C"];
 /// Covered grammars kept for the blocks of them other grammars embed, where those blocks are
 /// common enough that going plain would be a loss: `JavaScript (Babel)` is what
 /// `scope:source.js` resolves to in the onig set, so HTML's, Vue's and Svelte's `<script>`
-/// (and PHP's, Ruby's, Markdown's …) run on it (ADR-40's phase 5; until phase 6 covers HTML).
-/// `SQL`, for Ruby's and PHP's SQL strings and heredocs, Perl's, CFML's and Crystal's, and
-/// `SQL (Rails)`, which is SQL whole: 2,250 bytes of the dump.
-const EMBEDDED: &[&str] = &["JavaScript (Babel)", "SQL"];
+/// (and PHP's, Ruby's, Markdown's …) run on it (ADR-40's phase 5; until phase 6 covers HTML);
+/// `TypeScript` is Vue's and Svelte's `<script lang="ts">`. `TypeScriptReact` goes: only
+/// Typst's fences embed it. `SQL`, for Ruby's and PHP's SQL strings and heredocs, Perl's,
+/// CFML's and Crystal's, and `SQL (Rails)`, which is SQL whole: 2,250 bytes of the dump.
+const EMBEDDED: &[&str] = &["JavaScript (Babel)", "TypeScript", "SQL"];
 
 /// The grammars to empty, by index: the ones ada-parse covers but [`BUILT_ON`]'s and
 /// [`EMBEDDED`]'s, then every

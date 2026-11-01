@@ -61,7 +61,7 @@ impl Scan<'_, '_, '_> {
         }
     }
 
-    /// `string`: `'…'`, `"…"`, or a template.
+    /// `string`: `'…'`, `"…"`, or a template (`template-call` first: a tag's `true` is the literal).
     pub(super) fn string(&mut self) -> bool {
         match self.c(self.i) {
             b'\'' => {
@@ -76,7 +76,7 @@ impl Scan<'_, '_, '_> {
                 self.push(STR_D_F);
                 true
             }
-            _ => self.template(false),
+            _ => self.template_call() || self.template(false),
         }
     }
 
@@ -302,7 +302,11 @@ impl Scan<'_, '_, '_> {
                     self.i = self.ws(2).min(self.n);
                     return true;
                 }
-                if self.rest(i).starts_with(b"<caption>") {
+                // \G(<)caption(>): its failed search is cached for the rest of the line
+                if !self.g_caption && !self.rest(i).starts_with(b"<caption>") {
+                    self.g_caption = true;
+                }
+                if !self.g_caption {
                     self.tok(i, i + 1, JD_CAPTION_ANGLE_BEGIN);
                     self.tok(i + 1, i + 8, JD_CAPTION_TAG);
                     self.tok(i + 8, i + 9, JD_CAPTION_ANGLE_END);
@@ -630,9 +634,7 @@ impl Scan<'_, '_, '_> {
     pub(super) fn re_numeric(&self, i: usize) -> Option<usize> {
         let oct = |k: usize| matches!(self.c(k), b'0'..=b'7');
         let hex = |k: usize| self.c(k).is_ascii_hexdigit();
-        if (1..4).all(|k| oct(i + k)) {
-            Some(i + 4)
-        } else if self.c(i + 1) == b'x' && hex(i + 2) && hex(i + 3) {
+        if (1..4).all(|k| oct(i + k)) || (self.c(i + 1) == b'x' && hex(i + 2) && hex(i + 3)) {
             Some(i + 4)
         } else if self.c(i + 1) == b'u' && (2..6).all(|k| hex(i + k)) {
             Some(i + 6)

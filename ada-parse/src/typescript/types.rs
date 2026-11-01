@@ -112,7 +112,7 @@ impl Scan<'_, '_, '_> {
             TYPE_ANNOT => {
                 if self.not_after_op(i)
                     && (i >= self.n || i == 0 || matches!(c, b',' | b')' | b';' | b'}' | b']') || (c == b'/' && self.c(i + 1) == b'/')
-                        || (c == b'=' && self.c(i + 1) != b'>' && i + 1 <= self.n) || self.before_brace(i))
+                        || (c == b'=' && self.c(i + 1) != b'>' && i < self.n) || self.before_brace(i))
                     && self.pop_zero()
                 {
                     return true;
@@ -332,7 +332,7 @@ impl Scan<'_, '_, '_> {
                 }
                 self.type_()
             }
-            TYPE_OP_GAP => {
+            GAP => {
                 if i < self.n && !is_space(c) && self.pop_zero() {
                     return true;
                 }
@@ -603,7 +603,8 @@ impl Scan<'_, '_, '_> {
             return true;
         }
         let name_start = look::alpha(self.b, i) > 0;
-        if name_start && self.template(true) {
+        // `template-type`: `template-call` first (a tag's `null` is the literal)
+        if name_start && (self.template_call() || self.template(true)) {
             return true;
         }
         if name_start && self.wb(i) {
@@ -653,7 +654,7 @@ impl Scan<'_, '_, '_> {
                 if self.c(k) == b'{' {
                     self.push(TYPE_OP_OBJ);
                 } else {
-                    self.push(TYPE_OP_GAP);
+                    self.push(GAP);
                 }
                 return true;
             }
@@ -876,7 +877,7 @@ impl Scan<'_, '_, '_> {
         let q = self.ws(ne);
         let opt = if self.c(q) == b'?' { Some(q) } else { None };
         let after = opt.map_or(q, |o| o + 1);
-        let fun = self.we(ne) && look::fn_decl(self.b, after);
+        let fun = self.we(ne) && look::fn_decl(self.b, after, self.tsx);
         let plain = self.c(after) == b':';
         if !fun && !plain {
             return false;

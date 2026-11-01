@@ -2618,6 +2618,92 @@ mod tests {
         rules_match_the_grammar("js", "JavaScript (Babel)", text);
     }
 
+    /// ada-parse's TypeScript scanner picks the rules bat's `TypeScript` picks, in every
+    /// built-in theme (ADR-40's phase 5): declarations of every kind (interfaces, type aliases
+    /// with conditional, mapped and template literal types, enums, namespaces, abstract classes
+    /// with modifiers, decorators, overloads, accessors and index signatures), generics in calls
+    /// and arrows, the `<T>x` cast, `as const`, optional chaining, destructuring, a `const` at a
+    /// line's end, JSDoc with types, `@example` and its caption, a regex with groups and
+    /// classes, templates with a tag, and objects nested past the 28 levels a state keeps
+    /// unpacked.
+    #[test]
+    fn typescript_rules_match_the_grammar() {
+        let mut text = String::from(concat!(
+            "/// <reference path=\"./types.d.ts\" />\n",
+            "import type { A, B as C } from './a';\n",
+            "import * as fs from 'fs';\n",
+            "export interface Point<T extends number = number> { readonly x: T; y?: T; [key: string]: unknown }\n",
+            "type Maybe<T> = T extends null | undefined ? never : T;\n",
+            "type Keys = { [K in keyof Point as `get${Capitalize<K & string>}`]: () => Point[K] };\n",
+            "export enum Color { Red = 1, Green = 'g', ['Blue'] }\n",
+            "declare namespace NS { export const v: number; }\n",
+            "/**\n",
+            " * Makes one.\n",
+            " * @param {string} name - the name\n",
+            " * @returns {Promise<Foo>} {@link Foo}\n",
+            " * @example <caption>Use</caption>\n",
+            " * make('a');\n",
+            " */\n",
+            "@Component({ selector: 'app' })\n",
+            "export abstract class Foo<T> extends Base<T> implements I {\n",
+            "  private static readonly count: number = 0;\n",
+            "  #secret = 1;\n",
+            "  constructor(public name: string, protected opts?: Options) { super(); }\n",
+            "  get size(): number { return this.items?.length ?? 0; }\n",
+            "  abstract run(): void;\n",
+            "  async *load<U>(id: U, ...rest: unknown[]): AsyncGenerator<U> { yield* other<U>(id); }\n",
+            "  handler = (e: Event): void => { console.log(e.target as HTMLElement); };\n",
+            "}\n",
+            "function over(a: string): string;\n",
+            "function over(a: any) { return <string>a; }\n",
+            "const { a, b: [c, d] } = obj, n = a! + 0x1F + 1_000n;\n",
+            "const pick = <T, K extends keyof T>(o: T, k: K): T[K] => o[k];\n",
+            "let re = /(?<year>\\d{4})-[a-z]+$/gi, half = total / 2;\n",
+            "const tag = html`<p>${name}</p>`, plain = `a ${b ? 'c' : \"d\"}`;\n",
+            "const conf = { mode: 'x', list: [1, 2] } as const;\n",
+            "const\n",
+            "  // a comment after the keyword\n",
+            "  late = typeof window !== 'undefined' && window instanceof Object;\n",
+            "for (const [k, v] of Object.entries(map)) { if (k in v) continue; }\n",
+            "switch (kind) { case 'a': break; default: throw new Error(`bad ${kind}`); }\n",
+            "export default async function main(): Promise<void> { await Promise.all([]); }\n",
+        ));
+        // objects nested past 28 frames: the state packs them between lines
+        for _ in 0..20 {
+            text.push_str("({ key: {\n");
+        }
+        for _ in 0..20 {
+            text.push_str("} })\n");
+        }
+        rules_match_the_grammar("ts", "TypeScript", &text);
+    }
+
+    /// ada-parse's TSX, TypeScript's scanner with JSX, picks the rules bat's `TypeScriptReact`
+    /// picks, in every built-in theme (ADR-40's phase 5): elements with and without attributes,
+    /// components with namespaces and type arguments, entities in children and in attribute
+    /// strings, expressions as children and values, a generic arrow `<T,>` that is no function
+    /// for a name, and `<T extends …>` that is.
+    #[test]
+    fn tsx_rules_match_the_grammar() {
+        let text = concat!(
+            "import React from 'react';\n",
+            "export const List = <T,>({ items }: Props<T>) => (\n",
+            "  <ul className=\"list\" data-n='1 &amp; 2'>\n",
+            "    {items.map((item, i) => <Item<T> key={i} value={item} />)}\n",
+            "    <svg:rect width={10} /> &copy; &#169; &#xA9; & more\n",
+            "    <></>\n",
+            "  </ul>\n",
+            ");\n",
+            "const pick = <T extends object>(o: T) => o;\n",
+            "function App(): JSX.Element {\n",
+            "  return <Layout.Main title={`a ${b}`} {...rest}>\n",
+            "    <p>text</p>\n",
+            "  </Layout.Main>;\n",
+            "}\n",
+        );
+        rules_match_the_grammar("tsx", "TypeScriptReact", text);
+    }
+
     /// ada-parse's Dockerfile lexer picks the rules bat's grammar picks, in every built-in
     /// theme (ADR-40).
     #[test]

@@ -150,6 +150,18 @@ export default class A extends B { get n() { return /ab+c/gi.test(`x ${this.y}`)
 const f = async (a, b = 2) => console.log(a / b);
 ```
 
+```ts
+export abstract class A<T extends B> implements C { private x?: Map<string, T[]> = new Map(); @dec m(): `a${T}` { return <T>this.y as const; } }
+```
+
+```tsx
+export const L = <T,>({ items }: P<T>) => <ul className=\"l\">{items.map(i => <Item<T> key={i} />)} &amp;</ul>;
+```
+
+```typescript
+enum E { A = 1 } namespace N { export type K = keyof typeof E; }
+```
+
 ```text
 plain
 ```
@@ -233,6 +245,10 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         "lib.mjs",
         "view.jsx",
         "config.cjs",
+        "app.ts",
+        "lib.mts",
+        "conf.cts",
+        "view.tsx",
     ] {
         let t = FileType::by_path(Path::new(name));
         assert!(

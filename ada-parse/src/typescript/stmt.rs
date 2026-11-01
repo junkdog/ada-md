@@ -268,11 +268,10 @@ impl Scan<'_, '_, '_> {
             }
         }
         // export-declaration
-        if self.rest(i).starts_with(b"export") && self.wb(i) && self.boundary(i + 6) {
-            if self.export_declaration() {
+        if self.rest(i).starts_with(b"export") && self.wb(i) && self.boundary(i + 6)
+            && self.export_declaration() {
                 return true;
             }
-        }
         // (declare|export) alone
         for kw in [&b"declare"[..], b"export"] {
             if let Some(e) = self.kw(i, kw) {
@@ -446,11 +445,10 @@ impl Scan<'_, '_, '_> {
                 // for(?=((\s+|(\s*/*…*/\s*))await)?\s*(/*…*/\s*)?(\())
                 let mut k = self.ws(w);
                 let c2 = look::comments(self.b, k);
-                if let Some(ae) = self.word_b(c2, b"await") {
-                    if c2 > w {
+                if let Some(ae) = self.word_b(c2, b"await")
+                    && c2 > w {
                         k = ae;
                     }
-                }
                 let k = look::comments(self.b, self.ws(k));
                 if self.c(k) == b'(' {
                     self.tok(i, w, LOOP);
@@ -891,11 +889,10 @@ impl Scan<'_, '_, '_> {
         let i = self.i;
         let c = self.c(i);
         // (?=\}|;|,|$|(^(?!\s*KEY…(=|:|;|,|$))))|(?<=\})
-        if matches!(c, b'}' | b';' | b',') || i >= self.n || (i == 0 && !self.field_ahead(0, false)) || (i > 0 && self.b[i - 1] == b'}') {
-            if self.pop_zero() {
+        if (matches!(c, b'}' | b';' | b',') || i >= self.n || (i == 0 && !self.field_ahead(0, false)) || (i > 0 && self.b[i - 1] == b'}'))
+            && self.pop_zero() {
                 return true;
             }
-        }
         if c == b'=' && self.initializer() {
             return true;
         }
@@ -915,7 +912,7 @@ impl Scan<'_, '_, '_> {
                 mark = Some(ne);
                 e = ne + 1;
             }
-            if look::fn_decl(self.b, e) {
+            if look::fn_decl(self.b, e, self.tsx) {
                 self.tok(i, ne, ENTITY_FN);
                 if let Some(m) = mark {
                     self.tok(m, m + 1, if self.b[m] == b'?' { OPTIONAL } else { DEFINITE });
@@ -1068,28 +1065,25 @@ impl Scan<'_, '_, '_> {
                 self.expression()
             }
             OBJ_KEY_SQ => {
-                if c == b':' || (i > 0 && self.b[i - 1] == b']' && matches!(self.c(self.ws(i)), b'(' | b'<')) {
-                    if self.pop_zero() {
+                if (c == b':' || (i > 0 && self.b[i - 1] == b']' && matches!(self.c(self.ws(i)), b'(' | b'<')))
+                    && self.pop_zero() {
                         return true;
                     }
-                }
                 self.comment(false) || self.array_literal()
             }
             OBJ_KEY_STR => {
-                if c == b':' || (i > 0 && matches!(self.b[i - 1], b'\'' | b'"' | b'`') && self.key_str_end(i)) {
-                    if self.pop_zero() {
+                if (c == b':' || (i > 0 && matches!(self.b[i - 1], b'\'' | b'"' | b'`') && self.key_str_end(i)))
+                    && self.pop_zero() {
                         return true;
                     }
-                }
                 self.comment(false) || self.string()
             }
             OBJ_KEY_NUM => {
                 let k = self.ws(i);
-                if c == b':' || matches!(self.c(k), b'(' | b'<' | b',' | b'}') || self.as_ahead(i) {
-                    if self.pop_zero() {
+                if (c == b':' || matches!(self.c(k), b'(' | b'<' | b',' | b'}') || self.as_ahead(i))
+                    && self.pop_zero() {
                         return true;
                     }
-                }
                 self.comment(false) || self.numeric_key()
             }
             OBJ_KEY_METHOD | OBJ_METHOD | METHOD | FUNC | FUNC_EXPR => self.function_frame(f),
@@ -1116,11 +1110,10 @@ impl Scan<'_, '_, '_> {
                 self.expression()
             }
             NEW_F => {
-                if (i > 0 && self.b[i - 1] == b')') || self.new_end(i) {
-                    if self.pop_zero() {
+                if ((i > 0 && self.b[i - 1] == b')') || self.new_end(i))
+                    && self.pop_zero() {
                         return true;
                     }
-                }
                 self.expression()
             }
             RETURN => {
@@ -1171,12 +1164,17 @@ impl Scan<'_, '_, '_> {
                 }
                 self.expression()
             }
-            DESTRUCT | DESTRUCT_CONST => {
+            DESTRUCT | DESTRUCT_CONST | DESTRUCT_ARR | DESTRUCT_ARR_CONST => {
                 // (?=$|^|[;,=}]|of/in\s+)
                 if (i >= self.n || i == 0 || matches!(c, b';' | b',' | b'=' | b'}') || self.of_in(i)) && self.pop_zero() {
                     return true;
                 }
-                self.binding_pattern(f == DESTRUCT_CONST, false) || (c == b':' && self.type_annotation()) || self.comment(false)
+                // the object's context takes only `{`, the array's only `[`
+                let arr = matches!(f, DESTRUCT_ARR | DESTRUCT_ARR_CONST);
+                let j = if self.rest(i).starts_with(b"...") { self.ws(i + 3) } else { i };
+                (self.c(j) == if arr { b'[' } else { b'{' } && self.binding_pattern(matches!(f, DESTRUCT_CONST | DESTRUCT_ARR_CONST), false))
+                    || (c == b':' && self.type_annotation())
+                    || self.comment(false)
             }
             BIND_OBJ_F | BIND_OBJ_CONST | PBIND_OBJ => {
                 if c == b'}' {
@@ -1783,11 +1781,10 @@ impl Scan<'_, '_, '_> {
                     return true;
                 }
             }
-            OBJ_METHOD => {
-                if self.method_name() {
+            OBJ_METHOD
+                if self.method_name() => {
                     return true;
                 }
-            }
             _ => {}
         }
         if self.function_body() {
@@ -1921,7 +1918,7 @@ impl Scan<'_, '_, '_> {
         let q = self.ws(ne);
         let opt = if self.c(q) == b'?' { Some(q) } else { None };
         let after = opt.map_or(q, |o| o + 1);
-        let fun = look::fn_decl(self.b, after);
+        let fun = look::fn_decl(self.b, after, self.tsx);
         if let Some((s, e)) = modifier {
             self.tok(s, e, MODIFIER);
         }
@@ -2010,6 +2007,10 @@ impl Scan<'_, '_, '_> {
             self.tok(j, w, STORAGE);
             self.i = self.ws(w).min(self.n).max(w);
             self.var_kw_eol = self.i >= self.n;
+            if self.var_kw_eol {
+                // `\s*` took the `\n`: its `(?=\S)` push holds the next lines' blanks
+                self.push(GAP);
+            }
             return true;
         }
         if self.destructuring(cst) || self.var_single(cst) {
@@ -2048,10 +2049,16 @@ impl Scan<'_, '_, '_> {
             return false;
         }
         self.i = k.min(self.n);
+        let f = match (self.c(k) == b'[', cst) {
+            (false, false) => DESTRUCT,
+            (false, true) => DESTRUCT_CONST,
+            (true, false) => DESTRUCT_ARR,
+            (true, true) => DESTRUCT_ARR_CONST,
+        };
         if k == i {
-            self.push_zero(if cst { DESTRUCT_CONST } else { DESTRUCT })
+            self.push_zero(f)
         } else {
-            self.push(if cst { DESTRUCT_CONST } else { DESTRUCT });
+            self.push(f);
             true
         }
     }
@@ -2069,7 +2076,7 @@ impl Scan<'_, '_, '_> {
             bang = Some(ne);
             e = ne + 1;
         }
-        let fun = look::fn_decl(self.b, e);
+        let fun = look::fn_decl(self.b, e, self.tsx);
         let kind = if fun {
             if cst { CONST_FN } else { ENTITY_FN }
         } else if cst {

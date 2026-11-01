@@ -271,7 +271,7 @@ impl Scan<'_, '_, '_> {
             JSX_STR_D | JSX_STR_S => {
                 let q = if f == JSX_STR_D { b'"' } else { b'\'' };
                 if c == q {
-                    self.tok(i, i + 1, if f == JSX_STR_D { JSX_STR_D_END } else { JSX_STR_S_END });
+                    self.tok(i, i + 1, if f == JSX_STR_D { STR_D_END } else { STR_S_END });
                     self.i = i + 1;
                     return self.pop();
                 }
@@ -353,11 +353,18 @@ impl Scan<'_, '_, '_> {
             }
             e > s
         };
+        let (entity, mark, bad) = match self.top() {
+            JSX_STR_D => (JSX_STR_D_ENTITY, JSX_STR_D_ENTITY_MARK, JSX_STR_D_BAD_AMP),
+            JSX_STR_S => (JSX_STR_S_ENTITY, JSX_STR_S_ENTITY_MARK, JSX_STR_S_BAD_AMP),
+            _ => (JSX_ENTITY, JSX_ENTITY_MARK, JSX_BAD_AMP),
+        };
         if ok && self.c(e) == b';' {
-            return self.take(i, e + 1, JSX_ENTITY);
+            self.tok(i, i + 1, mark);
+            self.tok(i + 1, e, entity);
+            return self.take(e, e + 1, mark);
         }
         // `#x` can back off to `#` and digits: `&#x;` isn't one; `&#1x;` neither
-        self.take(i, i + 1, JSX_BAD_AMP)
+        self.take(i, i + 1, bad)
     }
 
     /// An attribute's patterns.
@@ -405,13 +412,13 @@ impl Scan<'_, '_, '_> {
                 }
             }
             b'"' => {
-                self.tok(i, i + 1, JSX_STR_D_BEGIN);
+                self.tok(i, i + 1, STR_D_BEGIN);
                 self.i = i + 1;
                 self.push(JSX_STR_D);
                 return true;
             }
             b'\'' => {
-                self.tok(i, i + 1, JSX_STR_S_BEGIN);
+                self.tok(i, i + 1, STR_S_BEGIN);
                 self.i = i + 1;
                 self.push(JSX_STR_S);
                 return true;
