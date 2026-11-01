@@ -329,7 +329,8 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         b,
         n: b.len(),
         stack: [MAIN; MAX],
-        tags: [(u8::MAX, 0, 0); TAGS],
+        // read only below `tag_count`
+        tags: [(0, 0, 0); TAGS],
         tag_count: 0,
         depth: 1,
         low: 1,
@@ -344,40 +345,37 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
             Name {
                 end: 0,
                 next: None,
-                special: false,
+                word_end: 0,
+                mask: 0,
             },
         )),
         parens: std::cell::Cell::new((usize::MAX, None)),
         out,
     };
-    let n = usize::from(state.depth);
-    for i in 0..n {
-        s.stack[1 + i] = if i < HALF {
-            state.levels[i]
-        } else {
-            state.withs[i - HALF]
-        };
-    }
-    s.depth = 1 + n;
+    // the levels kept, whole: those above the depth are never read
+    s.stack[1..=HALF].copy_from_slice(&state.levels);
+    s.stack[1 + HALF..=KEPT].copy_from_slice(&state.withs);
+    s.depth = 1 + usize::from(state.depth);
     s.low = s.depth;
     s.refresh();
     s.run();
     s.fill(s.n);
     let n = s.depth - 1;
     let from = n.saturating_sub(KEPT);
-    let mut packed = State {
-        depth: (n - from) as u8,
-        inexact: !s.exact || from > 0,
-        ..State::default()
-    };
-    for (i, &c) in s.stack[1 + from..s.depth].iter().enumerate() {
-        if i < HALF {
-            packed.levels[i] = c;
-        } else {
-            packed.withs[i - HALF] = c;
+    let kept = n - from;
+    // the top `KEPT` levels, whole, the bytes above the depth zeroed
+    let mut levels = [0; KEPT];
+    levels.copy_from_slice(&s.stack[1 + from..1 + from + KEPT]);
+    for (i, c) in levels.iter_mut().enumerate() {
+        if i >= kept {
+            *c = 0;
         }
     }
-    *state = packed;
+    state.levels.copy_from_slice(&levels[..HALF]);
+    state.withs.copy_from_slice(&levels[HALF..]);
+    state.depth = kept as u8;
+    state.inexact = !s.exact || from > 0;
+    state.arg = 0;
 }
 
 /// A tag's name as a JSX element's context keeps it between lines: 7 bits of its FNV-1a hash.
@@ -387,6 +385,27 @@ fn tag_hash(name: &[u8]) -> u8 {
         h = (h ^ u32::from(c)).wrapping_mul(0x0100_0193);
     }
     ((h ^ (h >> 7) ^ (h >> 14) ^ (h >> 21)) & 0x7f) as u8
+}
+
+/// Whether context `c` is code whose blanks only `core`'s or `expression`'s patterns can start
+/// at: those [`Scan::advance`] skips a run of blanks in.
+fn is_code(c: u8) -> bool {
+    matches!(
+        c,
+        MAIN | CURLY
+            | ROUND
+            | SQUARE
+            | SUBST
+            | JSX_EXPR
+            | SWITCH_BODY
+            | CASE
+            | PARAM_DEFAULT
+            | FOR_IN
+            | GQL_SUBST
+            | STYLED_ARGS
+            | LABEL
+            | CLASS_EXTENDS
+    )
 }
 
 /// The bytes of the UTF-8 character that starts with `c`.
@@ -820,152 +839,108 @@ const MODULE_PROPS: &[&[u8]] = &[
     b"parent",
 ];
 
-/// Whether `w`, a whole `\w` run, is a word some pattern at a name's start takes: a keyword,
-/// a support class, function or object, a constant, `async`, `function`, `new`, … Any other
-/// name followed by none of `=:(`.[` can only be `literal-variable`'s.
-fn special(w: &[u8]) -> bool {
+/// `support-class` can take the word.
+const W_SUPPORT_CLASS: u16 = 1;
+/// `support-other` can take the word (a support object's included).
+const W_SUPPORT_OTHER: u16 = 1 << 1;
+/// `literal-keywords` can take the word.
+const W_KEYWORD: u16 = 1 << 2;
+/// `literal-module` can take the word.
+const W_MODULE: u16 = 1 << 3;
+/// `literal-class` can take the word.
+const W_CLASS: u16 = 1 << 4;
+/// `flowtype-declaration` can take the word.
+const W_FLOW: u16 = 1 << 5;
+/// `literal-number` can take the word (`Infinity`).
+const W_NUMBER: u16 = 1 << 6;
+/// `literal-language-constant` can take the word.
+const W_CONSTANT: u16 = 1 << 7;
+/// `literal-language-variable` can take the word.
+const W_LANG_VAR: u16 = 1 << 8;
+/// `literal-constructor` can take the word (`new`).
+const W_NEW: u16 = 1 << 9;
+/// `literal-operators` can take the word.
+const W_OPERATOR: u16 = 1 << 10;
+/// A word some other pattern at a name's start looks for: `async`, `function`, `static`,
+/// `get`, `set`.
+const W_OTHER: u16 = 1 << 11;
+/// `literal-for` or `literal-switch` can take the word.
+const W_FOR_SWITCH: u16 = 1 << 12;
+/// `styled-components` can take the word.
+const W_STYLED: u16 = 1 << 13;
+/// `graphql` can take the word (`gql`).
+const W_GQL: u16 = 1 << 14;
+
+/// Which of the patterns at a name's start can take `w`, a whole `\w` run: a bit each
+/// (`W_*`), none for a word no pattern looks for. A name that has none and that none of `=:(`.[`
+/// follows can only be `literal-variable`'s.
+fn word_mask(w: &[u8]) -> u16 {
     // one `match`: the compiler tells the words apart by length and bytes
-    matches!(
-        w,
-        b"Array"
-            | b"ArrayBuffer"
-            | b"Boolean"
-            | b"DataView"
-            | b"Date"
-            | b"Float32Array"
-            | b"Float64Array"
-            | b"Function"
-            | b"Infinity"
-            | b"Int16Array"
-            | b"Int32Array"
-            | b"Int8Array"
-            | b"JSON"
-            | b"Map"
-            | b"Math"
-            | b"NaN"
-            | b"Number"
-            | b"Object"
-            | b"Promise"
-            | b"Proxy"
-            | b"Reflect"
-            | b"RegExp"
-            | b"Set"
-            | b"String"
-            | b"Symbol"
-            | b"System"
-            | b"TypeError"
-            | b"Uint16Array"
-            | b"Uint32Array"
-            | b"Uint8Array"
-            | b"Uint8ClampedArray"
-            | b"WeakMap"
-            | b"WeakSet"
-            | b"Error"
-            | b"EvalError"
-            | b"RangeError"
-            | b"ReferenceError"
-            | b"SyntaxError"
-            | b"URIError"
-            | b"constructor"
-            | b"decodeURI"
-            | b"decodeURIComponent"
-            | b"encodeURI"
-            | b"encodeURIComponent"
-            | b"escape"
-            | b"eval"
-            | b"hasOwnProperty"
-            | b"isFinite"
-            | b"isNaN"
-            | b"isPrototypeOf"
-            | b"parseFloat"
-            | b"parseInt"
-            | b"propertyIsEnumerable"
-            | b"toLocaleString"
-            | b"toString"
-            | b"unescape"
-            | b"valueOf"
-            | b"clearImmediate"
-            | b"clearInterval"
-            | b"clearTimeout"
-            | b"require"
-            | b"setImmediate"
-            | b"setInterval"
-            | b"setTimeout"
-            | b"Buffer"
-            | b"document"
-            | b"window"
-            | b"global"
-            | b"GLOBAL"
-            | b"root"
-            | b"__dirname"
-            | b"__filename"
-            | b"console"
-            | b"process"
-            | b"exports"
-            | b"module"
-            | b"async"
-            | b"function"
-            | b"const"
-            | b"let"
-            | b"var"
-            | b"await"
-            | b"yield"
-            | b"return"
-            | b"if"
-            | b"else"
-            | b"catch"
-            | b"finally"
-            | b"throw"
-            | b"try"
-            | b"break"
-            | b"continue"
-            | b"do"
-            | b"goto"
-            | b"while"
-            | b"case"
-            | b"default"
-            | b"enum"
-            | b"public"
-            | b"package"
-            | b"private"
-            | b"interface"
-            | b"protected"
-            | b"debugger"
-            | b"static"
-            | b"get"
-            | b"set"
-            | b"import"
-            | b"export"
-            | b"from"
-            | b"as"
-            | b"class"
-            | b"declare"
-            | b"type"
-            | b"true"
-            | b"false"
-            | b"null"
-            | b"undefined"
-            | b"arguments"
-            | b"super"
-            | b"this"
-            | b"self"
-            | b"__proto__"
-            | b"prototype"
-            | b"new"
-            | b"delete"
-            | b"instanceof"
-            | b"in"
-            | b"of"
-            | b"typeof"
-            | b"void"
-            | b"with"
-            | b"for"
-            | b"switch"
-            | b"styled"
-            | b"injectGlobal"
-            | b"keyframes"
-            | b"gql"
-    )
+    match w {
+        b"Array" | b"ArrayBuffer" | b"Boolean" | b"DataView" | b"Date" | b"Float32Array"
+        | b"Float64Array" | b"Function" | b"Int16Array" | b"Int32Array" | b"Int8Array"
+        | b"JSON" | b"Map" | b"Math" | b"Number" | b"Object" | b"Promise" | b"Proxy"
+        | b"Reflect" | b"RegExp" | b"Set" | b"String" | b"Symbol" | b"System" | b"TypeError"
+        | b"Uint16Array" | b"Uint32Array" | b"Uint8Array" | b"Uint8ClampedArray" | b"WeakMap"
+        | b"WeakSet" | b"Error" | b"EvalError" | b"RangeError" | b"ReferenceError"
+        | b"SyntaxError" | b"URIError" | b"Buffer" => W_SUPPORT_CLASS,
+        b"Infinity" => W_SUPPORT_CLASS | W_NUMBER,
+        b"NaN" => W_SUPPORT_CLASS | W_CONSTANT,
+        b"constructor" => W_SUPPORT_OTHER | W_LANG_VAR,
+        b"decodeURI"
+        | b"decodeURIComponent"
+        | b"encodeURI"
+        | b"encodeURIComponent"
+        | b"escape"
+        | b"eval"
+        | b"hasOwnProperty"
+        | b"isFinite"
+        | b"isNaN"
+        | b"isPrototypeOf"
+        | b"parseFloat"
+        | b"parseInt"
+        | b"propertyIsEnumerable"
+        | b"toLocaleString"
+        | b"toString"
+        | b"unescape"
+        | b"valueOf"
+        | b"clearImmediate"
+        | b"clearInterval"
+        | b"clearTimeout"
+        | b"require"
+        | b"setImmediate"
+        | b"setInterval"
+        | b"setTimeout"
+        | b"document"
+        | b"window"
+        | b"global"
+        | b"GLOBAL"
+        | b"root"
+        | b"__dirname"
+        | b"__filename"
+        | b"console"
+        | b"process"
+        | b"exports" => W_SUPPORT_OTHER,
+        b"module" => W_SUPPORT_OTHER | W_KEYWORD,
+        b"const" | b"let" | b"var" | b"await" | b"yield" | b"return" | b"if" | b"else"
+        | b"catch" | b"finally" | b"throw" | b"try" | b"break" | b"continue" | b"do" | b"goto"
+        | b"while" | b"case" | b"enum" | b"public" | b"package" | b"private" | b"protected"
+        | b"debugger" => W_KEYWORD,
+        b"default" => W_KEYWORD | W_MODULE,
+        b"interface" => W_KEYWORD | W_CLASS,
+        b"import" | b"export" | b"from" | b"as" => W_MODULE,
+        b"class" => W_CLASS,
+        b"declare" | b"type" => W_FLOW,
+        b"true" | b"false" | b"null" | b"undefined" => W_CONSTANT,
+        b"arguments" | b"super" | b"this" | b"self" | b"__proto__" | b"prototype" => W_LANG_VAR,
+        b"new" => W_NEW | W_OPERATOR,
+        b"delete" | b"instanceof" | b"in" | b"of" | b"typeof" | b"void" | b"with" => W_OPERATOR,
+        b"async" | b"function" | b"static" | b"get" | b"set" => W_OTHER,
+        b"for" | b"switch" => W_FOR_SWITCH,
+        b"styled" | b"injectGlobal" | b"keyframes" => W_STYLED,
+        b"gql" => W_GQL,
+        _ => 0,
+    }
 }
 
 /// The keywords a regex literal can follow, `\Wnew|…|^yield`.
@@ -1074,8 +1049,10 @@ struct Name {
     end: usize,
     /// The byte after the spaces after it.
     next: Option<u8>,
-    /// Whether its `\w` run is one of the grammar's words ([`special`]).
-    special: bool,
+    /// Where its `\w` run ends.
+    word_end: usize,
+    /// Which patterns at a name's start can take its `\w` run ([`word_mask`]).
+    mask: u16,
 }
 
 impl<'b> Scan<'b, '_> {
@@ -1151,7 +1128,7 @@ impl<'b> Scan<'b, '_> {
             self.stack.copy_within(2.., 1);
             // the levels moved: the tags' places no longer name them
             self.tag_count = 0;
-            self.tags = [(u8::MAX, 0, 0); TAGS];
+            self.tags = [(0, 0, 0); TAGS];
             self.depth -= 1;
             self.low = self.low.saturating_sub(1).max(1);
             self.exact = false;
@@ -1226,6 +1203,26 @@ impl<'b> Scan<'b, '_> {
         let mut p = 0;
         loop {
             self.looped = false;
+            // a run of blanks in code where no pattern can start, skipped whole: none of these
+            // contexts' own patterns starts at a blank, and `core`'s and `expression`'s only
+            // after a `.` or before `:`, `gql`, `` ` ``, `/` or `<` ([`Scan::blank_may_match`])
+            if p < self.n && matches!(self.b[p], b' ' | b'\t') && is_code(self.top()) {
+                let q = p + self.b[p..]
+                    .iter()
+                    .take_while(|&&c| c == b' ' || c == b'\t')
+                    .count();
+                // past them, a space only `\s` takes ends the shortcut (the line's `\n` doesn't)
+                let next = self.c(q);
+                if !matches!(
+                    next,
+                    Some(b'\x0b' | b'\x0c' | b'\r' | b':' | b'g' | b'`' | b'/' | b'<' | 0x80..)
+                ) && before(self.b, p) != Some(b'.')
+                {
+                    p = q;
+                    self.stuck = 0;
+                    continue;
+                }
+            }
             if let Some(q) = self.dispatch(p) {
                 self.stuck = if q == p { self.stuck + 1 } else { 0 };
                 p = q;
@@ -1270,10 +1267,7 @@ impl<'b> Scan<'b, '_> {
             REGEX | RE_GROUP | RE_CLASS => &REGEX_STOPS,
             // code: inside a run of blanks only `literal-labels`' `\s*:` can start, and only
             // where a `:` ends the run (its other patterns' lookbehinds see the blank)
-            MAIN | CURLY | ROUND | SQUARE | SUBST | JSX_EXPR | SWITCH_BODY | CASE
-            | PARAM_DEFAULT | FOR_IN | GQL_SUBST | STYLED_ARGS | LABEL | CLASS_EXTENDS
-                if matches!(b[p], b' ' | b'\t') =>
-            {
+            c if is_code(c) && matches!(b[p], b' ' | b'\t') => {
                 let q = p + b[p..]
                     .iter()
                     .take_while(|&&c| c == b' ' || c == b'\t')
@@ -1738,15 +1732,31 @@ impl<'b> Scan<'b, '_> {
         let r = match self.b[p] {
             // a name or a number is a key only before `:`, and is one of the grammar's words
             // before anything else here
-            b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' | b'0'..=b'9'
-                if {
-                    let n = self.name_at(p);
-                    n.next != Some(b':') && !n.special
-                } =>
-            {
-                None
+            // at a name or a number, the labels' patterns want a `:` after it, the others
+            // their words
+            b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' | b'0'..=b'9' => {
+                let n = self.name_at(p);
+                let colon = n.next == Some(b':');
+                let r = if colon {
+                    self.function_labels(p)
+                        .or_else(|| self.arrow_labels(p))
+                        .or_else(|| self.labels(p))
+                } else {
+                    None
+                };
+                r.or_else(|| {
+                    if n.mask & W_FOR_SWITCH != 0 {
+                        self.for_switch(p)
+                    } else if n.mask & W_STYLED != 0 {
+                        self.styled(p)
+                    } else if n.mask & W_GQL != 0 {
+                        self.graphql(p)
+                    } else {
+                        None
+                    }
+                })
             }
-            b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' | b'0'..=b'9' | b'\'' | b'"' | 0x80.. => self
+            b'\'' | b'"' | 0x80.. => self
                 .function_labels(p)
                 .or_else(|| self.arrow_labels(p))
                 .or_else(|| self.labels(p))
@@ -1791,11 +1801,18 @@ impl<'b> Scan<'b, '_> {
             return name;
         }
         let b = self.b;
-        let end = name_end(b, p + 1);
+        // `[$\w]*` is the `\w` run, then more after a `$`
+        let we = word_end(b, p);
+        let end = if b.get(we) == Some(&b'$') {
+            name_end(b, we)
+        } else {
+            we.max(p + 1)
+        };
         let name = Name {
             end,
             next: self.c(spaces(b, end)),
-            special: special(&b[p..word_end(b, p)]),
+            word_end: we,
+            mask: word_mask(&b[p..we]),
         };
         self.names.set((p, name));
         name
@@ -1809,11 +1826,9 @@ impl<'b> Scan<'b, '_> {
             return None;
         }
         let Name {
-            end: e,
-            next,
-            special,
+            end: e, next, mask, ..
         } = self.name_at(p);
-        if special || matches!(next, Some(b'=' | b':' | b'(' | b'`' | b'.' | b'[')) {
+        if mask != 0 || matches!(next, Some(b'=' | b':' | b'(' | b'`' | b'.' | b'[')) {
             return None;
         }
         let leaf = if before(b, p) == Some(b'.') {
@@ -1865,7 +1880,16 @@ impl<'b> Scan<'b, '_> {
                 .regexp(p)
                 .or_else(|| self.jsx(p))
                 .or_else(|| self.variable(p)),
-            b'(' => self.arrow_function(p).or_else(|| self.brackets(p)),
+            // at `(`, `literal-arrow-function` can only be its `(?=(…)\s*(=>))`
+            b'(' => {
+                if self.arrow_follows(p) {
+                    if !self.can_push() {
+                        return self.brackets(p);
+                    }
+                    return self.enter(p, ARROW).or_else(|| self.brackets(p));
+                }
+                self.brackets(p)
+            }
             b'/' => self
                 .regexp(p)
                 .or_else(|| self.comments(p))
@@ -1902,16 +1926,26 @@ impl<'b> Scan<'b, '_> {
         let Name {
             end: e,
             next,
-            special: sp,
+            word_end: we,
+            mask,
         } = self.name_at(p);
         let at_e = self.c(e);
-        let w = &b[p..word_end(b, p)];
+        let w = &b[p..we];
         let after_dot = before(b, p) == Some(b'.');
         let upper = b[p].is_ascii_uppercase() || b[p] == b'_';
         // `(\b_?[A-Z][$\w]*)?(\.)…`: a class's name before its member
         let class_member = upper && at_e == Some(b'.');
         let async_or_fn = matches!(w, b"async" | b"function");
-        if sp && let Some(q) = self.support_class(p).or_else(|| self.support_other(p)) {
+        // each word pattern is tried only for a word it can take ([`word_mask`])
+        let can = |bit: u16| mask & bit != 0;
+        if can(W_SUPPORT_CLASS)
+            && let Some(q) = self.support_class(p)
+        {
+            return Some(q);
+        }
+        if can(W_SUPPORT_OTHER)
+            && let Some(q) = self.support_other(p)
+        {
             return Some(q);
         }
         if (next == Some(b'=') || async_or_fn || class_member)
@@ -1924,7 +1958,9 @@ impl<'b> Scan<'b, '_> {
         {
             return Some(q);
         }
-        if sp && let Some(q) = self.keywords(p) {
+        if can(W_KEYWORD)
+            && let Some(q) = self.keywords(p)
+        {
             return Some(q);
         }
         if (next == Some(b'(') || matches!(w, b"static" | b"async" | b"get" | b"set"))
@@ -1932,17 +1968,41 @@ impl<'b> Scan<'b, '_> {
         {
             return Some(q);
         }
-        if sp
-            && let Some(q) = self
-                .module(p)
-                .or_else(|| self.class(p))
-                .or_else(|| self.flow_declaration(p))
-                .or_else(|| self.number(p))
-                .or_else(|| self.language_constant(p))
-                .or_else(|| self.language_variable(p))
-                .or_else(|| self.constructor(p))
-        {
-            return Some(q);
+        if mask & (W_MODULE | W_CLASS | W_FLOW | W_NUMBER | W_CONSTANT | W_LANG_VAR | W_NEW) != 0 {
+            let r = if can(W_MODULE) { self.module(p) } else { None }
+                .or_else(|| if can(W_CLASS) { self.class(p) } else { None })
+                .or_else(|| {
+                    if can(W_FLOW) {
+                        self.flow_declaration(p)
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| if can(W_NUMBER) { self.number(p) } else { None })
+                .or_else(|| {
+                    if can(W_CONSTANT) {
+                        self.language_constant(p)
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| {
+                    if can(W_LANG_VAR) {
+                        self.language_variable(p)
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| {
+                    if can(W_NEW) {
+                        self.constructor(p)
+                    } else {
+                        None
+                    }
+                });
+            if r.is_some() {
+                return r;
+            }
         }
         if (after_dot || upper || next == Some(b'(') || next == Some(b'.'))
             && let Some(q) = self.method_call(p)
@@ -1954,7 +2014,9 @@ impl<'b> Scan<'b, '_> {
         {
             return Some(q);
         }
-        if sp && let Some(q) = self.operators(p) {
+        if can(W_OPERATOR)
+            && let Some(q) = self.operators(p)
+        {
             return Some(q);
         }
         self.variable(p)
@@ -2591,17 +2653,12 @@ impl<'b> Scan<'b, '_> {
         // the four with a class's member, `…(\.)(prototype)(\.)(…)`'s two first: each pushes
         // before `(…) =>`, else takes a parameter and its `=>`
         let (class, dot) = self.class_dot(p)?;
-        let mut members = Vec::with_capacity(2);
-        if has(b, dot + 1, b"prototype")
-            && self.is(dot + 10, b'.')
-            && let Some(e) = ident(b, dot + 11)
-        {
-            members.push((Some(dot + 10), (dot + 11, e)));
-        }
-        if let Some(e) = ident(b, dot + 1) {
-            members.push((None, (dot + 1, e)));
-        }
-        for (proto, name) in members {
+        // `prototype.name` first, then the name after the `.`
+        let proto_member = (has(b, dot + 1, b"prototype") && self.is(dot + 10, b'.'))
+            .then(|| ident(b, dot + 11).map(|e| (Some(dot + 10), (dot + 11, e))))
+            .flatten();
+        let member = ident(b, dot + 1).map(|e| (None, (dot + 1, e)));
+        for (proto, name) in [proto_member, member].into_iter().flatten() {
             let s = spaces(b, name.1);
             if !self.is(s, b'=') {
                 continue;
@@ -2729,6 +2786,16 @@ impl<'b> Scan<'b, '_> {
     /// `literal-method`.
     fn method(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
+        // without `static`, `async`, `*`, `get` or `set` at `p`, only the bare key can match
+        if !matches!(self.c(p), Some(b's' | b'a' | b'*' | b'g')) {
+            let key = key(b, p)?;
+            if !self.body_follows(spaces(b, key.end)) || !self.can_push() {
+                return None;
+            }
+            self.key_caps(p, key);
+            self.push(METHOD);
+            return Some(key.end);
+        }
         // `(?:\b(static)\s+)?(?:\b(async)\s+)?(?:(\*)\s*)?(?>KEY)(?=\s*(…)(?>\s|/\*.*\*/)*\{)`
         let word_spaces = |q: usize, w: &[u8]| {
             if !has(b, q, w) || !boundary(b, q) {
@@ -3191,19 +3258,21 @@ impl<'b> Scan<'b, '_> {
     /// `literal-operators`.
     fn operators(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
-        if let Some(e) = self.keyword(
-            p,
-            &[
-                b"delete",
-                b"instanceof",
-                b"in",
-                b"new",
-                b"of",
-                b"typeof",
-                b"void",
-                b"with",
-            ],
-        ) {
+        if self.c(p).is_some_and(|c| WORD[usize::from(c)] || c >= 0x80)
+            && let Some(e) = self.keyword(
+                p,
+                &[
+                    b"delete",
+                    b"instanceof",
+                    b"in",
+                    b"new",
+                    b"of",
+                    b"typeof",
+                    b"void",
+                    b"with",
+                ],
+            )
+        {
             return self.tok(p, e, OP);
         }
         let c = self.c(p)?;
@@ -3710,6 +3779,123 @@ mod tests {
 
     fn js(lines: &[&'static str]) -> Vec<(&'static str, &'static str)> {
         marked(Lang::JavaScript, lines)
+    }
+
+    /// Every word a pattern at a name's start looks for has that pattern's bit: a word without
+    /// it skips the pattern.
+    #[test]
+    fn the_word_mask_names_every_pattern_a_word_can_start() {
+        use super::*;
+        let sets: &[(&[&[u8]], u16)] = &[
+            (BUILTIN_CLASSES, W_SUPPORT_CLASS),
+            (ERRORS, W_SUPPORT_CLASS),
+            (&[b"Buffer"], W_SUPPORT_CLASS),
+            (BUILTIN_FNS, W_SUPPORT_OTHER),
+            (NODE_FNS, W_SUPPORT_OTHER),
+            (
+                &[
+                    b"document",
+                    b"window",
+                    b"global",
+                    b"GLOBAL",
+                    b"root",
+                    b"__dirname",
+                    b"__filename",
+                    b"console",
+                    b"process",
+                    b"exports",
+                    b"module",
+                ],
+                W_SUPPORT_OTHER,
+            ),
+            (
+                &[
+                    b"const",
+                    b"let",
+                    b"var",
+                    b"await",
+                    b"yield",
+                    b"return",
+                    b"if",
+                    b"else",
+                    b"catch",
+                    b"finally",
+                    b"throw",
+                    b"try",
+                    b"break",
+                    b"continue",
+                    b"do",
+                    b"goto",
+                    b"while",
+                    b"case",
+                    b"default",
+                    b"enum",
+                    b"module",
+                    b"public",
+                    b"package",
+                    b"private",
+                    b"interface",
+                    b"protected",
+                    b"debugger",
+                ],
+                W_KEYWORD,
+            ),
+            (
+                &[b"import", b"export", b"default", b"from", b"as"],
+                W_MODULE,
+            ),
+            (&[b"class", b"interface"], W_CLASS),
+            (&[b"declare", b"type"], W_FLOW),
+            (&[b"Infinity"], W_NUMBER),
+            (
+                &[b"true", b"false", b"null", b"undefined", b"NaN"],
+                W_CONSTANT,
+            ),
+            (
+                &[
+                    b"arguments",
+                    b"super",
+                    b"this",
+                    b"self",
+                    b"__proto__",
+                    b"constructor",
+                    b"prototype",
+                ],
+                W_LANG_VAR,
+            ),
+            (&[b"new"], W_NEW),
+            (
+                &[
+                    b"delete",
+                    b"instanceof",
+                    b"in",
+                    b"new",
+                    b"of",
+                    b"typeof",
+                    b"void",
+                    b"with",
+                ],
+                W_OPERATOR,
+            ),
+            (&[b"for", b"switch"], W_FOR_SWITCH),
+            (&[b"styled", b"injectGlobal", b"keyframes"], W_STYLED),
+            (&[b"gql"], W_GQL),
+        ];
+        for &(words, bit) in sets {
+            for w in words {
+                assert_ne!(
+                    word_mask(w) & bit,
+                    0,
+                    "{} lacks {bit:#x}",
+                    String::from_utf8_lossy(w)
+                );
+            }
+        }
+        for w in [&b"async"[..], b"function", b"static", b"get", b"set"] {
+            assert_ne!(word_mask(w) & W_OTHER, 0);
+        }
+        assert_eq!(word_mask(b"foo"), 0);
+        assert_eq!(word_mask(b"Foo"), 0);
     }
 
     #[test]
