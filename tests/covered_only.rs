@@ -125,6 +125,12 @@ async def f(a, *b, c: int = 1) -> dict[str, int]:
     return {k: rf\"\\d{v!r:>4}\" for k, v in re.findall(r\"(?P<n>[a-z]+)\", \"SELECT 1\")}
 ```
 
+```lua
+local M = setmetatable({}, { __index = function(t, k) return rawget(t, k) end })
+function M.run(a, ...) --[==[ long
+]==] return string.format('%d\\n', #a) .. [[x]] end
+```
+
 ```text
 plain
 ```
@@ -200,6 +206,7 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         "main.go",
         "main.py",
         "stubs.pyi",
+        "init.lua",
     ] {
         let t = FileType::by_path(Path::new(name));
         assert!(
@@ -215,6 +222,6 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         assert!(!highlight::syntaxes_loaded(), "{first} loaded the set");
     }
 
-    print(&format!("{NOTE}\n```lua\nlocal x = 1\n```\n"));
-    assert!(highlight::syntaxes_loaded(), "a Lua fence needs the set");
+    print(&format!("{NOTE}\n```ruby\nx = 1\n```\n"));
+    assert!(highlight::syntaxes_loaded(), "a Ruby fence needs the set");
 }

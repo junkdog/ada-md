@@ -57,6 +57,8 @@ pub enum Lang {
     Go,
     /// bat's `Python`.
     Python,
+    /// bat's `Lua`.
+    Lua,
 }
 
 /// Fence languages that no syntax names, and the token each stands for (`zsh` for bash's).
@@ -256,10 +258,11 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
             "bzl",
         ],
     ),
+    (Lang::Lua, &["lua"]),
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 24] = [
+    pub const ALL: [Lang; 25] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -284,6 +287,7 @@ impl Lang {
         Lang::CSharp,
         Lang::Go,
         Lang::Python,
+        Lang::Lua,
     ];
 
     /// The name of the syntax it stands in for, as syntect names it.
@@ -313,6 +317,7 @@ impl Lang {
             Lang::CSharp => "C#",
             Lang::Go => "Go",
             Lang::Python => "Python",
+            Lang::Lua => "Lua",
         }
     }
 
@@ -343,6 +348,7 @@ impl Lang {
             Lang::CSharp => "source.cs",
             Lang::Go => "source.go",
             Lang::Python => "source.python",
+            Lang::Lua => "source.lua",
         }
     }
 
@@ -374,6 +380,7 @@ impl Lang {
             Lang::CSharp => crate::csharp::scopes(kind),
             Lang::Go => crate::go::scopes(kind),
             Lang::Python => crate::python::scopes(kind),
+            Lang::Lua => crate::lua::scopes(kind),
             _ if self.grammar().is_some() => {
                 self.grammar().map_or_else(Vec::new, |g| g.scopes(kind))
             }
@@ -410,7 +417,8 @@ impl Lang {
             | Lang::C
             | Lang::CSharp
             | Lang::Go
-            | Lang::Python => {
+            | Lang::Python
+            | Lang::Lua => {
                 return None;
             }
         })
@@ -636,6 +644,7 @@ mod tests {
         assert_eq!(Lang::from_token("go"), Some(Lang::Go));
         assert_eq!(Lang::from_token("python"), Some(Lang::Python));
         assert_eq!(Lang::from_token("py"), Some(Lang::Python));
+        assert_eq!(Lang::from_token("lua"), Some(Lang::Lua));
         assert_eq!(Lang::from_token("java"), Some(Lang::Java));
     }
 

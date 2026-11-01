@@ -29,6 +29,7 @@ mod json;
 mod kotlin;
 mod lang;
 mod logs;
+mod lua;
 mod machine;
 mod properties;
 mod python;
@@ -158,6 +159,7 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::CSharp => csharp::line(line.as_bytes(), state, &mut out),
         Lang::Go => go::line(line.as_bytes(), state, &mut out),
         Lang::Python => python::line(line.as_bytes(), state, &mut out),
+        Lang::Lua => lua::line(line.as_bytes(), state, &mut out),
         _ => {
             if let Some(g) = lang.grammar() {
                 machine::line(g, line.as_bytes(), state, &mut out);

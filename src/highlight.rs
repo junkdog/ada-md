@@ -2512,6 +2512,36 @@ mod tests {
         rules_match_the_grammar("python", "Python", text);
     }
 
+    /// ada-parse's Lua lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (ADR-40): its corners included (comments from the prototype anywhere, even in a `\z`
+    /// escape's spaces inside a string, long brackets with levels across lines, every escape,
+    /// hex floats, a function's dotted name and method, metamethods as keys and properties,
+    /// the builtin modules' members, `false` as `boolean.true` (sic), labels, a `,` in
+    /// parentheses stepped over by syntect's loop guard, and keywords out of place).
+    #[test]
+    fn lua_rules_match_the_grammar() {
+        let text = concat!(
+            "#!/usr/bin/env lua\n",
+            "--[==[ a long comment\n",
+            "]] still ]==] local M = {}\n",
+            "local mt = { __index = M, __call = function(self, ...) end, __mode = 'k' }\n",
+            "function M.util:run(a, b, ...) -- the method\n",
+            "  local s = 'a\\n\\x41\\65\\u{48}\\q' .. \"b\\z   -- inside\n",
+            "     c\" .. [[x]] .. [=[y\n",
+            "]]z]=]\n",
+            "  for i = 1, #a do print(a[i], string.format('%d', math.pi), io.stdout) end\n",
+            "  for k, v in pairs(t) do if k ~= nil and not v then goto skip elseif x then else end end\n",
+            "  ::skip:: while x >= 0x1p4 + 0xA.8 + 1e-3 + .5 + 0xff + ٣ do x = x // 2 >> 1 end\n",
+            "  repeat local y <const> = (a, b) until y == false\n",
+            "  self.x.__index = function() return self, _G, _VERSION, true end\n",
+            "  t[1]:m{1, [2] = 3; x = f\"s\"}; f[[long]] f'q' (g)(h)\n",
+            "  return setmetatable({}, mt), coroutine.wrap(f), utf8.charpattern, x.__metatable\n",
+            "end end then\n",
+            "local f = function(a, end) return a end\n",
+        );
+        rules_match_the_grammar("lua", "Lua", text);
+    }
+
     /// ada-parse's Dockerfile lexer picks the rules bat's grammar picks, in every built-in
     /// theme (ADR-40).
     #[test]
@@ -3025,7 +3055,7 @@ mod tests {
     fn parallel_highlighting_matches_one_thread() {
         let theme = Theme::builtin();
         let syntax = SyntaxTheme::new(&theme.syntax);
-        let lua = "local function f()\n  local s = [==[a \"quoted\"\n line]==]\n  -- note\n  local n = 0x1f\nend\n";
+        let ruby = "def f\n  s = <<~EOS\n    a \"quoted\" #{x}\n  EOS\n  # note\n  n = 0x1f\nend\n";
         let log =
             "2026-10-17 12:00:01 INFO started pid=42\n2026-10-17 12:00:02 ERROR failed: \"x\"\n";
         let swift = "let x = 1 // note\n";
@@ -3033,7 +3063,7 @@ mod tests {
         let diff = "--- a/x\n+++ b/x\n@@ -1 +1 @@ fn main\n-old\n+new\n same\n";
         let ini = "[core]\n; note\neditor = \"vim\" ; the one\n";
         for (lang, unit, reps) in [
-            ("lua", lua, 60),
+            ("ruby", ruby, 60),
             ("log", log, 150),
             ("swift", swift, 300),
             ("json", json, 150),
