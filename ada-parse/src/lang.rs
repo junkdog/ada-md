@@ -70,6 +70,8 @@ pub enum Lang {
     TypeScript,
     /// bat's `TypeScriptReact`, TSX: TypeScript's scanner with JSX.
     TypeScriptReact,
+    /// bat's `CSS`.
+    Css,
 }
 
 /// Fence languages that no syntax names, and the token each stands for (`zsh` for bash's).
@@ -280,10 +282,11 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::Lua, &["lua"]),
     (Lang::Sql, &["sql", "ddl", "dml"]),
     (Lang::PowerShell, &["ps1", "psm1", "psd1"]),
+    (Lang::Css, &["css", "css.erb", "css.liquid"]),
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 30] = [
+    pub const ALL: [Lang; 31] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -314,6 +317,7 @@ impl Lang {
         Lang::PowerShell,
         Lang::TypeScript,
         Lang::TypeScriptReact,
+        Lang::Css,
     ];
 
     /// The name of the syntax it stands in for, as syntect names it.
@@ -349,6 +353,7 @@ impl Lang {
             Lang::JavaScript => "JavaScript (Babel)",
             Lang::TypeScript => "TypeScript",
             Lang::TypeScriptReact => "TypeScriptReact",
+            Lang::Css => "CSS",
         }
     }
 
@@ -385,6 +390,7 @@ impl Lang {
             Lang::JavaScript => "source.js",
             Lang::TypeScript => "source.ts",
             Lang::TypeScriptReact => "source.tsx",
+            Lang::Css => "source.css",
         }
     }
 
@@ -422,6 +428,7 @@ impl Lang {
             Lang::JavaScript => crate::javascript::scopes(kind),
             Lang::TypeScript => crate::typescript::scopes(kind, false),
             Lang::TypeScriptReact => crate::typescript::scopes(kind, true),
+            Lang::Css => crate::css::scopes(kind),
             Lang::Bash => crate::bash::scopes(kind),
             Lang::Makefile => crate::bash::make_scopes(kind),
             _ if self.grammar().is_some() => {
@@ -466,7 +473,8 @@ impl Lang {
             | Lang::PowerShell
             | Lang::JavaScript
             | Lang::TypeScript
-            | Lang::TypeScriptReact => {
+            | Lang::TypeScriptReact
+            | Lang::Css => {
                 return None;
             }
         })
@@ -697,6 +705,9 @@ mod tests {
         assert_eq!(Lang::from_token("sql"), Some(Lang::Sql));
         assert_eq!(Lang::from_token("powershell"), Some(Lang::PowerShell));
         assert_eq!(Lang::from_token("ps1"), Some(Lang::PowerShell));
+        assert_eq!(Lang::from_token("css"), Some(Lang::Css));
+        assert_eq!(Lang::from_token("CSS"), Some(Lang::Css));
+        assert_eq!(Lang::from_file_name("site.css"), Some(Lang::Css));
         assert_eq!(Lang::from_token("java"), Some(Lang::Java));
     }
 

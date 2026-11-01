@@ -2723,6 +2723,52 @@ mod tests {
         rules_match_the_grammar("tsx", "TypeScriptReact", text);
     }
 
+    /// ada-parse's CSS lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (ADR-40's phase 6): its corners included (every at-rule and its prelude, a comment across
+    /// lines, selectors with custom elements, classes, ids, pseudo elements and classes and their
+    /// functions, attribute selectors with a namespace and a flag, combinators bad and good;
+    /// properties with vendor prefixes, custom and deprecated ones, `font`'s unquoted names; the
+    /// functions' groups, numbers of each type with units, `0` in a length-only group, colors,
+    /// constants that stop at a `-`, strings with escapes and an escaped newline, unicode ranges,
+    /// `!important` and `progid`).
+    #[test]
+    fn css_rules_match_the_grammar() {
+        let text = concat!(
+            "@charset \"utf-8\"; x\n",
+            "@import url(\"a.css\") screen and (orientation: landscape);\n",
+            "@namespace svg url(http://www.w3.org/2000/svg);\n",
+            "@custom-media --narrow (max-width: 30em);\n",
+            "/* a comment\n",
+            " * across lines */\n",
+            "@media only screen and (-webkit-min-device-pixel-ratio: 2), print and (aspect-ratio: 16/9) {\n",
+            "  my-element > .btn-primary:hover::before, a[href$=\".pdf\" i] ~ #main *, svg|rect >>> b {\n",
+            "    -webkit-transition: opacity .3s ease-in-out, transform 0.5s cubic-bezier(.17, .67, .83, .67);\n",
+            "    --main-color: #ffcc00aa; var-x y; color: var(--main-color, red) !important;\n",
+            "    font: italic bold 12px/30px Georgia, \"Times New Roman\", serif;\n",
+            "    background: url(img.png) no-repeat, linear-gradient(to right, rgba(0, 0, 0, .5) 0%, #fff 100%);\n",
+            "    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)) [line-a] auto-flow;\n",
+            "    transform: translateX(-10%) rotate(45deg) scale(1.5) translateZ(0.5px); width: calc(100% - (2 * 1.5em));\n",
+            "    content: \"\\201C x \\\"\" attr(data-x px, 1); filter: blur(10) progid:DXImageTransform.Microsoft.gradient(startColorstr='#80000000');\n",
+            "    list-style: decimal-leading-zero; counter-reset: c 1; content: counter(c, upper-roman) counters(c, \".\", lower-alpha);\n",
+            "    margin: 0 auto -1.5e2px +2em; z-index: 10; line-height: 1.5; color: CurrentColor; outline: 1px solid aliceblue;\n",
+            "    content: 'a\\\n",
+            "b';\n",
+            "  }\n",
+            "  li:nth-child(2n + 1):not(.a, :first-child) { clip: rect(0, auto, 1px, 2px) }\n",
+            "}\n",
+            "@font-face { font-family: \"X\"; src: local(Arial), url(x.woff2) format(\"woff2\"); unicode-range: U+0025-00FF, u+4??; }\n",
+            "@keyframes spin { from { transform: rotate(0deg) } 50% { opacity: .5 } to { transform: rotate(1turn) } }\n",
+            "@-webkit-keyframes a, b { }\n",
+            "@supports (display: grid) and (not (display: inline-grid)) { .x { display: grid } }\n",
+            "@page :first { margin: 1in }\n",
+            "@counter-style thumbs { system: cyclic; symbols: \"x\"; }\n",
+            "@document url(http://x), url-prefix(y), domain(z), regexp(\"a\") { b { c: d } }\n",
+            "div.a#b, h1 + p, clipPath, :root, ::-moz-selection, :lang(en), :drop(active) { -moz-box-sizing: border-box; }\n",
+            "@tailwind base; .é-x { top: 5q; transition: all 200ms steps(4, jump-end); color: hsl(120deg, 50%, 50%) }\n",
+        );
+        rules_match_the_grammar("css", "CSS", text);
+    }
+
     /// ada-parse's Dockerfile lexer picks the rules bat's grammar picks, in every built-in
     /// theme (ADR-40).
     #[test]

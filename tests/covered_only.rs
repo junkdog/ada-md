@@ -162,6 +162,11 @@ export const L = <T,>({ items }: P<T>) => <ul className=\"l\">{items.map(i => <I
 enum E { A = 1 } namespace N { export type K = keyof typeof E; }
 ```
 
+```css
+@media (min-width: 40em) { a.btn:hover::before, x-el[href$=\".pdf\" i] { color: var(--c, #fc0) !important; margin: 0 -1.5em; } }
+/* note */ @font-face { font-family: \"X\"; src: url(x.woff2) format(\"woff2\"); }
+```
+
 ```text
 plain
 ```
@@ -249,6 +254,7 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         "lib.mts",
         "conf.cts",
         "view.tsx",
+        "site.css",
     ] {
         let t = FileType::by_path(Path::new(name));
         assert!(

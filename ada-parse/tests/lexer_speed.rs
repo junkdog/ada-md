@@ -39,6 +39,7 @@ const LANGS: &[(&str, Lang)] = &[
     ("javascript", Lang::JavaScript),
     ("typescript", Lang::TypeScript),
     ("tsx", Lang::TypeScriptReact),
+    ("css", Lang::Css),
     ("bash", Lang::Bash),
     // `make.txt` phase 0's Makefiles
     ("make", Lang::Makefile),
