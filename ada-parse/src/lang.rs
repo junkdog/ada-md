@@ -438,7 +438,7 @@ impl Lang {
         })
     }
 
-    /// Whether [`crate::lex`] lexes it: false for the languages ada lexes itself.
+    /// Whether [`crate::lex`] lexes it: false for Makefile and bash, which [`crate::make`] lexes.
     pub fn lexed(self) -> bool {
         !matches!(self, Lang::Makefile | Lang::Bash)
     }

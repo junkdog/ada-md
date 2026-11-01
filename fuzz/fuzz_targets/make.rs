@@ -1,4 +1,4 @@
-//! G-002: the Makefile lexer (`ada::make`) against what it replaced, syntect on bat's grammar.
+//! G-002: the Makefile lexer (`ada_parse::make`) against what it replaced, syntect on bat's grammar.
 //! Every line, expanded as the highlighter expands it, must get the same scope stack on every
 //! byte from both, with each one's state carried from line to line (`lexer_parity`).
 //!
@@ -14,7 +14,7 @@
 
 mod lexer_parity;
 
-use ada::make::Grammar;
+use ada_parse::make::Grammar;
 use libfuzzer_sys::fuzz_target;
 
 /// The longest line compared.

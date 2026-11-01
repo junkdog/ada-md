@@ -27,8 +27,8 @@ use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet
 use crate::app::{Computed, Msg};
 use crate::doc::{CodeBlock, CodeId};
 use crate::layout::expand_tabs;
-use crate::make;
 use ada_parse::Lang;
+use ada_parse::make;
 
 /// Longer lines are left plain: backtracking regexes can be slow on them, and nobody reads them
 /// anyway.

@@ -1,4 +1,4 @@
-//! G-002 and G-003: ada's Makefile and shell lexer (`src/make`) against syntect on bat's
+//! G-002 and G-003: ada's Makefile and shell lexer (`ada-parse/src/make`) against syntect on bat's
 //! grammars, byte for byte; `--bash` takes the files as shell scripts.
 //!
 //! Each line is expanded as the highlighter expands it, then parsed by both, carrying their
@@ -19,7 +19,7 @@ use std::{env, fs};
 // bat's whole set: ada's own has these grammars emptied (ADR-40)
 use ada::highlight::reference_syntaxes as syntaxes;
 use ada::layout::expand_tabs;
-use ada::make::{self, Grammar, Span, State};
+use ada_parse::make::{self, Grammar, Span, State};
 use syntect::parsing::{ParseState, ScopeStack};
 
 mod common;

@@ -51,8 +51,9 @@ mod linux {
     use ada::doc::{self, Block, BlockKind, Doc};
     use ada::highlight::{self, SyntaxTheme};
     use ada::layout::{self, LayoutParams, TableMode};
+    use ada::print;
     use ada::theme::Theme;
-    use ada::{make, print};
+    use ada_parse::make;
     use syntect::parsing::ParseState;
     use syntect::util::LinesWithEndings;
 

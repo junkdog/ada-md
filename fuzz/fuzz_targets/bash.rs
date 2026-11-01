@@ -1,4 +1,4 @@
-//! G-003: the shell lexer (`ada::make` on bash) against what it replaced, syntect on bat's
+//! G-003: the shell lexer (`ada_parse::make` on bash) against what it replaced, syntect on bat's
 //! `Bourne Again Shell` grammar, as the `make` target checks Makefiles (`lexer_parity`).
 //!
 //! Lines are cut to 256 bytes, which keeps Oniguruma's backtracking short.
@@ -11,7 +11,7 @@
 
 mod lexer_parity;
 
-use ada::make::Grammar;
+use ada_parse::make::Grammar;
 use libfuzzer_sys::fuzz_target;
 
 /// The longest line compared.

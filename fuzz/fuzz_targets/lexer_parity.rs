@@ -1,5 +1,5 @@
 //! What the `make`, `bash` and `parse` targets share: a text's lines through ada's lexer
-//! (`ada::make`, `ada_parse`) and through syntect on bat's grammar, each with its state carried
+//! (`ada_parse::make`, `ada_parse`) and through syntect on bat's grammar, each with its state carried
 //! from line to line, and the first byte whose scope stack differs.
 //!
 //! The input is made ASCII (each byte's high bit dropped): Oniguruma's `\s`, `\w` and
@@ -9,7 +9,7 @@
 // bat's whole set: ada's own has these grammars emptied (ADR-40)
 use ada::highlight::reference_syntaxes as syntaxes;
 use ada::layout::expand_tabs;
-use ada::make::{self, Grammar, State};
+use ada_parse::make::{self, Grammar, State};
 use syntect::parsing::{ParseState, ScopeStack};
 
 /// Each byte's stack under the base scope, from syntect.

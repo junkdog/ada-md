@@ -10,6 +10,7 @@
 
 use std::time::{Duration, Instant};
 
+use ada_parse::make::{self, Grammar};
 use ada_parse::{Lang, State, lex};
 
 const LANGS: &[(&str, Lang)] = &[
@@ -35,6 +36,10 @@ const LANGS: &[(&str, Lang)] = &[
     ("python", Lang::Python),
     ("lua", Lang::Lua),
     ("javascript", Lang::JavaScript),
+    // on [`make`], the port of syntect's machine (G-002, G-003), not `lex`; `make.txt`
+    // phase 0's Makefiles
+    ("make", Lang::Makefile),
+    ("bash", Lang::Bash),
 ];
 
 #[test]
@@ -42,7 +47,7 @@ const LANGS: &[(&str, Lang)] = &[
 fn lexer_speed() {
     let dir = std::env::var("ADA_PARSE_LISTS").expect("ADA_PARSE_LISTS");
     let only = std::env::var("ONLY").ok();
-    let mut spans = Vec::new();
+    let (mut spans, mut make_spans) = (Vec::new(), Vec::new());
     for &(name, lang) in LANGS {
         if only.as_deref().is_some_and(|o| o != name) {
             continue;
@@ -60,11 +65,23 @@ fn lexer_speed() {
             continue;
         }
         let repeat = (4_000_000 / bytes).max(1);
+        let grammar = match lang {
+            Lang::Makefile => Some(Grammar::Make),
+            Lang::Bash => Some(Grammar::Bash),
+            _ => None,
+        };
         let mut best = Duration::MAX;
         for _ in 0..5 {
             let t = Instant::now();
             for _ in 0..repeat {
                 for text in &files {
+                    if let Some(g) = grammar {
+                        let mut state = make::State::new(g);
+                        for line in text.lines() {
+                            make::tokens(line, &mut state, &mut make_spans);
+                        }
+                        continue;
+                    }
                     let mut state = State::default();
                     for line in text.lines() {
                         lex(lang, line, &mut state, &mut spans);

@@ -14,7 +14,9 @@
 //! ports; YAML's reads YAML as bat's grammar does on well-formed text. The other formats whose
 //! lines carry state (Dockerfile, Java properties, `.env`, Git's ignore, attributes, mailmap and
 //! link files) still run on a port of syntect's parse machine (`machine.rs`), their grammars bat's
-//! context for context, until scanners replace them. Makefiles and bash are still lexed in ada.
+//! context for context, until scanners replace them. Makefiles and bash run on [`make`], an
+//! earlier port of that machine (G-002, G-003, moved in from ada), behind an interface of its own
+//! until a scanner replaces it.
 
 mod cpp;
 mod csharp;
@@ -32,6 +34,7 @@ mod lang;
 mod logs;
 mod lua;
 mod machine;
+pub mod make;
 mod properties;
 mod python;
 mod rust;
@@ -129,7 +132,7 @@ impl State {
 /// Lex one `line`, without its newline, into `spans` (cleared first), after the lines before
 /// it left `state`; `state` is left as this line leaves it. The spans come in order, don't
 /// overlap, aren't empty, and start and end on characters of the line; bytes no span covers
-/// are plain. A language ada lexes itself (Makefile, bash) gives no spans.
+/// are plain. Makefile and bash give no spans here: [`make::tokens`] lexes them.
 // one copy, called from each place that highlights; never inlined into those (ADR-40's size
 // discipline)
 #[inline(never)]

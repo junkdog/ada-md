@@ -17,8 +17,8 @@
 
 mod langs;
 
-use ada::make;
 use ada_parse::Lang;
+use ada_parse::make;
 use libfuzzer_sys::fuzz_target;
 
 /// Spans `(start, end)` of `line`, in order, as `highlight` takes them.
