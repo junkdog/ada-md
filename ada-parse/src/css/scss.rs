@@ -752,8 +752,256 @@ const MIXIN_BLOCK_OPS: &[u16] = &[
     O_CSS_MODULES,
 ];
 
+// ---- the gate: the classes of the byte at the place an op can start at ----
+
+/// A place's class: a bit of the byte there, of the line's `\n` (`n`), or of past it.
+const C_SP: u32 = 1; // ` ` `\t` `\r` `\x0b` `\x0c`
+const C_NL: u32 = 1 << 1;
+const C_END: u32 = 1 << 2;
+const C_LO: u32 = 1 << 3;
+const C_UP: u32 = 1 << 4;
+const C_DIG: u32 = 1 << 5;
+const C_DASH: u32 = 1 << 6;
+const C_PLUS: u32 = 1 << 7;
+const C_DOT: u32 = 1 << 8;
+const C_HASH: u32 = 1 << 9;
+const C_DOLLAR: u32 = 1 << 10;
+const C_SLASH: u32 = 1 << 11;
+const C_COMMA: u32 = 1 << 12;
+const C_COLON: u32 = 1 << 13;
+const C_LPAR: u32 = 1 << 14;
+const C_RPAR: u32 = 1 << 15;
+const C_LBR: u32 = 1 << 16;
+const C_RBR: u32 = 1 << 17;
+const C_SEMI: u32 = 1 << 18;
+const C_AT: u32 = 1 << 19;
+const C_BANG: u32 = 1 << 20;
+const C_QUOTE: u32 = 1 << 21;
+const C_PCT: u32 = 1 << 22;
+const C_AMP: u32 = 1 << 23;
+const C_STAR: u32 = 1 << 24;
+const C_LSQ: u32 = 1 << 25;
+const C_RSQ: u32 = 1 << 26;
+const C_UNDER: u32 = 1 << 27;
+const C_BSL: u32 = 1 << 28;
+/// Past ASCII: a letter, a mark, a symbol or one of Unicode's spaces.
+const C_HI: u32 = 1 << 29;
+/// `=` `<` `>` `~` `|` `?` `^`.
+const C_OPS: u32 = 1 << 30;
+const C_OTHER: u32 = 1 << 31;
+const ANY: u32 = u32::MAX;
+/// Where `\s*` can start: a space, one of Unicode's, the line's `\n`.
+const SPW: u32 = C_SP | C_HI | C_NL;
+/// Where `{{ident}}` can start.
+const IDENT: u32 = C_DASH | C_LO | C_UP | C_UNDER | C_HI | C_BSL;
+/// Where a number can start.
+const NUM: u32 = C_DIG | C_DASH | C_PLUS | C_DOT;
+const ALPHA: u32 = C_LO | C_UP;
+
+/// Each byte's class.
+static BYTE_CLASS: [u32; 256] = {
+    let mut t = [C_OTHER; 256];
+    let mut i = 0;
+    while i < 256 {
+        let c = i as u8;
+        t[i] = match c {
+            b' ' | b'\t' | b'\r' | 0x0b | 0x0c => C_SP,
+            b'a'..=b'z' => C_LO,
+            b'A'..=b'Z' => C_UP,
+            b'0'..=b'9' => C_DIG,
+            b'-' => C_DASH,
+            b'+' => C_PLUS,
+            b'.' => C_DOT,
+            b'#' => C_HASH,
+            b'$' => C_DOLLAR,
+            b'/' => C_SLASH,
+            b',' => C_COMMA,
+            b':' => C_COLON,
+            b'(' => C_LPAR,
+            b')' => C_RPAR,
+            b'{' => C_LBR,
+            b'}' => C_RBR,
+            b';' => C_SEMI,
+            b'@' => C_AT,
+            b'!' => C_BANG,
+            b'\'' | b'"' => C_QUOTE,
+            b'%' => C_PCT,
+            b'&' => C_AMP,
+            b'*' => C_STAR,
+            b'[' => C_LSQ,
+            b']' => C_RSQ,
+            b'_' => C_UNDER,
+            b'\\' => C_BSL,
+            b'=' | b'<' | b'>' | b'~' | b'|' | b'?' | b'^' => C_OPS,
+            0x80..=0xff => C_HI,
+            _ => C_OTHER,
+        };
+        i += 1;
+    }
+    t
+};
+
+/// The union of `ops`' gates.
+const fn union(ops: &[u16]) -> u32 {
+    let mut m = 0;
+    let mut i = 0;
+    while i < ops.len() {
+        m |= gate(ops[i]);
+        i += 1;
+    }
+    m
+}
+
+/// The classes of the place op `op` can match at (the ones not read stay [`ANY`]). An op whose
+/// pattern starts `\s*` can start at a space, and the place's `\n` is one.
+const fn gate(op: u16) -> u32 {
+    match op {
+        O_FRONT => C_DASH,
+        COMMENT_BLOCK | O_COMMENT_LINE | O_SLASH => C_SLASH,
+        O_SELECTORS => {
+            SPW | C_STAR | C_AMP | ALPHA | C_DOT | C_HASH | C_PCT | C_LSQ | C_COLON | C_OPS | C_PLUS
+        }
+        O_PROPERTIES => {
+            C_SLASH | ALPHA | C_DASH | C_DOLLAR | C_DIG | C_UNDER | C_HASH
+        }
+        FROM_TO | O_BUILTIN | O_CONSTANTS | UNICODE_RANGE | O_VAR_FN | O_CALC_FN | O_ATTR_FN
+        | O_MINMAX_FN | O_URL_FN | O_DOC_FNS | O_ADJ_FNS | O_COLOR_FNS | O_IMAGE_TYPE
+        | O_FILTER_FNS => ALPHA,
+        COMMA => SPW | C_COMMA,
+        O_NUMERIC | O_PERCENT | O_LENGTH | O_ANGLE | O_RESOLUTION | O_NUMBER | O_INTEGER => NUM,
+        O_ISEL => SPW | C_HASH,
+        O_CUSTOM_EL => SPW | C_LO,
+        O_AT_RULES => SPW | C_AT,
+        O_CURLY => C_LBR | C_RBR,
+        O_CSS_MODULES | O_PSEUDO_EL | O_PSEUDO_CL => SPW | C_COLON,
+        O_MIXIN_BLOCK_END | O_INTERP_END => C_RBR,
+        O_VALUE_AHEAD => SPW | C_SEMI | C_RBR | C_RPAR,
+        O_BRACE_AHEAD | O_CURLY_AHEAD => C_LBR,
+        O_SEMI_POP => SPW | C_SEMI,
+        O_COLON_VALUE => SPW | C_COLON,
+        O_COLON_FONT | O_ARG_COLON => C_COLON,
+        O_MAP_END | O_CLOSE_SASS | O_PAREN_END | GROUP_AHEAD | CALL_CLOSE => C_RPAR,
+        O_MAP_VAR_KEY => C_DOLLAR,
+        O_MAP_KEY | O_IDENT_UNQUOTED | O_SEL_IDENT | O_CUSTOM_FN => IDENT,
+        O_SEMI_INVALID => C_SEMI,
+        O_IMPORTANT | O_BANG_FLAG => C_BANG,
+        VENDOR => C_DASH,
+        LINE_NAMES_OPEN => C_LSQ,
+        O_COLOR_VALUES => ALPHA | C_HASH,
+        STRING => C_QUOTE,
+        O_MAP | O_ARGS_PAREN | GROUP | O_GROUP_CONIC => C_LPAR,
+        O_VARIABLES => IDENT | C_DOLLAR | C_HASH,
+        O_SASS_FN | O_TRUE_FALSE => C_LO,
+        O_INTERP | O_HEX => C_HASH,
+        O_CONCAT => ALPHA | C_UNDER | C_DASH | C_PLUS,
+        O_OPS => {
+            SPW | C_SLASH | C_STAR | C_OPS | C_DASH | C_PLUS | C_PCT | C_BANG | C_AMP | C_LO
+        }
+        O_UNQUOTED => ANY & !(C_SP | C_QUOTE | C_NL | C_END),
+        O_ARG_UNQUOTED => ANY & !(C_SP | C_QUOTE | C_NL | C_END | C_LPAR | C_RPAR),
+        O_ADJ_OPS | O_CALC_ARITH => C_DASH | C_PLUS | C_STAR | C_SLASH,
+        O_CUSTOM_PROP => C_DASH,
+        O_VAR_COMMA | O_COUNTER_COMMA => C_COMMA,
+        O_CALC_OPEN | O_CALC_PAREN | O_PS_OPEN | O_MIXIN_OPEN | O_INCLUDE_OPEN => C_LPAR,
+        O_CALC_CLOSE => C_RPAR,
+        O_PV => union(PROPERTY_VALUES),
+        O_SSE => union(SSE),
+        O_SVE => union(SVE),
+        _ => ANY,
+    }
+}
+
+/// Whether op `op` is `\s*X` alone: what it does from a space depends on the place after the
+/// run's spaces only, so where it failed at a run's first space it fails at the run's end too
+/// (`selectors`' `^` combinators hold only at the line's start, a subset). The at-rules are not
+/// (their patterns without `\s*` hold only at the `@`), nor `sass-operators` (its symbols don't
+/// start at a space).
+const fn pure(op: u16) -> bool {
+    matches!(
+        op,
+        O_SELECTORS
+            | O_CUSTOM_EL
+            | O_ISEL
+            | COMMA
+            | O_CSS_MODULES
+            | O_PSEUDO_EL
+            | O_PSEUDO_CL
+            | O_VALUE_AHEAD
+            | O_SEMI_POP
+            | O_COLON_VALUE
+    )
+}
+
+/// Whether op `op`, where it failed at a letter or `_` of a run of `[A-Za-z_]`, fails at the
+/// run's later places too: it can't start at one ([`gate`]), or it needs a `\b` where it starts,
+/// or what it reads from there is what it read from the earlier place (an ident's end, a run of
+/// `[a-zA-Z_-]`'s, the `\s*:` after it). An include is where each of its ops is.
+const fn mid_safe(op: u16) -> bool {
+    if gate(op) & (C_LO | C_UP | C_UNDER) == 0 {
+        return true;
+    }
+    match op {
+        O_PV => all_mid_safe(PROPERTY_VALUES),
+        O_SSE => all_mid_safe(SSE),
+        O_SVE => all_mid_safe(SVE),
+        O_SASS_FN | O_CUSTOM_FN | O_BUILTIN | O_VAR_FN | O_CALC_FN | O_ATTR_FN | O_MINMAX_FN
+        | O_URL_FN | O_DOC_FNS | O_ADJ_FNS | O_COLOR_FNS | O_IMAGE_TYPE | O_FILTER_FNS
+        | O_COLOR_VALUES | O_CONSTANTS | O_TRUE_FALSE | O_OPS | O_UNQUOTED | O_ARG_UNQUOTED
+        | O_UNITS | O_IN | O_ORIENTATION | FROM_TO | O_W_AT_FROM | O_W_CONIC_PLACES | O_W_TO
+        | O_W_SIDES | O_W_RADIAL | O_W_RADIAL_PLACES | O_W_SIZES_A | O_W_SIZES_B
+        | O_W_COLOR_SPACES | O_W_STEPS | O_W_AUTO | O_W_ROUND | O_W_AT | O_W_CIRCLE_PLACES
+        | O_W_FILL_RULES | O_W_REPETITIONS | O_W_EVEN_ODD => true,
+        O_VARIABLES | O_MAP_KEY | O_IDENT_UNQUOTED | O_IDENT_SASS | O_IDENT_PLAIN | O_SEL_IDENT
+        | O_ATTR_FN_NAME | O_CMOD_KEY | O_FONT_IDENTS | O_CONCAT => true,
+        _ => false,
+    }
+}
+
+const fn all_mid_safe(ops: &[u16]) -> bool {
+    let mut i = 0;
+    while i < ops.len() {
+        if !mid_safe(ops[i]) {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// The contexts whose ops are all [`mid_safe`]: where nothing matched at a letter or `_`, the
+/// scan goes on at the end of its run of `[A-Za-z_]`.
+static MID_SKIP: [bool; 256] = {
+    let mut t = [false; 256];
+    let mut c = 0;
+    while c < 256 {
+        let ops = ops(c as u8);
+        t[c] = !ops.is_empty() && all_mid_safe(ops);
+        c += 1;
+    }
+    t
+};
+
+/// [`gate`] of every op: SCSS's and CSS's below 403, `selector-parts`' (from 1000) after.
+static GATES: [u32; 409] = {
+    let mut t = [ANY; 409];
+    let mut i = 0;
+    while i < 403 {
+        t[i] = gate(i as u16);
+        i += 1;
+    }
+    t
+};
+
+/// Whether op `op` can match at a place of class `at` whose `\s*` ends at a place of class
+/// `past` (the same place but at a space): an op whose pattern starts `\s*` lists the classes
+/// after the spaces as well as the spaces', and any other can't start at a space.
+fn gated(op: u16, at: u32, past: u32) -> bool {
+    let i = if op >= 1000 { 403 + usize::from(op - 1000) } else { usize::from(op) };
+    GATES.get(i).is_none_or(|&g| g & at != 0 && g & past != 0)
+}
+
 /// Each context's ops in the grammar's order (an include as one op that tries its list).
-fn ops(ctx: u8) -> &'static [u16] {
+const fn ops(ctx: u8) -> &'static [u16] {
     match ctx {
         MAIN => MAIN_OPS,
         MIXIN_BLOCK => MIXIN_BLOCK_OPS,
@@ -1288,7 +1536,7 @@ fn ops(ctx: u8) -> &'static [u16] {
             O_OPS,
             O_ARG_UNQUOTED,
         ],
-        _ if ctx & WRAP != 0 && (64..=G_ARGS).contains(&(ctx & !WRAP)) => {
+        _ if ctx & WRAP != 0 && ctx & !WRAP >= 64 && ctx & !WRAP <= G_ARGS => {
             if ctx & !WRAP == G_CONIC {
                 &[CALL_CLOSE, O_GROUP_CONIC]
             } else {
@@ -1414,6 +1662,24 @@ fn custom_char(c: char) -> bool {
 impl Scan<'_, '_, '_, true> {
     // ---- reading the line ----
 
+    /// The class of place `p` ([`BYTE_CLASS`]).
+    fn class_at(&self, p: usize) -> u32 {
+        match p.cmp(&self.n) {
+            std::cmp::Ordering::Less => BYTE_CLASS[usize::from(self.b[p])],
+            std::cmp::Ordering::Equal => C_NL,
+            std::cmp::Ordering::Greater => C_END,
+        }
+    }
+
+    /// The classes of place `p` and of where `\s*` from it ends, for [`gated`].
+    fn classes(&self, p: usize) -> (u32, u32) {
+        let at = self.class_at(p);
+        if at & SPW == 0 {
+            return (at, at);
+        }
+        (at, self.class_at(self.spaces(p)))
+    }
+
     /// `{{break}}` at `i`: an ASCII character but `[-_[:alnum:]\\]` follows, or the line's end.
     fn brk(&self, i: usize) -> bool {
         if i >= self.n {
@@ -1530,6 +1796,9 @@ impl Scan<'_, '_, '_, true> {
 
     /// Where a run of the characters `\b` takes as a word's (CSS's `\w`) at `i` ends.
     fn bword_end(&self, mut i: usize) -> usize {
+        while i < self.n && (self.b[i].is_ascii_alphanumeric() || self.b[i] == b'_') {
+            i += 1;
+        }
         while i < self.n && self.word_at(i) {
             i = self.next(i);
         }
@@ -1613,6 +1882,10 @@ impl Scan<'_, '_, '_, true> {
             e = self.next(e);
         }
         let w = &self.b[(i + 1).min(e)..e];
+        // each of the list starts with a lowercase letter (a property's `: ` has no word)
+        if !w.first().is_some_and(u8::is_ascii_lowercase) {
+            return None;
+        }
         REGULAR_PSEUDO.contains(&w).then_some(e)
     }
 
@@ -1696,9 +1969,15 @@ impl Scan<'_, '_, '_, true> {
         let mut fresh = true;
         let mut guard = 0u32;
         let mut nc_push = (usize::MAX, 0usize);
+        // whether the scan reached `p` past a run of spaces where nothing matched: the [`pure`]
+        // ops failed there
+        let mut skipped = false;
         loop {
             let ctx = self.top();
             let mut looped = false;
+            // whether an op's gate let it be tried at `p`
+            let mut tried = true;
+            let after_run = std::mem::take(&mut skipped);
             let q = match ctx {
                 COMMENT => self.comment(p),
                 STR_S | STR_D => self.scss_string(p, ctx),
@@ -1713,26 +1992,25 @@ impl Scan<'_, '_, '_, true> {
                     }
                 }
                 FRONT => self.front(p),
+                MAIN | MIXIN_BLOCK | PV => {
+                    // their own code goes on past the tokens that leave the stack as it is, and
+                    // past the places where nothing matches: `p` is where it stopped
+                    let check = nc_push == (p, self.depth);
+                    let (at, q, t, consumed) =
+                        self.own_run(ctx, p, fresh, after_run, check, &mut looped, &mut nc_push);
+                    if consumed {
+                        guard = 0;
+                    }
+                    p = at;
+                    tried = t;
+                    q
+                }
                 _ => {
                     let check = nc_push == (p, self.depth);
-                    let mut hit = None;
-                    for &op in ops(ctx) {
-                        let d0 = self.depth;
-                        if let Some(q) = self.sop(op, p, ctx, fresh) {
-                            if q == p && self.depth < d0 && check {
-                                // a pop that would loop: passed over
-                                self.depth = d0;
-                                looped = true;
-                                continue;
-                            }
-                            if q == p && self.depth > d0 {
-                                nc_push = (p, self.depth);
-                            }
-                            hit = Some(q);
-                            break;
-                        }
-                    }
-                    hit
+                    let (q, t) =
+                        self.generic(ctx, p, fresh, after_run, check, &mut looped, &mut nc_push);
+                    tried = t;
+                    q
                 }
             };
             match q {
@@ -1755,15 +2033,488 @@ impl Scan<'_, '_, '_, true> {
                     fresh = true;
                 }
                 None => {
-                    if p > n {
+                    // Past the `\n` only an op whose gate is [`ANY`] can match, and it was
+                    // tried at the `\n`: nothing tried there, nothing matches after it.
+                    if p > n || (p == n && !tried) {
                         break;
                     }
-                    p = self.next(p);
+                    // Nothing matched at a space: nothing matches at the spaces after it either
+                    // (each op is `\s*X`, which from a later space tries fewer places, or can't
+                    // start at a space; `^` and the ops' `s == p` hold only before the run), so
+                    // the scan goes on at the run's end, stopping at the line's `\n`, where `$`
+                    // holds. A pop passed over sets `fresh`, so it steps as before.
+                    p = if !looped && p < n && self.space(p).is_some() {
+                        skipped = true;
+                        self.spaces(p).min(n)
+                    } else if !looped
+                        && p < n
+                        && MID_SKIP[usize::from(ctx)]
+                        && (self.b[p].is_ascii_alphabetic() || self.b[p] == b'_')
+                    {
+                        // the rest of the run of `[A-Za-z_]`: no op of the context starts in it
+                        let mut e = p + 1;
+                        while e < n && (self.b[e].is_ascii_alphabetic() || self.b[e] == b'_') {
+                            e += 1;
+                        }
+                        e
+                    } else {
+                        self.next(p)
+                    };
                     fresh = looped;
                 }
             }
         }
         self.fill(n);
+    }
+
+    /// The ops of `ctx` at `p` in order, those [`gated`] lets through: the hit, if any, and
+    /// whether any op was tried. `check`, `looped` and `nc_push` are the run's.
+    #[allow(clippy::too_many_arguments, reason = "the run's state, shared with its own code")]
+    fn generic(
+        &mut self,
+        ctx: u8,
+        p: usize,
+        fresh: bool,
+        after_run: bool,
+        check: bool,
+        looped: &mut bool,
+        nc_push: &mut (usize, usize),
+    ) -> (Option<usize>, bool) {
+        if ctx == G_ARGS
+            && p < self.n
+            && self.b[p].is_ascii_alphabetic()
+            && let Some(r) = self.args_word(p, ctx, fresh)
+        {
+            return (r, true);
+        }
+        let mut hit = None;
+        let (at, past) = self.classes(p);
+        let mut tried = false;
+        for &op in ops(ctx) {
+            if !gated(op, at, past) || (after_run && pure(op)) {
+                continue;
+            }
+            tried = true;
+            let d0 = self.depth;
+            if let Some(q) = self.sop(op, p, ctx, fresh) {
+                if q == p && self.depth < d0 && check {
+                    // a pop that would loop: passed over
+                    self.depth = d0;
+                    self.rewrap();
+                    *looped = true;
+                    continue;
+                }
+                if q == p && self.depth > d0 {
+                    *nc_push = (p, self.depth);
+                }
+                hit = self.after_pop(Some(q), p, d0);
+                break;
+            }
+        }
+            (hit, tried)
+    }
+
+    /// [`Scan::own_dispatch`] from `p` on: on past the tokens that leave the stack as it is and
+    /// past the places where nothing matches, as the run's loop would go (after a token that
+    /// consumed something, or past a run of spaces, the loop's check can't hold: no push that
+    /// consumed nothing was at that place before), places past ASCII with [`Scan::generic`].
+    /// Where it stopped, the hit there, whether an op was tried there, whether a token consumed
+    /// something on the way.
+    #[allow(clippy::too_many_arguments, reason = "the run's state")]
+    fn own_run(
+        &mut self,
+        ctx: u8,
+        mut p: usize,
+        mut fresh: bool,
+        mut after_run: bool,
+        mut check: bool,
+        looped: &mut bool,
+        nc_push: &mut (usize, usize),
+    ) -> (usize, Option<usize>, bool, bool) {
+        let n = self.n;
+        let mut consumed = false;
+        loop {
+            let d_in = self.depth;
+            let (q, tried) = match self.own_dispatch(ctx, p, fresh, after_run, check, looped) {
+                Some((q, tried)) => {
+                    if q == Some(p) && self.depth > d_in {
+                        *nc_push = (p, self.depth);
+                    }
+                    (self.after_pop(q, p, d_in), tried)
+                }
+                None => self.generic(ctx, p, fresh, after_run, check, looped, nc_push),
+            };
+            match q {
+                Some(q) if q > p && self.depth == d_in && self.top() == ctx => {
+                    consumed = true;
+                    p = q;
+                    fresh = true;
+                }
+                Some(_) => return (p, q, tried, consumed),
+                None => {
+                    if *looped || p >= n {
+                        return (p, None, tried, consumed);
+                    }
+                    if self.space(p).is_some() {
+                        // as the run's loop: the scan goes on at the run's end
+                        after_run = true;
+                        p = self.spaces(p).min(n);
+                        fresh = false;
+                        check = false;
+                        continue;
+                    }
+                    p = self.next(p);
+                    fresh = false;
+                }
+            }
+            after_run = false;
+            check = false;
+        }
+    }
+
+    /// After an op's hit `q` at `p` with the stack `d0` deep before it: a value's end before its
+    /// `;` takes the wrapper's `\s*(;)`, its first op, at once.
+    fn after_pop(&mut self, q: Option<usize>, p: usize, d0: usize) -> Option<usize> {
+        if q == Some(p) && self.depth < d0 && self.top() == PVW {
+            let s = self.spaces(p);
+            if self.ch(s) == Some(b';') {
+                self.tok(s, s + 1, RULE_END);
+                self.pop(s + 1);
+                return Some(s + 1);
+            }
+        }
+        q
+    }
+
+    /// The busiest contexts' ops at `p` dispatched on the byte there (and at a space on the byte
+    /// after the spaces), in the grammar's order and only those [`gated`] lets through, as the
+    /// run's loop tries them: the hit, if any, and whether any op was tried. `None` where the
+    /// place is left to the loop (past ASCII). `check` and `looped` are the loop's: a pop that
+    /// consumes nothing where it would loop is passed over.
+    fn own_dispatch(
+        &mut self,
+        ctx: u8,
+        p: usize,
+        fresh: bool,
+        after_run: bool,
+        check: bool,
+        looped: &mut bool,
+    ) -> Option<(Option<usize>, bool)> {
+        let n = self.n;
+        if p >= n {
+            // no op of these has `\n` and past it in its gate
+            return Some((None, false));
+        }
+        let c = self.b[p];
+        if c >= 0x80 {
+            return None;
+        }
+        if ctx == PV {
+            // `\s*(?=[;})])`, a pop (pure)
+            if !after_run && matches!(self.ch(self.spaces(p)), Some(b';' | b'}' | b')')) {
+                if !check {
+                    self.pop(p);
+                    return Some((Some(p), true));
+                }
+                self.fill(p);
+                *looped = true;
+            }
+            if let Some(q) = self.pv_list(p, ctx, fresh) {
+                return Some((Some(q), true));
+            }
+            if c == b'{' {
+                if !check {
+                    self.pop(p);
+                    return Some((Some(p), true));
+                }
+                self.fill(p);
+                *looped = true;
+            }
+            return Some((None, true));
+        }
+        if ctx == MIXIN_BLOCK && c == b'}' {
+            self.tok(p, p + 1, PL_END_SASS);
+            self.pop(p + 1);
+            return Some((Some(p + 1), true));
+        }
+        let list: &[u16] = match c {
+            b' ' | b'\t' | b'\r' | 0x0b | 0x0c => {
+                let s = self.spaces(p);
+                if s >= n {
+                    &[]
+                } else {
+                    match self.b[s] {
+                        b'a'..=b'z' if self.property_shape(s) => &[],
+                        b'a'..=b'z' => &[O_SELECTORS, O_CUSTOM_EL],
+                        b'#' => &[O_SELECTORS, O_ISEL],
+                        b':' => &[O_SELECTORS, O_CSS_MODULES],
+                        b',' => &[COMMA],
+                        b'@' => &[O_AT_RULES],
+                        b'A'..=b'Z' | b'*' | b'&' | b'.' | b'%' | b'[' | b'+' | b'=' | b'<' | b'>'
+                        | b'~' | b'|' | b'?' | b'^' => &[O_SELECTORS],
+                        _ => &[],
+                    }
+                }
+            }
+            b'-' => &[O_FRONT, O_PROPERTIES, O_NUMERIC],
+            b'/' => &[COMMENT_BLOCK, O_COMMENT_LINE, O_PROPERTIES],
+            b'a'..=b'z' if self.property_shape(p) => &[O_PROPERTIES, FROM_TO],
+            b'a'..=b'z' => &[O_SELECTORS, O_PROPERTIES, FROM_TO, O_CUSTOM_EL],
+            b'A'..=b'Z' => &[O_SELECTORS, O_PROPERTIES, FROM_TO],
+            b'*' | b'&' | b'%' | b'[' | b'=' | b'<' | b'>' | b'~' | b'|' | b'?' | b'^' => {
+                &[O_SELECTORS]
+            }
+            b'.' | b'+' => &[O_SELECTORS, O_NUMERIC],
+            b'#' => &[O_SELECTORS, O_PROPERTIES, O_ISEL],
+            b':' => &[O_SELECTORS, O_CSS_MODULES],
+            b'$' | b'_' => &[O_PROPERTIES],
+            b'0'..=b'9' => &[O_PROPERTIES, O_NUMERIC],
+            b',' => &[COMMA],
+            b'@' => &[O_AT_RULES],
+            b'{' | b'}' => &[O_CURLY],
+            _ => &[],
+        };
+        for &op in list {
+            if after_run && pure(op) {
+                continue;
+            }
+            if let Some(q) = self.sop(op, p, ctx, fresh) {
+                return Some((Some(q), true));
+            }
+        }
+        Some((None, true))
+    }
+
+    /// Whether a run of `[a-z0-9-]` at `i`, each `-` in it followed by a letter or a `-`, ends
+    /// at a `:` that a space or the line's end follows, as a property's name does: there
+    /// `selectors` and `custom-element-selectors` fail (a tag needs a pseudo after it, `: ` is
+    /// none; a custom element's ends in the run are at a `-`, which its lookaheads refuse, or
+    /// the run's end, where `: ` is no pseudo and is a `:`; a `-` before a digit would be an
+    /// end of its own, as in `scrollbar-3dlight-color`).
+    fn property_shape(&self, i: usize) -> bool {
+        let (b, n) = (self.b, self.n);
+        if i > 0 && (b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_') {
+            // no `\b` here: the ops it rules out fail on their own
+            return false;
+        }
+        // the run, read once a line however many words start in it (`a-a-a-…`)
+        let (a, mut e, mut bad) = self.shape_run.get();
+        if !(a <= i && i < e) {
+            e = i;
+            bad = usize::MAX;
+            while e < n && matches!(b[e], b'a'..=b'z' | b'0'..=b'9' | b'-') {
+                if b[e] == b'-' && !matches!(b.get(e + 1), Some(b'a'..=b'z' | b'-')) {
+                    bad = e;
+                }
+                e += 1;
+            }
+            self.shape_run.set((i, e, bad));
+        }
+        (bad == usize::MAX || bad < i)
+            && e < n
+            && b[e] == b':'
+            && (e + 1 == n || matches!(b[e + 1], b' ' | b'\t'))
+    }
+
+    /// `property-values` at `p`, its ops dispatched on the byte there as [`gated`] lets them
+    /// through: [`Scan::list`] of [`PROPERTY_VALUES`].
+    fn pv_list(&mut self, p: usize, ctx: u8, fresh: bool) -> Option<usize> {
+        let n = self.n;
+        if p >= n {
+            // none of its ops has `\n` and past it in its gate
+            return None;
+        }
+        if self.b[p].is_ascii_alphabetic()
+            && let Some(r) = self.pv_word(p)
+        {
+            return r;
+        }
+        let list: &[u16] = match self.b[p] {
+            b' ' | b'\t' | b'\r' | 0x0b | 0x0c => {
+                // `\s*(,)` and `sass-operators`' words after spaces
+                let s = self.spaces(p);
+                return match self.ch(s) {
+                    Some(b',') => self.op(P_COMMA, p, ctx, fresh),
+                    Some(b'a'..=b'z') if s < n => self.sass_operators(p),
+                    _ => None,
+                };
+            }
+            b'a'..=b'z' => &[
+                O_BUILTIN,
+                UNICODE_RANGE,
+                O_COLOR_VALUES,
+                O_CONSTANTS,
+                O_VARIABLES,
+                O_SASS_FN,
+                O_CUSTOM_FN,
+                O_CONCAT,
+                O_OPS,
+                O_IDENT_UNQUOTED,
+            ],
+            b'A'..=b'Z' => &[
+                O_BUILTIN,
+                UNICODE_RANGE,
+                O_COLOR_VALUES,
+                O_CONSTANTS,
+                O_VARIABLES,
+                O_CUSTOM_FN,
+                O_CONCAT,
+                O_IDENT_UNQUOTED,
+            ],
+            b'-' => &[
+                VENDOR,
+                O_NUMERIC,
+                O_VARIABLES,
+                O_CUSTOM_FN,
+                O_CONCAT,
+                O_OPS,
+                O_IDENT_UNQUOTED,
+            ],
+            b'0'..=b'9' | b'.' => &[O_NUMERIC],
+            b'$' => &[O_VARIABLES],
+            b'#' => &[O_COLOR_VALUES, O_VARIABLES, O_INTERP],
+            b'\'' | b'"' => &[STRING],
+            b'(' => &[O_MAP],
+            b',' => &[COMMA],
+            b'/' => &[O_SLASH],
+            b'!' => &[O_IMPORTANT, O_BANG_FLAG, O_OPS],
+            b';' => &[O_SEMI_INVALID],
+            b'[' => &[LINE_NAMES_OPEN],
+            b'+' => &[O_NUMERIC, O_CONCAT, O_OPS],
+            b'_' => &[O_VARIABLES, O_CUSTOM_FN, O_CONCAT, O_IDENT_UNQUOTED],
+            b'\\' => &[O_VARIABLES, O_CUSTOM_FN, O_IDENT_UNQUOTED],
+            b'*' | b'%' | b'&' | b'=' | b'<' | b'>' | b'~' | b'|' | b'?' | b'^' => &[O_OPS],
+            0x80.. => return self.list(PROPERTY_VALUES, p, ctx, fresh),
+            _ => return None,
+        };
+        for &op in list {
+            if let Some(q) = self.sop(op, p, ctx, fresh) {
+                return Some(q);
+            }
+        }
+        None
+    }
+
+    /// A word at `p` in `property-values`, read once: its ops' outcome where the word's end
+    /// settles most of them, `None` where it doesn't (the list then runs). With no `(` after the
+    /// word no function matches; with no `.`, `_`, `\\`, `:` or byte past ASCII after it the
+    /// word is the whole ident (no `ns.$x`, no custom function's `ns.`, `u+` and `progid:` out),
+    /// and with no `+` after its spaces no concatenation: what is left is the colors, the
+    /// constants, the operators' words and the unquoted ident, which always matches.
+    fn pv_word(&mut self, p: usize) -> Option<Option<usize>> {
+        let b = self.b;
+        if !self.boundary(p) {
+            return None;
+        }
+        let e = self.name_end(p);
+        if let Some(&a) = b.get(e)
+            && (a >= 0x80 || matches!(a, b'(' | b'.' | b'_' | b'\\' | b':' | b'+'))
+        {
+            return None;
+        }
+        let s = self.spaces(e);
+        if s > e && self.ch(s) == Some(b'+') {
+            return None;
+        }
+        // `color-values`' names: `\b(?i:…){{break}}`, the word lowercased
+        let mut exact = None;
+        if let Some(w) = self.color_word(p, e, &mut exact) {
+            return Some(Some(w));
+        }
+        // `property-value-constants` (`progid:` is out: no `:` after the word)
+        let delim = e >= self.n
+            || matches!(b[e], b' ' | b'\t' | b'\x0b' | b'\x0c' | b'\r' | b';' | b'{' | b')' | b',' | b'/');
+        if delim && exact.unwrap_or_else(|| lookup(&b[p..e])).lists & CONST != 0 {
+            self.tok(p, e, CONSTANT);
+            return Some(Some(e));
+        }
+        if let Some(q) = self.constants_tail(p) {
+            return Some(Some(q));
+        }
+        if matches!(b[p], b'n' | b'o' | b'a' | b'w' | b'f' | b't' | b'i')
+            && let Some(q) = self.sass_operators(p)
+        {
+            return Some(Some(q));
+        }
+        self.tok(p, e, UNQUOTED);
+        Some(Some(e))
+    }
+
+    /// `color-values`' names for the word `p..e` (a `{{break}}` after it): its leaf's token and
+    /// end. `exact` gets the table's entry for the word as it is when the lowercased word is it.
+    fn color_word(&mut self, p: usize, e: usize, exact: &mut Option<super::Word>) -> Option<usize> {
+        if e - p > 32 {
+            return None;
+        }
+        let mut low = [0u8; 32];
+        for (d, c) in low.iter_mut().zip(&self.b[p..e]) {
+            *d = c.to_ascii_lowercase();
+        }
+        let w = lookup(&low[..e - p]);
+        if low[..e - p] == self.b[p..e] {
+            *exact = Some(w);
+        }
+        for (bit, leaf) in [
+            (STD_COLOR, STD_COLOR_LEAF),
+            (EXT_COLOR, EXT_COLOR_LEAF),
+            (SPECIAL_COLOR, SPECIAL_COLOR_LEAF),
+        ] {
+            if w.lists & bit != 0 {
+                self.tok(p, e, leaf);
+                return Some(e);
+            }
+        }
+        None
+    }
+
+    /// A word at `p` (`\b` before it) whose `[A-Za-z0-9-]` run is the whole of what its ops
+    /// read: no `(` after it (no function), no `.`, `_`, `\\` or byte past ASCII (the ident ends
+    /// with it, so no `ns.$x` or `ns.f(`). Its end.
+    fn word_shape(&self, p: usize) -> Option<usize> {
+        if !self.boundary(p) {
+            return None;
+        }
+        let e = self.name_end(p);
+        match self.b.get(e) {
+            Some(&a) if a >= 0x80 || matches!(a, b'(' | b'.' | b'_' | b'\\') => None,
+            _ => Some(e),
+        }
+    }
+
+    /// A word at `p` in `sass-script-expression`, read once ([`Scan::word_shape`]): its
+    /// functions, variables and custom functions fail, which leaves the color names, the
+    /// operators' words, `true`/`false`/`null` and the unquoted string.
+    fn sse_word(&mut self, p: usize, ctx: u8, fresh: bool) -> Option<Option<usize>> {
+        let e = self.word_shape(p)?;
+        let mut exact = None;
+        if let Some(q) = self.color_word(p, e, &mut exact) {
+            return Some(Some(q));
+        }
+        let c = self.b[p];
+        if matches!(c, b'n' | b'o' | b'a' | b'w' | b'f' | b't' | b'i')
+            && let Some(q) = self.sass_operators(p)
+        {
+            return Some(Some(q));
+        }
+        if matches!(c, b't' | b'f' | b'n')
+            && let Some(q) = self.sop(O_TRUE_FALSE, p, ctx, fresh)
+        {
+            return Some(Some(q));
+        }
+        Some(self.sop(O_UNQUOTED, p, ctx, fresh))
+    }
+
+    /// A word at `p` in `function-arguments`, read once ([`Scan::word_shape`]): its functions,
+    /// variables and custom functions fail, which leaves the operators' words and the unquoted
+    /// argument.
+    fn args_word(&mut self, p: usize, ctx: u8, fresh: bool) -> Option<Option<usize>> {
+        self.word_shape(p)?;
+        if matches!(self.b[p], b'n' | b'o' | b'a' | b'w' | b'f' | b't' | b'i')
+            && let Some(q) = self.sass_operators(p)
+        {
+            return Some(Some(q));
+        }
+        Some(self.sop(O_ARG_UNQUOTED, p, ctx, fresh))
     }
 
     /// The front matter from `p`: a `---` line ends it (the others are YAML's, [`line`]).
@@ -1934,8 +2685,16 @@ impl Scan<'_, '_, '_, true> {
                 self.pop(p);
                 Some(p)
             }
-            O_PV => self.list(PROPERTY_VALUES, p, ctx, fresh),
-            O_SSE => self.list(SSE, p, ctx, fresh),
+            O_PV => self.pv_list(p, ctx, fresh),
+            O_SSE => {
+                if c.is_some_and(|c| c.is_ascii_alphabetic())
+                    && p < n
+                    && let Some(r) = self.sse_word(p, ctx, fresh)
+                {
+                    return r;
+                }
+                self.list(SSE, p, ctx, fresh)
+            }
             O_SVE => self.list(SVE, p, ctx, fresh),
             O_MEDIA_QUERY => self.list(MEDIA_QUERY, p, ctx, fresh),
             O_SP => self.list(SELECTOR_PARTS, p, ctx, fresh),
@@ -2038,7 +2797,8 @@ impl Scan<'_, '_, '_, true> {
                     && b.get(e) == Some(&b'.')
                 {
                     let f = run(e + 1);
-                    if f > e + 1 && b.get(f) == Some(&b'(') {
+                    if f > e + 1 && b.get(f) == Some(&b'(') && self.can_push() {
+                        // its call pushes: at the depth limit the pattern matches nothing, no token
                         self.tok(p, e, FN_SASS_NS);
                         self.tok(e, e + 1, FN_SASS_NS_DOT);
                         return self.call(e + 1, f, FN_SASS, G_ARGS, GROUP_BEGIN);
@@ -2738,7 +3498,11 @@ impl Scan<'_, '_, '_, true> {
 
     /// The ops of an include, tried in order at `p`.
     fn list(&mut self, ops: &[u16], p: usize, ctx: u8, fresh: bool) -> Option<usize> {
+        let (at, past) = self.classes(p);
         for &op in ops {
+            if !gated(op, at, past) {
+                continue;
+            }
             if let Some(q) = self.sop(op, p, ctx, fresh) {
                 return Some(q);
             }
@@ -2876,8 +3640,16 @@ impl Scan<'_, '_, '_, true> {
             self.tok(p, e, CONSTANT);
             return Some(e);
         }
+        self.constants_tail(p)
+    }
+
+    /// `property-value-constants`' last patterns at `p`, a word's start: the font families,
+    /// `true`, `false` and `null`.
+    fn constants_tail(&mut self, p: usize) -> Option<usize> {
+        let b = self.b;
         // `\b(?i:sans-serif|serif|monospace|fantasy|cursive|system-ui)\b(?=\s*[;,\n}{])`
-        for w in [
+        if matches!(b[p].to_ascii_lowercase(), b's' | b'm' | b'f' | b'c') {
+            for w in [
             &b"sans-serif"[..],
             b"serif",
             b"monospace",
@@ -2894,7 +3666,11 @@ impl Scan<'_, '_, '_, true> {
                 }
             }
         }
+        }
         // `\b(true|false|null)\b`
+        if !matches!(b[p], b't' | b'f' | b'n') {
+            return None;
+        }
         for w in [&b"true"[..], b"false", b"null"] {
             let e = p + w.len();
             if b.get(p..e) == Some(w) && self.boundary(e) {
@@ -3064,13 +3840,16 @@ impl Scan<'_, '_, '_, true> {
                 self.tok(p, e, ARITH_SASS);
                 return Some(e);
             }
-            for w in SASS_OP_SYMBOLS {
-                if b[p..].starts_with(w) {
-                    self.tok(p, p + w.len(), OP_SASS);
-                    return Some(p + w.len());
+            // the symbols start with one of `%~=!<>&|?` (`+` and `-` taken above)
+            if matches!(c, b'%' | b'~' | b'=' | b'!' | b'<' | b'>' | b'&' | b'|' | b'?') {
+                for w in SASS_OP_SYMBOLS {
+                    if b[p..].starts_with(w) {
+                        self.tok(p, p + w.len(), OP_SASS);
+                        return Some(p + w.len());
+                    }
                 }
             }
-            if self.boundary(p) {
+            if matches!(c, b'n' | b'o' | b'a' | b'w') && self.boundary(p) {
                 for w in [&b"not"[..], b"or", b"and", b"when"] {
                     let e = p + w.len();
                     if b.get(p..e) == Some(w) && self.boundary(e) {
@@ -3082,7 +3861,7 @@ impl Scan<'_, '_, '_, true> {
         }
         // `(?:\s*)\b(not|or|and|when|from|to|through|in)(?=\s)`
         let s = self.spaces(p);
-        if s < self.n && self.boundary(s) {
+        if s < self.n && matches!(b[s], b'n' | b'o' | b'a' | b'w' | b'f' | b't' | b'i') && self.boundary(s) {
             for w in [
                 &b"not"[..],
                 b"or",
@@ -3204,7 +3983,10 @@ impl Scan<'_, '_, '_, true> {
         // the tags: `\s*({{element_names}})` and a lookahead
         if b[s].is_ascii_alphabetic() && self.boundary(s) {
             let e = self.bword_end(s);
-            if lookup(&b[s..e]).lists & TAG != 0 && (self.pseudo_ahead(e, None) || !matches!(b.get(e), Some(b'-' | b':'))) {
+            // the lookahead first: a property's `:` rules most words out before the table
+            if (!matches!(b.get(e), Some(b'-' | b':')) || self.pseudo_ahead(e, None))
+                && lookup(&b[s..e]).lists & TAG != 0
+            {
                 self.tok(s, e, TAG_NAME);
                 self.push(SEL, e);
                 return Some(e);
@@ -3423,9 +4205,16 @@ impl Scan<'_, '_, '_, true> {
         {
             return None;
         }
-        let mut ends = Vec::new();
+        // the candidate ends: few, kept inline (a spill past 16 only on odd input)
+        let mut few = [0usize; 16];
+        let mut nfew = 0;
+        let mut more = Vec::new();
         let mut i = s + 1;
         let mut dash = false;
+        // the ASCII run before its first `-` at once: no end can be in it
+        while i < n && matches!(b[i], b'_' | b'a'..=b'z' | b'0'..=b'9') {
+            i += 1;
+        }
         while i < n {
             let (ch, len) = char_at(b, i);
             if !custom_char(ch) {
@@ -3434,11 +4223,16 @@ impl Scan<'_, '_, '_, true> {
             dash |= ch == '-';
             i = (i + len).min(n);
             if dash && self.boundary(i) && !self.ident_at(i) {
-                ends.push(i);
+                if nfew < few.len() {
+                    few[nfew] = i;
+                    nfew += 1;
+                } else {
+                    more.push(i);
+                }
             }
         }
         for variant in 0..5u8 {
-            for &e in ends.iter().rev() {
+            for &e in more.iter().rev().chain(few[..nfew].iter().rev()) {
                 let ok = if variant < 4 {
                     self.pseudo_ahead(e, Some(variant))
                 } else {
@@ -3486,23 +4280,42 @@ impl Scan<'_, '_, '_, true> {
 
     // ---- properties and at-rules ----
 
+    /// A property's name ends at `e`: `property-value-wrapper` pushed, and its `:` taken at once
+    /// where one follows, as its ops at `e` would (neither `\s*;` nor `\s*(?=[;})])` holds
+    /// before a `:`): where the scan goes on.
+    fn pvw(&mut self, e: usize) -> usize {
+        self.push(PVW, e);
+        let s = self.spaces(e);
+        if self.ch(s) == Some(b':') && self.can_push() {
+            self.tok(s, s + 1, KEY_VALUE);
+            self.push(PV, s + 1);
+            return s + 1;
+        }
+        e
+    }
+
     /// SCSS's `properties` at `p`.
     fn properties(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
-        if let Some(e) = self.sop(O_COMMENT_LINE, p, MAIN, false) {
-            return Some(e);
-        }
-        if let Some(e) = self.op(P_COMMENT, p, MAIN, false) {
-            return Some(e);
+        let c = self.ch(p)?;
+        if c == b'/' {
+            if let Some(e) = self.sop(O_COMMENT_LINE, p, MAIN, false) {
+                return Some(e);
+            }
+            if let Some(e) = self.op(P_COMMENT, p, MAIN, false) {
+                return Some(e);
+            }
         }
         if !self.can_push() {
             return None;
         }
-        let c = self.ch(p)?;
         let colon_after = |e: usize| self.ch(self.spaces(e)) == Some(b':');
         if c.is_ascii_alphabetic() && self.boundary(p) {
             // `\b(font-family|font|family)\b(?=\s*:)`
             for w in [&b"font-family"[..], b"font", b"family"] {
+                if c != b'f' {
+                    break;
+                }
                 let e = p + w.len();
                 if b.get(p..e) == Some(w) && self.boundary(e) && colon_after(e) {
                     self.tok(p, e, PROPERTY_NAME);
@@ -3514,8 +4327,7 @@ impl Scan<'_, '_, '_, true> {
             let e = self.name_end(p);
             if self.boundary(e) && colon_after(e) && lookup(&b[p..e]).lists & SCSS_PROP != 0 {
                 self.tok(p, e, PROPERTY_NAME);
-                self.push(PVW, e);
-                return Some(e);
+                return Some(self.pvw(e));
             }
         }
         // `(-(?:webkit|moz|ms|o)-)({{ident}})(?=\s*:)`
@@ -3527,8 +4339,7 @@ impl Scan<'_, '_, '_, true> {
                 {
                     self.tok(p, p + v.len(), super::VENDOR);
                     self.tok(p + v.len(), e, PROPERTY_NAME);
-                    self.push(PVW, e);
-                    return Some(e);
+                    return Some(self.pvw(e));
                 }
             }
         }
@@ -3538,8 +4349,7 @@ impl Scan<'_, '_, '_, true> {
         {
             self.tok(p, p + 1, DECL_MARK);
             self.tok(p + 1, e, DECL);
-            self.push(PVW, e);
-            return Some(e);
+            return Some(self.pvw(e));
         }
         // `(--)({{nmchar}}+)`
         if c == b'-' && b.get(p + 1) == Some(&b'-') {
@@ -3547,8 +4357,7 @@ impl Scan<'_, '_, '_, true> {
             if e > p + 2 {
                 self.tok(p, p + 2, CUSTOM_MARK);
                 self.tok(p + 2, e, CUSTOM_NAME);
-                self.push(PVW, e);
-                return Some(e);
+                return Some(self.pvw(e));
             }
         }
         // the partial names, `\b(z|y|…)\b`, ranked
@@ -3556,8 +4365,7 @@ impl Scan<'_, '_, '_, true> {
             && let Some((e, _)) = self.ranked(p, |w| w.partial_rank)
         {
             self.tok(p, e, PROPERTY_NAME);
-            self.push(PVW, e);
-            return Some(e);
+            return Some(self.pvw(e));
         }
         // `[a-zA-Z0-9_-]*((#)({)((\$)([a-zA-Z0-9_-][\w-]*))(}))[a-zA-Z0-9_-]*`
         let name = |i: usize| self.class_run(i, 0);
@@ -3576,14 +4384,12 @@ impl Scan<'_, '_, '_, true> {
             self.tok(h + 3, v, PROP_BARE_VAR);
             self.tok(v, v + 1, PROP_BARE_END);
             self.tok(v + 1, e, PROP_BARE);
-            self.push(PVW, e);
-            return Some(e);
+            return Some(self.pvw(e));
         }
         // `\b(composes)\b`
         if b.get(p..p + 8) == Some(b"composes") && self.boundary(p) && self.boundary(p + 8) {
             self.tok(p, p + 8, PROP_BARE);
-            self.push(PVW, p + 8);
-            return Some(p + 8);
+            return Some(self.pvw(p + 8));
         }
         None
     }
@@ -3948,6 +4754,20 @@ mod tests {
         let k = kinds(&["a { content: \"#{$x}\"; }"]);
         let x = k.iter().find(|(t, _)| *t == "x").unwrap();
         assert_eq!(x.1, "string.quoted.double.css variable.other.sass");
+    }
+
+    #[test]
+    fn a_call_at_the_depth_limit_leaves_no_token() {
+        // `ns.f(` past syntect's depth limit matches nothing: its `ns` and `.` were once
+        // tokens before the call's push was refused, and the next op's came before them
+        let line = format!("$x: f({} res.text() }}", "(".repeat(200));
+        let (mut st, mut spans) = (State::default(), Vec::new());
+        lex(Lang::Scss, &line, &mut st, &mut spans);
+        let mut at = 0;
+        for s in &spans {
+            assert!(at <= s.start as usize && s.start < s.end, "{:?} after {at}", (s.start, s.end));
+            at = s.end as usize;
+        }
     }
 
     #[test]
