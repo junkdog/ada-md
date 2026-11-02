@@ -111,6 +111,16 @@ impl State {
         self.levels[..8].copy_from_slice(&word.to_le_bytes());
     }
 
+    /// A scanner's bits beside its stack, in the machine's [`State::arg`], which no scanner
+    /// uses: Java's and Kotlin's SQL marker waiting for its string (phase 4).
+    fn flags(&self) -> u16 {
+        self.arg
+    }
+
+    fn set_flags(&mut self, flags: u16) {
+        self.arg = flags;
+    }
+
     fn levels(&self) -> &[u8] {
         &self.levels[..usize::from(self.depth)]
     }

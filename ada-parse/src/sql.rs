@@ -19,7 +19,7 @@
 //! `\d` Unicode's decimal digits; `(?i)` folds ASCII case only (Oniguruma's `ſ` for `s` isn't
 //! followed).
 
-use crate::{Out, State};
+use crate::{Out, State, is_space, skip_spaces, trim_end};
 
 // The contexts above `main`, by what they read; the line comments end with their line.
 pub(crate) const MAIN: u8 = 0;
@@ -309,6 +309,177 @@ pub(crate) fn embedded(
     keep.is_end = s.is_end;
     keep.at = s.at;
     Some((p, ctx))
+}
+
+// Where a host's string is SQL (phase 4, SQL by call sites and markers, as IntelliJ has it):
+// the JVM's calls and annotations, and IntelliJ's markers.
+
+/// Whether the call `b[p..e]` names takes SQL as its first argument: JDBC's
+/// (`prepareStatement`, `executeQuery`…), JPA's and Hibernate's (`createQuery`,
+/// `createNativeQuery`…), Spring's (`queryForObject`, `batchUpdate`, `JdbcClient.sql`), JDBI's
+/// (`createUpdate`, `createScript`), Android's (`execSQL`, `rawQuery`). `query`, `update` and
+/// `select` only on a receiver named as a database's (`jdbcTemplate.query`, `handle.select`):
+/// jsoup's `select("css")` and the like aren't SQL.
+pub(crate) fn jvm_call(b: &[u8], p: usize, e: usize) -> bool {
+    let name = &b[p..e];
+    // the first byte first: most calls are none of these
+    match name.first() {
+        Some(b'p') => matches!(name, b"prepareStatement" | b"prepareCall"),
+        Some(b'e') => matches!(
+            name,
+            b"executeQuery" | b"executeUpdate" | b"executeLargeUpdate" | b"execute" | b"execSQL"
+        ),
+        Some(b'a') => name == b"addBatch",
+        Some(b'c') => matches!(
+            name,
+            b"createQuery"
+                | b"createNativeQuery"
+                | b"createSQLQuery"
+                | b"createNativeMutationQuery"
+                | b"createMutationQuery"
+                | b"createSelectionQuery"
+                | b"createUpdate"
+                | b"createCall"
+                | b"createScript"
+                | b"compileStatement"
+        ),
+        Some(b'q') => {
+            matches!(
+                name,
+                b"queryForObject"
+                    | b"queryForList"
+                    | b"queryForMap"
+                    | b"queryForRowSet"
+                    | b"queryForStream"
+                    | b"queryForLong"
+                    | b"queryForInt"
+            ) || (name == b"query" && db_receiver(b, p))
+        }
+        Some(b'b') => name == b"batchUpdate",
+        Some(b's') => name == b"sql" || (name == b"select" && db_receiver(b, p)),
+        Some(b'r') => name == b"rawQuery",
+        Some(b'u') => name == b"update" && db_receiver(b, p),
+        _ => false,
+    }
+}
+
+/// Whether the call at `p` is on a receiver named as a database's: `….name(` with the name
+/// ending in `template` or `handle`, or holding `jdbc` (ASCII case ignored).
+pub(crate) fn db_receiver(b: &[u8], p: usize) -> bool {
+    let q = trim_end(b, 0, p);
+    if q == 0 || b[q - 1] != b'.' {
+        return false;
+    }
+    let e = trim_end(b, 0, q - 1);
+    let mut s = e;
+    while s > 0 && (b[s - 1].is_ascii_alphanumeric() || b[s - 1] == b'_') {
+        s -= 1;
+    }
+    let r = b[s..e].to_ascii_lowercase();
+    r.ends_with(b"template") || r.ends_with(b"handle") || r.windows(4).any(|w| w == b"jdbc")
+}
+
+/// Whether an annotation named `name` takes SQL: its `value` (a string alone in its
+/// parentheses), and the arguments [`jvm_argument`] names. Spring Data's and Micronaut's
+/// `@Query` (JPQL by default, SQL with `nativeQuery`), `@NativeQuery`, JDBI's `@SqlQuery`…,
+/// MyBatis' `@Select`…, JPA's `@NamedQuery` and `@NamedNativeQuery`, Hibernate's
+/// `@Formula`, `@Subselect`, `@SQLRestriction`, `@SQLInsert`…, Room's `@Query`.
+pub(crate) fn jvm_annotation(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"Query"
+            | b"NativeQuery"
+            | b"SqlQuery"
+            | b"SqlUpdate"
+            | b"SqlBatch"
+            | b"SqlCall"
+            | b"SqlScript"
+            | b"Select"
+            | b"Insert"
+            | b"Update"
+            | b"Delete"
+            | b"NamedQuery"
+            | b"NamedNativeQuery"
+            | b"Formula"
+            | b"Subselect"
+            | b"Where"
+            | b"SQLRestriction"
+            | b"SQLSelect"
+            | b"SQLInsert"
+            | b"SQLUpdate"
+            | b"SQLDelete"
+            | b"SQLDeleteAll"
+    )
+}
+
+/// Whether a SQL annotation's argument named `name` is SQL: `value`, `query` (`@NamedQuery`),
+/// `countQuery` (`@Query`), `sql` (`@SQLInsert`), `clause` (`@Where`).
+pub(crate) fn jvm_argument(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"value" | b"query" | b"countQuery" | b"sql" | b"clause"
+    )
+}
+
+/// Whether IntelliJ's language id `id` (`@Language("…")`, `// language=…`) is SQL or one of its
+/// dialects: one holding `sql` (`PostgreSQL`, `SQLite`, `TSQL`…), or a database's name.
+pub(crate) fn is_sql_language(id: &[u8]) -> bool {
+    let id = id.to_ascii_lowercase();
+    id.windows(3).any(|w| w == b"sql")
+        || matches!(
+            &id[..],
+            b"oracle"
+                | b"h2"
+                | b"hsqldb"
+                | b"derby"
+                | b"db2"
+                | b"sybase"
+                | b"redshift"
+                | b"snowflake"
+                | b"bigquery"
+                | b"clickhouse"
+                | b"cockroachdb"
+                | b"exasol"
+                | b"greenplum"
+                | b"vertica"
+        )
+}
+
+/// A `language=ID` comment's text from `p` (after `//` or `/*`): whether it marks SQL.
+pub(crate) fn marker_comment(b: &[u8], p: usize) -> bool {
+    let q = skip_spaces(b, p);
+    if !b[q..].starts_with(b"language=") {
+        return false;
+    }
+    let s = q + 9;
+    let mut e = s;
+    while e < b.len() && !is_space(b[e]) && b[e] != b'*' {
+        e += 1;
+    }
+    is_sql_language(&b[s..e])
+}
+
+/// Whether a SQL marker at `from` still holds at `to`: no `;`, `,`, `)`, `{` or `}` between (the
+/// declaration or argument it marks ended there; a marked parameter's default stays plain).
+pub(crate) fn marker_holds(b: &[u8], from: usize, to: usize) -> bool {
+    !b[from.min(to)..to]
+        .iter()
+        .any(|&c| matches!(c, b';' | b',' | b')' | b'{' | b'}'))
+}
+
+/// `@Language("ID")`'s `("ID")`, from `p` past the name: where it ends, if `ID` is SQL.
+pub(crate) fn language_annotation(b: &[u8], p: usize) -> Option<usize> {
+    let q = skip_spaces(b, p);
+    if b.get(q) != Some(&b'(') {
+        return None;
+    }
+    let s = skip_spaces(b, q + 1);
+    if b.get(s) != Some(&b'"') {
+        return None;
+    }
+    let e = s + 1 + b[s + 1..].iter().position(|&c| c == b'"')?;
+    let r = skip_spaces(b, e + 1);
+    (b.get(r) == Some(&b')') && is_sql_language(&b[s + 1..e])).then_some(r + 1)
 }
 
 // The words a pattern of `main` starts with, by the pattern (or the part of one) they start.

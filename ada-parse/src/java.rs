@@ -26,6 +26,7 @@
 
 use crate::machine::KEPT as HALF;
 use crate::regex;
+use crate::sql;
 use crate::{Out, State, is_space, skip_spaces, trim_end};
 
 // The contexts. Java's first, those with its prototype (comments, `goto`, `const`, `%>`)
@@ -213,6 +214,26 @@ const H_EMBED_TAG: u8 = 139;
 const H_EMBED_TEXT: u8 = 140;
 /// A string that holds a regex (ADR-40, phase 4), the regex's state in [`Scan::re`].
 const STRING_RE: u8 = 141;
+// SQL by call sites and markers (ADR-40, phase 4): the contexts whose strings are SQL, a text
+// block, and the strings whose text is SQL, by SQL's context. Each code context here has the
+// prototype, as those before `STRING` do (`has_prototype`, tried in `sql_context`).
+/// A call's `(` whose first argument is SQL (`prepareStatement(`, `createQuery(`…), to its
+/// first `,` (which makes it [`PARENS`]) or its `)`.
+const PARENS_SQL: u8 = 142;
+/// A SQL annotation's (`@Query`, `@SqlUpdate`…): before its `(`, its arguments (a string there
+/// is the `value`'s, SQL), and a named argument's value that is SQL (`query = …`).
+const ANNOT_PARAMS_SQL: u8 = 143;
+const ANNOT_ARGS_SQL: u8 = 144;
+const ANNOT_VALUE_SQL: u8 = 145;
+/// `"""…"""`, a text block (Java 15), which bat's grammar doesn't know: it read `""` and a
+/// string to the line's end, and the block's lines as code.
+const TEXT_BLOCK: u8 = 146;
+/// A string whose text is SQL, plus SQL's context there ([`crate::sql`]'s `MAIN` to `HASHES`;
+/// its line comments end with the line): `"…"`, then a text block.
+const SQL_DQ: u8 = 160;
+const SQL_DQ_LAST: u8 = SQL_DQ + sql::HASHES;
+const SQL_TB: u8 = SQL_DQ_LAST + 1;
+const SQL_TB_LAST: u8 = SQL_TB + sql::HASHES;
 
 /// Bits of a kind past its leaf: the HTML string or comment that holds it in Javadoc.
 const WRAP: u16 = 1 << 8;
@@ -226,8 +247,12 @@ const W_ATTR: u16 = 6 * WRAP;
 /// In a regex in a string: the leaf is the regex's kind.
 const W_RE: u16 = 7 * WRAP;
 const _: () = assert!(regex::KINDS <= WRAP as usize);
+/// SQL in a `"…"` string, then in a text block: the leaf is SQL's kind.
+const W_SQL: u16 = 8 * WRAP;
+const W_SQL_TB: u16 = 9 * WRAP;
+const _: () = assert!(sql::KINDS <= WRAP as usize);
 /// In an annotation (`meta.annotation`).
-const ANNOT: u16 = 8 * WRAP;
+const ANNOT: u16 = 16 * WRAP;
 
 macro_rules! leaves {
     ($($name:ident = $s:literal,)*) => {
@@ -252,7 +277,11 @@ leaves! {
     DQ_BEGIN = "string.quoted.double.java punctuation.definition.string.begin.java",
     DQ_END = "string.quoted.double.java punctuation.definition.string.end.java",
     DQ_ESCAPE = "string.quoted.double.java constant.character.escape.java",
-    SQ = "string.quoted.single.java",
+    TB = "string.quoted.triple.java",
+    TB_BEGIN = "string.quoted.triple.java punctuation.definition.string.begin.java",
+    TB_END = "string.quoted.triple.java punctuation.definition.string.end.java",
+    TB_ESCAPE = "string.quoted.triple.java constant.character.escape.java",
+    SQ ="string.quoted.single.java",
     SQ_BEGIN = "string.quoted.single.java punctuation.definition.string.begin.java",
     SQ_END = "string.quoted.single.java punctuation.definition.string.end.java",
     SQ_ESCAPE = "string.quoted.single.java constant.character.escape.java",
@@ -471,6 +500,19 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
         out.extend(regex::scopes(kind % WRAP));
         return out;
     }
+    if wrap * WRAP == W_SQL || wrap * WRAP == W_SQL_TB {
+        let k = kind % WRAP;
+        if usize::from(k) >= sql::KINDS {
+            return Vec::new();
+        }
+        out.push(if wrap * WRAP == W_SQL {
+            "string.quoted.double.java"
+        } else {
+            "string.quoted.triple.java"
+        });
+        out.extend(sql::scopes(k));
+        return out;
+    }
     if wrap != 0 {
         out.extend(["comment.block.documentation.javadoc", "text.html.javadoc"]);
         out.extend(match wrap * WRAP {
@@ -487,6 +529,44 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
     }
     out
 }
+
+/// By context: the kind of its text, plus [`COUNTED`] for one that holds an annotation open
+/// (`meta.annotation`): one lookup where a `match` grew with each context.
+static CTX: [u16; 256] = {
+    let mut t = [PLAIN; 256];
+    let mut i = JD_MAIN as usize;
+    while i < PARENS_SQL as usize {
+        t[i] = W_JD;
+        i += 1;
+    }
+    let mut i = SQL_DQ as usize;
+    while i <= SQL_DQ_LAST as usize {
+        t[i] = DQ;
+        t[i - SQL_DQ as usize + SQL_TB as usize] = TB;
+        i += 1;
+    }
+    t[STRING as usize] = DQ;
+    t[STRING_RE as usize] = DQ;
+    t[TEXT_BLOCK as usize] = TB;
+    t[CHAR as usize] = SQ;
+    t[COMMENT as usize] = BLOCK_TEXT;
+    t[LINE_COMMENT as usize] = LINE_TEXT;
+    t[H_OTHER_NAME as usize] = W_JD | NAME_OTHER;
+    t[H_CUSTOM_NAME as usize] = W_JD | NAME_CUSTOM;
+    t[H_ATTR_NAME as usize] = W_ATTR;
+    t[H_DQ as usize] = W_DQ;
+    t[H_SQ as usize] = W_SQ;
+    t[H_UNQ as usize] = W_UNQ;
+    t[H_COMMENT as usize] = W_HCOMMENT;
+    t[H_CDATA as usize] = W_JD | CDATA_TEXT;
+    t[ANNOT_PARAMS as usize] |= COUNTED;
+    t[ANNOT_ARGS as usize] |= COUNTED;
+    t[ANNOT_DEFAULT as usize] |= COUNTED;
+    t[ANNOT_PARAMS_SQL as usize] |= COUNTED;
+    t[ANNOT_ARGS_SQL as usize] |= COUNTED;
+    t
+};
+const COUNTED: u16 = 1 << 15;
 
 /// How many contexts a line can hold; one pushed past it drops the bottom one.
 const MAX: usize = 128;
@@ -512,6 +592,17 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         word_at: std::cell::Cell::new((usize::MAX, 0)),
         fqn: std::cell::Cell::new((usize::MAX, 0, false)),
         re: 0,
+        sql: sql::Embedded {
+            is_end: usize::MAX,
+            at: 0,
+        },
+        sql_end: usize::MAX,
+        sql_nl: false,
+        mark: if state.flags() & MARKED != 0 {
+            0
+        } else {
+            usize::MAX
+        },
         out,
     };
     let n = usize::from(state.depth);
@@ -542,8 +633,15 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
             packed.withs[i - HALF] = c;
         }
     }
+    if s.mark != usize::MAX && sql::marker_holds(b, s.mark, b.len()) {
+        packed.set_flags(MARKED);
+    }
     *state = packed;
 }
+
+/// [`State::flags`]' bit: a SQL marker (`@Language("SQL")`, `// language=SQL`) waits for its
+/// string.
+const MARKED: u16 = 1;
 
 struct Scan<'b, 'c> {
     b: &'b [u8],
@@ -575,6 +673,17 @@ struct Scan<'b, 'c> {
     fqn: std::cell::Cell<(usize, usize, bool)>,
     /// The state of the regex in [`STRING_RE`], which ends with its line.
     re: u8,
+    /// What SQL's scan keeps between the host's turns on a line.
+    sql: sql::Embedded,
+    /// Where the SQL string open on the line ends (its quote, or the line's end), past which
+    /// no SQL token runs; `usize::MAX` till it is looked for.
+    sql_end: usize,
+    /// Whether SQL's scan took the line's end (`\s` matching its `\n`).
+    sql_nl: bool,
+    /// A SQL marker's: the next string that opens at or past it is SQL, unless a `;`, `,`, `)`,
+    /// `{` or `}` came between ([`sql::marker_holds`], checked there and at the line's end);
+    /// `usize::MAX` for none.
+    mark: usize,
     out: &'b mut Out<'c>,
 }
 
@@ -611,6 +720,33 @@ fn regex_string(b: &[u8], p: usize) -> bool {
         .any(named),
         b'=' => named(b"regexp"),
         _ => false,
+    }
+}
+
+/// Whether context `c`, past `STRING`, is code with the prototype: SQL's call and annotation
+/// contexts.
+fn has_prototype(c: u8) -> bool {
+    c.wrapping_sub(PARENS_SQL) <= ANNOT_VALUE_SQL - PARENS_SQL
+}
+
+/// The bytes a string's patterns start on, around SQL: its end and its escapes.
+static SQL_YIELDS: [bool; 256] = RE_YIELDS;
+
+/// Where the string SQL is in ends, from `p` inside it: its `"` (a text block's `"""`), or the
+/// line's end.
+fn string_end(b: &[u8], mut p: usize, text_block: bool) -> usize {
+    loop {
+        p = find_any(b, p, *b"\"\\");
+        if p >= b.len() {
+            return b.len();
+        }
+        if b[p] == b'\\' {
+            p += 2;
+        } else if !text_block || b[p..].starts_with(b"\"\"\"") {
+            return p;
+        } else {
+            p += 1;
+        }
     }
 }
 
@@ -1166,32 +1302,16 @@ impl<'b> Scan<'b, '_> {
     }
 
     fn refresh(&mut self) {
-        let t = match self.top() {
-            STRING | STRING_RE => DQ,
-            CHAR => SQ,
-            COMMENT => BLOCK_TEXT,
-            LINE_COMMENT => LINE_TEXT,
-            H_OTHER_NAME => W_JD | NAME_OTHER,
-            H_CUSTOM_NAME => W_JD | NAME_CUSTOM,
-            H_ATTR_NAME => W_ATTR,
-            H_DQ => W_DQ,
-            H_SQ => W_SQ,
-            H_UNQ => W_UNQ,
-            H_COMMENT => W_HCOMMENT,
-            H_CDATA => W_JD | CDATA_TEXT,
-            JD_MAIN.. => W_JD,
-            _ => PLAIN,
-        };
-        self.text = self.kind(t);
+        self.text = self.kind(CTX[usize::from(self.top())] & !COUNTED);
     }
 
     fn count_in(&mut self, c: u8) {
-        self.annot += usize::from(matches!(c, ANNOT_PARAMS | ANNOT_ARGS | ANNOT_DEFAULT));
+        self.annot += usize::from(CTX[usize::from(c)] >> 15);
         self.tags += usize::from(c == JD_TAGS);
     }
 
     fn count_out(&mut self, c: u8) {
-        self.annot -= usize::from(matches!(c, ANNOT_PARAMS | ANNOT_ARGS | ANNOT_DEFAULT));
+        self.annot -= usize::from(CTX[usize::from(c)] >> 15);
         self.tags -= usize::from(c == JD_TAGS);
     }
 
@@ -1356,7 +1476,7 @@ impl<'b> Scan<'b, '_> {
         let c = b[p];
         let top = self.top();
         match top {
-            STRING | STRING_RE => find_any(b, p + 1, *b"\"\\"),
+            STRING | STRING_RE | TEXT_BLOCK => find_any(b, p + 1, *b"\"\\"),
             CHAR => find_any(b, p + 1, *b"'\\"),
             COMMENT | JD_MAIN | JD_HOLD => find_any(b, p + 1, *b"*"),
             LINE_COMMENT => find_any(b, p + 1, *b"%"),
@@ -1386,7 +1506,7 @@ impl<'b> Scan<'b, '_> {
             }
             BLOCK | PARENS | CTOR_ARGS | RHS | STATIC_RHS | LAMBDA_ARROW | LAMBDA_BODY | ASSERT
             | DECL_PARENS_IN | ARRAY_INIT | ANNOT_ARRAY_INIT | ARRAY_DEF_IN | ANNOT_DEFAULT
-            | ANNOT_ARGS | ANNOT_VALUE
+            | ANNOT_ARGS | ANNOT_VALUE | PARENS_SQL | ANNOT_ARGS_SQL | ANNOT_VALUE_SQL
                 if is_word(b, p) =>
             {
                 // patterns past a word's start begin with an identifier, which would have
@@ -1424,6 +1544,9 @@ impl<'b> Scan<'b, '_> {
         if top >= JD_MAIN {
             if top == STRING_RE {
                 return self.in_regex(p, c);
+            }
+            if top >= PARENS_SQL {
+                return self.sql_context(p, c, top);
             }
             return self.javadoc(p, c, top);
         }
@@ -1900,8 +2023,13 @@ impl<'b> Scan<'b, '_> {
             STRING | STRING_RE | CHAR | LINE_COMMENT | DOTTED_NS | DOTTED_MODULE | DOTTED_PKG
             | DOTTED_SMOD | JD_REF_AFTER | JD_IREF_AFTER | H_OTHER_NAME | H_CUSTOM_NAME
             | H_ATTR_NAME | H_UNQ => Some(self.leave(n)),
+            SQL_DQ..=SQL_DQ_LAST => Some(self.leave(n)),
             JD_CONTENTS => Some(self.enter(n, &[JD_TEXT])),
             JD_LINK_LABEL => Some(self.shift(n, &[JD_LABEL])),
+            SQL_TB..=SQL_TB_LAST => {
+                self.sql_eol(top);
+                None
+            }
             _ => None,
         }
     }
@@ -1934,6 +2062,197 @@ impl<'b> Scan<'b, '_> {
         Some(q)
     }
 
+    /// The contexts of SQL by call sites and markers, past `JD_MAIN` and out of the hot
+    /// `match`: a SQL call's and annotation's arguments, a text block, a string whose text is
+    /// SQL.
+    #[inline(never)]
+    fn sql_context(&mut self, p: usize, c: u8, top: u8) -> Option<usize> {
+        let b = self.b;
+        // the code contexts' prototype, as `at` tries it for those before `STRING`
+        if has_prototype(top)
+            && let Some(r) = self.prototype(p, c)
+        {
+            return Some(r);
+        }
+        match top {
+            PARENS_SQL => match c {
+                b')' => Some(self.close(p, 1, PAREN_END)),
+                // the first argument ends: the rest are code's
+                b',' => {
+                    self.stack[self.depth - 1] = PARENS;
+                    Some(p)
+                }
+                b'"' => Some(self.sql_string(p)),
+                _ => self.illegal_parens(p, c).or_else(|| self.code(p, c)),
+            },
+            ANNOT_PARAMS_SQL => match c {
+                b'(' => Some(self.then(p, 1, &[ANNOT_ARGS_SQL], PAREN_BEGIN)),
+                _ => self.any_pop(p),
+            },
+            ANNOT_ARGS_SQL => {
+                if c == b')' {
+                    return Some(self.close(p, 1, PAREN_END));
+                }
+                // `((?:[\p{L}_$][\p{L}\p{N}_$]*))\s*(=)`, the value SQL's if the name says so
+                if let Some(e) = ident(b, p) {
+                    let q = skip_spaces(b, e);
+                    if b.get(q) == Some(&b'=') {
+                        self.put(p, e, PARAMETER);
+                        self.put(q, q + 1, ASSIGN);
+                        let value = if sql::jvm_argument(&b[p..e]) {
+                            ANNOT_VALUE_SQL
+                        } else {
+                            ANNOT_VALUE
+                        };
+                        self.push(q + 1, value);
+                        return Some(q + 1);
+                    }
+                }
+                match c {
+                    b'{' => Some(self.open(p, 1, ANNOT_ARRAY_INIT, BRACE_BEGIN)),
+                    b'@' => Some(self.annotation(p)),
+                    b'"' => Some(self.sql_string(p)),
+                    _ => self.code(p, c),
+                }
+            }
+            ANNOT_VALUE_SQL => match c {
+                b',' | b'}' | b')' => Some(self.leave(p)),
+                b'@' => Some(self.annotation(p)),
+                b'"' => Some(self.sql_string(p)),
+                _ => self.code(p, c),
+            },
+            TEXT_BLOCK => match c {
+                b'"' => b[p..]
+                    .starts_with(b"\"\"\"")
+                    .then(|| self.close(p, 3, TB_END)),
+                b'\\' => Some(self.tb_escape(p)),
+                _ => None,
+            },
+            SQL_DQ..=SQL_TB_LAST => self.in_sql(p, c, top),
+            _ => None,
+        }
+    }
+
+    /// Whether the marker before `p` still holds there ([`sql::marker_holds`]); it's dropped
+    /// if not.
+    #[cold]
+    fn marked(&mut self, p: usize) -> bool {
+        let holds = sql::marker_holds(self.b, self.mark, p);
+        if !holds {
+            self.mark = usize::MAX;
+        }
+        holds
+    }
+
+    /// A string at `p` whose text is SQL: `"…"`, or a text block. It takes a marker's turn.
+    #[inline(never)]
+    fn sql_string(&mut self, p: usize) -> usize {
+        self.mark = usize::MAX;
+        self.sql_end = usize::MAX;
+        self.sql.is_end = usize::MAX;
+        if self.b[p + 1..].starts_with(b"\"\"") {
+            self.open(p, 3, SQL_TB + sql::MAIN, TB_BEGIN)
+        } else {
+            self.open(p, 1, SQL_DQ + sql::MAIN, DQ_BEGIN)
+        }
+    }
+
+    /// A text block's escape at `p`: `\\.`, or a `\\` that ends its line (which joins the next).
+    fn tb_escape(&mut self, p: usize) -> usize {
+        let e = if p + 1 < self.b.len() {
+            next(self.b, p + 1)
+        } else {
+            p + 1
+        };
+        self.token(p, e - p, TB_ESCAPE)
+    }
+
+    /// In a string whose text is SQL, at `p`: the string's end and its escapes, else SQL's
+    /// scanner, embedded, to the next place they can start ([`sql::embedded`]).
+    fn in_sql(&mut self, p: usize, c: u8, top: u8) -> Option<usize> {
+        let b = self.b;
+        let tb = top >= SQL_TB;
+        match c {
+            b'"' if !tb => return Some(self.close(p, 1, DQ_END)),
+            b'"' if b[p..].starts_with(b"\"\"\"") => return Some(self.close(p, 3, TB_END)),
+            b'\\' if tb => return Some(self.tb_escape(p)),
+            b'\\' if p + 1 < b.len() => {
+                let e = next(b, p + 1);
+                return Some(self.token(p, e - p, DQ_ESCAPE));
+            }
+            _ => {}
+        }
+        self.sql_scan(p, top).map(|(q, _)| q)
+    }
+
+    /// SQL's scan from `p` in the string `top` holds: where it stopped, its context there set on
+    /// the stack.
+    fn sql_scan(&mut self, p: usize, top: u8) -> Option<(usize, u8)> {
+        let (base, wrap) = if top >= SQL_TB {
+            (SQL_TB, W_SQL_TB)
+        } else {
+            (SQL_DQ, W_SQL)
+        };
+        let host = sql::Embed {
+            yields: &SQL_YIELDS,
+            base: self.kind(wrap),
+            text: self.text,
+        };
+        if self.sql_end == usize::MAX {
+            self.sql_end = string_end(self.b, p, top >= SQL_TB);
+        }
+        let end = self.sql_end;
+        self.fill(p);
+        self.sql.at = self.at;
+        let r = sql::embedded(
+            &self.b[..end],
+            p,
+            top - base,
+            &host,
+            &mut self.sql,
+            self.out,
+        );
+        self.at = self.sql.at;
+        let (mut q, ctx) = r?;
+        if q > end {
+            self.sql_nl |= end == self.b.len();
+            q = end;
+        }
+        self.stack[self.depth - 1] = base + ctx;
+        Some((q, ctx))
+    }
+
+    /// A text block's SQL at its line's end, which SQL's patterns may take as `\s`; its line
+    /// comment ends there.
+    fn sql_eol(&mut self, top: u8) {
+        let n = self.b.len();
+        if !self.sql_nl {
+            self.sql_scan(n, top);
+        }
+        if matches!(self.top() - SQL_TB, sql::DASHES | sql::HASHES) {
+            self.stack[self.depth - 1] = SQL_TB + sql::MAIN;
+        }
+    }
+
+    /// A SQL annotation's name `b[p..e]` (`@Query`): its arguments are SQL's
+    /// ([`ANNOT_PARAMS_SQL`]); `@Language("SQL")`, a marker for the next string.
+    fn annotation_sql(&mut self, p: usize, e: usize) {
+        let b = self.b;
+        let below = self.depth - 2;
+        if matches!(self.stack[below], ANNOT_PARAMS | ANNOT_PARAMS_SQL) {
+            self.stack[below] = if sql::jvm_annotation(&b[p..e]) {
+                ANNOT_PARAMS_SQL
+            } else {
+                ANNOT_PARAMS
+            };
+        }
+        if &b[p..e] == b"Language"
+            && let Some(end) = sql::language_annotation(b, e)
+        {
+            self.mark = end;
+        }
+    }
+
     /// The prototype: comments, `goto` and `const`, `%>`.
     fn prototype(&mut self, p: usize, c: u8) -> Option<usize> {
         let b = self.b;
@@ -1949,9 +2268,20 @@ impl<'b> Scan<'b, '_> {
                         self.push(p + 3, JD_CONTENTS);
                         return Some(p + 3);
                     }
+                    if sql::marker_comment(b, p + 2) {
+                        self.mark = b[p + 2..]
+                            .windows(2)
+                            .position(|w| w == b"*/")
+                            .map_or(b.len(), |i| p + 4 + i);
+                    }
                     Some(self.open(p, 2, COMMENT, BLOCK_MARK))
                 }
-                Some(b'/') => Some(self.open(p, 2, LINE_COMMENT, LINE_MARK)),
+                Some(b'/') => {
+                    if sql::marker_comment(b, p + 2) {
+                        self.mark = b.len();
+                    }
+                    Some(self.open(p, 2, LINE_COMMENT, LINE_MARK))
+                }
                 _ => None,
             },
             b'g' | b'c' if self.word_kind(p) == Word::Illegal => {
@@ -2266,7 +2596,10 @@ impl<'b> Scan<'b, '_> {
     /// `annotation-type-no-fqn` at `p`.
     fn annotation_name(&mut self, p: usize) -> Option<usize> {
         match type_name(self.b, p) {
-            Some(e) => Some(self.then(p, e - p, &[ANNOT_AFTER], ANNOTATION)),
+            Some(e) => {
+                self.annotation_sql(p, e);
+                Some(self.then(p, e - p, &[ANNOT_AFTER], ANNOTATION))
+            }
             None => self.any_pop(p),
         }
     }
@@ -2410,7 +2743,12 @@ impl<'b> Scan<'b, '_> {
             if b.get(q) == Some(&b'(') {
                 self.put(p, ie, FUNCTION_CALL);
                 self.put(q, q + 1, PAREN_BEGIN);
-                self.push(q + 1, PARENS);
+                let parens = if sql::jvm_call(b, p, ie) {
+                    PARENS_SQL
+                } else {
+                    PARENS
+                };
+                self.push(q + 1, parens);
                 return Some(q + 1);
             }
         }
@@ -2501,6 +2839,10 @@ impl<'b> Scan<'b, '_> {
                     return Some(self.enter(p, &[LAMBDA_PARAMS]));
                 }
                 return Some(self.open(p, 1, PARENS, PAREN_BEGIN));
+            }
+            b'"' if self.mark <= p && self.marked(p) => return Some(self.sql_string(p)),
+            b'"' if b[p + 1..].starts_with(b"\"\"") => {
+                return Some(self.open(p, 3, TEXT_BLOCK, TB_BEGIN));
             }
             b'"' if regex_string(b, p) => {
                 self.re = 0;
@@ -4004,5 +4346,86 @@ mod tests {
             !got.iter().any(|(t, s)| t == "+" && s.contains("regexp")),
             "{got:?}"
         );
+    }
+
+    #[test]
+    fn text_blocks() {
+        const TB: &str = "string.quoted.triple.java";
+        let l = [
+            "class A {",
+            r#"  String s = """"#,
+            r#"    a "q" "" \n \"""
+"#
+            .trim_end(),
+            r#"    int x = 1; \"#,
+            r#"    """;"#,
+            "  int y;",
+            "}",
+        ];
+        has(
+            &l,
+            r#"""""#,
+            &format!("{TB} punctuation.definition.string.begin.java"),
+        );
+        has(&l, r#"    a "q" "" "#, TB);
+        has(&l, r"\n", &format!("{TB} constant.character.escape.java"));
+        // `\"` then `""`, not the end
+        has(&l, r#"\""#, &format!("{TB} constant.character.escape.java"));
+        has(&l, r#"    int x = 1; "#, TB);
+        // a `\` at a line's end joins the next
+        has(&l, r"\", &format!("{TB} constant.character.escape.java"));
+        has(
+            &l,
+            r#"""""#,
+            &format!("{TB} punctuation.definition.string.end.java"),
+        );
+        has(&l, "int", "storage.type.primitive.java");
+    }
+
+    #[test]
+    fn sql_in_strings() {
+        const DQ: &str = "string.quoted.double.java";
+        const TB: &str = "string.quoted.triple.java";
+        const AN: &str = "meta.annotation.java string.quoted.double.java";
+        let l = [
+            "class A {",
+            "  // language=SQL",
+            r#"  static final String Q = "SELECT a FROM t WHERE b = \"x\"";"#,
+            r#"  @Language("PostgreSQL")"#,
+            r#"  String q = """"#,
+            r#"    DELETE FROM t /* a"#,
+            r#"    */ WHERE c = 'x' -- d"#,
+            r#"    """;"#,
+            r#"  @Query("UPDATE u SET n = ?1")"#,
+            r#"  @NamedQuery(name = "HAVING", query = "SELECT n FROM N")"#,
+            "  void f() {",
+            "    var ps = conn.prepareStatement(",
+            r#"      "SELECT id " +"#,
+            r#"      "FROM users", "ORDER");"#,
+            r#"    jdbcTemplate.update("INSERT INTO t"); doc.select("UNION"); s.concat("LIMIT");"#,
+            r#"    String p = "GROUP";"#,
+            "  }",
+            "}",
+        ];
+        has(&l, "SELECT", &format!("{DQ} keyword.other.DML.sql"));
+        // the host's escape between SQL's tokens
+        has(&l, r#"\""#, &format!("{DQ} constant.character.escape.java"));
+        // a text block's SQL, its comment across lines, a line comment to its line's end
+        has(&l, "DELETE", &format!("{TB} keyword.other.DML.sql"));
+        has(&l, "    */", &format!("{TB} comment.block.c"));
+        has(&l, "WHERE", &format!("{TB} keyword.other.DML.sql"));
+        has(&l, " d", &format!("{TB} comment.line.double-dash.sql"));
+        has(&l, "UPDATE", &format!("{AN} keyword.other.DML.sql"));
+        // `query =`'s value, not `name =`'s
+        has(&l, "HAVING", AN);
+        has(&[l[9]], "SELECT", &format!("{AN} keyword.other.DML.sql"));
+        // a call's first argument, over lines and `+`; not its second
+        has(&l, "FROM", &format!("{DQ} keyword.other.DML.sql"));
+        has(&l, "ORDER", DQ);
+        has(&l, "INSERT INTO", &format!("{DQ} keyword.other.DML.sql"));
+        // jsoup's `select`, any call, a plain string
+        for w in ["UNION", "LIMIT", "GROUP"] {
+            has(&l, w, DQ);
+        }
     }
 }
