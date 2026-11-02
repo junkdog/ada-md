@@ -360,8 +360,8 @@ fn print_doc(
             .ok(),
         None => None,
     };
-    // A whole log, JSON or text file prints a piece at a time (O-52); a preview reads only its
-    // head, and `--line`, `--match` and `--gutter` need the whole layout.
+    // A whole text file, or code ada lexes itself, prints a piece at a time (O-52, PRN-003); a
+    // preview reads only its head, and `--line`, `--match` and `--gutter` need the whole layout.
     let mut read = Vec::new();
     if rows.is_none()
         && args.line.is_none()

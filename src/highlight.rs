@@ -228,10 +228,15 @@ fn language(syntax: Syntax) -> Option<&'static str> {
 
 /// The cache key of a code block, or `None` when it has no language worth highlighting.
 pub fn key(code: &CodeBlock) -> Option<u64> {
-    let lang = code.lang.as_deref().filter(|l| !is_plain(l))?;
+    key_of(code.lang.as_deref(), code.hash)
+}
+
+/// [`key`] of a code block in `lang` whose text hashes to `hash`.
+pub fn key_of(lang: Option<&str>, hash: u64) -> Option<u64> {
+    let lang = lang.filter(|l| !is_plain(l))?;
     let mut h = DefaultHasher::new();
     lang.hash(&mut h);
-    code.hash.hash(&mut h);
+    hash.hash(&mut h);
     Some(h.finish())
 }
 
@@ -759,19 +764,23 @@ impl ParseRules {
 }
 
 /// How a file printed a piece at a time is highlighted (O-52): not at all, or by one of ada's
-/// own lexers, whose lines don't depend on each other but for JSON's open `/* */`. A syntect
-/// syntax's state carries from line to line and can't move between threads, so none streams.
+/// own lexers. A syntect syntax's state carries from line to line and can't move between
+/// threads, so none streams (O-053).
 pub enum Lexer {
     Plain,
     /// An ada-parse language whose lines don't depend on each other (`Lang::line_by_line`),
-    /// or JSON.
+    /// or JSON: each piece is highlighted on the thread that paints it.
     Parse(ParseRules),
+    /// Any other ada-parse language, whose state carries from line to line (PRN-003): one
+    /// [`Carrier`] highlights the pieces in order, and the threads that paint them get them
+    /// highlighted.
+    Carry(Lang),
 }
 
 impl Lexer {
     /// Whether a file in `lang`, or plain text with none, has a lexer.
     pub fn exists(lang: Option<&str>) -> bool {
-        lang.is_none_or(|l| is_plain(l) || own(l).is_some_and(streams))
+        lang.is_none_or(|l| is_plain(l) || own(l).is_some())
     }
 
     /// The lexer for a file in `lang`, or plain text with none; `None` when syntect would
@@ -782,14 +791,15 @@ impl Lexer {
             Some(lang) if is_plain(lang) => Some(Lexer::Plain),
             Some(lang) => match own(lang)? {
                 l if streams(l) => Some(Lexer::Parse(ParseRules::new(l, theme))),
-                _ => None,
+                l => Some(Lexer::Carry(l)),
             },
         }
     }
 
     /// Highlight `code`'s lines as [`highlight`] would, after the lines before it left
     /// `state` (JSON's open `/* */`; a line-by-line language's is always the default). Also
-    /// returns the state its last line leaves. `None` when the block is plain.
+    /// returns the state its last line leaves. `None` when the block is plain. Not for
+    /// [`Lexer::Carry`], whose pieces a [`Carrier`] highlights.
     pub fn highlight(
         &self,
         code: &CodeBlock,
@@ -802,6 +812,7 @@ impl Lexer {
         let mut lines = LineRuns::default();
         match self {
             Lexer::Plain => return (None, state),
+            Lexer::Carry(_) => unreachable!("a carried piece comes highlighted"),
             Lexer::Parse(rules) => {
                 let (mut spans, mut buf) = (Vec::new(), String::new());
                 for l in code.lines() {
@@ -858,10 +869,68 @@ impl Lexer {
     }
 }
 
-/// Whether a print streams `lang` a piece at a time: its lines don't depend on each other, or
-/// it is JSON, whose one state (a `/* */` open) the stream carries.
+/// Whether a streamed print highlights `lang`'s pieces on the threads that paint them: its
+/// lines don't depend on each other, or it is JSON, whose one state (a `/* */` open) the reader
+/// finds without lexing every line. Any other ada-parse language is a [`Lexer::Carry`].
 fn streams(lang: Lang) -> bool {
     lang == Lang::Json || lang.line_by_line()
+}
+
+/// Highlights the pieces of a file printed a piece at a time in a [`Lexer::Carry`] language, in
+/// order, carrying the lexer's state from each piece to the next (PRN-003). Its pieces' lines
+/// get [`highlight`]'s spans for the whole file: a line's spans depend only on the line and the
+/// state before it, and a piece's flag for tab expansion leaves a line without a control
+/// character as it is, as the whole block's does.
+pub struct Carrier<'a> {
+    rules: ParseRules,
+    highlighter: LazyHighlighter<'a>,
+    state: ada_parse::State,
+    spans: Vec<ada_parse::Span>,
+    buf: String,
+}
+
+impl<'a> Carrier<'a> {
+    pub fn new(lang: Lang, theme: &'a SyntaxTheme) -> Self {
+        Self {
+            rules: ParseRules::cached(lang, theme.id),
+            highlighter: LazyHighlighter {
+                theme,
+                built: OnceCell::new(),
+            },
+            state: ada_parse::State::default(),
+            spans: Vec::new(),
+            buf: String::new(),
+        }
+    }
+
+    /// Highlight the next piece, `text`, whose block has the cache key `key`.
+    pub fn highlight(&mut self, key: u64, text: &str) -> CodeSpans {
+        let expand = block_needs_expanding(text);
+        let mut lines = LineRuns::default();
+        for line in Lines::new(text) {
+            self.rules.line_resolving(
+                line,
+                &mut self.state,
+                &mut self.spans,
+                expand,
+                &mut self.buf,
+                &self.highlighter,
+                &mut lines,
+            );
+        }
+        CodeSpans {
+            key,
+            rules: self.highlighter.theme.id,
+            partial: false,
+            lines: lines.shrink(),
+        }
+    }
+}
+
+impl Drop for Carrier<'_> {
+    fn drop(&mut self) {
+        self.rules.keep();
+    }
 }
 
 /// What highlights a block's lines.

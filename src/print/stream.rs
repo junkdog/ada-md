@@ -1,14 +1,16 @@
-//! `--print` of a big log, JSON or text file a piece at a time (O-52). A whole print holds the
-//! file, its layout and its highlighting at once, ~6× the file at the peak (476 MiB for an 80 MB
-//! log). Here a reader cuts the input into pieces of whole lines, workers highlight, lay out and
-//! paint each piece as a document of its own, and the caller's thread writes them in order. The
+//! `--print` of a big text file, or of code ada lexes itself, a piece at a time (O-52). A whole
+//! print holds the file, its layout and its highlighting at once, ~6× the file at the peak (476
+//! MiB for an 80 MB log). Here a reader cuts the input into pieces of whole lines, workers
+//! highlight, lay out and paint each piece as a document of its own, and the caller's thread writes them in order. The
 //! output is the whole print's, byte for byte: a piece's rows are the rows its lines get in the
 //! whole layout, numbered for the whole file, with the code block's top row only in the first
 //! piece and its bottom row only in the last.
 //!
-//! Only lexers whose lines don't depend on each other stream ([`Lexer`]); JSON's one state, a
-//! `/* */` comment left open, the reader carries from piece to piece, scanning only the lines
-//! that can open or close one.
+//! Only ada's own lexers stream ([`Lexer`]). Where lines don't depend on each other, each piece
+//! is highlighted on the thread that paints it; JSON's one state, a `/* */` comment left open,
+//! the reader carries from piece to piece, scanning only the lines that can open or close one.
+//! Any other ada-parse language's state the reader carries by highlighting each piece itself,
+//! in order, before handing it on (PRN-003): one thread lexes, the rest lay out and paint.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -22,7 +24,7 @@ use std::thread;
 use crate::app;
 use crate::doc::{self, BlockKind};
 use crate::filetype::{self, FileType};
-use crate::highlight::{Highlights, Lexer, SyntaxTheme};
+use crate::highlight::{self, Carrier, CodeSpans, Highlights, Lexer, SyntaxTheme};
 use crate::layout::{self, Layout, LayoutParams, LineNumbers};
 use crate::theme::Theme;
 use crate::ui::Painter;
@@ -82,9 +84,9 @@ pub struct Stream {
     limits: Limits,
 }
 
-/// Read the start of `path` (`-` for stdin) and tell whether it streams: a log, JSON or text
-/// file of 1 MiB (`FIRST`) or more, shown as `forced` or as what it holds. With line numbers
-/// (`numbered`) the lines are counted first, which stdin can't do.
+/// Read the start of `path` (`-` for stdin) and tell whether it streams: a text file, or code
+/// in a language ada lexes itself, of 1 MiB (`FIRST`) or more, shown as `forced` or as what it
+/// holds. With line numbers (`numbered`) the lines are counted first, which stdin can't do.
 pub fn start(path: &Path, forced: Option<FileType>, numbered: bool) -> Start {
     let stdin = path == Path::new("-");
     if stdin && numbered {
@@ -143,7 +145,7 @@ pub fn start(path: &Path, forced: Option<FileType>, numbered: bool) -> Start {
 /// Print `bytes`, a file of `lang`, as [`start`] would stream it, but cut at `limits`, `first`
 /// bytes of it read before the rest, and line numbers counted as the whole print counts them. The fuzzer's way in (F-07): it checks the
 /// output against [`super::render`] of the whole file. `lang` must be one a lexer highlights
-/// (`None`, `"log"`, `"JSON"`, or an ada-parse language read line by line, as `"Diff"`).
+/// (`None`, `"log"`, `"JSON"`, or any other ada-parse language, as `"Diff"` or `"bash"`).
 #[doc(hidden)]
 pub fn write_bytes(
     bytes: &[u8],
@@ -262,6 +264,8 @@ struct Piece {
     last: bool,
     /// The lexer's state at its start: JSON's `/* */` left open, else the default.
     state: ada_parse::State,
+    /// Its highlighting, done by the reader for a [`Lexer::Carry`] language.
+    spans: Option<CodeSpans>,
 }
 
 /// What every piece is painted with.
@@ -276,13 +280,16 @@ struct Paint<'a> {
 
 impl Paint<'_> {
     /// Paint a piece; `spare` is a layout no longer needed, and comes back for the next piece.
-    fn piece(&self, piece: &Piece, spare: Layout) -> (String, Layout) {
+    fn piece(&self, piece: Piece, spare: Layout) -> (String, Layout) {
         let text = Arc::clone(&piece.text);
         let doc = doc::file::code_piece(text, self.lang, piece.first_line, piece.index as u64);
         let BlockKind::Code(code) = &doc.blocks[0].kind else {
             unreachable!("a piece is one code block");
         };
-        let (spans, _) = self.lexer.highlight(code, &self.syntax, piece.state);
+        let spans = match &self.lexer {
+            Lexer::Carry(_) => piece.spans,
+            lexer => lexer.highlight(code, &self.syntax, piece.state).0,
+        };
         let mut highlights = Highlights::default();
         if let Some(spans) = spans {
             highlights.insert(Arc::new(spans));
@@ -372,8 +379,15 @@ impl Stream {
                 let _ = tokens_tx.send(());
             }
             let lexer = &paint.lexer;
-            let reader =
-                s.spawn(move || read_pieces(rest, first, limits, lexer, &tokens, &jobs_tx));
+            let carrier = match *lexer {
+                Lexer::Carry(lang) => Some(Carrier::new(lang, &paint.syntax)),
+                _ => None,
+            };
+            let lang = paint.lang;
+            let reader = s.spawn(move || {
+                let carry = carrier.map(|c| (c, lang));
+                read_pieces(rest, first, limits, lexer, carry, &tokens, &jobs_tx)
+            });
             for _ in 0..workers {
                 let (jobs, done_tx) = (&jobs, done_tx.clone());
                 s.spawn(move || {
@@ -385,17 +399,18 @@ impl Stream {
                         };
                         // a panic stops the writing, which would wait for this piece, then goes
                         // on as it would in a whole print
+                        let index = piece.index;
                         let painted =
-                            panic::catch_unwind(AssertUnwindSafe(|| paint.piece(&piece, spare)));
+                            panic::catch_unwind(AssertUnwindSafe(|| paint.piece(piece, spare)));
                         let (out, layout) = match painted {
                             Ok(painted) => painted,
                             Err(panic) => {
-                                let _ = done_tx.send((piece.index, None));
+                                let _ = done_tx.send((index, None));
                                 panic::resume_unwind(panic);
                             }
                         };
                         spare = layout;
-                        if done_tx.send((piece.index, Some(out))).is_err() {
+                        if done_tx.send((index, Some(out))).is_err() {
                             return;
                         }
                     }
@@ -436,16 +451,26 @@ fn write_in_order(
 /// Cut the input, `buf` read of it so far and `input` the rest, into pieces of whole lines, a
 /// piece for each token. A piece ends on a newline and is never the lone newline of an empty
 /// line, which [`doc::code_lines`] would read as no line at all; at the end, the file's last
-/// empty line joins the piece before it for the same reason.
+/// empty line joins the piece before it for the same reason. With `carry`, a [`Lexer::Carry`]
+/// language's carrier and the file's language, each piece is highlighted as it is sent, after
+/// any such join, and before waiting for its token, so that lexing goes on while the workers
+/// paint.
 fn read_pieces(
     mut input: impl Read,
     mut buf: Vec<u8>,
     limits: Limits,
     lexer: &Lexer,
+    mut carry: Option<(Carrier, Option<&str>)>,
     tokens: &Receiver<()>,
     jobs: &SyncSender<Piece>,
 ) -> io::Result<()> {
-    let send = |piece: Piece| tokens.recv().is_ok() && jobs.send(piece).is_ok();
+    let mut send = |mut piece: Piece| {
+        if let Some((carrier, lang)) = &mut carry {
+            let key = highlight::key_of(*lang, piece.index as u64);
+            piece.spans = key.map(|key| carrier.highlight(key, &piece.text));
+        }
+        tokens.recv().is_ok() && jobs.send(piece).is_ok()
+    };
     let (mut index, mut line, mut state) = (0, 1, ada_parse::State::default());
     // a piece is a document of its own, its offsets `u32`s (PAR-001); under the cap, the last
     // empty line can still join it
@@ -463,6 +488,7 @@ fn read_pieces(
             first: index == 0,
             last,
             state,
+            spans: None,
             text,
         };
         index += 1;
@@ -550,6 +576,17 @@ mod tests {
 
     /// Print `bytes` in `lang` whole and a piece at a time, and check that the two agree.
     fn same(bytes: &[u8], lang: Option<&'static str>, width: u16, numbers: LineNumbers) {
+        same_at(bytes, lang, width, numbers, Limits::DEFAULT);
+    }
+
+    /// [`same`], with the reader cutting at `limits`.
+    fn same_at(
+        bytes: &[u8],
+        lang: Option<&'static str>,
+        width: u16,
+        numbers: LineNumbers,
+        limits: Limits,
+    ) {
         let theme = Theme::builtin();
         let filetype = FileType::Text { lang };
         let text = String::from_utf8_lossy(bytes);
@@ -564,7 +601,7 @@ mod tests {
             rest: Box::new(Cursor::new(bytes[split..].to_vec())),
             lang,
             lines,
-            limits: Limits::DEFAULT,
+            limits,
         };
         let mut out = Vec::new();
         stream.write(&theme, params, &mut out).unwrap();
@@ -680,5 +717,104 @@ mod tests {
         text.push_str("}\n");
         same(text.as_bytes(), Some("JSON"), 100, LineNumbers::Code);
         same(text.as_bytes(), Some("JSON"), 31, LineNumbers::Off);
+    }
+
+    /// `reps` times: a few lines of `plain`, then `open`, `inside` lines past several pieces
+    /// (some with a tab), and `close`, so that a lexer's state stays open across cuts.
+    fn carried(plain: &str, open: &str, inside: &str, close: &str, reps: usize) -> String {
+        let mut out = String::new();
+        for r in 0..reps {
+            for i in 0..40 {
+                let _ = writeln!(out, "{}", plain.replace('#', &(r * 100 + i).to_string()));
+            }
+            out.push_str(open);
+            out.push('\n');
+            for i in 0..LINES + 300 {
+                let tab = if (r + i) % 97 == 0 { "\t" } else { "" };
+                let _ = writeln!(out, "{tab}{}", inside.replace('#', &i.to_string()));
+            }
+            out.push_str(close);
+            out.push('\n');
+        }
+        out
+    }
+
+    /// Small pieces, so that cuts fall everywhere in the short inputs.
+    const SMALL: Limits = Limits {
+        piece: 700,
+        lines: 9,
+    };
+
+    #[test]
+    fn carried_languages_keep_their_state_across_pieces() {
+        let cases = [
+            (
+                "Bourne Again Shell (bash)",
+                carried(
+                    "x=$((# + 1)); echo \"v $x\" 'q' | grep -c a # note",
+                    "cat <<EOF",
+                    "inside a heredoc $HOME `date` # not a comment #",
+                    "EOF",
+                    3,
+                ),
+            ),
+            (
+                "Rust",
+                carried(
+                    "fn f#(x: u32) -> u32 { x + 0x1f } // note",
+                    "/* a comment /* nested */ that runs on",
+                    "  still inside, \"not a string\" fn #",
+                    "*/ const S: &str = r#\"",
+                    3,
+                ) + "\"#;\n",
+            ),
+            (
+                "Makefile",
+                carried(
+                    "VAR# := $(wildcard *.c) # note\ntarget#: dep\n\t$(CC) -o $@ $^",
+                    "define BLOCK",
+                    "  echo $(VAR#) \"inside define\"",
+                    "endef",
+                    3,
+                ),
+            ),
+            (
+                "Python",
+                carried(
+                    "def f#(x): return x + 1  # note",
+                    "s = \"\"\"a docstring",
+                    "  that runs on, 'quoted' # not a comment #",
+                    "\"\"\"",
+                    3,
+                ),
+            ),
+        ];
+        for (lang, text) in &cases {
+            for numbers in [LineNumbers::Code, LineNumbers::Off] {
+                same(text.as_bytes(), Some(lang), 100, numbers);
+            }
+            same(
+                text.replace('\n', "\r\n").as_bytes(),
+                Some(lang),
+                37,
+                LineNumbers::Code,
+            );
+            same_at(text.as_bytes(), Some(lang), 80, LineNumbers::Code, SMALL);
+            for ending in ["\n", "\n\n", "tail without a newline"] {
+                let text = format!("{text}{ending}");
+                same_at(text.as_bytes(), Some(lang), 80, LineNumbers::Off, SMALL);
+            }
+        }
+    }
+
+    #[test]
+    fn every_ada_parse_language_streams() {
+        for lang in ada_parse::Lang::ALL {
+            assert!(Lexer::exists(Some(lang.name())), "{lang:?}");
+        }
+        assert!(
+            !Lexer::exists(Some("Scala")),
+            "syntect's languages print whole"
+        );
     }
 }
