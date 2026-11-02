@@ -6,6 +6,8 @@ What changed in each release of ada, newest first. A release includes the change
 
 ### Features
 
+- *(ada-parse)* Highlight Lisp, Emacs Lisp, Scheme, Racket and Clojure with scanners of ada's own (X-006)
+- *(ada-parse)* Highlight SQL in Java's and Kotlin's strings by call site and marker, and Java's text blocks (ADR-40)
 - *(ada-parse)* Highlight regexes in JavaScript's and TypeScript's RegExp strings, and TypeScript's literals on the regex scanner (ADR-40)
 - *(ada-parse)* Highlight regexes in C#'s and PowerShell's strings, in .NET's dialect (ADR-40)
 - *(ada-parse)* Highlight JavaScript's regex literals as regexes, and a class's characters in Kotlin's and Java's (ADR-40)
@@ -28,18 +30,24 @@ What changed in each release of ada, newest first. A release includes the change
 - *(ada-parse)* Highlight a long line of Java's `a.b.c` chains in linear time, not quadratic (X-003)
 - *(ci)* Name the gnu target for cargo fuzz build, as the prebuilt cargo-fuzz defaults to musl
 - *(images)* Refuse a JPEG too short for the size its header claims
+- Refuse documents of 4 GiB or more instead of wrapping their u32 byte offsets (PAR-001)
+- End HTML's script at </script or the attribute's quote inside a regex character class (X-004)
 - Keep SCSS's spans in order when a namespaced call meets the nesting limit
 - Require Rust 1.95, and build the examples on macOS and Windows
 - Highlight TypeScript as bat's grammar does where scrambled input showed it differing (ADR-40)
 
 ### Performance
 
+- *(ada-parse)* Highlight Java 20% faster in ada by classifying tokens once in front of the grammar's patterns (X-005)
 - *(highlight)* Highlight shell scripts with the port of bat's bash grammar instead of syntect
 - *(highlight)* Highlight Makefiles with a port of bat's grammar instead of syntect
 - *(parse)* Scan for markup 16 bytes at a time on x86_64 (PAR-005)
 - *(parse)* Find line starts with AVX2, count code lines with memchr, hash with foldhash (PAR-003)
 - *(parse)* Find each event's lines with a cursor, not two binary searches (PAR-002)
 - *(print)* Write the SGR's first parameter without its separator, instead of removing it
+- Keep each document's runs and each table's cells in one Vec, the Doc's heap −4 to −67% and tables' print peak 94 → 65 MiB (PAR-008)
+- Print big files in ada-parse's languages a piece at a time, 6–7× less peak memory (PRN-003)
+- Highlight .env and Git's ignore, attributes and mailmap files 2.6–4.1× faster with scanners of ada's own
 - Highlight ada's own languages 30–124% faster in ada by trimming the per-line path around the lexers (HL-004)
 - Highlight HTML with a scanner of ada's own, its CSS and JavaScript on theirs, 31× faster than syntect in ada (ADR-40)
 - Highlight SCSS 3.4× faster alone and twice as fast in ada, with the same output (ADR-40)
