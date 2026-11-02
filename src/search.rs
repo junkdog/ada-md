@@ -128,14 +128,17 @@ fn collect(blocks: &[Block], doc: &Doc, glyphs: &Glyphs, texts: &mut [String]) {
                 put(
                     texts,
                     inlines.unit,
-                    wrap::unit_text(&inlines.runs, doc, glyphs),
+                    wrap::unit_text(doc.runs(inlines), doc, glyphs),
                 );
             }
             BlockKind::Table(t) => {
-                for row in std::iter::once(&t.header).chain(&t.rows) {
-                    for cell in &row.cells {
-                        put(texts, cell.unit, wrap::unit_text(&cell.runs, doc, glyphs));
-                    }
+                // the header's cells, then each row's
+                for cell in &t.cells {
+                    put(
+                        texts,
+                        cell.unit,
+                        wrap::unit_text(doc.runs(cell), doc, glyphs),
+                    );
                 }
             }
             BlockKind::Code(code) => {

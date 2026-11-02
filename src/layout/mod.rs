@@ -1123,7 +1123,7 @@ impl Builder<'_> {
                 anchor,
             } => self.heading(*level, inlines, *anchor),
             BlockKind::Paragraph(inlines) => {
-                self.paragraph(&inlines.runs, inlines.unit, self.text_key, None);
+                self.paragraph(self.doc.runs(inlines), inlines.unit, self.text_key, None);
             }
             BlockKind::List(list) => self.list(list),
             BlockKind::Quote { callout, blocks } => self.quote(*callout, blocks, block.src),
@@ -1154,7 +1154,7 @@ impl Builder<'_> {
         let g = self.g;
         let (prefix, suffix) = &g.heading[usize::from(level.clamp(1, 6) - 1)];
         self.push_prefix(prefix, key);
-        self.paragraph(&inlines.runs, inlines.unit, key, Some(suffix));
+        self.paragraph(self.doc.runs(inlines), inlines.unit, key, Some(suffix));
         self.pop_prefix();
     }
 

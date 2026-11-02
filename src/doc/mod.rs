@@ -83,6 +83,9 @@ pub struct Doc {
     /// Every run's text, in source order: a run holds its range (PAR-004), one heap block for
     /// the document's inline text instead of one a run.
     pub text: String,
+    /// Every paragraph's, heading's and cell's runs, end to end: an [`Inlines`] holds its range
+    /// (PAR-008), one heap block for the document's runs instead of one a paragraph or cell.
+    pub runs: Vec<Run>,
 }
 
 impl Doc {
@@ -93,6 +96,16 @@ impl Doc {
     /// `run`'s text: what is rendered and searched.
     pub fn run_text(&self, run: &Run) -> &str {
         run.text.of(&self.text)
+    }
+
+    /// `inlines`' runs.
+    pub fn runs(&self, inlines: &Inlines) -> &[Run] {
+        inlines.runs.of(&self.runs)
+    }
+
+    /// `inlines`' visible text, with breaks as spaces.
+    pub fn plain_text(&self, inlines: &Inlines) -> String {
+        plain_text(self.runs(inlines), &self.text)
     }
 }
 
@@ -222,6 +235,9 @@ pub struct Table {
     pub aligns: Vec<Align>,
     pub header: TableRow,
     pub rows: Vec<TableRow>,
+    /// Every row's cells, the header's first, end to end: a [`TableRow`] holds its range
+    /// (PAR-008), one heap block for the table's cells instead of one a row.
+    pub cells: Vec<Inlines>,
 }
 
 impl Table {
@@ -232,11 +248,17 @@ impl Table {
             .max(self.header.cells.len())
             .max(self.rows.iter().map(|r| r.cells.len()).max().unwrap_or(0))
     }
+
+    /// `row`'s cells.
+    pub fn cells(&self, row: &TableRow) -> &[Inlines] {
+        row.cells.of(&self.cells)
+    }
 }
 
 #[derive(Debug, Default)]
 pub struct TableRow {
-    pub cells: Vec<Inlines>,
+    /// A range of its table's [`Table::cells`] (read it with [`Table::cells`]).
+    pub cells: Slots,
     pub src: LineRange,
 }
 
@@ -250,23 +272,45 @@ pub enum Align {
 
 #[derive(Debug, Default)]
 pub struct Inlines {
-    pub runs: Vec<Run>,
+    /// A range of [`Doc::runs`] (read it with [`Doc::runs`]).
+    pub runs: Slots,
     pub unit: UnitId,
 }
 
-impl Inlines {
-    /// The visible text, with breaks as spaces; `text` is the document's [`Doc::text`].
-    pub fn plain_text(&self, text: &str) -> String {
-        let mut out = String::new();
-        for run in &self.runs {
-            match run.kind {
-                RunKind::Text | RunKind::InlineImage(_) => out.push_str(run.text.of(text)),
-                RunKind::SoftBreak | RunKind::HardBreak => out.push(' '),
-                RunKind::FootnoteRef(_) => {}
-            }
-        }
-        out
+/// Items `start..end` of a list the IR keeps end to end: a document's runs or a table's cells
+/// (PAR-008).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Slots {
+    pub start: u32,
+    pub end: u32,
+}
+
+impl Slots {
+    /// This range of `items`.
+    pub fn of<T>(self, items: &[T]) -> &[T] {
+        &items[self.start as usize..self.end as usize]
     }
+
+    pub fn len(self) -> usize {
+        (self.end - self.start) as usize
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.start == self.end
+    }
+}
+
+/// The visible text of `runs`, with breaks as spaces; `text` is the document's [`Doc::text`].
+pub fn plain_text(runs: &[Run], text: &str) -> String {
+    let mut out = String::new();
+    for run in runs {
+        match run.kind {
+            RunKind::Text | RunKind::InlineImage(_) => out.push_str(run.text.of(text)),
+            RunKind::SoftBreak | RunKind::HardBreak => out.push(' '),
+            RunKind::FootnoteRef(_) => {}
+        }
+    }
+    out
 }
 
 #[derive(Debug)]

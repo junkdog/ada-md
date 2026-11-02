@@ -746,10 +746,9 @@ impl Roles {
                 }
                 BlockKind::Table(t) => {
                     marker.take();
-                    for row in std::iter::once(&t.header).chain(&t.rows) {
-                        for cell in &row.cells {
-                            self.set(cell.unit, 0, &mut None);
-                        }
+                    // the header's cells, then each row's
+                    for cell in &t.cells {
+                        self.set(cell.unit, 0, &mut None);
                     }
                 }
                 BlockKind::Code(code) => {
@@ -824,7 +823,7 @@ impl<'a> Shown<'a> {
                 .map(|(i, r)| (Some(i as u32), r)),
         ) {
             by_line.push((r.src.start, row));
-            for (col, cell) in r.cells.iter().enumerate() {
+            for (col, cell) in table.cells(r).iter().enumerate() {
                 cells.push((cell.unit, row, geom::cells(col)));
             }
         }
@@ -902,7 +901,7 @@ impl<'a> Shown<'a> {
             None => Some(&self.table.header),
             Some(i) => self.table.rows.get(i as usize),
         };
-        r.and_then(|r| r.cells.get(usize::from(col)))
+        r.and_then(|r| self.table.cells(r).get(usize::from(col)))
             .map_or("", |c| view.map.unit_text(c.unit))
     }
 

@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-use ada::doc::{Block, BlockKind, Doc, InlineStyle, Inlines, LinkKind, RunKind};
+use ada::doc::{Block, BlockKind, Doc, InlineStyle, LinkKind, Run, RunKind};
 
 /// About 4 MB: past every cache but L3, and long enough that a sample isn't a handful of calls.
 pub const SIZE: usize = 4_000_000;
@@ -385,8 +385,9 @@ pub fn census(doc: &Doc) -> BTreeMap<&'static str, usize> {
     fn add(n: &mut Counts, key: &'static str, by: usize) {
         *n.entry(key).or_default() += by;
     }
-    fn inlines(i: &Inlines, n: &mut Counts) {
-        for run in &i.runs {
+    // every paragraph's, heading's and cell's runs, wherever they are nested
+    fn runs(runs: &[Run], n: &mut Counts) {
+        for run in runs {
             match run.kind {
                 RunKind::Text => {
                     for (style, key) in STYLES {
@@ -404,17 +405,11 @@ pub fn census(doc: &Doc) -> BTreeMap<&'static str, usize> {
     fn walk(blocks: &[Block], n: &mut Counts) {
         for block in blocks {
             match &block.kind {
-                BlockKind::Heading {
-                    level, inlines: i, ..
-                } => {
+                BlockKind::Heading { level, .. } => {
                     add(n, "heading", 1);
                     add(n, LEVELS[usize::from(*level) - 1], 1);
-                    inlines(i, n);
                 }
-                BlockKind::Paragraph(i) => {
-                    add(n, "paragraph", 1);
-                    inlines(i, n);
-                }
+                BlockKind::Paragraph(_) => add(n, "paragraph", 1),
                 BlockKind::List(list) => {
                     add(n, "list", 1);
                     for item in &list.items {
@@ -432,12 +427,7 @@ pub fn census(doc: &Doc) -> BTreeMap<&'static str, usize> {
                     add(n, "code", 1);
                     add(n, "code-bytes", code.text.len());
                 }
-                BlockKind::Table(t) => {
-                    add(n, "table", 1);
-                    for row in std::iter::once(&t.header).chain(&t.rows) {
-                        row.cells.iter().for_each(|c| inlines(c, n));
-                    }
-                }
+                BlockKind::Table(_) => add(n, "table", 1),
                 BlockKind::Image { .. } => add(n, "image", 1),
                 BlockKind::Rule => add(n, "rule", 1),
                 BlockKind::Html(_) => add(n, "html", 1),
@@ -446,6 +436,7 @@ pub fn census(doc: &Doc) -> BTreeMap<&'static str, usize> {
         }
     }
     let mut n = Counts::new();
+    runs(&doc.runs, &mut n);
     walk(&doc.blocks, &mut n);
     for note in &doc.footnotes {
         walk(&note.blocks, &mut n);

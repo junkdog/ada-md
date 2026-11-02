@@ -212,11 +212,8 @@ fn entry_sort(entry: u32) -> Option<Option<Sort>> {
 
 /// A header cell's text, or `column N` for an empty one.
 fn header_name(doc: &crate::doc::Doc, table: &crate::doc::Table, col: usize) -> String {
-    let name = table
-        .header
-        .cells
-        .get(col)
-        .map(|c| c.plain_text(&doc.text).trim().to_owned())
+    let name = (table.cells(&table.header).get(col))
+        .map(|c| doc.plain_text(c).trim().to_owned())
         .unwrap_or_default();
     if name.is_empty() {
         format!("column {}", col + 1)

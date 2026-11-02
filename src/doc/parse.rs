@@ -14,7 +14,7 @@ use super::slug::Slugger;
 use super::{
     Align, Anchor, AnchorKind, Block, BlockKind, Callout, CodeBlock, CodeId, Doc, Footnote,
     FootnoteId, InlineStyle, Inlines, LineRange, LinkId, LinkKind, LinkRef, List, ListItem, Run,
-    RunKind, Table, TableId, TableRow, TextRange, UnitId, fence,
+    RunKind, Slots, Table, TableId, TableRow, TextRange, UnitId, fence, plain_text,
 };
 use crate::guard;
 
@@ -111,9 +111,10 @@ enum Frame {
         items: Vec<ListItem>,
         src: LineRange,
     },
+    /// Its runs are [`Builder::runs`] from `start` on.
     Inline {
         kind: InlineKind,
-        runs: Vec<Run>,
+        start: u32,
         src: LineRange,
     },
     Code {
@@ -130,7 +131,9 @@ enum Frame {
         aligns: Vec<Align>,
         header: TableRow,
         rows: Vec<TableRow>,
+        /// Every row's cells so far, the open row's from `row_start` on.
         cells: Vec<Inlines>,
+        row_start: u32,
         row_src: LineRange,
         src: LineRange,
     },
@@ -149,6 +152,11 @@ struct Builder {
     line_starts: Vec<u32>,
     /// Every run's text, in source order: the [`Doc::text`] the runs' ranges are of (PAR-004).
     text: String,
+    /// Every closed paragraph's, heading's and cell's runs, then the open ones' (PAR-008).
+    runs: Vec<Run>,
+    /// The inline frames on the stack, so closing one needn't look for others under it: the
+    /// look ran at every paragraph and cell, 0.4–1.5% of parse's instructions (experiment 76).
+    inlines_open: u32,
     /// The line the last event started on, from 1.
     line: u32,
     stack: Vec<Frame>,
@@ -176,6 +184,8 @@ impl Builder {
             // a long run's text was copied at each step (long lines' parse +5–10%, experiment
             // 71); the room left over is never touched, and `finish` gives it back
             text: String::with_capacity(text.len()),
+            runs: Vec::new(),
+            inlines_open: 0,
             line: 1,
             stack: vec![Frame::Blocks {
                 kind: Container::Root,
@@ -335,6 +345,7 @@ impl Builder {
                     header: TableRow::default(),
                     rows: Vec::new(),
                     cells: Vec::new(),
+                    row_start: 0,
                     row_src: src,
                     src,
                 });
@@ -413,12 +424,17 @@ impl Builder {
                 if let Some(Frame::Table {
                     header,
                     cells,
+                    row_start,
                     row_src,
                     ..
                 }) = self.stack.last_mut()
                 {
+                    let end = cells.len() as u32;
                     *header = TableRow {
-                        cells: mem::take(cells),
+                        cells: Slots {
+                            start: mem::replace(row_start, end),
+                            end,
+                        },
                         src: *row_src,
                     };
                 }
@@ -427,12 +443,17 @@ impl Builder {
                 if let Some(Frame::Table {
                     rows,
                     cells,
+                    row_start,
                     row_src,
                     ..
                 }) = self.stack.last_mut()
                 {
+                    let end = cells.len() as u32;
                     rows.push(TableRow {
-                        cells: mem::take(cells),
+                        cells: Slots {
+                            start: mem::replace(row_start, end),
+                            end,
+                        },
                         src: *row_src,
                     });
                 }
@@ -442,14 +463,23 @@ impl Builder {
                     kind: InlineKind::Cell,
                     ..
                 }) = self.stack.last()
-                    && let Some(Frame::Inline { runs, .. }) = self.stack.pop()
-                    && let Some(Frame::Table { cells, .. }) = self.stack.last_mut()
+                    && let Some(Frame::Inline { start, .. }) = self.stack.pop()
                 {
-                    cells.push(Inlines {
-                        runs,
-                        unit: self.units,
-                    });
-                    self.units += 1;
+                    self.inlines_open -= 1;
+                    if !matches!(self.stack.last(), Some(Frame::Table { .. })) {
+                        // a cell outside a table, which pulldown-cmark doesn't make: its runs,
+                        // the last ones, go
+                        self.runs.truncate(start as usize);
+                        return;
+                    }
+                    let runs = self.close_runs(start);
+                    if let Some(Frame::Table { cells, .. }) = self.stack.last_mut() {
+                        cells.push(Inlines {
+                            runs,
+                            unit: self.units,
+                        });
+                        self.units += 1;
+                    }
                 }
             }
             _ => {
@@ -555,17 +585,50 @@ impl Builder {
             }
             self.push_inline(InlineKind::Implicit, LineRange::line(run.src_line));
         }
-        if let Some(Frame::Inline { runs, .. }) = self.stack.last_mut() {
-            runs.push(run);
+        if let Some(Frame::Inline { .. }) = self.stack.last() {
+            self.runs.push(run);
         }
     }
 
     fn push_inline(&mut self, kind: InlineKind, src: LineRange) {
+        self.inlines_open += 1;
         self.stack.push(Frame::Inline {
             kind,
-            runs: Vec::new(),
+            start: self.runs.len() as u32,
             src,
         });
+    }
+
+    /// The runs of the inline frame just popped, which began at `start`: [`Builder::runs`] from
+    /// there on, unless another inline frame is open below it (pulldown-cmark doesn't nest them,
+    /// but nothing here relies on it). Then its runs move ahead of the open frames', which stay
+    /// end to end after them, so each frame's runs remain one range.
+    fn close_runs(&mut self, start: u32) -> Slots {
+        let end = self.runs.len() as u32;
+        debug_assert_eq!(
+            self.inlines_open as usize,
+            (self.stack.iter())
+                .filter(|f| matches!(f, Frame::Inline { .. }))
+                .count()
+        );
+        if self.inlines_open == 0 {
+            return Slots { start, end };
+        }
+        let n = end - start;
+        let mut first = start;
+        for f in &mut self.stack {
+            if let Frame::Inline { start: open, .. } = f {
+                first = first.min(*open);
+                *open += n;
+            }
+        }
+        if first < start {
+            self.runs[first as usize..].rotate_right(n as usize);
+        }
+        Slots {
+            start: first,
+            end: first + n,
+        }
     }
 
     fn push_blocks(&mut self, kind: Container, src: LineRange) {
@@ -635,19 +698,22 @@ impl Builder {
         let Some(frame) = self.stack.pop() else {
             return;
         };
+        if let Frame::Inline { .. } = frame {
+            self.inlines_open -= 1;
+        }
         let block = match frame {
-            Frame::Inline { kind, runs, src } => match kind {
+            Frame::Inline { kind, start, src } => match kind {
                 InlineKind::Paragraph | InlineKind::Implicit | InlineKind::Cell
-                    if runs.is_empty() =>
+                    if self.runs.len() == start as usize =>
                 {
                     return;
                 }
                 InlineKind::Heading(level) => {
                     let inlines = Inlines {
-                        runs,
+                        runs: self.close_runs(start),
                         unit: self.next_unit(),
                     };
-                    let text = inlines.plain_text(&self.text);
+                    let text = plain_text(inlines.runs.of(&self.runs), &self.text);
                     let slug = self.slugs.slug(&text);
                     self.anchors.push(Anchor {
                         slug: slug.into(),
@@ -664,15 +730,12 @@ impl Builder {
                     }
                 }
                 InlineKind::Implicit => {
+                    let runs = &self.runs[start as usize..];
                     let first = runs.first().map_or(src.start, |r| r.src_line);
                     let last = runs.last().map_or(src.end, |r| r.src_line);
-                    let unit = self.next_unit();
-                    paragraph(runs, &self.text, LineRange::new(first, last), unit)
+                    self.paragraph(start, LineRange::new(first, last))
                 }
-                InlineKind::Paragraph | InlineKind::Cell => {
-                    let unit = self.next_unit();
-                    paragraph(runs, &self.text, src, unit)
-                }
+                InlineKind::Paragraph | InlineKind::Cell => self.paragraph(start, src),
             },
             Frame::Blocks {
                 kind,
@@ -769,16 +832,19 @@ impl Builder {
                 aligns,
                 header,
                 rows,
+                mut cells,
                 src,
                 ..
             } => {
                 self.tables += 1;
+                cells.shrink_to_fit();
                 Block {
                     kind: BlockKind::Table(Table {
                         id: self.tables - 1,
                         aligns,
                         header,
                         rows,
+                        cells,
                     }),
                     src,
                 }
@@ -786,6 +852,32 @@ impl Builder {
             Frame::Skip => return,
         };
         self.push_block(block);
+    }
+
+    /// The paragraph of the inline frame just popped, which began at `start` and has runs. One
+    /// that holds nothing but one image becomes an image block, and its runs go.
+    fn paragraph(&mut self, start: u32, src: LineRange) -> Block {
+        let unit = self.next_unit();
+        let mut images = self.runs[start as usize..]
+            .iter()
+            .filter(|r| !is_blank(r, &self.text));
+        if let (Some(run), None) = (images.next(), images.next())
+            && let RunKind::InlineImage(link) = run.kind
+        {
+            let alt = run.text.of(&self.text).into();
+            self.runs.truncate(start as usize);
+            return Block {
+                kind: BlockKind::Image { link, alt, unit },
+                src,
+            };
+        }
+        Block {
+            kind: BlockKind::Paragraph(Inlines {
+                runs: self.close_runs(start),
+                unit,
+            }),
+            src,
+        }
     }
 
     fn next_unit(&mut self) -> UnitId {
@@ -840,9 +932,11 @@ impl Builder {
         }
 
         self.text.shrink_to_fit();
+        self.runs.shrink_to_fit();
         Doc {
             blocks,
             text: self.text,
+            runs: self.runs,
             links: self.links,
             anchors: self.anchors,
             footnotes: self.footnotes,
@@ -851,28 +945,6 @@ impl Builder {
             code_count: self.code_blocks,
             unit_count: self.units,
         }
-    }
-}
-
-/// A paragraph that holds nothing but one image becomes an image block. `text` is the
-/// document's [`Builder::text`].
-fn paragraph(runs: Vec<Run>, text: &str, src: LineRange, unit: UnitId) -> Block {
-    let mut images = runs.iter().filter(|r| !is_blank(r, text));
-    if let (Some(run), None) = (images.next(), images.next())
-        && let RunKind::InlineImage(link) = run.kind
-    {
-        return Block {
-            kind: BlockKind::Image {
-                link,
-                alt: run.text.of(text).into(),
-                unit,
-            },
-            src,
-        };
-    }
-    Block {
-        kind: BlockKind::Paragraph(Inlines { runs, unit }),
-        src,
     }
 }
 
@@ -964,12 +1036,16 @@ mod tests {
         let BlockKind::Heading { inlines, .. } = &doc.blocks[0].kind else {
             panic!()
         };
-        assert_eq!(inlines.plain_text(&doc.text), "Head x");
+        assert_eq!(doc.plain_text(inlines), "Head x");
         assert_eq!(&*doc.anchors[0].text, "Head x");
         let BlockKind::Paragraph(inl) = &doc.blocks[1].kind else {
             panic!()
         };
-        let runs: Vec<_> = inl.runs.iter().map(|r| (doc.run_text(r), r.kind)).collect();
+        let runs: Vec<_> = doc
+            .runs(inl)
+            .iter()
+            .map(|r| (doc.run_text(r), r.kind))
+            .collect();
         assert_eq!(
             runs,
             [
@@ -988,7 +1064,61 @@ mod tests {
         let BlockKind::Paragraph(note) = &doc.footnotes[0].blocks[0].kind else {
             panic!()
         };
-        assert_eq!(note.plain_text(&doc.text), "note");
+        assert_eq!(doc.plain_text(note), "note");
+    }
+
+    #[test]
+    fn each_paragraphs_and_cells_runs_are_one_range_of_the_docs() {
+        let doc =
+            parse("a *b*\n\n![lone](i.png)\n\n| h | i |\n|---|---|\n| 1 | |\n| 3 | 4 | 5 |\n\nc\n");
+        let texts = |inl: &Inlines| -> Vec<&str> {
+            doc.runs(inl).iter().map(|r| doc.run_text(r)).collect()
+        };
+        let BlockKind::Paragraph(a) = &doc.blocks[0].kind else {
+            panic!()
+        };
+        assert_eq!(texts(a), ["a ", "b"]);
+        let BlockKind::Table(t) = &doc.blocks[2].kind else {
+            panic!()
+        };
+        let row = |r: &TableRow| -> Vec<String> {
+            t.cells(r).iter().map(|c| doc.plain_text(c)).collect()
+        };
+        assert_eq!(row(&t.header), ["h", "i"]);
+        assert_eq!(row(&t.rows[0]), ["1", ""]);
+        // a cell past the alignment row's columns is dropped by pulldown-cmark
+        assert_eq!(row(&t.rows[1]), ["3", "4"]);
+        assert_eq!(t.cells.len(), 6);
+        let BlockKind::Paragraph(c) = &doc.blocks[3].kind else {
+            panic!()
+        };
+        assert_eq!(texts(c), ["c"]);
+        // the lone image's runs went with its paragraph
+        assert_eq!(doc.runs.len(), 2 + 5 + 1);
+    }
+
+    #[test]
+    fn an_inline_frame_inside_another_keeps_both_ranges_whole() {
+        // pulldown-cmark doesn't nest them; the builder mustn't depend on it
+        let mut b = Builder::new("");
+        b.push_inline(InlineKind::Paragraph, LineRange::line(1));
+        b.push_text("a", InlineStyle::NONE, 1);
+        b.push_inline(InlineKind::Paragraph, LineRange::line(1));
+        b.push_text("b", InlineStyle::NONE, 1);
+        b.push_text("c", InlineStyle::EMPH, 1);
+        b.pop_block();
+        b.push_text("d", InlineStyle::NONE, 1);
+        b.pop_block();
+        let doc = b.finish();
+        let texts: Vec<Vec<&str>> = (doc.blocks.iter())
+            .map(|block| match &block.kind {
+                BlockKind::Paragraph(inl) => {
+                    doc.runs(inl).iter().map(|r| doc.run_text(r)).collect()
+                }
+                _ => panic!(),
+            })
+            .collect();
+        assert_eq!(texts, [vec!["b", "c"], vec!["a", "d"]]);
     }
 
     #[test]
@@ -997,8 +1127,8 @@ mod tests {
         let BlockKind::Paragraph(inl) = &doc.blocks[0].kind else {
             panic!()
         };
-        let runs: Vec<_> = inl
-            .runs
+        let runs: Vec<_> = doc
+            .runs(inl)
             .iter()
             .map(|r| (doc.run_text(r), r.style))
             .collect();
@@ -1031,7 +1161,7 @@ mod tests {
         let BlockKind::Paragraph(inl) = &doc.blocks[1].kind else {
             panic!()
         };
-        assert_eq!(inl.runs.last().map(|r| r.src_line), Some(4));
+        assert_eq!(doc.runs(inl).last().map(|r| r.src_line), Some(4));
     }
 
     #[test]
@@ -1171,7 +1301,7 @@ mod tests {
             let mut text = String::new();
             doc.each_block(&mut |b| match &b.kind {
                 BlockKind::List(l) => tasks += l.items.iter().filter(|i| i.task.is_some()).count(),
-                BlockKind::Paragraph(inl) => text.push_str(&inl.plain_text(&doc.text)),
+                BlockKind::Paragraph(inl) => text.push_str(&doc.plain_text(inl)),
                 _ => {}
             });
             // the folded item's marker is its text's, not an outer item's

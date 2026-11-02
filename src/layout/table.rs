@@ -87,8 +87,8 @@ impl Cells {
         for (r, row) in std::iter::once(&t.header).chain(&t.rows).enumerate() {
             self.rows.push(self.flat.len() as u32);
             let key = if r == 0 { StyleKey::TableHeader } else { key };
-            for cell in row.cells.iter().take(n) {
-                self.flat.push(&cell.runs, cell.unit, key, doc, glyphs);
+            for cell in t.cells(row).iter().take(n) {
+                self.flat.push(doc.runs(cell), cell.unit, key, doc, glyphs);
             }
         }
         self.rows.push(self.flat.len() as u32);
@@ -214,9 +214,8 @@ pub fn order(doc: &Doc, t: &Table, sort: Sort) -> Vec<u32> {
         .rows
         .iter()
         .map(|r| {
-            r.cells
-                .get(usize::from(sort.col))
-                .map(|c| c.plain_text(&doc.text).trim().to_owned())
+            (t.cells(r).get(usize::from(sort.col)))
+                .map(|c| doc.plain_text(c).trim().to_owned())
                 .unwrap_or_default()
         })
         .collect();

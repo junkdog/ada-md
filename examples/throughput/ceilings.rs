@@ -123,7 +123,7 @@ pub fn classifier() -> &'static str {
 /// The text a layout wraps: every run's and code block's, in order.
 pub fn text_of(doc: &Doc) -> Vec<&str> {
     fn inlines<'a>(doc: &'a Doc, i: &'a Inlines, out: &mut Vec<&'a str>) {
-        out.extend(i.runs.iter().map(|r| doc.run_text(r)));
+        out.extend(doc.runs(i).iter().map(|r| doc.run_text(r)));
     }
     fn walk<'a>(doc: &'a Doc, blocks: &'a [ada::doc::Block], out: &mut Vec<&'a str>) {
         for block in blocks {
@@ -139,9 +139,7 @@ pub fn text_of(doc: &Doc) -> Vec<&str> {
                 BlockKind::Quote { blocks, .. } => walk(doc, blocks, out),
                 BlockKind::Code(code) => out.push(&code.text),
                 BlockKind::Table(t) => {
-                    for row in std::iter::once(&t.header).chain(&t.rows) {
-                        row.cells.iter().for_each(|c| inlines(doc, c, out));
-                    }
+                    t.cells.iter().for_each(|c| inlines(doc, c, out));
                 }
                 BlockKind::Image { alt, .. } => out.push(alt),
                 BlockKind::Html(html) => out.push(html),

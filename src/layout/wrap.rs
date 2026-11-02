@@ -713,7 +713,7 @@ mod tests {
         };
         let w = wrap(
             Wrapped::new(None),
-            &inl.runs,
+            doc.runs(inl),
             StyleKey::Text,
             avail,
             &doc,
@@ -816,7 +816,7 @@ mod tests {
         };
         let w = wrap(
             Wrapped::new(None),
-            &inl.runs,
+            doc.runs(inl),
             StyleKey::Text,
             80,
             &doc,
@@ -825,7 +825,7 @@ mod tests {
         );
         assert_eq!(w.buf, "a\u{a0}b \u{1f}c\u{1f}");
         assert!(w.nbsp && w.pads);
-        assert_eq!(unit_text(&inl.runs, &doc, &glyphs), "a\u{a0}b c");
+        assert_eq!(unit_text(doc.runs(inl), &doc, &glyphs), "a\u{a0}b c");
     }
 
     #[test]
@@ -878,7 +878,7 @@ mod tests {
         };
         let w = wrap(
             Wrapped::new(None),
-            &inl.runs,
+            doc.runs(inl),
             StyleKey::Text,
             12,
             &doc,
