@@ -2947,7 +2947,8 @@ mod tests {
     /// attributes of each kind with quoted, unquoted and bad values, character references in
     /// text, strings and unquoted values, `<style>` and `<script>` of each type with their closing
     /// tags (`<!--`, `-->`, `</style >`'s escape alone), `style="…"` and `on…='…'` with an
-    /// escaped quote and a `//` comment past the quote, a `//` comment past `</script>`.
+    /// escaped quote and a `//` comment past the quote, a `//` comment past `</script>`, a regex
+    /// class's text cut at `</script` and at an attribute's quote.
     #[test]
     fn html_rules_match_the_grammar() {
         let text = concat!(
@@ -2974,6 +2975,8 @@ mod tests {
             "</script>\n",
             "<script type=\"module\" src=x.js></script><script type='text/html'><b>t</b></script>\n",
             "<script type=\"text/template\"><div>{{x}}</div></script><script>f()</SCRIPT >\n",
+            "<script>r = /[a</SCRIPT>b]/; s = /x[^c</script>d]/g;</script>\n",
+            "<b onclick=\"r = /[a\" c=\"]/\" onmouseover='/a[^b'>x</b>\n",
             "</div></body></html>\n",
             // last: the comment runs past the quote, so the attribute stays open to the end
             "<i style='content:\"\\'x\"' onmouseover='a // b'>i</i>\n",
