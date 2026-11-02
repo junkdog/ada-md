@@ -23,6 +23,15 @@
 //!
 //! The stack between lines is the contexts open above the top level, up to 28 (the bytes of
 //! [`State`]'s levels).
+//!
+//! **Tokens classified once** (X-005): in front of the patterns, fast paths read a token once
+//! (its word, the word's keyword class, the byte after its blanks) and take it whole where they
+//! can show what every pattern before the one that matches would do, the rest left to the
+//! patterns, which stay the reference: a run of blanks or a word no pattern of the context
+//! starts in is passed by the run loop ([`PASSES`]); a context pushed after a type, a field's
+//! or a parameter's name that pops at once at the next byte isn't pushed ([`Scan::pops_at`]);
+//! a member's type, name and `=` are one turn ([`Scan::field_or_method`]); a parameter's
+//! plain name skips the type patterns. Each held to golden digests of every line's spans.
 
 use crate::machine::KEPT as HALF;
 use crate::regex;
@@ -568,6 +577,53 @@ static CTX: [u16; 256] = {
 };
 const COUNTED: u16 = 1 << 15;
 
+/// By context, what the scan may pass without trying the patterns: [`BLANKS`], [`WORDS`].
+static PASSES: [u8; 256] = {
+    let mut t = [0; 256];
+    // the code contexts and those within a declaration (below `MODULE_KW`; the module's
+    // contexts not checked): no pattern starts at a blank but `illegal-open-block`'s
+    // `\s?(?={)`, and `enum-body`'s at a line's start; none matches at the line's end
+    let mut i = 0;
+    while i < MODULE_KW as usize {
+        t[i] = BLANKS | QUIET_EOL;
+        i += 1;
+    }
+    t[ENUM_BODY as usize] = 0;
+    let words = [
+        BLOCK,
+        PARENS,
+        CTOR_ARGS,
+        RHS,
+        STATIC_RHS,
+        LAMBDA_ARROW,
+        LAMBDA_BODY,
+        ASSERT,
+        DECL_PARENS_IN,
+        ARRAY_INIT,
+        ANNOT_ARRAY_INIT,
+        ARRAY_DEF_IN,
+        ANNOT_DEFAULT,
+        ANNOT_ARGS,
+        ANNOT_VALUE,
+        PARENS_SQL,
+        ANNOT_ARGS_SQL,
+        ANNOT_VALUE_SQL,
+    ];
+    let mut i = 0;
+    while i < words.len() {
+        t[words[i] as usize] |= WORDS;
+        i += 1;
+    }
+    t
+};
+/// A run of blanks matches nothing unless `{` follows it.
+const BLANKS: u8 = 1;
+/// Past a word's start only a pattern starting with an identifier can match, which would have
+/// at the start unless that is a digit: a word that matches nothing is passed whole.
+const WORDS: u8 = 2;
+/// At the line's end nothing matches ([`Scan::eol`]'s `None`).
+const QUIET_EOL: u8 = 4;
+
 /// How many contexts a line can hold; one pushed past it drops the bottom one.
 const MAX: usize = 128;
 /// How many the state keeps between lines: [`State`]'s levels and withs.
@@ -590,6 +646,8 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         arrow: None,
         tag_line: None,
         word_at: std::cell::Cell::new((usize::MAX, 0)),
+        kind_at: std::cell::Cell::new((usize::MAX, Word::Other)),
+        class_at: std::cell::Cell::new((usize::MAX, 0, false)),
         fqn: std::cell::Cell::new((usize::MAX, 0, false)),
         re: 0,
         sql: sql::Embedded {
@@ -668,6 +726,11 @@ struct Scan<'b, 'c> {
     tag_line: Option<bool>,
     /// The last whole word looked up: where it starts and ends.
     word_at: std::cell::Cell<(usize, usize)>,
+    /// The last word looked up among the keywords: where it starts, and its class.
+    kind_at: std::cell::Cell<(usize, Word)>,
+    /// The last chain [`Scan::class_ahead`] read: where it started, the start of its last word,
+    /// and its answer, the same at each of its modifiers.
+    class_at: std::cell::Cell<(usize, usize, bool)>,
     /// The last chain [`Scan::fqn_ahead`] read: where it started, where it stopped, and its answer, the same for
     /// each of its words (a long `a.a.a.…` read again from each was quadratic: X-003).
     fqn: std::cell::Cell<(usize, usize, bool)>,
@@ -944,11 +1007,12 @@ fn back_to(b: &[u8], from: usize, to: usize, ok: impl Fn(usize) -> bool) -> Opti
 }
 
 /// `[_$]*` then `first`, then `rest*`, at `p`: where `first` ends, and where the run does.
+#[inline]
 fn cased(
     b: &[u8],
     p: usize,
-    first: fn(&[u8], usize) -> bool,
-    rest: fn(&[u8], usize) -> bool,
+    first: impl Fn(&[u8], usize) -> bool,
+    rest: impl Fn(&[u8], usize) -> bool,
 ) -> Option<(usize, usize)> {
     let q = run_of(b, p, |b, i| matches!(b[i], b'_' | b'$'));
     first(b, q).then(|| {
@@ -957,16 +1021,54 @@ fn cased(
     })
 }
 
+#[inline]
 fn lower_rest(b: &[u8], i: usize) -> bool {
-    is_lower(b, i) || is_number(b, i) || matches!(b[i], b'_' | b'$')
+    match b[i] {
+        c @ ..0x80 => c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'$',
+        _ => is_lower(b, i) || is_number(b, i),
+    }
 }
 
+#[inline]
 fn upper_rest(b: &[u8], i: usize) -> bool {
-    is_upper(b, i) || is_number(b, i) || matches!(b[i], b'_' | b'$')
+    match b[i] {
+        c @ ..0x80 => c.is_ascii_uppercase() || c.is_ascii_digit() || c == b'_' || c == b'$',
+        _ => is_upper(b, i) || is_number(b, i),
+    }
+}
+
+/// [`cased`]'s run for `is_lower` and `lower_rest` at `p`: where it ends. ASCII on bytes, else
+/// by characters.
+#[inline]
+fn lower_run(b: &[u8], p: usize) -> Option<usize> {
+    let mut i = p;
+    while i < b.len() && matches!(b[i], b'_' | b'$') {
+        i += 1;
+    }
+    match b.get(i) {
+        Some(c) if c.is_ascii_lowercase() => i += 1,
+        Some(&c) if c >= 0x80 => return cased(b, p, is_lower, lower_rest).map(|r| r.1),
+        _ => return None,
+    }
+    while let Some(&c) = b.get(i) {
+        if c >= 0x80 {
+            return cased(b, p, is_lower, lower_rest).map(|r| r.1);
+        }
+        if !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'$') {
+            break;
+        }
+        i += 1;
+    }
+    Some(i)
 }
 
 /// `(?:[_$]*\p{Ll}[\p{Ll}\p{N}_$]*\b)` at `p`: a package's name.
 fn lower_word(b: &[u8], p: usize) -> Option<usize> {
+    // the run's end where `\b` is at it, the common case
+    let e = lower_run(b, p)?;
+    if boundary(b, e) {
+        return Some(e);
+    }
     let (m, e) = cased(b, p, is_lower, lower_rest)?;
     back_to(b, m, e, |_| true)
 }
@@ -979,8 +1081,7 @@ fn upper_word(b: &[u8], p: usize) -> Option<usize> {
 
 /// `(?=(?:[_$]*\p{Ll}[\p{Ll}\p{N}_$]*\b)\s*\.)` at `p`: a package before its `.`.
 fn package_ahead(b: &[u8], p: usize) -> bool {
-    cased(b, p, is_lower, lower_rest)
-        .is_some_and(|(_, e)| boundary(b, e) && b.get(skip_spaces(b, e)) == Some(&b'.'))
+    lower_run(b, p).is_some_and(|e| boundary(b, e) && b.get(skip_spaces(b, e)) == Some(&b'.'))
 }
 
 /// `(?:\p{Lu}[\p{L}\p{N}_$]*)` at `p`: a type's name.
@@ -1282,6 +1383,7 @@ impl<'b> Scan<'b, '_> {
     }
 
     /// Bytes `s..e` are `leaf`, after the text before them.
+    #[inline]
     fn put(&mut self, s: usize, e: usize, leaf: u16) {
         self.fill(s);
         let k = self.kind(leaf);
@@ -1437,17 +1539,36 @@ impl<'b> Scan<'b, '_> {
         if at == p {
             return &b[p..end];
         }
-        let end = if boundary(b, p) && is_word(b, p) {
-            word_end(b, p)
-        } else {
-            p
+        // `\b\w`: ASCII's on the table, else by characters
+        let end = match b.get(p) {
+            Some(&c) if c < 0x80 && (p == 0 || b[p - 1] < 0x80) => {
+                let before = p > 0 && CLASSES[usize::from(b[p - 1])] & W != 0;
+                if CLASSES[usize::from(c)] & W != 0 && !before {
+                    word_end(b, p)
+                } else {
+                    p
+                }
+            }
+            _ if boundary(b, p) && is_word(b, p) => word_end(b, p),
+            _ => p,
         };
         self.word_at.set((p, end));
         &b[p..end]
     }
 
+    #[inline]
     fn word_kind(&self, p: usize) -> Word {
-        lookup(self.word(p))
+        // every keyword starts with an ASCII lowercase letter
+        if !self.b.get(p).is_some_and(u8::is_ascii_lowercase) {
+            return Word::Other;
+        }
+        let (at, kind) = self.kind_at.get();
+        if at == p {
+            return kind;
+        }
+        let kind = lookup(self.word(p));
+        self.kind_at.set((p, kind));
+        kind
     }
 
     fn is_word_at(&self, p: usize, w: &[u8]) -> bool {
@@ -1455,8 +1576,20 @@ impl<'b> Scan<'b, '_> {
     }
 
     fn run(&mut self) {
+        let b = self.b;
         let mut p = 0;
         loop {
+            // a run of blanks no pattern of the context starts in
+            if p < b.len() && is_space(b[p]) && PASSES[usize::from(self.top())] & BLANKS != 0 {
+                let q = skip_spaces(b, p);
+                if b.get(q) != Some(&b'{') {
+                    p = q;
+                }
+            }
+            // the line's end, where the context's patterns take nothing
+            if p == b.len() && PASSES[usize::from(self.top())] & QUIET_EOL != 0 {
+                return;
+            }
             if let Some(q) = self.at(p) {
                 p = q;
                 if self.halt {
@@ -1504,13 +1637,7 @@ impl<'b> Scan<'b, '_> {
                     q
                 }
             }
-            BLOCK | PARENS | CTOR_ARGS | RHS | STATIC_RHS | LAMBDA_ARROW | LAMBDA_BODY | ASSERT
-            | DECL_PARENS_IN | ARRAY_INIT | ANNOT_ARRAY_INIT | ARRAY_DEF_IN | ANNOT_DEFAULT
-            | ANNOT_ARGS | ANNOT_VALUE | PARENS_SQL | ANNOT_ARGS_SQL | ANNOT_VALUE_SQL
-                if is_word(b, p) =>
-            {
-                // patterns past a word's start begin with an identifier, which would have
-                // matched at the start unless that is a digit
+            _ if PASSES[usize::from(top)] & WORDS != 0 && is_word(b, p) => {
                 let w = self.word(p);
                 let e = if w.is_empty() {
                     word_end(b, p)
@@ -1537,6 +1664,7 @@ impl<'b> Scan<'b, '_> {
         }
         let c = b[p];
         if top < STRING
+            && matches!(c, b'/' | b'g' | b'c' | b'%')
             && let Some(r) = self.prototype(p, c)
         {
             return Some(r);
@@ -1922,24 +2050,7 @@ impl<'b> Scan<'b, '_> {
                 }
                 None
             }
-            FIELD => {
-                if self.before_next_field(p) {
-                    return Some(self.leave(p));
-                }
-                let found = upper_word(b, p)
-                    .map(|e| (e, ENTITY_CONSTANT))
-                    .or_else(|| ident(b, p).map(|e| (e, PLAIN)));
-                if let Some((e, leaf)) = found {
-                    self.put(p, e, leaf);
-                    self.push(e, STATIC_ASSIGN);
-                    self.push(e, ARRAY_BRACKETS);
-                    return Some(e);
-                }
-                if c == b',' {
-                    return Some(self.token(p, 1, COMMA));
-                }
-                self.any_pop(p)
-            }
+            FIELD => self.field(p, c),
             STATIC_ASSIGN => match c {
                 b'=' => Some(self.then(p, 1, &[STATIC_RHS], ASSIGN)),
                 _ => self.any_pop(p),
@@ -2345,23 +2456,31 @@ impl<'b> Scan<'b, '_> {
         ) {
             return false;
         }
+        // a later modifier of the chain last read (a start after its blanks): the chain's answer
+        let (from, last, known) = self.class_at.get();
+        if p > from && p <= last && is_space(b[p - 1]) {
+            return known;
+        }
         let mut q = p;
-        loop {
-            for kw in [&b"class"[..], b"interface", b"@interface", b"enum"] {
-                if b[q..].starts_with(kw) && boundary(b, q + kw.len()) {
-                    return true;
-                }
+        let found = loop {
+            if [&b"class"[..], b"interface", b"@interface", b"enum"]
+                .iter()
+                .any(|kw| b[q..].starts_with(kw) && boundary(b, q + kw.len()))
+            {
+                break true;
             }
             let Some(m) = MODIFIERS.iter().find(|m| b[q..].starts_with(m)) else {
-                return false;
+                break false;
             };
             let r = q + m.len();
             let s = skip_spaces(b, r);
             if s == r {
-                return false;
+                break false;
             }
             q = s;
-        }
+        };
+        self.class_at.set((p, q, found));
+        found
     }
 
     /// `storage-modifiers` at `p`.
@@ -2386,10 +2505,25 @@ impl<'b> Scan<'b, '_> {
         if w == Word::Void {
             self.put(p, p + 4, VOID);
             self.push(p + 4, METHOD);
-            return Some(p + 4);
+            return Some(self.method_name(skip_spaces(b, p + 4)).unwrap_or(p + 4));
+        }
+        // a modifier or a primitive classified once: with no `(` or `.` after it (past its
+        // blanks), no call, package or type takes it before its own pattern
+        if matches!(w, Word::Modifier | Word::Primitive) {
+            let e = p + self.word(p).len();
+            if !b.get(e).is_some_and(|&x| x == b'$' || x >= 0x80)
+                && !matches!(b.get(skip_spaces(b, e)), Some(b'(' | b'.'))
+            {
+                if w == Word::Modifier {
+                    return Some(self.token(p, e - p, MODIFIER));
+                }
+                self.put(p, e, PRIMITIVE);
+                return Some(self.field_or_method(e, ARRAY_BRACKETS, b"["));
+            }
         }
         if self.call_ahead(p) {
-            return Some(self.enter(p, &[METHOD]));
+            self.enter(p, &[METHOD]);
+            return Some(self.method_name(p).unwrap_or(p));
         }
         if package_ahead(b, p) {
             return Some(self.enter(p, &[FIELD_OR_METHOD, AFTER_OBJ_ARRAY, TYPE_FQN]));
@@ -2398,16 +2532,12 @@ impl<'b> Scan<'b, '_> {
             && let Some(e) = type_name(b, p)
         {
             self.put(p, e, CLASS);
-            self.push(e, FIELD_OR_METHOD);
-            self.push(e, AFTER_OBJ_ARRAY);
-            return Some(e);
+            return Some(self.field_or_method(e, AFTER_OBJ_ARRAY, b"<.["));
         }
         if w == Word::Primitive {
             let e = word_end(b, p);
             self.put(p, e, PRIMITIVE);
-            self.push(e, FIELD_OR_METHOD);
-            self.push(e, ARRAY_BRACKETS);
-            return Some(e);
+            return Some(self.field_or_method(e, ARRAY_BRACKETS, b"["));
         }
         if let Some(r) = self.constants(p, c) {
             return Some(r);
@@ -2422,6 +2552,79 @@ impl<'b> Scan<'b, '_> {
             b'<' => Some(self.enter(p, &[GENERIC_DECL])),
             _ => None,
         }
+    }
+
+    /// After a member's type ending at `e`: `field-or-method` under `after`, the context after
+    /// the type, whose patterns start at `stops`. Where `after` pops at once, the member is
+    /// classified in the same turn: a method's name before its `(`, or a field's.
+    fn field_or_method(&mut self, e: usize, after: u8, stops: &[u8]) -> usize {
+        let Some(r) = self.pops_at(e, stops) else {
+            self.push(e, FIELD_OR_METHOD);
+            self.push(e, after);
+            return e;
+        };
+        // `field-or-method`'s lookaheads at `r` (its prototype ruled out by `pops_at`)
+        if self.call_ahead(r) {
+            self.push(r, METHOD);
+            return self.method_name(r).unwrap_or(r);
+        }
+        self.push(r, FIELD);
+        self.field(r, self.b[r]).unwrap_or(r)
+    }
+
+    /// `method`'s first pattern at `r`, a method's name before its `(`, where nothing of the
+    /// prototype starts there.
+    fn method_name(&mut self, r: usize) -> Option<usize> {
+        let b = self.b;
+        let &c = b.get(r)?;
+        if matches!(c, b'/' | b'%')
+            || (matches!(c, b'g' | b'c') && self.word_kind(r) == Word::Illegal)
+        {
+            return None;
+        }
+        let e = ident(b, r)?;
+        if b.get(skip_spaces(b, e)) != Some(&b'(') {
+            return None;
+        }
+        let leaf = if type_name(b, r) == Some(e) {
+            ENTITY_CTOR
+        } else {
+            ENTITY_FUNCTION
+        };
+        Some(self.token(r, e - r, leaf))
+    }
+
+    /// `field`'s patterns at `p`: a field's name, and where `array-brackets` and
+    /// `static-assignment` after it pop at once, those turns too.
+    fn field(&mut self, p: usize, c: u8) -> Option<usize> {
+        let b = self.b;
+        if self.before_next_field(p) {
+            return Some(self.leave(p));
+        }
+        let found = upper_word(b, p)
+            .map(|e| (e, ENTITY_CONSTANT))
+            .or_else(|| ident(b, p).map(|e| (e, PLAIN)));
+        if let Some((e, leaf)) = found {
+            self.put(p, e, leaf);
+            return Some(match self.pops_at(e, b"[") {
+                // `static-assignment`'s `=` opens the value in its place
+                Some(s) if b[s] == b'=' => {
+                    self.put(s, s + 1, ASSIGN);
+                    self.push(s + 1, STATIC_RHS);
+                    s + 1
+                }
+                Some(s) => s,
+                None => {
+                    self.push(e, STATIC_ASSIGN);
+                    self.push(e, ARRAY_BRACKETS);
+                    e
+                }
+            });
+        }
+        if c == b',' {
+            return Some(self.token(p, 1, COMMA));
+        }
+        self.any_pop(p)
     }
 
     /// `enum-body`'s `^(?=\s*([\p{Lu}_][\p{Lu}\p{Nd}_]*|(?!primitives|modifiers)
@@ -2506,6 +2709,21 @@ impl<'b> Scan<'b, '_> {
     /// `parameters` at `p`.
     fn parameters(&mut self, p: usize, c: u8) -> Option<usize> {
         let b = self.b;
+        // a parameter's name classified once: a lowercase word, no keyword, that no `.` follows
+        // is no package's (`package_ahead`), type's or primitive's, so the identifier's
+        if c.is_ascii_lowercase() {
+            let w = self.word(p);
+            let e = p + w.len();
+            if !w.is_empty()
+                && self.word_kind(p) == Word::Other
+                && w != b"final"
+                && !b.get(e).is_some_and(|&x| x == b'$' || x >= 0x80)
+                && b.get(skip_spaces(b, e)) != Some(&b'.')
+            {
+                self.put(p, e, PARAMETER);
+                return Some(self.after(e, ARRAY_BRACKETS, b"["));
+            }
+        }
         let w = self.word_kind(p);
         if self.is_word_at(p, b"final") {
             return Some(self.token(p, 5, MODIFIER));
@@ -2516,8 +2734,7 @@ impl<'b> Scan<'b, '_> {
         if w == Word::Primitive {
             let e = word_end(b, p);
             self.put(p, e, PRIMITIVE);
-            self.push(e, ARRAY_BRACKETS);
-            return Some(e);
+            return Some(self.after(e, ARRAY_BRACKETS, b"["));
         }
         if let Some(r) = self.object_and_array_types(p) {
             return Some(r);
@@ -2527,8 +2744,7 @@ impl<'b> Scan<'b, '_> {
         }
         if let Some(e) = ident(b, p) {
             self.put(p, e, PARAMETER);
-            self.push(e, ARRAY_BRACKETS);
-            return Some(e);
+            return Some(self.after(e, ARRAY_BRACKETS, b"["));
         }
         (c == b',').then(|| self.token(p, 1, COMMA))
     }
@@ -2539,22 +2755,34 @@ impl<'b> Scan<'b, '_> {
         if package_ahead(b, p) {
             return Some(self.enter(p, &[OBJ_ARRAY_PATH]));
         }
-        if boundary(b, p)
-            && let Some(w) = PRIMITIVES.iter().find(|w| b[p..].starts_with(w))
-            && b.get(skip_spaces(b, p + w.len())) == Some(&b'[')
-        {
-            self.put(p, p + w.len(), PRIMITIVE);
-            self.push(p + w.len(), ARRAY_BRACKETS);
-            return Some(p + w.len());
+        // a primitive's name then `\s*\[`: the whole word (the cached one)
+        if self.word_kind(p) == Word::Primitive {
+            let e = p + self.word(p).len();
+            if b.get(skip_spaces(b, e)) == Some(&b'[') {
+                self.put(p, e, PRIMITIVE);
+                self.push(e, ARRAY_BRACKETS);
+                return Some(e);
+            }
         }
         if boundary(b, p)
             && let Some(e) = type_name(b, p)
         {
             self.put(p, e, CLASS);
-            self.push(e, AFTER_OBJ_ARRAY);
-            return Some(e);
+            return Some(self.after(e, AFTER_OBJ_ARRAY, b"<.["));
         }
         None
+    }
+
+    /// `c` pushed at `e`, a context whose patterns start at `stops`: where it would pop at once
+    /// ([`Scan::pops_at`]), not pushed, and the scan goes on where it would have popped.
+    fn after(&mut self, e: usize, c: u8, stops: &[u8]) -> usize {
+        match self.pops_at(e, stops) {
+            Some(r) => r,
+            None => {
+                self.push(e, c);
+                e
+            }
+        }
     }
 
     /// `object-and-array-types-no-fqn` at `p`.
@@ -2687,10 +2915,11 @@ impl<'b> Scan<'b, '_> {
     /// `code` at a byte of a word, or `$`.
     fn code_word(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
-        let at_word = boundary(b, p);
         let w = self.word(p);
         let e = p + w.len();
-        let name = lookup(w);
+        // a word read is at `\b`
+        let at_word = !w.is_empty() || boundary(b, p);
+        let name = self.word_kind(p);
         // constants-and-special-vars
         match name {
             Word::Language => return Some(self.token(p, e - p, LANGUAGE)),
@@ -2713,12 +2942,15 @@ impl<'b> Scan<'b, '_> {
                 e
             }
         });
+        // the identifier's end and the first byte past its blanks, read once
+        let (ie, q) = match id {
+            Some(ie) => (ie, skip_spaces(b, ie)),
+            None => (p, usize::MAX),
+        };
+        let after = b.get(q).copied();
         // lambdas, `[\p{L}_$][\p{L}\p{N}_$]*\s*->`
-        if let Some(ie) = id {
-            let q = skip_spaces(b, ie);
-            if b[q..].starts_with(b"->") {
-                return Some(self.enter(p, &[LAMBDA_PARAMS]));
-            }
+        if after == Some(b'-') && b.get(q + 1) == Some(&b'>') {
+            return Some(self.enter(p, &[LAMBDA_PARAMS]));
         }
         // anonymous-classes-and-new
         if name == Word::New {
@@ -2738,24 +2970,31 @@ impl<'b> Scan<'b, '_> {
             return Some(self.token(p, 7, DEFAULT_KW));
         }
         // method-invocations
-        if let Some(ie) = id {
-            let q = skip_spaces(b, ie);
-            if b.get(q) == Some(&b'(') {
-                self.put(p, ie, FUNCTION_CALL);
-                self.put(q, q + 1, PAREN_BEGIN);
-                let parens = if sql::jvm_call(b, p, ie) {
-                    PARENS_SQL
-                } else {
-                    PARENS
-                };
-                self.push(q + 1, parens);
-                return Some(q + 1);
-            }
+        if after == Some(b'(') {
+            self.put(p, ie, FUNCTION_CALL);
+            self.put(q, q + 1, PAREN_BEGIN);
+            let parens = if sql::jvm_call(b, p, ie) {
+                PARENS_SQL
+            } else {
+                PARENS
+            };
+            self.push(q + 1, parens);
+            return Some(q + 1);
+        }
+        // a plain lowercase name, past the word's end: no pattern below takes it (the uppercase
+        // ones, a type's, want a capital, `_` or `$`; a package's, a `.` after it)
+        let plain = at_word && b[p].is_ascii_lowercase() && name == Word::Other && ie == e;
+        if plain && b.get(e) != Some(&b'.') {
+            return self.passed(e);
         }
         if at_word {
             // uppercase-identifiers
             let single = !w.is_empty() && is_upper(b, p) && next(b, p) == e;
             if matches!(w, b"UUID" | b"URL" | b"URI") || single {
+                if let Some(r) = self.pops_at(e, b"<.[") {
+                    self.token(p, e - p, CLASS);
+                    return Some(r);
+                }
                 return Some(self.open(p, e - p, AFTER_TYPE, CLASS));
             }
             if (matches!(b[p], b'_' | b'$') || is_upper(b, p))
@@ -2766,6 +3005,9 @@ impl<'b> Scan<'b, '_> {
             // all-types
             if name == Word::Primitive {
                 self.put(p, e, PRIMITIVE);
+                if let Some(r) = self.pops_at(e, b"[") {
+                    return Some(r);
+                }
                 self.push(e, ARRAY_BRACKETS);
                 return Some(e);
             }
@@ -2777,12 +3019,48 @@ impl<'b> Scan<'b, '_> {
                 && let Some(te) = back_to(b, next(b, p), te, |_| true)
             {
                 self.put(p, te, CLASS);
+                if let Some(r) = self.pops_at(te, b"<.[") {
+                    return Some(r);
+                }
                 self.push(te, AFTER_TYPE);
                 return Some(te);
             }
         }
         // keywords
-        (name == Word::Instanceof).then(|| self.token(p, e - p, INSTANCEOF))
+        if name == Word::Instanceof {
+            return Some(self.token(p, e - p, INSTANCEOF));
+        }
+        if at_word && !w.is_empty() && !b[p].is_ascii_digit() {
+            return self.passed(e);
+        }
+        None
+    }
+
+    /// A word ending at `e` that no pattern of `code` takes, its start not a digit: where the
+    /// context passes such a word whole ([`WORDS`]: no pattern of its own, or of a caller's
+    /// after `code`, starts at a word's byte), it is passed now, not by [`Scan::advance`].
+    #[inline]
+    fn passed(&self, e: usize) -> Option<usize> {
+        (PASSES[usize::from(self.top())] & WORDS != 0).then_some(e)
+    }
+
+    /// A context pushed at `e` whose patterns start only at one of `stops` or the prototype's
+    /// (`/`, `%`, `goto`, `const`), else `any_POP`: where it would pop, the first byte past `e`'s
+    /// blanks on the line, if it would there. The caller then skips the push and goes on from
+    /// that byte in its own context: the blanks are both contexts' text, and no lookahead's loop
+    /// guard can be past `e`.
+    fn pops_at(&self, e: usize, stops: &[u8]) -> Option<usize> {
+        let b = self.b;
+        let r = skip_spaces(b, e);
+        let &c = b.get(r)?;
+        // near the stack's limit a push drops the bottom context: no shortcut there
+        if self.depth + 4 >= MAX || stops.contains(&c) || matches!(c, b'/' | b'%') {
+            return None;
+        }
+        if matches!(c, b'g' | b'c') && self.word_kind(r) == Word::Illegal {
+            return None;
+        }
+        Some(r)
     }
 
     /// `(?=\b(?:(?:[_$]*\p{Ll}[\p{Ll}\p{N}_$]*\b)\.)+\p{Lu})` at `p`.
@@ -2799,8 +3077,8 @@ impl<'b> Scan<'b, '_> {
             if n > 0 && is_upper(b, q) {
                 break true;
             }
-            match cased(b, q, is_lower, lower_rest) {
-                Some((_, e)) if b.get(e) == Some(&b'.') && word_before(b, e) => {
+            match lower_run(b, q) {
+                Some(e) if b.get(e) == Some(&b'.') && word_before(b, e) => {
                     q = e + 1;
                     n += 1;
                 }
@@ -2817,7 +3095,10 @@ impl<'b> Scan<'b, '_> {
         let next = b.get(p + 1).copied();
         let (n, leaf) = match c {
             b'.' => {
-                if let Some(r) = self.number(p) {
+                // `(\.)(_*)\d…`
+                if matches!(next, Some(b'0'..=b'9' | b'_'))
+                    && let Some(r) = self.number(p)
+                {
                     return Some(r);
                 }
                 // `(\.)\s*(?=<)`
