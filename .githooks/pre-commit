@@ -3,8 +3,20 @@
 # leaves a lockfile cargo would rewrite: `--locked` fails on it in CI, as fuzz/Cargo.lock did after the version bump
 # to 1.0.0-rc.1. The nested crates lock ada-md and its dependencies too, so a version bump or a new dependency has to
 # reach every lockfile. Offline: a lockfile that needs the network to check is reported as one to update.
+#
+# Both checks run on the staged content, not the working tree: the Rust sources, manifests and lockfiles in the index
+# are copied to a scratch directory and checked there. Checking the working tree let a commit through whose staged
+# files were unformatted while the working copy had been formatted but not staged (the SCSS and HTML commits of
+# 2026-11-01). Files that aren't tracked never reach the snapshot, so a manifest that isn't committed is skipped.
 # Enable once per clone: git config core.hooksPath .githooks
 cd "$(git rev-parse --show-toplevel)" || exit 1
+snap=$(mktemp -d "${TMPDIR:-/tmp}/ada-pre-commit.XXXXXX") || { print -u2 "pre-commit: no scratch directory"; exit 1 }
+TRAPEXIT() { rm -rf -- "$snap" }
+# checkout-index reads GIT_INDEX_FILE, so `git commit -a` and `git commit <paths>` are checked as they will commit
+git ls-files -z -- '*.rs' '*Cargo.toml' '*Cargo.lock' .cargo/config.toml \
+  | git checkout-index -z --stdin --prefix="$snap/" \
+  || { print -u2 "pre-commit: could not copy the index to $snap"; exit 1 }
+cd "$snap" || exit 1
 unformatted=() stale=()
 for manifest in Cargo.toml fuzz/Cargo.toml bench/b2/Cargo.toml bench/order/demangle/Cargo.toml; do
   [[ -f $manifest ]] || continue
@@ -16,16 +28,16 @@ for manifest in Cargo.toml fuzz/Cargo.toml bench/b2/Cargo.toml bench/diagrams/co
 done
 (( ${#unformatted} + ${#stale} == 0 )) && exit 0
 if (( ${#unformatted} )); then
-  print -u2 "pre-commit: not rustfmt-clean: ${(j:, :)unformatted}"
+  print -u2 "pre-commit: staged sources not rustfmt-clean: ${(j:, :)unformatted}"
   for manifest in $unformatted; do
     print -u2 "  cargo fmt --manifest-path $manifest --all"
   done
 fi
 if (( ${#stale} )); then
-  print -u2 "pre-commit: lockfile out of date with its Cargo.toml: ${(j:, :)stale}"
+  print -u2 "pre-commit: staged lockfile out of date with its Cargo.toml: ${(j:, :)stale}"
   for manifest in $stale; do
     print -u2 "  cargo update --manifest-path $manifest --workspace"
   done
 fi
-print -u2 "then stage the result; or commit with --no-verify to skip this check"
+print -u2 "then stage the result (an unstaged fix doesn't count); or commit with --no-verify to skip this check"
 exit 1
