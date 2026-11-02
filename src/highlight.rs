@@ -2686,6 +2686,68 @@ mod tests {
         rules_match_the_grammar("lua", "Lua", text);
     }
 
+    /// ada-parse's Lisp lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (X-006): its corners included (every declaration and the frames it sets up, a class's
+    /// parents and a struct's options, `let`'s, `flet`'s and `macrolet`'s bindings, `declare`'s
+    /// specifiers, `loop`'s keywords and builtins, `(quote …)` and `'(…)`, namespaces before a
+    /// head, `make-`, `!`, `?` and `-p` functions, `|…|` symbols, annotations, every `#` macro,
+    /// numbers of every base, format directives, nested block comments across lines, a stray `)`
+    /// and `|#`). Backslashes in symbols aren't among them: those are read as the Lisp reader
+    /// reads them, a fix over bat (G-001).
+    #[test]
+    fn lisp_rules_match_the_grammar() {
+        let text = concat!(
+            ";;; -*- lisp -*-\n",
+            "(defun foo (x &optional (y 2) &rest r) \"Doc ~a~% ~2,'0d ~:@r ~10,2f ~5$\" (car x))\n",
+            "(defmacro m (a &body b) `(progn ,a ,@b))\n",
+            "(defclass c (pkg:a b) ((s :initarg :s)))\n",
+            "(defstruct (pt (:conc-name pt-)) x y) (deftype ty (&optional n) 'integer)\n",
+            "(defvar *v* nil) (defparameter *p* t) (defconstant +c+ 3.5d0)\n",
+            "(let ((a 1) b) (declare (ignore b) (type fixnum a)) (flet ((f (z) z)) (f a)))\n",
+            "(macrolet ((mm (q) q)) (labels ((g () 1)) (g)))\n",
+            "(defmethod run :around ((o c) n) (call-next-method))\n",
+            "(loop named outer for i from 0 below 10 with s = 0 collect (1+ i) into xs\n",
+            "      finally (return xs))\n",
+            "(dolist (e l) (dotimes (i 3) (do ((k 0 (1+ k))) ((> k 2)) (print k))))\n",
+            "(cl:defun g () (quote (a (b c))) '(d e) 'f #'car #'(lambda (q) q) #'+)\n",
+            "(make-pt :x 1) (set! a 1) (null? a) (foo-p a) (|f| x) (when (eq a b) (return-from g))\n",
+            "#| block #| nested |# still\n",
+            "   comment |# (if t nil) #\\Space #\\a #\\( #2\\x #+sbcl :a #-(or a b) b #. x #:g\n",
+            "#1=(a . #1#) #(1 2) #3(a) #*1010 #b101 #B-1/10 #o17 #x1F #16rFF #3r12 #c(1 2)\n",
+            "#p\"/tmp/x\" #s(pt :x 1) #2A((1 2)) #a #< 1.5 .5 1. 1/2 -3 +4 1e10 12.x 1.2.3\n",
+            "+a+b+ *print-base* array string true false keyword:k :key ::k |a b| &x |#\n",
+            "(*x* 1) (&rest) ('a) (t) (:k) (1 2) (\"s\") () (:a . b))\n",
+        );
+        rules_match_the_grammar("lisp", "Lisp", text);
+    }
+
+    /// ada-parse's Clojure lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (X-006): every head (`def…` as a prefix, `defprotocol`, `definterface`, `deftype`,
+    /// `defrecord`, `defmethod`, `reify`, `proxy`, `extend-*`, `fn`, `declare`) and the tails
+    /// they set up, the reader macros and dispatch (`#_`, `##Inf`, tagged literals, `#?`, `#:`),
+    /// metadata, characters, keywords, every number and its suffixes, a deprecated octal, strings
+    /// across lines, comments and commas, stray closers. Regex literals aren't among them: their
+    /// bodies are Java's dialect on ada-parse's regex scanner, a fix over bat by design.
+    #[test]
+    fn clojure_rules_match_the_grammar() {
+        let text = concat!(
+            "#!/usr/bin/env bb\n",
+            "(ns my.app (:require [clojure.string :as str])) ; c\n",
+            "(defn- f \"doc\" [x & ys] {:pre [(pos? x)]} (str/join \",\" ys))\n",
+            "(def ^:private x 1) (def ^{:a 1} y 2N) (default z)\n",
+            "(defprotocol P (m [this] \"doc\") (n [this a]))\n",
+            "(definterface I (go [])) (deftype T [a] P (m [_] a)) (defrecord R [a b])\n",
+            "(defmethod mm :k [x] x) (reify P (m [_] 1)) (proxy [Object] [] (toString [] \"s\"))\n",
+            "(extend-protocol P String (m [s] s)) (extend-type T P (m [_] nil))\n",
+            "(fn [x] x) (fn* [y] y) (fn name [z] z) (declare a b) (nil 1) (true) (/ 1 2)\n",
+            "[1 -2 +3 012 1N 0x1F 0XffN 2r101 36rZZ 1/2 1.5 1.5e10 1e5 1M 1.5M 1. 1# x# x']\n",
+            "{:k 'q `r ~s ~@t @u ::v :a/b \\a \\newline \\( #_ (skip) ##Inf ##-Inf #inst \"2020\"}\n",
+            "#{1 2} #(+ % 1) #?(:clj 1 :cljs 2) #?@(:clj [1]) #:a{:b 1} #'var , \"multi\n",
+            "line\" \"esc\\\"aped\" ) ] } (let [a 1] a)\n",
+        );
+        rules_match_the_grammar("clojure", "Clojure", text);
+    }
+
     /// ada-parse's SQL lexer picks the rules bat's grammar picks, in every built-in theme
     /// (ADR-40): its corners included (`create`'s name popped at the line's end, `drop`'s
     /// objects as prefixes, `drop table` at a word's end, `comment on … is` with the spaces

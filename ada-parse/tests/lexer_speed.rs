@@ -42,6 +42,11 @@ const LANGS: &[(&str, Lang)] = &[
     ("css", Lang::Css),
     ("scss", Lang::Scss),
     ("html", Lang::Html),
+    ("lisp", Lang::Lisp),
+    ("elisp", Lang::EmacsLisp),
+    ("scheme", Lang::Scheme),
+    ("racket", Lang::Racket),
+    ("clojure", Lang::Clojure),
     ("bash", Lang::Bash),
     // `make.txt` phase 0's Makefiles
     ("make", Lang::Makefile),

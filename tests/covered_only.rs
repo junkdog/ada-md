@@ -177,6 +177,25 @@ enum E { A = 1 } namespace N { export type K = keyof typeof E; }
 <style>a:hover { color: #fc0 }</style><script>const x = `t ${1 < 2}`; // </script>
 ```
 
+```lisp
+(defun f (x &optional (y 2)) \"~a~%\" (loop for i in x collect (car i))) ; c
+#| block |# (defstruct (s (:conc-name s-)) a) #'cl:car #\\Space #x1F 1/2 :key
+```
+
+```scheme
+(define (f x) (let loop ([i 0]) (if (< i x) (loop (+ i 1)) #t))) #;(skip me) #\\a
+```
+
+```racket
+#lang racket/base
+(struct posn (x y) #:transparent) (for/list ([i 3]) (λ (v) v)) #rx\"a+\"
+```
+
+```clojure
+(defn f [x & ys] {:pre [(pos? x)]} (str/join \",\" ys)) ; c
+#{1 2} #(+ % 1) #\"a\\d+\" ^:private 1N 0x1F \\a ::k
+```
+
 ```text
 plain
 ```
@@ -268,6 +287,16 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         "_variables.scss",
         "index.html",
         "page.htm",
+        "init.el",
+        "package.lisp",
+        "boot.scm",
+        "lib.sld",
+        "init.scm",
+        "build.ss",
+        "main.rkt",
+        "core.clj",
+        "app.cljs",
+        "deps.edn",
     ] {
         let t = FileType::by_path(Path::new(name));
         assert!(

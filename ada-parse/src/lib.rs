@@ -40,6 +40,7 @@ mod javascript;
 mod json;
 mod kotlin;
 mod lang;
+mod lisp;
 mod logs;
 mod lua;
 mod machine;
@@ -67,6 +68,7 @@ mod yaml_scan;
 
 use git_scan::Git;
 pub use lang::{ALIASES, Lang};
+use lisp::Dialect;
 
 /// Bytes `start..end` of a line are kind `kind` of the line's language, whose scopes
 /// [`Lang::scopes`] gives.
@@ -196,6 +198,11 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::Css => css::line(line.as_bytes(), state, &mut out),
         Lang::Scss => css::scss::line(line.as_bytes(), state, &mut out),
         Lang::Html => html::line(line.as_bytes(), state, &mut out),
+        Lang::Lisp => lisp::line(line.as_bytes(), Dialect::Common, state, &mut out),
+        Lang::EmacsLisp => lisp::line(line.as_bytes(), Dialect::Emacs, state, &mut out),
+        Lang::Scheme => lisp::line(line.as_bytes(), Dialect::Scheme, state, &mut out),
+        Lang::Racket => lisp::line(line.as_bytes(), Dialect::Racket, state, &mut out),
+        Lang::Clojure => lisp::clojure::line(line.as_bytes(), state, &mut out),
         Lang::Bash => bash::line(line.as_bytes(), state, &mut out),
         Lang::Makefile => bash::make_line(line.as_bytes(), state, &mut out),
         Lang::DotEnv => dotenv_scan::line(line.as_bytes(), state, &mut out),

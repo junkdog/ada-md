@@ -76,6 +76,18 @@ pub enum Lang {
     Scss,
     /// bat's `HTML`, with its CSS and JavaScript on their scanners.
     Html,
+    /// bat's `Lisp`, for Common Lisp (X-006).
+    Lisp,
+    /// bat's `Lisp` for Emacs Lisp (`.el`, ```` ```elisp ````): Lisp's scanner with Emacs's `?a`
+    /// characters, which bat's grammar lacks (X-006).
+    EmacsLisp,
+    /// bat's `Lisp` for Scheme (`.scm`, `.ss`, `.sld`, ```` ```scheme ````): Lisp's scanner with
+    /// heads, brackets and `#` forms of Scheme's, a design of ada's own (X-006).
+    Scheme,
+    /// bat's `Racket`: Scheme's reading of Lisp's scanner (X-006).
+    Racket,
+    /// bat's `Clojure`, on the Lisp family's second scanner (X-006).
+    Clojure,
 }
 
 /// Fence languages that no syntax names, and the token each stands for (`zsh` for bash's).
@@ -96,6 +108,11 @@ pub const ALIASES: &[(&str, &str)] = &[
     ("json5", "json"),
     // Sublime's `JavaScript` by name; ada's JavaScript is Babel's, whatever the token (ADR-40)
     ("javascript", "js"),
+    // the Lisps bat's `Lisp` reads, by the names fences give them (X-006)
+    ("scheme", "scm"),
+    ("elisp", "el"),
+    ("emacs-lisp", "el"),
+    ("common-lisp", "lisp"),
 ];
 
 /// The extensions and whole file names each language's syntax claims, lowercase: syntect
@@ -289,10 +306,18 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::Css, &["css", "css.erb", "css.liquid"]),
     (Lang::Scss, &["scss"]),
     (Lang::Html, &["html", "htm", "shtml", "xhtml"]),
+    (
+        Lang::Lisp,
+        &["lisp", "cl", "clisp", "l", "mud", "lsp", "fasl"],
+    ),
+    (Lang::EmacsLisp, &["el"]),
+    (Lang::Scheme, &["scm", "ss", "sld"]),
+    (Lang::Racket, &["rkt"]),
+    (Lang::Clojure, &["clj", "cljc", "cljs", "edn"]),
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 33] = [
+    pub const ALL: [Lang; 38] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -326,9 +351,15 @@ impl Lang {
         Lang::Css,
         Lang::Scss,
         Lang::Html,
+        Lang::Lisp,
+        Lang::EmacsLisp,
+        Lang::Scheme,
+        Lang::Racket,
+        Lang::Clojure,
     ];
 
-    /// The name of the syntax it stands in for, as syntect names it.
+    /// The name of the syntax it stands in for, as syntect names it. Emacs Lisp's and Scheme's
+    /// are `Lisp`'s: [`Lang::from_name`] gives `Lisp` for them, a file or a fence names them.
     pub fn name(self) -> &'static str {
         match self {
             Lang::Json => "JSON",
@@ -364,6 +395,9 @@ impl Lang {
             Lang::Css => "CSS",
             Lang::Scss => "SCSS",
             Lang::Html => "HTML",
+            Lang::Lisp | Lang::EmacsLisp | Lang::Scheme => "Lisp",
+            Lang::Racket => "Racket",
+            Lang::Clojure => "Clojure",
         }
     }
 
@@ -403,6 +437,9 @@ impl Lang {
             Lang::Css => "source.css",
             Lang::Scss => "source.scss",
             Lang::Html => "text.html.basic",
+            Lang::Lisp | Lang::EmacsLisp | Lang::Scheme => "source.lisp",
+            Lang::Racket => "source.racket",
+            Lang::Clojure => "source.clojure",
         }
     }
 
@@ -442,6 +479,8 @@ impl Lang {
             Lang::TypeScriptReact => crate::typescript::scopes(kind, true),
             Lang::Css | Lang::Scss => crate::css::scopes(kind),
             Lang::Html => crate::html::scopes(kind),
+            Lang::Lisp | Lang::EmacsLisp | Lang::Scheme | Lang::Racket => crate::lisp::scopes(kind),
+            Lang::Clojure => crate::lisp::clojure::scopes(kind),
             Lang::DotEnv => crate::dotenv_scan::scopes(kind),
             Lang::GitIgnore | Lang::GitAttributes | Lang::GitMailmap | Lang::GitLink => {
                 crate::git_scan::scopes(kind)
@@ -493,7 +532,12 @@ impl Lang {
             | Lang::GitAttributes
             | Lang::GitMailmap
             | Lang::GitLink
-            | Lang::Html => {
+            | Lang::Html
+            | Lang::Lisp
+            | Lang::EmacsLisp
+            | Lang::Scheme
+            | Lang::Racket
+            | Lang::Clojure => {
                 return None;
             }
         })

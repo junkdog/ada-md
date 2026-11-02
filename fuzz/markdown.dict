@@ -317,5 +317,9 @@
 "```jsonc\x0a"
 "```json5\x0a"
 "```javascript\x0a"
+"```scheme\x0a"
+"```elisp\x0a"
+"```emacs-lisp\x0a"
+"```common-lisp\x0a"
 "```c++\x0a"
 # end of the generated fence tags
