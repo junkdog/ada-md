@@ -6,7 +6,7 @@ mod diagram;
 mod table;
 pub mod wrap;
 
-pub use code::{TAB_STOP, expand_tabs};
+pub use code::{TAB_STOP, block_needs_expanding, expand_tabs, expand_tabs_in, expand_tabs_onto};
 
 #[cfg(test)]
 mod tests;

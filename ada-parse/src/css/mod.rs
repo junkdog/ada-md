@@ -992,7 +992,11 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
             None => return Vec::new(),
         }
     } else if leaf < FN_FIRST {
-        v.extend(LEAVES[usize::from(leaf)].split(' ').filter(|s| !s.is_empty()));
+        v.extend(
+            LEAVES[usize::from(leaf)]
+                .split(' ')
+                .filter(|s| !s.is_empty()),
+        );
     } else if leaf < AT_FIRST {
         v.push(FN_SCOPES[usize::from(leaf - FN_FIRST)]);
     } else {
@@ -1196,7 +1200,10 @@ fn char_at(b: &[u8], i: usize) -> (char, usize) {
         _ => 4,
     };
     let end = (i + len).min(b.len());
-    match std::str::from_utf8(&b[i..end]).ok().and_then(|s| s.chars().next()) {
+    match std::str::from_utf8(&b[i..end])
+        .ok()
+        .and_then(|s| s.chars().next())
+    {
         Some(ch) => (ch, len),
         None => ('\u{fffd}', 1),
     }
@@ -1279,7 +1286,8 @@ const F_COLOR: u16 = 1 << 8;
 const F_REST: u16 = 1 << 9;
 /// `@document`'s `url-prefix(`, `domain(`, `regexp(`.
 const F_DOC: u16 = 1 << 10;
-const BUILTIN: u16 = F_ATTR | F_CALC | F_IMAGE | F_FILTER | F_MINMAX | F_URL | F_VAR | F_ADJ | F_REST;
+const BUILTIN: u16 =
+    F_ATTR | F_CALC | F_IMAGE | F_FILTER | F_MINMAX | F_URL | F_VAR | F_ADJ | F_REST;
 
 /// The function named `w` before a `(`: its family, its name's leaf, its group (`CALC_W` for
 /// `calc`).
@@ -1302,8 +1310,9 @@ fn function(w: &[u8]) -> Option<(u16, u16, u8)> {
         b"var" => (F_VAR, FN_VAR, G_VAR),
         b"red" | b"green" | b"blue" | b"alpha" | b"a" => (F_ADJ, FN_COLOR, G_ADJ_CHANNEL),
         b"hue" | b"h" => (F_ADJ, FN_COLOR, G_ADJ_HUE),
-        b"saturation" | b"lightness" | b"whiteness" | b"blackness" | b"s" | b"l" | b"w"
-        | b"b" => (F_ADJ, FN_COLOR, G_ADJ_PERCENT),
+        b"saturation" | b"lightness" | b"whiteness" | b"blackness" | b"s" | b"l" | b"w" | b"b" => {
+            (F_ADJ, FN_COLOR, G_ADJ_PERCENT)
+        }
         b"tint" | b"shade" => (F_ADJ, FN_COLOR, G_TINT),
         b"blenda" | b"blend" => (F_ADJ, FN_COLOR, G_BLEND),
         b"filter" => (F_REST, FN_FILTER, G_FILTER),
@@ -1886,7 +1895,11 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                 return Some(e);
             }
         }
-        let s = if self.b.get(i) == Some(&b'-') { i + 1 } else { i };
+        let s = if self.b.get(i) == Some(&b'-') {
+            i + 1
+        } else {
+            i
+        };
         let q = self.nmstart(s)?;
         Some(self.nmchars(q))
     }
@@ -2016,7 +2029,9 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                         }
                     }
                 }
-                _ if keyframes && (c.is_ascii_alphanumeric() || matches!(c, b',' | b'-' | b'+' | b'.')) => {
+                _ if keyframes
+                    && (c.is_ascii_alphanumeric() || matches!(c, b',' | b'-' | b'+' | b'.')) =>
+                {
                     // `\b(from|to)\b`, `comma-delimiter` and `numeric-values` before `main`
                     let r = self.op(P_FROM_TO, p, ctx, false);
                     let r = r.or_else(|| self.op(P_COMMA, p, ctx, false));
@@ -2149,10 +2164,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                     None => {
                         // nothing starts inside the word but a digit, a `-` and `u+`
                         p += 1;
-                        while p < n
-                            && b[p].is_ascii_alphabetic()
-                            && b[p] | 0x20 != b'u'
-                        {
+                        while p < n && b[p].is_ascii_alphabetic() && b[p] | 0x20 != b'u' {
                             p += 1;
                         }
                         continue;
@@ -2621,7 +2633,14 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                 if c == Some(b':') && self.can_push() {
                     self.tok(p, p + 1, KEY_VALUE);
                     let q = self.blanks(p + 1);
-                    self.push(if op == P_VALUE { PROP_VALUE } else { FONT_VALUE }, q);
+                    self.push(
+                        if op == P_VALUE {
+                            PROP_VALUE
+                        } else {
+                            FONT_VALUE
+                        },
+                        q,
+                    );
                     return Some(q);
                 }
                 None
@@ -2877,7 +2896,15 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             }
             P_ATTR_NAME | P_COUNTER_NAME => {
                 let e = self.ident(p)?;
-                self.tok(p, e, if op == P_ATTR_NAME { ATTR_NAME } else { COUNTER_NAME });
+                self.tok(
+                    p,
+                    e,
+                    if op == P_ATTR_NAME {
+                        ATTR_NAME
+                    } else {
+                        COUNTER_NAME
+                    },
+                );
                 Some(e)
             }
             P_ATTR_FN_NAME => {
@@ -3315,7 +3342,14 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             }
             P_MQ_PAREN | P_SUP_PAREN => {
                 if c == Some(b'(') && self.can_push() {
-                    self.push(if op == P_MQ_PAREN { MQ_PAREN } else { SUP_PAREN }, p);
+                    self.push(
+                        if op == P_MQ_PAREN {
+                            MQ_PAREN
+                        } else {
+                            SUP_PAREN
+                        },
+                        p,
+                    );
                     self.tok(p, p + 1, GROUP_BEGIN);
                     return Some(p + 1);
                 }
@@ -3492,7 +3526,8 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             e
         };
         if self.boundary(w)
-            && (self.b[w..we].eq_ignore_ascii_case(b"decimal") || self.b[w..we].eq_ignore_ascii_case(b"none"))
+            && (self.b[w..we].eq_ignore_ascii_case(b"decimal")
+                || self.b[w..we].eq_ignore_ascii_case(b"none"))
             && self.boundary(we)
         {
             tries.push((w, we, COUNTER_STYLE_INVALID));
@@ -3599,7 +3634,9 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             (u, t)
         };
         let float = num.and_then(|nm| self.float_end(&nm)).map(|f| (f, unit(f)));
-        let int = num.filter(|nm| nm.int > nm.digits).map(|nm| (nm.int, unit(nm.int)));
+        let int = num
+            .filter(|nm| nm.int > nm.digits)
+            .map(|nm| (nm.int, unit(nm.int)));
         // `0\b(?!%)`
         let zero = c == b'0' && self.boundary(p + 1) && b.get(p + 1) != Some(&b'%');
         for &t in types {
@@ -3808,8 +3845,15 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             let m = self.next(p + 23);
             if m < self.n && b.get(m..m + 9) == Some(b"Microsoft") {
                 let s = self.next(m + 9);
-                for x in [&b"Alpha"[..], b"Blur", b"dropshadow", b"gradient", b"Shadow"] {
-                    if s < self.n && b.get(s..s + x.len()) == Some(x) && self.boundary(s + x.len()) {
+                for x in [
+                    &b"Alpha"[..],
+                    b"Blur",
+                    b"dropshadow",
+                    b"gradient",
+                    b"Shadow",
+                ] {
+                    if s < self.n && b.get(s..s + x.len()) == Some(x) && self.boundary(s + x.len())
+                    {
                         self.tok(p, s + x.len(), CONSTANT);
                         return Some(s + x.len());
                     }
@@ -4187,7 +4231,12 @@ mod tests {
     fn the_table_finds_its_words() {
         for e in ENTRIES {
             let w = lookup(e.word);
-            assert_eq!(w.lists, e.exact | e.folded, "{}", String::from_utf8_lossy(e.word));
+            assert_eq!(
+                w.lists,
+                e.exact | e.folded,
+                "{}",
+                String::from_utf8_lossy(e.word)
+            );
             assert_eq!(w.prop_rank, e.prop_rank);
         }
         // the case-sensitive lists want the listed spelling, the others take any
@@ -4237,19 +4286,31 @@ mod tests {
     fn a_rule_reads_as_bats_grammar_does() {
         let m = kinds(&["a.b:hover { color: red; margin: 0 1.5em }"]);
         assert!(m.contains(&("a", "entity.name.tag.css")), "{m:?}");
-        assert!(m.contains(&("color", "support.type.property-name.css")), "{m:?}");
+        assert!(
+            m.contains(&("color", "support.type.property-name.css")),
+            "{m:?}"
+        );
         assert!(
             m.contains(&("red", "support.constant.color.w3c-standard-color-name.css")),
             "{m:?}"
         );
         assert!(
-            m.contains(&("em", "constant.numeric.float.decimal.css keyword.other.unit.css")),
+            m.contains(&(
+                "em",
+                "constant.numeric.float.decimal.css keyword.other.unit.css"
+            )),
             "{m:?}"
         );
         // `\b(…|auto(hiding-scrollbar|-flow)?|…)\b` stops at `auto` in `auto-fill`
         let m = kinds(&["a { b: auto-fill }"]);
-        assert!(m.contains(&("auto", "support.constant.property-value.css")), "{m:?}");
-        assert!(m.contains(&("fill", "support.constant.property-value.css")), "{m:?}");
+        assert!(
+            m.contains(&("auto", "support.constant.property-value.css")),
+            "{m:?}"
+        );
+        assert!(
+            m.contains(&("fill", "support.constant.property-value.css")),
+            "{m:?}"
+        );
     }
 
     /// A block comment and a string continued by an escaped newline carry their state between
@@ -4259,11 +4320,17 @@ mod tests {
         let m = kinds(&["/* a", "b */ x { c: 'd\\", "e' } y { z: \"w", "}"]);
         assert!(m.contains(&("b ", "comment.block.css")), "{m:?}");
         assert!(
-            m.contains(&("\\", "string.quoted.single.css constant.character.escape.newline.css")),
+            m.contains(&(
+                "\\",
+                "string.quoted.single.css constant.character.escape.newline.css"
+            )),
             "{m:?}"
         );
         assert!(m.contains(&("e", "string.quoted.single.css")), "{m:?}");
         assert!(m.contains(&("w", "string.quoted.double.css")), "{m:?}");
-        assert_eq!(m.last(), Some(&("}", "punctuation.section.property-list.css")));
+        assert_eq!(
+            m.last(),
+            Some(&("}", "punctuation.section.property-list.css"))
+        );
     }
 }

@@ -296,7 +296,10 @@ const WINDOW_ATTR: usize = 64;
 /// (bit 12), how many `<script type="text/html">` bodies are open below it (6 bits from 6), and
 /// an attribute's tag context (6 bits).
 fn frame(emb: Emb, single: bool, bodies: usize, tag: u8) -> u16 {
-    ((emb as u16) << 13) | (u16::from(single) << 12) | ((bodies.min(63) as u16) << 6) | u16::from(tag)
+    ((emb as u16) << 13)
+        | (u16::from(single) << 12)
+        | ((bodies.min(63) as u16) << 6)
+        | u16::from(tag)
 }
 
 // ---- the scan ----
@@ -334,7 +337,11 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
             Emb::StyleAttr | Emb::EventAttr => {
                 s.push((arg & 63) as u8);
                 s.push(META);
-                s.push(if emb == Emb::StyleAttr { STYLE_VALUE } else { EVENT_VALUE });
+                s.push(if emb == Emb::StyleAttr {
+                    STYLE_VALUE
+                } else {
+                    EVENT_VALUE
+                });
             }
         }
         let mut st = *state;

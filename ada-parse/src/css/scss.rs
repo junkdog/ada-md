@@ -19,28 +19,26 @@
 //! its state kept beside SCSS's. **Not followed:** `(?i)`'s Unicode folding, as in CSS.
 
 use super::{
-    ANIMATION_NAME, ARITHMETIC, ATTR_NAME, ATTR_VAL, AT_COUNTER_STYLE,
-    AT_CUSTOM_MEDIA, AT_DOCUMENT, AT_IMPORT, AT_KEYFRAME, AT_MEDIA, AT_NAMESPACE, AT_PAGE,
-    AT_SUPPORTS, CLASS_DOT, CLASS_NAME, COLOR_SPACE, COMBINATOR, COMMENT, COMMENT_MARK,
-    CONST, CONSTANT, COUNTER_STYLE_INVALID, COUNTER_STYLE_NAME, CUSTOM_MARK, CUSTOM_NAME,
-    ENTITY_MARK, EXT_COLOR, EXT_COLOR_LEAF, FN_ATTR, FN_CALC, FN_COLOR, FN_COUNTER, FN_DOMAIN,
+    ANIMATION_NAME, ARITHMETIC, AT_COUNTER_STYLE, AT_CUSTOM_MEDIA, AT_DOCUMENT, AT_IMPORT,
+    AT_KEYFRAME, AT_MEDIA, AT_NAMESPACE, AT_PAGE, AT_SUPPORTS, ATTR_NAME, ATTR_VAL, CLASS_DOT,
+    CLASS_NAME, COLOR_SPACE, COMBINATOR, COMMENT, COMMENT_MARK, CONST, CONSTANT,
+    COUNTER_STYLE_INVALID, COUNTER_STYLE_NAME, CUSTOM_MARK, CUSTOM_NAME, ENTITY_MARK, ESCAPE,
+    ESCAPE_NEWLINE, EXT_COLOR, EXT_COLOR_LEAF, F_ADJ, F_ATTR, F_CALC, F_COLOR, F_DOC, F_FILTER,
+    F_IMAGE, F_MINMAX, F_REST, F_URL, F_VAR, FN_ATTR, FN_CALC, FN_COLOR, FN_COUNTER, FN_DOMAIN,
     FN_FILTER, FN_FONT_FACE, FN_GRADIENT, FN_GRID, FN_IMAGE, FN_REGEXP, FN_SHAPE, FN_TIMING,
-    FN_TOGGLE, FN_TRANSFORM, FN_URL, FN_URL_PREFIX, FN_VAR, FONT_NAME_LEAF, GROUP_BEGIN,
-    GROUP_END, HEX, HEX_MARK, HEXA, HEXA_MARK, ID_HASH, ID_NAME, IMPORTANT, KEY_VALUE,
-    KEYWORD_OTHER, LINE_NAMES, MEDIA_FEATURE, MEDIA_FEATURE_VENDOR, MAIN, NS_PREFIX,
-    P_ATTR_NAME, P_ATTR_OP, P_ATTR_SEL_END, P_ATTR_UNQUOTED, P_ATTR_VAL_END,
-    P_CALL_END, P_CASE_FLAG, P_COMMA, P_COMMENT, P_COUNTER_NAME, P_COUNTER_STYLES, P_CUSTOM_PROP,
-    P_DROP_WORDS, P_FROM_TO, P_GROUP, P_GROUP_END, P_LINE_NAME, P_LINE_NAMES, P_LINE_NAMES_END,
-    P_MEDIA_LOGIC, P_MEDIA_TYPES, P_MQ_COMMA, P_NTH_INVALID, P_QUALIFIED, P_STRING,
-    P_SUPPORTS_LOGIC, P_SYMBOL_TYPES, P_UNICODE_RANGE, P_VENDOR, PSEUDO_CLASS, PSEUDO_CLASS_MARK,
-    PSEUDO_ELEMENT, PSEUDO_ELEMENT_MARK, PSEUDO_ELEMENT_VENDOR, PSEUDO_KEYWORD, PROPERTY_NAME,
-    REPETITION, REPETITIONS, RULE_END, SASS_FN, SCSS_PROP, SPECIAL_COLOR, SPECIAL_COLOR_LEAF,
-    STD_COLOR, STD_COLOR_LEAF, STR_D, STR_S, STRING_END, Scan, State, TAG,
-    TAG_CUSTOM, TAG_NAME, TERMINATOR_LEAF, TIMING_DIRECTION, UNQUOTED, WILDCARD,
-    WRAP, ESCAPE, ESCAPE_NEWLINE, F_ADJ, F_ATTR, F_CALC, F_COLOR, F_DOC, F_FILTER, F_IMAGE,
-    F_MINMAX, F_REST, F_URL, F_VAR, MAX, Num, Out, Span, T_ANGLE, T_FREQUENCY, T_INTEGER, T_LENGTH,
-    T_NUMBER, T_PERCENT, T_RESOLUTION, T_TIME, char_at, is_hex, lex, lookup,
-    unit_type,
+    FN_TOGGLE, FN_TRANSFORM, FN_URL, FN_URL_PREFIX, FN_VAR, FONT_NAME_LEAF, GROUP_BEGIN, GROUP_END,
+    HEX, HEX_MARK, HEXA, HEXA_MARK, ID_HASH, ID_NAME, IMPORTANT, KEY_VALUE, KEYWORD_OTHER,
+    LINE_NAMES, MAIN, MAX, MEDIA_FEATURE, MEDIA_FEATURE_VENDOR, NS_PREFIX, Num, Out, P_ATTR_NAME,
+    P_ATTR_OP, P_ATTR_SEL_END, P_ATTR_UNQUOTED, P_ATTR_VAL_END, P_CALL_END, P_CASE_FLAG, P_COMMA,
+    P_COMMENT, P_COUNTER_NAME, P_COUNTER_STYLES, P_CUSTOM_PROP, P_DROP_WORDS, P_FROM_TO, P_GROUP,
+    P_GROUP_END, P_LINE_NAME, P_LINE_NAMES, P_LINE_NAMES_END, P_MEDIA_LOGIC, P_MEDIA_TYPES,
+    P_MQ_COMMA, P_NTH_INVALID, P_QUALIFIED, P_STRING, P_SUPPORTS_LOGIC, P_SYMBOL_TYPES,
+    P_UNICODE_RANGE, P_VENDOR, PROPERTY_NAME, PSEUDO_CLASS, PSEUDO_CLASS_MARK, PSEUDO_ELEMENT,
+    PSEUDO_ELEMENT_MARK, PSEUDO_ELEMENT_VENDOR, PSEUDO_KEYWORD, REPETITION, REPETITIONS, RULE_END,
+    SASS_FN, SCSS_PROP, SPECIAL_COLOR, SPECIAL_COLOR_LEAF, STD_COLOR, STD_COLOR_LEAF, STR_D, STR_S,
+    STRING_END, Scan, Span, State, T_ANGLE, T_FREQUENCY, T_INTEGER, T_LENGTH, T_NUMBER, T_PERCENT,
+    T_RESOLUTION, T_TIME, TAG, TAG_CUSTOM, TAG_NAME, TERMINATOR_LEAF, TIMING_DIRECTION, UNQUOTED,
+    WILDCARD, WRAP, char_at, is_hex, lex, lookup, unit_type,
 };
 
 /// Lex `b`, a line of SCSS without its `\n`, from `state`.
@@ -861,9 +859,7 @@ const fn gate(op: u16) -> u32 {
         O_SELECTORS => {
             SPW | C_STAR | C_AMP | ALPHA | C_DOT | C_HASH | C_PCT | C_LSQ | C_COLON | C_OPS | C_PLUS
         }
-        O_PROPERTIES => {
-            C_SLASH | ALPHA | C_DASH | C_DOLLAR | C_DIG | C_UNDER | C_HASH
-        }
+        O_PROPERTIES => C_SLASH | ALPHA | C_DASH | C_DOLLAR | C_DIG | C_UNDER | C_HASH,
         FROM_TO | O_BUILTIN | O_CONSTANTS | UNICODE_RANGE | O_VAR_FN | O_CALC_FN | O_ATTR_FN
         | O_MINMAX_FN | O_URL_FN | O_DOC_FNS | O_ADJ_FNS | O_COLOR_FNS | O_IMAGE_TYPE
         | O_FILTER_FNS => ALPHA,
@@ -894,9 +890,7 @@ const fn gate(op: u16) -> u32 {
         O_SASS_FN | O_TRUE_FALSE => C_LO,
         O_INTERP | O_HEX => C_HASH,
         O_CONCAT => ALPHA | C_UNDER | C_DASH | C_PLUS,
-        O_OPS => {
-            SPW | C_SLASH | C_STAR | C_OPS | C_DASH | C_PLUS | C_PCT | C_BANG | C_AMP | C_LO
-        }
+        O_OPS => SPW | C_SLASH | C_STAR | C_OPS | C_DASH | C_PLUS | C_PCT | C_BANG | C_AMP | C_LO,
         O_UNQUOTED => ANY & !(C_SP | C_QUOTE | C_NL | C_END),
         O_ARG_UNQUOTED => ANY & !(C_SP | C_QUOTE | C_NL | C_END | C_LPAR | C_RPAR),
         O_ADJ_OPS | O_CALC_ARITH => C_DASH | C_PLUS | C_STAR | C_SLASH,
@@ -996,7 +990,11 @@ static GATES: [u32; 409] = {
 /// `past` (the same place but at a space): an op whose pattern starts `\s*` lists the classes
 /// after the spaces as well as the spaces', and any other can't start at a space.
 fn gated(op: u16, at: u32, past: u32) -> bool {
-    let i = if op >= 1000 { 403 + usize::from(op - 1000) } else { usize::from(op) };
+    let i = if op >= 1000 {
+        403 + usize::from(op - 1000)
+    } else {
+        usize::from(op)
+    };
     GATES.get(i).is_none_or(|&g| g & at != 0 && g & past != 0)
 }
 
@@ -1042,7 +1040,14 @@ const fn ops(ctx: u8) -> &'static [u16] {
         G_PDIR => &[O_PAREN_END, O_VAR_FN, O_UNQUOTED],
         G_PSEL => &[O_PAREN_END, O_PS_COMMA, O_SELECTORS, O_CUSTOM_EL],
         G_PDROP => &[O_PAREN_END, DROP_WORDS, O_VAR_FN],
-        G_PNTH => &[O_PAREN_END, O_W_EVEN_ODD, O_NTH, NTH_INVALID, O_VAR_FN, O_INTEGER],
+        G_PNTH => &[
+            O_PAREN_END,
+            O_W_EVEN_ODD,
+            O_NTH,
+            NTH_INVALID,
+            O_VAR_FN,
+            O_INTEGER,
+        ],
         G_PLOCAL => &[O_PAREN_END, O_SELECTORS, STRING],
         LINE_NAMES => &[LINE_NAME, LINE_NAMES_CLOSE],
         EACH => &[O_VARIABLES, COMMA, O_BRACE_AHEAD, O_IN],
@@ -1209,7 +1214,14 @@ const fn ops(ctx: u8) -> &'static [u16] {
             O_SVE,
             O_CALC_PAREN,
         ],
-        G_ATTR => &[GROUP_AHEAD, O_VAR_FN, QUALIFIED, STRING, O_SVE, O_ATTR_FN_NAME],
+        G_ATTR => &[
+            GROUP_AHEAD,
+            O_VAR_FN,
+            QUALIFIED,
+            STRING,
+            O_SVE,
+            O_ATTR_FN_NAME,
+        ],
         G_CROSS_FADE => &[
             GROUP_AHEAD,
             COMMA,
@@ -1222,14 +1234,7 @@ const fn ops(ctx: u8) -> &'static [u16] {
             O_UNQUOTED,
         ],
         G_LENGTH => &[GROUP_AHEAD, O_VAR_FN, O_CALC_FN, O_LENGTH, O_SVE],
-        G_FILTER_AMOUNT => &[
-            GROUP_AHEAD,
-            O_VAR_FN,
-            O_CALC_FN,
-            O_PERCENT,
-            O_NUMBER,
-            O_SVE,
-        ],
+        G_FILTER_AMOUNT => &[GROUP_AHEAD, O_VAR_FN, O_CALC_FN, O_PERCENT, O_NUMBER, O_SVE],
         G_DROP_SHADOW => &[
             GROUP_AHEAD,
             O_VAR_FN,
@@ -1578,8 +1583,9 @@ fn function(w: &[u8]) -> Option<(u16, u16, u8)> {
         b"var" => (F_VAR, FN_VAR, G_VAR),
         b"red" | b"green" | b"blue" | b"alpha" | b"a" => (F_ADJ, FN_COLOR, G_ADJ_CHANNEL),
         b"hue" | b"h" => (F_ADJ, FN_COLOR, G_ADJ_HUE),
-        b"saturation" | b"lightness" | b"whiteness" | b"blackness" | b"s" | b"l" | b"w"
-        | b"b" => (F_ADJ, FN_COLOR, G_ADJ_PERCENT),
+        b"saturation" | b"lightness" | b"whiteness" | b"blackness" | b"s" | b"l" | b"w" | b"b" => {
+            (F_ADJ, FN_COLOR, G_ADJ_PERCENT)
+        }
         b"tint" | b"shade" => (F_ADJ, FN_COLOR, G_TINT),
         b"blenda" | b"blend" => (F_ADJ, FN_COLOR, G_BLEND),
         b"filter" => (F_REST, FN_FILTER, G_FILTER),
@@ -1619,23 +1625,71 @@ fn function(w: &[u8]) -> Option<(u16, u16, u8)> {
 }
 
 /// `builtin-functions`' families.
-const BUILTIN: u16 = F_ATTR | F_CALC | F_IMAGE | F_FILTER | F_MINMAX | F_URL | F_VAR | F_ADJ | F_REST;
+const BUILTIN: u16 =
+    F_ATTR | F_CALC | F_IMAGE | F_FILTER | F_MINMAX | F_URL | F_VAR | F_ADJ | F_REST;
 
 /// `regular_pseudo_classes`.
 static REGULAR_PSEUDO: &[&[u8]] = &[
-    b"active", b"any-link", b"blank", b"checked", b"current", b"default", b"defined",
-    b"disabled", b"drop", b"empty", b"enabled", b"first", b"first-child", b"first-of-type",
-    b"fullscreen", b"future", b"focus", b"focus-visible", b"focus-within", b"host", b"hover",
-    b"indeterminate", b"in-range", b"invalid", b"last-child", b"last-of-type", b"left", b"link",
-    b"local-link", b"only-child", b"only-of-type", b"optional", b"out-of-range", b"past",
-    b"placeholder-shown", b"read-only", b"read-write", b"required", b"right", b"root", b"scope",
-    b"target", b"target-within", b"user-invalid", b"valid", b"visited",
+    b"active",
+    b"any-link",
+    b"blank",
+    b"checked",
+    b"current",
+    b"default",
+    b"defined",
+    b"disabled",
+    b"drop",
+    b"empty",
+    b"enabled",
+    b"first",
+    b"first-child",
+    b"first-of-type",
+    b"fullscreen",
+    b"future",
+    b"focus",
+    b"focus-visible",
+    b"focus-within",
+    b"host",
+    b"hover",
+    b"indeterminate",
+    b"in-range",
+    b"invalid",
+    b"last-child",
+    b"last-of-type",
+    b"left",
+    b"link",
+    b"local-link",
+    b"only-child",
+    b"only-of-type",
+    b"optional",
+    b"out-of-range",
+    b"past",
+    b"placeholder-shown",
+    b"read-only",
+    b"read-write",
+    b"required",
+    b"right",
+    b"root",
+    b"scope",
+    b"target",
+    b"target-within",
+    b"user-invalid",
+    b"valid",
+    b"visited",
 ];
 
 /// `functional_pseudo_classes`.
 static FUNCTIONAL_PSEUDO: &[&[u8]] = &[
-    b"dir", b"lang", b"matches", b"not", b"has", b"drop", b"nth-last-child", b"nth-child",
-    b"nth-last-of-type", b"nth-of-type",
+    b"dir",
+    b"lang",
+    b"matches",
+    b"not",
+    b"has",
+    b"drop",
+    b"nth-last-child",
+    b"nth-child",
+    b"nth-last-of-type",
+    b"nth-of-type",
 ];
 
 /// `sass-operators`' second pattern's symbols, in its order (`$` left out: an empty match).
@@ -1754,7 +1808,11 @@ impl Scan<'_, '_, '_, true> {
                 return Some(e);
             }
         }
-        let s = if self.b.get(i) == Some(&b'-') { i + 1 } else { i };
+        let s = if self.b.get(i) == Some(&b'-') {
+            i + 1
+        } else {
+            i
+        };
         let q = self.nmstart(s)?;
         Some(self.nmchars_m(q))
     }
@@ -2069,7 +2127,10 @@ impl Scan<'_, '_, '_, true> {
 
     /// The ops of `ctx` at `p` in order, those [`gated`] lets through: the hit, if any, and
     /// whether any op was tried. `check`, `looped` and `nc_push` are the run's.
-    #[allow(clippy::too_many_arguments, reason = "the run's state, shared with its own code")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the run's state, shared with its own code"
+    )]
     fn generic(
         &mut self,
         ctx: u8,
@@ -2111,7 +2172,7 @@ impl Scan<'_, '_, '_, true> {
                 break;
             }
         }
-            (hit, tried)
+        (hit, tried)
     }
 
     /// [`Scan::own_dispatch`] from `p` on: on past the tokens that leave the stack as it is and
@@ -2250,8 +2311,20 @@ impl Scan<'_, '_, '_, true> {
                         b':' => &[O_SELECTORS, O_CSS_MODULES],
                         b',' => &[COMMA],
                         b'@' => &[O_AT_RULES],
-                        b'A'..=b'Z' | b'*' | b'&' | b'.' | b'%' | b'[' | b'+' | b'=' | b'<' | b'>'
-                        | b'~' | b'|' | b'?' | b'^' => &[O_SELECTORS],
+                        b'A'..=b'Z'
+                        | b'*'
+                        | b'&'
+                        | b'.'
+                        | b'%'
+                        | b'['
+                        | b'+'
+                        | b'='
+                        | b'<'
+                        | b'>'
+                        | b'~'
+                        | b'|'
+                        | b'?'
+                        | b'^' => &[O_SELECTORS],
                         _ => &[],
                     }
                 }
@@ -2423,7 +2496,10 @@ impl Scan<'_, '_, '_, true> {
         }
         // `property-value-constants` (`progid:` is out: no `:` after the word)
         let delim = e >= self.n
-            || matches!(b[e], b' ' | b'\t' | b'\x0b' | b'\x0c' | b'\r' | b';' | b'{' | b')' | b',' | b'/');
+            || matches!(
+                b[e],
+                b' ' | b'\t' | b'\x0b' | b'\x0c' | b'\r' | b';' | b'{' | b')' | b',' | b'/'
+            );
         if delim && exact.unwrap_or_else(|| lookup(&b[p..e])).lists & CONST != 0 {
             self.tok(p, e, CONSTANT);
             return Some(Some(e));
@@ -2610,7 +2686,18 @@ impl Scan<'_, '_, '_, true> {
             }
             O_SELECTORS => self.selectors(p),
             O_PROPERTIES => self.properties(p),
-            O_NUMERIC => self.s_numeric(p, &[T_ANGLE, T_FREQUENCY, T_LENGTH, T_RESOLUTION, T_TIME, T_PERCENT, T_NUMBER]),
+            O_NUMERIC => self.s_numeric(
+                p,
+                &[
+                    T_ANGLE,
+                    T_FREQUENCY,
+                    T_LENGTH,
+                    T_RESOLUTION,
+                    T_TIME,
+                    T_PERCENT,
+                    T_NUMBER,
+                ],
+            ),
             O_PERCENT => self.s_numeric(p, &[T_PERCENT]),
             O_LENGTH => self.s_numeric(p, &[T_LENGTH]),
             O_ANGLE => self.s_numeric(p, &[T_ANGLE]),
@@ -2783,7 +2870,9 @@ impl Scan<'_, '_, '_, true> {
                 if b.get(e) != Some(&b'(') || lookup(&b[p..e]).lists & SASS_FN == 0 {
                     return None;
                 }
-                if lookup(&b[p..e]).lists & SASS_FN == 0 || &b[p..e] != b[p..e].to_ascii_lowercase().as_slice() {
+                if lookup(&b[p..e]).lists & SASS_FN == 0
+                    || &b[p..e] != b[p..e].to_ascii_lowercase().as_slice()
+                {
                     return None;
                 }
                 self.call(p, e, FN_SASS, G_ARGS, GROUP_BEGIN)
@@ -2953,7 +3042,9 @@ impl Scan<'_, '_, '_, true> {
                 CONSTANT,
             ),
             O_W_TO => self.words_brk(p, &[b"to"], false, KEYWORD_OTHER),
-            O_W_SIDES => self.words_brk(p, &[b"bottom", b"left", b"right", b"top"], false, CONSTANT),
+            O_W_SIDES => {
+                self.words_brk(p, &[b"bottom", b"left", b"right", b"top"], false, CONSTANT)
+            }
             O_W_RADIAL => self.words_brk(p, &[b"at", b"circle", b"ellipse"], false, KEYWORD_OTHER),
             O_W_RADIAL_PLACES => self.words_brk(
                 p,
@@ -3109,7 +3200,11 @@ impl Scan<'_, '_, '_, true> {
             }
             O_NTH => self.nth_sass(p),
             O_IN => {
-                if b.get(p..p + 2) == Some(b"in") && self.boundary(p) && self.boundary(p + 2) && self.can_push() {
+                if b.get(p..p + 2) == Some(b"in")
+                    && self.boundary(p)
+                    && self.boundary(p + 2)
+                    && self.can_push()
+                {
                     self.tok(p, p + 2, OP_SASS);
                     self.push(EACH_IN, p + 2);
                     return Some(p + 2);
@@ -3194,7 +3289,14 @@ impl Scan<'_, '_, '_, true> {
             O_MIXIN_OPEN | O_INCLUDE_OPEN => {
                 if c == Some(b'(') && self.can_push() {
                     self.tok(p, p + 1, BEGIN_SASS);
-                    self.push(if op == O_MIXIN_OPEN { MIXIN_PARAMS } else { INCLUDE_ARGS }, p + 1);
+                    self.push(
+                        if op == O_MIXIN_OPEN {
+                            MIXIN_PARAMS
+                        } else {
+                            INCLUDE_ARGS
+                        },
+                        p + 1,
+                    );
                     return Some(p + 1);
                 }
                 None
@@ -3258,7 +3360,9 @@ impl Scan<'_, '_, '_, true> {
                     let s = self.spaces(p + 2);
                     if s > p + 2 && s <= n {
                         let mut e = s;
-                        while e < n && (b[e].is_ascii_alphanumeric() || b[e] == b'_' || b[e] == b'-') {
+                        while e < n
+                            && (b[e].is_ascii_alphanumeric() || b[e] == b'_' || b[e] == b'-')
+                        {
                             e += 1;
                         }
                         self.tok(p, p + 2, KW_AS);
@@ -3274,7 +3378,11 @@ impl Scan<'_, '_, '_, true> {
             O_USE_SHOW => {
                 for w in [&b"show"[..], b"hide"] {
                     let e = p + w.len();
-                    if b.get(p..e) == Some(w) && self.boundary(p) && self.boundary(e) && self.can_push() {
+                    if b.get(p..e) == Some(w)
+                        && self.boundary(p)
+                        && self.boundary(e)
+                        && self.can_push()
+                    {
                         self.tok(p, e, KW_SHOW);
                         self.push(USE_SHOW, e);
                         return Some(e);
@@ -3390,7 +3498,14 @@ impl Scan<'_, '_, '_, true> {
             O_SUP_OPEN | O_MQ_OPEN => {
                 if c == Some(b'(') && self.can_push() {
                     self.tok(p, p + 1, GROUP_BEGIN);
-                    self.push(if op == O_SUP_OPEN { SUP_PAREN } else { MQ_PAREN }, p + 1);
+                    self.push(
+                        if op == O_SUP_OPEN {
+                            SUP_PAREN
+                        } else {
+                            MQ_PAREN
+                        },
+                        p + 1,
+                    );
                     return Some(p + 1);
                 }
                 None
@@ -3545,7 +3660,11 @@ impl Scan<'_, '_, '_, true> {
         if family & families == 0 {
             return None;
         }
-        let begin = if group == G_CONIC { SECTION_BEGIN } else { GROUP_BEGIN };
+        let begin = if group == G_CONIC {
+            SECTION_BEGIN
+        } else {
+            GROUP_BEGIN
+        };
         self.call(p, e, leaf, group, begin)
     }
 
@@ -3620,13 +3739,22 @@ impl Scan<'_, '_, '_, true> {
         // `{{break}}(?=[\s;{),/])`: the word must end at one of those
         let delim = |i: usize| {
             i >= self.n
-                || matches!(self.b[i], b' ' | b'\t' | b'\x0b' | b'\x0c' | b'\r' | b';' | b'{' | b')' | b',' | b'/')
+                || matches!(
+                    self.b[i],
+                    b' ' | b'\t' | b'\x0b' | b'\x0c' | b'\r' | b';' | b'{' | b')' | b',' | b'/'
+                )
         };
         if b.get(p..p + 23) == Some(b"progid:DXImageTransform") {
             let m = self.next(p + 23);
             if m < self.n && b.get(m..m + 9) == Some(b"Microsoft") {
                 let s = self.next(m + 9);
-                for x in [&b"Alpha"[..], b"Blur", b"dropshadow", b"gradient", b"Shadow"] {
+                for x in [
+                    &b"Alpha"[..],
+                    b"Blur",
+                    b"dropshadow",
+                    b"gradient",
+                    b"Shadow",
+                ] {
                     let e = s + x.len();
                     if s < self.n && b.get(s..e) == Some(x) && delim(e) {
                         self.tok(p, e, CONSTANT);
@@ -3650,22 +3778,22 @@ impl Scan<'_, '_, '_, true> {
         // `\b(?i:sans-serif|serif|monospace|fantasy|cursive|system-ui)\b(?=\s*[;,\n}{])`
         if matches!(b[p].to_ascii_lowercase(), b's' | b'm' | b'f' | b'c') {
             for w in [
-            &b"sans-serif"[..],
-            b"serif",
-            b"monospace",
-            b"fantasy",
-            b"cursive",
-            b"system-ui",
-        ] {
-            let e = p + w.len();
-            if b.get(p..e).is_some_and(|x| x.eq_ignore_ascii_case(w)) && self.boundary(e) {
-                let s = self.spaces(e);
-                if s > self.n || matches!(self.ch(s), Some(b';' | b',' | b'}' | b'{')) {
-                    self.tok(p, e, FONT_NAME_LEAF);
-                    return Some(e);
+                &b"sans-serif"[..],
+                b"serif",
+                b"monospace",
+                b"fantasy",
+                b"cursive",
+                b"system-ui",
+            ] {
+                let e = p + w.len();
+                if b.get(p..e).is_some_and(|x| x.eq_ignore_ascii_case(w)) && self.boundary(e) {
+                    let s = self.spaces(e);
+                    if s > self.n || matches!(self.ch(s), Some(b';' | b',' | b'}' | b'{')) {
+                        self.tok(p, e, FONT_NAME_LEAF);
+                        return Some(e);
+                    }
                 }
             }
-        }
         }
         // `\b(true|false|null)\b`
         if !matches!(b[p], b't' | b'f' | b'n') {
@@ -3705,7 +3833,9 @@ impl Scan<'_, '_, '_, true> {
         let float = num
             .and_then(|nm| nm.dot.map(|(_, e)| e).or(nm.exp))
             .map(|f| (f, unit(f)));
-        let int = num.filter(|nm| nm.int > nm.digits).map(|nm| (nm.int, unit(nm.int)));
+        let int = num
+            .filter(|nm| nm.int > nm.digits)
+            .map(|nm| (nm.int, unit(nm.int)));
         let zero = c == b'0' && self.boundary(p + 1) && b.get(p + 1) != Some(&b'%');
         for &t in types {
             let hit = match t {
@@ -3784,7 +3914,11 @@ impl Scan<'_, '_, '_, true> {
             }
         }
         let s = self.spaces(e);
-        if s < self.n && matches!(b[s], b'-' | b'+') && b.get(s + 1).is_some_and(u8::is_ascii_digit) && s + 1 < self.n {
+        if s < self.n
+            && matches!(b[s], b'-' | b'+')
+            && b.get(s + 1).is_some_and(u8::is_ascii_digit)
+            && s + 1 < self.n
+        {
             self.tok(s, s + 1, ILLEGAL_OP);
             return s + 1;
         }
@@ -3841,7 +3975,10 @@ impl Scan<'_, '_, '_, true> {
                 return Some(e);
             }
             // the symbols start with one of `%~=!<>&|?` (`+` and `-` taken above)
-            if matches!(c, b'%' | b'~' | b'=' | b'!' | b'<' | b'>' | b'&' | b'|' | b'?') {
+            if matches!(
+                c,
+                b'%' | b'~' | b'=' | b'!' | b'<' | b'>' | b'&' | b'|' | b'?'
+            ) {
                 for w in SASS_OP_SYMBOLS {
                     if b[p..].starts_with(w) {
                         self.tok(p, p + w.len(), OP_SASS);
@@ -3861,7 +3998,10 @@ impl Scan<'_, '_, '_, true> {
         }
         // `(?:\s*)\b(not|or|and|when|from|to|through|in)(?=\s)`
         let s = self.spaces(p);
-        if s < self.n && matches!(b[s], b'n' | b'o' | b'a' | b'w' | b'f' | b't' | b'i') && self.boundary(s) {
+        if s < self.n
+            && matches!(b[s], b'n' | b'o' | b'a' | b'w' | b'f' | b't' | b'i')
+            && self.boundary(s)
+        {
             for w in [
                 &b"not"[..],
                 b"or",
@@ -3994,7 +4134,11 @@ impl Scan<'_, '_, '_, true> {
         }
         // classes and ids: `\s*(\.)(?={{ident}}|#)`
         if matches!(b[s], b'.' | b'#') && (self.ident_at(s + 1) || b.get(s + 1) == Some(&b'#')) {
-            let (mark, ctx) = if b[s] == b'.' { (CLASS_DOT, CLASS) } else { (ID_HASH, ID) };
+            let (mark, ctx) = if b[s] == b'.' {
+                (CLASS_DOT, CLASS)
+            } else {
+                (ID_HASH, ID)
+            };
             self.tok(s, s + 1, mark);
             self.push(ctx, s + 1);
             return Some(s + 1);
@@ -4139,11 +4283,31 @@ impl Scan<'_, '_, '_, true> {
         let call = |w: &[u8]| at(w) && b.get(s + 1 + w.len()) == Some(&b'(');
         // the calls: `\s*(:)(dir|lang)(?=\()` and the like
         for (words, to, leaf, mark) in [
-            (&[&b"dir"[..], b"lang"][..], PS_DIR, PSEUDO_CLASS, PSEUDO_CLASS_MARK),
-            (&[&b"matches"[..], b"is", b"where", b"not", b"has"][..], PS_SEL, PSEUDO_CLASS, PSEUDO_CLASS_MARK),
-            (&[&b"drop"[..]][..], PS_DROP, PSEUDO_CLASS, PSEUDO_CLASS_MARK),
             (
-                &[&b"nth-last-child"[..], b"nth-child", b"nth-last-of-type", b"nth-of-type"][..],
+                &[&b"dir"[..], b"lang"][..],
+                PS_DIR,
+                PSEUDO_CLASS,
+                PSEUDO_CLASS_MARK,
+            ),
+            (
+                &[&b"matches"[..], b"is", b"where", b"not", b"has"][..],
+                PS_SEL,
+                PSEUDO_CLASS,
+                PSEUDO_CLASS_MARK,
+            ),
+            (
+                &[&b"drop"[..]][..],
+                PS_DROP,
+                PSEUDO_CLASS,
+                PSEUDO_CLASS_MARK,
+            ),
+            (
+                &[
+                    &b"nth-last-child"[..],
+                    b"nth-child",
+                    b"nth-last-of-type",
+                    b"nth-of-type",
+                ][..],
                 PS_NTH,
                 PSEUDO_CLASS,
                 PSEUDO_CLASS_MARK,
@@ -4407,13 +4571,18 @@ impl Scan<'_, '_, '_, true> {
         if s >= n || b[s] != b'@' || !self.can_push() {
             return None;
         }
-        let word = |w: &[u8]| b.get(s + 1..s + 1 + w.len()) == Some(w) && self.boundary(s + 1 + w.len());
+        let word =
+            |w: &[u8]| b.get(s + 1..s + 1 + w.len()) == Some(w) && self.boundary(s + 1 + w.len());
         if s == p {
             // the patterns with no `\s*` before them
             for (words, leaf, to) in [
                 (&[&b"each"[..]][..], AT_FLOW, Some(EACH)),
                 (&[&b"for"[..], b"while"][..], AT_FLOW, Some(AT_EXPR)),
-                (&[&b"if"[..], b"else if", b"else"][..], AT_COND, Some(AT_EXPR)),
+                (
+                    &[&b"if"[..], b"else if", b"else"][..],
+                    AT_COND,
+                    Some(AT_EXPR),
+                ),
                 (&[&b"warn"[..], b"error"][..], AT_WARN_LEAF, Some(AT_WARN)),
                 (&[&b"debug"[..]][..], AT_DEBUG, Some(AT_WARN)),
                 (&[&b"at-root"[..]][..], AT_ROOT, None),
@@ -4456,11 +4625,12 @@ impl Scan<'_, '_, '_, true> {
                     while l < n && b[l].is_ascii_lowercase() {
                         l += 1;
                     }
-                    let (ns, start) = if l > t && b.get(l) == Some(&b'.') && self.word_run(l + 1, true) > l + 1 {
-                        (Some(l), l + 1)
-                    } else {
-                        (None, t)
-                    };
+                    let (ns, start) =
+                        if l > t && b.get(l) == Some(&b'.') && self.word_run(l + 1, true) > l + 1 {
+                            (Some(l), l + 1)
+                        } else {
+                            (None, t)
+                        };
                     let e = self.word_run(start, true);
                     if e > start {
                         self.tok(s, s + 1, INC_AT_MARK);
@@ -4522,7 +4692,10 @@ impl Scan<'_, '_, '_, true> {
                 let mut name = None;
                 for w in [&b"decimal"[..], b"none"] {
                     let e = t + w.len();
-                    if b.get(t..e).is_some_and(|x| x.eq_ignore_ascii_case(w)) && self.boundary(e) && ahead(e) {
+                    if b.get(t..e).is_some_and(|x| x.eq_ignore_ascii_case(w))
+                        && self.boundary(e)
+                        && ahead(e)
+                    {
                         name = Some((e, COUNTER_STYLE_INVALID));
                         break;
                     }
@@ -4744,8 +4917,14 @@ mod tests {
     fn a_rule_reads_as_bats_grammar_does() {
         let k = kinds(&[".btn-#{$x} { color: $red; }"]);
         let find = |t: &str| k.iter().find(|(x, _)| *x == t).map(|(_, s)| s.clone());
-        assert_eq!(find("btn-").as_deref(), Some("entity.other.attribute-name.class.css"));
-        assert_eq!(find("color").as_deref(), Some("support.type.property-name.css"));
+        assert_eq!(
+            find("btn-").as_deref(),
+            Some("entity.other.attribute-name.class.css")
+        );
+        assert_eq!(
+            find("color").as_deref(),
+            Some("support.type.property-name.css")
+        );
         assert_eq!(find("red").as_deref(), Some("variable.other.sass"));
     }
 
@@ -4765,7 +4944,11 @@ mod tests {
         lex(Lang::Scss, &line, &mut st, &mut spans);
         let mut at = 0;
         for s in &spans {
-            assert!(at <= s.start as usize && s.start < s.end, "{:?} after {at}", (s.start, s.end));
+            assert!(
+                at <= s.start as usize && s.start < s.end,
+                "{:?} after {at}",
+                (s.start, s.end)
+            );
             at = s.end as usize;
         }
     }

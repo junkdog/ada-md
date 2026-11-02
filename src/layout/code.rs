@@ -121,12 +121,106 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
 /// Tabs to spaces at stops of four, and other control characters to spaces. Layout and the
 /// highlighter both work on the expanded line, so their byte offsets agree.
 pub fn expand_tabs(line: &str) -> Cow<'_, str> {
-    // every control character starts with a byte below 0x20, 0x7f, or 0xc2 (C1): bytes first
-    let suspect = |b: u8| b < 0x20 || b == 0x7f || b == 0xc2;
-    if !line.bytes().any(suspect) || !line.contains(|c: char| c.is_control()) {
+    if !needs_expanding(line) {
         return Cow::Borrowed(line);
     }
     let mut out = String::with_capacity(line.len() + TAB_STOP);
+    expand_into(line, &mut out);
+    Cow::Owned(out)
+}
+
+/// [`expand_tabs`] into `buf`, reused from line to line: the line itself when nothing changes,
+/// else `buf` holding the expanded line (HL-004: no allocation a line with a tab).
+pub fn expand_tabs_in<'a>(line: &'a str, buf: &'a mut String) -> &'a str {
+    if !needs_expanding(line) {
+        return line;
+    }
+    buf.clear();
+    expand_into(line, buf);
+    buf
+}
+
+/// [`expand_tabs`] onto the end of `out`.
+pub fn expand_tabs_onto(line: &str, out: &mut String) {
+    if needs_expanding(line) {
+        expand_into(line, out);
+    } else {
+        out.push_str(line);
+    }
+}
+
+/// Whether any line of `text` may hold a control character, `\n` aside: when not, no line of
+/// it needs [`expand_tabs`]. One pass over the block, 32 bytes a step (HL-004: checked a line
+/// at a time, short lines spent most of it a byte at a time).
+pub fn block_needs_expanding(text: &str) -> bool {
+    let suspect = |b: u8| ((b < 0x20) & (b != b'\n')) | (b == 0x7f) | (b == 0xc2);
+    let (chunks, rest) = text.as_bytes().as_chunks::<32>();
+    chunks
+        .iter()
+        .any(|c| c.iter().fold(false, |m, &b| m | suspect(b)))
+        || rest.iter().any(|&b| suspect(b))
+}
+
+/// Whether `line` holds a control character.
+fn needs_expanding(line: &str) -> bool {
+    // every control character starts with a byte below 0x20, 0x7f, or 0xc2 (C1): bytes first,
+    // 16 at a time with no exit inside, which vectorizes (HL-004: the byte-at-a-time `any` was
+    // a third of `expand_tabs`)
+    let suspect = |b: u8| (b < 0x20) | (b == 0x7f) | (b == 0xc2);
+    let (chunks, rest) = line.as_bytes().as_chunks::<16>();
+    let found = chunks
+        .iter()
+        .any(|c| c.iter().fold(false, |m, &b| m | suspect(b)))
+        || rest.iter().any(|&b| suspect(b));
+    found && line.contains(|c: char| c.is_control())
+}
+
+/// `line`'s characters onto `out`, tabs to spaces at stops of four and other control
+/// characters to a space.
+fn expand_into(line: &str, out: &mut String) {
+    if line.is_ascii() {
+        // a column a byte, and every control character one byte
+        const SPACES: &str = "    ";
+        const _: () = assert!(SPACES.len() == TAB_STOP);
+        let (b, start) = (line.as_bytes(), out.len());
+        // indentation first, a stop a tab: most lines expanded are tabs, then text with no
+        // control character, copied whole (HL-004)
+        let lead = b.iter().take_while(|&&c| c == b'\t').count();
+        for _ in 0..lead {
+            out.push_str(SPACES);
+        }
+        let control = |c: u8| (c < 0x20) | (c == 0x7f);
+        let (chunks, tail) = b[lead..].as_chunks::<16>();
+        if !chunks
+            .iter()
+            .any(|c| c.iter().fold(false, |m, &x| m | control(x)))
+            && !tail.iter().any(|&x| control(x))
+        {
+            out.push_str(&line[lead..]);
+            return;
+        }
+        let mut from = lead;
+        for (i, &b) in b.iter().enumerate().skip(lead) {
+            if !control(b) {
+                continue;
+            }
+            out.push_str(&line[from..i]);
+            let n = if b == b'\t' {
+                TAB_STOP - (out.len() - start) % TAB_STOP
+            } else {
+                1
+            };
+            out.push_str(&SPACES[..n]);
+            from = i + 1;
+        }
+        out.push_str(&line[from..]);
+        return;
+    }
+    expand_chars(line, out);
+}
+
+/// [`expand_into`] a character at a time, for a line past ASCII.
+fn expand_chars(line: &str, out: &mut String) {
     let mut col = 0;
     for c in line.chars() {
         if c == '\t' {
@@ -141,7 +235,6 @@ pub fn expand_tabs(line: &str) -> Cow<'_, str> {
             col += c.width().unwrap_or(0);
         }
     }
-    Cow::Owned(out)
 }
 
 /// Split a line into pieces at most `width` columns wide. An empty line is one empty chunk.
@@ -177,6 +270,43 @@ mod tests {
     #[test]
     fn tabs_expand_to_stops() {
         assert_eq!(expand_tabs("a\tb\t\tc"), "a   b       c");
+    }
+
+    /// ASCII's byte path expands as the character path does, and `expand_tabs_in` as
+    /// `expand_tabs`, whatever the control bytes and wherever they fall against the 16-byte
+    /// check (HL-004).
+    #[test]
+    fn ascii_expands_as_chars_do() {
+        let mut seed = 0x9e37_79b9_u32;
+        let mut buf = String::new();
+        for len in 0..80 {
+            for _ in 0..40 {
+                let line: String = (0..len)
+                    .map(|_| {
+                        seed ^= seed << 13;
+                        seed ^= seed >> 17;
+                        seed ^= seed << 5;
+                        match seed % 8 {
+                            0 => '\t',
+                            1 => char::from((seed >> 8) as u8 % 0x20),
+                            2 => '\x7f',
+                            _ => char::from(b'a' + (seed >> 8) as u8 % 26),
+                        }
+                    })
+                    .collect();
+                let (mut fast, mut slow) = (String::new(), String::new());
+                expand_into(&line, &mut fast);
+                expand_chars(&line, &mut slow);
+                assert_eq!(fast, slow, "{line:?}");
+                assert_eq!(
+                    expand_tabs_in(&line, &mut buf),
+                    expand_tabs(&line),
+                    "{line:?}"
+                );
+            }
+        }
+        assert_eq!(expand_tabs("\u{85}x\tñ\t"), " x  ñ   ");
+        assert_eq!(expand_tabs_in("ñ\u{9f}", &mut buf), "ñ ");
     }
 
     #[test]

@@ -7,6 +7,7 @@
 //! `(end byte, rule)` runs, and paint resolves each rule against the ada theme (ADR-03).
 //! Results are cached by [`key`], a hash of the language and the code.
 
+use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::Path;
@@ -26,7 +27,7 @@ use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet
 
 use crate::app::{Computed, Msg};
 use crate::doc::{CodeBlock, CodeId};
-use crate::layout::expand_tabs;
+use crate::layout::{block_needs_expanding, expand_tabs, expand_tabs_in, expand_tabs_onto};
 use ada_parse::Lang;
 
 /// Longer lines are left plain: backtracking regexes can be slow on them, and nobody reads them
@@ -430,10 +431,6 @@ impl OpenLine<'_> {
         }
     }
 
-    fn runs(&self) -> &[Run] {
-        &self.runs[self.open..]
-    }
-
     /// Leave the line plain: no runs.
     fn clear(&mut self) {
         self.runs.truncate(self.open);
@@ -539,13 +536,14 @@ impl LineState {
         buf: &mut String,
         out: &mut LineRuns,
     ) -> Option<()> {
-        let line = expand_tabs(line);
-        if line.len() > MAX_LINE {
+        // expanded straight into the buffer syntect reads, with no copy between (HL-004)
+        buf.clear();
+        expand_tabs_onto(line, buf);
+        let len = buf.len();
+        if len > MAX_LINE {
             out.open_line().end();
             return Some(());
         }
-        buf.clear();
-        buf.push_str(&line);
         buf.push('\n');
         let ops = self.parse.parse_line(buf, self.set).ok()?;
         LINES.fetch_add(1, Ordering::Relaxed);
@@ -553,7 +551,7 @@ impl LineState {
         let mut end = 0;
         for (style, piece) in HighlightIterator::new(&mut self.scopes, &ops, buf, highlighter) {
             let start = end;
-            end = (end + piece.len()).min(line.len());
+            end = (end + piece.len()).min(len);
             if end == start {
                 continue;
             }
@@ -575,17 +573,21 @@ fn own(lang: &str) -> Option<Lang> {
 
 /// A line's runs from its spans, `(start, end, rule)` in order, as a line of `out`; empty when
 /// no span has a rule.
+#[inline]
 fn span_runs(len: usize, spans: impl Iterator<Item = (u32, u32, Rule)>, out: &mut LineRuns) {
     let mut out = out.open_line();
     let mut at = 0;
+    // whether a run has a rule, kept as they're pushed: no second pass over them (HL-004)
+    let mut colored = false;
     for (start, end, rule) in spans {
         if start > at {
             out.push(start, Rule(Rule::NONE));
         }
         out.push(end, rule);
+        colored |= rule.0 != Rule::NONE;
         at = end;
     }
-    if out.runs().iter().all(|r| r.rule.0 == Rule::NONE) {
+    if !colored {
         out.clear();
     } else if (at as usize) < len {
         out.push(len as u32, Rule(Rule::NONE));
@@ -593,33 +595,86 @@ fn span_runs(len: usize, spans: impl Iterator<Item = (u32, u32, Rule)>, out: &mu
     out.end();
 }
 
+/// A kind's place in [`ParseRules`] before its rule is resolved. No theme has this many rules.
+const UNSET: Rule = Rule(Rule::NONE - 1);
+
+/// The kinds' rules resolved so far, by language and theme (`SyntaxTheme::id`), for the next
+/// block in them to start from: resolving takes syntect's scope repository and a selector
+/// match for each kind, a sixth of a YAML corpus's time when each block did it anew (HL-004).
+static RESOLVED: Mutex<Vec<(Lang, u64, Vec<Rule>)>> = Mutex::new(Vec::new());
+
+/// Languages times themes kept in [`RESOLVED`]; past that it starts over.
+const RESOLVED_MAX: usize = 64;
+
 /// The theme's rule for each kind of an ada-parse language (ADR-40), as syntect would pick it
 /// for the kind's scopes: all of them up front for a language with a fixed set
 /// (`ParseRules::new`), else each the first time a span has it (`ParseRules::lazy`).
 pub struct ParseRules {
     lang: Lang,
     base: Scope,
-    /// By `Span::kind`; `None` until resolved.
-    rules: Vec<Option<Rule>>,
+    /// By `Span::kind`; [`UNSET`] until resolved, and past the end for a kind not met yet.
+    rules: Vec<Rule>,
+    /// The theme, and whether `rules` has rules [`RESOLVED`] lacks.
+    theme: u64,
+    fresh: bool,
 }
 
 impl ParseRules {
     /// Every kind's rule, for a language whose kinds are fixed (`Lang::kinds`).
     fn new(lang: Lang, theme: &SyntaxTheme) -> Self {
         let highlighter = SynHighlighter::new(&theme.theme);
-        let mut rules = Self::lazy(lang);
+        let mut rules = Self::lazy(lang, theme.id);
         rules.rules = (0..lang.kinds().len() as u16)
-            .map(|k| Some(rules.resolve(k, &highlighter)))
+            .map(|k| rules.resolve(k, &highlighter))
             .collect();
         rules
     }
 
     /// No rule yet: each is resolved when a span first has its kind.
-    fn lazy(lang: Lang) -> Self {
+    fn lazy(lang: Lang, theme: u64) -> Self {
         Self {
             lang,
             base: Scope::new(lang.base()).expect("scope"),
             rules: Vec::new(),
+            theme,
+            fresh: false,
+        }
+    }
+
+    /// The rules earlier blocks in `lang` and the theme resolved, the rest resolved as met.
+    fn cached(lang: Lang, theme: u64) -> Self {
+        let mut rules = Self::lazy(lang, theme);
+        let cache = RESOLVED.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((_, _, r)) = cache.iter().find(|(l, t, _)| *l == lang && *t == theme) {
+            rules.rules.clone_from(r);
+        }
+        rules
+    }
+
+    /// Hand the rules this block resolved to the blocks after it ([`RESOLVED`]).
+    fn keep(&mut self) {
+        if !std::mem::take(&mut self.fresh) {
+            return;
+        }
+        let mut cache = RESOLVED.lock().unwrap_or_else(PoisonError::into_inner);
+        let (lang, theme) = (self.lang, self.theme);
+        match cache.iter_mut().find(|(l, t, _)| *l == lang && *t == theme) {
+            Some((_, _, r)) => {
+                if r.len() < self.rules.len() {
+                    r.resize(self.rules.len(), UNSET);
+                }
+                for (mine, theirs) in self.rules.iter().zip(r.iter_mut()) {
+                    if *theirs == UNSET {
+                        *theirs = *mine;
+                    }
+                }
+            }
+            None => {
+                if cache.len() >= RESOLVED_MAX {
+                    cache.clear();
+                }
+                cache.push((lang, theme, self.rules.clone()));
+            }
         }
     }
 
@@ -631,55 +686,75 @@ impl ParseRules {
                 .iter()
                 .map(|s| Scope::new(s).expect("scope")),
         );
-        Rule::decode(highlighter.style_for_stack(&stack).foreground)
+        let rule = Rule::decode(highlighter.style_for_stack(&stack).foreground);
+        debug_assert_ne!(rule, UNSET);
+        rule
     }
 
-    /// Highlight one line into `out`, after the lines before it left `state`; `spans` is
-    /// scratch space. Every kind's rule must be resolved ([`ParseRules::new`]). Called from
-    /// each way a block is highlighted, so never inlined into them.
+    /// Resolve `kind`'s rule into `rules`, the first time a span has it.
+    #[cold]
+    #[inline(never)]
+    fn resolve_into(&mut self, kind: u16, highlighter: &SynHighlighter) -> Rule {
+        let k = usize::from(kind);
+        if k >= self.rules.len() {
+            self.rules.resize(k + 1, UNSET);
+        }
+        let rule = self.resolve(kind, highlighter);
+        self.rules[k] = rule;
+        self.fresh = true;
+        rule
+    }
+
+    /// Highlight one line into `out`, after the lines before it left `state`; `spans` and
+    /// `buf` (the line when tabs expand it) are scratch space. Every kind's rule must be
+    /// resolved ([`ParseRules::new`]). Called from each way a block is highlighted, so never
+    /// inlined into them.
     #[inline(never)]
     fn line(
         &self,
         line: &str,
         state: &mut ada_parse::State,
-        spans: &mut Vec<ada_parse::Span>,
+        (spans, buf): (&mut Vec<ada_parse::Span>, &mut String),
         out: &mut LineRuns,
     ) {
-        let line = expand_tabs(line);
-        ada_parse::lex(self.lang, &line, state, spans);
-        self.runs(line.len(), spans, out);
+        let line = expand_tabs_in(line, buf);
+        ada_parse::lex(self.lang, line, state, spans);
+        let rule = |s: &ada_parse::Span| {
+            let rule = self.rules.get(usize::from(s.kind)).copied();
+            (s.start, s.end, rule.unwrap_or(Rule(Rule::NONE)))
+        };
+        span_runs(line.len(), spans.iter().map(rule), out);
     }
 
-    /// As [`ParseRules::line`], resolving the rules of kinds met for the first time.
+    /// As [`ParseRules::line`], resolving the rules of kinds met for the first time. A line is
+    /// expanded only when `expand`, its block's text holding a control character, into `buf`.
     #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
     fn line_resolving(
         &mut self,
         line: &str,
         state: &mut ada_parse::State,
         spans: &mut Vec<ada_parse::Span>,
-        highlighter: &SynHighlighter,
+        expand: bool,
+        buf: &mut String,
+        highlighter: &LazyHighlighter,
         out: &mut LineRuns,
     ) {
-        let line = expand_tabs(line);
-        ada_parse::lex(self.lang, &line, state, spans);
-        for s in spans.iter() {
-            let k = usize::from(s.kind);
-            if self.rules.get(k).is_none_or(Option::is_none) {
-                if k >= self.rules.len() {
-                    self.rules.resize(k + 1, None);
-                }
-                self.rules[k] = Some(self.resolve(s.kind, highlighter));
-            }
-        }
-        self.runs(line.len(), spans, out);
-    }
-
-    fn runs(&self, len: usize, spans: &[ada_parse::Span], out: &mut LineRuns) {
-        let rule = |s: &ada_parse::Span| {
-            let rule = self.rules.get(usize::from(s.kind)).copied().flatten();
-            (s.start, s.end, rule.unwrap_or(Rule(Rule::NONE)))
+        let line = if expand {
+            expand_tabs_in(line, buf)
+        } else {
+            line
         };
-        span_runs(len, spans.iter().map(rule), out);
+        ada_parse::lex(self.lang, line, state, spans);
+        // the rule looked up once a span, resolved in the same pass when it's new (HL-004)
+        let rule = |s: &ada_parse::Span| {
+            let rule = match self.rules.get(usize::from(s.kind)) {
+                Some(&r) if r != UNSET => r,
+                _ => self.resolve_into(s.kind, highlighter.get()),
+            };
+            (s.start, s.end, rule)
+        };
+        span_runs(line.len(), spans.iter().map(rule), out);
     }
 }
 
@@ -728,9 +803,9 @@ impl Lexer {
         match self {
             Lexer::Plain => return (None, state),
             Lexer::Parse(rules) => {
-                let mut spans = Vec::new();
+                let (mut spans, mut buf) = (Vec::new(), String::new());
                 for l in code.lines() {
-                    rules.line(l, &mut state, &mut spans, &mut lines);
+                    rules.line(l, &mut state, (&mut spans, &mut buf), &mut lines);
                 }
             }
         }
@@ -792,7 +867,8 @@ fn streams(lang: Lang) -> bool {
 /// What highlights a block's lines.
 enum Engine {
     Syntect(LineState),
-    Parse(ParseRules, ada_parse::State, Vec<ada_parse::Span>),
+    /// Also whether the block's text has a control character, which `expand_tabs` changes.
+    Parse(ParseRules, ada_parse::State, Vec<ada_parse::Span>, bool),
 }
 
 /// The lines of a code block, split as [`crate::doc::code_lines`] splits them.
@@ -810,12 +886,29 @@ impl<'a> Iterator for Lines<'a> {
 
     fn next(&mut self) -> Option<&'a str> {
         let rest = self.0?;
-        let (line, tail) = match rest.split_once('\n') {
-            Some((line, tail)) => (line, Some(tail)),
+        // the memchr crate's search, vectorized: `split_once`'s was a fifth of a Diff corpus's
+        // time in ada (HL-004)
+        let (line, tail) = match memchr::memchr(b'\n', rest.as_bytes()) {
+            Some(i) => (&rest[..i], Some(&rest[i + 1..])),
             None => (rest, None),
         };
         self.0 = tail;
         Some(line.strip_suffix('\r').unwrap_or(line))
+    }
+}
+
+/// syntect's highlighter for a theme, built the first time it's needed: an ada-parse block
+/// needs it only for a kind no block before it resolved (HL-004: building it sorts the
+/// theme's selectors, a few percent of a corpus's time when every block did).
+struct LazyHighlighter<'a> {
+    theme: &'a SyntaxTheme,
+    built: OnceCell<SynHighlighter<'a>>,
+}
+
+impl<'a> LazyHighlighter<'a> {
+    fn get(&self) -> &SynHighlighter<'a> {
+        self.built
+            .get_or_init(|| SynHighlighter::new(&self.theme.theme))
     }
 }
 
@@ -824,7 +917,7 @@ impl<'a> Iterator for Lines<'a> {
 pub struct Highlighter<'a> {
     key: u64,
     rules: u64,
-    highlighter: SynHighlighter<'a>,
+    highlighter: LazyHighlighter<'a>,
     /// `None` once the block turns out plain, or syntect fails on it.
     state: Option<Engine>,
     rest: Lines<'a>,
@@ -834,14 +927,18 @@ pub struct Highlighter<'a> {
 
 impl<'a> Highlighter<'a> {
     pub fn new(key: u64, lang: &str, text: &'a str, theme: &'a SyntaxTheme) -> Self {
-        let highlighter = SynHighlighter::new(&theme.theme);
+        let highlighter = LazyHighlighter {
+            theme,
+            built: OnceCell::new(),
+        };
         let state = find_syntax(lang).map(|syntax| match syntax {
             Syntax::Own(lang) => Engine::Parse(
-                ParseRules::lazy(lang),
+                ParseRules::cached(lang, theme.id),
                 ada_parse::State::default(),
                 Vec::new(),
+                block_needs_expanding(text),
             ),
-            Syntax::Set(s) => Engine::Syntect(LineState::new(syntaxes(), s, &highlighter)),
+            Syntax::Set(s) => Engine::Syntect(LineState::new(syntaxes(), s, highlighter.get())),
         });
         Self {
             key,
@@ -856,33 +953,48 @@ impl<'a> Highlighter<'a> {
 
     /// Highlight up to `n` more lines. False once the block is done.
     pub fn step(&mut self, n: usize) -> bool {
-        for _ in 0..n {
-            let Some(state) = &mut self.state else {
-                return false;
-            };
-            let Some(line) = self.rest.next() else {
-                return false;
-            };
-            let out = &mut self.lines;
-            let done = match state {
-                Engine::Syntect(state) => {
-                    let done = state.line(line, &self.highlighter, &mut self.buf, out);
-                    done.is_some()
+        let Some(state) = &mut self.state else {
+            return false;
+        };
+        let out = &mut self.lines;
+        match state {
+            Engine::Parse(rules, state, spans, expand) => {
+                // the stall watch counts lines; an ada-parse lexer never stalls, so they're
+                // counted a batch at a time, not with an atomic add a line (HL-004)
+                const BATCH: u64 = 1024;
+                let mut done = 0;
+                for _ in 0..n {
+                    let Some(line) = self.rest.next() else {
+                        break;
+                    };
+                    let (hl, buf) = (&self.highlighter, &mut self.buf);
+                    rules.line_resolving(line, state, spans, *expand, buf, hl, out);
+                    done += 1;
+                    if done == BATCH {
+                        LINES.fetch_add(BATCH, Ordering::Relaxed);
+                        done = 0;
+                    }
                 }
-                Engine::Parse(rules, state, spans) => {
-                    LINES.fetch_add(1, Ordering::Relaxed);
-                    rules.line_resolving(line, state, spans, &self.highlighter, out);
-                    true
+                LINES.fetch_add(done, Ordering::Relaxed);
+            }
+            Engine::Syntect(state) => {
+                for _ in 0..n {
+                    let Some(line) = self.rest.next() else {
+                        break;
+                    };
+                    if state
+                        .line(line, self.highlighter.get(), &mut self.buf, out)
+                        .is_none()
+                    {
+                        // plain, as a whole
+                        self.state = None;
+                        self.lines = LineRuns::default();
+                        return false;
+                    }
                 }
-            };
-            if !done {
-                // plain, as a whole
-                self.state = None;
-                self.lines = LineRuns::default();
-                return false;
             }
         }
-        self.state.is_some() && self.rest.0.is_some()
+        self.rest.0.is_some()
     }
 
     /// How many lines are done.
@@ -900,12 +1012,20 @@ impl<'a> Highlighter<'a> {
         }
     }
 
-    pub fn finish(self) -> CodeSpans {
+    pub fn finish(mut self) -> CodeSpans {
         CodeSpans {
             key: self.key,
             rules: self.rules,
             partial: false,
-            lines: self.lines.shrink(),
+            lines: std::mem::take(&mut self.lines).shrink(),
+        }
+    }
+}
+
+impl Drop for Highlighter<'_> {
+    fn drop(&mut self) {
+        if let Some(Engine::Parse(rules, ..)) = &mut self.state {
+            rules.keep();
         }
     }
 }
@@ -963,7 +1083,7 @@ fn highlight_parse_on(
     let rules = ParseRules::new(lang, theme);
     lines_on(key, text, theme, threads, &|line, scratch, out| {
         let state = &mut ada_parse::State::default();
-        rules.line(line, state, &mut scratch.parse, out);
+        rules.line(line, state, (&mut scratch.parse, &mut scratch.buf), out);
     })
 }
 
@@ -971,6 +1091,8 @@ fn highlight_parse_on(
 #[derive(Default)]
 struct Scratch {
     parse: Vec<ada_parse::Span>,
+    /// The line, when tabs expand it.
+    buf: String,
 }
 
 /// A block whose lines don't depend on each other on `threads` threads, each taking a chunk of

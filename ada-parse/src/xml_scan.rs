@@ -1459,7 +1459,12 @@ mod tests {
         for (n, text) in block.split('\n').enumerate() {
             a.clear();
             b.clear();
-            machine::line(&xml::GRAMMAR, text.as_bytes(), &mut port, &mut Out::new(&mut a));
+            machine::line(
+                &xml::GRAMMAR,
+                text.as_bytes(),
+                &mut port,
+                &mut Out::new(&mut a),
+            );
             line(text.as_bytes(), &mut scan, &mut Out::new(&mut b));
             let want = bytes(text.len(), &a, |k| xml::GRAMMAR.scopes(k));
             let mut got = bytes(text.len(), &b, scopes);
