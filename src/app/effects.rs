@@ -3,7 +3,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::io::Read;
+use std::io::{self, Read};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
@@ -296,7 +296,7 @@ pub fn load_doc_head(path: &Path, stdin: Option<&Arc<str>>, head: Option<Head>) 
     // An image is read by the image worker; its document is only its name.
     let read = match (&filetype, head) {
         (Some(FileType::Image), _) => fs::metadata(path).map(|_| Vec::new()),
-        (Some(FileType::Markdown), _) | (_, None) => fs::read(path),
+        (Some(FileType::Markdown), _) | (_, None) => read_whole(path),
         (_, Some(head)) => read_head(path, head),
     };
     match read {
@@ -325,12 +325,53 @@ pub fn load_doc_head(path: &Path, stdin: Option<&Arc<str>>, head: Option<Head>) 
     }
 }
 
-/// The first `head.lines` lines of a file, at most `head.bytes` of it, ending on a whole
-/// character.
-fn read_head(path: &Path, head: Head) -> std::io::Result<Vec<u8>> {
+/// The most bytes of a document ada reads, 4 GiB less one: its byte offsets are `u32`s, which
+/// a longer text would wrap (PAR-001). Parsing even this much would take minutes and tens of GB.
+pub const MAX_DOC_BYTES: u64 = u32::MAX as u64;
+
+/// The error for a document over [`MAX_DOC_BYTES`].
+pub fn too_large() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::FileTooLarge,
+        "4 GiB or more: ada reads documents under 4 GiB",
+    )
+}
+
+/// Read the rest of `input` onto `bytes`, or fail with [`too_large`] once they pass
+/// [`MAX_DOC_BYTES`], having read at most one byte past it.
+pub fn read_capped(input: impl Read, bytes: &mut Vec<u8>) -> io::Result<()> {
+    read_capped_at(input, bytes, MAX_DOC_BYTES)
+}
+
+/// [`read_capped`] at `cap`.
+fn read_capped_at(input: impl Read, bytes: &mut Vec<u8>, cap: u64) -> io::Result<()> {
+    let left = cap.saturating_sub(bytes.len() as u64);
+    input.take(left + 1).read_to_end(bytes)?;
+    if bytes.len() as u64 > cap {
+        return Err(too_large());
+    }
+    Ok(())
+}
+
+/// A whole file, refused at once by its size when that is over [`MAX_DOC_BYTES`]; a file whose
+/// size tells nothing, as a pipe's, is refused once it reads past it.
+fn read_whole(path: &Path) -> io::Result<Vec<u8>> {
+    let file = fs::File::open(path)?;
+    let size = file.metadata().map_or(0, |m| m.len());
+    if size > MAX_DOC_BYTES {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::with_capacity(size as usize);
+    read_capped(file, &mut bytes)?;
+    Ok(bytes)
+}
+
+/// The first `head.lines` lines of a file, at most `head.bytes` of it and of
+/// [`MAX_DOC_BYTES`], ending on a whole character.
+fn read_head(path: &Path, head: Head) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     fs::File::open(path)?
-        .take(head.bytes as u64)
+        .take((head.bytes as u64).min(MAX_DOC_BYTES))
         .read_to_end(&mut bytes)?;
     cut_to_head(&mut bytes, head);
     Ok(bytes)
@@ -465,6 +506,45 @@ fn base64(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_document_of_4_gib_or_more_is_refused() {
+        // sparse: nothing is written, and the size alone refuses it, nothing read
+        let dir = std::env::temp_dir().join(format!("ada-huge-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let error = |path: &Path, head| match load_doc_head(path, None, head) {
+            Msg::DocFailed { error, .. } => error,
+            other => panic!("{other:?}"),
+        };
+        let note = dir.join("huge.md");
+        fs::File::create(&note)
+            .and_then(|f| f.set_len(MAX_DOC_BYTES + 1))
+            .unwrap();
+        assert_eq!(error(&note, None), too_large().to_string());
+        // a note is read whole even for a preview
+        let head = Head {
+            lines: 10,
+            bytes: 1 << 16,
+        };
+        assert_eq!(error(&note, Some(head)), too_large().to_string());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_capped_read_takes_the_cap_and_fails_a_byte_past_it() {
+        let read = |len: usize, read: &[u8]| {
+            let mut bytes = read.to_vec();
+            read_capped_at(&vec![b'a'; len][..], &mut bytes, 8).map(|()| bytes.len())
+        };
+        assert_eq!(read(8, b"").unwrap(), 8);
+        assert_eq!(read(5, b"abc").unwrap(), 8);
+        assert_eq!(read(0, b"").unwrap(), 0);
+        let past = read(9, b"").unwrap_err();
+        assert_eq!(past.kind(), io::ErrorKind::FileTooLarge);
+        assert!(read(6, b"abc").is_err());
+        // what was read before can be over the cap already
+        assert!(read(0, b"0123456789").is_err());
+    }
 
     #[test]
     fn a_preview_reads_the_head_of_a_text_file() {

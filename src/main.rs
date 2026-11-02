@@ -238,7 +238,7 @@ impl Drop for PipedImage {
 /// Read stdin, after the bytes `read` of it already, as [`app::load_doc_head`] reads a file:
 /// whole, or with a `head` only the head of what isn't markdown, which the first bytes tell.
 /// An image is told by its first bytes and read whole. Other input with a NUL in it isn't shown,
-/// unless `-l` names its type.
+/// unless `-l` names its type. Input over [`app::MAX_DOC_BYTES`] fails.
 fn read_stdin(
     read: Vec<u8>,
     head: Option<Head>,
@@ -253,13 +253,17 @@ fn read_stdin(
             .read_to_end(&mut bytes)
             .map_err(err)?;
         if let Some(ext) = filetype::image_ext(&bytes) {
-            stdin.read_to_end(&mut bytes).map_err(err)?;
+            app::read_capped(&mut stdin, &mut bytes).map_err(err)?;
             return PipedImage::write(&bytes, ext).map(Piped::Image);
         }
     }
     if let Some(head) = head {
         (&mut stdin)
-            .take(head.bytes.saturating_sub(bytes.len()) as u64)
+            .take(
+                (head.bytes as u64)
+                    .min(app::MAX_DOC_BYTES)
+                    .saturating_sub(bytes.len() as u64),
+            )
             .read_to_end(&mut bytes)
             .map_err(err)?;
         let sniffed = || FileType::of(Path::new("-"), &String::from_utf8_lossy(&bytes));
@@ -268,7 +272,7 @@ fn read_stdin(
             return text_of(bytes, forced).map(Piped::Text);
         }
     }
-    stdin.read_to_end(&mut bytes).map_err(err)?;
+    app::read_capped(&mut stdin, &mut bytes).map_err(err)?;
     text_of(bytes, forced).map(Piped::Text)
 }
 

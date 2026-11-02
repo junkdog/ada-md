@@ -36,7 +36,10 @@ use crate::search::SearchMap;
 use crate::select::{self, CopyOn, Selection};
 use crate::theme::{Glyphs, Theme};
 
-pub use effects::{Effects, Head, cut_to_head, editor_command, load_doc, load_doc_head, osc52};
+pub use effects::{
+    Effects, Head, MAX_DOC_BYTES, cut_to_head, editor_command, load_doc, load_doc_head, osc52,
+    read_capped,
+};
 pub use find::{Listing, Outline, OutlineEntry, Prompt, Search};
 pub use imaging::{ImageFile, ImageView};
 pub use input::{Cursor, Input};

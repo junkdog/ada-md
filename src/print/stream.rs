@@ -194,7 +194,8 @@ fn read_more(input: &mut impl Read, buf: &mut Vec<u8>) -> io::Result<usize> {
 }
 
 /// A file's lines as the whole document counts them ([`doc::Doc::line_count`]): one more than
-/// its newlines, but for one that ends it.
+/// its newlines, but for one that ends it. More than a `u32` counts fails, and the file is
+/// read whole, which refuses it by its size.
 fn count_lines(mut file: impl Read) -> io::Result<u32> {
     let mut buf = vec![0; 256 << 10];
     let (mut newlines, mut last) = (0usize, None);
@@ -209,7 +210,17 @@ fn count_lines(mut file: impl Read) -> io::Result<u32> {
         newlines += buf[..n].iter().filter(|&&b| b == b'\n').count();
         last = Some(buf[n - 1]);
     }
-    Ok((1 + newlines - usize::from(last == Some(b'\n'))) as u32)
+    u32::try_from(1 + newlines - usize::from(last == Some(b'\n'))).map_err(|_| too_many_lines())
+}
+
+/// A file of more lines than a `u32` counts, which takes 4 GiB of newlines.
+fn too_many_lines() -> io::Error {
+    io::Error::new(ErrorKind::FileTooLarge, "more than 4 Gi lines")
+}
+
+/// A line too long for a piece: 4 GiB or more.
+fn line_too_long() -> io::Error {
+    io::Error::new(ErrorKind::FileTooLarge, "a line of 4 GiB or more")
 }
 
 /// Where the next piece of `buf` ends: on the newline that ends its `lines`th line, or else the
@@ -436,7 +447,12 @@ fn read_pieces(
 ) -> io::Result<()> {
     let send = |piece: Piece| tokens.recv().is_ok() && jobs.send(piece).is_ok();
     let (mut index, mut line, mut state) = (0, 1, ada_parse::State::default());
+    // a piece is a document of its own, its offsets `u32`s (PAR-001); under the cap, the last
+    // empty line can still join it
     let mut piece = |text: &[u8], last: bool| {
+        if text.len() as u64 >= app::MAX_DOC_BYTES {
+            return Err(line_too_long());
+        }
         let text: Arc<str> = match std::str::from_utf8(text) {
             Ok(text) => Arc::from(text),
             Err(_) => Arc::from(String::from_utf8_lossy(text)),
@@ -450,9 +466,13 @@ fn read_pieces(
             text,
         };
         index += 1;
-        line += p.text.bytes().filter(|&b| b == b'\n').count() as u32;
+        let newlines = p.text.bytes().filter(|&b| b == b'\n').count();
+        line = u32::try_from(newlines)
+            .ok()
+            .and_then(|n| line.checked_add(n))
+            .ok_or_else(too_many_lines)?;
         state = lexer.state_after(&p.text, state);
-        p
+        Ok::<_, io::Error>(p)
     };
     let mut pending: Option<Piece> = None;
     // bytes of `buf` past `limits.piece` known to hold no newline
@@ -469,12 +489,16 @@ fn read_pieces(
             if eof {
                 break None;
             }
+            // no newline in 4 GiB: stop before holding more
+            if buf.len() as u64 >= app::MAX_DOC_BYTES {
+                return Err(line_too_long());
+            }
             eof = read_more(&mut input, &mut buf)? == 0;
         };
         let Some(cut) = cut else {
             break;
         };
-        let p = piece(&buf[..=cut], false);
+        let p = piece(&buf[..=cut], false)?;
         buf.drain(..=cut);
         scanned = 0;
         if let Some(p) = pending.replace(p)
@@ -496,9 +520,9 @@ fn read_pieces(
             if !send(p) {
                 return Ok(());
             }
-            piece(&buf, true)
+            piece(&buf, true)?
         }
-        None => piece(&buf, true),
+        None => piece(&buf, true)?,
     };
     send(last);
     Ok(())
