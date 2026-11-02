@@ -104,6 +104,22 @@ pub(super) const S_CONSTANT: u32 = 1 << 24;
 pub(super) const S_KEYWORD: u32 = 2 << 24;
 const SCHEME_IDENT: u32 = 3 << 24;
 
+/// What a word is at a list's head in Clojure ([`super::clojure`]): a design of ada's own, not
+/// bat's (whose `Clojure` colors the `def` family and leaves every other head a plain call).
+/// 0 for none. Clojure is case-sensitive and its core is lowercase: [`clojure_lookup`].
+pub(super) const C_CONDITIONAL: u32 = 1 << 26;
+pub(super) const C_CONTROL: u32 = 2 << 26;
+pub(super) const C_LOOP: u32 = 3 << 26;
+pub(super) const C_LOGICAL: u32 = 4 << 26;
+pub(super) const C_MODULE: u32 = 5 << 26;
+/// Arithmetic, comparison and the threading macros.
+pub(super) const C_OPERATOR: u32 = 6 << 26;
+/// The binding forms: `let`, `binding`, `with-open`, ….
+pub(super) const C_BINDING: u32 = 7 << 26;
+const CLOJURE_HEAD: u32 = 7 << 26;
+/// A function of `clojure.core`, the most used.
+pub(super) const C_BUILTIN: u32 = 1 << 29;
+
 /// bat's `class-declaration`, pattern 1: 2 words.
 const W_CLASS: &str = "defclass define-class";
 /// bat's `function-declaration`, pattern 1: 1 words.
@@ -341,7 +357,7 @@ const W_LOOP_OTHER: &str =
 /// Each list and what a word in it is, in the order the grammar tries them: a field already
 /// set by an earlier list stays (`defun` is a function's declaration before it is one of
 /// `other-declaration`'s).
-const LISTS: [(&str, u32); 61] = [
+const LISTS: [(&str, u32); 69] = [
     (W_CLASS, H_CLASS),
     (W_LAMBDA, H_LAMBDA),
     (W_DEFUN, H_DEFUN),
@@ -403,6 +419,14 @@ const LISTS: [(&str, u32); 61] = [
     (S_W_BUILTIN, S_BUILTIN),
     (S_W_CONSTANT, S_CONSTANT),
     (S_W_KEYWORD, S_KEYWORD),
+    (C_W_CONDITIONAL, C_CONDITIONAL),
+    (C_W_CONTROL, C_CONTROL),
+    (C_W_LOOP, C_LOOP),
+    (C_W_LOGICAL, C_LOGICAL),
+    (C_W_MODULE, C_MODULE),
+    (C_W_OPERATOR, C_OPERATOR),
+    (C_W_BINDING, C_BINDING),
+    (C_W_BUILTIN, C_BUILTIN),
 ];
 
 // Scheme's and Racket's (R7RS small, Racket's base, a few of Guile's and Chez's).
@@ -463,6 +487,37 @@ const S_W_BUILTIN: &str = "abs append apply assoc assq assv boolean=? boolean? b
 const S_W_CONSTANT: &str = "true false null empty";
 const S_W_KEYWORD: &str = "else =>";
 
+// Clojure's (`clojure.core`'s special forms, macros and most used functions).
+const C_W_CONDITIONAL: &str = "if if-not if-let if-some when when-not when-let when-some when-first \
+    cond condp case";
+const C_W_CONTROL: &str = "do try catch finally throw quote var new set! monitor-enter monitor-exit \
+    locking dosync delay lazy-seq lazy-cat future comment assert time io! with-out-str memfn";
+const C_W_LOOP: &str = "loop recur for doseq dotimes while";
+const C_W_LOGICAL: &str = "and or not";
+const C_W_MODULE: &str = "ns require use import refer refer-clojure in-ns load";
+const C_W_OPERATOR: &str = "+ - * / = == not= < > <= >= -> ->> some-> some->> as-> cond-> cond->> \
+    doto ..";
+const C_W_BINDING: &str = "let letfn binding with-open with-local-vars with-redefs";
+const C_W_BUILTIN: &str = "agent alter apply assoc assoc-in atom boolean boolean? butlast cat char \
+    char? class coll? commute comp compare complement completing concat conj cons constantly \
+    contains? count cycle dec dedupe deliver deref disj dissoc distinct doall dorun double double? \
+    drop drop-last drop-while eduction empty empty? eval even? every-pred every? ex-data ex-info \
+    ex-message false? ffirst filter filterv find first flatten float fn? fnil force format \
+    frequencies gensym get get-in group-by hash hash-map hash-set identical? identity ifn? inc \
+    instance? int int? integer? interleave interpose into into-array iterate juxt keep \
+    keep-indexed key keys keyword keyword? last list list* long macroexpand macroexpand-1 map \
+    map-entry? map-indexed map? mapcat mapv max max-key memoize merge merge-with meta min min-key \
+    mod name namespace nat-int? neg-int? neg? next nfirst nil? nnext not-any? not-empty \
+    not-every? nth nthnext nthrest number? odd? partial partition partition-all partition-by peek \
+    pop pos-int? pos? pr pr-str print printf println println-str prn prn-str promise quot rand \
+    rand-int rand-nth random-sample range re-find re-matcher re-matches re-pattern re-seq \
+    read-string realized? reduce reduce-kv reductions ref ref-set rem remove repeat repeatedly \
+    replace reset! resolve rest reverse run! second select-keys send send-off seq seq? sequence \
+    set shuffle slurp some some-fn some? sort sort-by sorted-map sorted-set spit split-at \
+    split-with str string? subs subvec swap! symbol symbol? take take-last take-nth take-while \
+    trampoline transduce tree-seq true? type update update-in val vals vary-meta vec vector \
+    vector? volatile! vreset! vswap! with-meta zero? zipmap";
+
 /// `def(?:[a-z]+f)?un` is a pattern, not a list: [`is_defun`]. These are the rest of its
 /// alternatives.
 const W_DEFUN: &str = "defgeneric define-command define-command-global define-parenscript";
@@ -500,7 +555,7 @@ const TEXT_LEN: usize = {
     n
 };
 
-const SIZE: usize = 2048;
+const SIZE: usize = 4096;
 
 /// FNV-1a over the word's bytes, ASCII case folded.
 const fn hash(w: &[u8], from: usize, to: usize) -> usize {
@@ -514,9 +569,10 @@ const fn hash(w: &[u8], from: usize, to: usize) -> usize {
     (h as usize) & (SIZE - 1)
 }
 
-/// The table, open addressed: each slot a word's place in [`TEXT`] (`offset << 8 | len`, 0 for
-/// none) in its top 32 bits and what the word is in the low 32.
-static SLOTS: [u64; SIZE] = {
+/// The table as it is built, open addressed: each slot a word's place in [`TEXT`]
+/// (`offset << 8 | len`, 0 for none) in its top 32 bits and what the word is in the low 32.
+/// Only [`ENTRIES`] and [`SLOTS`], its compact form, are in the binary.
+const fn table() -> [u64; SIZE] {
     let mut t = [0u64; SIZE];
     let mut at = 0;
     let mut l = 0;
@@ -550,6 +606,49 @@ static SLOTS: [u64; SIZE] = {
         l += 1;
     }
     t
+}
+
+/// How many words [`table`] holds.
+const WORDS: usize = {
+    let table = table();
+    let mut n = 0;
+    let mut h = 0;
+    while h < SIZE {
+        n += (table[h] != 0) as usize;
+        h += 1;
+    }
+    n
+};
+
+/// [`table`]'s words, in its order: 8 bytes a word, where the table's empty slots took 8 too.
+static ENTRIES: [u64; WORDS] = {
+    let table = table();
+    let mut e = [0u64; WORDS];
+    let (mut h, mut i) = (0, 0);
+    while h < SIZE {
+        if table[h] != 0 {
+            e[i] = table[h];
+            i += 1;
+        }
+        h += 1;
+    }
+    e
+};
+
+/// The open-addressed slots: a word's index in [`ENTRIES`] plus one, 0 for none; sparse
+/// enough (below two in five) that a miss, a head of no list, stops at once.
+static SLOTS: [u16; SIZE] = {
+    let table = table();
+    let mut t = [0u16; SIZE];
+    let (mut h, mut i) = (0, 0);
+    while h < SIZE {
+        if table[h] != 0 {
+            i += 1;
+            t[h] = i as u16;
+        }
+        h += 1;
+    }
+    t
 };
 
 const fn same(t: &[u8], a: usize, b: usize, n: usize) -> bool {
@@ -563,10 +662,21 @@ const fn same(t: &[u8], a: usize, b: usize, n: usize) -> bool {
     true
 }
 
+/// The fields of a word's info that hold one value, the first list's that sets them.
+const FIELDS: u32 = HEAD | IDENT | LOOP_WORD | OPERATOR | SCHEME_HEAD | SCHEME_IDENT | CLOJURE_HEAD;
+
 /// `info`'s fields that `old` doesn't set yet.
 const fn merge(old: u32, info: u32) -> u32 {
-    let mut add = info & !(HEAD | IDENT | LOOP_WORD | OPERATOR | SCHEME_HEAD | SCHEME_IDENT);
-    let fields = [HEAD, IDENT, LOOP_WORD, OPERATOR, SCHEME_HEAD, SCHEME_IDENT];
+    let mut add = info & !FIELDS;
+    let fields = [
+        HEAD,
+        IDENT,
+        LOOP_WORD,
+        OPERATOR,
+        SCHEME_HEAD,
+        SCHEME_IDENT,
+        CLOJURE_HEAD,
+    ];
     let mut i = 0;
     while i < fields.len() {
         if old & fields[i] == 0 {
@@ -585,16 +695,27 @@ pub(super) fn lookup(w: &[u8]) -> u32 {
     }
     let mut h = hash(w, 0, w.len());
     loop {
-        let slot = SLOTS[h];
-        if slot == 0 {
+        let i = SLOTS[h] as usize;
+        if i == 0 {
             return 0;
         }
+        let slot = ENTRIES[i - 1];
         let (o, n) = ((slot >> 40) as usize, ((slot >> 32) & 0xff) as usize);
         if n == w.len() && TEXT[o..o + n].eq_ignore_ascii_case(w) {
             return slot as u32;
         }
         h = (h + 1) & (SIZE - 1);
     }
+}
+
+/// What word `w` is in Clojure, which is case-sensitive: the lists' words are lowercase, so a
+/// token with an uppercase letter is none of them.
+#[inline]
+pub(super) fn clojure_lookup(w: &[u8]) -> u32 {
+    if w.iter().any(u8::is_ascii_uppercase) {
+        return 0;
+    }
+    lookup(w)
 }
 
 /// `def(?:[a-z]+f)?un`, ASCII case ignored.
@@ -635,6 +756,10 @@ pub(super) fn scheme_ident(info: u32) -> u32 {
     info & SCHEME_IDENT
 }
 
+pub(super) fn clojure_head(info: u32) -> u32 {
+    info & CLOJURE_HEAD
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -647,13 +772,20 @@ mod tests {
                 let got = lookup(w.as_bytes());
                 assert_ne!(got, 0, "{w}");
                 // a field is the first list's that sets it
-                for field in [HEAD, IDENT, LOOP_WORD, OPERATOR, SCHEME_HEAD, SCHEME_IDENT] {
+                for field in [
+                    HEAD,
+                    IDENT,
+                    LOOP_WORD,
+                    OPERATOR,
+                    SCHEME_HEAD,
+                    SCHEME_IDENT,
+                    CLOJURE_HEAD,
+                ] {
                     if info & field != 0 {
                         assert_ne!(got & field, 0, "{w}");
                     }
                 }
-                let rest =
-                    info & !(HEAD | IDENT | LOOP_WORD | OPERATOR | SCHEME_HEAD | SCHEME_IDENT);
+                let rest = info & !FIELDS;
                 assert_eq!(got & rest, rest, "{w}");
                 assert_eq!(lookup(w.to_ascii_uppercase().as_bytes()), got, "{w}");
                 assert!(w.len() <= LONGEST);
@@ -671,6 +803,24 @@ mod tests {
         assert_eq!(operator(lookup(b"and")), O_LOGICAL);
         assert_eq!(lookup(b"no-such-word"), 0);
         assert_eq!(lookup(b"de"), 0);
+        assert_eq!(clojure_head(clojure_lookup(b"if-some")), C_CONDITIONAL);
+        assert_eq!(clojure_head(clojure_lookup(b"->>")), C_OPERATOR);
+        assert_eq!(clojure_head(clojure_lookup(b"let")), C_BINDING);
+        assert_ne!(clojure_lookup(b"re-matches") & C_BUILTIN, 0);
+        assert_eq!(clojure_lookup(b"If-Some"), 0, "Clojure is case-sensitive");
+        // Common Lisp's `when` and Clojure's share a slot, each dialect its own field
+        assert_eq!(head(lookup(b"when")), H_CONDITIONAL);
+        assert_eq!(clojure_head(lookup(b"when")), C_CONDITIONAL);
+    }
+
+    /// The slots stay sparse enough that a miss, the common case, probes a slot or two; each
+    /// word is in one, and `u16` indices reach every entry.
+    #[test]
+    fn the_slots_stay_sparse() {
+        let used = SLOTS.iter().filter(|&&s| s != 0).count();
+        assert_eq!(used, WORDS);
+        assert!(used * 5 <= SIZE * 2, "{used} of {SIZE}");
+        assert!(WORDS < usize::from(u16::MAX));
     }
 
     #[test]

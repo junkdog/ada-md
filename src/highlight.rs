@@ -164,6 +164,15 @@ impl Syntax {
         }
     }
 
+    /// The name ada gives a whole file in it: [`Syntax::name`], but a Lisp dialect's own
+    /// ([`Lang::label`]), which leads back to the dialect where `Lisp` would not.
+    pub fn label(self) -> &'static str {
+        match self {
+            Syntax::Own(lang) => lang.label(),
+            Syntax::Set(syntax) => &syntax.name,
+        }
+    }
+
     /// A syntax of the set, or the lexer that stands in for it: the set still names the
     /// languages ada's lexers cover, but their grammars in it are empty.
     fn of(syntax: &'static SyntaxReference) -> Self {
@@ -203,7 +212,7 @@ pub fn needs_syntaxes(lang: &str) -> bool {
 pub fn file_language(path: &Path) -> Option<&'static str> {
     let name = path.file_name().and_then(|n| n.to_str());
     if let Some(lang) = name.and_then(Lang::from_file_name) {
-        return Some(lang.name());
+        return Some(lang.label());
     }
     let set = syntaxes();
     let by_name = name.and_then(|n| set.find_syntax_by_extension(n).map(Syntax::of));
@@ -214,7 +223,7 @@ pub fn file_language(path: &Path) -> Option<&'static str> {
 /// The language a file's first line declares: a `#!` line, `<?xml`, a vim modeline.
 pub fn first_line_language(line: &str) -> Option<&'static str> {
     if let Some(lang) = Lang::from_first_line(line) {
-        return Some(lang.name());
+        return Some(lang.label());
     }
     syntaxes()
         .find_syntax_by_first_line(line)
@@ -223,7 +232,7 @@ pub fn first_line_language(line: &str) -> Option<&'static str> {
 }
 
 fn language(syntax: Syntax) -> Option<&'static str> {
-    Some(syntax.name()).filter(|&n| n != "Plain Text")
+    Some(syntax.label()).filter(|&n| n != "Plain Text")
 }
 
 /// The cache key of a code block, or `None` when it has no language worth highlighting.
@@ -1950,9 +1959,39 @@ mod tests {
                     Some(lang) => assert_eq!(full, Some(lang.name()), "file {file:?}"),
                     None => assert_eq!(covered(full), None, "file {file:?}: not in the table"),
                 }
-                let full = full.filter(|&n| n != "Plain Text");
+                // a Lisp dialect's file is named for it (`Lang::label`), where the set says `Lisp`
+                let full = name
+                    .and_then(Lang::from_file_name)
+                    .map_or(full, |l| Some(l.label()))
+                    .filter(|&n| n != "Plain Text");
                 assert_eq!(file_language(Path::new(&file)), full, "file {file:?}");
             }
+        }
+    }
+
+    /// A Scheme or Emacs Lisp file, or `-l` naming one, is read in its dialect: the name its
+    /// file is given leads back to it, not to `Lisp`'s (Common Lisp's reading).
+    #[test]
+    fn a_lisp_dialects_file_keeps_its_dialect() {
+        for (file, label, lang) in [
+            ("x.scm", "Scheme", Lang::Scheme),
+            ("x.sld", "Scheme", Lang::Scheme),
+            ("init.el", "Emacs Lisp", Lang::EmacsLisp),
+            ("x.lisp", "Lisp", Lang::Lisp),
+            ("x.rkt", "Racket", Lang::Racket),
+        ] {
+            assert_eq!(file_language(Path::new(file)), Some(label), "{file}");
+            assert!(
+                matches!(find_syntax(label), Some(Syntax::Own(l)) if l == lang),
+                "{file}"
+            );
+        }
+        for (token, lang) in [("scheme", Lang::Scheme), ("elisp", Lang::EmacsLisp)] {
+            let label = find_syntax(token).map(Syntax::label);
+            assert!(
+                matches!(label.and_then(find_syntax), Some(Syntax::Own(l)) if l == lang),
+                "{token}"
+            );
         }
     }
 
@@ -2727,23 +2766,26 @@ mod tests {
     /// they set up, the reader macros and dispatch (`#_`, `##Inf`, tagged literals, `#?`, `#:`),
     /// metadata, characters, keywords, every number and its suffixes, a deprecated octal, strings
     /// across lines, comments and commas, stray closers. Regex literals aren't among them: their
-    /// bodies are Java's dialect on ada-parse's regex scanner, a fix over bat by design.
+    /// bodies are Java's dialect on ada-parse's regex scanner, a fix over bat by design. Nor are
+    /// heads of `clojure.core`'s (`ns`, `let`, `when`, `str`, `+`): ada reads them by what they do, where
+    /// bat calls every head a function (`clojure_heads` in ada-parse), so the calls here are
+    /// none of its words.
     #[test]
     fn clojure_rules_match_the_grammar() {
         let text = concat!(
             "#!/usr/bin/env bb\n",
-            "(ns my.app (:require [clojure.string :as str])) ; c\n",
-            "(defn- f \"doc\" [x & ys] {:pre [(pos? x)]} (str/join \",\" ys))\n",
+            "(in my.app (:require [clojure.string :as str])) ; c\n",
+            "(defn- f \"doc\" [x & ys] {:pre [(valid x)]} (str/join \",\" ys))\n",
             "(def ^:private x 1) (def ^{:a 1} y 2N) (default z)\n",
             "(defprotocol P (m [this] \"doc\") (n [this a]))\n",
             "(definterface I (go [])) (deftype T [a] P (m [_] a)) (defrecord R [a b])\n",
             "(defmethod mm :k [x] x) (reify P (m [_] 1)) (proxy [Object] [] (toString [] \"s\"))\n",
             "(extend-protocol P String (m [s] s)) (extend-type T P (m [_] nil))\n",
-            "(fn [x] x) (fn* [y] y) (fn name [z] z) (declare a b) (nil 1) (true) (/ 1 2)\n",
+            "(fn [x] x) (fn* [y] y) (fn name [z] z) (declare a b) (nil 1) (true) (f / 2)\n",
             "[1 -2 +3 012 1N 0x1F 0XffN 2r101 36rZZ 1/2 1.5 1.5e10 1e5 1M 1.5M 1. 1# x# x']\n",
             "{:k 'q `r ~s ~@t @u ::v :a/b \\a \\newline \\( #_ (skip) ##Inf ##-Inf #inst \"2020\"}\n",
-            "#{1 2} #(+ % 1) #?(:clj 1 :cljs 2) #?@(:clj [1]) #:a{:b 1} #'var , \"multi\n",
-            "line\" \"esc\\\"aped\" ) ] } (let [a 1] a)\n",
+            "#{1 2} #(g % 1) #?(:clj 1 :cljs 2) #?@(:clj [1]) #:a{:b 1} #'var , \"multi\n",
+            "line\" \"esc\\\"aped\" ) ] } (h [a 1] a)\n",
         );
         rules_match_the_grammar("clojure", "Clojure", text);
     }

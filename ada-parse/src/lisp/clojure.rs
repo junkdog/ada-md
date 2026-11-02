@@ -77,6 +77,15 @@ leaves! {
     FnFn = "entity.name.function.fn.clojure",
     Inherited = "entity.other.inherited-class.clojure",
     Symbolic = "constant.other.symbolic.clojure",
+    // a call's head by what `clojure.core` makes it, a design of ada's own ([`invoked`])
+    Conditional = "keyword.control.conditional.clojure",
+    Control = "keyword.control.clojure",
+    Loop = "keyword.control.loop.clojure",
+    Logical = "keyword.operator.logical.clojure",
+    Import = "keyword.control.import.clojure",
+    Operator = "keyword.operator.clojure",
+    Binding = "keyword.declaration.variable.clojure",
+    Builtin = "support.function.clojure",
 }
 
 /// The first kind of a regex literal's tokens: the regex scanner's kinds from here, under
@@ -154,6 +163,25 @@ static REGEX_EMBED: regex::Embed<'static> = regex::Embed {
     base: REGEX,
     text: L::Regex as u16,
 };
+
+/// What a call's head `w` is: a special form, a macro or a function of `clojure.core` by what
+/// it does, else a function. bat's grammar calls them all functions (`variable.function`, which
+/// no theme colors); this reading is ada's own, as Lisp's and Scheme's heads are.
+fn invoked(w: &[u8]) -> L {
+    use super::words::*;
+    let info = clojure_lookup(w);
+    match clojure_head(info) {
+        C_CONDITIONAL => L::Conditional,
+        C_CONTROL => L::Control,
+        C_LOOP => L::Loop,
+        C_LOGICAL => L::Logical,
+        C_MODULE => L::Import,
+        C_OPERATOR => L::Operator,
+        C_BINDING => L::Binding,
+        _ if info & C_BUILTIN != 0 => L::Builtin,
+        _ => L::Function,
+    }
+}
 
 /// Whether the byte at `p` follows an odd run of `\`: a regex's escape takes it (`\"`).
 fn escaped(b: &[u8], p: usize) -> bool {
@@ -777,6 +805,11 @@ impl Scan<'_, '_, '_> {
             _ => (L::FnFn, LIST),
         };
         if let Some(e) = self.symbol(p) {
+            let kind = if top == INVOKE {
+                invoked(&self.b[p..e])
+            } else {
+                kind
+            };
             self.put(p, e, kind);
             self.set(next);
             return e;
@@ -914,7 +947,7 @@ mod tests {
         let l = ["(defn foo [x] (str \"a\\n\" x :k ::b 1N 0x1F 2r101 1/2 1.5M nil #\"a\\d+\"))"];
         assert_eq!(scope_of(&l, "defn"), "storage.modifier.def.clojure");
         assert_eq!(scope_of(&l, "foo"), "entity.name.function.clojure");
-        assert_eq!(scope_of(&l, "str"), "variable.function.clojure");
+        assert_eq!(scope_of(&l, "str"), "support.function.clojure", "clojure.core's");
         assert_eq!(scope_of(&l, "k"), "constant.other.keyword.clojure");
         assert_eq!(scope_of(&l, "nil"), "constant.language.clojure");
         assert_eq!(scope_of(&l, "1/2"), "(none)");

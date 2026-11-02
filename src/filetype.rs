@@ -87,7 +87,7 @@ impl FileType {
             return Some(FileType::MERMAID);
         }
         let syntax = highlight::find_syntax(name)?;
-        Some(match syntax.name() {
+        Some(match syntax.label() {
             "Markdown" | "MultiMarkdown" => FileType::Markdown,
             "Plain Text" => FileType::Text { lang: None },
             lang => FileType::Text { lang: Some(lang) },

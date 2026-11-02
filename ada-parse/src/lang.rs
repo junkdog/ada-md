@@ -401,6 +401,17 @@ impl Lang {
         }
     }
 
+    /// The name ada gives a whole file in it, and `-l`: [`Lang::name`], but Emacs Lisp's and
+    /// Scheme's own, which lead back to them ([`Lang::from_token`]) where `Lisp` would give
+    /// Common Lisp's reading.
+    pub fn label(self) -> &'static str {
+        match self {
+            Lang::EmacsLisp => "Emacs Lisp",
+            Lang::Scheme => "Scheme",
+            _ => self.name(),
+        }
+    }
+
     /// The scope a whole block is in, as bat's grammar names it.
     pub fn base(self) -> &'static str {
         match self {
@@ -581,9 +592,9 @@ impl Lang {
             .find(|(alias, _)| alias.eq_ignore_ascii_case(lang))
             .map_or(lang, |&(_, token)| token);
         Lang::from_extension(token).or_else(|| {
-            Lang::ALL
-                .into_iter()
-                .find(|l| l.name().eq_ignore_ascii_case(token))
+            Lang::ALL.into_iter().find(|l| {
+                l.name().eq_ignore_ascii_case(token) || l.label().eq_ignore_ascii_case(token)
+            })
         })
     }
 

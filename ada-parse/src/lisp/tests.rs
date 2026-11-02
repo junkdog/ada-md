@@ -368,3 +368,40 @@ fn scheme_pipes_and_typed_racket() {
         "variable.other.lisp"
     );
 }
+
+/// Clojure's call heads (a design of ada's own; bat calls every one a function): special forms
+/// and `clojure.core`'s macros by what they do, its functions as builtins, the rest calls. Only
+/// a head: the same words elsewhere stay symbols.
+#[test]
+fn clojure_heads() {
+    let l = [
+        "(if-some [[m a b] (re-matches #\"(\\w+)\" s)] (println a b) (my-fn \"no\"))",
+        "(let [x 1] (loop [i 0] (when (< i 3) (recur (inc i)))))",
+        "(ns a.b (:require [c.d :as d])) (->> xs (map f) (filter even?)) (and p q)",
+        "(try (throw (ex-info \"e\" {})) (catch Exception e nil)) (binding [*out* w] x)",
+        "#(* % 2) (/ 1 2) (If-Some x) (str/join xs) (map identity [println])",
+    ];
+    let s = |t: &str| scheme_scope_of(Lang::Clojure, &l, t);
+    assert_eq!(s("if-some"), "keyword.control.conditional.clojure");
+    assert_eq!(s("when"), "keyword.control.conditional.clojure");
+    assert_eq!(s("re-matches"), "support.function.clojure");
+    assert_eq!(s("println"), "support.function.clojure");
+    assert_eq!(s("inc"), "support.function.clojure");
+    assert_eq!(s("my-fn"), "variable.function.clojure");
+    assert_eq!(s("let"), "keyword.declaration.variable.clojure");
+    assert_eq!(s("binding"), "keyword.declaration.variable.clojure");
+    assert_eq!(s("loop"), "keyword.control.loop.clojure");
+    assert_eq!(s("recur"), "keyword.control.loop.clojure");
+    assert_eq!(s("<"), "keyword.operator.clojure");
+    assert_eq!(s("->>"), "keyword.operator.clojure");
+    assert_eq!(s("*"), "keyword.operator.clojure", "an anonymous function's head");
+    assert_eq!(s("/"), "keyword.operator.clojure");
+    assert_eq!(s("and"), "keyword.operator.logical.clojure");
+    assert_eq!(s("ns"), "keyword.control.import.clojure");
+    assert_eq!(s("try"), "keyword.control.clojure");
+    assert_eq!(s("throw"), "keyword.control.clojure");
+    assert_eq!(s("If-Some"), "variable.function.clojure", "case-sensitive");
+    assert_eq!(s("str/join"), "variable.function.clojure", "qualified: not core's");
+    assert_eq!(s("even?"), "(none)", "not a head");
+    assert_eq!(s("identity"), "(none)", "not a head");
+}
