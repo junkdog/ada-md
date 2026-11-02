@@ -10,11 +10,11 @@
 //! The lexers are scanners of ada's own, speed first (ADR-40): one pass over a line's bytes,
 //! a fixed set of kinds carrying bat's scopes for the common case, syntect a guideline.
 //! Diff and INI are line lexers, each line on its own; logs (O-043) and JSON (O-048) came
-//! from ada; TOML's and XML's scanners are bat's grammars compiled by hand, exact against their
-//! ports; YAML's reads YAML as bat's grammar does on well-formed text. The other formats whose
-//! lines carry state (Dockerfile, Java properties, `.env`, Git's ignore, attributes, mailmap and
-//! link files) still run on a port of syntect's parse machine (`machine.rs`), their grammars bat's
-//! context for context, until scanners replace them. bash and Makefiles share a scanner, bat's
+//! from ada; TOML's, XML's, `.env`'s and Git's (ignore, attributes, mailmap and link files)
+//! scanners are bat's grammars compiled by hand, exact against their ports; YAML's reads YAML as
+//! bat's grammar does on well-formed text. Dockerfile and Java properties still run on a port of
+//! syntect's parse machine (`machine.rs`), their grammars bat's context for context, until
+//! scanners replace them. bash and Makefiles share a scanner, bat's
 //! contexts matched in place; [`make`], the earlier port of syntect's machine that ran them
 //! (G-002, G-003), stays as their reference in tests.
 
@@ -24,8 +24,14 @@ mod csharp;
 mod css;
 mod diff;
 mod dockerfile;
+// the port: the scanner's reference in tests, and the source of helpers it shares
+#[allow(dead_code)]
 mod dotenv;
+mod dotenv_scan;
+// the port: the scanner's reference in tests, and the source of helpers it shares
+#[allow(dead_code)]
 mod git;
+mod git_scan;
 mod go;
 mod html;
 mod ini;
@@ -59,6 +65,7 @@ mod xml_scan;
 mod yaml;
 mod yaml_scan;
 
+use git_scan::Git;
 pub use lang::{ALIASES, Lang};
 
 /// Bytes `start..end` of a line are kind `kind` of the line's language, whose scopes
@@ -191,6 +198,11 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::Html => html::line(line.as_bytes(), state, &mut out),
         Lang::Bash => bash::line(line.as_bytes(), state, &mut out),
         Lang::Makefile => bash::make_line(line.as_bytes(), state, &mut out),
+        Lang::DotEnv => dotenv_scan::line(line.as_bytes(), state, &mut out),
+        Lang::GitIgnore => git_scan::line(Git::Ignore, line.as_bytes(), state, &mut out),
+        Lang::GitAttributes => git_scan::line(Git::Attributes, line.as_bytes(), state, &mut out),
+        Lang::GitMailmap => git_scan::line(Git::Mailmap, line.as_bytes(), state, &mut out),
+        Lang::GitLink => git_scan::line(Git::Link, line.as_bytes(), state, &mut out),
         _ => {
             if let Some(g) = lang.grammar() {
                 machine::line(g, line.as_bytes(), state, &mut out);

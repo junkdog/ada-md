@@ -9,11 +9,11 @@ use crate::machine::{
     protos, slots,
 };
 
-const INTERPOLATION_0: u8 = 0;
-const DOUBLE_0: u8 = 1;
-const SINGLE_0: u8 = 2;
-const MAIN_0: u8 = 3;
-const START: u8 = 4;
+pub(crate) const INTERPOLATION_0: u8 = 0;
+pub(crate) const DOUBLE_0: u8 = 1;
+pub(crate) const SINGLE_0: u8 = 2;
+pub(crate) const MAIN_0: u8 = 3;
+pub(crate) const START: u8 = 4;
 const ESCAPES: u8 = 5;
 const INTERPOLATION: u8 = 6;
 const MAIN: u8 = 7;
@@ -114,17 +114,17 @@ pub static GRAMMAR: Grammar = Grammar {
 // the matchers: each finds its regex's leftmost match at or after `from`
 
 /// `\w` at `i`, the `\n` not.
-fn word(l: &Line, i: usize) -> bool {
+pub(crate) fn word(l: &Line, i: usize) -> bool {
     l.is(i, |c| is_word(c) && c != b'\n')
 }
 
 /// `\b` at `i`.
-fn boundary(l: &Line, i: usize) -> bool {
+pub(crate) fn boundary(l: &Line, i: usize) -> bool {
     (i > 0 && word(l, i - 1)) != word(l, i)
 }
 
 /// `[a-zA-Z_\x{7f}-\x{ff}]`
-fn is_name_start(c: u8) -> bool {
+pub(crate) fn is_name_start(c: u8) -> bool {
     c.is_ascii_alphabetic() || c == b'_' || c >= 0x7f
 }
 
@@ -135,7 +135,7 @@ fn is_name(c: u8) -> bool {
 
 /// `NAME*?\b` from a name's first character at `q`: the shortest run of name characters
 /// that a `\b` follows.
-fn lazy_name(l: &Line, q: usize) -> Option<usize> {
+pub(crate) fn lazy_name(l: &Line, q: usize) -> Option<usize> {
     let mut e = q + 1;
     loop {
         if boundary(l, e) {

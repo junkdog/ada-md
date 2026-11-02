@@ -15,66 +15,66 @@ use crate::machine::{
 };
 
 // Git Common
-const COMMENTS: u8 = 0;
-const COMMENTS_LINE: u8 = 1;
-const EMAIL_DOMAIN: u8 = 2;
-const EMAIL_END: u8 = 3;
-const EMAIL_META: u8 = 4;
-const EMAIL_NAME: u8 = 5;
-const FNMATCH_BODY: u8 = 6;
-const CLASS_BODY: u8 = 7;
-const CLASS_OPERATOR: u8 = 8;
-const CLASS_START: u8 = 9;
-const DIR_PATTERN: u8 = 10;
-const FNMATCH_START: u8 = 11;
+pub(crate) const COMMENTS: u8 = 0;
+pub(crate) const COMMENTS_LINE: u8 = 1;
+pub(crate) const EMAIL_DOMAIN: u8 = 2;
+pub(crate) const EMAIL_END: u8 = 3;
+pub(crate) const EMAIL_META: u8 = 4;
+pub(crate) const EMAIL_NAME: u8 = 5;
+pub(crate) const FNMATCH_BODY: u8 = 6;
+pub(crate) const CLASS_BODY: u8 = 7;
+pub(crate) const CLASS_OPERATOR: u8 = 8;
+pub(crate) const CLASS_START: u8 = 9;
+pub(crate) const DIR_PATTERN: u8 = 10;
+pub(crate) const FNMATCH_START: u8 = 11;
 // Git Ignore
-const IGNORE_MAIN_0: u8 = 12;
-const IGNORE_START: u8 = 13;
-const IGNORE_MAIN: u8 = 14;
-const IGNORE_PATTERN: u8 = 15;
+pub(crate) const IGNORE_MAIN_0: u8 = 12;
+pub(crate) const IGNORE_START: u8 = 13;
+pub(crate) const IGNORE_MAIN: u8 = 14;
+pub(crate) const IGNORE_PATTERN: u8 = 15;
 // Git Mailmap
-const MAILMAP_MAIN_0: u8 = 16;
-const MAILMAP_START: u8 = 17;
-const MAILMAP_MAIN: u8 = 18;
+pub(crate) const MAILMAP_MAIN_0: u8 = 16;
+pub(crate) const MAILMAP_START: u8 = 17;
+pub(crate) const MAILMAP_MAIN: u8 = 18;
 // Git Link
-const LINK_MAIN_0: u8 = 19;
-const LINK_START: u8 = 20;
-const EXPECT_PATH: u8 = 21;
-const EXPECT_SEPARATOR: u8 = 22;
-const GITDIR: u8 = 23;
-const LINK_MAIN: u8 = 24;
-const PATH: u8 = 25;
-const PATH_DIR_PATTERN: u8 = 26;
-const PATH_START: u8 = 27;
-const SEPARATOR: u8 = 28;
+pub(crate) const LINK_MAIN_0: u8 = 19;
+pub(crate) const LINK_START: u8 = 20;
+pub(crate) const EXPECT_PATH: u8 = 21;
+pub(crate) const EXPECT_SEPARATOR: u8 = 22;
+pub(crate) const GITDIR: u8 = 23;
+pub(crate) const LINK_MAIN: u8 = 24;
+pub(crate) const PATH: u8 = 25;
+pub(crate) const PATH_DIR_PATTERN: u8 = 26;
+pub(crate) const PATH_START: u8 = 27;
+pub(crate) const SEPARATOR: u8 = 28;
 // Git Attributes
-const VALUE_CONTENT_0: u8 = 29;
-const ATTR_MAIN_0: u8 = 30;
-const ATTR_START: u8 = 31;
-const ATTRIBUTE_KEY: u8 = 32;
-const MAYBE_VALUE_LIST: u8 = 33;
-const ATTRIBUTE_SEPARATOR: u8 = 34;
-const VALUE_CONTENT: u8 = 35;
-const VALUE_EXPECTED: u8 = 36;
-const VALUE_LIST: u8 = 37;
-const ATTRIBUTES_LIST: u8 = 38;
-const ELSE_POP: u8 = 39;
-const MACRO: u8 = 40;
-const ATTR_MAIN: u8 = 41;
-const META_DIFF: u8 = 42;
-const META_ENCODING: u8 = 43;
-const META_EOL: u8 = 44;
-const META_FILTER: u8 = 45;
-const META_MERGE: u8 = 46;
-const META_OTHER: u8 = 47;
-const META_TEXT: u8 = 48;
-const META_WHITESPACE: u8 = 49;
-const PATTERN: u8 = 50;
-const PATTERN_ATTRIBUTES: u8 = 51;
-const PATTERN_CONTENT: u8 = 52;
-const PATTERN_QUOTED: u8 = 53;
-const PATTERN_UNQUOTED: u8 = 54;
-const STRING_END: u8 = 55;
+pub(crate) const VALUE_CONTENT_0: u8 = 29;
+pub(crate) const ATTR_MAIN_0: u8 = 30;
+pub(crate) const ATTR_START: u8 = 31;
+pub(crate) const ATTRIBUTE_KEY: u8 = 32;
+pub(crate) const MAYBE_VALUE_LIST: u8 = 33;
+pub(crate) const ATTRIBUTE_SEPARATOR: u8 = 34;
+pub(crate) const VALUE_CONTENT: u8 = 35;
+pub(crate) const VALUE_EXPECTED: u8 = 36;
+pub(crate) const VALUE_LIST: u8 = 37;
+pub(crate) const ATTRIBUTES_LIST: u8 = 38;
+pub(crate) const ELSE_POP: u8 = 39;
+pub(crate) const MACRO: u8 = 40;
+pub(crate) const ATTR_MAIN: u8 = 41;
+pub(crate) const META_DIFF: u8 = 42;
+pub(crate) const META_ENCODING: u8 = 43;
+pub(crate) const META_EOL: u8 = 44;
+pub(crate) const META_FILTER: u8 = 45;
+pub(crate) const META_MERGE: u8 = 46;
+pub(crate) const META_OTHER: u8 = 47;
+pub(crate) const META_TEXT: u8 = 48;
+pub(crate) const META_WHITESPACE: u8 = 49;
+pub(crate) const PATTERN: u8 = 50;
+pub(crate) const PATTERN_ATTRIBUTES: u8 = 51;
+pub(crate) const PATTERN_CONTENT: u8 = 52;
+pub(crate) const PATTERN_QUOTED: u8 = 53;
+pub(crate) const PATTERN_UNQUOTED: u8 = 54;
+pub(crate) const STRING_END: u8 = 55;
 
 atoms! {
     COMMENT = "comment.line.git",
@@ -469,7 +469,7 @@ fn comment(l: &Line, from: usize) -> Option<M> {
 }
 
 /// `^\s*([#;]).*\n?`
-fn comment_line(l: &Line, from: usize) -> Option<M> {
+pub(crate) fn comment_line(l: &Line, from: usize) -> Option<M> {
     if from > 0 {
         return None;
     }
@@ -718,7 +718,7 @@ fn attr_operator_or_start(l: &Line, from: usize) -> Option<M> {
 }
 
 /// `<(?=\S+?>)`: a `<` and a `>` after it with no space between, but a character.
-fn email_open(l: &Line, from: usize) -> Option<M> {
+pub(crate) fn email_open(l: &Line, from: usize) -> Option<M> {
     let mut at = from;
     while let Some(k) = first(l, at, b'<') {
         let run = l.run(k + 1, |c| !is_space(c));
@@ -731,7 +731,7 @@ fn email_open(l: &Line, from: usize) -> Option<M> {
 }
 
 /// `[^ \t<#][^<#\n]+?(?=[ \t]*(<|(?m:$)))`
-fn user(l: &Line, from: usize) -> Option<M> {
+pub(crate) fn user(l: &Line, from: usize) -> Option<M> {
     let body = |c: u8| !matches!(c, b'<' | b'#' | b'\n');
     let ahead = |e: usize| {
         let q = l.run(e, is_blank);
@@ -817,17 +817,17 @@ fn attr_escape(l: &Line, from: usize) -> Option<M> {
 }
 
 /// `\w` at `i`.
-fn word(l: &Line, i: usize) -> bool {
+pub(crate) fn word(l: &Line, i: usize) -> bool {
     l.is(i, |c| is_word(c) && c != b'\n')
 }
 
 /// `\b` at `i`.
-fn boundary(l: &Line, i: usize) -> bool {
+pub(crate) fn boundary(l: &Line, i: usize) -> bool {
     (i > 0 && word(l, i - 1)) != word(l, i)
 }
 
 /// `\w+[-\w]*\b`: the run gives back until a `\b` follows.
-fn attribute_name(l: &Line, from: usize) -> Option<M> {
+pub(crate) fn attribute_name(l: &Line, from: usize) -> Option<M> {
     let mut p = from;
     while p < l.nl() {
         if !word(l, p) {
@@ -919,7 +919,7 @@ fn word_ahead(l: &Line, from: usize) -> Option<M> {
 }
 
 /// `(\[)([^-!]\S*)(\])`: the name gives back up to its last `]`.
-fn macro_name(l: &Line, from: usize) -> Option<M> {
+pub(crate) fn macro_name(l: &Line, from: usize) -> Option<M> {
     let mut at = from;
     while let Some(k) = first(l, at, b'[') {
         if l.at(k + 1).is_some_and(|c| c != b'-' && c != b'!') {

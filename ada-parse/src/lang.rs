@@ -442,6 +442,10 @@ impl Lang {
             Lang::TypeScriptReact => crate::typescript::scopes(kind, true),
             Lang::Css | Lang::Scss => crate::css::scopes(kind),
             Lang::Html => crate::html::scopes(kind),
+            Lang::DotEnv => crate::dotenv_scan::scopes(kind),
+            Lang::GitIgnore | Lang::GitAttributes | Lang::GitMailmap | Lang::GitLink => {
+                crate::git_scan::scopes(kind)
+            }
             Lang::Bash => crate::bash::scopes(kind),
             Lang::Makefile => crate::bash::make_scopes(kind),
             _ if self.grammar().is_some() => {
@@ -459,11 +463,6 @@ impl Lang {
         Some(match self {
             Lang::Dockerfile => &crate::dockerfile::GRAMMAR,
             Lang::Properties => &crate::properties::GRAMMAR,
-            Lang::DotEnv => &crate::dotenv::GRAMMAR,
-            Lang::GitIgnore => &crate::git::IGNORE,
-            Lang::GitAttributes => &crate::git::ATTRIBUTES,
-            Lang::GitMailmap => &crate::git::MAILMAP,
-            Lang::GitLink => &crate::git::LINK,
             Lang::Json
             | Lang::Log
             | Lang::Makefile
@@ -489,6 +488,11 @@ impl Lang {
             | Lang::TypeScriptReact
             | Lang::Css
             | Lang::Scss
+            | Lang::DotEnv
+            | Lang::GitIgnore
+            | Lang::GitAttributes
+            | Lang::GitMailmap
+            | Lang::GitLink
             | Lang::Html => {
                 return None;
             }
