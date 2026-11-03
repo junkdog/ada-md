@@ -337,7 +337,7 @@ pub fn too_large() -> io::Error {
     )
 }
 
-/// Read the rest of `input` onto `bytes`, or fail with [`too_large`] once they pass
+/// Read the rest of `input` onto `bytes`, or fail with `FileTooLarge` once they pass
 /// [`MAX_DOC_BYTES`], having read at most one byte past it.
 pub fn read_capped(input: impl Read, bytes: &mut Vec<u8>) -> io::Result<()> {
     read_capped_at(input, bytes, MAX_DOC_BYTES)
