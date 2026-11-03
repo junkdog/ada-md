@@ -394,14 +394,22 @@ fn clojure_heads() {
     assert_eq!(s("recur"), "keyword.control.loop.clojure");
     assert_eq!(s("<"), "keyword.operator.clojure");
     assert_eq!(s("->>"), "keyword.operator.clojure");
-    assert_eq!(s("*"), "keyword.operator.clojure", "an anonymous function's head");
+    assert_eq!(
+        s("*"),
+        "keyword.operator.clojure",
+        "an anonymous function's head"
+    );
     assert_eq!(s("/"), "keyword.operator.clojure");
     assert_eq!(s("and"), "keyword.operator.logical.clojure");
     assert_eq!(s("ns"), "keyword.control.import.clojure");
     assert_eq!(s("try"), "keyword.control.clojure");
     assert_eq!(s("throw"), "keyword.control.clojure");
     assert_eq!(s("If-Some"), "variable.function.clojure", "case-sensitive");
-    assert_eq!(s("str/join"), "variable.function.clojure", "qualified: not core's");
+    assert_eq!(
+        s("str/join"),
+        "variable.function.clojure",
+        "qualified: not core's"
+    );
     assert_eq!(s("even?"), "(none)", "not a head");
     assert_eq!(s("identity"), "(none)", "not a head");
 }

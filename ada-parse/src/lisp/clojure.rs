@@ -947,7 +947,11 @@ mod tests {
         let l = ["(defn foo [x] (str \"a\\n\" x :k ::b 1N 0x1F 2r101 1/2 1.5M nil #\"a\\d+\"))"];
         assert_eq!(scope_of(&l, "defn"), "storage.modifier.def.clojure");
         assert_eq!(scope_of(&l, "foo"), "entity.name.function.clojure");
-        assert_eq!(scope_of(&l, "str"), "support.function.clojure", "clojure.core's");
+        assert_eq!(
+            scope_of(&l, "str"),
+            "support.function.clojure",
+            "clojure.core's"
+        );
         assert_eq!(scope_of(&l, "k"), "constant.other.keyword.clojure");
         assert_eq!(scope_of(&l, "nil"), "constant.language.clojure");
         assert_eq!(scope_of(&l, "1/2"), "(none)");
