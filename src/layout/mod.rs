@@ -25,7 +25,7 @@ use crate::images;
 use crate::theme::{Glyphs, StyleKey};
 use table::ColMeasure;
 pub use table::Sort;
-use wrap::{Line, NBSP, PAD, Wrapped, text_width};
+use wrap::{Line, NBSP, PAD, Seg, Wrapped, text_width};
 
 /// How tables render; `t` cycles it for the whole session (ADR-11, plan Q12).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -665,7 +665,8 @@ pub fn image_alt(alt: &str) -> &str {
     alt.trim()
 }
 
-/// Indentation pushed by a container: a bullet, a quote bar, a heading prefix.
+/// Indentation pushed by a container: a bullet, a quote bar, a heading prefix. Its texts hold
+/// what [`push_span`] would write, NBSPs as spaces, so each row copies them unchecked (LAY-002).
 struct Prefix {
     /// Shown on the container's first row.
     first: String,
@@ -727,18 +728,58 @@ fn push_span(out: &mut Layout, row_start: u32, col: &mut u16, text: &str, width:
     push_range(out, row_start, col, start..end, width, look);
 }
 
-/// Append `text` with its [`PAD`]s as spaces: as many bytes, so its offsets hold.
-fn push_padded(out: &mut String, text: &str, pads: bool) {
-    if !pads {
-        out.push_str(text);
+/// [`push_span`] of `text` in style `key`, which holds no [`NBSP`]: copied unchecked.
+fn push_text(
+    out: &mut Layout,
+    row_start: u32,
+    col: &mut u16,
+    text: &str,
+    width: u16,
+    key: StyleKey,
+) {
+    if text.is_empty() {
         return;
     }
-    for (i, part) in text.split(PAD).enumerate() {
-        if i > 0 {
-            out.push(' ');
+    debug_assert!(!text.contains(NBSP));
+    let start = out.text.len() as u32;
+    out.text.push_str(text);
+    let end = out.text.len() as u32;
+    push_range(
+        out,
+        row_start,
+        col,
+        start..end,
+        width,
+        (key, InlineStyle::NONE, None),
+    );
+}
+
+/// Append the bytes `segs` of `w` cover, one run of them that follow each other in its buffer,
+/// with their [`PAD`]s as spaces: as many bytes, so their offsets hold. A pad is only ever in a
+/// piece's decoration, so only those are looked at (LAY-002: a search of the whole run was 3.6% of
+/// XL's layout).
+fn push_padded(out: &mut String, w: &Wrapped, segs: &[Seg]) {
+    let (Some(first), Some(last)) = (segs.first(), segs.last()) else {
+        return;
+    };
+    let buf = w.buf.as_bytes();
+    let mut from = first.start as usize;
+    for seg in segs {
+        let p = &w.pieces[seg.piece as usize];
+        if !p.pads {
+            continue;
         }
-        out.push_str(part);
+        for (a, b) in [(p.start, p.body_start), (p.body_end, p.end)] {
+            let a = a.max(seg.start) as usize;
+            let deco = buf.get(a..b.min(seg.end) as usize).unwrap_or_default();
+            for (k, _) in deco.iter().enumerate().filter(|&(_, &c)| c == PAD as u8) {
+                out.push_str(&w.buf[from..a + k]);
+                out.push(' ');
+                from = a + k + 1;
+            }
+        }
     }
+    out.push_str(&w.buf[from..last.end as usize]);
 }
 
 /// A span over `start..end` of [`Layout::text`], already there, which starts where the last span
@@ -793,7 +834,7 @@ impl Builder<'_> {
     fn push_prefix(&mut self, first: &str, key: StyleKey) {
         let width = first.width() as u16;
         self.prefixes.push(Prefix {
-            first: first.to_owned(),
+            first: first.replace(NBSP, " "),
             rest: " ".repeat(width as usize),
             key,
             width,
@@ -806,7 +847,7 @@ impl Builder<'_> {
     fn push_bar(&mut self, bar: &str, key: StyleKey) {
         self.push_prefix(bar, key);
         if let Some(p) = self.prefixes.last_mut() {
-            p.rest = bar.to_owned();
+            p.rest = bar.replace(NBSP, " ");
         }
     }
 
@@ -828,14 +869,7 @@ impl Builder<'_> {
         } = self;
         for p in prefixes.iter_mut() {
             let text = if p.used { &p.rest } else { &p.first };
-            push_span(
-                out,
-                *row_start,
-                col,
-                text,
-                p.width,
-                (p.key, InlineStyle::NONE, None),
-            );
+            push_text(out, *row_start, col, text, p.width, p.key);
             p.used = true;
         }
     }
@@ -869,14 +903,7 @@ impl Builder<'_> {
             ..
         } = self;
         for p in prefixes.iter() {
-            push_span(
-                out,
-                *row_start,
-                col,
-                &p.rest,
-                p.width,
-                (p.key, InlineStyle::NONE, None),
-            );
+            push_text(out, *row_start, col, &p.rest, p.width, p.key);
         }
         self.end_row(LineRange::NONE, RowKind::Blank);
     }
@@ -1027,14 +1054,18 @@ impl Builder<'_> {
                 );
             } else {
                 if i == copied {
-                    let (mut end, mut pads) = (i + 1, piece.pads);
+                    let mut end = i + 1;
                     while end < segs.len() && segs[end].start == segs[end - 1].end {
-                        pads |= w.pieces[segs[end].piece as usize].pads;
                         end += 1;
                     }
-                    let text = &w.buf[seg.start as usize..segs[end - 1].end as usize];
                     (to, from_buf) = (self.out.text.len() as u32, seg.start);
-                    push_padded(&mut self.out.text, text, pads);
+                    match w.pads {
+                        true => push_padded(&mut self.out.text, w, &segs[i..end]),
+                        false => {
+                            let text = &w.buf[seg.start as usize..segs[end - 1].end as usize];
+                            self.out.text.push_str(text);
+                        }
+                    }
                     copied = end;
                 }
                 let start = to + (seg.start - from_buf);

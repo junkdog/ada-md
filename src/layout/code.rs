@@ -53,11 +53,10 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
     } else {
         inner
     };
-    let pad = " ".repeat(lead as usize);
 
     b.begin_row();
     if lead > 0 {
-        b.text(&pad, StyleKey::CodeBlock);
+        b.spaces(lead, StyleKey::CodeBlock);
     }
     if let Some(lang) = code.lang.as_ref().filter(|_| b.params.code_labels) {
         b.text(cut(lang, usize::from(inner)), StyleKey::CodeLabel);
@@ -83,7 +82,7 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
                 b.begin_row();
                 if i == 0 {
                     if lead > 0 {
-                        b.text(&pad, StyleKey::CodeBlock);
+                        b.spaces(lead, StyleKey::CodeBlock);
                     }
                 } else {
                     b.text(&g.wrap_mark, StyleKey::CodeWrapMark);
@@ -107,7 +106,7 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
         } else {
             b.begin_row();
             if lead > 0 {
-                b.text(&pad, StyleKey::CodeBlock);
+                b.spaces(lead, StyleKey::CodeBlock);
             }
             if !line.is_empty() {
                 let col = b.col;

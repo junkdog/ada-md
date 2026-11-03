@@ -383,10 +383,13 @@ fn suspect(s: &str, fold: bool) -> bool {
     // folded, a newline is suspect too: tested against 0xff, which no byte of a str is
     let nl = if fold { 0xff } else { b'\n' };
     let hit = |b: u8| ((b < 0x20) & (b != nl)) | (b == 0x7f) | (b == 0xc2);
-    // a chunk at a time, not stopping inside one, so the test vectorizes (LAY-01)
-    s.as_bytes()
-        .chunks(32)
+    // a chunk at a time, not stopping inside one, so the test vectorizes (LAY-01); chunks of a
+    // fixed length, so it does (LAY-002)
+    let (chunks, rest) = s.as_bytes().as_chunks::<32>();
+    chunks
+        .iter()
         .any(|c| c.iter().fold(false, |acc, &b| acc | hit(b)))
+        || rest.iter().any(|&b| hit(b))
 }
 
 fn push_piece(
@@ -503,6 +506,24 @@ const CLASS: [u8; 256] = {
     t
 };
 
+/// The bytes of `v`, eight of the buffer's in little-endian order, that [`tokenize`]'s word loop
+/// stops at: a space, a newline, a `-` or `/`, and when `ascii` a byte past ASCII. Each one's top
+/// bit is set, so the lowest is the first in the buffer. A byte matched for zero borrows into the
+/// bytes after it, so a byte past the first may be set when it shouldn't; never one before it.
+const fn stops(v: u64, ascii: bool) -> u64 {
+    const LO: u64 = u64::from_le_bytes([0x01; 8]);
+    const HI: u64 = u64::from_le_bytes([0x80; 8]);
+    // the bytes of `x` that are zero
+    const fn zero(x: u64) -> u64 {
+        x.wrapping_sub(LO) & !x & HI
+    }
+    let delims = zero(v ^ (LO * b' ' as u64))
+        | zero(v ^ (LO * b'\n' as u64))
+        // `-` is 0x2d and `/` 0x2f: both 0x2f with bit 1 set
+        | zero((v | (LO * 0x02)) ^ (LO * b'/' as u64));
+    if ascii { delims | (v & HI) } else { delims }
+}
+
 /// Split `buf` into tokens, handed to `f` in order: no vector of them is built, and a word's
 /// bytes are read in a loop of their own (LAY-01).
 fn tokenize(buf: &str, mut f: impl FnMut(Tok)) {
@@ -534,7 +555,19 @@ fn tokenize(buf: &str, mut f: impl FnMut(Tok)) {
                 // as in `text_width` (the buffer holds no `\r`: `clean_char`).
                 let mut wide = false;
                 while i < bytes.len() {
-                    let class = CLASS[bytes[i] as usize];
+                    // the bytes up to the next one the loop below must look at, eight at a time
+                    // (LAY-002): most words end inside their first eight
+                    while let Some(chunk) = bytes.get(i..i + 8) {
+                        let v = u64::from_le_bytes(chunk.try_into().expect("eight bytes"));
+                        let stops = stops(v, !wide);
+                        if stops != 0 {
+                            i += (stops.trailing_zeros() / 8) as usize;
+                            break;
+                        }
+                        i += 8;
+                    }
+                    let Some(&b) = bytes.get(i) else { break };
+                    let class = CLASS[b as usize];
                     if class & (SPACE | NEWLINE) != 0 {
                         break;
                     }
@@ -578,6 +611,20 @@ impl Packer<'_> {
     /// Append `[start, end)`, `width` columns wide, to the current line, split at piece
     /// boundaries.
     fn add(&mut self, mut start: u32, end: u32, width: u16) {
+        // inside the piece of the line's last seg, right after it: that seg grows, and the line's
+        // source lines already hold the piece's (LAY-002)
+        let open = !self.is_empty();
+        if let Some(last) = self.segs.last_mut()
+            && open
+            && last.end == start
+            && last.piece as usize == self.cursor
+            && end <= self.pieces[self.cursor].end
+        {
+            last.end = end;
+            last.width = last.width.saturating_add(width);
+            self.line.width = self.line.width.saturating_add(width);
+            return;
+        }
         let mut whole = true;
         while start < end {
             while self.cursor + 1 < self.pieces.len() && self.pieces[self.cursor].end <= start {
@@ -654,10 +701,15 @@ fn pack(w: &mut Wrapped, avail: u16) {
             Tok::Word { start, end, width } => {
                 let space = u16::from(pending.is_some());
                 if p.line.width.saturating_add(space).saturating_add(width) <= avail {
-                    if let Some((s, e)) = pending {
-                        p.add(s, e, 1);
+                    match pending {
+                        // a space right before the word goes with it (LAY-002)
+                        Some((s, e)) if e == start => p.add(s, end, width.saturating_add(1)),
+                        Some((s, e)) => {
+                            p.add(s, e, 1);
+                            p.add(start, end, width);
+                        }
+                        None => p.add(start, end, width),
                     }
-                    p.add(start, end, width);
                 } else if width <= avail {
                     p.flush();
                     p.add(start, end, width);
@@ -851,6 +903,81 @@ mod tests {
         assert_eq!(w.buf, "a\u{a0}b \u{1f}c\u{1f}");
         assert!(w.nbsp && w.pads);
         assert_eq!(unit_text(doc.runs(inl), &doc, &glyphs), "a\u{a0}b c");
+    }
+
+    /// [`tokenize`]'s tokens, as `(kind, start, end, width)`.
+    fn tokens(buf: &str) -> Vec<(u8, u32, u32, u16)> {
+        let mut out = Vec::new();
+        tokenize(buf, |t| {
+            out.push(match t {
+                Tok::Word { start, end, width } => (0, start, end, width),
+                Tok::Space { start, end } => (1, start, end, 0),
+                Tok::Newline => (2, 0, 0, 0),
+            });
+        });
+        out
+    }
+
+    /// The tokens of [`tokenize`] before LAY-002's eight bytes at a time, a byte at a time.
+    fn tokens_bytewise(buf: &str) -> Vec<(u8, u32, u32, u16)> {
+        let (bytes, mut out, mut spaced, mut i) = (buf.as_bytes(), Vec::new(), false, 0);
+        while i < bytes.len() {
+            match bytes[i] {
+                b' ' => {
+                    if !spaced {
+                        out.push((1, i as u32, i as u32 + 1, 0));
+                    }
+                    (spaced, i) = (true, i + 1);
+                }
+                b'\n' => {
+                    out.push((2, 0, 0, 0));
+                    (spaced, i) = (false, i + 1);
+                }
+                _ => {
+                    let start = i;
+                    while i < bytes.len() && !matches!(bytes[i], b' ' | b'\n') {
+                        i += 1;
+                        let next = bytes.get(i).is_some_and(|&n| n != b' ' && n != b'\n');
+                        if matches!(bytes[i - 1], b'-' | b'/') && i - 1 > start && next {
+                            break;
+                        }
+                    }
+                    let width = text_width(&buf[start..i]) as u16;
+                    out.push((0, start as u32, i as u32, width));
+                    spaced = false;
+                }
+            }
+        }
+        out
+    }
+
+    /// Every delimiter, and a byte past ASCII, at each offset of words around eight bytes long:
+    /// the eight-byte scan stops where the byte loop did.
+    #[test]
+    fn tokenize_eight_at_a_time_agrees_with_a_byte_at_a_time() {
+        let fills = ["a", "\u{1f}", ".", "\u{2e}\u{2c}", "é", "日", "0"];
+        let marks = [
+            " ", "\n", "-", "/", "--", "- ", "/\n", "é", "日本", "\u{a0}", ",", "+",
+        ];
+        for fill in fills {
+            for len in 0..20 {
+                for at in 0..=len {
+                    for mark in marks {
+                        let mut s = fill.repeat(len);
+                        let cut = s.char_indices().nth(at).map_or(s.len(), |(i, _)| i);
+                        s.insert_str(cut, mark);
+                        for t in [
+                            s.clone(),
+                            format!("-{s}"),
+                            format!("{s}-x"),
+                            format!("x {s} y"),
+                        ] {
+                            assert_eq!(tokens(&t), tokens_bytewise(&t), "{t:?}");
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
