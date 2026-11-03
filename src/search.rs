@@ -406,6 +406,7 @@ mod tests {
             table_mode: TableMode::Auto,
             code_wrap: true,
             code_labels: true,
+            bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,

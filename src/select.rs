@@ -1025,6 +1025,7 @@ mod tests {
             table_mode: TableMode::Auto,
             code_wrap: true,
             code_labels: true,
+            bare: false,
             line_numbers: LineNumbers::Off,
             glyphs_gen: 0,
             images: None,

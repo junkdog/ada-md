@@ -347,6 +347,8 @@ fn print_doc(
             .unwrap_or(config.code_wrap || preview.is_none()),
         // the TUI names a code block's language on its top row; a print leaves it out
         code_labels: false,
+        // set below for a file of code
+        bare: false,
         line_numbers: config.line_numbers,
         glyphs_gen: theme.glyphs.generation(),
         images: cell.map(|cell| ImageFit {
@@ -375,6 +377,10 @@ fn print_doc(
         match print::stream::start(path, forced, numbered != LineNumbers::Off) {
             Start::Stream(stream) => {
                 let theme = theme.without_code_bg();
+                let params = LayoutParams {
+                    bare: true,
+                    ..params
+                };
                 return stream.run(&theme, params).map_err(|e| e.to_string());
             }
             Start::Whole(bytes) => read = bytes,
@@ -424,7 +430,14 @@ fn print_doc(
         matches: matches.as_ref(),
         gutter: gutter.as_ref(),
     };
-    let result = print::run(&doc, theme, filetype.params(params), opts);
+    // a file of code is laid out bare on that background, but beside the git gutter, which
+    // takes the margin's first column
+    let bare = code_theme.is_some() && gutter.as_ref().is_none_or(LineMarks::is_empty);
+    let params = LayoutParams {
+        bare,
+        ..filetype.params(params)
+    };
+    let result = print::run(&doc, theme, params, opts);
     // ada exits next: the document is left for the OS to reclaim instead of freed (O-31).
     std::mem::forget(doc);
     std::mem::forget(text);

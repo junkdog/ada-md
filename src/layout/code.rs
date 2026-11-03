@@ -1,7 +1,11 @@
 //! Code blocks (ADR-20): a background-filled block with the language on its top row, but in a
-//! print ([`LayoutParams::code_labels`](super::LayoutParams::code_labels)). With `code_wrap` on, long lines wrap with the theme's `↪`. With it off, each source line is one
-//! row whose code span is a fixed-width window, sliced at paint time by the shared horizontal
-//! offset, so scrolling sideways never relayouts. Highlighting is overlaid at paint, too.
+//! print ([`LayoutParams::code_labels`](super::LayoutParams::code_labels)). With `code_wrap` on,
+//! long lines wrap with the theme's `↪`. With it off, each source line is one row whose code span
+//! is a fixed-width window, sliced at paint time by the shared horizontal offset, so scrolling
+//! sideways never relayouts. Highlighting is overlaid at paint, too. A printed file of code
+//! ([`LayoutParams::bare`](super::LayoutParams::bare)) has no columns of the block's own left of
+//! its lines, nor right of them when they wrap: a wrapped line's mark takes its continuation's
+//! first column.
 
 use std::borrow::Cow;
 
@@ -24,18 +28,37 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
     let block = code.id;
     let g = b.g;
     let avail = b.avail();
-    let lead = [&g.wrap_mark, &g.code_clip[0]]
-        .iter()
-        .map(|s| s.width())
-        .max()
-        .unwrap_or(0)
-        .max(1) as u16;
-    let trail = g.code_clip[1].width().max(1) as u16;
+    // a print never scrolls sideways, so a bare block's left clip mark never shows, and its
+    // right one only where lines don't wrap
+    let bare = b.params.bare;
+    let lead = if bare {
+        0
+    } else {
+        [&g.wrap_mark, &g.code_clip[0]]
+            .iter()
+            .map(|s| s.width())
+            .max()
+            .unwrap_or(0)
+            .max(1) as u16
+    };
+    let trail = if bare && b.params.code_wrap {
+        0
+    } else {
+        g.code_clip[1].width().max(1) as u16
+    };
     let inner = avail.saturating_sub(lead + trail).max(1);
+    // a bare block's continuations start with the mark, so they hold that much less
+    let rest = if bare {
+        inner.saturating_sub(g.wrap_mark.width() as u16).max(1)
+    } else {
+        inner
+    };
     let pad = " ".repeat(lead as usize);
 
     b.begin_row();
-    b.text(&pad, StyleKey::CodeBlock);
+    if lead > 0 {
+        b.text(&pad, StyleKey::CodeBlock);
+    }
     if let Some(lang) = code.lang.as_ref().filter(|_| b.params.code_labels) {
         b.text(cut(lang, usize::from(inner)), StyleKey::CodeLabel);
     }
@@ -56,10 +79,12 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
         let line_src = LineRange::line(code.first_line + n as u32);
         if b.params.code_wrap {
             let mut from = 0;
-            for (i, chunk) in chunks(&line, inner).into_iter().enumerate() {
+            for (i, chunk) in chunks(&line, inner, rest).into_iter().enumerate() {
                 b.begin_row();
                 if i == 0 {
-                    b.text(&pad, StyleKey::CodeBlock);
+                    if lead > 0 {
+                        b.text(&pad, StyleKey::CodeBlock);
+                    }
                 } else {
                     b.text(&g.wrap_mark, StyleKey::CodeWrapMark);
                     b.fill(lead, StyleKey::CodeBlock);
@@ -81,7 +106,9 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
             }
         } else {
             b.begin_row();
-            b.text(&pad, StyleKey::CodeBlock);
+            if lead > 0 {
+                b.text(&pad, StyleKey::CodeBlock);
+            }
             if !line.is_empty() {
                 let col = b.col;
                 b.search_seg(unit, 0..line.len() as u32, col..col + inner);
@@ -237,25 +264,32 @@ fn expand_chars(line: &str, out: &mut String) {
     }
 }
 
-/// Split a line into pieces at most `width` columns wide. An empty line is one empty chunk.
-fn chunks(line: &str, width: u16) -> Vec<&str> {
+/// Split a line into pieces, the first at most `first` columns wide and the rest at most `rest`.
+/// An empty line is one empty chunk.
+fn chunks(line: &str, first: u16, rest: u16) -> Vec<&str> {
     // ASCII past `expand_tabs` has no control characters: a column a byte (LAY-01)
     if line.is_ascii() {
-        let (len, width) = (line.len(), usize::from(width.max(1)));
-        let starts = (0..len.max(1)).step_by(width);
+        let len = line.len();
+        let (first, rest) = (usize::from(first.max(1)), usize::from(rest.max(1)));
+        if len <= first {
+            return vec![line];
+        }
+        let starts = std::iter::once(0).chain((first..len).step_by(rest));
         return starts
-            .map(|i| &line[i.min(len)..(i + width).min(len)])
+            .map(|i| &line[i..(i + if i == 0 { first } else { rest }).min(len)])
             .collect();
     }
     let mut out = Vec::new();
     let mut start = 0;
     let mut used = 0u16;
+    let mut width = first;
     for (i, c) in line.char_indices() {
         let cw = c.width().unwrap_or(0) as u16;
         if used + cw > width && i > start {
             out.push(&line[start..i]);
             start = i;
             used = 0;
+            width = rest;
         }
         used += cw;
     }
@@ -311,8 +345,12 @@ mod tests {
 
     #[test]
     fn chunking() {
-        assert_eq!(chunks("abcdefg", 3), ["abc", "def", "g"]);
-        assert_eq!(chunks("", 3), [""]);
-        assert_eq!(chunks("日本語", 4), ["日本", "語"]);
+        assert_eq!(chunks("abcdefg", 3, 3), ["abc", "def", "g"]);
+        assert_eq!(chunks("abcdef", 3, 3), ["abc", "def"]);
+        assert_eq!(chunks("", 3, 3), [""]);
+        assert_eq!(chunks("日本語", 4, 4), ["日本", "語"]);
+        // a bare block's continuations are a mark narrower
+        assert_eq!(chunks("abcdefgh", 4, 3), ["abcd", "efg", "h"]);
+        assert_eq!(chunks("日本語日本", 4, 3), ["日本", "語", "日", "本"]);
     }
 }

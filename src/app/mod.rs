@@ -781,6 +781,7 @@ impl State {
             table_mode: self.table_mode,
             code_wrap: self.code_wrap,
             code_labels: true,
+            bare: false,
             line_numbers: self.line_numbers,
             glyphs_gen: self.glyphs_gen,
             // an image may take 60 % of the viewport

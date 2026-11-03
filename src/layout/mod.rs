@@ -118,6 +118,9 @@ pub struct LayoutParams {
     pub code_wrap: bool,
     /// Code blocks name their language on their top row: the TUI's do, a print's don't.
     pub code_labels: bool,
+    /// A file of code printed on the terminal's background, which is its page: no margin, and
+    /// its block takes no columns of its own but a wrapped line's mark.
+    pub bare: bool,
     /// Rows are numbered unless `Off`: [`FileType::params`](crate::filetype::FileType::params)
     /// turns the mode off for the files it doesn't cover.
     pub line_numbers: LineNumbers,
@@ -548,7 +551,7 @@ fn relayout_lines(
         width: params.width - numbers,
         ..params
     };
-    let margin = if inner.prose_width() >= 24 {
+    let margin = if inner.prose_width() >= 24 && !params.bare {
         glyphs.margin
     } else {
         0

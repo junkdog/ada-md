@@ -530,6 +530,7 @@ mod linux {
             table_mode: Default::default(),
             code_wrap: true,
             code_labels: true,
+            bare: false,
             line_numbers: Default::default(),
             glyphs_gen: theme.glyphs.generation(),
             images: None,

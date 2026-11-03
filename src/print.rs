@@ -874,6 +874,7 @@ mod tests {
             table_mode: Default::default(),
             code_wrap: true,
             code_labels: true,
+            bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,
@@ -891,6 +892,7 @@ mod tests {
             table_mode: Default::default(),
             code_wrap: true,
             code_labels: true,
+            bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,
@@ -937,6 +939,7 @@ mod tests {
             table_mode: Default::default(),
             code_wrap: true,
             code_labels: true,
+            bare: false,
             line_numbers: crate::layout::LineNumbers::All,
             glyphs_gen: 0,
             images: None,
@@ -986,6 +989,7 @@ mod tests {
             table_mode: Default::default(),
             code_wrap: true,
             code_labels: true,
+            bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
             images: Some(crate::layout::ImageFit {
@@ -1063,6 +1067,7 @@ mod tests {
             table_mode: Default::default(),
             code_wrap: true,
             code_labels: true,
+            bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,
@@ -1090,6 +1095,7 @@ mod tests {
             table_mode: Default::default(),
             code_wrap: true,
             code_labels: false,
+            bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,
@@ -1108,6 +1114,45 @@ mod tests {
         assert!(!out.contains("rust") && out.contains(&block), "{out:?}");
     }
 
+    /// A printed file of code is bare: its lines start at the edge, or a space past their
+    /// numbers, and a wrapped line's continuation at its mark, the width out to the edge.
+    #[test]
+    fn a_bare_code_file_takes_no_columns_of_its_own() {
+        let params = LayoutParams {
+            width: 30,
+            max_width: None,
+            table_mode: Default::default(),
+            code_wrap: true,
+            code_labels: false,
+            bare: true,
+            line_numbers: crate::layout::LineNumbers::Code,
+            glyphs_gen: 0,
+            images: None,
+        };
+        let theme = Theme::builtin().with_bg(false).without_code_bg();
+        let long = "x".repeat(60);
+        let file = crate::doc::file::code(&format!("fn main() {{}}\n{long}\n"), Some("Rust"));
+        let lines = |params| -> Vec<String> {
+            let filetype = crate::filetype::FileType::Text { lang: Some("Rust") };
+            let out = render(&file, &theme, filetype.params(params), Options::default());
+            out.lines().map(plain).collect()
+        };
+        let mark = &theme.glyphs.wrap_mark;
+        let numbered = lines(params);
+        assert_eq!(numbered[1], "1 fn main() {}");
+        assert_eq!(numbered[2], format!("2 {}", "x".repeat(28)));
+        assert_eq!(numbered[3], format!("  {mark}{}", "x".repeat(27)));
+        assert_eq!(numbered[4], format!("  {mark}xxxxx"));
+        let off = LayoutParams {
+            line_numbers: crate::layout::LineNumbers::Off,
+            ..params
+        };
+        assert_eq!(lines(off)[1], "fn main() {}");
+        assert_eq!(lines(off)[2], "x".repeat(30));
+        assert_eq!(lines(off)[3], format!("{mark}{}", "x".repeat(29)));
+        assert_eq!(lines(off)[4], format!("{mark}x"));
+    }
+
     /// `md` printed 40 columns wide with `opts`, a line each.
     fn marked(md: &str, opts: Options) -> Vec<String> {
         let params = LayoutParams {
@@ -1116,6 +1161,7 @@ mod tests {
             table_mode: Default::default(),
             code_wrap: true,
             code_labels: true,
+            bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,
@@ -1234,6 +1280,7 @@ mod tests {
             table_mode: Default::default(),
             code_wrap: true,
             code_labels: true,
+            bare: false,
             line_numbers: crate::layout::LineNumbers::All,
             glyphs_gen: 0,
             images: None,

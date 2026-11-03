@@ -97,6 +97,7 @@ fn main() {
             table_mode: TableMode::default(),
             code_wrap: true,
             code_labels: true,
+            bare: false,
             line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,

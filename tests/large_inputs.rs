@@ -257,6 +257,7 @@ fn large_documents_hold_in_print() {
                 table_mode,
                 code_wrap: true,
                 code_labels: true,
+                bare: false,
                 line_numbers,
                 glyphs_gen: theme.glyphs.generation(),
                 images: None,

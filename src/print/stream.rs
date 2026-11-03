@@ -569,6 +569,7 @@ mod tests {
             table_mode: Default::default(),
             code_wrap: true,
             code_labels: true,
+            bare: false,
             line_numbers,
             glyphs_gen: 0,
             images: None,
@@ -580,7 +581,7 @@ mod tests {
         same_at(bytes, lang, width, numbers, Limits::DEFAULT);
     }
 
-    /// [`same`], with the reader cutting at `limits`.
+    /// [`same`], with the reader cutting at `limits`, laid out bare as a print does and not.
     fn same_at(
         bytes: &[u8],
         lang: Option<&'static str>,
@@ -588,12 +589,28 @@ mod tests {
         numbers: LineNumbers,
         limits: Limits,
     ) {
+        let text = String::from_utf8_lossy(bytes);
+        let doc = FileType::Text { lang }.parse(Path::new("x"), &text);
+        for bare in [false, true] {
+            let params = LayoutParams {
+                bare,
+                ..params(width, numbers)
+            };
+            same_laid_out(bytes, lang, &doc, params, limits);
+        }
+    }
+
+    /// [`same_at`] with `params`, for `doc`, which is `bytes` parsed.
+    fn same_laid_out(
+        bytes: &[u8],
+        lang: Option<&'static str>,
+        doc: &crate::doc::Doc,
+        params: LayoutParams,
+        limits: Limits,
+    ) {
         let theme = Theme::builtin();
         let filetype = FileType::Text { lang };
-        let text = String::from_utf8_lossy(bytes);
-        let doc = filetype.parse(Path::new("x"), &text);
-        let params = params(width, numbers);
-        let whole = render(&doc, &theme, filetype.params(params), Options::default());
+        let whole = render(doc, &theme, filetype.params(params), Options::default());
         let lines = count_lines(bytes).unwrap();
         assert_eq!(lines, doc.line_count());
         let split = bytes.len().min(SAMPLE);
@@ -615,7 +632,8 @@ mod tests {
                 .position(|(a, b)| a != b)
                 .unwrap_or(a.len().min(b.len()));
             panic!(
-                "{lang:?}, {} bytes: whole {} lines, streamed {}; first difference at line {at}:\n{:?}\n{:?}",
+                "{lang:?}, bare {}, {} bytes: whole {} lines, streamed {}; first difference at line {at}:\n{:?}\n{:?}",
+                params.bare,
                 bytes.len(),
                 a.len(),
                 b.len(),

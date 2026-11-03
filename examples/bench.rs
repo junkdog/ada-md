@@ -210,6 +210,7 @@ fn params(theme: &Theme, width: u16) -> LayoutParams {
         table_mode: TableMode::Auto,
         code_wrap: true,
         code_labels: true,
+        bare: false,
         line_numbers: Default::default(),
         glyphs_gen: theme.glyphs.generation(),
         images: None,
