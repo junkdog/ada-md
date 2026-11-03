@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 # termcmp.zsh TERM DOC BASE NEW [OUT] (bench/b2): run two ada builds live in a real terminal
-# (tmux, kitty, alacritty or xterm) through the same key script on $B2_ROOT/corpus/DOC.md, or on DOC
+# (tmux, kitty, alacritty, xterm or GNU screen) through the same key script on $B2_ROOT/corpus/DOC.md, or on DOC
 # itself when it is a path to a .md file (run from its directory, so its images resolve), capture the
 # screen after every key, and compare the two builds screen by screen by what each cell shows.
 # Also prints the scroll sequences (DECSTBM, IL, DL) each build sent.
@@ -15,6 +15,8 @@
 #   FIFO and logs the bytes; screens by ImageMagick's `import -window`, compared pixel for pixel.
 # xterm: as alacritty (X11, relay.py, `import -window`), as a VT340 with 256 color registers, so it
 #   shows sixel images.
+# screen: GNU screen (truecolor on, no banner) inside tmux's detached pane, captured as tmux is: what screen draws
+#   of ada's frames, synchronized output (DEC 2026) included, which screen may not know (BEN-008).
 # kitty and alacritty open a window for ~25 s per build. Output goes to OUT (default $TMPDIR).
 term=$1 doc=$2 base=${3:A} new=${4:A} out=${5:-${TMPDIR:-/tmp}/termcmp}
 here=${0:A:h} corpus=${B2_ROOT:-$here/root}/corpus
@@ -38,11 +40,17 @@ drive() {
   (( $#keys )) || keys=($keys_l)
   mkdir -p $dir; rm -f $dir/*(N)
   case $term in
-    tmux)
+    tmux|screen)
       local -a T=(tmux -L termcmp -f /dev/null)
       $T kill-server 2>/dev/null
+      local run="exec $bin ${(j: :)${(@q)extra}} ${(q)file}"
+      if [[ $term == screen ]]; then
+        # GNU screen inside the tmux pane: no banner or status line, 24-bit color passed on
+        print -l 'startup_message off' 'truecolor on' 'hardstatus off' > $dir/screenrc
+        run="exec screen -c ${(q)dir}/screenrc -S termcmp-$$ $bin ${(j: :)${(@q)extra}} ${(q)file}"
+      fi
       # the delay lets pipe-pane attach before ada writes
-      $T new-session -d -s t -x 120 -y 40 -c $corpus "sleep 1; exec $bin ${(j: :)${(@q)extra}} ${(q)file}"
+      $T new-session -d -s t -x 120 -y 40 -c $corpus "sleep 1; $run"
       $T set -g status off
       $T pipe-pane -t t -o "cat > $dir/bytes"
       send() { case $1 in ENTER) $T send-keys -t t Enter;; PGDN) $T send-keys -t t NPage;;

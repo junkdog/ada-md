@@ -25,6 +25,16 @@ for line in open(f"{S}/b2/all.jsonl"):
     runs[(v, d)].append(r)
 
 
+# BEN-003 (2026-11-03): b2 records three times for first paint, end, search and reload: the end of the pty's burst
+# (first_ms, *_shown, what the tables rank on), the first finished update that shows the needle (first_chunk_ms,
+# *_shown_chunk) and when the screen's text stays as the span ends (first_frame_ms, *_frame). B2_RANK=frame ranks on
+# the last, and only when every record has it, so a merge of new reruns into older records stays on one rule. Not the
+# default: ada's second frame (its git gutter) changes the text too, and a viewer's ticking status line (mdfried's
+# page count) holds "text final" back for a second.
+FRAME = os.environ.get("B2_RANK") == "frame" and bool(runs) and all("first_frame_ms" in r for rs in runs.values() for r in rs)
+FIRST, SHOWN = ("first_frame_ms", "frame") if FRAME else ("first_ms", "shown")
+
+
 def num(x): return isinstance(x, (int, float)) and not isinstance(x, bool)
 
 
@@ -50,17 +60,17 @@ def cold(r, key):
 
 # facet -> (per-run value, unit); the per-cell value is the median across runs
 F = {
-    "first": lambda r: r.get("first_ms"), "settled": lambda r: r.get("settle_ms"),
+    "first": lambda r: r.get(FIRST), "settled": lambda r: r.get("settle_ms"),
     "startup CPU": lambda r: r.get("paint_cpu_ms"),
     "rss": lambda r: (r.get("hwm_kib") or 0) / 1024 or None, "rss paint": lambda r: (r.get("hwm_paint_kib") or 0) / 1024 or None,
     "idle CPU": lambda r: r.get("idle_cpu_ms"), "wakeups": lambda r: r.get("idle_ctxsw_s"),
     "line": lambda r: pr(r, "line", "done", True), "line CPU": lambda r: pr(r, "line", "cpu", True),
     "page": lambda r: pr(r, "page", "done", True), "page CPU": lambda r: pr(r, "page", "cpu", True),
     "page bytes": lambda r: pr(r, "page", "bytes", True),
-    "end": lambda r: pr(r, "end", "shown", all_shown=True), "end CPU": lambda r: pr(r, "end", "cpu"),
-    "search": lambda r: pr(r, "search", "shown", all_shown=True), "search CPU": lambda r: pr(r, "search", "cpu"),
+    "end": lambda r: pr(r, "end", SHOWN, all_shown=True), "end CPU": lambda r: pr(r, "end", "cpu"),
+    "search": lambda r: pr(r, "search", SHOWN, all_shown=True), "search CPU": lambda r: pr(r, "search", "cpu"),
     "resize": lambda r: cold(r, "done"), "resize CPU": lambda r: cold(r, "cpu"),
-    "reload": lambda r: pr(r, "reload", "shown", all_shown=True), "reload CPU": lambda r: pr(r, "reload", "cpu"),
+    "reload": lambda r: pr(r, "reload", SHOWN, all_shown=True), "reload CPU": lambda r: pr(r, "reload", "cpu"),
     "lag": lambda r: r.get("burst_lag_ms"), "burst CPU": lambda r: r.get("burst_cpu_ms"),
     "session CPU": lambda r: r.get("total_cpu_ms"), "session wall": lambda r: r.get("total_wall_ms"),
 }
@@ -397,7 +407,7 @@ def loader(d):
                         own = hyperfine(rss).get(n)
                         r["rss"] = own["rss"] if own and not own["killed"] else r["rss"]
                     out[n] = r
-        for c in timeouts.listed(d):  # skipped by b2p.zsh because it always hits the cap: "> cap" as when killed
+        for c in sorted(timeouts.listed(d)):  # skipped by b2p.zsh because it always hits the cap: "> cap" as when killed
             cf, cm, n = c.split()
             if (cf, cm) == (f, mode):
                 out.setdefault(n, dict(n=0, killed=True))

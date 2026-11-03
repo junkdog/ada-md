@@ -30,6 +30,11 @@ pub struct Scan {
     /// When the needle first showed after any chunk that leaves no synchronized update open, the frame's own
     /// end (BEN-003).
     pub shown_chunk: Option<f64>,
+    /// From when the screen's text (attributes aside) stays as the span ends, read after the chunks that leave no
+    /// synchronized update open, if the needle is in that text (BEN-003; `B2_RANK=frame` ranks on it). A frame
+    /// that only recolors doesn't move it; a partial frame that shows the needle before the rest doesn't earn it;
+    /// but any later change of the text does, such as ada's git gutter or a ticking status line.
+    pub frame: Option<f64>,
     pub bytes: usize,
     pub changed: bool,
 }
@@ -98,6 +103,9 @@ impl Replay {
         let mut sig = sig0;
         let mut shown = needle.filter(|n| self.text().contains(n)).map(|_| t_from);
         let mut shown_chunk = shown;
+        // the text at the span's start, then each time it changes at a finished update
+        let mut text = needle.map(|_| self.text());
+        let mut text_since = t_from;
         let (mut first, mut last) = (None, None);
         let mut bytes = 0;
         while let Some((t, c)) = chunks.get(self.i).filter(|(t, _)| *t < t_to) {
@@ -106,11 +114,25 @@ impl Replay {
             bytes += c.len();
             first = first.or(Some(*t));
             // as a terminal that knows synchronized output shows it: not inside an update
-            if shown_chunk.is_none()
-                && !self.synced
-                && needle.is_some_and(|n| self.text().contains(n))
-            {
-                shown_chunk = Some(*t);
+            if needle.is_some() && !self.synced {
+                let now = self.text();
+                if shown_chunk.is_none() && needle.is_some_and(|n| now.contains(n)) {
+                    shown_chunk = Some(*t);
+                }
+                if text.as_ref() != Some(&now) {
+                    // B2_TEXT_CHANGES: each change of the text, with its rows, to stderr (BEN-003's check)
+                    if std::env::var_os("B2_TEXT_CHANGES").is_some() {
+                        let old: Vec<&str> = text.as_deref().unwrap_or("").lines().collect();
+                        eprintln!("text changed at +{:.3} ms", (t - t_from) * 1e3);
+                        for (row, line) in now.lines().enumerate() {
+                            if old.get(row) != Some(&line) {
+                                eprintln!("  {row:>2} was {:?}", old.get(row).unwrap_or(&""));
+                                eprintln!("  {row:>2} now {line:?}");
+                            }
+                        }
+                    }
+                    (text, text_since) = (Some(now), *t);
+                }
             }
             let next = chunks.get(self.i).map_or(f64::INFINITY, |(t, _)| *t);
             if next - t > FRAME_GAP {
@@ -129,6 +151,10 @@ impl Replay {
             done: ms(last),
             shown: ms(shown),
             shown_chunk: ms(shown_chunk),
+            frame: ms(needle
+                .zip(text.as_deref())
+                .filter(|(n, text)| text.contains(n))
+                .map(|_| text_since)),
             bytes,
             changed: sig != sig0,
         }

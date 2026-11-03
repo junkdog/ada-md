@@ -16,6 +16,10 @@ for l in open(sys.argv[1]):
     r = json.loads(l)
     v, d = r["name"].rsplit("-", 1)
     runs[(v, d)].append(r)
+# BEN-003 (2026-11-03): first paint, end, search and reload rank on when the screen's text is final, if every record
+# has those times (doctables.py says why)
+FRAME = os.environ.get("B2_RANK") == "frame" and bool(runs) and all("first_frame_ms" in r for rs in runs.values() for r in rs)
+FIRST, SHOWN = ("first_frame_ms", "frame") if FRAME else ("first_ms", "shown")
 
 
 def num(x):
@@ -39,7 +43,8 @@ def agg(v, d, fn):
     return med([fn(r) for r in runs.get((v, d), [])])
 
 
-def misses(v, d, kind, key="shown"):
+def misses(v, d, kind, key=None):
+    key = key or SHOWN
     tot = sum(len(r.get(f"{kind}_{key}") or []) for r in runs.get((v, d), []))
     miss = sum(sum(1 for x in (r.get(f"{kind}_{key}") or []) if x is None) for r in runs.get((v, d), []))
     return miss, tot
@@ -77,7 +82,7 @@ rows, notes = [], []
 for v in V:
     row = [NAME[v]]
     for d in DOCS:
-        f = agg(v, d, lambda r: r.get("first_ms"))
+        f = agg(v, d, lambda r: r.get(FIRST))
         if f is None and runs.get((v, d)):
             notes.append(f"{NAME[v]} {d.upper()}: never painted (90 s cap)")
         elif f"{v}-{d}" in timeouts.listed("b2") and not runs.get((v, d)):
@@ -111,7 +116,7 @@ for d in DOCS:
         for kind in KINDS:
             note = None
             if kind in ("end", "search", "reload"):
-                wall = agg(v, d, lambda r: per_run(r, kind, "shown"))
+                wall = agg(v, d, lambda r: per_run(r, kind, SHOWN))
                 cpu = agg(v, d, lambda r: per_run(r, kind, "cpu"))
                 m, t = misses(v, d, kind)
                 if kind == "search" and v == "glow":

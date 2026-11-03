@@ -1,14 +1,16 @@
 #!/usr/bin/env zsh
-# full.zsh OUT: the whole B2 run, every viewer: the four lanes, print mode, the previewer files and images, mermaid
+# full.zsh OUT: the whole B2 run, every viewer: the lanes, print mode, the previewer files and images, mermaid
 # diagrams against the crates md-tui and leaf draw them with (bench/diagrams/compare, built from the same tree as ADA;
-# COMPARE overrides), then the vault notes' tables. OUT is a full record set (b2/all.jsonl, lane0..3.json, b2a/, b2p/, b2i/, doctables.md),
-# so it serves as REF for rerun.zsh as it is.
+# COMPARE overrides), then the vault notes' tables. OUT is a full record set (b2/all.jsonl, lane0.json, lane1.json,
+# lane-xl.json, b2a/, b2p/, b2i/, doctables.md), so it serves as REF for rerun.zsh as it is.
+# The lanes are CCD0's two (BEN-002, 2026-11-03; OUT/layout.txt says "ccd0", none before: four lanes over both CCDs):
+# the S, M and L jobs on both at once, then the XL jobs alone on the first, so no two XL jobs share CCD0's L3.
 # B2_PROFILE (on by default) holds every lane core ready for the run (b2-bench-profile: EPP performance, no idle
 # state deeper than C1, the clock floor at the top; ada-optimization experiment 28, BEN-04) and writes the profile's
 # id (or off) to OUT/profile.txt: cells made under different profiles don't mix. ADA is copied into OUT and run from there.
 S=${B2_ROOT:-${0:A:h}/root}; OUT=${${1:?usage: full.zsh OUT}:A}   # absolute: the lane specs run ADA from the corpus
 H=${0:A:h}; B2=$H/target/release/b2
-L=(0,2,4,6 8,10,12,14 16,18,20,22 24,26,28,30)   # as lanes.py
+L=(0,2,4,6 8,10,12,14)   # as lanes.py: CCD0's two lanes
 [[ -e $OUT ]] && { echo "full: $OUT exists" >&2; exit 1 }
 mkdir -p $OUT/b2
 cp ${ADA:?set ADA} $OUT/ada; export ADA=$OUT/ada
@@ -37,16 +39,20 @@ mark() {
 }
 print "ada $(sha256sum < $ADA | cut -c1-16) ($(git -C $H rev-parse --short HEAD) checked out), profile $PROFILE_ID, binaries ${${DROP:#off}:+read back}${${(M)DROP:#off}:+as cached}" > $OUT/run.log
 
-python3 -I $H/lanes.py > $OUT/lanes.txt && cp $H/lane?.json $OUT/   # lanes.py writes them beside itself
+# lanes.py writes them beside itself; by name, since older layouts' lane2.json and lane3.json may still be there
+python3 -I $H/lanes.py > $OUT/lanes.txt && cp $H/{lane0,lane1,lane-xl}.json $OUT/
+print ccd0 > $OUT/layout.txt
 mark "b2 start"
 pids=()
-for i in 0 1 2 3; do
+for i in 0 1; do
   taskset -c $L[i+1] $B2 run $OUT/lane$i.json $OUT/lane$i.jsonl > $OUT/lane$i.log 2>&1 &
   pids+=$!
 done
 rc=0; for p in $pids; do wait $p || rc=1; done
+mark "b2 lanes end rc=$rc"
+taskset -c $L[1] $B2 run $OUT/lane-xl.json $OUT/lane-xl.jsonl > $OUT/lane-xl.log 2>&1 || rc=1
 mark "b2 end rc=$rc"
-cat $OUT/lane?.jsonl > $OUT/b2/all.jsonl
+cat $OUT/{lane0,lane1,lane-xl}.jsonl > $OUT/b2/all.jsonl
 for part in b2a b2p b2i; do
   mark "$part start"
   env ${(U)part}_OUT=$OUT/$part zsh $H/$part.zsh > $OUT/$part.log 2>&1

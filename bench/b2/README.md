@@ -52,7 +52,10 @@ python3 -I bench/b2/plot.py $(git rev-parse --short HEAD) && gnuplot bench/b2/pl
 python3 -I site/perf.py   # the site's perf section, from the same .dat files
 ```
 
-The four lanes take about 18 minutes, print mode another 4.5, the previewer files about 13 (the huge files' runs
+The lanes are CCD0's two (since 2026-11-03, BEN-002: a job's CCD moved its per-key cells up to 1.4×, and two XL
+jobs at once on CCD0 read search 1.8×): the S, M and L jobs on both at once, then the XL jobs alone on the first
+(`lane0.json`, `lane1.json`, `lane-xl.json`; `layout.txt` says `ccd0`). That takes about 45 minutes, where the
+four lanes over both CCDs before took about 18; print mode another 4.5, the previewer files about 13 (the huge files' runs
 are capped at 60 s each, `B2P_CAP`), and images 3.5: about 40 minutes in all, as `full.zsh` ran on 2026-10-20,
 without the cells that always hit their cap.
 
@@ -66,6 +69,15 @@ record set's `killed.txt` (`input mode tool`), and `doctables.py` and `b2a_repor
 the huge files only). The timed runs themselves aren't wrapped, which would add `timeout`'s fork and exec to each
 cell, except the huge files' (`B2P_CAP`, the same cap by default). The probe doubles as a warm-up. The TUI lanes
 are bounded by `b2` itself: 20 s to paint (90 on XL), 2–5 s for each scenario's screen.
+
+### When the screen showed it
+
+`b2` replays each run's chunks through vt100 and records three times for first paint, end, search and reload
+(BEN-003, 2026-11-03): where the pty went quiet for 2 ms after the sentinel showed (`first_ms`, `*_shown`; what the
+tables rank on), the first finished synchronized update (DEC 2026) that shows it (`first_chunk_ms`,
+`*_shown_chunk`), and when the screen's text, colors aside, stays as the span ends (`first_frame_ms`, `*_frame`).
+`B2_RANK=frame` ranks `doctables.py`, `rank.py` and `report.py` on the last, when every record has it.
+`B2_TEXT_CHANGES=1 b2 run …` prints each change of the screen's text with its rows, to see what a later frame drew.
 
 ### Known timeouts
 
@@ -152,12 +164,12 @@ ADA=<new build> ADA_REF=<the build REF measured> zsh bench/b2/rerun.zsh REF OUT
 ```
 
 Reruns ada's cells (the lanes, print, the previewer files and images) beside the ada that REF measured, both built
-fresh from `git archive`, without rerunning the other viewers. REF is a full record set (`b2/all.jsonl`,
-`lane0..3.json`, `b2a/`, `b2p/`, `b2i/`; `full.zsh` writes one, `merge.py` builds one from a run and its reruns),
-and OUT becomes one, the next rerun's REF. ada's jobs are split into one-run jobs, one per round. With the
-profile, ada on its lanes in REF (a job REF ran on lane 2 or 3 takes lane 0 or 1, CCD0) and `adaref` on the same lanes of the other
-CCD at once, swapping sides each round, for 6 rounds (4 for XL): an even count, so each build has each side
-equally often, since even held ready a lane moves single cells by 20–40% (experiment 28, BEN-02). Five rounds of
+fresh from `git archive`, without rerunning the other viewers. REF is a full record set (`b2/all.jsonl`, its lane
+specs, `b2a/`, `b2p/`, `b2i/`; `full.zsh` writes one, `merge.py` builds one from a run and its reruns), and OUT
+becomes one, the next rerun's REF; a REF of the older four-lane layout is refused unless `B2_AB_ONLY`. ada's jobs
+are split into one-run jobs, one per round. With the profile, ada's S, M and L jobs and `adaref`'s at once on
+CCD0's two lanes, swapping lanes each round, then the XL pairs in turn on the first lane alone, the order flipping
+each round, for 6 rounds (4 for XL): an even count, so each build has each side equally often (BEN-002). Five rounds of
 that took 15 minutes. With `B2_PROFILE=off`, the two take turns on ada's lanes, 5 rounds (3 for XL; 24 minutes).
 Print, the previewer files and images run both in one `hyperfine` call.
 

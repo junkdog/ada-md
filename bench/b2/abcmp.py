@@ -52,7 +52,7 @@ def show(head, rows):
 
 
 def paired(rounds, d, f):
-    """new/old from the rounds' paired ratios: rerun.zsh's side-by-side rounds put ada on one CCD and adaref on the
+    """new/old from the rounds' paired ratios: rerun.zsh's side-by-side rounds put ada on one lane and adaref on the
     other, swapping each round, so a lane's own pull (20–40% on single cells) multiplies one way in the odd rounds
     and the other in the even ones; the mean of each side's mean log ratio cancels it."""
     logs = {0: [], 1: []}

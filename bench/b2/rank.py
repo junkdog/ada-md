@@ -10,6 +10,10 @@ for l in open(f"{S}/b2/all.jsonl"):
     v, d = r["name"].rsplit("-", 1)
     runs[(v, d)].append(r)
 V = ["ada", "treemd", "treemd-head", "leaf", "mdfried", "mdtui", "glow"]
+# BEN-003 (2026-11-03): first paint, end, search and reload rank on when the screen's text is final, if every record
+# has those times (doctables.py says why)
+FRAME = os.environ.get("B2_RANK") == "frame" and bool(runs) and all("first_frame_ms" in r for rs in runs.values() for r in rs)
+FIRST, SHOWN = ("first_frame_ms", "frame") if FRAME else ("first_ms", "shown")
 
 
 def num(x): return isinstance(x, (int, float)) and not isinstance(x, bool)
@@ -22,13 +26,13 @@ def pr(r, kind, key, oc):
     vals = r.get(f"{kind}_{key}") or []
     if oc:
         vals = [v for v, c in zip(vals, r.get(f"{kind}_changed") or []) if c]
-    if key in ("shown",) and any(x is None for x in vals):
+    if key in ("shown", "frame") and any(x is None for x in vals):
         return None  # a miss disqualifies the run
     return med(vals)
 
 
 FACETS = {
-    "first paint": lambda r: r.get("first_ms"),
+    "first paint": lambda r: r.get(FIRST),
     "settled": lambda r: r.get("settle_ms"),
     "startup CPU": lambda r: r.get("paint_cpu_ms"),
     "peak RSS": lambda r: r.get("hwm_kib"),
@@ -37,11 +41,11 @@ FACETS = {
     "line wall": lambda r: pr(r, "line", "done", True), "line CPU": lambda r: pr(r, "line", "cpu", True),
     "page wall": lambda r: pr(r, "page", "done", True), "page CPU": lambda r: pr(r, "page", "cpu", True),
     "page bytes": lambda r: pr(r, "page", "bytes", True),
-    "end wall": lambda r: pr(r, "end", "shown", False), "end CPU": lambda r: pr(r, "end", "cpu", False),
-    "search wall": lambda r: pr(r, "search", "shown", False), "search CPU": lambda r: pr(r, "search", "cpu", False),
+    "end wall": lambda r: pr(r, "end", SHOWN, False), "end CPU": lambda r: pr(r, "end", "cpu", False),
+    "search wall": lambda r: pr(r, "search", SHOWN, False), "search CPU": lambda r: pr(r, "search", "cpu", False),
     "resize wall": lambda r: pr(r, "resize", "done", False) if any(r.get("resize_changed") or []) else None,
     "resize CPU": lambda r: pr(r, "resize", "cpu", False) if any(r.get("resize_changed") or []) else None,
-    "reload wall": lambda r: pr(r, "reload", "shown", False), "reload CPU": lambda r: pr(r, "reload", "cpu", False),
+    "reload wall": lambda r: pr(r, "reload", SHOWN, False), "reload CPU": lambda r: pr(r, "reload", "cpu", False),
     "held page-down lag": lambda r: r.get("burst_lag_ms"), "held page-down CPU": lambda r: r.get("burst_cpu_ms"),
 }
 out = []
