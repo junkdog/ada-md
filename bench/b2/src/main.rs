@@ -388,6 +388,7 @@ fn analyze(job: &Job, s: &Session, rec: &mut Map<String, Value>) {
     rec.insert("total_cpu_ms".into(), json!(s.total_cpu_ms));
     rec.insert("total_wall_ms".into(), json!(s.total_wall_ms));
     rec.insert("first_ms".into(), json!(p.shown));
+    rec.insert("first_chunk_ms".into(), json!(p.shown_chunk));
     rec.insert("settle_ms".into(), json!(p.done));
     let mut lat = Map::new();
     let mut push = |k: String, v: Value| {
@@ -424,6 +425,7 @@ fn analyze(job: &Job, s: &Session, rec: &mut Map<String, Value>) {
             push(format!("{kind}_bytes"), json!(r.bytes));
             push(format!("{kind}_changed"), json!(r.changed));
             push(format!("{kind}_shown"), json!(r.shown));
+            push(format!("{kind}_shown_chunk"), json!(r.shown_chunk));
             let c0 = s.mark_cpu[idx];
             let c1 = s.mark_cpu.get(idx + 1).copied().flatten();
             push(format!("{kind}_cpu"), json!(c0.zip(c1).map(|(a, b)| b - a)));

@@ -15,6 +15,14 @@ cp ${ADA:?set ADA} $OUT/ada; export ADA=$OUT/ada
 COMPARE=${COMPARE:-$H/../diagrams/compare/target/release/compare}
 [[ -x $COMPARE ]] || { echo "full: no $COMPARE (cargo build --release --manifest-path bench/diagrams/compare/Cargo.toml)" >&2; exit 1 }
 cp $COMPARE $OUT/compare
+# every viewer's binary as read back from disk (BEN-001): a binary written seconds before maps 0.4-0.8 MiB more code
+# than one read back after a cache drop (fault-around and large folios over its cached pages, ada-optimization
+# experiment 30), and only ada's is copied (the distribution's glow, bat, chafa and kitten can't be). So the page
+# cache is dropped after the copies, whatever MemFree (B2_DROP_CACHES=off skips it, and every cell says so)
+DROP=${B2_DROP_CACHES:-/usr/local/sbin/oxasm-drop-caches}
+if [[ $DROP != off ]]; then
+  sudo -n $DROP > $OUT/drop-caches.txt 2>&1 || { echo "full: sudo -n $DROP failed; or set B2_DROP_CACHES=off" >&2; exit 1 }
+fi
 PROFILE=${B2_PROFILE:-on}; PROFILE_ID=off
 if [[ $PROFILE == on ]]; then   # restored when this script exits
   sudo -n /usr/local/sbin/b2-bench-profile on ${(j:,:)L} $$ || exit 1
@@ -27,7 +35,7 @@ mark() {
   for c in 0 2 8 16 24; do clocks+=$(( $(</sys/devices/system/cpu/cpu$c/cpufreq/scaling_cur_freq) / 1000 )); done
   print "$1 $(date +%T) Tctl: $(sensors 2>/dev/null | awk '/^Tctl:/ { print $2 }')  clocks(0,2,8,16,24): $clocks" >> $OUT/run.log
 }
-print "ada $(sha256sum < $ADA | cut -c1-16) ($(git -C $H rev-parse --short HEAD) checked out), profile $PROFILE_ID" > $OUT/run.log
+print "ada $(sha256sum < $ADA | cut -c1-16) ($(git -C $H rev-parse --short HEAD) checked out), profile $PROFILE_ID, binaries ${${DROP:#off}:+read back}${${(M)DROP:#off}:+as cached}" > $OUT/run.log
 
 python3 -I $H/lanes.py > $OUT/lanes.txt && cp $H/lane?.json $OUT/   # lanes.py writes them beside itself
 mark "b2 start"

@@ -6,7 +6,8 @@
 #            so it can be the next rerun's REF
 #   ADA:     the build under test; ADA_REF: REF's commit, built now (both from `git archive`, each with its own
 #            CARGO_TARGET_DIR: "Comparing two ada builds" in ada-optimization). Both are copied into OUT together,
-#            since a binary file's page-cache state moves peak RSS (O-23)
+#            since a binary file's page-cache state moves peak RSS (O-23), and the page cache is dropped after,
+#            so both map as read back from disk, as full.zsh has every viewer's (BEN-001)
 # B2_PROFILE (on by default) holds the bench cores ready for the run (b2-bench-profile: EPP performance, no idle
 # state deeper than C1, the clock floor at the top; ada-optimization experiment 28, BEN-04), which makes the lanes' load and CCD not matter: then the two
 # run at once, one run per job per round, ada on the lanes it took in REF (lanes 2 and 3 folded onto 0 and 1) and
@@ -52,6 +53,11 @@ fi
 print $PROFILE_ID > $OUT/profile.txt
 cp ${ADA:?set ADA} $OUT/ada; cp ${ADA_REF:?set ADA_REF} $OUT/ada-ref
 export ADA=$OUT/ada ADA_REF=$OUT/ada-ref
+# both copies read back from disk, as full.zsh has every viewer's (BEN-001); B2_DROP_CACHES=off skips it
+DROP=${B2_DROP_CACHES:-/usr/local/sbin/oxasm-drop-caches}
+if [[ $DROP != off ]]; then
+  sudo -n $DROP > $OUT/drop-caches.txt 2>&1 || { echo "rerun: sudo -n $DROP failed; or set B2_DROP_CACHES=off" >&2; exit 1 }
+fi
 cp $REF/lane?.json $OUT/
 print "ada $(sha256sum < $ADA | cut -c1-16), adaref $(sha256sum < $ADA_REF | cut -c1-16); ref $REF${PAR:+; rounds two at a time (B2_AB_PAR)}" > $OUT/run.log
 

@@ -6,8 +6,12 @@ S=${B2_ROOT:-${0:A:h}/root}
 B=$S/tools/bin; ADA=${ADA:-ada}
 OUT=${B2A_OUT:-$S/b2a}   # B2A_OUT and B2A_ONLY="ada": a rerun of some tools, as b2p.zsh's; merge.py merges it
 # COLUMNS: rich lays out at -w but crops each line at its console's width, 80 to a pipe, which lost 18% of L's words
+# COLORTERM as the lanes (src/main.rs) and b2i.zsh set it, so a run doesn't depend on the shell it starts from:
+# set since 2026-11-02 (BEN-007); before, a run had whatever that shell had
+export COLORTERM=truecolor
 export XDG_CONFIG_HOME=$S/home/x/config BAT_CONFIG_PATH=$S/home/x/config/bat/none BAT_CACHE_PATH=$S/home/x/cache/bat COLUMNS=100
-cd $S/corpus; mkdir -p $OUT; : > $OUT/bytes.txt
+cd $S/corpus; mkdir -p $OUT; : > $OUT/bytes.txt; : > $OUT/killed.txt
+source ${0:A:h}/capped.zsh   # the 2-minute cap: a command that doesn't finish is noted, not timed
 # drop the page cache and compact memory once if free memory is low, as `b2 run` does (see DROP_CACHES in
 # src/main.rs): print mode is all startup, so not before every run; hyperfine's warmup refills the cache
 DROP=${B2_DROP_CACHES:-/usr/local/sbin/oxasm-drop-caches}
@@ -30,14 +34,15 @@ P=("ada:$ADA -p -w 100"
 # long call reports hyperfine's size (ada-optimization, experiment 20)
 for d in s m l xl; do
   runs=15; [[ $d == xl ]] && runs=5
-  args=(); for c in $P; do args+=(-n ${c%%:*} "${c#*:} $d.md"); done
+  Q=($P); capped $OUT $d print Q $d.md
+  args=(); for c in $Q; do args+=(-n ${c%%:*} "${c#*:} $d.md"); done
   taskset -c 2,4,6,8 $B/hyperfine -N --input=null --output=pipe --warmup 2 --min-runs $runs --export-json $OUT/$d.json \
     $args > $OUT/$d.txt 2>&1
-  for c in $P; do
+  for c in $Q; do
     taskset -c 2,4,6,8 $B/hyperfine -N --input=null --output=pipe --warmup 1 --runs 10 \
       --export-json $OUT/$d.rss.${c%%:*}.json -n ${c%%:*} "${c#*:} $d.md" > /dev/null 2>&1
   done
-  for c in $P; do
+  for c in $Q; do
     n=${c%%:*}; cmd=(${=c#*:} $d.md)
     echo "$d $n bytes=$($cmd < /dev/null | wc -c)"   # RSS and CPU come from hyperfine's JSON
   done >> $OUT/bytes.txt

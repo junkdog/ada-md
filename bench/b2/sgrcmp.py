@@ -1,7 +1,11 @@
 """Compare two SGR-styled outputs by what each character shows. Exit 1 on a difference.
 
 sgrcmp.py [--screen] A B: with --screen, A and B are terminal screen captures (`tmux capture-pane
--e`, `kitten @ get-text --ansi`), whose style carries from line to line and may end set."""
+-e`, `kitten @ get-text --ansi`), whose style carries from line to line and may end set.
+
+kitty's Unicode placeholders (U+10EEEE) carry the image's id in their foreground color and the placement's in the
+underline color, which each process picks for itself: those colors are renamed by order of first appearance in
+each file (img1, img2, ...), so two runs that place the same images where they belong compare equal (BEN-008)."""
 import re, sys
 
 SCREEN = '--screen' in sys.argv
@@ -36,7 +40,23 @@ def lines(path):
         while cells and cells[-1][0] == ' ' and cells[-1][1:] == (None, None, frozenset(), None):
             cells.pop()
         out.append(cells)
-    return out
+    return ids(out)
+
+PLACEHOLDER = chr(0x10EEEE)
+
+def ids(screen):
+    """The placeholders' id colors renamed by order of first appearance, wherever they are used."""
+    names = {}
+    for cells in screen:
+        for ch, fg, bg, mods, ulc in cells:
+            if ch == PLACEHOLDER:
+                for c in (fg, ulc):
+                    if c is not None and c not in names:
+                        names[c] = ('img', len(names) + 1)
+    if not names:
+        return screen
+    return [[(ch, names.get(fg, fg), bg, mods, names.get(ulc, ulc)) for ch, fg, bg, mods, ulc in cells]
+            for cells in screen]
 
 def apply(st, params):
     st = dict(st)

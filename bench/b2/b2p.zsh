@@ -5,21 +5,28 @@
 #   preview: ada with --height 50 (its fzf budget: 2,000 rows, PREVIEW_ROWS), bat with --line-range=:2000 and
 #            rich with --head 2000 (both count source lines, so a wrapped line costs them more rows); mcat has no
 #            budget and isn't run
-# The huge files run under `timeout` (B2P_CAP seconds, 60 by default), fewer times: bat takes minutes to print
-# 80 MB. A killed run exits non-zero, which hyperfine records (-i); doctables.py shows it as "> cap". Its CPU
-# and RSS are lost: timeout signals its own process group too, so it never reaps the child.
+# Every command is probed once under the 2-minute cap first (capped.zsh, B2_CAP): one that doesn't finish is left
+# out and noted in killed.txt. The huge files' timed runs also run under `timeout` (B2P_CAP seconds, the same cap
+# by default), fewer times: bat takes minutes to print 80 MB. A killed run exits non-zero, which hyperfine records
+# (-i); doctables.py shows either as "> cap". Its CPU and RSS are lost: timeout signals its own process group too,
+# so it never reaps the child.
 # B2P_ONLY="ada rich" runs only those tools, for a rerun merged into the earlier records. The cells in timeouts.py
 # always hit the cap: they're skipped while the tool is still that version (B2_TIMEOUTS=off runs them).
 S=${B2_ROOT:-${0:A:h}/root}
-B=$S/tools/bin; ADA=${ADA:-ada}; CAP=${B2P_CAP:-60}
+B=$S/tools/bin; ADA=${ADA:-ada}
+source ${0:A:h}/capped.zsh   # sets CAP (B2_CAP, 120)
+CAP=${B2P_CAP:-$CAP}
 OUT=${B2P_OUT:-$S/b2p}   # B2P_OUT: another directory, for a rerun
 SKIP=("${(@f)$(python3 -I ${0:A:h}/timeouts.py b2p)}")   # "input mode tool"
 # COLUMNS: rich lays out at -w but crops each line at its console's width, 80 to a pipe (b2a.zsh)
+# COLORTERM as the lanes (src/main.rs) and b2i.zsh set it, so a run doesn't depend on the shell it starts from:
+# set since 2026-11-02 (BEN-007); before, a run had whatever that shell had
+export COLORTERM=truecolor
 export XDG_CONFIG_HOME=$S/home/x/config BAT_CONFIG_PATH=$S/home/x/config/bat/none BAT_CACHE_PATH=$S/home/x/cache/bat COLUMNS=100
 # Peak RSS comes from a short hyperfine call per command (*.rss.NAME.json): a child's ru_maxrss counts what
 # hyperfine held when it spawned it, and hyperfine grows with every run it keeps, so a small tool late in a
 # long call reports hyperfine's size (ada-optimization, experiment 20)
-cd $S/corpus; mkdir -p $OUT; : > $OUT/bytes.txt
+cd $S/corpus; mkdir -p $OUT; : > $OUT/bytes.txt; : > $OUT/killed.txt
 DROP=${B2_DROP_CACHES:-/usr/local/sbin/oxasm-drop-caches}   # as b2a.zsh
 free_kib=$(awk '/^MemFree:/ { print $2 }' /proc/meminfo)
 if [[ $DROP != off ]] && (( free_kib < ${B2_DROP_BELOW_GB:-8} * 1024 * 1024 )); then
@@ -36,6 +43,7 @@ for f in ${=B2P_FILES:-code-s.rs code-m.rs code-l.rs log.log huge.json huge.log}
     [[ -n $B2P_ONLY ]] && P=(${(M)P:#(${(~j:|:)${=B2P_ONLY}}):*})
     [[ -n $ADA_REF ]] && P+=(${${(M)P:#ada:*}/#ada:$ADA/adaref:$ADA_REF})   # rerun.zsh: the reference ada, beside ada
     for c in ${(M)SKIP:#$f $mode *}; do P=(${P:#${c##* }:*}); done
+    capped $OUT $f $mode P $f
     (( $#P )) || continue
     pre=(); runs=(--warmup 2 --min-runs 15)
     if [[ $f == huge.* ]]; then

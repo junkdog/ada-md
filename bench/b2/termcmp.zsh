@@ -1,22 +1,35 @@
 #!/usr/bin/env zsh
 # termcmp.zsh TERM DOC BASE NEW [OUT] (bench/b2): run two ada builds live in a real terminal
-# (tmux, kitty or alacritty) through the same key script on $B2_ROOT/corpus/DOC.md, capture the
+# (tmux, kitty, alacritty or xterm) through the same key script on $B2_ROOT/corpus/DOC.md, or on DOC
+# itself when it is a path to a .md file (run from its directory, so its images resolve), capture the
 # screen after every key, and compare the two builds screen by screen by what each cell shows.
 # Also prints the scroll sequences (DECSTBM, IL, DL) each build sent.
+# TERMCMP_ARGS: more arguments for both builds, e.g. "--image-protocol kitty" (kitty), "sixel" (xterm) or
+#   "halfblocks" (any), for the image modes (BEN-008); termcmp/glyphs.md is the document of wide graphemes,
+#   emoji, images and a table they go with.
 #
 # tmux: a detached server of its own at 120x40, `capture-pane -e -N` (-N keeps the cells an erase cleared on
 #   a background, TRM-02), bytes by `pipe-pane`.
 # kitty: remote control on an abstract socket, `get-text --ansi`, bytes by `--dump-bytes`.
 # alacritty: on XWayland (no WAYLAND_DISPLAY), ada inside relay.py, which takes the keys from a
 #   FIFO and logs the bytes; screens by ImageMagick's `import -window`, compared pixel for pixel.
+# xterm: as alacritty (X11, relay.py, `import -window`), as a VT340 with 256 color registers, so it
+#   shows sixel images.
 # kitty and alacritty open a window for ~25 s per build. Output goes to OUT (default $TMPDIR).
 term=$1 doc=$2 base=${3:A} new=${4:A} out=${5:-${TMPDIR:-/tmp}/termcmp}
 here=${0:A:h} corpus=${B2_ROOT:-$here/root}/corpus
 out=${out:A}
+# a path to a document: run from its directory; the key script and the output's names take its stem
+file=$doc.md
+if [[ $doc == *.md ]]; then corpus=${doc:A:h} file=${doc:t} doc=${${doc:t}%.md}; fi
+extra=(${=TERMCMP_ARGS:-})
 
 keys_m=(j j j k k d u / 'eight lines' ENTER j j j j j j j j j j j j k k k k k k d j u k n j j G k k k u g j j
         PGDN j k PGUP j j k k)
 keys_l=(j j j j k k k d d u j PGDN j k PGUP / class ENTER j j k n k G k k g j k)
+# line by line past the table and both images, half a page, a page, the end and back
+keys_glyphs=(j j j j j j j j j j j j j j j j j j j j j j j j k k k k d u PGDN j k PGUP G k k g j j
+             / 東京 ENTER n j k)
 
 # drive BUILD DIR: one build through the key script, a screen per key into DIR
 drive() {
@@ -29,7 +42,7 @@ drive() {
       local -a T=(tmux -L termcmp -f /dev/null)
       $T kill-server 2>/dev/null
       # the delay lets pipe-pane attach before ada writes
-      $T new-session -d -s t -x 120 -y 40 -c $corpus "sleep 1; exec $bin $doc.md"
+      $T new-session -d -s t -x 120 -y 40 -c $corpus "sleep 1; exec $bin ${(j: :)${(@q)extra}} ${(q)file}"
       $T set -g status off
       $T pipe-pane -t t -o "cat > $dir/bytes"
       send() { case $1 in ENTER) $T send-keys -t t Enter;; PGDN) $T send-keys -t t NPage;;
@@ -42,7 +55,7 @@ drive() {
       local sock=@termcmp-$$
       (cd $corpus && exec kitty --config NONE -o allow_remote_control=socket-only --listen-on unix:$sock \
          -o initial_window_width=120c -o initial_window_height=40c -o remember_window_size=no \
-         --dump-bytes $dir/bytes -T $name $bin $doc.md) &
+         --dump-bytes $dir/bytes -T $name $bin $extra $file) &
       pid=$!
       local -a K=(timeout 5 kitten @ --to unix:$sock)
       for i in {1..50}; do $K ls >/dev/null 2>&1 && break; sleep 0.2; done
@@ -53,17 +66,25 @@ drive() {
       stop() { $K send-text q; for i in {1..25}; do kill -0 $pid 2>/dev/null || break; sleep 0.2; done
                kill $pid 2>/dev/null }
       ;;
-    alacritty)
+    alacritty|xterm)
       local fifo=$dir/keys.fifo; mkfifo $fifo
-      (cd $corpus && exec env -u WAYLAND_DISPLAY alacritty --config-file /dev/null \
-         -o window.dimensions.columns=120 -o window.dimensions.lines=40 -o window.dynamic_title=false \
-         -T $name -e python3 -I $here/relay.py $fifo $dir/bytes $bin $doc.md) &
+      local -a relay=(python3 -I $here/relay.py $fifo $dir/bytes $bin $extra $file)
+      if [[ $term == alacritty ]]; then
+        (cd $corpus && exec env -u WAYLAND_DISPLAY alacritty --config-file /dev/null \
+           -o window.dimensions.columns=120 -o window.dimensions.lines=40 -o window.dynamic_title=false \
+           -T $name -e $relay) &
+      else
+        (cd $corpus && exec xterm -fa Monospace -fs 10 -ti vt340 -xrm 'XTerm*numColorRegisters: 256' -xrm 'XTerm*decTerminalID: vt340' \
+           -xrm 'XTerm*allowWindowOps: true' \
+           -xrm 'XTerm*allowTitleOps: false' -geometry 120x40 -title $name -e $relay) &
+      fi
       pid=$!
       exec 3<>$fifo
       send() { case $1 in ENTER) print -n '\r' >&3;; PGDN) print -n '\e[6~' >&3;;
                PGUP) print -n '\e[5~' >&3;; *) print -rn -- $1 >&3;; esac }
       grab() { timeout 10 import -window $name $dir/$1.png }
-      painted() { [[ -s $dir/bytes ]] && (( $(stat -c %s $dir/bytes) > 4000 )) }
+      # a frame is done when its synchronized update ends (ada brackets every frame); relay.py flushes each write
+      painted() { grep -aqF $'\e[?2026l' $dir/bytes 2>/dev/null }
       stop() { print -n q >&3; for i in {1..25}; do kill -0 $pid 2>/dev/null || break; sleep 0.2; done
                kill $pid 2>/dev/null; exec 3>&-; rm -f $fifo }
       ;;
@@ -71,6 +92,8 @@ drive() {
   esac
   # keys during the image probe restart its timeout (O-06), so wait for the first paint
   for i in {1..50}; do painted && break; sleep 0.2; done
+  # a build that exits or never paints (a bad argument, say) would compare as empty screens that agree
+  painted || { print "  ${bin:t}: never painted in 10 s"; stop 2>/dev/null; return 1 }
   sleep 0.5
   grab 00
   for k in $keys; do
@@ -89,8 +112,13 @@ for b in base new; do
   grep -aoE $'\e\\[[0-9]*[LM]|\e\\[[0-9]+;[0-9]+r' $out/$term-$doc-$b/bytes | sort | uniq -c | sort -rn \
     | tr -s ' \n' ' ' | cat -v; echo
 done
+cmp -s $out/$term-$doc-base/bytes $out/$term-$doc-new/bytes && print "  the two builds sent the same bytes"
 n=0 m=0
-for f in $out/$term-$doc-base/<->.(txt|png); do
+shots=($out/$term-$doc-base/<->.(txt|png)(N))
+# no screens: the grabs failed (2026-11-03: XWayland's screen reads 0x0, so `import` gets no window); the bytes
+# line above is then all there is
+(( $#shots )) || { print "$term $doc: no screens captured, nothing compared"; exit 1 }
+for f in $shots; do
   m=$((m+1)); g=$out/$term-$doc-new/${f:t}
   if [[ $f == *.png ]]; then
     [[ $(compare -metric AE $f $g null: 2>&1) == 0* ]] || { n=$((n+1)); echo "  DIFF ${f:t}" }

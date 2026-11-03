@@ -21,6 +21,7 @@ try:
             if r == fd:
                 os.write(1, data)
                 out.write(data)
+                out.flush()   # termcmp.zsh reads the log's size while the program runs (its first paint)
             else:
                 os.write(fd, data)
 except OSError:

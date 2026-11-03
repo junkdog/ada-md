@@ -153,11 +153,30 @@ def fm():
     printmode()
 
 
+def killed(x):
+    """{(input, mode, name)} from a record set's killed.txt (capped.zsh): the commands that didn't finish within its
+    cap, left out of the timed calls."""
+    path = f"{S}/{x}/killed.txt"
+    return {tuple(line.split()) for line in open(path) if line.strip()} if os.path.exists(path) else set()
+
+
+def cap_of(dirs, default=None):
+    """The cap a record set's commands ran under (cap.txt, capped.zsh; the last dir that has one), else default."""
+    caps = [int(open(p).read()) for x in dirs if os.path.exists(p := f"{S}/{x}/cap.txt")]
+    return caps[-1] if caps else default
+
+
+KILLED = dict(n=0, killed=True, wall=None, cpu=None, rss=None, ins=None, out=None)
+
+
 def b2a():
+    """{(doc, name): medians} of print mode; a command killed at the cap (killed.txt) has killed=True and no numbers."""
     nbytes, res = {}, {}
     for line in open(f"{S}/b2a/bytes.txt"):
         d, n, b = line.split()
         nbytes[(d, n)] = int(b.split("=")[1])
+    for d, _, n in killed("b2a"):
+        res[(d, n)] = dict(KILLED)
     for d in DOCS:
         for r in json.load(open(f"{S}/b2a/{d}.json"))["results"]:
             m = r["measurements"]
@@ -165,7 +184,7 @@ def b2a():
             rss = g("memory_peak_resident") / 2**20
             if os.path.exists(own := f"{S}/b2a/{d}.rss.{r['name']}.json"):  # see loader()
                 rss = hyperfine(own)[r["name"]]["rss"]
-            res[(d, r["name"])] = dict(n=len(m), wall=g("time_wall_clock") * 1e3, cpu=g("time_cpu") * 1e3,
+            res[(d, r["name"])] = dict(n=len(m), killed=False, wall=g("time_wall_clock") * 1e3, cpu=g("time_cpu") * 1e3,
                                        rss=rss, ins=g("instructions") / 1e6,
                                        out=nbytes[(d, r["name"])] / 1000 if (d, r["name"]) in nbytes else None)
     return res
@@ -177,6 +196,7 @@ FLOORS = ("lowdown", "bat")  # lowdown doesn't highlight, bat doesn't render: ne
 
 def printmode():
     res = b2a()
+    cap = cap_of(["b2a"])
     printers = [n for n in PRINTERS if (DOCS[0], n) in res]
     hl = [n for n in printers if n not in FLOORS]
     print("\n#### Print to a pipe (ms)\n")
@@ -185,10 +205,14 @@ def printmode():
         row = [n]
         for d in DOCS:
             for k in ("wall", "cpu"):
-                x, a = res[(d, n)][k], res[(d, "ada")][k]
+                r = res.get((d, n), KILLED)
+                x, a = r[k], res[(d, "ada")][k]
+                if r["killed"]:
+                    row += [f"> {cap} s", ""]
+                    continue
                 s = fmt(x)
-                row += [f"**{s}**" if n in hl and x == min(res[(d, m)][k] for m in hl) else s,
-                        "" if n == "ada" else fmt(x / a)]
+                lo = min((y for m in hl if (y := res.get((d, m), KILLED)[k]) is not None), default=None)
+                row += [f"**{s}**" if n in hl and x == lo else s, "" if n == "ada" else fmt(x / a)]
         rows.append(row)
     print(table(["Viewer"] + [h for d in DOCS for k in ("Wall", "CPU") for h in (f"{k} {d.upper()}", f"{k} {d.upper()} ×")], rows))
     print("\nPeak RSS (MiB), output (KB), instructions (M):\n")
@@ -197,9 +221,9 @@ def printmode():
         row = [n]
         for k in ("rss", "out", "ins"):
             for d in DOCS:
-                x = res[(d, n)][k]
-                s = fmt(x)
-                lo = min((y for m in hl if (y := res[(d, m)][k]) is not None), default=None)
+                x = res.get((d, n), KILLED)[k]
+                s = "" if x is None else fmt(x)
+                lo = min((y for m in hl if (y := res.get((d, m), KILLED)[k]) is not None), default=None)
                 row.append(f"**{s}**" if n in hl and x is not None and x == lo else s)
         rows.append(row)
     print(table(["Viewer"] + [f"{h} {d.upper()}" for h in ("RSS", "Output", "Instructions") for d in DOCS], rows))
@@ -252,7 +276,8 @@ def stands():
     res = b2a()
     rows = []
     for d in DOCS:
-        hl = [n for n in PRINTERS if n not in FLOORS and (d, n) in res]  # the printers that render and highlight
+        # the printers that render and highlight; one killed at the cap is behind ada, and no nearest other
+        hl = [n for n in PRINTERS if n not in FLOORS and (d, n) in res and not res[(d, n)]["killed"]]
         a = res[(d, "ada")]
         near = min((n for n in hl if n != "ada"), key=lambda n: res[(d, n)]["wall"])
         o = res[(d, near)]
@@ -376,7 +401,12 @@ def loader(d):
             cf, cm, n = c.split()
             if (cf, cm) == (f, mode):
                 out.setdefault(n, dict(n=0, killed=True))
+        for x in dirs:  # probed and killed at the cap (capped.zsh): never timed
+            for cf, cm, n in killed(x):
+                if (cf, cm) == (f, mode):
+                    out.setdefault(n, dict(n=0, killed=True))
         return out
+    load.cap = cap_of(dirs)
     load.bytes = {}
     for x in dirs:
         if os.path.exists(path := f"{S}/{x}/bytes.txt"):
@@ -389,14 +419,15 @@ def previewer():
     fence = "it wraps the file in a markdown code fence, which a fence inside the file closes; the rest shows as markdown"
     plain = "Pygments has no lexer for .log, so rich prints it without color"
     grid("Previewer files", PREV_FILES, [("whole", "whole file"), ("preview", "preview budget")],
-         ["ada", "bat", "rich", "mcat"], loader("b2p"), cap=int(os.environ.get("B2P_CAP", 60)),
+         ["ada", "bat", "rich", "mcat"], (load := loader("b2p")), cap=load.cap or int(os.environ.get("B2P_CAP", 60)),
          flags={("code-l.rs", "mcat"): fence, ("log.log", "rich"): plain, ("huge.log", "rich"): plain})
 
 
 def images():
     """b2i.zsh: 100×50-cell previews of each image, kitty graphics and text; a GIF's first frame."""
     grid("Images", IMAGES, [("kitty", "kitty graphics"), ("text", "half-blocks and symbols")],
-         ["ada", "icat", "icat-shm", "chafa", "mcat", "viu", "chafa-vhalf"], loader("b2i"), flags=IMAGE_FLAGS)
+         ["ada", "icat", "icat-shm", "chafa", "mcat", "viu", "chafa-vhalf"], (load := loader("b2i")), cap=load.cap,
+         flags=IMAGE_FLAGS)
     print("\nGIFs: the first frame, the others told to stop there (icat --loop 0, chafa --animate off, viu -s); "
           "mcat plays a GIF as a video with no way to stop at a frame, so it has no GIF cells.")
 

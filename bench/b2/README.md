@@ -56,6 +56,17 @@ The four lanes take about 18 minutes, print mode another 4.5, the previewer file
 are capped at 60 s each, `B2P_CAP`), and images 3.5: about 40 minutes in all, as `full.zsh` ran on 2026-10-20,
 without the cells that always hit their cap.
 
+### The 2-minute cap
+
+Every command of print mode, the previewer files and images runs once under `timeout -s KILL 120` before its
+hyperfine call (`capped.zsh`, sourced by the three scripts; the user, 2026-11-02, after bat and mdfried were seen
+running on for good on large inputs). One that doesn't finish is left out of the timed calls and noted in the
+record set's `killed.txt` (`input mode tool`), and `doctables.py` and `b2a_report.py` show its cells as
+`> 120 s`; `cap.txt` holds the cap (`B2_CAP` sets another; records without it are from before, capped at 60 s on
+the huge files only). The timed runs themselves aren't wrapped, which would add `timeout`'s fork and exec to each
+cell, except the huge files' (`B2P_CAP`, the same cap by default). The probe doubles as a warm-up. The TUI lanes
+are bounded by `b2` itself: 20 s to paint (90 on XL), 2–5 s for each scenario's screen.
+
 ### Known timeouts
 
 `timeouts.py` lists the cells that always hit their cap: md-tui 0.11.0 on XL (284 s to paint, against 90 s), bat
@@ -82,8 +93,9 @@ experiment 28).
   `src/highlight.rs`), `code-l.rs` (zerocopy 0.8.61's `src/lib.rs`), `log.log` (1 MB of `journalctl -o short-iso`),
   `huge.log` (80 MB of the same) and `huge.json` (3.75 MB on one line: `cargo metadata` of eight projects as a JSON
   array). `whole` prints the file; `preview` gives ada `--height 50` (its fzf budget, 2,000 rows), bat
-  `--line-range=:2000` and rich `--head 2000`. The huge files run under `timeout -s KILL $B2P_CAP`; a killed run
-  shows as `> 60 s`, and its CPU and RSS are lost (timeout signals its own process group, so it never reaps the
+  `--line-range=:2000` and rich `--head 2000`. Every command is probed under the 2-minute cap first, and the huge files' timed runs run
+  under `timeout -s KILL $B2P_CAP` (the same cap); a killed command shows as `> 120 s` (`> 60 s` before
+  2026-11-02), and its CPU and RSS are lost (timeout signals its own process group, so it never reaps the
   child).
 - `b2i.zsh`: `corpus/img/`: `fit.png` (686×811, sent to kitty as it is), `diagram.png` (2473×1808), `photo.jpg`
   (1500×2000), `photo-12mp.png`/`.jpg` and `photo-24mp.jpg` (a vault photo resized with ImageMagick), each as a
@@ -109,7 +121,10 @@ before each process. When free memory is short or fragmented, transparent huge p
 a viewer's heap faults more. They run `sudo -n /usr/local/sbin/oxasm-drop-caches`, which drops the page cache and
 compacts memory; oxasm's `xtask/scripts/oxasm-drop-caches` says how to install it and its password-free sudoers
 rule. `B2_DROP_CACHES` names another script, or `off` skips it. Runs and floods record the viewer's
-`anon_huge_kib` (`AnonHugePages`): how much of its heap got huge pages.
+`anon_huge_kib` (`AnonHugePages`): how much of its heap got huge pages. `full.zsh` and `rerun.zsh` also drop it
+once after copying ada in, whatever is free (BEN-001): a binary written seconds before maps more of its code than
+one read back from disk (fault-around and large folios over its cached pages), and only ada's is copied, so the drop
+puts every viewer's binary on the same footing, read back.
 
 `b2 floor [SAMPLES] [OUT.json]` measures the harness's own key → pty → timestamp path against the tty's echo,
 with no program on the slave. Run it under `taskset` on a lane's cores, alone and beside a run, to see what a
@@ -191,6 +206,7 @@ done
 | `b2i.zsh` | image previews against kitten icat, chafa, viu and mcat |
 | `../diagrams/compare` | mermaid diagrams, parse and draw in process, against mermaid-text 0.57 (md-tui) and mmdflux 2.6 (leaf): the probe set per diagram, and the site's sums per kind (`--dat`) |
 | `runcmp.py` | two runs' interactive cells side by side, for regressions |
+| `capped.zsh` | the 2-minute cap: each command probed once under `timeout`, a killed one noted in `killed.txt` |
 | `timeouts.py` | the cells that always hit their cap, skipped while the tool is still that version |
 | `full.zsh` | the whole run into one record set, the bench cores held ready |
 | `rerun.zsh`, `abcmp.py`, `merge.py` | ada's cells rerun beside the build the last run measured, compared, and merged over that run's records |

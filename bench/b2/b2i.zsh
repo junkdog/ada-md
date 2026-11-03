@@ -16,7 +16,8 @@ export XDG_CONFIG_HOME=$S/home/x/config
 # (144 KB against 213 for fit.png): set here, so a run doesn't depend on the shell it starts from (before
 # 2026-10-29 the runs had none)
 export COLORTERM=truecolor
-cd $S/corpus/img; mkdir -p $OUT; : > $OUT/bytes.txt
+cd $S/corpus/img; mkdir -p $OUT; : > $OUT/bytes.txt; : > $OUT/killed.txt
+source ${0:A:h}/capped.zsh   # the 2-minute cap: a command that doesn't finish is noted, not timed
 DROP=${B2_DROP_CACHES:-/usr/local/sbin/oxasm-drop-caches}   # as b2a.zsh
 free_kib=$(awk '/^MemFree:/ { print $2 }' /proc/meminfo)
 if [[ $DROP != off ]] && (( free_kib < ${B2_DROP_BELOW_GB:-8} * 1024 * 1024 )); then
@@ -47,8 +48,10 @@ for img in ${=B2I_FILES:-$FILES}; do
     if [[ $img == *.gif ]]; then
       Q=(); for c in ${P:#mcat:*}; do n=${c%%:*}; Q+=("$c${STILL[$n]:+ $STILL[$n]}"); done; P=($Q)
     fi
-    args=(); for c in $P; do args+=(-n ${c%%:*} "${c#*:} $img"); done
     : > $OUT/.start
+    capped $OUT $img $t P $img
+    (( $#P )) || continue
+    args=(); for c in $P; do args+=(-n ${c%%:*} "${c#*:} $img"); done
     taskset -c 2,4,6,8 $B/hyperfine -N --input=null --output=pipe --warmup 2 --min-runs 20 \
       --export-json $OUT/$img.$t.json $args > $OUT/$img.$t.txt 2>&1
     for c in $P; do
