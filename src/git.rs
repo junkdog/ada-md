@@ -242,7 +242,8 @@ fn git(dir: &Path, args: &[&OsStr]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// Run the two diffs for `path`, in parallel.
+/// Run the two diffs for `path`, in parallel. `None` outside a work tree, and for a file git ignores: git shows
+/// nothing for one, so neither does the gutter (an ignored note isn't a new one).
 pub fn run(path: &Path) -> Option<Diffs> {
     let dir = match path.parent() {
         Some(p) if !p.as_os_str().is_empty() => p,
@@ -257,6 +258,10 @@ pub fn run(path: &Path) -> Option<Diffs> {
     )
     .is_none()
     {
+        // not in the index: new, unless it's ignored (`check-ignore` exits 0 for an ignored path)
+        if git(dir, &[os("check-ignore"), os("-q"), os("--"), name]).is_some() {
+            return None;
+        }
         return Some(Diffs {
             total: String::new(),
             unstaged: String::new(),
@@ -496,6 +501,17 @@ mod tests {
             return; // no git here
         }
         let file = dir.join("note.md");
+        // an ignored file gets no gutter, as git shows nothing for it
+        std::fs::write(dir.join(".gitignore"), "/ignored.md\n/build/\n").unwrap();
+        std::fs::create_dir_all(dir.join("build")).unwrap();
+        std::fs::write(dir.join("ignored.md"), "x\n").unwrap();
+        std::fs::write(dir.join("build/out.md"), "x\n").unwrap();
+        assert_eq!(run(&dir.join("ignored.md")), None, "an ignored file");
+        assert_eq!(
+            run(&dir.join("build/out.md")),
+            None,
+            "a file in an ignored directory"
+        );
         std::fs::write(dir.join("other.md"), "x\n").unwrap();
         assert_eq!(
             run(&dir.join("other.md")),
