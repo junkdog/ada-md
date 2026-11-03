@@ -198,12 +198,15 @@ fuzz_target!(|data: &[u8]| {
         height: u16::from(setup.cell.1 % 64).max(1),
     };
     let height = preview.unwrap_or(24);
-    let params = LayoutParams {
+    let mut params = LayoutParams {
         width,
         max_width: setup.max_width.map(u16::from),
         table_mode: [TableMode::Auto, TableMode::Grid, TableMode::Records]
             [usize::from(setup.table_mode) % 3],
         code_wrap: setup.line_numbers & 0x80 == 0,
+        // a print's code blocks name no language; the TUI's do
+        code_labels: setup.table_mode & 0x80 != 0,
+        bare: false,
         line_numbers: [LineNumbers::Off, LineNumbers::Code, LineNumbers::All]
             [usize::from(setup.line_numbers) % 3],
         glyphs_gen: theme.glyphs.generation(),
@@ -214,6 +217,8 @@ fuzz_target!(|data: &[u8]| {
         }),
     };
     let filetype = forced.unwrap_or_else(|| FileType::of(path, &text));
+    // a file of code printed on the terminal's background, as `ada -p` prints one
+    params.bare = setup.table_mode & 0x40 != 0 && matches!(filetype, FileType::Text { .. });
     let doc = filetype.parse(path, &text);
 
     let pictures = proto.map(|proto| {

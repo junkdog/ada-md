@@ -1,6 +1,7 @@
-//! G-002: the Makefile lexer (`ada_parse::make`) against what it replaced, syntect on bat's grammar.
-//! Every line, expanded as the highlighter expands it, must get the same scope stack on every
-//! byte from both, with each one's state carried from line to line (`lexer_parity`).
+//! G-002: Makefile's scanner (`ada_parse::lex` on `Lang::Makefile`) against what it replaced,
+//! syntect on bat's grammar. Every line, expanded as the highlighter expands it, must give the
+//! scope a theme's rule follows on every byte as syntect does, with each one's state carried
+//! from line to line, for as long as the scanner's state holds its whole stack (`lexer_parity`).
 //!
 //! Lines are cut to 96 bytes, as the grammar backtracks ~n³ on unbalanced parens before a `:`
 //! (seconds a line from ~300 bytes), and past ~400 Oniguruma's retry limit gives up and
@@ -14,10 +15,11 @@
 
 mod lexer_parity;
 
-use ada_parse::make::Grammar;
+use ada_parse::Lang;
+use lexer_parity::Stacks;
 use libfuzzer_sys::fuzz_target;
 
 /// The longest line compared.
 const LINE: usize = 96;
 
-fuzz_target!(|data: &[u8]| lexer_parity::check(Grammar::Make, data, LINE));
+fuzz_target!(|data: &[u8]| lexer_parity::check(Lang::Makefile, data, LINE, Stacks::Rule));

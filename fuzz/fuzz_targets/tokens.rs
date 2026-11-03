@@ -1,6 +1,5 @@
-//! The scanners that took the place of bat's grammars: Makefile and shell lines (G-002 and
-//! G-003, `make`), and ada-parse's lexers (ADR-40), log lines (O-43) and JSON lines (O-48)
-//! among them, each given every line of the input with the state one line leaves the next.
+//! The scanners that took the place of bat's grammars, ada-parse's lexers (ADR-40), Makefile's
+//! and bash's (G-002, G-003), log lines' (O-43) and JSON lines' (O-48) among them, each given every line of the input with the state one line leaves the next.
 //! Their spans go to `highlight`'s runs, which slice the line at them: they must come in order,
 //! not overlap, not be empty, and start and end on characters of the line.
 //! Nothing may panic, and a long line must not take long. An input that starts with a NUL is a
@@ -18,7 +17,6 @@
 mod langs;
 
 use ada_parse::Lang;
-use ada_parse::make;
 use libfuzzer_sys::fuzz_target;
 
 /// Spans `(start, end)` of `line`, in order, as `highlight` takes them.
@@ -52,22 +50,10 @@ fuzz_target!(|data: &[u8]| {
     let text = String::from_utf8_lossy(data);
     let trace = std::env::var_os("ADA_FUZZ_TRACE").is_some();
     let on = langs::selected(&Lang::ALL);
-    let (on_make, on_bash) = (on.contains(&Lang::Makefile), on.contains(&Lang::Bash));
-    let (mut mk, mut sh) = (Vec::new(), Vec::new());
-    let mut state = make::State::new(make::Grammar::Make);
-    let mut bash = make::State::new(make::Grammar::Bash);
     let lexed = on.iter().copied().filter(|l| l.lexed());
     let mut parsed: Vec<_> = lexed.map(|l| (l, ada_parse::State::default())).collect();
     let mut ps = Vec::new();
     for line in text.split('\n') {
-        if on_make {
-            make::tokens(line, &mut state, &mut mk);
-            check("make", line, mk.iter().map(|s| (s.start, s.end)));
-        }
-        if on_bash {
-            make::tokens(line, &mut bash, &mut sh);
-            check("bash", line, sh.iter().map(|s| (s.start, s.end)));
-        }
         for (lang, state) in &mut parsed {
             ada_parse::lex(*lang, line, state, &mut ps);
             check(lang.name(), line, ps.iter().map(|s| (s.start, s.end)));
@@ -77,7 +63,7 @@ fuzz_target!(|data: &[u8]| {
             );
         }
         if trace {
-            eprintln!("{line:?}\n  make {mk:?}\n  bash {sh:?}");
+            eprintln!("{line:?}");
         }
     }
 });

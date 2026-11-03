@@ -6,7 +6,7 @@
 //! The Makefile grammar's own contexts hold few patterns, most of them searches (`just_eat`'s
 //! lookahead, `\s*(override)\b`, a `$(` anywhere), so they keep syntect's rule, the leftmost
 //! match of the context's patterns in order, each context's includes flattened at compile time
-//! ([`FLAT`]). Each pattern is the port's matcher (`make::grammar`), its match kept for the line as
+//! ([`FLAT`]). Each pattern is a matcher of `matchers.rs`, its match kept for the line as
 //! syntect's search cache keeps it ([`Mk`]), so a line costs a search a pattern rather than one a
 //! step; and a matcher whose required byte the line lacks isn't called ([`REQUIRE`]).
 //! `variable-substitutions`' eleven patterns, all starting at a `$`, are one search
@@ -24,9 +24,9 @@
 
 use std::mem::MaybeUninit;
 
-use crate::make::grammar as g;
-use crate::make::scan::Line;
-use crate::make::scan::{self, M, R};
+use super::matchers as g;
+use super::scan::Line;
+use super::scan::{self, M, R};
 use crate::{Out, State};
 
 use super::{
@@ -1333,39 +1333,5 @@ mod tests {
             "all",
             "meta.function.makefile entity.name.function.makefile"
         )));
-    }
-}
-
-#[cfg(test)]
-mod matchers {
-    use super::{Line, shell_c};
-    use crate::make::grammar as g;
-
-    #[test]
-    fn shell_c_is_the_ports() {
-        let lines = [
-            "X = sh -c 'a'",
-            "Y := bash  -c \"b\"",
-            "Z = zsh -c `c`",
-            "W = fish -c 'x'",
-            "V = shsh -c 'y' bash -c 'z'",
-            "U = bash -cx 'z'; sh -c\t'w'",
-            "T = ba sh -c 'q' zbash -c \"r\"",
-            "S = sh-c 'a' sh -c a sh -c 'b'",
-            "R = basbash -c 'x'",
-            "",
-            "sh",
-        ];
-        for text in lines {
-            let buf = format!("{text}\n");
-            let l = Line::new(&buf);
-            for pos in 0..=buf.len() {
-                assert_eq!(
-                    shell_c(&l, pos, 0),
-                    g::shell_c(&l, pos, 0),
-                    "{text:?} from {pos}"
-                );
-            }
-        }
     }
 }

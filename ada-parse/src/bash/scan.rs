@@ -2,7 +2,7 @@
 //! leftmost match at or after a position, as Oniguruma's search would, in time linear in what it
 //! reads: no backtracking.
 
-use std::cell::{Cell, OnceCell, RefCell};
+use std::cell::OnceCell;
 
 use anpa::core::parse;
 use anpa::findbyte::{eq, find_byte};
@@ -28,12 +28,6 @@ impl M {
         self
     }
 
-    /// The match, ending at `e` instead.
-    pub fn end(mut self, e: usize) -> M {
-        self.c[0].1 = e as u32;
-        self
-    }
-
     pub fn s(&self) -> usize {
         self.c[0].0 as usize
     }
@@ -45,16 +39,10 @@ impl M {
 
 pub type R = Option<M>;
 
-/// A line as the matchers see it: its text with a `\n` after it, as syntect parses lines, and
-/// what a level hands its patterns.
+/// A line as the matchers see it: its text with a `\n` after it, as syntect parses lines.
 pub struct Line<'a> {
     pub s: &'a str,
     pub b: &'a [u8],
-    /// What a backreference stands for: the quote an embedded shell script started with, a
-    /// here-document's end word.
-    pub cap: RefCell<Vec<u8>>,
-    /// The builtin a command's arguments belong to, as an index into the shell's table.
-    pub arg: Cell<u16>,
     parens: OnceCell<Parens>,
     last_eq: OnceCell<Option<usize>>,
 }
@@ -64,8 +52,6 @@ impl<'a> Line<'a> {
         Self {
             s,
             b: s.as_bytes(),
-            cap: RefCell::new(Vec::new()),
-            arg: Cell::new(0),
             parens: OnceCell::new(),
             last_eq: OnceCell::new(),
         }

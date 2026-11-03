@@ -78,11 +78,14 @@ merge1() {
   setup $t
   local d=corpus/$t-$l log=out/lang/merge-$t-$l.log
   mkdir -p $d corpus/$t
-  local -a was=($d/*(N))
+  local -a was=($d/*(N)) crashed_before=(out/lang/merge-$t-$l-*(N))
   local rc=0
-  ADA_FUZZ_LANGS=$l $bin $args -merge=1 -timeout=30 -rss_limit_mb=3072 $d corpus/$t $@ > $log 2>&1 || rc=$?
-  local -a now=($d/*(N))
-  print -r -- "$l: ${#was} → ${#now} inputs, $(du -sh $d | cut -f1), rc $rc, $(date +%T)"
+  # an input that crashes the target goes beside the log, not into fuzz/ (F-016)
+  ADA_FUZZ_LANGS=$l $bin $args -merge=1 -timeout=30 -rss_limit_mb=3072 -artifact_prefix=out/lang/merge-$t-$l- \
+    $d corpus/$t $@ > $log 2>&1 || rc=$?
+  local -a now=($d/*(N)) crashed=(out/lang/merge-$t-$l-*(N))
+  print -r -- "$l: ${#was} → ${#now} inputs, $(du -sh $d | cut -f1), $(( ${#crashed} - ${#crashed_before} )) crashing (out/lang/merge-$t-$l-*)," \
+    "rc $rc, $(date +%T)"
 }
 
 # cmin1 TARGET LANG: one language's corpus minimized, as `cmin` runs them side by side.

@@ -63,6 +63,9 @@ fuzz_target!(|data: &[u8]| {
         max_width: None,
         table_mode: TableMode::Auto,
         code_wrap: flags & 2 == 0,
+        code_labels: flags & 4 != 0,
+        // a file of code printed on the terminal's background, as `ada -p` prints one
+        bare: flags & 8 != 0,
         line_numbers: if flags & 1 == 1 {
             LineNumbers::Code
         } else {

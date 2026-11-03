@@ -44,7 +44,6 @@ mod lisp;
 mod logs;
 mod lua;
 mod machine;
-pub mod make;
 mod powershell;
 mod properties;
 mod python;

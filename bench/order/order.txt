@@ -729,7 +729,7 @@ ada_parse::diff::perforce_to
 <ada_parse::bash::Scan>::heredoc_end
 <ada_parse::bash::Scan>::builtin_option
 <ada_parse::bash::Scan>::builtin_option::{closure#0}
-ada_parse::make::grammar::bol_word
+ada_parse::bash::matchers::bol_word
 <ada_parse::lang::Lang>::from_token
 <ada_parse::lang::Lang>::from_name
 ada_parse::lang::any_eq

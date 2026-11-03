@@ -1,5 +1,5 @@
 //! ADR-40: ada-parse's lexers against what they replaced, syntect on bat's grammars, as the
-//! `make` target checks Makefiles (`lexer_parity`). The first byte picks the language, of the
+//! `make` and `bash` targets check Makefile's and bash's scanners (`lexer_parity`). The first byte picks the language, of the
 //! ones whose lexers give bat's scopes exactly: Diff, INI, TOML, XML, Dockerfile, Java
 //! properties, `.env`, and Git's ignore, attributes, mailmap and link files. Each kind's scopes must be
 //! syntect's stack on every byte of every line, as long as the lexer's state holds its whole
@@ -24,7 +24,8 @@
 mod langs;
 mod lexer_parity;
 
-use ada_parse::{Lang, State};
+use ada_parse::Lang;
+use lexer_parity::Stacks;
 use libfuzzer_sys::fuzz_target;
 
 /// The longest line compared.
@@ -53,20 +54,11 @@ fuzz_target!(|data: &[u8]| {
     if !langs::selected(&EXACT).contains(&lang) {
         return;
     }
-    let (mut state, mut spans) = (State::default(), Vec::new());
     // XML's scanner keeps a nested group's or conditional section's meta scopes once
-    let once = lang == Lang::Xml;
-    lexer_parity::compare(lang.name(), data, LINE, once, |line| {
-        ada_parse::lex(lang, line, &mut state, &mut spans);
-        if !state.is_exact() {
-            return None;
-        }
-        let mut out = vec![String::new(); line.len()];
-        for s in &spans {
-            for b in &mut out[s.start as usize..s.end as usize] {
-                *b = lang.scopes(s.kind).join(" ");
-            }
-        }
-        Some(out)
-    });
+    let stacks = if lang == Lang::Xml {
+        Stacks::Once
+    } else {
+        Stacks::Whole
+    };
+    lexer_parity::check(lang, data, LINE, stacks);
 });

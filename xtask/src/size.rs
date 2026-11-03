@@ -18,8 +18,6 @@ use crate::dump;
 
 /// Where a symbol's source path puts it, first match wins: (group, a piece of the path).
 const GROUPS: &[(&str, &str)] = &[
-    // the port moved in from ada (G-002, G-003), kept apart until a scanner replaces it
-    ("ada-parse, make/ (port)", "/ada-parse/src/make/"),
     ("ada-parse", "/ada-parse/src/"),
     ("src/json.rs", "/ada-md/src/json.rs"),
     ("src/logs.rs", "/ada-md/src/logs.rs"),
