@@ -518,6 +518,7 @@ impl Scan<'_, '_> {
         }
     }
 
+    #[inline(always)]
     fn run(&mut self, l: &Line) {
         let mut p = 0;
         while self.depth > 0 {
@@ -529,7 +530,9 @@ impl Scan<'_, '_> {
     }
 
     /// One match of the top context at `p`: where the next starts, or `None` when nothing
-    /// matches before the line ends.
+    /// matches before the line ends. Inlined, as [`Scan::run`] is into [`line`]: called out of
+    /// line, the two cost XML 7% more instructions (X-010).
+    #[inline(always)]
     fn step(&mut self, l: &Line, p: usize) -> Option<usize> {
         let b = l.b;
         let nl = self.nl;
