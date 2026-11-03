@@ -59,6 +59,9 @@ pub struct ColMeasure {
     pub max: u16,
     /// The header cell laid out on one line: the key column of the record cards.
     pub header: u16,
+    /// The widest body cell laid out on one line: what the column grows toward before its
+    /// header's width counts (FEAT-019).
+    pub body: u16,
 }
 
 /// Measure every column of `t`. Inline styles don't change widths; inline code counts its padding.
@@ -108,8 +111,9 @@ impl Cells {
                 col.min = col.min.max(min);
                 col.whole = col.whole.max(whole);
                 col.max = col.max.max(max);
-                if r == 0 {
-                    col.header = max;
+                match r {
+                    0 => col.header = max,
+                    _ => col.body = col.body.max(max),
                 }
             }
         }
@@ -125,34 +129,142 @@ impl Cells {
 /// Content widths for `cols` sharing `avail` cells, or `None` for records.
 ///
 /// 1. Everything fits on one line: each column gets `max`.
-/// 2. Every word fits whole: each column starts at `whole`, and the rest is shared in proportion
-///    to `max − whole`, as in CSS automatic table layout.
+/// 2. Every word fits whole: each column starts at `whole`, and the rest goes to the body first
+///    ([`body_first`]), shared in proportion to what each column's body asks beyond that, as in
+///    CSS automatic table layout.
 /// 3. Every word fits, broken after `-` and `/` where it must: the same from `min` (FEAT-015).
 /// 4. Every word up to [`MIN_CAP`] fits: the same from `min` capped, hard-breaking only the words
 ///    that are longer than what their column ends up with.
 /// 5. Otherwise `auto` gives up on the grid, while a forced grid shrinks in proportion to the
 ///    capped `min`, down to two cells a column (one would split wide characters).
-pub fn distribute(cols: &[ColMeasure], avail: u16, mode: TableMode) -> Option<Vec<u16>> {
+///
+/// `lines` wraps the cells, for the steps that count lines rather than cells.
+pub(super) fn distribute(
+    cols: &[ColMeasure],
+    avail: u16,
+    mode: TableMode,
+    lines: &mut dyn Lines,
+) -> Option<Vec<u16>> {
     let avail = u32::from(avail);
-    let total = |f: &dyn Fn(&ColMeasure) -> u16| cols.iter().map(|c| u32::from(f(c))).sum::<u32>();
-    let max = |c: &ColMeasure| c.max;
-    let whole = |c: &ColMeasure| c.whole;
-    let min = |c: &ColMeasure| c.min;
-    let capped = |c: &ColMeasure| c.min.min(MIN_CAP);
-    let forced = |c: &ColMeasure| c.max.min(2);
-    if total(&max) <= avail {
+    let total = |f: fn(&ColMeasure) -> u16| cols.iter().map(|c| u32::from(f(c))).sum::<u32>();
+    let max: fn(&ColMeasure) -> u16 = |c| c.max;
+    let capped: fn(&ColMeasure) -> u16 = |c| c.min.min(MIN_CAP);
+    if total(max) <= avail {
         return Some(cols.iter().map(max).collect());
     }
-    if total(&whole) <= avail {
-        return Some(grow(cols, avail, whole, max));
+    let froms: [fn(&ColMeasure) -> u16; 3] = [|c| c.whole, |c| c.min, capped];
+    if let Some(from) = froms.into_iter().find(|&from| total(from) <= avail) {
+        return Some(body_first(cols, avail, from, lines));
     }
-    if total(&min) <= avail {
-        return Some(grow(cols, avail, min, max));
+    let forced: fn(&ColMeasure) -> u16 = |c| c.max.min(2);
+    (mode == TableMode::Grid && total(forced) <= avail).then(|| grow(cols, avail, forced, capped))
+}
+
+/// How many lines a table's cells take at a width, wrapped as the grid wraps them.
+pub(super) trait Lines {
+    /// Column `col`'s header at `width`.
+    fn header(&mut self, col: usize, width: u16) -> usize;
+    /// Whether any of column `col`'s body cells takes more lines at `to` than at `from`.
+    fn body_grows(&mut self, col: usize, from: u16, to: u16) -> bool;
+}
+
+/// From `from`, grow each column toward its body's one-line width before its header's (FEAT-019):
+/// a header line is paid once, a body line in every row, so the header's widest word sets the
+/// floor and the rest of its width only takes what the body leaves, or what costs the body no
+/// line ([`fewer_header_lines`]). When every body cell fits on one line, the headers get as little
+/// more as lays them in the fewest lines; room that saves no header line stays unused, as when
+/// the whole table fits.
+fn body_first(
+    cols: &[ColMeasure],
+    avail: u32,
+    from: fn(&ColMeasure) -> u16,
+    lines: &mut dyn Lines,
+) -> Vec<u16> {
+    let body = |c: &ColMeasure| from(c).max(c.body);
+    let widths: Vec<u16> = cols.iter().map(body).collect();
+    if sum(&widths) > avail {
+        let widths = grow(cols, avail, from, body);
+        return fewer_header_lines(cols, widths, avail, from, lines);
     }
-    if total(&capped) <= avail {
-        return Some(grow(cols, avail, capped, max));
+    let tallest = tallest(lines, &widths);
+    for h in 1..tallest {
+        let fit = header_fit(cols, &widths, h, lines);
+        if sum(&fit) <= avail && self::tallest(lines, &fit) <= h {
+            return fit;
+        }
     }
-    (mode == TableMode::Grid && total(&forced) <= avail).then(|| grow(cols, avail, forced, capped))
+    widths
+}
+
+/// `widths` with the header row a line or more shorter, when the columns that make room for it
+/// lay out no body cell in more lines: from one line fewer on, until one costs a body line or the
+/// row can't be that short (a header with a line break in it).
+fn fewer_header_lines(
+    cols: &[ColMeasure],
+    widths: Vec<u16>,
+    avail: u32,
+    from: fn(&ColMeasure) -> u16,
+    lines: &mut dyn Lines,
+) -> Vec<u16> {
+    let mut best = None;
+    for h in (1..tallest(lines, &widths)).rev() {
+        let mut fit = header_fit(cols, &widths, h, lines);
+        // the columns whose headers fit in `h` lines already make the room, shared body first
+        let gives: Vec<usize> = (0..cols.len()).filter(|&i| fit[i] == widths[i]).collect();
+        let takes = sum(&fit) - gives.iter().map(|&i| u32::from(fit[i])).sum::<u32>();
+        let givers: Vec<ColMeasure> = gives.iter().map(|&i| cols[i]).collect();
+        let floor: u32 = givers.iter().map(|c| u32::from(from(c))).sum();
+        let Some(left) = avail.checked_sub(takes).filter(|&left| left >= floor) else {
+            break;
+        };
+        let body = |c: &ColMeasure| from(c).max(c.body);
+        for (&i, w) in gives.iter().zip(grow(&givers, left, from, body)) {
+            fit[i] = w;
+        }
+        let costs =
+            (gives.iter()).any(|&i| fit[i] < widths[i] && lines.body_grows(i, widths[i], fit[i]));
+        if costs || tallest(lines, &fit) > h {
+            break;
+        }
+        best = Some(fit);
+    }
+    best.unwrap_or(widths)
+}
+
+/// Each column of `widths` as narrow as lays its header in `h` lines, and no narrower than it is;
+/// `max` when no width does.
+fn header_fit(cols: &[ColMeasure], widths: &[u16], h: usize, lines: &mut dyn Lines) -> Vec<u16> {
+    (widths.iter().zip(cols).enumerate())
+        .map(|(i, (&w, c))| match lines.header(i, w) <= h {
+            true => w,
+            // one line takes `max`
+            false => narrowest(w.saturating_add(1), c.max, |w| lines.header(i, w) <= h),
+        })
+        .collect()
+}
+
+/// The most lines a header takes at `widths`.
+fn tallest(lines: &mut dyn Lines, widths: &[u16]) -> usize {
+    (widths.iter().enumerate())
+        .map(|(i, &w)| lines.header(i, w))
+        .max()
+        .unwrap_or(1)
+}
+
+fn sum(widths: &[u16]) -> u32 {
+    widths.iter().map(|&w| u32::from(w)).sum()
+}
+
+/// The narrowest width in `lo..=hi` that `fits`, taking `hi` to fit.
+fn narrowest(mut lo: u16, mut hi: u16, mut fits: impl FnMut(u16) -> bool) -> u16 {
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        match fits(mid) {
+            true => hi = mid,
+            false => lo = mid + 1,
+        }
+    }
+    hi
 }
 
 /// Start every column at `from` and share what is left of `avail` in proportion to `to − from`.
@@ -845,10 +957,14 @@ pub(super) fn layout(b: &mut Builder<'_>, t: &Table) {
         _ if t.rows.is_empty() => TableMode::Grid,
         mode => mode,
     };
+    // `grid` wraps the header short of the mark in its padding
+    let padded = header.mark.filter(|_| border.is_none());
+    let mut probe = Probe::new(&flat, &cols, b.cells.pop().unwrap_or_default(), padded);
     let widths = match mode {
         TableMode::Records => None,
-        mode => distribute(&cols, avail, mode),
+        mode => distribute(&cols, avail, mode, &mut probe),
     };
+    b.cells.push(probe.buf);
     let start = b.out.row_count();
     match widths {
         Some(widths) => grid(b, &flat, t, &header, &rows, &widths, border),
@@ -859,6 +975,72 @@ pub(super) fn layout(b: &mut Builder<'_>, t: &Table) {
         rows: start..b.out.row_count(),
     });
     b.flat = flat;
+}
+
+/// [`Lines`] from wrapping a table's cells.
+struct Probe<'a> {
+    flat: &'a Cells,
+    cols: &'a [ColMeasure],
+    buf: Wrapped,
+    /// The sort mark the header wraps short of.
+    mark: Option<Mark<'a>>,
+    /// Each header's lines at its one-line width and wider (more than one with a `<br>`), 0 until
+    /// wrapped once: most probes are at such a width.
+    whole: Vec<usize>,
+}
+
+impl<'a> Probe<'a> {
+    fn new(flat: &'a Cells, cols: &'a [ColMeasure], buf: Wrapped, mark: Option<Mark<'a>>) -> Self {
+        Probe {
+            flat,
+            cols,
+            buf,
+            mark,
+            whole: Vec::new(),
+        }
+    }
+
+    /// Cell `col` of row `r` at `width`, or none when the row is short of it.
+    fn lines(&mut self, r: usize, col: usize, width: u16) -> usize {
+        let Some(i) = self.flat.row(r).nth(col) else {
+            return 0;
+        };
+        self.buf = (self.flat.flat).wrap(i, std::mem::take(&mut self.buf), width);
+        self.buf.lines.len()
+    }
+
+    /// Column `col`'s header at `width`, short of the mark in its padding.
+    fn wrap_header(&mut self, col: usize, width: u16) -> usize {
+        let width = match self.mark {
+            Some(m) if m.col == col => width.saturating_sub(m.extra).max(1),
+            _ => width,
+        };
+        self.lines(0, col, width).max(1)
+    }
+}
+
+impl Lines for Probe<'_> {
+    fn header(&mut self, col: usize, width: u16) -> usize {
+        let one = self.cols.get(col).map_or(u16::MAX, |c| c.header);
+        if width < one {
+            return self.wrap_header(col, width);
+        }
+        if self.whole.is_empty() {
+            self.whole = vec![0; self.cols.len()];
+        }
+        if self.whole[col] == 0 {
+            self.whole[col] = self.wrap_header(col, one.max(1));
+        }
+        self.whole[col]
+    }
+
+    fn body_grows(&mut self, col: usize, from: u16, to: u16) -> bool {
+        // narrower first: a cell on one line there is no taller than at `from`
+        (1..self.flat.rows.len() - 1).any(|r| match self.lines(r, col, to) {
+            0 | 1 => false,
+            n => n > self.lines(r, col, from),
+        })
+    }
 }
 
 /// The header row, and the sort mark of the column the table is sorted by.
@@ -1145,19 +1327,57 @@ mod tests {
             whole: min,
             max,
             header: 0,
+            body: max,
         }
+    }
+
+    /// Lines by cells alone: a header `header` cells wide takes `⌈header / width⌉` lines, and no
+    /// body cell grows.
+    struct Cut<'a>(&'a [ColMeasure]);
+
+    impl Lines for Cut<'_> {
+        fn header(&mut self, col: usize, width: u16) -> usize {
+            usize::from(self.0[col].header.max(1).div_ceil(width.max(1)))
+        }
+
+        fn body_grows(&mut self, _: usize, _: u16, _: u16) -> bool {
+            false
+        }
+    }
+
+    fn cut(cols: &[ColMeasure], avail: u16, mode: TableMode) -> Option<Vec<u16>> {
+        distribute(cols, avail, mode, &mut Cut(cols))
+    }
+
+    fn glyphs() -> Glyphs {
+        Glyphs {
+            code_pad: 1,
+            ..Glyphs::default()
+        }
+    }
+
+    fn table(doc: &Doc) -> &Table {
+        let BlockKind::Table(t) = &doc.blocks[0].kind else {
+            panic!("not a table")
+        };
+        t
     }
 
     fn measured(md: &str) -> Vec<ColMeasure> {
         let doc = parse(md);
-        let BlockKind::Table(t) = &doc.blocks[0].kind else {
-            panic!("not a table")
-        };
-        let glyphs = Glyphs {
-            code_pad: 1,
-            ..Glyphs::default()
-        };
-        measure(t, &doc, &glyphs)
+        measure(table(&doc), &doc, &glyphs())
+    }
+
+    /// The first table of `md` distributed over `avail` cells, its cells wrapped as layout wraps
+    /// them.
+    fn widths(md: &str, avail: u16) -> Option<Vec<u16>> {
+        let doc = parse(md);
+        let t = table(&doc);
+        let mut flat = Cells::default();
+        flat.flatten(t, StyleKey::Text, &doc, &glyphs());
+        let cols = flat.measure(t.column_count());
+        let mut probe = Probe::new(&flat, &cols, Wrapped::default(), None);
+        distribute(&cols, avail, TableMode::Auto, &mut probe)
     }
 
     /// LAY-004: the borders are drawn at these widths, unmeasured.
@@ -1181,29 +1401,74 @@ mod tests {
         );
         let tuples: Vec<_> = cols
             .iter()
-            .map(|c| (c.min, c.whole, c.max, c.header))
+            .map(|c| (c.min, c.whole, c.max, c.header, c.body))
             .collect();
         // `x` is 3 wide with its padding, and the path can break after every `/` and `-`.
-        assert_eq!(tuples, [(4, 4, 4, 4), (6, 11, 19, 5)]);
+        assert_eq!(tuples, [(4, 4, 4, 4, 3), (6, 11, 19, 5, 19)]);
     }
 
     /// FEAT-015: a date, a version or a flag isn't broken after its `-` while the prose column
     /// can give up the room.
     #[test]
     fn whole_words_before_breaks_after_hyphens() {
-        let cols = measured(
-            "| Date | Version | Change |\n|---|---|---|\n\
-             | 2026-10-27 | 1.0.0-rc.1 | First release candidate, with the gutter, search and sorting |\n",
-        );
+        let md = "| Date | Version | Change |\n|---|---|---|\n\
+             | 2026-10-27 | 1.0.0-rc.1 | First release candidate, with the gutter, search and sorting |\n";
+        let cols = measured(md);
         let tuples: Vec<_> = cols.iter().map(|c| (c.min, c.whole, c.max)).collect();
         assert_eq!(tuples, [(5, 10, 10), (7, 10, 10), (10, 10, 60)]);
         // Shared from `min` by `max − min`, the date would get 5 + 48·5/58, 9.
-        assert_eq!(
-            distribute(&cols, 70, TableMode::Auto),
-            Some(vec![10, 10, 50])
-        );
+        assert_eq!(widths(md, 70), Some(vec![10, 10, 50]));
         // No room for every word whole: the breaks after `-` and `/` come back.
-        assert_eq!(distribute(&cols, 28, TableMode::Auto), Some(vec![6, 7, 15]));
+        assert_eq!(widths(md, 28), Some(vec![6, 7, 15]));
+    }
+
+    /// FEAT-019: the issue's table. A header wraps rather than take room from a column whose
+    /// rows wrap, as an extra header line is paid once and a body line in every row.
+    const FUZZ_ROUNDS: &str = "| Round | Fuzz target name | Crashes found | Notes |\n|---|---|---|---|\n\
+        | 12 | layout | 0 | Ran for six hours on twelve cores. Nothing new turned up in the table code. |\n\
+        | 13 | session | 0 | The replay target found a slow path in search. It was fixed the next day and rerun. |\n\
+        | 14 | layout | 0 | A longer run after the grid change, with the new seeds from the corpus. Clean. |\n";
+
+    #[test]
+    fn headers_wrap_before_the_rows_do() {
+        let cols = measured(FUZZ_ROUNDS);
+        let body: Vec<_> = cols.iter().map(|c| (c.whole, c.body, c.max)).collect();
+        assert_eq!(body, [(5, 2, 5), (7, 7, 16), (7, 1, 13), (7, 83, 83)]);
+        // `Fuzz target` on one line would take 4 cells from `Notes`, which then wraps more:
+        // `Crashes found` and `Fuzz target name` wrap instead, at their widest words.
+        assert_eq!(widths(FUZZ_ROUNDS, 63), Some(vec![5, 7, 7, 44]));
+    }
+
+    /// FEAT-019: room that costs the rows no line goes to a header line.
+    #[test]
+    fn a_header_line_that_costs_no_body_line() {
+        // `Notes` takes two lines a row at 51 cells as at 55: `Fuzz target` and `Crashes found`
+        // fit on one line each, and `Fuzz target name` too.
+        assert_eq!(widths(FUZZ_ROUNDS, 83), Some(vec![5, 16, 13, 49]));
+    }
+
+    /// FEAT-019: with every body cell on one line, the headers get only what saves a line.
+    #[test]
+    fn headers_take_only_what_saves_a_line() {
+        let md = "| Fuzz target name | Crashes found |\n|---|---|\n| x | 0 |\n";
+        // In two lines, `Fuzz target` / `name` and `Crashes` / `found`; shared by `max − whole`,
+        // 10 and 10 would have left `Fuzz` / `target` / `name` on three.
+        assert_eq!(widths(md, 20), Some(vec![11, 7]));
+        assert_eq!(widths(md, 28), Some(vec![11, 7]));
+        assert_eq!(widths(md, 29), Some(vec![16, 13]));
+    }
+
+    /// FEAT-019: a header with a line break takes two lines at any width, so no other header is
+    /// widened to one line at the body's expense.
+    #[test]
+    fn a_header_that_cant_be_one_line_sets_the_height() {
+        let md = "| Fuzz target name | Crashes<br>found | Notes |\n|---|---|---|\n\
+            | layout | 0 | Ran for six hours on twelve cores. Nothing new turned up in the table code. |\n\
+            | session | 3 | The replay target found a slow path in search. It was fixed the next day. |\n";
+        // two header lines: `Fuzz target` / `name`; at 86 `Notes` would keep its two lines a row
+        // at 63, but `Fuzz target name` in 16 saves no line beside `Crashes` / `found`
+        assert_eq!(widths(md, 86), Some(vec![11, 7, 68]));
+        assert_eq!(widths(md, 80), Some(vec![11, 7, 62]));
     }
 
     #[test]
@@ -1214,37 +1479,38 @@ mod tests {
         ));
         assert_eq!((cols[0].min, cols[0].max), (40, 60));
         // Room for the whole URL: it isn't broken.
-        assert_eq!(distribute(&cols, 50, TableMode::Auto), Some(vec![43, 7]));
+        assert_eq!(cut(&cols, 50, TableMode::Auto), Some(vec![43, 7]));
         // No room: the URL breaks rather than turning the table into records.
-        assert_eq!(distribute(&cols, 30, TableMode::Auto), Some(vec![25, 5]));
-        assert_eq!(distribute(&cols, 28, TableMode::Auto), None);
+        assert_eq!(cut(&cols, 30, TableMode::Auto), Some(vec![25, 5]));
+        assert_eq!(cut(&cols, 28, TableMode::Auto), None);
     }
 
     #[test]
     fn natural_widths_when_everything_fits() {
         let cols = [col(3, 10), col(5, 20)];
-        assert_eq!(distribute(&cols, 30, TableMode::Auto), Some(vec![10, 20]));
-        assert_eq!(distribute(&cols, 99, TableMode::Auto), Some(vec![10, 20]));
+        assert_eq!(cut(&cols, 30, TableMode::Auto), Some(vec![10, 20]));
+        assert_eq!(cut(&cols, 99, TableMode::Auto), Some(vec![10, 20]));
     }
 
     #[test]
     fn remainder_shared_by_max_minus_min() {
         let cols = [col(4, 4), col(2, 12), col(2, 32)];
         // Σmin = 8, 12 left over, shared 10 : 30 → 3 and 9.
-        assert_eq!(distribute(&cols, 20, TableMode::Auto), Some(vec![4, 5, 11]));
+        assert_eq!(cut(&cols, 20, TableMode::Auto), Some(vec![4, 5, 11]));
     }
 
     #[test]
     fn auto_gives_up_and_grid_shrinks() {
         let cols = [col(10, 20), col(20, 40)];
-        assert_eq!(distribute(&cols, 24, TableMode::Auto), None);
-        assert_eq!(distribute(&cols, 24, TableMode::Grid), Some(vec![8, 16]));
-        assert_eq!(distribute(&cols, 3, TableMode::Grid), None);
+        assert_eq!(cut(&cols, 24, TableMode::Auto), None);
+        assert_eq!(cut(&cols, 24, TableMode::Grid), Some(vec![8, 16]));
+        assert_eq!(cut(&cols, 3, TableMode::Grid), None);
     }
 
     /// Architecture §13: widths sum to at most `avail`, no column falls below `whole` when every
     /// word fits whole, and none below `min` (capped, when the words don't all fit) unless the
-    /// grid is forced.
+    /// grid is forced. Body first (FEAT-019): no column is wider than its floor and its body but
+    /// for a header line, one cell less would make the header row taller.
     #[test]
     fn distribution_properties() {
         let mut seed = 0x2545_f491_4f6c_dd1du64;
@@ -1259,8 +1525,16 @@ mod tests {
                 .map(|_| {
                     let min = 1 + next(40) as u16;
                     let max = min + next(60) as u16;
+                    // `max` is the header's one-line width or the body's
+                    let other = next(u64::from(max) + 1) as u16;
+                    let (header, body) = match next(2) {
+                        0 => (max, other),
+                        _ => (other, max),
+                    };
                     ColMeasure {
                         whole: min + next(u64::from(max - min) + 1) as u16,
+                        header,
+                        body,
                         ..col(min, max)
                     }
                 })
@@ -1273,7 +1547,7 @@ mod tests {
                 let whole_fits = sum(|c| c.whole) <= u32::from(avail);
                 let fits = sum(|c| c.min) <= u32::from(avail);
                 let capped_fits = sum(|c| c.min.min(MIN_CAP)) <= u32::from(avail);
-                let Some(widths) = distribute(&cols, avail, mode) else {
+                let Some(widths) = cut(&cols, avail, mode) else {
                     assert!(!capped_fits, "{cols:?} gave up at {avail}");
                     continue;
                 };
@@ -1288,6 +1562,19 @@ mod tests {
                     assert!(!whole_fits || w >= c.whole, "{what}");
                     assert!(!fits || w >= c.min, "{what}");
                     assert!(!capped_fits || w >= c.min.min(MIN_CAP), "{what}");
+                }
+                let mut cut = Cut(&cols);
+                let h = tallest(&mut cut, &widths);
+                let floor = |c: &ColMeasure| match () {
+                    _ if whole_fits => c.whole,
+                    _ if fits => c.min,
+                    _ => c.min.min(MIN_CAP),
+                };
+                for (i, (&w, c)) in widths.iter().zip(&cols).enumerate() {
+                    if capped_fits && w > floor(c).max(c.body) {
+                        let what = format!("{cols:?} → {widths:?} at {avail}, column {i}");
+                        assert!(cut.header(i, w - 1) > h, "{what}");
+                    }
                 }
             }
         }

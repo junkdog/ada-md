@@ -443,6 +443,37 @@ fn sort_marks_sit_on_the_rule_or_in_the_header_padding() {
     );
 }
 
+/// FEAT-019 with a mark wider than its padding: the header wraps short of the mark, at the floor
+/// the mark widens, so the body keeps the room.
+#[test]
+fn a_wrapping_header_keeps_its_sort_mark() {
+    let md = "| Fuzz target name | Crashes found | Notes |\n|---|---|---|\n\
+              | layout | 0 | Ran for six hours on twelve cores. Nothing new turned up in the table code. |\n\
+              | session | 3 | The replay target found a slow path in search. It was fixed the next day. |\n";
+    let doc = parse(md);
+    let mut glyphs = Theme::builtin().glyphs;
+    glyphs.table_border = TableBorder::None;
+    glyphs.sort_mark = ["↑↑".into(), "↓↓".into()];
+    let mut measure = Measure::new(&doc, &glyphs);
+    let sort = Sort { col: 1, desc: true };
+    measure.set_sort(&doc, doc.tables()[0], Some(sort));
+    let l = layout_measured(&doc, &measure, &glyphs, params(60));
+    let rows: Vec<String> = (0..l.rows.len())
+        .map(|r| l.row_text(r).trim().to_owned())
+        .collect();
+    // `Crashes` at its floor, 7 and the mark's extra cell; `Fuzz target` on one line, as `Notes`
+    // takes three lines a row either way
+    assert_eq!(
+        rows[..3],
+        [
+            "Fuzz target  Crashes   Notes",
+            "name         found ↓↓",
+            "session      3         The replay target found a slow",
+        ]
+    );
+    assert_eq!(rows.len(), 8, "{rows:#?}");
+}
+
 /// Every other body row is striped, on every terminal row it takes, inside the outer borders.
 #[test]
 fn alternate_rows_are_striped() {
