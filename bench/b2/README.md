@@ -54,10 +54,10 @@ python3 -I site/perf.py   # the site's perf section, from the same .dat files
 
 The lanes are CCD0's two (since 2026-11-03, BEN-002: a job's CCD moved its per-key cells up to 1.4×, and two XL
 jobs at once on CCD0 read search 1.8×): the S, M and L jobs on both at once, then the XL jobs alone on the first
-(`lane0.json`, `lane1.json`, `lane-xl.json`; `layout.txt` says `ccd0`). That takes about 45 minutes, where the
-four lanes over both CCDs before took about 18; print mode another 4.5, the previewer files about 13 (the huge files' runs
-are capped at 60 s each, `B2P_CAP`), and images 3.5: about 40 minutes in all, as `full.zsh` ran on 2026-10-20,
-without the cells that always hit their cap.
+(`lane0.json`, `lane1.json`, `lane-xl.json`; `layout.txt` says `ccd0`). That took 43 minutes in the first such
+run (2026-11-03: the two lanes 28.4, the XL jobs alone 14.7), where the four lanes over both CCDs before took
+about 18; print mode another 4.6, the previewer files 14.1, images 6.9 and the mermaid diagrams 3.4: about 72
+minutes in all, without the cells that always hit their cap.
 
 ### The 2-minute cap
 

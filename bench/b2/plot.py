@@ -74,8 +74,9 @@ if os.path.exists(f"{S}/b2p"):
                            for n in tools[mode]] for f in PREV_FILES]
             blocks.append(block(f"previewer, {label}, {unit}", rows, tools[mode]))
     with open(f"{OUT}/previewer.dat", "w") as f:
+        # the run's own cap (capped.zsh's cap.txt, 120 s since BEN-014), as doctables.py reads it; 60 s before
         f.write(f"# B2 previewer files at ada {prev_stamp}: hyperfine medians, ms (peak RSS in MiB); cap at "
-                f"{os.environ.get('B2P_CAP', 60)} s; written by bench/b2/plot.py\n")
+                f"{load.cap or int(os.environ.get('B2P_CAP', 60))} s; written by bench/b2/plot.py\n")
         f.write("\n\n\n".join(blocks) + "\n")
     print(f"wrote {OUT}/previewer.dat")
 
