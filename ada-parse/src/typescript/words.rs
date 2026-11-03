@@ -1630,4 +1630,32 @@ mod tests {
         assert_eq!(class(b"foo"), 0);
         assert_eq!(class(b"Arrays"), 0);
     }
+
+    /// `Scan::keyword_name` tells `LITERAL`'s words apart by their length and last byte, and
+    /// `OP_WORD`'s by their length: a word added to either needs its own key there.
+    #[test]
+    fn the_keyword_names_keys_hold() {
+        let words = |bit| {
+            let mut v: Vec<&[u8]> = ENTRIES
+                .iter()
+                .filter(|e| e.1 & bit != 0)
+                .map(|e| e.0)
+                .collect();
+            v.sort();
+            v
+        };
+        let lit: [&[u8]; 8] = [
+            b"Infinity",
+            b"NaN",
+            b"false",
+            b"null",
+            b"super",
+            b"this",
+            b"true",
+            b"undefined",
+        ];
+        assert_eq!(words(LITERAL), lit);
+        let op: [&[u8]; 4] = [b"await", b"delete", b"new", b"void"];
+        assert_eq!(words(OP_WORD), op);
+    }
 }

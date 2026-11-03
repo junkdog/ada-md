@@ -156,21 +156,22 @@ impl Scan<'_, '_, '_> {
             if !self.we(e) {
                 return None;
             }
-            return Some(match &self.b[i..e] {
-                b"new" => {
+            // `words::OP_WORD`'s four have four lengths
+            return Some(match e - i {
+                3 => {
                     self.tok(i, e, NEW);
                     self.i = e;
                     self.push(NEW_F);
                     true
                 }
-                b"await" => self.take(i, e, FLOW),
-                b"delete" => self.take(i, e, DELETE),
+                5 => self.take(i, e, FLOW),
+                6 => self.take(i, e, DELETE),
                 _ => self.take(i, e, VOID),
             });
         }
         match d {
             b'(' | b'<' | b'?' | b'!' | b'`' => return None,
-            b'.' if k == e && &self.b[i..e] == b"this" && self.boundary(e) => {
+            b'.' if k == e && crate::same(&self.b[i..e], b"this") && self.boundary(e) => {
                 match self.call_chain(i, e, THIS) {
                     Chain::Call => return Some(true),
                     Chain::NoCall => {}
@@ -184,14 +185,15 @@ impl Scan<'_, '_, '_> {
             b'.' if self.function_call() => return Some(true),
             _ => {}
         }
-        let kind = match &self.b[i..e] {
-            b"this" => THIS,
-            b"super" => SUPER,
-            b"true" => TRUE,
-            b"false" => FALSE,
-            b"null" => NULL,
-            b"undefined" => UNDEFINED,
-            b"NaN" => NAN,
+        // `words::LITERAL`'s eight, each by its length and last byte
+        let kind = match (e - i, self.b[e - 1]) {
+            (4, b's') => THIS,
+            (5, b'r') => SUPER,
+            (4, b'e') => TRUE,
+            (5, b'e') => FALSE,
+            (4, b'l') => NULL,
+            (9, b'd') => UNDEFINED,
+            (3, b'N') => NAN,
             _ => INFINITY,
         };
         let end_ok = if matches!(kind, THIS | SUPER) {
@@ -578,7 +580,7 @@ impl Scan<'_, '_, '_> {
         // (?:«wb»(\basync))?((?<![})!\]])\s*(?=sure|line))
         let mut s = i;
         let mut asy = None;
-        if self.wb(i) && self.rest(i).starts_with(b"async") && self.boundary(i + 5) {
+        if self.wb(i) && self.has(i, b"async") && self.boundary(i + 5) {
             asy = Some(i);
             s = i + 5;
         }
@@ -623,7 +625,7 @@ impl Scan<'_, '_, '_> {
         }
         let mut k = self.ws(i);
         let mut asy = None;
-        if self.rest(k).starts_with(b"async") {
+        if self.has(k, b"async") {
             asy = Some(k);
             k += 5;
         }
@@ -1882,8 +1884,7 @@ impl Scan<'_, '_, '_> {
         // backtracking: `async (x)` is a method named `async`
         let word = |me: &Self, k: usize, w: &[u8]| {
             let e = k + w.len();
-            (me.rest(k).starts_with(w) && me.boundary(k) && me.boundary(e) && me.ws(e) > e)
-                .then(|| me.ws(e))
+            (me.has(k, w) && me.boundary(k) && me.boundary(e) && me.ws(e) > e).then(|| me.ws(e))
         };
         let mut found = None;
         // without `a`, `g`, `s` or `*` at the place, only the bare key can match
@@ -1966,7 +1967,7 @@ impl Scan<'_, '_, '_> {
         }
         let mut k = self.ws(i);
         let mut asy = None;
-        if after_colon && self.rest(k).starts_with(b"async") {
+        if after_colon && self.has(k, b"async") {
             asy = Some(k);
             k = self.ws(k + 5);
         }
@@ -2063,7 +2064,7 @@ impl Scan<'_, '_, '_> {
         }
         let mut j = self.ws(i);
         let mut rest = None;
-        if self.rest(j).starts_with(b"...") {
+        if self.has(j, b"...") {
             rest = Some(j);
             j = self.ws(j + 3);
         }
@@ -2101,12 +2102,12 @@ impl Scan<'_, '_, '_> {
             b"readonly",
         ];
         for m in mods {
-            if self.rest(i).starts_with(m) && self.boundary(i + m.len()) {
+            if self.has(i, m) && self.boundary(i + m.len()) {
                 let k = self.ws(i + m.len());
                 if k > i + m.len()
                     && mods
                         .iter()
-                        .any(|m2| self.rest(k).starts_with(m2) && is_space(self.c(k + m2.len())))
+                        .any(|m2| self.has(k, m2) && is_space(self.c(k + m2.len())))
                 {
                     return self.take(i, i + m.len(), MODIFIER);
                 }
@@ -2115,10 +2116,10 @@ impl Scan<'_, '_, '_> {
         let mut j = i;
         let mut modifier = None;
         for m in mods {
-            if self.rest(j).starts_with(m) && self.boundary(j + m.len()) {
+            if self.has(j, m) && self.boundary(j + m.len()) {
                 let k = self.ws(j + m.len());
                 // the modifier only before a name (else it is the name)
-                let r = if self.rest(k).starts_with(b"...") {
+                let r = if self.has(k, b"...") {
                     self.ws(k + 3)
                 } else {
                     k
@@ -2131,7 +2132,7 @@ impl Scan<'_, '_, '_> {
             }
         }
         let mut rest = None;
-        if self.rest(j).starts_with(b"...") {
+        if self.has(j, b"...") {
             rest = Some(j);
             j = self.ws(j + 3);
         }
@@ -2201,13 +2202,13 @@ impl Scan<'_, '_, '_> {
             return true;
         }
         let r = self.rest(i);
-        if r.starts_with(b"||") || r.starts_with(b"&&") || r.starts_with(b"!==") {
+        if crate::starts(r, b"||") || crate::starts(r, b"&&") || crate::starts(r, b"!==") {
             return true;
         }
         if self.kw(i, b"new").is_some() {
             return true;
         }
-        if self.wb(i) && r.starts_with(b"function") {
+        if self.wb(i) && crate::starts(r, b"function") {
             let e = i + 8;
             let k = self.ws(e);
             if (k > e && self.name(k) > k) || self.c(k) == b'(' {

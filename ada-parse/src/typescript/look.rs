@@ -334,7 +334,7 @@ pub(super) fn arrow_sure(b: &[u8], i: usize) -> bool {
     if at(b, j) == b')' {
         return at(b, ws(b, j + 1)) == b':';
     }
-    let j = if b[j.min(b.len())..].starts_with(b"...") {
+    let j = if crate::has_at(b, j.min(b.len()), b"...") {
         ws(b, j + 3)
     } else {
         j
@@ -360,7 +360,7 @@ pub(super) fn arrow_line(b: &[u8], i: usize) -> bool {
                 Some(e) => e,
                 None => return false,
             }
-        } else if b[j.min(b.len())..].starts_with(b"...") {
+        } else if crate::has_at(b, j.min(b.len()), b"...") {
             let k = ws(b, j + 3);
             let a = alpha(b, k);
             if a == 0 {
@@ -461,7 +461,7 @@ pub(super) fn tp_extends(b: &[u8], i: usize) -> bool {
         return false;
     }
     let k = ws(b, e);
-    b[k.min(b.len())..].starts_with(b"extends") && !matches!(at(b, k + 7), b'=' | b'>' | 0)
+    crate::has_at(b, k.min(b.len()), b"extends") && !matches!(at(b, k + 7), b'=' | b'>' | 0)
 }
 
 /// `\s*«RT»+\s*=>` at `i`.
@@ -476,7 +476,7 @@ pub(super) fn rt_arrow(b: &[u8], i: usize) -> bool {
 pub(super) fn fn_value(b: &[u8], i: usize, tsx: bool) -> bool {
     let rest = &b[i.min(b.len())..];
     let after_async = |gap_needed: bool| -> Option<usize> {
-        if rest.starts_with(b"async") {
+        if crate::starts(rest, b"async") {
             let j = ws(b, i + 5);
             if gap_needed && j == i + 5 {
                 return None;
@@ -488,7 +488,7 @@ pub(super) fn fn_value(b: &[u8], i: usize, tsx: bool) -> bool {
     };
     let first = |k: usize| -> bool {
         let r = &b[k.min(b.len())..];
-        if r.starts_with(b"function") {
+        if crate::starts(r, b"function") {
             let j = ws(b, k + 8);
             if matches!(at(b, j), b'(' | b'<' | b'*') || j > k + 8 {
                 return true;
@@ -526,7 +526,7 @@ pub(super) fn fn_type_head(b: &[u8], j: usize) -> bool {
     }
     if at(b, j) == b'(' {
         let k = ws(b, j + 1);
-        if at(b, k) == b')' || b[k.min(b.len())..].starts_with(b"...") {
+        if at(b, k) == b')' || crate::has_at(b, k.min(b.len()), b"...") {
             return true;
         }
         let mut e = k;
@@ -555,9 +555,9 @@ pub(super) fn fn_colon(b: &[u8], i: usize, tsx: bool, value: bool) -> bool {
                 return true;
             }
             // :\s*«wb»Function«we»
-            if b[j.min(b.len())..].starts_with(b"Function")
+            if crate::has_at(b, j.min(b.len()), b"Function")
                 && !alnum_at(b, j + 8)
-                && (at(b, j + 8) != b'.' || b[j + 8..].starts_with(b"..."))
+                && (at(b, j + 8) != b'.' || crate::has_at(b, j + 8, b"..."))
             {
                 return true;
             }
@@ -603,7 +603,7 @@ pub(super) fn fn_colon(b: &[u8], i: usize, tsx: bool, value: bool) -> bool {
 fn ta_start(b: &[u8], i: usize) -> Option<usize> {
     let r = &b[i.min(b.len())..];
     for w in [&b"keyof"[..], b"infer", b"typeof", b"readonly"] {
-        if r.starts_with(w) {
+        if crate::starts(r, w) {
             let j = ws(b, i + w.len());
             if j > i + w.len() {
                 return Some(j);

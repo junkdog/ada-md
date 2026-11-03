@@ -274,6 +274,12 @@ fn has_at(b: &[u8], i: usize, s: &[u8]) -> bool {
     i <= b.len() && b.len() - i >= s.len() && same(&b[i..i + s.len()], s)
 }
 
+/// Whether `b` starts with `s`, as [`same`] compares.
+#[inline(always)]
+fn starts(b: &[u8], s: &[u8]) -> bool {
+    has_at(b, 0, s)
+}
+
 /// Where the spaces at `at` in `b` end.
 fn skip_spaces(b: &[u8], mut at: usize) -> usize {
     while at < b.len() && is_space(b[at]) {

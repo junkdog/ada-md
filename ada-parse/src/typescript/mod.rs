@@ -889,7 +889,7 @@ impl Scan<'_, '_, '_> {
                     let k = self.ws(self.i);
                     let d = self.c(k);
                     if !(matches!(d, b'<' | b'/' | b'(' | b'[' | b'{' | b':' | b'?' | b'!')
-                        || (d == b'a' && self.rest(k).starts_with(b"async")))
+                        || (d == b'a' && self.has(k, b"async")))
                     {
                         self.i = k.min(self.n);
                         self.stuck = 0;
@@ -1053,6 +1053,13 @@ impl Scan<'_, '_, '_> {
         &self.b[i.min(self.n)..]
     }
 
+    /// Whether the line has `w` at `i`: `rest(i).starts_with(w)`, compared as
+    /// [`crate::same`] does, without a call to `memcmp`.
+    #[inline(always)]
+    fn has(&self, i: usize, w: &[u8]) -> bool {
+        crate::has_at(self.b, i.min(self.n), w)
+    }
+
     /// Past blanks (`\s`, the line's `\n` too) from `i`.
     fn ws(&self, mut i: usize) -> usize {
         while is_space(self.c(i)) {
@@ -1104,13 +1111,13 @@ impl Scan<'_, '_, '_> {
 
     /// `«we»`: `(?![_$[:alnum:]])(?:(?=\.\.\.)|(?!\.))` at `i`.
     fn we(&self, i: usize) -> bool {
-        !self.alnum_at(i) && (self.c(i) != b'.' || self.rest(i).starts_with(b"..."))
+        !self.alnum_at(i) && (self.c(i) != b'.' || self.has(i, b"..."))
     }
 
     /// The word `w` at `i` between `«wb»` and `«we»`: its end.
     fn kw(&self, i: usize, w: &[u8]) -> Option<usize> {
         let e = i + w.len();
-        (self.rest(i).starts_with(w) && self.wb(i) && self.we(e)).then_some(e)
+        (self.has(i, w) && self.wb(i) && self.we(e)).then_some(e)
     }
 
     /// `\b` at `i`, by ASCII and Unicode's word characters.
@@ -1121,12 +1128,12 @@ impl Scan<'_, '_, '_> {
     /// The word `w` at `i` with `\b` after it (but not necessarily before).
     fn word_b(&self, i: usize, w: &[u8]) -> Option<usize> {
         let e = i + w.len();
-        (self.rest(i).starts_with(w) && self.boundary(e)).then_some(e)
+        (self.has(i, w) && self.boundary(e)).then_some(e)
     }
 
     /// The name at `i` is `w`, whole.
     fn is_name(&self, i: usize, e: usize, w: &[u8]) -> bool {
-        &self.b[i..e] == w
+        crate::same(&self.b[i..e], w)
     }
 
     /// One frame's turn at the place: whether it matched something. Inlined into the scan's loop

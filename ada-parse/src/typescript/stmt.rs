@@ -89,14 +89,14 @@ impl Scan<'_, '_, '_> {
         let mut j = i;
         let mut export = None;
         let mut declare = None;
-        if self.rest(j).starts_with(b"export") && self.boundary(j) {
+        if self.has(j, b"export") && self.boundary(j) {
             let k = self.ws(j + 6);
             if k > j + 6 && k < self.n {
                 export = Some(j + 6);
                 j = k;
             }
         }
-        if self.rest(j).starts_with(b"declare") && self.boundary(j) {
+        if self.has(j, b"declare") && self.boundary(j) {
             let k = self.ws(j + 7);
             if k > j + 7 && k < self.n {
                 declare = Some(j + 7);
@@ -315,10 +315,7 @@ impl Scan<'_, '_, '_> {
             }
         }
         // export-declaration
-        if self.rest(i).starts_with(b"export")
-            && self.wb(i)
-            && self.boundary(i + 6)
-            && self.export_declaration()
+        if self.has(i, b"export") && self.wb(i) && self.boundary(i + 6) && self.export_declaration()
         {
             return true;
         }
@@ -429,14 +426,14 @@ impl Scan<'_, '_, '_> {
     pub(super) fn function_head(&self, j: usize, _decl: bool) -> Option<[usize; 7]> {
         let mut k = j;
         let mut asy = usize::MAX;
-        if self.rest(k).starts_with(b"async") && self.boundary(k) {
+        if self.has(k, b"async") && self.boundary(k) {
             let m = self.ws(k + 5);
             if m > k + 5 {
                 asy = k;
                 k = m;
             }
         }
-        if !self.rest(k).starts_with(b"function") || !self.boundary(k + 8) {
+        if !self.has(k, b"function") || !self.boundary(k + 8) {
             return None;
         }
         if asy == usize::MAX && !self.wb(k) {
@@ -619,7 +616,7 @@ impl Scan<'_, '_, '_> {
             return false;
         }
         ws.iter().any(|w| {
-            i >= w.len() && &self.b[i - w.len()..i] == *w && {
+            i >= w.len() && crate::same(&self.b[i - w.len()..i], w) && {
                 let s = i - w.len();
                 s == 0 || (self.b[s - 1] != b'.' && !look::alnum_before(self.b, s))
             }
@@ -769,7 +766,7 @@ impl Scan<'_, '_, '_> {
                 continue;
             }
             for w in ws.iter() {
-                if self.rest(j).starts_with(w) && self.boundary(j) {
+                if self.has(j, w) && self.boundary(j) {
                     let e = j + w.len();
                     let k = self.ws(e);
                     if k > e && k < self.n + 1 {
@@ -884,7 +881,7 @@ impl Scan<'_, '_, '_> {
         let mut k = j;
         let mut acc = None;
         for w in [&b"get"[..], b"set"] {
-            if self.rest(k).starts_with(w) && self.boundary(k) && self.boundary(k + 3) {
+            if self.has(k, w) && self.boundary(k) && self.boundary(k + 3) {
                 let m = self.ws(k + 3);
                 if m > k + 3 {
                     acc = Some((k, k + 3));
@@ -1115,7 +1112,7 @@ impl Scan<'_, '_, '_> {
     /// `«wb»(of|in)\s+` at `i`.
     pub(super) fn of_in(&self, i: usize) -> bool {
         for w in [&b"of"[..], b"in"] {
-            if self.rest(i).starts_with(w) && self.wb(i) && is_space(self.c(i + 2)) {
+            if self.has(i, w) && self.wb(i) && is_space(self.c(i + 2)) {
                 return true;
             }
         }
@@ -1383,7 +1380,7 @@ impl Scan<'_, '_, '_> {
                 }
                 // the object's context takes only `{`, the array's only `[`
                 let arr = matches!(f, DESTRUCT_ARR | DESTRUCT_ARR_CONST);
-                let j = if self.rest(i).starts_with(b"...") {
+                let j = if self.has(i, b"...") {
                     self.ws(i + 3)
                 } else {
                     i
@@ -1998,7 +1995,7 @@ impl Scan<'_, '_, '_> {
             b"declare",
         ]
         .iter()
-        .any(|w| self.rest(j).starts_with(w) && is_space(self.c(j + w.len())))
+        .any(|w| self.has(j, w) && is_space(self.c(j + w.len())))
     }
 
     /// Whether the line is the block's first (a `#!` line counts only there).
@@ -2010,7 +2007,7 @@ impl Scan<'_, '_, '_> {
 
     /// `directives`: `^(///)\s*(?=<(reference|amd-dependency|amd-module)(\s+(path|types|no-default-lib|lib|name)\s*=\s*(«sq»|«dq»|«bq»))+\s*/>\s*$)`.
     pub(super) fn directive(&mut self) -> bool {
-        if !self.b.starts_with(b"///") {
+        if !crate::starts(self.b, b"///") {
             return false;
         }
         let j = self.ws(3);
@@ -2020,7 +2017,7 @@ impl Scan<'_, '_, '_> {
         let r = self.rest(j + 1);
         let w = [&b"reference"[..], b"amd-dependency", b"amd-module"]
             .into_iter()
-            .find(|w| r.starts_with(w));
+            .find(|w| crate::starts(r, w));
         let Some(w) = w else { return false };
         let mut k = j + 1 + w.len();
         let mut any = false;
@@ -2031,7 +2028,7 @@ impl Scan<'_, '_, '_> {
             }
             let a = [&b"path"[..], b"types", b"no-default-lib", b"lib", b"name"]
                 .into_iter()
-                .find(|a| self.rest(m).starts_with(a));
+                .find(|a| self.has(m, a));
             let Some(a) = a else { break };
             let q = self.ws(m + a.len());
             if self.c(q) != b'=' {
@@ -2183,7 +2180,7 @@ impl Scan<'_, '_, '_> {
         let i = self.i;
         // the modifiers need a word's start; `...` doesn't (`undefined...rest` is a rest parameter)
         let at_word = self.wb(i);
-        if !at_word && !self.rest(i).starts_with(b"...") {
+        if !at_word && !self.has(i, b"...") {
             return false;
         }
         let mods: &[&[u8]] = if at_word {
@@ -2199,12 +2196,12 @@ impl Scan<'_, '_, '_> {
         };
         // a modifier before another
         for m in mods {
-            if self.rest(i).starts_with(m) && self.boundary(i + m.len()) {
+            if self.has(i, m) && self.boundary(i + m.len()) {
                 let k = self.ws(i + m.len());
                 if k > i + m.len()
                     && mods
                         .iter()
-                        .any(|m2| self.rest(k).starts_with(m2) && is_space(self.c(k + m2.len())))
+                        .any(|m2| self.has(k, m2) && is_space(self.c(k + m2.len())))
                 {
                     return self.take(i, i + m.len(), MODIFIER);
                 }
@@ -2213,10 +2210,10 @@ impl Scan<'_, '_, '_> {
         let mut j = i;
         let mut modifier = None;
         for m in mods {
-            if self.rest(j).starts_with(m) && self.boundary(j + m.len()) {
+            if self.has(j, m) && self.boundary(j + m.len()) {
                 let k = self.ws(j + m.len());
                 // the modifier only before a name (else it is the name)
-                let r = if self.rest(k).starts_with(b"...") {
+                let r = if self.has(k, b"...") {
                     self.ws(k + 3)
                 } else {
                     k
@@ -2229,7 +2226,7 @@ impl Scan<'_, '_, '_> {
             }
         }
         let mut rest = None;
-        if self.rest(j).starts_with(b"...") {
+        if self.has(j, b"...") {
             rest = Some(j);
             j = self.ws(j + 3);
         }
@@ -2279,7 +2276,7 @@ impl Scan<'_, '_, '_> {
         }
         let mut j = self.ws(i);
         let mut rest = None;
-        if self.rest(j).starts_with(b"...") {
+        if self.has(j, b"...") {
             rest = Some(j);
             j = self.ws(j + 3);
         }
@@ -2442,7 +2439,7 @@ impl Scan<'_, '_, '_> {
         let i = self.i;
         let mut j = i;
         let mut rest = None;
-        if self.rest(i).starts_with(b"...") {
+        if self.has(i, b"...") {
             rest = Some(i);
             j = self.ws(i + 3);
         }
@@ -2485,9 +2482,7 @@ impl Scan<'_, '_, '_> {
         }
         let cst = f == BIND_OBJ_CONST;
         if f == PBIND_OBJ {
-            if self.c(i) == b'{'
-                || (self.rest(i).starts_with(b"...") && self.c(self.ws(i + 3)) == b'{')
-            {
+            if self.c(i) == b'{' || (self.has(i, b"...") && self.c(self.ws(i + 3)) == b'{') {
                 return self.pbinding_obj();
             }
         } else if self.binding_obj_only(cst) {
@@ -2506,7 +2501,7 @@ impl Scan<'_, '_, '_> {
     /// `object-binding-pattern` alone (not the array's).
     pub(super) fn binding_obj_only(&mut self, cst: bool) -> bool {
         let i = self.i;
-        let j = if self.rest(i).starts_with(b"...") {
+        let j = if self.has(i, b"...") {
             self.ws(i + 3)
         } else {
             i
@@ -2521,7 +2516,7 @@ impl Scan<'_, '_, '_> {
     pub(super) fn pbinding_obj(&mut self) -> bool {
         let i = self.i;
         let mut j = i;
-        if self.rest(i).starts_with(b"...") {
+        if self.has(i, b"...") {
             self.tok(i, i + 3, REST);
             j = self.ws(i + 3);
         }
@@ -2536,7 +2531,7 @@ impl Scan<'_, '_, '_> {
         let i = self.i;
         let mut j = i;
         let mut rest = None;
-        if self.rest(i).starts_with(b"...") {
+        if self.has(i, b"...") {
             rest = Some(i);
             j = self.ws(i + 3);
         }
@@ -2564,7 +2559,7 @@ impl Scan<'_, '_, '_> {
         }
         let cst = matches!(f, BIND_ARR_CONST | BIND_OBJ_CONST);
         if matches!(f, PBIND_ARR | PBIND_OBJ) {
-            let j = if self.rest(i).starts_with(b"...") {
+            let j = if self.has(i, b"...") {
                 self.ws(i + 3)
             } else {
                 i

@@ -447,9 +447,9 @@ impl Scan<'_, '_, '_> {
                         b';' | b')' | b',' | b'}' | b']' | b':' | b'?' | b'-' | b'+' | b'>'
                     )
                     || i >= self.n
-                    || self.rest(i).starts_with(b"||")
-                    || self.rest(i).starts_with(b"&&")
-                    || self.rest(i).starts_with(b"!==")
+                    || self.has(i, b"||")
+                    || self.has(i, b"&&")
+                    || self.has(i, b"!==")
                     || (self.kw(i, b"as").is_some_and(|e| is_space(self.c(e))))
                     || (f == AS_F && is_space(c) && self.c(self.ws(i)) == b'<');
                 if ends && self.pop_zero() {
@@ -465,9 +465,9 @@ impl Scan<'_, '_, '_> {
                         b';' | b')' | b',' | b'}' | b']' | b':' | b'?' | b'-' | b'+' | b'>'
                     )
                     || i >= self.n
-                    || self.rest(i).starts_with(b"||")
-                    || self.rest(i).starts_with(b"&&")
-                    || self.rest(i).starts_with(b"!==")
+                    || self.has(i, b"||")
+                    || self.has(i, b"&&")
+                    || self.has(i, b"!==")
                     || self.instanceof_again(i)
                     || self.function_ahead(i);
                 if ends && self.pop_zero() {
@@ -544,12 +544,12 @@ impl Scan<'_, '_, '_> {
             return false;
         }
         let k = self.ws(ne);
-        k > ne && self.rest(k).starts_with(b"instanceof") && self.we(k + 10)
+        k > ne && self.has(k, b"instanceof") && self.we(k + 10)
     }
 
     /// `«wb»function((\s+name)|(\s*[\(]))` at `i`.
     pub(super) fn function_ahead(&self, i: usize) -> bool {
-        if !(self.wb(i) && self.rest(i).starts_with(b"function")) {
+        if !(self.wb(i) && self.has(i, b"function")) {
             return false;
         }
         let e = i + 8;
@@ -580,7 +580,7 @@ impl Scan<'_, '_, '_> {
             b"declare",
         ]
         .iter()
-        .any(|w| self.rest(j).starts_with(w) && is_space(self.c(j + w.len())))
+        .any(|w| self.has(j, w) && is_space(self.c(j + w.len())))
     }
 
     /// `return-type-core`.
@@ -633,7 +633,7 @@ impl Scan<'_, '_, '_> {
             let ne = self.name(j);
             if ne > j
                 && is_space(self.c(ne))
-                && self.rest(ne + 1).starts_with(b"is")
+                && self.has(ne + 1, b"is")
                 && self.we(ne + 3)
                 && !(asserts.is_none() && self.is_name(j, ne, b"asserts"))
             {
@@ -824,7 +824,7 @@ impl Scan<'_, '_, '_> {
         if c == b'(' {
             // (?=[(]\s*(([)])|(\.\.\.)|([_$[:alnum:]]+\s*(([:,?=])|([)]\s*=>)))))
             let k = self.ws(i + 1);
-            let fn_type = self.c(k) == b')' || self.rest(k).starts_with(b"...") || {
+            let fn_type = self.c(k) == b')' || self.has(k, b"...") || {
                 let mut e = k;
                 while look::alnum(self.b, e) > 0 {
                     e += look::alnum(self.b, e);
@@ -977,7 +977,7 @@ impl Scan<'_, '_, '_> {
         let i = self.i;
         // the modifiers need a word's start; `...` doesn't
         let at_word = self.wb(i);
-        if !at_word && !self.rest(i).starts_with(b"...") {
+        if !at_word && !self.has(i, b"...") {
             return false;
         }
         let mods: &[&[u8]] = if at_word {
@@ -988,10 +988,10 @@ impl Scan<'_, '_, '_> {
         let mut j = i;
         let mut modifier = None;
         for m in mods {
-            if self.rest(j).starts_with(m) && self.boundary(j + m.len()) {
+            if self.has(j, m) && self.boundary(j + m.len()) {
                 let k = self.ws(j + m.len());
                 // the modifier only before a name (else it is the name)
-                let r = if self.rest(k).starts_with(b"...") {
+                let r = if self.has(k, b"...") {
                     self.ws(k + 3)
                 } else {
                     k
@@ -1004,7 +1004,7 @@ impl Scan<'_, '_, '_> {
             }
         }
         let mut rest = None;
-        if self.rest(j).starts_with(b"...") {
+        if self.has(j, b"...") {
             rest = Some(j);
             j = self.ws(j + 3);
         }

@@ -27,7 +27,7 @@ impl Scan<'_, '_, '_> {
                 self.push(BLOCK_F);
                 // (?:\s*((@)internal)(?=\s|(\*/)))?
                 let k = self.ws(j + 2);
-                if self.rest(k).starts_with(b"@internal") {
+                if self.has(k, b"@internal") {
                     let e = k + 9;
                     if is_space(self.c(e)) || (self.c(e) == b'*' && self.c(e + 1) == b'/') {
                         self.tok(k, k + 1, INTERNAL_MARK);
@@ -44,7 +44,7 @@ impl Scan<'_, '_, '_> {
                 self.tok(j, j + 2, LINE_MARK);
                 let mut e = j + 2;
                 let k = self.ws(e);
-                if self.rest(k).starts_with(b"@internal") {
+                if self.has(k, b"@internal") {
                     let f = k + 9;
                     if f >= self.n || is_space(self.c(f)) {
                         self.tok(e, k, LINE);
@@ -450,7 +450,7 @@ impl Scan<'_, '_, '_> {
                     return true;
                 }
                 // \G(<)caption(>): its failed search is cached for the rest of the line
-                if !self.g_caption && !self.rest(i).starts_with(b"<caption>") {
+                if !self.g_caption && !self.has(i, b"<caption>") {
                     self.g_caption = true;
                 }
                 if !self.g_caption {
@@ -481,7 +481,7 @@ impl Scan<'_, '_, '_> {
                 false
             }
             DOC_CAPTION => {
-                if self.rest(i).starts_with(b"</caption>") {
+                if self.has(i, b"</caption>") {
                     self.tok(i, i + 2, JD_CAPTION_ANGLE_BEGIN);
                     self.tok(i + 2, i + 9, JD_CAPTION_TAG);
                     self.tok(i + 9, i + 10, JD_CAPTION_ANGLE_END);
@@ -587,7 +587,7 @@ impl Scan<'_, '_, '_> {
                 }
                 if c == b'<' {
                     for w in [&b"reference"[..], b"amd-dependency", b"amd-module"] {
-                        if self.rest(i + 1).starts_with(w) {
+                        if self.has(i + 1, w) {
                             self.tok(i, i + 1, DIRECTIVE_TAG_MARK);
                             self.tok(i + 1, i + 1 + w.len(), DIRECTIVE_TAG);
                             self.i = i + 1 + w.len();
@@ -605,7 +605,7 @@ impl Scan<'_, '_, '_> {
                     return self.pop();
                 }
                 for w in [&b"path"[..], b"types", b"no-default-lib", b"lib", b"name"] {
-                    if self.rest(i).starts_with(w) {
+                    if self.has(i, w) {
                         return self.take(i, i + w.len(), DIRECTIVE_ATTR);
                     }
                 }
@@ -890,7 +890,7 @@ impl Scan<'_, '_, '_> {
         }
         if at_word(b"see") && gap {
             let r = self.rest(after);
-            if r.starts_with(b"http://") || r.starts_with(b"https://") {
+            if crate::starts(r, b"http://") || crate::starts(r, b"https://") {
                 let k = doc_run(self.b, after, b"");
                 tag_tok(self, e);
                 return self.take(after, k, JD_LINK);
@@ -898,7 +898,7 @@ impl Scan<'_, '_, '_> {
             let k = doc_run(self.b, after, b"@/");
             // not before an inline tag, a `[description]` before it or not
             let inline = inline_tag_len(r).is_some()
-                || (r.starts_with(b"[") && {
+                || (crate::starts(r, b"[") && {
                     let e = r.iter().position(|&c| c == b']');
                     e.is_some_and(|e| {
                         !r[1..e].contains(&b'[') && inline_tag_len(&r[e + 1..]).is_some()
@@ -1015,7 +1015,7 @@ impl Scan<'_, '_, '_> {
         if !self.g_link {
             let r = self.rest(k);
             let mut j = k;
-            if r.starts_with(b"http://") || r.starts_with(b"https://") {
+            if crate::starts(r, b"http://") || crate::starts(r, b"https://") {
                 while j < self.n {
                     let d = self.b[j];
                     if d == b'|' || d == b'}' || is_space(d) {
@@ -1137,7 +1137,7 @@ impl Scan<'_, '_, '_> {
         }
         loop {
             let mut k = j;
-            if self.rest(k).starts_with(b"[]") {
+            if self.has(k, b"[]") {
                 k += 2;
             }
             if self.c(k) == b'.'
@@ -1215,13 +1215,13 @@ impl Scan<'_, '_, '_> {
 /// `link(?:code|plain)?|tutorial` with no `\b` after it (`{@linkn` is `link` and `n`).
 fn inline_tag_len(r: &[u8]) -> Option<usize> {
     let r = r.strip_prefix(b"{@")?;
-    if r.starts_with(b"linkcode") {
+    if crate::starts(r, b"linkcode") {
         Some(8)
-    } else if r.starts_with(b"linkplain") {
+    } else if crate::starts(r, b"linkplain") {
         Some(9)
-    } else if r.starts_with(b"link") {
+    } else if crate::starts(r, b"link") {
         Some(4)
-    } else if r.starts_with(b"tutorial") {
+    } else if crate::starts(r, b"tutorial") {
         Some(8)
     } else {
         None
