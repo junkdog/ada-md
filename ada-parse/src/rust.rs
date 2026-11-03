@@ -20,9 +20,15 @@
 //! A string that `Regex::new(`, `RegexBuilder::new(` or `regex!(` takes is colored as the
 //! `regex` crate's regex (ADR-40, phase 4; [`crate::regex`]), as RustRover colors it: its text
 //! is the regex's, but for the string's end and (in `"…"`) its escapes.
+//!
+//! SQL by call site and marker (ADR-40, phase 4; [`crate::sql`]), as RustRover has it: the SQL
+//! argument of sqlx's, diesel's, rusqlite's and postgres' calls (`sqlx::query!(`,
+//! `query_as!(T, `, `sql_query(`, `conn.execute(`…), and the string after `// language=SQL`.
+//! Its text is SQL's, but for the string's end and (in `"…"`) its escapes.
 
 use crate::machine::KEPT as HALF;
 use crate::regex;
+use crate::sql;
 use crate::{Out, State, is_space, skip_spaces};
 
 // The contexts, by bat's names where one is one of them.
@@ -113,17 +119,34 @@ const ATTR_CALL: u8 = 55;
 const FMT_FIRST: u8 = 56;
 /// `write!`'s first argument, before the format string.
 const WRITE_FIRST: u8 = 57;
+/// A SQL call's `( … )` (ADR-40, phase 4): [`GROUP`], plus where its SQL argument is (a
+/// `PSQL_*` state added). Past that argument, or one that doesn't fit, it is [`GROUP`].
+const PSQL: u8 = 58;
+/// At the first argument: the SQL (`sql_query(`, `query!(`, `conn.execute(`…).
+const PSQL_SQL: u8 = 0;
+/// At the first argument: a type, then the SQL (`query_as!(`).
+const PSQL_TYPE: u8 = 1;
+/// In the type, waiting for its `,`.
+const PSQL_SKIP: u8 = 2;
+const PSQL_LAST: u8 = PSQL + PSQL_SKIP;
 // strings and comments last: no `with_prototype` reaches into them
-const STRING: u8 = 58;
-const FMT_STRING: u8 = 59;
-const BYTE_STRING: u8 = 60;
-const RAW_STRING: u8 = 61;
-const FMT_RAW: u8 = 62;
-const RAW_BYTES: u8 = 63;
-const BLOCK_COMMENT: u8 = 64;
-const DOC_COMMENT: u8 = 65;
+const STRING: u8 = 70;
+const _: () = assert!(PSQL_LAST < STRING);
+const FMT_STRING: u8 = 71;
+const BYTE_STRING: u8 = 72;
+const RAW_STRING: u8 = 73;
+const FMT_RAW: u8 = 74;
+const RAW_BYTES: u8 = 75;
+const BLOCK_COMMENT: u8 = 76;
+const DOC_COMMENT: u8 = 77;
+/// SQL in the string below (ADR-40, phase 4): this, plus SQL's context there
+/// ([`crate::sql`]'s `MAIN` to `HASHES`).
+const SQL_IN: u8 = 0x50;
+const SQL_LAST: u8 = SQL_IN + sql::HASHES;
+const _: () = assert!(DOC_COMMENT < SQL_IN);
 /// A regex in the string below (ADR-40, phase 4): this bit, and the regex's state.
 const REGEX: u8 = 0x80;
+const _: () = assert!(SQL_LAST < REGEX);
 
 /// The leaves: a token's scopes. A kind is a leaf, plus [`NLEAVES`] in an attribute.
 static LEAVES: [&str; 112] = [
@@ -356,9 +379,25 @@ const NLEAVES: u16 = LEAVES.len() as u16;
 const RE_STRING: u16 = 256;
 const RE_RAW: u16 = RE_STRING + regex::KINDS as u16;
 const _: () = assert!(2 * NLEAVES <= RE_STRING);
+/// SQL in a `"…"` string, then in a raw one: SQL's kinds from each.
+const SQL_STRING: u16 = RE_RAW + regex::KINDS as u16;
+const SQL_RAW: u16 = SQL_STRING + sql::KINDS as u16;
 
 /// The scopes under `source.rust` a kind carries, outermost first.
 pub fn scopes(kind: u16) -> Vec<&'static str> {
+    if kind >= SQL_STRING {
+        let (text, base) = if kind >= SQL_RAW {
+            (RAW, SQL_RAW)
+        } else {
+            (STR, SQL_STRING)
+        };
+        if usize::from(kind - base) >= sql::KINDS {
+            return Vec::new();
+        }
+        let mut out = scopes(text);
+        out.extend(sql::scopes(kind - base));
+        return out;
+    }
     if kind >= RE_STRING {
         let (text, base) = if kind >= RE_RAW {
             (RAW, RE_RAW)
@@ -390,12 +429,25 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         b,
         stack: [MAIN; MAX],
         depth: 1,
-        hashes: usize::from(state.arg),
+        hashes: usize::from(state.arg & !MARKED),
         exact: state.is_exact(),
         annot: 0,
         tuple: 0,
         text: 0,
         at: 0,
+        sql_paren: usize::MAX,
+        sql_call: PSQL_SQL,
+        sql: sql::Embedded {
+            is_end: usize::MAX,
+            at: 0,
+        },
+        sql_end: usize::MAX,
+        sql_nl: false,
+        mark: if state.arg & MARKED != 0 {
+            0
+        } else {
+            usize::MAX
+        },
         out,
     };
     let n = usize::from(state.depth);
@@ -410,8 +462,8 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     }
     s.depth = 1 + n;
     s.refresh();
-    if s.top() >= REGEX {
-        s.text = s.regex_text();
+    if s.top() >= SQL_IN {
+        s.text = s.string_text();
     }
     s.run();
     s.fill(b.len());
@@ -421,12 +473,15 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         depth: (n - from) as u8,
         inexact: !s.exact || from > 0,
         arg: if matches!(s.string_top(), RAW_STRING | FMT_RAW | RAW_BYTES) {
-            s.hashes as u16
+            s.hashes as u16 & !MARKED
         } else {
             0
         },
         ..State::default()
     };
+    if s.mark != usize::MAX && sql::marker_holds(b, s.mark, b.len()) {
+        packed.arg |= MARKED;
+    }
     for (i, &c) in s.stack[1 + from..s.depth].iter().enumerate() {
         if i < HALF {
             packed.levels[i] = c;
@@ -436,6 +491,10 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     }
     *state = packed;
 }
+
+/// [`State::arg`]'s bit beside an open raw string's `#`s: a SQL marker (`// language=SQL`)
+/// waits for its string.
+const MARKED: u16 = 0x8000;
 
 struct Scan<'b, 'c> {
     b: &'b [u8],
@@ -452,6 +511,21 @@ struct Scan<'b, 'c> {
     text: u16,
     /// Where the spans so far end.
     at: usize,
+    /// Where the `(` of a SQL call is ([`sql_call`]), and the state its arguments start in;
+    /// `usize::MAX` for none on the line.
+    sql_paren: usize,
+    sql_call: u8,
+    /// What SQL's scan keeps between the host's turns on a line.
+    sql: sql::Embedded,
+    /// Where the SQL string open on the line ends (its quote, or the line's end), past which no
+    /// SQL token runs; `usize::MAX` till it is looked for.
+    sql_end: usize,
+    /// Whether SQL's scan took the line's end (`\s` matching its `\n`).
+    sql_nl: bool,
+    /// A SQL marker's: the next string that opens at or past it is SQL, unless a `;`, `,`, `)`,
+    /// `{` or `}` came between ([`sql::marker_holds`], checked there and at the line's end);
+    /// `usize::MAX` for none.
+    mark: usize,
     out: &'b mut Out<'c>,
 }
 
@@ -807,6 +881,97 @@ fn regex_string(b: &[u8], p: usize) -> bool {
         .any(|name| b[..w].ends_with(name) && (w == name.len() || !is_word(b[w - name.len() - 1])))
 }
 
+/// The call `name` (a macro's with `mac`) whose arguments hold SQL, as RustRover reads them: the
+/// [`PSQL`] state they start in. sqlx's `query`, `query_as`, `query_scalar` and their `_with`
+/// forms, its macros (`query!`, `query_scalar!`, `query_unchecked!`…, and `query_as!` after a
+/// type), diesel's `sql_query`, `sql` and `push_sql`, rusqlite's and postgres' `execute`,
+/// `execute_batch`, `prepare`, `query_row`, `query`, `query_one`, `batch_execute`….
+fn sql_call(name: &[u8], mac: bool) -> Option<u8> {
+    if mac {
+        return match name {
+            b"query" | b"query_scalar" | b"query_unchecked" | b"query_scalar_unchecked" => {
+                Some(PSQL_SQL)
+            }
+            b"query_as" | b"query_as_unchecked" => Some(PSQL_TYPE),
+            _ => None,
+        };
+    }
+    // the first byte first: most calls start with none of these
+    let sql = match name.first()? {
+        b'q' => matches!(
+            name,
+            b"query"
+                | b"query_as"
+                | b"query_scalar"
+                | b"query_with"
+                | b"query_as_with"
+                | b"query_scalar_with"
+                | b"query_row"
+                | b"query_one"
+                | b"query_opt"
+                | b"query_raw"
+                | b"query_typed"
+        ),
+        b's' => matches!(name, b"sql_query" | b"sql" | b"simple_query"),
+        b'p' => matches!(
+            name,
+            b"push_sql" | b"prepare" | b"prepare_cached" | b"prepare_typed"
+        ),
+        b'e' => matches!(name, b"execute" | b"execute_batch"),
+        b'b' => name == b"batch_execute",
+        _ => false,
+    };
+    sql.then_some(PSQL_SQL)
+}
+
+/// Whether the `.` at `p` follows a receiver named as a prepared statement's (`stmt.execute(`,
+/// `insert_statement.query(`, ASCII case ignored), whose arguments are the SQL's, not SQL.
+fn stmt_receiver(b: &[u8], p: usize) -> bool {
+    let mut s = p;
+    while s > 0 && (b[s - 1].is_ascii_alphanumeric() || b[s - 1] == b'_') {
+        s -= 1;
+    }
+    let r = b[s..p].to_ascii_lowercase();
+    r.windows(4).any(|w| w == b"stmt") || r.windows(9).any(|w| w == b"statement")
+}
+
+/// A turbofish's `<…>` at `p`, its `<`, on the line: where the byte after its `>` is.
+fn turbofish_end(b: &[u8], p: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, &c) in b[p..].iter().enumerate() {
+        match c {
+            b'<' => depth += 1,
+            b'>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(p + i + 1);
+                }
+            }
+            b'(' | b')' | b';' | b'{' | b'}' | b'"' => return None,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Where the string SQL is in ends on its line, from `p` inside it: its quote (a raw one's
+/// with `hashes` `#`s after it), or the line's end.
+fn string_end(b: &[u8], mut p: usize, hashes: Option<usize>) -> usize {
+    while p < b.len() {
+        match (b[p], hashes) {
+            (b'"', None) => return p,
+            (b'"', Some(h))
+                if b.len() > p + h && b[p + 1..p + 1 + h].iter().all(|&c| c == b'#') =>
+            {
+                return p;
+            }
+            (b'\\', None) => p += 2,
+            _ => p += 1,
+        }
+    }
+    b.len()
+}
+
 /// A character literal's body at `p`, `[^'\\]` or an escape: where it ends, and whether it
 /// is an escape.
 fn char_body(b: &[u8], p: usize, unicode: bool) -> Option<(usize, bool)> {
@@ -956,6 +1121,7 @@ fn proto(c: u8) -> bool {
             | RAW_BYTES
             | MATCHER
             | MATCHER_GROUP
+            | SQL_IN..=SQL_LAST
             | REGEX..
     )
 }
@@ -1011,17 +1177,17 @@ impl Scan<'_, '_> {
         self.text = self.kind(text_of(self.top()));
     }
 
-    /// [`Scan::refresh`] in a regex: its string's text.
+    /// [`Scan::refresh`] in a regex or SQL: its string's text.
     #[cold]
     #[inline(never)]
-    fn regex_text(&self) -> u16 {
+    fn string_text(&self) -> u16 {
         self.kind(text_of(self.string_top()))
     }
 
-    /// The top context, or under a regex the string it is in.
+    /// The top context, or under a regex or SQL the string it is in.
     fn string_top(&self) -> u8 {
         let top = self.top();
-        if top >= REGEX && self.depth >= 2 {
+        if top >= SQL_IN && self.depth >= 2 {
             self.stack[self.depth - 2]
         } else {
             top
@@ -1162,6 +1328,7 @@ impl Scan<'_, '_> {
             MAIN | BLOCK | GROUP | BRACKET | MACRO_BRACKET | CLOSURE_BODY => {
                 self.statements(top, p, c)
             }
+            PSQL..=PSQL_LAST => self.sql_group(p, c, top),
             HEAD | MOD_HEAD => self.head(top, p, c),
             AFTER_OP | TRY_CLOSURE => {
                 let q = skip_spaces(b, p);
@@ -1705,6 +1872,7 @@ impl Scan<'_, '_> {
                 None
             }
             BLOCK_COMMENT | DOC_COMMENT => self.in_comment(top, p, c),
+            SQL_IN..=SQL_LAST => self.in_sql(p, c, top),
             _ => self.in_regex(p, c, top),
         }
     }
@@ -1717,6 +1885,10 @@ impl Scan<'_, '_> {
             CLOSURE_BODY | CLOSURE_PARAMS | NO_TYPE_NAMES | IMPL_GENERIC => self.pop(len),
             IMPL_FOR => self.set(len, IMPL_IDENT),
             STRUCT_GENERIC => self.set(len, STRUCT_BODY),
+            SQL_IN..=SQL_LAST => {
+                self.sql_eol(top);
+                return None;
+            }
             _ => return None,
         }
         Some(len)
@@ -1771,9 +1943,20 @@ impl Scan<'_, '_> {
             return None;
         }
         match b.get(p + 1) {
-            Some(b'*') => Some(self.open_comment(p)),
+            Some(b'*') => {
+                if sql::marker_comment(b, p + 2) {
+                    self.mark = b[p + 2..]
+                        .windows(2)
+                        .position(|w| w == b"*/")
+                        .map_or(b.len(), |i| p + 4 + i);
+                }
+                Some(self.open_comment(p))
+            }
             Some(b'/') => {
                 let doc = matches!(b.get(p + 2), Some(b'!' | b'/'));
+                if !doc && sql::marker_comment(b, p + 2) {
+                    self.mark = b.len();
+                }
                 let (text, n) = if doc { (DOC, 3) } else { (COMMENT, 2) };
                 self.put(p, p + n, text + MARK);
                 let mut from = p + n;
@@ -1891,7 +2074,12 @@ impl Scan<'_, '_> {
                 p + 1
             }
             b'(' => {
-                self.push(p, GROUP);
+                let group = if p == self.sql_paren {
+                    PSQL + self.sql_call
+                } else {
+                    GROUP
+                };
+                self.push(p, group);
                 self.put(p, p + 1, GROUP_BEGIN);
                 self.push_ahead(p + 1, TRY_CLOSURE);
                 p + 1
@@ -2066,13 +2254,177 @@ impl Scan<'_, '_> {
         Some(e)
     }
 
-    /// A string opened at `p`, its text from `e`: a regex in it where a call makes it one.
+    /// A string opened at `p`, its text from `e`: SQL in it after a marker, else a regex in it
+    /// where a call makes it one.
     // out of line, so that the callers' hot paths stay inlined
     #[inline(never)]
     fn regex_in(&mut self, p: usize, e: usize) {
-        if regex_string(self.b, p) {
+        if self.mark <= p && self.marked(p) {
+            if matches!(self.top(), STRING | RAW_STRING) {
+                self.sql_in(e);
+            }
+        } else if regex_string(self.b, p) {
             self.push(e, REGEX);
-            self.text = self.regex_text();
+            self.text = self.string_text();
+        }
+    }
+
+    /// A name `b[p..e]` before a call's `(` (after `!` for a macro, `::<…>` for a turbofish):
+    /// that `(` opens a SQL call's arguments if the name is one of [`sql_call`]'s.
+    #[inline(never)]
+    fn sql_name(&mut self, p: usize, e: usize) {
+        let b = self.b;
+        let mac = b.get(e) == Some(&b'!');
+        let Some(st) = sql_call(&b[p..e], mac) else {
+            return;
+        };
+        if p > 0 && b[p - 1] == b'.' && stmt_receiver(b, p - 1) {
+            return;
+        }
+        let q = if mac {
+            skip_spaces(b, e + 1)
+        } else if b[e..].starts_with(b"::<") {
+            match turbofish_end(b, e + 2) {
+                Some(q) => q,
+                None => return,
+            }
+        } else {
+            e
+        };
+        if b.get(q) == Some(&b'(') {
+            self.sql_paren = q;
+            self.sql_call = st;
+        }
+    }
+
+    /// A SQL call's arguments at `p`: [`GROUP`]'s patterns, with the state followed at the
+    /// first argument's start (and a type's `,`), and the SQL argument's string opened as SQL.
+    #[cold]
+    #[inline(never)]
+    fn sql_group(&mut self, p: usize, c: u8, top: u8) -> Option<usize> {
+        let b = self.b;
+        if !is_space(c) && c != b')' && !(c == b'/' && matches!(b.get(p + 1), Some(b'/' | b'*'))) {
+            let next = match top - PSQL {
+                PSQL_SQL => {
+                    let d = self.depth - 1;
+                    self.stack[d] = GROUP;
+                    if (c == b'"' || (c == b'r' && starts_word(b, p)))
+                        && let Some(e) = self.sql_string(p)
+                    {
+                        return Some(e);
+                    }
+                    GROUP
+                }
+                PSQL_TYPE if c == b'"' => GROUP,
+                PSQL_TYPE => PSQL + PSQL_SKIP,
+                _ if c == b',' => PSQL + PSQL_SQL,
+                _ => top,
+            };
+            let d = self.depth - 1;
+            self.stack[d] = next;
+        }
+        self.statements(GROUP, p, c)
+    }
+
+    /// A string at `p`, `"…"` or a raw one, whose text is SQL; `None` if none opens there.
+    fn sql_string(&mut self, p: usize) -> Option<usize> {
+        let e = self.string_open(p, false)?;
+        if matches!(self.top(), STRING | RAW_STRING) {
+            self.sql_in(e);
+        }
+        Some(e)
+    }
+
+    /// SQL in the string just opened, its text from `e`. It takes a marker's turn.
+    fn sql_in(&mut self, e: usize) {
+        self.mark = usize::MAX;
+        self.sql_end = usize::MAX;
+        self.sql.is_end = usize::MAX;
+        self.push(e, SQL_IN + sql::MAIN);
+        self.text = self.string_text();
+    }
+
+    /// Whether the marker before `p` still holds there ([`sql::marker_holds`]); it's dropped
+    /// if not.
+    #[cold]
+    fn marked(&mut self, p: usize) -> bool {
+        let holds = sql::marker_holds(self.b, self.mark, p);
+        if !holds {
+            self.mark = usize::MAX;
+        }
+        holds
+    }
+
+    /// In SQL in a string, at `p`: the string's end and (in `"…"`) its escapes, else SQL's
+    /// scanner, embedded, to the next place they can start ([`sql::embedded`]).
+    #[cold]
+    #[inline(never)]
+    fn in_sql(&mut self, p: usize, c: u8, top: u8) -> Option<usize> {
+        let b = self.b;
+        if self.string_top() == RAW_STRING {
+            let h = self.hashes;
+            if c == b'"' && b.len() > p + h && b[p + 1..p + 1 + h].iter().all(|&c| c == b'#') {
+                self.pop(p);
+                return Some(self.close_n(p, 1 + h, RAW_END));
+            }
+        } else {
+            match c {
+                b'"' => {
+                    self.pop(p);
+                    return Some(self.close(p, STR_END));
+                }
+                b'\\' => {
+                    if let Some(e) = escape(b, p, true) {
+                        return Some(self.token(p, e - p, STR_ESCAPE));
+                    }
+                    if p + 1 == b.len() {
+                        return Some(self.token(p, 1, STR_CONTINUATION));
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.sql_scan(p, top).map(|(q, _)| q)
+    }
+
+    /// SQL's scan from `p` in the string below `top`: where it stopped, its context there set
+    /// on the stack. No SQL token runs past the string's end.
+    fn sql_scan(&mut self, p: usize, top: u8) -> Option<(usize, u8)> {
+        let raw = self.string_top() == RAW_STRING;
+        let host = sql::Embed {
+            yields: &RE_YIELDS[usize::from(raw)],
+            base: if raw { SQL_RAW } else { SQL_STRING },
+            text: self.text,
+        };
+        let b = self.b;
+        if self.sql_end == usize::MAX {
+            self.sql_end = string_end(b, p, raw.then_some(self.hashes));
+        }
+        let end = self.sql_end;
+        self.fill(p);
+        self.sql.at = self.at;
+        let r = sql::embedded(&b[..end], p, top - SQL_IN, &host, &mut self.sql, self.out);
+        self.at = self.sql.at;
+        let (mut q, ctx) = r?;
+        if q > end {
+            self.sql_nl |= end == b.len();
+            q = end;
+        }
+        let d = self.depth - 1;
+        self.stack[d] = SQL_IN + ctx;
+        Some((q, ctx))
+    }
+
+    /// SQL at its string's line end, which SQL's patterns may take as `\s`; its line comment
+    /// ends there.
+    #[cold]
+    fn sql_eol(&mut self, top: u8) {
+        if !self.sql_nl {
+            self.sql_scan(self.b.len(), top);
+        }
+        if matches!(self.top().wrapping_sub(SQL_IN), sql::DASHES | sql::HASHES) {
+            let d = self.depth - 1;
+            self.stack[d] = SQL_IN + sql::MAIN;
         }
     }
 
@@ -2284,12 +2636,14 @@ impl Scan<'_, '_> {
         }
         let lower = matches!(next, Some(b'(' | b'!')) && is_lower(w);
         if next == Some(b'(') && lower {
+            self.sql_name(p, e);
             return Some(self.token(p, e - p, SUPPORT_FN));
         }
         if next == Some(b'!') && lower {
             let s = skip_spaces(b, e + 1);
             let open = b.get(s).copied();
             if open == Some(b'(') {
+                self.sql_name(p, e);
                 let first = match w {
                     b"format" | b"print" | b"println" | b"eprint" | b"eprintln" => FMT_FIRST,
                     b"write" | b"writeln" => WRITE_FIRST,
@@ -2372,6 +2726,9 @@ impl Scan<'_, '_> {
 
     /// A path's segment `p..e` before `::`: `self`, `super` or a module's name.
     fn path(&mut self, p: usize, e: usize) -> usize {
+        if self.b.get(e + 2) == Some(&b'<') {
+            self.sql_name(p, e);
+        }
         let leaf = match &self.b[p..e] {
             b"self" => PATH_SELF,
             b"super" => PATH_SUPER,
@@ -2405,7 +2762,12 @@ impl Scan<'_, '_> {
             match w {
                 b"self" => return self.token(p, e - p, SELF),
                 b"super" => return self.token(p, e - p, KEYWORD),
-                _ if ident => return e,
+                _ if ident => {
+                    if matches!(b.get(e), Some(b'(' | b'!')) {
+                        self.sql_name(p, e);
+                    }
+                    return e;
+                }
                 _ => {}
             }
         }
@@ -2946,6 +3308,68 @@ mod tests {
         // not a regex: any other call
         let got = of(&l[4..]);
         assert!(!got.iter().any(|(_, s)| s.contains("regexp")), "{got:?}");
+    }
+
+    #[test]
+    fn sql_in_strings() {
+        const DQ: &str = "string.quoted.double.rust";
+        const RAW: &str = "string.quoted.double.raw.rust";
+        let dml = |s: &str| format!("{s} keyword.other.DML.sql");
+        let l = [
+            "// language=SQL",
+            r#"const Q: &str = "SELECT a FROM t WHERE b = '{x}'\n";"#,
+            r#"let rows = sqlx::query!("DELETE FROM u WHERE id = $1", id)"#,
+            r##"    .fetch_all(&pool).await?; diesel::sql_query(r#"UPDATE "u" SET n = 2"#);"##,
+            "let n = sqlx::query_as!(",
+            "    User,",
+            r##"    r#"INSERT INTO u -- a note"##,
+            r##"    VALUES (1)"#, id"##,
+            ");",
+            r#"conn.execute("CREATE TABLE p (id INTEGER)", params![]);"#,
+            r#"let s = query_scalar::<_, i64>("UNION ALL SELECT 1");"#,
+            r#"stmt.execute(["LIMIT"]); stmt.query("ORDER"); f("HAVING");"#,
+            r#"conn.execute(&format!("JOIN {}", t), []); query_as!(User, "WHERE")"#,
+            r#"query_as::<_, User>("GROUP BY x")"#,
+        ];
+        // a marker's string; the host's escape between SQL's tokens, `{x}` SQL's text
+        has(&l, "SELECT", &dml(DQ));
+        has(&l, r"\n", &format!("{DQ} constant.character.escape.rust"));
+        has(&l, "{x}", &format!("{DQ} string.quoted.single.sql"));
+        // a macro's and a function's first argument, a raw string's `"` SQL's
+        has(&l, "DELETE", &dml(DQ));
+        has(&l, "UPDATE", &dml(RAW));
+        has(&l, "u", &format!("{RAW} string.quoted.double.sql"));
+        // `query_as!`'s after its type, over lines; SQL's line comment ends with its line
+        has(&l[4..9], "INSERT INTO", &dml(RAW));
+        has(
+            &l,
+            " a note",
+            &format!("{RAW} comment.line.double-dash.sql"),
+        );
+        has(
+            &l[4..9],
+            "VALUES",
+            &format!("{RAW} keyword.other.DML.II.sql"),
+        );
+        has(
+            &l,
+            "CREATE",
+            &format!("{DQ} meta.create.sql keyword.other.create.sql"),
+        );
+        // a turbofish
+        has(&l, "UNION ALL", &dml(DQ));
+        has(&l, "GROUP BY", &dml(DQ));
+        has(&l, "WHERE", &dml(DQ));
+        // a prepared statement's arguments, any other call, a string in a call in the argument
+        for w in ["LIMIT", "ORDER", "HAVING", "JOIN"] {
+            assert!(
+                of(&l)
+                    .iter()
+                    .any(|(t, s)| t.contains(w) && !s.contains(".sql")),
+                "{w}: {:#?}",
+                of(&l)
+            );
+        }
     }
 
     #[test]
