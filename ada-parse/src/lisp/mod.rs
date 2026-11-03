@@ -70,6 +70,9 @@ leaves! {
     Keyword = "keyword.other.symbol.lisp",
     KeywordBegin = "keyword.other.symbol.lisp punctuation.definition.symbol.begin.lisp",
     KeywordEnd = "keyword.other.symbol.lisp punctuation.definition.symbol.end.lisp",
+    // a keyword's `:`, `::` or `#:` under the keyword's scope, so a theme colors the keyword whole
+    // (X-009); bat's `punctuation.accessor` beside it, as `pkg:sym`'s still is
+    KeywordMark = "keyword.other.symbol.lisp punctuation.definition.keyword.lisp",
     Control = "keyword.control.lisp",
     Quoted = "punctuation.definition.quoted.lisp",
     Unquote = "punctuation.definition.variable.lisp",
@@ -956,7 +959,7 @@ impl Scan<'_, '_, '_> {
     fn keyword(&mut self, p: usize) -> Option<usize> {
         let k = p + 1 + usize::from(self.at(p + 1) == b':');
         let id = self.ident_at(k)?;
-        self.put(p, k, L::Accessor);
+        self.put(p, k, L::KeywordMark);
         self.put_id(k, id, L::Keyword);
         Some(id.end)
     }
@@ -2379,7 +2382,7 @@ impl Scan<'_, '_, '_> {
     /// Racket's `#:keyword` at `p`.
     fn hash_keyword(&mut self, p: usize) -> Option<usize> {
         let id = self.ident_at(p + 2)?;
-        self.put(p, p + 2, L::Accessor);
+        self.put(p, p + 2, L::KeywordMark);
         self.put_id(p + 2, id, L::Keyword);
         Some(id.end)
     }

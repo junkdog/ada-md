@@ -2646,20 +2646,27 @@ fn number(b: &[u8], p: usize) -> Option<(usize, usize, u16)> {
             h -= 1;
         }
     }
-    // 2: `(?:[0-9_]+)?\.[0-9_]+(?:[eE][0-9]+)?[FfDdMm]?`
+    // `[+-]?[0-9]+` after an exponent's `e` at `at`, the sign only before a digit: where
+    // the digits end, or `None`. bat's grammar takes no sign (and in 4 and 5 one digit at
+    // most), so `1e10`, `2e-3` and `1.5e-3` broke apart (X-008).
+    let exponent = |at: usize, under: bool| {
+        let s = at + 1 + usize::from(matches!(b.get(at + 1), Some(b'+' | b'-')));
+        let mut x = s;
+        while x < b.len() && (b[x].is_ascii_digit() || (under && b[x] == b'_')) {
+            x += 1;
+        }
+        (x > s).then_some(x)
+    };
+    // 2: `(?:[0-9_]+)?\.[0-9_]+(?:[eE][+-]?[0-9]+)?[FfDdMm]?`
     let i = int(q);
     if b.get(i) == Some(&b'.') {
         let f = int(i + 1);
         if f > i + 1 {
             let mut ends = [usize::MAX; 2];
-            if matches!(b.get(f), Some(b'e' | b'E')) {
-                let mut x = f + 1;
-                while x < b.len() && b[x].is_ascii_digit() {
-                    x += 1;
-                }
-                if x > f + 1 {
-                    ends[0] = x;
-                }
+            if matches!(b.get(f), Some(b'e' | b'E'))
+                && let Some(x) = exponent(f, false)
+            {
+                ends[0] = x;
             }
             ends[1] = f;
             for e in ends {
@@ -2695,16 +2702,13 @@ fn number(b: &[u8], p: usize) -> Option<(usize, usize, u16)> {
     if i == q {
         return None;
     }
-    // 4: `[0-9_]+[eE](?:[0-9_])?+[FfDdMm]?`, 5: `[0-9_]+\.[eE](?:[0-9_])?+[FfDdMm]?`
+    // 4: `[0-9_]+[eE](?:[+-]?[0-9_]+)?[FfDdMm]?`, 5: `[0-9_]+\.[eE](?:[+-]?[0-9_]+)?[FfDdMm]?`
     for at in [i, i + 1] {
         if at == i + 1 && b.get(i) != Some(&b'.') {
             continue;
         }
         if matches!(b.get(at), Some(b'e' | b'E')) {
-            let mut e = at + 1;
-            if b.get(e).is_some_and(|&c| c.is_ascii_digit() || c == b'_') {
-                e += 1;
-            }
+            let e = exponent(at, true).unwrap_or(at + 1);
             if tf(e)
                 && let Some(r) = tail(b, e + 1)
             {
@@ -3296,5 +3300,16 @@ mod tests {
         let mut spans = Vec::new();
         crate::lex(Lang::PowerShell, "#requires", &mut state, &mut spans);
         assert_eq!(state, State::default());
+    }
+
+    /// An exponent takes a sign and any number of digits, where bat's grammar takes neither
+    /// (X-008): `1e10`, `2e-3` and `1.5e-3` are one number each; `2e-x` stays `2e` and `-`.
+    #[test]
+    fn exponents_with_signs_and_digits() {
+        let n = "constant.numeric.integer.powershell";
+        let got = kinds(&["$x = 1e10 + 2e-3 + 1.5e-3 + 1.5e+10d + 2e-x"]);
+        for want in ["1e10", "2e-3", "1.5e-3", "1.5e+10d", "2e"] {
+            assert!(got.contains(&(want, n)), "{want}: {got:?}");
+        }
     }
 }

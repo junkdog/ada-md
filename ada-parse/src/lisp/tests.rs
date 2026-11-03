@@ -413,3 +413,15 @@ fn clojure_heads() {
     assert_eq!(s("even?"), "(none)", "not a head");
     assert_eq!(s("identity"), "(none)", "not a head");
 }
+
+/// A keyword's `:`, `::` and Racket's `#:` sit under the keyword's scope, so a theme colors the
+/// keyword whole, where bat's accessor is its sibling (X-009); `pkg:sym`'s stays an accessor.
+#[test]
+fn a_keywords_mark_is_the_keywords() {
+    const MARK: &str = "keyword.other.symbol.lisp punctuation.definition.keyword.lisp";
+    assert_eq!(scope_of(&["(f :keys)"], ":"), MARK);
+    assert_eq!(scope_of(&["(f ::keys)"], "::"), MARK);
+    assert_eq!(scope_of(&["(cl:car x)"], ":"), "punctuation.accessor.lisp");
+    let racket = marked(Lang::Racket, &["(f #:kw 1)"]);
+    assert!(racket.contains(&("#:", MARK)), "{racket:?}");
+}

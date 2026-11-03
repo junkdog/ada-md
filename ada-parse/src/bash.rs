@@ -167,7 +167,11 @@ kinds! {
     HEX = "constant.numeric.integer.hexadecimal.shell",
     OCTAL = "constant.numeric.integer.octal.shell",
     OTHER_BASE = "constant.numeric.integer.other.shell",
-    BASE = "punctuation.definition.numeric.base.shell",
+    // a base's mark under its number's scope, as syntect stacks it (the pushed context's meta
+    // scope over the match), so a theme's `constant.numeric punctuation` reaches it (HL-005)
+    HEX_BASE = "constant.numeric.integer.hexadecimal.shell punctuation.definition.numeric.base.shell",
+    OCTAL_BASE = "constant.numeric.integer.octal.shell punctuation.definition.numeric.base.shell",
+    OTHER_BASE_MARK = "constant.numeric.integer.other.shell punctuation.definition.numeric.base.shell",
     NOT_HEX = "invalid.illegal.not-a-hex-character.shell",
     NOT_OCTAL = "invalid.illegal.not-an-octal-character.shell",
     BITWISE = "keyword.operator.bitwise.shell",
@@ -2956,10 +2960,10 @@ impl Scan<'_, '_, '_> {
         let d = self.at(p + 1);
         if c.is_ascii_digit() && !self.word_before(p) {
             if c == b'0' && matches!(d, b'x' | b'X') {
-                return self.push(p, p + 2, k::BASE, &[HEX]);
+                return self.push(p, p + 2, k::HEX_BASE, &[HEX]);
             }
             if c == b'0' && matches!(d, b'0'..=b'7') {
-                return self.push(p, p + 1, k::BASE, &[OCTAL]);
+                return self.push(p, p + 1, k::OCTAL_BASE, &[OCTAL]);
             }
             let e = self.digits_end(p);
             if self.at(e) == b'#' {
@@ -2970,7 +2974,14 @@ impl Scan<'_, '_, '_> {
                     f += 1;
                 }
                 if f > e + 1 {
-                    return self.exec(p, f, k::OTHER_BASE, &[(p, e + 1, k::BASE)], Op::None, 0);
+                    return self.exec(
+                        p,
+                        f,
+                        k::OTHER_BASE,
+                        &[(p, e + 1, k::OTHER_BASE_MARK)],
+                        Op::None,
+                        0,
+                    );
                 }
             }
             return self.none(p, e, k::DECIMAL);

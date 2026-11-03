@@ -2457,6 +2457,24 @@ impl Scan<'_, '_> {
                 self.put(p, r, FLOAT);
                 return Some(self.token(r, 3, NUMERIC));
             }
+            // `\d[eE][+-]?[\d_]*\d`, with `f32`, `f64` or nothing to the word's end: a float
+            // without a dot, which bat's grammar leaves plain (X-008)
+            if matches!(b.get(r), Some(b'e' | b'E')) {
+                let mut s = r + 1;
+                if matches!(b.get(s), Some(b'+' | b'-')) {
+                    s += 1;
+                }
+                let x = digits_end(b, s, digit);
+                if b[s..x].iter().any(u8::is_ascii_digit) {
+                    if suffix(x, b"f32") || suffix(x, b"f64") {
+                        self.put(p, x, FLOAT);
+                        return Some(self.token(x, 3, NUMERIC));
+                    }
+                    if ends_word(b, x) {
+                        return Some(self.token(p, x - p, FLOAT));
+                    }
+                }
+            }
         }
         let e = word_end(b, p);
         // the integer's digits, then a suffix or nothing to the word's end
@@ -2956,6 +2974,21 @@ mod tests {
         has(&l, "a", "variable.other.member.rust");
         has(&l, "b", "variable.other.member.rust");
         has(&l, ":", "punctuation.separator.type.rust");
+    }
+
+    /// A float with an exponent and no dot is a float, which bat's grammar leaves plain (X-008):
+    /// with a sign, underscores and `f32`/`f64`; an integer suffix or no exponent digit isn't one.
+    #[test]
+    fn floats_without_a_dot() {
+        let l = ["1e3 + 1E-3 + 2e10f64 + 1_000e+3_ + 0e0 + 1e3_f32 + 0x1e3"];
+        for f in ["1e3", "1E-3", "2e10", "1_000e+3_", "0e0", "1e3_"] {
+            has(&l, f, "constant.numeric.float.rust");
+        }
+        has(&l, "f64", "storage.type.numeric.rust");
+        has(&l, "f32", "storage.type.numeric.rust");
+        has(&l, "0x1e3", "constant.numeric.integer.hexadecimal.rust");
+        let got = of(&["1e; 1e3u8; 1e+"]);
+        assert!(!got.iter().any(|(_, s)| s.contains("numeric")), "{got:#?}");
     }
 
     #[test]

@@ -2757,7 +2757,9 @@ mod tests {
             "+a+b+ *print-base* array string true false keyword:k :key ::k |a b| &x |#\n",
             "(*x* 1) (&rest) ('a) (t) (:k) (1 2) (\"s\") () (:a . b))\n",
         );
-        rules_match_the_grammar("lisp", "Lisp", text);
+        // a keyword's `:` under the keyword (X-009) is a rule bat's sibling accessor never meets:
+        // compared without it, pinned in `a_literals_punctuation_reads_in_its_color`
+        rules_match_the_grammar_without("lisp", "Lisp", text, &[LISP_KEYWORD_MARK]);
     }
 
     /// ada-parse's Clojure lexer picks the rules bat's grammar picks, in every built-in theme
@@ -2818,7 +2820,9 @@ mod tests {
             "GROUP BY a ORDER  BY b DESC LIMIT 10 UNION ALL SELECT TOP 5 * FROM w;\n",
             "INSERT IGNORE INTO t VALUES (1, \"a\"\"b #{x} c\", %{p #{q} r}, %r{s}, ());\n",
             "BEGIN WORK; START TRANSACTION; GRANT WITH GRANT OPTION; REVOKE; COMMIT;\n",
-            "SELECT 1 AS one, true, FALSE, 1.5, 12ab, ٣, x.y.z ASC;\n",
+            // a fraction or an exponent (`1.5`, `1e3`) reads as one number, bat's as two or
+            // none: ada-parse's `decimals_and_exponents` (X-008)
+            "SELECT 1 AS one, true, FALSE, 12ab, ٣, x.y.z ASC;\n",
         );
         rules_match_the_grammar("sql", "SQL", text);
     }
@@ -2828,7 +2832,9 @@ mod tests {
     /// a block comment's docs, `function` with a scope, attributes and their parameters, types,
     /// commands with a path before them, every variable form, operators after `-`, numbers with
     /// suffixes and units, strings with escapes and interpolation, here-strings, `--%`, `class`,
-    /// `%` and `?`, dot-sourcing, a range, a type's name after a digit).
+    /// `%` and `?`, dot-sourcing, a range, a type's name after a digit). An exponent's sign and
+    /// its digits past the first aren't bat's, by design: ada-parse's
+    /// `exponents_with_signs_and_digits` (X-008).
     #[test]
     fn powershell_rules_match_the_grammar() {
         let text = concat!(
@@ -2844,7 +2850,7 @@ mod tests {
             "    param([Parameter(Mandatory, Position=0)][ValidateSet('a', 'b')][string[]] $Name, [int]$N = 0x1FUL)\n",
             "    begin { $ErrorActionPreference = 'Stop' } process {\n",
             "        Get-ChildItem C:\\x\\Get-Foo.ps1 -Path $env:TEMP 2>&1 | ForEach-Object { $_.FullName } | Where-Object Length -gt 10mb\n",
-            "        $h = @{ 'k' = 1; Name = \"a $x `n $($y.z) `u{1F600} `u{ \"\"q\"\" ${env:path}.Length\" }; $a = @(1, 2..3, -.5, 1.5e3d, 1e10, _)\n",
+            "        $h = @{ 'k' = 1; Name = \"a $x `n $($y.z) `u{1F600} `u{ \"\"q\"\" ${env:path}.Length\" }; $a = @(1, 2..3, -.5, 1.5e3d, 1e1, _)\n",
             "        $s = @\"\n",
             "text $v `t $(Get-Date) \"\" ${global:x}\n",
             "\"@\n",
@@ -3363,10 +3369,92 @@ mod tests {
         rules_match_the_grammar("bash", "Bourne Again Shell (bash)", text);
     }
 
+    /// A literal's punctuation takes the literal's color in every built-in theme (HL-005): a
+    /// number's `.` and `0x` (past tokyonight's `punctuation.separator` too), a Clojure
+    /// keyword's `:`, a character's `?`, an entity's `&` and `;`; a Lisp keyword's `:` as the
+    /// keyword (X-009). An escape's keeps its own, and so does `pkg:sym`'s accessor.
+    #[test]
+    fn a_literals_punctuation_reads_in_its_color() {
+        // language, line, the punctuation's byte, a byte of the literal's body
+        let whole = [
+            ("python", "x = 2.5", 5, 4),
+            ("python", "x = 0x1F", 4, 6),
+            ("rust", "let x = 0x1F;", 8, 10),
+            ("json", "[2.5]", 2, 1),
+            ("clojure", "(f :keys)", 3, 4),
+            ("elisp", "(f ?a)", 3, 4),
+            // X-009: a keyword's `:`, `::` and Racket's `#:`
+            ("lisp", "(f :keys ::k)", 3, 4),
+            ("lisp", "(f :keys ::k)", 10, 11),
+            ("racket", "(f #:kw 1)", 3, 5),
+            ("html", "<p>&amp;</p>", 3, 4),
+            ("html", "<p>&amp;</p>", 7, 4),
+        ];
+        let at = |spans: &CodeSpans, byte: u32| {
+            let run = spans.line(0).iter().find(|r| r.end > byte).unwrap();
+            run.rule
+        };
+        for theme in Theme::builtins() {
+            let rules = SyntaxTheme::new(&theme.syntax);
+            for (lang, line, punct, body) in whole {
+                let spans = highlight(1, lang, line, &rules);
+                let (p, b) = (at(&spans, punct), at(&spans, body));
+                assert_eq!(
+                    p.style(&theme.syntax),
+                    b.style(&theme.syntax),
+                    "{}: {lang} {line:?} byte {punct}: {:?} against {:?}",
+                    theme.name,
+                    theme.syntax.get(usize::from(p.0)),
+                    theme.syntax.get(usize::from(b.0)),
+                );
+            }
+            // `pkg:sym`'s `:` is an accessor, not a keyword's
+            let spans = highlight(1, "lisp", "(cl:car x)", &rules);
+            let rule = at(&spans, 3);
+            assert!(
+                theme.syntax[usize::from(rule.0)]
+                    .0
+                    .starts_with("punctuation"),
+                "{}: {:?}",
+                theme.name,
+                theme.syntax[usize::from(rule.0)]
+            );
+            // Lisp's `~~`: the escape's `~` isn't the constant's
+            let spans = highlight(1, "lisp", "(format t \"~~\")", &rules);
+            let rule = at(&spans, 11);
+            assert!(
+                !theme.syntax[usize::from(rule.0)]
+                    .0
+                    .starts_with("constant.character punctuation"),
+                "{}: {:?}",
+                theme.name,
+                theme.syntax[usize::from(rule.0)]
+            );
+        }
+    }
+
+    /// The themes' rule that colors a Lisp keyword's `:` as the keyword (X-009).
+    const LISP_KEYWORD_MARK: &str = "keyword.other.symbol punctuation";
+
     fn rules_match_the_grammar(lang: &str, name: &str, text: &str) {
+        rules_match_the_grammar_without(lang, name, text, &[]);
+    }
+
+    /// As [`rules_match_the_grammar`], each theme without the rules `left_out`: those that color
+    /// a by-design departure from bat's scopes, so the rest is still compared rule for rule.
+    fn rules_match_the_grammar_without(lang: &str, name: &str, text: &str, left_out: &[&str]) {
         assert_eq!(find_syntax(lang).unwrap().name(), name);
         for theme in Theme::builtins() {
-            let theme = SyntaxTheme::new(&theme.syntax);
+            let mut syntax = theme.syntax.clone();
+            let before = syntax.len();
+            syntax.retain(|(scope, _)| !left_out.contains(&scope.as_str()));
+            assert_eq!(
+                syntax.len(),
+                before - left_out.len(),
+                "{}: {left_out:?}",
+                theme.name
+            );
+            let theme = SyntaxTheme::new(&syntax);
             let want = highlight_syntect(reference_syntaxes(), name, text, &theme).unwrap();
             assert_eq!(painted(&highlight(1, lang, text, &theme)), painted(&want));
         }

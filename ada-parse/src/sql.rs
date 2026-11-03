@@ -1059,6 +1059,12 @@ impl Scan<'_, '_, '_, '_> {
         {
             return r;
         }
+        // `\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b`, a fraction or an exponent: bat's grammar takes
+        // only `\b\d+\b`, so `1.5` read as two numbers and `1e3` plain (X-008)
+        if let Some(d) = self.decimal(p) {
+            self.tok(p, d, NUMBER);
+            return Ok(d);
+        }
         // `\b\d+\b`
         if self.all_digits(p, e) {
             self.tok(p, e, NUMBER);
@@ -1537,6 +1543,39 @@ impl Scan<'_, '_, '_, '_> {
     /// `\s+` at `p`, the line's `\n` taken: where it ends.
     fn spaces1(&self, p: usize) -> Option<usize> {
         self.space(p).map(|e| self.spaces(e))
+    }
+
+    /// An ASCII number with a fraction or an exponent at `p`, a word's start, up to a word's
+    /// end and the host's next place: where it ends. `None` for digits alone, or anything else.
+    fn decimal(&self, p: usize) -> Option<usize> {
+        // the byte at `q`, unless it is past the line or the host's
+        let at = |q: usize| (q < self.n && !self.yields(q)).then(|| self.b[q]);
+        let digits = |mut q: usize| {
+            while at(q).is_some_and(|c| c.is_ascii_digit()) {
+                q += 1;
+            }
+            q
+        };
+        let i = digits(p);
+        if i == p {
+            return None;
+        }
+        let mut end = i;
+        if at(i) == Some(b'.') {
+            let f = digits(i + 1);
+            if f > i + 1 {
+                end = f;
+            }
+        }
+        if matches!(at(end), Some(b'e' | b'E')) {
+            let s = end + 1 + usize::from(matches!(at(end + 1), Some(b'+' | b'-')));
+            let x = digits(s);
+            if x > s {
+                end = x;
+            }
+        }
+        let boundary = at(end).is_none() || !is_word(&self.b[..self.n], end);
+        (end > i && boundary).then_some(end)
     }
 
     /// Whether `p..e`, a word, is all `\d`.
@@ -2022,5 +2061,17 @@ mod tests {
                 (" c", "comment.line.double-dash.sql"),
             ]
         );
+    }
+
+    /// A number with a fraction or an exponent is one number, where bat's grammar reads `1.5`
+    /// as two and leaves `1e3` plain (X-008); digits before a letter stay as bat reads them.
+    #[test]
+    fn decimals_and_exponents() {
+        let n = "constant.numeric.sql";
+        let got = kinds(&["SELECT 1.5, 1e3, 2E-3, 1.5e+3 FROM t WHERE a > .5 AND b = 12ab"]);
+        for want in ["1.5", "1e3", "2E-3", "1.5e+3", "5"] {
+            assert!(got.contains(&(want, n)), "{want}: {got:?}");
+        }
+        assert!(!got.iter().any(|(t, _)| t.contains("12")), "{got:?}");
     }
 }

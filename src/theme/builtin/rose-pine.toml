@@ -159,6 +159,10 @@ changed = { fg = "gold", bold = true }          # the mark on a value the config
 "entity.other.attribute-name" = { fg = "iris" }
 "constant" = { fg = "gold" }
 "constant.numeric" = { fg = "gold" }
+"constant.numeric punctuation, constant.numeric punctuation.separator" = { fg = "gold" }  # a literal's `.`, `0x`, `/` read whole
+"constant.other.keyword punctuation" = { fg = "gold" }  # the `:` of `:keys`
+"constant.character punctuation - constant.character.escape" = { fg = "gold" }  # `?a`, `#\a`, `&amp;`
+"keyword.other.symbol punctuation" = { fg = "pine" }  # a Lisp keyword's `:`, as the keyword
 "constant.language" = { fg = "rose" }        # true, false, null
 "string" = { fg = "gold" }
 "constant.character.escape" = { fg = "pine" }
