@@ -321,5 +321,8 @@
 "```elisp\x0a"
 "```emacs-lisp\x0a"
 "```common-lisp\x0a"
+"```csharp\x0a"
+"```pwsh\x0a"
+"```posh\x0a"
 "```c++\x0a"
 # end of the generated fence tags

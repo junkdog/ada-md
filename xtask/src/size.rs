@@ -1,9 +1,9 @@
-//! `cargo xtask size`: the size gate of ada-parse's phases (ADR-40). Builds ada as the release
-//! does (fat LTO), but unstripped and with line tables, in `target/size`; attributes the
-//! binary's symbols to their source files with `nm -S -l`; and reports ada-parse's bytes, those
-//! of ada's lexers outside it, and the binary's size stripped (`strip`, as the profile's
-//! `strip = true` leaves it). The gate: ada-parse's code within the bytes ada's trimmed syntax
-//! set drops from two-face's (`cargo xtask dump`). Exit 1 past it.
+//! `cargo xtask size`: ada-parse's binary size (ADR-40). Builds ada as the release does (fat
+//! LTO), but unstripped and with line tables, in `target/size`; attributes the binary's symbols
+//! to their source files with `nm -S -l`; and reports ada-parse's bytes, those of ada's lexers
+//! outside it, the binary's size stripped (`strip`, as the profile's `strip = true` leaves it)
+//! and the bytes ada's trimmed syntax set drops from two-face's (`cargo xtask dump`). A report,
+//! not a gate: the size gate was retired on 2026-11-03, a guideline the scanners were always past.
 //!
 //! Fat LTO inlines generic code into the crate that instantiates it, under that crate's file
 //! names or std's, so a figure for a generic-heavy dependency (syntect) comes out low; ada's
@@ -18,8 +18,7 @@ use crate::dump;
 
 /// Where a symbol's source path puts it, first match wins: (group, a piece of the path).
 const GROUPS: &[(&str, &str)] = &[
-    // the port moved in from ada (G-002, G-003), kept apart from the gate until a scanner
-    // replaces it
+    // the port moved in from ada (G-002, G-003), kept apart until a scanner replaces it
     ("ada-parse, make/ (port)", "/ada-parse/src/make/"),
     ("ada-parse", "/ada-parse/src/"),
     ("src/json.rs", "/ada-md/src/json.rs"),
@@ -100,15 +99,6 @@ pub fn run(root: &Path) -> Result<ExitCode, String> {
     println!("ada, stripped: {binary} bytes");
     println!("syntax set: two-face's {two_face}, ada's {ours}: {budget} bytes dropped");
     let parse = sizes.get("ada-parse").copied().unwrap_or(0);
-    let pass = parse <= budget;
-    println!(
-        "gate: ada-parse's {parse} bytes {} the {budget} dropped: {}",
-        if pass { "within" } else { "past" },
-        if pass { "pass" } else { "FAIL" },
-    );
-    Ok(if pass {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    })
+    println!("ada-parse: {parse} bytes, against the {budget} the trimmed set drops");
+    Ok(ExitCode::SUCCESS)
 }

@@ -1060,7 +1060,8 @@ impl Scan<'_, '_, '_> {
             FOR_ARGS => FOR_BODY,
             BUILTIN_ARGS => BUILTIN_ARGS_BODY,
             BUILTIN_ARGS_BT => BUILTIN_ARGS_BODY_BT,
-            HEREDOC_PREAMBLE => HEREDOC_LINE,
+            // not `HEREDOC_PREAMBLE`: its body, `HEREDOC_LINE`, clears the here-document's
+            // string, and the prototype matched before its `""` (`cat <<EOF # c`) keeps it
             // what a recipe's make patterns push sees none of them (syntect's `proto_starts`)
             COMMENT_BODY if self.from_with => COMMENT_BODY_NW,
             CONTINUED if self.from_with => CONTINUED_NW,

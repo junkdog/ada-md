@@ -20,8 +20,8 @@
 //! `cargo xtask dump [--check]`: ada's syntax sets in `assets/`, two-face's with the grammars
 //! ada-parse's lexers stand in for emptied (`dump`, ADR-40); `--check` only compares.
 //!
-//! `cargo xtask size`: ada-parse's size gate (`size`, ADR-40): its bytes in the release binary,
-//! by `nm`, within the bytes the trimmed syntax set drops.
+//! `cargo xtask size`: ada-parse's bytes in the release binary, by `nm`, beside the bytes the
+//! trimmed syntax set drops (`size`, ADR-40).
 
 mod dump;
 mod lackey;

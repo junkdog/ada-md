@@ -3361,6 +3361,10 @@ mod tests {
             "cat <<-EOF > \"$DIR/out\"\n",
             "\tname: ${USER}\n",
             "\tEOF\n",
+            // the prototype's comment on the opening line keeps the here-document's string
+            "cat <<'EOF'\t# literal\n",
+            "$x\n",
+            "EOF\n",
             "coproc worker { while read -r l; do echo \"$l\"; done; }\n",
             "x=`basename $PWD` y=$'tab\\there' z=~/src\n",
             "arr+=( \"${arr[@]/#/-I}\" ) && echo ${arr[*]:1:2} {a,b}{1..3}\n",

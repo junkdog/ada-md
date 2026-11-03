@@ -113,6 +113,10 @@ pub const ALIASES: &[(&str, &str)] = &[
     ("elisp", "el"),
     ("emacs-lisp", "el"),
     ("common-lisp", "lisp"),
+    // GitHub's names for C# and PowerShell, which bat's set doesn't know
+    ("csharp", "cs"),
+    ("pwsh", "powershell"),
+    ("posh", "powershell"),
 ];
 
 /// The extensions and whole file names each language's syntax claims, lowercase: syntect
@@ -771,7 +775,7 @@ mod tests {
         assert_eq!(Lang::from_token("kotlin"), Some(Lang::Kotlin));
         assert_eq!(Lang::from_token("cs"), Some(Lang::CSharp));
         assert_eq!(Lang::from_token("c#"), Some(Lang::CSharp));
-        assert_eq!(Lang::from_token("csharp"), None);
+        assert_eq!(Lang::from_token("csharp"), Some(Lang::CSharp));
         assert_eq!(Lang::from_token("go"), Some(Lang::Go));
         assert_eq!(Lang::from_token("python"), Some(Lang::Python));
         assert_eq!(Lang::from_token("py"), Some(Lang::Python));
@@ -779,6 +783,8 @@ mod tests {
         assert_eq!(Lang::from_token("sql"), Some(Lang::Sql));
         assert_eq!(Lang::from_token("powershell"), Some(Lang::PowerShell));
         assert_eq!(Lang::from_token("ps1"), Some(Lang::PowerShell));
+        assert_eq!(Lang::from_token("pwsh"), Some(Lang::PowerShell));
+        assert_eq!(Lang::from_token("posh"), Some(Lang::PowerShell));
         assert_eq!(Lang::from_token("css"), Some(Lang::Css));
         assert_eq!(Lang::from_token("CSS"), Some(Lang::Css));
         assert_eq!(Lang::from_file_name("site.css"), Some(Lang::Css));
