@@ -67,6 +67,12 @@ mod linux {
     /// one-line JSON): one sample, no warm-up.
     const SYNTECT_SAMPLES: usize = 1;
     const SAMPLE: Duration = Duration::from_millis(5);
+    /// A drop sample's untimed makes take about this long at most: filling [`SAMPLE`] with drops
+    /// alone, a drop 200× faster than its parse made a second of documents a sample (BEN-013).
+    const MAKE_BUDGET: Duration = Duration::from_millis(50);
+    /// ...unless a sample's drops would take less than this, where starting and stopping the
+    /// counters starts to show.
+    const DROP_FLOOR: Duration = Duration::from_micros(200);
     /// B2's print width.
     const WIDTH: u16 = 100;
 
@@ -199,14 +205,28 @@ mod linux {
         sample(counters, samples, reps, f)
     }
 
-    /// Time freeing what `make` returns: one to warm up and size the samples, then `samples`
-    /// samples, each making `reps` of them untimed and freeing them under the counters.
-    fn measure_drop<T>(counters: &Counters, samples: usize, mut make: impl FnMut() -> T) -> Sample {
+    /// Time freeing what `make` returns: two to warm up and size the samples, then `samples`
+    /// samples, each making `reps` of them untimed and freeing them under the counters. `reps`
+    /// fills [`SAMPLE`] with drops, but no more than [`MAKE_BUDGET`] with makes unless that
+    /// leaves a sample's drops under [`DROP_FLOOR`] (BEN-013); the bool says a sample's drops
+    /// took less than the floor anyway.
+    fn measure_drop<T>(
+        counters: &Counters,
+        samples: usize,
+        mut make: impl FnMut() -> T,
+    ) -> (Sample, bool) {
         let first = make();
+        let t = Instant::now();
+        let second = make();
+        let make_once = t.elapsed().max(Duration::from_nanos(1));
         let t = Instant::now();
         drop(black_box(first));
         let once = t.elapsed().max(Duration::from_nanos(1));
-        let reps = (SAMPLE.as_nanos() / once.as_nanos()).clamp(1, 10_000) as usize;
+        drop(second);
+        let by_drop = SAMPLE.as_nanos() / once.as_nanos();
+        let by_make = MAKE_BUDGET.as_nanos() / make_once.as_nanos();
+        let floor = DROP_FLOOR.as_nanos().div_ceil(once.as_nanos());
+        let reps = by_drop.min(by_make.max(floor)).clamp(1, 10_000) as usize;
         let (mut cpus, mut walls, mut cycles, mut instructions) = (vec![], vec![], vec![], vec![]);
         for _ in 0..samples {
             let keep: Vec<T> = (0..reps).map(|_| make()).collect();
@@ -221,13 +241,15 @@ mod linux {
             cycles.push(count.cycles as f64 / per);
             instructions.push(count.instructions as f64 / per);
         }
-        Sample {
+        let s = Sample {
             reps,
             cpu_ns: median(cpus),
             wall_ns: median(walls),
             cycles: median(cycles),
             instructions: median(instructions),
-        }
+        };
+        let short = s.cpu_ns * (reps as f64) < DROP_FLOOR.as_nanos() as f64;
+        (s, short)
     }
 
     /// [`measure`] without the warm-up: one call a sample, for a reference that takes seconds.
@@ -416,10 +438,23 @@ mod linux {
                 texts.iter().map(|t| doc::parse(t)).collect::<Vec<_>>()
             });
             if self.args.stage("drop") {
-                let s = measure_drop(self.counters, self.samples, || {
+                let (s, short) = measure_drop(self.counters, self.samples, || {
                     texts.iter().map(|t| doc::parse(t)).collect::<Vec<_>>()
                 });
-                emit(input, "drop", &s, "");
+                if short {
+                    eprintln!(
+                        "  {}: a drop sample under {} µs ({} reps)",
+                        input.id,
+                        DROP_FLOOR.as_micros(),
+                        s.reps
+                    );
+                }
+                emit(
+                    input,
+                    "drop",
+                    &s,
+                    if short { ",\"short\":true" } else { "" },
+                );
             }
             if !["c1-layout", "layout", "c1-print", "print"]
                 .iter()
@@ -460,9 +495,16 @@ mod linux {
             self.cell(input, "c1-print", &extra, || {
                 ceilings::write(out.as_bytes(), &mut into);
             });
-            // `render` ends with `String::from_utf8_lossy` over its output, which a print to stdout
-            // doesn't: UTF-8 validation and a copy, 6-7% of the stage (BEN-010)
-            self.cell(input, "print", &extra, render);
+            // as `ada -p` prints: `print::write`, without `render`'s UTF-8 check and copy (6-7% of
+            // the stage, BEN-010), into one buffer already as big as the output, as C1's
+            self.cell(input, "print", &extra, || {
+                into.clear();
+                for d in &docs {
+                    print::write(d, theme, params, print::Options::default(), &mut into)
+                        .expect("writing to a Vec");
+                }
+                into.len()
+            });
         }
     }
 

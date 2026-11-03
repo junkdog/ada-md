@@ -125,8 +125,8 @@ pub fn render(doc: &Doc, theme: &Theme, params: LayoutParams, opts: Options) -> 
 /// its size (6.3 MB in an 8 MB buffer for XL) at the peak (O-16).
 const PIECE: usize = 64 * 1024;
 
-/// [`render`] into `w`, a piece at a time.
-fn write(
+/// [`render`] into `w`, a piece at a time, as [`run`] writes to stdout: no UTF-8 check, no copy.
+pub fn write(
     doc: &Doc,
     theme: &Theme,
     params: LayoutParams,

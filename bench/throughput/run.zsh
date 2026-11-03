@@ -49,6 +49,13 @@ if ! git -C $REPO show $COMMIT:Cargo.toml | grep -q '^pulldown-cmark = .*"html"'
     || (cd $BUILD && cargo add --quiet --dev pulldown-cmark@0.13.5 --no-default-features -F html) \
     > $OUT/build.log 2>&1 || { echo "run: cargo add failed, $OUT/build.log" >&2; exit 1 }
 fi
+# the print cell calls print::write, public since BEN-010 (2026-11-02; the same signature since the series began):
+# made public in a commit from before it (meta.txt says so)
+if ! git -C $REPO show ${COMMIT}:src/print.rs | grep -q '^pub fn write('; then
+  grep -qE '^(pub )?fn write\(' $BUILD/src/print.rs || { echo "run: no print::write in $COMMIT" >&2; exit 1 }
+  sed -i 's/^fn write(/pub fn write(/' $BUILD/src/print.rs
+  ADDED+=" (print::write made public)"
+fi
 # two builds, so the dev-dependency's feature stays out of ada's
 (cd $BUILD && CARGO_TARGET_DIR=$BUILD/target cargo build --release --locked --bin ada \
   && CARGO_TARGET_DIR=$BUILD/target cargo build --release --locked --example throughput) \
