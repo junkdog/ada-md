@@ -4,7 +4,7 @@ expression: frames.last().unwrap()
 ---
    Modules
                             ╭─ sort by 3/5 ─────────────────╮
-  The ported modules, with t│ › ▏                           │
+  The ported modules, with t│ ›                             │
                             │ Suite  ▲ ascending            │
   ╭────────────────┬───────┬│ Suite  ▼ descending           │──────────────────────────╮
   │ Module         │  Java ││ Cases  ▲ ascending            │                          │

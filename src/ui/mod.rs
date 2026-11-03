@@ -12,6 +12,7 @@ use std::ops::Range;
 use crate::geom::Rect;
 use crate::grid::Grid;
 use crate::style::{Color, Modifier, Style};
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{Document, ImageView, Input, Row, State};
@@ -394,8 +395,9 @@ fn status_bar(buf: &mut Grid, area: Rect, state: &State) {
 
     if let Some(prompt) = &state.prompt {
         let room = usize::from(pos_x - area.x);
-        let input = field(&prompt.input, room.saturating_sub(1));
-        let mut pieces = vec![(format!("/{input}"), theme.style(StyleKey::Prompt))];
+        let style = theme.style(StyleKey::Prompt);
+        let mut pieces = vec![("/".to_owned(), style)];
+        pieces.extend(field(&prompt.input, room.saturating_sub(1), style));
         if let Some(e) = &prompt.error {
             pieces.push((format!("  {e}"), theme.style(StyleKey::PromptError)));
         }
@@ -543,11 +545,20 @@ pub fn heading_path(doc: &Document, top: u32) -> Vec<&str> {
 }
 
 /// Keep the end of `s`, which is the interesting part of a path, within `max` columns.
-/// A text field with its cursor drawn as `▏`, in `room` columns: when the cursor would pass the
-/// right edge, the start gives way to an `…` (FEAT-018). Past the cursor, the caller cuts.
-fn field(input: &Input, room: usize) -> String {
+/// A text field in `room` columns, in `style`, its cursor a block over the character under it
+/// (a blank at the end), so the text keeps its spacing: a bar between characters reads as a
+/// space. When the cursor would pass the right edge, the start gives way to an `…` (FEAT-018).
+/// Past the cursor, the caller cuts.
+fn field(input: &Input, room: usize, style: Style) -> Pieces {
     let (before, after) = input.split();
-    format!("{}▏{after}", elide_start(before, room.saturating_sub(1)))
+    let at = after.graphemes(true).next().unwrap_or(" ");
+    let rest = after.get(at.len()..).unwrap_or("");
+    let before = elide_start(before, room.saturating_sub(at.width().max(1)));
+    vec![
+        (before, style),
+        (at.to_owned(), style.add_modifier(Modifier::REVERSED)),
+        (rest.to_owned(), style),
+    ]
 }
 
 fn elide_start(s: &str, max: usize) -> String {
@@ -732,12 +743,29 @@ mod tests {
 
     #[test]
     fn a_long_field_keeps_its_cursor_in_view() {
-        let at = |cursor| Input::new("abcdefgh".into(), crate::app::Cursor(cursor));
-        assert_eq!(field(&at(3), 20), "abc▏defgh");
-        // the end in 6 columns: the start gives way
-        assert_eq!(field(&at(8), 6), "…efgh▏");
+        let field = |text: &str, cursor, room| {
+            let input = Input::new(text.into(), crate::app::Cursor(cursor));
+            let style = Style::default();
+            let pieces = field(&input, room, style);
+            let block = style.add_modifier(Modifier::REVERSED);
+            assert_eq!(
+                pieces.iter().map(|p| p.1).collect::<Vec<_>>(),
+                [style, block, style]
+            );
+            pieces
+                .into_iter()
+                .map(|p| p.0)
+                .collect::<Vec<_>>()
+                .join("|")
+        };
+        // the cursor on the character it is before, which keeps its column
+        assert_eq!(field("abcdefgh", 3, 20), "abc|d|efgh");
+        // the end in 6 columns: a blank to type into, and the start gives way
+        assert_eq!(field("abcdefgh", 8, 6), "…efgh| |");
         // the start: the rest is the caller's to cut
-        assert_eq!(field(&at(0), 6), "▏abcdefgh");
-        assert_eq!(field(&at(5), 4), "…de▏fgh");
+        assert_eq!(field("abcdefgh", 0, 6), "|a|bcdefgh");
+        assert_eq!(field("abcdefgh", 5, 4), "…de|f|gh");
+        // a wide character under the cursor takes its two columns from the room
+        assert_eq!(field("abcd漢", 4, 5), "…cd|漢|");
     }
 }

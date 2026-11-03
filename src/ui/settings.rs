@@ -176,7 +176,11 @@ fn value(state: &State, row: Row, width: u16, focused: bool) -> Pieces {
         }
         Value::Width(typed) => {
             let label = theme.style(StyleKey::SettingsLabel);
-            let cursor = if focused { "▏" } else { " " };
+            // the cursor a block after the text, like the prompt's (ui::field)
+            let cursor = match focused {
+                true => field.add_modifier(Modifier::REVERSED),
+                false => field,
+            };
             let (text, style) = match typed {
                 "" => ("terminal", off),
                 typed => (typed, field),
@@ -184,12 +188,9 @@ fn value(state: &State, row: Row, width: u16, focused: bool) -> Pieces {
             let mut pieces = vec![
                 (" ".into(), field, None),
                 (text.into(), style, None),
+                (" ".into(), cursor, None),
                 (
-                    format!(
-                        "{cursor}{:pad$} ",
-                        "",
-                        pad = NUMBER.saturating_sub(text.width())
-                    ),
+                    format!("{:pad$} ", "", pad = NUMBER.saturating_sub(text.width())),
                     field,
                     None,
                 ),

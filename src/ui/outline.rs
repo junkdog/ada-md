@@ -6,7 +6,7 @@ use crate::grid::Grid;
 use crate::style::Modifier;
 use unicode_width::UnicodeWidthStr;
 
-use super::{field, popup_frame};
+use super::{field, popup_frame, put};
 use crate::app::{Listing, OutlineEntry, State};
 use crate::theme::StyleKey;
 
@@ -116,8 +116,10 @@ pub fn draw(buf: &mut Grid, area: Rect, state: &State) {
 
     // the filter, then as many entries as fit, keeping the selection in view
     let x = rect.x + 1;
-    let filter = format!(" › {}", field(&outline.filter, inner.saturating_sub(3)));
-    buf.set_stringn(x, top + 1, &filter, inner, theme.style(StyleKey::Prompt));
+    let style = theme.style(StyleKey::Prompt);
+    let mut filter = vec![(" › ".to_owned(), style)];
+    filter.extend(field(&outline.filter, inner.saturating_sub(3), style));
+    put(buf, x, top + 1, inner, &filter);
     let rows = usize::from(bottom - top - 2);
     if entries.is_empty() {
         let none = match (outline.filter.is_empty(), outline.listing) {

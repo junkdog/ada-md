@@ -4,7 +4,7 @@ expression: frames.last().unwrap()
 ---
    Walker
               ╭─ outline 2/2 ────────────────╮
-  Start here, │ › e▏                         │ missing
+  Start here, │ › e                          │ missing
   one.        │ Walker                       │
               │   Details                    │
   ## Backgroun│                              │

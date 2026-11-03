@@ -4,7 +4,7 @@ expression: frames.last().unwrap()
 ---
    Walker
              ╭─ links 2/2 ───────────────────╮
-  Start here,│ › ▏                           │ missing
+  Start here,│ ›                             │ missing
   one.       │ the second note  b.md#details │
              │ missing ✗                     │
   ## Backgrou╰───────────────────────────────╯

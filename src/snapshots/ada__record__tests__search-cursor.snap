@@ -17,4 +17,4 @@ expression: frames.last().unwrap()
   • following a link pushes history
   • going back restores the scroll position and the focus
 
-/d▏pet                                               0  All
+/dpet                                                0  All

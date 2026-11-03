@@ -4,7 +4,7 @@ expression: frames.last().unwrap()
 ---
        println!("tab-indented");
        let long_line = "╭─ themes 1/10 ────────────────╮nough that it has to ›
-   }                    │ › ▏                          │
+   }                    │ ›                            │
                         │ gruvbox-dark                 │
                         │ catppuccin-mocha             │
    kotlin               │ catppuccin-macchiato         │
