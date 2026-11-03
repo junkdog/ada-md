@@ -407,6 +407,7 @@ impl Scan<'_, '_, '_> {
     }
 
     /// The open context's text runs to `to` (never past the line).
+    #[inline(always)]
     fn flush(&mut self, to: usize) {
         let to = to.min(self.l.nl());
         if to > self.at {
@@ -419,6 +420,7 @@ impl Scan<'_, '_, '_> {
     }
 
     /// The text up to `s`, then `s..e` is `kind` (what the line holds of it).
+    #[inline(always)]
     fn tok(&mut self, s: usize, e: usize, kind: u16) {
         self.flush(s);
         let e = e.min(self.l.nl());
@@ -432,6 +434,10 @@ impl Scan<'_, '_, '_> {
         self.l.at(i)
     }
 
+    /// The line's contexts, matched in turn. Inlined into [`line`], as [`Scan::flush`] and
+    /// [`Scan::tok`] are wherever they're called: out of line, the three cost the Git formats
+    /// 12–20% more instructions (X-023).
+    #[inline(always)]
     fn run(&mut self) {
         let nl = self.l.nl();
         let end = self.l.end();
