@@ -1,6 +1,5 @@
 //! YAML by a scanner of ada's own (ADR-40, speed first): one pass over a line's bytes,
-//! dispatching on the byte at each token's start, in place of bat's 47 contexts on the
-//! machine (`yaml.rs`). It reads YAML the way bat's grammar does where text is well formed:
+//! dispatching on the byte at each token's start, in place of bat's 47 contexts. It reads YAML the way bat's grammar does where text is well formed:
 //! keys (a plain scalar a `: ` follows), plain scalars to where the grammar ends them, the
 //! implicit types (null, booleans, numbers, timestamps, `=`, `<<`), quoted strings, comments,
 //! block scalars (their body runs to the first line indented less than its first), anchors,
@@ -10,13 +9,13 @@
 //! scope, a fixed set ([`scopes`]): bat's stack nests every enclosing collection's meta scope,
 //! which none of the built-in themes tells apart, so the scanner keeps only the innermost.
 //! What it doesn't follow: `? ` explicit keys' `meta.block-mapping` and their odd `:`, and the
-//! grammar's paths through bad input (the machine's quirks); syntect is a guideline here
+//! grammar's paths through bad input (syntect's quirks); syntect is a guideline here
 //! (`examples/parity.rs` reads how close it comes).
 //!
 //! The state between lines is one word: an open quoted string, a block scalar's header or its
 //! indentation, and the flow collections open (the kinds and pair values of the innermost 16).
 
-use crate::machine::{Line, M};
+use crate::matcher::{Line, M};
 use crate::yaml::{
     directive_reserved, directive_tag, directive_yaml, implicit_at, in_end_at, out_end_at,
     tag_handle,
@@ -574,10 +573,7 @@ impl Scan<'_, '_, '_> {
         // an implicit type ends where its look-ahead holds, at the scalar's end, but for a
         // timestamp's blanks and zone; one that starts with a letter is a word of at most five
         if may_be_implicit(c) && (!c.is_ascii_alphabetic() || e - p <= 5) {
-            let l = Line {
-                b,
-                arg: Default::default(),
-            };
+            let l = Line { b };
             let end: fn(&Line, usize) -> bool = if flow { in_end_at } else { out_end_at };
             if let Some(m) = implicit_at(&l, p, end) {
                 self.implicit(&m);
@@ -809,10 +805,7 @@ impl Scan<'_, '_, '_> {
                 return rest;
             }
         } else {
-            let l = Line {
-                b,
-                arg: Default::default(),
-            };
+            let l = Line { b };
             if let Some(m) = tag_handle(&l, p).filter(|m| m.s as usize == p) {
                 self.put(p, m.e as usize, leaf::TAG);
                 return m.e as usize;
@@ -847,10 +840,7 @@ impl Scan<'_, '_, '_> {
     fn directive(&mut self) -> usize {
         let b = self.b;
         self.put(0, 1, leaf::DIRECTIVE_BEGIN);
-        let l = Line {
-            b,
-            arg: Default::default(),
-        };
+        let l = Line { b };
         let found = [directive_yaml, directive_tag, directive_reserved]
             .iter()
             .enumerate()

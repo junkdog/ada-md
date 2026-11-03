@@ -22,7 +22,7 @@
 //! The stack between lines is the contexts open above the top level, up to 28 (the bytes of
 //! [`State`]'s levels).
 
-use crate::machine::KEPT as HALF;
+use crate::matcher::KEPT as HALF;
 use crate::regex;
 use crate::sql;
 use crate::{Out, State, is_space, skip_spaces, trim_end};

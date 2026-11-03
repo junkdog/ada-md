@@ -22,7 +22,7 @@
 //! [`State`]'s levels). A JSX element's context keeps its tag's name as a 7-bit hash there, so
 //! a closing tag on a later line is matched by its hash; on its own line, by its text.
 
-use crate::machine::KEPT as HALF;
+use crate::matcher::KEPT as HALF;
 use crate::regex;
 use crate::{Out, State};
 

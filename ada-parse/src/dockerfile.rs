@@ -1,28 +1,15 @@
-//! Dockerfiles, in place of bat's `Dockerfile`: its 12 contexts on the
-//! [machine](crate::machine). An instruction's arguments run on across lines ending in `\`
-//! (and blank ones); a string left open at a line's end turns to `invalid`, as bat's does.
-//! bat's `Dockerfile (with bash)`, which colors `RUN` as shell, is a syntax of its own that no
-//! file name selects, and stays on syntect.
+//! Dockerfiles by a scanner: bat's `Dockerfile` compiled by hand. Every pattern but an
+//! instruction's arguments' is anchored at a line's start, so a line is decided by its first
+//! bytes: a comment, an instruction (its arguments then run to a line's end that isn't
+//! continued by `\`), `FROM`, or text bat marks `invalid`. A string left open at a line's end
+//! turns the next line `invalid`, as bat's does. bat's `Dockerfile (with bash)`, which colors
+//! `RUN` as shell, is a syntax of its own that no file name selects, and stays on syntect.
 //!
-//! The contexts keep syntect's ids (the order the probe's `dump Dockerfile` lists them in).
+//! Exact against bat's grammar on syntect: the `parse` fuzz target holds every byte's scopes to
+//! syntect's.
 
-use crate::machine::{
-    Ctx, Grammar, It::I, It::P, Kinds, Line, M, Pat, atoms, empty, first, is_space, lit1, protos,
-    slots,
-};
-
-const MAIN_0: u8 = 0;
-const START: u8 = 1;
-const ARGS: u8 = 2;
-const BODY: u8 = 3;
-const COMMENTS: u8 = 4;
-const DIRECTIVES: u8 = 5;
-const DOUBLE_QUOTED: u8 = 6;
-const ESCAPED_CHAR: u8 = 7;
-const FROM: u8 = 8;
-const INVALID: u8 = 9;
-const MAIN: u8 = 10;
-const SINGLE_QUOTED: u8 = 11;
+use crate::matcher::{Atom, atoms, is_space};
+use crate::{Out, State};
 
 atoms! {
     STR_BEGIN = "punctuation.definition.string.begin.dockerfile",
@@ -41,177 +28,280 @@ atoms! {
     SINGLE = "string.quoted.single.dockerfile",
 }
 
-const fn ctx(items: &'static [crate::machine::It]) -> Ctx {
-    Ctx::new(items)
-}
+const COMMENT_LEADING: u16 = 0;
+const COMMENT: u16 = 1;
+const COMMENT_MARK: u16 = 2;
+const KEYWORD: u16 = 3;
+const ONBUILD: u16 = 4;
+const OPERATOR: u16 = 5;
+const STAGE: u16 = 7;
+const TAG: u16 = 8;
+const INVALID: u16 = 9;
+const ESCAPED: u16 = 10;
+/// A double-quoted string's kinds; a single-quoted one's are the same, [`IN_SINGLE`] on.
+const DOUBLE: u16 = 11;
+const DOUBLE_BEGIN: u16 = 12;
+const DOUBLE_END: u16 = 13;
+const DOUBLE_ESCAPED: u16 = 14;
+const IN_SINGLE: u16 = 4;
 
-static CTXS: [Ctx; 12] = [
-    // __main
-    ctx(&[I(MAIN)]),
-    // __start: its `source.dockerfile` is the base scope
-    ctx(&[P(Pat::new(empty).push(&[MAIN_0]))]).no_proto(),
-    // args
-    ctx(&[
-        I(COMMENTS),
-        I(ESCAPED_CHAR),
-        P(Pat::new(blank_line)),
-        P(Pat::new(continuation)),
-        P(Pat::new(newline).pop()),
-        P(Pat::new(dquote).sc(&[s::STR_BEGIN]).push(&[DOUBLE_QUOTED])),
-        P(Pat::new(squote).sc(&[s::STR_BEGIN]).push(&[SINGLE_QUOTED])),
-    ]),
-    // body
-    ctx(&[I(COMMENTS), I(DIRECTIVES), I(INVALID), I(FROM)]),
-    // comments
-    ctx(&[P(Pat::new(comment).caps(&[
-        (1, &[s::COMMENT_LEADING]),
-        (2, &[s::COMMENT_S]),
-        (3, &[s::COMMENT_MARK]),
-    ]))]),
-    // directives
-    ctx(&[
-        P(Pat::new(instruction)
-            .caps(&[(0, &[s::KEYWORD]), (1, &[s::SPECIAL])])
-            .push(&[ARGS])),
-        P(Pat::new(maintainer).sc(&[s::KEYWORD]).push(&[ARGS])),
-        P(Pat::new(copy)
-            .caps(&[(1, &[s::KEYWORD]), (2, &[s::SPECIAL]), (3, &[s::STAGE])])
-            .push(&[ARGS])),
-        P(Pat::new(command)
-            .caps(&[(0, &[s::OPERATOR]), (1, &[s::SPECIAL])])
-            .push(&[ARGS])),
-    ]),
-    // double_quote_string
-    ctx(&[
-        I(ESCAPED_CHAR),
-        P(Pat::new(blank_line)),
-        P(Pat::new(continuation)),
-        P(Pat::new(newline).set(&[INVALID])),
-        P(Pat::new(dquote).sc(&[s::STR_END]).pop()),
-    ])
-    .meta(&[s::DOUBLE]),
-    // escaped-char
-    ctx(&[P(Pat::new(escaped).sc(&[s::ESCAPED]))]),
-    // from
-    ctx(&[P(Pat::new(from)
-        .caps(&[
-            (1, &[s::KEYWORD]),
-            (2, &[s::TAG_DIGEST]),
-            (3, &[s::KEYWORD]),
-            (4, &[s::STAGE]),
-        ])
-        .push(&[BODY]))]),
-    // invalid
-    ctx(&[P(Pat::new(invalid).sc(&[s::INVALID_S]).set(&[BODY]))]),
-    // main: only ever included, so its `source.dockerfile` never applies
-    ctx(&[I(COMMENTS), P(Pat::new(arg).sc(&[s::KEYWORD])), I(FROM)]),
-    // single_quote_string
-    ctx(&[
-        I(ESCAPED_CHAR),
-        P(Pat::new(blank_line)),
-        P(Pat::new(continuation)),
-        P(Pat::new(newline).set(&[INVALID])),
-        P(Pat::new(squote).sc(&[s::STR_END]).pop()),
-    ])
-    .meta(&[s::SINGLE]),
+/// Each kind's scopes under `source.dockerfile`, by kind.
+static KINDS: [&[Atom]; 19] = [
+    &[s::COMMENT_LEADING],
+    &[s::COMMENT_S],
+    &[s::COMMENT_S, s::COMMENT_MARK],
+    &[s::KEYWORD],
+    &[s::KEYWORD, s::SPECIAL],
+    &[s::OPERATOR],
+    &[s::OPERATOR, s::SPECIAL],
+    &[s::STAGE],
+    &[s::TAG_DIGEST],
+    &[s::INVALID_S],
+    &[s::ESCAPED],
+    &[s::DOUBLE],
+    &[s::DOUBLE, s::STR_BEGIN],
+    &[s::DOUBLE, s::STR_END],
+    &[s::DOUBLE, s::ESCAPED],
+    &[s::SINGLE],
+    &[s::SINGLE, s::STR_BEGIN],
+    &[s::SINGLE, s::STR_END],
+    &[s::SINGLE, s::ESCAPED],
 ];
 
-static SLOTS: [u16; 12] = slots(&CTXS);
-static PROTOS: [bool; 12] = protos(&CTXS, None);
-static KINDS: Kinds = Kinds::new();
-
-pub static GRAMMAR: Grammar = Grammar {
-    ctxs: &CTXS,
-    start: &[START],
-    atoms: ATOMS,
-    slots: &SLOTS,
-    proto: None,
-    protos: &PROTOS,
-    kinds: &KINDS,
-};
-
-// the matchers: each finds its regex's leftmost match at or after `from`; `^` holds at the
-// line's start and after its `\n`, where nothing these look for follows
-
-/// `^\s*(?m:$)`: a blank line, its `\n` and all.
-fn blank_line(l: &Line, from: usize) -> Option<M> {
-    (from == 0 && l.run(0, is_space) == l.end()).then(|| M::new(0, l.end()))
-}
-
-/// `\\\s+(?m:$)`: a `\` with only spaces after it, the `\n` taken.
-fn continuation(l: &Line, from: usize) -> Option<M> {
-    let mut at = from;
-    while let Some(k) = first(l, at, b'\\') {
-        if l.run(k + 1, is_space) == l.end() {
-            return Some(M::new(k, l.end()));
-        }
-        at = k + 1;
-    }
-    None
-}
-
-/// `\n`
-fn newline(l: &Line, from: usize) -> Option<M> {
-    (from <= l.nl()).then(|| M::new(l.nl(), l.end()))
-}
-
-/// `"`
-fn dquote(l: &Line, from: usize) -> Option<M> {
-    lit1(l, from, b'"')
-}
-
-/// `'`
-fn squote(l: &Line, from: usize) -> Option<M> {
-    lit1(l, from, b'\'')
-}
-
-/// `\\.`
-fn escaped(l: &Line, from: usize) -> Option<M> {
-    let mut at = from;
-    while let Some(k) = first(l, at, b'\\') {
-        if let Some(n) = l.char_len(k + 1) {
-            return Some(M::new(k, k + 1 + n));
-        }
-        at = k + 1;
-    }
-    None
-}
-
-/// `^(\s*)((#).*(?m:$)\n?)`
-fn comment(l: &Line, from: usize) -> Option<M> {
-    if from > 0 {
-        return None;
-    }
-    let q = l.run(0, is_space);
-    (q < l.nl() && l.b[q] == b'#').then(|| {
-        let m = M::new(0, l.end()).g(2, q, l.end()).g(3, q, q + 1);
-        if q > 0 { m.g(1, 0, q) } else { m }
+/// The scopes under `source.dockerfile` a kind carries, outermost first.
+pub fn scopes(kind: u16) -> Vec<&'static str> {
+    KINDS.get(usize::from(kind)).map_or_else(Vec::new, |k| {
+        k.iter().map(|&a| ATOMS[usize::from(a)]).collect()
     })
 }
 
+/// The context open at the scan's place: the top of bat's stack.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Ctx {
+    /// `main`, before the first `FROM`: comments, `ARG` and `FROM` only.
+    Main,
+    /// `body`, which each `FROM` pushes and nothing pops.
+    Body,
+    /// `args`: an instruction's arguments, to a line's end that isn't continued.
+    Args,
+    /// A string in the arguments, `"` or `'`.
+    Double,
+    Single,
+    /// `invalid`, where a string left open at a line's end set it: the next line that starts
+    /// with something other than an ASCII capital is `invalid`.
+    Invalid,
+}
+
+/// The levels bat's stack holds above `main` past which a line is no longer exact: syntect's
+/// stack, which also holds `__start` and `__main`, takes no push past 100 levels, where this
+/// scanner goes on.
+const EXACT_DEPTH: u64 = 96;
+
+/// Lex `b`, a line without its `\n`, from `state`: its word holds the open context and how many
+/// levels bat's stack holds above `main`.
+#[inline(never)]
+pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
+    let word = state.word();
+    let mut ctx = match word & 0xf {
+        1 => Ctx::Body,
+        2 => Ctx::Args,
+        3 => Ctx::Double,
+        4 => Ctx::Single,
+        5 => Ctx::Invalid,
+        _ => Ctx::Main,
+    };
+    let mut depth = word >> 4;
+    let blank = b.iter().all(|&c| is_space(c));
+    // the patterns anchored at the line's start; past them only the arguments' and strings'
+    // patterns can match
+    let p = match ctx {
+        Ctx::Main | Ctx::Body => {
+            if comment(b, out) {
+                return save(state, ctx, depth);
+            }
+            if ctx == Ctx::Body
+                && let Some(e) = directive(b, out)
+            {
+                ctx = Ctx::Args;
+                depth += 1;
+                // a keyword whose `\s` is the line's `\n` took it: nothing pops the arguments
+                if e > b.len() {
+                    return save(state, ctx, depth);
+                }
+                e
+            } else {
+                if ctx == Ctx::Main && arg(b) {
+                    out.push(0, 4.min(b.len()), KEYWORD);
+                } else if ctx == Ctx::Body && invalid(b) {
+                    out.push(0, b.len(), INVALID);
+                } else if from(b, out) {
+                    ctx = Ctx::Body;
+                    depth += 1;
+                }
+                return save(state, ctx, depth);
+            }
+        }
+        // `^\s*$` takes a blank line and its `\n`: the arguments go on
+        Ctx::Args if blank || comment(b, out) => return save(state, ctx, depth),
+        Ctx::Double | Ctx::Single if blank => {
+            let kind = if ctx == Ctx::Double {
+                DOUBLE
+            } else {
+                DOUBLE + IN_SINGLE
+            };
+            out.push(0, b.len(), kind);
+            return save(state, ctx, depth);
+        }
+        Ctx::Args | Ctx::Double | Ctx::Single => 0,
+        Ctx::Invalid => {
+            if invalid(b) {
+                out.push(0, b.len(), INVALID);
+                ctx = Ctx::Body;
+            }
+            return save(state, ctx, depth);
+        }
+    };
+    let (ctx, depth) = args(b, p, ctx, depth, out);
+    save(state, ctx, depth);
+}
+
+/// The arguments or a string in them, from `p` to the line's end: the context the line
+/// leaves open, and the depth.
+fn args(b: &[u8], mut p: usize, mut ctx: Ctx, mut depth: u64, out: &mut Out) -> (Ctx, u64) {
+    loop {
+        if ctx == Ctx::Args {
+            let next = b[p..]
+                .iter()
+                .position(|&c| matches!(c, b'\\' | b'"' | b'\''));
+            let Some(k) = next.map(|i| p + i) else {
+                // `\n` pops the arguments
+                return (Ctx::Body, depth - 1);
+            };
+            match b[k] {
+                b'\\' => match escaped(b, k) {
+                    Some(e) => {
+                        out.push(k, e, ESCAPED);
+                        p = e;
+                    }
+                    // `\\\s+$` takes the `\` and the `\n`: the arguments go on
+                    None => return (ctx, depth),
+                },
+                q => {
+                    let single = if q == b'"' { 0 } else { IN_SINGLE };
+                    out.push(k, k + 1, DOUBLE_BEGIN + single);
+                    p = k + 1;
+                    ctx = if single == 0 {
+                        Ctx::Double
+                    } else {
+                        Ctx::Single
+                    };
+                    depth += 1;
+                }
+            }
+            continue;
+        }
+        let (quote, single) = match ctx {
+            Ctx::Double => (b'"', 0),
+            _ => (b'\'', IN_SINGLE),
+        };
+        let next = b[p..].iter().position(|&c| c == b'\\' || c == quote);
+        let Some(k) = next.map(|i| p + i) else {
+            // `\n` sets `invalid`
+            out.push(p, b.len(), DOUBLE + single);
+            return (Ctx::Invalid, depth);
+        };
+        out.push(p, k, DOUBLE + single);
+        if b[k] == quote {
+            out.push(k, k + 1, DOUBLE_END + single);
+            p = k + 1;
+            ctx = Ctx::Args;
+            depth -= 1;
+            continue;
+        }
+        match escaped(b, k) {
+            Some(e) => {
+                out.push(k, e, DOUBLE_ESCAPED + single);
+                p = e;
+            }
+            // `\\\s+$`: the string goes on
+            None => {
+                out.push(k, b.len(), DOUBLE + single);
+                return (ctx, depth);
+            }
+        }
+    }
+}
+
+/// Keeps the context a line leaves open and the depth in `state`; a depth near syntect's limit
+/// marks it inexact.
+fn save(state: &mut State, ctx: Ctx, depth: u64) {
+    if depth >= EXACT_DEPTH {
+        state.inexact = true;
+    }
+    let ctx = match ctx {
+        Ctx::Main => 0,
+        Ctx::Body => 1,
+        Ctx::Args => 2,
+        Ctx::Double => 3,
+        Ctx::Single => 4,
+        Ctx::Invalid => 5,
+    };
+    state.set_word(depth.min(u64::MAX >> 4) << 4 | ctx);
+}
+
+/// `\\.` at `k`: where it ends; `None` for a `\` that ends the line, which `\\\s+$` takes.
+fn escaped(b: &[u8], k: usize) -> Option<usize> {
+    (k + 1 < b.len()).then(|| k + 1 + char_len(b, k + 1))
+}
+
+/// `^(\s*)((#).*(?m:$)\n?)`: the whole line, `\n` and all.
+fn comment(b: &[u8], out: &mut Out) -> bool {
+    let Some(q) = b.iter().position(|&c| !is_space(c)) else {
+        return false;
+    };
+    if b[q] != b'#' {
+        return false;
+    }
+    out.push(0, q, COMMENT_LEADING);
+    out.push(q, q + 1, COMMENT_MARK);
+    out.push(q + 1, b.len(), COMMENT);
+    true
+}
+
 /// Whether `word` starts at `at`, ignoring ASCII case.
-fn word_at(l: &Line, at: usize, word: &[u8]) -> bool {
-    l.b.get(at..at + word.len())
+fn word_at(b: &[u8], at: usize, word: &[u8]) -> bool {
+    b.get(at..at + word.len())
         .is_some_and(|w| w.eq_ignore_ascii_case(word))
 }
 
+/// Whether `\s` matches at `at`, the line's `\n` at its end.
+fn space_at(b: &[u8], at: usize) -> bool {
+    b.get(at).is_none_or(|&c| is_space(c)) && at <= b.len()
+}
+
+/// Where the spaces at `at` end.
+fn spaces(b: &[u8], at: usize) -> usize {
+    at + b[at.min(b.len())..]
+        .iter()
+        .take_while(|&&c| is_space(c))
+        .count()
+}
+
 /// `^\s*(?i:(onbuild)\s+)?(?i:<words>)\s`: the match's end, and where `onbuild` is.
-fn keyword(l: &Line, words: &[&[u8]]) -> Option<(usize, Option<(usize, usize)>)> {
-    let q = l.run(0, is_space);
+fn keyword(b: &[u8], words: &[&[u8]]) -> Option<(usize, Option<usize>)> {
+    let q = spaces(b, 0);
     let after = |at: usize| {
         words
             .iter()
-            .map(|w| at + w.len())
-            .zip(words)
-            .find(|&(e, w)| word_at(l, at, w) && l.is(e, is_space))
-            .map(|(e, _)| e + 1)
+            .find(|w| word_at(b, at, w) && space_at(b, at + w.len()))
+            .map(|w| at + w.len() + 1)
     };
-    if word_at(l, q, b"onbuild") {
-        let k = l.run(q + 7, is_space);
+    if word_at(b, q, b"onbuild") {
+        let k = spaces(b, q + 7);
         if k > q + 7
             && let Some(e) = after(k)
         {
-            return Some((e, Some((q, q + 7))));
+            return Some((e, Some(q)));
         }
     }
     after(q).map(|e| (e, None))
@@ -232,113 +322,129 @@ const INSTRUCTIONS: [&[u8]; 12] = [
     b"workdir",
 ];
 
-/// An instruction that takes arguments (`RUN`, `ENV`, …), `ONBUILD` before it or not.
-fn instruction(l: &Line, from: usize) -> Option<M> {
-    with_onbuild(l, from, &INSTRUCTIONS)
-}
-
-/// `^\s*(?i:(onbuild)\s+)?(?i:cmd|entrypoint)\s`
-fn command(l: &Line, from: usize) -> Option<M> {
-    with_onbuild(l, from, &[b"cmd", b"entrypoint"])
-}
-
-fn with_onbuild(l: &Line, from: usize, words: &[&[u8]]) -> Option<M> {
-    if from > 0 {
-        return None;
+/// `directives`, in the grammar's order: an instruction that takes arguments (`RUN`, `ENV`,
+/// …), `MAINTAINER`, `COPY` and `CMD` or `ENTRYPOINT`, `ONBUILD` before any but `MAINTAINER`.
+/// Where the match ends, its arguments' start: past the line's end when the keyword's `\s` is
+/// its `\n`.
+fn directive(b: &[u8], out: &mut Out) -> Option<usize> {
+    // caps 0 the keyword, 1 `onbuild` within it
+    let whole = |e: usize, onbuild: Option<usize>, kind: u16, out: &mut Out| {
+        let end = e.min(b.len());
+        match onbuild {
+            Some(o) => {
+                out.push(0, o, kind);
+                out.push(o, o + 7, kind + 1);
+                out.push(o + 7, end, kind);
+            }
+            None => out.push(0, end, kind),
+        }
+        e
+    };
+    if let Some((e, onbuild)) = keyword(b, &INSTRUCTIONS) {
+        return Some(whole(e, onbuild, KEYWORD, out));
     }
-    let (e, onbuild) = keyword(l, words)?;
-    let m = M::new(0, e);
-    Some(match onbuild {
-        Some((s, e)) => m.g(1, s, e),
-        None => m,
-    })
+    if let Some((e, None)) = keyword(b, &[b"maintainer"]) {
+        return Some(whole(e, None, KEYWORD, out));
+    }
+    if let Some(e) = copy(b, out) {
+        return Some(e);
+    }
+    keyword(b, &[b"cmd", b"entrypoint"]).map(|(e, onbuild)| whole(e, onbuild, OPERATOR, out))
 }
 
-/// `^\s*(?i:maintainer)\s`
-fn maintainer(l: &Line, from: usize) -> Option<M> {
-    if from > 0 {
-        return None;
-    }
-    keyword(l, &[b"maintainer"])
-        .filter(|&(_, o)| o.is_none())
-        .map(|(e, _)| M::new(0, e))
-}
-
-/// `^\s*((?i:(onbuild)\s+)?(?i:copy))(?:\s+--from=(\S+))?\s`
-fn copy(l: &Line, from: usize) -> Option<M> {
-    if from > 0 {
-        return None;
-    }
-    let q = l.run(0, is_space);
-    let try_copy = |at: usize| word_at(l, at, b"copy").then_some(at + 4);
-    let (start, kw_end, onbuild) = match word_at(l, q, b"onbuild") {
+/// `^\s*((?i:(onbuild)\s+)?(?i:copy))(?:\s+--from=(\S+))?\s`: caps 1 the keyword, 2 `onbuild`,
+/// 3 the stage.
+fn copy(b: &[u8], out: &mut Out) -> Option<usize> {
+    let q = spaces(b, 0);
+    let (kw_end, onbuild) = match word_at(b, q, b"onbuild") {
         true => {
-            let k = l.run(q + 7, is_space);
-            match try_copy(k).filter(|_| k > q + 7) {
-                Some(e) => (q, e, Some((q, q + 7))),
-                None => (q, try_copy(q)?, None),
+            let k = spaces(b, q + 7);
+            if k > q + 7 && word_at(b, k, b"copy") {
+                (k + 4, true)
+            } else if word_at(b, q, b"copy") {
+                (q + 4, false)
+            } else {
+                return None;
             }
         }
-        false => (q, try_copy(q)?, None),
+        false if word_at(b, q, b"copy") => (q + 4, false),
+        false => return None,
     };
-    let mut m = M::new(0, 0).g(1, start, kw_end);
-    if let Some(o) = onbuild {
-        m = m.g(2, o.0, o.1);
-    }
-    // `(?:\s+--from=(\S+))?`, then `\s`
-    let s = l.run(kw_end, is_space);
-    if s > kw_end && l.b.get(s..s + 7) == Some(b"--from=") {
-        let e = l.run(s + 7, |c| !is_space(c));
-        if e > s + 7 && l.is(e, is_space) {
-            m = m.g(3, s + 7, e);
-            m.e = e as u32 + 1;
-            return Some(m);
+    let keyword = |out: &mut Out| {
+        if onbuild {
+            out.push(q, q + 7, ONBUILD);
+            out.push(q + 7, kw_end, KEYWORD);
+        } else {
+            out.push(q, kw_end, KEYWORD);
+        }
+    };
+    let s = spaces(b, kw_end);
+    if s > kw_end && b.get(s..s + 7) == Some(b"--from=") {
+        let e = s + 7 + b[s + 7..].iter().take_while(|&&c| !is_space(c)).count();
+        if e > s + 7 && space_at(b, e) {
+            keyword(out);
+            out.push(s + 7, e, STAGE);
+            return Some(e + 1);
         }
     }
-    l.is(kw_end, is_space).then(|| {
-        m.e = kw_end as u32 + 1;
-        m
+    space_at(b, kw_end).then(|| {
+        keyword(out);
+        kw_end + 1
     })
 }
 
-/// `^(?i:(from))\s+[^\s:@]+(?:[:@](\S+))?(?:\s+(?i:(as))\s+(\S+))?`
-fn from(l: &Line, from: usize) -> Option<M> {
-    if from > 0 || !word_at(l, 0, b"from") {
-        return None;
+/// `^(?i:(from))\s+[^\s:@]+(?:[:@](\S+))?(?:\s+(?i:(as))\s+(\S+))?`: caps 1 `from`, 2 the tag
+/// or digest, 3 `as`, 4 the stage.
+fn from(b: &[u8], out: &mut Out) -> bool {
+    if !word_at(b, 0, b"from") {
+        return false;
     }
-    let image = l.run(4, is_space);
-    let e = l.run(image, |c| !is_space(c) && c != b':' && c != b'@');
+    let image = spaces(b, 4);
+    let e = image
+        + b[image..]
+            .iter()
+            .take_while(|&&c| !is_space(c) && c != b':' && c != b'@')
+            .count();
     if image == 4 || e == image {
-        return None;
+        return false;
     }
-    let mut m = M::new(0, e).g(1, 0, 4);
+    out.push(0, 4, KEYWORD);
     let mut end = e;
-    if l.is(e, |c| c == b':' || c == b'@') {
-        let t = l.run(e + 1, |c| !is_space(c));
+    if b.get(e).is_some_and(|&c| c == b':' || c == b'@') {
+        let t = e + 1 + b[e + 1..].iter().take_while(|&&c| !is_space(c)).count();
         if t > e + 1 {
-            m = m.g(2, e + 1, t);
+            out.push(e + 1, t, TAG);
             end = t;
         }
     }
-    let a = l.run(end, is_space);
-    if a > end && word_at(l, a, b"as") {
-        let n = l.run(a + 2, is_space);
-        let ne = l.run(n, |c| !is_space(c));
+    let a = spaces(b, end);
+    if a > end && word_at(b, a, b"as") {
+        let n = spaces(b, a + 2);
+        let ne = n + b[n..].iter().take_while(|&&c| !is_space(c)).count();
         if n > a + 2 && ne > n {
-            m = m.g(3, a, a + 2).g(4, n, ne);
-            end = ne;
+            out.push(a, a + 2, KEYWORD);
+            out.push(n, ne, STAGE);
         }
     }
-    m.e = end as u32;
-    Some(m)
+    true
 }
 
 /// `^[^A-Z\n](.*)(?m:$)`
-fn invalid(l: &Line, from: usize) -> Option<M> {
-    (from == 0 && l.b.first().is_some_and(|c| !c.is_ascii_uppercase())).then(|| M::new(0, l.nl()))
+fn invalid(b: &[u8]) -> bool {
+    b.first().is_some_and(|c| !c.is_ascii_uppercase())
 }
 
 /// `^(?i:arg)\s`
-fn arg(l: &Line, from: usize) -> Option<M> {
-    (from == 0 && word_at(l, 0, b"arg") && l.is(3, is_space)).then(|| M::new(0, 4))
+fn arg(b: &[u8]) -> bool {
+    word_at(b, 0, b"arg") && space_at(b, 3)
+}
+
+/// The length of the character at `i`, a valid UTF-8 line's.
+fn char_len(b: &[u8], i: usize) -> usize {
+    match b[i] {
+        0..0x80 => 1,
+        0xc0..0xe0 => 2,
+        0xe0..0xf0 => 3,
+        _ => 4,
+    }
 }

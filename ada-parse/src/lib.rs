@@ -10,13 +10,10 @@
 //! The lexers are scanners of ada's own, speed first (ADR-40): one pass over a line's bytes,
 //! a fixed set of kinds carrying bat's scopes for the common case, syntect a guideline.
 //! Diff and INI are line lexers, each line on its own; logs (O-043) and JSON (O-048) came
-//! from ada; TOML's, XML's, `.env`'s and Git's (ignore, attributes, mailmap and link files)
-//! scanners are bat's grammars compiled by hand, exact against their ports; YAML's reads YAML as
-//! bat's grammar does on well-formed text. Dockerfile and Java properties still run on a port of
-//! syntect's parse machine (`machine.rs`), their grammars bat's context for context, until
-//! scanners replace them. bash and Makefiles share a scanner, bat's
-//! contexts matched in place; [`make`], the earlier port of syntect's machine that ran them
-//! (G-002, G-003), stays as their reference in tests.
+//! from ada; TOML's, XML's, `.env`'s, Git's (ignore, attributes, mailmap and link files),
+//! Dockerfile's and Java properties' scanners are bat's grammars compiled by hand, exact
+//! against syntect (the `parse` fuzz target); YAML's reads YAML as bat's grammar does on
+//! well-formed text. bash and Makefiles share a scanner, bat's contexts matched in place.
 
 mod bash;
 mod cpp;
@@ -24,12 +21,10 @@ mod csharp;
 mod css;
 mod diff;
 mod dockerfile;
-// the port: the scanner's reference in tests, and the source of helpers it shares
-#[allow(dead_code)]
+// the matchers and context ids its scanner shares, from the port it replaced
 mod dotenv;
 mod dotenv_scan;
-// the port: the scanner's reference in tests, and the source of helpers it shares
-#[allow(dead_code)]
+// the matchers and context ids its scanner shares, from the port it replaced
 mod git;
 mod git_scan;
 mod go;
@@ -43,30 +38,26 @@ mod lang;
 mod lisp;
 mod logs;
 mod lua;
-mod machine;
+mod matcher;
 mod powershell;
 mod properties;
 mod python;
 mod regex;
 mod rust;
 mod sql;
-// the port: the scanner's reference in tests, and the source of helpers it shares
-#[allow(dead_code)]
+// the matchers and context ids its scanner shares, from the port it replaced
 mod toml;
 mod toml_scan;
 mod typescript;
-// the port: the scanner's reference in tests, and the source of the matchers it shares
-#[allow(dead_code)]
+// the matchers and context ids its scanner shares, from the port it replaced
 mod xml;
 mod xml_scan;
-// the port, replaced by the scanner (speed first, ADR-40); kept for the matchers the scanner
-// shares, until they move into it
-#[allow(dead_code)]
+// the matchers its scanner shares, from the port it replaced
 mod yaml;
 mod yaml_scan;
 
 use git_scan::Git;
-pub use lang::{ALIASES, Lang};
+pub use lang::{ALIASES, FirstLine, Lang, first_line_syntaxes};
 use lisp::Dialect;
 
 /// Bytes `start..end` of a line are kind `kind` of the line's language, whose scopes
@@ -82,17 +73,17 @@ pub struct Span {
 /// Small and `Copy`, so a line's highlighting can start on any thread from the state before it.
 /// A new block starts from `State::default()`.
 ///
-/// For a language on the machine (`machine.rs`), the stack of contexts between lines, up to
-/// 14 levels; nested deeper, the bottom ones are dropped and the lines after
-/// may differ from syntect's.
+/// A scanner keeps a stack of its contexts here, up to 14 levels (twice that
+/// with the bytes beside them); nested deeper, the bottom ones are dropped and the lines
+/// after may differ from syntect's ([`State::is_exact`]). Others keep a word of their own.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct State {
-    levels: [u8; machine::KEPT],
-    /// Each level's `with_prototype`, plus 1; 0 for none.
-    withs: [u8; machine::KEPT],
+    levels: [u8; matcher::KEPT],
+    /// A byte a level beside `levels`, for the scanners that keep one.
+    withs: [u8; matcher::KEPT],
     depth: u8,
     inexact: bool,
-    /// The back-reference of the topmost level that has one ([`machine::Line::arg`]).
+    /// A scanner's bits beside its stack ([`State::flags`]).
     arg: u16,
 }
 
@@ -103,12 +94,8 @@ impl State {
         !self.inexact
     }
 
-    fn exact(&self) -> bool {
-        !self.inexact
-    }
-
-    /// A scanner's state (a language not on the machine): a word of its own, 0 at a block's
-    /// start, kept in the bytes the machine's stack would take.
+    /// A scanner's state kept as a word of its own, 0 at a block's start, in the bytes a stack
+    /// would take.
     fn word(&self) -> u64 {
         let mut b = [0; 8];
         b.copy_from_slice(&self.levels[..8]);
@@ -119,8 +106,8 @@ impl State {
         self.levels[..8].copy_from_slice(&word.to_le_bytes());
     }
 
-    /// A scanner's bits beside its stack, in the machine's [`State::arg`], which no scanner
-    /// uses: Java's and Kotlin's SQL marker waiting for its string (phase 4).
+    /// A scanner's bits beside its stack: Java's and Kotlin's SQL marker waiting for its string
+    /// (phase 4).
     fn flags(&self) -> u16 {
         self.arg
     }
@@ -133,17 +120,13 @@ impl State {
         &self.levels[..usize::from(self.depth)]
     }
 
-    fn withs(&self) -> &[u8] {
-        &self.withs[..usize::from(self.depth)]
-    }
-
-    /// A stack to keep: its top [`machine::KEPT`] levels.
+    /// A stack to keep: its top [`matcher::KEPT`] levels.
     fn pack(levels: &[u8], withs: &[u8], arg: u16, exact: bool) -> State {
-        let from = levels.len().saturating_sub(machine::KEPT);
+        let from = levels.len().saturating_sub(matcher::KEPT);
         let n = levels.len() - from;
         let mut state = State {
-            levels: [0; machine::KEPT],
-            withs: [0; machine::KEPT],
+            levels: [0; matcher::KEPT],
+            withs: [0; matcher::KEPT],
             depth: n as u8,
             inexact: !exact || from > 0,
             arg,
@@ -209,11 +192,9 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::GitAttributes => git_scan::line(Git::Attributes, line.as_bytes(), state, &mut out),
         Lang::GitMailmap => git_scan::line(Git::Mailmap, line.as_bytes(), state, &mut out),
         Lang::GitLink => git_scan::line(Git::Link, line.as_bytes(), state, &mut out),
-        _ => {
-            if let Some(g) = lang.grammar() {
-                machine::line(g, line.as_bytes(), state, &mut out);
-            }
-        }
+        Lang::Dockerfile => dockerfile::line(line.as_bytes(), state, &mut out),
+        Lang::Properties => properties::line(line.as_bytes(), state, &mut out),
+        Lang::Log | Lang::Json => unreachable!(),
     }
 }
 

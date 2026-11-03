@@ -458,9 +458,9 @@ impl Lang {
         }
     }
 
-    /// The scopes under [`Lang::base`] each kind of a scanned language carries, space-separated,
-    /// by [`crate::Span::kind`]: a fixed set. Empty for those on the machine, whose kinds are
-    /// the stacks of scopes met so far ([`Lang::scopes`]).
+    /// The scopes under [`Lang::base`] each kind of a line lexer's language carries,
+    /// space-separated, by [`crate::Span::kind`]; empty for the scanners, whose kinds
+    /// [`Lang::scopes`] gives.
     pub fn kinds(self) -> &'static [&'static str] {
         match self {
             Lang::Diff => crate::diff::KINDS,
@@ -502,60 +502,13 @@ impl Lang {
             }
             Lang::Bash => crate::bash::scopes(kind),
             Lang::Makefile => crate::bash::make_scopes(kind),
-            _ if self.grammar().is_some() => {
-                self.grammar().map_or_else(Vec::new, |g| g.scopes(kind))
-            }
+            Lang::Dockerfile => crate::dockerfile::scopes(kind),
+            Lang::Properties => crate::properties::scopes(kind),
             _ => self
                 .kinds()
                 .get(usize::from(kind))
                 .map_or_else(Vec::new, |k| k.split(' ').collect()),
         }
-    }
-
-    /// The context grammar it runs on, for the languages not read line by line.
-    pub(crate) fn grammar(self) -> Option<&'static crate::machine::Grammar> {
-        Some(match self {
-            Lang::Dockerfile => &crate::dockerfile::GRAMMAR,
-            Lang::Properties => &crate::properties::GRAMMAR,
-            Lang::Json
-            | Lang::Log
-            | Lang::Makefile
-            | Lang::Bash
-            | Lang::Diff
-            | Lang::Ini
-            | Lang::Toml
-            | Lang::Xml
-            | Lang::Yaml
-            | Lang::Rust
-            | Lang::Kotlin
-            | Lang::Java
-            | Lang::Cpp
-            | Lang::C
-            | Lang::CSharp
-            | Lang::Go
-            | Lang::Python
-            | Lang::Lua
-            | Lang::Sql
-            | Lang::PowerShell
-            | Lang::JavaScript
-            | Lang::TypeScript
-            | Lang::TypeScriptReact
-            | Lang::Css
-            | Lang::Scss
-            | Lang::DotEnv
-            | Lang::GitIgnore
-            | Lang::GitAttributes
-            | Lang::GitMailmap
-            | Lang::GitLink
-            | Lang::Html
-            | Lang::Lisp
-            | Lang::EmacsLisp
-            | Lang::Scheme
-            | Lang::Racket
-            | Lang::Clojure => {
-                return None;
-            }
-        })
     }
 
     /// Whether [`crate::lex`] lexes it: every language in the table, since Makefiles moved onto
@@ -617,66 +570,370 @@ impl Lang {
     }
 
     /// The language a file's first line declares (`#!/bin/sh`, `# -*- makefile -*-`), when
-    /// syntect's first-line match surely gives it; `None` leaves it to syntect.
-    ///
-    /// syntect tries the set's first-line regexes from its last syntax to its first, so a
-    /// line bash's regex matches is still another syntax's when a later one's matches too
-    /// (`#!/usr/bin/env fish` names `sh` nowhere, but `#!/home/ls/bin/sh` is LiveScript's).
-    /// Each later regex that can match a line starting with `#` needs a word of its own in it
-    /// (`fish`, `node`, `ls`), so a line holding none of those words is bash's. The words were
-    /// read off bat 0.26.1's grammars; ada's tests list the syntaxes they stand for, and fail
-    /// when the set gains another.
+    /// syntect's first-line match on bat's set surely gives one of these; `None` when it gives
+    /// another syntax, none, or only the set can tell ([`Lang::first_line`]).
     pub fn from_first_line(line: &str) -> Option<Lang> {
+        match Lang::first_line(line) {
+            FirstLine::Lang(lang) => Some(lang),
+            FirstLine::None | FirstLine::Ask => None,
+        }
+    }
+
+    /// What syntect's first-line match on bat's set makes of a file's first line, as far as
+    /// that can be told without the set: one of these languages, no syntax at all, or a
+    /// question for the set.
+    ///
+    /// syntect tries the set's first-line regexes from its last syntax to its first, and the
+    /// first that matches names the syntax. A table holds each regex in the set's
+    /// order as a test that holds on every line the regex can match, and, for some, the regex
+    /// itself; the walk goes the same way, past each regex the line surely doesn't match, and
+    /// stops at the first it may: one of these languages when that regex is one of theirs and
+    /// matches, the set when only the set can tell.
+    pub fn first_line(line: &str) -> FirstLine {
         let line = line.strip_prefix('\u{feff}').unwrap_or(line);
-        // Unicode case folding and `\s` reach past ASCII: leave such lines to syntect
-        if !line.is_ascii() {
-            return None;
+        // `^` also holds after a line feed
+        if line.contains('\n') {
+            return FirstLine::Ask;
         }
-        let lower = line.to_ascii_lowercase();
-        let has = |words: &[&str]| words.iter().any(|w| lower.contains(w));
-        if has(AFTER_BASH) {
-            return None;
+        let text = FirstLineText::new(line);
+        for regex in FIRST_LINES.iter().rev() {
+            if !(regex.may)(&text) {
+                continue;
+            }
+            // `\b`, `\s` and case folding reach past ASCII: such lines go to the set
+            match regex
+                .exact
+                .filter(|_| text.ascii)
+                .and_then(|exact| exact(line))
+            {
+                Some(true) => return regex.lang.map_or(FirstLine::Ask, FirstLine::Lang),
+                Some(false) => {}
+                None => return FirstLine::Ask,
+            }
         }
-        if is_bash_line(line) {
-            return Some(Lang::Bash);
-        }
-        if !has(AFTER_MAKE) && is_make_line(&lower) {
-            return Some(Lang::Makefile);
-        }
-        None
+        FirstLine::None
     }
 }
 
-/// A word each first-line regex of a syntax after bash's in the set needs, to match a line
-/// starting with `#`: Textile, CMakeCache, CoffeeScript, Crystal, Elixir, Fish, GLSL,
-/// JavaScript (Babel), Julia, LiveScript, Requirements.txt, JQ, Svelte, Swift and Odin.
-const AFTER_BASH: &[&str] = &[
-    "textile",
-    "cmakecache",
-    "coffee",
-    "crystal",
-    "elixir",
-    "iex",
-    "fish",
-    "glsl",
-    "node",
-    "js",
-    "julia",
-    "ls",
-    "pip",
-    "requirements",
-    "jq",
-    "jaq",
-    "yq",
-    "xq",
-    "html",
-    "swift",
-    "odin",
+/// What a file's first line says, by [`Lang::first_line`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FirstLine {
+    /// The set's first-line match gives this language.
+    Lang(Lang),
+    /// No first-line regex of the set matches the line.
+    None,
+    /// Only the set can tell: a syntax not covered here, or a regex the table can't decide.
+    Ask,
+}
+
+/// The syntaxes of bat's set that have a first-line regex, in the set's order: what
+/// [`Lang::first_line`] walks. ada's tests hold it to the set's names and order, and a
+/// snapshot of the regexes fails when two-face changes one.
+#[doc(hidden)]
+pub fn first_line_syntaxes() -> impl Iterator<Item = &'static str> {
+    FIRST_LINES.iter().map(|r| r.syntax)
+}
+
+/// One first-line regex of the set: its syntax, a test holding on every line the regex can
+/// match (it may hold on more), and, where the table decides it, the regex on an ASCII line
+/// (`None` when it can't tell) and the language it names.
+struct FirstLineRegex {
+    syntax: &'static str,
+    may: fn(&FirstLineText) -> bool,
+    exact: Option<fn(&str) -> Option<bool>>,
+    lang: Option<Lang>,
+}
+
+const fn may(syntax: &'static str, may: fn(&FirstLineText) -> bool) -> FirstLineRegex {
+    FirstLineRegex {
+        syntax,
+        may,
+        exact: None,
+        lang: None,
+    }
+}
+
+const fn decided(
+    syntax: &'static str,
+    lang: Lang,
+    may: fn(&FirstLineText) -> bool,
+    exact: fn(&str) -> Option<bool>,
+) -> FirstLineRegex {
+    FirstLineRegex {
+        syntax,
+        may,
+        exact: Some(exact),
+        lang: Some(lang),
+    }
+}
+
+/// bat 0.26.1's first-line regexes, read off its grammars: each `may` asks for what the
+/// regex can't match without (its anchor, its words), ignoring ASCII case where the regex
+/// does. Shebang regexes name their interpreter, so a line naming none of a later regex's
+/// words is past it.
+const FIRST_LINES: &[FirstLineRegex] = &[
+    // ^#!.*(osascript)
+    may("AppleScript", |t| t.shebang() && t.has("osascript")),
+    // -\*- C\+\+ -\*-
+    may("C++", |t| t.has("-*- C++ -*-")),
+    // -[*]-( Mode:)? C -[*]-
+    may("C", |t| t.has(" C -*-")),
+    // ^#!.*\bg?dmd\b.
+    may("D", |t| t.shebang() && t.has("dmd")),
+    // ^(=== modified file|====\s*//.+\s-\s.+\s+====|Index: |--- [^%]|\*\*\*.*\d{4}\s*$
+    //   |\d+(,\d+)* (a|d|c) \d+(,\d+)* $|diff --git )
+    may("Diff", |t| {
+        ["===", "Index: ", "--- ", "***", "diff --git "]
+            .iter()
+            .any(|p| t.line.starts_with(p))
+            || t.line.starts_with(char::is_numeric)
+    }),
+    // (?x: ^\#! .* \b(erlang|escript)\b | ^ \s* \%+ \s* -\*- .*? \b[Ee]rlang\b .*? -\*-)
+    may("Erlang", |t| {
+        t.shebang() && t.has_ci("escript") || t.has_ci("erlang")
+    }),
+    // ^\[core\]
+    may("Git Config", |t| t.line.starts_with("[core]")),
+    // ^\s*gitdir\s*:
+    may("Git Link", |t| t.trimmed().starts_with("gitdir")),
+    // ^commit\s+\h{7,}
+    may("Git Log", |t| t.line.starts_with("commit")),
+    // ^(?:drop|edit|exec|fixup|pick|reword|squash|[defprsx]) \h{7,}
+    may("Git Rebase Todo", |t| {
+        t.line.starts_with(['d', 'e', 'f', 'p', 'r', 's', 'x'])
+            && t.line.split_once(' ').is_some_and(|(_, rest)| {
+                rest.bytes().take_while(u8::is_ascii_hexdigit).count() >= 7
+            })
+    }),
+    // (?i)<(!DOCTYPE\s*)?html
+    may("HTML", html),
+    // ^#!\s*/.*\b(node|bun|js)\b
+    may("JavaScript", |t| {
+        t.shebang() && (t.has("node") || t.has("bun") || t.has("js"))
+    }),
+    // This is (pdf|pdfe)?TeXk?, Version
+    may("LaTeX Log", |t| t.has("TeX") && t.has(", Version ")),
+    // (?xi: ^ \s* ; .*? -\*- .*? \blisp\b .*? -\*-)
+    may("Lisp", |t| t.has("-*-") && t.has_ci("lisp")),
+    // (?xi: ^\#! .* \bmake\b | ^\# \s* -\*- [^*]* makefile [^*]* -\*-)
+    decided(
+        "Makefile",
+        Lang::Makefile,
+        |t| t.has_ci("make"),
+        |line| Some(is_make_line(&line.to_ascii_lowercase())),
+    ),
+    // (?i)^format:\s*complete\s*$
+    may("MultiMarkdown", |t| t.lower.starts_with("format:")),
+    // ^(#!.*[^-]php[0-9]?|<\?php)\b
+    may("PHP", |t| {
+        t.shebang() && t.has("php") || t.line.starts_with("<?php")
+    }),
+    // (?xi: ^\#! .* \bperl\b | ^\# \s* -\*- [^*]* perl [^*]* -\*-)
+    may("Perl", |t| t.has_ci("perl")),
+    // ^#!\s*/.*\bpython(\d(\.\d)?)?\b
+    decided(
+        "Python",
+        Lang::Python,
+        |t| t.shebang() && t.has("python"),
+        |line| Some(is_python_line(line)),
+    ),
+    // (?xi: ^\#! .* \bj?ruby\b | ^\# \s* -\*- [^*]* ruby [^*]* -\*-)
+    may("Ruby", |t| t.has_ci("ruby")),
+    // (?x) ^\#! .* \b(bash|zsh|sh|tcsh|ash|dash|ksh)\b
+    //    | ^\# \s* -\*- [^*]* mode: \s* shell-script [^*]* -\*-
+    decided(
+        "Bourne Again Shell (bash)",
+        Lang::Bash,
+        |t| t.shebang() && t.has("sh") || t.has("shell-script"),
+        |line| Some(is_bash_line(line)),
+    ),
+    // textile
+    may("Textile", |t| t.has("textile")),
+    // (?x: ^(?: <\?xml\s
+    //   | \s*<([\w-]+):Envelope\s+xmlns:\1\s*=\s*"http://schemas.xmlsoap.org/soap/envelope/"\s*>
+    //   | \s*(?i:<!DOCTYPE\s+(?!html[ \t\n\f>]))))
+    decided(
+        "XML",
+        Lang::Xml,
+        |t| {
+            t.line.starts_with("<?xml")
+                || t.has(":Envelope")
+                || t.lower
+                    .trim_start_matches(is_any_space)
+                    .starts_with("<!doctype")
+        },
+        |line| {
+            let decl = line
+                .strip_prefix("<?xml")
+                .is_some_and(|rest| rest.starts_with(is_space));
+            // the other two ways in are left to the set
+            decl.then_some(true)
+        },
+    ),
+    // ^%YAML( ?1.\d+)?
+    may("YAML", |t| t.line.starts_with("%YAML")),
+    // # This is the CMakeCache file.
+    may("CMakeCache", |t| t.has("# This is the CMakeCache file")),
+    // ^#!.*\bcoffee
+    may("CoffeeScript", |t| t.shebang() && t.has("coffee")),
+    // ^#!/.*\bcrystal
+    may("Crystal", |t| t.shebang() && t.has("crystal")),
+    // ^\s*(?i:(from(?!\s+\S+\s+import)|arg))\s+
+    may("Dockerfile", |t| {
+        let lower = t.lower.trim_start_matches(is_any_space);
+        ["from", "arg"].iter().any(|w| {
+            lower
+                .strip_prefix(w)
+                .is_some_and(|rest| rest.starts_with(is_any_space))
+        })
+    }),
+    // ^#!/.*\b(?:elixirc?|iex)
+    may("Elixir", |t| {
+        t.shebang() && (t.has("elixir") || t.has("iex"))
+    }),
+    // ^#!.*\b(fish)\b
+    may("Fish", |t| t.shebang() && t.has("fish")),
+    // -[*]-( Mode:)? GLSL -[*]-
+    may("GLSL", |t| t.has(" GLSL -*-")),
+    // ^#!\s*/.*\b(node|js)$\n?
+    may("JavaScript (Babel)", |t| {
+        t.shebang() && (t.has("node") || t.has("js"))
+    }),
+    // ^{% extends ["'][^"']+["'] %}
+    may("HTML (Jinja2)", |t| t.line.starts_with("{% extends")),
+    // ^#!.*\bjulia\s*$
+    may("Julia", |t| t.shebang() && t.has("julia")),
+    // ^#!.*\bls
+    may("LiveScript", |t| t.shebang() && t.has("ls")),
+    // ^(syntax)\s*(=)\s*("proto\d")\s*(;)\s*$
+    may("Protocol Buffer", |t| t.line.starts_with("syntax")),
+    // (?xi: ^ \#! .* \bpip | ^ \s* \# .*? -\*- .*? \bpip-requirements\b .*? -\*-
+    //   | ^ \s* \# (vim?|ex): .*? \brequirements\b)
+    may("Requirements.txt", |t| {
+        t.shebang() && t.has_ci("pip")
+            || t.has_ci("requirements")
+                && (t.has("-*-") || ["#vi:", "#vim:", "#ex:"].iter().any(|m| t.has_ci(m)))
+    }),
+    // (?xi: ^ \#! .* \b(jq|gojq|jaq|yq|xq)\b)
+    may("JQ", |t| {
+        t.shebang() && ["jq", "jaq", "yq", "xq"].iter().any(|w| t.has_ci(w))
+    }),
+    // (?i)<(!DOCTYPE\s*)?html
+    may("Svelte", html),
+    // ^#!/.*\bswift
+    may("Swift", |t| t.shebang() && t.has("swift")),
+    // (?x: ^ (?: (?:GET|HEAD|POST|PUT|DELETE|CONNECT|OPTIONS|TRACE|PATCH)\ .+\ HTTP/\d(?:\.\d)?$
+    //   | (?:HTTP/\d(?:\.\d)?\ \d{3}\ )))
+    may("HTTP Request and Response", |t| {
+        [
+            "GET ", "HEAD ", "POST ", "PUT ", "DELETE ", "CONNECT ", "OPTIONS ", "TRACE ",
+            "PATCH ", "HTTP/",
+        ]
+        .iter()
+        .any(|p| t.line.starts_with(p))
+    }),
+    // ^-----BEGIN [\w ]+ PRIVATE KEY-----
+    may("Private Key", |t| t.line.starts_with("-----BEGIN ")),
+    // -[*]-( Mode:)? Odin -[*]-
+    may("Odin", |t| t.has(" Odin -*-")),
 ];
 
-/// The same for the syntaxes between Makefile's and bash's: PHP, Perl, Python, Ruby, and
-/// bash itself, whose shell names and `shell-script` all hold `sh`.
-const AFTER_MAKE: &[&str] = &["php", "perl", "python", "ruby", "sh"];
+/// A first line as [`FIRST_LINES`]' tests read it: as it is, and folded to lowercase for the
+/// regexes that ignore case.
+struct FirstLineText<'a> {
+    line: &'a str,
+    /// The line in ASCII lowercase, with each character that a regex ignoring case can match
+    /// to ASCII letters written as those letters (`ſ` as `s`, `ﬁ` as `fi`).
+    lower: String,
+    ascii: bool,
+}
+
+impl<'a> FirstLineText<'a> {
+    fn new(line: &'a str) -> FirstLineText<'a> {
+        let ascii = line.is_ascii();
+        let lower = if ascii {
+            line.to_ascii_lowercase()
+        } else {
+            fold(line)
+        };
+        FirstLineText { line, lower, ascii }
+    }
+
+    fn shebang(&self) -> bool {
+        self.line.starts_with("#!")
+    }
+
+    fn has(&self, s: &str) -> bool {
+        self.line.contains(s)
+    }
+
+    /// Whether the line holds `s`, ASCII lowercase, ignoring case.
+    fn has_ci(&self, s: &str) -> bool {
+        self.lower.contains(s)
+    }
+
+    /// The line past `^\s*`.
+    fn trimmed(&self) -> &str {
+        self.line.trim_start_matches(is_any_space)
+    }
+}
+
+/// HTML's and Svelte's first-line regex, `(?i)<(!DOCTYPE\s*)?html`.
+fn html(t: &FirstLineText) -> bool {
+    t.has_ci("<html") || t.has_ci("<!doctype")
+}
+
+/// `line` in ASCII lowercase, each character Unicode case folding takes to ASCII letters
+/// written as them: `ſ` and the Kelvin sign, `İ`'s `i`, `ß` and the Latin ligatures. Any other
+/// character stays as it is, and so can't make an ASCII word appear.
+fn fold(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    for c in line.chars() {
+        match c {
+            '\u{17f}' => out.push('s'),
+            '\u{212a}' => out.push('k'),
+            '\u{130}' => out.push('i'),
+            '\u{df}' | '\u{1e9e}' => out.push_str("ss"),
+            '\u{fb00}' => out.push_str("ff"),
+            '\u{fb01}' => out.push_str("fi"),
+            '\u{fb02}' => out.push_str("fl"),
+            '\u{fb03}' => out.push_str("ffi"),
+            '\u{fb04}' => out.push_str("ffl"),
+            '\u{fb05}' | '\u{fb06}' => out.push_str("st"),
+            c => out.push(c.to_ascii_lowercase()),
+        }
+    }
+    out
+}
+
+/// At least every character Oniguruma's and fancy-regex's Unicode `\s` take, for a test
+/// skipping a regex's leading `\s*`: skipping more only makes the test hold more often.
+fn is_any_space(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '\u{180e}' | '\u{200b}' | '\u{feff}')
+}
+
+/// bat's Python first-line regex, `^#!\s*/.*\bpython(\d(\.\d)?)?\b`, on an ASCII line.
+fn is_python_line(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix("#!") else {
+        return false;
+    };
+    let Some(rest) = rest.trim_start_matches(is_space).strip_prefix('/') else {
+        return false;
+    };
+    let b = rest.as_bytes();
+    rest.match_indices("python").any(|(i, word)| {
+        // the `/` before the first byte is a boundary
+        let starts = i == 0 || !is_word(b[i - 1]);
+        // `\b` after `python`, after one more digit, or after `\d\.\d`, whose `.` is one
+        let ends = match &b[i + word.len()..] {
+            [] => true,
+            [c, ..] if !is_word(*c) => true,
+            [d, rest @ ..] if d.is_ascii_digit() => rest.first().is_none_or(|&c| !is_word(c)),
+            _ => false,
+        };
+        starts && ends
+    })
+}
 
 /// Whether `word` is one of `words`, ignoring ASCII case. Never inlined: inlined, the compiler
 /// unrolls the search over every word of the table into a compare of its own.
@@ -835,12 +1092,29 @@ mod tests {
         for line in make {
             assert_eq!(Lang::from_first_line(line), Some(Lang::Makefile), "{line}");
         }
+        let python = [
+            "#!/usr/bin/python3",
+            "#!/usr/bin/env python",
+            "#! /usr/bin/env python3.12 -u",
+            "#!/usr/local/bin/python2.7",
+            "#!/opt/python/bin/python",
+        ];
+        for line in python {
+            assert_eq!(Lang::from_first_line(line), Some(Lang::Python), "{line}");
+        }
+        assert_eq!(
+            Lang::from_first_line("<?xml version=\"1.0\"?>"),
+            Some(Lang::Xml)
+        );
         let neither = [
             "#!/usr/bin/env fish",
             "#!/home/ls/bin/sh",
             "#!/usr/bin/env node",
             "#!/bin/shell",
-            "#!/usr/bin/python3",
+            "#!python3",
+            "#!/usr/bin/python312",
+            "#!/usr/bin/env python3 # ruby",
+            "<?xml",
             "# -*- mode: shell-script",
             "# -*- mode: shell-* -*-",
             "#!/bin/sh é",
@@ -850,5 +1124,32 @@ mod tests {
         for line in neither {
             assert_eq!(Lang::from_first_line(line), None, "{line}");
         }
+    }
+
+    /// Lines no first-line regex can match are told apart without the set.
+    #[test]
+    fn first_lines_of_no_syntax() {
+        let lines = [
+            "# ada",
+            "<p align=\"center\">",
+            "{",
+            "[package]",
+            "Some text, from here.",
+            "# Requirements",
+            "# Über",
+            "---",
+            "",
+        ];
+        for line in lines {
+            assert_eq!(Lang::first_line(line), FirstLine::None, "{line}");
+        }
+        assert_eq!(Lang::first_line("#!/usr/bin/env ruby"), FirstLine::Ask);
+        // ignoring case, the Kelvin sign is a `k` and `ſ` an `s`
+        assert_eq!(Lang::first_line("#!/usr/bin/ma\u{212a}e"), FirstLine::Ask);
+        assert_eq!(
+            Lang::first_line("#!/usr/bin/pip-requirement\u{17f}"),
+            FirstLine::Ask
+        );
+        assert_eq!(Lang::first_line("#!/usr/bin/\u{212a}sh"), FirstLine::Ask);
     }
 }

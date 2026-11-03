@@ -25,7 +25,7 @@
 //! table's value three), so a stack deeper than 28 is kept in [`RUNS`]: the runs of contexts
 //! that deep stacks repeat, a byte each.
 
-use crate::machine::KEPT as HALF;
+use crate::matcher::KEPT as HALF;
 use crate::{Out, State};
 
 // The contexts, by bat's names where they have one.

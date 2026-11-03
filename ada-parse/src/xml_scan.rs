@@ -1,22 +1,20 @@
 //! XML by a scanner (ADR-40, speed first): bat's `XML` grammar compiled by hand, as TOML's is.
-//! Each of the port's contexts (`xml.rs`) is an arm of one `match` on the top of the stack, and
+//! Each of the grammar's contexts (their ids in `xml.rs`) is an arm of one `match` on the top of the stack, and
 //! each decides at the byte where its next match can start: text runs to the next `<` or `&`, a
 //! tag's attributes and strings to the next quote, `<`, `&` or `>`. Nearly every context ends
 //! in a pattern that matches any byte that isn't a space (the grammar's `else-pop`s), so the
 //! leftmost match is the first pattern that matches at the first byte that isn't a space; the
-//! rest search ahead once, for a byte. The port's matchers are shared, anchored at a position.
+//! rest search ahead once, for a byte. The matchers in `xml.rs` are anchored at a position.
 //!
-//! The stack holds the port's context ids and packs into the same [`State`], so the port is an
-//! exact reference: the tests hold every byte's scopes and every line's state to it. A span's
+//! The stack holds syntect's context ids and packs into a [`State`]. Exact against syntect on
+//! bat's grammar, each scope once (`tests/exact_lexers.rs`, the `parse` fuzz target). A span's
 //! kind is fixed ([`scopes`]): the meta scopes of the stack as a set (a doctype's, its internal
 //! subset's, a conditional section's, then one of a tag's, a comment's, a declaration's, a
 //! group's), a string's, and a leaf. bat's stack repeats a group's or a conditional section's
 //! meta scopes as they nest, which none of the built-in themes tells apart; here each is kept
-//! once, the only way the scanner's scopes differ from the port's.
+//! once, the only way the scanner's scopes differ from syntect's.
 
-use std::cell::Cell;
-
-use crate::machine::{Atom, DEPTH, Line, M, MAX_PUSH};
+use crate::matcher::{Atom, DEPTH, Line, M, MAX_PUSH};
 use crate::xml::{
     ATOMS, ATTLIST_PARENS_0, CDATA_0, COMMENT_0, DOCTYPE_META, DOCTYPE_ROOT_NAME,
     DTD_ATTLIST_CONTENT, DTD_ATTLIST_META, DTD_CONTENT_QUOTED, DTD_CONTENT_TYPE,
@@ -257,10 +255,7 @@ const NO_MATCH: u32 = u32::MAX - 1;
 /// Lex `b`, a line without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let l = Line {
-        b,
-        arg: Cell::new(0),
-    };
+    let l = Line { b };
     let mut scan = Scan {
         nl: b.len(),
         stack: [0; DEPTH],
@@ -1413,234 +1408,6 @@ impl Scan<'_, '_> {
                 }
             }
             i = k + 1;
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{Span, machine, xml};
-
-    /// Each byte's scopes, as `kind_scopes` names a span's kind, each scope once.
-    fn bytes(
-        len: usize,
-        spans: &[Span],
-        kind_scopes: impl Fn(u16) -> Vec<&'static str>,
-    ) -> Vec<String> {
-        let mut out = vec![String::new(); len];
-        let mut last = 0;
-        for s in spans {
-            assert!(
-                s.start >= last && s.end > s.start && s.end as usize <= len,
-                "{spans:?}"
-            );
-            last = s.end;
-            let mut scopes = kind_scopes(s.kind);
-            let mut seen = Vec::new();
-            scopes.retain(|s| {
-                let new = !seen.contains(s);
-                seen.push(*s);
-                new
-            });
-            let scopes = scopes.join(" ");
-            for b in &mut out[s.start as usize..s.end as usize] {
-                b.clone_from(&scopes);
-            }
-        }
-        out
-    }
-
-    /// The scanner gives each line of `block` the port's scopes (each once) and leaves it the
-    /// port's state.
-    fn agree(block: &str) -> Result<(), String> {
-        let (mut port, mut scan) = (State::default(), State::default());
-        let (mut a, mut b) = (Vec::new(), Vec::new());
-        for (n, text) in block.split('\n').enumerate() {
-            a.clear();
-            b.clear();
-            machine::line(
-                &xml::GRAMMAR,
-                text.as_bytes(),
-                &mut port,
-                &mut Out::new(&mut a),
-            );
-            line(text.as_bytes(), &mut scan, &mut Out::new(&mut b));
-            let want = bytes(text.len(), &a, |k| xml::GRAMMAR.scopes(k));
-            let mut got = bytes(text.len(), &b, scopes);
-            // where the machine's scopes are full it drops the innermost; the scanner keeps them
-            for s in &a {
-                if xml::GRAMMAR.scopes(s.kind).len() >= SCOPES {
-                    for i in s.start..s.end {
-                        got[i as usize].clone_from(&want[i as usize]);
-                    }
-                }
-            }
-            if want != got {
-                let i = (0..text.len()).find(|&i| want[i] != got[i]).unwrap_or(0);
-                return Err(format!(
-                    "line {n} {text:?}, byte {i}: port {:?}, scanner {:?}",
-                    want[i], got[i]
-                ));
-            }
-            if port != scan {
-                return Err(format!(
-                    "line {n} {text:?}: state port {port:?}, scanner {scan:?}"
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn agrees_with_the_port_on_examples() {
-        let blocks = [
-            "<?xml version=\"1.0\" encoding='UTF-8'?>\n<root a=\"1\">text &amp; more</root>\n",
-            "<?xml-stylesheet href=\"a.xsl\"?>\n<?php echo 1; ?>\n<?XmL x?>\n<?123?>\n",
-            "<!DOCTYPE note SYSTEM \"note.dtd\" [\n  <!ELEMENT note (to,from?,(a|b)*)>\n  <!ELEMENT br EMPTY>\n  <!ATTLIST note id ID #REQUIRED kind (x|y) \"x\" ref IDREFS #IMPLIED>\n  <!ENTITY % param \"value\">\n  <!ENTITY pic SYSTEM \"p.gif\" NDATA gif>\n  <!NOTATION gif PUBLIC \"image/gif\">\n  %param;\n  <!BOGUS x>\n]>\n",
-            "<!doctype html>\n<!DOCTYPE>\n<!DOCTYPE a:b PUBLIC \"x\" 'y'>\n",
-            "<ns:root xmlns:ns=\"urn:x\" a='1' b=bare c = \"&amp;&#65;&#x41;&bad\">\n",
-            "  <!-- a comment -- with -- dashes --->\n  <![CDATA[ raw <text> ]]>\n",
-            "  <item key=\"v\"/>text &lt; & more < x\n  <a:b:c d:e:f=\"1\" ?>\n  <bad$name 1x=\"2\" / >\n",
-            "  <multi\n    attr=\"v\"\n  >\n</ns:root>\n<!-- open\ncomment -->\n",
-            "<a b=\"x <c>\n<a b='open\nstill' c\n=\n'v'>\n</a >\n</ a>\n</a x>\n",
-            "<a =\"x\" b/c=1 d=/>\n<a ?x=1 /y>\n<?xml a/b=1 >x?>\n<a b==\"c\">\n",
-            "<!DOCTYPE x [\n<![ INCLUDE [\n<!ELEMENT a ((b|c)+, d)*>\n<![%p;[<!ATTLIST a b CDATA #FIXED \"1\">]]>\n]]>\n]>\n",
-            "<!DOCTYPE x [ <!ENTITY a \"&#38;&amp;\"> <!-- c --> <?pi x?> <![CDATA[x]]> ]>\n",
-            "<!DOCTYPE x [<!ELEMENT a (#PCDATA|b)* > <!ATTLIST a b (c|d|&e;|<) #IMPLIED>]>\n",
-            "\u{e9}<\u{e9}l\u{e9} \u{e9}=\"\u{e9}\">&\u{e9};</\u{e9}l\u{e9}>\n",
-        ];
-        for block in blocks {
-            agree(block).unwrap();
-        }
-        // past the depth a line holds, and past syntect's push limit
-        agree(&format!("<!DOCTYPE x [<!ELEMENT a {}b", "(".repeat(200))).unwrap();
-        agree(&format!("<!DOCTYPE x [{}", "<![[".repeat(60))).unwrap();
-    }
-
-    /// SplitMix64, so the test needs no crate: any seed, zero included.
-    struct Rng(u64);
-
-    impl Rng {
-        fn next(&mut self) -> u64 {
-            self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-            let mut z = self.0;
-            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-            z ^ (z >> 31)
-        }
-
-        fn pick<'a>(&mut self, of: &[&'a str]) -> &'a str {
-            of[(self.next() % of.len() as u64) as usize]
-        }
-    }
-
-    /// Blocks of XML's tokens in random order, against the port.
-    #[test]
-    fn agrees_with_the_port_on_token_soup() {
-        let tokens = [
-            "<",
-            ">",
-            "</",
-            "/>",
-            "<?",
-            "?>",
-            "<?xml",
-            "<?xml-s",
-            "<?php",
-            "<!",
-            "<!--",
-            "-->",
-            "--",
-            "-",
-            "<![CDATA[",
-            "]]>",
-            "<!DOCTYPE",
-            "<!doctype",
-            "<!ELEMENT",
-            "<!ATTLIST",
-            "<!ENTITY",
-            "<!NOTATION",
-            "<![",
-            "[",
-            "]",
-            "]>",
-            "(",
-            ")",
-            "|",
-            ",",
-            "*",
-            "?",
-            "+",
-            "#PCDATA",
-            "#CDATA",
-            "#REQUIRED",
-            "#FIXED",
-            "#",
-            "%",
-            "%p;",
-            "&",
-            "&amp;",
-            "&#65;",
-            "&#x41;",
-            "&#x;",
-            ";",
-            "=",
-            "\"",
-            "'",
-            " ",
-            "  ",
-            "\t",
-            "\n",
-            "\n",
-            "\n",
-            "a",
-            "b:c",
-            "ns:",
-            ":",
-            "x1",
-            "1",
-            "_",
-            ".",
-            "/",
-            "PUBLIC",
-            "SYSTEM",
-            "NDATA",
-            "EMPTY",
-            "ANY",
-            "CDATA",
-            "ID",
-            "IDREFS",
-            "NMTOKEN",
-            "é",
-            "$",
-        ];
-        let rounds: u64 = std::env::var("XML_SOUP")
-            .ok()
-            .and_then(|n| n.parse().ok())
-            .unwrap_or(20_000);
-        let mut rng = Rng(0);
-        for _ in 0..rounds {
-            let n = 1 + rng.next() % 40;
-            let block: String = (0..n).map(|_| rng.pick(&tokens)).collect();
-            if let Err(e) = agree(&block) {
-                panic!("{e}\nblock: {block:?}");
-            }
-        }
-    }
-
-    /// Every file listed in `$XML_CORPUS` (a file of paths), against the port.
-    #[test]
-    fn agrees_with_the_port_on_a_corpus() {
-        let Ok(list) = std::env::var("XML_CORPUS") else {
-            return;
-        };
-        let list = std::fs::read_to_string(list).expect("a list of paths");
-        for path in list.lines() {
-            let text = std::fs::read_to_string(path).unwrap_or_default();
-            if let Err(e) = agree(&text) {
-                panic!("{path}: {e}");
-            }
         }
     }
 }

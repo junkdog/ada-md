@@ -1,28 +1,15 @@
-//! Java properties files, in place of bat's `Java Properties`: its 10 contexts on the
-//! [machine](crate::machine). A line is a comment or a key and its value; a value (or key)
-//! ending in `\` runs on into the next line.
+//! Java properties files by a scanner: bat's `Java Properties` compiled by hand. A line is a
+//! comment, or a key, a separator and a value, each a run the scan passes in one step; a key or
+//! value ending in `\` runs on into the next line, which is all the state there is.
 //!
-//! The contexts keep syntect's ids (the order the probe's `dump "Java Properties"` lists them
-//! in).
+//! Exact against bat's grammar on syntect: the `parse` fuzz target holds every byte's scopes to
+//! syntect's.
 
-use crate::machine::{
-    Ctx, Grammar, It::I, It::P, Kinds, Line, M, Pat, atoms, empty, first, is_space, non_space,
-    protos, slots,
-};
-
-const MAIN_0: u8 = 0;
-const VALUE_0: u8 = 1;
-const PROPERTY_0: u8 = 2;
-const PROPERTY_1: u8 = 3;
-const MAIN_1: u8 = 4;
-const START: u8 = 5;
-const BACKSLASH: u8 = 6;
-const MAIN: u8 = 7;
-const PROPERTY: u8 = 8;
-const PROPERTY_VALUE: u8 = 9;
+use crate::matcher::{Atom, atoms, is_space};
+use crate::{Out, State};
 
 atoms! {
-    PROPERTY_META = "meta.property.java-props",
+    PROPERTY = "meta.property.java-props",
     VALUE = "string.unquoted.java-props",
     SEPARATOR = "punctuation.separator.java-props",
     CONTINUATION = "punctuation.separator.continuation.java-props",
@@ -33,128 +20,182 @@ atoms! {
     KEY = "entity.name.key.java-props",
 }
 
-const fn ctx(items: &'static [crate::machine::It]) -> Ctx {
-    Ctx::new(items)
-}
+const COMMENT: u16 = 0;
+const COMMENT_MARK: u16 = 1;
+/// Between a key and its value: the separator's spaces.
+const META: u16 = 2;
+const SEPARATOR: u16 = 3;
+/// A key's kinds; a value's are the same, [`IN_VALUE`] on.
+const KEY: u16 = 4;
+const ESCAPE: u16 = 5;
+const UNICODE: u16 = 6;
+const CONTINUATION: u16 = 7;
+const IN_VALUE: u16 = 4;
 
-static CTXS: [Ctx; 10] = [
-    // #anon_main_0
-    ctx(&[P(Pat::new(empty).pop())]).meta(&[s::PROPERTY_META]),
-    // #anon_property-value_0
-    ctx(&[I(BACKSLASH)]).content(&[s::VALUE]),
-    // #anon_property_0
-    ctx(&[
-        P(Pat::new(separator)
-            .sc(&[s::SEPARATOR])
-            .set(&[PROPERTY_VALUE])),
-        I(PROPERTY_VALUE),
-    ]),
-    // #anon_property_1, the `with_prototype` of a key's end
-    ctx(&[P(Pat::new(newline_ahead).pop())]).no_proto(),
-    // __main
-    ctx(&[I(MAIN)]),
-    // __start: its `source.java-props` is the base scope
-    ctx(&[P(Pat::new(empty).push(&[MAIN_1]))]).no_proto(),
-    // backslash
-    ctx(&[
-        P(Pat::new(continuation).caps(&[(1, &[s::CONTINUATION])])),
-        P(Pat::new(unicode).sc(&[s::UNICODE])),
-        P(Pat::new(escape).sc(&[s::ESCAPE])),
-    ]),
-    // main: only ever included, so its `source.java-props` never applies
-    ctx(&[
-        P(Pat::new(comment)
-            .sc(&[s::COMMENT])
-            .caps(&[(1, &[s::COMMENT_MARK])])),
-        P(Pat::new(non_space_ahead).push(&[MAIN_0, PROPERTY])),
-    ]),
-    // property
-    ctx(&[
-        I(BACKSLASH),
-        P(Pat::new(key_end_ahead).set(&[PROPERTY_0]).with(PROPERTY_1)),
-    ])
-    .content(&[s::KEY]),
-    // property-value
-    ctx(&[P(Pat::new(non_space_ahead).set(&[VALUE_0]))]),
+/// Each kind's scopes under `source.java-props`, by kind.
+static KINDS: [&[Atom]; 12] = [
+    &[s::COMMENT],
+    &[s::COMMENT, s::COMMENT_MARK],
+    &[s::PROPERTY],
+    &[s::PROPERTY, s::SEPARATOR],
+    &[s::PROPERTY, s::KEY],
+    &[s::PROPERTY, s::KEY, s::ESCAPE],
+    &[s::PROPERTY, s::KEY, s::UNICODE],
+    &[s::PROPERTY, s::KEY, s::CONTINUATION],
+    &[s::PROPERTY, s::VALUE],
+    &[s::PROPERTY, s::VALUE, s::ESCAPE],
+    &[s::PROPERTY, s::VALUE, s::UNICODE],
+    &[s::PROPERTY, s::VALUE, s::CONTINUATION],
 ];
 
-static SLOTS: [u16; 10] = slots(&CTXS);
-static PROTOS: [bool; 10] = protos(&CTXS, None);
-static KINDS: Kinds = Kinds::new();
-
-pub static GRAMMAR: Grammar = Grammar {
-    ctxs: &CTXS,
-    start: &[START],
-    atoms: ATOMS,
-    slots: &SLOTS,
-    proto: None,
-    protos: &PROTOS,
-    kinds: &KINDS,
-};
-
-// the matchers: each finds its regex's leftmost match at or after `from`
-
-/// `[:=]`
-fn separator(l: &Line, from: usize) -> Option<M> {
-    let hay = l.b.get(from..)?;
-    let i = from + hay.iter().position(|&c| c == b':' || c == b'=')?;
-    Some(M::new(i, i + 1))
+/// The scopes under `source.java-props` a kind carries, outermost first.
+pub fn scopes(kind: u16) -> Vec<&'static str> {
+    KINDS.get(usize::from(kind)).map_or_else(Vec::new, |k| {
+        k.iter().map(|&a| ATOMS[usize::from(a)]).collect()
+    })
 }
 
-/// `(?=\n)`
-fn newline_ahead(l: &Line, from: usize) -> Option<M> {
-    (from <= l.nl()).then(|| M::new(l.nl(), l.nl()))
+/// What a line leaves open: nothing, a key or a value that ends in `\`.
+const OPEN_KEY: u64 = 1;
+const OPEN_VALUE: u64 = 2;
+
+/// Lex `b`, a line without its `\n`, from `state`.
+#[inline(never)]
+pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
+    let open = match state.word() {
+        OPEN_KEY => run(b, 0, KEY, out),
+        OPEN_VALUE => run(b, 0, KEY + IN_VALUE, out),
+        _ => main(b, out),
+    };
+    state.set_word(open);
 }
 
-/// `(\\)\n`
-fn continuation(l: &Line, from: usize) -> Option<M> {
-    let k = l.nl().checked_sub(1)?;
-    (k >= from && l.b[k] == b'\\').then(|| M::new(k, l.end()).g(1, k, k + 1))
+/// `main`: a comment, `^\s*([#!]).*`, or a property at the first byte that isn't a space.
+fn main(b: &[u8], out: &mut Out) -> u64 {
+    let Some(q) = b.iter().position(|&c| !is_space(c)) else {
+        return 0;
+    };
+    if matches!(b[q], b'#' | b'!') {
+        out.push(0, q, COMMENT);
+        out.push(q, q + 1, COMMENT_MARK);
+        out.push(q + 1, b.len(), COMMENT);
+        return 0;
+    }
+    run(b, q, KEY, out)
 }
 
-/// `\\u[[:xdigit:]]{4}`
-fn unicode(l: &Line, from: usize) -> Option<M> {
-    let mut at = from;
-    while let Some(m) = l.lit(at, b"\\u") {
-        let k = m.s as usize;
-        if (k + 2..k + 6).all(|i| l.is(i, |c| c.is_ascii_hexdigit())) {
-            return Some(M::new(k, k + 6));
+/// A key (`kind` [`KEY`]) or a value ([`KEY`] + [`IN_VALUE`]) from `p`, with its escapes; a
+/// key goes on to its separator and value. What the line leaves open.
+fn run(b: &[u8], mut p: usize, kind: u16, out: &mut Out) -> u64 {
+    let value = kind != KEY;
+    let mut start = p;
+    loop {
+        // to the next `\`, or a key's end: `(?=[:=\s])`, which the line's end is
+        let stop = |c: u8| c == b'\\' || !value && (c == b':' || c == b'=' || is_space(c));
+        let k = b[p..]
+            .iter()
+            .position(|&c| stop(c))
+            .map_or(b.len(), |i| p + i);
+        if k == b.len() || b[k] != b'\\' {
+            out.push_merged(start, k, kind);
+            if value {
+                return 0;
+            }
+            return separator(b, k, out);
         }
-        at = k + 1;
-    }
-    None
-}
-
-/// `\\[^u]`, the `\n` among what follows
-fn escape(l: &Line, from: usize) -> Option<M> {
-    let mut at = from;
-    while let Some(k) = first(l, at, b'\\') {
-        match l.at(k + 1) {
-            Some(b'u') | None => at = k + 1,
-            Some(_) if k + 1 == l.nl() => return Some(M::new(k, l.end())),
-            Some(_) => return Some(M::new(k, k + 1 + l.char_len(k + 1).unwrap_or(1))),
+        // `(\\)\n`, then `\\u[[:xdigit:]]{4}`, then `\\[^u]`
+        let (end, escape) = if k + 1 == b.len() {
+            (k + 1, CONTINUATION)
+        } else if b[k + 1] == b'u' {
+            if b.len() >= k + 6 && b[k + 2..k + 6].iter().all(u8::is_ascii_hexdigit) {
+                (k + 6, UNICODE)
+            } else {
+                // no escape starts here
+                p = k + 1;
+                continue;
+            }
+        } else {
+            (k + 1 + char_len(b, k + 1), ESCAPE)
+        };
+        out.push_merged(start, k, kind);
+        out.push(k, end, kind + (escape - KEY));
+        if escape == CONTINUATION {
+            return if value { OPEN_VALUE } else { OPEN_KEY };
         }
+        p = end;
+        start = end;
     }
-    None
 }
 
-/// `^\s*([#!]).*`
-fn comment(l: &Line, from: usize) -> Option<M> {
-    if from > 0 {
-        return None;
+/// After a key, at `p`: the first `[:=]` or byte that isn't a space, whichever comes first
+/// (the separator on a tie), then the value at the first byte past the separator that isn't
+/// a space; the line's end closes the property.
+fn separator(b: &[u8], p: usize, out: &mut Out) -> u64 {
+    let Some(q) = b[p..].iter().position(|&c| !is_space(c)).map(|i| p + i) else {
+        out.push(p, b.len(), META);
+        return 0;
+    };
+    out.push(p, q, META);
+    if !matches!(b[q], b':' | b'=') {
+        return run(b, q, KEY + IN_VALUE, out);
     }
-    let q = l.run(0, is_space);
-    (q < l.nl() && matches!(l.b[q], b'#' | b'!')).then(|| M::new(0, l.nl()).g(1, q, q + 1))
+    out.push(q, q + 1, SEPARATOR);
+    let Some(v) = b[q + 1..]
+        .iter()
+        .position(|&c| !is_space(c))
+        .map(|i| q + 1 + i)
+    else {
+        out.push(q + 1, b.len(), META);
+        return 0;
+    };
+    out.push(q + 1, v, META);
+    run(b, v, KEY + IN_VALUE, out)
 }
 
-/// `(?=\S)`
-fn non_space_ahead(l: &Line, from: usize) -> Option<M> {
-    non_space(l, from).map(|m| M::new(m.s as usize, m.s as usize))
+/// The length of the character at `i`, a valid UTF-8 line's.
+fn char_len(b: &[u8], i: usize) -> usize {
+    match b[i] {
+        0..0x80 => 1,
+        0xc0..0xe0 => 2,
+        0xe0..0xf0 => 3,
+        _ => 4,
+    }
 }
 
-/// `(?=[:=\s])`
-fn key_end_ahead(l: &Line, from: usize) -> Option<M> {
-    (from..=l.nl())
-        .find(|&i| l.is(i, |c| c == b':' || c == b'=' || is_space(c)))
-        .map(|i| M::new(i, i))
+#[cfg(test)]
+mod tests {
+    use crate::Lang;
+    use crate::tests::marked;
+
+    /// The last scope of each piece: a comment, a key with an escape, its separator, a value
+    /// with escapes run on by `\\`, and a key run on.
+    #[test]
+    fn a_property_and_its_escapes() {
+        let got: Vec<(&str, &str)> = marked(
+            Lang::Properties,
+            &["  ! c", "a\\ b = x\\u00e9\\", "  more", "k \\"],
+        )
+        .into_iter()
+        .map(|(t, s)| (t, s.rsplit(' ').next().unwrap()))
+        .collect();
+        let want = [
+            ("  ", "comment.line.java-props"),
+            ("!", "punctuation.definition.comment.java-props"),
+            (" c", "comment.line.java-props"),
+            ("a", "entity.name.key.java-props"),
+            ("\\ ", "constant.character.escape.java-props"),
+            ("b", "entity.name.key.java-props"),
+            (" ", "meta.property.java-props"),
+            ("=", "punctuation.separator.java-props"),
+            (" ", "meta.property.java-props"),
+            ("x", "string.unquoted.java-props"),
+            ("\\u00e9", "constant.character.escape.unicode.java-props"),
+            ("\\", "punctuation.separator.continuation.java-props"),
+            ("  more", "string.unquoted.java-props"),
+            ("k", "entity.name.key.java-props"),
+            (" ", "meta.property.java-props"),
+            ("\\", "punctuation.separator.continuation.java-props"),
+        ];
+        assert_eq!(got, want);
+    }
 }

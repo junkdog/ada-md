@@ -26,7 +26,7 @@
 //! `query_as!(T, `, `sql_query(`, `conn.execute(`…), and the string after `// language=SQL`.
 //! Its text is SQL's, but for the string's end and (in `"…"`) its escapes.
 
-use crate::machine::KEPT as HALF;
+use crate::matcher::KEPT as HALF;
 use crate::regex;
 use crate::sql;
 use crate::{Out, State, is_space, skip_spaces};

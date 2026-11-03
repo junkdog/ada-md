@@ -28,7 +28,7 @@
 //! `(?i)` folds ASCII case only, `\s` and `\S` are Unicode's, `\b`'s word characters are ASCII's
 //! and, past ASCII, letters and numbers.
 
-use crate::machine::KEPT as HALF;
+use crate::matcher::KEPT as HALF;
 use crate::{Out, Span, State};
 
 // ---- the contexts ----

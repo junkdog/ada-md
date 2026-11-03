@@ -25,7 +25,7 @@ mod regex;
 mod strings;
 mod words;
 
-use crate::machine::KEPT as HALF;
+use crate::matcher::KEPT as HALF;
 use crate::{Out, State};
 
 macro_rules! leaves {

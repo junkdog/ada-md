@@ -1,7 +1,38 @@
 ---
 source: src/highlight.rs
-expression: "later.join(\"\\n\")"
+expression: "regexes.join(\"\\n\")"
 ---
+AppleScript: ^#!.*(osascript)
+C++: -\*- C\+\+ -\*-
+C: -[*]-( Mode:)? C -[*]-
+D: ^#!.*\bg?dmd\b.
+Diff: (?x)^
+    (===\ modified\ file
+    |==== \s* // .+ \s - \s .+ \s+ ====
+    |Index:[ ]
+    |---\ [^%]
+    |\*\*\*.*\d{4}\s*$
+    |\d+(,\d+)* (a|d|c) \d+(,\d+)* $
+    |diff\ --git[ ]
+    )
+Erlang: (?x:
+  ^ \#! .* \b(erlang|escript)\b |                # shebang
+  ^ \s* \%+ \s* -\*- .*? \b[Ee]rlang\b .*? -\*-  # editorconfig
+)
+Git Config: ^\[core\]
+Git Link: ^\s*gitdir\s*:
+Git Log: ^commit\s+\h{7,}
+Git Rebase Todo: ^(?:drop|edit|exec|fixup|pick|reword|squash|[defprsx]) \h{7,} 
+HTML: (?i)<(!DOCTYPE\s*)?html
+JavaScript: ^#!\s*/.*\b(node|bun|js)\b
+LaTeX Log: This is (pdf|pdfe)?TeXk?, Version 
+Lisp: (?xi:
+  ^ \s* ; .*? -\*- .*? \blisp\b .*? -\*-  # editorconfig
+)
+Makefile: (?xi:
+  ^\#! .* \bmake\b |                     # shebang
+  ^\# \s* -\*- [^*]* makefile [^*]* -\*- # editorconfig
+)
 MultiMarkdown: (?i)^format:\s*complete\s*$
 PHP: ^(#!.*[^-]php[0-9]?|<\?php)\b
 Perl: (?xi:
@@ -33,7 +64,6 @@ Dockerfile: ^\s*(?i:(from(?!\s+\S+\s+import)|arg))\s+
 Elixir: ^#!/.*\b(?:elixirc?|iex)
 Fish: ^#!.*\b(fish)\b
 GLSL: -[*]-( Mode:)? GLSL -[*]-
-JavaScript (Babel): ^#!\s*/.*\b(node|js)$\n?
 HTML (Jinja2): ^{% extends ["'][^"']+["'] %}
 Julia: ^#!.*\bjulia\s*$
 LiveScript: ^#!.*\bls

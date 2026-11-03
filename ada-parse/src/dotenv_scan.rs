@@ -1,19 +1,16 @@
-//! `.env` files by a scanner: bat's `DotENV` compiled by hand. The port (`dotenv.rs`) runs its 9
-//! contexts on the machine, which sets up ~2 KB of state a line and asks every pattern for its
-//! leftmost match through a function pointer; here each context that can be open is a loop that
-//! tests its patterns at the scan's place, in the grammar's order, on the byte there.
+//! `.env` files by a scanner: bat's `DotENV` compiled by hand. Each of its 9 contexts that can be
+//! open is a loop that tests its patterns at the scan's place, in the grammar's order, on the
+//! byte there, where syntect asks every pattern for its leftmost match.
 //!
-//! The state holds the port's context ids, so the port is an exact reference: the tests hold
-//! every byte's scopes and every line's state to it. A span's kind is one of a fixed set
-//! ([`scopes`]), in place of the machine's trie of scope stacks.
-
-use std::cell::Cell;
+//! The state holds syntect's context ids. Exact against syntect on bat's grammar
+//! (`tests/exact_lexers.rs`, the `parse` fuzz target), as it was against the port it replaced.
+//! A span's kind is one of a fixed set ([`scopes`]).
 
 use crate::dotenv::{
     ATOMS, DOUBLE_0, INTERPOLATION_0, MAIN_0, SINGLE_0, START, boundary, is_name_start, lazy_name,
     s,
 };
-use crate::machine::{Atom, Line, is_space, is_word};
+use crate::matcher::{Atom, Line, is_space, is_word};
 use crate::{Out, State};
 
 const NONE: u16 = 0;
@@ -66,7 +63,7 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
     })
 }
 
-/// The context open at the scan's place: the top of the port's stack.
+/// The context open at the scan's place: the top of syntect's stack.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Ctx {
     /// `main`, under `__start`; its text has no scope.
@@ -107,10 +104,7 @@ impl Emit<'_, '_> {
 /// Lex `b`, a line without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let l = Line {
-        b,
-        arg: Cell::new(0),
-    };
+    let l = Line { b };
     let nl = b.len();
     let mut ctx = match state.levels().last() {
         Some(&DOUBLE_0) => Ctx::Double,
@@ -382,139 +376,4 @@ fn number_at(l: &Line, p: usize) -> Option<usize> {
         return exponent(digits(p + 1));
     }
     None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{Span, dotenv, machine};
-
-    /// Each byte's scopes, as `kind_scopes` names a span's kind.
-    fn bytes(
-        len: usize,
-        spans: &[Span],
-        kind_scopes: impl Fn(u16) -> Vec<&'static str>,
-    ) -> Vec<String> {
-        let mut out = vec![String::new(); len];
-        let mut last = 0;
-        for s in spans {
-            assert!(
-                s.start >= last && s.end > s.start && s.end as usize <= len,
-                "{spans:?}"
-            );
-            last = s.end;
-            let scopes = kind_scopes(s.kind).join(" ");
-            for b in &mut out[s.start as usize..s.end as usize] {
-                b.clone_from(&scopes);
-            }
-        }
-        out
-    }
-
-    /// The scanner gives each line of `block` the port's scopes and leaves it the port's state.
-    fn agree(block: &str) -> Result<(), String> {
-        let (mut port, mut scan) = (State::default(), State::default());
-        let (mut a, mut b) = (Vec::new(), Vec::new());
-        for (n, text) in block.split('\n').enumerate() {
-            a.clear();
-            b.clear();
-            machine::line(
-                &dotenv::GRAMMAR,
-                text.as_bytes(),
-                &mut port,
-                &mut Out::new(&mut a),
-            );
-            line(text.as_bytes(), &mut scan, &mut Out::new(&mut b));
-            let want = bytes(text.len(), &a, |k| dotenv::GRAMMAR.scopes(k));
-            let got = bytes(text.len(), &b, scopes);
-            if want != got {
-                let i = (0..text.len()).find(|&i| want[i] != got[i]).unwrap_or(0);
-                return Err(format!(
-                    "line {n} {text:?}, byte {i}: port {:?}, scanner {:?}",
-                    want[i], got[i]
-                ));
-            }
-            if port != scan {
-                return Err(format!(
-                    "line {n} {text:?}: state port {port:?}, scanner {scan:?}"
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn agrees_with_the_port_on_examples() {
-        let blocks = [
-            "# comment\nexport DATABASE_URL=\"postgres://${USER}:$PASS@host/db\\n\" # c\n",
-            "DEBUG = true\nN=0x1F\nF=1.5e+3\nG=.5\nH=1. 2.x\nI=1.5x 0x1g 12e5 3E-2y a.5 1e\n",
-            "S='single $NOT'\nM=\"multi\nline {x} $$y\"\nEXPORTER=null\na=b=c\n",
-            "x =  NULL\ny= False\nz=TRUEx\n export\texport x\nmyexportexport=1 reexport\n",
-            "A=\"${a $b ${c}} {$$d} \\q \\$ \\\"\"\nB=\"${unclosed\nstill}\" '\nC='a\nb' \"\n",
-            "K=\"$\x7f\" ${é} $é1 $_x_ ${1}\"\n\u{e9}=\u{e9} caf\u{e9}=1 =1 ==2 a = b\n",
-            "0x=1 0x 1.e5 .e5 1..2 x=1.2.3 x=-1 +2 x=1_000\n",
-            "",
-            "\n\n",
-            "#\n\"\n'\n${\n",
-        ];
-        for block in blocks {
-            agree(block).unwrap();
-        }
-    }
-
-    /// SplitMix64, so the test needs no crate: any seed, zero included.
-    struct Rng(u64);
-
-    impl Rng {
-        fn next(&mut self) -> u64 {
-            self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-            let mut z = self.0;
-            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-            z ^ (z >> 31)
-        }
-
-        fn pick<'a>(&mut self, of: &[&'a str]) -> &'a str {
-            of[(self.next() % of.len() as u64) as usize]
-        }
-    }
-
-    /// Blocks of `.env`'s tokens in random order, against the port.
-    #[test]
-    fn agrees_with_the_port_on_token_soup() {
-        let tokens = [
-            "#", "\"", "'", "=", " = ", " ", "\t", "\n", "\n", "$", "$$", "${", "{", "}", "\\",
-            "\\n", "\\$", "\\\"", "\\q", "export", "EXPORT", "Export ", "true", "False", "NULL",
-            "nul", "KEY", "a_b", "x", "e", "E", "+", "-", ".", "0", "1", "42", "0x", "0xFf", "1.5",
-            "e5", "E-3", "_", "é", "\u{7f}", "€", ":", "/", "@",
-        ];
-        let rounds: u64 = std::env::var("DOTENV_SOUP")
-            .ok()
-            .and_then(|n| n.parse().ok())
-            .unwrap_or(20_000);
-        let mut rng = Rng(0);
-        for _ in 0..rounds {
-            let n = 1 + rng.next() % 40;
-            let block: String = (0..n).map(|_| rng.pick(&tokens)).collect();
-            if let Err(e) = agree(&block) {
-                panic!("{e}\nblock: {block:?}");
-            }
-        }
-    }
-
-    /// Each file of `$DOTENV_CORPUS` (a list of paths) against the port.
-    #[test]
-    #[ignore]
-    fn agrees_with_the_port_on_the_corpus() {
-        let list = std::env::var("DOTENV_CORPUS").expect("DOTENV_CORPUS");
-        let list = std::fs::read_to_string(list).expect("a list of paths");
-        for path in list.lines() {
-            let Ok(text) = std::fs::read_to_string(path) else {
-                continue;
-            };
-            if let Err(e) = agree(&text) {
-                panic!("{path}: {e}");
-            }
-        }
-    }
 }

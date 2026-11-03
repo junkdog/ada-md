@@ -1484,6 +1484,5 @@ ada_parse::kotlin::is_word
 <ada_parse::rust::Scan>::regex_text
 ada_parse::rust::scopes
 ada_parse::kotlin::scopes
-<core::option::Option<&ada_parse::machine::Grammar>>::map_or_else::<alloc::vec::Vec<&str>, <alloc::vec::Vec<&str>>::new, <ada_parse::lang::Lang>::scopes::{closure#0}>
 <core::iter::adapters::filter::Filter<core::str::iter::Split<char>, ada_parse::javascript::scopes::{closure#0}::{closure#0}> as core::iter::traits::iterator::Iterator>::next
 <core::iter::adapters::chain::Chain<core::iter::adapters::copied::Copied<core::slice::iter::Iter<&str>>, core::iter::adapters::filter::Filter<core::str::iter::Split<char>, ada_parse::yaml_scan::scopes::{closure#0}>> as core::iter::traits::iterator::Iterator>::next

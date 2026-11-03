@@ -142,7 +142,7 @@ const STRING: u8 = 48;
 const REGEX_FRAME: u8 = 49;
 
 const MAX: usize = 128;
-const KEPT: usize = 2 * crate::machine::KEPT;
+const KEPT: usize = 2 * crate::matcher::KEPT;
 /// A byte of the packed state with this bit is a run of list tails, its count in the rest.
 const RUN: u8 = 0x80;
 
@@ -222,10 +222,10 @@ struct Scan<'b, 'o, 's> {
 impl Scan<'_, '_, '_> {
     fn unpack(&mut self, state: &State) {
         let byte = |i: usize| {
-            if i < crate::machine::KEPT {
+            if i < crate::matcher::KEPT {
                 state.levels[i]
             } else {
-                state.withs[i - crate::machine::KEPT]
+                state.withs[i - crate::matcher::KEPT]
             }
         };
         let depth = usize::from(state.depth);
@@ -290,10 +290,10 @@ impl Scan<'_, '_, '_> {
             ..State::default()
         };
         for (i, &c) in codes[from..k].iter().enumerate() {
-            if i < crate::machine::KEPT {
+            if i < crate::matcher::KEPT {
                 state.levels[i] = c;
             } else {
-                state.withs[i - crate::machine::KEPT] = c;
+                state.withs[i - crate::matcher::KEPT] = c;
             }
         }
         state

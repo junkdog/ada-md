@@ -300,7 +300,7 @@ const XSYMBOL: u8 = 54;
 /// How many frames a line holds; past it the bottom one drops (counted, if a body).
 const MAX: usize = 128;
 /// The state's bytes: [`State`]'s levels and withs.
-const KEPT: usize = 2 * crate::machine::KEPT;
+const KEPT: usize = 2 * crate::matcher::KEPT;
 /// A byte of the packed state with this bit is a run of list bodies, its count in the rest.
 const RUN: u8 = 0x80;
 
@@ -445,10 +445,10 @@ impl Scan<'_, '_, '_> {
     /// can open more), the list bodies below them counted in `base`.
     fn unpack(&mut self, state: &State) {
         let byte = |i: usize| {
-            if i < crate::machine::KEPT {
+            if i < crate::matcher::KEPT {
                 state.levels[i]
             } else {
-                state.withs[i - crate::machine::KEPT]
+                state.withs[i - crate::matcher::KEPT]
             }
         };
         let depth = usize::from(state.depth);
@@ -515,10 +515,10 @@ impl Scan<'_, '_, '_> {
             ..State::default()
         };
         for (i, &c) in codes[from..k].iter().enumerate() {
-            if i < crate::machine::KEPT {
+            if i < crate::matcher::KEPT {
                 state.levels[i] = c;
             } else {
-                state.withs[i - crate::machine::KEPT] = c;
+                state.withs[i - crate::matcher::KEPT] = c;
             }
         }
         state

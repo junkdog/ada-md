@@ -26,7 +26,7 @@
 //! `\w` past ASCII is a letter or a decimal digit (Oniguruma's Latin-1 table also takes
 //! `²³¹¼½¾`; not followed), `\p{L}` a letter, `\p{N}` a number, `\s` Unicode's spaces; `(?i)` folds ASCII case only (Oniguruma's `ſ` for `s` isn't followed).
 
-use crate::machine::KEPT as HALF;
+use crate::matcher::KEPT as HALF;
 use crate::{Out, State};
 
 // The contexts, by what they read; the first ten include `main`.

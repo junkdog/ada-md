@@ -1,18 +1,16 @@
 //! TOML by a scanner (prototype, 2026-10-31): bat's `TOML` grammar compiled by hand. Each of
-//! the port's contexts (`toml.rs`) is an arm of one `match`, and each of its patterns a test of
-//! the bytes at the position, where the machine asks every pattern for its leftmost match
-//! through a function pointer. Most contexts end in a pattern that matches anywhere (`.`,
+//! the grammar's contexts (their ids in `toml.rs`) is an arm of one `match`, and each of its
+//! patterns a test of the bytes at the position, where syntect asks every pattern for its
+//! leftmost match. Most contexts end in a pattern that matches anywhere (`.`,
 //! `\w+|.`, the empty regex), so the leftmost match is the first pattern that matches right
 //! there; only the strings and a `[[table]]` name search ahead.
 //!
-//! The stack holds the port's context ids and packs into the same [`State`], so the port is an
-//! exact reference for it: the tests hold every byte's scopes and every line's state to it.
-//! A span's kind is an outer meta scope (a key's, a table name's) and a leaf, both fixed
-//! ([`scopes`]), in place of the machine's trie of scope stacks.
+//! The stack holds syntect's context ids and packs into a [`State`]. Exact against syntect on
+//! bat's grammar (`tests/exact_lexers.rs`, the `parse` fuzz target), as it was against the port
+//! of syntect's machine it replaced. A span's kind is an outer meta scope (a key's, a table
+//! name's) and a leaf, both fixed ([`scopes`]).
 
-use std::cell::Cell;
-
-use crate::machine::{Atom, DEPTH, Line, MAX_PUSH, is_blank, is_space, is_word};
+use crate::matcher::{Atom, DEPTH, Line, MAX_PUSH, is_blank, is_space, is_word};
 use crate::toml::{
     ARRAY_SEP, ARRAY_SEP_0, ATOMS, BASIC_STRING_0, DATA_TYPES, Digit, INLINE_KEYVAL_SEP,
     INLINE_KEYVALS, INLINE_KEYVALS_0, INLINE_TABLE_0, KEY, KEY_SIMPLE, KEYVAL_SEP, MAIN_0,
@@ -148,10 +146,7 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
 /// Lex `b`, a line without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let l = Line {
-        b,
-        arg: Cell::new(0),
-    };
+    let l = Line { b };
     let mut scan = Scan {
         nl: b.len(),
         stack: [0; DEPTH],
@@ -827,232 +822,4 @@ fn integer(l: &Line, p: usize) -> Option<(usize, usize)> {
     }
     let q = sign(l, p);
     int_part(l, q, |r| word_end(l, r).then_some(r)).map(|e| (q, e))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{Span, machine, toml};
-
-    /// Each byte's scopes, as `kind_scopes` names a span's kind.
-    fn bytes(
-        len: usize,
-        spans: &[Span],
-        kind_scopes: impl Fn(u16) -> Vec<&'static str>,
-    ) -> Vec<String> {
-        let mut out = vec![String::new(); len];
-        let mut last = 0;
-        for s in spans {
-            assert!(
-                s.start >= last && s.end > s.start && s.end as usize <= len,
-                "{spans:?}"
-            );
-            last = s.end;
-            let scopes = kind_scopes(s.kind).join(" ");
-            for b in &mut out[s.start as usize..s.end as usize] {
-                b.clone_from(&scopes);
-            }
-        }
-        out
-    }
-
-    /// The scanner gives each line of `block` the port's scopes and leaves it the port's state.
-    fn agree(block: &str) -> Result<(), String> {
-        let (mut port, mut scan) = (State::default(), State::default());
-        let (mut a, mut b) = (Vec::new(), Vec::new());
-        for (n, text) in block.split('\n').enumerate() {
-            a.clear();
-            b.clear();
-            machine::line(
-                &toml::GRAMMAR,
-                text.as_bytes(),
-                &mut port,
-                &mut Out::new(&mut a),
-            );
-            line(text.as_bytes(), &mut scan, &mut Out::new(&mut b));
-            let want = bytes(text.len(), &a, |k| toml::GRAMMAR.scopes(k));
-            let got = bytes(text.len(), &b, scopes);
-            if want != got {
-                let i = (0..text.len()).find(|&i| want[i] != got[i]).unwrap_or(0);
-                return Err(format!(
-                    "line {n} {text:?}, byte {i}: port {:?}, scanner {:?}",
-                    want[i], got[i]
-                ));
-            }
-            if port != scan {
-                return Err(format!(
-                    "line {n} {text:?}: state port {port:?}, scanner {scan:?}"
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn agrees_with_the_port_on_examples() {
-        let blocks = [
-            "name = \"ada\" # why\nversion = '1.0'\n",
-            "[package]\nname = \"x\"\n\n[[bin]]\npath = \"src/main.rs\"\n",
-            "x = [\n  1, -2.5,\n  # c\n  \"s\", [true, false], {a = 1, b.c = 'd'},\n]\n",
-            "s = \"\"\"\nline \\n \\u00e9 \\q\nend\"\"\" # c\nt = '''\nraw\n'''\n",
-            "d = 1979-05-27T07:32:00Z\ne = 07:32:00.5\nf = 1979-05-27\nh = 0xDEAD_beef\no = 0o17\nb = 0b101\n",
-            "i = +inf\nn = -nan\nf = 6.626e-34\ng = 1e10\nk = 1_000\nz = 0k\n",
-            "\"quoted key\" = 1\n'lit key' = 2\na . b . c = 3\n[ a . \"b\" . 'c' ]\n[[ a.b ]]\n",
-            "bad = \nbad2 = = 1\nkey\n= 1\n[]\n[[]]\n[a]b]\n[[a]b]]\n[[a]\nx = 1 trailing\n",
-            "t = {\n a = 1,\n}\nu = { , }\nv = { a = 1, , b = 2 }\nw = {a=1}}\n",
-            "x = \"unterminated\ny = 'also\nz = [1 2]\n\"k\\\"ey\" = 1\n\t  key\t=\t1\t\n",
-            "a = [[[[[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]]]]\nb = [\n[\n[\n[\n[\n[\n[\n[\n[\n[\n[\n[\n[\n[\n[\n1\n",
-        ];
-        for block in blocks {
-            agree(block).unwrap();
-        }
-        // past the depth a line holds, and past syntect's push limit
-        agree(&format!("a = {}1", "[".repeat(200))).unwrap();
-        agree(&format!("a = {}x = 1", "[{".repeat(70))).unwrap();
-    }
-
-    /// SplitMix64, so the test needs no crate: any seed, zero included.
-    struct Rng(u64);
-
-    impl Rng {
-        fn next(&mut self) -> u64 {
-            self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-            let mut z = self.0;
-            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-            z ^ (z >> 31)
-        }
-
-        fn pick<'a>(&mut self, of: &[&'a str]) -> &'a str {
-            of[(self.next() % of.len() as u64) as usize]
-        }
-    }
-
-    /// Blocks of TOML's tokens in random order, against the port.
-    #[test]
-    fn agrees_with_the_port_on_token_soup() {
-        let tokens = [
-            "[",
-            "]",
-            "[[",
-            "]]",
-            "{",
-            "}",
-            "=",
-            ",",
-            ".",
-            " ",
-            "  ",
-            "\t",
-            "\n",
-            "\n",
-            "\n",
-            "#",
-            "\"",
-            "'",
-            "\"\"\"",
-            "'''",
-            "\\",
-            "\\n",
-            "\\u00e9",
-            "\\U0001F600",
-            "\\x",
-            "key",
-            "a-b_c",
-            "true",
-            "false",
-            "inf",
-            "nan",
-            "+",
-            "-",
-            "0",
-            "1",
-            "42",
-            "1_000",
-            "0x1f",
-            "0o7",
-            "0b1",
-            "3.14",
-            "1e5",
-            "6.6e-3",
-            "1979-05-27",
-            "07:32:00",
-            "T",
-            "Z",
-            "z",
-            "+01:00",
-            ".5",
-            "é",
-            "€",
-            ":",
-            "x",
-            "_",
-        ];
-        let rounds: u64 = std::env::var("TOML_SOUP")
-            .ok()
-            .and_then(|n| n.parse().ok())
-            .unwrap_or(20_000);
-        let mut rng = Rng(0);
-        for _ in 0..rounds {
-            let n = 1 + rng.next() % 40;
-            let block: String = (0..n).map(|_| rng.pick(&tokens)).collect();
-            if let Err(e) = agree(&block) {
-                panic!("{e}\nblock: {block:?}");
-            }
-        }
-    }
-
-    /// The lexers alone on `$TOML_CORPUS`, in MB of source a second: each file's lines, a
-    /// block from the default state, best of 5 rounds. Run pinned, in release:
-    /// `TOML_CORPUS=… taskset -c 2 cargo test --release --lib lexer_speed -- --ignored --nocapture`
-    #[test]
-    #[ignore]
-    fn lexer_speed() {
-        let list = std::env::var("TOML_CORPUS").expect("TOML_CORPUS");
-        let list = std::fs::read_to_string(list).expect("a list of paths");
-        let files: Vec<String> = list
-            .lines()
-            .filter_map(|p| std::fs::read_to_string(p).ok())
-            .collect();
-        let bytes: usize = files.iter().map(String::len).sum();
-        let mut spans = Vec::new();
-        let mut time = |name: &str, lex: &dyn Fn(&[u8], &mut State, &mut Out)| {
-            let best = (0..5)
-                .map(|_| {
-                    let t = std::time::Instant::now();
-                    for text in &files {
-                        let mut state = State::default();
-                        for line in text.lines() {
-                            spans.clear();
-                            lex(line.as_bytes(), &mut state, &mut Out::new(&mut spans));
-                        }
-                    }
-                    t.elapsed()
-                })
-                .min()
-                .unwrap();
-            let mbs = bytes as f64 / best.as_secs_f64() / 1e6;
-            println!(
-                "{name}: {mbs:.1} MB/s ({bytes} bytes, {} files)",
-                files.len()
-            );
-        };
-        time("port", &|b, s, o| machine::line(&toml::GRAMMAR, b, s, o));
-        time("scanner", &|b, s, o| line(b, s, o));
-    }
-
-    /// Every file listed in `$TOML_CORPUS` (a file of paths), against the port.
-    #[test]
-    fn agrees_with_the_port_on_a_corpus() {
-        let Ok(list) = std::env::var("TOML_CORPUS") else {
-            return;
-        };
-        let list = std::fs::read_to_string(list).expect("a list of paths");
-        for path in list.lines() {
-            let text = std::fs::read_to_string(path).unwrap_or_default();
-            if let Err(e) = agree(&text) {
-                panic!("{path}: {e}");
-            }
-        }
-    }
 }

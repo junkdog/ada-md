@@ -7,6 +7,10 @@
 //! extensions and first-line match: syntect still answers which language a file is, and ada
 //! takes such an answer to its own lexer, never to the empty grammar.
 //!
+//! Beside each it writes `assets/syntax-names-{onig,fancy}.txt` ([`names`]): every syntax's name
+//! and extensions in the set's order, which ada reads to name a file's or a fence's language
+//! without loading the set.
+//!
 //! `--check` builds them and compares them with the files instead, exit 1 when they differ:
 //! after a two-face update, or a change to the languages ada-parse covers.
 
@@ -32,7 +36,10 @@ pub fn run(root: &Path, check: bool) -> Result<ExitCode, String> {
         if flavor == FLAVORS[0] {
             report(&full);
         }
-        let bytes = dump(&trim(full))?;
+        let trimmed = trim(full);
+        let names = names(&trimmed)?;
+        let names_out = names_path(root, flavor);
+        let bytes = dump(&trimmed)?;
         let out = asset_path(root, flavor);
         let before = fs::metadata(&source).map_or(0, |m| m.len());
         println!(
@@ -40,12 +47,14 @@ pub fn run(root: &Path, check: bool) -> Result<ExitCode, String> {
             bytes.len(),
             before as i64 - bytes.len() as i64,
         );
-        if check {
-            if fs::read(&out).ok().as_deref() != Some(&bytes[..]) {
-                stale.push(out.display().to_string());
+        for (out, bytes) in [(&out, &bytes[..]), (&names_out, names.as_bytes())] {
+            if check {
+                if fs::read(out).ok().as_deref() != Some(bytes) {
+                    stale.push(out.display().to_string());
+                }
+            } else {
+                fs::write(out, bytes).map_err(|e| format!("{}: {e}", out.display()))?;
             }
-        } else {
-            fs::write(&out, &bytes).map_err(|e| format!("{}: {e}", out.display()))?;
         }
     }
     if stale.is_empty() {
@@ -157,6 +166,27 @@ pub fn dump(set: &SyntaxSet) -> Result<Vec<u8>, String> {
     bincode::serialize(set).map_err(|e| format!("dump: {e}"))
 }
 
+/// The set's syntaxes in its order, a line each: the name, then each extension, tab-separated.
+/// syntect finds a syntax by name or extension from the last to the first, which ada's reading
+/// of this list follows.
+pub fn names(set: &SyntaxSet) -> Result<String, String> {
+    let mut out = String::new();
+    for s in set.syntaxes() {
+        let fields = std::iter::once(&s.name).chain(&s.file_extensions);
+        for (i, field) in fields.enumerate() {
+            if field.is_empty() || field.contains(['\t', '\n']) {
+                return Err(format!("{}: can't list {field:?}", s.name));
+            }
+            if i > 0 {
+                out.push('\t');
+            }
+            out.push_str(field);
+        }
+        out.push('\n');
+    }
+    Ok(out)
+}
+
 /// The grammars emptied, and which kept ones link into them, how often: those embeds go plain.
 fn report(set: &SyntaxSet) {
     let builder = set.clone().into_builder();
@@ -226,6 +256,10 @@ pub fn asset_path(root: &Path, flavor: &str) -> PathBuf {
     root.join(format!("assets/syntaxes-{flavor}.bin"))
 }
 
+pub fn names_path(root: &Path, flavor: &str) -> PathBuf {
+    root.join(format!("assets/syntax-names-{flavor}.txt"))
+}
+
 fn read(path: &Path) -> Result<Vec<u8>, String> {
     fs::read(path).map_err(|e| format!("{}: {e}", path.display()))
 }
@@ -259,9 +293,15 @@ mod tests {
         for flavor in FLAVORS {
             let full =
                 dumps::from_uncompressed_data(&read(&source_path(&two_face, flavor)).unwrap());
-            let bytes = dump(&trim(full.unwrap())).unwrap();
+            let trimmed = trim(full.unwrap());
+            let bytes = dump(&trimmed).unwrap();
             let asset = read(&asset_path(root(), flavor)).unwrap();
             assert!(asset == bytes, "{flavor}: run `cargo xtask dump`");
+            let listed = read(&names_path(root(), flavor)).unwrap();
+            assert!(
+                listed == names(&trimmed).unwrap().as_bytes(),
+                "{flavor}: run `cargo xtask dump`"
+            );
         }
     }
 }

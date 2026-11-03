@@ -307,10 +307,36 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         );
         assert!(!highlight::syntaxes_loaded(), "{name} loaded the set");
     }
-    // a file of a name no table knows (`deploy`) still loads the set, to rule out a syntax that
-    // claims the whole name; its first line alone doesn't
-    for first in ["#!/bin/sh", "#!/usr/bin/env bash", "#!/usr/bin/make -f"] {
+    // a name no syntax claims, or one the set has but only names, never loads it: the name
+    // list beside the set answers
+    for name in [
+        "deploy",
+        "README",
+        "notes.weird",
+        "x.rb",
+        "Gemfile",
+        "x.txt",
+    ] {
+        let _ = FileType::by_path(Path::new(name));
+        assert!(!highlight::syntaxes_loaded(), "{name} loaded the set");
+    }
+    assert_eq!(highlight::file_language(Path::new("x.rb")), Some("Ruby"));
+    assert_eq!(highlight::file_language(Path::new("x.txt")), None);
+    assert!(!highlight::needs_syntaxes("nosuchlanguage"));
+    assert!(highlight::find_syntax("nosuchlanguage").is_none());
+    // nor does a first line that names a covered language, or none at all
+    for first in [
+        "#!/bin/sh",
+        "#!/usr/bin/env bash",
+        "#!/usr/bin/make -f",
+        "#!/usr/bin/env python3",
+        "<?xml version=\"1.0\"?>",
+    ] {
         assert!(highlight::first_line_language(first).is_some(), "{first}");
+        assert!(!highlight::syntaxes_loaded(), "{first} loaded the set");
+    }
+    for first in ["# ada", "<p align=\"center\">", "Some text.", "{", ""] {
+        assert!(highlight::first_line_language(first).is_none(), "{first}");
         assert!(!highlight::syntaxes_loaded(), "{first} loaded the set");
     }
 

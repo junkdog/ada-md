@@ -33,7 +33,7 @@
 //! a member's type, name and `=` are one turn ([`Scan::field_or_method`]); a parameter's
 //! plain name skips the type patterns. Each held to golden digests of every line's spans.
 
-use crate::machine::KEPT as HALF;
+use crate::matcher::KEPT as HALF;
 use crate::regex;
 use crate::sql;
 use crate::{Out, State, is_space, skip_spaces, trim_end};

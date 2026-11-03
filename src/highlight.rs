@@ -28,7 +28,7 @@ use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet
 use crate::app::{Computed, Msg};
 use crate::doc::{CodeBlock, CodeId};
 use crate::layout::{block_needs_expanding, expand_tabs, expand_tabs_in, expand_tabs_onto};
-use ada_parse::Lang;
+use ada_parse::{FirstLine, Lang};
 
 /// Longer lines are left plain: backtracking regexes can be slow on them, and nobody reads them
 /// anyway.
@@ -178,10 +178,19 @@ impl Syntax {
     fn of(syntax: &'static SyntaxReference) -> Self {
         Lang::from_name(&syntax.name).map_or(Syntax::Set(syntax), Syntax::Own)
     }
+
+    /// The set's syntax named `name`, or the lexer that stands in for it; only a syntax ada's
+    /// lexers don't cover loads the set.
+    fn named(name: &str) -> Option<Self> {
+        match Lang::from_name(name) {
+            Some(lang) => Some(Syntax::Own(lang)),
+            None => syntaxes().find_syntax_by_name(name).map(Syntax::Set),
+        }
+    }
 }
 
-/// The syntax for a fence language, with the aliases the vault needs. A language ada-parse's
-/// table covers doesn't load the set.
+/// The syntax for a fence language, with the aliases the vault needs. Only a language the set
+/// has and ada-parse doesn't cover loads the set.
 pub fn find_syntax(lang: &str) -> Option<Syntax> {
     if is_plain(lang) {
         return None;
@@ -189,50 +198,109 @@ pub fn find_syntax(lang: &str) -> Option<Syntax> {
     if let Some(lang) = Lang::from_token(lang) {
         return Some(Syntax::Own(lang));
     }
-    let lower = lang.to_ascii_lowercase();
-    let token = ALIASES
-        .iter()
-        .find(|&&(alias, _)| alias == lower)
-        .map_or(lower.as_str(), |&(_, token)| token);
-    // a syntax's own name, as a whole file's language is given (`Rust`, `TOML`)
-    syntaxes()
-        .find_syntax_by_name(lang)
-        .or_else(|| syntaxes().find_syntax_by_token(token))
-        .map(Syntax::of)
+    names::find(lang).and_then(Syntax::named)
 }
 
-/// Whether highlighting a fence in `lang` needs the syntax set: neither plain nor covered by
-/// ada-parse's table.
+/// Whether highlighting a fence in `lang` needs the syntax set: a language the set has and
+/// ada-parse doesn't cover.
 pub fn needs_syntaxes(lang: &str) -> bool {
-    !is_plain(lang) && Lang::from_token(lang).is_none()
+    !is_plain(lang)
+        && Lang::from_token(lang).is_none()
+        && names::find(lang).is_some_and(|name| Lang::from_name(name).is_none())
 }
 
 /// The language of a whole file, by its name alone: the name itself (`Makefile`, `.zshrc`,
-/// `Cargo.lock`), then its extension. `None` when that says nothing, or says plain text.
+/// `Cargo.lock`), then its extension. `None` when that says nothing, or says plain text. Never
+/// loads the set.
 pub fn file_language(path: &Path) -> Option<&'static str> {
     let name = path.file_name().and_then(|n| n.to_str());
     if let Some(lang) = name.and_then(Lang::from_file_name) {
         return Some(lang.label());
     }
-    let set = syntaxes();
-    let by_name = name.and_then(|n| set.find_syntax_by_extension(n).map(Syntax::of));
-    let by_ext = || find_syntax(path.extension()?.to_str()?);
-    by_name.or_else(by_ext).and_then(language)
+    let by_name = name.and_then(names::by_extension).map(names::label);
+    let by_ext = || {
+        let ext = path.extension()?.to_str()?;
+        if is_plain(ext) {
+            return None;
+        }
+        match Lang::from_token(ext) {
+            Some(lang) => Some(lang.label()),
+            None => names::find(ext).map(names::label),
+        }
+    };
+    by_name.or_else(by_ext).filter(|&n| n != "Plain Text")
 }
 
-/// The language a file's first line declares: a `#!` line, `<?xml`, a vim modeline.
+/// The language a file's first line declares: a `#!` line, `<?xml`, a vim modeline. Only a
+/// line ada-parse can't tell about loads the set.
 pub fn first_line_language(line: &str) -> Option<&'static str> {
-    if let Some(lang) = Lang::from_first_line(line) {
-        return Some(lang.label());
+    match Lang::first_line(line) {
+        FirstLine::Lang(lang) => Some(lang.label()),
+        FirstLine::None => None,
+        FirstLine::Ask => syntaxes()
+            .find_syntax_by_first_line(line)
+            .map(Syntax::of)
+            .and_then(language),
     }
-    syntaxes()
-        .find_syntax_by_first_line(line)
-        .map(Syntax::of)
-        .and_then(language)
 }
 
 fn language(syntax: Syntax) -> Option<&'static str> {
     Some(syntax.label()).filter(|&n| n != "Plain Text")
+}
+
+/// The set's syntaxes by name and extension, as `cargo xtask dump` lists them beside the set
+/// (`assets/syntax-names-*.txt`): syntect's lookups without loading the set.
+mod names {
+    use ada_parse::{ALIASES, Lang};
+
+    /// A line a syntax, in the set's order: its name, then its extensions, tab-separated.
+    #[cfg(feature = "onig")]
+    pub(super) static LIST: &str = include_str!("../assets/syntax-names-onig.txt");
+    #[cfg(not(feature = "onig"))]
+    pub(super) static LIST: &str = include_str!("../assets/syntax-names-fancy.txt");
+
+    /// The syntaxes as syntect searches them, the last first: each name and its extensions.
+    fn syntaxes() -> impl Iterator<Item = (&'static str, std::str::Split<'static, char>)> {
+        LIST.lines().rev().map(|line| {
+            let mut fields = line.split('\t');
+            (fields.next().unwrap_or_default(), fields)
+        })
+    }
+
+    /// `find_syntax_by_extension`'s syntax: its name.
+    pub fn by_extension(ext: &str) -> Option<&'static str> {
+        syntaxes()
+            .find_map(|(name, mut exts)| exts.any(|e| e.eq_ignore_ascii_case(ext)).then_some(name))
+    }
+
+    /// `find_syntax_by_token`'s: by extension, then by name ignoring ASCII case.
+    fn by_token(token: &str) -> Option<&'static str> {
+        by_extension(token).or_else(|| {
+            syntaxes()
+                .map(|(name, _)| name)
+                .find(|name| name.eq_ignore_ascii_case(token))
+        })
+    }
+
+    /// The name of the set's syntax for a fence language that isn't plain and that ada-parse's
+    /// table doesn't cover: the syntax's own name (`Ruby`, as a whole file's language is
+    /// given), then the token, through ada's aliases.
+    pub fn find(lang: &str) -> Option<&'static str> {
+        if let Some((name, _)) = syntaxes().find(|&(name, _)| name == lang) {
+            return Some(name);
+        }
+        let lower = lang.to_ascii_lowercase();
+        let token = ALIASES
+            .iter()
+            .find(|&&(alias, _)| alias == lower)
+            .map_or(lower.as_str(), |&(_, token)| token);
+        by_token(token)
+    }
+
+    /// The name ada gives a file in the syntax named `name`: [`super::Syntax::label`].
+    pub fn label(name: &'static str) -> &'static str {
+        Lang::from_name(name).map_or(name, Lang::label)
+    }
 }
 
 /// The cache key of a code block, or `None` when it has no language worth highlighting.
@@ -1995,16 +2063,67 @@ mod tests {
         }
     }
 
-    /// The table's first lines are syntect's on the whole set, and ada's answer is too.
-    #[test]
-    fn first_lines_agree_with_the_set() {
+    /// The first lines ada-parse tells about are syntect's on the whole set: a language of its
+    /// own, or no syntax at all; and ada's answer is syntect's.
+    fn first_lines_agree(lines: &[String]) -> (usize, usize) {
         let full = |l: &str| {
             let found = reference_syntaxes().find_syntax_by_first_line(l);
             found.map(|s| &*s.name).filter(|&n| n != "Plain Text")
         };
+        let (mut claimed, mut asked) = (0, 0);
+        for l in lines {
+            let want = full(l);
+            match Lang::first_line(l) {
+                FirstLine::Lang(lang) => {
+                    assert_eq!(want, Some(lang.name()), "{l:?}");
+                    claimed += 1;
+                }
+                FirstLine::None => assert_eq!(want, None, "{l:?}"),
+                FirstLine::Ask => asked += 1,
+            }
+            assert_eq!(first_line_language(l), want, "{l:?}");
+        }
+        (claimed, asked)
+    }
+
+    #[test]
+    fn first_lines_agree_with_the_set() {
         let interpreters = [
-            "sh", "bash", "zsh", "dash", "ksh", "tcsh", "ash", "fish", "python3", "perl", "ruby",
-            "node", "make", "php", "lua", "awk", "jq", "swift", "julia", "pip", "shell",
+            "sh",
+            "bash",
+            "zsh",
+            "dash",
+            "ksh",
+            "tcsh",
+            "ash",
+            "fish",
+            "python",
+            "python3",
+            "python3.12",
+            "python312",
+            "python3x",
+            "perl",
+            "ruby",
+            "node",
+            "make",
+            "php",
+            "lua",
+            "awk",
+            "jq",
+            "swift",
+            "julia",
+            "pip",
+            "shell",
+            "osascript",
+            "dmd",
+            "escript",
+            "bun",
+            "coffee",
+            "crystal",
+            "elixir",
+            "iex",
+            "lsc",
+            "gojq",
         ];
         let paths = [
             "/bin/",
@@ -2012,8 +2131,9 @@ mod tests {
             "/usr/bin/env -S ",
             "/opt/ls/",
             "/home/js/",
+            "",
         ];
-        let args = ["", " -e", " -f", " -x python", " # make"];
+        let args = ["", " -e", " -f", " -x python", " # make", " # ruby"];
         let mut lines: Vec<String> = Vec::new();
         for i in interpreters {
             for p in paths {
@@ -2023,41 +2143,139 @@ mod tests {
                 }
             }
         }
-        lines.extend(
-            [
-                "# -*- mode: shell-script -*-",
-                "# -*- mode:shell-script; x: 1 -*-",
-                "# -*- Mode: shell-script -*-",
-                "# -*- makefile -*-",
-                "#-*- GNUMakefile -*-",
-                "# -*- mode: python -*-",
-                "\u{feff}#!/bin/sh",
-                "#!/bin/sh é",
-                "echo",
-                "",
-            ]
-            .map(str::to_owned),
-        );
-        let mut claimed = 0;
-        for l in &lines {
-            let want = full(l);
-            if let Some(lang) = Lang::from_first_line(l) {
-                assert_eq!(want, Some(lang.name()), "{l:?}");
-                claimed += 1;
-            }
-            assert_eq!(first_line_language(l), want, "{l:?}");
+        // a line each regex of the set matches, and lines close to them
+        let samples = [
+            "# -*- mode: shell-script -*-",
+            "# -*- mode:shell-script; x: 1 -*-",
+            "# -*- Mode: shell-script -*-",
+            "# -*- makefile -*-",
+            "#-*- GNUMakefile -*-",
+            "# -*- mode: python -*-",
+            "\u{feff}#!/bin/sh",
+            "#!/bin/sh é",
+            "#! /usr/bin/python3 # é",
+            "#!/usr/bin/ma\u{212a}e",
+            "# -*- \u{17f}hell-script -*-",
+            "// -*- C++ -*-",
+            "/* -*- Mode: C -*- */",
+            "=== modified file 'x'",
+            "==== //depot/a.c#3 - /home/a.c ====",
+            "Index: src/x.rs",
+            "--- a/x",
+            "---",
+            "--- %x",
+            "*** 1,5 2026",
+            "***",
+            "12,15c12 ",
+            "1. A list",
+            "diff --git a/x b/x",
+            "%% -*- erlang -*-",
+            "[core]",
+            "gitdir: ../.git",
+            "  gitdir : x",
+            "commit 0123456789abcdef",
+            "commit message",
+            "pick 0123456 msg",
+            "f 0123abc x",
+            "feat: 0123456",
+            "<!DOCTYPE html>",
+            "<!doctype HTML>",
+            "<html lang=en>",
+            "<p align=\"center\">",
+            "This is pdfTeX, Version 3.14",
+            "; -*- mode: lisp -*-",
+            "format: complete",
+            "Format:  Complete ",
+            "<?php echo 1;",
+            "<?phpx",
+            "#!/usr/bin/php7",
+            "# -*- perl -*-",
+            "# -*- ruby -*-",
+            "#!/usr/bin/jruby",
+            "textile",
+            "<?xml version=\"1.0\"?>",
+            "<?xml",
+            "<?xml\tversion=\"1.0\"?><é/>",
+            "<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">",
+            "<!DOCTYPE note SYSTEM \"x.dtd\">",
+            "%YAML 1.2",
+            "# This is the CMakeCache file.",
+            "FROM rust:1.95",
+            "  arg VERSION=1",
+            "from x import y",
+            "\u{3000}FROM x",
+            "FROM\u{3000}x",
+            "Fro\u{1e3f} x",
+            "From here on, text.",
+            "// -*- Mode: GLSL -*-",
+            "{% extends \"base.html\" %}",
+            "syntax = \"proto3\";",
+            "# -*- pip-requirements -*-",
+            "#vim: set ft=requirements",
+            "# Requirements",
+            "GET /index.html HTTP/1.1",
+            "HTTP/1.1 200 OK",
+            "-----BEGIN RSA PRIVATE KEY-----",
+            "// -*- Odin -*-",
+            "# ada",
+            "# Über",
+            "{",
+            "echo",
+            "",
+        ];
+        for l in samples {
+            lines.push(l.to_owned());
+            lines.push(l.to_ascii_uppercase());
+            lines.push(l.to_ascii_lowercase());
+            lines.push(format!(" {l}"));
         }
-        assert!(claimed > 100, "the table claims {claimed} lines");
+        let (claimed, _) = first_lines_agree(&lines);
+        assert!(claimed > 200, "the table claims {claimed} lines");
     }
 
-    /// The syntaxes whose first-line regexes syntect tries before Makefile's, and so before
-    /// bash's: ada-parse's `from_first_line` names a word for each that can match a line starting
-    /// with `#`. A new one, or a changed regex, needs a look at those words.
+    /// [`first_lines_agree_with_the_set`] on real files' first lines, a line each in the file
+    /// `ADA_FIRST_LINES` names: e.g. `head -qn1` of every file under `/usr/bin` and a few
+    /// checkouts.
     #[test]
-    fn the_first_lines_tried_before_the_tables() {
-        let set = reference_syntaxes().syntaxes();
-        let make = set.iter().position(|s| s.name == "Makefile").unwrap();
-        let later: Vec<String> = set[make + 1..]
+    #[ignore]
+    fn first_lines_of_real_files_agree() {
+        let path = std::env::var("ADA_FIRST_LINES").expect("ADA_FIRST_LINES");
+        let bytes = std::fs::read(path).unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        let lines: Vec<String> = text.lines().map(str::to_owned).collect();
+        let (claimed, asked) = first_lines_agree(&lines);
+        println!(
+            "{} lines: {claimed} claimed, {asked} asked the set",
+            lines.len()
+        );
+    }
+
+    /// ada-parse's first-line table walks the set's first-line regexes in the set's order.
+    /// The table may list a syntax the set lacks (the fancy build has no `JavaScript (Babel)`
+    /// regex), which only sends more lines to the set.
+    #[test]
+    fn the_first_line_table_follows_the_set() {
+        let set: Vec<&str> = reference_syntaxes()
+            .syntaxes()
+            .iter()
+            .filter(|s| s.first_line_match.is_some())
+            .map(|s| &*s.name)
+            .collect();
+        let mut table = ada_parse::first_line_syntaxes();
+        for name in &set {
+            assert!(
+                table.any(|t| t == *name),
+                "{name}: not in ada-parse's first-line table, or out of the set's order"
+            );
+        }
+    }
+
+    /// Every first-line regex of the set: ada-parse's table holds a test for each. A new one,
+    /// or a changed regex, needs a look at that table.
+    #[test]
+    fn the_first_line_regexes() {
+        let regexes: Vec<String> = reference_syntaxes()
+            .syntaxes()
             .iter()
             .filter_map(|s| Some(format!("{}: {}", s.name, s.first_line_match.as_ref()?)))
             .collect();
@@ -2068,8 +2286,25 @@ mod tests {
             "fancy"
         };
         insta::with_settings!({ snapshot_suffix => flavor }, {
-            insta::assert_snapshot!(later.join("\n"));
+            insta::assert_snapshot!(regexes.join("\n"));
         });
+    }
+
+    /// A file's or a fence's language is named without the set (`file_language` never loads
+    /// it, `find_syntax` only for a syntax ada's lexers don't cover): the list `cargo xtask
+    /// dump` writes beside the set is the set's names and extensions, in its order.
+    #[test]
+    fn the_name_list_is_the_sets() {
+        let mut from_set = String::new();
+        for s in syntaxes().syntaxes() {
+            from_set.push_str(&s.name);
+            for e in &s.file_extensions {
+                from_set.push('\t');
+                from_set.push_str(e);
+            }
+            from_set.push('\n');
+        }
+        assert!(from_set == names::LIST, "run `cargo xtask dump`");
     }
 
     /// On valid JSON, the scanner picks the rules bat's grammar picks, in every built-in theme

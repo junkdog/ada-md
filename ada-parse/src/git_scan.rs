@@ -1,17 +1,14 @@
 //! Git's own files by a scanner: bat's `Git Ignore`, `Git Attributes`, `Git Mailmap` and
-//! `Git Link`, with the parts of `Git Common` they share, compiled by hand. The port (`git.rs`)
-//! runs their 56 contexts on the machine, which sets up ~2 KB of state a line and asks every
-//! pattern in reach for its leftmost match through a function pointer, most of them searches;
-//! here each context that can be open is an arm of one `match`, testing its patterns at the scan's
-//! place in the grammar's order, and the text where none can start is passed whole.
+//! `Git Link`, with the parts of `Git Common` they share, compiled by hand. Each of their 56
+//! contexts that can be open is an arm of one `match`, testing its patterns at the scan's place
+//! in the grammar's order, where syntect asks every pattern in reach for its leftmost match,
+//! most of them searches; the text where none can start is passed whole.
 //!
-//! The stack holds the port's context ids and packs into the same [`State`], so the port is an
-//! exact reference: the tests hold every byte's scopes and every line's state to it. A span's
+//! The stack holds syntect's context ids and packs into a [`State`]. Exact against syntect on
+//! bat's grammars (`tests/exact_lexers.rs`, the `parse` fuzz target). A span's
 //! kind is fixed ([`scopes`]): a scope list of its own, an `fnmatch` leaf under the pattern it is
 //! in (an ignore pattern, a quoted or an unquoted attributes pattern), or an attribute's leaf
 //! under its builtin's meta scope.
-
-use std::cell::Cell;
 
 use crate::git::{
     ATOMS, ATTR_MAIN_0, ATTR_START, ATTRIBUTE_KEY, ATTRIBUTES_LIST, CLASS_BODY, CLASS_OPERATOR,
@@ -22,7 +19,7 @@ use crate::git::{
     PATH_START, PATTERN_ATTRIBUTES, PATTERN_CONTENT, PATTERN_QUOTED, PATTERN_UNQUOTED, SEPARATOR,
     VALUE_CONTENT, VALUE_CONTENT_0, VALUE_EXPECTED, VALUE_LIST, boundary, comment_line, s, word,
 };
-use crate::machine::{Atom, Line, is_blank, is_space};
+use crate::matcher::{Atom, Line, is_blank, is_space};
 use crate::{Out, State};
 
 /// Which of the four syntaxes a line is in.
@@ -304,10 +301,7 @@ struct Scan<'a, 'b, 'c> {
 #[inline(never)]
 pub fn line(git: Git, b: &[u8], state: &mut State, out: &mut Out) {
     let mut scan = Scan {
-        l: Line {
-            b,
-            arg: Cell::new(0),
-        },
+        l: Line { b },
         stack: [0; DEPTH],
         depth: 0,
         pattern: IN_IGNORE,
@@ -729,7 +723,7 @@ impl Scan<'_, '_, '_> {
             b'$' => {
                 let e = self
                     .l
-                    .run(p + 1, |c| crate::machine::is_word(c) && c != b'\n');
+                    .run(p + 1, |c| crate::matcher::is_word(c) && c != b'\n');
                 if e > p + 1 {
                     self.tok(p, e, f(F_ENV));
                     return e;
@@ -907,7 +901,7 @@ impl Scan<'_, '_, '_> {
     /// `attribute-key` at `p`, a word: `\w+[-\w]*\b`, the run giving back to a `\b`.
     fn attribute_key(&mut self, p: usize) -> usize {
         let run = self.l.run(p, |c| {
-            (crate::machine::is_word(c) && c != b'\n') || c == b'-'
+            (crate::matcher::is_word(c) && c != b'\n') || c == b'-'
         });
         match (p + 1..=run).rev().find(|&e| boundary(&self.l, e)) {
             Some(e) if word(&self.l, p) => {
@@ -1186,214 +1180,4 @@ fn macro_end(l: &Line, k: usize) -> Option<usize> {
     let first = l.char_len(k + 1).unwrap_or(1);
     let run = l.run(k + 1 + first, |c| !is_space(c));
     (k + 1 + first..run).rev().find(|&j| l.b[j] == b']')
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::machine::Grammar;
-    use crate::{Span, git, machine};
-
-    /// Each byte's scopes, as `kind_scopes` names a span's kind.
-    fn bytes(
-        len: usize,
-        spans: &[Span],
-        kind_scopes: impl Fn(u16) -> Vec<&'static str>,
-    ) -> Vec<String> {
-        let mut out = vec![String::new(); len];
-        let mut last = 0;
-        for s in spans {
-            assert!(
-                s.start >= last && s.end > s.start && s.end as usize <= len,
-                "{spans:?}"
-            );
-            last = s.end;
-            let scopes = kind_scopes(s.kind).join(" ");
-            for b in &mut out[s.start as usize..s.end as usize] {
-                b.clone_from(&scopes);
-            }
-        }
-        out
-    }
-
-    fn grammar(g: Git) -> &'static Grammar {
-        match g {
-            Git::Ignore => &git::IGNORE,
-            Git::Attributes => &git::ATTRIBUTES,
-            Git::Mailmap => &git::MAILMAP,
-            Git::Link => &git::LINK,
-        }
-    }
-
-    /// The scanner gives each line of `block` the port's scopes and leaves it the port's state.
-    fn agree(g: Git, block: &str) -> Result<(), String> {
-        let (mut port, mut scan) = (State::default(), State::default());
-        let (mut a, mut b) = (Vec::new(), Vec::new());
-        for (n, text) in block.split('\n').enumerate() {
-            a.clear();
-            b.clear();
-            machine::line(
-                grammar(g),
-                text.as_bytes(),
-                &mut port,
-                &mut Out::new(&mut a),
-            );
-            line(g, text.as_bytes(), &mut scan, &mut Out::new(&mut b));
-            let want = bytes(text.len(), &a, |k| grammar(g).scopes(k));
-            let got = bytes(text.len(), &b, scopes);
-            if want != got {
-                let i = (0..text.len()).find(|&i| want[i] != got[i]).unwrap_or(0);
-                return Err(format!(
-                    "{g:?} line {n} {text:?}, byte {i}: port {:?}, scanner {:?}",
-                    want[i], got[i]
-                ));
-            }
-            if port != scan {
-                return Err(format!(
-                    "{g:?} line {n} {text:?}: state port {port:?}, scanner {scan:?}"
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    const ALL: [Git; 4] = [Git::Ignore, Git::Attributes, Git::Mailmap, Git::Link];
-
-    #[test]
-    fn agrees_with_the_port_on_examples() {
-        let blocks = [
-            "# build output\n/target/\n!keep.me\n*.log ; not a comment\n**/node_modules\n",
-            "docs/[!a-c]*.md\na[]b]c\na[x\n\\#literal \\ \n$HOME/../.cache/./x\nC:/drive ~/home\n   \n",
-            "a[\\]b]c [^x] [*?] [ ] [é]\nx\\\ny\\$z\\*\\é \"q\" a:b ./x ../y .z/w.v\n[\n\\\n!\n!!x\n",
-            "# attributes\n* text=auto eol=lf\n*.png binary -diff\n",
-            "*.rs diff=rust merge=union filter=lfs encoding=UTF-16 whitespace=tab-in-indent,trailing-space\n",
-            "\"quoted path\" -text !eol custom=a,b, x=\"q\\\"v\"\n[attr]binary -diff -merge -text\n-bad op\n",
-            "path/[ab]*.c foo= bar\nx a=\"open\nx a=, b=,c ,d a=b,,c a==b a=b=c\n !x\n\"[a\" b\n\"a\nb\\\nc d\n",
-            "x textual eolx diffx -diff- a-b- a--b _ é=é [ab] [-x] [!x] [a] b\n x\t\ty=\"\\t\\x\" z=\" \"\n",
-            "# mailmap\nProper Name <proper@email.xx>\n<proper@email.xx> <commit@email.xx>\n",
-            "Proper Name <proper@email.xx> Commit Name <commit@email.xx>\nName Only\n<bad email> x\n",
-            "a <b@c.d.e> f ; g\n<<a>> <> <a <a@b@c.d> a\t <x>\nname ;comment <x>\n\r<a>\n",
-            "gitdir: ../.git/modules/sub\n  gitdir :C:\\repo\\.git.\ngitdir: ~/x/*\nnotgitdir: x\n",
-            "# comment\ngitdir\nx\ngitdir x : y\ngitdir:\ngitdir: a/..\\./b.c.\n gitdir: .\n",
-            "",
-            "\n\n",
-        ];
-        for block in blocks {
-            for g in ALL {
-                agree(g, block).unwrap();
-            }
-        }
-    }
-
-    /// SplitMix64, so the test needs no crate: any seed, zero included.
-    struct Rng(u64);
-
-    impl Rng {
-        fn next(&mut self) -> u64 {
-            self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-            let mut z = self.0;
-            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-            z ^ (z >> 31)
-        }
-
-        fn pick<'a>(&mut self, of: &[&'a str]) -> &'a str {
-            of[(self.next() % of.len() as u64) as usize]
-        }
-    }
-
-    /// Blocks of the four syntaxes' tokens in random order, against the port, each block in each
-    /// syntax.
-    #[test]
-    fn agrees_with_the_port_on_token_soup() {
-        let tokens = [
-            "#",
-            ";",
-            "!",
-            "-",
-            "[",
-            "]",
-            "^",
-            "/",
-            "\\",
-            ".",
-            "..",
-            "*",
-            "?",
-            "$",
-            "$HOME",
-            ":",
-            "C:",
-            "~",
-            "\"",
-            "=",
-            ",",
-            "<",
-            ">",
-            "@",
-            " ",
-            "  ",
-            "\t",
-            "\r",
-            "\n",
-            "\n",
-            "\n",
-            "a",
-            "x_y",
-            "é",
-            "diff",
-            "text",
-            "eol",
-            "encoding",
-            "filter",
-            "merge",
-            "whitespace",
-            "binary",
-            "gitdir",
-            "gitdir:",
-            "\\n",
-            "\\\"",
-            "a@b.c",
-            "name",
-            "1",
-        ];
-        let rounds: u64 = std::env::var("GIT_SOUP")
-            .ok()
-            .and_then(|n| n.parse().ok())
-            .unwrap_or(10_000);
-        let mut rng = Rng(0);
-        for _ in 0..rounds {
-            let n = 1 + rng.next() % 40;
-            let block: String = (0..n).map(|_| rng.pick(&tokens)).collect();
-            for g in ALL {
-                if let Err(e) = agree(g, &block) {
-                    panic!("{e}\nblock: {block:?}");
-                }
-            }
-        }
-    }
-
-    /// Each file of `$GIT_CORPUS` (a list of paths) against the port, in the syntax its name
-    /// gives.
-    #[test]
-    #[ignore]
-    fn agrees_with_the_port_on_the_corpus() {
-        let list = std::env::var("GIT_CORPUS").expect("GIT_CORPUS");
-        let list = std::fs::read_to_string(list).expect("a list of paths");
-        for path in list.lines() {
-            let Ok(text) = std::fs::read_to_string(path) else {
-                continue;
-            };
-            let g = if path.ends_with("attributes") {
-                Git::Attributes
-            } else if path.ends_with("mailmap") {
-                Git::Mailmap
-            } else {
-                Git::Ignore
-            };
-            if let Err(e) = agree(g, &text) {
-                panic!("{path}: {e}");
-            }
-        }
-    }
 }

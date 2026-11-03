@@ -26,7 +26,7 @@ mod words;
 
 use std::cell::Cell;
 
-use crate::machine::KEPT as HALF;
+use crate::matcher::KEPT as HALF;
 use crate::{Out, State, regex};
 
 macro_rules! leaves {

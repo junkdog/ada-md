@@ -31,7 +31,7 @@ use std::mem::MaybeUninit;
 use anpa::core::parse;
 use anpa::findbyte::{eq, find_byte};
 
-use crate::machine::KEPT as HALF;
+use crate::matcher::KEPT as HALF;
 use crate::{Out, State};
 
 mod makefile;
