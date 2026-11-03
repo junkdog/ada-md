@@ -228,6 +228,31 @@ impl Flat {
         measure_buf(&self.all.buf[c.start as usize..c.end as usize])
     }
 
+    /// The lines [`wrap`] lays cell `i` in at its `max` and wider: one for each hard break, and
+    /// one more after the last when a word follows it (or there is none). Apart from
+    /// [`Flat::measure`], whose loop every cell goes through.
+    pub fn hard_lines(&self, i: usize) -> u16 {
+        let c = self.cells[i];
+        let buf = &self.all.buf.as_bytes()[c.start as usize..c.end as usize];
+        let breaks = buf
+            .iter()
+            .filter(|&&b| CLASS[b as usize] == NEWLINE)
+            .count();
+        let last = buf
+            .rsplit(|&b| CLASS[b as usize] == NEWLINE)
+            .next()
+            .unwrap_or(&[]);
+        let word = last.iter().any(|&b| CLASS[b as usize] != SPACE);
+        u16::try_from(breaks + usize::from(word || breaks == 0)).unwrap_or(u16::MAX)
+    }
+
+    /// Cell `i`'s length in bytes: never less than its width, as no character is wider than its
+    /// UTF-8 bytes (a [`PAD`] is one byte and one column).
+    pub fn bytes(&self, i: usize) -> usize {
+        let c = self.cells[i];
+        (c.end - c.start) as usize
+    }
+
     /// [`wrap`] of cell `i` to `avail` columns, into `into`'s buffers.
     pub fn wrap(&self, i: usize, into: Wrapped, avail: u16) -> Wrapped {
         let c = self.cells[i];
@@ -855,6 +880,12 @@ mod tests {
             "\u{2764}\u{fe0f}",
         ] {
             assert_eq!(text_width(s), s.width(), "{s:?}");
+            // `Flat::bytes` bounds a cell's width (LAY-005)
+            assert!(text_width(s) <= s.len(), "{s:?}");
+        }
+        for c in (0..=0x10_ffffu32).filter_map(char::from_u32) {
+            let s = c.to_string();
+            assert!(text_width(&s) <= s.len(), "{c:?}");
         }
     }
 

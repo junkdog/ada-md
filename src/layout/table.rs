@@ -59,6 +59,8 @@ pub struct ColMeasure {
     pub max: u16,
     /// The header cell laid out on one line: the key column of the record cards.
     pub header: u16,
+    /// The lines the header takes at `header` cells and wider: more than one with a `<br>`.
+    pub header_lines: u16,
     /// The widest body cell laid out on one line: what the column grows toward before its
     /// header's width counts (FEAT-019).
     pub body: u16,
@@ -105,20 +107,22 @@ impl Cells {
     /// The `n` columns' measurements.
     fn measure(&self, n: usize) -> Vec<ColMeasure> {
         let mut cols = vec![ColMeasure::default(); n];
-        for r in 0..self.rows.len() - 1 {
+        // the header apart, so the body's loop, every cell of the table, stays as lean as it was
+        for (col, i) in cols.iter_mut().zip(self.row(0)) {
+            let (min, whole, max) = self.flat.measure(i);
+            (col.min, col.whole, col.header) = (min, whole, max);
+            col.header_lines = self.flat.hard_lines(i);
+        }
+        for r in 1..self.rows.len() - 1 {
             for (col, i) in cols.iter_mut().zip(self.row(r)) {
                 let (min, whole, max) = self.flat.measure(i);
                 col.min = col.min.max(min);
                 col.whole = col.whole.max(whole);
-                col.max = col.max.max(max);
-                match r {
-                    0 => col.header = max,
-                    _ => col.body = col.body.max(max),
-                }
+                col.body = col.body.max(max);
             }
         }
         for col in &mut cols {
-            col.max = col.max.max(1);
+            col.max = col.header.max(col.body).max(1);
             col.min = col.min.clamp(1, col.max);
             col.whole = col.whole.clamp(col.min, col.max);
         }
@@ -186,11 +190,15 @@ fn body_first(
         let widths = grow(cols, avail, from, body);
         return fewer_header_lines(cols, widths, avail, from, lines);
     }
-    let tallest = tallest(lines, &widths);
-    for h in 1..tallest {
-        let fit = header_fit(cols, &widths, h, lines);
-        if sum(&fit) <= avail && self::tallest(lines, &fit) <= h {
-            return fit;
+    let at = header_lines(lines, &widths);
+    // one line a header is every column at `max`, which step 1 found too wide
+    for h in 2..at.iter().copied().max().unwrap_or(1) {
+        if floor(cols, &widths, h) > avail {
+            continue;
+        }
+        match header_fit(cols, &widths, &at, h, lines) {
+            Some(fit) if sum(&fit) <= avail => return fit,
+            _ => {}
         }
     }
     widths
@@ -207,8 +215,16 @@ fn fewer_header_lines(
     lines: &mut dyn Lines,
 ) -> Vec<u16> {
     let mut best = None;
-    for h in (1..tallest(lines, &widths)).rev() {
-        let mut fit = header_fit(cols, &widths, h, lines);
+    let floors: Vec<u16> = cols.iter().map(from).collect();
+    let at = header_lines(lines, &widths);
+    for h in (1..at.iter().copied().max().unwrap_or(1)).rev() {
+        // a shorter row needs wider headers still
+        if floor(cols, &floors, h) > avail {
+            break;
+        }
+        let Some(mut fit) = header_fit(cols, &widths, &at, h, lines) else {
+            break;
+        };
         // the columns whose headers fit in `h` lines already make the room, shared body first
         let gives: Vec<usize> = (0..cols.len()).filter(|&i| fit[i] == widths[i]).collect();
         let takes = sum(&fit) - gives.iter().map(|&i| u32::from(fit[i])).sum::<u32>();
@@ -223,7 +239,8 @@ fn fewer_header_lines(
         }
         let costs =
             (gives.iter()).any(|&i| fit[i] < widths[i] && lines.body_grows(i, widths[i], fit[i]));
-        if costs || tallest(lines, &fit) > h {
+        // the headers that grew fit `h` lines by `header_fit`; those that shrank are checked here
+        if costs || (gives.iter()).any(|&i| fit[i] < widths[i] && lines.header(i, fit[i]) > h) {
             break;
         }
         best = Some(fit);
@@ -231,24 +248,52 @@ fn fewer_header_lines(
     best.unwrap_or(widths)
 }
 
-/// Each column of `widths` as narrow as lays its header in `h` lines, and no narrower than it is;
-/// `max` when no width does.
-fn header_fit(cols: &[ColMeasure], widths: &[u16], h: usize, lines: &mut dyn Lines) -> Vec<u16> {
-    (widths.iter().zip(cols).enumerate())
-        .map(|(i, (&w, c))| match lines.header(i, w) <= h {
+/// Each column of `widths` as narrow as lays its header in `h` lines, and no narrower than it is,
+/// or none when a header has more lines than `h` at any width (its `<br>`s).
+fn header_fit(
+    cols: &[ColMeasure],
+    widths: &[u16],
+    at: &[usize],
+    h: usize,
+    lines: &mut dyn Lines,
+) -> Option<Vec<u16>> {
+    if cols.iter().any(|c| usize::from(c.header_lines) > h) {
+        return None;
+    }
+    let fit = (widths.iter().zip(cols).zip(at).enumerate())
+        .map(|(i, ((&w, c), &n))| match n <= h {
             true => w,
-            // one line takes `max`
-            false => narrowest(w.saturating_add(1), c.max, |w| lines.header(i, w) <= h),
+            // its one-line width lays it in its hard lines, `h` or fewer
+            false => {
+                let lo = w.saturating_add(1).max(header_floor(c, h));
+                narrowest(lo, c.header.max(lo), |w| lines.header(i, w) <= h)
+            }
         })
-        .collect()
+        .collect();
+    Some(fit)
 }
 
-/// The most lines a header takes at `widths`.
-fn tallest(lines: &mut dyn Lines, widths: &[u16]) -> usize {
+/// What the columns take at least, each at `widths` and wide enough for its header to fit `h`
+/// lines, by [`header_floor`]: no wrap needed to rule an `h` out.
+fn floor(cols: &[ColMeasure], widths: &[u16], h: usize) -> u32 {
+    (cols.iter().zip(widths))
+        .map(|(c, &w)| u32::from(w.max(header_floor(c, h))))
+        .sum()
+}
+
+/// No narrower width lays `c`'s header in `h` lines: they hold `h` times their width, and the
+/// `h − 1` spaces they break at.
+fn header_floor(c: &ColMeasure, h: usize) -> u16 {
+    let h = u32::try_from(h).unwrap_or(u32::MAX).max(1);
+    let floor = (u32::from(c.header) + 1).saturating_sub(h).div_ceil(h);
+    u16::try_from(floor).unwrap_or(u16::MAX)
+}
+
+/// The lines each header takes at `widths`.
+fn header_lines(lines: &mut dyn Lines, widths: &[u16]) -> Vec<usize> {
     (widths.iter().enumerate())
         .map(|(i, &w)| lines.header(i, w))
-        .max()
-        .unwrap_or(1)
+        .collect()
 }
 
 fn sum(widths: &[u16]) -> u32 {
@@ -984,9 +1029,6 @@ struct Probe<'a> {
     buf: Wrapped,
     /// The sort mark the header wraps short of.
     mark: Option<Mark<'a>>,
-    /// Each header's lines at its one-line width and wider (more than one with a `<br>`), 0 until
-    /// wrapped once: most probes are at such a width.
-    whole: Vec<usize>,
 }
 
 impl<'a> Probe<'a> {
@@ -996,7 +1038,6 @@ impl<'a> Probe<'a> {
             cols,
             buf,
             mark,
-            whole: Vec::new(),
         }
     }
 
@@ -1021,24 +1062,25 @@ impl<'a> Probe<'a> {
 
 impl Lines for Probe<'_> {
     fn header(&mut self, col: usize, width: u16) -> usize {
-        let one = self.cols.get(col).map_or(u16::MAX, |c| c.header);
-        if width < one {
-            return self.wrap_header(col, width);
+        // most probes are at a width the header fits: its lines are measured
+        match self.cols.get(col) {
+            Some(c) if width >= c.header => usize::from(c.header_lines.max(1)),
+            _ => self.wrap_header(col, width),
         }
-        if self.whole.is_empty() {
-            self.whole = vec![0; self.cols.len()];
-        }
-        if self.whole[col] == 0 {
-            self.whole[col] = self.wrap_header(col, one.max(1));
-        }
-        self.whole[col]
     }
 
     fn body_grows(&mut self, col: usize, from: u16, to: u16) -> bool {
+        let flat = self.flat;
+        // a cell no longer than `to` lays its hard lines whole there, as at `from`
+        let fits =
+            |r: usize| (flat.row(r).nth(col)).is_none_or(|i| flat.flat.bytes(i) <= usize::from(to));
         // narrower first: a cell on one line there is no taller than at `from`
-        (1..self.flat.rows.len() - 1).any(|r| match self.lines(r, col, to) {
-            0 | 1 => false,
-            n => n > self.lines(r, col, from),
+        (1..flat.rows.len() - 1).any(|r| {
+            !fits(r)
+                && match self.lines(r, col, to) {
+                    0 | 1 => false,
+                    n => n > self.lines(r, col, from),
+                }
         })
     }
 }
@@ -1327,6 +1369,7 @@ mod tests {
             whole: min,
             max,
             header: 0,
+            header_lines: 1,
             body: max,
         }
     }
@@ -1405,6 +1448,26 @@ mod tests {
             .collect();
         // `x` is 3 wide with its padding, and the path can break after every `/` and `-`.
         assert_eq!(tuples, [(4, 4, 4, 4, 3), (6, 11, 19, 5, 19)]);
+        // a header's lines at its width, as `wrap` lays them out
+        for (header, lines) in [
+            ("a b", 1),
+            ("a<br>b", 2),
+            ("a<br>b<br>", 2),
+            ("<br>a", 2),
+            ("a<br><br>b", 3),
+            ("", 1),
+        ] {
+            let md = format!("| {header} | k |\n|---|---|\n| x | y |\n");
+            let doc = parse(&md);
+            let t = table(&doc);
+            let mut flat = Cells::default();
+            flat.flatten(t, StyleKey::Text, &doc, &glyphs());
+            let cols = flat.measure(t.column_count());
+            let i = flat.row(0).start;
+            let wrapped = flat.flat.wrap(i, Wrapped::default(), cols[0].header.max(1));
+            assert_eq!(cols[0].header_lines, lines, "{header:?}");
+            assert_eq!(wrapped.lines.len(), usize::from(lines), "{header:?}");
+        }
     }
 
     /// FEAT-015: a date, a version or a flag isn't broken after its `-` while the prose column
@@ -1564,7 +1627,10 @@ mod tests {
                     assert!(!capped_fits || w >= c.min.min(MIN_CAP), "{what}");
                 }
                 let mut cut = Cut(&cols);
-                let h = tallest(&mut cut, &widths);
+                let h = header_lines(&mut cut, &widths)
+                    .into_iter()
+                    .max()
+                    .unwrap_or(1);
                 let floor = |c: &ColMeasure| match () {
                     _ if whole_fits => c.whole,
                     _ if fits => c.min,
