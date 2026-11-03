@@ -1,0 +1,92 @@
+#!/usr/bin/env zsh
+# Refuse a push that ci.yml would fail on Linux: rustfmt and clippy (-D warnings) over the crate and over fuzz/,
+# `cargo doc` with -D warnings, `cargo check` on the MSRV (when that toolchain is installed) and `cargo test`, all
+# --locked. The pre-commit hook only checks rustfmt and the lockfiles, which let two pushes through that CI failed:
+# a public doc linking a private item (cargo doc, 2026-11-02) and fuzz targets that no longer compiled after
+# LayoutParams gained fields (fuzz clippy, 2026-11-03). Windows clippy (cfg(windows) code) and the macOS and Windows
+# test runs stay CI's.
+#
+# The checks run on each pushed commit, not the working tree: the commit is checked out into target/pre-push/tree
+# through a private index, so only the files that changed since the last push are rewritten and cargo rebuilds just
+# what they touch. That tree builds into target/pre-push/target, apart from the checkout's own builds. A commit that
+# passed is recorded in target/pre-push/passed and isn't checked again. Each check's output is in
+# target/pre-push/<check>.log. Skip it all with `git push --no-verify`.
+# Enable once per clone: git config core.hooksPath .githooks
+emulate zsh
+setopt no_unset pipe_fail
+zmodload zsh/datetime
+
+top=$(git rev-parse --show-toplevel) || exit 1
+base=$top/target/pre-push
+mkdir -p $base || exit 1
+passed=$base/passed
+[[ -e $passed ]] || : >> $passed
+
+# stdin: <local ref> <local sha> <remote ref> <remote sha>, one line per ref; a delete pushes the all-zero sha
+commits=()
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [[ -z ${local_sha//0} ]] && continue
+  commit=$(git rev-parse --verify --quiet "$local_sha^{commit}") || continue
+  grep -qxF $commit $passed && continue
+  (( ${commits[(Ie)$commit]} )) || commits+=($commit)
+done
+(( ${#commits} )) || exit 0
+
+# two pushes from one checkout at once would share the tree
+exec {lock_fd}>>$base/lock || exit 1
+flock $lock_fd || exit 1
+
+[[ -t 2 ]] && export CARGO_TERM_COLOR=always || export CARGO_TERM_COLOR=never
+export CARGO_TARGET_DIR=$base/target
+unset GIT_WORK_TREE
+
+run() {  # run NAME CMD…: one check in the tree, its output in NAME.log
+  local name=$1 log=$base/$1.log start=$EPOCHREALTIME rc
+  shift
+  print -nu2 -- "  ${(r:12:)name}"
+  ( cd $base/tree && "$@" ) >| $log 2>&1
+  rc=$?
+  if (( rc == 0 )); then
+    printf '  ok      %5.1f s\n' $(( EPOCHREALTIME - start )) >&2
+  else
+    printf '  FAILED  %5.1f s  (%s)\n' $(( EPOCHREALTIME - start )) $log >&2
+    failed+=($name)
+  fi
+  return rc
+}
+
+result=0
+for commit in $commits; do
+  print -u2 "pre-push: checking $(git log -1 --format='%h %s' $commit)"
+  if ! GIT_INDEX_FILE=$base/index git --work-tree=$base/tree read-tree --reset -u $commit 2> /dev/null; then
+    # a private index or tree left broken by an interrupted run: start both again
+    rm -rf -- $base/tree $base/index
+    mkdir -p $base/tree
+    GIT_INDEX_FILE=$base/index git --work-tree=$base/tree read-tree --reset -u $commit \
+      || { print -u2 "pre-push: could not check out $commit into $base/tree"; exit 1 }
+  fi
+  failed=()
+  run fmt cargo fmt --all -- --check
+  run fuzz-fmt cargo fmt --manifest-path fuzz/Cargo.toml --all -- --check
+  run clippy cargo clippy --all-targets --locked -- -D warnings
+  run fuzz-clippy cargo clippy --manifest-path fuzz/Cargo.toml --all-targets --locked -- -D warnings
+  run doc env RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --locked
+  msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' $base/tree/Cargo.toml)
+  if [[ -n $msrv ]] && rustup run $msrv rustc -V > /dev/null 2>&1; then
+    run msrv cargo +$msrv check --all-targets --locked
+  else
+    print -u2 "  ${(r:12:)${:-msrv}}  skipped: no $msrv toolchain (rustup toolchain install $msrv)"
+  fi
+  run test cargo test --locked
+  if (( ${#failed} )); then
+    result=1
+    for name in $failed; do
+      print -u2 "\n--- $name ($base/$name.log, last 30 lines)"
+      tail -n 30 $base/$name.log >&2
+    done
+    print -u2 "\npre-push: $(git rev-parse --short $commit) would fail CI: ${(j:, :)failed}; push with --no-verify to skip"
+  else
+    print -r -- $commit >> $passed
+  fi
+done
+exit $result
