@@ -945,12 +945,11 @@ impl Scan<'_, '_, '_> {
     /// Byte `i`, the line's `\n` at its end, 0 past it.
     #[inline]
     fn c(&self, i: usize) -> u8 {
-        if i < self.n {
-            self.b[i]
-        } else if i == self.n {
-            b'\n'
-        } else {
-            0
+        // one bounds check: `n` is `b`'s length
+        match self.b.get(i) {
+            Some(&c) => c,
+            None if i == self.b.len() => b'\n',
+            None => 0,
         }
     }
 

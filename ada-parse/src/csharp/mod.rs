@@ -760,6 +760,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     let mut s = Scan {
         b,
         n: b.len(),
+        ind: 0,
         stack: [MAIN; MAX],
         bits: [0; MAX],
         depth: 1,
@@ -787,6 +788,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         s.bits[1 + i] = level_bits(s.bits[i], c);
     }
     s.depth = 1 + n;
+    s.ind = s.indent();
     s.refresh();
     s.run();
     s.fill(s.n);
@@ -811,6 +813,8 @@ pub(crate) struct Scan<'b, 'c> {
     b: &'b [u8],
     /// The line's length: where its `\n` is.
     n: usize,
+    /// Where the line's indentation ends, `^\s*` (its `\n` not taken).
+    ind: usize,
     stack: [u8; MAX],
     /// Each level's [`level_bits`].
     bits: [u16; MAX],
@@ -1243,7 +1247,9 @@ impl Scan<'_, '_> {
         if spaces_inert(top) && (p > self.n || self.space(p)) {
             return if p == 0 { self.proto(p) } else { None };
         }
+        // the prototype's patterns start with `/`, or at the line's start
         if has_proto(top)
+            && (p == 0 || (p + 1 < self.n && self.b[p] == b'/'))
             && let Some(q) = self.proto(p)
         {
             return Some(q);
@@ -1258,7 +1264,7 @@ impl Scan<'_, '_> {
         }
         let b = self.b;
         if p == 0 {
-            let s = self.sp_line(0);
+            let s = self.ind;
             if s < self.n && b[s] == b'#' {
                 self.fill(0);
                 self.push(PREPROC);
@@ -1276,8 +1282,8 @@ impl Scan<'_, '_> {
     pub(super) fn comments(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
         if p == 0 {
-            let s = self.sp_line(0);
-            if b[s..].starts_with(b"///") {
+            let s = self.ind;
+            if self.lit(s, b"///") {
                 // the indentation is the context's; the marks open the doc comment
                 self.put(s, s + 3, DOC_MARK);
                 self.push(DOC);

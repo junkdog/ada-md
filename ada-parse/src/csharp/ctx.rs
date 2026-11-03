@@ -2535,11 +2535,11 @@ impl Scan<'_, '_> {
             return self.tok(p, word_end, UNEXPECTED_KW);
         }
         // `\b(return|yield\s+return)\b`, `\b(continue|break|yield\s+break)\b\s*(;)?`
-        if whole && w == b"return" {
+        if whole && crate::same(w, b"return") {
             return self.then(p, word_end, RETURN_KW, &[LINE_IN]);
         }
         let mut brk = (whole && matches!(w, b"continue" | b"break")).then_some(word_end);
-        if w == b"yield"
+        if crate::same(w, b"yield")
             && whole
             && let Some(s) = self.sp1(word_end)
         {
@@ -2563,10 +2563,10 @@ impl Scan<'_, '_> {
             self.pop();
             return Some(end);
         }
-        if whole && w == b"throw" {
+        if whole && crate::same(w, b"throw") {
             return self.then(p, word_end, THROW_KW, &[LINE_IN]);
         }
-        if w == b"goto"
+        if crate::same(w, b"goto")
             && let Some(s) = self.sp1(word_end)
         {
             if self.kw_end(s, b"case") {
@@ -2666,13 +2666,11 @@ impl Scan<'_, '_> {
         if let Some(s) = self.sp1(p + kw) {
             // `(var|dynamic)\s+({{reserved}}|{{base_type}})\s*(=)`
             let mut bad = None;
-            for r in &re::RESERVED {
-                if self.lit(s, r) {
-                    let t = self.sp(s + r.len());
-                    if self.ch(t) == b'=' && t < self.n {
-                        bad = Some((s + r.len(), t));
-                        break;
-                    }
+            let w = self.word(s);
+            if re::is_reserved(w) {
+                let t = self.sp(s + w.len());
+                if self.ch(t) == b'=' && t < self.n {
+                    bad = Some((s + w.len(), t));
                 }
             }
             if bad.is_none()
@@ -3030,13 +3028,13 @@ impl Scan<'_, '_> {
         let w = &b[p..e];
         let lower = b[p].is_ascii_lowercase();
         if lower {
-            if w == b"value" {
+            if crate::same(w, b"value") {
                 return self.tok(p, e, VALUE);
             }
             if let Some(q) = self.keywords(p) {
                 return Some(q);
             }
-            if SQL_WORDS.contains(&w) {
+            if SQL_WORDS.iter().any(|x| crate::same(x, w)) {
                 let s = self.sp(e);
                 let blocked = s < self.n
                     && matches!(
@@ -3780,7 +3778,6 @@ impl Scan<'_, '_> {
 
     /// `documentation`.
     fn doc(&mut self, p: usize) -> Option<usize> {
-        let b = self.b;
         if self.ch(p) == b'<' && p < self.n {
             if self.ch(p + 1) == b'/' {
                 let mut hit = None;
@@ -3803,8 +3800,8 @@ impl Scan<'_, '_> {
             }
         }
         if p == 0 {
-            let s = self.sp_line(0);
-            if b[s..].starts_with(b"///") {
+            let s = self.ind;
+            if self.lit(s, b"///") {
                 return self.tok(s, s + 3, DOC_PUNCT);
             }
             // `^\s*(?!///)`: its spaces are out of the doc comment

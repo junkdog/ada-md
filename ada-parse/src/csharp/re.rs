@@ -266,7 +266,7 @@ impl Scan<'_, '_> {
     /// Whether the line has `s` at `i`.
     #[inline]
     pub(super) fn lit(&self, i: usize, s: &[u8]) -> bool {
-        self.b.get(i..).is_some_and(|r| r.starts_with(s))
+        crate::has_at(self.b, i, s)
     }
 
     /// Where the run of `\\w` at `i` ends (`i` where there is none), once a place.
@@ -307,13 +307,13 @@ impl Scan<'_, '_> {
 
     /// `\bw\b` at `i`.
     pub(super) fn kw(&self, i: usize, w: &[u8]) -> bool {
-        self.word(i) == w && !self.word_before(i)
+        crate::same(self.word(i), w) && !self.word_before(i)
     }
 
     /// `w\b` at `i` (no `\b` before), `w` all word characters.
     #[inline]
     pub(super) fn kw_end(&self, i: usize, w: &[u8]) -> bool {
-        self.word(i) == w
+        crate::same(self.word(i), w)
     }
 
     /// The first of `ws` that is a whole word at `i` (`\b(?:…)\b`): where it ends.
@@ -325,7 +325,7 @@ impl Scan<'_, '_> {
         if w.is_empty() {
             return None;
         }
-        ws.contains(&w).then_some(i + w.len())
+        ws.iter().any(|x| crate::same(x, w)).then_some(i + w.len())
     }
 
     /// Past `\s*` at `i`, the `\n` included.
@@ -333,6 +333,21 @@ impl Scan<'_, '_> {
     pub(super) fn sp(&self, i: usize) -> usize {
         let i = self.sp_line(i);
         if i == self.n { i + 1 } else { i }
+    }
+
+    /// Where the line's indentation ends: [`Self::sp_line`] from 0, eight bytes at a time
+    /// while they're all ` `.
+    pub(super) fn indent(&self) -> usize {
+        let mut p = 0;
+        while let Some(chunk) = self.b[..self.n].get(p..p + 8) {
+            let x = u64::from_le_bytes(chunk.try_into().unwrap()) ^ 0x2020_2020_2020_2020;
+            if x != 0 {
+                p += (x.trailing_zeros() / 8) as usize;
+                break;
+            }
+            p += 8;
+        }
+        self.sp_line(p)
     }
 
     /// Past `\s*` at `i` on the line (its `\n` not taken).
@@ -518,7 +533,7 @@ impl Scan<'_, '_> {
         RESERVED[from..]
             .iter()
             .take_while(|r| r[0] == c)
-            .any(|r| w.starts_with(r))
+            .any(|r| w.len() >= r.len() && crate::same(&w[..r.len()], r))
     }
 
     /// `{{reserved}}\b` at `i`: where it ends.

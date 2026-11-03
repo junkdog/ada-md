@@ -1407,6 +1407,18 @@ impl Scan<'_, '_> {
     /// The word at `p`.
     #[inline]
     fn info(&self, p: usize) -> Word {
+        // most places are no word's start: an ASCII byte other than `\w` takes no call
+        if self
+            .b
+            .get(p)
+            .is_none_or(|&c| c < 0x80 && !WORD[usize::from(c)])
+        {
+            return Word {
+                end: p,
+                ident: p,
+                ..Word::NONE
+            };
+        }
         let slot = &self.wcache[p % WCACHE];
         let (at, w) = slot.get();
         if at == p {
@@ -1420,15 +1432,25 @@ impl Scan<'_, '_> {
     #[inline(never)]
     fn find_word(&self, p: usize) -> Word {
         let b = self.b;
-        if !(p < self.n && starts_word(b, p) && is_word(b, p)) {
-            return Word {
-                end: p,
-                ident: p,
-                ..Word::NONE
-            };
+        let none = Word {
+            end: p,
+            ident: p,
+            ..Word::NONE
+        };
+        // `\w` at `p`, ASCII without the character's decode
+        let Some(&c) = b.get(p) else {
+            return none;
+        };
+        if !(if c < 0x80 {
+            WORD[usize::from(c)]
+        } else {
+            is_word(b, p)
+        }) || !starts_word(b, p)
+        {
+            return none;
         }
         let end = word_end(b, p);
-        let ident = if !is_name_start(b, p) {
+        let ident = if c.is_ascii_digit() || (c >= 0x80 && !is_name_start(b, p)) {
             p
         } else if end >= self.n || b[end] < 0x80 {
             end

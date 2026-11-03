@@ -386,18 +386,27 @@ const ENTRIES: &[(&[u8], u8, u16)] = &[
     (b"zip", K_NONE, BUILTIN_FUNCTION),
 ];
 
-const SIZE: usize = 1024;
+const SLOT_BITS: u32 = 10;
+const SIZE: usize = 1 << SLOT_BITS;
 
-/// FNV-1a over the word's bytes.
+/// A hash of fixed cost: the first and last four bytes (or the bytes of a shorter word) and
+/// the length, multiplied, the top bits a slot.
 const fn hash(w: &[u8]) -> usize {
-    let mut h: u32 = 0x811c_9dc5;
-    let mut i = 0;
-    while i < w.len() {
-        h ^= w[i] as u32;
-        h = h.wrapping_mul(0x0100_0193);
-        i += 1;
-    }
-    (h as usize) & (SIZE - 1)
+    let n = w.len();
+    let x = if n >= 4 {
+        let a = u32::from_le_bytes([w[0], w[1], w[2], w[3]]) as u64;
+        let z = u32::from_le_bytes([w[n - 4], w[n - 3], w[n - 2], w[n - 1]]) as u64;
+        a | z << 32
+    } else {
+        let mut x = 0u64;
+        let mut i = 0;
+        while i < n {
+            x |= (w[i] as u64) << (8 * i);
+            i += 1;
+        }
+        x
+    };
+    ((x ^ n as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - SLOT_BITS)) as usize
 }
 
 /// The table: each slot an entry's index plus one, 0 for none; open addressing.
@@ -415,13 +424,28 @@ static TABLE: [u16; SIZE] = {
     t
 };
 
-/// The longest word in the table: longer ones are none of them.
-const LONGEST: usize = 25;
+/// Which lengths (a bit each) the words of the table starting with a byte have: most names
+/// are none of them, and miss here before the hash.
+static FIRST_LEN: [u32; 128] = {
+    let mut t = [0u32; 128];
+    let mut i = 0;
+    while i < ENTRIES.len() {
+        let w = ENTRIES[i].0;
+        assert!(w.len() < 32 && w[0] < 0x80);
+        t[w[0] as usize] |= 1 << w.len();
+        i += 1;
+    }
+    t
+};
 
 /// Word `w`'s keyword and name class.
-#[inline]
+#[inline(always)]
 pub(super) fn lookup(w: &[u8]) -> (u8, u16) {
-    if w.len() > LONGEST || w.is_empty() {
+    let maybe = match w.first() {
+        Some(&c) if c < 0x80 && w.len() < 32 => FIRST_LEN[usize::from(c)] & (1 << w.len()) != 0,
+        _ => false,
+    };
+    if !maybe {
         return (K_NONE, GENERIC);
     }
     let mut h = hash(w);
@@ -431,7 +455,7 @@ pub(super) fn lookup(w: &[u8]) -> (u8, u16) {
             return (K_NONE, GENERIC);
         }
         let (e, k, s) = ENTRIES[usize::from(i - 1)];
-        if e == w {
+        if crate::same(e, w) {
             return (k, s);
         }
         h = (h + 1) & (SIZE - 1);

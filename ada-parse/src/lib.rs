@@ -247,6 +247,33 @@ fn is_space(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r')
 }
 
+/// Whether `a` and `b` are equal, without a call to `memcmp` for a word or an operator: up to
+/// 16 bytes, two loads a side that overlap in the middle; longer ones compare as slices.
+#[inline(always)]
+fn same(a: &[u8], b: &[u8]) -> bool {
+    fn at<const N: usize>(s: &[u8], i: usize) -> [u8; N] {
+        s[i..i + N].try_into().unwrap()
+    }
+    let n = a.len();
+    if n != b.len() {
+        return false;
+    }
+    match n {
+        0 => true,
+        1 => a[0] == b[0],
+        2..4 => at::<2>(a, 0) == at::<2>(b, 0) && at::<2>(a, n - 2) == at::<2>(b, n - 2),
+        4..8 => at::<4>(a, 0) == at::<4>(b, 0) && at::<4>(a, n - 4) == at::<4>(b, n - 4),
+        8..=16 => at::<8>(a, 0) == at::<8>(b, 0) && at::<8>(a, n - 8) == at::<8>(b, n - 8),
+        _ => a == b,
+    }
+}
+
+/// Whether `b` has `s` at `i`, as [`same`] compares.
+#[inline(always)]
+fn has_at(b: &[u8], i: usize, s: &[u8]) -> bool {
+    i <= b.len() && b.len() - i >= s.len() && same(&b[i..i + s.len()], s)
+}
+
 /// Where the spaces at `at` in `b` end.
 fn skip_spaces(b: &[u8], mut at: usize) -> usize {
     while at < b.len() && is_space(b[at]) {
