@@ -345,6 +345,8 @@ fn print_doc(
         code_wrap: args
             .code_wrap
             .unwrap_or(config.code_wrap || preview.is_none()),
+        // the TUI names a code block's language on its top row; a print leaves it out
+        code_labels: false,
         line_numbers: config.line_numbers,
         glyphs_gen: theme.glyphs.generation(),
         images: cell.map(|cell| ImageFit {
@@ -371,7 +373,10 @@ fn print_doc(
     {
         let numbered = FileType::Text { lang: None }.params(params).line_numbers;
         match print::stream::start(path, forced, numbered != LineNumbers::Off) {
-            Start::Stream(stream) => return stream.run(theme, params).map_err(|e| e.to_string()),
+            Start::Stream(stream) => {
+                let theme = theme.without_code_bg();
+                return stream.run(&theme, params).map_err(|e| e.to_string());
+            }
             Start::Whole(bytes) => read = bytes,
         }
     }
@@ -391,6 +396,9 @@ fn print_doc(
         }
     };
     let filetype = forced.unwrap_or_else(|| FileType::of(path, &text));
+    // a file of code prints on the terminal's background, as a note's text does
+    let code_theme = matches!(filetype, FileType::Text { .. }).then(|| theme.without_code_bg());
+    let theme = code_theme.as_ref().unwrap_or(theme);
     print::start((filetype == FileType::Markdown).then_some(&*text));
     // git runs while the document is parsed and laid out; never for stdin or an image
     // (architecture §8)

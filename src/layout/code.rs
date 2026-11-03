@@ -1,5 +1,5 @@
-//! Code blocks (ADR-20): a background-filled block with the language on its top row. With
-//! `code_wrap` on, long lines wrap with the theme's `↪`. With it off, each source line is one
+//! Code blocks (ADR-20): a background-filled block with the language on its top row, but in a
+//! print ([`LayoutParams::code_labels`](super::LayoutParams::code_labels)). With `code_wrap` on, long lines wrap with the theme's `↪`. With it off, each source line is one
 //! row whose code span is a fixed-width window, sliced at paint time by the shared horizontal
 //! offset, so scrolling sideways never relayouts. Highlighting is overlaid at paint, too.
 
@@ -36,7 +36,7 @@ pub(super) fn layout(b: &mut Builder<'_>, code: &CodeBlock, src: LineRange) {
 
     b.begin_row();
     b.text(&pad, StyleKey::CodeBlock);
-    if let Some(lang) = &code.lang {
+    if let Some(lang) = code.lang.as_ref().filter(|_| b.params.code_labels) {
         b.text(cut(lang, usize::from(inner)), StyleKey::CodeLabel);
     }
     b.fill(avail, StyleKey::CodeBlock);

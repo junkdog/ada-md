@@ -116,6 +116,8 @@ pub struct LayoutParams {
     pub max_width: Option<u16>,
     pub table_mode: TableMode,
     pub code_wrap: bool,
+    /// Code blocks name their language on their top row: the TUI's do, a print's don't.
+    pub code_labels: bool,
     /// Rows are numbered unless `Off`: [`FileType::params`](crate::filetype::FileType::params)
     /// turns the mode off for the files it doesn't cover.
     pub line_numbers: LineNumbers,

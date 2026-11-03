@@ -365,6 +365,28 @@ impl Theme {
         theme
     }
 
+    /// The theme for printing a file of code: the file is one code block, which in a print is
+    /// the page, so its background goes as the document's does ([`Theme::with_bg`]), and with
+    /// it every code style's that repeats it. A note's code blocks keep theirs.
+    pub fn without_code_bg(&self) -> Theme {
+        let mut theme = self.clone();
+        let Some(bg) = theme.styles[StyleKey::CodeBlock as usize].bg else {
+            return theme;
+        };
+        for key in [
+            StyleKey::CodeBlock,
+            StyleKey::CodeText,
+            StyleKey::CodeLabel,
+            StyleKey::CodeWrapMark,
+        ] {
+            let style = &mut theme.styles[key as usize];
+            if style.bg == Some(bg) {
+                style.bg = None;
+            }
+        }
+        theme
+    }
+
     /// A key's style on top of the document style, and of its parent's.
     pub fn style(&self, key: StyleKey) -> Style {
         let base = self.styles[StyleKey::Text as usize];
@@ -499,6 +521,29 @@ mod tests {
         // a theme without a background is left as it is
         let plain = Theme::empty();
         assert_eq!(plain.with_bg(false).styles, plain.styles);
+    }
+
+    #[test]
+    fn a_printed_code_file_drops_only_the_code_backgrounds() {
+        let code = [
+            StyleKey::CodeBlock,
+            StyleKey::CodeText,
+            StyleKey::CodeLabel,
+            StyleKey::CodeWrapMark,
+        ];
+        for theme in Theme::builtins() {
+            let theme = theme.with_bg(false);
+            let off = theme.without_code_bg();
+            for &key in StyleKey::ALL {
+                let (was, now) = (theme.style(key), off.style(key));
+                if code.contains(&key) {
+                    assert_eq!(now.bg, None, "{}: {}", theme.name, key.path());
+                    assert_eq!(now, Style { bg: None, ..was }, "{}", key.path());
+                } else if key.parent().is_none_or(|p| !code.contains(&p)) {
+                    assert_eq!(now, was, "{}: {}", theme.name, key.path());
+                }
+            }
+        }
     }
 
     /// WCAG's contrast ratio between two colors, 1 to 21.

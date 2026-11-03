@@ -873,6 +873,7 @@ mod tests {
             max_width: None,
             table_mode: Default::default(),
             code_wrap: true,
+            code_labels: true,
             line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,
@@ -889,6 +890,7 @@ mod tests {
             max_width: None,
             table_mode: Default::default(),
             code_wrap: true,
+            code_labels: true,
             line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,
@@ -934,6 +936,7 @@ mod tests {
             max_width: None,
             table_mode: Default::default(),
             code_wrap: true,
+            code_labels: true,
             line_numbers: crate::layout::LineNumbers::All,
             glyphs_gen: 0,
             images: None,
@@ -982,6 +985,7 @@ mod tests {
             max_width: None,
             table_mode: Default::default(),
             code_wrap: true,
+            code_labels: true,
             line_numbers: Default::default(),
             glyphs_gen: 0,
             images: Some(crate::layout::ImageFit {
@@ -1058,6 +1062,7 @@ mod tests {
             max_width: None,
             table_mode: Default::default(),
             code_wrap: true,
+            code_labels: true,
             line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,
@@ -1075,6 +1080,34 @@ mod tests {
         );
     }
 
+    /// A print names no language, and a file of code prints on the terminal's background,
+    /// where a note's code block keeps its own.
+    #[test]
+    fn a_printed_code_file_has_no_background_and_no_label() {
+        let params = LayoutParams {
+            width: 40,
+            max_width: None,
+            table_mode: Default::default(),
+            code_wrap: true,
+            code_labels: false,
+            line_numbers: Default::default(),
+            glyphs_gen: 0,
+            images: None,
+        };
+        let theme = Theme::builtin().with_bg(false);
+        let block = bg_of(StyleKey::CodeBlock);
+
+        let file = crate::doc::file::code("fn main() {}\n", Some("Rust"));
+        let out = render(&file, &theme.without_code_bg(), params, Options::default());
+        assert!(!out.contains("Rust") && !out.contains(&block), "{out:?}");
+        assert!(!out.contains("\x1b[48") && !out.contains(";48;"), "{out:?}");
+        assert!(plain(&out).contains("fn main() {}"), "{out:?}");
+
+        let note = crate::doc::parse("```rust\nfn main() {}\n```\n");
+        let out = render(&note, &theme, params, Options::default());
+        assert!(!out.contains("rust") && out.contains(&block), "{out:?}");
+    }
+
     /// `md` printed 40 columns wide with `opts`, a line each.
     fn marked(md: &str, opts: Options) -> Vec<String> {
         let params = LayoutParams {
@@ -1082,6 +1115,7 @@ mod tests {
             max_width: None,
             table_mode: Default::default(),
             code_wrap: true,
+            code_labels: true,
             line_numbers: Default::default(),
             glyphs_gen: 0,
             images: None,
@@ -1199,6 +1233,7 @@ mod tests {
             max_width: None,
             table_mode: Default::default(),
             code_wrap: true,
+            code_labels: true,
             line_numbers: crate::layout::LineNumbers::All,
             glyphs_gen: 0,
             images: None,

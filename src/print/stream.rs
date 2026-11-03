@@ -568,6 +568,7 @@ mod tests {
             max_width: None,
             table_mode: Default::default(),
             code_wrap: true,
+            code_labels: true,
             line_numbers,
             glyphs_gen: 0,
             images: None,
