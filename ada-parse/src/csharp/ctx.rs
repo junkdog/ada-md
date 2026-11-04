@@ -5,7 +5,9 @@
 //! methods of their own.
 
 use super::c::*;
+use super::words::{self, *};
 use super::*;
+use crate::clike::{CLASS, SPACE, WORD};
 
 /// `{{bin_op}}`'s alternatives, in order.
 const BIN_OP: [&[u8]; 21] = [
@@ -16,7 +18,7 @@ const BIN_OP: [&[u8]; 21] = [
 const UNARY_OP: [&[u8]; 7] = [b"++", b"--", b"-", b"~", b"!", b"&", b"*"];
 
 /// The words `line_of_code_in_no_semicolon` takes for LINQ.
-const SQL_WORDS: [&[u8]; 15] = [
+pub(super) const SQL_WORDS: [&[u8]; 15] = [
     b"let",
     b"select",
     b"equals",
@@ -836,19 +838,15 @@ impl Scan<'_, '_> {
 
     /// `#anon_main_1`'s pop: `(?={{visibility}}|\b(?:class|delegate|interface|namespace|readonly)\b)`.
     fn main_line_stop(&self, p: usize) -> bool {
-        self.visibility(p).is_some()
-            || self
-                .kw_any(
-                    p,
-                    &[
-                        b"class",
-                        b"delegate",
-                        b"interface",
-                        b"namespace",
-                        b"readonly",
-                    ],
-                )
-                .is_some()
+        if !self.ch(p).is_ascii_lowercase() || self.word_before(p) {
+            return false;
+        }
+        let id = words::get(self.word(p));
+        words::flags(id) & VIS != 0
+            || matches!(
+                id,
+                W_CLASS | W_DELEGATE | W_INTERFACE | W_NAMESPACE | W_READONLY
+            )
     }
 
     /// `attribute`.
@@ -1237,6 +1235,11 @@ impl Scan<'_, '_> {
         if self.ch(p) == b'}' {
             return self.close(p, p + 1, BLOCK_END);
         }
+        if let Some(e) = self.name_here(p)
+            && let Some(q) = self.member_name(p, e)
+        {
+            return q;
+        }
         if let Some(q) = self.attribute(p) {
             return Some(q);
         }
@@ -1357,6 +1360,60 @@ impl Scan<'_, '_> {
             return self.then(p, e, MEMBER, &[EH_AFTER]);
         }
         self.any_leave(p)
+    }
+
+    /// A class body's patterns at a name of ASCII `p..e` ([`Scan::name_here`]) that is a
+    /// visibility, one of `class_declaration`'s modifiers, a type or a member's name (the
+    /// declarations' words left to the patterns): what they give, `None` for the others.
+    #[inline]
+    fn member_name(&mut self, p: usize, e: usize) -> Option<Option<usize>> {
+        let id = if self.b[p].is_ascii_lowercase() {
+            words::get(&self.b[p..e])
+        } else {
+            0
+        };
+        let flags = words::flags(id);
+        // `class_declaration`'s, before `method_declaration`'s
+        if matches!(id, W_STATIC | W_UNSAFE | W_ABSTRACT | W_PARTIAL | W_SEALED) {
+            return Some(self.tok(p, e, MODIFIER));
+        }
+        if flags & VIS != 0 {
+            return Some(self.tok(p, e, ACCESS));
+        }
+        if id != 0 && flags != BASE && id != W_STRING {
+            return None;
+        }
+        // `method_declaration`'s, by the byte after the name
+        let s = self.sp(e);
+        if s < self.n {
+            match self.b[s] {
+                b'<' => {
+                    self.put(p, e, SUPPORT_TYPE);
+                    self.put(s, s + 1, GENERIC_BEGIN);
+                    self.push(METHOD_NAME);
+                    self.push(TYPE_ARG);
+                    return Some(Some(s + 1));
+                }
+                b'(' => {
+                    self.put(p, e, CTOR);
+                    self.put(s, s + 1, PARAMS_BEGIN);
+                    self.push(CTOR_PREBODY);
+                    self.push(METHOD_PARAMS);
+                    return Some(Some(s + 1));
+                }
+                b'.' => {
+                    self.put(p, e, INHERITED);
+                    return Some(self.tok(s, s + 1, DOT));
+                }
+                _ => {}
+            }
+        }
+        let leaf = if flags & BASE != 0 {
+            STORAGE_TYPE
+        } else {
+            SUPPORT_TYPE
+        };
+        Some(self.tok_push(p, e, leaf, &[MD_TYPE]))
     }
 
     /// `method_declaration`.
@@ -1486,6 +1543,11 @@ impl Scan<'_, '_> {
         if self.ch(p) == b'.' {
             return self.tok(p, p + 1, DOT);
         }
+        if let Some(e) = self.name_here(p)
+            && let Some(q) = self.member_name_after_type(p, e)
+        {
+            return q;
+        }
         // `(operator)\s*({{unary_op}}|{{bin_op}})\s*(\()`
         if self.lit(p, b"operator") {
             let s = self.sp(p + 8);
@@ -1597,6 +1659,50 @@ impl Scan<'_, '_> {
             return self.shift(p, &[METHOD_ACCESSOR]);
         }
         None
+    }
+
+    /// `method_name`'s patterns at a name of ASCII `p..e` ([`Scan::name_here`]) but
+    /// `operator` and `this`, by the byte after it and its blanks: what they give, `None` for
+    /// the others.
+    #[inline]
+    fn member_name_after_type(&mut self, p: usize, e: usize) -> Option<Option<usize>> {
+        if self.lit(p, b"operator") || self.lit(p, b"this") {
+            return None;
+        }
+        let s = self.sp(e);
+        if s >= self.n {
+            return None;
+        }
+        Some(match self.b[s] {
+            // `({{name}}\s*)?((=>)\s*)`
+            b'=' if self.ch(s + 1) == b'>' && s + 1 < self.n => {
+                self.put(p, s, MEMBER);
+                self.put(s, s + 2, M_GET_ARROW);
+                let t = self.sp(s + 2);
+                self.put(s + 2, t, METHOD);
+                self.set(&[LINE_IN]);
+                Some(t)
+            }
+            // `({{name}})\s*(?==[^>])`
+            b'=' if self.on(s + 1) => {
+                self.put(p, e, MEMBER);
+                self.fill(s);
+                self.set(&[MEMBER_VARS]);
+                Some(s)
+            }
+            b'(' => {
+                self.put(p, e, METHOD_FUNCTION);
+                self.put(s, s + 1, PARAMS_BEGIN);
+                self.set(&[METHOD_BODY, METHOD_PARAMS]);
+                Some(s + 1)
+            }
+            b';' => {
+                self.put(p, e, MEMBER);
+                self.close(s, s + 1, TERM_STMT)
+            }
+            b'<' | b'.' => return None,
+            _ => self.tok_push(p, e, PROPERTY_MEMBER, &[MN_AFTER]),
+        })
     }
 
     /// `(?=[^(]*>\.)` at `i`.
@@ -1793,21 +1899,25 @@ impl Scan<'_, '_> {
             }
             return self.enter(p, &[ARG_EXPR]);
         }
-        // `({{name}})\s*(=)(?=[^>=])`, then `({{name}})\s*(:)`
+        // `({{name}})\s*(=)(?=[^>=])`, then `({{name}})\s*(:)`, where a name can start
+        let c = self.ch(p);
+        let named = c.is_ascii_alphabetic() || matches!(c, b'_' | b'@' | b'\\') || c >= 0x80;
         let mut hit = None;
-        self.names(p, &mut |e| {
-            let s = self.sp(e);
-            if self.ch(s) == b'='
-                && s < self.n
-                && self.on(s + 1)
-                && !matches!(self.ch(s + 1), b'>' | b'=')
-            {
-                hit = Some((e, s, ASSIGNMENT));
-                return true;
-            }
-            false
-        });
-        if hit.is_none() {
+        if named {
+            self.names(p, &mut |e| {
+                let s = self.sp(e);
+                if self.ch(s) == b'='
+                    && s < self.n
+                    && self.on(s + 1)
+                    && !matches!(self.ch(s + 1), b'>' | b'=')
+                {
+                    hit = Some((e, s, ASSIGNMENT));
+                    return true;
+                }
+                false
+            });
+        }
+        if hit.is_none() && named {
             self.names(p, &mut |e| {
                 let s = self.sp(e);
                 if self.ch(s) == b':' && s < self.n {
@@ -2269,9 +2379,7 @@ impl Scan<'_, '_> {
 
     /// `line_of_code`.
     fn line(&mut self, p: usize) -> Option<usize> {
-        if let Some(e) = self.ascii_name(p)
-            && !self.word_before(p)
-        {
+        if let Some(e) = self.name_here(p) {
             return self.line_name(p, e);
         }
         let c = self.ch(p);
@@ -2386,19 +2494,27 @@ impl Scan<'_, '_> {
     /// name is it), not after a word character: the patterns that can start with a letter or
     /// `_`, in the grammar's order.
     fn line_name(&mut self, p: usize, e: usize) -> Option<usize> {
-        let w = &self.b[p..e];
-        if self.b[p].is_ascii_lowercase() {
-            if let Some(q) = self.line_keyword(p) {
-                return Some(q);
-            }
-            if let Some(q) = self.keywords(p) {
-                return Some(q);
-            }
+        let id = if self.b[p].is_ascii_lowercase() {
+            words::get(&self.b[p..e])
+        } else {
+            0
+        };
+        if words::flags(id) & STMT != 0
+            && let Some(q) = self.line_keyword(p)
+        {
+            return Some(q);
         }
-        if self.nested_method_ahead(p) {
-            return self.enter(p, &[NESTED_METHOD]);
+        if let Some(q) = self.keywords_word(p, e, id) {
+            return Some(q);
         }
         let s = self.sp(e);
+        // the declarations' lookaheads need a type to go on after the name: `<`, `[`, `*`,
+        // `?`, `.` (`nested_method`'s not), or blanks and a name
+        let dotted = self.ch(s) == b'.';
+        let typed = self.type_goes_on(e, s) && (!dotted || self.chain_goes_on(e));
+        if typed && !dotted && self.nested_method_ahead(p) {
+            return self.enter(p, &[NESTED_METHOD]);
+        }
         if self.ch(s) == b'<' && s < self.n {
             if self.generic_method_ahead(s + 1) {
                 self.put(p, e, SUPPORT_TYPE);
@@ -2417,9 +2533,9 @@ impl Scan<'_, '_> {
                 return self.then(e, e + 1, GENERIC_BEGIN, &[LOC_GENERIC]);
             }
         }
-        match w {
-            b"const" => return self.tok(p, e, MODIFIER),
-            b"var" | b"dynamic" => {
+        match id {
+            W_CONST => return self.tok(p, e, MODIFIER),
+            W_VAR | W_DYNAMIC => {
                 if let Some(q) = self.var_line(p) {
                     return Some(q);
                 }
@@ -2435,16 +2551,18 @@ impl Scan<'_, '_> {
             self.push(LAMBDA_BODY);
             return Some(t);
         }
-        if let Some(q) = self.local_declaration(p) {
+        if typed && let Some(q) = self.local_declaration(p) {
             return Some(q);
         }
-        // `({{name}})\s*(:)(?!:)`
-        if self.ch(s) == b':' && s < self.n && self.ch(s + 1) != b':' {
-            self.put(p, e, LABEL);
-            return self.close(s, s + 1, SEPARATOR);
-        }
-        if let Some(q) = self.namespace_alias(p, NAMESPACE_VAR) {
-            return Some(q);
+        if self.ch(s) == b':' && s < self.n {
+            // `({{name}})\s*(:)(?!:)`
+            if self.ch(s + 1) != b':' {
+                self.put(p, e, LABEL);
+                return self.close(s, s + 1, SEPARATOR);
+            }
+            if let Some(q) = self.namespace_alias(p, NAMESPACE_VAR) {
+                return Some(q);
+            }
         }
         // `({{name}})\s+({{name}})`
         if s > e
@@ -2790,8 +2908,17 @@ impl Scan<'_, '_> {
         // each pattern needs its word whole (`this[` and `nameof(` too): one match on it
         let w = self.word(p);
         let e = p + w.len();
-        match w {
-            b"this" | b"base" => {
+        self.keywords_word(p, e, words::get(w))
+    }
+
+    /// `keywords` at the word `p..e` (its whole run of `\w`), whose id is `id`.
+    #[inline]
+    fn keywords_word(&mut self, p: usize, e: usize, id: u8) -> Option<usize> {
+        if words::flags(id) & KWS == 0 {
+            return None;
+        }
+        match id {
+            W_THIS | W_BASE => {
                 let s = self.sp(e);
                 if self.ch(s) == b'[' && s < self.n {
                     self.put(p, e, VAR_LANGUAGE);
@@ -2799,26 +2926,26 @@ impl Scan<'_, '_> {
                 }
                 self.tok(p, e, VAR_LANGUAGE)
             }
-            b"await" => self.tok(p, e, AWAIT),
-            b"nameof" if self.ch(e) == b'(' && e < self.n => {
+            W_AWAIT => self.tok(p, e, AWAIT),
+            W_NAMEOF if self.ch(e) == b'(' && e < self.n => {
                 self.put(p, e, KW_OTHER);
                 self.tok_push(e, e + 1, M_GROUP_BEGIN, &[NAMEOF])
             }
-            b"typeof" | b"default" if self.ch(e) == b'(' && e < self.n => {
+            W_TYPEOF | W_DEFAULT if self.ch(e) == b'(' && e < self.n => {
                 self.put(p, e, REFLECTION);
                 self.tok_push(e, e + 1, M_GROUP_BEGIN, &[TYPEOF])
             }
-            b"as" | b"is" => {
+            W_AS | W_IS => {
                 let s = self.sp1(e)?;
                 self.put(p, e, REFLECTION);
                 self.fill(s);
                 self.push(TYPE_NO_SPACE);
                 Some(s)
             }
-            b"checked" | b"unchecked" => self.tok_push(p, e, KW_OTHER, &[CHECKED]),
-            b"unsafe" => self.tok_push(p, e, KW_OTHER, &[UNSAFE]),
-            b"new" => self.tok_push(p, e, INSTANCE_NEW, &[NEW]),
-            b"public" | b"private" | b"protected" | b"internal" => self.tok(p, e, ACCESS),
+            W_CHECKED | W_UNCHECKED => self.tok_push(p, e, KW_OTHER, &[CHECKED]),
+            W_UNSAFE => self.tok_push(p, e, KW_OTHER, &[UNSAFE]),
+            W_NEW => self.tok_push(p, e, INSTANCE_NEW, &[NEW]),
+            W_PUBLIC | W_PRIVATE | W_PROTECTED | W_INTERNAL => self.tok(p, e, ACCESS),
             _ => None,
         }
     }
@@ -2874,9 +3001,7 @@ impl Scan<'_, '_> {
 
     /// `line_of_code_in_no_semicolon`.
     fn nosemi(&mut self, p: usize) -> Option<usize> {
-        if let Some(e) = self.ascii_name(p)
-            && !self.word_before(p)
-        {
+        if let Some(e) = self.name_here(p) {
             return self.nosemi_name(p, e);
         }
         let c = self.ch(p);
@@ -3025,16 +3150,17 @@ impl Scan<'_, '_> {
     /// with a letter or `_`, in the grammar's order.
     fn nosemi_name(&mut self, p: usize, e: usize) -> Option<usize> {
         let b = self.b;
-        let w = &b[p..e];
         let lower = b[p].is_ascii_lowercase();
-        if lower {
-            if crate::same(w, b"value") {
+        let id = if lower { words::get(&b[p..e]) } else { 0 };
+        let flags = words::flags(id);
+        if id != 0 {
+            if id == W_VALUE {
                 return self.tok(p, e, VALUE);
             }
-            if let Some(q) = self.keywords(p) {
+            if let Some(q) = self.keywords_word(p, e, id) {
                 return Some(q);
             }
-            if SQL_WORDS.iter().any(|x| crate::same(x, w)) {
+            if flags & LINQ != 0 {
                 let s = self.sp(e);
                 let blocked = s < self.n
                     && matches!(
@@ -3045,7 +3171,7 @@ impl Scan<'_, '_> {
                     return self.tok(p, e, SQL);
                 }
             }
-            if matches!(w, b"true" | b"false" | b"null") {
+            if flags & LANG != 0 {
                 return self.tok(p, e, LANGUAGE);
             }
         } else if b[p] == b'_'
@@ -3074,7 +3200,7 @@ impl Scan<'_, '_> {
         let next = self.ch(s);
         if s < self.n {
             // `((?!{{reserved}}\b){{name}})\s*(\()`
-            if next == b'(' && !(lower && re::is_reserved(w)) {
+            if next == b'(' && flags & RES == 0 {
                 self.put(p, e, FC_FUNCTION);
                 self.put(e, s, FUNCTION_CALL);
                 return self.tok_push(s, s + 1, FC_GROUP_BEGIN, &[ARGUMENTS]);
@@ -3101,13 +3227,11 @@ impl Scan<'_, '_> {
                 return Some(t);
             }
         }
-        if lower {
-            if let Some(end) = self.base_type(p) {
-                return self.tok(p, end, STORAGE_TYPE);
-            }
-            if re::is_reserved(w) {
-                return self.tok(p, e, KW_OTHER);
-            }
+        if flags & BASE != 0 {
+            return self.tok(p, e, STORAGE_TYPE);
+        }
+        if flags & RES != 0 {
+            return self.tok(p, e, KW_OTHER);
         }
         // `(?:(global)|({{name}}))\s*(::)`
         if self.lit(p, b"global") {
@@ -3125,7 +3249,40 @@ impl Scan<'_, '_> {
     }
 
     /// `{{bin_op}}=`, then `{{bin_op}}|{{unary_op}}`, at `p`: where it ends.
+    ///
+    /// By its first byte: the alternatives in order make `++` two `+`, `--` two `-`, and an
+    /// operator followed by `=` the longer one (`<<=`, `<==`, `=>=`).
     fn operator(&self, p: usize) -> Option<usize> {
+        let (b, n) = (self.b, self.n);
+        if p >= n {
+            return None;
+        }
+        let at = |i: usize| if i < n { b[i] } else { 0 };
+        let c = b[p];
+        let (c1, c2) = (at(p + 1), at(p + 2));
+        let len = match c {
+            b'+' | b'*' | b'/' | b'%' | b'^' => 1 + usize::from(c1 == b'='),
+            b'-' => match (c1, c2) {
+                (b'>', b'=') => 3,
+                (b'=' | b'>', _) => 2,
+                _ => 1,
+            },
+            b'|' | b'&' if c1 == c => 2 + usize::from(c2 == b'='),
+            b'|' | b'&' => 1 + usize::from(c1 == b'='),
+            b'<' | b'>' if c1 == c || c1 == b'=' => 2 + usize::from(c2 == b'='),
+            b'<' | b'>' => 1,
+            b'=' if c1 == b'>' || c1 == b'=' => 2 + usize::from(c2 == b'='),
+            b'!' if c1 == b'=' => 2 + usize::from(c2 == b'='),
+            b'!' | b'~' => 1,
+            b'?' if c1 == b'?' => 2 + usize::from(c2 == b'='),
+            _ => return None,
+        };
+        Some(p + len)
+    }
+
+    /// The operator at `p` as the grammar's lists find it ([`Scan::operator`]'s reference).
+    #[cfg(test)]
+    pub(super) fn operator_by_lists(&self, p: usize) -> Option<usize> {
         let c = self.ch(p);
         if p >= self.n || !b"+-*/%|&^<>=!?~".contains(&c) {
             return None;
@@ -3140,6 +3297,65 @@ impl Scan<'_, '_> {
             .chain(UNARY_OP.iter())
             .find(|op| self.lit(p, op))
             .map(|op| p + op.len())
+    }
+
+    #[cfg(test)]
+    pub(super) fn operator_at(&self, p: usize) -> Option<usize> {
+        self.operator(p)
+    }
+
+    /// Whether a type can go on after a name that ends at `e`, its blanks to `s`, as a
+    /// declaration's lookahead needs it to: `<`, `[`, `*`, `?` or `.` next, or blanks and a
+    /// name's start (a letter, `_`, `@`, `\\`, a character past ASCII).
+    #[inline(always)]
+    fn type_goes_on(&self, e: usize, s: usize) -> bool {
+        let c = self.ch(s);
+        matches!(c, b'<' | b'[' | b'*' | b'?' | b'.')
+            || (s > e && (c.is_ascii_alphabetic() || matches!(c, b'_' | b'@' | b'\\') || c >= 0x80))
+    }
+
+    /// Whether a type can go on after a dotted path of names whose first ends at `e` (a
+    /// `.` next): the path's names read on (ASCII, no type arguments), then
+    /// [`Scan::type_goes_on`] after the last. A `.` with no name after it ends the path: no
+    /// type before it can go on either, since a `.` follows each.
+    fn chain_goes_on(&self, mut e: usize) -> bool {
+        loop {
+            let s = self.sp(e);
+            if self.ch(s) != b'.' || s >= self.n {
+                return self.type_goes_on(e, s);
+            }
+            let t = self.sp(s + 1);
+            match self.ascii_name(t) {
+                Some(f) => e = f,
+                None => {
+                    let c = self.ch(t);
+                    // a name past ASCII, escaped, or before a character past ASCII: the
+                    // lookahead decides
+                    return c.is_ascii_alphabetic()
+                        || matches!(c, b'_' | b'@' | b'\\')
+                        || c >= 0x80;
+                }
+            }
+        }
+    }
+
+    /// A name of ASCII at `p` that a byte ends ([`Scan::ascii_name`]'s), not after a word
+    /// character: where it ends. Read on the core's byte classes.
+    #[inline(always)]
+    pub(super) fn name_here(&self, p: usize) -> Option<usize> {
+        let b = self.b;
+        let e = self.ascii_name(p)?;
+        if p > 0 {
+            let d = b[p - 1];
+            if d < 0x80 {
+                if CLASS[usize::from(d)] & WORD != 0 {
+                    return None;
+                }
+            } else if self.word_before(p) {
+                return None;
+            }
+        }
+        Some(e)
     }
 
     /// `line_of_code_in_no_semicolon`'s patterns that start with a name: a generic call, a
@@ -3476,6 +3692,20 @@ impl Scan<'_, '_> {
 
     /// `type_common`.
     fn type_common(&mut self, p: usize) -> Option<usize> {
+        // a name of ASCII that isn't before `::`: a type's name, or one of `{{base_type}}`;
+        // a lowercase one may start `class`, `struct`, `enum` or `new` (tested as prefixes)
+        if let Some(e) = self.ascii_name(p) {
+            let c = self.b[p];
+            let s = self.sp(e);
+            if !(self.ch(s) == b':' && self.ch(s + 1) == b':' && s + 1 < self.n) {
+                if !c.is_ascii_lowercase() {
+                    return self.tok(p, e, SUPPORT_TYPE);
+                }
+                if words::flags(words::get(&self.b[p..e])) & BASE != 0 {
+                    return self.tok(p, e, STORAGE_TYPE);
+                }
+            }
+        }
         if let Some(q) = self.namespace_alias(p, NAMESPACE_VAR) {
             return Some(q);
         }
@@ -3711,6 +3941,12 @@ impl Scan<'_, '_> {
 
     /// `comments_in`, in a comment whose leaves for a to-do and a link are given.
     fn comments_in(&mut self, p: usize, todo: u16, link: u16) -> Option<usize> {
+        if !matches!(
+            self.b.get(p),
+            Some(b't' | b'T' | b'h' | b'H' | b'x' | b'X' | b'/')
+        ) {
+            return None;
+        }
         if let Some(e) = self.todo(p) {
             return self.tok(p, e, todo);
         }
@@ -3816,12 +4052,31 @@ impl Scan<'_, '_> {
         if let Some(q) = self.comments_in(p, TODO, LINK) {
             return Some(q);
         }
-        // `[\w\s]+|.`
-        if self.word_at(p) || self.space(p) {
-            let mut e = p;
-            while self.word_at(e) || self.space(e) {
-                e = self.next(e);
+        // `[\w\s]+|.`, ASCII on the core's classes
+        let (b, n) = (self.b, self.n);
+        let mut e = p;
+        loop {
+            if e < n {
+                let c = b[e];
+                if c < 0x80 {
+                    if CLASS[usize::from(c)] & (WORD | SPACE) == 0 {
+                        break;
+                    }
+                    e += 1;
+                } else if self.word_at(e) || self.space(e) {
+                    e = self.next(e);
+                } else {
+                    break;
+                }
+            } else {
+                // the line's `\n`, a space
+                if e == n {
+                    e += 1;
+                }
+                break;
             }
+        }
+        if e > p {
             return self.tok(p, e, DOC_TEXT);
         }
         if p < self.n {

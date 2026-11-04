@@ -9,6 +9,7 @@
 //! `char::is_alphabetic`, `\w` `char::is_alphanumeric`, `\s` ASCII's.
 
 use super::Scan;
+use crate::clike::{CLASS, DIGIT, SPACE, WORD};
 
 /// `{{reserved}}`, in the grammar's order: `@in` comes before `@interface`.
 pub(super) const RESERVED: [&[u8]; 61] = [
@@ -356,7 +357,7 @@ impl Scan<'_, '_> {
         while i < self.n {
             let c = self.b[i];
             if c < 0x80 {
-                if !crate::is_space(c) {
+                if CLASS[usize::from(c)] & SPACE == 0 {
                     break;
                 }
                 i += 1;
@@ -378,12 +379,29 @@ impl Scan<'_, '_> {
     /// `\S` at `i`.
     #[inline]
     pub(super) fn nonspace(&self, i: usize) -> bool {
-        i < self.n && space_len(&self.b[i..]).is_none()
+        i < self.n && {
+            let c = self.b[i];
+            if c < 0x80 {
+                CLASS[usize::from(c)] & SPACE == 0
+            } else {
+                space_len(&self.b[i..]).is_none()
+            }
+        }
     }
 
     /// `\s` at `i` (the `\n` too).
+    #[inline]
     pub(super) fn space(&self, i: usize) -> bool {
-        i == self.n || (i < self.n && space_len(&self.b[i..]).is_some())
+        if i < self.n {
+            let c = self.b[i];
+            if c < 0x80 {
+                CLASS[usize::from(c)] & SPACE != 0
+            } else {
+                space_len(&self.b[i..]).is_some()
+            }
+        } else {
+            i == self.n
+        }
     }
 
     /// `$` at `i`.
@@ -473,9 +491,9 @@ impl Scan<'_, '_> {
         }
         let b = self.b;
         let end = match b.get(i) {
-            Some(&c) if c.is_ascii_alphabetic() || c == b'_' => {
+            Some(&c) if CLASS[usize::from(c)] & (WORD | DIGIT) == WORD => {
                 let mut e = i + 1;
-                while e < self.n && ascii_word(b[e]) {
+                while e < self.n && CLASS[usize::from(b[e])] & WORD != 0 {
                     e += 1;
                 }
                 (e >= self.n || (b[e] < 0x80 && b[e] != b'\\')).then_some(e)

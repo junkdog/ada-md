@@ -29,6 +29,7 @@
 
 mod ctx;
 mod re;
+mod words;
 pub(crate) use re::ND;
 
 use crate::matcher::KEPT as HALF;
@@ -543,8 +544,48 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
 }
 
 /// What context `ctx` adds to the bits of the level under it (`under`): the string it is in,
-/// the meta content scope around, `meta.annotation`, `meta.preprocessor`.
-const fn level_bits(under: u16, ctx: u8) -> u16 {
+/// the meta content scope around, `meta.annotation`, `meta.preprocessor`. Each group of bits
+/// is either kept from the level under or set by the context, so it is a table but for a
+/// preprocessor line and a string, which depend on more ([`level_bits_by_rule`]).
+#[inline(always)]
+fn level_bits(under: u16, ctx: u8) -> u16 {
+    let (keep, set) = LEVELS[usize::from(ctx)];
+    if keep == BY_RULE {
+        return level_bits_by_rule(under, ctx);
+    }
+    (under & keep) | set
+}
+
+/// A context [`LEVELS`] leaves to [`level_bits_by_rule`].
+const BY_RULE: u16 = u16::MAX;
+
+/// Each context's bits kept from the level under, and those it sets.
+static LEVELS: [(u16, u16); 256] = {
+    let mut t = [(0, 0); 256];
+    let mut c = 0;
+    while c < 256 {
+        let ctx = c as u8;
+        t[c] = if ctx == PREPROC || ctx == STRING {
+            (BY_RULE, 0)
+        } else {
+            let mut keep = 0;
+            let groups = [CHAIN, WRAP, ANN, PRE];
+            let mut g = 0;
+            while g < groups.len() {
+                let m = groups[g];
+                if level_bits_by_rule(m, ctx) & m == m && level_bits_by_rule(0, ctx) & m == 0 {
+                    keep |= m;
+                }
+                g += 1;
+            }
+            (keep, level_bits_by_rule(0, ctx))
+        };
+        c += 1;
+    }
+    t
+};
+
+const fn level_bits_by_rule(under: u16, ctx: u8) -> u16 {
     let chain = match ctx {
         STRING | FORMAT_STRING => CH_S,
         LONG_STRING | LONG_FORMAT_STRING => CH_R,
@@ -724,6 +765,23 @@ const fn spaces_inert(ctx: u8) -> bool {
             | METHOD_NAME
     )
 }
+
+/// [`spaces_inert`] in [`CTX`].
+const INERT: u8 = 1;
+/// [`has_proto`] in [`CTX`].
+const PROTO: u8 = 2;
+
+/// Each context's [`INERT`] and [`PROTO`], so a turn reads them with one load.
+static CTX: [u8; 256] = {
+    let mut t = [0; 256];
+    let mut c = 0;
+    while c < 256 {
+        let ctx = c as u8;
+        t[c] = if spaces_inert(ctx) { INERT } else { 0 } | if has_proto(ctx) { PROTO } else { 0 };
+        c += 1;
+    }
+    t
+};
 
 /// The bytes a pattern of a context starts with, as a table for [`Scan::advance`].
 const fn stops(bytes: &[u8]) -> [u8; 256] {
@@ -1016,6 +1074,32 @@ fn regex_first_argument(b: &[u8], q: usize) -> bool {
         || ends_word(b, w, b"RegularExpressionAttribute")
 }
 
+impl<'b, 'c> Scan<'b, 'c> {
+    #[cfg(test)]
+    fn for_test(b: &'b [u8], _state: &mut State, out: &'b mut Out<'c>) -> Self {
+        Scan {
+            b,
+            n: b.len(),
+            ind: 0,
+            stack: [MAIN; MAX],
+            bits: [0; MAX],
+            depth: 1,
+            exact: true,
+            text: PLAIN,
+            at: 0,
+            step: 0,
+            loop_at: (usize::MAX, 0),
+            looped: false,
+            halt: false,
+            stuck: 0,
+            wcache: std::cell::Cell::new((usize::MAX, 0)),
+            ncache: std::cell::Cell::new((usize::MAX, None)),
+            regex_calls: None,
+            out,
+        }
+    }
+}
+
 impl Scan<'_, '_> {
     fn top(&self) -> u8 {
         self.stack[self.depth - 1]
@@ -1178,6 +1262,10 @@ impl Scan<'_, '_> {
         let end = self.n + 1;
         let mut p = 0;
         loop {
+            // at the line's end, a context that passes over blanks has nothing to match
+            if p >= self.n && p > 0 && CTX[usize::from(self.top())] & INERT != 0 {
+                return;
+            }
             self.looped = false;
             if let Some(q) = self.at(p) {
                 if self.halt {
@@ -1214,7 +1302,10 @@ impl Scan<'_, '_> {
             BLOCK_COMMENT => &BLOCK_COMMENT_STOPS,
             STRING | FORMAT_STRING | FORMAT_STRING_LOST => &STRING_STOPS,
             LONG_STRING | LONG_FORMAT_STRING | LONG_FORMAT_STRING_LOST => &LONG_STRING_STOPS,
-            top if spaces_inert(top) && p < self.n && re::space_len(&self.b[p..]).is_some() => {
+            top if CTX[usize::from(top)] & INERT != 0
+                && p < self.n
+                && re::space_len(&self.b[p..]).is_some() =>
+            {
                 return self.sp_line(p);
             }
             _ => return self.next(p),
@@ -1244,11 +1335,12 @@ impl Scan<'_, '_> {
         let top = self.top();
         // at a space, the line's end or past it, such a context has none but the prototype's
         // `^\s*` patterns, at the line's start
-        if spaces_inert(top) && (p > self.n || self.space(p)) {
+        let ctx = CTX[usize::from(top)];
+        if ctx & INERT != 0 && (p > self.n || self.space(p)) {
             return if p == 0 { self.proto(p) } else { None };
         }
         // the prototype's patterns start with `/`, or at the line's start
-        if has_proto(top)
+        if ctx & PROTO != 0
             && (p == 0 || (p + 1 < self.n && self.b[p] == b'/'))
             && let Some(q) = self.proto(p)
         {
@@ -1305,6 +1397,47 @@ impl Scan<'_, '_> {
 mod tests {
     use crate::Lang;
     use crate::tests::marked;
+
+    #[test]
+    fn level_bits_by_table_are_the_rules() {
+        for c in 0..=255u8 {
+            for chain in 0..8u16 {
+                for wrap in 0..4u16 {
+                    for flags in 0..4u16 {
+                        let under = chain << 9 | wrap << 12 | flags << 14;
+                        assert_eq!(
+                            super::level_bits(under, c),
+                            super::level_bits_by_rule(under, c),
+                            "{c} {under:#x}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn operators_by_first_byte_are_the_lists() {
+        let ops = b"+-*/%|&^<>=!?~ ax";
+        let mut spans = Vec::new();
+        let mut out = crate::Out::new(&mut spans);
+        let mut state = crate::State::default();
+        for &a in ops {
+            for &b in ops {
+                for &c in ops {
+                    for n in 1..=3 {
+                        let line = [a, b, c];
+                        let line = &line[..n];
+                        let mut s = super::Scan::for_test(line, &mut state, &mut out);
+                        for p in 0..=n {
+                            assert_eq!(s.operator_at(p), s.operator_by_lists(p), "{line:?} at {p}");
+                        }
+                        s.n = 0;
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn a_class_and_its_method() {
