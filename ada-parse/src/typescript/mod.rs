@@ -27,7 +27,7 @@ mod words;
 
 use std::cell::Cell;
 
-use crate::matcher::KEPT as HALF;
+use crate::stack::HELD as KEPT;
 use crate::{Out, State, regex};
 
 macro_rules! leaves {
@@ -690,8 +690,6 @@ const JSX_STR_S: u8 = 159;
 
 /// How many frames a line can hold; one pushed past it drops the bottom one.
 const MAX: usize = 128;
-/// How many the state keeps between lines: [`State`]'s levels and withs.
-const KEPT: usize = 2 * HALF;
 /// Matches that take nothing, in a row at one place, before the scan steps on regardless.
 const STUCK: usize = 48;
 
@@ -722,9 +720,7 @@ pub fn line(b: &[u8], tsx: bool, state: &mut State, out: &mut Out) {
         re: 0,
         out,
     };
-    s.stack[1..=HALF].copy_from_slice(&state.levels);
-    s.stack[1 + HALF..=KEPT].copy_from_slice(&state.withs);
-    s.depth = 1 + usize::from(state.depth);
+    s.depth = state.load(&mut s.stack);
     if state.arg == PACKED {
         s.depth = 1 + unpack(&mut s.stack, s.depth - 1);
     }
@@ -734,20 +730,13 @@ pub fn line(b: &[u8], tsx: bool, state: &mut State, out: &mut Out) {
     if s.re != 0 && matches!(s.top(), REGEX_F | RE_STR_F) {
         s.spill();
     }
-    let mut n = s.depth - 1;
-    state.arg = 0;
-    if n > KEPT {
-        n = pack(&mut s.stack, n);
-        state.arg = PACKED;
+    // deeper than the state keeps: the pairs packed, so that the top `KEPT` hold them all
+    let (mut depth, mut arg) = (s.depth, 0);
+    if depth - 1 > KEPT {
+        depth = 1 + pack(&mut s.stack, depth - 1);
+        arg = PACKED;
     }
-    let from = n.saturating_sub(KEPT);
-    let kept = n - from;
-    let mut levels = [0; KEPT];
-    levels[..kept].copy_from_slice(&s.stack[1 + from..1 + from + kept]);
-    state.levels.copy_from_slice(&levels[..HALF]);
-    state.withs.copy_from_slice(&levels[HALF..]);
-    state.depth = kept as u8;
-    state.inexact = !s.exact || from > 0;
+    *state = State::keep(&s.stack, depth, s.exact, arg);
 }
 
 /// [`State`]'s `arg` when its levels are packed ([`pack`]).
@@ -954,17 +943,13 @@ impl Scan<'_, '_, '_> {
 
     /// The bytes up to `to` that no token has covered, as the frames open make them.
     fn fill(&mut self, to: usize) {
-        let to = to.min(self.b.len());
-        if to > self.done {
-            let k = self.text | self.wrap;
-            if k != PLAIN {
-                self.out.push_merged(self.done, to, k);
-            }
-            self.done = to;
-        }
+        self.out
+            .fill(&mut self.done, to.min(self.b.len()), self.text | self.wrap);
     }
 
-    /// Bytes `s..e` are `kind`.
+    /// Bytes `s..e` are `kind`: an empty token fills nothing, and none starts before where the
+    /// spans end. Its own token half, not [`Out::put`]: `put`'s second fill tests `e` against
+    /// where the spans end, which TypeScript paid +0.50% instructions for (X-017 (d)).
     fn tok(&mut self, s: usize, e: usize, kind: u16) {
         let e = e.min(self.b.len());
         if e <= s {
@@ -993,9 +978,7 @@ impl Scan<'_, '_, '_> {
         self.fill(self.i);
         if self.depth == MAX {
             self.tpl -= usize::from(is_tpl(self.stack[1]));
-            self.stack.copy_within(2.., 1);
-            self.depth -= 1;
-            self.exact = false;
+            crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
         }
         self.stack[self.depth] = f;
         self.depth += 1;
