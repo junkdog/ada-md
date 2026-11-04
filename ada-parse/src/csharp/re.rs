@@ -353,9 +353,27 @@ impl Scan<'_> {
         self.sp_line(p)
     }
 
-    /// Past `\s*` at `i` on the line (its `\n` not taken).
-    #[inline]
-    pub(super) fn sp_line(&self, mut i: usize) -> usize {
+    /// Past `\s*` at `i` on the line (its `\n` not taken): none or one ASCII blank decided
+    /// here, a longer run or a space past ASCII out of line ([`Self::sp_run`]).
+    #[inline(always)]
+    pub(super) fn sp_line(&self, i: usize) -> usize {
+        let b = &self.b[..self.n];
+        // whether the byte at `i` is an ASCII blank; `None` past ASCII
+        let blank = |i: usize| match b.get(i) {
+            Some(&c) if c >= 0x80 => None,
+            Some(&c) => Some(CLASS[usize::from(c)] & SPACE != 0),
+            None => Some(false),
+        };
+        match blank(i) {
+            Some(false) => i,
+            Some(true) if blank(i + 1) == Some(false) => i + 1,
+            _ => self.sp_run(i),
+        }
+    }
+
+    /// [`Self::sp_line`]'s loop.
+    #[inline(never)]
+    fn sp_run(&self, mut i: usize) -> usize {
         let b = &self.b[..self.n];
         while let Some(&c) = b.get(i) {
             if c < 0x80 {

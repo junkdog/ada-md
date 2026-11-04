@@ -99,10 +99,36 @@ impl Scan<'_> {
         if matches!(c, b't' | b'T' | b'h' | b'H' | b'x' | b'X' | b'/') && self.marks(p) {
             return self.doc(p);
         }
-        // the text's turns, one after another while each would take text, as `doc`'s
+        // the text's turns, one after another while each would take text, as `doc`'s: a run of
+        // word bytes and blanks (`[\w\s]+`, the line's `\n` in it when the run reaches it), or
+        // a character of its own (`.`); a turn after a run starts at a byte that isn't a word's
+        // or a blank, so a to-do's or a link's letters start one only after a character of its
+        // own
         let mut e = p;
         loop {
-            e = self.doc_text_at(e);
+            // the run: ASCII's word bytes and blanks on the core's classes, a character past
+            // ASCII that is either by its own
+            let s = e;
+            loop {
+                while e < n && CLASS[usize::from(b[e])] & (WORD | SPACE) != 0 {
+                    e += 1;
+                }
+                if e < n && b[e] >= 0x80 && (self.word_at(e) || self.space(e)) {
+                    e = self.next(e);
+                    continue;
+                }
+                break;
+            }
+            if e >= n {
+                e = n + 1;
+                break;
+            }
+            let c = b[e];
+            if e > s && (c == b'<' || (c == b'/' && self.marks(e))) {
+                break;
+            }
+            // a character of its own
+            e = self.next(e);
             if e >= n {
                 break;
             }
@@ -115,31 +141,6 @@ impl Scan<'_> {
         }
         self.put_doc(p, e, DOC_TEXT);
         Some(e)
-    }
-
-    /// `documentation`'s text at `p`, on the line or its `\n` (`[\w\s]+|.`): where it ends.
-    #[inline(always)]
-    fn doc_text_at(&self, p: usize) -> usize {
-        let (b, n) = (self.b, self.n);
-        let mut e = p;
-        loop {
-            // ASCII's word bytes and blanks on the core's classes (a byte past ASCII has
-            // neither class), a character past ASCII by its own
-            e += b[e..n]
-                .iter()
-                .position(|&c| CLASS[usize::from(c)] & (WORD | SPACE) == 0)
-                .unwrap_or(n - e);
-            if e < n && b[e] >= 0x80 && (self.word_at(e) || self.space(e)) {
-                e = self.next(e);
-                continue;
-            }
-            break;
-        }
-        if e == n {
-            // the line's `\n`, a space
-            return n + 1;
-        }
-        if e > p { e } else { self.next(p) }
     }
 
     /// `#anon_documentation_0`'s turn at `p`, not a blank: [`Scan::doc_tag`]'s, its usual

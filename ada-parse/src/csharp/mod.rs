@@ -875,6 +875,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         stuck: 0,
         wcache: std::cell::Cell::new((usize::MAX, 0)),
         ncache: std::cell::Cell::new((usize::MAX, None)),
+        pcache: std::cell::Cell::new((usize::MAX, None)),
         regex_calls: None,
         merge: out.1,
         spans: &mut *out.0,
@@ -904,6 +905,10 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     state.inexact = !s.exact || from > 0;
     state.arg = 0;
 }
+
+/// Two names with blanks between ([`Scan::plain_pair`]): where the first ends, where the second
+/// ends, and where the blanks after it end.
+type Pair = (usize, usize, usize);
 
 pub(crate) struct Scan<'b> {
     b: &'b [u8],
@@ -938,6 +943,8 @@ pub(crate) struct Scan<'b> {
     wcache: std::cell::Cell<(usize, usize)>,
     /// The last place [`Scan::ascii_name`] looked at, and what it found.
     ncache: std::cell::Cell<(usize, Option<usize>)>,
+    /// The last place [`Scan::plain_pair`] looked at, and what it found.
+    pcache: std::cell::Cell<(usize, Option<Pair>)>,
     /// The line's regex calls, found at its first string ([`RegexCalls`]).
     regex_calls: Option<RegexCalls>,
     /// Whether a span joins the last when it touches it with the same kind ([`Out`]'s flag).
@@ -1140,6 +1147,7 @@ impl<'b> Scan<'b> {
             stuck: 0,
             wcache: std::cell::Cell::new((usize::MAX, 0)),
             ncache: std::cell::Cell::new((usize::MAX, None)),
+            pcache: std::cell::Cell::new((usize::MAX, None)),
             regex_calls: None,
             merge: true,
             spans,
@@ -1276,10 +1284,25 @@ impl Scan<'_> {
     }
 
     fn push(&mut self, c: u8) {
+        self.push_quiet(c);
+        self.refresh();
+    }
+
+    /// [`Scan::push`] without the top's text: for a run of pushes, refreshed after the last.
+    #[inline(always)]
+    fn push_quiet(&mut self, c: u8) {
         if self.depth == MAX {
             self.drop_bottom();
         }
         self.push_level(c);
+    }
+
+    /// `cs` pushed, bottom first.
+    #[inline(always)]
+    fn push_all(&mut self, cs: &[u8]) {
+        for &c in cs {
+            self.push_quiet(c);
+        }
         self.refresh();
     }
 
@@ -1311,10 +1334,15 @@ impl Scan<'_> {
 
     /// Replace the top with `cs`, bottom first.
     fn set(&mut self, cs: &[u8]) {
-        self.pop();
-        for &c in cs {
-            self.push(c);
+        // the pop and the first push write the top level in place, above the bottom one
+        if self.depth > 1
+            && let Some((&c, rest)) = cs.split_first()
+        {
+            self.set_level(self.depth - 1, c);
+            return self.push_all(rest);
         }
+        self.pop();
+        self.push_all(cs);
     }
 
     /// Text before `p` is the top context's; then `cs` are pushed, bottom first, by a match
@@ -1327,9 +1355,7 @@ impl Scan<'_> {
         }
         self.fill(p);
         let depth = self.depth + 1;
-        for &c in cs {
-            self.push(c);
-        }
+        self.push_all(cs);
         self.loop_at = (p, depth);
         Some(p)
     }
@@ -1362,9 +1388,7 @@ impl Scan<'_> {
             return Some(s);
         }
         self.put(s, e, leaf);
-        for &c in cs {
-            self.push(c);
-        }
+        self.push_all(cs);
         Some(e)
     }
 
@@ -1376,9 +1400,7 @@ impl Scan<'_> {
             return Some(s);
         }
         self.fill(s);
-        for &c in cs {
-            self.push(c);
-        }
+        self.push_all(cs);
         self.put(s, e, leaf);
         Some(e)
     }
@@ -1470,7 +1492,8 @@ impl Scan<'_> {
                 && p < self.n
                 && re::space_len(&self.b[p..]).is_some() =>
             {
-                return self.sp_line(p);
+                // the line's indentation is found once a line
+                return if p == 0 { self.ind } else { self.sp_line(p) };
             }
             _ => return self.next(p),
         };
@@ -1492,25 +1515,30 @@ impl Scan<'_> {
     /// block comment's `*/` (`stops` has `*` for one), or a to-do or a link, whose letters
     /// start one only at a word's start (`\b`). A letter is checked first by the four bytes
     /// there: `todo`, `hack` or `xxx` in any case, `http`.
-    fn comment_skip(&self, mut q: usize, stops: &[u8; 256]) -> usize {
+    fn comment_skip(&self, q: usize, stops: &[u8; 256]) -> usize {
         let b = &self.b[..self.n];
-        loop {
-            match b[q.min(b.len())..]
-                .iter()
-                .position(|&c| stops[usize::from(c)] != 0)
-            {
-                None => return b.len(),
-                Some(k) => q += k,
-            }
+        let len = b.len();
+        let mut q = q.min(len);
+        while q < len {
             let c = b[q];
+            if stops[usize::from(c)] == 0 {
+                q += 1;
+                continue;
+            }
             let hit = if c == b'*' {
                 b.get(q + 1) == Some(&b'/')
             } else if c.is_ascii_alphabetic() {
                 CLASS[usize::from(b[q - 1])] & WORD == 0 && {
-                    let mut w = [0; 4];
-                    let t = &b[q..(q + 4).min(b.len())];
-                    w[..t.len()].copy_from_slice(t);
-                    let x = u32::from_le_bytes(w);
+                    // the four bytes at `q`, the line's end as zeros
+                    let x = match b.get(q..q + 4) {
+                        Some(w) => u32::from_le_bytes([w[0], w[1], w[2], w[3]]),
+                        None => {
+                            let mut w = [0; 4];
+                            let t = &b[q..];
+                            w[..t.len()].copy_from_slice(t);
+                            u32::from_le_bytes(w)
+                        }
+                    };
                     let lower = x | 0x2020_2020;
                     (lower == u32::from_le_bytes(*b"todo")
                         || lower == u32::from_le_bytes(*b"hack")
@@ -1526,6 +1554,7 @@ impl Scan<'_> {
             }
             q += 1;
         }
+        len
     }
 
     /// Where the character at `p` ends (the line's `\n` is one byte).

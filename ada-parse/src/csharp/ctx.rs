@@ -2687,8 +2687,23 @@ impl Scan<'_> {
         let s = self.sp(e);
         // the declarations' lookaheads need a type to go on after the name: `<`, `[`, `*`,
         // `?`, `.` (`nested_method`'s not), or blanks and a name
-        let dotted = self.ch(s) == b'.';
+        let c = self.ch(s);
+        let dotted = c == b'.';
         let typed = self.type_goes_on(e, s) && (!dotted || self.chain_goes_on(e));
+        // a name that's no word of the table, that no type goes on from (so no `<` after it,
+        // no lookahead's declaration, no name after its blanks), before no `:` (a label's,
+        // `::`) and no `=>` (a lambda's): no pattern holds but the set's, so the name is
+        // `line_of_code_in`'s
+        if id == 0
+            && !typed
+            && c != b':'
+            && !(c == b'=' && self.ch(s + 1) == b'>')
+            && self.stuck < STUCK
+        {
+            self.fill(p);
+            self.set(&[LINE_IN]);
+            return self.expr_name_id(p, e, 0);
+        }
         if typed && !dotted && self.nested_method_ahead(p) {
             return self.enter(p, &[NESTED_METHOD]);
         }
@@ -2946,7 +2961,18 @@ impl Scan<'_> {
     /// Two names of ASCII at `p` with blanks between (`Type name`), the second starting with
     /// a letter or `_`: where the first ends, where the second ends, and where the blanks after
     /// it end ([`Scan::sp`]). The declarations' lookaheads read such a pair one way only.
-    pub(super) fn plain_pair(&self, p: usize) -> Option<(usize, usize, usize)> {
+    pub(super) fn plain_pair(&self, p: usize) -> Option<Pair> {
+        let (at, pair) = self.pcache.get();
+        if at == p {
+            return pair;
+        }
+        let pair = self.plain_pair_at(p);
+        self.pcache.set((p, pair));
+        pair
+    }
+
+    /// [`Scan::plain_pair`], not memoized.
+    fn plain_pair_at(&self, p: usize) -> Option<Pair> {
         let e = self.ascii_name(p)?;
         let s = self.sp(e);
         if s == e || s >= self.n || !(self.b[s].is_ascii_alphabetic() || self.b[s] == b'_') {
@@ -3045,13 +3071,34 @@ impl Scan<'_> {
     pub(super) fn local_declaration(&mut self, p: usize) -> Option<usize> {
         // two names of ASCII with blanks between: the first pattern's lookahead holds unless
         // `(` or `:` follows the second
-        if let Some((e, _, t)) = self.plain_pair(p)
+        if let Some((e, m, t)) = self.plain_pair(p)
             && !self.word_before(p)
             && &self.b[p..e] != b"ref"
             && !(matches!(self.ch(t), b'(' | b':') && t < self.n)
         {
             self.fill(p);
             self.set(&[VARS_DECL, TYPE_NO_SPACE]);
+            // then the type's turn, where `type_common` takes the name whole (one that doesn't
+            // start lowercase, or one of `{{base_type}}`; no `::` after it); the blank's, one
+            // byte that pops it; and the variable's name, `vars_decl`'s: in one, counted as the
+            // loop counts the set's turn, which takes nothing
+            let b = self.b;
+            let leaf = if !b[p].is_ascii_lowercase() {
+                SUPPORT_TYPE
+            } else if words::flags(words::get(&b[p..e])) & BASE != 0 {
+                STORAGE_TYPE
+            } else {
+                return Some(p);
+            };
+            if matches!(b[e], b' ' | b'\t')
+                && self.ascii_name(e + 1) == Some(m)
+                && self.stuck < STUCK
+            {
+                self.put(p, e, leaf);
+                self.close(e, e + 1, PLAIN);
+                self.put(e + 1, m, VAR_OTHER);
+                return Some(m);
+            }
             return Some(p);
         }
         // with `ref ` first, then without
@@ -3175,10 +3222,43 @@ impl Scan<'_> {
             }
             W_CHECKED | W_UNCHECKED => self.tok_push(p, e, KW_OTHER, &[CHECKED]),
             W_UNSAFE => self.tok_push(p, e, KW_OTHER, &[UNSAFE]),
-            W_NEW => self.tok_push(p, e, INSTANCE_NEW, &[NEW]),
+            W_NEW => {
+                let q = self.tok_push(p, e, INSTANCE_NEW, &[NEW]);
+                if self.halt {
+                    return q;
+                }
+                Some(self.new_turns(e).unwrap_or(e))
+            }
             W_PUBLIC | W_PRIVATE | W_PROTECTED | W_INTERNAL => self.tok(p, e, ACCESS),
             _ => None,
         }
+    }
+
+    /// After `new` (at `e`, `NEW` on top): where blanks, a type of one name that
+    /// `type_common` takes whole (one that doesn't start lowercase, or one of `{{base_type}}`)
+    /// and `(` follow, the turns `NEW`'s set to its type (which takes nothing), the type's and
+    /// `new_type`'s at the `(`, in one. `None` where they don't follow, nothing done.
+    #[inline(never)]
+    fn new_turns(&mut self, e: usize) -> Option<usize> {
+        let b = self.b;
+        let s = crate::clike::skip_blanks(&b[..self.n], e);
+        if s == e {
+            return None;
+        }
+        let m = self.ascii_name(s)?;
+        if m >= self.n || b[m] != b'(' {
+            return None;
+        }
+        let leaf = if !b[s].is_ascii_lowercase() {
+            SUPPORT_TYPE
+        } else if words::flags(words::get(&b[s..m])) & BASE != 0 {
+            STORAGE_TYPE
+        } else {
+            return None;
+        };
+        self.shift(s, &[NEW_TYPE]);
+        self.put(s, m, leaf);
+        self.new_type(m)
     }
 
     /// `lambdas`.
@@ -3761,6 +3841,18 @@ impl Scan<'_> {
             b'"' => {
                 let q = self.open(p, p + 1, STRING_BEGIN, &[STRING]);
                 self.regex_in(p);
+                // a string whose first stop is its end: `string`'s patterns match nothing at
+                // its text (a turn of `advance` to the stop), then its `"`; taken here
+                if !self.halt
+                    && self.top() == STRING
+                    && let Some(k) = self.b[p + 1..self.n]
+                        .iter()
+                        .position(|&c| STRING_STOPS[usize::from(c)] != 0)
+                    && self.b[p + 1 + k] == b'"'
+                {
+                    let e = p + 1 + k;
+                    return self.close(e, e + 1, STRING_END);
+                }
                 q
             }
             // `{{dec_digits}}` can start with `_`, and `\d` is Unicode's: a float only

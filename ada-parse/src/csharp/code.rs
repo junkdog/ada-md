@@ -22,9 +22,7 @@ impl Scan<'_> {
             if CTX[usize::from(top)] & INERT == 0 {
                 return p;
             }
-            while p < n && CLASS[usize::from(b[p])] & SPACE != 0 {
-                p += 1;
-            }
+            p = blanks(b, n, p);
             if p >= n {
                 return p;
             }
@@ -179,6 +177,28 @@ fn plain_int(b: &[u8], p: usize) -> Option<usize> {
     ok.then_some(d)
 }
 
+/// Where the blanks at `p` end, on a line of `n` bytes: one or two checked here, a longer run
+/// out of line (a loop here keeps the run's place in several registers at every token).
+#[inline(always)]
+fn blanks(b: &[u8], n: usize, p: usize) -> usize {
+    if p < n && CLASS[usize::from(b[p])] & SPACE != 0 {
+        if p + 1 < n && CLASS[usize::from(b[p + 1])] & SPACE != 0 {
+            return blank_run(b, n, p + 2);
+        }
+        return p + 1;
+    }
+    p
+}
+
+#[inline(never)]
+fn blank_run(b: &[u8], n: usize, p: usize) -> usize {
+    clike::skip_blanks(&b[..n], p)
+}
+
+/// The bytes an expression's context has a pattern of its own at, those under 64 (`,`, `)`,
+/// `:`, `;`); `]` is tested by itself.
+const OWN: u64 = 1 << b',' | 1 << b')' | 1 << b':' | 1 << b';';
+
 /// What an expression's turn did at the place, `p`.
 enum Turn {
     /// It took `p..` to here.
@@ -209,10 +229,7 @@ impl Scan<'_> {
             if CTX[usize::from(top)] & EXPR == 0 || self.depth + 2 >= SYNTECT_DEPTH {
                 return p;
             }
-            let mut q = p;
-            while q < n && CLASS[usize::from(b[q])] & SPACE != 0 {
-                q += 1;
-            }
+            let q = blanks(b, n, p);
             if q >= n {
                 return q;
             }
@@ -253,32 +270,34 @@ impl Scan<'_> {
     fn expr_tok(&mut self, top: u8, p: usize) -> Turn {
         let (b, n) = (self.b, self.n);
         let c = b[p];
-        match (top, c) {
-            // `nosemi`'s pop, then `arguments`' separator or end
-            (ARG_EXPR, b',' | b')') => {
-                let d = self.depth;
-                if d < 3 || self.ctx_at(d - 2) != ARGUMENTS || self.loop_at == (p, d) {
+        if (c < 64 && OWN >> c & 1 != 0) || c == b']' {
+            match (top, c) {
+                // `nosemi`'s pop, then `arguments`' separator or end
+                (ARG_EXPR, b',' | b')') => {
+                    let d = self.depth;
+                    if d < 3 || self.ctx_at(d - 2) != ARGUMENTS || self.loop_at == (p, d) {
+                        return Turn::Not;
+                    }
+                    self.fill(p);
+                    self.pop();
+                    return Turn::Took(if c == b',' {
+                        self.put_code(p, p + 1, ARGUMENT_SEP)
+                    } else {
+                        self.close_code(p, GROUP_END)
+                    });
+                }
+                (IF_GROUP, b')') => return Turn::Took(self.close_code(p, M_GROUP_END)),
+                (GROUP | GROUP_IN, b')') => return Turn::Took(self.close_code(p, GROUP_END)),
+                (TERNARY, b':') => return Turn::Took(self.close_code(p, TERNARY_OP)),
+                (ACCESSOR_ARGS, b',') => return Turn::Took(self.put_code(p, p + 1, ACCESSOR_SEP)),
+                (ACCESSOR_ARGS, b']') => return Turn::Took(self.close_code(p, M_BRACKETS_END)),
+                // their pops, and `nosemi`'s `;`: none takes it
+                (ARG_EXPR | GROUP | NOSEMI | LAMBDA_BODY | MV_VALUE | VD_VALUE, b';') => {
                     return Turn::Not;
                 }
-                self.fill(p);
-                self.pop();
-                return Turn::Took(if c == b',' {
-                    self.put_code(p, p + 1, ARGUMENT_SEP)
-                } else {
-                    self.close_code(p, GROUP_END)
-                });
+                (MV_VALUE | VD_VALUE, b',') => return Turn::Not,
+                _ => {}
             }
-            (IF_GROUP, b')') => return Turn::Took(self.close_code(p, M_GROUP_END)),
-            (GROUP | GROUP_IN, b')') => return Turn::Took(self.close_code(p, GROUP_END)),
-            (TERNARY, b':') => return Turn::Took(self.close_code(p, TERNARY_OP)),
-            (ACCESSOR_ARGS, b',') => return Turn::Took(self.put_code(p, p + 1, ACCESSOR_SEP)),
-            (ACCESSOR_ARGS, b']') => return Turn::Took(self.close_code(p, M_BRACKETS_END)),
-            // their pops, and `nosemi`'s `;`: none takes it
-            (ARG_EXPR | GROUP | NOSEMI | LAMBDA_BODY | MV_VALUE | VD_VALUE, b';') => {
-                return Turn::Not;
-            }
-            (MV_VALUE | VD_VALUE, b',') => return Turn::Not,
-            _ => {}
         }
         if CLASS[usize::from(c)] & (WORD | DIGIT) == WORD {
             let Some(e) = self.name_here(p) else {
@@ -344,10 +363,7 @@ impl Scan<'_> {
         if b[p] == b'_' || (e < n && b[e] == b'<') {
             return self.nosemi_name_id(p, e, id);
         }
-        let mut s = e;
-        while s < n && CLASS[usize::from(b[s])] & SPACE != 0 {
-            s += 1;
-        }
+        let s = blanks(b, n, e);
         if s < n {
             let after = if s + 1 < n { b[s + 1] } else { 0 };
             match b[s] {
@@ -385,10 +401,7 @@ impl Scan<'_> {
                 if e - p == 3 && (crate::same(&b[p..e], b"out") || crate::same(&b[p..e], b"ref")) {
                     return Turn::Not;
                 }
-                let mut s = e;
-                while s < n && CLASS[usize::from(b[s])] & SPACE != 0 {
-                    s += 1;
-                }
+                let s = blanks(b, n, e);
                 if s < n && matches!(b[s], b'=' | b':' | 0x80..) {
                     return Turn::Not;
                 }
