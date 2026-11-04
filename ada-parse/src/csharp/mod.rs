@@ -23,7 +23,9 @@
 //! comment's or a namespace name's scope, `meta.annotation`, `meta.preprocessor`.
 //!
 //! The code contexts' turns run in a loop of their own (`code.rs`, X-025's first stage), the
-//! rest in [`Scan::run`]'s.
+//! rest in [`Scan::run`]'s; within it an expression's tokens run in one of their own
+//! ([`Scan::expr`], its third), each decided by its first byte and what follows on the line,
+//! its spans emitted inline.
 //!
 //! A string that `new Regex(`, `Regex.IsMatch(input, …)` and the like take is colored as
 //! .NET's regex (ADR-40, phase 4; [`crate::regex`]), as Rider colors it: its text is the
@@ -776,14 +778,38 @@ const fn spaces_inert(ctx: u8) -> bool {
 const INERT: u8 = 1;
 /// [`has_proto`] in [`CTX`].
 const PROTO: u8 = 2;
+/// A context whose turns [`Scan::expr`] runs: `line_of_code_in_no_semicolon`'s patterns behind
+/// a few of its own, or `arguments`.
+const EXPR: u8 = 4;
 
-/// Each context's [`INERT`] and [`PROTO`], so a turn reads them with one load.
+/// The contexts of [`EXPR`].
+const fn is_expr(ctx: u8) -> bool {
+    matches!(
+        ctx,
+        LINE_IN
+            | NOSEMI
+            | ARG_EXPR
+            | ARGUMENTS
+            | IF_GROUP
+            | GROUP
+            | GROUP_IN
+            | TERNARY
+            | LAMBDA_BODY
+            | MV_VALUE
+            | VD_VALUE
+            | ACCESSOR_ARGS
+    )
+}
+
+/// Each context's [`INERT`], [`PROTO`] and [`EXPR`], so a turn reads them with one load.
 static CTX: [u8; 256] = {
     let mut t = [0; 256];
     let mut c = 0;
     while c < 256 {
         let ctx = c as u8;
-        t[c] = if spaces_inert(ctx) { INERT } else { 0 } | if has_proto(ctx) { PROTO } else { 0 };
+        t[c] = if spaces_inert(ctx) { INERT } else { 0 }
+            | if has_proto(ctx) { PROTO } else { 0 }
+            | if is_expr(ctx) { EXPR } else { 0 };
         c += 1;
     }
     t
@@ -1188,8 +1214,7 @@ impl Scan<'_> {
     /// Bytes `s..e` are `leaf` in the top context, after the text before them.
     #[inline(never)]
     fn put(&mut self, s: usize, e: usize, leaf: u16) {
-        let k = self.cur() | leaf;
-        self.put_kind(s, e, k);
+        self.put_code(s, e, leaf);
     }
 
     /// Bytes `s..e` are kind `k` as it is.

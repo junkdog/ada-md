@@ -1831,7 +1831,10 @@ impl Scan<'_> {
     /// `#anon_method_param_type_0`: a parameter's type.
     pub(super) fn mpt_type(&mut self, p: usize) -> Option<usize> {
         let s = self.sp(p);
-        if !self.word_before(s) || s == p {
+        // each modifier's first byte first
+        if matches!(self.ch(s), b'o' | b'r' | b't' | b'p' | b'i')
+            && (!self.word_before(s) || s == p)
+        {
             for w in [&b"out"[..], b"ref", b"this", b"params", b"in"] {
                 if self.lit(s, w)
                     && !self.word_before(s)
@@ -2646,7 +2649,7 @@ impl Scan<'_> {
         }
         self.fill(p);
         self.set(&[LINE_IN]);
-        self.nosemi_name_id(p, e, id)
+        self.expr_name_id(p, e, id)
     }
 
     /// `line_of_code`'s statements by keyword, at a word's start.

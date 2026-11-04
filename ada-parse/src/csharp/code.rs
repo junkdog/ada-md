@@ -2,11 +2,13 @@
 //! context is one that passes over blanks (code's), its turns run here a token at a time, blanks
 //! passed inline and the hot contexts' patterns dispatched without [`Scan::context`]'s `match`.
 //! bat's contexts and their stack stay as they are, so each turn is the one [`Scan::run`] would
-//! take, and the state between lines is the same.
+//! take, and the state between lines is the same. An expression's tokens go one step further
+//! ([`Scan::expr`], X-025's third stage): a run of them in one call, each token's patterns
+//! decided by its first byte and what follows it, the spans emitted inline.
 
 use super::c::*;
 use super::*;
-use crate::clike::{CLASS, SPACE};
+use crate::clike::{self, CLASS, DIGIT, SPACE};
 
 impl Scan<'_> {
     /// The turns from `p` (past the line's start) while the top context is code's: blanks passed
@@ -31,6 +33,15 @@ impl Scan<'_> {
                 return p;
             }
             self.looped = false;
+            // an expression's tokens run in a loop of their own, where they can
+            if CTX[usize::from(top)] & EXPR != 0 && self.stuck == 0 {
+                let q = self.expr(p);
+                if q > p {
+                    p = q;
+                    self.step = q;
+                    continue;
+                }
+            }
             let Some(q) = self.frame(top, p) else {
                 return p;
             };
@@ -116,5 +127,256 @@ impl Scan<'_> {
             LINE => self.line(p),
             _ => self.context(top, p),
         }
+    }
+}
+
+/// What an expression's turn did at the place, `p`.
+enum Turn {
+    /// It took `p..` to here.
+    Took(usize),
+    /// The name `p..` to here is the expression's next turn ([`Scan::expr_name`]); anything
+    /// before it (an argument's push) is done.
+    Name(usize),
+    /// Nothing; the turn is [`Scan::frame`]'s.
+    Not,
+}
+
+impl Scan<'_> {
+    /// An expression's tokens in a run of their own (X-025's third stage): while the top is
+    /// `line_of_code_in`, an argument's expression or `arguments`, each token whose turn there
+    /// is decided by its first byte and what follows it on the line (a plain name, a call's
+    /// name, `.`, an operator, a number, a character or a string's start, an argument's start,
+    /// `,` and `)`, a statement's `;`) is taken here, the turn [`Scan::frame`]'s arm would take,
+    /// its spans emitted inline. Returns where the run stops: the line's end, a token it leaves
+    /// to [`Scan::frame`], or a top it doesn't run (`p` itself when it took nothing).
+    #[inline(never)]
+    pub(super) fn expr(&mut self, mut p: usize) -> usize {
+        let (b, n) = (self.b, self.n);
+        loop {
+            let top = self.top();
+            if CTX[usize::from(top)] & EXPR == 0 || self.depth + 2 >= SYNTECT_DEPTH {
+                return p;
+            }
+            let mut q = p;
+            while q < n && CLASS[usize::from(b[q])] & SPACE != 0 {
+                q += 1;
+            }
+            if q >= n {
+                return q;
+            }
+            let c = b[q];
+            if c >= 0x80 || (c == b'/' && q + 1 < n && matches!(b[q + 1], b'/' | b'*')) {
+                return q;
+            }
+            self.looped = false;
+            let turn = if top == ARGUMENTS {
+                self.expr_arg(q)
+            } else {
+                self.expr_tok(top, q)
+            };
+            // a name's patterns in one place, whichever context reached them
+            let r = match turn {
+                Turn::Took(r) => r,
+                Turn::Name(e) => match self.expr_name(q, e) {
+                    Some(r) => r,
+                    None => return q,
+                },
+                Turn::Not => return q,
+            };
+            debug_assert!(r > q);
+            p = r;
+            self.step = r;
+        }
+    }
+
+    /// The turn at `p` of an expression's context `top` ([`EXPR`]'s but `arguments`), where it
+    /// is one [`Scan::expr`] takes (`None` before anything is done, where it isn't): the
+    /// context's own patterns first, then `line_of_code_in`'s (`line_of_code_in_no_semicolon`'s
+    /// alone for a group's and an argument's expression).
+    #[inline(always)]
+    fn expr_tok(&mut self, top: u8, p: usize) -> Turn {
+        let (b, n) = (self.b, self.n);
+        let c = b[p];
+        match (top, c) {
+            // `nosemi`'s pop, then `arguments`' separator or end
+            (ARG_EXPR, b',' | b')') => {
+                let d = self.depth;
+                if d < 3 || self.ctx_at(d - 2) != ARGUMENTS || self.loop_at == (p, d) {
+                    return Turn::Not;
+                }
+                self.fill(p);
+                self.pop();
+                return Turn::Took(if c == b',' {
+                    self.put_code(p, p + 1, ARGUMENT_SEP)
+                } else {
+                    self.close_code(p, GROUP_END)
+                });
+            }
+            (IF_GROUP, b')') => return Turn::Took(self.close_code(p, M_GROUP_END)),
+            (GROUP | GROUP_IN, b')') => return Turn::Took(self.close_code(p, GROUP_END)),
+            (TERNARY, b':') => return Turn::Took(self.close_code(p, TERNARY_OP)),
+            (ACCESSOR_ARGS, b',') => return Turn::Took(self.put_code(p, p + 1, ACCESSOR_SEP)),
+            (ACCESSOR_ARGS, b']') => return Turn::Took(self.close_code(p, M_BRACKETS_END)),
+            // their pops, and `nosemi`'s `;`: none takes it
+            (ARG_EXPR | GROUP | NOSEMI | LAMBDA_BODY | MV_VALUE | VD_VALUE, b';') => {
+                return Turn::Not;
+            }
+            (MV_VALUE | VD_VALUE, b',') => return Turn::Not,
+            _ => {}
+        }
+        if CLASS[usize::from(c)] & (WORD | DIGIT) == WORD {
+            let Some(e) = self.name_here(p) else {
+                return Turn::Not;
+            };
+            if top == ACCESSOR_ARGS {
+                // `({{name}})\s*(:)` first
+                let s = clike::skip_blanks(&b[..n], e);
+                if s < n && matches!(b[s], b':' | 0x80..) {
+                    return Turn::Not;
+                }
+            }
+            return Turn::Name(e);
+        }
+        let next = if p + 1 < n { b[p + 1] } else { 0 };
+        let q = match c {
+            b'.' => self.put_code(p, p + 1, DOT),
+            b';' => self.close_code(p, TERM_STMT),
+            b'0'..=b'9' | b'"' | b'\'' => match self.literals(p) {
+                Some(q) => q,
+                None => return Turn::Not,
+            },
+            b'-' if next == b'>' => self.put_code(p, p + 2, ARROW),
+            b'?' if next == b'.' => self.put_code(p, p + 2, NULL_COALESCING),
+            b'+' | b'-' | b'*' | b'/' | b'%' | b'^' | b'|' | b'&' | b'<' | b'>' | b'=' | b'!'
+            | b'~' | b'?' => match self.operator(p) {
+                Some(e) => self.put_code(p, e, OPERATOR),
+                None if c == b'=' => self.put_code(p, p + 1, ASSIGNMENT),
+                None => return Turn::Not,
+            },
+            _ => return Turn::Not,
+        };
+        Turn::Took(q)
+    }
+
+    /// `line_of_code_in_no_semicolon` at a name of ASCII `p..e` ([`Scan::nosemi_name`]), a
+    /// plain one decided here: no keyword, not `_…`, no `<` after it, and after its blanks
+    /// nothing that starts another of the name's patterns but a call's `(`.
+    #[inline(always)]
+    fn expr_name(&mut self, p: usize, e: usize) -> Option<usize> {
+        let id = if self.b[p].is_ascii_lowercase() {
+            words::get(&self.b[p..e])
+        } else {
+            0
+        };
+        self.expr_name_id(p, e, id)
+    }
+
+    /// [`Scan::expr_name`] with the name's word id looked up ([`Scan::nosemi_name_id`]'s).
+    #[inline(always)]
+    pub(super) fn expr_name_id(&mut self, p: usize, e: usize, id: u8) -> Option<usize> {
+        let (b, n) = (self.b, self.n);
+        if id != 0 || b[p] == b'_' || (e < n && b[e] == b'<') {
+            return self.nosemi_name_id(p, e, id);
+        }
+        let mut s = e;
+        while s < n && CLASS[usize::from(b[s])] & SPACE != 0 {
+            s += 1;
+        }
+        if s < n {
+            let after = if s + 1 < n { b[s + 1] } else { 0 };
+            match b[s] {
+                // `((?!{{reserved}}\b){{name}})\s*(\()`
+                b'(' => {
+                    self.put_code(p, e, FC_FUNCTION);
+                    self.put_code(e, s, FUNCTION_CALL);
+                    let q = self.put_code(s, s + 1, FC_GROUP_BEGIN);
+                    self.push(ARGUMENTS);
+                    return Some(q);
+                }
+                b'[' | 0x80.. => return self.nosemi_name_id(p, e, 0),
+                b'?' if after == b'[' => return self.nosemi_name_id(p, e, 0),
+                b'=' if s > e && after == b'>' => return self.nosemi_name_id(p, e, 0),
+                b':' if after == b':' => return self.nosemi_name_id(p, e, 0),
+                _ => {}
+            }
+        }
+        Some(self.put_code(p, e, VAR_OTHER))
+    }
+
+    /// `arguments`' turn at `p`, where it is one [`Scan::expr`] takes: its `,` and `)`, or a
+    /// name that starts an argument's expression (not `out`, `ref`, a parameter's `name =` or
+    /// `name:`), the push and the expression's turn at the name.
+    #[inline(always)]
+    fn expr_arg(&mut self, p: usize) -> Turn {
+        let (b, n) = (self.b, self.n);
+        match b[p] {
+            b',' => Turn::Took(self.put_code(p, p + 1, ARGUMENT_SEP)),
+            b')' => Turn::Took(self.close_code(p, GROUP_END)),
+            c if CLASS[usize::from(c)] & (WORD | DIGIT) == WORD => {
+                let Some(e) = self.name_here(p) else {
+                    return Turn::Not;
+                };
+                if e - p == 3 && (crate::same(&b[p..e], b"out") || crate::same(&b[p..e], b"ref")) {
+                    return Turn::Not;
+                }
+                let mut s = e;
+                while s < n && CLASS[usize::from(b[s])] & SPACE != 0 {
+                    s += 1;
+                }
+                if s < n && matches!(b[s], b'=' | b':' | 0x80..) {
+                    return Turn::Not;
+                }
+                // `enter`'s push of the expression, which takes nothing, then the expression's
+                // turn at the name
+                self.fill(p);
+                self.push(ARG_EXPR);
+                self.loop_at = (p, self.depth);
+                Turn::Name(e)
+            }
+            _ => Turn::Not,
+        }
+    }
+
+    /// The byte at `p` is `leaf`, then the top context pops ([`Scan::close`]). Returns `p + 1`.
+    #[inline(always)]
+    fn close_code(&mut self, p: usize, leaf: u16) -> usize {
+        let q = self.put_code(p, p + 1, leaf);
+        self.pop();
+        q
+    }
+
+    /// Bytes `s..e` are `leaf` in the top context: [`Scan::put`] inline, its usual case here
+    /// (`s..e` on the line, at or past where the spans end, the text before plain, the spans
+    /// with room), the rest [`Scan::put_kind`]'s. Returns `e`.
+    #[inline(always)]
+    pub(super) fn put_code(&mut self, s: usize, e: usize, leaf: u16) -> usize {
+        let k = self.cur() | leaf;
+        let at = self.at;
+        if s < at
+            || e < s
+            || e > self.n
+            || (s > at && self.text != PLAIN)
+            || self.spans.len() == self.spans.capacity()
+        {
+            self.put_kind(s, e, k);
+            return e;
+        }
+        if e > s && k != PLAIN {
+            if let Some(last) = self.spans.last_mut()
+                && last.end as usize == s
+                && last.kind == k
+                && self.merge
+            {
+                last.end = e as u32;
+            } else {
+                self.spans.push(Span {
+                    start: s as u32,
+                    end: e as u32,
+                    kind: k,
+                });
+            }
+        }
+        self.at = e;
+        e
     }
 }
