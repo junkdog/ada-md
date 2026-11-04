@@ -738,7 +738,6 @@ const SYNTECT_DEPTH: usize = 99;
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     let mut s = Scan {
         b,
-        n: b.len(),
         stack: [MAIN; MAX],
         raws: [0; MAX],
         depth: 1,
@@ -766,7 +765,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     }
     s.refresh();
     s.run();
-    s.fill(s.n);
+    s.fill(s.b.len());
     let n = s.depth - 1;
     let from = n.saturating_sub(KEPT);
     let mut packed = State {
@@ -1298,9 +1297,8 @@ impl Word {
 }
 
 struct Scan<'b, 'c> {
+    /// The line, without its `\n`: its length is where the `\n` is.
     b: &'b [u8],
-    /// The line's length: where its `\n` is.
-    n: usize,
     stack: [u8; MAX],
     /// Each level's wrap: what its context and the ones below it add to a kind, as bits
     /// (`BASES` gives its plain text's kind).
@@ -1360,7 +1358,7 @@ impl Scan<'_, '_> {
 
     /// The byte at `p`, the line's `\n` at its end.
     fn ch(&self, p: usize) -> Option<u8> {
-        match p.cmp(&self.n) {
+        match p.cmp(&self.b.len()) {
             std::cmp::Ordering::Less => Some(self.b[p]),
             std::cmp::Ordering::Equal => Some(b'\n'),
             std::cmp::Ordering::Greater => None,
@@ -1378,30 +1376,30 @@ impl Scan<'_, '_> {
 
     /// `\s` at `p`, the line's `\n` one.
     fn space(&self, p: usize) -> bool {
-        p == self.n || space_len(self.b, p).is_some()
+        p == self.b.len() || space_len(self.b, p).is_some()
     }
 
     /// `\S` at `p`.
     fn nonspace(&self, p: usize) -> bool {
-        p < self.n && space_len(self.b, p).is_none()
+        p < self.b.len() && space_len(self.b, p).is_none()
     }
 
     /// `$` at `p`.
     fn eol(&self, p: usize) -> bool {
-        p >= self.n
+        p >= self.b.len()
     }
 
     /// Where the character at `p` ends (the line's `\n` is one byte).
     fn next(&self, p: usize) -> usize {
-        if p >= self.n {
+        if p >= self.b.len() {
             return p + 1;
         }
-        p + char_len(self.b[p]).min(self.n - p)
+        p + char_len(self.b[p]).min(self.b.len() - p)
     }
 
     /// `.` at `p`: where it ends.
     fn any(&self, p: usize) -> Option<usize> {
-        (p < self.n).then(|| self.next(p))
+        (p < self.b.len()).then(|| self.next(p))
     }
 
     /// The word at `p`.
@@ -1452,10 +1450,10 @@ impl Scan<'_, '_> {
         let end = word_end(b, p);
         let ident = if c.is_ascii_digit() || (c >= 0x80 && !is_name_start(b, p)) {
             p
-        } else if end >= self.n || b[end] < 0x80 {
+        } else if end >= self.b.len() || b[end] < 0x80 {
             end
         } else {
-            alnum_ident_end(&b[..self.n], end)
+            alnum_ident_end(&b[..self.b.len()], end)
         };
         let (kw, special) = words::lookup(&b[p..end]);
         Word {
@@ -1498,7 +1496,7 @@ impl Scan<'_, '_> {
                 return true;
             }
             let d = skip_blanks(self.b, e);
-            if !self.is(d, b'.') || d >= self.n {
+            if !self.is(d, b'.') || d >= self.b.len() {
                 return false;
             }
             q = skip_blanks(self.b, d + 1);
@@ -1515,7 +1513,7 @@ impl Scan<'_, '_> {
                 return (false, item);
             };
             let s = self.spaces(e);
-            if s < self.n {
+            if s < self.b.len() {
                 match self.b[s] {
                     b'(' => return (true, item),
                     b'[' => item = true,
@@ -1523,7 +1521,7 @@ impl Scan<'_, '_> {
                 }
             }
             let d = skip_blanks(self.b, e);
-            if !self.is(d, b'.') || d >= self.n {
+            if !self.is(d, b'.') || d >= self.b.len() {
                 return (false, item);
             }
             q = skip_blanks(self.b, d + 1);
@@ -1537,7 +1535,7 @@ impl Scan<'_, '_> {
 
     /// The text up to `p` is the top context's.
     fn fill(&mut self, p: usize) {
-        let p = p.min(self.n);
+        let p = p.min(self.b.len());
         if p > self.at {
             if self.text != 0 {
                 self.out.push_merged(self.at, p, self.text);
@@ -1549,7 +1547,7 @@ impl Scan<'_, '_> {
     /// Bytes `s..e` are `kind`, after the text before them.
     fn put(&mut self, s: usize, e: usize, kind: u16) {
         self.fill(s);
-        let e = e.min(self.n);
+        let e = e.min(self.b.len());
         if kind != 0 && e > self.at {
             self.out.push_merged(self.at, e, kind);
         }
@@ -1675,7 +1673,7 @@ impl Scan<'_, '_> {
     /// Whether `after-expression` at `p` matches anything but its `''` pop.
     fn after_needed(&self, p: usize) -> bool {
         let q = self.spaces(p);
-        (q < self.n && matches!(self.b[q], b'(' | b'[' | b'.')) || self.call_follows(p)
+        (q < self.b.len() && matches!(self.b[q], b'(' | b'[' | b'.')) || self.call_follows(p)
     }
 
     /// Bytes `s..e` are `kind`, then `allow-unpack-operators` is pushed, unless it would pop
@@ -1694,7 +1692,7 @@ impl Scan<'_, '_> {
     /// that isn't a space.
     fn unpack_needed(&self, p: usize) -> bool {
         let q = skip_spaces(self.b, p);
-        q >= self.n || matches!(self.b[q], b'*' | b'#')
+        q >= self.b.len() || matches!(self.b[q], b'*' | b'#')
     }
 
     /// Bytes `s..e` are leaf `l` of the top context, which stays.
@@ -1705,12 +1703,12 @@ impl Scan<'_, '_> {
     }
 
     fn run(&mut self) {
-        let end = self.n + 1;
+        let end = self.b.len() + 1;
         let mut p = 0;
         loop {
             // where no pattern of the context starts at a space, the spaces are skipped whole
-            if p < self.n && is_blank(self.b[p]) && spaces_inert(self.top()) && p > 0 {
-                p = skip_spaces(self.b, p).min(self.n);
+            if p < self.b.len() && is_blank(self.b[p]) && spaces_inert(self.top()) && p > 0 {
+                p = skip_spaces(self.b, p).min(self.b.len());
             }
             self.looped = false;
             if let Some(q) = self.at(p) {
@@ -1718,12 +1716,12 @@ impl Scan<'_, '_> {
                 p = q;
                 if self.stuck > STUCK {
                     self.stuck = 0;
-                    if p >= self.n {
+                    if p >= self.b.len() {
                         return;
                     }
                     p = self.next(p);
                 }
-            } else if p >= end || (self.looped && p >= self.n) {
+            } else if p >= end || (self.looped && p >= self.b.len()) {
                 return;
             } else if self.looped {
                 // syntect's guard: a step of a character, and a new search from there
@@ -1740,13 +1738,13 @@ impl Scan<'_, '_> {
     /// bytes of a text no pattern starts in, and past a run of spaces in code (a pattern that
     /// starts at a space takes the run as it would from its first).
     fn advance(&self, p: usize) -> usize {
-        if p >= self.n {
+        if p >= self.b.len() {
             return p + 1;
         }
         let b = self.b;
         let c = self.top();
         let stops: &[bool; 256] = match c {
-            COMMENT => return self.n,
+            COMMENT => return self.b.len(),
             DOC_DQ | DOC_SQ => &DOC_STOPS,
             DOC_RAW_DQ | DOC_RAW_SQ => &QUOTE_STOPS,
             RE_COMMENT => &RE_COMMENT_STOPS,
@@ -1760,13 +1758,13 @@ impl Scan<'_, '_> {
             c if embedded(c) => return self.next(p),
             _ => {
                 if b[p] == b' ' {
-                    return skip_blanks(b, p).min(self.n);
+                    return skip_blanks(b, p).min(self.b.len());
                 }
                 return self.next(p);
             }
         };
         let mut q = p + 1;
-        while q < self.n && !stops[usize::from(b[q])] {
+        while q < self.b.len() && !stops[usize::from(b[q])] {
             q += 1;
         }
         q
@@ -1793,7 +1791,7 @@ impl Scan<'_, '_> {
         self.sql.at = self.at;
         let ctx = TO_SQL[usize::from(c - SQL_MAIN)];
         let (q, ctx) = crate::sql::embedded(
-            &self.b[..self.n],
+            &self.b[..self.b.len()],
             p,
             ctx,
             &embed,
@@ -1830,11 +1828,15 @@ impl Scan<'_, '_> {
         }
         match c {
             MAIN => self.main(p),
-            COMMENT => (p == self.n).then(|| self.close(p, p + 1, 0)).flatten(),
+            COMMENT => (p == self.b.len())
+                .then(|| self.close(p, p + 1, 0))
+                .flatten(),
             LINE_CONT => self.strings(p).or_else(|| {
-                (self.nonspace(p) || p == self.n || (p == 0 && self.spaces(0) >= self.n))
-                    .then(|| self.leave(p))
-                    .flatten()
+                (self.nonspace(p)
+                    || p == self.b.len()
+                    || (p == 0 && self.spaces(0) >= self.b.len()))
+                .then(|| self.leave(p))
+                .flatten()
             }),
             RAISE => self
                 .lcop(p)
@@ -1864,8 +1866,10 @@ impl Scan<'_, '_> {
                 })
                 .or_else(|| {
                     // `\.+`
-                    if self.is(p, b'.') && p < self.n {
-                        let e = (p..self.n).find(|&q| self.b[q] != b'.').unwrap_or(self.n);
+                    if self.is(p, b'.') && p < self.b.len() {
+                        let e = (p..self.b.len())
+                            .find(|&q| self.b[q] != b'.')
+                            .unwrap_or(self.b.len());
                         return self.tok(p, e, L::ImportRelative);
                     }
                     self.ident(p)?;
@@ -1876,7 +1880,7 @@ impl Scan<'_, '_> {
                 .lcop(p)
                 .or_else(|| {
                     let q = skip_blanks(self.b, p);
-                    if !self.is(q, b'(') || q >= self.n {
+                    if !self.is(q, b'(') || q >= self.b.len() {
                         return None;
                     }
                     let k = self.k(L::ImportListBegin);
@@ -1986,7 +1990,7 @@ impl Scan<'_, '_> {
                 let k = self.k(L::ElifBlock);
                 self.colon(p)
                     .and_then(|e| self.close(p, e, k))
-                    .or_else(|| match p.cmp(&self.n) {
+                    .or_else(|| match p.cmp(&self.b.len()) {
                         // `$\n?`, after the `\n` too
                         std::cmp::Ordering::Equal => self.close(p, p + 1, 0),
                         std::cmp::Ordering::Greater => self.leave(p),
@@ -2035,7 +2039,7 @@ impl Scan<'_, '_> {
                 .ident(p)
                 .map(|e| {
                     let q = skip_blanks(self.b, e);
-                    if self.is(q, b'.') && q < self.n {
+                    if self.is(q, b'.') && q < self.b.len() {
                         let r = skip_blanks(self.b, q + 1);
                         let k = self.k(L::Inherited);
                         self.put(p, q, k);
@@ -2141,8 +2145,10 @@ impl Scan<'_, '_> {
                 .or_else(|| self.lcop(p))
                 .or_else(|| self.in_statement(p)),
             UNPACK => self.comments(p).or_else(|| {
-                if self.is(p, b'*') && p < self.n {
-                    let e = (p..self.n).find(|&q| self.b[q] != b'*').unwrap_or(self.n);
+                if self.is(p, b'*') && p < self.b.len() {
+                    let e = (p..self.b.len())
+                        .find(|&q| self.b[q] != b'*')
+                        .unwrap_or(self.b.len());
                     let (e, l) = match e - p {
                         1 => (e, L::UnpackSequence),
                         2 => (e, L::UnpackMapping),
@@ -2155,7 +2161,7 @@ impl Scan<'_, '_> {
             }),
             DECORATOR => self.decorator(p),
             DEC_WRAP => {
-                if self.is(p, b'.') && p < self.n {
+                if self.is(p, b'.') && p < self.b.len() {
                     let k = self.k(L::Dot);
                     self.put(p, p + 1, k);
                     let q = self.spaces(p + 1);
@@ -2182,7 +2188,7 @@ impl Scan<'_, '_> {
                     let k = self.k(L::ArgsBegin);
                     self.tok_push(p, p + 1, k, &[DEC_ARGS])
                 }
-                Some(b'.') if p < self.n => {
+                Some(b'.') if p < self.b.len() => {
                     let k = self.k(L::Dot);
                     let q = self.spaces(p + 1);
                     self.put(p, p + 1, k);
@@ -2230,7 +2236,7 @@ impl Scan<'_, '_> {
             },
             CALL => match self.ch(p) {
                 Some(b'(') => self.shift(p, &[CALL_OPEN]),
-                Some(b'.') if p < self.n => {
+                Some(b'.') if p < self.b.len() => {
                     let q = self.spaces(p + 1);
                     self.ident(q)?;
                     let k = self.k(L::Dot);
@@ -2303,7 +2309,7 @@ impl Scan<'_, '_> {
             },
             DICT_KEY => {
                 let q = self.spaces(p);
-                if matches!(self.ch(q), Some(b'}' | b',' | b':')) && q < self.n {
+                if matches!(self.ch(q), Some(b'}' | b',' | b':')) && q < self.b.len() {
                     if q == p {
                         if let Some(e) = self.leave(p) {
                             return Some(e);
@@ -2330,7 +2336,7 @@ impl Scan<'_, '_> {
             },
             DICT_VAL => {
                 let q = self.spaces(p);
-                if ((matches!(self.ch(q), Some(b'}' | b',')) && q < self.n)
+                if ((matches!(self.ch(q), Some(b'}' | b',')) && q < self.b.len())
                     || self.has(q, b"for") && !is_word(self.b, q + 3))
                     && let Some(e) = self.leave(p)
                 {
@@ -2370,9 +2376,9 @@ impl Scan<'_, '_> {
                     if !self.nonspace(p) {
                         return None;
                     }
-                    let e = (p..self.n)
+                    let e = (p..self.b.len())
                         .find(|&q| space_len(self.b, q).is_some())
-                        .unwrap_or(self.n);
+                        .unwrap_or(self.b.len());
                     self.tok(p, e, L::StorageIllegal)
                 }),
             NAME | DOTTED => {
@@ -2458,7 +2464,7 @@ impl Scan<'_, '_> {
         if p == 0 {
             // `docstrings`, `decorators`, `classes`, `functions`: the line's start, `^\s*`
             let q = self.spaces(0);
-            if q < self.n
+            if q < self.b.len()
                 && matches!(self.b[q], b'"' | b'\'' | b'u' | b'U' | b'r' | b'R')
                 && let Some(r) = self.docstring_start(0)
             {
@@ -2466,7 +2472,7 @@ impl Scan<'_, '_> {
             }
             if q > 0 {
                 // no other pattern of `statements` starts at a space
-                if self.is(q, b'@') && q < self.n {
+                if self.is(q, b'@') && q < self.b.len() {
                     return self.tok_push(0, q, self.w(), &[DECORATOR]);
                 }
                 return self.class_or_def(q);
@@ -2478,7 +2484,7 @@ impl Scan<'_, '_> {
             }
         } else if p == 0 {
             let q = self.spaces(0);
-            if self.is(q, b'@') && q < self.n {
+            if self.is(q, b'@') && q < self.b.len() {
                 return self.tok_push(p, q, self.w(), &[DECORATOR]);
             }
             if let Some(r) = self.class_or_def(q) {
@@ -2575,7 +2581,7 @@ impl Scan<'_, '_> {
                 };
                 self.tok(p, e, kw);
                 let q = self.spaces(e);
-                if self.is(q, b':') && q < self.n {
+                if self.is(q, b':') && q < self.b.len() {
                     let k = self.w();
                     self.put(e, q, k);
                     return self.tok(q, q + 1, block);
@@ -2655,14 +2661,14 @@ impl Scan<'_, '_> {
 
     /// `line-continuation`: `(\\)(.*)$\n?`, then the next line's start.
     fn line_continuation(&mut self, p: usize) -> Option<usize> {
-        if !self.is(p, b'\\') || p >= self.n {
+        if !self.is(p, b'\\') || p >= self.b.len() {
             return None;
         }
         let k = self.k(L::Continuation);
         self.put(p, p + 1, k);
         let k = self.k(L::UnexpectedText);
-        self.put(p + 1, self.n, k);
-        self.tok_push(self.n, self.n + 1, 0, &[LINE_CONT])
+        self.put(p + 1, self.b.len(), k);
+        self.tok_push(self.b.len(), self.b.len() + 1, 0, &[LINE_CONT])
     }
 
     /// `line-continuation-or-pop`.
@@ -2679,7 +2685,7 @@ impl Scan<'_, '_> {
 
     /// `comments`.
     fn comments(&mut self, p: usize) -> Option<usize> {
-        if self.is(p, b'#') && p < self.n {
+        if self.is(p, b'#') && p < self.b.len() {
             let k = self.k(L::CommentMark);
             return self.tok_push(p, p + 1, k, &[COMMENT]);
         }
@@ -2701,7 +2707,7 @@ impl Scan<'_, '_> {
             return self.tok(p, p + 3, L::Constant);
         }
         if (c.is_ascii_digit() || c == b'.' || c >= 0x80)
-            && let Some((e, l, caps)) = number(&self.b[..self.n], p)
+            && let Some((e, l, caps)) = number(&self.b[..self.b.len()], p)
         {
             let base = self.k(l);
             let mut at = p;
@@ -2801,7 +2807,7 @@ impl Scan<'_, '_> {
 
     /// `(?=(\.\s*)?{{path}}\s*\()` at `p`.
     fn call_follows(&self, p: usize) -> bool {
-        let q = if self.is(p, b'.') && p < self.n {
+        let q = if self.is(p, b'.') && p < self.b.len() {
             self.spaces(p + 1)
         } else {
             p
@@ -2835,12 +2841,13 @@ impl Scan<'_, '_> {
                 k += 1;
                 let e = w.end;
                 let dot = skip_blanks(self.b, e);
-                if dot < self.n && self.b[dot] == b'.' {
+                if dot < self.b.len() && self.b[dot] == b'.' {
                     q = skip_blanks(self.b, dot + 1);
                     continue;
                 }
                 // only spaces before the `(`, as `qualified-name-until-leaf`'s `\s*` has them
-                return (dot < self.n && self.b[dot] == b'(').then_some((lead, names, k, dot));
+                return (dot < self.b.len() && self.b[dot] == b'(')
+                    .then_some((lead, names, k, dot));
             }
         };
         let Some((lead, names, k, paren)) = shape() else {
@@ -2891,11 +2898,11 @@ impl Scan<'_, '_> {
 
     /// `lists`.
     fn lists(&mut self, p: usize) -> Option<usize> {
-        if !self.is(p, b'[') || p >= self.n {
+        if !self.is(p, b'[') || p >= self.b.len() {
             return None;
         }
         let q = self.spaces(p + 1);
-        if self.is(q, b']') && q < self.n {
+        if self.is(q, b']') && q < self.b.len() {
             let k = self.k(L::SequenceBegin);
             self.put(p, p + 1, k);
             let w = self.w();
@@ -2913,11 +2920,11 @@ impl Scan<'_, '_> {
 
     /// `dictionaries-and-sets`.
     fn dicts(&mut self, p: usize) -> Option<usize> {
-        if !self.is(p, b'{') || p >= self.n {
+        if !self.is(p, b'{') || p >= self.b.len() {
             return None;
         }
         let q = self.spaces(p + 1);
-        if self.is(q, b'}') && q < self.n {
+        if self.is(q, b'}') && q < self.b.len() {
             let k = self.k(L::MappingBegin);
             self.put(p, p + 1, k);
             let w = self.w();
@@ -2927,14 +2934,16 @@ impl Scan<'_, '_> {
         }
         let star = |s: &Self, n: usize| {
             let q = s.spaces(p + 1);
-            (q..q + n).all(|i| s.is(i, b'*') && i < s.n)
+            (q..q + n).all(|i| s.is(i, b'*') && i < s.b.len())
         };
-        if self.simple_expression(p + 1, &|s: &Self, q| s.is(q, b':') && q < s.n) || star(self, 2) {
+        if self.simple_expression(p + 1, &|s: &Self, q| s.is(q, b':') && q < s.b.len())
+            || star(self, 2)
+        {
             let k = self.k(L::MappingBegin);
             return self.tok_push(p, p + 1, k, &[DICT]);
         }
         if self.simple_expression(p + 1, &|s: &Self, q| {
-            matches!(s.ch(q), Some(b',' | b'}')) && q < s.n
+            matches!(s.ch(q), Some(b',' | b'}')) && q < s.b.len()
         }) || star(self, 1)
         {
             let k = self.k(L::SetBegin);
@@ -2947,7 +2956,7 @@ impl Scan<'_, '_> {
     /// `tuples`.
     fn tuples(&mut self, p: usize) -> Option<usize> {
         let q = self.spaces(p + 1);
-        if self.is(q, b')') && q < self.n {
+        if self.is(q, b')') && q < self.b.len() {
             let k = self.k(L::SequenceBegin);
             self.put(p, p + 1, k);
             let w = self.w();
@@ -2955,8 +2964,9 @@ impl Scan<'_, '_> {
             let k = self.k(L::SequenceEnd);
             return self.push_after(q, q + 1, k);
         }
-        let star_path = self.is(q, b'*') && q < self.n && self.ident(q + 1).is_some();
-        if star_path || self.simple_expression(p + 1, &|s: &Self, q| s.is(q, b',') && q < s.n) {
+        let star_path = self.is(q, b'*') && q < self.b.len() && self.ident(q + 1).is_some();
+        if star_path || self.simple_expression(p + 1, &|s: &Self, q| s.is(q, b',') && q < s.b.len())
+        {
             let k = self.k(L::SequenceBegin);
             return self.tok_push(p, p + 1, k, &[TUPLE]);
         }
@@ -2965,7 +2975,7 @@ impl Scan<'_, '_> {
 
     /// `groups`.
     fn groups(&mut self, p: usize) -> Option<usize> {
-        if !self.is(p, b'(') || p >= self.n {
+        if !self.is(p, b'(') || p >= self.b.len() {
             return None;
         }
         let k = self.k(L::GroupBegin);
@@ -2976,7 +2986,7 @@ impl Scan<'_, '_> {
     /// grammar's backtracking could take it.
     #[inline(never)]
     fn simple_expression(&self, p: usize, then: &dyn Fn(&Self, usize) -> bool) -> bool {
-        let n = self.n;
+        let n = self.b.len();
         let b = self.b;
         // positions reached, `p..=n + 1`
         let mut seen = vec![false; n + 2 - p.min(n + 1)];
@@ -3095,7 +3105,7 @@ impl Scan<'_, '_> {
     /// `expression-in-a-group`.
     fn in_group(&mut self, p: usize) -> Option<usize> {
         self.in_statement(p).or_else(|| {
-            if !self.is(p, b'.') || p >= self.n {
+            if !self.is(p, b'.') || p >= self.b.len() {
                 return None;
             }
             let q = skip_blanks(self.b, p + 1);
@@ -3130,7 +3140,7 @@ impl Scan<'_, '_> {
         loop {
             // the name's context, then `qualified-name`'s, at `q`: a name that starts there
             // is the machinery's
-            let plain = q >= self.n || (self.b[q] < 0x80 && !WORD[usize::from(self.b[q])]);
+            let plain = q >= self.b.len() || (self.b[q] < 0x80 && !WORD[usize::from(self.b[q])]);
             if !plain && (self.word(q).is_some() || self.is(q, b'_') || self.ident(q).is_some()) {
                 self.fill(q);
                 self.push(QN);
@@ -3140,7 +3150,7 @@ impl Scan<'_, '_> {
             }
             // `dotted-name`: `\s*(\.)\s*(?={{identifier}})`
             let dot = self.spaces(q);
-            if !self.is(dot, b'.') || dot >= self.n {
+            if !self.is(dot, b'.') || dot >= self.b.len() {
                 break;
             }
             let r = self.spaces(dot + 1);
@@ -3192,7 +3202,7 @@ impl Scan<'_, '_> {
     /// `dotted-name`: `\s*(\.)\s*(?={{identifier}})`.
     fn dotted_name(&mut self, p: usize) -> Option<usize> {
         let d = self.spaces(p);
-        if !self.is(d, b'.') || d >= self.n {
+        if !self.is(d, b'.') || d >= self.b.len() {
             return None;
         }
         let q = self.spaces(d + 1);
@@ -3230,7 +3240,7 @@ impl Scan<'_, '_> {
             return self.name_tok(p, w.end, c, w.special);
         }
         // `_(?!{{identifier_continue}})`
-        if self.is(p, b'_') && p < self.n && !is_word(self.b, p + 1) {
+        if self.is(p, b'_') && p < self.b.len() && !is_word(self.b, p + 1) {
             return self.name_tok(p, p + 1, c, words::LANGUAGE);
         }
         None
@@ -3327,9 +3337,9 @@ impl Scan<'_, '_> {
             if !self.nonspace(p) {
                 return None;
             }
-            let e = (p..self.n)
+            let e = (p..self.b.len())
                 .find(|&q| space_len(self.b, q).is_some())
-                .unwrap_or(self.n);
+                .unwrap_or(self.b.len());
             self.tok(p, e, L::ImportIllegal)
         })
     }
@@ -3349,7 +3359,7 @@ impl Scan<'_, '_> {
         }
         // `\s*(\.) *(?:({{illegal_names}}\b)|({{identifier}}))`
         let d = self.spaces(p);
-        if self.is(d, b'.') && d < self.n {
+        if self.is(d, b'.') && d < self.b.len() {
             let q = skip_blanks(self.b, d + 1);
             let named = self
                 .word_at_any(q)
@@ -3367,12 +3377,12 @@ impl Scan<'_, '_> {
         }
         // `\ *(\. *\S+)`
         let d = skip_blanks(self.b, p);
-        if self.is(d, b'.') && d < self.n {
+        if self.is(d, b'.') && d < self.b.len() {
             let q = skip_blanks(self.b, d + 1);
             if self.nonspace(q) {
-                let e = (q..self.n)
+                let e = (q..self.b.len())
                     .find(|&i| space_len(self.b, i).is_some())
-                    .unwrap_or(self.n);
+                    .unwrap_or(self.b.len());
                 let w = self.w();
                 self.put(p, d, w);
                 let k = self.k(L::NameIllegal);
@@ -3384,7 +3394,7 @@ impl Scan<'_, '_> {
 
     /// The run of word characters at `p`, a word's start or not, to its end.
     fn word_at_any(&self, p: usize) -> Option<usize> {
-        (p < self.n && is_word(self.b, p)).then(|| word_end(self.b, p))
+        (p < self.b.len() && is_word(self.b, p)).then(|| word_end(self.b, p))
     }
 
     /// `target-list`.
@@ -3454,12 +3464,12 @@ impl Scan<'_, '_> {
         let q = self.spaces(p);
         let w = self.w();
         match self.ch(q) {
-            Some(b'(') if q < self.n => {
+            Some(b'(') if q < self.b.len() => {
                 self.put(p, q, w);
                 let k = self.k(L::ArgsBegin);
                 return self.tok_push(q, q + 1, k, &[AFTER_ARGS]);
             }
-            Some(b'[') if q < self.n => {
+            Some(b'[') if q < self.b.len() => {
                 self.put(p, q, w);
                 let k = self.k(L::BracketsBegin);
                 return self.tok_push(q, q + 1, k, &[AFTER_ITEM]);
@@ -3469,7 +3479,7 @@ impl Scan<'_, '_> {
         if self.call_follows(p) {
             return self.call(p);
         }
-        if self.is(q, b'.') && q < self.n {
+        if self.is(q, b'.') && q < self.b.len() {
             self.put(p, q, w);
             let k = self.k(L::Dot);
             return self.tok_push(q, q + 1, k, &[ATTR]);
@@ -3480,14 +3490,14 @@ impl Scan<'_, '_> {
     /// `qualified-name-until-leaf`.
     fn qn_leaf(&mut self, p: usize) -> Option<usize> {
         let then_dot = |s: &Self, e: usize| {
-            matches!(s.ch(s.spaces(e)), Some(b'.' | b'\\')) && s.spaces(e) < s.n
+            matches!(s.ch(s.spaces(e)), Some(b'.' | b'\\')) && s.spaces(e) < s.b.len()
         };
         if let Some(e) = self.ident(p)
             && then_dot(self, e)
         {
             return self.enter(p, &[LEAF_NAME]);
         }
-        if self.is(p, b'.') && p < self.n {
+        if self.is(p, b'.') && p < self.b.len() {
             let q = self.spaces(p + 1);
             if let Some(e) = self.ident(q) {
                 if then_dot(self, e) {
@@ -3508,7 +3518,7 @@ impl Scan<'_, '_> {
 
     /// `decorators`' context.
     fn decorator(&mut self, p: usize) -> Option<usize> {
-        if self.is(p, b'@') && p < self.n {
+        if self.is(p, b'@') && p < self.b.len() {
             return self.tok(p, p + 1, L::AnnotationMark);
         }
         if self.eol(p)
@@ -3520,7 +3530,7 @@ impl Scan<'_, '_> {
             return Some(q);
         }
         // `(?=\.?\s*{{path}}\s*\()`, `(?=\.?\s*{{path}})`
-        let q = if self.is(p, b'.') && p < self.n {
+        let q = if self.is(p, b'.') && p < self.b.len() {
             self.spaces(p + 1)
         } else {
             self.spaces(p)
@@ -3649,7 +3659,7 @@ impl Scan<'_, '_> {
         if let Some(e) = self.ident(p) {
             // `({{identifier}}) *(=)`
             let q = skip_blanks(self.b, e);
-            if self.is(q, b'=') && q < self.n {
+            if self.is(q, b'=') && q < self.b.len() {
                 let k = self.k(L::InheritanceParameter);
                 self.put(p, e, k);
                 let w = self.w();
@@ -3664,7 +3674,7 @@ impl Scan<'_, '_> {
     /// `( … )`, a tuple's and a list's.
     fn sequence(&mut self, p: usize, c: u8) -> Option<usize> {
         let close = if c == LIST { b']' } else { b')' };
-        if self.is(p, close) && p < self.n {
+        if self.is(p, close) && p < self.b.len() {
             let k = self.k(if c == GROUP {
                 L::GroupEnd
             } else {

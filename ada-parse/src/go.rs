@@ -425,7 +425,6 @@ const SYNTECT_DEPTH: usize = 99;
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     let mut s = Scan {
         b,
-        n: b.len(),
         stack: [MAIN; MAX],
         depth: 1,
         exact: state.is_exact(),
@@ -464,7 +463,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         s.text = s.string_text();
     }
     s.run();
-    s.fill(s.n);
+    s.fill(s.b.len());
     let n = s.depth - 1;
     let from = n.saturating_sub(KEPT);
     let mut packed = State {
@@ -1138,9 +1137,8 @@ fn dec_digits_plain(b: &[u8], p: usize) -> Option<usize> {
 }
 
 struct Scan<'b, 'c> {
+    /// The line, without its `\n`: its length is where the `\n` is.
     b: &'b [u8],
-    /// The line's length: where its `\n` is.
-    n: usize,
     stack: [u8; MAX],
     depth: usize,
     exact: bool,
@@ -1204,7 +1202,7 @@ impl Scan<'_, '_> {
 
     /// The text up to `p` is the top context's.
     fn fill(&mut self, p: usize) {
-        let p = p.min(self.n);
+        let p = p.min(self.b.len());
         if p > self.at {
             if self.text != PLAIN {
                 self.out.push_merged(self.at, p, self.text);
@@ -1216,7 +1214,7 @@ impl Scan<'_, '_> {
     /// Bytes `s..e` are `leaf`, after the text before them.
     fn put(&mut self, s: usize, e: usize, leaf: u16) {
         self.fill(s);
-        let e = e.min(self.n);
+        let e = e.min(self.b.len());
         if leaf != PLAIN && e > self.at {
             self.out.push_merged(self.at, e, leaf);
         }
@@ -1317,11 +1315,11 @@ impl Scan<'_, '_> {
     }
 
     fn run(&mut self) {
-        let end = self.n + 1;
+        let end = self.b.len() + 1;
         let mut p = 0;
         loop {
             // where no pattern of the context starts at a space, the spaces are skipped whole
-            if p < self.n && is_blank(self.b[p]) && spaces_inert(self.top()) {
+            if p < self.b.len() && is_blank(self.b[p]) && spaces_inert(self.top()) {
                 p = skip_spaces(self.b, p);
             }
             self.looped = false;
@@ -1330,12 +1328,12 @@ impl Scan<'_, '_> {
                 p = q;
                 if self.stuck > STUCK {
                     self.stuck = 0;
-                    if p >= self.n {
+                    if p >= self.b.len() {
                         return;
                     }
                     p = self.next(p);
                 }
-            } else if p >= end || (self.looped && p >= self.n) {
+            } else if p >= end || (self.looped && p >= self.b.len()) {
                 return;
             } else if self.looped {
                 // syntect's guard: a step of a character, and a new search from there
@@ -1350,15 +1348,15 @@ impl Scan<'_, '_> {
 
     /// Where the character at `p` ends (the line's `\n` is one byte).
     fn next(&self, p: usize) -> usize {
-        if p >= self.n {
+        if p >= self.b.len() {
             return p + 1;
         }
-        p + char_len(self.b[p]).min(self.n - p)
+        p + char_len(self.b[p]).min(self.b.len() - p)
     }
 
     /// Where a pattern of the top context can next start, after none did at `p`.
     fn advance(&self, p: usize) -> usize {
-        if p >= self.n {
+        if p >= self.b.len() {
             return p + 1;
         }
         let b = self.b;
@@ -1376,7 +1374,7 @@ impl Scan<'_, '_> {
             }
         };
         let mut q = p + 1;
-        while q < self.n && !stops[usize::from(b[q])] {
+        while q < self.b.len() && !stops[usize::from(b[q])] {
             q += 1;
         }
         q
@@ -1589,7 +1587,7 @@ impl Scan<'_, '_> {
                 })
                 .or_else(|| self.params_returns(p)),
             METHOD => {
-                if p <= self.n && !self.byte(p, b'(') {
+                if p <= self.b.len() && !self.byte(p, b'(') {
                     return self.shift(p, &[SIGNATURE]);
                 }
                 self.byte(p, b'(')
@@ -1663,7 +1661,7 @@ impl Scan<'_, '_> {
             }
             BLOCK_COMMENT => {
                 let b = self.b;
-                if b[p.min(self.n)..].starts_with(b"*/") {
+                if b[p.min(self.b.len())..].starts_with(b"*/") {
                     return self.close(p, p + 2, COMMENT_END);
                 }
                 if p == 0 {
@@ -1725,7 +1723,7 @@ impl Scan<'_, '_> {
     #[cold]
     #[inline(never)]
     fn in_regex(&mut self, p: usize, top: u8) -> Option<usize> {
-        if top < REGEX || p >= self.n {
+        if top < REGEX || p >= self.b.len() {
             return None;
         }
         let raw = self.string_text() == OTHER;
@@ -1815,7 +1813,7 @@ impl Scan<'_, '_> {
     #[inline(never)]
     fn sql_parens(&mut self, p: usize, top: u8) -> Option<usize> {
         let b = self.b;
-        if p < self.n
+        if p < self.b.len()
             && b[p] != b')'
             && !(b[p] == b'/' && matches!(b.get(p + 1), Some(b'/' | b'*')))
         {
@@ -1891,8 +1889,8 @@ impl Scan<'_, '_> {
     #[inline(never)]
     fn in_sql(&mut self, p: usize, top: u8) -> Option<usize> {
         let raw = self.string_text() == OTHER;
-        if p >= self.n {
-            if p == self.n && !self.sql_nl {
+        if p >= self.b.len() {
+            if p == self.b.len() && !self.sql_nl {
                 self.sql_scan(p, top);
                 self.sql_nl = true;
             }
@@ -1953,12 +1951,12 @@ impl Scan<'_, '_> {
 
     /// Whether byte `p` is `c` (on the line, not its `\n`).
     fn byte(&self, p: usize, c: u8) -> bool {
-        p < self.n && self.b[p] == c
+        p < self.b.len() && self.b[p] == c
     }
 
     /// `\S` at `p` (the line's `\n` is a space).
     fn nonblank(&self, p: usize) -> bool {
-        p < self.n && space_len(self.b, p).is_none()
+        p < self.b.len() && space_len(self.b, p).is_none()
     }
 
     /// `pop-before-nonblank`: `(?=\S)`, a pop.
@@ -1996,7 +1994,7 @@ impl Scan<'_, '_> {
 
     /// `pop-on-terminator`: `;`, or the line's end.
     fn terminator(&mut self, p: usize) -> Option<usize> {
-        if p >= self.n {
+        if p >= self.b.len() {
             return self.leave(p);
         }
         self.semicolon(p)
@@ -2011,7 +2009,7 @@ impl Scan<'_, '_> {
     }
 
     fn ellipsis(&mut self, p: usize) -> Option<usize> {
-        if p < self.n && self.b[p..].starts_with(b"...") {
+        if p < self.b.len() && self.b[p..].starts_with(b"...") {
             self.tok(p, p + 3, VARIADIC)
         } else {
             None
@@ -2032,7 +2030,7 @@ impl Scan<'_, '_> {
         if at == p {
             return e;
         }
-        let e = if p < self.n && is_word(self.b, p) && starts_word(self.b, p) {
+        let e = if p < self.b.len() && is_word(self.b, p) && starts_word(self.b, p) {
             Some(word_end(self.b, p))
         } else {
             None
@@ -2109,17 +2107,17 @@ impl Scan<'_, '_> {
                 } else {
                     self.line_marker(p);
                     self.put(p, p + 2, LINE_MARK);
-                    self.put(p + 2, self.n, LINE_COMMENT);
+                    self.put(p + 2, self.b.len(), LINE_COMMENT);
                 }
                 // `$\n?` takes the line's `\n`
-                Some(self.n + 1)
+                Some(self.b.len() + 1)
             }
             Some(b'*') => {
                 if sql::marker_comment(b, p + 2) {
                     self.mark = b[p + 2..]
                         .windows(2)
                         .position(|w| w == b"*/")
-                        .map_or(self.n, |i| p + 4 + i);
+                        .map_or(self.b.len(), |i| p + 4 + i);
                 }
                 self.tok_push(p, p + 2, COMMENT_BEGIN, &[BLOCK_COMMENT])
             }
@@ -2132,7 +2130,7 @@ impl Scan<'_, '_> {
     #[inline(never)]
     fn line_marker(&mut self, p: usize) {
         if sql::marker_comment(self.b, p + 2) {
-            self.mark = self.n;
+            self.mark = self.b.len();
         }
     }
 
@@ -2147,11 +2145,11 @@ impl Scan<'_, '_> {
             self.put(q, e, ANN_FUNCTION);
             q = e;
         }
-        while q < self.n {
+        while q < self.b.len() {
             let s = skip_spaces(b, q);
             self.put(q, s, ANNOTATION);
             let mut e = s;
-            while e < self.n && space_len(b, e).is_none() {
+            while e < self.b.len() && space_len(b, e).is_none() {
                 e += char_len(b[e]);
             }
             self.put(s, e, ANN_PARAMETER);
@@ -2161,7 +2159,7 @@ impl Scan<'_, '_> {
 
     /// `match-any`: `match-comments`, then `match-tokens`.
     fn any(&mut self, p: usize) -> Option<usize> {
-        if p >= self.n {
+        if p >= self.b.len() {
             return None;
         }
         let b = self.b;
@@ -2277,7 +2275,7 @@ impl Scan<'_, '_> {
     fn short_var_from(&self, mut e: usize) -> bool {
         loop {
             let q = noise(self.b, e);
-            if self.b[q.min(self.n)..].starts_with(b":=") {
+            if self.b[q.min(self.b.len())..].starts_with(b":=") {
                 return true;
             }
             if !self.byte(q, b',') {
@@ -2298,7 +2296,9 @@ impl Scan<'_, '_> {
         }
         let b = self.b;
         let s = p + 1;
-        let close = (s..self.n).find(|&q| b[q] == b')').unwrap_or(self.n);
+        let close = (s..self.b.len())
+            .find(|&q| b[q] == b')')
+            .unwrap_or(self.b.len());
         let rest = |r: usize| {
             let Some(e) = self.ident(noise(b, r + 1)) else {
                 return false;
@@ -2306,10 +2306,10 @@ impl Scan<'_, '_> {
             self.byte(noise(b, e), b'(')
         };
         // `[^)]+` to the first `)`, or to a comment in the noise that holds one
-        if close < self.n && close > s && rest(close) {
+        if close < self.b.len() && close > s && rest(close) {
             return true;
         }
-        (s..=close.min(self.n.saturating_sub(1))).any(|j| {
+        (s..=close.min(self.b.len().saturating_sub(1))).any(|j| {
             b[j..].starts_with(b"/*") && {
                 let r = noise(b, j);
                 r > close && self.byte(r, b')') && rest(r)
@@ -2326,7 +2326,7 @@ impl Scan<'_, '_> {
                 return false;
             };
             let t = noise(b, e);
-            if t >= self.n {
+            if t >= self.b.len() {
                 return false;
             }
             b[t..].starts_with(b"...") || !matches!(b[t], b'/' | b',' | b')' | b'.')
@@ -2366,7 +2366,7 @@ impl Scan<'_, '_> {
                     self.put(p + 1, e, RUNE_ESCAPE);
                     return self.tok(e, e + 1, RUNE);
                 }
-                let e = (p + 1..self.n).find(|&q| b[q] == b'\'')?;
+                let e = (p + 1..self.b.len()).find(|&q| b[q] == b'\'')?;
                 self.tok(p, e + 1, RUNE)
             }
             b'"' => self.string(p, false),
@@ -2388,7 +2388,7 @@ impl Scan<'_, '_> {
     /// `match-operators` at `p`.
     fn operators(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
-        let next = |i: usize| if p + i < self.n { b[p + i] } else { 0 };
+        let next = |i: usize| if p + i < self.b.len() { b[p + i] } else { 0 };
         let (len, leaf) = match b[p] {
             b'!' if next(1) == b'=' => (2, OPERATOR),
             b'!' => (1, OPERATOR),
@@ -2452,7 +2452,7 @@ impl Scan<'_, '_> {
 
     /// `pop-type`'s patterns, in the context that includes them.
     fn types(&mut self, p: usize) -> Option<usize> {
-        if p >= self.n {
+        if p >= self.b.len() {
             return None;
         }
         let b = self.b;
@@ -2535,7 +2535,7 @@ impl Scan<'_, '_> {
             let b = self.b;
             // an embedded type: `(?={{noise}}(?:"|`|//|;|\}|$))`, `"` and `` ` `` a struct's
             let q = noise(b, e);
-            let embedded = q >= self.n
+            let embedded = q >= self.b.len()
                 || matches!(b[q], b';' | b'}')
                 || b[q..].starts_with(b"//")
                 || (is_struct && matches!(b[q], b'"' | b'`'));
@@ -2642,7 +2642,7 @@ impl Scan<'_, '_> {
     /// `match-template-string` at `p`: `{{(?=.*}})`.
     fn template(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
-        if p + 1 < self.n
+        if p + 1 < self.b.len()
             && b[p] == b'{'
             && b[p + 1] == b'{'
             && b[p + 2..].windows(2).any(|w| w == b"}}")
@@ -2655,7 +2655,7 @@ impl Scan<'_, '_> {
     /// A template's `{{ … }}`.
     fn interpolation(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
-        if p >= self.n {
+        if p >= self.b.len() {
             return None;
         }
         let c = b[p];
@@ -2669,7 +2669,7 @@ impl Scan<'_, '_> {
             return self.tok(p, p + k + 1, RIGHT_TRIM);
         }
         if c == b'-' {
-            if p + 1 == self.n {
+            if p + 1 == self.b.len() {
                 return self.tok(p, p + 2, LEFT_TRIM);
             }
             if let Some(k) = space_len(b, p + 1) {

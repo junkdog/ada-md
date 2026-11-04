@@ -46,15 +46,19 @@ impl Scan<'_, '_, '_> {
                 let k = self.ws(e);
                 if self.has(k, b"@internal") {
                     let f = k + 9;
-                    if f >= self.n || is_space(self.c(f)) {
+                    if f >= self.b.len() || is_space(self.c(f)) {
                         self.tok(e, k, LINE);
                         self.tok(k, k + 1, LINE_INTERNAL_MARK);
                         self.tok(k + 1, f, LINE_INTERNAL);
                         e = f;
                     }
                 }
-                self.tok(e, self.n, LINE);
-                self.i = if consume_eol { self.n + 1 } else { self.n };
+                self.tok(e, self.b.len(), LINE);
+                self.i = if consume_eol {
+                    self.b.len() + 1
+                } else {
+                    self.b.len()
+                };
                 true
             }
             _ => false,
@@ -212,11 +216,11 @@ impl Scan<'_, '_, '_> {
                 }
                 _ => {}
             }
-            if i >= self.n {
-                self.i = self.n + 1;
+            if i >= self.b.len() {
+                self.i = self.b.len() + 1;
                 return true;
             }
-            return self.regex_run(3, self.n);
+            return self.regex_run(3, self.b.len());
         }
         let (q, h, end, esc, bad) = if host == STR_S_F {
             (b'\'', 1, STR_S_END, STR_S_ESC, STR_S_BAD)
@@ -234,23 +238,27 @@ impl Scan<'_, '_, '_> {
             self.i = e;
             return true;
         }
-        if i >= self.n {
-            self.i = self.n + 1;
+        if i >= self.b.len() {
+            self.i = self.b.len() + 1;
             return true;
         }
         // `((?:[^\\\n])$)`: the line's last character ends the string
-        let mut last = self.n - 1;
+        let mut last = self.b.len() - 1;
         while last > 0 && self.b[last] & 0xc0 == 0x80 {
             last -= 1;
         }
         if i >= last {
-            self.tok(i, self.n, bad);
-            self.i = self.n;
+            self.tok(i, self.b.len(), bad);
+            self.i = self.b.len();
             return self.end_regex_string();
         }
         // a `\` last is an escape's (a `\\`, the regex's `\`, and the string goes on) or the line's
         // continuation, never `[^\\\n]$`
-        let lim = if self.b[last] == b'\\' { self.n } else { last };
+        let lim = if self.b[last] == b'\\' {
+            self.b.len()
+        } else {
+            last
+        };
         self.regex_run(h, lim)
     }
 
@@ -297,7 +305,7 @@ impl Scan<'_, '_, '_> {
 
     /// `string-character-escape` at the place, `\` there: its end.
     pub(super) fn escape_end(&self, i: usize) -> usize {
-        escape_at(&self.b[..self.n], i)
+        escape_at(&self.b[..self.b.len()], i)
     }
 
     /// A frame of text's turn. Out of the scan's loop, where its arms would crowd the code's.
@@ -320,19 +328,19 @@ impl Scan<'_, '_, '_> {
                 };
                 // the next quote, backslash or the line's last character
                 let mut j = i;
-                while j < self.n {
+                while j < self.b.len() {
                     let d = self.b[j];
                     if d == q || d == b'\\' {
                         break;
                     }
                     let l = char_len(d);
-                    if j + l >= self.n {
+                    if j + l >= self.b.len() {
                         break;
                     }
                     j += l;
                 }
-                if j >= self.n {
-                    self.i = self.n + 1;
+                if j >= self.b.len() {
+                    self.i = self.b.len() + 1;
                     return true;
                 }
                 self.fill(j);
@@ -356,11 +364,11 @@ impl Scan<'_, '_, '_> {
             }
             TPL_F | TPL_TYPE => {
                 let mut j = i;
-                while j < self.n && !matches!(self.b[j], b'`' | b'\\' | b'$') {
+                while j < self.b.len() && !matches!(self.b[j], b'`' | b'\\' | b'$') {
                     j += 1;
                 }
-                if j >= self.n {
-                    self.i = self.n + 1;
+                if j >= self.b.len() {
+                    self.i = self.b.len() + 1;
                     return true;
                 }
                 match self.b[j] {
@@ -394,7 +402,7 @@ impl Scan<'_, '_, '_> {
                     self.pop()
                 }
                 None => {
-                    self.i = self.n + 1;
+                    self.i = self.b.len() + 1;
                     true
                 }
             },
@@ -409,7 +417,7 @@ impl Scan<'_, '_, '_> {
                 }
                 // to the next place a pattern can start
                 let mut j = i + 1;
-                while j < self.n && !matches!(self.b[j], b'*' | b'@' | b'[' | b'{') {
+                while j < self.b.len() && !matches!(self.b[j], b'*' | b'@' | b'[' | b'{') {
                     j += 1;
                 }
                 self.i = j;
@@ -429,7 +437,7 @@ impl Scan<'_, '_, '_> {
                     self.i = e;
                     return self.pop();
                 }
-                self.regex_run(0, self.n)
+                self.regex_run(0, self.b.len())
             }
             RE_STR_F => self.regex_string(),
             RE_GROUP_F | RE_SET_F => {
@@ -437,7 +445,7 @@ impl Scan<'_, '_, '_> {
                 true
             }
             LINE_EOL => {
-                self.i = self.n + 1;
+                self.i = self.b.len() + 1;
                 true
             }
             DOC_EXAMPLE => {
@@ -446,7 +454,7 @@ impl Scan<'_, '_, '_> {
                 }
                 // ^\s\*\s+
                 if i == 0 && is_space(c) && self.c(1) == b'*' && is_space(self.c(2)) {
-                    self.i = self.ws(2).min(self.n);
+                    self.i = self.ws(2).min(self.b.len());
                     return true;
                 }
                 // \G(<)caption(>): its failed search is cached for the rest of the line
@@ -461,12 +469,12 @@ impl Scan<'_, '_, '_> {
                     self.push(DOC_CAPTION);
                     return true;
                 }
-                if i < self.n && !is_space(c) && c != b'@' && c != b'*' {
+                if i < self.b.len() && !is_space(c) && c != b'@' && c != b'*' {
                     // [^\s@*](?:[^*]|\*[^/])*
                     let mut e = i + 1;
-                    while e < self.n {
+                    while e < self.b.len() {
                         if self.b[e] == b'*' {
-                            if self.c(e + 1) == b'/' || e + 1 >= self.n {
+                            if self.c(e + 1) == b'/' || e + 1 >= self.b.len() {
                                 break;
                             }
                             e += 2;
@@ -474,8 +482,8 @@ impl Scan<'_, '_, '_> {
                             e += 1;
                         }
                     }
-                    self.tok(i, e.min(self.n), JD_EXAMPLE_CODE);
-                    self.i = e.min(self.n);
+                    self.tok(i, e.min(self.b.len()), JD_EXAMPLE_CODE);
+                    self.i = e.min(self.b.len());
                     return true;
                 }
                 false
@@ -500,7 +508,7 @@ impl Scan<'_, '_, '_> {
                     self.tok(i, i + 1, JD_TYPE_END);
                     self.i = i + 1;
                     self.pop();
-                    self.i = self.ws(i + 1).min(self.n);
+                    self.i = self.ws(i + 1).min(self.b.len());
                     return true;
                 }
                 if c == b'*' && self.c(i + 1) == b'/' {
@@ -521,7 +529,7 @@ impl Scan<'_, '_, '_> {
             }
             DOC_TYPEDEF | DOC_PARAM | DOC_TYPED => {
                 // (?=\s|\*/|[^{}\[\]A-Za-z_$])
-                if i >= self.n
+                if i >= self.b.len()
                     || is_space(c)
                     || (c == b'*' && self.c(i + 1) == b'/')
                     || !matches!(c, b'{' | b'}' | b'[' | b']' | b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'$')
@@ -564,7 +572,7 @@ impl Scan<'_, '_, '_> {
                     self.i = i + 1;
                     return self.pop();
                 }
-                if i >= self.n || (c == b'*' && self.c(i + 1) == b'/') {
+                if i >= self.b.len() || (c == b'*' && self.c(i + 1) == b'/') {
                     return self.pop_zero();
                 }
                 false
@@ -582,7 +590,7 @@ impl Scan<'_, '_, '_> {
                 self.inline_g()
             }
             DIRECTIVE_F => {
-                if i >= self.n {
+                if i >= self.b.len() {
                     return self.pop_zero();
                 }
                 if c == b'<' {
@@ -644,7 +652,7 @@ impl Scan<'_, '_, '_> {
         while self.c(e).is_ascii_alphanumeric() || self.c(e) == b'_' || self.c(e) == b'$' {
             e += 1;
         }
-        let tag = &self.b[s..e.min(self.n)];
+        let tag = &self.b[s..e.min(self.b.len())];
         let after = self.ws(e);
         let gap = after > e;
         let at_word = |w: &[u8]| tag == w;
@@ -664,26 +672,26 @@ impl Scan<'_, '_, '_> {
         // ((@)author)\s+([^@\s<>*/](?:[^@<>*/]|\*[^/])*)(?:\s*(<)([^>\s]+)(>))?
         if at_word(b"author")
             && gap
-            && after < self.n
+            && after < self.b.len()
             && !matches!(self.c(after), b'@' | b'<' | b'>' | b'*' | b'/')
         {
             let mut k = after + 1;
-            while k < self.n {
+            while k < self.b.len() {
                 match self.b[k] {
                     b'@' | b'<' | b'>' | b'/' => break,
-                    b'*' if self.c(k + 1) == b'/' || k + 1 >= self.n => break,
+                    b'*' if self.c(k + 1) == b'/' || k + 1 >= self.b.len() => break,
                     b'*' => k += 2,
                     _ => k += 1,
                 }
             }
-            let k = k.min(self.n);
+            let k = k.min(self.b.len());
             tag_tok(self, e);
             self.tok(after, k, JD_TYPE);
             self.i = k;
             let m = self.ws(k);
             if self.c(m) == b'<' {
                 let mut q = m + 1;
-                while q < self.n && self.b[q] != b'>' && !is_space(self.b[q]) {
+                while q < self.b.len() && self.b[q] != b'>' && !is_space(self.b[q]) {
                     q += 1;
                 }
                 if q > m + 1 && self.c(q) == b'>' {
@@ -715,7 +723,7 @@ impl Scan<'_, '_, '_> {
         }
         if at_word(b"example") && gap {
             tag_tok(self, e);
-            self.i = after.min(self.n);
+            self.i = after.min(self.b.len());
             self.push(DOC_EXAMPLE);
             return true;
         }
@@ -763,7 +771,7 @@ impl Scan<'_, '_, '_> {
                 break;
             }
             tag_tok(self, e);
-            return self.take(after, k.min(self.n), JD_VAR);
+            return self.take(after, k.min(self.b.len()), JD_VAR);
         }
         let param_like = [
             &b"arg"[..],
@@ -785,7 +793,7 @@ impl Scan<'_, '_, '_> {
                 k += 1;
             }
             tag_tok(self, e);
-            return self.take(after, k.min(self.n), JD_VAR);
+            return self.take(after, k.min(self.b.len()), JD_VAR);
         }
         if at_word(b"typedef") && gap && self.c(after) == b'{' {
             tag_tok(self, e);
@@ -939,7 +947,7 @@ impl Scan<'_, '_, '_> {
             && gap
         {
             let mut k = after;
-            while k < self.n && !is_space(self.b[k]) && self.b[k] != b'*' {
+            while k < self.b.len() && !is_space(self.b[k]) && self.b[k] != b'*' {
                 k += 1;
             }
             if k > after {
@@ -952,7 +960,7 @@ impl Scan<'_, '_, '_> {
         while self.c(w).is_ascii_alphanumeric() || self.c(w) == b'_' {
             w += 1;
         }
-        if doc_tag(&self.b[s..w.min(self.n)]) && self.boundary(w) {
+        if doc_tag(&self.b[s..w.min(self.b.len())]) && self.boundary(w) {
             tag_tok(self, w);
             self.i = w;
             return true;
@@ -973,10 +981,10 @@ impl Scan<'_, '_, '_> {
         if self.c(i) == b'[' {
             // (\[)[^\]]+(\])(?={@(?:link|linkcode|linkplain|tutorial))
             let mut e = i + 1;
-            while e < self.n && self.b[e] != b']' {
+            while e < self.b.len() && self.b[e] != b']' {
                 e += 1;
             }
-            if e > i + 1 && e < self.n && inline_tag_len(self.rest(e + 1)).is_some() {
+            if e > i + 1 && e < self.b.len() && inline_tag_len(self.rest(e + 1)).is_some() {
                 self.tok(i, i + 1, JD_DESC_BEGIN);
                 self.tok(i + 1, e, JD_DESC);
                 return self.take(e, e + 1, JD_DESC_END);
@@ -990,7 +998,7 @@ impl Scan<'_, '_, '_> {
         self.tok(i, i + 1, JD_INLINE_BEGIN);
         self.tok(i + 1, i + 2, JD_INLINE_TAG_AT);
         self.tok(i + 2, e, JD_INLINE_TAG);
-        let k = self.ws(e).min(self.n);
+        let k = self.ws(e).min(self.b.len());
         // the blanks after the tag are the push's, under the inline tag's scope
         self.i = e;
         self.push(DOC_INLINE);
@@ -1016,7 +1024,7 @@ impl Scan<'_, '_, '_> {
             let r = self.rest(k);
             let mut j = k;
             if crate::starts(r, b"http://") || crate::starts(r, b"https://") {
-                while j < self.n {
+                while j < self.b.len() {
                     let d = self.b[j];
                     if d == b'|' || d == b'}' || is_space(d) {
                         break;
@@ -1039,13 +1047,13 @@ impl Scan<'_, '_, '_> {
         }
         if !self.g_desc {
             let mut j = k;
-            while j < self.n {
+            while j < self.b.len() {
                 let d = self.b[j];
                 if matches!(d, b'{' | b'}' | b'@' | b'|') || is_space(d) {
                     break;
                 }
                 if d == b'*' {
-                    if self.c(j + 1) != b'/' && j + 1 < self.n {
+                    if self.c(j + 1) != b'/' && j + 1 < self.b.len() {
                         j += 2;
                         continue;
                     }
@@ -1096,15 +1104,15 @@ impl Scan<'_, '_, '_> {
         // \G{(?:[^}*]|\*[^/}])+$: a type left open at the line's end. syntect's line ends in `\n`,
         // which the class takes: a `{` or `*` last on the line is open too (`{\n`, `{x*\n`)
         let mut j = i + 1;
-        while j < self.n {
+        while j < self.b.len() {
             match self.b[j] {
                 b'}' => break,
-                b'*' if j + 1 < self.n && matches!(self.b[j + 1], b'/' | b'}') => break,
+                b'*' if j + 1 < self.b.len() && matches!(self.b[j + 1], b'/' | b'}') => break,
                 b'*' => j += 2,
                 _ => j += 1,
             }
         }
-        (j >= self.n).then_some(self.n)
+        (j >= self.b.len()).then_some(self.b.len())
     }
 
     /// `brackets`, in a JSDoc type.
@@ -1159,7 +1167,7 @@ impl Scan<'_, '_, '_> {
             let v = self.ws(k + 1);
             let mut e = v;
             let mut depth = 0;
-            while e < self.n {
+            while e < self.b.len() {
                 let d = self.b[e];
                 if d == b'*' && self.c(e + 1) == b'/' {
                     break;

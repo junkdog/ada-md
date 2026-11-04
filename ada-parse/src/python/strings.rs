@@ -8,7 +8,7 @@ impl Scan<'_, '_> {
     /// `{{sql_indicator}}` at `p`: `\s*(?:SELECT|INSERT|UPDATE|DELETE|CREATE|REPLACE|ALTER|WITH)\b`.
     pub(super) fn sql_follows(&self, p: usize) -> bool {
         let q = self.spaces(p);
-        if q >= self.n {
+        if q >= self.b.len() {
             return false;
         }
         let e = word_end(self.b, q);
@@ -30,7 +30,7 @@ impl Scan<'_, '_> {
     /// before the first quote within three bytes, which one pattern of the quote's group
     /// takes whole.
     pub(super) fn strings(&mut self, p: usize) -> Option<usize> {
-        let quote_at = |q: usize| q < self.n && matches!(self.b[q], b'"' | b'\'');
+        let quote_at = |q: usize| q < self.b.len() && matches!(self.b[q], b'"' | b'\'');
         let q0 = if quote_at(p) {
             p
         } else if quote_at(p + 1) {
@@ -87,7 +87,7 @@ impl Scan<'_, '_> {
         if q >= 2 {
             self.has(p, &[quote; 3]).then_some(p + 3)
         } else {
-            (self.is(p, quote) && p < self.n).then_some(p + 1)
+            (self.is(p, quote) && p < self.b.len()).then_some(p + 1)
         }
     }
 
@@ -182,7 +182,7 @@ impl Scan<'_, '_> {
         let ends = if block {
             self.string_end(p, q).is_some()
         } else {
-            self.string_end(p, q).is_some() || p == self.n
+            self.string_end(p, q).is_some() || p == self.b.len()
         };
         if ends && let Some(e) = self.leave(p) {
             return Some(e);
@@ -221,11 +221,11 @@ impl Scan<'_, '_> {
 
     /// `line-continuation-inside-string`: `(\\)$\n?`, or the line's `\n` ending the string.
     fn lcs(&mut self, p: usize) -> Option<usize> {
-        if p + 1 == self.n && self.b[p] == b'\\' {
+        if p + 1 == self.b.len() && self.b[p] == b'\\' {
             self.tok(p, p + 1, L::Continuation);
-            return Some(self.n + 1);
+            return Some(self.b.len() + 1);
         }
-        if p == self.n {
+        if p == self.b.len() {
             return self.then(p, p + 1, 0, &[AFTER]);
         }
         None
@@ -233,7 +233,7 @@ impl Scan<'_, '_> {
 
     /// `line-continuation-inside-block-string`: `\\$`.
     fn lcbs(&mut self, p: usize) -> Option<usize> {
-        if p + 1 == self.n && self.b[p] == b'\\' {
+        if p + 1 == self.b.len() && self.b[p] == b'\\' {
             return self.tok(p, p + 1, L::Continuation);
         }
         None
@@ -241,11 +241,11 @@ impl Scan<'_, '_> {
 
     /// `escaped-char`.
     pub(super) fn escaped_char(&mut self, p: usize) -> Option<usize> {
-        if !self.is(p, b'\\') || p >= self.n {
+        if !self.is(p, b'\\') || p >= self.b.len() {
             return None;
         }
-        let hex = |q: usize| q < self.n && self.b[q].is_ascii_hexdigit();
-        let oct = |q: usize| q < self.n && matches!(self.b[q], b'0'..=b'7');
+        let hex = |q: usize| q < self.b.len() && self.b[q].is_ascii_hexdigit();
+        let oct = |q: usize| q < self.b.len() && matches!(self.b[q], b'0'..=b'7');
         if self.is(p + 1, b'x') && hex(p + 2) && hex(p + 3) {
             return self.tok(p, p + 4, L::EscapeHex);
         }
@@ -253,7 +253,7 @@ impl Scan<'_, '_> {
             let e = (p + 1..p + 4).take_while(|&q| oct(q)).count() + p + 1;
             return self.tok(p, e, L::EscapeOctal);
         }
-        if p + 1 < self.n && b"\\\"'abfnrtv".contains(&self.b[p + 1]) {
+        if p + 1 < self.b.len() && b"\\\"'abfnrtv".contains(&self.b[p + 1]) {
             return self.tok(p, p + 2, L::Escape);
         }
         let e = self.any(p + 1)?;
@@ -262,20 +262,20 @@ impl Scan<'_, '_> {
 
     /// `escaped-unicode-char`.
     pub(super) fn escaped_unicode(&mut self, p: usize) -> Option<usize> {
-        if !self.is(p, b'\\') || p + 1 >= self.n {
+        if !self.is(p, b'\\') || p + 1 >= self.b.len() {
             return None;
         }
         let hex = |from: usize, n: usize| {
-            from + n <= self.n && self.b[from..from + n].iter().all(u8::is_ascii_hexdigit)
+            from + n <= self.b.len() && self.b[from..from + n].iter().all(u8::is_ascii_hexdigit)
         };
         match self.b[p + 1] {
             b'U' if hex(p + 2, 8) => self.tok(p, p + 10, L::Escape16),
             b'u' if hex(p + 2, 4) => self.tok(p, p + 6, L::Escape32),
             b'N' if self.is(p + 2, b'{') => {
-                let e = (p + 3..self.n)
+                let e = (p + 3..self.b.len())
                     .find(|&q| !(self.b[q].is_ascii_alphabetic() || self.b[q] == b' '))
-                    .unwrap_or(self.n);
-                if e > p + 3 && self.is(e, b'}') && e < self.n {
+                    .unwrap_or(self.b.len());
+                if e > p + 3 && self.is(e, b'}') && e < self.b.len() {
                     return self.tok(p, e + 1, L::EscapeName);
                 }
                 None
@@ -296,17 +296,17 @@ impl Scan<'_, '_> {
     /// `f-string-content`.
     fn fcontent(&mut self, p: usize) -> Option<usize> {
         match self.ch(p)? {
-            b'{' if p < self.n => {
+            b'{' if p < self.b.len() => {
                 if self.is(p + 1, b'{') {
                     return self.tok(p, p + 2, L::Escape);
                 }
                 let q = self.spaces(p + 1);
-                if self.is(q, b'}') && q < self.n {
+                if self.is(q, b'}') && q < self.b.len() {
                     return self.tok(p, q + 1, L::EmptyExpression);
                 }
                 self.enter(p, &[FREPL])
             }
-            b'}' if p < self.n => {
+            b'}' if p < self.b.len() => {
                 if self.is(p + 1, b'}') {
                     return self.tok(p, p + 2, L::Escape);
                 }
@@ -323,17 +323,17 @@ impl Scan<'_, '_> {
             return self.tok(p + 1, p + 3, L::FEscapeBraces);
         }
         match self.ch(p)? {
-            b'{' if p < self.n => {
+            b'{' if p < self.b.len() => {
                 if self.is(p + 1, b'{') {
                     return self.tok(p, p + 2, L::Escape);
                 }
                 let q = self.spaces(p + 1);
-                if self.is(q, b'}') && q < self.n {
+                if self.is(q, b'}') && q < self.b.len() {
                     return self.tok(p, q + 1, L::EmptyExpression);
                 }
                 self.enter(p, &[FREPL_R])
             }
-            b'}' if p < self.n => {
+            b'}' if p < self.b.len() => {
                 if self.is(p + 1, b'}') {
                     return self.tok(p, p + 2, L::Escape);
                 }
@@ -346,17 +346,17 @@ impl Scan<'_, '_> {
     /// `constant-placeholder`.
     pub(super) fn placeholder(&mut self, p: usize) -> Option<usize> {
         match self.ch(p)? {
-            b'%' if p < self.n => self.printf(p).or_else(|| self.strftime(p)),
+            b'%' if p < self.b.len() => self.printf(p).or_else(|| self.strftime(p)),
             b'{' if self.has(p, b"{{") => self.tok(p, p + 2, L::Escape),
             b'}' if self.has(p, b"}}") => self.tok(p, p + 2, L::Escape),
-            b'{' if p < self.n => self.formatting(p),
+            b'{' if p < self.b.len() => self.formatting(p),
             _ => None,
         }
     }
 
     /// The printf placeholder at `p`, a `%`.
     fn printf(&mut self, p: usize) -> Option<usize> {
-        let b = &self.b[..self.n];
+        let b = &self.b[..self.b.len()];
         let mut q = p + 1;
         let mut key = None;
         // `( \( ({{identifier}}) \) )?`
@@ -412,11 +412,11 @@ impl Scan<'_, '_> {
 
     /// `{{strftime_spec}}` at `p`, a `%`.
     fn strftime(&mut self, p: usize) -> Option<usize> {
-        let c = *self.b.get(p + 1).filter(|_| p + 1 < self.n)?;
+        let c = *self.b.get(p + 1).filter(|_| p + 1 < self.b.len())?;
         if b"aAwdbBGmyYHIpMSfzZjuUVWcxX%".contains(&c) {
             return self.tok(p, p + 2, L::Placeholder);
         }
-        if c == b'-' && p + 2 < self.n && b"dmHIMSj".contains(&self.b[p + 2]) {
+        if c == b'-' && p + 2 < self.b.len() && b"dmHIMSj".contains(&self.b[p + 2]) {
             return self.tok(p, p + 3, L::Placeholder);
         }
         None
@@ -425,7 +425,7 @@ impl Scan<'_, '_> {
     /// `{{format_spec}}` at `s`, then `}`: where the `}` is, the alignments tried in the
     /// regex's order.
     fn format_spec(&self, s: usize) -> Option<usize> {
-        let b = &self.b[..self.n];
+        let b = &self.b[..self.b.len()];
         let align = |q: usize| matches!(b.get(q), Some(b'<' | b'>' | b'=' | b'^'));
         let rest = |mut q: usize| {
             if matches!(b.get(q), Some(b' ' | b'+' | b'-')) {
@@ -464,10 +464,10 @@ impl Scan<'_, '_> {
 
     /// `formatting-syntax` at `p`, a `{`.
     fn formatting(&mut self, p: usize) -> Option<usize> {
-        let b = &self.b[..self.n];
+        let b = &self.b[..self.b.len()];
         // the simple form: `(\{)(?:[\w.\[\]]+)?(![ars])?(:(?:{{format_spec}}|[^}%]*%.[^}]*))?(\})`
         let mut q = p + 1;
-        while q < self.n && (is_word(b, q) || matches!(b[q], b'.' | b'[' | b']')) {
+        while q < self.b.len() && (is_word(b, q) || matches!(b[q], b'.' | b'[' | b']')) {
             q = self.next(q);
         }
         let field = q;
@@ -479,12 +479,12 @@ impl Scan<'_, '_> {
         let spec = if b.get(q) == Some(&b':') {
             self.format_spec(q + 1).or_else(|| {
                 // `[^}%]*%.[^}]*`
-                let r = (q + 1..self.n).find(|&i| matches!(b[i], b'}' | b'%'))?;
+                let r = (q + 1..self.b.len()).find(|&i| matches!(b[i], b'}' | b'%'))?;
                 if b[r] != b'%' {
                     return None;
                 }
                 let d = self.any(r + 1)?;
-                (d..self.n).find(|&i| b[i] == b'}')
+                (d..self.b.len()).find(|&i| b[i] == b'}')
             })
         } else {
             None
@@ -502,13 +502,13 @@ impl Scan<'_, '_> {
             return self.tok(close, close + 1, L::PlaceholderEnd);
         }
         // the nested form: `\{(?=[^\}"']+\{[^"']*\})`
-        let run = (p + 1..self.n)
+        let run = (p + 1..self.b.len())
             .find(|&i| matches!(b[i], b'}' | b'"' | b'\''))
-            .unwrap_or(self.n);
+            .unwrap_or(self.b.len());
         if let Some(j) = (p + 2..run).find(|&i| b[i] == b'{') {
-            let quote = (j + 1..self.n)
+            let quote = (j + 1..self.b.len())
                 .find(|&i| matches!(b[i], b'"' | b'\''))
-                .unwrap_or(self.n);
+                .unwrap_or(self.b.len());
             if (j + 1..quote).any(|i| b[i] == b'}') {
                 let k = self.base_of(PLACEHOLDER) | L::PhBegin as u16;
                 return self.tok_push(p, p + 1, k, &[PLACEHOLDER]);
@@ -521,11 +521,11 @@ impl Scan<'_, '_> {
     pub(super) fn fstring(&mut self, p: usize, c: u8) -> Option<usize> {
         match c {
             FREPL | FREPL_R => match self.ch(p)? {
-                b'}' if p < self.n => {
+                b'}' if p < self.b.len() => {
                     let k = self.k(L::InterpolationEnd);
                     self.close(p, p + 1, k)
                 }
-                b'{' if p < self.n => {
+                b'{' if p < self.b.len() => {
                     let k = self.k(L::InterpolationBegin);
                     let inner = if c == FREPL { FREPL_IN } else { FREPL_R_IN };
                     self.tok_push(p, p + 1, k, &[inner])
@@ -565,13 +565,13 @@ impl Scan<'_, '_> {
                 {
                     return Some(e);
                 }
-                if self.is(p, b'\\') && p < self.n {
+                if self.is(p, b'\\') && p < self.b.len() {
                     return self.tok(p, p + 1, L::BackslashInFString);
                 }
                 self.inline_for(p).or_else(|| self.in_group(p))
             }
             PLACEHOLDER => match self.ch(p)? {
-                b'}' if p < self.n => {
+                b'}' if p < self.b.len() => {
                     let k = self.k(L::PhEnd);
                     self.close(p, p + 1, k)
                 }
@@ -585,7 +585,7 @@ impl Scan<'_, '_> {
                 _ => {
                     // `[\w.\[\]]+`, no scope of its own
                     let mut q = p;
-                    while q < self.n
+                    while q < self.b.len()
                         && (is_word(self.b, q) || matches!(self.b[q], b'.' | b'[' | b']'))
                     {
                         q = self.next(q);
@@ -601,7 +601,7 @@ impl Scan<'_, '_> {
                 if self.is(p, b'}') {
                     return self.leave(p);
                 }
-                if self.is(p, b'{') && p < self.n {
+                if self.is(p, b'{') && p < self.b.len() {
                     return self.formatting(p);
                 }
                 None

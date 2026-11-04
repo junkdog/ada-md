@@ -1506,7 +1506,6 @@ fn lex<const S: bool>(
 ) {
     let mut s = Scan {
         b,
-        n: b.len(),
         out,
         stack: [MAIN; MAX],
         depth: 1,
@@ -1564,7 +1563,6 @@ type Run = std::cell::Cell<(usize, usize)>;
 /// that has one (a string's interpolation is the string's), where CSS's takes its top's.
 struct Scan<'b, 'o, 's, const S: bool = false> {
     b: &'b [u8],
-    n: usize,
     out: &'o mut Out<'s>,
     stack: [u8; MAX],
     depth: usize,
@@ -1615,7 +1613,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
 
     /// Fill the top context's text up to `to`.
     fn fill(&mut self, to: usize) {
-        let to = to.min(self.n);
+        let to = to.min(self.b.len());
         if to > self.at {
             let w = self.wrap();
             if w != 0 {
@@ -1628,7 +1626,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
     /// Bytes `start..end` are leaf `leaf` in the top context's wrap.
     fn tok(&mut self, start: usize, end: usize, leaf: u16) {
         self.fill(start);
-        let end = end.min(self.n);
+        let end = end.min(self.b.len());
         if end > start {
             let kind = self.wrap() | leaf;
             if kind != 0 {
@@ -1671,9 +1669,9 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
 
     /// The byte at `i`: the line's, its `\n` at `n`, none past it.
     fn ch(&self, i: usize) -> Option<u8> {
-        if i < self.n {
+        if i < self.b.len() {
             Some(self.b[i])
-        } else if i == self.n {
+        } else if i == self.b.len() {
             Some(b'\n')
         } else {
             None
@@ -1682,7 +1680,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
 
     /// Whether `\w` holds at `i`.
     fn word_at(&self, i: usize) -> bool {
-        if i >= self.n {
+        if i >= self.b.len() {
             return false;
         }
         let c = self.b[i];
@@ -1695,7 +1693,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
 
     /// Whether `\w` holds just before `i`.
     fn word_before(&self, i: usize) -> bool {
-        if i == 0 || i > self.n {
+        if i == 0 || i > self.b.len() {
             // the line's start, or past its `\n`
             return false;
         }
@@ -1714,20 +1712,20 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
 
     /// Where the character at `i` ends.
     fn next(&self, i: usize) -> usize {
-        if i >= self.n {
+        if i >= self.b.len() {
             return i + 1;
         }
         let c = self.b[i];
         if c < 0x80 {
             i + 1
         } else {
-            (i + char_at(self.b, i).1).min(self.n)
+            (i + char_at(self.b, i).1).min(self.b.len())
         }
     }
 
     /// Where `\s*` at `i` ends (the `\n` at `n` is a space).
     fn spaces(&self, i: usize) -> usize {
-        if i < self.n && !matches!(self.b[i], b' ' | b'\t' | b'\r' | 0x0b | 0x0c | 0x80..) {
+        if i < self.b.len() && !matches!(self.b[i], b' ' | b'\t' | b'\r' | 0x0b | 0x0c | 0x80..) {
             // no space here
             return i;
         }
@@ -1750,7 +1748,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             return e;
         }
         let mut k = i;
-        while k < self.n && self.b[k].is_ascii_digit() {
+        while k < self.b.len() && self.b[k].is_ascii_digit() {
             k += 1;
         }
         self.digits_run.set((i, k));
@@ -1760,9 +1758,9 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
     /// Where `{{exponent}}` at `p` ends, if it matches.
     fn exponent(&self, p: usize) -> Option<usize> {
         let b = self.b;
-        if p < self.n && (b[p] == b'e' || b[p] == b'E') {
+        if p < self.b.len() && (b[p] == b'e' || b[p] == b'E') {
             let mut q = p + 1;
-            if q < self.n && (b[q] == b'-' || b[q] == b'+') {
+            if q < self.b.len() && (b[q] == b'-' || b[q] == b'+') {
                 q += 1;
             }
             let d = self.digits(q);
@@ -1777,11 +1775,11 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
     fn num_at(&self, p: usize) -> Option<Num> {
         let b = self.b;
         let mut d = p;
-        if d < self.n && (b[d] == b'-' || b[d] == b'+') {
+        if d < self.b.len() && (b[d] == b'-' || b[d] == b'+') {
             d += 1;
         }
         let int = self.digits(d);
-        let dot = if int < self.n && b[int] == b'.' {
+        let dot = if int < self.b.len() && b[int] == b'.' {
             let f = self.digits(int + 1);
             (f > int + 1).then(|| (int, self.exponent(f).unwrap_or(f)))
         } else {
@@ -1806,12 +1804,12 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             return is_space(c).then_some(i + 1);
         }
         let (ch, len) = char_at(self.b, i);
-        ch.is_whitespace().then_some((i + len).min(self.n))
+        ch.is_whitespace().then_some((i + len).min(self.b.len()))
     }
 
     /// Where `[ \t]*` at `i` ends.
     fn blanks(&self, mut i: usize) -> usize {
-        while i < self.n && matches!(self.b[i], b' ' | b'\t') {
+        while i < self.b.len() && matches!(self.b[i], b' ' | b'\t') {
             i += 1;
         }
         i
@@ -1819,18 +1817,18 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
 
     /// `$` at `i`.
     fn eol(&self, i: usize) -> bool {
-        i >= self.n
+        i >= self.b.len()
     }
 
     /// Where `{{escape}}` at `i` ends.
     fn escape(&self, i: usize) -> Option<usize> {
-        if i >= self.n || self.b[i] != b'\\' {
+        if i >= self.b.len() || self.b[i] != b'\\' {
             return None;
         }
         let mut q = i + 1;
         let c = self.ch(q)?;
-        if is_hex(c) && q < self.n {
-            while q < self.n && q - i <= 6 && is_hex(self.b[q]) {
+        if is_hex(c) && q < self.b.len() {
+            while q < self.b.len() && q - i <= 6 && is_hex(self.b[q]) {
                 q += 1;
             }
             if let Some(s) = self.ch(q)
@@ -1854,7 +1852,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         }
         if c >= 0x80 {
             let (ch, len) = char_at(self.b, i);
-            return nonascii(ch).then_some((i + len).min(self.n));
+            return nonascii(ch).then_some((i + len).min(self.b.len()));
         }
         self.escape(i)
     }
@@ -1867,14 +1865,14 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         }
         if c >= 0x80 {
             let (ch, len) = char_at(self.b, i);
-            return (word_char(ch) || nonascii(ch)).then_some((i + len).min(self.n));
+            return (word_char(ch) || nonascii(ch)).then_some((i + len).min(self.b.len()));
         }
         self.escape(i)
     }
 
     /// Where `{{nmchar}}*` at `i` ends.
     fn nmchars(&self, mut i: usize) -> usize {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         loop {
             // `[-\w]` in ASCII first, the rest a character at a time
             while i < n && (b[i].is_ascii_alphanumeric() || b[i] == b'_' || b[i] == b'-') {
@@ -1911,7 +1909,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             return e;
         }
         let mut k = i;
-        while k < self.n && (self.b[k].is_ascii_alphanumeric() || self.b[k] == b'-') {
+        while k < self.b.len() && (self.b[k].is_ascii_alphanumeric() || self.b[k] == b'-') {
             k += 1;
         }
         self.names_run.set((i, k));
@@ -1923,7 +1921,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
     /// The line, a place at a time: each context's ops tried in order at the place the scan
     /// has reached; when none matches, the next character.
     fn run(&mut self) {
-        let n = self.n;
+        let n = self.b.len();
         let mut p = self.at;
         // whether a search starts at `p`: the line's start, or right after a match
         let mut fresh = true;
@@ -1997,7 +1995,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
     /// `@keyframes`'), from `p`: their ops dispatched on the byte at the place, the blocks' `}` a
     /// pop before it, a selector's own code run at once.
     fn body(&mut self, mut p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let (depth, ctx) = (self.depth, self.top());
         let block = ctx != MAIN;
         let keyframes = ctx == KF_BODY;
@@ -2106,7 +2104,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
     /// `ops(FONT_VALUE)`) dispatched on the byte at the place: where the stack changed, or `None`
     /// at the line's end (nothing matches at its `\n`).
     fn value(&mut self, mut p: usize, font: bool) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let (depth, ctx) = (self.depth, self.top());
         while p < n {
             let c = b[p];
@@ -2302,7 +2300,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         }
         if let Some(e) = font_name {
             let s = self.spaces(e);
-            if s > self.n || matches!(self.ch(s), Some(b';' | b',' | b'}')) {
+            if s > self.b.len() || matches!(self.ch(s), Some(b';' | b',' | b'}')) {
                 self.tok(p, e, FONT_NAME_LEAF);
                 return Some(e);
             }
@@ -2312,7 +2310,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
 
     /// A selector from `p`, its ops (`ops(SELECTOR)`) dispatched on the byte at the place.
     fn selector(&mut self, mut p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let (depth, ctx) = (self.depth, self.top());
         while p < n {
             let c = b[p];
@@ -2383,7 +2381,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
 
     /// `meta.property-list` from `p`: before a `}` a pop, a comment, a property's name, its `:`.
     fn pl_body(&mut self, mut p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let (depth, ctx) = (self.depth, self.top());
         while p < n {
             match b[p] {
@@ -2437,7 +2435,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
 
     /// `meta.property-name` from `p`, over `[-a-z]`.
     fn prop_name(&mut self, mut p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let (depth, ctx) = (self.depth, self.top());
         loop {
             if p >= n || !matches!(b[p], b'-' | b'a'..=b'z') {
@@ -2479,7 +2477,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
 
     /// `/* … */` from `p`.
     fn comment(&mut self, p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         if p > n {
             return None;
         }
@@ -2514,7 +2512,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
 
     /// A string from `p`: its end, a newline's pop, escapes.
     fn string(&mut self, p: usize, ctx: u8) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         if p > n {
             return None;
         }
@@ -2556,7 +2554,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
 
     /// Op `op` at `p` in context `ctx`: where the scan goes on if it matched.
     fn op(&mut self, op: u8, p: usize, ctx: u8, fresh: bool) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let c = self.ch(p);
         match op {
             P_COMMENT => {
@@ -3520,7 +3518,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         // the name, as the decimal|none alternative, then as an ident
         let we = {
             let mut e = w;
-            while e < self.n && self.b[e].is_ascii_alphanumeric() {
+            while e < self.b.len() && self.b[e].is_ascii_alphanumeric() {
                 e += 1;
             }
             e
@@ -3588,7 +3586,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         }
         let s = p + 2;
         let mut e = s;
-        while e < self.n && e - s < 6 && (is_hex(b[e]) || b[e] == b'?') {
+        while e < self.b.len() && e - s < 6 && (is_hex(b[e]) || b[e] == b'?') {
             e += 1;
         }
         if e == s {
@@ -3597,7 +3595,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         let mut dash = None;
         if b.get(e) == Some(&b'-') {
             let mut f = e + 1;
-            while f < self.n && f - e - 1 < 6 && is_hex(b[f]) {
+            while f < self.b.len() && f - e - 1 < 6 && is_hex(b[f]) {
                 f += 1;
             }
             if f > e + 1 {
@@ -3702,7 +3700,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             return e;
         }
         let mut k = i;
-        while k < self.n && self.b[k].is_ascii_alphabetic() {
+        while k < self.b.len() && self.b[k].is_ascii_alphabetic() {
             k += 1;
         }
         self.letters_run.set((i, k));
@@ -3804,7 +3802,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         if b.get(p) == Some(&b'#') {
             // `(#)(\h{3}|\h{6})\b`, then `(#)(\h{4}|\h{8})\b`
             let mut h = p + 1;
-            while h < self.n && is_hex(b[h]) {
+            while h < self.b.len() && is_hex(b[h]) {
                 h += 1;
             }
             let k = h - p - 1;
@@ -3843,7 +3841,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             // `progid:DXImageTransform.Microsoft.(Alpha|Blur|dropshadow|gradient|Shadow)\b`, its
             // `.`s any character
             let m = self.next(p + 23);
-            if m < self.n && b.get(m..m + 9) == Some(b"Microsoft") {
+            if m < self.b.len() && b.get(m..m + 9) == Some(b"Microsoft") {
                 let s = self.next(m + 9);
                 for x in [
                     &b"Alpha"[..],
@@ -3852,7 +3850,9 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                     b"gradient",
                     b"Shadow",
                 ] {
-                    if s < self.n && b.get(s..s + x.len()) == Some(x) && self.boundary(s + x.len())
+                    if s < self.b.len()
+                        && b.get(s..s + x.len()) == Some(x)
+                        && self.boundary(s + x.len())
                     {
                         self.tok(p, s + x.len(), CONSTANT);
                         return Some(s + x.len());
@@ -3880,7 +3880,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             {
                 // `\s*` gives the line's `\n` back to `[;,\n}]`
                 let s = self.spaces(e);
-                if s > self.n || matches!(self.ch(s), Some(b';' | b',' | b'}')) {
+                if s > self.b.len() || matches!(self.ch(s), Some(b';' | b',' | b'}')) {
                     self.tok(p, e, FONT_NAME_LEAF);
                     return Some(e);
                 }
@@ -3892,7 +3892,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
     /// Custom elements: `\b([a-z](?:{{custom_element_chars}})*-(?:{{custom_element_chars}})*)\b`:
     /// the longest run of the characters, with a `-` after its first, that ends at a `\b`.
     fn custom_element(&mut self, p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         if !b.get(p)?.is_ascii_lowercase() || !self.boundary(p) || p < self.custom_failed.get() {
             return None;
         }
@@ -4098,7 +4098,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                 return Some(e);
             }
         }
-        Some(s.min(self.n + 1))
+        Some(s.min(self.b.len() + 1))
     }
 
     /// `[-+]\s+\d+n?|[-+]?\d+\s+n` at `p`.
@@ -4213,7 +4213,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             self.tok(s, s + 1, KEY_VALUE);
             return Some(s + 1);
         }
-        Some(s.min(self.n + 1))
+        Some(s.min(self.b.len() + 1))
     }
 }
 

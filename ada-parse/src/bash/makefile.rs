@@ -994,7 +994,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     s.stack[0] = MaybeUninit::new(Frame { ctx: MAIN, ..FRAME });
     s.load(state);
     s.run::<true>();
-    s.fill(s.n);
+    s.fill(s.b.len());
     *state = s.save();
 }
 
@@ -1130,7 +1130,7 @@ impl Scan<'_, '_, '_> {
     pub(super) fn make_step(&mut self, p: usize, ctx: u8) -> Result<usize, usize> {
         // none of `main`'s patterns matches in a line's `\n` alone: those at its start need
         // `^`, the others text
-        if ctx == MAIN && p >= self.n {
+        if ctx == MAIN && p >= self.b.len() {
             return Err(usize::MAX);
         }
         let mut b = Best::new();
@@ -1159,7 +1159,7 @@ impl Scan<'_, '_, '_> {
 
     fn with_proto_at(&mut self, p: usize, with: u8) -> Option<usize> {
         let c = self.at(p);
-        let n = self.n;
+        let n = self.b.len();
         match with {
             W_RECIPE => {
                 if p >= n
@@ -1219,7 +1219,7 @@ impl Scan<'_, '_, '_> {
 
     /// `variable-substitutions` at `p`.
     fn substitution_at(&mut self, p: usize) -> Option<usize> {
-        if self.at(p) != b'$' || p >= self.n {
+        if self.at(p) != b'$' || p >= self.b.len() {
             return None;
         }
         let mut b = Best::new();
@@ -1243,7 +1243,7 @@ impl Scan<'_, '_, '_> {
     }
 
     fn find_with(&self, from: usize, with: u8) -> usize {
-        let n = self.n;
+        let n = self.b.len();
         // `$` pops a recipe's and an assignment's contexts at the line's end
         let end = if matches!(with, W_RECIPE | W_ASSIGN) {
             from.max(n)

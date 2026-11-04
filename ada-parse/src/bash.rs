@@ -768,13 +768,12 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     s.stack[0] = MaybeUninit::new(FRAME);
     s.load(state);
     s.run::<false>();
-    s.fill(s.n);
+    s.fill(s.b.len());
     *state = s.save();
 }
 
 struct Scan<'a, 'o, 'p> {
     b: &'a [u8],
-    n: usize,
     /// The frames below `depth` are written; those above are not.
     stack: [MaybeUninit<Frame>; MAX],
     depth: usize,
@@ -810,7 +809,6 @@ impl<'a, 'o, 'p> Scan<'a, 'o, 'p> {
     ) -> Self {
         Scan {
             b,
-            n: b.len(),
             stack: [const { MaybeUninit::uninit() }; MAX],
             depth: 1,
             emitted: 0,
@@ -842,7 +840,7 @@ impl Scan<'_, '_, '_> {
     fn at(&self, i: usize) -> u8 {
         match self.b.get(i) {
             Some(&c) => c,
-            None if i == self.n => b'\n',
+            None if i == self.b.len() => b'\n',
             None => 0,
         }
     }
@@ -853,7 +851,7 @@ impl Scan<'_, '_, '_> {
 
     /// Where the `\s` from `i` ends, the `\n` included.
     fn ws_end(&self, mut i: usize) -> usize {
-        while i <= self.n && ws(self.at(i)) {
+        while i <= self.b.len() && ws(self.at(i)) {
             i += 1;
         }
         i
@@ -861,7 +859,7 @@ impl Scan<'_, '_, '_> {
 
     /// Where the run of lowercase ASCII letters from `i` ends.
     fn lower_end(&self, mut i: usize) -> usize {
-        while i < self.n && self.b[i].is_ascii_lowercase() {
+        while i < self.b.len() && self.b[i].is_ascii_lowercase() {
             i += 1;
         }
         i
@@ -949,7 +947,7 @@ impl Scan<'_, '_, '_> {
 
     /// The place after the character at `p`.
     fn next_char(&self, p: usize) -> usize {
-        if p >= self.n {
+        if p >= self.b.len() {
             p + 1
         } else {
             p + char_len(self.b[p])
@@ -959,7 +957,7 @@ impl Scan<'_, '_, '_> {
     /// Where the bytes of `class` from `p` end, on this line.
     fn run_of(&self, p: usize, class: u8) -> usize {
         let mut q = p;
-        while q < self.n && CLASS[usize::from(self.b[q])] & class != 0 {
+        while q < self.b.len() && CLASS[usize::from(self.b[q])] & class != 0 {
             q += 1;
         }
         q
@@ -983,29 +981,29 @@ impl Scan<'_, '_, '_> {
 
     /// The first of `x`, `y`, `z`, `w` from `p` on the line, or the line's end.
     fn find4(&self, p: usize, x: u8, y: u8, z: u8, w: u8) -> usize {
-        let rest = &self.b[p.min(self.n)..];
+        let rest = &self.b[p.min(self.b.len())..];
         let found = parse(find_byte(eq(x) | eq(y) | eq(z) | eq(w), false), rest);
         match found.result {
-            Some(_) => self.n - found.state.len(),
-            None => self.n,
+            Some(_) => self.b.len() - found.state.len(),
+            None => self.b.len(),
         }
     }
 
     fn find3(&self, p: usize, x: u8, y: u8, z: u8) -> usize {
-        let rest = &self.b[p.min(self.n)..];
+        let rest = &self.b[p.min(self.b.len())..];
         let found = parse(find_byte(eq(x) | eq(y) | eq(z), false), rest);
         match found.result {
-            Some(_) => self.n - found.state.len(),
-            None => self.n,
+            Some(_) => self.b.len() - found.state.len(),
+            None => self.b.len(),
         }
     }
 
     fn find1(&self, p: usize, x: u8) -> usize {
-        let rest = &self.b[p.min(self.n)..];
+        let rest = &self.b[p.min(self.b.len())..];
         let found = parse(find_byte(eq(x), false), rest);
         match found.result {
-            Some(_) => self.n - found.state.len(),
-            None => self.n,
+            Some(_) => self.b.len() - found.state.len(),
+            None => self.b.len(),
         }
     }
 
@@ -1099,7 +1097,7 @@ impl Scan<'_, '_, '_> {
     }
 
     fn put(&mut self, s: usize, e: usize, kind: u16) {
-        let e = e.min(self.n);
+        let e = e.min(self.b.len());
         if e > s && kind != PLAIN {
             self.out.push_merged(s, e, self.map(kind));
         }
@@ -1239,10 +1237,10 @@ impl Scan<'_, '_, '_> {
             match self.step::<MAKE>(p) {
                 Ok(e) => p = e,
                 Err(next) => {
-                    if p > self.n || next > self.n + 1 {
+                    if p > self.b.len() || next > self.b.len() + 1 {
                         break;
                     }
-                    p = next.max(p + 1).min(self.n + 1);
+                    p = next.max(p + 1).min(self.b.len() + 1);
                 }
             }
         }
@@ -1299,16 +1297,16 @@ impl Scan<'_, '_, '_> {
                 t!(self.main(p, false));
             }
             COMMENT_BODY | COMMENT_BODY_NW => {
-                if p == self.n {
+                if p == self.b.len() {
                     t!(self.pop(p, p + 1, k::COMMENT));
                 }
-                return Err(self.n);
+                return Err(self.b.len());
             }
             CONTINUED | CONTINUED_NW => {
                 if p == 0 {
                     t!(self.pop(0, 0, PLAIN));
                 }
-                return Err(self.n + 1);
+                return Err(self.b.len() + 1);
             }
             CMD | CMD_BT => t!(self.cmd(p, ctx == CMD_BT)),
             CMD_PAREN | CMD_PAREN_BT => {
@@ -1331,7 +1329,7 @@ impl Scan<'_, '_, '_> {
                 t!(self.main(p, bt));
             }
             LET | LET_BT => {
-                if p >= self.n || (ctx == LET_BT && c == b'`') {
+                if p >= self.b.len() || (ctx == LET_BT && c == b'`') {
                     t!(self.pop(p, p, PLAIN));
                 }
                 t!(self.expression(p));
@@ -1344,7 +1342,7 @@ impl Scan<'_, '_, '_> {
                 t!(self.args_boilerplate(p, ctx == TEST_BODY_BT));
                 if ws(c) {
                     let q = self.ws_end(p);
-                    if self.at(q) == b']' && q < self.n {
+                    if self.at(q) == b']' && q < self.b.len() {
                         t!(self.exec(p, q + 1, PLAIN, &[(q, q + 1, k::TEST_END)], Op::Pop, 0));
                     }
                 }
@@ -1369,7 +1367,7 @@ impl Scan<'_, '_, '_> {
             CMD_NAME => t!(self.set(p, p, PLAIN, &[CMD_NAME_BODY])),
             CMD_NAME_BODY => {
                 // `(?={{is_start_of_arguments}}|{{is_end_of_interpolation}})`
-                if p >= self.n || metachar(c) || c == b'`' || c == b'=' {
+                if p >= self.b.len() || metachar(c) || c == b'`' || c == b'=' {
                     t!(self.pop(p, p, PLAIN));
                 }
                 t!(self.name_common(p));
@@ -1386,17 +1384,17 @@ impl Scan<'_, '_, '_> {
                 return Err(self.after(p, ARGS_PLAIN));
             }
             OPTION | OPTION_BT => {
-                if c == b'=' && p < self.n {
+                if c == b'=' && p < self.b.len() {
                     t!(self.set(p, p, PLAIN, &[OPTION_ASSIGN]));
                 }
                 // `(?=[^\w$-]|$)`, and a backtick
-                if p >= self.n || !(self.word_at(p) || c == b'$' || c == b'-') {
+                if p >= self.b.len() || !(self.word_at(p) || c == b'$' || c == b'-') {
                     t!(self.pop(p, p, PLAIN));
                 }
                 t!(self.eas(p));
             }
             OPTION_ASSIGN => {
-                if c == b'=' && p < self.n {
+                if c == b'=' && p < self.b.len() {
                     t!(self.pop(p, p + 1, k::OPTION_ASSIGN));
                 }
             }
@@ -1405,7 +1403,7 @@ impl Scan<'_, '_, '_> {
                     t!(self.pop(p, p, PLAIN));
                 }
                 t!(self.redirection(p));
-                if matches!(c, b')' | b'}' | b';' | b'&' | b'|') && p < self.n {
+                if matches!(c, b')' | b'}' | b';' | b'&' | b'|') && p < self.b.len() {
                     t!(self.pop(p, p, PLAIN));
                 }
                 t!(self.eas(p));
@@ -1425,20 +1423,20 @@ impl Scan<'_, '_, '_> {
                 if self.keyword_at(p, b"esac") {
                     t!(self.pop(p, p + 4, k::COND_END));
                 }
-                if c == b'(' && p < self.n {
+                if c == b'(' && p < self.b.len() {
                     t!(self.push(p, p, PLAIN, &[CASE_PAREN]));
                 }
-                if p < self.n && !ws(c) {
+                if p < self.b.len() && !ws(c) {
                     t!(self.push(p, p, PLAIN, &[CASE_PATTERNS]));
                 }
             }
             CASE_PAREN => {
-                if c == b'(' && p < self.n {
+                if c == b'(' && p < self.b.len() {
                     t!(self.set(p, p + 1, k::PATTERNS_BEGIN, &[CASE_PATTERNS]));
                 }
             }
             CASE_PATTERNS => {
-                if c == b')' && p < self.n {
+                if c == b')' && p < self.b.len() {
                     t!(self.set(p, p + 1, k::PATTERNS_END, &[CASE_COMMANDS]));
                 }
                 if self.case_end(p).is_some() {
@@ -1450,7 +1448,7 @@ impl Scan<'_, '_, '_> {
                 t!(self.case_patterns_body(p));
             }
             CASE_PATTERNS_PAREN => {
-                if c == b')' && p < self.n {
+                if c == b')' && p < self.b.len() {
                     t!(self.pop(p, p + 1, k::PARENS_END));
                 }
                 t!(self.case_patterns_body(p));
@@ -1480,7 +1478,7 @@ impl Scan<'_, '_, '_> {
                 return Err(self.after(p, EXPR_PLAIN));
             }
             EXPRESSION_PAREN => {
-                if c == b')' && p < self.n {
+                if c == b')' && p < self.b.len() {
                     t!(self.pop(p, p + 1, k::PARENS_END));
                 }
                 t!(self.expression(p));
@@ -1491,7 +1489,7 @@ impl Scan<'_, '_, '_> {
                     t!(self.pop(p, p + 1, k::NOT_HEX));
                 }
                 // `(?=\H)`
-                if p < self.n + 1 && !c.is_ascii_hexdigit() {
+                if p < self.b.len() + 1 && !c.is_ascii_hexdigit() {
                     t!(self.pop(p, p, PLAIN));
                 }
             }
@@ -1499,12 +1497,12 @@ impl Scan<'_, '_, '_> {
                 if matches!(c, b'8' | b'9') {
                     t!(self.pop(p, p + 1, k::NOT_OCTAL));
                 }
-                if p < self.n + 1 && !matches!(c, b'0'..=b'7') {
+                if p < self.b.len() + 1 && !matches!(c, b'0'..=b'7') {
                     t!(self.pop(p, p, PLAIN));
                 }
             }
             REGEXP => {
-                if ws(c) && p <= self.n {
+                if ws(c) && p <= self.b.len() {
                     t!(self.pop(p, p, PLAIN));
                 }
                 t!(self.eas(p));
@@ -1519,10 +1517,10 @@ impl Scan<'_, '_, '_> {
                 t!(self.eas(p));
             }
             PARAMETER_START => {
-                if c == b'!' && p < self.n {
+                if c == b'!' && p < self.b.len() {
                     t!(self.set(p, p + 1, k::INDIRECTION, &[PARAMETER_POST]));
                 }
-                if c == b'#' && p < self.n {
+                if c == b'#' && p < self.b.len() {
                     t!(self.set(p, p + 1, k::ARITH_OP, &[PARAMETER_POST]));
                 }
                 t!(self.set(p, p, PLAIN, &[PARAMETER_POST]));
@@ -1534,7 +1532,7 @@ impl Scan<'_, '_, '_> {
             PARAMETER_OP => {
                 let s = p;
                 let q = if c == b':' { p + 1 } else { p };
-                if matches!(self.at(q), b'-' | b'+' | b'=' | b'?') && q < self.n {
+                if matches!(self.at(q), b'-' | b'+' | b'=' | b'?') && q < self.b.len() {
                     t!(self.set(s, q + 1, k::ASSIGN, &[PARAMETER_COMMON]));
                 }
             }
@@ -1545,7 +1543,7 @@ impl Scan<'_, '_, '_> {
             }
             PARAMETER_SLASH => {
                 let q = if matches!(c, b'@' | b'*') { p + 1 } else { p };
-                if self.at(q) == b'/' && q < self.n {
+                if self.at(q) == b'/' && q < self.b.len() {
                     let mut caps = [(q, q + 1, k::SUBSTITUTION); 2];
                     let n = if q > p {
                         caps[0] = (p, q, k::LANG_VAR);
@@ -1558,13 +1556,13 @@ impl Scan<'_, '_, '_> {
                 }
             }
             PARAMETER_SLASH_FIRST => {
-                if matches!(c, b'/' | b'#' | b'%') && p < self.n {
+                if matches!(c, b'/' | b'#' | b'%') && p < self.b.len() {
                     t!(self.set(p, p + 1, k::SWITCH, &[PARAMETER_SUBSTITUTE]));
                 }
                 t!(self.set(p, p, PLAIN, &[PARAMETER_SUBSTITUTE]));
             }
             PARAMETER_SUBSTITUTE => {
-                if c == b'/' && p < self.n {
+                if c == b'/' && p < self.b.len() {
                     t!(self.set(p, p + 1, k::SUBSTITUTION, &[PARAMETER_COMMON]));
                 }
                 t!(self.parameter_common(p));
@@ -1572,20 +1570,20 @@ impl Scan<'_, '_, '_> {
             }
             PARAMETER_SUBSTRING => {
                 let q = if c == b'@' { p + 1 } else { p };
-                if self.at(q) == b':' && q < self.n {
+                if self.at(q) == b':' && q < self.b.len() {
                     let caps = [(p, q, k::LANG_VAR), (q, q + 1, k::SUBSTRING_BEGIN)];
                     t!(self.exec(p, q + 1, PLAIN, &caps, Op::Set(&[PARAMETER_OFFSET]), 0));
                 }
             }
             PARAMETER_OFFSET => {
-                if c == b':' && p < self.n {
+                if c == b':' && p < self.b.len() {
                     t!(self.set(p, p, PLAIN, &[PARAMETER_LENGTH_COLON]));
                 }
                 t!(self.expression(p));
                 t!(self.parameter_common(p));
             }
             PARAMETER_LENGTH_COLON => {
-                if c == b':' && p < self.n {
+                if c == b':' && p < self.b.len() {
                     t!(self.set(p, p + 1, k::SUBSTRING_END, &[PARAMETER_LENGTH]));
                 }
             }
@@ -1602,7 +1600,7 @@ impl Scan<'_, '_, '_> {
             }
             COMMAND_PARENS => {
                 let q = self.ws_end(p);
-                if self.at(q) == b')' && q < self.n {
+                if self.at(q) == b')' && q < self.b.len() {
                     t!(self.exec(p, q + 1, PLAIN, &[(q, q + 1, k::PARENS_END)], Op::Pop, 0));
                 }
                 t!(self.main(p, false));
@@ -1614,7 +1612,7 @@ impl Scan<'_, '_, '_> {
                 t!(self.main(p, true));
             }
             EXTGLOB => {
-                if c == b')' && p < self.n {
+                if c == b')' && p < self.b.len() {
                     t!(self.pop(p, p + 1, k::PARENS_END));
                 }
                 if c == b'|' {
@@ -1660,7 +1658,7 @@ impl Scan<'_, '_, '_> {
                 return Err(self.find3(p + 1, b'\'', b'\\', b'\\'));
             }
             ESCAPED_NEWLINE => {
-                if p < self.n && !ws(c) {
+                if p < self.b.len() && !ws(c) {
                     t!(self.pop(p, p, PLAIN));
                 }
             }
@@ -1679,11 +1677,11 @@ impl Scan<'_, '_, '_> {
                     t!(self.pop(p, p, PLAIN));
                 }
                 let q = self.ws_end(p);
-                if self.at(q) == b'#' && q < self.n {
+                if self.at(q) == b'#' && q < self.b.len() {
                     t!(self.pop(p, p, PLAIN));
                 }
                 t!(self.args_boilerplate(p, false));
-                if p < self.n && !ws(c) {
+                if p < self.b.len() && !ws(c) {
                     t!(self.push(p, p, PLAIN, &[VARDEF_VALUE, VARDEF_ASSIGN, VARDEF_NAME]));
                 }
             }
@@ -1700,7 +1698,7 @@ impl Scan<'_, '_, '_> {
                 t!(self.continuation_or_pop(p));
                 t!(self.any_escape(p));
                 let var = ctx == VARDEF_NAME_BODY;
-                if p >= self.n
+                if p >= self.b.len()
                     || self.varassign_at(p).is_some()
                     || ws(c)
                     || (var && (metachar(c) || matches!(c, b';' | b'&' | b'`')))
@@ -1711,8 +1709,8 @@ impl Scan<'_, '_, '_> {
                     t!(self.push(p, p + 1, k::SECTION_BRACES_BEGIN, &[ARRAY_BODY]));
                 }
                 // `\s*$`, the line's `\n` included
-                if p < self.n && self.b[p..].iter().all(|&c| ws(c)) {
-                    t!(self.pop(p, self.n + 1, PLAIN));
+                if p < self.b.len() && self.b[p..].iter().all(|&c| ws(c)) {
+                    t!(self.pop(p, self.b.len() + 1, PLAIN));
                 }
                 t!(self.string(p));
                 return Err(self.run_of(self.next_char(p), DEF_PLAIN));
@@ -1726,7 +1724,7 @@ impl Scan<'_, '_, '_> {
                 t!(self.pop(p, p, PLAIN));
             }
             VARDEF_VALUE => {
-                if c == b'(' && p < self.n {
+                if c == b'(' && p < self.b.len() {
                     t!(self.set(p, p + 1, k::PARENS_BEGIN, &[VARDEF_ARRAY]));
                 }
                 if matches!(c, b'&' | b'`') {
@@ -1735,7 +1733,7 @@ impl Scan<'_, '_, '_> {
                 t!(self.set(p, p, PLAIN, &[VARDEF_VALUE_WORD]));
             }
             VARDEF_ARRAY => {
-                if c == b')' && p < self.n {
+                if c == b')' && p < self.b.len() {
                     t!(self.pop(p, p + 1, k::PARENS_END));
                 }
                 if c == b'[' {
@@ -1750,7 +1748,7 @@ impl Scan<'_, '_, '_> {
                 t!(self.eas(p));
             }
             VARDEF_ARRAY_EQ => {
-                if c == b'=' && p < self.n {
+                if c == b'=' && p < self.b.len() {
                     t!(self.pop(p, p + 1, k::ASSIGN));
                 }
                 t!(self.pop(p, p, PLAIN));
@@ -1762,7 +1760,7 @@ impl Scan<'_, '_, '_> {
                 t!(self.eas(p));
                 t!(self.continuation_or_pop(p));
                 t!(self.any_escape(p));
-                if metachar(c) && p <= self.n {
+                if metachar(c) && p <= self.b.len() {
                     t!(self.pop(p, p, PLAIN));
                 }
                 return Err(self.after(p, WORD_PLAIN));
@@ -1778,12 +1776,12 @@ impl Scan<'_, '_, '_> {
                     _ => b"",
                 };
                 let q = self.ws_end(p);
-                if self.at(q) == b'-' && q < self.n {
+                if self.at(q) == b'-' && q < self.b.len() {
                     let mut e = q + 1;
-                    while set.contains(&self.at(e)) && e < self.n {
+                    while set.contains(&self.at(e)) && e < self.b.len() {
                         e += 1;
                     }
-                    if e == q + 1 && self.at(e) == b'p' && e < self.n {
+                    if e == q + 1 && self.at(e) == b'p' && e < self.b.len() {
                         e += 1;
                     }
                     if e > q + 1 {
@@ -1794,7 +1792,7 @@ impl Scan<'_, '_, '_> {
                 t!(self.pop(p, q, PLAIN));
             }
             PROCESS_SUBSTITUTION => {
-                if c == b')' && p < self.n {
+                if c == b')' && p < self.b.len() {
                     t!(self.pop(p, p + 1, k::PARENS_END));
                 }
                 t!(self.main(p, false));
@@ -1802,20 +1800,20 @@ impl Scan<'_, '_, '_> {
             REDIRECTION_POST => {
                 let q = self.ws_end(p);
                 let d = self.at(q);
-                if d.is_ascii_digit() && q < self.n {
+                if d.is_ascii_digit() && q < self.b.len() {
                     let e = self.digits_end(q);
                     t!(self.exec(p, e, PLAIN, &[(q, e, k::FD)], Op::Pop, 0));
                 }
-                if d == b'-' && q < self.n {
+                if d == b'-' && q < self.b.len() {
                     t!(self.exec(p, q + 1, PLAIN, &[(q, q + 1, k::FD_END)], Op::Pop, 0));
                 }
-                if q < self.n {
+                if q < self.b.len() {
                     t!(self.set(p, q, PLAIN, &[REDIRECTION_TARGET]));
                 }
                 t!(self.pop(p, q, PLAIN));
             }
             REDIRECTION_TARGET => {
-                if p <= self.n && (metachar(c) || c == b'`') {
+                if p <= self.b.len() && (metachar(c) || c == b'`') {
                     t!(self.pop(p, p, PLAIN));
                 }
                 t!(self.eas(p));
@@ -1834,27 +1832,27 @@ impl Scan<'_, '_, '_> {
                 if expand {
                     return Err(self.find3(p + 1, b'\\', b'$', b'`'));
                 }
-                return Err(self.n + 1);
+                return Err(self.b.len() + 1);
             }
             HEREDOC_PREAMBLE => t!(self.set(p, p, PLAIN, &[HEREDOC_LINE])),
             HEREDOC_LINE => {
-                if p >= self.n {
+                if p >= self.b.len() {
                     t!(self.pop(p, p, PLAIN));
                 }
                 let q = self.ws_end(p);
-                if q < self.n {
+                if q < self.b.len() {
                     t!(self.push(p, q, PLAIN, &[MAIN_POP_AT_END, CMD_POST, CMD_ARGS]));
                 }
             }
             COPROC_BODY => {
                 let q = self.ws_end(p);
-                if q < self.n {
+                if q < self.b.len() {
                     let mut k = q;
-                    while k < self.n && !ws(self.b[k]) {
+                    while k < self.b.len() && !ws(self.b[k]) {
                         k += 1;
                     }
                     let brace = self.b[q + 1..k].contains(&b'{')
-                        || (self.at(self.ws_end(k)) == b'{' && self.ws_end(k) < self.n);
+                        || (self.at(self.ws_end(k)) == b'{' && self.ws_end(k) < self.b.len());
                     if brace {
                         t!(self.set(p, q, PLAIN, &[COPROC_NAME_CTX]));
                     }
@@ -1863,7 +1861,7 @@ impl Scan<'_, '_, '_> {
             }
             COPROC_NAME_CTX => {
                 let q = self.ws_end(p);
-                if self.at(q) == b'{' && q < self.n {
+                if self.at(q) == b'{' && q < self.b.len() {
                     t!(self.set(p, p, PLAIN, &[COPROC_BRACE]));
                 }
             }
@@ -1881,15 +1879,15 @@ impl Scan<'_, '_, '_> {
             FUNCDEF_NAME_BODY => {
                 // `(?=\s*[({]|$)`
                 let q = self.ws_end(p);
-                if p >= self.n || (matches!(self.at(q), b'(' | b'{') && q < self.n) {
+                if p >= self.b.len() || (matches!(self.at(q), b'(' | b'{') && q < self.b.len()) {
                     t!(self.pop(p, p, PLAIN));
                 }
                 return Err(self.run_of(self.next_char(p), FUNC_PLAIN));
             }
             FUNCDEF_PARENS => {
-                if c == b'(' && p < self.n {
+                if c == b'(' && p < self.b.len() {
                     let q = self.ws_end(p + 1);
-                    if self.at(q) == b')' && q < self.n {
+                    if self.at(q) == b')' && q < self.b.len() {
                         let caps = [(p, p + 1, k::PARENS_BEGIN), (q, q + 1, k::PARENS_END)];
                         t!(self.exec(p, q + 1, PLAIN, &caps, Op::None, 0));
                     }
@@ -1897,7 +1895,7 @@ impl Scan<'_, '_, '_> {
                 if c == b'{' {
                     t!(self.pop(p, p + 1, k::SECTION_BRACES_BEGIN));
                 }
-                if c == b'(' && p < self.n {
+                if c == b'(' && p < self.b.len() {
                     t!(self.pop(p, p + 1, k::COMPOUND_BEGIN));
                 }
             }
@@ -1905,7 +1903,7 @@ impl Scan<'_, '_, '_> {
                 if c == b'}' {
                     t!(self.pop(p, p + 1, k::SECTION_BRACES_END));
                 }
-                if c == b')' && p < self.n {
+                if c == b')' && p < self.b.len() {
                     t!(self.pop(p, p + 1, k::COMPOUND_END));
                 }
                 t!(self.main(p, ctx == FUNCDEF_BODY_BT));
@@ -1932,11 +1930,11 @@ impl Scan<'_, '_, '_> {
         }
         // at the line's end, `main` and the closing bytes of the contexts around it match
         // nothing
-        if p >= self.n && ends_with_main(ctx) {
+        if p >= self.b.len() && ends_with_main(ctx) {
             return Err(usize::MAX);
         }
-        if p < self.n && ws(c) && skips_spaces(ctx) {
-            return Err(self.ws_end(p).min(self.n));
+        if p < self.b.len() && ws(c) && skips_spaces(ctx) {
+            return Err(self.ws_end(p).min(self.b.len()));
         }
         Err(self.next_char(p))
     }
@@ -1944,8 +1942,8 @@ impl Scan<'_, '_, '_> {
     /// The next place that may match after `p`, where nothing did: past a run of spaces, or
     /// past bytes of `class`.
     fn after(&self, p: usize, class: u8) -> usize {
-        if p < self.n && ws(self.b[p]) {
-            self.ws_end(p).min(self.n)
+        if p < self.b.len() && ws(self.b[p]) {
+            self.ws_end(p).min(self.b.len())
         } else {
             self.run_of(self.next_char(p), class)
         }
@@ -1960,12 +1958,12 @@ impl Scan<'_, '_, '_> {
         // `(?:^\s*|\s+)(\#)`
         if p == 0 || ws(c) {
             let q = self.ws_end(p);
-            if self.at(q) == b'#' && q < self.n {
+            if self.at(q) == b'#' && q < self.b.len() {
                 let caps = [(q, q + 1, k::COMMENT_BEGIN)];
                 return self.exec(p, q + 1, PLAIN, &caps, Op::Push(&[COMMENT_BODY]), 0);
             }
         }
-        if c == b'\\' && p < self.n {
+        if c == b'\\' && p < self.b.len() {
             return self.backslash(p, true);
         }
         None
@@ -1974,12 +1972,12 @@ impl Scan<'_, '_, '_> {
     /// At a `\`: `\\\n` (pushing the context that ends at the next line's start), `\\(\s+)\n`,
     /// and, when `escape`, `\\.`.
     fn backslash(&mut self, p: usize, escape: bool) -> Option<usize> {
-        if p + 1 == self.n {
-            return self.push(p, self.n + 1, k::CONTINUATION, &[CONTINUED]);
+        if p + 1 == self.b.len() {
+            return self.push(p, self.b.len() + 1, k::CONTINUATION, &[CONTINUED]);
         }
         if self.b[p + 1..].iter().all(|&c| ws(c)) {
-            let caps = [(p + 1, self.n, k::EXTRA_SPACES)];
-            return self.exec(p, self.n + 1, PLAIN, &caps, Op::None, 0);
+            let caps = [(p + 1, self.b.len(), k::EXTRA_SPACES)];
+            return self.exec(p, self.b.len() + 1, PLAIN, &caps, Op::None, 0);
         }
         if escape {
             return self.none(p, p + 1 + char_len(self.b[p + 1]), k::ESCAPE);
@@ -1989,7 +1987,7 @@ impl Scan<'_, '_, '_> {
 
     /// `\\.`
     fn any_escape(&mut self, p: usize) -> Option<usize> {
-        if self.at(p) == b'\\' && p + 1 < self.n {
+        if self.at(p) == b'\\' && p + 1 < self.b.len() {
             return self.none(p, p + 1 + char_len(self.b[p + 1]), k::ESCAPE);
         }
         None
@@ -1997,7 +1995,7 @@ impl Scan<'_, '_, '_> {
 
     /// `line-continuation-or-pop-at-end`: `$`, `\\\n`, `\\(\s+)\n`.
     fn continuation_or_pop(&mut self, p: usize) -> Option<usize> {
-        if p >= self.n {
+        if p >= self.b.len() {
             return self.pop(p, p, PLAIN);
         }
         if self.b[p] == b'\\' {
@@ -2015,7 +2013,7 @@ impl Scan<'_, '_, '_> {
         // where the first word stops (a metacharacter, `=` or a brace), read once for both
         // lookaheads below
         let stop = self.run_of(q, WORD_GOES_ON);
-        if q < self.n {
+        if q < self.b.len() {
             // funcdef: `\s*\b(function)\s+`, `(?=\s*{{identifier_non_posix}}\s*\(\s*\))`
             let body = if bt { FUNCDEF_BODY_BT } else { FUNCDEF_BODY };
             let funcdef = [body, FUNCDEF_PARENS, FUNCDEF_NAME];
@@ -2034,7 +2032,7 @@ impl Scan<'_, '_, '_> {
             let args = if bt { CMD_ARGS_BT } else { CMD_ARGS };
             return self.push(p, p + 6, k::COPROC, &[CMD_POST, args, COPROC_BODY]);
         }
-        if q < self.n {
+        if q < self.b.len() {
             // vardef: `\s*\b(WORD){{keyword_break}}`, the word read once
             let e = self.lower_end(q);
             let modifier = match &self.b[q..e] {
@@ -2068,10 +2066,10 @@ impl Scan<'_, '_, '_> {
             return Some(e);
         }
         let c = self.at(p);
-        if !bt && c == b'!' && p < self.n {
+        if !bt && c == b'!' && p < self.b.len() {
             // `\!(?!\S)`, `(\!)(-?\d+|!)`, `\!`
             let d = self.at(p + 1);
-            if p + 1 >= self.n || ws(d) {
+            if p + 1 >= self.b.len() || ws(d) {
                 return self.none(p, p + 1, k::LOGICAL);
             }
             if d == b'!' {
@@ -2098,7 +2096,7 @@ impl Scan<'_, '_, '_> {
             }
             return self.none(p, p + 1, k::HISTORY_MARK);
         }
-        if p < self.n && !ws(c) {
+        if p < self.b.len() && !ws(c) {
             return self.push(p, p, PLAIN, &[if bt { CMD_BT } else { CMD }]);
         }
         None
@@ -2107,7 +2105,7 @@ impl Scan<'_, '_, '_> {
     /// [`Scan::function_name`], given where the first word from `q` stops: decided there
     /// when it stops at a metacharacter or the line's end, where the name's run ends too.
     fn function_name_from(&self, q: usize, stop: usize) -> bool {
-        if stop < self.n && !metachar(self.b[stop]) {
+        if stop < self.b.len() && !metachar(self.b[stop]) {
             return self.function_name(q);
         }
         let c = self.at(q);
@@ -2115,16 +2113,16 @@ impl Scan<'_, '_, '_> {
             return false;
         }
         let open = self.ws_end(stop.max(q + 1));
-        self.at(open) == b'(' && open < self.n && {
+        self.at(open) == b'(' && open < self.b.len() && {
             let close = self.ws_end(open + 1);
-            self.at(close) == b')' && close < self.n
+            self.at(close) == b')' && close < self.b.len()
         }
     }
 
     /// [`Scan::is_variable`], given where the first word from `q` stops: decided there when
     /// it stops at `=`, a space or the line's end, where the run of `{{nbc}}` ends too.
     fn is_variable_from(&self, q: usize, stop: usize) -> bool {
-        if stop >= self.n {
+        if stop >= self.b.len() {
             return false;
         }
         match self.b[stop] {
@@ -2141,13 +2139,13 @@ impl Scan<'_, '_, '_> {
             return false;
         }
         let mut e = q + 1;
-        while e < self.n && !metachar(self.b[e]) && self.b[e] != b'=' {
+        while e < self.b.len() && !metachar(self.b[e]) && self.b[e] != b'=' {
             e += 1;
         }
         let open = self.ws_end(e);
-        self.at(open) == b'(' && open < self.n && {
+        self.at(open) == b'(' && open < self.b.len() && {
             let close = self.ws_end(open + 1);
-            self.at(close) == b')' && close < self.n
+            self.at(close) == b')' && close < self.b.len()
         }
     }
 
@@ -2155,19 +2153,19 @@ impl Scan<'_, '_, '_> {
     fn is_variable(&self, q: usize) -> bool {
         let nbc = |c: u8| !(matches!(c, b'{' | b'}' | b'(' | b')' | b'=') || ws(c));
         let run = |mut i: usize| {
-            while i < self.n && nbc(self.b[i]) {
+            while i < self.b.len() && nbc(self.b[i]) {
                 i += 1;
             }
             i
         };
         let mut i = run(q);
-        if matches!(self.at(i), b'(' | b'{') && i < self.n {
+        if matches!(self.at(i), b'(' | b'{') && i < self.b.len() {
             let j = run(i + 1);
-            if matches!(self.at(j), b')' | b'}') && j < self.n {
+            if matches!(self.at(j), b')' | b'}') && j < self.b.len() {
                 i = run(j + 1);
             }
         }
-        self.at(i) == b'=' && i < self.n
+        self.at(i) == b'=' && i < self.b.len()
     }
 
     /// `cmd` (`cmd-bt`), at its first byte.
@@ -2197,7 +2195,7 @@ impl Scan<'_, '_, '_> {
             return Some(e);
         }
         if matches!(c, b')' | b'}')
-            && p < self.n
+            && p < self.b.len()
             && let Some(e) = self.pop(p, p, PLAIN)
         {
             return Some(e);
@@ -2205,7 +2203,7 @@ impl Scan<'_, '_, '_> {
         if let Some(e) = self.continuation_or_pop(p) {
             return Some(e);
         }
-        if c == b'(' && p < self.n {
+        if c == b'(' && p < self.b.len() {
             let paren = if bt { CMD_PAREN_BT } else { CMD_PAREN };
             return self.push(p, p + 1, k::COMPOUND_BEGIN, &[paren]);
         }
@@ -2213,7 +2211,7 @@ impl Scan<'_, '_, '_> {
         let name_end = if matches!(c, b'.' | b':') { p + 1 } else { e };
         if let Some(i) = builtin(self.b.get(p..name_end).unwrap_or_default()) {
             let d = self.at(name_end);
-            if name_end >= self.n || ws(d) || matches!(d, b';' | b'>' | b'<' | b'|') {
+            if name_end >= self.b.len() || ws(d) || matches!(d, b';' | b'>' | b'<' | b'|') {
                 let args = if bt { BUILTIN_ARGS_BT } else { BUILTIN_ARGS };
                 let kind = k::B_SET + i as u16;
                 return self.exec(p, name_end, kind, &[], Op::Set(&[CMD_POST, args]), i as u32);
@@ -2236,7 +2234,7 @@ impl Scan<'_, '_, '_> {
             let caps = [(p, p + 1, k::BRACES_BEGIN)];
             return self.exec(p, p + 1, PLAIN, &caps, Op::Push(&[brace]), 0);
         }
-        if p < self.n && !ws(c) {
+        if p < self.b.len() && !ws(c) {
             let args = if bt { CMD_ARGS_BT } else { CMD_ARGS };
             return self.set(p, p, PLAIN, &[CMD_POST, args, CMD_NAME]);
         }
@@ -2260,7 +2258,7 @@ impl Scan<'_, '_, '_> {
             b'|' => self.pop(p, p + 1, k::PIPE),
             b'&' if d == b'&' => self.pop(p, p + 2, k::AND),
             b'&' => self.pop(p, p + 1, k::JOB),
-            _ if p >= self.n || !ws(c) => self.pop(p, p, PLAIN),
+            _ if p >= self.b.len() || !ws(c) => self.pop(p, p, PLAIN),
             _ => None,
         }
     }
@@ -2299,7 +2297,7 @@ impl Scan<'_, '_, '_> {
         // by the byte at `p`, the patterns that can start on it, in the grammar's order:
         // `(?=\))`, `(?=}|\s+#)`, `redirection`, `(?=\s*([|;]|&(?!>)))`,
         // `expansion-and-string`, `line-continuation-or-pop-at-end`, `(?:\s+|^)--(?=\s|$)`
-        if p >= self.n {
+        if p >= self.b.len() {
             return self.continuation_or_pop(p);
         }
         let c = self.b[p];
@@ -2310,7 +2308,7 @@ impl Scan<'_, '_, '_> {
         };
         if ws(c) {
             let q = self.ws_end(p);
-            if q >= self.n {
+            if q >= self.b.len() {
                 return None;
             }
             let d = self.b[q];
@@ -2358,7 +2356,7 @@ impl Scan<'_, '_, '_> {
 
     /// `(?:\s+|^)` at `p`: where what follows it starts.
     fn ws_or_bol(&self, p: usize) -> Option<usize> {
-        if ws(self.at(p)) && p < self.n {
+        if ws(self.at(p)) && p < self.b.len() {
             Some(self.ws_end(p))
         } else if p == 0 {
             Some(0)
@@ -2370,7 +2368,7 @@ impl Scan<'_, '_, '_> {
     /// `{{start_of_option}}`: `(?:\s+|^)--?(?=[\w$])`
     fn option_start(&mut self, p: usize, bt: bool) -> Option<usize> {
         let k = self.ws_or_bol(p)?;
-        if self.at(k) != b'-' || k >= self.n {
+        if self.at(k) != b'-' || k >= self.b.len() {
             return None;
         }
         let opens = |s: &Self, i: usize| s.word_at(i) || s.at(i) == b'$';
@@ -2392,21 +2390,22 @@ impl Scan<'_, '_, '_> {
             return None;
         }
         let k = self.ws_or_bol(p)?;
-        if k >= self.n {
+        if k >= self.b.len() {
             return None;
         }
-        let ends =
-            |s: &Self, i: usize| i >= s.n || ws(s.at(i)) || matches!(s.at(i), b';' | b'`' | b')');
+        let ends = |s: &Self, i: usize| {
+            i >= s.b.len() || ws(s.at(i)) || matches!(s.at(i), b';' | b'`' | b')')
+        };
         let run = |s: &Self, from: usize, set: &[u8]| {
             let mut e = from;
-            while e < s.n && set.contains(&s.b[e]) {
+            while e < s.b.len() && set.contains(&s.b[e]) {
                 e += 1;
             }
             e
         };
         if bi.prefix.contains(&self.b[k]) {
             let j = k + 1;
-            if j < self.n && bi.one.contains(&self.b[j]) && ends(self, j + 1) {
+            if j < self.b.len() && bi.one.contains(&self.b[j]) && ends(self, j + 1) {
                 let caps = [(k, j + 1, k::OPTION), (k, j, k::OPTION_MARK)];
                 return self.exec(p, j + 1, PLAIN, &caps, Op::None, 0);
             }
@@ -2461,7 +2460,9 @@ impl Scan<'_, '_, '_> {
         }
         match c {
             b'|' => self.none(p, p + 1, k::LOGICAL),
-            b'(' if p < self.n => self.push(p, p + 1, k::PARENS_BEGIN, &[CASE_PATTERNS_PAREN]),
+            b'(' if p < self.b.len() => {
+                self.push(p, p + 1, k::PARENS_BEGIN, &[CASE_PATTERNS_PAREN])
+            }
             _ => None,
         }
     }
@@ -2472,7 +2473,7 @@ impl Scan<'_, '_, '_> {
     fn redirection(&mut self, p: usize) -> Option<usize> {
         let d = self.digits_end(p);
         let c = self.at(d);
-        if !matches!(c, b'<' | b'>' | b'&') || d >= self.n {
+        if !matches!(c, b'<' | b'>' | b'&') || d >= self.b.len() {
             return None;
         }
         let fd = (p, d, k::FD);
@@ -2546,10 +2547,10 @@ impl Scan<'_, '_, '_> {
             // `'…'` and `"…"`
             for quote in *b"'\"" {
                 if self.at(j) == quote
-                    && j < self.n
+                    && j < self.b.len()
                     && let Some(e) = self.identifier(j + 1)
                     && self.at(e) == quote
-                    && e < self.n
+                    && e < self.b.len()
                 {
                     let caps = [
                         fd,
@@ -2571,7 +2572,7 @@ impl Scan<'_, '_, '_> {
             }
             // `\WORD`
             if self.at(j) == b'\\'
-                && j < self.n
+                && j < self.b.len()
                 && let Some(e) = self.identifier(j + 1)
             {
                 let caps = [
@@ -2590,7 +2591,7 @@ impl Scan<'_, '_, '_> {
                     arg,
                 );
             }
-            if j < self.n
+            if j < self.b.len()
                 && let Some(e) = self.identifier(j)
             {
                 let caps = [fd, op, (j, e, k::HEREDOC_TOKEN)];
@@ -2605,9 +2606,13 @@ impl Scan<'_, '_, '_> {
     /// when `tabs`.
     fn heredoc_end(&mut self, tabs: bool) -> Option<usize> {
         let arg = self.top().arg;
-        let i = if tabs { self.ws_end(0).min(self.n) } else { 0 };
+        let i = if tabs {
+            self.ws_end(0).min(self.b.len())
+        } else {
+            0
+        };
         // the identifier the line starts with: the word, if the line ends the here-document
-        let e = if i < self.n {
+        let e = if i < self.b.len() {
             self.identifier(i)?
         } else {
             return None;
@@ -2615,17 +2620,17 @@ impl Scan<'_, '_, '_> {
         if hash(&self.b[i..e]) != arg {
             return None;
         }
-        if e < self.n && self.b[e..].iter().all(|&c| ws(c)) {
+        if e < self.b.len() && self.b[e..].iter().all(|&c| ws(c)) {
             return self.exec(
                 0,
-                self.n + 1,
+                self.b.len() + 1,
                 PLAIN,
-                &[(e, self.n, k::HEREDOC_SPACES)],
+                &[(e, self.b.len(), k::HEREDOC_SPACES)],
                 Op::Pop,
                 0,
             );
         }
-        if e == self.n {
+        if e == self.b.len() {
             return self.exec(0, e, PLAIN, &[(i, e, k::HEREDOC_TOKEN)], Op::Pop, 0);
         }
         None
@@ -2760,7 +2765,7 @@ impl Scan<'_, '_, '_> {
             let caps = [mark, (p + 1, p + 2, k::LANG_VAR)];
             return self.exec(p, p + 2, PLAIN, &caps, Op::None, 0);
         }
-        if p + 1 < self.n
+        if p + 1 < self.b.len()
             && let Some(e) = self.identifier(p + 1)
         {
             let caps = [mark, (p + 1, e, k::READWRITE)];
@@ -2828,7 +2833,7 @@ impl Scan<'_, '_, '_> {
         }
         let c = self.at(p);
         let d = self.at(p + 1);
-        if p >= self.n {
+        if p >= self.b.len() {
             return None;
         }
         // `(?=[@*]?/)`
@@ -2914,27 +2919,27 @@ impl Scan<'_, '_, '_> {
 
     /// `string-quoted-double-escape-character`: `\\[$`"\\]`, and `\\\n`.
     fn dq_escape(&mut self, p: usize) -> Option<usize> {
-        if self.at(p) != b'\\' || p >= self.n {
+        if self.at(p) != b'\\' || p >= self.b.len() {
             return None;
         }
         if matches!(self.at(p + 1), b'$' | b'`' | b'"' | b'\\') {
             return self.none(p, p + 2, k::ESCAPE);
         }
-        if p + 1 == self.n {
-            return self.push(p, self.n + 1, k::ESCAPE, &[ESCAPED_NEWLINE]);
+        if p + 1 == self.b.len() {
+            return self.push(p, self.b.len() + 1, k::ESCAPE, &[ESCAPED_NEWLINE]);
         }
         None
     }
 
     /// `\\([abfnrtv'"?]|[0-8]{1,3}|x\h{1,8}|c[a-z])`
     fn ansi_escape(&mut self, p: usize) -> Option<usize> {
-        if self.at(p) != b'\\' || p >= self.n {
+        if self.at(p) != b'\\' || p >= self.b.len() {
             return None;
         }
         let j = p + 1;
         let run = |s: &Self, from: usize, max: usize, f: fn(u8) -> bool| {
             let mut e = from;
-            while e < from + max && e < s.n && f(s.b[e]) {
+            while e < from + max && e < s.b.len() && f(s.b[e]) {
                 e += 1;
             }
             e
@@ -2971,7 +2976,7 @@ impl Scan<'_, '_, '_> {
             let e = self.digits_end(p);
             if self.at(e) == b'#' {
                 let mut f = e + 1;
-                while f < self.n
+                while f < self.b.len()
                     && (self.b[f].is_ascii_alphanumeric() || matches!(self.b[f], b'@' | b'_'))
                 {
                     f += 1;
@@ -2989,7 +2994,7 @@ impl Scan<'_, '_, '_> {
             }
             return self.none(p, e, k::DECIMAL);
         }
-        if p >= self.n {
+        if p >= self.b.len() {
             return None;
         }
         let e2 = self.at(p + 2);
@@ -3061,14 +3066,17 @@ impl Scan<'_, '_, '_> {
         if let Some(e) = self.eas(p) {
             return Some(e);
         }
-        if p >= self.n {
+        if p >= self.b.len() {
             return None;
         }
         let c = self.b[p];
         let d = self.at(p + 1);
         if c == b'-' {
             // `((-)[aobcdefghknoprstuvwxzGLNORS])(?=\s)`
-            if b"aobcdefghknoprstuvwxzGLNORS".contains(&d) && ws(self.at(p + 2)) && p + 1 < self.n {
+            if b"aobcdefghknoprstuvwxzGLNORS".contains(&d)
+                && ws(self.at(p + 2))
+                && p + 1 < self.b.len()
+            {
                 let caps = [(p, p + 2, k::OPTION), (p, p + 1, k::OPTION_MARK)];
                 return self.exec(p, p + 2, PLAIN, &caps, Op::None, 0);
             }
@@ -3106,7 +3114,7 @@ impl Scan<'_, '_, '_> {
 
     /// `[+\-?]?=` at `i`: where it ends.
     fn varassign_at(&self, i: usize) -> Option<usize> {
-        if i >= self.n {
+        if i >= self.b.len() {
             return None;
         }
         match self.b[i] {

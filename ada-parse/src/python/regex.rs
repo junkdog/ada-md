@@ -8,21 +8,21 @@ impl Scan<'_, '_> {
     pub(super) fn regex(&mut self, p: usize, c: u8) -> Option<usize> {
         match c {
             RE_COMMENT => {
-                if self.is(p, b')') && p < self.n {
+                if self.is(p, b')') && p < self.b.len() {
                     let k = self.k(L::ReCommentEnd);
                     return self.close(p, p + 1, k);
                 }
                 None
             }
             RE_SET => {
-                if self.is(p, b']') && p < self.n {
+                if self.is(p, b']') && p < self.b.len() {
                     let k = self.k(L::ReSetEnd);
                     return self.close(p, p + 1, k);
                 }
                 self.re_class(p).or_else(|| self.re_range(p))
             }
             _ => {
-                if c == RE_GROUP && self.is(p, b')') && p < self.n {
+                if c == RE_GROUP && self.is(p, b')') && p < self.b.len() {
                     let k = self.k(L::ReGroupEnd);
                     return self.close(p, p + 1, k);
                 }
@@ -34,7 +34,7 @@ impl Scan<'_, '_> {
     /// The regex's `main`.
     fn re_main(&mut self, p: usize) -> Option<usize> {
         let b: &[u8] = self.b;
-        let n = self.n;
+        let n = self.b.len();
         let c = self.ch(p).filter(|_| p < n)?;
         let at = |q: usize| b.get(q).copied().filter(|_| q < n);
         match c {
@@ -102,7 +102,7 @@ impl Scan<'_, '_> {
     /// The patterns of `main` that start with `(`.
     fn re_group(&mut self, p: usize) -> Option<usize> {
         let b: &[u8] = self.b;
-        let n = self.n;
+        let n = self.b.len();
         let at = |q: usize| b.get(q).copied().filter(|_| q < n);
         if at(p + 1) == Some(b'?') {
             match at(p + 2) {
@@ -197,13 +197,13 @@ impl Scan<'_, '_> {
 
     /// `character-class`.
     fn re_class(&mut self, p: usize) -> Option<usize> {
-        let c = self.ch(p).filter(|_| p < self.n)?;
+        let c = self.ch(p).filter(|_| p < self.b.len())?;
         match c {
             b'\\' => {
                 if matches!(
                     self.ch(p + 1),
                     Some(b'w' | b'W' | b's' | b'S' | b'd' | b'D' | b'h' | b'H')
-                ) && p + 1 < self.n
+                ) && p + 1 < self.b.len()
                 {
                     return self.tok(p, p + 2, L::ReClass);
                 }
@@ -213,7 +213,7 @@ impl Scan<'_, '_> {
             b'.' => self.tok(p, p + 1, L::ReClass),
             b'[' => {
                 let w = self.base_of(RE_SET);
-                if self.is(p + 1, b'^') && p + 1 < self.n {
+                if self.is(p + 1, b'^') && p + 1 < self.b.len() {
                     self.put(p, p + 1, w | L::ReSetBegin as u16);
                     return self.tok_push(p + 1, p + 2, w | L::ReNegation as u16, &[RE_SET]);
                 }
@@ -234,7 +234,7 @@ impl Scan<'_, '_> {
             self.any(q).map(|e| (e, false))
         };
         let (d, esc1) = first(p)?;
-        if !self.is(d, b'-') || d >= self.n {
+        if !self.is(d, b'-') || d >= self.b.len() {
             return None;
         }
         let s = d + 1;

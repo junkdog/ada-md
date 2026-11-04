@@ -314,7 +314,6 @@ const KEPT: usize = 2 * HALF;
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     let mut s = Scan {
         b,
-        n: b.len(),
         out,
         stack: [MAIN; MAX],
         depth: 1,
@@ -394,7 +393,6 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
 
 struct Scan<'b, 'o, 's> {
     b: &'b [u8],
-    n: usize,
     out: &'o mut Out<'s>,
     stack: [u8; MAX],
     depth: usize,
@@ -657,7 +655,7 @@ impl Scan<'_, '_, '_> {
 
     /// Fill the top context's text up to `to`.
     fn fill(&mut self, to: usize) {
-        let to = to.min(self.n);
+        let to = to.min(self.b.len());
         if to > self.at {
             let t = self.text();
             if t != PLAIN {
@@ -670,7 +668,7 @@ impl Scan<'_, '_, '_> {
     /// Bytes `s..e` are `kind`, after the text before them.
     fn tok(&mut self, s: usize, e: usize, kind: u16) {
         self.fill(s);
-        let e = e.min(self.n);
+        let e = e.min(self.b.len());
         if e > self.at {
             self.out.push_merged(self.at, e, kind);
             self.at = e;
@@ -679,7 +677,7 @@ impl Scan<'_, '_, '_> {
 
     /// Where the `\s` run at `i` ends.
     fn spaces(&self, mut i: usize) -> usize {
-        while i < self.n {
+        while i < self.b.len() {
             let c = self.b[i];
             if c < 0x80 {
                 if !crate::is_space(c) {
@@ -699,11 +697,11 @@ impl Scan<'_, '_, '_> {
 
     /// The next character's place after `i`.
     fn next(&self, i: usize) -> usize {
-        if i >= self.n {
+        if i >= self.b.len() {
             return i + 1;
         }
         let mut j = i + 1;
-        while j < self.n && self.b[j] & 0xc0 == 0x80 {
+        while j < self.b.len() && self.b[j] & 0xc0 == 0x80 {
             j += 1;
         }
         j
@@ -716,12 +714,12 @@ impl Scan<'_, '_, '_> {
 
     /// Whether a word character is at `i` (not the line's `\n`).
     fn word_at(&self, i: usize) -> bool {
-        i < self.n && is_word(char_at(self.b, i).0)
+        i < self.b.len() && is_word(char_at(self.b, i).0)
     }
 
     /// Where a tag's name that starts at `i` ends: `{{tag_name_char}}*`.
     fn name_end(&self, mut i: usize) -> usize {
-        while i < self.n && !name_break(self.b[i]) {
+        while i < self.b.len() && !name_break(self.b[i]) {
             i += 1;
         }
         i
@@ -755,7 +753,7 @@ impl Scan<'_, '_, '_> {
 
     /// The first place from `i` where `(?i)(?=(?:-->\s*)?</TAG)` matches.
     fn find_close(&self, mut i: usize, tag: &[u8]) -> Option<usize> {
-        while i < self.n {
+        while i < self.b.len() {
             let c = self.b[i];
             if (c == b'<' || c == b'-') && self.close_at(i, tag) {
                 return Some(i);
@@ -768,7 +766,7 @@ impl Scan<'_, '_, '_> {
     /// A character reference at `i` in `wrap` ([`E_NONE`] and the like): its tokens, and where it
     /// ends.
     fn entity(&mut self, i: usize, wrap: u16) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let run = |mut j: usize, f: fn(&u8) -> bool| {
             while j < n && f(&b[j]) {
                 j += 1;
@@ -852,7 +850,7 @@ impl Scan<'_, '_, '_> {
                         if guard > 4 * MAX as u32 {
                             // a push and a pop at one place forever: step a character
                             guard = 0;
-                            if p >= self.n {
+                            if p >= self.b.len() {
                                 break;
                             }
                             p = self.next(p);
@@ -867,14 +865,14 @@ impl Scan<'_, '_, '_> {
             }
         }
         if self.emb.is_none() {
-            self.fill(self.n);
+            self.fill(self.b.len());
         }
     }
 
     /// `main`, and `script-html`'s body (`main` after a comment and `script-close-tag`).
     fn main(&mut self, mut p: usize) -> Option<usize> {
         let shb = self.top() == SCRIPT_HTML_BODY;
-        while p < self.n {
+        while p < self.b.len() {
             match self.b[p] {
                 b'<' => {
                     if let Some(q) = self.main_lt(p, shb) {
@@ -990,7 +988,7 @@ impl Scan<'_, '_, '_> {
 
     /// A comment's body: `(<!-)?(--\s*>)`, a pop, and `<!--(?!-?>)|--!>`.
     fn comment(&mut self, mut p: usize) -> Option<usize> {
-        while p < self.n {
+        while p < self.b.len() {
             match self.b[p] {
                 b'<' => {
                     if self.is(p, b"<!-")
@@ -1036,7 +1034,7 @@ impl Scan<'_, '_, '_> {
     }
 
     fn cdata(&mut self, mut p: usize) -> Option<usize> {
-        while p < self.n {
+        while p < self.b.len() {
             if self.b[p] == b']' && self.is(p, b"]]>") {
                 self.tok(p, p + 3, TAG_END);
                 self.pop();
@@ -1048,7 +1046,7 @@ impl Scan<'_, '_, '_> {
     }
 
     fn dt_meta(&mut self, mut p: usize) -> Option<usize> {
-        while p < self.n {
+        while p < self.b.len() {
             if self.b[p] == b'>' {
                 self.tok(p, p + 1, TAG_END);
                 self.pop();
@@ -1114,7 +1112,7 @@ impl Scan<'_, '_, '_> {
     }
 
     fn dt_subset(&mut self, mut p: usize) -> Option<usize> {
-        while p < self.n {
+        while p < self.b.len() {
             match self.b[p] {
                 b']' => {
                     self.tok(p, p + 1, BRACKETS_END);
@@ -1131,7 +1129,7 @@ impl Scan<'_, '_, '_> {
 
     /// `<?xml`'s body: `?>`, then a generic attribute (which takes a string's quote first).
     fn pi(&mut self, mut p: usize) -> Option<usize> {
-        while p < self.n {
+        while p < self.b.len() {
             let c = self.b[p];
             if c == b'?' && self.c(p + 1) == Some(b'>') {
                 self.tok(p, p + 2, TAG_END);
@@ -1162,7 +1160,7 @@ impl Scan<'_, '_, '_> {
         } else {
             (b'\'', SS_END, E_SS)
         };
-        while p < self.n {
+        while p < self.b.len() {
             let c = self.b[p];
             if c == quote {
                 self.tok(p, p + 1, end);
@@ -1187,7 +1185,7 @@ impl Scan<'_, '_, '_> {
             ctx,
             STYLE_TAG | STYLE_OTHER | SCRIPT_TAG | SCRIPT_HTML | SCRIPT_OTHER
         );
-        while p < self.n {
+        while p < self.b.len() {
             let c = self.b[p];
             if typed
                 && matches!(c, b't' | b'T')
@@ -1237,7 +1235,7 @@ impl Scan<'_, '_, '_> {
                 b's' if self.is(p, b"style") => Some((5, ATTR_STYLE, EQ_STYLE)),
                 b'o' if self.is(p, b"on") => {
                     let mut e = p + 2;
-                    while e < self.n && self.b[e].is_ascii_lowercase() {
+                    while e < self.b.len() && self.b[e].is_ascii_lowercase() {
                         e += 1;
                     }
                     let name = &self.b[p + 2..e];
@@ -1261,7 +1259,7 @@ impl Scan<'_, '_, '_> {
 
     /// `tag-custom-name`: its characters, others invalid, to the name's end.
     fn custom_name(&mut self, mut p: usize) -> Option<usize> {
-        while p < self.n {
+        while p < self.b.len() {
             if name_break(self.b[p]) {
                 break;
             }
@@ -1287,7 +1285,7 @@ impl Scan<'_, '_, '_> {
 
     /// An attribute's name: `["'`<]` invalid, to `[\t\n\f =/>]`.
     fn attr_name(&mut self, mut p: usize) -> Option<usize> {
-        while p < self.n {
+        while p < self.b.len() {
             match self.b[p] {
                 c if attr_break(c) => break,
                 b'"' | b'\'' | b'`' | b'<' => {
@@ -1323,7 +1321,7 @@ impl Scan<'_, '_, '_> {
 
     /// An attribute's value: a quote, an unquoted value, or a pop.
     fn value(&mut self, mut p: usize) -> Option<usize> {
-        while p < self.n {
+        while p < self.b.len() {
             match self.b[p] {
                 b'"' => {
                     self.tok(p, p + 1, SD_BEGIN);
@@ -1353,7 +1351,7 @@ impl Scan<'_, '_, '_> {
 
     /// An unquoted value: to `[\t\n\f ]` or `/?>`, `["'`<]` invalid, character references.
     fn unquoted(&mut self, mut p: usize) -> Option<usize> {
-        while p < self.n {
+        while p < self.b.len() {
             match self.b[p] {
                 b' ' | b'\t' | b'\x0c' | b'>' => break,
                 b'/' if self.c(p + 1) == Some(b'>') => break,
@@ -1466,7 +1464,7 @@ impl Scan<'_, '_, '_> {
     }
 
     fn style_other_body(&mut self, mut p: usize) -> Option<usize> {
-        while p < self.n {
+        while p < self.b.len() {
             if self.b[p] == b'<' && self.is_ic(p, b"</style>") {
                 self.style_close(p);
                 return Some(p + 8);
@@ -1500,7 +1498,7 @@ impl Scan<'_, '_, '_> {
     }
 
     fn script_other_body(&mut self, mut p: usize) -> Option<usize> {
-        while p < self.n {
+        while p < self.b.len() {
             let c = self.b[p];
             if c == b'<' && self.is(p, b"<!--") {
                 self.tok(p, p + 4, COMMENT_BEGIN);
@@ -1519,7 +1517,7 @@ impl Scan<'_, '_, '_> {
 
     /// `script-close-tag`'s set: `-->`, then `</script` sets the closing tag's context.
     fn script_close(&mut self, mut p: usize) -> Option<usize> {
-        while p < self.n {
+        while p < self.b.len() {
             if self.is(p, b"-->") {
                 self.tok(p, p + 3, COMMENT_END);
                 return Some(p + 3);
@@ -1542,7 +1540,7 @@ impl Scan<'_, '_, '_> {
         match emb {
             Emb::StyleTag => self.find_close(from, b"style"),
             Emb::ScriptTag => self.find_close(from, b"script"),
-            Emb::StyleAttr | Emb::EventAttr => self.b[from.min(self.n)..]
+            Emb::StyleAttr | Emb::EventAttr => self.b[from.min(self.b.len())..]
                 .iter()
                 .position(|&c| c == quote)
                 .map(|i| from + i),
@@ -1553,7 +1551,7 @@ impl Scan<'_, '_, '_> {
     /// state `st` there (`None` for a fresh one): its spans to its escape, where HTML goes on
     /// (after an attribute's closing quote); `None` when the line ends inside it.
     fn embed(&mut self, emb: Emb, quote: u8, from: usize, st: Option<State>) -> Option<usize> {
-        let n = self.n;
+        let n = self.b.len();
         let first = self.escape(emb, quote, from);
         self.fill(from);
         // a fresh `style="…"` is CSS's `rule-list-body`
@@ -1626,7 +1624,7 @@ impl Scan<'_, '_, '_> {
         end: usize,
         window: usize,
     ) -> Mark {
-        let n = self.n;
+        let n = self.b.len();
         let bit = if emb.css() { CSS_KIND } else { JS_KIND };
         let mut escape = first;
         let mut i = k;

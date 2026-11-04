@@ -699,7 +699,6 @@ const STUCK: usize = 48;
 pub fn line(b: &[u8], tsx: bool, state: &mut State, out: &mut Out) {
     let mut s = Scan {
         b,
-        n: b.len(),
         i: 0,
         stack: [MAIN; MAX],
         depth: 1,
@@ -827,7 +826,6 @@ fn unpack(stack: &mut [u8; MAX], n: usize) -> usize {
 
 struct Scan<'a, 'o, 'p> {
     b: &'a [u8],
-    n: usize,
     /// The place the scan has reached; `n` is the line's `\n`.
     i: usize,
     stack: [u8; MAX],
@@ -872,14 +870,14 @@ impl Scan<'_, '_, '_> {
     fn run(&mut self) {
         // where the last turn failed at a space or tab in code, `usize::MAX` if the last one didn't
         let mut failed = usize::MAX;
-        while self.i <= self.n {
+        while self.i <= self.b.len() {
             let i0 = self.i;
             let top = self.stack[self.depth - 1];
             let q = quiet(top);
             if q != 0 {
                 // the turns that can't match in these frames ([`quiet`]): at the line's end, and
                 // at blanks before anything but the bytes their blank-led patterns look for
-                if self.i == self.n {
+                if self.i == self.b.len() {
                     if q & Q_END != 0 {
                         break;
                     }
@@ -891,7 +889,7 @@ impl Scan<'_, '_, '_> {
                     if !(matches!(d, b'<' | b'/' | b'(' | b'[' | b'{' | b':' | b'?' | b'!')
                         || (d == b'a' && self.has(k, b"async")))
                     {
-                        self.i = k.min(self.n);
+                        self.i = k.min(self.b.len());
                         self.stuck = 0;
                         self.zero.0 = usize::MAX;
                         failed = usize::MAX;
@@ -901,7 +899,7 @@ impl Scan<'_, '_, '_> {
             }
             if self.step(top) {
                 failed = usize::MAX;
-            } else if self.i < self.n
+            } else if self.i < self.b.len()
                 && matches!(self.b[self.i], b' ' | b'\t')
                 && family(top) == Family::Code
             {
@@ -918,7 +916,7 @@ impl Scan<'_, '_, '_> {
                 failed = i;
             } else {
                 failed = usize::MAX;
-                self.i += if self.i < self.n {
+                self.i += if self.i < self.b.len() {
                     char_len(self.b[self.i])
                 } else {
                     1
@@ -927,7 +925,7 @@ impl Scan<'_, '_, '_> {
             if self.i == i0 {
                 self.stuck += 1;
                 if self.stuck > STUCK {
-                    self.i += if self.i < self.n {
+                    self.i += if self.i < self.b.len() {
                         char_len(self.b[self.i])
                     } else {
                         1
@@ -939,7 +937,7 @@ impl Scan<'_, '_, '_> {
                 self.zero.0 = usize::MAX;
             }
         }
-        self.fill(self.n);
+        self.fill(self.b.len());
     }
 
     /// Byte `i`, the line's `\n` at its end, 0 past it.
@@ -955,7 +953,7 @@ impl Scan<'_, '_, '_> {
 
     /// The bytes up to `to` that no token has covered, as the frames open make them.
     fn fill(&mut self, to: usize) {
-        let to = to.min(self.n);
+        let to = to.min(self.b.len());
         if to > self.done {
             let k = self.text | self.wrap;
             if k != PLAIN {
@@ -967,7 +965,7 @@ impl Scan<'_, '_, '_> {
 
     /// Bytes `s..e` are `kind`.
     fn tok(&mut self, s: usize, e: usize, kind: u16) {
-        let e = e.min(self.n);
+        let e = e.min(self.b.len());
         if e <= s {
             return;
         }
@@ -1050,14 +1048,14 @@ impl Scan<'_, '_, '_> {
     /// The line from `i`, empty past its end.
     #[inline]
     fn rest(&self, i: usize) -> &[u8] {
-        &self.b[i.min(self.n)..]
+        &self.b[i.min(self.b.len())..]
     }
 
     /// Whether the line has `w` at `i`: `rest(i).starts_with(w)`, compared as
     /// [`crate::same`] does, without a call to `memcmp`.
     #[inline(always)]
     fn has(&self, i: usize, w: &[u8]) -> bool {
-        crate::has_at(self.b, i.min(self.n), w)
+        crate::has_at(self.b, i.min(self.b.len()), w)
     }
 
     /// Past blanks (`\s`, the line's `\n` too) from `i`.
@@ -1070,7 +1068,7 @@ impl Scan<'_, '_, '_> {
 
     /// Past spaces and tabs only.
     fn sp(&self, mut i: usize) -> usize {
-        while i < self.n && matches!(self.b[i], b' ' | b'\t') {
+        while i < self.b.len() && matches!(self.b[i], b' ' | b'\t') {
             i += 1;
         }
         i

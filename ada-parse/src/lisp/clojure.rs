@@ -193,7 +193,6 @@ fn escaped(b: &[u8], p: usize) -> bool {
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     let mut s = Scan {
         b,
-        n: b.len(),
         out,
         stack: [TOP; MAX],
         depth: 0,
@@ -208,7 +207,6 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
 
 struct Scan<'b, 'o, 's> {
     b: &'b [u8],
-    n: usize,
     out: &'o mut Out<'s>,
     stack: [u8; MAX],
     depth: usize,
@@ -354,7 +352,7 @@ impl Scan<'_, '_, '_> {
 
     /// Whether `p` is a delimiter or the line's end (`(?=[\s,;…])`, the `\n` a space).
     fn at_delim(&self, p: usize) -> bool {
-        p >= self.n
+        p >= self.b.len()
             || DELIM[usize::from(self.b[p])]
             || (self.b[p] >= 0x80 && self.wide_space(p) > 0)
     }
@@ -374,7 +372,7 @@ impl Scan<'_, '_, '_> {
 
     /// `[^\s,;…]*` at `p`: where the run of non-delimiters ends.
     fn run_end(&self, mut p: usize) -> usize {
-        while p < self.n {
+        while p < self.b.len() {
             let c = self.b[p];
             if DELIM[usize::from(c)] || (c >= 0x80 && self.wide_space(p) > 0) {
                 break;
@@ -385,7 +383,7 @@ impl Scan<'_, '_, '_> {
     }
 
     fn skip_spaces(&self, mut p: usize) -> usize {
-        while p < self.n {
+        while p < self.b.len() {
             let c = self.b[p];
             if matches!(c, b' ' | b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r') {
                 p += 1;
@@ -402,7 +400,7 @@ impl Scan<'_, '_, '_> {
     }
 
     fn step(&self, p: usize) -> usize {
-        (p + super::char_len(self.b[p])).min(self.n)
+        (p + super::char_len(self.b[p])).min(self.b.len())
     }
 
     fn run(&mut self) {
@@ -415,7 +413,7 @@ impl Scan<'_, '_, '_> {
                 DISPATCH => self.dispatch(p),
                 _ => {
                     p = self.skip_spaces(p);
-                    if p >= self.n {
+                    if p >= self.b.len() {
                         return;
                     }
                     match top {
@@ -429,7 +427,7 @@ impl Scan<'_, '_, '_> {
                     }
                 }
             };
-            if p >= self.n && !(self.top() == DISPATCH && p == self.n) {
+            if p >= self.b.len() && !(self.top() == DISPATCH && p == self.b.len()) {
                 return;
             }
         }
@@ -478,17 +476,17 @@ impl Scan<'_, '_, '_> {
         match self.b[p] {
             b';' => {
                 let mut e = p + 1;
-                while self.at(e) == b';' && e < self.n {
+                while self.at(e) == b';' && e < self.b.len() {
                     e += 1;
                 }
                 self.put(p, e, L::CommentPunct);
-                self.put(e, self.n, L::Comment);
-                Some(self.n)
+                self.put(e, self.b.len(), L::Comment);
+                Some(self.b.len())
             }
-            b'#' if self.at(p + 1) == b'!' && p + 1 < self.n => {
+            b'#' if self.at(p + 1) == b'!' && p + 1 < self.b.len() => {
                 self.put(p, p + 2, L::CommentPunct);
-                self.put(p + 2, self.n, L::Comment);
-                Some(self.n)
+                self.put(p + 2, self.b.len(), L::Comment);
+                Some(self.b.len())
             }
             b',' => {
                 self.put(p, p + 1, L::Comma);
@@ -527,7 +525,7 @@ impl Scan<'_, '_, '_> {
                 self.open(MAP, once);
                 return Some(p + 1);
             }
-            b'#' if self.at(p + 1) == b'{' && p + 1 < self.n => {
+            b'#' if self.at(p + 1) == b'{' && p + 1 < self.b.len() => {
                 self.put(p, p + 2, L::BraceBegin);
                 self.open(MAP, once);
                 return Some(p + 2);
@@ -584,14 +582,14 @@ impl Scan<'_, '_, '_> {
     /// `\\\S[^\s,;…#']*` at `p`: where the character ends.
     fn character(&self, p: usize) -> Option<usize> {
         let q = p + 1;
-        if q >= self.n || self.skip_spaces(q) > q {
+        if q >= self.b.len() || self.skip_spaces(q) > q {
             return None;
         }
         let mut e = q + super::char_len(self.b[q]);
-        while e < self.n && !self.at_delim(e) && !matches!(self.b[e], b'#' | b'\'') {
+        while e < self.b.len() && !self.at_delim(e) && !matches!(self.b[e], b'#' | b'\'') {
             e += 1;
         }
-        Some(e.min(self.n))
+        Some(e.min(self.b.len()))
     }
 
     /// `(?:nil|true|false)(?=[\s,;…])` at `p`.
@@ -608,8 +606,8 @@ impl Scan<'_, '_, '_> {
 
     /// `(:):?[^:\s,;…][^\s,;…]*` at `p`: where the keyword ends.
     fn keyword(&self, p: usize) -> Option<usize> {
-        let q = p + 1 + usize::from(self.at(p + 1) == b':' && p + 1 < self.n);
-        if q >= self.n || self.b[q] == b':' || self.at_delim(q) {
+        let q = p + 1 + usize::from(self.at(p + 1) == b':' && p + 1 < self.b.len());
+        if q >= self.b.len() || self.b[q] == b':' || self.at_delim(q) {
             return None;
         }
         Some(self.run_end(q))
@@ -634,7 +632,7 @@ impl Scan<'_, '_, '_> {
         let q = p + usize::from(matches!(b[p], b'+' | b'-'));
         super::digit(b, q)?;
         let d = super::digits(b, q);
-        let n_after = |s: &Self, i: usize| i + usize::from(s.at(i) == b'N' && i < s.n);
+        let n_after = |s: &Self, i: usize| i + usize::from(s.at(i) == b'N' && i < s.b.len());
         // `[-+]?0\d+N?`, deprecated
         if b[q] == b'0' && d > q + 1 {
             let e = n_after(self, d);
@@ -659,9 +657,9 @@ impl Scan<'_, '_, '_> {
             return Some(e);
         }
         // `([-+]?)(0[Xx])\h+(N?)`
-        if b[q] == b'0' && d == q + 1 && matches!(self.at(d), b'x' | b'X') && d < self.n {
+        if b[q] == b'0' && d == q + 1 && matches!(self.at(d), b'x' | b'X') && d < self.b.len() {
             let mut h = d + 1;
-            while h < self.n && b[h].is_ascii_hexdigit() {
+            while h < self.b.len() && b[h].is_ascii_hexdigit() {
                 h += 1;
             }
             let e = n_after(self, h);
@@ -677,12 +675,12 @@ impl Scan<'_, '_, '_> {
         }
         // `([-+]?)((?:[2-9]|[1-9]\d+)[Rr])[0-9A-Za-z]+`
         if matches!(self.at(d), b'r' | b'R')
-            && d < self.n
+            && d < self.b.len()
             && (b'1'..=b'9').contains(&b[q])
             && (d > q + 1 || b[q] >= b'2')
         {
             let mut v = d + 1;
-            while v < self.n && b[v].is_ascii_alphanumeric() {
+            while v < self.b.len() && b[v].is_ascii_alphanumeric() {
                 v += 1;
             }
             if v > d + 1 && self.at_number_end(v) {
@@ -693,7 +691,7 @@ impl Scan<'_, '_, '_> {
             }
         }
         // `([-+]?)\d+(/)\d+`
-        if self.at(d) == b'/' && d < self.n && super::digit(b, d + 1).is_some() {
+        if self.at(d) == b'/' && d < self.b.len() && super::digit(b, d + 1).is_some() {
             let r = super::digits(b, d + 1);
             if self.at_number_end(r) {
                 sign(self, L::RationalSign);
@@ -705,14 +703,15 @@ impl Scan<'_, '_, '_> {
         }
         // `([-+]?)\d+(?:(?:(\.)\d+(?:[eE][-+]?\d+)?|(?:[eE][-+]?\d+))(M)?|(M))`
         let exponent = |s: &Self, i: usize| -> Option<usize> {
-            if !matches!(s.at(i), b'e' | b'E') || i >= s.n {
+            if !matches!(s.at(i), b'e' | b'E') || i >= s.b.len() {
                 return None;
             }
             let j = i + 1 + usize::from(matches!(s.at(i + 1), b'+' | b'-'));
             super::digit(s.b, j)?;
             Some(super::digits(s.b, j))
         };
-        let (dot, f) = if self.at(d) == b'.' && d < self.n && super::digit(b, d + 1).is_some() {
+        let (dot, f) = if self.at(d) == b'.' && d < self.b.len() && super::digit(b, d + 1).is_some()
+        {
             let f = super::digits(b, d + 1);
             (true, exponent(self, f).unwrap_or(f))
         } else if let Some(f) = exponent(self, d) {
@@ -720,7 +719,7 @@ impl Scan<'_, '_, '_> {
         } else {
             (false, d)
         };
-        let m = f + usize::from(self.at(f) == b'M' && f < self.n);
+        let m = f + usize::from(self.at(f) == b'M' && f < self.b.len());
         if (f > d || m > f) && self.at_number_end(m) {
             sign(self, L::FloatSign);
             if dot {
@@ -821,7 +820,7 @@ impl Scan<'_, '_, '_> {
 
     /// `pop-dispatch-expr`, right after `#`, at `p`.
     fn dispatch(&mut self, p: usize) -> usize {
-        if p >= self.n || self.skip_spaces(p) > p {
+        if p >= self.b.len() || self.skip_spaces(p) > p {
             self.set(TAG);
             return p;
         }
@@ -884,7 +883,7 @@ impl Scan<'_, '_, '_> {
 
     /// A string's text from `p`: to its end or the line's.
     fn string(&mut self, p: usize) -> usize {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let mut from = p;
         let mut q = p;
         while q < n {
@@ -910,7 +909,7 @@ impl Scan<'_, '_, '_> {
 
     /// A regex literal from `p`: its `"`, else the regex to its next `"` or the line's end.
     fn regex(&mut self, p: usize) -> usize {
-        if p < self.n && self.b[p] == b'"' {
+        if p < self.b.len() && self.b[p] == b'"' {
             self.put(p, p + 1, L::RegexEnd);
             self.pop();
             return p + 1;
@@ -919,13 +918,13 @@ impl Scan<'_, '_, '_> {
         match regex::embedded(self.b, p, self.regex, &REGEX_EMBED, &mut at, self.out) {
             Some((q, st)) => {
                 self.regex = st;
-                q.min(self.n).max(if q > self.n {
-                    self.n
+                q.min(self.b.len()).max(if q > self.b.len() {
+                    self.b.len()
                 } else {
                     p + usize::from(q == p)
                 })
             }
-            None => self.n,
+            None => self.b.len(),
         }
     }
 }

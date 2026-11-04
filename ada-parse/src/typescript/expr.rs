@@ -130,7 +130,7 @@ impl Scan<'_, '_, '_> {
             b'=' if self.c(k + 1) == b'>' => {
                 // arrow-function's first: `name\s*(?==>)`
                 self.tok(i, e, PARAM);
-                self.i = k.min(self.n);
+                self.i = k.min(self.b.len());
                 Some(true)
             }
             b'=' if self.c(k + 1) != b'=' && look::fn_value(self.b, self.ws(k + 1), self.tsx) => {
@@ -567,7 +567,7 @@ impl Scan<'_, '_, '_> {
                     self.tok(a, a + 5, ASYNC);
                 }
                 self.tok(j, ne, PARAM);
-                self.i = k.min(self.n);
+                self.i = k.min(self.b.len());
                 return true;
             }
             if asy.is_none() {
@@ -600,7 +600,7 @@ impl Scan<'_, '_, '_> {
         if let Some(a) = asy {
             self.tok(a, a + 5, ASYNC);
         }
-        self.i = k.min(self.n);
+        self.i = k.min(self.b.len());
         if self.i == i {
             self.push_zero(ARROW_HEAD)
         } else {
@@ -645,8 +645,8 @@ impl Scan<'_, '_, '_> {
             } else {
                 Some(q)
             };
-            let a = t.is_some_and(|t| self.c(t) == b'(' && self.ws(t + 1) >= self.n);
-            a || (self.c(q) == b'<' && self.ws(q + 1) >= self.n)
+            let a = t.is_some_and(|t| self.c(t) == b'(' && self.ws(t + 1) >= self.b.len());
+            a || (self.c(q) == b'<' && self.ws(q + 1) >= self.b.len())
         };
         if !ok {
             return false;
@@ -655,7 +655,7 @@ impl Scan<'_, '_, '_> {
             self.tok(a, a + 5, ASYNC);
             self.i = a + 5;
         } else {
-            self.i = k.min(self.n);
+            self.i = k.min(self.b.len());
         }
         if self.i == i {
             self.push_zero(MAYBE_ARROW)
@@ -712,7 +712,7 @@ impl Scan<'_, '_, '_> {
                     || (i >= 2 && matches!(p, b'+' | b'-')))
         };
         let not_eq = !(self.c(k + 1) == b'=' || (self.c(k + 1) == b'<' && self.c(k + 2) == b'='));
-        if before && not_eq && self.ws(k + 1) < self.n {
+        if before && not_eq && self.ws(k + 1) < self.b.len() {
             self.tok(k, k + 1, ANGLE);
             self.i = k + 1;
             self.push(CAST);
@@ -802,7 +802,7 @@ impl Scan<'_, '_, '_> {
                     }
                     if let Some(e) = self.word_b(k, b"const") {
                         let m = self.ws(e);
-                        if m >= self.n
+                        if m >= self.b.len()
                             || matches!(self.c(m), b';' | b',' | b':' | b'}' | b')' | b']')
                         {
                             self.tok(i, w, AS);
@@ -810,7 +810,7 @@ impl Scan<'_, '_, '_> {
                         }
                     }
                     self.tok(i, w, AS);
-                    self.i = k.min(self.n);
+                    self.i = k.min(self.b.len());
                     self.push(AS_F);
                     true
                 }
@@ -995,7 +995,7 @@ impl Scan<'_, '_, '_> {
     pub(super) fn type_args_open_eol(&self, i: usize) -> bool {
         self.c(i) == b'<' && {
             let k = self.ws(i + 1);
-            matches!(self.c(k), b'{' | b'[' | b'(') && self.ws(k + 1) >= self.n
+            matches!(self.c(k), b'{' | b'[' | b'(') && self.ws(k + 1) >= self.b.len()
         }
     }
 
@@ -1152,7 +1152,7 @@ impl Scan<'_, '_, '_> {
     pub(super) fn array_literal(&mut self) -> bool {
         let i = self.i;
         let k = self.ws(i);
-        if self.c(k) != b'[' || k >= self.n {
+        if self.c(k) != b'[' || k >= self.b.len() {
             return false;
         }
         self.tok(k, k + 1, SQUARE);
@@ -1382,7 +1382,7 @@ impl Scan<'_, '_, '_> {
                 0 => return false,
                 b'/' => break,
                 b'\\' => {
-                    if j + 1 > self.n || self.c(j + 1) == b'\n' {
+                    if j + 1 > self.b.len() || self.c(j + 1) == b'\n' {
                         return false;
                     }
                     j += 2;
@@ -1816,7 +1816,7 @@ impl Scan<'_, '_, '_> {
                 if look::fn_value(self.b, self.ws(v), self.tsx) {
                     return self.take(i, ne, ENTITY_FN);
                 }
-                self.i = self.ws(ne).min(self.n);
+                self.i = self.ws(ne).min(self.b.len());
                 return true;
             }
         }
@@ -1830,11 +1830,11 @@ impl Scan<'_, '_, '_> {
             // name\s*(?=,|\}|$|\/\/|\/\*)
             let k = self.ws(ne);
             if matches!(self.c(k), b',' | b'}')
-                || k >= self.n
+                || k >= self.b.len()
                 || (self.c(k) == b'/' && matches!(self.c(k + 1), b'/' | b'*'))
             {
                 self.tok(i, ne, READWRITE);
-                self.i = k.min(self.n);
+                self.i = k.min(self.b.len());
                 return true;
             }
         }
@@ -1843,13 +1843,13 @@ impl Scan<'_, '_, '_> {
             if k > e {
                 if let Some(ce) = self.word_b(k, b"const") {
                     let m = self.ws(ce);
-                    if m >= self.n || matches!(self.c(m), b',' | b'}') {
+                    if m >= self.b.len() || matches!(self.c(m), b',' | b'}') {
                         self.tok(i, e, AS);
                         return self.take(k, ce, MODIFIER);
                     }
                 }
                 self.tok(i, e, AS);
-                self.i = k.min(self.n);
+                self.i = k.min(self.b.len());
                 self.push(OBJ_AS);
                 return true;
             }
@@ -1937,7 +1937,7 @@ impl Scan<'_, '_, '_> {
         if let Some(s) = star {
             self.tok(s, s + 1, ASTERISK);
         }
-        self.i = k.min(self.n);
+        self.i = k.min(self.b.len());
         if again {
             if k == i {
                 return self.method_name_here();
@@ -1999,7 +1999,7 @@ impl Scan<'_, '_, '_> {
                 return true;
             }
             // \s*(async)?\s*(?=\<\s*$)
-            if self.c(k) == b'<' && self.ws(k + 1) >= self.n {
+            if self.c(k) == b'<' && self.ws(k + 1) >= self.b.len() {
                 if let Some(a) = asy {
                     self.tok(a, a + 5, ASYNC);
                 }
@@ -2153,7 +2153,7 @@ impl Scan<'_, '_, '_> {
         let fun = look::fn_decl(self.b, after, self.tsx);
         let plain = {
             let k = self.ws(after);
-            matches!(self.c(k), b':' | b',') || after >= self.n
+            matches!(self.c(k), b':' | b',') || after >= self.b.len()
         };
         if !fun && !plain {
             return false;
@@ -2175,7 +2175,7 @@ impl Scan<'_, '_, '_> {
             self.tok(o, o + 1, OPTIONAL);
             self.i = o + 1;
         } else {
-            self.i = q.min(self.n);
+            self.i = q.min(self.b.len());
         }
         true
     }
@@ -2197,7 +2197,7 @@ impl Scan<'_, '_, '_> {
         if matches!(
             c,
             b';' | b')' | b',' | b'}' | b']' | b':' | b'?' | b'-' | b'+' | b'>'
-        ) || i >= self.n
+        ) || i >= self.b.len()
         {
             return true;
         }

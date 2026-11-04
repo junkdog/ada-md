@@ -91,14 +91,14 @@ impl Scan<'_, '_, '_> {
         let mut declare = None;
         if self.has(j, b"export") && self.boundary(j) {
             let k = self.ws(j + 6);
-            if k > j + 6 && k < self.n {
+            if k > j + 6 && k < self.b.len() {
                 export = Some(j + 6);
                 j = k;
             }
         }
         if self.has(j, b"declare") && self.boundary(j) {
             let k = self.ws(j + 7);
-            if k > j + 7 && k < self.n {
+            if k > j + 7 && k < self.b.len() {
                 declare = Some(j + 7);
                 j = k;
             }
@@ -220,7 +220,7 @@ impl Scan<'_, '_, '_> {
                 self.prefix_toks(i, export, declare, j);
                 self.tok(j, w, TYPE_KW);
                 self.tok(k, ne, TYPE_ALIAS);
-                self.i = self.ws(ne).min(self.n);
+                self.i = self.ws(ne).min(self.b.len());
                 self.push(TYPE_DECL);
                 return true;
             }
@@ -279,7 +279,7 @@ impl Scan<'_, '_, '_> {
                         }
                         self.tok(m, ne, ALIAS);
                         self.tok(q, q + 1, ASSIGN);
-                        self.i = r.min(self.n);
+                        self.i = r.min(self.b.len());
                         self.push(IMPORT_ALIAS);
                         return true;
                     }
@@ -456,7 +456,7 @@ impl Scan<'_, '_, '_> {
                 m = ne;
             }
         }
-        let end = self.ws(m).min(self.n);
+        let end = self.ws(m).min(self.b.len());
         Some([asy, k, star, name.0, name.1, end, fe])
     }
 
@@ -612,7 +612,7 @@ impl Scan<'_, '_, '_> {
     /// `(?<=^w|[^\._$[:alnum:]]w)` at `i` for one of `ws`.
     pub(super) fn word_ends_at(&self, i: usize, ws: &[&[u8]]) -> bool {
         // each word ends in a lowercase letter: most places have none before them
-        if i == 0 || i > self.n || !self.b[i - 1].is_ascii_lowercase() {
+        if i == 0 || i > self.b.len() || !self.b[i - 1].is_ascii_lowercase() {
             return false;
         }
         ws.iter().any(|w| {
@@ -652,7 +652,7 @@ impl Scan<'_, '_, '_> {
         }
         // (?<=:)\s*: after a `:` a frame above took (a ternary's), an expression
         if i > 0 && self.b[i - 1] == b':' {
-            self.i = self.ws(i).min(self.n);
+            self.i = self.ws(i).min(self.b.len());
             if self.i == i {
                 return self.push_zero(CLASS_COLON);
             }
@@ -736,7 +736,7 @@ impl Scan<'_, '_, '_> {
                     return false;
                 }
                 let r = self.ws(e);
-                r < self.n
+                r < self.b.len()
                     && !matches!(
                         self.c(r),
                         b'?' | b'(' | b'<' | b'!' | b'=' | b':' | b';' | b',' | b'}'
@@ -769,7 +769,7 @@ impl Scan<'_, '_, '_> {
                 if self.has(j, w) && self.boundary(j) {
                     let e = j + w.len();
                     let k = self.ws(e);
-                    if k > e && k < self.n + 1 {
+                    if k > e && k < self.b.len() + 1 {
                         out[n] = (j, e, *kind);
                         j = k;
                         break;
@@ -1013,7 +1013,7 @@ impl Scan<'_, '_, '_> {
         }
         matches!(self.c(r), b'=' | b':' | b';' | b',')
             || (brace && self.c(r) == b'}')
-            || r >= self.n
+            || r >= self.b.len()
     }
 
     /// A field's turn.
@@ -1022,7 +1022,7 @@ impl Scan<'_, '_, '_> {
         let c = self.c(i);
         // (?=\}|;|,|$|(^(?!\s*KEY…(=|:|;|,|$))))|(?<=\})
         if (matches!(c, b'}' | b';' | b',')
-            || i >= self.n
+            || i >= self.b.len()
             || (i == 0 && !self.field_ahead(0, false))
             || (i > 0 && self.b[i - 1] == b'}'))
             && self.pop_zero()
@@ -1087,13 +1087,13 @@ impl Scan<'_, '_, '_> {
         // (?=\s*\S)(?!\s*.*=>\s*$): something after it on the line, and not an arrow at its end
         let k = self.ws(i + 1);
         let tail_arrow = {
-            let mut e = self.n;
+            let mut e = self.b.len();
             while e > i + 1 && is_space(self.b[e - 1]) {
                 e -= 1;
             }
             e >= i + 3 && &self.b[e - 2..e] == b"=>"
         };
-        if k < self.n && !tail_arrow {
+        if k < self.b.len() && !tail_arrow {
             self.push(INIT);
         } else {
             self.push(INIT_EOL);
@@ -1103,7 +1103,7 @@ impl Scan<'_, '_, '_> {
 
     /// `(?=$|^|[,);}\]]|((?<![_$[:alnum:]])(?:(?<=\.\.\.)|(?<!\.))(of|in)\s+))` at `i`.
     pub(super) fn init_end(&self, i: usize) -> bool {
-        i >= self.n
+        i >= self.b.len()
             || i == 0
             || matches!(self.c(i), b',' | b')' | b';' | b'}' | b']')
             || self.of_in(i)
@@ -1127,7 +1127,7 @@ impl Scan<'_, '_, '_> {
             MAIN => {
                 if i == 0 && self.c(0) == b'#' && self.c(1) == b'!' && self.exact_first_line() {
                     self.tok(0, 2, SHEBANG_MARK);
-                    return self.take(2, self.n, SHEBANG);
+                    return self.take(2, self.b.len(), SHEBANG);
                 }
                 if i == 0 && self.directive() {
                     return true;
@@ -1195,7 +1195,7 @@ impl Scan<'_, '_, '_> {
                 // at a blank before a name, `object_member` can match only a method's key (the
                 // name, then `(`, `<` or `?`), or a key's method after a quote or `]`: otherwise
                 // the blanks are passed
-                if i < self.n && is_space(c) {
+                if i < self.b.len() && is_space(c) {
                     let k = self.ws(i);
                     if is_name_start(self.c(k))
                         && !matches!(self.c(self.ws(self.name(k))), b'(' | b'<' | b'?')
@@ -1215,7 +1215,7 @@ impl Scan<'_, '_, '_> {
                         if look::fn_value(self.b, self.ws(v), self.tsx) {
                             return self.take(i, e, ENTITY_FN);
                         }
-                        self.i = k.min(self.n);
+                        self.i = k.min(self.b.len());
                         return true;
                     }
                 }
@@ -1235,7 +1235,7 @@ impl Scan<'_, '_, '_> {
             }
             OBJ_ASSIGN => {
                 if (matches!(c, b',' | b'}')
-                    || i >= self.n
+                    || i >= self.b.len()
                     || (c == b'/' && matches!(self.c(i + 1), b'/' | b'*')))
                     && self.pop_zero()
                 {
@@ -1305,7 +1305,7 @@ impl Scan<'_, '_, '_> {
             }
             RETURN => {
                 if (matches!(c, b';' | b'}')
-                    || i >= self.n
+                    || i >= self.b.len()
                     || self.blank_at(i)
                     || self.decl_at_bol(i))
                     && self.pop_zero()
@@ -1322,7 +1322,7 @@ impl Scan<'_, '_, '_> {
                     && (matches!(c, b'=' | b';' | b'}')
                         || self.of_in(i)
                         || self.blank_at(i)
-                        || (i > 0 && !is_space(self.b[i - 1]) && self.ws(i) >= self.n))
+                        || (i > 0 && !is_space(self.b[i - 1]) && self.ws(i) >= self.b.len()))
                     && self.pop_zero()
                 {
                     return true;
@@ -1337,7 +1337,7 @@ impl Scan<'_, '_, '_> {
             }
             VAR_NAME => {
                 // (?=$|^|[;,=}]|«wb»(of|in)\s+)
-                if (i >= self.n
+                if (i >= self.b.len()
                     || i == 0
                     || matches!(c, b';' | b',' | b'=' | b'}')
                     || self.of_in(i))
@@ -1361,7 +1361,7 @@ impl Scan<'_, '_, '_> {
                     || (i > 0
                         && !is_space(self.b[i - 1])
                         && self.b[i - 1] != b'='
-                        && self.ws(i) >= self.n))
+                        && self.ws(i) >= self.b.len()))
                     && self.pop_zero()
                 {
                     return true;
@@ -1370,7 +1370,7 @@ impl Scan<'_, '_, '_> {
             }
             DESTRUCT | DESTRUCT_CONST | DESTRUCT_ARR | DESTRUCT_ARR_CONST => {
                 // (?=$|^|[;,=}]|of/in\s+)
-                if (i >= self.n
+                if (i >= self.b.len()
                     || i == 0
                     || matches!(c, b';' | b',' | b'=' | b'}')
                     || self.of_in(i))
@@ -1462,7 +1462,7 @@ impl Scan<'_, '_, '_> {
                         | b'|'
                         | b'{'
                         | b'?'
-                ) || i >= self.n
+                ) || i >= self.b.len()
                     || self.blank_at(i)
                     || self.decl_at_bol(i))
                     && self.pop_zero()
@@ -1555,7 +1555,7 @@ impl Scan<'_, '_, '_> {
                 let prev_ok = i > 0
                     && (self.b[i - 1] == b'}' || !is_space(self.b[i - 1]))
                     && !(i >= 2 && &self.b[i - 2..i] == b"=>");
-                let next_ok = i < self.n && c != b'{' && !is_space(c);
+                let next_ok = i < self.b.len() && c != b'{' && !is_space(c);
                 let not_comment = !(c == b'/' && matches!(self.c(i + 1), b'/' | b'*'));
                 if (prev_ok || next_ok) && not_comment && self.pop_zero() {
                     return true;
@@ -1646,15 +1646,15 @@ impl Scan<'_, '_, '_> {
                 }
                 // at the line's end only `(?<=:)\s*` can match: every other pattern needs a byte
                 // ahead, past blanks
-                if i == self.n && !(i > 0 && self.b[i - 1] == b':') {
+                if i == self.b.len() && !(i > 0 && self.b[i - 1] == b':') {
                     return false;
                 }
-                if i < self.n
+                if i < self.b.len()
                     && is_space(c)
                     && !(i > 0 && self.b[i - 1] == b':')
                     && self.class_blank_passes(i)
                 {
-                    self.i = self.ws(i).min(self.n);
+                    self.i = self.ws(i).min(self.b.len());
                     return true;
                 }
                 self.class_body()
@@ -1716,7 +1716,7 @@ impl Scan<'_, '_, '_> {
                 c == b',' && self.take(i, i + 1, COMMA)
             }
             ENUM_MEMBER_KEY | ENUM_MEMBER_F => {
-                if (matches!(c, b',' | b'}') || i >= self.n) && self.pop_zero() {
+                if (matches!(c, b',' | b'}') || i >= self.b.len()) && self.pop_zero() {
                     return true;
                 }
                 if self.comment(false) {
@@ -1751,7 +1751,7 @@ impl Scan<'_, '_, '_> {
             }
             IMPORT_F => {
                 // (?<!^import|[^\._$[:alnum:]]import)(?=;|$|^)
-                if (c == b';' || i >= self.n || i == 0)
+                if (c == b';' || i >= self.b.len() || i == 0)
                     && !self.word_ends_at(i, &[b"import"])
                     && self.pop_zero()
                 {
@@ -1787,7 +1787,7 @@ impl Scan<'_, '_, '_> {
                 self.import_export_clause()
             }
             EXPORT_F => {
-                if (i >= self.n || c == b';' || self.blank_at(i) || self.decl_at_bol(i))
+                if (i >= self.b.len() || c == b';' || self.blank_at(i) || self.decl_at_bol(i))
                     && self.pop_zero()
                 {
                     return true;
@@ -1795,7 +1795,7 @@ impl Scan<'_, '_, '_> {
                 self.import_export_declaration()
             }
             EXPORT_DEFAULT => {
-                if (i >= self.n || c == b';' || self.blank_at(i) || self.decl_at_bol(i))
+                if (i >= self.b.len() || c == b';' || self.blank_at(i) || self.decl_at_bol(i))
                     && self.pop_zero()
                 {
                     return true;
@@ -1811,7 +1811,7 @@ impl Scan<'_, '_, '_> {
                 self.comment(false) || self.string()
             }
             IMPORT_ALIAS => {
-                if (c == b';' || i >= self.n || i == 0) && self.pop_zero() {
+                if (c == b';' || i >= self.b.len() || i == 0) && self.pop_zero() {
                     return true;
                 }
                 if self.comment(true) {
@@ -1874,7 +1874,7 @@ impl Scan<'_, '_, '_> {
                 self.expression() || (c == b';' && self.take(i, i + 1, TERMINATOR))
             }
             IF => {
-                if (c == b';' || i >= self.n || c == b'}') && self.pop_zero() {
+                if (c == b';' || i >= self.b.len() || c == b'}') && self.pop_zero() {
                     return true;
                 }
                 if self.comment(false) {
@@ -2046,7 +2046,7 @@ impl Scan<'_, '_, '_> {
             any = true;
         }
         let m = self.ws(k);
-        if !any || !(self.c(m) == b'/' && self.c(m + 1) == b'>') || self.ws(m + 2) < self.n {
+        if !any || !(self.c(m) == b'/' && self.c(m + 1) == b'>') || self.ws(m + 2) < self.b.len() {
             return false;
         }
         self.tok(0, 3, DIRECTIVE_MARK);
@@ -2065,7 +2065,7 @@ impl Scan<'_, '_, '_> {
             FUNC => after_brace || self.decl_end(i),
             FUNC_EXPR => after_brace || c == b';',
             METHOD | OBJ_KEY_METHOD => {
-                after_brace || matches!(c, b'}' | b';' | b',') || (f == METHOD && i >= self.n)
+                after_brace || matches!(c, b'}' | b';' | b',') || (f == METHOD && i >= self.b.len())
             }
             _ => after_brace || matches!(c, b'}' | b';' | b','),
         };
@@ -2263,7 +2263,7 @@ impl Scan<'_, '_, '_> {
             self.tok(o, o + 1, OPTIONAL);
             self.i = o + 1;
         } else {
-            self.i = q.min(self.n);
+            self.i = q.min(self.b.len());
         }
         true
     }
@@ -2323,7 +2323,7 @@ impl Scan<'_, '_, '_> {
             // line's `\n` too, where it holds unless the keyword's own `\s*` took the `\n`
             let at_end = {
                 let e = self.ws(i);
-                e >= self.n
+                e >= self.b.len()
                     && (!self.word_ends_at(i, if cst { &[b"const"] } else { &[b"let", b"var"] })
                         || !self.var_kw_eol)
             };
@@ -2341,8 +2341,8 @@ impl Scan<'_, '_, '_> {
             let w = self.name(j);
             self.prefix_toks(i, export, declare, j);
             self.tok(j, w, STORAGE);
-            self.i = self.ws(w).min(self.n).max(w);
-            self.var_kw_eol = self.i >= self.n;
+            self.i = self.ws(w).min(self.b.len()).max(w);
+            self.var_kw_eol = self.i >= self.b.len();
             if self.var_kw_eol {
                 // `\s*` took the `\n`: its `(?=\S)` push holds the next lines' blanks
                 self.push(GAP);
@@ -2362,8 +2362,8 @@ impl Scan<'_, '_, '_> {
             let k = self.ws(i + 1);
             self.tok(i, i + 1, COMMA);
             self.i = i + 1;
-            if k >= self.n || (self.c(k) == b'/' && self.c(k + 1) == b'/') {
-                self.i = k.min(self.n);
+            if k >= self.b.len() || (self.c(k) == b'/' && self.c(k + 1) == b'/') {
+                self.i = k.min(self.b.len());
                 self.push(if cst { VAR_CONST_MORE } else { VAR_MORE });
             }
             return true;
@@ -2384,7 +2384,7 @@ impl Scan<'_, '_, '_> {
         if !matches!(self.c(k), b'{' | b'[') {
             return false;
         }
-        self.i = k.min(self.n);
+        self.i = k.min(self.b.len());
         let f = match (self.c(k) == b'[', cst) {
             (false, false) => DESTRUCT,
             (false, true) => DESTRUCT_CONST,

@@ -213,7 +213,6 @@ pub(crate) fn embedded(
     }
     let mut s = Scan {
         b,
-        n,
         out,
         from: p,
         host,
@@ -238,7 +237,6 @@ pub(crate) fn embedded(
 
 struct Scan<'b, 'o, 's, 'e> {
     b: &'b [u8],
-    n: usize,
     out: &'o mut Out<'s>,
     /// Where the scan took over from the host, whose patterns had their turn there.
     from: usize,
@@ -265,7 +263,7 @@ impl Scan<'_, '_, '_, '_> {
     }
 
     fn put(&mut self, s: usize, e: usize, kind: u16) -> usize {
-        let e = e.min(self.n);
+        let e = e.min(self.b.len());
         self.fill(s);
         if e > s {
             self.out.push(s, e, self.host.base + kind);
@@ -344,7 +342,7 @@ impl Scan<'_, '_, '_, '_> {
     /// end or template matches is theirs: none, so no token of the regex runs over it (`"\\"` is
     /// a lone `\` and the string's end, `"\\$"` an escaped `$`).
     fn unit(&self, p: usize) -> Option<Unit> {
-        let &c = self.b.get(p).filter(|_| p < self.n)?;
+        let &c = self.b.get(p).filter(|_| p < self.b.len())?;
         if self.host_stop(p) {
             return None;
         }
@@ -392,7 +390,7 @@ impl Scan<'_, '_, '_, '_> {
         };
         Some(Unit {
             c,
-            end: end.min(self.n),
+            end: end.min(self.b.len()),
             host: true,
         })
     }
@@ -407,7 +405,7 @@ impl Scan<'_, '_, '_, '_> {
         // a run of characters with no meaning to the regex or the host: text
         if !self.special(&MAIN_BYTES, p) {
             let mut q = p + 1;
-            while q < self.n && !self.special(&MAIN_BYTES, q) {
+            while q < self.b.len() && !self.special(&MAIN_BYTES, q) {
                 q += 1;
             }
             return q;
@@ -452,7 +450,7 @@ impl Scan<'_, '_, '_, '_> {
     fn braces(&mut self, p: usize, e: usize) -> Option<usize> {
         let digits = |q: usize| {
             let mut r = q;
-            while r < self.n && self.b[r].is_ascii_digit() {
+            while r < self.b.len() && self.b[r].is_ascii_digit() {
                 r += 1;
             }
             r
@@ -575,12 +573,12 @@ impl Scan<'_, '_, '_, '_> {
                     };
                     let flag = |c: u8| flags.contains(&c);
                     let mut t = q;
-                    while t < self.n && flag(self.b[t]) {
+                    while t < self.b.len() && flag(self.b[t]) {
                         t += 1;
                     }
                     if self.b.get(t) == Some(&b'-') {
                         t += 1;
-                        while t < self.n && flag(self.b[t]) {
+                        while t < self.b.len() && flag(self.b[t]) {
                             t += 1;
                         }
                     }
@@ -630,11 +628,11 @@ impl Scan<'_, '_, '_, '_> {
             ),
         };
         // a name doesn't run over the host's end (PowerShell's `’`, a byte past ASCII)
-        if s >= self.n || !first(self.b[s]) || self.host_stop(s) {
+        if s >= self.b.len() || !first(self.b[s]) || self.host_stop(s) {
             return None;
         }
         let mut t = s + 1;
-        while t < self.n && rest(self.b[t]) && !self.host_stop(t) {
+        while t < self.b.len() && rest(self.b[t]) && !self.host_stop(t) {
             t += 1;
         }
         Some(t)
@@ -789,10 +787,10 @@ impl Scan<'_, '_, '_, '_> {
             s
         };
         let mut t = w;
-        while t < self.n && self.b[t].is_ascii_lowercase() {
+        while t < self.b.len() && self.b[t].is_ascii_lowercase() {
             t += 1;
         }
-        (t > w && self.b[t..self.n].starts_with(b":]")).then_some(t + 2)
+        (t > w && self.b[t..self.b.len()].starts_with(b":]")).then_some(t + 2)
     }
 
     /// `\…`, its `\` at `p` to `e`: where it ends.
@@ -819,7 +817,7 @@ impl Scan<'_, '_, '_, '_> {
             b'b' | b'B' | b'A' | b'G' | b'Z' | b'z' if !in_set => self.tok(p, n, L::Anchor),
             b'1'..=b'9' if !in_set => {
                 let mut q = n;
-                while q < self.n && self.b[q].is_ascii_digit() {
+                while q < self.b.len() && self.b[q].is_ascii_digit() {
                     q += 1;
                 }
                 self.tok(p, q, L::BackReference)
@@ -829,7 +827,7 @@ impl Scan<'_, '_, '_, '_> {
                     && self.b.get(s).is_some_and(u8::is_ascii_alphabetic)
                 {
                     let mut t = s + 1;
-                    while t < self.n && self.b[t].is_ascii_alphanumeric() {
+                    while t < self.b.len() && self.b[t].is_ascii_alphanumeric() {
                         t += 1;
                     }
                     if let Some(g) = self.is(t, b'>') {
@@ -852,7 +850,7 @@ impl Scan<'_, '_, '_, '_> {
             }
             b'0' => {
                 let mut q = n;
-                while q < n + 3 && q < self.n && matches!(self.b[q], b'0'..=b'7') {
+                while q < n + 3 && q < self.b.len() && matches!(self.b[q], b'0'..=b'7') {
                     q += 1;
                 }
                 self.tok(p, q, L::Escape)
@@ -860,7 +858,7 @@ impl Scan<'_, '_, '_, '_> {
             b'x' => {
                 let hex = |q: usize| self.b.get(q).is_some_and(u8::is_ascii_hexdigit);
                 if self.b.get(n) == Some(&b'{')
-                    && let Some(c) = (n + 1..self.n).find(|&q| !hex(q))
+                    && let Some(c) = (n + 1..self.b.len()).find(|&q| !hex(q))
                     && c > n + 1
                     && self.b[c] == b'}'
                 {
@@ -879,7 +877,7 @@ impl Scan<'_, '_, '_, '_> {
                 self.tok(p, q, L::Escape)
             }
             b'N' if self.b.get(n) == Some(&b'{') => {
-                let q = (n + 1..self.n)
+                let q = (n + 1..self.b.len())
                     .take_while(|&q| self.unit(q).is_some_and(|u| !u.host))
                     .find(|&q| self.b[q] == b'}')
                     .map_or(n, |c| c + 1);
@@ -895,7 +893,7 @@ impl Scan<'_, '_, '_, '_> {
         let Some(u) = self.unit(e) else {
             // at the line's end no pattern takes a lone `\` in a literal; in a string, and before
             // the host's end or `${`, it is an escape (of what the substitution starts with)
-            if e < self.n || self.host.cooked {
+            if e < self.b.len() || self.host.cooked {
                 return self.tok(p, e, L::Escape);
             }
             return e;
@@ -909,7 +907,7 @@ impl Scan<'_, '_, '_, '_> {
             b'b' | b'B' if !in_set => self.tok(p, n, L::Anchor),
             b'1'..=b'9' if !in_set => {
                 let mut q = n;
-                while q < self.n && self.b[q].is_ascii_digit() {
+                while q < self.b.len() && self.b[q].is_ascii_digit() {
                     q += 1;
                 }
                 self.tok(p, q, L::BackReference)
@@ -947,13 +945,13 @@ impl Scan<'_, '_, '_, '_> {
         let n = u.end;
         let in_set = self.st & SET != 0;
         let rust = self.rust();
-        let hex = |q: usize| q < self.n && self.b[q].is_ascii_hexdigit();
+        let hex = |q: usize| q < self.b.len() && self.b[q].is_ascii_hexdigit();
         // `{H…}`, from `n`: where it ends
         let braced = |s: &Self, n: usize| {
             if s.b.get(n) != Some(&b'{') {
                 return None;
             }
-            let c = (n + 1..s.n).find(|&q| !hex(q))?;
+            let c = (n + 1..s.b.len()).find(|&q| !hex(q))?;
             (c > n + 1 && s.b[c] == b'}').then_some(c + 1)
         };
         match u.c {
@@ -961,7 +959,7 @@ impl Scan<'_, '_, '_, '_> {
                 // Rust's `\b{start}`, `\b{end}`, `\b{start-half}`, `\b{end-half}`
                 if rust && u.c == b'b' && self.b.get(n) == Some(&b'{') {
                     for w in [&b"{start}"[..], b"{end}", b"{start-half}", b"{end-half}"] {
-                        if self.b[n..self.n].starts_with(w) {
+                        if self.b[n..self.b.len()].starts_with(w) {
                             return self.tok(p, n + w.len(), L::Anchor);
                         }
                     }
@@ -977,7 +975,7 @@ impl Scan<'_, '_, '_, '_> {
             }
             b'0'..=b'7' if !rust => {
                 let mut q = n;
-                while q < n + 2 && q < self.n && matches!(self.b[q], b'0'..=b'7') {
+                while q < n + 2 && q < self.b.len() && matches!(self.b[q], b'0'..=b'7') {
                     q += 1;
                 }
                 self.tok(p, q, L::Escape)
@@ -1006,12 +1004,12 @@ impl Scan<'_, '_, '_, '_> {
         }
         let n = u.end;
         let in_set = self.st & SET != 0;
-        let hex = |q: usize| q < self.n && self.b[q].is_ascii_hexdigit();
+        let hex = |q: usize| q < self.b.len() && self.b[q].is_ascii_hexdigit();
         match u.c {
             b'b' | b'B' | b'A' | b'G' | b'Z' | b'z' if !in_set => self.tok(p, n, L::Anchor),
             b'1'..=b'9' if !in_set => {
                 let mut q = n;
-                while q < self.n && self.b[q].is_ascii_digit() {
+                while q < self.b.len() && self.b[q].is_ascii_digit() {
                     q += 1;
                 }
                 self.tok(p, q, L::BackReference)
@@ -1037,7 +1035,7 @@ impl Scan<'_, '_, '_, '_> {
             b'p' | b'P' => self.property(p, n),
             b'0' => {
                 let mut q = n;
-                while q < n + 2 && q < self.n && matches!(self.b[q], b'0'..=b'7') {
+                while q < n + 2 && q < self.b.len() && matches!(self.b[q], b'0'..=b'7') {
                     q += 1;
                 }
                 self.tok(p, q, L::Escape)
@@ -1050,7 +1048,9 @@ impl Scan<'_, '_, '_, '_> {
                 let q = if (n..n + 4).all(hex) { n + 4 } else { n };
                 self.tok(p, q, L::Escape)
             }
-            b'c' if n < self.n && self.b[n].is_ascii_alphabetic() => self.tok(p, n + 1, L::Escape),
+            b'c' if n < self.b.len() && self.b[n].is_ascii_alphabetic() => {
+                self.tok(p, n + 1, L::Escape)
+            }
             _ => self.tok(p, n, L::Escape),
         }
     }
@@ -1100,13 +1100,13 @@ impl Scan<'_, '_, '_, '_> {
     /// Where ECMAScript's escape `\c…` ends, `c` the character after its `\`, ending at `n`:
     /// `\cX`, `\xHH`, `\uHHHH` and `\u{H…}` take more.
     fn ecma_escape(&self, n: usize, c: u8) -> usize {
-        let hex = |q: usize| q < self.n && self.b[q].is_ascii_hexdigit();
+        let hex = |q: usize| q < self.b.len() && self.b[q].is_ascii_hexdigit();
         match c {
-            b'c' if n < self.n && self.b[n].is_ascii_uppercase() => n + 1,
+            b'c' if n < self.b.len() && self.b[n].is_ascii_uppercase() => n + 1,
             b'x' if hex(n) && hex(n + 1) => n + 2,
             b'u' => {
                 if self.b.get(n) == Some(&b'{')
-                    && let Some(c) = (n + 1..self.n).find(|&q| !hex(q))
+                    && let Some(c) = (n + 1..self.b.len()).find(|&q| !hex(q))
                     && c > n + 1
                     && self.b[c] == b'}'
                 {
@@ -1125,7 +1125,7 @@ impl Scan<'_, '_, '_, '_> {
         let dialect = self.host.dialect;
         let name = |s: &Self, q: usize| {
             let mut t = q;
-            while t < s.n
+            while t < s.b.len()
                 && (s.b[t].is_ascii_alphabetic()
                     || s.b[t] == b'_'
                     || match dialect {

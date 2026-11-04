@@ -162,7 +162,7 @@ impl Scan<'_, '_, '_> {
             .tag_name(m, &|me, e| me.c(me.ws(e)) == b'>', true)
             .is_some()
         {
-            self.i = k.min(self.n);
+            self.i = k.min(self.b.len());
             return if k == i {
                 self.push_zero(JSX_WA_EXPR)
             } else {
@@ -181,13 +181,13 @@ impl Scan<'_, '_, '_> {
                 && let Some(x) = self.word_b(g, b"extends")
             {
                 let h = self.ws(x);
-                if h > x && !matches!(self.c(h), b'=' | b'>') && h < self.n {
+                if h > x && !matches!(self.c(h), b'=' | b'>') && h < self.b.len() {
                     return false;
                 }
             }
         }
         if self.tag_name(m, &|me, e| me.tag_follow(e), false).is_some() {
-            self.i = k.min(self.n);
+            self.i = k.min(self.b.len());
             return if k == i {
                 self.push_zero(JSX_EXPR)
             } else {
@@ -287,7 +287,7 @@ impl Scan<'_, '_, '_> {
                     // jsx-tag-attributes: \s+
                     if is_space(c) {
                         self.push(JSX_ATTRS2);
-                        self.i = self.ws(i).min(self.n + 1);
+                        self.i = self.ws(i).min(self.b.len() + 1);
                         return true;
                     }
                     return false;
@@ -454,7 +454,7 @@ impl Scan<'_, '_, '_> {
                 let k = self.ws(i + 1);
                 if matches!(self.c(k), b'\'' | b'"' | b'{')
                     || (self.c(k) == b'/' && matches!(self.c(k + 1), b'*' | b'/'))
-                    || k >= self.n
+                    || k >= self.b.len()
                 {
                     return self.take(i, i + 1, ASSIGN);
                 }
@@ -480,9 +480,9 @@ impl Scan<'_, '_, '_> {
             _ => {}
         }
         // jsx-tag-attributes-illegal: \S+
-        if i < self.n && !is_space(c) {
+        if i < self.b.len() && !is_space(c) {
             let mut e = i;
-            while e < self.n && !is_space(self.b[e]) {
+            while e < self.b.len() && !is_space(self.b[e]) {
                 e += 1;
             }
             return self.take(i, e, JSX_ILLEGAL);

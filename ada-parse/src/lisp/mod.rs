@@ -394,7 +394,6 @@ pub fn line(b: &[u8], dialect: Dialect, state: &mut State, out: &mut Out) {
         scheme,
         class: if scheme { &SCHEME_CLASS } else { &CLASS },
         regex: state.arg as u8,
-        n: b.len(),
         out,
         stack: [TOP; MAX],
         depth: 0,
@@ -422,7 +421,6 @@ struct Scan<'b, 'o, 's> {
     class: &'static [u8; 256],
     /// An open `#rx"…"`'s regex state.
     regex: u8,
-    n: usize,
     out: &'o mut Out<'s>,
     stack: [u8; MAX],
     depth: usize,
@@ -611,7 +609,7 @@ impl Scan<'_, '_, '_> {
                 XSYMBOL => self.xsymbol_text(p),
                 _ => {
                     p = self.skip_spaces(p);
-                    if p >= self.n {
+                    if p >= self.b.len() {
                         return;
                     }
                     match top {
@@ -625,7 +623,7 @@ impl Scan<'_, '_, '_> {
                     }
                 }
             };
-            if p >= self.n {
+            if p >= self.b.len() {
                 return;
             }
         }
@@ -633,7 +631,7 @@ impl Scan<'_, '_, '_> {
 
     /// Where the spaces at `p` end (`\s`, Unicode's too).
     fn skip_spaces(&self, mut p: usize) -> usize {
-        while p < self.n {
+        while p < self.b.len() {
             match self.class[usize::from(self.b[p])] {
                 C_SPACE => p += 1,
                 C_HIGH => match self.wide_space(p) {
@@ -657,7 +655,7 @@ impl Scan<'_, '_, '_> {
 
     /// `{{break}}` at `p`: a break character, or the line's end.
     fn at_break(&self, p: usize) -> bool {
-        p >= self.n
+        p >= self.b.len()
             || match self.class[usize::from(self.b[p])] {
                 C_SPACE | C_BREAK => true,
                 C_HIGH => self.wide_space(p) > 0,
@@ -667,13 +665,13 @@ impl Scan<'_, '_, '_> {
 
     /// The next character's place.
     fn step(&self, p: usize) -> usize {
-        (p + char_len(self.b[p])).min(self.n)
+        (p + char_len(self.b[p])).min(self.b.len())
     }
 
     /// An unquoted identifier's run at `p`: escapes and characters but breaks. Its end, whether
     /// it has a character that is neither a digit nor a `.`, and whether it has an escape.
     fn run_at(&self, p: usize) -> (usize, bool, bool) {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let (mut q, mut y, mut escaped) = (p, false, false);
         while q < n {
             match self.class[usize::from(b[q])] {
@@ -708,7 +706,7 @@ impl Scan<'_, '_, '_> {
 
     /// `{{identifier}}` at `p`.
     fn ident_at(&mut self, p: usize) -> Option<Id> {
-        if p >= self.n {
+        if p >= self.b.len() {
             return None;
         }
         if self.b[p] == b'|' {
@@ -742,7 +740,7 @@ impl Scan<'_, '_, '_> {
         if p >= self.quoted_fail {
             return None;
         }
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let mut q = p + 1;
         while q < n {
             match b[q] {
@@ -887,7 +885,7 @@ impl Scan<'_, '_, '_> {
 
     /// Where [`Scan::elisp_char`]'s character at `p` ends.
     fn elisp_char_end(&self, p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let mut q = p + 1;
         if q >= n {
             return None;
@@ -967,10 +965,10 @@ impl Scan<'_, '_, '_> {
     /// `quoted-content`, right after a `'`.
     fn quoted_content(&mut self, p: usize) -> usize {
         // Scheme's `'#t`, `'#(…)`, `'#{a b}#`: the body reads the `#` form
-        if self.scheme && self.at(p) == b'#' && p < self.n {
+        if self.scheme && self.at(p) == b'#' && p < self.b.len() {
             return p;
         }
-        if p < self.n && self.opens(self.b[p]) {
+        if p < self.b.len() && self.opens(self.b[p]) {
             self.put(p, p + 1, L::ParenBegin);
             self.push(QUOTED);
             return p + 1;
@@ -991,7 +989,7 @@ impl Scan<'_, '_, '_> {
         let k = p + usize::from(self.at(p) == b'|');
         if b.get(k..k + 7) == Some(b"keyword") {
             let e = k + 7 + usize::from(self.at(k + 7) == b'|');
-            if self.at(e) == b':' && e < self.n {
+            if self.at(e) == b':' && e < self.b.len() {
                 if k > p {
                     self.put(p, k, L::NamespaceBegin);
                 }
@@ -1003,7 +1001,7 @@ impl Scan<'_, '_, '_> {
             }
         }
         let id = id?;
-        if b[p] == b'#' || self.at(id.end) != b':' || id.end >= self.n {
+        if b[p] == b'#' || self.at(id.end) != b':' || id.end >= self.b.len() {
             return None;
         }
         self.put_id(p, id, L::Namespace);
@@ -1069,7 +1067,7 @@ impl Scan<'_, '_, '_> {
 
     /// `\+\S+\+{{break}}` at `p`: its end, the last `+` in the run of non-spaces before a break.
     fn plus_constant(&mut self, p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         // the run of non-spaces, and its last `+` before a break, once a run
         if !(p >= self.plus.0 && p < self.plus.1) {
             let mut s = p + 1;
@@ -1221,9 +1219,9 @@ impl Scan<'_, '_, '_> {
         } else {
             let e = id.end;
             let suffix = match self.at(e) {
-                b'!' if e < self.n => Some((1, L::Mutating)),
-                b'?' if e < self.n => Some((1, L::Predicate)),
-                b'-' if self.at(e + 1) == b'p' && e + 1 < self.n => Some((2, L::Predicate)),
+                b'!' if e < self.b.len() => Some((1, L::Mutating)),
+                b'?' if e < self.b.len() => Some((1, L::Predicate)),
+                b'-' if self.at(e + 1) == b'p' && e + 1 < self.b.len() => Some((2, L::Predicate)),
                 _ => None,
             };
             if let Some((k, kind)) = suffix
@@ -1285,7 +1283,7 @@ impl Scan<'_, '_, '_> {
 
     /// `\s` or the line's end at `p` (`\S`'s negation).
     fn at_break_space(&self, p: usize) -> bool {
-        p >= self.n
+        p >= self.b.len()
             || match self.class[usize::from(self.b[p])] {
                 C_SPACE => true,
                 C_HIGH => self.wide_space(p) > 0,
@@ -1299,7 +1297,7 @@ impl Scan<'_, '_, '_> {
             (b';', _) => Some(self.line_comment(p)),
             (b'#', b'|') => Some(self.block_open(p)),
             // Scheme's `#;`: the next datum commented out, wherever a comment can be
-            (b'#', b';') if self.scheme && p + 1 < self.n => {
+            (b'#', b';') if self.scheme && p + 1 < self.b.len() => {
                 self.put(p, p + 2, L::DatumPunct);
                 self.push(DATUM);
                 Some(p + 2)
@@ -1314,12 +1312,12 @@ impl Scan<'_, '_, '_> {
 
     fn line_comment(&mut self, p: usize) -> usize {
         let mut e = p + 1;
-        while self.at(e) == b';' && e < self.n {
+        while self.at(e) == b';' && e < self.b.len() {
             e += 1;
         }
         self.put(p, e, L::LineCommentPunct);
-        self.put(e, self.n, L::LineComment);
-        self.n
+        self.put(e, self.b.len(), L::LineComment);
+        self.b.len()
     }
 
     fn block_open(&mut self, p: usize) -> usize {
@@ -1330,7 +1328,7 @@ impl Scan<'_, '_, '_> {
 
     /// A block comment's text from `p`: to its end, a nested one, or the line's end.
     fn block(&mut self, p: usize) -> usize {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let mut q = p;
         while q + 1 < n {
             match (b[q], b[q + 1]) {
@@ -1353,7 +1351,7 @@ impl Scan<'_, '_, '_> {
 
     /// A string's text from `p`: to its end or the line's.
     fn string(&mut self, p: usize, stop: &[bool; 256]) -> usize {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let mut from = p;
         let mut q = p;
         while q < n {
@@ -1393,7 +1391,7 @@ impl Scan<'_, '_, '_> {
     /// `string-format-mini-language` at `p`, a `~`: where it ends, its spans pushed after the
     /// string's text from `text`.
     fn directive(&mut self, text: usize, p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let d = digits(b, p + 1);
         // `(~)(\d*)[%&|~]`
         if matches!(self.at(d), b'%' | b'&' | b'|' | b'~') && d < n {
@@ -1461,10 +1459,10 @@ impl Scan<'_, '_, '_> {
 
     /// `:?@?` at `p` (`@?` without `colon`): where it ends.
     fn modifiers(&self, mut p: usize, colon: bool) -> usize {
-        if colon && self.at(p) == b':' && p < self.n {
+        if colon && self.at(p) == b':' && p < self.b.len() {
             p += 1;
         }
-        if self.at(p) == b'@' && p < self.n {
+        if self.at(p) == b'@' && p < self.b.len() {
             p += 1;
         }
         p
@@ -1494,7 +1492,7 @@ impl Scan<'_, '_, '_> {
         let d1 = self.digits(q, 0);
         // `\d* (\.) \d+ {{exponent}}?`
         if self.at(d1) == b'.'
-            && d1 < self.n
+            && d1 < self.b.len()
             && let Some(_) = digit(b, d1 + 1)
         {
             let f = self.digits(d1 + 1, 1);
@@ -1511,7 +1509,7 @@ impl Scan<'_, '_, '_> {
             return None;
         }
         // `\d+ (?: (\.) \d* )? {{exponent}}`
-        let (dot, f) = if self.at(d1) == b'.' && d1 < self.n {
+        let (dot, f) = if self.at(d1) == b'.' && d1 < self.b.len() {
             (true, self.digits(d1 + 1, 1))
         } else {
             (false, d1)
@@ -1530,7 +1528,7 @@ impl Scan<'_, '_, '_> {
             return Some(e);
         }
         // `\d+ (/) \d+`
-        if self.at(d1) == b'/' && d1 < self.n && digit(b, d1 + 1).is_some() {
+        if self.at(d1) == b'/' && d1 < self.b.len() && digit(b, d1 + 1).is_some() {
             let r = self.digits(d1 + 1, 1);
             if self.at_break(r) {
                 self.sign(p, q);
@@ -1541,7 +1539,7 @@ impl Scan<'_, '_, '_> {
             }
         }
         // `\d+ (?: (\.)(?!\d) | {{break}} )`
-        if self.at(d1) == b'.' && d1 < self.n && digit(b, d1 + 1).is_none() {
+        if self.at(d1) == b'.' && d1 < self.b.len() && digit(b, d1 + 1).is_none() {
             self.sign(p, q);
             self.put(q, d1, L::NumValue);
             self.put(d1, d1 + 1, L::NumDot);
@@ -1563,7 +1561,7 @@ impl Scan<'_, '_, '_> {
 
     /// `{{exponent}}` at `p`: `[esfdlESFDL][-+]?\d+`.
     fn exponent(&self, p: usize) -> Option<usize> {
-        if !matches!(self.at(p) | 0x20, b'e' | b's' | b'f' | b'd' | b'l') || p >= self.n {
+        if !matches!(self.at(p) | 0x20, b'e' | b's' | b'f' | b'd' | b'l') || p >= self.b.len() {
             return None;
         }
         let q = p + 1 + usize::from(matches!(self.at(p + 1), b'+' | b'-'));
@@ -1586,7 +1584,7 @@ impl Scan<'_, '_, '_> {
 
     /// `macros` at `p`, a `#`: where the match ends, `None` for none.
     fn macros(&mut self, p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let d = digits(b, p + 1);
         let c = self.at(d);
         let has_c = d < n;
@@ -1716,7 +1714,7 @@ impl Scan<'_, '_, '_> {
             };
             return self.radix_value(p, p + 2, base);
         }
-        if self.at(d) | 0x20 != b'r' || d >= self.n {
+        if self.at(d) | 0x20 != b'r' || d >= self.b.len() {
             return None;
         }
         let base = match &self.b[p + 1..d] {
@@ -1737,7 +1735,7 @@ impl Scan<'_, '_, '_> {
     /// `[\p{L}\p{N}]`): rational, then integer.
     fn radix_value(&mut self, p: usize, start: usize, base: u8) -> Option<usize> {
         let b = self.b;
-        let q = start + usize::from(matches!(self.at(start), b'+' | b'-') && start < self.n);
+        let q = start + usize::from(matches!(self.at(start), b'+' | b'-') && start < self.b.len());
         let is = |c: u8| match base {
             2 => matches!(c, b'0' | b'1'),
             8 => matches!(c, b'0'..=b'7'),
@@ -1767,7 +1765,7 @@ impl Scan<'_, '_, '_> {
             s.put(p, start, L::NumBase);
             s.sign(start, q);
         };
-        if self.at(v) == b'/' && v < self.n {
+        if self.at(v) == b'/' && v < self.b.len() {
             let w = run(v + 1);
             if w > v + 1 && self.at_break(w) {
                 put_prefix(self);
@@ -1777,7 +1775,7 @@ impl Scan<'_, '_, '_> {
                 return Some(w);
             }
         }
-        if self.at(v) == b'.' && v < self.n && run(v + 1) == v + 1 {
+        if self.at(v) == b'.' && v < self.b.len() && run(v + 1) == v + 1 {
             put_prefix(self);
             self.put(q, v, L::NumValue);
             self.put(v, v + 1, L::NumDot);
@@ -1793,7 +1791,7 @@ impl Scan<'_, '_, '_> {
 
     /// `macro-characters` at `p` (`d`: the `\` after `#`'s digits): where it ends.
     fn character(&mut self, p: usize, d: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let q = d + 1;
         if q >= n {
             return None;
@@ -2230,7 +2228,7 @@ impl Scan<'_, '_, '_> {
 
     /// Scheme's and Racket's `#` forms at `p` (before Common Lisp's): where the match ends.
     fn scheme_hash(&mut self, p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let rest = &b[p + 1..];
         let c1 = self.at(p + 1);
         // `#t`, `#f`, `#true`, `#false`
@@ -2362,7 +2360,7 @@ impl Scan<'_, '_, '_> {
     /// A `#{…}` symbol's text from `p`, on a line after its `#{`: to its `}` (a `#` after it
     /// Guile's) or the line's end.
     fn xsymbol_text(&mut self, p: usize) -> usize {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         match b[p..].iter().position(|&c| c == b'}') {
             Some(i) => {
                 let q = p + i;
@@ -2390,7 +2388,7 @@ impl Scan<'_, '_, '_> {
     /// After `#;`, at `p`: the datum it comments out, as a block comment. Its prefixes (`'`,
     /// `` ` ``, `,`, `#`) stay with it; a list or a string is a frame, the rest one token.
     fn datum(&mut self, p: usize) -> usize {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let c = b[p];
         if self.opens(c) {
             self.put_merged(p, p + 1, L::Block);
@@ -2433,7 +2431,7 @@ impl Scan<'_, '_, '_> {
     /// A commented-out list's or string's text from `p`, as a block comment: to the frame's end,
     /// an inner list or string, or the line's end.
     fn datum_text(&mut self, p: usize, top: u8) -> usize {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let mut q = p;
         while q < n {
             let c = b[q];
@@ -2481,7 +2479,7 @@ impl Scan<'_, '_, '_> {
     /// A `#rx"…"`'s or `#px"…"`'s regex from `p`: the string's `"` and escapes (a `\\` is the
     /// regex's `\`), else the regex to the next place they can be.
     fn regex_text(&mut self, p: usize) -> usize {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         if p >= n {
             return n;
         }

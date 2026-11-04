@@ -318,7 +318,6 @@ const SYNTECT_DEPTH: usize = 99;
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     let mut s = Scan {
         b,
-        n: b.len(),
         stack: [MAIN; MAX],
         depth: 1,
         exact: state.is_exact(),
@@ -340,7 +339,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         }
     }
     s.run();
-    s.fill(s.n);
+    s.fill(s.b.len());
     // a byte a context, or past the levels, a byte a run
     let open = &s.stack[1..s.depth];
     let mut runs;
@@ -1036,9 +1035,8 @@ fn long_close(b: &[u8], p: usize, level: usize) -> Option<usize> {
 }
 
 struct Scan<'b, 'c> {
+    /// The line, without its `\n`: its length is where the `\n` is.
     b: &'b [u8],
-    /// The line's length: where its `\n` is.
-    n: usize,
     stack: [u8; MAX],
     depth: usize,
     exact: bool,
@@ -1098,7 +1096,7 @@ impl Scan<'_, '_> {
 
     /// The text up to `p` is the top context's.
     fn fill(&mut self, p: usize) {
-        let p = p.min(self.n);
+        let p = p.min(self.b.len());
         if p > self.at {
             let text = self.text();
             if text != PLAIN {
@@ -1111,7 +1109,7 @@ impl Scan<'_, '_> {
     /// Bytes `s..e` are `leaf`, after the text before them.
     fn put(&mut self, s: usize, e: usize, leaf: u16) {
         self.fill(s);
-        let e = e.min(self.n);
+        let e = e.min(self.b.len());
         if leaf != PLAIN && e > self.at {
             self.out.push_merged(self.at, e, leaf);
         }
@@ -1210,7 +1208,7 @@ impl Scan<'_, '_> {
     }
 
     fn run(&mut self) {
-        let n = self.n;
+        let n = self.b.len();
         let mut p = 0;
         let mut stuck = 0;
         loop {
@@ -1249,7 +1247,7 @@ impl Scan<'_, '_> {
     /// or a pop), applied at `p` where no comment starts: what the scan's next turns would do
     /// there, without them.
     fn empty_matches(&mut self, p: usize) {
-        if p > self.n || self.b.get(p) == Some(&b'-') && self.b.get(p + 1) == Some(&b'-') {
+        if p > self.b.len() || self.b.get(p) == Some(&b'-') && self.b.get(p + 1) == Some(&b'-') {
             return;
         }
         loop {
@@ -1266,10 +1264,10 @@ impl Scan<'_, '_> {
 
     /// Where the character at `p` ends (the line's `\n` is one byte).
     fn next(&self, p: usize) -> usize {
-        if p >= self.n {
+        if p >= self.b.len() {
             return p + 1;
         }
-        p + char_len(self.b[p]).min(self.n - p)
+        p + char_len(self.b[p]).min(self.b.len() - p)
     }
 
     /// Where a pattern of the top context can next start, after none did at `p`.
@@ -1279,11 +1277,11 @@ impl Scan<'_, '_> {
             STRING_SINGLE => |c| matches!(c, b'\\' | b'\''),
             STRING_DOUBLE => |c| matches!(c, b'\\' | b'"'),
             LONG_STRING | COMMENT_BLOCK => |c| c == b']',
-            COMMENT_LINE => return self.n,
+            COMMENT_LINE => return self.b.len(),
             _ => return self.next(p),
         };
         let mut q = p + 1;
-        while q < self.n && !stop(b[q]) {
+        while q < self.b.len() && !stop(b[q]) {
             q += 1;
         }
         q
@@ -1293,7 +1291,7 @@ impl Scan<'_, '_> {
     fn word_end(&self, p: usize) -> usize {
         let b = self.b;
         let mut e = p;
-        while e < self.n && WORD[usize::from(b[e])] {
+        while e < self.b.len() && WORD[usize::from(b[e])] {
             e += 1;
         }
         e
@@ -1301,7 +1299,7 @@ impl Scan<'_, '_> {
 
     /// The word at `p` is `w` (`w{{identifier_break}}`).
     fn word_is(&self, p: usize, w: &[u8]) -> bool {
-        self.b[p.min(self.n)..].starts_with(w)
+        self.b[p.min(self.b.len())..].starts_with(w)
             && !self
                 .b
                 .get(p + w.len())
@@ -1320,7 +1318,7 @@ impl Scan<'_, '_> {
 
     /// `(?=\S)` at `p`.
     fn nonblank(&self, p: usize) -> bool {
-        p < self.n && space_len(self.b, p).is_none()
+        p < self.b.len() && space_len(self.b, p).is_none()
     }
 
     /// `else-pop`.
@@ -1335,7 +1333,7 @@ impl Scan<'_, '_> {
     /// `\s*` then a byte `ok` takes, after `e`.
     fn ahead(&self, e: usize, ok: impl Fn(&[u8], usize) -> bool) -> bool {
         let q = skip_spaces(self.b, e);
-        q < self.n && ok(self.b, q)
+        q < self.b.len() && ok(self.b, q)
     }
 
     /// `{{function_call_ahead}}` after `e`.
@@ -1346,9 +1344,9 @@ impl Scan<'_, '_> {
     /// `{{function_assignment_ahead}}` after `e`: `\s*=\s*function{{identifier_break}}`.
     fn assignment_ahead(&self, e: usize) -> bool {
         let q = skip_spaces(self.b, e);
-        q < self.n && self.b[q] == b'=' && {
+        q < self.b.len() && self.b[q] == b'=' && {
             let r = skip_spaces(self.b, q + 1);
-            r < self.n && self.word_is(r, b"function")
+            r < self.b.len() && self.word_is(r, b"function")
         }
     }
 
@@ -1412,7 +1410,7 @@ impl Scan<'_, '_> {
                 self.else_pop(p)
             }
             LABEL_END => {
-                if self.b[p.min(self.n)..].starts_with(b"::") {
+                if self.b[p.min(self.b.len())..].starts_with(b"::") {
                     return self.close(p, p + 2, LABEL_CLOSE);
                 }
                 self.else_pop(p)
@@ -1528,7 +1526,7 @@ impl Scan<'_, '_> {
                 if let Some(e) = self.ident(p) {
                     return self.tok(p, e, PARAMETER);
                 }
-                if self.b[p.min(self.n)..].starts_with(b"...") {
+                if self.b[p.min(self.b.len())..].starts_with(b"...") {
                     return self.tok(p, p + 3, LANGUAGE);
                 }
                 None
@@ -1555,7 +1553,7 @@ impl Scan<'_, '_> {
                 None
             }
             COMMENT_LINE => {
-                if p == self.n {
+                if p == self.b.len() {
                     return self.close(p, p + 1, LINE_COMMENT);
                 }
                 None
@@ -1857,7 +1855,7 @@ impl Scan<'_, '_> {
         // `(?={{identifier}}\s*=(?!=))`
         if let Some(e) = self.ident(p) {
             let q = skip_spaces(b, e);
-            if q < self.n
+            if q < self.b.len()
                 && b[q] == b'='
                 && b.get(q + 1) != Some(&b'=')
                 && let Some(r) = self.enter(p, &[KEY])
@@ -1883,9 +1881,11 @@ impl Scan<'_, '_> {
         let w = &self.b[p..e];
         // `(?:({{metamethod}})|{{identifier}})(?=\s*=\s*function\b)`
         let q = skip_spaces(self.b, e);
-        if q < self.n && self.b[q] == b'=' {
+        if q < self.b.len() && self.b[q] == b'=' {
             let r = skip_spaces(self.b, q + 1);
-            if self.b[r.min(self.n)..].starts_with(b"function") && !is_word_char(self.b, r + 8) {
+            if self.b[r.min(self.b.len())..].starts_with(b"function")
+                && !is_word_char(self.b, r + 8)
+            {
                 let leaf = if is_metamethod(w) {
                     KEY_METAMETHOD
                 } else {
@@ -1907,7 +1907,7 @@ impl Scan<'_, '_> {
     fn string(&mut self, p: usize, top: u8) -> Option<usize> {
         let b = self.b;
         let host = if top == STRING_SINGLE { SINGLE } else { DOUBLE };
-        if p == self.n {
+        if p == self.b.len() {
             // `\n`: the string is left unclosed
             return self.close(p, p + 1, host);
         }
@@ -1950,7 +1950,7 @@ impl Scan<'_, '_> {
                     return self.tok(p, e, host + ESCAPE_DEC);
                 }
                 // `\\.`
-                let e = p + 1 + char_len(c).min(self.n - p - 1);
+                let e = p + 1 + char_len(c).min(self.b.len() - p - 1);
                 self.tok(p, e, host + INVALID_ESCAPE)
             }
             c if c == if top == STRING_SINGLE { b'\'' } else { b'"' } => {

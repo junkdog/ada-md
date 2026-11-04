@@ -13,7 +13,7 @@ impl Scan<'_, '_, '_> {
         self.tok(i, i + 1, ANNOTATION);
         self.i = i + 1;
         let k = self.ws(i + 1);
-        self.push(if k < self.n {
+        self.push(if k < self.b.len() {
             TYPE_ANNOT
         } else {
             TYPE_ANNOT_EOL
@@ -34,7 +34,7 @@ impl Scan<'_, '_, '_> {
         self.tok(k, k + 1, ANNOTATION);
         self.i = k + 1;
         let m = self.ws(k + 1);
-        self.push(if m < self.n {
+        self.push(if m < self.b.len() {
             RETURN_TYPE
         } else {
             RETURN_TYPE_EOL
@@ -67,7 +67,7 @@ impl Scan<'_, '_, '_> {
         self.tok(i, i + 2, ARROW);
         self.i = i + 2;
         let k = self.ws(i + 2);
-        self.push(if k < self.n {
+        self.push(if k < self.b.len() {
             TYPE_FN_RET
         } else {
             TYPE_FN_RET_EOL
@@ -116,7 +116,11 @@ impl Scan<'_, '_, '_> {
     /// match ends at the `{`, so the frame below starts there (`object-literal` before
     /// `destructuring-parameter`'s `\s*`). No other alternative of the pop can match at a blank.
     fn blanks_to_brace(&mut self, i: usize) -> bool {
-        if !(i < self.n && is_space(self.c(i)) && self.not_after_op(i) && self.before_brace(i)) {
+        if !(i < self.b.len()
+            && is_space(self.c(i))
+            && self.not_after_op(i)
+            && self.before_brace(i))
+        {
             return false;
         }
         self.i = self.ws(i);
@@ -125,7 +129,7 @@ impl Scan<'_, '_, '_> {
 
     /// `(?<=\S)(?=\s*$)` at `i`.
     pub(super) fn last_token_end(&self, i: usize) -> bool {
-        i > 0 && !is_space(self.b[i - 1]) && self.ws(i) >= self.n
+        i > 0 && !is_space(self.b[i - 1]) && self.ws(i) >= self.b.len()
     }
 
     /// A frame of a type's turn.
@@ -138,11 +142,11 @@ impl Scan<'_, '_, '_> {
                     return true;
                 }
                 if self.not_after_op(i)
-                    && (i >= self.n
+                    && (i >= self.b.len()
                         || i == 0
                         || matches!(c, b',' | b')' | b';' | b'}' | b']')
                         || (c == b'/' && self.c(i + 1) == b'/')
-                        || (c == b'=' && self.c(i + 1) != b'>' && i < self.n)
+                        || (c == b'=' && self.c(i + 1) != b'>' && i < self.b.len())
                         || self.before_brace(i))
                     && self.pop_zero()
                 {
@@ -177,7 +181,7 @@ impl Scan<'_, '_, '_> {
             }
             RETURN_TYPE => {
                 if self.not_after_op(i)
-                    && (i >= self.n
+                    && (i >= self.b.len()
                         || i == 0
                         || matches!(c, b'{' | b'}' | b';' | b',')
                         || (c == b'/' && self.c(i + 1) == b'/'))
@@ -233,7 +237,7 @@ impl Scan<'_, '_, '_> {
                         c,
                         b',' | b']' | b')' | b'{' | b'}' | b'=' | b';' | b'>' | b':' | b'?'
                     ) || (c == b'/' && self.c(i + 1) == b'/')
-                        || i >= self.n)
+                        || i >= self.b.len())
                     && self.pop_zero()
                 {
                     return true;
@@ -329,7 +333,7 @@ impl Scan<'_, '_, '_> {
             }
             TYPE_SPREAD => {
                 if (matches!(c, b'}' | b';' | b',')
-                    || i >= self.n
+                    || i >= self.b.len()
                     || (i > 0 && self.b[i - 1] == b'}'))
                     && self.pop_zero()
                 {
@@ -393,7 +397,7 @@ impl Scan<'_, '_, '_> {
                 self.type_()
             }
             GAP => {
-                if i < self.n && !is_space(c) && self.pop_zero() {
+                if i < self.b.len() && !is_space(c) && self.pop_zero() {
                     return true;
                 }
                 false
@@ -433,7 +437,7 @@ impl Scan<'_, '_, '_> {
                         return true;
                     }
                     self.tok(i, i + 1, ASSIGN);
-                    self.i = k.min(self.n);
+                    self.i = k.min(self.b.len());
                     self.push(TYPE_DECL_VALUE);
                     return true;
                 }
@@ -446,7 +450,7 @@ impl Scan<'_, '_, '_> {
                         c,
                         b';' | b')' | b',' | b'}' | b']' | b':' | b'?' | b'-' | b'+' | b'>'
                     )
-                    || i >= self.n
+                    || i >= self.b.len()
                     || self.has(i, b"||")
                     || self.has(i, b"&&")
                     || self.has(i, b"!==")
@@ -464,7 +468,7 @@ impl Scan<'_, '_, '_> {
                         c,
                         b';' | b')' | b',' | b'}' | b']' | b':' | b'?' | b'-' | b'+' | b'>'
                     )
-                    || i >= self.n
+                    || i >= self.b.len()
                     || self.has(i, b"||")
                     || self.has(i, b"&&")
                     || self.has(i, b"!==")
@@ -489,13 +493,13 @@ impl Scan<'_, '_, '_> {
                     let k = self.ws(i + 1);
                     if self.c(k) == b'?' {
                         self.tok(k, k + 1, OPTIONAL);
-                        self.i = self.ws(k + 1).min(self.n);
+                        self.i = self.ws(k + 1).min(self.b.len());
                     } else {
-                        self.i = k.min(self.n);
+                        self.i = k.min(self.b.len());
                     }
                     return self.pop();
                 }
-                if i >= self.n && self.pop_zero() {
+                if i >= self.b.len() && self.pop_zero() {
                     return true;
                 }
                 c == b':' && self.type_annotation()
@@ -513,17 +517,17 @@ impl Scan<'_, '_, '_> {
                         self.tok(m, m + 1, OPTIONAL);
                         k = self.ws(m + 1);
                     }
-                    self.i = k.min(self.n);
+                    self.i = k.min(self.b.len());
                     return self.pop();
                 }
-                if i >= self.n && self.pop_zero() {
+                if i >= self.b.len() && self.pop_zero() {
                     return true;
                 }
                 if let Some(e) = self.kw(i, b"as") {
                     let k = self.ws(e);
                     if k > e {
                         self.tok(i, e, AS);
-                        self.i = k.min(self.n);
+                        self.i = k.min(self.b.len());
                         return true;
                     }
                 }
@@ -679,7 +683,7 @@ impl Scan<'_, '_, '_> {
         let c = self.c(i);
         // `template-call`'s second, `(name)?\s*(?=«TA»\s*`)`, starts at the blanks before its `<`
         // (they are the template's)
-        if is_space(c) && i < self.n && self.c(self.ws(i)) == b'<' && self.template_call() {
+        if is_space(c) && i < self.b.len() && self.c(self.ws(i)) == b'<' && self.template_call() {
             return true;
         }
         // and its first at `(\??\.\s*)?name`: `.tag`…`` (before `numeric-literal`)
@@ -748,7 +752,7 @@ impl Scan<'_, '_, '_> {
                 let k = self.ws(ne);
                 if k > ne {
                     self.tok(i, ne, MODIFIER);
-                    self.i = k.min(self.n);
+                    self.i = k.min(self.b.len());
                     self.push(TYPE_COND);
                     return true;
                 }
@@ -851,7 +855,7 @@ impl Scan<'_, '_, '_> {
         if name_start {
             if let Some(e) = self.kw(i, b"readonly") {
                 self.tok(i, e, MODIFIER);
-                self.i = self.ws(e).min(self.n);
+                self.i = self.ws(e).min(self.b.len());
                 return true;
             }
             return self.type_name();
@@ -967,7 +971,7 @@ impl Scan<'_, '_, '_> {
         self.tok(k, k + 1, SQUARE);
         self.tok(m, ne, TYPE);
         self.tok(g, g + 2, IN);
-        self.i = self.ws(g + 2).min(self.n);
+        self.i = self.ws(g + 2).min(self.b.len());
         self.push(MAPPED);
         true
     }
@@ -1053,7 +1057,7 @@ impl Scan<'_, '_, '_> {
             self.tok(o, o + 1, OPTIONAL);
             self.i = o + 1;
         } else {
-            self.i = q.min(self.n);
+            self.i = q.min(self.b.len());
         }
         true
     }

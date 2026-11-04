@@ -371,7 +371,6 @@ pub(crate) fn is_text(kind: u16) -> bool {
 fn lex(b: &[u8], from: usize, state: &mut State, out: &mut Out) {
     let mut s = Scan {
         b,
-        n: b.len(),
         stack: [MAIN; MAX],
         // read only below `tag_count`
         tags: [(0, 0, 0); TAGS],
@@ -404,7 +403,7 @@ fn lex(b: &[u8], from: usize, state: &mut State, out: &mut Out) {
     s.low = s.depth;
     s.refresh();
     s.run();
-    s.fill(s.n);
+    s.fill(s.b.len());
     let n = s.depth - 1;
     let from = n.saturating_sub(KEPT);
     let kept = n - from;
@@ -1108,9 +1107,8 @@ const fn re_str_embed(yields: &'static [bool; 256], host: u16, text: u16) -> reg
 }
 
 struct Scan<'b, 'c> {
+    /// The line, without its `\n`: its length is where the `\n` is.
     b: &'b [u8],
-    /// The line's length: where its `\n` is.
-    n: usize,
     stack: [u8; MAX],
     /// For a JSX element's context pushed on this line, where its tag's name is.
     tags: [(u8, u32, u32); TAGS],
@@ -1186,7 +1184,7 @@ impl<'b> Scan<'b, '_> {
 
     /// The whole word at `p`, `\b(\w+)\b`, when one starts there.
     fn word(&self, p: usize) -> Option<&'b [u8]> {
-        if p >= self.n || !boundary(self.b, p) || !is_word(self.b, p) {
+        if p >= self.b.len() || !boundary(self.b, p) || !is_word(self.b, p) {
             return None;
         }
         // the name read there ([`Scan::name_at`]) knows where its `\w` run ends
@@ -1210,7 +1208,7 @@ impl<'b> Scan<'b, '_> {
 
     /// The text up to `p` is the top context's.
     fn fill(&mut self, p: usize) {
-        let p = p.min(self.n);
+        let p = p.min(self.b.len());
         if p > self.at {
             if self.text != PLAIN {
                 self.out.push_merged(self.at, p, self.text);
@@ -1222,7 +1220,7 @@ impl<'b> Scan<'b, '_> {
     /// Bytes `s..e` are `leaf`, after the text before them.
     fn put(&mut self, s: usize, e: usize, leaf: u16) {
         self.fill(s);
-        let e = e.min(self.n);
+        let e = e.min(self.b.len());
         if leaf != PLAIN && e > self.at {
             self.out.push_merged(self.at, e, leaf);
         }
@@ -1305,20 +1303,21 @@ impl<'b> Scan<'b, '_> {
     }
 
     fn run(&mut self) {
-        let end = self.n + 1;
+        let end = self.b.len() + 1;
         let mut p = self.at;
         loop {
             // at the line's `\n` and past it no pattern of code, of a comment or of a template's
             // text can match (`core` and `expression` take nothing there, nor these contexts'
             // own patterns): the dispatches there would fail
-            if p >= self.n && (is_code(self.top()) || matches!(self.top(), DOC | BLOCK | TPL)) {
+            if p >= self.b.len() && (is_code(self.top()) || matches!(self.top(), DOC | BLOCK | TPL))
+            {
                 return;
             }
             self.looped = false;
             // a run of blanks in code where no pattern can start, skipped whole: none of these
             // contexts' own patterns starts at a blank, and `core`'s and `expression`'s only
             // after a `.` or before `:`, `gql`, `` ` ``, `/` or `<` ([`Scan::blank_may_match`])
-            if p < self.n && matches!(self.b[p], b' ' | b'\t') && is_code(self.top()) {
+            if p < self.b.len() && matches!(self.b[p], b' ' | b'\t') && is_code(self.top()) {
                 let q = p + self.b[p..]
                     .iter()
                     .take_while(|&&c| c == b' ' || c == b'\t')
@@ -1344,12 +1343,12 @@ impl<'b> Scan<'b, '_> {
                 p = q;
                 if self.stuck > STUCK {
                     self.stuck = 0;
-                    if p >= self.n {
+                    if p >= self.b.len() {
                         return;
                     }
                     p = self.next(p);
                 }
-            } else if p >= end || (self.looped && p >= self.n) {
+            } else if p >= end || (self.looped && p >= self.b.len()) {
                 return;
             } else {
                 p = self.advance(p);
@@ -1360,15 +1359,15 @@ impl<'b> Scan<'b, '_> {
 
     /// Where the character at `p` ends (the line's `\n` is one byte).
     fn next(&self, p: usize) -> usize {
-        if p >= self.n {
+        if p >= self.b.len() {
             return p + 1;
         }
-        p + char_len(self.b[p]).min(self.n - p)
+        p + char_len(self.b[p]).min(self.b.len() - p)
     }
 
     /// Where a pattern of the top context can next start, after none did at `p`.
     fn advance(&self, p: usize) -> usize {
-        if p >= self.n {
+        if p >= self.b.len() {
             return p + 1;
         }
         let b = self.b;
@@ -1412,7 +1411,7 @@ impl<'b> Scan<'b, '_> {
             _ => return self.next(p),
         };
         let mut q = p + 1;
-        while q < self.n && !stops[usize::from(b[q])] {
+        while q < self.b.len() && !stops[usize::from(b[q])] {
             q += 1;
         }
         q
@@ -1458,7 +1457,7 @@ impl<'b> Scan<'b, '_> {
                 if c == Some(q) {
                     return self.close(p, p + 1, STR_END);
                 }
-                if p == self.n {
+                if p == self.b.len() {
                     // `(\n)`: the string ends with its line
                     self.fill(p);
                     self.pop();
@@ -1701,7 +1700,7 @@ impl<'b> Scan<'b, '_> {
                 if let Some(q) = self.flow_tokens(p) {
                     return Some(q);
                 }
-                if p < self.n
+                if p < self.b.len()
                     && space_len(self.b, p).is_none()
                     && let Some(q) = self.leave(p)
                 {
@@ -1827,7 +1826,7 @@ impl<'b> Scan<'b, '_> {
         let mut run = p + 1;
         loop {
             run = name_end(b, run);
-            if run < self.n && b[run] == b'.' {
+            if run < self.b.len() && b[run] == b'.' {
                 run += 1;
             } else {
                 break;
@@ -1848,7 +1847,7 @@ impl<'b> Scan<'b, '_> {
     /// `literal-for`, `literal-switch`, `styled-components`, `graphql`, `expression`,
     /// `literal-punctuation`.
     fn core(&mut self, p: usize) -> Option<usize> {
-        if p >= self.n {
+        if p >= self.b.len() {
             return None;
         }
         // no pattern before `literal-punctuation`'s can start at `;` or `,`
@@ -2259,7 +2258,7 @@ impl<'b> Scan<'b, '_> {
 
     /// `expression`.
     fn expression(&mut self, p: usize) -> Option<usize> {
-        if p >= self.n {
+        if p >= self.b.len() {
             return None;
         }
         // only the patterns that can start with the byte at `p`, in the grammar's order
@@ -2703,7 +2702,7 @@ impl<'b> Scan<'b, '_> {
 
     /// `merge-conflits`.
     fn merge_conflict(&mut self, p: usize) -> Option<usize> {
-        if p != 0 || self.n < 7 {
+        if p != 0 || self.b.len() < 7 {
             return None;
         }
         let b = self.b;
@@ -2711,7 +2710,7 @@ impl<'b> Scan<'b, '_> {
         if run(b'<') || run(b'>') {
             // `\s(.+)$`
             let k = space_len(b, 7)?;
-            if 7 + k >= self.n {
+            if 7 + k >= self.b.len() {
                 return None;
             }
             let leaf = if b[0] == b'<' {
@@ -2720,9 +2719,9 @@ impl<'b> Scan<'b, '_> {
                 CONFLICT_OTHER
             };
             self.put(0, 7, leaf);
-            return self.tok(7 + k, self.n, CONFLICT_TEXT);
+            return self.tok(7 + k, self.b.len(), CONFLICT_TEXT);
         }
-        if self.n == 7 && b[..7].iter().all(|&x| x == b'=' || x == b'|') {
+        if self.b.len() == 7 && b[..7].iter().all(|&x| x == b'=' || x == b'|') {
             return self.tok(0, 7, CONFLICT_SEP);
         }
         None
@@ -2772,7 +2771,7 @@ impl<'b> Scan<'b, '_> {
 
     /// `(?<=\Wword|^word)` at `p`.
     fn after_word(&self, p: usize, w: &[u8]) -> bool {
-        if p < w.len() || p > self.n || &self.b[p - w.len()..p] != w {
+        if p < w.len() || p > self.b.len() || &self.b[p - w.len()..p] != w {
             return false;
         }
         let s = p - w.len();
@@ -2791,7 +2790,7 @@ impl<'b> Scan<'b, '_> {
                 before(b, p),
                 Some(b'(' | b'{' | b'[' | b',' | b'?' | b':' | b'=')
             )
-            || (p >= 2 && p <= self.n && matches!(&b[p - 2..p], b"&&" | b"||" | b"=>"))
+            || (p >= 2 && p <= self.b.len() && matches!(&b[p - 2..p], b"&&" | b"||" | b"=>"))
             || self.after_word(p, b"return")
             || self.after_word(p, b"default");
         if !after {
@@ -3508,7 +3507,7 @@ impl<'b> Scan<'b, '_> {
                 self.pop();
                 return self.close(p, p + 1, STR_END);
             }
-            if p == self.n {
+            if p == self.b.len() {
                 // `(\n)`: the string ends with its line
                 self.fill(p);
                 self.pop();
@@ -3552,12 +3551,12 @@ impl<'b> Scan<'b, '_> {
         if has(self.b, p, b"${") {
             return self.tok_push(p, p + 2, SUBST_BEGIN, SUBST);
         }
-        if p >= self.n {
+        if p >= self.b.len() {
             return None;
         }
         // `.`: a character; a run of them is one span
         let mut e = self.next(p);
-        while e < self.n && !matches!(self.b[e], b'`' | b'\\' | b'$') {
+        while e < self.b.len() && !matches!(self.b[e], b'`' | b'\\' | b'$') {
             e += 1;
         }
         self.tok(p, e, TPL_TEXT)
@@ -3569,7 +3568,7 @@ impl<'b> Scan<'b, '_> {
             return None;
         }
         let s = spaces(self.b, p + 1);
-        if s > self.n {
+        if s > self.b.len() {
             // the spaces took the line's `\n`
             return self.tok(p, s, nl);
         }
@@ -3593,10 +3592,10 @@ impl<'b> Scan<'b, '_> {
         // as the string's own dispatches would give them
         let b = self.b;
         let mut i = e;
-        while i < self.n && b[i] != q && b[i] != b'\\' {
+        while i < self.b.len() && b[i] != q && b[i] != b'\\' {
             i += 1;
         }
-        if i < self.n && b[i] == q {
+        if i < self.b.len() && b[i] == q {
             return self.close(i, i + 1, STR_END);
         }
         Some(e)
@@ -3744,8 +3743,8 @@ impl<'b> Scan<'b, '_> {
                 }
                 Some(b'/') => {
                     self.put(p, p + 2, LINE_MARK);
-                    self.tok(p + 2, self.n, LINE)?;
-                    Some(self.n + 1)
+                    self.tok(p + 2, self.b.len(), LINE)?;
+                    Some(self.b.len() + 1)
                 }
                 _ => None,
             },
@@ -3753,8 +3752,8 @@ impl<'b> Scan<'b, '_> {
             b'-' if has(b, p, b"-->") => self.tok(p, p + 3, HTML_COMMENT),
             b'#' if p == 0 && self.is(1, b'!') => {
                 self.put(0, 2, SHEBANG_MARK);
-                self.tok(2, self.n, SHEBANG)?;
-                Some(self.n + 1)
+                self.tok(2, self.b.len(), SHEBANG)?;
+                Some(self.b.len() + 1)
             }
             _ => None,
         }
@@ -4085,7 +4084,7 @@ impl<'b> Scan<'b, '_> {
             let e = spaces(b, s + 1);
             self.put(p, s, PLAIN);
             self.put(s, s + 1, FLOW_OTHER);
-            return Some(e.min(self.n + 1));
+            return Some(e.min(self.b.len() + 1));
         }
         let c = self.c(p)?;
         match c {
@@ -4147,7 +4146,7 @@ impl<'b> Scan<'b, '_> {
                             break;
                         }
                     }
-                    Some(_) if e < self.n && is_word(b, e) => e += char_len(b[e]),
+                    Some(_) if e < self.b.len() && is_word(b, e) => e += char_len(b[e]),
                     _ => break,
                 }
             }
@@ -4264,10 +4263,12 @@ impl<'b> Scan<'b, '_> {
         }
         // `&\S*;`: the last `;` before a space
         let mut s = p + 1;
-        while s < self.n && space_len(b, s).is_none() {
+        while s < self.b.len() && space_len(b, s).is_none() {
             s += char_len(b[s]);
         }
-        let semi = b[p + 1..s.min(self.n)].iter().rposition(|&c| c == b';')?;
+        let semi = b[p + 1..s.min(self.b.len())]
+            .iter()
+            .rposition(|&c| c == b';')?;
         self.tok(p, p + 1 + semi + 1, bad)
     }
 

@@ -198,7 +198,6 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     let mut s = Scan {
         b,
-        n: b.len(),
         out,
         mark: 0,
         is_end: usize::MAX,
@@ -266,7 +265,6 @@ pub(crate) fn embedded(
     }
     let mut s = Scan {
         b,
-        n,
         out,
         mark: p,
         is_end: keep.is_end,
@@ -861,7 +859,6 @@ static WORD: [bool; 256] = {
 
 struct Scan<'b, 'o, 's, 'e> {
     b: &'b [u8],
-    n: usize,
     out: &'o mut Out<'s>,
     /// Where the last token ended, or where `main` took over: where syntect's search for
     /// the next match starts.
@@ -879,7 +876,7 @@ struct Scan<'b, 'o, 's, 'e> {
 
 impl Scan<'_, '_, '_, '_> {
     fn tok(&mut self, start: usize, end: usize, kind: u16) {
-        let e = end.min(self.n);
+        let e = end.min(self.b.len());
         match self.embed {
             None => self.out.push(start, e, kind),
             Some(host) => {
@@ -901,7 +898,7 @@ impl Scan<'_, '_, '_, '_> {
     fn yields(&self, p: usize) -> bool {
         match self.embed {
             None => false,
-            Some(host) => p > self.from && p < self.n && host.yields[usize::from(self.b[p])],
+            Some(host) => p > self.from && p < self.b.len() && host.yields[usize::from(self.b[p])],
         }
     }
 
@@ -924,7 +921,7 @@ impl Scan<'_, '_, '_, '_> {
 
     /// `main` from `p`: `None` at the line's end, or the context it pushes and where.
     fn main(&mut self, mut p: usize) -> Option<(usize, u8)> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         self.mark = p;
         let stop = if self.embed.is_some() {
             // a word the host's token ended in the middle of: no `\b` before its rest
@@ -1036,7 +1033,7 @@ impl Scan<'_, '_, '_, '_> {
     /// Embedded, a line comment from `p` (its mark's end): its text up to the host's next
     /// place, or to the line's end, where it pops.
     fn line_comment(&mut self, ctx: u8, p: usize) -> Option<(usize, u8)> {
-        let n = self.n;
+        let n = self.b.len();
         if p >= n {
             return Some((n + 1, MAIN));
         }
@@ -1071,7 +1068,7 @@ impl Scan<'_, '_, '_, '_> {
             return Ok(e);
         }
         // `\b(\w+?)\.(\w+)\b`
-        if b.get(e) == Some(&b'.') && is_word(&b[..self.n], e + 1) {
+        if b.get(e) == Some(&b'.') && is_word(&b[..self.b.len()], e + 1) {
             let t = word_end(b, e + 1);
             self.tok(p, e, DATABASE);
             self.tok(e + 1, t, TABLE);
@@ -1261,7 +1258,7 @@ impl Scan<'_, '_, '_, '_> {
         let s = self.spaces1(e)?;
         let o = OBJECTS
             .iter()
-            .find(|o| at_ci(&self.b[..self.n], s, o))
+            .find(|o| at_ci(&self.b[..self.b.len()], s, o))
             .map(|o| s + o.len())?;
         self.tok(p, e, DROP_KEYWORD);
         self.tok(s, o, DROP_OBJECT);
@@ -1276,11 +1273,11 @@ impl Scan<'_, '_, '_, '_> {
     /// `\s*(drop)\s+(table)\s+(\w+)(\s+cascade)?\b` with `drop` at `p`: where it ends.
     fn drop_table(&mut self, p: usize) -> Option<usize> {
         let t = self.spaces1(p + 4)?;
-        if !at_ci(&self.b[..self.n], t, b"table") {
+        if !at_ci(&self.b[..self.b.len()], t, b"table") {
             return None;
         }
         let nm = self.spaces1(t + 5)?;
-        if !is_word(&self.b[..self.n], nm) {
+        if !is_word(&self.b[..self.b.len()], nm) {
             return None;
         }
         let ne = word_end(self.b, nm);
@@ -1299,7 +1296,7 @@ impl Scan<'_, '_, '_, '_> {
     fn alter(&mut self, p: usize, e: usize) -> Option<usize> {
         let s = self.spaces1(e)?;
         let (o, end) = OBJECTS.iter().find_map(|o| {
-            if !at_ci(&self.b[..self.n], s, o) {
+            if !at_ci(&self.b[..self.b.len()], s, o) {
                 return None;
             }
             let q = s + o.len();
@@ -1330,7 +1327,7 @@ impl Scan<'_, '_, '_, '_> {
                     W_CHARACTER => {
                         let q = self.space(e)?;
                         let v = q + b"varying".len();
-                        if at_ci(&self.b[..self.n], q, b"varying") && self.size(v).is_some() {
+                        if at_ci(&self.b[..self.b.len()], q, b"varying") && self.size(v).is_some() {
                             v
                         } else {
                             q
@@ -1338,7 +1335,7 @@ impl Scan<'_, '_, '_, '_> {
                     }
                     _ => {
                         let q = self.space(e)?;
-                        at_ci(&self.b[..self.n], q, b"char").then_some(q + 4)?
+                        at_ci(&self.b[..self.b.len()], q, b"char").then_some(q + 4)?
                     }
                 };
                 let d = self.size(t)?;
@@ -1354,7 +1351,7 @@ impl Scan<'_, '_, '_, '_> {
             W_NUMERIC => {
                 // `(numeric|decimal)\b(?:\((\d+),(\d+)\))?`
                 self.tok(p, e, TYPE);
-                let b = &self.b[..self.n];
+                let b = &self.b[..self.b.len()];
                 if b.get(e) == Some(&b'(') {
                     let d1 = digits0(b, e + 1);
                     if d1 > e + 1 && b.get(d1) == Some(&b',') {
@@ -1385,7 +1382,7 @@ impl Scan<'_, '_, '_, '_> {
 
     /// `\((\d+)\)` at `p`: where its digits end.
     fn size(&self, p: usize) -> Option<usize> {
-        let b = &self.b[..self.n];
+        let b = &self.b[..self.b.len()];
         if b.get(p) != Some(&b'(') {
             return None;
         }
@@ -1460,7 +1457,7 @@ impl Scan<'_, '_, '_, '_> {
         let s = self.spaces1(q)?;
         let o = COMMENT_OBJECTS
             .iter()
-            .find(|o| at_ci(&self.b[..self.n], s, o))
+            .find(|o| at_ci(&self.b[..self.b.len()], s, o))
             .map(|o| s + o.len())?;
         let mut starts = Vec::new();
         let mut q = o;
@@ -1480,12 +1477,12 @@ impl Scan<'_, '_, '_, '_> {
             loop {
                 if let Some(e) = self
                     .spaces1(q)
-                    .filter(|&a| at_ci(&self.b[..self.n], a, b"is"))
+                    .filter(|&a| at_ci(&self.b[..self.b.len()], a, b"is"))
                     .and_then(|a| self.spaces1(a + 2))
                 {
                     return Some(e);
                 }
-                if q >= self.n {
+                if q >= self.b.len() {
                     break;
                 }
                 q += char_len(self.b[q]);
@@ -1498,8 +1495,8 @@ impl Scan<'_, '_, '_, '_> {
     /// it starts: 0 for none. Found once a line.
     fn last_is(&mut self) -> usize {
         if self.is_end == usize::MAX {
-            let b = &self.b[..self.n];
-            self.is_end = (1..self.n.saturating_sub(1))
+            let b = &self.b[..self.b.len()];
+            self.is_end = (1..self.b.len().saturating_sub(1))
                 .rev()
                 .find(|&r| {
                     at_ci(b, r, b"is")
@@ -1519,17 +1516,17 @@ impl Scan<'_, '_, '_, '_> {
 
     /// The word `w` at `p` (ASCII case ignored), then `\b`: where it ends.
     fn keyword_at(&self, p: usize, w: &[u8]) -> Option<usize> {
-        let b = &self.b[..self.n];
+        let b = &self.b[..self.b.len()];
         let e = p + w.len();
         (at_ci(b, p, w) && !is_word(b, e)).then_some(e)
     }
 
     /// `\s` at `p`, the line's `\n` one: where it ends.
     fn space(&self, p: usize) -> Option<usize> {
-        if p == self.n {
+        if p == self.b.len() {
             return Some(p + 1);
         }
-        space_len(&self.b[..self.n], p).map(|k| p + k)
+        space_len(&self.b[..self.b.len()], p).map(|k| p + k)
     }
 
     /// `\s*` at `p`, the line's `\n` taken: where it ends.
@@ -1549,7 +1546,7 @@ impl Scan<'_, '_, '_, '_> {
     /// end and the host's next place: where it ends. `None` for digits alone, or anything else.
     fn decimal(&self, p: usize) -> Option<usize> {
         // the byte at `q`, unless it is past the line or the host's
-        let at = |q: usize| (q < self.n && !self.yields(q)).then(|| self.b[q]);
+        let at = |q: usize| (q < self.b.len() && !self.yields(q)).then(|| self.b[q]);
         let digits = |mut q: usize| {
             while at(q).is_some_and(|c| c.is_ascii_digit()) {
                 q += 1;
@@ -1574,7 +1571,7 @@ impl Scan<'_, '_, '_, '_> {
                 end = x;
             }
         }
-        let boundary = at(end).is_none() || !is_word(&self.b[..self.n], end);
+        let boundary = at(end).is_none() || !is_word(&self.b[..self.b.len()], end);
         (end > i && boundary).then_some(end)
     }
 
@@ -1589,7 +1586,7 @@ impl Scan<'_, '_, '_, '_> {
 
     /// A block comment from `p`: `None` at the line's end, or `main` past its `*/`.
     fn block(&mut self, mut p: usize) -> Option<(usize, u8)> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         if p == 0 {
             // `^\s*(\*)(?!/)`
             let mut q = 0;
@@ -1620,10 +1617,10 @@ impl Scan<'_, '_, '_, '_> {
     /// The first place from `p` the host's patterns get, or the line's end.
     fn host_next(&self, p: usize) -> usize {
         if self.embed.is_none() {
-            return self.n;
+            return self.b.len();
         }
         let mut q = p;
-        while q < self.n && !self.yields(q) {
+        while q < self.b.len() && !self.yields(q) {
             q += 1;
         }
         q
@@ -1631,7 +1628,7 @@ impl Scan<'_, '_, '_, '_> {
 
     /// String `ctx` from `p`: `None` at the line's end, or `main` past its end.
     fn string(&mut self, ctx: u8, mut p: usize) -> Option<(usize, u8)> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let quote = match ctx {
             SINGLE => b'\'',
             DOUBLE => b'"',
@@ -1709,7 +1706,7 @@ impl Scan<'_, '_, '_, '_> {
     /// `identifier_create` from `p`: `main` where it pops. It pops by the line's end at the
     /// latest: past a `\n` that `create`'s `\s*` took, `{{end_identifier}}`'s `$` holds.
     fn create(&mut self, mut p: usize) -> Option<(usize, u8)> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         loop {
             if p > n {
                 return Some((p, MAIN));
@@ -1751,7 +1748,7 @@ impl Scan<'_, '_, '_, '_> {
 
     /// A name at `p`, `\w+` or one in quotes: its text's start and end, and its end.
     fn create_name(&self, p: usize) -> Option<(usize, usize, usize)> {
-        let b = &self.b[..self.n];
+        let b = &self.b[..self.b.len()];
         match *b.get(p)? {
             quote @ (b'\'' | b'"' | b'`') => {
                 let i = b[p + 1..].iter().position(|&c| c == quote)?;
@@ -1767,12 +1764,12 @@ impl Scan<'_, '_, '_, '_> {
 
     /// `{{end_identifier}}` at `p`: `(?=[ \t]*(?:[^\w'"`. \t]|$))`.
     fn end_identifier(&self, p: usize) -> bool {
-        let b = &self.b[..self.n];
+        let b = &self.b[..self.b.len()];
         let mut r = p;
         while matches!(b.get(r), Some(b' ' | b'\t')) {
             r += 1;
         }
-        r >= self.n || !(is_word(b, r) || matches!(b[r], b'\'' | b'"' | b'`' | b'.'))
+        r >= self.b.len() || !(is_word(b, r) || matches!(b[r], b'\'' | b'"' | b'`' | b'.'))
     }
 }
 

@@ -1718,7 +1718,7 @@ impl Scan<'_, '_, '_, true> {
 
     /// The class of place `p` ([`BYTE_CLASS`]).
     fn class_at(&self, p: usize) -> u32 {
-        match p.cmp(&self.n) {
+        match p.cmp(&self.b.len()) {
             std::cmp::Ordering::Less => BYTE_CLASS[usize::from(self.b[p])],
             std::cmp::Ordering::Equal => C_NL,
             std::cmp::Ordering::Greater => C_END,
@@ -1736,7 +1736,7 @@ impl Scan<'_, '_, '_, true> {
 
     /// `{{break}}` at `i`: an ASCII character but `[-_[:alnum:]\\]` follows, or the line's end.
     fn brk(&self, i: usize) -> bool {
-        if i >= self.n {
+        if i >= self.b.len() {
             return true;
         }
         let c = self.b[i];
@@ -1756,7 +1756,7 @@ impl Scan<'_, '_, '_, true> {
             _ => c.is_ascii_lowercase() || c == b'_' || c == b'-',
         };
         let mut j = i;
-        while j < self.n && in_class(self.b[j]) {
+        while j < self.b.len() && in_class(self.b[j]) {
             j += 1;
         }
         self.class_runs[k].set((i, j));
@@ -1767,17 +1767,17 @@ impl Scan<'_, '_, '_, true> {
     /// an op that reads an ident at each place in one would be quadratic (`@media (aaaa…`). Each
     /// place's end is the end of the place after its first character's, filled in on the way.
     fn nmchars_m(&self, i: usize) -> usize {
-        if self.n < 512 {
+        if self.b.len() < 512 {
             return self.nmchars(i);
         }
         let mut memo = self.nm_ends.borrow_mut();
         if memo.is_empty() {
-            memo.resize(self.n + 2, u32::MAX);
+            memo.resize(self.b.len() + 2, u32::MAX);
         }
         let mut path = Vec::new();
         let mut k = i;
         let end = loop {
-            if k > self.n {
+            if k > self.b.len() {
                 break k;
             }
             if memo[k] != u32::MAX {
@@ -1819,22 +1819,22 @@ impl Scan<'_, '_, '_, true> {
 
     /// Whether `{{ident}}` starts at `i`, read from its first characters.
     fn ident_at(&self, i: usize) -> bool {
-        if i >= self.n {
+        if i >= self.b.len() {
             return false;
         }
         let b = self.b;
         if b[i] == b'-' {
-            if b.get(i + 1) == Some(&b'-') && i + 2 < self.n && self.nmchar(i + 2).is_some() {
+            if b.get(i + 1) == Some(&b'-') && i + 2 < self.b.len() && self.nmchar(i + 2).is_some() {
                 return true;
             }
-            return i + 1 < self.n && self.nmstart(i + 1).is_some();
+            return i + 1 < self.b.len() && self.nmstart(i + 1).is_some();
         }
         self.nmstart(i).is_some()
     }
 
     /// Where a run of `\w` (and `-` if `dash`) at `i` ends.
     fn word_run(&self, mut i: usize, dash: bool) -> usize {
-        while i < self.n {
+        while i < self.b.len() {
             let c = self.b[i];
             if c < 0x80 {
                 if c.is_ascii_alphanumeric() || c == b'_' || (dash && c == b'-') {
@@ -1847,17 +1847,17 @@ impl Scan<'_, '_, '_, true> {
             if !class_word(ch) {
                 break;
             }
-            i = (i + len).min(self.n);
+            i = (i + len).min(self.b.len());
         }
         i
     }
 
     /// Where a run of the characters `\b` takes as a word's (CSS's `\w`) at `i` ends.
     fn bword_end(&self, mut i: usize) -> usize {
-        while i < self.n && (self.b[i].is_ascii_alphanumeric() || self.b[i] == b'_') {
+        while i < self.b.len() && (self.b[i].is_ascii_alphanumeric() || self.b[i] == b'_') {
             i += 1;
         }
-        while i < self.n && self.word_at(i) {
+        while i < self.b.len() && self.word_at(i) {
             i = self.next(i);
         }
         i
@@ -1866,7 +1866,7 @@ impl Scan<'_, '_, '_, true> {
     /// Where `[a-zA-Z0-9_-][\w-]*` at `i` ends: a variable's name.
     fn var_name(&self, i: usize) -> Option<usize> {
         let c = *self.b.get(i)?;
-        if i >= self.n || !(c.is_ascii_alphanumeric() || c == b'_' || c == b'-') {
+        if i >= self.b.len() || !(c.is_ascii_alphanumeric() || c == b'_' || c == b'-') {
             return None;
         }
         Some(self.word_run(i + 1, true))
@@ -1936,7 +1936,7 @@ impl Scan<'_, '_, '_, true> {
         }
         // `\b(…)\b(?![-])`: the word to a `\b` no `-` follows
         let mut e = i + 1;
-        while e < self.n && (self.word_at(e) || self.b[e] == b'-') {
+        while e < self.b.len() && (self.word_at(e) || self.b[e] == b'-') {
             e = self.next(e);
         }
         let w = &self.b[(i + 1).min(e)..e];
@@ -1954,7 +1954,7 @@ impl Scan<'_, '_, '_, true> {
             return false;
         }
         let mut e = i + 1;
-        while e < self.n && (b[e].is_ascii_lowercase() || b[e] == b'-') {
+        while e < self.b.len() && (b[e].is_ascii_lowercase() || b[e] == b'-') {
             e += 1;
         }
         b.get(e) == Some(&b'(') && FUNCTIONAL_PSEUDO.contains(&&b[i + 1..e])
@@ -2000,7 +2000,7 @@ impl Scan<'_, '_, '_, true> {
             ends.extend(alt.into_iter().rev());
         }
         let s = if b.get(i) == Some(&b'-') { i + 1 } else { i };
-        if s < self.n
+        if s < self.b.len()
             && let Some(q) = self.nmstart(s)
         {
             let mut k = q;
@@ -2022,7 +2022,7 @@ impl Scan<'_, '_, '_, true> {
     /// as syntect, it is passed over, and if nothing else matches there the scan steps a
     /// character and searches afresh.
     fn scss_run(&mut self) {
-        let n = self.n;
+        let n = self.b.len();
         let mut p = 0;
         let mut fresh = true;
         let mut guard = 0u32;
@@ -2142,7 +2142,7 @@ impl Scan<'_, '_, '_, true> {
         nc_push: &mut (usize, usize),
     ) -> (Option<usize>, bool) {
         if ctx == G_ARGS
-            && p < self.n
+            && p < self.b.len()
             && self.b[p].is_ascii_alphabetic()
             && let Some(r) = self.args_word(p, ctx, fresh)
         {
@@ -2192,7 +2192,7 @@ impl Scan<'_, '_, '_, true> {
         looped: &mut bool,
         nc_push: &mut (usize, usize),
     ) -> (usize, Option<usize>, bool, bool) {
-        let n = self.n;
+        let n = self.b.len();
         let mut consumed = false;
         loop {
             let d_in = self.depth;
@@ -2261,7 +2261,7 @@ impl Scan<'_, '_, '_, true> {
         check: bool,
         looped: &mut bool,
     ) -> Option<(Option<usize>, bool)> {
-        let n = self.n;
+        let n = self.b.len();
         if p >= n {
             // no op of these has `\n` and past it in its gate
             return Some((None, false));
@@ -2365,7 +2365,7 @@ impl Scan<'_, '_, '_, true> {
     /// the run's end, where `: ` is no pseudo and is a `:`; a `-` before a digit would be an
     /// end of its own, as in `scrollbar-3dlight-color`).
     fn property_shape(&self, i: usize) -> bool {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         if i > 0 && (b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_') {
             // no `\b` here: the ops it rules out fail on their own
             return false;
@@ -2392,7 +2392,7 @@ impl Scan<'_, '_, '_, true> {
     /// `property-values` at `p`, its ops dispatched on the byte there as [`gated`] lets them
     /// through: [`Scan::list`] of [`PROPERTY_VALUES`].
     fn pv_list(&mut self, p: usize, ctx: u8, fresh: bool) -> Option<usize> {
-        let n = self.n;
+        let n = self.b.len();
         if p >= n {
             // none of its ops has `\n` and past it in its gate
             return None;
@@ -2495,7 +2495,7 @@ impl Scan<'_, '_, '_, true> {
             return Some(Some(w));
         }
         // `property-value-constants` (`progid:` is out: no `:` after the word)
-        let delim = e >= self.n
+        let delim = e >= self.b.len()
             || matches!(
                 b[e],
                 b' ' | b'\t' | b'\x0b' | b'\x0c' | b'\r' | b';' | b'{' | b')' | b',' | b'/'
@@ -2595,7 +2595,7 @@ impl Scan<'_, '_, '_, true> {
 
     /// The front matter from `p`: a `---` line ends it (the others are YAML's, [`line`]).
     fn front(&mut self, p: usize) -> Option<usize> {
-        if p > self.n {
+        if p > self.b.len() {
             return None;
         }
         if p == 0 && self.b == b"---" {
@@ -2603,12 +2603,12 @@ impl Scan<'_, '_, '_, true> {
             self.pop(3);
             return Some(3);
         }
-        Some(self.n + 1)
+        Some(self.b.len() + 1)
     }
 
     /// A string from `p`: its end, a newline's pop, escapes, interpolation.
     fn scss_string(&mut self, p: usize, ctx: u8) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         if p > n {
             return None;
         }
@@ -2665,7 +2665,7 @@ impl Scan<'_, '_, '_, true> {
         if op >= 1000 {
             return self.selector_part(op, p);
         }
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let c = self.ch(p);
         match op {
             O_COMMENT_LINE => {
@@ -3675,7 +3675,7 @@ impl Scan<'_, '_, '_, true> {
             return None;
         }
         let mut h = p + 1;
-        while h < self.n && is_hex(b[h]) {
+        while h < self.b.len() && is_hex(b[h]) {
             h += 1;
         }
         let k = h - p - 1;
@@ -3738,7 +3738,7 @@ impl Scan<'_, '_, '_, true> {
         }
         // `{{break}}(?=[\s;{),/])`: the word must end at one of those
         let delim = |i: usize| {
-            i >= self.n
+            i >= self.b.len()
                 || matches!(
                     self.b[i],
                     b' ' | b'\t' | b'\x0b' | b'\x0c' | b'\r' | b';' | b'{' | b')' | b',' | b'/'
@@ -3746,7 +3746,7 @@ impl Scan<'_, '_, '_, true> {
         };
         if b.get(p..p + 23) == Some(b"progid:DXImageTransform") {
             let m = self.next(p + 23);
-            if m < self.n && b.get(m..m + 9) == Some(b"Microsoft") {
+            if m < self.b.len() && b.get(m..m + 9) == Some(b"Microsoft") {
                 let s = self.next(m + 9);
                 for x in [
                     &b"Alpha"[..],
@@ -3756,7 +3756,7 @@ impl Scan<'_, '_, '_, true> {
                     b"Shadow",
                 ] {
                     let e = s + x.len();
-                    if s < self.n && b.get(s..e) == Some(x) && delim(e) {
+                    if s < self.b.len() && b.get(s..e) == Some(x) && delim(e) {
                         self.tok(p, e, CONSTANT);
                         return Some(e);
                     }
@@ -3788,7 +3788,7 @@ impl Scan<'_, '_, '_, true> {
                 let e = p + w.len();
                 if b.get(p..e).is_some_and(|x| x.eq_ignore_ascii_case(w)) && self.boundary(e) {
                     let s = self.spaces(e);
-                    if s > self.n || matches!(self.ch(s), Some(b';' | b',' | b'}' | b'{')) {
+                    if s > self.b.len() || matches!(self.ch(s), Some(b';' | b',' | b'}' | b'{')) {
                         self.tok(p, e, FONT_NAME_LEAF);
                         return Some(e);
                     }
@@ -3814,7 +3814,7 @@ impl Scan<'_, '_, '_, true> {
     fn s_numeric(&mut self, p: usize, types: &[u8]) -> Option<usize> {
         let b = self.b;
         let c = *b.get(p)?;
-        if !(c.is_ascii_digit() || matches!(c, b'-' | b'+' | b'.')) || p >= self.n {
+        if !(c.is_ascii_digit() || matches!(c, b'-' | b'+' | b'.')) || p >= self.b.len() {
             return None;
         }
         if !self.can_push() {
@@ -3906,18 +3906,18 @@ impl Scan<'_, '_, '_, true> {
     /// `\s*([-+])(?=\d)`, each a pop, else `''`'s; where the scan goes on.
     fn maybe_illegal(&mut self, e: usize) -> usize {
         let b = self.b;
-        if matches!(b.get(e), Some(b'-' | b'+')) && e < self.n {
+        if matches!(b.get(e), Some(b'-' | b'+')) && e < self.b.len() {
             let s = self.spaces(e + 1);
-            if s < self.n && b[s].is_ascii_digit() {
+            if s < self.b.len() && b[s].is_ascii_digit() {
                 self.tok(e, e + 1, ILLEGAL_OP);
                 return e + 1;
             }
         }
         let s = self.spaces(e);
-        if s < self.n
+        if s < self.b.len()
             && matches!(b[s], b'-' | b'+')
             && b.get(s + 1).is_some_and(u8::is_ascii_digit)
-            && s + 1 < self.n
+            && s + 1 < self.b.len()
         {
             self.tok(s, s + 1, ILLEGAL_OP);
             return s + 1;
@@ -3933,7 +3933,7 @@ impl Scan<'_, '_, '_, true> {
             i += 1;
         }
         let d = self.digits(i);
-        if b.get(d) != Some(&b'n') || d >= self.n {
+        if b.get(d) != Some(&b'n') || d >= self.b.len() {
             return None;
         }
         self.tok(p, i, ARITHMETIC);
@@ -3941,7 +3941,7 @@ impl Scan<'_, '_, '_, true> {
         self.tok(d, d + 1, NUM_SUFFIX);
         let nend = d + 1;
         let s = self.spaces(nend);
-        if s < self.n && matches!(b[s], b'-' | b'+') {
+        if s < self.b.len() && matches!(b[s], b'-' | b'+') {
             let t = self.spaces(s + 1);
             let e = self.digits(t);
             if e > t {
@@ -3950,7 +3950,7 @@ impl Scan<'_, '_, '_, true> {
                 return Some(e);
             }
         }
-        Some(s.min(self.n + 1))
+        Some(s.min(self.b.len() + 1))
     }
 
     /// `sass-operators` at `p`.
@@ -3958,7 +3958,7 @@ impl Scan<'_, '_, '_, true> {
         let b = self.b;
         let c = self.ch(p)?;
         // `/|\*|\-\-|\-|\+\+|\+|~`
-        if p < self.n {
+        if p < self.b.len() {
             let e = match c {
                 b'/' | b'*' | b'~' => p + 1,
                 b'-' | b'+' => {
@@ -3998,7 +3998,7 @@ impl Scan<'_, '_, '_, true> {
         }
         // `(?:\s*)\b(not|or|and|when|from|to|through|in)(?=\s)`
         let s = self.spaces(p);
-        if s < self.n
+        if s < self.b.len()
             && matches!(b[s], b'n' | b'o' | b'a' | b'w' | b'f' | b't' | b'i')
             && self.boundary(s)
         {
@@ -4025,7 +4025,7 @@ impl Scan<'_, '_, '_, true> {
     /// `unquoted-concatenated-string` at `p`.
     fn concat(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
-        let n = self.n;
+        let n = self.b.len();
         let run = |i: usize| self.class_run(i, 1);
         // `\s+`: where it ends, if it takes something
         let spaces1 = |i: usize| {
@@ -4076,7 +4076,7 @@ impl Scan<'_, '_, '_, true> {
         let mut e = self.ident_m(p)?;
         loop {
             let s = self.spaces(e);
-            if s == e || s >= self.n {
+            if s == e || s >= self.b.len() {
                 break;
             }
             match self.ident_m(s) {
@@ -4102,7 +4102,7 @@ impl Scan<'_, '_, '_, true> {
 
     /// `selectors` at `p`.
     fn selectors(&mut self, p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let s = self.spaces(p);
         if s >= n || !self.can_push() {
             return self.selectors_tail(p);
@@ -4174,7 +4174,7 @@ impl Scan<'_, '_, '_, true> {
             let s = self.spaces(0);
             if let Some(e) = self.combinator_at(s) {
                 self.tok(s, e, COMBINATOR);
-                return Some(self.spaces(e).min(self.n + 1));
+                return Some(self.spaces(e).min(self.b.len() + 1));
             }
         }
         None
@@ -4187,7 +4187,7 @@ impl Scan<'_, '_, '_, true> {
         match b.get(i)? {
             b'>' => {
                 let mut k = i + 1;
-                while k < self.n && k - i < 3 && b[k] == b'>' {
+                while k < self.b.len() && k - i < 3 && b[k] == b'>' {
                     k += 1;
                 }
                 (i + 1..=k).rev().find(|&e| !comb(b.get(e)))
@@ -4226,14 +4226,14 @@ impl Scan<'_, '_, '_, true> {
                 None
             }
             1003 => {
-                if matches!(b.get(p), Some(b'.' | b'#' | b'[' | b'&')) && p < self.n {
+                if matches!(b.get(p), Some(b'.' | b'#' | b'[' | b'&')) && p < self.b.len() {
                     self.pop(p);
                     return Some(p);
                 }
                 None
             }
             1004 => {
-                if s >= self.n || b[s..].starts_with(b"//") || b[s..].starts_with(b"/*") {
+                if s >= self.b.len() || b[s..].starts_with(b"//") || b[s..].starts_with(b"/*") {
                     self.pop(s);
                     return Some(s);
                 }
@@ -4257,7 +4257,7 @@ impl Scan<'_, '_, '_, true> {
     /// `pseudo-elements` at `p`: `\s*{{pseudo_elements}}`, its spaces in its scope.
     fn pseudo_element(&mut self, p: usize) -> Option<usize> {
         let s = self.spaces(p);
-        if s >= self.n {
+        if s >= self.b.len() {
             return None;
         }
         let (colons, vendor, e) = self.pseudo_element_at(s)?;
@@ -4276,7 +4276,7 @@ impl Scan<'_, '_, '_, true> {
     fn pseudo_class(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
         let s = self.spaces(p);
-        if s >= self.n || b[s] != b':' {
+        if s >= self.b.len() || b[s] != b':' {
             return None;
         }
         let at = |w: &[u8]| b.get(s + 1..s + 1 + w.len()) == Some(w);
@@ -4359,7 +4359,7 @@ impl Scan<'_, '_, '_, true> {
     /// `custom-element-selectors` at `p`: each of its five patterns, the longest element that
     /// ends at a `\b` no ident follows, with that pattern's lookahead.
     fn custom_elements(&mut self, p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let s = self.spaces(p);
         if s >= n
             || !b[s].is_ascii_lowercase()
@@ -4417,7 +4417,7 @@ impl Scan<'_, '_, '_, true> {
     /// `interpolated-selectors` at `p`: `\s*(#)(?={.*}…)`, a `}` later on the line that one of
     /// the lookaheads follows.
     fn interpolated_selector(&mut self, p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let s = self.spaces(p);
         if s + 1 >= n || b[s] != b'#' || b[s + 1] != b'{' || !self.can_push() {
             return None;
@@ -4566,7 +4566,7 @@ impl Scan<'_, '_, '_, true> {
 
     /// SCSS's `at-rules` at `p`.
     fn s_at_rules(&mut self, p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let s = self.spaces(p);
         if s >= n || b[s] != b'@' || !self.can_push() {
             return None;

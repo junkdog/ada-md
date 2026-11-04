@@ -310,7 +310,6 @@ const SYNTECT_DEPTH: usize = 99;
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     let mut s = Scan {
         b,
-        n: b.len(),
         out,
         stack: [MAIN; MAX],
         wraps: [W_NONE; MAX],
@@ -863,7 +862,6 @@ type Step = usize;
 
 struct Scan<'b, 'o, 's> {
     b: &'b [u8],
-    n: usize,
     out: &'o mut Out<'s>,
     stack: [u8; MAX],
     /// Each level's wrap: what a token in it sits in.
@@ -906,7 +904,7 @@ impl Scan<'_, '_, '_> {
 
     /// Fill the top context's text up to `to`.
     fn fill(&mut self, to: usize) {
-        let to = to.min(self.n);
+        let to = to.min(self.b.len());
         if to > self.at {
             let w = self.wrap();
             if w != 0 {
@@ -919,7 +917,7 @@ impl Scan<'_, '_, '_> {
     /// Bytes `start..end` are leaf `leaf` in the top context's wrap.
     fn tok(&mut self, start: usize, end: usize, leaf: u16) {
         self.fill(start);
-        let end = end.min(self.n);
+        let end = end.min(self.b.len());
         if end > start {
             let kind = self.wrap() | leaf;
             if kind != 0 {
@@ -975,7 +973,7 @@ impl Scan<'_, '_, '_> {
                 None => break,
             }
         }
-        self.fill(self.n);
+        self.fill(self.b.len());
     }
 
     // ---- the contexts that include `main` ----
@@ -983,7 +981,7 @@ impl Scan<'_, '_, '_> {
     /// The top context, one that includes `main`, from `p`: where its stack changed, or
     /// `None` at the line's end.
     fn code(&mut self, mut p: usize) -> Option<Step> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let ctx = self.top();
         let close = CLOSE[usize::from(ctx)];
         if p == 0 && n > 0 && space_len(b, 0).is_some() {
@@ -1358,17 +1356,17 @@ impl Scan<'_, '_, '_> {
                 self.push(STOP, p);
                 self.tok(p, p + 3, CONTROL);
                 // `.+`, then the pop at `$`
-                self.tok(p + 3, self.n, UNQUOTED);
+                self.tok(p + 3, self.b.len(), UNQUOTED);
                 self.pop();
-                return self.n;
+                return self.b.len();
             }
             if next.is_ascii_alphabetic() {
                 let mut e = p + 1;
-                while e < self.n && b[e].is_ascii_alphabetic() {
+                while e < self.b.len() && b[e].is_ascii_alphabetic() {
                     e += 1;
                 }
                 // `(?!\p{L})`: the letters run whole
-                if !(e < self.n && b[e] >= 0x80 && is_letter(b, e)) {
+                if !(e < self.b.len() && b[e] >= 0x80 && is_letter(b, e)) {
                     let bits = self.classes(p + 1, e);
                     if bits & REGEX_OP != 0 {
                         self.regex_operator(p, e);
@@ -1498,8 +1496,8 @@ impl Scan<'_, '_, '_> {
             if self.spaces_to_end(q) {
                 self.push(ctx, p);
                 self.tok(p, q, STRING_BEGIN);
-                self.fill(self.n);
-                return Go::Changed(self.n);
+                self.fill(self.b.len());
+                return Go::Changed(self.b.len());
             }
         }
         if next == b'(' {
@@ -1574,7 +1572,7 @@ impl Scan<'_, '_, '_> {
         let double = self.stack[self.depth - 2] != SINGLE;
         let b = self.b;
         loop {
-            if p >= self.n {
+            if p >= self.b.len() {
                 return None;
             }
             if double {
@@ -1598,7 +1596,7 @@ impl Scan<'_, '_, '_> {
                             continue;
                         }
                         if self.spaces_to_end(p + 1) {
-                            self.tok(p, self.n, KEYWORD_OTHER);
+                            self.tok(p, self.b.len(), KEYWORD_OTHER);
                             return None;
                         }
                     }
@@ -1645,7 +1643,7 @@ impl Scan<'_, '_, '_> {
     fn open_comment(&mut self, p: usize) -> usize {
         let b = self.b;
         let mut e = p + 1;
-        while e < self.n && b[e] == b'#' {
+        while e < self.b.len() && b[e] == b'#' {
             e += 1;
         }
         self.push(LINE, p);
@@ -1699,7 +1697,7 @@ impl Scan<'_, '_, '_> {
 
     /// Whether only spaces follow `p` to the line's end.
     fn spaces_to_end(&self, mut p: usize) -> bool {
-        while p < self.n {
+        while p < self.b.len() {
             match space_len(self.b, p) {
                 Some(k) => p += k,
                 None => return false,
@@ -1727,9 +1725,13 @@ impl Scan<'_, '_, '_> {
     /// at `p`, a byte of the prefix, when a `\` follows: where it ends.
     fn prefixed_command(&mut self, p: usize) -> Option<usize> {
         if self.backslash == usize::MAX {
-            self.backslash = self.b.iter().rposition(|&c| c == b'\\').unwrap_or(self.n);
+            self.backslash = self
+                .b
+                .iter()
+                .rposition(|&c| c == b'\\')
+                .unwrap_or(self.b.len());
         }
-        if self.backslash == self.n || self.backslash < p {
+        if self.backslash == self.b.len() || self.backslash < p {
             return None;
         }
         let (from, to, s, end) = self.prefix;
@@ -1773,7 +1775,7 @@ impl Scan<'_, '_, '_> {
 
     /// A command's `.+?(?:\.(?i:exe|cmd|bat|ps1))?\b` from `k`, after its `-`: where it ends.
     fn command_tail(&self, k: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         if k >= n {
             return None;
         }
@@ -1811,7 +1813,8 @@ impl Scan<'_, '_, '_> {
         } else {
             // the run, and its last `.exe` with `\b` after
             let mut to = p;
-            while to < self.n && (WORD[usize::from(b[to])] || b[to] == b'.' || b[to] == b'-') {
+            while to < self.b.len() && (WORD[usize::from(b[to])] || b[to] == b'.' || b[to] == b'-')
+            {
                 to += 1;
             }
             let mut d = usize::MAX;
@@ -1854,7 +1857,7 @@ impl Scan<'_, '_, '_> {
         while let Some(l) = space_len(b, s) {
             s += l;
         }
-        if s == e || s >= self.n || !self.can_push() {
+        if s == e || s >= self.b.len() || !self.can_push() {
             return None;
         }
         // `(?:(global|local|script|private):)?`
@@ -1927,7 +1930,7 @@ impl Scan<'_, '_, '_> {
         }
         let mut ne = a;
         loop {
-            if ne < self.n && b[ne] == b'-' {
+            if ne < self.b.len() && b[ne] == b'-' {
                 ne += 1;
             } else if is_word(b, ne) {
                 ne += if b[ne] < 0x80 { 1 } else { char_len(b[ne]) };
@@ -2015,14 +2018,14 @@ impl Scan<'_, '_, '_> {
         self.tok(qe, s, HA);
         self.tok(s, s + 1, HA_EQUALS);
         self.tok(s + 1, t, HA);
-        Some(t.min(self.n))
+        Some(t.min(self.b.len()))
     }
 
     /// The type context's `(?!\d+|\.)(?:\p{L}|\p{N}|\.)+` at `p`.
     fn type_name(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
         let mut q = p;
-        while q < self.n {
+        while q < self.b.len() {
             let c = b[q];
             if c.is_ascii_alphanumeric() || c == b'.' {
                 q += 1;
@@ -2141,7 +2144,7 @@ impl Scan<'_, '_, '_> {
         let b = self.b;
         let open = p + 1;
         let close = self.next_brace(open + 1);
-        if close >= self.n || close == open + 1 || b[close - 1] == b'`' {
+        if close >= self.b.len() || close == open + 1 || b[close - 1] == b'`' {
             return None;
         }
         let c0 = open + 1;
@@ -2198,9 +2201,9 @@ impl Scan<'_, '_, '_> {
         if f <= from && from <= at && f != usize::MAX {
             return at;
         }
-        let at = (from..self.n)
+        let at = (from..self.b.len())
             .find(|&i| self.b[i] == b'}')
-            .unwrap_or(self.n);
+            .unwrap_or(self.b.len());
         self.brace = (from, at);
         at
     }
@@ -2224,7 +2227,7 @@ impl Scan<'_, '_, '_> {
     /// An attribute: `]` pops, `(` pushes its arguments.
     fn attr(&mut self, mut p: usize) -> Option<Step> {
         let b = self.b;
-        while p < self.n {
+        while p < self.b.len() {
             match b[p] {
                 b']' => {
                     self.tok(p, p + 1, BRACKET_END);
@@ -2245,7 +2248,7 @@ impl Scan<'_, '_, '_> {
     /// After `function name`: `(?=\{|\()` pops; a comment may come first.
     fn function_rest(&mut self, mut p: usize) -> Option<Step> {
         let b = self.b;
-        while p < self.n {
+        while p < self.b.len() {
             match b[p] {
                 b'{' | b'(' => {
                     self.pop();
@@ -2284,8 +2287,8 @@ impl Scan<'_, '_, '_> {
                     self.tok(p, s, DOC);
                     self.tok(s, k, DOC_DOT);
                     self.tok(k, e, DOC_KEYWORD);
-                    self.tok(e, self.n, DOC);
-                    return Some(self.n);
+                    self.tok(e, self.b.len(), DOC);
+                    return Some(self.b.len());
                 }
             }
             // `(EXTERNALHELP|FORWARDHELP(?:CATEGORY|TARGETNAME)|PARAMETER|REMOTEHELPRUNSPACE)`,
@@ -2299,7 +2302,7 @@ impl Scan<'_, '_, '_> {
                 }
                 if a > e {
                     // the argument: to the last byte that isn't a space
-                    let mut t = self.n;
+                    let mut t = self.b.len();
                     while t > a {
                         let mut c = t - 1;
                         while c > a && b[c] & 0xc0 == 0x80 {
@@ -2325,8 +2328,8 @@ impl Scan<'_, '_, '_> {
                         self.tok(k, e, DOC_KEYWORD);
                         self.tok(e, a, DOC);
                         self.tok(a, t, DOC_KEYWORD);
-                        self.tok(t, self.n, DOC);
-                        return Some(self.n);
+                        self.tok(t, self.b.len(), DOC);
+                        return Some(self.b.len());
                     }
                 }
             }
@@ -2338,10 +2341,14 @@ impl Scan<'_, '_, '_> {
     /// A line comment from `p`: `#requires`, docs where the search starts, the pop at `$`.
     fn line_comment(&mut self, mut p: usize) -> Option<Step> {
         let b = self.b;
-        if p >= self.n {
-            self.fill(self.n);
+        if p >= self.b.len() {
+            self.fill(self.b.len());
             self.pop();
-            return if p > self.n { None } else { Some(self.n) };
+            return if p > self.b.len() {
+                None
+            } else {
+                Some(self.b.len())
+            };
         }
         if p == self.docs_at
             && let Some(q) = self.docs(p)
@@ -2352,29 +2359,29 @@ impl Scan<'_, '_, '_> {
             // `(?<=#)(?i:(requires))\s`
             if p > 0 && b[p - 1] == b'#' && at_ci(b, p, b"requires") && self.can_push() {
                 let e = p + 8;
-                let sl = if e >= self.n {
+                let sl = if e >= self.b.len() {
                     Some(1)
                 } else {
                     space_len(b, e)
                 };
                 if let Some(l) = sl {
                     self.push(REQUIRES, p);
-                    self.tok(p, (e + l).min(self.n), REQUIRES_KEYWORD);
+                    self.tok(p, (e + l).min(self.b.len()), REQUIRES_KEYWORD);
                     return Some(e + l);
                 }
             }
             match b[p..].iter().position(|&c| c == b'#') {
                 Some(i) => p += i + 1,
                 None => {
-                    self.fill(self.n);
+                    self.fill(self.b.len());
                     self.pop();
-                    return Some(self.n.max(p));
+                    return Some(self.b.len().max(p));
                 }
             }
-            if p >= self.n {
-                self.fill(self.n);
+            if p >= self.b.len() {
+                self.fill(self.b.len());
                 self.pop();
-                return Some(self.n);
+                return Some(self.b.len());
             }
         }
     }
@@ -2382,7 +2389,7 @@ impl Scan<'_, '_, '_> {
     /// `#requires`'s arguments from `p`, to the pop at `$`.
     fn requires(&mut self, mut p: usize) -> Option<Step> {
         let b = self.b;
-        while p < self.n {
+        while p < self.b.len() {
             let c = b[p];
             if c == b'-'
                 && let Some(e) = REQUIRES_FLAGS
@@ -2424,9 +2431,9 @@ impl Scan<'_, '_, '_> {
             }
             p += char_len(c);
         }
-        self.fill(self.n);
+        self.fill(self.b.len());
         self.pop();
-        Some(self.n.max(p))
+        Some(self.b.len().max(p))
     }
 
     /// A block comment from `p`: `#>` pops; docs where the search starts.
@@ -2440,8 +2447,8 @@ impl Scan<'_, '_, '_> {
                 return Some(q);
             }
         }
-        while p + 1 < self.n {
-            match b[p..self.n - 1].iter().position(|&c| c == b'#') {
+        while p + 1 < self.b.len() {
+            match b[p..self.b.len() - 1].iter().position(|&c| c == b'#') {
                 Some(i) => p += i,
                 None => break,
             }
@@ -2458,7 +2465,7 @@ impl Scan<'_, '_, '_> {
     /// A single-quoted string from `p`.
     fn single(&mut self, mut p: usize) -> Option<Step> {
         let b = self.b;
-        while p < self.n {
+        while p < self.b.len() {
             let c = b[p];
             let q = match c {
                 b'\'' => 1,
@@ -2512,10 +2519,10 @@ impl Scan<'_, '_, '_> {
             return Some(l + 1);
         }
         loop {
-            while p < self.n && !DQ_STOP[usize::from(b[p])] {
+            while p < self.b.len() && !DQ_STOP[usize::from(b[p])] {
                 p += 1;
             }
-            if p >= self.n {
+            if p >= self.b.len() {
                 return None;
             }
             match b[p] {
@@ -2538,7 +2545,7 @@ impl Scan<'_, '_, '_> {
                         p = q;
                     } else if !here && self.spaces_to_end(p + 1) {
                         // `` `\s*$ ``
-                        self.tok(p, self.n, KEYWORD_OTHER);
+                        self.tok(p, self.b.len(), KEYWORD_OTHER);
                         return None;
                     } else {
                         p += 1;
@@ -2569,7 +2576,7 @@ impl Scan<'_, '_, '_> {
     /// After `--%`: never open at a line's start, since it pops at the line's end.
     fn stop(&mut self, _p: usize) -> Option<Step> {
         self.pop();
-        Some(self.n)
+        Some(self.b.len())
     }
 }
 
