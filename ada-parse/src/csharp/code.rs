@@ -8,7 +8,7 @@ use super::c::*;
 use super::*;
 use crate::clike::{CLASS, SPACE};
 
-impl Scan<'_, '_> {
+impl Scan<'_> {
     /// The turns from `p` (past the line's start) while the top context is code's: blanks passed
     /// inline, each token's patterns tried as [`Scan::run`]'s turn would. Returns where the scan
     /// is when the top isn't code's, the line ends, or the turn at the place is one for
@@ -96,7 +96,14 @@ impl Scan<'_, '_> {
                 {
                     return Some(q);
                 }
-                self.enter(p, &[LINE])
+                // the push's turn, then the statement's at the same place, counted as the loop
+                // counts a turn that takes nothing (and left to it where the guard is due)
+                let q = self.enter(p, &[LINE])?;
+                if self.halt || self.stuck + 1 >= STUCK {
+                    return Some(q);
+                }
+                self.stuck += 1;
+                self.line(p)
             }
             IF_GROUP => {
                 if self.b[p] == b')' {

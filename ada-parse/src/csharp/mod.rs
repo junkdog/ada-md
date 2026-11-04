@@ -38,7 +38,8 @@ pub(crate) use re::ND;
 
 use crate::clike::{CLASS, WORD};
 use crate::matcher::KEPT as HALF;
-use crate::{Out, State};
+use crate::{Out, Span, State};
+use std::mem::MaybeUninit;
 
 /// The contexts, by bat's names where one is one of them (`#anon_…` by their parent's).
 pub(crate) mod c {
@@ -825,8 +826,8 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         b,
         n: b.len(),
         ind: 0,
-        stack: [MAIN; MAX],
-        bits: [0; MAX],
+        stack: [const { MaybeUninit::uninit() }; MAX],
+        bits: [const { MaybeUninit::uninit() }; MAX],
         depth: 1,
         exact: state.is_exact(),
         text: PLAIN,
@@ -839,17 +840,18 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         wcache: std::cell::Cell::new((usize::MAX, 0)),
         ncache: std::cell::Cell::new((usize::MAX, None)),
         regex_calls: None,
-        out,
+        merge: out.1,
+        spans: &mut *out.0,
     };
+    s.stack[0] = MaybeUninit::new(MAIN);
+    s.bits[0] = MaybeUninit::new(0);
     let n = usize::from(state.depth).min(KEPT);
     let mut held = [0; KEPT];
     held[..HALF].copy_from_slice(&state.levels);
     held[HALF..].copy_from_slice(&state.withs);
-    for (i, &c) in held[..n].iter().enumerate() {
-        s.stack[1 + i] = c;
-        s.bits[1 + i] = level_bits(s.bits[i], c);
+    for &c in &held[..n] {
+        s.push_level(c);
     }
-    s.depth = 1 + n;
     s.ind = s.indent();
     s.refresh();
     s.run();
@@ -857,7 +859,9 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     let n = s.depth - 1;
     let from = n.saturating_sub(KEPT);
     let mut held = [0; KEPT];
-    held[..n - from].copy_from_slice(&s.stack[1 + from..s.depth]);
+    for (i, h) in held[..n - from].iter_mut().enumerate() {
+        *h = s.ctx_at(1 + from + i);
+    }
     state.levels.copy_from_slice(&held[..HALF]);
     state.withs.copy_from_slice(&held[HALF..]);
     state.depth = (n - from) as u8;
@@ -865,15 +869,16 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     state.arg = 0;
 }
 
-pub(crate) struct Scan<'b, 'c> {
+pub(crate) struct Scan<'b> {
     b: &'b [u8],
     /// The line's length: where its `\n` is.
     n: usize,
     /// Where the line's indentation ends, `^\s*` (its `\n` not taken).
     ind: usize,
-    stack: [u8; MAX],
-    /// Each level's [`level_bits`].
-    bits: [u16; MAX],
+    /// The contexts, bottom first: each level below `depth` written ([`Scan::ctx_at`]).
+    stack: [MaybeUninit<u8>; MAX],
+    /// Each level's [`level_bits`], written as `stack` is.
+    bits: [MaybeUninit<u16>; MAX],
     depth: usize,
     exact: bool,
     /// The kind of text no pattern of the top context matches.
@@ -899,7 +904,10 @@ pub(crate) struct Scan<'b, 'c> {
     ncache: std::cell::Cell<(usize, Option<usize>)>,
     /// The line's regex calls, found at its first string ([`RegexCalls`]).
     regex_calls: Option<RegexCalls>,
-    out: &'b mut Out<'c>,
+    /// Whether a span joins the last when it touches it with the same kind ([`Out`]'s flag).
+    merge: bool,
+    /// The line's spans ([`Out`]'s, held directly).
+    spans: &'b mut Vec<Span>,
 }
 
 /// The commas after the first argument of `Regex.IsMatch(` and the like on a line (up to
@@ -1072,15 +1080,15 @@ fn regex_first_argument(b: &[u8], q: usize) -> bool {
         || ends_word(b, w, b"RegularExpressionAttribute")
 }
 
-impl<'b, 'c> Scan<'b, 'c> {
+impl<'b> Scan<'b> {
     #[cfg(test)]
-    fn for_test(b: &'b [u8], _state: &mut State, out: &'b mut Out<'c>) -> Self {
+    fn for_test(b: &'b [u8], _state: &mut State, spans: &'b mut Vec<Span>) -> Self {
         Scan {
             b,
             n: b.len(),
             ind: 0,
-            stack: [MAIN; MAX],
-            bits: [0; MAX],
+            stack: [MaybeUninit::new(MAIN); MAX],
+            bits: [MaybeUninit::new(0); MAX],
             depth: 1,
             exact: true,
             text: PLAIN,
@@ -1093,20 +1101,46 @@ impl<'b, 'c> Scan<'b, 'c> {
             wcache: std::cell::Cell::new((usize::MAX, 0)),
             ncache: std::cell::Cell::new((usize::MAX, None)),
             regex_calls: None,
-            out,
+            merge: true,
+            spans,
         }
     }
 }
 
-impl Scan<'_, '_> {
+impl Scan<'_> {
+    /// The context at level `i`, below `depth`.
+    #[inline(always)]
+    fn ctx_at(&self, i: usize) -> u8 {
+        debug_assert!(i < self.depth);
+        // SAFETY: every level below `depth` is written: the bottom one in `line`, each pushed
+        // one in `push_level`, and `drop_bottom` moves written ones down; `depth` is in
+        // `1..=MAX`, so the mask only drops the bounds check
+        unsafe { self.stack[i & (MAX - 1)].assume_init() }
+    }
+
+    /// The bits of level `i`, below `depth`.
+    #[inline(always)]
+    fn bits_at(&self, i: usize) -> u16 {
+        debug_assert!(i < self.depth);
+        // SAFETY: as `ctx_at`'s; `bits` is written with `stack`
+        unsafe { self.bits[i & (MAX - 1)].assume_init() }
+    }
+
+    /// Level `i` (at most `depth`) is context `c`, its bits from the level under it.
+    #[inline(always)]
+    fn set_level(&mut self, i: usize, c: u8) {
+        let under = self.bits_at(i - 1);
+        self.stack[i & (MAX - 1)] = MaybeUninit::new(c);
+        self.bits[i & (MAX - 1)] = MaybeUninit::new(level_bits(under, c));
+    }
+
     fn top(&self) -> u8 {
-        // `depth` is in `1..=MAX`, so the mask only drops the bounds check
-        self.stack[(self.depth - 1) & (MAX - 1)]
+        self.ctx_at(self.depth - 1)
     }
 
     /// The bits of the top level.
     fn cur(&self) -> u16 {
-        self.bits[(self.depth - 1) & (MAX - 1)]
+        self.bits_at(self.depth - 1)
     }
 
     fn refresh(&mut self) {
@@ -1114,29 +1148,90 @@ impl Scan<'_, '_> {
     }
 
     /// The text up to `p` is the top context's.
+    #[inline]
     fn fill(&mut self, p: usize) {
         let p = p.min(self.n);
         if p > self.at {
             if self.text != PLAIN {
-                self.out.push_merged(self.at, p, self.text);
+                self.text_to(p);
             }
             self.at = p;
         }
     }
 
+    /// The top context's text from where the spans end to `p`, a span: out of line, since a
+    /// code context's text is plain.
+    #[inline(never)]
+    fn text_to(&mut self, p: usize) {
+        self.emit(self.at, p, self.text);
+    }
+
+    /// Bytes `s..e` (`s < e`) are kind `k`: the last span grows when it ends at `s` with the
+    /// same kind.
+    #[inline(always)]
+    fn emit(&mut self, s: usize, e: usize, k: u16) {
+        if let Some(last) = self.spans.last_mut()
+            && last.end as usize == s
+            && last.kind == k
+            && self.merge
+        {
+            last.end = e as u32;
+            return;
+        }
+        self.spans.push(Span {
+            start: s as u32,
+            end: e as u32,
+            kind: k,
+        });
+    }
+
     /// Bytes `s..e` are `leaf` in the top context, after the text before them.
+    #[inline(never)]
     fn put(&mut self, s: usize, e: usize, leaf: u16) {
         let k = self.cur() | leaf;
         self.put_kind(s, e, k);
     }
 
     /// Bytes `s..e` are kind `k` as it is.
+    ///
+    /// Without a call on its way when the text before is plain (a code context's) and the
+    /// spans have room, so it needs no registers saved: the rest is [`Scan::put_slow`]'s.
+    #[inline(never)]
     fn put_kind(&mut self, s: usize, e: usize, k: u16) {
+        let n = self.n;
+        let at = self.at;
+        if (s.min(n) > at && self.text != PLAIN) || self.spans.len() == self.spans.capacity() {
+            return self.put_slow(s, e, k);
+        }
+        let at = at.max(s.min(n));
+        let s = s.max(at);
+        let e = e.min(n);
+        if k != PLAIN && e > s {
+            if let Some(last) = self.spans.last_mut()
+                && last.end as usize == s
+                && last.kind == k
+                && self.merge
+            {
+                last.end = e as u32;
+            } else if self.spans.len() < self.spans.capacity() {
+                self.spans.push(Span {
+                    start: s as u32,
+                    end: e as u32,
+                    kind: k,
+                });
+            }
+        }
+        self.at = at.max(e);
+    }
+
+    /// [`Scan::put_kind`] with the text before it, or with the spans to grow.
+    #[inline(never)]
+    fn put_slow(&mut self, s: usize, e: usize, k: u16) {
         self.fill(s);
         let s = s.max(self.at);
         let e = e.min(self.n);
         if k != PLAIN && e > s {
-            self.out.push_merged(s, e, k);
+            self.emit(s, e, k);
         }
         self.at = self.at.max(e);
     }
@@ -1145,11 +1240,15 @@ impl Scan<'_, '_> {
         if self.depth == MAX {
             self.drop_bottom();
         }
-        let d = self.depth & (MAX - 1);
-        self.stack[d] = c;
-        self.bits[d] = level_bits(self.bits[d.wrapping_sub(1) & (MAX - 1)], c);
-        self.depth += 1;
+        self.push_level(c);
         self.refresh();
+    }
+
+    /// `c` on top, the stack not full.
+    #[inline(always)]
+    fn push_level(&mut self, c: u8) {
+        self.set_level(self.depth, c);
+        self.depth += 1;
     }
 
     /// A full stack drops the context above the top level, for a push.
@@ -1158,7 +1257,7 @@ impl Scan<'_, '_> {
     fn drop_bottom(&mut self) {
         self.stack.copy_within(2.., 1);
         for i in 1..MAX - 1 {
-            self.bits[i] = level_bits(self.bits[i - 1], self.stack[i]);
+            self.set_level(i, self.ctx_at(i));
         }
         self.depth -= 1;
         self.exact = false;
@@ -1489,7 +1588,6 @@ mod tests {
     fn operators_by_first_byte_are_the_lists() {
         let ops = b"+-*/%|&^<>=!?~ ax";
         let mut spans = Vec::new();
-        let mut out = crate::Out::new(&mut spans);
         let mut state = crate::State::default();
         for &a in ops {
             for &b in ops {
@@ -1497,7 +1595,7 @@ mod tests {
                     for n in 1..=3 {
                         let line = [a, b, c];
                         let line = &line[..n];
-                        let mut s = super::Scan::for_test(line, &mut state, &mut out);
+                        let mut s = super::Scan::for_test(line, &mut state, &mut spans);
                         for p in 0..=n {
                             assert_eq!(s.operator_at(p), s.operator_by_lists(p), "{line:?} at {p}");
                         }

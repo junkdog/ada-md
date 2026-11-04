@@ -36,7 +36,7 @@ pub(super) const SQL_WORDS: [&[u8]; 15] = [
     b"descending",
 ];
 
-impl Scan<'_, '_> {
+impl Scan<'_> {
     /// The patterns of context `top` at `p`, the first that matches applied.
     pub(super) fn context(&mut self, top: u8, p: usize) -> Option<usize> {
         match top {
@@ -705,7 +705,7 @@ impl Scan<'_, '_> {
         if top < REGEX {
             return None;
         }
-        let verbatim = self.stack[self.depth - 2] == LONG_STRING;
+        let verbatim = self.ctx_at(self.depth - 2) == LONG_STRING;
         if p >= self.n {
             if verbatim {
                 return None;
@@ -738,8 +738,15 @@ impl Scan<'_, '_> {
             base: self.cur() | RE_LEAF,
             text: self.cur(),
         };
-        let (q, st) = crate::regex::embedded(b, p, top - REGEX, &host, &mut self.at, self.out)?;
-        self.stack[self.depth - 1] = REGEX + st;
+        let (q, st) = crate::regex::embedded(
+            b,
+            p,
+            top - REGEX,
+            &host,
+            &mut self.at,
+            &mut Out(self.spans, self.merge),
+        )?;
+        self.stack[(self.depth - 1) & (MAX - 1)] = MaybeUninit::new(REGEX + st);
         Some(q)
     }
 
@@ -1556,6 +1563,11 @@ impl Scan<'_, '_> {
     /// `({{name}})\s*(c)` at `p`, the name's ends tried in order: the name's end and `c`'s
     /// place.
     pub(super) fn name_then(&self, p: usize, c: u8) -> Option<(usize, usize)> {
+        // a name of ASCII that a byte ends has that one end
+        if let Some(e) = self.ascii_name(p) {
+            let s = self.sp(e);
+            return (self.ch(s) == c && s < self.n).then_some((e, s));
+        }
         let mut at = None;
         self.names(p, &mut |e| {
             let s = self.sp(e);
@@ -2783,11 +2795,6 @@ impl Scan<'_, '_> {
                 })
             })
         };
-        // nothing the lookahead takes before its `(` is one of `(={};`: the first of them on
-        // the line must be that `(`
-        if self.first_stop(p).is_none_or(|r| self.b[r] != b'(') {
-            return false;
-        }
         // two names of ASCII with blanks between, as most declarations start: the second is
         // the method's only if `(` or its generics follow (`<`, read by the lookahead)
         if let Some((e, _, t)) = self.plain_pair(p)
@@ -2795,6 +2802,11 @@ impl Scan<'_, '_> {
             && self.ch(t) != b'<'
         {
             return self.ch(t) == b'(' && t < self.n;
+        }
+        // nothing the lookahead takes before its `(` is one of `(={};`: the first of them on
+        // the line must be that `(`
+        if self.first_stop(p).is_none_or(|r| self.b[r] != b'(') {
+            return false;
         }
         for w in [&b"async"[..], b"ref"] {
             if self.lit(p, w)
@@ -2883,21 +2895,13 @@ impl Scan<'_, '_> {
             return None;
         };
         if let Some(s) = self.sp1(p + kw) {
-            // `(var|dynamic)\s+({{reserved}}|{{base_type}})\s*(=)`
+            // `(var|dynamic)\s+({{reserved}}|{{base_type}})\s*(=)`: either is the whole word
             let mut bad = None;
             let w = self.word(s);
-            if words::flags(words::get(w)) & RES != 0 {
+            if words::flags(words::get(w)) & (RES | BASE) != 0 {
                 let t = self.sp(s + w.len());
                 if self.ch(t) == b'=' && t < self.n {
                     bad = Some((s + w.len(), t));
-                }
-            }
-            if bad.is_none()
-                && let Some(e) = self.base_type(s)
-            {
-                let t = self.sp(e);
-                if self.ch(t) == b'=' && t < self.n {
-                    bad = Some((e, t));
                 }
             }
             if let Some((e, t)) = bad {
@@ -3242,15 +3246,15 @@ impl Scan<'_, '_> {
         // interpolation, the string's
         if matches!(self.top(), INTERP | LINTERP) && self.depth > 2 {
             let f = self.depth - 2;
-            let under = self.bits[f] & CHAIN;
+            let under = self.bits_at(f) & CHAIN;
             self.put_kind(p, p + 1, (self.cur() & !CHAIN) | under | BLOCK_BEGIN);
             // and then pops those two, so the string's scopes are gone for good
-            self.stack[f] = match self.stack[f] {
+            let lost = match self.ctx_at(f) {
                 FORMAT_STRING => FORMAT_STRING_LOST,
                 LONG_FORMAT_STRING => LONG_FORMAT_STRING_LOST,
                 c => c,
             };
-            self.bits[f] = level_bits(self.bits[f - 1], self.stack[f]);
+            self.set_level(f, lost);
             self.set(&[CODE_BRACE]);
             return Some(p + 1);
         }

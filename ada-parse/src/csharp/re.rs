@@ -197,7 +197,7 @@ pub(super) fn space_len(b: &[u8]) -> Option<usize> {
     }
 }
 
-impl Scan<'_, '_> {
+impl Scan<'_> {
     /// The byte at `i`: the line's, its `\n` at the end, 0 past it.
     #[inline]
     pub(super) fn ch(&self, i: usize) -> u8 {
