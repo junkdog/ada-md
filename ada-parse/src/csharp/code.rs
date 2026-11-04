@@ -34,7 +34,7 @@ impl Scan<'_> {
                     && b[p + 1] == b'/'
                     && CTX[usize::from(top)] & PROTO != 0
                     && self.depth < SYNTECT_DEPTH
-                    && self.comment_skip(p + 2, &LINE_COMMENT_STOPS) >= n
+                    && self.comment_skip::<false>(p + 2, &LINE_COMMENT_STOPS) >= n
                 {
                     self.open(p, p + 2, LC_MARK, &[LINE_COMMENT]);
                     self.fill(n);

@@ -746,7 +746,7 @@ impl Scan<'_> {
             &mut self.at,
             &mut Out(self.spans, self.merge),
         )?;
-        self.stack[(self.depth - 1) & (MAX - 1)] = MaybeUninit::new(REGEX + st);
+        self.stack[(self.depth - 1) & (MAX - 1)] = REGEX + st;
         Some(q)
     }
 

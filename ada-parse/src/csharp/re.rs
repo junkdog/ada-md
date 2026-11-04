@@ -338,21 +338,6 @@ impl Scan<'_> {
         if i == self.n { i + 1 } else { i }
     }
 
-    /// Where the line's indentation ends: [`Self::sp_line`] from 0, eight bytes at a time
-    /// while they're all ` `.
-    pub(super) fn indent(&self) -> usize {
-        let mut p = 0;
-        while let Some(chunk) = self.b[..self.n].get(p..p + 8) {
-            let x = u64::from_le_bytes(chunk.try_into().unwrap()) ^ 0x2020_2020_2020_2020;
-            if x != 0 {
-                p += (x.trailing_zeros() / 8) as usize;
-                break;
-            }
-            p += 8;
-        }
-        self.sp_line(p)
-    }
-
     /// Past `\s*` at `i` on the line (its `\n` not taken): none or one ASCII blank decided
     /// here, a longer run or a space past ASCII out of line ([`Self::sp_run`]).
     #[inline(always)]
