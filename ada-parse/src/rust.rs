@@ -27,6 +27,7 @@
 //! Its text is SQL's, but for the string's end and (in `"…"`) its escapes.
 
 use crate::matcher::KEPT as HALF;
+use crate::prim::char_len;
 use crate::regex;
 use crate::sql;
 use crate::{Out, State, is_space, skip_spaces};
@@ -809,16 +810,6 @@ fn is_int_suffix(w: &[u8]) -> bool {
             | b"u128"
             | b"usize"
     )
-}
-
-/// The bytes of the UTF-8 character that starts with `c`.
-fn char_len(c: u8) -> usize {
-    match c {
-        0xf0.. => 4,
-        0xe0.. => 3,
-        0xc0.. => 2,
-        _ => 1,
-    }
 }
 
 fn digits_end(b: &[u8], mut p: usize, digit: impl Fn(u8) -> bool) -> usize {

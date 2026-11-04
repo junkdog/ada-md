@@ -27,6 +27,7 @@
 //!
 //! The stack between lines is the frames and contexts open above the top level, up to 28 (the
 //! bytes of [`State`]'s levels).
+use crate::prim::{char_len, find_any};
 
 mod code;
 mod doc;
@@ -775,28 +776,17 @@ fn string_end(b: &[u8], mut p: usize, text_block: bool) -> usize {
     }
 }
 
-/// The bytes of the UTF-8 character that starts with `c`.
-fn char_len(c: u8) -> usize {
-    match c {
-        0xf0.. => 4,
-        0xe0.. => 3,
-        0xc0.. => 2,
-        _ => 1,
-    }
+/// The character after the one at `i`, which must be in the line (no end test: `prim::next_char`'s
+/// costs Java ~0.25% of its instructions).
+#[inline]
+fn next(b: &[u8], i: usize) -> usize {
+    (i + char_len(b[i])).min(b.len())
 }
 
 /// The character byte `i` of `b` is in, and where it starts.
 #[cold]
 fn wide(b: &[u8], i: usize) -> char {
-    let s = (i.saturating_sub(3)..=i)
-        .rev()
-        .find(|&s| b[s] & 0xc0 != 0x80)
-        .unwrap_or(i);
-    let e = (s + char_len(b[s])).min(b.len());
-    std::str::from_utf8(&b[s..e])
-        .ok()
-        .and_then(|t| t.chars().next())
-        .unwrap_or('\u{fffd}')
+    crate::prim::wide_char_at(b, i).unwrap_or('\u{fffd}')
 }
 
 /// ASCII's classes, by byte: `\w`, an identifier's, past ASCII (to decode).
@@ -894,12 +884,6 @@ fn is_number(b: &[u8], i: usize) -> bool {
         Some(_) => wide(b, i).is_numeric(),
         None => false,
     }
-}
-
-/// The character after the one at `i`.
-#[inline]
-fn next(b: &[u8], i: usize) -> usize {
-    (i + char_len(b[i])).min(b.len())
 }
 
 /// The character before `i`.
@@ -1056,31 +1040,6 @@ fn next_of(b: &[u8], from: usize, stop: impl Fn(u8) -> bool) -> usize {
     b.get(from..)
         .and_then(|rest| rest.iter().position(|&c| stop(c)))
         .map_or(b.len(), |i| from + i)
-}
-
-/// Where the first byte from `from` that is one of `set` is, or the end: eight bytes at a time
-/// (each byte's zero test: a borrow only ever marks bytes above a true match, so the lowest
-/// mark is the first).
-fn find_any<const N: usize>(b: &[u8], from: usize, set: [u8; N]) -> usize {
-    const LO: u64 = 0x0101_0101_0101_0101;
-    const HI: u64 = 0x8080_8080_8080_8080;
-    let mut i = from;
-    while let Some(chunk) = b.get(i..i + 8) {
-        let w = u64::from_le_bytes(chunk.try_into().unwrap_or([0; 8]));
-        let mut m = 0;
-        for x in set {
-            let v = w ^ (LO * u64::from(x));
-            m |= v.wrapping_sub(LO) & !v & HI;
-        }
-        if m != 0 {
-            return i + (m.trailing_zeros() / 8) as usize;
-        }
-        i += 8;
-    }
-    while i < b.len() && !set.contains(&b[i]) {
-        i += 1;
-    }
-    i.min(b.len())
 }
 
 /// The spaces of `[\t\n\f ]`, and the line's end, which is its `\n`.

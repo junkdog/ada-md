@@ -36,6 +36,7 @@
 //! byte, seven bits: the groups open, whether a class is and one nested in it, `\Q…\E`.
 
 use crate::Out;
+use crate::prim::char_len;
 
 // The state, seven bits: the groups open (up to 15 kept), a class open and one nested in it,
 // `\Q…\E`.
@@ -1204,16 +1205,6 @@ pub(crate) fn java_escape(b: &[u8], p: usize) -> usize {
         Some(b'u') if (2..6).all(|i| hex(p + i)) => p + 6,
         Some(&d) => p + 1 + char_len(d),
         None => p + 1,
-    }
-}
-
-/// The bytes of the UTF-8 character that starts with `c`.
-fn char_len(c: u8) -> usize {
-    match c {
-        0xf0.. => 4,
-        0xe0.. => 3,
-        0xc0.. => 2,
-        _ => 1,
     }
 }
 

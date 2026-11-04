@@ -3,17 +3,9 @@
 //! operator's name. A line is its bytes without the `\n`; where a regex could take the `\n`,
 //! the line's end stands for it.
 
+use crate::prim::char_len;
+pub use crate::prim::{find_any, next_char as next};
 use crate::{is_space, skip_spaces};
-
-/// The bytes of the UTF-8 character that starts with `c`.
-fn char_len(c: u8) -> usize {
-    match c {
-        0xf0.. => 4,
-        0xe0.. => 3,
-        0xc0.. => 2,
-        _ => 1,
-    }
-}
 
 /// The character byte `i` of `b` is in.
 #[cold]
@@ -141,15 +133,6 @@ pub fn upper_rest_end(b: &[u8], mut p: usize) -> usize {
         p += 1;
     }
     p
-}
-
-/// The character after the one at `i`.
-#[inline]
-pub fn next(b: &[u8], i: usize) -> usize {
-    match b.get(i) {
-        Some(&c) => (i + char_len(c)).min(b.len()),
-        None => i + 1,
-    }
 }
 
 /// The character before `i`.
@@ -484,31 +467,6 @@ pub fn punct_at(b: &[u8], i: usize) -> bool {
 /// `\W` at `i`, the `\n` at the line's end included.
 pub fn non_word_at(b: &[u8], i: usize) -> bool {
     !is_word(b, i)
-}
-
-/// Where the first byte from `from` that is one of `set` is, or the end: eight bytes at a time
-/// (each byte's zero test: a borrow only ever marks bytes above a true match, so the lowest
-/// mark is the first).
-pub fn find_any<const N: usize>(b: &[u8], from: usize, set: [u8; N]) -> usize {
-    const LO: u64 = 0x0101_0101_0101_0101;
-    const HI: u64 = 0x8080_8080_8080_8080;
-    let mut i = from;
-    while let Some(chunk) = b.get(i..i + 8) {
-        let w = u64::from_le_bytes(chunk.try_into().unwrap_or([0; 8]));
-        let mut m = 0;
-        for x in set {
-            let v = w ^ (LO * u64::from(x));
-            m |= v.wrapping_sub(LO) & !v & HI;
-        }
-        if m != 0 {
-            return i + (m.trailing_zeros() / 8) as usize;
-        }
-        i += 8;
-    }
-    while i < b.len() && !set.contains(&b[i]) {
-        i += 1;
-    }
-    i.min(b.len())
 }
 
 /// `(?:\d(?:[\d']*\d)?)` at `q`: where it ends (the longest, ending on a digit).

@@ -26,6 +26,7 @@
 //! that deep stacks repeat, a byte each.
 
 use crate::matcher::KEPT as HALF;
+use crate::prim::{WORD, char_len, digit, is_nd, skip_spaces, space_len, wide_char};
 use crate::{Out, State};
 
 // The contexts, by bat's names where they have one.
@@ -864,83 +865,6 @@ fn is_builtin_function(w: &[u8]) -> bool {
     )
 }
 
-/// ASCII's word bytes, `{{identifier_char}}`.
-static WORD: [bool; 256] = {
-    let mut t = [false; 256];
-    let mut c = 0;
-    while c < 128 {
-        t[c] = (c as u8).is_ascii_alphanumeric() || c == b'_' as usize;
-        c += 1;
-    }
-    t
-};
-
-/// The bytes of the UTF-8 character that starts with `c`.
-fn char_len(c: u8) -> usize {
-    match c {
-        0xf0.. => 4,
-        0xe0.. => 3,
-        0xc0.. => 2,
-        _ => 1,
-    }
-}
-
-/// The character that starts at byte `i` of `b`, past ASCII.
-#[cold]
-fn wide_char(b: &[u8], i: usize) -> Option<char> {
-    let e = (i + char_len(b[i])).min(b.len());
-    std::str::from_utf8(&b[i..e]).ok()?.chars().next()
-}
-
-/// `\s` at `p` (the line's `\n` past its end isn't asked): how many bytes the space takes.
-fn space_len(b: &[u8], p: usize) -> Option<usize> {
-    let &c = b.get(p)?;
-    if c < 0x80 {
-        return matches!(c, b' ' | b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r').then_some(1);
-    }
-    wide_space(b, p)
-}
-
-#[cold]
-fn wide_space(b: &[u8], p: usize) -> Option<usize> {
-    let c = wide_char(b, p)?;
-    matches!(
-        c,
-        '\u{85}' | '\u{a0}' | '\u{1680}' | '\u{2000}'
-            ..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}'
-    )
-    .then(|| c.len_utf8())
-}
-
-/// Where the spaces at `p` end.
-fn skip_spaces(b: &[u8], mut p: usize) -> usize {
-    while let Some(k) = space_len(b, p) {
-        p += k;
-    }
-    p
-}
-
-/// Whether `c` is one of Unicode's decimal digits, `\p{Nd}`.
-fn is_nd(c: char) -> bool {
-    let u = c as u32;
-    crate::csharp::ND.iter().any(|&s| u >= s && u - s < 10) || c.is_ascii_digit()
-}
-
-/// `\d` at `p`, Unicode's decimal digits: where it ends.
-fn digit(b: &[u8], p: usize) -> Option<usize> {
-    match *b.get(p)? {
-        c if c.is_ascii_digit() => Some(p + 1),
-        c if c < 0x80 => None,
-        _ => wide_digit(b, p),
-    }
-}
-
-#[cold]
-fn wide_digit(b: &[u8], p: usize) -> Option<usize> {
-    let c = wide_char(b, p)?;
-    is_nd(c).then(|| p + c.len_utf8())
-}
-
 /// `\d*` at `p`: where it ends.
 fn digits(b: &[u8], mut p: usize) -> usize {
     while let Some(e) = digit(b, p) {
@@ -1264,10 +1188,7 @@ impl Scan<'_, '_> {
 
     /// Where the character at `p` ends (the line's `\n` is one byte).
     fn next(&self, p: usize) -> usize {
-        if p >= self.b.len() {
-            return p + 1;
-        }
-        p + char_len(self.b[p]).min(self.b.len() - p)
+        crate::prim::next_char(self.b, p)
     }
 
     /// Where a pattern of the top context can next start, after none did at `p`.

@@ -1,0 +1,252 @@
+//! The byte-level pieces the scanners share (X-017's first part, the parser audit's item 3): a
+//! UTF-8 character's length and its decoding past ASCII, `\w`, `\s` and `\d` as the regex
+//! grammars read them (past ASCII a letter or one of Unicode's decimal digits, Unicode's
+//! spaces), a name's end with ASCII's run taken at once, byte sets as tables, and a search for
+//! one of a few bytes eight at a time. Each was a copy in up to thirteen scanners; the scanners
+//! whose classes differ (a name's characters past ASCII, `$` in a name) keep their own or pass
+//! theirs in. No behavior of their own: what each did before, the digests hold.
+
+/// ASCII's word bytes, `[A-Za-z0-9_]`.
+pub static WORD: [bool; 256] = {
+    let mut t = [false; 256];
+    let mut c = 0;
+    while c < 128 {
+        t[c] = (c as u8).is_ascii_alphanumeric() || c == b'_' as usize;
+        c += 1;
+    }
+    t
+};
+
+/// The bytes of the UTF-8 character that starts with `c`.
+#[inline]
+pub const fn char_len(c: u8) -> usize {
+    match c {
+        0xf0.. => 4,
+        0xe0.. => 3,
+        0xc0.. => 2,
+        _ => 1,
+    }
+}
+
+/// The character after the one at `p` (`p + 1` at the line's end or past it).
+#[inline]
+pub fn next_char(b: &[u8], p: usize) -> usize {
+    match b.get(p) {
+        Some(&c) => (p + char_len(c)).min(b.len()),
+        None => p + 1,
+    }
+}
+
+/// The character that starts at byte `i` of `b`, past ASCII.
+#[cold]
+pub fn wide_char(b: &[u8], i: usize) -> Option<char> {
+    let e = (i + char_len(b[i])).min(b.len());
+    std::str::from_utf8(&b[i..e]).ok()?.chars().next()
+}
+
+/// The character that byte `i` of `b` is in, past ASCII.
+#[cold]
+pub fn wide_char_at(b: &[u8], i: usize) -> Option<char> {
+    let s = (i.saturating_sub(3)..=i)
+        .rev()
+        .find(|&s| b[s] & 0xc0 != 0x80)
+        .unwrap_or(i);
+    wide_char(b, s)
+}
+
+/// Where Unicode's decimal digits past ASCII start, ten in a row each (`\\d` is Unicode's in
+/// syntect's regexes): Unicode 16's `Nd`.
+pub const ND: [u32; 75] = [
+    0x660, 0x6f0, 0x7c0, 0x966, 0x9e6, 0xa66, 0xae6, 0xb66, 0xbe6, 0xc66, 0xce6, 0xd66, 0xde6,
+    0xe50, 0xed0, 0xf20, 0x1040, 0x1090, 0x17e0, 0x1810, 0x1946, 0x19d0, 0x1a80, 0x1a90, 0x1b50,
+    0x1bb0, 0x1c40, 0x1c50, 0xa620, 0xa8d0, 0xa900, 0xa9d0, 0xa9f0, 0xaa50, 0xabf0, 0xff10,
+    0x104a0, 0x10d30, 0x10d40, 0x11066, 0x110f0, 0x11136, 0x111d0, 0x112f0, 0x11450, 0x114d0,
+    0x11650, 0x116c0, 0x116d0, 0x116da, 0x11730, 0x118e0, 0x11950, 0x11bf0, 0x11c50, 0x11d50,
+    0x11da0, 0x11f50, 0x16130, 0x16a60, 0x16ac0, 0x16b50, 0x16d70, 0x1ccf0, 0x1d7ce, 0x1d7d8,
+    0x1d7e2, 0x1d7ec, 0x1d7f6, 0x1e140, 0x1e2f0, 0x1e4f0, 0x1e5f1, 0x1e950, 0x1fbf0,
+];
+
+/// Whether `c` is one of Unicode's decimal digits, `\p{Nd}`.
+pub fn is_nd(c: char) -> bool {
+    let u = c as u32;
+    c.is_ascii_digit() || ND.iter().any(|&s| u >= s && u - s < 10)
+}
+
+/// Whether the character that byte `i` of `b` is in is a word's, `\w` (and `[[:alnum:]_]`):
+/// past ASCII, a letter or a decimal digit (`₁` is neither).
+pub fn is_word(b: &[u8], i: usize) -> bool {
+    match b.get(i) {
+        Some(&c) if c < 0x80 => WORD[usize::from(c)],
+        Some(_) => wide_char_at(b, i).is_some_and(|c| c.is_alphabetic() || is_nd(c)),
+        None => false,
+    }
+}
+
+/// [`is_word`] for the character that starts at byte `i`: a byte inside a character is none.
+pub fn is_word_starting(b: &[u8], i: usize) -> bool {
+    match b.get(i) {
+        Some(&c) if c < 0x80 => WORD[usize::from(c)],
+        Some(_) => wide_char(b, i).is_some_and(|c| c.is_alphabetic() || is_nd(c)),
+        None => false,
+    }
+}
+
+/// Where the run of `\w` ([`is_word`]) at `p` ends: ASCII's bytes on the table at once, a
+/// character past ASCII decoded only where one is.
+pub fn word_end(b: &[u8], mut p: usize) -> usize {
+    loop {
+        while p < b.len() && WORD[usize::from(b[p])] {
+            p += 1;
+        }
+        if p < b.len() && b[p] >= 0x80 && is_word(b, p) {
+            p += char_len(b[p]);
+        } else {
+            return p.min(b.len());
+        }
+    }
+}
+
+/// [`word_end`] with the characters past ASCII that `wide` takes (at a character's start).
+#[inline(always)]
+pub fn word_end_by(b: &[u8], mut p: usize, wide: impl Fn(&[u8], usize) -> bool) -> usize {
+    loop {
+        while p < b.len() && WORD[usize::from(b[p])] {
+            p += 1;
+        }
+        if p < b.len() && b[p] >= 0x80 && wide(b, p) {
+            p += char_len(b[p]);
+        } else {
+            return p.min(b.len());
+        }
+    }
+}
+
+/// Whether `\b` holds before `p`, at a word's start ([`is_word`]).
+pub fn starts_word(b: &[u8], p: usize) -> bool {
+    p == 0 || !is_word(b, p - 1)
+}
+
+/// Whether the character at `i` can start a name, `[[:alpha:]_]`.
+pub fn is_name_start(b: &[u8], i: usize) -> bool {
+    match b.get(i) {
+        Some(&c) if c < 0x80 => c.is_ascii_alphabetic() || c == b'_',
+        Some(_) => wide_char(b, i).is_some_and(char::is_alphabetic),
+        None => false,
+    }
+}
+
+/// An ASCII space other than the line's `\n`.
+pub fn is_blank(c: u8) -> bool {
+    matches!(c, b' ' | b'\t' | b'\x0b' | b'\x0c' | b'\r')
+}
+
+/// `\s` at `p`: how many bytes the space takes.
+pub fn space_len(b: &[u8], p: usize) -> Option<usize> {
+    let &c = b.get(p)?;
+    if c < 0x80 {
+        return matches!(c, b' ' | b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r').then_some(1);
+    }
+    wide_space(b, p)
+}
+
+/// [`space_len`] without the line's `\n`.
+pub fn blank_len(b: &[u8], p: usize) -> Option<usize> {
+    let &c = b.get(p)?;
+    if c < 0x80 {
+        return is_blank(c).then_some(1);
+    }
+    wide_space(b, p)
+}
+
+/// A space past ASCII at `p` (one of Unicode's `White_Space` but the separators below `0x80`):
+/// how many bytes it takes.
+#[cold]
+pub fn wide_space(b: &[u8], p: usize) -> Option<usize> {
+    let c = wide_char(b, p)?;
+    matches!(
+        c,
+        '\u{85}' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}'
+    )
+    .then(|| c.len_utf8())
+}
+
+/// Where the spaces ([`space_len`]) at `p` end.
+pub fn skip_spaces(b: &[u8], mut p: usize) -> usize {
+    while let Some(k) = space_len(b, p) {
+        p += k;
+    }
+    p
+}
+
+/// `\d` at `p`, Unicode's decimal digits: where it ends.
+pub fn digit(b: &[u8], p: usize) -> Option<usize> {
+    match *b.get(p)? {
+        c if c.is_ascii_digit() => Some(p + 1),
+        c if c < 0x80 => None,
+        _ => wide_digit(b, p),
+    }
+}
+
+/// A decimal digit past ASCII at `p` ([`is_nd`]): where it ends.
+#[cold]
+pub fn wide_digit(b: &[u8], p: usize) -> Option<usize> {
+    let c = wide_char(b, p)?;
+    is_nd(c).then(|| p + c.len_utf8())
+}
+
+/// A table of the bytes in `bytes`.
+pub const fn stops(bytes: &[u8]) -> [bool; 256] {
+    let mut t = [false; 256];
+    let mut i = 0;
+    while i < bytes.len() {
+        t[bytes[i] as usize] = true;
+        i += 1;
+    }
+    t
+}
+
+/// Where the first byte from `from` that is one of `set` is, or the end: eight bytes at a time
+/// (each byte's zero test: a borrow only ever marks bytes above a true match, so the lowest
+/// mark is the first).
+pub fn find_any<const N: usize>(b: &[u8], from: usize, set: [u8; N]) -> usize {
+    const LO: u64 = 0x0101_0101_0101_0101;
+    const HI: u64 = 0x8080_8080_8080_8080;
+    let mut i = from;
+    while let Some(chunk) = b.get(i..i + 8) {
+        let w = u64::from_le_bytes(chunk.try_into().unwrap_or([0; 8]));
+        let mut m = 0;
+        for x in set {
+            let v = w ^ (LO * u64::from(x));
+            m |= v.wrapping_sub(LO) & !v & HI;
+        }
+        if m != 0 {
+            return i + (m.trailing_zeros() / 8) as usize;
+        }
+        i += 8;
+    }
+    while i < b.len() && !set.contains(&b[i]) {
+        i += 1;
+    }
+    i.min(b.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn words_spaces_and_digits_past_ascii() {
+        let b = "a_1é٣₁ x".as_bytes();
+        assert_eq!(word_end(b, 0), 7, "é and ٣ are \\w, ₁ isn't");
+        assert!(is_word(b, 4), "inside é");
+        assert!(!is_word_starting(b, 4), "inside é");
+        assert_eq!(digit(b, 5), Some(7));
+        assert_eq!(digit(b, 7), None);
+        assert_eq!(space_len("\u{3000}".as_bytes(), 0), Some(3));
+        assert_eq!(space_len(b"\n", 0), Some(1));
+        assert_eq!(blank_len(b"\n", 0), None);
+        assert_eq!(find_any(b"0123456789abcdef;", 0, *b";#"), 16);
+        assert_eq!(find_any(b"abc", 1, *b";"), 3);
+    }
+}

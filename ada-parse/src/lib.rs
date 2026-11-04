@@ -41,6 +41,7 @@ mod logs;
 mod lua;
 mod matcher;
 mod powershell;
+mod prim;
 mod properties;
 mod python;
 mod regex;

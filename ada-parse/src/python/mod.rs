@@ -20,6 +20,10 @@
 //!
 //! The stack between lines is the contexts open above the top level, up to 28 (the bytes of
 //! [`State`]'s levels and withs).
+use crate::prim::{
+    WORD, char_len, digit, is_blank, is_name_start, is_nd, is_word, skip_spaces, space_len,
+    starts_word, stops, wide_char, word_end,
+};
 
 mod regex;
 mod strings;
@@ -828,22 +832,6 @@ const fn spaces_inert(c: u8) -> bool {
     )
 }
 
-/// An ASCII space other than the line's `\n`.
-fn is_blank(c: u8) -> bool {
-    matches!(c, b' ' | b'\t' | b'\x0b' | b'\x0c' | b'\r')
-}
-
-/// A table of the bytes in `bytes`.
-const fn stops(bytes: &[u8]) -> [bool; 256] {
-    let mut t = [false; 256];
-    let mut i = 0;
-    while i < bytes.len() {
-        t[bytes[i] as usize] = true;
-        i += 1;
-    }
-    t
-}
-
 /// The bytes a pattern of a text context can start at: a docstring's (its escapes, its end),
 /// a raw docstring's, a string's (its end, escapes, placeholders, replacements, `\` at the
 /// line's end), and the embedded contexts', their string's prototype's stops with their own.
@@ -852,82 +840,6 @@ static QUOTE_STOPS: [bool; 256] = stops(b"\"'");
 static STRING_STOPS: [bool; 256] = stops(b"\"'\\{}%");
 static RE_COMMENT_STOPS: [bool; 256] = stops(b"\"'\\{}%)");
 static RE_STOPS: [bool; 256] = stops(b"\"'\\{}%#^$?+*|()[].");
-
-/// ASCII's word bytes, `[A-Za-z0-9_]`.
-static WORD: [bool; 256] = {
-    let mut t = [false; 256];
-    let mut c = 0;
-    while c < 128 {
-        t[c] = (c as u8).is_ascii_alphanumeric() || c == b'_' as usize;
-        c += 1;
-    }
-    t
-};
-
-/// The bytes of the UTF-8 character that starts with `c`.
-fn char_len(c: u8) -> usize {
-    match c {
-        0xf0.. => 4,
-        0xe0.. => 3,
-        0xc0.. => 2,
-        _ => 1,
-    }
-}
-
-/// The character that starts at byte `i` of `b`, past ASCII.
-#[cold]
-fn wide_char(b: &[u8], i: usize) -> Option<char> {
-    let e = (i + char_len(b[i])).min(b.len());
-    std::str::from_utf8(&b[i..e]).ok()?.chars().next()
-}
-
-/// The character that byte `i` of `b` is in, past ASCII.
-#[cold]
-fn wide_char_at(b: &[u8], i: usize) -> Option<char> {
-    let s = (i.saturating_sub(3)..=i)
-        .rev()
-        .find(|&s| b[s] & 0xc0 != 0x80)
-        .unwrap_or(i);
-    wide_char(b, s)
-}
-
-/// Whether `c` is one of Unicode's decimal digits, `\p{Nd}`.
-fn is_nd(c: char) -> bool {
-    let u = c as u32;
-    c.is_ascii_digit() || crate::csharp::ND.iter().any(|&s| u >= s && u - s < 10)
-}
-
-/// Whether the character that byte `i` of `b` is in is a word's, `\w` (and
-/// `[[:alnum:]_]`): past ASCII, a letter or a decimal digit.
-fn is_word(b: &[u8], i: usize) -> bool {
-    match b.get(i) {
-        Some(&c) if c < 0x80 => WORD[usize::from(c)],
-        Some(_) => wide_char_at(b, i).is_some_and(|c| c.is_alphabetic() || is_nd(c)),
-        None => false,
-    }
-}
-
-/// Whether the character at `i` can start a name, `[[:alpha:]_]`.
-fn is_name_start(b: &[u8], i: usize) -> bool {
-    match b.get(i) {
-        Some(&c) if c < 0x80 => c.is_ascii_alphabetic() || c == b'_',
-        Some(_) => wide_char(b, i).is_some_and(char::is_alphabetic),
-        None => false,
-    }
-}
-
-fn word_end(b: &[u8], mut p: usize) -> usize {
-    loop {
-        while p < b.len() && WORD[usize::from(b[p])] {
-            p += 1;
-        }
-        if p < b.len() && b[p] >= 0x80 && is_word(b, p) {
-            p += char_len(b[p]);
-        } else {
-            return p.min(b.len());
-        }
-    }
-}
 
 /// Where `{{identifier}}` ends when its word stops at `e` before a character past
 /// ASCII: `[[:alnum:]]` takes Unicode's other numbers (`₁`), which `\w` doesn't, so the run
@@ -957,60 +869,12 @@ fn alnum_ident_end(b: &[u8], e: usize) -> usize {
     q.max(e)
 }
 
-/// Whether `\b` holds before `p`, at a word's start.
-fn starts_word(b: &[u8], p: usize) -> bool {
-    p == 0 || !is_word(b, p - 1)
-}
-
-/// `\s` at `p` of the line (not its `\n`): how many bytes the space takes.
-fn space_len(b: &[u8], p: usize) -> Option<usize> {
-    let &c = b.get(p)?;
-    if c < 0x80 {
-        return matches!(c, b' ' | b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r').then_some(1);
-    }
-    wide_space(b, p)
-}
-
-#[cold]
-fn wide_space(b: &[u8], p: usize) -> Option<usize> {
-    let c = wide_char(b, p)?;
-    matches!(
-        c,
-        '\u{85}' | '\u{a0}' | '\u{1680}' | '\u{2000}'
-            ..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}'
-    )
-    .then(|| c.len_utf8())
-}
-
-/// Where the spaces at `p` end, before the line's `\n`.
-fn skip_spaces(b: &[u8], mut p: usize) -> usize {
-    while let Some(k) = space_len(b, p) {
-        p += k;
-    }
-    p
-}
-
 /// Where the ` `s at `p` end.
 fn skip_blanks(b: &[u8], mut p: usize) -> usize {
     while b.get(p) == Some(&b' ') {
         p += 1;
     }
     p
-}
-
-/// `\d` at `p`, Unicode's decimal digits: where it ends.
-fn digit(b: &[u8], p: usize) -> Option<usize> {
-    match *b.get(p)? {
-        c if c.is_ascii_digit() => Some(p + 1),
-        c if c < 0x80 => None,
-        _ => wide_digit(b, p),
-    }
-}
-
-#[cold]
-fn wide_digit(b: &[u8], p: usize) -> Option<usize> {
-    let c = wide_char(b, p)?;
-    is_nd(c).then(|| p + c.len_utf8())
 }
 
 /// `\d*` at `p`: where it ends.
@@ -1401,10 +1265,7 @@ impl Scan<'_, '_> {
 
     /// Where the character at `p` ends (the line's `\n` is one byte).
     fn next(&self, p: usize) -> usize {
-        if p >= self.b.len() {
-            return p + 1;
-        }
-        p + char_len(self.b[p]).min(self.b.len() - p)
+        crate::prim::next_char(self.b, p)
     }
 
     /// `.` at `p`: where it ends.

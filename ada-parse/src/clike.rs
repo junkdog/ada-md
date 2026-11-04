@@ -6,6 +6,7 @@
 //! all-capitals from a type's capital without reading the name again; and a keyword is looked
 //! up once in a table hashed at compile time ([`Words`]). The languages differ in parameters,
 //! not code: which characters past ASCII a name takes, whether `$` is one of its bytes.
+pub use crate::prim::char_len;
 
 /// A blank: `\s` as far as ASCII goes.
 pub const SPACE: u8 = 1;
@@ -63,17 +64,6 @@ pub fn skip_blanks(b: &[u8], mut p: usize) -> usize {
         p += 1;
     }
     p
-}
-
-/// The bytes of the UTF-8 character that starts with `c`.
-#[inline]
-pub fn char_len(c: u8) -> usize {
-    match c {
-        0xf0.. => 4,
-        0xe0.. => 3,
-        0xc0.. => 2,
-        _ => 1,
-    }
 }
 
 /// The character at `i`, a byte past ASCII that starts one ('\u{fffd}' for a broken one), and

@@ -32,6 +32,7 @@ use anpa::core::parse;
 use anpa::findbyte::{eq, find_byte};
 
 use crate::matcher::KEPT as HALF;
+use crate::prim::char_len;
 use crate::{Out, State};
 
 mod makefile;
@@ -3275,16 +3276,6 @@ fn skips_spaces(ctx: u8) -> bool {
 /// so a line ends the here-document where the identifier it starts with has the same hash.
 fn tag(word: &[u8]) -> u32 {
     hash(word)
-}
-
-/// The length of the UTF-8 character that starts with `c`.
-fn char_len(c: u8) -> usize {
-    match c {
-        0xf0.. => 4,
-        0xe0.. => 3,
-        0xc0.. => 2,
-        _ => 1,
-    }
 }
 
 #[cfg(test)]

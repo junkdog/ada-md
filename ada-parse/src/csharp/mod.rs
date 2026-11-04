@@ -43,7 +43,6 @@ mod doc;
 mod import;
 mod re;
 mod words;
-pub(crate) use re::ND;
 
 use crate::clike::{CLASS, WORD};
 use crate::matcher::KEPT as HALF;
@@ -1772,10 +1771,7 @@ impl Scan<'_> {
 
     /// Where the character at `p` ends (the line's `\n` is one byte).
     fn next(&self, p: usize) -> usize {
-        if p >= self.b.len() {
-            return p + 1;
-        }
-        p + re::char_len(self.b[p]).min(self.b.len() - p)
+        crate::prim::next_char(self.b, p)
     }
 
     /// The first pattern of the top context that matches at `p` (the prototype's first),

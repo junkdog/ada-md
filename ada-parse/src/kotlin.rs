@@ -23,6 +23,7 @@
 //! [`State`]'s levels).
 
 use crate::matcher::KEPT as HALF;
+use crate::prim::char_len;
 use crate::regex;
 use crate::sql;
 use crate::{Out, State, is_space, skip_spaces, trim_end};
@@ -346,32 +347,12 @@ fn is_word(b: &[u8], i: usize) -> bool {
 
 #[cold]
 fn wide_word(b: &[u8], i: usize) -> bool {
-    let s = (i.saturating_sub(3)..=i)
-        .rev()
-        .find(|&s| b[s] & 0xc0 != 0x80)
-        .unwrap_or(i);
-    let e = (s + char_len(b[s])).min(b.len());
-    std::str::from_utf8(&b[s..e])
-        .ok()
-        .and_then(|t| t.chars().next())
-        .is_some_and(char::is_alphanumeric)
+    crate::prim::wide_char_at(b, i).is_some_and(char::is_alphanumeric)
 }
 
-/// The bytes of the UTF-8 character that starts with `c`.
-fn char_len(c: u8) -> usize {
-    match c {
-        0xf0.. => 4,
-        0xe0.. => 3,
-        0xc0.. => 2,
-        _ => 1,
-    }
-}
-
-fn word_end(b: &[u8], mut p: usize) -> usize {
-    while is_word(b, p) {
-        p += char_len(b[p]);
-    }
-    p
+/// Where the run of `\w` at `p` ends ([`crate::prim::word_end_by`], Kotlin's characters).
+fn word_end(b: &[u8], p: usize) -> usize {
+    crate::prim::word_end_by(b, p, wide_word)
 }
 
 /// Whether `\b` holds before `p`, at a word's start.

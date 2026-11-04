@@ -23,6 +23,7 @@
 //! a closing tag on a later line is matched by its hash; on its own line, by its text.
 
 use crate::matcher::KEPT as HALF;
+use crate::prim::{WORD, char_len, digit, is_word, stops, wide_digit, wide_space, word_end};
 use crate::regex;
 use crate::{Out, State};
 
@@ -452,78 +453,10 @@ fn is_code(c: u8) -> bool {
     )
 }
 
-/// The bytes of the UTF-8 character that starts with `c`.
-fn char_len(c: u8) -> usize {
-    match c {
-        0xf0.. => 4,
-        0xe0.. => 3,
-        0xc0.. => 2,
-        _ => 1,
-    }
-}
-
-/// The character that starts at byte `i` of `b`, past ASCII.
-#[cold]
-fn wide_char(b: &[u8], i: usize) -> Option<char> {
-    let e = (i + char_len(b[i])).min(b.len());
-    std::str::from_utf8(&b[i..e]).ok()?.chars().next()
-}
-
-/// The character that byte `i` of `b` is in, past ASCII.
-#[cold]
-fn wide_char_at(b: &[u8], i: usize) -> Option<char> {
-    let s = (i.saturating_sub(3)..=i)
-        .rev()
-        .find(|&s| b[s] & 0xc0 != 0x80)
-        .unwrap_or(i);
-    wide_char(b, s)
-}
-
-/// ASCII's word bytes, `[A-Za-z0-9_]`.
-static WORD: [bool; 256] = {
-    let mut t = [false; 256];
-    let mut c = 0;
-    while c < 128 {
-        t[c] = (c as u8).is_ascii_alphanumeric() || c == b'_' as usize;
-        c += 1;
-    }
-    t
-};
-
-/// Whether `c` is one of Unicode's decimal digits, `\p{Nd}`.
-fn is_nd(c: char) -> bool {
-    let u = c as u32;
-    crate::csharp::ND.iter().any(|&s| u >= s && u - s < 10) || c.is_ascii_digit()
-}
-
-/// Whether the character that byte `i` of `b` is in is a word's, `\w`: past ASCII, a letter
-/// or a decimal digit.
-fn is_word(b: &[u8], i: usize) -> bool {
-    match b.get(i) {
-        Some(&c) if c < 0x80 => WORD[usize::from(c)],
-        Some(_) => wide_char_at(b, i).is_some_and(|c| c.is_alphabetic() || is_nd(c)),
-        None => false,
-    }
-}
-
 /// `\b` at `p`.
 fn boundary(b: &[u8], p: usize) -> bool {
     let before = p > 0 && is_word(b, p - 1);
     before != is_word(b, p)
-}
-
-/// Where `\w*` at `p` ends.
-fn word_end(b: &[u8], mut p: usize) -> usize {
-    loop {
-        while p < b.len() && WORD[usize::from(b[p])] {
-            p += 1;
-        }
-        if p < b.len() && b[p] >= 0x80 && is_word(b, p) {
-            p += char_len(b[p]);
-        } else {
-            return p.min(b.len());
-        }
-    }
 }
 
 /// Where `[$\w]*` at `p` ends.
@@ -559,17 +492,6 @@ fn space_len(b: &[u8], p: usize) -> Option<usize> {
         return matches!(c, b' ' | b'\t' | b'\x0b' | b'\x0c' | b'\r').then_some(1);
     }
     wide_space(b, p)
-}
-
-#[cold]
-fn wide_space(b: &[u8], p: usize) -> Option<usize> {
-    let c = wide_char(b, p)?;
-    matches!(
-        c,
-        '\u{85}' | '\u{a0}' | '\u{1680}' | '\u{2000}'
-            ..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}'
-    )
-    .then(|| c.len_utf8())
 }
 
 /// Where `\s*` at `p` ends (it takes the line's `\n`).
@@ -718,21 +640,6 @@ fn digits(b: &[u8], p: usize) -> Option<usize> {
         e = d;
     }
     Some(e)
-}
-
-/// `\d` at `p`: where it ends.
-fn digit(b: &[u8], p: usize) -> Option<usize> {
-    match *b.get(p)? {
-        c if c.is_ascii_digit() => Some(p + 1),
-        c if c < 0x80 => None,
-        _ => wide_digit(b, p),
-    }
-}
-
-#[cold]
-fn wide_digit(b: &[u8], p: usize) -> Option<usize> {
-    let c = wide_char(b, p)?;
-    is_nd(c).then(|| p + c.len_utf8())
 }
 
 /// `[0-9]+` at `p`: where it ends.
@@ -1030,17 +937,6 @@ fn escape(b: &[u8], p: usize) -> Option<usize> {
         b'u' if (q..q + 4).all(hex) => Some(q + 4),
         _ => None,
     }
-}
-
-/// A table of the bytes in `bytes`.
-const fn stops(bytes: &[u8]) -> [bool; 256] {
-    let mut t = [false; 256];
-    let mut i = 0;
-    while i < bytes.len() {
-        t[bytes[i] as usize] = true;
-        i += 1;
-    }
-    t
 }
 
 /// The bytes a pattern of a comment, a string, a JSX string, `{{ }}`, a template whose text is
@@ -1359,10 +1255,7 @@ impl<'b> Scan<'b, '_> {
 
     /// Where the character at `p` ends (the line's `\n` is one byte).
     fn next(&self, p: usize) -> usize {
-        if p >= self.b.len() {
-            return p + 1;
-        }
-        p + char_len(self.b[p]).min(self.b.len() - p)
+        crate::prim::next_char(self.b, p)
     }
 
     /// Where a pattern of the top context can next start, after none did at `p`.

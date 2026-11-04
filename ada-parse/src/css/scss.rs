@@ -1702,7 +1702,7 @@ static SASS_OP_SYMBOLS: &[&[u8]] = &[
 /// other scanners (`²` is neither).
 fn class_word(c: char) -> bool {
     let u = c as u32;
-    c.is_alphabetic() || crate::csharp::ND.iter().any(|&s| u >= s && u - s < 10)
+    c.is_alphabetic() || crate::prim::ND.iter().any(|&s| u >= s && u - s < 10)
 }
 
 /// A media feature's end and its two vendor prefixes' places.

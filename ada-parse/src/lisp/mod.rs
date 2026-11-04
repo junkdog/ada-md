@@ -21,6 +21,7 @@
 //! string or comment around it; no theme keys on the meta scopes (`meta.parens`,
 //! `meta.function`, …), so they are left out. The state between lines is the stack, a byte a
 //! frame, runs of plain list bodies as a count.
+use crate::prim::{char_len, digit, is_nd, wide_char};
 
 pub(crate) mod clojure;
 mod words;
@@ -2618,42 +2619,6 @@ impl Scan<'_, '_, '_> {
             }
         }
     }
-}
-
-/// The bytes a UTF-8 character takes, by its first byte.
-fn char_len(b: u8) -> usize {
-    match b {
-        0..0xc0 => 1,
-        0xc0..0xe0 => 2,
-        0xe0..0xf0 => 3,
-        _ => 4,
-    }
-}
-
-fn wide_char(b: &[u8], i: usize) -> Option<char> {
-    let e = (i + char_len(b[i])).min(b.len());
-    std::str::from_utf8(&b[i..e]).ok()?.chars().next()
-}
-
-/// Whether `c` is one of Unicode's decimal digits, `\p{Nd}`.
-fn is_nd(c: char) -> bool {
-    let u = c as u32;
-    crate::csharp::ND.iter().any(|&s| u >= s && u - s < 10) || c.is_ascii_digit()
-}
-
-/// `\d` at `p`: where it ends.
-fn digit(b: &[u8], p: usize) -> Option<usize> {
-    match *b.get(p)? {
-        c if c.is_ascii_digit() => Some(p + 1),
-        c if c < 0x80 => None,
-        _ => wide_digit(b, p),
-    }
-}
-
-#[cold]
-fn wide_digit(b: &[u8], p: usize) -> Option<usize> {
-    let c = wide_char(b, p)?;
-    is_nd(c).then(|| p + c.len_utf8())
 }
 
 /// `\d*` at `p`: where it ends.

@@ -15,6 +15,7 @@
 //!
 //! The stack between lines is the frames open above the top level, up to 28 (the bytes of
 //! [`State`]'s levels).
+use crate::prim::char_len;
 
 mod expr;
 mod jsx;
@@ -1251,16 +1252,6 @@ fn is_name_start(c: u8) -> bool {
 /// `\s`: a blank, the line's `\n` too.
 fn is_space(c: u8) -> bool {
     matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)
-}
-
-/// The bytes of the UTF-8 character that starts with `c`.
-fn char_len(c: u8) -> usize {
-    match c {
-        0xf0.. => 4,
-        0xe0.. => 3,
-        0xc0.. => 2,
-        _ => 1,
-    }
 }
 
 #[cfg(test)]

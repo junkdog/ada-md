@@ -27,6 +27,10 @@
 //! `²³¹¼½¾`; not followed), `\p{L}` a letter, `\p{N}` a number, `\s` Unicode's spaces; `(?i)` folds ASCII case only (Oniguruma's `ſ` for `s` isn't followed).
 
 use crate::matcher::KEPT as HALF;
+use crate::prim::{
+    WORD, blank_len as space_len, char_len, digit, is_nd, is_word_starting as is_word, wide_char,
+    word_end,
+};
 use crate::{Out, State};
 
 // The contexts, by what they read; the first ten include `main`.
@@ -830,17 +834,6 @@ static CLASS_OF: [u8; 256] = {
         } else {
             INERT
         };
-        c += 1;
-    }
-    t
-};
-
-/// `[A-Za-z0-9_]`.
-static WORD: [bool; 256] = {
-    let mut t = [false; 256];
-    let mut c = 0;
-    while c < 128 {
-        t[c] = (c as u8).is_ascii_alphanumeric() || c == b'_' as usize;
         c += 1;
     }
     t
@@ -2996,92 +2989,12 @@ fn boundary(b: &[u8], p: usize) -> bool {
     before != after
 }
 
-/// The bytes of the UTF-8 character that starts with `c`.
-fn char_len(c: u8) -> usize {
-    match c {
-        0xf0.. => 4,
-        0xe0.. => 3,
-        0xc0.. => 2,
-        _ => 1,
-    }
-}
-
-/// The character that starts at byte `i` of `b`, past ASCII.
-#[cold]
-fn wide_char(b: &[u8], i: usize) -> Option<char> {
-    let e = (i + char_len(b[i])).min(b.len());
-    std::str::from_utf8(&b[i..e]).ok()?.chars().next()
-}
-
-/// Whether `c` is one of Unicode's decimal digits, `\p{Nd}`.
-fn is_nd(c: char) -> bool {
-    let u = c as u32;
-    c.is_ascii_digit() || crate::csharp::ND.iter().any(|&s| u >= s && u - s < 10)
-}
-
-/// Whether the character at byte `i` of `b` is a word's, `\w`, or a name's, `(?:\p{L}|\d|_)`:
-/// past ASCII, a letter or a decimal digit. (Oniguruma's Latin-1 table also marks `²³¹¼½¾`
-/// as words, though its Unicode table leaves `\p{No}` out; not followed.) `i` is a
-/// character's first byte.
-fn is_word(b: &[u8], i: usize) -> bool {
-    match b.get(i) {
-        Some(&c) if c < 0x80 => WORD[usize::from(c)],
-        Some(_) => wide_char(b, i).is_some_and(|c| c.is_alphabetic() || is_nd(c)),
-        None => false,
-    }
-}
-
 /// Whether the character at byte `i` is a letter, `\p{L}`.
 fn is_letter(b: &[u8], i: usize) -> bool {
     match b.get(i) {
         Some(&c) if c < 0x80 => c.is_ascii_alphabetic(),
         Some(_) => wide_char(b, i).is_some_and(char::is_alphabetic),
         None => false,
-    }
-}
-
-/// Where the word at `p` ends.
-fn word_end(b: &[u8], mut p: usize) -> usize {
-    loop {
-        while p < b.len() && WORD[usize::from(b[p])] {
-            p += 1;
-        }
-        if p < b.len() && b[p] >= 0x80 && is_word(b, p) {
-            p += char_len(b[p]);
-        } else {
-            return p.min(b.len());
-        }
-    }
-}
-
-/// `\s` at `p` of the line (not its `\n`): how many bytes the space takes.
-fn space_len(b: &[u8], p: usize) -> Option<usize> {
-    let &c = b.get(p)?;
-    if c < 0x80 {
-        return matches!(c, b' ' | b'\t' | b'\x0b' | b'\x0c' | b'\r').then_some(1);
-    }
-    wide_space(b, p)
-}
-
-#[cold]
-fn wide_space(b: &[u8], p: usize) -> Option<usize> {
-    let c = wide_char(b, p)?;
-    matches!(
-        c,
-        '\u{85}' | '\u{a0}' | '\u{1680}' | '\u{2000}'
-            ..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}'
-    )
-    .then(|| c.len_utf8())
-}
-
-/// `\d` at `p`, Unicode's decimal digits: where it ends.
-fn digit(b: &[u8], p: usize) -> Option<usize> {
-    match *b.get(p)? {
-        c if c.is_ascii_digit() => Some(p + 1),
-        c if c < 0x80 => None,
-        _ => wide_char(b, p)
-            .filter(|&c| is_nd(c))
-            .map(|c| p + c.len_utf8()),
     }
 }
 
