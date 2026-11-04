@@ -140,6 +140,7 @@ impl Scan<'_> {
             }
             LINE => self.line(p),
             VARS_DECL => self.vars_decl(p),
+            GEN_TYPES | TYPE_ARG | LOC_GENERIC => self.type_arg(top, p),
             METHOD_PARAMS => {
                 if self.b[p] == b')' {
                     return self.close(p, p + 1, PARAMS_END_M);
@@ -160,6 +161,53 @@ impl Scan<'_> {
             }
             _ => self.context(top, p),
         }
+    }
+
+    /// A type argument's turn at `p` in `<…>` (`GEN_TYPES`, `TYPE_ARG`, `LOC_GENERIC`), where
+    /// it's decided here: `,`, the list's `>`, or a name of ASCII that `type_common`'s first
+    /// pattern takes (no `::` after it; not a lowercase name but one of `{{base_type}}`). The
+    /// rest is [`Scan::context`]'s. Out of line: in [`Scan::frame`]'s loop it cost the other
+    /// turns more than it saved.
+    #[inline(never)]
+    fn type_arg(&mut self, top: u8, p: usize) -> Option<usize> {
+        let (b, n) = (self.b, self.b.len());
+        let c = b[p];
+        match c {
+            // the three's `,` (`LOC_GENERIC`'s through `type_arg_param_common`)
+            b',' => return Some(self.put_code(p, p + 1, TYPE_SEP)),
+            b'>' => {
+                return match top {
+                    GEN_TYPES => Some(self.close_code(p, GENERIC_END)),
+                    LOC_GENERIC => {
+                        let q = self.put_code(p, p + 1, GENERIC_END);
+                        self.set(&[LOC_AFTER_GENERIC]);
+                        Some(q)
+                    }
+                    _ => self.type_arg_param_common(p),
+                };
+            }
+            _ => {}
+        }
+        if CLASS[usize::from(c)] & (WORD | DIGIT) != WORD {
+            return self.context(top, p);
+        }
+        let Some(e) = self.ascii_name(p) else {
+            return self.context(top, p);
+        };
+        // `::` after the name (past blanks) is `namespace_alias`'s
+        if e < n && (b[e] == b':' || b[e] <= b' ') {
+            let s = self.sp(e);
+            if self.ch(s) == b':' && self.ch(s + 1) == b':' && s + 1 < n {
+                return self.context(top, p);
+            }
+        }
+        if !c.is_ascii_lowercase() {
+            return Some(self.put_code(p, e, SUPPORT_TYPE));
+        }
+        if words::flags(words::get(&b[p..e])) & words::BASE != 0 {
+            return Some(self.put_code(p, e, STORAGE_TYPE));
+        }
+        self.context(top, p)
     }
 }
 

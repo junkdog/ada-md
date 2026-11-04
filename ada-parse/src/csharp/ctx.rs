@@ -2498,6 +2498,11 @@ impl Scan<'_> {
     pub(super) fn sw_case(&mut self, p: usize) -> Option<usize> {
         // `({{name}})\s*(:)`: a name of ASCII has one end (`names`' only), and none starts
         // where neither it nor a name past ASCII, escaped or after `@` does
+        // at a `.`, no name starts (no label, no `when`, no declaration), and `line_of_code_in`'s
+        // `.` is the pattern (`case A.B:`)
+        if self.ch(p) == b'.' && p < self.b.len() {
+            return self.tok(p, p + 1, DOT);
+        }
         let ascii = self.ascii_name(p);
         let mut label = None;
         if let Some(e) = ascii {
@@ -2788,6 +2793,21 @@ impl Scan<'_> {
             }
             if s == e {
                 self.put(p, e, SUPPORT_TYPE);
+                // plain type arguments, then a blank: `LOC_GENERIC`'s turns over them, its `>`'s
+                // and `LOC_AFTER_GENERIC`'s blanks (a set to `VARS_DECL`), in one
+                if let Some(g) = self.plain_type_args(e + 1)
+                    && matches!(self.b.get(g + 1), Some(b' ' | b'\t'))
+                    && let Some(t) = self.sp1(g + 1)
+                {
+                    self.put(e, e + 1, GENERIC_BEGIN);
+                    self.set(&[LOC_GENERIC]);
+                    self.put_type_args(e + 1, g);
+                    self.put(g, g + 1, GENERIC_END);
+                    self.set(&[LOC_AFTER_GENERIC]);
+                    self.fill(t);
+                    self.set(&[VARS_DECL]);
+                    return Some(t);
+                }
                 return self.then(e, e + 1, GENERIC_BEGIN, &[LOC_GENERIC]);
             }
         }
@@ -3360,7 +3380,9 @@ impl Scan<'_> {
     /// After `new` (at `e`, `NEW` on top): where blanks, a type of one name that
     /// `type_common` takes whole (one that doesn't start lowercase, or one of `{{base_type}}`)
     /// and `(` follow, the turns `NEW`'s set to its type (which takes nothing), the type's and
-    /// `new_type`'s at the `(`, in one. `None` where they don't follow, nothing done.
+    /// `new_type`'s at the `(`, in one; so too where plain type arguments come between
+    /// ([`Scan::plain_type_args`]: `new List<T>(`), their turns in `TYPE_ARG` with them. `None`
+    /// where they don't follow, nothing done.
     #[inline(never)]
     fn new_turns(&mut self, e: usize) -> Option<usize> {
         let b = self.b;
@@ -3369,19 +3391,96 @@ impl Scan<'_> {
             return None;
         }
         let m = self.ascii_name(s)?;
-        if m >= self.b.len() || b[m] != b'(' {
+        if m >= self.b.len() {
             return None;
         }
-        let leaf = if !b[s].is_ascii_lowercase() {
-            SUPPORT_TYPE
-        } else if words::flags(words::get(&b[s..m])) & BASE != 0 {
-            STORAGE_TYPE
-        } else {
-            return None;
+        let g = match b[m] {
+            b'(' => None,
+            // `type_common`'s `\s*(<)` push of `TYPE_ARG` (room for it, and for `new_type`'s
+            // two at the `(`)
+            b'<' if self.depth + 3 < SYNTECT_DEPTH => {
+                let g = self.plain_type_args(m + 1)?;
+                (b.get(g + 1) == Some(&b'(')).then_some(())?;
+                Some(g)
+            }
+            _ => return None,
         };
+        let leaf = self.type_leaf(s, m)?;
         self.shift(s, &[NEW_TYPE]);
         self.put(s, m, leaf);
-        self.new_type(m)
+        let Some(g) = g else {
+            return self.new_type(m);
+        };
+        self.put(m, m + 1, GENERIC_BEGIN);
+        self.push_all(&[TYPE_ARG]);
+        self.put_type_args(m + 1, g);
+        // `type_arg_param_common`'s `>`: no suffix before the `(`
+        self.put(g, g + 1, GENERIC_END);
+        self.fill(g + 1);
+        self.pop();
+        self.new_type(g + 1)
+    }
+
+    /// The leaf `type_common`'s first pattern gives the name of ASCII `s..e` where no `::`
+    /// follows: `support.type` but for a lowercase name, which only `{{base_type}}`'s are.
+    #[inline(always)]
+    fn type_leaf(&self, s: usize, e: usize) -> Option<u16> {
+        if !self.b[s].is_ascii_lowercase() {
+            Some(SUPPORT_TYPE)
+        } else if words::flags(words::get(&self.b[s..e])) & BASE != 0 {
+            Some(STORAGE_TYPE)
+        } else {
+            None
+        }
+    }
+
+    /// Plain type arguments at `i`, past a `<`: names of ASCII that [`Scan::type_leaf`] takes,
+    /// `,` between them, spaces and tabs around each. Where their `>` is.
+    fn plain_type_args(&self, i: usize) -> Option<usize> {
+        let (b, n) = (self.b, self.b.len());
+        let mut q = i;
+        loop {
+            while q < n && matches!(b[q], b' ' | b'\t') {
+                q += 1;
+            }
+            if q >= n || CLASS[usize::from(b[q])] & (WORD | crate::clike::DIGIT) != WORD {
+                return None;
+            }
+            let e = self.ascii_name(q)?;
+            self.type_leaf(q, e)?;
+            q = e;
+            while q < n && matches!(b[q], b' ' | b'\t') {
+                q += 1;
+            }
+            match b.get(q) {
+                Some(b',') => q += 1,
+                Some(b'>') => return Some(q),
+                _ => return None,
+            }
+        }
+    }
+
+    /// The turns of `TYPE_ARG` over plain type arguments `i..g` ([`Scan::plain_type_args`]):
+    /// each name's leaf, each `,` a separator.
+    fn put_type_args(&mut self, i: usize, g: usize) {
+        let b = self.b;
+        let mut q = i;
+        while q < g {
+            match b[q] {
+                b' ' | b'\t' => q += 1,
+                b',' => {
+                    self.put(q, q + 1, TYPE_SEP);
+                    q += 1;
+                }
+                _ => {
+                    let e = self.ascii_name(q).unwrap_or(q + 1);
+                    if let Some(leaf) = self.type_leaf(q, e) {
+                        self.put(q, e, leaf);
+                    }
+                    q = e;
+                }
+            }
+        }
     }
 
     /// `lambdas`.
@@ -3627,6 +3726,21 @@ impl Scan<'_> {
             // `({{name}})(<)(?=[^(]*>\s*\()`, `({{name}})(<)(?={{namespaced_name}}>\s*\.)`
             if self.generic_call_paren_ahead(e + 1) {
                 self.put(p, e, VAR_FUNCTION);
+                // plain type arguments and `>(`: `N_GENERIC_CALL`'s turns over them and its
+                // `>`'s, which sets `arguments` past the `(`, in one
+                if self.depth < SYNTECT_DEPTH
+                    && let Some(g) = self.plain_type_args(e + 1)
+                    && self.b.get(g + 1) == Some(&b'(')
+                {
+                    self.put(e, e + 1, GENERIC_BEGIN);
+                    self.push_all(&[N_GENERIC_CALL]);
+                    self.put_type_args(e + 1, g);
+                    self.put(g, g + 1, FC_GENERIC_END);
+                    self.put(g + 1, g + 1, FUNCTION_CALL);
+                    self.put(g + 1, g + 2, FC_GROUP_BEGIN);
+                    self.set(&[ARGUMENTS]);
+                    return Some(g + 2);
+                }
                 return self.tok_push(e, e + 1, GENERIC_BEGIN, &[N_GENERIC_CALL]);
             }
             if self.namespaced(e + 1, &mut |g| {
