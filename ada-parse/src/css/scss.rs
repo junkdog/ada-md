@@ -28,17 +28,18 @@ use super::{
     FN_FILTER, FN_FONT_FACE, FN_GRADIENT, FN_GRID, FN_IMAGE, FN_REGEXP, FN_SHAPE, FN_TIMING,
     FN_TOGGLE, FN_TRANSFORM, FN_URL, FN_URL_PREFIX, FN_VAR, FONT_NAME_LEAF, GROUP_BEGIN, GROUP_END,
     HEX, HEX_MARK, HEXA, HEXA_MARK, ID_HASH, ID_NAME, IMPORTANT, KEY_VALUE, KEYWORD_OTHER,
-    LINE_NAMES, MAIN, MAX, MEDIA_FEATURE, MEDIA_FEATURE_VENDOR, NS_PREFIX, Num, Out, P_ATTR_NAME,
-    P_ATTR_OP, P_ATTR_SEL_END, P_ATTR_UNQUOTED, P_ATTR_VAL_END, P_CALL_END, P_CASE_FLAG, P_COMMA,
-    P_COMMENT, P_COUNTER_NAME, P_COUNTER_STYLES, P_CUSTOM_PROP, P_DROP_WORDS, P_FROM_TO, P_GROUP,
-    P_GROUP_END, P_LINE_NAME, P_LINE_NAMES, P_LINE_NAMES_END, P_MEDIA_LOGIC, P_MEDIA_TYPES,
-    P_MQ_COMMA, P_NTH_INVALID, P_QUALIFIED, P_STRING, P_SUPPORTS_LOGIC, P_SYMBOL_TYPES,
-    P_UNICODE_RANGE, P_VENDOR, PROPERTY_NAME, PSEUDO_CLASS, PSEUDO_CLASS_MARK, PSEUDO_ELEMENT,
-    PSEUDO_ELEMENT_MARK, PSEUDO_ELEMENT_VENDOR, PSEUDO_KEYWORD, REPETITION, REPETITIONS, RULE_END,
-    SASS_FN, SCSS_PROP, SPECIAL_COLOR, SPECIAL_COLOR_LEAF, STD_COLOR, STD_COLOR_LEAF, STR_D, STR_S,
-    STRING_END, Scan, Span, State, T_ANGLE, T_FREQUENCY, T_INTEGER, T_LENGTH, T_NUMBER, T_PERCENT,
-    T_RESOLUTION, T_TIME, TAG, TAG_CUSTOM, TAG_NAME, TERMINATOR_LEAF, TIMING_DIRECTION, UNQUOTED,
-    WILDCARD, WRAP, char_at, is_hex, lex, lookup, unit_type,
+    LINE_NAMES, MAIN, MAX, MEDIA_FEATURE, MEDIA_FEATURE_VENDOR, NMCHARS, NS_PREFIX, Num, Out,
+    P_ATTR_NAME, P_ATTR_OP, P_ATTR_SEL_END, P_ATTR_UNQUOTED, P_ATTR_VAL_END, P_CALL_END,
+    P_CASE_FLAG, P_COMMA, P_COMMENT, P_COUNTER_NAME, P_COUNTER_STYLES, P_CUSTOM_PROP, P_DROP_WORDS,
+    P_FROM_TO, P_GROUP, P_GROUP_END, P_LINE_NAME, P_LINE_NAMES, P_LINE_NAMES_END, P_MEDIA_LOGIC,
+    P_MEDIA_TYPES, P_MQ_COMMA, P_NTH_INVALID, P_QUALIFIED, P_STRING, P_SUPPORTS_LOGIC,
+    P_SYMBOL_TYPES, P_UNICODE_RANGE, P_VENDOR, PROPERTY_NAME, PSEUDO_CLASS, PSEUDO_CLASS_MARK,
+    PSEUDO_ELEMENT, PSEUDO_ELEMENT_MARK, PSEUDO_ELEMENT_VENDOR, PSEUDO_KEYWORD, REPETITION,
+    REPETITIONS, RULE_END, SASS_FN, SCSS_PROP, SPECIAL_COLOR, SPECIAL_COLOR_LEAF, STD_COLOR,
+    STD_COLOR_LEAF, STR_D, STR_S, STRING_END, Scan, Span, State, T_ANGLE, T_FREQUENCY, T_INTEGER,
+    T_LENGTH, T_NUMBER, T_PERCENT, T_RESOLUTION, T_TIME, TAG, TAG_CUSTOM, TAG_NAME,
+    TERMINATOR_LEAF, TIMING_DIRECTION, UNQUOTED, WILDCARD, WORDS, WRAP, char_at, is, is_hex, lex,
+    lookup, unit_type,
 };
 
 /// Lex `b`, a line of SCSS without its `\n`, from `state`.
@@ -975,27 +976,156 @@ static MID_SKIP: [bool; 256] = {
     t
 };
 
-/// [`gate`] of every op: SCSS's and CSS's below 403, `selector-parts`' (from 1000) after.
-static GATES: [u32; 409] = {
-    let mut t = [ANY; 409];
-    let mut i = 0;
-    while i < 403 {
-        t[i] = gate(i as u16);
-        i += 1;
+/// [`gate`] as the run reads it: SCSS's and CSS's ops below 403 by their gates, the rest
+/// (`selector-parts`', from 1000) at any place.
+const fn gate_of(op: u16) -> u32 {
+    if op < 403 { gate(op) } else { ANY }
+}
+
+/// Whether op `op` can match at a place of class `at` whose `\s*` ends at a place of class
+/// `past` (the same place but at a space): an op whose pattern starts `\s*` lists the classes
+/// after the spaces as well as the spaces', and any other can't start at a space. Read through
+/// [`MASKS`] and [`Include`]'s rows, a list's ops at once.
+const fn gated(op: u16, at: u32, past: u32) -> bool {
+    let g = gate_of(op);
+    g & at != 0 && g & past != 0
+}
+
+/// Whether op lists `a` and `b` are the same.
+const fn same_ops(a: &[u16], b: &[u16]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut j = 0;
+    while j < a.len() {
+        if a[j] != b[j] {
+            return false;
+        }
+        j += 1;
+    }
+    true
+}
+
+/// The first context whose ops are `ctx`'s, if it is before `ctx`.
+const fn first_with_ops(ctx: usize) -> usize {
+    let mine = ops(ctx as u8);
+    let mut c = 0;
+    while c < ctx {
+        if same_ops(ops(c as u8), mine) {
+            return c;
+        }
+        c += 1;
+    }
+    ctx
+}
+
+/// How many rows [`MASKS`] has: one a distinct list of ops (the function groups share theirs).
+const ROW_COUNT: usize = {
+    let mut r = 0;
+    let mut c = 0;
+    while c < 256 {
+        if !ops(c as u8).is_empty() && first_with_ops(c) == c {
+            r += 1;
+        }
+        c += 1;
+    }
+    r
+};
+
+/// Each context's row in [`MASKS`] plus one, 0 for none (no ops); contexts with the same ops
+/// share a row.
+static ROWS: [u8; 256] = {
+    assert!(ROW_COUNT < 256);
+    let mut t = [0u8; 256];
+    let mut r = 0;
+    let mut c = 0;
+    while c < 256 {
+        if !ops(c as u8).is_empty() {
+            let f = first_with_ops(c);
+            if f == c {
+                r += 1;
+                t[c] = r;
+            } else {
+                t[c] = t[f];
+            }
+        }
+        c += 1;
     }
     t
 };
 
-/// Whether op `op` can match at a place of class `at` whose `\s*` ends at a place of class
-/// `past` (the same place but at a space): an op whose pattern starts `\s*` lists the classes
-/// after the spaces as well as the spaces', and any other can't start at a space.
-fn gated(op: u16, at: u32, past: u32) -> bool {
-    let i = if op >= 1000 {
-        403 + usize::from(op - 1000)
-    } else {
-        usize::from(op)
-    };
-    GATES.get(i).is_none_or(|&g| g & at != 0 && g & past != 0)
+/// [`gated`] for each context's ops at once (X-018): by the class bit of a place, bit `j` set
+/// where `ops(ctx)[j]`'s gate holds the class, so a place's ops are its class's mask and the
+/// mask of where its `\s*` ends, together.
+static MASKS: [[u32; 32]; ROW_COUNT] = {
+    let mut t = [[0u32; 32]; ROW_COUNT];
+    let mut c = 0;
+    while c < 256 {
+        let ops = ops(c as u8);
+        if !ops.is_empty() && first_with_ops(c) == c {
+            t[ROWS[c] as usize - 1] = mask_row(ops);
+        }
+        c += 1;
+    }
+    t
+};
+
+/// A list's [`MASKS`] row: by the class bit of a place, bit `j` where `ops[j]`'s gate holds it.
+const fn mask_row(ops: &[u16]) -> [u32; 32] {
+    assert!(ops.len() <= 32, "a list with more ops than a mask's bits");
+    let mut row = [0u32; 32];
+    let mut k = 0;
+    while k < 32 {
+        let mut j = 0;
+        while j < ops.len() {
+            if gated(ops[j], 1 << k, 1 << k) {
+                row[k] |= 1 << j;
+            }
+            j += 1;
+        }
+        k += 1;
+    }
+    row
+}
+
+/// The includes [`Scan::list`] tries, each with its [`mask_row`].
+struct Include {
+    ops: &'static [u16],
+    masks: [u32; 32],
+}
+
+static I_PROPERTY_VALUES: Include = Include {
+    ops: PROPERTY_VALUES,
+    masks: mask_row(PROPERTY_VALUES),
+};
+static I_SSE: Include = Include {
+    ops: SSE,
+    masks: mask_row(SSE),
+};
+static I_SVE: Include = Include {
+    ops: SVE,
+    masks: mask_row(SVE),
+};
+static I_MEDIA_QUERY: Include = Include {
+    ops: MEDIA_QUERY,
+    masks: mask_row(MEDIA_QUERY),
+};
+static I_SELECTOR_PARTS: Include = Include {
+    ops: SELECTOR_PARTS,
+    masks: mask_row(SELECTOR_PARTS),
+};
+
+/// The ops of `ctx` that [`gated`] lets through at a place of class `at` whose `\s*` ends at
+/// one of class `past`: bit `j` for `ops(ctx)[j]`.
+#[inline(always)]
+fn gated_ops(ctx: u8, at: u32, past: u32) -> u32 {
+    match ROWS[usize::from(ctx)] {
+        0 => 0,
+        r => {
+            let row = &MASKS[usize::from(r - 1)];
+            row[at.trailing_zeros() as usize] & row[past.trailing_zeros() as usize]
+        }
+    }
 }
 
 /// Each context's ops in the grammar's order (an include as one op that tries its list).
@@ -1717,6 +1847,7 @@ impl Scan<'_, '_, '_, true> {
     // ---- reading the line ----
 
     /// The class of place `p` ([`BYTE_CLASS`]).
+    #[inline(always)]
     fn class_at(&self, p: usize) -> u32 {
         match p.cmp(&self.b.len()) {
             std::cmp::Ordering::Less => BYTE_CLASS[usize::from(self.b[p])],
@@ -1726,6 +1857,7 @@ impl Scan<'_, '_, '_, true> {
     }
 
     /// The classes of place `p` and of where `\s*` from it ends, for [`gated`].
+    #[inline(always)]
     fn classes(&self, p: usize) -> (u32, u32) {
         let at = self.class_at(p);
         if at & SPW == 0 {
@@ -1740,7 +1872,7 @@ impl Scan<'_, '_, '_, true> {
             return true;
         }
         let c = self.b[i];
-        c < 0x80 && !(c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'\\'))
+        c < 0x80 && !(is(c, NMCHARS) || c == b'\\')
     }
 
     /// Where the run of class `k` at `i` ends (0 `[a-zA-Z0-9_-]`, 1 `[a-zA-Z_-]`, 2 `[a-z_-]`),
@@ -1751,7 +1883,7 @@ impl Scan<'_, '_, '_, true> {
             return e;
         }
         let in_class = |c: u8| match k {
-            0 => c.is_ascii_alphanumeric() || c == b'_' || c == b'-',
+            0 => is(c, NMCHARS),
             1 => c.is_ascii_alphabetic() || c == b'_' || c == b'-',
             _ => c.is_ascii_lowercase() || c == b'_' || c == b'-',
         };
@@ -1837,7 +1969,7 @@ impl Scan<'_, '_, '_, true> {
         while i < self.b.len() {
             let c = self.b[i];
             if c < 0x80 {
-                if c.is_ascii_alphanumeric() || c == b'_' || (dash && c == b'-') {
+                if is(c, if dash { NMCHARS } else { WORDS }) {
                     i += 1;
                     continue;
                 }
@@ -1854,7 +1986,7 @@ impl Scan<'_, '_, '_, true> {
 
     /// Where a run of the characters `\b` takes as a word's (CSS's `\w`) at `i` ends.
     fn bword_end(&self, mut i: usize) -> usize {
-        while i < self.b.len() && (self.b[i].is_ascii_alphanumeric() || self.b[i] == b'_') {
+        while i < self.b.len() && is(self.b[i], WORDS) {
             i += 1;
         }
         while i < self.b.len() && self.word_at(i) {
@@ -1866,7 +1998,7 @@ impl Scan<'_, '_, '_, true> {
     /// Where `[a-zA-Z0-9_-][\w-]*` at `i` ends: a variable's name.
     fn var_name(&self, i: usize) -> Option<usize> {
         let c = *self.b.get(i)?;
-        if i >= self.b.len() || !(c.is_ascii_alphanumeric() || c == b'_' || c == b'-') {
+        if i >= self.b.len() || !is(c, NMCHARS) {
             return None;
         }
         Some(self.word_run(i + 1, true))
@@ -2151,8 +2283,12 @@ impl Scan<'_, '_, '_, true> {
         let mut hit = None;
         let (at, past) = self.classes(p);
         let mut tried = false;
-        for &op in ops(ctx) {
-            if !gated(op, at, past) || (after_run && pure(op)) {
+        let ops = ops(ctx);
+        let mut m = gated_ops(ctx, at, past);
+        while m != 0 {
+            let op = ops[m.trailing_zeros() as usize];
+            m &= m - 1;
+            if after_run && pure(op) {
                 continue;
             }
             tried = true;
@@ -2366,7 +2502,7 @@ impl Scan<'_, '_, '_, true> {
     /// end of its own, as in `scrollbar-3dlight-color`).
     fn property_shape(&self, i: usize) -> bool {
         let (b, n) = (self.b, self.b.len());
-        if i > 0 && (b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_') {
+        if i > 0 && is(b[i - 1], WORDS) {
             // no `\b` here: the ops it rules out fail on their own
             return false;
         }
@@ -2457,7 +2593,7 @@ impl Scan<'_, '_, '_, true> {
             b'_' => &[O_VARIABLES, O_CUSTOM_FN, O_CONCAT, O_IDENT_UNQUOTED],
             b'\\' => &[O_VARIABLES, O_CUSTOM_FN, O_IDENT_UNQUOTED],
             b'*' | b'%' | b'&' | b'=' | b'<' | b'>' | b'~' | b'|' | b'?' | b'^' => &[O_OPS],
-            0x80.. => return self.list(PROPERTY_VALUES, p, ctx, fresh),
+            0x80.. => return self.list(&I_PROPERTY_VALUES, p, ctx, fresh),
             _ => return None,
         };
         for &op in list {
@@ -2780,11 +2916,11 @@ impl Scan<'_, '_, '_, true> {
                 {
                     return r;
                 }
-                self.list(SSE, p, ctx, fresh)
+                self.list(&I_SSE, p, ctx, fresh)
             }
-            O_SVE => self.list(SVE, p, ctx, fresh),
-            O_MEDIA_QUERY => self.list(MEDIA_QUERY, p, ctx, fresh),
-            O_SP => self.list(SELECTOR_PARTS, p, ctx, fresh),
+            O_SVE => self.list(&I_SVE, p, ctx, fresh),
+            O_MEDIA_QUERY => self.list(&I_MEDIA_QUERY, p, ctx, fresh),
+            O_SP => self.list(&I_SELECTOR_PARTS, p, ctx, fresh),
             O_BRACE_AHEAD | O_CURLY_AHEAD => {
                 if c == Some(b'{') {
                     self.pop(p);
@@ -3360,9 +3496,7 @@ impl Scan<'_, '_, '_, true> {
                     let s = self.spaces(p + 2);
                     if s > p + 2 && s <= n {
                         let mut e = s;
-                        while e < n
-                            && (b[e].is_ascii_alphanumeric() || b[e] == b'_' || b[e] == b'-')
-                        {
+                        while e < n && is(b[e], NMCHARS) {
                             e += 1;
                         }
                         self.tok(p, p + 2, KW_AS);
@@ -3577,7 +3711,7 @@ impl Scan<'_, '_, '_, true> {
             }
             O_CMOD_KEY => {
                 let mut e = p;
-                while e < n && (b[e].is_ascii_alphanumeric() || b[e] == b'_' || b[e] == b'-') {
+                while e < n && is(b[e], NMCHARS) {
                     e += 1;
                 }
                 if e == p {
@@ -3612,12 +3746,13 @@ impl Scan<'_, '_, '_, true> {
     }
 
     /// The ops of an include, tried in order at `p`.
-    fn list(&mut self, ops: &[u16], p: usize, ctx: u8, fresh: bool) -> Option<usize> {
+    fn list(&mut self, list: &Include, p: usize, ctx: u8, fresh: bool) -> Option<usize> {
         let (at, past) = self.classes(p);
-        for &op in ops {
-            if !gated(op, at, past) {
-                continue;
-            }
+        let mut m =
+            list.masks[at.trailing_zeros() as usize] & list.masks[past.trailing_zeros() as usize];
+        while m != 0 {
+            let op = list.ops[m.trailing_zeros() as usize];
+            m &= m - 1;
             if let Some(q) = self.sop(op, p, ctx, fresh) {
                 return Some(q);
             }

@@ -740,15 +740,20 @@ static WRAPS: [&str; 5] = [
 ];
 
 /// The wrap a context gives the tokens in it.
+#[inline(always)]
 fn own_wrap(ctx: u8) -> u8 {
-    match ctx {
-        COMMENT => W_COMMENT,
-        STR_S => W_SINGLE,
-        STR_D => W_DOUBLE,
-        scss::LINE => W_LINE,
-        _ => W_NONE,
-    }
+    OWN_WRAPS[usize::from(ctx)]
 }
+
+/// [`own_wrap`] by context: one load where the stack changes.
+static OWN_WRAPS: [u8; 256] = {
+    let mut t = [W_NONE; 256];
+    t[COMMENT as usize] = W_COMMENT;
+    t[STR_S as usize] = W_SINGLE;
+    t[STR_D as usize] = W_DOUBLE;
+    t[scss::LINE as usize] = W_LINE;
+    t
+};
 
 /// A kind is a leaf in its low bits, the wrap above them.
 const LEAF_BITS: u16 = 8;
@@ -1160,6 +1165,12 @@ const NO_WORD: Word = Word {
 /// Word `w`: its case-sensitive lists if spelled as listed, its case-insensitive ones if not.
 fn lookup(w: &[u8]) -> Word {
     let (id, spelled) = TABLE.get_spelled(w);
+    word(id, spelled)
+}
+
+/// What the table says of the word of id `id` (0 for none), spelled as listed or not.
+#[inline(always)]
+fn word(id: u16, spelled: bool) -> Word {
     if id == 0 {
         return NO_WORD;
     }
@@ -1182,6 +1193,95 @@ fn lookup(w: &[u8]) -> Word {
         }
     }
 }
+
+/// A word's prefix that is a word of the table: its length, its id, and whether the word as
+/// listed spells it as the prefix's entry does.
+#[derive(Clone, Copy)]
+struct Prefix {
+    len: u8,
+    spelled: bool,
+    id: u16,
+}
+
+/// Entry `i`'s prefixes that end before a `-` that no `-` precedes ([`Scan::word_ends`]' ends)
+/// and are words of the table, shortest first, into `out` from `at` (with `out` `None`, only
+/// counted): where the next entry's go.
+const fn prefixes_of(i: usize, out: Option<&mut [Prefix]>, at: usize) -> usize {
+    let w = ENTRIES[i].word;
+    let mut out = out;
+    let mut n = at;
+    let mut k = 1;
+    while k < w.len() {
+        if w[k] == b'-' && w[k - 1] != b'-' {
+            let (pre, _) = w.split_at(k);
+            let id = TABLE.find(pre);
+            if id != 0 {
+                // the prefix's entry as listed, against the word's bytes
+                let listed = LIST[(id - 1) as usize];
+                let mut same = true;
+                let mut j = 0;
+                while j < k {
+                    same &= listed[j] == pre[j];
+                    j += 1;
+                }
+                if let Some(o) = &mut out {
+                    o[n] = Prefix {
+                        len: k as u8,
+                        spelled: same,
+                        id,
+                    };
+                }
+                n += 1;
+            }
+        }
+        k += 1;
+    }
+    n
+}
+
+/// How many prefixes [`PREFIXES`] holds.
+const PREFIX_COUNT: usize = {
+    let mut n = 0;
+    let mut i = 0;
+    while i < ENTRIES.len() {
+        n = prefixes_of(i, None, n);
+        i += 1;
+    }
+    n
+};
+
+/// Every word's prefixes ([`prefixes_of`]), one word's after another's: a word read whole as
+/// listed has its prefixes' entries without a lookup each (X-018). Word `i`'s are
+/// `PREFIXES[PREFIX_AT[i]..PREFIX_AT[i + 1]]`.
+static PREFIXES: [Prefix; PREFIX_COUNT] = {
+    let mut t = [Prefix {
+        len: 0,
+        spelled: false,
+        id: 0,
+    }; PREFIX_COUNT];
+    let mut n = 0;
+    let mut i = 0;
+    while i < ENTRIES.len() {
+        n = prefixes_of(i, Some(&mut t), n);
+        i += 1;
+    }
+    t
+};
+
+/// Where each word's prefixes start in [`PREFIXES`], and past the last word's, their end.
+static PREFIX_AT: [u16; ENTRIES.len() + 1] = {
+    assert!(PREFIX_COUNT <= u16::MAX as usize);
+    let mut t = [0u16; ENTRIES.len() + 1];
+    let mut n = 0;
+    let mut i = 0;
+    while i < ENTRIES.len() {
+        t[i] = n as u16;
+        n = prefixes_of(i, None, n);
+        i += 1;
+    }
+    t[ENTRIES.len()] = n as u16;
+    t
+};
 
 // ---- characters ----
 
@@ -1262,7 +1362,49 @@ fn custom_element_wide(c: char) -> bool {
         | '\u{10000}'..='\u{effff}')
 }
 
-fn is_space(c: u8) -> bool {
+/// ASCII's classes as bits of [`CLASSES`]: a test of a few of them is one load, where
+/// `is_ascii_alphanumeric` is a chain of compares (X-018).
+const ALNUM: u8 = 1;
+const UNDER: u8 = 1 << 1;
+const DASH: u8 = 1 << 2;
+/// [`is_space`]'s bytes: `[ \t\n\x0b\x0c\r]`.
+const SPACE: u8 = 1 << 3;
+/// `[A-Za-z0-9_]`, `\w` in ASCII.
+const WORDS: u8 = ALNUM | UNDER;
+/// `[A-Za-z0-9-]`.
+const NAMES: u8 = ALNUM | DASH;
+/// `[A-Za-z0-9_-]`, `{{nmchar}}` in ASCII.
+const NMCHARS: u8 = ALNUM | UNDER | DASH;
+
+/// Each byte's classes: [`ALNUM`], [`UNDER`], [`DASH`]; none past ASCII.
+static CLASSES: [u8; 256] = {
+    let mut t = [0u8; 256];
+    let mut c = 0;
+    while c < 128 {
+        let b = c as u8;
+        t[c] = if b.is_ascii_alphanumeric() {
+            ALNUM
+        } else if b == b'_' {
+            UNDER
+        } else if b == b'-' {
+            DASH
+        } else if is_space(b) {
+            SPACE
+        } else {
+            0
+        };
+        c += 1;
+    }
+    t
+};
+
+/// Whether byte `c` is in one of the classes `m`.
+#[inline(always)]
+fn is(c: u8, m: u8) -> bool {
+    CLASSES[usize::from(c)] & m != 0
+}
+
+const fn is_space(c: u8) -> bool {
     matches!(c, b' ' | b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r')
 }
 
@@ -1519,12 +1661,11 @@ fn lex<const S: bool>(
         class_runs: [const { Run::new((usize::MAX, 0)) }; 3],
         nm_ends: std::cell::RefCell::new(Vec::new()),
         swrap: W_NONE,
+        wrap: 0,
         shape_run: std::cell::Cell::new((usize::MAX, 0, 0)),
     };
     s.depth = state.load(&mut s.stack);
-    if S {
-        s.rewrap();
-    }
+    s.rewrap();
     let exact = state.is_exact();
     run(&mut s);
     *state = State::keep(&s.stack, s.depth, exact, 0);
@@ -1564,6 +1705,9 @@ struct Scan<'b, 'o, 's, const S: bool = false> {
     nm_ends: std::cell::RefCell<Vec<u32>>,
     /// SCSS's: the wrap of the innermost context that has one, kept as the stack changes.
     swrap: u8,
+    /// The wrap the text and tokens take, as a kind's bits ([`Scan::wrap`]): CSS's top's,
+    /// SCSS's [`Scan::swrap`], kept as the stack changes.
+    wrap: u16,
     /// SCSS's: the last run of `[a-z0-9-]` a property's shape read: where it starts and ends,
     /// and its last `-` that no letter or `-` follows (`usize::MAX` for none).
     shape_run: std::cell::Cell<(usize, usize, usize)>,
@@ -1574,19 +1718,24 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         self.stack[self.depth - 1]
     }
 
+    #[inline(always)]
     fn wrap(&self) -> u16 {
-        let w = if S { self.swrap } else { own_wrap(self.top()) };
-        u16::from(w) << LEAF_BITS
+        self.wrap
     }
 
-    /// SCSS's wrap read from the stack again ([`Scan::swrap`]).
+    /// The wrap read from the stack again: CSS's top's, SCSS's [`Scan::swrap`].
     fn rewrap(&mut self) {
-        self.swrap = self.stack[..self.depth]
-            .iter()
-            .rev()
-            .map(|&c| own_wrap(c))
-            .find(|&w| w != W_NONE)
-            .unwrap_or(W_NONE);
+        if S {
+            self.swrap = self.stack[..self.depth]
+                .iter()
+                .rev()
+                .map(|&c| own_wrap(c))
+                .find(|&w| w != W_NONE)
+                .unwrap_or(W_NONE);
+            self.wrap = u16::from(self.swrap) << LEAF_BITS;
+        } else {
+            self.wrap = u16::from(own_wrap(self.top())) << LEAF_BITS;
+        }
     }
 
     /// Fill the top context's text up to `to`.
@@ -1624,11 +1773,14 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         self.fill(at);
         self.stack[self.depth] = c;
         self.depth += 1;
+        let w = own_wrap(c);
         if S {
-            let w = own_wrap(c);
             if w != W_NONE {
                 self.swrap = w;
+                self.wrap = u16::from(w) << LEAF_BITS;
             }
+        } else {
+            self.wrap = u16::from(w) << LEAF_BITS;
         }
     }
 
@@ -1637,7 +1789,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         self.fill(at);
         if self.depth > 1 {
             self.depth -= 1;
-            if S && own_wrap(self.stack[self.depth]) != W_NONE {
+            if !S || own_wrap(self.stack[self.depth]) != W_NONE {
                 self.rewrap();
             }
         }
@@ -1663,7 +1815,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         }
         let c = self.b[i];
         if c < 0x80 {
-            c.is_ascii_alphanumeric() || c == b'_'
+            is(c, WORDS)
         } else {
             word_char(char_at(self.b, i).0)
         }
@@ -1677,7 +1829,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         }
         let c = self.b[i - 1];
         if c < 0x80 {
-            c.is_ascii_alphanumeric() || c == b'_'
+            is(c, WORDS)
         } else {
             word_char(char_before(self.b, i))
         }
@@ -1702,18 +1854,36 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
     }
 
     /// Where `\s*` at `i` ends (the `\n` at `n` is a space).
+    #[inline(always)]
     fn spaces(&self, i: usize) -> usize {
         if i < self.b.len() && !matches!(self.b[i], b' ' | b'\t' | b'\r' | 0x0b | 0x0c | 0x80..) {
-            // no space here
+            // no space here: answered where it's asked, without a call
             return i;
         }
+        self.spaces_run_end(i)
+    }
+
+    /// [`Scan::spaces`] where a space or the line's end is at `i`.
+    #[inline(never)]
+    fn spaces_run_end(&self, i: usize) -> usize {
         let (a, e) = self.spaces_run.get();
         if a <= i && i <= e {
             return e;
         }
+        let (b, n) = (self.b, self.b.len());
         let mut k = i;
-        while let Some(e) = self.space(k) {
-            k = e;
+        loop {
+            // ASCII's spaces at once, then the line's `\n` or a space past ASCII
+            while k < n && is(b[k], SPACE) {
+                k += 1;
+            }
+            if k < n && b[k] < 0x80 {
+                break;
+            }
+            match self.space(k) {
+                Some(e) => k = e,
+                None => break,
+            }
         }
         self.spaces_run.set((i, k));
         k
@@ -1838,7 +2008,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
     /// `{{nmchar}}` at `i`: where it ends.
     fn nmchar(&self, i: usize) -> Option<usize> {
         let c = *self.b.get(i)?;
-        if c.is_ascii_alphanumeric() || c == b'_' || c == b'-' {
+        if is(c, NMCHARS) {
             return Some(i + 1);
         }
         if c >= 0x80 {
@@ -1853,8 +2023,12 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         let (b, n) = (self.b, self.b.len());
         loop {
             // `[-\w]` in ASCII first, the rest a character at a time
-            while i < n && (b[i].is_ascii_alphanumeric() || b[i] == b'_' || b[i] == b'-') {
+            while i < n && is(b[i], NMCHARS) {
                 i += 1;
+            }
+            if i >= n || (b[i] < 0x80 && b[i] != b'\\') {
+                // the line's end, or an ASCII byte that starts no escape: no `{{nmchar}}`
+                return i;
             }
             match self.nmchar(i) {
                 Some(q) => i = q,
@@ -1887,7 +2061,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             return e;
         }
         let mut k = i;
-        while k < self.b.len() && (self.b[k].is_ascii_alphanumeric() || self.b[k] == b'-') {
+        while k < self.b.len() && is(self.b[k], NAMES) {
             k += 1;
         }
         self.names_run.set((i, k));
@@ -2005,12 +2179,10 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                         }
                     }
                 }
-                _ if keyframes
-                    && (c.is_ascii_alphanumeric() || matches!(c, b',' | b'-' | b'+' | b'.')) =>
-                {
+                _ if keyframes && (is(c, NAMES) || matches!(c, b',' | b'+' | b'.')) => {
                     // `\b(from|to)\b`, `comma-delimiter` and `numeric-values` before `main`
-                    let r = self.op(P_FROM_TO, p, ctx, false);
-                    let r = r.or_else(|| self.op(P_COMMA, p, ctx, false));
+                    let r = self.op_at(P_FROM_TO, p, ctx, false);
+                    let r = r.or_else(|| self.op_at(P_COMMA, p, ctx, false));
                     let r = r.or_else(|| self.numeric(p, &NUMERIC));
                     match r {
                         Some(q) => Some(q),
@@ -2063,12 +2235,12 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
     fn main_at(&mut self, p: usize) -> Option<usize> {
         let c = self.b[p];
         match c {
-            b'/' => self.op(P_COMMENT, p, MAIN, false),
+            b'/' => self.op_at(P_COMMENT, p, MAIN, false),
             b':' | b'.' | b'*' | b'#' | b'[' | b'a'..=b'z' | b'A'..=b'Z' => {
-                self.op(P_SELECTOR, p, MAIN, false)
+                self.op_at(P_SELECTOR, p, MAIN, false)
             }
             b'@' => self.at_rules(p),
-            b'{' => self.op(P_PL, p, MAIN, false),
+            b'{' => self.op_at(P_PL, p, MAIN, false),
             _ => None,
         }
     }
@@ -2115,26 +2287,26 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                         }
                     }
                 }
-                b'/' => self.op(P_COMMENT, p, ctx, false),
+                b'/' => self.op_at(P_COMMENT, p, ctx, false),
                 b'-' => {
-                    let r = self.op(P_VENDOR, p, ctx, false);
+                    let r = self.op_at(P_VENDOR, p, ctx, false);
                     let r = r.or_else(|| self.numeric(p, &NUMERIC));
                     if font {
-                        r.or_else(|| self.op(P_IDENT_RUN, p, ctx, false))
+                        r.or_else(|| self.op_at(P_IDENT_RUN, p, ctx, false))
                     } else {
                         r
                     }
                 }
                 b'+' | b'.' | b'0'..=b'9' => self.numeric(p, &NUMERIC),
                 b'#' => self.color_values(p),
-                b'[' => self.op(P_LINE_NAMES, p, ctx, false),
-                b'\'' | b'"' => self.op(P_STRING, p, ctx, false),
-                b'!' => self.op(P_IMPORTANT, p, ctx, false),
+                b'[' => self.op_at(P_LINE_NAMES, p, ctx, false),
+                b'\'' | b'"' => self.op_at(P_STRING, p, ctx, false),
+                b'!' => self.op_at(P_IMPORTANT, p, ctx, false),
                 b',' if font => {
                     self.tok(p, p + 1, COMMA);
                     Some(self.spaces(p + 1))
                 }
-                b'_' | b'\\' if font => self.op(P_IDENT_RUN, p, ctx, false),
+                b'_' | b'\\' if font => self.op_at(P_IDENT_RUN, p, ctx, false),
                 b'a'..=b'z' | b'A'..=b'Z' => match self.value_word(p, font) {
                     Some(q) => Some(q),
                     None => {
@@ -2165,7 +2337,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                             }
                         }
                     } else if font {
-                        self.op(P_IDENT_RUN, p, ctx, false)
+                        self.op_at(P_IDENT_RUN, p, ctx, false)
                     } else {
                         None
                     }
@@ -2209,15 +2381,31 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             return Some(q);
         }
         if font {
-            return self.op(P_IDENT_RUN, p, FONT_VALUE, false);
+            return self.op_at(P_IDENT_RUN, p, FONT_VALUE, false);
         }
         None
     }
 
     /// The words of the table that a word at `p` (its `[A-Za-z0-9-]` run to `end`) can be, each
     /// with its end: where a `\b` follows, before each `-` and at the run's end.
+    /// Where a prefix isn't a word of the table, `each` may or may not see it (its lists 0).
     fn word_ends(&self, p: usize, end: usize, mut each: impl FnMut(usize, Word)) {
         let b = self.b;
+        let whole = end > p && end - p <= LONGEST && b[end - 1] != b'-' && !self.word_at(end);
+        let (mut id, mut spelled) = (0, false);
+        if whole {
+            // the run a word as listed: its prefixes are its entry's
+            (id, spelled) = TABLE.get_spelled(&b[p..end]);
+            if id != 0 && spelled {
+                let i = usize::from(id - 1);
+                let at = usize::from(PREFIX_AT[i])..usize::from(PREFIX_AT[i + 1]);
+                for x in &PREFIXES[at] {
+                    each(p + usize::from(x.len), word(x.id, x.spelled));
+                }
+                each(end, word(id, true));
+                return;
+            }
+        }
         let mut k = p + 1;
         // no word of the table is longer
         let lim = end.min(p + LONGEST + 1);
@@ -2227,8 +2415,8 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             }
             k += 1;
         }
-        if end > p && end - p <= LONGEST && b[end - 1] != b'-' && !self.word_at(end) {
-            each(end, lookup(&b[p..end]));
+        if whole {
+            each(end, word(id, spelled));
         }
     }
 
@@ -2311,20 +2499,20 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                 }
                 b'a'..=b'z' if self.boundary(p) => self
                     .custom_element(p)
-                    .or_else(|| self.op(P_TAG, p, ctx, false)),
-                b'.' => self.op(P_CLASS, p, ctx, false),
-                b'#' => self.op(P_ID, p, ctx, false),
+                    .or_else(|| self.op_at(P_TAG, p, ctx, false)),
+                b'.' => self.op_at(P_CLASS, p, ctx, false),
+                b'#' => self.op_at(P_ID, p, ctx, false),
                 b'*' => {
                     self.tok(p, p + 1, WILDCARD);
                     Some(p + 1)
                 }
                 b'>' | b'~' | b'+' => self.combinator(p),
                 b':' => self.pseudo(p),
-                b'[' => self.op(P_ATTR_SEL, p, ctx, false),
+                b'[' => self.op_at(P_ATTR_SEL, p, ctx, false),
                 b'0'..=b'9' | b'A'..=b'Z' | b'_' | b'a'..=b'z' => {
                     // inside a word or not lowercase: nothing starts before its end
                     p += 1;
-                    while p < n && (b[p].is_ascii_alphanumeric() || b[p] == b'_') {
+                    while p < n && is(b[p], WORDS) {
                         p += 1;
                     }
                     continue;
@@ -2372,7 +2560,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                     self.pop(p);
                     return Some(p);
                 }
-                b'/' => match self.op(P_COMMENT, p, ctx, false) {
+                b'/' => match self.op_at(P_COMMENT, p, ctx, false) {
                     Some(q) => return Some(q),
                     None => p += 1,
                 },
@@ -2380,7 +2568,12 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                     // a name, then its `:` and value, without going back to the run: each
                     // goes on here when it popped back to this context
                     let op = if b[p] == b':' { P_VALUE } else { P_PROP_NAME };
-                    let Some(q) = self.op(op, p, ctx, false) else {
+                    let hit = if op == P_VALUE {
+                        self.op_at(P_VALUE, p, ctx, false)
+                    } else {
+                        self.op_at(P_PROP_NAME, p, ctx, false)
+                    };
+                    let Some(q) = hit else {
                         p += 1;
                         continue;
                     };
@@ -2419,11 +2612,11 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                 return Some(p);
             }
             let r = if b[p] == b'-' {
-                self.op(P_VENDOR, p, ctx, false)
-                    .or_else(|| self.op(P_CUSTOM_PROP, p, ctx, false))
+                self.op_at(P_VENDOR, p, ctx, false)
+                    .or_else(|| self.op_at(P_CUSTOM_PROP, p, ctx, false))
             } else if self.boundary(p) {
-                self.op(P_VAR_DEPRECATED, p, ctx, false)
-                    .or_else(|| self.op(P_FONT, p, ctx, false))
+                self.op_at(P_VAR_DEPRECATED, p, ctx, false)
+                    .or_else(|| self.op_at(P_FONT, p, ctx, false))
                     .or_else(|| {
                         let (e, _) = self.ranked(p, |w| w.prop_rank)?;
                         self.tok(p, e, PROPERTY_NAME);
@@ -2527,8 +2720,18 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         Some(n + 1)
     }
 
-    /// Op `op` at `p` in context `ctx`: where the scan goes on if it matched.
+    /// Op `op` at `p` in context `ctx`: where the scan goes on if it matched. The ops a
+    /// context's list names at run time come here; the own code's ops by name are
+    /// [`Scan::op_at`] at the call, its arm alone.
+    #[inline(never)]
     fn op(&mut self, op: u8, p: usize, ctx: u8, fresh: bool) -> Option<usize> {
+        self.op_at(op, p, ctx, fresh)
+    }
+
+    /// [`Scan::op`]'s arms, inlined where `op` is a constant: the match folds to its arm, with
+    /// no call into the whole of them (X-018).
+    #[inline(always)]
+    fn op_at(&mut self, op: u8, p: usize, ctx: u8, fresh: bool) -> Option<usize> {
         let (b, n) = (self.b, self.b.len());
         let c = self.ch(p);
         match op {
@@ -2803,7 +3006,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                     return None;
                 }
                 let mut e = p;
-                while e < n && b[e].is_ascii_alphanumeric() {
+                while e < n && is(b[e], ALNUM) {
                     e += 1;
                 }
                 if !self.boundary(e) {
@@ -3096,6 +3299,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             P_CALC_END => {
                 if c == Some(b')') {
                     self.stack[self.depth - 1] = TERMINATOR;
+                    self.rewrap();
                     self.fill(p);
                     return Some(p);
                 }
@@ -3493,7 +3697,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         // the name, as the decimal|none alternative, then as an ident
         let we = {
             let mut e = w;
-            while e < self.b.len() && self.b[e].is_ascii_alphanumeric() {
+            while e < self.b.len() && is(self.b[e], ALNUM) {
                 e += 1;
             }
             e
