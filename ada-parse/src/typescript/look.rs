@@ -125,9 +125,7 @@ pub(super) fn name(b: &[u8], i: usize) -> usize {
     let mut j = i + a;
     loop {
         // ASCII's name characters first, the commonest by far
-        while j < b.len() && NAME_ASCII[usize::from(b[j])] {
-            j += 1;
-        }
+        j = ascii_name_end(b, j);
         if j >= b.len() || b[j] < 0x80 {
             return j;
         }
@@ -136,6 +134,57 @@ pub(super) fn name(b: &[u8], i: usize) -> usize {
             return j;
         }
         j += k;
+    }
+}
+
+/// Past ASCII's name characters (`[_$a-zA-Z0-9]`) from `j` (`j <= b.len()`): sixteen bytes a step
+/// on x86-64 where the line has sixteen, the last sixteen read again where fewer are left past
+/// `j`; a byte a step otherwise.
+#[inline(always)]
+fn ascii_name_end(b: &[u8], mut j: usize) -> usize {
+    #[cfg(target_arch = "x86_64")]
+    if b.len() >= 16 {
+        while j < b.len() {
+            let q = j.min(b.len() - 16);
+            let s = j - q;
+            // the bytes from `j` that aren't a name's, the line's end past them
+            let stop = !(name_mask(b, q) >> s) & (0xffff >> s);
+            if stop != 0 {
+                return j + stop.trailing_zeros() as usize;
+            }
+            j = q + 16;
+        }
+        return j;
+    }
+    while j < b.len() && NAME_ASCII[usize::from(b[j])] {
+        j += 1;
+    }
+    j
+}
+
+/// Of the sixteen bytes of `b` at `q` (`q + 16 <= b.len()`), a bit for each in `[_$a-zA-Z0-9]`.
+/// SSE2, which every x86-64 has.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn name_mask(b: &[u8], q: usize) -> u32 {
+    use std::arch::x86_64::*;
+    assert!(q + 16 <= b.len());
+    // SAFETY: SSE2 is part of x86-64; the load reads `b[q..q + 16]`, inside `b` (above), and
+    // needs no alignment
+    unsafe {
+        let w = _mm_loadu_si128(b.as_ptr().add(q).cast());
+        // `x - lo` at most `n`, unsigned: `x` in `lo..=lo + n`
+        let within = |x: __m128i, lo: u8, n: u8| {
+            let d = _mm_sub_epi8(x, _mm_set1_epi8(lo as i8));
+            _mm_cmpeq_epi8(_mm_min_epu8(d, _mm_set1_epi8(n as i8)), d)
+        };
+        // `| 0x20` takes `A..=Z` to `a..=z` and no other byte there
+        let letter = within(_mm_or_si128(w, _mm_set1_epi8(0x20)), b'a', 25);
+        let digit = within(w, b'0', 9);
+        let us = _mm_cmpeq_epi8(w, _mm_set1_epi8(b'_' as i8));
+        let dollar = _mm_cmpeq_epi8(w, _mm_set1_epi8(b'$' as i8));
+        let m = _mm_or_si128(_mm_or_si128(letter, digit), _mm_or_si128(us, dollar));
+        _mm_movemask_epi8(m) as u32
     }
 }
 
@@ -171,20 +220,42 @@ pub(super) fn bal(b: &[u8], i: usize, open: u8, close: u8, depth: u8) -> Option<
     // one pass with the level counted (the line's `\n` is neither bracket): an `open` at the
     // deepest level fails it, as the nested copies of the regex run out
     let mut level = 1;
-    for (j, &c) in b.iter().enumerate().skip(i + 1) {
-        if c == close {
+    let mut j = i + 1;
+    loop {
+        // the next bracket of either kind, eight bytes a step
+        j = crate::prim::find_any(b, j, [open, close]);
+        if j >= b.len() {
+            return None;
+        }
+        if b[j] == close {
             level -= 1;
             if level == 0 {
                 return Some(j + 1);
             }
-        } else if c == open {
+        } else {
             if level == depth {
                 return None;
             }
             level += 1;
         }
+        j += 1;
     }
-    None
+}
+
+/// Whether `=>` starts at `i` or past it on the line: a test every arrow's lookahead needs to
+/// pass, as each ends in `\s*=>`.
+fn arrow_ahead(b: &[u8], i: usize) -> bool {
+    let mut j = i + 1;
+    loop {
+        j = crate::prim::find_any(b, j, *b">");
+        if j >= b.len() {
+            return false;
+        }
+        if b[j - 1] == b'=' {
+            return true;
+        }
+        j += 1;
+    }
 }
 
 /// `«B{»`, `«B(»` or `«B[»` at `i`.
@@ -354,7 +425,8 @@ pub(super) fn arrow_sure(b: &[u8], i: usize) -> bool {
 /// The arrow found on its line: `«TP»?\(\s*«cm*»((«alpha»|«B{»|«B[»|(\.\.\.\s*«alpha»))([^()'"`]|«B(»|«sq»|«dq»|«bq»)*)?\)(\s*:\s*«RT»+)?\s*=>` at `i`.
 pub(super) fn arrow_line(b: &[u8], i: usize) -> bool {
     let Some(j) = tp_opt(b, i) else { return false };
-    if at(b, j) != b'(' {
+    // the `=>` it ends in, past the `(`
+    if at(b, j) != b'(' || !arrow_ahead(b, j) {
         return false;
     }
     let mut j = comments(b, ws(b, j + 1));
@@ -593,8 +665,15 @@ pub(super) fn fn_colon(b: &[u8], i: usize, tsx: bool, value: bool) -> bool {
             let mut k = j;
             let mut any = false;
             loop {
-                match at(b, k) {
-                    0 => return false,
+                // past the `[^<>(),=]` units, eight bytes a step: the line's end fails it (its
+                // `\n` one more unit, and nothing after it)
+                let f = crate::prim::find_any(b, k, *b"=(<>),");
+                any |= f > k;
+                k = f;
+                if k >= b.len() {
+                    return false;
+                }
+                match b[k] {
                     b'=' if at(b, k + 1) == b'>' => k += 2,
                     b'=' => return any && fn_value(b, ws(b, k + 1), tsx),
                     b'(' => match bal(b, k, b'(', b')', 3) {
@@ -602,17 +681,13 @@ pub(super) fn fn_colon(b: &[u8], i: usize, tsx: bool, value: bool) -> bool {
                         None => return false,
                     },
                     b'<' => {
-                        let mut e = k + 1;
-                        while !matches!(at(b, e), b'<' | b'>' | 0) {
-                            e += 1;
-                        }
+                        let e = crate::prim::find_any(b, k + 1, *b"<>");
                         if at(b, e) != b'>' {
                             return false;
                         }
                         k = e + 1;
                     }
-                    b'>' | b')' | b',' => return false,
-                    _ => k += 1,
+                    _ => return false,
                 }
                 any = true;
             }
@@ -762,4 +837,34 @@ pub(super) fn call_target(b: &[u8], i: usize) -> Option<usize> {
         }
     }
     ends[..n].iter().rev().copied().find(|&e| call_after(b, e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NAME_ASCII, ascii_name_end};
+
+    /// The sixteen-byte steps end where the byte loop does, at every start of every line from 0 to
+    /// 40 bytes, each byte of 256 at each place in turn among name bytes.
+    #[test]
+    fn ascii_name_end_is_the_byte_loops() {
+        let slow = |b: &[u8], mut j: usize| {
+            while j < b.len() && NAME_ASCII[usize::from(b[j])] {
+                j += 1;
+            }
+            j
+        };
+        for n in 0..=40 {
+            for at in 0..n.max(1) {
+                for c in 0..=255u8 {
+                    let mut b: Vec<u8> = (0..n).map(|k| b"aZ09_$xQ"[k % 8]).collect();
+                    if at < n {
+                        b[at] = c;
+                    }
+                    for j in 0..=n {
+                        assert_eq!(ascii_name_end(&b, j), slow(&b, j), "{b:?} from {j}");
+                    }
+                }
+            }
+        }
+    }
 }
