@@ -28,7 +28,8 @@
 //! its spans emitted inline; a doc comment's turns run in one of their own too
 //! ([`Scan::doc_run`], its fourth). A blank line and a lone `{` or `}` (a third of the lines)
 //! don't build the scan at all (`brace.rs`, its sixth): their turns in the commonest contexts
-//! are read from a table, the state moved on as the scan would.
+//! are read from a table, the state moved on as the scan would. Nor does a plain `using A.B;`
+//! (`import.rs`, its seventh).
 //!
 //! A string that `new Regex(`, `Regex.IsMatch(input, …)` and the like take is colored as
 //! .NET's regex (ADR-40, phase 4; [`crate::regex`]), as Rider colors it: its text is the
@@ -39,6 +40,7 @@ mod brace;
 mod code;
 mod ctx;
 mod doc;
+mod import;
 mod re;
 mod words;
 pub(crate) use re::ND;
@@ -862,7 +864,7 @@ const SYNTECT_DEPTH: usize = 99;
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     let i = brace::lead(b);
-    if !brace::line(b, i, state, out) {
+    if !brace::line(b, i, state, out) && !import::line(b, i, state, out) {
         scan(b, i, state, out);
     }
 }
@@ -872,7 +874,6 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
 fn scan(b: &[u8], i: usize, state: &mut State, out: &mut Out) {
     let mut s = Scan {
         b,
-        n: b.len(),
         ind: 0,
         stack: [MAIN; MAX],
         bits: [const { MaybeUninit::uninit() }; MAX],
@@ -892,21 +893,21 @@ fn scan(b: &[u8], i: usize, state: &mut State, out: &mut Out) {
         merge: out.1,
         spans: &mut *out.0,
     };
-    s.bits[0] = MaybeUninit::new(0);
     let n = usize::from(state.depth).min(KEPT);
-    // the held levels above the bottom one in one copy, then each level's bits
+    // the held levels above the bottom one in one copy, then each level's bits: none where no
+    // level gives any (the last save's flag, the usual case), else folded up from the bottom
     s.stack[1..1 + HALF].copy_from_slice(&state.levels);
     s.stack[1 + HALF..1 + KEPT].copy_from_slice(&state.withs);
-    let mut under = 0;
-    for (bits, &c) in s.bits[1..].iter_mut().zip(&s.stack[1..1 + n]) {
-        under = level_bits(under, c);
-        *bits = MaybeUninit::new(under);
+    s.bits[..1 + KEPT].fill(MaybeUninit::new(0));
+    let low = usize::from(state.flags() & BITS);
+    if low != 0 {
+        s.fold_bits(low, n);
     }
     s.depth = 1 + n;
     s.ind = s.sp_line(i);
     s.refresh();
     s.run();
-    s.fill(s.n);
+    s.fill(s.b.len());
     let n = s.depth - 1;
     let from = n.saturating_sub(KEPT);
     // the top `KEPT` levels in one copy (`from` is at most `MAX - 1 - KEPT`), those past the
@@ -920,8 +921,66 @@ fn scan(b: &[u8], i: usize, state: &mut State, out: &mut Out) {
     state.withs.copy_from_slice(&held[HALF..]);
     state.depth = (n - from) as u8;
     state.inexact = !s.exact || from > 0;
-    state.arg = 0;
+    // the lowest held level that gives bits of its own: below it every level's bits are none,
+    // and its own bits are never none, so where the stack is all held, the lowest level whose
+    // bits aren't; else (rare) by their contexts
+    let gives = if from == 0 {
+        // SAFETY: the bits of levels 1..=KEPT are written: all of them at the load, and each
+        // pushed level's since
+        let bits: &[u16; KEPT] = unsafe { &*s.bits[1..1 + KEPT].as_ptr().cast() };
+        let mut m = 0u32;
+        for (k, (&b, &h)) in bits.iter().zip(&HELD_BITS[n]).enumerate() {
+            m |= u32::from(b & h != 0) << k;
+        }
+        m
+    } else {
+        let mut m = 0u32;
+        for (k, &c) in held[..n - from].iter().enumerate() {
+            m |= u32::from(SETS[usize::from(c)]) << k;
+        }
+        m
+    };
+    state.set_flags(if gives == 0 {
+        0
+    } else {
+        gives.trailing_zeros() as u16 + 1
+    });
 }
+
+/// [`State`]'s flags: the lowest held level that gives bits of its own ([`SETS`]), from 1, so a
+/// line's load folds them from it ([`Scan::fold_bits`]); 0 where none does, and every level's
+/// bits are none.
+const BITS: u16 = 0x1f;
+const _: () = assert!(KEPT as u16 <= BITS);
+
+/// Whether context `c` gives its level bits of its own (or by rule, [`level_bits`]): where no
+/// level of the stack does, every level's bits are none, so its text is plain and a brace's
+/// kind is its leaf.
+static SETS: [bool; 256] = {
+    let mut t = [false; 256];
+    let mut c = 0;
+    while c < 256 {
+        let (keep, set) = LEVELS[c];
+        t[c] = keep == BY_RULE || set != 0;
+        c += 1;
+    }
+    t
+};
+
+/// For `m` levels held, the mask of their bits: a line's save looks at theirs only.
+static HELD_BITS: [[u16; KEPT]; KEPT + 1] = {
+    let mut t = [[0; KEPT]; KEPT + 1];
+    let mut m = 0;
+    while m <= KEPT {
+        let mut k = 0;
+        while k < m {
+            t[m][k] = 0xffff;
+            k += 1;
+        }
+        m += 1;
+    }
+    t
+};
 
 /// For `m` levels held, the mask of the bytes that are theirs: a line's save clears the rest.
 static HELD: [[u8; KEPT]; KEPT + 1] = {
@@ -943,9 +1002,8 @@ static HELD: [[u8; KEPT]; KEPT + 1] = {
 type Pair = (usize, usize, usize);
 
 pub(crate) struct Scan<'b> {
+    /// The line, without its `\n`: its length is where the `\n` is.
     b: &'b [u8],
-    /// The line's length: where its `\n` is.
-    n: usize,
     /// Where the line's indentation ends, `^\s*` (its `\n` not taken).
     ind: usize,
     /// The contexts, bottom first: the levels below `depth`, then what pops left.
@@ -1164,7 +1222,6 @@ impl<'b> Scan<'b> {
     fn for_test(b: &'b [u8], _state: &mut State, spans: &'b mut Vec<Span>) -> Self {
         Scan {
             b,
-            n: b.len(),
             ind: 0,
             stack: [MAIN; MAX],
             bits: [MaybeUninit::new(0); MAX],
@@ -1214,6 +1271,19 @@ impl Scan<'_> {
         self.bits[i & (MAX - 1)] = MaybeUninit::new(level_bits(under, c));
     }
 
+    /// The bits of the `n` held levels above the bottom one, folded up from level `low`, the
+    /// lowest that gives bits of its own ([`BITS`]: a doc comment, a string, an attribute);
+    /// those under it are none.
+    #[inline(never)]
+    fn fold_bits(&mut self, low: usize, n: usize) {
+        let mut under = 0;
+        let low = low.min(n + 1);
+        for (bits, &c) in self.bits[low..].iter_mut().zip(&self.stack[low..1 + n]) {
+            under = level_bits(under, c);
+            *bits = MaybeUninit::new(under);
+        }
+    }
+
     fn top(&self) -> u8 {
         self.ctx_at(self.depth - 1)
     }
@@ -1230,7 +1300,7 @@ impl Scan<'_> {
     /// The text up to `p` is the top context's.
     #[inline]
     fn fill(&mut self, p: usize) {
-        let p = p.min(self.n);
+        let p = p.min(self.b.len());
         if p > self.at {
             if self.text != PLAIN {
                 self.text_to(p);
@@ -1277,7 +1347,7 @@ impl Scan<'_> {
     /// spans have room, so it needs no registers saved: the rest is [`Scan::put_slow`]'s.
     #[inline(never)]
     fn put_kind(&mut self, s: usize, e: usize, k: u16) {
-        let n = self.n;
+        let n = self.b.len();
         let at = self.at;
         if (s.min(n) > at && self.text != PLAIN) || self.spans.len() == self.spans.capacity() {
             return self.put_slow(s, e, k);
@@ -1308,7 +1378,7 @@ impl Scan<'_> {
     fn put_slow(&mut self, s: usize, e: usize, k: u16) {
         self.fill(s);
         let s = s.max(self.at);
-        let e = e.min(self.n);
+        let e = e.min(self.b.len());
         if k != PLAIN && e > s {
             self.emit(s, e, k);
         }
@@ -1458,7 +1528,7 @@ impl Scan<'_> {
     }
 
     fn run(&mut self) {
-        let end = self.n + 1;
+        let end = self.b.len() + 1;
         let mut p = 0;
         // at the line's indentation, a context that passes over blanks has no pattern but the
         // prototype's: where none can match there, the first turn is the indentation's step
@@ -1475,12 +1545,12 @@ impl Scan<'_> {
             let ctx = CTX[usize::from(self.top())];
             if p > 0 && ctx & INERT != 0 {
                 // at the line's end, a context that passes over blanks has nothing to match
-                if p >= self.n {
+                if p >= self.b.len() {
                     return;
                 }
                 // code's frames run their turns in a loop of their own
                 p = self.code(p);
-                if self.halt || (p >= self.n && CTX[usize::from(self.top())] & INERT != 0) {
+                if self.halt || (p >= self.b.len() && CTX[usize::from(self.top())] & INERT != 0) {
                     return;
                 }
             } else if ctx & DOCS != 0
@@ -1490,7 +1560,7 @@ impl Scan<'_> {
                 // so do a doc comment's (`code` leaves no doc comment on top: none is above
                 // a code context)
                 p = q;
-                if self.halt || (p > self.n && self.top() == DOC) {
+                if self.halt || (p > self.b.len() && self.top() == DOC) {
                     return;
                 }
                 continue;
@@ -1505,13 +1575,13 @@ impl Scan<'_> {
                 self.step = q;
                 if self.stuck > STUCK {
                     self.stuck = 0;
-                    if p >= self.n {
+                    if p >= self.b.len() {
                         return;
                     }
                     p = self.next(p);
                     self.step = p;
                 }
-            } else if p >= end || (self.looped && p >= self.n) {
+            } else if p >= end || (self.looped && p >= self.b.len()) {
                 return;
             } else if self.looped {
                 // syntect's guard: a step of a character, and a new search from there
@@ -1529,7 +1599,7 @@ impl Scan<'_> {
     /// takes it. Whether it was.
     #[inline(never)]
     fn whole_comment(&mut self) -> bool {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         if !(n >= 2 && b[0] == b'/' && b[1] == b'/' && b.get(2) != Some(&b'/'))
             || self.depth >= SYNTECT_DEPTH
             || self.comment_skip::<false>(2, &LINE_COMMENT_STOPS) < n
@@ -1552,7 +1622,7 @@ impl Scan<'_> {
             STRING | FORMAT_STRING | FORMAT_STRING_LOST => &STRING_STOPS,
             LONG_STRING | LONG_FORMAT_STRING | LONG_FORMAT_STRING_LOST => &LONG_STRING_STOPS,
             top if CTX[usize::from(top)] & INERT != 0
-                && p < self.n
+                && p < self.b.len()
                 && re::space_len(&self.b[p..]).is_some() =>
             {
                 // the line's indentation is found once a line
@@ -1560,7 +1630,7 @@ impl Scan<'_> {
             }
             _ => return self.next(p),
         };
-        if p >= self.n {
+        if p >= self.b.len() {
             return p + 1;
         }
         let b = self.b;
@@ -1568,7 +1638,7 @@ impl Scan<'_> {
         if matches!(self.top(), LINE_COMMENT | BLOCK_COMMENT) {
             return self.comment_skip::<true>(q, stops);
         }
-        while q < self.n && stops[usize::from(b[q])] == 0 {
+        while q < self.b.len() && stops[usize::from(b[q])] == 0 {
             q += 1;
         }
         q
@@ -1583,7 +1653,7 @@ impl Scan<'_> {
     /// pattern's check (for the shortcuts that take a comment whole, which leave a stop to
     /// the comment's turns).
     fn comment_skip<const SURE: bool>(&self, q: usize, stops: &[u8; 256]) -> usize {
-        let b = &self.b[..self.n];
+        let b = &self.b[..self.b.len()];
         let len = b.len();
         let mut q = q.min(len);
         while q < len {
@@ -1626,10 +1696,10 @@ impl Scan<'_> {
 
     /// Where the character at `p` ends (the line's `\n` is one byte).
     fn next(&self, p: usize) -> usize {
-        if p >= self.n {
+        if p >= self.b.len() {
             return p + 1;
         }
-        p + re::char_len(self.b[p]).min(self.n - p)
+        p + re::char_len(self.b[p]).min(self.b.len() - p)
     }
 
     /// The first pattern of the top context that matches at `p` (the prototype's first),
@@ -1639,7 +1709,7 @@ impl Scan<'_> {
         // at a space, the line's end or past it, such a context has none but the prototype's
         // `^\s*` patterns, at the line's start
         let ctx = CTX[usize::from(top)];
-        if ctx & INERT != 0 && (p > self.n || self.space(p)) {
+        if ctx & INERT != 0 && (p > self.b.len() || self.space(p)) {
             return if p == 0 && self.starts_proto() {
                 self.proto(p)
             } else {
@@ -1648,7 +1718,7 @@ impl Scan<'_> {
         }
         // the prototype's patterns start with `/`, or at the line's start
         if ctx & PROTO != 0
-            && ((p == 0 && self.starts_proto()) || (p + 1 < self.n && self.b[p] == b'/'))
+            && ((p == 0 && self.starts_proto()) || (p + 1 < self.b.len() && self.b[p] == b'/'))
             && let Some(q) = self.proto(p)
         {
             return Some(q);
@@ -1672,7 +1742,7 @@ impl Scan<'_> {
         let b = self.b;
         if p == 0 {
             let s = self.ind;
-            if s < self.n && b[s] == b'#' {
+            if s < self.b.len() && b[s] == b'#' {
                 self.fill(0);
                 self.push(PREPROC);
                 self.put(0, s, PLAIN);
@@ -1697,7 +1767,7 @@ impl Scan<'_> {
                 return Some(s + 3);
             }
         }
-        if p + 1 < self.n && b[p] == b'/' {
+        if p + 1 < self.b.len() && b[p] == b'/' {
             match b[p + 1] {
                 b'/' => return self.open(p, p + 2, LC_MARK, &[LINE_COMMENT]),
                 b'*' => return self.open(p, p + 2, BC_BEGIN, &[BLOCK_COMMENT]),
@@ -1742,11 +1812,10 @@ mod tests {
                     for n in 1..=3 {
                         let line = [a, b, c];
                         let line = &line[..n];
-                        let mut s = super::Scan::for_test(line, &mut state, &mut spans);
+                        let s = super::Scan::for_test(line, &mut state, &mut spans);
                         for p in 0..=n {
                             assert_eq!(s.operator_at(p), s.operator_by_lists(p), "{line:?} at {p}");
                         }
-                        s.n = 0;
                     }
                 }
             }
@@ -1971,6 +2040,9 @@ mod tests {
                 }
             }
             state.depth = stack.len() as u8;
+            // the save's flag, as a scan would leave it
+            let low = stack.iter().position(|&c| super::SETS[usize::from(c)]);
+            state.set_flags(low.map_or(0, |k| k as u16 + 1));
             for line in lines {
                 let b = line.as_bytes();
                 let i = super::brace::lead(b);
@@ -1991,5 +2063,119 @@ mod tests {
         }
         eprintln!("{taken} of {cases} taken");
         assert!(taken * 10 > cases, "{taken} of {cases}");
+    }
+
+    /// The shortcut for a plain `using` line (`import.rs`) against the scan: every context on
+    /// every other, and three deep for the ones it takes and their neighbors, each shape of
+    /// line, the spans and the state after.
+    #[test]
+    fn using_lines_take_the_scans_turns() {
+        use super::c::*;
+        use crate::{Out, Span, State};
+        let lines = [
+            "using System;",
+            "using System.Collections.Generic;",
+            "    using A.B;",
+            "\tusing  A_1.b2;  ",
+            "using\tA;\t",
+            "using A.B ;",
+            "using A..B;",
+            "using A.;",
+            "using .A;",
+            "using A.B",
+            "using A;\r",
+            "using A; // c",
+            "using A;x",
+            "using 1A;",
+            "using A.1B;",
+            "using static A.B;",
+            "using staticA.B;",
+            "using A.static;",
+            "using A = B.C;",
+            "using A=B;",
+            "using global::A.B;",
+            "using global.A;",
+            "using A::B;",
+            "using (var x = y);",
+            "using var x = y;",
+            "using @A;",
+            "using \u{e4}.B;",
+            "using A\u{e4};",
+            "using A.B<C>;",
+            "usingA;",
+            "using",
+            "using ",
+            "using;",
+            "xusing A;",
+            "  using A.B.C.D.E.F.G;",
+        ];
+        let all: Vec<u8> = (0..=LONG_FORMAT_STRING_LOST)
+            .chain([REGEX, REGEX + 1])
+            .collect();
+        let named = [
+            MAIN,
+            MAIN_BRACE,
+            MAIN_BRACE_M,
+            MAIN_LINE,
+            NS_DECL,
+            NS_NAME,
+            USING_NS,
+            DTB_BLOCK,
+            MB_BLOCK,
+            STRING,
+            ATTR_IN,
+            PREPROC,
+            DOC,
+            LINE_IN,
+        ];
+        let mut stacks: Vec<Vec<u8>> = vec![vec![]];
+        for &t in &all {
+            stacks.push(vec![t]);
+            for &u in &all {
+                stacks.push(vec![u, t]);
+            }
+        }
+        for &a in &named {
+            for &u in &named {
+                for &t in &named {
+                    stacks.push(vec![a, u, t]);
+                }
+            }
+        }
+        let (mut taken, mut cases) = (0, 0);
+        for stack in &stacks {
+            let mut state = State::default();
+            for (i, &c) in stack.iter().enumerate() {
+                if i < super::HALF {
+                    state.levels[i] = c;
+                } else {
+                    state.withs[i - super::HALF] = c;
+                }
+            }
+            state.depth = stack.len() as u8;
+            // the save's flag, as a scan would leave it
+            let low = stack.iter().position(|&c| super::SETS[usize::from(c)]);
+            state.set_flags(low.map_or(0, |k| k as u16 + 1));
+            for line in lines {
+                let b = line.as_bytes();
+                let i = super::brace::lead(b);
+                let mut full = state;
+                let (mut qs, mut fs) = (Vec::<Span>::new(), Vec::<Span>::new());
+                let took = super::import::line(b, i, &state, &mut Out::new(&mut qs));
+                super::scan(b, i, &mut full, &mut Out::new(&mut fs));
+                cases += 1;
+                if took {
+                    taken += 1;
+                    assert_eq!(qs, fs, "{stack:?} {line:?}");
+                    assert_eq!(state, full, "{stack:?} {line:?}");
+                } else {
+                    assert!(qs.is_empty(), "{stack:?} {line:?}: touched");
+                }
+            }
+        }
+        eprintln!("{taken} of {cases} taken");
+        // the stacks whose top takes a `using` with no level that gives bits, each of the
+        // lines that are one
+        assert!(taken > 6000, "{taken} of {cases}");
     }
 }

@@ -103,7 +103,7 @@ impl Scan<'_> {
             DTB_BLOCK => self.dtb_block(p),
             EVENT_HANDLER => self.event_handler(p),
             EH_AFTER => match self.ch(p) {
-                b';' if p < self.n => self.close(p, p + 1, TERM_STMT),
+                b';' if p < self.b.len() => self.close(p, p + 1, TERM_STMT),
                 b'{' => self.then(p, p + 1, BLOCK_BEGIN, &[EH_BLOCK]),
                 _ => self.any_leave(p),
             },
@@ -123,7 +123,7 @@ impl Scan<'_> {
             MN_EXPLICIT => self.mn_explicit(p),
             MN_AFTER => {
                 let s = self.sp(p);
-                if self.ch(s) == b',' && s < self.n {
+                if self.ch(s) == b',' && s < self.b.len() {
                     self.put(s, s + 1, VARIABLES_SEP);
                     self.fill(s + 1);
                     self.pop();
@@ -173,7 +173,7 @@ impl Scan<'_> {
                     return self.shift(p, &[MPT_TYPE]);
                 }
                 if matches!(c, b'}' | b')' | b'>' | b']' | b';')
-                    && p < self.n
+                    && p < self.b.len()
                     && let Some(q) = self.leave(p)
                 {
                     return Some(q);
@@ -182,7 +182,7 @@ impl Scan<'_> {
             }
             MPT_TYPE => self.mpt_type(p),
             CTOR_PREBODY => {
-                if self.ch(p) == b':' && p < self.n {
+                if self.ch(p) == b':' && p < self.b.len() {
                     return self.then(p, p + 1, PREBODY_SEP, &[CTOR_COLON]);
                 }
                 if self.ch(p) == b'{' || self.lit(p, b"=>") {
@@ -214,7 +214,7 @@ impl Scan<'_> {
             },
             ACC_BLOCK => self.acc_block(p),
             ACC_AFTER => {
-                if self.ch(p) == b'=' && p < self.n {
+                if self.ch(p) == b'=' && p < self.b.len() {
                     return self.then(p, p + 1, ASSIGNMENT, &[LINE_IN]);
                 }
                 self.any_leave(p)
@@ -227,7 +227,7 @@ impl Scan<'_> {
                 if let Some(q) = self.nosemi(p) {
                     return Some(q);
                 }
-                if self.ch(p) == b';' && p < self.n {
+                if self.ch(p) == b';' && p < self.b.len() {
                     return self.leave(p);
                 }
                 None
@@ -235,7 +235,7 @@ impl Scan<'_> {
             ACCESSOR_ARGS => self.accessor_args(p),
             LAMBDA_BODY => {
                 if self.ch(p) == b';'
-                    && p < self.n
+                    && p < self.b.len()
                     && let Some(q) = self.leave(p)
                 {
                     return Some(q);
@@ -246,7 +246,7 @@ impl Scan<'_> {
             MEMBER_VARS => self.member_vars(p),
             MV_VALUE => {
                 if matches!(self.ch(p), b';' | b',')
-                    && p < self.n
+                    && p < self.b.len()
                     && let Some(q) = self.leave(p)
                 {
                     return Some(q);
@@ -257,7 +257,7 @@ impl Scan<'_> {
             VD_VALUE => {
                 let c = self.ch(p);
                 if matches!(c, b';' | b',')
-                    && p < self.n
+                    && p < self.b.len()
                     && let Some(q) = self.leave(p)
                 {
                     return Some(q);
@@ -288,7 +288,7 @@ impl Scan<'_> {
             ANON_CLASS => self.anon_class(p),
             NEW_TYPE => self.new_type(p),
             NEW_BRACKETS => match self.ch(p) {
-                b',' if p < self.n => self.tok_push(p, p + 1, ARGUMENT_SEP, &[LINE_IN]),
+                b',' if p < self.b.len() => self.tok_push(p, p + 1, ARGUMENT_SEP, &[LINE_IN]),
                 b']' => self.close(p, p + 1, BRACKETS_END),
                 _ => self.any_enter(p, &[LINE_IN]),
             },
@@ -301,7 +301,7 @@ impl Scan<'_> {
                 self.then(p, p + 1, BRACES_BEGIN, &[INIT_CTOR])
             }
             TERNARY => {
-                if self.ch(p) == b':' && p < self.n {
+                if self.ch(p) == b':' && p < self.b.len() {
                     return self.close(p, p + 1, TERNARY_OP);
                 }
                 self.line_in(p)
@@ -309,7 +309,7 @@ impl Scan<'_> {
             CAST => self.cast(p),
             TUPLE => self.tuple(p),
             GEN_TYPES => match self.ch(p) {
-                b',' if p < self.n => self.tok(p, p + 1, TYPE_SEP),
+                b',' if p < self.b.len() => self.tok(p, p + 1, TYPE_SEP),
                 b'>' => self.close(p, p + 1, GENERIC_END),
                 _ => self.type_(p),
             },
@@ -401,7 +401,7 @@ impl Scan<'_> {
             TYPE_ARG => self.type_arg_param_common(p),
             TUPLE_T => match self.ch(p) {
                 b')' => self.close(p, p + 1, GROUP_END),
-                b',' if p < self.n => self.tok(p, p + 1, TUPLE_SEP),
+                b',' if p < self.b.len() => self.tok(p, p + 1, TUPLE_SEP),
                 _ => self.any_enter(p, &[VDE]),
             },
             VDE => self.vde(p),
@@ -419,7 +419,7 @@ impl Scan<'_> {
                     self.pop();
                     return Some(s);
                 }
-                if matches!(self.ch(p), b',' | b')' | b';' | b'}') && p < self.n {
+                if matches!(self.ch(p), b',' | b')' | b';' | b'}') && p < self.b.len() {
                     return self.leave(p);
                 }
                 None
@@ -428,7 +428,7 @@ impl Scan<'_> {
             VD_TUPLE => match self.ch(p) {
                 b')' => self.close(p, p + 1, TUPLE_GROUP_END),
                 b'_' if !self.word_at(p + 1) => self.tok(p, p + 1, DISCARD),
-                b',' if p < self.n => self.tok(p, p + 1, TUPLE_SEP),
+                b',' if p < self.b.len() => self.tok(p, p + 1, TUPLE_SEP),
                 _ => {
                     let e = self.name(p)?;
                     self.tok(p, e, VAR_OTHER)
@@ -445,8 +445,8 @@ impl Scan<'_> {
                 self.any_shift(p, &[LINE])
             }
             FOR_VAR_ASSIGN => match self.ch(p) {
-                b'=' if p < self.n => self.then(p, p + 1, LOOP_ASSIGN, &[LINE_IN]),
-                b';' | b')' | b'}' if p < self.n => self.leave(p),
+                b'=' if p < self.b.len() => self.then(p, p + 1, LOOP_ASSIGN, &[LINE_IN]),
+                b';' | b')' | b'}' if p < self.b.len() => self.leave(p),
                 _ => None,
             },
             FOREACH_VAR_ASSIGN => {
@@ -460,19 +460,19 @@ impl Scan<'_> {
             }
             IF_COND => {
                 let s = self.sp(p);
-                if self.ch(s) == b'(' && s < self.n {
+                if self.ch(s) == b'(' && s < self.b.len() {
                     self.put(s, s + 1, M_GROUP_BEGIN);
                     self.set(&[IF_GROUP]);
                     return Some(s + 1);
                 }
-                if p <= self.n && self.ch(p) != b'(' {
+                if p <= self.b.len() && self.ch(p) != b'(' {
                     return self.leave(p);
                 }
                 None
             }
             IF_GROUP => {
                 let s = self.sp(p);
-                if self.ch(s) == b')' && s < self.n {
+                if self.ch(s) == b')' && s < self.b.len() {
                     self.put(s, s + 1, M_GROUP_END);
                     self.pop();
                     return Some(s + 1);
@@ -497,7 +497,7 @@ impl Scan<'_> {
             ELSE_BLOCK => self.else_block(p),
             ELSE_BODY => {
                 let s = self.sp(p);
-                if self.ch(s) == b'{' && s < self.n {
+                if self.ch(s) == b'{' && s < self.b.len() {
                     self.put(s, s + 1, M_BLOCK_BEGIN);
                     self.set(&[MAIN_BRACE_M]);
                     return Some(s + 1);
@@ -520,7 +520,7 @@ impl Scan<'_> {
             }
             TRY_LINE => {
                 let s = self.sp_line(p);
-                if s >= self.n {
+                if s >= self.b.len() {
                     if s > p {
                         self.fill(s);
                         self.pop();
@@ -535,7 +535,7 @@ impl Scan<'_> {
             CATCH_EXPR => {
                 if self.lit(p, b"catch") {
                     let s = self.sp(p + 5);
-                    if self.ch(s) == b'(' && s < self.n {
+                    if self.ch(s) == b'(' && s < self.b.len() {
                         self.put(p, p + 5, CATCH_KW);
                         self.put(s, s + 1, M_GROUP_BEGIN);
                         self.push(CATCH_BLOCK);
@@ -615,14 +615,14 @@ impl Scan<'_> {
                 if self.lit(p, b"\"{") {
                     return self.tok_push(p, p + 2, HASH_BEGIN, &[PP_HASH]);
                 }
-                if self.ch(p) == b'"' && p < self.n {
+                if self.ch(p) == b'"' && p < self.b.len() {
                     return self.open(p, p + 1, STRING_BEGIN, &[STRING]);
                 }
                 self.option_done(p)
             }
             PP_HASH => {
                 let mut e = p;
-                while e < self.n && (self.b[e] == b'-' || self.b[e].is_ascii_hexdigit()) {
+                while e < self.b.len() && (self.b[e] == b'-' || self.b[e].is_ascii_hexdigit()) {
                     e += 1;
                 }
                 if e > p {
@@ -640,11 +640,11 @@ impl Scan<'_> {
             DOC => self.doc(p),
             DOC_TAG => self.doc_tag(p),
             LINE_COMMENT => {
-                if p == self.n {
+                if p == self.b.len() {
                     let e = self.next(p);
                     return self.close(p, e, PLAIN);
                 }
-                if p > self.n {
+                if p > self.b.len() {
                     return self.leave(p);
                 }
                 self.comments_in(p, LC_TODO, LC_LINK)
@@ -655,7 +655,7 @@ impl Scan<'_> {
                 }
                 if p == 0 {
                     let s = self.sp_line(0);
-                    if self.ch(s) == b'*' && s < self.n && self.ch(s + 1) != b'/' {
+                    if self.ch(s) == b'*' && s < self.b.len() && self.ch(s + 1) != b'/' {
                         return self.tok(s, s + 1, BC_STAR);
                     }
                 }
@@ -670,7 +670,7 @@ impl Scan<'_> {
             FS_S | FS_I => self.format_spec(p),
             FS_R | FS_RI => self.long_format_spec(p),
             INTERP => {
-                if p >= self.n
+                if p >= self.b.len()
                     && let Some(q) = self.leave(p)
                 {
                     return Some(q);
@@ -706,7 +706,7 @@ impl Scan<'_> {
             return None;
         }
         let verbatim = self.ctx_at(self.depth - 2) == LONG_STRING;
-        if p >= self.n {
+        if p >= self.b.len() {
             if verbatim {
                 return None;
             }
@@ -795,7 +795,7 @@ impl Scan<'_> {
 
     /// `stray_close_bracket`: `[})\]]`.
     pub(super) fn stray(&mut self, p: usize) -> Option<usize> {
-        if matches!(self.ch(p), b'}' | b')' | b']') && p < self.n {
+        if matches!(self.ch(p), b'}' | b')' | b']') && p < self.b.len() {
             return self.tok(p, p + 1, STRAY);
         }
         None
@@ -871,7 +871,7 @@ impl Scan<'_> {
 
     /// `attribute`.
     pub(super) fn attribute(&mut self, p: usize) -> Option<usize> {
-        if self.ch(p) != b'[' || p >= self.n {
+        if self.ch(p) != b'[' || p >= self.b.len() {
             return None;
         }
         let s = self.sp(p + 1);
@@ -888,7 +888,7 @@ impl Scan<'_> {
         ] {
             if self.lit(s, w) {
                 let t = self.sp(s + w.len());
-                if self.ch(t) == b':' && t < self.n {
+                if self.ch(t) == b':' && t < self.b.len() {
                     self.fill(p);
                     self.push(ATTR_IN);
                     self.put(p, p + 1, ANNOTATION_BEGIN);
@@ -918,7 +918,7 @@ impl Scan<'_> {
             let mut alias = false;
             self.names(s, &mut |n| {
                 let t = self.sp(n);
-                alias = self.ch(t) == b'=' && t < self.n;
+                alias = self.ch(t) == b'=' && t < self.b.len();
                 alias
             });
             if alias {
@@ -930,7 +930,7 @@ impl Scan<'_> {
         }
         // `\b(using)(?!\s*\()(?:\s+(static))?\b`
         let s = self.sp(e);
-        if self.ch(s) == b'(' && s < self.n {
+        if self.ch(s) == b'(' && s < self.b.len() {
             return None;
         }
         if let Some(s) = self.sp1(e)
@@ -953,7 +953,7 @@ impl Scan<'_> {
             return self.tok(p, e, PATH);
         }
         match self.ch(p) {
-            b'=' if p < self.n => return self.tok(p, p + 1, ASSIGNMENT),
+            b'=' if p < self.b.len() => return self.tok(p, p + 1, ASSIGNMENT),
             b'.' => return self.tok(p, p + 1, NS_SEP),
             b'<' => return self.tok_push(p, p + 1, GENERIC_BEGIN, &[TYPE_ARG]),
             b';' => return self.close(p, p + 1, TERMINATOR),
@@ -1080,7 +1080,7 @@ impl Scan<'_> {
             let t = self.sp(e);
             let mut end = t;
             let mut typed = None;
-            if self.ch(t) == b':' && t < self.n {
+            if self.ch(t) == b':' && t < self.b.len() {
                 let u = self.sp(t + 1);
                 for w in [
                     &b"byte"[..],
@@ -1204,8 +1204,8 @@ impl Scan<'_> {
             return self.tok(p, e, ENUM_CONSTANT);
         }
         match self.ch(p) {
-            b'=' if p < self.n => self.tok_push(p, p + 1, ASSIGNMENT, &[LINE_IN]),
-            b',' if p < self.n => self.tok(p, p + 1, ENUM_COMMA),
+            b'=' if p < self.b.len() => self.tok_push(p, p + 1, ASSIGNMENT, &[LINE_IN]),
+            b',' if p < self.b.len() => self.tok(p, p + 1, ENUM_COMMA),
             _ => None,
         }
     }
@@ -1218,12 +1218,12 @@ impl Scan<'_> {
         if let Some(e) = self.name(p) {
             let s = self.sp(e);
             match self.ch(s) {
-                b'<' if s < self.n => {
+                b'<' if s < self.b.len() => {
                     self.put(p, e, DELEGATE_NAME_LEAF);
                     self.put(e, s, DELEGATE);
                     return self.then(s, s + 1, DELEGATE_GENERIC_BEGIN, &[DN_GENERIC]);
                 }
-                b'(' if s < self.n => {
+                b'(' if s < self.b.len() => {
                     self.put(p, e, DELEGATE_NAME_LEAF);
                     self.put(e, s, DELEGATE);
                     return self.then(s, s + 1, DELEGATE_PARAMS_BEGIN, &[DELEGATE_PARAMS]);
@@ -1236,12 +1236,12 @@ impl Scan<'_> {
 
     /// `delegate_end`.
     pub(super) fn delegate_end(&mut self, p: usize) -> Option<usize> {
-        if self.ch(p) == b';' && p < self.n {
+        if self.ch(p) == b';' && p < self.b.len() {
             return self.close(p, p + 1, TERMINATOR);
         }
-        if p < self.n && self.space(p) {
+        if p < self.b.len() && self.space(p) {
             let s = self.sp_line(p);
-            if s < self.n {
+            if s < self.b.len() {
                 return self.close(p, s, EXPECTED_COLON);
             }
             return None;
@@ -1257,7 +1257,7 @@ impl Scan<'_> {
     pub(super) fn data_type_sig(&mut self, p: usize) -> Option<usize> {
         match self.ch(p) {
             b'<' => return self.tok_push(p, p + 1, GENERIC_BEGIN, &[DTS_GENERIC]),
-            b':' if p < self.n => return self.then(p, p + 1, TYPE_SEP, &[TYPE_CONSTRAINT]),
+            b':' if p < self.b.len() => return self.then(p, p + 1, TYPE_SEP, &[TYPE_CONSTRAINT]),
             b'{' => return self.leave(p),
             _ => {}
         }
@@ -1272,7 +1272,7 @@ impl Scan<'_> {
         if self.ch(p) == b'{' {
             return self.tok_push(p, p + 1, BLOCK_BEGIN, &[DTB_BLOCK]);
         }
-        if p > self.n {
+        if p > self.b.len() {
             return self.leave(p);
         }
         let mut e = p;
@@ -1328,14 +1328,14 @@ impl Scan<'_> {
             let mut hit = None;
             if let Some(e) = self.base_type(s) {
                 let t = self.sp(e);
-                if self.ch(t) == b':' && t < self.n {
+                if self.ch(t) == b':' && t < self.b.len() {
                     hit = Some((e, t, STORAGE_TYPE));
                 }
             }
             if hit.is_none() {
                 self.names(s, &mut |e| {
                     let t = self.sp(e);
-                    if self.ch(t) == b':' && t < self.n {
+                    if self.ch(t) == b':' && t < self.b.len() {
                         hit = Some((e, t, SUPPORT_TYPE));
                         return true;
                     }
@@ -1365,7 +1365,7 @@ impl Scan<'_> {
         // `({{name}})?(\.)`
         let mut dot = None;
         self.names(p, &mut |e| {
-            if self.ch(e) == b'.' && e < self.n {
+            if self.ch(e) == b'.' && e < self.b.len() {
                 dot = Some(e);
                 return true;
             }
@@ -1377,7 +1377,7 @@ impl Scan<'_> {
         }
         match self.ch(p) {
             b'.' => return self.tok(p, p + 1, DOT_NAMESPACE),
-            b',' if p < self.n => return self.tok(p, p + 1, INHERITED_SEP),
+            b',' if p < self.b.len() => return self.tok(p, p + 1, INHERITED_SEP),
             _ => {}
         }
         if let Some(e) = self.name(p) {
@@ -1392,16 +1392,16 @@ impl Scan<'_> {
             return None;
         }
         let s = self.sp(p + 3);
-        (self.ch(s) == b'(' && s < self.n).then_some(())?;
+        (self.ch(s) == b'(' && s < self.b.len()).then_some(())?;
         let t = self.sp(s + 1);
-        (self.ch(t) == b')' && t < self.n).then_some(t + 1)
+        (self.ch(t) == b')' && t < self.b.len()).then_some(t + 1)
     }
 
     /// `event_handler_declaration`.
     pub(super) fn event_handler(&mut self, p: usize) -> Option<usize> {
         let mut dot = None;
         self.names(p, &mut |e| {
-            if self.ch(e) == b'.' && e < self.n {
+            if self.ch(e) == b'.' && e < self.b.len() {
                 dot = Some(e);
                 return true;
             }
@@ -1448,7 +1448,7 @@ impl Scan<'_> {
         }
         // `method_declaration`'s, by the byte after the name
         let s = self.sp(e);
-        if s < self.n {
+        if s < self.b.len() {
             match self.b[s] {
                 b'<' => {
                     self.put(p, e, SUPPORT_TYPE);
@@ -1480,15 +1480,15 @@ impl Scan<'_> {
         // the type's turn, `MD_TYPE`'s set of `method_name` at the blank (no suffix there,
         // nothing taken) and the name's turn, in one; the name's turn takes it, so the count
         // of turns that take nothing is the loop's after it
-        if self.depth < SYNTECT_DEPTH && e < self.n && matches!(self.b[e], b' ' | b'\t') {
+        if self.depth < SYNTECT_DEPTH && e < self.b.len() && matches!(self.b[e], b' ' | b'\t') {
             let s = self.sp(e);
-            if s < self.n
+            if s < self.b.len()
                 && let Some(m) = self.name_here(s)
                 && !self.lit(s, b"operator")
                 && !self.lit(s, b"this")
             {
                 let t = self.sp(m);
-                if t < self.n && !matches!(self.b[t], b'<' | b'.') {
+                if t < self.b.len() && !matches!(self.b[t], b'<' | b'.') {
                     self.put(p, e, leaf);
                     self.push(METHOD_NAME);
                     self.step = e;
@@ -1525,7 +1525,7 @@ impl Scan<'_> {
         }
         if self.kw(p, b"event") {
             let e = self.sp_line(p + 5);
-            let e = if e == self.n { e + 1 } else { e };
+            let e = if e == self.b.len() { e + 1 } else { e };
             self.put(p, p + 5, MODIFIER);
             self.fill(e);
             self.push(EVENT_HANDLER);
@@ -1597,12 +1597,12 @@ impl Scan<'_> {
         // a name of ASCII that a byte ends has that one end
         if let Some(e) = self.ascii_name(p) {
             let s = self.sp(e);
-            return (self.ch(s) == c && s < self.n).then_some((e, s));
+            return (self.ch(s) == c && s < self.b.len()).then_some((e, s));
         }
         let mut at = None;
         self.names(p, &mut |e| {
             let s = self.sp(e);
-            if self.ch(s) == c && s < self.n {
+            if self.ch(s) == c && s < self.b.len() {
                 at = Some((e, s));
                 return true;
             }
@@ -1645,7 +1645,7 @@ impl Scan<'_> {
                 return Some(t);
             }
             let s = self.sp(p);
-            if s < self.n {
+            if s < self.b.len() {
                 match self.b[s] {
                     b'(' => {
                         self.put(s, s + 1, PARAMS_BEGIN);
@@ -1669,7 +1669,7 @@ impl Scan<'_> {
             for op in UNARY_OP.iter().chain(BIN_OP.iter()) {
                 if self.lit(s, op) {
                     let t = self.sp(s + op.len());
-                    if self.ch(t) == b'(' && t < self.n {
+                    if self.ch(t) == b'(' && t < self.b.len() {
                         self.put(p, p + 8, MODIFIER_OTHER);
                         self.put(s, s + op.len(), METHOD_FUNCTION);
                         self.put(t, t + 1, PARAMS_BEGIN);
@@ -1706,7 +1706,7 @@ impl Scan<'_> {
         let mut assign = None;
         self.names(p, &mut |e| {
             let s = self.sp(e);
-            if self.ch(s) == b'=' && s < self.n && self.ch(s + 1) != b'>' && self.on(s + 1) {
+            if self.ch(s) == b'=' && s < self.b.len() && self.ch(s + 1) != b'>' && self.on(s + 1) {
                 assign = Some((e, s));
                 return true;
             }
@@ -1724,7 +1724,7 @@ impl Scan<'_> {
             .map(|(e, s)| (Some(e), s))
             .or_else(|| {
                 let s = self.sp(p);
-                (self.ch(s) == b'(' && s < self.n).then_some((None, s))
+                (self.ch(s) == b'(' && s < self.b.len()).then_some((None, s))
             });
         if let Some((name, s)) = call {
             if let Some(e) = name {
@@ -1752,7 +1752,7 @@ impl Scan<'_> {
         // `(this)\s*(\[)`
         if self.lit(p, b"this") {
             let s = self.sp(p + 4);
-            if self.ch(s) == b'[' && s < self.n {
+            if self.ch(s) == b'[' && s < self.b.len() {
                 self.put(p, p + 4, VAR_LANGUAGE);
                 self.put(s, s + 1, M_BRACKETS_BEGIN);
                 self.set(&[METHOD_ACCESSOR, METHOD_PARAMS_BRACKET]);
@@ -1770,7 +1770,7 @@ impl Scan<'_> {
         }
         // `(?=\s*\{)`
         let s = self.sp(p);
-        if self.ch(s) == b'{' && s < self.n {
+        if self.ch(s) == b'{' && s < self.b.len() {
             return self.shift(p, &[METHOD_ACCESSOR]);
         }
         None
@@ -1785,12 +1785,12 @@ impl Scan<'_> {
             return None;
         }
         let s = self.sp(e);
-        if s >= self.n {
+        if s >= self.b.len() {
             return None;
         }
         Some(match self.b[s] {
             // `({{name}}\s*)?((=>)\s*)`
-            b'=' if self.ch(s + 1) == b'>' && s + 1 < self.n => {
+            b'=' if self.ch(s + 1) == b'>' && s + 1 < self.b.len() => {
                 self.put(p, s, MEMBER);
                 self.put(s, s + 2, M_GET_ARROW);
                 let t = self.sp(s + 2);
@@ -1824,7 +1824,7 @@ impl Scan<'_> {
     pub(super) fn gt_dot_ahead(&self, i: usize) -> bool {
         let mut q = i;
         while self.on(q) && self.ch(q) != b'(' {
-            if self.ch(q) == b'>' && self.ch(q + 1) == b'.' && q + 1 < self.n {
+            if self.ch(q) == b'>' && self.ch(q + 1) == b'.' && q + 1 < self.b.len() {
                 return true;
             }
             q += 1;
@@ -1836,13 +1836,13 @@ impl Scan<'_> {
     pub(super) fn mn_explicit(&mut self, p: usize) -> Option<usize> {
         if self.ch(p) == b'>' {
             let s = self.sp(p + 1);
-            if self.ch(s) == b'.' && s < self.n {
+            if self.ch(s) == b'.' && s < self.b.len() {
                 self.put(p, p + 1, GENERIC_END_P);
                 self.put(p + 1, s, METHOD_GENERIC);
                 return self.close(s, s + 1, DOT_P);
             }
         }
-        if self.ch(p) == b',' && p < self.n {
+        if self.ch(p) == b',' && p < self.b.len() {
             return self.tok(p, p + 1, PARAM_TYPE_SEP);
         }
         self.type_(p)
@@ -1858,7 +1858,7 @@ impl Scan<'_> {
         }
         match self.ch(p) {
             b'{' => return self.then(p, p + 1, BLOCK_BEGIN, &[MB_BLOCK]),
-            b';' if p < self.n => return self.close(p, p + 1, TERMINATOR),
+            b';' if p < self.b.len() => return self.close(p, p + 1, TERMINATOR),
             _ => {}
         }
         if self.nonspace(p) {
@@ -1877,9 +1877,9 @@ impl Scan<'_> {
             return self.tok(p, e, PARAMETER);
         }
         match self.ch(p) {
-            b'=' if p < self.n => self.tok_push(p, p + 1, DEFAULT_VALUE, &[LINE_IN]),
-            b',' if p < self.n => self.close(p, p + 1, PARAMETER_SEP),
-            b'}' | b')' | b'>' | b']' | b';' if p < self.n => self.leave(p),
+            b'=' if p < self.b.len() => self.tok_push(p, p + 1, DEFAULT_VALUE, &[LINE_IN]),
+            b',' if p < self.b.len() => self.close(p, p + 1, PARAMETER_SEP),
+            b'}' | b')' | b'>' | b']' | b';' if p < self.b.len() => self.leave(p),
             _ => None,
         }
     }
@@ -1917,7 +1917,7 @@ impl Scan<'_> {
         for w in [&b"this"[..], b"base"] {
             if self.lit(p, w) {
                 let s = self.sp(p + 4);
-                if self.ch(s) == b'(' && s < self.n {
+                if self.ch(s) == b'(' && s < self.b.len() {
                     self.put(p, p + 4, VAR_LANGUAGE);
                     self.put(s, s + 1, M_GROUP_BEGIN);
                     self.set(&[CTOR_INIT, ARGUMENTS]);
@@ -1952,14 +1952,14 @@ impl Scan<'_> {
     pub(super) fn attr_in(&mut self, p: usize) -> Option<usize> {
         // a name of ASCII has one end, which each name's pattern reads
         if let Some(e) = self.ascii_name(p) {
-            if e < self.n && self.b[e] == b'(' {
+            if e < self.b.len() && self.b[e] == b'(' {
                 self.put(p, e, VARIABLE_ANNOTATION);
                 self.put(e, e + 1, M_GROUP_BEGIN);
                 self.set(&[ATTR_ARGS, ARGUMENTS]);
                 return Some(e + 1);
             }
             let s = self.sp(e);
-            if s < self.n && self.b[s] == b'.' {
+            if s < self.b.len() && self.b[s] == b'.' {
                 self.put(p, e, NAMESPACE_VAR);
                 return self.tok(s, s + 1, DOT_NAMESPACE);
             }
@@ -1970,7 +1970,7 @@ impl Scan<'_> {
         // `({{name}})(\()`
         let mut call = None;
         self.names(p, &mut |e| {
-            if self.ch(e) == b'(' && e < self.n {
+            if self.ch(e) == b'(' && e < self.b.len() {
                 call = Some(e);
                 return true;
             }
@@ -1993,7 +1993,7 @@ impl Scan<'_> {
             return self.tok(p, e, VARIABLE_ANNOTATION);
         }
         match self.ch(p) {
-            b',' if p < self.n => self.tok(p, p + 1, ANNOTATION_SEP),
+            b',' if p < self.b.len() => self.tok(p, p + 1, ANNOTATION_SEP),
             b']' => self.close(p, p + 1, ANNOTATION_END),
             _ => None,
         }
@@ -2019,7 +2019,7 @@ impl Scan<'_> {
             // the name's one end: `({{name}})\s*(=)(?=[^>=])`, `({{name}})\s*(:)`, else an
             // expression
             let s = self.sp(e);
-            if s < self.n {
+            if s < self.b.len() {
                 let c = self.b[s];
                 let leaf = match c {
                     b'=' if self.on(s + 1) && !matches!(self.ch(s + 1), b'>' | b'=') => {
@@ -2051,7 +2051,7 @@ impl Scan<'_> {
             self.names(p, &mut |e| {
                 let s = self.sp(e);
                 if self.ch(s) == b'='
-                    && s < self.n
+                    && s < self.b.len()
                     && self.on(s + 1)
                     && !matches!(self.ch(s + 1), b'>' | b'=')
                 {
@@ -2064,7 +2064,7 @@ impl Scan<'_> {
         if hit.is_none() && named {
             self.names(p, &mut |e| {
                 let s = self.sp(e);
-                if self.ch(s) == b':' && s < self.n {
+                if self.ch(s) == b':' && s < self.b.len() {
                     hit = Some((e, s, ARG_VALUE_SEP));
                     return true;
                 }
@@ -2076,9 +2076,9 @@ impl Scan<'_> {
             return self.tok_push(s, s + 1, leaf, &[LINE_IN]);
         }
         match self.ch(p) {
-            b',' if p < self.n => return self.tok(p, p + 1, ARGUMENT_SEP),
+            b',' if p < self.b.len() => return self.tok(p, p + 1, ARGUMENT_SEP),
             b')' => return self.close(p, p + 1, GROUP_END),
-            b';' if p < self.n => return self.close(p, p + 1, EXPECTED_CLOSE_PAREN),
+            b';' if p < self.b.len() => return self.close(p, p + 1, EXPECTED_CLOSE_PAREN),
             _ => {}
         }
         if let Some(q) = self.stray(p) {
@@ -2110,7 +2110,7 @@ impl Scan<'_> {
             return self.tok(s, s + 1, KEY_VALUE_PARAMETER);
         }
         match self.ch(p) {
-            b',' if p < self.n => return self.tok(p, p + 1, ACCESSOR_SEP),
+            b',' if p < self.b.len() => return self.tok(p, p + 1, ACCESSOR_SEP),
             b']' => return self.close(p, p + 1, M_BRACKETS_END),
             _ => {}
         }
@@ -2122,7 +2122,7 @@ impl Scan<'_> {
         let mut param = None;
         self.names(p, &mut |e| {
             let s = self.sp(e);
-            if matches!(self.ch(s), b')' | b',' | b'/') && s < self.n {
+            if matches!(self.ch(s), b')' | b',' | b'/') && s < self.b.len() {
                 param = Some(e);
                 return true;
             }
@@ -2131,7 +2131,7 @@ impl Scan<'_> {
         if let Some(e) = param {
             return self.tok(p, e, PARAMETER);
         }
-        if self.ch(p) == b',' && p < self.n {
+        if self.ch(p) == b',' && p < self.b.len() {
             return self.tok(p, p + 1, PARAMETER_SEP);
         }
         if self.ch(p) == b')' {
@@ -2149,7 +2149,9 @@ impl Scan<'_> {
     /// `member_variables_declaration`.
     pub(super) fn member_vars(&mut self, p: usize) -> Option<usize> {
         match self.ch(p) {
-            b'=' if p < self.n => return self.tok_push(p, p + 1, ASSIGN_VARIABLE, &[MV_VALUE]),
+            b'=' if p < self.b.len() => {
+                return self.tok_push(p, p + 1, ASSIGN_VARIABLE, &[MV_VALUE]);
+            }
             b'{' => return self.enter(p, &[METHOD_ACCESSOR]),
             _ => {}
         }
@@ -2157,25 +2159,25 @@ impl Scan<'_> {
             return self.tok(p, e, MEMBER);
         }
         match self.ch(p) {
-            b',' if p < self.n => self.tok(p, p + 1, VARIABLES_SEP),
-            b';' if p < self.n => self.close(p, p + 1, TERM_STMT),
-            b'}' | b')' | b'>' | b']' if p < self.n => self.leave(p),
+            b',' if p < self.b.len() => self.tok(p, p + 1, VARIABLES_SEP),
+            b';' if p < self.b.len() => self.close(p, p + 1, TERM_STMT),
+            b'}' | b')' | b'>' | b']' if p < self.b.len() => self.leave(p),
             _ => None,
         }
     }
 
     /// `variables_declaration`.
     pub(super) fn vars_decl(&mut self, p: usize) -> Option<usize> {
-        if self.ch(p) == b'=' && p < self.n {
+        if self.ch(p) == b'=' && p < self.b.len() {
             return self.tok_push(p, p + 1, ASSIGN_VARIABLE, &[VD_VALUE]);
         }
         if let Some(e) = self.name(p) {
             return self.tok(p, e, VAR_OTHER);
         }
         match self.ch(p) {
-            b',' if p < self.n => self.tok(p, p + 1, VARIABLES_SEP),
-            b';' if p < self.n => self.close(p, p + 1, TERM_STMT),
-            b'{' | b'}' | b')' | b'>' | b']' if p < self.n => self.leave(p),
+            b',' if p < self.b.len() => self.tok(p, p + 1, VARIABLES_SEP),
+            b';' if p < self.b.len() => self.close(p, p + 1, TERM_STMT),
+            b'{' | b'}' | b')' | b'>' | b']' if p < self.b.len() => self.leave(p),
             _ => None,
         }
     }
@@ -2190,7 +2192,7 @@ impl Scan<'_> {
         match self.ch(p) {
             b'}' => return self.close(p, p + 1, BRACES_END_I),
             b'{' => return self.tok_push(p, p + 1, BRACES_BEGIN, &[INIT_CTOR]),
-            b',' if p < self.n => return self.tok(p, p + 1, ARRAY_SEP),
+            b',' if p < self.b.len() => return self.tok(p, p + 1, ARRAY_SEP),
             _ => {}
         }
         if self.init_stop(p) {
@@ -2203,7 +2205,7 @@ impl Scan<'_> {
     pub(super) fn anon_class(&mut self, p: usize) -> Option<usize> {
         match self.ch(p) {
             b'}' => return self.close(p, p + 1, BLOCK_END),
-            b',' if p < self.n => return self.tok(p, p + 1, CLASS_SEP),
+            b',' if p < self.b.len() => return self.tok(p, p + 1, CLASS_SEP),
             _ => {}
         }
         if let Some((e, s)) = self.name_then(p, b'=') {
@@ -2223,16 +2225,16 @@ impl Scan<'_> {
         if let Some(q) = self.brackets_capture(p) {
             return Some(q);
         }
-        if self.ch(p) == b'[' && p < self.n {
+        if self.ch(p) == b'[' && p < self.b.len() {
             return self.tok_push(p, p + 1, BRACKETS_BEGIN, &[NEW_BRACKETS]);
         }
         // `(?:\s*((\()\s*(\)))\s*)?(\{)`
         let s = self.sp(p);
-        if self.ch(s) == b'(' && s < self.n {
+        if self.ch(s) == b'(' && s < self.b.len() {
             let t = self.sp(s + 1);
-            if self.ch(t) == b')' && t < self.n {
+            if self.ch(t) == b')' && t < self.b.len() {
                 let u = self.sp(t + 1);
-                if self.ch(u) == b'{' && u < self.n {
+                if self.ch(u) == b'{' && u < self.b.len() {
                     self.put(p, s, INSTANCE);
                     self.put(s, s + 1, INSTANCE_GROUP_BEGIN);
                     self.put(s + 1, t, INSTANCE_GROUP);
@@ -2253,14 +2255,14 @@ impl Scan<'_> {
 
     /// `{{brackets_capture}}`, `((\[)(,*)(\]))`, as a token.
     pub(super) fn brackets_capture(&mut self, p: usize) -> Option<usize> {
-        if self.ch(p) != b'[' || p >= self.n {
+        if self.ch(p) != b'[' || p >= self.b.len() {
             return None;
         }
         let mut r = p + 1;
-        while r < self.n && self.b[r] == b',' {
+        while r < self.b.len() && self.b[r] == b',' {
             r += 1;
         }
-        if r < self.n && self.b[r] == b']' {
+        if r < self.b.len() && self.b[r] == b']' {
             self.put(p, p + 1, M_BRACKETS_BEGIN);
             self.put(p + 1, r, BRACKETS_SEP);
             return self.tok(r, r + 1, M_BRACKETS_END);
@@ -2305,8 +2307,8 @@ impl Scan<'_> {
     pub(super) fn tuple(&mut self, p: usize) -> Option<usize> {
         match self.ch(p) {
             b')' => return self.close(p, p + 1, GROUP_END),
-            b',' if p < self.n => return self.tok(p, p + 1, TUPLE_SEP),
-            b':' if p < self.n => return self.tok(p, p + 1, ASSIGNMENT),
+            b',' if p < self.b.len() => return self.tok(p, p + 1, TUPLE_SEP),
+            b':' if p < self.b.len() => return self.tok(p, p + 1, ASSIGNMENT),
             b'_' if !self.word_at(p + 1) => return self.tok(p, p + 1, DISCARD),
             _ => {}
         }
@@ -2314,14 +2316,14 @@ impl Scan<'_> {
         if !self.starts_reserved(p)
             && self.declaration(p, &mut |n| {
                 let s = self.sp(n);
-                matches!(self.ch(s), b':' | b',') && s < self.n
+                matches!(self.ch(s), b':' | b',') && s < self.b.len()
             })
         {
             return self.enter(p, &[VDE]);
         }
         let mut generic = None;
         self.names(p, &mut |e| {
-            if self.ch(e) == b'<' && e < self.n {
+            if self.ch(e) == b'<' && e < self.b.len() {
                 generic = Some(e);
                 return true;
             }
@@ -2337,10 +2339,10 @@ impl Scan<'_> {
     /// `#anon_line_of_code_in_no_semicolon_0`: a generic call's type arguments.
     pub(super) fn n_generic_call(&mut self, p: usize) -> Option<usize> {
         match self.ch(p) {
-            b',' if p < self.n => return self.tok(p, p + 1, TYPE_SEP),
+            b',' if p < self.b.len() => return self.tok(p, p + 1, TYPE_SEP),
             b'>' => {
                 let s = self.sp(p + 1);
-                if self.ch(s) == b'(' && s < self.n {
+                if self.ch(s) == b'(' && s < self.b.len() {
                     self.put(p, p + 1, FC_GENERIC_END);
                     self.put(p + 1, s, FUNCTION_CALL);
                     self.put(s, s + 1, FC_GROUP_BEGIN);
@@ -2365,7 +2367,7 @@ impl Scan<'_> {
             let mut hit = None;
             self.names(p, &mut |e| {
                 let s = self.sp(e);
-                if self.ch(s) == b')' && s < self.n {
+                if self.ch(s) == b')' && s < self.b.len() {
                     hit = Some(e);
                     return true;
                 }
@@ -2386,7 +2388,7 @@ impl Scan<'_> {
         if c < 0x80 {
             return c.is_ascii_lowercase();
         }
-        std::str::from_utf8(&self.b[p..(p + re::char_len(c)).min(self.n)])
+        std::str::from_utf8(&self.b[p..(p + re::char_len(c)).min(self.b.len())])
             .ok()
             .and_then(|s| s.chars().next())
             .is_some_and(char::is_lowercase)
@@ -2396,7 +2398,7 @@ impl Scan<'_> {
     pub(super) fn var_decl(&mut self, p: usize) -> Option<usize> {
         if self.lit(p, b"var") {
             let s = self.sp(p + 3);
-            if self.ch(s) == b'(' && s < self.n {
+            if self.ch(s) == b'(' && s < self.b.len() {
                 self.put(p, p + 3, VAR_KW);
                 return self.then(s, s + 1, TUPLE_GROUP_BEGIN, &[VD_TUPLE]);
             }
@@ -2481,7 +2483,7 @@ impl Scan<'_> {
         }
         if self.kw_end(p, b"default") && !self.word_before(p) {
             let s = self.sp(p + 7);
-            if self.ch(s) == b':' && s < self.n {
+            if self.ch(s) == b':' && s < self.b.len() {
                 self.put(p, p + 7, CASE_KW);
                 return self.tok(s, s + 1, CASE_SEP);
             }
@@ -2497,7 +2499,7 @@ impl Scan<'_> {
         let mut label = None;
         self.names(p, &mut |e| {
             let s = self.sp(e);
-            if self.ch(s) == b':' && s < self.n {
+            if self.ch(s) == b':' && s < self.b.len() {
                 label = Some(e);
                 return true;
             }
@@ -2509,12 +2511,17 @@ impl Scan<'_> {
         if self.kw(p, b"when") {
             return self.tok(p, p + 4, WHEN_KW);
         }
-        if self.declaration(p, &mut |n| {
-            self.sp1(n).is_some_and(|s| self.kw_end(s, b"when"))
-        }) {
+        // the declaration's `when` must follow on the line
+        if self.b[p.min(self.b.len())..]
+            .windows(4)
+            .any(|w| crate::same(w, b"when"))
+            && self.declaration(p, &mut |n| {
+                self.sp1(n).is_some_and(|s| self.kw_end(s, b"when"))
+            })
+        {
             return self.enter(p, &[VDE]);
         }
-        if self.ch(p) == b':' && p < self.n {
+        if self.ch(p) == b':' && p < self.b.len() {
             return self.close(p, p + 1, CASE_SEP);
         }
         if let Some(q) = self.line_in(p) {
@@ -2561,7 +2568,7 @@ impl Scan<'_> {
         let mut generic = None;
         self.names(p, &mut |e| {
             let s = self.sp(e);
-            if self.ch(s) == b'<' && s < self.n && self.generic_method_ahead(s + 1) {
+            if self.ch(s) == b'<' && s < self.b.len() && self.generic_method_ahead(s + 1) {
                 generic = Some((e, s));
                 return true;
             }
@@ -2578,7 +2585,7 @@ impl Scan<'_> {
         let mut call = None;
         self.names(p, &mut |e| {
             let s = self.sp(e);
-            if self.ch(s) == b'<' && s < self.n && self.generic_call_ahead(s + 1) {
+            if self.ch(s) == b'<' && s < self.b.len() && self.generic_call_ahead(s + 1) {
                 call = Some((e, s));
                 return true;
             }
@@ -2592,7 +2599,7 @@ impl Scan<'_> {
         // `({{name}})(<)`
         let mut generic = None;
         self.names(p, &mut |e| {
-            if self.ch(e) == b'<' && e < self.n {
+            if self.ch(e) == b'<' && e < self.b.len() {
                 generic = Some(e);
                 return true;
             }
@@ -2618,7 +2625,7 @@ impl Scan<'_> {
         let mut label = None;
         self.names(p, &mut |e| {
             let s = self.sp(e);
-            if self.ch(s) == b':' && s < self.n && self.ch(s + 1) != b':' {
+            if self.ch(s) == b':' && s < self.b.len() && self.ch(s + 1) != b':' {
                 label = Some((e, s));
                 return true;
             }
@@ -2674,7 +2681,7 @@ impl Scan<'_> {
         // unless the name is `{{reserved}}` or `{{base_type}}`
         if matches!(id, W_VAR | W_DYNAMIC)
             && let Some((_, m, t)) = self.plain_pair(p)
-            && t < self.n
+            && t < self.b.len()
             && self.b[t] == b'='
         {
             let s = self.sp(e);
@@ -2707,7 +2714,7 @@ impl Scan<'_> {
         if typed && !dotted && self.nested_method_ahead(p) {
             return self.enter(p, &[NESTED_METHOD]);
         }
-        if self.ch(s) == b'<' && s < self.n {
+        if self.ch(s) == b'<' && s < self.b.len() {
             if self.generic_method_ahead(s + 1) {
                 self.put(p, e, SUPPORT_TYPE);
                 self.put(s, s + 1, GENERIC_BEGIN);
@@ -2735,7 +2742,7 @@ impl Scan<'_> {
             _ => {}
         }
         // `({{name}})\s+(=>)\s*`
-        if s > e && s < self.n && self.lit(s, b"=>") {
+        if s > e && s < self.b.len() && self.lit(s, b"=>") {
             self.put(p, e, PARAMETER);
             self.put(s, s + 2, LAMBDA);
             let t = self.sp(s + 2);
@@ -2746,7 +2753,7 @@ impl Scan<'_> {
         if typed && let Some(q) = self.local_declaration(p) {
             return Some(q);
         }
-        if self.ch(s) == b':' && s < self.n {
+        if self.ch(s) == b':' && s < self.b.len() {
             // `({{name}})\s*(:)(?!:)`
             if self.ch(s + 1) != b':' {
                 self.put(p, e, LABEL);
@@ -2777,7 +2784,7 @@ impl Scan<'_> {
     pub(super) fn line_keyword(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
         let mut e = p;
-        while e < self.n && b[e].is_ascii_alphabetic() {
+        while e < self.b.len() && b[e].is_ascii_alphabetic() {
             e += 1;
         }
         // each statement's word is whole: `for`'s and `using`'s `(` and `goto`'s blank can't
@@ -2803,7 +2810,7 @@ impl Scan<'_> {
             }
             W_FOR => {
                 let s = self.sp(p + 3);
-                if self.ch(s) == b'(' && s < self.n {
+                if self.ch(s) == b'(' && s < self.b.len() {
                     let declares = {
                         let q = s + 1;
                         let mut ok = false;
@@ -2825,7 +2832,7 @@ impl Scan<'_> {
             }
             W_FOREACH => {
                 let s = self.sp(p + 7);
-                if self.ch(s) == b'(' && s < self.n {
+                if self.ch(s) == b'(' && s < self.b.len() {
                     self.put(p, p + 7, FOREACH_KW);
                     self.put(s, s + 1, M_GROUP_BEGIN);
                     self.set(&[FOR_BLOCK, FOREACH_VAR_ASSIGN, VAR_DECL]);
@@ -2837,7 +2844,7 @@ impl Scan<'_> {
             }
             W_USING | W_FIXED | W_LOCK => {
                 let s = self.sp(word_end);
-                if self.ch(s) == b'(' && s < self.n {
+                if self.ch(s) == b'(' && s < self.b.len() {
                     let (leaf, block) = match id {
                         W_USING => (USING_KW, USING_BLOCK),
                         W_FIXED => (FIXED_KW, EXPR_BLOCK),
@@ -2876,7 +2883,7 @@ impl Scan<'_> {
         if let Some(e) = brk {
             self.put(p, e, BREAK_KW);
             let s = self.sp(e);
-            let end = if self.ch(s) == b';' && s < self.n {
+            let end = if self.ch(s) == b';' && s < self.b.len() {
                 self.put(s, s + 1, TERM_STMT);
                 s + 1
             } else {
@@ -2919,7 +2926,7 @@ impl Scan<'_> {
                 self.generic_decl(e, &mut |g| {
                     self.type_suffix(g, &mut |t| {
                         self.spaced_name(t, &mut |m| {
-                            self.generic_decl(m, &mut |h| self.ch(h) == b'(' && h < self.n)
+                            self.generic_decl(m, &mut |h| self.ch(h) == b'(' && h < self.b.len())
                         })
                     })
                 })
@@ -2931,7 +2938,7 @@ impl Scan<'_> {
             && !matches!(&self.b[p..e], b"async" | b"ref")
             && self.ch(t) != b'<'
         {
-            return self.ch(t) == b'(' && t < self.n;
+            return self.ch(t) == b'(' && t < self.b.len();
         }
         // nothing the lookahead takes before its `(` is one of `(={};`: the first of them on
         // the line must be that `(`
@@ -2952,7 +2959,7 @@ impl Scan<'_> {
 
     /// The first of `(={};` on the line from `p`.
     pub(super) fn first_stop(&self, p: usize) -> Option<usize> {
-        self.b[p.min(self.n)..self.n]
+        self.b[p.min(self.b.len())..self.b.len()]
             .iter()
             .position(|c| matches!(c, b'(' | b'=' | b'{' | b'}' | b';'))
             .map(|k| p + k)
@@ -2975,7 +2982,7 @@ impl Scan<'_> {
     fn plain_pair_at(&self, p: usize) -> Option<Pair> {
         let e = self.ascii_name(p)?;
         let s = self.sp(e);
-        if s == e || s >= self.n || !(self.b[s].is_ascii_alphabetic() || self.b[s] == b'_') {
+        if s == e || s >= self.b.len() || !(self.b[s].is_ascii_alphabetic() || self.b[s] == b'_') {
             return None;
         }
         let m = self.ascii_name(s)?;
@@ -2985,7 +2992,7 @@ impl Scan<'_> {
     /// Whether the byte at `e`, after a type's first name, can go on to a declaration's
     /// `\s+{{name}}`: a space (the line's `\n` too), `<`, `[`, `*`, `?`, and `.` if `dotted`.
     pub(super) fn after_type(&self, e: usize, dotted: bool) -> bool {
-        e >= self.n
+        e >= self.b.len()
             || matches!(self.b[e], b'<' | b'[' | b'*' | b'?')
             || (dotted && self.b[e] == b'.')
             || self.space(e)
@@ -2998,7 +3005,7 @@ impl Scan<'_> {
             r += 1;
         }
         // nothing after the `>` before the `(` is one of `(={};` either
-        if self.ch(r) != b'(' || r >= self.n {
+        if self.ch(r) != b'(' || r >= self.b.len() {
             return false;
         }
         let mut g = r;
@@ -3007,7 +3014,7 @@ impl Scan<'_> {
             if self.ch(g) == b'>'
                 && self.type_suffix(g + 1, &mut |t| {
                     self.spaced_name(t, &mut |m| {
-                        self.generic_decl(m, &mut |h| self.ch(h) == b'(' && h < self.n)
+                        self.generic_decl(m, &mut |h| self.ch(h) == b'(' && h < self.b.len())
                     })
                 })
             {
@@ -3023,7 +3030,7 @@ impl Scan<'_> {
         while self.on(r) && !matches!(self.ch(r), b'(' | b'=' | b'{' | b'}' | b';') {
             r += 1;
         }
-        r < self.n && self.ch(r) == b'(' && r > i && self.ch(r - 1) == b'>'
+        r < self.b.len() && self.ch(r) == b'(' && r > i && self.ch(r - 1) == b'>'
     }
 
     /// `line_of_code`'s `var`/`dynamic` patterns.
@@ -3041,7 +3048,7 @@ impl Scan<'_> {
             let w = self.word(s);
             if words::flags(words::get(w)) & (RES | BASE) != 0 {
                 let t = self.sp(s + w.len());
-                if self.ch(t) == b'=' && t < self.n {
+                if self.ch(t) == b'=' && t < self.b.len() {
                     bad = Some((s + w.len(), t));
                 }
             }
@@ -3060,7 +3067,7 @@ impl Scan<'_> {
         // `(?=var\s*\()`
         if kw == 3 {
             let s = self.sp(p + 3);
-            if self.ch(s) == b'(' && s < self.n {
+            if self.ch(s) == b'(' && s < self.b.len() {
                 return self.enter(p, &[VAR_DECL]);
             }
         }
@@ -3074,7 +3081,7 @@ impl Scan<'_> {
         if let Some((e, m, t)) = self.plain_pair(p)
             && !self.word_before(p)
             && &self.b[p..e] != b"ref"
-            && !(matches!(self.ch(t), b'(' | b':') && t < self.n)
+            && !(matches!(self.ch(t), b'(' | b':') && t < self.b.len())
         {
             self.fill(p);
             self.set(&[VARS_DECL, TYPE_NO_SPACE]);
@@ -3124,7 +3131,7 @@ impl Scan<'_> {
             if self.bnd(q)
                 && self.declaration(q, &mut |n| {
                     let s = self.sp(n);
-                    !(matches!(self.ch(s), b'(' | b':') && s < self.n)
+                    !(matches!(self.ch(s), b'(' | b':') && s < self.b.len())
                 })
             {
                 if let Some(r) = r {
@@ -3140,7 +3147,7 @@ impl Scan<'_> {
             s.type_suffix(e, &mut |t| {
                 s.spaced_name(t, &mut |m| {
                     let u = s.sp(m);
-                    !(s.ch(u) == b':' && u < s.n)
+                    !(s.ch(u) == b':' && u < s.b.len())
                 })
             })
         };
@@ -3198,18 +3205,18 @@ impl Scan<'_> {
         match id {
             W_THIS | W_BASE => {
                 let s = self.sp(e);
-                if self.ch(s) == b'[' && s < self.n {
+                if self.ch(s) == b'[' && s < self.b.len() {
                     self.put(p, e, VAR_LANGUAGE);
                     return self.tok_push(s, s + 1, M_BRACKETS_BEGIN, &[ACCESSOR_ARGS]);
                 }
                 self.tok(p, e, VAR_LANGUAGE)
             }
             W_AWAIT => self.tok(p, e, AWAIT),
-            W_NAMEOF if self.ch(e) == b'(' && e < self.n => {
+            W_NAMEOF if self.ch(e) == b'(' && e < self.b.len() => {
                 self.put(p, e, KW_OTHER);
                 self.tok_push(e, e + 1, M_GROUP_BEGIN, &[NAMEOF])
             }
-            W_TYPEOF | W_DEFAULT if self.ch(e) == b'(' && e < self.n => {
+            W_TYPEOF | W_DEFAULT if self.ch(e) == b'(' && e < self.b.len() => {
                 self.put(p, e, REFLECTION);
                 self.tok_push(e, e + 1, M_GROUP_BEGIN, &[TYPEOF])
             }
@@ -3241,12 +3248,12 @@ impl Scan<'_> {
     #[inline(never)]
     fn new_turns(&mut self, e: usize) -> Option<usize> {
         let b = self.b;
-        let s = crate::clike::skip_blanks(&b[..self.n], e);
+        let s = crate::clike::skip_blanks(&b[..self.b.len()], e);
         if s == e {
             return None;
         }
         let m = self.ascii_name(s)?;
-        if m >= self.n || b[m] != b'(' {
+        if m >= self.b.len() || b[m] != b'(' {
             return None;
         }
         let leaf = if !b[s].is_ascii_lowercase() {
@@ -3283,12 +3290,12 @@ impl Scan<'_> {
             return Some(t);
         }
         // `\((?=[^()]*\)\s+=>)`
-        if self.ch(p) == b'(' && p < self.n {
+        if self.ch(p) == b'(' && p < self.b.len() {
             let mut q = p + 1;
             while self.on(q) && !matches!(self.ch(q), b'(' | b')') {
                 q += 1;
             }
-            if q < self.n
+            if q < self.b.len()
                 && self.ch(q) == b')'
                 && let Some(s) = self.sp1(q + 1)
                 && self.lit(s, b"=>")
@@ -3304,7 +3311,7 @@ impl Scan<'_> {
         if let Some(q) = self.nosemi(p) {
             return Some(q);
         }
-        if self.ch(p) == b';' && p < self.n {
+        if self.ch(p) == b';' && p < self.b.len() {
             return self.close(p, p + 1, TERM_STMT);
         }
         None
@@ -3317,7 +3324,7 @@ impl Scan<'_> {
         }
         let c = self.ch(p);
         // punctuation: only the patterns that can start with it, in the grammar's order
-        if p < self.n {
+        if p < self.b.len() {
             match c {
                 b'.' => return self.tok(p, p + 1, DOT),
                 b')' | b']' | b',' | b'}' => return self.leave(p),
@@ -3346,7 +3353,7 @@ impl Scan<'_> {
             }
             if let Some(e) = self.kw_any(p, &SQL_WORDS) {
                 let s = self.sp(e);
-                let blocked = s < self.n
+                let blocked = s < self.b.len()
                     && matches!(
                         self.ch(s),
                         b'.' | b',' | b';' | b'+' | b'=' | b'&' | b'|' | b'[' | b']' | b')'
@@ -3357,11 +3364,11 @@ impl Scan<'_> {
             }
         }
         match c {
-            b'?' if self.ch(p + 1) == b'.' && p + 1 < self.n => {
+            b'?' if self.ch(p + 1) == b'.' && p + 1 < self.b.len() => {
                 return self.tok(p, p + 2, NULL_COALESCING);
             }
             b'.' => return self.tok(p, p + 1, DOT),
-            b'-' if self.ch(p + 1) == b'>' && p + 1 < self.n => {
+            b'-' if self.ch(p + 1) == b'>' && p + 1 < self.b.len() => {
                 return self.tok(p, p + 2, ARROW);
             }
             _ => {}
@@ -3369,21 +3376,21 @@ impl Scan<'_> {
         if let Some(e) = self.operator(p) {
             return self.tok(p, e, OPERATOR);
         }
-        if c == b'=' && p < self.n {
+        if c == b'=' && p < self.b.len() {
             return self.tok(p, p + 1, ASSIGNMENT);
         }
         if let Some(q) = self.literals(p) {
             return Some(q);
         }
-        if c == b'$' && self.ch(p + 1) == b'"' && p + 1 < self.n {
+        if c == b'$' && self.ch(p + 1) == b'"' && p + 1 < self.b.len() {
             return self.open(p, p + 2, STRING_BEGIN, &[FORMAT_STRING]);
         }
-        if c == b'@' && self.ch(p + 1) == b'"' && p + 1 < self.n {
+        if c == b'@' && self.ch(p + 1) == b'"' && p + 1 < self.b.len() {
             let q = self.open(p, p + 2, STRING_BEGIN, &[LONG_STRING]);
             self.regex_in(p);
             return q;
         }
-        if (self.lit(p, b"@$\"") || self.lit(p, b"$@\"")) && p + 2 < self.n {
+        if (self.lit(p, b"@$\"") || self.lit(p, b"$@\"")) && p + 2 < self.b.len() {
             return self.open(p, p + 3, STRING_BEGIN, &[LONG_FORMAT_STRING]);
         }
         if let Some(q) = self.names_in_code(p) {
@@ -3394,10 +3401,10 @@ impl Scan<'_> {
         }
         // `\s*(\??\[)`
         let s = self.sp(p);
-        if s < self.n {
+        if s < self.b.len() {
             let e = if self.ch(s) == b'[' {
                 Some(s + 1)
-            } else if self.ch(s) == b'?' && self.ch(s + 1) == b'[' && s + 1 < self.n {
+            } else if self.ch(s) == b'?' && self.ch(s + 1) == b'[' && s + 1 < self.b.len() {
                 Some(s + 2)
             } else {
                 None
@@ -3422,13 +3429,14 @@ impl Scan<'_> {
             return self.tok(p, e, VAR_OTHER);
         }
         match c {
-            b'@' if p < self.n => return self.tok(p, p + 1, RESERVED_CHAR),
-            b'?' if p < self.n => return self.tok_push(p, p + 1, TERNARY_OP, &[TERNARY]),
-            b'(' if p < self.n => return self.paren(p),
+            b'@' if p < self.b.len() => return self.tok(p, p + 1, RESERVED_CHAR),
+            b'?' if p < self.b.len() => return self.tok_push(p, p + 1, TERNARY_OP, &[TERNARY]),
+            b'(' if p < self.b.len() => return self.paren(p),
             b'{' => return self.nosemi_brace(p),
             _ => {}
         }
-        if (matches!(c, b'}' | b')' | b'>' | b']' | b',') && p < self.n) || self.starts_reserved(p)
+        if (matches!(c, b'}' | b')' | b'>' | b']' | b',') && p < self.b.len())
+            || self.starts_reserved(p)
         {
             return self.leave(p);
         }
@@ -3481,7 +3489,7 @@ impl Scan<'_> {
             }
             if flags & LINQ != 0 {
                 let s = self.sp(e);
-                let blocked = s < self.n
+                let blocked = s < self.b.len()
                     && matches!(
                         self.ch(s),
                         b'.' | b',' | b';' | b'+' | b'=' | b'&' | b'|' | b'[' | b']' | b')'
@@ -3499,7 +3507,7 @@ impl Scan<'_> {
             return Some(q);
         }
         let after = self.ch(e);
-        if after == b'<' && e < self.n {
+        if after == b'<' && e < self.b.len() {
             // `({{name}})(<)(?=[^(]*>\s*\()`, `({{name}})(<)(?={{namespaced_name}}>\s*\.)`
             if self.generic_call_paren_ahead(e + 1) {
                 self.put(p, e, VAR_FUNCTION);
@@ -3508,7 +3516,7 @@ impl Scan<'_> {
             if self.namespaced(e + 1, &mut |g| {
                 self.ch(g) == b'>' && {
                     let s = self.sp(g + 1);
-                    self.ch(s) == b'.' && s < self.n
+                    self.ch(s) == b'.' && s < self.b.len()
                 }
             }) {
                 self.put(p, e, SUPPORT_TYPE);
@@ -3517,7 +3525,7 @@ impl Scan<'_> {
         }
         let s = self.sp(e);
         let next = self.ch(s);
-        if s < self.n {
+        if s < self.b.len() {
             // `((?!{{reserved}}\b){{name}})\s*(\()`
             if next == b'(' && flags & RES == 0 {
                 self.put(p, e, FC_FUNCTION);
@@ -3527,7 +3535,7 @@ impl Scan<'_> {
             // `({{name}})\s*(\??\[)`
             let open = if next == b'[' {
                 Some(s + 1)
-            } else if next == b'?' && self.ch(s + 1) == b'[' && s + 1 < self.n {
+            } else if next == b'?' && self.ch(s + 1) == b'[' && s + 1 < self.b.len() {
                 Some(s + 2)
             } else {
                 None
@@ -3572,7 +3580,7 @@ impl Scan<'_> {
     /// By its first byte: the alternatives in order make `++` two `+`, `--` two `-`, and an
     /// operator followed by `=` the longer one (`<<=`, `<==`, `=>=`).
     pub(super) fn operator(&self, p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         if p >= n {
             return None;
         }
@@ -3603,11 +3611,11 @@ impl Scan<'_> {
     #[cfg(test)]
     pub(super) fn operator_by_lists(&self, p: usize) -> Option<usize> {
         let c = self.ch(p);
-        if p >= self.n || !b"+-*/%|&^<>=!?~".contains(&c) {
+        if p >= self.b.len() || !b"+-*/%|&^<>=!?~".contains(&c) {
             return None;
         }
         for op in &BIN_OP {
-            if self.lit(p, op) && self.ch(p + op.len()) == b'=' && p + op.len() < self.n {
+            if self.lit(p, op) && self.ch(p + op.len()) == b'=' && p + op.len() < self.b.len() {
                 return Some(p + op.len() + 1);
             }
         }
@@ -3640,7 +3648,7 @@ impl Scan<'_> {
     pub(super) fn chain_goes_on(&self, mut e: usize) -> bool {
         loop {
             let s = self.sp(e);
-            if self.ch(s) != b'.' || s >= self.n {
+            if self.ch(s) != b'.' || s >= self.b.len() {
                 return self.type_goes_on(e, s);
             }
             let t = self.sp(s + 1);
@@ -3687,7 +3695,7 @@ impl Scan<'_> {
         // `({{name}})(<)(?=[^(]*>\s*\()`
         let mut hit = None;
         self.names(p, &mut |e| {
-            if self.ch(e) == b'<' && e < self.n && self.generic_call_paren_ahead(e + 1) {
+            if self.ch(e) == b'<' && e < self.b.len() && self.generic_call_paren_ahead(e + 1) {
                 hit = Some(e);
                 return true;
             }
@@ -3701,11 +3709,11 @@ impl Scan<'_> {
         let mut hit = None;
         self.names(p, &mut |e| {
             if self.ch(e) == b'<'
-                && e < self.n
+                && e < self.b.len()
                 && self.namespaced(e + 1, &mut |g| {
                     self.ch(g) == b'>' && {
                         let s = self.sp(g + 1);
-                        self.ch(s) == b'.' && s < self.n
+                        self.ch(s) == b'.' && s < self.b.len()
                     }
                 })
             {
@@ -3730,9 +3738,9 @@ impl Scan<'_> {
         let mut hit = None;
         self.names(p, &mut |e| {
             let s = self.sp(e);
-            if s < self.n
+            if s < self.b.len()
                 && (self.ch(s) == b'['
-                    || (self.ch(s) == b'?' && self.ch(s + 1) == b'[' && s + 1 < self.n))
+                    || (self.ch(s) == b'?' && self.ch(s + 1) == b'[' && s + 1 < self.b.len()))
             {
                 hit = Some((e, s));
                 return true;
@@ -3753,7 +3761,7 @@ impl Scan<'_> {
         while self.on(r) && self.ch(r) != b'(' {
             r += 1;
         }
-        if r >= self.n {
+        if r >= self.b.len() {
             return false;
         }
         let mut t = r;
@@ -3767,12 +3775,12 @@ impl Scan<'_> {
     pub(super) fn paren(&mut self, p: usize) -> Option<usize> {
         // `(\()\s*(\*)\s*({{name}})\s*(\))`
         let s = self.sp(p + 1);
-        if self.ch(s) == b'*' && s < self.n {
+        if self.ch(s) == b'*' && s < self.b.len() {
             let t = self.sp(s + 1);
             let mut hit = None;
             self.names(t, &mut |e| {
                 let u = self.sp(e);
-                if self.ch(u) == b')' && u < self.n {
+                if self.ch(u) == b')' && u < self.b.len() {
                     hit = Some((e, u));
                     return true;
                 }
@@ -3788,7 +3796,7 @@ impl Scan<'_> {
         // `(\()(?={{namespaced_name}}\s*\))`
         if self.namespaced(p + 1, &mut |g| {
             let s = self.sp(g);
-            self.ch(s) == b')' && s < self.n
+            self.ch(s) == b')' && s < self.b.len()
         }) {
             return self.tok_push(p, p + 1, GROUP_BEGIN, &[CAST]);
         }
@@ -3806,14 +3814,14 @@ impl Scan<'_> {
                 return false;
             }
             match self.ch(i) {
-                b',' => return i < self.n,
+                b',' => return i < self.b.len(),
                 b')' => return false,
                 b'(' => {
                     let mut j = i + 1;
                     while self.on(j) && self.ch(j) != b')' {
                         j += 1;
                     }
-                    if j >= self.n {
+                    if j >= self.b.len() {
                         return false;
                     }
                     i = j + 1;
@@ -3826,7 +3834,7 @@ impl Scan<'_> {
     /// `literals`.
     pub(super) fn literals(&mut self, p: usize) -> Option<usize> {
         let c = self.ch(p);
-        if p >= self.n {
+        if p >= self.b.len() {
             return None;
         }
         match c {
@@ -3845,7 +3853,7 @@ impl Scan<'_> {
                 // its text (a turn of `advance` to the stop), then its `"`; taken here
                 if !self.halt
                     && self.top() == STRING
-                    && let Some(k) = self.b[p + 1..self.n]
+                    && let Some(k) = self.b[p + 1..self.b.len()]
                         .iter()
                         .position(|&c| STRING_STOPS[usize::from(c)] != 0)
                     && self.b[p + 1 + k] == b'"'
@@ -3864,7 +3872,7 @@ impl Scan<'_> {
 
     /// The character literals.
     pub(super) fn char_literal(&mut self, p: usize) -> Option<usize> {
-        if self.ch(p + 1) == b'\'' && p + 1 < self.n {
+        if self.ch(p + 1) == b'\'' && p + 1 < self.b.len() {
             return self.tok(p, p + 2, LONE_ESCAPE);
         }
         if let Some(e) = self.escaped_char_then_quote(p + 1) {
@@ -3872,17 +3880,17 @@ impl Scan<'_> {
             self.put(p + 1, e, CHAR_ESCAPE);
             return self.tok(e, e + 1, CHAR_LEAF);
         }
-        if p + 1 < self.n {
+        if p + 1 < self.b.len() {
             let e = self.next(p + 1);
-            if self.ch(e) == b'\'' && e < self.n {
+            if self.ch(e) == b'\'' && e < self.b.len() {
                 return self.tok(p, e + 1, CHAR_LEAF);
             }
         }
         let mut e = p + 1;
-        while e < self.n && self.b[e] != b'\'' {
+        while e < self.b.len() && self.b[e] != b'\'' {
             e += 1;
         }
-        if e < self.n && e > p + 1 {
+        if e < self.b.len() && e > p + 1 {
             return self.tok(p, e + 1, NOT_A_CHAR);
         }
         None
@@ -3892,7 +3900,7 @@ impl Scan<'_> {
     pub(super) fn number(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
         // `(0[xX])[\h_]*\h`, `(0[bB])[01_]*[01]`
-        if b[p] == b'0' && p + 1 < self.n {
+        if b[p] == b'0' && p + 1 < self.b.len() {
             let (digit, hex): (fn(u8) -> bool, bool) = match b[p + 1] {
                 b'x' | b'X' => (|c: u8| c.is_ascii_hexdigit(), true),
                 b'b' | b'B' => (|c: u8| c == b'0' || c == b'1', false),
@@ -3900,7 +3908,7 @@ impl Scan<'_> {
             };
             let mut e = p + 2;
             let mut last = None;
-            while e < self.n && (digit(b[e]) || b[e] == b'_') {
+            while e < self.b.len() && (digit(b[e]) || b[e] == b'_') {
                 if digit(b[e]) {
                     last = Some(e + 1);
                 }
@@ -3929,9 +3937,9 @@ impl Scan<'_> {
         }
         self.put(p, e, DECIMAL);
         let s = match (self.ch(e), self.ch(e + 1)) {
-            (b'u' | b'U', b'l' | b'L') if e + 1 < self.n => 2,
-            (b'l' | b'L', b'u' | b'U') if e + 1 < self.n => 2,
-            (b'u' | b'U' | b'l' | b'L', _) if e < self.n => 1,
+            (b'u' | b'U', b'l' | b'L') if e + 1 < self.b.len() => 2,
+            (b'l' | b'L', b'u' | b'U') if e + 1 < self.b.len() => 2,
+            (b'u' | b'U' | b'l' | b'L', _) if e < self.b.len() => 1,
             _ => 0,
         };
         if s > 0 {
@@ -3949,10 +3957,10 @@ impl Scan<'_> {
         });
         if let Some(e) = first {
             let suffix = |s: &Self, i: usize| {
-                i < s.n && matches!(s.b[i], b'f' | b'F' | b'd' | b'D' | b'm' | b'M')
+                i < s.b.len() && matches!(s.b[i], b'f' | b'F' | b'd' | b'D' | b'm' | b'M')
             };
             let exponent = |s: &Self, i: usize| -> Option<usize> {
-                if i >= s.n || !matches!(s.b[i], b'e' | b'E') {
+                if i >= s.b.len() || !matches!(s.b[i], b'e' | b'E') {
                     return None;
                 }
                 let mut end = None;
@@ -3960,7 +3968,7 @@ impl Scan<'_> {
                     end = Some(x);
                     true
                 });
-                if end.is_none() && i + 1 < s.n && matches!(s.b[i + 1], b'-' | b'+') {
+                if end.is_none() && i + 1 < s.b.len() && matches!(s.b[i + 1], b'-' | b'+') {
                     s.dec_digits(i + 2, &mut |x| {
                         end = Some(x);
                         true
@@ -3969,7 +3977,7 @@ impl Scan<'_> {
                 end
             };
             let mut float = None;
-            if self.ch(e) == b'.' && e < self.n {
+            if self.ch(e) == b'.' && e < self.b.len() {
                 let mut f = None;
                 self.dec_digits(e + 1, &mut |x| {
                     f = Some(x);
@@ -4015,7 +4023,7 @@ impl Scan<'_> {
         if let Some(q) = self.type_common(p) {
             return Some(q);
         }
-        if self.ch(p) == b'(' && p < self.n {
+        if self.ch(p) == b'(' && p < self.b.len() {
             return self.tok_push(p, p + 1, GROUP_BEGIN, &[TUPLE_T]);
         }
         None
@@ -4028,7 +4036,7 @@ impl Scan<'_> {
         if let Some(e) = self.ascii_name(p) {
             let c = self.b[p];
             let s = self.sp(e);
-            if !(self.ch(s) == b':' && self.ch(s + 1) == b':' && s + 1 < self.n) {
+            if !(self.ch(s) == b':' && self.ch(s + 1) == b':' && s + 1 < self.b.len()) {
                 if !c.is_ascii_lowercase() {
                     return self.tok(p, e, SUPPORT_TYPE);
                 }
@@ -4060,29 +4068,29 @@ impl Scan<'_> {
         }
         let s = self.sp(p);
         match self.ch(s) {
-            b'.' if s < self.n => {
+            b'.' if s < self.b.len() => {
                 self.put(s, s + 1, DOT_NAMESPACE);
                 let t = self.sp(s + 1);
                 return self.fin(t);
             }
             _ => {}
         }
-        if self.ch(p) == b'*' && p < self.n {
+        if self.ch(p) == b'*' && p < self.b.len() {
             return self.tok(p, p + 1, POINTER);
         }
         match self.ch(s) {
-            b'?' if s < self.n => return self.tok(s, s + 1, NULLABLE),
-            b'<' if s < self.n => return self.tok_push(s, s + 1, GENERIC_BEGIN, &[TYPE_ARG]),
+            b'?' if s < self.b.len() => return self.tok(s, s + 1, NULLABLE),
+            b'<' if s < self.b.len() => return self.tok_push(s, s + 1, GENERIC_BEGIN, &[TYPE_ARG]),
             _ => {}
         }
         if let Some(e) = self.name(p) {
             return self.tok(p, e, SUPPORT_TYPE);
         }
         let c = self.ch(p);
-        if matches!(c, b'{' | b':') && p < self.n {
+        if matches!(c, b'{' | b':') && p < self.b.len() {
             return self.close(p, p + 1, ILLEGAL);
         }
-        if (matches!(c, b'}' | b')' | b'>' | b']' | b',' | b';') && p < self.n)
+        if (matches!(c, b'}' | b')' | b'>' | b']' | b',' | b';') && p < self.b.len())
             || self.lit(p, b"=>")
         {
             return self.leave(p);
@@ -4093,7 +4101,7 @@ impl Scan<'_> {
     /// `type_arg_param_common`.
     pub(super) fn type_arg_param_common(&mut self, p: usize) -> Option<usize> {
         match self.ch(p) {
-            b',' if p < self.n => return self.tok(p, p + 1, TYPE_SEP),
+            b',' if p < self.b.len() => return self.tok(p, p + 1, TYPE_SEP),
             b'>' => {
                 self.put(p, p + 1, GENERIC_END);
                 let x = self.type_suffix_capture(p + 1);
@@ -4152,7 +4160,7 @@ impl Scan<'_> {
                 if self.kw(p, w) {
                     let s = self.sp_line(p + w.len());
                     self.put(p, p + w.len(), KW_OTHER_PP);
-                    return self.tok(s, self.n, leaf);
+                    return self.tok(s, self.b.len(), leaf);
                 }
             }
             if self.lit(p, b"line")
@@ -4167,8 +4175,8 @@ impl Scan<'_> {
                     self.put(p, p + 4, KW_OTHER_PP);
                     self.put(s, d, DECIMAL);
                     let mut end = t;
-                    if self.ch(t) == b'"' && t < self.n {
-                        let last = (t + 1..self.n).rev().find(|&i| self.b[i] == b'"');
+                    if self.ch(t) == b'"' && t < self.b.len() {
+                        let last = (t + 1..self.b.len()).rev().find(|&i| self.b[i] == b'"');
                         if let Some(l) = last {
                             self.put(t, t + 1, PP_LINE_STRING_BEGIN);
                             self.put(t + 1, l, PP_LINE_STRING);
@@ -4200,8 +4208,8 @@ impl Scan<'_> {
             self.put(p, p + 6, KW_OTHER_PP);
             return self.tok_push(s, s + 7, KW_OTHER_PP, &[PP_WARNING]);
         }
-        if p == self.step && p < self.n {
-            return self.tok(p, self.n, INVALID);
+        if p == self.step && p < self.b.len() {
+            return self.tok(p, self.b.len(), INVALID);
         }
         if self.eol(p) {
             return self.leave(p);
@@ -4212,8 +4220,8 @@ impl Scan<'_> {
     /// `#anon_preprocessor_option_0`: an `#if`'s condition.
     pub(super) fn pp_if(&mut self, p: usize) -> Option<usize> {
         match self.ch(p) {
-            b'(' | b')' if p < self.n => return self.tok(p, p + 1, PARENS),
-            b'!' if p < self.n => return self.tok(p, p + 1, LOGICAL),
+            b'(' | b')' if p < self.b.len() => return self.tok(p, p + 1, PARENS),
+            b'!' if p < self.b.len() => return self.tok(p, p + 1, LOGICAL),
             _ => {}
         }
         if self.lit(p, b"&&") || self.lit(p, b"||") {
@@ -4249,7 +4257,7 @@ impl Scan<'_> {
             self.put(p, e, KW_OTHER_PP);
             if let Some(s) = self.sp1(e) {
                 let mut t = s;
-                while t < self.n {
+                while t < self.b.len() {
                     let c = self.b[t];
                     if c.is_ascii_alphabetic() || c == b'_' || c == b'-' {
                         t += 1;
@@ -4349,11 +4357,11 @@ impl Scan<'_> {
 
     /// `documentation`.
     pub(super) fn doc(&mut self, p: usize) -> Option<usize> {
-        if self.ch(p) == b'<' && p < self.n {
+        if self.ch(p) == b'<' && p < self.b.len() {
             if self.ch(p + 1) == b'/' {
                 let mut hit = None;
                 self.names(p + 2, &mut |e| {
-                    if self.ch(e) == b'>' && e < self.n {
+                    if self.ch(e) == b'>' && e < self.b.len() {
                         hit = Some(e);
                         return true;
                     }
@@ -4393,7 +4401,7 @@ impl Scan<'_> {
         loop {
             let q = self.doc_text(e)?;
             e = q;
-            if e >= self.n {
+            if e >= self.b.len() {
                 break;
             }
             let c = self.b[e];
@@ -4415,7 +4423,7 @@ impl Scan<'_> {
     #[inline]
     fn doc_text(&self, p: usize) -> Option<usize> {
         // ASCII on the core's classes
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let mut e = p;
         loop {
             if e < n {
@@ -4441,7 +4449,7 @@ impl Scan<'_> {
         if e > p {
             return Some(e);
         }
-        (p < self.n).then(|| self.next(p))
+        (p < self.b.len()).then(|| self.next(p))
     }
 
     /// `#anon_documentation_0`: a tag's attributes.
@@ -4454,9 +4462,9 @@ impl Scan<'_> {
             return self.close(p, p + 2, TAG_END);
         }
         match self.ch(p) {
-            b'>' if p < self.n => return self.close(p, p + 1, TAG_END),
-            b'"' if p < self.n => {
-                if let Some(e) = (p + 1..self.n).find(|&i| self.b[i] == b'"') {
+            b'>' if p < self.b.len() => return self.close(p, p + 1, TAG_END),
+            b'"' if p < self.b.len() => {
+                if let Some(e) = (p + 1..self.b.len()).find(|&i| self.b[i] == b'"') {
                     return self.tok(p, e + 1, DQ);
                 }
             }
@@ -4473,7 +4481,7 @@ impl Scan<'_> {
         if let Some(q) = self.string_escaped(p) {
             return Some(q);
         }
-        if self.ch(p) == b'"' && p < self.n {
+        if self.ch(p) == b'"' && p < self.b.len() {
             return self.close(p, p + 1, STRING_END);
         }
         if let Some(q) = self.string_placeholders(p) {
@@ -4485,10 +4493,10 @@ impl Scan<'_> {
             self.put(p, p + 1, PH_BEGIN);
             return self.tok(p + 1, d, DECIMAL);
         }
-        if p == self.n {
+        if p == self.b.len() {
             return self.close(p, p + 1, UNCLOSED_STRING);
         }
-        if p > self.n {
+        if p > self.b.len() {
             return self.leave(p);
         }
         None
@@ -4499,7 +4507,7 @@ impl Scan<'_> {
         if let Some(e) = self.escaped_char(p) {
             return self.tok(p, e, ESCAPE);
         }
-        if self.ch(p) == b'\\' && p < self.n {
+        if self.ch(p) == b'\\' && p < self.b.len() {
             return self.tok(p, p + 1, LONE_ESCAPE);
         }
         None
@@ -4507,7 +4515,7 @@ impl Scan<'_> {
 
     /// `(\{)(\d+)` at `p`: where the digits end.
     pub(super) fn brace_digits(&self, p: usize) -> Option<usize> {
-        if self.ch(p) != b'{' || p >= self.n {
+        if self.ch(p) != b'{' || p >= self.b.len() {
             return None;
         }
         self.digits(p + 1)
@@ -4518,7 +4526,7 @@ impl Scan<'_> {
         if self.lit(p, b"{{") || self.lit(p, b"}}") {
             return self.tok(p, p + 2, ESCAPE);
         }
-        if self.ch(p) != b'{' || p >= self.n {
+        if self.ch(p) != b'{' || p >= self.b.len() {
             return None;
         }
         // `\{\h{8}-(?:\h{4}-){3}\h{12}\}`
@@ -4526,13 +4534,13 @@ impl Scan<'_> {
             let mut i = p + 1;
             for (k, n) in [8, 4, 4, 4, 12].into_iter().enumerate() {
                 for _ in 0..n {
-                    if i >= s.n || !s.b[i].is_ascii_hexdigit() {
+                    if i >= s.b.len() || !s.b[i].is_ascii_hexdigit() {
                         return false;
                     }
                     i += 1;
                 }
                 let want = if k == 4 { b'}' } else { b'-' };
-                if s.ch(i) != want || i >= s.n {
+                if s.ch(i) != want || i >= s.b.len() {
                     return false;
                 }
                 i += 1;
@@ -4545,7 +4553,7 @@ impl Scan<'_> {
         // `(\{)(\d+)(?=")`
         if let Some(d) = self.brace_digits(p)
             && self.ch(d) == b'"'
-            && d < self.n
+            && d < self.b.len()
         {
             self.put(p, p + 1, PH_BEGIN_P);
             return self.tok(p + 1, d, PH_UNCLOSED_NUM);
@@ -4567,7 +4575,7 @@ impl Scan<'_> {
             self.put(p, p + 1, PH_BEGIN);
             return self.tok(p + 1, d, DECIMAL);
         }
-        if self.ch(p) == b'"' && p < self.n {
+        if self.ch(p) == b'"' && p < self.b.len() {
             return self.close(p, p + 1, STRING_END);
         }
         None
@@ -4575,7 +4583,7 @@ impl Scan<'_> {
 
     /// `format_string`.
     pub(super) fn format_string(&mut self, p: usize) -> Option<usize> {
-        if self.ch(p) == b'"' && p < self.n {
+        if self.ch(p) == b'"' && p < self.b.len() {
             return self.close(p, p + 1, STRING_END);
         }
         if let Some(q) = self.string_escaped(p) {
@@ -4584,13 +4592,13 @@ impl Scan<'_> {
         if self.lit(p, b"{{") || self.lit(p, b"}}") {
             return self.tok(p, p + 2, ESCAPE);
         }
-        if self.ch(p) == b'{' && p < self.n {
+        if self.ch(p) == b'{' && p < self.b.len() {
             return self.open(p, p + 1, INTERP_BEGIN, &[INTERP]);
         }
-        if p == self.n {
+        if p == self.b.len() {
             return self.close(p, p + 1, UNCLOSED_STRING);
         }
-        if p > self.n {
+        if p > self.b.len() {
             return self.leave(p);
         }
         None
@@ -4601,13 +4609,13 @@ impl Scan<'_> {
         if self.lit(p, b"\"\"") {
             return self.tok(p, p + 2, ESCAPE);
         }
-        if self.ch(p) == b'"' && p < self.n {
+        if self.ch(p) == b'"' && p < self.b.len() {
             return self.close(p, p + 1, STRING_END);
         }
         if self.lit(p, b"{{") || self.lit(p, b"}}") {
             return self.tok(p, p + 2, ESCAPE);
         }
-        if self.ch(p) == b'{' && p < self.n {
+        if self.ch(p) == b'{' && p < self.b.len() {
             return self.open(p, p + 1, INTERP_BEGIN, &[LINTERP]);
         }
         None
@@ -4616,10 +4624,10 @@ impl Scan<'_> {
     /// `string_placeholder` (a verbatim string's, `long`).
     pub(super) fn placeholder(&mut self, p: usize, long: bool) -> Option<usize> {
         // `inside_string_placeholder`
-        if self.ch(p) == b'}' && p < self.n {
+        if self.ch(p) == b'}' && p < self.b.len() {
             self.put(p, p + 1, PH_END);
             let mut e = p + 1;
-            if self.ch(e) == b'}' && e < self.n && self.ch(e + 1) != b'}' {
+            if self.ch(e) == b'}' && e < self.b.len() && self.ch(e + 1) != b'}' {
                 self.put(e, e + 1, UNESCAPED_PH);
                 e += 1;
             }
@@ -4628,7 +4636,7 @@ impl Scan<'_> {
             return Some(e);
         }
         if self.ch(p) == b'"'
-            && p < self.n
+            && p < self.b.len()
             && let Some(q) = self.leave(p)
         {
             return Some(q);
@@ -4655,10 +4663,10 @@ impl Scan<'_> {
             let s = self.sp(p);
             let mut end = s;
             let mut parts = None;
-            if self.ch(s) == b',' && s < self.n {
+            if self.ch(s) == b',' && s < self.b.len() {
                 let t = self.sp(s + 1);
                 let mut d = t;
-                if self.ch(d) == b'-' && d < self.n {
+                if self.ch(d) == b'-' && d < self.b.len() {
                     d += 1;
                 }
                 if let Some(e) = self.digits(d) {
@@ -4675,11 +4683,11 @@ impl Scan<'_> {
                 return self.fin(end);
             }
         }
-        if self.ch(p) == b':' && p < self.n {
+        if self.ch(p) == b':' && p < self.b.len() {
             let unclosed = if long {
-                self.ch(p + 1) == b'"' && p + 1 < self.n && self.ch(p + 2) != b'"'
+                self.ch(p + 1) == b'"' && p + 1 < self.b.len() && self.ch(p + 2) != b'"'
             } else {
-                self.ch(p + 1) == b'"' && p + 1 < self.n
+                self.ch(p + 1) == b'"' && p + 1 < self.b.len()
             };
             if unclosed {
                 return self.close(p, p + 1, UNCLOSED_PH);
@@ -4698,7 +4706,7 @@ impl Scan<'_> {
             return Some(q);
         }
         if self.ch(p) == b'}'
-            && p < self.n
+            && p < self.b.len()
             && let Some(q) = self.leave(p)
         {
             return Some(q);
@@ -4712,7 +4720,7 @@ impl Scan<'_> {
                     e += 1;
                 }
                 let mut esc = false;
-                while self.ch(e) == b'\\' && e + 1 < self.n {
+                while self.ch(e) == b'\\' && e + 1 < self.b.len() {
                     e = self.next(e + 1);
                     esc = true;
                 }
@@ -4720,11 +4728,11 @@ impl Scan<'_> {
                     break;
                 }
             }
-            if self.ch(e) == b'"' && e < self.n {
+            if self.ch(e) == b'"' && e < self.b.len() {
                 return self.close(p, e, UNCLOSED_PH);
             }
         }
-        if self.ch(p) == b'{' && p < self.n {
+        if self.ch(p) == b'{' && p < self.b.len() {
             return self.tok(p, p + 1, UNESCAPED_PH);
         }
         None
@@ -4736,13 +4744,13 @@ impl Scan<'_> {
             return self.tok(p, p + 2, ESCAPE);
         }
         if self.ch(p) == b'}'
-            && p < self.n
+            && p < self.b.len()
             && let Some(q) = self.leave(p)
         {
             return Some(q);
         }
         // `\\(?:""|[^"])`
-        if self.ch(p) == b'\\' && p < self.n {
+        if self.ch(p) == b'\\' && p < self.b.len() {
             if self.lit(p + 1, b"\"\"") {
                 return self.tok(p, p + 3, ESCAPE);
             }
@@ -4762,10 +4770,10 @@ impl Scan<'_> {
                 break;
             }
         }
-        if e > p && self.ch(e) == b'"' && e < self.n {
+        if e > p && self.ch(e) == b'"' && e < self.b.len() {
             return self.close(p, e, UNCLOSED_PH);
         }
-        if self.ch(p) == b'{' && p < self.n {
+        if self.ch(p) == b'{' && p < self.b.len() {
             return self.tok(p, p + 1, UNESCAPED_PH);
         }
         None

@@ -18,7 +18,7 @@ impl Scan<'_> {
     /// top it doesn't run, or past the line's end.
     #[inline(never)]
     pub(super) fn doc_run(&mut self, mut p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let from = p;
         loop {
             let top = self.top();
@@ -65,7 +65,7 @@ impl Scan<'_> {
     /// cases here.
     #[inline(always)]
     fn doc_turn(&mut self, p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let c = self.ch(p);
         if c == b'<' && p < n {
             // `(</)({{name}})(>)`, then `(<)({{name}})`: a name of ASCII has one end
@@ -147,7 +147,7 @@ impl Scan<'_> {
     /// cases here.
     #[inline(always)]
     fn tag_turn(&mut self, p: usize) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         if p >= n {
             return self.doc_tag(p);
         }
@@ -188,7 +188,7 @@ impl Scan<'_> {
     fn put_doc(&mut self, s: usize, e: usize, leaf: u16) -> usize {
         let k = self.cur() | leaf;
         let at = self.at;
-        let end = e.min(self.n);
+        let end = e.min(self.b.len());
         if s < at || end < s || self.spans.len() + 2 > self.spans.capacity() {
             self.put_kind(s, e, k);
             return e;

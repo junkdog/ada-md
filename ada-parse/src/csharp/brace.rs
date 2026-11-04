@@ -113,20 +113,6 @@ pub(super) fn line(b: &[u8], i: usize, state: &mut State, out: &mut Out) -> bool
     take(i, c, state, out)
 }
 
-/// Whether context `c` gives its level bits of its own (or by rule, [`level_bits`]): where no
-/// level of the stack does, every level's bits are none, so its text is plain and a brace's
-/// kind is its leaf.
-static SETS: [bool; 256] = {
-    let mut t = [false; 256];
-    let mut c = 0;
-    while c < 256 {
-        let (keep, set) = LEVELS[c];
-        t[c] = keep == BY_RULE || set != 0;
-        c += 1;
-    }
-    t
-};
-
 /// [`line`]'s case `c` (`{`, `}`, or 0 for a blank line) at `i`.
 #[inline(never)]
 fn take(i: usize, c: u8, state: &mut State, out: &mut Out) -> bool {
@@ -140,15 +126,16 @@ fn take(i: usize, c: u8, state: &mut State, out: &mut Out) -> bool {
     if (i > 0 || c == 0) && CTX[usize::from(t)] & INERT == 0 {
         return false;
     }
+    // a blank line leaves the state as it is
     if c == 0 && i == 0 {
-        state.arg = 0;
         return true;
     }
-    if st[..d].iter().any(|&x| SETS[usize::from(x)]) {
+    // where no level gives bits of its own (the save's flag, [`BITS`]), every level's bits are
+    // none, so the blanks' text is plain and a brace's kind is its leaf
+    if state.flags() & BITS != 0 {
         return false;
     }
     if c == 0 {
-        state.arg = 0;
         return true;
     }
     let table = if c == b'{' { &OPEN } else { &CLOSE };
@@ -208,6 +195,7 @@ fn take(i: usize, c: u8, state: &mut State, out: &mut Out) -> bool {
     state.levels.copy_from_slice(&st[..HALF]);
     state.withs.copy_from_slice(&st[HALF..]);
     state.depth = d as u8;
-    state.arg = 0;
+    // no level gives bits: each step above checked the top it left
+    state.set_flags(0);
     true
 }

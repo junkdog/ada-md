@@ -16,7 +16,7 @@ impl Scan<'_> {
     /// is when the top isn't code's, the line ends, or the turn at the place is one for
     /// [`Scan::run`] (a comment's start, a character past ASCII, no pattern matching).
     pub(super) fn code(&mut self, mut p: usize) -> usize {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         loop {
             let top = self.top();
             if CTX[usize::from(top)] & INERT == 0 {
@@ -223,7 +223,7 @@ impl Scan<'_> {
     /// to [`Scan::frame`], or a top it doesn't run (`p` itself when it took nothing).
     #[inline(never)]
     pub(super) fn expr(&mut self, mut p: usize) -> usize {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         loop {
             let top = self.top();
             if CTX[usize::from(top)] & EXPR == 0 || self.depth + 2 >= SYNTECT_DEPTH {
@@ -268,7 +268,7 @@ impl Scan<'_> {
     /// alone for a group's and an argument's expression).
     #[inline(always)]
     fn expr_tok(&mut self, top: u8, p: usize) -> Turn {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         let c = b[p];
         if (c < 64 && OWN >> c & 1 != 0) || c == b']' {
             match (top, c) {
@@ -352,7 +352,7 @@ impl Scan<'_> {
     /// [`Scan::expr_name`] with the name's word id looked up ([`Scan::nosemi_name_id`]'s).
     #[inline(always)]
     pub(super) fn expr_name_id(&mut self, p: usize, e: usize, id: u8) -> Option<usize> {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         if id != 0 {
             // `true`, `false`, `null`: no other of the name's patterns comes first
             if words::flags(id) & (words::KWS | words::LINQ | words::LANG) == words::LANG {
@@ -390,7 +390,7 @@ impl Scan<'_> {
     /// `name:`), the push and the expression's turn at the name.
     #[inline(always)]
     fn expr_arg(&mut self, p: usize) -> Turn {
-        let (b, n) = (self.b, self.n);
+        let (b, n) = (self.b, self.b.len());
         match b[p] {
             b',' => Turn::Took(self.put_code(p, p + 1, ARGUMENT_SEP)),
             b')' => Turn::Took(self.close_code(p, GROUP_END)),
@@ -442,7 +442,7 @@ impl Scan<'_> {
         let at = self.at;
         if s < at
             || e < s
-            || e > self.n
+            || e > self.b.len()
             || (s > at && self.text != PLAIN)
             || self.spans.len() == self.spans.capacity()
         {

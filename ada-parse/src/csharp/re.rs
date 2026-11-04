@@ -201,9 +201,9 @@ impl Scan<'_> {
     /// The byte at `i`: the line's, its `\n` at the end, 0 past it.
     #[inline]
     pub(super) fn ch(&self, i: usize) -> u8 {
-        if i < self.n {
+        if i < self.b.len() {
             self.b[i]
-        } else if i == self.n {
+        } else if i == self.b.len() {
             b'\n'
         } else {
             0
@@ -213,13 +213,13 @@ impl Scan<'_> {
     /// Whether `i` is on the line or its `\n`.
     #[inline]
     pub(super) fn on(&self, i: usize) -> bool {
-        i <= self.n
+        i <= self.b.len()
     }
 
     /// The character starting at byte `i` (not past ASCII's start bytes).
     fn char_at(&self, i: usize) -> Option<char> {
         let b = self.b;
-        let e = (i + char_len(b[i])).min(self.n);
+        let e = (i + char_len(b[i])).min(self.b.len());
         std::str::from_utf8(&b[i..e]).ok()?.chars().next()
     }
 
@@ -236,7 +236,7 @@ impl Scan<'_> {
     /// `\w` at the character starting at `i`.
     #[inline]
     pub(super) fn word_at(&self, i: usize) -> bool {
-        if i >= self.n {
+        if i >= self.b.len() {
             return false;
         }
         let c = self.b[i];
@@ -250,7 +250,7 @@ impl Scan<'_> {
     /// `\w` at the character ending at `i`.
     #[inline]
     pub(super) fn word_before(&self, i: usize) -> bool {
-        if i == 0 || i > self.n {
+        if i == 0 || i > self.b.len() {
             return false;
         }
         let c = self.b[i - 1];
@@ -280,7 +280,7 @@ impl Scan<'_> {
         if at == i {
             return end;
         }
-        let b = &self.b[..self.n];
+        let b = &self.b[..self.b.len()];
         let mut e = i;
         while let Some(&c) = b.get(e) {
             if c < 0x80 {
@@ -289,7 +289,7 @@ impl Scan<'_> {
                 }
                 e += 1;
             } else if self.word_at(e) {
-                e += char_len(c).min(self.n - e);
+                e += char_len(c).min(self.b.len() - e);
             } else {
                 break;
             }
@@ -301,7 +301,7 @@ impl Scan<'_> {
     /// The whole run of `\\w` at `i`.
     #[inline]
     pub(super) fn word(&self, i: usize) -> &[u8] {
-        if i >= self.n {
+        if i >= self.b.len() {
             return &[];
         }
         let e = self.word_end(i);
@@ -335,14 +335,14 @@ impl Scan<'_> {
     #[inline]
     pub(super) fn sp(&self, i: usize) -> usize {
         let i = self.sp_line(i);
-        if i == self.n { i + 1 } else { i }
+        if i == self.b.len() { i + 1 } else { i }
     }
 
     /// Past `\s*` at `i` on the line (its `\n` not taken): none or one ASCII blank decided
     /// here, a longer run or a space past ASCII out of line ([`Self::sp_run`]).
     #[inline(always)]
     pub(super) fn sp_line(&self, i: usize) -> usize {
-        let b = &self.b[..self.n];
+        let b = &self.b[..self.b.len()];
         // whether the byte at `i` is an ASCII blank; `None` past ASCII
         let blank = |i: usize| match b.get(i) {
             Some(&c) if c >= 0x80 => None,
@@ -359,7 +359,7 @@ impl Scan<'_> {
     /// [`Self::sp_line`]'s loop.
     #[inline(never)]
     fn sp_run(&self, mut i: usize) -> usize {
-        let b = &self.b[..self.n];
+        let b = &self.b[..self.b.len()];
         while let Some(&c) = b.get(i) {
             if c < 0x80 {
                 if CLASS[usize::from(c)] & SPACE == 0 {
@@ -384,7 +384,7 @@ impl Scan<'_> {
     /// `\S` at `i`.
     #[inline]
     pub(super) fn nonspace(&self, i: usize) -> bool {
-        i < self.n && {
+        i < self.b.len() && {
             let c = self.b[i];
             if c < 0x80 {
                 CLASS[usize::from(c)] & SPACE == 0
@@ -397,7 +397,7 @@ impl Scan<'_> {
     /// `\s` at `i` (the `\n` too).
     #[inline]
     pub(super) fn space(&self, i: usize) -> bool {
-        if i < self.n {
+        if i < self.b.len() {
             let c = self.b[i];
             if c < 0x80 {
                 CLASS[usize::from(c)] & SPACE != 0
@@ -405,13 +405,13 @@ impl Scan<'_> {
                 space_len(&self.b[i..]).is_some()
             }
         } else {
-            i == self.n
+            i == self.b.len()
         }
     }
 
     /// `$` at `i`.
     pub(super) fn eol(&self, i: usize) -> bool {
-        i >= self.n
+        i >= self.b.len()
     }
 
     /// `\\u\h{4}` or `\\U\h{8}` at `i`: where it ends.
@@ -497,7 +497,7 @@ impl Scan<'_> {
         let b = self.b;
         let end = match b.get(i) {
             Some(&c) if CLASS[usize::from(c)] & (WORD | DIGIT) == WORD => {
-                let rest = &b[i + 1..self.n];
+                let rest = &b[i + 1..self.b.len()];
                 let len = rest
                     .iter()
                     .position(|&c| CLASS[usize::from(c)] & WORD == 0)
@@ -624,13 +624,13 @@ impl Scan<'_> {
         let mut q = s;
         while k < ends.len() {
             match self.ch(q) {
-                b'*' | b'?' if q < self.n => q += 1,
-                b'[' if q < self.n => {
+                b'*' | b'?' if q < self.b.len() => q += 1,
+                b'[' if q < self.b.len() => {
                     let mut r = q + 1;
-                    while r < self.n && self.b[r] == b',' {
+                    while r < self.b.len() && self.b[r] == b',' {
                         r += 1;
                     }
-                    if r < self.n && self.b[r] == b']' {
+                    if r < self.b.len() && self.b[r] == b']' {
                         q = r + 1;
                     } else {
                         break;
@@ -654,7 +654,7 @@ impl Scan<'_> {
             self.generic_decl(e, &mut |g| {
                 // another segment first (the `*` is greedy), then this one the last
                 let s = self.sp(g);
-                if self.ch(s) == b'.' && s < self.n {
+                if self.ch(s) == b'.' && s < self.b.len() {
                     let t = self.sp(s + 1);
                     for t2 in (s + 1..=t).rev() {
                         if self.namespaced(t2, f) {
@@ -671,23 +671,23 @@ impl Scan<'_> {
     /// end, the brackets' (`[`, the commas' end, `]`'s end) and the `*`'s place.
     pub(super) fn type_suffix_capture(&self, i: usize) -> Suffix {
         let mut q = i;
-        let question = (q < self.n && self.b[q] == b'?').then(|| {
+        let question = (q < self.b.len() && self.b[q] == b'?').then(|| {
             q += 1;
             q
         });
         let mut brackets = None;
-        if q < self.n && self.b[q] == b'[' {
+        if q < self.b.len() && self.b[q] == b'[' {
             let mut r = q + 1;
-            while r < self.n && self.b[r] == b',' {
+            while r < self.b.len() && self.b[r] == b',' {
                 r += 1;
             }
-            if r < self.n && self.b[r] == b']' {
+            if r < self.b.len() && self.b[r] == b']' {
                 brackets = Some((q, r));
                 q = r + 1;
             }
         }
         let s = self.sp(q);
-        let star = (s < self.n && self.b[s] == b'*').then_some(s);
+        let star = (s < self.b.len() && self.b[s] == b'*').then_some(s);
         let end = star.map_or(q, |s| s + 1);
         Suffix {
             question,
@@ -709,14 +709,14 @@ impl Scan<'_> {
             b'u' | b'U' => self.unicode_escape(i),
             b'x' => {
                 let mut e = i + 2;
-                while e < self.n && e < i + 6 && is_hex(b[e]) {
+                while e < self.b.len() && e < i + 6 && is_hex(b[e]) {
                     e += 1;
                 }
                 (e > i + 2).then_some(e)
             }
             b'0'..=b'9' => {
                 let mut e = i + 1;
-                while e < self.n && e < i + 4 && b[e].is_ascii_digit() {
+                while e < self.b.len() && e < i + 4 && b[e].is_ascii_digit() {
                     e += 1;
                 }
                 Some(e)
@@ -729,7 +729,7 @@ impl Scan<'_> {
     pub(super) fn escaped_char_then_quote(&self, i: usize) -> Option<usize> {
         let b = self.b;
         let e = self.escaped_char(i)?;
-        if self.ch(e) == b'\'' && e < self.n {
+        if self.ch(e) == b'\'' && e < self.b.len() {
             return Some(e);
         }
         // `\x` and `\digits` take fewer
@@ -740,7 +740,7 @@ impl Scan<'_> {
         };
         (min..e)
             .rev()
-            .find(|&e2| self.ch(e2) == b'\'' && e2 < self.n)
+            .find(|&e2| self.ch(e2) == b'\'' && e2 < self.b.len())
     }
 
     /// `{{dec_digits}}`, `[\d_]*\d`, at `i`: its ends, longest first.
@@ -748,7 +748,7 @@ impl Scan<'_> {
         // the run of digits and `_`, then back from its end to each digit's end
         let mut e = i;
         loop {
-            if e < self.n && self.b[e] == b'_' {
+            if e < self.b.len() && self.b[e] == b'_' {
                 e += 1;
             } else if let Some(d) = self.digit(e) {
                 e = d;
