@@ -22,7 +22,7 @@ pub(super) struct Entry {
 }
 
 #[rustfmt::skip]
-pub(super) static ENTRIES: &[Entry] = &[
+pub(super) const ENTRIES: &[Entry] = &[
     Entry { word: b"a", exact: TAG, folded: 0, rank: u16::MAX, rank_folded: u16::MAX, prop_rank: u16::MAX, partial_rank: u16::MAX },
     Entry { word: b"abbr", exact: TAG, folded: 0, rank: u16::MAX, rank_folded: u16::MAX, prop_rank: u16::MAX, partial_rank: u16::MAX },
     Entry { word: b"abs", exact: SASS_FN, folded: 0, rank: u16::MAX, rank_folded: u16::MAX, prop_rank: u16::MAX, partial_rank: u16::MAX },

@@ -4,7 +4,7 @@
 //! byte at a time on the table and past ASCII by characters in a cold path ([`ident_end`]),
 //! with the classes its bytes had ([`Ident`]), so that a classifier tells a constant's
 //! all-capitals from a type's capital without reading the name again; and a keyword is looked
-//! up once in a table hashed at compile time ([`Words`]). The languages differ in parameters,
+//! up once in a table hashed at compile time ([`crate::words::Words`]). The languages differ in parameters,
 //! not code: which characters past ASCII a name takes, whether `$` is one of its bytes.
 pub use crate::prim::char_len;
 
@@ -127,99 +127,9 @@ fn ident_wide<const DOLLAR_IN: bool>(
     Ident { end: i, bits }
 }
 
-/// A language's keywords, hashed at compile time: a word's id is its index in the list plus
-/// one, 0 for none. A first-byte and length filter turns away most names before the hash (the
-/// first and last four bytes and the length, multiplied), and a hit is checked by
-/// [`crate::same`]. `SLOTS` is a power of two, at least twice the words.
-pub struct Words<const SLOTS: usize> {
-    words: &'static [&'static [u8]],
-    table: [u8; SLOTS],
-    first_len: [u32; 128],
-}
-
-impl<const SLOTS: usize> Words<SLOTS> {
-    pub const fn new(words: &'static [&'static [u8]]) -> Self {
-        assert!(SLOTS.is_power_of_two() && words.len() * 2 <= SLOTS && words.len() < 255);
-        let mut table = [0u8; SLOTS];
-        let mut first_len = [0u32; 128];
-        let mut i = 0;
-        while i < words.len() {
-            let w = words[i];
-            assert!(!w.is_empty() && w.len() < 32 && w[0] < 0x80);
-            first_len[w[0] as usize] |= 1 << w.len();
-            let mut h = hash::<SLOTS>(w);
-            while table[h] != 0 {
-                h = (h + 1) & (SLOTS - 1);
-            }
-            table[h] = i as u8 + 1;
-            i += 1;
-        }
-        Words {
-            words,
-            table,
-            first_len,
-        }
-    }
-
-    /// Word `w`'s id, 0 for none.
-    #[inline(always)]
-    pub fn get(&self, w: &[u8]) -> u8 {
-        let maybe = match w.first() {
-            Some(&c) if c < 0x80 && w.len() < 32 => {
-                self.first_len[usize::from(c)] & (1 << w.len()) != 0
-            }
-            _ => false,
-        };
-        if !maybe {
-            return 0;
-        }
-        let mut h = hash::<SLOTS>(w);
-        loop {
-            let i = self.table[h];
-            if i == 0 || crate::same(self.words[usize::from(i - 1)], w) {
-                return i;
-            }
-            h = (h + 1) & (SLOTS - 1);
-        }
-    }
-}
-
-/// A hash of fixed cost: the first and last four bytes (or the bytes of a shorter word) and the
-/// length, multiplied, the top bits a slot.
-const fn hash<const SLOTS: usize>(w: &[u8]) -> usize {
-    let n = w.len();
-    let x = if n >= 4 {
-        let a = u32::from_le_bytes([w[0], w[1], w[2], w[3]]) as u64;
-        let z = u32::from_le_bytes([w[n - 4], w[n - 3], w[n - 2], w[n - 1]]) as u64;
-        a | z << 32
-    } else {
-        let mut x = 0u64;
-        let mut i = 0;
-        while i < n {
-            x |= (w[i] as u64) << (8 * i);
-            i += 1;
-        }
-        x
-    };
-    ((x ^ n as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - SLOTS.trailing_zeros())) as usize
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    static W: Words<16> = Words::new(&[b"if", b"else", b"while", b"instanceof"]);
-
-    #[test]
-    fn the_table_finds_its_words() {
-        assert_eq!(W.get(b"if"), 1);
-        assert_eq!(W.get(b"else"), 2);
-        assert_eq!(W.get(b"while"), 3);
-        assert_eq!(W.get(b"instanceof"), 4);
-        for w in [&b"i"[..], b"iff", b"els", b"While", b"", b"\xc3\xa9"] {
-            assert_eq!(W.get(w), 0);
-        }
-    }
 
     #[test]
     fn names_are_read_with_their_classes() {

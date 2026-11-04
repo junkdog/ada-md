@@ -31,6 +31,7 @@ use crate::prim::{
     WORD, blank_len as space_len, char_len, digit, is_nd, is_word_starting as is_word, wide_char,
     word_end,
 };
+use crate::words::{Words, text_len};
 use crate::{Out, State};
 
 // The contexts, by what they read; the first ten include `main`.
@@ -723,55 +724,34 @@ const ENTRIES: &[(&[u8], u32)] = &[
     (b"f", OP_FORMAT),
 ];
 
-const SIZE: usize = 1024;
-
-/// FNV-1a over the word's bytes, ASCII case folded.
-const fn hash(w: &[u8]) -> usize {
-    let mut h: u32 = 0x811c_9dc5;
+/// The table's list: [`ENTRIES`]' words.
+const LIST: [&[u8]; ENTRIES.len()] = {
+    let mut l: [&[u8]; ENTRIES.len()] = [b""; ENTRIES.len()];
     let mut i = 0;
-    while i < w.len() {
-        h ^= w[i].to_ascii_lowercase() as u32;
-        h = h.wrapping_mul(0x0100_0193);
+    while i < l.len() {
+        l[i] = ENTRIES[i].0;
         i += 1;
     }
-    (h as usize) & (SIZE - 1)
-}
+    l
+};
 
-/// The table: each slot an entry's index plus one, 0 for none; open addressing.
-static SLOTS: [u16; SIZE] = {
-    let mut t = [0u16; SIZE];
+/// [`ENTRIES`]' words, ASCII case ignored: a word's id is its index plus one.
+static TABLE: Words<1024, { ENTRIES.len() }, { text_len(&LIST) }, true> = Words::new(&LIST);
+
+/// Each word's classes by its id, none at 0.
+static INFO: [u32; ENTRIES.len() + 1] = {
+    let mut t = [0; ENTRIES.len() + 1];
     let mut i = 0;
     while i < ENTRIES.len() {
-        let mut h = hash(ENTRIES[i].0);
-        while t[h] != 0 {
-            h = (h + 1) & (SIZE - 1);
-        }
-        t[h] = i as u16 + 1;
+        t[i + 1] = ENTRIES[i].1;
         i += 1;
     }
     t
 };
 
-/// The longest word in the table: longer ones are none of them.
-const LONGEST: usize = 31;
-
 /// The classes of word `w`, ASCII case ignored; 0 for none.
 fn lookup(w: &[u8]) -> u32 {
-    if w.len() > LONGEST {
-        return 0;
-    }
-    let mut h = hash(w);
-    loop {
-        let i = SLOTS[h];
-        if i == 0 {
-            return 0;
-        }
-        let (e, k) = ENTRIES[usize::from(i - 1)];
-        if e.eq_ignore_ascii_case(w) {
-            return k;
-        }
-        h = (h + 1) & (SIZE - 1);
-    }
+    TABLE.value(w, &INFO)
 }
 
 /// What a byte is to the contexts that include `main`.

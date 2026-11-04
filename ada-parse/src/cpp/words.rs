@@ -6,6 +6,7 @@ use super::{
     MAC_TYPE, MEMBER_VAR, MICROSOFT_TYPE, PTHREAD_TYPE, RETURN_KW, STATIC_MAC, STDINT_TYPE,
     SUPPORT_CONSTANT, SYS_TYPE, THROW_KW, VAR_LANGUAGE, WINDOWS_TYPE,
 };
+use crate::words::{Words, text_len};
 
 /// What a whole word is to C++'s expressions, the first of their patterns that takes it (a
 /// pattern that also needs what follows the word says so).
@@ -51,7 +52,7 @@ pub enum Kw {
 }
 
 /// The words [`lookup`] classes by themselves, whatever their shape.
-static KEYWORDS: [(&[u8], Kw); 98] = {
+const KEYWORDS: [(&[u8], Kw); 98] = {
     use Kw::*;
     [
         (b"_Pragma", Control),
@@ -160,7 +161,7 @@ static KEYWORDS: [(&[u8], Kw); 98] = {
 pub fn lookup(w: &[u8]) -> Kw {
     let i = find_word(w);
     match i {
-        Some(i) if i < KEYWORDS.len() => return KEYWORDS[i].1,
+        Some(i) if i < KEYWORDS.len() => return KW[i],
         _ => {}
     }
     if let Some(v) = value_shape(w) {
@@ -276,96 +277,53 @@ pub fn is_c_control(w: &[u8]) -> bool {
     )
 }
 
-/// Which lengths (a bit each, up to 31) the support words starting with a byte have: most
-/// Which lengths (a bit each, up to 31) the words of [`TABLE`] starting with a byte have: most
-/// names are none of them, and miss here before the hash.
-static FIRST_LEN: [u32; 128] = {
-    let mut t = [0u32; 128];
-    let mut i = 0;
-    while i < WORDS {
-        let w = word(i);
-        t[w[0] as usize] |= 1 << w.len();
-        i += 1;
-    }
-    t
-};
-
-/// Whether `w` can be a word of [`TABLE`], by its first byte and length.
-fn maybe_word(w: &[u8]) -> bool {
-    match w.first() {
-        Some(&c) if c < 0x80 && w.len() < 32 => FIRST_LEN[usize::from(c)] & (1 << w.len()) != 0,
-        _ => false,
-    }
-}
-
 /// How many words [`TABLE`] holds: the keywords, then the support words.
 const WORDS: usize = KEYWORDS.len() + SUPPORT.len();
 
-/// Word `i` of [`TABLE`]'s numbering.
-const fn word(i: usize) -> &'static [u8] {
-    if i < KEYWORDS.len() {
-        KEYWORDS[i].0
-    } else {
-        SUPPORT[i - KEYWORDS.len()].0
-    }
-}
-
-/// A hash of fixed cost: the first and last four bytes (or the bytes of a shorter word) and
-/// the length, multiplied, the top bits a slot.
-const fn hash(w: &[u8]) -> usize {
-    let n = w.len();
-    let x = if n >= 4 {
-        let a = u32::from_le_bytes([w[0], w[1], w[2], w[3]]) as u64;
-        let z = u32::from_le_bytes([w[n - 4], w[n - 3], w[n - 2], w[n - 1]]) as u64;
-        a | z << 32
-    } else {
-        let mut x = 0u64;
-        let mut i = 0;
-        while i < n {
-            x |= (w[i] as u64) << (8 * i);
-            i += 1;
-        }
-        x
-    };
-    ((x ^ n as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - SLOT_BITS)) as usize
-}
-
-const SLOT_BITS: u32 = 11;
-const SLOTS: usize = 1 << SLOT_BITS;
-
-/// The keywords and [`SUPPORT`]'s words by their hash, open addressing: a word's number plus 1
-/// a slot, 0 for none.
-static TABLE: [u16; SLOTS] = {
-    let mut t = [0u16; SLOTS];
+/// The words of [`KEYWORDS`] and [`SUPPORT`], in that order: [`TABLE`]'s list.
+const LIST: [&[u8]; WORDS] = {
+    let mut l: [&[u8]; WORDS] = [b""; WORDS];
     let mut i = 0;
     while i < WORDS {
-        let mut k = hash(word(i));
-        while t[k] != 0 {
-            k = (k + 1) % SLOTS;
-        }
-        t[k] = i as u16 + 1;
+        l[i] = if i < KEYWORDS.len() {
+            KEYWORDS[i].0
+        } else {
+            SUPPORT[i - KEYWORDS.len()].0
+        };
         i += 1;
     }
-    t
+    l
 };
 
-/// `w`'s number in [`TABLE`].
+/// The keywords and [`SUPPORT`]'s words: a word's id is its number in [`LIST`] plus one.
+static TABLE: Words<2048, WORDS, { text_len(&LIST) }> = Words::new(&LIST);
+
+/// [`KEYWORDS`]' classes, by number.
+static KW: [Kw; KEYWORDS.len()] = {
+    let mut k = [Kw::Other; KEYWORDS.len()];
+    let mut i = 0;
+    while i < k.len() {
+        k[i] = KEYWORDS[i].1;
+        i += 1;
+    }
+    k
+};
+
+/// [`SUPPORT`]'s lists, by number.
+static LISTS: [Support; SUPPORT.len()] = {
+    let mut k = [Support::C99; SUPPORT.len()];
+    let mut i = 0;
+    while i < k.len() {
+        k[i] = SUPPORT[i].1;
+        i += 1;
+    }
+    k
+};
+
+/// `w`'s number in [`LIST`].
 #[inline]
 fn find_word(w: &[u8]) -> Option<usize> {
-    if !maybe_word(w) {
-        return None;
-    }
-    let mut k = hash(w);
-    loop {
-        let i = usize::from(TABLE[k]);
-        if i == 0 {
-            return None;
-        }
-        if word(i - 1) == w {
-            return Some(i - 1);
-        }
-        k = (k + 1) % SLOTS;
-    }
+    usize::from(TABLE.get(w)).checked_sub(1)
 }
 
 /// Where `w` is in [`SUPPORT`].
@@ -376,7 +334,7 @@ fn find(w: &[u8]) -> Option<usize> {
 /// The leaf, with [`C`], of [`SUPPORT`]'s word `i` (none for C99's functions).
 fn support_leaf(i: usize) -> Option<u16> {
     Some(
-        match SUPPORT[i].1 {
+        match LISTS[i] {
             Support::C99 => return None,
             Support::Sys => SYS_TYPE,
             Support::Pthread => PTHREAD_TYPE,
@@ -395,7 +353,7 @@ pub fn support(w: &[u8]) -> Option<u16> {
 
 /// Whether `w` is one of C99's functions (`support.function.C99.c`).
 pub fn is_c99(w: &[u8]) -> bool {
-    find(w).is_some_and(|i| SUPPORT[i].1 == Support::C99)
+    find(w).is_some_and(|i| LISTS[i] == Support::C99)
 }
 
 /// Whether the word at `p` of `b` is one of C99's functions: `\b(…)\b`.
@@ -420,7 +378,8 @@ enum Support {
 }
 
 /// C's support words: the C99 functions and the types, by list.
-static SUPPORT: [(&[u8], Support); 794] = [
+#[allow(clippy::large_const_arrays)] // read only where the table is built: not in the binary
+const SUPPORT: [(&[u8], Support); 794] = [
     (b"APIENTRY", Support::Windows),
     (b"ATOM", Support::Windows),
     (b"AbsoluteTime", Support::Mac),

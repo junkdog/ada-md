@@ -18,6 +18,7 @@
 
 use super::*;
 use crate::clike::{self, DIGIT, DOLLAR, HIGH, Ident, LOWER, UPPER};
+use crate::words::{Words, text_len};
 use clike::CLASS as BYTES;
 
 // What a keyword is, by group.
@@ -113,7 +114,7 @@ const W_THROWS: u8 = 54;
 const W_UUID: u8 = 57;
 const W_URI: u8 = 59;
 
-static WORD_LIST: [&[u8]; N] = {
+const WORD_LIST: [&[u8]; N] = {
     let mut w: [&[u8]; N] = [b""; N];
     let mut i = 0;
     while i < N {
@@ -122,7 +123,7 @@ static WORD_LIST: [&[u8]; N] = {
     }
     w
 };
-static WORDS: clike::Words<128> = clike::Words::new(&WORD_LIST);
+static WORDS: Words<128, N, { text_len(&WORD_LIST) }> = Words::new(&WORD_LIST);
 
 /// A name read at the scan's place: where it starts and ends, its bytes' classes, its keyword.
 #[derive(Clone, Copy)]
@@ -193,7 +194,7 @@ impl<'b> Scan<'b, '_> {
         let Ident { end, bits } = clike::ident_end::<true>(b, next(b, p), wide_ident);
         let bits = bits | BYTES[usize::from(b[p])];
         let id = if b[p].is_ascii_lowercase() || b[p] == b'U' {
-            WORDS.get(&b[p..end])
+            WORDS.get(&b[p..end]) as u8
         } else {
             0
         };
@@ -1579,7 +1580,7 @@ mod tests {
         ];
         for (id, w) in ids {
             assert_eq!(KEYWORDS[usize::from(id) - 1].0, w);
-            assert_eq!(WORDS.get(w), id);
+            assert_eq!(WORDS.get(w), u16::from(id));
         }
         for (i, (w, _, _)) in KEYWORDS.iter().enumerate() {
             assert_eq!(

@@ -20,6 +20,7 @@
 //! followed).
 
 use crate::prim::{WORD, char_len, digit, is_word_starting as is_word, space_len, word_end};
+use crate::words::{Words, text_len};
 use crate::{Out, State, is_space, skip_spaces, trim_end};
 
 // The contexts above `main`, by what they read; the line comments end with their line.
@@ -685,55 +686,34 @@ const ENTRIES: &[(&[u8], u8)] = &[
     (b"upper", W_STRING_FUNCTION),
 ];
 
-const SIZE: usize = 512;
-
-/// FNV-1a over the word's bytes, ASCII case folded.
-const fn hash(w: &[u8]) -> usize {
-    let mut h: u32 = 0x811c_9dc5;
+/// The table's list: [`ENTRIES`]' words.
+const LIST: [&[u8]; ENTRIES.len()] = {
+    let mut l: [&[u8]; ENTRIES.len()] = [b""; ENTRIES.len()];
     let mut i = 0;
-    while i < w.len() {
-        h ^= w[i].to_ascii_lowercase() as u32;
-        h = h.wrapping_mul(0x0100_0193);
+    while i < l.len() {
+        l[i] = ENTRIES[i].0;
         i += 1;
     }
-    (h as usize) & (SIZE - 1)
-}
+    l
+};
 
-/// The table: each slot an entry's index plus one, 0 for none; open addressing.
-static SLOTS: [u8; SIZE] = {
-    let mut t = [0u8; SIZE];
+/// [`ENTRIES`]' words, ASCII case ignored: a word's id is its index plus one.
+static WORDS: Words<512, { ENTRIES.len() }, { text_len(&LIST) }, true> = Words::new(&LIST);
+
+/// Each word's pattern word by its id, none at 0.
+static INFO: [u8; ENTRIES.len() + 1] = {
+    let mut t = [W_NONE; ENTRIES.len() + 1];
     let mut i = 0;
     while i < ENTRIES.len() {
-        let mut h = hash(ENTRIES[i].0);
-        while t[h] != 0 {
-            h = (h + 1) & (SIZE - 1);
-        }
-        t[h] = i as u8 + 1;
+        t[i + 1] = ENTRIES[i].1;
         i += 1;
     }
     t
 };
 
-/// The longest word in the table: longer ones are none of them.
-const LONGEST: usize = 17;
-
 /// The pattern word `w` starts, ASCII case ignored.
 fn lookup(w: &[u8]) -> u8 {
-    if w.len() > LONGEST {
-        return W_NONE;
-    }
-    let mut h = hash(w);
-    loop {
-        let i = SLOTS[h];
-        if i == 0 {
-            return W_NONE;
-        }
-        let (e, k) = ENTRIES[usize::from(i - 1)];
-        if e.eq_ignore_ascii_case(w) {
-            return k;
-        }
-        h = (h + 1) & (SIZE - 1);
-    }
+    WORDS.value(w, &INFO)
 }
 
 /// The objects `drop` and `alter` take, in their order: no `\b` after them.

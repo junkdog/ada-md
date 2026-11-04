@@ -51,6 +51,7 @@ mod sql;
 mod toml;
 mod toml_scan;
 mod typescript;
+mod words;
 // the matchers and context ids its scanner shares, from the port it replaced
 mod xml;
 mod xml_scan;

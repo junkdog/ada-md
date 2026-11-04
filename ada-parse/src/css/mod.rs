@@ -28,6 +28,7 @@ pub(crate) mod scss;
 mod words;
 
 use crate::matcher::KEPT as HALF;
+use crate::words::{Words, text_len};
 use crate::{Out, State};
 use words::{ENTRIES, LONGEST};
 
@@ -1066,8 +1067,6 @@ const SASS_FN: u16 = 1 << 10;
 /// CSS's lists: the bits below SCSS's.
 const CSS_LISTS: u16 = SCSS_PROP - 1;
 
-const SIZE: usize = 4096;
-
 /// `none`'s rank in `property-value-constants`, to tell it from the other words.
 const NONE_RANK: u16 = {
     let mut i = 0;
@@ -1085,40 +1084,57 @@ const NONE_RANK: u16 = {
     }
 };
 
-/// FNV-1a's start.
-const FNV: u32 = 0x811c_9dc5;
-
-/// FNV-1a's step over byte `c`, ASCII case folded: a word's hash grows a byte at a time, so a
-/// word's prefixes are hashed on the way to it.
-const fn fnv(h: u32, c: u8) -> u32 {
-    (h ^ c.to_ascii_lowercase() as u32).wrapping_mul(0x0100_0193)
-}
-
-/// FNV-1a over the word's bytes, ASCII case folded.
-const fn hash(w: &[u8]) -> usize {
-    let mut h = FNV;
+/// The table's list: [`ENTRIES`]' words, as spelled for the case-sensitive lists.
+#[allow(clippy::large_const_arrays)] // read only where the table is built: not in the binary
+const LIST: [&[u8]; ENTRIES.len()] = {
+    let mut l: [&[u8]; ENTRIES.len()] = [b""; ENTRIES.len()];
     let mut i = 0;
-    while i < w.len() {
-        h = fnv(h, w[i]);
+    while i < l.len() {
+        l[i] = ENTRIES[i].word;
         i += 1;
     }
-    (h as usize) & (SIZE - 1)
-}
+    l
+};
 
-/// The table: each slot an entry's index plus one, 0 for none; open addressing.
-static SLOTS: [u16; SIZE] = {
-    let mut t = [0u16; SIZE];
+/// [`ENTRIES`]' words, ASCII case ignored: a word's id is its index plus one.
+static TABLE: Words<4096, { ENTRIES.len() }, { text_len(&LIST) }, true> = Words::new(&LIST);
+
+/// [`ENTRIES`] without their words, by index.
+static LISTS: [Lists; ENTRIES.len()] = {
+    let mut t = [Lists {
+        exact: 0,
+        folded: 0,
+        rank: 0,
+        rank_folded: 0,
+        prop_rank: 0,
+        partial_rank: 0,
+    }; ENTRIES.len()];
     let mut i = 0;
-    while i < ENTRIES.len() {
-        let mut h = hash(ENTRIES[i].word);
-        while t[h] != 0 {
-            h = (h + 1) & (SIZE - 1);
-        }
-        t[h] = i as u16 + 1;
+    while i < t.len() {
+        let e = &ENTRIES[i];
+        t[i] = Lists {
+            exact: e.exact,
+            folded: e.folded,
+            rank: e.rank,
+            rank_folded: e.rank_folded,
+            prop_rank: e.prop_rank,
+            partial_rank: e.partial_rank,
+        };
         i += 1;
     }
     t
 };
+
+/// An entry's lists and ranks ([`words::Entry`]'s, its word in [`TABLE`]).
+#[derive(Clone, Copy)]
+struct Lists {
+    exact: u16,
+    folded: u16,
+    rank: u16,
+    rank_folded: u16,
+    prop_rank: u16,
+    partial_rank: u16,
+}
 
 /// What the table says of a word: the lists it is in, and its ranks.
 #[derive(Clone, Copy)]
@@ -1144,40 +1160,27 @@ const NO_WORD: Word = Word {
 
 /// Word `w`: its case-sensitive lists if spelled as listed, its case-insensitive ones if not.
 fn lookup(w: &[u8]) -> Word {
-    lookup_hashed(w, hash(w))
-}
-
-/// [`lookup`] with the word's hash, [`hash`]'s, already taken.
-fn lookup_hashed(w: &[u8], mut h: usize) -> Word {
-    if w.is_empty() || w.len() > LONGEST {
+    let (id, spelled) = TABLE.get_spelled(w);
+    if id == 0 {
         return NO_WORD;
     }
-    loop {
-        let i = SLOTS[h];
-        if i == 0 {
-            return NO_WORD;
+    let e = &LISTS[usize::from(id - 1)];
+    if spelled {
+        Word {
+            lists: e.exact | e.folded,
+            rank: e.rank.min(e.rank_folded),
+            counter_rank: e.rank_folded,
+            prop_rank: e.prop_rank,
+            partial_rank: e.partial_rank,
         }
-        let e = &ENTRIES[usize::from(i - 1)];
-        if e.word.eq_ignore_ascii_case(w) {
-            return if e.word == w {
-                Word {
-                    lists: e.exact | e.folded,
-                    rank: e.rank.min(e.rank_folded),
-                    counter_rank: e.rank_folded,
-                    prop_rank: e.prop_rank,
-                    partial_rank: e.partial_rank,
-                }
-            } else {
-                Word {
-                    lists: e.folded,
-                    rank: e.rank_folded,
-                    counter_rank: e.rank_folded,
-                    prop_rank: u16::MAX,
-                    partial_rank: u16::MAX,
-                }
-            };
+    } else {
+        Word {
+            lists: e.folded,
+            rank: e.rank_folded,
+            counter_rank: e.rank_folded,
+            prop_rank: u16::MAX,
+            partial_rank: u16::MAX,
         }
-        h = (h + 1) & (SIZE - 1);
     }
 }
 
@@ -2240,20 +2243,17 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
     /// with its end: where a `\b` follows, before each `-` and at the run's end.
     fn word_ends(&self, p: usize, end: usize, mut each: impl FnMut(usize, Word)) {
         let b = self.b;
-        let mut h = fnv(FNV, b[p]);
         let mut k = p + 1;
         // no word of the table is longer
         let lim = end.min(p + LONGEST + 1);
         while k < lim {
-            let c = b[k];
-            if c == b'-' && b[k - 1] != b'-' {
-                each(k, lookup_hashed(&b[p..k], (h as usize) & (SIZE - 1)));
+            if b[k] == b'-' && b[k - 1] != b'-' {
+                each(k, lookup(&b[p..k]));
             }
-            h = fnv(h, c);
             k += 1;
         }
         if end > p && end - p <= LONGEST && b[end - 1] != b'-' && !self.word_at(end) {
-            each(end, lookup_hashed(&b[p..end], (h as usize) & (SIZE - 1)));
+            each(end, lookup(&b[p..end]));
         }
     }
 

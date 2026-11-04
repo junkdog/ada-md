@@ -1,10 +1,10 @@
-//! The words C#'s patterns test, in one table on the C family's core ([`crate::clike::Words`],
-//! X-015): a name is looked up once, and its groups ([`flags`]) answer what the grammar asks
+//! The words C#'s patterns test, in one table on the C family's core (X-015, on
+//! [`crate::words::Words`] since X-017): a name is looked up once, and its groups ([`flags`]) answer what the grammar asks
 //! with a list each (`{{reserved}}`, `{{base_type}}`, the LINQ words, `keywords`' words,
 //! `line_of_code`'s statements, `method_declaration`'s modifiers). Every word is ASCII
 //! lowercase, so a name that doesn't start with a lowercase letter isn't looked up.
 
-use crate::clike;
+use crate::words::{Words, text_len};
 
 /// `{{reserved}}`.
 pub(super) const RES: u16 = 1;
@@ -29,7 +29,7 @@ macro_rules! words {
         #[repr(u8)]
         enum W { _None, $($id,)* Count }
         $(#[allow(dead_code)] pub(super) const $id: u8 = W::$id as u8;)*
-        static LIST: [&[u8]; W::Count as usize - 1] = [$($w,)*];
+        const LIST: [&[u8]; W::Count as usize - 1] = [$($w,)*];
         static FLAGS: [u16; W::Count as usize] = [0, $($f,)*];
     };
 }
@@ -141,12 +141,12 @@ words! {
     W_WHEN = b"when", 0;
 }
 
-static TABLE: clike::Words<256> = clike::Words::new(&LIST);
+static TABLE: Words<256, { LIST.len() }, { text_len(&LIST) }> = Words::new(&LIST);
 
 /// Word `w`'s id, 0 for none.
 #[inline(always)]
 pub(super) fn get(w: &[u8]) -> u8 {
-    TABLE.get(w)
+    TABLE.get(w) as u8
 }
 
 /// The groups of the word with id `id` (0 for none: no group).

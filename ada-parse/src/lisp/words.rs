@@ -5,7 +5,9 @@
 //!
 //! The lists are bat's patterns expanded (`bench/b2/root/build/lisp-scan/words.py` over the
 //! probe's dump of the grammar); only the table is in the binary: the lists are consts, read
-//! where the table is built.
+//! where the table is built (a [`crate::words::Words`]).
+
+use crate::words::{Words, text_len};
 
 /// What a word is at a list's head (`paren-begin`), in the grammar's order: the first list it
 /// is in. 0 for none.
@@ -522,11 +524,9 @@ const C_W_BUILTIN: &str = "agent alter apply assoc assoc-in atom boolean boolean
 /// alternatives.
 const W_DEFUN: &str = "defgeneric define-command define-command-global define-parenscript";
 
-/// The longest word in the lists: a longer token is none of them.
-pub(super) const LONGEST: usize = 38;
-
 /// The lists' text, one after the other, each word followed by a space.
-static TEXT: [u8; TEXT_LEN] = {
+#[allow(clippy::large_const_arrays)] // read only where the table is built: not in the binary
+const TEXT: [u8; TEXT_LEN] = {
     let mut t = [0u8; TEXT_LEN];
     let mut at = 0;
     let mut l = 0;
@@ -555,112 +555,94 @@ const TEXT_LEN: usize = {
     n
 };
 
-const SIZE: usize = 4096;
-
-/// FNV-1a over the word's bytes, ASCII case folded.
-const fn hash(w: &[u8], from: usize, to: usize) -> usize {
-    let mut h: u32 = 0x811c_9dc5;
-    let mut i = from;
-    while i < to {
-        h ^= w[i].to_ascii_lowercase() as u32;
-        h = h.wrapping_mul(0x0100_0193);
+/// How many words the lists hold, a word in two lists counted twice.
+const LISTED: usize = {
+    let mut n = 0;
+    let mut i = 0;
+    while i < TEXT_LEN {
+        // a word ends where a space follows a byte that isn't one
+        n += (TEXT[i] == b' ' && i > 0 && TEXT[i - 1] != b' ') as usize;
         i += 1;
     }
-    (h as usize) & (SIZE - 1)
-}
+    n
+};
 
-/// The table as it is built, open addressed: each slot a word's place in [`TEXT`]
-/// (`offset << 8 | len`, 0 for none) in its top 32 bits and what the word is in the low 32.
-/// Only [`ENTRIES`] and [`SLOTS`], its compact form, are in the binary.
-const fn table() -> [u64; SIZE] {
-    let mut t = [0u64; SIZE];
-    let mut at = 0;
-    let mut l = 0;
+/// Every listed word, in the lists' order, with its list's info.
+#[allow(clippy::large_const_arrays)] // read only where the table is built: not in the binary
+const ALL: ([&[u8]; LISTED], [u32; LISTED]) = {
+    let text: &[u8] = &TEXT;
+    let mut words: [&[u8]; LISTED] = [b""; LISTED];
+    let mut info = [0u32; LISTED];
+    let (mut at, mut l, mut n) = (0, 0, 0);
     while l < LISTS.len() {
         let end = at + LISTS[l].0.len();
-        let info = LISTS[l].1;
         while at < end {
             let mut e = at;
             while e < end && TEXT[e] != b' ' {
                 e += 1;
             }
             if e > at {
-                let mut h = hash(&TEXT, at, e);
-                loop {
-                    let slot = t[h];
-                    if slot == 0 {
-                        t[h] = ((at as u64) << 40) | (((e - at) as u64) << 32) | info as u64;
-                        break;
-                    }
-                    let (o, n) = ((slot >> 40) as usize, ((slot >> 32) & 0xff) as usize);
-                    if n == e - at && same(&TEXT, o, at, n) {
-                        t[h] = slot | merge(slot as u32, info) as u64;
-                        break;
-                    }
-                    h = (h + 1) & (SIZE - 1);
-                }
+                words[n] = text.split_at(at).1.split_at(e - at).0;
+                info[n] = LISTS[l].1;
+                n += 1;
             }
             at = e + 1;
         }
         at = end + 1;
         l += 1;
     }
-    t
-}
+    (words, info)
+};
 
-/// How many words [`table`] holds.
+/// The listed words, each found at its first listing: built only to merge a word's lists.
+#[allow(clippy::large_const_arrays)] // read only where the table is built: not in the binary
+const ALL_TABLE: Words<8192, LISTED, { text_len(&ALL.0) }, true> = Words::new(&ALL.0);
+
+/// How many different words the lists hold.
 const WORDS: usize = {
-    let table = table();
     let mut n = 0;
-    let mut h = 0;
-    while h < SIZE {
-        n += (table[h] != 0) as usize;
-        h += 1;
+    let mut i = 0;
+    while i < LISTED {
+        n += (ALL_TABLE.find(ALL.0[i]) as usize == i + 1) as usize;
+        i += 1;
     }
     n
 };
 
-/// [`table`]'s words, in its order: 8 bytes a word, where the table's empty slots took 8 too.
-static ENTRIES: [u64; WORDS] = {
-    let table = table();
-    let mut e = [0u64; WORDS];
-    let (mut h, mut i) = (0, 0);
-    while h < SIZE {
-        if table[h] != 0 {
-            e[i] = table[h];
-            i += 1;
+/// Each word once, at its first listing, and what it is: every list's fields merged, a
+/// field the first list's that sets it.
+#[allow(clippy::large_const_arrays)] // read only where the table is built: not in the binary
+const MERGED: ([&[u8]; WORDS], [u32; WORDS + 1]) = {
+    let mut words: [&[u8]; WORDS] = [b""; WORDS];
+    let mut info = [0u32; WORDS + 1];
+    // a listing's word's number among the different words, by the listing's index
+    let mut number = [0u16; LISTED];
+    let (mut i, mut n) = (0, 0);
+    while i < LISTED {
+        let first = ALL_TABLE.find(ALL.0[i]) as usize - 1;
+        if first == i {
+            words[n] = ALL.0[i];
+            number[i] = n as u16;
+            n += 1;
         }
-        h += 1;
-    }
-    e
-};
-
-/// The open-addressed slots: a word's index in [`ENTRIES`] plus one, 0 for none; sparse
-/// enough (below two in five) that a miss, a head of no list, stops at once.
-static SLOTS: [u16; SIZE] = {
-    let table = table();
-    let mut t = [0u16; SIZE];
-    let (mut h, mut i) = (0, 0);
-    while h < SIZE {
-        if table[h] != 0 {
-            i += 1;
-            t[h] = i as u16;
-        }
-        h += 1;
-    }
-    t
-};
-
-const fn same(t: &[u8], a: usize, b: usize, n: usize) -> bool {
-    let mut i = 0;
-    while i < n {
-        if t[a + i] != t[b + i] {
-            return false;
-        }
+        let k = number[first] as usize + 1;
+        info[k] |= merge(info[k], ALL.1[i]);
         i += 1;
     }
-    true
-}
+    (words, info)
+};
+
+/// The lists' words, ASCII case ignored: a word's id is its number plus one.
+static TABLE: Words<SIZE, WORDS, { text_len(&MERGED.0) }, true> = Words::new(&MERGED.0);
+
+/// What each word is by its id, 0 at 0.
+static INFO: [u32; WORDS + 1] = MERGED.1;
+
+const SIZE: usize = 4096;
+
+// the slots stay sparse enough (below two in five) that a miss, the common case, probes a slot
+// or two; a word in several lists is in the table once
+const _: () = assert!(WORDS * 5 <= SIZE * 2 && WORDS > 1000 && WORDS < LISTED);
 
 /// The fields of a word's info that hold one value, the first list's that sets them.
 const FIELDS: u32 = HEAD | IDENT | LOOP_WORD | OPERATOR | SCHEME_HEAD | SCHEME_IDENT | CLOJURE_HEAD;
@@ -690,22 +672,7 @@ const fn merge(old: u32, info: u32) -> u32 {
 /// What word `w` is, ASCII case ignored: 0 for none of the lists'.
 #[inline]
 pub(super) fn lookup(w: &[u8]) -> u32 {
-    if w.len() > LONGEST {
-        return 0;
-    }
-    let mut h = hash(w, 0, w.len());
-    loop {
-        let i = SLOTS[h] as usize;
-        if i == 0 {
-            return 0;
-        }
-        let slot = ENTRIES[i - 1];
-        let (o, n) = ((slot >> 40) as usize, ((slot >> 32) & 0xff) as usize);
-        if n == w.len() && TEXT[o..o + n].eq_ignore_ascii_case(w) {
-            return slot as u32;
-        }
-        h = (h + 1) & (SIZE - 1);
-    }
+    TABLE.value(w, &INFO)
 }
 
 /// What word `w` is in Clojure, which is case-sensitive: the lists' words are lowercase, so a
@@ -788,7 +755,6 @@ mod tests {
                 let rest = info & !FIELDS;
                 assert_eq!(got & rest, rest, "{w}");
                 assert_eq!(lookup(w.to_ascii_uppercase().as_bytes()), got, "{w}");
-                assert!(w.len() <= LONGEST);
                 words += 1;
             }
         }
@@ -811,16 +777,6 @@ mod tests {
         // Common Lisp's `when` and Clojure's share a slot, each dialect its own field
         assert_eq!(head(lookup(b"when")), H_CONDITIONAL);
         assert_eq!(clojure_head(lookup(b"when")), C_CONDITIONAL);
-    }
-
-    /// The slots stay sparse enough that a miss, the common case, probes a slot or two; each
-    /// word is in one, and `u16` indices reach every entry.
-    #[test]
-    fn the_slots_stay_sparse() {
-        let used = SLOTS.iter().filter(|&&s| s != 0).count();
-        assert_eq!(used, WORDS);
-        assert!(used * 5 <= SIZE * 2, "{used} of {SIZE}");
-        assert!(WORDS < usize::from(u16::MAX));
     }
 
     #[test]
