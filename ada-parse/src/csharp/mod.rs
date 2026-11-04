@@ -25,7 +25,8 @@
 //! The code contexts' turns run in a loop of their own (`code.rs`, X-025's first stage), the
 //! rest in [`Scan::run`]'s; within it an expression's tokens run in one of their own
 //! ([`Scan::expr`], its third), each decided by its first byte and what follows on the line,
-//! its spans emitted inline.
+//! its spans emitted inline; a doc comment's turns run in one of their own too
+//! ([`Scan::doc_run`], its fourth).
 //!
 //! A string that `new Regex(`, `Regex.IsMatch(input, …)` and the like take is colored as
 //! .NET's regex (ADR-40, phase 4; [`crate::regex`]), as Rider colors it: its text is the
@@ -34,6 +35,7 @@
 
 mod code;
 mod ctx;
+mod doc;
 mod re;
 mod words;
 pub(crate) use re::ND;
@@ -782,6 +784,9 @@ const PROTO: u8 = 2;
 /// a few of its own, or `arguments`.
 const EXPR: u8 = 4;
 
+/// A doc comment's contexts, whose turns [`Scan::doc_run`] runs.
+const DOCS: u8 = 8;
+
 /// The contexts of [`EXPR`].
 const fn is_expr(ctx: u8) -> bool {
     matches!(
@@ -801,7 +806,7 @@ const fn is_expr(ctx: u8) -> bool {
     )
 }
 
-/// Each context's [`INERT`], [`PROTO`] and [`EXPR`], so a turn reads them with one load.
+/// Each context's [`INERT`], [`PROTO`], [`EXPR`] and [`DOCS`], so a turn reads them with one load.
 static CTX: [u8; 256] = {
     let mut t = [0; 256];
     let mut c = 0;
@@ -809,7 +814,12 @@ static CTX: [u8; 256] = {
         let ctx = c as u8;
         t[c] = if spaces_inert(ctx) { INERT } else { 0 }
             | if has_proto(ctx) { PROTO } else { 0 }
-            | if is_expr(ctx) { EXPR } else { 0 };
+            | if is_expr(ctx) { EXPR } else { 0 }
+            | if matches!(ctx, DOC | DOC_TAG) {
+                DOCS
+            } else {
+                0
+            };
         c += 1;
     }
     t
@@ -1089,6 +1099,10 @@ fn first_argument(b: &[u8], s: usize) -> Option<usize> {
 /// `Regex.Replace(` and the like ([`REGEX_METHODS`]) is found by the line's [`RegexCalls`].
 fn regex_first_argument(b: &[u8], q: usize) -> bool {
     let w = blank_back(b, q - 1);
+    // each name below ends with `x`, `n` or `e`: most calls are turned away by that byte
+    if w == 0 || !matches!(b[w - 1], b'x' | b'n' | b'e') {
+        return false;
+    }
     if b[..w].ends_with(b"Regex") {
         let mut s = w - 5;
         if s > 0 && word_byte(b[s - 1]) {
@@ -1393,16 +1407,28 @@ impl Scan<'_> {
         let end = self.n + 1;
         let mut p = 0;
         loop {
-            // at the line's end, a context that passes over blanks has nothing to match
-            if p >= self.n && p > 0 && CTX[usize::from(self.top())] & INERT != 0 {
-                return;
-            }
-            // code's frames run their turns in a loop of their own
-            if p > 0 && CTX[usize::from(self.top())] & INERT != 0 {
+            let ctx = CTX[usize::from(self.top())];
+            if p > 0 && ctx & INERT != 0 {
+                // at the line's end, a context that passes over blanks has nothing to match
+                if p >= self.n {
+                    return;
+                }
+                // code's frames run their turns in a loop of their own
                 p = self.code(p);
                 if self.halt || (p >= self.n && CTX[usize::from(self.top())] & INERT != 0) {
                     return;
                 }
+            } else if ctx & DOCS != 0
+                && self.stuck == 0
+                && let Some(q) = self.doc_run(p)
+            {
+                // so do a doc comment's (`code` leaves no doc comment on top: none is above
+                // a code context)
+                p = q;
+                if self.halt || (p > self.n && self.top() == DOC) {
+                    return;
+                }
+                continue;
             }
             self.looped = false;
             if let Some(q) = self.at(p) {

@@ -974,9 +974,10 @@ impl Scan<'_> {
 
     /// `namespace_alias`: `(?:(global)|({{name}}))\s*(::)`, the name `name_leaf`.
     pub(super) fn namespace_alias(&mut self, p: usize, name_leaf: u16) -> Option<usize> {
-        // a name of ASCII has one end: `::` must follow it, or it is `global`
+        // a name of ASCII has one end: `::` must follow it, or it is `global` (one that only
+        // starts with it has a word's byte where `::` would be)
         if let Some(e) = self.ascii_name(p)
-            && e - p != 6
+            && !(e - p == 6 && crate::same(&self.b[p..e], b"global"))
             && self.ch(self.sp(e)) != b':'
         {
             return None;
@@ -1434,6 +1435,14 @@ impl Scan<'_> {
         if flags & VIS != 0 {
             return Some(self.tok(p, e, ACCESS));
         }
+        // `method_declaration`'s modifiers that no pattern before it starts with (`readonly`
+        // and `ref` can start a struct's)
+        if matches!(
+            id,
+            W_CONST | W_EXTERN | W_NEW | W_OVERRIDE | W_VIRTUAL | W_VOLATILE | W_ASYNC
+        ) {
+            return Some(self.tok(p, e, MODIFIER));
+        }
         if id != 0 && flags != BASE && id != W_STRING {
             return None;
         }
@@ -1467,6 +1476,28 @@ impl Scan<'_> {
         } else {
             SUPPORT_TYPE
         };
+        // the type, a blank and a member's name of ASCII that `member_name_after_type` takes:
+        // the type's turn, `MD_TYPE`'s set of `method_name` at the blank (no suffix there,
+        // nothing taken) and the name's turn, in one; the name's turn takes it, so the count
+        // of turns that take nothing is the loop's after it
+        if self.depth < SYNTECT_DEPTH && e < self.n && matches!(self.b[e], b' ' | b'\t') {
+            let s = self.sp(e);
+            if s < self.n
+                && let Some(m) = self.name_here(s)
+                && !self.lit(s, b"operator")
+                && !self.lit(s, b"this")
+            {
+                let t = self.sp(m);
+                if t < self.n && !matches!(self.b[t], b'<' | b'.') {
+                    self.put(p, e, leaf);
+                    self.push(METHOD_NAME);
+                    self.step = e;
+                    let q = self.member_name_after_type(s, m);
+                    debug_assert!(q.is_some());
+                    return q;
+                }
+            }
+        }
         Some(self.tok_push(p, e, leaf, &[MD_TYPE]))
     }
 
@@ -1599,8 +1630,33 @@ impl Scan<'_> {
 
     /// `method_name`: after a member's type, its name: a method's, a property's, a field's.
     pub(super) fn method_name(&mut self, p: usize) -> Option<usize> {
-        if self.ch(p) == b'.' {
+        let c = self.ch(p);
+        if c == b'.' {
             return self.tok(p, p + 1, DOT);
+        }
+        // where no name starts, only `=>`, a call's `(` and the accessors' `{` can match (each
+        // after no name), and `operator` and `this` need their letters
+        if !(c.is_ascii_alphabetic() || matches!(c, b'_' | b'@' | b'\\') || c >= 0x80) {
+            if c == b'=' && self.lit(p, b"=>") {
+                self.put(p, p + 2, M_GET_ARROW);
+                let t = self.sp(p + 2);
+                self.put(p + 2, t, METHOD);
+                self.set(&[LINE_IN]);
+                return Some(t);
+            }
+            let s = self.sp(p);
+            if s < self.n {
+                match self.b[s] {
+                    b'(' => {
+                        self.put(s, s + 1, PARAMS_BEGIN);
+                        self.set(&[METHOD_BODY, METHOD_PARAMS]);
+                        return Some(s + 1);
+                    }
+                    b'{' => return self.shift(p, &[METHOD_ACCESSOR]),
+                    _ => {}
+                }
+            }
+            return None;
         }
         if let Some(e) = self.name_here(p)
             && let Some(q) = self.member_name_after_type(p, e)
@@ -1894,6 +1950,23 @@ impl Scan<'_> {
 
     /// `attribute_in`.
     pub(super) fn attr_in(&mut self, p: usize) -> Option<usize> {
+        // a name of ASCII has one end, which each name's pattern reads
+        if let Some(e) = self.ascii_name(p) {
+            if e < self.n && self.b[e] == b'(' {
+                self.put(p, e, VARIABLE_ANNOTATION);
+                self.put(e, e + 1, M_GROUP_BEGIN);
+                self.set(&[ATTR_ARGS, ARGUMENTS]);
+                return Some(e + 1);
+            }
+            let s = self.sp(e);
+            if s < self.n && self.b[s] == b'.' {
+                self.put(p, e, NAMESPACE_VAR);
+                return self.tok(s, s + 1, DOT_NAMESPACE);
+            }
+            if self.ch(s) != b':' && !(e - p == 6 && crate::same(&self.b[p..e], b"global")) {
+                return self.tok(p, e, VARIABLE_ANNOTATION);
+            }
+        }
         // `({{name}})(\()`
         let mut call = None;
         self.names(p, &mut |e| {
@@ -2142,6 +2215,11 @@ impl Scan<'_> {
 
     /// `#anon_maybe_an_anonymous_class_1`: after `new`, not an anonymous class.
     pub(super) fn new_type(&mut self, p: usize) -> Option<usize> {
+        // at a letter, only `type`'s patterns can match
+        let c = self.ch(p);
+        if c.is_ascii_alphabetic() || c == b'_' {
+            return self.type_(p);
+        }
         if let Some(q) = self.brackets_capture(p) {
             return Some(q);
         }
@@ -2454,6 +2532,19 @@ impl Scan<'_> {
             return self.line_name(p, e);
         }
         let c = self.ch(p);
+        // where no name starts (a `.` after `this`, `(`, an operator, a literal), every pattern
+        // but `lambdas`' `(` and the `.` needs one (or a keyword's letters)
+        if !(c.is_ascii_alphabetic() || matches!(c, b'_' | b'@' | b'\\') || c >= 0x80) {
+            if c == b'('
+                && let Some(q) = self.lambdas(p)
+            {
+                return Some(q);
+            }
+            if c == b'.' {
+                return self.tok(p, p + 1, DOT);
+            }
+            return self.any_shift(p, &[LINE_IN]);
+        }
         if c.is_ascii_lowercase()
             && !self.word_before(p)
             && let Some(q) = self.line_keyword(p)
@@ -2571,12 +2662,27 @@ impl Scan<'_> {
             0
         };
         if words::flags(id) & STMT != 0
-            && let Some(q) = self.line_keyword(p)
+            && let Some(q) = self.line_keyword_id(p, e, id)
         {
             return Some(q);
         }
         if let Some(q) = self.keywords_word(p, e, id) {
             return Some(q);
+        }
+        // `var name =`: no declaration's lookahead holds (a name after a blank, then `=`), no
+        // `<` follows, so `var_line`'s `(var|dynamic)\s+({{name}})\s*(=)` is the pattern,
+        // unless the name is `{{reserved}}` or `{{base_type}}`
+        if matches!(id, W_VAR | W_DYNAMIC)
+            && let Some((_, m, t)) = self.plain_pair(p)
+            && t < self.n
+            && self.b[t] == b'='
+        {
+            let s = self.sp(e);
+            if words::flags(words::get(&self.b[s..m])) & (RES | BASE) == 0 {
+                self.put(p, e, VAR_KW);
+                self.put(s, m, VAR_OTHER);
+                return self.then(t, t + 1, ASSIGN_VARIABLE, &[LINE_IN]);
+            }
         }
         let s = self.sp(e);
         // the declarations' lookaheads need a type to go on after the name: `<`, `[`, `*`,
@@ -2655,23 +2761,32 @@ impl Scan<'_> {
     /// `line_of_code`'s statements by keyword, at a word's start.
     pub(super) fn line_keyword(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
-        let word_end = {
-            let mut e = p;
-            while e < self.n && b[e].is_ascii_alphabetic() {
-                e += 1;
-            }
-            e
-        };
-        let w = &b[p..word_end];
-        let whole = !self.word_at(word_end);
-        match w {
-            b"if" if whole => {
+        let mut e = p;
+        while e < self.n && b[e].is_ascii_alphabetic() {
+            e += 1;
+        }
+        // each statement's word is whole: `for`'s and `using`'s `(` and `goto`'s blank can't
+        // follow a word's byte either
+        if self.word_at(e) {
+            return None;
+        }
+        let id = words::get(&b[p..e]);
+        if words::flags(id) & STMT == 0 {
+            return None;
+        }
+        self.line_keyword_id(p, e, id)
+    }
+
+    /// `line_of_code`'s statements at the whole word `p..word_end` of id `id` (`STMT`'s).
+    pub(super) fn line_keyword_id(&mut self, p: usize, word_end: usize, id: u8) -> Option<usize> {
+        match id {
+            W_IF => {
                 return self.then(p, word_end, IF_KW, &[ELSE_BLOCK, IF_BLOCK, IF_COND]);
             }
-            b"switch" if whole => {
+            W_SWITCH => {
                 return self.then(p, word_end, SWITCH_KW, &[SWITCH_BLOCK, IF_COND]);
             }
-            b"for" => {
+            W_FOR => {
                 let s = self.sp(p + 3);
                 if self.ch(s) == b'(' && s < self.n {
                     let declares = {
@@ -2693,7 +2808,7 @@ impl Scan<'_> {
                     return Some(s + 1);
                 }
             }
-            b"foreach" => {
+            W_FOREACH => {
                 let s = self.sp(p + 7);
                 if self.ch(s) == b'(' && s < self.n {
                     self.put(p, p + 7, FOREACH_KW);
@@ -2702,15 +2817,15 @@ impl Scan<'_> {
                     return Some(s + 1);
                 }
             }
-            b"try" if whole => {
+            W_TRY => {
                 return self.then(p, word_end, TRY_KW, &[FINALLY_BLOCK, CATCH_EXPR, TRY_BLOCK]);
             }
-            b"using" | b"fixed" | b"lock" => {
+            W_USING | W_FIXED | W_LOCK => {
                 let s = self.sp(word_end);
                 if self.ch(s) == b'(' && s < self.n {
-                    let (leaf, block) = match w {
-                        b"using" => (USING_KW, USING_BLOCK),
-                        b"fixed" => (FIXED_KW, EXPR_BLOCK),
+                    let (leaf, block) = match id {
+                        W_USING => (USING_KW, USING_BLOCK),
+                        W_FIXED => (FIXED_KW, EXPR_BLOCK),
                         _ => (LOCK_KW, EXPR_BLOCK),
                     };
                     self.put(p, word_end, leaf);
@@ -2719,24 +2834,21 @@ impl Scan<'_> {
                     return Some(s + 1);
                 }
             }
-            b"do" if whole => {
+            W_DO => {
                 return self.then(p, word_end, DO_KW, &[DO_COND, WHILE_BLOCK]);
             }
-            b"while" if whole => {
+            W_WHILE => {
                 return self.then(p, word_end, WHILE_KW, &[WHILE_BLOCK, WHILE_COND]);
             }
+            W_ELSE | W_CASE | W_CATCH | W_FINALLY => {
+                return self.tok(p, word_end, UNEXPECTED_KW);
+            }
+            // `\b(return|yield\s+return)\b`, `\b(continue|break|yield\s+break)\b\s*(;)?`
+            W_RETURN => return self.then(p, word_end, RETURN_KW, &[LINE_IN]),
             _ => {}
         }
-        if whole && matches!(w, b"else" | b"case" | b"catch" | b"finally") {
-            return self.tok(p, word_end, UNEXPECTED_KW);
-        }
-        // `\b(return|yield\s+return)\b`, `\b(continue|break|yield\s+break)\b\s*(;)?`
-        if whole && crate::same(w, b"return") {
-            return self.then(p, word_end, RETURN_KW, &[LINE_IN]);
-        }
-        let mut brk = (whole && matches!(w, b"continue" | b"break")).then_some(word_end);
-        if crate::same(w, b"yield")
-            && whole
+        let mut brk = matches!(id, W_CONTINUE | W_BREAK).then_some(word_end);
+        if id == W_YIELD
             && let Some(s) = self.sp1(word_end)
         {
             if self.kw_end(s, b"return") {
@@ -2759,10 +2871,10 @@ impl Scan<'_> {
             self.pop();
             return Some(end);
         }
-        if whole && crate::same(w, b"throw") {
+        if id == W_THROW {
             return self.then(p, word_end, THROW_KW, &[LINE_IN]);
         }
-        if crate::same(w, b"goto")
+        if id == W_GOTO
             && let Some(s) = self.sp1(word_end)
         {
             if self.kw_end(s, b"case") {

@@ -30,6 +30,22 @@ impl Scan<'_> {
             }
             let c = b[p];
             if c >= 0x80 || (c == b'/' && p + 1 < n && matches!(b[p + 1], b'/' | b'*')) {
+                // a line comment with no to-do or link in it: the prototype's open, the
+                // comment's step to the line's end, and its close there, as `run` takes them
+                if c == b'/'
+                    && b[p + 1] == b'/'
+                    && CTX[usize::from(top)] & PROTO != 0
+                    && self.depth < SYNTECT_DEPTH
+                    && self.comment_skip(p + 2, &LINE_COMMENT_STOPS) >= n
+                {
+                    self.open(p, p + 2, LC_MARK, &[LINE_COMMENT]);
+                    self.fill(n);
+                    self.pop();
+                    self.looped = false;
+                    self.stuck = 0;
+                    self.step = n + 1;
+                    return n + 1;
+                }
                 return p;
             }
             self.looped = false;
@@ -125,9 +141,42 @@ impl Scan<'_> {
                 self.line_in(p)
             }
             LINE => self.line(p),
+            METHOD_PARAMS => {
+                if self.b[p] == b')' {
+                    return self.close(p, p + 1, PARAMS_END_M);
+                }
+                // `(?=\S)`'s push of a parameter and its type, then the type's `(?=\S)` set
+                // (not at an attribute's `[`), neither taking anything, then the type's turn
+                // at the same place: counted as the loop counts turns that take nothing, and
+                // left to it where the guard is due
+                let q = self.enter(p, &[METHOD_PARAM, METHOD_PARAM_TYPE])?;
+                if self.halt || self.b[p] == b'[' || self.stuck + 2 >= STUCK {
+                    return Some(q);
+                }
+                self.stuck += 1;
+                self.step = p;
+                self.shift(p, &[MPT_TYPE]);
+                self.stuck += 1;
+                self.mpt_type(p)
+            }
             _ => self.context(top, p),
         }
     }
+}
+
+/// Where the decimal integer at `p` ends, where `literals` reads it as one and only one
+/// (`DECIMAL`, no suffix): ASCII digits that no letter, `_`, `.` or byte past ASCII follows,
+/// and no `0` before more digits.
+#[inline(always)]
+fn plain_int(b: &[u8], p: usize) -> Option<usize> {
+    let mut d = p + 1;
+    while d < b.len() && b[d].is_ascii_digit() {
+        d += 1;
+    }
+    let ok = (b[p] != b'0' || d == p + 1)
+        && b.get(d)
+            .is_none_or(|&c| c < 0x80 && !c.is_ascii_alphanumeric() && !matches!(c, b'_' | b'.'));
+    ok.then_some(d)
 }
 
 /// What an expression's turn did at the place, `p`.
@@ -137,6 +186,9 @@ enum Turn {
     /// The name `p..` to here is the expression's next turn ([`Scan::expr_name`]); anything
     /// before it (an argument's push) is done.
     Name(usize),
+    /// `arguments`' push of an expression (its turn takes nothing); the expression's turn at
+    /// the same place is next, and takes it.
+    Pushed,
     /// Nothing; the turn is [`Scan::frame`]'s.
     Not,
 }
@@ -181,6 +233,10 @@ impl Scan<'_> {
                     Some(r) => r,
                     None => return q,
                 },
+                Turn::Pushed => {
+                    p = q;
+                    continue;
+                }
                 Turn::Not => return q,
             };
             debug_assert!(r > q);
@@ -241,6 +297,9 @@ impl Scan<'_> {
         let q = match c {
             b'.' => self.put_code(p, p + 1, DOT),
             b';' => self.close_code(p, TERM_STMT),
+            // a decimal integer that no letter, `_`, `.` or digit past ASCII goes on from (and
+            // no `0` before more digits): `literals`' number, `(?:0|[1-9]{{dec_digits}}?)`
+            b'0'..=b'9' if let Some(d) = plain_int(&b[..n], p) => self.put_code(p, d, DECIMAL),
             b'0'..=b'9' | b'"' | b'\'' => match self.literals(p) {
                 Some(q) => q,
                 None => return Turn::Not,
@@ -275,7 +334,14 @@ impl Scan<'_> {
     #[inline(always)]
     pub(super) fn expr_name_id(&mut self, p: usize, e: usize, id: u8) -> Option<usize> {
         let (b, n) = (self.b, self.n);
-        if id != 0 || b[p] == b'_' || (e < n && b[e] == b'<') {
+        if id != 0 {
+            // `true`, `false`, `null`: no other of the name's patterns comes first
+            if words::flags(id) & (words::KWS | words::LINQ | words::LANG) == words::LANG {
+                return Some(self.put_code(p, e, LANGUAGE));
+            }
+            return self.nosemi_name_id(p, e, id);
+        }
+        if b[p] == b'_' || (e < n && b[e] == b'<') {
             return self.nosemi_name_id(p, e, id);
         }
         let mut s = e;
@@ -332,6 +398,15 @@ impl Scan<'_> {
                 self.push(ARG_EXPR);
                 self.loop_at = (p, self.depth);
                 Turn::Name(e)
+            }
+            // a string's or a number's start: no pattern of `arguments` but `(?=\S)`'s push of
+            // the expression, whose turn there (`literals`') takes the string's start or the
+            // number; room left for the run to go on
+            b'"' | b'0'..=b'9' if self.depth + 3 < SYNTECT_DEPTH => {
+                self.fill(p);
+                self.push(ARG_EXPR);
+                self.loop_at = (p, self.depth);
+                Turn::Pushed
             }
             _ => Turn::Not,
         }
