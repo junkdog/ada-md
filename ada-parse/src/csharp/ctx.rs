@@ -2496,15 +2496,25 @@ impl Scan<'_> {
 
     /// `#anon_switch_block_1`: a case's label.
     pub(super) fn sw_case(&mut self, p: usize) -> Option<usize> {
+        // `({{name}})\s*(:)`: a name of ASCII has one end (`names`' only), and none starts
+        // where neither it nor a name past ASCII, escaped or after `@` does
+        let ascii = self.ascii_name(p);
         let mut label = None;
-        self.names(p, &mut |e| {
+        if let Some(e) = ascii {
             let s = self.sp(e);
             if self.ch(s) == b':' && s < self.b.len() {
                 label = Some(e);
-                return true;
             }
-            false
-        });
+        } else if matches!(self.ch(p), b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'@' | b'\\' | 0x80..) {
+            self.names(p, &mut |e| {
+                let s = self.sp(e);
+                if self.ch(s) == b':' && s < self.b.len() {
+                    label = Some(e);
+                    return true;
+                }
+                false
+            });
+        }
         if let Some(e) = label {
             return self.tok(p, e, CONSTANT_OTHER);
         }
@@ -2512,9 +2522,7 @@ impl Scan<'_> {
             return self.tok(p, p + 4, WHEN_KW);
         }
         // the declaration's `when` must follow on the line
-        if self.b[p.min(self.b.len())..]
-            .windows(4)
-            .any(|w| crate::same(w, b"when"))
+        if self.when_from(p)
             && self.declaration(p, &mut |n| {
                 self.sp1(n).is_some_and(|s| self.kw_end(s, b"when"))
             })
@@ -2524,6 +2532,19 @@ impl Scan<'_> {
         if self.ch(p) == b':' && p < self.b.len() {
             return self.close(p, p + 1, CASE_SEP);
         }
+        // at the line's end, and at a blank but where `\s*(\??\[)` follows, `line_of_code_in`
+        // has nothing (a test pins it)
+        if p >= self.b.len() || (matches!(self.b[p], b' ' | b'\t') && !self.bracket_after(p)) {
+            return if self.eol(p) { self.leave(p) } else { None };
+        }
+        // `line_of_code_in` at a name is `nosemi_name`'s, as the expression run reads it
+        if let Some(e) = ascii
+            && self.depth + 2 < SYNTECT_DEPTH
+            && self.name_here(p) == Some(e)
+            && let Some(q) = self.expr_name(p, e)
+        {
+            return Some(q);
+        }
         if let Some(q) = self.line_in(p) {
             return Some(q);
         }
@@ -2531,6 +2552,29 @@ impl Scan<'_> {
             return self.leave(p);
         }
         None
+    }
+
+    /// Whether `\s*(\??\[)` matches at `p`, on the line.
+    pub(super) fn bracket_after(&self, p: usize) -> bool {
+        let s = self.sp(p);
+        s < self.b.len()
+            && (self.ch(s) == b'['
+                || (self.ch(s) == b'?' && self.ch(s + 1) == b'[' && s + 1 < self.b.len()))
+    }
+
+    /// Whether `when` is on the line at or after `p` (anywhere, as a run of bytes), from the
+    /// last search where it still answers.
+    fn when_from(&self, p: usize) -> bool {
+        let (from, at) = self.when.get();
+        if from <= p && (at == usize::MAX || at >= p) {
+            return at != usize::MAX;
+        }
+        let at = self.b[p.min(self.b.len())..]
+            .windows(4)
+            .position(|w| crate::same(w, b"when"))
+            .map_or(usize::MAX, |k| p + k);
+        self.when.set((p, at));
+        at != usize::MAX
     }
 
     /// `line_of_code`.
@@ -2692,6 +2736,19 @@ impl Scan<'_> {
             }
         }
         let s = self.sp(e);
+        // `Type name`, two plain names, the first no word of the table (so not `async`, `ref`,
+        // `var`, `const`), before none of `(`, `:`, `<`: `nested_method_ahead` reads the pair as
+        // no method's, none of the patterns between holds at a name before a blank and a
+        // letter, and `local_declaration`'s first does
+        if id == 0
+            && s > e
+            && (self.ch(s).is_ascii_alphabetic() || self.ch(s) == b'_')
+            && let Some((f, _, t)) = self.plain_pair(p)
+            && f == e
+            && !(matches!(self.ch(t), b'(' | b':' | b'<') && t < self.b.len())
+        {
+            return self.local_declaration(p);
+        }
         // the declarations' lookaheads need a type to go on after the name: `<`, `[`, `*`,
         // `?`, `.` (`nested_method`'s not), or blanks and a name
         let c = self.ch(s);
@@ -2711,7 +2768,9 @@ impl Scan<'_> {
             self.set(&[LINE_IN]);
             return self.expr_name_id(p, e, 0);
         }
-        if typed && !dotted && self.nested_method_ahead(p) {
+        // and every declaration's a blank and a name after the type
+        let typed_decl = typed && self.blank_name_after(e);
+        if typed_decl && !dotted && self.nested_method_ahead(p) {
             return self.enter(p, &[NESTED_METHOD]);
         }
         if self.ch(s) == b'<' && s < self.b.len() {
@@ -2750,7 +2809,7 @@ impl Scan<'_> {
             self.push(LAMBDA_BODY);
             return Some(t);
         }
-        if typed && let Some(q) = self.local_declaration(p) {
+        if typed_decl && let Some(q) = self.local_declaration(p) {
             return Some(q);
         }
         if self.ch(s) == b':' && s < self.b.len() {
@@ -2942,7 +3001,10 @@ impl Scan<'_> {
         }
         // nothing the lookahead takes before its `(` is one of `(={};`: the first of them on
         // the line must be that `(`
-        if self.first_stop(p).is_none_or(|r| self.b[r] != b'(') {
+        let Some(r) = self.first_stop(p).filter(|&r| self.b[r] == b'(') else {
+            return false;
+        };
+        if !self.method_name_before(p, r) {
             return false;
         }
         for w in [&b"async"[..], b"ref"] {
@@ -2955,6 +3017,60 @@ impl Scan<'_> {
             }
         }
         rest(p)
+    }
+
+    /// Whether a blank and then what may start a name follow somewhere on the line from `e`:
+    /// every declaration's lookahead ends in `\s+{{name}}`, so none holds where none does. A
+    /// blank here is any byte up to a space or past ASCII, a name's start an ASCII letter, `_`,
+    /// `@`, `\` or a byte past ASCII (so a character past ASCII counts as either).
+    pub(super) fn blank_name_after(&self, e: usize) -> bool {
+        self.b[e.min(self.b.len())..].windows(2).any(|w| {
+            (w[0] <= b' ' || w[0] >= 0x80)
+                && (w[1].is_ascii_alphabetic()
+                    || matches!(w[1], b'_' | b'@' | b'\\')
+                    || w[1] >= 0x80)
+        })
+    }
+
+    /// Whether `nested_method_ahead`'s `\s+{{name}}{{generic_declaration}}\(` can end at the
+    /// `(` at `r`, the first of `(={};` from `p`: back from `r` over blanks, then over a
+    /// `<…>` (to the nearest `<`: `generic_declaration` holds none, and none of `(={};` is
+    /// before `r`) and its blanks, the method's name must be a whole run of name bytes after
+    /// `p` with a blank before it. Bytes past ASCII and `\` (an escape in a name) leave it to
+    /// the lookahead (`true`).
+    pub(super) fn method_name_before(&self, p: usize, r: usize) -> bool {
+        let b = self.b;
+        let blank = |c: u8| matches!(c, b' ' | b'\t' | b'\x0b' | b'\x0c' | b'\r');
+        let mut i = r;
+        while i > p && blank(b[i - 1]) {
+            i -= 1;
+        }
+        if i > p && b[i - 1] == b'>' {
+            while i > p && b[i - 1] != b'<' {
+                if b[i - 1] >= 0x80 {
+                    return true;
+                }
+                i -= 1;
+            }
+            if i == p {
+                return false;
+            }
+            i -= 1;
+            while i > p && blank(b[i - 1]) {
+                i -= 1;
+            }
+        }
+        let end = i;
+        while i > p
+            && (b[i - 1].is_ascii_alphanumeric()
+                || matches!(b[i - 1], b'_' | b'@' | b'\\' | 0x80..))
+        {
+            if b[i - 1] >= 0x80 || b[i - 1] == b'\\' {
+                return true;
+            }
+            i -= 1;
+        }
+        i < end && i > p && (blank(b[i - 1]) || b[i - 1] >= 0x80)
     }
 
     /// The first of `(={};` on the line from `p`.

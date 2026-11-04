@@ -34,7 +34,7 @@ impl Scan<'_> {
                     && b[p + 1] == b'/'
                     && CTX[usize::from(top)] & PROTO != 0
                     && self.depth < SYNTECT_DEPTH
-                    && self.comment_skip::<false>(p + 2, &LINE_COMMENT_STOPS) >= n
+                    && self.comment_skip::<false, false>(p + 2) >= n
                 {
                     self.open(p, p + 2, LC_MARK, &[LINE_COMMENT]);
                     self.fill(n);
@@ -139,6 +139,7 @@ impl Scan<'_> {
                 self.line_in(p)
             }
             LINE => self.line(p),
+            VARS_DECL => self.vars_decl(p),
             METHOD_PARAMS => {
                 if self.b[p] == b')' {
                     return self.close(p, p + 1, PARAMS_END_M);
@@ -286,16 +287,30 @@ impl Scan<'_> {
                         self.close_code(p, GROUP_END)
                     });
                 }
+                // `VD_VALUE`'s pop at `;` or `,`, then `vars_decl`'s end or separator there
+                (VD_VALUE, b';' | b',') => {
+                    let d = self.depth;
+                    if d < 3 || self.ctx_at(d - 2) != VARS_DECL || self.loop_at == (p, d) {
+                        return Turn::Not;
+                    }
+                    self.fill(p);
+                    self.pop();
+                    return Turn::Took(if c == b',' {
+                        self.put_code(p, p + 1, VARIABLES_SEP)
+                    } else {
+                        self.close_code(p, TERM_STMT)
+                    });
+                }
                 (IF_GROUP, b')') => return Turn::Took(self.close_code(p, M_GROUP_END)),
                 (GROUP | GROUP_IN, b')') => return Turn::Took(self.close_code(p, GROUP_END)),
                 (TERNARY, b':') => return Turn::Took(self.close_code(p, TERNARY_OP)),
                 (ACCESSOR_ARGS, b',') => return Turn::Took(self.put_code(p, p + 1, ACCESSOR_SEP)),
                 (ACCESSOR_ARGS, b']') => return Turn::Took(self.close_code(p, M_BRACKETS_END)),
                 // their pops, and `nosemi`'s `;`: none takes it
-                (ARG_EXPR | GROUP | NOSEMI | LAMBDA_BODY | MV_VALUE | VD_VALUE, b';') => {
+                (ARG_EXPR | GROUP | NOSEMI | LAMBDA_BODY | MV_VALUE, b';') => {
                     return Turn::Not;
                 }
-                (MV_VALUE | VD_VALUE, b',') => return Turn::Not,
+                (MV_VALUE, b',') => return Turn::Not,
                 _ => {}
             }
         }
@@ -340,7 +355,7 @@ impl Scan<'_> {
     /// plain one decided here: no keyword, not `_…`, no `<` after it, and after its blanks
     /// nothing that starts another of the name's patterns but a call's `(`.
     #[inline(always)]
-    fn expr_name(&mut self, p: usize, e: usize) -> Option<usize> {
+    pub(super) fn expr_name(&mut self, p: usize, e: usize) -> Option<usize> {
         let id = if self.b[p].is_ascii_lowercase() {
             words::get(&self.b[p..e])
         } else {

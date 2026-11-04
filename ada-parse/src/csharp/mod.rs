@@ -845,6 +845,35 @@ const fn stops(bytes: &[u8]) -> [u8; 256] {
 static LINE_COMMENT_STOPS: [u8; 256] = stops(b"tThHxX/");
 /// A block comment's: those, and `*/`.
 static BLOCK_COMMENT_STOPS: [u8; 256] = stops(b"tThHxX/*");
+/// Of the sixteen bytes of `b` at `q` (`q >= 1`, `q + 16 <= b.len()`), a bit for each that
+/// may be a comment's stop ([`Scan::comment_skip`]): `/`, `*` in a block (`BLOCK`), and `t`,
+/// `h` or `x` in any case where the byte before isn't a lowercase letter (where it is, the
+/// letter starts no word). A superset of the stop tables' bytes that can match. SSE2, which
+/// every x86-64 has.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn comment_stops<const BLOCK: bool>(b: &[u8], q: usize) -> u32 {
+    use std::arch::x86_64::*;
+    assert!(q >= 1 && q + 16 <= b.len());
+    // SAFETY: SSE2 is part of x86-64; both loads read `b[q - 1..q + 16]`, inside `b` (above),
+    // and need no alignment
+    unsafe {
+        let w = _mm_loadu_si128(b.as_ptr().add(q).cast());
+        let prev = _mm_loadu_si128(b.as_ptr().add(q - 1).cast());
+        let eq = |x: __m128i, c: u8| _mm_cmpeq_epi8(x, _mm_set1_epi8(c as i8));
+        let f = _mm_or_si128(w, _mm_set1_epi8(0x20));
+        let letters = _mm_or_si128(_mm_or_si128(eq(f, b't'), eq(f, b'h')), eq(f, b'x'));
+        // `prev` in `a..=z`: less than 26 past `a`, unsigned
+        let d = _mm_sub_epi8(prev, _mm_set1_epi8(b'a' as i8));
+        let lower = _mm_cmpeq_epi8(_mm_min_epu8(d, _mm_set1_epi8(25)), d);
+        let mut m = _mm_or_si128(_mm_andnot_si128(lower, letters), eq(w, b'/'));
+        if BLOCK {
+            m = _mm_or_si128(m, eq(w, b'*'));
+        }
+        _mm_movemask_epi8(m) as u32
+    }
+}
+
 /// A string's and an interpolated one's: escapes, quotes, braces.
 static STRING_STOPS: [u8; 256] = stops(b"\\\"{}");
 /// A verbatim string's: quotes and braces.
@@ -889,6 +918,7 @@ fn scan(b: &[u8], i: usize, state: &mut State, out: &mut Out) {
         wcache: std::cell::Cell::new((usize::MAX, 0)),
         ncache: std::cell::Cell::new((usize::MAX, None)),
         pcache: std::cell::Cell::new((usize::MAX, None)),
+        when: std::cell::Cell::new((usize::MAX, 0)),
         regex_calls: None,
         merge: out.1,
         spans: &mut *out.0,
@@ -1035,6 +1065,9 @@ pub(crate) struct Scan<'b> {
     ncache: std::cell::Cell<(usize, Option<usize>)>,
     /// The last place [`Scan::plain_pair`] looked at, and what it found.
     pcache: std::cell::Cell<(usize, Option<Pair>)>,
+    /// Where [`Scan::when_from`] last looked from, and the first `when` it found from there
+    /// (`usize::MAX`: none on the line).
+    when: std::cell::Cell<(usize, usize)>,
     /// The line's regex calls, found at its first string ([`RegexCalls`]).
     regex_calls: Option<RegexCalls>,
     /// Whether a span joins the last when it touches it with the same kind ([`Out`]'s flag).
@@ -1237,6 +1270,7 @@ impl<'b> Scan<'b> {
             wcache: std::cell::Cell::new((usize::MAX, 0)),
             ncache: std::cell::Cell::new((usize::MAX, None)),
             pcache: std::cell::Cell::new((usize::MAX, None)),
+            when: std::cell::Cell::new((usize::MAX, 0)),
             regex_calls: None,
             merge: true,
             spans,
@@ -1602,7 +1636,7 @@ impl Scan<'_> {
         let (b, n) = (self.b, self.b.len());
         if !(n >= 2 && b[0] == b'/' && b[1] == b'/' && b.get(2) != Some(&b'/'))
             || self.depth >= SYNTECT_DEPTH
-            || self.comment_skip::<false>(2, &LINE_COMMENT_STOPS) < n
+            || self.comment_skip::<false, false>(2) < n
         {
             return false;
         }
@@ -1635,8 +1669,10 @@ impl Scan<'_> {
         }
         let b = self.b;
         let mut q = p + 1;
-        if matches!(self.top(), LINE_COMMENT | BLOCK_COMMENT) {
-            return self.comment_skip::<true>(q, stops);
+        match self.top() {
+            LINE_COMMENT => return self.comment_skip::<true, false>(q),
+            BLOCK_COMMENT => return self.comment_skip::<true, true>(q),
+            _ => {}
         }
         while q < self.b.len() && stops[usize::from(b[q])] == 0 {
             q += 1;
@@ -1644,54 +1680,94 @@ impl Scan<'_> {
         q
     }
 
-    /// In a comment, from `q`: where one of its patterns matches next (or the line's end): a
-    /// block comment's `*/` (`stops` has `*` for one), or a to-do or a link, whose letters
-    /// start one only at a word's start (`\b`). A letter is checked first by the four bytes
-    /// there: `todo`, `hack` or `xxx` in any case, `http`.
+    /// In a comment, from `q` (past the line's start): where one of its patterns matches next
+    /// (or the line's end): a block comment's `*/` (`BLOCK`), or a to-do or a link, whose
+    /// letters start one only at a word's start (`\b`). On x86-64, sixteen bytes at a time
+    /// first, each byte that may be a stop ([`comment_stops`]: `/`, `*` in a block, `t`, `h`
+    /// or `x` in any case where no lowercase letter is before it) checked as the table's
+    /// stops are ([`Scan::comment_stop`]), the last few bytes in the line's last sixteen; a
+    /// line of sixteen bytes or fewer, and other targets, by the table.
     ///
     /// Not `SURE`, a letter is a stop where its four bytes are one of those, without the
     /// pattern's check (for the shortcuts that take a comment whole, which leave a stop to
     /// the comment's turns).
-    fn comment_skip<const SURE: bool>(&self, q: usize, stops: &[u8; 256]) -> usize {
+    fn comment_skip<const SURE: bool, const BLOCK: bool>(&self, q: usize) -> usize {
         let b = &self.b[..self.b.len()];
         let len = b.len();
         let mut q = q.min(len);
-        while q < len {
-            let c = b[q];
-            if stops[usize::from(c)] == 0 {
-                q += 1;
-                continue;
-            }
-            let hit = if c == b'*' {
-                b.get(q + 1) == Some(&b'/')
-            } else if c.is_ascii_alphabetic() {
-                CLASS[usize::from(b[q - 1])] & WORD == 0 && {
-                    // the four bytes at `q`, the line's end as zeros
-                    let x = match b.get(q..q + 4) {
-                        Some(w) => u32::from_le_bytes([w[0], w[1], w[2], w[3]]),
-                        None => {
-                            let mut w = [0; 4];
-                            let t = &b[q..];
-                            w[..t.len()].copy_from_slice(t);
-                            u32::from_le_bytes(w)
-                        }
-                    };
-                    let lower = x | 0x2020_2020;
-                    (lower == u32::from_le_bytes(*b"todo")
-                        || lower == u32::from_le_bytes(*b"hack")
-                        || lower & 0xff_ffff == u32::from_le_bytes(*b"xxx\0")
-                        || x == u32::from_le_bytes(*b"http"))
-                        && (!SURE || self.marks(q))
+        debug_assert!(q > 0 || len == 0);
+        #[cfg(target_arch = "x86_64")]
+        while q > 0 && q + 16 <= len {
+            let mut m = comment_stops::<BLOCK>(b, q);
+            // each place that may be a stop, in order, without loading the bytes again
+            while m != 0 {
+                let s = q + m.trailing_zeros() as usize;
+                if self.comment_stop::<SURE>(s) {
+                    return s;
                 }
-            } else {
-                self.marks(q)
-            };
-            if hit {
+                m &= m - 1;
+            }
+            q += 16;
+        }
+        // the last few bytes in the line's last sixteen, those before `q` left out
+        #[cfg(target_arch = "x86_64")]
+        if q < len && len > 16 {
+            let base = len - 16;
+            let mut m = comment_stops::<BLOCK>(b, base) & u32::MAX << (q - base);
+            while m != 0 {
+                let s = base + m.trailing_zeros() as usize;
+                if self.comment_stop::<SURE>(s) {
+                    return s;
+                }
+                m &= m - 1;
+            }
+            return len;
+        }
+        let stops = if BLOCK {
+            &BLOCK_COMMENT_STOPS
+        } else {
+            &LINE_COMMENT_STOPS
+        };
+        while q < len {
+            if stops[usize::from(b[q])] != 0 && self.comment_stop::<SURE>(q) {
                 return q;
             }
             q += 1;
         }
         len
+    }
+
+    /// Whether a comment's pattern matches at its stop byte `q` ([`Scan::comment_skip`]'s): a
+    /// block comment's `*/`, or a to-do or a link. A letter is checked first by the four
+    /// bytes there: `todo`, `hack` or `xxx` in any case, `http`.
+    #[inline(always)]
+    fn comment_stop<const SURE: bool>(&self, q: usize) -> bool {
+        let b = &self.b[..self.b.len()];
+        let c = b[q];
+        if c == b'*' {
+            b.get(q + 1) == Some(&b'/')
+        } else if c.is_ascii_alphabetic() {
+            CLASS[usize::from(b[q - 1])] & WORD == 0 && {
+                // the four bytes at `q`, the line's end as zeros
+                let x = match b.get(q..q + 4) {
+                    Some(w) => u32::from_le_bytes([w[0], w[1], w[2], w[3]]),
+                    None => {
+                        let mut w = [0; 4];
+                        let t = &b[q..];
+                        w[..t.len()].copy_from_slice(t);
+                        u32::from_le_bytes(w)
+                    }
+                };
+                let lower = x | 0x2020_2020;
+                (lower == u32::from_le_bytes(*b"todo")
+                    || lower == u32::from_le_bytes(*b"hack")
+                    || lower & 0xff_ffff == u32::from_le_bytes(*b"xxx\0")
+                    || x == u32::from_le_bytes(*b"http"))
+                    && (!SURE || self.marks(q))
+            }
+        } else {
+            self.marks(q)
+        }
     }
 
     /// Where the character at `p` ends (the line's `\n` is one byte).
@@ -1801,6 +1877,46 @@ mod tests {
         }
     }
 
+    /// The sixteen-byte pass flags every byte of the stop tables that can match (a letter only
+    /// where no word byte is before it), at each place in the sixteen, and nothing outside them.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn comment_stops_cover_the_tables() {
+        use super::{BLOCK_COMMENT_STOPS, CLASS, LINE_COMMENT_STOPS, WORD, comment_stops};
+        for prev in 0..=255u8 {
+            for c in 0..=255u8 {
+                for i in 0..16 {
+                    // `c` at place `i`, `prev` before it, the other bytes zeros (no stops)
+                    let mut b = [0u8; 17];
+                    b[i] = prev;
+                    b[i + 1] = c;
+                    for (block, table) in
+                        [(false, &LINE_COMMENT_STOPS), (true, &BLOCK_COMMENT_STOPS)]
+                    {
+                        let m = if block {
+                            comment_stops::<true>(&b, 1)
+                        } else {
+                            comment_stops::<false>(&b, 1)
+                        };
+                        let can = table[usize::from(c)] != 0
+                            && !(c.is_ascii_alphabetic() && CLASS[usize::from(prev)] & WORD != 0);
+                        assert!(
+                            !can || m >> i & 1 != 0,
+                            "{prev:#x} {c:#x} at {i}, block {block}"
+                        );
+                        assert!(
+                            table[usize::from(c)] != 0 || m >> i & 1 == 0,
+                            "{prev:#x} {c:#x} at {i}"
+                        );
+                        // `prev` is in the sixteen itself past the first place, its own bit there
+                        let own = if i > 0 { 1 << (i - 1) } else { 0 };
+                        assert_eq!(m & !(1 << i) & !own, 0, "{prev:#x} {c:#x} at {i}");
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn operators_by_first_byte_are_the_lists() {
         let ops = b"+-*/%|&^<>=!?~ ax";
@@ -1819,6 +1935,49 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// `line_of_code_in` matches nothing at the line's end, nor at a blank but before
+    /// `\s*\??\[` (`sw_case` leaves it out there): lines of every three bytes of a wide set
+    /// after a blank, and some of real code, at each blank and the end.
+    #[test]
+    fn line_in_has_nothing_at_the_end_or_a_blank() {
+        let set: Vec<u8> = (0x20..0x7f).chain([b'\t', 0xc3, 0xa9]).collect();
+        let real: [&[u8]; 7] = [
+            b"case Kind.Foo:",
+            b"x = y?",
+            b"a ? b :",
+            b"@",
+            b"foo(",
+            b"int[] a = {",
+            b"case  [a] x when y:",
+        ];
+        let mut spans = Vec::new();
+        let mut state = crate::State::default();
+        let mut check = |line: &[u8]| {
+            let mut s = super::Scan::for_test(line, &mut state, &mut spans);
+            s.depth = 3;
+            s.stack[1] = super::c::SW_BRACE;
+            s.stack[2] = super::c::SW_CASE;
+            for p in 0..=line.len() {
+                if p == line.len() || (matches!(line[p], b' ' | b'\t') && !s.bracket_after(p)) {
+                    assert_eq!(s.line_in(p), None, "{line:?} at {p}");
+                }
+            }
+        };
+        for &a in &set {
+            for &b in &set {
+                for &c in &set {
+                    check(&[b' ', a, b, c]);
+                }
+                check(&[a, b]);
+            }
+            check(&[a]);
+        }
+        check(b"");
+        for line in real {
+            check(line);
         }
     }
 
