@@ -6,9 +6,23 @@ use super::*;
 
 impl Scan<'_, '_> {
     /// `{{sql_indicator}}` at `p`: `\s*(?:SELECT|INSERT|UPDATE|DELETE|CREATE|REPLACE|ALTER|WITH)\b`.
+    #[inline]
     pub(super) fn sql_follows(&self, p: usize) -> bool {
-        let q = self.spaces(p);
-        if q >= self.b.len() {
+        // most strings start with no space and no capital: the first byte turns them away
+        let q = match self.b.get(p) {
+            Some(b'S' | b'I' | b'U' | b'D' | b'C' | b'R' | b'A' | b'W') => p,
+            Some(&c)
+                if c < 0x80 && !matches!(c, b' ' | b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r') =>
+            {
+                return false;
+            }
+            Some(_) => self.spaces(p),
+            None => return false,
+        };
+        if !matches!(
+            self.b.get(q),
+            Some(b'S' | b'I' | b'U' | b'D' | b'C' | b'R' | b'A' | b'W')
+        ) {
             return false;
         }
         let e = word_end(self.b, q);

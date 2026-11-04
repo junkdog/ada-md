@@ -1078,7 +1078,7 @@ impl Scan<'_, '_, '_> {
         let i = self.i;
         let c = self.c(i);
         if i > 0 && self.b[i - 1] == b')' {
-            let again = look::call_target(self.b, i).is_some() || look::call_after(self.b, i);
+            let again = look::call_follows(self.b, i);
             if !again && self.pop_zero() {
                 return true;
             }

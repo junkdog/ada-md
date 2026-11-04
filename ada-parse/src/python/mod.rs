@@ -1274,6 +1274,16 @@ fn is_constant_name(w: &[u8]) -> bool {
     pair
 }
 
+/// A call's usual shape, `.`? then names between dots (` ` around them) and `\s*(`: each
+/// name's start (`k` of them, at most eight) and the `(`.
+#[derive(Clone, Copy)]
+struct CallShape {
+    lead: bool,
+    names: [usize; 8],
+    k: usize,
+    paren: usize,
+}
+
 /// What the word at a place is, for the patterns that look at whole words: found once.
 #[derive(Clone, Copy)]
 struct Word {
@@ -1504,25 +1514,48 @@ impl Scan<'_, '_> {
     }
 
     /// `(?={{path}}\s*\()` and `(?={{path}}\s*\[)` at `p`: whether one of the path's ends
-    /// takes each.
-    fn path_follows(&self, p: usize) -> (bool, bool) {
+    /// takes each. The walk is the one [`call`](Self::call)'s shape takes, so a call comes
+    /// with that shape (`Some`, `None` where the shape doesn't hold) and isn't walked again.
+    #[inline]
+    fn path_follows(&self, p: usize) -> (bool, bool, Option<CallShape>) {
         let mut q = p;
         let mut item = false;
+        let mut names = [0; 8];
+        let mut k = 0;
+        // every name `\w` to its word's end, at most eight
+        let mut plain = true;
         loop {
-            let Some(e) = self.ident(q) else {
-                return (false, item);
-            };
+            let w = self.info(q);
+            if w.ident <= q {
+                return (false, item, None);
+            }
+            let e = w.ident;
+            plain &= w.ident == w.end && k < names.len();
+            if k < names.len() {
+                names[k] = q;
+            }
+            k += 1;
             let s = self.spaces(e);
             if s < self.b.len() {
                 match self.b[s] {
-                    b'(' => return (true, item),
+                    b'(' => {
+                        // the shape's `(` after blanks alone, as `qualified-name-until-leaf`'s
+                        // `\s*` has them
+                        let shape = (plain && skip_blanks(self.b, e) == s).then_some(CallShape {
+                            lead: false,
+                            names,
+                            k,
+                            paren: s,
+                        });
+                        return (true, item, shape);
+                    }
                     b'[' => item = true,
                     _ => {}
                 }
             }
             let d = skip_blanks(self.b, e);
-            if !self.is(d, b'.') || d >= self.b.len() {
-                return (false, item);
+            if d >= self.b.len() || self.b[d] != b'.' {
+                return (false, item, None);
             }
             q = skip_blanks(self.b, d + 1);
         }
@@ -1673,7 +1706,9 @@ impl Scan<'_, '_> {
     /// Whether `after-expression` at `p` matches anything but its `''` pop.
     fn after_needed(&self, p: usize) -> bool {
         let q = self.spaces(p);
-        (q < self.b.len() && matches!(self.b[q], b'(' | b'[' | b'.')) || self.call_follows(p)
+        // past those, a call needs a name at `p` itself (a `.` there went above)
+        (q < self.b.len() && matches!(self.b[q], b'(' | b'[' | b'.'))
+            || (self.ident(p).is_some() && self.call_follows(p))
     }
 
     /// Bytes `s..e` are `kind`, then `allow-unpack-operators` is pushed, unless it would pop
@@ -2754,9 +2789,9 @@ impl Scan<'_, '_> {
                 return Some(q);
             }
             // `function-calls`, `item-access`: one walk of the path for both lookaheads
-            let (call, item) = self.path_follows(p);
+            let (call, item, shape) = self.path_follows(p);
             if call {
-                return self.call(p);
+                return self.call_as(p, shape);
             }
             if item {
                 return self.enter(p, &[ITEM]);
@@ -2782,14 +2817,11 @@ impl Scan<'_, '_> {
         if let Some(q) = self.strings(p) {
             return Some(q);
         }
-        // `function-calls`
-        if self.call_follows(p) {
+        // `function-calls`: no word starts here (a word went above), so only after a `.`
+        if c == b'.' && self.call_follows(p) {
             return self.call(p);
         }
-        // `item-access`
-        if word.is_some() && self.path_then(p, Self::bracket_follows) {
-            return self.enter(p, &[ITEM]);
-        }
+        // `item-access` needs a word here, which went above
         match c {
             b'[' => return self.lists(p),
             b'{' => return self.dicts(p),
@@ -2822,11 +2854,7 @@ impl Scan<'_, '_> {
     /// call's, the `(` opening the arguments, and the loop guard's record the pushes leave;
     /// else the contexts are pushed.
     fn call(&mut self, p: usize) -> Option<usize> {
-        let d = self.depth;
-        let shape = || -> Option<(bool, [usize; 8], usize, usize)> {
-            if d + 3 >= SYNTECT_DEPTH || d + 3 >= MAX {
-                return None;
-            }
+        let shape = || -> Option<CallShape> {
             let lead = self.is(p, b'.');
             let mut q = if lead { skip_blanks(self.b, p + 1) } else { p };
             // each name's start, then the `(`
@@ -2846,11 +2874,29 @@ impl Scan<'_, '_> {
                     continue;
                 }
                 // only spaces before the `(`, as `qualified-name-until-leaf`'s `\s*` has them
-                return (dot < self.b.len() && self.b[dot] == b'(')
-                    .then_some((lead, names, k, dot));
+                return (dot < self.b.len() && self.b[dot] == b'(').then_some(CallShape {
+                    lead,
+                    names,
+                    k,
+                    paren: dot,
+                });
             }
         };
-        let Some((lead, names, k, paren)) = shape() else {
+        let shape = shape();
+        self.call_as(p, shape)
+    }
+
+    /// [`call`](Self::call) at `p` with its shape known: `None` where it doesn't hold, and
+    /// the contexts are pushed.
+    fn call_as(&mut self, p: usize, shape: Option<CallShape>) -> Option<usize> {
+        let d = self.depth;
+        let Some(CallShape {
+            lead,
+            names,
+            k,
+            paren,
+        }) = shape.filter(|_| d + 3 < SYNTECT_DEPTH.min(MAX))
+        else {
             return self.enter(p, &[CALL, QN_LEAF]);
         };
         let mut loop_at = (p, d + 1);
@@ -2936,15 +2982,20 @@ impl Scan<'_, '_> {
             let q = s.spaces(p + 1);
             (q..q + n).all(|i| s.is(i, b'*') && i < s.b.len())
         };
-        if self.simple_expression(p + 1, &|s: &Self, q| s.is(q, b':') && q < s.b.len())
+        // each test holds only at its byte, which the line's rest must have
+        let rest = &self.b[(p + 1).min(self.b.len())..];
+        if (rest.contains(&b':')
+            && self.simple_expression(p + 1, &|s: &Self, q| s.is(q, b':') && q < s.b.len()))
             || star(self, 2)
         {
             let k = self.k(L::MappingBegin);
             return self.tok_push(p, p + 1, k, &[DICT]);
         }
-        if self.simple_expression(p + 1, &|s: &Self, q| {
-            matches!(s.ch(q), Some(b',' | b'}')) && q < s.b.len()
-        }) || star(self, 1)
+        if (rest.iter().any(|&c| c == b',' || c == b'}')
+            && self.simple_expression(p + 1, &|s: &Self, q| {
+                matches!(s.ch(q), Some(b',' | b'}')) && q < s.b.len()
+            }))
+            || star(self, 1)
         {
             let k = self.k(L::SetBegin);
             return self.tok_push(p, p + 1, k, &[SET]);
@@ -2965,7 +3016,10 @@ impl Scan<'_, '_> {
             return self.push_after(q, q + 1, k);
         }
         let star_path = self.is(q, b'*') && q < self.b.len() && self.ident(q + 1).is_some();
-        if star_path || self.simple_expression(p + 1, &|s: &Self, q| s.is(q, b',') && q < s.b.len())
+        // the test holds only at a `,`, which the line's rest must have
+        if star_path
+            || (self.b[(p + 1).min(self.b.len())..].contains(&b',')
+                && self.simple_expression(p + 1, &|s: &Self, q| s.is(q, b',') && q < s.b.len()))
         {
             let k = self.k(L::SequenceBegin);
             return self.tok_push(p, p + 1, k, &[TUPLE]);
@@ -2983,30 +3037,46 @@ impl Scan<'_, '_> {
     }
 
     /// Whether `{{simple_expression}}` at `p` can end where `then` holds: every way the
-    /// grammar's backtracking could take it.
+    /// grammar's backtracking could take it. Each of its pieces ends past where it starts,
+    /// so the places it can reach are taken in order, once each, from a set of bits (on the
+    /// stack for a line's first 1,024 places after `p`).
     #[inline(never)]
     fn simple_expression(&self, p: usize, then: &dyn Fn(&Self, usize) -> bool) -> bool {
         let n = self.b.len();
         let b = self.b;
-        // positions reached, `p..=n + 1`
-        let mut seen = vec![false; n + 2 - p.min(n + 1)];
-        let mut todo = vec![p];
-        let mark = |q: usize, seen: &mut Vec<bool>, todo: &mut Vec<usize>| {
-            if q <= n + 1 && !seen[q - p] {
-                seen[q - p] = true;
-                todo.push(q);
-            }
-        };
         if p > n + 1 {
             return false;
         }
-        seen[0] = true;
-        while let Some(q) = todo.pop() {
+        // places reached, `p..=n + 1`, a bit each
+        let len = n + 2 - p;
+        let mut small = [0u64; 16];
+        let mut big = Vec::new();
+        let seen: &mut [u64] = if len <= 1024 {
+            &mut small
+        } else {
+            big.resize(len.div_ceil(64), 0);
+            &mut big
+        };
+        // the furthest place reached
+        let mut last = p;
+        let mark = |q: usize, seen: &mut [u64], last: &mut usize| {
+            if q <= n + 1 {
+                seen[(q - p) / 64] |= 1 << ((q - p) % 64);
+                *last = (*last).max(q);
+            }
+        };
+        mark(p, seen, &mut last);
+        let mut q = p;
+        while q <= last {
+            if seen[(q - p) / 64] & (1 << ((q - p) % 64)) == 0 {
+                q += 1;
+                continue;
+            }
             if then(self, q) {
                 return true;
             }
             if q > n {
-                continue;
+                break;
             }
             // `\s+`
             let mut s = q;
@@ -3016,31 +3086,22 @@ impl Scan<'_, '_> {
                 } else {
                     s + space_len(b, s).unwrap_or(1)
                 };
-                mark(s, &mut seen, &mut todo);
+                mark(s, seen, &mut last);
             }
-            // `[urfb]*"(?:\\.|[^"])*"` and its `'` twin: every quote the content reaches ends
-            // it (a `\\` takes the next character, or is one itself)
+            // `[urfb]*"(?:\\.|[^"])*"` and its `'` twin: the content reaches every place up to
+            // the first quote not after a `\\` (one after it, the `\\.` takes), and each quote
+            // it reaches ends it
             let mut r = q;
             loop {
                 if let Some(quote @ (b'"' | b'\'')) = self.ch(r)
                     && r < n
                 {
-                    let mut reach = vec![false; n + 2 - r];
-                    reach[1] = true;
-                    for i in r + 1..=n {
-                        if !reach[i - r] {
-                            continue;
-                        }
-                        let c = self.ch(i).unwrap_or(b'\n');
-                        if c == quote {
-                            mark(i + 1, &mut seen, &mut todo);
-                            continue;
-                        }
-                        reach[self.next(i) - r] = true;
-                        if c == b'\\'
-                            && let Some(e) = self.any(i + 1)
-                        {
-                            reach[e - r] = true;
+                    for i in r + 1..n {
+                        if b[i] == quote {
+                            mark(i + 1, seen, &mut last);
+                            if b[i - 1] != b'\\' {
+                                break;
+                            }
                         }
                     }
                 }
@@ -3060,32 +3121,33 @@ impl Scan<'_, '_> {
                         None => break,
                     },
                 };
-                mark(e, &mut seen, &mut todo);
+                mark(e, seen, &mut last);
                 s = e;
             }
             // `[+*/%@-] | // | and | or`
             if matches!(self.ch(q), Some(b'+' | b'*' | b'/' | b'%' | b'@' | b'-')) && q < n {
-                mark(q + 1, &mut seen, &mut todo);
+                mark(q + 1, seen, &mut last);
             }
             if self.has(q, b"//") {
-                mark(q + 2, &mut seen, &mut todo);
+                mark(q + 2, seen, &mut last);
             }
             if self.has(q, b"and") {
-                mark(q + 3, &mut seen, &mut todo);
+                mark(q + 3, seen, &mut last);
             }
             if self.has(q, b"or") {
-                mark(q + 2, &mut seen, &mut todo);
+                mark(q + 2, seen, &mut last);
             }
             // `{{path}}`: each of its ends
             let mut s = q;
             while let Some(e) = self.ident(s) {
-                mark(e, &mut seen, &mut todo);
+                mark(e, seen, &mut last);
                 let d = skip_blanks(b, e);
                 if !self.is(d, b'.') || d >= n {
                     break;
                 }
                 s = skip_blanks(b, d + 1);
             }
+            q += 1;
         }
         false
     }

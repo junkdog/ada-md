@@ -915,8 +915,17 @@ impl Scan<'_, '_, '_> {
     }
 
     /// `(?=\s*(KEY)\s*(\??))\s*(«TP»)?[\(]`, a method's key ahead at `k`.
+    #[inline]
     pub(super) fn method_key_ahead(&self, k: usize) -> bool {
         let q = self.ws(k);
+        // a key starts with a name, a quote, `[`, a digit or `.` (a `,` or `}` mostly, here)
+        let c = self.c(q);
+        if !(is_name_start(c)
+            || c >= 0x80
+            || matches!(c, b'\'' | b'"' | b'`' | b'[' | b'0'..=b'9' | b'.'))
+        {
+            return false;
+        }
         let Some(e) = self.member_key(q) else {
             return false;
         };
@@ -1161,8 +1170,7 @@ impl Scan<'_, '_, '_> {
                     self.tok(i, i + 1, ROUND);
                     self.i = i + 1;
                     // the call goes on if another follows (`function-call`'s pop's lookahead)
-                    if look::call_target(self.b, i + 1).is_some() || look::call_after(self.b, i + 1)
-                    {
+                    if look::call_follows(self.b, i + 1) {
                         self.set(CALL);
                         return true;
                     }

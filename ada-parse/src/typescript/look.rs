@@ -168,15 +168,23 @@ pub(super) fn bal(b: &[u8], i: usize, open: u8, close: u8, depth: u8) -> Option<
     if at(b, i) != open || depth == 0 {
         return None;
     }
-    let mut j = i + 1;
-    loop {
-        match at(b, j) {
-            0 => return None,
-            c if c == close => return Some(j + 1),
-            c if c == open => j = bal(b, j, open, close, depth - 1)?,
-            _ => j += 1,
+    // one pass with the level counted (the line's `\n` is neither bracket): an `open` at the
+    // deepest level fails it, as the nested copies of the regex run out
+    let mut level = 1;
+    for (j, &c) in b.iter().enumerate().skip(i + 1) {
+        if c == close {
+            level -= 1;
+            if level == 0 {
+                return Some(j + 1);
+            }
+        } else if c == open {
+            if level == depth {
+                return None;
+            }
+            level += 1;
         }
     }
+    None
 }
 
 /// `«B{»`, `«B(»` or `«B[»` at `i`.
@@ -475,6 +483,16 @@ pub(super) fn rt_arrow(b: &[u8], i: usize) -> bool {
 /// TSX's `(open|sure|extends|line)`.
 pub(super) fn fn_value(b: &[u8], i: usize, tsx: bool) -> bool {
     let rest = &b[i.min(b.len())..];
+    // every alternative starts with a name (`async`, `function`, one before `=>`), a `(` or a
+    // `<`; a name other than `async` and `function` is one only before `=>`
+    match at(b, i) {
+        b'(' | b'<' => {}
+        b'a' | b'f' if crate::starts(rest, b"async") || crate::starts(rest, b"function") => {}
+        _ => {
+            let e = name(b, i);
+            return e > i && arrow_at(b, e);
+        }
+    }
     let after_async = |gap_needed: bool| -> Option<usize> {
         if crate::starts(rest, b"async") {
             let j = ws(b, i + 5);
@@ -551,18 +569,22 @@ pub(super) fn fn_colon(b: &[u8], i: usize, tsx: bool, value: bool) -> bool {
     match at(b, i) {
         b':' => {
             let j = ws(b, i + 1);
-            if fn_type_head(b, j) {
-                return true;
-            }
-            // :\s*«wb»Function«we»
-            if crate::has_at(b, j.min(b.len()), b"Function")
-                && !alnum_at(b, j + 8)
-                && (at(b, j + 8) != b'.' || crate::has_at(b, j + 8, b"..."))
-            {
-                return true;
-            }
-            if open_params(b, j, tsx) {
-                return true;
+            // a function type's head and open parameters start with `<` or `(`, `Function`
+            // with its `F`: a type that starts with anything else is only the last alternative's
+            match at(b, j) {
+                b'<' | b'(' => {
+                    if fn_type_head(b, j) || open_params(b, j, tsx) {
+                        return true;
+                    }
+                }
+                // :\s*«wb»Function«we»
+                b'F' if crate::has_at(b, j.min(b.len()), b"Function")
+                    && !alnum_at(b, j + 8)
+                    && (at(b, j + 8) != b'.' || crate::has_at(b, j + 8, b"...")) =>
+                {
+                    return true;
+                }
+                _ => {}
             }
             if !value {
                 return false;
@@ -668,6 +690,21 @@ pub(super) fn call_after(b: &[u8], i: usize) -> bool {
         }
     }
     at(b, j) == b'('
+}
+
+/// Whether a call follows at `i`, a target with a call after it or a call at once:
+/// `call_target(b, i).is_some() || call_after(b, i)`, the bytes that start neither turned away
+/// first (after a call's `)`, mostly `;`, `)`, `,` or `.`).
+#[inline]
+pub(super) fn call_follows(b: &[u8], i: usize) -> bool {
+    match at(b, i) {
+        b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' | b'.' | b'?' | 0x80.. => {
+            call_target(b, i).is_some() || call_after(b, i)
+        }
+        // a target starts with a name, `.` or `?`
+        b'!' | b'<' | b'(' | b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c => call_after(b, i),
+        _ => false,
+    }
 }
 
 /// A call's target from `i`, `((«name»)(\s*\??\.\s*(\#?«name»))*)|(\??\.\s*\#?«name»)`, with
