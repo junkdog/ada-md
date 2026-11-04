@@ -16,6 +16,7 @@
 //! well-formed text. bash and Makefiles share a scanner, bat's contexts matched in place.
 
 mod bash;
+mod clike;
 mod cpp;
 mod csharp;
 mod css;

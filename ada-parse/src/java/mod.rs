@@ -1,18 +1,22 @@
-//! Java by a scanner of ada's own (ADR-40, speed first): bat's `Java` grammar compiled by hand,
-//! as Rust's and Kotlin's were (`rust.rs`, `kotlin.rs`), with the Javadoc it embeds and the part
-//! of HTML that Javadoc includes. Each context that can be open is an arm of one `match` on the
-//! top of a stack, trying its patterns in the grammar's order at the position the scan has
-//! reached, which is syntect's leftmost match; where no pattern can start (a word, spaces, a
-//! comment's text), the run is skipped whole.
+//! Java by a scanner of ada's own (ADR-40, speed first), with the Javadoc it embeds and the part
+//! of HTML that Javadoc includes, emitting bat's scopes, with bat's `Java` grammar the reference
+//! it is checked against.
+//!
+//! **Code is read a token at a time** (X-015, [`code`]): on the C family's core
+//! ([`crate::clike`]), a name read once and looked up once, a type read whole, and frames of
+//! ada's own (a block, a class's body, a member's declaration, parentheses, parameters, an
+//! annotation's arguments) that classify each token by what follows it on the line. The rare
+//! declarations' headers (a class's, a type parameter's, `throws`, imports, the package,
+//! `module-info.java`) stay contexts of bat's grammar compiled by hand, each an arm of one
+//! `match` on the top of the stack trying its patterns in the grammar's order at the scan's
+//! place (syntect's leftmost match), as do Javadoc and its HTML, strings and comments.
 //!
 //! The grammar keeps meta scopes on nearly every context, but the built-in themes key on one of
 //! them only, `meta.annotation`, so a kind is a leaf (bat's scopes for a token) in an
-//! annotation or not, and the contexts that differ only in meta scopes are one here (a method's
-//! body, a block, a static initializer are [`BLOCK`]; `( … )` and a call's arguments are
-//! [`PARENS`]); the contexts that only hold a meta scope and pop at once aren't kept. Inside
-//! Javadoc a kind also says which HTML string or comment holds it ([`scopes`]).
+//! annotation or not. Inside Javadoc a kind also says which HTML string or comment holds it
+//! ([`scopes`]).
 //!
-//! It follows the grammar where it colors, odd corners included: `@Override`'s line end and the
+//! It colors as the grammar does, odd corners included: `@Override`'s line end and the
 //! next line's indentation are the annotation's; `default` is a modifier in a block, and
 //! `default ->` a lambda's parameter; a line comment ends at `%>`, which then empties the stack;
 //! an unknown block tag (`@hidden`) leaves the rest of its Javadoc plain to the next tag;
@@ -21,34 +25,28 @@
 //! the Unicode classes are `char`'s (`\p{L}` its alphabetic, `\w` its alphanumeric), and `\s`
 //! is ASCII's.
 //!
-//! The stack between lines is the contexts open above the top level, up to 28 (the bytes of
-//! [`State`]'s levels).
-//!
-//! **Tokens classified once** (X-005): in front of the patterns, fast paths read a token once
-//! (its word, the word's keyword class, the byte after its blanks) and take it whole where they
-//! can show what every pattern before the one that matches would do, the rest left to the
-//! patterns, which stay the reference: a run of blanks or a word no pattern of the context
-//! starts in is passed by the run loop ([`PASSES`]); a context pushed after a type, a field's
-//! or a parameter's name that pops at once at the next byte isn't pushed ([`Scan::pops_at`]);
-//! a member's type, name and `=` are one turn ([`Scan::field_or_method`]); a parameter's
-//! plain name skips the type patterns. Each held to golden digests of every line's spans.
+//! The stack between lines is the frames and contexts open above the top level, up to 28 (the
+//! bytes of [`State`]'s levels).
+
+mod code;
+mod doc;
 
 use crate::matcher::KEPT as HALF;
 use crate::regex;
 use crate::sql;
 use crate::{Out, State, is_space, skip_spaces, trim_end};
+use code::is_frame;
 
-// The contexts. Java's first, those with its prototype (comments, `goto`, `const`, `%>`)
-// before `STRING`.
-/// The top level (`main`).
-const MAIN: u8 = 0;
-/// A class's body (`class-body`), `}` closing it.
+// The frames of ada's own ([`code`]), below `FRAMES`.
+/// The top level (`main`): declarations, then code.
+const TOP: u8 = 0;
+/// A class's body, `}` closing it.
 const CLASS_BODY: u8 = 1;
 /// An enum's body: a class's, and a line of constants.
 const ENUM_BODY: u8 = 2;
 /// An anonymous class's body, whose `}` is a brace's.
 const ANON_BODY: u8 = 3;
-/// `{ … }` of statements (`code-block`): a method's, a block's, an initializer's.
+/// `{ … }` of statements: a method's, a block's, an initializer's.
 const BLOCK: u8 = 4;
 /// An enum's constants, to `;` or `}`.
 const ENUM_CONSTANTS: u8 = 5;
@@ -56,109 +54,115 @@ const ENUM_CONSTANTS: u8 = 5;
 const ENUM_CONSTANT: u8 = 6;
 /// `( … )` of code: a group's, a call's.
 const PARENS: u8 = 7;
-/// A constructor's arguments.
-const CTOR_ARGS: u8 = 8;
-/// After them: an anonymous class's body.
-const CTOR_AFTER: u8 = 9;
-/// An assignment's value.
-const RHS: u8 = 10;
-/// A field's value.
-const STATIC_RHS: u8 = 11;
-const LAMBDA_PARAMS: u8 = 12;
-const LAMBDA_PARAM_LIST: u8 = 13;
-const LAMBDA_ARROW: u8 = 14;
-const LAMBDA_BODY: u8 = 15;
-const ASSERT: u8 = 16;
-/// After `for` or `try`: their `( … )`.
-const DECL_PARENS: u8 = 17;
-const DECL_PARENS_IN: u8 = 18;
-const CATCH: u8 = 19;
-const CATCH_OPEN: u8 = 20;
-const CATCH_PARAMS: u8 = 21;
-/// After `::`.
-const METHOD_REF: u8 = 22;
-const ARRAY_INIT: u8 = 23;
-const ANNOT_ARRAY_INIT: u8 = 24;
-const ARRAY_DEF: u8 = 25;
-const ARRAY_DEF_IN: u8 = 26;
-const ARRAY_DEF_AFTER: u8 = 27;
-/// After `new`.
-const INSTANTIATION: u8 = 28;
-const NEW_TYPE: u8 = 29;
-const AFTER_NEW_TYPE: u8 = 30;
-const AFTER_NEW_GENERIC: u8 = 31;
-const CONSTRUCTION: u8 = 32;
-/// After a type in code.
-const AFTER_TYPE: u8 = 33;
-const AFTER_TYPE_DOT: u8 = 34;
-const ARRAY_BRACKETS: u8 = 35;
-/// A type's package, to its name (`object-type-fqn`).
-const TYPE_FQN: u8 = 36;
-const GENERIC_INVOCATION: u8 = 37;
-const GENERIC_ARG: u8 = 38;
-const GENERIC_BOUNDS: u8 = 39;
-const MULTI_BOUNDS: u8 = 40;
-const GENERIC_DECL: u8 = 41;
-const GENERIC_PARAM: u8 = 42;
+/// A call's `(` whose first argument is SQL (`prepareStatement(`, `createQuery(`…), to its
+/// first `,` (which makes it [`PARENS`]) or its `)` (ADR-40, phase 4).
+const PARENS_SQL: u8 = 8;
+/// A constructor's arguments, then what may follow them: an anonymous class's body.
+const CTOR_ARGS: u8 = 9;
+const CTOR_AFTER: u8 = 10;
+/// A method's parameters, a lambda's, a `catch`'s.
+const METHOD_PARAMS: u8 = 11;
+const LAMBDA_PARAM_LIST: u8 = 12;
+const CATCH_PARAMS: u8 = 13;
+/// After `for` or `try`, their `( … )`; after `catch`, its.
+const DECL_PARENS: u8 = 14;
+const DECL_PARENS_IN: u8 = 15;
+const CATCH: u8 = 16;
+/// A lambda's parameters read, before its `->`; then its body, to `)`, `}` or `;`.
+const LAMBDA_ARROW: u8 = 17;
+const LAMBDA_BODY: u8 = 18;
+const ASSERT: u8 = 19;
+/// `{ … }` of an array's values; in an annotation's arguments.
+const ARRAY_INIT: u8 = 20;
+const ANNOT_ARRAY_INIT: u8 = 21;
+/// After `new int` or a `]`: an array's `[` or values; then in its `[ … ]`.
+const ARRAY_DEF: u8 = 22;
+const ARRAY_DEF_IN: u8 = 23;
+/// An annotation, before its `(`, then in its arguments, and a named argument's value; each
+/// with SQL's variant (`@Query`, `@SqlUpdate`…: a string there is the `value`'s, SQL). One of
+/// these on the stack, or [`ANNOT_DEFAULT`], is an annotation open (`meta.annotation`).
+const ANNOT_PARAMS: u8 = 24;
+const ANNOT_PARAMS_SQL: u8 = 25;
+const ANNOT_ARGS: u8 = 26;
+const ANNOT_ARGS_SQL: u8 = 27;
+const ANNOT_VALUE: u8 = 28;
+const ANNOT_VALUE_SQL: u8 = 29;
+/// An annotation type's element's `default` value.
+const ANNOT_DEFAULT: u8 = 30;
+/// A method's declaration: its name, parameters, `throws`, to its body or `;`.
+const METHOD: u8 = 31;
+/// A member's type read, its name on a later line.
+const MEMBER: u8 = 32;
+/// A field's declarators; after a name (`static-assignment`); a value, to `,` or `;`.
+const FIELD: u8 = 33;
+const FIELD_NAMED: u8 = 34;
+const STATIC_RHS: u8 = 35;
+/// After `new`, its type; after the type.
+const INSTANTIATION: u8 = 36;
+const AFTER_NEW_TYPE: u8 = 37;
+/// After `::` at a line's end.
+const METHOD_REF: u8 = 38;
+/// An assignment's value, to `;`, `)`, `}` or `,`.
+const RHS: u8 = 39;
+const FRAMES: u8 = 40;
+// bat's contexts, for the rare declarations' headers, with its prototype (comments, `goto`,
+// `const`, `%>`) as all those before `STRING`
+const CLASS_TYPE: u8 = 40;
+const CLASS_NAME: u8 = 41;
+const CLASS_EXTENDS: u8 = 42;
+const CLASS_SUPERS: u8 = 43;
+const INHERITED_REF: u8 = 44;
+const INHERITED_PATH: u8 = 45;
+const INHERITED_NAME: u8 = 46;
+const AFTER_INHERITED: u8 = 47;
+const CLASS_BLOCK: u8 = 48;
+const ENUM_BLOCK: u8 = 49;
+const GENERIC_DECL: u8 = 50;
+const GENERIC_PARAM: u8 = 51;
+const GENERIC_BOUNDS: u8 = 52;
+const MULTI_BOUNDS: u8 = 53;
+/// A type's arguments that don't close on their line.
+const GENERIC_INVOCATION: u8 = 54;
+const GENERIC_ARG: u8 = 55;
 /// `object-and-array-types`' package, its name, what follows it.
-const OBJ_ARRAY_PATH: u8 = 43;
-const AFTER_OBJ_ARRAY: u8 = 44;
-const OBJ_ARRAY_TYPE: u8 = 45;
+const OBJ_ARRAY_PATH: u8 = 56;
+const AFTER_OBJ_ARRAY: u8 = 57;
+const OBJ_ARRAY_TYPE: u8 = 58;
+const ARRAY_BRACKETS: u8 = 59;
+/// A type's package, to its name (`object-type-fqn`), across a line's end.
+const TYPE_FQN: u8 = 60;
 /// `object-type-reference`, its package, its name, what follows it.
-const TYPE_REF: u8 = 46;
-const TYPE_REF_PATH: u8 = 47;
-const TYPE_REF_NAME: u8 = 48;
-const AFTER_TYPE_REF: u8 = 49;
-const CLASS_TYPE: u8 = 50;
-const CLASS_NAME: u8 = 51;
-const CLASS_EXTENDS: u8 = 52;
-const CLASS_SUPERS: u8 = 53;
-const INHERITED_REF: u8 = 54;
-const INHERITED_PATH: u8 = 55;
-const INHERITED_NAME: u8 = 56;
-const AFTER_INHERITED: u8 = 57;
-const CLASS_BLOCK: u8 = 58;
-const ENUM_BLOCK: u8 = 59;
-const METHOD: u8 = 60;
-const METHOD_PARAMS: u8 = 61;
-const THROWS_LIST: u8 = 62;
-const ANNOT_DEFAULT: u8 = 63;
-const FIELD_OR_METHOD: u8 = 64;
-const FIELD: u8 = 65;
-const STATIC_ASSIGN: u8 = 66;
-/// An annotation's type, its package, its name, what follows it.
-const ANNOT_TYPE_REF: u8 = 67;
-const ANNOT_PATH: u8 = 68;
-const ANNOT_NAME: u8 = 69;
-const ANNOT_AFTER: u8 = 70;
-/// An annotation's bottom: before its `(`, then in its arguments. One of these two on the
-/// stack, or [`ANNOT_DEFAULT`], is an annotation open (`meta.annotation`).
-const ANNOT_PARAMS: u8 = 71;
-const ANNOT_ARGS: u8 = 72;
-const ANNOT_VALUE: u8 = 73;
+const TYPE_REF: u8 = 61;
+const TYPE_REF_PATH: u8 = 62;
+const TYPE_REF_NAME: u8 = 63;
+const AFTER_TYPE_REF: u8 = 64;
+const THROWS_LIST: u8 = 65;
+/// An annotation's package and name, across a line's end.
+const ANNOT_PATH: u8 = 66;
+const ANNOT_NAME: u8 = 67;
+const ANNOT_AFTER: u8 = 68;
 /// `module-info.java`'s.
-const MODULE_KW: u8 = 74;
-const MODULE_ID: u8 = 75;
-const MODULE_BODY: u8 = 76;
-const MODULE_BODY_IN: u8 = 77;
-const EXPORTS: u8 = 78;
-const EXPORTS_TO: u8 = 79;
-const REQUIRES: u8 = 80;
-const PROVIDES_WITH: u8 = 81;
-const PROVIDES_LIST: u8 = 82;
+const MODULE_KW: u8 = 69;
+const MODULE_ID: u8 = 70;
+const MODULE_BODY: u8 = 71;
+const MODULE_BODY_IN: u8 = 72;
+const EXPORTS: u8 = 73;
+const EXPORTS_TO: u8 = 74;
+const REQUIRES: u8 = 75;
+const PROVIDES_WITH: u8 = 76;
+const PROVIDES_LIST: u8 = 77;
 /// `dot-separated-identifier` under each scope that holds it.
-const DOTTED_NS: u8 = 83;
-const DOTTED_MODULE: u8 = 84;
-const DOTTED_PKG: u8 = 85;
-const DOTTED_SMOD: u8 = 86;
-const PACKAGE_NAME: u8 = 87;
-const IMPORT_BODY: u8 = 88;
-const IMPORT_PATH: u8 = 89;
-const IMPORT_AFTER: u8 = 90;
-const STATIC_IMPORT: u8 = 91;
-const STATIC_PATH: u8 = 92;
-const STATIC_AFTER: u8 = 93;
-// without the prototype
+const DOTTED_NS: u8 = 78;
+const DOTTED_MODULE: u8 = 79;
+const DOTTED_PKG: u8 = 80;
+const DOTTED_SMOD: u8 = 81;
+const PACKAGE_NAME: u8 = 82;
+const IMPORT_BODY: u8 = 83;
+const IMPORT_PATH: u8 = 84;
+const IMPORT_AFTER: u8 = 85;
+const STATIC_IMPORT: u8 = 86;
+const STATIC_PATH: u8 = 87;
+const STATIC_AFTER: u8 = 88;
 const STRING: u8 = 94;
 const CHAR: u8 = 95;
 const COMMENT: u8 = 96;
@@ -223,17 +227,8 @@ const H_EMBED_TAG: u8 = 139;
 const H_EMBED_TEXT: u8 = 140;
 /// A string that holds a regex (ADR-40, phase 4), the regex's state in [`Scan::re`].
 const STRING_RE: u8 = 141;
-// SQL by call sites and markers (ADR-40, phase 4): the contexts whose strings are SQL, a text
-// block, and the strings whose text is SQL, by SQL's context. Each code context here has the
-// prototype, as those before `STRING` do (`has_prototype`, tried in `sql_context`).
-/// A call's `(` whose first argument is SQL (`prepareStatement(`, `createQuery(`…), to its
-/// first `,` (which makes it [`PARENS`]) or its `)`.
-const PARENS_SQL: u8 = 142;
-/// A SQL annotation's (`@Query`, `@SqlUpdate`…): before its `(`, its arguments (a string there
-/// is the `value`'s, SQL), and a named argument's value that is SQL (`query = …`).
-const ANNOT_PARAMS_SQL: u8 = 143;
-const ANNOT_ARGS_SQL: u8 = 144;
-const ANNOT_VALUE_SQL: u8 = 145;
+// SQL by call sites and markers (ADR-40, phase 4): a text block, and the strings whose text is
+// SQL, by SQL's context ([`PARENS_SQL`] and the annotations' are frames).
 /// `"""…"""`, a text block (Java 15), which bat's grammar doesn't know: it read `""` and a
 /// string to the line's end, and the block's lines as code.
 const TEXT_BLOCK: u8 = 146;
@@ -544,7 +539,7 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
 static CTX: [u16; 256] = {
     let mut t = [PLAIN; 256];
     let mut i = JD_MAIN as usize;
-    while i < PARENS_SQL as usize {
+    while i < STRING_RE as usize {
         t[i] = W_JD;
         i += 1;
     }
@@ -577,50 +572,20 @@ static CTX: [u16; 256] = {
 };
 const COUNTED: u16 = 1 << 15;
 
-/// By context, what the scan may pass without trying the patterns: [`BLANKS`], [`WORDS`].
+/// By context of bat's patterns, what the scan may pass without trying them: [`BLANKS`].
 static PASSES: [u8; 256] = {
     let mut t = [0; 256];
-    // the code contexts and those within a declaration (below `MODULE_KW`; the module's
-    // contexts not checked): no pattern starts at a blank but `illegal-open-block`'s
-    // `\s?(?={)`, and `enum-body`'s at a line's start; none matches at the line's end
-    let mut i = 0;
+    // those within a declaration (below `MODULE_KW`; the module's contexts not checked): no
+    // pattern starts at a blank, none matches at the line's end
+    let mut i = FRAMES as usize;
     while i < MODULE_KW as usize {
         t[i] = BLANKS | QUIET_EOL;
         i += 1;
     }
-    t[ENUM_BODY as usize] = 0;
-    let words = [
-        BLOCK,
-        PARENS,
-        CTOR_ARGS,
-        RHS,
-        STATIC_RHS,
-        LAMBDA_ARROW,
-        LAMBDA_BODY,
-        ASSERT,
-        DECL_PARENS_IN,
-        ARRAY_INIT,
-        ANNOT_ARRAY_INIT,
-        ARRAY_DEF_IN,
-        ANNOT_DEFAULT,
-        ANNOT_ARGS,
-        ANNOT_VALUE,
-        PARENS_SQL,
-        ANNOT_ARGS_SQL,
-        ANNOT_VALUE_SQL,
-    ];
-    let mut i = 0;
-    while i < words.len() {
-        t[words[i] as usize] |= WORDS;
-        i += 1;
-    }
     t
 };
-/// A run of blanks matches nothing unless `{` follows it.
+/// A run of blanks matches nothing.
 const BLANKS: u8 = 1;
-/// Past a word's start only a pattern starting with an identifier can match, which would have
-/// at the start unless that is a digit: a word that matches nothing is passed whole.
-const WORDS: u8 = 2;
 /// At the line's end nothing matches ([`Scan::eol`]'s `None`).
 const QUIET_EOL: u8 = 4;
 
@@ -634,7 +599,7 @@ const KEPT: usize = 2 * HALF;
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     let mut s = Scan {
         b,
-        stack: [MAIN; MAX],
+        stack: [TOP; MAX],
         depth: 1,
         exact: state.is_exact(),
         annot: 0,
@@ -643,6 +608,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         at: 0,
         loop_at: (usize::MAX, 0),
         halt: false,
+        enum_checked: false,
         arrow: None,
         tag_line: None,
         word_at: std::cell::Cell::new((usize::MAX, 0)),
@@ -720,6 +686,8 @@ struct Scan<'b, 'c> {
     loop_at: (usize, usize),
     /// A loop at the line's end: nothing more to match.
     halt: bool,
+    /// Whether an enum's body was asked at the line's start for a line of constants.
+    enum_checked: bool,
     /// The last `)` followed by `\s*->`, once looked for.
     arrow: Option<Option<usize>>,
     /// Whether the line is `^\s*\*?\s*@`, once looked at.
@@ -784,12 +752,6 @@ fn regex_string(b: &[u8], p: usize) -> bool {
         b'=' => named(b"regexp"),
         _ => false,
     }
-}
-
-/// Whether context `c`, past `STRING`, is code with the prototype: SQL's call and annotation
-/// contexts.
-fn has_prototype(c: u8) -> bool {
-    c.wrapping_sub(PARENS_SQL) <= ANNOT_VALUE_SQL - PARENS_SQL
 }
 
 /// The bytes a string's patterns start on, around SQL: its end and its escapes.
@@ -1579,12 +1541,16 @@ impl<'b> Scan<'b, '_> {
         let b = self.b;
         let mut p = 0;
         loop {
+            if is_frame(self.top()) {
+                p = self.code_run(p);
+                if is_frame(self.top()) {
+                    return;
+                }
+                continue;
+            }
             // a run of blanks no pattern of the context starts in
             if p < b.len() && is_space(b[p]) && PASSES[usize::from(self.top())] & BLANKS != 0 {
-                let q = skip_spaces(b, p);
-                if b.get(q) != Some(&b'{') {
-                    p = q;
-                }
+                p = skip_spaces(b, p);
             }
             // the line's end, where the context's patterns take nothing
             if p == b.len() && PASSES[usize::from(self.top())] & QUIET_EOL != 0 {
@@ -1606,7 +1572,6 @@ impl<'b> Scan<'b, '_> {
     /// Where the next pattern can start, after none did at `p`.
     fn advance(&self, p: usize) -> usize {
         let b = self.b;
-        let c = b[p];
         let top = self.top();
         match top {
             STRING | STRING_RE | TEXT_BLOCK => find_any(b, p + 1, *b"\"\\"),
@@ -1628,34 +1593,13 @@ impl<'b> Scan<'b, '_> {
             H_EMBED_TEXT | H_EMBED_DQ | H_EMBED_SQ => {
                 next_of(b, p + 1, |c| matches!(c, b'<' | b'*' | b'"' | b'\''))
             }
-            _ if is_space(c) => {
-                // `\s?(?={)` starts at the last space before `{`
-                let q = skip_spaces(b, p);
-                if q > p + 1 && b.get(q) == Some(&b'{') {
-                    q - 1
-                } else {
-                    q
-                }
-            }
-            _ if PASSES[usize::from(top)] & WORDS != 0 && is_word(b, p) => {
-                let w = self.word(p);
-                let e = if w.is_empty() {
-                    word_end(b, p)
-                } else {
-                    p + w.len()
-                };
-                if c.is_ascii_digit() {
-                    run_of(b, p, |b, i| !is_ident_start(b, i)).min(e)
-                } else {
-                    e
-                }
-            }
+            _ if is_space(b[p]) => skip_spaces(b, p),
             _ => next(b, p),
         }
     }
 
-    /// The first pattern of the top context that matches at `p`, applied: where the scan goes
-    /// on, or `None` when none does.
+    /// The first pattern of the top context, one of bat's, that matches at `p`, applied: where
+    /// the scan goes on, or `None` when none does.
     fn at(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
         let top = self.top();
@@ -1673,195 +1617,12 @@ impl<'b> Scan<'b, '_> {
             if top == STRING_RE {
                 return self.in_regex(p, c);
             }
-            if top >= PARENS_SQL {
+            if top >= TEXT_BLOCK {
                 return self.sql_context(p, c, top);
             }
             return self.javadoc(p, c, top);
         }
         match top {
-            MAIN => self.main(p, c),
-            CLASS_BODY | ANON_BODY => match c {
-                b'}' => Some(self.close(
-                    p,
-                    1,
-                    if top == ANON_BODY {
-                        BRACE_END
-                    } else {
-                        BLOCK_END
-                    },
-                )),
-                _ => self.class_body(p, c),
-            },
-            ENUM_BODY => {
-                if c == b'}' {
-                    return Some(self.close(p, 1, BLOCK_END));
-                }
-                if p == 0 && self.enum_line() {
-                    return Some(self.enter(0, &[ENUM_CONSTANTS]));
-                }
-                self.class_body(p, c)
-            }
-            BLOCK => match c {
-                b'}' => Some(self.close(p, 1, BLOCK_END)),
-                _ => self.code_block(p, c),
-            },
-            ENUM_CONSTANTS => match c {
-                b';' | b'}' => Some(self.leave(p)),
-                b',' => Some(self.token(p, 1, COMMA)),
-                _ if is_word(b, p) => {
-                    let e = word_end(b, p);
-                    self.put(p, e, ENUM_NAME);
-                    self.push(e, ENUM_CONSTANT);
-                    Some(e)
-                }
-                _ => None,
-            },
-            ENUM_CONSTANT => match c {
-                b'{' => Some(self.open(p, 1, ENUM_BODY, BLOCK_BEGIN)),
-                b'(' => Some(self.open(p, 1, PARENS, PAREN_BEGIN)),
-                _ => self.any_pop(p),
-            },
-            PARENS => match c {
-                b')' => Some(self.close(p, 1, PAREN_END)),
-                _ => self.illegal_parens(p, c).or_else(|| self.code(p, c)),
-            },
-            CTOR_ARGS => match c {
-                b')' => Some(self.then(p, 1, &[CTOR_AFTER], PAREN_END)),
-                _ => self.illegal_parens(p, c).or_else(|| self.code(p, c)),
-            },
-            CTOR_AFTER => match c {
-                b'{' => Some(self.then(p, 1, &[ANON_BODY], BRACE_BEGIN)),
-                _ => self.any_pop(p),
-            },
-            RHS => match c {
-                b';' | b')' | b'}' | b',' => Some(self.leave(p)),
-                _ => self.code(p, c),
-            },
-            STATIC_RHS => match c {
-                b',' | b';' => Some(self.leave(p)),
-                _ => {
-                    if self.before_next_field(p) {
-                        return Some(self.leave(p));
-                    }
-                    self.code(p, c)
-                        .or_else(|| (c == b')').then(|| self.token(p, 1, STRAY_PAREN)))
-                }
-            },
-            LAMBDA_PARAMS => {
-                if c == b'(' {
-                    return Some(self.then(p, 1, &[LAMBDA_PARAM_LIST], PAREN_BEGIN));
-                }
-                let e = ident(b, p)?;
-                Some(self.then(p, e - p, &[LAMBDA_ARROW], PARAMETER))
-            }
-            LAMBDA_PARAM_LIST => match c {
-                b')' => Some(self.then(p, 1, &[LAMBDA_ARROW], PAREN_END)),
-                _ => self.parameters(p, c),
-            },
-            LAMBDA_ARROW => (c == b'-' && b.get(p + 1) == Some(&b'>'))
-                .then(|| self.then(p, 2, &[LAMBDA_BODY], ARROW)),
-            LAMBDA_BODY => match c {
-                b')' | b'}' | b';' => Some(self.leave(p)),
-                _ => self.code(p, c),
-            },
-            ASSERT => match c {
-                b';' => Some(self.leave(p)),
-                b':' => Some(self.token(p, 1, EXPR_SEP)),
-                _ => self.code(p, c),
-            },
-            DECL_PARENS => match c {
-                b'(' => Some(self.then(p, 1, &[DECL_PARENS_IN], PAREN_BEGIN)),
-                _ => self.any_pop(p),
-            },
-            DECL_PARENS_IN => match c {
-                b')' => Some(self.close(p, 1, PAREN_END)),
-                _ => self.open_block(p, c).or_else(|| self.code_block(p, c)),
-            },
-            CATCH => match c {
-                b'(' => Some(self.shift(p, &[CATCH_OPEN])),
-                _ => self.any_pop(p),
-            },
-            CATCH_OPEN => (c == b'(').then(|| self.then(p, 1, &[CATCH_PARAMS], PAREN_BEGIN)),
-            CATCH_PARAMS => match c {
-                b')' => Some(self.close(p, 1, PAREN_END)),
-                b'|' => Some(self.token(p, 1, BAR)),
-                _ => self.parameters(p, c),
-            },
-            METHOD_REF => match ident(b, p) {
-                Some(e) => Some(self.close(p, e - p, FUNCTION_REF)),
-                None => self.any_pop(p),
-            },
-            ARRAY_INIT | ANNOT_ARRAY_INIT => match c {
-                b'}' => Some(self.close(p, 1, BRACE_END)),
-                b'{' => Some(self.open(p, 1, ARRAY_INIT, BRACE_BEGIN)),
-                b'@' if top == ANNOT_ARRAY_INIT => Some(self.annotation(p)),
-                _ => self.code(p, c),
-            },
-            ARRAY_DEF => match c {
-                b'[' => Some(self.then(p, 1, &[ARRAY_DEF_IN], BRACKET_BEGIN)),
-                _ => self.any_pop(p),
-            },
-            ARRAY_DEF_IN => match c {
-                b']' => Some(self.then(p, 1, &[ARRAY_DEF_AFTER], BRACKET_END)),
-                _ => self.code(p, c),
-            },
-            ARRAY_DEF_AFTER => match c {
-                b'[' => Some(self.shift(p, &[ARRAY_DEF])),
-                b'{' => Some(self.then(p, 1, &[ARRAY_INIT], BRACE_BEGIN)),
-                _ => self.any_pop(p),
-            },
-            INSTANTIATION => {
-                if self.word_kind(p) == Word::Primitive {
-                    let e = word_end(b, p);
-                    return Some(self.then(p, e - p, &[ARRAY_DEF], PRIMITIVE));
-                }
-                if package_ahead(b, p) {
-                    return Some(self.shift(p, &[AFTER_NEW_TYPE, TYPE_FQN]));
-                }
-                self.new_type(p)
-            }
-            NEW_TYPE => self.new_type(p),
-            AFTER_NEW_TYPE => match c {
-                b'[' => Some(self.shift(p, &[ARRAY_DEF])),
-                b'(' => Some(self.shift(p, &[CONSTRUCTION])),
-                b'<' if b.get(p + 1) == Some(&b'>') => {
-                    Some(self.then(p, 2, &[CONSTRUCTION], DIAMOND))
-                }
-                b'<' => Some(self.shift(p, &[AFTER_NEW_GENERIC, GENERIC_INVOCATION])),
-                b'.' => Some(self.then(p, 1, &[NEW_TYPE], DOT)),
-                _ => self.any_pop(p),
-            },
-            AFTER_NEW_GENERIC => match c {
-                b'[' => Some(self.shift(p, &[ARRAY_DEF])),
-                b'(' => Some(self.then(p, 1, &[CTOR_ARGS], PAREN_BEGIN)),
-                _ => self.any_pop(p),
-            },
-            CONSTRUCTION => match c {
-                b'(' => Some(self.then(p, 1, &[CTOR_ARGS], PAREN_BEGIN)),
-                _ => self.any_pop(p),
-            },
-            AFTER_TYPE => match c {
-                b'<' => Some(self.shift(p, &[ARRAY_BRACKETS, GENERIC_INVOCATION])),
-                b'.' if b.get(p + 1) != Some(&b'.') => {
-                    Some(self.then(p, 1, &[AFTER_TYPE_DOT], DOT))
-                }
-                _ => self.array_brackets(p, c),
-            },
-            AFTER_TYPE_DOT => {
-                if c == b'<' {
-                    return Some(self.shift(p, &[GENERIC_INVOCATION]));
-                }
-                if b[p..].starts_with(b"class") && boundary(b, p + 5) {
-                    return Some(self.close(p, 5, VAR_LANGUAGE));
-                }
-                if let Some(e) = upper_word(b, p) {
-                    return Some(self.close(p, e - p, CONSTANT));
-                }
-                if let Some(e) = type_name(b, p) {
-                    return Some(self.then(p, e - p, &[AFTER_TYPE], CLASS));
-                }
-                self.any_pop(p)
-            }
             ARRAY_BRACKETS => self.array_brackets(p, c),
             TYPE_FQN => {
                 if let Some(r) = self.package(p, c, PACKAGE) {
@@ -1953,7 +1714,7 @@ impl<'b> Scan<'b, '_> {
                     (b"@interface", CLASS_BLOCK),
                     (b"enum", ENUM_BLOCK),
                 ] {
-                    if b[p..].starts_with(kw) && boundary(b, p + kw.len()) {
+                    if crate::has_at(b, p, kw) && boundary(b, p + kw.len()) {
                         let e = p + kw.len();
                         self.set(p, &[cs, CLASS_EXTENDS, GENERIC_DECL, CLASS_NAME]);
                         if c == b'@' {
@@ -1966,8 +1727,8 @@ impl<'b> Scan<'b, '_> {
                 self.any_pop(p)
             }
             CLASS_NAME => {
-                if !b[p..].starts_with(b"extends")
-                    && !b[p..].starts_with(b"implements")
+                if !crate::has_at(b, p, b"extends")
+                    && !crate::has_at(b, p, b"implements")
                     && let Some(e) = ident(b, p)
                     && let Some(e) = back_to(b, next(b, p), e, |_| true)
                 {
@@ -1980,7 +1741,7 @@ impl<'b> Scan<'b, '_> {
                     (&b"extends"[..], EXTENDS_KW),
                     (b"implements", IMPLEMENTS_KW),
                 ] {
-                    if b[p..].starts_with(kw) && boundary(b, p + kw.len()) {
+                    if crate::has_at(b, p, kw) && boundary(b, p + kw.len()) {
                         let e = p + kw.len();
                         self.put(p, e, leaf);
                         self.push(e, CLASS_SUPERS);
@@ -2030,37 +1791,6 @@ impl<'b> Scan<'b, '_> {
                 b'{' => Some(self.then(p, 1, &[ENUM_BODY], BLOCK_BEGIN)),
                 _ => self.any_pop(p),
             },
-            METHOD => self.method(p, c),
-            METHOD_PARAMS => match c {
-                b')' => Some(self.close(p, 1, PAREN_END)),
-                _ => self.parameters(p, c).or_else(|| {
-                    (!is_space(c)).then(|| self.close(p, char_len(c), MISSING_PARAM_END))
-                }),
-            },
-            ANNOT_DEFAULT => match c {
-                b';' => Some(self.leave(p)),
-                _ => self.code(p, c),
-            },
-            FIELD_OR_METHOD => {
-                if self.call_ahead(p) {
-                    return Some(self.shift(p, &[METHOD]));
-                }
-                if !is_space(c) {
-                    return Some(self.shift(p, &[FIELD]));
-                }
-                None
-            }
-            FIELD => self.field(p, c),
-            STATIC_ASSIGN => match c {
-                b'=' => Some(self.then(p, 1, &[STATIC_RHS], ASSIGN)),
-                _ => self.any_pop(p),
-            },
-            ANNOT_TYPE_REF => {
-                if package_ahead(b, p) {
-                    return Some(self.shift(p, &[ANNOT_PATH]));
-                }
-                self.annotation_name(p)
-            }
             ANNOT_PATH => {
                 if let Some(e) = lower_word(b, p) {
                     return Some(self.token(p, e - p, ANNOTATION_PKG));
@@ -2068,41 +1798,12 @@ impl<'b> Scan<'b, '_> {
                 if c == b'.' {
                     return Some(self.token(p, 1, DOT));
                 }
-                self.annotation_name(p)
+                self.annotation_type(p)
             }
-            ANNOT_NAME => self.annotation_name(p),
+            ANNOT_NAME => self.annotation_type(p),
             ANNOT_AFTER => match c {
                 b'.' => Some(self.then(p, 1, &[ANNOT_NAME], DOT)),
                 _ => self.any_pop(p),
-            },
-            ANNOT_PARAMS => match c {
-                b'(' => Some(self.then(p, 1, &[ANNOT_ARGS], PAREN_BEGIN)),
-                _ => self.any_pop(p),
-            },
-            ANNOT_ARGS => {
-                if c == b')' {
-                    return Some(self.close(p, 1, PAREN_END));
-                }
-                // `((?:[\p{L}_$][\p{L}\p{N}_$]*))\s*(=)`
-                if let Some(e) = ident(b, p) {
-                    let q = skip_spaces(b, e);
-                    if b.get(q) == Some(&b'=') {
-                        self.put(p, e, PARAMETER);
-                        self.put(q, q + 1, ASSIGN);
-                        self.push(q + 1, ANNOT_VALUE);
-                        return Some(q + 1);
-                    }
-                }
-                match c {
-                    b'{' => Some(self.open(p, 1, ANNOT_ARRAY_INIT, BRACE_BEGIN)),
-                    b'@' => Some(self.annotation(p)),
-                    _ => self.code(p, c),
-                }
-            }
-            ANNOT_VALUE => match c {
-                b',' | b'}' | b')' => Some(self.leave(p)),
-                b'@' => Some(self.annotation(p)),
-                _ => self.code(p, c),
             },
             STRING | CHAR => {
                 let (q, end, escape) = if top == STRING {
@@ -2173,69 +1874,14 @@ impl<'b> Scan<'b, '_> {
         Some(q)
     }
 
-    /// The contexts of SQL by call sites and markers, past `JD_MAIN` and out of the hot
-    /// `match`: a SQL call's and annotation's arguments, a text block, a string whose text is
-    /// SQL.
+    /// The contexts past `TEXT_BLOCK`, out of the hot `match`: a text block, a string whose
+    /// text is SQL.
     #[inline(never)]
     fn sql_context(&mut self, p: usize, c: u8, top: u8) -> Option<usize> {
         let b = self.b;
-        // the code contexts' prototype, as `at` tries it for those before `STRING`
-        if has_prototype(top)
-            && let Some(r) = self.prototype(p, c)
-        {
-            return Some(r);
-        }
         match top {
-            PARENS_SQL => match c {
-                b')' => Some(self.close(p, 1, PAREN_END)),
-                // the first argument ends: the rest are code's
-                b',' => {
-                    self.stack[self.depth - 1] = PARENS;
-                    Some(p)
-                }
-                b'"' => Some(self.sql_string(p)),
-                _ => self.illegal_parens(p, c).or_else(|| self.code(p, c)),
-            },
-            ANNOT_PARAMS_SQL => match c {
-                b'(' => Some(self.then(p, 1, &[ANNOT_ARGS_SQL], PAREN_BEGIN)),
-                _ => self.any_pop(p),
-            },
-            ANNOT_ARGS_SQL => {
-                if c == b')' {
-                    return Some(self.close(p, 1, PAREN_END));
-                }
-                // `((?:[\p{L}_$][\p{L}\p{N}_$]*))\s*(=)`, the value SQL's if the name says so
-                if let Some(e) = ident(b, p) {
-                    let q = skip_spaces(b, e);
-                    if b.get(q) == Some(&b'=') {
-                        self.put(p, e, PARAMETER);
-                        self.put(q, q + 1, ASSIGN);
-                        let value = if sql::jvm_argument(&b[p..e]) {
-                            ANNOT_VALUE_SQL
-                        } else {
-                            ANNOT_VALUE
-                        };
-                        self.push(q + 1, value);
-                        return Some(q + 1);
-                    }
-                }
-                match c {
-                    b'{' => Some(self.open(p, 1, ANNOT_ARRAY_INIT, BRACE_BEGIN)),
-                    b'@' => Some(self.annotation(p)),
-                    b'"' => Some(self.sql_string(p)),
-                    _ => self.code(p, c),
-                }
-            }
-            ANNOT_VALUE_SQL => match c {
-                b',' | b'}' | b')' => Some(self.leave(p)),
-                b'@' => Some(self.annotation(p)),
-                b'"' => Some(self.sql_string(p)),
-                _ => self.code(p, c),
-            },
             TEXT_BLOCK => match c {
-                b'"' => b[p..]
-                    .starts_with(b"\"\"\"")
-                    .then(|| self.close(p, 3, TB_END)),
+                b'"' => crate::has_at(b, p, b"\"\"\"").then(|| self.close(p, 3, TB_END)),
                 b'\\' => Some(self.tb_escape(p)),
                 _ => None,
             },
@@ -2345,56 +1991,11 @@ impl<'b> Scan<'b, '_> {
         }
     }
 
-    /// A SQL annotation's name `b[p..e]` (`@Query`): its arguments are SQL's
-    /// ([`ANNOT_PARAMS_SQL`]); `@Language("SQL")`, a marker for the next string.
-    fn annotation_sql(&mut self, p: usize, e: usize) {
-        let b = self.b;
-        let below = self.depth - 2;
-        if matches!(self.stack[below], ANNOT_PARAMS | ANNOT_PARAMS_SQL) {
-            self.stack[below] = if sql::jvm_annotation(&b[p..e]) {
-                ANNOT_PARAMS_SQL
-            } else {
-                ANNOT_PARAMS
-            };
-        }
-        if &b[p..e] == b"Language"
-            && let Some(end) = sql::language_annotation(b, e)
-        {
-            self.mark = end;
-        }
-    }
-
     /// The prototype: comments, `goto` and `const`, `%>`.
     fn prototype(&mut self, p: usize, c: u8) -> Option<usize> {
         let b = self.b;
         match c {
-            b'/' => match b.get(p + 1) {
-                Some(b'*') => {
-                    if b[p + 2..].starts_with(b"*/") {
-                        return Some(self.token(p, 4, EMPTY_COMMENT));
-                    }
-                    if b.get(p + 2) == Some(&b'*') {
-                        self.put(p, p + 3, JD_BEGIN);
-                        self.push(p + 3, JD_MAIN);
-                        self.push(p + 3, JD_CONTENTS);
-                        return Some(p + 3);
-                    }
-                    if sql::marker_comment(b, p + 2) {
-                        self.mark = b[p + 2..]
-                            .windows(2)
-                            .position(|w| w == b"*/")
-                            .map_or(b.len(), |i| p + 4 + i);
-                    }
-                    Some(self.open(p, 2, COMMENT, BLOCK_MARK))
-                }
-                Some(b'/') => {
-                    if sql::marker_comment(b, p + 2) {
-                        self.mark = b.len();
-                    }
-                    Some(self.open(p, 2, LINE_COMMENT, LINE_MARK))
-                }
-                _ => None,
-            },
+            b'/' => self.comment(p),
             b'g' | b'c' if self.word_kind(p) == Word::Illegal => {
                 Some(self.token(p, 4 + usize::from(c == b'c'), ILLEGAL_KEYWORD))
             }
@@ -2405,32 +2006,37 @@ impl<'b> Scan<'b, '_> {
         }
     }
 
-    /// `main`'s own patterns, then `code`.
-    fn main(&mut self, p: usize, c: u8) -> Option<usize> {
-        match self.word(p) {
-            b"package" => {
-                self.put(p, p + 7, PACKAGE_KW);
-                self.push(p + 7, PACKAGE_NAME);
-                return Some(p + 7);
+    /// A comment at `p`, a `/`: `/**/`, Javadoc, a block or a line comment (a SQL marker's
+    /// noted).
+    fn comment(&mut self, p: usize) -> Option<usize> {
+        let b = self.b;
+        match b.get(p + 1) {
+            Some(b'*') => {
+                if crate::has_at(b, p + 2, b"*/") {
+                    return Some(self.token(p, 4, EMPTY_COMMENT));
+                }
+                if b.get(p + 2) == Some(&b'*') {
+                    self.put(p, p + 3, JD_BEGIN);
+                    self.push(p + 3, JD_MAIN);
+                    self.push(p + 3, JD_CONTENTS);
+                    return Some(p + 3);
+                }
+                if sql::marker_comment(b, p + 2) {
+                    self.mark = b[p + 2..]
+                        .windows(2)
+                        .position(|w| w == b"*/")
+                        .map_or(b.len(), |i| p + 4 + i);
+                }
+                Some(self.open(p, 2, COMMENT, BLOCK_MARK))
             }
-            b"import" => return Some(self.open(p, 6, IMPORT_BODY, IMPORT_KW)),
-            b"open" | b"module" if self.module_ahead(p) => {
-                return Some(self.enter(p, &[MODULE_KW]));
+            Some(b'/') => {
+                if sql::marker_comment(b, p + 2) {
+                    self.mark = b.len();
+                }
+                Some(self.open(p, 2, LINE_COMMENT, LINE_MARK))
             }
-            _ => {}
+            _ => None,
         }
-        if self.class_ahead(p) {
-            return Some(self.enter(p, &[CLASS_TYPE]));
-        }
-        match c {
-            b'@' => return Some(self.annotation(p)),
-            b'}' => return Some(self.token(p, 1, STRAY_BRACE)),
-            _ => {}
-        }
-        if let Some(r) = self.modifier(p) {
-            return Some(r);
-        }
-        self.code(p, c)
     }
 
     /// `(?=\b(?:open\s+)?module\b)` at `p`.
@@ -2483,150 +2089,6 @@ impl<'b> Scan<'b, '_> {
         found
     }
 
-    /// `storage-modifiers` at `p`.
-    fn modifier(&mut self, p: usize) -> Option<usize> {
-        (self.word_kind(p) == Word::Modifier).then(|| {
-            let e = word_end(self.b, p);
-            self.token(p, e - p, MODIFIER)
-        })
-    }
-
-    /// `class-body` at `p`.
-    fn class_body(&mut self, p: usize, c: u8) -> Option<usize> {
-        let b = self.b;
-        if self.class_ahead(p) {
-            return Some(self.enter(p, &[CLASS_TYPE]));
-        }
-        if c == b'@' {
-            return Some(self.annotation(p));
-        }
-        // fields-and-methods
-        let w = self.word_kind(p);
-        if w == Word::Void {
-            self.put(p, p + 4, VOID);
-            self.push(p + 4, METHOD);
-            return Some(self.method_name(skip_spaces(b, p + 4)).unwrap_or(p + 4));
-        }
-        // a modifier or a primitive classified once: with no `(` or `.` after it (past its
-        // blanks), no call, package or type takes it before its own pattern
-        if matches!(w, Word::Modifier | Word::Primitive) {
-            let e = p + self.word(p).len();
-            if !b.get(e).is_some_and(|&x| x == b'$' || x >= 0x80)
-                && !matches!(b.get(skip_spaces(b, e)), Some(b'(' | b'.'))
-            {
-                if w == Word::Modifier {
-                    return Some(self.token(p, e - p, MODIFIER));
-                }
-                self.put(p, e, PRIMITIVE);
-                return Some(self.field_or_method(e, ARRAY_BRACKETS, b"["));
-            }
-        }
-        if self.call_ahead(p) {
-            self.enter(p, &[METHOD]);
-            return Some(self.method_name(p).unwrap_or(p));
-        }
-        if package_ahead(b, p) {
-            return Some(self.enter(p, &[FIELD_OR_METHOD, AFTER_OBJ_ARRAY, TYPE_FQN]));
-        }
-        if boundary(b, p)
-            && let Some(e) = type_name(b, p)
-        {
-            self.put(p, e, CLASS);
-            return Some(self.field_or_method(e, AFTER_OBJ_ARRAY, b"<.["));
-        }
-        if w == Word::Primitive {
-            let e = word_end(b, p);
-            self.put(p, e, PRIMITIVE);
-            return Some(self.field_or_method(e, ARRAY_BRACKETS, b"["));
-        }
-        if let Some(r) = self.constants(p, c) {
-            return Some(r);
-        }
-        if let Some(r) = self.modifier(p) {
-            return Some(r);
-        }
-        match c {
-            b'{' => Some(self.open(p, 1, BLOCK, BLOCK_BEGIN)),
-            b',' => Some(self.token(p, 1, COMMA)),
-            b';' => Some(self.token(p, 1, TERMINATOR)),
-            b'<' => Some(self.enter(p, &[GENERIC_DECL])),
-            _ => None,
-        }
-    }
-
-    /// After a member's type ending at `e`: `field-or-method` under `after`, the context after
-    /// the type, whose patterns start at `stops`. Where `after` pops at once, the member is
-    /// classified in the same turn: a method's name before its `(`, or a field's.
-    fn field_or_method(&mut self, e: usize, after: u8, stops: &[u8]) -> usize {
-        let Some(r) = self.pops_at(e, stops) else {
-            self.push(e, FIELD_OR_METHOD);
-            self.push(e, after);
-            return e;
-        };
-        // `field-or-method`'s lookaheads at `r` (its prototype ruled out by `pops_at`)
-        if self.call_ahead(r) {
-            self.push(r, METHOD);
-            return self.method_name(r).unwrap_or(r);
-        }
-        self.push(r, FIELD);
-        self.field(r, self.b[r]).unwrap_or(r)
-    }
-
-    /// `method`'s first pattern at `r`, a method's name before its `(`, where nothing of the
-    /// prototype starts there.
-    fn method_name(&mut self, r: usize) -> Option<usize> {
-        let b = self.b;
-        let &c = b.get(r)?;
-        if matches!(c, b'/' | b'%')
-            || (matches!(c, b'g' | b'c') && self.word_kind(r) == Word::Illegal)
-        {
-            return None;
-        }
-        let e = ident(b, r)?;
-        if b.get(skip_spaces(b, e)) != Some(&b'(') {
-            return None;
-        }
-        let leaf = if type_name(b, r) == Some(e) {
-            ENTITY_CTOR
-        } else {
-            ENTITY_FUNCTION
-        };
-        Some(self.token(r, e - r, leaf))
-    }
-
-    /// `field`'s patterns at `p`: a field's name, and where `array-brackets` and
-    /// `static-assignment` after it pop at once, those turns too.
-    fn field(&mut self, p: usize, c: u8) -> Option<usize> {
-        let b = self.b;
-        if self.before_next_field(p) {
-            return Some(self.leave(p));
-        }
-        let found = upper_word(b, p)
-            .map(|e| (e, ENTITY_CONSTANT))
-            .or_else(|| ident(b, p).map(|e| (e, PLAIN)));
-        if let Some((e, leaf)) = found {
-            self.put(p, e, leaf);
-            return Some(match self.pops_at(e, b"[") {
-                // `static-assignment`'s `=` opens the value in its place
-                Some(s) if b[s] == b'=' => {
-                    self.put(s, s + 1, ASSIGN);
-                    self.push(s + 1, STATIC_RHS);
-                    s + 1
-                }
-                Some(s) => s,
-                None => {
-                    self.push(e, STATIC_ASSIGN);
-                    self.push(e, ARRAY_BRACKETS);
-                    e
-                }
-            });
-        }
-        if c == b',' {
-            return Some(self.token(p, 1, COMMA));
-        }
-        self.any_pop(p)
-    }
-
     /// `enum-body`'s `^(?=\s*([\p{Lu}_][\p{Lu}\p{Nd}_]*|(?!primitives|modifiers)
     /// [\p{Ll}_][\p{L}\p{N}_]*)\s*[,;{(])`, at the line's start.
     fn enum_line(&self) -> bool {
@@ -2661,92 +2123,10 @@ impl<'b> Scan<'b, '_> {
         ident(b, p).is_some_and(|e| b.get(skip_spaces(b, e)) == Some(&b'('))
     }
 
-    /// `before-next-field`: `(?=\b(?:modifiers|primitives|void)\b)` at `p`.
-    fn before_next_field(&self, p: usize) -> bool {
-        matches!(
-            self.word_kind(p),
-            Word::Modifier | Word::Primitive | Word::Void
-        )
-    }
-
     /// `before-next-import`: `(?=\bimport\b)`, `(?=\b(?:modifiers|class|interface|enum)\b)`.
     fn before_next_import(&self, p: usize) -> bool {
         matches!(self.word(p), b"import" | b"class" | b"interface" | b"enum")
             || self.word_kind(p) == Word::Modifier
-    }
-
-    /// `method`'s patterns at `p`.
-    fn method(&mut self, p: usize, c: u8) -> Option<usize> {
-        let b = self.b;
-        if let Some(e) = ident(b, p) {
-            let q = skip_spaces(b, e);
-            if b.get(q) == Some(&b'(') {
-                let leaf = if type_name(b, p) == Some(e) {
-                    ENTITY_CTOR
-                } else {
-                    ENTITY_FUNCTION
-                };
-                return Some(self.token(p, e - p, leaf));
-            }
-        }
-        match c {
-            b'(' => return Some(self.open(p, 1, METHOD_PARAMS, PAREN_BEGIN)),
-            b'{' => return Some(self.then(p, 1, &[BLOCK], BLOCK_BEGIN)),
-            _ => {}
-        }
-        match self.word(p) {
-            b"throws" => {
-                self.put(p, p + 6, THROWS_KW);
-                self.push(p + 6, THROWS_LIST);
-                self.push(p + 6, TYPE_REF);
-                Some(p + 6)
-            }
-            b"default" => Some(self.open(p, 7, ANNOT_DEFAULT, DEFAULT_DECL)),
-            _ => self.any_pop(p),
-        }
-    }
-
-    /// `parameters` at `p`.
-    fn parameters(&mut self, p: usize, c: u8) -> Option<usize> {
-        let b = self.b;
-        // a parameter's name classified once: a lowercase word, no keyword, that no `.` follows
-        // is no package's (`package_ahead`), type's or primitive's, so the identifier's
-        if c.is_ascii_lowercase() {
-            let w = self.word(p);
-            let e = p + w.len();
-            if !w.is_empty()
-                && self.word_kind(p) == Word::Other
-                && w != b"final"
-                && !b.get(e).is_some_and(|&x| x == b'$' || x >= 0x80)
-                && b.get(skip_spaces(b, e)) != Some(&b'.')
-            {
-                self.put(p, e, PARAMETER);
-                return Some(self.after(e, ARRAY_BRACKETS, b"["));
-            }
-        }
-        let w = self.word_kind(p);
-        if self.is_word_at(p, b"final") {
-            return Some(self.token(p, 5, MODIFIER));
-        }
-        if c == b'@' {
-            return Some(self.annotation(p));
-        }
-        if w == Word::Primitive {
-            let e = word_end(b, p);
-            self.put(p, e, PRIMITIVE);
-            return Some(self.after(e, ARRAY_BRACKETS, b"["));
-        }
-        if let Some(r) = self.object_and_array_types(p) {
-            return Some(r);
-        }
-        if b[p..].starts_with(b"...") {
-            return Some(self.token(p, 3, VARIADIC));
-        }
-        if let Some(e) = ident(b, p) {
-            self.put(p, e, PARAMETER);
-            return Some(self.after(e, ARRAY_BRACKETS, b"["));
-        }
-        (c == b',').then(|| self.token(p, 1, COMMA))
     }
 
     /// `object-and-array-types` at `p`.
@@ -2801,14 +2181,6 @@ impl<'b> Scan<'b, '_> {
         }
     }
 
-    /// `object-type-instantiation-no-fqn` at `p`.
-    fn new_type(&mut self, p: usize) -> Option<usize> {
-        match type_name(self.b, p) {
-            Some(e) => Some(self.then(p, e - p, &[AFTER_NEW_TYPE], CLASS)),
-            None => self.any_pop(p),
-        }
-    }
-
     /// `inherited-object-type-reference-no-fqn` at `p`.
     fn inherited_name(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
@@ -2822,11 +2194,12 @@ impl<'b> Scan<'b, '_> {
     }
 
     /// `annotation-type-no-fqn` at `p`.
-    fn annotation_name(&mut self, p: usize) -> Option<usize> {
+    fn annotation_type(&mut self, p: usize) -> Option<usize> {
         match type_name(self.b, p) {
             Some(e) => {
-                self.annotation_sql(p, e);
-                Some(self.then(p, e - p, &[ANNOT_AFTER], ANNOTATION))
+                self.annotation_name(p, e);
+                self.set(e, &[ANNOT_AFTER]);
+                Some(e)
             }
             None => self.any_pop(p),
         }
@@ -2860,188 +2233,6 @@ impl<'b> Scan<'b, '_> {
             b'>' => Some(self.close(p, 1, GENERIC_END)),
             _ => None,
         }
-    }
-
-    /// `illegal-parens-terminators` at `p`.
-    fn illegal_parens(&mut self, p: usize, c: u8) -> Option<usize> {
-        if c == b';' {
-            return Some(self.close(p, 1, STRAY_TERMINATOR));
-        }
-        self.open_block(p, c)
-    }
-
-    /// `illegal-open-block`: `\s?(?={)` at `p`.
-    fn open_block(&mut self, p: usize, c: u8) -> Option<usize> {
-        if c == b'{' {
-            return Some(self.leave(p));
-        }
-        (is_space(c) && self.b.get(p + 1) == Some(&b'{'))
-            .then(|| self.close(p, 1, STRAY_TERMINATOR))
-    }
-
-    /// `annotations` at `p`, an `@`.
-    fn annotation(&mut self, p: usize) -> usize {
-        self.push(p, ANNOT_PARAMS);
-        self.push(p, ANNOT_TYPE_REF);
-        self.token(p, 1, ANNOT_MARK)
-    }
-
-    /// `code-block` at `p`: modifiers, `var`, then `code`, annotations, a stray `)`.
-    fn code_block(&mut self, p: usize, c: u8) -> Option<usize> {
-        match self.word_kind(p) {
-            Word::Modifier => return self.modifier(p),
-            Word::Var => return Some(self.token(p, 3, VAR)),
-            _ => {}
-        }
-        if let Some(r) = self.code(p, c) {
-            return Some(r);
-        }
-        match c {
-            b'@' => Some(self.annotation(p)),
-            b')' => Some(self.token(p, 1, STRAY_PAREN)),
-            _ => None,
-        }
-    }
-
-    /// `code` at `p`.
-    fn code(&mut self, p: usize, c: u8) -> Option<usize> {
-        if c >= 0x80 || c == b'$' || c == b'_' || c.is_ascii_alphanumeric() {
-            self.code_word(p)
-        } else {
-            self.code_punct(p, c)
-        }
-    }
-
-    /// `code` at a byte of a word, or `$`.
-    fn code_word(&mut self, p: usize) -> Option<usize> {
-        let b = self.b;
-        let w = self.word(p);
-        let e = p + w.len();
-        // a word read is at `\b`
-        let at_word = !w.is_empty() || boundary(b, p);
-        let name = self.word_kind(p);
-        // constants-and-special-vars
-        match name {
-            Word::Language => return Some(self.token(p, e - p, LANGUAGE)),
-            Word::Special => return Some(self.token(p, e - p, VAR_LANGUAGE)),
-            _ => {}
-        }
-        if at_word
-            && b[p].is_ascii_digit()
-            && let Some(r) = self.number(p)
-        {
-            return Some(r);
-        }
-        // the identifier at `p`: past ASCII's `\w` only over `$` and bytes past ASCII
-        let id = is_ident_start(b, p).then(|| {
-            if e == p {
-                ident_end(b, next(b, p))
-            } else if b.get(e).is_some_and(|&c| c == b'$' || c >= 0x80) {
-                ident_end(b, e)
-            } else {
-                e
-            }
-        });
-        // the identifier's end and the first byte past its blanks, read once
-        let (ie, q) = match id {
-            Some(ie) => (ie, skip_spaces(b, ie)),
-            None => (p, usize::MAX),
-        };
-        let after = b.get(q).copied();
-        // lambdas, `[\p{L}_$][\p{L}\p{N}_$]*\s*->`
-        if after == Some(b'-') && b.get(q + 1) == Some(&b'>') {
-            return Some(self.enter(p, &[LAMBDA_PARAMS]));
-        }
-        // anonymous-classes-and-new
-        if name == Word::New {
-            return Some(self.open(p, 3, INSTANTIATION, NEW));
-        }
-        // keywords-control
-        if let Word::Control(leaf) = name {
-            let n = e - p;
-            return Some(match leaf {
-                CATCH_KW => self.open(p, n, CATCH, leaf),
-                TRY_KW | FOR_KW => self.open(p, n, DECL_PARENS, leaf),
-                ASSERT_KW => self.open(p, n, ASSERT, leaf),
-                _ => self.token(p, n, leaf),
-            });
-        }
-        if w == b"default" {
-            return Some(self.token(p, 7, DEFAULT_KW));
-        }
-        // method-invocations
-        if after == Some(b'(') {
-            self.put(p, ie, FUNCTION_CALL);
-            self.put(q, q + 1, PAREN_BEGIN);
-            let parens = if sql::jvm_call(b, p, ie) {
-                PARENS_SQL
-            } else {
-                PARENS
-            };
-            self.push(q + 1, parens);
-            return Some(q + 1);
-        }
-        // a plain lowercase name, past the word's end: no pattern below takes it (the uppercase
-        // ones, a type's, want a capital, `_` or `$`; a package's, a `.` after it)
-        let plain = at_word && b[p].is_ascii_lowercase() && name == Word::Other && ie == e;
-        if plain && b.get(e) != Some(&b'.') {
-            return self.passed(e);
-        }
-        if at_word {
-            // uppercase-identifiers
-            let single = !w.is_empty() && is_upper(b, p) && next(b, p) == e;
-            if matches!(w, b"UUID" | b"URL" | b"URI") || single {
-                if let Some(r) = self.pops_at(e, b"<.[") {
-                    self.token(p, e - p, CLASS);
-                    return Some(r);
-                }
-                return Some(self.open(p, e - p, AFTER_TYPE, CLASS));
-            }
-            if (matches!(b[p], b'_' | b'$') || is_upper(b, p))
-                && let Some(ue) = upper_word(b, p)
-            {
-                return Some(self.token(p, ue - p, CONSTANT));
-            }
-            // all-types
-            if name == Word::Primitive {
-                self.put(p, e, PRIMITIVE);
-                if let Some(r) = self.pops_at(e, b"[") {
-                    return Some(r);
-                }
-                self.push(e, ARRAY_BRACKETS);
-                return Some(e);
-            }
-            // a package's name runs to the identifier's end, then `.`
-            if id.is_some_and(|ie| b.get(ie) == Some(&b'.')) && self.fqn_ahead(p) {
-                return Some(self.enter(p, &[AFTER_TYPE, TYPE_FQN]));
-            }
-            if let Some(te) = type_name(b, p)
-                && let Some(te) = back_to(b, next(b, p), te, |_| true)
-            {
-                self.put(p, te, CLASS);
-                if let Some(r) = self.pops_at(te, b"<.[") {
-                    return Some(r);
-                }
-                self.push(te, AFTER_TYPE);
-                return Some(te);
-            }
-        }
-        // keywords
-        if name == Word::Instanceof {
-            return Some(self.token(p, e - p, INSTANCEOF));
-        }
-        if at_word && !w.is_empty() && !b[p].is_ascii_digit() {
-            return self.passed(e);
-        }
-        None
-    }
-
-    /// A word ending at `e` that no pattern of `code` takes, its start not a digit: where the
-    /// context passes such a word whole ([`WORDS`]: no pattern of its own, or of a caller's
-    /// after `code`, starts at a word's byte), it is passed now, not by [`Scan::advance`].
-    #[inline]
-    fn passed(&self, e: usize) -> Option<usize> {
-        (PASSES[usize::from(self.top())] & WORDS != 0).then_some(e)
     }
 
     /// A context pushed at `e` whose patterns start only at one of `stops` or the prototype's
@@ -3089,85 +2280,6 @@ impl<'b> Scan<'b, '_> {
         found
     }
 
-    /// `code` at a byte that isn't a word's.
-    fn code_punct(&mut self, p: usize, c: u8) -> Option<usize> {
-        let b = self.b;
-        let next = b.get(p + 1).copied();
-        let (n, leaf) = match c {
-            b'.' => {
-                // `(\.)(_*)\d…`
-                if matches!(next, Some(b'0'..=b'9' | b'_'))
-                    && let Some(r) = self.number(p)
-                {
-                    return Some(r);
-                }
-                // `(\.)\s*(?=<)`
-                let q = skip_spaces(b, p + 1);
-                if b.get(q) == Some(&b'<') {
-                    self.put(p, p + 1, DOT);
-                    self.push(q, GENERIC_INVOCATION);
-                    return Some(q);
-                }
-                // `(\.)(class\b)?`
-                self.put(p, p + 1, DOT);
-                if b[p + 1..].starts_with(b"class") && boundary(b, p + 6) {
-                    return Some(self.token(p + 1, 5, VAR_LANGUAGE));
-                }
-                return Some(p + 1);
-            }
-            b'(' => {
-                if self.arrow_after(p) {
-                    return Some(self.enter(p, &[LAMBDA_PARAMS]));
-                }
-                return Some(self.open(p, 1, PARENS, PAREN_BEGIN));
-            }
-            b'"' if self.mark <= p && self.marked(p) => return Some(self.sql_string(p)),
-            b'"' if b[p + 1..].starts_with(b"\"\"") => {
-                return Some(self.open(p, 3, TEXT_BLOCK, TB_BEGIN));
-            }
-            b'"' if regex_string(b, p) => {
-                self.re = 0;
-                return Some(self.open(p, 1, STRING_RE, DQ_BEGIN));
-            }
-            b'"' => return Some(self.open(p, 1, STRING, DQ_BEGIN)),
-            b'\'' => return Some(self.open(p, 1, CHAR, SQ_BEGIN)),
-            b'{' => return Some(self.open(p, 1, BLOCK, BLOCK_BEGIN)),
-            b'=' if next != Some(b'=') => {
-                self.put(p, p + 1, ASSIGN);
-                self.push(p + 1, RHS);
-                return Some(p + 1);
-            }
-            b'|' | b'&' | b'^' | b'*' | b'/' | b'+' | b'-' if next == Some(b'=') => {
-                self.put(p, p + 2, ASSIGN);
-                self.push(p + 2, RHS);
-                return Some(p + 2);
-            }
-            b':' if next == Some(b':') => {
-                self.put(p, p + 2, DOUBLE_COLON);
-                self.push(p + 2, METHOD_REF);
-                return Some(p + 2);
-            }
-            b'?' | b':' => (1, TERNARY),
-            b'<' if next == Some(b'<') => (2, BITSHIFT),
-            b'>' if next == Some(b'>') => {
-                (if b.get(p + 2) == Some(&b'>') { 3 } else { 2 }, BITSHIFT)
-            }
-            b'=' | b'!' if next == Some(b'=') => (2, COMPARISON),
-            b'<' if matches!(next, Some(b'=' | b'>')) => (2, COMPARISON),
-            b'>' if next == Some(b'=') => (2, COMPARISON),
-            b'<' | b'>' => (1, COMPARISON),
-            b'-' | b'+' if next == Some(c) => (2, INCDEC),
-            b'-' | b'+' | b'*' | b'/' | b'%' => (1, ARITH),
-            b'!' => (1, LOGICAL),
-            b'&' | b'|' if next == Some(c) => (2, LOGICAL),
-            b'~' | b'^' | b'&' | b'|' => (1, BITWISE),
-            b',' => (1, COMMA),
-            b';' => (1, TERMINATOR),
-            _ => return None,
-        };
-        Some(self.token(p, n, leaf))
-    }
-
     /// `lambdas`' `\(.*\)\s*->` at `p`, a `(`: a `)` later on the line with `->` after it.
     fn arrow_after(&mut self, p: usize) -> bool {
         let b = self.b;
@@ -3188,27 +2300,6 @@ impl<'b> Scan<'b, '_> {
             last
         });
         last.is_some_and(|q| q > p)
-    }
-
-    /// `constants-and-special-vars` at `p`.
-    fn constants(&mut self, p: usize, c: u8) -> Option<usize> {
-        match self.word_kind(p) {
-            Word::Language => {
-                let e = word_end(self.b, p);
-                return Some(self.token(p, e - p, LANGUAGE));
-            }
-            Word::Special => {
-                let e = word_end(self.b, p);
-                return Some(self.token(p, e - p, VAR_LANGUAGE));
-            }
-            _ => {}
-        }
-        if (c == b'.' || (c.is_ascii_digit() && boundary(self.b, p)))
-            && let Some(r) = self.number(p)
-        {
-            return Some(r);
-        }
-        None
     }
 
     /// The numbers of `constants-and-special-vars` at `p`, in their order: a hexadecimal
@@ -3553,876 +2644,7 @@ impl<'b> Scan<'b, '_> {
             None => self.any_pop(p),
         }
     }
-
-    // Javadoc, and the HTML in it
-
-    /// Whether the line is `^\s*\*?\s*@`.
-    fn is_tag_line(&mut self) -> bool {
-        let b = self.b;
-        *self.tag_line.get_or_insert_with(|| {
-            let mut q = skip_spaces(b, 0);
-            if b.get(q) == Some(&b'*') {
-                q = skip_spaces(b, q + 1);
-            }
-            b.get(q) == Some(&b'@')
-        })
-    }
-
-    /// The `with_prototype`s of the levels below: `(?=\*/)` above `contents`, and
-    /// `(?=^\s*\*?\s*@)` from the block tags up.
-    fn jd_withs(&mut self, p: usize) -> Option<usize> {
-        let b = self.b;
-        // a pop that would loop is passed over for the patterns after it
-        if self.loop_at == (p, self.depth) {
-            return None;
-        }
-        if b[p] == b'*' && b.get(p + 1) == Some(&b'/') {
-            return Some(self.leave(p));
-        }
-        if p == 0 && self.tags > 0 && self.is_tag_line() {
-            return Some(self.leave(p));
-        }
-        None
-    }
-
-    /// Javadoc's prototype at the line's start: `^\s*(\*)(?!/)\s*(?!\s*@)`.
-    fn jd_star(&mut self) -> Option<usize> {
-        let b = self.b;
-        let q = skip_spaces(b, 0);
-        if b.get(q) != Some(&b'*') || b.get(q + 1) == Some(&b'/') {
-            return None;
-        }
-        let e = skip_spaces(b, q + 1);
-        if b.get(e) == Some(&b'@') {
-            return None;
-        }
-        self.put(q, q + 1, W_JD | JD_STAR);
-        self.fill(e);
-        Some(e)
-    }
-
-    /// The Javadoc and HTML contexts at `p`.
-    fn javadoc(&mut self, p: usize, c: u8, top: u8) -> Option<usize> {
-        let b = self.b;
-        if top == JD_MAIN {
-            return (c == b'*' && b.get(p + 1) == Some(&b'/')).then(|| self.close(p, 2, JD_END));
-        }
-        if let Some(r) = self.jd_withs(p) {
-            return Some(r);
-        }
-        // the prototype, but in `contents`, below the tags and in HTML's contexts
-        if p == 0
-            && !matches!(top, JD_CONTENTS | JD_HOLD)
-            && top < H_TAG
-            && let Some(e) = self.jd_star()
-        {
-            return Some(e);
-        }
-        match top {
-            JD_CONTENTS => {
-                // `\s*(?=@)`, then `` pushing the text
-                let q = skip_spaces(b, p);
-                if b.get(q) == Some(&b'@') {
-                    return Some(self.tags_at(p, q));
-                }
-                Some(self.enter(p, &[JD_TEXT]))
-            }
-            JD_TEXT => {
-                if p == 0 && self.is_tag_line() {
-                    // `^\s*(\*)?\s*(?=@)`
-                    let mut q = skip_spaces(b, 0);
-                    if b[q] == b'*' {
-                        self.put(q, q + 1, W_JD | JD_STAR);
-                        q = skip_spaces(b, q + 1);
-                    }
-                    return Some(self.tags_at(0, q));
-                }
-                self.inline_formatting(p, c)
-            }
-            JD_HOLD => (p == 0 && self.is_tag_line()).then(|| self.leave(p)),
-            JD_TAGS => {
-                if c != b'@' {
-                    return None;
-                }
-                let tags: [(&[u8], u16, u16, &[u8]); 16] = [
-                    (b"param", TAG_PARAM, TAG_PARAM_AT, &[JD_TAG, JD_PARAM_NAME]),
-                    (b"see", TAG_SEE, TAG_SEE_AT, &[JD_TAG, JD_SEE]),
-                    (b"throws", TAG_THROWS, TAG_THROWS_AT, &[JD_TAG, JD_REF]),
-                    (b"exception", TAG_THROWS, TAG_THROWS_AT, &[JD_TAG, JD_REF]),
-                    (b"uses", TAG_USES, TAG_USES_AT, &[JD_TAG, JD_REF]),
-                    (b"provides", TAG_USES, TAG_USES_AT, &[JD_TAG, JD_REF]),
-                    (b"return", TAG_DOC, TAG_DOC_AT, &[JD_TAG]),
-                    (b"deprecated", TAG_DOC, TAG_DOC_AT, &[JD_TAG]),
-                    (b"author", TAG_DOC, TAG_DOC_AT, &[JD_TAG]),
-                    (b"version", TAG_DOC, TAG_DOC_AT, &[JD_TAG]),
-                    (b"since", TAG_DOC, TAG_DOC_AT, &[JD_TAG]),
-                    (b"apiNote", TAG_DOC, TAG_DOC_AT, &[JD_TAG]),
-                    (b"implNote", TAG_DOC, TAG_DOC_AT, &[JD_TAG]),
-                    (b"implSpec", TAG_DOC, TAG_DOC_AT, &[JD_TAG]),
-                    (b"moduleGraph", TAG_DOC, TAG_DOC_AT, &[JD_TAG]),
-                    (b"serial", TAG_DOC, TAG_DOC_AT, &[JD_TAG]),
-                ];
-                let w = &b[p + 1..word_end(b, p + 1)];
-                let w = match w {
-                    b"serialField" | b"serialData" => &b"serial"[..],
-                    _ => w,
-                };
-                if let Some(&(_, leaf, at, cs)) = tags.iter().find(|t| t.0 == w) {
-                    let e = word_end(b, p + 1);
-                    for &cx in cs {
-                        self.push(p, cx);
-                    }
-                    self.put(p, p + 1, W_JD | at);
-                    self.put(p + 1, e, W_JD | leaf);
-                    return Some(e);
-                }
-                Some(self.close(p, 1, W_JD))
-            }
-            JD_TAG => self.inline_formatting(p, c),
-            JD_PARAM_NAME => (!is_space(c)).then(|| {
-                let e = next_of(b, p, is_space);
-                self.close(p, e - p, W_JD | JD_PARAM)
-            }),
-            JD_SEE => match c {
-                b'\'' | b'<' => Some(self.leave(p)),
-                _ if !is_space(c) => Some(self.shift(p, &[JD_REF])),
-                _ => None,
-            },
-            JD_REF | JD_IREF => {
-                if top == JD_IREF && c == b'}' {
-                    return Some(self.leave(p));
-                }
-                let e = self.reference(p)?;
-                let to = if top == JD_REF {
-                    JD_REF_AFTER
-                } else {
-                    JD_IREF_AFTER
-                };
-                Some(self.then(p, e - p, &[to], W_JD | LINK))
-            }
-            JD_REF_AFTER | JD_IREF_AFTER => {
-                if top == JD_IREF_AFTER && c == b'}' {
-                    return Some(self.leave(p));
-                }
-                if c == b'(' {
-                    let to = if top == JD_REF_AFTER {
-                        JD_REF_PARENS
-                    } else {
-                        JD_IREF_PARENS
-                    };
-                    return Some(self.then(p, 1, &[to], W_JD | LINK));
-                }
-                Some(self.leave(p))
-            }
-            JD_REF_PARENS | JD_IREF_PARENS => {
-                if top == JD_IREF_PARENS && c == b'}' {
-                    return Some(self.leave(p));
-                }
-                if c == b')' {
-                    return Some(self.close(p, 1, W_JD | LINK));
-                }
-                // `.`, to where another pattern could start
-                let e = next_of(b, p + 1, |c| matches!(c, b')' | b'}' | b'*'));
-                Some(self.token(p, e - p, W_JD | LINK))
-            }
-            JD_RAW | JD_BRACES => match c {
-                b'}' => Some(self.close(p, 1, W_JD | if top == JD_RAW { INLINE_END } else { RAW })),
-                b'{' => Some(self.open(p, 1, JD_BRACES, W_JD | RAW)),
-                _ if p == 0 && top == JD_RAW && is_space(c) => {
-                    // `^\s+`
-                    let e = skip_spaces(b, 0);
-                    self.fill(e);
-                    Some(e)
-                }
-                _ => {
-                    // `.`, to where another pattern could start
-                    let e = next_of(b, p + 1, |c| matches!(c, b'{' | b'}' | b'*'));
-                    Some(self.token(p, e - p, W_JD | RAW))
-                }
-            },
-            JD_INLINE => (c == b'}').then(|| self.close(p, 1, W_JD | INLINE_END)),
-            JD_LINK_LABEL => {
-                let e = skip_spaces(b, p);
-                self.fill(e);
-                Some(self.shift(e, &[JD_LABEL]))
-            }
-            JD_LABEL => {
-                if let Some(r) = self.html(p, c) {
-                    return Some(r);
-                }
-                (c == b'}').then(|| self.leave(p))
-            }
-            _ => self.html_context(p, c, top),
-        }
-    }
-
-    /// The block tags, pushed by a match from `p` to `q` (`contents_0` or `_3` under them).
-    fn tags_at(&mut self, p: usize, q: usize) -> usize {
-        if q == p {
-            return self.enter(p, &[JD_HOLD, JD_TAGS]);
-        }
-        self.push(q, JD_HOLD);
-        self.push(q, JD_TAGS);
-        q
-    }
-
-    /// `reference`'s `(?:(?:ident)\.)*(?:ident)(?:#(?:ident))?|#(?:ident)` at `p`.
-    fn reference(&self, p: usize) -> Option<usize> {
-        let b = self.b;
-        let hash = |q: usize| {
-            if b.get(q) == Some(&b'#') {
-                ident(b, q + 1)
-            } else {
-                None
-            }
-        };
-        let Some(mut e) = ident(b, p) else {
-            return hash(p);
-        };
-        while b.get(e) == Some(&b'.')
-            && let Some(f) = ident(b, e + 1)
-        {
-            e = f;
-        }
-        Some(hash(e).unwrap_or(e))
-    }
-
-    /// `inline-formatting`: the inline tags, then HTML.
-    fn inline_formatting(&mut self, p: usize, c: u8) -> Option<usize> {
-        if c == b'{'
-            && let Some(r) = self.inline_tag(p)
-        {
-            return Some(r);
-        }
-        self.html(p, c)
-    }
-
-    /// `javadoc-inline-tags` at `p`, a `{`.
-    fn inline_tag(&mut self, p: usize) -> Option<usize> {
-        let b = self.b;
-        if b.get(p + 1) != Some(&b'@') {
-            return None;
-        }
-        let s = p + 2;
-        let w = &b[s..word_end(b, s)];
-        let e = s + w.len();
-        // `({)((@)(?:code|literal))(?:\s+|(?=\}))`
-        for kw in [&b"code"[..], b"literal"] {
-            let k = s + kw.len();
-            if b[s..].starts_with(kw) && (k == b.len() || is_space(b[k]) || b[k] == b'}') {
-                let q = skip_spaces(b, k);
-                return Some(self.inline_open(p, k, TAG_CODE, TAG_CODE_AT, &[JD_RAW], q));
-            }
-        }
-        match w {
-            b"link" | b"linkplain" => {
-                let cs = [JD_INLINE, JD_LINK_LABEL, JD_IREF];
-                Some(self.inline_open(p, e, TAG_LINK, TAG_LINK_AT, &cs, e))
-            }
-            b"value" => {
-                Some(self.inline_open(p, e, TAG_VALUE, TAG_VALUE_AT, &[JD_INLINE, JD_IREF], e))
-            }
-            b"index" | b"extLink" => {
-                Some(self.inline_open(p, e, TAG_DOC, TAG_DOC_AT, &[JD_INLINE], e))
-            }
-            b"inheritDoc" if b.get(e) == Some(&b'}') => {
-                self.put(p, p + 1, W_JD | INLINE_BEGIN);
-                self.put(p + 1, s, W_JD | TAG_DOC_AT);
-                self.put(s, e, W_JD | TAG_DOC);
-                Some(self.token(e, 1, W_JD | INLINE_END))
-            }
-            _ => None,
-        }
-    }
-
-    /// An inline tag at `p`, its name ending at `e`, pushing `cs`; the match ends at `to`.
-    fn inline_open(
-        &mut self,
-        p: usize,
-        e: usize,
-        leaf: u16,
-        at: u16,
-        cs: &[u8],
-        to: usize,
-    ) -> usize {
-        for &c in cs {
-            self.push(p, c);
-        }
-        self.put(p, p + 1, W_JD | INLINE_BEGIN);
-        self.put(p + 1, p + 2, W_JD | at);
-        self.put(p + 2, e, W_JD | leaf);
-        self.fill(to);
-        to
-    }
-
-    /// HTML's `main` at `p`, in Javadoc: tags, comments, entities.
-    fn html(&mut self, p: usize, c: u8) -> Option<usize> {
-        let b = self.b;
-        if c == b'&' {
-            return self.entity(p, W_JD);
-        }
-        if c != b'<' {
-            return None;
-        }
-        let rest = &b[p + 1..];
-        if rest.starts_with(b"!--") {
-            // `(<!--)(-?>)?`
-            self.push(p, H_COMMENT);
-            self.put(p, p + 4, W_HCOMMENT | HCOMMENT_BEGIN);
-            let mut e = p + 4;
-            if b[e..].starts_with(b"->") {
-                e += 2;
-            } else if b[e..].starts_with(b">") {
-                e += 1;
-            }
-            self.put(p + 4, e, W_HCOMMENT | HCOMMENT_BAD);
-            return Some(e);
-        }
-        if rest.starts_with(b"![CDATA[") {
-            self.push(p, H_CDATA);
-            self.put(p, p + 3, W_JD | TAG_OPEN);
-            self.put(p + 3, p + 8, W_JD | CDATA_KW);
-            return Some(self.token(p + 8, 1, W_JD | TAG_OPEN));
-        }
-        if rest.starts_with(b"!DOCTYPE") {
-            for cx in [DT_META, DT_CONTENT, DT_TYPE, DT_NAME] {
-                self.push(p, cx);
-            }
-            self.put(p, p + 2, W_JD | TAG_OPEN);
-            return Some(self.token(p + 2, 7, W_JD | DOCTYPE_KW));
-        }
-        if rest.starts_with(b"?xml") {
-            self.push(p, H_PI);
-            self.put(p, p + 2, W_JD | TAG_OPEN);
-            return Some(self.token(p + 2, 3, W_JD | NAME_XML));
-        }
-        let close = rest.first() == Some(&b'/');
-        let s = p + 1 + usize::from(close);
-        let e = (s..b.len())
-            .find(|&i| ends_tag_name(b, i))
-            .unwrap_or(b.len());
-        let name = &b[s..e];
-        let lower = |w: &[u8]| name.eq_ignore_ascii_case(w);
-        if !close && (lower(b"style") || lower(b"script")) {
-            let leaf = if lower(b"style") {
-                NAME_STYLE
-            } else {
-                NAME_SCRIPT
-            };
-            self.push(p, H_EMBED_TAG);
-            self.put(p, s, W_JD | TAG_OPEN);
-            return Some(self.token(s, e - s, W_JD | leaf));
-        }
-        if !name.is_empty() {
-            let found = HTML_TAGS
-                .iter()
-                .find(|(names, _, _)| names.iter().any(|w| lower(w)));
-            if let Some(&(_, leaf, cx)) = found {
-                self.push(p, cx);
-                self.put(p, s, W_JD | TAG_OPEN);
-                return Some(self.token(s, e - s, W_JD | leaf));
-            }
-        }
-        if b.get(s).is_some_and(u8::is_ascii_alphabetic) {
-            let custom = name.contains(&b'-');
-            self.push(p, H_TAG_SC);
-            self.push(p, if custom { H_CUSTOM_NAME } else { H_OTHER_NAME });
-            return Some(self.token(p, s - p, W_JD | TAG_OPEN));
-        }
-        if rest.first() == Some(&b'>') {
-            return Some(self.token(p, 2, W_JD | INCOMPLETE));
-        }
-        None
-    }
-
-    /// `entities` at `p`, an `&`, in `wrap`.
-    fn entity(&mut self, p: usize, wrap: u16) -> Option<usize> {
-        let b = self.b;
-        let (mark, body, leaves) = if b[p + 1..].starts_with(b"#x") || b[p + 1..].starts_with(b"#X")
-        {
-            (
-                3,
-                next_of(b, p + 3, |c| !c.is_ascii_hexdigit()),
-                [ENT_HEX, ENT_HEX_MARK, ENT_HEX_END],
-            )
-        } else if b.get(p + 1) == Some(&b'#') {
-            (
-                2,
-                next_of(b, p + 2, |c| !c.is_ascii_digit()),
-                [ENT_DEC, ENT_DEC_MARK, ENT_DEC_END],
-            )
-        } else {
-            (
-                1,
-                next_of(b, p + 1, |c| !c.is_ascii_alphanumeric()),
-                [ENT_NAMED, ENT_NAMED_MARK, ENT_NAMED_END],
-            )
-        };
-        if body == p + mark || b.get(body) != Some(&b';') {
-            return None;
-        }
-        self.put(p, p + mark, wrap | leaves[1]);
-        self.put(p + mark, body, wrap | leaves[0]);
-        Some(self.token(body, 1, wrap | leaves[2]))
-    }
-
-    /// HTML's contexts at `p`.
-    fn html_context(&mut self, p: usize, c: u8, top: u8) -> Option<usize> {
-        let b = self.b;
-        match top {
-            H_TAG | H_TAG_SC | H_EMBED_TAG => {
-                if c == b'>' {
-                    if top == H_EMBED_TAG {
-                        return Some(self.then(p, 1, &[H_EMBED_TEXT], W_JD | TAG_CLOSE));
-                    }
-                    return Some(self.close(p, 1, W_JD | TAG_CLOSE));
-                }
-                if c == b'/' && b.get(p + 1) == Some(&b'>') && top != H_TAG {
-                    return Some(self.close(p, 2, W_JD | TAG_CLOSE));
-                }
-                self.attributes(p, c)
-            }
-            H_EMBED_TEXT => {
-                let rest = &b[p..];
-                let closes = |w: &[u8]| {
-                    rest.len() >= 2 + w.len()
-                        && rest.starts_with(b"</")
-                        && rest[2..2 + w.len()].eq_ignore_ascii_case(w)
-                };
-                (closes(b"style") || closes(b"script")).then(|| self.leave(p))
-            }
-            H_PI => {
-                if c == b'?' && b.get(p + 1) == Some(&b'>') {
-                    return Some(self.close(p, 2, W_JD | TAG_CLOSE));
-                }
-                self.generic_attribute(p, c)
-                    .or_else(|| self.html_string(p, c))
-            }
-            H_OTHER_NAME => ends_tag_name(b, p).then(|| self.leave(p)),
-            H_CUSTOM_NAME => {
-                if ends_tag_name(b, p) {
-                    return Some(self.leave(p));
-                }
-                let ok = |i: usize| {
-                    let c = b[i];
-                    matches!(c, b'-' | b'_' | b'a'..=b'z' | b'0'..=b'9') || c >= 0x80
-                };
-                if c == b'\\' && p + 1 < b.len() {
-                    let e = next(b, p + 1);
-                    return Some(self.token(p, e - p, W_JD | NAME_CUSTOM));
-                }
-                if ok(p) {
-                    let e = run_of(b, p, |_, i| ok(i));
-                    return Some(self.token(p, e - p, W_JD | NAME_CUSTOM));
-                }
-                Some(self.token(p, char_len(c), W_JD | NAME_CUSTOM_BAD))
-            }
-            H_ATTR_NAME => {
-                if is_html_space(b, p) || matches!(c, b'=' | b'/' | b'>') {
-                    return Some(self.leave(p));
-                }
-                if matches!(c, b'"' | b'\'' | b'`' | b'<') {
-                    return Some(self.token(p, 1, W_ATTR | BAD_NAME));
-                }
-                let e = next_of(b, p + 1, |c| {
-                    matches!(
-                        c,
-                        b'\t'
-                            | b'\n'
-                            | b'\x0c'
-                            | b' '
-                            | b'='
-                            | b'/'
-                            | b'>'
-                            | b'"'
-                            | b'\''
-                            | b'`'
-                            | b'<'
-                            | b'*'
-                    )
-                });
-                self.fill(e);
-                Some(e)
-            }
-            H_EQ | H_EMBED_EQ => match c {
-                b'=' => {
-                    let to = if top == H_EQ { H_VALUE } else { H_EMBED_VALUE };
-                    Some(self.then(p, 1, &[to], W_JD | KEY_VALUE))
-                }
-                _ => self.any_pop(p),
-            },
-            H_VALUE => match c {
-                b'"' => Some(self.then(p, 1, &[H_DQ], W_DQ | STR_BEGIN)),
-                b'\'' => Some(self.then(p, 1, &[H_SQ], W_SQ | STR_BEGIN)),
-                b'\t' | b'\n' | b'\x0c' | b' ' | b'=' | b'>' => self.any_pop(p),
-                _ => Some(self.shift(p, &[H_UNQ])),
-            },
-            H_EMBED_VALUE => match c {
-                b'"' => Some(self.then(p, 1, &[H_EMBED_DQ], W_JD | EMBED_DQ_BEGIN)),
-                b'\'' => Some(self.then(p, 1, &[H_EMBED_SQ], W_JD | EMBED_SQ_BEGIN)),
-                _ => self.any_pop(p),
-            },
-            H_EMBED_DQ | H_EMBED_SQ => {
-                let (q, leaf) = if top == H_EMBED_DQ {
-                    (b'"', EMBED_DQ_END)
-                } else {
-                    (b'\'', EMBED_SQ_END)
-                };
-                (c == q).then(|| self.close(p, 1, W_JD | leaf))
-            }
-            H_DQ | H_SQ => {
-                let (q, wrap) = if top == H_DQ {
-                    (b'"', W_DQ)
-                } else {
-                    (b'\'', W_SQ)
-                };
-                if c == q {
-                    return Some(self.close(p, 1, wrap | STR_END));
-                }
-                if c == b'&' {
-                    return self.entity(p, wrap);
-                }
-                None
-            }
-            H_UNQ => {
-                if is_html_space(b, p) || c == b'>' || (c == b'/' && b.get(p + 1) == Some(&b'>')) {
-                    return Some(self.leave(p));
-                }
-                if matches!(c, b'"' | b'\'' | b'`' | b'<') {
-                    return Some(self.token(p, 1, W_UNQ | BAD_VALUE));
-                }
-                if c == b'&' {
-                    return self.entity(p, W_UNQ);
-                }
-                None
-            }
-            H_COMMENT => {
-                // `(<!-)?(--\s*>)`
-                let dashes = |q: usize| {
-                    b[q..].starts_with(b"--").then(|| {
-                        let s = skip_spaces(b, q + 2);
-                        (b.get(s) == Some(&b'>')).then_some(s + 1)
-                    })?
-                };
-                if b[p..].starts_with(b"<!-")
-                    && let Some(e) = dashes(p + 3)
-                {
-                    self.put(p, p + 3, W_HCOMMENT | HCOMMENT_BAD);
-                    self.put(p + 3, e, W_HCOMMENT | HCOMMENT_END);
-                    self.pop(e);
-                    return Some(e);
-                }
-                if let Some(e) = dashes(p) {
-                    return Some(self.close(p, e - p, W_HCOMMENT | HCOMMENT_END));
-                }
-                // `<!--(?!-?>)|--!>`
-                if b[p..].starts_with(b"<!--")
-                    && !b[p + 4..].starts_with(b">")
-                    && !b[p + 4..].starts_with(b"->")
-                {
-                    return Some(self.token(p, 4, W_HCOMMENT | HCOMMENT_BAD));
-                }
-                if b[p..].starts_with(b"--!>") {
-                    return Some(self.token(p, 4, W_HCOMMENT | HCOMMENT_BAD));
-                }
-                None
-            }
-            H_CDATA => b[p..]
-                .starts_with(b"]]>")
-                .then(|| self.close(p, 3, W_JD | TAG_CLOSE)),
-            DT_NAME => {
-                if c.is_ascii_alphabetic() {
-                    let e = (p + 1..b.len())
-                        .find(|&i| ends_tag_name(b, i))
-                        .unwrap_or(b.len());
-                    return Some(self.close(p, e - p, W_JD | DOCTYPE_NAME));
-                }
-                self.any_pop(p)
-            }
-            DT_TYPE => {
-                for w in [&b"PUBLIC"[..], b"SYSTEM"] {
-                    if b[p..].starts_with(w) && boundary(b, p + 6) {
-                        return Some(self.close(p, 6, W_JD | DOCTYPE_EXTERNAL));
-                    }
-                }
-                self.any_pop(p)
-            }
-            DT_CONTENT => {
-                if c == b'[' {
-                    return Some(self.then(p, 1, &[DT_SUBSET], W_JD | HBRACKET_BEGIN));
-                }
-                self.html_string(p, c).or_else(|| self.any_pop(p))
-            }
-            DT_META => (c == b'>').then(|| self.close(p, 1, W_JD | TAG_CLOSE)),
-            DT_SUBSET => {
-                if c == b']' {
-                    return Some(self.close(p, 1, W_JD | HBRACKET_END));
-                }
-                if b[p..].starts_with(b"<!--") {
-                    return self.html(p, c);
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    /// `string-double-quoted`, `string-single-quoted` at `p`.
-    fn html_string(&mut self, p: usize, c: u8) -> Option<usize> {
-        match c {
-            b'"' => Some(self.open(p, 1, H_DQ, W_DQ | STR_BEGIN)),
-            b'\'' => Some(self.open(p, 1, H_SQ, W_SQ | STR_BEGIN)),
-            _ => None,
-        }
-    }
-
-    /// `tag-attributes` at `p`.
-    fn attributes(&mut self, p: usize, c: u8) -> Option<usize> {
-        let b = self.b;
-        if boundary(b, p) && is_word(b, p) {
-            let w = &b[p..word_end(b, p)];
-            let found = match w {
-                b"id" => Some((ATTR_ID, H_EQ)),
-                b"class" => Some((ATTR_CLASS, H_EQ)),
-                b"style" => Some((ATTR_STYLE, H_EMBED_EQ)),
-                _ if w.starts_with(b"on") && EVENTS.contains(&&w[2..]) => {
-                    Some((ATTR_EVENT, H_EMBED_EQ))
-                }
-                _ => None,
-            };
-            if let Some((leaf, cx)) = found {
-                return Some(self.open(p, w.len(), cx, W_JD | leaf));
-            }
-        }
-        self.generic_attribute(p, c)
-    }
-
-    /// `tag-generic-attribute`: `(?=[^[\t\n\f =/>]])`.
-    fn generic_attribute(&mut self, p: usize, c: u8) -> Option<usize> {
-        if is_html_space(self.b, p) || matches!(c, b'=' | b'/' | b'>') {
-            return None;
-        }
-        Some(self.enter(p, &[H_EQ, H_ATTR_NAME]))
-    }
 }
-
-/// HTML's tag names in its `main`, by the leaf of their name and the context their body is.
-static HTML_TAGS: [(&[&[u8]], u16, u8); 8] = [
-    (&[b"body", b"head", b"html"], NAME_STRUCTURE, H_TAG),
-    (
-        &[
-            b"address",
-            b"applet",
-            b"article",
-            b"aside",
-            b"blockquote",
-            b"center",
-            b"dd",
-            b"dir",
-            b"div",
-            b"dl",
-            b"dt",
-            b"figcaption",
-            b"figure",
-            b"footer",
-            b"frame",
-            b"frameset",
-            b"h1",
-            b"h2",
-            b"h3",
-            b"h4",
-            b"h5",
-            b"h6",
-            b"header",
-            b"iframe",
-            b"menu",
-            b"nav",
-            b"noframes",
-            b"object",
-            b"ol",
-            b"p",
-            b"pre",
-            b"section",
-            b"ul",
-        ],
-        NAME_BLOCK,
-        H_TAG,
-    ),
-    (&[b"hr"], NAME_BLOCK, H_TAG_SC),
-    (&[b"form", b"fieldset"], NAME_FORM_BLOCK, H_TAG),
-    (
-        &[
-            b"abbr",
-            b"acronym",
-            b"area",
-            b"audio",
-            b"b",
-            b"base",
-            b"basefont",
-            b"bdi",
-            b"bdo",
-            b"big",
-            b"br",
-            b"canvas",
-            b"caption",
-            b"cite",
-            b"code",
-            b"del",
-            b"details",
-            b"dfn",
-            b"dialog",
-            b"em",
-            b"font",
-            b"head",
-            b"html",
-            b"i",
-            b"img",
-            b"ins",
-            b"isindex",
-            b"kbd",
-            b"li",
-            b"link",
-            b"map",
-            b"mark",
-            b"menu",
-            b"menuitem",
-            b"meta",
-            b"noscript",
-            b"param",
-            b"picture",
-            b"q",
-            b"rp",
-            b"rt",
-            b"rtc",
-            b"ruby",
-            b"s",
-            b"samp",
-            b"script",
-            b"small",
-            b"source",
-            b"span",
-            b"strike",
-            b"strong",
-            b"style",
-            b"sub",
-            b"summary",
-            b"sup",
-            b"time",
-            b"title",
-            b"track",
-            b"tt",
-            b"u",
-            b"var",
-            b"video",
-            b"wbr",
-        ],
-        NAME_INLINE,
-        H_TAG_SC,
-    ),
-    (
-        &[
-            b"button",
-            b"datalist",
-            b"input",
-            b"label",
-            b"legend",
-            b"meter",
-            b"optgroup",
-            b"option",
-            b"output",
-            b"progress",
-            b"select",
-            b"template",
-            b"textarea",
-        ],
-        NAME_FORM,
-        H_TAG_SC,
-    ),
-    (&[b"a"], NAME_A, H_TAG_SC),
-    (
-        &[
-            b"col",
-            b"colgroup",
-            b"table",
-            b"tbody",
-            b"td",
-            b"tfoot",
-            b"th",
-            b"thead",
-            b"tr",
-        ],
-        NAME_TABLE,
-        H_TAG_SC,
-    ),
-];
-
-/// The events of `tag-event-attribute`, after `on`.
-static EVENTS: [&[u8]; 64] = [
-    b"abort",
-    b"autocomplete",
-    b"autocompleteerror",
-    b"auxclick",
-    b"blur",
-    b"cancel",
-    b"canplay",
-    b"canplaythrough",
-    b"change",
-    b"click",
-    b"close",
-    b"contextmenu",
-    b"cuechange",
-    b"dblclick",
-    b"drag",
-    b"dragend",
-    b"dragenter",
-    b"dragexit",
-    b"dragleave",
-    b"dragover",
-    b"dragstart",
-    b"drop",
-    b"durationchange",
-    b"emptied",
-    b"ended",
-    b"error",
-    b"focus",
-    b"input",
-    b"invalid",
-    b"keydown",
-    b"keypress",
-    b"keyup",
-    b"load",
-    b"loadeddata",
-    b"loadedmetadata",
-    b"loadstart",
-    b"mousedown",
-    b"mouseenter",
-    b"mouseleave",
-    b"mousemove",
-    b"mouseout",
-    b"mouseover",
-    b"mouseup",
-    b"mousewheel",
-    b"pause",
-    b"play",
-    b"playing",
-    b"progress",
-    b"ratechange",
-    b"reset",
-    b"resize",
-    b"scroll",
-    b"seeked",
-    b"seeking",
-    b"select",
-    b"show",
-    b"sort",
-    b"stalled",
-    b"submit",
-    b"suspend",
-    b"timeupdate",
-    b"toggle",
-    b"volumechange",
-    b"waiting",
-];
 
 #[cfg(test)]
 mod tests {
