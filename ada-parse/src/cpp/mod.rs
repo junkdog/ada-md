@@ -23,7 +23,7 @@ mod pp;
 mod text;
 mod words;
 
-use crate::matcher::KEPT as HALF;
+use crate::stack::HELD;
 use crate::{Out, State};
 use text::next;
 
@@ -618,8 +618,6 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
 
 /// How many contexts a line can hold; one pushed past it drops the bottom one.
 const MAX: usize = 128;
-/// How many the state keeps between lines: [`State`]'s levels and withs.
-const KEPT: usize = 2 * HALF;
 /// Matches that take nothing in a row at one place before the scan steps on.
 const STUCK: usize = 64;
 /// A raw string's longest delimiter.
@@ -664,20 +662,13 @@ fn scan(b: &[u8], state: &mut State, out: &mut Out, root: u8) {
     // an open raw string's delimiter is in the top bytes, its length plus 1 in `arg`
     let d = usize::from(state.arg).saturating_sub(1).min(stored);
     let n = stored - d;
-    let byte = |i: usize| {
-        if i < HALF {
-            state.levels[i]
-        } else {
-            state.withs[i - HALF]
-        }
-    };
     for i in 0..n {
-        let c = byte(i);
+        let c = state.level(i);
         s.stack[1 + i] = c;
         s.count_in(c);
     }
     for i in 0..d {
-        s.delim[i] = byte(n + i);
+        s.delim[i] = state.level(n + i);
     }
     s.delim_len = d;
     s.depth = 1 + n;
@@ -693,7 +684,7 @@ fn scan(b: &[u8], state: &mut State, out: &mut Out, root: u8) {
     let raw = s.stack[1..s.depth].contains(&RAW_STRING);
     let d = if raw { s.delim_len } else { 0 };
     let n = s.depth - 1;
-    let from = n.saturating_sub(KEPT - d);
+    let from = n.saturating_sub(HELD - d);
     let mut packed = State {
         depth: (n - from + d) as u8,
         inexact: !s.exact || from > 0,
@@ -704,12 +695,10 @@ fn scan(b: &[u8], state: &mut State, out: &mut Out, root: u8) {
         .iter()
         .chain(&s.delim[..d])
         .copied();
+    // the levels and the delimiter above them a byte at a time: as `State::keep` with the
+    // delimiter laid on the stack, C++ +0.37% instructions and C +0.50%
     for (i, c) in bytes.enumerate() {
-        if i < HALF {
-            packed.levels[i] = c;
-        } else {
-            packed.withs[i - HALF] = c;
-        }
+        packed.set_level(i, c);
     }
     *state = packed;
 }
@@ -808,9 +797,7 @@ impl<'b> Scan<'b, '_> {
         if self.depth == MAX {
             let gone = self.stack[1];
             self.count_out(gone);
-            self.stack.copy_within(2.., 1);
-            self.depth -= 1;
-            self.exact = false;
+            crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
         }
         self.stack[self.depth] = c;
         self.depth += 1;

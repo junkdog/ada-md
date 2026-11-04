@@ -443,13 +443,6 @@ impl Scan<'_, '_, '_> {
     /// The frames `state` keeps: the top ones on the stack (half of it at most, so that the line
     /// can open more), the list bodies below them counted in `base`.
     fn unpack(&mut self, state: &State) {
-        let byte = |i: usize| {
-            if i < crate::matcher::KEPT {
-                state.levels[i]
-            } else {
-                state.withs[i - crate::matcher::KEPT]
-            }
-        };
         let depth = usize::from(state.depth);
         let count = |c: u8| {
             if c & RUN != 0 {
@@ -458,11 +451,11 @@ impl Scan<'_, '_, '_> {
                 1
             }
         };
-        let total: usize = (0..depth).map(|i| count(byte(i))).sum();
+        let total: usize = (0..depth).map(|i| count(state.level(i))).sum();
         // the frames past the room stay below the stack, all bodies but a dropped other
         let mut skip = total.saturating_sub(MAX / 2);
         for i in 0..depth {
-            let c = byte(i);
+            let c = state.level(i);
             let k = count(c);
             let below = skip.min(k);
             skip -= below;
@@ -514,11 +507,7 @@ impl Scan<'_, '_, '_> {
             ..State::default()
         };
         for (i, &c) in codes[from..k].iter().enumerate() {
-            if i < crate::matcher::KEPT {
-                state.levels[i] = c;
-            } else {
-                state.withs[i - crate::matcher::KEPT] = c;
-            }
+            state.set_level(i, c);
         }
         state
     }

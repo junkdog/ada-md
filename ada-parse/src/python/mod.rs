@@ -29,7 +29,6 @@ mod regex;
 mod strings;
 mod words;
 
-use crate::matcher::KEPT as HALF;
 use crate::{Out, State};
 
 macro_rules! leaves {
@@ -729,8 +728,6 @@ const WCACHE: usize = 8;
 
 /// How many contexts a line can hold; one pushed past it drops the bottom one.
 const MAX: usize = 128;
-/// How many the state keeps between lines: [`State`]'s levels and withs.
-const KEPT: usize = 2 * HALF;
 /// Matches that take nothing, in a row at one place, before the scan steps on regardless.
 const STUCK: usize = 64;
 /// syntect's stack limit (with its two bottom contexts, `__start` and `main`): at it, a push's
@@ -760,31 +757,13 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     };
     let n = usize::from(state.depth);
     for i in 0..n {
-        let c = if i < HALF {
-            state.levels[i]
-        } else {
-            state.withs[i - HALF]
-        };
+        let c = state.level(i);
         s.push(c);
     }
     s.refresh();
     s.run();
     s.fill(s.b.len());
-    let n = s.depth - 1;
-    let from = n.saturating_sub(KEPT);
-    let mut packed = State {
-        depth: (n - from) as u8,
-        inexact: !s.exact || from > 0,
-        ..State::default()
-    };
-    for (i, &c) in s.stack[1 + from..s.depth].iter().enumerate() {
-        if i < HALF {
-            packed.levels[i] = c;
-        } else {
-            packed.withs[i - HALF] = c;
-        }
-    }
-    *state = packed;
+    *state = State::keep(&s.stack, s.depth, s.exact, 0);
 }
 
 /// Whether no pattern of context `c` starts at a space past the line's start: none starts
@@ -1429,30 +1408,18 @@ impl Scan<'_, '_> {
 
     /// The text up to `p` is the top context's.
     fn fill(&mut self, p: usize) {
-        let p = p.min(self.b.len());
-        if p > self.at {
-            if self.text != 0 {
-                self.out.push_merged(self.at, p, self.text);
-            }
-            self.at = p;
-        }
+        self.out.fill(&mut self.at, p.min(self.b.len()), self.text);
     }
 
     /// Bytes `s..e` are `kind`, after the text before them.
     fn put(&mut self, s: usize, e: usize, kind: u16) {
-        self.fill(s);
-        let e = e.min(self.b.len());
-        if kind != 0 && e > self.at {
-            self.out.push_merged(self.at, e, kind);
-        }
-        self.at = self.at.max(e);
+        self.out
+            .put(&mut self.at, s, e, self.b.len(), self.text, kind);
     }
 
     fn push(&mut self, c: u8) {
         if self.depth == MAX {
-            self.stack.copy_within(2.., 1);
-            self.depth -= 1;
-            self.exact = false;
+            crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
             for d in 1..self.depth {
                 self.relevel(d);
             }

@@ -47,6 +47,7 @@ mod python;
 mod regex;
 mod rust;
 mod sql;
+mod stack;
 // the matchers and context ids its scanner shares, from the port it replaced
 mod toml;
 mod toml_scan;

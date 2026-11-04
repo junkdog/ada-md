@@ -29,7 +29,6 @@
 //! `Get(&dest, `…), and the string after `// language=SQL`. Its text is SQL's, but for the
 //! string's end and (in `"…"`) its escapes.
 
-use crate::matcher::KEPT as HALF;
 use crate::prim::{
     char_len, digit, is_blank, is_name_start, is_word, skip_spaces, space_len, starts_word, stops,
     word_end,
@@ -414,8 +413,6 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
 
 /// How many contexts a line can hold; one pushed past it drops the bottom one.
 const MAX: usize = 128;
-/// How many the state keeps between lines: [`State`]'s levels and withs.
-const KEPT: usize = 2 * HALF;
 /// Matches that take nothing, in a row at one place, before the scan steps on regardless.
 const STUCK: usize = 64;
 /// syntect's stack limit (with its two bottom contexts, `__start` and `main`): at it, a push's
@@ -453,39 +450,15 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         },
         out,
     };
-    let n = usize::from(state.depth);
-    for i in 0..n {
-        s.stack[1 + i] = if i < HALF {
-            state.levels[i]
-        } else {
-            state.withs[i - HALF]
-        };
-    }
-    s.depth = 1 + n;
+    s.depth = state.load(&mut s.stack);
     s.refresh();
     if s.top() >= SQL_IN {
         s.text = s.string_text();
     }
     s.run();
     s.fill(s.b.len());
-    let n = s.depth - 1;
-    let from = n.saturating_sub(KEPT);
-    let mut packed = State {
-        depth: (n - from) as u8,
-        inexact: !s.exact || from > 0,
-        ..State::default()
-    };
-    for (i, &c) in s.stack[1 + from..s.depth].iter().enumerate() {
-        if i < HALF {
-            packed.levels[i] = c;
-        } else {
-            packed.withs[i - HALF] = c;
-        }
-    }
-    if s.mark != usize::MAX && sql::marker_holds(b, s.mark, b.len()) {
-        packed.set_flags(MARKED);
-    }
-    *state = packed;
+    let marked = s.mark != usize::MAX && sql::marker_holds(b, s.mark, b.len());
+    *state = State::keep(&s.stack, s.depth, s.exact, if marked { MARKED } else { 0 });
 }
 
 /// [`State::flags`]' bit: a SQL marker (`// language=SQL`) waits for its string.
@@ -1065,30 +1038,18 @@ impl Scan<'_, '_> {
 
     /// The text up to `p` is the top context's.
     fn fill(&mut self, p: usize) {
-        let p = p.min(self.b.len());
-        if p > self.at {
-            if self.text != PLAIN {
-                self.out.push_merged(self.at, p, self.text);
-            }
-            self.at = p;
-        }
+        self.out.fill(&mut self.at, p.min(self.b.len()), self.text);
     }
 
     /// Bytes `s..e` are `leaf`, after the text before them.
     fn put(&mut self, s: usize, e: usize, leaf: u16) {
-        self.fill(s);
-        let e = e.min(self.b.len());
-        if leaf != PLAIN && e > self.at {
-            self.out.push_merged(self.at, e, leaf);
-        }
-        self.at = self.at.max(e);
+        self.out
+            .put(&mut self.at, s, e, self.b.len(), self.text, leaf);
     }
 
     fn push(&mut self, c: u8) {
         if self.depth == MAX {
-            self.stack.copy_within(2.., 1);
-            self.depth -= 1;
-            self.exact = false;
+            crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
         }
         self.stack[self.depth] = c;
         self.depth += 1;

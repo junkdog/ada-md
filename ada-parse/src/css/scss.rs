@@ -61,7 +61,7 @@ pub(super) const YAML_KIND: u16 = 0x8000;
 /// leave the state's second half free, where YAML's state is kept.
 fn in_front_matter(state: &State) -> bool {
     let d = usize::from(state.depth);
-    (1..=super::HALF).contains(&d) && state.levels[d - 1] == FRONT
+    (1..=crate::matcher::KEPT).contains(&d) && state.levels[d - 1] == FRONT
 }
 
 /// A line of the front matter: YAML's scanner, its state in the state's second half (`---` on

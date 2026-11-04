@@ -26,7 +26,6 @@
 //! `\w` past ASCII is a letter or a decimal digit (Oniguruma's Latin-1 table also takes
 //! `²³¹¼½¾`; not followed), `\p{L}` a letter, `\p{N}` a number, `\s` Unicode's spaces; `(?i)` folds ASCII case only (Oniguruma's `ſ` for `s` isn't followed).
 
-use crate::matcher::KEPT as HALF;
 use crate::prim::{
     WORD, blank_len as space_len, char_len, digit, is_nd, is_word_starting as is_word, wide_char,
     word_end,
@@ -304,8 +303,6 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
 
 /// How many contexts a line can hold (syntect's limit is below it).
 const MAX: usize = 128;
-/// How many the state keeps between lines: [`State`]'s levels and withs.
-const KEPT: usize = 2 * HALF;
 /// syntect's stack limit (with its two bottom contexts, `__start` and `main`): at it, a push's
 /// pattern matches nothing, so the patterns after it get their turn.
 const SYNTECT_DEPTH: usize = 99;
@@ -333,11 +330,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     };
     let n = usize::from(state.depth);
     for i in 0..n {
-        let c = if i < HALF {
-            state.levels[i]
-        } else {
-            state.withs[i - HALF]
-        };
+        let c = state.level(i);
         s.stack[1 + i] = c;
         s.wraps[1 + i] = match OWN_WRAP.get(usize::from(c)).copied().unwrap_or(W_NONE) {
             W_NONE => s.wraps[i],
@@ -346,21 +339,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     }
     s.depth = 1 + n;
     s.run();
-    let n = s.depth - 1;
-    let from = n.saturating_sub(KEPT);
-    let mut packed = State {
-        depth: (n - from) as u8,
-        inexact: !s.exact || from > 0,
-        ..State::default()
-    };
-    for (i, &c) in s.stack[1 + from..s.depth].iter().enumerate() {
-        if i < HALF {
-            packed.levels[i] = c;
-        } else {
-            packed.withs[i - HALF] = c;
-        }
-    }
-    *state = packed;
+    *state = State::keep(&s.stack, s.depth, s.exact, 0);
 }
 
 // A word's classes, as bits: the patterns it can start.

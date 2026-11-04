@@ -3130,16 +3130,9 @@ impl Scan<'_, '_, '_> {
     #[inline(always)]
     fn load(&mut self, state: &State) {
         let len = usize::from(state.depth).min(KEPT);
-        let byte = |i: usize| {
-            if i < HALF {
-                state.levels[i]
-            } else {
-                state.withs[i - HALF]
-            }
-        };
         let mut i = 0;
         while i < len {
-            let ctx = byte(i);
+            let ctx = state.level(i);
             i += 1;
             if usize::from(ctx) >= CONTEXTS {
                 break;
@@ -3147,7 +3140,7 @@ impl Scan<'_, '_, '_> {
             let mut arg = 0u32;
             if let Some(n) = has_arg(ctx) {
                 for j in 0..n {
-                    arg |= u32::from(byte(i + j)) << (8 * j);
+                    arg |= u32::from(state.level(i + j)) << (8 * j);
                 }
                 i += n;
             }
@@ -3176,11 +3169,7 @@ impl Scan<'_, '_, '_> {
         };
         let mut i = 0;
         let mut put = |c: u8| {
-            if i < HALF {
-                state.levels[i] = c;
-            } else {
-                state.withs[i - HALF] = c;
-            }
+            state.set_level(i, c);
             i += 1;
         };
         for d in from..self.depth {

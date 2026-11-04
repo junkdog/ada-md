@@ -922,34 +922,22 @@ fn scan(b: &[u8], i: usize, state: &mut State, out: &mut Out) {
         merge: out.1,
         spans: &mut *out.0,
     };
-    let n = usize::from(state.depth).min(KEPT);
     // the held levels above the bottom one in one copy, then each level's bits: none where no
     // level gives any (the last save's flag, the usual case), else folded up from the bottom
-    s.stack[1..1 + HALF].copy_from_slice(&state.levels);
-    s.stack[1 + HALF..1 + KEPT].copy_from_slice(&state.withs);
+    s.depth = state.load(&mut s.stack);
+    let n = s.depth - 1;
     s.bits[..1 + KEPT].fill(MaybeUninit::new(0));
     let low = usize::from(state.flags() & BITS);
     if low != 0 {
         s.fold_bits(low, n);
     }
-    s.depth = 1 + n;
     s.ind = s.sp_line(i);
     s.refresh();
     s.run();
     s.fill(s.b.len());
     let n = s.depth - 1;
     let from = n.saturating_sub(KEPT);
-    // the top `KEPT` levels in one copy (`from` is at most `MAX - 1 - KEPT`), those past the
-    // top as zeros
-    let mut held = [0; KEPT];
-    held.copy_from_slice(&s.stack[1 + from..1 + from + KEPT]);
-    for (h, m) in held.iter_mut().zip(&HELD[n - from]) {
-        *h &= m;
-    }
-    state.levels.copy_from_slice(&held[..HALF]);
-    state.withs.copy_from_slice(&held[HALF..]);
-    state.depth = (n - from) as u8;
-    state.inexact = !s.exact || from > 0;
+    *state = State::keep(&s.stack, s.depth, s.exact, 0);
     // the lowest held level that gives bits of its own: below it every level's bits are none,
     // and its own bits are never none, so where the stack is all held, the lowest level whose
     // bits aren't; else (rare) by their contexts
@@ -964,8 +952,8 @@ fn scan(b: &[u8], i: usize, state: &mut State, out: &mut Out) {
         m
     } else {
         let mut m = 0u32;
-        for (k, &c) in held[..n - from].iter().enumerate() {
-            m |= u32::from(SETS[usize::from(c)]) << k;
+        for k in 0..KEPT {
+            m |= u32::from(SETS[usize::from(state.level(k))]) << k;
         }
         m
     };
@@ -1004,21 +992,6 @@ static HELD_BITS: [[u16; KEPT]; KEPT + 1] = {
         let mut k = 0;
         while k < m {
             t[m][k] = 0xffff;
-            k += 1;
-        }
-        m += 1;
-    }
-    t
-};
-
-/// For `m` levels held, the mask of the bytes that are theirs: a line's save clears the rest.
-static HELD: [[u8; KEPT]; KEPT + 1] = {
-    let mut t = [[0; KEPT]; KEPT + 1];
-    let mut m = 0;
-    while m <= KEPT {
-        let mut k = 0;
-        while k < m {
-            t[m][k] = 0xff;
             k += 1;
         }
         m += 1;
@@ -2188,11 +2161,7 @@ mod tests {
         for stack in &stacks {
             let mut state = State::default();
             for (i, &c) in stack.iter().enumerate() {
-                if i < super::HALF {
-                    state.levels[i] = c;
-                } else {
-                    state.withs[i - super::HALF] = c;
-                }
+                state.set_level(i, c);
             }
             state.depth = stack.len() as u8;
             // the save's flag, as a scan would leave it
@@ -2301,11 +2270,7 @@ mod tests {
         for stack in &stacks {
             let mut state = State::default();
             for (i, &c) in stack.iter().enumerate() {
-                if i < super::HALF {
-                    state.levels[i] = c;
-                } else {
-                    state.withs[i - super::HALF] = c;
-                }
+                state.set_level(i, c);
             }
             state.depth = stack.len() as u8;
             // the save's flag, as a scan would leave it

@@ -329,11 +329,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         out,
     };
     for i in 0..usize::from(state.depth) {
-        let c = if i < HALF {
-            state.levels[i]
-        } else {
-            state.withs[i - HALF]
-        };
+        let c = state.level(i);
         match RUNS.get(usize::from(c).wrapping_sub(usize::from(RUN))) {
             Some(run) => run.iter().for_each(|&c| s.push(c)),
             None => s.push(c),
@@ -341,14 +337,14 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     }
     s.run();
     s.fill(s.b.len());
-    // a byte a context, or past the levels, a byte a run
+    // a byte a context above the base, or past the levels, a byte a run
     let open = &s.stack[1..s.depth];
     let mut runs;
-    let codes = if open.len() <= KEPT {
-        open
+    let (codes, depth) = if open.len() <= KEPT {
+        (&s.stack, s.depth)
     } else {
         runs = [0; MAX];
-        let (mut i, mut k) = (0, 0);
+        let (mut i, mut k) = (0, 1);
         while i < open.len() {
             let rest = &open[i..];
             let (code, len) = RUNS
@@ -358,25 +354,14 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
             runs[k] = code;
             (i, k) = (i + len, k + 1);
         }
-        &runs[..k]
+        (&runs, k)
     };
-    let from = codes.len().saturating_sub(KEPT);
-    let mut packed = State {
-        depth: (codes.len() - from) as u8,
-        inexact: !s.exact || from > 0,
-        ..State::default()
+    let arg = if matches!(s.top(), LONG_STRING | COMMENT_BLOCK) {
+        u16::try_from(s.level).unwrap_or(u16::MAX)
+    } else {
+        0
     };
-    if matches!(s.top(), LONG_STRING | COMMENT_BLOCK) {
-        packed.arg = u16::try_from(s.level).unwrap_or(u16::MAX);
-    }
-    for (i, &c) in codes[from..].iter().enumerate() {
-        if i < HALF {
-            packed.levels[i] = c;
-        } else {
-            packed.withs[i - HALF] = c;
-        }
-    }
-    *state = packed;
+    *state = State::keep(codes, depth, s.exact, arg);
 }
 
 /// The first byte that stands for a run of [`RUNS`] (the contexts are below it).
@@ -1033,18 +1018,12 @@ impl Scan<'_, '_> {
     /// Bytes `s..e` are `leaf`, after the text before them.
     fn put(&mut self, s: usize, e: usize, leaf: u16) {
         self.fill(s);
-        let e = e.min(self.b.len());
-        if leaf != PLAIN && e > self.at {
-            self.out.push_merged(self.at, e, leaf);
-        }
-        self.at = self.at.max(e);
+        self.out.fill(&mut self.at, e.min(self.b.len()), leaf);
     }
 
     fn push(&mut self, c: u8) {
         if self.depth == MAX {
-            self.stack.copy_within(2.., 1);
-            self.depth -= 1;
-            self.exact = false;
+            crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
         }
         self.stack[self.depth] = c;
         self.depth += 1;

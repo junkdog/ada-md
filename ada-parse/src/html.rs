@@ -28,7 +28,6 @@
 //! `(?i)` folds ASCII case only, `\s` and `\S` are Unicode's, `\b`'s word characters are ASCII's
 //! and, past ASCII, letters and numbers.
 
-use crate::matcher::KEPT as HALF;
 use crate::{Out, Span, State};
 
 // ---- the contexts ----
@@ -306,8 +305,6 @@ fn frame(emb: Emb, single: bool, bodies: usize, tag: u8) -> u16 {
 
 /// How many contexts a line can hold; past it the bottom one drops.
 const MAX: usize = 128;
-/// How many the state keeps between lines: [`State`]'s levels and withs.
-const KEPT: usize = 2 * HALF;
 
 /// Lex `b`, a line of HTML without its `\n`, from `state`.
 #[inline(never)]
@@ -350,15 +347,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
             None => p = usize::MAX,
         }
     } else {
-        let n = usize::from(state.depth);
-        for i in 0..n {
-            s.stack[1 + i] = if i < HALF {
-                state.levels[i]
-            } else {
-                state.withs[i - HALF]
-            };
-        }
-        s.depth = 1 + n;
+        s.depth = state.load(&mut s.stack);
     }
     if p != usize::MAX {
         s.run(p);
@@ -374,21 +363,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         state.arg = frame(emb, quote == b'\'', bodies, tag);
         return;
     }
-    let n = s.depth - 1;
-    let from = n.saturating_sub(KEPT);
-    let mut packed = State {
-        depth: (n - from) as u8,
-        inexact: !s.exact || from > 0,
-        ..State::default()
-    };
-    for (i, &c) in s.stack[1 + from..s.depth].iter().enumerate() {
-        if i < HALF {
-            packed.levels[i] = c;
-        } else {
-            packed.withs[i - HALF] = c;
-        }
-    }
-    *state = packed;
+    *state = State::keep(&s.stack, s.depth, s.exact, 0);
 }
 
 struct Scan<'b, 'o, 's> {
@@ -604,9 +579,7 @@ impl Scan<'_, '_, '_> {
 
     fn push(&mut self, ctx: u8) {
         if self.depth == MAX {
-            self.stack.copy_within(2.., 1);
-            self.depth -= 1;
-            self.exact = false;
+            crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
         }
         self.stack[self.depth] = ctx;
         self.depth += 1;

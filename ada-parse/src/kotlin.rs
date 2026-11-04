@@ -22,7 +22,6 @@
 //! The stack between lines is the contexts open above the top level, up to 28 (the bytes of
 //! [`State`]'s levels).
 
-use crate::matcher::KEPT as HALF;
 use crate::prim::char_len;
 use crate::regex;
 use crate::sql;
@@ -239,8 +238,6 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
 
 /// How many contexts a line can hold; one pushed past it drops the bottom one.
 const MAX: usize = 128;
-/// How many the state keeps between lines: [`State`]'s levels and withs.
-const KEPT: usize = 2 * HALF;
 
 /// Lex `b`, a line without its `\n`, from `state`.
 #[inline(never)]
@@ -268,36 +265,12 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         },
         out,
     };
-    let n = usize::from(state.depth);
-    for i in 0..n {
-        s.stack[1 + i] = if i < HALF {
-            state.levels[i]
-        } else {
-            state.withs[i - HALF]
-        };
-    }
-    s.depth = 1 + n;
+    s.depth = state.load(&mut s.stack);
     s.refresh();
     s.run();
     s.fill(b.len());
-    let n = s.depth - 1;
-    let from = n.saturating_sub(KEPT);
-    let mut packed = State {
-        depth: (n - from) as u8,
-        inexact: !s.exact || from > 0,
-        ..State::default()
-    };
-    for (i, &c) in s.stack[1 + from..s.depth].iter().enumerate() {
-        if i < HALF {
-            packed.levels[i] = c;
-        } else {
-            packed.withs[i - HALF] = c;
-        }
-    }
-    if s.mark != usize::MAX && sql::marker_holds(b, s.mark, b.len()) {
-        packed.set_flags(MARKED);
-    }
-    *state = packed;
+    let marked = s.mark != usize::MAX && sql::marker_holds(b, s.mark, b.len());
+    *state = State::keep(&s.stack, s.depth, s.exact, if marked { MARKED } else { 0 });
 }
 
 /// [`State::flags`]' bit: a SQL marker (`@Language("SQL")`, `// language=SQL`) waits for its
@@ -857,9 +830,7 @@ impl Scan<'_, '_> {
     fn push(&mut self, at: usize, c: u8) {
         self.fill(at);
         if self.depth == MAX {
-            self.stack.copy_within(2.., 1);
-            self.depth -= 1;
-            self.exact = false;
+            crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
         }
         self.stack[self.depth] = c;
         self.depth += 1;

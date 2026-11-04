@@ -27,7 +27,6 @@
 pub(crate) mod scss;
 mod words;
 
-use crate::matcher::KEPT as HALF;
 use crate::words::{Words, text_len};
 use crate::{Out, State};
 use words::{ENTRIES, LONGEST};
@@ -1455,8 +1454,6 @@ struct Num {
 
 /// How many contexts a line can hold (syntect's limit is below it).
 const MAX: usize = 128;
-/// How many the state keeps between lines: [`State`]'s levels and withs.
-const KEPT: usize = 2 * HALF;
 /// syntect's stack limit (with its two bottom contexts, `__start` and `main`): at it, a push's
 /// pattern matches nothing, so the patterns after it get their turn.
 const SYNTECT_DEPTH: usize = 99;
@@ -1524,35 +1521,13 @@ fn lex<const S: bool>(
         swrap: W_NONE,
         shape_run: std::cell::Cell::new((usize::MAX, 0, 0)),
     };
-    let n = usize::from(state.depth);
-    for i in 0..n {
-        s.stack[1 + i] = if i < HALF {
-            state.levels[i]
-        } else {
-            state.withs[i - HALF]
-        };
-    }
-    s.depth = 1 + n;
+    s.depth = state.load(&mut s.stack);
     if S {
         s.rewrap();
     }
     let exact = state.is_exact();
     run(&mut s);
-    let n = s.depth - 1;
-    let from = n.saturating_sub(KEPT);
-    let mut packed = State {
-        depth: (n - from) as u8,
-        inexact: !exact || from > 0,
-        ..State::default()
-    };
-    for (i, &c) in s.stack[1 + from..s.depth].iter().enumerate() {
-        if i < HALF {
-            packed.levels[i] = c;
-        } else {
-            packed.withs[i - HALF] = c;
-        }
-    }
-    *state = packed;
+    *state = State::keep(&s.stack, s.depth, exact, 0);
 }
 
 /// Bytes `start..end` of the line.

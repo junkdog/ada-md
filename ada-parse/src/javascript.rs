@@ -22,7 +22,6 @@
 //! [`State`]'s levels). A JSX element's context keeps its tag's name as a 7-bit hash there, so
 //! a closing tag on a later line is matched by its hash; on its own line, by its text.
 
-use crate::matcher::KEPT as HALF;
 use crate::prim::{WORD, char_len, digit, is_word, stops, wide_digit, wide_space, word_end};
 use crate::regex;
 use crate::{Out, State};
@@ -337,8 +336,6 @@ const MAX: usize = 128;
 /// How many of the JSX tags pushed on a line keep their place in it; an older one is matched
 /// by its hash, as one from an earlier line.
 const TAGS: usize = 16;
-/// How many the state keeps between lines: [`State`]'s levels and withs.
-const KEPT: usize = 2 * HALF;
 /// Matches that take nothing, in a row at one place, before the scan steps on regardless.
 const STUCK: usize = 64;
 /// syntect's stack limit (with its two bottom contexts, `__start` and `__main`): at it, a
@@ -398,29 +395,12 @@ fn lex(b: &[u8], from: usize, state: &mut State, out: &mut Out) {
         out,
     };
     // the levels kept, whole: those above the depth are never read
-    s.stack[1..=HALF].copy_from_slice(&state.levels);
-    s.stack[1 + HALF..=KEPT].copy_from_slice(&state.withs);
-    s.depth = 1 + usize::from(state.depth);
+    s.depth = state.load(&mut s.stack);
     s.low = s.depth;
     s.refresh();
     s.run();
     s.fill(s.b.len());
-    let n = s.depth - 1;
-    let from = n.saturating_sub(KEPT);
-    let kept = n - from;
-    // the top `KEPT` levels, whole, the bytes above the depth zeroed
-    let mut levels = [0; KEPT];
-    levels.copy_from_slice(&s.stack[1 + from..1 + from + KEPT]);
-    for (i, c) in levels.iter_mut().enumerate() {
-        if i >= kept {
-            *c = 0;
-        }
-    }
-    state.levels.copy_from_slice(&levels[..HALF]);
-    state.withs.copy_from_slice(&levels[HALF..]);
-    state.depth = kept as u8;
-    state.inexact = !s.exact || from > 0;
-    state.arg = 0;
+    *state = State::keep(&s.stack, s.depth, s.exact, 0);
 }
 
 /// A tag's name as a JSX element's context keeps it between lines: 7 bits of its FNV-1a hash.
@@ -1104,34 +1084,22 @@ impl<'b> Scan<'b, '_> {
 
     /// The text up to `p` is the top context's.
     fn fill(&mut self, p: usize) {
-        let p = p.min(self.b.len());
-        if p > self.at {
-            if self.text != PLAIN {
-                self.out.push_merged(self.at, p, self.text);
-            }
-            self.at = p;
-        }
+        self.out.fill(&mut self.at, p.min(self.b.len()), self.text);
     }
 
     /// Bytes `s..e` are `leaf`, after the text before them.
     fn put(&mut self, s: usize, e: usize, leaf: u16) {
-        self.fill(s);
-        let e = e.min(self.b.len());
-        if leaf != PLAIN && e > self.at {
-            self.out.push_merged(self.at, e, leaf);
-        }
-        self.at = self.at.max(e);
+        self.out
+            .put(&mut self.at, s, e, self.b.len(), self.text, leaf);
     }
 
     fn push(&mut self, c: u8) {
         if self.depth == MAX {
-            self.stack.copy_within(2.., 1);
+            crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
             // the levels moved: the tags' places no longer name them
             self.tag_count = 0;
             self.tags = [(0, 0, 0); TAGS];
-            self.depth -= 1;
             self.low = self.low.saturating_sub(1).max(1);
-            self.exact = false;
         }
         self.stack[self.depth] = c;
         self.depth += 1;
