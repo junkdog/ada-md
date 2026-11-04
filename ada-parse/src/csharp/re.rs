@@ -9,6 +9,7 @@
 //! `char::is_alphabetic`, `\w` `char::is_alphanumeric`, `\s` ASCII's.
 
 use super::Scan;
+use super::words;
 use crate::clike::{CLASS, DIGIT, SPACE, WORD};
 
 /// `{{reserved}}`, in the grammar's order: `@in` comes before `@interface`.
@@ -95,6 +96,7 @@ pub(crate) const ND: [u32; 75] = [
 ];
 
 /// Whether `w` is a word of `{{reserved}}`.
+#[cfg(test)]
 pub(super) fn is_reserved(w: &[u8]) -> bool {
     matches!(
         w,
@@ -176,8 +178,9 @@ fn is_hex(c: u8) -> bool {
     c.is_ascii_hexdigit()
 }
 
+#[inline(always)]
 fn ascii_word(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c == b'_'
+    CLASS[usize::from(c)] & WORD != 0
 }
 
 /// The bytes of the `\\s` character (Unicode's White_Space, as syntect's regexes take it) at
@@ -277,12 +280,11 @@ impl Scan<'_, '_> {
         if at == i {
             return end;
         }
-        let b = self.b;
+        let b = &self.b[..self.n];
         let mut e = i;
-        while e < self.n {
-            let c = b[e];
+        while let Some(&c) = b.get(e) {
             if c < 0x80 {
-                if !ascii_word(c) {
+                if CLASS[usize::from(c)] & WORD == 0 {
                     break;
                 }
                 e += 1;
@@ -354,8 +356,8 @@ impl Scan<'_, '_> {
     /// Past `\s*` at `i` on the line (its `\n` not taken).
     #[inline]
     pub(super) fn sp_line(&self, mut i: usize) -> usize {
-        while i < self.n {
-            let c = self.b[i];
+        let b = &self.b[..self.n];
+        while let Some(&c) = b.get(i) {
             if c < 0x80 {
                 if CLASS[usize::from(c)] & SPACE == 0 {
                     break;
@@ -492,11 +494,15 @@ impl Scan<'_, '_> {
         let b = self.b;
         let end = match b.get(i) {
             Some(&c) if CLASS[usize::from(c)] & (WORD | DIGIT) == WORD => {
-                let mut e = i + 1;
-                while e < self.n && CLASS[usize::from(b[e])] & WORD != 0 {
-                    e += 1;
-                }
-                (e >= self.n || (b[e] < 0x80 && b[e] != b'\\')).then_some(e)
+                let rest = &b[i + 1..self.n];
+                let len = rest
+                    .iter()
+                    .position(|&c| CLASS[usize::from(c)] & WORD == 0)
+                    .unwrap_or(rest.len());
+                let e = i + 1 + len;
+                rest.get(len)
+                    .is_none_or(|&c| c < 0x80 && c != b'\\')
+                    .then_some(e)
             }
             _ => None,
         };
@@ -557,32 +563,13 @@ impl Scan<'_, '_> {
     /// `{{reserved}}\b` at `i`: where it ends.
     pub(super) fn reserved_word(&self, i: usize) -> Option<usize> {
         let w = self.word(i);
-        is_reserved(w).then_some(i + w.len())
+        (words::flags(words::get(w)) & words::RES != 0).then_some(i + w.len())
     }
 
     /// `{{base_type}}` at `i` (its `\b` after, none before): where it ends.
     pub(super) fn base_type(&self, i: usize) -> Option<usize> {
         let w = self.word(i);
-        matches!(
-            w,
-            b"bool"
-                | b"byte"
-                | b"sbyte"
-                | b"char"
-                | b"decimal"
-                | b"double"
-                | b"float"
-                | b"int"
-                | b"uint"
-                | b"long"
-                | b"ulong"
-                | b"short"
-                | b"ushort"
-                | b"object"
-                | b"string"
-                | b"void"
-        )
-        .then_some(i + w.len())
+        (words::flags(words::get(w)) & words::BASE != 0).then_some(i + w.len())
     }
 
     /// `{{visibility}}` at `i`: `\b(?:public|private|protected|internal|protected\s+internal)\b`.

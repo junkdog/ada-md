@@ -701,7 +701,7 @@ impl Scan<'_, '_> {
     /// they can start.
     #[cold]
     #[inline(never)]
-    fn in_regex(&mut self, p: usize, top: u8) -> Option<usize> {
+    pub(super) fn in_regex(&mut self, p: usize, top: u8) -> Option<usize> {
         if top < REGEX {
             return None;
         }
@@ -745,7 +745,7 @@ impl Scan<'_, '_> {
 
     /// A string opened at `p` (its `"`, or the `@` of `@"`): a regex in it where a call makes
     /// it one, by the `(` or `,` before it.
-    fn regex_in(&mut self, p: usize) {
+    pub(super) fn regex_in(&mut self, p: usize) {
         let b = self.b;
         let q = blank_back(b, p);
         let regex = q > 0
@@ -763,7 +763,7 @@ impl Scan<'_, '_> {
     }
 
     /// `(?=\S)` at `p`: a pop.
-    fn any_leave(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn any_leave(&mut self, p: usize) -> Option<usize> {
         if self.nonspace(p) {
             return self.leave(p);
         }
@@ -771,7 +771,7 @@ impl Scan<'_, '_> {
     }
 
     /// `(?=\S)` at `p`: a push of `cs`.
-    fn any_enter(&mut self, p: usize, cs: &[u8]) -> Option<usize> {
+    pub(super) fn any_enter(&mut self, p: usize, cs: &[u8]) -> Option<usize> {
         if self.nonspace(p) {
             return self.enter(p, cs);
         }
@@ -779,7 +779,7 @@ impl Scan<'_, '_> {
     }
 
     /// `(?=\S)` at `p`: a set.
-    fn any_shift(&mut self, p: usize, cs: &[u8]) -> Option<usize> {
+    pub(super) fn any_shift(&mut self, p: usize, cs: &[u8]) -> Option<usize> {
         if self.nonspace(p) {
             return self.shift(p, cs);
         }
@@ -787,7 +787,7 @@ impl Scan<'_, '_> {
     }
 
     /// `stray_close_bracket`: `[})\]]`.
-    fn stray(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn stray(&mut self, p: usize) -> Option<usize> {
         if matches!(self.ch(p), b'}' | b')' | b']') && p < self.n {
             return self.tok(p, p + 1, STRAY);
         }
@@ -795,12 +795,12 @@ impl Scan<'_, '_> {
     }
 
     /// `code_block_in`: `(?=\S)`, a statement.
-    fn code_block_in(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn code_block_in(&mut self, p: usize) -> Option<usize> {
         self.any_enter(p, &[LINE])
     }
 
     /// `main`.
-    fn main(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn main(&mut self, p: usize) -> Option<usize> {
         if let Some(q) = self.stray(p) {
             return Some(q);
         }
@@ -810,26 +810,39 @@ impl Scan<'_, '_> {
         if let Some(q) = self.attribute(p) {
             return Some(q);
         }
-        if let Some(q) = self.using(p) {
-            return Some(q);
-        }
-        if let Some(q) = self.class_decl(p) {
-            return Some(q);
+        // the rest start with a word of their own, but `interface` (not after a word
+        // character but `interface`'s)
+        let id = if self.ch(p).is_ascii_lowercase() && !self.word_before(p) {
+            words::get(self.word(p))
+        } else {
+            0
+        };
+        if id != 0 {
+            if id == W_USING
+                && let Some(q) = self.using(p)
+            {
+                return Some(q);
+            }
+            if let Some(q) = self.class_decl(p) {
+                return Some(q);
+            }
         }
         if let Some(q) = self.interface_decl(p) {
             return Some(q);
         }
-        if self.kw(p, b"namespace") {
+        if id == W_NAMESPACE {
             return self.tok_push(p, p + 9, NAMESPACE_KW, &[NS_DECL]);
         }
-        if let Some(q) = self.delegate_decl(p) {
+        if id == W_DELEGATE
+            && let Some(q) = self.delegate_decl(p)
+        {
             return Some(q);
         }
         self.any_enter(p, &[MAIN_LINE])
     }
 
     /// `{ … }` holding `main`, its `}` `end`.
-    fn brace_main(&mut self, p: usize, end: u16) -> Option<usize> {
+    pub(super) fn brace_main(&mut self, p: usize, end: u16) -> Option<usize> {
         if self.ch(p) == b'}' {
             return self.close(p, p + 1, end);
         }
@@ -837,7 +850,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_main_1`'s pop: `(?={{visibility}}|\b(?:class|delegate|interface|namespace|readonly)\b)`.
-    fn main_line_stop(&self, p: usize) -> bool {
+    pub(super) fn main_line_stop(&self, p: usize) -> bool {
         if !self.ch(p).is_ascii_lowercase() || self.word_before(p) {
             return false;
         }
@@ -850,7 +863,7 @@ impl Scan<'_, '_> {
     }
 
     /// `attribute`.
-    fn attribute(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn attribute(&mut self, p: usize) -> Option<usize> {
         if self.ch(p) != b'[' || p >= self.n {
             return None;
         }
@@ -882,14 +895,19 @@ impl Scan<'_, '_> {
     }
 
     /// `using`.
-    fn using(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn using(&mut self, p: usize) -> Option<usize> {
         if !self.kw_end(p, b"using") || self.word_before(p) {
             // `\b(using)\s+` needs no `\b` after, but `\s+` there is one
             return None;
         }
         let e = p + 5;
         // `\b(using)\s+(?={{name}}\s*=\s*)`
-        if let Some(s) = self.sp1(e) {
+        if let Some(s) = self.sp1(e)
+            // a name of ASCII has one end, which `=` must follow
+            && self
+                .ascii_name(s)
+                .is_none_or(|n| self.ch(self.sp(n)) == b'=')
+        {
             let mut alias = false;
             self.names(s, &mut |n| {
                 let t = self.sp(n);
@@ -920,7 +938,7 @@ impl Scan<'_, '_> {
     }
 
     /// `using_namespace`.
-    fn using_ns(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn using_ns(&mut self, p: usize) -> Option<usize> {
         if let Some(q) = self.namespace_alias(p, NAMESPACE_VAR) {
             return Some(q);
         }
@@ -948,7 +966,14 @@ impl Scan<'_, '_> {
     }
 
     /// `namespace_alias`: `(?:(global)|({{name}}))\s*(::)`, the name `name_leaf`.
-    fn namespace_alias(&mut self, p: usize, name_leaf: u16) -> Option<usize> {
+    pub(super) fn namespace_alias(&mut self, p: usize, name_leaf: u16) -> Option<usize> {
+        // a name of ASCII has one end: `::` must follow it, or it is `global`
+        if let Some(e) = self.ascii_name(p)
+            && e - p != 6
+            && self.ch(self.sp(e)) != b':'
+        {
+            return None;
+        }
         if self.lit(p, b"global") {
             let s = self.sp(p + 6);
             if self.lit(s, b"::") {
@@ -971,7 +996,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_namespace_declaration_0`.
-    fn ns_decl(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn ns_decl(&mut self, p: usize) -> Option<usize> {
         if self.name(p).is_some() {
             return self.enter(p, &[NS_NAME]);
         }
@@ -982,7 +1007,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_namespace_declaration_1`: the name, in `entity.name.namespace`.
-    fn ns_name(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn ns_name(&mut self, p: usize) -> Option<usize> {
         if let Some(e) = self.name(p) {
             return self.tok(p, e, PLAIN);
         }
@@ -993,15 +1018,37 @@ impl Scan<'_, '_> {
     }
 
     /// `class_declaration`.
-    fn class_decl(&mut self, p: usize) -> Option<usize> {
-        if let Some(e) = self.kw_any(
-            p,
-            &[b"static", b"unsafe", b"abstract", b"partial", b"sealed"],
-        ) {
-            return self.tok(p, e, MODIFIER);
+    pub(super) fn class_decl(&mut self, p: usize) -> Option<usize> {
+        // each pattern starts with one of these words, whole, not after a word character
+        if !self.ch(p).is_ascii_lowercase()
+            || self.word_before(p)
+            || !matches!(
+                words::get(self.word(p)),
+                W_STATIC
+                    | W_UNSAFE
+                    | W_ABSTRACT
+                    | W_PARTIAL
+                    | W_SEALED
+                    | W_PUBLIC
+                    | W_PRIVATE
+                    | W_PROTECTED
+                    | W_INTERNAL
+                    | W_CLASS
+                    | W_READONLY
+                    | W_REF
+                    | W_STRUCT
+                    | W_ENUM
+            )
+        {
+            return None;
         }
-        if let Some(e) = self.visibility(p) {
-            return self.tok(p, e, ACCESS);
+        let e = p + self.word(p).len();
+        match words::get(self.word(p)) {
+            W_STATIC | W_UNSAFE | W_ABSTRACT | W_PARTIAL | W_SEALED => {
+                return self.tok(p, e, MODIFIER);
+            }
+            W_PUBLIC | W_PRIVATE | W_PROTECTED | W_INTERNAL => return self.tok(p, e, ACCESS),
+            _ => {}
         }
         if self.kw_end(p, b"class")
             && !self.word_before(p)
@@ -1062,7 +1109,7 @@ impl Scan<'_, '_> {
     }
 
     /// `(?:\b(readonly)\s+)?(?:\b(ref)\s+)?\b(struct)\s+({{name}})`.
-    fn struct_decl(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn struct_decl(&mut self, p: usize) -> Option<usize> {
         let opt = |s: &Self, q: usize, w: &[u8]| -> Option<usize> {
             if s.lit(q, w) && !s.word_before(q) {
                 s.sp1(q + w.len())
@@ -1112,7 +1159,7 @@ impl Scan<'_, '_> {
     }
 
     /// `interface_declaration`: `(interface)\s+({{name}})`.
-    fn interface_decl(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn interface_decl(&mut self, p: usize) -> Option<usize> {
         if !self.lit(p, b"interface") {
             return None;
         }
@@ -1126,7 +1173,7 @@ impl Scan<'_, '_> {
     }
 
     /// `delegate_declaration`: `\b(delegate)\b\s+`.
-    fn delegate_decl(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn delegate_decl(&mut self, p: usize) -> Option<usize> {
         if !self.kw(p, b"delegate") {
             return None;
         }
@@ -1138,7 +1185,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_class_declaration_2`, an enum's body.
-    fn enum_body(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn enum_body(&mut self, p: usize) -> Option<usize> {
         if self.ch(p) == b'}' {
             return self.then(p, p + 1, BLOCK_END, &[ENUM_END]);
         }
@@ -1156,7 +1203,7 @@ impl Scan<'_, '_> {
     }
 
     /// `delegate_name`.
-    fn delegate_name(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn delegate_name(&mut self, p: usize) -> Option<usize> {
         if let Some(e) = self.sp1(p) {
             return self.tok(p, e, DELEGATE);
         }
@@ -1180,7 +1227,7 @@ impl Scan<'_, '_> {
     }
 
     /// `delegate_end`.
-    fn delegate_end(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn delegate_end(&mut self, p: usize) -> Option<usize> {
         if self.ch(p) == b';' && p < self.n {
             return self.close(p, p + 1, TERMINATOR);
         }
@@ -1199,7 +1246,7 @@ impl Scan<'_, '_> {
     }
 
     /// `data_type_signature`.
-    fn data_type_sig(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn data_type_sig(&mut self, p: usize) -> Option<usize> {
         match self.ch(p) {
             b'<' => return self.tok_push(p, p + 1, GENERIC_BEGIN, &[DTS_GENERIC]),
             b':' if p < self.n => return self.then(p, p + 1, TYPE_SEP, &[TYPE_CONSTRAINT]),
@@ -1213,7 +1260,7 @@ impl Scan<'_, '_> {
     }
 
     /// `data_type_body`.
-    fn data_type_body(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn data_type_body(&mut self, p: usize) -> Option<usize> {
         if self.ch(p) == b'{' {
             return self.tok_push(p, p + 1, BLOCK_BEGIN, &[DTB_BLOCK]);
         }
@@ -1231,7 +1278,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_data_type_body_0`: a class's body.
-    fn dtb_block(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn dtb_block(&mut self, p: usize) -> Option<usize> {
         if self.ch(p) == b'}' {
             return self.close(p, p + 1, BLOCK_END);
         }
@@ -1259,7 +1306,7 @@ impl Scan<'_, '_> {
     }
 
     /// `type_constraint`.
-    fn type_constraint(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn type_constraint(&mut self, p: usize) -> Option<usize> {
         if self.ch(p) == b'{'
             && let Some(q) = self.leave(p)
         {
@@ -1332,7 +1379,7 @@ impl Scan<'_, '_> {
     }
 
     /// `new\s*\(\s*\)` at `p`: where it ends.
-    fn new_parens(&self, p: usize) -> Option<usize> {
+    pub(super) fn new_parens(&self, p: usize) -> Option<usize> {
         if !self.lit(p, b"new") {
             return None;
         }
@@ -1343,7 +1390,7 @@ impl Scan<'_, '_> {
     }
 
     /// `event_handler_declaration`.
-    fn event_handler(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn event_handler(&mut self, p: usize) -> Option<usize> {
         let mut dot = None;
         self.names(p, &mut |e| {
             if self.ch(e) == b'.' && e < self.n {
@@ -1366,7 +1413,7 @@ impl Scan<'_, '_> {
     /// visibility, one of `class_declaration`'s modifiers, a type or a member's name (the
     /// declarations' words left to the patterns): what they give, `None` for the others.
     #[inline]
-    fn member_name(&mut self, p: usize, e: usize) -> Option<Option<usize>> {
+    pub(super) fn member_name(&mut self, p: usize, e: usize) -> Option<Option<usize>> {
         let id = if self.b[p].is_ascii_lowercase() {
             words::get(&self.b[p..e])
         } else {
@@ -1417,7 +1464,7 @@ impl Scan<'_, '_> {
     }
 
     /// `method_declaration`.
-    fn method_decl(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn method_decl(&mut self, p: usize) -> Option<usize> {
         if let Some(e) = self.kw_any(
             p,
             &[
@@ -1508,7 +1555,7 @@ impl Scan<'_, '_> {
 
     /// `({{name}})\s*(c)` at `p`, the name's ends tried in order: the name's end and `c`'s
     /// place.
-    fn name_then(&self, p: usize, c: u8) -> Option<(usize, usize)> {
+    pub(super) fn name_then(&self, p: usize, c: u8) -> Option<(usize, usize)> {
         let mut at = None;
         self.names(p, &mut |e| {
             let s = self.sp(e);
@@ -1523,7 +1570,7 @@ impl Scan<'_, '_> {
 
     /// The tokens of a `{{type_suffix_capture}}` (`method_declaration`'s, after a type), the
     /// leaf of the `>` before it if it had one.
-    fn suffix_tokens(&mut self, x: &re::Suffix, _gt: Option<u16>) {
+    pub(super) fn suffix_tokens(&mut self, x: &re::Suffix, _gt: Option<u16>) {
         if let Some(q) = x.question {
             self.put(q - 1, q, NULLABLE);
         }
@@ -1539,7 +1586,7 @@ impl Scan<'_, '_> {
     }
 
     /// `method_name`: after a member's type, its name: a method's, a property's, a field's.
-    fn method_name(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn method_name(&mut self, p: usize) -> Option<usize> {
         if self.ch(p) == b'.' {
             return self.tok(p, p + 1, DOT);
         }
@@ -1665,7 +1712,7 @@ impl Scan<'_, '_> {
     /// `operator` and `this`, by the byte after it and its blanks: what they give, `None` for
     /// the others.
     #[inline]
-    fn member_name_after_type(&mut self, p: usize, e: usize) -> Option<Option<usize>> {
+    pub(super) fn member_name_after_type(&mut self, p: usize, e: usize) -> Option<Option<usize>> {
         if self.lit(p, b"operator") || self.lit(p, b"this") {
             return None;
         }
@@ -1706,7 +1753,7 @@ impl Scan<'_, '_> {
     }
 
     /// `(?=[^(]*>\.)` at `i`.
-    fn gt_dot_ahead(&self, i: usize) -> bool {
+    pub(super) fn gt_dot_ahead(&self, i: usize) -> bool {
         let mut q = i;
         while self.on(q) && self.ch(q) != b'(' {
             if self.ch(q) == b'>' && self.ch(q + 1) == b'.' && q + 1 < self.n {
@@ -1718,7 +1765,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_method_name_1`: an explicit interface's type arguments.
-    fn mn_explicit(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn mn_explicit(&mut self, p: usize) -> Option<usize> {
         if self.ch(p) == b'>' {
             let s = self.sp(p + 1);
             if self.ch(s) == b'.' && s < self.n {
@@ -1734,7 +1781,7 @@ impl Scan<'_, '_> {
     }
 
     /// `method_body`.
-    fn method_body(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn method_body(&mut self, p: usize) -> Option<usize> {
         if self.kw_end(p, b"where") {
             return self.enter(p, &[TYPE_CONSTRAINT]);
         }
@@ -1757,7 +1804,7 @@ impl Scan<'_, '_> {
     }
 
     /// `method_param`.
-    fn method_param(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn method_param(&mut self, p: usize) -> Option<usize> {
         if let Some(e) = self.name(p) {
             return self.tok(p, e, PARAMETER);
         }
@@ -1770,7 +1817,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_method_param_type_0`: a parameter's type.
-    fn mpt_type(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn mpt_type(&mut self, p: usize) -> Option<usize> {
         let s = self.sp(p);
         if !self.word_before(s) || s == p {
             for w in [&b"out"[..], b"ref", b"this", b"params", b"in"] {
@@ -1792,7 +1839,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_constructor_prebody_0`.
-    fn ctor_colon(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn ctor_colon(&mut self, p: usize) -> Option<usize> {
         if let Some(e) = self.sp1(p) {
             return self.tok(p, e, PREBODY);
         }
@@ -1814,7 +1861,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_method_accessor_0`: a property's `{ … }`.
-    fn acc_block(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn acc_block(&mut self, p: usize) -> Option<usize> {
         if self.ch(p) == b'}' {
             return self.then(p, p + 1, BLOCK_END, &[ACC_AFTER]);
         }
@@ -1831,7 +1878,7 @@ impl Scan<'_, '_> {
     }
 
     /// `attribute_in`.
-    fn attr_in(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn attr_in(&mut self, p: usize) -> Option<usize> {
         // `({{name}})(\()`
         let mut call = None;
         self.names(p, &mut |e| {
@@ -1865,15 +1912,16 @@ impl Scan<'_, '_> {
     }
 
     /// `arguments`.
-    fn arguments(&mut self, p: usize) -> Option<usize> {
-        if self.lit(p, b"out") && self.space(p + 3) {
+    pub(super) fn arguments(&mut self, p: usize) -> Option<usize> {
+        let c0 = self.ch(p);
+        if c0 == b'o' && self.lit(p, b"out") && self.space(p + 3) {
             let e = self.next(p + 3);
             self.put(p, p + 3, ARG_MODIFIER);
             self.fill(e);
             self.push(OUT_ARG);
             return Some(e);
         }
-        if self.lit(p, b"ref") && self.space(p + 3) {
+        if c0 == b'r' && self.lit(p, b"ref") && self.space(p + 3) {
             let e = self.next(p + 3);
             self.put(p, p + 3, ARG_MODIFIER);
             self.fill(e);
@@ -1897,7 +1945,15 @@ impl Scan<'_, '_> {
                     return self.tok_push(s, s + 1, leaf, &[LINE_IN]);
                 }
             }
-            return self.enter(p, &[ARG_EXPR]);
+            // the push's turn, then the expression's at the name (`nosemi`'s first pattern)
+            let q = self.enter(p, &[ARG_EXPR]);
+            if self.halt || self.stuck >= STUCK {
+                return q;
+            }
+            return match self.name_here(p) {
+                Some(e) => self.nosemi_name(p, e),
+                None => q,
+            };
         }
         // `({{name}})\s*(=)(?=[^>=])`, then `({{name}})\s*(:)`, where a name can start
         let c = self.ch(p);
@@ -1944,7 +2000,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_arguments_0`: after `out `.
-    fn out_arg(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn out_arg(&mut self, p: usize) -> Option<usize> {
         if self.lit(p, b"ref") && self.space(p + 3) {
             let e = self.next(p + 3);
             self.put(p, p + 3, ARG_MODIFIER);
@@ -1960,7 +2016,7 @@ impl Scan<'_, '_> {
     }
 
     /// `accessor_arguments`.
-    fn accessor_args(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn accessor_args(&mut self, p: usize) -> Option<usize> {
         if let Some((e, s)) = self.name_then(p, b':') {
             self.put(p, e, PARAMETER_OTHER);
             return self.tok(s, s + 1, KEY_VALUE_PARAMETER);
@@ -1974,7 +2030,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_lambdas_1`: a lambda's `( … ) =>`.
-    fn lambda_params(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn lambda_params(&mut self, p: usize) -> Option<usize> {
         let mut param = None;
         self.names(p, &mut |e| {
             let s = self.sp(e);
@@ -2003,7 +2059,7 @@ impl Scan<'_, '_> {
     }
 
     /// `member_variables_declaration`.
-    fn member_vars(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn member_vars(&mut self, p: usize) -> Option<usize> {
         match self.ch(p) {
             b'=' if p < self.n => return self.tok_push(p, p + 1, ASSIGN_VARIABLE, &[MV_VALUE]),
             b'{' => return self.enter(p, &[METHOD_ACCESSOR]),
@@ -2021,7 +2077,7 @@ impl Scan<'_, '_> {
     }
 
     /// `variables_declaration`.
-    fn vars_decl(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn vars_decl(&mut self, p: usize) -> Option<usize> {
         if self.ch(p) == b'=' && p < self.n {
             return self.tok_push(p, p + 1, ASSIGN_VARIABLE, &[VD_VALUE]);
         }
@@ -2037,12 +2093,12 @@ impl Scan<'_, '_> {
     }
 
     /// `(?=[^,\s{}])` at `p`.
-    fn init_stop(&self, p: usize) -> bool {
+    pub(super) fn init_stop(&self, p: usize) -> bool {
         self.nonspace(p) && !matches!(self.b[p], b',' | b'{' | b'}')
     }
 
     /// `initializer_constructor`.
-    fn initializer(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn initializer(&mut self, p: usize) -> Option<usize> {
         match self.ch(p) {
             b'}' => return self.close(p, p + 1, BRACES_END_I),
             b'{' => return self.tok_push(p, p + 1, BRACES_BEGIN, &[INIT_CTOR]),
@@ -2056,7 +2112,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_maybe_an_anonymous_class_0`.
-    fn anon_class(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn anon_class(&mut self, p: usize) -> Option<usize> {
         match self.ch(p) {
             b'}' => return self.close(p, p + 1, BLOCK_END),
             b',' if p < self.n => return self.tok(p, p + 1, CLASS_SEP),
@@ -2070,7 +2126,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_maybe_an_anonymous_class_1`: after `new`, not an anonymous class.
-    fn new_type(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn new_type(&mut self, p: usize) -> Option<usize> {
         if let Some(q) = self.brackets_capture(p) {
             return Some(q);
         }
@@ -2103,7 +2159,7 @@ impl Scan<'_, '_> {
     }
 
     /// `{{brackets_capture}}`, `((\[)(,*)(\]))`, as a token.
-    fn brackets_capture(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn brackets_capture(&mut self, p: usize) -> Option<usize> {
         if self.ch(p) != b'[' || p >= self.n {
             return None;
         }
@@ -2120,7 +2176,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_line_of_code_in_no_semicolon_3`: a cast's `( … )`.
-    fn cast(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn cast(&mut self, p: usize) -> Option<usize> {
         if self.ch(p) == b')' {
             return self.close(p, p + 1, GROUP_END);
         }
@@ -2153,7 +2209,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_line_of_code_in_no_semicolon_4`: a tuple's `( … )`.
-    fn tuple(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn tuple(&mut self, p: usize) -> Option<usize> {
         match self.ch(p) {
             b')' => return self.close(p, p + 1, GROUP_END),
             b',' if p < self.n => return self.tok(p, p + 1, TUPLE_SEP),
@@ -2186,7 +2242,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_line_of_code_in_no_semicolon_0`: a generic call's type arguments.
-    fn n_generic_call(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn n_generic_call(&mut self, p: usize) -> Option<usize> {
         match self.ch(p) {
             b',' if p < self.n => return self.tok(p, p + 1, TYPE_SEP),
             b'>' => {
@@ -2205,7 +2261,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_keywords_0`: `nameof( … )`.
-    fn nameof(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn nameof(&mut self, p: usize) -> Option<usize> {
         if self.ch(p) == b')' {
             return self.close(p, p + 1, M_GROUP_END);
         }
@@ -2230,7 +2286,7 @@ impl Scan<'_, '_> {
     }
 
     /// `(?=\p{Ll})` at `p`.
-    fn lowercase_at(&self, p: usize) -> bool {
+    pub(super) fn lowercase_at(&self, p: usize) -> bool {
         let Some(&c) = self.b.get(p) else {
             return false;
         };
@@ -2244,7 +2300,7 @@ impl Scan<'_, '_> {
     }
 
     /// `var_declaration`.
-    fn var_decl(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn var_decl(&mut self, p: usize) -> Option<usize> {
         if self.lit(p, b"var") {
             let s = self.sp(p + 3);
             if self.ch(s) == b'(' && s < self.n {
@@ -2266,7 +2322,7 @@ impl Scan<'_, '_> {
     }
 
     /// `var_declaration_explicit`.
-    fn vde(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn vde(&mut self, p: usize) -> Option<usize> {
         if let Some((e, s)) = self.name_then(p, b'.') {
             self.put(p, e, SUPPORT_TYPE);
             return self.tok(s, s + 1, DOT_NAMESPACE);
@@ -2305,7 +2361,7 @@ impl Scan<'_, '_> {
     }
 
     /// `else_block`.
-    fn else_block(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn else_block(&mut self, p: usize) -> Option<usize> {
         if self.lit(p, b"else") {
             // `(else\s+if)\b\s*`
             if let Some(s) = self.sp1(p + 4)
@@ -2326,7 +2382,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_switch_block_0`: a switch's `{ … }`.
-    fn sw_brace(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn sw_brace(&mut self, p: usize) -> Option<usize> {
         if self.ch(p) == b'}' {
             return self.close(p, p + 1, BLOCK_END);
         }
@@ -2344,7 +2400,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_switch_block_1`: a case's label.
-    fn sw_case(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn sw_case(&mut self, p: usize) -> Option<usize> {
         let mut label = None;
         self.names(p, &mut |e| {
             let s = self.sp(e);
@@ -2378,7 +2434,7 @@ impl Scan<'_, '_> {
     }
 
     /// `line_of_code`.
-    fn line(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn line(&mut self, p: usize) -> Option<usize> {
         if let Some(e) = self.name_here(p) {
             return self.line_name(p, e);
         }
@@ -2493,7 +2549,7 @@ impl Scan<'_, '_> {
     /// `line_of_code` at a name of ASCII that ends at `e` (its one end, so every pattern's
     /// name is it), not after a word character: the patterns that can start with a letter or
     /// `_`, in the grammar's order.
-    fn line_name(&mut self, p: usize, e: usize) -> Option<usize> {
+    pub(super) fn line_name(&mut self, p: usize, e: usize) -> Option<usize> {
         let id = if self.b[p].is_ascii_lowercase() {
             words::get(&self.b[p..e])
         } else {
@@ -2571,11 +2627,18 @@ impl Scan<'_, '_> {
             self.put(p, e, SUPPORT_TYPE);
             return self.then(s, m, VAR_OTHER, &[VARS_DECL]);
         }
-        self.shift(p, &[LINE_IN])
+        // the set's turn, then `line_of_code_in`'s at the same name, which `nosemi` reads as
+        // `nosemi_name` does
+        if self.stuck >= STUCK {
+            return self.shift(p, &[LINE_IN]);
+        }
+        self.fill(p);
+        self.set(&[LINE_IN]);
+        self.nosemi_name_id(p, e, id)
     }
 
     /// `line_of_code`'s statements by keyword, at a word's start.
-    fn line_keyword(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn line_keyword(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
         let word_end = {
             let mut e = p;
@@ -2701,7 +2764,7 @@ impl Scan<'_, '_> {
     }
 
     /// `(?=(?:\b(?:async|ref)\s+)?{{name}}(?:{{generic_declaration}})?{{type_suffix}}\s+{{name}}{{generic_declaration}}\()`.
-    fn nested_method_ahead(&self, p: usize) -> bool {
+    pub(super) fn nested_method_ahead(&self, p: usize) -> bool {
         // a name of ASCII not `async` or `ref`, followed by none of what can follow it here
         if let Some(e) = self.ascii_name(p)
             && !matches!(&self.b[p..e], b"async" | b"ref")
@@ -2720,6 +2783,19 @@ impl Scan<'_, '_> {
                 })
             })
         };
+        // nothing the lookahead takes before its `(` is one of `(={};`: the first of them on
+        // the line must be that `(`
+        if self.first_stop(p).is_none_or(|r| self.b[r] != b'(') {
+            return false;
+        }
+        // two names of ASCII with blanks between, as most declarations start: the second is
+        // the method's only if `(` or its generics follow (`<`, read by the lookahead)
+        if let Some((e, _, t)) = self.plain_pair(p)
+            && !matches!(&self.b[p..e], b"async" | b"ref")
+            && self.ch(t) != b'<'
+        {
+            return self.ch(t) == b'(' && t < self.n;
+        }
         for w in [&b"async"[..], b"ref"] {
             if self.lit(p, w)
                 && !self.word_before(p)
@@ -2732,9 +2808,30 @@ impl Scan<'_, '_> {
         rest(p)
     }
 
+    /// The first of `(={};` on the line from `p`.
+    pub(super) fn first_stop(&self, p: usize) -> Option<usize> {
+        self.b[p.min(self.n)..self.n]
+            .iter()
+            .position(|c| matches!(c, b'(' | b'=' | b'{' | b'}' | b';'))
+            .map(|k| p + k)
+    }
+
+    /// Two names of ASCII at `p` with blanks between (`Type name`), the second starting with
+    /// a letter or `_`: where the first ends, where the second ends, and where the blanks after
+    /// it end ([`Scan::sp`]). The declarations' lookaheads read such a pair one way only.
+    pub(super) fn plain_pair(&self, p: usize) -> Option<(usize, usize, usize)> {
+        let e = self.ascii_name(p)?;
+        let s = self.sp(e);
+        if s == e || s >= self.n || !(self.b[s].is_ascii_alphabetic() || self.b[s] == b'_') {
+            return None;
+        }
+        let m = self.ascii_name(s)?;
+        Some((e, m, self.sp(m)))
+    }
+
     /// Whether the byte at `e`, after a type's first name, can go on to a declaration's
     /// `\s+{{name}}`: a space (the line's `\n` too), `<`, `[`, `*`, `?`, and `.` if `dotted`.
-    fn after_type(&self, e: usize, dotted: bool) -> bool {
+    pub(super) fn after_type(&self, e: usize, dotted: bool) -> bool {
         e >= self.n
             || matches!(self.b[e], b'<' | b'[' | b'*' | b'?')
             || (dotted && self.b[e] == b'.')
@@ -2742,10 +2839,14 @@ impl Scan<'_, '_> {
     }
 
     /// `(?=([^(={};]*>){{type_suffix}}\s+{{name}}{{generic_declaration}}\()` at `i`.
-    fn generic_method_ahead(&self, i: usize) -> bool {
+    pub(super) fn generic_method_ahead(&self, i: usize) -> bool {
         let mut r = i;
         while self.on(r) && !matches!(self.ch(r), b'(' | b'=' | b'{' | b'}' | b';') {
             r += 1;
+        }
+        // nothing after the `>` before the `(` is one of `(={};` either
+        if self.ch(r) != b'(' || r >= self.n {
+            return false;
         }
         let mut g = r;
         while g > i {
@@ -2764,7 +2865,7 @@ impl Scan<'_, '_> {
     }
 
     /// `(?=[^(={};]*>\()` at `i`.
-    fn generic_call_ahead(&self, i: usize) -> bool {
+    pub(super) fn generic_call_ahead(&self, i: usize) -> bool {
         let mut r = i;
         while self.on(r) && !matches!(self.ch(r), b'(' | b'=' | b'{' | b'}' | b';') {
             r += 1;
@@ -2773,7 +2874,7 @@ impl Scan<'_, '_> {
     }
 
     /// `line_of_code`'s `var`/`dynamic` patterns.
-    fn var_line(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn var_line(&mut self, p: usize) -> Option<usize> {
         let kw = if self.lit(p, b"var") {
             3
         } else if self.lit(p, b"dynamic") {
@@ -2785,7 +2886,7 @@ impl Scan<'_, '_> {
             // `(var|dynamic)\s+({{reserved}}|{{base_type}})\s*(=)`
             let mut bad = None;
             let w = self.word(s);
-            if re::is_reserved(w) {
+            if words::flags(words::get(w)) & RES != 0 {
                 let t = self.sp(s + w.len());
                 if self.ch(t) == b'=' && t < self.n {
                     bad = Some((s + w.len(), t));
@@ -2822,7 +2923,18 @@ impl Scan<'_, '_> {
     }
 
     /// `line_of_code`'s two declarations of a local.
-    fn local_declaration(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn local_declaration(&mut self, p: usize) -> Option<usize> {
+        // two names of ASCII with blanks between: the first pattern's lookahead holds unless
+        // `(` or `:` follows the second
+        if let Some((e, _, t)) = self.plain_pair(p)
+            && !self.word_before(p)
+            && &self.b[p..e] != b"ref"
+            && !(matches!(self.ch(t), b'(' | b':') && t < self.n)
+        {
+            self.fill(p);
+            self.set(&[VARS_DECL, TYPE_NO_SPACE]);
+            return Some(p);
+        }
         // with `ref ` first, then without
         let mut starts = [(None, p); 2];
         let mut k = 0;
@@ -2900,7 +3012,7 @@ impl Scan<'_, '_> {
     }
 
     /// `keywords`.
-    fn keywords(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn keywords(&mut self, p: usize) -> Option<usize> {
         let c = self.ch(p);
         if !c.is_ascii_lowercase() || self.word_before(p) {
             return None;
@@ -2913,7 +3025,7 @@ impl Scan<'_, '_> {
 
     /// `keywords` at the word `p..e` (its whole run of `\w`), whose id is `id`.
     #[inline]
-    fn keywords_word(&mut self, p: usize, e: usize, id: u8) -> Option<usize> {
+    pub(super) fn keywords_word(&mut self, p: usize, e: usize, id: u8) -> Option<usize> {
         if words::flags(id) & KWS == 0 {
             return None;
         }
@@ -2951,7 +3063,7 @@ impl Scan<'_, '_> {
     }
 
     /// `lambdas`.
-    fn lambdas(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn lambdas(&mut self, p: usize) -> Option<usize> {
         // `({{name}})\s+(=>)\s*`
         let mut arrow = None;
         self.names(p, &mut |e| {
@@ -2989,7 +3101,7 @@ impl Scan<'_, '_> {
     }
 
     /// `line_of_code_in`.
-    fn line_in(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn line_in(&mut self, p: usize) -> Option<usize> {
         if let Some(q) = self.nosemi(p) {
             return Some(q);
         }
@@ -3000,7 +3112,7 @@ impl Scan<'_, '_> {
     }
 
     /// `line_of_code_in_no_semicolon`.
-    fn nosemi(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn nosemi(&mut self, p: usize) -> Option<usize> {
         if let Some(e) = self.name_here(p) {
             return self.nosemi_name(p, e);
         }
@@ -3125,7 +3237,7 @@ impl Scan<'_, '_> {
     }
 
     /// `line_of_code_in_no_semicolon`'s `\{`, a set.
-    fn nosemi_brace(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn nosemi_brace(&mut self, p: usize) -> Option<usize> {
         // a `set` restores the scopes the context cleared before its token: in an
         // interpolation, the string's
         if matches!(self.top(), INTERP | LINTERP) && self.depth > 2 {
@@ -3148,10 +3260,18 @@ impl Scan<'_, '_> {
     /// `line_of_code_in_no_semicolon` at a name of ASCII that ends at `e` (its one end, so
     /// every pattern's name is it), not after a word character: the patterns that can start
     /// with a letter or `_`, in the grammar's order.
-    fn nosemi_name(&mut self, p: usize, e: usize) -> Option<usize> {
+    pub(super) fn nosemi_name(&mut self, p: usize, e: usize) -> Option<usize> {
+        let id = if self.b[p].is_ascii_lowercase() {
+            words::get(&self.b[p..e])
+        } else {
+            0
+        };
+        self.nosemi_name_id(p, e, id)
+    }
+
+    /// [`Scan::nosemi_name`] with the name's word id looked up.
+    pub(super) fn nosemi_name_id(&mut self, p: usize, e: usize, id: u8) -> Option<usize> {
         let b = self.b;
-        let lower = b[p].is_ascii_lowercase();
-        let id = if lower { words::get(&b[p..e]) } else { 0 };
         let flags = words::flags(id);
         if id != 0 {
             if id == W_VALUE {
@@ -3234,14 +3354,14 @@ impl Scan<'_, '_> {
             return self.tok(p, e, KW_OTHER);
         }
         // `(?:(global)|({{name}}))\s*(::)`
-        if self.lit(p, b"global") {
+        if e - p == 6 && self.lit(p, b"global") {
             let g = self.sp(p + 6);
             if self.lit(g, b"::") {
                 self.put(p, p + 6, SUPPORT_NAMESPACE);
                 return self.tok(g, g + 2, DOUBLE_COLON);
             }
         }
-        if self.lit(s, b"::") {
+        if next == b':' && self.lit(s, b"::") {
             self.put(p, e, SUPPORT_NAMESPACE);
             return self.tok(s, s + 2, DOUBLE_COLON);
         }
@@ -3252,7 +3372,7 @@ impl Scan<'_, '_> {
     ///
     /// By its first byte: the alternatives in order make `++` two `+`, `--` two `-`, and an
     /// operator followed by `=` the longer one (`<<=`, `<==`, `=>=`).
-    fn operator(&self, p: usize) -> Option<usize> {
+    pub(super) fn operator(&self, p: usize) -> Option<usize> {
         let (b, n) = (self.b, self.n);
         if p >= n {
             return None;
@@ -3308,7 +3428,7 @@ impl Scan<'_, '_> {
     /// declaration's lookahead needs it to: `<`, `[`, `*`, `?` or `.` next, or blanks and a
     /// name's start (a letter, `_`, `@`, `\\`, a character past ASCII).
     #[inline(always)]
-    fn type_goes_on(&self, e: usize, s: usize) -> bool {
+    pub(super) fn type_goes_on(&self, e: usize, s: usize) -> bool {
         let c = self.ch(s);
         matches!(c, b'<' | b'[' | b'*' | b'?' | b'.')
             || (s > e && (c.is_ascii_alphabetic() || matches!(c, b'_' | b'@' | b'\\') || c >= 0x80))
@@ -3318,7 +3438,7 @@ impl Scan<'_, '_> {
     /// `.` next): the path's names read on (ASCII, no type arguments), then
     /// [`Scan::type_goes_on`] after the last. A `.` with no name after it ends the path: no
     /// type before it can go on either, since a `.` follows each.
-    fn chain_goes_on(&self, mut e: usize) -> bool {
+    pub(super) fn chain_goes_on(&self, mut e: usize) -> bool {
         loop {
             let s = self.sp(e);
             if self.ch(s) != b'.' || s >= self.n {
@@ -3360,7 +3480,7 @@ impl Scan<'_, '_> {
 
     /// `line_of_code_in_no_semicolon`'s patterns that start with a name: a generic call, a
     /// generic type's member, a call, an indexer.
-    fn names_in_code(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn names_in_code(&mut self, p: usize) -> Option<usize> {
         let c = self.ch(p);
         if !(c.is_ascii_alphabetic() || c == b'_' || c == b'@' || c == b'\\' || c >= 0x80) {
             return None;
@@ -3429,7 +3549,7 @@ impl Scan<'_, '_> {
     }
 
     /// `(?=[^(]*>\s*\()` at `i`.
-    fn generic_call_paren_ahead(&self, i: usize) -> bool {
+    pub(super) fn generic_call_paren_ahead(&self, i: usize) -> bool {
         let mut r = i;
         while self.on(r) && self.ch(r) != b'(' {
             r += 1;
@@ -3445,7 +3565,7 @@ impl Scan<'_, '_> {
     }
 
     /// `line_of_code_in_no_semicolon`'s `(` patterns.
-    fn paren(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn paren(&mut self, p: usize) -> Option<usize> {
         // `(\()\s*(\*)\s*({{name}})\s*(\))`
         let s = self.sp(p + 1);
         if self.ch(s) == b'*' && s < self.n {
@@ -3481,7 +3601,7 @@ impl Scan<'_, '_> {
     }
 
     /// `(?=(?:[^,)(]|\([^\)]*\))*,)` at `i`.
-    fn tuple_ahead(&self, mut i: usize) -> bool {
+    pub(super) fn tuple_ahead(&self, mut i: usize) -> bool {
         loop {
             if !self.on(i) {
                 return false;
@@ -3505,7 +3625,7 @@ impl Scan<'_, '_> {
     }
 
     /// `literals`.
-    fn literals(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn literals(&mut self, p: usize) -> Option<usize> {
         let c = self.ch(p);
         if p >= self.n {
             return None;
@@ -3532,7 +3652,7 @@ impl Scan<'_, '_> {
     }
 
     /// The character literals.
-    fn char_literal(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn char_literal(&mut self, p: usize) -> Option<usize> {
         if self.ch(p + 1) == b'\'' && p + 1 < self.n {
             return self.tok(p, p + 2, LONE_ESCAPE);
         }
@@ -3558,7 +3678,7 @@ impl Scan<'_, '_> {
     }
 
     /// The number patterns.
-    fn number(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn number(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
         // `(0[xX])[\h_]*\h`, `(0[bB])[01_]*[01]`
         if b[p] == b'0' && p + 1 < self.n {
@@ -3610,7 +3730,7 @@ impl Scan<'_, '_> {
     }
 
     /// `{{dec_digits}}(?:(?:(?:(\.){{dec_digits}}){{dec_exponent}}?|{{dec_exponent}})({{float_suffix}})?|({{float_suffix}}))`.
-    fn float(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn float(&mut self, p: usize) -> Option<usize> {
         let mut first = None;
         self.dec_digits(p, &mut |e| {
             first = Some(e);
@@ -3674,13 +3794,13 @@ impl Scan<'_, '_> {
     }
 
     /// The match ends at `e`, its text the context's.
-    fn fin(&mut self, e: usize) -> Option<usize> {
+    pub(super) fn fin(&mut self, e: usize) -> Option<usize> {
         self.fill(e);
         Some(e)
     }
 
     /// `type`.
-    fn type_(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn type_(&mut self, p: usize) -> Option<usize> {
         if let Some(q) = self.type_common(p) {
             return Some(q);
         }
@@ -3691,7 +3811,7 @@ impl Scan<'_, '_> {
     }
 
     /// `type_common`.
-    fn type_common(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn type_common(&mut self, p: usize) -> Option<usize> {
         // a name of ASCII that isn't before `::`: a type's name, or one of `{{base_type}}`;
         // a lowercase one may start `class`, `struct`, `enum` or `new` (tested as prefixes)
         if let Some(e) = self.ascii_name(p) {
@@ -3706,19 +3826,23 @@ impl Scan<'_, '_> {
                 }
             }
         }
-        if let Some(q) = self.namespace_alias(p, NAMESPACE_VAR) {
-            return Some(q);
-        }
-        for w in [&b"class"[..], b"struct", b"enum"] {
-            if self.lit(p, w) {
-                return self.tok(p, p + w.len(), STORAGE_TYPE_OTHER);
+        // the patterns up to `brackets_capture` start with a name (`global`, `class`, `new`…)
+        let c = self.ch(p);
+        if c.is_ascii_alphabetic() || matches!(c, b'_' | b'@' | b'\\') || c >= 0x80 {
+            if let Some(q) = self.namespace_alias(p, NAMESPACE_VAR) {
+                return Some(q);
             }
-        }
-        if let Some(e) = self.new_parens(p) {
-            return self.tok(p, e, NEW_OP);
-        }
-        if let Some(e) = self.base_type(p) {
-            return self.tok(p, e, STORAGE_TYPE);
+            for w in [&b"class"[..], b"struct", b"enum"] {
+                if self.lit(p, w) {
+                    return self.tok(p, p + w.len(), STORAGE_TYPE_OTHER);
+                }
+            }
+            if let Some(e) = self.new_parens(p) {
+                return self.tok(p, e, NEW_OP);
+            }
+            if let Some(e) = self.base_type(p) {
+                return self.tok(p, e, STORAGE_TYPE);
+            }
         }
         if let Some(q) = self.brackets_capture(p) {
             return Some(q);
@@ -3756,7 +3880,7 @@ impl Scan<'_, '_> {
     }
 
     /// `type_arg_param_common`.
-    fn type_arg_param_common(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn type_arg_param_common(&mut self, p: usize) -> Option<usize> {
         match self.ch(p) {
             b',' if p < self.n => return self.tok(p, p + 1, TYPE_SEP),
             b'>' => {
@@ -3772,7 +3896,7 @@ impl Scan<'_, '_> {
     }
 
     /// `type_parameter`.
-    fn type_parameter(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn type_parameter(&mut self, p: usize) -> Option<usize> {
         for w in [&b"in"[..], b"out"] {
             if self.kw_end(p, w) {
                 return self.tok(p, p + w.len(), MODIFIER);
@@ -3782,7 +3906,7 @@ impl Scan<'_, '_> {
     }
 
     /// `preprocessor_option`.
-    fn preproc(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn preproc(&mut self, p: usize) -> Option<usize> {
         if !self.word_before(p) {
             for w in [&b"define"[..], b"undef"] {
                 if self.lit(p, w)
@@ -3875,7 +3999,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_preprocessor_option_0`: an `#if`'s condition.
-    fn pp_if(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn pp_if(&mut self, p: usize) -> Option<usize> {
         match self.ch(p) {
             b'(' | b')' if p < self.n => return self.tok(p, p + 1, PARENS),
             b'!' if p < self.n => return self.tok(p, p + 1, LOGICAL),
@@ -3894,7 +4018,7 @@ impl Scan<'_, '_> {
     }
 
     /// `option_done`.
-    fn option_done(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn option_done(&mut self, p: usize) -> Option<usize> {
         if let Some(q) = self.comments(p) {
             return Some(q);
         }
@@ -3909,7 +4033,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_preprocessor_option_3`: `#pragma warning`'s arguments.
-    fn pp_warning(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn pp_warning(&mut self, p: usize) -> Option<usize> {
         if let Some(e) = self.kw_any(p, &[b"disable", b"restore"]) {
             self.put(p, e, KW_OTHER_PP);
             if let Some(s) = self.sp1(e) {
@@ -3940,7 +4064,7 @@ impl Scan<'_, '_> {
     }
 
     /// `comments_in`, in a comment whose leaves for a to-do and a link are given.
-    fn comments_in(&mut self, p: usize, todo: u16, link: u16) -> Option<usize> {
+    pub(super) fn comments_in(&mut self, p: usize, todo: u16, link: u16) -> Option<usize> {
         if !matches!(
             self.b.get(p),
             Some(b't' | b'T' | b'h' | b'H' | b'x' | b'X' | b'/')
@@ -3960,7 +4084,7 @@ impl Scan<'_, '_> {
     }
 
     /// `\b(?i:todo|hack|xxx)\b` at `p`: where it ends.
-    fn todo(&self, p: usize) -> Option<usize> {
+    pub(super) fn todo(&self, p: usize) -> Option<usize> {
         if self.word_before(p) {
             return None;
         }
@@ -3980,7 +4104,7 @@ impl Scan<'_, '_> {
     }
 
     /// `\b(https?://\S*)\b` at `p`: where it ends.
-    fn link(&self, p: usize) -> Option<usize> {
+    pub(super) fn link(&self, p: usize) -> Option<usize> {
         if self.word_before(p) || !self.lit(p, b"http") {
             return None;
         }
@@ -4004,7 +4128,7 @@ impl Scan<'_, '_> {
     }
 
     /// Where the character before `i` starts.
-    fn prev(&self, i: usize) -> usize {
+    pub(super) fn prev(&self, i: usize) -> usize {
         let mut s = i - 1;
         while s > 0 && self.b[s] & 0xc0 == 0x80 {
             s -= 1;
@@ -4013,7 +4137,7 @@ impl Scan<'_, '_> {
     }
 
     /// `documentation`.
-    fn doc(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn doc(&mut self, p: usize) -> Option<usize> {
         if self.ch(p) == b'<' && p < self.n {
             if self.ch(p + 1) == b'/' {
                 let mut hit = None;
@@ -4052,7 +4176,34 @@ impl Scan<'_, '_> {
         if let Some(q) = self.comments_in(p, TODO, LINK) {
             return Some(q);
         }
-        // `[\w\s]+|.`, ASCII on the core's classes
+        // the text's turns, one after another while each would take text: to a `<`, a to-do
+        // or a link, or the line's end (the spans are one kind, so they join)
+        let mut e = p;
+        loop {
+            let q = self.doc_text(e)?;
+            e = q;
+            if e >= self.n {
+                break;
+            }
+            let c = self.b[e];
+            if c == b'<'
+                || (matches!(c, b't' | b'T' | b'h' | b'H' | b'x' | b'X' | b'/') && self.marks(e))
+            {
+                break;
+            }
+        }
+        self.tok(p, e, DOC_TEXT)
+    }
+
+    /// Whether `comments`' to-do or link patterns match at `p`.
+    pub(super) fn marks(&self, p: usize) -> bool {
+        self.todo(p).is_some() || self.lit(p, b"/!\\") || self.link(p).is_some()
+    }
+
+    /// `documentation`'s text at `p` (`[\w\s]+|.`): where it ends.
+    #[inline]
+    fn doc_text(&self, p: usize) -> Option<usize> {
+        // ASCII on the core's classes
         let (b, n) = (self.b, self.n);
         let mut e = p;
         loop {
@@ -4077,17 +4228,13 @@ impl Scan<'_, '_> {
             }
         }
         if e > p {
-            return self.tok(p, e, DOC_TEXT);
+            return Some(e);
         }
-        if p < self.n {
-            let e = self.next(p);
-            return self.tok(p, e, DOC_TEXT);
-        }
-        None
+        (p < self.n).then(|| self.next(p))
     }
 
     /// `#anon_documentation_0`: a tag's attributes.
-    fn doc_tag(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn doc_tag(&mut self, p: usize) -> Option<usize> {
         if let Some((e, s)) = self.name_then(p, b'=') {
             self.put(p, e, ATTRIBUTE_NAME);
             return self.tok(s, s + 1, ARG_VALUE_SEP);
@@ -4111,7 +4258,7 @@ impl Scan<'_, '_> {
     }
 
     /// `string`.
-    fn string(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn string(&mut self, p: usize) -> Option<usize> {
         if let Some(q) = self.string_escaped(p) {
             return Some(q);
         }
@@ -4137,7 +4284,7 @@ impl Scan<'_, '_> {
     }
 
     /// `string_escaped`.
-    fn string_escaped(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn string_escaped(&mut self, p: usize) -> Option<usize> {
         if let Some(e) = self.escaped_char(p) {
             return self.tok(p, e, ESCAPE);
         }
@@ -4148,7 +4295,7 @@ impl Scan<'_, '_> {
     }
 
     /// `(\{)(\d+)` at `p`: where the digits end.
-    fn brace_digits(&self, p: usize) -> Option<usize> {
+    pub(super) fn brace_digits(&self, p: usize) -> Option<usize> {
         if self.ch(p) != b'{' || p >= self.n {
             return None;
         }
@@ -4156,7 +4303,7 @@ impl Scan<'_, '_> {
     }
 
     /// `string_placeholders`.
-    fn string_placeholders(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn string_placeholders(&mut self, p: usize) -> Option<usize> {
         if self.lit(p, b"{{") || self.lit(p, b"}}") {
             return self.tok(p, p + 2, ESCAPE);
         }
@@ -4196,7 +4343,7 @@ impl Scan<'_, '_> {
     }
 
     /// `long_string`.
-    fn long_string(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn long_string(&mut self, p: usize) -> Option<usize> {
         if self.lit(p, b"\"\"") {
             return self.tok(p, p + 2, ESCAPE);
         }
@@ -4216,7 +4363,7 @@ impl Scan<'_, '_> {
     }
 
     /// `format_string`.
-    fn format_string(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn format_string(&mut self, p: usize) -> Option<usize> {
         if self.ch(p) == b'"' && p < self.n {
             return self.close(p, p + 1, STRING_END);
         }
@@ -4239,7 +4386,7 @@ impl Scan<'_, '_> {
     }
 
     /// `long_format_string`.
-    fn long_format_string(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn long_format_string(&mut self, p: usize) -> Option<usize> {
         if self.lit(p, b"\"\"") {
             return self.tok(p, p + 2, ESCAPE);
         }
@@ -4256,7 +4403,7 @@ impl Scan<'_, '_> {
     }
 
     /// `string_placeholder` (a verbatim string's, `long`).
-    fn placeholder(&mut self, p: usize, long: bool) -> Option<usize> {
+    pub(super) fn placeholder(&mut self, p: usize, long: bool) -> Option<usize> {
         // `inside_string_placeholder`
         if self.ch(p) == b'}' && p < self.n {
             self.put(p, p + 1, PH_END);
@@ -4291,7 +4438,7 @@ impl Scan<'_, '_> {
     }
 
     /// `string_placeholder_format` (a verbatim string's, `long`), its format spec `fs`.
-    fn placeholder_format(&mut self, p: usize, long: bool, fs: u8) -> Option<usize> {
+    pub(super) fn placeholder_format(&mut self, p: usize, long: bool, fs: u8) -> Option<usize> {
         // `\s*(?:(,)\s*(-?\d+)\s*)?`, at the step's start only, and only taking something
         if p == self.step {
             let s = self.sp(p);
@@ -4332,7 +4479,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_string_placeholder_format_0`: a format spec in a string.
-    fn format_spec(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn format_spec(&mut self, p: usize) -> Option<usize> {
         if self.lit(p, b"{{") || self.lit(p, b"}}") {
             return self.tok(p, p + 2, ESCAPE);
         }
@@ -4373,7 +4520,7 @@ impl Scan<'_, '_> {
     }
 
     /// `#anon_long_string_placeholder_format_0`: a format spec in a verbatim string.
-    fn long_format_spec(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn long_format_spec(&mut self, p: usize) -> Option<usize> {
         if self.lit(p, b"{{") || self.lit(p, b"}}") || self.lit(p, b"\"\"") {
             return self.tok(p, p + 2, ESCAPE);
         }

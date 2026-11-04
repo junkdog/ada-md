@@ -22,16 +22,21 @@
 //! key on: the string it is in (a chain of string, placeholder and format spec), a doc
 //! comment's or a namespace name's scope, `meta.annotation`, `meta.preprocessor`.
 //!
+//! The code contexts' turns run in a loop of their own (`code.rs`, X-025's first stage), the
+//! rest in [`Scan::run`]'s.
+//!
 //! A string that `new Regex(`, `Regex.IsMatch(input, …)` and the like take is colored as
 //! .NET's regex (ADR-40, phase 4; [`crate::regex`]), as Rider colors it: its text is the
 //! regex's, and placeholders (`{0}`) aren't looked for in it; the string's end and escapes are
 //! the host's, and in a verbatim one `""`.
 
+mod code;
 mod ctx;
 mod re;
 mod words;
 pub(crate) use re::ND;
 
+use crate::clike::{CLASS, WORD};
 use crate::matcher::KEPT as HALF;
 use crate::{Out, State};
 
@@ -805,6 +810,7 @@ static LONG_STRING_STOPS: [u8; 256] = stops(b"\"{}");
 
 /// How many contexts a line can hold; one pushed past it drops the bottom one.
 const MAX: usize = 128;
+const _: () = assert!(MAX.is_power_of_two());
 /// How many the state keeps between lines: [`State`]'s levels and withs.
 const KEPT: usize = 2 * HALF;
 /// Matches that take nothing in a row at one place before the scan steps on.
@@ -835,13 +841,11 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         regex_calls: None,
         out,
     };
-    let n = usize::from(state.depth);
-    for i in 0..n {
-        let c = if i < HALF {
-            state.levels[i]
-        } else {
-            state.withs[i - HALF]
-        };
+    let n = usize::from(state.depth).min(KEPT);
+    let mut held = [0; KEPT];
+    held[..HALF].copy_from_slice(&state.levels);
+    held[HALF..].copy_from_slice(&state.withs);
+    for (i, &c) in held[..n].iter().enumerate() {
         s.stack[1 + i] = c;
         s.bits[1 + i] = level_bits(s.bits[i], c);
     }
@@ -852,19 +856,13 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     s.fill(s.n);
     let n = s.depth - 1;
     let from = n.saturating_sub(KEPT);
-    let mut packed = State {
-        depth: (n - from) as u8,
-        inexact: !s.exact || from > 0,
-        ..State::default()
-    };
-    for (i, &c) in s.stack[1 + from..s.depth].iter().enumerate() {
-        if i < HALF {
-            packed.levels[i] = c;
-        } else {
-            packed.withs[i - HALF] = c;
-        }
-    }
-    *state = packed;
+    let mut held = [0; KEPT];
+    held[..n - from].copy_from_slice(&s.stack[1 + from..s.depth]);
+    state.levels.copy_from_slice(&held[..HALF]);
+    state.withs.copy_from_slice(&held[HALF..]);
+    state.depth = (n - from) as u8;
+    state.inexact = !s.exact || from > 0;
+    state.arg = 0;
 }
 
 pub(crate) struct Scan<'b, 'c> {
@@ -1102,12 +1100,13 @@ impl<'b, 'c> Scan<'b, 'c> {
 
 impl Scan<'_, '_> {
     fn top(&self) -> u8 {
-        self.stack[self.depth - 1]
+        // `depth` is in `1..=MAX`, so the mask only drops the bounds check
+        self.stack[(self.depth - 1) & (MAX - 1)]
     }
 
     /// The bits of the top level.
     fn cur(&self) -> u16 {
-        self.bits[self.depth - 1]
+        self.bits[(self.depth - 1) & (MAX - 1)]
     }
 
     fn refresh(&mut self) {
@@ -1144,17 +1143,25 @@ impl Scan<'_, '_> {
 
     fn push(&mut self, c: u8) {
         if self.depth == MAX {
-            self.stack.copy_within(2.., 1);
-            for i in 1..MAX - 1 {
-                self.bits[i] = level_bits(self.bits[i - 1], self.stack[i]);
-            }
-            self.depth -= 1;
-            self.exact = false;
+            self.drop_bottom();
         }
-        self.stack[self.depth] = c;
-        self.bits[self.depth] = level_bits(self.bits[self.depth - 1], c);
+        let d = self.depth & (MAX - 1);
+        self.stack[d] = c;
+        self.bits[d] = level_bits(self.bits[d.wrapping_sub(1) & (MAX - 1)], c);
         self.depth += 1;
         self.refresh();
+    }
+
+    /// A full stack drops the context above the top level, for a push.
+    #[cold]
+    #[inline(never)]
+    fn drop_bottom(&mut self) {
+        self.stack.copy_within(2.., 1);
+        for i in 1..MAX - 1 {
+            self.bits[i] = level_bits(self.bits[i - 1], self.stack[i]);
+        }
+        self.depth -= 1;
+        self.exact = false;
     }
 
     fn pop(&mut self) {
@@ -1266,6 +1273,13 @@ impl Scan<'_, '_> {
             if p >= self.n && p > 0 && CTX[usize::from(self.top())] & INERT != 0 {
                 return;
             }
+            // code's frames run their turns in a loop of their own
+            if p > 0 && CTX[usize::from(self.top())] & INERT != 0 {
+                p = self.code(p);
+                if self.halt || (p >= self.n && CTX[usize::from(self.top())] & INERT != 0) {
+                    return;
+                }
+            }
             self.looped = false;
             if let Some(q) = self.at(p) {
                 if self.halt {
@@ -1315,10 +1329,53 @@ impl Scan<'_, '_> {
         }
         let b = self.b;
         let mut q = p + 1;
+        if matches!(self.top(), LINE_COMMENT | BLOCK_COMMENT) {
+            return self.comment_skip(q, stops);
+        }
         while q < self.n && stops[usize::from(b[q])] == 0 {
             q += 1;
         }
         q
+    }
+
+    /// In a comment, from `q`: where one of its patterns matches next (or the line's end): a
+    /// block comment's `*/` (`stops` has `*` for one), or a to-do or a link, whose letters
+    /// start one only at a word's start (`\b`). A letter is checked first by the four bytes
+    /// there: `todo`, `hack` or `xxx` in any case, `http`.
+    fn comment_skip(&self, mut q: usize, stops: &[u8; 256]) -> usize {
+        let b = &self.b[..self.n];
+        loop {
+            match b[q.min(b.len())..]
+                .iter()
+                .position(|&c| stops[usize::from(c)] != 0)
+            {
+                None => return b.len(),
+                Some(k) => q += k,
+            }
+            let c = b[q];
+            let hit = if c == b'*' {
+                b.get(q + 1) == Some(&b'/')
+            } else if c.is_ascii_alphabetic() {
+                CLASS[usize::from(b[q - 1])] & WORD == 0 && {
+                    let mut w = [0; 4];
+                    let t = &b[q..(q + 4).min(b.len())];
+                    w[..t.len()].copy_from_slice(t);
+                    let x = u32::from_le_bytes(w);
+                    let lower = x | 0x2020_2020;
+                    (lower == u32::from_le_bytes(*b"todo")
+                        || lower == u32::from_le_bytes(*b"hack")
+                        || lower & 0xff_ffff == u32::from_le_bytes(*b"xxx\0")
+                        || x == u32::from_le_bytes(*b"http"))
+                        && self.marks(q)
+                }
+            } else {
+                self.marks(q)
+            };
+            if hit {
+                return q;
+            }
+            q += 1;
+        }
     }
 
     /// Where the character at `p` ends (the line's `\n` is one byte).
@@ -1337,16 +1394,28 @@ impl Scan<'_, '_> {
         // `^\s*` patterns, at the line's start
         let ctx = CTX[usize::from(top)];
         if ctx & INERT != 0 && (p > self.n || self.space(p)) {
-            return if p == 0 { self.proto(p) } else { None };
+            return if p == 0 && self.starts_proto() {
+                self.proto(p)
+            } else {
+                None
+            };
         }
         // the prototype's patterns start with `/`, or at the line's start
         if ctx & PROTO != 0
-            && (p == 0 || (p + 1 < self.n && self.b[p] == b'/'))
+            && ((p == 0 && self.starts_proto()) || (p + 1 < self.n && self.b[p] == b'/'))
             && let Some(q) = self.proto(p)
         {
             return Some(q);
         }
         self.context(top, p)
+    }
+
+    /// Whether the prototype can match at the line's start: the line starts with `/`, or its
+    /// indentation ends at `/` (`///`) or `#`.
+    #[inline]
+    fn starts_proto(&self) -> bool {
+        let b = self.b;
+        b.first() == Some(&b'/') || matches!(b.get(self.ind), Some(b'/' | b'#'))
     }
 
     /// The prototype: a doc comment, a line or block comment, a preprocessor line.
