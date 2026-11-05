@@ -43,6 +43,8 @@ pub enum Lang {
     GitLink,
     /// bat's `fstab`: fstab, crypttab and mtab.
     Fstab,
+    /// bat's `Known Hosts`: OpenSSH's `known_hosts`.
+    KnownHosts,
     /// bat's `Rust`.
     Rust,
     /// bat's `Kotlin`.
@@ -263,6 +265,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::GitMailmap, &[".mailmap", "mailmap"]),
     (Lang::GitLink, &[".git"]),
     (Lang::Fstab, &["fstab", "crypttab", "mtab"]),
+    (Lang::KnownHosts, &["known_hosts", "known_hosts.old"]),
     (Lang::Rust, &["rs"]),
     (Lang::Kotlin, &["kt", "kts"]),
     (Lang::Java, &["java", "bsh"]),
@@ -324,7 +327,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 39] = [
+    pub const ALL: [Lang; 40] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -342,6 +345,7 @@ impl Lang {
         Lang::GitMailmap,
         Lang::GitLink,
         Lang::Fstab,
+        Lang::KnownHosts,
         Lang::Rust,
         Lang::Kotlin,
         Lang::Java,
@@ -387,6 +391,7 @@ impl Lang {
             Lang::GitMailmap => "Git Mailmap",
             Lang::GitLink => "Git Link",
             Lang::Fstab => "fstab",
+            Lang::KnownHosts => "Known Hosts",
             Lang::Rust => "Rust",
             Lang::Kotlin => "Kotlin",
             Lang::Java => "Java",
@@ -441,6 +446,7 @@ impl Lang {
             Lang::GitMailmap => "text.git.mailmap",
             Lang::GitLink => "text.git.link",
             Lang::Fstab => "source.fstab",
+            Lang::KnownHosts => "text.known_hosts",
             Lang::Rust => "source.rust",
             Lang::Kotlin => "source.Kotlin",
             Lang::Java => "source.java",
@@ -472,6 +478,7 @@ impl Lang {
             Lang::Diff => crate::diff::KINDS,
             Lang::Ini => crate::ini::KINDS,
             Lang::Fstab => crate::fstab::KINDS,
+            Lang::KnownHosts => crate::known_hosts::KINDS,
             Lang::Json => &crate::json::KINDS,
             Lang::Log => &crate::logs::KINDS,
             _ => &[],

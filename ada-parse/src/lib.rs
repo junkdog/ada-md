@@ -10,7 +10,7 @@
 //! The lexers are scanners of ada's own, speed first (ADR-40): one pass over a line's bytes,
 //! a fixed set of kinds carrying bat's scopes for the common case, syntect a guideline.
 //! Diff is a line lexer, each line on its own; INI, Java properties, `.env`, Git's own files
-//! (ignore, attributes, mailmap and link files) and fstab share the line-format engine
+//! (ignore, attributes, mailmap and link files), fstab and `known_hosts` share the line-format engine
 //! (`line_format.rs`); logs (O-043) and JSON (O-048) came from ada; Dockerfile's scanner is
 //! bat's grammar compiled by hand; these are exact against syntect (the `parse` fuzz target),
 //! and XML's, of ada's own design, is too; YAML's and TOML's read
@@ -34,6 +34,7 @@ mod ini;
 mod java;
 mod javascript;
 mod json;
+mod known_hosts;
 mod kotlin;
 mod lang;
 // the frame under INI, Java properties and `.env`
@@ -49,6 +50,7 @@ mod python;
 mod regex;
 mod rust;
 mod sql;
+mod ssh;
 mod stack;
 // the matchers and context ids its scanner shares, from the port it replaced
 mod toml;
@@ -228,6 +230,7 @@ fn scanner(lang: Lang) -> Scanner {
         Lang::GitMailmap => out!(git::mailmap),
         Lang::GitLink => out!(git::link),
         Lang::Fstab => out!(fstab::line),
+        Lang::KnownHosts => out!(known_hosts::line),
         Lang::Dockerfile => out!(dockerfile::line),
         Lang::Properties => out!(properties::line),
     }

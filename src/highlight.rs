@@ -3740,6 +3740,19 @@ mod tests {
         rules_match_the_grammar("fstab", "fstab", text);
     }
 
+    /// ada-parse's `known_hosts` lexer picks the rules bat's grammar picks, in every built-in
+    /// theme (ADR-40).
+    #[test]
+    fn known_hosts_rules_match_the_grammar() {
+        let text = concat!(
+            "# c\n",
+            "@revoked [a,b*]:22,1.2.3.4,::1 ssh-rsa AAAAB3NzaC1yc2E= a label\n",
+            "|1|abcdefghijklmnopqrstuvwxyz0=|abcdefghijklmnopqrstuvwxyz0= ssh-dss x\n",
+            "@cert-authority !*.example.com ecdsa-sha2-nistp256 AAAAE2VjZHNh\n",
+        );
+        rules_match_the_grammar("known_hosts", "Known Hosts", text);
+    }
+
     /// ada-parse's `.env` lexer picks the rules bat's grammar picks, in every built-in theme
     /// (ADR-40).
     #[test]

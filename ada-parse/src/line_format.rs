@@ -1,6 +1,6 @@
 //! The line-format engine (X-020's second part, the parser audit's item 5): the frame under the
-//! formats read a line at a time, INI's, Java properties', `.env`'s, Git's four (X-034) and
-//! fstab's. A line is a comment, a
+//! formats read a line at a time, INI's, Java properties', `.env`'s, Git's four (X-034),
+//! fstab's and `known_hosts`' (X-045). A line is a comment, a
 //! section's header or an entry (a key, its separator and a value), told apart by the first
 //! byte past its blanks on the format's table ([`Format::LEAD`], the prefix dispatch); a format
 //! reads each with the [`Cursor`]'s primitives. What a line leaves open (a value run on by a

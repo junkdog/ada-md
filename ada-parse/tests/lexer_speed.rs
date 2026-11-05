@@ -31,6 +31,7 @@ const LANGS: &[(&str, Lang)] = &[
     ("gitattributes", Lang::GitAttributes),
     ("mailmap", Lang::GitMailmap),
     ("fstab", Lang::Fstab),
+    ("known_hosts", Lang::KnownHosts),
     ("rust", Lang::Rust),
     ("kotlin", Lang::Kotlin),
     ("java", Lang::Java),

@@ -310,6 +310,16 @@ UUID=ad252f43-ade0-4506-a583-d6d5cb53f5c2  /      ext4  rw,relatime        0 1
 server:/export                             /nfs   nfs4  _netdev,x-systemd  0 0
 ```
 
+## Known Hosts
+
+```known_hosts
+# OpenSSH's known hosts
+github.com,140.82.121.4 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+[localhost]:2222,[::1]:2222 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTY= dev box
+|1|JfKTdBh7rNbXkVAQCRp4OQoPfmI=|USECr3SWf1JUPsms5AqfD5QfxkM= ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC1
+@cert-authority *.example.com ssh-dss AAAAB3NzaC1kc3MAAACBAP== ca
+```
+
 ## Rust
 
 ```rust

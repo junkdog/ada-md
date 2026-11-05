@@ -433,6 +433,79 @@ fn fstab_soup() {
 }
 
 #[test]
+fn known_hosts_examples() {
+    let blocks = [
+        "# c\n  # c\n@revoked [a,b*]:22,1.2.3.4 ssh-rsa AAAAB3Nza+/= my label \n",
+        "|1|abcdefghijklmnopqrstuvwxyz0=|abcdefghijklmnopqrstuvwxyz0= ssh-dss AAAAC3x\n",
+        "[foo\nbar]x\n[a\n,b\n]:123456,c\n",
+        "github.com,140.82.121.4 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n",
+        "[::1]:22,::ffff:1.2.3.4,fe80::7:8%eth0,1:2:3:4:5:6:7:8 ecdsa-sha2-nistp256 AAAAE2VjZHNh=\n",
+        "[!1.2.3.4,::1]x !a*b?c ssh-rsa,ssh-dss x509v3-ssh-rs\"x AAAAB3N\n",
+        "@cert-authority *.example.com ssh-rsa AAAAB3NzaC1yc2E== a\x0b\n@revokedX y\n  @revoked z\n",
+        "a AAAAB3Nza==ssh-rsa b\n1.2.3.456 1.2.3.4a ::1abg x::1 AAAAB3Nz\x0b a  \n",
+        "   \n\n[]\n[]:\n[]:x\n[1.2.3.4]:2\n[,]\n[x*,?]\n",
+        "",
+    ];
+    for block in blocks {
+        exact(Lang::KnownHosts, block);
+    }
+}
+
+#[test]
+fn known_hosts_soup() {
+    let tokens = [
+        "#",
+        "@revoked",
+        "@cert-authority",
+        "@",
+        " ",
+        "  ",
+        "\t",
+        ",",
+        "[",
+        "]",
+        "]:22",
+        ":",
+        "!",
+        "*",
+        "?",
+        "|",
+        "|1|",
+        "abcdefghijklmnopqrstuvwxyz0=",
+        "a",
+        "x.org",
+        "1.2.3.4",
+        "255",
+        ".",
+        "::",
+        "::1",
+        "fe80::1%e",
+        "dead:beef::",
+        "ffff",
+        "ssh-rsa",
+        "ssh-dss",
+        "ecdsa-sha2-nistp256",
+        "AAAAB3Nz",
+        "AAAAC3N",
+        "AAAAE2V",
+        "+/",
+        "=",
+        "\"",
+        "\x0b",
+        "\n",
+        "\n",
+        "\n",
+    ];
+    soup(&[Lang::KnownHosts], &tokens, 30);
+    // the addresses' alternatives, in pieces
+    let tokens = [
+        ":", ":", "::", "1", "ab", "1234", "12345", "fe80", "FE80:", "%", "eth0", "ffff", "0", ".",
+        "1.2.3.4", "25", "256", "[", "]", ",", " ", "\n",
+    ];
+    soup(&[Lang::KnownHosts], &tokens, 40);
+}
+
+#[test]
 fn properties_examples() {
     let blocks = [
         "# c\n  ! c\na\\ b = x\\ty \\u00e9\\\n  more\nk:v\nk \\\n v\n",
