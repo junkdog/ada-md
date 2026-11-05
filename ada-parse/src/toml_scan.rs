@@ -1,41 +1,44 @@
-//! TOML by a scanner (prototype, 2026-10-31): bat's `TOML` grammar compiled by hand. Each of
-//! the grammar's contexts (their ids in `toml.rs`) is an arm of one `match`, and each of its
-//! patterns a test of the bytes at the position, where syntect asks every pattern for its
-//! leftmost match. Most contexts end in a pattern that matches anywhere (`.`,
-//! `\w+|.`, the empty regex), so the leftmost match is the first pattern that matches right
-//! there; only the strings and a `[[table]]` name search ahead.
+//! TOML by a scanner of ada's own (X-020, 2026-11-05): one pass over a line, a statement at a
+//! time (a comment, a table's header, or a key, its `=` and its value), each value dispatched
+//! on its first byte. It took the place of bat's grammar compiled by hand (2026-10-31), whose
+//! stack of the grammar's contexts cost a dispatch and a push or pop a token. A kind is the
+//! same outer meta scope (a key's, a table name's) × leaf as then ([`scopes`]), so the themes
+//! color it as they did.
 //!
-//! The stack holds syntect's context ids and packs into a [`State`]. Exact against syntect on
-//! bat's grammar (`tests/exact_lexers.rs`, the `parse` fuzz target), as it was against the port
-//! of syntect's machine it replaced. A span's kind is an outer meta scope (a key's, a table
-//! name's) and a leaf, both fixed ([`scopes`]).
+//! Where it reads TOML as TOML 1.1 does and bat's grammar doesn't (syntect a guideline here,
+//! `examples/parity.rs` reads how close it comes): blanks after a value are no error; an inline
+//! table may run across lines and hold comments; a multi-line string closes at the last three
+//! quotes of a run of up to five; `true` and `false` are whole words (`trueish` is a bad value);
+//! `\e` and `\xHH` are escapes; an unterminated literal string is a string to the line's end, as
+//! a basic one is; a table's header ends with its line. Bad keys and names have one rule each:
+//! a key not followed by `=` leaves the rest of the line a bad key-value, a dot with no key
+//! after it is a bad key, junk in a header runs to its `]`.
+//!
+//! The state between lines is one word: a multi-line string open, the arrays and inline tables
+//! open (each level's kind, the innermost 48), and where in the innermost the line stopped.
 
-use crate::matcher::{Atom, DEPTH, Line, MAX_PUSH, is_blank, is_space, is_word};
+use crate::matcher::{Atom, Line, is_word};
+use crate::prim::find_any;
 use crate::toml::{
-    ARRAY_SEP, ARRAY_SEP_0, ATOMS, BASIC_STRING_0, DATA_TYPES, Digit, INLINE_KEYVAL_SEP,
-    INLINE_KEYVALS, INLINE_KEYVALS_0, INLINE_TABLE_0, KEY, KEY_SIMPLE, KEYVAL_SEP, MAIN_0,
-    MAYBE_ARRAY_COMMENTS, MAYBE_COMMENT_EOL, MAYBE_DOT_KEY, MAYBE_DOT_TABLE, MAYBE_EMPTY_ARRAY,
-    START, STRING_0, STRING_1, TABLE_ARRAY_NAME, TABLE_NAME, TABLE_NAME_SIMPLE, date, digits_from,
-    fraction, int_part, is_bare, is_key_start, offset, s, sign, time, word_end, word_start,
+    ATOMS, Digit, date, digits_from, fraction, int_part, offset, s, sign, time, word_end,
+    word_start,
 };
 use crate::{Out, State};
 
-/// The meta scope a span sits in, by the context below it: none, a key's, a table name's, an
-/// array of tables' name's. A kind is `outer << 6 | leaf`.
+/// The meta scope a span sits in: none, a key's, a table name's, an array of tables' name's.
+/// A kind is `outer << 6 | leaf`.
 const OUTERS: [&[Atom]; 4] = [
     &[],
     &[s::META_KEY],
     &[s::META_TABLE],
     &[s::META_TABLE_ARRAY],
 ];
-const NO_OUTER: u16 = 0;
-const IN_KEY: u16 = 1;
-const IN_TABLE: u16 = 2;
-const IN_TABLE_ARRAY: u16 = 3;
+const IN_KEY: u16 = 1 << 6;
+const IN_TABLE: u16 = 2 << 6;
+const IN_TABLE_ARRAY: u16 = 3 << 6;
 
 /// The leaves: the scopes under the outer one.
 mod leaf {
-    pub const NONE: u16 = 0;
     pub const KEY: u16 = 1;
     pub const TABLE_NAME: u16 = 2;
     pub const KEY_DOT: u16 = 3;
@@ -63,7 +66,7 @@ mod leaf {
     pub const INLINE_BEGIN: u16 = 37;
     pub const INLINE_END: u16 = 38;
     pub const INLINE_SEP: u16 = 39;
-    pub const BAD_TABLE_END: u16 = 40;
+    // 40, a bad inline table end, is no longer given (TOML 1.1 takes a trailing `,`)
     pub const TABLE_BEGIN: u16 = 41;
     pub const TABLE_END: u16 = 42;
     pub const TABLE_ARRAY_BEGIN: u16 = 43;
@@ -143,641 +146,612 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
         .collect()
 }
 
+/// A byte's classes: a bare key's (`[A-Za-z0-9_-]`), what a key or a table name starts with
+/// (those and the quotes), a blank (`[ \t]`).
+const BARE: u8 = 1;
+const KEY_START: u8 = 2;
+const BLANK: u8 = 4;
+
+static CLASS: [u8; 256] = {
+    let mut t = [0; 256];
+    let mut c = 0;
+    while c < 256 {
+        let b = c as u8;
+        if b.is_ascii_alphanumeric() || b == b'_' || b == b'-' {
+            t[c] = BARE | KEY_START;
+        }
+        c += 1;
+    }
+    t[b'"' as usize] = KEY_START;
+    t[b'\'' as usize] = KEY_START;
+    t[b' ' as usize] = BLANK;
+    t[b'\t' as usize] = BLANK;
+    t
+};
+
+#[inline(always)]
+fn class(c: u8) -> u8 {
+    CLASS[usize::from(c)]
+}
+
+/// Where the run of `[ \t]` from `p` ends.
+#[inline(always)]
+fn blanks(b: &[u8], mut p: usize) -> usize {
+    while p < b.len() && class(b[p]) & BLANK != 0 {
+        p += 1;
+    }
+    p
+}
+
+/// Where the line stopped, in the innermost array or inline table, or at the top level. Only
+/// the first six are kept between lines; at the top level a line starts a statement.
+mod at {
+    /// An array's value (after its `[` or a `,`).
+    pub const ARRAY_VALUE: u8 = 0;
+    /// After an array's value: its `,` or `]`.
+    pub const ARRAY_SEP: u8 = 1;
+    /// An inline table's first key, or its `}`.
+    pub const INLINE_KEY: u8 = 2;
+    /// An inline table's key after a `,`, or its `}` (TOML 1.1).
+    pub const INLINE_NEXT: u8 = 3;
+    /// After an inline table's key: its `=`.
+    pub const INLINE_EQ: u8 = 4;
+    /// After an inline table's value: its `,` or `}`.
+    pub const INLINE_SEP: u8 = 5;
+    /// A line's start at the top level.
+    pub const LINE: u8 = 6;
+    /// A value, after a `=`.
+    pub const VALUE: u8 = 7;
+    /// After a value at the top level: a comment, or the line's end.
+    pub const TOP_AFTER: u8 = 8;
+}
+
+/// A multi-line string open: none, a basic one, a literal one.
+const NO_STRING: u64 = 0;
+const BASIC_OPEN: u64 = 1;
+const LITERAL_OPEN: u64 = 2;
+
+/// The levels of arrays and inline tables whose kinds are kept, the innermost; past them, a
+/// level is taken for an array.
+const KINDS: u32 = 48;
+
 /// Lex `b`, a line without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let l = Line { b };
-    let mut scan = Scan {
-        nl: b.len(),
-        stack: [0; DEPTH],
-        depth: 0,
-        dropped: 0,
-        exact: state.is_exact(),
-        outer: NO_OUTER,
+    let w = state.word();
+    let mut t = Scan {
+        b,
+        depth: (w >> 8) as u8,
+        kinds: w >> 16,
+        string: NO_STRING,
+        stop: at::LINE,
         out,
     };
-    match state.levels() {
-        [] => {
-            scan.stack[0] = START;
-            scan.depth = 1;
-        }
-        levels => {
-            scan.stack[..levels.len()].copy_from_slice(levels);
-            scan.depth = levels.len();
-            // a table name left open (an unterminated quoted part) keeps its meta scope
-            scan.outer = levels.iter().fold(NO_OUTER, |outer, &c| match c {
-                KEY => IN_KEY,
-                TABLE_NAME => IN_TABLE,
-                TABLE_ARRAY_NAME => IN_TABLE_ARRAY,
-                _ => outer,
-            });
-        }
+    let (p, at) = match w & 3 {
+        NO_STRING if t.depth == 0 => (0, at::LINE),
+        NO_STRING => (0, (w >> 2 & 7) as u8),
+        open => match t.triple(0, open) {
+            Some(e) => (e, t.after()),
+            None => (b.len(), at::LINE),
+        },
+    };
+    if t.string == NO_STRING {
+        t.run(p, at);
     }
-    scan.run(&l);
-    static NO_WITHS: [u8; DEPTH] = [0; DEPTH];
-    *state = State::pack(
-        &scan.stack[..scan.depth],
-        &NO_WITHS[..scan.depth],
-        0,
-        scan.exact,
-    );
+    let stop = match t.depth {
+        0 => 0,
+        _ => u64::from(t.stop),
+    };
+    state.set_word(t.string | stop << 2 | u64::from(t.depth) << 8 | t.kinds << 16);
 }
 
-struct Scan<'b, 'c> {
-    /// Where the `\n` is; positions run to `nl + 1`, past it.
-    nl: usize,
-    stack: [u8; DEPTH],
-    depth: usize,
-    /// Levels dropped from the bottom, past [`DEPTH`], still counted toward syntect's push limit.
-    dropped: usize,
-    exact: bool,
-    outer: u16,
-    out: &'b mut Out<'c>,
+struct Scan<'b, 'o, 'c> {
+    b: &'b [u8],
+    /// The arrays and inline tables open.
+    depth: u8,
+    /// Bit `i`: whether the `i`th level from the innermost is an inline table.
+    kinds: u64,
+    /// A multi-line string left open at the line's end.
+    string: u64,
+    /// Where the line stopped inside the innermost level.
+    stop: u8,
+    out: &'o mut Out<'c>,
 }
 
-impl Scan<'_, '_> {
-    /// Bytes `s..e` (never past the `\n`) are `leaf` in the current outer scope.
-    fn put(&mut self, s: usize, e: usize, leaf: u16) {
-        let kind = self.outer << 6 | leaf;
-        let e = e.min(self.nl);
-        if kind != 0 && e > s {
-            self.out.push_merged(s, e, kind);
-        }
-    }
-
-    fn top(&self) -> u8 {
-        self.stack[self.depth - 1]
-    }
-
-    /// Whether syntect would push here (it doesn't past 100 levels; a `set` it always does).
-    fn can_push(&self) -> bool {
-        self.depth + self.dropped < MAX_PUSH
-    }
-
-    fn push(&mut self, refs: &[u8]) {
-        for &r in refs {
-            if self.depth == DEPTH {
-                self.stack.copy_within(1.., 0);
-                self.depth -= 1;
-                self.dropped += 1;
-                self.exact = false;
-            }
-            self.stack[self.depth] = r;
-            self.depth += 1;
-        }
-    }
-
-    fn set(&mut self, refs: &[u8]) {
-        self.depth -= 1;
-        self.push(refs);
-    }
-
-    fn pop(&mut self) {
-        self.depth -= 1;
-    }
-
+impl Scan<'_, '_, '_> {
     #[inline(always)]
-    fn run(&mut self, l: &Line) {
-        let mut p = 0;
-        while self.depth > 0 {
-            match self.step(l, p) {
-                Some(q) => p = q,
-                None => return,
-            }
-        }
+    fn put(&mut self, s: usize, e: usize, kind: u16) {
+        self.out.push(s, e, kind);
     }
 
-    /// One match of the top context at `p`: where the next starts, or `None` when nothing
-    /// matches before the line ends. Inlined, as [`Scan::run`] is into [`line`]: called out of
-    /// line, the two cost TOML 29% more instructions (X-023, as XML's X-010).
+    /// What follows a value: the innermost level's separator, or the top level's end.
     #[inline(always)]
-    fn step(&mut self, l: &Line, p: usize) -> Option<usize> {
-        let nl = self.nl;
-        let at = |i: usize| l.at(i);
-        let blanks = |i: usize| l.run(i, is_blank);
-        match self.top() {
-            START => {
-                if !self.can_push() {
-                    return None;
-                }
-                self.push(&[MAIN_0]);
-                Some(p)
-            }
-            MAIN_0 => {
-                if p == 0 {
-                    let q = blanks(0);
-                    if q > 0 {
-                        return Some(q);
-                    }
-                }
-                if let Some(q) = self.comment(l, p) {
-                    return Some(q);
-                }
-                if let Some(e) = empty_table(l, p) {
-                    self.put(p, e, leaf::BAD_TABLE);
-                    return Some(e);
-                }
-                if at(p) == Some(b'[') && self.can_push() {
-                    let (opened, ctx, outer, begin) = match at(p + 1) == Some(b'[') {
-                        true => (2, TABLE_ARRAY_NAME, IN_TABLE_ARRAY, leaf::TABLE_ARRAY_BEGIN),
-                        false => (1, TABLE_NAME, IN_TABLE, leaf::TABLE_BEGIN),
-                    };
-                    self.put(p, p + opened, begin);
-                    self.push(&[MAYBE_COMMENT_EOL, ctx]);
-                    self.outer = outer;
-                    return Some(blanks(p + opened));
-                }
-                if l.is(p, is_key_start) && self.can_push() {
-                    self.push(&[KEYVAL_SEP, KEY]);
-                    self.outer = IN_KEY;
-                    return Some(p);
-                }
-                if p < nl {
-                    self.put(p, nl, leaf::ILLEGAL);
-                    return Some(nl);
-                }
-                None
-            }
-            KEYVAL_SEP => {
-                let q = blanks(p);
-                if q < nl && at(q) == Some(b'=') {
-                    self.put(q, q + 1, leaf::KEY_VALUE);
-                    self.set(&[MAYBE_COMMENT_EOL, DATA_TYPES]);
-                    return Some(blanks(q + 1));
-                }
-                self.pop();
-                if p > nl || q == nl {
-                    return Some(p.max(nl));
-                }
-                self.put(p, nl, leaf::BAD_KEYVAL);
-                Some(nl)
-            }
-            KEY => {
-                if l.is(p, is_key_start) && self.can_push() {
-                    self.push(&[MAYBE_DOT_KEY, KEY_SIMPLE]);
-                    return Some(p);
-                }
-                let q = blanks(p);
-                // `(?=[ \t]*=)`, or `$` past the `\n`
-                let e = if (q < nl && at(q) == Some(b'=')) || p > nl {
-                    p
-                } else if q == nl {
-                    self.put(p, nl, leaf::NONE);
-                    nl
-                } else {
-                    let e = p + l.char_len(p).unwrap_or(1);
-                    self.put(p, e, leaf::BAD_KEY);
-                    e
-                };
-                self.pop();
-                self.outer = NO_OUTER;
-                Some(e)
-            }
-            ctx @ (MAYBE_DOT_KEY | MAYBE_DOT_TABLE) => {
-                let (dot, bad, close, simple) = match ctx {
-                    MAYBE_DOT_KEY => (leaf::KEY_DOT, leaf::BAD_KEY, b'=', KEY_SIMPLE),
-                    _ => (leaf::TABLE_DOT, leaf::BAD_TABLE, b']', TABLE_NAME_SIMPLE),
-                };
-                let q = blanks(p);
-                if q < nl && at(q) == Some(b'.') && self.can_push() {
-                    let r = blanks(q + 1);
-                    if l.is(r, is_key_start) {
-                        self.put(p, q, leaf::NONE);
-                        self.put(q, q + 1, dot);
-                        self.put(q + 1, r, leaf::NONE);
-                        self.push(&[simple]);
-                        return Some(r);
-                    }
-                }
-                self.pop();
-                if l.eol(q) || at(q) == Some(close) {
-                    return Some(p);
-                }
-                let e = p + l.char_len(p).unwrap_or(1);
-                self.put(p, e, bad);
-                Some(e)
-            }
-            ctx @ (KEY_SIMPLE | TABLE_NAME_SIMPLE) => {
-                let (name, bad) = match ctx {
-                    KEY_SIMPLE => (leaf::KEY, leaf::BAD_KEY),
-                    _ => (leaf::TABLE_NAME, leaf::BAD_TABLE),
-                };
-                match at(p) {
-                    Some(c) if is_bare(c) => {
-                        let e = l.run(p, is_bare);
-                        self.put(p, e, name);
-                        self.pop();
-                        Some(e)
-                    }
-                    Some(b'"') => {
-                        self.put(p, p + 1, leaf::BASIC + BEGIN);
-                        self.set(&[BASIC_STRING_0]);
-                        Some(p + 1)
-                    }
-                    _ => {
-                        if let Some(e) = self.literal(l, p) {
-                            self.pop();
-                            return Some(e);
-                        }
-                        if p >= nl {
-                            return None;
-                        }
-                        // a key ends at a space, a table name's bad byte is one character;
-                        // either context starts on a key's first byte, never a space
-                        let e = match ctx {
-                            KEY_SIMPLE => l.run(p, |c| !is_space(c)),
-                            _ => p + l.char_len(p).unwrap_or(1),
-                        };
-                        self.put(p, e, bad);
-                        self.pop();
-                        Some(e)
-                    }
-                }
-            }
-            BASIC_STRING_0 => {
-                let (e, closed) =
-                    self.escapes(l, p, leaf::BASIC, |b, k| (b[k] == b'"').then_some(k + 1));
-                self.pop();
-                // unterminated, its `\n` invalid: the line goes on past it
-                Some(if closed { e } else { nl + 1 })
-            }
-            STRING_1 => {
-                let (e, closed) = self.escapes(l, p, leaf::TRIPLE_BASIC, |b, k| {
-                    b[k..].starts_with(b"\"\"\"").then_some(k + 3)
-                });
-                if !closed {
-                    return None;
-                }
-                self.pop();
-                Some(e)
-            }
-            STRING_0 => {
-                let mut i = p;
-                while let Some(k) = find(l.b, i, |c| c == b'\'') {
-                    if l.b[k..].starts_with(b"'''") {
-                        self.put(p, k, leaf::TRIPLE_LITERAL + TEXT);
-                        self.put(k, k + 3, leaf::TRIPLE_LITERAL + END);
-                        self.pop();
-                        return Some(k + 3);
-                    }
-                    i = k + 1;
-                }
-                self.put(p, nl, leaf::TRIPLE_LITERAL + TEXT);
-                None
-            }
-            TABLE_NAME => {
-                let q = blanks(p);
-                if q < nl && at(q) == Some(b']') {
-                    self.outer = NO_OUTER;
-                    self.put(q, q + 1, leaf::TABLE_END);
-                    self.pop();
-                    return Some(q + 1);
-                }
-                if l.is(p, is_key_start) && self.can_push() {
-                    self.push(&[MAYBE_DOT_TABLE, TABLE_NAME_SIMPLE]);
-                    return Some(p);
-                }
-                if p > nl {
-                    return None;
-                }
-                self.junk(l, p)
-            }
-            TABLE_ARRAY_NAME => {
-                // leftmost of `[ \t]*(\]\])`, a key's first byte, `[^\]]+\]?`; ties in that order
-                let close = (p..nl.saturating_sub(1))
-                    .find(|&k| l.b[k] == b']' && l.b[k + 1] == b']')
-                    .map(|k| (back_blanks(l.b, p, k), k));
-                let key = find(l.b, p, is_key_start).filter(|_| self.can_push());
-                let junk = (p..=nl).find(|&i| at(i) != Some(b']'));
-                let start = [close.map(|c| c.0), key, junk].into_iter().flatten().min();
-                let Some(start) = start else {
-                    self.put(p, nl, leaf::NONE);
-                    return None;
-                };
-                self.put(p, start, leaf::NONE);
-                if let Some((s, k)) = close
-                    && s == start
-                {
-                    self.outer = NO_OUTER;
-                    self.put(k, k + 2, leaf::TABLE_ARRAY_END);
-                    self.pop();
-                    return Some(k + 2);
-                }
-                if key == Some(start) {
-                    self.push(&[MAYBE_DOT_TABLE, TABLE_NAME_SIMPLE]);
-                    return Some(start);
-                }
-                self.junk(l, start)
-            }
-            MAYBE_COMMENT_EOL => {
-                if let Some(q) = self.comment(l, p) {
-                    return Some(q);
-                }
-                self.pop();
-                if p >= nl {
-                    return Some(p);
-                }
-                self.put(p, nl, leaf::BAD_TRAILING);
-                Some(nl)
-            }
-            DATA_TYPES => self.value(l, p),
-            MAYBE_ARRAY_COMMENTS => {
-                if let Some(q) = self.ws_or_comment(l, p) {
-                    return Some(q);
-                }
-                if p < nl {
-                    self.pop();
-                    return Some(p);
-                }
-                None
-            }
-            MAYBE_EMPTY_ARRAY => {
-                if at(p) == Some(b']') && p < nl {
-                    self.put(p, p + 1, leaf::ARRAY_END);
-                    self.pop();
-                    return Some(p + 1);
-                }
-                self.set(&[ARRAY_SEP, DATA_TYPES]);
-                Some(p)
-            }
-            ctx @ (ARRAY_SEP | ARRAY_SEP_0) => {
-                if let Some(q) = self.ws_or_comment(l, p) {
-                    return Some(q);
-                }
-                if p >= nl {
-                    return None;
-                }
-                match at(p) {
-                    Some(b']') => {
-                        self.put(p, p + 1, leaf::ARRAY_END);
-                        self.pop();
-                        Some(p + 1)
-                    }
-                    _ if ctx == ARRAY_SEP_0 => {
-                        self.set(&[ARRAY_SEP, DATA_TYPES]);
-                        Some(p)
-                    }
-                    Some(b',') => {
-                        self.put(p, p + 1, leaf::ARRAY_SEP);
-                        self.set(&[ARRAY_SEP_0]);
-                        Some(p + 1)
-                    }
-                    _ => {
-                        let e = word_or_char(l, p);
-                        self.put(p, e, leaf::BAD_ARRAY);
-                        Some(e)
-                    }
-                }
-            }
-            ctx @ (INLINE_TABLE_0 | INLINE_KEYVALS_0) => {
-                let q = blanks(p);
-                if q > p {
-                    return Some(q);
-                }
-                if at(p) == Some(b'}') && p < nl {
-                    let end = match ctx {
-                        INLINE_TABLE_0 => leaf::INLINE_END,
-                        _ => leaf::BAD_TABLE_END,
-                    };
-                    self.put(p, p + 1, end);
-                    self.pop();
-                    return Some(p + 1);
-                }
-                self.set(&[INLINE_KEYVAL_SEP, KEY]);
-                self.outer = IN_KEY;
-                Some(p)
-            }
-            INLINE_KEYVAL_SEP => {
-                let q = blanks(p);
-                if q < nl && at(q) == Some(b'=') {
-                    self.put(q, q + 1, leaf::KEY_VALUE);
-                    self.set(&[INLINE_KEYVALS, DATA_TYPES]);
-                    return Some(blanks(q + 1));
-                }
-                if p < nl {
-                    self.pop();
-                    return Some(p);
-                }
-                None
-            }
-            INLINE_KEYVALS => {
-                let q = blanks(p);
-                if q > p {
-                    return Some(q);
-                }
-                if p >= nl {
-                    return None;
-                }
-                match at(p) {
-                    Some(b'}') => {
-                        self.put(p, p + 1, leaf::INLINE_END);
-                        self.pop();
-                        Some(p + 1)
-                    }
-                    Some(b',') => {
-                        self.put(p, p + 1, leaf::INLINE_SEP);
-                        self.set(&[INLINE_KEYVALS_0]);
-                        Some(p + 1)
-                    }
-                    _ => {
-                        self.pop();
-                        Some(p)
-                    }
-                }
-            }
-            // the rest are only ever included
-            _ => None,
+    fn after(&self) -> u8 {
+        match (self.depth, self.kinds & 1) {
+            (0, _) => at::TOP_AFTER,
+            (_, 0) => at::ARRAY_SEP,
+            _ => at::INLINE_SEP,
         }
     }
 
-    /// A value, `data-types`: the first of its patterns that matches at `p`.
-    fn value(&mut self, l: &Line, p: usize) -> Option<usize> {
-        let nl = self.nl;
-        let b = l.b;
-        let opened = |s: &mut Self, n: usize, kind: u16, ctx: &[u8]| {
-            s.put(p, p + n, kind);
-            s.set(ctx);
-            Some(p + n)
+    fn open(&mut self, inline: bool) {
+        self.depth = self.depth.saturating_add(1);
+        self.kinds = (self.kinds << 1 | u64::from(inline)) & ((1 << KINDS) - 1);
+    }
+
+    /// Closes the innermost level: what follows it.
+    fn close(&mut self) -> u8 {
+        self.depth -= 1;
+        self.kinds >>= 1;
+        self.after()
+    }
+
+    /// The line from `p`, where `at` says it is.
+    #[inline(always)]
+    fn run(&mut self, mut p: usize, mut at: u8) {
+        let b = self.b;
+        let nl = b.len();
+        loop {
+            match at {
+                at::LINE => {
+                    let q = blanks(b, p);
+                    let Some(&c) = b.get(q) else { return };
+                    if c == b'#' {
+                        return self.comment(q);
+                    }
+                    if c == b'[' {
+                        p = self.header(q);
+                        at = at::TOP_AFTER;
+                        continue;
+                    }
+                    if class(c) & KEY_START == 0 {
+                        return self.put(q, nl, leaf::ILLEGAL);
+                    }
+                    let e = self.key(q, IN_KEY);
+                    let r = blanks(b, e);
+                    match b.get(r) {
+                        Some(b'=') => {
+                            self.put(r, r + 1, leaf::KEY_VALUE);
+                            p = blanks(b, r + 1);
+                            at = at::VALUE;
+                        }
+                        Some(_) => return self.put(r, nl, leaf::BAD_KEYVAL),
+                        None => return,
+                    }
+                }
+                at::VALUE => {
+                    if p >= nl {
+                        at = self.after();
+                        continue;
+                    }
+                    (p, at) = self.value(p);
+                    if self.string != NO_STRING {
+                        return;
+                    }
+                }
+                at::TOP_AFTER => {
+                    let q = blanks(b, p);
+                    match b.get(q) {
+                        Some(b'#') => self.comment(q),
+                        Some(_) => self.put(q, nl, leaf::BAD_TRAILING),
+                        None => {}
+                    }
+                    return;
+                }
+                at::ARRAY_VALUE | at::ARRAY_SEP => {
+                    p = blanks(b, p);
+                    let Some(&c) = b.get(p) else {
+                        self.stop = at;
+                        return;
+                    };
+                    match c {
+                        b'#' => {
+                            self.stop = at;
+                            return self.comment(p);
+                        }
+                        b']' => {
+                            self.put(p, p + 1, leaf::ARRAY_END);
+                            p += 1;
+                            at = self.close();
+                        }
+                        b',' if at == at::ARRAY_SEP => {
+                            self.put(p, p + 1, leaf::ARRAY_SEP);
+                            p += 1;
+                            at = at::ARRAY_VALUE;
+                        }
+                        _ if at == at::ARRAY_VALUE => {
+                            (p, at) = self.value(p);
+                            if self.string != NO_STRING {
+                                return;
+                            }
+                        }
+                        _ => {
+                            let e = word_or_char(b, p);
+                            self.out.push_merged(p, e, leaf::BAD_ARRAY);
+                            p = e;
+                        }
+                    }
+                }
+                at::INLINE_KEY | at::INLINE_NEXT => {
+                    p = blanks(b, p);
+                    let Some(&c) = b.get(p) else {
+                        self.stop = at;
+                        return;
+                    };
+                    match c {
+                        b'#' => {
+                            self.stop = at;
+                            return self.comment(p);
+                        }
+                        // TOML 1.1 lets a `,` end the last pair
+                        b'}' => {
+                            self.put(p, p + 1, leaf::INLINE_END);
+                            p += 1;
+                            at = self.close();
+                        }
+                        _ if class(c) & KEY_START != 0 => {
+                            p = self.key(p, IN_KEY);
+                            at = at::INLINE_EQ;
+                        }
+                        _ => {
+                            let e = word_or_char(b, p);
+                            self.out.push_merged(p, e, IN_KEY | leaf::BAD_KEY);
+                            p = e;
+                        }
+                    }
+                }
+                at::INLINE_EQ => {
+                    p = blanks(b, p);
+                    match b.get(p) {
+                        Some(b'=') => {
+                            self.put(p, p + 1, leaf::KEY_VALUE);
+                            p = blanks(b, p + 1);
+                            at = at::VALUE;
+                        }
+                        Some(_) => at = self.close(),
+                        None => {
+                            self.stop = at;
+                            return;
+                        }
+                    }
+                }
+                _ => {
+                    // at::INLINE_SEP
+                    p = blanks(b, p);
+                    let Some(&c) = b.get(p) else {
+                        self.stop = at;
+                        return;
+                    };
+                    match c {
+                        b'#' => {
+                            self.stop = at;
+                            return self.comment(p);
+                        }
+                        b'}' => {
+                            self.put(p, p + 1, leaf::INLINE_END);
+                            p += 1;
+                            at = self.close();
+                        }
+                        b',' => {
+                            self.put(p, p + 1, leaf::INLINE_SEP);
+                            p += 1;
+                            at = at::INLINE_NEXT;
+                        }
+                        _ => at = self.close(),
+                    }
+                }
+            }
+        }
+    }
+
+    /// A key at `p`, on a byte a key starts with, its parts and dots in `outer`: where it
+    /// ends, the line's end if a quoted part is left open.
+    fn key(&mut self, p: usize, outer: u16) -> usize {
+        let (name, dot, bad) = match outer {
+            IN_KEY => (leaf::KEY, leaf::KEY_DOT, leaf::BAD_KEY),
+            _ => (leaf::TABLE_NAME, leaf::TABLE_DOT, leaf::BAD_TABLE),
         };
-        match l.at(p) {
-            Some(b'{') => return opened(self, 1, leaf::INLINE_BEGIN, &[INLINE_TABLE_0]),
-            Some(b'[') => {
-                let ctx = &[MAYBE_EMPTY_ARRAY, MAYBE_ARRAY_COMMENTS];
-                return opened(self, 1, leaf::ARRAY_BEGIN, ctx);
+        let b = self.b;
+        let mut p = p;
+        loop {
+            let e = match b[p] {
+                b'"' => match self.basic(p, outer | leaf::BASIC) {
+                    Some(e) => e,
+                    None => return b.len(),
+                },
+                b'\'' => match self.literal(p, outer | leaf::LITERAL) {
+                    Some(e) => e,
+                    None => {
+                        let rest = b[p + 1..].iter().take_while(|&&c| class(c) & BLANK == 0);
+                        let e = p + 1 + rest.count();
+                        self.put(p, e, outer | bad);
+                        e
+                    }
+                },
+                _ => {
+                    let mut e = p + 1;
+                    while e < b.len() && class(b[e]) & BARE != 0 {
+                        e += 1;
+                    }
+                    self.put(p, e, outer | name);
+                    e
+                }
+            };
+            let q = blanks(b, e);
+            if b.get(q) != Some(&b'.') {
+                return e;
             }
-            Some(b'\'') if b[p..].starts_with(b"'''") => {
-                return opened(self, 3, leaf::TRIPLE_LITERAL + BEGIN, &[STRING_0]);
+            let r = blanks(b, q + 1);
+            if !b.get(r).is_some_and(|&c| class(c) & KEY_START != 0) {
+                self.put(e, q, outer);
+                self.put(q, q + 1, outer | bad);
+                return q + 1;
             }
-            Some(b'"') if b[p..].starts_with(b"\"\"\"") => {
-                return opened(self, 3, leaf::TRIPLE_BASIC + BEGIN, &[STRING_1]);
+            self.put(e, q, outer);
+            self.put(q, q + 1, outer | dot);
+            self.put(q + 1, r, outer);
+            p = r;
+        }
+    }
+
+    /// A table's header at `p`, its `[`: where it ends.
+    fn header(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let nl = b.len();
+        let two = b.get(p + 1) == Some(&b'[');
+        let n = 1 + usize::from(two);
+        let q = blanks(b, p + n);
+        // `[]`, `[ ]`, `[[]]`, `[[]`, `[]]`: no name
+        if b.get(q) == Some(&b']') {
+            let e = q + 1 + usize::from(b.get(q + 1) == Some(&b']'));
+            self.put(p, e, leaf::BAD_TABLE);
+            return e;
+        }
+        let (outer, begin, end) = match two {
+            true => (
+                IN_TABLE_ARRAY,
+                leaf::TABLE_ARRAY_BEGIN,
+                leaf::TABLE_ARRAY_END,
+            ),
+            false => (IN_TABLE, leaf::TABLE_BEGIN, leaf::TABLE_END),
+        };
+        self.put(p, p + n, begin);
+        let mut e = q;
+        if b.get(q).is_some_and(|&c| class(c) & KEY_START != 0) {
+            e = self.key(q, outer);
+        }
+        let r = blanks(b, e);
+        if r >= nl {
+            return nl;
+        }
+        if b[r] == b']' && (!two || b.get(r + 1) == Some(&b']')) {
+            self.put(r, r + n, end);
+            return r + n;
+        }
+        // junk to the header's `]` (an array of tables' `]]`, or its first `]` without one)
+        let close = |s: &[u8]| s.windows(2).position(|w| w == b"]]").map(|i| i + 2);
+        let first = |s: &[u8]| s.iter().position(|&c| c == b']').map(|i| i + 1);
+        let k = match two {
+            true => close(&b[r..]).or_else(|| first(&b[r..])),
+            false => first(&b[r..]),
+        };
+        let k = k.map_or(nl, |k| r + k);
+        self.put(r, k, leaf::BAD_TABLE);
+        k
+    }
+
+    /// A value at `p`, before the line's end and not a blank: where it ends and what follows.
+    #[inline(always)]
+    fn value(&mut self, p: usize) -> (usize, u8) {
+        let b = self.b;
+        let c = b[p];
+        match c {
+            b'"' => {
+                if b[p..].starts_with(b"\"\"\"") {
+                    self.put(p, p + 3, leaf::TRIPLE_BASIC + BEGIN);
+                    return match self.triple(p + 3, BASIC_OPEN) {
+                        Some(e) => (e, self.after()),
+                        None => (b.len(), at::LINE),
+                    };
+                }
+                let e = self.basic(p, leaf::BASIC).unwrap_or(b.len());
+                return (e, self.after());
             }
-            Some(b'"') => return opened(self, 1, leaf::BASIC + BEGIN, &[BASIC_STRING_0]),
+            b'\'' => {
+                if b[p..].starts_with(b"'''") {
+                    self.put(p, p + 3, leaf::TRIPLE_LITERAL + BEGIN);
+                    return match self.triple(p + 3, LITERAL_OPEN) {
+                        Some(e) => (e, self.after()),
+                        None => (b.len(), at::LINE),
+                    };
+                }
+                let e = match self.literal(p, leaf::LITERAL) {
+                    Some(e) => e,
+                    None => {
+                        self.put(p, p + 1, leaf::LITERAL + BEGIN);
+                        self.put(p + 1, b.len(), leaf::LITERAL + TEXT);
+                        b.len()
+                    }
+                };
+                return (e, self.after());
+            }
+            b'[' => {
+                self.put(p, p + 1, leaf::ARRAY_BEGIN);
+                self.open(false);
+                return (p + 1, at::ARRAY_VALUE);
+            }
+            b'{' => {
+                self.put(p, p + 1, leaf::INLINE_BEGIN);
+                self.open(true);
+                return (p + 1, at::INLINE_KEY);
+            }
             _ => {}
         }
-        let e = if let Some(e) = self.literal(l, p) {
-            e
-        } else if let Some(e) = datetime(l, p) {
-            self.put(p, e, leaf::DATETIME);
-            e
-        } else if let Some((q, e)) = float(l, p).or_else(|| inf_nan(l, p)) {
-            self.put(p, q, leaf::FLOAT_SIGN);
-            self.put(q, e, leaf::FLOAT);
-            e
-        } else if let Some((q, e)) = integer(l, p) {
-            self.put(p, q, leaf::INTEGER_SIGN);
-            self.put(q, e, leaf::INTEGER);
-            e
-        } else if b[p.min(nl)..].starts_with(b"true") || b[p.min(nl)..].starts_with(b"false") {
-            let e = p + if b[p] == b't' { 4 } else { 5 };
-            self.put(p, e, leaf::BOOL);
-            e
-        } else if p > nl {
-            p
-        } else if l.run(p, is_blank) == nl {
-            nl
-        } else {
-            let e = word_or_char(l, p);
+        let l = Line { b };
+        let e = match c {
+            b't' | b'f' => {
+                let word: &[u8] = if c == b't' { b"true" } else { b"false" };
+                match b[p..].starts_with(word) && word_end(&l, p + word.len()) {
+                    true => {
+                        self.put(p, p + word.len(), leaf::BOOL);
+                        Some(p + word.len())
+                    }
+                    false => None,
+                }
+            }
+            b'0'..=b'9' | b'+' | b'-' | b'i' | b'n' => self.number(&l, p),
+            _ => None,
+        };
+        let e = e.unwrap_or_else(|| {
+            let e = word_or_char(b, p);
             self.put(p, e, leaf::BAD_VALUE);
             e
-        };
-        self.pop();
+        });
+        (e, self.after())
+    }
+
+    /// A date-time, a float or an integer at `p`: where it ends.
+    fn number(&mut self, l: &Line, p: usize) -> Option<usize> {
+        if l.b[p].is_ascii_digit()
+            && let Some(e) = datetime(l, p)
+        {
+            self.put(p, e, leaf::DATETIME);
+            return Some(e);
+        }
+        if let Some((q, e)) = float(l, p).or_else(|| inf_nan(l, p)) {
+            self.put(p, q, leaf::FLOAT_SIGN);
+            self.put(q, e, leaf::FLOAT);
+            return Some(e);
+        }
+        let (q, e) = integer(l, p)?;
+        self.put(p, q, leaf::INTEGER_SIGN);
+        self.put(q, e, leaf::INTEGER);
         Some(e)
     }
 
-    /// `(')[^']*(')` at `p`.
-    fn literal(&mut self, l: &Line, p: usize) -> Option<usize> {
-        if l.at(p) != Some(b'\'') || p >= self.nl {
-            return None;
-        }
-        let j = find(l.b, p + 1, |c| c == b'\'')?;
-        self.put(p, p + 1, leaf::LITERAL + BEGIN);
-        self.put(p + 1, j, leaf::LITERAL + TEXT);
-        self.put(j, j + 1, leaf::LITERAL + END);
+    /// `'…'` at `p` as `base`'s leaves: where it ends, or none if it isn't closed.
+    fn literal(&mut self, p: usize, base: u16) -> Option<usize> {
+        let b = self.b;
+        let j = p + 1 + b[p + 1..].iter().position(|&c| c == b'\'')?;
+        self.put(p, p + 1, base + BEGIN);
+        self.put(p + 1, j, base + TEXT);
+        self.put(j, j + 1, base + END);
         Some(j + 1)
     }
 
-    /// A basic string's text from `p`, its escapes marked, to where `close` takes a quote it
-    /// meets: where that ends and true, or the line's end and false.
-    fn escapes(
-        &mut self,
-        l: &Line,
-        p: usize,
-        base: u16,
-        close: impl Fn(&[u8], usize) -> Option<usize>,
-    ) -> (usize, bool) {
-        let b = l.b;
+    /// A basic string at `p`, its `"`, as `base`'s leaves, its escapes marked: where it ends, or
+    /// none if it runs to the line's end unclosed.
+    fn basic(&mut self, p: usize, base: u16) -> Option<usize> {
+        self.put(p, p + 1, base + BEGIN);
+        let b = self.b;
+        let mut from = p + 1;
+        let mut i = from;
+        loop {
+            let k = find_any(b, i, *b"\"\\");
+            if k >= b.len() {
+                self.put(from, b.len(), base + TEXT);
+                return None;
+            }
+            if b[k] == b'"' {
+                self.put(from, k, base + TEXT);
+                self.put(k, k + 1, base + END);
+                return Some(k + 1);
+            }
+            from = self.escape(k, from, base);
+            i = from.max(k + 1);
+        }
+    }
+
+    /// The escape at `k` (a `\`) in a basic string whose text so far starts at `from`: where
+    /// the text goes on.
+    fn escape(&mut self, k: usize, from: usize, base: u16) -> usize {
+        let b = self.b;
+        let n = escape(b, k);
+        if n > 0 {
+            self.put(from, k, base + TEXT);
+            self.put(k, k + n, base + ESCAPE);
+            return k + n;
+        }
+        if k + 1 >= b.len() {
+            // a `\` ending the line: text (in a multi-line string, its line ending)
+            return from;
+        }
+        let e = k + 1 + Line { b }.char_len(k + 1).unwrap_or(1);
+        self.put(from, k, base + TEXT);
+        self.put(k, e, base + BAD_ESCAPE);
+        e
+    }
+
+    /// A multi-line string's text from `p`, `open` saying which: where it closes, or none if it
+    /// goes on past the line (kept in [`Scan::string`]).
+    fn triple(&mut self, p: usize, open: u64) -> Option<usize> {
+        let b = self.b;
+        let (quote, base) = match open {
+            BASIC_OPEN => (b'"', leaf::TRIPLE_BASIC),
+            _ => (b'\'', leaf::TRIPLE_LITERAL),
+        };
         let mut from = p;
         let mut i = p;
-        while let Some(k) = find(b, i, |c| c == b'"' || c == b'\\') {
-            if b[k] == b'"' {
-                if let Some(e) = close(b, k) {
-                    self.put(from, k, base + TEXT);
-                    self.put(k, e, base + END);
-                    return (e, true);
-                }
-                i = k + 1;
+        loop {
+            let k = match open {
+                BASIC_OPEN => find_any(b, i, *b"\"\\"),
+                _ => find_any(b, i, *b"'"),
+            };
+            if k >= b.len() {
+                self.put(from, b.len(), base + TEXT);
+                self.string = open;
+                return None;
+            }
+            if b[k] == b'\\' {
+                from = self.escape(k, from, base);
+                i = from.max(k + 1);
                 continue;
             }
-            let n = escape(l, k);
-            let e = match n {
-                0 => l.char_len(k + 1).map(|c| (k + 1 + c, base + BAD_ESCAPE)),
-                n => Some((k + n, base + ESCAPE)),
-            };
-            match e {
-                Some((e, kind)) => {
-                    self.put(from, k, base + TEXT);
-                    self.put(k, e, kind);
-                    from = e;
-                    i = e;
-                }
-                None => i = k + 1,
+            let run = b[k..].iter().take_while(|&&c| c == quote).count();
+            if run < 3 {
+                i = k + run;
+                continue;
             }
+            // the last three of up to five close it
+            let e = k + run.min(5);
+            self.put(from, e - 3, base + TEXT);
+            self.put(e - 3, e, base + END);
+            return Some(e);
         }
-        self.put(from, self.nl, base + TEXT);
-        (self.nl, false)
     }
 
-    /// `[ \t]*((#).*)` at `p`: the line's end.
-    fn comment(&mut self, l: &Line, p: usize) -> Option<usize> {
-        let q = l.run(p, is_blank);
-        if q >= self.nl || l.b[q] != b'#' {
-            return None;
-        }
-        self.put(p, q, leaf::NONE);
-        self.put(q, q + 1, leaf::COMMENT_MARK);
-        self.put(q + 1, self.nl, leaf::COMMENT);
-        Some(self.nl)
-    }
-
-    /// `([ \t\n])*` when it takes something, else a comment, at `p`.
-    fn ws_or_comment(&mut self, l: &Line, p: usize) -> Option<usize> {
-        let q = l.run(p, |c| matches!(c, b' ' | b'\t' | b'\n'));
-        if q > p {
-            return Some(q);
-        }
-        self.comment(l, p)
-    }
-
-    /// A table name's `[^\]]+\]?` at `p`, the `\n` among what it takes; it ends the name.
-    fn junk(&mut self, l: &Line, p: usize) -> Option<usize> {
-        let q = l.run(p, |c| c != b']');
-        let e = q + usize::from(l.at(q) == Some(b']'));
-        self.outer = NO_OUTER;
-        self.put(p, e, leaf::BAD_TABLE);
-        self.pop();
-        Some(e)
+    /// A comment at `p`, its `#`, to the line's end.
+    fn comment(&mut self, p: usize) {
+        self.put(p, p + 1, leaf::COMMENT_MARK);
+        self.put(p + 1, self.b.len(), leaf::COMMENT);
     }
 }
 
-/// The first byte at or after `from` in `set`.
-fn find(b: &[u8], from: usize, set: impl Fn(u8) -> bool) -> Option<usize> {
-    let hay = b.get(from..)?;
-    hay.iter().position(|&c| set(c)).map(|i| from + i)
-}
-
-/// Where the `[ \t]` before `at` start, not before `from`.
-fn back_blanks(b: &[u8], from: usize, mut at: usize) -> usize {
-    while at > from && is_blank(b[at - 1]) {
-        at -= 1;
-    }
-    at
-}
-
-/// `\w+|.` at `p`, before the `\n`.
-fn word_or_char(l: &Line, p: usize) -> usize {
-    match is_word(l.b[p]) {
-        true => l.run(p, |c| is_word(c) && c != b'\n'),
-        false => p + l.char_len(p).unwrap_or(1),
+/// `\w+|.` at `p`.
+fn word_or_char(b: &[u8], p: usize) -> usize {
+    match is_word(b[p]) {
+        true => p + b[p..].iter().take_while(|&&c| is_word(c)).count(),
+        false => p + Line { b }.char_len(p).unwrap_or(1),
     }
 }
 
-/// `\[?\[[ \t]*\]\]?` at `p`.
-fn empty_table(l: &Line, p: usize) -> Option<usize> {
-    if l.at(p) != Some(b'[') {
-        return None;
-    }
-    let close = |at: usize| {
-        let q = l.run(at, is_blank);
-        (l.at(q) == Some(b']')).then(|| q + 1 + usize::from(l.at(q + 1) == Some(b']')))
+/// The length of a valid escape at `k` (its `\`), or 0: `\b \t \n \f \r \" \\ \e`, `\xHH`,
+/// `\uHHHH`, `\UHHHHHHHH`.
+fn escape(b: &[u8], k: usize) -> usize {
+    let hex = |at: usize, n: usize| {
+        b.get(at..at + n)
+            .is_some_and(|h| h.iter().all(u8::is_ascii_hexdigit))
     };
-    match l.at(p + 1) {
-        Some(b'[') => close(p + 2).or_else(|| close(p + 1)),
-        _ => close(p + 1),
-    }
-}
-
-/// The length of `\\(?:[btnfr"\\]|u\h{4}|U\h{8})` at `k`, or 0.
-fn escape(l: &Line, k: usize) -> usize {
-    let hex = |at: usize, n: usize| (at..at + n).all(|i| l.is(i, |c| c.is_ascii_hexdigit()));
-    match l.at(k + 1) {
-        Some(b'b' | b't' | b'n' | b'f' | b'r' | b'"' | b'\\') => 2,
+    match b.get(k + 1) {
+        Some(b'b' | b't' | b'n' | b'f' | b'r' | b'"' | b'\\' | b'e') => 2,
+        Some(b'x') if hex(k + 2, 2) => 4,
         Some(b'u') if hex(k + 2, 4) => 6,
         Some(b'U') if hex(k + 2, 8) => 10,
         _ => 0,
     }
 }
 
-/// The date-time regex at `p`.
+/// A date, a time, or both with an offset, at `p`.
 fn datetime(l: &Line, p: usize) -> Option<usize> {
     if let Some(d) = date(l, p) {
         if l.is(d, |c| matches!(c, b't' | b'T' | b' '))
@@ -790,7 +764,7 @@ fn datetime(l: &Line, p: usize) -> Option<usize> {
     time(l, p)
 }
 
-/// The float regex at `p`: where its sign ends, and it.
+/// A float at `p`: where its sign ends, and it.
 fn float(l: &Line, p: usize) -> Option<(usize, usize)> {
     if !word_start(l, p) {
         return None;
@@ -799,7 +773,7 @@ fn float(l: &Line, p: usize) -> Option<(usize, usize)> {
     int_part(l, q, |r| fraction(l, r)).map(|e| (q, e))
 }
 
-/// `(?<!\w)([+-])?(inf|nan)(?!\w)` at `p`.
+/// `[+-]?(inf|nan)` as a word at `p`.
 fn inf_nan(l: &Line, p: usize) -> Option<(usize, usize)> {
     if !word_start(l, p) {
         return None;
@@ -809,7 +783,8 @@ fn inf_nan(l: &Line, p: usize) -> Option<(usize, usize)> {
     ((word == b"inf" || word == b"nan") && word_end(l, q + 3)).then_some((q, q + 3))
 }
 
-/// The integer regex at `p` (`toml::integer`'s branches): where its sign ends, and it.
+/// An integer at `p` (decimal with a sign, or hexadecimal, octal or binary): where its sign
+/// ends, and it.
 fn integer(l: &Line, p: usize) -> Option<(usize, usize)> {
     if l.at(p) == Some(b'0') {
         let radix: [(u8, Digit); 3] = [
@@ -825,4 +800,139 @@ fn integer(l: &Line, p: usize) -> Option<(usize, usize)> {
     }
     let q = sign(l, p);
     int_part(l, q, |r| word_end(l, r).then_some(r)).map(|e| (q, e))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Lang;
+    use crate::tests::marked;
+
+    fn kinds(lines: &[&'static str]) -> Vec<(&'static str, &'static str)> {
+        marked(Lang::Toml, lines)
+            .into_iter()
+            .map(|(t, s)| (t, s.rsplit(' ').next().unwrap()))
+            .collect()
+    }
+
+    #[test]
+    fn keys_and_values() {
+        assert_eq!(
+            kinds(&["name = \"ada\" # why"]),
+            [
+                ("name", "entity.name.tag.toml"),
+                ("=", "punctuation.definition.key-value.toml"),
+                ("\"", "punctuation.definition.string.begin.toml"),
+                ("ada", "string.quoted.double.basic.toml"),
+                ("\"", "punctuation.definition.string.end.toml"),
+                ("#", "punctuation.definition.comment.toml"),
+                (" why", "comment.line.number-sign.toml"),
+            ]
+        );
+    }
+
+    #[test]
+    fn arrays_run_across_lines() {
+        let got = kinds(&["x = [", "  1, -2.5,", "]"]);
+        assert!(
+            got.contains(&("-", "keyword.operator.arithmetic.toml")),
+            "{got:?}"
+        );
+        assert!(
+            got.contains(&("1", "constant.numeric.integer.toml")),
+            "{got:?}"
+        );
+        assert_eq!(
+            got.last(),
+            Some(&("]", "punctuation.definition.array.end.toml"))
+        );
+    }
+
+    /// Where it reads TOML 1.1 and bat's grammar doesn't.
+    #[test]
+    fn toml_1_1_where_bat_differs() {
+        // blanks after a value are no error
+        assert_eq!(kinds(&["a = 1   "]).len(), 3);
+        // an inline table across lines, with a comment and a trailing `,`
+        let got = kinds(&["t = {", " a = 1, # c", "}"]);
+        assert!(got.contains(&("a", "entity.name.tag.toml")), "{got:?}");
+        assert!(
+            got.contains(&(" c", "comment.line.number-sign.toml")),
+            "{got:?}"
+        );
+        assert_eq!(
+            got.last(),
+            Some(&("}", "punctuation.definition.inline-table.end.toml"))
+        );
+        // a multi-line string closes at the last three quotes of up to five
+        let got = kinds(&[r#"s = """a""""""#]);
+        assert!(
+            got.contains(&(r#"a"""#, "string.quoted.triple.basic.block.toml")),
+            "{got:?}"
+        );
+        // whole words, the new escapes, an unterminated literal string
+        assert_eq!(
+            kinds(&["f = trueish"]).last(),
+            Some(&("trueish", "invalid.illegal.value.toml"))
+        );
+        let got = kinds(&[r#"k = "\e\x41""#]);
+        assert!(
+            got.contains(&(r"\e", "constant.character.escape.toml"))
+                && got.contains(&(r"\x41", "constant.character.escape.toml")),
+            "{got:?}"
+        );
+        assert_eq!(
+            kinds(&["y = 'also"]).last(),
+            Some(&("also", "string.quoted.single.literal.toml"))
+        );
+    }
+
+    #[test]
+    fn bad_keys_and_headers() {
+        assert_eq!(
+            kinds(&["a b = 1"]),
+            [
+                ("a", "entity.name.tag.toml"),
+                ("b = 1", "invalid.illegal.keyval.toml")
+            ]
+        );
+        assert_eq!(
+            kinds(&["[[a]b]]"]).last(),
+            Some(&("]b]]", "invalid.illegal.table.toml"))
+        );
+        assert_eq!(kinds(&["[ ]"]), [("[ ]", "invalid.illegal.table.toml")]);
+        // a header ends with its line, a quoted part left open
+        assert_eq!(
+            kinds(&["[\"a", "b = 1"]).last(),
+            Some(&("1", "constant.numeric.integer.toml"))
+        );
+    }
+
+    /// Arrays nested past the levels whose kinds are kept, and the odd blocks the scanner was
+    /// once held to syntect on: the spans in order, and the top level back after them.
+    #[test]
+    fn deep_and_odd_input() {
+        let deep = format!("a = {}1{}", "[".repeat(200), "]".repeat(200));
+        let blocks = [
+            deep.as_str(),
+            "bad = \nbad2 = = 1\nkey\n= 1\n[]\n[[]]\n[a]b]\n[[a]b]]\n[[a]\nx = 1 trailing",
+            "t = {\n a = 1,\n}\nu = { , }\nv = { a = 1, , b = 2 }\nw = {a=1}}",
+            "x = \"unterminated\ny = 'also\nz = [1 2]\n\"k\\\"ey\" = 1\n\t  key\t=\t1\t",
+            "s = \"\"\"\nline \\n \\u00e9 \\q\nend\"\"\" # c\nt = '''\nraw\n'''",
+        ];
+        for block in blocks {
+            let mut lines: Vec<&'static str> = block.to_string().leak().split('\n').collect();
+            lines.push("after = 1");
+            let got = kinds(&lines);
+            assert!(
+                got.ends_with(&[
+                    ("after", "entity.name.tag.toml"),
+                    ("=", "punctuation.definition.key-value.toml"),
+                    ("1", "constant.numeric.integer.toml"),
+                ]),
+                "{block:?}: {got:?}"
+            );
+        }
+        // past the kinds kept, the levels below are taken for arrays: still in order
+        kinds(&[format!("a = {}x = 1", "[{".repeat(70)).leak(), "b = 2"]);
+    }
 }

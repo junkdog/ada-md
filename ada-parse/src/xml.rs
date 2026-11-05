@@ -1,50 +1,10 @@
-//! What XML's scanner (`xml_scan.rs`) shares from the port of bat's `XML` it replaced: the
-//! contexts' ids, which its stack holds (syntect's, in the order the probe's `dump XML` lists
-//! them), the scopes, and the matchers of the regexes it tests at a position. Names' `\p{L}`
+//! What XML's scanner (`xml_scan.rs`) keeps from bat's `XML`: the scopes, and the matchers of
+//! the regexes it tests at a position, for what isn't plain. Names' `\p{L}`
 //! and `\p{N}` are ASCII letters and digits here, and any byte past ASCII, so that a name never
 //! ends inside a character; on ASCII text the scopes are syntect's.
 
-use crate::matcher::{Line, M, atoms, first, is_space, is_word};
+use crate::matcher::{Line, M, atoms, is_space, is_word};
 
-pub(crate) const CDATA_0: u8 = 0;
-pub(crate) const COMMENT_0: u8 = 1;
-pub(crate) const ATTLIST_PARENS_0: u8 = 2;
-pub(crate) const ELEMENT_PARENS_0: u8 = 3;
-pub(crate) const SUBSET_BRACKETS_0: u8 = 4;
-pub(crate) const UNKNOWN_0: u8 = 5;
-pub(crate) const PREPROCESSOR_0: u8 = 6;
-pub(crate) const PREPROCESSOR_1: u8 = 7;
-pub(crate) const KEY_VALUE_0: u8 = 8;
-pub(crate) const TAG_0: u8 = 9;
-pub(crate) const TAG_1: u8 = 10;
-pub(crate) const MAIN_0: u8 = 11;
-pub(crate) const START: u8 = 12;
-pub(crate) const DOCTYPE_META: u8 = 16;
-pub(crate) const DOCTYPE_ROOT_NAME: u8 = 17;
-pub(crate) const DTD_ATTLIST_CONTENT: u8 = 20;
-pub(crate) const DTD_ATTLIST_META: u8 = 21;
-pub(crate) const DTD_CONTENT_QUOTED: u8 = 24;
-pub(crate) const DTD_CONTENT_TYPE: u8 = 25;
-pub(crate) const DTD_CONTENT_UNQUOTED: u8 = 26;
-pub(crate) const DTD_ELEMENT_CONTENT: u8 = 28;
-pub(crate) const DTD_ELEMENT_META: u8 = 29;
-pub(crate) const DTD_ELEMENT_NAME: u8 = 30;
-pub(crate) const DTD_ELEMENT_PARENS: u8 = 31;
-pub(crate) const DTD_ENTITY_CONTENT: u8 = 35;
-pub(crate) const DTD_ENTITY_META: u8 = 36;
-pub(crate) const DTD_ENTITY_NAME: u8 = 37;
-pub(crate) const DTD_ENTITY_PUNCTUATION: u8 = 38;
-pub(crate) const DTD_NOTATION_META: u8 = 40;
-pub(crate) const DTD_NOTATION_NAME: u8 = 41;
-pub(crate) const DTD_SUBSET_BRACKETS: u8 = 43;
-pub(crate) const DTD_SUBSET_META: u8 = 44;
-pub(crate) const DTD_SUBSET_NAME: u8 = 45;
-pub(crate) const STRING_DOUBLE_QUOTED_BODY: u8 = 54;
-pub(crate) const STRING_SINGLE_QUOTED_BODY: u8 = 59;
-// nothing includes it, in bat's grammar either
-#[allow(dead_code)]
-pub(crate) const STRING_UNQUOTED_POP: u8 = 62;
-pub(crate) const TAG_ATTRIBUTE_SEPARATOR: u8 = 65;
 atoms! {
     CDATA_META = "meta.tag.sgml.cdata.xml",
     CDATA_TEXT = "string.unquoted.cdata.xml",
@@ -150,41 +110,10 @@ pub(crate) fn is_name2(c: u8) -> bool {
     is_name(c) || c == b':'
 }
 
-/// Whether `l`'s byte at `i` is a space (`\s`), the `\n` among them.
-fn space_at(l: &Line, i: usize) -> bool {
-    l.is(i, is_space)
-}
-
 /// `\b` at `i`.
 pub(crate) fn boundary(l: &Line, i: usize) -> bool {
     let w = |i: usize| l.is(i, |c| is_word(c) && c != b'\n');
     (i > 0 && w(i - 1)) != w(i)
-}
-
-/// `\?>`
-pub(crate) fn question_gt(l: &Line, from: usize) -> Option<M> {
-    l.lit(from, b"?>")
-}
-
-/// `>` with the byte before it when that is one of `before`, as `[…]?>` takes it; or, with
-/// `must`, only a `>` that one of them comes before (`[…]>`).
-fn before_gt(l: &Line, from: usize, before: &[u8], must: bool) -> Option<M> {
-    let mut at = from;
-    while let Some(k) = first(l, at, b'>') {
-        if k > from && before.contains(&l.b[k - 1]) {
-            return Some(M::new(k - 1, k + 1));
-        }
-        if !must {
-            return Some(M::new(k, k + 1));
-        }
-        at = k + 1;
-    }
-    None
-}
-
-/// `/?>`
-pub(crate) fn slash_gt(l: &Line, from: usize) -> Option<M> {
-    before_gt(l, from, b"/", false)
 }
 
 /// [`doctype`] at `k`, where a `<!` is.
@@ -303,22 +232,6 @@ pub(crate) fn dtd_name_at(l: &Line, p: usize) -> Option<M> {
         .then(|| M::new(p, e))
 }
 
-/// `\s?(?=[<…])`: a space and the byte ahead, else the byte ahead alone.
-fn space_then(l: &Line, from: usize, set: &[u8]) -> Option<M> {
-    l.find(from, |p| {
-        let is = |i: usize| l.at(i).is_some_and(|c| set.contains(&c));
-        if space_at(l, p) && is(p + 1) {
-            return Some(M::new(p, p + 1));
-        }
-        is(p).then(|| M::new(p, p))
-    })
-}
-
-/// `\s?(?=<)`
-pub(crate) fn missing_tag_end(l: &Line, from: usize) -> Option<M> {
-    space_then(l, from, b"<")
-}
-
 /// [`preprocessor_xml`] at `k`, where a `<?` is.
 pub(crate) fn preprocessor_xml_at(l: &Line, k: usize) -> Option<M> {
     let ahead = |i: usize| l.is(i, |c| matches!(c, b'?' | b'<' | b'>') || is_space(c));
@@ -403,25 +316,6 @@ pub(crate) fn qname(l: &Line, q: usize, mut m: M, first: usize) -> Option<M> {
     let (e, lvalid) = local(q)?;
     m.e = e as u32;
     Some(m.g(first + 3 + usize::from(!lvalid), q, e))
-}
-
-/// An attribute's name:
-/// `(?:(?:(N)|([^:=/<>\s]+))(:))?(?:(N)|([^=/<>\s]+?))(?=[=<>\s]|[/?]>)`.
-pub(crate) fn attribute(l: &Line, from: usize) -> Option<M> {
-    let free = |c: u8| !matches!(c, b'=' | b'/' | b'<' | b'>') && !is_space(c);
-    let mut p = from;
-    while p < l.nl() {
-        if !l.is(p, free) {
-            p += 1;
-            continue;
-        }
-        if let Some(m) = attribute_at(l, p) {
-            return Some(m);
-        }
-        // the run's end decides for every start in it
-        p = l.run(p, free);
-    }
-    None
 }
 
 /// [`attribute`] at `p`.

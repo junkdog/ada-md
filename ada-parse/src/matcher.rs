@@ -125,11 +125,6 @@ impl Line<'_> {
         i == self.nl() || i == self.end()
     }
 
-    /// The leftmost position at or after `from` where `at` matches, with what it gives.
-    pub fn find(&self, from: usize, at: impl Fn(usize) -> Option<M>) -> Option<M> {
-        (from..=self.end()).find_map(at)
-    }
-
     /// The leftmost `lit` at or after `from`.
     pub fn lit(&self, from: usize, lit: &[u8]) -> Option<M> {
         let hay = self.b.get(from..)?;
@@ -181,13 +176,6 @@ pub fn is_blank(b: u8) -> bool {
 pub fn is_space(b: u8) -> bool {
     crate::is_space(b)
 }
-
-/// How many levels a line's stack holds, more than syntect lets a push reach; past it the
-/// bottom ones are dropped, still counted toward the depth.
-pub(crate) const DEPTH: usize = 128;
-
-/// How deep syntect lets a push take the stack.
-pub(crate) const MAX_PUSH: usize = 100;
 
 /// The levels a [`crate::State`] keeps between lines.
 pub const KEPT: usize = 14;

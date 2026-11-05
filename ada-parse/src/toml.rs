@@ -1,33 +1,8 @@
-//! What TOML's scanner (`toml_scan.rs`) shares from the port of bat's `TOML` it replaced: the
-//! contexts' ids, which its stack holds (syntect's, in the order the probe's `dump TOML` lists
-//! them), the scopes, and the matchers of the regexes it tests at a position.
+//! What TOML's scanner (`toml_scan.rs`) keeps from bat's `TOML`: the scopes, and the
+//! matchers of its numbers and dates, each at a position.
 
 use crate::matcher::{Line, is_word};
 
-// the contexts
-pub(crate) const ARRAY_SEP_0: u8 = 0;
-pub(crate) const BASIC_STRING_0: u8 = 1;
-pub(crate) const INLINE_KEYVALS_0: u8 = 2;
-pub(crate) const INLINE_TABLE_0: u8 = 3;
-pub(crate) const STRING_0: u8 = 4;
-pub(crate) const STRING_1: u8 = 5;
-pub(crate) const MAIN_0: u8 = 6;
-pub(crate) const START: u8 = 7;
-pub(crate) const ARRAY_SEP: u8 = 9;
-pub(crate) const DATA_TYPES: u8 = 13;
-pub(crate) const INLINE_KEYVAL_SEP: u8 = 17;
-pub(crate) const INLINE_KEYVALS: u8 = 19;
-pub(crate) const KEY: u8 = 21;
-pub(crate) const KEY_SIMPLE: u8 = 23;
-pub(crate) const KEYVAL_SEP: u8 = 25;
-pub(crate) const MAYBE_ARRAY_COMMENTS: u8 = 28;
-pub(crate) const MAYBE_COMMENT_EOL: u8 = 29;
-pub(crate) const MAYBE_DOT_KEY: u8 = 30;
-pub(crate) const MAYBE_DOT_TABLE: u8 = 31;
-pub(crate) const MAYBE_EMPTY_ARRAY: u8 = 32;
-pub(crate) const TABLE_ARRAY_NAME: u8 = 35;
-pub(crate) const TABLE_NAME: u8 = 36;
-pub(crate) const TABLE_NAME_SIMPLE: u8 = 38;
 /// The scopes, as indices into [`ATOMS`].
 pub(crate) mod s {
     use crate::matcher::Atom;
@@ -122,16 +97,6 @@ pub(crate) const ATOMS: &[&str] = &[
 ];
 
 // the matchers: each finds its regex's leftmost match at or after `from`
-
-/// `[A-Za-z0-9_'"-]`, what a key or a table name starts with.
-pub(crate) fn is_key_start(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || matches!(c, b'_' | b'\'' | b'"' | b'-')
-}
-
-/// `[A-Za-z0-9_-]`.
-pub(crate) fn is_bare(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-')
-}
 
 fn digit(l: &Line, i: usize) -> bool {
     l.is(i, |c| c.is_ascii_digit())

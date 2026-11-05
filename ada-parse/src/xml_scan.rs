@@ -1,32 +1,32 @@
-//! XML by a scanner (ADR-40, speed first): bat's `XML` grammar compiled by hand, as TOML's is.
-//! Each of the grammar's contexts (their ids in `xml.rs`) is an arm of one `match` on the top of the stack, and
-//! each decides at the byte where its next match can start: text runs to the next `<` or `&`, a
-//! tag's attributes and strings to the next quote, `<`, `&` or `>`. Nearly every context ends
-//! in a pattern that matches any byte that isn't a space (the grammar's `else-pop`s), so the
-//! leftmost match is the first pattern that matches at the first byte that isn't a space; the
-//! rest search ahead once, for a byte. The matchers in `xml.rs` are anchored at a position.
+//! XML by a scanner of ada's own (X-020, 2026-11-05): where the line is, as one mode and a few
+//! counters, in place of a stack of bat's 68 contexts, and each span's kind held as the line
+//! goes rather than worked out from the stack at each push and pop. Text runs to the next `<`
+//! or `&`; a tag's plain names, its attributes and their strings take one step each; the
+//! doctype, its internal subset and the declarations in it (`ENTITY`, `ELEMENT`, `ATTLIST`,
+//! `NOTATION`, conditional sections) are modes of their own, read in the order bat's grammar
+//! reads them, as are comments, CDATA and processing instructions. The matchers in `xml.rs`
+//! read what isn't plain: a namespace, a bad name, a reference.
 //!
-//! The stack holds syntect's context ids and packs into a [`State`]. Exact against syntect on
-//! bat's grammar, each scope once (`tests/exact_lexers.rs`, the `parse` fuzz target). A span's
-//! kind is fixed ([`scopes`]): the meta scopes of the stack as a set (a doctype's, its internal
-//! subset's, a conditional section's, then one of a tag's, a comment's, a declaration's, a
-//! group's), a string's, and a leaf. bat's stack repeats a group's or a conditional section's
-//! meta scopes as they nest, which none of the built-in themes tells apart; here each is kept
-//! once, the only way the scanner's scopes differ from syntect's.
+//! A span's kind is fixed ([`scopes`]): a doctype's, an internal subset's and a conditional
+//! section's meta scopes as a set, one of a tag's, a comment's, a declaration's or a group's,
+//! a string's, and a leaf, as when the scanner was bat's grammar compiled by hand (2026-10-31),
+//! so the themes color it as they did, and still exact against syntect on bat's grammar, each
+//! scope once (`tests/exact_lexers.rs`, the `parse` fuzz target). In a tag, a byte that starts
+//! nothing (a stray `=`, `/` or `?`) is passed as the tag's own, where bat's grammar searched for
+//! the leftmost of its patterns, which reads the same wherever it was tried (the hand-picked
+//! blocks, the corpus, 36,000 lines of token soup). Nesting has no limit of syntect's; past
+//! where syntect's would stop, the state says the lines aren't exact.
+//!
+//! The state between lines is one word: the mode, where a string returns to, the string's
+//! quote, the meta flags, the markup's meta scope, the conditional sections and an element's
+//! groups open.
 
-use crate::matcher::{Atom, DEPTH, Line, M, MAX_PUSH};
+use crate::matcher::{Atom, Line, M, first};
+use crate::prim::find_any;
 use crate::xml::{
-    ATOMS, ATTLIST_PARENS_0, CDATA_0, COMMENT_0, DOCTYPE_META, DOCTYPE_ROOT_NAME,
-    DTD_ATTLIST_CONTENT, DTD_ATTLIST_META, DTD_CONTENT_QUOTED, DTD_CONTENT_TYPE,
-    DTD_CONTENT_UNQUOTED, DTD_ELEMENT_CONTENT, DTD_ELEMENT_META, DTD_ELEMENT_NAME,
-    DTD_ELEMENT_PARENS, DTD_ENTITY_CONTENT, DTD_ENTITY_META, DTD_ENTITY_NAME,
-    DTD_ENTITY_PUNCTUATION, DTD_NOTATION_META, DTD_NOTATION_NAME, DTD_SUBSET_BRACKETS,
-    DTD_SUBSET_META, DTD_SUBSET_NAME, ELEMENT_PARENS_0, KEY_VALUE_0, MAIN_0, PREPROCESSOR_0,
-    PREPROCESSOR_1, START, STRING_DOUBLE_QUOTED_BODY, STRING_SINGLE_QUOTED_BODY, SUBSET_BRACKETS_0,
-    TAG_0, TAG_1, TAG_ATTRIBUTE_SEPARATOR, UNKNOWN_0, attr_default_at, attr_type_at, attribute,
-    attribute_at, boundary, char_ref_at, declaration_at, doctype_at, dtd_attr_name_at, dtd_name_at,
-    is_name, is_name_start, is_name2, is_name2_start, marked_name_at, missing_tag_end,
-    placeholder_at, preprocessor_other_at, preprocessor_xml_at, qname, question_gt, s, slash_gt,
+    ATOMS, attr_default_at, attr_type_at, attribute_at, boundary, char_ref_at, declaration_at,
+    doctype_at, dtd_attr_name_at, dtd_name_at, is_name, is_name_start, is_name2, is_name2_start,
+    marked_name_at, placeholder_at, preprocessor_other_at, preprocessor_xml_at, qname, s,
     unknown_at,
 };
 use crate::{Out, State, is_space};
@@ -61,16 +61,18 @@ const INNERS: [&[Atom]; 14] = [
     &[s::NOTATION_META],
 ];
 mod inner {
+    pub const NONE: usize = 0;
     pub const TAG: usize = 1;
     pub const PREPROCESSOR: usize = 2;
     pub const COMMENT: usize = 3;
     pub const CDATA: usize = 4;
     pub const UNKNOWN: usize = 5;
+    /// An enumeration in an attribute list is one past it, [`super::ENUMERATION`]; 8 is an
+    /// enumeration alone, which the scanner no longer gives.
     pub const ATTLIST: usize = 6;
-    /// An enumeration in a declaration, or a group: one past the declaration's.
-    pub const ENUMERATED: usize = 8;
+    /// A group in an element's declaration is one past it, [`super::ELEMENT_GROUP`]; 11 is a
+    /// group alone, which the scanner no longer gives.
     pub const ELEMENT: usize = 9;
-    pub const GROUP: usize = 11;
     pub const ENTITY: usize = 12;
     pub const NOTATION: usize = 13;
 }
@@ -240,130 +242,58 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
         .collect()
 }
 
-/// The searches a tag or a processing instruction makes ahead of a byte that decides nothing
-/// (bad input), each kept for the line while it lies ahead, as syntect keeps a regex's match.
-const MEMOS: usize = 4;
-const SLASH_GT: usize = 0;
-const QUESTION_GT: usize = 1;
-const MISSING: usize = 2;
-const ATTRIBUTE: usize = 3;
-const UNKNOWN: u32 = u32::MAX;
-/// The most scopes the machine holds at once.
-const SCOPES: usize = 64;
-const NO_MATCH: u32 = u32::MAX - 1;
-
-/// Lex `b`, a line without its `\n`, from `state`.
-#[inline(never)]
-pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let l = Line { b };
-    let mut scan = Scan {
-        nl: b.len(),
-        stack: [0; DEPTH],
-        depth: 0,
-        dropped: 0,
-        exact: state.is_exact(),
-        base: 0,
-        text: 0,
-        metas: 0,
-        deep: false,
-        at: 0,
-        memo: [UNKNOWN; MEMOS],
-        out,
-    };
-    match state.levels() {
-        [] => {
-            scan.stack[0] = START;
-            scan.depth = 1;
-        }
-        levels => {
-            scan.stack[..levels.len()].copy_from_slice(levels);
-            scan.depth = levels.len();
-        }
-    }
-    scan.refresh();
-    scan.run(&l);
-    scan.fill(scan.nl);
-    static NO_WITHS: [u8; DEPTH] = [0; DEPTH];
-    *state = State::pack(
-        &scan.stack[..scan.depth],
-        &NO_WITHS[..scan.depth],
-        0,
-        scan.exact,
-    );
+/// Where a line is.
+mod mode {
+    /// The document's text.
+    pub const TEXT: u8 = 0;
+    /// In a tag or an `<?xml …?>` (the markup tells): an attribute's name, or the tag's end.
+    pub const TAG: u8 = 1;
+    /// After an attribute's name: its `=`.
+    pub const TAG_EQ: u8 = 2;
+    /// After an attribute's `=`: its value.
+    pub const TAG_VALUE: u8 = 3;
+    /// In a quoted string, which returns to [`super::Scan::ret`].
+    pub const STRING: u8 = 4;
+    /// A close tag's, the doctype's or a declaration's end, after what it holds.
+    pub const END: u8 = 5;
+    pub const COMMENT: u8 = 6;
+    pub const CDATA: u8 = 7;
+    /// A processing instruction but `<?xml`, to its `?>`.
+    pub const PI: u8 = 8;
+    /// The doctype's root element.
+    pub const ROOT: u8 = 9;
+    /// `PUBLIC` or `SYSTEM`, in the doctype, an entity's or a notation's declaration.
+    pub const TYPE: u8 = 10;
+    /// The doctype's or a notation's quoted strings.
+    pub const QUOTED: u8 = 11;
+    /// The doctype's internal subset's `[`, or a conditional section's.
+    pub const BRACKETS: u8 = 12;
+    /// The internal subset, or a conditional section's.
+    pub const SUBSET: u8 = 13;
+    /// A conditional section's end, after its `]`.
+    pub const SECTION_END: u8 = 14;
+    /// A declaration's name, or a conditional section's keyword.
+    pub const NAME: u8 = 15;
+    /// An entity's declaration: its `%`.
+    pub const PERCENT: u8 = 16;
+    /// An entity's value, or `NDATA`.
+    pub const ENTITY_VALUE: u8 = 17;
+    /// After `NDATA`: the notation's name.
+    pub const NDATA_NAME: u8 = 18;
+    /// An element's content: `EMPTY`, `ANY`, its group.
+    pub const ELEMENT_CONTENT: u8 = 19;
+    /// In an element's group or an attribute's enumeration (the markup tells).
+    pub const GROUP: u8 = 20;
+    /// After a group's `)`: its quantifier.
+    pub const GROUP_AFTER: u8 = 21;
+    /// An attribute list's attributes: their names, types, defaults.
+    pub const ATTRIBUTES: u8 = 22;
 }
 
-struct Scan<'b, 'c> {
-    /// Where the `\n` is.
-    nl: usize,
-    stack: [u8; DEPTH],
-    depth: usize,
-    /// Levels dropped from the bottom, past [`DEPTH`], still counted toward syntect's push limit.
-    dropped: usize,
-    exact: bool,
-    /// The kind of the stack's scopes, with no leaf.
-    base: u16,
-    /// The kind of text no pattern matches: [`Scan::base`], in CDATA its text's.
-    text: u16,
-    /// How many meta scopes the machine would hold for the stack, repeats included: past
-    /// [`SCOPES`] it drops some, and the line isn't exact.
-    metas: usize,
-    /// A leaf's scopes may not fit beside the stack's.
-    deep: bool,
-    /// Where the spans so far end.
-    at: usize,
-    memo: [u32; MEMOS],
-    out: &'b mut Out<'c>,
-}
-
-/// What each context gives the stack's kind, by its id: how many scopes it gives its text
-/// (its meta and meta content scopes, bits 0–1), a flag (bits 2–4), an inner markup (bits 5–8),
-/// a group or an enumeration (bits 9–10), a string (bits 11–12). The kind changes only with the
-/// contexts that give some scopes.
-static ROLES: [u16; 68] = {
-    let mut roles = [0; 68];
-    let mut c = 0;
-    while c < 68 {
-        roles[c] = role(c as u8);
-        c += 1;
-    }
-    roles
-};
-
-const GROUP: u16 = 1;
-const ENUMERATION: u16 = 2;
-
-const fn role(c: u8) -> u16 {
-    let (flag, decl, group, string) = match c {
-        DOCTYPE_META => (DOCTYPE, 0, 0, 0),
-        SUBSET_BRACKETS_0 => (SUBSET, 0, 0, 0),
-        DTD_SUBSET_META => (SECTION, 0, 0, 0),
-        TAG_0 | TAG_1 => (0, inner::TAG, 0, 0),
-        PREPROCESSOR_0 | PREPROCESSOR_1 => (0, inner::PREPROCESSOR, 0, 0),
-        COMMENT_0 => (0, inner::COMMENT, 0, 0),
-        CDATA_0 => (0, inner::CDATA, 0, 0),
-        UNKNOWN_0 => (0, inner::UNKNOWN, 0, 0),
-        DTD_ATTLIST_META => (0, inner::ATTLIST, 0, 0),
-        DTD_ELEMENT_META => (0, inner::ELEMENT, 0, 0),
-        DTD_ENTITY_META => (0, inner::ENTITY, 0, 0),
-        DTD_NOTATION_META => (0, inner::NOTATION, 0, 0),
-        DTD_ELEMENT_PARENS => (0, 0, GROUP, 0),
-        ATTLIST_PARENS_0 => (0, 0, ENUMERATION, 0),
-        STRING_DOUBLE_QUOTED_BODY => (0, 0, 0, 1),
-        STRING_SINGLE_QUOTED_BODY => (0, 0, 0, 2),
-        _ => (0, 0, 0, 0),
-    };
-    let metas = match c {
-        SUBSET_BRACKETS_0 | CDATA_0 => 2,
-        _ if flag != 0 || decl != 0 || group != 0 || string != 0 => 1,
-        _ => 0,
-    };
-    metas | (flag as u16) << 2 | (decl as u16) << 5 | group << 9 | string << 11
-}
-
-/// Whether a context gives its text scopes, so the stack's kind changes with it.
-fn metas_of(c: u8) -> usize {
-    usize::from(ROLES[usize::from(c)] & 3)
-}
+/// What a group's markup is: an element's declaration and a group, an attribute list's and an
+/// enumeration.
+const ELEMENT_GROUP: usize = inner::ELEMENT + 1;
+const ENUMERATION: usize = inner::ATTLIST + 1;
 
 /// `[*?+]`
 fn is_quantifier(c: u8) -> bool {
@@ -371,6 +301,7 @@ fn is_quantifier(c: u8) -> bool {
 }
 
 /// Where the spaces from `p` end.
+#[inline(always)]
 fn spaces(b: &[u8], mut p: usize) -> usize {
     while p < b.len() && is_space(b[p]) {
         p += 1;
@@ -386,31 +317,131 @@ fn find(b: &[u8], from: usize, set: impl Fn(u8) -> bool) -> Option<usize> {
         .map(|i| from + i)
 }
 
-impl Scan<'_, '_> {
-    /// Bytes `s..e` are `leaf` in the stack's scopes; the text before them, from where the
-    /// spans end, is the stack's text.
+/// Lex `b`, a line without its `\n`, from `state`.
+#[inline(never)]
+pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
+    let w = state.word();
+    let mut x = Scan {
+        b,
+        mode: (w & 31) as u8,
+        ret: (w >> 5 & 31) as u8,
+        string: (w >> 10 & 3) as usize,
+        flags: (w >> 12 & 7) as usize,
+        inner: (w >> 15 & 15) as usize,
+        sections: (w >> 19) as u8,
+        depth: (w >> 27) as u8,
+        base: 0,
+        text: 0,
+        at: 0,
+        out,
+    };
+    x.rebase();
+    x.run(0);
+    x.fill(b.len());
+    let w = u64::from(x.mode)
+        | u64::from(x.ret) << 5
+        | (x.string as u64) << 10
+        | (x.flags as u64) << 12
+        | (x.inner as u64) << 15
+        | u64::from(x.sections) << 19
+        | u64::from(x.depth) << 27;
+    state.set_word(w);
+    // syntect takes no push past 100 levels: a section is two of its contexts, a group one
+    if 2 * usize::from(x.sections) + usize::from(x.depth) > EXACT_NESTING {
+        state.inexact = true;
+    }
+}
+
+/// How deep conditional sections (twice) and an element's groups nest before syntect's stack
+/// could reach its limit, past which a line's scopes are no longer bat's.
+const EXACT_NESTING: usize = 80;
+
+struct Scan<'b, 'o, 'c> {
+    b: &'b [u8],
+    mode: u8,
+    /// Where a string returns to.
+    ret: u8,
+    /// The string open: none, double-quoted, single-quoted.
+    string: usize,
+    /// The meta flags: in the doctype, its internal subset, a conditional section.
+    flags: usize,
+    /// The markup's meta scope ([`INNERS`]).
+    inner: usize,
+    /// The conditional sections open.
+    sections: u8,
+    /// An element's groups open.
+    depth: u8,
+    /// The kind of the scopes so far, with no leaf.
+    base: u16,
+    /// The kind of text no token takes: [`Scan::base`], in CDATA its text's.
+    text: u16,
+    /// Where the spans so far end.
+    at: usize,
+    out: &'o mut Out<'c>,
+}
+
+impl Scan<'_, '_, '_> {
+    /// The kinds, after the flags, the markup, the string or the mode changed.
+    fn rebase(&mut self) {
+        self.base = kind(self.flags, self.inner, self.string, 0);
+        self.text = match self.mode {
+            mode::CDATA => self.base + leaf::CDATA_TEXT,
+            _ => self.base,
+        };
+    }
+
+    /// Bytes `s..e` are `leaf` in the scopes so far; the text before them, from where the
+    /// spans end, is the scopes' text.
+    #[inline(always)]
     fn put(&mut self, s: usize, e: usize, leaf: u16) {
         self.fill(s);
-        let e = e.min(self.nl);
+        let e = e.min(self.b.len());
         let kind = self.base + leaf;
-        if self.deep && self.metas + LEAVES[usize::from(leaf)].len() > SCOPES {
-            self.exact = false;
-        }
         if kind != 0 && e > s {
             self.out.push_merged(s, e, kind);
         }
         self.at = self.at.max(e);
     }
 
-    /// The text from where the spans end to `pos` is the stack's text.
+    /// [`Scan::put`] out of line, for the doctype's and its subset's rare paths: inlined there,
+    /// they took 17 KB.
+    #[inline(never)]
+    fn put_rare(&mut self, s: usize, e: usize, leaf: u16) {
+        self.put(s, e, leaf);
+    }
+
+    /// The text from where the spans end to `pos` is the scopes' text.
+    #[inline(always)]
     fn fill(&mut self, pos: usize) {
-        let pos = pos.min(self.nl);
+        let pos = pos.min(self.b.len());
         if pos > self.at {
             if self.text != 0 {
                 self.out.push_merged(self.at, pos, self.text);
             }
             self.at = pos;
         }
+    }
+
+    /// From `at`, markup whose meta scope is `inner`, in `mode`.
+    fn markup(&mut self, at: usize, inner: usize, mode: u8) {
+        self.fill(at);
+        self.inner = inner;
+        self.mode = mode;
+        self.rebase();
+    }
+
+    /// Where markup that ends returns: the internal subset, or the document's text.
+    fn back(&self) -> u8 {
+        match self.flags & SUBSET {
+            0 => mode::TEXT,
+            _ => mode::SUBSET,
+        }
+    }
+
+    /// The markup ends at `at`.
+    fn leave(&mut self, at: usize) {
+        let back = self.back();
+        self.markup(at, inner::NONE, back);
     }
 
     /// A match `m`: its groups in `caps`, as `(group, leaf)`, the rest of it `sc`.
@@ -422,7 +453,6 @@ impl Scan<'_, '_> {
                 continue;
             };
             if ge > gs {
-                debug_assert!(gs >= at);
                 self.put(at, gs, sc);
                 self.put(gs, ge, leaf);
                 at = ge;
@@ -437,639 +467,460 @@ impl Scan<'_, '_> {
         m.e as usize
     }
 
-    /// The stack's kinds, after it changed.
-    fn refresh(&mut self) {
-        let (mut flags, mut decl, mut group, mut string) = (0, 0, 0, 0);
-        let mut metas = 0;
-        for &c in &self.stack[..self.depth] {
-            let r = ROLES[usize::from(c)];
-            metas += usize::from(r & 3);
-            flags |= usize::from(r >> 2 & 7);
-            if r >> 5 & 15 != 0 {
-                decl = usize::from(r >> 5 & 15);
-            }
-            group |= r >> 9 & 3;
-            if r >> 11 != 0 {
-                string = usize::from(r >> 11);
-            }
-        }
-        self.metas = metas;
-        if metas > SCOPES {
-            self.exact = false;
-        }
-        self.deep = metas + 2 > SCOPES;
-        let inner = match (decl, group) {
-            (d, 0) => d,
-            (inner::ATTLIST | inner::ELEMENT, _) => decl + 1,
-            // the group's declaration dropped with the bottom levels
-            (_, ENUMERATION) => inner::ENUMERATED,
-            _ => inner::GROUP,
+    /// A quoted string at `q`, its quote: it returns to `ret`.
+    fn string_at(&mut self, q: usize, ret: u8) {
+        self.fill(q);
+        self.string = match self.b[q] {
+            b'"' => 1,
+            _ => 2,
         };
-        self.base = kind(flags, inner, string, 0);
-        self.text = match self.depth > 0 && self.top() == CDATA_0 {
-            true => self.base + leaf::CDATA_TEXT,
-            false => self.base,
-        };
+        self.ret = ret;
+        self.mode = mode::STRING;
+        self.rebase();
+        self.put(q, q + 1, leaf::STR_BEGIN);
     }
 
-    fn top(&self) -> u8 {
-        self.stack[self.depth - 1]
-    }
-
-    /// Whether syntect would push here (it doesn't past 100 levels; a `set` it always does).
-    fn can_push(&self) -> bool {
-        self.depth + self.dropped < MAX_PUSH
-    }
-
-    /// Push `refs` at `at`, the text before it in the scopes so far.
-    fn push(&mut self, at: usize, refs: &[u8]) {
-        self.fill(at);
-        for &r in refs {
-            if self.depth == DEPTH {
-                self.stack.copy_within(1.., 0);
-                self.depth -= 1;
-                self.dropped += 1;
-                self.exact = false;
-            }
-            self.stack[self.depth] = r;
-            self.depth += 1;
-        }
-        if refs.iter().any(|&r| metas_of(r) > 0) || self.dropped > 0 {
-            self.refresh();
+    /// `\s?(?=[\]<])`'s pop at `q`, the first byte from `p` that isn't a space: where the
+    /// next mode starts.
+    fn else_pop(&self, p: usize, q: usize) -> usize {
+        match q > p && matches!(self.b[q], b']' | b'<') {
+            true => q - 1,
+            false => q,
         }
     }
 
-    fn set(&mut self, at: usize, refs: &[u8]) {
-        self.fill(at);
-        self.depth -= 1;
-        let gone = self.stack[self.depth];
-        self.push(at, refs);
-        if metas_of(gone) > 0 {
-            self.refresh();
+    /// A quoted string at `q`, the first byte from `p` that isn't a space, returning to `ret`;
+    /// else `next` from where it pops.
+    fn quoted_or_pop(&mut self, p: usize, q: usize, ret: u8, next: u8) -> usize {
+        let at = self.else_pop(p, q);
+        if at == q && matches!(self.b[q], b'"' | b'\'') {
+            self.string_at(q, ret);
+            return q + 1;
         }
+        self.mode = next;
+        at
     }
 
-    /// Pop at `at`, the text before it in the scopes so far.
-    fn pop(&mut self, at: usize) {
-        self.fill(at);
-        self.depth -= 1;
-        if metas_of(self.stack[self.depth]) > 0 || self.depth == 0 {
-            self.refresh();
-        }
-    }
-
+    /// The line from `p`, in the mode it is in.
     #[inline(always)]
-    fn run(&mut self, l: &Line) {
-        let mut p = 0;
-        while self.depth > 0 {
-            match self.step(l, p) {
-                Some(q) => p = q,
-                None => return,
-            }
-        }
-    }
-
-    /// One match of the top context at `p`: where the next starts, or `None` when nothing
-    /// matches before the line ends. Inlined, as [`Scan::run`] is into [`line`]: called out of
-    /// line, the two cost XML 7% more instructions (X-010).
-    #[inline(always)]
-    fn step(&mut self, l: &Line, p: usize) -> Option<usize> {
-        let b = l.b;
-        let nl = self.nl;
-        match self.top() {
-            START => {
-                if !self.can_push() {
-                    return None;
-                }
-                self.push(p, &[MAIN_0]);
-                Some(p)
-            }
-            MAIN_0 => self.main(l, p),
-            COMMENT_0 => {
-                let mut i = p;
-                loop {
-                    let k = find(b, i, |c| c == b'-')?;
-                    if b.get(k + 1) == Some(&b'-') {
-                        if b.get(k + 2) == Some(&b'>') {
-                            self.put(k, k + 3, leaf::COMMENT_END);
-                            self.pop(k + 3);
-                            return Some(k + 3);
-                        }
-                        let e = l.run(k, |c| c == b'-');
-                        self.put(k, e, leaf::DOUBLE_HYPHEN);
-                        return Some(e);
+    fn run(&mut self, mut p: usize) {
+        let b = self.b;
+        let nl = b.len();
+        loop {
+            match self.mode {
+                mode::TEXT => {
+                    let k = find_any(b, p, *b"<&");
+                    if k >= nl {
+                        return;
                     }
-                    i = k + 1;
-                }
-            }
-            CDATA_0 => self.closer(l, p, b"]]>", leaf::TAG_END),
-            PREPROCESSOR_1 => self.closer(l, p, b"?>", leaf::TAG_END),
-            TAG_0 | DOCTYPE_META | DTD_ENTITY_META | DTD_ELEMENT_META | DTD_ATTLIST_META
-            | DTD_NOTATION_META | UNKNOWN_0 => {
-                // a close tag's end, or `dtd-end`; the same but for what a missing end is
-                // before, and the scope of what else they take
-                let q = spaces(b, p);
-                if q >= nl {
-                    return None;
-                }
-                let tag = self.top() == TAG_0;
-                let missing = |c: u8| c == b'<' || (!tag && c == b']');
-                let c = b[q];
-                if missing(c) {
-                    let s = if q > p { q - 1 } else { q };
-                    self.put(s, q, leaf::MISSING_TAG_END);
-                    self.pop(q);
-                    return Some(q);
-                }
-                if c == b'>' {
-                    self.put(q, q + 1, leaf::TAG_END);
-                    self.pop(q + 1);
-                    return Some(q + 1);
-                }
-                if matches!(c, b'/' | b'?') && b.get(q + 1) == Some(&b'>') {
-                    self.put(q, q + 2, leaf::BAD_TAG_END);
-                    self.pop(q + 2);
-                    return Some(q + 2);
-                }
-                let e = q + l.char_len(q).unwrap_or(1);
-                let unexpected = match tag {
-                    true => leaf::UNEXPECTED_ATTR,
-                    false => leaf::UNEXPECTED,
-                };
-                self.put(q, e, unexpected);
-                Some(e)
-            }
-            TAG_1 => self.tag(l, p, true),
-            PREPROCESSOR_0 => self.tag(l, p, false),
-            TAG_ATTRIBUTE_SEPARATOR => {
-                let q = spaces(b, p);
-                if q >= nl {
-                    return None;
-                }
-                if b[q] == b'=' {
-                    self.put(q, q + 1, leaf::KEY_VALUE);
-                    self.set(q + 1, &[KEY_VALUE_0]);
-                    return Some(q + 1);
-                }
-                let at = self.tag_else(b, p, q);
-                self.pop(at);
-                Some(at)
-            }
-            KEY_VALUE_0 => {
-                let q = spaces(b, p);
-                if q >= nl {
-                    return None;
-                }
-                let c = b[q];
-                if q > p && c == b'<' {
-                    self.pop(q - 1);
-                    return Some(q - 1);
-                }
-                if c == b'"' || c == b'\'' {
-                    let body = match c {
-                        b'"' => STRING_DOUBLE_QUOTED_BODY,
-                        _ => STRING_SINGLE_QUOTED_BODY,
+                    p = match b[k] {
+                        b'&' => self.ampersand(k),
+                        _ => self.open(k),
                     };
-                    self.set(q, &[body]);
-                    self.put(q, q + 1, leaf::STR_BEGIN);
-                    return Some(q + 1);
                 }
-                if !matches!(c, b'?' | b'/' | b'<' | b'>') {
-                    let e = l.run(q, |c| {
-                        !matches!(c, b'?' | b'/' | b'<' | b'>') && !is_space(c)
-                    });
-                    self.put(q, e, leaf::BAD_ATTR_VALUE);
-                    self.pop(e);
-                    return Some(e);
+                mode::TAG => match self.tag(p) {
+                    Some(e) => p = e,
+                    None => return,
+                },
+                mode::TAG_EQ => {
+                    let q = spaces(b, p);
+                    if q >= nl {
+                        return;
+                    }
+                    if b[q] == b'=' {
+                        self.put(q, q + 1, leaf::KEY_VALUE);
+                        self.mode = mode::TAG_VALUE;
+                        p = q + 1;
+                    } else {
+                        self.mode = mode::TAG;
+                        p = if q > p && b[q] == b'<' { q - 1 } else { q };
+                    }
                 }
-                self.pop(q);
-                Some(q)
+                mode::TAG_VALUE => {
+                    let q = spaces(b, p);
+                    if q >= nl {
+                        return;
+                    }
+                    let c = b[q];
+                    let stop = |c: u8| matches!(c, b'?' | b'/' | b'<' | b'>');
+                    if q > p && c == b'<' {
+                        self.mode = mode::TAG;
+                        p = q - 1;
+                    } else if c == b'"' || c == b'\'' {
+                        self.string_at(q, mode::TAG);
+                        p = q + 1;
+                    } else if !stop(c) {
+                        let e = q + b[q..]
+                            .iter()
+                            .take_while(|&&c| !stop(c) && !is_space(c))
+                            .count();
+                        self.put(q, e, leaf::BAD_ATTR_VALUE);
+                        self.mode = mode::TAG;
+                        p = e;
+                    } else {
+                        self.mode = mode::TAG;
+                        p = q;
+                    }
+                }
+                mode::STRING => {
+                    let quote = if self.string == 1 { b'"' } else { b'\'' };
+                    let k = find_any(b, p, [quote, b'<', b'&']);
+                    if k >= nl {
+                        return;
+                    }
+                    p = match b[k] {
+                        b'<' => {
+                            let s = if k > p && is_space(b[k - 1]) {
+                                k - 1
+                            } else {
+                                k
+                            };
+                            self.put(s, k, leaf::MISSING_TAG_END);
+                            self.end_string(k);
+                            k
+                        }
+                        b'&' => self.ampersand(k),
+                        _ => {
+                            self.put(k, k + 1, leaf::STR_END);
+                            self.end_string(k + 1);
+                            k + 1
+                        }
+                    };
+                }
+                mode::END => match self.end(p) {
+                    Some(e) => p = e,
+                    None => return,
+                },
+                mode::COMMENT => {
+                    let mut i = p;
+                    loop {
+                        let Some(k) = first(&Line { b }, i, b'-') else {
+                            return;
+                        };
+                        if b.get(k + 1) == Some(&b'-') {
+                            if b.get(k + 2) == Some(&b'>') {
+                                self.put(k, k + 3, leaf::COMMENT_END);
+                                self.leave(k + 3);
+                                p = k + 3;
+                            } else {
+                                let e = k + b[k..].iter().take_while(|&&c| c == b'-').count();
+                                self.put(k, e, leaf::DOUBLE_HYPHEN);
+                                p = e;
+                            }
+                            break;
+                        }
+                        i = k + 1;
+                    }
+                }
+                mode::CDATA | mode::PI => {
+                    let close: &[u8] = match self.mode {
+                        mode::CDATA => b"]]>",
+                        _ => b"?>",
+                    };
+                    let Some(m) = Line { b }.lit(p, close) else {
+                        return;
+                    };
+                    let e = m.s as usize + close.len();
+                    self.put(m.s as usize, e, leaf::TAG_END);
+                    self.leave(e);
+                    p = e;
+                }
+                _ => match self.dtd(p) {
+                    Some(e) => p = e,
+                    None => return,
+                },
             }
-            body @ (STRING_DOUBLE_QUOTED_BODY | STRING_SINGLE_QUOTED_BODY) => {
-                let quote = match body {
-                    STRING_DOUBLE_QUOTED_BODY => b'"',
-                    _ => b'\'',
-                };
-                let k = find(b, p, |c| c == quote || c == b'<' || c == b'&')?;
-                match b[k] {
-                    b'<' => {
+        }
+    }
+
+    /// The doctype and its internal subset, a step: where the line goes on, or none at its end.
+    /// Out of line, as they are rare: in `line`, they took XML's code from 31 to 54 KB.
+    #[inline(never)]
+    fn dtd(&mut self, mut p: usize) -> Option<usize> {
+        let b = self.b;
+        let nl = b.len();
+        loop {
+            match self.mode {
+                mode::ROOT => {
+                    let q = spaces(b, p);
+                    if q >= nl {
+                        return None;
+                    }
+                    self.mode = mode::TYPE;
+                    if q > p && matches!(b[q], b']' | b'<') {
+                        p = q - 1;
+                        continue;
+                    }
+                    p = match qname(&Line { b }, q, M::new(q, q), 1) {
+                        Some(m) => {
+                            let caps = [
+                                (1, leaf::ROOT_NS),
+                                (2, leaf::BAD_TAG_NAME),
+                                (3, leaf::ROOT_NS + 1),
+                                (4, leaf::ROOT_NS + 2),
+                                (5, leaf::BAD_TAG_NAME),
+                            ];
+                            self.emit(&m, leaf::NONE, &caps);
+                            m.e as usize
+                        }
+                        None => q,
+                    };
+                }
+                mode::TYPE => {
+                    let q = spaces(b, p);
+                    if q >= nl {
+                        return None;
+                    }
+                    let at = self.else_pop(p, q);
+                    let rest = &b[q..];
+                    p = if at == q
+                        && (rest.starts_with(b"PUBLIC") || rest.starts_with(b"SYSTEM"))
+                        && boundary(&Line { b }, q + 6)
+                    {
+                        self.put_rare(q, q + 6, leaf::EXTERNAL);
+                        q + 6
+                    } else {
+                        at
+                    };
+                    self.mode = match self.inner {
+                        inner::ENTITY => mode::ENTITY_VALUE,
+                        _ => mode::QUOTED,
+                    };
+                }
+                mode::QUOTED => {
+                    let q = spaces(b, p);
+                    if q >= nl {
+                        return None;
+                    }
+                    let next = match self.inner {
+                        inner::NONE => mode::BRACKETS,
+                        _ => mode::END,
+                    };
+                    p = self.quoted_or_pop(p, q, mode::QUOTED, next);
+                }
+                mode::BRACKETS => {
+                    let q = spaces(b, p);
+                    if q >= nl {
+                        return None;
+                    }
+                    let at = self.else_pop(p, q);
+                    if at == q && b[q] == b'[' {
+                        self.fill(q);
+                        self.flags |= SUBSET;
+                        self.mode = mode::SUBSET;
+                        self.rebase();
+                        self.put_rare(q, q + 1, leaf::BRACKETS_BEGIN);
+                        p = q + 1;
+                    } else {
+                        self.mode = match self.flags & SUBSET {
+                            0 => mode::END,
+                            _ => mode::SECTION_END,
+                        };
+                        p = at;
+                    }
+                }
+                mode::SUBSET => p = self.subset(p)?,
+                mode::SECTION_END => {
+                    let k = find_any(b, p, *b"><");
+                    if k >= nl {
+                        return None;
+                    }
+                    if b[k] == b'<' {
                         let s = if k > p && is_space(b[k - 1]) {
                             k - 1
                         } else {
                             k
                         };
-                        self.put(s, k, leaf::MISSING_TAG_END);
-                        self.pop(k);
-                        Some(k)
-                    }
-                    b'&' => Some(self.ampersand(l, k)),
-                    _ => {
-                        self.put(k, k + 1, leaf::STR_END);
-                        self.pop(k + 1);
-                        Some(k + 1)
-                    }
-                }
-            }
-            DOCTYPE_ROOT_NAME => {
-                let q = spaces(b, p);
-                if q >= nl {
-                    return None;
-                }
-                if q > p && matches!(b[q], b']' | b'<') {
-                    self.pop(q - 1);
-                    return Some(q - 1);
-                }
-                if let Some(m) = qname(l, q, M::new(q, q), 1) {
-                    self.emit(
-                        &m,
-                        leaf::NONE,
-                        &[
-                            (1, leaf::ROOT_NS),
-                            (2, leaf::BAD_TAG_NAME),
-                            (3, leaf::ROOT_NS + 1),
-                            (4, leaf::ROOT_NS + 2),
-                            (5, leaf::BAD_TAG_NAME),
-                        ],
-                    );
-                    self.pop(m.e as usize);
-                    return Some(m.e as usize);
-                }
-                self.pop(q);
-                Some(q)
-            }
-            DTD_CONTENT_TYPE => {
-                let q = spaces(b, p);
-                if q >= nl {
-                    return None;
-                }
-                let at = self.else_pop(b, p, q);
-                let rest = &b[q..];
-                if at == q
-                    && (rest.starts_with(b"PUBLIC") || rest.starts_with(b"SYSTEM"))
-                    && boundary(l, q + 6)
-                {
-                    self.put(q, q + 6, leaf::EXTERNAL);
-                    self.pop(q + 6);
-                    return Some(q + 6);
-                }
-                self.pop(at);
-                Some(at)
-            }
-            DTD_CONTENT_QUOTED => {
-                let q = spaces(b, p);
-                if q >= nl {
-                    return None;
-                }
-                self.quoted_or_pop(b, p, q)
-            }
-            DTD_SUBSET_BRACKETS => {
-                let q = spaces(b, p);
-                if q >= nl {
-                    return None;
-                }
-                let at = self.else_pop(b, p, q);
-                if at == q && b[q] == b'[' {
-                    self.set(q, &[SUBSET_BRACKETS_0]);
-                    self.put(q, q + 1, leaf::BRACKETS_BEGIN);
-                    return Some(q + 1);
-                }
-                self.pop(at);
-                Some(at)
-            }
-            SUBSET_BRACKETS_0 => self.dtd(l, p),
-            DTD_SUBSET_META => {
-                let k = find(b, p, |c| c == b'>' || c == b'<')?;
-                if b[k] == b'<' {
-                    let s = if k > p && is_space(b[k - 1]) {
-                        k - 1
+                        self.put_rare(s, k, leaf::MISSING_TAG_END);
+                        self.end_section(k);
+                        p = k;
                     } else {
-                        k
+                        let (s, end) = match (k > p).then(|| b[k - 1]) {
+                            Some(b']') => (k - 1, leaf::TAG_END),
+                            Some(b'/' | b'?') => (k - 1, leaf::BAD_TAG_END),
+                            _ => (k, leaf::BAD_TAG_END),
+                        };
+                        self.put_rare(s, k + 1, end);
+                        self.end_section(k + 1);
+                        p = k + 1;
+                    }
+                }
+                mode::NAME => {
+                    let q = spaces(b, p);
+                    if q >= nl {
+                        return None;
+                    }
+                    p = self.name(p, q);
+                }
+                mode::PERCENT => {
+                    let q = spaces(b, p);
+                    if q >= nl {
+                        return None;
+                    }
+                    let at = self.else_pop(p, q);
+                    p = if at == q && b[q] == b'%' {
+                        self.put_rare(q, q + 1, leaf::ENTITY_MARK);
+                        q + 1
+                    } else {
+                        at
                     };
-                    self.put(s, k, leaf::MISSING_TAG_END);
-                    self.pop(k);
-                    return Some(k);
+                    self.mode = mode::NAME;
                 }
-                let before = (k > p).then(|| b[k - 1]);
-                let (s, end) = match before {
-                    Some(b']') => (k - 1, leaf::TAG_END),
-                    Some(b'/' | b'?') => (k - 1, leaf::BAD_TAG_END),
-                    _ => (k, leaf::BAD_TAG_END),
-                };
-                self.put(s, k + 1, end);
-                self.pop(k + 1);
-                Some(k + 1)
-            }
-            name @ (DTD_ENTITY_NAME | DTD_ELEMENT_NAME | DTD_NOTATION_NAME | DTD_SUBSET_NAME) => {
-                let q = spaces(b, p);
-                if q >= nl {
-                    return None;
+                mode::ENTITY_VALUE => {
+                    let q = spaces(b, p);
+                    if q >= nl {
+                        return None;
+                    }
+                    if self.else_pop(p, q) == q
+                        && b[q..].starts_with(b"NDATA")
+                        && boundary(&Line { b }, q + 5)
+                    {
+                        self.put_rare(q, q + 5, leaf::NDATA);
+                        self.mode = mode::NDATA_NAME;
+                        p = q + 5;
+                        continue;
+                    }
+                    p = self.quoted_or_pop(p, q, mode::ENTITY_VALUE, mode::END);
                 }
-                if q > p && matches!(b[q], b']' | b'<') {
-                    self.pop(q - 1);
-                    return Some(q - 1);
+                mode::NDATA_NAME => {
+                    let q = spaces(b, p);
+                    if q >= nl {
+                        return None;
+                    }
+                    let at = self.else_pop(p, q);
+                    if at == q && is_name2_start(b[q]) {
+                        let e = q + 1 + b[q + 1..].iter().take_while(|&&c| is_name2(c)).count();
+                        self.put_rare(q, e, leaf::UNQUOTED);
+                        p = e;
+                    } else {
+                        self.mode = mode::END;
+                        p = at;
+                    }
                 }
-                if let Some(m) = dtd_name_at(l, q) {
-                    let leaf = match name {
-                        DTD_ENTITY_NAME => leaf::ENTITY_NAME,
-                        DTD_ELEMENT_NAME => leaf::ELEMENT_NAME,
-                        DTD_NOTATION_NAME => leaf::NOTATION_NAME,
-                        _ => leaf::SUBSET_NAME,
+                mode::ELEMENT_CONTENT => {
+                    let q = spaces(b, p);
+                    if q >= nl {
+                        return None;
+                    }
+                    p = self.element_content(p, q);
+                }
+                mode::GROUP => p = self.group(p)?,
+                mode::GROUP_AFTER => {
+                    let q = spaces(b, p);
+                    if q >= nl {
+                        return None;
+                    }
+                    let at = self.else_pop(p, q);
+                    p = if at == q && is_quantifier(b[q]) {
+                        self.put_rare(q, q + 1, leaf::OPERATOR);
+                        q + 1
+                    } else {
+                        at
                     };
-                    self.put(q, m.e as usize, leaf);
-                    self.pop(m.e as usize);
-                    return Some(m.e as usize);
+                    self.mode = match self.depth {
+                        0 => mode::END,
+                        _ => mode::GROUP,
+                    };
                 }
-                // `dtd-common-name`
-                if b[q] == b'%'
-                    && let Some(m) = marked_name_at(l, q)
-                {
-                    let e = self.reference(&m, leaf::PARAMETER);
-                    self.pop(e);
-                    return Some(e);
+                mode::ATTRIBUTES => {
+                    let q = spaces(b, p);
+                    if q >= nl {
+                        return None;
+                    }
+                    p = self.attributes(p, q);
                 }
-                let ident = |c: u8| !b"'\"[]()<>".contains(&c) && !is_space(c);
-                if ident(b[q]) {
-                    let e = l.run(q, ident);
-                    self.put(q, e, leaf::BAD_IDENTIFIER);
-                    self.pop(e);
-                    return Some(e);
-                }
-                self.pop(q);
-                Some(q)
+                _ => {}
             }
-            DTD_ENTITY_PUNCTUATION => {
-                let q = spaces(b, p);
-                if q >= nl {
-                    return None;
-                }
-                let at = self.else_pop(b, p, q);
-                if at == q && b[q] == b'%' {
-                    self.put(q, q + 1, leaf::ENTITY_MARK);
-                    self.pop(q + 1);
-                    return Some(q + 1);
-                }
-                self.pop(at);
-                Some(at)
-            }
-            DTD_ENTITY_CONTENT => {
-                let q = spaces(b, p);
-                if q >= nl {
-                    return None;
-                }
-                if self.else_pop(b, p, q) == q && b[q..].starts_with(b"NDATA") && boundary(l, q + 5)
-                {
-                    self.put(q, q + 5, leaf::NDATA);
-                    self.set(q + 5, &[DTD_CONTENT_UNQUOTED]);
-                    return Some(q + 5);
-                }
-                self.quoted_or_pop(b, p, q)
-            }
-            DTD_CONTENT_UNQUOTED => {
-                let q = spaces(b, p);
-                if q >= nl {
-                    return None;
-                }
-                let at = self.else_pop(b, p, q);
-                if at == q && is_name2_start(b[q]) {
-                    let e = l.run(q + 1, is_name2);
-                    self.put(q, e, leaf::UNQUOTED);
-                    return Some(e);
-                }
-                self.pop(at);
-                Some(at)
-            }
-            DTD_ELEMENT_CONTENT => {
-                let q = spaces(b, p);
-                if q >= nl {
-                    return None;
-                }
-                if self.else_pop(b, p, q) == q {
-                    let rest = &b[q..];
-                    let word = [&b"EMPTY"[..], b"ANY"]
-                        .into_iter()
-                        .find(|w| rest.starts_with(w) && boundary(l, q + w.len()));
-                    if let Some(w) = word
-                        && boundary(l, q)
-                    {
-                        self.put(q, q + w.len(), leaf::CONSTANT);
-                        self.pop(q + w.len());
-                        return Some(q + w.len());
-                    }
-                    if b[q] == b'(' {
-                        self.set(q, &[DTD_ELEMENT_PARENS]);
-                        self.put(q, q + 1, leaf::GROUP_BEGIN);
-                        return Some(q + 1);
-                    }
-                    if let Some(e) = self.entity_parameter(l, q) {
-                        return Some(e);
-                    }
-                }
-                self.quoted_or_pop(b, p, q)
-            }
-            ctx @ (DTD_ELEMENT_PARENS | ATTLIST_PARENS_0) => self.group(l, p, ctx),
-            ELEMENT_PARENS_0 => {
-                let q = spaces(b, p);
-                if q >= nl {
-                    return None;
-                }
-                let at = self.else_pop(b, p, q);
-                if at == q && is_quantifier(b[q]) {
-                    self.put(q, q + 1, leaf::OPERATOR);
-                    self.pop(q + 1);
-                    return Some(q + 1);
-                }
-                self.pop(at);
-                Some(at)
-            }
-            DTD_ATTLIST_CONTENT => {
-                let q = spaces(b, p);
-                if q >= nl {
-                    return None;
-                }
-                if self.else_pop(b, p, q) == q {
-                    if let Some(e) = self.entity_parameter(l, q) {
-                        return Some(e);
-                    }
-                    if b[q] == b'(' && self.can_push() {
-                        self.push(q, &[ATTLIST_PARENS_0]);
-                        self.put(q, q + 1, leaf::GROUP_BEGIN);
-                        return Some(q + 1);
-                    }
-                    if let Some(m) = attr_type_at(l, q) {
-                        self.put(q, m.e as usize, leaf::ATTR_TYPE);
-                        return Some(m.e as usize);
-                    }
-                    if b[q] == b'#'
-                        && let Some(m) = attr_default_at(l, q)
-                    {
-                        self.emit(&m, leaf::ATTR_DEFAULT, &[(1, leaf::ATTR_DEFAULT + 1)]);
-                        return Some(m.e as usize);
-                    }
-                    if let Some(m) = dtd_attr_name_at(l, q) {
-                        self.put(q, m.e as usize, leaf::ATTR_NAME);
-                        return Some(m.e as usize);
-                    }
-                }
-                self.quoted_or_pop(b, p, q)
-            }
-            // the rest are only ever included
-            _ => None,
+            return Some(p);
         }
     }
 
-    /// `\s?(?=<)` and the empty match of `tag-else-pop`: where it pops, `q` the first byte
-    /// from `p` that isn't a space.
-    fn tag_else(&self, b: &[u8], p: usize, q: usize) -> usize {
-        if q > p && b[q] == b'<' { q - 1 } else { q }
+    /// The string ends at `at`.
+    fn end_string(&mut self, at: usize) {
+        self.fill(at);
+        self.string = 0;
+        self.mode = self.ret;
+        self.rebase();
     }
 
-    /// `dtd-else-pop`: where it pops, as [`Scan::tag_else`], a `]` too.
-    fn else_pop(&self, b: &[u8], p: usize, q: usize) -> usize {
-        if q > p && matches!(b[q], b']' | b'<') {
-            q - 1
-        } else {
-            q
+    /// A conditional section ends at `at`.
+    fn end_section(&mut self, at: usize) {
+        self.fill(at);
+        self.sections = self.sections.saturating_sub(1);
+        if self.sections == 0 {
+            self.flags &= !SECTION;
         }
+        self.mode = mode::SUBSET;
+        self.rebase();
     }
 
-    /// `dtd-content-quoted` at `q`, the first byte from `p` that isn't a space: a quoted
-    /// string, else pop.
-    fn quoted_or_pop(&mut self, b: &[u8], p: usize, q: usize) -> Option<usize> {
-        let at = self.else_pop(b, p, q);
-        if at == q && matches!(b[q], b'"' | b'\'') && self.can_push() {
-            let body = match b[q] {
-                b'"' => STRING_DOUBLE_QUOTED_BODY,
-                _ => STRING_SINGLE_QUOTED_BODY,
-            };
-            self.push(q, &[body]);
-            self.put(q, q + 1, leaf::STR_BEGIN);
-            return Some(q + 1);
-        }
-        self.pop(at);
-        Some(at)
-    }
-
-    /// A context that only ends at `close`, its scope `end`.
-    fn closer(&mut self, l: &Line, p: usize, close: &[u8], end: u16) -> Option<usize> {
-        let k = l.lit(p, close)?.s as usize;
-        let e = k + close.len();
-        self.put(k, e, end);
-        self.pop(e);
-        Some(e)
-    }
-
-    /// `entity-parameter` at `q`: `#PCDATA` or a `%name;`.
-    fn entity_parameter(&mut self, l: &Line, q: usize) -> Option<usize> {
-        match l.b[q] {
-            b'#' => {
-                let m = placeholder_at(l, q)?;
-                self.emit(&m, leaf::PLACEHOLDER, &[(1, leaf::PLACEHOLDER + 1)]);
-                Some(m.e as usize)
-            }
-            b'%' => {
-                let m = marked_name_at(l, q)?;
-                Some(self.reference(&m, leaf::PARAMETER))
-            }
-            _ => None,
-        }
-    }
-
-    /// `&` at `k`: a reference (`entity`), else a bad one (`should-be-entity`).
-    fn ampersand(&mut self, l: &Line, k: usize) -> usize {
-        if l.b.get(k + 1) == Some(&b'#') {
-            if let Some(m) = char_ref_at(l, k, true) {
-                return self.reference(&m, leaf::ENTITY_HEX);
-            }
-            if let Some(m) = char_ref_at(l, k, false) {
-                return self.reference(&m, leaf::ENTITY_DEC);
-            }
-        }
-        if let Some(m) = marked_name_at(l, k) {
-            return self.reference(&m, leaf::ENTITY_NAMED);
-        }
-        self.put(k, k + 1, leaf::BAD_AMPERSAND);
-        k + 1
-    }
-
-    /// The document's text, up to the next `<` or `&`.
-    fn main(&mut self, l: &Line, p: usize) -> Option<usize> {
-        let b = l.b;
-        let k = find(b, p, |c| c == b'<' || c == b'&')?;
-        if b[k] == b'&' {
-            return Some(self.ampersand(l, k));
-        }
-        let push = self.can_push();
+    /// A `<` at `k` in the document's text: the markup it opens, else a bad `<`.
+    fn open(&mut self, k: usize) -> usize {
+        let b = self.b;
+        let l = Line { b };
         match b.get(k + 1) {
-            Some(b'?') if push => {
-                if let Some(e) = self.preprocessor(l, k) {
-                    return Some(e);
+            Some(b'?') => {
+                if let Some(e) = self.preprocessor(k) {
+                    return e;
                 }
             }
-            Some(b'!') if push => {
-                if let Some(m) = doctype_at(l, k) {
-                    self.push(
-                        k,
-                        &[
-                            DOCTYPE_META,
-                            DTD_SUBSET_BRACKETS,
-                            DTD_CONTENT_QUOTED,
-                            DTD_CONTENT_TYPE,
-                            DOCTYPE_ROOT_NAME,
-                        ],
-                    );
-                    self.emit(
-                        &m,
-                        leaf::NONE,
-                        &[
-                            (1, leaf::TAG_BEGIN),
-                            (2, leaf::DOCTYPE_KW),
-                            (3, leaf::BAD_TAG_NAME),
-                        ],
-                    );
-                    return Some(m.e as usize);
+            Some(b'!') => {
+                if let Some(m) = doctype_at(&l, k) {
+                    self.fill(k);
+                    self.flags |= DOCTYPE;
+                    self.markup(k, inner::NONE, mode::ROOT);
+                    let caps = [
+                        (1, leaf::TAG_BEGIN),
+                        (2, leaf::DOCTYPE_KW),
+                        (3, leaf::BAD_TAG_NAME),
+                    ];
+                    self.emit(&m, leaf::NONE, &caps);
+                    return m.e as usize;
                 }
-                if let Some(e) = self.comment_or_cdata(b, k) {
-                    return Some(e);
+                if let Some(e) = self.comment_or_cdata(k) {
+                    return e;
                 }
             }
-            Some(b'/') if push => {
-                if let Some(e) = self.plain_tag(l, k, 2, TAG_0) {
-                    return Some(e);
+            Some(b'/') => {
+                if let Some(e) = self.plain_tag(k, 2, mode::END) {
+                    return e;
                 }
-                let m = qname(l, k + 2, M::new(k, k).g(1, k, k + 2), 2);
-                if let Some(m) = m {
-                    self.push(k, &[TAG_0]);
-                    return Some(self.tag_name(&m));
-                }
-            }
-            _ if push => {
-                if let Some(e) = self.plain_tag(l, k, 1, TAG_1) {
-                    return Some(e);
-                }
-                let m = qname(l, k + 1, M::new(k, k).g(1, k, k + 1), 2);
-                if let Some(m) = m {
-                    self.push(k, &[TAG_1]);
-                    return Some(self.tag_name(&m));
+                if let Some(m) = qname(&l, k + 2, M::new(k, k).g(1, k, k + 2), 2) {
+                    self.markup(k, inner::TAG, mode::END);
+                    return self.tag_name(&m);
                 }
             }
-            _ => {}
+            _ => {
+                if let Some(e) = self.plain_tag(k, 1, mode::TAG) {
+                    return e;
+                }
+                if let Some(m) = qname(&l, k + 1, M::new(k, k).g(1, k, k + 1), 2) {
+                    self.markup(k, inner::TAG, mode::TAG);
+                    return self.tag_name(&m);
+                }
+            }
         }
         self.put(k, k + 1, leaf::MISSING_ENTITY);
-        Some(k + 1)
+        k + 1
     }
 
     /// A tag at `k` whose `<` or `</` (`open` bytes) a plain local name follows, as [`qname`]
     /// reads it: no namespace, and one of `[/<>\s]` after it.
-    fn plain_tag(&mut self, l: &Line, k: usize, open: usize, ctx: u8) -> Option<usize> {
+    #[inline(always)]
+    fn plain_tag(&mut self, k: usize, open: usize, mode: u8) -> Option<usize> {
+        let b = self.b;
         let q = k + open;
-        if !l.is(q, is_name_start) {
+        if !b.get(q).is_some_and(|&c| is_name_start(c)) {
             return None;
         }
-        let e = l.run(q + 1, is_name);
-        if !l.is(e, |c| matches!(c, b'/' | b'<' | b'>') || is_space(c)) {
+        let e = q + 1 + b[q + 1..].iter().take_while(|&&c| is_name(c)).count();
+        if !b
+            .get(e)
+            .is_none_or(|&c| matches!(c, b'/' | b'<' | b'>') || is_space(c))
+        {
             return None;
         }
-        self.push(k, &[ctx]);
+        self.markup(k, inner::TAG, mode);
         self.put(k, q, leaf::TAG_BEGIN);
         self.put(q, e, leaf::TAG_NS + 2);
         Some(e)
@@ -1077,31 +928,28 @@ impl Scan<'_, '_> {
 
     /// A tag's `<` or `</` and name, from [`qname`]'s groups.
     fn tag_name(&mut self, m: &M) -> usize {
-        self.emit(
-            m,
-            leaf::NONE,
-            &[
-                (1, leaf::TAG_BEGIN),
-                (2, leaf::TAG_NS),
-                (3, leaf::BAD_TAG_NAME),
-                (4, leaf::TAG_NS + 1),
-                (5, leaf::TAG_NS + 2),
-                (6, leaf::BAD_TAG_NAME),
-            ],
-        );
+        let caps = [
+            (1, leaf::TAG_BEGIN),
+            (2, leaf::TAG_NS),
+            (3, leaf::BAD_TAG_NAME),
+            (4, leaf::TAG_NS + 1),
+            (5, leaf::TAG_NS + 2),
+            (6, leaf::BAD_TAG_NAME),
+        ];
+        self.emit(m, leaf::NONE, &caps);
         m.e as usize
     }
 
     /// `<!--` or `<![CDATA[` at `k`.
-    fn comment_or_cdata(&mut self, b: &[u8], k: usize) -> Option<usize> {
-        let rest = &b[k..];
+    fn comment_or_cdata(&mut self, k: usize) -> Option<usize> {
+        let rest = &self.b[k..];
         if rest.starts_with(b"<!--") {
-            self.push(k, &[COMMENT_0]);
+            self.markup(k, inner::COMMENT, mode::COMMENT);
             self.put(k, k + 4, leaf::COMMENT_BEGIN);
             return Some(k + 4);
         }
         if rest.starts_with(b"<![CDATA[") {
-            self.push(k, &[CDATA_0]);
+            self.markup(k, inner::CDATA, mode::CDATA);
             self.put(k, k + 3, leaf::TAG_BEGIN);
             self.put(k + 3, k + 8, leaf::CDATA_KW);
             self.put(k + 8, k + 9, leaf::TAG_BEGIN);
@@ -1111,9 +959,10 @@ impl Scan<'_, '_> {
     }
 
     /// A processing instruction at `k`, where a `<?` is.
-    fn preprocessor(&mut self, l: &Line, k: usize) -> Option<usize> {
-        if let Some(m) = preprocessor_xml_at(l, k) {
-            self.push(k, &[PREPROCESSOR_0]);
+    fn preprocessor(&mut self, k: usize) -> Option<usize> {
+        let l = Line { b: self.b };
+        if let Some(m) = preprocessor_xml_at(&l, k) {
+            self.markup(k, inner::PREPROCESSOR, mode::TAG);
             let caps = [
                 (1, leaf::TAG_BEGIN),
                 (2, leaf::TAG_NAME),
@@ -1122,31 +971,30 @@ impl Scan<'_, '_> {
             self.emit(&m, leaf::NONE, &caps);
             return Some(m.e as usize);
         }
-        let m = preprocessor_other_at(l, k)?;
-        self.push(k, &[PREPROCESSOR_1]);
+        let m = preprocessor_other_at(&l, k)?;
+        self.markup(k, inner::PREPROCESSOR, mode::PI);
         self.emit(&m, leaf::NONE, &[(1, leaf::TAG_BEGIN), (2, leaf::TAG_NAME)]);
         Some(m.e as usize)
     }
 
-    /// Inside a tag (`tag`) or an `<?xml …?>`: its end, an attribute, or a missing end.
-    fn tag(&mut self, l: &Line, p: usize, tag: bool) -> Option<usize> {
-        let b = l.b;
+    /// In a tag or an `<?xml …?>`: its end, an attribute, or a missing end.
+    #[inline(always)]
+    fn tag(&mut self, p: usize) -> Option<usize> {
+        let b = self.b;
         let q = spaces(b, p);
-        if q >= self.nl {
-            return None;
-        }
-        let c = b[q];
+        let &c = b.get(q)?;
+        let tag = self.inner == inner::TAG;
         let next = b.get(q + 1).copied();
         if c == b'<' {
             let s = if q > p { q - 1 } else { q };
             self.put(s, q, leaf::MISSING_TAG_END);
-            self.pop(q);
+            self.leave(q);
             return Some(q);
         }
         if tag && (c == b'>' || (c == b'/' && next == Some(b'>'))) {
             let e = if c == b'>' { q + 1 } else { q + 2 };
             self.put(q, e, leaf::TAG_END);
-            self.pop(e);
+            self.leave(e);
             return Some(e);
         }
         if c == b'?' && next == Some(b'>') {
@@ -1156,195 +1004,157 @@ impl Scan<'_, '_> {
                 leaf::TAG_END
             };
             self.put(q, q + 2, end);
-            self.pop(q + 2);
+            self.leave(q + 2);
             return Some(q + 2);
-        }
-        if !self.can_push() {
-            return self.tag_slow(l, p, tag);
         }
         // a plain local name, as `attribute_at` reads it: no namespace, its look-ahead after it
         if is_name_start(c) {
-            let e = l.run(q + 1, is_name);
-            let ahead = l.is(e, |c| matches!(c, b'=' | b'<' | b'>') || is_space(c))
-                || (l.is(e, |c| c == b'/' || c == b'?') && l.at(e + 1) == Some(b'>'));
+            let e = q + 1 + b[q + 1..].iter().take_while(|&&c| is_name(c)).count();
+            let ahead = match b.get(e) {
+                None => true,
+                Some(&c) => {
+                    matches!(c, b'=' | b'<' | b'>')
+                        || is_space(c)
+                        || (matches!(c, b'/' | b'?') && b.get(e + 1) == Some(&b'>'))
+                }
+            };
             if ahead {
-                self.push(q, &[TAG_ATTRIBUTE_SEPARATOR]);
                 self.put(q, e, leaf::ATTR_NS + 2);
+                self.mode = mode::TAG_EQ;
                 return Some(e);
             }
         }
-        match attribute_at(l, q) {
-            Some(m) => Some(self.attribute(&m)),
-            None => self.tag_slow(l, p, tag),
-        }
-    }
-
-    /// An attribute's name: its groups, then its `=` and value to come.
-    fn attribute(&mut self, m: &M) -> usize {
-        self.push(m.s as usize, &[TAG_ATTRIBUTE_SEPARATOR]);
-        self.emit(
-            m,
-            leaf::NONE,
-            &[
+        if let Some(m) = attribute_at(&Line { b }, q) {
+            let caps = [
                 (1, leaf::ATTR_NS),
                 (2, leaf::BAD_ATTR_NAME),
                 (3, leaf::ATTR_NS + 1),
                 (4, leaf::ATTR_NS + 2),
                 (5, leaf::BAD_ATTR_NAME),
-            ],
-        );
-        m.e as usize
+            ];
+            self.emit(&m, leaf::NONE, &caps);
+            self.mode = mode::TAG_EQ;
+            return Some(m.e as usize);
+        }
+        // a byte that starts nothing: the tag's own
+        Some(q + Line { b }.char_len(q).unwrap_or(1))
     }
 
-    /// A pattern's leftmost match from `p`, kept for the line while it lies ahead.
-    fn memo(
-        &mut self,
-        slot: usize,
-        l: &Line,
-        p: usize,
-        find: fn(&Line, usize) -> Option<M>,
-    ) -> Option<M> {
-        match self.memo[slot] {
-            NO_MATCH => None,
-            at if at != UNKNOWN && at as usize >= p => find(l, at as usize),
-            _ => {
-                let m = find(l, p);
-                self.memo[slot] = m.map_or(NO_MATCH, |m| m.s);
-                m
-            }
+    /// A close tag's, the doctype's or a declaration's end at the first byte from `p` that
+    /// isn't a space; else a byte it doesn't expect.
+    fn end(&mut self, p: usize) -> Option<usize> {
+        let b = self.b;
+        let q = spaces(b, p);
+        let &c = b.get(q)?;
+        let tag = self.inner == inner::TAG;
+        if c == b'<' || (!tag && c == b']') {
+            let s = if q > p { q - 1 } else { q };
+            self.put(s, q, leaf::MISSING_TAG_END);
+            self.end_markup(q);
+            return Some(q);
         }
-    }
-
-    /// [`Scan::tag`] where the first byte that isn't a space decides nothing: the leftmost of
-    /// its patterns, ties to the first, as the machine finds it.
-    fn tag_slow(&mut self, l: &Line, p: usize, tag: bool) -> Option<usize> {
-        let gt = match tag {
-            true => self.memo(SLASH_GT, l, p, slash_gt),
-            false => None,
-        };
-        let question = self.memo(QUESTION_GT, l, p, question_gt);
-        let missing = self.memo(MISSING, l, p, missing_tag_end);
-        let attribute = match self.can_push() {
-            true => self.memo(ATTRIBUTE, l, p, attribute),
-            false => None,
-        };
-        let best = [gt, question, missing, attribute]
-            .into_iter()
-            .enumerate()
-            .filter_map(|(i, m)| m.map(|m| (m.s, i, m)))
-            .min_by_key(|&(s, i, _)| (s, i))?;
-        let (s, e) = (best.2.s as usize, best.2.e as usize);
-        match best.1 {
-            0 => {
-                self.put(s, e, leaf::TAG_END);
-                self.pop(e);
-            }
-            1 => {
-                let end = if tag {
-                    leaf::BAD_TAG_END
-                } else {
-                    leaf::TAG_END
-                };
-                self.put(s, e, end);
-                self.pop(e);
-            }
-            2 => {
-                self.put(s, e, leaf::MISSING_TAG_END);
-                self.pop(e);
-            }
-            _ => return Some(self.attribute(&best.2)),
+        if c == b'>' {
+            self.put(q, q + 1, leaf::TAG_END);
+            self.end_markup(q + 1);
+            return Some(q + 1);
         }
+        if matches!(c, b'/' | b'?') && b.get(q + 1) == Some(&b'>') {
+            self.put(q, q + 2, leaf::BAD_TAG_END);
+            self.end_markup(q + 2);
+            return Some(q + 2);
+        }
+        let e = q + Line { b }.char_len(q).unwrap_or(1);
+        let unexpected = match tag {
+            true => leaf::UNEXPECTED_ATTR,
+            false => leaf::UNEXPECTED,
+        };
+        self.put(q, e, unexpected);
         Some(e)
     }
 
-    /// The internal subset: a declaration, a comment, a reference, its `]`.
-    fn dtd(&mut self, l: &Line, p: usize) -> Option<usize> {
-        let b = l.b;
+    /// What [`Scan::end`] ends, ends at `at`: a close tag, the doctype, or a declaration.
+    fn end_markup(&mut self, at: usize) {
+        if self.inner == inner::NONE {
+            self.fill(at);
+            self.flags &= !DOCTYPE;
+        }
+        self.leave(at);
+    }
+
+    /// The internal subset or a conditional section's from `p`: a declaration, a comment, a
+    /// reference, its `]`.
+    fn subset(&mut self, p: usize) -> Option<usize> {
+        let b = self.b;
         let mut i = p;
         loop {
-            let k = find(b, i, |c| matches!(c, b']' | b'<' | b'#' | b'%'))?;
+            let k = find_any(b, i, *b"]<#%");
+            if k >= b.len() {
+                return None;
+            }
             match b[k] {
                 b']' => {
-                    self.put(k, k + 1, leaf::BRACKETS_END);
-                    self.pop(k + 1);
+                    self.put_rare(k, k + 1, leaf::BRACKETS_END);
+                    self.fill(k + 1);
+                    if self.sections > 0 {
+                        self.mode = mode::SECTION_END;
+                    } else {
+                        self.flags &= !SUBSET;
+                        self.mode = mode::END;
+                    }
+                    self.rebase();
                     return Some(k + 1);
                 }
-                b'<' if self.can_push() => {
-                    if let Some(e) = self.declaration(l, k) {
+                b'<' => {
+                    if let Some(e) = self.declaration(k) {
                         return Some(e);
                     }
                 }
-                b'#' | b'%' => {
-                    if let Some(e) = self.entity_parameter(l, k) {
+                _ => {
+                    if let Some(e) = self.entity_parameter(k) {
                         return Some(e);
                     }
                 }
-                _ => {}
             }
             i = k + 1;
         }
     }
 
     /// A declaration, a comment, CDATA or a processing instruction at `k`, where a `<` is.
-    fn declaration(&mut self, l: &Line, k: usize) -> Option<usize> {
-        let b = l.b;
+    fn declaration(&mut self, k: usize) -> Option<usize> {
+        let b = self.b;
+        let l = Line { b };
         if b.get(k + 1) == Some(&b'?') {
-            return self.preprocessor(l, k);
+            return self.preprocessor(k);
         }
         if b.get(k + 1) != Some(&b'!') {
             return None;
         }
-        // CDATA before the comment, as `dtd` includes them; neither starts as the other
-        if let Some(e) = self.comment_or_cdata(b, k) {
+        if let Some(e) = self.comment_or_cdata(k) {
             return Some(e);
         }
-        const DECLS: [(&[u8], u16, &[u8]); 4] = [
-            (
-                b"ENTITY",
-                leaf::ENTITY_KW,
-                &[
-                    DTD_ENTITY_META,
-                    DTD_ENTITY_CONTENT,
-                    DTD_CONTENT_TYPE,
-                    DTD_ENTITY_NAME,
-                    DTD_ENTITY_PUNCTUATION,
-                ],
-            ),
-            (
-                b"ELEMENT",
-                leaf::ELEMENT_KW,
-                &[DTD_ELEMENT_META, DTD_ELEMENT_CONTENT, DTD_ELEMENT_NAME],
-            ),
-            (
-                b"ATTLIST",
-                leaf::ATTLIST_KW,
-                &[DTD_ATTLIST_META, DTD_ATTLIST_CONTENT, DTD_ELEMENT_NAME],
-            ),
-            (
-                b"NOTATION",
-                leaf::NOTATION_KW,
-                &[
-                    DTD_NOTATION_META,
-                    DTD_CONTENT_QUOTED,
-                    DTD_CONTENT_TYPE,
-                    DTD_NOTATION_NAME,
-                ],
-            ),
+        const DECLS: [(&[u8], u16, usize, u8); 4] = [
+            (b"ENTITY", leaf::ENTITY_KW, inner::ENTITY, mode::PERCENT),
+            (b"ELEMENT", leaf::ELEMENT_KW, inner::ELEMENT, mode::NAME),
+            (b"ATTLIST", leaf::ATTLIST_KW, inner::ATTLIST, mode::NAME),
+            (b"NOTATION", leaf::NOTATION_KW, inner::NOTATION, mode::NAME),
         ];
-        for (kw, kw_leaf, refs) in DECLS {
-            if let Some(m) = declaration_at(l, k, kw) {
-                self.push(k, refs);
+        for (kw, kw_leaf, inner, mode) in DECLS {
+            if let Some(m) = declaration_at(&l, k, kw) {
+                self.markup(k, inner, mode);
                 self.emit(&m, leaf::NONE, &[(1, leaf::TAG_BEGIN), (2, kw_leaf)]);
                 return Some(m.e as usize);
             }
         }
         if b.get(k + 2) == Some(&b'[') {
-            self.push(k, &[DTD_SUBSET_META, DTD_SUBSET_BRACKETS, DTD_SUBSET_NAME]);
-            self.put(k, k + 3, leaf::TAG_BEGIN);
+            self.fill(k);
+            self.sections = self.sections.saturating_add(1);
+            self.flags |= SECTION;
+            self.markup(k, inner::NONE, mode::NAME);
+            self.put_rare(k, k + 3, leaf::TAG_BEGIN);
             return Some(k + 3);
         }
-        let m = unknown_at(l, k);
-        self.push(k, &[UNKNOWN_0]);
+        let m = unknown_at(&l, k);
+        self.markup(k, inner::UNKNOWN, mode::END);
         self.emit(
             &m,
             leaf::NONE,
@@ -1353,11 +1163,141 @@ impl Scan<'_, '_> {
         Some(m.e as usize)
     }
 
-    /// A group in an element's declaration or an attribute's enumeration: its names,
-    /// separators, references and `)`.
-    fn group(&mut self, l: &Line, p: usize, ctx: u8) -> Option<usize> {
-        let b = l.b;
-        let element = ctx == DTD_ELEMENT_PARENS;
+    /// A declaration's name or a conditional section's keyword at `q`, the first byte from `p`
+    /// that isn't a space: where what comes after it starts.
+    fn name(&mut self, p: usize, q: usize) -> usize {
+        let b = self.b;
+        let l = Line { b };
+        let (name, next) = match self.inner {
+            inner::ENTITY => (leaf::ENTITY_NAME, mode::TYPE),
+            inner::ELEMENT => (leaf::ELEMENT_NAME, mode::ELEMENT_CONTENT),
+            inner::ATTLIST => (leaf::ELEMENT_NAME, mode::ATTRIBUTES),
+            inner::NOTATION => (leaf::NOTATION_NAME, mode::TYPE),
+            _ => (leaf::SUBSET_NAME, mode::BRACKETS),
+        };
+        self.mode = next;
+        if q > p && matches!(b[q], b']' | b'<') {
+            return q - 1;
+        }
+        if let Some(m) = dtd_name_at(&l, q) {
+            self.put_rare(q, m.e as usize, name);
+            return m.e as usize;
+        }
+        // `dtd-common-name`
+        if b[q] == b'%'
+            && let Some(m) = marked_name_at(&l, q)
+        {
+            return self.reference(&m, leaf::PARAMETER);
+        }
+        let ident = |c: u8| !b"'\"[]()<>".contains(&c) && !is_space(c);
+        if ident(b[q]) {
+            let e = q + b[q..].iter().take_while(|&&c| ident(c)).count();
+            self.put_rare(q, e, leaf::BAD_IDENTIFIER);
+            return e;
+        }
+        q
+    }
+
+    /// An element's content at `q`, the first byte from `p` that isn't a space.
+    fn element_content(&mut self, p: usize, q: usize) -> usize {
+        let b = self.b;
+        let l = Line { b };
+        if self.else_pop(p, q) == q {
+            let rest = &b[q..];
+            let word = [&b"EMPTY"[..], b"ANY"]
+                .into_iter()
+                .find(|w| rest.starts_with(w) && boundary(&l, q + w.len()));
+            if let Some(w) = word
+                && boundary(&l, q)
+            {
+                self.put_rare(q, q + w.len(), leaf::CONSTANT);
+                self.mode = mode::END;
+                return q + w.len();
+            }
+            if b[q] == b'(' {
+                self.depth = 1;
+                self.markup(q, ELEMENT_GROUP, mode::GROUP);
+                self.put_rare(q, q + 1, leaf::GROUP_BEGIN);
+                return q + 1;
+            }
+            if let Some(e) = self.entity_parameter(q) {
+                return e;
+            }
+        }
+        self.quoted_or_pop(p, q, mode::ELEMENT_CONTENT, mode::END)
+    }
+
+    /// An attribute list's attributes at `q`, the first byte from `p` that isn't a space.
+    fn attributes(&mut self, p: usize, q: usize) -> usize {
+        let b = self.b;
+        let l = Line { b };
+        if self.else_pop(p, q) == q {
+            if let Some(e) = self.entity_parameter(q) {
+                return e;
+            }
+            if b[q] == b'(' {
+                self.markup(q, ENUMERATION, mode::GROUP);
+                self.put_rare(q, q + 1, leaf::GROUP_BEGIN);
+                return q + 1;
+            }
+            if let Some(m) = attr_type_at(&l, q) {
+                self.put_rare(q, m.e as usize, leaf::ATTR_TYPE);
+                return m.e as usize;
+            }
+            if b[q] == b'#'
+                && let Some(m) = attr_default_at(&l, q)
+            {
+                self.emit(&m, leaf::ATTR_DEFAULT, &[(1, leaf::ATTR_DEFAULT + 1)]);
+                return m.e as usize;
+            }
+            if let Some(m) = dtd_attr_name_at(&l, q) {
+                self.put_rare(q, m.e as usize, leaf::ATTR_NAME);
+                return m.e as usize;
+            }
+        }
+        self.quoted_or_pop(p, q, mode::ATTRIBUTES, mode::END)
+    }
+
+    /// `entity-parameter` at `q`: `#PCDATA` or a `%name;`.
+    fn entity_parameter(&mut self, q: usize) -> Option<usize> {
+        let l = Line { b: self.b };
+        match l.b[q] {
+            b'#' => {
+                let m = placeholder_at(&l, q)?;
+                self.emit(&m, leaf::PLACEHOLDER, &[(1, leaf::PLACEHOLDER + 1)]);
+                Some(m.e as usize)
+            }
+            b'%' => {
+                let m = marked_name_at(&l, q)?;
+                Some(self.reference(&m, leaf::PARAMETER))
+            }
+            _ => None,
+        }
+    }
+
+    /// `&` at `k`: a reference, else a bad one.
+    fn ampersand(&mut self, k: usize) -> usize {
+        let l = Line { b: self.b };
+        if l.b.get(k + 1) == Some(&b'#') {
+            if let Some(m) = char_ref_at(&l, k, true) {
+                return self.reference(&m, leaf::ENTITY_HEX);
+            }
+            if let Some(m) = char_ref_at(&l, k, false) {
+                return self.reference(&m, leaf::ENTITY_DEC);
+            }
+        }
+        if let Some(m) = marked_name_at(&l, k) {
+            return self.reference(&m, leaf::ENTITY_NAMED);
+        }
+        self.put(k, k + 1, leaf::BAD_AMPERSAND);
+        k + 1
+    }
+
+    /// An element's group or an attribute's enumeration from `p`: its names, separators,
+    /// references and `)`.
+    fn group(&mut self, p: usize) -> Option<usize> {
+        let b = self.b;
+        let element = self.inner == ELEMENT_GROUP;
         let mut i = p;
         loop {
             let k = find(b, i, |c| {
@@ -1368,45 +1308,49 @@ impl Scan<'_, '_> {
             let c = b[k];
             match c {
                 b')' => {
-                    self.put(k, k + 1, leaf::GROUP_END);
-                    match element {
-                        true => self.set(k + 1, &[ELEMENT_PARENS_0]),
-                        false => self.pop(k + 1),
+                    self.put_rare(k, k + 1, leaf::GROUP_END);
+                    if element {
+                        self.depth -= 1;
+                        let inner = match self.depth {
+                            0 => inner::ELEMENT,
+                            _ => ELEMENT_GROUP,
+                        };
+                        self.markup(k + 1, inner, mode::GROUP_AFTER);
+                    } else {
+                        self.markup(k + 1, inner::ATTLIST, mode::ATTRIBUTES);
                     }
                     return Some(k + 1);
                 }
                 b'(' => {
-                    if self.can_push() {
-                        self.push(k, &[DTD_ELEMENT_PARENS]);
-                        self.put(k, k + 1, leaf::GROUP_BEGIN);
-                        return Some(k + 1);
-                    }
+                    self.depth = self.depth.saturating_add(1);
+                    self.put_rare(k, k + 1, leaf::GROUP_BEGIN);
+                    return Some(k + 1);
                 }
                 b'|' if !element => {
-                    self.put(k, k + 1, leaf::LOGICAL_SEP);
+                    self.put_rare(k, k + 1, leaf::LOGICAL_SEP);
                     return Some(k + 1);
                 }
                 b'|' | b',' => {
-                    self.put(k, k + 1, leaf::SEPARATOR);
+                    self.put_rare(k, k + 1, leaf::SEPARATOR);
                     return Some(k + 1);
                 }
                 b'#' | b'%' => {
-                    if let Some(e) = self.entity_parameter(l, k) {
+                    if let Some(e) = self.entity_parameter(k) {
                         return Some(e);
                     }
                 }
-                b'&' => return Some(self.ampersand(l, k)),
+                b'&' => return Some(self.ampersand(k)),
                 b'<' => {
-                    self.put(k, k + 1, leaf::MISSING_ENTITY);
+                    self.put_rare(k, k + 1, leaf::MISSING_ENTITY);
                     return Some(k + 1);
                 }
                 _ if is_quantifier(c) => {
-                    self.put(k, k + 1, leaf::OPERATOR);
+                    self.put_rare(k, k + 1, leaf::OPERATOR);
                     return Some(k + 1);
                 }
                 _ => {
-                    let e = l.run(k + 1, is_name2);
-                    self.put(k, e, leaf::UNQUOTED);
+                    let e = k + 1 + b[k + 1..].iter().take_while(|&&c| is_name2(c)).count();
+                    self.put_rare(k, e, leaf::UNQUOTED);
                     return Some(e);
                 }
             }

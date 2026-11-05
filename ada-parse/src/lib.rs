@@ -10,10 +10,11 @@
 //! The lexers are scanners of ada's own, speed first (ADR-40): one pass over a line's bytes,
 //! a fixed set of kinds carrying bat's scopes for the common case, syntect a guideline.
 //! Diff and INI are line lexers, each line on its own; logs (O-043) and JSON (O-048) came
-//! from ada; TOML's, XML's, `.env`'s, Git's (ignore, attributes, mailmap and link files),
-//! Dockerfile's and Java properties' scanners are bat's grammars compiled by hand, exact
-//! against syntect (the `parse` fuzz target); YAML's reads YAML as bat's grammar does on
-//! well-formed text. bash and Makefiles share a scanner, bat's contexts matched in place.
+//! from ada; `.env`'s, Git's (ignore, attributes, mailmap and link files), Dockerfile's and
+//! Java properties' scanners are bat's grammars compiled by hand, exact against syntect (the
+//! `parse` fuzz target); XML's is of ada's own design and still exact; YAML's and TOML's read
+//! their formats as bat's grammars do on well-formed text (TOML's as TOML 1.1 where bat's
+//! doesn't). bash and Makefiles share a scanner, bat's contexts matched in place.
 
 mod bash;
 mod clike;
