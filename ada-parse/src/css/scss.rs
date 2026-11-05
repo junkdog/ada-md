@@ -2182,7 +2182,7 @@ impl Scan<'_, '_, '_, true> {
                     }
                 }
                 FRONT => self.front(p),
-                MAIN | MIXIN_BLOCK | PV => {
+                MAIN | MIXIN_BLOCK | PV | MAP => {
                     // their own code goes on past the tokens that leave the stack as it is, and
                     // past the places where nothing matches: `p` is where it stopped
                     let check = nc_push == (p, self.depth);
@@ -2198,7 +2198,7 @@ impl Scan<'_, '_, '_, true> {
                 _ => {
                     let check = nc_push == (p, self.depth);
                     let (q, t) =
-                        self.generic(ctx, p, fresh, after_run, check, &mut looped, &mut nc_push);
+                        self.generic_at(ctx, p, fresh, after_run, check, &mut looped, &mut nc_push);
                     tried = t;
                     q
                 }
@@ -2263,7 +2263,27 @@ impl Scan<'_, '_, '_, true> {
         clippy::too_many_arguments,
         reason = "the run's state, shared with its own code"
     )]
+    #[inline(never)]
     fn generic(
+        &mut self,
+        ctx: u8,
+        p: usize,
+        fresh: bool,
+        after_run: bool,
+        check: bool,
+        looped: &mut bool,
+        nc_push: &mut (usize, usize),
+    ) -> (Option<usize>, bool) {
+        self.generic_at(ctx, p, fresh, after_run, check, looped, nc_push)
+    }
+
+    /// [`Scan::generic`] in the run's loop, without the call (X-031).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the run's state, shared with its own code"
+    )]
+    #[inline(always)]
+    fn generic_at(
         &mut self,
         ctx: u8,
         p: usize,
@@ -2428,6 +2448,18 @@ impl Scan<'_, '_, '_, true> {
                 *looped = true;
             }
             return Some((None, true));
+        }
+        if ctx == MAP {
+            // `\)`, `$name:`, `name:`, then `property-values`, each only where its gate holds
+            let key = match c {
+                b')' => return Some((self.sop(O_MAP_END, p, ctx, fresh), true)),
+                b'$' => self.sop(O_MAP_VAR_KEY, p, ctx, fresh),
+                b'-' | b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'\\' => {
+                    self.sop(O_MAP_KEY, p, ctx, fresh)
+                }
+                _ => None,
+            };
+            return Some((key.or_else(|| self.pv_list(p, ctx, fresh)), true));
         }
         if ctx == MIXIN_BLOCK && c == b'}' {
             self.tok(p, p + 1, PL_END_SASS);

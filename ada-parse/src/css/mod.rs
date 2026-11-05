@@ -434,7 +434,7 @@ const P_SUPPORTS_LOGIC: u8 = 121;
 const P_SUP_PAREN: u8 = 122;
 
 /// Each context's ops in the grammar's order. `COMMENT` and the strings have their own code.
-fn ops(ctx: u8) -> &'static [u8] {
+const fn ops(ctx: u8) -> &'static [u8] {
     const MAIN_OPS: [u8; 4] = [P_COMMENT, P_SELECTOR, P_AT_RULES, P_PL];
     match ctx {
         MAIN => &MAIN_OPS,
@@ -718,6 +718,263 @@ fn ops(ctx: u8) -> &'static [u8] {
         ],
         _ if ctx & WRAP != 0 => &[P_CALL_END, P_GROUP],
         _ => &[],
+    }
+}
+
+// ---- the gates: where each op can match (X-031) ----
+
+// A place's class, one bit: its byte's, or the line's `\n` at `n`, or past it.
+const K_SP: u32 = 1;
+const K_NL: u32 = 1 << 1;
+const K_END: u32 = 1 << 2;
+/// Past ASCII: a letter, a mark, a symbol or one of Unicode's spaces.
+const K_HI: u32 = 1 << 3;
+const K_LO: u32 = 1 << 4;
+const K_UP: u32 = 1 << 5;
+const K_DIG: u32 = 1 << 6;
+const K_DASH: u32 = 1 << 7;
+const K_PLUS: u32 = 1 << 8;
+const K_DOT: u32 = 1 << 9;
+const K_HASH: u32 = 1 << 10;
+const K_SLASH: u32 = 1 << 11;
+const K_COMMA: u32 = 1 << 12;
+const K_COLON: u32 = 1 << 13;
+const K_LPAR: u32 = 1 << 14;
+const K_RPAR: u32 = 1 << 15;
+const K_LBR: u32 = 1 << 16;
+const K_RBR: u32 = 1 << 17;
+const K_SEMI: u32 = 1 << 18;
+const K_AT: u32 = 1 << 19;
+const K_BANG: u32 = 1 << 20;
+const K_QUOTE: u32 = 1 << 21;
+const K_LSQ: u32 = 1 << 22;
+const K_RSQ: u32 = 1 << 23;
+const K_STAR: u32 = 1 << 24;
+const K_UNDER: u32 = 1 << 25;
+const K_BSL: u32 = 1 << 26;
+/// `>` `~`.
+const K_COMB: u32 = 1 << 27;
+/// `=` `^` `$`.
+const K_OPS: u32 = 1 << 28;
+const K_OTHER: u32 = 1 << 29;
+const K_PIPE: u32 = 1 << 30;
+const K_ANY: u32 = u32::MAX;
+/// Where `\s*` takes a space and a byte after it can still match: an op's `X` in `\s*X` is
+/// listed beside these (the `\n` at `n` is a space, but past it nothing is left to read).
+const K_SPW: u32 = K_SP | K_HI;
+const K_ALPHA: u32 = K_LO | K_UP;
+/// Where `{{ident}}` can start.
+const K_IDENT: u32 = K_DASH | K_ALPHA | K_UNDER | K_HI | K_BSL;
+/// Where a number can start.
+const K_NUM: u32 = K_DIG | K_DASH | K_PLUS | K_DOT;
+
+/// Each byte's class.
+static BYTE_KIND: [u32; 256] = {
+    let mut t = [K_OTHER; 256];
+    let mut i = 0;
+    while i < 256 {
+        let c = i as u8;
+        t[i] = match c {
+            b' ' | b'\t' | b'\r' | 0x0b | 0x0c => K_SP,
+            b'a'..=b'z' => K_LO,
+            b'A'..=b'Z' => K_UP,
+            b'0'..=b'9' => K_DIG,
+            b'-' => K_DASH,
+            b'+' => K_PLUS,
+            b'.' => K_DOT,
+            b'#' => K_HASH,
+            b'/' => K_SLASH,
+            b',' => K_COMMA,
+            b':' => K_COLON,
+            b'(' => K_LPAR,
+            b')' => K_RPAR,
+            b'{' => K_LBR,
+            b'}' => K_RBR,
+            b';' => K_SEMI,
+            b'@' => K_AT,
+            b'!' => K_BANG,
+            b'\'' | b'"' => K_QUOTE,
+            b'[' => K_LSQ,
+            b']' => K_RSQ,
+            b'*' => K_STAR,
+            b'_' => K_UNDER,
+            b'\\' => K_BSL,
+            b'>' | b'~' => K_COMB,
+            b'=' | b'^' | b'$' => K_OPS,
+            b'|' => K_PIPE,
+            0x80..=0xff => K_HI,
+            _ => K_OTHER,
+        };
+        i += 1;
+    }
+    t
+};
+
+/// The classes of the places op `op` can match at: a superset, read from its code in
+/// [`Scan::op_at`] (an op that starts `\s*` at its spaces too, [`K_SPW`]).
+const fn gate(op: u8) -> u32 {
+    match op {
+        P_COMMENT => K_SLASH,
+        P_SELECTOR | P_SELECTOR_IN => K_COLON | K_DOT | K_STAR | K_HASH | K_LSQ | K_ALPHA,
+        P_AT_RULES | P_CM_KEYWORD | P_KF_KEYWORD | P_MEDIA_KEYWORD => K_SPW | K_AT,
+        P_PL | P_RULE_LIST | P_BLOCK => K_LBR,
+        P_RULE_LIST_END | P_PL_BODY_END => K_SPW | K_RBR,
+        P_PL_END | P_BLOCK_END | P_BRACE_AHEAD => K_RBR,
+        P_PROP_NAME => K_DASH | K_LO,
+        P_VALUE | P_FONT_VALUE | P_PSEUDO => K_COLON,
+        P_VALUE_END => K_SPW | K_SEMI | K_RBR | K_RPAR,
+        P_VENDOR | P_CUSTOM_PROP => K_DASH,
+        P_BUILTIN_FNS | P_FILTER_FNS | P_IMAGE_TYPE | P_VAR_FN | P_CALC_FN | P_ATTR_FN
+        | P_MINMAX_FN | P_URL_FN | P_DOC_FNS | P_ADJ_FNS | P_UNICODE_RANGE | P_CONSTANTS
+        | P_PROP_NAMES | P_TAG | P_COUNTER_STYLES | P_MEDIA_TYPES | P_MEDIA_LOGIC
+        | P_SUPPORTS_LOGIC => K_ALPHA,
+        P_LINE_NAMES | P_ATTR_SEL => K_LSQ,
+        P_LINE_NAME | P_IDENT_RUN | P_ATTR_NAME | P_COUNTER_NAME | P_ATTR_FN_NAME => K_IDENT,
+        P_LINE_NAMES_END | P_ATTR_SEL_END => K_RSQ,
+        P_NUMERIC | P_PERCENT | P_LENGTH | P_ANGLE | P_RESOLUTION | P_NUMBER | P_INTEGER => K_NUM,
+        P_COLOR_VALUES => K_ALPHA | K_HASH,
+        P_STRING => K_QUOTE,
+        P_IMPORTANT => K_BANG,
+        P_COMMA => K_SPW | K_COMMA,
+        // `$`, or no `[-a-z]`
+        P_PROP_NAME_END => K_ANY & !(K_DASH | K_LO),
+        P_VAR_DEPRECATED | P_FONT | P_CUSTOM_ELEMENT | P_EVEN_ODD | P_DROP_WORDS
+        | P_SYMBOL_TYPES | P_AUTO | P_ROUND | P_AT | P_CIRCLE_PLACES | P_FILL_RULES
+        | P_REPETITIONS | P_SIZES | P_TO | P_SIDES | P_RADIAL_WORDS | P_RADIAL_PLACES
+        | P_COLOR_SPACES | P_FROM_TO | P_ORIENTATION | P_STEPS_WORDS => K_LO,
+        P_SELECTOR_END => K_SLASH | K_AT | K_LBR | K_RPAR,
+        P_CLASS => K_DOT,
+        P_ID => K_HASH,
+        P_WILDCARD => K_STAR,
+        P_COMBINATOR => K_COMB | K_PLUS,
+        // `{{ident}}|`, `*|` and a bare `|`
+        P_QUALIFIED => K_IDENT | K_STAR | K_PIPE,
+        P_ATTR_OP => K_SPW | K_OPS | K_PIPE | K_COMB | K_STAR,
+        // `\s+[iI]`: a space at least
+        P_CASE_FLAG => K_SPW,
+        P_ATTR_UNQUOTED => K_ANY & !(K_SP | K_NL | K_END | K_RSQ | K_LSQ | K_QUOTE),
+        P_ATTR_VAL_END => K_RSQ | K_SP | K_NL | K_HI,
+        P_GROUP_END | P_CALL_END | P_CALC_END | P_PAREN_END => K_RPAR,
+        P_GROUP | P_CALC_PAREN | P_MQ_PAREN | P_SUP_PAREN => K_LPAR,
+        P_UNQUOTED => K_ANY & !(K_SP | K_NL | K_END | K_QUOTE),
+        P_ADJ_OPS => K_DASH | K_PLUS | K_STAR,
+        P_COUNTER_COMMA | P_MQ_COMMA => K_COMMA,
+        P_NTH => K_DASH | K_PLUS | K_DIG | K_LO,
+        P_NTH_INVALID => K_DASH | K_PLUS | K_DIG,
+        P_DENSITY => K_DIG,
+        // `\b\w`: a letter in the end, but read as `\w`
+        P_UNITS => K_ALPHA | K_DIG | K_UNDER | K_HI,
+        P_CALC_OP => K_DASH | K_SLASH | K_STAR | K_PLUS,
+        P_SEMI | P_CM_END => K_SEMI,
+        P_SEMI_END => K_SEMI | K_NL | K_END,
+        P_CM_INNER_END => K_SPW | K_SEMI,
+        // `\s*(?=[^{;])`, its `\s*` giving a space back
+        P_MQL | P_KF_NAMES => K_ANY & !(K_LBR | K_SEMI | K_END),
+        P_AT_BLOCK | P_SPACES_BRACE => K_SPW | K_LBR,
+        P_SPACES_BRACE_SEMI => K_SPW | K_LBR | K_SEMI,
+        P_KF_NAME_END => K_SPW | K_COMMA | K_LBR | K_SEMI,
+        P_MEDIA_FEATURE => K_DASH | K_LO,
+        P_RATIO => K_SPW | K_DIG,
+        // `P_POP_EMPTY`, `P_KF_NAME` (empty matches), and any op not read here
+        _ => K_ANY,
+    }
+}
+
+/// Whether op lists `a` and `b` are the same.
+const fn same_ops(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut j = 0;
+    while j < a.len() {
+        if a[j] != b[j] {
+            return false;
+        }
+        j += 1;
+    }
+    true
+}
+
+/// The first context whose ops are `ctx`'s, if it is before `ctx`.
+const fn first_with_ops(ctx: usize) -> usize {
+    let mine = ops(ctx as u8);
+    let mut c = 0;
+    while c < ctx {
+        if same_ops(ops(c as u8), mine) {
+            return c;
+        }
+        c += 1;
+    }
+    ctx
+}
+
+/// How many rows [`MASKS`] has: one a distinct list of ops (the wrapped calls share theirs).
+const ROW_COUNT: usize = {
+    let mut r = 0;
+    let mut c = 0;
+    while c < 256 {
+        if !ops(c as u8).is_empty() && first_with_ops(c) == c {
+            r += 1;
+        }
+        c += 1;
+    }
+    r
+};
+
+/// Each context's row in [`MASKS`] plus one, 0 for none.
+static ROWS: [u8; 256] = {
+    assert!(ROW_COUNT < 256);
+    let mut t = [0u8; 256];
+    let mut r = 0;
+    let mut c = 0;
+    while c < 256 {
+        if !ops(c as u8).is_empty() {
+            let f = first_with_ops(c);
+            if f == c {
+                r += 1;
+                t[c] = r;
+            } else {
+                t[c] = t[f];
+            }
+        }
+        c += 1;
+    }
+    t
+};
+
+/// Each list's ops by a place's class: bit `j` set where `ops(ctx)[j]`'s [`gate`] holds the
+/// class, so a place's ops are one load.
+static MASKS: [[u16; 32]; ROW_COUNT] = {
+    let mut t = [[0u16; 32]; ROW_COUNT];
+    let mut c = 0;
+    while c < 256 {
+        let ops = ops(c as u8);
+        if !ops.is_empty() && first_with_ops(c) == c {
+            assert!(ops.len() <= 16, "a list with more ops than a mask's bits");
+            let r = ROWS[c] as usize - 1;
+            let mut k = 0;
+            while k < 32 {
+                let mut j = 0;
+                while j < ops.len() {
+                    if gate(ops[j]) & (1 << k) != 0 {
+                        t[r][k] |= 1 << j;
+                    }
+                    j += 1;
+                }
+                k += 1;
+            }
+        }
+        c += 1;
+    }
+    t
+};
+
+/// The ops of `ctx` that can match at a place of class `kind`: bit `j` for `ops(ctx)[j]`.
+#[inline(always)]
+fn gated_ops(ctx: u8, kind: u32) -> u16 {
+    match ROWS[usize::from(ctx)] {
+        0 => 0,
+        r => MASKS[usize::from(r - 1)][kind.trailing_zeros() as usize],
     }
 }
 
@@ -1808,6 +2065,16 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         }
     }
 
+    /// The class of the place `i` ([`BYTE_KIND`]; the line's `\n`, or past it).
+    #[inline(always)]
+    fn kind_at(&self, i: usize) -> u32 {
+        match self.b.get(i) {
+            Some(&c) => BYTE_KIND[usize::from(c)],
+            None if i == self.b.len() => K_NL,
+            None => K_END,
+        }
+    }
+
     /// Whether `\w` holds at `i`.
     fn word_at(&self, i: usize) -> bool {
         if i >= self.b.len() {
@@ -2083,6 +2350,12 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             let q = match ctx {
                 COMMENT => self.comment(p),
                 STR_S | STR_D => self.string(p, ctx),
+                // a property list's `}` and `{`, the only places its ops' gates hold
+                PL => match self.ch(p) {
+                    Some(b'}') => self.op_at(P_PL_END, p, ctx, fresh),
+                    Some(b'{') => self.op_at(P_RULE_LIST, p, ctx, fresh),
+                    _ => None,
+                },
                 // the busiest contexts' own code: it goes on past tokens that leave the stack as it
                 // is, and gives up the line only at its end
                 PROP_VALUE | FONT_VALUE | SELECTOR | PL_BODY | PROP_NAME | MAIN | BLOCK
@@ -2101,8 +2374,13 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                     }
                 }
                 _ => {
+                    // the ops whose gates hold the place, in the grammar's order
+                    let ops = ops(ctx);
+                    let mut set = gated_ops(ctx, self.kind_at(p));
                     let mut hit = None;
-                    for &op in ops(ctx) {
+                    while set != 0 {
+                        let op = ops[set.trailing_zeros() as usize];
+                        set &= set - 1;
                         if let Some(q) = self.op(op, p, ctx, fresh) {
                             hit = Some(q);
                             break;
