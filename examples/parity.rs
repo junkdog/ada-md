@@ -12,10 +12,11 @@
 //!
 //! The files are compared on `-j N` threads (all cores by default), each file on one, and
 //! merged in the list's order, so the report is the same on any number. `--speed` compares
-//! nothing and gives both highlighters' speed alone, on one thread (run it pinned): the corpus
-//! in the first theme, in MB of source a second
-//! of wall time (one call a file, syntect's on a set already loaded, so its first use of a
-//! grammar counts once; run it pinned to a core).
+//! nothing and gives both highlighters' speed alone, on one thread, in the first theme, in MB
+//! of the files a second: syntect's one call a file (on a set already loaded, so its first use
+//! of a grammar counts once), ada's as `lexer_speed` times the lexer (the corpus repeated to
+//! 4 MB, best of 5), its first call apart. Run it pinned, the core's clock held up
+//! (`b2-bench-profile on 2 $$`): a corpus of small files is over in a few milliseconds.
 //!
 //! ```zsh
 //! cargo run --release --example parity -- json $(cat lists/json.txt)
@@ -217,40 +218,64 @@ fn main() {
     }
 }
 
-/// Both highlighters' speed on `files` in one theme, on this thread, as `-j 1` times them: the
-/// files syntect fails on count for syntect alone, those with a line past `MAX_LINE` for neither.
+/// Both highlighters' speed on `files` in one theme, on this thread: the files syntect fails on
+/// count for neither, those with a line past `MAX_LINE` for neither, and a byte is a byte of the
+/// file, as `lexer_speed` and `hl_path` count them. syntect's is one call a file, its first use
+/// of the grammar counted once. ada's is taken as `lexer_speed` takes the lexer's (X-048): the
+/// corpus in a pass of its own, repeated to at least 4 MB a round, best of 5, after a pass that
+/// isn't timed; its first call, which resolves the theme's rules once a process, is timed on its
+/// own and printed apart. Timed a call a file right after syntect's, ada read up to 6× under
+/// that on corpora of small files: the first call was up to half its time, and a timer pair a
+/// call a sixth of a 150-byte file's.
 fn speed(files: &[String], lang: &str, name: &str, rule: &SyntaxTheme) {
-    let (mut bytes, mut ada, mut syntect) = (0usize, Duration::ZERO, Duration::ZERO);
-    let mut timed = 0;
+    let mut texts = Vec::new();
+    let mut syntect = Duration::ZERO;
     for path in files {
         let Ok(text) = fs::read_to_string(path) else {
             continue;
         };
-        let lines = || text.strip_suffix('\n').unwrap_or(&text).split('\n');
-        if lines().any(|l| expand_tabs(l).len() > MAX_LINE) {
+        if text.split('\n').any(|l| expand_tabs(l).len() > MAX_LINE) {
             continue;
         }
         let start = Instant::now();
         let theirs =
             highlight::highlight_syntect(highlight::reference_syntaxes(), name, &text, rule);
         syntect += start.elapsed();
-        if theirs.is_none() {
-            continue;
+        if theirs.is_some() {
+            texts.push(text);
         }
-        let start = Instant::now();
-        let ours = highlight::highlight(1, lang, &text, rule);
-        ada += start.elapsed();
-        std::hint::black_box((ours, theirs));
-        timed += 1;
-        bytes += lines()
-            .map(|l| expand_tabs(l.strip_suffix('\r').unwrap_or(l)).len())
-            .sum::<usize>();
+        std::hint::black_box(theirs);
     }
+    let bytes: usize = texts.iter().map(String::len).sum();
+    let first = texts.first().map_or(Duration::ZERO, |text| {
+        let start = Instant::now();
+        std::hint::black_box(highlight::highlight(1, lang, text, rule));
+        start.elapsed()
+    });
+    let pass = || {
+        for text in &texts {
+            std::hint::black_box(highlight::highlight(1, lang, text, rule));
+        }
+    };
+    pass();
+    let repeat = (4_000_000 / bytes.max(1)).max(1);
+    let mut best = Duration::MAX;
+    for _ in 0..5 {
+        let start = Instant::now();
+        for _ in 0..repeat {
+            pass();
+        }
+        best = best.min(start.elapsed());
+    }
+    let ada = best / repeat as u32;
     let rate = |t: Duration| bytes as f64 / 1e6 / t.as_secs_f64().max(1e-9);
     println!(
-        "{lang} ({name}): {timed} files, {bytes} bytes\nspeed: ada {:.1} MB/s, syntect {:.2} MB/s",
+        "{lang} ({name}): {} files, {bytes} bytes\nspeed: ada {:.1} MB/s, syntect {:.2} MB/s \
+         (ada's first call {:.1} µs)",
+        texts.len(),
         rate(ada),
-        rate(syntect)
+        rate(syntect),
+        first.as_secs_f64() * 1e6
     );
 }
 

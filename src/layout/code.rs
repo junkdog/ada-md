@@ -179,7 +179,7 @@ pub fn expand_tabs_onto(line: &str, out: &mut String) {
 /// end dropped), may hold a control character: when not, no line of it needs
 /// [`expand_tabs`]. One pass over the block, 32 bytes a step (HL-004: checked a line at a time,
 /// short lines spent most of it a byte at a time). A block with a byte that may start one is
-/// looked at again ([`keeps_controls`]), so a CRLF block or one with `«` or `±` (0xc2, a C1
+/// looked at again (`keeps_controls`), so a CRLF block or one with `«` or `±` (0xc2, a C1
 /// control's lead byte too) isn't checked again line by line (X-048: INI's corpus, 74
 /// instructions a line).
 pub fn block_needs_expanding(text: &str) -> bool {

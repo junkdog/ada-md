@@ -8,8 +8,12 @@
 //! MODE=ada taskset -c 2 target/release/examples/hl_path yaml @lists/yaml.txt  # one mode, for perf
 //! ```
 //!
-//! `MODE` is `lex`, `ada` or both (the default), or `digest`: a hash of every line's runs in
-//! every built-in theme, for holding a speed step to the same output. `SECS` keeps the one mode
+//! A run takes ~10–20 ms: hold the core's clock up (`b2-bench-profile on 2 $$`), or the first
+//! runs of a sweep read up to ~30% slow before the governor ramps (X-048).
+//!
+//! `MODE` is `lex`, `ada` or both (the default), `digest`: a hash of every line's runs in
+//! every built-in theme, for holding a speed step to the same output, or `count`: the corpus's
+//! lines, spans and runs, and its files with a tab or a CR. `SECS` keeps the one mode
 //! running about that long, for a profile. `BLOCK=N` cuts each file into blocks of N lines, each
 //! highlighted (and lexed) from the default state, as a document's code blocks are.
 
@@ -70,17 +74,19 @@ fn main() {
         .unwrap_or(0.0);
     let repeat = (4_000_000 / bytes.max(1)).max(1);
 
+    // lexer_speed's loop as written there: one spans vector for every round (a fresh one each
+    // round cost fstab's 3.9 KB corpus ~6%), `str::lines`, the state anew a file (X-048)
+    let kept = std::cell::RefCell::new(Vec::new());
     let lex = || {
-        let mut spans = Vec::new();
+        let lang = own.expect("own");
+        let mut spans = kept.borrow_mut();
         for text in &texts {
             let mut state = ada_parse::State::default();
-            let body = text.strip_suffix('\n').unwrap_or(text);
-            for line in body.split('\n') {
-                let line = line.strip_suffix('\r').unwrap_or(line);
-                ada_parse::lex(own.expect("own"), line, &mut state, &mut spans);
+            for line in text.lines() {
+                ada_parse::lex(lang, line, &mut state, &mut spans);
             }
-            hint::black_box(&spans);
         }
+        hint::black_box(&*spans);
     };
     let ada = || {
         for text in &texts {
@@ -117,6 +123,33 @@ fn main() {
             }
         }
         println!("{lang} {:016x}", h.finish());
+        return;
+    }
+    if mode == "count" {
+        // the corpus's shape: files, lines, the lexer's spans and ada's runs, in the first theme
+        let (mut lines, mut spans, mut runs) = (0usize, 0usize, 0usize);
+        let mut v = Vec::new();
+        for text in &texts {
+            let mut state = ada_parse::State::default();
+            let body = text.strip_suffix('\n').unwrap_or(text);
+            for line in body.split('\n') {
+                let line = line.strip_suffix('\r').unwrap_or(line);
+                ada_parse::lex(own.expect("own"), line, &mut state, &mut v);
+                spans += v.len();
+                lines += 1;
+            }
+            let out = highlight::highlight(1, &lang, text, &rule);
+            runs += (0..out.line_count())
+                .map(|n| out.line(n).len())
+                .sum::<usize>();
+        }
+        let tabbed = texts.iter().filter(|t| t.contains('\t')).count();
+        let crlf = texts.iter().filter(|t| t.contains('\r')).count();
+        println!(
+            "{lang}: {} files, {bytes} bytes, {lines} lines, {spans} spans, {runs} runs; \
+             {tabbed} files with a tab, {crlf} with a CR",
+            texts.len()
+        );
         return;
     }
     println!("{lang}: {} files, {bytes} bytes", texts.len());
