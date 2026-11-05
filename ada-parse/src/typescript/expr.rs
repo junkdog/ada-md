@@ -63,6 +63,12 @@ impl Scan<'_, '_, '_> {
         if c == b',' {
             return self.take(self.i, self.i + 1, COMMA);
         }
+        // at a blank, no pattern matches unless `blank_led`'s bytes follow: the turns in frames
+        // the run loop doesn't pass blanks in ([`super::quiet`]), each pattern walking the blanks
+        // to fail (X-035)
+        if is_space(c) && !self.blank_led(self.ws(self.i)) {
+            return false;
+        }
         if is_name_start(c)
             && let Some(r) = self.plain_name(false)
         {

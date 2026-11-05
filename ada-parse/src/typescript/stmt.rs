@@ -1118,6 +1118,16 @@ impl Scan<'_, '_, '_> {
             || self.of_in(i)
     }
 
+    /// A space or tab at `i` past the line's start: where the frames that test it have nothing to
+    /// take, each of their patterns needing its byte at the place (a comment's `/` but at the
+    /// line's start, a quote, a bracket, a name), but for what each tests besides. Their turns there
+    /// failed a blank at a time, ~200–300 instructions each (X-035); the run is passed with
+    /// [`Scan::sp`], as the failed turns passed it.
+    #[inline]
+    fn inner_blank(&self, i: usize, c: u8) -> bool {
+        i > 0 && matches!(c, b' ' | b'\t')
+    }
+
     /// `«wb»(of|in)\s+` at `i`.
     pub(super) fn of_in(&self, i: usize) -> bool {
         for w in [&b"of"[..], b"in"] {
@@ -1202,12 +1212,15 @@ impl Scan<'_, '_, '_> {
                 }
                 // at a blank before a name, `object_member` can match only a method's key (the
                 // name, then `(`, `<` or `?`), or a key's method after a quote or `]`: otherwise
-                // the blanks are passed
+                // the blanks are passed. Before `}` or `,` nothing matches (each pattern needs a
+                // key's byte past the blanks, or its own at the place): passed too (X-035)
                 if i < self.b.len() && is_space(c) {
                     let k = self.ws(i);
-                    if is_name_start(self.c(k))
-                        && !matches!(self.c(self.ws(self.name(k))), b'(' | b'<' | b'?')
-                        && !(i > 0 && matches!(self.b[i - 1], b']' | b'\'' | b'"' | b'`'))
+                    let d = self.c(k);
+                    if matches!(d, b'}' | b',')
+                        || (is_name_start(d)
+                            && !matches!(self.c(self.ws(self.name(k))), b'(' | b'<' | b'?')
+                            && !(i > 0 && matches!(self.b[i - 1], b']' | b'\'' | b'"' | b'`')))
                     {
                         self.i = k;
                         return true;
@@ -1344,6 +1357,10 @@ impl Scan<'_, '_, '_> {
                 c == b',' && self.take(i, i + 1, COMMA)
             }
             VAR_NAME => {
+                if self.inner_blank(i, c) {
+                    self.i = self.sp(i);
+                    return true;
+                }
                 // (?=$|^|[;,=}]|«wb»(of|in)\s+)
                 if (i >= self.b.len()
                     || i == 0
@@ -1538,6 +1555,12 @@ impl Scan<'_, '_, '_> {
                 ne > i && self.take(i, ne, TPL_TAG)
             }
             ARROW_HEAD => {
+                // a return type's `:` after `)` is the only thing taken past blanks
+                if self.inner_blank(i, c) && !(self.b[i - 1] == b')' && self.c(self.ws(i)) == b':')
+                {
+                    self.i = self.sp(i);
+                    return true;
+                }
                 // (?==>|\{|(^\s*(export|function|…)\s+))
                 if ((c == b'=' && self.c(i + 1) == b'>') || c == b'{' || self.arrow_head_bol(i))
                     && self.pop_zero()
@@ -1613,6 +1636,11 @@ impl Scan<'_, '_, '_> {
                     self.tok(i, i + 1, PARAMS_END);
                     self.i = i + 1;
                     return self.pop();
+                }
+                // a destructuring parameter is the only thing taken past blanks
+                if self.inner_blank(i, c) && !matches!(self.c(self.ws(i)), b'{' | b'[' | b'.') {
+                    self.i = self.sp(i);
+                    return true;
                 }
                 self.parameters_body()
             }
@@ -1765,6 +1793,10 @@ impl Scan<'_, '_, '_> {
                 {
                     return true;
                 }
+                if self.inner_blank(i, c) && !self.word_ends_at(i, &[b"import"]) {
+                    self.i = self.sp(i);
+                    return true;
+                }
                 if self.comment(true) || self.string() {
                     return true;
                 }
@@ -1777,6 +1809,10 @@ impl Scan<'_, '_, '_> {
                 self.import_export_declaration()
             }
             IMPORT_CLAUSE => {
+                if self.inner_blank(i, c) {
+                    self.i = self.sp(i);
+                    return true;
+                }
                 if let Some(e) = self.word_b(i, b"from")
                     && self.boundary(i)
                 {
@@ -1787,6 +1823,10 @@ impl Scan<'_, '_, '_> {
                 self.import_export_declaration()
             }
             IMPORT_BLOCK => {
+                if self.inner_blank(i, c) {
+                    self.i = self.sp(i);
+                    return true;
+                }
                 if c == b'}' {
                     self.tok(i, i + 1, BLOCK_BRACE);
                     self.i = i + 1;

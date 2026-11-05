@@ -875,9 +875,8 @@ impl Scan<'_, '_, '_> {
                     && (q & Q_BLANK != 0 || (q & Q_BLANK_IN != 0 && self.i > 0))
                 {
                     let k = self.ws(self.i);
-                    let d = self.c(k);
-                    if !(matches!(d, b'<' | b'/' | b'(' | b'[' | b'{' | b':' | b'?' | b'!')
-                        || (d == b'a' && self.has(k, b"async")))
+                    if !(self.blank_led(k)
+                        || (self.c(k) == b'{' && q & Q_STMT != 0 && self.after_operator(self.i)))
                     {
                         self.i = k.min(self.b.len());
                         self.stuck = 0;
@@ -1050,6 +1049,16 @@ impl Scan<'_, '_, '_> {
         i
     }
 
+    /// Whether `expression` can match at blanks that end at `k`: only `\s*` then `<`, `/`, `(`,
+    /// `[`, `:`, `?`, `!` or `async` ([`quiet`]'s list); its other patterns need a name, a
+    /// digit, a quote, a dot or an operator at the place.
+    #[inline]
+    fn blank_led(&self, k: usize) -> bool {
+        let d = self.c(k);
+        matches!(d, b'<' | b'/' | b'(' | b'[' | b':' | b'?' | b'!')
+            || (d == b'a' && self.has(k, b"async"))
+    }
+
     /// Past spaces and tabs only.
     fn sp(&self, mut i: usize) -> usize {
         while i < self.b.len() && matches!(self.b[i], b' ' | b'\t') {
@@ -1191,7 +1200,8 @@ fn family(f: u8) -> Family {
 }
 
 /// Frames of code whose turn can't match at the line's end, nor at a blank unless the next
-/// non-blank is `<`, `/`, `(`, `[`, `{`, `:`, `?`, `!` or `async`. Their turns are `statements` or
+/// non-blank is `<`, `/`, `(`, `[`, `:`, `?`, `!` or `async`, or `{` in [`Q_STMT`]'s frames after an
+/// operator. Their turns are `statements` or
 /// `expression` and a closing bracket or two, each pattern of which needs a particular byte at the
 /// place, `\s*` then one of those bytes (`\s*<` a cast, type arguments or JSX, `\s*/` a regex, a
 /// division or a comment, `\s*\(` and `\s*<` an arrow's head or a call after `)`, `\s*\[` an
@@ -1204,8 +1214,9 @@ fn family(f: u8) -> Family {
 /// `OBJ`'s turn is `object_member`, whose keys start at a blank too, but not at the line's end.
 fn quiet(f: u8) -> u8 {
     match f {
-        MAIN | BLOCK | CASE_BLOCK | LABEL_BLOCK | PAREN | IF_COND | SWITCH_EXPR | ARRAY
-        | OBJ_VAL | OBJ_SPREAD | CALL_ARGS | TERNARY_F => Q_END | Q_BLANK,
+        MAIN | BLOCK | CASE_BLOCK => Q_END | Q_BLANK | Q_STMT,
+        LABEL_BLOCK | PAREN | IF_COND | SWITCH_EXPR | ARRAY | OBJ_VAL | OBJ_SPREAD | CALL_ARGS
+        | TERNARY_F => Q_END | Q_BLANK,
         OBJ => Q_END,
         RETURN | INIT => Q_BLANK_IN,
         _ => 0,
@@ -1218,6 +1229,10 @@ const Q_END: u8 = 1;
 const Q_BLANK: u8 = 2;
 /// The same past the line's start.
 const Q_BLANK_IN: u8 = 4;
+/// `statements`' frames: a blank before `{` is `\s*\{`'s, an object after an operator
+/// (`after_op_obj`), and no pattern in the others takes it (X-035: arrays' and calls'
+/// indentation before `{` was taken a pattern at a time, ~900 instructions a turn, to fail).
+const Q_STMT: u8 = 8;
 
 /// A template's frame: what is open inside it is under `string.template` too.
 fn is_tpl(f: u8) -> bool {
