@@ -10,7 +10,8 @@
 //!
 //! `MODE` is `lex`, `ada` or both (the default), or `digest`: a hash of every line's runs in
 //! every built-in theme, for holding a speed step to the same output. `SECS` keeps the one mode
-//! running about that long, for a profile.
+//! running about that long, for a profile. `BLOCK=N` cuts each file into blocks of N lines, each
+//! highlighted (and lexed) from the default state, as a document's code blocks are.
 
 use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
@@ -45,6 +46,17 @@ fn main() {
         .iter()
         .filter_map(|p| fs::read_to_string(p).ok())
         .collect();
+    // BLOCK=N: each file as blocks of N lines, as a document's code blocks come (X-022)
+    let texts = match env::var("BLOCK").ok().and_then(|b| b.parse::<usize>().ok()) {
+        Some(n) if n > 0 => texts
+            .iter()
+            .flat_map(|t| {
+                let lines: Vec<&str> = t.split_inclusive('\n').collect();
+                lines.chunks(n).map(<[&str]>::concat).collect::<Vec<_>>()
+            })
+            .collect(),
+        _ => texts,
+    };
     let bytes: usize = texts.iter().map(String::len).sum();
     let themes = Theme::builtins();
     let rule = SyntaxTheme::new(&themes[0].syntax);

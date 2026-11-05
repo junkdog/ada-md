@@ -513,11 +513,6 @@ impl OpenLine<'_> {
         }
     }
 
-    /// Leave the line plain: no runs.
-    fn clear(&mut self) {
-        self.runs.truncate(self.open);
-    }
-
     fn end(self) {
         // a run is a byte or more of the text, so this takes a block of over 4 GiB
         let end = u32::try_from(self.runs.len()).expect("a block of under 2³² runs");
@@ -657,24 +652,42 @@ fn own(lang: &str) -> Option<Lang> {
 /// no span has a rule.
 #[inline]
 fn span_runs(len: usize, spans: impl Iterator<Item = (u32, u32, Rule)>, out: &mut LineRuns) {
-    let mut out = out.open_line();
+    let open = out.runs.len();
+    let runs = &mut out.runs;
+    // no `reserve` for a span and a gap each: the bound is twice what the theme leaves, and
+    // a block's vector grown to it took JSON 57% more page faults and 4% of its time (X-022)
+
+    // the line's last run's rule, held here rather than read back: a span whose rule is the
+    // last one's stretches it, so the theme joins spans (X-022); [`UNSET`] before the first
+    let mut last = UNSET;
+    let mut put = |end: u32, rule: Rule| {
+        if rule == last {
+            let n = runs.len();
+            runs[n - 1].end = end;
+        } else {
+            runs.push(Run { end, rule });
+            last = rule;
+        }
+    };
     let mut at = 0;
     // whether a run has a rule, kept as they're pushed: no second pass over them (HL-004)
     let mut colored = false;
     for (start, end, rule) in spans {
         if start > at {
-            out.push(start, Rule(Rule::NONE));
+            put(start, Rule(Rule::NONE));
         }
-        out.push(end, rule);
+        put(end, rule);
         colored |= rule.0 != Rule::NONE;
         at = end;
     }
     if !colored {
-        out.clear();
+        runs.truncate(open);
     } else if (at as usize) < len {
-        out.push(len as u32, Rule(Rule::NONE));
+        put(len as u32, Rule(Rule::NONE));
     }
-    out.end();
+    // a run is a byte or more of the text, so this takes a block of over 4 GiB
+    let end = u32::try_from(runs.len()).expect("a block of under 2³² runs");
+    out.ends.push(end);
 }
 
 /// A kind's place in [`ParseRules`] before its rule is resolved. No theme has this many rules.
@@ -683,7 +696,13 @@ const UNSET: Rule = Rule(Rule::NONE - 1);
 /// The kinds' rules resolved so far, by language and theme (`SyntaxTheme::id`), for the next
 /// block in them to start from: resolving takes syntect's scope repository and a selector
 /// match for each kind, a sixth of a YAML corpus's time when each block did it anew (HL-004).
-static RESOLVED: Mutex<Vec<(Lang, u64, Vec<Rule>)>> = Mutex::new(Vec::new());
+/// Shared, not copied, by the blocks that start from it: a table runs to the language's
+/// highest kind (C#'s and Python's embedded regexes and SQL put theirs past 30,000), and
+/// copying it cost a C# block ~66,000 instructions, as many as lexing 40 of its lines (X-022).
+static RESOLVED: Mutex<Vec<Resolved>> = Mutex::new(Vec::new());
+
+/// A language's and a theme's (`SyntaxTheme::id`) rules by kind in [`RESOLVED`].
+type Resolved = (Lang, u64, Arc<[Rule]>);
 
 /// Languages times themes kept in [`RESOLVED`]; past that it starts over.
 const RESOLVED_MAX: usize = 64;
@@ -693,9 +712,12 @@ const RESOLVED_MAX: usize = 64;
 /// (`ParseRules::new`), else each the first time a span has it (`ParseRules::lazy`).
 pub struct ParseRules {
     lang: Lang,
-    base: Scope,
     /// By `Span::kind`; [`UNSET`] until resolved, and past the end for a kind not met yet.
-    rules: Vec<Rule>,
+    /// [`RESOLVED`]'s table until this block resolves a kind of its own, then a copy.
+    rules: Arc<[Rule]>,
+    /// [`RESOLVED`]'s table when this block started from it: if it's still the cache's when
+    /// the block ends, nothing was resolved meanwhile and `rules` holds all of it.
+    start: Arc<[Rule]>,
     /// The theme, and whether `rules` has rules [`RESOLVED`] lacks.
     theme: u64,
     fresh: bool,
@@ -716,8 +738,8 @@ impl ParseRules {
     fn lazy(lang: Lang, theme: u64) -> Self {
         Self {
             lang,
-            base: Scope::new(lang.base()).expect("scope"),
-            rules: Vec::new(),
+            rules: Arc::new([]),
+            start: Arc::new([]),
             theme,
             fresh: false,
         }
@@ -728,7 +750,8 @@ impl ParseRules {
         let mut rules = Self::lazy(lang, theme);
         let cache = RESOLVED.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some((_, _, r)) = cache.iter().find(|(l, t, _)| *l == lang && *t == theme) {
-            rules.rules.clone_from(r);
+            rules.rules = Arc::clone(r);
+            rules.start = Arc::clone(r);
         }
         rules
     }
@@ -738,30 +761,53 @@ impl ParseRules {
         if !std::mem::take(&mut self.fresh) {
             return;
         }
+        // without the unresolved tail `resolve_into`'s doubling left
+        let used = self
+            .rules
+            .iter()
+            .rposition(|&r| r != UNSET)
+            .map_or(0, |i| i + 1);
+        let mine: Arc<[Rule]> = if used == self.rules.len() {
+            Arc::clone(&self.rules)
+        } else {
+            self.rules[..used].into()
+        };
         let mut cache = RESOLVED.lock().unwrap_or_else(PoisonError::into_inner);
         let (lang, theme) = (self.lang, self.theme);
-        match cache.iter_mut().find(|(l, t, _)| *l == lang && *t == theme) {
+        let kept = match cache.iter_mut().find(|(l, t, _)| *l == lang && *t == theme) {
+            // the table this block started from: it has all the cache's rules and more
+            Some((_, _, r)) if Arc::ptr_eq(r, &self.start) => {
+                *r = mine;
+                Arc::clone(r)
+            }
             Some((_, _, r)) => {
-                if r.len() < self.rules.len() {
-                    r.resize(self.rules.len(), UNSET);
+                // what another block resolved meanwhile, joined with this one's
+                let mut joined = mine.to_vec();
+                if joined.len() < r.len() {
+                    joined.resize(r.len(), UNSET);
                 }
-                for (mine, theirs) in self.rules.iter().zip(r.iter_mut()) {
-                    if *theirs == UNSET {
-                        *theirs = *mine;
+                for (m, theirs) in joined.iter_mut().zip(r.iter()) {
+                    if *m == UNSET {
+                        *m = *theirs;
                     }
                 }
+                *r = joined.into();
+                Arc::clone(r)
             }
             None => {
                 if cache.len() >= RESOLVED_MAX {
                     cache.clear();
                 }
-                cache.push((lang, theme, self.rules.clone()));
+                cache.push((lang, theme, Arc::clone(&mine)));
+                mine
             }
-        }
+        };
+        self.start = kept;
     }
 
     fn resolve(&self, kind: u16, highlighter: &SynHighlighter) -> Rule {
-        let mut stack = vec![self.base];
+        // the base scope here, not a block's set-up: syntect's scope repository is behind a lock
+        let mut stack = vec![Scope::new(self.lang.base()).expect("scope")];
         stack.extend(
             self.lang
                 .scopes(kind)
@@ -777,12 +823,21 @@ impl ParseRules {
     #[cold]
     #[inline(never)]
     fn resolve_into(&mut self, kind: u16, highlighter: &SynHighlighter) -> Rule {
-        let k = usize::from(kind);
-        if k >= self.rules.len() {
-            self.rules.resize(k + 1, UNSET);
-        }
+        let (k, len) = (usize::from(kind), self.rules.len());
         let rule = self.resolve(kind, highlighter);
-        self.rules[k] = rule;
+        match Arc::get_mut(&mut self.rules) {
+            Some(rules) if k < len => rules[k] = rule,
+            _ => {
+                // the shared table copied, once a block, or the table grown: doubled, as a `Vec`
+                // grows, so a block meeting kinds far apart copies it a few times at most
+                let mut rules = self.rules.to_vec();
+                if k >= len {
+                    rules.resize((2 * len).max(k + 1), UNSET);
+                }
+                rules[k] = rule;
+                self.rules = rules.into();
+            }
+        }
         self.fresh = true;
         rule
     }
