@@ -343,7 +343,13 @@ fn boundary(b: &[u8], e: usize) -> bool {
     is_word(b, e - 1) != is_word(b, e)
 }
 
-/// Where the first byte from `from` that `stop` takes is, or the end.
+/// Where the first byte from `from` that is one of `set` is, or the line's length: sixteen bytes
+/// a step ([`crate::prim::find_in`]).
+fn next_in<const N: usize>(b: &[u8], from: usize, set: [u8; N]) -> usize {
+    crate::prim::find_in(b, from.min(b.len()), b.len(), set)
+}
+
+/// Where the first byte from `from` that `stop` takes is, or the line's length.
 fn next_of(b: &[u8], from: usize, stop: impl Fn(u8) -> bool) -> usize {
     b.get(from..)
         .and_then(|rest| rest.iter().position(|&c| stop(c)))
@@ -899,11 +905,11 @@ impl Scan<'_, '_> {
         let b = self.b;
         match self.top() {
             // a raw string has no escapes
-            RAW => next_of(b, p + 1, |c| c == b'"' || c == b'$'),
-            STRING => next_of(b, p + 1, |c| matches!(c, b'"' | b'$' | b'\\')),
-            CHAR => next_of(b, p + 1, |c| c == b'\'' || c == b'\\'),
-            BACKTICK => next_of(b, p + 1, |c| c == b'`'),
-            COMMENT => next_of(b, p + 1, |c| c == b'*'),
+            RAW => next_in(b, p + 1, *b"\"$"),
+            STRING => next_in(b, p + 1, *b"\"$\\"),
+            CHAR => next_in(b, p + 1, *b"'\\"),
+            BACKTICK => next_in(b, p + 1, *b"`"),
+            COMMENT => next_in(b, p + 1, *b"*"),
             top => {
                 let c = b[p];
                 if is_space(c) {

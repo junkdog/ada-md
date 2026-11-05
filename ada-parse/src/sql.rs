@@ -1614,9 +1614,7 @@ impl Scan<'_, '_, '_, '_> {
         // the host's next place (the line's end on its own), where its patterns come first
         let mut lim = self.host_next(p);
         loop {
-            while p < lim && b[p] != quote && b[p] != other {
-                p += 1;
-            }
+            p = crate::prim::find_in(b, p, lim, [quote, other]);
             if p >= lim {
                 if p >= n {
                     break;

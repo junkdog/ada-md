@@ -9,8 +9,6 @@
 //! stands (`foo`, `NaN`, a missing `,`) is left plain; an unknown escape is still invalid.
 
 use crate::Span;
-use anpa::core::parse;
-use anpa::findbyte::{eq, find_byte};
 
 /// What a stretch of a JSON line is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -285,14 +283,10 @@ fn string_end(b: &[u8], mut at: usize) -> usize {
     }
 }
 
-/// The next `"` or `\` in `b[at..end]`, or `end`: anpa's scan, 8 bytes at a time.
+/// The next `"` or `\` in `b[at..end]`, or `end`, sixteen bytes a step.
+#[inline(always)]
 fn next_special(b: &[u8], at: usize, end: usize) -> usize {
-    let rest = &b[at..end];
-    let found = parse(find_byte(eq(b'"') | eq(b'\\'), false), rest);
-    match found.result {
-        Some(_) => end - found.state.len(),
-        None => end,
-    }
+    crate::prim::find_in(b, at, end, *b"\"\\")
 }
 
 /// How long the escape at the start of `b` is, and whether JSON has it. `b` holds the byte

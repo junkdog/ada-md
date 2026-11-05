@@ -170,10 +170,8 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
 fn args(b: &[u8], mut p: usize, mut ctx: Ctx, mut depth: u64, out: &mut Out) -> (Ctx, u64) {
     loop {
         if ctx == Ctx::Args {
-            let next = b[p..]
-                .iter()
-                .position(|&c| matches!(c, b'\\' | b'"' | b'\''));
-            let Some(k) = next.map(|i| p + i) else {
+            let k = crate::prim::find_in(b, p, b.len(), *b"\\\"'");
+            let Some(k) = (k < b.len()).then_some(k) else {
                 // `\n` pops the arguments
                 return (Ctx::Body, depth - 1);
             };
@@ -204,8 +202,8 @@ fn args(b: &[u8], mut p: usize, mut ctx: Ctx, mut depth: u64, out: &mut Out) -> 
             Ctx::Double => (b'"', 0),
             _ => (b'\'', IN_SINGLE),
         };
-        let next = b[p..].iter().position(|&c| c == b'\\' || c == quote);
-        let Some(k) = next.map(|i| p + i) else {
+        let k = crate::prim::find_in(b, p, b.len(), [b'\\', quote]);
+        let Some(k) = (k < b.len()).then_some(k) else {
             // `\n` sets `invalid`
             out.push(p, b.len(), DOUBLE + single);
             return (Ctx::Invalid, depth);

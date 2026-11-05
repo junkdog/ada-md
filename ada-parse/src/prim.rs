@@ -231,6 +231,62 @@ pub fn find_any<const N: usize>(b: &[u8], from: usize, set: [u8; N]) -> usize {
     i.min(b.len())
 }
 
+/// Where the first byte of `b[from..end]` that is one of `set` is, or `end` (`from` where
+/// `from >= end`; `end` at most `b.len()`): sixteen bytes a step, the last step read again
+/// from `end - 16` with the bytes before `from` masked off, so a run that ends near the line's
+/// end is found in one load. SSE2, which every x86-64 has; [`find_any`]'s eight elsewhere.
+#[inline(always)]
+pub fn find_in<const N: usize>(b: &[u8], from: usize, end: usize, set: [u8; N]) -> usize {
+    const { assert!(N > 0) };
+    let end = end.min(b.len());
+    if from >= end {
+        return from;
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        use std::arch::x86_64::*;
+        // SAFETY: SSE2 is part of x86-64; every load reads `b[q..q + 16]` with `q + 16 <= end
+        // <= b.len()` (each call below), and needs no alignment
+        unsafe {
+            let vs = set.map(|c| _mm_set1_epi8(c as i8));
+            let hits = |q: usize| {
+                let w = _mm_loadu_si128(b.as_ptr().add(q).cast());
+                let mut m = _mm_cmpeq_epi8(w, vs[0]);
+                for v in &vs[1..] {
+                    m = _mm_or_si128(m, _mm_cmpeq_epi8(w, *v));
+                }
+                _mm_movemask_epi8(m) as u32
+            };
+            let mut i = from;
+            while i + 16 <= end {
+                let m = hits(i);
+                if m != 0 {
+                    return i + m.trailing_zeros() as usize;
+                }
+                i += 16;
+            }
+            if i == end {
+                return end;
+            }
+            if end >= 16 {
+                let q = end - 16;
+                let m = hits(q) >> (i - q);
+                return if m != 0 {
+                    i + m.trailing_zeros() as usize
+                } else {
+                    end
+                };
+            }
+            while i < end && !set.contains(&b[i]) {
+                i += 1;
+            }
+            i
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    find_any(&b[..end], from, set)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,5 +304,15 @@ mod tests {
         assert_eq!(blank_len(b"\n", 0), None);
         assert_eq!(find_any(b"0123456789abcdef;", 0, *b";#"), 16);
         assert_eq!(find_any(b"abc", 1, *b";"), 3);
+        let long = b"0123456789abcdef0123456789\"x\\";
+        for from in 0..long.len() {
+            for end in from..=long.len() {
+                let want = (from..end)
+                    .find(|&i| b"\"\\".contains(&long[i]))
+                    .unwrap_or(end);
+                assert_eq!(find_in(long, from, end, *b"\"\\"), want, "{from}..{end}");
+            }
+        }
+        assert_eq!(find_in(b"abc", 3, 1, *b"a"), 3);
     }
 }

@@ -3452,10 +3452,7 @@ impl<'b> Scan<'b, '_> {
         // a string that closes on its line before any `\\`: its text and its end in this step,
         // as the string's own dispatches would give them
         let b = self.b;
-        let mut i = e;
-        while i < self.b.len() && b[i] != q && b[i] != b'\\' {
-            i += 1;
-        }
+        let i = crate::prim::find_in(b, e, b.len(), [q, b'\\']);
         if i < self.b.len() && b[i] == q {
             return self.close(i, i + 1, STR_END);
         }
