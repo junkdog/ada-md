@@ -15,6 +15,8 @@ use ada_parse::{Lang, State, lex};
 const LANGS: &[(&str, Lang)] = &[
     ("json", Lang::Json),
     ("diff", Lang::Diff),
+    // token-cost's `log.txt`, log-corpus/'s snapshot
+    ("log", Lang::Log),
     ("ini", Lang::Ini),
     ("toml", Lang::Toml),
     ("xml", Lang::Xml),
