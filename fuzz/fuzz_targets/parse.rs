@@ -1,7 +1,7 @@
 //! ADR-40: ada-parse's lexers against what they replaced, syntect on bat's grammars, as the
 //! `make` and `bash` targets check Makefile's and bash's scanners (`lexer_parity`). The first byte picks the language, of the
 //! ones whose lexers give bat's scopes exactly: Diff, INI, XML, Dockerfile, Java
-//! properties, `.env`, and Git's ignore, attributes, mailmap and link files. Each kind's scopes must be
+//! properties, `.env`, Git's ignore, attributes, mailmap and link files, and fstab. Each kind's scopes must be
 //! syntect's stack on every byte of every line, as long as the lexer's state holds its whole
 //! stack and each stack of scopes has its own kind (nested deeper than either, the lexer keeps
 //! the top and the innermost scopes). XML's scanner keeps each meta scope once where bat's nest
@@ -33,7 +33,7 @@ use libfuzzer_sys::fuzz_target;
 const LINE: usize = 256;
 
 /// The languages whose kinds carry bat's scopes exactly.
-const EXACT: [Lang; 10] = [
+const EXACT: [Lang; 11] = [
     Lang::Diff,
     Lang::Ini,
     Lang::Xml,
@@ -44,6 +44,7 @@ const EXACT: [Lang; 10] = [
     Lang::GitAttributes,
     Lang::GitMailmap,
     Lang::GitLink,
+    Lang::Fstab,
 ];
 
 fuzz_target!(|data: &[u8]| {

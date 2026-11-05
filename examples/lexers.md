@@ -301,6 +301,15 @@ No fence token reaches this lexer yet (`.git` shows unhighlighted); a worktree's
 gitdir: ../.git/worktrees/ada-md-secondary
 ```
 
+## fstab
+
+```fstab
+# <file system>  <dir>   <type>  <options>          <dump> <pass>
+UUID=ad252f43-ade0-4506-a583-d6d5cb53f5c2  /      ext4  rw,relatime        0 1
+/dev/nvme0n1p1                             /boot  vfat  rw,fmask=0077      0 2
+server:/export                             /nfs   nfs4  _netdev,x-systemd  0 0
+```
+
 ## Rust
 
 ```rust

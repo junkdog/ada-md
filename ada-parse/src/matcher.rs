@@ -53,18 +53,6 @@ impl M {
             .zip(&self.spans[..n])
             .map(|(&g, &(s, e))| (g, s as usize, e as usize))
     }
-
-    /// Where group `n` (from 1; 0 for the whole match) spans, if it took part.
-    pub fn group(&self, n: u8) -> Option<(usize, usize)> {
-        if n == 0 {
-            return Some((self.s as usize, self.e as usize));
-        }
-        let i = self.nums[..usize::from(self.n)]
-            .iter()
-            .position(|&x| x == n)?;
-        let (s, e) = self.spans[i];
-        Some((s as usize, e as usize))
-    }
 }
 
 /// A line as a regex sees it: its bytes, then a `\n` at [`Line::nl`]; positions run to

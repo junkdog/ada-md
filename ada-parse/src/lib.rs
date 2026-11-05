@@ -9,11 +9,11 @@
 //!
 //! The lexers are scanners of ada's own, speed first (ADR-40): one pass over a line's bytes,
 //! a fixed set of kinds carrying bat's scopes for the common case, syntect a guideline.
-//! Diff is a line lexer, each line on its own; INI, Java properties and `.env` share the
-//! line-format engine (`line_format.rs`); logs (O-043) and JSON (O-048) came from ada; `.env`'s,
-//! Git's (ignore, attributes, mailmap and link files), Dockerfile's and Java properties'
-//! scanners are bat's grammars compiled by hand, exact against syntect (the `parse` fuzz
-//! target), as INI's is; XML's is of ada's own design and still exact; YAML's and TOML's read
+//! Diff is a line lexer, each line on its own; INI, Java properties, `.env`, Git's own files
+//! (ignore, attributes, mailmap and link files) and fstab share the line-format engine
+//! (`line_format.rs`); logs (O-043) and JSON (O-048) came from ada; Dockerfile's scanner is
+//! bat's grammar compiled by hand; these are exact against syntect (the `parse` fuzz target),
+//! and XML's, of ada's own design, is too; YAML's and TOML's read
 //! their formats as bat's grammars do on well-formed text (TOML's as TOML 1.1 where bat's
 //! doesn't). bash and Makefiles share a scanner, bat's contexts matched in place.
 
@@ -25,9 +25,9 @@ mod css;
 mod diff;
 mod dockerfile;
 mod dotenv;
+mod fstab;
 // the matchers and context ids its scanner shares, from the port it replaced
 mod git;
-mod git_scan;
 mod go;
 mod html;
 mod ini;
@@ -62,7 +62,6 @@ mod xml_scan;
 mod yaml;
 mod yaml_scan;
 
-use git_scan::Git;
 pub use lang::{ALIASES, FirstLine, Lang, first_line_syntaxes};
 use lisp::Dialect;
 
@@ -121,26 +120,6 @@ impl State {
     fn set_flags(&mut self, flags: u16) {
         self.arg = flags;
     }
-
-    fn levels(&self) -> &[u8] {
-        &self.levels[..usize::from(self.depth)]
-    }
-
-    /// A stack to keep: its top [`matcher::KEPT`] levels.
-    fn pack(levels: &[u8], withs: &[u8], arg: u16, exact: bool) -> State {
-        let from = levels.len().saturating_sub(matcher::KEPT);
-        let n = levels.len() - from;
-        let mut state = State {
-            levels: [0; matcher::KEPT],
-            withs: [0; matcher::KEPT],
-            depth: n as u8,
-            inexact: !exact || from > 0,
-            arg,
-        };
-        state.levels[..n].copy_from_slice(&levels[from..]);
-        state.withs[..n].copy_from_slice(&withs[from..]);
-        state
-    }
 }
 
 /// Lex one `line`, without its newline, into `spans` (cleared first), after the lines before
@@ -194,10 +173,11 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::Bash => bash::line(line.as_bytes(), state, &mut out),
         Lang::Makefile => bash::make_line(line.as_bytes(), state, &mut out),
         Lang::DotEnv => dotenv::line(line.as_bytes(), state, &mut out),
-        Lang::GitIgnore => git_scan::line(Git::Ignore, line.as_bytes(), state, &mut out),
-        Lang::GitAttributes => git_scan::line(Git::Attributes, line.as_bytes(), state, &mut out),
-        Lang::GitMailmap => git_scan::line(Git::Mailmap, line.as_bytes(), state, &mut out),
-        Lang::GitLink => git_scan::line(Git::Link, line.as_bytes(), state, &mut out),
+        Lang::GitIgnore => git::ignore(line.as_bytes(), state, &mut out),
+        Lang::GitAttributes => git::attributes(line.as_bytes(), state, &mut out),
+        Lang::GitMailmap => git::mailmap(line.as_bytes(), state, &mut out),
+        Lang::GitLink => git::link(line.as_bytes(), state, &mut out),
+        Lang::Fstab => fstab::line(line.as_bytes(), state, &mut out),
         Lang::Dockerfile => dockerfile::line(line.as_bytes(), state, &mut out),
         Lang::Properties => properties::line(line.as_bytes(), state, &mut out),
         Lang::Log | Lang::Json => unreachable!(),

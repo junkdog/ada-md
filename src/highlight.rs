@@ -3516,6 +3516,20 @@ mod tests {
         rules_match_the_grammar("properties", "Java Properties", text);
     }
 
+    /// ada-parse's fstab lexer picks the rules bat's grammar picks, in every built-in theme
+    /// (ADR-40).
+    #[test]
+    fn fstab_rules_match_the_grammar() {
+        let text = concat!(
+            "# <file system> <dir> <type> <options> <dump> <pass>\n",
+            "UUID=ab12\t/\text4\trw,relatime,x=1\t0 1\n",
+            "/dev/sda2 none swap sw 0 0\n",
+            "server:/export /nfs nfs4 _netdev 0 0 # c\n",
+            "//srv/share /mnt cifs user=a 3 x y\n",
+        );
+        rules_match_the_grammar("fstab", "fstab", text);
+    }
+
     /// ada-parse's `.env` lexer picks the rules bat's grammar picks, in every built-in theme
     /// (ADR-40).
     #[test]

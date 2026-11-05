@@ -41,6 +41,8 @@ pub enum Lang {
     GitMailmap,
     /// bat's `Git Link`.
     GitLink,
+    /// bat's `fstab`: fstab, crypttab and mtab.
+    Fstab,
     /// bat's `Rust`.
     Rust,
     /// bat's `Kotlin`.
@@ -260,6 +262,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     ),
     (Lang::GitMailmap, &[".mailmap", "mailmap"]),
     (Lang::GitLink, &[".git"]),
+    (Lang::Fstab, &["fstab", "crypttab", "mtab"]),
     (Lang::Rust, &["rs"]),
     (Lang::Kotlin, &["kt", "kts"]),
     (Lang::Java, &["java", "bsh"]),
@@ -321,7 +324,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 38] = [
+    pub const ALL: [Lang; 39] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -338,6 +341,7 @@ impl Lang {
         Lang::GitAttributes,
         Lang::GitMailmap,
         Lang::GitLink,
+        Lang::Fstab,
         Lang::Rust,
         Lang::Kotlin,
         Lang::Java,
@@ -382,6 +386,7 @@ impl Lang {
             Lang::GitAttributes => "Git Attributes",
             Lang::GitMailmap => "Git Mailmap",
             Lang::GitLink => "Git Link",
+            Lang::Fstab => "fstab",
             Lang::Rust => "Rust",
             Lang::Kotlin => "Kotlin",
             Lang::Java => "Java",
@@ -435,6 +440,7 @@ impl Lang {
             Lang::GitAttributes => "text.git.attributes",
             Lang::GitMailmap => "text.git.mailmap",
             Lang::GitLink => "text.git.link",
+            Lang::Fstab => "source.fstab",
             Lang::Rust => "source.rust",
             Lang::Kotlin => "source.Kotlin",
             Lang::Java => "source.java",
@@ -465,6 +471,7 @@ impl Lang {
         match self {
             Lang::Diff => crate::diff::KINDS,
             Lang::Ini => crate::ini::KINDS,
+            Lang::Fstab => crate::fstab::KINDS,
             Lang::Json => &crate::json::KINDS,
             Lang::Log => &crate::logs::KINDS,
             _ => &[],
@@ -498,7 +505,7 @@ impl Lang {
             Lang::Clojure => crate::lisp::clojure::scopes(kind),
             Lang::DotEnv => crate::dotenv::scopes(kind),
             Lang::GitIgnore | Lang::GitAttributes | Lang::GitMailmap | Lang::GitLink => {
-                crate::git_scan::scopes(kind)
+                crate::git::scopes(kind)
             }
             Lang::Bash => crate::bash::scopes(kind),
             Lang::Makefile => crate::bash::make_scopes(kind),
@@ -520,7 +527,7 @@ impl Lang {
     /// Whether a line's spans never depend on the lines before it, so that lines can be lexed
     /// in any order, on any thread, from `State::default()`.
     pub fn line_by_line(self) -> bool {
-        matches!(self, Lang::Diff | Lang::Ini | Lang::Log)
+        matches!(self, Lang::Diff | Lang::Ini | Lang::Log | Lang::Fstab)
     }
 
     /// The language a syntax's own name gives, as `find_syntax_by_name` matches it: exactly.

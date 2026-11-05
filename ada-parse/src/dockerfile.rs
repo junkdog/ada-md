@@ -111,7 +111,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         _ => Ctx::Main,
     };
     let mut depth = word >> 4;
-    let blank = b.iter().all(|&c| is_space(c));
+    let blank = || b.iter().all(|&c| is_space(c));
     // the patterns anchored at the line's start; past them only the arguments' and strings'
     // patterns can match
     let p = match ctx {
@@ -142,8 +142,8 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
             }
         }
         // `^\s*$` takes a blank line and its `\n`: the arguments go on
-        Ctx::Args if blank || comment(b, out) => return save(state, ctx, depth),
-        Ctx::Double | Ctx::Single if blank => {
+        Ctx::Args if blank() || comment(b, out) => return save(state, ctx, depth),
+        Ctx::Double | Ctx::Single if blank() => {
             let kind = if ctx == Ctx::Double {
                 DOUBLE
             } else {
@@ -285,45 +285,83 @@ fn spaces(b: &[u8], at: usize) -> usize {
         .count()
 }
 
-/// `^\s*(?i:(onbuild)\s+)?(?i:<words>)\s`: the match's end, and where `onbuild` is.
-fn keyword(b: &[u8], words: &[&[u8]]) -> Option<(usize, Option<usize>)> {
-    let q = spaces(b, 0);
-    let after = |at: usize| {
-        words
-            .iter()
-            .find(|w| word_at(b, at, w) && space_at(b, at + w.len()))
-            .map(|w| at + w.len() + 1)
-    };
-    if word_at(b, q, b"onbuild") {
-        let k = spaces(b, q + 7);
-        if k > q + 7
-            && let Some(e) = after(k)
-        {
-            return Some((e, Some(q)));
-        }
-    }
-    after(q).map(|e| (e, None))
+/// What a line's first word is, as the instructions' patterns read it: an instruction that
+/// takes arguments (`RUN`, `ENV`, …), `MAINTAINER`, `COPY`, `CMD` or `ENTRYPOINT`, `ONBUILD`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Word {
+    Instruction,
+    Maintainer,
+    Copy,
+    Command,
+    Onbuild,
+    Other,
 }
 
-const INSTRUCTIONS: [&[u8]; 12] = [
-    b"add",
-    b"arg",
-    b"env",
-    b"expose",
-    b"healthcheck",
-    b"label",
-    b"run",
-    b"shell",
-    b"stopsignal",
-    b"user",
-    b"volume",
-    b"workdir",
-];
+/// A word of lowercase letters as [`word`] folds one.
+const fn key_of(w: &[u8]) -> u128 {
+    let mut k = 0u128;
+    let mut i = w.len();
+    while i > 0 {
+        i -= 1;
+        k = k << 8 | w[i] as u128;
+    }
+    k
+}
+
+const K_ADD: u128 = key_of(b"add");
+const K_ARG: u128 = key_of(b"arg");
+const K_ENV: u128 = key_of(b"env");
+const K_RUN: u128 = key_of(b"run");
+const K_USER: u128 = key_of(b"user");
+const K_LABEL: u128 = key_of(b"label");
+const K_SHELL: u128 = key_of(b"shell");
+const K_EXPOSE: u128 = key_of(b"expose");
+const K_VOLUME: u128 = key_of(b"volume");
+const K_WORKDIR: u128 = key_of(b"workdir");
+const K_STOPSIGNAL: u128 = key_of(b"stopsignal");
+const K_HEALTHCHECK: u128 = key_of(b"healthcheck");
+const K_CMD: u128 = key_of(b"cmd");
+const K_ENTRYPOINT: u128 = key_of(b"entrypoint");
+const K_COPY: u128 = key_of(b"copy");
+const K_ONBUILD: u128 = key_of(b"onbuild");
+const K_MAINTAINER: u128 = key_of(b"maintainer");
+
+/// The word of ASCII letters at `at` (ignoring case), if `\s` follows it (the line's `\n`
+/// among them): which it is, and where it ends. The words are letters, so a word the
+/// patterns name ends where the letters do.
+fn word(b: &[u8], at: usize) -> (Word, usize) {
+    let mut e = at;
+    while e < b.len() && b[e].is_ascii_alphabetic() {
+        e += 1;
+    }
+    if !space_at(b, e) {
+        return (Word::Other, e);
+    }
+    // the word folded to lowercase, a byte a letter, as one key: the longest word is 11
+    let w = &b[at..e];
+    if w.len() > 11 {
+        return (Word::Other, e);
+    }
+    let key = w
+        .iter()
+        .rev()
+        .fold(0u128, |k, &c| k << 8 | u128::from(c | 0x20));
+    let word = match key {
+        K_ADD | K_ARG | K_ENV | K_RUN | K_USER | K_LABEL | K_SHELL | K_EXPOSE | K_VOLUME
+        | K_WORKDIR | K_STOPSIGNAL | K_HEALTHCHECK => Word::Instruction,
+        K_CMD | K_ENTRYPOINT => Word::Command,
+        K_COPY => Word::Copy,
+        K_ONBUILD => Word::Onbuild,
+        K_MAINTAINER => Word::Maintainer,
+        _ => Word::Other,
+    };
+    (word, e)
+}
 
 /// `directives`, in the grammar's order: an instruction that takes arguments (`RUN`, `ENV`,
-/// …), `MAINTAINER`, `COPY` and `CMD` or `ENTRYPOINT`, `ONBUILD` before any but `MAINTAINER`.
-/// Where the match ends, its arguments' start: past the line's end when the keyword's `\s` is
-/// its `\n`.
+/// …), `MAINTAINER`, `COPY` and `CMD` or `ENTRYPOINT`, `ONBUILD` before any but `MAINTAINER`
+/// (`^\s*(?i:(onbuild)\s+)?(?i:<words>)\s`). Where the match ends, its arguments' start: past
+/// the line's end when the keyword's `\s` is its `\n`. The line's first word is read once.
 fn directive(b: &[u8], out: &mut Out) -> Option<usize> {
     // caps 0 the keyword, 1 `onbuild` within it
     let whole = |e: usize, onbuild: Option<usize>, kind: u16, out: &mut Out| {
@@ -338,16 +376,28 @@ fn directive(b: &[u8], out: &mut Out) -> Option<usize> {
         }
         e
     };
-    if let Some((e, onbuild)) = keyword(b, &INSTRUCTIONS) {
-        return Some(whole(e, onbuild, KEYWORD, out));
+    let q = spaces(b, 0);
+    let (first, e) = word(b, q);
+    let (w, e, onbuild) = match first {
+        // `(onbuild)\s+` and the word after it; `MAINTAINER` takes none
+        Word::Onbuild => {
+            let k = spaces(b, e);
+            if k == e {
+                return None;
+            }
+            match word(b, k) {
+                (Word::Maintainer, _) => return None,
+                (w, e) => (w, e, Some(q)),
+            }
+        }
+        w => (w, e, None),
+    };
+    match w {
+        Word::Instruction | Word::Maintainer => Some(whole(e + 1, onbuild, KEYWORD, out)),
+        Word::Copy => copy(b, out),
+        Word::Command => Some(whole(e + 1, onbuild, OPERATOR, out)),
+        Word::Onbuild | Word::Other => None,
     }
-    if let Some((e, None)) = keyword(b, &[b"maintainer"]) {
-        return Some(whole(e, None, KEYWORD, out));
-    }
-    if let Some(e) = copy(b, out) {
-        return Some(e);
-    }
-    keyword(b, &[b"cmd", b"entrypoint"]).map(|(e, onbuild)| whole(e, onbuild, OPERATOR, out))
 }
 
 /// `^\s*((?i:(onbuild)\s+)?(?i:copy))(?:\s+--from=(\S+))?\s`: caps 1 the keyword, 2 `onbuild`,

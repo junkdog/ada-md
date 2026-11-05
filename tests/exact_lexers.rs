@@ -42,20 +42,52 @@ impl Rng {
     }
 }
 
-/// Blocks of `tokens` in random order, up to `most` a block, in each of `langs`.
+/// Blocks of `tokens` in random order, up to `most` a block, in each of `langs`. The blocks are
+/// drawn first, from one seed, then checked on every core (syntect is the slow side, and a
+/// soup is one test); a failure names the first failing block in the order drawn.
 fn soup(langs: &[Lang], tokens: &[&str], most: u64) {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     let rounds: u64 = std::env::var("EXACT_SOUP")
         .ok()
         .and_then(|n| n.parse().ok())
         .unwrap_or(300);
     let mut rng = Rng(0);
-    for _ in 0..rounds {
-        let n = 1 + rng.next() % most;
-        let block: String = (0..n).map(|_| rng.pick(tokens)).collect();
-        for &lang in langs {
-            let run = std::panic::catch_unwind(|| exact(lang, &block));
-            assert!(run.is_ok(), "{lang:?}, block: {block:?}");
+    let blocks: Vec<String> = (0..rounds)
+        .map(|_| {
+            let n = 1 + rng.next() % most;
+            (0..n).map(|_| rng.pick(tokens)).collect()
+        })
+        .collect();
+    let next = AtomicUsize::new(0);
+    let failed: Mutex<Option<(usize, Lang)>> = Mutex::new(None);
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    std::thread::scope(|s| {
+        for _ in 0..threads.min(blocks.len()) {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(block) = blocks.get(i) else { break };
+                    for &lang in langs {
+                        if std::panic::catch_unwind(|| exact(lang, block)).is_err() {
+                            let mut first = failed
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            if first.is_none_or(|(j, _)| i < j) {
+                                *first = Some((i, lang));
+                            }
+                        }
+                    }
+                }
+            });
         }
+    });
+    if let Some((i, lang)) = failed
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+    {
+        panic!("{lang:?}, block {i}: {:?}", blocks[i]);
     }
 }
 
@@ -223,6 +255,7 @@ fn git_examples() {
         "a <b@c.d.e> f ; g\n<<a>> <> <a <a@b@c.d> a\t <x>\nname ;comment <x>\n\r<a>\n",
         "gitdir: ../.git/modules/sub\n  gitdir :C:\\repo\\.git.\ngitdir: ~/x/*\nnotgitdir: x\n",
         "# comment\ngitdir\nx\ngitdir x : y\ngitdir:\ngitdir: a/..\\./b.c.\n gitdir: .\n",
+        "a\"b c x\"y=\"z\" \"q\"r s\nab\"[c\" d\n",
         "",
         "\n\n",
     ];
@@ -300,6 +333,9 @@ fn dockerfile_examples() {
         "FROM x\nRUN a \\ \nb\n  RUN x\n\tlabel a=b\n",
         "FROM x@sha256:abc\nFROM scratch\nEXPOSE 80\nHEALTHCHECK CMD x\n",
         "from x\nFROM\nFROM \nARG\nRUN 'a\n\nb'\n",
+        "FROM x\nONBUILD MAINTAINER x\nONBUILD ONBUILD RUN x\nRUN2 x\nCOPYX y\nonbuild\nONBUILD  \n",
+        "FROM x\nONBUILDRUN x\ncopy --from=a b c\nHealthcheck NONE\nstopSignal x\n  Add a b\nOnBuild Cmd x\n",
+        "FROM x\nShell [\"a\"]\nvolume /x\nUSER\nlabel\texpose 1\nENTRYPOINT\nMAINTAINERS x\nWORKDIR\tx\n",
         "",
         "\n\n",
     ];
@@ -335,6 +371,17 @@ fn dockerfile_soup() {
         "MAINTAINER ",
         "MAINTAINER",
         "ENTRYPOINT ",
+        "HEALTHCHECK ",
+        "STOPSIGNAL ",
+        "WORKDIR ",
+        "ADD ",
+        "Copy ",
+        "onbuildx ",
+        "SHELL ",
+        "VOLUME ",
+        "USER ",
+        "LABEL ",
+        "EXPOSE ",
         "\n",
         "\n",
         "\n",
@@ -356,6 +403,33 @@ fn dockerfile_soup() {
         ":",
     ];
     soup(&[Lang::Dockerfile], &tokens, 60);
+}
+
+#[test]
+fn fstab_examples() {
+    let blocks = [
+        "# <file system> <dir> <type> <options> <dump> <pass>\nUUID=ab12\t/\text4\trw,relatime\t0 1\n",
+        "LABEL=x /boot vfat rw,fmask=0077,x=,=y,a=b=c 0 2 # c\n/dev/sda1 none swap sw 0 0\n",
+        "//srv/share /mnt cifs user=a,pass=b 0 0\n\\\\srv\\x /m smb defaults\nserver:/export /nfs nfs4 _netdev 0 0\n",
+        "  sda1  /x  ext4\nabc/def /m\n/a/b/ /c\n/ / / / 1 2\n/x/ y\n\\x/y z\n:a b\na: b\n=a b\nx=y\n",
+        "tmpfs /tmp tmpfs defaults 10 20 extra\nproc /proc proc defaults 3 x y\na b c d,e,,f g h # c\n",
+        "a #b\na b #c\na b c #d\na b c d #e\na b c d 0 #f\n  # c\n\t\n",
+        "a b c d\ne f g\nh i\nj\n",
+        "",
+        "\n\n",
+    ];
+    for block in blocks {
+        exact(Lang::Fstab, block);
+    }
+}
+
+#[test]
+fn fstab_soup() {
+    let tokens = [
+        "UUID=", "LABEL=x", "=", "x", "/", "/dev/", "//", "\\\\", "\\", ":", "a:b", "/mnt", "ext4",
+        ",", "rw", "a=b", "0", "1", "2", "3", " ", "  ", "\t", "#", "# c", "\n", "\n", "\n",
+    ];
+    soup(&[Lang::Fstab], &tokens, 30);
 }
 
 #[test]
