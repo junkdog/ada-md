@@ -293,7 +293,7 @@ pub(super) fn bal(b: &[u8], i: usize, open: u8, close: u8, depth: u8) -> Option<
     let mut j = i + 1;
     loop {
         // the next bracket of either kind, eight bytes a step
-        j = crate::prim::find_any(b, j, [open, close]);
+        j = crate::prim::find_swar(b, j, [open, close]);
         if j >= b.len() {
             return None;
         }
@@ -317,7 +317,7 @@ pub(super) fn bal(b: &[u8], i: usize, open: u8, close: u8, depth: u8) -> Option<
 fn arrow_ahead(b: &[u8], i: usize) -> bool {
     let mut j = i + 1;
     loop {
-        j = crate::prim::find_any(b, j, *b">");
+        j = crate::prim::find_swar(b, j, *b">");
         if j >= b.len() {
             return false;
         }
@@ -737,7 +737,7 @@ pub(super) fn fn_colon(b: &[u8], i: usize, tsx: bool, value: bool) -> bool {
             loop {
                 // past the `[^<>(),=]` units, eight bytes a step: the line's end fails it (its
                 // `\n` one more unit, and nothing after it)
-                let f = crate::prim::find_any(b, k, *b"=(<>),");
+                let f = crate::prim::find_swar(b, k, *b"=(<>),");
                 any |= f > k;
                 k = f;
                 if k >= b.len() {
@@ -751,7 +751,7 @@ pub(super) fn fn_colon(b: &[u8], i: usize, tsx: bool, value: bool) -> bool {
                         None => return false,
                     },
                     b'<' => {
-                        let e = crate::prim::find_any(b, k + 1, *b"<>");
+                        let e = crate::prim::find_swar(b, k + 1, *b"<>");
                         if at(b, e) != b'>' {
                             return false;
                         }

@@ -206,10 +206,21 @@ pub const fn stops(bytes: &[u8]) -> [bool; 256] {
     t
 }
 
-/// Where the first byte from `from` that is one of `set` is, or the end: eight bytes at a time
-/// (each byte's zero test: a borrow only ever marks bytes above a true match, so the lowest
-/// mark is the first).
+/// Where the first byte from `from` that is one of `set` is, or the end: [`find_in`] to the
+/// line's end on x86-64, [`find_swar`] elsewhere.
 pub fn find_any<const N: usize>(b: &[u8], from: usize, set: [u8; N]) -> usize {
+    #[cfg(target_arch = "x86_64")]
+    {
+        find_in(b, from.min(b.len()), b.len(), set)
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    find_swar(b, from, set)
+}
+
+/// [`find_any`] eight bytes at a time (each byte's zero test: a borrow only ever marks bytes
+/// above a true match, so the lowest mark is the first): where runs are short, as in
+/// TypeScript's lookaheads, cheaper than [`find_in`]'s set-up (X-041).
+pub fn find_swar<const N: usize>(b: &[u8], from: usize, set: [u8; N]) -> usize {
     const LO: u64 = 0x0101_0101_0101_0101;
     const HI: u64 = 0x8080_8080_8080_8080;
     let mut i = from;
@@ -234,7 +245,7 @@ pub fn find_any<const N: usize>(b: &[u8], from: usize, set: [u8; N]) -> usize {
 /// Where the first byte of `b[from..end]` that is one of `set` is, or `end` (`from` where
 /// `from >= end`; `end` at most `b.len()`): sixteen bytes a step, the last step read again
 /// from `end - 16` with the bytes before `from` masked off, so a run that ends near the line's
-/// end is found in one load. SSE2, which every x86-64 has; [`find_any`]'s eight elsewhere.
+/// end is found in one load. SSE2, which every x86-64 has; [`find_swar`]'s eight elsewhere.
 #[inline(always)]
 pub fn find_in<const N: usize>(b: &[u8], from: usize, end: usize, set: [u8; N]) -> usize {
     const { assert!(N > 0) };
@@ -284,7 +295,7 @@ pub fn find_in<const N: usize>(b: &[u8], from: usize, end: usize, set: [u8; N]) 
         }
     }
     #[cfg(not(target_arch = "x86_64"))]
-    find_any(&b[..end], from, set)
+    find_swar(&b[..end], from, set)
 }
 
 #[cfg(test)]
@@ -304,6 +315,9 @@ mod tests {
         assert_eq!(blank_len(b"\n", 0), None);
         assert_eq!(find_any(b"0123456789abcdef;", 0, *b";#"), 16);
         assert_eq!(find_any(b"abc", 1, *b";"), 3);
+        assert_eq!(find_any(b"abc", 5, *b";"), 3);
+        assert_eq!(find_swar(b"0123456789abcdef;", 0, *b";#"), 16);
+        assert_eq!(find_swar(b"abc", 5, *b";"), 3);
         let long = b"0123456789abcdef0123456789\"x\\";
         for from in 0..long.len() {
             for end in from..=long.len() {

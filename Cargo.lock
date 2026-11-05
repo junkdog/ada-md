@@ -31,9 +31,6 @@ dependencies = [
 [[package]]
 name = "ada-parse"
 version = "0.1.0"
-dependencies = [
- "anpa",
-]
 
 [[package]]
 name = "adler2"

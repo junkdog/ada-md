@@ -195,7 +195,7 @@ pub fn trim(b: &[u8], from: usize, mut end: usize) -> usize {
     end
 }
 
-/// Where the first of `set` from `p` in `b` is, or the line's end: eight bytes a step.
+/// Where the first of `set` from `p` in `b` is, or the line's end: sixteen bytes a step.
 #[inline(always)]
 pub fn find<const N: usize>(b: &[u8], p: usize, set: [u8; N]) -> usize {
     find_any(b, p, set)

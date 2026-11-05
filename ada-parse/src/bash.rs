@@ -4,8 +4,8 @@
 //! a byte each on a stack, but matches at the place it has reached instead of searching ahead
 //! with every pattern in reach. Each context dispatches on the byte there to the few patterns
 //! that can start on it, in the grammar's order, which is syntect's leftmost match; where none
-//! can, a run of bytes that start nothing is passed whole (anpa's `find_byte` in strings and
-//! here-documents), where the port tried dozens of patterns at every token.
+//! can, a run of bytes that start nothing is passed whole ([`crate::prim::find_in`] in strings
+//! and here-documents), where the port tried dozens of patterns at every token.
 //!
 //! syntect's machinery is followed where a line's colors depend on it: the prototype (comments,
 //! line continuations, escapes) tried first in the contexts that take it; a pop that matches
@@ -27,9 +27,6 @@
 //! (FNV-1a), in the bytes after its context.
 
 use std::mem::MaybeUninit;
-
-use anpa::core::parse;
-use anpa::findbyte::{eq, find_byte};
 
 use crate::matcher::KEPT as HALF;
 use crate::prim::char_len;
@@ -982,30 +979,18 @@ impl Scan<'_, '_, '_> {
 
     /// The first of `x`, `y`, `z`, `w` from `p` on the line, or the line's end.
     fn find4(&self, p: usize, x: u8, y: u8, z: u8, w: u8) -> usize {
-        let rest = &self.b[p.min(self.b.len())..];
-        let found = parse(find_byte(eq(x) | eq(y) | eq(z) | eq(w), false), rest);
-        match found.result {
-            Some(_) => self.b.len() - found.state.len(),
-            None => self.b.len(),
-        }
+        let b = self.b;
+        crate::prim::find_in(b, p.min(b.len()), b.len(), [x, y, z, w])
     }
 
     fn find3(&self, p: usize, x: u8, y: u8, z: u8) -> usize {
-        let rest = &self.b[p.min(self.b.len())..];
-        let found = parse(find_byte(eq(x) | eq(y) | eq(z), false), rest);
-        match found.result {
-            Some(_) => self.b.len() - found.state.len(),
-            None => self.b.len(),
-        }
+        let b = self.b;
+        crate::prim::find_in(b, p.min(b.len()), b.len(), [x, y, z])
     }
 
     fn find1(&self, p: usize, x: u8) -> usize {
-        let rest = &self.b[p.min(self.b.len())..];
-        let found = parse(find_byte(eq(x), false), rest);
-        match found.result {
-            Some(_) => self.b.len() - found.state.len(),
-            None => self.b.len(),
-        }
+        let b = self.b;
+        crate::prim::find_in(b, p.min(b.len()), b.len(), [x])
     }
 
     // ---- the stack

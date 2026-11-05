@@ -7,10 +7,9 @@ description = "ada-md's own lexers for the most used languages, and the table th
 license = "MIT"
 repository = "https://github.com/junkdog/ada-md"
 
-# no syntect types (ADR-40); anpa for bash's byte finder. ada checks the table against bat's
-# grammars in its own tests, where syntect is.
+# no syntect types (ADR-40), and no dependencies. ada checks the table against bat's grammars in
+# its own tests, where syntect is.
 [dependencies]
-anpa = "0.13"
 
 [lints.rust]
 unused_variables = "deny"

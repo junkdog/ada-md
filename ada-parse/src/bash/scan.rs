@@ -4,9 +4,6 @@
 
 use std::cell::OnceCell;
 
-use anpa::core::parse;
-use anpa::findbyte::{eq, find_byte};
-
 /// Byte offsets `(start, end)` of a pattern's match, `c[0]`, and of its groups 1 to 5; a group
 /// that took part in no match is [`NONE`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,22 +133,22 @@ pub fn ws(c: u8) -> bool {
     matches!(c, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
 }
 
-/// The first `x` in `b[from..]`: anpa's scan, 8 bytes at a time.
+/// The first `x` in `b[from..]`: [`crate::prim::find_in`], sixteen bytes a step.
 ///
 /// Not inlined, like the scans below: a hundred matchers call them.
 #[inline(never)]
 pub fn find(b: &[u8], from: usize, x: u8) -> Option<usize> {
-    let rest = b.get(from..)?;
-    let found = parse(find_byte(eq(x), false), rest);
-    found.result.map(|_| b.len() - found.state.len())
+    (from <= b.len())
+        .then(|| crate::prim::find_in(b, from, b.len(), [x]))
+        .filter(|&i| i < b.len())
 }
 
 /// The first `x` or `y` in `b[from..]`.
 #[inline(never)]
 pub fn find2(b: &[u8], from: usize, x: u8, y: u8) -> Option<usize> {
-    let rest = b.get(from..)?;
-    let found = parse(find_byte(eq(x) | eq(y), false), rest);
-    found.result.map(|_| b.len() - found.state.len())
+    (from <= b.len())
+        .then(|| crate::prim::find_in(b, from, b.len(), [x, y]))
+        .filter(|&i| i < b.len())
 }
 
 /// The first `needle` in `b[from..]`.
