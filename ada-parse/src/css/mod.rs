@@ -768,9 +768,10 @@ const K_IDENT: u32 = K_DASH | K_ALPHA | K_UNDER | K_HI | K_BSL;
 /// Where a number can start.
 const K_NUM: u32 = K_DIG | K_DASH | K_PLUS | K_DOT;
 
-/// Each byte's class.
-static BYTE_KIND: [u32; 256] = {
-    let mut t = [K_OTHER; 256];
+/// Each byte's class, as the index of its `K_` bit (X-037: a byte a class, where the class's
+/// bit took four).
+static BYTE_KIND: [u8; 256] = {
+    let mut t = [0u8; 256];
     let mut i = 0;
     while i < 256 {
         let c = i as u8;
@@ -804,7 +805,8 @@ static BYTE_KIND: [u32; 256] = {
             b'|' => K_PIPE,
             0x80..=0xff => K_HI,
             _ => K_OTHER,
-        };
+        }
+        .trailing_zeros() as u8;
         i += 1;
     }
     t
@@ -895,12 +897,34 @@ const fn same_ops(a: &[u8], b: &[u8]) -> bool {
     true
 }
 
+/// Whether the run tries `ctx`'s ops through [`gated_ops`]: not for the contexts with code of
+/// their own ([`Scan::run`]'s arms), whose ops are called by name (X-037: their rows dropped).
+const fn gated(ctx: u8) -> bool {
+    !ops(ctx).is_empty()
+        && !matches!(
+            ctx,
+            COMMENT
+                | STR_S
+                | STR_D
+                | PL
+                | PROP_VALUE
+                | FONT_VALUE
+                | SELECTOR
+                | PL_BODY
+                | PROP_NAME
+                | MAIN
+                | BLOCK
+                | MEDIA_BODY
+                | KF_BODY
+        )
+}
+
 /// The first context whose ops are `ctx`'s, if it is before `ctx`.
 const fn first_with_ops(ctx: usize) -> usize {
     let mine = ops(ctx as u8);
     let mut c = 0;
     while c < ctx {
-        if same_ops(ops(c as u8), mine) {
+        if gated(c as u8) && same_ops(ops(c as u8), mine) {
             return c;
         }
         c += 1;
@@ -913,7 +937,7 @@ const ROW_COUNT: usize = {
     let mut r = 0;
     let mut c = 0;
     while c < 256 {
-        if !ops(c as u8).is_empty() && first_with_ops(c) == c {
+        if gated(c as u8) && first_with_ops(c) == c {
             r += 1;
         }
         c += 1;
@@ -928,7 +952,7 @@ static ROWS: [u8; 256] = {
     let mut r = 0;
     let mut c = 0;
     while c < 256 {
-        if !ops(c as u8).is_empty() {
+        if gated(c as u8) {
             let f = first_with_ops(c);
             if f == c {
                 r += 1;
@@ -949,7 +973,7 @@ static MASKS: [[u16; 32]; ROW_COUNT] = {
     let mut c = 0;
     while c < 256 {
         let ops = ops(c as u8);
-        if !ops.is_empty() && first_with_ops(c) == c {
+        if gated(c as u8) && first_with_ops(c) == c {
             assert!(ops.len() <= 16, "a list with more ops than a mask's bits");
             let r = ROWS[c] as usize - 1;
             let mut k = 0;
@@ -969,12 +993,13 @@ static MASKS: [[u16; 32]; ROW_COUNT] = {
     t
 };
 
-/// The ops of `ctx` that can match at a place of class `kind`: bit `j` for `ops(ctx)[j]`.
+/// The ops of `ctx` that can match at a place of class `kind` (a `K_` bit's index): bit `j`
+/// for `ops(ctx)[j]`.
 #[inline(always)]
-fn gated_ops(ctx: u8, kind: u32) -> u16 {
+fn gated_ops(ctx: u8, kind: u8) -> u16 {
     match ROWS[usize::from(ctx)] {
         0 => 0,
-        r => MASKS[usize::from(r - 1)][kind.trailing_zeros() as usize],
+        r => MASKS[usize::from(r - 1)][usize::from(kind)],
     }
 }
 
@@ -1774,6 +1799,19 @@ static NUMERIC: [u8; 7] = [
     T_NUMBER,
 ];
 
+/// The numeric type a one-type numeric op reads ([`Scan::op_at`]'s arms), `None` for the others.
+const fn num_type(op: u8) -> Option<u8> {
+    match op {
+        P_PERCENT => Some(T_PERCENT),
+        P_LENGTH => Some(T_LENGTH),
+        P_ANGLE => Some(T_ANGLE),
+        P_RESOLUTION => Some(T_RESOLUTION),
+        P_NUMBER => Some(T_NUMBER),
+        P_INTEGER => Some(T_INTEGER),
+        _ => None,
+    }
+}
+
 /// No numeric type: what [`unit_type`] gives a word that is no unit.
 const NO_TYPE: u8 = 0xff;
 
@@ -1908,6 +1946,7 @@ fn lex<const S: bool>(
         out,
         stack: [MAIN; MAX],
         depth: 1,
+        ctx: MAIN,
         at: from,
         spaces_run: Run::new((usize::MAX, 0)),
         digits_run: Run::new((usize::MAX, 0)),
@@ -1922,6 +1961,7 @@ fn lex<const S: bool>(
         shape_run: std::cell::Cell::new((usize::MAX, 0, 0)),
     };
     s.depth = state.load(&mut s.stack);
+    s.ctx = s.stack[s.depth - 1];
     s.rewrap();
     let exact = state.is_exact();
     run(&mut s);
@@ -1942,6 +1982,9 @@ struct Scan<'b, 'o, 's, const S: bool = false> {
     out: &'o mut Out<'s>,
     stack: [u8; MAX],
     depth: usize,
+    /// The top context, `stack[depth - 1]`, kept as the stack changes (X-037: read at every
+    /// place and after every token, it was a load of the depth and a bounds test each time).
+    ctx: u8,
     /// Where the spans pushed so far end: a context's text fills up to the next token.
     at: usize,
     /// The last run of `\s`, of digits, of letters, of `[A-Za-z0-9-]` scanned.
@@ -1971,8 +2014,15 @@ struct Scan<'b, 'o, 's, const S: bool = false> {
 }
 
 impl<const S: bool> Scan<'_, '_, '_, S> {
+    #[inline(always)]
     fn top(&self) -> u8 {
-        self.stack[self.depth - 1]
+        self.ctx
+    }
+
+    /// Set the depth to `d`, the top read from the stack again.
+    fn set_depth(&mut self, d: usize) {
+        self.depth = d;
+        self.ctx = self.stack[d - 1];
     }
 
     #[inline(always)]
@@ -2030,6 +2080,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         self.fill(at);
         self.stack[self.depth] = c;
         self.depth += 1;
+        self.ctx = c;
         let w = own_wrap(c);
         if S {
             if w != W_NONE {
@@ -2045,8 +2096,9 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
     fn pop(&mut self, at: usize) {
         self.fill(at);
         if self.depth > 1 {
-            self.depth -= 1;
-            if !S || own_wrap(self.stack[self.depth]) != W_NONE {
+            let popped = self.ctx;
+            self.set_depth(self.depth - 1);
+            if !S || own_wrap(popped) != W_NONE {
                 self.rewrap();
             }
         }
@@ -2065,13 +2117,14 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         }
     }
 
-    /// The class of the place `i` ([`BYTE_KIND`]; the line's `\n`, or past it).
+    /// The class of the place `i`, its `K_` bit's index ([`BYTE_KIND`]; the line's `\n`, or
+    /// past it).
     #[inline(always)]
-    fn kind_at(&self, i: usize) -> u32 {
+    fn kind_at(&self, i: usize) -> u8 {
         match self.b.get(i) {
             Some(&c) => BYTE_KIND[usize::from(c)],
-            None if i == self.b.len() => K_NL,
-            None => K_END,
+            None if i == self.b.len() => K_NL.trailing_zeros() as u8,
+            None => K_END.trailing_zeros() as u8,
         }
     }
 
@@ -2088,7 +2141,8 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         }
     }
 
-    /// Whether `\w` holds just before `i`.
+    /// Whether `\w` holds just before `i`: ASCII where it's asked, without a call (X-037).
+    #[inline(always)]
     fn word_before(&self, i: usize) -> bool {
         if i == 0 || i > self.b.len() {
             // the line's start, or past its `\n`
@@ -2098,8 +2152,15 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         if c < 0x80 {
             is(c, WORDS)
         } else {
-            word_char(char_before(self.b, i))
+            self.word_before_wide(i)
         }
+    }
+
+    /// [`Scan::word_before`] where a byte past ASCII ends at `i`.
+    #[cold]
+    #[inline(never)]
+    fn word_before_wide(&self, i: usize) -> bool {
+        word_char(char_before(self.b, i))
     }
 
     /// `\b` at `i`.
@@ -2130,9 +2191,25 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         self.spaces_run_end(i)
     }
 
+    /// [`Scan::spaces`], one space before a byte that is no space answered where it's asked too:
+    /// for the busiest callers only, the rest call for it (X-037: in all of them it was ~11 KB).
+    #[inline(always)]
+    fn spaces_hot(&self, i: usize) -> usize {
+        let b = self.b;
+        if i + 1 < b.len() && b[i] == b' ' && b[i + 1] < 0x80 && !is(b[i + 1], SPACE) {
+            return i + 1;
+        }
+        self.spaces(i)
+    }
+
     /// [`Scan::spaces`] where a space or the line's end is at `i`.
     #[inline(never)]
     fn spaces_run_end(&self, i: usize) -> usize {
+        let b = self.b;
+        if i + 1 < b.len() && b[i] == b' ' && b[i + 1] < 0x80 && !is(b[i + 1], SPACE) {
+            // one space, as most are: without the memo or the loop (X-037)
+            return i + 1;
+        }
         let (a, e) = self.spaces_run.get();
         if a <= i && i <= e {
             return e;
@@ -2381,7 +2458,26 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                     while set != 0 {
                         let op = ops[set.trailing_zeros() as usize];
                         set &= set - 1;
-                        if let Some(q) = self.op(op, p, ctx, fresh) {
+                        let next = |set: u16| ops[set.trailing_zeros() as usize];
+                        let r = match num_type(op) {
+                            // a numeric op and those the set holds right after it, one read of
+                            // the number for all of their types in order (X-037)
+                            Some(t) if set != 0 && num_type(next(set)).is_some() => {
+                                let mut types = [t; 8];
+                                let mut k = 1;
+                                while set != 0
+                                    && k < types.len()
+                                    && let Some(t) = num_type(next(set))
+                                {
+                                    types[k] = t;
+                                    k += 1;
+                                    set &= set - 1;
+                                }
+                                self.numeric(p, &types[..k])
+                            }
+                            _ => self.op(op, p, ctx, fresh),
+                        };
+                        if let Some(q) = r {
                             hit = Some(q);
                             break;
                         }
@@ -2438,7 +2534,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                 }
                 b' ' | b'\t' | b'\r' | 0x0b | 0x0c => {
                     // the at-rules' `\s*` and `@keyframes`' `,`: nothing else starts at a space
-                    let s = self.spaces(p);
+                    let s = self.spaces_hot(p);
                     match self.ch(s) {
                         Some(b'@') => match self.at_rules(p) {
                             Some(q) => return Some(q),
@@ -2449,7 +2545,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                         },
                         Some(b',') if keyframes => {
                             self.tok(s, s + 1, COMMA);
-                            Some(self.spaces(s + 1))
+                            Some(self.spaces_hot(s + 1))
                         }
                         _ => {
                             p = s;
@@ -2488,7 +2584,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                 }
                 None => {
                     if c >= 0x80 && self.space(p).is_some() {
-                        let s = self.spaces(p);
+                        let s = self.spaces_hot(p);
                         if self.ch(s) == Some(b'@')
                             && let Some(q) = self.at_rules(p)
                         {
@@ -2496,7 +2592,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                         }
                         if keyframes && self.ch(s) == Some(b',') {
                             self.tok(s, s + 1, COMMA);
-                            p = self.spaces(s + 1);
+                            p = self.spaces_hot(s + 1);
                             continue;
                         }
                         p = s;
@@ -2548,7 +2644,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                 }
                 b' ' | b'\t' | b'\r' | 0x0b | 0x0c => {
                     // `\s*(;)`, `font`'s `\s*(,)\s*`: nothing else starts at a space
-                    let s = self.spaces(p);
+                    let s = self.spaces_hot(p);
                     match self.ch(s) {
                         Some(b';') => {
                             self.tok(s, s + 1, RULE_END);
@@ -2557,7 +2653,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                         }
                         Some(b',') if font => {
                             self.tok(s, s + 1, COMMA);
-                            Some(self.spaces(s + 1))
+                            Some(self.spaces_hot(s + 1))
                         }
                         _ => {
                             p = s;
@@ -2582,7 +2678,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                 b'!' => self.op_at(P_IMPORTANT, p, ctx, false),
                 b',' if font => {
                     self.tok(p, p + 1, COMMA);
-                    Some(self.spaces(p + 1))
+                    Some(self.spaces_hot(p + 1))
                 }
                 b'_' | b'\\' if font => self.op_at(P_IDENT_RUN, p, ctx, false),
                 b'a'..=b'z' | b'A'..=b'Z' => match self.value_word(p, font) {
@@ -2598,7 +2694,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                 },
                 _ if c >= 0x80 => {
                     if self.space(p).is_some() {
-                        let s = self.spaces(p);
+                        let s = self.spaces_hot(p);
                         match self.ch(s) {
                             Some(b';') => {
                                 self.tok(s, s + 1, RULE_END);
@@ -2607,7 +2703,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                             }
                             Some(b',') if font => {
                                 self.tok(s, s + 1, COMMA);
-                                Some(self.spaces(s + 1))
+                                Some(self.spaces_hot(s + 1))
                             }
                             _ => {
                                 p = s;
@@ -2702,7 +2798,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
     /// else a generic font family before `;`, `,`, `}` or the line's end.
     fn value_words(&mut self, p: usize, end: usize) -> Option<usize> {
         let b = self.b;
-        if b.get(p..p + 7) == Some(b"progid:") {
+        if crate::has_at(b, p, b"progid:") {
             return self.constants(p);
         }
         let mut color: Option<(usize, u16)> = None;
@@ -2762,10 +2858,10 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                 }
                 b' ' | b'\t' | b'\r' | 0x0b | 0x0c => {
                     // `comma-delimiter`'s `\s*`: nothing else starts at a space
-                    let s = self.spaces(p);
+                    let s = self.spaces_hot(p);
                     if self.ch(s) == Some(b',') {
                         self.tok(s, s + 1, COMMA);
-                        Some(self.spaces(s + 1))
+                        Some(self.spaces_hot(s + 1))
                     } else {
                         p = s;
                         continue;
@@ -2773,7 +2869,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                 }
                 b',' => {
                     self.tok(p, p + 1, COMMA);
-                    Some(self.spaces(p + 1))
+                    Some(self.spaces_hot(p + 1))
                 }
                 b'a'..=b'z' if self.boundary(p) => self
                     .custom_element(p)
@@ -2796,10 +2892,10 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                     continue;
                 }
                 _ if c >= 0x80 && self.space(p).is_some() => {
-                    let s = self.spaces(p);
+                    let s = self.spaces_hot(p);
                     if self.ch(s) == Some(b',') {
                         self.tok(s, s + 1, COMMA);
-                        Some(self.spaces(s + 1))
+                        Some(self.spaces_hot(s + 1))
                     } else {
                         p = s;
                         continue;
@@ -2827,7 +2923,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         while p < n {
             match b[p] {
                 b' ' | b'\t' | b'\r' | 0x0b | 0x0c => {
-                    let s = self.spaces(p);
+                    let s = self.spaces_hot(p);
                     if self.ch(s) == Some(b'}') {
                         self.pop(p);
                         return Some(p);
@@ -2866,7 +2962,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                     }
                 }
                 c if c >= 0x80 && self.space(p).is_some() => {
-                    let s = self.spaces(p);
+                    let s = self.spaces_hot(p);
                     if self.ch(s) == Some(b'}') {
                         self.pop(p);
                         return Some(p);
@@ -2911,10 +3007,13 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                     p = q;
                 }
                 None => {
-                    // a letter inside a word starts nothing
+                    // a letter inside a word starts nothing: past a letter, `\w` holds before
+                    // each one; past a `-`, the next letter is a word's start
                     p += 1;
-                    while p < n && b[p].is_ascii_lowercase() && self.word_before(p) {
-                        p += 1;
+                    if b[p - 1] != b'-' {
+                        while p < n && b[p].is_ascii_lowercase() {
+                            p += 1;
+                        }
                     }
                 }
             }
@@ -3116,7 +3215,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                 if c == Some(b'-') {
                     let r = &b[p + 1..n.min(p + 8)];
                     for v in [&b"webkit-"[..], b"moz-", b"ms-", b"o-"] {
-                        if r.starts_with(v) {
+                        if crate::starts(r, v) {
                             let e = p + 1 + v.len();
                             self.tok(p, e, VENDOR);
                             return Some(e);
@@ -3182,7 +3281,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             P_IMPORTANT => {
                 if c == Some(b'!') {
                     let s = self.spaces(p + 1);
-                    if b.get(s..s + 9) == Some(b"important") {
+                    if crate::has_at(b, s, b"important") {
                         self.tok(p, s + 9, IMPORTANT);
                         return Some(s + 9);
                     }
@@ -3220,7 +3319,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                 None
             }
             P_VAR_DEPRECATED => {
-                if b.get(p..p + 4) == Some(b"var-") && self.boundary(p) {
+                if crate::has_at(b, p, b"var-") && self.boundary(p) {
                     let e = self.ident(p + 4)?;
                     if self.space(e).is_some() {
                         self.tok(p, p + 4, DEPRECATED_PREFIX);
@@ -3242,8 +3341,8 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                 None
             }
             P_FONT => {
-                if b.get(p..p + 4) == Some(b"font") && self.boundary(p) {
-                    let e = if b.get(p + 4..p + 11) == Some(b"-family") {
+                if crate::has_at(b, p, b"font") && self.boundary(p) {
+                    let e = if crate::has_at(b, p + 4, b"-family") {
                         p + 11
                     } else {
                         p + 4
@@ -3512,7 +3611,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             ),
             P_STEPS_WORDS => {
                 for w in [&b"end"[..], b"middle", b"start"] {
-                    if b.get(p..p + w.len()) == Some(w) {
+                    if crate::has_at(b, p, w) {
                         self.tok(p, p + w.len(), TIMING_DIRECTION);
                         return Some(p + w.len());
                     }
@@ -3577,6 +3676,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             P_CALC_END => {
                 if c == Some(b')') {
                     self.stack[self.depth - 1] = TERMINATOR;
+                    self.ctx = TERMINATOR;
                     self.rewrap();
                     self.fill(p);
                     return Some(p);
@@ -3622,7 +3722,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             }
             P_CM_KEYWORD => {
                 let s = self.spaces(p);
-                if b.get(s..s + 13) == Some(b"@custom-media") && self.can_push() {
+                if crate::has_at(b, s, b"@custom-media") && self.can_push() {
                     self.at_keyword(s, s + 13, AT_CUSTOM_MEDIA);
                     self.push(CM, s + 13);
                     return Some(s + 13);
@@ -3690,7 +3790,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                         break;
                     }
                 }
-                if b.get(k..k + 9) != Some(b"keyframes") || !self.can_push() {
+                if !crate::has_at(b, k, b"keyframes") || !self.can_push() {
                     return None;
                 }
                 let e = k + 9;
@@ -3762,7 +3862,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             }
             P_MEDIA_KEYWORD => {
                 let s = self.spaces(p);
-                if b.get(s..s + 6) == Some(b"@media") && self.can_push() {
+                if crate::has_at(b, s, b"@media") && self.can_push() {
                     self.at_keyword(s, s + 6, AT_MEDIA);
                     self.push(MEDIA_HEAD, s + 6);
                     return Some(s + 6);
@@ -4077,33 +4177,21 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             return None;
         }
         let num = self.num_at(p);
-        // the units after the float and after the integer, read once: where each ends, and the
-        // type it is a unit of when a `\b` follows it
-        let unit = |f: usize| {
-            let u = self.unit_end(f);
-            let t = if self.boundary(u) {
-                unit_type(&b[f..u])
-            } else {
-                NO_TYPE
-            };
-            (u, t)
-        };
-        let float = num.and_then(|nm| self.float_end(&nm)).map(|f| (f, unit(f)));
-        let int = num
-            .filter(|nm| nm.int > nm.digits)
-            .map(|nm| (nm.int, unit(nm.int)));
-        // `0\b(?!%)`
-        let zero = c == b'0' && self.boundary(p + 1) && b.get(p + 1) != Some(&b'%');
+        // where the float and the integer end; the unit after each is read once, and only for a
+        // type that has units (X-037: `%` and the plain numbers don't)
+        let float = num.and_then(|nm| self.float_end(&nm));
+        let int = num.filter(|nm| nm.int > nm.digits).map(|nm| nm.int);
+        let mut units: Option<((usize, u8), (usize, u8))> = None;
         for &t in types {
             match t {
                 T_PERCENT => {
                     if let Some(nm) = num {
-                        if let Some((f, _)) = float
+                        if let Some(f) = float
                             && b.get(f) == Some(&b'%')
                         {
                             return Some(self.number_tok(p, &nm, f, f + 1, true));
                         }
-                        if let Some((i, _)) = int
+                        if let Some(i) = int
                             && b.get(i) == Some(&b'%')
                         {
                             return Some(self.number_tok(p, &nm, i, i + 1, false));
@@ -4113,29 +4201,41 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                 T_NUMBER | T_INTEGER => {
                     if let Some(nm) = num {
                         if t == T_NUMBER
-                            && let Some((f, _)) = float
+                            && let Some(f) = float
                         {
                             return Some(self.number_tok(p, &nm, f, f, true));
                         }
-                        if let Some((i, _)) = int {
+                        if let Some(i) = int {
                             return Some(self.number_tok(p, &nm, i, i, false));
                         }
                     }
                 }
                 _ => {
                     if let Some(nm) = num {
-                        if let Some((f, (u, ut))) = float
-                            && ut == t
+                        let (fu, iu) = *units.get_or_insert_with(|| {
+                            let none = (0, NO_TYPE);
+                            (
+                                float.map_or(none, |f| self.unit_at(f)),
+                                int.map_or(none, |i| self.unit_at(i)),
+                            )
+                        });
+                        if let Some(f) = float
+                            && fu.1 == t
                         {
-                            return Some(self.number_tok(p, &nm, f, u, true));
+                            return Some(self.number_tok(p, &nm, f, fu.0, true));
                         }
-                        if let Some((i, (u, ut))) = int
-                            && ut == t
+                        if let Some(i) = int
+                            && iu.1 == t
                         {
-                            return Some(self.number_tok(p, &nm, i, u, false));
+                            return Some(self.number_tok(p, &nm, i, iu.0, false));
                         }
                     }
-                    if zero && (t == T_LENGTH || t == T_ANGLE) {
+                    // `0\b(?!%)`
+                    if (t == T_LENGTH || t == T_ANGLE)
+                        && c == b'0'
+                        && self.boundary(p + 1)
+                        && b.get(p + 1) != Some(&b'%')
+                    {
                         self.tok(p, p + 1, INTEGER);
                         return Some(p + 1);
                     }
@@ -4148,6 +4248,18 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
     /// Where `{{float}}` ends in `nm`: its first form, else its second.
     fn float_end(&self, nm: &Num) -> Option<usize> {
         nm.dot.map(|(_, e)| e).or(nm.exp)
+    }
+
+    /// The unit after a number that ends at `f`: where it could end, and the type it is a unit
+    /// of when a `\b` follows it ([`NO_TYPE`] if none).
+    fn unit_at(&self, f: usize) -> (usize, u8) {
+        let u = self.unit_end(f);
+        let t = if self.boundary(u) {
+            unit_type(&self.b[f..u])
+        } else {
+            NO_TYPE
+        };
+        (u, t)
     }
 
     /// Where a unit after `i` could end: its run of letters.
@@ -4191,7 +4303,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         }
         for w in words {
             let e = p + w.len();
-            if b.get(p..e) == Some(w) && self.boundary(e) {
+            if crate::has_at(b, p, w) && self.boundary(e) {
                 self.tok(p, e, leaf);
                 return Some(e);
             }
@@ -4294,11 +4406,11 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
     /// `property-value-constants` at `p`.
     fn constants(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
-        if b.get(p..p + 23) == Some(b"progid:DXImageTransform") && self.boundary(p) {
+        if crate::has_at(b, p, b"progid:DXImageTransform") && self.boundary(p) {
             // `progid:DXImageTransform.Microsoft.(Alpha|Blur|dropshadow|gradient|Shadow)\b`, its
             // `.`s any character
             let m = self.next(p + 23);
-            if m < self.b.len() && b.get(m..m + 9) == Some(b"Microsoft") {
+            if m < self.b.len() && crate::has_at(b, m, b"Microsoft") {
                 let s = self.next(m + 9);
                 for x in [
                     &b"Alpha"[..],
@@ -4307,10 +4419,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                     b"gradient",
                     b"Shadow",
                 ] {
-                    if s < self.b.len()
-                        && b.get(s..s + x.len()) == Some(x)
-                        && self.boundary(s + x.len())
-                    {
+                    if s < self.b.len() && crate::has_at(b, s, x) && self.boundary(s + x.len()) {
                         self.tok(p, s + x.len(), CONSTANT);
                         return Some(s + x.len());
                     }
@@ -4443,7 +4552,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
             let s = p + colons;
             for w in [&b"before"[..], b"after", b"first-line", b"first-letter"] {
                 let e = s + w.len();
-                if b.get(s..e) == Some(w) && self.boundary(e) {
+                if crate::has_at(b, s, w) && self.boundary(e) {
                     self.tok(p, s, PSEUDO_ELEMENT_MARK);
                     self.tok(s, e, PSEUDO_ELEMENT);
                     return Some(e);
@@ -4591,6 +4700,13 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
     /// orientation)\s*(:)?`.
     fn media_feature(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
+        // the bytes a feature's name can start with: its prefixes' and its names' first
+        if !matches!(
+            b.get(p),
+            Some(b'-' | b'm' | b'd' | b'h' | b'w' | b'a' | b'p' | b'c' | b'r' | b'g' | b's' | b'o')
+        ) {
+            return None;
+        }
         let at = |i: usize, w: &[u8]| b.get(i..i + w.len()) == Some(w);
         // the name's end, and its two vendor prefixes' places
         let mut best: Option<(usize, Option<Span>, Option<Span>)> = None;

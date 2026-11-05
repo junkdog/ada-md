@@ -1863,7 +1863,7 @@ impl Scan<'_, '_, '_, true> {
         if at & SPW == 0 {
             return (at, at);
         }
-        (at, self.class_at(self.spaces(p)))
+        (at, self.class_at(self.spaces_hot(p)))
     }
 
     /// `{{break}}` at `i`: an ASCII character but `[-_[:alnum:]\\]` follows, or the line's end.
@@ -2037,7 +2037,7 @@ impl Scan<'_, '_, '_, true> {
             let s = i + colons;
             for w in [&b"before"[..], b"after", b"first-line", b"first-letter"] {
                 let e = s + w.len();
-                if b.get(s..e) == Some(w) && self.brk(e) {
+                if crate::has_at(b, s, w) && self.brk(e) {
                     return Some((s, None, e));
                 }
             }
@@ -2045,7 +2045,7 @@ impl Scan<'_, '_, '_, true> {
         if two {
             let s = i + 2;
             for v in [&b"-moz-"[..], b"-ms-", b"-webkit-"] {
-                if b.get(s..s + v.len()) == Some(v)
+                if crate::has_at(b, s, v)
                     && let Some(e) = self.ident_m(s + v.len())
                     && self.brk(e)
                 {
@@ -2100,7 +2100,7 @@ impl Scan<'_, '_, '_, true> {
         }
         for v in [&b"-moz-"[..], b"-ms-", b"-webkit-"] {
             let s = i + 1;
-            if b.get(s..s + v.len()) == Some(v) {
+            if crate::has_at(b, s, v) {
                 let e = self.ident_m(s + v.len())?;
                 return Some((s + v.len(), e));
             }
@@ -2235,7 +2235,7 @@ impl Scan<'_, '_, '_, true> {
                     // holds. A pop passed over sets `fresh`, so it steps as before.
                     p = if !looped && p < n && self.space(p).is_some() {
                         skipped = true;
-                        self.spaces(p).min(n)
+                        self.spaces_hot(p).min(n)
                     } else if !looped
                         && p < n
                         && MID_SKIP[usize::from(ctx)]
@@ -2316,7 +2316,7 @@ impl Scan<'_, '_, '_, true> {
             if let Some(q) = self.sop(op, p, ctx, fresh) {
                 if q == p && self.depth < d0 && check {
                     // a pop that would loop: passed over
-                    self.depth = d0;
+                    self.set_depth(d0);
                     self.rewrap();
                     *looped = true;
                     continue;
@@ -2375,7 +2375,7 @@ impl Scan<'_, '_, '_, true> {
                     if self.space(p).is_some() {
                         // as the run's loop: the scan goes on at the run's end
                         after_run = true;
-                        p = self.spaces(p).min(n);
+                        p = self.spaces_hot(p).min(n);
                         fresh = false;
                         check = false;
                         continue;
@@ -2391,16 +2391,26 @@ impl Scan<'_, '_, '_, true> {
 
     /// After an op's hit `q` at `p` with the stack `d0` deep before it: a value's end before its
     /// `;` takes the wrapper's `\s*(;)`, its first op, at once.
+    /// Its test where it's asked, the rare pop's `;` out of line (X-037: a larger
+    /// [`Scan::spaces`] had put the whole of it out of line, 166k calls a round).
+    #[inline(always)]
     fn after_pop(&mut self, q: Option<usize>, p: usize, d0: usize) -> Option<usize> {
         if q == Some(p) && self.depth < d0 && self.top() == PVW {
-            let s = self.spaces(p);
-            if self.ch(s) == Some(b';') {
-                self.tok(s, s + 1, RULE_END);
-                self.pop(s + 1);
-                return Some(s + 1);
-            }
+            return self.value_end_semi(p).or(q);
         }
         q
+    }
+
+    /// [`Scan::after_pop`]'s `\s*(;)` at `p`, if it's there.
+    #[inline(never)]
+    fn value_end_semi(&mut self, p: usize) -> Option<usize> {
+        let s = self.spaces(p);
+        if self.ch(s) == Some(b';') {
+            self.tok(s, s + 1, RULE_END);
+            self.pop(s + 1);
+            return Some(s + 1);
+        }
+        None
     }
 
     /// The busiest contexts' ops at `p` dispatched on the byte there (and at a space on the byte
@@ -2428,7 +2438,7 @@ impl Scan<'_, '_, '_, true> {
         }
         if ctx == PV {
             // `\s*(?=[;})])`, a pop (pure)
-            if !after_run && matches!(self.ch(self.spaces(p)), Some(b';' | b'}' | b')')) {
+            if !after_run && matches!(self.ch(self.spaces_hot(p)), Some(b';' | b'}' | b')')) {
                 if !check {
                     self.pop(p);
                     return Some((Some(p), true));
@@ -2468,7 +2478,7 @@ impl Scan<'_, '_, '_, true> {
         }
         let list: &[u16] = match c {
             b' ' | b'\t' | b'\r' | 0x0b | 0x0c => {
-                let s = self.spaces(p);
+                let s = self.spaces_hot(p);
                 if s >= n {
                     &[]
                 } else {
@@ -2573,7 +2583,7 @@ impl Scan<'_, '_, '_, true> {
         let list: &[u16] = match self.b[p] {
             b' ' | b'\t' | b'\r' | 0x0b | 0x0c => {
                 // `\s*(,)` and `sass-operators`' words after spaces
-                let s = self.spaces(p);
+                let s = self.spaces_hot(p);
                 return match self.ch(s) {
                     Some(b',') => self.op(P_COMMA, p, ctx, fresh),
                     Some(b'a'..=b'z') if s < n => self.sass_operators(p),
@@ -2887,10 +2897,10 @@ impl Scan<'_, '_, '_, true> {
                 _ => None,
             },
             O_CSS_MODULES => {
-                let s = self.spaces(p);
+                let s = self.spaces_hot(p);
                 if self.ch(s) == Some(b':') && s < n {
                     for w in [&b"import"[..], b"export"] {
-                        if b.get(s + 1..s + 1 + w.len()) == Some(w) && self.can_push() {
+                        if crate::has_at(b, s + 1, w) && self.can_push() {
                             let e = s + 1 + w.len();
                             self.tok(p, s, PSEUDO_MODULE);
                             self.tok(s, s + 1, PSEUDO_MODULE_MARK);
@@ -2903,7 +2913,7 @@ impl Scan<'_, '_, '_, true> {
                 None
             }
             O_SEMI_POP => {
-                let s = self.spaces(p);
+                let s = self.spaces_hot(p);
                 if self.ch(s) == Some(b';') {
                     self.tok(s, s + 1, RULE_END);
                     self.pop(s + 1);
@@ -2912,7 +2922,7 @@ impl Scan<'_, '_, '_, true> {
                 None
             }
             O_VALUE_AHEAD => {
-                let s = self.spaces(p);
+                let s = self.spaces_hot(p);
                 if matches!(self.ch(s), Some(b';' | b'}' | b')')) {
                     self.pop(p);
                     return Some(p);
@@ -2920,7 +2930,7 @@ impl Scan<'_, '_, '_, true> {
                 None
             }
             O_COLON_VALUE => {
-                let s = self.spaces(p);
+                let s = self.spaces_hot(p);
                 if self.ch(s) == Some(b':') && self.can_push() {
                     self.tok(s, s + 1, KEY_VALUE);
                     self.push(PV, s + 1);
@@ -2982,7 +2992,7 @@ impl Scan<'_, '_, '_, true> {
                     return None;
                 }
                 let e = self.var_name(p + 1)?;
-                let s = self.spaces(e);
+                let s = self.spaces_hot(e);
                 if self.ch(s) == Some(b':') && s < n {
                     self.tok(p, p + 1, VAR_MARK);
                     self.tok(p + 1, s, VAR);
@@ -2993,7 +3003,7 @@ impl Scan<'_, '_, '_, true> {
             }
             O_MAP_KEY => {
                 let e = self.ident_m(p)?;
-                let s = self.spaces(e);
+                let s = self.spaces_hot(e);
                 if self.ch(s) == Some(b':') && s < n {
                     self.tok(p, e, PARAM);
                     self.tok(s, s + 1, KEY_VALUE);
@@ -3115,7 +3125,7 @@ impl Scan<'_, '_, '_, true> {
                 }
                 for w in [&b"false"[..], b"true", b"null"] {
                     let e = p + w.len();
-                    if b.get(p..e) == Some(w) && self.boundary(e) {
+                    if crate::has_at(b, p, w) && self.boundary(e) {
                         self.tok(p, e, CONST_LANG);
                         return Some(e);
                     }
@@ -3186,7 +3196,7 @@ impl Scan<'_, '_, '_, true> {
             }
             O_URL_SCHEME => {
                 for w in [&b"https://"[..], b"http://", b"ftp://"] {
-                    if b.get(p..p + w.len()) == Some(w) {
+                    if crate::has_at(b, p, w) {
                         self.tok(p, p + w.len(), UNQUOTED);
                         return Some(p + w.len());
                     }
@@ -3368,7 +3378,7 @@ impl Scan<'_, '_, '_, true> {
             }
             O_NTH => self.nth_sass(p),
             O_IN => {
-                if b.get(p..p + 2) == Some(b"in")
+                if crate::has_at(b, p, b"in")
                     && self.boundary(p)
                     && self.boundary(p + 2)
                     && self.can_push()
@@ -3389,9 +3399,9 @@ impl Scan<'_, '_, '_, true> {
             }
             O_BANG_FLAG => {
                 if c == Some(b'!') {
-                    let s = self.spaces(p + 1);
+                    let s = self.spaces_hot(p + 1);
                     for w in [&b"default"[..], b"global", b"optional"] {
-                        if b.get(s..s + w.len()) == Some(w) {
+                        if crate::has_at(b, s, w) {
                             self.tok(p, s + w.len(), KW_SASS);
                             return Some(s + w.len());
                         }
@@ -3401,8 +3411,8 @@ impl Scan<'_, '_, '_, true> {
             }
             O_IMPORTANT => {
                 if c == Some(b'!') {
-                    let s = self.spaces(p + 1);
-                    if b.get(s..s + 9) == Some(b"important") && self.brk(s + 9) {
+                    let s = self.spaces_hot(p + 1);
+                    if crate::has_at(b, s, b"important") && self.brk(s + 9) {
                         self.tok(p, s + 9, IMPORTANT);
                         return Some(s + 9);
                     }
@@ -3435,7 +3445,7 @@ impl Scan<'_, '_, '_, true> {
             }
             O_FONT_IDENTS => self.font_idents(p),
             O_BRACE_SEMI_AHEAD | O_SPACES_CURLY_AHEAD | O_SPACES_SEMI_AHEAD => {
-                let s = self.spaces(p);
+                let s = self.spaces_hot(p);
                 let ok = match op {
                     O_BRACE_SEMI_AHEAD => matches!(self.ch(s), Some(b'{' | b';')),
                     O_SPACES_CURLY_AHEAD => self.ch(s) == Some(b'{'),
@@ -3510,7 +3520,7 @@ impl Scan<'_, '_, '_, true> {
                 None
             }
             O_SEMI_INC | O_SEMI_RET | O_USE_SEMI => {
-                let s = self.spaces(p);
+                let s = self.spaces_hot(p);
                 if self.ch(s) == Some(b';') {
                     match op {
                         O_SEMI_INC => self.tok(s, s + 1, TERM_SASS),
@@ -3524,8 +3534,8 @@ impl Scan<'_, '_, '_, true> {
             }
             O_USE_AS => {
                 // `\b(as)\b\s+([a-zA-Z0-9_-]*(\*)?)`
-                if b.get(p..p + 2) == Some(b"as") && self.boundary(p) && self.boundary(p + 2) {
-                    let s = self.spaces(p + 2);
+                if crate::has_at(b, p, b"as") && self.boundary(p) && self.boundary(p + 2) {
+                    let s = self.spaces_hot(p + 2);
                     if s > p + 2 && s <= n {
                         let mut e = s;
                         while e < n && is(b[e], NMCHARS) {
@@ -3544,7 +3554,7 @@ impl Scan<'_, '_, '_, true> {
             O_USE_SHOW => {
                 for w in [&b"show"[..], b"hide"] {
                     let e = p + w.len();
-                    if b.get(p..e) == Some(w)
+                    if crate::has_at(b, p, w)
                         && self.boundary(p)
                         && self.boundary(e)
                         && self.can_push()
@@ -3557,8 +3567,8 @@ impl Scan<'_, '_, '_, true> {
                 None
             }
             O_USE_WITH => {
-                if b.get(p..p + 4) == Some(b"with") {
-                    let s = self.spaces(p + 4);
+                if crate::has_at(b, p, b"with") {
+                    let s = self.spaces_hot(p + 4);
                     if s > p + 4 && self.ch(s) == Some(b'(') && self.can_push() {
                         self.tok(p, p + 4, KW_WITH);
                         self.tok(s, s + 1, BEGIN_SASS);
@@ -3576,7 +3586,7 @@ impl Scan<'_, '_, '_, true> {
                 None
             }
             O_URL_OPEN => {
-                if b.get(p..p + 4) == Some(b"url(") && self.can_push() {
+                if crate::has_at(b, p, b"url(") && self.can_push() {
                     self.tok(p, p + 3, FN_URL);
                     self.tok(p + 3, p + 4, GROUP_BEGIN);
                     self.push(URL_G, p + 4);
@@ -3593,8 +3603,8 @@ impl Scan<'_, '_, '_, true> {
                 None
             }
             O_CM_KEYWORD => {
-                let s = self.spaces(p);
-                if b.get(s..s + 13) == Some(b"@custom-media") && self.can_push() {
+                let s = self.spaces_hot(p);
+                if crate::has_at(b, s, b"@custom-media") && self.can_push() {
                     self.at_pair(s, s + 13, AT_CUSTOM_MEDIA);
                     self.push(CM, s + 13);
                     return Some(s + 13);
@@ -3615,7 +3625,7 @@ impl Scan<'_, '_, '_, true> {
                     b"optional",
                 ] {
                     let e = p + 1 + w.len();
-                    if b.get(p + 1..e) == Some(w) && b.get(e) == Some(&b')') {
+                    if crate::has_at(b, p + 1, w) && b.get(e) == Some(&b')') {
                         self.tok(p, p + 1, BEGIN_SASS);
                         self.tok(p + 1, e, CONST_OTHER_SASS);
                         self.tok(e, e + 1, END_SASS);
@@ -3630,7 +3640,7 @@ impl Scan<'_, '_, '_, true> {
                 if !fresh {
                     return None;
                 }
-                let s = self.spaces(p);
+                let s = self.spaces_hot(p);
                 if let Some(e) = self.ident_m(s)
                     && s < n
                 {
@@ -3640,7 +3650,7 @@ impl Scan<'_, '_, '_, true> {
                 (s > p).then_some(s)
             }
             O_KF_COMMA => {
-                let s = self.spaces(p);
+                let s = self.spaces_hot(p);
                 if self.ch(s) == Some(b',') {
                     self.tok(s, s + 1, REPETITION);
                     return Some(s + 1);
@@ -3694,7 +3704,7 @@ impl Scan<'_, '_, '_, true> {
                     return None;
                 }
                 for w in [&b"portrait"[..], b"landscape", b"progressive", b"interlace"] {
-                    if b.get(p..p + w.len()) == Some(w) {
+                    if crate::has_at(b, p, w) {
                         self.tok(p, p + w.len(), CONSTANT);
                         return Some(p + w.len());
                     }
@@ -3702,7 +3712,7 @@ impl Scan<'_, '_, '_, true> {
                 None
             }
             O_RATIO => {
-                let s = self.spaces(p);
+                let s = self.spaces_hot(p);
                 let a = self.digits(s);
                 if a > s && b.get(a) == Some(&b'/') {
                     let d = self.digits(a + 1);
@@ -3724,7 +3734,7 @@ impl Scan<'_, '_, '_, true> {
                 None
             }
             O_CMOD_BLOCK => {
-                let s = self.spaces(p);
+                let s = self.spaces_hot(p);
                 if self.ch(s) == Some(b'{') && self.can_push() {
                     // `\s*(\{)`'s scope is the whole match's
                     self.tok(p, s + 1, PL_BEGIN);
@@ -3749,7 +3759,7 @@ impl Scan<'_, '_, '_, true> {
                 if e == p {
                     return None;
                 }
-                let s = self.spaces(e);
+                let s = self.spaces_hot(e);
                 if self.ch(s) == Some(b':') && s < n && self.can_push() {
                     self.tok(p, e, PROP_MODULE);
                     self.tok(s, s + 1, KEY_VALUE);
@@ -3765,7 +3775,7 @@ impl Scan<'_, '_, '_, true> {
                     return Some(p + 1);
                 }
                 // `\s*(?=$)`, in the capture that is the terminator's scope
-                let s = self.spaces(p);
+                let s = self.spaces_hot(p);
                 if s >= n {
                     self.tok(p, n, RULE_END);
                     self.pop(s);
@@ -3911,9 +3921,9 @@ impl Scan<'_, '_, '_, true> {
                     b' ' | b'\t' | b'\x0b' | b'\x0c' | b'\r' | b';' | b'{' | b')' | b',' | b'/'
                 )
         };
-        if b.get(p..p + 23) == Some(b"progid:DXImageTransform") {
+        if crate::has_at(b, p, b"progid:DXImageTransform") {
             let m = self.next(p + 23);
-            if m < self.b.len() && b.get(m..m + 9) == Some(b"Microsoft") {
+            if m < self.b.len() && crate::has_at(b, m, b"Microsoft") {
                 let s = self.next(m + 9);
                 for x in [
                     &b"Alpha"[..],
@@ -3968,7 +3978,7 @@ impl Scan<'_, '_, '_, true> {
         }
         for w in [&b"true"[..], b"false", b"null"] {
             let e = p + w.len();
-            if b.get(p..e) == Some(w) && self.boundary(e) {
+            if crate::has_at(b, p, w) && self.boundary(e) {
                 self.tok(p, e, CONST_LANG);
                 return Some(e);
             }
@@ -3988,30 +3998,19 @@ impl Scan<'_, '_, '_, true> {
             return None;
         }
         let num = self.num_at(p);
-        let unit = |f: usize| {
-            let u = self.unit_end(f);
-            let t = if self.boundary(u) {
-                unit_type(&b[f..u])
-            } else {
-                super::NO_TYPE
-            };
-            (u, t)
-        };
-        let float = num
-            .and_then(|nm| nm.dot.map(|(_, e)| e).or(nm.exp))
-            .map(|f| (f, unit(f)));
-        let int = num
-            .filter(|nm| nm.int > nm.digits)
-            .map(|nm| (nm.int, unit(nm.int)));
-        let zero = c == b'0' && self.boundary(p + 1) && b.get(p + 1) != Some(&b'%');
+        // where the float and the integer end; the unit after each is read once, and only for a
+        // type that has units (X-037)
+        let float = num.and_then(|nm| nm.dot.map(|(_, e)| e).or(nm.exp));
+        let int = num.filter(|nm| nm.int > nm.digits).map(|nm| nm.int);
+        let mut units: Option<((usize, u8), (usize, u8))> = None;
         for &t in types {
             let hit = match t {
                 T_PERCENT => {
-                    if let Some((f, _)) = float
+                    if let Some(f) = float
                         && b.get(f) == Some(&b'%')
                     {
                         Some((f, f + 1, true))
-                    } else if let Some((i, _)) = int
+                    } else if let Some(i) = int
                         && b.get(i) == Some(&b'%')
                     {
                         Some((i, i + 1, false))
@@ -4021,22 +4020,29 @@ impl Scan<'_, '_, '_, true> {
                 }
                 T_NUMBER | T_INTEGER => {
                     if t == T_NUMBER
-                        && let Some((f, _)) = float
+                        && let Some(f) = float
                     {
                         Some((f, f, true))
                     } else {
-                        int.map(|(i, _)| (i, i, false))
+                        int.map(|i| (i, i, false))
                     }
                 }
                 _ => {
-                    if let Some((f, (u, ut))) = float
-                        && ut == t
+                    let (fu, iu) = *units.get_or_insert_with(|| {
+                        let none = (0, super::NO_TYPE);
+                        (
+                            float.map_or(none, |f| self.unit_at(f)),
+                            int.map_or(none, |i| self.unit_at(i)),
+                        )
+                    });
+                    if let Some(f) = float
+                        && fu.1 == t
                     {
-                        Some((f, u, true))
-                    } else if let Some((i, (u, ut))) = int
-                        && ut == t
+                        Some((f, fu.0, true))
+                    } else if let Some(i) = int
+                        && iu.1 == t
                     {
-                        Some((i, u, false))
+                        Some((i, iu.0, false))
                     } else {
                         None
                     }
@@ -4047,7 +4053,12 @@ impl Scan<'_, '_, '_, true> {
                 self.number_toks(p, &nm, end, unit, is_float);
                 return Some(self.maybe_illegal(unit));
             }
-            if zero && (t == T_LENGTH || t == T_ANGLE) {
+            // `0\b(?!%)`
+            if (t == T_LENGTH || t == T_ANGLE)
+                && c == b'0'
+                && self.boundary(p + 1)
+                && b.get(p + 1) != Some(&b'%')
+            {
                 self.tok(p, p + 1, NUM_VALUE);
                 return Some(self.maybe_illegal(p + 1));
             }
@@ -4147,7 +4158,7 @@ impl Scan<'_, '_, '_, true> {
                 b'%' | b'~' | b'=' | b'!' | b'<' | b'>' | b'&' | b'|' | b'?'
             ) {
                 for w in SASS_OP_SYMBOLS {
-                    if b[p..].starts_with(w) {
+                    if crate::has_at(b, p, w) {
                         self.tok(p, p + w.len(), OP_SASS);
                         return Some(p + w.len());
                     }
@@ -4156,7 +4167,7 @@ impl Scan<'_, '_, '_, true> {
             if matches!(c, b'n' | b'o' | b'a' | b'w') && self.boundary(p) {
                 for w in [&b"not"[..], b"or", b"and", b"when"] {
                     let e = p + w.len();
-                    if b.get(p..e) == Some(w) && self.boundary(e) {
+                    if crate::has_at(b, p, w) && self.boundary(e) {
                         self.tok(p, e, OP_SASS);
                         return Some(e);
                     }
@@ -4164,7 +4175,7 @@ impl Scan<'_, '_, '_, true> {
             }
         }
         // `(?:\s*)\b(not|or|and|when|from|to|through|in)(?=\s)`
-        let s = self.spaces(p);
+        let s = self.spaces_hot(p);
         if s < self.b.len()
             && matches!(b[s], b'n' | b'o' | b'a' | b'w' | b'f' | b't' | b'i')
             && self.boundary(s)
@@ -4180,7 +4191,7 @@ impl Scan<'_, '_, '_, true> {
                 b"in",
             ] {
                 let e = s + w.len();
-                if b.get(s..e) == Some(w) && self.space(e).is_some() {
+                if crate::has_at(b, s, w) && self.space(e).is_some() {
                     self.tok(s, e, OP_SASS);
                     return Some(e);
                 }
@@ -4400,7 +4411,7 @@ impl Scan<'_, '_, '_, true> {
                 None
             }
             1004 => {
-                if s >= self.b.len() || b[s..].starts_with(b"//") || b[s..].starts_with(b"/*") {
+                if s >= self.b.len() || crate::has_at(b, s, b"//") || crate::has_at(b, s, b"/*") {
                     self.pop(s);
                     return Some(s);
                 }
@@ -4446,7 +4457,7 @@ impl Scan<'_, '_, '_, true> {
         if s >= self.b.len() || b[s] != b':' {
             return None;
         }
-        let at = |w: &[u8]| b.get(s + 1..s + 1 + w.len()) == Some(w);
+        let at = |w: &[u8]| crate::has_at(b, s + 1, w);
         let call = |w: &[u8]| at(w) && b.get(s + 1 + w.len()) == Some(&b'(');
         // the calls: `\s*(:)(dir|lang)(?=\()` and the like
         for (words, to, leaf, mark) in [
@@ -4648,7 +4659,7 @@ impl Scan<'_, '_, '_, true> {
                     break;
                 }
                 let e = p + w.len();
-                if b.get(p..e) == Some(w) && self.boundary(e) && colon_after(e) {
+                if crate::has_at(b, p, w) && self.boundary(e) && colon_after(e) {
                     self.tok(p, e, PROPERTY_NAME);
                     self.push(FONT_PROP, e);
                     return Some(e);
@@ -4664,7 +4675,7 @@ impl Scan<'_, '_, '_, true> {
         // `(-(?:webkit|moz|ms|o)-)({{ident}})(?=\s*:)`
         if c == b'-' {
             for v in [&b"-webkit-"[..], b"-moz-", b"-ms-", b"-o-"] {
-                if b.get(p..p + v.len()) == Some(v)
+                if crate::has_at(b, p, v)
                     && let Some(e) = self.ident_m(p + v.len())
                     && colon_after(e)
                 {
@@ -4718,7 +4729,7 @@ impl Scan<'_, '_, '_, true> {
             return Some(self.pvw(e));
         }
         // `\b(composes)\b`
-        if b.get(p..p + 8) == Some(b"composes") && self.boundary(p) && self.boundary(p + 8) {
+        if crate::has_at(b, p, b"composes") && self.boundary(p) && self.boundary(p + 8) {
             self.tok(p, p + 8, PROP_BARE);
             return Some(self.pvw(p + 8));
         }
