@@ -426,7 +426,7 @@ pub fn line(b: &[u8], dialect: Dialect, state: &mut State, out: &mut Out) {
         regex: state.arg as u8,
         level: DEPTH_KINDS + 4 * (state.arg >> 8).min(u16::from(DEPTHS) - 1),
         out,
-        stack: [TOP; MAX],
+        stack: [TOP; MAX + 1],
         depth: 0,
         base: 0,
         exact: state.is_exact(),
@@ -456,7 +456,9 @@ struct Scan<'b, 'o, 's> {
     /// depth the next `(` colors as.
     level: u16,
     out: &'o mut Out<'s>,
-    stack: [u8; MAX],
+    /// The frames at `1..=depth`, bottom first; at 0 what is below them: a body body (`BODY`)
+    /// while `base` counts any, else `TOP`. So the top is one load, `stack[depth]`.
+    stack: [u8; MAX + 1],
     depth: usize,
     /// Plain list bodies below the stack.
     base: usize,
@@ -476,6 +478,11 @@ impl Scan<'_, '_, '_> {
     /// The frames `state` keeps: the top ones on the stack (half of it at most, so that the line
     /// can open more), the list bodies below them counted in `base`.
     fn unpack(&mut self, state: &State) {
+        // most lines: every frame fits, none below the stack
+        if let Some(d) = expand(state, BODY, &mut self.stack[1..]) {
+            self.depth = d;
+            return;
+        }
         let depth = usize::from(state.depth);
         let count = |c: u8| {
             if c & RUN != 0 {
@@ -503,6 +510,9 @@ impl Scan<'_, '_, '_> {
                 self.push(c);
             }
         }
+        if self.base > 0 {
+            self.stack[0] = BODY;
+        }
     }
 
     fn pack(&self) -> State {
@@ -512,29 +522,33 @@ impl Scan<'_, '_, '_> {
             } else {
                 0
             };
-        keep(&self.stack[..self.depth], BODY, self.base, self.exact, arg)
+        keep(
+            &self.stack[1..=self.depth],
+            BODY,
+            self.base,
+            self.exact,
+            arg,
+        )
     }
 
     fn top(&self) -> u8 {
-        match self.depth {
-            0 if self.base > 0 => BODY,
-            0 => TOP,
-            d => self.stack[d - 1],
-        }
+        self.stack[self.depth]
     }
 
     fn push(&mut self, f: u8) {
         if self.depth == MAX {
-            if self.stack[0] == BODY {
+            // the bottom frame dropped: a body into the count below
+            if self.stack[1] == BODY {
                 self.base += 1;
+                self.stack[0] = BODY;
             } else {
                 self.exact = false;
             }
-            self.stack.copy_within(1.., 0);
+            self.stack.copy_within(2.., 1);
             self.depth -= 1;
         }
-        self.stack[self.depth] = f;
         self.depth += 1;
+        self.stack[self.depth] = f;
     }
 
     fn pop(&mut self) {
@@ -542,6 +556,9 @@ impl Scan<'_, '_, '_> {
             self.depth -= 1;
         } else if self.base > 0 {
             self.base -= 1;
+            if self.base == 0 {
+                self.stack[0] = TOP;
+            }
         }
     }
 
@@ -554,13 +571,16 @@ impl Scan<'_, '_, '_> {
     /// The frame below the top (a head's list) made `f`.
     fn set_below(&mut self, f: u8) {
         if self.depth >= 2 {
-            self.stack[self.depth - 2] = f;
+            self.stack[self.depth - 1] = f;
         } else if self.depth == 1 && self.base > 0 {
             // the body is in the count below the stack: take it out
             self.base -= 1;
-            let top = self.stack[0];
-            self.stack[0] = f;
-            self.stack[1] = top;
+            if self.base == 0 {
+                self.stack[0] = TOP;
+            }
+            let top = self.stack[1];
+            self.stack[1] = f;
+            self.stack[2] = top;
             self.depth = 2;
         }
     }
@@ -599,16 +619,24 @@ impl Scan<'_, '_, '_> {
         self.out.push_merged(from, to, kind as u16);
     }
 
-    /// An identifier's span as kind `kind`, its `|…|` delimiters as the two kinds after it.
+    /// An identifier's span as kind `kind`, its `|…|` delimiters as the two kinds after it. In
+    /// its callers, a `|…|` symbol called: most identifiers are a span.
+    #[inline(always)]
     fn put_id(&mut self, from: usize, id: Id, kind: L) {
         if id.quoted {
-            let k = kind as u16;
-            self.out.push(from, from + 1, k + 1);
-            self.out.push(from + 1, id.end - 1, k);
-            self.out.push(id.end - 1, id.end, k + 2);
+            self.put_quoted(from, id, kind);
         } else {
             self.put(from, id.end, kind);
         }
+    }
+
+    /// [`Scan::put_id`] of a `|…|` symbol.
+    #[cold]
+    fn put_quoted(&mut self, from: usize, id: Id, kind: L) {
+        let k = kind as u16;
+        self.out.push(from, from + 1, k + 1);
+        self.out.push(from + 1, id.end - 1, k);
+        self.out.push(id.end - 1, id.end, k + 2);
     }
 
     fn at(&self, p: usize) -> u8 {
@@ -616,7 +644,13 @@ impl Scan<'_, '_, '_> {
     }
 
     fn run(&mut self) {
-        let mut p = 0;
+        // a line's indentation, eight bytes a step, where a code frame's first turn would skip
+        // it; a text frame's (a string's, a comment's) spaces are its text
+        let mut p = if self.top() < STRING {
+            blanks(self.b, 0)
+        } else {
+            0
+        };
         loop {
             let top = self.top();
             p = match top {
@@ -688,7 +722,9 @@ impl Scan<'_, '_, '_> {
     }
 
     /// An unquoted identifier's run at `p`: escapes and characters but breaks. Its end, whether
-    /// it has a character that is neither a digit nor a `.`, and whether it has an escape.
+    /// it has a character that is neither a digit nor a `.`, and whether it has an escape. In its
+    /// callers ([`Scan::ident_at`] the hot one): a call saved six registers a token.
+    #[inline(always)]
     fn run_at(&self, p: usize) -> (usize, bool, bool) {
         #[cfg(target_arch = "x86_64")]
         if self.b.len() >= 16 {
@@ -705,9 +741,10 @@ impl Scan<'_, '_, '_> {
     fn run_wide(&self, p: usize) -> (usize, bool, bool) {
         let (b, n) = (self.b, self.b.len());
         let (mut q, mut y, mut escaped) = (p, false, false);
-        // a short run's bytes a step, cheaper than a step of sixteen: most runs end in these
-        let pre = (p + PRE).min(n);
-        while q < pre {
+        // a short run's bytes a step, cheaper than a step of sixteen: most runs end in these,
+        // and the byte after them is read too, so a run of `PRE` (the commonest length) ends here
+        let pre = (p + PRE).min(n - 1);
+        while q <= pre {
             match self.class[usize::from(b[q])] {
                 C_OTHER => {
                     y = true;
@@ -844,7 +881,9 @@ impl Scan<'_, '_, '_> {
         None
     }
 
-    /// A word of the lists at `p`, the whole token `id`, followed by a break: what it is.
+    /// A word of the lists at `p`, the whole token `id`, followed by a break: what it is. In
+    /// its callers: a call saved six registers for a lookup of ~70 instructions.
+    #[inline(always)]
     fn word(&self, p: usize, id: Id) -> u32 {
         if id.quoted || id.escaped || !self.at_break(id.end) {
             return 0;
@@ -1073,8 +1112,20 @@ impl Scan<'_, '_, '_> {
         }
     }
 
-    /// `namespaces` at `p` (`pkg:`, `pkg::`, `keyword`): where it ends.
+    /// `namespaces` at `p` (`pkg:`, `pkg::`, `keyword`): where it ends. Tried at every
+    /// identifier and a head, so what can start one is tested in place: `keyword` (maybe in
+    /// `|…|`), or an identifier with a `:` after it.
+    #[inline(always)]
     fn namespace(&mut self, p: usize, id: Option<Id>) -> Option<usize> {
+        let c = self.at(p);
+        if c != b'k' && c != b'|' && !id.is_some_and(|id| self.at(id.end) == b':') {
+            return None;
+        }
+        self.namespace_at(p, id)
+    }
+
+    /// [`Scan::namespace`] past its gate.
+    fn namespace_at(&mut self, p: usize, id: Option<Id>) -> Option<usize> {
         // `(\|?)keyword(\|?)(?=:)`
         let b = self.b;
         let k = p + usize::from(self.at(p) == b'|');
@@ -1386,7 +1437,17 @@ impl Scan<'_, '_, '_> {
     }
 
     /// `comments` at `p`: where the match ends, `None` for none.
+    #[inline(always)]
     fn comment(&mut self, p: usize) -> Option<usize> {
+        // in place, its first byte: a head and most frames' turns try it where none is
+        if !matches!(self.b[p], b';' | b'#' | b'|') {
+            return None;
+        }
+        self.comment_at(p)
+    }
+
+    /// [`Scan::comment`] past its first byte's test.
+    fn comment_at(&mut self, p: usize) -> Option<usize> {
         match (self.b[p], self.at(p + 1)) {
             (b';', _) => Some(self.line_comment(p)),
             (b'#', b'|') => Some(self.block_open(p)),
@@ -2721,6 +2782,39 @@ impl Scan<'_, '_, '_> {
 /// no buffer of every code is cleared a line.
 #[inline(always)]
 pub(super) fn keep(frames: &[u8], body: u8, base: usize, exact: bool, arg: u16) -> State {
+    // most lines: no bodies below the stack, and frames enough for the state's codes, so the
+    // codes are written in order (a run's code stands for one frame or more), no ring
+    if base == 0 && frames.len() <= KEPT {
+        let mut codes = [0u8; KEPT];
+        let (mut k, mut run) = (0, 0u8);
+        for &f in frames {
+            if f == body {
+                run += 1;
+                continue;
+            }
+            if run > 0 {
+                codes[k] = RUN | run;
+                k += 1;
+                run = 0;
+            }
+            codes[k] = f;
+            k += 1;
+        }
+        if run > 0 {
+            codes[k] = RUN | run;
+            k += 1;
+        }
+        let mut state = State {
+            depth: k as u8,
+            inexact: !exact,
+            arg,
+            ..State::default()
+        };
+        let (levels, withs) = codes.split_at(crate::matcher::KEPT);
+        state.levels.copy_from_slice(levels);
+        state.withs.copy_from_slice(withs);
+        return state;
+    }
     struct Ring {
         codes: [u8; KEPT],
         /// Codes written.
@@ -2812,6 +2906,64 @@ fn plain_masks(b: &[u8], q: usize, scheme: bool) -> (u32, u32) {
         let digits = or(within(w, b'0', 9), eq(w, b'.'));
         (!stop & 0xffff, _mm_movemask_epi8(digits) as u32)
     }
+}
+
+/// The frames `state`'s codes ([`keep`]) stand for, bottom first, written to `stack` (a run's
+/// code as that many `body` frames): their count, or `None` where they're more than half the
+/// stack (the caller's slow path leaves the bottom ones below it).
+#[inline(always)]
+fn expand(state: &State, body: u8, stack: &mut [u8]) -> Option<usize> {
+    const { assert!(KEPT == 2 * crate::matcher::KEPT) };
+    let mut codes = [0u8; KEPT];
+    let (levels, withs) = codes.split_at_mut(crate::matcher::KEPT);
+    levels.copy_from_slice(&state.levels);
+    withs.copy_from_slice(&state.withs);
+    let codes = &codes[..usize::from(state.depth).min(KEPT)];
+    let count = |c: u8| {
+        if c & RUN != 0 {
+            usize::from(c & !RUN)
+        } else {
+            1
+        }
+    };
+    if codes.iter().map(|&c| count(c)).sum::<usize>() > MAX / 2 {
+        return None;
+    }
+    let mut d = 0;
+    for &c in codes {
+        if c & RUN != 0 {
+            // eight frames a store: the bytes past the run are above the stack's top, never read
+            // before a push writes them (`d` stays at most half the stack, so a store fits)
+            let mut k = usize::from(c & !RUN);
+            while k > 0 {
+                stack[d..d + 8].fill(body);
+                let step = k.min(8);
+                d += step;
+                k -= step;
+            }
+        } else {
+            stack[d] = c;
+            d += 1;
+        }
+    }
+    Some(d)
+}
+
+/// Where a run of ` ` at `p` ends, eight bytes a step while eight are left: a line's
+/// indentation (10–12 bytes on average in the corpora), which a byte loop walks a byte a turn.
+/// The bytes after it are the caller's: a tab, the line's last few, a space past ASCII.
+#[inline(always)]
+fn blanks(b: &[u8], mut p: usize) -> usize {
+    const SPACES: u64 = u64::from_le_bytes([b' '; 8]);
+    while let Some(w) = b.get(p..p + 8) {
+        let x = u64::from_le_bytes(w.try_into().unwrap()) ^ SPACES;
+        if x != 0 {
+            // the first byte that isn't a space: the lowest nonzero byte
+            return p + (x.trailing_zeros() / 8) as usize;
+        }
+        p += 8;
+    }
+    p
 }
 
 /// `\d*` at `p`: where it ends.

@@ -164,11 +164,25 @@ const STRING: u8 = 48;
 const REGEX_FRAME: u8 = 49;
 
 const MAX: usize = 128;
+// the engine's stack's size: [`super::expand`] writes this one
+const _: () = assert!(MAX == super::MAX);
 /// A byte of the packed state with this bit is a run of list tails, its count in the rest.
 const RUN: u8 = 0x80;
 
 /// `[\s,;\(\)\[\]{}\"`~@\^\\]`: the delimiters (ASCII; Unicode's spaces are too).
 static DELIM: [bool; 256] = crate::regex::table(b" \t\n\x0b\x0c\r,;()[]{}\"`~@^\\");
+/// [`DELIM`] and the bytes past ASCII: where [`Scan::run_end`] looks closer.
+static RUN_STOP: [bool; 256] = {
+    let mut t = DELIM;
+    let mut i = 0x80;
+    while i < 256 {
+        t[i] = true;
+        i += 1;
+    }
+    t
+};
+/// The first bytes of `match-noise`'s patterns ([`Scan::noise`]).
+static NOISE: [bool; 256] = crate::regex::table(b";#,^");
 
 /// A regex literal's host: its `"` ends it wherever the regex is (`with_prototype: (?=")`).
 static REGEX_YIELDS: [bool; 256] = crate::regex::table(b"\"");
@@ -215,7 +229,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     let mut s = Scan {
         b,
         out,
-        stack: [TOP; MAX],
+        stack: [TOP; MAX + 1],
         depth: 0,
         base: 0,
         exact: state.is_exact(),
@@ -230,7 +244,9 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
 struct Scan<'b, 'o, 's> {
     b: &'b [u8],
     out: &'o mut Out<'s>,
-    stack: [u8; MAX],
+    /// The frames at `1..=depth`, bottom first; at 0 what is below them: a list body (`LIST`)
+    /// while `base` counts any, else `TOP`. So the top is one load, `stack[depth]`.
+    stack: [u8; MAX + 1],
     depth: usize,
     /// List tails below the stack.
     base: usize,
@@ -244,6 +260,11 @@ struct Scan<'b, 'o, 's> {
 
 impl Scan<'_, '_, '_> {
     fn unpack(&mut self, state: &State) {
+        // most lines: every frame fits, none below the stack
+        if let Some(d) = super::expand(state, LIST, &mut self.stack[1..]) {
+            self.depth = d;
+            return;
+        }
         let depth = usize::from(state.depth);
         let count = |c: u8| {
             if c & RUN != 0 {
@@ -270,6 +291,9 @@ impl Scan<'_, '_, '_> {
                 self.push(c);
             }
         }
+        if self.base > 0 {
+            self.stack[0] = LIST;
+        }
     }
 
     fn pack(&self) -> State {
@@ -279,29 +303,33 @@ impl Scan<'_, '_, '_> {
             } else {
                 0
             };
-        super::keep(&self.stack[..self.depth], LIST, self.base, self.exact, arg)
+        super::keep(
+            &self.stack[1..=self.depth],
+            LIST,
+            self.base,
+            self.exact,
+            arg,
+        )
     }
 
     fn top(&self) -> u8 {
-        match self.depth {
-            0 if self.base > 0 => LIST,
-            0 => TOP,
-            d => self.stack[d - 1],
-        }
+        self.stack[self.depth]
     }
 
     fn push(&mut self, f: u8) {
         if self.depth == MAX {
-            if self.stack[0] == LIST {
+            // the bottom frame dropped: a body into the count below
+            if self.stack[1] == LIST {
                 self.base += 1;
+                self.stack[0] = LIST;
             } else {
                 self.exact = false;
             }
-            self.stack.copy_within(1.., 0);
+            self.stack.copy_within(2.., 1);
             self.depth -= 1;
         }
-        self.stack[self.depth] = f;
         self.depth += 1;
+        self.stack[self.depth] = f;
     }
 
     fn pop(&mut self) {
@@ -309,6 +337,9 @@ impl Scan<'_, '_, '_> {
             self.depth -= 1;
         } else if self.base > 0 {
             self.base -= 1;
+            if self.base == 0 {
+                self.stack[0] = TOP;
+            }
         }
     }
 
@@ -319,6 +350,7 @@ impl Scan<'_, '_, '_> {
     }
 
     /// `f` pushed in a body, set in place of a one-shot frame.
+    #[inline(always)]
     fn open(&mut self, f: u8, once: bool) {
         if once {
             self.set(f);
@@ -384,8 +416,8 @@ impl Scan<'_, '_, '_> {
     /// `[^\s,;…]*` at `p`: where the run of non-delimiters ends.
     fn run_end(&self, mut p: usize) -> usize {
         while p < self.b.len() {
-            let c = self.b[p];
-            if DELIM[usize::from(c)] || (c >= 0x80 && self.wide_space(p) > 0) {
+            // one test a byte: a delimiter, or a byte past ASCII (a space of Unicode's, rare)
+            if RUN_STOP[usize::from(self.b[p])] && (self.b[p] < 0x80 || self.wide_space(p) > 0) {
                 break;
             }
             p += 1;
@@ -394,8 +426,13 @@ impl Scan<'_, '_, '_> {
     }
 
     fn skip_spaces(&self, mut p: usize) -> usize {
-        while p < self.b.len() {
-            let c = self.b[p];
+        let (b, n) = (self.b, self.b.len());
+        while p < n {
+            let c = b[p];
+            // ASCII but a space or a control byte: most turns start on a token
+            if c.wrapping_sub(b'!') < 0x80 - b'!' {
+                break;
+            }
             if matches!(c, b' ' | b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r') {
                 p += 1;
             } else if c >= 0x80 {
@@ -415,7 +452,14 @@ impl Scan<'_, '_, '_> {
     }
 
     fn run(&mut self) {
-        let mut p = 0;
+        // a line's indentation, eight bytes a step, where a code frame's first turn would skip
+        // it; a string's or a regex's spaces are its text, and a `#` before them is a tag's
+        let top = self.top();
+        let mut p = if top < STRING && top != DISPATCH {
+            super::blanks(self.b, 0)
+        } else {
+            0
+        };
         loop {
             let top = self.top();
             p = match top {
@@ -482,8 +526,18 @@ impl Scan<'_, '_, '_> {
         Some(e)
     }
 
-    /// `match-noise` at `p`: a comment, a `,`, or `^` (its expression pushed).
+    /// `match-noise` at `p`: a comment, a `,`, or `^` (its expression pushed). Tried at every
+    /// turn, so its first byte is tested in place ([`NOISE`]) and the rest called.
+    #[inline(always)]
     fn noise(&mut self, p: usize) -> Option<usize> {
+        if !NOISE[usize::from(self.b[p])] {
+            return None;
+        }
+        self.noise_at(p)
+    }
+
+    /// [`Scan::noise`] past its first byte's test.
+    fn noise_at(&mut self, p: usize) -> Option<usize> {
         match self.b[p] {
             b';' => {
                 let mut e = p + 1;
@@ -603,7 +657,9 @@ impl Scan<'_, '_, '_> {
         Some(e.min(self.b.len()))
     }
 
-    /// `(?:nil|true|false)(?=[\s,;…])` at `p`.
+    /// `(?:nil|true|false)(?=[\s,;…])` at `p`. In place: tried at most tokens, a byte's
+    /// compare where a call cost more.
+    #[inline(always)]
     fn constant(&self, p: usize) -> Option<usize> {
         let w: &[u8] = match self.b[p] {
             b'n' => b"nil",
@@ -612,7 +668,7 @@ impl Scan<'_, '_, '_> {
             _ => return None,
         };
         let e = p + w.len();
-        (self.b[p..].starts_with(w) && self.at_delim(e)).then_some(e)
+        (crate::starts(&self.b[p..], w) && self.at_delim(e)).then_some(e)
     }
 
     /// `(:):?[^:\s,;…][^\s,;…]*` at `p`: where the keyword ends.
@@ -626,6 +682,12 @@ impl Scan<'_, '_, '_> {
 
     /// The tails' symbol, `(?:/|[^\s,;…\d#':][^\s,;…]*)`, at `p`: where it ends.
     fn symbol(&self, p: usize) -> Option<usize> {
+        self.symbol_run(p, None)
+    }
+
+    /// [`Scan::symbol`], `run` the end of the run at `p` where it's read ([`Scan::run_end`]).
+    #[inline(always)]
+    fn symbol_run(&self, p: usize, run: Option<usize>) -> Option<usize> {
         let c = self.b[p];
         if c == b'/' {
             return Some(p + 1);
@@ -634,7 +696,7 @@ impl Scan<'_, '_, '_> {
         {
             return None;
         }
-        Some(self.run_end(p))
+        Some(run.unwrap_or_else(|| self.run_end(p)))
     }
 
     /// The numbers at `p`, in the grammar's order: where the number ends, its spans pushed.
@@ -755,31 +817,41 @@ impl Scan<'_, '_, '_> {
         }
         let e = self.run_end(p);
         let w = &self.b[p..e];
-        let found = if w.starts_with(b"defprotocol") {
-            Some((L::StorageType, PROTOCOL_NAME, e))
-        } else if w.starts_with(b"definterface") {
-            Some((L::StorageType, INTERFACE_NAME, e))
-        } else if w.starts_with(b"deftype") || w.starts_with(b"defrecord") {
-            Some((L::StorageType, TYPE_NAME, e))
-        } else if w.starts_with(b"defmethod") {
-            Some((L::Def, FN_NAME, e))
-        } else if w.starts_with(b"def") {
-            Some((L::Def, DEF_NAME, e))
-        } else if w.starts_with(b"reify")
-            || w.starts_with(b"proxy")
-            || w.starts_with(b"extend-protocol")
-            || w.starts_with(b"extend-type")
-        {
-            Some((L::Function, TYPE, e))
-        } else if w.starts_with(b"fn")
-            && (self.at_delim(p + 2) || (self.at(p + 2) == b'*' && self.at_delim(p + 3)))
-        {
-            let e = p + 2 + usize::from(self.at(p + 2) == b'*');
-            Some((L::Fn, FN_NAME, e))
-        } else if w.starts_with(b"declare") {
-            Some((L::Declare, FORWARD, e))
-        } else {
-            None
+        let starts = |s: &[u8]| crate::starts(w, s);
+        // the patterns by their first byte, in the grammar's order within one: most heads are
+        // none of them, and a compare is two loads a side, no `memcmp`
+        let found = match w.first() {
+            Some(b'd') => {
+                if starts(b"defprotocol") {
+                    Some((L::StorageType, PROTOCOL_NAME, e))
+                } else if starts(b"definterface") {
+                    Some((L::StorageType, INTERFACE_NAME, e))
+                } else if starts(b"deftype") || starts(b"defrecord") {
+                    Some((L::StorageType, TYPE_NAME, e))
+                } else if starts(b"defmethod") {
+                    Some((L::Def, FN_NAME, e))
+                } else if starts(b"def") {
+                    Some((L::Def, DEF_NAME, e))
+                } else if starts(b"declare") {
+                    Some((L::Declare, FORWARD, e))
+                } else {
+                    None
+                }
+            }
+            Some(b'r') if starts(b"reify") => Some((L::Function, TYPE, e)),
+            Some(b'p') if starts(b"proxy") => Some((L::Function, TYPE, e)),
+            Some(b'e') if starts(b"extend-protocol") || starts(b"extend-type") => {
+                Some((L::Function, TYPE, e))
+            }
+            Some(b'f')
+                if starts(b"fn")
+                    && (self.at_delim(p + 2)
+                        || (self.at(p + 2) == b'*' && self.at_delim(p + 3))) =>
+            {
+                let e = p + 2 + usize::from(self.at(p + 2) == b'*');
+                Some((L::Fn, FN_NAME, e))
+            }
+            _ => None,
         };
         match found {
             Some((kind, next, e)) => {
@@ -787,10 +859,9 @@ impl Scan<'_, '_, '_> {
                 self.set(next);
                 e
             }
-            None => {
-                self.set(INVOKE);
-                p
-            }
+            // `pop-invoke-list-tail` at once, where the next turn would start (no spaces, no
+            // noise), on the run read above
+            None => self.name_at(p, INVOKE, Some(e)),
         }
     }
 
@@ -800,6 +871,13 @@ impl Scan<'_, '_, '_> {
         if let Some(q) = self.noise(p) {
             return q;
         }
+        self.name_at(p, top, None)
+    }
+
+    /// [`Scan::name`] past `match-noise`, `run` the end of the run at `p` where it's read
+    /// ([`Scan::run_end`]).
+    #[inline(always)]
+    fn name_at(&mut self, p: usize, top: u8, run: Option<usize>) -> usize {
         if let Some(e) = self.constant(p) {
             self.put(p, e, L::ConstLang);
             self.set(LIST);
@@ -814,7 +892,7 @@ impl Scan<'_, '_, '_> {
             TYPE_NAME => (L::TypeName, TYPE),
             _ => (L::FnFn, LIST),
         };
-        if let Some(e) = self.symbol(p) {
+        if let Some(e) = self.symbol_run(p, run) {
             let kind = if top == INVOKE {
                 invoked(&self.b[p..e])
             } else {

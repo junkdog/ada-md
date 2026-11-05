@@ -244,7 +244,7 @@ const fn hash<const SLOTS: usize, const FOLD: bool>(w: &[u8]) -> usize {
 /// A word of one to three bytes in a `u64` without a loop: its first, middle and last bytes
 /// (each of a shorter word's bytes, the length telling them apart).
 #[inline(always)]
-const fn short(w: &[u8]) -> u64 {
+pub(crate) const fn short(w: &[u8]) -> u64 {
     let n = w.len();
     w[0] as u64 | (w[n >> 1] as u64) << 8 | (w[n - 1] as u64) << 16
 }
@@ -254,7 +254,7 @@ const HIGH: u64 = 0x8080_8080_8080_8080;
 
 /// Eight bytes with their ASCII capitals lowercased (each byte apart: no carry crosses one).
 #[inline(always)]
-const fn lower(x: u64) -> u64 {
+pub(crate) const fn lower(x: u64) -> u64 {
     let low = x & !HIGH;
     // a byte's top bit: its low seven bits at least `A`, and past `Z`
     let ge_a = low + ONES * (0x80 - b'A' as u64);

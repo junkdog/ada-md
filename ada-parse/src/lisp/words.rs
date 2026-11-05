@@ -632,17 +632,197 @@ const MERGED: ([&[u8]; WORDS], [u32; WORDS + 1]) = {
     (words, info)
 };
 
-/// The lists' words, ASCII case ignored: a word's id is its number plus one.
-static TABLE: Words<SIZE, WORDS, { text_len(&MERGED.0) }, true> = Words::new(&MERGED.0);
+/// The lists' words, ASCII case folded: a word's id is its number plus one.
+static TABLE: Keyed<SIZE, WORDS, { long_len(&MERGED.0) }> = Keyed::new(&MERGED.0);
 
 /// What each word is by its id, 0 at 0.
 static INFO: [u32; WORDS + 1] = MERGED.1;
 
 const SIZE: usize = 4096;
 
-// the slots stay sparse enough (below two in five) that a miss, the common case, probes a slot
-// or two; a word in several lists is in the table once
+// the slots stay sparse enough (below two in five) that a miss probes a slot or two; a word in
+// several lists is in the table once
 const _: () = assert!(WORDS * 5 <= SIZE * 2 && WORDS > 1000 && WORDS < LISTED);
+
+/// The lists' words by a key of their bytes (X-032): [`crate::words::Words`]'s first-byte filter
+/// lets nearly every Lisp token through (a thousand words of every first letter and length), and
+/// its compare folds the listed word's text and the token's again after the hash has. Here a
+/// token's key is read and folded once, and serves the hash and the compare: up to 16 bytes the
+/// key and the length are the word, so a hit is two compares of the folded key, nothing more.
+/// The words are kept folded (the lists are lowercase): a token unfolded matches only as it is
+/// spelled lowercase ([`clojure_lookup`]).
+struct Keyed<const SLOTS: usize, const N: usize, const LONG: usize> {
+    /// By the key's hash, open addressed: a word's id (its number plus one) in the low 16 bits,
+    /// its length above; 0 for none. A probe of another length loads no key.
+    slots: [u32; SLOTS],
+    /// Each word's key by its number, folded ([`key`]).
+    keys: [(u64, u64); N],
+    /// Where a word past 16 bytes is in `long` (0 for the rest).
+    at: [u16; N],
+    /// The words past 16 bytes, folded, one after another: their middles aren't in the key.
+    long: [u8; LONG],
+}
+
+/// How many bytes the words of `list` past 16 bytes hold: a [`Keyed`] table's `LONG`.
+const fn long_len(list: &[&[u8]]) -> usize {
+    let (mut n, mut i) = (0, 0);
+    while i < list.len() {
+        if list[i].len() > 16 {
+            n += list[i].len();
+        }
+        i += 1;
+    }
+    n
+}
+
+/// Word `w`'s key, ASCII case folded with `FOLD`: its first, middle and last bytes (one to
+/// three), its first and last four (four to seven), its first and last eight (eight or more).
+/// With its length it is the word up to 16 bytes. Each word folded where it's read, so a short
+/// word's zero isn't.
+#[inline(always)]
+const fn key<const FOLD: bool>(w: &[u8]) -> (u64, u64) {
+    #[inline(always)]
+    const fn fold<const FOLD: bool>(x: u64) -> u64 {
+        if FOLD { crate::words::lower(x) } else { x }
+    }
+    #[inline(always)]
+    const fn four(w: &[u8], i: usize) -> u64 {
+        u32::from_le_bytes([w[i], w[i + 1], w[i + 2], w[i + 3]]) as u64
+    }
+    #[inline(always)]
+    const fn eight(w: &[u8], i: usize) -> u64 {
+        u64::from_le_bytes([
+            w[i],
+            w[i + 1],
+            w[i + 2],
+            w[i + 3],
+            w[i + 4],
+            w[i + 5],
+            w[i + 6],
+            w[i + 7],
+        ])
+    }
+    let n = w.len();
+    if n >= 8 {
+        (fold::<FOLD>(eight(w, 0)), fold::<FOLD>(eight(w, n - 8)))
+    } else if n >= 4 {
+        (fold::<FOLD>(four(w, 0) | four(w, n - 4) << 32), 0)
+    } else if n > 0 {
+        (fold::<FOLD>(crate::words::short(w)), 0)
+    } else {
+        (0, 0)
+    }
+}
+
+/// [`key`] at run time, the same key: each word one load (two that overlap from four to seven
+/// bytes), which LLVM doesn't make of the const reads.
+#[inline(always)]
+fn key_of<const FOLD: bool>(w: &[u8]) -> (u64, u64) {
+    let fold = |x: u64| if FOLD { crate::words::lower(x) } else { x };
+    let n = w.len();
+    let four = |i: usize| u64::from(u32::from_le_bytes(w[i..i + 4].try_into().unwrap()));
+    let eight = |i: usize| u64::from_le_bytes(w[i..i + 8].try_into().unwrap());
+    if n >= 8 {
+        (fold(eight(0)), fold(eight(n - 8)))
+    } else if n >= 4 {
+        (fold(four(0) | four(n - 4) << 32), 0)
+    } else if n > 0 {
+        (fold(crate::words::short(w)), 0)
+    } else {
+        (0, 0)
+    }
+}
+
+/// A slot for a key: its two words multiplied apart (no dependency between the multiplies),
+/// the top bits.
+#[inline(always)]
+const fn slot_of<const SLOTS: usize>((a, b): (u64, u64), n: usize) -> usize {
+    let x =
+        (a ^ n as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ b.wrapping_mul(0xc2b2_ae3d_27d4_eb4f);
+    (x >> (64 - SLOTS.trailing_zeros())) as usize
+}
+
+impl<const SLOTS: usize, const N: usize, const LONG: usize> Keyed<SLOTS, N, LONG> {
+    /// The table of `list`, `N` words, each different (ASCII case aside), lowercase, under 64
+    /// bytes.
+    const fn new(list: &[&[u8]]) -> Self {
+        assert!(SLOTS.is_power_of_two() && N * 2 <= SLOTS && N < 0xffff && list.len() == N);
+        let mut t = Keyed {
+            slots: [0; SLOTS],
+            keys: [(0, 0); N],
+            at: [0; N],
+            long: [0; LONG],
+        };
+        let (mut o, mut i) = (0, 0);
+        while i < N {
+            let w = list[i];
+            let n = w.len();
+            assert!(n > 0 && n < 64);
+            let mut k = 0;
+            while k < n {
+                // the words are kept as a folded token reads, so a lowercase spelling is exact
+                assert!(!w[k].is_ascii_uppercase());
+                k += 1;
+            }
+            t.keys[i] = key::<true>(w);
+            if n > 16 {
+                t.at[i] = o as u16;
+                let mut k = 0;
+                while k < n {
+                    t.long[o + k] = w[k];
+                    k += 1;
+                }
+                o += n;
+            }
+            let mut h = slot_of::<SLOTS>(t.keys[i], n);
+            while t.slots[h] != 0 {
+                h = (h + 1) & (SLOTS - 1);
+            }
+            t.slots[h] = (n as u32) << 16 | (i as u32 + 1);
+            i += 1;
+        }
+        assert!(o == LONG && LONG <= u16::MAX as usize);
+        t
+    }
+
+    /// Word `w`'s id, 0 for none: ASCII case ignored with `FOLD`, else only its lowercase
+    /// spelling found.
+    #[inline(always)]
+    fn id<const FOLD: bool>(&self, w: &[u8]) -> usize {
+        let n = w.len();
+        if n == 0 || n >= 64 {
+            return 0;
+        }
+        let k = key_of::<FOLD>(w);
+        let want = (n as u32) << 16;
+        let mut h = slot_of::<SLOTS>(k, n);
+        loop {
+            let s = self.slots[h];
+            if s == 0 {
+                return 0;
+            }
+            if s & !0xffff == want {
+                let i = (s & 0xffff) as usize - 1;
+                if self.keys[i] == k && (n <= 16 || self.long_same::<FOLD>(i, w)) {
+                    return i + 1;
+                }
+            }
+            h = (h + 1) & (SLOTS - 1);
+        }
+    }
+
+    /// Whether word `i`, past 16 bytes, is `w`, of its length.
+    #[cold]
+    fn long_same<const FOLD: bool>(&self, i: usize, w: &[u8]) -> bool {
+        let at = usize::from(self.at[i]);
+        let t = &self.long[at..at + w.len()];
+        if FOLD {
+            t.eq_ignore_ascii_case(w)
+        } else {
+            t == w
+        }
+    }
+}
 
 /// The fields of a word's info that hold one value, the first list's that sets them.
 const FIELDS: u32 = HEAD | IDENT | LOOP_WORD | OPERATOR | SCHEME_HEAD | SCHEME_IDENT | CLOJURE_HEAD;
@@ -672,17 +852,14 @@ const fn merge(old: u32, info: u32) -> u32 {
 /// What word `w` is, ASCII case ignored: 0 for none of the lists'.
 #[inline]
 pub(super) fn lookup(w: &[u8]) -> u32 {
-    TABLE.value(w, &INFO)
+    INFO[TABLE.id::<true>(w)]
 }
 
 /// What word `w` is in Clojure, which is case-sensitive: the lists' words are lowercase, so a
-/// token with an uppercase letter is none of them.
+/// token with an uppercase letter is none of them (its key unfolded matches no word's).
 #[inline]
 pub(super) fn clojure_lookup(w: &[u8]) -> u32 {
-    if w.iter().any(u8::is_ascii_uppercase) {
-        return 0;
-    }
-    lookup(w)
+    INFO[TABLE.id::<false>(w)]
 }
 
 /// `def(?:[a-z]+f)?un`, ASCII case ignored.
@@ -774,6 +951,25 @@ mod tests {
         assert_eq!(clojure_head(clojure_lookup(b"let")), C_BINDING);
         assert_ne!(clojure_lookup(b"re-matches") & C_BUILTIN, 0);
         assert_eq!(clojure_lookup(b"If-Some"), 0, "Clojure is case-sensitive");
+        // past 16 bytes the key holds the first and last eight: the middle is compared apart
+        assert_ne!(lookup(b"multiple-value-bind"), 0);
+        assert_eq!(
+            lookup(b"multiple-VALUE-bind"),
+            lookup(b"multiple-value-bind")
+        );
+        assert_eq!(
+            clojure_lookup(b"multiple-value-bind"),
+            lookup(b"multiple-value-bind")
+        );
+        assert_eq!(clojure_lookup(b"multiple-VALUE-bind"), 0);
+        assert_eq!(lookup(b"multiple-valuexbind"), 0);
+        // the run-time key is the const one, folded or not
+        let mut tokens: Vec<Vec<u8>> = MERGED.0.iter().map(|w| w.to_vec()).collect();
+        tokens.extend((0..40).map(|n| (0..n).map(|i| b"aZ-?*09\xc3"[(i * 7 + n) % 8]).collect()));
+        for w in &tokens {
+            assert_eq!(key_of::<true>(w), key::<true>(w), "{w:?}");
+            assert_eq!(key_of::<false>(w), key::<false>(w), "{w:?}");
+        }
         // Common Lisp's `when` and Clojure's share a slot, each dialect its own field
         assert_eq!(head(lookup(b"when")), H_CONDITIONAL);
         assert_eq!(clojure_head(lookup(b"when")), C_CONDITIONAL);
