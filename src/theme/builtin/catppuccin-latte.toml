@@ -160,6 +160,12 @@ changed = { fg = "maroon", bold = true }         # the mark on a value the confi
 "constant.other.keyword punctuation" = { fg = "peach" }  # the `:` of `:keys`
 "constant.character punctuation - constant.character.escape" = { fg = "peach" }  # `?a`, `#\a`, `&amp;`
 "keyword.other.symbol punctuation" = { fg = "mauve" }  # a Lisp keyword's `:`, as the keyword
+"meta.depth-1 punctuation" = { fg = "mauve" }  # a Lisp list's parens by depth, cycling
+"meta.depth-2 punctuation" = { fg = "blue" }
+"meta.depth-3 punctuation" = { fg = "teal" }
+"meta.depth-4 punctuation" = { fg = "green" }
+"meta.depth-5 punctuation" = { fg = "yellow" }
+"meta.depth-6 punctuation" = { fg = "peach" }
 "string" = { fg = "green" }
 "constant.character.escape" = { fg = "pink" }
 "markup.deleted" = { fg = "red" }

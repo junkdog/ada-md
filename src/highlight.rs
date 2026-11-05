@@ -2994,7 +2994,10 @@ mod tests {
         );
         // a keyword's `:` under the keyword (X-009) is a rule bat's sibling accessor never meets:
         // compared without it, pinned in `a_literals_punctuation_reads_in_its_color`
-        rules_match_the_grammar_without("lisp", "Lisp", text, &[LISP_KEYWORD_MARK]);
+        // and the parens by depth (X-030), which bat's grammar has no scope for
+        let mut left_out = vec![LISP_KEYWORD_MARK];
+        left_out.extend(LISP_DEPTHS);
+        rules_match_the_grammar_without("lisp", "Lisp", text, &left_out);
     }
 
     /// ada-parse's Clojure lexer picks the rules bat's grammar picks, in every built-in theme
@@ -3024,7 +3027,8 @@ mod tests {
             "#{1 2} #(g % 1) #?(:clj 1 :cljs 2) #?@(:clj [1]) #:a{:b 1} #'var , \"multi\n",
             "line\" \"esc\\\"aped\" ) ] } (h [a 1] a)\n",
         );
-        rules_match_the_grammar("clojure", "Clojure", text);
+        // the delimiters by depth (X-030) bat's grammar has no scope for
+        rules_match_the_grammar_without("clojure", "Clojure", text, &LISP_DEPTHS);
     }
 
     /// ada-parse's SQL lexer picks the rules bat's grammar picks, in every built-in theme
@@ -3672,8 +3676,82 @@ mod tests {
         }
     }
 
+    /// A Lisp list's parens color by depth (X-030), cycling through the six rules, an opener and
+    /// its closer alike, across lines, a parameter list's and Scheme's `[…]` too, Clojure's
+    /// vectors and maps; a theme without the rules colors them as `punctuation`, as bat's
+    /// grammar does.
+    #[test]
+    fn lisp_parens_color_by_depth() {
+        // seven deep across a line, so the seventh pair is the first's depth again
+        let common = "(a (b (c\n(d (e (f (g)))))) (h))\n(defun f (x) (car x))\n";
+        let scheme = "(a (b [c\n(d {e (f (g))})]) [h])\n(define (f x) [car x])\n";
+        let clojure = "(a (b [c\n(d {:e (f (g))})]) #{h})\n(defn f [x] {:k (car x)})\n";
+        let langs = [
+            ("lisp", common),
+            ("elisp", common),
+            ("scheme", scheme),
+            ("racket", scheme),
+            ("clojure", clojure),
+        ];
+        for (lang, text) in langs {
+            for theme in Theme::builtins() {
+                let rules = SyntaxTheme::new(&theme.syntax);
+                let spans = highlight(1, lang, text, &rules);
+                let mut depth = 0usize;
+                for (n, line) in text.lines().enumerate() {
+                    for (i, c) in line.bytes().enumerate() {
+                        let closes = matches!(c, b')' | b']' | b'}');
+                        // Clojure's `#{` is its set's opener whole
+                        let set = c == b'#' && line.as_bytes().get(i + 1) == Some(&b'{');
+                        if !closes && !set && !matches!(c, b'(' | b'[' | b'{') {
+                            continue;
+                        }
+                        if i > 0 && c == b'{' && line.as_bytes()[i - 1] == b'#' {
+                            continue;
+                        }
+                        depth -= usize::from(closes);
+                        let run = spans
+                            .line(n as u32)
+                            .iter()
+                            .find(|r| r.end as usize > i)
+                            .unwrap();
+                        assert_eq!(
+                            theme.syntax[usize::from(run.rule.0)].0,
+                            LISP_DEPTHS[depth % 6],
+                            "{}: {lang} line {n} byte {i}",
+                            theme.name
+                        );
+                        depth += usize::from(!closes);
+                    }
+                }
+                assert_eq!(depth, 0);
+                // without the rules, plain punctuation
+                let mut syntax = theme.syntax.clone();
+                syntax.retain(|(scope, _)| !LISP_DEPTHS.contains(&scope.as_str()));
+                let spans = highlight(1, lang, text, &SyntaxTheme::new(&syntax));
+                let rule = spans.line(0)[0].rule;
+                assert_eq!(
+                    syntax[usize::from(rule.0)].0,
+                    "punctuation",
+                    "{}",
+                    theme.name
+                );
+            }
+        }
+    }
+
     /// The themes' rule that colors a Lisp keyword's `:` as the keyword (X-009).
     const LISP_KEYWORD_MARK: &str = "keyword.other.symbol punctuation";
+
+    /// The themes' rules that color a Lisp list's parens by depth (X-030).
+    const LISP_DEPTHS: [&str; 6] = [
+        "meta.depth-1 punctuation",
+        "meta.depth-2 punctuation",
+        "meta.depth-3 punctuation",
+        "meta.depth-4 punctuation",
+        "meta.depth-5 punctuation",
+        "meta.depth-6 punctuation",
+    ];
 
     fn rules_match_the_grammar(lang: &str, name: &str, text: &str) {
         rules_match_the_grammar_without(lang, name, text, &[]);

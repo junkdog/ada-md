@@ -200,8 +200,37 @@ leaves! {
 /// under `string.regexp.lisp`.
 const REGEX_KINDS: u16 = 256;
 
+/// How many bytes of a run [`Scan::run_at`] reads a byte a step before sixteen a step: most
+/// symbols end in these, and a step of sixteen costs more than a short run's bytes.
+#[cfg(target_arch = "x86_64")]
+const PRE: usize = 4;
+
+/// How many depths a list's delimiters cycle through, each a rule of its own in a theme.
+pub(crate) const DEPTHS: u8 = 6;
+
+/// The first kind of a list's delimiters by depth, past the regex scanner's: `DEPTH_KINDS + 4 *
+/// depth + i`, `i` the delimiter's place from [`L::ParenBegin`] (`(`, `)`, a parameter list's
+/// `(` and `)`), its leaf under `meta.depth-N.lisp` (N from 1).
+const DEPTH_KINDS: u16 = REGEX_KINDS + crate::regex::KINDS as u16;
+
+static DEPTH_SCOPES: [&str; DEPTHS as usize] = [
+    "meta.depth-1.lisp",
+    "meta.depth-2.lisp",
+    "meta.depth-3.lisp",
+    "meta.depth-4.lisp",
+    "meta.depth-5.lisp",
+    "meta.depth-6.lisp",
+];
+
 /// The scopes kind `kind` carries, outermost first.
 pub fn scopes(kind: u16) -> Vec<&'static str> {
+    if kind >= DEPTH_KINDS {
+        let (depth, i) = ((kind - DEPTH_KINDS) / 4, (kind - DEPTH_KINDS) % 4);
+        let Some(&outer) = DEPTH_SCOPES.get(usize::from(depth)) else {
+            return Vec::new();
+        };
+        return vec![outer, LEAVES[usize::from(L::ParenBegin as u16 + i)]];
+    }
     if kind >= REGEX_KINDS {
         let mut s = vec!["string.regexp.lisp"];
         s.extend(crate::regex::scopes(kind - REGEX_KINDS));
@@ -395,6 +424,7 @@ pub fn line(b: &[u8], dialect: Dialect, state: &mut State, out: &mut Out) {
         scheme,
         class: if scheme { &SCHEME_CLASS } else { &CLASS },
         regex: state.arg as u8,
+        level: DEPTH_KINDS + 4 * (state.arg >> 8).min(u16::from(DEPTHS) - 1),
         out,
         stack: [TOP; MAX],
         depth: 0,
@@ -422,6 +452,9 @@ struct Scan<'b, 'o, 's> {
     class: &'static [u8; 256],
     /// An open `#rx"…"`'s regex state.
     regex: u8,
+    /// The lists open, modulo [`DEPTHS`], as that depth's first kind ([`DEPTH_KINDS`]): the
+    /// depth the next `(` colors as.
+    level: u16,
     out: &'o mut Out<'s>,
     stack: [u8; MAX],
     depth: usize,
@@ -473,43 +506,13 @@ impl Scan<'_, '_, '_> {
     }
 
     fn pack(&self) -> State {
-        let mut codes = [0u8; 2 * MAX + 64];
-        let mut k = 0;
-        // the bodies below the stack: past the state's bytes of runs, the bottom drops anyway
-        let mut run = self.base.min(0x7f * KEPT);
-        let flush = |run: &mut usize, codes: &mut [u8], k: &mut usize| {
-            while *run > 0 {
-                let n = (*run).min(0x7f);
-                codes[*k] = RUN | n as u8;
-                *k += 1;
-                *run -= n;
-            }
-        };
-        for &f in &self.stack[..self.depth] {
-            if f == BODY {
-                run += 1;
-                continue;
-            }
-            flush(&mut run, &mut codes, &mut k);
-            codes[k] = f;
-            k += 1;
-        }
-        flush(&mut run, &mut codes, &mut k);
-        let from = k.saturating_sub(KEPT);
-        let mut state = State {
-            depth: (k - from) as u8,
-            inexact: !self.exact || from > 0 || self.base > 0x7f * KEPT,
-            arg: if self.top() == REGEX {
+        let arg = ((self.level - DEPTH_KINDS) / 4) << 8
+            | if self.top() == REGEX {
                 u16::from(self.regex)
             } else {
                 0
-            },
-            ..State::default()
-        };
-        for (i, &c) in codes[from..k].iter().enumerate() {
-            state.set_level(i, c);
-        }
-        state
+            };
+        keep(&self.stack[..self.depth], BODY, self.base, self.exact, arg)
     }
 
     fn top(&self) -> u8 {
@@ -564,6 +567,32 @@ impl Scan<'_, '_, '_> {
 
     fn put(&mut self, from: usize, to: usize, kind: L) {
         self.out.push(from, to, kind as u16);
+    }
+
+    /// A list's delimiter `kind` (`(`, `)`, a parameter list's) at `from..to`, the kind of its
+    /// depth ([`DEPTH_KINDS`]): an opener at the depth it opens, a closer at the depth it closes.
+    #[inline(always)]
+    fn delim(&mut self, from: usize, to: usize, kind: L) {
+        let i = kind as u16 - L::ParenBegin as u16;
+        debug_assert!(i < 4, "{kind:?} is no delimiter");
+        // `level` is the depth's first kind: an opener's is the depth's, then the next one's
+        const FIRST: u16 = DEPTH_KINDS;
+        const LAST: u16 = DEPTH_KINDS + 4 * (DEPTHS as u16 - 1);
+        if i & 1 != 0 {
+            self.level = if self.level == FIRST {
+                LAST
+            } else {
+                self.level - 4
+            };
+        }
+        self.out.push(from, to, self.level + i);
+        if i & 1 == 0 {
+            self.level = if self.level == LAST {
+                FIRST
+            } else {
+                self.level + 4
+            };
+        }
     }
 
     fn put_merged(&mut self, from: usize, to: usize, kind: L) {
@@ -661,6 +690,78 @@ impl Scan<'_, '_, '_> {
     /// An unquoted identifier's run at `p`: escapes and characters but breaks. Its end, whether
     /// it has a character that is neither a digit nor a `.`, and whether it has an escape.
     fn run_at(&self, p: usize) -> (usize, bool, bool) {
+        #[cfg(target_arch = "x86_64")]
+        if self.b.len() >= 16 {
+            return self.run_wide(p);
+        }
+        self.run_bytes(p)
+    }
+
+    /// [`Scan::run_at`] sixteen bytes a step (SSE2, which every x86-64 has), on a line of
+    /// sixteen or more: the bytes a run takes as they are ([`plain_masks`]) a step, an escape or a
+    /// character past ASCII as [`Scan::run_bytes`] takes it.
+    #[cfg(target_arch = "x86_64")]
+    #[inline(always)]
+    fn run_wide(&self, p: usize) -> (usize, bool, bool) {
+        let (b, n) = (self.b, self.b.len());
+        let (mut q, mut y, mut escaped) = (p, false, false);
+        // a short run's bytes a step, cheaper than a step of sixteen: most runs end in these
+        let pre = (p + PRE).min(n);
+        while q < pre {
+            match self.class[usize::from(b[q])] {
+                C_OTHER => {
+                    y = true;
+                    q += 1;
+                }
+                C_DIGIT | C_DOT => q += 1,
+                // an escape or a character past ASCII: the steps below take it
+                C_ESCAPE | C_HIGH => break,
+                _ => return (q, y, escaped),
+            }
+        }
+        while q < n {
+            // the sixteen bytes from `q`, the line's last sixteen where fewer are left
+            let c = q.min(n - 16);
+            let s = q - c;
+            let (plain, digits) = plain_masks(b, c, self.scheme);
+            let stop = !(plain >> s) & (0xffff >> s);
+            let len = if stop != 0 {
+                stop.trailing_zeros()
+            } else {
+                16 - s as u32
+            };
+            // a byte taken that is neither a digit nor a `.`
+            let taken = (1u32 << len) - 1;
+            y |= (taken & !(digits >> s)) != 0;
+            q += len as usize;
+            if stop == 0 {
+                continue;
+            }
+            match self.class[usize::from(b[q])] {
+                C_ESCAPE => {
+                    if q + 1 >= n {
+                        break;
+                    }
+                    q += 1 + char_len(b[q + 1]);
+                    (y, escaped) = (true, true);
+                }
+                C_HIGH => {
+                    if self.wide_space(q) > 0 {
+                        break;
+                    }
+                    if !wide_char(b, q).is_some_and(is_nd) {
+                        y = true;
+                    }
+                    q += char_len(b[q]);
+                }
+                _ => break,
+            }
+        }
+        (q.min(n), y, escaped)
+    }
+
+    /// [`Scan::run_at`] a byte a step.
+    fn run_bytes(&self, p: usize) -> (usize, bool, bool) {
         let (b, n) = (self.b, self.b.len());
         let (mut q, mut y, mut escaped) = (p, false, false);
         while q < n {
@@ -755,7 +856,7 @@ impl Scan<'_, '_, '_> {
     fn body(&mut self, p: usize, top: u8) -> usize {
         match self.b[p] {
             c if self.opens(c) => {
-                self.put(p, p + 1, L::ParenBegin);
+                self.delim(p, p + 1, L::ParenBegin);
                 match top {
                     TOP | BODY => {
                         self.push(BODY);
@@ -774,7 +875,7 @@ impl Scan<'_, '_, '_> {
                 if top == TOP {
                     self.put(p, p + 1, L::StrayParen);
                 } else {
-                    self.put(p, p + 1, L::ParenEnd);
+                    self.delim(p, p + 1, L::ParenEnd);
                     self.pop();
                 }
                 p + 1
@@ -959,7 +1060,7 @@ impl Scan<'_, '_, '_> {
             return p;
         }
         if p < self.b.len() && self.opens(self.b[p]) {
-            self.put(p, p + 1, L::ParenBegin);
+            self.delim(p, p + 1, L::ParenBegin);
             self.push(QUOTED);
             return p + 1;
         }
@@ -977,7 +1078,8 @@ impl Scan<'_, '_, '_> {
         // `(\|?)keyword(\|?)(?=:)`
         let b = self.b;
         let k = p + usize::from(self.at(p) == b'|');
-        if b.get(k..k + 7) == Some(b"keyword") {
+        // its first byte before the compare: most identifiers aren't it
+        if self.at(k) == b'k' && b.get(k..k + 7).is_some_and(|w| crate::same(w, b"keyword")) {
             let e = k + 7 + usize::from(self.at(k + 7) == b'|');
             if self.at(e) == b':' && e < self.b.len() {
                 if k > p {
@@ -1178,7 +1280,9 @@ impl Scan<'_, '_, '_> {
         if !id.quoted {
             let e = id.end;
             // `make-{{identifier}}`
-            if b[p..e].starts_with(b"make-")
+            if e - p >= 5
+                && b[p] == b'm'
+                && crate::same(&b[p..p + 5], b"make-")
                 && let Some(rest) = self.ident_at(p + 5)
                 && (rest.quoted || rest.end == e)
             {
@@ -1582,7 +1686,7 @@ impl Scan<'_, '_, '_> {
         if has_c && c | 0x20 == b'a' {
             if self.at(d + 1) == b'(' && d + 1 < n {
                 self.put(p, d + 1, L::Array);
-                self.put(d + 1, d + 2, L::ParenBegin);
+                self.delim(d + 1, d + 2, L::ParenBegin);
                 self.push(BODY);
                 return Some(d + 2);
             }
@@ -1621,7 +1725,7 @@ impl Scan<'_, '_, '_> {
         }
         if has_c1 && c1 | 0x20 == b'c' && self.at(p + 2) == b'(' && p + 2 < n {
             self.put(p, p + 2, L::Complex);
-            self.put(p + 2, p + 3, L::ParenBegin);
+            self.delim(p + 2, p + 3, L::ParenBegin);
             self.push(BODY);
             return Some(p + 3);
         }
@@ -1635,7 +1739,7 @@ impl Scan<'_, '_, '_> {
         // `macro-structures`
         if has_c && c | 0x20 == b's' && self.at(d + 1) == b'(' && d + 1 < n {
             self.put(p, d + 1, L::Struct);
-            self.put(d + 1, d + 2, L::ParenBegin);
+            self.delim(d + 1, d + 2, L::ParenBegin);
             self.push(LIST);
             self.push(MSTRUCT_NAME);
             return Some(d + 2);
@@ -1672,7 +1776,7 @@ impl Scan<'_, '_, '_> {
         // `macro-vectors`
         if c == b'(' && has_c {
             self.put(p, d, L::Vector);
-            self.put(d, d + 1, L::ParenBegin);
+            self.delim(d, d + 1, L::ParenBegin);
             self.push(BODY);
             return Some(d + 1);
         }
@@ -1899,12 +2003,12 @@ impl Scan<'_, '_, '_> {
     fn loop_body(&mut self, p: usize) -> usize {
         match self.b[p] {
             b')' => {
-                self.put(p, p + 1, L::ParenEnd);
+                self.delim(p, p + 1, L::ParenEnd);
                 self.pop();
                 return p + 1;
             }
             b'(' => {
-                self.put(p, p + 1, L::ParenBegin);
+                self.delim(p, p + 1, L::ParenBegin);
                 self.push(BODY);
                 self.push(HEAD);
                 return p + 1;
@@ -1958,12 +2062,12 @@ impl Scan<'_, '_, '_> {
     fn params(&mut self, p: usize) -> usize {
         match self.b[p] {
             c if self.closes(c) => {
-                self.put(p, p + 1, L::ParamsEnd);
+                self.delim(p, p + 1, L::ParamsEnd);
                 self.pop();
                 p + 1
             }
             c if self.opens(c) => {
-                self.put(p, p + 1, L::ParenBegin);
+                self.delim(p, p + 1, L::ParenBegin);
                 self.push(BODY);
                 self.push(PARAM_NAME);
                 p + 1
@@ -2029,7 +2133,7 @@ impl Scan<'_, '_, '_> {
             return q;
         }
         if self.b[p] == b')' {
-            self.put(p, p + 1, L::ParenEnd);
+            self.delim(p, p + 1, L::ParenEnd);
             self.pop();
             return p + 1;
         }
@@ -2040,7 +2144,7 @@ impl Scan<'_, '_, '_> {
     fn bindings(&mut self, p: usize, top: u8) -> usize {
         match self.b[p] {
             c if self.opens(c) => {
-                self.put(p, p + 1, L::ParenBegin);
+                self.delim(p, p + 1, L::ParenBegin);
                 self.push(BODY);
                 match top {
                     VARS => self.push(VAR_NAME),
@@ -2056,7 +2160,7 @@ impl Scan<'_, '_, '_> {
                 return p + 1;
             }
             c if self.closes(c) => {
-                self.put(p, p + 1, L::ParenEnd);
+                self.delim(p, p + 1, L::ParenEnd);
                 self.pop();
                 return p + 1;
             }
@@ -2164,7 +2268,7 @@ impl Scan<'_, '_, '_> {
             S_DEFINE_NAME | S_SYNTAX_NAME | S_FN_NAME | S_MACRO_NAME => {
                 let syntax = matches!(top, S_SYNTAX_NAME | S_MACRO_NAME);
                 if opens {
-                    self.put(p, p + 1, L::ParamsBegin);
+                    self.delim(p, p + 1, L::ParamsBegin);
                     self.set(PARAMS);
                     self.push(if syntax { S_MACRO_NAME } else { S_FN_NAME });
                     return p + 1;
@@ -2183,7 +2287,7 @@ impl Scan<'_, '_, '_> {
             // a list of parameters, or one name taking them all
             S_PARAMS => {
                 if opens {
-                    self.put(p, p + 1, L::ParamsBegin);
+                    self.delim(p, p + 1, L::ParamsBegin);
                     self.set(PARAMS);
                     return p + 1;
                 }
@@ -2196,7 +2300,7 @@ impl Scan<'_, '_, '_> {
             // a named `let`'s name, then the bindings
             _ => {
                 if opens {
-                    self.put(p, p + 1, L::ParenBegin);
+                    self.delim(p, p + 1, L::ParenBegin);
                     self.set(VARS);
                     return p + 1;
                 }
@@ -2240,7 +2344,7 @@ impl Scan<'_, '_, '_> {
             // Typed Racket's `#{x : T}`: code, a list
             b'{' if self.racket => {
                 self.put(p, p + 1, L::Vector);
-                self.put(p + 1, p + 2, L::ParenBegin);
+                self.delim(p + 1, p + 2, L::ParenBegin);
                 self.push(LIST);
                 Some(p + 2)
             }
@@ -2305,7 +2409,7 @@ impl Scan<'_, '_, '_> {
                     let q = p + 1 + pre.len();
                     if rest.starts_with(pre) && q < n && self.opens(b[q]) {
                         self.put(p, q, L::Vector);
-                        self.put(q, q + 1, L::ParenBegin);
+                        self.delim(q, q + 1, L::ParenBegin);
                         self.push(LIST);
                         return Some(q + 1);
                     }
@@ -2507,7 +2611,7 @@ impl Scan<'_, '_, '_> {
         match top {
             FN_NAME | MACRO_NAME | TYPE_NAME | STRUCT_QNAME | STRUCT_NAME => {
                 if top == STRUCT_NAME && opens {
-                    self.put(p, p + 1, L::ParenBegin);
+                    self.delim(p, p + 1, L::ParenBegin);
                     self.set(BODY);
                     self.push(STRUCT_QNAME);
                     return p + 1;
@@ -2576,7 +2680,7 @@ impl Scan<'_, '_, '_> {
             }
             DECLARE_SPECS => {
                 if opens {
-                    self.put(p, p + 1, L::ParenBegin);
+                    self.delim(p, p + 1, L::ParenBegin);
                     self.push(BODY);
                     self.push(DECLARE_ID);
                     return p + 1;
@@ -2593,7 +2697,7 @@ impl Scan<'_, '_, '_> {
                         MACROLET_LIST => (L::ParenBegin, MACROLETS),
                         _ => (L::ParenBegin, VARS),
                     };
-                    self.put(p, p + 1, kind);
+                    self.delim(p, p + 1, kind);
                     self.set(f);
                     return p + 1;
                 }
@@ -2607,6 +2711,106 @@ impl Scan<'_, '_, '_> {
                 p
             }
         }
+    }
+}
+
+/// The state that keeps `frames` (bottom first) over `base` plain bodies below them, `body` the
+/// frame a run counts (the engine's list body, Clojure's list tail): a code a frame, a run of
+/// `body` frames a code (`RUN` and up to 127 of them), the top [`KEPT`] codes kept and the bottom
+/// dropped past them (inexact then); `arg` beside them. The codes go through a ring of `KEPT`, so
+/// no buffer of every code is cleared a line.
+#[inline(always)]
+pub(super) fn keep(frames: &[u8], body: u8, base: usize, exact: bool, arg: u16) -> State {
+    struct Ring {
+        codes: [u8; KEPT],
+        /// Codes written.
+        k: usize,
+        /// The next code's place.
+        w: usize,
+    }
+    impl Ring {
+        #[inline(always)]
+        fn put(&mut self, c: u8) {
+            self.codes[self.w] = c;
+            self.w = if self.w + 1 == KEPT { 0 } else { self.w + 1 };
+            self.k += 1;
+        }
+        #[inline(always)]
+        fn flush(&mut self, run: &mut usize) {
+            while *run > 0 {
+                let n = (*run).min(0x7f);
+                self.put(RUN | n as u8);
+                *run -= n;
+            }
+        }
+    }
+    let mut ring = Ring {
+        codes: [0; KEPT],
+        k: 0,
+        w: 0,
+    };
+    // the bodies below the stack: past the state's bytes of runs, the bottom drops anyway
+    let mut run = base.min(0x7f * KEPT);
+    for &f in frames {
+        if f == body {
+            run += 1;
+            continue;
+        }
+        ring.flush(&mut run);
+        ring.put(f);
+    }
+    ring.flush(&mut run);
+    let kept = ring.k.min(KEPT);
+    let mut state = State {
+        depth: kept as u8,
+        inexact: !exact || ring.k > KEPT || base > 0x7f * KEPT,
+        arg,
+        ..State::default()
+    };
+    // the oldest code kept: the ring's start until it wraps, then the next place
+    let mut r = if ring.k > KEPT { ring.w } else { 0 };
+    for i in 0..kept {
+        state.set_level(i, ring.codes[r]);
+        r = if r + 1 == KEPT { 0 } else { r + 1 };
+    }
+    state
+}
+
+/// Of the sixteen bytes of `b` at `q` (`q + 16 <= b.len()`), a bit for each an identifier's run
+/// takes as it is (an ASCII byte but a space, a break and `\`; [`CLASS`], Scheme's [`SCHEME_CLASS`]
+/// with `scheme`), and a bit for each digit and `.`.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn plain_masks(b: &[u8], q: usize, scheme: bool) -> (u32, u32) {
+    use std::arch::x86_64::*;
+    assert!(q + 16 <= b.len());
+    // SAFETY: SSE2 is part of x86-64; the load reads `b[q..q + 16]`, inside `b` (above), and
+    // needs no alignment
+    unsafe {
+        let w = _mm_loadu_si128(b.as_ptr().add(q).cast());
+        let eq = |x: __m128i, c: u8| _mm_cmpeq_epi8(x, _mm_set1_epi8(c as i8));
+        // `x - lo` at most `n`, unsigned: `x` in `lo..=lo + n`
+        let within = |x: __m128i, lo: u8, n: u8| {
+            let d = _mm_sub_epi8(x, _mm_set1_epi8(lo as i8));
+            _mm_cmpeq_epi8(_mm_min_epu8(d, _mm_set1_epi8(n as i8)), d)
+        };
+        let or = |a, b| _mm_or_si128(a, b);
+        // `| 0x20` takes `\` to `|`, `[` to `{` and `]` to `}`, and no other byte to those
+        let up = _mm_or_si128(w, _mm_set1_epi8(0x20));
+        // `\t`..`\r` and ` `; `(` `)`, `:` `;`, `"`, `'`, `,`; `|` and `\`
+        let space = or(within(w, b'\t', 4), eq(w, b' '));
+        let breaks = or(
+            or(within(w, b'(', 1), within(w, b':', 1)),
+            or(or(eq(w, b'"'), eq(w, b'\'')), eq(w, b',')),
+        );
+        let mut stop = or(or(space, breaks), eq(up, b'|'));
+        if scheme {
+            stop = or(stop, or(eq(up, b'{'), eq(up, b'}')));
+        }
+        // bytes past ASCII stop too: their top bit
+        let stop = (_mm_movemask_epi8(or(stop, w)) as u32) & 0xffff;
+        let digits = or(within(w, b'0', 9), eq(w, b'.'));
+        (!stop & 0xffff, _mm_movemask_epi8(digits) as u32)
     }
 }
 

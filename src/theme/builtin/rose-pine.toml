@@ -163,6 +163,12 @@ changed = { fg = "gold", bold = true }          # the mark on a value the config
 "constant.other.keyword punctuation" = { fg = "gold" }  # the `:` of `:keys`
 "constant.character punctuation - constant.character.escape" = { fg = "gold" }  # `?a`, `#\a`, `&amp;`
 "keyword.other.symbol punctuation" = { fg = "pine" }  # a Lisp keyword's `:`, as the keyword
+"meta.depth-1 punctuation" = { fg = "iris" }  # a Lisp list's parens by depth, cycling
+"meta.depth-2 punctuation" = { fg = "foam" }
+"meta.depth-3 punctuation" = { fg = "pine" }
+"meta.depth-4 punctuation" = { fg = "gold" }
+"meta.depth-5 punctuation" = { fg = "rose" }
+"meta.depth-6 punctuation" = { fg = "love" }
 "constant.language" = { fg = "rose" }        # true, false, null
 "string" = { fg = "gold" }
 "constant.character.escape" = { fg = "pine" }

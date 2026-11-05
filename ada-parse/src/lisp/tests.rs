@@ -114,7 +114,8 @@ fn deep_nesting_keeps_its_bodies() {
     assert!(
         spans
             .iter()
-            .all(|s| Lang::Lisp.scopes(s.kind) == ["punctuation.section.parens.end.lisp"])
+            .all(|s| Lang::Lisp.scopes(s.kind).last()
+                == Some(&"punctuation.section.parens.end.lisp"))
     );
     lex(Lang::Lisp, lines[2], &mut state, &mut spans);
     assert_eq!(
@@ -324,7 +325,11 @@ fn racket_lines() {
     assert_eq!(s("for/list"), "keyword.control.loop.lisp");
     assert_eq!(s("λ"), "keyword.declaration.function.inline.lisp");
     assert_eq!(s("displayln"), "support.function.lisp");
-    assert_eq!(s("{"), "punctuation.section.parens.begin.lisp");
+    assert_eq!(
+        s("{"),
+        "meta.depth-1.lisp punctuation.section.parens.begin.lisp",
+        "a list, colored by its depth (X-030)"
+    );
     let (mut spans, mut state) = (Vec::new(), State::default());
     for line in l {
         lex(Lang::Racket, line, &mut state, &mut spans);

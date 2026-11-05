@@ -11,6 +11,7 @@
 //! Kinds are bat's leaf scopes with the string or comment around them; the state between lines is
 //! the stack, a byte a frame, runs of list tails as a count, and an open regex's state.
 
+use super::DEPTHS;
 use crate::regex;
 use crate::{Out, State};
 
@@ -92,8 +93,29 @@ leaves! {
 /// `string.regexp.clojure`.
 const REGEX: u16 = 128;
 
+/// The first kind of a list's, a vector's or a map's delimiters by depth, past the regex
+/// scanner's: `DEPTH_KINDS + 6 * depth + i`, `i` the delimiter's place from [`L::ParenBegin`]
+/// (an opener, then its closer: parens, brackets, braces), its leaf under `meta.depth-N.clojure`.
+const DEPTH_KINDS: u16 = REGEX + regex::KINDS as u16;
+
+static DEPTH_SCOPES: [&str; DEPTHS as usize] = [
+    "meta.depth-1.clojure",
+    "meta.depth-2.clojure",
+    "meta.depth-3.clojure",
+    "meta.depth-4.clojure",
+    "meta.depth-5.clojure",
+    "meta.depth-6.clojure",
+];
+
 /// The scopes kind `kind` carries, outermost first.
 pub fn scopes(kind: u16) -> Vec<&'static str> {
+    if kind >= DEPTH_KINDS {
+        let (depth, i) = ((kind - DEPTH_KINDS) / 6, (kind - DEPTH_KINDS) % 6);
+        let Some(&outer) = DEPTH_SCOPES.get(usize::from(depth)) else {
+            return Vec::new();
+        };
+        return vec![outer, LEAVES[usize::from(L::ParenBegin as u16 + i)]];
+    }
     if kind >= REGEX {
         let mut s = vec!["string.regexp.clojure"];
         s.extend(regex::scopes(kind - REGEX));
@@ -142,7 +164,6 @@ const STRING: u8 = 48;
 const REGEX_FRAME: u8 = 49;
 
 const MAX: usize = 128;
-const KEPT: usize = 2 * crate::matcher::KEPT;
 /// A byte of the packed state with this bit is a run of list tails, its count in the rest.
 const RUN: u8 = 0x80;
 
@@ -199,6 +220,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         base: 0,
         exact: state.is_exact(),
         regex: state.arg as u8,
+        level: DEPTH_KINDS + 6 * (state.arg >> 8).min(u16::from(DEPTHS) - 1),
     };
     s.unpack(state);
     s.run();
@@ -215,6 +237,9 @@ struct Scan<'b, 'o, 's> {
     exact: bool,
     /// An open regex literal's state.
     regex: u8,
+    /// The lists, vectors and maps open, modulo [`DEPTHS`], as that depth's first kind
+    /// ([`DEPTH_KINDS`]): the depth the next opener colors as.
+    level: u16,
 }
 
 impl Scan<'_, '_, '_> {
@@ -248,42 +273,13 @@ impl Scan<'_, '_, '_> {
     }
 
     fn pack(&self) -> State {
-        let mut codes = [0u8; 2 * MAX + 64];
-        let mut k = 0;
-        let mut run = self.base.min(0x7f * KEPT);
-        let flush = |run: &mut usize, codes: &mut [u8], k: &mut usize| {
-            while *run > 0 {
-                let n = (*run).min(0x7f);
-                codes[*k] = RUN | n as u8;
-                *k += 1;
-                *run -= n;
-            }
-        };
-        for &f in &self.stack[..self.depth] {
-            if f == LIST {
-                run += 1;
-                continue;
-            }
-            flush(&mut run, &mut codes, &mut k);
-            codes[k] = f;
-            k += 1;
-        }
-        flush(&mut run, &mut codes, &mut k);
-        let from = k.saturating_sub(KEPT);
-        let mut state = State {
-            depth: (k - from) as u8,
-            inexact: !self.exact || from > 0 || self.base > 0x7f * KEPT,
-            arg: if self.top() == REGEX_FRAME {
+        let arg = ((self.level - DEPTH_KINDS) / 6) << 8
+            | if self.top() == REGEX_FRAME {
                 u16::from(self.regex)
             } else {
                 0
-            },
-            ..State::default()
-        };
-        for (i, &c) in codes[from..k].iter().enumerate() {
-            state.set_level(i, c);
-        }
-        state
+            };
+        super::keep(&self.stack[..self.depth], LIST, self.base, self.exact, arg)
     }
 
     fn top(&self) -> u8 {
@@ -333,6 +329,32 @@ impl Scan<'_, '_, '_> {
 
     fn put(&mut self, from: usize, to: usize, kind: L) {
         self.out.push(from, to, kind as u16);
+    }
+
+    /// A list's, a vector's or a map's delimiter `kind` at `from..to`, the kind of its depth
+    /// ([`DEPTH_KINDS`]): an opener at the depth it opens, a closer at the depth it closes.
+    #[inline(always)]
+    fn delim(&mut self, from: usize, to: usize, kind: L) {
+        let i = kind as u16 - L::ParenBegin as u16;
+        debug_assert!(i < 6, "{kind:?} is no delimiter");
+        // `level` is the depth's first kind: an opener's is the depth's, then the next one's
+        const FIRST: u16 = DEPTH_KINDS;
+        const LAST: u16 = DEPTH_KINDS + 6 * (DEPTHS as u16 - 1);
+        if i & 1 != 0 {
+            self.level = if self.level == FIRST {
+                LAST
+            } else {
+                self.level - 6
+            };
+        }
+        self.out.push(from, to, self.level + i);
+        if i & 1 == 0 {
+            self.level = if self.level == LAST {
+                FIRST
+            } else {
+                self.level + 6
+            };
+        }
     }
 
     fn at(&self, p: usize) -> u8 {
@@ -432,12 +454,12 @@ impl Scan<'_, '_, '_> {
             _ => (b')', L::ParenEnd),
         };
         if c == closer && top != TOP {
-            self.put(p, p + 1, kind);
+            self.delim(p, p + 1, kind);
             self.pop();
             return p + 1;
         }
         if c == b'(' && matches!(top, INTERFACE | PROTOCOL | TYPE) {
-            self.put(p, p + 1, L::ParenBegin);
+            self.delim(p, p + 1, L::ParenBegin);
             self.push(if top == PROTOCOL { DEF_NAME } else { FN_NAME });
             return p + 1;
         }
@@ -500,22 +522,22 @@ impl Scan<'_, '_, '_> {
         let (e, kind) = match c {
             b')' | b']' | b'}' => (p + 1, L::Illegal),
             b'(' => {
-                self.put(p, p + 1, L::ParenBegin);
+                self.delim(p, p + 1, L::ParenBegin);
                 self.open(HEAD, once);
                 return Some(p + 1);
             }
             b'[' => {
-                self.put(p, p + 1, L::BracketBegin);
+                self.delim(p, p + 1, L::BracketBegin);
                 self.open(VECTOR, once);
                 return Some(p + 1);
             }
             b'{' => {
-                self.put(p, p + 1, L::BraceBegin);
+                self.delim(p, p + 1, L::BraceBegin);
                 self.open(MAP, once);
                 return Some(p + 1);
             }
             b'#' if self.at(p + 1) == b'{' && p + 1 < self.b.len() => {
-                self.put(p, p + 2, L::BraceBegin);
+                self.delim(p, p + 2, L::BraceBegin);
                 self.open(MAP, once);
                 return Some(p + 2);
             }
