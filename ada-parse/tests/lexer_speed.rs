@@ -1,7 +1,10 @@
 //! ada-parse's lexers alone, in MB of source a second, on the census corpora (ADR-40): each
 //! file's lines through `lex` from the default state, the corpus repeated to at least 4 MB a
-//! round, best of 5 rounds. `$ADA_PARSE_LISTS` is the directory of lists (`<lang>.txt`, one
-//! path a line); `$ONLY` picks one language, for a profile. Run pinned, in release:
+//! round, best of 5 rounds. The lines are split before the timing, so only the lexer is timed:
+//! `str::lines` inside the loop was 11–19% of a lexer's time and doubled its branch misses where
+//! lines are short (X-051); `SPLIT=in` times the old loop, the split in it. `$ADA_PARSE_LISTS` is
+//! the directory of lists (`<lang>.txt`, one path a line); `$ONLY` picks one language, for a
+//! profile. Run pinned, in release:
 //!
 //! ```zsh
 //! ADA_PARSE_LISTS=bench/b2/root/build/syntect-probe/lists taskset -c 2 \
@@ -60,6 +63,7 @@ const LANGS: &[(&str, Lang)] = &[
 fn lexer_speed() {
     let dir = std::env::var("ADA_PARSE_LISTS").expect("ADA_PARSE_LISTS");
     let only = std::env::var("ONLY").ok();
+    let split_in = std::env::var("SPLIT").is_ok_and(|s| s == "in");
     let mut spans = Vec::new();
     for &(name, lang) in LANGS {
         if only.as_deref().is_some_and(|o| o != name) {
@@ -73,7 +77,9 @@ fn lexer_speed() {
             .filter_map(|p| std::fs::read_to_string(p).ok())
             .collect();
         let bytes: usize = files.iter().map(String::len).sum();
-        let lines: usize = files.iter().map(|f| f.lines().count()).sum();
+        // each file's lines, split as `str::lines` splits them (a `\r` before a `\n` dropped)
+        let split: Vec<Vec<&str>> = files.iter().map(|f| f.lines().collect()).collect();
+        let lines: usize = split.iter().map(Vec::len).sum();
         if bytes == 0 {
             continue;
         }
@@ -81,11 +87,22 @@ fn lexer_speed() {
         let mut best = Duration::MAX;
         for _ in 0..5 {
             let t = Instant::now();
-            for _ in 0..repeat {
-                for text in &files {
-                    let mut state = State::default();
-                    for line in text.lines() {
-                        lex(lang, line, &mut state, &mut spans);
+            if split_in {
+                for _ in 0..repeat {
+                    for text in &files {
+                        let mut state = State::default();
+                        for line in text.lines() {
+                            lex(lang, line, &mut state, &mut spans);
+                        }
+                    }
+                }
+            } else {
+                for _ in 0..repeat {
+                    for file in &split {
+                        let mut state = State::default();
+                        for &line in file {
+                            lex(lang, line, &mut state, &mut spans);
+                        }
                     }
                 }
             }

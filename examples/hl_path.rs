@@ -1,7 +1,8 @@
 //! HL-004: what ada's per-line path costs around an ada-parse lexer. Times, on one corpus and
-//! in one binary, the lexer alone (each line through `ada_parse::lex`, as `lexer_speed` does)
-//! and `highlight::highlight` (the whole path: line splitting, `expand_tabs`, the rules, the
-//! runs), warm: the corpus repeated to at least 4 MB a round, best of `ROUNDS` (5). Run pinned:
+//! in one binary, the lexer alone (each line through `ada_parse::lex`, as `lexer_speed` does:
+//! the lines split before the timing, X-051) and `highlight::highlight` (the whole path: line
+//! splitting, `expand_tabs`, the rules, the runs), warm: the corpus repeated to at least 4 MB a
+//! round, best of `ROUNDS` (5). Run pinned:
 //!
 //! ```zsh
 //! taskset -c 2 target/release/examples/hl_path yaml @lists/yaml.txt
@@ -11,7 +12,8 @@
 //! A run takes ~10–20 ms: hold the core's clock up (`b2-bench-profile on 2 $$`), or the first
 //! runs of a sweep read up to ~30% slow before the governor ramps (X-048).
 //!
-//! `MODE` is `lex`, `ada` or both (the default), `digest`: a hash of every line's runs in
+//! `MODE` is `lex`, `ada` or both (the default), `lex-in`: the lexer with `str::lines` in the
+//! timed loop, as `lexer_speed`'s `SPLIT=in`, `digest`: a hash of every line's runs in
 //! every built-in theme, for holding a speed step to the same output, or `count`: the corpus's
 //! lines, spans and runs, and its files with a tab or a CR. `SECS` keeps the one mode
 //! running about that long, for a profile. `BLOCK=N` cuts each file into blocks of N lines, each
@@ -75,9 +77,22 @@ fn main() {
     let repeat = (4_000_000 / bytes.max(1)).max(1);
 
     // lexer_speed's loop as written there: one spans vector for every round (a fresh one each
-    // round cost fstab's 3.9 KB corpus ~6%), `str::lines`, the state anew a file (X-048)
+    // round cost fstab's 3.9 KB corpus ~6%, X-048), the lines split by `str::lines` before the
+    // timing (X-051), the state anew a file; `lex-in` splits inside it, as before X-051
+    let split: Vec<Vec<&str>> = texts.iter().map(|t| t.lines().collect()).collect();
     let kept = std::cell::RefCell::new(Vec::new());
     let lex = || {
+        let lang = own.expect("own");
+        let mut spans = kept.borrow_mut();
+        for file in &split {
+            let mut state = ada_parse::State::default();
+            for &line in file {
+                ada_parse::lex(lang, line, &mut state, &mut spans);
+            }
+        }
+        hint::black_box(&*spans);
+    };
+    let lex_in = || {
         let lang = own.expect("own");
         let mut spans = kept.borrow_mut();
         for text in &texts {
@@ -157,6 +172,9 @@ fn main() {
     if mode.is_empty() || mode == "lex" {
         l = Some(time(&lex));
         println!("lex  {:7.1} MB/s", l.unwrap());
+    }
+    if mode == "lex-in" {
+        println!("lex-in {:5.1} MB/s", time(&lex_in));
     }
     if mode.is_empty() || mode == "ada" {
         a = Some(time(&ada));

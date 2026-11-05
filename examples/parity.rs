@@ -17,6 +17,8 @@
 //! of a grammar counts once), ada's as `lexer_speed` times the lexer (the corpus repeated to
 //! 4 MB, best of 5), its first call apart. Run it pinned, the core's clock held up
 //! (`b2-bench-profile on 2 $$`): a corpus of small files is over in a few milliseconds.
+//! `KEPT=FILE` writes the paths `--speed` timed to FILE, one a line, so `lexer_speed` can time
+//! the lexer alone on the same files (X-051).
 //!
 //! ```zsh
 //! cargo run --release --example parity -- json $(cat lists/json.txt)
@@ -229,6 +231,7 @@ fn main() {
 /// call a sixth of a 150-byte file's.
 fn speed(files: &[String], lang: &str, name: &str, rule: &SyntaxTheme) {
     let mut texts = Vec::new();
+    let mut kept = String::new();
     let mut syntect = Duration::ZERO;
     for path in files {
         let Ok(text) = fs::read_to_string(path) else {
@@ -243,8 +246,13 @@ fn speed(files: &[String], lang: &str, name: &str, rule: &SyntaxTheme) {
         syntect += start.elapsed();
         if theirs.is_some() {
             texts.push(text);
+            kept.push_str(path);
+            kept.push('\n');
         }
         std::hint::black_box(theirs);
+    }
+    if let Ok(out) = std::env::var("KEPT") {
+        fs::write(out, kept).expect("KEPT");
     }
     let bytes: usize = texts.iter().map(String::len).sum();
     let first = texts.first().map_or(Duration::ZERO, |text| {
