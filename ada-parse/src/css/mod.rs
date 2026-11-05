@@ -1657,14 +1657,20 @@ const WORDS: u8 = ALNUM | UNDER;
 const NAMES: u8 = ALNUM | DASH;
 /// `[A-Za-z0-9_-]`, `{{nmchar}}` in ASCII.
 const NMCHARS: u8 = ALNUM | UNDER | DASH;
+/// `[a-z0-9]`, beside [`ALNUM`]: with [`DASH`], a property's name's bytes (SCSS's
+/// `property_shape`, X-037: three ranges compared a byte).
+const LOWNUM: u8 = 1 << 4;
 
-/// Each byte's classes: [`ALNUM`], [`UNDER`], [`DASH`]; none past ASCII.
+/// Each byte's classes: [`ALNUM`] (and [`LOWNUM`]), [`UNDER`], [`DASH`], [`SPACE`]; none past
+/// ASCII.
 static CLASSES: [u8; 256] = {
     let mut t = [0u8; 256];
     let mut c = 0;
     while c < 128 {
         let b = c as u8;
-        t[c] = if b.is_ascii_alphanumeric() {
+        t[c] = if b.is_ascii_lowercase() || b.is_ascii_digit() {
+            ALNUM | LOWNUM
+        } else if b.is_ascii_alphanumeric() {
             ALNUM
         } else if b == b'_' {
             UNDER
@@ -1971,6 +1977,56 @@ fn lex<const S: bool>(
 /// Bytes `start..end` of the line.
 type Span = (usize, usize);
 
+/// The CSS ops [`scss`] names, in its contexts' lists, its includes and its calls: the ops its
+/// copy of [`Scan::op`] is called with. `scss_css_ops!(m)` is `m!(P_… P_… …)`, the names handed
+/// to `m` (`scss`'s tests check its lists against them).
+macro_rules! scss_css_ops {
+    ($m:ident) => {
+        $m!(
+            P_ATTR_NAME
+            P_ATTR_OP
+            P_ATTR_SEL_END
+            P_ATTR_UNQUOTED
+            P_ATTR_VAL_END
+            P_CALL_END
+            P_CASE_FLAG
+            P_COMMA
+            P_COMMENT
+            P_COUNTER_NAME
+            P_COUNTER_STYLES
+            P_CUSTOM_PROP
+            P_DROP_WORDS
+            P_FROM_TO
+            P_GROUP
+            P_GROUP_END
+            P_LINE_NAME
+            P_LINE_NAMES
+            P_LINE_NAMES_END
+            P_MEDIA_LOGIC
+            P_MEDIA_TYPES
+            P_MQ_COMMA
+            P_NTH_INVALID
+            P_QUALIFIED
+            P_STRING
+            P_SUPPORTS_LOGIC
+            P_SYMBOL_TYPES
+            P_UNICODE_RANGE
+            P_VENDOR
+        )
+    };
+}
+
+/// Whether [`scss_css_ops`] holds `op`.
+#[cfg(test)]
+fn scss_css_op(op: u8) -> bool {
+    macro_rules! any {
+        ($($o:ident)*) => {
+            matches!(op, $($o)|*)
+        };
+    }
+    scss_css_ops!(any)
+}
+
 /// A run's memo: the place a scan of a run of one class of bytes started and where the run ends,
 /// so a scan from anywhere in it is answered at once (a run passed a place at a time stays linear).
 type Run = std::cell::Cell<(usize, usize)>;
@@ -2168,6 +2224,17 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         self.word_before(i) != self.word_at(i)
     }
 
+    /// [`Scan::boundary`] between two ASCII bytes answered where it's asked: for the busiest
+    /// callers only, the rest call for it (X-037: 45k calls a round in SCSS at ~31).
+    #[inline(always)]
+    fn boundary_hot(&self, i: usize) -> bool {
+        let b = self.b;
+        if i > 0 && i < b.len() && b[i - 1] < 0x80 && b[i] < 0x80 {
+            return is(b[i - 1], WORDS) != is(b[i], WORDS);
+        }
+        self.boundary(i)
+    }
+
     /// Where the character at `i` ends.
     fn next(&self, i: usize) -> usize {
         if i >= self.b.len() {
@@ -2214,22 +2281,46 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         if a <= i && i <= e {
             return e;
         }
-        let (b, n) = (self.b, self.b.len());
+        let n = b.len();
         let mut k = i;
-        loop {
-            // ASCII's spaces at once, then the line's `\n` or a space past ASCII
+        // a run of ` ` (an indent) eight bytes a step, then ASCII's spaces a byte a step
+        while let Some(w) = b.get(k..k + 8) {
+            let x = u64::from_le_bytes(w.try_into().unwrap()) ^ 0x2020_2020_2020_2020;
+            if x != 0 {
+                k += (x.trailing_zeros() / 8) as usize;
+                break;
+            }
+            k += 8;
+        }
+        while k < n && is(b[k], SPACE) {
+            k += 1;
+        }
+        if k == n {
+            // the line's `\n`, a space
+            k = n + 1;
+        } else if k < n && b[k] >= 0x80 {
+            k = self.spaces_wide(k);
+        }
+        self.spaces_run.set((i, k));
+        k
+    }
+
+    /// [`Scan::spaces_run_end`]'s run on from `k`, a byte past ASCII: spaces past ASCII and
+    /// ASCII's as they come, and the line's `\n`. Out of line (X-037: Unicode's test inlined in
+    /// it took ~15 instructions a call of saving registers).
+    #[cold]
+    #[inline(never)]
+    fn spaces_wide(&self, mut k: usize) -> usize {
+        let (b, n) = (self.b, self.b.len());
+        while let Some(e) = self.space(k) {
+            k = e;
             while k < n && is(b[k], SPACE) {
                 k += 1;
             }
             if k < n && b[k] < 0x80 {
                 break;
             }
-            match self.space(k) {
-                Some(e) => k = e,
-                None => break,
-            }
         }
-        self.spaces_run.set((i, k));
         k
     }
 
@@ -2475,7 +2566,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
                                 }
                                 self.numeric(p, &types[..k])
                             }
-                            _ => self.op(op, p, ctx, fresh),
+                            _ => self.op_hot(op, p, ctx, fresh),
                         };
                         if let Some(q) = r {
                             hit = Some(q);
@@ -3099,10 +3190,44 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
 
     /// Op `op` at `p` in context `ctx`: where the scan goes on if it matched. The ops a
     /// context's list names at run time come here; the own code's ops by name are
-    /// [`Scan::op_at`] at the call, its arm alone.
+    /// [`Scan::op_at`] at the call, its arm alone. SCSS's copy keeps only the arms of the CSS
+    /// ops [`scss`] names ([`scss_css_ops`]), the only ones it's called with (X-037: the rest,
+    /// CSS's at-rules, pseudo-classes and color values among them, were ~17 KB compiled again
+    /// for a scanner that has its own).
     #[inline(never)]
     fn op(&mut self, op: u8, p: usize, ctx: u8, fresh: bool) -> Option<usize> {
+        if S {
+            // an arm an op, each with its op a constant: `op_at` folds to that arm alone
+            macro_rules! arms {
+                ($($o:ident)*) => {
+                    match op {
+                        $($o => self.op_at($o, p, ctx, fresh),)*
+                        _ => {
+                            debug_assert!(false, "SCSS names no CSS op {op}");
+                            None
+                        }
+                    }
+                };
+            }
+            return scss_css_ops!(arms);
+        }
         self.op_at(op, p, ctx, fresh)
+    }
+
+    /// [`Scan::op`] in CSS's run loop: the busiest small ops, a group's and a call's ends, a
+    /// custom property and an attribute selector's ends, run in place (X-037: ~26k
+    /// of the loop's 86k calls a round, each a few instructions inside the ~20 that `op`'s
+    /// entry and exit took; in SCSS's callers too they cost more than they saved, +13.8 KB).
+    #[inline(always)]
+    fn op_hot(&mut self, op: u8, p: usize, ctx: u8, fresh: bool) -> Option<usize> {
+        match op {
+            P_CALL_END => self.op_at(P_CALL_END, p, ctx, fresh),
+            P_GROUP_END => self.op_at(P_GROUP_END, p, ctx, fresh),
+            P_CUSTOM_PROP => self.op_at(P_CUSTOM_PROP, p, ctx, fresh),
+            P_ATTR_SEL_END => self.op_at(P_ATTR_SEL_END, p, ctx, fresh),
+            P_ATTR_VAL_END => self.op_at(P_ATTR_VAL_END, p, ctx, fresh),
+            _ => self.op(op, p, ctx, fresh),
+        }
     }
 
     /// [`Scan::op`]'s arms, inlined where `op` is a constant: the match folds to its arm, with
@@ -4057,6 +4182,14 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         None
     }
 
+    /// Whether `w` is at `i`: its first byte tested where it's asked, the compare after it left
+    /// a call for its size (X-037: SCSS's at-rules' words tried in turn, a `memcmp` call each,
+    /// were ~14 calls an at-rule; CSS's, ~1k at-rules a round, gained too little for its size).
+    #[inline(always)]
+    fn lit(&self, i: usize, w: &[u8]) -> bool {
+        self.b.get(i) == Some(&w[0]) && self.b.get(i..i + w.len()) == Some(w)
+    }
+
     /// `@` at `s` and the keyword to `e`, at-rule `leaf`'s two leaves.
     fn at_keyword(&mut self, s: usize, e: usize, leaf: u16) {
         self.tok(s, s + 1, leaf + 1);
@@ -4696,6 +4829,52 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         None
     }
 
+    /// The media features' group at `p`, CSS's and SCSS's: `(-webkit-|-o-)?(?:min-|max-)?(-moz-)?
+    /// (?:(?:device-)?(?:height|width|aspect-ratio|pixel-ratio)|color(?:-index)?|monochrome|
+    /// resolution)`, its end and its two vendor prefixes' places. Each optional part is taken
+    /// where it's there, the names by their first byte (X-037: the alternatives tried in turn, a
+    /// slice compare each, were ~8 `memcmp` calls a feature). Exact: where the rest fails after a
+    /// part, no choice without it matches either, since a part left out leaves a `-`, `m` or `d`
+    /// that nothing after it starts with (`monochrome` is no `min-` or `max-`). Out of line: one
+    /// copy for both callers.
+    #[inline(never)]
+    fn feature_name(&self, p: usize) -> Option<(usize, Option<Span>, Option<Span>)> {
+        let b = self.b;
+        let at = |i: usize, w: &[u8]| crate::has_at(b, i, w);
+        let mut k = p;
+        let vendor = |k: &mut usize, w: &[u8]| {
+            let v = at(*k, w).then(|| (*k, *k + w.len()));
+            if v.is_some() {
+                *k += w.len();
+            }
+            v
+        };
+        let v1 = vendor(&mut k, b"-webkit-").or_else(|| vendor(&mut k, b"-o-"));
+        if at(k, b"min-") || at(k, b"max-") {
+            k += 4;
+        }
+        let v3 = vendor(&mut k, b"-moz-");
+        let l = if at(k, b"device-") { k + 7 } else { k };
+        let w: &[u8] = match b.get(l)? {
+            b'h' => b"height",
+            b'w' => b"width",
+            b'a' => b"aspect-ratio",
+            b'p' => b"pixel-ratio",
+            // `color(?:-index)?|monochrome|resolution`, at `k`: none after `device-`
+            b'c' if l == k => {
+                if at(k, b"color-index") {
+                    b"color-index"
+                } else {
+                    b"color"
+                }
+            }
+            b'm' if l == k => b"monochrome",
+            b'r' if l == k => b"resolution",
+            _ => return None,
+        };
+        at(l, w).then(|| (l + w.len(), v1, v3))
+    }
+
     /// The media features at `p`: `((?:(-webkit-|-o-)?(?:min-|max-)?(-moz-)?(?:…))|grid|scan|
     /// orientation)\s*(:)?`.
     fn media_feature(&mut self, p: usize) -> Option<usize> {
@@ -4707,71 +4886,14 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         ) {
             return None;
         }
-        let at = |i: usize, w: &[u8]| b.get(i..i + w.len()) == Some(w);
+        let at = |i: usize, w: &[u8]| crate::has_at(b, i, w);
         // the name's end, and its two vendor prefixes' places
-        let mut best: Option<(usize, Option<Span>, Option<Span>)> = None;
-        'first: for v1 in [Some(&b"-webkit-"[..]), Some(b"-o-"), None] {
-            let mut i = p;
-            let mut vend1 = None;
-            if let Some(v) = v1 {
-                if !at(i, v) {
-                    continue;
-                }
-                vend1 = Some((i, i + v.len()));
-                i += v.len();
-            }
-            for mm in [Some(&b"min-"[..]), Some(b"max-"), None] {
-                let mut j = i;
-                if let Some(m) = mm {
-                    if !at(j, m) {
-                        continue;
-                    }
-                    j += m.len();
-                }
-                for v3 in [Some(&b"-moz-"[..]), None] {
-                    let mut k = j;
-                    let mut vend3 = None;
-                    if let Some(v) = v3 {
-                        if !at(k, v) {
-                            continue;
-                        }
-                        vend3 = Some((k, k + v.len()));
-                        k += v.len();
-                    }
-                    // `(?:device-)?(?:height|width|aspect-ratio|pixel-ratio)`
-                    for dv in [Some(&b"device-"[..]), None] {
-                        let mut l = k;
-                        if let Some(d) = dv {
-                            if !at(l, d) {
-                                continue;
-                            }
-                            l += d.len();
-                        }
-                        for w in [&b"height"[..], b"width", b"aspect-ratio", b"pixel-ratio"] {
-                            if at(l, w) {
-                                best = Some((l + w.len(), vend1, vend3));
-                                break 'first;
-                            }
-                        }
-                    }
-                    // `color(?:-index)?|monochrome|resolution`
-                    for w in [&b"color-index"[..], b"color", b"monochrome", b"resolution"] {
-                        if at(k, w) {
-                            best = Some((k + w.len(), vend1, vend3));
-                            break 'first;
-                        }
-                    }
-                }
-            }
-        }
-        if best.is_none() {
-            for w in [&b"grid"[..], b"scan", b"orientation"] {
-                if at(p, w) {
-                    best = Some((p + w.len(), None, None));
-                    break;
-                }
-            }
-        }
+        let best = self.feature_name(p).or_else(|| {
+            [&b"grid"[..], b"scan", b"orientation"]
+                .into_iter()
+                .find(|w| at(p, w))
+                .map(|w| (p + w.len(), None, None))
+        });
         let (e, v1, v3) = best?;
         // the name's tokens, its vendor prefixes in it
         let mut i = p;

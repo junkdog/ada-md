@@ -22,20 +22,20 @@ use super::{
     ANIMATION_NAME, ARITHMETIC, AT_COUNTER_STYLE, AT_CUSTOM_MEDIA, AT_DOCUMENT, AT_IMPORT,
     AT_KEYFRAME, AT_MEDIA, AT_NAMESPACE, AT_PAGE, AT_SUPPORTS, ATTR_NAME, ATTR_VAL, CLASS_DOT,
     CLASS_NAME, COLOR_SPACE, COMBINATOR, COMMENT, COMMENT_MARK, CONST, CONSTANT,
-    COUNTER_STYLE_INVALID, COUNTER_STYLE_NAME, CUSTOM_MARK, CUSTOM_NAME, ENTITY_MARK, ESCAPE,
+    COUNTER_STYLE_INVALID, COUNTER_STYLE_NAME, CUSTOM_MARK, CUSTOM_NAME, DASH, ENTITY_MARK, ESCAPE,
     ESCAPE_NEWLINE, EXT_COLOR, EXT_COLOR_LEAF, F_ADJ, F_ATTR, F_CALC, F_COLOR, F_DOC, F_FILTER,
     F_IMAGE, F_MINMAX, F_REST, F_URL, F_VAR, FN_ATTR, FN_CALC, FN_COLOR, FN_COUNTER, FN_DOMAIN,
     FN_FILTER, FN_FONT_FACE, FN_GRADIENT, FN_GRID, FN_IMAGE, FN_REGEXP, FN_SHAPE, FN_TIMING,
     FN_TOGGLE, FN_TRANSFORM, FN_URL, FN_URL_PREFIX, FN_VAR, FONT_NAME_LEAF, GROUP_BEGIN, GROUP_END,
     HEX, HEX_MARK, HEXA, HEXA_MARK, ID_HASH, ID_NAME, IMPORTANT, KEY_VALUE, KEYWORD_OTHER,
-    LINE_NAMES, MAIN, MAX, MEDIA_FEATURE, MEDIA_FEATURE_VENDOR, NMCHARS, NS_PREFIX, Num, Out,
-    P_ATTR_NAME, P_ATTR_OP, P_ATTR_SEL_END, P_ATTR_UNQUOTED, P_ATTR_VAL_END, P_CALL_END,
+    LINE_NAMES, LOWNUM, MAIN, MAX, MEDIA_FEATURE, MEDIA_FEATURE_VENDOR, NMCHARS, NS_PREFIX, Num,
+    Out, P_ATTR_NAME, P_ATTR_OP, P_ATTR_SEL_END, P_ATTR_UNQUOTED, P_ATTR_VAL_END, P_CALL_END,
     P_CASE_FLAG, P_COMMA, P_COMMENT, P_COUNTER_NAME, P_COUNTER_STYLES, P_CUSTOM_PROP, P_DROP_WORDS,
     P_FROM_TO, P_GROUP, P_GROUP_END, P_LINE_NAME, P_LINE_NAMES, P_LINE_NAMES_END, P_MEDIA_LOGIC,
     P_MEDIA_TYPES, P_MQ_COMMA, P_NTH_INVALID, P_QUALIFIED, P_STRING, P_SUPPORTS_LOGIC,
     P_SYMBOL_TYPES, P_UNICODE_RANGE, P_VENDOR, PROPERTY_NAME, PSEUDO_CLASS, PSEUDO_CLASS_MARK,
     PSEUDO_ELEMENT, PSEUDO_ELEMENT_MARK, PSEUDO_ELEMENT_VENDOR, PSEUDO_KEYWORD, REPETITION,
-    REPETITIONS, RULE_END, SASS_FN, SCSS_PROP, SPECIAL_COLOR, SPECIAL_COLOR_LEAF, STD_COLOR,
+    REPETITIONS, RULE_END, SASS_FN, SCSS_PROP, SPACE, SPECIAL_COLOR, SPECIAL_COLOR_LEAF, STD_COLOR,
     STD_COLOR_LEAF, STR_D, STR_S, STRING_END, Scan, Span, State, T_ANGLE, T_FREQUENCY, T_INTEGER,
     T_LENGTH, T_NUMBER, T_PERCENT, T_RESOLUTION, T_TIME, TAG, TAG_CUSTOM, TAG_NAME,
     TERMINATOR_LEAF, TIMING_DIRECTION, UNQUOTED, WILDCARD, WORDS, WRAP, char_at, is, is_hex, lex,
@@ -1126,6 +1126,51 @@ fn gated_ops(ctx: u8, at: u32, past: u32) -> u32 {
             row[at.trailing_zeros() as usize] & row[past.trailing_zeros() as usize]
         }
     }
+}
+
+/// [`ops`]' lists end to end ([`OPS_FLAT`]) and where each context's starts ([`OPS_AT`]): a
+/// context's ops at run time are two loads (X-037: `ops`' match was a call, 56k a round at ~10
+/// instructions; inlined, it took ~2.7 KB).
+const OPS_TOTAL: usize = {
+    let (mut t, mut c) = (0, 0);
+    while c < 256 {
+        t += ops(c as u8).len();
+        c += 1;
+    }
+    t
+};
+
+static OPS_FLAT: [u16; OPS_TOTAL] = {
+    let mut f = [0u16; OPS_TOTAL];
+    let (mut c, mut k) = (0, 0);
+    while c < 256 {
+        let o = ops(c as u8);
+        let mut j = 0;
+        while j < o.len() {
+            f[k] = o[j];
+            k += 1;
+            j += 1;
+        }
+        c += 1;
+    }
+    f
+};
+
+static OPS_AT: [u16; 257] = {
+    let mut a = [0u16; 257];
+    let mut c = 0;
+    while c < 256 {
+        a[c + 1] = a[c] + ops(c as u8).len() as u16;
+        c += 1;
+    }
+    a
+};
+
+/// [`ops`] at run time, from [`OPS_FLAT`].
+#[inline(always)]
+fn ops_of(ctx: u8) -> &'static [u16] {
+    let c = usize::from(ctx);
+    &OPS_FLAT[usize::from(OPS_AT[c])..usize::from(OPS_AT[c + 1])]
 }
 
 /// Each context's ops in the grammar's order (an include as one op that tries its list).
@@ -2303,7 +2348,7 @@ impl Scan<'_, '_, '_, true> {
         let mut hit = None;
         let (at, past) = self.classes(p);
         let mut tried = false;
-        let ops = ops(ctx);
+        let ops = ops_of(ctx);
         let mut m = gated_ops(ctx, at, past);
         while m != 0 {
             let op = ops[m.trailing_zeros() as usize];
@@ -2553,7 +2598,7 @@ impl Scan<'_, '_, '_, true> {
         if !(a <= i && i < e) {
             e = i;
             bad = usize::MAX;
-            while e < n && matches!(b[e], b'a'..=b'z' | b'0'..=b'9' | b'-') {
+            while e < n && is(b[e], LOWNUM | DASH) {
                 if b[e] == b'-' && !matches!(b.get(e + 1), Some(b'a'..=b'z' | b'-')) {
                     bad = e;
                 }
@@ -2835,7 +2880,10 @@ impl Scan<'_, '_, '_, true> {
         self.tok(p + 1, p + 2, BEGIN_SASS);
     }
 
-    /// Op `op` at `p` in context `ctx`: where the scan goes on if it matched.
+    /// Op `op` at `p` in context `ctx`: where the scan goes on if it matched. CSS's ops and
+    /// the selector parts go to their own code where it's asked, a known op's straight there
+    /// (X-037: through [`Scan::sop_own`], each paid its ~20 instructions of saving registers).
+    #[inline(always)]
     fn sop(&mut self, op: u16, p: usize, ctx: u8, fresh: bool) -> Option<usize> {
         if op < 256 {
             return self.op(op as u8, p, ctx, fresh);
@@ -2843,6 +2891,12 @@ impl Scan<'_, '_, '_, true> {
         if op >= 1000 {
             return self.selector_part(op, p);
         }
+        self.sop_own(op, p, ctx, fresh)
+    }
+
+    /// [`Scan::sop`]'s ops of SCSS's own, from 256 to 999.
+    #[inline(never)]
+    fn sop_own(&mut self, op: u16, p: usize, ctx: u8, fresh: bool) -> Option<usize> {
         let (b, n) = (self.b, self.b.len());
         let c = self.ch(p);
         match op {
@@ -3080,23 +3134,27 @@ impl Scan<'_, '_, '_, true> {
             O_OPS => self.sass_operators(p),
             O_CONCAT => self.concat(p),
             O_UNQUOTED | O_ARG_UNQUOTED => {
-                if !self.boundary(p) {
+                if !self.boundary_hot(p) {
                     return None;
                 }
                 let parens = op == O_ARG_UNQUOTED;
                 let mut i = p;
                 let mut last = None;
+                // ASCII's bytes without a call (X-037: `space`, `next` and `boundary` a byte)
                 while i < n {
                     let ch = b[i];
-                    if self.space(i).is_some()
-                        || ch == b'\''
+                    if (if ch < 0x80 {
+                        is(ch, SPACE)
+                    } else {
+                        self.space(i).is_some()
+                    }) || ch == b'\''
                         || ch == b'"'
                         || (parens && (ch == b'(' || ch == b')'))
                     {
                         break;
                     }
-                    i = self.next(i);
-                    if self.boundary(i) {
+                    i = if ch < 0x80 { i + 1 } else { self.next(i) };
+                    if self.boundary_hot(i) {
                         last = Some(i);
                     }
                 }
@@ -4749,8 +4807,7 @@ impl Scan<'_, '_, '_, true> {
         if s >= n || b[s] != b'@' || !self.can_push() {
             return None;
         }
-        let word =
-            |w: &[u8]| b.get(s + 1..s + 1 + w.len()) == Some(w) && self.boundary(s + 1 + w.len());
+        let word = |w: &[u8]| self.lit(s + 1, w) && self.boundary(s + 1 + w.len());
         if s == p {
             // the patterns with no `\s*` before them
             for (words, leaf, to) in [
@@ -4781,7 +4838,7 @@ impl Scan<'_, '_, '_, true> {
             // `((@)(mixin|function))\s+([\w-]+)`
             for w in [&b"mixin"[..], b"function"] {
                 let k = s + 1 + w.len();
-                if b.get(s + 1..k) == Some(w) {
+                if self.lit(s + 1, w) {
                     let t = self.spaces(k);
                     if t > k && t < n {
                         let e = self.word_run(t, true);
@@ -4795,7 +4852,7 @@ impl Scan<'_, '_, '_, true> {
                 }
             }
             // `((@)(include))\s+(([a-z]+)(\.))?([\w-]+)`
-            if b.get(s + 1..s + 8) == Some(b"include") {
+            if self.lit(s + 1, b"include") {
                 let k = s + 8;
                 let t = self.spaces(k);
                 if t > k && t < n {
@@ -4844,14 +4901,14 @@ impl Scan<'_, '_, '_, true> {
             // `((@)(?:-(?:webkit|moz|o)-)?(charset|namespace|font-face)\b)`
             let mut k = s + 1;
             for v in [&b"-webkit-"[..], b"-moz-", b"-o-"] {
-                if b.get(k..k + v.len()) == Some(v) {
+                if self.lit(k, v) {
                     k += v.len();
                     break;
                 }
             }
             for w in [&b"charset"[..], b"namespace", b"font-face"] {
                 let e = k + w.len();
-                if b.get(k..e) == Some(w) && self.boundary(e) {
+                if self.lit(k, w) && self.boundary(e) {
                     self.at_pair(s, e, AT_CSS_LEAF);
                     self.push(AT_CSS, e);
                     return Some(e);
@@ -4904,7 +4961,7 @@ impl Scan<'_, '_, '_, true> {
             self.push(CM_OUT, p);
             return Some(p);
         }
-        if s == p && b.get(s + 1..s + 9) == Some(b"document") {
+        if s == p && self.lit(s + 1, b"document") {
             self.at_pair(s, s + 9, AT_DOCUMENT);
             self.push(DOCUMENT, s + 9);
             return Some(s + 9);
@@ -4919,12 +4976,12 @@ impl Scan<'_, '_, '_, true> {
         // `\s*((@)(-webkit-|-moz-|-o-)?keyframes)`
         let mut k = s + 1;
         for v in [&b"-webkit-"[..], b"-moz-", b"-o-"] {
-            if b.get(k..k + v.len()) == Some(v) {
+            if self.lit(k, v) {
                 k += v.len();
                 break;
             }
         }
-        if b.get(k..k + 9) == Some(b"keyframes") {
+        if self.lit(k, b"keyframes") {
             self.at_pair(s, k + 9, AT_KEYFRAME);
             self.push(KEYFRAMES, k + 9);
             return Some(k + 9);
@@ -4935,7 +4992,7 @@ impl Scan<'_, '_, '_, true> {
             return Some(s + 6);
         }
         // `\s*((@)namespace)\s+({{ident}}(?!{{nmchar}}|\())?`
-        if b.get(s + 1..s + 10) == Some(b"namespace") {
+        if self.lit(s + 1, b"namespace") {
             let k = s + 10;
             let t = self.spaces(k);
             if t > k {
@@ -4954,7 +5011,7 @@ impl Scan<'_, '_, '_, true> {
             }
         }
         // `\s*((@)page)\s*(?:(:)(first|left|right))?\s*`
-        if b.get(s + 1..s + 5) == Some(b"page") {
+        if self.lit(s + 1, b"page") {
             let k = s + 5;
             self.at_pair(s, k, AT_PAGE);
             let mut t = self.spaces(k);
@@ -4972,12 +5029,12 @@ impl Scan<'_, '_, '_, true> {
             self.push(PAGE, t);
             return Some(t);
         }
-        if s == p && b.get(s + 1..s + 9) == Some(b"supports") {
+        if s == p && self.lit(s + 1, b"supports") {
             self.at_pair(s, s + 9, AT_SUPPORTS);
             self.push(SUPPORTS, s + 9);
             return Some(s + 9);
         }
-        if s == p && b.get(s + 1..s + 8) == Some(b"content") {
+        if s == p && self.lit(s + 1, b"content") {
             self.at_pair(s, s + 8, AT_CONTENT);
             self.push(CONTENT, s + 8);
             return Some(s + 8);
@@ -4988,60 +5045,8 @@ impl Scan<'_, '_, '_, true> {
     /// SCSS's media features at `p`: `(…)|grid|scan|orientation\s*(?=[:)])` into its end.
     fn media_feature_scss(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
-        let at = |i: usize, w: &[u8]| b.get(i..i + w.len()) == Some(w);
-        let mut best: Option<Feature> = None;
-        'first: for v1 in [Some(&b"-webkit-"[..]), Some(b"-o-"), None] {
-            let mut i = p;
-            let mut vend1 = None;
-            if let Some(v) = v1 {
-                if !at(i, v) {
-                    continue;
-                }
-                vend1 = Some((i, i + v.len()));
-                i += v.len();
-            }
-            for mm in [Some(&b"min-"[..]), Some(b"max-"), None] {
-                let mut j = i;
-                if let Some(m) = mm {
-                    if !at(j, m) {
-                        continue;
-                    }
-                    j += m.len();
-                }
-                for v3 in [Some(&b"-moz-"[..]), None] {
-                    let mut k = j;
-                    let mut vend3 = None;
-                    if let Some(v) = v3 {
-                        if !at(k, v) {
-                            continue;
-                        }
-                        vend3 = Some((k, k + v.len()));
-                        k += v.len();
-                    }
-                    for dv in [Some(&b"device-"[..]), None] {
-                        let mut l = k;
-                        if let Some(d) = dv {
-                            if !at(l, d) {
-                                continue;
-                            }
-                            l += d.len();
-                        }
-                        for w in [&b"height"[..], b"width", b"aspect-ratio", b"pixel-ratio"] {
-                            if at(l, w) {
-                                best = Some((l + w.len(), vend1, vend3));
-                                break 'first;
-                            }
-                        }
-                    }
-                    for w in [&b"color-index"[..], b"color", b"monochrome", b"resolution"] {
-                        if at(k, w) {
-                            best = Some((k + w.len(), vend1, vend3));
-                            break 'first;
-                        }
-                    }
-                }
-            }
-        }
+        let at = |i: usize, w: &[u8]| crate::has_at(b, i, w);
+        let mut best: Option<Feature> = self.feature_name(p);
         if best.is_none() {
             for w in [&b"grid"[..], b"scan"] {
                 if at(p, w) {
@@ -5128,6 +5133,27 @@ mod tests {
                 (s.start, s.end)
             );
             at = s.end as usize;
+        }
+    }
+
+    #[test]
+    fn its_css_ops_are_those_scss_css_ops_keeps() {
+        // `Scan::op`'s SCSS copy keeps only these arms: every CSS op a list or an include
+        // names must be one of them
+        let lists = [
+            &super::OPS_FLAT[..],
+            super::I_PROPERTY_VALUES.ops,
+            super::I_SSE.ops,
+            super::I_SVE.ops,
+            super::I_MEDIA_QUERY.ops,
+            super::I_SELECTOR_PARTS.ops,
+        ];
+        for list in lists {
+            for &op in list {
+                if op < 256 {
+                    assert!(super::super::scss_css_op(op as u8), "CSS op {op}");
+                }
+            }
         }
     }
 
