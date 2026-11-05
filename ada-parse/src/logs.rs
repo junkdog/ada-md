@@ -10,12 +10,18 @@
 //! time, a string's body sixteen. Characters past ASCII are decoded only where one decides
 //! something.
 //!
+//! The message's bytes sixty-four at a time (X-047): SSE2 classifies them into bit masks (word,
+//! hex, digit, and where a gap stops), and a word's length and shape and a gap's end are bits
+//! counted, not bytes read one at a time. A plain number is taken from its masks, a word is
+//! told from the flags by its length and ends before it is folded, and a URL's scheme is read
+//! only where a `://` follows on the line.
+//!
 //! A line depends on no other: a string left open isn't a string. Each [`Kind`] carries the
 //! scopes bat's grammar gave the same text where it had one, so `[syntax]` rules written for it
 //! still apply.
 
 use crate::Span;
-use crate::prim::{char_len, find_in, wide_char, wide_char_at};
+use crate::prim::{char_len, find_in, stops, wide_char, wide_char_at, wide_space};
 
 /// What a stretch of a log line is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -499,18 +505,44 @@ fn level_of(k: u64) -> Option<Kind> {
 
 /// A word in a message that flags a level: error and warning words in any case (`failed`,
 /// `Exception`, `IOException`), the other levels in capitals (`INFO`, `DEBUG`). The word is
-/// the `n` bytes of `b` at `p`.
+/// the `n` bytes of `b` at `p`. Most words are told apart before [`flagged`] by their ends and
+/// length: a long one by its last byte (the suffixes' `n` and `r`), a lower-case one by the
+/// lengths of the flags that start with its letter, a capitalized one (`Connection`) by its
+/// last byte (`KeyError`'s `r`) unless its letter starts a flag, and one that starts with
+/// anything but a letter never.
 #[inline(always)]
 fn message_level(b: &[u8], p: usize, n: usize) -> Option<Kind> {
-    let &first = b.get(p).filter(|_| n > 0)?;
-    if n <= 9 && first.is_ascii_lowercase() && !matches!(first, b'e' | b'f' | b'c' | b'p' | b'w') {
-        // most words, at once
-        return None;
-    }
-    flagged(b, p, n)
+    let w = b.get(p..p + n).filter(|w| !w.is_empty())?;
+    let (first, last) = (w[0], w[n - 1]);
+    let maybe = if n > 9 {
+        matches!(last, b'n' | b'r')
+    } else if first.is_ascii_lowercase() {
+        FLAG_LENGTHS[usize::from(first - b'a')] >> n & 1 != 0
+    } else if first.is_ascii_uppercase() {
+        n > 2
+            && (!w[1].is_ascii_lowercase()
+                || matches!(first, b'E' | b'F' | b'C' | b'P' | b'W')
+                || last == b'r')
+    } else {
+        false
+    };
+    if maybe { flagged(b, p, n) } else { None }
 }
 
-/// [`message_level`] past the words that start with a lower-case letter no flag starts with.
+/// The lengths of the lower-case flags, a bit each, by their first letter: `error` and
+/// `exception`; `fail`, `fatal`, `failed` and `failure`; `critical`; `panic` and `panicked`;
+/// `warn` and `warning`.
+const FLAG_LENGTHS: [u16; 26] = {
+    let mut t = [0; 26];
+    t[(b'e' - b'a') as usize] = 1 << 5 | 1 << 9;
+    t[(b'f' - b'a') as usize] = 1 << 4 | 1 << 5 | 1 << 6 | 1 << 7;
+    t[(b'c' - b'a') as usize] = 1 << 8;
+    t[(b'p' - b'a') as usize] = 1 << 5 | 1 << 8;
+    t[(b'w' - b'a') as usize] = 1 << 4 | 1 << 7;
+    t
+};
+
+/// [`message_level`] past the words its tests tell apart.
 #[inline(never)]
 fn flagged(b: &[u8], p: usize, n: usize) -> Option<Kind> {
     let w = &b[p..p + n];
@@ -699,6 +731,137 @@ struct Scan<'a> {
     b: &'a [u8],
     open: u8,
     dead: Dead,
+    /// Where the next `://` from the last [`Scan::url`] is (the line's length when there is
+    /// none), found when a URL's scheme might end there and not before.
+    sep: usize,
+    /// The 64 bytes' masks the loop reads words and gaps from, at or before its position.
+    w: Window,
+}
+
+/// Bit masks of 64 bytes of a line from `base`, bit `i` for byte `base + i`: word bytes
+/// (ASCII's `\w`), hex digits, digits, and the bytes a gap stops at (a word byte, a quote, a
+/// byte past ASCII, and every bit past the line's end). A message's words and gaps are read
+/// off them by counting bits, so a byte is classified once, sixteen a step, and not once a
+/// test.
+#[derive(Clone, Copy)]
+struct Window {
+    base: usize,
+    word: u64,
+    hex: u64,
+    digit: u64,
+    stop: u64,
+}
+
+impl Window {
+    /// The masks of `b`'s 64 bytes from `base`: where fewer are left, the line's last 64
+    /// shifted down, or a short line's bytes copied out first.
+    #[inline(never)]
+    fn at(b: &[u8], base: usize) -> Window {
+        if let Some(c) = b.get(base..base + 64) {
+            return Window::of(base, c, 0);
+        }
+        let left = b.len() - base;
+        if left == 0 {
+            return Window {
+                base,
+                word: 0,
+                hex: 0,
+                digit: 0,
+                stop: !0,
+            };
+        }
+        let mut w = match b.len().checked_sub(64) {
+            Some(q) => Window::of(base, &b[q..], base - q),
+            None => {
+                let mut pad = [0; 64];
+                pad[..left].copy_from_slice(&b[base..]);
+                Window::of(base, &pad, 0)
+            }
+        };
+        w.stop |= !0 << left;
+        w
+    }
+
+    /// The masks of the 64 bytes `c`, shifted down `shift` bits.
+    #[inline(always)]
+    fn of(base: usize, c: &[u8], shift: usize) -> Window {
+        let (mut word, mut hex, mut digit, mut stop) = (0, 0, 0, 0);
+        for k in 0..4 {
+            let [wm, hm, dm, sm] = classify16(&c[16 * k..16 * k + 16]).map(u64::from);
+            word |= wm << (16 * k);
+            hex |= hm << (16 * k);
+            digit |= dm << (16 * k);
+            stop |= sm << (16 * k);
+        }
+        Window {
+            base,
+            word: word >> shift,
+            hex: hex >> shift,
+            digit: digit >> shift,
+            stop: stop >> shift,
+        }
+    }
+
+    /// The window that holds `p`, at or past this one: the next on the grid when `p` is in it,
+    /// so each byte is classified once.
+    #[inline(always)]
+    fn seek(&mut self, b: &[u8], p: usize) {
+        let off = p - self.base;
+        if off >= 64 {
+            *self = Window::at(b, if off < 128 { self.base + 64 } else { p });
+        }
+    }
+}
+
+/// Word, hex, digit and stop masks of 16 bytes: SSE2, which every x86-64 has; the class table
+/// elsewhere.
+#[inline(always)]
+fn classify16(c: &[u8]) -> [u32; 4] {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use std::arch::x86_64::*;
+        // SAFETY: SSE2 is part of x86-64, and `c` has 16 bytes (each call), read unaligned
+        unsafe {
+            let v = _mm_loadu_si128(c.as_ptr().cast());
+            // `lo..=hi` in one signed compare: the range moved to the bottom of i8's
+            let range = |x: __m128i, lo: u8, hi: u8| {
+                let t = _mm_add_epi8(x, _mm_set1_epi8(0x80u8.wrapping_sub(lo) as i8));
+                _mm_cmplt_epi8(t, _mm_set1_epi8((0x80u8 + (hi - lo + 1)) as i8))
+            };
+            let folded = _mm_or_si128(v, _mm_set1_epi8(0x20));
+            let digit = range(v, b'0', b'9');
+            let alpha = range(folded, b'a', b'z');
+            let under = _mm_cmpeq_epi8(v, _mm_set1_epi8(b'_' as i8));
+            let word = _mm_or_si128(_mm_or_si128(digit, alpha), under);
+            let hex = _mm_or_si128(digit, range(folded, b'a', b'f'));
+            let quote = _mm_or_si128(
+                _mm_or_si128(
+                    _mm_cmpeq_epi8(v, _mm_set1_epi8(b'"' as i8)),
+                    _mm_cmpeq_epi8(v, _mm_set1_epi8(b'\'' as i8)),
+                ),
+                _mm_cmpeq_epi8(v, _mm_set1_epi8(b'`' as i8)),
+            );
+            let word_m = _mm_movemask_epi8(word) as u32;
+            [
+                word_m,
+                _mm_movemask_epi8(hex) as u32,
+                _mm_movemask_epi8(digit) as u32,
+                word_m | _mm_movemask_epi8(_mm_or_si128(quote, v)) as u32,
+            ]
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let mut m = [0; 4];
+        for (i, &c) in c.iter().enumerate() {
+            let k = CLASS[c as usize];
+            m[0] |= u32::from(k & WORD != 0) << i;
+            m[1] |= u32::from(k & HEX != 0) << i;
+            m[2] |= u32::from(k & DIGIT != 0) << i;
+            m[3] |= u32::from(k & (WORD | QUOTE) != 0 || c >= 0x80) << i;
+        }
+        m
+    }
 }
 
 fn put(spans: &mut Vec<Span>, start: usize, end: usize, kind: Kind) {
@@ -710,15 +873,17 @@ fn put(spans: &mut Vec<Span>, start: usize, end: usize, kind: Kind) {
 }
 
 /// The rest of the line, a token at a time by its first byte: a quote, a run of bytes that
-/// start nothing, or a word. A word is read once, its shape gathered as it goes (its length,
-/// whether its bytes are all hex digits, all capitals), and the byte after it and that shape
-/// decide which scanners may take it, each reading from the word's start only when it might.
+/// start nothing, or a word. A word's length and shape (all hex digits, all digits) are read
+/// off the [`Window`]'s masks, and the byte after it and that shape decide which scanners may
+/// take it, each reading from the word's start only when it might.
 fn message(line: &str, spans: &mut Vec<Span>, mut p: usize) {
     let mut m = Scan {
         line,
         b: line.as_bytes(),
         open: 0,
         dead: Dead::default(),
+        sep: 0,
+        w: Window::at(line.as_bytes(), p),
     };
     let b = m.b;
     while let Some(&c) = b.get(p) {
@@ -726,15 +891,21 @@ fn message(line: &str, spans: &mut Vec<Span>, mut p: usize) {
         if class & QUOTE != 0 {
             // a quote that doesn't close is a character like another
             p = m.quoted(spans, p).unwrap_or(p + 1);
+            m.w.seek(b, p);
             continue;
         }
         if class & WORD == 0 && (c < 0x80 || !wide_word(b, p)) {
-            p = gap(b, p);
+            p = m.gap(p);
             continue;
         }
-        let (run, shape) = word_shape(b, p);
+        let (run, hex, digits) = m.word_run(p, class & DIGIT != 0);
         let next = b.get(p + run).copied().unwrap_or(0);
-        let hex = shape & HEX != 0;
+        if digits && !matches!(next, b'.' | b'-' | b'/' | b':') {
+            // a plain number, which nothing before `number` takes and `number` reads whole
+            put(spans, p, p + run, Kind::Number);
+            p += run;
+            continue;
+        }
         let uuid_ahead = hex && run == 8 && next == b'-';
         let found = 'found: {
             if class & DIGIT != 0 {
@@ -788,7 +959,12 @@ fn message(line: &str, spans: &mut Vec<Span>, mut p: usize) {
                     break 'found Some(e);
                 }
             }
-            if hex && next == b':' {
+            // two colons at least: a hex digit or a colon after the first
+            if hex
+                && next == b':'
+                && b.get(p + run + 1)
+                    .is_some_and(|&c| c == b':' || c.is_ascii_hexdigit())
+            {
                 break 'found m.ipv6(spans, p);
             }
             None
@@ -797,25 +973,9 @@ fn message(line: &str, spans: &mut Vec<Span>, mut p: usize) {
             Some(e) => e,
             None => m.word(spans, p, run),
         };
+        // a scanner may end past the window; a gap and a word's run end in it
+        m.w.seek(b, p);
     }
-}
-
-/// Where a run of characters that start nothing (spaces, punctuation) from `p` ends.
-fn gap(b: &[u8], mut p: usize) -> usize {
-    while let Some(&c) = b.get(p) {
-        if c < 0x80 {
-            if CLASS[c as usize] & (WORD | QUOTE) != 0 {
-                break;
-            }
-            p += 1;
-        } else {
-            if wide_word(b, p) {
-                break;
-            }
-            p += char_len(c);
-        }
-    }
-    p
 }
 
 /// The length of the word characters from `p`, and the classes all their bytes share (none
@@ -844,6 +1004,62 @@ fn word_shape(b: &[u8], p: usize) -> (usize, u8) {
 }
 
 impl Scan<'_> {
+    /// Where a run of characters that start nothing (spaces, punctuation) from `p` ends: the
+    /// next stop in the window, a byte past ASCII decoded to tell whether it is one.
+    #[inline(always)]
+    fn gap(&mut self, mut p: usize) -> usize {
+        let b = self.b;
+        loop {
+            let off = p - self.w.base;
+            let z = (self.w.stop >> off).trailing_zeros() as usize;
+            if off + z >= 64 {
+                p = self.w.base + 64;
+                self.w = Window::at(b, p);
+                continue;
+            }
+            p += z;
+            match b.get(p) {
+                Some(&c) if c >= 0x80 && !wide_word(b, p) => {
+                    p += char_len(c);
+                    self.w.seek(b, p);
+                }
+                _ => return p,
+            }
+        }
+    }
+
+    /// The length of the word characters from `p` (one at least), and whether they are all
+    /// hex digits, and all digits (only when `digit`, its first is one): the window's run of
+    /// word bits, [`word_shape`] where a character past ASCII is among them. The run ends in
+    /// the window, which moves on when the word reaches past it.
+    #[inline(always)]
+    fn word_run(&mut self, p: usize, digit: bool) -> (usize, bool, bool) {
+        let b = self.b;
+        let off = p - self.w.base;
+        let ones = |m: u64| (!m).trailing_zeros() as usize;
+        let mut run = ones(self.w.word >> off);
+        let mut hex = ones(self.w.hex >> off) >= run;
+        let mut digits = digit && ones(self.w.digit >> off) >= run;
+        if off + run >= 64 {
+            // the word reaches into the next window
+            self.w = Window::at(b, self.w.base + 64);
+            let more = ones(self.w.word);
+            hex &= ones(self.w.hex) >= more;
+            digits &= ones(self.w.digit) >= more;
+            run += more;
+            if more == 64 {
+                run = usize::MAX;
+            }
+        }
+        if run != usize::MAX && b.get(p + run).is_none_or(|&c| c < 0x80) {
+            return (run, hex, digits);
+        }
+        // a long word, or one with a character past ASCII, may end past the window
+        let (run, shape) = word_shape(b, p);
+        self.w.seek(b, p + run);
+        (run, shape & HEX != 0, shape & DIGIT != 0)
+    }
+
     /// The word at `p`, its `run` of word characters and then any apostrophes between word
     /// characters (`don't`), which start no string: marked when it's a level or error word.
     fn word(&self, spans: &mut Vec<Span>, p: usize, run: usize) -> usize {
@@ -1013,20 +1229,39 @@ impl Scan<'_> {
 
     /// `https://example.com/x?y`, short of trailing punctuation and of a `)` it doesn't open.
     fn url(&mut self, spans: &mut Vec<Span>, p: usize) -> Option<usize> {
+        let b = self.b;
         if p < self.dead.url {
             return None;
         }
-        let scheme = run_end(self.b, p, SCHEME);
-        let sep = self.b.get(scheme..scheme + 3);
-        if scheme == p || sep.is_none_or(|s| s[0] != b':' || s[1] != b'/' || s[2] != b'/') {
+        if self.sep <= p {
+            // a `://` can't be at `p`, a word's start: the one before it is behind
+            self.sep = scheme_sep(b, p);
+        }
+        if self.sep == b.len() {
+            // no `://` on the rest of the line
+            self.dead.url = b.len();
+            return None;
+        }
+        let scheme = run_end(b, p, SCHEME);
+        if scheme == p || scheme != self.sep {
             self.dead.url = scheme;
             return None;
         }
-        let rest = &self.line[scheme + 3..];
-        let end = rest
-            .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '`' | '<' | '>'))
-            .unwrap_or(rest.len());
-        let mut url = &rest[..end];
+        let mut i = scheme + 3;
+        while let Some(&c) = b.get(i) {
+            if c < 0x80 {
+                if URL_END[usize::from(c)] {
+                    break;
+                }
+                i += 1;
+            } else {
+                if wide_space(b, i).is_some() {
+                    break;
+                }
+                i += char_len(c);
+            }
+        }
+        let mut url = &self.line[scheme + 3..i];
         loop {
             let trimmed = url.trim_end_matches(['.', ',', ';', ':', '!', '?']);
             let opens = trimmed.matches('(').count();
@@ -1083,6 +1318,21 @@ impl Scan<'_> {
         Some(v)
     }
 }
+
+/// Where the first `://` after `p` is, or `b`'s length.
+fn scheme_sep(b: &[u8], p: usize) -> usize {
+    let mut i = p + 1;
+    loop {
+        let j = find_in(b, i, b.len(), *b":");
+        if j == b.len() || b.get(j + 1..j + 3) == Some(b"//") {
+            return j;
+        }
+        i = j + 1;
+    }
+}
+
+/// The ASCII bytes a URL ends before: spaces (`char::is_whitespace`'s), quotes, `<` and `>`.
+static URL_END: [bool; 256] = stops(b" \t\n\x0b\x0c\r\"'`<>");
 
 /// Whether the character before byte `p` of `b` is a word character.
 fn word_before(b: &[u8], p: usize) -> bool {
@@ -1457,6 +1707,51 @@ mod tests {
             let s = format!("a{c}");
             assert_eq!(decode(s.as_bytes(), 1), u32::from(c));
             assert_eq!(wide_word(s.as_bytes(), 1), c.is_alphanumeric(), "{c}");
+        }
+    }
+
+    /// A window's masks are the class table's, from every start, lines short and long ending
+    /// anywhere on the grid.
+    #[test]
+    fn windows_are_the_class_table() {
+        let piece = "ab_9F \"x'`.é─日-Z0\t";
+        for len in (0..20).chain(60..70).chain(124..132) {
+            let line: String = piece.chars().cycle().take(len).collect();
+            let b = line.as_bytes();
+            for base in 0..=b.len() {
+                let w = Window::at(b, base);
+                for i in 0..64 {
+                    let (word, hex, digit, stop) = match b.get(base + i) {
+                        Some(&c) => {
+                            let k = CLASS[c as usize];
+                            let word = k & WORD != 0;
+                            (
+                                word,
+                                k & HEX != 0,
+                                k & DIGIT != 0,
+                                word || k & QUOTE != 0 || c >= 0x80,
+                            )
+                        }
+                        None => (false, false, false, true),
+                    };
+                    let bit = |m: u64| m >> i & 1 == 1;
+                    let at = format!("{line:?} from {base}, byte {i}");
+                    assert_eq!(bit(w.word), word, "word: {at}");
+                    assert_eq!(bit(w.hex), hex, "hex: {at}");
+                    assert_eq!(bit(w.digit), digit, "digit: {at}");
+                    assert_eq!(bit(w.stop), stop, "stop: {at}");
+                }
+            }
+            marked(&line);
+            marked(&line.replace(' ', "a"));
+        }
+        // words that end past the next window: a long one, one with a character past ASCII
+        for n in [60, 64, 127, 128, 129, 200] {
+            let digits = "9".repeat(n);
+            let line = format!("x {digits} 1");
+            assert_eq!(marked(&line), [(&digits[..], Number), ("1", Number)], "{n}");
+            let line = format!("é{} 1", "a".repeat(n));
+            assert_eq!(marked(&line), [("1", Number)], "{n}");
         }
     }
 
