@@ -175,16 +175,64 @@ pub fn expand_tabs_onto(line: &str, out: &mut String) {
     }
 }
 
-/// Whether any line of `text` may hold a control character, `\n` aside: when not, no line of
-/// it needs [`expand_tabs`]. One pass over the block, 32 bytes a step (HL-004: checked a line
-/// at a time, short lines spent most of it a byte at a time).
+/// Whether any line of `text`, as the highlighter splits it (`\n`, a `\r` before it or at the
+/// end dropped), may hold a control character: when not, no line of it needs
+/// [`expand_tabs`]. One pass over the block, 32 bytes a step (HL-004: checked a line at a time,
+/// short lines spent most of it a byte at a time). A block with a byte that may start one is
+/// looked at again ([`keeps_controls`]), so a CRLF block or one with `«` or `±` (0xc2, a C1
+/// control's lead byte too) isn't checked again line by line (X-048: INI's corpus, 74
+/// instructions a line).
 pub fn block_needs_expanding(text: &str) -> bool {
     let suspect = |b: u8| ((b < 0x20) & (b != b'\n')) | (b == 0x7f) | (b == 0xc2);
-    let (chunks, rest) = text.as_bytes().as_chunks::<32>();
-    chunks
+    let b = text.as_bytes();
+    let (chunks, rest) = b.as_chunks::<32>();
+    match chunks
         .iter()
-        .any(|c| c.iter().fold(false, |m, &b| m | suspect(b)))
-        || rest.iter().any(|&b| suspect(b))
+        .position(|c| c.iter().fold(false, |m, &x| m | suspect(x)))
+    {
+        Some(n) => keeps_controls(b, n),
+        None => rest.iter().any(|&x| suspect(x)) && keeps_controls(b, chunks.len()),
+    }
+}
+
+/// Whether a line of `b` keeps a control character, from its 32-byte step `n` on, the first
+/// with a byte that may start one: each step's such bytes as a mask, and only those looked at.
+/// Out of line, so the check every block makes stays as small as it was where it's inlined
+/// (X-048: inlined whole, it cost fstab and Mailmap 2–4% at the same instructions).
+#[inline(never)]
+fn keeps_controls(b: &[u8], mut n: usize) -> bool {
+    let suspect = |b: u8| ((b < 0x20) & (b != b'\n')) | (b == 0x7f) | (b == 0xc2);
+    let (chunks, rest) = b.as_chunks::<32>();
+    let has = |c: &[u8; 32]| c.iter().fold(false, |m, &x| m | suspect(x));
+    // the test vectorizes; the mask, taken only for a step that has such a byte, doesn't
+    while let Some(k) = chunks.get(n..).and_then(|c| c.iter().position(has)) {
+        n += k;
+        let mut mask = chunks[n]
+            .iter()
+            .enumerate()
+            .fold(0u32, |m, (i, &x)| m | (u32::from(suspect(x)) << i));
+        while mask != 0 {
+            if kept(b, n * 32 + mask.trailing_zeros() as usize) {
+                return true;
+            }
+            mask &= mask - 1;
+        }
+        n += 1;
+    }
+    let from = b.len() - rest.len();
+    (from..b.len()).any(|i| suspect(b[i]) && kept(b, i))
+}
+
+/// Whether the byte at `i`, one that may start a control character, starts one a line keeps:
+/// not a `\r` the line split drops (before `\n` or at the end), nor a `0xc2` that leads a
+/// printable character.
+fn kept(b: &[u8], i: usize) -> bool {
+    match b[i] {
+        b'\r' => b.get(i + 1).is_some_and(|&n| n != b'\n'),
+        // C1 controls are U+0080..=U+009F: 0xc2 then 0x80..=0x9f
+        0xc2 => b.get(i + 1).is_some_and(|n| (0x80..=0x9f).contains(n)),
+        _ => true,
+    }
 }
 
 /// Whether `line` holds a control character.
@@ -299,6 +347,34 @@ fn chunks(line: &str, first: u16, rest: u16) -> Vec<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The block's answer is "some line, as the highlighter splits it, holds a control
+    /// character", wherever in a 32-byte step the byte falls (X-048).
+    #[test]
+    fn block_check_matches_its_lines() {
+        let lines_hold_one = |t: &str| {
+            t.strip_suffix('\n')
+                .unwrap_or(t)
+                .split('\n')
+                .any(|l| l.strip_suffix('\r').unwrap_or(l).contains(char::is_control))
+        };
+        let pieces = [
+            "\r\n", "\r", "\r\r\n", "\t", "«", "±", "\u{85}", "\u{9f}", "\u{a0}", "\u{7f}", "\n",
+            "é", "\u{1b}",
+        ];
+        for pad in [0, 5, 30, 31, 32, 33, 63, 64] {
+            for p in pieces {
+                for tail in ["", "x", "\n", "x\n"] {
+                    let text = format!("{}{p}{tail}", "a".repeat(pad));
+                    assert_eq!(
+                        block_needs_expanding(&text),
+                        lines_hold_one(&text),
+                        "{text:?}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn tabs_expand_to_stops() {
