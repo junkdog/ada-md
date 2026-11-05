@@ -7,7 +7,7 @@
 //! `(end byte, rule)` runs, and paint resolves each rule against the ada theme (ADR-03).
 //! Results are cached by [`key`], a hash of the language and the code.
 
-use std::cell::OnceCell;
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::Path;
@@ -189,9 +189,39 @@ impl Syntax {
     }
 }
 
+thread_local! {
+    /// Fence tokens this thread looked up lately, as written, and what [`find_syntax`] found
+    /// for each. A document's blocks name a few languages over and over, and the search
+    /// through the aliases, extensions and names took a 7-line block 9% of its instructions
+    /// in C#, 37% in `.env` (X-036).
+    static FOUND: RefCell<Vec<(Box<str>, Option<Syntax>)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Tokens kept in [`FOUND`]; past that it starts over.
+const FOUND_MAX: usize = 16;
+
 /// The syntax for a fence language, with the aliases the vault needs. Only a language the set
 /// has and ada-parse doesn't cover loads the set.
 pub fn find_syntax(lang: &str) -> Option<Syntax> {
+    let found = |found: &Vec<(Box<str>, Option<Syntax>)>| {
+        found.iter().find(|(t, _)| **t == *lang).map(|&(_, s)| s)
+    };
+    if let Some(syntax) = FOUND.try_with(|f| found(&f.borrow())).ok().flatten() {
+        return syntax;
+    }
+    let syntax = search_syntax(lang);
+    let _ = FOUND.try_with(|f| {
+        let mut f = f.borrow_mut();
+        if f.len() >= FOUND_MAX {
+            f.clear();
+        }
+        f.push((lang.into(), syntax));
+    });
+    syntax
+}
+
+/// [`find_syntax`]'s search, without the cache.
+fn search_syntax(lang: &str) -> Option<Syntax> {
     if is_plain(lang) {
         return None;
     }
@@ -491,6 +521,79 @@ impl LineRuns {
         self.ends.shrink_to_fit();
         self
     }
+
+    /// The lines as a finished block keeps them, at their size, leaving these empty: copied
+    /// out of a vector [`BlockScratch`] keeps for the next block, else moved and shrunk.
+    fn done(&mut self) -> Self {
+        if self.runs.capacity() > RUNS_KEPT || self.ends.capacity() > ENDS_KEPT {
+            return std::mem::take(self).shrink();
+        }
+        let done = Self {
+            runs: self.runs.as_slice().to_vec(),
+            ends: self.ends.as_slice().to_vec(),
+        };
+        self.clear();
+        done
+    }
+}
+
+/// A thread's vectors for highlighting a block, which the next block on the thread starts
+/// from: grown from empty, a 7-line block's spans, runs and line ends took ~10 reallocations,
+/// a ninth of its instructions in C# and JSON, and `shrink` copied the runs once more (X-036).
+/// Only small ones are kept, so a thread holds 64 KB of them at most.
+struct BlockScratch {
+    spans: Vec<ada_parse::Span>,
+    lines: LineRuns,
+    /// A line, when tabs expand it.
+    buf: String,
+}
+
+/// The most of each vector [`BlockScratch`] keeps between blocks, by length.
+const SPANS_KEPT: usize = 1024;
+const RUNS_KEPT: usize = 4096;
+const ENDS_KEPT: usize = 4096;
+const BUF_KEPT: usize = 4096;
+
+thread_local! {
+    static SCRATCH: Cell<BlockScratch> = const { Cell::new(BlockScratch::EMPTY) };
+}
+
+impl BlockScratch {
+    const EMPTY: Self = Self {
+        spans: Vec::new(),
+        lines: LineRuns {
+            runs: Vec::new(),
+            ends: Vec::new(),
+        },
+        buf: String::new(),
+    };
+
+    /// The thread's scratch, empty; a fresh one while another block on the thread holds it.
+    fn take() -> Self {
+        SCRATCH
+            .try_with(|s| s.replace(Self::EMPTY))
+            .unwrap_or(Self::EMPTY)
+    }
+
+    /// Hand the vectors back to the thread for its next block, those that grew large dropped.
+    fn put(mut self) {
+        fn keep<T>(v: &mut Vec<T>, most: usize) {
+            if v.capacity() > most {
+                *v = Vec::new();
+            } else {
+                v.clear();
+            }
+        }
+        keep(&mut self.spans, SPANS_KEPT);
+        keep(&mut self.lines.runs, RUNS_KEPT);
+        keep(&mut self.lines.ends, ENDS_KEPT);
+        if self.buf.capacity() > BUF_KEPT {
+            self.buf = String::new();
+        } else {
+            self.buf.clear();
+        }
+        let _ = SCRATCH.try_with(|s| s.set(self));
+    }
 }
 
 /// A line of [`LineRuns`] being written: its runs are those from `open` on. Where the line
@@ -747,13 +850,19 @@ impl ParseRules {
 
     /// The rules earlier blocks in `lang` and the theme resolved, the rest resolved as met.
     fn cached(lang: Lang, theme: u64) -> Self {
-        let mut rules = Self::lazy(lang, theme);
         let cache = RESOLVED.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some((_, _, r)) = cache.iter().find(|(l, t, _)| *l == lang && *t == theme) {
-            rules.rules = Arc::clone(r);
-            rules.start = Arc::clone(r);
+        // the cache's table, not `lazy`'s two empty ones made and dropped: an allocation and
+        // a free each, ~180 instructions a block (X-036)
+        match cache.iter().find(|(l, t, _)| *l == lang && *t == theme) {
+            Some((_, _, r)) => Self {
+                lang,
+                rules: Arc::clone(r),
+                start: Arc::clone(r),
+                theme,
+                fresh: false,
+            },
+            None => Self::lazy(lang, theme),
         }
-        rules
     }
 
     /// Hand the rules this block resolved to the blocks after it ([`RESOLVED`]).
@@ -941,23 +1050,23 @@ impl Lexer {
         let Some(key) = key(code) else {
             return (None, state);
         };
-        let mut lines = LineRuns::default();
-        match self {
+        let rules = match self {
             Lexer::Plain => return (None, state),
             Lexer::Carry(_) => unreachable!("a carried piece comes highlighted"),
-            Lexer::Parse(rules) => {
-                let (mut spans, mut buf) = (Vec::new(), String::new());
-                for l in code.lines() {
-                    rules.line(l, &mut state, (&mut spans, &mut buf), &mut lines);
-                }
-            }
+            Lexer::Parse(rules) => rules,
+        };
+        let mut scratch = BlockScratch::take();
+        let BlockScratch { spans, lines, buf } = &mut scratch;
+        for l in code.lines() {
+            rules.line(l, &mut state, (spans, buf), lines);
         }
         let spans = CodeSpans {
             key,
             rules: theme.id,
             partial: false,
-            lines: lines.shrink(),
+            lines: lines.done(),
         };
+        scratch.put();
         (Some(spans), state)
     }
 
@@ -1018,6 +1127,8 @@ pub struct Carrier<'a> {
     highlighter: LazyHighlighter<'a>,
     state: ada_parse::State,
     spans: Vec<ada_parse::Span>,
+    /// The piece's runs, kept from piece to piece: [`LineRuns::done`] copies them out.
+    lines: LineRuns,
     buf: String,
 }
 
@@ -1031,6 +1142,7 @@ impl<'a> Carrier<'a> {
             },
             state: ada_parse::State::default(),
             spans: Vec::new(),
+            lines: LineRuns::default(),
             buf: String::new(),
         }
     }
@@ -1038,7 +1150,7 @@ impl<'a> Carrier<'a> {
     /// Highlight the next piece, `text`, whose block has the cache key `key`.
     pub fn highlight(&mut self, key: u64, text: &str) -> CodeSpans {
         let expand = block_needs_expanding(text);
-        let mut lines = LineRuns::default();
+        let mut lines = std::mem::take(&mut self.lines);
         for line in Lines::new(text) {
             self.rules.line_resolving(
                 line,
@@ -1050,12 +1162,14 @@ impl<'a> Carrier<'a> {
                 &mut lines,
             );
         }
-        CodeSpans {
+        let spans = CodeSpans {
             key,
             rules: self.highlighter.theme.id,
             partial: false,
-            lines: lines.shrink(),
-        }
+            lines: lines.done(),
+        };
+        self.lines = lines;
+        spans
     }
 }
 
@@ -1132,11 +1246,12 @@ impl<'a> Highlighter<'a> {
             theme,
             built: OnceCell::new(),
         };
+        let BlockScratch { spans, lines, buf } = BlockScratch::take();
         let state = find_syntax(lang).map(|syntax| match syntax {
             Syntax::Own(lang) => Engine::Parse(
                 ParseRules::cached(lang, theme.id),
                 ada_parse::State::default(),
-                Vec::new(),
+                spans,
                 block_needs_expanding(text),
             ),
             Syntax::Set(s) => Engine::Syntect(LineState::new(syntaxes(), s, highlighter.get())),
@@ -1147,8 +1262,8 @@ impl<'a> Highlighter<'a> {
             state,
             highlighter,
             rest: Lines::new(text),
-            lines: LineRuns::default(),
-            buf: String::new(),
+            lines,
+            buf,
         }
     }
 
@@ -1189,7 +1304,7 @@ impl<'a> Highlighter<'a> {
                     {
                         // plain, as a whole
                         self.state = None;
-                        self.lines = LineRuns::default();
+                        self.lines.clear();
                         return false;
                     }
                 }
@@ -1218,16 +1333,24 @@ impl<'a> Highlighter<'a> {
             key: self.key,
             rules: self.rules,
             partial: false,
-            lines: std::mem::take(&mut self.lines).shrink(),
+            lines: self.lines.done(),
         }
     }
 }
 
 impl Drop for Highlighter<'_> {
     fn drop(&mut self) {
-        if let Some(Engine::Parse(rules, ..)) = &mut self.state {
+        let mut spans = Vec::new();
+        if let Some(Engine::Parse(rules, _, s, _)) = &mut self.state {
             rules.keep();
+            spans = std::mem::take(s);
         }
+        BlockScratch {
+            spans,
+            lines: std::mem::take(&mut self.lines),
+            buf: std::mem::take(&mut self.buf),
+        }
+        .put();
     }
 }
 
@@ -1991,6 +2114,52 @@ mod tests {
         for lang in ["text", "TXT", "mermaid", "ebnf"] {
             assert!(find_syntax(lang).is_none(), "{lang}");
         }
+    }
+
+    /// The cache by fence token answers as the search does, for tokens new to it and again,
+    /// past the point where it starts over (X-036).
+    #[test]
+    fn find_syntax_cached_as_searched() {
+        let tokens = "rust Rust json env dotenv ts TypeScript zsh text mermaid ruby Ruby kt cs c# \
+                      gitattributes fstab ini yaml toml";
+        for _ in 0..2 {
+            for t in tokens.split_whitespace() {
+                assert_eq!(
+                    find_syntax(t).map(Syntax::name),
+                    search_syntax(t).map(Syntax::name),
+                    "{t}"
+                );
+            }
+        }
+    }
+
+    /// A block highlighted on a thread whose scratch a larger block left holds no more than
+    /// its own runs, the same ones a fresh thread gives, and what grew past the scratch's
+    /// limit is dropped, not kept (X-036).
+    #[test]
+    fn scratch_leaves_blocks_as_fresh_ones() {
+        let theme = SyntaxTheme::new(&Theme::builtin().syntax);
+        let small = "fn main() {\n    let x = 1; // one\n}\n";
+        let fresh = thread::scope(|s| s.spawn(|| highlight(1, "rust", small, &theme)).join())
+            .expect("thread");
+        let big = "let a = [1, \"two\", 3.0];\n".repeat(2000);
+        thread::scope(|s| {
+            s.spawn(|| {
+                let first = highlight(1, "rust", small, &theme);
+                let large = highlight(2, "rust", &big, &theme);
+                assert!(large.lines.runs.len() > RUNS_KEPT);
+                assert_eq!(large.lines.runs.len(), large.lines.runs.capacity());
+                let kept = SCRATCH.replace(BlockScratch::EMPTY);
+                assert!(kept.lines.runs.capacity() <= RUNS_KEPT);
+                SCRATCH.set(kept);
+                let again = highlight(1, "rust", small, &theme);
+                for spans in [&first, &again] {
+                    assert_eq!(spans, &fresh);
+                    assert_eq!(spans.lines.runs.capacity(), spans.lines.runs.len());
+                    assert_eq!(spans.lines.ends.capacity(), spans.lines.ends.len());
+                }
+            });
+        });
     }
 
     /// `find_syntax` as it was before ada-parse (ADR-40): on the whole set.
