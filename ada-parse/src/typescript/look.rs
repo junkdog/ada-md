@@ -47,15 +47,59 @@ fn wide_before(b: &[u8], i: usize) -> Option<char> {
     wide(b, s)
 }
 
+/// [`CLASS`]: an ASCII name character, `[_$a-zA-Z0-9]`.
+pub(super) const NAME: u8 = 1;
+/// [`CLASS`]: an ASCII name's first character, `[_$a-zA-Z]`.
+pub(super) const START: u8 = 2;
+/// [`CLASS`]: a byte past ASCII, its character decoded to be tested (`wide`).
+pub(super) const HIGH: u8 = 4;
+/// [`CLASS`]: `.`.
+pub(super) const DOT: u8 = 8;
+/// [`CLASS`]: `\s`, a blank or a line's end.
+pub(super) const SPACE: u8 = 16;
+
+/// Each byte's classes: what the predicates test, one load each (a chain of compares before, and
+/// the bytes past ASCII tested by a call the hot path saved registers for).
+pub(super) static CLASS: [u8; 256] = {
+    let mut t = [0; 256];
+    let mut c = 0;
+    while c < 256 {
+        let b = c as u8;
+        t[c] = match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' => NAME | START,
+            b'0'..=b'9' => NAME,
+            b'.' => DOT,
+            b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c => SPACE,
+            0x80.. => HIGH,
+            _ => 0,
+        };
+        c += 1;
+    }
+    t
+};
+
+/// Byte `c`'s classes.
+#[inline(always)]
+pub(super) fn class(c: u8) -> u8 {
+    CLASS[usize::from(c)]
+}
+
 /// `[_$[:alpha:]]` at `i`: its length, 0 if none.
 #[inline]
 pub(super) fn alpha(b: &[u8], i: usize) -> usize {
-    match at(b, i) {
-        b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' => 1,
-        c if c >= 0x80 && i < b.len() => match wide(b, i) {
-            Some(ch) if ch.is_alphabetic() => ch.len_utf8(),
-            _ => 0,
-        },
+    match b.get(i) {
+        Some(&c) if class(c) & START != 0 => 1,
+        Some(&c) if c >= 0x80 => alpha_wide(b, i),
+        _ => 0,
+    }
+}
+
+/// [`alpha`] past ASCII.
+#[cold]
+#[inline(never)]
+fn alpha_wide(b: &[u8], i: usize) -> usize {
+    match wide(b, i) {
+        Some(ch) if ch.is_alphabetic() => ch.len_utf8(),
         _ => 0,
     }
 }
@@ -63,12 +107,19 @@ pub(super) fn alpha(b: &[u8], i: usize) -> usize {
 /// `[_$[:alnum:]]` at `i`: its length, 0 if none.
 #[inline]
 pub(super) fn alnum(b: &[u8], i: usize) -> usize {
-    match at(b, i) {
-        b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$' => 1,
-        c if c >= 0x80 && i < b.len() => match wide(b, i) {
-            Some(ch) if ch.is_alphanumeric() => ch.len_utf8(),
-            _ => 0,
-        },
+    match b.get(i) {
+        Some(&c) if class(c) & NAME != 0 => 1,
+        Some(&c) if c >= 0x80 => alnum_wide(b, i),
+        _ => 0,
+    }
+}
+
+/// [`alnum`] past ASCII.
+#[cold]
+#[inline(never)]
+pub(super) fn alnum_wide(b: &[u8], i: usize) -> usize {
+    match wide(b, i) {
+        Some(ch) if ch.is_alphanumeric() => ch.len_utf8(),
         _ => 0,
     }
 }
@@ -82,14 +133,19 @@ pub(super) fn alnum_at(b: &[u8], i: usize) -> bool {
 /// Whether a name's character ends just before `i`.
 #[inline]
 pub(super) fn alnum_before(b: &[u8], i: usize) -> bool {
-    if i == 0 || i > b.len() {
-        return false;
-    }
-    match b[i - 1] {
-        b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$' => true,
-        c if c >= 0x80 => wide_before(b, i).is_some_and(char::is_alphanumeric),
+    // `i == 0` wraps to a place past any line, as does one past the line's `\n`
+    match b.get(i.wrapping_sub(1)) {
+        Some(&c) if class(c) & NAME != 0 => true,
+        Some(&c) if c >= 0x80 => alnum_wide_before(b, i),
         _ => false,
     }
+}
+
+/// [`alnum_before`] past ASCII.
+#[cold]
+#[inline(never)]
+pub(super) fn alnum_wide_before(b: &[u8], i: usize) -> bool {
+    wide_before(b, i).is_some_and(char::is_alphanumeric)
 }
 
 /// `\w` at `i`.
@@ -115,16 +171,40 @@ pub(super) fn is_word_before(b: &[u8], i: usize) -> bool {
     }
 }
 
-/// The end of a name `[_$[:alpha:]][_$[:alnum:]]*` at `i`; `i` if none starts there.
-#[inline]
+/// The end of a name `[_$[:alpha:]][_$[:alnum:]]*` at `i`; `i` if none starts there. The first
+/// byte is tested here, inlined, so that a place where no name starts costs a load and a test;
+/// the rest is [`name_from`]'s, which saves no registers.
+#[inline(always)]
 pub(super) fn name(b: &[u8], i: usize) -> usize {
+    match b.get(i) {
+        Some(&c) if class(c) & (START | HIGH) != 0 => name_from(b, i, c),
+        _ => i,
+    }
+}
+
+/// [`name`] from `i`, where `c`, an ASCII name's first byte or one past ASCII, is: ASCII's names
+/// to their end, anything else [`name_wide`]'s.
+#[inline(never)]
+fn name_from(b: &[u8], i: usize, c: u8) -> usize {
+    if c < 0x80 {
+        let j = ascii_name_end(b, i + 1);
+        if j >= b.len() || b[j] < 0x80 {
+            return j;
+        }
+    }
+    name_wide(b, i)
+}
+
+/// [`name`] at `i` with characters past ASCII in it (or at `i`), read again from its start.
+#[cold]
+#[inline(never)]
+fn name_wide(b: &[u8], i: usize) -> usize {
     let a = alpha(b, i);
     if a == 0 {
         return i;
     }
     let mut j = i + a;
     loop {
-        // ASCII's name characters first, the commonest by far
         j = ascii_name_end(b, j);
         if j >= b.len() || b[j] < 0x80 {
             return j;
@@ -156,7 +236,7 @@ fn ascii_name_end(b: &[u8], mut j: usize) -> usize {
         }
         return j;
     }
-    while j < b.len() && NAME_ASCII[usize::from(b[j])] {
+    while j < b.len() && class(b[j]) & NAME != 0 {
         j += 1;
     }
     j
@@ -173,10 +253,11 @@ fn name_mask(b: &[u8], q: usize) -> u32 {
     // needs no alignment
     unsafe {
         let w = _mm_loadu_si128(b.as_ptr().add(q).cast());
-        // `x - lo` at most `n`, unsigned: `x` in `lo..=lo + n`
+        // `x` in `lo..=lo + n`: `x - lo + 0x80` below `n + 1 - 0x80`, signed (one add and one
+        // compare, where an unsigned range takes a subtract, a min and a compare)
         let within = |x: __m128i, lo: u8, n: u8| {
-            let d = _mm_sub_epi8(x, _mm_set1_epi8(lo as i8));
-            _mm_cmpeq_epi8(_mm_min_epu8(d, _mm_set1_epi8(n as i8)), d)
+            let d = _mm_add_epi8(x, _mm_set1_epi8(0x80u8.wrapping_sub(lo) as i8));
+            _mm_cmplt_epi8(d, _mm_set1_epi8((n as i8).wrapping_sub(127)))
         };
         // `| 0x20` takes `A..=Z` to `a..=z` and no other byte there
         let letter = within(_mm_or_si128(w, _mm_set1_epi8(0x20)), b'a', 25);
@@ -187,17 +268,6 @@ fn name_mask(b: &[u8], q: usize) -> u32 {
         _mm_movemask_epi8(m) as u32
     }
 }
-
-/// `[_$[:alnum:]]` for each ASCII byte (none past it).
-static NAME_ASCII: [bool; 256] = {
-    let mut t = [false; 256];
-    let mut c = 0;
-    while c < 128 {
-        t[c] = matches!(c as u8, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$');
-        c += 1;
-    }
-    t
-};
 
 /// `[[:upper:]][_$[:digit:][:upper:]]*` at `i`, ASCII's: its end, `i` if none.
 pub(super) fn upper(b: &[u8], i: usize) -> usize {
@@ -841,14 +911,14 @@ pub(super) fn call_target(b: &[u8], i: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{NAME_ASCII, ascii_name_end};
+    use super::{NAME, ascii_name_end, class};
 
     /// The sixteen-byte steps end where the byte loop does, at every start of every line from 0 to
     /// 40 bytes, each byte of 256 at each place in turn among name bytes.
     #[test]
     fn ascii_name_end_is_the_byte_loops() {
         let slow = |b: &[u8], mut j: usize| {
-            while j < b.len() && NAME_ASCII[usize::from(b[j])] {
+            while j < b.len() && class(b[j]) & NAME != 0 {
                 j += 1;
             }
             j

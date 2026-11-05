@@ -1085,15 +1085,40 @@ impl Scan<'_, '_, '_> {
     }
 
     /// `«wb»`: `(?<![_$[:alnum:]])(?:(?<=\.\.\.)|(?<!\.))` at `i`.
+    /// One load of the byte before's [`look::CLASS`], where it took a chain of compares and a call
+    /// past ASCII that the hot path saved registers for (X-029).
+    #[inline]
     fn wb(&self, i: usize) -> bool {
-        // `i` may be past the line's `\n` (after `ws`): `c` reads it there
-        !self.alnum_before(i)
-            && (i == 0 || self.c(i - 1) != b'.' || (i >= 3 && &self.b[i - 3..i] == b"..."))
+        // `i == 0` wraps to a place past the line, and `i` may be past the line's `\n` (after
+        // `ws`): before either is no name character and no `.`
+        let Some(&p) = self.b.get(i.wrapping_sub(1)) else {
+            return true;
+        };
+        let k = look::class(p);
+        if k & (look::NAME | look::DOT | look::HIGH) == 0 {
+            true
+        } else if k & look::DOT != 0 {
+            i >= 3 && &self.b[i - 3..i] == b"..."
+        } else {
+            k & look::HIGH != 0 && !look::alnum_wide_before(self.b, i)
+        }
     }
 
     /// `«we»`: `(?![_$[:alnum:]])(?:(?=\.\.\.)|(?!\.))` at `i`.
+    #[inline]
     fn we(&self, i: usize) -> bool {
-        !self.alnum_at(i) && (self.c(i) != b'.' || self.has(i, b"..."))
+        // at the line's `\n` and past it, no name character and no `.`
+        let Some(&c) = self.b.get(i) else {
+            return true;
+        };
+        let k = look::class(c);
+        if k & (look::NAME | look::DOT | look::HIGH) == 0 {
+            true
+        } else if k & look::DOT != 0 {
+            self.has(i, b"...")
+        } else {
+            k & look::HIGH != 0 && look::alnum_wide(self.b, i) == 0
+        }
     }
 
     /// The word `w` at `i` between `«wb»` and `«we»`: its end.
