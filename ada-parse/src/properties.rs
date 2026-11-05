@@ -1,11 +1,14 @@
-//! Java properties files by a scanner: bat's `Java Properties` compiled by hand. A line is a
-//! comment, or a key, a separator and a value, each a run the scan passes in one step; a key or
-//! value ending in `\` runs on into the next line, which is all the state there is.
+//! Java properties files by a scanner on the line-format engine: bat's `Java Properties`
+//! compiled by hand. A line is a comment, or a key, a separator and a value, each a run the scan
+//! passes in one step; a key or value ending in `\` runs on into the next line, which is all the
+//! state there is.
 //!
 //! Exact against bat's grammar on syntect: the `parse` fuzz target holds every byte's scopes to
 //! syntect's.
 
-use crate::matcher::{Atom, atoms, is_space};
+use crate::line_format::{Cursor, Format, blanks, find, find_by, leads};
+use crate::matcher::{Atom, atoms};
+use crate::prim::{char_len, stops};
 use crate::{Out, State};
 
 atoms! {
@@ -62,46 +65,54 @@ const OPEN_VALUE: u64 = 2;
 /// Lex `b`, a line without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let open = match state.word() {
-        OPEN_KEY => run(b, 0, KEY, out),
-        OPEN_VALUE => run(b, 0, KEY + IN_VALUE, out),
-        _ => main(b, out),
-    };
-    state.set_word(open);
+    crate::line_format::line::<Properties>(b, state, out);
 }
 
-/// `main`: a comment, `^\s*([#!]).*`, or a property at the first byte that isn't a space.
-fn main(b: &[u8], out: &mut Out) -> u64 {
-    let Some(q) = b.iter().position(|&c| !is_space(c)) else {
-        return 0;
-    };
-    if matches!(b[q], b'#' | b'!') {
-        out.push(0, q, COMMENT);
-        out.push(q, q + 1, COMMENT_MARK);
-        out.push(q + 1, b.len(), COMMENT);
-        return 0;
+struct Properties;
+
+impl Format for Properties {
+    // `^\s*([#!]).*`
+    const LEAD: [u8; 256] = leads(b"#!", b"");
+    const COMMENT_TEXT: u16 = COMMENT;
+    const COMMENT_MARK: u16 = COMMENT_MARK;
+    const COMMENT_BLANKS: bool = true;
+
+    #[inline(always)]
+    fn resume(c: &mut Cursor, open: u64) -> u64 {
+        match open {
+            OPEN_KEY => run(c, 0, KEY),
+            _ => run(c, 0, KEY + IN_VALUE),
+        }
     }
-    run(b, q, KEY, out)
+
+    /// A property at the first byte that isn't a space, the blanks before it plain.
+    #[inline(always)]
+    fn entry(c: &mut Cursor, p: usize) -> u64 {
+        c.skip(p);
+        run(c, p, KEY)
+    }
 }
 
-/// A key (`kind` [`KEY`]) or a value ([`KEY`] + [`IN_VALUE`]) from `p`, with its escapes; a
-/// key goes on to its separator and value. What the line leaves open.
-fn run(b: &[u8], mut p: usize, kind: u16, out: &mut Out) -> u64 {
+/// Where a key's run stops: a `\`, or its end, `(?=[:=\s])`.
+static KEY_STOP: [bool; 256] = stops(b"\\:= \t\n\x0b\x0c\r");
+
+/// A key (`kind` [`KEY`]) or a value ([`KEY`] + [`IN_VALUE`]) from `p`, the cursor there, with
+/// its escapes; a key goes on to its separator and value. What the line leaves open.
+fn run(c: &mut Cursor, mut p: usize, kind: u16) -> u64 {
+    let b = c.b;
     let value = kind != KEY;
-    let mut start = p;
     loop {
-        // to the next `\`, or a key's end: `(?=[:=\s])`, which the line's end is
-        let stop = |c: u8| c == b'\\' || !value && (c == b':' || c == b'=' || is_space(c));
-        let k = b[p..]
-            .iter()
-            .position(|&c| stop(c))
-            .map_or(b.len(), |i| p + i);
+        // to the next `\`, or a key's end, which the line's end is
+        let k = match value {
+            true => find(b, p, *b"\\"),
+            false => find_by(b, p, &KEY_STOP),
+        };
         if k == b.len() || b[k] != b'\\' {
-            out.push_merged(start, k, kind);
+            c.put_merged(k, kind);
             if value {
                 return 0;
             }
-            return separator(b, k, out);
+            return separator(c, k);
         }
         // `(\\)\n`, then `\\u[[:xdigit:]]{4}`, then `\\[^u]`
         let (end, escape) = if k + 1 == b.len() {
@@ -115,51 +126,39 @@ fn run(b: &[u8], mut p: usize, kind: u16, out: &mut Out) -> u64 {
                 continue;
             }
         } else {
-            (k + 1 + char_len(b, k + 1), ESCAPE)
+            (k + 1 + char_len(b[k + 1]), ESCAPE)
         };
-        out.push_merged(start, k, kind);
-        out.push(k, end, kind + (escape - KEY));
+        c.put_merged(k, kind);
+        c.put(end, kind + (escape - KEY));
         if escape == CONTINUATION {
             return if value { OPEN_VALUE } else { OPEN_KEY };
         }
         p = end;
-        start = end;
     }
 }
 
 /// After a key, at `p`: the first `[:=]` or byte that isn't a space, whichever comes first
 /// (the separator on a tie), then the value at the first byte past the separator that isn't
 /// a space; the line's end closes the property.
-fn separator(b: &[u8], p: usize, out: &mut Out) -> u64 {
-    let Some(q) = b[p..].iter().position(|&c| !is_space(c)).map(|i| p + i) else {
-        out.push(p, b.len(), META);
+fn separator(c: &mut Cursor, p: usize) -> u64 {
+    let b = c.b;
+    let q = blanks(b, p);
+    if q == b.len() {
+        c.put(b.len(), META);
         return 0;
-    };
-    out.push(p, q, META);
+    }
+    c.put(q, META);
     if !matches!(b[q], b':' | b'=') {
-        return run(b, q, KEY + IN_VALUE, out);
+        return run(c, q, KEY + IN_VALUE);
     }
-    out.push(q, q + 1, SEPARATOR);
-    let Some(v) = b[q + 1..]
-        .iter()
-        .position(|&c| !is_space(c))
-        .map(|i| q + 1 + i)
-    else {
-        out.push(q + 1, b.len(), META);
+    c.put(q + 1, SEPARATOR);
+    let v = blanks(b, q + 1);
+    if v == b.len() {
+        c.put(b.len(), META);
         return 0;
-    };
-    out.push(q + 1, v, META);
-    run(b, v, KEY + IN_VALUE, out)
-}
-
-/// The length of the character at `i`, a valid UTF-8 line's.
-fn char_len(b: &[u8], i: usize) -> usize {
-    match b[i] {
-        0..0x80 => 1,
-        0xc0..0xe0 => 2,
-        0xe0..0xf0 => 3,
-        _ => 4,
     }
+    c.put(v, META);
+    run(c, v, KEY + IN_VALUE)
 }
 
 #[cfg(test)]

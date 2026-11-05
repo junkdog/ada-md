@@ -9,10 +9,11 @@
 //!
 //! The lexers are scanners of ada's own, speed first (ADR-40): one pass over a line's bytes,
 //! a fixed set of kinds carrying bat's scopes for the common case, syntect a guideline.
-//! Diff and INI are line lexers, each line on its own; logs (O-043) and JSON (O-048) came
-//! from ada; `.env`'s, Git's (ignore, attributes, mailmap and link files), Dockerfile's and
-//! Java properties' scanners are bat's grammars compiled by hand, exact against syntect (the
-//! `parse` fuzz target); XML's is of ada's own design and still exact; YAML's and TOML's read
+//! Diff is a line lexer, each line on its own; INI, Java properties and `.env` share the
+//! line-format engine (`line_format.rs`); logs (O-043) and JSON (O-048) came from ada; `.env`'s,
+//! Git's (ignore, attributes, mailmap and link files), Dockerfile's and Java properties'
+//! scanners are bat's grammars compiled by hand, exact against syntect (the `parse` fuzz
+//! target), as INI's is; XML's is of ada's own design and still exact; YAML's and TOML's read
 //! their formats as bat's grammars do on well-formed text (TOML's as TOML 1.1 where bat's
 //! doesn't). bash and Makefiles share a scanner, bat's contexts matched in place.
 
@@ -23,9 +24,7 @@ mod csharp;
 mod css;
 mod diff;
 mod dockerfile;
-// the matchers and context ids its scanner shares, from the port it replaced
 mod dotenv;
-mod dotenv_scan;
 // the matchers and context ids its scanner shares, from the port it replaced
 mod git;
 mod git_scan;
@@ -37,6 +36,8 @@ mod javascript;
 mod json;
 mod kotlin;
 mod lang;
+// the frame under INI, Java properties and `.env`
+mod line_format;
 mod lisp;
 mod logs;
 mod lua;
@@ -164,7 +165,7 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
     let mut out = Out::new(spans);
     match lang {
         Lang::Diff => diff::line(line.as_bytes(), &mut out),
-        Lang::Ini => ini::line(line.as_bytes(), &mut out),
+        Lang::Ini => ini::line(line.as_bytes(), state, &mut out),
         Lang::Toml => toml_scan::line(line.as_bytes(), state, &mut out),
         Lang::Yaml => yaml_scan::line(line.as_bytes(), state, &mut out),
         Lang::Xml => xml_scan::line(line.as_bytes(), state, &mut out),
@@ -192,7 +193,7 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
         Lang::Clojure => lisp::clojure::line(line.as_bytes(), state, &mut out),
         Lang::Bash => bash::line(line.as_bytes(), state, &mut out),
         Lang::Makefile => bash::make_line(line.as_bytes(), state, &mut out),
-        Lang::DotEnv => dotenv_scan::line(line.as_bytes(), state, &mut out),
+        Lang::DotEnv => dotenv::line(line.as_bytes(), state, &mut out),
         Lang::GitIgnore => git_scan::line(Git::Ignore, line.as_bytes(), state, &mut out),
         Lang::GitAttributes => git_scan::line(Git::Attributes, line.as_bytes(), state, &mut out),
         Lang::GitMailmap => git_scan::line(Git::Mailmap, line.as_bytes(), state, &mut out),

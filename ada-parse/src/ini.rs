@@ -1,8 +1,9 @@
-//! INI files, in place of bat's `INI`: a line is a comment, a `[section]`, or a `key = value`
-//! declaration, whose key and value may be quoted and which may end in a `;` comment. A line
-//! doesn't depend on the ones before it.
+//! INI files, in place of bat's `INI`, on the line-format engine: a line is a comment, a
+//! `[section]`, or a `key = value` declaration, whose key and value may be quoted and which may
+//! end in a `;` comment. A line doesn't depend on the ones before it.
 
-use crate::{Out, skip_spaces, trim_end};
+use crate::line_format::{Cursor, Format, blanks, find, leads, trim};
+use crate::{Out, State};
 
 const COMMENT: u16 = 0;
 const COMMENT_MARK: u16 = 1;
@@ -37,79 +38,118 @@ pub const KINDS: &[&str] = &[
     "meta.declaration.ini comment.declarationline.semicolon.ini",
 ];
 
-/// One line, by the first of the grammar's three patterns that matches it; the last matches
-/// any line.
+/// Lex `b`, a line without its `\n`: by the first of the grammar's three patterns that matches
+/// it, the last matching any line.
 #[inline(never)]
-pub fn line(b: &[u8], out: &mut Out) {
-    let len = b.len();
-    let start = skip_spaces(b, 0);
-    let mut at = 0;
-    let mut put = |end: usize, kind: u16| {
-        out.push(at, end, kind);
-        at = end;
-    };
-    // `^\s*(;|#).*$`
-    if matches!(b.get(start), Some(b';' | b'#')) {
-        put(start, COMMENT);
-        put(start + 1, COMMENT_MARK);
-        put(len, COMMENT);
-        return;
+pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
+    crate::line_format::line::<Ini>(b, state, out);
+}
+
+struct Ini;
+
+impl Format for Ini {
+    // `^\s*(;|#).*$` and `^\s*(\[)…`
+    const LEAD: [u8; 256] = leads(b";#", b"[");
+    const COMMENT_TEXT: u16 = COMMENT;
+    const COMMENT_MARK: u16 = COMMENT_MARK;
+    const COMMENT_BLANKS: bool = true;
+
+    // a line leaves nothing open, and a state from elsewhere is read past
+    const OPENS: bool = false;
+
+    fn resume(_: &mut Cursor, _: u64) -> u64 {
+        unreachable!("INI's lines leave nothing open")
     }
-    // `^\s*(\[)(.*?)(\])\s*(;.*)?$`: the name ends at the first `]` that only spaces and a
-    // comment follow
-    if b.get(start) == Some(&b'[') {
-        let close = (start + 1..len).find(|&i| b[i] == b']' && ends(b, i + 1).is_some());
-        if let Some(close) = close {
-            put(start, SECTION);
-            put(start + 1, SECTION_MARK);
-            put(close, SECTION_NAME);
-            put(close + 1, SECTION_MARK);
-            let comment = ends(b, close + 1).unwrap_or(len);
-            put(comment, SECTION);
-            put(len, SECTION_COMMENT);
-            return;
-        }
+
+    /// The third pattern's text is its blanks.
+    #[inline(always)]
+    fn blank(c: &mut Cursor) {
+        c.put(c.len(), DECLARATION);
     }
-    // `^(\s*(["']?)(.+?)(\2)\s*(=))?\s*((["']?)(.*?)(\7))\s*(;.*)?$`
-    let mut value = 0;
-    if let Some((key, quoted, equals)) = key(b, start) {
-        let quote = usize::from(quoted);
-        put(key.0 - quote, PROPERTY);
-        put(key.0, KEY_QUOTE);
-        put(key.1, KEY);
-        put(key.1 + quote, KEY_QUOTE);
-        put(equals, PROPERTY);
-        put(equals + 1, EQUALS);
-        value = equals + 1;
+
+    /// `^\s*(\[)(.*?)(\])\s*(;.*)?$`: the name ends at the first `]` that only spaces and a
+    /// comment follow.
+    #[inline(always)]
+    fn section(c: &mut Cursor, start: usize) -> Option<u64> {
+        let b = c.b;
+        let mut close = start + 1;
+        let comment = loop {
+            close = find(b, close, *b"]");
+            if close == b.len() {
+                return None;
+            }
+            if let Some(comment) = ends(b, close + 1) {
+                break comment;
+            }
+            close += 1;
+        };
+        c.put(start, SECTION);
+        c.put(start + 1, SECTION_MARK);
+        c.put(close, SECTION_NAME);
+        c.put(close + 1, SECTION_MARK);
+        c.put(comment, SECTION);
+        c.put(b.len(), SECTION_COMMENT);
+        Some(0)
     }
-    let value = skip_spaces(b, value);
-    put(value, DECLARATION);
-    let quoted = b
-        .get(value)
-        .filter(|&&q| q == b'"' || q == b'\'')
-        .and_then(|&q| (value + 1..len).find(|&i| b[i] == q && ends(b, i + 1).is_some()));
-    let comment = match quoted {
-        Some(close) => {
-            put(value + 1, VALUE_QUOTE);
-            put(close, VALUE);
-            put(close + 1, VALUE_QUOTE);
-            ends(b, close + 1).unwrap_or(len)
+
+    /// `^(\s*(["']?)(.+?)(\2)\s*(=))?\s*((["']?)(.*?)(\7))\s*(;.*)?$`
+    #[inline(always)]
+    fn entry(c: &mut Cursor, start: usize) -> u64 {
+        let b = c.b;
+        let mut value = 0;
+        if let Some((key, quoted, equals)) = key(b, start) {
+            let quote = usize::from(quoted);
+            c.put(key.0 - quote, PROPERTY);
+            c.put(key.0, KEY_QUOTE);
+            c.put(key.1, KEY);
+            c.put(key.1 + quote, KEY_QUOTE);
+            c.put(equals, PROPERTY);
+            c.put(equals + 1, EQUALS);
+            value = equals + 1;
         }
-        None => {
-            // the text ends where only spaces and a comment follow: before the first `;`
-            let semi = (value..len).find(|&i| b[i] == b';').unwrap_or(len);
-            put(trim_end(b, value, semi), VALUE);
-            semi
+        let value = blanks(b, value);
+        c.put(value, DECLARATION);
+        let comment = match quoted_value(b, value) {
+            Some(close) => {
+                c.put(value + 1, VALUE_QUOTE);
+                c.put(close, VALUE);
+                c.put(close + 1, VALUE_QUOTE);
+                ends(b, close + 1).unwrap_or(b.len())
+            }
+            None => {
+                // the text ends where only spaces and a comment follow: before the first `;`
+                let semi = find(b, value, *b";");
+                c.put(trim(b, value, semi), VALUE);
+                semi
+            }
+        };
+        c.put(comment, DECLARATION);
+        c.put(b.len(), COMMENT_AFTER);
+        0
+    }
+}
+
+/// A quoted value's closing quote, when the value at `value` starts with one and a quote of
+/// its kind is followed by spaces and a comment alone.
+fn quoted_value(b: &[u8], value: usize) -> Option<usize> {
+    let q = *b.get(value).filter(|&&q| q == b'"' || q == b'\'')?;
+    let mut close = value + 1;
+    loop {
+        close = find(b, close, [q]);
+        if close == b.len() {
+            return None;
         }
-    };
-    put(comment, DECLARATION);
-    put(len, COMMENT_AFTER);
+        if ends(b, close + 1).is_some() {
+            return Some(close);
+        }
+        close += 1;
+    }
 }
 
 /// Where the comment starts when only spaces and a `;` comment follow `at`, `\s*(;.*)?$`, or
 /// the line's end when only spaces do; `None` when something else does.
 fn ends(b: &[u8], at: usize) -> Option<usize> {
-    let at = skip_spaces(b, at);
+    let at = blanks(b, at);
     (at == b.len() || b[at] == b';').then_some(at)
 }
 
@@ -118,15 +158,19 @@ fn ends(b: &[u8], at: usize) -> Option<usize> {
 fn key(b: &[u8], start: usize) -> Option<((usize, usize), bool, usize)> {
     let len = b.len();
     if let Some(&q) = b.get(start).filter(|&&q| q == b'"' || q == b'\'') {
-        let close =
-            (start + 2..len).find(|&i| b[i] == q && b.get(skip_spaces(b, i + 1)) == Some(&b'='));
-        if let Some(close) = close {
-            return Some(((start + 1, close), true, skip_spaces(b, close + 1)));
+        let mut close = start + 2;
+        while close < len {
+            close = find(b, close, [q]);
+            if close < len && b.get(blanks(b, close + 1)) == Some(&b'=') {
+                return Some(((start + 1, close), true, blanks(b, close + 1)));
+            }
+            close += 1;
         }
     }
     // `.+?` takes a byte at least, and stops before the spaces ahead of the first `=`
-    if let Some(equals) = (start + 1..len).find(|&i| b[i] == b'=') {
-        return Some(((start, trim_end(b, start + 1, equals)), false, equals));
+    let equals = find(b, start + 1, *b"=");
+    if equals < len {
+        return Some(((start, trim(b, start + 1, equals)), false, equals));
     }
     // a key of one space, given back by `\s*`, before an `=` that starts the text
     (start > 0 && b.get(start) == Some(&b'=')).then(|| ((start - 1, start), false, start))

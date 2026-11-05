@@ -2370,7 +2370,10 @@ mod tests {
     }
 
     /// ada-parse's TOML lexer picks the rules bat's grammar picks, in every built-in theme
-    /// (ADR-40).
+    /// (ADR-40), on text where it reads TOML as bat's grammar does. It reads TOML 1.1 where the
+    /// grammar doesn't (X-020): `truex` is one bad value where the grammar gives `true` and a bad
+    /// `x`, and the blanks after a value are no error, so `= ] x` is two bad values where the
+    /// grammar makes `] x` one (`toml_scan.rs`'s tests hold those departures).
     #[test]
     fn toml_rules_match_the_grammar() {
         let text = concat!(
@@ -2395,12 +2398,12 @@ mod tests {
             "  { x = 1 },\n",
             "  \"s\",\n",
             "]\n",
-            "bad = ] x\n",
+            "bad = ]\n",
             "[]\n",
             "key\n",
             "= 1\n",
             "a = \"unterminated\n",
-            "b = truex falsey\n",
+            "b = yes\n",
         );
         rules_match_the_grammar("toml", "TOML", text);
     }

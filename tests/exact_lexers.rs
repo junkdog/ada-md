@@ -189,6 +189,7 @@ fn dotenv_examples() {
         "",
         "\n\n",
         "#\n\"\n'\n${\n",
+        "  # lead\n \t export A=1\n\t\n   =true\n  ' x\n\t'\n  \"s\n",
     ];
     for block in blocks {
         exact(Lang::DotEnv, block);

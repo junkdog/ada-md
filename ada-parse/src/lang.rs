@@ -496,7 +496,7 @@ impl Lang {
             Lang::Html => crate::html::scopes(kind),
             Lang::Lisp | Lang::EmacsLisp | Lang::Scheme | Lang::Racket => crate::lisp::scopes(kind),
             Lang::Clojure => crate::lisp::clojure::scopes(kind),
-            Lang::DotEnv => crate::dotenv_scan::scopes(kind),
+            Lang::DotEnv => crate::dotenv::scopes(kind),
             Lang::GitIgnore | Lang::GitAttributes | Lang::GitMailmap | Lang::GitLink => {
                 crate::git_scan::scopes(kind)
             }
