@@ -8,3 +8,4 @@
 *.pending-snap
 /.bench-lock
 /.bench-running
+/.work/

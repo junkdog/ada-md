@@ -3,7 +3,7 @@
 # fuzz_targets/langs.rs), each language's inputs in a corpus of its own, corpus/TARGET-LANG. A smoke for a
 # new or changed lexer then neither replays the whole corpus through every lexer first nor shares its runs
 # with them. LANGS is a comma list of `Lang`s as the target names them, in lowercase (`python`, `cpp,c`),
-# or `all`. Run it under bench/exclusive.zsh, with absolute paths.
+# or `all`. Run it under `bench/work.zsh fuzz`, with absolute paths.
 #
 #   lang.zsh corpus TARGET LANGS [SEEDS…]   each language's corpus/TARGET-LANG: what it has, and the inputs
 #                                           of corpus/TARGET and the SEEDS dirs that reach code of that
@@ -23,7 +23,7 @@
 #
 # Each builds the target first, as `cargo fuzz run -s none -a` does. A language new to the target starts
 # empty, so `corpus` with its seeds (census files, a dir each) comes first.
-# e.g. bench/exclusive.zsh "py smoke" /home/junkdog/opt/dev/rust/ada-md/fuzz/lang.zsh smoke tokens python 300
+# e.g. bench/work.zsh fuzz "py smoke" /home/junkdog/opt/dev/rust/ada-md/fuzz/lang.zsh smoke tokens python 300
 setopt err_exit pipe_fail no_unset extended_glob
 F=${0:A:h} CALLER=$PWD
 cd $F
@@ -158,7 +158,7 @@ smoke() {
   kill -TERM -- -$pid 2> /dev/null || true
   wait $pid || rc=$?
   trap - INT TERM EXIT
-  # a fork job that outlived the group's SIGTERM (2026-11-02: one, reparented to init, held bench/exclusive.zsh's
+  # a fork job that outlived the group's SIGTERM (2026-11-02: one, reparented to init, held the old bench/exclusive.zsh's
   # lock for minutes after the smoke ended): this run's are the processes with its artifact prefix
   local -a left
   local p k
