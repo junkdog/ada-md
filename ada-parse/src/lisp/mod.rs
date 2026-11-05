@@ -723,7 +723,8 @@ impl Scan<'_, '_, '_> {
 
     /// An unquoted identifier's run at `p`: escapes and characters but breaks. Its end, whether
     /// it has a character that is neither a digit nor a `.`, and whether it has an escape. In its
-    /// callers ([`Scan::ident_at`] the hot one): a call saved six registers a token.
+    /// callers ([`Scan::ident_at`] the hot one): a call saved six registers a token. Where a run
+    /// is rare, [`Scan::run_at_call`].
     #[inline(always)]
     fn run_at(&self, p: usize) -> (usize, bool, bool) {
         #[cfg(target_arch = "x86_64")]
@@ -795,6 +796,15 @@ impl Scan<'_, '_, '_> {
             }
         }
         (q.min(n), y, escaped)
+    }
+
+    /// [`Scan::run_at`] in a call, where a run is read less often than an identifier's (a
+    /// character's name, a datum comment's): 1.2 KB of copies, no cycles (X-038). Scheme's
+    /// `#lang` and `#!`, once a file, keep it in place: called there too, Racket's and Scheme's
+    /// cycles were +0.5% (the code's layout, not the calls).
+    #[inline(never)]
+    fn run_at_call(&self, p: usize) -> (usize, bool, bool) {
+        self.run_at(p)
     }
 
     /// [`Scan::run_at`] a byte a step.
@@ -882,7 +892,9 @@ impl Scan<'_, '_, '_> {
     }
 
     /// A word of the lists at `p`, the whole token `id`, followed by a break: what it is. In
-    /// its callers: a call saved six registers for a lookup of ~70 instructions.
+    /// its callers: a call saved six registers for a lookup of ~70 instructions. Called where a
+    /// word is tried less often (a function's name, a loop's body, `declare`), it saved 3 KB of
+    /// copies for +1% cycles (X-038): every caller has it in place.
     #[inline(always)]
     fn word(&self, p: usize, id: Id) -> u32 {
         if id.quoted || id.escaped || !self.at_break(id.end) {
@@ -2015,7 +2027,7 @@ impl Scan<'_, '_, '_> {
                 }
             }
             // `(?:\\.|[^{{break_char}}])+`: the rest of the run, a `\` ending the line in it
-            let (mut e, _, _) = self.run_at(q);
+            let (mut e, _, _) = self.run_at_call(q);
             if e == n - 1 && b[e] == b'\\' {
                 e = n;
             }
@@ -2576,7 +2588,7 @@ impl Scan<'_, '_, '_> {
         } else {
             p
         };
-        let (e, _, _) = self.run_at(from);
+        let (e, _, _) = self.run_at_call(from);
         let e = e.max(p + char_len(c)).min(n);
         self.put_merged(p, e, L::Block);
         self.pop();

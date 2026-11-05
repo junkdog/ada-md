@@ -632,11 +632,68 @@ const MERGED: ([&[u8]; WORDS], [u32; WORDS + 1]) = {
     (words, info)
 };
 
-/// The lists' words, ASCII case folded: a word's id is its number plus one.
-static TABLE: Keyed<SIZE, WORDS, { long_len(&MERGED.0) }> = Keyed::new(&MERGED.0);
+/// The words by length class ([`class_of`]), each class in [`MERGED`]'s order: a word's id is
+/// its place here plus one, so its class is its id's range and each class keeps only the key it
+/// needs ([`Keyed`]).
+#[allow(clippy::large_const_arrays)] // read only where the table is built: not in the binary
+const SORTED: ([&[u8]; WORDS], [u32; WORDS + 1]) = {
+    let mut words: [&[u8]; WORDS] = [b""; WORDS];
+    let mut info = [0u32; WORDS + 1];
+    let (mut class, mut n) = (0, 0);
+    while class < 3 {
+        let mut i = 0;
+        while i < WORDS {
+            if class_of(MERGED.0[i].len()) == class {
+                words[n] = MERGED.0[i];
+                info[n + 1] = MERGED.1[i + 1];
+                n += 1;
+            }
+            i += 1;
+        }
+        class += 1;
+    }
+    (words, info)
+};
+
+/// A word's length class: 0 under eight bytes (its key one word), 1 from eight to 16 (two), 2
+/// past 16 (two, and its middle apart).
+const fn class_of(n: usize) -> usize {
+    (n >= 8) as usize + (n > 16) as usize
+}
+
+/// How many words of `list` are of class `class`.
+const fn in_class(list: &[&[u8]], class: usize) -> usize {
+    let (mut n, mut i) = (0, 0);
+    while i < list.len() {
+        n += (class_of(list[i].len()) == class) as usize;
+        i += 1;
+    }
+    n
+}
+
+/// How many bytes the middles of the words of `list` past 16 bytes hold (all but their first
+/// and last eight): a [`Keyed`] table's `MID`.
+const fn mid_len(list: &[&[u8]]) -> usize {
+    let (mut n, mut i) = (0, 0);
+    while i < list.len() {
+        if list[i].len() > 16 {
+            n += list[i].len() - 16;
+        }
+        i += 1;
+    }
+    n
+}
+
+/// How many words are under eight bytes, and past 16.
+const SHORT: usize = in_class(&MERGED.0, 0);
+const LONG: usize = in_class(&MERGED.0, 2);
+
+/// The lists' words, ASCII case folded, by their ids.
+static TABLE: Keyed<SIZE, SHORT, { WORDS - SHORT }, { LONG + 1 }, { mid_len(&MERGED.0) }> =
+    Keyed::new(&SORTED.0);
 
 /// What each word is by its id, 0 at 0.
-static INFO: [u32; WORDS + 1] = MERGED.1;
+static INFO: [u32; WORDS + 1] = SORTED.1;
 
 const SIZE: usize = 4096;
 
@@ -644,35 +701,42 @@ const SIZE: usize = 4096;
 // several lists is in the table once
 const _: () = assert!(WORDS * 5 <= SIZE * 2 && WORDS > 1000 && WORDS < LISTED);
 
+/// The bits of a slot that hold a word's id; its length is above them.
+const ID: u16 = 0x7ff;
+
 /// The lists' words by a key of their bytes (X-032): [`crate::words::Words`]'s first-byte filter
 /// lets nearly every Lisp token through (a thousand words of every first letter and length), and
 /// its compare folds the listed word's text and the token's again after the hash has. Here a
 /// token's key is read and folded once, and serves the hash and the compare: up to 16 bytes the
-/// key and the length are the word, so a hit is two compares of the folded key, nothing more.
-/// The words are kept folded (the lists are lowercase): a token unfolded matches only as it is
-/// spelled lowercase ([`clojure_lookup`]).
-struct Keyed<const SLOTS: usize, const N: usize, const LONG: usize> {
-    /// By the key's hash, open addressed: a word's id (its number plus one) in the low 16 bits,
-    /// its length above; 0 for none. A probe of another length loads no key.
-    slots: [u32; SLOTS],
-    /// Each word's key by its number, folded ([`key`]).
-    keys: [(u64, u64); N],
-    /// Where a word past 16 bytes is in `long` (0 for the rest).
-    at: [u16; N],
-    /// The words past 16 bytes, folded, one after another: their middles aren't in the key.
-    long: [u8; LONG],
+/// key and the length are the word, so a hit is a compare or two of the folded key, nothing
+/// more. The words are kept folded (the lists are lowercase): a token unfolded matches only as it
+/// is spelled lowercase ([`clojure_lookup`]).
+///
+/// Each length class keeps what it needs (X-038): a word under eight bytes its key's one word, a
+/// longer one both, one past 16 its middle too; a slot is two bytes, the id and the length (31
+/// for 31 or more, the middle's length telling those apart). A token's length tells its class,
+/// so it reads one class's keys.
+struct Keyed<const SLOTS: usize, const S: usize, const W: usize, const A: usize, const MID: usize> {
+    /// By the key's hash, open addressed: a word's id in [`ID`], its length (at most 31) above;
+    /// 0 for none. A probe of another length loads no key.
+    slots: [u16; SLOTS],
+    /// The keys of the words under eight bytes, ids 1 to `S` ([`key`]'s first word: the second
+    /// is 0).
+    short: [u64; S],
+    /// The keys of the rest, ids `S + 1` on.
+    wide: [(u64, u64); W],
+    /// Where the middle of each word past 16 bytes (the last `A - 1` ids) starts in `mid`, and
+    /// where the last one's ends.
+    middle: [u16; A],
+    /// The middles of the words past 16 bytes, folded, one after another: all but the first and
+    /// last eight bytes, which the key holds.
+    mid: [u8; MID],
 }
 
-/// How many bytes the words of `list` past 16 bytes hold: a [`Keyed`] table's `LONG`.
-const fn long_len(list: &[&[u8]]) -> usize {
-    let (mut n, mut i) = (0, 0);
-    while i < list.len() {
-        if list[i].len() > 16 {
-            n += list[i].len();
-        }
-        i += 1;
-    }
-    n
+/// A slot's length: the word's up to 30, 31 for the rest.
+#[inline(always)]
+const fn tag(n: usize) -> u16 {
+    (if n < 31 { n as u16 } else { 31 }) << 11
 }
 
 /// Word `w`'s key, ASCII case folded with `FOLD`: its first, middle and last bytes (one to
@@ -742,46 +806,69 @@ const fn slot_of<const SLOTS: usize>((a, b): (u64, u64), n: usize) -> usize {
     (x >> (64 - SLOTS.trailing_zeros())) as usize
 }
 
-impl<const SLOTS: usize, const N: usize, const LONG: usize> Keyed<SLOTS, N, LONG> {
-    /// The table of `list`, `N` words, each different (ASCII case aside), lowercase, under 64
-    /// bytes.
+impl<const SLOTS: usize, const S: usize, const W: usize, const A: usize, const MID: usize>
+    Keyed<SLOTS, S, W, A, MID>
+{
+    /// The ids of the words past 16 bytes start past this.
+    const LONG_FROM: usize = S + W - (A - 1);
+
+    /// The table of `list`, its words in their length classes' order ([`SORTED`]): `S` under
+    /// eight bytes, `A - 1` past 16 last, each different (ASCII case aside) and lowercase.
     const fn new(list: &[&[u8]]) -> Self {
-        assert!(SLOTS.is_power_of_two() && N * 2 <= SLOTS && N < 0xffff && list.len() == N);
+        assert!(SLOTS.is_power_of_two() && (S + W) * 2 <= SLOTS && S + W <= ID as usize);
+        assert!(list.len() == S + W && A >= 1 && A - 1 <= W);
         let mut t = Keyed {
             slots: [0; SLOTS],
-            keys: [(0, 0); N],
-            at: [0; N],
-            long: [0; LONG],
+            short: [0; S],
+            wide: [(0, 0); W],
+            middle: [0; A],
+            mid: [0; MID],
         };
-        let (mut o, mut i) = (0, 0);
-        while i < N {
+        let (mut o, mut j, mut i) = (0, 0, 0);
+        while i < S + W {
             let w = list[i];
             let n = w.len();
-            assert!(n > 0 && n < 64);
+            assert!(n > 0);
             let mut k = 0;
             while k < n {
                 // the words are kept as a folded token reads, so a lowercase spelling is exact
                 assert!(!w[k].is_ascii_uppercase());
                 k += 1;
             }
-            t.keys[i] = key::<true>(w);
+            // its id's range is its class
+            let class = if i < S {
+                0
+            } else if i < Self::LONG_FROM {
+                1
+            } else {
+                2
+            };
+            assert!(class_of(n) == class);
+            let key = key::<true>(w);
+            if i < S {
+                t.short[i] = key.0;
+            } else {
+                t.wide[i - S] = key;
+            }
             if n > 16 {
-                t.at[i] = o as u16;
-                let mut k = 0;
-                while k < n {
-                    t.long[o + k] = w[k];
+                t.middle[j] = o as u16;
+                let mut k = 8;
+                while k < n - 8 {
+                    t.mid[o] = w[k];
+                    o += 1;
                     k += 1;
                 }
-                o += n;
+                j += 1;
             }
-            let mut h = slot_of::<SLOTS>(t.keys[i], n);
+            let mut h = slot_of::<SLOTS>(key, n);
             while t.slots[h] != 0 {
                 h = (h + 1) & (SLOTS - 1);
             }
-            t.slots[h] = (n as u32) << 16 | (i as u32 + 1);
+            t.slots[h] = tag(n) | (i as u16 + 1);
             i += 1;
         }
-        assert!(o == LONG && LONG <= u16::MAX as usize);
+        assert!(j == A - 1 && o == MID && MID <= u16::MAX as usize);
+        t.middle[j] = o as u16;
         t
     }
 
@@ -790,36 +877,47 @@ impl<const SLOTS: usize, const N: usize, const LONG: usize> Keyed<SLOTS, N, LONG
     #[inline(always)]
     fn id<const FOLD: bool>(&self, w: &[u8]) -> usize {
         let n = w.len();
-        if n == 0 || n >= 64 {
+        if n == 0 {
             return 0;
         }
         let k = key_of::<FOLD>(w);
-        let want = (n as u32) << 16;
+        let want = tag(n);
         let mut h = slot_of::<SLOTS>(k, n);
         loop {
             let s = self.slots[h];
             if s == 0 {
                 return 0;
             }
-            if s & !0xffff == want {
-                let i = (s & 0xffff) as usize - 1;
-                if self.keys[i] == k && (n <= 16 || self.long_same::<FOLD>(i, w)) {
-                    return i + 1;
+            // a length under 31 is the word's, so its class is the token's
+            if s & !ID == want {
+                let i = usize::from(s & ID);
+                let same = if n < 8 {
+                    self.short[i - 1] == k.0
+                } else {
+                    self.wide[i - 1 - S] == k && (n <= 16 || self.mid_same::<FOLD>(i, w))
+                };
+                if same {
+                    return i;
                 }
             }
             h = (h + 1) & (SLOTS - 1);
         }
     }
 
-    /// Whether word `i`, past 16 bytes, is `w`, of its length.
+    /// Whether word `i`, past 16 bytes, is `w`, past 16 bytes, its key `w`'s: their middles.
     #[cold]
-    fn long_same<const FOLD: bool>(&self, i: usize, w: &[u8]) -> bool {
-        let at = usize::from(self.at[i]);
-        let t = &self.long[at..at + w.len()];
+    fn mid_same<const FOLD: bool>(&self, i: usize, w: &[u8]) -> bool {
+        let j = i - 1 - Self::LONG_FROM;
+        let (from, to) = (usize::from(self.middle[j]), usize::from(self.middle[j + 1]));
+        let n = w.len();
+        if to - from != n - 16 {
+            return false;
+        }
+        let (t, m) = (&self.mid[from..to], &w[8..n - 8]);
         if FOLD {
-            t.eq_ignore_ascii_case(w)
+            t.eq_ignore_ascii_case(m)
         } else {
-            t == w
+            t == m
         }
     }
 }
@@ -963,6 +1061,18 @@ mod tests {
         );
         assert_eq!(clojure_lookup(b"multiple-VALUE-bind"), 0);
         assert_eq!(lookup(b"multiple-valuexbind"), 0);
+        // from 31 bytes on a slot's length is 31: the middle's length tells them apart, and a
+        // token of 16 or fewer with a long word's key is of another length
+        let w = b"least-positive-normalized-double-float";
+        assert_ne!(lookup(w), 0);
+        assert_eq!(lookup(&w[..w.len() - 1]), 0);
+        assert_eq!(lookup(b"least-positive-normalized-double-floatx"), 0);
+        assert_eq!(lookup(b"least-positive-normalized-doubl-float"), 0);
+        assert_eq!(lookup(b"least-pole-float"), 0);
+        assert_eq!(
+            lookup(b"least-pole-float".to_ascii_uppercase().as_slice()),
+            0
+        );
         // the run-time key is the const one, folded or not
         let mut tokens: Vec<Vec<u8>> = MERGED.0.iter().map(|w| w.to_vec()).collect();
         tokens.extend((0..40).map(|n| (0..n).map(|i| b"aZ-?*09\xc3"[(i * 7 + n) % 8]).collect()));

@@ -349,8 +349,8 @@ impl Scan<'_, '_, '_> {
         self.push(f);
     }
 
-    /// `f` pushed in a body, set in place of a one-shot frame.
-    #[inline(always)]
+    /// `f` pushed in a body, set in place of a one-shot frame. Called: inlined it took more
+    /// instructions out than cycles (X-038: cycles −2.4% called, its misses fewer).
     fn open(&mut self, f: u8, once: bool) {
         if once {
             self.set(f);
