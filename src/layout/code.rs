@@ -158,12 +158,18 @@ pub fn expand_tabs(line: &str) -> Cow<'_, str> {
 /// [`expand_tabs`] into `buf`, reused from line to line: the line itself when nothing changes,
 /// else `buf` holding the expanded line (HL-004: no allocation a line with a tab).
 pub fn expand_tabs_in<'a>(line: &'a str, buf: &'a mut String) -> &'a str {
+    if expand_tabs_to(line, buf) { buf } else { line }
+}
+
+/// [`expand_tabs`] into `buf` when the line changes, and whether it did: `false` leaves `buf`
+/// as it was, the line itself the answer (HL-006: `ada_parse::lex_lines`' `prep`).
+pub fn expand_tabs_to(line: &str, buf: &mut String) -> bool {
     if !needs_expanding(line) {
-        return line;
+        return false;
     }
     buf.clear();
     expand_into(line, buf);
-    buf
+    true
 }
 
 /// [`expand_tabs`] onto the end of `out`.

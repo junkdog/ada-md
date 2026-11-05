@@ -27,7 +27,9 @@ use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet
 
 use crate::app::{Computed, Msg};
 use crate::doc::{CodeBlock, CodeId};
-use crate::layout::{block_needs_expanding, expand_tabs, expand_tabs_in, expand_tabs_onto};
+use crate::layout::{
+    block_needs_expanding, expand_tabs, expand_tabs_in, expand_tabs_onto, expand_tabs_to,
+};
 use ada_parse::{FirstLine, Lang};
 
 /// Longer lines are left plain: backtracking regexes can be slow on them, and nobody reads them
@@ -953,8 +955,7 @@ impl ParseRules {
 
     /// Highlight one line into `out`, after the lines before it left `state`; `spans` and
     /// `buf` (the line when tabs expand it) are scratch space. Every kind's rule must be
-    /// resolved ([`ParseRules::new`]). Called from each way a block is highlighted, so never
-    /// inlined into them.
+    /// resolved ([`ParseRules::new`]). For lines handed out one at a time (`lines_on`).
     #[inline(never)]
     fn line(
         &self,
@@ -965,42 +966,73 @@ impl ParseRules {
     ) {
         let line = expand_tabs_in(line, buf);
         ada_parse::lex(self.lang, line, state, spans);
+        self.runs(line.len(), spans, out);
+    }
+
+    /// A line's runs from its spans. Every kind's rule must be resolved.
+    #[inline(always)]
+    fn runs(&self, len: usize, spans: &[ada_parse::Span], out: &mut LineRuns) {
         let rule = |s: &ada_parse::Span| {
             let rule = self.rules.get(usize::from(s.kind)).copied();
             (s.start, s.end, rule.unwrap_or(Rule(Rule::NONE)))
         };
-        span_runs(line.len(), spans.iter().map(rule), out);
+        span_runs(len, spans.iter().map(rule), out);
     }
 
-    /// As [`ParseRules::line`], resolving the rules of kinds met for the first time. A line is
-    /// expanded only when `expand`, its block's text holding a control character, into `buf`.
-    #[inline(never)]
-    #[allow(clippy::too_many_arguments)]
-    fn line_resolving(
-        &mut self,
-        line: &str,
+    /// Highlight up to `max` of `text`'s lines into `out`, after the lines before them left
+    /// `state`; returns where the lines left start, `None` once `text` is done (as
+    /// [`ada_parse::lex_lines`]). A line is expanded only when `expand`, its block's text
+    /// holding a control character, into `buf`; `spans` and `buf` are scratch space. Every
+    /// kind's rule must be resolved ([`ParseRules::new`]).
+    fn lines(
+        &self,
+        text: &str,
+        max: usize,
         state: &mut ada_parse::State,
-        spans: &mut Vec<ada_parse::Span>,
-        expand: bool,
-        buf: &mut String,
+        (spans, buf, expand): (&mut Vec<ada_parse::Span>, &mut String, bool),
+        out: &mut LineRuns,
+    ) -> Option<usize> {
+        let prep = |line: &str, buf: &mut String| expand && expand_tabs_to(line, buf);
+        ada_parse::lex_lines(
+            self.lang,
+            text,
+            max,
+            state,
+            (spans, buf),
+            prep,
+            |line, spans| {
+                self.runs(line.len(), spans, out);
+            },
+        )
+    }
+
+    /// As [`ParseRules::lines`], resolving the rules of kinds met for the first time, and
+    /// counting the lines done into `done`.
+    #[allow(clippy::too_many_arguments)]
+    fn lines_resolving(
+        &mut self,
+        text: &str,
+        max: usize,
+        state: &mut ada_parse::State,
+        (spans, buf, expand): (&mut Vec<ada_parse::Span>, &mut String, bool),
         highlighter: &LazyHighlighter,
         out: &mut LineRuns,
-    ) {
-        let line = if expand {
-            expand_tabs_in(line, buf)
-        } else {
-            line
-        };
-        ada_parse::lex(self.lang, line, state, spans);
-        // the rule looked up once a span, resolved in the same pass when it's new (HL-004)
-        let rule = |s: &ada_parse::Span| {
-            let rule = match self.rules.get(usize::from(s.kind)) {
-                Some(&r) if r != UNSET => r,
-                _ => self.resolve_into(s.kind, highlighter.get()),
+        mut done: impl FnMut(),
+    ) -> Option<usize> {
+        let prep = |line: &str, buf: &mut String| expand && expand_tabs_to(line, buf);
+        let lang = self.lang;
+        ada_parse::lex_lines(lang, text, max, state, (spans, buf), prep, |line, spans| {
+            // the rule looked up once a span, resolved in the same pass when it's new (HL-004)
+            let rule = |s: &ada_parse::Span| {
+                let rule = match self.rules.get(usize::from(s.kind)) {
+                    Some(&r) if r != UNSET => r,
+                    _ => self.resolve_into(s.kind, highlighter.get()),
+                };
+                (s.start, s.end, rule)
             };
-            (s.start, s.end, rule)
-        };
-        span_runs(line.len(), spans.iter().map(rule), out);
+            span_runs(line.len(), spans.iter().map(rule), out);
+            done();
+        })
     }
 }
 
@@ -1057,8 +1089,10 @@ impl Lexer {
         };
         let mut scratch = BlockScratch::take();
         let BlockScratch { spans, lines, buf } = &mut scratch;
-        for l in code.lines() {
-            rules.line(l, &mut state, (spans, buf), lines);
+        // the lines as `CodeBlock::lines` splits them, which `Lines` and `lex_lines` share
+        if let Some(text) = Lines::new(&code.text).0 {
+            let expand = block_needs_expanding(text);
+            rules.lines(text, usize::MAX, &mut state, (spans, buf, expand), lines);
         }
         let spans = CodeSpans {
             key,
@@ -1151,15 +1185,15 @@ impl<'a> Carrier<'a> {
     pub fn highlight(&mut self, key: u64, text: &str) -> CodeSpans {
         let expand = block_needs_expanding(text);
         let mut lines = std::mem::take(&mut self.lines);
-        for line in Lines::new(text) {
-            self.rules.line_resolving(
-                line,
+        if let Some(text) = Lines::new(text).0 {
+            self.rules.lines_resolving(
+                text,
+                usize::MAX,
                 &mut self.state,
-                &mut self.spans,
-                expand,
-                &mut self.buf,
+                (&mut self.spans, &mut self.buf, expand),
                 &self.highlighter,
                 &mut lines,
+                || {},
             );
         }
         let spans = CodeSpans {
@@ -1278,19 +1312,26 @@ impl<'a> Highlighter<'a> {
                 // the stall watch counts lines; an ada-parse lexer never stalls, so they're
                 // counted a batch at a time, not with an atomic add a line (HL-004)
                 const BATCH: u64 = 1024;
+                let Some(text) = self.rest.0 else {
+                    return false;
+                };
                 let mut done = 0;
-                for _ in 0..n {
-                    let Some(line) = self.rest.next() else {
-                        break;
-                    };
-                    let (hl, buf) = (&self.highlighter, &mut self.buf);
-                    rules.line_resolving(line, state, spans, *expand, buf, hl, out);
-                    done += 1;
-                    if done == BATCH {
-                        LINES.fetch_add(BATCH, Ordering::Relaxed);
-                        done = 0;
-                    }
-                }
+                let next = rules.lines_resolving(
+                    text,
+                    n,
+                    state,
+                    (spans, &mut self.buf, *expand),
+                    &self.highlighter,
+                    out,
+                    || {
+                        done += 1;
+                        if done == BATCH {
+                            LINES.fetch_add(BATCH, Ordering::Relaxed);
+                            done = 0;
+                        }
+                    },
+                );
+                self.rest = Lines(next.map(|p| &text[p..]));
                 LINES.fetch_add(done, Ordering::Relaxed);
             }
             Engine::Syntect(state) => {

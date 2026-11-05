@@ -130,57 +130,106 @@ impl State {
 // discipline)
 #[inline(never)]
 pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
-    match lang {
-        Lang::Log => return logs::tokens(line, spans),
-        Lang::Json => {
-            // the only state a JSON line hands on: a `/* */` comment left open
-            let mut comment = state.word() != 0;
-            json::tokens(line, &mut comment, spans);
-            return state.set_word(u64::from(comment));
+    scanner(lang)(line, state, spans);
+}
+
+/// Lex up to `max` of `text`'s lines from `state`, each as [`lex`] lexes it, calling `each`
+/// after each with the line and its spans. A line ends at a `\n`, a `\r` before it dropped;
+/// `prep` may write a line's replacement into `buf` and return true, and the replacement is
+/// lexed and handed to `each` in its place. Returns where the lines left start, or `None` once
+/// `text`'s last line (one without a `\n`) is done. The language's scanner is found once a
+/// call, not once a line (HL-006).
+#[inline]
+pub fn lex_lines(
+    lang: Lang,
+    text: &str,
+    max: usize,
+    state: &mut State,
+    (spans, buf): (&mut Vec<Span>, &mut String),
+    mut prep: impl FnMut(&str, &mut String) -> bool,
+    mut each: impl FnMut(&str, &[Span]),
+) -> Option<usize> {
+    let scan = scanner(lang);
+    let b = text.as_bytes();
+    let mut p = 0;
+    for _ in 0..max {
+        let e = prim::find_any(b, p, *b"\n");
+        // SAFETY: `p` is 0 or just past a `\n`, and `e` at a `\n` or the end, `p <= e`: a `\n`
+        // is a character of its own, so both ends are on characters of `text`
+        let line = unsafe { text.get_unchecked(p..e) };
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        let line = if prep(line, buf) { buf.as_str() } else { line };
+        scan(line, state, spans);
+        each(line, spans);
+        if e == b.len() {
+            return None;
         }
-        _ => {}
+        p = e + 1;
     }
-    spans.clear();
-    let mut out = Out::new(spans);
+    Some(p)
+}
+
+/// One line's lexer, as [`lex`] calls it.
+type Scanner = fn(&str, &mut State, &mut Vec<Span>);
+
+/// `lang`'s lexer: its scanner behind the spans' [`Out`].
+fn scanner(lang: Lang) -> Scanner {
+    macro_rules! out {
+        ($f:expr) => {
+            |l: &str, s: &mut State, v: &mut Vec<Span>| {
+                v.clear();
+                $f(l.as_bytes(), s, &mut Out::new(v))
+            }
+        };
+    }
     match lang {
-        Lang::Diff => diff::line(line.as_bytes(), &mut out),
-        Lang::Ini => ini::line(line.as_bytes(), state, &mut out),
-        Lang::Toml => toml_scan::line(line.as_bytes(), state, &mut out),
-        Lang::Yaml => yaml_scan::line(line.as_bytes(), state, &mut out),
-        Lang::Xml => xml_scan::line(line.as_bytes(), state, &mut out),
-        Lang::Rust => rust::line(line.as_bytes(), state, &mut out),
-        Lang::Kotlin => kotlin::line(line.as_bytes(), state, &mut out),
-        Lang::Java => java::line(line.as_bytes(), state, &mut out),
-        Lang::Cpp => cpp::line(line.as_bytes(), state, &mut out),
-        Lang::C => cpp::line_c(line.as_bytes(), state, &mut out),
-        Lang::CSharp => csharp::line(line.as_bytes(), state, &mut out),
-        Lang::Go => go::line(line.as_bytes(), state, &mut out),
-        Lang::Python => python::line(line.as_bytes(), state, &mut out),
-        Lang::Lua => lua::line(line.as_bytes(), state, &mut out),
-        Lang::Sql => sql::line(line.as_bytes(), state, &mut out),
-        Lang::PowerShell => powershell::line(line.as_bytes(), state, &mut out),
-        Lang::JavaScript => javascript::line(line.as_bytes(), state, &mut out),
-        Lang::TypeScript => typescript::line(line.as_bytes(), false, state, &mut out),
-        Lang::TypeScriptReact => typescript::line(line.as_bytes(), true, state, &mut out),
-        Lang::Css => css::line(line.as_bytes(), state, &mut out),
-        Lang::Scss => css::scss::line(line.as_bytes(), state, &mut out),
-        Lang::Html => html::line(line.as_bytes(), state, &mut out),
-        Lang::Lisp => lisp::line(line.as_bytes(), Dialect::Common, state, &mut out),
-        Lang::EmacsLisp => lisp::line(line.as_bytes(), Dialect::Emacs, state, &mut out),
-        Lang::Scheme => lisp::line(line.as_bytes(), Dialect::Scheme, state, &mut out),
-        Lang::Racket => lisp::line(line.as_bytes(), Dialect::Racket, state, &mut out),
-        Lang::Clojure => lisp::clojure::line(line.as_bytes(), state, &mut out),
-        Lang::Bash => bash::line(line.as_bytes(), state, &mut out),
-        Lang::Makefile => bash::make_line(line.as_bytes(), state, &mut out),
-        Lang::DotEnv => dotenv::line(line.as_bytes(), state, &mut out),
-        Lang::GitIgnore => git::ignore(line.as_bytes(), state, &mut out),
-        Lang::GitAttributes => git::attributes(line.as_bytes(), state, &mut out),
-        Lang::GitMailmap => git::mailmap(line.as_bytes(), state, &mut out),
-        Lang::GitLink => git::link(line.as_bytes(), state, &mut out),
-        Lang::Fstab => fstab::line(line.as_bytes(), state, &mut out),
-        Lang::Dockerfile => dockerfile::line(line.as_bytes(), state, &mut out),
-        Lang::Properties => properties::line(line.as_bytes(), state, &mut out),
-        Lang::Log | Lang::Json => unreachable!(),
+        Lang::Log => |l, _, v| logs::tokens(l, v),
+        Lang::Json => |l, s, v| {
+            // the only state a JSON line hands on: a `/* */` comment left open
+            let mut comment = s.word() != 0;
+            json::tokens(l, &mut comment, v);
+            s.set_word(u64::from(comment));
+        },
+        Lang::Diff => |l, _, v| {
+            v.clear();
+            diff::line(l.as_bytes(), &mut Out::new(v));
+        },
+        Lang::Ini => out!(ini::line),
+        Lang::Toml => out!(toml_scan::line),
+        Lang::Yaml => out!(yaml_scan::line),
+        Lang::Xml => out!(xml_scan::line),
+        Lang::Rust => out!(rust::line),
+        Lang::Kotlin => out!(kotlin::line),
+        Lang::Java => out!(java::line),
+        Lang::Cpp => out!(cpp::line),
+        Lang::C => out!(cpp::line_c),
+        Lang::CSharp => out!(csharp::line),
+        Lang::Go => out!(go::line),
+        Lang::Python => out!(python::line),
+        Lang::Lua => out!(lua::line),
+        Lang::Sql => out!(sql::line),
+        Lang::PowerShell => out!(powershell::line),
+        Lang::JavaScript => out!(javascript::line),
+        Lang::TypeScript => out!(|b, s, o| typescript::line(b, false, s, o)),
+        Lang::TypeScriptReact => out!(|b, s, o| typescript::line(b, true, s, o)),
+        Lang::Css => out!(css::line),
+        Lang::Scss => out!(css::scss::line),
+        Lang::Html => out!(html::line),
+        Lang::Lisp => out!(|b, s, o| lisp::line(b, Dialect::Common, s, o)),
+        Lang::EmacsLisp => out!(|b, s, o| lisp::line(b, Dialect::Emacs, s, o)),
+        Lang::Scheme => out!(|b, s, o| lisp::line(b, Dialect::Scheme, s, o)),
+        Lang::Racket => out!(|b, s, o| lisp::line(b, Dialect::Racket, s, o)),
+        Lang::Clojure => out!(lisp::clojure::line),
+        Lang::Bash => out!(bash::line),
+        Lang::Makefile => out!(bash::make_line),
+        Lang::DotEnv => out!(dotenv::line),
+        Lang::GitIgnore => out!(git::ignore),
+        Lang::GitAttributes => out!(git::attributes),
+        Lang::GitMailmap => out!(git::mailmap),
+        Lang::GitLink => out!(git::link),
+        Lang::Fstab => out!(fstab::line),
+        Lang::Dockerfile => out!(dockerfile::line),
+        Lang::Properties => out!(properties::line),
     }
 }
 
@@ -304,5 +353,48 @@ mod tests {
             }));
         }
         out
+    }
+
+    /// `lex_lines` lexes as `lex` does line by line: the lines split at `\n` with a `\r`
+    /// before it dropped, the state carried, `max` honored, and `prep`'s line lexed in place.
+    #[test]
+    fn lex_lines_matches_lex() {
+        let text = "fn main() {\r\n    let s = r#\"raw\n\n\r\nstill\"#;\r\r\n\t// a tab\n}\n\nlast";
+        let expand = |l: &str| l.replace('\t', "    ");
+        for lang in [
+            Lang::Rust,
+            Lang::Json,
+            Lang::Bash,
+            Lang::Python,
+            Lang::Diff,
+            Lang::Log,
+        ] {
+            let (mut want, mut state, mut spans) = (Vec::new(), State::default(), Vec::new());
+            for line in text.split('\n') {
+                let line = expand(line.strip_suffix('\r').unwrap_or(line));
+                lex(lang, &line, &mut state, &mut spans);
+                want.push((line, spans.clone()));
+            }
+            let want_state = state;
+            for max in [1, 2, 3, usize::MAX] {
+                let (mut got, mut state) = (Vec::new(), State::default());
+                let (mut spans, mut buf) = (Vec::new(), String::new());
+                let mut rest = Some(text);
+                while let Some(t) = rest {
+                    let prep = |l: &str, buf: &mut String| {
+                        l.contains('\t') && {
+                            *buf = expand(l);
+                            true
+                        }
+                    };
+                    let each = |l: &str, s: &[Span]| got.push((l.to_owned(), s.to_vec()));
+                    let next =
+                        lex_lines(lang, t, max, &mut state, (&mut spans, &mut buf), prep, each);
+                    rest = next.map(|p| &t[p..]);
+                }
+                assert_eq!(got, want, "{lang:?} max {max}");
+                assert_eq!(state, want_state, "{lang:?} max {max}");
+            }
+        }
     }
 }
