@@ -9,7 +9,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::LinkState;
 use crate::doc::CodeId;
-use crate::highlight::{Highlights, Run};
+use crate::highlight::{self, Highlights, Run};
 use crate::layout::{Layout, Row, RowKind, Span};
 use crate::theme::{StyleKey, Theme};
 
@@ -335,10 +335,7 @@ fn overlay(
         if !gap.is_empty() {
             emit(gap, base);
         }
-        let style = run
-            .rule
-            .style(&theme.syntax)
-            .map_or(base, |s| base.patch(s));
+        let style = highlight::rule_style(run.rule, &theme.syntax).map_or(base, |s| base.patch(s));
         emit(piece, style);
         pos = b;
     }

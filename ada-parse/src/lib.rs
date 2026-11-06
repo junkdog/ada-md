@@ -25,6 +25,7 @@ mod css;
 mod diff;
 mod dockerfile;
 mod dotenv;
+mod emit;
 mod fstab;
 // the matchers and context ids its scanner shares, from the port it replaced
 mod git;
@@ -64,6 +65,7 @@ mod xml_scan;
 mod yaml;
 mod yaml_scan;
 
+pub use emit::{Rule, Rules, Run};
 pub use lang::{ALIASES, FirstLine, Lang, first_line_syntaxes};
 use lisp::Dialect;
 
@@ -132,7 +134,30 @@ impl State {
 // discipline)
 #[inline(never)]
 pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
-    scanner(lang)(line, state, spans);
+    scanner::<true>(lang)(line, state, spans);
+}
+
+/// As [`lex`], but the line's runs by theme rule pushed to `runs`, as a highlighter builds them
+/// from its spans: a span's rule is `rules`' for its kind, a gap between spans is
+/// [`Rule::NONE`]'s, a run joins the one before where their rules are the same, a line where no
+/// rule is met has no runs, and one where one is ends at the line's end. `spans` is scratch
+/// space. Rust's scan writes the runs itself (X-068); any other language's spans are read into
+/// them.
+#[inline(never)]
+pub fn lex_runs(
+    lang: Lang,
+    line: &str,
+    state: &mut State,
+    spans: &mut Vec<Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    if lang == Lang::Rust {
+        spans.clear();
+        return rust::line_runs(line.as_bytes(), state, &mut Out::new(spans), rules, runs);
+    }
+    scanner::<false>(lang)(line, state, spans);
+    emit::runs_of(line.len(), spans, &mut emit::Table::new(rules), runs);
 }
 
 /// Lex up to `max` of `text`'s lines from `state`, each as [`lex`] lexes it, calling `each`
@@ -155,10 +180,40 @@ pub fn lex_lines(
         // one scan across the block's lines, its state read and made once (X-066)
         return rust::lines(text, max, state, (spans, buf), prep, each);
     }
-    let scan = scanner(lang);
+    let scan = scanner::<true>(lang);
     split_lines(text, max, (spans, buf), prep, each, |l, v| {
-        scan(l, state, v)
+        scan(l, state, v);
     })
+}
+
+/// As [`lex_lines`], but each line's runs by theme rule pushed to `runs`, as [`lex_runs`]
+/// pushes them; `each` gets where the line's runs end, `runs`' length.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+pub fn lex_lines_runs(
+    lang: Lang,
+    text: &str,
+    max: usize,
+    state: &mut State,
+    (spans, buf): (&mut Vec<Span>, &mut String),
+    prep: impl FnMut(&str, &mut String) -> bool,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    mut each: impl FnMut(usize),
+) -> Option<usize> {
+    if lang == Lang::Rust {
+        return rust::lines_runs(text, max, state, (spans, buf), prep, rules, runs, each);
+    }
+    let scan = scanner::<false>(lang);
+    let mut t = emit::Table::new(rules);
+    split_lines(
+        text,
+        max,
+        (spans, buf),
+        prep,
+        |line, spans| each(emit::runs_of(line.len(), spans, &mut t, runs)),
+        |l, v| scan(l, state, v),
+    )
 }
 
 /// [`lex_lines`]' loop: each of up to `max` lines split, `prep`'d, lexed by `scan` and handed
@@ -200,8 +255,10 @@ fn line_at(text: &str, p: usize) -> (&str, usize) {
 /// One line's lexer, as [`lex`] calls it.
 type Scanner = fn(&str, &mut State, &mut Vec<Span>);
 
-/// `lang`'s lexer: its scanner behind the spans' [`Out`].
-fn scanner(lang: Lang) -> Scanner {
+/// `lang`'s lexer: its scanner behind the spans' [`Out`]. Without `RUST`, Rust's is none: the
+/// run API's table, so that a highlighter on runs doesn't carry Rust's span scan (X-068).
+#[inline(always)]
+fn scanner<const RUST: bool>(lang: Lang) -> Scanner {
     macro_rules! out {
         ($f:expr) => {
             |l: &str, s: &mut State, v: &mut Vec<Span>| {
@@ -226,6 +283,7 @@ fn scanner(lang: Lang) -> Scanner {
         Lang::Toml => out!(toml_scan::line),
         Lang::Yaml => out!(yaml_scan::line),
         Lang::Xml => out!(xml_scan::line),
+        Lang::Rust if !RUST => |_, _, _| unreachable!("Rust's runs come from its own scan"),
         Lang::Rust => out!(rust::line),
         Lang::Kotlin => out!(kotlin::line),
         Lang::Java => out!(java::line),

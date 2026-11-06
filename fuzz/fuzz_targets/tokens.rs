@@ -5,6 +5,9 @@
 //! Nothing may panic, and a long line must not take long. An input that starts with a NUL is a
 //! size and a piece: the piece is repeated to 1–64 KiB, since a scan that reads a run again from
 //! each word only shows on long lines, which libFuzzer grows to slowly (O-50).
+//! A language whose scan writes a highlighter's runs itself (`lex_runs`, X-068: Rust) is lexed
+//! that way too, on a state of its own: its runs must be those its spans give, by a theme's rules
+//! resolved as they're met, and its state the same.
 //! `ADA_FUZZ_LANGS` limits it to some languages (`python`, `makefile,bash`; `langs.rs`), as
 //! `fuzz/lang.zsh` runs a smoke for one lexer on that language's own corpus.
 //!
@@ -16,8 +19,65 @@
 
 mod langs;
 
-use ada_parse::Lang;
+use ada_parse::{Lang, Rule, Rules, Run, Span};
 use libfuzzer_sys::fuzz_target;
+
+/// The languages whose scan writes runs itself, not through spans (X-068).
+const RUN_SCANS: [Lang; 1] = [Lang::Rust];
+
+/// A theme of a few rules over the kinds, plain for some, each resolved as it's met into a table
+/// grown as ada's is.
+struct Lazy(Vec<Rule>);
+
+impl Lazy {
+    fn rule(kind: u16) -> Rule {
+        match kind % 5 {
+            0 => Rule(Rule::NONE),
+            r => Rule(r % 3),
+        }
+    }
+}
+
+impl Rules for Lazy {
+    fn table(&self) -> &[Rule] {
+        &self.0
+    }
+
+    fn resolve(&mut self, kind: u16) -> Rule {
+        let k = usize::from(kind);
+        if k >= self.0.len() {
+            self.0
+                .resize((2 * self.0.len()).max(k + 1), Rule(Rule::UNSET));
+        }
+        self.0[k] = Lazy::rule(kind);
+        self.0[k]
+    }
+}
+
+/// A line's runs from its spans, as a highlighter builds them: a gap plain, a run joined to the
+/// one before of its rule, none where no span has a rule, else ending at the line's end.
+fn runs_of(len: usize, spans: &[Span]) -> Vec<Run> {
+    let mut runs: Vec<Run> = Vec::new();
+    let put = |runs: &mut Vec<Run>, end: u32, rule: Rule| match runs.last_mut() {
+        Some(r) if r.rule == rule => r.end = end,
+        _ => runs.push(Run { end, rule }),
+    };
+    let mut at = 0;
+    for s in spans {
+        if s.start > at {
+            put(&mut runs, s.start, Rule(Rule::NONE));
+        }
+        put(&mut runs, s.end, Lazy::rule(s.kind));
+        at = s.end;
+    }
+    if runs.iter().all(|r| r.rule.0 == Rule::NONE) {
+        return Vec::new();
+    }
+    if (at as usize) < len {
+        put(&mut runs, len as u32, Rule(Rule::NONE));
+    }
+    runs
+}
 
 /// Spans `(start, end)` of `line`, in order, as `highlight` takes them.
 fn check(what: &str, line: &str, spans: impl Iterator<Item = (u32, u32)>) {
@@ -52,8 +112,22 @@ fuzz_target!(|data: &[u8]| {
     let on = langs::selected(&Lang::ALL);
     let lexed = on.iter().copied().filter(|l| l.lexed());
     let mut parsed: Vec<_> = lexed.map(|l| (l, ada_parse::State::default())).collect();
-    let mut ps = Vec::new();
+    let mut ran: Vec<_> = on
+        .iter()
+        .copied()
+        .filter(|l| RUN_SCANS.contains(l))
+        .map(|l| (l, ada_parse::State::default(), Lazy(Vec::new())))
+        .collect();
+    let (mut ps, mut scratch, mut runs) = (Vec::new(), Vec::new(), Vec::new());
     for line in text.split('\n') {
+        for (lang, state, rules) in &mut ran {
+            let mut spans_state = *state;
+            ada_parse::lex(*lang, line, &mut spans_state, &mut ps);
+            runs.clear();
+            ada_parse::lex_runs(*lang, line, state, &mut scratch, rules, &mut runs);
+            assert_eq!(runs, runs_of(line.len(), &ps), "{lang:?} runs: {line:?}");
+            assert_eq!(*state, spans_state, "{lang:?} state after runs: {line:?}");
+        }
         for (lang, state) in &mut parsed {
             ada_parse::lex(*lang, line, state, &mut ps);
             check(lang.name(), line, ps.iter().map(|s| (s.start, s.end)));

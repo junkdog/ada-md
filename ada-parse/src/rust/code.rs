@@ -254,7 +254,7 @@ struct NameAt {
     id: u8,
 }
 
-impl Scan<'_, '_> {
+impl<K: Sink> Scan<'_, '_, K> {
     /// The name at `p`, whose first byte is a name's.
     #[inline(always)]
     fn name(&self, p: usize) -> NameAt {

@@ -408,30 +408,21 @@ impl SyntaxTheme {
     }
 }
 
-/// An index into the theme's `[syntax]` rules.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Rule(pub u16);
+/// An index into the theme's `[syntax]` rules, and a highlighted run: bytes up to `end` of the
+/// tab-expanded line take `rule`. ada-parse's, which its lexers write (X-068).
+pub use ada_parse::{Rule, Run};
 
-impl Rule {
-    pub const NONE: u16 = u16::MAX;
-
-    fn decode(c: Color) -> Self {
-        match c.a {
-            0 => Rule(Self::NONE),
-            _ => Rule(u16::from(c.r) << 8 | u16::from(c.g)),
-        }
-    }
-
-    pub fn style(self, rules: &[(String, Style)]) -> Option<Style> {
-        rules.get(usize::from(self.0)).map(|(_, s)| *s)
+/// The rule a style's foreground stands for ([`SyntaxTheme::new`]'s encoding).
+fn decode_rule(c: Color) -> Rule {
+    match c.a {
+        0 => Rule(Rule::NONE),
+        _ => Rule(u16::from(c.r) << 8 | u16::from(c.g)),
     }
 }
 
-/// A highlighted run: bytes up to `end` of the tab-expanded line take `rule`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Run {
-    pub end: u32,
-    pub rule: Rule,
+/// `rule`'s style among the theme's `rules`; none for [`Rule::NONE`].
+pub fn rule_style(rule: Rule, rules: &[(String, Style)]) -> Option<Style> {
+    rules.get(usize::from(rule.0)).map(|(_, s)| *s)
 }
 
 /// The highlighting of one code block. Empty when the language isn't known.
@@ -619,9 +610,7 @@ impl OpenLine<'_> {
     }
 
     fn end(self) {
-        // a run is a byte or more of the text, so this takes a block of over 4 GiB
-        let end = u32::try_from(self.runs.len()).expect("a block of under 2³² runs");
-        self.ends.push(end);
+        self.ends.push(run_count(self.runs.len()));
     }
 }
 
@@ -737,7 +726,7 @@ impl LineState {
             if end == start {
                 continue;
             }
-            out.push(end as u32, Rule::decode(style.foreground));
+            out.push(end as u32, decode_rule(style.foreground));
         }
         out.end();
         Some(())
@@ -753,50 +742,8 @@ fn own(lang: &str) -> Option<Lang> {
     }
 }
 
-/// A line's runs from its spans, `(start, end, rule)` in order, as a line of `out`; empty when
-/// no span has a rule.
-#[inline]
-fn span_runs(len: usize, spans: impl Iterator<Item = (u32, u32, Rule)>, out: &mut LineRuns) {
-    let open = out.runs.len();
-    let runs = &mut out.runs;
-    // no `reserve` for a span and a gap each: the bound is twice what the theme leaves, and
-    // a block's vector grown to it took JSON 57% more page faults and 4% of its time (X-022)
-
-    // the line's last run's rule, held here rather than read back: a span whose rule is the
-    // last one's stretches it, so the theme joins spans (X-022); [`UNSET`] before the first
-    let mut last = UNSET;
-    let mut put = |end: u32, rule: Rule| {
-        if rule == last {
-            let n = runs.len();
-            runs[n - 1].end = end;
-        } else {
-            runs.push(Run { end, rule });
-            last = rule;
-        }
-    };
-    let mut at = 0;
-    // whether a run has a rule, kept as they're pushed: no second pass over them (HL-004)
-    let mut colored = false;
-    for (start, end, rule) in spans {
-        if start > at {
-            put(start, Rule(Rule::NONE));
-        }
-        put(end, rule);
-        colored |= rule.0 != Rule::NONE;
-        at = end;
-    }
-    if !colored {
-        runs.truncate(open);
-    } else if (at as usize) < len {
-        put(len as u32, Rule(Rule::NONE));
-    }
-    // a run is a byte or more of the text, so this takes a block of over 4 GiB
-    let end = u32::try_from(runs.len()).expect("a block of under 2³² runs");
-    out.ends.push(end);
-}
-
 /// A kind's place in [`ParseRules`] before its rule is resolved. No theme has this many rules.
-const UNSET: Rule = Rule(Rule::NONE - 1);
+const UNSET: Rule = Rule(Rule::UNSET);
 
 /// The kinds' rules resolved so far, by language and theme (`SyntaxTheme::id`), for the next
 /// block in them to start from: resolving takes syntect's scope repository and a selector
@@ -925,7 +872,7 @@ impl ParseRules {
                 .iter()
                 .map(|s| Scope::new(s).expect("scope")),
         );
-        let rule = Rule::decode(highlighter.style_for_stack(&stack).foreground);
+        let rule = decode_rule(highlighter.style_for_stack(&stack).foreground);
         debug_assert_ne!(rule, UNSET);
         rule
     }
@@ -965,18 +912,9 @@ impl ParseRules {
         out: &mut LineRuns,
     ) {
         let line = expand_tabs_in(line, buf);
-        ada_parse::lex(self.lang, line, state, spans);
-        self.runs(line.len(), spans, out);
-    }
-
-    /// A line's runs from its spans. Every kind's rule must be resolved.
-    #[inline(always)]
-    fn runs(&self, len: usize, spans: &[ada_parse::Span], out: &mut LineRuns) {
-        let rule = |s: &ada_parse::Span| {
-            let rule = self.rules.get(usize::from(s.kind)).copied();
-            (s.start, s.end, rule.unwrap_or(Rule(Rule::NONE)))
-        };
-        span_runs(len, spans.iter().map(rule), out);
+        let rules = &mut AllResolved(&self.rules);
+        ada_parse::lex_runs(self.lang, line, state, spans, rules, &mut out.runs);
+        out.ends.push(run_count(out.runs.len()));
     }
 
     /// Highlight up to `max` of `text`'s lines into `out`, after the lines before them left
@@ -993,15 +931,19 @@ impl ParseRules {
         out: &mut LineRuns,
     ) -> Option<usize> {
         let prep = |line: &str, buf: &mut String| expand && expand_tabs_to(line, buf);
-        ada_parse::lex_lines(
+        let LineRuns { runs, ends } = out;
+        let rules = &mut AllResolved(&self.rules);
+        ada_parse::lex_lines_runs(
             self.lang,
             text,
             max,
             state,
             (spans, buf),
             prep,
-            |line, spans| {
-                self.runs(line.len(), spans, out);
+            rules,
+            runs,
+            |n| {
+                ends.push(run_count(n));
             },
         )
     }
@@ -1021,18 +963,62 @@ impl ParseRules {
     ) -> Option<usize> {
         let prep = |line: &str, buf: &mut String| expand && expand_tabs_to(line, buf);
         let lang = self.lang;
-        ada_parse::lex_lines(lang, text, max, state, (spans, buf), prep, |line, spans| {
-            // the rule looked up once a span, resolved in the same pass when it's new (HL-004)
-            let rule = |s: &ada_parse::Span| {
-                let rule = match self.rules.get(usize::from(s.kind)) {
-                    Some(&r) if r != UNSET => r,
-                    _ => self.resolve_into(s.kind, highlighter.get()),
-                };
-                (s.start, s.end, rule)
-            };
-            span_runs(line.len(), spans.iter().map(rule), out);
-            done();
-        })
+        let LineRuns { runs, ends } = out;
+        // the rule looked up once a span, resolved in the same pass when it's new (HL-004)
+        let rules = &mut Resolving {
+            rules: self,
+            highlighter,
+        };
+        ada_parse::lex_lines_runs(
+            lang,
+            text,
+            max,
+            state,
+            (spans, buf),
+            prep,
+            rules,
+            runs,
+            |n| {
+                ends.push(run_count(n));
+                done();
+            },
+        )
+    }
+}
+
+/// Where a line's runs end, as [`LineRuns::ends`] holds it.
+#[inline(always)]
+fn run_count(n: usize) -> u32 {
+    // a run is a byte or more of the text, so this takes a block of over 4 GiB
+    u32::try_from(n).expect("a block of under 2³² runs")
+}
+
+/// A table whose kinds' rules are all resolved ([`ParseRules::new`]): a kind past it has none.
+struct AllResolved<'a>(&'a [Rule]);
+
+impl ada_parse::Rules for AllResolved<'_> {
+    fn table(&self) -> &[Rule] {
+        self.0
+    }
+
+    fn resolve(&mut self, _: u16) -> Rule {
+        Rule(Rule::NONE)
+    }
+}
+
+/// A block's rules, each resolved into its table the first time a span has its kind.
+struct Resolving<'a, 'h> {
+    rules: &'a mut ParseRules,
+    highlighter: &'a LazyHighlighter<'h>,
+}
+
+impl ada_parse::Rules for Resolving<'_, '_> {
+    fn table(&self) -> &[Rule] {
+        &self.rules.rules
+    }
+
+    fn resolve(&mut self, kind: u16) -> Rule {
+        self.rules.resolve_into(kind, self.highlighter.get())
     }
 }
 
@@ -3943,8 +3929,8 @@ mod tests {
                 let spans = highlight(1, lang, line, &rules);
                 let (p, b) = (at(&spans, punct), at(&spans, body));
                 assert_eq!(
-                    p.style(&theme.syntax),
-                    b.style(&theme.syntax),
+                    rule_style(p, &theme.syntax),
+                    rule_style(b, &theme.syntax),
                     "{}: {lang} {line:?} byte {punct}: {:?} against {:?}",
                     theme.name,
                     theme.syntax.get(usize::from(p.0)),
@@ -4409,7 +4395,7 @@ mod tests {
         }
     }
 
-    /// A run never stretches into the line before it, a plain line holds no runs, and appending
+    /// A run never stretches into the line before it, and appending
     /// from a line on shifts that line's ends to the runs already there (HL-002).
     #[test]
     fn line_runs_keep_their_lines_apart() {
@@ -4423,9 +4409,13 @@ mod tests {
         line.push(1, a);
         line.push(3, b);
         line.end();
-        span_runs(4, std::iter::once((0, 4, Rule(Rule::NONE))), &mut lines);
-        span_runs(5, std::iter::once((1, 3, a)), &mut lines);
         let none = Rule(Rule::NONE);
+        lines.open_line().end();
+        let mut line = lines.open_line();
+        line.push(1, none);
+        line.push(3, a);
+        line.push(5, none);
+        line.end();
         let run = |end, rule| Run { end, rule };
         let want = [
             vec![run(4, a)],

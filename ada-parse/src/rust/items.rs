@@ -29,7 +29,7 @@ fn is_matcher(top: u8) -> bool {
     (MATCHER..=NEST_CURLY).contains(&top)
 }
 
-impl Scan<'_, '_> {
+impl<K: Sink> Scan<'_, '_, K> {
     /// [`Scan::tok_close`] on the emitter out of line.
     fn close_far(&mut self, p: usize, leaf: u16) -> usize {
         self.tok_far(p, p + 1, leaf);
