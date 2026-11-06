@@ -15,6 +15,7 @@
 //! Exact against bat's grammar on syntect, as far as ASCII goes (`tests/exact_lexers.rs`, the
 //! `parse` fuzz target).
 
+use crate::emit::{Push, Runs, Sink};
 use crate::line_format::{BLANK, Cursor, Format, blanks, leads};
 use crate::ssh::{BASE64, KEY_TYPES, Listed, fingerprint, ipv4, ipv6, label, listed};
 use crate::{Out, State};
@@ -102,7 +103,13 @@ const BRACKET: u64 = 1;
 /// Lex `b`, a line without its `\n`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    crate::line_format::line::<KnownHosts>(b, state, out);
+    crate::line_format::line::<KnownHosts, _>(b, state, out, &mut Push);
+}
+
+/// [`line`]'s lexemes written to `k`, a run sink (X-069).
+#[inline(never)]
+pub(crate) fn line_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+    crate::line_format::line::<KnownHosts, _>(b, state, out, k);
 }
 
 struct KnownHosts;
@@ -115,7 +122,7 @@ impl Format for KnownHosts {
     const COMMENT_BLANKS: bool = false;
 
     /// A line inside a bracketed host: its text to the `]`, then the host line goes on.
-    fn resume(c: &mut Cursor, _: u64) -> u64 {
+    fn resume<K: Sink>(c: &mut Cursor<K>, _: u64) -> u64 {
         match bracket_text(c, 0) {
             Some(p) => tokens(c, p),
             None => BRACKET,
@@ -124,12 +131,12 @@ impl Format for KnownHosts {
 
     /// A line of blanks: `^((@)…)?` matches nothing and pushes the host line, which takes them.
     #[inline(always)]
-    fn blank(c: &mut Cursor) {
+    fn blank<K: Sink>(c: &mut Cursor<K>) {
         c.put(c.len(), LINE);
     }
 
     #[inline(always)]
-    fn entry(c: &mut Cursor, _: usize) -> u64 {
+    fn entry<K: Sink>(c: &mut Cursor<K>, _: usize) -> u64 {
         let b = c.b;
         // `^((@)(?:revoked|cert-authority))?` at the line's start alone
         let annotation = [&b"@revoked"[..], b"@cert-authority"]
@@ -144,7 +151,7 @@ impl Format for KnownHosts {
 }
 
 /// The host line's tokens from `p` to the line's end: what the line leaves open.
-fn tokens(c: &mut Cursor, mut p: usize) -> u64 {
+fn tokens<K: Sink>(c: &mut Cursor<K>, mut p: usize) -> u64 {
     let b = c.b;
     let n = b.len();
     loop {
@@ -212,14 +219,14 @@ fn tokens(c: &mut Cursor, mut p: usize) -> u64 {
 
 /// The host line's own bytes (blanks, a label's) up to `to`.
 #[inline(always)]
-fn line_to(c: &mut Cursor, to: usize) {
+fn line_to<K: Sink>(c: &mut Cursor<K>, to: usize) {
     if to > c.at {
         c.put_merged(to, LINE);
     }
 }
 
 /// `(\|)(\d+)(\|)([\w+/]{27}=)(\|)([\w+/]{27}=)` at `p`, a hashed host: where it ends.
-fn hashed(c: &mut Cursor, p: usize) -> Option<usize> {
+fn hashed<K: Sink>(c: &mut Cursor<K>, p: usize) -> Option<usize> {
     let b = c.b;
     let mut d = p + 1;
     while d < b.len() && b[d].is_ascii_digit() {
@@ -250,7 +257,7 @@ fn hashed(c: &mut Cursor, p: usize) -> Option<usize> {
 /// `#anon_hostname-or-ip-value_0` from `p`, past a `[`: `!`s and addresses, then the host's
 /// text to the `]`. Where the host line goes on past the `]` and its port, or `None` where the
 /// line ends first.
-fn bracket(c: &mut Cursor, mut p: usize) -> Option<usize> {
+fn bracket<K: Sink>(c: &mut Cursor<K>, mut p: usize) -> Option<usize> {
     let b = c.b;
     loop {
         if p == b.len() {
@@ -274,7 +281,7 @@ fn bracket(c: &mut Cursor, mut p: usize) -> Option<usize> {
 
 /// `#anon_hostname-or-ip-value_1` from `p`: the host's text and wildcards to the `]`, which
 /// closes the bracket. Where the host line goes on, or `None` where the line ends first.
-fn bracket_text(c: &mut Cursor, mut p: usize) -> Option<usize> {
+fn bracket_text<K: Sink>(c: &mut Cursor<K>, mut p: usize) -> Option<usize> {
     let b = c.b;
     loop {
         let e = crate::line_format::find(b, p, *b"]*?");
@@ -293,7 +300,7 @@ fn bracket_text(c: &mut Cursor, mut p: usize) -> Option<usize> {
 }
 
 /// `(\])(?:(:)(\d{1,5}))?` at `p`: where the host line goes on.
-fn close(c: &mut Cursor, p: usize) -> usize {
+fn close<K: Sink>(c: &mut Cursor<K>, p: usize) -> usize {
     let b = c.b;
     c.put(p + 1, BRACKET_END);
     if b.get(p + 1) == Some(&b':') && b.get(p + 2).is_some_and(u8::is_ascii_digit) {

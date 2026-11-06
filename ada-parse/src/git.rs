@@ -17,6 +17,7 @@
 //! `Git Config` and `Git Rebase Todo` embed a shell, and `Git Commit` and `Git Log` bat's
 //! `Diff`; they stay on syntect.
 
+use crate::emit::{Push, Runs, Sink};
 use crate::line_format::{self, Cursor, Format, blanks, find, leads};
 use crate::matcher::{Atom, Line, atoms, is_blank, is_space, is_word};
 use crate::{Out, State};
@@ -337,25 +338,49 @@ const fn ak(meta: u16, leaf: u16) -> u16 {
 /// Lex `b`, a line of Git Ignore without its `\n`, from `state`.
 #[inline(never)]
 pub fn ignore(b: &[u8], state: &mut State, out: &mut Out) {
-    line_format::line::<Ignore>(b, state, out);
+    line_format::line::<Ignore, _>(b, state, out, &mut Push);
+}
+
+/// [`ignore`]'s lexemes written to `k`, a run sink (X-069).
+#[inline(never)]
+pub(crate) fn ignore_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+    line_format::line::<Ignore, _>(b, state, out, k);
 }
 
 /// Lex `b`, a line of Git Attributes without its `\n`, from `state`.
 #[inline(never)]
 pub fn attributes(b: &[u8], state: &mut State, out: &mut Out) {
-    line_format::line::<Attributes>(b, state, out);
+    line_format::line::<Attributes, _>(b, state, out, &mut Push);
+}
+
+/// [`attributes`]'s lexemes written to `k`, a run sink (X-069).
+#[inline(never)]
+pub(crate) fn attributes_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+    line_format::line::<Attributes, _>(b, state, out, k);
 }
 
 /// Lex `b`, a line of Git Mailmap without its `\n`, from `state`.
 #[inline(never)]
 pub fn mailmap(b: &[u8], state: &mut State, out: &mut Out) {
-    line_format::line::<Mailmap>(b, state, out);
+    line_format::line::<Mailmap, _>(b, state, out, &mut Push);
+}
+
+/// [`mailmap`]'s lexemes written to `k`, a run sink (X-069).
+#[inline(never)]
+pub(crate) fn mailmap_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+    line_format::line::<Mailmap, _>(b, state, out, k);
 }
 
 /// Lex `b`, a line of Git Link without its `\n`, from `state`.
 #[inline(never)]
 pub fn link(b: &[u8], state: &mut State, out: &mut Out) {
-    line_format::line::<Link>(b, state, out);
+    line_format::line::<Link, _>(b, state, out, &mut Push);
+}
+
+/// [`link`]'s lexemes written to `k`, a run sink (X-069).
+#[inline(never)]
+pub(crate) fn link_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+    line_format::line::<Link, _>(b, state, out, k);
 }
 
 /// What a line leaves open: an unquoted attributes pattern, or `gitdir`'s separator.
@@ -364,14 +389,14 @@ const OPEN: u64 = 1;
 /// The text up to `s` is `text`, then `s..e` is `kind`: what of it is on the line (a match
 /// can take the line's `\n`, which no span holds).
 #[inline(always)]
-fn tk(c: &mut Cursor, text: Option<u16>, s: usize, e: usize, kind: u16) {
+fn tk<K: Sink>(c: &mut Cursor<K>, text: Option<u16>, s: usize, e: usize, kind: u16) {
     let e = e.min(c.len());
     c.tok(text, s, e, kind);
 }
 
 /// The text up to `to`, or the line's end where `to` is past it, is `text`.
 #[inline(always)]
-fn upto(c: &mut Cursor, text: Option<u16>, to: usize) {
+fn upto<K: Sink>(c: &mut Cursor<K>, text: Option<u16>, to: usize) {
     let to = to.min(c.len());
     c.text(text, to);
 }
@@ -413,7 +438,7 @@ static IGNORE_STOPS: [bool; 256] = crate::prim::stops(b"[/.*?\\$:");
 // one copy for the three kinds of pattern: inlined at each of Git Attributes' four places it
 // took 30 KB more, and a copy a kind 16 KB
 #[inline(never)]
-fn pattern(c: &mut Cursor, mut p: usize, start: bool, pat: u16) -> Option<usize> {
+fn pattern<K: Sink>(c: &mut Cursor<K>, mut p: usize, start: bool, pat: u16) -> Option<usize> {
     let b = c.b;
     let n = b.len();
     let text = Some(fk(pat, F_TEXT));
@@ -531,7 +556,7 @@ fn pattern(c: &mut Cursor, mut p: usize, start: bool, pat: u16) -> Option<usize>
 /// `fnmatch-char-class-body` and the two before it, from `p` past the `[`: where the class
 /// ends, past the line's `\n` where the line ends it.
 #[inline(always)]
-fn class(c: &mut Cursor, mut p: usize, pat: u16) -> usize {
+fn class<K: Sink>(c: &mut Cursor<K>, mut p: usize, pat: u16) -> usize {
     let b = c.b;
     let n = b.len();
     let text = Some(fk(pat, F_CLASS));
@@ -578,8 +603,8 @@ fn class(c: &mut Cursor, mut p: usize, pat: u16) -> usize {
 /// slash a drive takes besides `/`), giving the `:` kind `drive` and the `~` kind `home`:
 /// where they end, or `None`.
 #[inline(always)]
-fn dir_start(
-    c: &mut Cursor,
+fn dir_start<K: Sink>(
+    c: &mut Cursor<K>,
     p: usize,
     slash: u8,
     drive: u16,
@@ -607,8 +632,8 @@ fn dir_start(
 /// A `dir-pattern` context's patterns at `p`: `..` (kind `parent`) or `.` (kind `this`)
 /// before a slash, else nothing: where it ends.
 #[inline(always)]
-fn dir_pattern(
-    c: &mut Cursor,
+fn dir_pattern<K: Sink>(
+    c: &mut Cursor<K>,
     p: usize,
     slash: u8,
     parent: u16,
@@ -643,13 +668,13 @@ impl Format for Ignore {
     const COMMENT_BLANKS: bool = false;
     const OPENS: bool = false;
 
-    fn resume(_: &mut Cursor, _: u64) -> u64 {
+    fn resume<K: Sink>(_: &mut Cursor<K>, _: u64) -> u64 {
         unreachable!("Git Ignore's lines leave nothing open")
     }
 
     /// `!|(?=\S)`, then the pattern to the line's end.
     #[inline(always)]
-    fn entry(c: &mut Cursor, q: usize) -> u64 {
+    fn entry<K: Sink>(c: &mut Cursor<K>, q: usize) -> u64 {
         let negate = c.b[q] == b'!';
         tk(c, None, q, q + usize::from(negate), fk(IN_IGNORE, F_NEGATE));
         pattern(c, q + usize::from(negate), true, IN_IGNORE);
@@ -670,7 +695,7 @@ impl Format for Attributes {
 
     /// An unquoted pattern the line before left open, then its attributes.
     #[inline(always)]
-    fn resume(c: &mut Cursor, _: u64) -> u64 {
+    fn resume<K: Sink>(c: &mut Cursor<K>, _: u64) -> u64 {
         match pattern(c, 0, false, IN_UNQUOTED) {
             Some(p) => attribute_list(c, p),
             None => OPEN,
@@ -679,7 +704,7 @@ impl Format for Attributes {
 
     /// `(\[)([^-!]\S*)(\])` and its attributes, or `None` for a `[` that starts a pattern.
     #[inline(always)]
-    fn section(c: &mut Cursor, q: usize) -> Option<u64> {
+    fn section<K: Sink>(c: &mut Cursor<K>, q: usize) -> Option<u64> {
         let j = macro_end(c.b, q)?;
         tk(c, None, q, q + 1, BRACKETS_BEGIN);
         tk(c, None, q + 1, j, MACRO);
@@ -689,7 +714,7 @@ impl Format for Attributes {
 
     /// `[-!\[]|(?=\S)`, a pattern, then its attributes.
     #[inline(always)]
-    fn entry(c: &mut Cursor, q: usize) -> u64 {
+    fn entry<K: Sink>(c: &mut Cursor<K>, q: usize) -> u64 {
         let b = c.b;
         let n = usize::from(matches!(b[q], b'-' | b'!' | b'['));
         tk(c, None, q, q + n, BAD_OPERATOR);
@@ -722,7 +747,7 @@ fn macro_end(b: &[u8], k: usize) -> Option<usize> {
 /// `attributes-list` from `p` to the line's end: what the line leaves open.
 // one copy, for Git Attributes' three places (an entry, a macro, a line resumed)
 #[inline(never)]
-fn attribute_list(c: &mut Cursor, mut p: usize) -> u64 {
+fn attribute_list<K: Sink>(c: &mut Cursor<K>, mut p: usize) -> u64 {
     let b = c.b;
     let n = b.len();
     let text = Some(LIST);
@@ -780,7 +805,7 @@ fn builtin(b: &[u8], p: usize) -> u16 {
 /// An attribute at `p`, a word, under builtin `meta`: its key, `=` and its values, or the
 /// space after it: where the list goes on.
 #[inline(always)]
-fn attribute(c: &mut Cursor, mut p: usize, meta: u16) -> usize {
+fn attribute<K: Sink>(c: &mut Cursor<K>, mut p: usize, meta: u16) -> usize {
     let b = c.b;
     let n = b.len();
     let text = Some(ak(meta, A_NONE));
@@ -826,7 +851,7 @@ fn attribute(c: &mut Cursor, mut p: usize, meta: u16) -> usize {
 
 /// `attribute-value-expected` at `p`: the text to the next `\s`, which it takes.
 #[inline(always)]
-fn expected(c: &mut Cursor, p: usize, meta: u16) -> usize {
+fn expected<K: Sink>(c: &mut Cursor<K>, p: usize, meta: u16) -> usize {
     let b = c.b;
     let mut i = p;
     while i < b.len() && !is_space(b[i]) {
@@ -838,7 +863,7 @@ fn expected(c: &mut Cursor, p: usize, meta: u16) -> usize {
 
 /// `attribute-value-list` from `p`, a value's start: its values and the space after them.
 #[inline(always)]
-fn values(c: &mut Cursor, p: usize, meta: u16) -> usize {
+fn values<K: Sink>(c: &mut Cursor<K>, p: usize, meta: u16) -> usize {
     let b = c.b;
     let n = b.len();
     let text = Some(ak(meta, A_VALUE));
@@ -880,7 +905,7 @@ fn values(c: &mut Cursor, p: usize, meta: u16) -> usize {
 
 /// `attribute-value-content` at `p`: a quoted value or `[^,\s]*`, where it ends.
 #[inline(always)]
-fn value(c: &mut Cursor, p: usize, meta: u16) -> usize {
+fn value<K: Sink>(c: &mut Cursor<K>, p: usize, meta: u16) -> usize {
     let b = c.b;
     let n = b.len();
     let text = Some(ak(meta, A_VALUE));
@@ -929,13 +954,13 @@ impl Format for Mailmap {
     const COMMENT_BLANKS: bool = false;
     const OPENS: bool = false;
 
-    fn resume(_: &mut Cursor, _: u64) -> u64 {
+    fn resume<K: Sink>(_: &mut Cursor<K>, _: u64) -> u64 {
         unreachable!("Git Mailmap's lines leave nothing open")
     }
 
     /// A line of blanks: past spaces and tabs, a name can start at any other.
     #[inline(always)]
-    fn blank(c: &mut Cursor) {
+    fn blank<K: Sink>(c: &mut Cursor<K>) {
         if c.b.iter().any(|&ch| !is_blank(ch)) {
             mailmap_main(c);
         }
@@ -943,14 +968,14 @@ impl Format for Mailmap {
 
     /// `main` from the line's start: a name can start at a blank past spaces and tabs.
     #[inline(always)]
-    fn entry(c: &mut Cursor, _: usize) -> u64 {
+    fn entry<K: Sink>(c: &mut Cursor<K>, _: usize) -> u64 {
         mailmap_main(c);
         0
     }
 }
 
 /// Git Mailmap's `main` over the line: names, e-mail addresses, a comment.
-fn mailmap_main(c: &mut Cursor) {
+fn mailmap_main<K: Sink>(c: &mut Cursor<K>) {
     let b = c.b;
     let n = b.len();
     let mut p = 0;
@@ -1034,7 +1059,7 @@ fn user(b: &[u8], p: usize) -> Result<usize, usize> {
 /// `email-name` and `email-domain` from `p`, past the `<`: where the address ends, past its
 /// `>` (which `<(?=\S+?>)` has seen).
 #[inline(always)]
-fn email(c: &mut Cursor, mut p: usize) -> usize {
+fn email<K: Sink>(c: &mut Cursor<K>, mut p: usize) -> usize {
     let b = c.b;
     let text = Some(EMAIL);
     let mut domain = false;
@@ -1073,13 +1098,13 @@ impl Format for Link {
 
     /// `gitdir` the line before, still waiting for its `:`.
     #[inline(always)]
-    fn resume(c: &mut Cursor, _: u64) -> u64 {
+    fn resume<K: Sink>(c: &mut Cursor<K>, _: u64) -> u64 {
         expect_separator(c, 0)
     }
 
     /// `\bgitdir\b`, or `\S+` each that isn't one.
     #[inline(always)]
-    fn entry(c: &mut Cursor, mut q: usize) -> u64 {
+    fn entry<K: Sink>(c: &mut Cursor<K>, mut q: usize) -> u64 {
         let b = c.b;
         loop {
             // the byte before `q` is a blank, or `q` is the line's start
@@ -1102,7 +1127,7 @@ impl Format for Link {
 
 /// `expect-separator` from `p`: what the line leaves open.
 #[inline(never)]
-fn expect_separator(c: &mut Cursor, mut p: usize) -> u64 {
+fn expect_separator<K: Sink>(c: &mut Cursor<K>, mut p: usize) -> u64 {
     let b = c.b;
     let text = Some(LINK_KEY);
     loop {
@@ -1129,7 +1154,7 @@ fn expect_separator(c: &mut Cursor, mut p: usize) -> u64 {
 
 /// `separator` at `p`, a `:`, then `expect-path`.
 #[inline(always)]
-fn separator(c: &mut Cursor, p: usize) {
+fn separator<K: Sink>(c: &mut Cursor<K>, p: usize) {
     let b = c.b;
     tk(c, Some(LINK_MAPPING), p, p + 1, LINK_KEY_VALUE);
     let text = Some(LINK_VALUE);
@@ -1142,7 +1167,7 @@ fn separator(c: &mut Cursor, p: usize) {
 
 /// `path-start`, then `path`, from `p` to the line's end.
 #[inline(always)]
-fn path(c: &mut Cursor, p: usize) {
+fn path<K: Sink>(c: &mut Cursor<K>, p: usize) {
     let b = c.b;
     let n = b.len();
     let text = Some(LINK_PATH);

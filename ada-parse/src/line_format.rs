@@ -10,6 +10,7 @@
 //! What stays a format's own is what its grammar's corners need, as each is exact against bat's
 //! grammar on syntect: where a key ends, what a separator is, which quotes close.
 
+use crate::emit::Sink;
 use crate::prim::{find_any, stops};
 use crate::{Out, State};
 
@@ -52,31 +53,34 @@ pub trait Format {
 
     /// A line after one that left `open` (not 0): the whole line, and what it leaves open.
     /// Never called where [`Format::OPENS`] is false.
-    fn resume(c: &mut Cursor, open: u64) -> u64;
+    fn resume<K: Sink>(c: &mut Cursor<K>, open: u64) -> u64;
 
     /// A line of blanks alone.
     #[inline(always)]
-    fn blank(_c: &mut Cursor) {}
+    fn blank<K: Sink>(_c: &mut Cursor<K>) {}
 
     /// A section's header whose lead byte is at `p`, or `None` where the line isn't one and is
     /// read as an entry.
     #[inline(always)]
-    fn section(_c: &mut Cursor, _p: usize) -> Option<u64> {
+    fn section<K: Sink>(_c: &mut Cursor<K>, _p: usize) -> Option<u64> {
         None
     }
 
     /// An entry whose first byte past the blanks is at `p` (the cursor still at the line's
     /// start): what the line leaves open.
-    fn entry(c: &mut Cursor, p: usize) -> u64;
+    fn entry<K: Sink>(c: &mut Cursor<K>, p: usize) -> u64;
 }
 
-/// Lex `b`, a line without its `\n`, as format `F`, from `state`.
+/// Lex `b`, a line without its `\n`, as format `F`, from `state`, its lexemes written to `k`
+/// (a line started on it, X-069).
 #[inline(always)]
-pub fn line<F: Format>(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut c = Cursor { b, out, at: 0 };
+pub fn line<F: Format, K: Sink>(b: &[u8], state: &mut State, out: &mut Out, k: &mut K) {
+    // the sink by reference, not copied in and out: a copy's wide loads and stores over its
+    // fields' narrow ones failed to forward, ~11 times a line on INI (IPC 4.9 -> 3.9, X-069)
+    let mut c = Cursor { b, out, k, at: 0 };
     let open = match state.word() {
         open if open != 0 && F::OPENS => F::resume(&mut c, open),
-        _ => fresh::<F>(&mut c),
+        _ => fresh::<F, K>(&mut c),
     };
     state.set_word(open);
 }
@@ -84,7 +88,7 @@ pub fn line<F: Format>(b: &[u8], state: &mut State, out: &mut Out) {
 /// A line after one that left nothing open: a blank line, or by its first byte past the
 /// blanks, a comment, a section's header or an entry. What it leaves open.
 #[inline(always)]
-pub fn fresh<F: Format>(c: &mut Cursor) -> u64 {
+pub fn fresh<F: Format, K: Sink>(c: &mut Cursor<K>) -> u64 {
     let b = c.b;
     let p = blanks(b, 0);
     if p == b.len() {
@@ -104,15 +108,17 @@ pub fn fresh<F: Format>(c: &mut Cursor) -> u64 {
     }
 }
 
-/// A line's spans as a format reads it: where the spans so far end, and what goes after.
-pub struct Cursor<'l, 'o, 's> {
+/// A line's lexemes as a format reads it, written to a sink: where they so far end, and what
+/// goes after.
+pub struct Cursor<'l, 'o, 's, K: Sink> {
     pub b: &'l [u8],
     out: &'o mut Out<'s>,
+    k: &'o mut K,
     /// Where the spans so far end.
     pub at: usize,
 }
 
-impl Cursor<'_, '_, '_> {
+impl<K: Sink> Cursor<'_, '_, '_, K> {
     /// The line's length.
     #[inline(always)]
     pub fn len(&self) -> usize {
@@ -122,14 +128,14 @@ impl Cursor<'_, '_, '_> {
     /// The spans so far go on to `end` with `kind` (none where it's empty).
     #[inline(always)]
     pub fn put(&mut self, end: usize, kind: u16) {
-        self.out.push(self.at, end, kind);
+        self.k.push(&mut self.out, self.at, end, kind);
         self.at = end;
     }
 
     /// As [`Cursor::put`], joined to the span before where it's the same kind and touches.
     #[inline(always)]
     pub fn put_merged(&mut self, end: usize, kind: u16) {
-        self.out.push_merged(self.at, end, kind);
+        self.k.merge(&mut self.out, self.at, end, kind);
         self.at = end;
     }
 
@@ -144,7 +150,7 @@ impl Cursor<'_, '_, '_> {
     #[inline(always)]
     pub fn tok(&mut self, text: Option<u16>, s: usize, e: usize, kind: u16) {
         self.text(text, s);
-        self.out.push_merged(s, e, kind);
+        self.k.merge(&mut self.out, s, e, kind);
         self.at = e;
     }
 
@@ -155,7 +161,7 @@ impl Cursor<'_, '_, '_> {
         if let Some(kind) = text
             && to > self.at
         {
-            self.out.push_merged(self.at, to, kind);
+            self.k.merge(&mut self.out, self.at, to, kind);
         }
         self.at = to;
     }

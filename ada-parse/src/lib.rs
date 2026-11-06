@@ -65,6 +65,7 @@ mod xml_scan;
 mod yaml;
 mod yaml_scan;
 
+use emit::Sink as _;
 pub use emit::{Rule, Rules, Run};
 pub use lang::{ALIASES, FirstLine, Lang, first_line_syntaxes};
 use lisp::Dialect;
@@ -141,8 +142,8 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
 /// from its spans: a span's rule is `rules`' for its kind, a gap between spans is
 /// [`Rule::NONE`]'s, a run joins the one before where their rules are the same, a line where no
 /// rule is met has no runs, and one where one is ends at the line's end. `spans` is scratch
-/// space. Rust's scan writes the runs itself (X-068); any other language's spans are read into
-/// them.
+/// space. Rust's scan writes the runs itself (X-068), as the line-format engine's do (X-069); any
+/// other language's spans are read into them.
 #[inline(never)]
 pub fn lex_runs(
     lang: Lang,
@@ -155,6 +156,13 @@ pub fn lex_runs(
     if lang == Lang::Rust {
         spans.clear();
         return rust::line_runs(line.as_bytes(), state, &mut Out::new(spans), rules, runs);
+    }
+    if let Some(scan) = run_scanner(lang) {
+        spans.clear();
+        let mut k = emit::Runs::new(rules, runs);
+        scan(line.as_bytes(), state, &mut Out::new(spans), &mut k);
+        k.end_line(line.len());
+        return;
     }
     scanner::<false>(lang)(line, state, spans);
     emit::runs_of(line.len(), spans, &mut emit::Table::new(rules), runs);
@@ -211,6 +219,16 @@ pub fn lex_lines_runs(
 ) -> Option<usize> {
     if lang == Lang::Rust {
         return rust::lines_runs(text, max, state, (spans, buf), prep, rules, runs, each);
+    }
+    if let Some(scan) = run_scanner(lang) {
+        // a line at a time on one run sink, opened once a block (X-069)
+        let mut k = emit::Runs::new(rules, runs);
+        let mut out = Out::new(spans);
+        return split_lines(text, max, buf, prep, |l| {
+            k.start_line();
+            scan(l.as_bytes(), state, &mut out, &mut k);
+            each(k.end_line(l.len()));
+        });
     }
     let mut t = emit::Table::new(rules);
     let mut prep = prep;
@@ -320,10 +338,32 @@ fn line_at(text: &str, p: usize) -> (&str, usize) {
 /// One line's lexer, as [`lex`] calls it.
 type Scanner = fn(&str, &mut State, &mut Vec<Span>);
 
-/// `lang`'s lexer: its scanner behind the spans' [`Out`]. Without `RUST`, Rust's is none: the
-/// run API's table, so that a highlighter on runs doesn't carry Rust's span scan (X-068).
+/// One line's lexer writing to a run sink, as [`lex_runs`] calls it (X-069).
+type RunScanner = fn(&[u8], &mut State, &mut Out, &mut emit::Runs);
+
+/// `lang`'s lexer on a run sink, where its scan writes runs a line at a time: the line-format
+/// engine's (X-069). Rust's is its own pass (X-068).
 #[inline(always)]
-fn scanner<const RUST: bool>(lang: Lang) -> Scanner {
+fn run_scanner(lang: Lang) -> Option<RunScanner> {
+    Some(match lang {
+        Lang::Ini => ini::line_runs,
+        Lang::Properties => properties::line_runs,
+        Lang::DotEnv => dotenv::line_runs,
+        Lang::GitIgnore => git::ignore_runs,
+        Lang::GitAttributes => git::attributes_runs,
+        Lang::GitMailmap => git::mailmap_runs,
+        Lang::GitLink => git::link_runs,
+        Lang::Fstab => fstab::line_runs,
+        Lang::KnownHosts => known_hosts::line_runs,
+        _ => return None,
+    })
+}
+
+/// `lang`'s lexer: its scanner behind the spans' [`Out`]. Without `SPANS`, the run API's table,
+/// the languages whose scans write runs (Rust's, X-068; [`run_scanner`]'s, X-069) are none, so
+/// that a highlighter on runs doesn't carry their span scans.
+#[inline(always)]
+fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
     macro_rules! out {
         ($f:expr) => {
             |l: &str, s: &mut State, v: &mut Vec<Span>| {
@@ -333,6 +373,19 @@ fn scanner<const RUST: bool>(lang: Lang) -> Scanner {
         };
     }
     match lang {
+        Lang::Ini
+        | Lang::Properties
+        | Lang::DotEnv
+        | Lang::GitIgnore
+        | Lang::GitAttributes
+        | Lang::GitMailmap
+        | Lang::GitLink
+        | Lang::Fstab
+        | Lang::KnownHosts
+            if !SPANS =>
+        {
+            |_, _, _| unreachable!("a line format's runs come from its own scan")
+        }
         Lang::Log => |l, _, v| logs::tokens(l, v),
         Lang::Json => |l, s, v| {
             // the only state a JSON line hands on: a `/* */` comment left open
@@ -348,7 +401,7 @@ fn scanner<const RUST: bool>(lang: Lang) -> Scanner {
         Lang::Toml => out!(toml_scan::line),
         Lang::Yaml => out!(yaml_scan::line),
         Lang::Xml => out!(xml_scan::line),
-        Lang::Rust if !RUST => |_, _, _| unreachable!("Rust's runs come from its own scan"),
+        Lang::Rust if !SPANS => |_, _, _| unreachable!("Rust's runs come from its own scan"),
         Lang::Rust => out!(rust::line),
         Lang::Kotlin => out!(kotlin::line),
         Lang::Java => out!(java::line),

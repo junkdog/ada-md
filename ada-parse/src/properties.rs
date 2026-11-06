@@ -6,6 +6,7 @@
 //! Exact against bat's grammar on syntect: the `parse` fuzz target holds every byte's scopes to
 //! syntect's.
 
+use crate::emit::{Push, Runs, Sink};
 use crate::line_format::{Cursor, Format, blanks, find, find_by, leads};
 use crate::matcher::{Atom, atoms};
 use crate::prim::{char_len, stops};
@@ -65,7 +66,13 @@ const OPEN_VALUE: u64 = 2;
 /// Lex `b`, a line without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    crate::line_format::line::<Properties>(b, state, out);
+    crate::line_format::line::<Properties, _>(b, state, out, &mut Push);
+}
+
+/// [`line`]'s lexemes written to `k`, a run sink (X-069).
+#[inline(never)]
+pub(crate) fn line_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+    crate::line_format::line::<Properties, _>(b, state, out, k);
 }
 
 struct Properties;
@@ -78,7 +85,7 @@ impl Format for Properties {
     const COMMENT_BLANKS: bool = true;
 
     #[inline(always)]
-    fn resume(c: &mut Cursor, open: u64) -> u64 {
+    fn resume<K: Sink>(c: &mut Cursor<K>, open: u64) -> u64 {
         match open {
             OPEN_KEY => run(c, 0, KEY),
             _ => run(c, 0, KEY + IN_VALUE),
@@ -87,7 +94,7 @@ impl Format for Properties {
 
     /// A property at the first byte that isn't a space, the blanks before it plain.
     #[inline(always)]
-    fn entry(c: &mut Cursor, p: usize) -> u64 {
+    fn entry<K: Sink>(c: &mut Cursor<K>, p: usize) -> u64 {
         c.skip(p);
         run(c, p, KEY)
     }
@@ -98,7 +105,7 @@ static KEY_STOP: [bool; 256] = stops(b"\\:= \t\n\x0b\x0c\r");
 
 /// A key (`kind` [`KEY`]) or a value ([`KEY`] + [`IN_VALUE`]) from `p`, the cursor there, with
 /// its escapes; a key goes on to its separator and value. What the line leaves open.
-fn run(c: &mut Cursor, mut p: usize, kind: u16) -> u64 {
+fn run<K: Sink>(c: &mut Cursor<K>, mut p: usize, kind: u16) -> u64 {
     let b = c.b;
     let value = kind != KEY;
     loop {
@@ -140,7 +147,7 @@ fn run(c: &mut Cursor, mut p: usize, kind: u16) -> u64 {
 /// After a key, at `p`: the first `[:=]` or byte that isn't a space, whichever comes first
 /// (the separator on a tie), then the value at the first byte past the separator that isn't
 /// a space; the line's end closes the property.
-fn separator(c: &mut Cursor, p: usize) -> u64 {
+fn separator<K: Sink>(c: &mut Cursor<K>, p: usize) -> u64 {
     let b = c.b;
     let q = blanks(b, p);
     if q == b.len() {

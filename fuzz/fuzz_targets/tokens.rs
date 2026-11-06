@@ -26,8 +26,20 @@ mod langs;
 use ada_parse::{Lang, Rule, Rules, Run, Span};
 use libfuzzer_sys::fuzz_target;
 
-/// The languages whose scan writes runs itself, not through spans (X-068).
-const RUN_SCANS: [Lang; 1] = [Lang::Rust];
+/// The languages whose scan writes runs itself, not through spans (Rust X-068, the line-format
+/// engine's X-069).
+const RUN_SCANS: [Lang; 10] = [
+    Lang::Rust,
+    Lang::Ini,
+    Lang::Properties,
+    Lang::DotEnv,
+    Lang::GitIgnore,
+    Lang::GitAttributes,
+    Lang::GitMailmap,
+    Lang::GitLink,
+    Lang::Fstab,
+    Lang::KnownHosts,
+];
 
 /// A theme of a few rules over the kinds, plain for some, each resolved as it's met into a table
 /// grown as ada's is.

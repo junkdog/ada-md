@@ -2,6 +2,7 @@
 //! `[section]`, or a `key = value` declaration, whose key and value may be quoted and which may
 //! end in a `;` comment. A line doesn't depend on the ones before it.
 
+use crate::emit::{Push, Runs, Sink};
 use crate::line_format::{Cursor, Format, blanks, find, leads, trim};
 use crate::{Out, State};
 
@@ -42,7 +43,13 @@ pub const KINDS: &[&str] = &[
 /// it, the last matching any line.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    crate::line_format::line::<Ini>(b, state, out);
+    crate::line_format::line::<Ini, _>(b, state, out, &mut Push);
+}
+
+/// [`line`]'s lexemes written to `k`, a run sink (X-069).
+#[inline(never)]
+pub(crate) fn line_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+    crate::line_format::line::<Ini, _>(b, state, out, k);
 }
 
 struct Ini;
@@ -57,20 +64,20 @@ impl Format for Ini {
     // a line leaves nothing open, and a state from elsewhere is read past
     const OPENS: bool = false;
 
-    fn resume(_: &mut Cursor, _: u64) -> u64 {
+    fn resume<K: Sink>(_: &mut Cursor<K>, _: u64) -> u64 {
         unreachable!("INI's lines leave nothing open")
     }
 
     /// The third pattern's text is its blanks.
     #[inline(always)]
-    fn blank(c: &mut Cursor) {
+    fn blank<K: Sink>(c: &mut Cursor<K>) {
         c.put(c.len(), DECLARATION);
     }
 
     /// `^\s*(\[)(.*?)(\])\s*(;.*)?$`: the name ends at the first `]` that only spaces and a
     /// comment follow.
     #[inline(always)]
-    fn section(c: &mut Cursor, start: usize) -> Option<u64> {
+    fn section<K: Sink>(c: &mut Cursor<K>, start: usize) -> Option<u64> {
         let b = c.b;
         let mut close = start + 1;
         let comment = loop {
@@ -94,7 +101,7 @@ impl Format for Ini {
 
     /// `^(\s*(["']?)(.+?)(\2)\s*(=))?\s*((["']?)(.*?)(\7))\s*(;.*)?$`
     #[inline(always)]
-    fn entry(c: &mut Cursor, start: usize) -> u64 {
+    fn entry<K: Sink>(c: &mut Cursor<K>, start: usize) -> u64 {
         let b = c.b;
         let mut value = 0;
         if let Some((key, quoted, equals)) = key(b, start) {

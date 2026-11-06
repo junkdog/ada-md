@@ -46,6 +46,12 @@ pub(crate) trait Sink: Copy {
     /// `out` is the scan's field, not the vector's handle read from it: only a span sink's
     /// growth reads it, and a handle passed in was loaded at every span (+2.3% cycles alone).
     fn merge(&mut self, out: &mut &mut Out, s: usize, e: usize, kind: u16);
+    /// As [`Sink::merge`], but on a span sink not joined to the span before: the same where
+    /// lexemes are joined by rule anyway.
+    #[inline(always)]
+    fn push(&mut self, out: &mut &mut Out, s: usize, e: usize, kind: u16) {
+        self.merge(out, s, e, kind);
+    }
     /// Opened for writing at `out`'s end, room made there for `n` more spans.
     fn open(&mut self, out: &mut Out, n: usize);
     /// Closed for another scanner to push spans to `out`.
@@ -54,6 +60,36 @@ pub(crate) trait Sink: Copy {
     fn reopen(&mut self, out: &mut Out, n: usize);
     /// A line starts, on a sink open since an earlier one (a block's pass).
     fn start_line(&mut self);
+}
+
+/// A line's spans pushed to the vector as [`Out`] pushes them, no cursor: the span API of a
+/// scanner whose spans went that way before it was generic over its sink (the line-format
+/// engine, X-069), so that API's code stays as it was.
+#[derive(Clone, Copy)]
+pub(crate) struct Push;
+
+impl Sink for Push {
+    #[inline(always)]
+    fn merge(&mut self, out: &mut &mut Out, s: usize, e: usize, kind: u16) {
+        out.push_merged(s, e, kind);
+    }
+
+    #[inline(always)]
+    fn push(&mut self, out: &mut &mut Out, s: usize, e: usize, kind: u16) {
+        out.push(s, e, kind);
+    }
+
+    #[inline(always)]
+    fn open(&mut self, _: &mut Out, _: usize) {}
+
+    #[inline(always)]
+    fn close(&mut self, _: &mut Out) {}
+
+    #[inline(always)]
+    fn reopen(&mut self, _: &mut Out, _: usize) {}
+
+    #[inline(always)]
+    fn start_line(&mut self) {}
 }
 
 /// A line's spans, on a write cursor in the scan's own fields: a span is three stores and a
@@ -477,10 +513,19 @@ mod tests {
 
     /// Runs from spans, the reference: each line's spans by [`lex_lines`], read into runs.
     fn from_spans(text: &str, prep: impl Fn(&str, &mut String) -> bool + Copy) -> Vec<Vec<Run>> {
+        lang_from_spans(Lang::Rust, text, prep)
+    }
+
+    /// [`from_spans`] in `lang`.
+    fn lang_from_spans(
+        lang: Lang,
+        text: &str,
+        prep: impl Fn(&str, &mut String) -> bool + Copy,
+    ) -> Vec<Vec<Run>> {
         let (mut spans, mut buf, mut state) = (Vec::new(), String::new(), State::default());
         let (mut rules, mut runs, mut lines) = (Lazy(Vec::new()), Vec::new(), Vec::new());
         lex_lines(
-            Lang::Rust,
+            lang,
             text,
             usize::MAX,
             &mut state,
@@ -582,6 +627,82 @@ mod tests {
             &mut want,
         );
         assert_eq!(runs, want);
+    }
+
+    /// The line-format engine's runs written by its scans (X-069) are those its spans give: a
+    /// block's lines on one sink, in blocks of a few lines and a line at a time, through what a
+    /// line leaves open (a value run on by `\`, a quote not closed), comments, plain lines and
+    /// blank ones.
+    #[test]
+    fn line_format_runs_are_their_spans() {
+        let texts: [(Lang, &str); 9] = [
+            (
+                Lang::Ini,
+                "; c\n[sec]\nkey = value ; x\n\n  name=\"q\"\n[bad\nplain\n# h\n",
+            ),
+            (
+                Lang::Properties,
+                "# c\n! d\nkey = a \\\n  b\\\n c\nk2: v\\u00e9\n\nk3 v3\n=x",
+            ),
+            (
+                Lang::DotEnv,
+                "# c\nexport A=1\nB=\"x ${A} \\\"\n y\"\nC='z\n'\nD=$(cmd) # t\n\nE",
+            ),
+            (
+                Lang::GitIgnore,
+                "# c\n*.o\n!keep/**\n/build/\n[a-z]?.txt\n\n\\#x",
+            ),
+            (
+                Lang::GitAttributes,
+                "# c\n*.rs text eol=lf diff=rust\n[attr]bin -diff -merge\n* !x -y\n\n\"a b\" z",
+            ),
+            (
+                Lang::GitMailmap,
+                "# c\nA B <a@b> <c@d>\n<e@f> Name <g@h>\nbad <x\n\n",
+            ),
+            (Lang::GitLink, "gitdir: ../.git/modules/x\nother\n\n"),
+            (
+                Lang::Fstab,
+                "# c\nUUID=ab-12 / ext4 defaults,noatime 0 1\n/dev/sda1\t/boot vfat rw 0 2\nbad\n\n",
+            ),
+            (
+                Lang::KnownHosts,
+                "# c\nhost,1.2.3.4 ssh-ed25519 AAAAC3Nz\n[h]:22 ecdsa-sha2-nistp256 AAAA x\n|1|aGFz|aGFz ssh-rsa AAAA\n@revoked * ssh-rsa AAAA\n\n",
+            ),
+        ];
+        let none = |_: &str, _: &mut String| false;
+        for (lang, text) in texts {
+            let want = lang_from_spans(lang, text, none);
+            for max in [usize::MAX, 1, 2, 3] {
+                let (mut spans, mut buf, mut state) = (Vec::new(), String::new(), State::default());
+                let (mut rules, mut runs, mut got) = (Lazy(Vec::new()), Vec::new(), Vec::new());
+                let mut rest = Some(0);
+                while let Some(p) = rest {
+                    let mut ends = vec![runs.len()];
+                    let next = lex_lines_runs(
+                        lang,
+                        &text[p..],
+                        max,
+                        &mut state,
+                        (&mut spans, &mut buf),
+                        none,
+                        &mut rules,
+                        &mut runs,
+                        |n| ends.push(n),
+                    );
+                    got.extend(ends.windows(2).map(|w| runs[w[0]..w[1]].to_vec()));
+                    rest = next.map(|q| p + q);
+                }
+                assert_eq!(got, want, "{lang:?} in blocks of {max}");
+            }
+            let (mut state, mut spans, mut rules, mut runs) =
+                (State::default(), Vec::new(), Lazy(Vec::new()), Vec::new());
+            for (n, line) in text.split('\n').enumerate() {
+                runs.clear();
+                lex_runs(lang, line, &mut state, &mut spans, &mut rules, &mut runs);
+                assert_eq!(runs, want[n], "{lang:?}: line {n} alone");
+            }
+        }
     }
 
     /// A gap between spans is plain, a run joins the one before of its rule, a line with no rule

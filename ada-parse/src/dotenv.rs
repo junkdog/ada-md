@@ -10,6 +10,7 @@
 //! the `parse` fuzz target). Names' `\x{7f}-\x{ff}` is any byte past ASCII here, and `\w` ASCII
 //! plus those.
 
+use crate::emit::{Push, Runs, Sink};
 use crate::line_format::{Cursor, Format, find, leads};
 use crate::matcher::{Atom, Line, atoms, is_space};
 use crate::prim::stops;
@@ -96,7 +97,13 @@ enum Ctx {
 /// Lex `b`, a line without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    crate::line_format::line::<DotEnv>(b, state, out);
+    crate::line_format::line::<DotEnv, _>(b, state, out, &mut Push);
+}
+
+/// [`line`]'s lexemes written to `k`, a run sink (X-069).
+#[inline(never)]
+pub(crate) fn line_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+    crate::line_format::line::<DotEnv, _>(b, state, out, k);
 }
 
 struct DotEnv;
@@ -109,7 +116,7 @@ impl Format for DotEnv {
     const COMMENT_BLANKS: bool = false;
 
     #[inline(always)]
-    fn resume(c: &mut Cursor, open: u64) -> u64 {
+    fn resume<K: Sink>(c: &mut Cursor<K>, open: u64) -> u64 {
         let ctx = match open {
             1 => Ctx::Double,
             2 => Ctx::Interpolation,
@@ -121,7 +128,7 @@ impl Format for DotEnv {
     /// `main` from the blank before `p`, where `\s?(export)` can start: none of `main`'s
     /// patterns starts at a blank that another blank follows.
     #[inline(always)]
-    fn entry(c: &mut Cursor, p: usize) -> u64 {
+    fn entry<K: Sink>(c: &mut Cursor<K>, p: usize) -> u64 {
         scan(c, p.saturating_sub(1), Ctx::Main)
     }
 }
@@ -158,7 +165,7 @@ fn is_word(c: u8) -> bool {
 /// The line from `p` in `ctx`, the cursor where the spans so far end: what it leaves open.
 /// One copy, for a line's entry and a line in a string alike.
 #[inline(never)]
-fn scan(c: &mut Cursor, mut p: usize, mut ctx: Ctx) -> u64 {
+fn scan<K: Sink>(c: &mut Cursor<K>, mut p: usize, mut ctx: Ctx) -> u64 {
     let b = c.b;
     let l = Line { b };
     let nl = b.len();
@@ -342,7 +349,7 @@ fn constant_word(b: &[u8], i: usize) -> Option<usize> {
 /// a constant, a number); past a word that is no name, to its end, as only `export` can start
 /// inside one.
 #[inline]
-fn main_at(l: &Line, p: usize, o: &mut Cursor) -> Step {
+fn main_at<K: Sink>(l: &Line, p: usize, o: &mut Cursor<K>) -> Step {
     let b = l.b;
     let c = b[p];
     match c {
