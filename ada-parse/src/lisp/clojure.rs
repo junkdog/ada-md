@@ -226,19 +226,87 @@ fn escaped(b: &[u8], p: usize) -> bool {
 /// Lex `b`, a line of Clojure without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut s = Scan {
-        b,
-        out,
-        stack: [TOP; MAX + 1],
-        depth: 0,
-        base: 0,
-        exact: state.is_exact(),
-        regex: state.arg as u8,
-        level: DEPTH_KINDS + 6 * (state.arg >> 8).min(u16::from(DEPTHS) - 1),
-    };
+    let mut s = Scan::fresh(b, state, out);
     s.unpack(state);
     s.run();
     *state = s.pack();
+}
+
+/// A block of Clojure on one scan opened from `state` ([`crate::Carry`], X-070), `state` left
+/// as the last line leaves it.
+pub fn block(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut c = Carried {
+        s: Scan::fresh(b"", state, &mut out),
+        deep: None,
+    };
+    c.s.unpack(state);
+    let rest = pass(&mut c);
+    *state = c.deep.unwrap_or_else(|| c.s.pack());
+    rest
+}
+
+/// A scan kept across a block's lines, and the state the last line left where a save and load
+/// don't leave its frames as they are (lists below the stack, or more frames than a state's
+/// codes): a block ending there hands on that state, as `line` would.
+struct Carried<'b, 'o, 's> {
+    s: Scan<'b, 'o, 's>,
+    deep: Option<State>,
+}
+
+impl crate::Carry for Carried<'_, '_, '_> {
+    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        let s = &mut self.s;
+        s.out.0.clear();
+        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
+        s.b = unsafe { crate::line_for(b) };
+        s.run();
+        s.b = b"";
+        // a regex's state is kept only while it is the top frame (`pack`)
+        if s.top() != REGEX_FRAME {
+            s.regex = 0;
+        }
+        // `keep`'s codes in order and `expand`'s frames from them: the frames as they are
+        self.deep = (s.base > 0 || s.depth > super::KEPT).then(|| s.reloaded());
+        s.out.0
+    }
+}
+
+impl<'b, 'o, 's> Scan<'b, 'o, 's> {
+    /// A scan of `b`, returned as a literal so that it is built in place; its frames are
+    /// [`Scan::unpack`]'s.
+    #[inline(always)]
+    fn fresh(b: &'b [u8], state: &State, out: &'o mut Out<'s>) -> Self {
+        Scan {
+            b,
+            out,
+            stack: [TOP; MAX + 1],
+            depth: 0,
+            base: 0,
+            exact: state.is_exact(),
+            regex: state.arg as u8,
+            level: DEPTH_KINDS + 6 * (state.arg >> 8).min(u16::from(DEPTHS) - 1),
+        }
+    }
+
+    /// The scan as a state's save and the next line's load leave it: that state.
+    #[cold]
+    #[inline(never)]
+    fn reloaded(&mut self) -> State {
+        let state = self.pack();
+        self.regex = state.arg as u8;
+        self.level = DEPTH_KINDS + 6 * (state.arg >> 8).min(u16::from(DEPTHS) - 1);
+        self.stack = [TOP; MAX + 1];
+        self.depth = 0;
+        self.base = 0;
+        self.exact = state.is_exact();
+        self.unpack(&state);
+        state
+    }
 }
 
 struct Scan<'b, 'o, 's> {

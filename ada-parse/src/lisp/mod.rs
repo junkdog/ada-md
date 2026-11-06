@@ -416,28 +416,137 @@ pub enum Dialect {
 /// Lex `b`, a line of Lisp without its `\n`, from `state`, in `dialect`.
 #[inline(never)]
 pub fn line(b: &[u8], dialect: Dialect, state: &mut State, out: &mut Out) {
-    let scheme = matches!(dialect, Dialect::Scheme | Dialect::Racket);
-    let mut s = Scan {
-        b,
-        racket: dialect == Dialect::Racket,
-        elisp: dialect == Dialect::Emacs,
-        scheme,
-        class: if scheme { &SCHEME_CLASS } else { &CLASS },
-        regex: state.arg as u8,
-        level: DEPTH_KINDS + 4 * (state.arg >> 8).min(u16::from(DEPTHS) - 1),
-        out,
-        stack: [TOP; MAX + 1],
-        depth: 0,
-        base: 0,
-        exact: state.is_exact(),
-        dead: (usize::MAX, 0),
-        quoted_fail: usize::MAX,
-        plus: (usize::MAX, 0, 0),
-        digits: [(usize::MAX, 0); 2],
-    };
+    let mut s = Scan::fresh(b, dialect, state, out);
     s.unpack(state);
     s.run();
     *state = s.pack();
+}
+
+/// A block of Common Lisp on one scan opened from `state` ([`crate::Carry`], X-070), `state`
+/// left as the last line leaves it.
+pub fn block_common(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    block(Dialect::Common, state, spans, pass)
+}
+
+/// [`block_common`]'s, in Emacs Lisp.
+pub fn block_emacs(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    block(Dialect::Emacs, state, spans, pass)
+}
+
+/// [`block_common`]'s, in Scheme.
+pub fn block_scheme(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    block(Dialect::Scheme, state, spans, pass)
+}
+
+/// [`block_common`]'s, in Racket.
+pub fn block_racket(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    block(Dialect::Racket, state, spans, pass)
+}
+
+#[inline(always)]
+fn block(
+    dialect: Dialect,
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut c = Carried {
+        s: Scan::fresh(b"", dialect, state, &mut out),
+        deep: None,
+    };
+    c.s.unpack(state);
+    let rest = pass(&mut c);
+    *state = c.deep.unwrap_or_else(|| c.s.pack());
+    rest
+}
+
+/// A scan kept across a block's lines, and the state the last line left where a save and load
+/// don't leave its frames as they are (bodies below the stack, or more frames than a state's
+/// codes): a block ending there hands on that state, as `line` would.
+struct Carried<'b, 'o, 's> {
+    s: Scan<'b, 'o, 's>,
+    deep: Option<State>,
+}
+
+impl crate::Carry for Carried<'_, '_, '_> {
+    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        let s = &mut self.s;
+        s.out.0.clear();
+        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
+        s.b = unsafe { crate::line_for(b) };
+        s.dead = (usize::MAX, 0);
+        s.quoted_fail = usize::MAX;
+        s.plus = (usize::MAX, 0, 0);
+        s.digits = [(usize::MAX, 0); 2];
+        s.run();
+        s.b = b"";
+        // a regex's state is kept only while it is the top frame (`pack`)
+        if s.top() != REGEX {
+            s.regex = 0;
+        }
+        // `keep`'s codes in order and `expand`'s frames from them: the frames as they are
+        self.deep = (s.base > 0 || s.depth > KEPT).then(|| s.reloaded());
+        s.out.0
+    }
+}
+
+impl<'b, 'o, 's> Scan<'b, 'o, 's> {
+    /// A scan of `b` in `dialect`, returned as a literal so that it is built in place; its
+    /// frames are [`Scan::unpack`]'s.
+    #[inline(always)]
+    fn fresh(b: &'b [u8], dialect: Dialect, state: &State, out: &'o mut Out<'s>) -> Self {
+        let scheme = matches!(dialect, Dialect::Scheme | Dialect::Racket);
+        Scan {
+            b,
+            racket: dialect == Dialect::Racket,
+            elisp: dialect == Dialect::Emacs,
+            scheme,
+            class: if scheme { &SCHEME_CLASS } else { &CLASS },
+            regex: state.arg as u8,
+            level: DEPTH_KINDS + 4 * (state.arg >> 8).min(u16::from(DEPTHS) - 1),
+            out,
+            stack: [TOP; MAX + 1],
+            depth: 0,
+            base: 0,
+            exact: state.is_exact(),
+            dead: (usize::MAX, 0),
+            quoted_fail: usize::MAX,
+            plus: (usize::MAX, 0, 0),
+            digits: [(usize::MAX, 0); 2],
+        }
+    }
+
+    /// The scan as a state's save and the next line's load leave it: that state.
+    #[cold]
+    #[inline(never)]
+    fn reloaded(&mut self) -> State {
+        let state = self.pack();
+        self.regex = state.arg as u8;
+        self.level = DEPTH_KINDS + 4 * (state.arg >> 8).min(u16::from(DEPTHS) - 1);
+        self.stack = [TOP; MAX + 1];
+        self.depth = 0;
+        self.base = 0;
+        self.exact = state.is_exact();
+        self.unpack(&state);
+        state
+    }
 }
 
 struct Scan<'b, 'o, 's> {

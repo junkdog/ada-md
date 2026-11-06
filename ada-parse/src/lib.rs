@@ -308,6 +308,11 @@ fn carried(lang: Lang) -> Option<Block> {
         Lang::Scss => css::scss::block,
         Lang::Html => html::block,
         Lang::Xml => xml_scan::block,
+        Lang::Lisp => lisp::block_common,
+        Lang::EmacsLisp => lisp::block_emacs,
+        Lang::Scheme => lisp::block_scheme,
+        Lang::Racket => lisp::block_racket,
+        Lang::Clojure => lisp::clojure::block,
         _ => return None,
     })
 }
