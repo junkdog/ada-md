@@ -22,24 +22,24 @@ use super::{
     ANIMATION_NAME, ARITHMETIC, AT_COUNTER_STYLE, AT_CUSTOM_MEDIA, AT_DOCUMENT, AT_IMPORT,
     AT_KEYFRAME, AT_MEDIA, AT_NAMESPACE, AT_PAGE, AT_SUPPORTS, ATTR_NAME, ATTR_VAL, CLASS_DOT,
     CLASS_NAME, COLOR_SPACE, COMBINATOR, COMMENT, COMMENT_MARK, CONST, CONSTANT,
-    COUNTER_STYLE_INVALID, COUNTER_STYLE_NAME, CUSTOM_MARK, CUSTOM_NAME, DASH, ENTITY_MARK, ESCAPE,
-    ESCAPE_NEWLINE, EXT_COLOR, EXT_COLOR_LEAF, F_ADJ, F_ATTR, F_CALC, F_COLOR, F_DOC, F_FILTER,
-    F_IMAGE, F_MINMAX, F_REST, F_URL, F_VAR, FN_ATTR, FN_CALC, FN_COLOR, FN_COUNTER, FN_DOMAIN,
-    FN_FILTER, FN_FONT_FACE, FN_GRADIENT, FN_GRID, FN_IMAGE, FN_REGEXP, FN_SHAPE, FN_TIMING,
-    FN_TOGGLE, FN_TRANSFORM, FN_URL, FN_URL_PREFIX, FN_VAR, FONT_NAME_LEAF, GROUP_BEGIN, GROUP_END,
-    HEX, HEX_MARK, HEXA, HEXA_MARK, ID_HASH, ID_NAME, IMPORTANT, KEY_VALUE, KEYWORD_OTHER,
-    LINE_NAMES, LOWNUM, MAIN, MAX, MEDIA_FEATURE, MEDIA_FEATURE_VENDOR, NMCHARS, NS_PREFIX, Num,
-    Out, P_ATTR_NAME, P_ATTR_OP, P_ATTR_SEL_END, P_ATTR_UNQUOTED, P_ATTR_VAL_END, P_CALL_END,
-    P_CASE_FLAG, P_COMMA, P_COMMENT, P_COUNTER_NAME, P_COUNTER_STYLES, P_CUSTOM_PROP, P_DROP_WORDS,
-    P_FROM_TO, P_GROUP, P_GROUP_END, P_LINE_NAME, P_LINE_NAMES, P_LINE_NAMES_END, P_MEDIA_LOGIC,
-    P_MEDIA_TYPES, P_MQ_COMMA, P_NTH_INVALID, P_QUALIFIED, P_STRING, P_SUPPORTS_LOGIC,
-    P_SYMBOL_TYPES, P_UNICODE_RANGE, P_VENDOR, PROPERTY_NAME, PSEUDO_CLASS, PSEUDO_CLASS_MARK,
-    PSEUDO_ELEMENT, PSEUDO_ELEMENT_MARK, PSEUDO_ELEMENT_VENDOR, PSEUDO_KEYWORD, REPETITION,
-    REPETITIONS, RULE_END, SASS_FN, SCSS_PROP, SPACE, SPECIAL_COLOR, SPECIAL_COLOR_LEAF, STD_COLOR,
-    STD_COLOR_LEAF, STR_D, STR_S, STRING_END, Scan, Span, State, T_ANGLE, T_FREQUENCY, T_INTEGER,
-    T_LENGTH, T_NUMBER, T_PERCENT, T_RESOLUTION, T_TIME, TAG, TAG_CUSTOM, TAG_NAME,
-    TERMINATOR_LEAF, TIMING_DIRECTION, UNQUOTED, WILDCARD, WORDS, WRAP, char_at, is, is_hex, lex,
-    lookup, unit_type,
+    COUNTER_STYLE_INVALID, COUNTER_STYLE_NAME, CUSTOM_MARK, CUSTOM_NAME, Carried, DASH,
+    ENTITY_MARK, ESCAPE, ESCAPE_NEWLINE, EXT_COLOR, EXT_COLOR_LEAF, F_ADJ, F_ATTR, F_CALC, F_COLOR,
+    F_DOC, F_FILTER, F_IMAGE, F_MINMAX, F_REST, F_URL, F_VAR, FN_ATTR, FN_CALC, FN_COLOR,
+    FN_COUNTER, FN_DOMAIN, FN_FILTER, FN_FONT_FACE, FN_GRADIENT, FN_GRID, FN_IMAGE, FN_REGEXP,
+    FN_SHAPE, FN_TIMING, FN_TOGGLE, FN_TRANSFORM, FN_URL, FN_URL_PREFIX, FN_VAR, FONT_NAME_LEAF,
+    GROUP_BEGIN, GROUP_END, HEX, HEX_MARK, HEXA, HEXA_MARK, ID_HASH, ID_NAME, IMPORTANT, KEY_VALUE,
+    KEYWORD_OTHER, LINE_NAMES, LOWNUM, MAIN, MAX, MEDIA_FEATURE, MEDIA_FEATURE_VENDOR, NMCHARS,
+    NS_PREFIX, Num, Out, P_ATTR_NAME, P_ATTR_OP, P_ATTR_SEL_END, P_ATTR_UNQUOTED, P_ATTR_VAL_END,
+    P_CALL_END, P_CASE_FLAG, P_COMMA, P_COMMENT, P_COUNTER_NAME, P_COUNTER_STYLES, P_CUSTOM_PROP,
+    P_DROP_WORDS, P_FROM_TO, P_GROUP, P_GROUP_END, P_LINE_NAME, P_LINE_NAMES, P_LINE_NAMES_END,
+    P_MEDIA_LOGIC, P_MEDIA_TYPES, P_MQ_COMMA, P_NTH_INVALID, P_QUALIFIED, P_STRING,
+    P_SUPPORTS_LOGIC, P_SYMBOL_TYPES, P_UNICODE_RANGE, P_VENDOR, PROPERTY_NAME, PSEUDO_CLASS,
+    PSEUDO_CLASS_MARK, PSEUDO_ELEMENT, PSEUDO_ELEMENT_MARK, PSEUDO_ELEMENT_VENDOR, PSEUDO_KEYWORD,
+    REPETITION, REPETITIONS, RULE_END, SASS_FN, SCSS_PROP, SPACE, SPECIAL_COLOR,
+    SPECIAL_COLOR_LEAF, STD_COLOR, STD_COLOR_LEAF, STR_D, STR_S, STRING_END, Scan, Span, State,
+    T_ANGLE, T_FREQUENCY, T_INTEGER, T_LENGTH, T_NUMBER, T_PERCENT, T_RESOLUTION, T_TIME, TAG,
+    TAG_CUSTOM, TAG_NAME, TERMINATOR_LEAF, TIMING_DIRECTION, UNQUOTED, WILDCARD, WORDS, WRAP,
+    char_at, is, is_hex, lex, lookup, unit_type,
 };
 
 /// Lex `b`, a line of SCSS without its `\n`, from `state`.
@@ -53,6 +53,67 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         reason = "the method itself isn't general over the scan's lifetimes"
     )]
     lex::<true>(b, 0, state, out, |s| s.scss_run());
+}
+
+/// A block of SCSS on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
+/// the last line leaves it. The front matter's lines go on a state held apart, which keeps
+/// YAML's in its second half, till the `---` that ends it.
+pub fn block(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut s = Scan::fresh(b"", 0, &mut out);
+    s.load_state(state);
+    let mut f = Front {
+        c: Carried {
+            s,
+            exact: state.is_exact(),
+        },
+        held: in_front_matter(state).then_some(*state),
+    };
+    let rest = pass(&mut f);
+    *state = match f.held {
+        Some(held) => held,
+        None => State::keep(&f.c.s.stack, f.c.s.depth, f.c.exact, 0),
+    };
+    rest
+}
+
+/// SCSS's scan kept across a block's lines, and the state of the front matter it's in.
+struct Front<'b, 'o, 's> {
+    c: Carried<'b, 'o, 's, true>,
+    held: Option<State>,
+}
+
+impl crate::Carry for Front<'_, '_, '_> {
+    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        let s = &mut self.c.s;
+        s.out.0.clear();
+        if let Some(held) = &mut self.held {
+            if b != b"---" {
+                front_matter_line(b, held, s.out);
+                return s.out.0;
+            }
+            // the `---` that ends it: the scan's, from the state
+            s.depth = held.load(&mut s.stack);
+            self.c.exact = held.is_exact();
+            self.held = None;
+        }
+        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
+        s.b = unsafe { crate::line_for(b) };
+        s.line_start(0);
+        s.scss_run();
+        crate::stack::hold(&mut s.stack, &mut s.depth, &mut self.c.exact);
+        s.b = b"";
+        // a line that opens the front matter: the state the next line's would start from
+        let d = s.depth - 1;
+        if (1..=crate::matcher::KEPT).contains(&d) && s.stack[d] == FRONT {
+            self.held = Some(State::keep(&s.stack, s.depth, self.c.exact, 0));
+        }
+        s.out.0
+    }
 }
 
 /// A kind of the front matter's embedded YAML: YAML's kind with this bit set.

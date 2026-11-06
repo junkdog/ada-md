@@ -113,6 +113,33 @@ pub(super) fn line(b: &[u8], i: usize, state: &mut State, out: &mut Out) -> bool
     take(i, c, state, out)
 }
 
+/// [`line`] on a scan kept across a block's lines (X-067): the same turns on its stack, which
+/// holds no more levels than a state at a line's start.
+#[inline(always)]
+pub(super) fn on_scan(b: &[u8], i: usize, s: &mut Scan) -> bool {
+    let c = match b.get(i) {
+        None => 0,
+        Some(&c @ (b'{' | b'}')) => {
+            if !b[i + 1..].iter().all(|&t| matches!(t, b' ' | b'\t')) {
+                return false;
+            }
+            c
+        }
+        Some(_) => return false,
+    };
+    take_on(i, c, s)
+}
+
+/// What a line's turns here leave.
+enum Took {
+    /// The line is the scan's.
+    No,
+    /// Its spans pushed, the levels as they were.
+    Same,
+    /// Its spans pushed, the levels moved, and none gives bits.
+    Moved,
+}
+
 /// [`line`]'s case `c` (`{`, `}`, or 0 for a blank line) at `i`.
 #[inline(never)]
 fn take(i: usize, c: u8, state: &mut State, out: &mut Out) -> bool {
@@ -120,23 +147,69 @@ fn take(i: usize, c: u8, state: &mut State, out: &mut Out) -> bool {
     let mut st = [0; KEPT];
     st[..HALF].copy_from_slice(&state.levels);
     st[HALF..].copy_from_slice(&state.withs);
-    let top = |st: &[u8; KEPT], d: usize| if d == 0 { MAIN } else { st[d - 1] };
-    let t = top(&st, d);
+    match turns(i, c, &mut st, &mut d, || state.flags() & BITS != 0, out) {
+        Took::No => false,
+        Took::Same => true,
+        Took::Moved => {
+            st[d..].fill(0);
+            state.levels.copy_from_slice(&st[..HALF]);
+            state.withs.copy_from_slice(&st[HALF..]);
+            state.depth = d as u8;
+            // no level gives bits: each step above checked the top it left
+            state.set_flags(0);
+            true
+        }
+    }
+}
+
+/// [`on_scan`]'s case `c` at `i`.
+#[inline(never)]
+fn take_on(i: usize, c: u8, s: &mut Scan) -> bool {
+    let mut d = s.depth - 1;
+    let (bits, depth) = (&s.bits, s.depth);
+    // SAFETY: the bits of every level below `depth` are written ([`Scan::bits_at`])
+    let any = || (1..depth).any(|k| unsafe { bits[k].assume_init() } != 0);
+    let mut out = Out(&mut *s.spans, s.merge);
+    match turns(i, c, &mut s.stack[1..=KEPT], &mut d, any, &mut out) {
+        Took::No => false,
+        Took::Same => true,
+        Took::Moved => {
+            s.depth = 1 + d;
+            // no level gives bits, as a state saved with no flag loads them
+            s.bits[1..=d].fill(MaybeUninit::new(0));
+            true
+        }
+    }
+}
+
+/// The turns of [`take`] on `st`, the `d` levels above the bottom one (at most [`KEPT`]);
+/// `bits` tells whether any of them gives bits of its own.
+#[inline(always)]
+fn turns(
+    i: usize,
+    c: u8,
+    st: &mut [u8],
+    d: &mut usize,
+    bits: impl FnOnce() -> bool,
+    out: &mut Out,
+) -> Took {
+    let top = |st: &[u8], d: usize| if d == 0 { MAIN } else { st[d - 1] };
+    let t = top(st, *d);
     // the blanks before the brace (or the line's) are passed over, and its text is plain
     if (i > 0 || c == 0) && CTX[usize::from(t)] & INERT == 0 {
-        return false;
+        return Took::No;
     }
     // a blank line leaves the state as it is
     if c == 0 && i == 0 {
-        return true;
+        return Took::Same;
     }
     // where no level gives bits of its own (the save's flag, [`BITS`]), every level's bits are
     // none, so the blanks' text is plain and a brace's kind is its leaf
-    if state.flags() & BITS != 0 {
-        return false;
+    if bits() {
+        return Took::No;
     }
     if c == 0 {
-        return true;
+        return Took::Same;
     }
     let table = if c == b'{' { &OPEN } else { &CLOSE };
     let mut kind = PLAIN;
@@ -144,42 +217,42 @@ fn take(i: usize, c: u8, state: &mut State, out: &mut Out) -> bool {
     // the brace's turn, after any that take nothing
     while kind == PLAIN {
         turns += 1;
-        if turns > TURNS || d == 0 {
-            return false;
+        if turns > TURNS || *d == 0 {
+            return Took::No;
         }
-        match table[usize::from(st[d - 1])] {
-            Brace::No => return false,
+        match table[usize::from(st[*d - 1])] {
+            Brace::No => return Took::No,
             Brace::Set(x, leaf) => {
                 kind = leaf;
-                st[d - 1] = x;
+                st[*d - 1] = x;
             }
             Brace::Push(x, leaf) => {
-                if d + 1 >= KEPT {
-                    return false;
+                if *d + 1 >= KEPT {
+                    return Took::No;
                 }
                 kind = leaf;
-                st[d] = x;
-                d += 1;
+                st[*d] = x;
+                *d += 1;
             }
             Brace::Close(leaf) => {
                 kind = leaf;
-                d -= 1;
+                *d -= 1;
             }
-            Brace::Leave => d -= 1,
-            Brace::Shift(x) => st[d - 1] = x,
+            Brace::Leave => *d -= 1,
+            Brace::Shift(x) => st[*d - 1] = x,
         }
-        if SETS[usize::from(top(&st, d))] {
-            return false;
+        if SETS[usize::from(top(st, *d))] {
+            return Took::No;
         }
     }
     // the line's end: a context that passes over blanks takes nothing more, a type's body pops
     // there (`data_type_body`'s `leave`), anything else is the scan's
-    while CTX[usize::from(top(&st, d))] & INERT == 0 {
+    while CTX[usize::from(top(st, *d))] & INERT == 0 {
         turns += 1;
-        if top(&st, d) != DATA_TYPE_BODY || turns > TURNS {
-            return false;
+        if top(st, *d) != DATA_TYPE_BODY || turns > TURNS {
+            return Took::No;
         }
-        d -= 1;
+        *d -= 1;
     }
     let spans = &mut *out.0;
     let (s, e) = (i as u32, i as u32 + 1);
@@ -191,11 +264,5 @@ fn take(i: usize, c: u8, state: &mut State, out: &mut Out) -> bool {
             kind,
         }),
     }
-    st[d..].fill(0);
-    state.levels.copy_from_slice(&st[..HALF]);
-    state.withs.copy_from_slice(&st[HALF..]);
-    state.depth = d as u8;
-    // no level gives bits: each step above checked the top it left
-    state.set_flags(0);
-    true
+    Took::Moved
 }

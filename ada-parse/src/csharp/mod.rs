@@ -900,68 +900,172 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
 /// [`line`] by the scan, the line's leading ` ` and `\t` ending at `i`.
 #[inline(always)]
 fn scan(b: &[u8], i: usize, state: &mut State, out: &mut Out) {
-    let mut s = Scan {
-        b,
-        ind: 0,
-        stack: [MAIN; MAX],
-        bits: [const { MaybeUninit::uninit() }; MAX],
-        depth: 1,
-        exact: state.is_exact(),
-        text: PLAIN,
-        at: 0,
-        step: 0,
-        loop_at: (usize::MAX, 0),
-        looped: false,
-        halt: false,
-        stuck: 0,
-        wcache: std::cell::Cell::new((usize::MAX, 0)),
-        ncache: std::cell::Cell::new((usize::MAX, None)),
-        pcache: std::cell::Cell::new((usize::MAX, None)),
-        when: std::cell::Cell::new((usize::MAX, 0)),
-        regex_calls: None,
-        merge: out.1,
-        spans: &mut *out.0,
-    };
-    // the held levels above the bottom one in one copy, then each level's bits: none where no
-    // level gives any (the last save's flag, the usual case), else folded up from the bottom
-    s.depth = state.load(&mut s.stack);
-    let n = s.depth - 1;
-    s.bits[..1 + KEPT].fill(MaybeUninit::new(0));
-    let low = usize::from(state.flags() & BITS);
-    if low != 0 {
-        s.fold_bits(low, n);
-    }
+    let mut s = Scan::fresh(b, &mut *out.0, out.1);
+    s.load_state(state);
     s.ind = s.sp_line(i);
-    s.refresh();
-    s.run();
-    s.fill(s.b.len());
-    let n = s.depth - 1;
-    let from = n.saturating_sub(KEPT);
-    *state = State::keep(&s.stack, s.depth, s.exact, 0);
-    // the lowest held level that gives bits of its own: below it every level's bits are none,
-    // and its own bits are never none, so where the stack is all held, the lowest level whose
-    // bits aren't; else (rare) by their contexts
-    let gives = if from == 0 {
-        // SAFETY: the bits of levels 1..=KEPT are written: all of them at the load, and each
-        // pushed level's since
-        let bits: &[u16; KEPT] = unsafe { &*s.bits[1..1 + KEPT].as_ptr().cast() };
-        let mut m = 0u32;
-        for (k, (&b, &h)) in bits.iter().zip(&HELD_BITS[n]).enumerate() {
-            m |= u32::from(b & h != 0) << k;
+    s.lex();
+    *state = s.state();
+}
+
+/// A block's lines on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
+/// the last one leaves it.
+pub fn block(
+    state: &mut State,
+    spans: &mut Vec<Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    let mut s = Scan::fresh(b"", spans, true);
+    s.load_state(state);
+    let rest = pass(&mut s);
+    *state = s.state();
+    rest
+}
+
+impl crate::Carry for Scan<'_> {
+    fn next(&mut self, b: &[u8]) -> &[Span] {
+        self.spans.clear();
+        let i = brace::lead(b);
+        // a blank line or a lone brace on the stack itself, a `using` line on the state it
+        // would be read from, as [`line`] takes them
+        if brace::on_scan(b, i, self) || (b.get(i) == Some(&b'u') && self.import(b, i)) {
+            return self.spans;
         }
-        m
-    } else {
-        let mut m = 0u32;
-        for k in 0..KEPT {
-            m |= u32::from(SETS[usize::from(state.level(k))]) << k;
+        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
+        self.b = unsafe { crate::line_for(b) };
+        self.text = PLAIN;
+        self.at = 0;
+        self.step = 0;
+        self.loop_at = (usize::MAX, 0);
+        self.looped = false;
+        self.halt = false;
+        self.stuck = 0;
+        self.wcache.set((usize::MAX, 0));
+        self.ncache.set((usize::MAX, None));
+        self.pcache.set((usize::MAX, None));
+        self.when.set((usize::MAX, 0));
+        self.regex_calls = None;
+        self.ind = self.sp_line(i);
+        self.lex();
+        // the line's end as a state's save and load leave it (`line` leaves that to its state)
+        if self.depth - 1 > KEPT {
+            self.reload();
         }
-        m
-    };
-    state.set_flags(if gives == 0 {
-        0
-    } else {
-        gives.trailing_zeros() as u16 + 1
-    });
+        self.b = b"";
+        self.spans
+    }
+}
+
+impl<'b> Scan<'b> {
+    /// A scan of `b`, its spans to `spans` (joined where `merge`), returned as a literal so that it
+    /// is built in place; the state is [`Scan::load_state`]'s.
+    #[inline(always)]
+    fn fresh(b: &'b [u8], spans: &'b mut Vec<Span>, merge: bool) -> Self {
+        Scan {
+            b,
+            ind: 0,
+            stack: [MAIN; MAX],
+            bits: [const { MaybeUninit::uninit() }; MAX],
+            depth: 1,
+            exact: true,
+            text: PLAIN,
+            at: 0,
+            step: 0,
+            loop_at: (usize::MAX, 0),
+            looped: false,
+            halt: false,
+            stuck: 0,
+            wcache: std::cell::Cell::new((usize::MAX, 0)),
+            ncache: std::cell::Cell::new((usize::MAX, None)),
+            pcache: std::cell::Cell::new((usize::MAX, None)),
+            when: std::cell::Cell::new((usize::MAX, 0)),
+            regex_calls: None,
+            merge,
+            spans,
+        }
+    }
+
+    /// What [`Scan::fresh`] leaves to `state`: the stack and what is read from it, apart from
+    /// the literal, which a constructor that changed it before returning it copied (a `memcpy`
+    /// a line, X-056's trap).
+    #[inline(always)]
+    fn load_state(&mut self, state: &State) {
+        self.load(state);
+    }
+}
+
+impl Scan<'_> {
+    /// The stack and its levels' bits from `state`: the held levels above the bottom one in one
+    /// copy, then each level's bits, none where no level gives any (the last save's flag, the
+    /// usual case), else folded up from the bottom.
+    #[inline(always)]
+    fn load(&mut self, state: &State) {
+        self.exact = state.is_exact();
+        self.depth = state.load(&mut self.stack);
+        let n = self.depth - 1;
+        self.bits[..1 + KEPT].fill(MaybeUninit::new(0));
+        let low = usize::from(state.flags() & BITS);
+        if low != 0 {
+            self.fold_bits(low, n);
+        }
+    }
+
+    /// The line lexed from the stack it starts with, its indentation read.
+    #[inline(always)]
+    fn lex(&mut self) {
+        self.refresh();
+        self.run();
+        self.fill(self.b.len());
+    }
+
+    /// The scan as a state's save and load leave it, its stack deeper than a state holds.
+    #[cold]
+    #[inline(never)]
+    fn reload(&mut self) {
+        let state = self.state();
+        self.load(&state);
+    }
+
+    /// A `using` line taken without the scan ([`import::line`]), on the state the scan holds;
+    /// the state as it was.
+    #[cold]
+    #[inline(never)]
+    fn import(&mut self, b: &[u8], i: usize) -> bool {
+        let state = self.state();
+        import::line(b, i, &state, &mut Out(&mut *self.spans, self.merge))
+    }
+
+    /// The state the scan's last line leaves, its flag the lowest held level that gives bits of
+    /// its own.
+    fn state(&self) -> State {
+        let n = self.depth - 1;
+        let from = n.saturating_sub(KEPT);
+        let mut state = State::keep(&self.stack, self.depth, self.exact, 0);
+        // the lowest held level that gives bits of its own: below it every level's bits are
+        // none, and its own bits are never none, so where the stack is all held, the lowest
+        // level whose bits aren't; else (rare) by their contexts
+        let gives = if from == 0 {
+            // SAFETY: the bits of levels 1..=KEPT are written: all of them at the load, and each
+            // pushed level's since
+            let bits: &[u16; KEPT] = unsafe { &*self.bits[1..1 + KEPT].as_ptr().cast() };
+            let mut m = 0u32;
+            for (k, (&b, &h)) in bits.iter().zip(&HELD_BITS[n]).enumerate() {
+                m |= u32::from(b & h != 0) << k;
+            }
+            m
+        } else {
+            let mut m = 0u32;
+            for k in 0..KEPT {
+                m |= u32::from(SETS[usize::from(state.level(k))]) << k;
+            }
+            m
+        };
+        state.set_flags(if gives == 0 {
+            0
+        } else {
+            gives.trailing_zeros() as u16 + 1
+        });
+        state
+    }
 }
 
 /// [`State`]'s flags: the lowest held level that gives bits of its own ([`SETS`]), from 1, so a

@@ -367,40 +367,102 @@ pub(crate) fn is_text(kind: u16) -> bool {
 
 #[inline(always)]
 fn lex(b: &[u8], from: usize, state: &mut State, out: &mut Out) {
-    let mut s = Scan {
-        b,
-        stack: [MAIN; MAX],
-        // read only below `tag_count`
-        tags: [(0, 0, 0); TAGS],
-        tag_count: 0,
-        depth: 1,
-        low: 1,
-        exact: state.is_exact(),
-        text: PLAIN,
-        at: from,
-        loop_at: (usize::MAX, 0),
-        looped: false,
-        stuck: 0,
-        names: std::cell::Cell::new((
-            usize::MAX,
-            Name {
-                end: 0,
-                next: None,
-                word_end: 0,
-                mask: 0,
-            },
-        )),
-        parens: std::cell::Cell::new((usize::MAX, None)),
-        member: usize::MAX,
-        out,
-    };
-    // the levels kept, whole: those above the depth are never read
-    s.depth = state.load(&mut s.stack);
-    s.low = s.depth;
-    s.refresh();
-    s.run();
-    s.fill(s.b.len());
+    let mut s = Scan::fresh(b, from, state, out);
+    s.load_state(state);
+    s.lex();
     *state = State::keep(&s.stack, s.depth, s.exact, 0);
+}
+
+/// A block's lines on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
+/// the last one leaves it.
+pub fn block(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut s = Scan::fresh(b"", 0, state, &mut out);
+    s.load_state(state);
+    let rest = pass(&mut s);
+    *state = State::keep(&s.stack, s.depth, s.exact, 0);
+    rest
+}
+
+impl crate::Carry for Scan<'_, '_> {
+    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        self.out.0.clear();
+        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
+        self.b = unsafe { crate::line_for(b) };
+        // the tags read only below their count
+        self.tag_count = 0;
+        self.low = self.depth;
+        self.text = PLAIN;
+        self.at = 0;
+        self.loop_at = (usize::MAX, 0);
+        self.looped = false;
+        self.stuck = 0;
+        self.names.set((usize::MAX, NO_NAME));
+        self.parens.set((usize::MAX, None));
+        self.member = usize::MAX;
+        self.lex();
+        // the line's end as a state's save and load leave it (`line` leaves that to its state)
+        crate::stack::hold(&mut self.stack, &mut self.depth, &mut self.exact);
+        self.b = b"";
+        self.out.0
+    }
+}
+
+/// A [`Scan::names`] entry for no place.
+const NO_NAME: Name = Name {
+    end: 0,
+    next: None,
+    word_end: 0,
+    mask: 0,
+};
+
+impl<'b, 'c> Scan<'b, 'c> {
+    /// A scan of `b`, its spans from `from`, returned as a literal so that it is built in place;
+    /// the state is [`Scan::load_state`]'s.
+    #[inline(always)]
+    fn fresh(b: &'b [u8], from: usize, state: &State, out: &'b mut Out<'c>) -> Self {
+        Scan {
+            b,
+            stack: [MAIN; MAX],
+            // read only below `tag_count`
+            tags: [(0, 0, 0); TAGS],
+            tag_count: 0,
+            depth: 1,
+            low: 1,
+            exact: state.is_exact(),
+            text: PLAIN,
+            at: from,
+            loop_at: (usize::MAX, 0),
+            looped: false,
+            stuck: 0,
+            names: std::cell::Cell::new((usize::MAX, NO_NAME)),
+            parens: std::cell::Cell::new((usize::MAX, None)),
+            member: usize::MAX,
+            out,
+        }
+    }
+
+    /// What [`Scan::fresh`] leaves to `state`: the stack and what is read from it, apart from
+    /// the literal, which a constructor that changed it before returning it copied (a `memcpy`
+    /// a line, X-056's trap).
+    #[inline(always)]
+    fn load_state(&mut self, state: &State) {
+        // the levels kept, whole: those above the depth are never read
+        self.depth = state.load(&mut self.stack);
+        self.low = self.depth;
+    }
+
+    /// The line lexed from the stack it starts with.
+    #[inline(always)]
+    fn lex(&mut self) {
+        self.refresh();
+        self.run();
+        self.fill(self.b.len());
+    }
 }
 
 /// A tag's name as a JSX element's context keeps it between lines: 7 bits of its FNV-1a hash.

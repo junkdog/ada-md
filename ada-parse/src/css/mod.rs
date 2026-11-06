@@ -1947,31 +1947,108 @@ fn lex<const S: bool>(
     out: &mut Out,
     run: impl FnOnce(&mut Scan<'_, '_, '_, S>),
 ) {
-    let mut s = Scan {
-        b,
-        out,
-        stack: [MAIN; MAX],
-        depth: 1,
-        ctx: MAIN,
-        at: from,
-        spaces_run: Run::new((usize::MAX, 0)),
-        digits_run: Run::new((usize::MAX, 0)),
-        letters_run: Run::new((usize::MAX, 0)),
-        names_run: Run::new((usize::MAX, 0)),
-        custom_failed: std::cell::Cell::new(0),
-        isel_end: std::cell::Cell::new(usize::MAX),
-        class_runs: [const { Run::new((usize::MAX, 0)) }; 3],
-        nm_ends: std::cell::RefCell::new(Vec::new()),
-        swrap: W_NONE,
-        wrap: 0,
-        shape_run: std::cell::Cell::new((usize::MAX, 0, 0)),
-    };
-    s.depth = state.load(&mut s.stack);
-    s.ctx = s.stack[s.depth - 1];
-    s.rewrap();
+    let mut s = Scan::fresh(b, from, out);
+    s.load_state(state);
     let exact = state.is_exact();
     run(&mut s);
     *state = State::keep(&s.stack, s.depth, exact, 0);
+}
+
+/// A block of CSS on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
+/// the last line leaves it.
+pub fn block(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut s = Scan::fresh(b"", 0, &mut out);
+    s.load_state(state);
+    let mut c = Carried {
+        s,
+        exact: state.is_exact(),
+    };
+    let rest = pass(&mut c);
+    *state = State::keep(&c.s.stack, c.s.depth, c.exact, 0);
+    rest
+}
+
+/// CSS's scan kept across a block's lines, and whether its lines are still syntect's, which
+/// a line's scan leaves to its caller.
+struct Carried<'b, 'o, 's, const S: bool> {
+    s: Scan<'b, 'o, 's, S>,
+    exact: bool,
+}
+
+impl crate::Carry for Carried<'_, '_, '_, false> {
+    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        let s = &mut self.s;
+        s.out.0.clear();
+        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
+        s.b = unsafe { crate::line_for(b) };
+        s.line_start(0);
+        s.run();
+        crate::stack::hold(&mut s.stack, &mut s.depth, &mut self.exact);
+        s.b = b"";
+        s.out.0
+    }
+}
+
+impl<'b, 'o, 's, const S: bool> Scan<'b, 'o, 's, S> {
+    /// A scan of `b`, its spans from `from`, returned as a literal so that it is built in place;
+    /// the state is [`Scan::load_state`]'s.
+    #[inline(always)]
+    fn fresh(b: &'b [u8], from: usize, out: &'o mut Out<'s>) -> Self {
+        Scan {
+            b,
+            out,
+            stack: [MAIN; MAX],
+            depth: 1,
+            ctx: MAIN,
+            at: from,
+            spaces_run: Run::new((usize::MAX, 0)),
+            digits_run: Run::new((usize::MAX, 0)),
+            letters_run: Run::new((usize::MAX, 0)),
+            names_run: Run::new((usize::MAX, 0)),
+            custom_failed: std::cell::Cell::new(0),
+            isel_end: std::cell::Cell::new(usize::MAX),
+            class_runs: [const { Run::new((usize::MAX, 0)) }; 3],
+            nm_ends: std::cell::RefCell::new(Vec::new()),
+            swrap: W_NONE,
+            wrap: 0,
+            shape_run: std::cell::Cell::new((usize::MAX, 0, 0)),
+        }
+    }
+
+    /// What [`Scan::fresh`] leaves to `state`: the stack and what is read from it, apart from
+    /// the literal, which a constructor that changed it before returning it copied (a `memcpy`
+    /// a line, X-056's trap).
+    #[inline(always)]
+    fn load_state(&mut self, state: &State) {
+        self.depth = state.load(&mut self.stack);
+        self.ctx = self.stack[self.depth - 1];
+        self.rewrap();
+    }
+
+    /// What a line starts with, its spans from `from`, on a scan kept from the line before.
+    #[inline(always)]
+    fn line_start(&mut self, from: usize) {
+        self.ctx = self.stack[self.depth - 1];
+        self.at = from;
+        self.spaces_run.set((usize::MAX, 0));
+        self.digits_run.set((usize::MAX, 0));
+        self.letters_run.set((usize::MAX, 0));
+        self.names_run.set((usize::MAX, 0));
+        self.custom_failed.set(0);
+        self.isel_end.set(usize::MAX);
+        for r in &self.class_runs {
+            r.set((usize::MAX, 0));
+        }
+        self.nm_ends.get_mut().clear();
+        self.swrap = W_NONE;
+        self.rewrap();
+        self.shape_run.set((usize::MAX, 0, 0));
+    }
 }
 
 /// Bytes `start..end` of the line.

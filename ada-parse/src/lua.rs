@@ -317,51 +317,154 @@ const SYNTECT_DEPTH: usize = 99;
 /// Lex `b`, a line of Lua without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut s = Scan {
-        b,
-        stack: [MAIN; MAX],
-        depth: 1,
-        exact: state.is_exact(),
-        level: usize::from(state.arg),
-        at: 0,
-        loop_at: (usize::MAX, 0),
-        looped: false,
-        out,
-    };
-    for i in 0..usize::from(state.depth) {
-        let c = state.level(i);
-        match RUNS.get(usize::from(c).wrapping_sub(usize::from(RUN))) {
-            Some(run) => run.iter().for_each(|&c| s.push(c)),
-            None => s.push(c),
+    let mut s = Scan::fresh(b, out);
+    s.load_state(state);
+    s.lex();
+    *state = s.state();
+}
+
+/// A block of Lua on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
+/// the last line leaves it.
+pub fn block(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut s = Scan::fresh(b"", &mut out);
+    s.load_state(state);
+    let mut c = Carried { s, deep: None };
+    let rest = pass(&mut c);
+    *state = c.deep.unwrap_or_else(|| c.s.state());
+    rest
+}
+
+impl Scan<'_, '_> {
+    /// `b`, a block's next line, lexed on the scan: [`Carried`]'s.
+    #[inline(always)]
+    fn lex_next(&mut self, b: &[u8]) {
+        self.out.0.clear();
+        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
+        self.b = unsafe { crate::line_for(b) };
+        self.at = 0;
+        self.loop_at = (usize::MAX, 0);
+        self.looped = false;
+        self.lex();
+        self.b = b"";
+    }
+}
+
+/// A scan kept across a block's lines, and the state the last line left where it ended past the
+/// levels a state holds: its levels' runs packed then, which loading and packing them again
+/// may pack apart, so a block ending there hands on that state, as `line` would.
+struct Carried<'b, 'c> {
+    s: Scan<'b, 'c>,
+    deep: Option<State>,
+}
+
+impl crate::Carry for Carried<'_, '_> {
+    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        let s = &mut self.s;
+        s.lex_next(b);
+        // the line's end as a state's save and the next line's load leave it
+        self.deep = (s.depth - 1 > KEPT).then(|| s.reloaded());
+        s.out.0
+    }
+}
+
+impl<'b, 'c> Scan<'b, 'c> {
+    /// A scan of `b`, returned as a literal so that it is built in place; the state is
+    /// [`Scan::load_state`]'s.
+    #[inline(always)]
+    fn fresh(b: &'b [u8], out: &'b mut Out<'c>) -> Self {
+        Scan {
+            b,
+            stack: [MAIN; MAX],
+            depth: 1,
+            exact: true,
+            level: 0,
+            at: 0,
+            loop_at: (usize::MAX, 0),
+            looped: false,
+            out,
         }
     }
-    s.run();
-    s.fill(s.b.len());
-    // a byte a context above the base, or past the levels, a byte a run
-    let open = &s.stack[1..s.depth];
-    let mut runs;
-    let (codes, depth) = if open.len() <= KEPT {
-        (&s.stack, s.depth)
-    } else {
-        runs = [0; MAX];
-        let (mut i, mut k) = (0, 1);
-        while i < open.len() {
-            let rest = &open[i..];
-            let (code, len) = RUNS
-                .iter()
-                .position(|r| rest.starts_with(r))
-                .map_or((rest[0], 1), |r| (RUN + r as u8, RUNS[r].len()));
-            runs[k] = code;
-            (i, k) = (i + len, k + 1);
+
+    /// What [`Scan::fresh`] leaves to `state`: the stack and what is read from it, apart from
+    /// the literal, which a constructor that changed it before returning it copied (a `memcpy`
+    /// a line, X-056's trap).
+    #[inline(always)]
+    fn load_state(&mut self, state: &State) {
+        self.load(state);
+    }
+
+    /// The stack from `state`, its runs expanded, and an open long bracket's level.
+    #[inline(always)]
+    fn load(&mut self, state: &State) {
+        self.exact = state.is_exact();
+        self.level = usize::from(state.arg);
+        self.depth = 1;
+        for i in 0..usize::from(state.depth) {
+            let c = state.level(i);
+            match RUNS.get(usize::from(c).wrapping_sub(usize::from(RUN))) {
+                Some(run) => run.iter().for_each(|&c| self.push(c)),
+                None => self.push(c),
+            }
         }
-        (&runs, k)
-    };
-    let arg = if matches!(s.top(), LONG_STRING | COMMENT_BLOCK) {
-        u16::try_from(s.level).unwrap_or(u16::MAX)
-    } else {
-        0
-    };
-    *state = State::keep(codes, depth, s.exact, arg);
+    }
+
+    /// The level a line hands the next: an open long bracket's, as a state's `arg` holds it.
+    #[inline(always)]
+    fn arg(&self) -> u16 {
+        if matches!(self.top(), LONG_STRING | COMMENT_BLOCK) {
+            u16::try_from(self.level).unwrap_or(u16::MAX)
+        } else {
+            0
+        }
+    }
+
+    /// The line lexed from the stack it starts with, the level kept only for an open long
+    /// bracket.
+    #[inline(always)]
+    fn lex(&mut self) {
+        self.run();
+        self.fill(self.b.len());
+        self.level = usize::from(self.arg());
+    }
+
+    /// The scan as a state's save and load leave it, its stack deeper than a state holds: the
+    /// state.
+    #[cold]
+    #[inline(never)]
+    fn reloaded(&mut self) -> State {
+        let state = self.state();
+        self.load(&state);
+        state
+    }
+
+    /// The state the scan's last line leaves: a byte a context above the base, or past the
+    /// levels, a byte a run.
+    fn state(&self) -> State {
+        let open = &self.stack[1..self.depth];
+        let mut runs;
+        let (codes, depth) = if open.len() <= KEPT {
+            (&self.stack, self.depth)
+        } else {
+            runs = [0; MAX];
+            let (mut i, mut k) = (0, 1);
+            while i < open.len() {
+                let rest = &open[i..];
+                let (code, len) = RUNS
+                    .iter()
+                    .position(|r| rest.starts_with(r))
+                    .map_or((rest[0], 1), |r| (RUN + r as u8, RUNS[r].len()));
+                runs[k] = code;
+                (i, k) = (i + len, k + 1);
+            }
+            (&runs, k)
+        };
+        State::keep(codes, depth, self.exact, self.arg())
+    }
 }
 
 /// The first byte that stands for a run of [`RUNS`] (the contexts are below it).

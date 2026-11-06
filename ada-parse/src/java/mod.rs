@@ -595,50 +595,154 @@ const MAX: usize = 128;
 /// Lex `b`, a line without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut s = Scan {
-        b,
-        stack: [TOP; MAX],
-        depth: 1,
-        exact: state.is_exact(),
-        annot: 0,
-        tags: 0,
-        text: PLAIN,
-        at: 0,
-        loop_at: (usize::MAX, 0),
-        halt: false,
-        enum_checked: false,
-        arrow: None,
-        tag_line: None,
-        word_at: std::cell::Cell::new((usize::MAX, 0)),
-        kind_at: std::cell::Cell::new((usize::MAX, Word::Other)),
-        class_at: std::cell::Cell::new((usize::MAX, 0, false)),
-        fqn: std::cell::Cell::new((usize::MAX, 0, false)),
-        re: 0,
-        sql: sql::Embedded {
-            is_end: usize::MAX,
+    let mut s = Scan::fresh(b, out);
+    s.load_state(state);
+    s.lex();
+    *state = s.state();
+}
+
+/// A block's lines on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
+/// the last one leaves it.
+pub fn block(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut s = Scan::fresh(b"", &mut out);
+    s.load_state(state);
+    let rest = pass(&mut s);
+    *state = s.state();
+    rest
+}
+
+impl crate::Carry for Scan<'_, '_> {
+    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        self.out.0.clear();
+        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
+        self.b = unsafe { crate::line_for(b) };
+        self.line_start();
+        self.lex();
+        // the line's end as a state's save and load leave it (`line` leaves that to its state)
+        if self.depth - 1 > crate::stack::HELD {
+            self.reload();
+        }
+        self.b = b"";
+        self.out.0
+    }
+}
+
+impl<'b, 'c> Scan<'b, 'c> {
+    /// A scan of `b`, returned as a literal so that it is built in place; the state is
+    /// [`Scan::load_state`]'s.
+    #[inline(always)]
+    fn fresh(b: &'b [u8], out: &'b mut Out<'c>) -> Self {
+        Scan {
+            b,
+            stack: [TOP; MAX],
+            depth: 1,
+            exact: true,
+            annot: 0,
+            tags: 0,
+            text: PLAIN,
             at: 0,
-        },
-        sql_end: usize::MAX,
-        sql_nl: false,
-        mark: if state.flags() & MARKED != 0 {
+            loop_at: (usize::MAX, 0),
+            halt: false,
+            enum_checked: false,
+            arrow: None,
+            tag_line: None,
+            word_at: std::cell::Cell::new((usize::MAX, 0)),
+            kind_at: std::cell::Cell::new((usize::MAX, Word::Other)),
+            class_at: std::cell::Cell::new((usize::MAX, 0, false)),
+            fqn: std::cell::Cell::new((usize::MAX, 0, false)),
+            re: 0,
+            sql: sql::Embedded {
+                is_end: usize::MAX,
+                at: 0,
+            },
+            sql_end: usize::MAX,
+            sql_nl: false,
+            mark: usize::MAX,
+            out,
+        }
+    }
+
+    /// What [`Scan::fresh`] leaves to `state`: the stack and what is read from it, apart from
+    /// the literal, which a constructor that changed it before returning it copied (a `memcpy`
+    /// a line, X-056's trap).
+    #[inline(always)]
+    fn load_state(&mut self, state: &State) {
+        self.load(state);
+    }
+
+    /// The stack, its counts, and what else a line hands the next, from `state`.
+    #[inline(always)]
+    fn load(&mut self, state: &State) {
+        self.exact = state.is_exact();
+        (self.annot, self.tags) = (0, 0);
+        let n = usize::from(state.depth);
+        for i in 0..n {
+            let c = state.level(i);
+            self.stack[1 + i] = c;
+            self.count_in(c);
+        }
+        self.depth = 1 + n;
+        self.mark = if state.flags() & MARKED != 0 {
             0
         } else {
             usize::MAX
-        },
-        out,
-    };
-    let n = usize::from(state.depth);
-    for i in 0..n {
-        let c = state.level(i);
-        s.stack[1 + i] = c;
-        s.count_in(c);
+        };
     }
-    s.depth = 1 + n;
-    s.refresh();
-    s.run();
-    s.fill(b.len());
-    let marked = s.mark != usize::MAX && sql::marker_holds(b, s.mark, b.len());
-    *state = State::keep(&s.stack, s.depth, s.exact, if marked { MARKED } else { 0 });
+
+    /// What a line starts with, on a scan kept from the line before.
+    #[inline(always)]
+    fn line_start(&mut self) {
+        self.text = PLAIN;
+        self.at = 0;
+        self.loop_at = (usize::MAX, 0);
+        self.halt = false;
+        self.enum_checked = false;
+        self.arrow = None;
+        self.tag_line = None;
+        self.word_at.set((usize::MAX, 0));
+        self.kind_at.set((usize::MAX, Word::Other));
+        self.class_at.set((usize::MAX, 0, false));
+        self.fqn.set((usize::MAX, 0, false));
+        self.re = 0;
+        self.sql = sql::Embedded {
+            is_end: usize::MAX,
+            at: 0,
+        };
+        self.sql_end = usize::MAX;
+        self.sql_nl = false;
+    }
+
+    /// The line lexed from the stack it starts with, a SQL marker that still holds kept for the
+    /// next line.
+    #[inline(always)]
+    fn lex(&mut self) {
+        let b = self.b;
+        self.refresh();
+        self.run();
+        self.fill(b.len());
+        let marked = self.mark != usize::MAX && sql::marker_holds(b, self.mark, b.len());
+        self.mark = if marked { 0 } else { usize::MAX };
+    }
+
+    /// The scan as a state's save and load leave it, its stack deeper than a state holds.
+    #[cold]
+    #[inline(never)]
+    fn reload(&mut self) {
+        let state = self.state();
+        self.load(&state);
+    }
+
+    /// The state the scan's last line leaves.
+    #[inline(always)]
+    fn state(&self) -> State {
+        let flags = if self.mark != usize::MAX { MARKED } else { 0 };
+        State::keep(&self.stack, self.depth, self.exact, flags)
+    }
 }
 
 /// [`State::flags`]' bit: a SQL marker (`@Language("SQL")`, `// language=SQL`) waits for its

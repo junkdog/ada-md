@@ -696,47 +696,187 @@ const STUCK: usize = 48;
 /// Lex `b`, a line of TypeScript (TSX if `tsx`) without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], tsx: bool, state: &mut State, out: &mut Out) {
-    let mut s = Scan {
-        b,
-        i: 0,
-        stack: [MAIN; MAX],
-        depth: 1,
-        tsx,
-        exact: state.is_exact(),
-        text: PLAIN,
-        wrap: 0,
-        tpl: 0,
-        tick: b.iter().rposition(|&c| c == b'`').map_or(0, |k| k + 1),
-        last_name: Cell::new((usize::MAX, 0)),
-        done: 0,
-        zero: (usize::MAX, 0),
-        stuck: 0,
-        g_link: false,
-        g_desc: false,
-        g_caption: false,
-        g_type_open: false,
-        g_type_brace: false,
-        var_kw_eol: false,
-        re: 0,
-        out,
-    };
-    s.depth = state.load(&mut s.stack);
-    if state.arg == PACKED {
-        s.depth = 1 + unpack(&mut s.stack, s.depth - 1);
+    let mut s = Scan::fresh(b, tsx, out);
+    s.load_state(state);
+    s.lex();
+    *state = s.state();
+}
+
+/// A block of TypeScript on one scan opened from `state` ([`crate::Carry`], X-067), `state`
+/// left as the last line leaves it.
+pub fn block(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    block_of(false, state, spans, pass)
+}
+
+/// [`block`] for TSX.
+pub fn block_tsx(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    block_of(true, state, spans, pass)
+}
+
+fn block_of(
+    tsx: bool,
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut s = Scan::fresh(b"", tsx, &mut out);
+    s.load_state(state);
+    let mut c = Carried { s, deep: None };
+    let rest = pass(&mut c);
+    *state = c.deep.unwrap_or_else(|| c.s.state());
+    rest
+}
+
+impl Scan<'_, '_, '_> {
+    /// `b`, a block's next line, lexed on the scan: [`Carried`]'s.
+    #[inline(always)]
+    fn lex_next(&mut self, b: &[u8]) {
+        self.out.0.clear();
+        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
+        self.b = unsafe { crate::line_for(b) };
+        self.i = 0;
+        self.text = PLAIN;
+        self.wrap = 0;
+        self.tick = ticked(b);
+        self.last_name.set((usize::MAX, 0));
+        self.done = 0;
+        self.zero = (usize::MAX, 0);
+        self.stuck = 0;
+        self.g_link = false;
+        self.g_desc = false;
+        self.g_caption = false;
+        self.g_type_open = false;
+        self.g_type_brace = false;
+        self.var_kw_eol = false;
+        self.re = 0;
+        self.lex();
+        self.b = b"";
     }
-    s.tpl = s.stack[1..s.depth].iter().filter(|&&f| is_tpl(f)).count();
-    s.refresh();
-    s.run();
-    if s.re != 0 && matches!(s.top(), REGEX_F | RE_STR_F) {
-        s.spill();
+}
+
+/// A scan kept across a block's lines, and the state the last line left where it ended past the
+/// levels a state holds: its levels' runs packed then, which loading and packing them again
+/// may pack apart, so a block ending there hands on that state, as `line` would.
+struct Carried<'a, 'o, 'p> {
+    s: Scan<'a, 'o, 'p>,
+    deep: Option<State>,
+}
+
+impl crate::Carry for Carried<'_, '_, '_> {
+    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        let s = &mut self.s;
+        s.lex_next(b);
+        // the line's end as a state's save and the next line's load leave it
+        self.deep = (s.depth - 1 > KEPT).then(|| s.reloaded());
+        s.out.0
     }
-    // deeper than the state keeps: the pairs packed, so that the top `KEPT` hold them all
-    let (mut depth, mut arg) = (s.depth, 0);
-    if depth - 1 > KEPT {
-        depth = 1 + pack(&mut s.stack, depth - 1);
-        arg = PACKED;
+}
+
+/// Past a line's last `` ` ``, or 0 for none ([`Scan::tick`]).
+#[inline(always)]
+fn ticked(b: &[u8]) -> usize {
+    b.iter().rposition(|&c| c == b'`').map_or(0, |k| k + 1)
+}
+
+impl<'a, 'o, 'p> Scan<'a, 'o, 'p> {
+    /// A scan of `b`, returned as a literal so that it is built in place; the state is
+    /// [`Scan::load_state`]'s.
+    #[inline(always)]
+    fn fresh(b: &'a [u8], tsx: bool, out: &'o mut Out<'p>) -> Self {
+        Scan {
+            b,
+            i: 0,
+            stack: [MAIN; MAX],
+            depth: 1,
+            tsx,
+            exact: true,
+            text: PLAIN,
+            wrap: 0,
+            tpl: 0,
+            tick: ticked(b),
+            last_name: Cell::new((usize::MAX, 0)),
+            done: 0,
+            zero: (usize::MAX, 0),
+            stuck: 0,
+            g_link: false,
+            g_desc: false,
+            g_caption: false,
+            g_type_open: false,
+            g_type_brace: false,
+            var_kw_eol: false,
+            re: 0,
+            out,
+        }
     }
-    *state = State::keep(&s.stack, depth, s.exact, arg);
+
+    /// What [`Scan::fresh`] leaves to `state`: the stack and what is read from it, apart from
+    /// the literal, which a constructor that changed it before returning it copied (a `memcpy`
+    /// a line, X-056's trap).
+    #[inline(always)]
+    fn load_state(&mut self, state: &State) {
+        self.load(state);
+    }
+
+    /// The stack (its pairs unpacked) and its templates' count from `state`.
+    #[inline(always)]
+    fn load(&mut self, state: &State) {
+        self.exact = state.is_exact();
+        self.depth = state.load(&mut self.stack);
+        if state.arg == PACKED {
+            self.depth = 1 + unpack(&mut self.stack, self.depth - 1);
+        }
+        self.tpl = self.stack[1..self.depth]
+            .iter()
+            .filter(|&&f| is_tpl(f))
+            .count();
+    }
+
+    /// The line lexed from the stack it starts with, a regex's state spilled at its end.
+    #[inline(always)]
+    fn lex(&mut self) {
+        self.refresh();
+        self.run();
+        if self.re != 0 && matches!(self.top(), REGEX_F | RE_STR_F) {
+            self.spill();
+        }
+    }
+
+    /// The scan as a state's save and load leave it, its stack deeper than a state holds: the
+    /// state.
+    #[cold]
+    #[inline(never)]
+    fn reloaded(&mut self) -> State {
+        let state = self.state();
+        self.load(&state);
+        state
+    }
+
+    /// The state the scan's last line leaves: deeper than the state keeps, the pairs packed, so
+    /// that the top `KEPT` hold them all.
+    #[inline(always)]
+    fn state(&self) -> State {
+        if self.depth - 1 > KEPT {
+            return self.packed();
+        }
+        State::keep(&self.stack, self.depth, self.exact, 0)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn packed(&self) -> State {
+        let mut stack = self.stack;
+        let depth = 1 + pack(&mut stack, self.depth - 1);
+        State::keep(&stack, depth, self.exact, PACKED)
+    }
 }
 
 /// [`State`]'s `arg` when its levels are packed ([`pack`]).

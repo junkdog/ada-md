@@ -636,71 +636,194 @@ pub fn line_c(b: &[u8], state: &mut State, out: &mut Out) {
 /// Lex `b` from `state`, the stack's bottom `root`.
 #[inline(never)]
 fn scan(b: &[u8], state: &mut State, out: &mut Out, root: u8) {
-    let lead = text::indent_end(b);
-    let mut s = Scan {
-        b,
-        lead,
-        dir: pp::directive(b, lead),
-        stack: [root; MAX],
-        depth: 1,
-        exact: state.is_exact(),
-        pre: 0,
-        wrap: 0,
-        text: PLAIN,
-        at: 0,
-        loop_at: (usize::MAX, 0),
-        halt: false,
-        stuck: 0,
-        delim: [0; DELIM],
-        delim_len: 0,
-        word_at: std::cell::Cell::new((usize::MAX, 0)),
-        kw_at: std::cell::Cell::new((usize::MAX, words::Kw::Other)),
-        id_cache: std::cell::Cell::new((usize::MAX, None)),
-        out,
-    };
-    let stored = usize::from(state.depth);
-    // an open raw string's delimiter is in the top bytes, its length plus 1 in `arg`
-    let d = usize::from(state.arg).saturating_sub(1).min(stored);
-    let n = stored - d;
-    for i in 0..n {
-        let c = state.level(i);
-        s.stack[1 + i] = c;
-        s.count_in(c);
+    let mut s = Scan::fresh(b, out, root);
+    s.load_state(state);
+    s.lex();
+    *state = s.state();
+}
+
+/// A block of C++ on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
+/// the last line leaves it.
+pub fn block(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    block_from(MAIN, state, spans, pass)
+}
+
+/// [`block`] for C, from C's root.
+pub fn block_c(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    block_from(C_MAIN, state, spans, pass)
+}
+
+fn block_from(
+    root: u8,
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut s = Scan::fresh(b"", &mut out, root);
+    s.load_state(state);
+    let rest = pass(&mut s);
+    *state = s.state();
+    rest
+}
+
+impl crate::Carry for Scan<'_, '_> {
+    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        self.out.0.clear();
+        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
+        self.b = unsafe { crate::line_for(b) };
+        self.lead = text::indent_end(b);
+        self.dir = pp::directive(b, self.lead);
+        self.text = PLAIN;
+        self.at = 0;
+        self.loop_at = (usize::MAX, 0);
+        self.halt = false;
+        self.stuck = 0;
+        self.word_at.set((usize::MAX, 0));
+        self.kw_at.set((usize::MAX, words::Kw::Other));
+        self.id_cache.set((usize::MAX, None));
+        // a pop clears the wrap where a load finds the one below
+        self.rewrap();
+        self.lex();
+        // the line's end as a state's save and load leave it (`line` leaves that to its state): a
+        // raw string's delimiter kept only while one is open, past the levels a state holds (with
+        // the delimiter's bytes) the bottom ones dropped
+        if !self.raw() {
+            self.delim_len = 0;
+        }
+        if self.depth - 1 + self.delim_len > HELD {
+            self.reload();
+        }
+        self.b = b"";
+        self.out.0
     }
-    for i in 0..d {
-        s.delim[i] = state.level(n + i);
+}
+
+impl<'b, 'c> Scan<'b, 'c> {
+    /// A scan of `b`, the stack's bottom `root`, returned as a literal so that it is built in
+    /// place; the state is [`Scan::load_state`]'s.
+    #[inline(always)]
+    fn fresh(b: &'b [u8], out: &'b mut Out<'c>, root: u8) -> Self {
+        let lead = text::indent_end(b);
+        Scan {
+            b,
+            lead,
+            dir: pp::directive(b, lead),
+            stack: [root; MAX],
+            depth: 1,
+            exact: true,
+            pre: 0,
+            wrap: 0,
+            text: PLAIN,
+            at: 0,
+            loop_at: (usize::MAX, 0),
+            halt: false,
+            stuck: 0,
+            delim: [0; DELIM],
+            delim_len: 0,
+            word_at: std::cell::Cell::new((usize::MAX, 0)),
+            kw_at: std::cell::Cell::new((usize::MAX, words::Kw::Other)),
+            id_cache: std::cell::Cell::new((usize::MAX, None)),
+            out,
+        }
     }
-    s.delim_len = d;
-    s.depth = 1 + n;
-    s.wrap = s.stack[..s.depth]
-        .iter()
-        .rev()
-        .map(|&c| ((info(c) >> 16) as u16) & 0x7fff)
-        .find(|&w| w != 0)
-        .unwrap_or(0);
-    s.refresh();
-    s.run();
-    s.fill(b.len());
-    let raw = s.stack[1..s.depth].contains(&RAW_STRING);
-    let d = if raw { s.delim_len } else { 0 };
-    let n = s.depth - 1;
-    let from = n.saturating_sub(HELD - d);
-    let mut packed = State {
-        depth: (n - from + d) as u8,
-        inexact: !s.exact || from > 0,
-        arg: if raw { d as u16 + 1 } else { 0 },
-        ..State::default()
-    };
-    let bytes = s.stack[1 + from..s.depth]
-        .iter()
-        .chain(&s.delim[..d])
-        .copied();
-    // the levels and the delimiter above them a byte at a time: as `State::keep` with the
-    // delimiter laid on the stack, C++ +0.37% instructions and C +0.50%
-    for (i, c) in bytes.enumerate() {
-        packed.set_level(i, c);
+
+    /// What [`Scan::fresh`] leaves to `state`: the stack and what is read from it, apart from
+    /// the literal, which a constructor that changed it before returning it copied (a `memcpy`
+    /// a line, X-056's trap).
+    #[inline(always)]
+    fn load_state(&mut self, state: &State) {
+        self.load(state);
+        self.rewrap();
     }
-    *state = packed;
+
+    /// The stack, its counts and an open raw string's delimiter from `state`.
+    #[inline(always)]
+    fn load(&mut self, state: &State) {
+        self.exact = state.is_exact();
+        self.pre = 0;
+        let stored = usize::from(state.depth);
+        // an open raw string's delimiter is in the top bytes, its length plus 1 in `arg`
+        let d = usize::from(state.arg).saturating_sub(1).min(stored);
+        let n = stored - d;
+        for i in 0..n {
+            let c = state.level(i);
+            self.stack[1 + i] = c;
+            self.count_in(c);
+        }
+        for i in 0..d {
+            self.delim[i] = state.level(n + i);
+        }
+        self.delim_len = d;
+        self.depth = 1 + n;
+    }
+
+    /// The wrap of the topmost context that has one, as a load finds it.
+    #[inline(always)]
+    fn rewrap(&mut self) {
+        self.wrap = self.stack[..self.depth]
+            .iter()
+            .rev()
+            .map(|&c| ((info(c) >> 16) as u16) & 0x7fff)
+            .find(|&w| w != 0)
+            .unwrap_or(0);
+    }
+
+    /// The line lexed from the stack it starts with.
+    #[inline(always)]
+    fn lex(&mut self) {
+        self.refresh();
+        self.run();
+        self.fill(self.b.len());
+    }
+
+    /// Whether a raw string is open on the stack.
+    #[inline(always)]
+    fn raw(&self) -> bool {
+        self.stack[1..self.depth].contains(&RAW_STRING)
+    }
+
+    /// The scan as a state's save and load leave it, its stack deeper than a state holds.
+    #[cold]
+    #[inline(never)]
+    fn reload(&mut self) {
+        let state = self.state();
+        self.load(&state);
+        self.rewrap();
+    }
+
+    /// The state the scan's last line leaves: the levels, and an open raw string's delimiter
+    /// above them.
+    fn state(&self) -> State {
+        let raw = self.raw();
+        let d = if raw { self.delim_len } else { 0 };
+        let n = self.depth - 1;
+        let from = n.saturating_sub(HELD - d);
+        let mut packed = State {
+            depth: (n - from + d) as u8,
+            inexact: !self.exact || from > 0,
+            arg: if raw { d as u16 + 1 } else { 0 },
+            ..State::default()
+        };
+        let bytes = self.stack[1 + from..self.depth]
+            .iter()
+            .chain(&self.delim[..d])
+            .copied();
+        // the levels and the delimiter above them a byte at a time: as `State::keep` with the
+        // delimiter laid on the stack, C++ +0.37% instructions and C +0.50%
+        for (i, c) in bytes.enumerate() {
+            packed.set_level(i, c);
+        }
+        packed
+    }
 }
 
 struct Scan<'b, 'c> {

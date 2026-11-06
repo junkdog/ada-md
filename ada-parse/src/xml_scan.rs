@@ -320,35 +320,108 @@ fn find(b: &[u8], from: usize, set: impl Fn(u8) -> bool) -> Option<usize> {
 /// Lex `b`, a line without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let w = state.word();
+    let (w, deep) = lex(b, state.word(), out);
+    state.set_word(w);
+    if deep {
+        state.inexact = true;
+    }
+}
+
+/// `b` lexed from `w`, the word the line before left: the word it leaves, and whether it's
+/// nested past what syntect takes. The scan a local, its fields in registers.
+// one copy, for `line` and the block: with two, `run`'s callees were no longer inlined into it
+// (XML +2.6% instructions)
+#[inline(never)]
+fn lex(b: &[u8], w: u64, out: &mut Out) -> (u64, bool) {
     let mut x = Scan {
         b,
-        mode: (w & 31) as u8,
-        ret: (w >> 5 & 31) as u8,
-        string: (w >> 10 & 3) as usize,
-        flags: (w >> 12 & 7) as usize,
-        inner: (w >> 15 & 15) as usize,
-        sections: (w >> 19) as u8,
-        depth: (w >> 27) as u8,
+        mode: 0,
+        ret: 0,
+        string: 0,
+        flags: 0,
+        inner: 0,
+        sections: 0,
+        depth: 0,
         base: 0,
         text: 0,
         at: 0,
         out,
     };
+    x.unpack(w);
     x.rebase();
     x.run(0);
     x.fill(b.len());
-    let w = u64::from(x.mode)
-        | u64::from(x.ret) << 5
-        | (x.string as u64) << 10
-        | (x.flags as u64) << 12
-        | (x.inner as u64) << 15
-        | u64::from(x.sections) << 19
-        | u64::from(x.depth) << 27;
-    state.set_word(w);
-    // syntect takes no push past 100 levels: a section is two of its contexts, a group one
-    if 2 * usize::from(x.sections) + usize::from(x.depth) > EXACT_NESTING {
-        state.inexact = true;
+    (x.pack(), x.too_deep())
+}
+
+/// A block of XML ([`crate::Carry`], X-067): each line on a scan of its own from the word the
+/// one before left, `state` left as the last line leaves it. A local scan keeps its fields in
+/// registers, which one kept across the lines behind a reference lost (+3% instructions).
+pub fn block(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut c = Carried {
+        out: &mut out,
+        w: state.word(),
+        deep: false,
+    };
+    let rest = pass(&mut c);
+    state.set_word(c.w);
+    state.inexact |= c.deep;
+    rest
+}
+
+/// What XML's lines hand on across a block: the word, and whether a line was nested past
+/// syntect's limit.
+struct Carried<'o, 'c> {
+    out: &'o mut Out<'c>,
+    w: u64,
+    deep: bool,
+}
+
+impl crate::Carry for Carried<'_, '_> {
+    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        self.out.0.clear();
+        let deep;
+        (self.w, deep) = lex(b, self.w, self.out);
+        self.deep |= deep;
+        self.out.0
+    }
+}
+
+impl Scan<'_, '_, '_> {
+    /// The scan's state from a state's word.
+    #[inline(always)]
+    fn unpack(&mut self, w: u64) {
+        self.mode = (w & 31) as u8;
+        self.ret = (w >> 5 & 31) as u8;
+        self.string = (w >> 10 & 3) as usize;
+        self.flags = (w >> 12 & 7) as usize;
+        self.inner = (w >> 15 & 15) as usize;
+        self.sections = (w >> 19) as u8;
+        self.depth = (w >> 27) as u8;
+    }
+
+    /// The state's word the scan's line leaves.
+    #[inline(always)]
+    fn pack(&self) -> u64 {
+        u64::from(self.mode)
+            | u64::from(self.ret) << 5
+            | (self.string as u64) << 10
+            | (self.flags as u64) << 12
+            | (self.inner as u64) << 15
+            | u64::from(self.sections) << 19
+            | u64::from(self.depth) << 27
+    }
+
+    /// Whether the scan is nested past what syntect takes: no push past 100 levels, a section
+    /// two of its contexts, a group one.
+    #[inline(always)]
+    fn too_deep(&self) -> bool {
+        2 * usize::from(self.sections) + usize::from(self.depth) > EXACT_NESTING
     }
 }
 

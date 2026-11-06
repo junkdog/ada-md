@@ -8,6 +8,10 @@
 //! A language whose scan writes a highlighter's runs itself (`lex_runs`, X-068: Rust) is lexed
 //! that way too, on a state of its own: its runs must be those its spans give, by a theme's rules
 //! resolved as they're met, and its state the same.
+//! One language an input (by a hash of it) is lexed again as blocks (`lex_lines`, X-067: a carried
+//! scanner's one scan across a block's lines), each of a few lines (1 to 8 by the input's length,
+//! or all of them): each line's spans, and the state each block leaves, must be those the lines
+//! give one at a time.
 //! `ADA_FUZZ_LANGS` limits it to some languages (`python`, `makefile,bash`; `langs.rs`), as
 //! `fuzz/lang.zsh` runs a smoke for one lexer on that language's own corpus.
 //!
@@ -140,4 +144,52 @@ fuzz_target!(|data: &[u8]| {
             eprintln!("{line:?}");
         }
     }
+    // one language an input, so the check costs a fortieth of the lexing above
+    let lexed: Vec<_> = on.iter().copied().filter(|l| l.lexed()).collect();
+    if !lexed.is_empty() {
+        let max = match text.len() % 9 {
+            0 => usize::MAX,
+            n => n,
+        };
+        let h = data
+            .iter()
+            .fold(0usize, |h, &c| h.wrapping_mul(31) ^ usize::from(c));
+        blocks(lexed[h % lexed.len()], &text, max);
+    }
 });
+
+/// `text` lexed in `lang` as blocks of `max` lines, against its lines lexed one at a time (a
+/// `\r` before a `\n` dropped, as `lex_lines` drops it).
+fn blocks(lang: Lang, text: &str, max: usize) {
+    let (mut want, mut state, mut spans) = (Vec::new(), ada_parse::State::default(), Vec::new());
+    for line in text.split('\n') {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        ada_parse::lex(lang, line, &mut state, &mut spans);
+        want.push((spans.clone(), state));
+    }
+    let (mut got, mut state, mut buf) = (Vec::new(), ada_parse::State::default(), String::new());
+    let mut rest = Some(text);
+    while let Some(t) = rest {
+        let each = |_: &str, s: &[Span]| got.push(s.to_vec());
+        let next = ada_parse::lex_lines(
+            lang,
+            t,
+            max,
+            &mut state,
+            (&mut spans, &mut buf),
+            |_, _| false,
+            each,
+        );
+        let n = got.len();
+        assert_eq!(
+            state,
+            want[n - 1].1,
+            "{lang:?} block of {max}: state after line {n}"
+        );
+        rest = next.map(|p| &t[p..]);
+    }
+    assert_eq!(got.len(), want.len(), "{lang:?} block of {max}: lines");
+    for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+        assert_eq!(*g, w.0, "{lang:?} block of {max}: line {}", i + 1);
+    }
+}

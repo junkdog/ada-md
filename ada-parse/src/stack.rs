@@ -99,6 +99,25 @@ pub fn drop_bottom(stack: &mut [u8], depth: &mut usize, exact: &mut bool) {
     *exact = false;
 }
 
+/// A line's end as a state's save and the next line's load leave its stack, for a scan kept
+/// across a block's lines (X-067): past the levels a state holds, the bottom ones dropped, and
+/// the lines after no longer syntect's.
+#[inline(always)]
+pub fn hold(stack: &mut [u8], depth: &mut usize, exact: &mut bool) {
+    if *depth - 1 > HELD {
+        hold_top(stack, depth, exact);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn hold_top(stack: &mut [u8], depth: &mut usize, exact: &mut bool) {
+    let from = *depth - 1 - HELD;
+    stack.copy_within(1 + from..*depth, 1);
+    *depth -= from;
+    *exact = false;
+}
+
 impl Out<'_> {
     /// The text from `*at`, where the spans end, to `p` is `text` (plain where it is 0, no
     /// span), and the spans end at `p`; a `p` at or before `*at` leaves both.

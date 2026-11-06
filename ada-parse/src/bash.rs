@@ -460,7 +460,7 @@ static FLAGS: [(u8, u8); CONTEXTS] = {
 };
 
 /// Whether a context keeps an argument between lines: a builtin's index, or a
-/// here-document's end word.
+/// here-document's end word: its bytes beside the context's (at most 4, [`Scan::next`]'s bound).
 fn has_arg(ctx: u8) -> Option<usize> {
     match ctx {
         BUILTIN_ARGS | BUILTIN_ARGS_BT | BUILTIN_ARGS_BODY | BUILTIN_ARGS_BODY_BT => Some(1),
@@ -768,6 +768,65 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     s.run::<false>();
     s.fill(s.b.len());
     *state = s.save();
+}
+
+/// A block of bash on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
+/// the last line leaves it.
+pub fn block(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut s = Scan::new(b"", state, &mut out, None);
+    s.stack[0] = MaybeUninit::new(FRAME);
+    s.load(state);
+    let rest = pass(&mut s);
+    *state = s.save();
+    rest
+}
+
+impl crate::Carry for Scan<'_, '_, '_> {
+    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        self.out.0.clear();
+        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
+        self.b = unsafe { crate::line_for(b) };
+        self.emitted = 0;
+        self.push_at = (0, 0);
+        self.guard = false;
+        self.last_bracket = None;
+        self.last_close = None;
+        self.from_with = false;
+        self.with_next = (0, 0, 0);
+        self.run::<false>();
+        self.fill(self.b.len());
+        // a state holds whole frames from the top, each up to 5 bytes: past what it holds, the
+        // bottom ones dropped
+        if self.depth - 1 > KEPT / 5 && !self.fits() {
+            self.reload();
+        }
+        self.b = b"";
+        self.out.0
+    }
+}
+
+impl Scan<'_, '_, '_> {
+    /// Whether a state holds every frame above the bottom one.
+    #[cold]
+    fn fits(&self) -> bool {
+        let size = |d| 1 + has_arg(self.at_frame(d).ctx).unwrap_or(0);
+        (1..self.depth).map(size).sum::<usize>() <= KEPT
+    }
+
+    /// The scan as a state's save and load leave it, its frames more than a state holds.
+    #[cold]
+    #[inline(never)]
+    fn reload(&mut self) {
+        let state = self.save();
+        self.exact = state.is_exact();
+        self.depth = 1;
+        self.load(&state);
+    }
 }
 
 struct Scan<'a, 'o, 'p> {

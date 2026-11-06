@@ -737,33 +737,120 @@ const SYNTECT_DEPTH: usize = 99;
 /// Lex `b`, a line of Python without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut s = Scan {
-        b,
-        stack: [MAIN; MAX],
-        raws: [0; MAX],
-        depth: 1,
-        exact: state.is_exact(),
-        text: 0,
-        at: 0,
-        loop_at: (usize::MAX, 0),
-        looped: false,
-        stuck: 0,
-        wcache: [const { std::cell::Cell::new((usize::MAX, Word::NONE)) }; WCACHE],
-        sql: crate::sql::Embedded {
+    let mut s = Scan::fresh(b, out);
+    s.load_state(state);
+    s.lex();
+    *state = s.state();
+}
+
+/// A block's lines on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
+/// the last one leaves it.
+pub fn block(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut s = Scan::fresh(b"", &mut out);
+    s.load_state(state);
+    let rest = pass(&mut s);
+    *state = s.state();
+    rest
+}
+
+impl crate::Carry for Scan<'_, '_> {
+    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        self.out.0.clear();
+        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
+        self.b = unsafe { crate::line_for(b) };
+        self.text = 0;
+        self.at = 0;
+        self.loop_at = (usize::MAX, 0);
+        self.looped = false;
+        self.stuck = 0;
+        for c in &self.wcache {
+            c.set((usize::MAX, Word::NONE));
+        }
+        self.sql = crate::sql::Embedded {
             is_end: usize::MAX,
             at: 0,
-        },
-        out,
-    };
-    let n = usize::from(state.depth);
-    for i in 0..n {
-        let c = state.level(i);
-        s.push(c);
+        };
+        self.lex();
+        // the line's end as a state's save and load leave it (`line` leaves that to its state)
+        if self.depth - 1 > crate::stack::HELD {
+            self.reload();
+        }
+        self.b = b"";
+        self.out.0
     }
-    s.refresh();
-    s.run();
-    s.fill(s.b.len());
-    *state = State::keep(&s.stack, s.depth, s.exact, 0);
+}
+
+impl<'b, 'c> Scan<'b, 'c> {
+    /// A scan of `b`, returned as a literal so that it is built in place; the state is
+    /// [`Scan::load_state`]'s.
+    #[inline(always)]
+    fn fresh(b: &'b [u8], out: &'b mut Out<'c>) -> Self {
+        Scan {
+            b,
+            stack: [MAIN; MAX],
+            raws: [0; MAX],
+            depth: 1,
+            exact: true,
+            text: 0,
+            at: 0,
+            loop_at: (usize::MAX, 0),
+            looped: false,
+            stuck: 0,
+            wcache: [const { std::cell::Cell::new((usize::MAX, Word::NONE)) }; WCACHE],
+            sql: crate::sql::Embedded {
+                is_end: usize::MAX,
+                at: 0,
+            },
+            out,
+        }
+    }
+
+    /// What [`Scan::fresh`] leaves to `state`: the stack and what is read from it, apart from
+    /// the literal, which a constructor that changed it before returning it copied (a `memcpy`
+    /// a line, X-056's trap).
+    #[inline(always)]
+    fn load_state(&mut self, state: &State) {
+        self.load(state);
+    }
+
+    /// The stack and its levels' wraps from `state`.
+    #[inline(always)]
+    fn load(&mut self, state: &State) {
+        self.exact = state.is_exact();
+        self.depth = 1;
+        let n = usize::from(state.depth);
+        for i in 0..n {
+            let c = state.level(i);
+            self.push(c);
+        }
+    }
+
+    /// The line lexed from the stack it starts with.
+    #[inline(always)]
+    fn lex(&mut self) {
+        self.refresh();
+        self.run();
+        self.fill(self.b.len());
+    }
+
+    /// The scan as a state's save and load leave it, its stack deeper than a state holds.
+    #[cold]
+    #[inline(never)]
+    fn reload(&mut self) {
+        let state = self.state();
+        self.load(&state);
+    }
+
+    /// The state the scan's last line leaves.
+    #[inline(always)]
+    fn state(&self) -> State {
+        State::keep(&self.stack, self.depth, self.exact, 0)
+    }
 }
 
 /// Whether no pattern of context `c` starts at a space past the line's start: none starts

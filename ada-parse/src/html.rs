@@ -318,52 +318,127 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         exact: state.is_exact(),
         emb: None,
     };
-    let mut p = 0;
-    if let Some(emb) = Emb::from_bits(state.arg >> 13) {
-        // the line starts inside an embed: HTML's stack below it, then the embedded language
-        let arg = state.arg;
-        let bodies = usize::from((arg >> 6) & 63);
-        for _ in 0..bodies {
-            s.push(SCRIPT_HTML_BODY);
-        }
-        let quote = if arg & (1 << 12) != 0 { b'\'' } else { b'"' };
-        match emb {
-            Emb::StyleTag => s.push(STYLE_BODY),
-            Emb::ScriptTag => s.push(SCRIPT_BODY),
-            Emb::StyleAttr | Emb::EventAttr => {
-                s.push((arg & 63) as u8);
-                s.push(META);
-                s.push(if emb == Emb::StyleAttr {
-                    STYLE_VALUE
-                } else {
-                    EVENT_VALUE
-                });
-            }
-        }
-        let mut st = *state;
-        st.arg = 0;
-        match s.embed(emb, quote, 0, Some(st)) {
-            Some(q) => p = q,
-            None => p = usize::MAX,
-        }
-    } else {
-        s.depth = state.load(&mut s.stack);
-    }
+    let p = s.begin(state);
     if p != usize::MAX {
         s.run(p);
     }
-    if let Some((emb, quote, st)) = s.emb {
-        // the stack below the embed: `main`, the bodies, the host
-        let host = if emb.attr() { 3 } else { 1 };
-        let bodies = s.depth - 1 - host;
-        let tag = if emb.attr() { s.stack[s.depth - 3] } else { 0 };
-        let exact = s.exact && st.is_exact() && bodies < 64;
-        *state = st;
-        state.inexact = !exact;
-        state.arg = frame(emb, quote == b'\'', bodies, tag);
-        return;
+    *state = s.state();
+}
+
+/// A block of HTML on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
+/// the last line leaves it. A line that starts inside an embed starts from the state, as
+/// [`line`]'s does.
+pub fn block(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut s = Scan {
+        b: b"",
+        out: &mut out,
+        stack: [MAIN; MAX],
+        depth: 1,
+        at: 0,
+        exact: true,
+        emb: None,
+    };
+    s.reopen(state);
+    let rest = pass(&mut s);
+    *state = s.state();
+    rest
+}
+
+impl crate::Carry for Scan<'_, '_, '_> {
+    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        self.out.0.clear();
+        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
+        self.b = unsafe { crate::line_for(b) };
+        self.at = 0;
+        let p = if self.emb.is_some() {
+            let state = self.state();
+            self.reopen(&state)
+        } else {
+            0
+        };
+        if p != usize::MAX {
+            self.run(p);
+        }
+        // past the levels a state holds, the bottom ones dropped; an embed's line is its own
+        if self.emb.is_none() {
+            crate::stack::hold(&mut self.stack, &mut self.depth, &mut self.exact);
+        }
+        self.b = b"";
+        self.out.0
     }
-    *state = State::keep(&s.stack, s.depth, s.exact, 0);
+}
+
+impl Scan<'_, '_, '_> {
+    /// The scan opened from `state` again, at the line's start: where its scan starts
+    /// ([`Scan::begin`]).
+    #[inline(never)]
+    fn reopen(&mut self, state: &State) -> usize {
+        (self.depth, self.exact, self.emb) = (1, state.is_exact(), None);
+        self.begin(state)
+    }
+
+    /// The line's stack from `state`: where the scan starts, or `usize::MAX` where an embed
+    /// took the whole line.
+    #[inline(always)]
+    fn begin(&mut self, state: &State) -> usize {
+        let mut p = 0;
+        if let Some(emb) = Emb::from_bits(state.arg >> 13) {
+            // the line starts inside an embed: HTML's stack below it, then the embedded language
+            let arg = state.arg;
+            let bodies = usize::from((arg >> 6) & 63);
+            for _ in 0..bodies {
+                self.push(SCRIPT_HTML_BODY);
+            }
+            let quote = if arg & (1 << 12) != 0 { b'\'' } else { b'"' };
+            match emb {
+                Emb::StyleTag => self.push(STYLE_BODY),
+                Emb::ScriptTag => self.push(SCRIPT_BODY),
+                Emb::StyleAttr | Emb::EventAttr => {
+                    self.push((arg & 63) as u8);
+                    self.push(META);
+                    self.push(if emb == Emb::StyleAttr {
+                        STYLE_VALUE
+                    } else {
+                        EVENT_VALUE
+                    });
+                }
+            }
+            let mut st = *state;
+            st.arg = 0;
+            match self.embed(emb, quote, 0, Some(st)) {
+                Some(q) => p = q,
+                None => p = usize::MAX,
+            }
+        } else {
+            self.depth = state.load(&mut self.stack);
+        }
+        p
+    }
+
+    /// The state the scan's last line leaves.
+    fn state(&self) -> State {
+        if let Some((emb, quote, st)) = self.emb {
+            // the stack below the embed: `main`, the bodies, the host
+            let host = if emb.attr() { 3 } else { 1 };
+            let bodies = self.depth - 1 - host;
+            let tag = if emb.attr() {
+                self.stack[self.depth - 3]
+            } else {
+                0
+            };
+            let exact = self.exact && st.is_exact() && bodies < 64;
+            let mut state = st;
+            state.inexact = !exact;
+            state.arg = frame(emb, quote == b'\'', bodies, tag);
+            return state;
+        }
+        State::keep(&self.stack, self.depth, self.exact, 0)
+    }
 }
 
 struct Scan<'b, 'o, 's> {

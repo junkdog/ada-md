@@ -180,9 +180,17 @@ pub fn lex_lines(
         // one scan across the block's lines, its state read and made once (X-066)
         return rust::lines(text, max, state, (spans, buf), prep, each);
     }
+    let (mut prep, mut each) = (prep, each);
+    if let Some(block) = carried(lang) {
+        // every other carried scanner's: one scan across the lines, through one loop (X-067)
+        return block(state, spans, &mut |c| {
+            split_lines(text, max, buf, &mut prep, |l| each(l, c.next(l.as_bytes())))
+        });
+    }
     let scan = scanner::<true>(lang);
-    split_lines(text, max, (spans, buf), prep, each, |l, v| {
-        scan(l, state, v);
+    split_lines(text, max, buf, prep, |l| {
+        scan(l, state, spans);
+        each(l, spans);
     })
 }
 
@@ -204,41 +212,98 @@ pub fn lex_lines_runs(
     if lang == Lang::Rust {
         return rust::lines_runs(text, max, state, (spans, buf), prep, rules, runs, each);
     }
-    let scan = scanner::<false>(lang);
     let mut t = emit::Table::new(rules);
-    split_lines(
-        text,
-        max,
-        (spans, buf),
-        prep,
-        |line, spans| each(emit::runs_of(line.len(), spans, &mut t, runs)),
-        |l, v| scan(l, state, v),
-    )
+    let mut prep = prep;
+    if let Some(block) = carried(lang) {
+        return block(state, spans, &mut |c| {
+            split_lines(text, max, buf, &mut prep, |l| {
+                each(emit::runs_of(l.len(), c.next(l.as_bytes()), &mut t, runs));
+            })
+        });
+    }
+    let scan = scanner::<false>(lang);
+    split_lines(text, max, buf, prep, |l| {
+        scan(l, state, spans);
+        each(emit::runs_of(l.len(), spans, &mut t, runs));
+    })
 }
 
-/// [`lex_lines`]' loop: each of up to `max` lines split, `prep`'d, lexed by `scan` and handed
-/// to `each`.
+/// [`lex_lines`]' loop: each of up to `max` lines split, `prep`'d and handed to `lex`.
 #[inline(always)]
 fn split_lines(
     text: &str,
     max: usize,
-    (spans, buf): (&mut Vec<Span>, &mut String),
+    buf: &mut String,
     mut prep: impl FnMut(&str, &mut String) -> bool,
-    mut each: impl FnMut(&str, &[Span]),
-    mut scan: impl FnMut(&str, &mut Vec<Span>),
+    mut lex: impl FnMut(&str),
 ) -> Option<usize> {
     let mut p = 0;
     for _ in 0..max {
         let (line, e) = line_at(text, p);
-        let line = if prep(line, buf) { buf.as_str() } else { line };
-        scan(line, spans);
-        each(line, spans);
+        lex(if prep(line, buf) { buf.as_str() } else { line });
         if e == text.len() {
             return None;
         }
         p = e + 1;
     }
     Some(p)
+}
+
+/// A scanner's scan kept across a block's lines (X-067, HL-006's stage B in X-066's shape): its
+/// stack and what a line hands the next stay where they are, a line resets only what a line
+/// starts with, and a [`State`] is read once at the block's start and made once at its end.
+/// Each line ends as a state's save and load would leave it (past the levels a state holds, the
+/// bottom ones dropped), so a block lexes as its lines do one at a time.
+pub(crate) trait Carry {
+    /// `b`, the block's next line, lexed on the scan as [`lex`] lexes it after the lines
+    /// before: its spans.
+    fn next(&mut self, b: &[u8]) -> &[Span];
+}
+
+/// A carried scanner's block: its scan opened from the state on the spans' vector, handed to
+/// the loop (compiled in the caller's crate; the scanner's code is in this one, called through
+/// [`Carry`]'s table), and the state left as the last line leaves it.
+type Block = fn(
+    &mut State,
+    &mut Vec<Span>,
+    &mut dyn FnMut(&mut dyn Carry) -> Option<usize>,
+) -> Option<usize>;
+
+/// `lang`'s block on a carried scan, where it has one.
+#[inline(always)]
+fn carried(lang: Lang) -> Option<Block> {
+    Some(match lang {
+        Lang::Kotlin => kotlin::block,
+        Lang::Java => java::block,
+        Lang::Python => python::block,
+        Lang::Go => go::block,
+        Lang::CSharp => csharp::block,
+        Lang::TypeScript => typescript::block,
+        Lang::TypeScriptReact => typescript::block_tsx,
+        Lang::JavaScript => javascript::block,
+        Lang::Cpp => cpp::block,
+        Lang::C => cpp::block_c,
+        Lang::Bash => bash::block,
+        Lang::Lua => lua::block,
+        Lang::PowerShell => powershell::block,
+        Lang::Css => css::block,
+        Lang::Scss => css::scss::block,
+        Lang::Html => html::block,
+        Lang::Xml => xml_scan::block,
+        _ => return None,
+    })
+}
+
+/// `b` as a scan's line for one [`Carry::next`], which sets the scan's line back to an empty
+/// one before it returns.
+///
+/// # Safety
+///
+/// The scan holding the slice drops it before `b`'s borrow ends.
+#[inline(always)]
+unsafe fn line_for<'b>(b: &[u8]) -> &'b [u8] {
+    // SAFETY: the caller's
+    unsafe { &*std::ptr::from_ref(b) }
 }
 
 /// The line of `text` that starts at `p` (0 or just past a `\n`), a `\r` before its `\n`
@@ -442,20 +507,15 @@ mod tests {
         out
     }
 
-    /// `lex_lines` lexes as `lex` does line by line: the lines split at `\n` with a `\r`
-    /// before it dropped, the state carried, `max` honored, and `prep`'s line lexed in place.
+    /// `lex_lines` lexes as `lex` does line by line in every language: the lines split at `\n`
+    /// with a `\r` before it dropped, the state carried, `max` honored, and `prep`'s line lexed
+    /// in place.
     #[test]
     fn lex_lines_matches_lex() {
         let text = "fn main() {\r\n    let s = r#\"raw\n\n\r\nstill\"#;\r\r\n\t// a tab\n}\n\nlast";
         let expand = |l: &str| l.replace('\t', "    ");
-        for lang in [
-            Lang::Rust,
-            Lang::Json,
-            Lang::Bash,
-            Lang::Python,
-            Lang::Diff,
-            Lang::Log,
-        ] {
+        // every language: the carried scanners' blocks (X-067) and the line-by-line ones
+        for lang in Lang::ALL {
             let (mut want, mut state, mut spans) = (Vec::new(), State::default(), Vec::new());
             for line in text.split('\n') {
                 let line = expand(line.strip_suffix('\r').unwrap_or(line));

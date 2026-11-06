@@ -424,41 +424,116 @@ const SYNTECT_DEPTH: usize = 99;
 /// Lex `b`, a line of Go without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut s = Scan {
-        b,
-        stack: [MAIN; MAX],
-        depth: 1,
-        exact: state.is_exact(),
-        text: PLAIN,
-        at: 0,
-        loop_at: (usize::MAX, 0),
-        looped: false,
-        stuck: 0,
-        wcache: std::cell::Cell::new((usize::MAX, None)),
-        sql_paren: usize::MAX,
-        sql_call: PSQL_LEAD,
-        sql: sql::Embedded {
+    let mut s = Scan::fresh(b, state, out);
+    s.load_state(state);
+    s.lex();
+    *state = s.state();
+}
+
+/// A block's lines on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
+/// the last one leaves it.
+pub fn block(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut s = Scan::fresh(b"", state, &mut out);
+    s.load_state(state);
+    let rest = pass(&mut s);
+    *state = s.state();
+    rest
+}
+
+impl crate::Carry for Scan<'_, '_> {
+    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        self.out.0.clear();
+        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
+        self.b = unsafe { crate::line_for(b) };
+        self.text = PLAIN;
+        self.at = 0;
+        self.loop_at = (usize::MAX, 0);
+        self.looped = false;
+        self.stuck = 0;
+        self.wcache.set((usize::MAX, None));
+        self.sql_paren = usize::MAX;
+        self.sql_call = PSQL_LEAD;
+        self.sql = sql::Embedded {
             is_end: usize::MAX,
             at: 0,
-        },
-        sql_end: usize::MAX,
-        sql_nl: false,
-        mark: if state.flags() & MARKED != 0 {
-            0
-        } else {
-            usize::MAX
-        },
-        out,
-    };
-    s.depth = state.load(&mut s.stack);
-    s.refresh();
-    if s.top() >= SQL_IN {
-        s.text = s.string_text();
+        };
+        self.sql_end = usize::MAX;
+        self.sql_nl = false;
+        self.lex();
+        // the line's end as a state's save and load leave it (`line` leaves that to its state)
+        crate::stack::hold(&mut self.stack, &mut self.depth, &mut self.exact);
+        self.b = b"";
+        self.out.0
     }
-    s.run();
-    s.fill(s.b.len());
-    let marked = s.mark != usize::MAX && sql::marker_holds(b, s.mark, b.len());
-    *state = State::keep(&s.stack, s.depth, s.exact, if marked { MARKED } else { 0 });
+}
+
+impl<'b, 'c> Scan<'b, 'c> {
+    /// A scan of `b`, returned as a literal so that it is built in place; the state is
+    /// [`Scan::load_state`]'s.
+    #[inline(always)]
+    fn fresh(b: &'b [u8], state: &State, out: &'b mut Out<'c>) -> Self {
+        Scan {
+            b,
+            stack: [MAIN; MAX],
+            depth: 1,
+            exact: state.is_exact(),
+            text: PLAIN,
+            at: 0,
+            loop_at: (usize::MAX, 0),
+            looped: false,
+            stuck: 0,
+            wcache: std::cell::Cell::new((usize::MAX, None)),
+            sql_paren: usize::MAX,
+            sql_call: PSQL_LEAD,
+            sql: sql::Embedded {
+                is_end: usize::MAX,
+                at: 0,
+            },
+            sql_end: usize::MAX,
+            sql_nl: false,
+            mark: if state.flags() & MARKED != 0 {
+                0
+            } else {
+                usize::MAX
+            },
+            out,
+        }
+    }
+
+    /// What [`Scan::fresh`] leaves to `state`: the stack and what is read from it, apart from
+    /// the literal, which a constructor that changed it before returning it copied (a `memcpy`
+    /// a line, X-056's trap).
+    #[inline(always)]
+    fn load_state(&mut self, state: &State) {
+        self.depth = state.load(&mut self.stack);
+    }
+
+    /// The line lexed from the stack it starts with, a SQL marker that still holds kept for the
+    /// next line.
+    #[inline(always)]
+    fn lex(&mut self) {
+        let b = self.b;
+        self.refresh();
+        if self.top() >= SQL_IN {
+            self.text = self.string_text();
+        }
+        self.run();
+        self.fill(b.len());
+        let marked = self.mark != usize::MAX && sql::marker_holds(b, self.mark, b.len());
+        self.mark = if marked { 0 } else { usize::MAX };
+    }
+
+    /// The state the scan's last line leaves.
+    #[inline(always)]
+    fn state(&self) -> State {
+        let flags = if self.mark != usize::MAX { MARKED } else { 0 };
+        State::keep(&self.stack, self.depth, self.exact, flags)
+    }
 }
 
 /// [`State::flags`]' bit: a SQL marker (`// language=SQL`) waits for its string.

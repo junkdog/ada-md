@@ -310,36 +310,114 @@ const SYNTECT_DEPTH: usize = 99;
 /// Lex `b`, a line of PowerShell without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut s = Scan {
-        b,
-        out,
-        stack: [MAIN; MAX],
-        wraps: [W_NONE; MAX],
-        depth: 1,
-        exact: state.is_exact(),
-        at: 0,
-        docs_failed: false,
-        docs_at: usize::MAX,
-        backslash: usize::MAX,
-        prefix: (usize::MAX, 0, usize::MAX, 0),
-        exe: (usize::MAX, 0, usize::MAX),
-        brace: (usize::MAX, 0),
-        word: (usize::MAX, 0, 0),
-        regex_at: usize::MAX,
-        regex_type: false,
-    };
-    let n = usize::from(state.depth);
-    for i in 0..n {
-        let c = state.level(i);
-        s.stack[1 + i] = c;
-        s.wraps[1 + i] = match OWN_WRAP.get(usize::from(c)).copied().unwrap_or(W_NONE) {
-            W_NONE => s.wraps[i],
-            w => w,
-        };
-    }
-    s.depth = 1 + n;
-    s.run();
+    let mut s = Scan::fresh(b, out);
+    s.load_state(state);
+    s.lex();
     *state = State::keep(&s.stack, s.depth, s.exact, 0);
+}
+
+/// A block of PowerShell on one scan opened from `state` ([`crate::Carry`], X-067), `state`
+/// left as the last line leaves it.
+pub fn block(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut s = Scan::fresh(b"", &mut out);
+    s.load_state(state);
+    let rest = pass(&mut s);
+    *state = State::keep(&s.stack, s.depth, s.exact, 0);
+    rest
+}
+
+impl crate::Carry for Scan<'_, '_, '_> {
+    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        self.out.0.clear();
+        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
+        self.b = unsafe { crate::line_for(b) };
+        self.at = 0;
+        self.docs_failed = false;
+        self.docs_at = usize::MAX;
+        self.backslash = usize::MAX;
+        self.prefix = (usize::MAX, 0, usize::MAX, 0);
+        self.exe = (usize::MAX, 0, usize::MAX);
+        self.brace = (usize::MAX, 0);
+        self.word = (usize::MAX, 0, 0);
+        self.regex_at = usize::MAX;
+        self.regex_type = false;
+        self.lex();
+        // the line's end as a state's save and load leave it (`line` leaves that to its state)
+        if self.depth - 1 > crate::stack::HELD {
+            self.reload();
+        }
+        self.b = b"";
+        self.out.0
+    }
+}
+
+impl<'b, 'o, 's> Scan<'b, 'o, 's> {
+    /// A scan of `b`, returned as a literal so that it is built in place; the state is
+    /// [`Scan::load_state`]'s.
+    #[inline(always)]
+    fn fresh(b: &'b [u8], out: &'o mut Out<'s>) -> Self {
+        Scan {
+            b,
+            out,
+            stack: [MAIN; MAX],
+            wraps: [W_NONE; MAX],
+            depth: 1,
+            exact: true,
+            at: 0,
+            docs_failed: false,
+            docs_at: usize::MAX,
+            backslash: usize::MAX,
+            prefix: (usize::MAX, 0, usize::MAX, 0),
+            exe: (usize::MAX, 0, usize::MAX),
+            brace: (usize::MAX, 0),
+            word: (usize::MAX, 0, 0),
+            regex_at: usize::MAX,
+            regex_type: false,
+        }
+    }
+
+    /// What [`Scan::fresh`] leaves to `state`: the stack and what is read from it, apart from
+    /// the literal, which a constructor that changed it before returning it copied (a `memcpy`
+    /// a line, X-056's trap).
+    #[inline(always)]
+    fn load_state(&mut self, state: &State) {
+        self.load(state);
+    }
+
+    /// The stack and its levels' wraps from `state`.
+    #[inline(always)]
+    fn load(&mut self, state: &State) {
+        self.exact = state.is_exact();
+        let n = usize::from(state.depth);
+        for i in 0..n {
+            let c = state.level(i);
+            self.stack[1 + i] = c;
+            self.wraps[1 + i] = match OWN_WRAP.get(usize::from(c)).copied().unwrap_or(W_NONE) {
+                W_NONE => self.wraps[i],
+                w => w,
+            };
+        }
+        self.depth = 1 + n;
+    }
+
+    /// The line lexed from the stack it starts with.
+    #[inline(always)]
+    fn lex(&mut self) {
+        self.run();
+    }
+
+    /// The scan as a state's save and load leave it, its stack deeper than a state holds.
+    #[cold]
+    #[inline(never)]
+    fn reload(&mut self) {
+        let state = State::keep(&self.stack, self.depth, self.exact, 0);
+        self.load(&state);
+    }
 }
 
 // A word's classes, as bits: the patterns it can start.
