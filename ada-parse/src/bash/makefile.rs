@@ -998,6 +998,61 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     *state = s.save();
 }
 
+/// A block of a Makefile on one scan opened from `state` ([`crate::Carry`], X-073): bash's kept
+/// scan, its [`Mk`] made once, a line copied with its `\n` into a buffer kept for the block;
+/// `state` left as the last line leaves it.
+pub fn block(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut mk = Mk {
+        l: Line::new(""),
+        present: 0,
+        valid: [0; 2],
+        span: [const { MaybeUninit::uninit() }; MATCHERS],
+        found: [const { MaybeUninit::uninit() }; MATCHERS],
+    };
+    let mut s = Scan::new(b"", state, &mut out, Some(&mut mk));
+    s.stack[0] = MaybeUninit::new(Frame { ctx: MAIN, ..FRAME });
+    s.load(state);
+    let mut c = Carried { s, buf: Vec::new() };
+    let rest = pass(&mut c);
+    *state = c.s.save();
+    rest
+}
+
+/// A Makefile's block: the kept scan, and its line with a `\n` after it.
+struct Carried<'a, 'o, 'p> {
+    s: Scan<'a, 'o, 'p>,
+    buf: Vec<u8>,
+}
+
+impl crate::Carry for Carried<'_, '_, '_> {
+    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        let n = b.len();
+        self.buf.clear();
+        self.buf.reserve(n + 1);
+        self.buf.extend_from_slice(b);
+        self.buf.push(b'\n');
+        // SAFETY: the scan's line and `Mk`'s are set back to empty ones below, before the
+        // buffer is written again or dropped
+        let buf = unsafe { crate::line_for(&self.buf) };
+        // SAFETY: a line's text, a `str`, then a `\n`
+        let text = unsafe { std::str::from_utf8_unchecked(buf) };
+        // SAFETY: a Makefile's scan has its `Mk`
+        let mk = unsafe { self.s.mk.as_deref_mut().unwrap_unchecked() };
+        mk.l = Line::new(text);
+        mk.present = b.iter().fold(0, |set, &c| set | BIT[usize::from(c)]);
+        mk.valid = [0; 2];
+        self.s.carry::<true>(&buf[..n]);
+        // SAFETY: as above
+        unsafe { self.s.mk.as_deref_mut().unwrap_unchecked() }.l = Line::new("");
+        self.s.out.0
+    }
+}
+
 impl Scan<'_, '_, '_> {
     /// Where a make matcher's leftmost match from `p` starts and ends, kept for the line; the
     /// match itself stays in the memo, for the pattern that wins.

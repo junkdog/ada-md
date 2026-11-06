@@ -476,124 +476,55 @@ fn line_on<K: Sink>(b: &[u8], state: &mut State, out: &mut Out, k: K) -> K {
     s.k
 }
 
-/// Lex up to `max` of `text`'s lines from `state`, as [`crate::lex_lines`] does, on one scan
-/// kept across them (X-066, HL-006's stage B): its stack, the bits a line hands the next and its
-/// spans stay where they are, and a line resets only what a line starts with. A [`State`] is
-/// read once at the start and made once at the end. Each line ends as [`line`]'s does (past the
-/// levels a state holds, the bottom ones dropped), so a block lexes as its lines do one at a
-/// time.
-#[inline(never)]
-pub fn lines(
-    text: &str,
-    max: usize,
+/// A block of Rust on one scan opened from `state` ([`crate::Carry`]; X-066's scan, on the shared
+/// loop since X-073): its stack, the bits a line hands the next and its spans' cursor stay where
+/// they are, a line resets only what a line starts with, and a [`State`] is read once at the
+/// start and made once at the end. Each line ends as [`line()`]'s does (past the levels a state
+/// holds, the bottom ones dropped), so a block lexes as its lines do one at a time.
+pub fn block(
     state: &mut State,
-    (spans, buf): (&mut Vec<crate::Span>, &mut String),
-    prep: impl FnMut(&str, &mut String) -> bool,
-    mut each: impl FnMut(&str, &[crate::Span]),
-) -> Option<usize> {
-    let k = Spans::new();
-    pass(text, max, state, (spans, buf), prep, k, |line, _, out| {
-        each(line, out.0);
-    })
-}
-
-/// [`lines`]' runs by theme rule pushed to `runs` (X-068), `each` told where a line's runs end:
-/// [`crate::lex_lines_runs`] for Rust.
-#[inline(never)]
-#[allow(clippy::too_many_arguments)]
-pub fn lines_runs(
-    text: &str,
-    max: usize,
-    state: &mut State,
-    (spans, buf): (&mut Vec<crate::Span>, &mut String),
-    prep: impl FnMut(&str, &mut String) -> bool,
-    rules: &mut dyn Rules,
-    runs: &mut Vec<Run>,
-    mut each: impl FnMut(usize),
-) -> Option<usize> {
-    let k = Runs::new(rules, runs);
-    pass(text, max, state, (spans, buf), prep, k, |line, k, _| {
-        each(k.end_line(line.len()));
-    })
-}
-
-/// A line's scan on a sink, compiled in this crate once a sink. [`pass`] is generic over its
-/// caller's closures, so it is compiled in the caller's crate, and every generic method of the
-/// scan it called would be compiled there again: Rust's scan was twice in ada (+75 KB). These
-/// methods, on the sinks themselves, are compiled here only.
-trait Lexes: Sink {
-    /// [`Scan::lex_next`].
-    fn lex_next(s: &mut Scan<'_, '_, Self>);
-    /// [`Scan::lex_apart`].
-    fn lex_apart(s: &mut Scan<'_, '_, Self>, b: &[u8]);
-}
-
-impl Lexes for Spans {
-    #[inline(never)]
-    fn lex_next(s: &mut Scan<'_, '_, Self>) {
-        s.lex_next();
-    }
-
-    #[inline(never)]
-    fn lex_apart(s: &mut Scan<'_, '_, Self>, b: &[u8]) {
-        s.lex_apart(b);
-    }
-}
-
-impl Lexes for Runs<'_> {
-    #[inline(never)]
-    fn lex_next(s: &mut Scan<'_, '_, Self>) {
-        s.lex_next();
-    }
-
-    #[inline(never)]
-    fn lex_apart(s: &mut Scan<'_, '_, Self>, b: &[u8]) {
-        s.lex_apart(b);
-    }
-}
-
-/// [`lines`]' loop on a sink of either kind: `each` gets a line, the sink and the spans'
-/// vector once the line is lexed and its spans closed.
-#[inline(always)]
-fn pass<K: Lexes>(
-    text: &str,
-    max: usize,
-    state: &mut State,
-    (spans, buf): (&mut Vec<crate::Span>, &mut String),
-    mut prep: impl FnMut(&str, &mut String) -> bool,
-    k: K,
-    mut each: impl FnMut(&str, &mut K, &mut Out),
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
 ) -> Option<usize> {
     let mut out = Out::new(spans);
-    let mut s = Scan::new(b"", &mut out, state.is_exact(), state.arg, k);
-    s.load(state);
-    // the spans' cursor opened once a block: a line starts it at the vector's start
-    s.out.0.clear();
-    s.open_spans(64);
-    let mut p = 0;
-    let mut rest = Some(0);
-    for _ in 0..max {
-        let (line, e) = crate::line_at(text, p);
-        s.k.start_line();
-        if prep(line, buf) {
-            K::lex_apart(&mut s, buf.as_bytes());
-            s.close_spans();
-            each(buf.as_str(), &mut s.k, s.out);
-        } else {
-            s.b = line.as_bytes();
-            K::lex_next(&mut s);
-            s.close_spans();
-            each(line, &mut s.k, s.out);
-        }
-        if e == text.len() {
-            rest = None;
-            break;
-        }
-        p = e + 1;
-        rest = Some(p);
-    }
+    let mut s = Scan::new(b"", &mut out, state.is_exact(), state.arg, Spans::new());
+    s.open_lines(state);
+    let rest = pass(&mut s);
     *state = s.state();
     rest
+}
+
+/// [`block`]'s runs by theme rule pushed to `runs` (X-068's sink, [`crate::CarryRuns`]).
+pub fn block_runs(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let k = Runs::new(rules, runs);
+    let mut s = Scan::new(b"", &mut out, state.is_exact(), state.arg, k);
+    s.open_lines(state);
+    let rest = pass(&mut s);
+    *state = s.state();
+    rest
+}
+
+impl crate::Carry for Scan<'_, '_, Spans> {
+    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        // SAFETY: the line is set back to an empty one before `b`'s borrow ends
+        self.carry(unsafe { crate::line_for(b) });
+        self.out.0
+    }
+}
+
+impl crate::CarryRuns for Scan<'_, '_, Runs<'_>> {
+    fn next(&mut self, b: &[u8]) -> usize {
+        // SAFETY: as above
+        self.carry(unsafe { crate::line_for(b) });
+        self.k.end_line(b.len())
+    }
 }
 
 impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
@@ -614,6 +545,25 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         State::keep(&self.stack, self.depth, self.exact, self.arg())
     }
 
+    /// The scan opened for a block from `state`, its spans' cursor at the vector's start.
+    #[inline(always)]
+    fn open_lines(&mut self, state: &State) {
+        self.load(state);
+        self.out.0.clear();
+        self.open_spans(64);
+    }
+
+    /// `b`, the block's next line, lexed on this scan, its spans closed; the scan's line an
+    /// empty one again after.
+    #[inline(always)]
+    fn carry(&mut self, b: &'b [u8]) {
+        self.k.start_line();
+        self.b = b;
+        self.lex_next();
+        self.close_spans();
+        self.b = b"";
+    }
+
     /// The next line, [`Scan::b`], lexed on this scan: what a line starts with reset, the rest
     /// kept from the line before.
     #[inline(always)]
@@ -629,30 +579,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.sql_end = usize::MAX;
         self.sql_nl = false;
         self.lex_line();
-    }
-
-    /// The next line lexed from `b`, a line `prep` wrote apart from the block (a tab expanded),
-    /// on a scan of its own that hands back what this one keeps.
-    #[cold]
-    #[inline(never)]
-    fn lex_apart(&mut self, b: &[u8]) {
-        self.close_spans();
-        // the sink handed to the line's scan and back: a span sink opens again below, a run
-        // sink's runs go on where they are
-        let mut s = Scan::new(b, &mut *self.out, self.exact, 0, self.k);
-        s.open_spans(b.len() / 4 + 16);
-        s.stack = self.stack;
-        (s.depth, s.cur, s.opened) = (self.depth, self.cur, self.opened);
-        (s.hashes, s.annot, s.mark) = (self.hashes, self.annot, self.mark);
-        s.lex_line();
-        s.close_spans();
-        self.stack = s.stack;
-        (self.depth, self.cur, self.opened) = (s.depth, s.cur, s.opened);
-        (self.hashes, self.annot, self.mark) = (s.hashes, s.annot, s.mark);
-        self.exact = s.exact;
-        self.k = s.k;
-        // its spans where this scan's cursor goes on (the vector may have moved)
-        self.open_spans(0);
     }
 
     /// A line's scan, its stack the base alone, `arg` the bits the line before left.

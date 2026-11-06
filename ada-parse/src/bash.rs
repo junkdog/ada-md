@@ -36,7 +36,7 @@ mod makefile;
 mod matchers;
 mod scan;
 
-pub use makefile::{line as make_line, scopes as make_scopes};
+pub use makefile::{block as make_block, line as make_line, scopes as make_scopes};
 
 macro_rules! kinds {
     ($($k:ident = $s:literal,)*) => {
@@ -788,9 +788,19 @@ pub fn block(
 
 impl crate::Carry for Scan<'_, '_, '_> {
     fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        // SAFETY: the line is set back to an empty one before `b`'s borrow ends
+        self.carry::<false>(unsafe { crate::line_for(b) })
+    }
+}
+
+impl<'a> Scan<'a, '_, '_> {
+    /// `b`, the block's next line, lexed on the kept scan ([`crate::Carry::next`]); `MAKE` for
+    /// a Makefile's, its [`makefile::Mk`] already on the line. The scan's line is an empty one
+    /// again when it returns.
+    #[inline(always)]
+    fn carry<const MAKE: bool>(&mut self, b: &'a [u8]) -> &[crate::Span] {
         self.out.0.clear();
-        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
-        self.b = unsafe { crate::line_for(b) };
+        self.b = b;
         self.emitted = 0;
         self.push_at = (0, 0);
         self.guard = false;
@@ -798,7 +808,7 @@ impl crate::Carry for Scan<'_, '_, '_> {
         self.last_close = None;
         self.from_with = false;
         self.with_next = (0, 0, 0);
-        self.run::<false>();
+        self.run::<MAKE>();
         self.fill(self.b.len());
         // a state holds whole frames from the top, each up to 5 bytes: past what it holds, the
         // bottom ones dropped

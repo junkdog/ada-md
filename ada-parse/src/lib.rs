@@ -184,13 +184,9 @@ pub fn lex_lines(
     prep: impl FnMut(&str, &mut String) -> bool,
     each: impl FnMut(&str, &[Span]),
 ) -> Option<usize> {
-    if lang == Lang::Rust {
-        // one scan across the block's lines, its state read and made once (X-066)
-        return rust::lines(text, max, state, (spans, buf), prep, each);
-    }
     let (mut prep, mut each) = (prep, each);
-    if let Some(block) = carried(lang) {
-        // every other carried scanner's: one scan across the lines, through one loop (X-067)
+    if let Some(block) = carried::<true>(lang) {
+        // a carried scanner's: one scan across the lines, through one loop (X-067)
         return block(state, spans, &mut |c| {
             split_lines(text, max, buf, &mut prep, |l| each(l, c.next(l.as_bytes())))
         });
@@ -217,22 +213,28 @@ pub fn lex_lines_runs(
     runs: &mut Vec<Run>,
     mut each: impl FnMut(usize),
 ) -> Option<usize> {
+    let mut prep = prep;
     if lang == Lang::Rust {
-        return rust::lines_runs(text, max, state, (spans, buf), prep, rules, runs, each);
-    }
-    if let Some(scan) = run_scanner(lang) {
-        // a line at a time on one run sink, opened once a block (X-069)
-        let mut k = emit::Runs::new(rules, runs);
-        let mut out = Out::new(spans);
-        return split_lines(text, max, buf, prep, |l| {
-            k.start_line();
-            scan(l.as_bytes(), state, &mut out, &mut k);
-            each(k.end_line(l.len()));
+        // Rust's scan writes the runs (X-068), on the shared loop (X-073)
+        return rust::block_runs(state, spans, rules, runs, &mut |c| {
+            split_lines(text, max, buf, &mut prep, |l| each(c.next(l.as_bytes())))
         });
     }
-    let mut t = emit::Table::new(rules);
-    let mut prep = prep;
-    if let Some(block) = carried(lang) {
+    if let Some(scan) = run_scanner(lang) {
+        return lines_run_scanned(
+            scan,
+            text,
+            max,
+            state,
+            (spans, buf),
+            prep,
+            rules,
+            runs,
+            each,
+        );
+    }
+    if let Some(block) = carried::<false>(lang) {
+        let mut t = emit::Table::new(rules);
         return block(state, spans, &mut |c| {
             split_lines(text, max, buf, &mut prep, |l| {
                 each(emit::runs_of(l.len(), c.next(l.as_bytes()), &mut t, runs));
@@ -240,6 +242,63 @@ pub fn lex_lines_runs(
         });
     }
     let scan = scanner::<false>(lang);
+    lines_scanned(
+        scan,
+        text,
+        max,
+        state,
+        (spans, buf),
+        prep,
+        rules,
+        runs,
+        each,
+    )
+}
+
+// [`lex_lines_runs`]' paths whose loops would be inline in it each a function of their own
+// (X-073): compiled in the caller's crate as the loop was, but each on its own registers, so
+// that a path added or changed doesn't move another's per-line code (+7 instructions a line on
+// YAML's when Makefile joined `carried`'s table)
+
+/// [`lex_lines_runs`] on a run scanner: a line at a time on one run sink, opened once a block
+/// (X-069).
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn lines_run_scanned(
+    scan: RunScanner,
+    text: &str,
+    max: usize,
+    state: &mut State,
+    (spans, buf): (&mut Vec<Span>, &mut String),
+    prep: impl FnMut(&str, &mut String) -> bool,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    mut each: impl FnMut(usize),
+) -> Option<usize> {
+    let mut k = emit::Runs::new(rules, runs);
+    let mut out = Out::new(spans);
+    split_lines(text, max, buf, prep, |l| {
+        k.start_line();
+        scan(l.as_bytes(), state, &mut out, &mut k);
+        each(k.end_line(l.len()));
+    })
+}
+
+/// [`lex_lines_runs`] on a line's scanner, its spans read into runs.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn lines_scanned(
+    scan: Scanner,
+    text: &str,
+    max: usize,
+    state: &mut State,
+    (spans, buf): (&mut Vec<Span>, &mut String),
+    prep: impl FnMut(&str, &mut String) -> bool,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    mut each: impl FnMut(usize),
+) -> Option<usize> {
+    let mut t = emit::Table::new(rules);
     split_lines(text, max, buf, prep, |l| {
         scan(l, state, spans);
         each(emit::runs_of(l.len(), spans, &mut t, runs));
@@ -287,10 +346,20 @@ type Block = fn(
     &mut dyn FnMut(&mut dyn Carry) -> Option<usize>,
 ) -> Option<usize>;
 
-/// `lang`'s block on a carried scan, where it has one.
+/// As [`Carry`], a scan writing a line's runs by theme rule ([`emit::Runs`], X-068): Rust's, on
+/// the shared loop (X-073).
+pub(crate) trait CarryRuns {
+    /// `b`, the block's next line, lexed on the scan as [`lex_runs`] lexes it after the lines
+    /// before, its runs pushed: where they end.
+    fn next(&mut self, b: &[u8]) -> usize;
+}
+
+/// `lang`'s block on a carried scan, where it has one. Without `SPANS`, the run API's table,
+/// the languages whose scans write runs are none, as in [`scanner`].
 #[inline(always)]
-fn carried(lang: Lang) -> Option<Block> {
+fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
     Some(match lang {
+        Lang::Rust if SPANS => rust::block,
         Lang::Kotlin => kotlin::block,
         Lang::Java => java::block,
         Lang::Python => python::block,
@@ -302,6 +371,7 @@ fn carried(lang: Lang) -> Option<Block> {
         Lang::Cpp => cpp::block,
         Lang::C => cpp::block_c,
         Lang::Bash => bash::block,
+        Lang::Makefile => bash::make_block,
         Lang::Lua => lua::block,
         Lang::PowerShell => powershell::block,
         Lang::Css => css::block,
@@ -347,7 +417,7 @@ type Scanner = fn(&str, &mut State, &mut Vec<Span>);
 type RunScanner = fn(&[u8], &mut State, &mut Out, &mut emit::Runs);
 
 /// `lang`'s lexer on a run sink, where its scan writes runs a line at a time: the line-format
-/// engine's (X-069). Rust's is its own pass (X-068).
+/// engine's (X-069). Rust's runs come from its carried scan ([`CarryRuns`], X-068, X-073).
 #[inline(always)]
 fn run_scanner(lang: Lang) -> Option<RunScanner> {
     Some(match lang {
