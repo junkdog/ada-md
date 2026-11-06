@@ -9,9 +9,8 @@
 //! the keywords by leaf, the primitive and `support.type` names, the item words, the macros whose
 //! first argument is a format string, SQL's calls), and its shape (a constant's capitals, a call's
 //! lowercase, a C type's) is told from those classes, not read again. Punctuation is one `match`
-//! on its byte. The frames share the stack and its ids with the contexts on bat's patterns (the
-//! headers, attributes, closure parameters, `macro_rules!`, strings, comments, regexes, SQL;
-//! [`Scan::at`]), which they push and return to.
+//! on its byte. The frames share the stack and its ids with the headers', attributes', strings'
+//! and comments' frames ([`super::items`]), which run in the same loop.
 
 use super::*;
 use crate::clike::{self, CLASS, DIGIT, HIGH, Ident, LOWER, SPACE, UPPER, WORD};
@@ -241,14 +240,6 @@ static INFO: [(u8, u16); N + 1] = {
     t
 };
 
-/// Whether the frames run `top`: the statement frames, `after-operator` and `try-closure` (a
-/// line's end may leave them), a path's segments, a SQL call's arguments and the type frames,
-/// whose ids come first ([`LAST_FRAME`]).
-#[inline(always)]
-pub(super) fn is_code(top: u8) -> bool {
-    top <= LAST_FRAME
-}
-
 /// `[\p{Ll}_][\p{Ll}\p{Nd}_]*`, a whole name of these classes whose first byte is `first`.
 #[inline(always)]
 fn lower(first: u8, bits: u8) -> bool {
@@ -277,21 +268,27 @@ impl Scan<'_, '_> {
         NameAt { e: end, bits, id }
     }
 
-    /// Bytes `s..e` are `leaf` (not 0), in a frame or a context of the code around one: those
-    /// never run in an attribute and their text is plain, so no text before it is filled and its
-    /// kind is the leaf.
+    /// Bytes `s..e` are `leaf` (not 0), in a frame: frames never run in an attribute and their
+    /// text is plain, so no text before it is filled, its kind is the leaf, and [`Scan::at`]
+    /// stays where it is (X-065): a turn into colored text fills to its place first, under the
+    /// plain text, which moves it there.
     #[inline(always)]
     pub(super) fn tok(&mut self, s: usize, e: usize, leaf: u16) -> usize {
-        // no text before it to fill (a string's just pushed has been, to its quote)
-        debug_assert!(self.annot == 0 && (self.text == 0 || self.at >= s));
+        debug_assert!(self.annot == 0 && self.text == 0 && e > s);
         self.merge(s, e, leaf);
-        self.at = e;
         e
+    }
+
+    /// [`Scan::tok`] out of line, for the frames that run seldom (the headers', a closure's,
+    /// `macro_rules!`'s; X-064): one copy of the emitter, not one a place.
+    #[inline(never)]
+    pub(super) fn tok_far(&mut self, s: usize, e: usize, leaf: u16) -> usize {
+        self.tok(s, e, leaf)
     }
 
     /// A closer at `p`, `leaf`, that ends the frame.
     #[inline(always)]
-    fn tok_close(&mut self, p: usize, leaf: u16) -> usize {
+    pub(super) fn tok_close(&mut self, p: usize, leaf: u16) -> usize {
         self.tok(p, p + 1, leaf);
         self.pop_code();
         p + 1
@@ -300,20 +297,27 @@ impl Scan<'_, '_> {
     /// Frame `c` pushed from a frame: no text to fill before it, nothing to count, its text
     /// plain as the frame's.
     #[inline(always)]
-    fn push_code(&mut self, c: u8) {
+    pub(super) fn push_code(&mut self, c: u8) {
         if self.depth == MAX {
-            crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
-            self.count();
+            self.full();
         }
         self.stack[self.depth] = c;
         self.depth += 1;
         self.cur = c;
     }
 
+    /// A stack full: its bottom level dropped, the attributes counted again.
+    #[cold]
+    #[inline(never)]
+    fn full(&mut self) {
+        crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
+        self.count();
+    }
+
     /// The frame on top popped: what is below a frame is a frame or a context of the code
     /// around it, never a string's or a comment's, so the text stays plain.
     #[inline(always)]
-    fn pop_code(&mut self) {
+    pub(super) fn pop_code(&mut self) {
         if self.depth > 1 {
             self.depth -= 1;
             self.cur = self.stack[self.depth - 1];
@@ -335,7 +339,7 @@ impl Scan<'_, '_> {
     /// A generic's `<` at `p`, which a frame has seen: its arguments' frame opened, in place of
     /// [`GENERIC`]'s turn at it (bat's contexts still push that).
     #[inline(always)]
-    fn open_generic(&mut self, p: usize) -> usize {
+    pub(super) fn open_generic(&mut self, p: usize) -> usize {
         self.push_code(GENERIC_ARGS);
         self.tok(p, p + 1, GENERIC_BEGIN)
     }
@@ -365,17 +369,32 @@ impl Scan<'_, '_> {
         e + 2
     }
 
-    /// The frames' run from `p`, while one is on top: where it stopped, at the line's end or
-    /// at the start of a context on bat's patterns.
+    /// The frames' run from `p`: where it stopped, at the line's end or where a regex or SQL in
+    /// a string is on top. The code's and the type frames first (ids up to [`LAST_FRAME`], one
+    /// compare), the rest a call ([`Scan::item_turn`], X-064).
     pub(super) fn code_run(&mut self, mut p: usize) -> usize {
         let b = self.b;
         loop {
             let top = self.top();
-            if !is_code(top) {
-                return p;
+            if top > LAST_FRAME {
+                if top >= SQL_IN {
+                    return p;
+                }
+                if p >= b.len() {
+                    // the patterns that match the line's `\n`: `(?=[};)\]\n])` and the empty match
+                    match top {
+                        CLOSURE_PARAMS | IMPL_GENERIC => self.pop_code(),
+                        IMPL_FOR => self.set_top(IMPL_IDENT),
+                        STRUCT_GENERIC => self.set_top(STRUCT_BODY),
+                        _ => return b.len(),
+                    }
+                    continue;
+                }
+                p = self.item_turn(p, b[p], top);
+                continue;
             }
-            // an attribute's contexts open only strings above them, so no frame runs in one
-            // and a kind is its leaf ([`Scan::tok`])
+            // an attribute's frames open only strings above them, so no code or type frame
+            // runs in one and a kind is its leaf ([`Scan::tok`])
             debug_assert!(self.annot == 0, "a frame in an attribute");
             if p >= b.len() {
                 // `(?=[};)\]\n])`, and the empty match
@@ -469,8 +488,9 @@ impl Scan<'_, '_> {
         match b.get(q) {
             None => q,
             Some(b'|') => {
-                self.set(p, CLOSURE);
-                q
+                self.set_top(CLOSURE_RETURN);
+                self.push_code(CLOSURE_PARAMS);
+                self.tok(q, q + 1, PARAMS_BEGIN)
             }
             Some(b'<') if top == AFTER_OP => {
                 self.set_top(GENERIC_ARGS);
@@ -612,12 +632,12 @@ impl Scan<'_, '_> {
                     p + 1
                 }
                 b'(' => {
-                    self.push(p, PARAM_TUPLE);
+                    self.push_code(PARAM_TUPLE);
                     self.tok(p, p + 1, META_GROUP_BEGIN)
                 }
                 b':' if let Some(o) = colon_paren(b, p) => {
                     self.tok(p, p + 1, SEPARATOR);
-                    self.push(o, PARAM_TUPLE_TYPE);
+                    self.push_code(PARAM_TUPLE_TYPE);
                     self.tok(o, o + 1, META_GROUP_BEGIN)
                 }
                 _ if starts => self.param_word(p).unwrap_or_else(|| word_end(b, p)),
@@ -646,7 +666,7 @@ impl Scan<'_, '_> {
                     p + 2
                 }
                 b'w' if self.is_word_at(p, b"where") => {
-                    self.set(p, FN_WHERE);
+                    self.set_top(FN_WHERE);
                     p
                 }
                 _ => {
@@ -741,7 +761,7 @@ impl Scan<'_, '_> {
     /// `type-any-identifier`'s patterns that start on punctuation, at `p`: a reference's `&`,
     /// a raw pointer's `*const`/`*mut`, a lifetime, a path's `::`, a generic's arguments, a
     /// type's group.
-    fn type_tok(&mut self, p: usize, c: u8) -> Option<usize> {
+    pub(super) fn type_tok(&mut self, p: usize, c: u8) -> Option<usize> {
         let b = self.b;
         match c {
             b'&' => Some(self.tok(p, p + 1, OPERATOR)),
@@ -778,7 +798,7 @@ impl Scan<'_, '_> {
             b']' if top == GENERIC_ARRAY => return self.tok_close(p, GROUP_END),
             b';' if top == GENERIC_ARRAY => {
                 self.tok(p, p + 1, SEPARATOR);
-                self.set(p + 1, GENERIC_LEN);
+                self.set_top(GENERIC_LEN);
                 return p + 1;
             }
             b'[' => {
@@ -788,7 +808,7 @@ impl Scan<'_, '_> {
             b'-' if b.get(p + 1) == Some(&b'>') => return self.tok(p, p + 2, SEPARATOR_GENERIC),
             b'e' if starts && self.is_word_at(p, b"extern") => {
                 self.tok(p, p + 6, KEYWORD);
-                self.push(p + 6, GENERIC_EXTERN);
+                self.push_code(GENERIC_EXTERN);
                 return p + 6;
             }
             _ if starts => {
@@ -962,8 +982,7 @@ impl Scan<'_, '_> {
                 if b.get(t) == Some(&b'|') {
                     self.tok(p, e, FN_NAME);
                     self.tok(s, s + 1, OPERATOR);
-                    self.push(t, CLOSURE);
-                    return t;
+                    return self.open_closure(t);
                 }
             }
         }
@@ -975,7 +994,7 @@ impl Scan<'_, '_> {
                 W_TRAIT => self.item_at(p, e, (k, ke), TRAIT, TRAIT_NAME, Some(HEAD)),
                 W_IMPL if id == W_IMPL => {
                     self.tok(p, e, IMPL);
-                    self.push(e, IMPL_DEF);
+                    self.push_code(IMPL_DEF);
                     Some(e)
                 }
                 W_ENUM => self.item_at(p, e, (k, ke), ENUM, ENUM_NAME, Some(HEAD)),
@@ -1011,7 +1030,7 @@ impl Scan<'_, '_> {
                         let m = word_end(b, s);
                         self.tok(p, e + 1, SUPPORT_FN);
                         self.tok(s, m, MACRO_NAME);
-                        self.push(m, MACRO_BLOCK);
+                        self.push_code(MACRO_BLOCK);
                         return m;
                     }
                 }
@@ -1043,7 +1062,7 @@ impl Scan<'_, '_> {
                 };
                 if fmt != MAIN {
                     self.tok(p, e + 1, SUPPORT_MACRO);
-                    self.push(s, fmt);
+                    self.push_code(fmt);
                     return self.tok(s, s + 1, META_GROUP_BEGIN);
                 }
             }
@@ -1100,7 +1119,7 @@ impl Scan<'_, '_> {
         self.tok(k, ke, leaf);
         self.tok(s, n, name);
         if let Some(c) = then {
-            self.push(n, c);
+            self.push_code(c);
         }
         Some(n)
     }
@@ -1119,7 +1138,7 @@ impl Scan<'_, '_> {
             self.tok(p, e, MODIFIER);
         }
         self.tok(k, ke, STRUCT);
-        self.push(end, STRUCT_ID);
+        self.push_code(STRUCT_ID);
         Some(end)
     }
 
@@ -1142,7 +1161,7 @@ impl Scan<'_, '_> {
             b'\'' => self.quote(p),
             b'"' => {
                 self.push(p, STRING);
-                let e = self.tok(p, p + 1, STR_BEGIN);
+                let e = self.token(p, 1, STR_BEGIN);
                 self.regex_in(p, e);
                 e
             }
@@ -1217,10 +1236,7 @@ impl Scan<'_, '_> {
             },
             b'-' | b'+' | b'%' => self.op_eq(p, ARITHMETIC),
             b'^' => self.op_eq(p, BITWISE),
-            b'|' if self.last_opened != 0 => {
-                self.push(p, CLOSURE);
-                p
-            }
+            b'|' if self.last_opened != 0 => self.open_closure(p),
             b'<' if self.last_opened == OPENED_AFTER => self.open_generic(p),
             b'&' | b'|' => {
                 if next == Some(b'=') {
