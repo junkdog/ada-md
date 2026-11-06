@@ -670,39 +670,81 @@ mod tests {
                 "# c\nhost,1.2.3.4 ssh-ed25519 AAAAC3Nz\n[h]:22 ecdsa-sha2-nistp256 AAAA x\n|1|aGFz|aGFz ssh-rsa AAAA\n@revoked * ssh-rsa AAAA\n\n",
             ),
         ];
-        let none = |_: &str, _: &mut String| false;
         for (lang, text) in texts {
-            let want = lang_from_spans(lang, text, none);
-            for max in [usize::MAX, 1, 2, 3] {
-                let (mut spans, mut buf, mut state) = (Vec::new(), String::new(), State::default());
-                let (mut rules, mut runs, mut got) = (Lazy(Vec::new()), Vec::new(), Vec::new());
-                let mut rest = Some(0);
-                while let Some(p) = rest {
-                    let mut ends = vec![runs.len()];
-                    let next = lex_lines_runs(
-                        lang,
-                        &text[p..],
-                        max,
-                        &mut state,
-                        (&mut spans, &mut buf),
-                        none,
-                        &mut rules,
-                        &mut runs,
-                        |n| ends.push(n),
-                    );
-                    got.extend(ends.windows(2).map(|w| runs[w[0]..w[1]].to_vec()));
-                    rest = next.map(|q| p + q);
-                }
-                assert_eq!(got, want, "{lang:?} in blocks of {max}");
-            }
-            let (mut state, mut spans, mut rules, mut runs) =
-                (State::default(), Vec::new(), Lazy(Vec::new()), Vec::new());
-            for (n, line) in text.split('\n').enumerate() {
-                runs.clear();
-                lex_runs(lang, line, &mut state, &mut spans, &mut rules, &mut runs);
-                assert_eq!(runs, want[n], "{lang:?}: line {n} alone");
-            }
+            runs_are_spans(lang, text);
         }
+    }
+
+    /// `lang`'s runs of `text` are those its spans give, in blocks of a few lines and a line at a
+    /// time, the state handed on.
+    fn runs_are_spans(lang: Lang, text: &str) {
+        let none = |_: &str, _: &mut String| false;
+        let want = lang_from_spans(lang, text, none);
+        for max in [usize::MAX, 1, 2, 3] {
+            let (mut spans, mut buf, mut state) = (Vec::new(), String::new(), State::default());
+            let (mut rules, mut runs, mut got) = (Lazy(Vec::new()), Vec::new(), Vec::new());
+            let mut rest = Some(0);
+            while let Some(p) = rest {
+                let mut ends = vec![runs.len()];
+                let next = lex_lines_runs(
+                    lang,
+                    &text[p..],
+                    max,
+                    &mut state,
+                    (&mut spans, &mut buf),
+                    none,
+                    &mut rules,
+                    &mut runs,
+                    |n| ends.push(n),
+                );
+                got.extend(ends.windows(2).map(|w| runs[w[0]..w[1]].to_vec()));
+                rest = next.map(|q| p + q);
+            }
+            assert_eq!(got, want, "{lang:?} in blocks of {max}");
+        }
+        let (mut state, mut spans, mut rules, mut runs) =
+            (State::default(), Vec::new(), Lazy(Vec::new()), Vec::new());
+        for (n, line) in text.split('\n').enumerate() {
+            runs.clear();
+            lex_runs(lang, line, &mut state, &mut spans, &mut rules, &mut runs);
+            assert_eq!(runs, want[n], "{lang:?}: line {n} alone");
+        }
+    }
+
+    /// The runs written by the scans of X-072 are those their spans give: JSON's through keys,
+    /// escapes, numbers, words, and a `/* */` comment over lines; TOML's; XML's.
+    #[test]
+    fn scans_runs_are_their_spans() {
+        runs_are_spans(
+            Lang::Json,
+            concat!(
+                "{\"a\": 1, \"b\\\"\" : [1.5, -2e3, true, null, NaN], // c\n",
+                "  \"s\": \"x\\u00e9\\q\", /* open\n",
+                "\n",
+                "  still */ \"k\": {}, \"open\n",
+                "  [ ] , \"/*\" /**/ }",
+            ),
+        );
+        // TOML's through headers, inline tables and arrays over lines, multi-line strings, dates,
+        // and bad keys and array items (spans joined)
+        runs_are_spans(
+            Lang::Toml,
+            concat!(
+                "# c\n[table]\nkey = \"v\" # t\n\"q k\".x = 1_000\n[[arr]]\nd = 1979-05-27T07:32:00Z\n",
+                "a = [\n  1, 2.5, # c\n  \"x\",\n]\nt = { a = 1, b = { c = [true] } }\n",
+                "m = \"\"\"\nmulti \\u00e9\n\"\"\"\nl = '''\nlit'''\nbad key = ?\nx = [1 2 @]\n[bad\n",
+            ),
+        );
+        // XML's through a doctype and its subset, comments, CDATA and attributes over lines, and
+        // processing instructions
+        runs_are_spans(
+            Lang::Xml,
+            concat!(
+                "<?xml version=\"1.0\"?>\n<!DOCTYPE a [\n  <!ELEMENT a (b|c)*>\n  <!ENTITY e \"x\">\n]>\n",
+                "<a x=\"1\"\n   y='2'>text &e; &#x41;<!-- c\n still -->\n<![CDATA[ raw\n<b>]]>",
+                "<b:c/></a>\n<?pi data?>\n< bad\n",
+            ),
+        );
     }
 
     /// A gap between spans is plain, a run joins the one before of its rule, a line with no rule

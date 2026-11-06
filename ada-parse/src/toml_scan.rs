@@ -17,6 +17,7 @@
 //! The state between lines is one word: a multi-line string open, the arrays and inline tables
 //! open (each level's kind, the innermost 48), and where in the innermost the line stopped.
 
+use crate::emit::{Push, Runs, Sink};
 use crate::matcher::{Atom, Line, is_word};
 use crate::prim::find_any;
 use crate::toml::{
@@ -218,6 +219,18 @@ const KINDS: u32 = 48;
 /// Lex `b`, a line without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
+    scan(b, state, out, &mut Push);
+}
+
+/// As [`line`], the line's runs written to `k` (X-072).
+#[inline(never)]
+pub(crate) fn line_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+    scan(b, state, out, k);
+}
+
+/// [`line`]'s scan, its lexemes written to `k`, held by reference (X-069's lesson).
+#[inline(always)]
+fn scan<K: Sink>(b: &[u8], state: &mut State, out: &mut Out, k: &mut K) {
     let w = state.word();
     let mut t = Scan {
         b,
@@ -226,6 +239,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         string: NO_STRING,
         stop: at::LINE,
         out,
+        k,
     };
     let (p, at) = match w & 3 {
         NO_STRING if t.depth == 0 => (0, at::LINE),
@@ -245,7 +259,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     state.set_word(t.string | stop << 2 | u64::from(t.depth) << 8 | t.kinds << 16);
 }
 
-struct Scan<'b, 'o, 'c> {
+struct Scan<'b, 'o, 'c, K: Sink> {
     b: &'b [u8],
     /// The arrays and inline tables open.
     depth: u8,
@@ -256,12 +270,13 @@ struct Scan<'b, 'o, 'c> {
     /// Where the line stopped inside the innermost level.
     stop: u8,
     out: &'o mut Out<'c>,
+    k: &'o mut K,
 }
 
-impl Scan<'_, '_, '_> {
+impl<K: Sink> Scan<'_, '_, '_, K> {
     #[inline(always)]
     fn put(&mut self, s: usize, e: usize, kind: u16) {
-        self.out.push(s, e, kind);
+        self.k.push(&mut self.out, s, e, kind);
     }
 
     /// What follows a value: the innermost level's separator, or the top level's end.
@@ -367,7 +382,7 @@ impl Scan<'_, '_, '_> {
                         }
                         _ => {
                             let e = word_or_char(b, p);
-                            self.out.push_merged(p, e, leaf::BAD_ARRAY);
+                            self.k.merge(&mut self.out, p, e, leaf::BAD_ARRAY);
                             p = e;
                         }
                     }
@@ -395,7 +410,7 @@ impl Scan<'_, '_, '_> {
                         }
                         _ => {
                             let e = word_or_char(b, p);
-                            self.out.push_merged(p, e, IN_KEY | leaf::BAD_KEY);
+                            self.k.merge(&mut self.out, p, e, IN_KEY | leaf::BAD_KEY);
                             p = e;
                         }
                     }

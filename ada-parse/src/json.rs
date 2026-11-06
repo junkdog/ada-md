@@ -8,7 +8,8 @@
 //! `[syntax]` rules written for it still apply. What the grammar marks as invalid by where it
 //! stands (`foo`, `NaN`, a missing `,`) is left plain; an unknown escape is still invalid.
 
-use crate::Span;
+use crate::emit::{Push, Runs, Sink};
+use crate::{Out, Span, State};
 
 /// What a stretch of a JSON line is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -133,13 +134,23 @@ pub const KINDS: [&str; Kind::ALL.len()] = {
 /// `/* */` comment is open at the line's start, and is left saying whether one is at its end.
 pub fn tokens(line: &str, comment: &mut bool, spans: &mut Vec<Span>) {
     spans.clear();
-    let b = line.as_bytes();
+    scan(line.as_bytes(), comment, &mut Out::new(spans), &mut Push);
+}
+
+/// As [`tokens`], the line's runs written to `k` (X-072): the only state a JSON line hands on is
+/// a `/* */` comment left open.
+pub(crate) fn line_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+    let mut comment = state.word() != 0;
+    scan(b, &mut comment, out, k);
+    state.set_word(u64::from(comment));
+}
+
+/// [`tokens`]' scan of `b`, its lexemes written to `k`. A lexeme is never empty, nor joined to the
+/// one before.
+#[inline(always)]
+fn scan<K: Sink>(b: &[u8], comment: &mut bool, mut out: &mut Out, k: &mut K) {
     let mut push = |start: usize, end: usize, kind: Kind| {
-        spans.push(Span {
-            start: start as u32,
-            end: end as u32,
-            kind: kind as u16,
-        });
+        k.push(&mut out, start, end, kind as u16);
     };
     let mut i = 0;
     if *comment {

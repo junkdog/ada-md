@@ -21,6 +21,7 @@
 //! quote, the meta flags, the markup's meta scope, the conditional sections and an element's
 //! groups open.
 
+use crate::emit::{Push, Runs, Sink};
 use crate::matcher::{Atom, Line, M, first};
 use crate::prim::find_any;
 use crate::xml::{
@@ -320,7 +321,18 @@ fn find(b: &[u8], from: usize, set: impl Fn(u8) -> bool) -> Option<usize> {
 /// Lex `b`, a line without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let (w, deep) = lex(b, state.word(), out);
+    let (w, deep) = lex(b, state.word(), out, &mut Push);
+    state.set_word(w);
+    if deep {
+        state.inexact = true;
+    }
+}
+
+/// As [`line`], the line's runs written to `k` (X-072): a block's lines on one sink, as the
+/// line-format engine's, since all a line hands the next is the word.
+#[inline(never)]
+pub(crate) fn line_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+    let (w, deep) = lex(b, state.word(), out, k);
     state.set_word(w);
     if deep {
         state.inexact = true;
@@ -329,10 +341,11 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
 
 /// `b` lexed from `w`, the word the line before left: the word it leaves, and whether it's
 /// nested past what syntect takes. The scan a local, its fields in registers.
-// one copy, for `line` and the block: with two, `run`'s callees were no longer inlined into it
-// (XML +2.6% instructions)
+// one copy a sink, for `line` and the block: with two, `run`'s callees were no longer inlined
+// into it (XML +2.6% instructions). The sink by reference, as the doctype's paths are out of
+// line (X-069's lesson).
 #[inline(never)]
-fn lex(b: &[u8], w: u64, out: &mut Out) -> (u64, bool) {
+fn lex<K: Sink>(b: &[u8], w: u64, out: &mut Out, k: &mut K) -> (u64, bool) {
     let mut x = Scan {
         b,
         mode: 0,
@@ -346,6 +359,7 @@ fn lex(b: &[u8], w: u64, out: &mut Out) -> (u64, bool) {
         text: 0,
         at: 0,
         out,
+        k,
     };
     x.unpack(w);
     x.rebase();
@@ -386,13 +400,13 @@ impl crate::Carry for Carried<'_, '_> {
     fn next(&mut self, b: &[u8]) -> &[crate::Span] {
         self.out.0.clear();
         let deep;
-        (self.w, deep) = lex(b, self.w, self.out);
+        (self.w, deep) = lex(b, self.w, self.out, &mut Push);
         self.deep |= deep;
         self.out.0
     }
 }
 
-impl Scan<'_, '_, '_> {
+impl<K: Sink> Scan<'_, '_, '_, K> {
     /// The scan's state from a state's word.
     #[inline(always)]
     fn unpack(&mut self, w: u64) {
@@ -429,7 +443,7 @@ impl Scan<'_, '_, '_> {
 /// could reach its limit, past which a line's scopes are no longer bat's.
 const EXACT_NESTING: usize = 80;
 
-struct Scan<'b, 'o, 'c> {
+struct Scan<'b, 'o, 'c, K: Sink> {
     b: &'b [u8],
     mode: u8,
     /// Where a string returns to.
@@ -451,9 +465,10 @@ struct Scan<'b, 'o, 'c> {
     /// Where the spans so far end.
     at: usize,
     out: &'o mut Out<'c>,
+    k: &'o mut K,
 }
 
-impl Scan<'_, '_, '_> {
+impl<K: Sink> Scan<'_, '_, '_, K> {
     /// The kinds, after the flags, the markup, the string or the mode changed.
     fn rebase(&mut self) {
         self.base = kind(self.flags, self.inner, self.string, 0);
@@ -471,7 +486,7 @@ impl Scan<'_, '_, '_> {
         let e = e.min(self.b.len());
         let kind = self.base + leaf;
         if kind != 0 && e > s {
-            self.out.push_merged(s, e, kind);
+            self.k.merge(&mut self.out, s, e, kind);
         }
         self.at = self.at.max(e);
     }
@@ -489,7 +504,7 @@ impl Scan<'_, '_, '_> {
         let pos = pos.min(self.b.len());
         if pos > self.at {
             if self.text != 0 {
-                self.out.push_merged(self.at, pos, self.text);
+                self.k.merge(&mut self.out, self.at, pos, self.text);
             }
             self.at = pos;
         }

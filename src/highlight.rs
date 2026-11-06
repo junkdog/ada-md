@@ -1098,7 +1098,7 @@ impl Lexer {
         if !matches!(self, Lexer::Parse(r) if r.lang == Lang::Json) {
             return state;
         }
-        let mut spans = Vec::new();
+        let (mut spans, mut runs) = (Vec::new(), Vec::new());
         let mut rest = text;
         // both marks hold a `*`, which JSON hardly has otherwise
         let mark = |rest: &str, comment: bool| {
@@ -1123,10 +1123,33 @@ impl Lexer {
             let end = rest[at..].find('\n').map_or(rest.len(), |i| at + i);
             let line = &rest[start..end];
             let line = line.strip_suffix('\r').unwrap_or(line);
-            ada_parse::lex(Lang::Json, &expand_tabs(line), &mut state, &mut spans);
+            // on the run API, as every other line is: a call to `lex` would link the span scans
+            // of the languages whose scans write runs (JSON's among them) beside them (X-072)
+            runs.clear();
+            ada_parse::lex_runs(
+                Lang::Json,
+                &expand_tabs(line),
+                &mut state,
+                &mut spans,
+                &mut Plain,
+                &mut runs,
+            );
             rest = rest.get(end + 1..).unwrap_or_default();
         }
         state
+    }
+}
+
+/// A theme with no rules, for a scan run only for the state it leaves.
+struct Plain;
+
+impl ada_parse::Rules for Plain {
+    fn table(&self) -> &[ada_parse::Rule] {
+        &[]
+    }
+
+    fn resolve(&mut self, _: u16) -> ada_parse::Rule {
+        ada_parse::Rule(ada_parse::Rule::NONE)
     }
 }
 

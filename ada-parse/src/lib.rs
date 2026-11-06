@@ -142,8 +142,8 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
 /// from its spans: a span's rule is `rules`' for its kind, a gap between spans is
 /// [`Rule::NONE`]'s, a run joins the one before where their rules are the same, a line where no
 /// rule is met has no runs, and one where one is ends at the line's end. `spans` is scratch
-/// space. Rust's scan writes the runs itself (X-068), as the line-format engine's do (X-069); any
-/// other language's spans are read into them.
+/// space. Rust's scan writes the runs itself (X-068), as the line-format engine's do (X-069), and
+/// JSON's, TOML's and XML's (X-072); any other language's spans are read into them.
 #[inline(never)]
 pub fn lex_runs(
     lang: Lang,
@@ -355,7 +355,8 @@ pub(crate) trait CarryRuns {
 }
 
 /// `lang`'s block on a carried scan, where it has one. Without `SPANS`, the run API's table,
-/// the languages whose scans write runs are none, as in [`scanner`].
+/// the languages whose scans write runs are none, as in [`scanner`]: XML's runs are a line at a
+/// time on [`run_scanner`]'s path, all its lines hand on being a word.
 #[inline(always)]
 fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
     Some(match lang {
@@ -377,7 +378,7 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::Css => css::block,
         Lang::Scss => css::scss::block,
         Lang::Html => html::block,
-        Lang::Xml => xml_scan::block,
+        Lang::Xml if SPANS => xml_scan::block,
         Lang::Lisp => lisp::block_common,
         Lang::EmacsLisp => lisp::block_emacs,
         Lang::Scheme => lisp::block_scheme,
@@ -417,7 +418,8 @@ type Scanner = fn(&str, &mut State, &mut Vec<Span>);
 type RunScanner = fn(&[u8], &mut State, &mut Out, &mut emit::Runs);
 
 /// `lang`'s lexer on a run sink, where its scan writes runs a line at a time: the line-format
-/// engine's (X-069). Rust's runs come from its carried scan ([`CarryRuns`], X-068, X-073).
+/// engine's (X-069), JSON's, TOML's and XML's (X-072; YAML's ran 1–2% slower in ada, X-072).
+/// Rust's runs come from its carried scan ([`CarryRuns`], X-068, X-073).
 #[inline(always)]
 fn run_scanner(lang: Lang) -> Option<RunScanner> {
     Some(match lang {
@@ -430,13 +432,16 @@ fn run_scanner(lang: Lang) -> Option<RunScanner> {
         Lang::GitLink => git::link_runs,
         Lang::Fstab => fstab::line_runs,
         Lang::KnownHosts => known_hosts::line_runs,
+        Lang::Json => json::line_runs,
+        Lang::Toml => toml_scan::line_runs,
+        Lang::Xml => xml_scan::line_runs,
         _ => return None,
     })
 }
 
 /// `lang`'s lexer: its scanner behind the spans' [`Out`]. Without `SPANS`, the run API's table,
-/// the languages whose scans write runs (Rust's, X-068; [`run_scanner`]'s, X-069) are none, so
-/// that a highlighter on runs doesn't carry their span scans.
+/// the languages whose scans write runs (Rust's, X-068; [`run_scanner`]'s, X-069, X-072) are
+/// none, so that a highlighter on runs doesn't carry their span scans.
 #[inline(always)]
 fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
     macro_rules! out {
@@ -462,6 +467,7 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
             |_, _, _| unreachable!("a line format's runs come from its own scan")
         }
         Lang::Log => |l, _, v| logs::tokens(l, v),
+        Lang::Json if !SPANS => |_, _, _| unreachable!("JSON's runs come from its own scan"),
         Lang::Json => |l, s, v| {
             // the only state a JSON line hands on: a `/* */` comment left open
             let mut comment = s.word() != 0;
@@ -473,8 +479,10 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
             diff::line(l.as_bytes(), &mut Out::new(v));
         },
         Lang::Ini => out!(ini::line),
+        Lang::Toml if !SPANS => |_, _, _| unreachable!("TOML's runs come from its own scan"),
         Lang::Toml => out!(toml_scan::line),
         Lang::Yaml => out!(yaml_scan::line),
+        Lang::Xml if !SPANS => |_, _, _| unreachable!("XML's runs come from its own scan"),
         Lang::Xml => out!(xml_scan::line),
         Lang::Rust if !SPANS => |_, _, _| unreachable!("Rust's runs come from its own scan"),
         Lang::Rust => out!(rust::line),
