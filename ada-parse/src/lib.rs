@@ -152,14 +152,8 @@ pub fn lex_lines(
     each: impl FnMut(&str, &[Span]),
 ) -> Option<usize> {
     if lang == Lang::Rust {
-        // the scan kept across the block's lines, its state made once (HL-006's stage B)
-        let mut carry = rust::Carry::new(state);
-        let rest = split_lines(text, max, (spans, buf), prep, each, |l, v| {
-            v.clear();
-            carry.line(l.as_bytes(), &mut Out::new(v));
-        });
-        *state = carry.state();
-        return rest;
+        // one scan across the block's lines, its state read and made once (X-066)
+        return rust::lines(text, max, state, (spans, buf), prep, each);
     }
     let scan = scanner(lang);
     split_lines(text, max, (spans, buf), prep, each, |l, v| {
@@ -178,23 +172,29 @@ fn split_lines(
     mut each: impl FnMut(&str, &[Span]),
     mut scan: impl FnMut(&str, &mut Vec<Span>),
 ) -> Option<usize> {
-    let b = text.as_bytes();
     let mut p = 0;
     for _ in 0..max {
-        let e = prim::find_any(b, p, *b"\n");
-        // SAFETY: `p` is 0 or just past a `\n`, and `e` at a `\n` or the end, `p <= e`: a `\n`
-        // is a character of its own, so both ends are on characters of `text`
-        let line = unsafe { text.get_unchecked(p..e) };
-        let line = line.strip_suffix('\r').unwrap_or(line);
+        let (line, e) = line_at(text, p);
         let line = if prep(line, buf) { buf.as_str() } else { line };
         scan(line, spans);
         each(line, spans);
-        if e == b.len() {
+        if e == text.len() {
             return None;
         }
         p = e + 1;
     }
     Some(p)
+}
+
+/// The line of `text` that starts at `p` (0 or just past a `\n`), a `\r` before its `\n`
+/// dropped, and where it ends: its `\n`, or `text`'s end.
+#[inline(always)]
+fn line_at(text: &str, p: usize) -> (&str, usize) {
+    let e = prim::find_any(text.as_bytes(), p, *b"\n");
+    // SAFETY: `p` is 0 or just past a `\n`, and `e` at a `\n` or the end, `p <= e`: a `\n` is a
+    // character of its own, so both ends are on characters of `text`
+    let line = unsafe { text.get_unchecked(p..e) };
+    (line.strip_suffix('\r').unwrap_or(line), e)
 }
 
 /// One line's lexer, as [`lex`] calls it.

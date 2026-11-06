@@ -436,74 +436,104 @@ const MAX: usize = 128;
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     let mut s = Scan::new(b, out, state.is_exact(), state.arg);
-    s.depth = state.load(&mut s.stack);
-    s.cur = s.stack[s.depth - 1];
-    if state.arg & OPEN != 0 {
-        s.count_open();
-    }
-    let arg = s.lex_line();
-    *state = State::keep(&s.stack, s.depth, s.exact, arg);
+    s.load(state);
+    s.lex_line();
+    *state = s.state();
 }
 
-/// The bottom of the stack a line starts and ends with: the base and the levels a [`State`]
-/// holds, rounded up.
-const CARRIED: usize = 32;
-const _: () = assert!(crate::stack::HELD < CARRIED);
-
-/// What a block's lines hand on, kept across them (HL-006's stage B, X-056): the stack's
-/// bottom, which a [`State`] holds only between calls, and the bits beside it. A line ends as
-/// [`line`]'s does: past the levels a state holds, the bottom ones are dropped, so a block lexed
-/// through this lexes as its lines do one at a time.
-pub struct Carry {
-    head: [u8; CARRIED],
-    depth: usize,
-    exact: bool,
-    /// The open raw string's `#`s.
-    hashes: usize,
-    /// How many attributes are open.
-    annot: usize,
-    /// [`State::arg`] as the last line left it: an open raw string's `#`s, [`MARKED`].
-    arg: u16,
-}
-
-impl Carry {
-    /// The scan as `state` left it.
-    pub fn new(state: &State) -> Carry {
-        let mut c = Carry {
-            head: [MAIN; CARRIED],
-            depth: 1,
-            exact: state.is_exact(),
-            hashes: usize::from(state.arg & HASHES),
-            annot: 0,
-            arg: state.arg,
-        };
-        c.depth = state.load(&mut c.head);
-        for &l in &c.head[1..if state.arg & OPEN != 0 { c.depth } else { 1 }] {
-            c.annot += usize::from(l == ATTRIBUTE);
+/// Lex up to `max` of `text`'s lines from `state`, as [`crate::lex_lines`] does, on one scan
+/// kept across them (X-066, HL-006's stage B): its stack, the bits a line hands the next and its
+/// spans stay where they are, and a line resets only what a line starts with. A [`State`] is
+/// read once at the start and made once at the end. Each line ends as [`line`]'s does (past the
+/// levels a state holds, the bottom ones dropped), so a block lexes as its lines do one at a
+/// time.
+#[inline(never)]
+pub fn lines(
+    text: &str,
+    max: usize,
+    state: &mut State,
+    (spans, buf): (&mut Vec<crate::Span>, &mut String),
+    mut prep: impl FnMut(&str, &mut String) -> bool,
+    mut each: impl FnMut(&str, &[crate::Span]),
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut s = Scan::new(b"", &mut out, state.is_exact(), state.arg);
+    s.load(state);
+    let mut p = 0;
+    let mut rest = Some(0);
+    for _ in 0..max {
+        let (line, e) = crate::line_at(text, p);
+        s.out.0.clear();
+        if prep(line, buf) {
+            s.lex_apart(buf.as_bytes());
+            each(buf.as_str(), s.out.0);
+        } else {
+            s.b = line.as_bytes();
+            s.lex_next();
+            each(line, s.out.0);
         }
-        c
+        if e == text.len() {
+            rest = None;
+            break;
+        }
+        p = e + 1;
+        rest = Some(p);
     }
-
-    /// The state the last line left.
-    pub fn state(&self) -> State {
-        State::keep(&self.head, self.depth, self.exact, self.arg)
-    }
-
-    /// Lex `b`, the next line without its `\n`.
-    #[inline(never)]
-    pub fn line(&mut self, b: &[u8], out: &mut Out) {
-        let mut s = Scan::new(b, out, self.exact, self.arg);
-        s.stack[..CARRIED].copy_from_slice(&self.head);
-        (s.depth, s.hashes, s.annot) = (self.depth, self.hashes, self.annot);
-        s.cur = s.stack[s.depth - 1];
-        self.arg = s.lex_line();
-        self.head.copy_from_slice(&s.stack[..CARRIED]);
-        (self.depth, self.hashes, self.exact) = (s.depth, s.hashes, s.exact);
-        self.annot = s.annot;
-    }
+    *state = s.state();
+    rest
 }
 
 impl<'b, 'c> Scan<'b, 'c> {
+    /// The stack as `state` left it, on a scan [`Scan::new`] made from its bits: in place, as
+    /// a scan returned by value is a `memcpy` call a line (X-056's trap, measured again at X-066).
+    #[inline(always)]
+    fn load(&mut self, state: &State) {
+        self.depth = state.load(&mut self.stack);
+        self.cur = self.stack[self.depth - 1];
+        if state.arg & OPEN != 0 {
+            self.count_open();
+        }
+    }
+
+    /// The state the scan's last line left.
+    #[inline(always)]
+    fn state(&self) -> State {
+        State::keep(&self.stack, self.depth, self.exact, self.arg())
+    }
+
+    /// The next line, [`Scan::b`], lexed on this scan: what a line starts with reset, the rest
+    /// kept from the line before.
+    #[inline(always)]
+    fn lex_next(&mut self) {
+        self.last_opened = 0;
+        self.at = 0;
+        self.sql_paren = usize::MAX;
+        self.sql_call = PSQL_SQL;
+        self.sql = sql::Embedded {
+            is_end: usize::MAX,
+            at: 0,
+        };
+        self.sql_end = usize::MAX;
+        self.sql_nl = false;
+        self.lex_line();
+    }
+
+    /// The next line lexed from `b`, a line `prep` wrote apart from the block (a tab expanded),
+    /// on a scan of its own that hands back what this one keeps.
+    #[cold]
+    #[inline(never)]
+    fn lex_apart(&mut self, b: &[u8]) {
+        let mut s = Scan::new(b, &mut *self.out, self.exact, 0);
+        s.stack = self.stack;
+        (s.depth, s.cur, s.opened) = (self.depth, self.cur, self.opened);
+        (s.hashes, s.annot, s.mark) = (self.hashes, self.annot, self.mark);
+        s.lex_line();
+        self.stack = s.stack;
+        (self.depth, self.cur, self.opened) = (s.depth, s.cur, s.opened);
+        (self.hashes, self.annot, self.mark) = (s.hashes, s.annot, s.mark);
+        self.exact = s.exact;
+    }
+
     /// A line's scan, its stack the base alone, `arg` the bits the line before left.
     #[inline(always)]
     fn new(b: &'b [u8], out: &'b mut Out<'c>, exact: bool, arg: u16) -> Self {
@@ -541,9 +571,10 @@ impl<'b, 'c> Scan<'b, 'c> {
     }
 
     /// The line lexed from the stack it starts with, ended as a state ends it (past the levels
-    /// a state holds, the bottom ones dropped): the [`State::arg`] it leaves.
+    /// a state holds, the bottom ones dropped), a SQL marker that still holds kept at the next
+    /// line's start.
     #[inline(always)]
-    fn lex_line(&mut self) -> u16 {
+    fn lex_line(&mut self) {
         let b = self.b;
         self.refresh();
         if self.top() >= SQL_IN {
@@ -551,13 +582,12 @@ impl<'b, 'c> Scan<'b, 'c> {
         }
         self.run();
         self.fill(b.len());
-        let mut arg = if matches!(self.string_top(), RAW_STRING | FMT_RAW | RAW_BYTES) {
-            self.hashes as u16 & HASHES
-        } else {
-            0
-        };
-        if self.mark != usize::MAX && sql::marker_holds(b, self.mark, b.len()) {
-            arg |= MARKED;
+        if self.mark != usize::MAX {
+            self.mark = if sql::marker_holds(b, self.mark, b.len()) {
+                0
+            } else {
+                usize::MAX
+            };
         }
         let n = self.depth - 1;
         if n > crate::stack::HELD {
@@ -566,6 +596,19 @@ impl<'b, 'c> Scan<'b, 'c> {
             self.depth -= from;
             self.exact = false;
             self.count();
+        }
+    }
+
+    /// The [`State::arg`] the scan's last line leaves.
+    #[inline(always)]
+    fn arg(&self) -> u16 {
+        let mut arg = if matches!(self.string_top(), RAW_STRING | FMT_RAW | RAW_BYTES) {
+            self.hashes as u16 & HASHES
+        } else {
+            0
+        };
+        if self.mark != usize::MAX {
+            arg |= MARKED;
         }
         if self.annot != 0 {
             arg |= OPEN;
