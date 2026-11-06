@@ -26,10 +26,13 @@
 //! `query_as!(T, `, `sql_query(`, `conn.execute(`…), and the string after `// language=SQL`.
 //! Its text is SQL's, but for the string's end and (in `"…"`) its escapes.
 
-use crate::prim::char_len;
+mod code;
+
+use crate::clike::{CLASS, HIGH, LOWER, SPACE, UPPER, WORD};
+use crate::prim::{self, char_len};
 use crate::regex;
 use crate::sql;
-use crate::{Out, State, is_space, skip_spaces};
+use crate::{Out, State};
 
 // The contexts, by bat's names where one is one of them.
 /// The top level (`statements`).
@@ -423,63 +426,173 @@ const MAX: usize = 128;
 /// Lex `b`, a line without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut s = Scan {
-        b,
-        stack: [MAIN; MAX],
-        depth: 1,
-        hashes: usize::from(state.arg & !MARKED),
-        exact: state.is_exact(),
-        annot: 0,
-        tuple: 0,
-        text: 0,
-        at: 0,
-        sql_paren: usize::MAX,
-        sql_call: PSQL_SQL,
-        sql: sql::Embedded {
-            is_end: usize::MAX,
-            at: 0,
-        },
-        sql_end: usize::MAX,
-        sql_nl: false,
-        mark: if state.arg & MARKED != 0 {
-            0
-        } else {
-            usize::MAX
-        },
-        out,
-    };
-    let n = usize::from(state.depth);
-    for i in 0..n {
-        let c = state.level(i);
-        s.stack[1 + i] = c;
-        s.enter(c);
+    let mut s = Scan::new(b, out, state.is_exact(), state.arg);
+    s.depth = state.load(&mut s.stack);
+    s.cur = s.stack[s.depth - 1];
+    if state.arg & OPEN != 0 {
+        s.count_open();
     }
-    s.depth = 1 + n;
-    s.refresh();
-    if s.top() >= SQL_IN {
-        s.text = s.string_text();
-    }
-    s.run();
-    s.fill(b.len());
-    let mut arg = if matches!(s.string_top(), RAW_STRING | FMT_RAW | RAW_BYTES) {
-        s.hashes as u16 & !MARKED
-    } else {
-        0
-    };
-    if s.mark != usize::MAX && sql::marker_holds(b, s.mark, b.len()) {
-        arg |= MARKED;
-    }
+    let arg = s.lex_line();
     *state = State::keep(&s.stack, s.depth, s.exact, arg);
+}
+
+/// The bottom of the stack a line starts and ends with: the base and the levels a [`State`]
+/// holds, rounded up.
+const CARRIED: usize = 32;
+const _: () = assert!(crate::stack::HELD < CARRIED);
+
+/// What a block's lines hand on, kept across them (HL-006's stage B, X-056): the stack's
+/// bottom, which a [`State`] holds only between calls, and the bits beside it. A line ends as
+/// [`line`]'s does: past the levels a state holds, the bottom ones are dropped, so a block lexed
+/// through this lexes as its lines do one at a time.
+pub struct Carry {
+    head: [u8; CARRIED],
+    depth: usize,
+    exact: bool,
+    /// The open raw string's `#`s.
+    hashes: usize,
+    /// How many attributes and tuple structs' fields are open.
+    annot: usize,
+    tuple: usize,
+    /// [`State::arg`] as the last line left it: an open raw string's `#`s, [`MARKED`].
+    arg: u16,
+}
+
+impl Carry {
+    /// The scan as `state` left it.
+    pub fn new(state: &State) -> Carry {
+        let mut c = Carry {
+            head: [MAIN; CARRIED],
+            depth: 1,
+            exact: state.is_exact(),
+            hashes: usize::from(state.arg & HASHES),
+            annot: 0,
+            tuple: 0,
+            arg: state.arg,
+        };
+        c.depth = state.load(&mut c.head);
+        for &l in &c.head[1..if state.arg & OPEN != 0 { c.depth } else { 1 }] {
+            c.annot += usize::from(l == ATTRIBUTE);
+            c.tuple += usize::from(l == TUPLE_FIELDS);
+        }
+        c
+    }
+
+    /// The state the last line left.
+    pub fn state(&self) -> State {
+        State::keep(&self.head, self.depth, self.exact, self.arg)
+    }
+
+    /// Lex `b`, the next line without its `\n`.
+    #[inline(never)]
+    pub fn line(&mut self, b: &[u8], out: &mut Out) {
+        let mut s = Scan::new(b, out, self.exact, self.arg);
+        s.stack[..CARRIED].copy_from_slice(&self.head);
+        (s.depth, s.hashes, s.annot, s.tuple) = (self.depth, self.hashes, self.annot, self.tuple);
+        s.cur = s.stack[s.depth - 1];
+        self.arg = s.lex_line();
+        self.head.copy_from_slice(&s.stack[..CARRIED]);
+        (self.depth, self.hashes, self.exact) = (s.depth, s.hashes, s.exact);
+        (self.annot, self.tuple) = (s.annot, s.tuple);
+    }
+}
+
+impl<'b, 'c> Scan<'b, 'c> {
+    /// A line's scan, its stack the base alone, `arg` the bits the line before left.
+    #[inline(always)]
+    fn new(b: &'b [u8], out: &'b mut Out<'c>, exact: bool, arg: u16) -> Self {
+        Scan {
+            b,
+            stack: [MAIN; MAX],
+            depth: 1,
+            cur: MAIN,
+            opened: arg & (OPENED_AFTER | OPENED_TRY),
+            last_opened: 0,
+            hashes: usize::from(arg & HASHES),
+            exact,
+            annot: 0,
+            tuple: 0,
+            text: 0,
+            at: 0,
+            sql_paren: usize::MAX,
+            sql_call: PSQL_SQL,
+            sql: sql::Embedded {
+                is_end: usize::MAX,
+                at: 0,
+            },
+            sql_end: usize::MAX,
+            sql_nl: false,
+            mark: if arg & MARKED != 0 { 0 } else { usize::MAX },
+            out,
+        }
+    }
+
+    /// The open attributes and tuple structs' fields, counted on the stack.
+    #[inline(always)]
+    fn count_open(&mut self) {
+        for &l in &self.stack[1..self.depth] {
+            self.annot += usize::from(l == ATTRIBUTE);
+            self.tuple += usize::from(l == TUPLE_FIELDS);
+        }
+    }
+
+    /// The line lexed from the stack it starts with, ended as a state ends it (past the levels
+    /// a state holds, the bottom ones dropped): the [`State::arg`] it leaves.
+    #[inline(always)]
+    fn lex_line(&mut self) -> u16 {
+        let b = self.b;
+        self.refresh();
+        if self.top() >= SQL_IN {
+            self.text = self.string_text();
+        }
+        self.run();
+        self.fill(b.len());
+        let mut arg = if matches!(self.string_top(), RAW_STRING | FMT_RAW | RAW_BYTES) {
+            self.hashes as u16 & HASHES
+        } else {
+            0
+        };
+        if self.mark != usize::MAX && sql::marker_holds(b, self.mark, b.len()) {
+            arg |= MARKED;
+        }
+        let n = self.depth - 1;
+        if n > crate::stack::HELD {
+            let from = n - crate::stack::HELD;
+            self.stack.copy_within(1 + from..self.depth, 1);
+            self.depth -= from;
+            self.exact = false;
+            self.count();
+        }
+        if (self.annot | self.tuple) != 0 {
+            arg |= OPEN;
+        }
+        arg | self.opened
+    }
 }
 
 /// [`State::arg`]'s bit beside an open raw string's `#`s: a SQL marker (`// language=SQL`)
 /// waits for its string.
 const MARKED: u16 = 0x8000;
+/// [`State::arg`]'s bit for an attribute or a tuple struct's fields open on the stack, so that a
+/// line counts them only then.
+const OPEN: u16 = 0x4000;
+/// [`State::arg`]'s bits for the frames' [`Scan::opened`] at the line's end.
+const OPENED_AFTER: u16 = 0x2000;
+const OPENED_TRY: u16 = 0x1000;
+/// [`State::arg`]'s bits for an open raw string's `#`s (Rust allows 255).
+const HASHES: u16 = 0x0fff;
 
 struct Scan<'b, 'c> {
     b: &'b [u8],
     stack: [u8; MAX],
     depth: usize,
+    /// The top context, `stack[depth - 1]`, read without the stack.
+    cur: u8,
+    /// Whether the frames' next token may start a closure ([`OPENED_AFTER`] after an operator,
+    /// where a generic may start too; [`OPENED_TRY`] after `(` or `{`), in place of bat's
+    /// `after-operator` and `try-closure`; and the current token's, taken from it.
+    opened: u16,
+    last_opened: u16,
     /// The open raw string's `#`s.
     hashes: usize,
     exact: bool,
@@ -509,20 +622,31 @@ struct Scan<'b, 'c> {
     out: &'b mut Out<'c>,
 }
 
-/// A byte of a word: `\w`, every byte past ASCII among them.
+/// A byte of a word: `\w`, every byte past ASCII among them (the core's classes, one load).
+#[inline(always)]
 fn is_word(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c == b'_' || c >= 0x80
+    CLASS[usize::from(c)] & (WORD | HIGH) != 0
 }
 
+#[inline(always)]
 fn is_letter(c: u8) -> bool {
-    c.is_ascii_alphabetic() || c >= 0x80
+    CLASS[usize::from(c)] & (UPPER | LOWER | HIGH) != 0
 }
 
-fn word_end(b: &[u8], mut p: usize) -> usize {
-    while p < b.len() && is_word(b[p]) {
-        p += 1;
-    }
-    p
+/// `\s` as far as ASCII goes.
+#[inline(always)]
+fn is_space(c: u8) -> bool {
+    CLASS[usize::from(c)] & SPACE != 0
+}
+
+#[inline(always)]
+fn skip_spaces(b: &[u8], p: usize) -> usize {
+    crate::clike::skip_blanks(b, p)
+}
+
+#[inline(always)]
+fn word_end(b: &[u8], p: usize) -> usize {
+    crate::clike::class_run(b, p, WORD | HIGH).end
 }
 
 /// Whether `\b` holds before `p`, at a word's start.
@@ -540,6 +664,16 @@ fn ident_end(b: &[u8], p: usize) -> Option<usize> {
     let c = *b.get(p)?;
     let ok = is_letter(c) || (c == b'_' && b.get(p + 1).is_some_and(|&d| is_word(d)));
     ok.then(|| word_end(b, p))
+}
+
+/// Whether bat's identifier starts at `p`: [`ident_end`]'s test, without reading the word.
+#[inline(always)]
+fn ident_starts(b: &[u8], p: usize) -> bool {
+    match b.get(p) {
+        Some(&c) if is_letter(c) => true,
+        Some(b'_') => b.get(p + 1).is_some_and(|&d| is_word(d)),
+        _ => false,
+    }
 }
 
 /// Whether a whole word is bat's identifier.
@@ -763,14 +897,6 @@ fn lookup(w: &[u8]) -> Name {
         },
         _ => Other,
     }
-}
-
-fn is_support(w: &[u8]) -> bool {
-    lookup(w) == Name::Support
-}
-
-fn is_primitive(w: &[u8]) -> bool {
-    lookup(w) == Name::Primitive
 }
 
 fn is_int_suffix(w: &[u8]) -> bool {
@@ -1071,13 +1197,33 @@ fn impl_for_ahead(b: &[u8], p: usize) -> bool {
     angle.is_some_and(|a| (a + 1..b.len()).any(|j| b[j] == b'>' && for_at(b, j + 1)))
 }
 
-/// The next byte at `from` or after that `stop` picks, or the line's end.
-fn next_of(b: &[u8], from: usize, stop: impl Fn(u8) -> bool) -> usize {
-    b[from.min(b.len())..]
-        .iter()
-        .position(|&c| stop(c))
-        .map_or(b.len(), |i| from + i)
-}
+/// What a blank run does in a context on bat's patterns, at [`Scan::run`]'s turn: nothing (no
+/// pattern starts on a blank, so `at` fails and `advance` passes the run), for most; in a
+/// generic's arguments only after a space or a tab, as another blank pops them; in
+/// `return-type` (a blank before `{` pops it), `after-operator`, `try-closure`, a path's
+/// segments and the contexts that move on at once (`impl-for`, the generic heads), something,
+/// so the run isn't passed.
+static BLANKS: [u8; 256] = {
+    let mut t = [PASS_ANY; 256];
+    let mut c = STRING as usize;
+    while c < 256 {
+        t[c] = 0;
+        c += 1;
+    }
+    t[RETURN_TYPE as usize] = 0;
+    t[IMPL_GENERIC as usize] = 0;
+    t[STRUCT_GENERIC as usize] = 0;
+    t[IMPL_FOR as usize] = 0;
+    t[AFTER_OP as usize] = 0;
+    t[TRY_CLOSURE as usize] = 0;
+    t[NO_TYPE_NAMES as usize] = 0;
+    t[GENERIC_ARGS as usize] = PASS_SPACE_TAB;
+    t[GENERIC_NESTED as usize] = PASS_SPACE_TAB;
+    t[GENERIC_ARRAY as usize] = PASS_SPACE_TAB;
+    t
+};
+const PASS_ANY: u8 = 1;
+const PASS_SPACE_TAB: u8 = 2;
 
 /// The contexts the prototype (`$name`) reaches: all but strings and macro matchers.
 fn proto(c: u8) -> bool {
@@ -1114,8 +1260,17 @@ fn colon_paren(b: &[u8], p: usize) -> Option<usize> {
 }
 
 impl Scan<'_, '_> {
+    #[inline(always)]
     fn top(&self) -> u8 {
-        self.stack[self.depth - 1]
+        self.cur
+    }
+
+    /// The top context replaced by `c`, in place (an embedded scan's state, a SQL call's
+    /// argument), with no text filled and nothing counted.
+    fn set_top(&mut self, c: u8) {
+        let d = self.depth - 1;
+        self.stack[d] = c;
+        self.cur = c;
     }
 
     fn kind(&self, leaf: u16) -> u16 {
@@ -1127,9 +1282,28 @@ impl Scan<'_, '_> {
         self.fill(s);
         let kind = self.kind(leaf);
         if kind != 0 {
-            self.out.push_merged(s, e, kind);
+            self.merge(s, e, kind);
         }
         self.at = e;
+    }
+
+    /// `Out::push_merged`, in place: it isn't always inlined, and a token is the scan's
+    /// commonest step.
+    #[inline(always)]
+    fn merge(&mut self, s: usize, e: usize, kind: u16) {
+        let join = self.out.1;
+        let spans = &mut *self.out.0;
+        match spans.last_mut() {
+            Some(last) if last.end as usize == s && last.kind == kind && join => {
+                last.end = e as u32;
+            }
+            _ if e > s => spans.push(crate::Span {
+                start: s as u32,
+                end: e as u32,
+                kind,
+            }),
+            _ => {}
+        }
     }
 
     /// The text up to `p` is the context's.
@@ -1190,6 +1364,7 @@ impl Scan<'_, '_> {
         }
         self.stack[self.depth] = c;
         self.depth += 1;
+        self.cur = c;
         self.enter(c);
         self.refresh();
     }
@@ -1198,6 +1373,15 @@ impl Scan<'_, '_> {
     /// space shows it would pop there at once, matching nothing: anything but `|` or a `$name`,
     /// and for `after-operator` a `<`. At the line's end it stays, for the next line.
     fn push_ahead(&mut self, at: usize, c: u8) {
+        if (self.annot | self.tuple) == 0 && code::is_code(self.top()) {
+            // the frames run next: they tell a closure by the token before it
+            self.opened = if c == AFTER_OP {
+                OPENED_AFTER
+            } else {
+                OPENED_TRY
+            };
+            return;
+        }
         let q = skip_spaces(self.b, at);
         match self.b.get(q) {
             None | Some(b'|' | b'$') => {}
@@ -1211,7 +1395,8 @@ impl Scan<'_, '_> {
         self.fill(at);
         if self.depth > 1 {
             self.depth -= 1;
-            self.leave(self.stack[self.depth]);
+            self.leave(self.cur);
+            self.cur = self.stack[self.depth - 1];
         }
         self.refresh();
     }
@@ -1219,8 +1404,9 @@ impl Scan<'_, '_> {
     fn set(&mut self, at: usize, c: u8) {
         self.fill(at);
         let top = self.depth - 1;
-        self.leave(self.stack[top]);
+        self.leave(self.cur);
         self.stack[top] = c;
+        self.cur = c;
         self.enter(c);
         self.refresh();
     }
@@ -1228,6 +1414,21 @@ impl Scan<'_, '_> {
     fn run(&mut self) {
         let mut p = 0;
         loop {
+            if code::is_code(self.top()) && (self.tuple | self.annot) == 0 {
+                p = self.code_run(p);
+                if code::is_code(self.top()) && (self.tuple | self.annot) == 0 {
+                    // the line's end
+                    return;
+                }
+                continue;
+            }
+            let b = self.b;
+            if p < b.len() && is_space(b[p]) {
+                let pass = BLANKS[usize::from(self.top())];
+                if pass == PASS_ANY || (pass == PASS_SPACE_TAB && matches!(b[p], b' ' | b'\t')) {
+                    p = skip_spaces(b, p);
+                }
+            }
             if let Some(q) = self.at(p) {
                 p = q;
             } else if p < self.b.len() {
@@ -1242,12 +1443,13 @@ impl Scan<'_, '_> {
     fn advance(&self, p: usize) -> usize {
         let b = self.b;
         match self.top() {
-            STRING => next_of(b, p + 1, |c| c == b'"' || c == b'\\'),
-            BYTE_STRING => next_of(b, p + 1, |c| c == b'"' || c == b'\\'),
-            FMT_STRING => next_of(b, p + 1, |c| matches!(c, b'"' | b'\\' | b'{' | b'}')),
-            RAW_STRING | RAW_BYTES => next_of(b, p + 1, |c| c == b'"'),
-            FMT_RAW => next_of(b, p + 1, |c| matches!(c, b'"' | b'{' | b'}')),
-            BLOCK_COMMENT | DOC_COMMENT => next_of(b, p + 1, |c| matches!(c, b'*' | b'/' | b'$')),
+            // a string's or a comment's text, to the next byte a pattern starts on, sixteen
+            // bytes a step
+            STRING | BYTE_STRING => prim::find_any(b, p + 1, *b"\"\\"),
+            FMT_STRING => prim::find_any(b, p + 1, *b"\"\\{}"),
+            RAW_STRING | RAW_BYTES => prim::find_any(b, p + 1, *b"\""),
+            FMT_RAW => prim::find_any(b, p + 1, *b"\"{}"),
+            BLOCK_COMMENT | DOC_COMMENT => prim::find_any(b, p + 1, *b"*/$"),
             _ => {
                 let c = b[p];
                 if is_space(c) {
@@ -1311,7 +1513,7 @@ impl Scan<'_, '_> {
                         Some(q)
                     }
                     // the prototype matches there first
-                    Some(b'$') if q > p && ident_end(b, q + 1).is_some() => Some(q),
+                    Some(b'$') if q > p && ident_starts(b, q + 1) => Some(q),
                     Some(_) => {
                         self.pop(q);
                         Some(q)
@@ -1767,17 +1969,24 @@ impl Scan<'_, '_> {
                 }
                 b',' => Some(self.token(p, 1, SEPARATOR)),
                 b'=' => Some(self.token(p, 1, OPERATOR)),
-                _ => {
-                    if let Some(e) = ident_end(b, p)
-                        && b.get(e) == Some(&b'(')
-                    {
+                _ if is_word(c) => {
+                    // the word read once: a call, a string's prefix, else plain to its end
+                    let e = word_end(b, p);
+                    let w = &b[p..e];
+                    if is_ident(w) && b.get(e) == Some(&b'(') {
                         self.put(p, e, CALL);
                         self.push(e, ATTR_CALL);
                         self.put(e, e + 1, CALL_BEGIN);
                         return Some(e + 1);
                     }
-                    self.string(p, false)
+                    if matches!(w, b"b" | b"br" | b"r")
+                        && let Some(q) = self.string(p, false)
+                    {
+                        return Some(q);
+                    }
+                    Some(e)
                 }
+                _ => self.string(p, false),
             },
             FMT_FIRST => {
                 if let Some(e) = self.comment(p) {
@@ -1862,9 +2071,16 @@ impl Scan<'_, '_> {
         Some(len)
     }
 
-    /// Whether `w` is the whole word at `p`.
+    /// Whether `w` is the whole word at `p`: its first byte first, then the rest without a
+    /// call to `memcmp`.
+    #[inline(always)]
     fn is_word_at(&self, p: usize, w: &[u8]) -> bool {
-        self.b[p..].starts_with(w) && ends_word(self.b, p + w.len()) && starts_word(self.b, p)
+        let b = self.b;
+        b.get(p) == w.first()
+            && b.len() >= p + w.len()
+            && crate::same(&b[p..p + w.len()], w)
+            && ends_word(b, p + w.len())
+            && starts_word(b, p)
     }
 
     /// `n` bytes at `p` are `leaf`: where they end.
@@ -1929,7 +2145,11 @@ impl Scan<'_, '_> {
                 self.put(p, p + n, text + MARK);
                 let mut from = p + n;
                 let mut at = from;
-                while let Some(d) = b[at..].iter().position(|&c| c == b'$').map(|i| at + i) {
+                loop {
+                    let d = prim::find_any(b, at, *b"$");
+                    if d == b.len() {
+                        break;
+                    }
                     if let Some(e) = ident_end(b, d + 1) {
                         self.put(from, d, text);
                         self.put(d, e, text + VAR);
@@ -2063,7 +2283,7 @@ impl Scan<'_, '_> {
                 return self.number(p, true);
             }
             b':' => {
-                if next == Some(b':') && ident_end(b, p + 2).is_some() {
+                if next == Some(b':') && ident_starts(b, p + 2) {
                     self.put(p, p + 2, PATH_ACCESSOR);
                     self.push(p + 2, NO_TYPE_NAMES);
                     p + 2
@@ -2274,8 +2494,7 @@ impl Scan<'_, '_> {
         if !is_space(c) && c != b')' && !(c == b'/' && matches!(b.get(p + 1), Some(b'/' | b'*'))) {
             let next = match top - PSQL {
                 PSQL_SQL => {
-                    let d = self.depth - 1;
-                    self.stack[d] = GROUP;
+                    self.set_top(GROUP);
                     if (c == b'"' || (c == b'r' && starts_word(b, p)))
                         && let Some(e) = self.sql_string(p)
                     {
@@ -2288,8 +2507,7 @@ impl Scan<'_, '_> {
                 _ if c == b',' => PSQL + PSQL_SQL,
                 _ => top,
             };
-            let d = self.depth - 1;
-            self.stack[d] = next;
+            self.set_top(next);
         }
         self.statements(GROUP, p, c)
     }
@@ -2378,8 +2596,7 @@ impl Scan<'_, '_> {
             self.sql_nl |= end == b.len();
             q = end;
         }
-        let d = self.depth - 1;
-        self.stack[d] = SQL_IN + ctx;
+        self.set_top(SQL_IN + ctx);
         Some((q, ctx))
     }
 
@@ -2391,8 +2608,7 @@ impl Scan<'_, '_> {
             self.sql_scan(self.b.len(), top);
         }
         if matches!(self.top().wrapping_sub(SQL_IN), sql::DASHES | sql::HASHES) {
-            let d = self.depth - 1;
-            self.stack[d] = SQL_IN + sql::MAIN;
+            self.set_top(SQL_IN + sql::MAIN);
         }
     }
 
@@ -2447,8 +2663,7 @@ impl Scan<'_, '_> {
             text: self.text,
         };
         let (q, st) = regex::embedded(b, p, top & regex::STATE, &host, &mut self.at, self.out)?;
-        let d = self.depth - 1;
-        self.stack[d] = REGEX | st;
+        self.set_top(REGEX | st);
         Some(q)
     }
 
@@ -2739,7 +2954,7 @@ impl Scan<'_, '_> {
                 _ => {}
             }
         }
-        if c == b':' && b.get(p + 1) == Some(&b':') && ident_end(b, p + 2).is_some() {
+        if c == b':' && b.get(p + 1) == Some(&b':') && ident_starts(b, p + 2) {
             self.put(p, p + 2, PATH_ACCESSOR);
             self.push(p + 2, NO_TYPE_NAMES);
             return p + 2;
@@ -2872,7 +3087,7 @@ impl Scan<'_, '_> {
                 ends_word(b, p + n).then(|| self.token(p, n, MODIFIER))
             }
             b'\'' => self.lifetime(p),
-            b':' => (b.get(p + 1) == Some(&b':') && ident_end(b, p + 2).is_some())
+            b':' => (b.get(p + 1) == Some(&b':') && ident_starts(b, p + 2))
                 .then(|| self.token(p, 2, PATH_ACCESSOR)),
             b'<' => {
                 self.push(p, GENERIC);
@@ -2882,42 +3097,7 @@ impl Scan<'_, '_> {
                 self.push(p, TYPE_GROUP);
                 Some(self.token(p, 1, GROUP_BEGIN))
             }
-            _ if is_word(c) && starts_word(b, p) => {
-                let e = word_end(b, p);
-                let w = &b[p..e];
-                let next = b.get(e).copied();
-                match w {
-                    b"ref" | b"mut" | b"const" => return Some(self.token(p, e - p, MODIFIER)),
-                    b"fn" if next == Some(b'(') => {
-                        self.put(p, e, FN);
-                        self.push(e, FN_TYPE);
-                        return Some(self.token(e, 1, META_GROUP_BEGIN));
-                    }
-                    _ => {}
-                }
-                let ident = is_ident(w);
-                if b[e..].starts_with(b"::") {
-                    if is_type_name(w) {
-                        self.put(p, e, PATH_TYPE);
-                        return Some(self.token(e, 2, TYPE_ACCESSOR));
-                    }
-                    if ident {
-                        self.put(p, e, PATH);
-                        return Some(self.token(e, 2, PATH_ACCESSOR));
-                    }
-                }
-                if next == Some(b'<') && ident {
-                    if is_support(w) {
-                        self.put(p, e, SUPPORT_TYPE);
-                    }
-                    self.push(e, GENERIC);
-                    return Some(e);
-                }
-                if is_primitive(w) {
-                    return Some(self.token(p, e - p, STORAGE));
-                }
-                (w == b"_").then(|| self.token(p, 1, OPERATOR))
-            }
+            _ if is_word(c) && starts_word(b, p) => self.type_word(p),
             _ => None,
         }
     }
@@ -3016,20 +3196,7 @@ impl Scan<'_, '_> {
                     return Some(self.token(o, 1, META_GROUP_BEGIN));
                 }
             }
-            _ if is_word(c) && starts_word(b, p) => {
-                let e = word_end(b, p);
-                if &b[p..e] == b"self" {
-                    return Some(self.token(p, e - p, PARAMETER));
-                }
-                if is_ident(&b[p..e]) {
-                    // `name\s*(:(?!:))`
-                    let s = skip_spaces(b, e);
-                    if b.get(s) == Some(&b':') && b.get(s + 1) != Some(&b':') {
-                        self.put(p, e, PARAMETER);
-                        return Some(self.token(s, 1, SEPARATOR));
-                    }
-                }
-            }
+            _ if is_word(c) && starts_word(b, p) => return self.param_word(p),
             _ => {}
         }
         self.tai(p)
@@ -3067,7 +3234,8 @@ impl Scan<'_, '_> {
             self.push(e, FIELD_TYPE);
             return Some(e);
         }
-        None
+        // plain to the word's end, where `advance` would go
+        Some(e)
     }
 
     fn generic_args(&mut self, top: u8, p: usize, c: u8) -> Option<usize> {
@@ -3122,6 +3290,7 @@ impl Scan<'_, '_> {
                 self.push(p, GENERIC_ARRAY);
                 return Some(self.token(p, 1, GROUP_BEGIN));
             }
+            _ if is_word(c) && starts_word(b, p) => return Some(self.generic_word(p)),
             _ => {}
         }
         if let Some(e) = self.tai(p) {
@@ -3130,17 +3299,6 @@ impl Scan<'_, '_> {
         match c {
             b':' => Some(self.token(p, 1, SEPARATOR)),
             b'+' => Some(self.token(p, 1, OPERATOR)),
-            _ if is_word(c) && starts_word(b, p) => {
-                let e = word_end(b, p);
-                let w = &b[p..e];
-                if is_support(w) {
-                    Some(self.token(p, e - p, SUPPORT_TYPE))
-                } else if w == b"as" {
-                    Some(self.token(p, 2, OPERATOR))
-                } else {
-                    None
-                }
-            }
             _ => None,
         }
     }
@@ -3174,8 +3332,8 @@ impl Scan<'_, '_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::Lang;
     use crate::tests::marked;
+    use crate::{Lang, State};
 
     fn of(lines: &[&str]) -> Vec<(String, String)> {
         marked(Lang::Rust, lines)
@@ -3464,6 +3622,84 @@ mod tests {
         has(&l, "a", "variable.parameter.rust");
         has(&l, "x", "variable.parameter.rust");
         has(&l, "map", "support.function.rust");
+    }
+
+    /// A block lexed in one call lexes as its lines one at a time: the scan kept across them
+    /// ends each line as a state would, a stack deeper than a state holds cut at its bottom.
+    #[test]
+    fn a_block_lexes_as_its_lines() {
+        let deep = format!("{}\n{}\n", "{(".repeat(20), "[x, ".repeat(9));
+        let text = format!(
+            "{deep}let s = r##\"a\n\"#\"##; // language=SQL\nlet q =\n\"SELECT 1\";\n#[a(\nb)] struct S(u8,\nu16);\n{}",
+            "})".repeat(25)
+        );
+        let (mut want, mut state, mut spans) = (Vec::new(), State::default(), Vec::new());
+        for line in text.split('\n') {
+            crate::lex(Lang::Rust, line, &mut state, &mut spans);
+            want.push((line.to_owned(), spans.clone(), state));
+        }
+        assert!(!want[1].2.is_exact(), "the stack outgrew a state");
+        for max in [1, 2, usize::MAX] {
+            let (mut got, mut state, mut buf) = (Vec::new(), State::default(), String::new());
+            let mut rest = Some(&text[..]);
+            while let Some(t) = rest {
+                let next = crate::lex_lines(
+                    Lang::Rust,
+                    t,
+                    max,
+                    &mut state,
+                    (&mut spans, &mut buf),
+                    |_, _| false,
+                    |l, s| got.push((l.to_owned(), s.to_vec())),
+                );
+                // a call's state is its last line's
+                assert_eq!(
+                    state,
+                    want[got.len() - 1].2,
+                    "max {max}, line {}",
+                    got.len()
+                );
+                rest = next.map(|p| &t[p..]);
+            }
+            let lines: Vec<_> = want
+                .iter()
+                .map(|(l, s, _)| (l.clone(), s.clone()))
+                .collect();
+            assert_eq!(got, lines, "max {max}");
+        }
+    }
+
+    /// The type frames, ada's own (X-056): a generic's bounds with `?Sized` stay a generic (bat's
+    /// grammar marked the `?` invalid and read on as an impl's name), a nested `>` ends, a
+    /// const generic's block and a macro in a type hold code.
+    #[test]
+    fn types() {
+        let l = ["impl<T: ?Sized + Message> private::Sealed for *const T {}"];
+        has(&l, "?", "keyword.operator.rust");
+        has(&l, "Sized", "support.type.rust");
+        has(&l, "for", "keyword.other.rust");
+        has(&l, ">", "punctuation.definition.generic.end.rust");
+        let l = ["fn f<R: Rng + ?Sized>(&self, rng: &mut R) -> Vec<Option<u8>> {}"];
+        has(&l, "self", "variable.parameter.rust");
+        has(&l, "rng", "variable.parameter.rust");
+        has(&l, ">>", "punctuation.definition.generic.end.rust");
+        let l = ["let x = Iso8601::<{ CONFIG }>; let t = p.parse::<Token![=]>()?;"];
+        has(&l, "CONFIG", "constant.other.rust");
+        has(&l, "Token!", "support.macro.rust");
+        has(&l, "=", "keyword.operator.assignment.rust");
+        let l = [
+            "struct S<'a, #[may_dangle] T: 'a> {",
+            "    f: Option<(",
+            "        u32, // n",
+            "    )>,",
+            "}",
+        ];
+        has(
+            &l,
+            "may_dangle",
+            "meta.annotation.rust variable.annotation.rust",
+        );
+        has(&l, " n", "comment.line.double-slash.rust");
     }
 
     #[test]

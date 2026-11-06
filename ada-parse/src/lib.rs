@@ -148,10 +148,36 @@ pub fn lex_lines(
     max: usize,
     state: &mut State,
     (spans, buf): (&mut Vec<Span>, &mut String),
+    prep: impl FnMut(&str, &mut String) -> bool,
+    each: impl FnMut(&str, &[Span]),
+) -> Option<usize> {
+    if lang == Lang::Rust {
+        // the scan kept across the block's lines, its state made once (HL-006's stage B)
+        let mut carry = rust::Carry::new(state);
+        let rest = split_lines(text, max, (spans, buf), prep, each, |l, v| {
+            v.clear();
+            carry.line(l.as_bytes(), &mut Out::new(v));
+        });
+        *state = carry.state();
+        return rest;
+    }
+    let scan = scanner(lang);
+    split_lines(text, max, (spans, buf), prep, each, |l, v| {
+        scan(l, state, v)
+    })
+}
+
+/// [`lex_lines`]' loop: each of up to `max` lines split, `prep`'d, lexed by `scan` and handed
+/// to `each`.
+#[inline(always)]
+fn split_lines(
+    text: &str,
+    max: usize,
+    (spans, buf): (&mut Vec<Span>, &mut String),
     mut prep: impl FnMut(&str, &mut String) -> bool,
     mut each: impl FnMut(&str, &[Span]),
+    mut scan: impl FnMut(&str, &mut Vec<Span>),
 ) -> Option<usize> {
-    let scan = scanner(lang);
     let b = text.as_bytes();
     let mut p = 0;
     for _ in 0..max {
@@ -161,7 +187,7 @@ pub fn lex_lines(
         let line = unsafe { text.get_unchecked(p..e) };
         let line = line.strip_suffix('\r').unwrap_or(line);
         let line = if prep(line, buf) { buf.as_str() } else { line };
-        scan(line, state, spans);
+        scan(line, spans);
         each(line, spans);
         if e == b.len() {
             return None;

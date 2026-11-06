@@ -99,6 +99,24 @@ pub fn ident_end<const DOLLAR_IN: bool>(b: &[u8], p: usize, wide: fn(char) -> bo
     Ident { end: i, bits }
 }
 
+/// The run from `p` of bytes whose classes meet `take`, with the classes they had: a name in a
+/// language whose every byte past ASCII is a letter (Rust's `\w`: `WORD | HIGH`), read a byte at
+/// a time on the table (X-054: no wider read gained).
+#[inline(always)]
+pub fn class_run(b: &[u8], p: usize, take: u8) -> Ident {
+    let mut i = p;
+    let mut bits = 0;
+    while let Some(&c) = b.get(i) {
+        let k = CLASS[usize::from(c)];
+        if k & take == 0 {
+            break;
+        }
+        bits |= k;
+        i += 1;
+    }
+    Ident { end: i, bits }
+}
+
 #[cold]
 #[inline(never)]
 fn ident_wide<const DOLLAR_IN: bool>(
@@ -142,5 +160,10 @@ mod tests {
         let r = ident_end::<false>("naïve(".as_bytes(), 0, char::is_alphanumeric);
         assert_eq!((r.end, r.bits & HIGH), (6, HIGH));
         assert_eq!(ident_end::<false>(b"a$b", 0, char::is_alphanumeric).end, 1);
+        let r = class_run("u8é_X+".as_bytes(), 0, WORD | HIGH);
+        assert_eq!(
+            (r.end, r.bits & (UPPER | LOWER | DIGIT | HIGH)),
+            (6, UPPER | LOWER | DIGIT | HIGH)
+        );
     }
 }

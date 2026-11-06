@@ -2758,14 +2758,16 @@ mod tests {
 
     /// ada-parse's Rust lexer picks the rules bat's grammar picks, in every built-in theme
     /// (ADR-40): its odd corners included (a one-digit width in a placeholder, `write!`'s
-    /// first argument, a tuple struct's first `)`, `impl` names past `for`).
+    /// first argument, a tuple struct's first `)`, `impl` names past `for`). Not `?Sized`: bat's
+    /// grammar marks its `?` invalid and ends the generic there, which ada's type frames don't
+    /// (X-056, by design; ada-parse's `rust::tests::types`).
     #[test]
     fn rust_rules_match_the_grammar() {
         let text = concat!(
             "//! crate docs $x\n",
             "#![allow(dead_code)]\n",
             "#[derive(Debug, Clone)] #[cfg(not(feature = \"x\"))]\n",
-            "pub(crate) struct S<'a, T: ?Sized> { pub a: &'a T, b: Vec<[u8; 4]> }\n",
+            "pub(crate) struct S<'a, T: Sized> { pub a: &'a T, b: Vec<[u8; 4]> }\n",
             "struct Tuple(pub u32, Option<(u8, u16)>);\n",
             "enum E<T> { A(T), B { x: i32 }, C = 3 }\n",
             "trait Tr: Clone + Send { type Out; fn f(&self) -> Self::Out; }\n",

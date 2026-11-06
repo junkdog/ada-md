@@ -448,7 +448,8 @@ pub(crate) fn is_sql_language(id: &[u8]) -> bool {
 /// A `language=ID` comment's text from `p` (after `//` or `/*`): whether it marks SQL.
 pub(crate) fn marker_comment(b: &[u8], p: usize) -> bool {
     let q = skip_spaces(b, p);
-    if !b[q..].starts_with(b"language=") {
+    // the first byte first: most comments aren't markers, and the compare is a call
+    if b.get(q) != Some(&b'l') || !b[q..].starts_with(b"language=") {
         return false;
     }
     let s = q + 9;
