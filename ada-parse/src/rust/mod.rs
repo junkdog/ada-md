@@ -1,9 +1,12 @@
-//! Rust by a scanner of ada's own (ADR-40, speed first): bat's `Rust` grammar compiled by hand.
-//! Each of its contexts that can be open is an arm of one `match` on the top of a stack, and each
-//! tries its patterns, in the grammar's order, at the position the scan has reached: syntect's
-//! leftmost match is the first pattern that matches at the first position where one does. Where
-//! no pattern can start inside a run of bytes (a word, spaces, a string's text), the run is
-//! skipped whole.
+//! Rust by a scanner of ada's own (ADR-40, speed first). Its code (the statements, a path's
+//! segments, the types) runs on frames of ada's own on the C family's core ([`code`], X-056).
+//! The rest is bat's `Rust` grammar compiled by hand: the headers (`impl`, `where`, `trait`,
+//! `enum`, `mod`), attributes, closure parameters, `macro_rules!`, strings, comments, regexes
+//! and SQL. Each of those contexts that can be open is an arm of one `match` on the top of a
+//! stack, and each tries its patterns, in the grammar's order, at the position the scan has
+//! reached: syntect's leftmost match is the first pattern that matches at the first position
+//! where one does. Where no pattern can start inside a run of bytes (a word, spaces, a string's
+//! text), the run is skipped whole. Frames and contexts share the stack, their ids one space.
 //!
 //! What the 14 built-in themes tell apart is a token's own scopes and whether it is in an
 //! attribute (`meta.annotation`), so a kind is a leaf (bat's scopes for the token) with or
@@ -34,7 +37,8 @@ use crate::regex;
 use crate::sql;
 use crate::{Out, State};
 
-// The contexts, by bat's names where one is one of them.
+// The contexts, by bat's names where one is one of them. The frames first ([`code`], X-056): ids
+// up to [`LAST_FRAME`], so that telling one is a compare (X-063); then the contexts on bat's patterns.
 /// The top level (`statements`).
 const MAIN: u8 = 0;
 /// `{ … }`: a block, a function's, an impl's, a trait's, a module's or a macro's body.
@@ -47,84 +51,15 @@ const BRACKET: u8 = 3;
 const MACRO_BRACKET: u8 = 4;
 /// A closure's body without braces, to the end of the line or a closer.
 const CLOSURE_BODY: u8 = 5;
-/// A trait's or an enum's header, or an impl's before `{`: `statements-block`.
-const HEAD: u8 = 6;
-/// A module's header, which `;` can end.
-const MOD_HEAD: u8 = 7;
-/// After an operator: `<` starts generics, `|` a closure.
-const AFTER_OP: u8 = 8;
+/// After an operator: `<` starts generics, `|` a closure (a line's end may leave it).
+const AFTER_OP: u8 = 6;
 /// After `{` or `(`: `|` starts a closure.
-const TRY_CLOSURE: u8 = 9;
-const CLOSURE: u8 = 10;
-const CLOSURE_PARAMS: u8 = 11;
-/// `(a, b)` among parameters.
-const PARAM_TUPLE: u8 = 12;
-/// `: (A, B)` among parameters.
-const PARAM_TUPLE_TYPE: u8 = 13;
-/// A closure parameter's type.
-const CLOSURE_PARAM_TYPE: u8 = 14;
-const CLOSURE_RETURN: u8 = 15;
-const RETURN_TYPE: u8 = 16;
-const FN_GENERIC: u8 = 17;
-const FN_PARAMS: u8 = 18;
-const FN_RETURN: u8 = 19;
-const FN_WHERE: u8 = 20;
-const IMPL_DEF: u8 = 21;
-const IMPL_GENERIC: u8 = 22;
-const IMPL_FOR: u8 = 23;
-/// An impl's trait, before `for`.
-const IMPL_TRAIT: u8 = 24;
-const IMPL_IDENT: u8 = 25;
-const IMPL_WHERE: u8 = 26;
-const STRUCT_ID: u8 = 27;
-const STRUCT_GENERIC: u8 = 28;
-const STRUCT_BODY: u8 = 29;
-const STRUCT_FIELDS: u8 = 30;
-const FIELD_TYPE: u8 = 31;
-/// A tuple struct's fields, which its first `)` ends, at any depth (bat's `with_prototype`).
-const TUPLE_FIELDS: u8 = 32;
-/// `generic-angles`.
-const GENERIC: u8 = 33;
-/// `generic-angles-contents`.
-const GENERIC_ARGS: u8 = 34;
-/// A `<` in them.
-const GENERIC_NESTED: u8 = 35;
-/// A `[` in them.
-const GENERIC_ARRAY: u8 = 36;
-/// After its `;`.
-const GENERIC_LEN: u8 = 37;
-/// After `extern` in them.
-const GENERIC_EXTERN: u8 = 38;
-/// `(` in a constant expression.
-const CONST_GROUP: u8 = 39;
-/// `fn(` in a type.
-const FN_TYPE: u8 = 40;
-const FN_TYPE_RETURN: u8 = 41;
-/// `(` in a type.
-const TYPE_GROUP: u8 = 42;
+const TRY_CLOSURE: u8 = 7;
 /// After `name::` in an expression.
-const NO_TYPE_NAMES: u8 = 43;
-/// After `macro_rules! name`.
-const MACRO_BLOCK: u8 = 44;
-const MACRO_RULES: u8 = 45;
-const MACRO_RULES_BRACKET: u8 = 46;
-const MACRO_RULES_PAREN: u8 = 47;
-const MATCHER: u8 = 48;
-/// `$(` in a matcher.
-const MATCHER_GROUP: u8 = 49;
-const MATCH_OP: u8 = 50;
-const MACRO_BODY: u8 = 51;
-const MACRO_TERM: u8 = 52;
-const ATTRIBUTE: u8 = 53;
-const ATTR_PARAMS: u8 = 54;
-const ATTR_CALL: u8 = 55;
-/// A formatting macro's first argument.
-const FMT_FIRST: u8 = 56;
-/// `write!`'s first argument, before the format string.
-const WRITE_FIRST: u8 = 57;
+const NO_TYPE_NAMES: u8 = 8;
 /// A SQL call's `( … )` (ADR-40, phase 4): [`GROUP`], plus where its SQL argument is (a
 /// `PSQL_*` state added). Past that argument, or one that doesn't fit, it is [`GROUP`].
-const PSQL: u8 = 58;
+const PSQL: u8 = 9;
 /// At the first argument: the SQL (`sql_query(`, `query!(`, `conn.execute(`…).
 const PSQL_SQL: u8 = 0;
 /// At the first argument: a type, then the SQL (`query_as!(`).
@@ -132,9 +67,83 @@ const PSQL_TYPE: u8 = 1;
 /// In the type, waiting for its `,`.
 const PSQL_SKIP: u8 = 2;
 const PSQL_LAST: u8 = PSQL + PSQL_SKIP;
+// the type frames
+const RETURN_TYPE: u8 = 12;
+const FN_GENERIC: u8 = 13;
+const FN_PARAMS: u8 = 14;
+const FN_RETURN: u8 = 15;
+const STRUCT_FIELDS: u8 = 16;
+const FIELD_TYPE: u8 = 17;
+/// A tuple struct's fields, a type frame: its own `)` ends it, not the first at any depth as bat's
+/// `with_prototype` has it (X-063).
+const TUPLE_FIELDS: u8 = 18;
+/// `generic-angles`.
+const GENERIC: u8 = 19;
+/// `generic-angles-contents`.
+const GENERIC_ARGS: u8 = 20;
+/// A `<` in them.
+const GENERIC_NESTED: u8 = 21;
+/// A `[` in them.
+const GENERIC_ARRAY: u8 = 22;
+/// `fn(` in a type.
+const FN_TYPE: u8 = 23;
+const FN_TYPE_RETURN: u8 = 24;
+/// `(` in a type.
+const TYPE_GROUP: u8 = 25;
+/// The last frame's id.
+const LAST_FRAME: u8 = TYPE_GROUP;
+const _: () = assert!(PSQL_LAST < RETURN_TYPE);
+/// A trait's or an enum's header, or an impl's before `{`: `statements-block`.
+const HEAD: u8 = 26;
+/// A module's header, which `;` can end.
+const MOD_HEAD: u8 = 27;
+const CLOSURE: u8 = 28;
+const CLOSURE_PARAMS: u8 = 29;
+/// `(a, b)` among parameters.
+const PARAM_TUPLE: u8 = 30;
+/// `: (A, B)` among parameters.
+const PARAM_TUPLE_TYPE: u8 = 31;
+/// A closure parameter's type.
+const CLOSURE_PARAM_TYPE: u8 = 32;
+const CLOSURE_RETURN: u8 = 33;
+const FN_WHERE: u8 = 34;
+const IMPL_DEF: u8 = 35;
+const IMPL_GENERIC: u8 = 36;
+const IMPL_FOR: u8 = 37;
+/// An impl's trait, before `for`.
+const IMPL_TRAIT: u8 = 38;
+const IMPL_IDENT: u8 = 39;
+const IMPL_WHERE: u8 = 40;
+const STRUCT_ID: u8 = 41;
+const STRUCT_GENERIC: u8 = 42;
+const STRUCT_BODY: u8 = 43;
+/// After its `;`, in a generic's `[ … ]`.
+const GENERIC_LEN: u8 = 44;
+/// After `extern` in a generic's arguments.
+const GENERIC_EXTERN: u8 = 45;
+/// `(` in a constant expression.
+const CONST_GROUP: u8 = 46;
+/// After `macro_rules! name`.
+const MACRO_BLOCK: u8 = 47;
+const MACRO_RULES: u8 = 48;
+const MACRO_RULES_BRACKET: u8 = 49;
+const MACRO_RULES_PAREN: u8 = 50;
+const MATCHER: u8 = 51;
+/// `$(` in a matcher.
+const MATCHER_GROUP: u8 = 52;
+const MATCH_OP: u8 = 53;
+const MACRO_BODY: u8 = 54;
+const MACRO_TERM: u8 = 55;
+const ATTRIBUTE: u8 = 56;
+const ATTR_PARAMS: u8 = 57;
+const ATTR_CALL: u8 = 58;
+/// A formatting macro's first argument.
+const FMT_FIRST: u8 = 59;
+/// `write!`'s first argument, before the format string.
+const WRITE_FIRST: u8 = 60;
 // strings and comments last: no `with_prototype` reaches into them
 const STRING: u8 = 70;
-const _: () = assert!(PSQL_LAST < STRING);
+const _: () = assert!(WRITE_FIRST < STRING);
 const FMT_STRING: u8 = 71;
 const BYTE_STRING: u8 = 72;
 const RAW_STRING: u8 = 73;
@@ -451,9 +460,8 @@ pub struct Carry {
     exact: bool,
     /// The open raw string's `#`s.
     hashes: usize,
-    /// How many attributes and tuple structs' fields are open.
+    /// How many attributes are open.
     annot: usize,
-    tuple: usize,
     /// [`State::arg`] as the last line left it: an open raw string's `#`s, [`MARKED`].
     arg: u16,
 }
@@ -467,13 +475,11 @@ impl Carry {
             exact: state.is_exact(),
             hashes: usize::from(state.arg & HASHES),
             annot: 0,
-            tuple: 0,
             arg: state.arg,
         };
         c.depth = state.load(&mut c.head);
         for &l in &c.head[1..if state.arg & OPEN != 0 { c.depth } else { 1 }] {
             c.annot += usize::from(l == ATTRIBUTE);
-            c.tuple += usize::from(l == TUPLE_FIELDS);
         }
         c
     }
@@ -488,12 +494,12 @@ impl Carry {
     pub fn line(&mut self, b: &[u8], out: &mut Out) {
         let mut s = Scan::new(b, out, self.exact, self.arg);
         s.stack[..CARRIED].copy_from_slice(&self.head);
-        (s.depth, s.hashes, s.annot, s.tuple) = (self.depth, self.hashes, self.annot, self.tuple);
+        (s.depth, s.hashes, s.annot) = (self.depth, self.hashes, self.annot);
         s.cur = s.stack[s.depth - 1];
         self.arg = s.lex_line();
         self.head.copy_from_slice(&s.stack[..CARRIED]);
         (self.depth, self.hashes, self.exact) = (s.depth, s.hashes, s.exact);
-        (self.annot, self.tuple) = (s.annot, s.tuple);
+        self.annot = s.annot;
     }
 }
 
@@ -511,7 +517,6 @@ impl<'b, 'c> Scan<'b, 'c> {
             hashes: usize::from(arg & HASHES),
             exact,
             annot: 0,
-            tuple: 0,
             text: 0,
             at: 0,
             sql_paren: usize::MAX,
@@ -527,12 +532,11 @@ impl<'b, 'c> Scan<'b, 'c> {
         }
     }
 
-    /// The open attributes and tuple structs' fields, counted on the stack.
+    /// The open attributes, counted on the stack.
     #[inline(always)]
     fn count_open(&mut self) {
         for &l in &self.stack[1..self.depth] {
             self.annot += usize::from(l == ATTRIBUTE);
-            self.tuple += usize::from(l == TUPLE_FIELDS);
         }
     }
 
@@ -563,7 +567,7 @@ impl<'b, 'c> Scan<'b, 'c> {
             self.exact = false;
             self.count();
         }
-        if (self.annot | self.tuple) != 0 {
+        if self.annot != 0 {
             arg |= OPEN;
         }
         arg | self.opened
@@ -573,7 +577,7 @@ impl<'b, 'c> Scan<'b, 'c> {
 /// [`State::arg`]'s bit beside an open raw string's `#`s: a SQL marker (`// language=SQL`)
 /// waits for its string.
 const MARKED: u16 = 0x8000;
-/// [`State::arg`]'s bit for an attribute or a tuple struct's fields open on the stack, so that a
+/// [`State::arg`]'s bit for an attribute open on the stack, so that a
 /// line counts them only then.
 const OPEN: u16 = 0x4000;
 /// [`State::arg`]'s bits for the frames' [`Scan::opened`] at the line's end.
@@ -598,8 +602,6 @@ struct Scan<'b, 'c> {
     exact: bool,
     /// How many attributes are open.
     annot: usize,
-    /// How many tuple structs' fields are open.
-    tuple: usize,
     /// The kind of text no pattern matches.
     text: u16,
     /// Where the spans so far end.
@@ -685,26 +687,6 @@ fn is_ident(w: &[u8]) -> bool {
     }
 }
 
-/// `[\p{Ll}_][\p{Ll}\p{Nd}_]*`, a whole word.
-fn is_lower(w: &[u8]) -> bool {
-    matches!(w.first(), Some(b'a'..=b'z' | b'_'))
-        && w.iter()
-            .all(|&c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_')
-}
-
-/// `[\p{Lu}_][\p{Lu}\p{Nd}_]+`, a whole word: a constant's name.
-fn is_constant(w: &[u8]) -> bool {
-    w.len() >= 2
-        && matches!(w[0], b'A'..=b'Z' | b'_')
-        && w.iter()
-            .all(|&c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == b'_')
-}
-
-/// `c_[\p{Ll}\p{Nd}_]+|[\p{Ll}_][\p{Ll}\p{Nd}_]*_t`, a whole word: a C type's name.
-fn is_c_type(w: &[u8]) -> bool {
-    w.len() >= 3 && is_lower(w) && (w.starts_with(b"c_") || w.ends_with(b"_t"))
-}
-
 /// `[\p{Lu}]|_*[\p{Lu}][\p{L}\p{N}_]*[\p{Ll}][\p{L}\p{N}_]*`, a whole word: a type's name
 /// before `::`.
 fn is_type_name(w: &[u8]) -> bool {
@@ -719,6 +701,7 @@ fn is_type_name(w: &[u8]) -> bool {
 
 /// What a word is to bat's grammar, by [`lookup`]: a keyword (its leaf), one of the `support.type`
 /// names, a primitive type (or `Self`), or another name.
+#[cfg(test)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Name {
     Other,
@@ -727,7 +710,9 @@ enum Name {
     Primitive,
 }
 
-/// The word `w` among bat's keywords and type names, dispatching on its first byte.
+/// The word `w` among bat's keywords and type names, dispatching on its first byte: the
+/// copy [`code::WORDS`]'s table is tested against.
+#[cfg(test)]
 fn lookup(w: &[u8]) -> Name {
     use Name::{Keyword as K, Other, Primitive, Support};
     let Some(&c) = w.first() else {
@@ -1198,11 +1183,9 @@ fn impl_for_ahead(b: &[u8], p: usize) -> bool {
 }
 
 /// What a blank run does in a context on bat's patterns, at [`Scan::run`]'s turn: nothing (no
-/// pattern starts on a blank, so `at` fails and `advance` passes the run), for most; in a
-/// generic's arguments only after a space or a tab, as another blank pops them; in
-/// `return-type` (a blank before `{` pops it), `after-operator`, `try-closure`, a path's
-/// segments and the contexts that move on at once (`impl-for`, the generic heads), something,
-/// so the run isn't passed.
+/// pattern starts on a blank, so `at` fails and `advance` passes the run), for most; in the
+/// contexts that move on at once (`impl-for`, the generic heads), something, so the run isn't
+/// passed. The frames pass their blanks themselves.
 static BLANKS: [u8; 256] = {
     let mut t = [PASS_ANY; 256];
     let mut c = STRING as usize;
@@ -1210,20 +1193,12 @@ static BLANKS: [u8; 256] = {
         t[c] = 0;
         c += 1;
     }
-    t[RETURN_TYPE as usize] = 0;
     t[IMPL_GENERIC as usize] = 0;
     t[STRUCT_GENERIC as usize] = 0;
     t[IMPL_FOR as usize] = 0;
-    t[AFTER_OP as usize] = 0;
-    t[TRY_CLOSURE as usize] = 0;
-    t[NO_TYPE_NAMES as usize] = 0;
-    t[GENERIC_ARGS as usize] = PASS_SPACE_TAB;
-    t[GENERIC_NESTED as usize] = PASS_SPACE_TAB;
-    t[GENERIC_ARRAY as usize] = PASS_SPACE_TAB;
     t
 };
 const PASS_ANY: u8 = 1;
-const PASS_SPACE_TAB: u8 = 2;
 
 /// The contexts the prototype (`$name`) reaches: all but strings and macro matchers.
 fn proto(c: u8) -> bool {
@@ -1338,22 +1313,19 @@ impl Scan<'_, '_> {
         }
     }
 
-    /// Count the open attributes and tuple structs' fields.
+    /// Count the open attributes.
     fn count(&mut self) {
         let open = &self.stack[..self.depth];
         self.annot = open.iter().filter(|&&c| c == ATTRIBUTE).count();
-        self.tuple = open.iter().filter(|&&c| c == TUPLE_FIELDS).count();
         self.refresh();
     }
 
     fn enter(&mut self, c: u8) {
         self.annot += usize::from(c == ATTRIBUTE);
-        self.tuple += usize::from(c == TUPLE_FIELDS);
     }
 
     fn leave(&mut self, c: u8) {
         self.annot -= usize::from(c == ATTRIBUTE);
-        self.tuple -= usize::from(c == TUPLE_FIELDS);
     }
 
     fn push(&mut self, at: usize, c: u8) {
@@ -1367,28 +1339,6 @@ impl Scan<'_, '_> {
         self.cur = c;
         self.enter(c);
         self.refresh();
-    }
-
-    /// Push `after-operator` or `try-closure` at `at`, unless the line's next byte that isn't a
-    /// space shows it would pop there at once, matching nothing: anything but `|` or a `$name`,
-    /// and for `after-operator` a `<`. At the line's end it stays, for the next line.
-    fn push_ahead(&mut self, at: usize, c: u8) {
-        if (self.annot | self.tuple) == 0 && code::is_code(self.top()) {
-            // the frames run next: they tell a closure by the token before it
-            self.opened = if c == AFTER_OP {
-                OPENED_AFTER
-            } else {
-                OPENED_TRY
-            };
-            return;
-        }
-        let q = skip_spaces(self.b, at);
-        match self.b.get(q) {
-            None | Some(b'|' | b'$') => {}
-            Some(b'<') if c == AFTER_OP => {}
-            Some(_) => return,
-        }
-        self.push(at, c);
     }
 
     fn pop(&mut self, at: usize) {
@@ -1414,20 +1364,17 @@ impl Scan<'_, '_> {
     fn run(&mut self) {
         let mut p = 0;
         loop {
-            if code::is_code(self.top()) && (self.tuple | self.annot) == 0 {
+            if code::is_code(self.top()) {
                 p = self.code_run(p);
-                if code::is_code(self.top()) && (self.tuple | self.annot) == 0 {
+                if code::is_code(self.top()) {
                     // the line's end
                     return;
                 }
                 continue;
             }
             let b = self.b;
-            if p < b.len() && is_space(b[p]) {
-                let pass = BLANKS[usize::from(self.top())];
-                if pass == PASS_ANY || (pass == PASS_SPACE_TAB && matches!(b[p], b' ' | b'\t')) {
-                    p = skip_spaces(b, p);
-                }
+            if p < b.len() && is_space(b[p]) && BLANKS[usize::from(self.top())] == PASS_ANY {
+                p = skip_spaces(b, p);
             }
             if let Some(q) = self.at(p) {
                 p = q;
@@ -1468,20 +1415,12 @@ impl Scan<'_, '_> {
     fn at(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
         let top = self.top();
+        // the frames run their own contexts ([`Scan::code_run`])
+        debug_assert!(!code::is_code(top));
         if p == b.len() {
             return self.eol(top);
         }
         let c = b[p];
-        // a tuple struct's fields end at the first `)`, in any context opened in them
-        if self.tuple > 0 && c == b')' && top < STRING {
-            if top == TUPLE_FIELDS {
-                self.put(p, p + 1, GROUP_END);
-                self.pop(p + 1);
-                return Some(p + 1);
-            }
-            self.pop(p);
-            return Some(p);
-        }
         if c == b'$'
             && proto(top)
             && let Some(e) = ident_end(b, p + 1)
@@ -1492,34 +1431,14 @@ impl Scan<'_, '_> {
                 _ => VARIABLE,
             };
             self.put(p, e, leaf);
+            if top == STRUCT_ID {
+                // a macro's `struct $name`: the name, else the header never ends
+                self.struct_named(e);
+            }
             return Some(e);
         }
         match top {
-            MAIN | BLOCK | GROUP | BRACKET | MACRO_BRACKET | CLOSURE_BODY => {
-                self.statements(top, p, c)
-            }
-            PSQL..=PSQL_LAST => self.sql_group(p, c, top),
             HEAD | MOD_HEAD => self.head(top, p, c),
-            AFTER_OP | TRY_CLOSURE => {
-                let q = skip_spaces(b, p);
-                match b.get(q) {
-                    None => None,
-                    Some(b'|') => {
-                        self.set(p, CLOSURE);
-                        Some(q)
-                    }
-                    Some(b'<') if top == AFTER_OP => {
-                        self.set(q, GENERIC);
-                        Some(q)
-                    }
-                    // the prototype matches there first
-                    Some(b'$') if q > p && ident_starts(b, q + 1) => Some(q),
-                    Some(_) => {
-                        self.pop(q);
-                        Some(q)
-                    }
-                }
-            }
             CLOSURE => (c == b'|').then(|| {
                 self.set(p, CLOSURE_RETURN);
                 self.push(p, CLOSURE_PARAMS);
@@ -1561,51 +1480,6 @@ impl Scan<'_, '_> {
                     Some(p)
                 }
             },
-            RETURN_TYPE => self.return_type(p, c),
-            FN_GENERIC => {
-                if let Some(e) = self.comment(p) {
-                    return Some(e);
-                }
-                match c {
-                    b'<' => {
-                        self.push(p, GENERIC);
-                        Some(p)
-                    }
-                    b'(' => {
-                        self.set(p, FN_PARAMS);
-                        self.put(p, p + 1, PARAMS_BEGIN);
-                        Some(p + 1)
-                    }
-                    _ if is_space(c) => None,
-                    _ => {
-                        self.pop(p);
-                        Some(p)
-                    }
-                }
-            }
-            FN_PARAMS => self.fn_params(p, c),
-            FN_RETURN => {
-                if let Some(e) = self.comment(p) {
-                    return Some(e);
-                }
-                match c {
-                    b'{' => Some(self.open_block(p, false)),
-                    b'-' if b.get(p + 1) == Some(&b'>') => {
-                        self.put(p, p + 2, SEPARATOR);
-                        self.push(p + 2, RETURN_TYPE);
-                        Some(p + 2)
-                    }
-                    _ if is_space(c) => None,
-                    _ if self.is_word_at(p, b"where") => {
-                        self.set(p, FN_WHERE);
-                        Some(p)
-                    }
-                    _ => {
-                        self.pop(p);
-                        Some(p)
-                    }
-                }
-            }
             FN_WHERE | IMPL_WHERE => {
                 if let Some(e) = self.comment(p) {
                     return Some(e);
@@ -1701,12 +1575,7 @@ impl Scan<'_, '_> {
             STRUCT_ID => {
                 let e = ident_end(b, p)?;
                 self.put(p, e, STRUCT_NAME);
-                let next = if b.get(e) == Some(&b'<') {
-                    STRUCT_GENERIC
-                } else {
-                    STRUCT_BODY
-                };
-                self.set(e, next);
+                self.struct_named(e);
                 Some(e)
             }
             STRUCT_BODY => {
@@ -1731,48 +1600,6 @@ impl Scan<'_, '_> {
                     _ => None,
                 }
             }
-            STRUCT_FIELDS => self.struct_fields(p, c),
-            FIELD_TYPE => match c {
-                b',' => {
-                    self.pop(p + 1);
-                    Some(p + 1)
-                }
-                b'}' => {
-                    self.pop(p);
-                    Some(p)
-                }
-                _ => {
-                    if let Some(e) = self.comment(p) {
-                        return Some(e);
-                    }
-                    if c == b':' {
-                        return Some(self.token(p, 1, SEPARATOR_TYPE));
-                    }
-                    self.tai(p)
-                }
-            },
-            TUPLE_FIELDS => self.comment(p).or_else(|| self.tai(p)),
-            GENERIC => {
-                if let Some(e) = self.comment(p) {
-                    return Some(e);
-                }
-                match c {
-                    b'-' if b.get(p + 1) == Some(&b'>') => {
-                        self.put(p, p + 2, SEPARATOR_GENERIC);
-                        self.push(p + 2, GENERIC_ARGS);
-                        Some(p + 2)
-                    }
-                    b'>' => Some(self.close(p, GENERIC_END)),
-                    b'<' => {
-                        self.push(p, GENERIC_ARGS);
-                        self.put(p, p + 1, GENERIC_BEGIN);
-                        Some(p + 1)
-                    }
-                    _ if is_space(c) => None,
-                    _ => Some(self.close_n(p, char_len(c), INVALID)),
-                }
-            }
-            GENERIC_ARGS | GENERIC_NESTED | GENERIC_ARRAY => self.generic_args(top, p, c),
             GENERIC_LEN => {
                 if c == b']' {
                     return Some(self.close(p, GROUP_END));
@@ -1802,33 +1629,6 @@ impl Scan<'_, '_> {
                 self.pop(p);
                 Some(p)
             }
-            FN_TYPE => {
-                if c == b')' {
-                    self.put(p, p + 1, META_GROUP_END);
-                    self.set(p + 1, FN_TYPE_RETURN);
-                    return Some(p + 1);
-                }
-                self.tai(p)
-            }
-            FN_TYPE_RETURN => match c {
-                b'-' if b.get(p + 1) == Some(&b'>') => {
-                    self.put(p, p + 2, SEPARATOR);
-                    self.push(p + 2, RETURN_TYPE);
-                    Some(p + 2)
-                }
-                _ if is_space(c) => None,
-                _ => {
-                    self.pop(p);
-                    Some(p)
-                }
-            },
-            TYPE_GROUP => {
-                if c == b')' {
-                    return Some(self.close(p, GROUP_END));
-                }
-                self.tai(p)
-            }
-            NO_TYPE_NAMES => Some(self.no_type_names(p, c)),
             MACRO_BLOCK => match c {
                 b'{' => {
                     self.set(p, MACRO_RULES);
@@ -2059,7 +1859,7 @@ impl Scan<'_, '_> {
         let len = self.b.len();
         match top {
             // `(?=[};)\]\n])`, and the empty match
-            CLOSURE_BODY | CLOSURE_PARAMS | NO_TYPE_NAMES | IMPL_GENERIC => self.pop(len),
+            CLOSURE_PARAMS | IMPL_GENERIC => self.pop(len),
             IMPL_FOR => self.set(len, IMPL_IDENT),
             STRUCT_GENERIC => self.set(len, STRUCT_BODY),
             SQL_IN..=SQL_LAST => {
@@ -2069,6 +1869,16 @@ impl Scan<'_, '_> {
             _ => return None,
         }
         Some(len)
+    }
+
+    /// A struct's name ended at `e`: its generic or its body next.
+    fn struct_named(&mut self, e: usize) {
+        let next = if self.b.get(e) == Some(&b'<') {
+            STRUCT_GENERIC
+        } else {
+            STRUCT_BODY
+        };
+        self.set(e, next);
     }
 
     /// Whether `w` is the whole word at `p`: its first byte first, then the rest without a
@@ -2106,7 +1916,7 @@ impl Scan<'_, '_> {
         self.set(p, BLOCK);
         self.put(p, p + 1, BLOCK_BEGIN);
         if try_closure {
-            self.push_ahead(p + 1, TRY_CLOSURE);
+            self.push_ahead_code(p + 1, TRY_CLOSURE);
         }
         p + 1
     }
@@ -2202,22 +2012,6 @@ impl Scan<'_, '_> {
         (c == b'/' && b.get(p + 1) == Some(&b'*')).then(|| self.open_comment(p))
     }
 
-    /// `statements`, at `p` in one of the contexts made of them: the context's closers first.
-    fn statements(&mut self, top: u8, p: usize, c: u8) -> Option<usize> {
-        match (top, c) {
-            (BLOCK, b'}') => return Some(self.close(p, BLOCK_END)),
-            (GROUP, b')') => return Some(self.close(p, META_GROUP_END)),
-            (BRACKET | MACRO_BRACKET, b']') => return Some(self.close(p, GROUP_END)),
-            (BRACKET, b';') => return Some(self.token(p, 1, SEPARATOR)),
-            (CLOSURE_BODY, b'}' | b';' | b')' | b']') => {
-                self.pop(p);
-                return Some(p);
-            }
-            _ => {}
-        }
-        self.statement(p, c)
-    }
-
     /// A header's `statements-block`: comments and the body's braces.
     fn head(&mut self, top: u8, p: usize, c: u8) -> Option<usize> {
         if top == MOD_HEAD && c == b';' {
@@ -2235,134 +2029,12 @@ impl Scan<'_, '_> {
         }
     }
 
-    /// One of the patterns `statements` holds, at `p`.
-    fn statement(&mut self, p: usize, c: u8) -> Option<usize> {
-        let b = self.b;
-        let next = b.get(p + 1).copied();
-        Some(match c {
-            b'\'' => self.quote(p),
-            b'"' => {
-                self.push(p, STRING);
-                let e = self.token(p, 1, STR_BEGIN);
-                self.regex_in(p, e);
-                e
-            }
-            b'/' => match self.comment(p) {
-                Some(e) => e,
-                None => self.op_eq(p, ARITHMETIC),
-            },
-            b'#' => match self.attribute(p) {
-                Some(e) => e,
-                None => self.token(p, 1, OPERATOR),
-            },
-            b'{' => {
-                self.push(p, BLOCK);
-                self.put(p, p + 1, BLOCK_BEGIN);
-                self.push_ahead(p + 1, TRY_CLOSURE);
-                p + 1
-            }
-            b'(' => {
-                let group = if p == self.sql_paren {
-                    PSQL + self.sql_call
-                } else {
-                    GROUP
-                };
-                self.push(p, group);
-                self.put(p, p + 1, GROUP_BEGIN);
-                self.push_ahead(p + 1, TRY_CLOSURE);
-                p + 1
-            }
-            b'[' => {
-                self.push(p, BRACKET);
-                self.token(p, 1, GROUP_BEGIN)
-            }
-            b'0'..=b'9' => {
-                if !starts_word(b, p) {
-                    return None;
-                }
-                return self.number(p, true);
-            }
-            b':' => {
-                if next == Some(b':') && ident_starts(b, p + 2) {
-                    self.put(p, p + 2, PATH_ACCESSOR);
-                    self.push(p + 2, NO_TYPE_NAMES);
-                    p + 2
-                } else {
-                    self.after_op(p, 1, SEPARATOR)
-                }
-            }
-            b';' => self.after_op(p, 1, TERMINATOR),
-            b',' => self.after_op(p, 1, SEPARATOR),
-            b'-' if next == Some(b'>') => {
-                self.put(p, p + 2, SEPARATOR);
-                self.push(p + 2, RETURN_TYPE);
-                p + 2
-            }
-            b'=' => match next {
-                Some(b'>') => self.after_op(p, 2, OPERATOR),
-                Some(b'=') => self.token(p, 2, COMPARISON),
-                _ => self.after_op(p, 1, ASSIGNMENT),
-            },
-            b'*' => match self.star_keyword(p) {
-                Some(e) => e,
-                None => self.op_eq(p, ARITHMETIC),
-            },
-            b'-' | b'+' | b'%' => self.op_eq(p, ARITHMETIC),
-            b'^' => self.op_eq(p, BITWISE),
-            b'&' | b'|' => {
-                if next == Some(b'=') {
-                    self.token(p, 2, ASSIGNMENT)
-                } else if next == Some(c) {
-                    self.token(p, 2, LOGICAL)
-                } else {
-                    self.token(p, 1, BITWISE)
-                }
-            }
-            b'!' => {
-                if next == Some(b'=') {
-                    self.token(p, 2, COMPARISON)
-                } else {
-                    self.token(p, 1, LOGICAL)
-                }
-            }
-            b'<' | b'>' => {
-                if next == Some(c) && b.get(p + 2) == Some(&b'=') {
-                    self.token(p, 3, ASSIGNMENT)
-                } else if next == Some(b'=') {
-                    self.token(p, 2, COMPARISON)
-                } else {
-                    self.token(p, 1, COMPARISON)
-                }
-            }
-            b'.' => {
-                if next == Some(b'.') {
-                    let n = if b.get(p + 2) == Some(&b'.') { 3 } else { 2 };
-                    self.token(p, n, RANGE)
-                } else {
-                    self.token(p, 1, DOT)
-                }
-            }
-            b'@' | b'~' | b'?' | b'$' => self.token(p, 1, OPERATOR),
-            // no pattern starts with a space: the run is plain
-            _ if is_space(c) => skip_spaces(b, p),
-            _ if is_word(c) => return self.word(p),
-            _ => return None,
-        })
-    }
-
-    /// `n` bytes at `p` are `leaf`, and push `after-operator`.
-    fn after_op(&mut self, p: usize, n: usize, leaf: u16) -> usize {
-        self.put(p, p + n, leaf);
-        self.push_ahead(p + n, AFTER_OP);
-        p + n
-    }
-
     /// An operator that `=` can follow, making it an assignment.
     fn op_eq(&mut self, p: usize, leaf: u16) -> usize {
         if self.b.get(p + 1) == Some(&b'=') {
-            self.token(p, 2, ASSIGNMENT)
+            self.tok(p, p + 2, ASSIGNMENT)
         } else {
-            self.token(p, 1, leaf)
+            self.tok(p, p + 1, leaf)
         }
     }
 
@@ -2376,7 +2048,7 @@ impl Scan<'_, '_> {
         } else {
             return None;
         };
-        ends_word(b, p + n).then(|| self.token(p, n, leaf))
+        ends_word(b, p + n).then(|| self.tok(p, p + n, leaf))
     }
 
     /// `(#!?)(\[)` at `p`: an attribute.
@@ -2401,17 +2073,17 @@ impl Scan<'_, '_> {
         if let Some(e) = ident_end(b, p + 1) {
             let s = skip_spaces(b, e);
             if b.get(s) == Some(&b':') {
-                self.put(p, e, LABEL);
-                return self.token(s, 1, SEPARATOR);
+                self.tok(p, e, LABEL);
+                return self.tok(s, s + 1, SEPARATOR);
             }
             if b.get(e) != Some(&b'\'') {
-                return self.token(p, e - p, LIFETIME);
+                return self.tok(p, e, LIFETIME);
             }
         }
         if let Some(e) = self.character(p, p, true) {
             return e;
         }
-        self.token(p, 1, OPERATOR)
+        self.tok(p, p + 1, OPERATOR)
     }
 
     /// A character literal whose `'` is at `q`, its prefix from `p`: where it ends.
@@ -2483,33 +2155,6 @@ impl Scan<'_, '_> {
             self.sql_paren = q;
             self.sql_call = st;
         }
-    }
-
-    /// A SQL call's arguments at `p`: [`GROUP`]'s patterns, with the state followed at the
-    /// first argument's start (and a type's `,`), and the SQL argument's string opened as SQL.
-    #[cold]
-    #[inline(never)]
-    fn sql_group(&mut self, p: usize, c: u8, top: u8) -> Option<usize> {
-        let b = self.b;
-        if !is_space(c) && c != b')' && !(c == b'/' && matches!(b.get(p + 1), Some(b'/' | b'*'))) {
-            let next = match top - PSQL {
-                PSQL_SQL => {
-                    self.set_top(GROUP);
-                    if (c == b'"' || (c == b'r' && starts_word(b, p)))
-                        && let Some(e) = self.sql_string(p)
-                    {
-                        return Some(e);
-                    }
-                    GROUP
-                }
-                PSQL_TYPE if c == b'"' => GROUP,
-                PSQL_TYPE => PSQL + PSQL_SKIP,
-                _ if c == b',' => PSQL + PSQL_SQL,
-                _ => top,
-            };
-            self.set_top(next);
-        }
-        self.statements(GROUP, p, c)
     }
 
     /// A string at `p`, `"…"` or a raw one, whose text is SQL; `None` if none opens there.
@@ -2704,269 +2349,6 @@ impl Scan<'_, '_> {
         }
     }
 
-    /// A word at `p`, at the top level.
-    fn word(&mut self, p: usize) -> Option<usize> {
-        let b = self.b;
-        if !starts_word(b, p) {
-            return None;
-        }
-        let e = word_end(b, p);
-        let w = &b[p..e];
-        let ident = is_ident(w);
-        let next = b.get(e).copied();
-        let item = matches!(
-            w,
-            b"pub" | b"mod" | b"fn" | b"struct" | b"type" | b"trait" | b"enum" | b"impl"
-        );
-        // the items, in bat's order: a module, a closure's name, a function, a struct, a type,
-        // a trait, an impl, an enum
-        if item && let Some(q) = self.item(p, e, b"mod", MODULE, MODULE_NAME, Some(MOD_HEAD)) {
-            return Some(q);
-        }
-        if ident && matches!(next, Some(b' ' | b'\t' | b'=')) {
-            // `name\s*=\s*(?=\|)`
-            let s = skip_spaces(b, e);
-            if b.get(s) == Some(&b'=') {
-                let t = skip_spaces(b, s + 1);
-                if b.get(t) == Some(&b'|') {
-                    self.put(p, e, FN_NAME);
-                    self.put(s, s + 1, OPERATOR);
-                    self.push(t, CLOSURE);
-                    return Some(t);
-                }
-            }
-        }
-        if item && let Some(q) = self.items(p, e) {
-            return Some(q);
-        }
-        self.word_rest(p, e, ident, next)
-    }
-
-    /// The items after a closure's name, for a word that can start one.
-    fn items(&mut self, p: usize, e: usize) -> Option<usize> {
-        let b = self.b;
-        let w = &b[p..e];
-        if let Some(q) = self.item(p, e, b"fn", FN, FN_NAME, Some(FN_GENERIC)) {
-            return Some(q);
-        }
-        if let Some((k, ke)) = self.keyword_at(p, e, b"struct") {
-            // `struct\s+`, the `\n` among the spaces
-            let end = if ke == b.len() {
-                Some(ke)
-            } else {
-                is_space(b[ke]).then(|| skip_spaces(b, ke))
-            };
-            if let Some(end) = end {
-                if k > p {
-                    self.put(p, e, MODIFIER);
-                }
-                self.put(k, ke, STRUCT);
-                self.push(end, STRUCT_ID);
-                return Some(end);
-            }
-        }
-        if let Some(q) = self.item(p, e, b"type", TYPE, TYPE_NAME, None) {
-            return Some(q);
-        }
-        if let Some(q) = self.item(p, e, b"trait", TRAIT, TRAIT_NAME, Some(HEAD)) {
-            return Some(q);
-        }
-        if w == b"impl" {
-            self.put(p, e, IMPL);
-            self.push(e, IMPL_DEF);
-            return Some(e);
-        }
-        self.item(p, e, b"enum", ENUM, ENUM_NAME, Some(HEAD))
-    }
-
-    /// The patterns after the items, for the word `p..e`.
-    fn word_rest(&mut self, p: usize, e: usize, ident: bool, next: Option<u8>) -> Option<usize> {
-        let b = self.b;
-        let w = &b[p..e];
-        let name = lookup(w);
-        if let Name::Keyword(leaf) = name {
-            self.put(p, e, leaf);
-            if w == b"return" {
-                self.push_ahead(e, AFTER_OP);
-            }
-            return Some(e);
-        }
-        // `type`: a name before `<`, then the primitive types
-        if next == Some(b'<') && ident {
-            if name == Name::Support {
-                self.put(p, e, SUPPORT_TYPE);
-            }
-            self.push(e, GENERIC);
-            return Some(e);
-        }
-        if name == Name::Primitive {
-            return Some(self.token(p, e - p, STORAGE));
-        }
-        if w == b"macro_rules" && next == Some(b'!') {
-            let s = skip_spaces(b, e + 1);
-            if s > e + 1 && matches!(b.get(s), Some(&c) if is_letter(c) || c == b'_') {
-                let n = word_end(b, s);
-                self.put(p, e + 1, SUPPORT_FN);
-                self.put(s, n, MACRO_NAME);
-                self.push(n, MACRO_BLOCK);
-                return Some(n);
-            }
-        }
-        if matches!(w, b"b" | b"br" | b"r")
-            && let Some(q) = self.string(p, true)
-        {
-            return Some(q);
-        }
-        let lower = matches!(next, Some(b'(' | b'!')) && is_lower(w);
-        if next == Some(b'(') && lower {
-            self.sql_name(p, e);
-            return Some(self.token(p, e - p, SUPPORT_FN));
-        }
-        if next == Some(b'!') && lower {
-            let s = skip_spaces(b, e + 1);
-            let open = b.get(s).copied();
-            if open == Some(b'(') {
-                self.sql_name(p, e);
-                let first = match w {
-                    b"format" | b"print" | b"println" | b"eprint" | b"eprintln" => FMT_FIRST,
-                    b"write" | b"writeln" => WRITE_FIRST,
-                    _ => MAIN,
-                };
-                if first != MAIN {
-                    self.put(p, e + 1, SUPPORT_MACRO);
-                    self.push(s, first);
-                    return Some(self.token(s, 1, META_GROUP_BEGIN));
-                }
-            }
-            if matches!(open, Some(b'(' | b'{' | b'[')) {
-                return Some(self.token(p, e + 1 - p, SUPPORT_MACRO));
-            }
-        }
-        if name == Name::Support {
-            return Some(self.token(p, e - p, SUPPORT_TYPE));
-        }
-        // basic-identifiers
-        if is_constant(w) {
-            return Some(self.token(p, e - p, CONSTANT));
-        }
-        if is_c_type(w) {
-            return Some(self.token(p, e - p, STORAGE));
-        }
-        if ident && b[e..].starts_with(b"::") {
-            return Some(self.path(p, e));
-        }
-        match w {
-            b"self" => Some(self.token(p, e - p, SELF)),
-            b"super" => Some(self.token(p, e - p, KEYWORD)),
-            b"_" => Some(self.token(p, 1, OPERATOR)),
-            // no pattern matches inside a word: it is plain
-            _ => Some(e),
-        }
-    }
-
-    /// `kw` at `p`, alone or after `pub\s+` (the word `p..e`): where it starts and ends.
-    fn keyword_at(&self, p: usize, e: usize, kw: &[u8]) -> Option<(usize, usize)> {
-        let b = self.b;
-        let w = &b[p..e];
-        if w == kw {
-            return Some((p, e));
-        }
-        if w != b"pub" {
-            return None;
-        }
-        let k = skip_spaces(b, e);
-        (k > e && b[k..].starts_with(kw) && ends_word(b, k + kw.len())).then_some((k, k + kw.len()))
-    }
-
-    /// `\b(?:(pub)\s+)?(kw)\s+(name)\b` at `p`: `kw` is `leaf`, the name `name`, and `then`
-    /// is pushed after it.
-    fn item(
-        &mut self,
-        p: usize,
-        e: usize,
-        kw: &[u8],
-        leaf: u16,
-        name: u16,
-        then: Option<u8>,
-    ) -> Option<usize> {
-        let b = self.b;
-        let (k, ke) = self.keyword_at(p, e, kw)?;
-        let s = skip_spaces(b, ke);
-        if s == ke {
-            return None;
-        }
-        let n = ident_end(b, s)?;
-        if k > p {
-            self.put(p, e, MODIFIER);
-        }
-        self.put(k, ke, leaf);
-        self.put(s, n, name);
-        if let Some(c) = then {
-            self.push(n, c);
-        }
-        Some(n)
-    }
-
-    /// A path's segment `p..e` before `::`: `self`, `super` or a module's name.
-    fn path(&mut self, p: usize, e: usize) -> usize {
-        if self.b.get(e + 2) == Some(&b'<') {
-            self.sql_name(p, e);
-        }
-        let leaf = match &self.b[p..e] {
-            b"self" => PATH_SELF,
-            b"super" => PATH_SUPER,
-            _ => PATH,
-        };
-        self.put(p, e, leaf);
-        self.put(e, e + 2, PATH_ACCESSOR);
-        self.push(e + 2, NO_TYPE_NAMES);
-        e + 2
-    }
-
-    /// `no-type-names` at `p`: a path's next segment, or nothing (an empty match that ends it).
-    fn no_type_names(&mut self, p: usize, c: u8) -> usize {
-        let b = self.b;
-        if let Some(e) = self.comment(p) {
-            return e;
-        }
-        if is_word(c) && starts_word(b, p) {
-            let e = word_end(b, p);
-            let w = &b[p..e];
-            if is_constant(w) {
-                return self.token(p, e - p, CONSTANT);
-            }
-            if is_c_type(w) {
-                return self.token(p, e - p, STORAGE);
-            }
-            let ident = is_ident(w);
-            if ident && b[e..].starts_with(b"::") {
-                return self.path(p, e);
-            }
-            match w {
-                b"self" => return self.token(p, e - p, SELF),
-                b"super" => return self.token(p, e - p, KEYWORD),
-                _ if ident => {
-                    if matches!(b.get(e), Some(b'(' | b'!')) {
-                        self.sql_name(p, e);
-                    }
-                    return e;
-                }
-                _ => {}
-            }
-        }
-        if c == b':' && b.get(p + 1) == Some(&b':') && ident_starts(b, p + 2) {
-            self.put(p, p + 2, PATH_ACCESSOR);
-            self.push(p + 2, NO_TYPE_NAMES);
-            return p + 2;
-        }
-        if c == b'<' {
-            self.push(p, GENERIC);
-        } else {
-            self.pop(p);
-        }
-        p
-    }
-
     /// `numbers` at `p`, a digit; floats only with `floats`.
     fn number(&mut self, p: usize, floats: bool) -> Option<usize> {
         let b = self.b;
@@ -3149,156 +2531,6 @@ impl Scan<'_, '_> {
                 }
                 matches!(w, b"mut" | b"ref").then(|| self.token(p, e - p, MODIFIER))
             }
-            _ => None,
-        }
-    }
-
-    fn return_type(&mut self, p: usize, c: u8) -> Option<usize> {
-        let b = self.b;
-        // `(?=\s*\{|\bwhere\b)`
-        let q = skip_spaces(b, p);
-        if b.get(q) == Some(&b'{') || self.is_word_at(p, b"where") {
-            self.pop(p);
-            return Some(p);
-        }
-        if is_space(c) {
-            return None;
-        }
-        if let Some(e) = self.tai(p) {
-            return Some(e);
-        }
-        if let Some(e) = ident_end(b, p) {
-            return Some(e);
-        }
-        self.pop(p);
-        Some(p)
-    }
-
-    fn fn_params(&mut self, p: usize, c: u8) -> Option<usize> {
-        let b = self.b;
-        if let Some(e) = self.comment(p) {
-            return Some(e);
-        }
-        match c {
-            b')' => {
-                self.put(p, p + 1, FN_PARAMS_END);
-                self.set(p + 1, FN_RETURN);
-                return Some(p + 1);
-            }
-            b'(' => {
-                self.push(p, PARAM_TUPLE);
-                return Some(self.token(p, 1, META_GROUP_BEGIN));
-            }
-            b':' => {
-                if let Some(o) = colon_paren(b, p) {
-                    self.put(p, p + 1, SEPARATOR);
-                    self.push(o, PARAM_TUPLE_TYPE);
-                    return Some(self.token(o, 1, META_GROUP_BEGIN));
-                }
-            }
-            _ if is_word(c) && starts_word(b, p) => return self.param_word(p),
-            _ => {}
-        }
-        self.tai(p)
-    }
-
-    fn struct_fields(&mut self, p: usize, c: u8) -> Option<usize> {
-        let b = self.b;
-        if c == b'}' {
-            return Some(self.close(p, BLOCK_END));
-        }
-        if let Some(e) = self.comment(p) {
-            return Some(e);
-        }
-        if c == b'#' {
-            return self.attribute(p);
-        }
-        if !(is_word(c) && starts_word(b, p)) {
-            return None;
-        }
-        let e = word_end(b, p);
-        let w = &b[p..e];
-        if w == b"pub" {
-            self.put(p, e, MODIFIER);
-            if b[e..].starts_with(b"(crate)") {
-                self.put(e, e + 1, MODIFIER_BEGIN);
-                self.put(e + 1, e + 6, MODIFIER);
-                return Some(self.token(e + 6, 1, MODIFIER_END));
-            }
-            return Some(e);
-        }
-        // `name(?=\s*:)`
-        let s = skip_spaces(b, e);
-        if is_ident(w) && b.get(s) == Some(&b':') {
-            self.put(p, e, MEMBER);
-            self.push(e, FIELD_TYPE);
-            return Some(e);
-        }
-        // plain to the word's end, where `advance` would go
-        Some(e)
-    }
-
-    fn generic_args(&mut self, top: u8, p: usize, c: u8) -> Option<usize> {
-        let b = self.b;
-        match (top, c) {
-            (GENERIC_NESTED, b'>') => return Some(self.close(p, GENERIC_BEGIN)),
-            (GENERIC_ARRAY, b']') => return Some(self.close(p, GROUP_END)),
-            (GENERIC_ARRAY, b';') => {
-                self.put(p, p + 1, SEPARATOR);
-                self.set(p + 1, GENERIC_LEN);
-                return Some(p + 1);
-            }
-            _ => {}
-        }
-        if let Some(e) = self.comment(p) {
-            return Some(e);
-        }
-        if self.is_word_at(p, b"extern") {
-            self.put(p, p + 6, KEYWORD);
-            self.push(p + 6, GENERIC_EXTERN);
-            return Some(p + 6);
-        }
-        // `(?=>|[^ \t\n\$=<_+'(),&:\[\]*\p{L}\p{N}])`
-        let allowed = matches!(
-            c,
-            b' ' | b'\t'
-                | b'$'
-                | b'='
-                | b'<'
-                | b'_'
-                | b'+'
-                | b'\''
-                | b'('
-                | b')'
-                | b','
-                | b'&'
-                | b':'
-                | b'['
-                | b']'
-                | b'*'
-        ) || is_word(c);
-        if !allowed {
-            self.pop(p);
-            return Some(p);
-        }
-        match c {
-            b'<' => {
-                self.push(p, GENERIC_NESTED);
-                return Some(self.token(p, 1, GENERIC_BEGIN));
-            }
-            b'[' => {
-                self.push(p, GENERIC_ARRAY);
-                return Some(self.token(p, 1, GROUP_BEGIN));
-            }
-            _ if is_word(c) && starts_word(b, p) => return Some(self.generic_word(p)),
-            _ => {}
-        }
-        if let Some(e) = self.tai(p) {
-            return Some(e);
-        }
-        match c {
-            b':' => Some(self.token(p, 1, SEPARATOR)),
-            b'+' => Some(self.token(p, 1, OPERATOR)),
             _ => None,
         }
     }
@@ -3700,6 +2932,31 @@ mod tests {
             "meta.annotation.rust variable.annotation.rust",
         );
         has(&l, " n", "comment.line.double-slash.rust");
+    }
+
+    /// A tuple struct's fields are a type frame (X-063): its own `)` ends them, not the first
+    /// in a type inside (bat's `with_prototype`), a field's attribute is one, `pub` a modifier;
+    /// a macro's `struct $name` is named, and a brace ends fields a misread header opened.
+    #[test]
+    fn tuple_fields() {
+        let l = ["pub struct W(Box<dyn Fn(u8) -> u8>, u32);"];
+        has(&l, ">", "punctuation.definition.generic.end.rust");
+        let l = ["struct M<K, V>(PhantomData<(K, V)>);"];
+        has(&l, ">", "punctuation.definition.generic.end.rust");
+        let l = ["struct A(#[serde(skip)] pub u8, String);"];
+        has(&l, "serde", "meta.annotation.rust variable.annotation.rust");
+        has(&l, "pub", "storage.modifier.rust");
+        has(&l, "u8", "storage.type.rust");
+        let l = [
+            "macro_rules! m { ($name:ident) => {",
+            "    pub struct $name {",
+            "        message: &'static str,",
+            "    }",
+            "}}",
+        ];
+        has(&l, "message", "variable.other.member.rust");
+        let l = ["struct S", "$(impl X {", "    fn f() {}", "})*"];
+        has(&l, "f", "entity.name.function.rust");
     }
 
     #[test]

@@ -2758,9 +2758,10 @@ mod tests {
 
     /// ada-parse's Rust lexer picks the rules bat's grammar picks, in every built-in theme
     /// (ADR-40): its odd corners included (a one-digit width in a placeholder, `write!`'s
-    /// first argument, a tuple struct's first `)`, `impl` names past `for`). Not `?Sized`: bat's
-    /// grammar marks its `?` invalid and ends the generic there, which ada's type frames don't
-    /// (X-056, by design; ada-parse's `rust::tests::types`).
+    /// first argument, `impl` names past `for`). Not `?Sized`: bat's grammar marks its `?` invalid
+    /// and ends the generic there, which ada's type frames don't (X-056, by design; ada-parse's
+    /// `rust::tests::types`); nor a tuple struct's `pub` or a group in its fields, whose first `)`
+    /// ends them in bat's (X-063, by design; `rust::tests::tuple_fields`).
     #[test]
     fn rust_rules_match_the_grammar() {
         let text = concat!(
@@ -2768,7 +2769,7 @@ mod tests {
             "#![allow(dead_code)]\n",
             "#[derive(Debug, Clone)] #[cfg(not(feature = \"x\"))]\n",
             "pub(crate) struct S<'a, T: Sized> { pub a: &'a T, b: Vec<[u8; 4]> }\n",
-            "struct Tuple(pub u32, Option<(u8, u16)>);\n",
+            "struct Tuple(u32, Option<u8>);\n",
             "enum E<T> { A(T), B { x: i32 }, C = 3 }\n",
             "trait Tr: Clone + Send { type Out; fn f(&self) -> Self::Out; }\n",
             "impl<'a, T> fmt::Display for S<'a, T> where T: Copy {\n",

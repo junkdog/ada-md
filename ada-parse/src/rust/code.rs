@@ -1,16 +1,17 @@
-//! Rust's code on the C family's core ([`crate::clike`], X-056): the contexts made of bat's
-//! `statements` (the top level, a block, parentheses, brackets, a macro's brackets, a closure's
-//! body) and the two it pushes after an operator (`after-operator`, `try-closure`), run by a loop
-//! of their own.
+//! Rust's code on the C family's core ([`crate::clike`], X-056): the statement frames (the top
+//! level, a block, parentheses, brackets, a macro's brackets, a closure's body, a SQL call's
+//! arguments), a path's segments and the type frames (a tuple struct's fields among them,
+//! X-063), run by a loop of their own. A closure is told by the token before it, in place of bat's
+//! `after-operator` and `try-closure`.
 //!
 //! A blank run is passed whole; a name is read once with the classes of its bytes
 //! ([`clike::class_run`]) and looked up once among every word the frames ask about ([`WORDS`]:
 //! the keywords by leaf, the primitive and `support.type` names, the item words, the macros whose
 //! first argument is a format string, SQL's calls), and its shape (a constant's capitals, a call's
 //! lowercase, a C type's) is told from those classes, not read again. Punctuation is one `match`
-//! on its byte. The frames are the grammar's contexts, the same ids on the same stack, so what a
-//! line leaves the next is what bat's patterns left; the headers, types, strings, comments and
-//! attributes stay on them ([`Scan::at`]).
+//! on its byte. The frames share the stack and its ids with the contexts on bat's patterns (the
+//! headers, attributes, closure parameters, `macro_rules!`, strings, comments, regexes, SQL;
+//! [`Scan::at`]), which they push and return to.
 
 use super::*;
 use crate::clike::{self, CLASS, DIGIT, HIGH, Ident, LOWER, SPACE, UPPER, WORD};
@@ -240,41 +241,13 @@ static INFO: [(u8, u16); N + 1] = {
     t
 };
 
-/// Whether the frames run `top`: the contexts made of `statements`, `after-operator`,
-/// `try-closure`, a path's segments (`no-type-names`) and the type frames ([`TYPES`]).
+/// Whether the frames run `top`: the statement frames, `after-operator` and `try-closure` (a
+/// line's end may leave them), a path's segments, a SQL call's arguments and the type frames,
+/// whose ids come first ([`LAST_FRAME`]).
 #[inline(always)]
 pub(super) fn is_code(top: u8) -> bool {
-    top < 64 && (FRAMES >> top) & 1 != 0
+    top <= LAST_FRAME
 }
-
-/// [`is_code`]'s contexts, a bit each.
-const FRAMES: u64 = {
-    let mut m = 0;
-    let mut c = MAIN;
-    while c <= CLOSURE_BODY {
-        m |= 1 << c;
-        c += 1;
-    }
-    m | 1 << AFTER_OP | 1 << TRY_CLOSURE | 1 << NO_TYPE_NAMES | TYPES
-};
-
-/// The type frames ([`Scan::type_frame`]): a function's head after its name, its parameters,
-/// its return and return type; a generic's arguments; a struct's fields and a field's type; a
-/// type's group, a function type and its return.
-const TYPES: u64 = 1 << FN_GENERIC
-    | 1 << FN_PARAMS
-    | 1 << FN_RETURN
-    | 1 << RETURN_TYPE
-    | 1 << GENERIC
-    | 1 << GENERIC_ARGS
-    | 1 << GENERIC_NESTED
-    | 1 << GENERIC_ARRAY
-    | 1 << STRUCT_FIELDS
-    | 1 << FIELD_TYPE
-    | 1 << TYPE_GROUP
-    | 1 << FN_TYPE
-    | 1 << FN_TYPE_RETURN;
-const _: () = assert!(NO_TYPE_NAMES < 64);
 
 /// `[\p{Ll}_][\p{Ll}\p{Nd}_]*`, a whole name of these classes whose first byte is `first`.
 #[inline(always)]
@@ -304,10 +277,13 @@ impl Scan<'_, '_> {
         NameAt { e: end, bits, id }
     }
 
-    /// Bytes `s..e` are `leaf` (not 0), in a frame, where the text is plain: the frames run
-    /// outside attributes, so no text before it is filled and its kind is the leaf.
+    /// Bytes `s..e` are `leaf` (not 0), in a frame or a context of the code around one: those
+    /// never run in an attribute and their text is plain, so no text before it is filled and its
+    /// kind is the leaf.
     #[inline(always)]
-    fn tok(&mut self, s: usize, e: usize, leaf: u16) -> usize {
+    pub(super) fn tok(&mut self, s: usize, e: usize, leaf: u16) -> usize {
+        // no text before it to fill (a string's just pushed has been, to its quote)
+        debug_assert!(self.annot == 0 && (self.text == 0 || self.at >= s));
         self.merge(s, e, leaf);
         self.at = e;
         e
@@ -344,16 +320,24 @@ impl Scan<'_, '_> {
         }
     }
 
-    /// Where bat's grammar pushes `after-operator` or `try-closure` (`c`) from a frame: the
+    /// Where bat's grammar pushes `after-operator` or `try-closure` (`c`), a frame on top: the
     /// next token may start a closure (and after an operator, a generic), told by
     /// [`Scan::opened`] when it comes, without a context of its own.
     #[inline(always)]
-    fn push_ahead_code(&mut self, _at: usize, c: u8) {
+    pub(super) fn push_ahead_code(&mut self, _at: usize, c: u8) {
         self.opened = if c == AFTER_OP {
             OPENED_AFTER
         } else {
             OPENED_TRY
         };
+    }
+
+    /// A generic's `<` at `p`, which a frame has seen: its arguments' frame opened, in place of
+    /// [`GENERIC`]'s turn at it (bat's contexts still push that).
+    #[inline(always)]
+    fn open_generic(&mut self, p: usize) -> usize {
+        self.push_code(GENERIC_ARGS);
+        self.tok(p, p + 1, GENERIC_BEGIN)
     }
 
     /// `n` bytes at `p` are `leaf`, after an operator.
@@ -387,11 +371,12 @@ impl Scan<'_, '_> {
         let b = self.b;
         loop {
             let top = self.top();
-            // a tuple struct's fields end at the first `)` in any context, `at`'s; in an
-            // attribute, every kind is the attribute's
-            if !is_code(top) || (self.tuple | self.annot) != 0 {
+            if !is_code(top) {
                 return p;
             }
+            // an attribute's contexts open only strings above them, so no frame runs in one
+            // and a kind is its leaf ([`Scan::tok`])
+            debug_assert!(self.annot == 0, "a frame in an attribute");
             if p >= b.len() {
                 // `(?=[};)\]\n])`, and the empty match
                 if top == CLOSURE_BODY || top == NO_TYPE_NAMES {
@@ -405,15 +390,27 @@ impl Scan<'_, '_> {
                 // the next token's, a closure's start once
                 self.last_opened = std::mem::take(&mut self.opened);
             }
+            let mut top = top;
             if top > CLOSURE_BODY {
-                p = match top {
-                    AFTER_OP | TRY_CLOSURE => self.after_op_frame(p, c, top),
-                    NO_TYPE_NAMES => self.path_frame(p, c),
-                    // no type frame matches on a blank
-                    _ if CLASS[usize::from(c)] & SPACE != 0 => clike::skip_blanks(b, p),
-                    _ => self.type_frame(p, c, top),
-                };
-                continue;
+                if matches!(top, PSQL..=PSQL_LAST) {
+                    // its states followed, the token a group's
+                    match self.sql_frame(p, c, top) {
+                        Some(q) => {
+                            p = q;
+                            continue;
+                        }
+                        None => top = GROUP,
+                    }
+                } else {
+                    p = match top {
+                        AFTER_OP | TRY_CLOSURE => self.after_op_frame(p, c, top),
+                        NO_TYPE_NAMES => self.path_frame(p, c),
+                        // no type frame matches on a blank
+                        _ if CLASS[usize::from(c)] & SPACE != 0 => clike::skip_blanks(b, p),
+                        _ => self.type_frame(p, c, top),
+                    };
+                    continue;
+                }
             }
             let k = CLASS[usize::from(c)];
             if k & SPACE != 0 {
@@ -424,6 +421,37 @@ impl Scan<'_, '_> {
                 p = self.code_punct(p, c, top);
             }
         }
+    }
+
+    /// A SQL call's arguments at `p`, not the line's end: the state followed at the first
+    /// argument's start (and a type's `,`), and the SQL argument's string opened as SQL (where it
+    /// ends); else `None`, the token a group's, which [`Scan::code_run`] lexes as one.
+    #[cold]
+    #[inline(never)]
+    fn sql_frame(&mut self, p: usize, c: u8, top: u8) -> Option<usize> {
+        let b = self.b;
+        if CLASS[usize::from(c)] & SPACE == 0
+            && c != b')'
+            && !(c == b'/' && matches!(b.get(p + 1), Some(b'/' | b'*')))
+        {
+            let next = match top - PSQL {
+                PSQL_SQL => {
+                    self.set_top(GROUP);
+                    if (c == b'"' || (c == b'r' && starts_word(b, p)))
+                        && let Some(e) = self.sql_string(p)
+                    {
+                        return Some(e);
+                    }
+                    GROUP
+                }
+                PSQL_TYPE if c == b'"' => GROUP,
+                PSQL_TYPE => PSQL + PSQL_SKIP,
+                _ if c == b',' => PSQL + PSQL_SQL,
+                _ => top,
+            };
+            self.set_top(next);
+        }
+        None
     }
 
     /// `after-operator` or `try-closure` at `p`, not the line's end: a closure's `|`, a
@@ -445,8 +473,8 @@ impl Scan<'_, '_> {
                 q
             }
             Some(b'<') if top == AFTER_OP => {
-                self.set(q, GENERIC);
-                q
+                self.set_top(GENERIC_ARGS);
+                self.tok(q, q + 1, GENERIC_BEGIN)
             }
             Some(b'$') if q > p && ident_starts(b, q + 1) => q,
             Some(_) => {
@@ -472,14 +500,14 @@ impl Scan<'_, '_> {
         let n = self.name(p);
         let e = n.e;
         if n.id == W_SELF {
-            return Some(self.token(p, e - p, PARAMETER));
+            return Some(self.tok(p, e, PARAMETER));
         }
         if is_ident(&b[p..e]) {
             // `name\s*(:(?!:))`
             let s = skip_spaces(b, e);
             if b.get(s) == Some(&b':') && b.get(s + 1) != Some(&b':') {
-                self.put(p, e, PARAMETER);
-                return Some(self.token(s, 1, SEPARATOR));
+                self.tok(p, e, PARAMETER);
+                return Some(self.tok(s, s + 1, SEPARATOR));
             }
         }
         self.type_name(p, n, true)
@@ -493,8 +521,8 @@ impl Scan<'_, '_> {
             return q;
         }
         match INFO[usize::from(n.id)] {
-            (G_SUPPORT, _) => self.token(p, n.e - p, SUPPORT_TYPE),
-            _ if n.id == W_AS => self.token(p, 2, OPERATOR),
+            (G_SUPPORT, _) => self.tok(p, n.e, SUPPORT_TYPE),
+            _ if n.id == W_AS => self.tok(p, p + 2, OPERATOR),
             _ => n.e,
         }
     }
@@ -506,11 +534,11 @@ impl Scan<'_, '_> {
         let (e, len) = (n.e, n.e - p);
         let next = b.get(e).copied();
         match n.id {
-            W_REF | W_MUT | W_CONST => return Some(self.token(p, len, MODIFIER)),
+            W_REF | W_MUT | W_CONST => return Some(self.tok(p, p + len, MODIFIER)),
             W_FN if next == Some(b'(') => {
-                self.token(p, e - p, FN);
-                self.push(e, FN_TYPE);
-                return Some(self.token(e, 1, META_GROUP_BEGIN));
+                self.tok(p, e, FN);
+                self.push_code(FN_TYPE);
+                return Some(self.tok(e, e + 1, META_GROUP_BEGIN));
             }
             _ => {}
         }
@@ -519,27 +547,26 @@ impl Scan<'_, '_> {
             CLASS[usize::from(first)] & (UPPER | LOWER | HIGH) != 0 || (first == b'_' && len >= 2);
         if next == Some(b':') && b.get(e + 1) == Some(&b':') {
             if is_type_name(&b[p..e]) {
-                self.token(p, e - p, PATH_TYPE);
-                return Some(self.token(e, 2, TYPE_ACCESSOR));
+                self.tok(p, e, PATH_TYPE);
+                return Some(self.tok(e, e + 2, TYPE_ACCESSOR));
             }
             if ident {
-                self.token(p, e - p, PATH);
-                return Some(self.token(e, 2, PATH_ACCESSOR));
+                self.tok(p, e, PATH);
+                return Some(self.tok(e, e + 2, PATH_ACCESSOR));
             }
         }
         let group = INFO[usize::from(n.id)].0;
         if next == Some(b'<') && ident {
             if group == G_SUPPORT {
-                self.token(p, e - p, SUPPORT_TYPE);
+                self.tok(p, e, SUPPORT_TYPE);
             }
-            self.push(e, GENERIC);
-            return Some(e);
+            return Some(self.open_generic(e));
         }
         if group == G_PRIMITIVE {
-            return Some(self.token(p, len, STORAGE));
+            return Some(self.tok(p, p + len, STORAGE));
         }
         if len == 1 && first == b'_' {
-            return Some(self.token(p, 1, OPERATOR));
+            return Some(self.tok(p, p + 1, OPERATOR));
         }
         (plain && ident).then_some(e)
     }
@@ -671,6 +698,19 @@ impl Scan<'_, '_> {
             },
             TYPE_GROUP => match c {
                 b')' => self.tok_close(p, GROUP_END),
+                _ => self.type_any(p, c, word, starts),
+            },
+            // its own `)` ends it, not the first in a type inside (bat's `with_prototype`), and
+            // a field's attribute is one
+            TUPLE_FIELDS => match c {
+                b')' => self.tok_close(p, GROUP_END),
+                b'#' => self.attribute(p).unwrap_or(p + 1),
+                // no field holds a brace: a header misread (a macro's `struct $name {`) ends here
+                b'{' | b'}' => {
+                    self.pop_code();
+                    p
+                }
+                b'p' if starts && self.is_word_at(p, b"pub") => self.field_word(p),
                 _ => self.type_any(p, c, word, starts),
             },
             // FN_TYPE
@@ -870,10 +910,7 @@ impl Scan<'_, '_> {
                     self.push_code(NO_TYPE_NAMES);
                     return p + 2;
                 }
-                b'<' => {
-                    self.push(p, GENERIC);
-                    return p;
-                }
+                b'<' => return self.open_generic(p),
                 _ => {}
             }
         }
@@ -883,6 +920,8 @@ impl Scan<'_, '_> {
 
     /// A name at `p` in a statement frame: an item's head, a closure's name, a keyword, a
     /// type, a call, a macro, a constant, a path.
+    // inside `code_run`'s loop, as before X-063 shrank `mod.rs` (out of line, ~2% slower in ada)
+    #[inline(always)]
     fn code_word(&mut self, p: usize) -> usize {
         let b = self.b;
         let n = self.name(p);
@@ -948,7 +987,7 @@ impl Scan<'_, '_> {
         }
         let (group, leaf) = INFO[usize::from(id)];
         if group == G_KEYWORD {
-            self.put(p, e, leaf);
+            self.tok(p, e, leaf);
             if id == W_RETURN {
                 self.push_ahead_code(e, AFTER_OP);
             }
@@ -959,8 +998,7 @@ impl Scan<'_, '_> {
             if group == G_SUPPORT {
                 self.tok(p, e, SUPPORT_TYPE);
             }
-            self.push(e, GENERIC);
-            return e;
+            return self.open_generic(e);
         }
         if group == G_PRIMITIVE {
             return self.tok(p, e, STORAGE);
@@ -1059,8 +1097,8 @@ impl Scan<'_, '_> {
         if k > p {
             self.tok(p, e, MODIFIER);
         }
-        self.put(k, ke, leaf);
-        self.put(s, n, name);
+        self.tok(k, ke, leaf);
+        self.tok(s, n, name);
         if let Some(c) = then {
             self.push(n, c);
         }
@@ -1087,6 +1125,8 @@ impl Scan<'_, '_> {
 
     /// Punctuation, a digit or a `$` at `p` in a statement frame `top`: the frame's closers,
     /// then `statements`' patterns; a byte none starts on is plain.
+    // inside `code_run`'s loop, as before X-063 shrank `mod.rs` (out of line, ~2% slower in ada)
+    #[inline(always)]
     fn code_punct(&mut self, p: usize, c: u8, top: u8) -> usize {
         let b = self.b;
         let next = b.get(p + 1).copied();
@@ -1124,7 +1164,7 @@ impl Scan<'_, '_> {
                 if p == self.sql_paren {
                     self.push(p, PSQL + self.sql_call);
                     self.tok(p, p + 1, GROUP_BEGIN);
-                    self.push_ahead(p + 1, TRY_CLOSURE);
+                    self.push_ahead_code(p + 1, TRY_CLOSURE);
                 } else {
                     self.push_code(GROUP);
                     self.tok(p, p + 1, GROUP_BEGIN);
@@ -1163,7 +1203,7 @@ impl Scan<'_, '_> {
             b',' => self.after_op_code(p, 1, SEPARATOR),
             b'-' if next == Some(b'>') => {
                 self.tok(p, p + 2, SEPARATOR);
-                self.push(p + 2, RETURN_TYPE);
+                self.push_code(RETURN_TYPE);
                 p + 2
             }
             b'=' => match next {
@@ -1181,10 +1221,7 @@ impl Scan<'_, '_> {
                 self.push(p, CLOSURE);
                 p
             }
-            b'<' if self.last_opened == OPENED_AFTER => {
-                self.push_code(GENERIC);
-                p
-            }
+            b'<' if self.last_opened == OPENED_AFTER => self.open_generic(p),
             b'&' | b'|' => {
                 if next == Some(b'=') {
                     self.tok(p, p + 2, ASSIGNMENT)
