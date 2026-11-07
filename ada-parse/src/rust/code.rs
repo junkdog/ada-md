@@ -412,6 +412,11 @@ impl<K: Sink> Scan<'_, '_, K> {
             let mut top = top;
             if top > CLOSURE_BODY {
                 if matches!(top, PSQL..=PSQL_LAST) {
+                    if CLASS[usize::from(c)] & SPACE != 0 {
+                        // nothing matches on a blank: the token after it is the frame's
+                        p = clike::skip_blanks(b, p);
+                        continue;
+                    }
                     // its states followed, the token a group's
                     match self.sql_frame(p, c, top) {
                         Some(q) => {
@@ -431,11 +436,20 @@ impl<K: Sink> Scan<'_, '_, K> {
                     continue;
                 }
             }
-            let k = CLASS[usize::from(c)];
+            let (mut c, mut k, mut blanks) = (c, CLASS[usize::from(c)], false);
             if k & SPACE != 0 {
+                // the blanks and the token after them in one turn: the frame is the one this turn
+                // read (a blank opens and closes none), so only the line's end goes round again
                 p = clike::skip_blanks(b, p);
-            } else if k & NAME != 0 && k & DIGIT == 0 {
-                p = self.code_word(p);
+                let Some(&d) = b.get(p) else { continue };
+                (c, k, blanks) = (d, CLASS[usize::from(d)], true);
+                self.last_opened = std::mem::take(&mut self.opened);
+            }
+            if k & NAME != 0 && k & DIGIT == 0 {
+                // a name that starts inside a word: only where the turn before stopped in one (a
+                // number's end, `12abc`), never after blanks
+                let inside = !blanks && p > 0 && CLASS[usize::from(b[p - 1])] & NAME != 0;
+                p = self.code_word(p, inside);
             } else {
                 p = self.code_punct(p, c, top);
             }
@@ -942,12 +956,13 @@ impl<K: Sink> Scan<'_, '_, K> {
     /// type, a call, a macro, a constant, a path.
     // inside `code_run`'s loop, as before X-063 shrank `mod.rs` (out of line, ~2% slower in ada)
     #[inline(always)]
-    fn code_word(&mut self, p: usize) -> usize {
+    fn code_word(&mut self, p: usize, inside: bool) -> usize {
         let b = self.b;
         let n = self.name(p);
         let e = n.e;
-        // a name that starts inside a word matches nothing: plain to the word's end
-        if p > 0 && CLASS[usize::from(b[p - 1])] & NAME != 0 {
+        // a name that starts inside a word (`inside`, the byte before it a name's) matches
+        // nothing: plain to the word's end
+        if inside {
             return e;
         }
         let first = b[p];
@@ -1344,6 +1359,25 @@ mod tests {
                 }
             };
             assert_eq!((group, leaf), want, "{}", String::from_utf8_lossy(w));
+        }
+    }
+
+    /// The indentation's four-space steps end where the byte loop ends.
+    #[test]
+    fn indentation_is_the_byte_loop() {
+        let pad = [
+            "", " ", "  ", "   ", "    ", "\t", " \t", "    \t", "\t    ", "     ",
+        ];
+        for a in pad {
+            for b in pad {
+                for c in pad {
+                    for tail in ["", "x", "x ", "{"] {
+                        let t = format!("{a}{b}{c}{tail}");
+                        let s = t.as_bytes();
+                        assert_eq!(skip_indent(s), clike::skip_blanks(s, 0), "{t:?}");
+                    }
+                }
+            }
         }
     }
 }

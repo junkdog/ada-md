@@ -740,6 +740,17 @@ fn skip_spaces(b: &[u8], p: usize) -> usize {
     crate::clike::skip_blanks(b, p)
 }
 
+/// A line's indentation, four spaces a step, then the rest of its blanks a byte a step: it is
+/// 14.5% of the corpus's bytes, 8 a run, nearly always spaces in fours.
+#[inline(always)]
+fn skip_indent(b: &[u8]) -> usize {
+    let mut p = 0;
+    while b.get(p..p + 4).is_some_and(|w| w == b"    ") {
+        p += 4;
+    }
+    crate::clike::skip_blanks(b, p)
+}
+
 #[inline(always)]
 fn word_end(b: &[u8], p: usize) -> usize {
     crate::clike::class_run(b, p, WORD | HIGH).end
@@ -1415,7 +1426,13 @@ impl<K: Sink> Scan<'_, '_, K> {
     /// The line from the start: the frames' loop ([`Scan::code_run`]), and where a regex or SQL
     /// in a string is on top, its turns ([`Scan::embed_turn`]) till the string is again.
     fn run(&mut self) {
-        let mut p = 0;
+        // a line's indentation where a statement frame is on top, which would skip it in
+        // [`Scan::code_run`] a byte a turn
+        let mut p = if self.b.first() == Some(&b' ') && self.top() <= CLOSURE_BODY {
+            skip_indent(self.b)
+        } else {
+            0
+        };
         loop {
             p = self.code_run(p);
             if self.top() < SQL_IN {
