@@ -27,6 +27,7 @@ use std::mem::MaybeUninit;
 use super::matchers as g;
 use super::scan::Line;
 use super::scan::{self, M, R};
+use crate::emit::{Push, Rules, Run, Runs, Sink};
 use crate::{Out, State};
 
 use super::{
@@ -967,6 +968,25 @@ static TRIGGER: [u8; 256] = {
 /// Lex `b`, a line of a Makefile without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
+    line_on(b, state, out, Push);
+}
+
+/// [`line`]'s runs by theme rule pushed to `runs` (X-075, X-068's sink): [`crate::lex_runs`] for
+/// a Makefile.
+#[inline(never)]
+pub fn line_runs(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    line_on(b, state, out, Runs::new(rules, runs)).end_line(b.len());
+}
+
+/// [`line`]'s scan on the sink `k`, which it returns as the line leaves it.
+#[inline(always)]
+fn line_on<K: Sink>(b: &[u8], state: &mut State, out: &mut Out, k: K) -> K {
     let n = b.len();
     let mut small = [0u8; 256];
     let heap: Vec<u8>;
@@ -990,12 +1010,13 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         span: [const { MaybeUninit::uninit() }; MATCHERS],
         found: [const { MaybeUninit::uninit() }; MATCHERS],
     };
-    let mut s = Scan::new(&buf[..n], state, out, Some(&mut mk));
+    let mut s = Scan::new(&buf[..n], state, out, Some(&mut mk), k);
     s.stack[0] = MaybeUninit::new(Frame { ctx: MAIN, ..FRAME });
     s.load(state);
     s.run::<true>();
     s.fill(s.b.len());
     *state = s.save();
+    s.k
 }
 
 /// A block of a Makefile on one scan opened from `state` ([`crate::Carry`], X-073): bash's kept
@@ -1014,7 +1035,34 @@ pub fn block(
         span: [const { MaybeUninit::uninit() }; MATCHERS],
         found: [const { MaybeUninit::uninit() }; MATCHERS],
     };
-    let mut s = Scan::new(b"", state, &mut out, Some(&mut mk));
+    let mut s = Scan::new(b"", state, &mut out, Some(&mut mk), Push);
+    s.stack[0] = MaybeUninit::new(Frame { ctx: MAIN, ..FRAME });
+    s.load(state);
+    let mut c = Carried { s, buf: Vec::new() };
+    let rest = pass(&mut c);
+    *state = c.s.save();
+    rest
+}
+
+/// [`block`]'s runs by theme rule pushed to `runs` ([`crate::CarryRuns`], X-075).
+pub fn block_runs(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    out.0.clear();
+    let mut mk = Mk {
+        l: Line::new(""),
+        present: 0,
+        valid: [0; 2],
+        span: [const { MaybeUninit::uninit() }; MATCHERS],
+        found: [const { MaybeUninit::uninit() }; MATCHERS],
+    };
+    let k = Runs::new(rules, runs);
+    let mut s = Scan::new(b"", state, &mut out, Some(&mut mk), k);
     s.stack[0] = MaybeUninit::new(Frame { ctx: MAIN, ..FRAME });
     s.load(state);
     let mut c = Carried { s, buf: Vec::new() };
@@ -1024,13 +1072,32 @@ pub fn block(
 }
 
 /// A Makefile's block: the kept scan, and its line with a `\n` after it.
-struct Carried<'a, 'o, 'p> {
-    s: Scan<'a, 'o, 'p>,
+struct Carried<'a, 'o, 'p, K: Sink> {
+    s: Scan<'a, 'o, 'p, K>,
     buf: Vec<u8>,
 }
 
-impl crate::Carry for Carried<'_, '_, '_> {
+impl crate::Carry for Carried<'_, '_, '_, Push> {
     fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        self.s.out.0.clear();
+        self.carry(b);
+        self.s.out.0
+    }
+}
+
+impl crate::CarryRuns for Carried<'_, '_, '_, Runs<'_>> {
+    fn next(&mut self, b: &[u8]) -> usize {
+        self.s.k.start_line();
+        self.carry(b);
+        self.s.k.end_line(b.len())
+    }
+}
+
+impl<K: Sink> Carried<'_, '_, '_, K> {
+    /// `b`, the block's next line, lexed on the kept scan; its line and `Mk`'s empty ones again
+    /// after.
+    #[inline(always)]
+    fn carry(&mut self, b: &[u8]) {
         let n = b.len();
         self.buf.clear();
         self.buf.reserve(n + 1);
@@ -1049,11 +1116,10 @@ impl crate::Carry for Carried<'_, '_, '_> {
         self.s.carry::<true>(&buf[..n]);
         // SAFETY: as above
         unsafe { self.s.mk.as_deref_mut().unwrap_unchecked() }.l = Line::new("");
-        self.s.out.0
     }
 }
 
-impl Scan<'_, '_, '_> {
+impl<K: Sink> Scan<'_, '_, '_, K> {
     /// Where a make matcher's leftmost match from `p` starts and ends, kept for the line; the
     /// match itself stays in the memo, for the pattern that wins.
     fn search(&mut self, id: u8, p: usize) -> Option<(u32, u32)> {

@@ -28,6 +28,7 @@
 
 use std::mem::MaybeUninit;
 
+use crate::emit::{Push, Rules, Run, Runs, Sink};
 use crate::matcher::KEPT as HALF;
 use crate::prim::char_len;
 use crate::{Out, State};
@@ -36,7 +37,10 @@ mod makefile;
 mod matchers;
 mod scan;
 
-pub use makefile::{block as make_block, line as make_line, scopes as make_scopes};
+pub use makefile::{
+    block as make_block, block_runs as make_block_runs, line as make_line,
+    line_runs as make_line_runs, scopes as make_scopes,
+};
 
 macro_rules! kinds {
     ($($k:ident = $s:literal,)*) => {
@@ -762,12 +766,31 @@ fn hash(word: &[u8]) -> u32 {
 /// Lex `b`, a line of bash without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut s = Scan::new(b, state, out, None);
+    let mut s = Scan::new(b, state, out, None, Push);
     s.stack[0] = MaybeUninit::new(FRAME);
     s.load(state);
     s.run::<false>();
     s.fill(s.b.len());
     *state = s.save();
+}
+
+/// [`line`]'s runs by theme rule pushed to `runs` (X-075, X-068's sink): [`crate::lex_runs`] for
+/// bash.
+#[inline(never)]
+pub fn line_runs(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    let mut s = Scan::new(b, state, out, None, Runs::new(rules, runs));
+    s.stack[0] = MaybeUninit::new(FRAME);
+    s.load(state);
+    s.run::<false>();
+    s.fill(s.b.len());
+    *state = s.save();
+    s.k.end_line(b.len());
 }
 
 /// A block of bash on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
@@ -778,7 +801,7 @@ pub fn block(
     pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
 ) -> Option<usize> {
     let mut out = Out::new(spans);
-    let mut s = Scan::new(b"", state, &mut out, None);
+    let mut s = Scan::new(b"", state, &mut out, None, Push);
     s.stack[0] = MaybeUninit::new(FRAME);
     s.load(state);
     let rest = pass(&mut s);
@@ -786,20 +809,48 @@ pub fn block(
     rest
 }
 
-impl crate::Carry for Scan<'_, '_, '_> {
+/// [`block`]'s runs by theme rule pushed to `runs` ([`crate::CarryRuns`], X-075).
+pub fn block_runs(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    out.0.clear();
+    let mut s = Scan::new(b"", state, &mut out, None, Runs::new(rules, runs));
+    s.stack[0] = MaybeUninit::new(FRAME);
+    s.load(state);
+    let rest = pass(&mut s);
+    *state = s.save();
+    rest
+}
+
+impl crate::Carry for Scan<'_, '_, '_, Push> {
     fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        self.out.0.clear();
         // SAFETY: the line is set back to an empty one before `b`'s borrow ends
-        self.carry::<false>(unsafe { crate::line_for(b) })
+        self.carry::<false>(unsafe { crate::line_for(b) });
+        self.out.0
     }
 }
 
-impl<'a> Scan<'a, '_, '_> {
+impl crate::CarryRuns for Scan<'_, '_, '_, Runs<'_>> {
+    fn next(&mut self, b: &[u8]) -> usize {
+        self.k.start_line();
+        // SAFETY: as above
+        self.carry::<false>(unsafe { crate::line_for(b) });
+        self.k.end_line(b.len())
+    }
+}
+
+impl<'a, K: Sink> Scan<'a, '_, '_, K> {
     /// `b`, the block's next line, lexed on the kept scan ([`crate::Carry::next`]); `MAKE` for
     /// a Makefile's, its [`makefile::Mk`] already on the line. The scan's line is an empty one
     /// again when it returns.
     #[inline(always)]
-    fn carry<const MAKE: bool>(&mut self, b: &'a [u8]) -> &[crate::Span] {
-        self.out.0.clear();
+    fn carry<const MAKE: bool>(&mut self, b: &'a [u8]) {
         self.b = b;
         self.emitted = 0;
         self.push_at = (0, 0);
@@ -816,11 +867,10 @@ impl<'a> Scan<'a, '_, '_> {
             self.reload();
         }
         self.b = b"";
-        self.out.0
     }
 }
 
-impl Scan<'_, '_, '_> {
+impl<K: Sink> Scan<'_, '_, '_, K> {
     /// Whether a state holds every frame above the bottom one.
     #[cold]
     fn fits(&self) -> bool {
@@ -839,7 +889,7 @@ impl Scan<'_, '_, '_> {
     }
 }
 
-struct Scan<'a, 'o, 'p> {
+struct Scan<'a, 'o, 'p, K: Sink> {
     b: &'a [u8],
     /// The frames below `depth` are written; those above are not.
     stack: [MaybeUninit<Frame>; MAX],
@@ -856,6 +906,9 @@ struct Scan<'a, 'o, 'p> {
     last_bracket: Option<Option<usize>>,
     /// Where the line's last `))` starts, once looked for.
     last_close: Option<Option<usize>>,
+    /// Where the lexemes go, a line's spans or its runs by theme rule (X-075, X-068's sink).
+    k: K,
+    /// The spans' vector, the span API's.
     out: &'o mut Out<'p>,
     /// A Makefile's line as its make patterns read it; `None` for a shell script. Behind a
     /// pointer, so that a shell script's scan stays small.
@@ -866,13 +919,14 @@ struct Scan<'a, 'o, 'p> {
     with_next: (u8, usize, usize),
 }
 
-impl<'a, 'o, 'p> Scan<'a, 'o, 'p> {
+impl<'a, 'o, 'p, K: Sink> Scan<'a, 'o, 'p, K> {
     #[inline(always)]
     fn new(
         b: &'a [u8],
         state: &State,
         out: &'o mut Out<'p>,
         mk: Option<&'o mut makefile::Mk<'a>>,
+        k: K,
     ) -> Self {
         Scan {
             b,
@@ -884,6 +938,7 @@ impl<'a, 'o, 'p> Scan<'a, 'o, 'p> {
             exact: state.is_exact(),
             last_bracket: None,
             last_close: None,
+            k,
             out,
             mk,
             from_with: false,
@@ -901,7 +956,7 @@ enum Op<'c> {
     Pop,
 }
 
-impl Scan<'_, '_, '_> {
+impl<K: Sink> Scan<'_, '_, '_, K> {
     // ---- the line
 
     fn at(&self, i: usize) -> u8 {
@@ -1154,7 +1209,8 @@ impl Scan<'_, '_, '_> {
     fn put(&mut self, s: usize, e: usize, kind: u16) {
         let e = e.min(self.b.len());
         if e > s && kind != PLAIN {
-            self.out.push_merged(s, e, self.map(kind));
+            let kind = self.map(kind);
+            self.k.merge(&mut self.out, s, e, kind);
         }
         if e > self.emitted {
             self.emitted = e;

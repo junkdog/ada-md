@@ -27,9 +27,15 @@ use ada_parse::{Lang, Rule, Rules, Run, Span};
 use libfuzzer_sys::fuzz_target;
 
 /// The languages whose scan writes runs itself, not through spans (Rust X-068, the line-format
-/// engine's X-069, JSON's, TOML's and XML's X-072).
-const RUN_SCANS: [Lang; 25] = [
+/// engine's X-069, JSON's, TOML's and XML's X-072, the code languages' X-074; Go's, Lua's,
+/// SCSS's, bash's and Makefile's X-075).
+const RUN_SCANS: [Lang; 30] = [
+    Lang::Bash,
+    Lang::Makefile,
+    Lang::Scss,
     Lang::Rust,
+    Lang::Go,
+    Lang::Lua,
     Lang::Java,
     Lang::CSharp,
     Lang::Kotlin,

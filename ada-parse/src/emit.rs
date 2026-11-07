@@ -64,6 +64,17 @@ pub(crate) trait Sink: Copy {
     fn merge_call(&mut self, out: &mut &mut Out, s: usize, e: usize, kind: u16) {
         self.merge(out, s, e, kind);
     }
+    /// [`Out::fill`] on the sink: the text from `*at` to `p` is `text` (plain where it is 0), and
+    /// the lexemes end at `p`; a `p` at or before `*at` leaves both (X-075, Lua's).
+    #[inline(always)]
+    fn fill(&mut self, out: &mut &mut Out, at: &mut usize, p: usize, text: u16) {
+        if p > *at {
+            if text != 0 {
+                self.merge(out, *at, p, text);
+            }
+            *at = p;
+        }
+    }
     /// Opened for writing at `out`'s end, room made there for `n` more spans.
     fn open(&mut self, out: &mut Out, n: usize);
     /// Closed for another scanner to push spans to `out`.
@@ -1031,6 +1042,86 @@ mod tests {
                 "        string t = $\"x {a + 1:N2} y\", v = @\"multi\n  line\";\n",
                 "        /* open\n  still */ void F(int a) => a switch { 1 => 2, _ => 3 };\n",
                 "    }\n}\n",
+            ),
+        );
+    }
+
+    /// Go's and Lua's runs written by their scans (X-075) are those their spans give: Go's through
+    /// an embedded regex and SQL, raw strings and a comment over lines; Lua's through long
+    /// brackets of levels and `\z`.
+    #[test]
+    fn go_and_lua_runs_are_their_spans() {
+        runs_are_spans(
+            Lang::Go,
+            concat!(
+                "package main\nimport (\n\t\"fmt\"\n\tre \"regexp\"\n)\n// c\n",
+                "func (s *S) F(x []int, m map[string]int) (int, error) {\n",
+                "\tr := regexp.MustCompile(`^(?P<y>\\d{4})-[a-z]+$`)\n\tq := re.MustCompile(\"a+\\\\d\")\n",
+                "\trows, _ := db.Query(\"SELECT a, b FROM t WHERE id = $1\", id)\n",
+                "\t// language=SQL\n\tu := `UPDATE t\n\tSET a = 1`\n",
+                "\ts := fmt.Sprintf(\"%d %v\\n\", 0x1F, 'c')\n\t/* open\n still */ return len(x), nil\n\n}\n",
+            ),
+        );
+        runs_are_spans(
+            Lang::Lua,
+            concat!(
+                "-- c\nlocal function f(a, ...)\n  local s = [==[long\n  ]] still]==] .. \"x\\z\n",
+                "     y\" .. 'q\\n'\n  --[[ block\n  ]] return #a + 0x1F, a:m(b), t[1]\nend\n",
+                "--[=[ open\n\n]=] goto done ::done:: print(not nil and true or false)\n",
+            ),
+        );
+    }
+
+    /// SCSS's runs written by its scan (X-075) are those its spans give: through CSS's selectors,
+    /// at-rules, functions, strings and a comment over lines, its front matter (YAML's spans
+    /// taken as runs), interpolation, maps and `//` comments. (CSS's are read from its spans:
+    /// HTML's embeds keep its span copy in ada, X-075.)
+    #[test]
+    fn scss_runs_are_its_spans() {
+        let css = concat!(
+            "@charset \"utf-8\";\n@import url(\"a.css\") screen and (min-width: 600px);\n",
+            ":root { --main: #1f2; }\na.b > #c[href^='x' i]::before, li:nth-child(2n+1) {\n",
+            "  color: rgb(0 128 255 / 50%); margin: -1.5em auto !important;\n",
+            "  font: italic bold 12px/30px Georgia, \"Times New\", serif; /* open\n",
+            "  still */ background: url(x.png) no-repeat;\n}\n",
+            "@media (prefers-color-scheme: dark) { body { content: \"q\\\"\n\" } }\n",
+            "@keyframes k { from { top: 0 } 50.5% { top: calc(100% - var(--h, 2px)) } }\n",
+        );
+        runs_are_spans(Lang::Scss, css);
+        runs_are_spans(
+            Lang::Scss,
+            concat!(
+                "---\ntitle: \"x\"\nlist: [1, 2]\n---\n@use \"sass:math\";\n$map: (a: 1, 'b': 2px);\n",
+                "// c\n@mixin m($x, $y: 10px) { width: math.div($x, 2) + $y; }\n",
+                ".a-#{$n} { &:hover { @include m(1px); } %ph { @extend .b; } }\n",
+                "@each $k, $v in $map { .#{$k} { v: if($v > 1, $v * 2, null); } }\n",
+                "@function f($a...) { @return nth($a, 1); } /* open\n still */ .c { d: e }\n",
+            ),
+        );
+    }
+
+    /// bash's and Makefile's runs written by their scan (X-075) are those their spans give:
+    /// bash's through here-documents, `$(…)`, `${…}`, arithmetic, tests and strings over lines;
+    /// Makefile's through rules, variables, conditionals, `define` and recipes in bash.
+    #[test]
+    fn bash_and_makefile_runs_are_their_spans() {
+        runs_are_spans(
+            Lang::Bash,
+            concat!(
+                "#!/usr/bin/env bash\nset -euo pipefail\nf() { local a=${1:-x} b=\"$(date +%s)\"; }\n",
+                "if [[ -n \"$a\" && $b -gt 0 ]]; then echo 'q' >&2; fi\nfor i in {1..3}; do (( n += i * 2 )); done\n",
+                "cat <<-EOF > \"$out\"\n\tline $HOME ${arr[@]}\nEOF\ns=\"open\n still\" # c\n",
+                "case $x in a|b) echo `pwd`;; *) exit 1;; esac\narr=(a \"b c\") && export PATH=\"$PATH:/x\"\n",
+            ),
+        );
+        runs_are_spans(
+            Lang::Makefile,
+            concat!(
+                "# c\n.PHONY: all clean\nCC ?= gcc\nCFLAGS := -O2 $(EXTRA) ${X}\nSRC = $(wildcard src/*.c)\n",
+                "all: $(SRC:.c=.o) | dir\n\t$(CC) $(CFLAGS) -o $@ $^ && echo \"done $$HOME\"\n",
+                "ifeq ($(OS),Windows_NT)\n  EXE := .exe\nelse\n  EXE :=\nendif\n",
+                "define tmpl\n$(1): ; @echo $(1)\nendef\n%.o: %.c\n\t@if [ -f $< ]; then \\\n\t  cc -c $<; fi\n",
+                "export A = 1\nvpath %.h inc\n-include deps.mk\n",
             ),
         );
     }

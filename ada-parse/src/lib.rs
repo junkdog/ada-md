@@ -143,9 +143,10 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
 /// [`Rule::NONE`]'s, a run joins the one before where their rules are the same, a line where no
 /// rule is met has no runs, and one where one is ends at the line's end. `spans` is scratch
 /// space. Rust's scan writes the runs itself (X-068), as the line-format engine's do (X-069),
-/// JSON's, TOML's and XML's (X-072), and X-074's carried scans (Java's, C#'s, Kotlin's,
-/// TypeScript's, Python's, the Lisp engine's, Clojure's); any other language's spans are read
-/// into them.
+/// JSON's, TOML's and XML's (X-072), X-074's carried scans (Java's, C#'s, Kotlin's,
+/// TypeScript's, Python's, the Lisp engine's, Clojure's) and X-075's (Go's, Lua's, SCSS's,
+/// bash's, Makefile's); any other language's spans
+/// are read into them.
 #[inline(never)]
 pub fn lex_runs(
     lang: Lang,
@@ -369,8 +370,11 @@ type RunBlock = fn(
 /// A carried scanner's line on a run sink, as [`lex_runs`] calls it.
 type LineRuns = fn(&[u8], &mut State, &mut Out, &mut dyn Rules, &mut Vec<Run>);
 
-/// `lang`'s block and line on a carried scan that writes runs: Rust's (X-068, X-073), and X-074's
-/// (Java's, C#'s, Kotlin's, TypeScript's and TSX's, Python's, the Lisp engine's and Clojure's).
+/// `lang`'s block and line on a carried scan that writes runs: Rust's (X-068, X-073), X-074's
+/// (Java's, C#'s, Kotlin's, TypeScript's and TSX's, Python's, the Lisp engine's and Clojure's),
+/// and X-075's (Go's, Lua's, SCSS's, bash's and Makefile's; CSS's span copy stays in ada for
+/// HTML's embeds and SQL's for its hosts', so their runs are read from their spans, and
+/// PowerShell's ran no faster).
 #[inline(always)]
 fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
     Some(match lang {
@@ -386,6 +390,11 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
         Lang::Scheme => (lisp::block_runs_scheme, lisp::line_runs_scheme),
         Lang::Racket => (lisp::block_runs_racket, lisp::line_runs_racket),
         Lang::Clojure => (lisp::clojure::block_runs, lisp::clojure::line_runs),
+        Lang::Go => (go::block_runs, go::line_runs),
+        Lang::Lua => (lua::block_runs, lua::line_runs),
+        Lang::Scss => (css::scss::block_runs, css::scss::line_runs),
+        Lang::Bash => (bash::block_runs, bash::line_runs),
+        Lang::Makefile => (bash::make_block_runs, bash::make_line_runs),
         _ => return None,
     })
 }
@@ -400,19 +409,19 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::Kotlin if SPANS => kotlin::block,
         Lang::Java if SPANS => java::block,
         Lang::Python if SPANS => python::block,
-        Lang::Go => go::block,
+        Lang::Go if SPANS => go::block,
         Lang::CSharp if SPANS => csharp::block,
         Lang::TypeScript if SPANS => typescript::block,
         Lang::TypeScriptReact if SPANS => typescript::block_tsx,
         Lang::JavaScript => javascript::block,
         Lang::Cpp => cpp::block,
         Lang::C => cpp::block_c,
-        Lang::Bash => bash::block,
-        Lang::Makefile => bash::make_block,
-        Lang::Lua => lua::block,
+        Lang::Bash if SPANS => bash::block,
+        Lang::Makefile if SPANS => bash::make_block,
+        Lang::Lua if SPANS => lua::block,
         Lang::PowerShell => powershell::block,
         Lang::Css => css::block,
-        Lang::Scss => css::scss::block,
+        Lang::Scss if SPANS => css::scss::block,
         Lang::Html => html::block,
         Lang::Xml if SPANS => xml_scan::block,
         Lang::Lisp if SPANS => lisp::block_common,
@@ -455,7 +464,8 @@ type RunScanner = fn(&[u8], &mut State, &mut Out, &mut emit::Runs);
 
 /// `lang`'s lexer on a run sink, where its scan writes runs a line at a time: the line-format
 /// engine's (X-069), JSON's, TOML's and XML's (X-072; YAML's ran 1–2% slower in ada, X-072),
-/// Dockerfile's (X-074; Diff's ran 3–4% slower in ada, its span API 10% slower alone).
+/// Dockerfile's (X-074; Diff's ran 3–4% slower in ada, its span API 10% slower alone; X-075's
+/// SQL and log lexer ran slower in ada).
 /// The carried scans' runs come from [`carried_runs`] (Rust's, X-068, X-073; X-074's).
 #[inline(always)]
 fn run_scanner(lang: Lang) -> Option<RunScanner> {
@@ -535,9 +545,11 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::C => out!(cpp::line_c),
         Lang::CSharp if !SPANS => |_, _, _| unreachable!("C#'s runs come from its own scan"),
         Lang::CSharp => out!(csharp::line),
+        Lang::Go if !SPANS => |_, _, _| unreachable!("Go's runs come from its own scan"),
         Lang::Go => out!(go::line),
         Lang::Python if !SPANS => |_, _, _| unreachable!("Python's runs come from its own scan"),
         Lang::Python => out!(python::line),
+        Lang::Lua if !SPANS => |_, _, _| unreachable!("Lua's runs come from its own scan"),
         Lang::Lua => out!(lua::line),
         Lang::Sql => out!(sql::line),
         Lang::PowerShell => out!(powershell::line),
@@ -547,6 +559,7 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         }
         Lang::TypeScript => out!(|b, s, o| typescript::line(b, false, s, o)),
         Lang::TypeScriptReact => out!(|b, s, o| typescript::line(b, true, s, o)),
+        Lang::Scss if !SPANS => |_, _, _| unreachable!("SCSS's runs come from its own scan"),
         Lang::Css => out!(css::line),
         Lang::Scss => out!(css::scss::line),
         Lang::Html => out!(html::line),
@@ -558,6 +571,9 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::Scheme => out!(|b, s, o| lisp::line(b, Dialect::Scheme, s, o)),
         Lang::Racket => out!(|b, s, o| lisp::line(b, Dialect::Racket, s, o)),
         Lang::Clojure => out!(lisp::clojure::line),
+        Lang::Bash | Lang::Makefile if !SPANS => {
+            |_, _, _| unreachable!("bash's and Makefile's runs come from their own scans")
+        }
         Lang::Bash => out!(bash::line),
         Lang::Makefile => out!(bash::make_line),
         Lang::DotEnv => out!(dotenv::line),

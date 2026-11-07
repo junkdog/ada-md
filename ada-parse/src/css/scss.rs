@@ -41,6 +41,7 @@ use super::{
     TAG_CUSTOM, TAG_NAME, TERMINATOR_LEAF, TIMING_DIRECTION, UNQUOTED, WILDCARD, WORDS, WRAP,
     char_at, is, is_hex, lex, lookup, unit_type,
 };
+use crate::emit::{Push, Rules, Run, Runs, Sink};
 
 /// Lex `b`, a line of SCSS without its `\n`, from `state`.
 #[inline(never)]
@@ -52,7 +53,32 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         clippy::redundant_closure_for_method_calls,
         reason = "the method itself isn't general over the scan's lifetimes"
     )]
-    lex::<true>(b, 0, state, out, |s| s.scss_run());
+    lex::<true, _>(b, 0, state, out, Push, |s| s.scss_run());
+}
+
+/// [`line`]'s runs by theme rule pushed to `runs` (X-075, X-068's sink): [`crate::lex_runs`] for
+/// SCSS. The front matter's lines are YAML's spans, taken as runs.
+#[inline(never)]
+pub fn line_runs(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    let mut k = Runs::new(rules, runs);
+    if in_front_matter(state) && b != b"---" {
+        front_matter_line(b, state, out);
+        k.reopen(out, 0);
+    } else {
+        #[allow(
+            clippy::redundant_closure_for_method_calls,
+            reason = "the method itself isn't general over the scan's lifetimes"
+        )]
+        let r = lex::<true, _>(b, 0, state, out, k, |s| s.scss_run());
+        k = r;
+    }
+    k.end_line(b.len());
 }
 
 /// A block of SCSS on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
@@ -64,7 +90,34 @@ pub fn block(
     pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
 ) -> Option<usize> {
     let mut out = Out::new(spans);
-    let mut s = Scan::fresh(b"", 0, &mut out);
+    let mut s = Scan::fresh(b"", 0, &mut out, Push);
+    s.load_state(state);
+    let mut f = Front {
+        c: Carried {
+            s,
+            exact: state.is_exact(),
+        },
+        held: in_front_matter(state).then_some(*state),
+    };
+    let rest = pass(&mut f);
+    *state = match f.held {
+        Some(held) => held,
+        None => State::keep(&f.c.s.stack, f.c.s.depth, f.c.exact, 0),
+    };
+    rest
+}
+
+/// [`block`]'s runs by theme rule pushed to `runs` ([`crate::CarryRuns`], X-075).
+pub fn block_runs(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    out.0.clear();
+    let mut s = Scan::fresh(b"", 0, &mut out, Runs::new(rules, runs));
     s.load_state(state);
     let mut f = Front {
         c: Carried {
@@ -82,19 +135,38 @@ pub fn block(
 }
 
 /// SCSS's scan kept across a block's lines, and the state of the front matter it's in.
-struct Front<'b, 'o, 's> {
-    c: Carried<'b, 'o, 's, true>,
+struct Front<'b, 'o, 's, K: Sink> {
+    c: Carried<'b, 'o, 's, true, K>,
     held: Option<State>,
 }
 
-impl crate::Carry for Front<'_, '_, '_> {
+impl crate::Carry for Front<'_, '_, '_, Push> {
     fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        self.c.s.out.0.clear();
+        self.carry(b);
+        self.c.s.out.0
+    }
+}
+
+impl crate::CarryRuns for Front<'_, '_, '_, Runs<'_>> {
+    fn next(&mut self, b: &[u8]) -> usize {
+        self.c.s.k.start_line();
+        self.carry(b);
+        self.c.s.k.end_line(b.len())
+    }
+}
+
+impl<K: Sink> Front<'_, '_, '_, K> {
+    /// `b`, the block's next line, lexed on the scan, or as the front matter's (YAML's spans,
+    /// the run sink takes them).
+    #[inline(always)]
+    fn carry(&mut self, b: &[u8]) {
         let s = &mut self.c.s;
-        s.out.0.clear();
         if let Some(held) = &mut self.held {
             if b != b"---" {
                 front_matter_line(b, held, s.out);
-                return s.out.0;
+                s.k.reopen(s.out, 0);
+                return;
             }
             // the `---` that ends it: the scan's, from the state
             s.depth = held.load(&mut s.stack);
@@ -112,7 +184,6 @@ impl crate::Carry for Front<'_, '_, '_> {
         if (1..=crate::matcher::KEPT).contains(&d) && s.stack[d] == FRONT {
             self.held = Some(State::keep(&s.stack, s.depth, self.c.exact, 0));
         }
-        s.out.0
     }
 }
 
@@ -1949,7 +2020,7 @@ fn custom_char(c: char) -> bool {
     matches!(c, '-' | '_' | 'a'..='z' | '0'..='9') || super::custom_element_wide(c)
 }
 
-impl Scan<'_, '_, '_, true> {
+impl<K: Sink> Scan<'_, '_, '_, true, K> {
     // ---- reading the line ----
 
     /// The class of place `p` ([`BYTE_CLASS`]).

@@ -25,6 +25,7 @@
 //! table's value three), so a stack deeper than 28 is kept in [`RUNS`]: the runs of contexts
 //! that deep stacks repeat, a byte each.
 
+use crate::emit::{Push, Rules, Run, Runs, Sink};
 use crate::matcher::KEPT as HALF;
 use crate::prim::{WORD, char_len, digit, is_nd, skip_spaces, space_len, wide_char};
 use crate::{Out, State};
@@ -317,10 +318,27 @@ const SYNTECT_DEPTH: usize = 99;
 /// Lex `b`, a line of Lua without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut s = Scan::fresh(b, out);
+    let mut s = Scan::fresh(b, out, Push);
     s.load_state(state);
     s.lex();
     *state = s.state();
+}
+
+/// [`line`]'s runs by theme rule pushed to `runs` (X-075, X-068's sink): [`crate::lex_runs`] for
+/// Lua.
+#[inline(never)]
+pub fn line_runs(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    let mut s = Scan::fresh(b, out, Runs::new(rules, runs));
+    s.load_state(state);
+    s.lex();
+    *state = s.state();
+    s.k.end_line(b.len());
 }
 
 /// A block of Lua on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
@@ -331,7 +349,7 @@ pub fn block(
     pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
 ) -> Option<usize> {
     let mut out = Out::new(spans);
-    let mut s = Scan::fresh(b"", &mut out);
+    let mut s = Scan::fresh(b"", &mut out, Push);
     s.load_state(state);
     let mut c = Carried { s, deep: None };
     let rest = pass(&mut c);
@@ -339,11 +357,28 @@ pub fn block(
     rest
 }
 
-impl Scan<'_, '_> {
+/// [`block`]'s runs by theme rule pushed to `runs` ([`crate::CarryRuns`], X-075).
+pub fn block_runs(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    out.0.clear();
+    let mut s = Scan::fresh(b"", &mut out, Runs::new(rules, runs));
+    s.load_state(state);
+    let mut c = Carried { s, deep: None };
+    let rest = pass(&mut c);
+    *state = c.deep.unwrap_or_else(|| c.s.state());
+    rest
+}
+
+impl<K: Sink> Scan<'_, '_, K> {
     /// `b`, a block's next line, lexed on the scan: [`Carried`]'s.
     #[inline(always)]
     fn lex_next(&mut self, b: &[u8]) {
-        self.out.0.clear();
         // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
         self.b = unsafe { crate::line_for(b) };
         self.at = 0;
@@ -357,14 +392,15 @@ impl Scan<'_, '_> {
 /// A scan kept across a block's lines, and the state the last line left where it ended past the
 /// levels a state holds: its levels' runs packed then, which loading and packing them again
 /// may pack apart, so a block ending there hands on that state, as `line` would.
-struct Carried<'b, 'c> {
-    s: Scan<'b, 'c>,
+struct Carried<'b, 'c, K: Sink> {
+    s: Scan<'b, 'c, K>,
     deep: Option<State>,
 }
 
-impl crate::Carry for Carried<'_, '_> {
+impl crate::Carry for Carried<'_, '_, Push> {
     fn next(&mut self, b: &[u8]) -> &[crate::Span] {
         let s = &mut self.s;
+        s.out.0.clear();
         s.lex_next(b);
         // the line's end as a state's save and the next line's load leave it
         self.deep = (s.depth - 1 > KEPT).then(|| s.reloaded());
@@ -372,11 +408,21 @@ impl crate::Carry for Carried<'_, '_> {
     }
 }
 
-impl<'b, 'c> Scan<'b, 'c> {
+impl crate::CarryRuns for Carried<'_, '_, Runs<'_>> {
+    fn next(&mut self, b: &[u8]) -> usize {
+        let s = &mut self.s;
+        s.k.start_line();
+        s.lex_next(b);
+        self.deep = (s.depth - 1 > KEPT).then(|| s.reloaded());
+        s.k.end_line(b.len())
+    }
+}
+
+impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// A scan of `b`, returned as a literal so that it is built in place; the state is
     /// [`Scan::load_state`]'s.
     #[inline(always)]
-    fn fresh(b: &'b [u8], out: &'b mut Out<'c>) -> Self {
+    fn fresh(b: &'b [u8], out: &'b mut Out<'c>, k: K) -> Self {
         Scan {
             b,
             stack: [MAIN; MAX],
@@ -386,6 +432,7 @@ impl<'b, 'c> Scan<'b, 'c> {
             at: 0,
             loop_at: (usize::MAX, 0),
             looped: false,
+            k,
             out,
         }
     }
@@ -1046,7 +1093,7 @@ fn long_close(b: &[u8], p: usize, level: usize) -> Option<usize> {
     .then_some(e)
 }
 
-struct Scan<'b, 'c> {
+struct Scan<'b, 'c, K: Sink> {
     /// The line, without its `\n`: its length is where the `\n` is.
     b: &'b [u8],
     stack: [u8; MAX],
@@ -1062,10 +1109,13 @@ struct Scan<'b, 'c> {
     loop_at: (usize, usize),
     /// A pop at the place was passed over (`loop_at`).
     looped: bool,
+    /// Where the lexemes go, a line's spans or its runs by theme rule (X-075, X-068's sink).
+    k: K,
+    /// The spans' vector, the span API's.
     out: &'b mut Out<'c>,
 }
 
-impl Scan<'_, '_> {
+impl<K: Sink> Scan<'_, '_, K> {
     fn top(&self) -> u8 {
         self.stack[self.depth - 1]
     }
@@ -1112,7 +1162,7 @@ impl Scan<'_, '_> {
         if p > self.at {
             let text = self.text();
             if text != PLAIN {
-                self.out.push_merged(self.at, p, text);
+                self.k.merge(&mut self.out, self.at, p, text);
             }
             self.at = p;
         }
@@ -1121,7 +1171,8 @@ impl Scan<'_, '_> {
     /// Bytes `s..e` are `leaf`, after the text before them.
     fn put(&mut self, s: usize, e: usize, leaf: u16) {
         self.fill(s);
-        self.out.fill(&mut self.at, e.min(self.b.len()), leaf);
+        let e = e.min(self.b.len());
+        self.k.fill(&mut self.out, &mut self.at, e, leaf);
     }
 
     fn push(&mut self, c: u8) {

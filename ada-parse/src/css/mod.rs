@@ -27,6 +27,7 @@
 pub(crate) mod scss;
 mod words;
 
+use crate::emit::{Push, Sink};
 use crate::words::{Words, text_len};
 use crate::{Out, State};
 use words::{ENTRIES, LONGEST};
@@ -1908,7 +1909,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         clippy::redundant_closure_for_method_calls,
         reason = "the method itself isn't general over the scan's lifetimes"
     )]
-    lex::<false>(b, 0, state, out, |s| s.run());
+    lex::<false, _>(b, 0, state, out, Push, |s| s.run());
 }
 
 /// Lex `b`, a line holding CSS from `from` (HTML's `<style>` and `style="…"`), from `state`.
@@ -1918,7 +1919,7 @@ pub(crate) fn line_from(b: &[u8], from: usize, state: &mut State, out: &mut Out)
         clippy::redundant_closure_for_method_calls,
         reason = "the method itself isn't general over the scan's lifetimes"
     )]
-    lex::<false>(b, from, state, out, |s| s.run());
+    lex::<false, _>(b, from, state, out, Push, |s| s.run());
 }
 
 /// Whether a span of kind `kind` is a context's text (a comment's, a string's), not a token: an
@@ -1938,20 +1939,22 @@ pub(crate) fn rule_list_body() -> State {
 }
 
 /// Lex `b` from `state` with `run`: CSS's scan or SCSS's ([`scss`]), the stack kept between lines
-/// in `state` either way.
+/// in `state` either way; its lexemes written to `k`, returned as the line leaves it.
 #[inline(always)]
-fn lex<const S: bool>(
+fn lex<const S: bool, K: Sink>(
     b: &[u8],
     from: usize,
     state: &mut State,
     out: &mut Out,
-    run: impl FnOnce(&mut Scan<'_, '_, '_, S>),
-) {
-    let mut s = Scan::fresh(b, from, out);
+    k: K,
+    run: impl FnOnce(&mut Scan<'_, '_, '_, S, K>),
+) -> K {
+    let mut s = Scan::fresh(b, from, out, k);
     s.load_state(state);
     let exact = state.is_exact();
     run(&mut s);
     *state = State::keep(&s.stack, s.depth, exact, 0);
+    s.k
 }
 
 /// A block of CSS on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
@@ -1962,7 +1965,7 @@ pub fn block(
     pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
 ) -> Option<usize> {
     let mut out = Out::new(spans);
-    let mut s = Scan::fresh(b"", 0, &mut out);
+    let mut s = Scan::fresh(b"", 0, &mut out, Push);
     s.load_state(state);
     let mut c = Carried {
         s,
@@ -1975,33 +1978,42 @@ pub fn block(
 
 /// CSS's scan kept across a block's lines, and whether its lines are still syntect's, which
 /// a line's scan leaves to its caller.
-struct Carried<'b, 'o, 's, const S: bool> {
-    s: Scan<'b, 'o, 's, S>,
+struct Carried<'b, 'o, 's, const S: bool, K: Sink> {
+    s: Scan<'b, 'o, 's, S, K>,
     exact: bool,
 }
 
-impl crate::Carry for Carried<'_, '_, '_, false> {
+impl crate::Carry for Carried<'_, '_, '_, false, Push> {
     fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        self.s.out.0.clear();
+        self.carry(b);
+        self.s.out.0
+    }
+}
+
+impl<K: Sink> Carried<'_, '_, '_, false, K> {
+    /// `b`, the block's next line, lexed on the scan; the scan's line an empty one again after.
+    #[inline(always)]
+    fn carry(&mut self, b: &[u8]) {
         let s = &mut self.s;
-        s.out.0.clear();
         // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
         s.b = unsafe { crate::line_for(b) };
         s.line_start(0);
         s.run();
         crate::stack::hold(&mut s.stack, &mut s.depth, &mut self.exact);
         s.b = b"";
-        s.out.0
     }
 }
 
-impl<'b, 'o, 's, const S: bool> Scan<'b, 'o, 's, S> {
+impl<'b, 'o, 's, const S: bool, K: Sink> Scan<'b, 'o, 's, S, K> {
     /// A scan of `b`, its spans from `from`, returned as a literal so that it is built in place;
     /// the state is [`Scan::load_state`]'s.
     #[inline(always)]
-    fn fresh(b: &'b [u8], from: usize, out: &'o mut Out<'s>) -> Self {
+    fn fresh(b: &'b [u8], from: usize, out: &'o mut Out<'s>, k: K) -> Self {
         Scan {
             b,
             out,
+            k,
             stack: [MAIN; MAX],
             depth: 1,
             ctx: MAIN,
@@ -2110,9 +2122,13 @@ type Run = std::cell::Cell<(usize, usize)>;
 
 /// A line's scan; `S` for SCSS ([`scss`]), whose text takes the wrap of the innermost context
 /// that has one (a string's interpolation is the string's), where CSS's takes its top's.
-struct Scan<'b, 'o, 's, const S: bool = false> {
+struct Scan<'b, 'o, 's, const S: bool = false, K: Sink = Push> {
     b: &'b [u8],
+    /// The spans' vector: the span API's (HTML's embeds among them), and where SCSS's front
+    /// matter pushes YAML's spans for the run sink to take.
     out: &'o mut Out<'s>,
+    /// Where the lexemes go, a line's spans or its runs by theme rule (X-075, X-068's sink).
+    k: K,
     stack: [u8; MAX],
     depth: usize,
     /// The top context, `stack[depth - 1]`, kept as the stack changes (X-037: read at every
@@ -2146,7 +2162,7 @@ struct Scan<'b, 'o, 's, const S: bool = false> {
     shape_run: std::cell::Cell<(usize, usize, usize)>,
 }
 
-impl<const S: bool> Scan<'_, '_, '_, S> {
+impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
     #[inline(always)]
     fn top(&self) -> u8 {
         self.ctx
@@ -2184,7 +2200,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         if to > self.at {
             let w = self.wrap();
             if w != 0 {
-                self.out.push(self.at, to, w | PLAIN);
+                self.k.push_call(&mut self.out, self.at, to, w | PLAIN);
             }
             self.at = to;
         }
@@ -2197,7 +2213,7 @@ impl<const S: bool> Scan<'_, '_, '_, S> {
         if end > start {
             let kind = self.wrap() | leaf;
             if kind != 0 {
-                self.out.push(start, end, kind);
+                self.k.push_call(&mut self.out, start, end, kind);
             }
             self.at = end;
         }
