@@ -2,8 +2,10 @@
 # lang.zsh COMMAND …: `tokens` or `parse` fuzzed on some of ada-parse's languages alone (ADA_FUZZ_LANGS,
 # fuzz_targets/langs.rs), each language's inputs in a corpus of its own, corpus/TARGET-LANG. A smoke for a
 # new or changed lexer then neither replays the whole corpus through every lexer first nor shares its runs
-# with them. LANGS is a comma list of `Lang`s as the target names them, in lowercase (`python`, `cpp,c`),
-# or `all`. Run it under `bench/work.zsh fuzz`, with absolute paths.
+# with them. `tokens`' CI rounds fuzz the same way, and its corpora are their store (ci.zsh, F-017);
+# corpus/tokens stays home as the union, a seed for a new language. LANGS is a comma list of `Lang`s as the
+# target names them, in lowercase (`python`, `cpp,c`), or `all`. Run it under `bench/work.zsh fuzz`, with
+# absolute paths.
 #
 #   lang.zsh corpus TARGET LANGS [SEEDS…]   each language's corpus/TARGET-LANG: what it has, and the inputs
 #                                           of corpus/TARGET and the SEEDS dirs that reach code of that
@@ -13,12 +15,14 @@
 #                                           12 forks for SECONDS after the seed pass, on the languages'
 #                                           corpora and the SEEDS dirs (read only); the inputs it adds go
 #                                           to the first language's corpus and are copied to corpus/TARGET
-#                                           (the whole one, the CI rounds' seed); findings and the log in
+#                                           (the union; `parse`'s CI rounds' seed); findings and the log in
 #                                           out/lang/TARGET-LANGS/; its RC is 72, libFuzzer's on SIGTERM
 #   lang.zsh cmin TARGET LANGS              each language's corpus/TARGET-LANG minimized (libFuzzer's
-#                                           -merge=1 into an empty dir, filtered to the language), the
-#                                           old one replaced; 12 languages at a time, logs in out/lang/.
-#                                           Its inputs are all in corpus/TARGET too, so nothing is lost
+#                                           -set_cover_merge=1 into an empty dir, filtered to the
+#                                           language; LANG_MERGE=merge for -merge=1), the old one
+#                                           replaced; 12 languages at a time, logs in out/lang/. What it
+#                                           drops reaches no edge or feature the rest doesn't; a CI
+#                                           round's inputs brought home are in no other corpus
 #   lang.zsh names TARGET                   the languages TARGET takes
 #
 # Each builds the target first, as `cargo fuzz run -s none -a` does. A language new to the target starts
@@ -99,7 +103,10 @@ cmin1() {
   mkdir -p $m
   local -a was=($d/*(N))
   local rc=0
-  ADA_FUZZ_LANGS=$l $bin $args -merge=1 -timeout=30 -rss_limit_mb=3072 -artifact_prefix=out/lang/cmin-$t-$l- \
+  # set cover (F-017): the same edges and features in half the inputs and half the seed pass of -merge=1
+  local merge=-set_cover_merge=1
+  [[ ${LANG_MERGE:-cover} == merge ]] && merge=-merge=1
+  ADA_FUZZ_LANGS=$l $bin $args $merge -timeout=30 -rss_limit_mb=3072 -artifact_prefix=out/lang/cmin-$t-$l- \
     $m $d > $log 2>&1 || rc=$?
   local -a now=($m/*(N))
   if (( rc == 0 && ${#now} > 0 )); then

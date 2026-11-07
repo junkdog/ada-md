@@ -6,7 +6,9 @@ name: 🐛 Fuzz
 # The corpus is kept as the `corpus-TARGET` artifact, 90 days: a round starts from the newest,
 # else from the `fuzz-corpus` release's TARGET.tar.zst (`fuzz/ci.zsh pack` makes them from the
 # local corpora), else empty. A crash, timeout or OOM fails its worker; the inputs and the log
-# are its `findings-TARGET-SHARD` artifact. By hand only:
+# are its `findings-TARGET-SHARD` artifact. `tokens` is fuzzed by language (F-017): its workers
+# take a group of its languages each, every one alone on its own corpus, corpus/tokens-LANG. By
+# hand only:
 #
 #   gh workflow run fuzz.yml -f minutes=15 -f workers='print=1 make=1'
 on:
@@ -17,7 +19,7 @@ on:
         default: '240'
       workers:
         description: Workers per target
-        default: 'session=5 print=3 render=2 diagram=2 make=2 bash=2 stream=1 images=1 tokens=1 roots=1'
+        default: 'session=5 print=3 render=2 diagram=2 make=2 bash=2 stream=1 images=1 tokens=4 roots=1'
 
 permissions:
   contents: read
@@ -59,6 +61,7 @@ jobs:
         run: |
           cargo fuzz build -s none -a --target x86_64-unknown-linux-gnu
           tar -C target/x86_64-unknown-linux-gnu/release -cf - $(jq -r '.[]' <<< "$TARGETS") | zstd -3 -T0 > fuzzers.tar.zst
+          if jq -e 'index("tokens")' <<< "$TARGETS" > /dev/null; then zsh ci.zsh langs; fi
         env:
           TARGETS: ${{ steps.plan.outputs.targets }}
       - uses: actions/upload-artifact@v7
@@ -94,9 +97,10 @@ jobs:
       - name: 📥 Corpus
         run: zsh fuzz/ci.zsh fetch "$TARGET"
       - name: 🐛 Fuzz
-        run: zsh fuzz/ci.zsh run "$TARGET" "$(( MINUTES * 60 ))"
+        run: zsh fuzz/ci.zsh run "$TARGET" "$(( MINUTES * 60 ))" "$LANGS"
         env:
           MINUTES: ${{ inputs.minutes }}
+          LANGS: ${{ matrix.langs }}
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
