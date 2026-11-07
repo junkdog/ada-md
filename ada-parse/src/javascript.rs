@@ -403,6 +403,11 @@ impl crate::Carry for Scan<'_, '_> {
         self.stuck = 0;
         self.names.set((usize::MAX, NO_NAME));
         self.parens.set((usize::MAX, None));
+        // what a long line keeps (X-078), which a short one doesn't read
+        if b.len() > LONG_LINE {
+            self.paren_read.set(0);
+            self.run.set((usize::MAX, 0));
+        }
         self.member = usize::MAX;
         self.lex();
         // the line's end as a state's save and load leave it (`line` leaves that to its state)
@@ -441,6 +446,9 @@ impl<'b, 'c> Scan<'b, 'c> {
             stuck: 0,
             names: std::cell::Cell::new((usize::MAX, NO_NAME)),
             parens: std::cell::Cell::new((usize::MAX, None)),
+            paren_read: std::cell::Cell::new(0),
+            paren_ends: std::cell::RefCell::new(Vec::new()),
+            run: std::cell::Cell::new((usize::MAX, 0)),
             member: usize::MAX,
             out,
         }
@@ -604,6 +612,51 @@ fn balanced(b: &[u8], p: usize) -> Option<usize> {
         }
     }
     None
+}
+
+/// Lines up to this long read ahead from each place as the grammar does; a longer one keeps
+/// what its lookaheads read, so that its places don't each read to its end (X-078). The tests
+/// keep it on every line.
+#[cfg(not(test))]
+const LONG_LINE: usize = 1024;
+#[cfg(test)]
+const LONG_LINE: usize = 0;
+
+/// No `)` closes the `(` ([`paren_ends`]).
+const NO_END: u32 = u32::MAX;
+
+/// [`balanced`]'s reads up to this many bytes aren't counted toward its line's budget: a line
+/// of them costs at most this many a place (X-078).
+const LONG_READ: usize = 128;
+
+/// [`balanced`] for every `(` of `b` in one pass, into `ends` by its place (other places
+/// unset): where its parentheses end, or [`NO_END`]. The open ones are a stack linked through
+/// their own entries.
+#[cold]
+#[inline(never)]
+fn paren_ends(b: &[u8], ends: &mut Vec<u32>) {
+    ends.clear();
+    ends.resize(b.len(), NO_END);
+    let mut top = NO_END;
+    for (i, &c) in b.iter().enumerate() {
+        match c {
+            b'(' => {
+                ends[i] = top;
+                top = i as u32;
+            }
+            b')' if top != NO_END => {
+                let below = ends[top as usize];
+                ends[top as usize] = i as u32 + 1;
+                top = below;
+            }
+            _ => {}
+        }
+    }
+    while top != NO_END {
+        let below = ends[top as usize];
+        ends[top as usize] = NO_END;
+        top = below;
+    }
 }
 
 /// `(?=(balanced)\s*(=>))` at `p`.
@@ -1072,6 +1125,15 @@ struct Scan<'b, 'c> {
     names: std::cell::Cell<(usize, Name)>,
     /// The last `(` [`Scan::balanced`] was asked about, and its answer.
     parens: std::cell::Cell<(usize, Option<usize>)>,
+    /// The bytes [`balanced`] has read on this line in reads past [`LONG_READ`]: past a budget,
+    /// the line's parentheses are matched once, into `paren_ends`, and this is `usize::MAX`
+    /// (X-078).
+    paren_read: std::cell::Cell<usize>,
+    /// Where the parentheses opened at each `(` of the line end ([`paren_ends`]), kept across a
+    /// block's lines for its allocation.
+    paren_ends: std::cell::RefCell<Vec<u32>>,
+    /// The last run of `\s` read from a place ([`Scan::spaces_at`]): where it starts and ends.
+    run: std::cell::Cell<(usize, usize)>,
     /// Where the last member after a `.` [`Scan::after_object`] took starts.
     member: usize,
     out: &'b mut Out<'c>,
@@ -1513,7 +1575,7 @@ impl<'b> Scan<'b, '_> {
                     .or_else(|| self.comments(p))
             }
             CLASS_PROP => {
-                let s = spaces(self.b, p);
+                let s = self.spaces_at(p);
                 if matches!(self.c(s), Some(b';' | b'}'))
                     && let Some(q) = self.leave(p)
                 {
@@ -1522,7 +1584,7 @@ impl<'b> Scan<'b, '_> {
                 self.flow_annotation(p).or_else(|| self.expression(p))
             }
             METHOD_DEF => {
-                let s = spaces(self.b, p);
+                let s = self.spaces_at(p);
                 if matches!(self.c(s), Some(b';' | b'{'))
                     && let Some(q) = self.leave(p)
                 {
@@ -1553,7 +1615,7 @@ impl<'b> Scan<'b, '_> {
             }
             ARROW => {
                 if before(self.b, p) == Some(b')') {
-                    let s = spaces(self.b, p);
+                    let s = self.spaces_at(p);
                     if has(self.b, s, b"=>") {
                         self.put(s, s + 2, ARROW_KW);
                         self.pop();
@@ -1638,7 +1700,7 @@ impl<'b> Scan<'b, '_> {
                 self.flow_tokens(p)
             }
             FLOW_DECL => {
-                let s = spaces(self.b, p);
+                let s = self.spaces_at(p);
                 if (self.is(s, b';') || has(self.b, s, b"from"))
                     && let Some(q) = self.leave(p)
                 {
@@ -1840,14 +1902,99 @@ impl<'b> Scan<'b, '_> {
 
     /// [`balanced`] at `p`, the last answer kept: a call's `(` is asked about by
     /// `literal-method`'s lookahead, then by `literal-arrow-function`'s.
+    #[inline(always)]
     fn balanced(&self, p: usize) -> Option<usize> {
         let (at, end) = self.parens.get();
         if at == p {
             return end;
         }
+        if self.b.len() > LONG_LINE {
+            return self.balanced_kept(p);
+        }
         let end = balanced(self.b, p);
         self.parens.set((p, end));
         end
+    }
+
+    /// [`Scan::balanced`] on a long line. A `(` that nothing closes is read to the line's end,
+    /// so a line of them would be read again from each (X-078): once the line's long reads
+    /// pass twice its length, its parentheses are matched in one pass and the answers read
+    /// from that.
+    #[inline(never)]
+    fn balanced_kept(&self, p: usize) -> Option<usize> {
+        let end = if self.paren_read.get() == usize::MAX {
+            self.balanced_by_table(p)
+        } else {
+            let end = balanced(self.b, p);
+            // a short read costs what a byte of the line does: only the long ones are counted
+            // (none at a place that isn't a `(`, which reads nothing)
+            let read = match end {
+                Some(e) => e - p,
+                None if self.b.get(p) == Some(&b'(') => self.b.len() - p,
+                None => 0,
+            };
+            if read > LONG_READ {
+                self.long_read(read);
+            }
+            end
+        };
+        self.parens.set((p, end));
+        end
+    }
+
+    /// [`Scan::balanced`] past its budget: the answer from the line's table.
+    #[cold]
+    #[inline(never)]
+    fn balanced_by_table(&self, p: usize) -> Option<usize> {
+        if self.b.get(p) != Some(&b'(') {
+            return None;
+        }
+        let e = self.paren_ends.borrow()[p];
+        (e != NO_END).then_some(e as usize)
+    }
+
+    /// A read of [`Scan::balanced`]'s past [`LONG_READ`], counted: once the line's pass twice
+    /// its length, its parentheses are matched into `paren_ends` ([`paren_ends`]) and the count
+    /// is `usize::MAX`; a line too long for the table's places reads on.
+    #[cold]
+    #[inline(never)]
+    fn long_read(&self, read: usize) {
+        let read = self.paren_read.get() + read;
+        if read > 2 * self.b.len() && self.b.len() < NO_END as usize {
+            paren_ends(self.b, &mut self.paren_ends.borrow_mut());
+            self.paren_read.set(usize::MAX);
+        } else {
+            self.paren_read.set(read);
+        }
+    }
+
+    /// `spaces` at `p`, the place the patterns are tried at.
+    #[inline(always)]
+    fn spaces_at(&self, p: usize) -> usize {
+        let b = self.b;
+        if b.len() > LONG_LINE {
+            return self.spaces_kept(p);
+        }
+        spaces(b, p)
+    }
+
+    /// [`Scan::spaces_at`] on a long line, a run read once: the patterns tried at each place
+    /// along a run of blanks read it ahead from there (`\s*:`, `\s*gql`, `\s*/`, …), and a line
+    /// of them would be read again from each (X-078).
+    #[inline(never)]
+    fn spaces_kept(&self, p: usize) -> usize {
+        let b = self.b;
+        if p < b.len() && b[p] < 0x80 && !matches!(b[p], b' ' | b'\t' | b'\x0b' | b'\x0c' | b'\r') {
+            return p;
+        }
+        let (s, e) = self.run.get();
+        // a place in the run that starts a character is one its read passed
+        if s <= p && p < e && (p >= b.len() || b[p] & 0xc0 != 0x80) {
+            return e;
+        }
+        let e = spaces(b, p);
+        self.run.set((p, e));
+        e
     }
 
     /// `(?=(…)\s*(=>))` at `p`.
@@ -2174,7 +2321,7 @@ impl<'b> Scan<'b, '_> {
     fn blank_may_match(&self, p: usize) -> bool {
         before(self.b, p) == Some(b'.')
             || matches!(
-                self.c(spaces(self.b, p)),
+                self.c(self.spaces_at(p)),
                 Some(b':' | b'g' | b'`' | b'/' | b'<')
             )
     }
@@ -2531,7 +2678,7 @@ impl<'b> Scan<'b, '_> {
             // `(?=(?>'…'|"…"|)\s*:)`, pushing nothing
             let colon = match self.c(p) {
                 Some(b'\'' | b'"') => quoted(b, p).map(|e| spaces(b, e)),
-                _ => Some(spaces(b, p)),
+                _ => Some(self.spaces_at(p)),
             };
             if colon.is_some_and(|c| self.is(c, b':')) {
                 return self.enter(p, LABEL);
@@ -2612,7 +2759,7 @@ impl<'b> Scan<'b, '_> {
 
     /// `graphql`: `\s*+gql`` or `\s*+`#graphql`.
     fn graphql(&mut self, p: usize) -> Option<usize> {
-        let s = spaces(self.b, p);
+        let s = self.spaces_at(p);
         let e = if has(self.b, s, b"gql`") {
             s + 4
         } else if has(self.b, s, b"`#graphql") {
@@ -2653,7 +2800,7 @@ impl<'b> Scan<'b, '_> {
     /// `literal-regexp`.
     fn regexp(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
-        let s = spaces(b, p);
+        let s = self.spaces_at(p);
         if !self.is(s, b'/') || matches!(self.c(s + 1), Some(b'/' | b'*')) || eol(b, s + 1) {
             return None;
         }
@@ -2704,7 +2851,7 @@ impl<'b> Scan<'b, '_> {
     /// `literal-jsx`.
     fn jsx(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
-        let s = spaces(b, p);
+        let s = self.spaces_at(p);
         if !self.is(s, b'<') || !ident_start(self.c(s + 1)) {
             return None;
         }
@@ -3824,7 +3971,7 @@ impl<'b> Scan<'b, '_> {
         }
         // `(?<=\.)\s*([_$a-zA-Z][$\w]*)`
         if after_dot {
-            let s = spaces(b, p);
+            let s = self.spaces_at(p);
             if let Some(e) = ident(b, s) {
                 self.put(p, s, PLAIN);
                 return self.tok(s, e, PROPERTY);
@@ -3862,12 +4009,12 @@ impl<'b> Scan<'b, '_> {
         {
             return self.tok_push(p, e, FLOW_OP, METHOD_DEF);
         }
-        if self.is(spaces(b, p), b'<') {
+        if self.is(self.spaces_at(p), b'<') {
             return self.enter(p, METHOD_DEF);
         }
         // `(?<=[]"'])\s*(?=[<(])`
         if matches!(before(b, p), Some(b']' | b'"' | b'\'')) {
-            let s = spaces(b, p);
+            let s = self.spaces_at(p);
             if matches!(self.c(s), Some(b'<' | b'(')) {
                 if s == p {
                     return self.enter(p, METHOD_DEF);
@@ -3994,12 +4141,12 @@ impl<'b> Scan<'b, '_> {
         let b = self.b;
         // `(?<=[:?|&=])(?=\s*{)`
         if matches!(before(b, p), Some(b':' | b'?' | b'|' | b'&' | b'='))
-            && self.is(spaces(b, p), b'{')
+            && self.is(self.spaces_at(p), b'{')
         {
             return self.enter(p, FLOW_AFTER);
         }
         // `\s*([|&])\s*`
-        let s = spaces(b, p);
+        let s = self.spaces_at(p);
         if matches!(self.c(s), Some(b'|' | b'&')) {
             let e = spaces(b, s + 1);
             self.put(p, s, PLAIN);
@@ -4228,6 +4375,98 @@ mod tests {
 
     fn js(lines: &[&'static str]) -> Vec<(&'static str, &'static str)> {
         marked(Lang::JavaScript, lines)
+    }
+
+    /// The parentheses matched in one pass end where [`super::balanced`]'s read from each `(`
+    /// does (X-078), on every line of `(`, `)` and `a` up to nine bytes.
+    #[test]
+    fn paren_ends_are_balanced_at_every_paren() {
+        let mut line = Vec::new();
+        let mut ends = Vec::new();
+        for n in 0..=9u32 {
+            for k in 0..3usize.pow(n) {
+                line.clear();
+                let mut k = k;
+                for _ in 0..n {
+                    line.push(b"()a"[k % 3]);
+                    k /= 3;
+                }
+                super::paren_ends(&line, &mut ends);
+                for p in (0..line.len()).filter(|&p| line[p] == b'(') {
+                    let e = (ends[p] != super::NO_END).then_some(ends[p] as usize);
+                    assert_eq!(e, super::balanced(&line, p), "{line:?} at {p}");
+                }
+            }
+        }
+    }
+
+    /// [`super::Scan::balanced`] on long lines, where its reads pass the budget and the line's
+    /// table answers from then on (X-078), is the read from each place, asked forward, backward
+    /// and again.
+    #[test]
+    fn balanced_past_its_budget_is_the_read_from_each_place() {
+        // the line, and whether its reads pass the budget
+        let mut lines: Vec<(Vec<u8>, bool)> = [
+            ("(", true),
+            ("(()", true),
+            ("f(", true),
+            ("(a)(", true),
+            ("((x))", false),
+            (")(", false),
+        ]
+        .iter()
+        .map(|&(p, long)| (p.repeat(400).into_bytes(), long))
+        .collect();
+        // and a mix, from a small generator
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        lines.push((
+            (0..3000)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    b"(()a"[(x % 4) as usize]
+                })
+                .collect(),
+            true,
+        ));
+        for (line, long) in &lines {
+            let (state, mut spans) = (crate::State::default(), Vec::new());
+            let mut out = crate::Out::new(&mut spans);
+            let s = super::Scan::fresh(line, 0, &state, &mut out);
+            let all = 0..=line.len() + 1;
+            for p in all.clone().chain(all.clone().rev()).chain(all) {
+                assert_eq!(s.balanced(p), super::balanced(line, p), "at {p}");
+            }
+            let table = s.paren_read.get() == usize::MAX;
+            assert_eq!(table, *long, "{:?}…", &line[..8]);
+        }
+    }
+
+    /// The run of blanks kept from a place is the read from each place in it (X-078), asked
+    /// forward, backward and again, on lines of ASCII blanks, spaces past ASCII (U+2001, U+3000)
+    /// and others, a character's inner bytes included.
+    #[test]
+    fn spaces_at_is_the_read_from_each_place() {
+        let pieces = [" ", "\t", "\u{2001}", "\u{3000}", "a", "\u{e9}", ":"];
+        for n in 0..=5u32 {
+            for k in 0..pieces.len().pow(n) {
+                let mut line = String::new();
+                let mut k = k;
+                for _ in 0..n {
+                    line.push_str(pieces[k % pieces.len()]);
+                    k /= pieces.len();
+                }
+                let b = line.as_bytes();
+                let (state, mut spans) = (crate::State::default(), Vec::new());
+                let mut out = crate::Out::new(&mut spans);
+                let s = super::Scan::fresh(b, 0, &state, &mut out);
+                let all = 0..=b.len() + 1;
+                for p in all.clone().chain(all.clone().rev()).chain(all) {
+                    assert_eq!(s.spaces_at(p), super::spaces(b, p), "{line:?} at {p}");
+                }
+            }
+        }
     }
 
     /// Every word a pattern at a name's start looks for has that pattern's bit: a word without

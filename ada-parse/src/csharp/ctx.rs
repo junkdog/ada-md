@@ -1817,6 +1817,9 @@ impl<K: Lex> Scan<'_, K> {
 
     /// `(?=[^(]*>\.)` at `i`.
     pub(super) fn gt_dot_ahead(&self, i: usize) -> bool {
+        if self.b.len() > super::LONG_LINE {
+            return self.gt_dot_kept(i);
+        }
         let mut q = i;
         while self.on(q) && self.ch(q) != b'(' {
             if self.ch(q) == b'>' && self.ch(q + 1) == b'.' && q + 1 < self.b.len() {
@@ -1825,6 +1828,21 @@ impl<K: Lex> Scan<'_, K> {
             q += 1;
         }
         false
+    }
+
+    /// [`Scan::gt_dot_ahead`] on a long line: the first `>.` from `i` before the first `(`
+    /// from it, both kept, so the places before either don't each read to it (X-079).
+    #[inline(never)]
+    fn gt_dot_kept(&self, i: usize) -> bool {
+        let (from, mut g) = self.gt_dot.get();
+        if !(from <= i && (g == usize::MAX || g >= i)) {
+            g = self.b[i.min(self.b.len())..]
+                .windows(2)
+                .position(|w| w == b">.")
+                .map_or(usize::MAX, |k| i + k);
+            self.gt_dot.set((i, g));
+        }
+        g != usize::MAX && g < self.first_paren(i).0
     }
 
     /// `#anon_method_name_1`: an explicit interface's type arguments.
@@ -3039,12 +3057,37 @@ impl<K: Lex> Scan<'_, K> {
     /// blank here is any byte up to a space or past ASCII, a name's start an ASCII letter, `_`,
     /// `@`, `\` or a byte past ASCII (so a character past ASCII counts as either).
     pub(super) fn blank_name_after(&self, e: usize) -> bool {
+        if self.b.len() > super::LONG_LINE {
+            return self.blank_name_kept(e);
+        }
         self.b[e.min(self.b.len())..].windows(2).any(|w| {
             (w[0] <= b' ' || w[0] >= 0x80)
                 && (w[1].is_ascii_alphabetic()
                     || matches!(w[1], b'_' | b'@' | b'\\')
                     || w[1] >= 0x80)
         })
+    }
+
+    /// [`Scan::blank_name_after`] on a long line: whether one holds from `e` is whether the
+    /// line's last one starts at `e` or after, so that place is found once a line, from the
+    /// line's end back ([`Scan::bname`]) (X-079).
+    #[inline(never)]
+    fn blank_name_kept(&self, e: usize) -> bool {
+        let mut last = self.bname.get();
+        if last == usize::MAX {
+            last = self
+                .b
+                .windows(2)
+                .rposition(|w| {
+                    (w[0] <= b' ' || w[0] >= 0x80)
+                        && (w[1].is_ascii_alphabetic()
+                            || matches!(w[1], b'_' | b'@' | b'\\')
+                            || w[1] >= 0x80)
+                })
+                .map_or(0, |i| i + 1);
+            self.bname.set(last);
+        }
+        e < last
     }
 
     /// Whether `nested_method_ahead`'s `\s+{{name}}{{generic_declaration}}\(` can end at the
@@ -3090,10 +3133,30 @@ impl<K: Lex> Scan<'_, K> {
 
     /// The first of `(={};` on the line from `p`.
     pub(super) fn first_stop(&self, p: usize) -> Option<usize> {
+        if self.b.len() > super::LONG_LINE {
+            return self.first_stop_kept(p);
+        }
         self.b[p.min(self.b.len())..self.b.len()]
             .iter()
             .position(|c| matches!(c, b'(' | b'=' | b'{' | b'}' | b';'))
             .map(|k| p + k)
+    }
+
+    /// [`Scan::first_stop`] on a long line: the answer from a place holds for every place up
+    /// to it, so the reads from each place along a line without one don't read to its end
+    /// again (X-079).
+    #[inline(never)]
+    fn first_stop_kept(&self, p: usize) -> Option<usize> {
+        let (from, at) = self.stop.get();
+        if from <= p && (at == usize::MAX || at >= p) {
+            return (at != usize::MAX).then_some(at);
+        }
+        let at = self.b[p.min(self.b.len())..self.b.len()]
+            .iter()
+            .position(|c| matches!(c, b'(' | b'=' | b'{' | b'}' | b';'))
+            .map(|k| p + k);
+        self.stop.set((p, at.unwrap_or(usize::MAX)));
+        at
     }
 
     /// Two names of ASCII at `p` with blanks between (`Type name`), the second starting with
@@ -3131,37 +3194,56 @@ impl<K: Lex> Scan<'_, K> {
 
     /// `(?=([^(={};]*>){{type_suffix}}\s+{{name}}{{generic_declaration}}\()` at `i`.
     pub(super) fn generic_method_ahead(&self, i: usize) -> bool {
-        let mut r = i;
-        while self.on(r) && !matches!(self.ch(r), b'(' | b'=' | b'{' | b'}' | b';') {
-            r += 1;
-        }
         // nothing after the `>` before the `(` is one of `(={};` either
-        if self.ch(r) != b'(' || r >= self.b.len() {
+        let Some(r) = self.first_stop(i).filter(|&r| self.b[r] == b'(') else {
             return false;
+        };
+        if self.b.len() > super::LONG_LINE {
+            return self.generic_method_kept(i, r);
         }
-        let mut g = r;
-        while g > i {
-            g -= 1;
-            if self.ch(g) == b'>'
-                && self.type_suffix(g + 1, &mut |t| {
-                    self.spaced_name(t, &mut |m| {
-                        self.generic_decl(m, &mut |h| self.ch(h) == b'(' && h < self.b.len())
-                    })
-                })
-            {
-                return true;
+        (i..r)
+            .rev()
+            .any(|g| self.ch(g) == b'>' && self.generic_method_tail(g + 1))
+    }
+
+    /// What follows a `>` in [`Scan::generic_method_ahead`]'s lookahead, at `i`.
+    fn generic_method_tail(&self, i: usize) -> bool {
+        self.type_suffix(i, &mut |t| {
+            self.spaced_name(t, &mut |m| {
+                self.generic_decl(m, &mut |h| self.ch(h) == b'(' && h < self.b.len())
+            })
+        })
+    }
+
+    /// [`Scan::generic_method_ahead`] on a long line, before the `(` at `r`: whether the tail
+    /// holds after a `>` depends on the `>` alone, so the search back from the `(` is kept and
+    /// goes on from where it stopped: the places before one `(` don't each read back to
+    /// themselves (X-079).
+    #[inline(never)]
+    fn generic_method_kept(&self, i: usize, r: usize) -> bool {
+        let (at, mut low, mut found) = self.gm.get();
+        if at != r {
+            (low, found) = (r, usize::MAX);
+        }
+        if found != usize::MAX {
+            // the last `>` before the `(` the tail follows: none after it does
+            return found >= i;
+        }
+        while low > i {
+            low -= 1;
+            if self.ch(low) == b'>' && self.generic_method_tail(low + 1) {
+                found = low;
+                break;
             }
         }
-        false
+        self.gm.set((r, low, found));
+        found != usize::MAX
     }
 
     /// `(?=[^(={};]*>\()` at `i`.
     pub(super) fn generic_call_ahead(&self, i: usize) -> bool {
-        let mut r = i;
-        while self.on(r) && !matches!(self.ch(r), b'(' | b'=' | b'{' | b'}' | b';') {
-            r += 1;
-        }
-        r < self.b.len() && self.ch(r) == b'(' && r > i && self.ch(r - 1) == b'>'
+        self.first_stop(i)
+            .is_some_and(|r| self.b[r] == b'(' && r > i && self.b[r - 1] == b'>')
     }
 
     /// `line_of_code`'s `var`/`dynamic` patterns.
@@ -3982,6 +4064,9 @@ impl<K: Lex> Scan<'_, K> {
 
     /// `(?=[^(]*>\s*\()` at `i`.
     pub(super) fn generic_call_paren_ahead(&self, i: usize) -> bool {
+        if self.b.len() > super::LONG_LINE {
+            return self.generic_call_paren_kept(i);
+        }
         let mut r = i;
         while self.on(r) && self.ch(r) != b'(' {
             r += 1;
@@ -3994,6 +4079,37 @@ impl<K: Lex> Scan<'_, K> {
             t -= 1;
         }
         t > i && self.ch(t - 1) == b'>'
+    }
+
+    /// [`Scan::generic_call_paren_ahead`] on a long line: the first `(` from a place, and
+    /// where the blanks before it start, hold for every place up to it, so they are kept: the
+    /// places before one `(` don't each read to it (X-079).
+    #[inline(never)]
+    fn generic_call_paren_kept(&self, i: usize) -> bool {
+        let (r, t) = self.first_paren(i);
+        // the blanks walked back to `i` at most, as the lookahead's `[^(]*` starts there
+        r != usize::MAX && t > i && self.ch(t - 1) == b'>'
+    }
+
+    /// The first `(` from `i` on a long line (`usize::MAX`: none), and where the blanks before
+    /// it start (walked back past `i` if they go on). Kept: the answer holds for every place up
+    /// to the `(` (X-079).
+    fn first_paren(&self, i: usize) -> (usize, usize) {
+        let (from, mut r, mut t) = self.paren.get();
+        if !(from <= i && (r == usize::MAX || r >= i)) {
+            r = self.b[i.min(self.b.len())..]
+                .iter()
+                .position(|&c| c == b'(')
+                .map_or(usize::MAX, |k| i + k);
+            t = r;
+            if r != usize::MAX {
+                while t > 0 && self.space(t - 1) {
+                    t -= 1;
+                }
+            }
+            self.paren.set((i, r, t));
+        }
+        (r, t)
     }
 
     /// `line_of_code_in_no_semicolon`'s `(` patterns.

@@ -1123,6 +1123,14 @@ impl<'b, K: Lex> Scan<'b, K> {
         self.ncache.set((usize::MAX, None));
         self.pcache.set((usize::MAX, None));
         self.when.set((usize::MAX, 0));
+        // what a long line keeps (X-079), which a short one doesn't read
+        if b.len() > LONG_LINE {
+            self.bname.set(usize::MAX);
+            self.stop.set((usize::MAX, 0));
+            self.gm.set((usize::MAX, 0, usize::MAX));
+            self.paren.set((usize::MAX, 0, 0));
+            self.gt_dot.set((usize::MAX, 0));
+        }
         self.regex_calls = None;
         self.ind = self.sp_line(i);
         self.lex();
@@ -1155,6 +1163,11 @@ impl<'b, K: Lex> Scan<'b, K> {
             ncache: std::cell::Cell::new((usize::MAX, None)),
             pcache: std::cell::Cell::new((usize::MAX, None)),
             when: std::cell::Cell::new((usize::MAX, 0)),
+            bname: std::cell::Cell::new(usize::MAX),
+            stop: std::cell::Cell::new((usize::MAX, 0)),
+            gm: std::cell::Cell::new((usize::MAX, 0, usize::MAX)),
+            paren: std::cell::Cell::new((usize::MAX, 0, 0)),
+            gt_dot: std::cell::Cell::new((usize::MAX, 0)),
             regex_calls: None,
             k,
         }
@@ -1279,6 +1292,14 @@ static HELD_BITS: [[u16; KEPT]; KEPT + 1] = {
     t
 };
 
+/// Lines up to this long read ahead from each place as the grammar does; a longer one keeps
+/// what its lookaheads read, so that its places don't each read to its end (X-079). The tests
+/// keep it on every line.
+#[cfg(not(test))]
+const LONG_LINE: usize = 1024;
+#[cfg(test)]
+const LONG_LINE: usize = 0;
+
 /// Two names with blanks between ([`Scan::plain_pair`]): where the first ends, where the second
 /// ends, and where the blanks after it end.
 type Pair = (usize, usize, usize);
@@ -1320,6 +1341,24 @@ pub(crate) struct Scan<'b, K: Lex> {
     /// Where [`Scan::when_from`] last looked from, and the first `when` it found from there
     /// (`usize::MAX`: none on the line).
     when: std::cell::Cell<(usize, usize)>,
+    /// One past the last place on the line where a blank and then what may start a name are
+    /// ([`Scan::blank_name_after`]; 0: none, `usize::MAX`: not looked for yet), so that the
+    /// test is one compare a name, not a read of the rest of the line (X-079).
+    bname: std::cell::Cell<usize>,
+    /// Where [`Scan::first_stop`] last looked from, and the first of `(={};` it found from there
+    /// (`usize::MAX`: none on the line), which every place up to it shares (X-079).
+    stop: std::cell::Cell<(usize, usize)>,
+    /// [`Scan::generic_method_ahead`]'s search back from a `(`: the `(`, how far back it has
+    /// looked, and the last `>` it found that the lookahead's tail follows (`usize::MAX`: none
+    /// down to there) (X-079).
+    gm: std::cell::Cell<(usize, usize, usize)>,
+    /// [`Scan::first_paren`]'s: where it last looked from, the `(` it found (`usize::MAX`: none
+    /// on the line), which every place up to it shares, and where the blanks before that `(`
+    /// start (X-079).
+    paren: std::cell::Cell<(usize, usize, usize)>,
+    /// Where [`Scan::gt_dot_ahead`] last looked for `>.` from, and the first it found
+    /// (`usize::MAX`: none on the line) (X-079).
+    gt_dot: std::cell::Cell<(usize, usize)>,
     /// The line's regex calls, found at its first string ([`RegexCalls`]).
     regex_calls: Option<RegexCalls>,
     /// Where the lexemes go: the line's spans, or its runs by theme rule (X-074).
@@ -1521,6 +1560,11 @@ impl<'b> Scan<'b, SpanLex<'b>> {
             ncache: std::cell::Cell::new((usize::MAX, None)),
             pcache: std::cell::Cell::new((usize::MAX, None)),
             when: std::cell::Cell::new((usize::MAX, 0)),
+            bname: std::cell::Cell::new(usize::MAX),
+            stop: std::cell::Cell::new((usize::MAX, 0)),
+            gm: std::cell::Cell::new((usize::MAX, 0, usize::MAX)),
+            paren: std::cell::Cell::new((usize::MAX, 0, 0)),
+            gt_dot: std::cell::Cell::new((usize::MAX, 0)),
             regex_calls: None,
             k: SpanLex::new(spans, true),
         }
@@ -2080,6 +2124,129 @@ impl<K: Lex> Scan<'_, K> {
 mod tests {
     use crate::Lang;
     use crate::tests::marked;
+
+    /// `blank_name_after`'s answer from the line's last place is the read of the rest of the
+    /// line it replaced (X-079), at every place of lines of blanks, name starts, bytes past
+    /// ASCII and others.
+    #[test]
+    fn blank_name_after_is_the_read_of_the_rest_of_the_line() {
+        let read = |b: &[u8], e: usize| {
+            b[e.min(b.len())..].windows(2).any(|w| {
+                (w[0] <= b' ' || w[0] >= 0x80)
+                    && (w[1].is_ascii_alphabetic()
+                        || matches!(w[1], b'_' | b'@' | b'\\')
+                        || w[1] >= 0x80)
+            })
+        };
+        let alphabet = [b' ', b'a', b'<', b'@', 0xc3, b'\t', b':'];
+        let mut line = Vec::new();
+        for n in 0..=6u32 {
+            for k in 0..alphabet.len().pow(n) {
+                line.clear();
+                let mut k = k;
+                for _ in 0..n {
+                    line.push(alphabet[k % alphabet.len()]);
+                    k /= alphabet.len();
+                }
+                let (mut state, mut spans) = (crate::State::default(), Vec::new());
+                let s = super::Scan::for_test(&line, &mut state, &mut spans);
+                // asked in no order, as the patterns ask
+                for e in (0..=n as usize + 1).rev().chain(0..=n as usize + 1) {
+                    assert_eq!(s.blank_name_after(e), read(&line, e), "{line:?} at {e}");
+                }
+            }
+        }
+    }
+
+    /// `first_stop`'s kept answer, the generic lookaheads on it, the call's `(` and `>.` are the reads from each
+    /// place they replaced (X-079), at every place of short lines of names, `<`, `>`, blanks and
+    /// the stops, asked forward, backward and again.
+    #[test]
+    fn first_stop_and_the_generic_lookaheads_are_the_reads_from_each_place() {
+        let stops = |c: u8| matches!(c, b'(' | b'=' | b'{' | b'}' | b';');
+        let alphabet = b"A<> (;\t.";
+        let mut line = Vec::new();
+        for n in 0..=6u32 {
+            for k in 0..alphabet.len().pow(n) {
+                line.clear();
+                let mut k = k;
+                for _ in 0..n {
+                    line.push(alphabet[k % alphabet.len()]);
+                    k /= alphabet.len();
+                }
+                let (mut state, mut spans) = (crate::State::default(), Vec::new());
+                let s = super::Scan::for_test(&line, &mut state, &mut spans);
+                let first = |p: usize| {
+                    line[p.min(line.len())..]
+                        .iter()
+                        .position(|&c| stops(c))
+                        .map(|k| p + k)
+                };
+                let ahead = |i: usize| {
+                    let mut r = i;
+                    while s.on(r) && !stops(s.ch(r)) {
+                        r += 1;
+                    }
+                    r
+                };
+                let method = |i: usize| {
+                    let r = ahead(i);
+                    if s.ch(r) != b'(' || r >= line.len() {
+                        return false;
+                    }
+                    (i..r).rev().any(|g| {
+                        s.ch(g) == b'>'
+                            && s.type_suffix(g + 1, &mut |t| {
+                                s.spaced_name(t, &mut |m| {
+                                    s.generic_decl(m, &mut |h| s.ch(h) == b'(' && h < line.len())
+                                })
+                            })
+                    })
+                };
+                let call = |i: usize| {
+                    let r = ahead(i);
+                    r < line.len() && s.ch(r) == b'(' && r > i && s.ch(r - 1) == b'>'
+                };
+                let paren = |i: usize| {
+                    let mut r = i;
+                    while s.on(r) && s.ch(r) != b'(' {
+                        r += 1;
+                    }
+                    if r >= line.len() {
+                        return false;
+                    }
+                    let mut t = r;
+                    while t > i && s.space(t - 1) {
+                        t -= 1;
+                    }
+                    t > i && s.ch(t - 1) == b'>'
+                };
+                let gt_dot = |i: usize| {
+                    let mut q = i;
+                    while s.on(q) && s.ch(q) != b'(' {
+                        if s.ch(q) == b'>' && s.ch(q + 1) == b'.' && q + 1 < line.len() {
+                            return true;
+                        }
+                        q += 1;
+                    }
+                    false
+                };
+                let all = 0..=n as usize + 2;
+                for i in all.clone().chain(all.clone().rev()).chain(all) {
+                    assert_eq!(s.gt_dot_ahead(i), gt_dot(i), "{line:?} gt_dot at {i}");
+                    assert_eq!(s.first_stop(i), first(i), "{line:?} first_stop at {i}");
+                    assert_eq!(
+                        s.generic_method_ahead(i),
+                        method(i),
+                        "{line:?} method at {i}"
+                    );
+                    assert_eq!(s.generic_call_ahead(i), call(i), "{line:?} call at {i}");
+                    let got = s.generic_call_paren_ahead(i);
+                    assert_eq!(got, paren(i), "{line:?} call paren at {i}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn level_bits_by_table_are_the_rules() {
