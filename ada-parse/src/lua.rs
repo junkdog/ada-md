@@ -498,13 +498,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             (&self.stack, self.depth)
         } else {
             runs = [0; MAX];
-            let (mut i, mut k) = (0, 1);
-            while i < open.len() {
-                let rest = &open[i..];
-                let (code, len) = RUNS
-                    .iter()
-                    .position(|r| rest.starts_with(r))
-                    .map_or((rest[0], 1), |r| (RUN + r as u8, RUNS[r].len()));
+            let (mut i, mut k) = (1, 1);
+            while i < self.depth {
+                let (code, len) = packed(&self.stack, i, self.depth);
                 runs[k] = code;
                 (i, k) = (i + len, k + 1);
             }
@@ -514,6 +510,68 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     }
 }
 
+/// The run of [`RUNS`] that the contexts of `stack` from `at` to `end` start with, the first in
+/// their order, as its byte and length, else the context at `at` alone: [`Scan::state`]'s
+/// packing, a line deeper than the levels. Without a slice compare (X-077: a `memcmp` a run a
+/// level, which libFuzzer's compare hooks made most of Lua's time): the eight contexts from
+/// `at` as a word, against only the runs that start with the first ([`BY_FIRST`]), each by its
+/// length's bytes ([`KEYS`]).
+#[inline(always)]
+fn packed(stack: &[u8; MAX], at: usize, end: usize) -> (u8, usize) {
+    let left = end - at;
+    let w = match stack.get(at..at + 8) {
+        Some(s) => u64::from_le_bytes(s.try_into().unwrap()),
+        None => stack[at..end]
+            .iter()
+            .rev()
+            .fold(0, |w, &c| (w << 8) | u64::from(c)),
+    };
+    let mut m = BY_FIRST[usize::from(stack[at] % RUN)];
+    while m != 0 {
+        let r = m.trailing_zeros() as usize;
+        let (key, mask, len) = KEYS[r];
+        if len <= left && w & mask == key {
+            return (RUN + r as u8, len);
+        }
+        m &= m - 1;
+    }
+    (stack[at], 1)
+}
+
+/// Each run of [`RUNS`] as [`packed`] compares it: its contexts as a little-endian word, the mask
+/// of its length's bytes, its length.
+static KEYS: [(u64, u64, usize); RUN_COUNT] = {
+    let mut keys = [(0, 0, 0); RUN_COUNT];
+    let mut r = 0;
+    while r < RUN_COUNT {
+        let run = RUN_LIST[r];
+        assert!(!run.is_empty() && run.len() <= 8);
+        let (mut key, mut i) = (0u64, run.len());
+        while i > 0 {
+            i -= 1;
+            assert!(run[i] < RUN);
+            key = (key << 8) | run[i] as u64;
+        }
+        let mask = u64::MAX >> (64 - 8 * run.len());
+        keys[r] = (key, mask, run.len());
+        r += 1;
+    }
+    keys
+};
+
+/// The runs of [`RUNS`] by their first context: bit `r` of a context's mask for each run `r`
+/// that starts with it.
+static BY_FIRST: [u64; RUN as usize] = {
+    assert!(RUN_COUNT <= 64);
+    let mut by = [0; RUN as usize];
+    let mut r = 0;
+    while r < RUN_COUNT {
+        by[RUN_LIST[r][0] as usize] |= 1 << r;
+        r += 1;
+    }
+    by
+};
+
 /// The first byte that stands for a run of [`RUNS`] (the contexts are below it).
 const RUN: u8 = 64;
 
@@ -521,7 +579,10 @@ const RUN: u8 = 64;
 /// lines once a stack is deeper than [`KEPT`] (`RUN` and up): a call's open arguments, a
 /// function among them and its body, a table's value; picked on the stacks of the corpus that
 /// went past the levels.
-static RUNS: [&[u8]; RUN_COUNT] = [
+static RUNS: [&[u8]; RUN_COUNT] = RUN_LIST;
+
+/// [`RUNS`] as a constant, for [`KEYS`] and [`BY_FIRST`].
+const RUN_LIST: [&[u8]; RUN_COUNT] = [
     &[
         BLOCK,
         EXPR_END,
@@ -2145,5 +2206,54 @@ mod tests {
             "meta.property.lua support.function.builtin.lua",
         );
         has(&l, "pi", "meta.property.lua support.constant.builtin.lua");
+    }
+
+    /// [`super::packed`] (X-077) picks the run the slice compare it replaced picked: the first
+    /// of `RUNS` the contexts start with, on stacks of the runs' contexts, other contexts, and
+    /// runs cut short at the stack's end, up to `MAX` deep.
+    #[test]
+    fn packing_without_compares() {
+        use super::{MAX, RUN, RUNS, packed};
+        let mut ctx: Vec<u8> = RUNS.iter().flat_map(|r| r.iter().copied()).collect();
+        ctx.sort_unstable();
+        ctx.dedup();
+        ctx.extend([0, 2, 11, 58]);
+        let mut x = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = |n: usize| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x % n as u64) as usize
+        };
+        for _ in 0..20_000 {
+            let mut stack = [0u8; MAX];
+            let depth = 2 + next(MAX - 1);
+            let mut i = 1;
+            while i < depth {
+                if next(3) > 0 {
+                    let r = RUNS[next(RUNS.len())];
+                    let n = r.len().min(depth - i);
+                    stack[i..i + n].copy_from_slice(&r[..n]);
+                    i += n;
+                } else {
+                    stack[i] = ctx[next(ctx.len())];
+                    i += 1;
+                }
+            }
+            // what lies past the depth is a deeper line's leftovers
+            for c in &mut stack[depth..] {
+                *c = ctx[next(ctx.len())];
+            }
+            let mut i = 1;
+            while i < depth {
+                let rest = &stack[i..depth];
+                let want = RUNS
+                    .iter()
+                    .position(|r| rest.starts_with(r))
+                    .map_or((rest[0], 1), |r| (RUN + r as u8, RUNS[r].len()));
+                assert_eq!(packed(&stack, i, depth), want, "{rest:?}");
+                i += want.1;
+            }
+        }
     }
 }
