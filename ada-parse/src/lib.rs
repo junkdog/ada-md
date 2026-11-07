@@ -65,6 +65,8 @@ mod xml_scan;
 mod yaml;
 mod yaml_scan;
 
+use std::mem::MaybeUninit;
+
 use emit::Sink as _;
 pub use emit::{Rule, Rules, Run};
 pub use lang::{ALIASES, FirstLine, Lang, first_line_syntaxes};
@@ -368,9 +370,11 @@ fn split_lines(
     mut prep: impl FnMut(&str, &mut String) -> bool,
     mut lex: impl FnMut(&str),
 ) -> Option<usize> {
+    let mut nl = Newlines::new(text.as_bytes());
     let mut p = 0;
     for _ in 0..max {
-        let (line, e) = line_at(text, p);
+        let e = nl.next();
+        let line = line_to(text, p, e);
         lex(if prep(line, buf) { buf.as_str() } else { line });
         if e == text.len() {
             return None;
@@ -492,15 +496,126 @@ unsafe fn line_for<'b>(b: &[u8]) -> &'b [u8] {
     unsafe { &*std::ptr::from_ref(b) }
 }
 
-/// The line of `text` that starts at `p` (0 or just past a `\n`), a `\r` before its `\n`
-/// dropped, and where it ends: its `\n`, or `text`'s end.
+/// The line of `text` from `p` (0 or just past a `\n`) to `e` (the next `\n`, or `text`'s
+/// end), a `\r` before its `\n` dropped.
 #[inline(always)]
-fn line_at(text: &str, p: usize) -> (&str, usize) {
-    let e = prim::find_any(text.as_bytes(), p, *b"\n");
-    // SAFETY: `p` is 0 or just past a `\n`, and `e` at a `\n` or the end, `p <= e`: a `\n` is a
-    // character of its own, so both ends are on characters of `text`
+fn line_to(text: &str, p: usize, e: usize) -> &str {
+    debug_assert!(p <= e && e <= text.len());
+    // SAFETY: `p` is 0 or just past a `\n`, and `e` at a `\n` or the end, `p <= e`
+    // ([`Newlines::next`]): a `\n` is a character of its own, so both ends are on characters
+    // of `text`
     let line = unsafe { text.get_unchecked(p..e) };
-    (line.strip_suffix('\r').unwrap_or(line), e)
+    line.strip_suffix('\r').unwrap_or(line)
+}
+
+/// A refill stops once more than this many `\n`s are held.
+const NL_FULL: usize = 128;
+/// How many `\n`s [`Newlines`] holds: past [`NL_FULL`], a step adding up to 64.
+const NL_HELD: usize = NL_FULL + 64;
+/// The 64-byte steps a refill takes at most: a fixed count on ordinary text, so its loop's exit
+/// predicts.
+const NL_STEPS: usize = 32;
+
+/// A block's `\n`s, found 64 bytes a step a stretch ahead of its lines ([`split_lines`], X-087):
+/// a line's end is the next one taken from the buffer. A search a line from the line's start
+/// ended on a branch whose step count the line's length set, missed on most lines (35–40% of
+/// Rust's per-line cycles and misses).
+struct Newlines<'t> {
+    b: &'t [u8],
+    /// Where the search has reached: every `\n` before it is held or taken.
+    at: usize,
+    /// Where the held `\n`s' offsets count from.
+    base: usize,
+    /// The `\n`s found, `ends[taken..held]` not yet taken, at `base` plus each.
+    ends: [MaybeUninit<u32>; NL_HELD],
+    taken: usize,
+    held: usize,
+}
+
+impl<'t> Newlines<'t> {
+    #[inline(always)]
+    fn new(b: &'t [u8]) -> Self {
+        Newlines {
+            b,
+            at: 0,
+            base: 0,
+            ends: [MaybeUninit::uninit(); NL_HELD],
+            taken: 0,
+            held: 0,
+        }
+    }
+
+    /// The next `\n` past the last one taken, or `b`'s end past the last.
+    #[inline(always)]
+    fn next(&mut self) -> usize {
+        if self.taken == self.held && !self.refill() {
+            return self.b.len();
+        }
+        // SAFETY: `taken < held`, and `refill` wrote `ends[..held]`
+        let e = unsafe { self.ends.get_unchecked(self.taken).assume_init() };
+        self.taken += 1;
+        self.base + e as usize
+    }
+
+    /// The next stretch's `\n`s held, up to [`NL_STEPS`] steps or past [`NL_FULL`] found: false at
+    /// `b`'s end with none left.
+    #[inline(never)]
+    fn refill(&mut self) -> bool {
+        let b = self.b;
+        loop {
+            if self.at >= b.len() {
+                return false;
+            }
+            let base = self.at;
+            let mut at = base;
+            let mut held = 0;
+            // the steps that read 64 of `b`'s bytes, a fixed count but where `\n`s crowd
+            let full = ((b.len() - at) / 64).min(NL_STEPS);
+            let mut steps = 0;
+            while steps < full && held <= NL_FULL {
+                // SAFETY: `at + 64 <= b.len()`, from `full`
+                let c = unsafe { &*b.as_ptr().add(at).cast::<[u8; 64]>() };
+                // an offset under `NL_STEPS * 64`
+                held = self.hold(prim::newlines64(c), (at - base) as u32, held);
+                at += 64;
+                steps += 1;
+            }
+            if steps == full && full < NL_STEPS && held <= NL_FULL && at < b.len() {
+                // the tail, under 64 bytes, on a copy
+                let mut c = [0; 64];
+                c[..b.len() - at].copy_from_slice(&b[at..]);
+                held = self.hold(prim::newlines64(&c), (at - base) as u32, held);
+                at = b.len();
+            }
+            (self.at, self.base, self.taken, self.held) = (at, base, 0, held);
+            if held != 0 {
+                return true;
+            }
+        }
+    }
+
+    /// A step's `\n`s, `m` and their count `n`, held past the `held` already, at `off` from
+    /// the base: how many are held now.
+    #[inline(always)]
+    fn hold(&mut self, (m, n): (u64, usize), off: u32, held: usize) -> usize {
+        // four written whatever the count (most steps hold up to four: 94–98% of the code
+        // lists'), so the loop's exit doesn't depend on it (simdjson's flattening); garbage past
+        // `n` is overwritten or never read, so the bit or-ed in only spares `trailing_zeros`
+        // its zero case
+        let mut m = m;
+        let mut w = held;
+        for _ in 0..4 {
+            self.ends[w] = MaybeUninit::new(off + (m | 1 << 63).trailing_zeros());
+            m &= m.wrapping_sub(1);
+            w += 1;
+        }
+        while m != 0 {
+            self.ends[w] = MaybeUninit::new(off + m.trailing_zeros());
+            m &= m - 1;
+            w += 1;
+        }
+        held + n
+    }
 }
 
 /// One line's lexer, as [`lex`] calls it.
@@ -745,6 +860,45 @@ mod tests {
             }));
         }
         out
+    }
+
+    /// [`Newlines`] gives each `\n` in turn, then the end: across its 64-byte steps, its
+    /// refills (a long line, more than four `\n`s a step, more than [`NL_FULL`] a refill) and the
+    /// tail.
+    #[test]
+    fn newlines_each_in_turn() {
+        let mut texts: Vec<Vec<u8>> = vec![
+            b"".to_vec(),
+            b"\n".to_vec(),
+            b"a".to_vec(),
+            b"a\r\nb\n".to_vec(),
+            vec![b'\n'; 1000],
+            vec![b'x'; 5000],
+        ];
+        for len in [63, 64, 65, 127, 128, 129, 1023, 1024, 1025, 3000] {
+            for every in [1, 2, 3, 7, 9, 36, 65, 700, 1100, 2048] {
+                texts.push(
+                    (0..len)
+                        .map(|i| if i % every == every - 1 { b'\n' } else { b'a' })
+                        .collect(),
+                );
+            }
+        }
+        let mut long = vec![b'a'; 2000];
+        long.extend([b'\n'; 70]);
+        long.extend(vec![b'b'; 1100]);
+        long.push(b'\n');
+        texts.push(long);
+        for t in &texts {
+            let want: Vec<usize> = (0..t.len())
+                .filter(|&i| t[i] == b'\n')
+                .chain([t.len()])
+                .collect();
+            let mut nl = Newlines::new(t);
+            let got: Vec<usize> = (0..want.len()).map(|_| nl.next()).collect();
+            assert_eq!(got, want, "{} bytes", t.len());
+            assert_eq!(nl.next(), t.len(), "past the end");
+        }
     }
 
     /// `lex_lines` lexes as `lex` does line by line in every language: the lines split at `\n`

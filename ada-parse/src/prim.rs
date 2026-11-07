@@ -1,10 +1,11 @@
 //! The byte-level pieces the scanners share (X-017's first part, the parser audit's item 3): a
 //! UTF-8 character's length and its decoding past ASCII, `\w`, `\s` and `\d` as the regex
 //! grammars read them (past ASCII a letter or one of Unicode's decimal digits, Unicode's
-//! spaces), a name's end with ASCII's run taken at once, byte sets as tables, and a search for
-//! one of a few bytes eight at a time. Each was a copy in up to thirteen scanners; the scanners
-//! whose classes differ (a name's characters past ASCII, `$` in a name) keep their own or pass
-//! theirs in. No behavior of their own: what each did before, the digests hold.
+//! spaces), a name's end with ASCII's run taken at once, byte sets as tables, a search for one
+//! of a few bytes eight at a time, and a block's `\n`s 64 bytes a step (X-087). Each was a copy
+//! in up to thirteen scanners; the scanners whose classes differ (a name's characters past ASCII,
+//! `$` in a name) keep their own or pass theirs in. No behavior of their own: what each did
+//! before, the digests hold.
 
 /// ASCII's word bytes, `[A-Za-z0-9_]`.
 pub static WORD: [bool; 256] = {
@@ -298,9 +299,78 @@ pub fn find_in<const N: usize>(b: &[u8], from: usize, end: usize, set: [u8; N]) 
     find_swar(&b[..end], from, set)
 }
 
+/// The `\n`s of `c`, a bit each, byte `i` at bit `i`, and how many: SSE2's four compares on
+/// x86-64, the count summed from them (`psadbw`: x86-64's floor has no `popcnt`, and its
+/// emulation is 14 instructions), eight bytes a word elsewhere.
+#[inline(always)]
+pub fn newlines64(c: &[u8; 64]) -> (u64, usize) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use std::arch::x86_64::*;
+        // SAFETY: SSE2 is part of x86-64; each load reads 16 of `c`'s 64 bytes, unaligned
+        unsafe {
+            let nl = _mm_set1_epi8(b'\n' as i8);
+            let eq = |q: usize| _mm_cmpeq_epi8(_mm_loadu_si128(c.as_ptr().add(q).cast()), nl);
+            let (a, b, d, e) = (eq(0), eq(16), eq(32), eq(48));
+            let bits = |v| u64::from(_mm_movemask_epi8(v) as u16);
+            let m = bits(a) | bits(b) << 16 | bits(d) << 32 | bits(e) << 48;
+            // each `\n` a -1 in its lane, so the lanes' negated sums are the counts (4 at most)
+            let zero = _mm_setzero_si128();
+            let sum = _mm_sub_epi8(zero, _mm_add_epi8(_mm_add_epi8(a, b), _mm_add_epi8(d, e)));
+            let s = _mm_sad_epu8(sum, zero);
+            let n = _mm_cvtsi128_si32(s) + _mm_cvtsi128_si32(_mm_unpackhi_epi64(s, s));
+            (m, n as usize)
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    newlines64_swar(c)
+}
+
+/// [`newlines64`] eight bytes a word, where x86-64's SSE2 isn't.
+#[cfg(any(test, not(target_arch = "x86_64")))]
+#[inline(always)]
+fn newlines64_swar(c: &[u8; 64]) -> (u64, usize) {
+    const LO: u64 = 0x0101_0101_0101_0101;
+    const LOW7: u64 = 0x7f7f_7f7f_7f7f_7f7f;
+    let mut m = 0;
+    for (k, w) in c.as_chunks::<8>().0.iter().enumerate() {
+        let v = u64::from_le_bytes(*w) ^ (LO * u64::from(b'\n'));
+        // a byte's top bit set exactly where it's zero (no borrow between bytes)
+        let z = !(((v & LOW7) + LOW7) | v | LOW7);
+        // the eight top bits gathered into one byte, byte `i`'s at bit `i`
+        m |= ((z >> 7).wrapping_mul(0x0102_0408_1020_4080) >> 56) << (8 * k);
+    }
+    (m, m.count_ones() as usize)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn newlines_a_bit_each() {
+        let mut c = [b'a'; 64];
+        assert_eq!(newlines64(&c), (0, 0));
+        for i in [0, 1, 7, 8, 15, 16, 31, 32, 47, 48, 62, 63] {
+            c[i] = b'\n';
+        }
+        c[5] = 0x8a;
+        c[6] = 0x0b;
+        c[9] = 0x09;
+        let want = (0..64)
+            .filter(|&i| c[i] == b'\n')
+            .fold(0u64, |m, i| m | 1 << i);
+        assert_eq!(newlines64(&c), (want, want.count_ones() as usize));
+        assert_eq!(newlines64(&[b'\n'; 64]), (u64::MAX, 64));
+        for c in [c, [b'\n'; 64], [0x8a; 64], [0x0a ^ 0x80; 64]] {
+            assert_eq!(newlines64_swar(&c), newlines64(&c));
+        }
+        let mut c = [0u8; 64];
+        for (i, x) in c.iter_mut().enumerate() {
+            *x = (i as u8).wrapping_mul(37) ^ 0x0a;
+        }
+        assert_eq!(newlines64_swar(&c), newlines64(&c));
+    }
 
     #[test]
     fn words_spaces_and_digits_past_ascii() {
