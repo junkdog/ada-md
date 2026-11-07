@@ -696,38 +696,37 @@ mod tests {
     /// a raw string over lines, and plain lines (no runs).
     #[test]
     fn rust_runs_are_its_spans() {
-        let tabs = |l: &str, b: &mut String| {
+        let tabs: crate::Prep = |l, b| {
             b.clear();
             b.push_str(&l.replace('\t', "    "));
             l.contains('\t')
         };
-        let none = |_: &str, _: &mut String| false;
         for text in [
             TEXT,
             include_str!("rust/mod.rs"),
             include_str!("rust/code.rs"),
         ] {
-            for (name, prep) in [
-                ("tabs", &tabs as &dyn Fn(&str, &mut String) -> bool),
-                ("none", &none),
-            ] {
-                let want = from_spans(text, |l, b| prep(l, b));
+            for (name, prep) in [("tabs", Some(tabs)), ("none", None)] {
+                let prep2 = |l: &str, b: &mut String| prep.is_some_and(|p: crate::Prep| p(l, b));
+                let want = from_spans(text, prep2);
                 let (mut spans, mut buf, mut state) = (Vec::new(), String::new(), State::default());
                 let (mut rules, mut runs, mut ends) = (Lazy(Vec::new()), Vec::new(), vec![0]);
-                let prep2 = |l: &str, b: &mut String| prep(l, b);
                 let rest = lex_lines_runs(
                     Lang::Rust,
                     text,
                     usize::MAX,
                     &mut state,
                     (&mut spans, &mut buf),
-                    prep2,
+                    prep,
                     &mut rules,
                     &mut runs,
-                    |n| ends.push(n),
+                    &mut ends,
                 );
                 assert_eq!(rest, None);
-                let got: Vec<_> = ends.windows(2).map(|w| runs[w[0]..w[1]].to_vec()).collect();
+                let got: Vec<_> = ends
+                    .windows(2)
+                    .map(|w| runs[w[0] as usize..w[1] as usize].to_vec())
+                    .collect();
                 assert_eq!(got.len(), want.len(), "{name}");
                 for (n, (g, w)) in got.iter().zip(&want).enumerate() {
                     assert_eq!(g, w, "{name}: line {n}");
@@ -736,7 +735,7 @@ mod tests {
                 let (mut state, mut rules, mut runs) =
                     (State::default(), Lazy(Vec::new()), Vec::new());
                 for (n, line) in text.split('\n').enumerate() {
-                    let line = if prep(line, &mut buf) {
+                    let line = if prep2(line, &mut buf) {
                         buf.clone()
                     } else {
                         line.to_owned()
@@ -837,19 +836,22 @@ mod tests {
             let (mut rules, mut runs, mut got) = (Lazy(Vec::new()), Vec::new(), Vec::new());
             let mut rest = Some(0);
             while let Some(p) = rest {
-                let mut ends = vec![runs.len()];
+                let mut ends = vec![u32::try_from(runs.len()).unwrap()];
                 let next = lex_lines_runs(
                     lang,
                     &text[p..],
                     max,
                     &mut state,
                     (&mut spans, &mut buf),
-                    none,
+                    None,
                     &mut rules,
                     &mut runs,
-                    |n| ends.push(n),
+                    &mut ends,
                 );
-                got.extend(ends.windows(2).map(|w| runs[w[0]..w[1]].to_vec()));
+                got.extend(
+                    ends.windows(2)
+                        .map(|w| runs[w[0] as usize..w[1] as usize].to_vec()),
+                );
                 rest = next.map(|q| p + q);
             }
             assert_eq!(got, want, "{lang:?} in blocks of {max}");

@@ -274,7 +274,7 @@ pub fn block_runs(
     spans: &mut Vec<crate::Span>,
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
-    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+    lines: &mut crate::RunLines,
 ) -> Option<usize> {
     let mut out = Out::new(spans);
     out.0.clear();
@@ -283,7 +283,7 @@ pub fn block_runs(
         deep: None,
     };
     c.s.unpack(state);
-    let rest = pass(&mut c);
+    let rest = lines.pass(&mut c);
     *state = c.deep.unwrap_or_else(|| c.s.pack());
     rest
 }

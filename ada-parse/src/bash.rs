@@ -815,14 +815,14 @@ pub fn block_runs(
     spans: &mut Vec<crate::Span>,
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
-    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+    lines: &mut crate::RunLines,
 ) -> Option<usize> {
     let mut out = Out::new(spans);
     out.0.clear();
     let mut s = Scan::new(b"", state, &mut out, None, Runs::new(rules, runs));
     s.stack[0] = MaybeUninit::new(FRAME);
     s.load(state);
-    let rest = pass(&mut s);
+    let rest = lines.pass(&mut s);
     *state = s.save();
     rest
 }
@@ -837,6 +837,8 @@ impl crate::Carry for Scan<'_, '_, '_, Push> {
 }
 
 impl crate::CarryRuns for Scan<'_, '_, '_, Runs<'_>> {
+    // out of line: inline in the block's loop it ran slower in ada (X-086)
+    #[inline(never)]
     fn next(&mut self, b: &[u8]) -> usize {
         self.k.start_line();
         // SAFETY: as above

@@ -783,9 +783,9 @@ pub fn block_runs(
     spans: &mut Vec<crate::Span>,
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
-    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+    lines: &mut crate::RunLines,
 ) -> Option<usize> {
-    block_runs_of(false, state, spans, rules, runs, pass)
+    block_runs_of(false, state, spans, rules, runs, lines)
 }
 
 /// [`block_runs`] for TSX.
@@ -794,9 +794,9 @@ pub fn block_runs_tsx(
     spans: &mut Vec<crate::Span>,
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
-    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+    lines: &mut crate::RunLines,
 ) -> Option<usize> {
-    block_runs_of(true, state, spans, rules, runs, pass)
+    block_runs_of(true, state, spans, rules, runs, lines)
 }
 
 fn block_runs_of(
@@ -805,14 +805,14 @@ fn block_runs_of(
     spans: &mut Vec<crate::Span>,
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
-    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+    lines: &mut crate::RunLines,
 ) -> Option<usize> {
     let mut out = Out::new(spans);
     out.0.clear();
     let mut s = Scan::fresh(b"", tsx, &mut out, Runs::new(rules, runs));
     s.load_state(state);
     let mut c = Carried { s, deep: None };
-    let rest = pass(&mut c);
+    let rest = lines.pass(&mut c);
     *state = c.deep.unwrap_or_else(|| c.s.state());
     rest
 }
@@ -863,6 +863,8 @@ impl crate::Carry for Carried<'_, '_, '_, Push> {
 }
 
 impl crate::CarryRuns for Carried<'_, '_, '_, Runs<'_>> {
+    // out of line: inline in the block's loop it ran slower in ada (X-086)
+    #[inline(never)]
     fn next(&mut self, b: &[u8]) -> usize {
         let s = &mut self.s;
         s.k.start_line();

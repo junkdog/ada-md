@@ -201,9 +201,14 @@ pub fn lex_lines(
     })
 }
 
+/// A line's replacement before it's lexed, as [`lex_lines`]' `prep`: written into the buffer,
+/// true when it was. A plain function, so that a carried scan's loop is compiled with the scan
+/// (X-086).
+pub type Prep = fn(&str, &mut String) -> bool;
+
 /// As [`lex_lines`], but each line's runs by theme rule pushed to `runs`, as [`lex_runs`]
-/// pushes them; `each` gets where the line's runs end, `runs`' length.
-#[inline]
+/// pushes them, and where the line's runs end (`runs`' length) pushed to `ends`; a line is
+/// replaced by `prep`'s where it has one.
 #[allow(clippy::too_many_arguments)]
 pub fn lex_lines_runs(
     lang: Lang,
@@ -211,17 +216,21 @@ pub fn lex_lines_runs(
     max: usize,
     state: &mut State,
     (spans, buf): (&mut Vec<Span>, &mut String),
-    prep: impl FnMut(&str, &mut String) -> bool,
+    prep: Option<Prep>,
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
-    mut each: impl FnMut(usize),
+    ends: &mut Vec<u32>,
 ) -> Option<usize> {
-    let mut prep = prep;
     if let Some((block, _)) = carried_runs(lang) {
-        // a carried scan writing the runs (X-068, X-074), on the shared loop (X-073)
-        return block(state, spans, rules, runs, &mut |c| {
-            split_lines(text, max, buf, &mut prep, |l| each(c.next(l.as_bytes())))
-        });
+        // a carried scan writing the runs (X-068, X-074), the loop compiled with it (X-086)
+        let mut lines = RunLines {
+            text,
+            max,
+            buf,
+            prep,
+            ends,
+        };
+        return block(state, spans, rules, runs, &mut lines);
     }
     if let Some(scan) = run_scanner(lang) {
         return lines_run_scanned(
@@ -233,14 +242,19 @@ pub fn lex_lines_runs(
             prep,
             rules,
             runs,
-            each,
+            ends,
         );
     }
     if let Some(block) = carried::<false>(lang) {
         let mut t = emit::Table::new(rules);
         return block(state, spans, &mut |c| {
-            split_lines(text, max, buf, &mut prep, |l| {
-                each(emit::runs_of(l.len(), c.next(l.as_bytes()), &mut t, runs));
+            split_lines(text, max, buf, prepped(prep), |l| {
+                ends.push(run_count(emit::runs_of(
+                    l.len(),
+                    c.next(l.as_bytes()),
+                    &mut t,
+                    runs,
+                )));
             })
         });
     }
@@ -254,14 +268,13 @@ pub fn lex_lines_runs(
         prep,
         rules,
         runs,
-        each,
+        ends,
     )
 }
 
 // [`lex_lines_runs`]' paths whose loops would be inline in it each a function of their own
-// (X-073): compiled in the caller's crate as the loop was, but each on its own registers, so
-// that a path added or changed doesn't move another's per-line code (+7 instructions a line on
-// YAML's when Makefile joined `carried`'s table)
+// (X-073): each on its own registers, so that a path added or changed doesn't move another's
+// per-line code (+7 instructions a line on YAML's when Makefile joined `carried`'s table)
 
 /// [`lex_lines_runs`] on a run scanner: a line at a time on one run sink, opened once a block
 /// (X-069).
@@ -273,17 +286,17 @@ fn lines_run_scanned(
     max: usize,
     state: &mut State,
     (spans, buf): (&mut Vec<Span>, &mut String),
-    prep: impl FnMut(&str, &mut String) -> bool,
+    prep: Option<Prep>,
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
-    mut each: impl FnMut(usize),
+    ends: &mut Vec<u32>,
 ) -> Option<usize> {
     let mut k = emit::Runs::new(rules, runs);
     let mut out = Out::new(spans);
-    split_lines(text, max, buf, prep, |l| {
+    split_lines(text, max, buf, prepped(prep), |l| {
         k.start_line();
         scan(l.as_bytes(), state, &mut out, &mut k);
-        each(k.end_line(l.len()));
+        ends.push(run_count(k.end_line(l.len())));
     })
 }
 
@@ -296,16 +309,54 @@ fn lines_scanned(
     max: usize,
     state: &mut State,
     (spans, buf): (&mut Vec<Span>, &mut String),
-    prep: impl FnMut(&str, &mut String) -> bool,
+    prep: Option<Prep>,
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
-    mut each: impl FnMut(usize),
+    ends: &mut Vec<u32>,
 ) -> Option<usize> {
     let mut t = emit::Table::new(rules);
-    split_lines(text, max, buf, prep, |l| {
+    split_lines(text, max, buf, prepped(prep), |l| {
         scan(l, state, spans);
-        each(emit::runs_of(l.len(), spans, &mut t, runs));
+        ends.push(run_count(emit::runs_of(l.len(), spans, &mut t, runs)));
     })
+}
+
+/// [`lex_lines_runs`]' `prep` as [`split_lines`] takes it: a line without one is lexed as it is.
+#[inline(always)]
+fn prepped(prep: Option<Prep>) -> impl FnMut(&str, &mut String) -> bool {
+    move |l, buf| prep.is_some_and(|p| p(l, buf))
+}
+
+/// Where a line's runs end, as [`lex_lines_runs`] pushes it to `ends`.
+#[inline(always)]
+fn run_count(n: usize) -> u32 {
+    // a run is a byte or more of the text, so this takes a block of over 4 GiB
+    u32::try_from(n).expect("a block of under 2³² runs")
+}
+
+/// A block's lines as a carried scan writing runs lexes them ([`lex_lines_runs`]): up to `max`
+/// of `text`'s lines, each `prep`'d, where its runs end pushed to `ends`. The loop is compiled
+/// with each scan ([`RunLines::pass`], X-086), so a line is no table call and the scan's `next`
+/// is inline in it; the loop was in the caller's crate, the scan called a line through
+/// [`CarryRuns`]' table (X-073).
+pub(crate) struct RunLines<'t, 'a> {
+    text: &'t str,
+    max: usize,
+    buf: &'a mut String,
+    prep: Option<Prep>,
+    ends: &'a mut Vec<u32>,
+}
+
+impl RunLines<'_, '_> {
+    /// The lines lexed on `c`, a scan opened for the block: where the lines left start, as
+    /// [`lex_lines`] returns it.
+    #[inline(always)]
+    pub(crate) fn pass(&mut self, c: &mut impl CarryRuns) -> Option<usize> {
+        let ends = &mut *self.ends;
+        split_lines(self.text, self.max, self.buf, prepped(self.prep), |l| {
+            ends.push(run_count(c.next(l.as_bytes())));
+        })
+    }
 }
 
 /// [`lex_lines`]' loop: each of up to `max` lines split, `prep`'d and handed to `lex`.
@@ -349,8 +400,9 @@ type Block = fn(
     &mut dyn FnMut(&mut dyn Carry) -> Option<usize>,
 ) -> Option<usize>;
 
-/// As [`Carry`], a scan writing a line's runs by theme rule ([`emit::Runs`], X-068): Rust's, on
-/// the shared loop (X-073), and X-074's ([`carried_runs`]).
+/// As [`Carry`], a scan writing a line's runs by theme rule ([`emit::Runs`], X-068): Rust's
+/// (X-073), X-074's and X-075's ([`carried_runs`]), each a line of [`RunLines::pass`]' loop,
+/// compiled with the scan (X-086).
 pub(crate) trait CarryRuns {
     /// `b`, the block's next line, lexed on the scan as [`lex_runs`] lexes it after the lines
     /// before, its runs pushed: where they end.
@@ -358,14 +410,9 @@ pub(crate) trait CarryRuns {
 }
 
 /// A carried scanner's block on a run sink ([`CarryRuns`]), as [`Block`] on the spans: the runs
-/// pushed to the vector by the rules.
-type RunBlock = fn(
-    &mut State,
-    &mut Vec<Span>,
-    &mut dyn Rules,
-    &mut Vec<Run>,
-    &mut dyn FnMut(&mut dyn CarryRuns) -> Option<usize>,
-) -> Option<usize>;
+/// pushed to the vector by the rules, its lines' loop compiled with the scan ([`RunLines`]).
+type RunBlock =
+    fn(&mut State, &mut Vec<Span>, &mut dyn Rules, &mut Vec<Run>, &mut RunLines) -> Option<usize>;
 
 /// A carried scanner's line on a run sink, as [`lex_runs`] calls it.
 type LineRuns = fn(&[u8], &mut State, &mut Out, &mut dyn Rules, &mut Vec<Run>);

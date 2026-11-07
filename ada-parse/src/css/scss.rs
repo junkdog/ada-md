@@ -113,7 +113,7 @@ pub fn block_runs(
     spans: &mut Vec<crate::Span>,
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
-    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+    lines: &mut crate::RunLines,
 ) -> Option<usize> {
     let mut out = Out::new(spans);
     out.0.clear();
@@ -126,7 +126,7 @@ pub fn block_runs(
         },
         held: in_front_matter(state).then_some(*state),
     };
-    let rest = pass(&mut f);
+    let rest = lines.pass(&mut f);
     *state = match f.held {
         Some(held) => held,
         None => State::keep(&f.c.s.stack, f.c.s.depth, f.c.exact, 0),

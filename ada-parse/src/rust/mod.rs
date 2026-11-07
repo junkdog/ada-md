@@ -500,13 +500,13 @@ pub fn block_runs(
     spans: &mut Vec<crate::Span>,
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
-    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+    lines: &mut crate::RunLines,
 ) -> Option<usize> {
     let mut out = Out::new(spans);
     let k = Runs::new(rules, runs);
     let mut s = Scan::new(b"", &mut out, state.is_exact(), state.arg, k);
     s.open_lines(state);
-    let rest = pass(&mut s);
+    let rest = lines.pass(&mut s);
     *state = s.state();
     rest
 }

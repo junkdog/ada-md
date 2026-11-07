@@ -944,12 +944,12 @@ pub fn block_runs(
     spans: &mut Vec<Span>,
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
-    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+    lines: &mut crate::RunLines,
 ) -> Option<usize> {
     spans.clear();
     let mut s = Scan::fresh(b"", RunLex::new(rules, runs, spans));
     s.load_state(state);
-    let rest = pass(&mut s);
+    let rest = lines.pass(&mut s);
     *state = s.state();
     rest
 }

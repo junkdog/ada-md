@@ -930,7 +930,6 @@ impl ParseRules {
         (spans, buf, expand): (&mut Vec<ada_parse::Span>, &mut String, bool),
         out: &mut LineRuns,
     ) -> Option<usize> {
-        let prep = |line: &str, buf: &mut String| expand && expand_tabs_to(line, buf);
         let LineRuns { runs, ends } = out;
         let rules = &mut AllResolved(&self.rules);
         ada_parse::lex_lines_runs(
@@ -939,18 +938,14 @@ impl ParseRules {
             max,
             state,
             (spans, buf),
-            prep,
+            prep(expand),
             rules,
             runs,
-            |n| {
-                ends.push(run_count(n));
-            },
+            ends,
         )
     }
 
-    /// As [`ParseRules::lines`], resolving the rules of kinds met for the first time, and
-    /// counting the lines done into `done`.
-    #[allow(clippy::too_many_arguments)]
+    /// As [`ParseRules::lines`], resolving the rules of kinds met for the first time.
     fn lines_resolving(
         &mut self,
         text: &str,
@@ -959,9 +954,7 @@ impl ParseRules {
         (spans, buf, expand): (&mut Vec<ada_parse::Span>, &mut String, bool),
         highlighter: &LazyHighlighter,
         out: &mut LineRuns,
-        mut done: impl FnMut(),
     ) -> Option<usize> {
-        let prep = |line: &str, buf: &mut String| expand && expand_tabs_to(line, buf);
         let lang = self.lang;
         let LineRuns { runs, ends } = out;
         // the rule looked up once a span, resolved in the same pass when it's new (HL-004)
@@ -975,15 +968,18 @@ impl ParseRules {
             max,
             state,
             (spans, buf),
-            prep,
+            prep(expand),
             rules,
             runs,
-            |n| {
-                ends.push(run_count(n));
-                done();
-            },
+            ends,
         )
     }
+}
+
+/// A block's lines' replacement for ada-parse: tabs expanded when `expand`, its text holding a
+/// control character.
+fn prep(expand: bool) -> Option<ada_parse::Prep> {
+    expand.then_some(expand_tabs_to)
 }
 
 /// Where a line's runs end, as [`LineRuns::ends`] holds it.
@@ -1202,7 +1198,6 @@ impl<'a> Carrier<'a> {
                 (&mut self.spans, &mut self.buf, expand),
                 &self.highlighter,
                 &mut lines,
-                || {},
             );
         }
         let spans = CodeSpans {
@@ -1319,29 +1314,33 @@ impl<'a> Highlighter<'a> {
         match state {
             Engine::Parse(rules, state, spans, expand) => {
                 // the stall watch counts lines; an ada-parse lexer never stalls, so they're
-                // counted a batch at a time, not with an atomic add a line (HL-004)
-                const BATCH: u64 = 1024;
-                let Some(text) = self.rest.0 else {
+                // counted a batch at a time, a call a batch, not with an atomic add a line
+                // (HL-004; the loop is ada-parse's since X-086)
+                const BATCH: usize = 1024;
+                let Some(mut text) = self.rest.0 else {
                     return false;
                 };
-                let mut done = 0;
-                let next = rules.lines_resolving(
-                    text,
-                    n,
-                    state,
-                    (spans, &mut self.buf, *expand),
-                    &self.highlighter,
-                    out,
-                    || {
-                        done += 1;
-                        if done == BATCH {
-                            LINES.fetch_add(BATCH, Ordering::Relaxed);
-                            done = 0;
+                let mut left = n;
+                loop {
+                    let (max, done) = (left.min(BATCH), out.ends.len());
+                    let next = rules.lines_resolving(
+                        text,
+                        max,
+                        state,
+                        (spans, &mut self.buf, *expand),
+                        &self.highlighter,
+                        out,
+                    );
+                    LINES.fetch_add((out.ends.len() - done) as u64, Ordering::Relaxed);
+                    left -= max;
+                    match next {
+                        Some(p) if left > 0 => text = &text[p..],
+                        next => {
+                            self.rest = Lines(next.map(|p| &text[p..]));
+                            break;
                         }
-                    },
-                );
-                self.rest = Lines(next.map(|p| &text[p..]));
-                LINES.fetch_add(done, Ordering::Relaxed);
+                    }
+                }
             }
             Engine::Syntect(state) => {
                 for _ in 0..n {
