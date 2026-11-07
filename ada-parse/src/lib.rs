@@ -737,4 +737,39 @@ mod tests {
             }
         }
     }
+
+    /// An HTML block whose first line starts inside an embed, in a string continued by a `\` at
+    /// the line before's end, lexes as its lines do one at a time: the block's scan is opened
+    /// from the state without lexing an empty line, which ends the continuation (X-080, from
+    /// F-018's input).
+    #[test]
+    fn html_block_opens_inside_an_embed() {
+        let text =
+            "<style>\na { content: 'a\\\nb'; }\n</style>\n<script>\nlet s = 'a\\\nb';\n</script>";
+        let (mut want, mut state, mut spans) = (Vec::new(), State::default(), Vec::new());
+        for line in text.split('\n') {
+            lex(Lang::Html, line, &mut state, &mut spans);
+            want.push(spans.clone());
+        }
+        let want_state = state;
+        for max in [1, 2, usize::MAX] {
+            let (mut got, mut state, mut buf) = (Vec::new(), State::default(), String::new());
+            let mut rest = Some(text);
+            while let Some(t) = rest {
+                let each = |_: &str, s: &[Span]| got.push(s.to_vec());
+                let next = lex_lines(
+                    Lang::Html,
+                    t,
+                    max,
+                    &mut state,
+                    (&mut spans, &mut buf),
+                    |_, _| false,
+                    each,
+                );
+                rest = next.map(|p| &t[p..]);
+            }
+            assert_eq!(got, want, "max {max}");
+            assert_eq!(state, want_state, "max {max}");
+        }
+    }
 }

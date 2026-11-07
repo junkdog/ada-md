@@ -340,10 +340,12 @@ pub fn block(
         stack: [MAIN; MAX],
         depth: 1,
         at: 0,
-        exact: true,
+        exact: state.is_exact(),
         emb: None,
     };
-    s.reopen(state);
+    // the state loaded, not lexed on an empty line: an embed's language would end what an empty
+    // line ends (a CSS string's `\` continuation, X-080); the first line reopens it from here
+    s.emb = s.load(state);
     let rest = pass(&mut s);
     *state = s.state();
     rest
@@ -386,38 +388,43 @@ impl Scan<'_, '_, '_> {
     /// took the whole line.
     #[inline(always)]
     fn begin(&mut self, state: &State) -> usize {
-        let mut p = 0;
-        if let Some(emb) = Emb::from_bits(state.arg >> 13) {
-            // the line starts inside an embed: HTML's stack below it, then the embedded language
-            let arg = state.arg;
-            let bodies = usize::from((arg >> 6) & 63);
-            for _ in 0..bodies {
-                self.push(SCRIPT_HTML_BODY);
-            }
-            let quote = if arg & (1 << 12) != 0 { b'\'' } else { b'"' };
-            match emb {
-                Emb::StyleTag => self.push(STYLE_BODY),
-                Emb::ScriptTag => self.push(SCRIPT_BODY),
-                Emb::StyleAttr | Emb::EventAttr => {
-                    self.push((arg & 63) as u8);
-                    self.push(META);
-                    self.push(if emb == Emb::StyleAttr {
-                        STYLE_VALUE
-                    } else {
-                        EVENT_VALUE
-                    });
-                }
-            }
-            let mut st = *state;
-            st.arg = 0;
-            match self.embed(emb, quote, 0, Some(st)) {
-                Some(q) => p = q,
-                None => p = usize::MAX,
-            }
-        } else {
-            self.depth = state.load(&mut self.stack);
+        match self.load(state) {
+            Some((emb, quote, st)) => self.embed(emb, quote, 0, Some(st)).unwrap_or(usize::MAX),
+            None => 0,
         }
-        p
+    }
+
+    /// The stack from `state`; when it's inside an embed, HTML's stack below it, and the embed,
+    /// its quote and its language's state.
+    #[inline(always)]
+    fn load(&mut self, state: &State) -> Option<(Emb, u8, State)> {
+        let Some(emb) = Emb::from_bits(state.arg >> 13) else {
+            self.depth = state.load(&mut self.stack);
+            return None;
+        };
+        // the line starts inside an embed: HTML's stack below it, then the embedded language
+        let arg = state.arg;
+        let bodies = usize::from((arg >> 6) & 63);
+        for _ in 0..bodies {
+            self.push(SCRIPT_HTML_BODY);
+        }
+        let quote = if arg & (1 << 12) != 0 { b'\'' } else { b'"' };
+        match emb {
+            Emb::StyleTag => self.push(STYLE_BODY),
+            Emb::ScriptTag => self.push(SCRIPT_BODY),
+            Emb::StyleAttr | Emb::EventAttr => {
+                self.push((arg & 63) as u8);
+                self.push(META);
+                self.push(if emb == Emb::StyleAttr {
+                    STYLE_VALUE
+                } else {
+                    EVENT_VALUE
+                });
+            }
+        }
+        let mut st = *state;
+        st.arg = 0;
+        Some((emb, quote, st))
     }
 
     /// The state the scan's last line leaves.
