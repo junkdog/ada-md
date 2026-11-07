@@ -43,7 +43,7 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       prerelease: ${{ steps.v.outputs.prerelease }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.REF }}
       - name: 🔍 Tag matches Cargo.toml
@@ -98,7 +98,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.REF }}
       - uses: dtolnay/rust-toolchain@master
@@ -194,7 +194,7 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
       # the history and tags, for git-cliff
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.REF }}
           fetch-depth: 0
