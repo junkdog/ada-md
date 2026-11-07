@@ -18,11 +18,14 @@
 //! [`State`]'s levels); an open raw string keeps its delimiter in the top ones.
 
 mod c;
+mod code;
 mod cxx;
+mod decl;
 mod pp;
 mod text;
 mod words;
 
+use crate::emit::{Rules, Run, Runs, Sink, Spans};
 use crate::stack::HELD;
 use crate::{Out, State};
 use text::next;
@@ -625,21 +628,48 @@ const DELIM: usize = 16;
 
 /// Lex `b`, a line of C++ without its `\n`, from `state`.
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    scan(b, state, out, MAIN);
+    scan(b, state, out, MAIN, Spans::new());
 }
 
 /// Lex `b`, a line of C without its `\n`, from `state`: the same contexts, from C's root.
 pub fn line_c(b: &[u8], state: &mut State, out: &mut Out) {
-    scan(b, state, out, C_MAIN);
+    scan(b, state, out, C_MAIN, Spans::new());
 }
 
-/// Lex `b` from `state`, the stack's bottom `root`.
+/// [`line`]'s runs by theme rule pushed to `runs` (X-057, X-068's sink): [`crate::lex_runs`] for
+/// C++.
+pub fn line_runs(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    scan(b, state, out, MAIN, Runs::new(rules, runs)).end_line(b.len());
+}
+
+/// [`line_c`]'s runs by theme rule pushed to `runs`.
+pub fn line_runs_c(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    scan(b, state, out, C_MAIN, Runs::new(rules, runs)).end_line(b.len());
+}
+
+/// Lex `b` from `state`, the stack's bottom `root`, on a scan writing to `k`: the sink as the
+/// line leaves it.
 #[inline(never)]
-fn scan(b: &[u8], state: &mut State, out: &mut Out, root: u8) {
-    let mut s = Scan::fresh(b, out, root);
+fn scan<K: Sink>(b: &[u8], state: &mut State, out: &mut Out, root: u8, k: K) -> K {
+    let mut s = Scan::fresh(b, out, root, k);
+    s.k.open(s.out, b.len() / 4 + 16);
     s.load_state(state);
     s.lex();
+    s.k.close(s.out);
     *state = s.state();
+    s.k
 }
 
 /// A block of C++ on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
@@ -668,18 +698,80 @@ fn block_from(
     pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
 ) -> Option<usize> {
     let mut out = Out::new(spans);
-    let mut s = Scan::fresh(b"", &mut out, root);
+    out.0.clear();
+    let mut s = Scan::fresh(b"", &mut out, root, Spans::new());
+    s.k.open(s.out, 64);
     s.load_state(state);
     let rest = pass(&mut s);
     *state = s.state();
     rest
 }
 
-impl crate::Carry for Scan<'_, '_> {
+/// [`block`]'s runs by theme rule pushed to `runs` ([`crate::CarryRuns`], X-057), its lines'
+/// loop compiled with the scan ([`crate::RunLines`]).
+pub fn block_runs(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    lines: &mut crate::RunLines,
+) -> Option<usize> {
+    block_runs_from(MAIN, state, spans, rules, runs, lines)
+}
+
+/// [`block_runs`] for C, from C's root.
+pub fn block_runs_c(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    lines: &mut crate::RunLines,
+) -> Option<usize> {
+    block_runs_from(C_MAIN, state, spans, rules, runs, lines)
+}
+
+fn block_runs_from(
+    root: u8,
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    lines: &mut crate::RunLines,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    out.0.clear();
+    let mut s = Scan::fresh(b"", &mut out, root, Runs::new(rules, runs));
+    s.load_state(state);
+    let rest = lines.pass(&mut s);
+    *state = s.state();
+    rest
+}
+
+impl crate::Carry for Scan<'_, '_, Spans> {
     fn next(&mut self, b: &[u8]) -> &[crate::Span] {
-        self.out.0.clear();
-        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
-        self.b = unsafe { crate::line_for(b) };
+        // SAFETY: the line is set back to an empty one before `b`'s borrow ends
+        self.carry(unsafe { crate::line_for(b) });
+        self.k.close(self.out);
+        self.out.0
+    }
+}
+
+impl crate::CarryRuns for Scan<'_, '_, Runs<'_>> {
+    #[inline(always)]
+    fn next(&mut self, b: &[u8]) -> usize {
+        // SAFETY: as above
+        self.carry(unsafe { crate::line_for(b) });
+        self.k.end_line(b.len())
+    }
+}
+
+impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
+    /// `b`, the block's next line, lexed on this scan from where the line before left it; the
+    /// scan's line an empty one again after.
+    #[inline(always)]
+    fn carry(&mut self, b: &'b [u8]) {
+        self.k.start_line();
+        self.b = b;
         self.lead = text::indent_end(b);
         self.dir = pp::directive(b, self.lead);
         self.text = PLAIN;
@@ -703,15 +795,14 @@ impl crate::Carry for Scan<'_, '_> {
             self.reload();
         }
         self.b = b"";
-        self.out.0
     }
 }
 
-impl<'b, 'c> Scan<'b, 'c> {
+impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// A scan of `b`, the stack's bottom `root`, returned as a literal so that it is built in
     /// place; the state is [`Scan::load_state`]'s.
     #[inline(always)]
-    fn fresh(b: &'b [u8], out: &'b mut Out<'c>, root: u8) -> Self {
+    fn fresh(b: &'b [u8], out: &'b mut Out<'c>, root: u8, k: K) -> Self {
         let lead = text::indent_end(b);
         Scan {
             b,
@@ -732,6 +823,7 @@ impl<'b, 'c> Scan<'b, 'c> {
             word_at: std::cell::Cell::new((usize::MAX, 0)),
             kw_at: std::cell::Cell::new((usize::MAX, words::Kw::Other)),
             id_cache: std::cell::Cell::new((usize::MAX, None)),
+            k,
             out,
         }
     }
@@ -788,7 +880,15 @@ impl<'b, 'c> Scan<'b, 'c> {
     /// Whether a raw string is open on the stack.
     #[inline(always)]
     fn raw(&self) -> bool {
-        self.stack[1..self.depth].contains(&RAW_STRING)
+        // a few levels: a loop, not `contains`' call to `memchr` a line
+        let mut i = 1;
+        while i < self.depth {
+            if self.stack[i % MAX] == RAW_STRING {
+                return true;
+            }
+            i += 1;
+        }
+        false
     }
 
     /// The scan as a state's save and load leave it, its stack deeper than a state holds.
@@ -803,7 +903,17 @@ impl<'b, 'c> Scan<'b, 'c> {
     /// The state the scan's last line leaves: the levels, and an open raw string's delimiter
     /// above them.
     fn state(&self) -> State {
-        let raw = self.raw();
+        if !self.raw() {
+            return State::keep(&self.stack, self.depth, self.exact, 0);
+        }
+        self.raw_state()
+    }
+
+    /// [`Scan::state`] with a raw string open: its delimiter laid above the levels.
+    #[cold]
+    #[inline(never)]
+    fn raw_state(&self) -> State {
+        let raw = true;
         let d = if raw { self.delim_len } else { 0 };
         let n = self.depth - 1;
         let from = n.saturating_sub(HELD - d);
@@ -826,7 +936,7 @@ impl<'b, 'c> Scan<'b, 'c> {
     }
 }
 
-struct Scan<'b, 'c> {
+struct Scan<'b, 'c, K: Sink> {
     b: &'b [u8],
     /// Where the line's indentation ends.
     lead: usize,
@@ -860,12 +970,16 @@ struct Scan<'b, 'c> {
     kw_at: std::cell::Cell<(usize, words::Kw)>,
     /// Where the last identifier looked for at a place ends ([`text::id`]).
     id_cache: std::cell::Cell<(usize, Option<usize>)>,
+    /// Where the lexemes go, a line's spans on a write cursor (X-065's) or its runs by theme rule
+    /// (X-068's).
+    k: K,
     out: &'b mut Out<'c>,
 }
 
-impl<'b> Scan<'b, '_> {
+impl<'b, K: Sink> Scan<'b, '_, K> {
     fn top(&self) -> u8 {
-        self.stack[self.depth - 1]
+        // `depth` is 1 to `MAX`: the index without its bounds check
+        self.stack[(self.depth - 1) % MAX]
     }
 
     /// `leaf` here: in `meta.preprocessor` and the wrap around.
@@ -887,7 +1001,7 @@ impl<'b> Scan<'b, '_> {
         let s = s.max(self.at);
         let e = e.min(self.b.len());
         if k & !C != PLAIN && e > s {
-            self.out.push_merged(s, e, k);
+            self.k.merge(&mut self.out, s, e, k);
         }
         self.at = self.at.max(e);
     }
@@ -897,7 +1011,7 @@ impl<'b> Scan<'b, '_> {
         let p = p.min(self.b.len());
         if p > self.at {
             if self.text & !C != PLAIN {
-                self.out.push_merged(self.at, p, self.text);
+                self.k.merge(&mut self.out, self.at, p, self.text);
             }
             self.at = p;
         }
@@ -1069,6 +1183,13 @@ impl<'b> Scan<'b, '_> {
     fn run(&mut self) {
         let mut p = self.first();
         loop {
+            // the frames' common turns on their own loop ([`code`], X-057), the rest here
+            if code::is_frame(self.top()) {
+                p = self.code_run(p);
+                if self.halt || (p >= self.b.len() && code::ends_at_eol(self.top())) {
+                    return;
+                }
+            }
             if let Some(q) = self.at(p) {
                 self.stuck = if q == p { self.stuck + 1 } else { 0 };
                 p = q;

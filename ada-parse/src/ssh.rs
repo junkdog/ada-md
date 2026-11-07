@@ -466,14 +466,13 @@ mod tests {
 
     #[test]
     fn the_word_tables_are_sorted() {
-        for words in [KEY_TYPES.words] {
-            assert!(
-                words
-                    .windows(2)
-                    .all(|w| (w[0].0.len(), w[0].0) < (w[1].0.len(), w[1].0))
-            );
-            assert!(words.iter().all(|&(k, l)| lookup(words, k) == Some(l)));
-        }
+        let words = KEY_TYPES.words;
+        assert!(
+            words
+                .windows(2)
+                .all(|w| (w[0].0.len(), w[0].0) < (w[1].0.len(), w[1].0))
+        );
+        assert!(words.iter().all(|&(k, l)| lookup(words, k) == Some(l)));
     }
 
     #[test]

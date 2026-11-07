@@ -23,7 +23,7 @@ pub(super) enum Rule {
 
 /// The words `(?=\b(…)\b)` stops before in `global-type` and `data-structures-type` (with
 /// `operator`), `global-maybe-function` and `data-structures-maybe-method` (without).
-fn is_stop_word(w: &[u8], with_operator: bool) -> bool {
+pub(super) fn is_stop_word(w: &[u8], with_operator: bool) -> bool {
     matches!(
         w,
         b"break"
@@ -78,7 +78,7 @@ fn is_stop_word(w: &[u8], with_operator: bool) -> bool {
 
 /// `(struct|union|enum\s+class|enum\s+struct|enum|class)` at `p`, without `\b`s: where each
 /// alternative ends, in order.
-fn ds_keyword(b: &[u8], p: usize) -> [Option<usize>; 2] {
+pub(super) fn ds_keyword(b: &[u8], p: usize) -> [Option<usize>; 2] {
     let mut out = [None, None];
     for (w, n) in [(&b"struct"[..], 6), (b"union", 5)] {
         if starts(b, p, w) {
@@ -241,7 +241,7 @@ fn upper_macro(b: &[u8], p: usize) -> Option<usize> {
     (e >= p + 3 && !is_word(b, e)).then_some(e)
 }
 
-impl Scan<'_, '_> {
+impl<K: Sink> Scan<'_, '_, K> {
     /// The patterns of C++'s context `top` at `p`.
     pub(super) fn cxx_context(&mut self, top: u8, p: usize, c: u8) -> Option<usize> {
         let b = self.b;
@@ -1326,7 +1326,7 @@ impl Scan<'_, '_> {
     /// sets a group or a braced expression: done here at once, unless a later name is C99's
     /// (that context takes one first) or the push would be the one where the scan steps on.
     /// Where the scan goes on.
-    fn qualified_call(&mut self, p: usize, e: usize, q: usize) -> Option<usize> {
+    pub(super) fn qualified_call(&mut self, p: usize, e: usize, q: usize) -> Option<usize> {
         let b = self.b;
         if self.stuck >= STUCK || starts(b, p, b"template") {
             return None;
@@ -2187,7 +2187,7 @@ impl Scan<'_, '_> {
     }
 
     /// `(?=(struct|union|enum\s+class|enum\s+struct|enum|class)([^(;]+(?m:$)|.*\{))` at `p`.
-    fn ds_ahead(&self, p: usize) -> bool {
+    pub(super) fn ds_ahead(&self, p: usize) -> bool {
         let b = self.b;
         ds_keyword(b, p).into_iter().flatten().any(|e| {
             let rest = &b[e.min(b.len())..];

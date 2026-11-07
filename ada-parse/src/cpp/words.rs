@@ -159,19 +159,49 @@ const KEYWORDS: [(&[u8], Kw); 98] = {
 /// The word `w` to C++'s expressions: a keyword's class, else a variable's or constant's by
 /// its shape, else a support list's.
 pub fn lookup(w: &[u8]) -> Kw {
-    let i = find_word(w);
-    match i {
-        Some(i) if i < KEYWORDS.len() => return KW[i],
-        _ => {}
+    lookup_inline(w)
+}
+
+/// [`lookup`], inlined where a scan's loop asks it a name a turn (X-057): the word's class read
+/// by its id ([`BY_ID`]), and a variable's shape tested only on a word that isn't a keyword
+/// and starts as one can.
+#[inline(always)]
+pub fn lookup_inline(w: &[u8]) -> Kw {
+    let k = TABLE.value(w, &BY_ID);
+    if !matches!(k, Kw::Other | Kw::Support(_) | Kw::C99) {
+        return k;
     }
-    if let Some(v) = value_shape(w) {
+    if matches!(w.first(), Some(b'f' | b'm' | b'g' | b's' | b'k'))
+        && let Some(v) = value_shape(w)
+    {
         return Kw::Value(v);
     }
-    match i {
-        Some(i) => support_leaf(i - KEYWORDS.len()).map_or(Kw::C99, Kw::Support),
-        None => Kw::Other,
-    }
+    k
 }
+
+/// What [`TABLE`]'s words are by id, before a variable's shape: a keyword's class, a support
+/// word's leaf (with [`C`]) or C99's function; [`Kw::Other`] at 0, for none.
+static BY_ID: [Kw; WORDS + 1] = {
+    let mut t = [Kw::Other; WORDS + 1];
+    let mut i = 0;
+    while i < WORDS {
+        t[i + 1] = if i < KEYWORDS.len() {
+            KEYWORDS[i].1
+        } else {
+            match SUPPORT[i - KEYWORDS.len()].1 {
+                Support::C99 => Kw::C99,
+                Support::Sys => Kw::Support(SYS_TYPE | C),
+                Support::Pthread => Kw::Support(PTHREAD_TYPE | C),
+                Support::Stdint => Kw::Support(STDINT_TYPE | C),
+                Support::Microsoft => Kw::Support(MICROSOFT_TYPE | C),
+                Support::Windows => Kw::Support(WINDOWS_TYPE | C),
+                Support::Mac => Kw::Support(MAC_TYPE | C),
+            }
+        };
+        i += 1;
+    }
+    t
+};
 
 /// The variables and constants a word's shape gives, in the grammar's order: `\b(f|m)
 /// [\p{Lu}]\w*\b` and `\bm_[\p{L}\p{N}_]+\b` (C++'s members), `\bg[A-Z]\w*\b`, `\bs[A-Z]\w*\b`
@@ -297,17 +327,6 @@ const LIST: [&[u8]; WORDS] = {
 
 /// The keywords and [`SUPPORT`]'s words: a word's id is its number in [`LIST`] plus one.
 static TABLE: Words<2048, WORDS, { text_len(&LIST) }> = Words::new(&LIST);
-
-/// [`KEYWORDS`]' classes, by number.
-static KW: [Kw; KEYWORDS.len()] = {
-    let mut k = [Kw::Other; KEYWORDS.len()];
-    let mut i = 0;
-    while i < k.len() {
-        k[i] = KEYWORDS[i].1;
-        i += 1;
-    }
-    k
-};
 
 /// [`SUPPORT`]'s lists, by number.
 static LISTS: [Support; SUPPORT.len()] = {

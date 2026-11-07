@@ -21,6 +21,30 @@ pub(super) fn directive(b: &[u8], q: usize) -> Option<(usize, usize, usize)> {
 
 /// `[\p{Lu}_][\p{Lu}\p{Nd}_]{2,}` with `\b`s at `p`.
 fn upper_word(b: &[u8], p: usize) -> Option<usize> {
+    // ASCII around it, the common case, without decoding a character
+    if let Some(&c) = b.get(p)
+        && c < 0x80
+        && (p == 0 || b[p - 1] < 0x80)
+    {
+        let w = |x: u8| x.is_ascii_alphanumeric() || x == b'_';
+        if (p > 0 && w(b[p - 1])) || !(c.is_ascii_uppercase() || c == b'_') {
+            return None;
+        }
+        let mut e = p + 1;
+        while e < b.len() && (b[e].is_ascii_uppercase() || b[e].is_ascii_digit() || b[e] == b'_') {
+            e += 1;
+        }
+        if e >= b.len() || b[e] < 0x80 {
+            return (e >= p + 3 && !(e < b.len() && w(b[e]))).then_some(e);
+        }
+    }
+    upper_word_wide(b, p)
+}
+
+/// [`upper_word`] where a character past ASCII is next to it or in it.
+#[cold]
+#[inline(never)]
+fn upper_word_wide(b: &[u8], p: usize) -> Option<usize> {
     if word_before(b, p) || !(super::text::is_upper(b, p) || at(b, p) == b'_') {
         return None;
     }
@@ -28,7 +52,7 @@ fn upper_word(b: &[u8], p: usize) -> Option<usize> {
     (e >= p + 3 && !is_word(b, e)).then_some(e)
 }
 
-impl Scan<'_, '_> {
+impl<K: Sink> Scan<'_, '_, K> {
     /// The `#if` rules of `preprocessor-global`, `-statements` or `-data-structures` (C++'s),
     /// at the line's start: `#if 1` (enabled), `#if 0` (disabled), any other `#if` but in data
     /// structures.
@@ -836,7 +860,7 @@ impl Scan<'_, '_> {
     /// `(?=(?!if|for|switch|while|decltype|sizeof|__declspec|__attribute__|typeid|alignof|
     /// alignas|static_assert)PATH\s*\()` at `p` (C's without the last four, and `\bID\b`
     /// for `PATH`).
-    fn pp_call_ahead(&self, p: usize, cl: bool) -> bool {
+    pub(super) fn pp_call_ahead(&self, p: usize, cl: bool) -> bool {
         let b = self.b;
         let mut stops: &[&[u8]] = &[
             b"if",

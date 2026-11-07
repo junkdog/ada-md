@@ -1074,6 +1074,32 @@ mod tests {
         );
     }
 
+    /// C++'s and C's runs written by their scan (X-057) are those their spans give: through the
+    /// preprocessor (an `#if 0` branch, a macro over lines), a class and its methods, templates,
+    /// a raw string over lines, members, calls, numbers, strings and comments.
+    #[test]
+    fn cpp_and_c_runs_are_their_spans() {
+        runs_are_spans(
+            Lang::Cpp,
+            concat!(
+                "#include <vector>\n#define MAX(a, b) \\\n  ((a) > (b))\n#if 0\nold();\n#else\n",
+                "namespace ns {\ntemplate <typename T>\nclass Foo : public Bar<T> {\n public:\n",
+                "  explicit Foo(int x = 0) : x_(x) {}\n  int get() const { return x_ + 0x1F + 1.5f; }\n",
+                "  // c\n  std::vector<int> v{1, 2};\n};\n}  // ns\n#endif\n",
+                "auto s = R\"d(one\n)\" still )d\"; /* open\n * still */ int main() {\n",
+                "  for (auto& e : v) { e->call(a.b, \"x\\n%d\", 'c'); }\n  return mFoo == nullptr;\n}\n",
+            ),
+        );
+        runs_are_spans(
+            Lang::C,
+            concat!(
+                "#include \"a.h\"\nstatic const int k = 0x7fUL; /* c\n */\n",
+                "struct s { int a; char *b; };\nint f(int a, char b[]) {\n",
+                "  if (a > 10) return a.b + sizeof(int);\n  printf(\"%d\\n\", 1e3);\n  // c\n}\n",
+            ),
+        );
+    }
+
     /// SCSS's runs written by its scan (X-075) are those its spans give: through CSS's selectors,
     /// at-rules, functions, strings and a comment over lines, its front matter (YAML's spans
     /// taken as runs), interpolation, maps and `//` comments. (CSS's are read from its spans:

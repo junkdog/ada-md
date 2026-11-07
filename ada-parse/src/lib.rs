@@ -423,9 +423,9 @@ type LineRuns = fn(&[u8], &mut State, &mut Out, &mut dyn Rules, &mut Vec<Run>);
 
 /// `lang`'s block and line on a carried scan that writes runs: Rust's (X-068, X-073), X-074's
 /// (Java's, C#'s, Kotlin's, TypeScript's and TSX's, Python's, the Lisp engine's and Clojure's),
-/// and X-075's (Go's, Lua's, SCSS's, bash's and Makefile's; CSS's span copy stays in ada for
+/// X-075's (Go's, Lua's, SCSS's, bash's and Makefile's; CSS's span copy stays in ada for
 /// HTML's embeds and SQL's for its hosts', so their runs are read from their spans, and
-/// PowerShell's ran no faster).
+/// PowerShell's ran no faster), and X-057's (C++'s and C's).
 #[inline(always)]
 fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
     Some(match lang {
@@ -446,6 +446,8 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
         Lang::Scss => (css::scss::block_runs, css::scss::line_runs),
         Lang::Bash => (bash::block_runs, bash::line_runs),
         Lang::Makefile => (bash::make_block_runs, bash::make_line_runs),
+        Lang::Cpp => (cpp::block_runs, cpp::line_runs),
+        Lang::C => (cpp::block_runs_c, cpp::line_runs_c),
         _ => return None,
     })
 }
@@ -465,8 +467,8 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::TypeScript if SPANS => typescript::block,
         Lang::TypeScriptReact if SPANS => typescript::block_tsx,
         Lang::JavaScript => javascript::block,
-        Lang::Cpp => cpp::block,
-        Lang::C => cpp::block_c,
+        Lang::Cpp if SPANS => cpp::block,
+        Lang::C if SPANS => cpp::block_c,
         Lang::Bash if SPANS => bash::block,
         Lang::Makefile if SPANS => bash::make_block,
         Lang::Lua if SPANS => lua::block,

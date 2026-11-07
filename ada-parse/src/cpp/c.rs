@@ -13,7 +13,7 @@ use crate::{is_space, skip_spaces};
 
 /// `(?:[lL]{1,2}[uU]?|[uU][lL]{0,2})?\b` at `q`: where it ends, tried in a backtracking
 /// engine's order.
-fn int_suffix(b: &[u8], q: usize) -> Option<usize> {
+pub(super) fn int_suffix(b: &[u8], q: usize) -> Option<usize> {
     let l = |i: usize| matches!(at(b, i), b'l' | b'L') && i < b.len();
     let u = |i: usize| matches!(at(b, i), b'u' | b'U') && i < b.len();
     let ends = |e: usize| boundary_at(b, e);
@@ -44,7 +44,7 @@ fn boundary_at(b: &[u8], i: usize) -> bool {
     super::text::boundary(b, i)
 }
 
-impl Scan<'_, '_> {
+impl<K: Sink> Scan<'_, '_, K> {
     /// The patterns of C's context `top` at `p`.
     pub(super) fn c_context(&mut self, top: u8, p: usize, c: u8) -> Option<usize> {
         let b = self.b;
@@ -985,7 +985,7 @@ impl Scan<'_, '_> {
 
 /// `\\(?:\\|[abefnrtv\'"?]|[0-3][0-9]{0,2}|[4-7][0-9]?|x[a-fA-F0-9]+|u[a-fA-F0-9]{4}|
 /// U[a-fA-F0-9]{8})` at `p`: where it ends.
-fn escape_end(b: &[u8], p: usize) -> Option<usize> {
+pub(super) fn escape_end(b: &[u8], p: usize) -> Option<usize> {
     let c = at(b, p + 1);
     let digits = |from: usize, max: usize| {
         let mut e = from;
@@ -1026,7 +1026,7 @@ fn escape_end(b: &[u8], p: usize) -> Option<usize> {
 
 /// C's `string_placeholder` at `p` (a `%`): where it ends, by a backtracking search over its
 /// parts in the regex's order.
-fn placeholder(b: &[u8], p: usize) -> Option<usize> {
+pub(super) fn placeholder(b: &[u8], p: usize) -> Option<usize> {
     let byte = |i: usize| b.get(i).copied();
     // `(-?\d+)` at `i`: each end, the sign first, the longest first
     let signed = |i: usize| -> Vec<usize> {
@@ -1128,7 +1128,7 @@ fn conversion(b: &[u8], i: usize) -> Option<usize> {
 }
 
 /// `(?=(struct|union|enum)([^(;]+(?m:$)|.*\{))` at `p`.
-fn c_ds_ahead(b: &[u8], p: usize) -> bool {
+pub(super) fn c_ds_ahead(b: &[u8], p: usize) -> bool {
     [&b"struct"[..], b"union", b"enum"].iter().any(|w| {
         starts(b, p, w) && {
             let rest = &b[p + w.len()..];
