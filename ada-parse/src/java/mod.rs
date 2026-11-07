@@ -32,6 +32,7 @@ use crate::prim::{char_len, find_any};
 mod code;
 mod doc;
 
+use crate::emit::{Push, Rules, Run, Runs, Sink};
 use crate::regex;
 use crate::sql;
 use crate::{Out, State, is_space, skip_spaces, trim_end};
@@ -595,10 +596,27 @@ const MAX: usize = 128;
 /// Lex `b`, a line without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut s = Scan::fresh(b, out);
+    let mut s = Scan::fresh(b, out, Push);
     s.load_state(state);
     s.lex();
     *state = s.state();
+}
+
+/// [`line`]'s runs by theme rule pushed to `runs` (X-074, X-068's sink): [`crate::lex_runs`] for
+/// Java.
+#[inline(never)]
+pub fn line_runs(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    let mut s = Scan::fresh(b, out, Runs::new(rules, runs));
+    s.load_state(state);
+    s.lex();
+    *state = s.state();
+    s.k.end_line(b.len());
 }
 
 /// A block's lines on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
@@ -609,18 +627,53 @@ pub fn block(
     pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
 ) -> Option<usize> {
     let mut out = Out::new(spans);
-    let mut s = Scan::fresh(b"", &mut out);
+    let mut s = Scan::fresh(b"", &mut out, Push);
     s.load_state(state);
     let rest = pass(&mut s);
     *state = s.state();
     rest
 }
 
-impl crate::Carry for Scan<'_, '_> {
+/// [`block`]'s runs by theme rule pushed to `runs` ([`crate::CarryRuns`], X-074).
+pub fn block_runs(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    out.0.clear();
+    let mut s = Scan::fresh(b"", &mut out, Runs::new(rules, runs));
+    s.load_state(state);
+    let rest = pass(&mut s);
+    *state = s.state();
+    rest
+}
+
+impl crate::Carry for Scan<'_, '_, Push> {
     fn next(&mut self, b: &[u8]) -> &[crate::Span] {
         self.out.0.clear();
         // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
-        self.b = unsafe { crate::line_for(b) };
+        self.carry(unsafe { crate::line_for(b) });
+        self.out.0
+    }
+}
+
+impl crate::CarryRuns for Scan<'_, '_, Runs<'_>> {
+    fn next(&mut self, b: &[u8]) -> usize {
+        self.k.start_line();
+        // SAFETY: as above
+        self.carry(unsafe { crate::line_for(b) });
+        self.k.end_line(b.len())
+    }
+}
+
+impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
+    /// `b`, the block's next line, lexed on this scan; the scan's line an empty one again after.
+    #[inline(always)]
+    fn carry(&mut self, b: &'b [u8]) {
+        self.b = b;
         self.line_start();
         self.lex();
         // the line's end as a state's save and load leave it (`line` leaves that to its state)
@@ -628,15 +681,12 @@ impl crate::Carry for Scan<'_, '_> {
             self.reload();
         }
         self.b = b"";
-        self.out.0
     }
-}
 
-impl<'b, 'c> Scan<'b, 'c> {
     /// A scan of `b`, returned as a literal so that it is built in place; the state is
     /// [`Scan::load_state`]'s.
     #[inline(always)]
-    fn fresh(b: &'b [u8], out: &'b mut Out<'c>) -> Self {
+    fn fresh(b: &'b [u8], out: &'b mut Out<'c>, k: K) -> Self {
         Scan {
             b,
             stack: [TOP; MAX],
@@ -663,6 +713,7 @@ impl<'b, 'c> Scan<'b, 'c> {
             sql_end: usize::MAX,
             sql_nl: false,
             mark: usize::MAX,
+            k,
             out,
         }
     }
@@ -749,7 +800,7 @@ impl<'b, 'c> Scan<'b, 'c> {
 /// string.
 const MARKED: u16 = 1;
 
-struct Scan<'b, 'c> {
+struct Scan<'b, 'c, K: Sink> {
     b: &'b [u8],
     stack: [u8; MAX],
     depth: usize,
@@ -797,6 +848,10 @@ struct Scan<'b, 'c> {
     /// `{` or `}` came between ([`sql::marker_holds`], checked there and at the line's end);
     /// `usize::MAX` for none.
     mark: usize,
+    /// Where the lexemes go, a line's spans or its runs by theme rule (X-074, X-068's sink).
+    k: K,
+    /// The spans' vector: the span API's, and where an embedded scan pushes its spans for the
+    /// run sink to take.
     out: &'b mut Out<'c>,
 }
 
@@ -1374,7 +1429,7 @@ fn ends(b: &[u8], q: usize, suffixed: bool, suffix: u16, parts: &mut Parts) -> O
     boundary(b, q).then_some(q)
 }
 
-impl<'b> Scan<'b, '_> {
+impl<'b, K: Sink> Scan<'b, '_, K> {
     fn top(&self) -> u8 {
         self.stack[self.depth - 1]
     }
@@ -1390,7 +1445,7 @@ impl<'b> Scan<'b, '_> {
         self.fill(s);
         let k = self.kind(leaf);
         if k != PLAIN && e > s {
-            self.out.push_merged(s, e, k);
+            self.k.merge(&mut self.out, s, e, k);
         }
         self.at = self.at.max(e);
     }
@@ -1399,7 +1454,7 @@ impl<'b> Scan<'b, '_> {
     fn fill(&mut self, p: usize) {
         if p > self.at {
             if self.text != PLAIN {
-                self.out.push_merged(self.at, p, self.text);
+                self.k.merge(&mut self.out, self.at, p, self.text);
             }
             self.at = p;
         }
@@ -1907,7 +1962,10 @@ impl<'b> Scan<'b, '_> {
             base: self.kind(W_RE),
             text: self.text,
         };
-        let (q, st) = regex::embedded(b, p, self.re, &host, &mut self.at, self.out)?;
+        self.k.close(self.out);
+        let r = regex::embedded(b, p, self.re, &host, &mut self.at, self.out);
+        self.k.reopen(self.out, 16);
+        let (q, st) = r?;
         self.re = st;
         Some(q)
     }
@@ -1999,6 +2057,7 @@ impl<'b> Scan<'b, '_> {
         let end = self.sql_end;
         self.fill(p);
         self.sql.at = self.at;
+        self.k.close(self.out);
         let r = sql::embedded(
             &self.b[..end],
             p,
@@ -2007,6 +2066,7 @@ impl<'b> Scan<'b, '_> {
             &mut self.sql,
             self.out,
         );
+        self.k.reopen(self.out, 16);
         self.at = self.sql.at;
         let (mut q, ctx) = r?;
         if q > end {

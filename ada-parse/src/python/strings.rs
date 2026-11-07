@@ -4,7 +4,7 @@
 
 use super::*;
 
-impl Scan<'_, '_> {
+impl<K: Sink> Scan<'_, '_, K> {
     /// `{{sql_indicator}}` at `p`: `\s*(?:SELECT|INSERT|UPDATE|DELETE|CREATE|REPLACE|ALTER|WITH)\b`.
     #[inline]
     pub(super) fn sql_follows(&self, p: usize) -> bool {

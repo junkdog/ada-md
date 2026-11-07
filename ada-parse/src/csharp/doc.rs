@@ -10,7 +10,7 @@ use super::c::*;
 use super::*;
 use crate::clike::{DIGIT, SPACE};
 
-impl Scan<'_> {
+impl<K: Lex> Scan<'_, K> {
     /// The turns from `p` while the top is `documentation` or a tag's attributes, as
     /// [`Scan::run`]'s loop would take them (its bookkeeping too). Returns where the scan is,
     /// or `None` when it took no turn. It stops at a turn that takes nothing, a turn of the
@@ -189,7 +189,7 @@ impl Scan<'_> {
         let k = self.cur() | leaf;
         let at = self.at;
         let end = e.min(self.b.len());
-        if s < at || end < s || self.spans.len() + 2 > self.spans.capacity() {
+        if s < at || end < s || self.k.full(2) {
             self.put_kind(s, e, k);
             return e;
         }

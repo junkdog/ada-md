@@ -36,7 +36,7 @@ pub(super) const SQL_WORDS: [&[u8]; 15] = [
     b"descending",
 ];
 
-impl Scan<'_> {
+impl<K: Lex> Scan<'_, K> {
     /// The patterns of context `top` at `p`, the first that matches applied.
     pub(super) fn context(&mut self, top: u8, p: usize) -> Option<usize> {
         match top {
@@ -738,14 +738,9 @@ impl Scan<'_> {
             base: self.cur() | RE_LEAF,
             text: self.cur(),
         };
-        let (q, st) = crate::regex::embedded(
-            b,
-            p,
-            top - REGEX,
-            &host,
-            &mut self.at,
-            &mut Out(self.spans, self.merge),
-        )?;
+        let r = crate::regex::embedded(b, p, top - REGEX, &host, &mut self.at, &mut self.k.out());
+        self.k.took();
+        let (q, st) = r?;
         self.stack[(self.depth - 1) & (MAX - 1)] = REGEX + st;
         Some(q)
     }

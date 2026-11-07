@@ -11,7 +11,7 @@ struct TagName {
     component: bool,
 }
 
-impl Scan<'_, '_, '_> {
+impl<K: Sink> Scan<'_, '_, '_, K> {
     /// `[-_$[:alpha:][:digit:].]*` from `i`, backed off a trailing `.` or `-`: its end.
     fn tag_run(&self, i: usize) -> usize {
         let mut e = i;

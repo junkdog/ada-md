@@ -26,6 +26,7 @@ use crate::prim::{char_len, digit, is_nd, wide_char};
 pub(crate) mod clojure;
 mod words;
 
+use crate::emit::{Mark, Push, Rules, Run, Runs, Sink};
 use crate::{Out, State};
 use words::*;
 
@@ -416,10 +417,61 @@ pub enum Dialect {
 /// Lex `b`, a line of Lisp without its `\n`, from `state`, in `dialect`.
 #[inline(never)]
 pub fn line(b: &[u8], dialect: Dialect, state: &mut State, out: &mut Out) {
-    let mut s = Scan::fresh(b, dialect, state, out);
+    let mut s = Scan::fresh(b, dialect, state, out, Push);
     s.unpack(state);
     s.run();
     *state = s.pack();
+}
+
+/// [`line`]'s runs by theme rule pushed to `runs` (X-074, X-068's sink): [`crate::lex_runs`] for
+/// the dialect.
+#[inline(always)]
+fn line_runs(
+    dialect: Dialect,
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    let mut s = Scan::fresh(b, dialect, state, out, Runs::new(rules, runs));
+    s.unpack(state);
+    s.run();
+    *state = s.pack();
+    s.k.end_line(b.len());
+}
+
+/// [`line_runs`] in each dialect, and [`block_runs`]: [`crate::carried_runs`]' entries.
+macro_rules! runs_of {
+    ($($line:ident, $block:ident, $d:expr;)*) => {$(
+        #[inline(never)]
+        pub fn $line(
+            b: &[u8],
+            state: &mut State,
+            out: &mut Out,
+            rules: &mut dyn Rules,
+            runs: &mut Vec<Run>,
+        ) {
+            line_runs($d, b, state, out, rules, runs);
+        }
+
+        pub fn $block(
+            state: &mut State,
+            spans: &mut Vec<crate::Span>,
+            rules: &mut dyn Rules,
+            runs: &mut Vec<Run>,
+            pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+        ) -> Option<usize> {
+            block_runs($d, state, spans, rules, runs, pass)
+        }
+    )*};
+}
+
+runs_of! {
+    line_runs_common, block_runs_common, Dialect::Common;
+    line_runs_emacs, block_runs_emacs, Dialect::Emacs;
+    line_runs_scheme, block_runs_scheme, Dialect::Scheme;
+    line_runs_racket, block_runs_racket, Dialect::Racket;
 }
 
 /// A block of Common Lisp on one scan opened from `state` ([`crate::Carry`], X-070), `state`
@@ -468,7 +520,29 @@ fn block(
 ) -> Option<usize> {
     let mut out = Out::new(spans);
     let mut c = Carried {
-        s: Scan::fresh(b"", dialect, state, &mut out),
+        s: Scan::fresh(b"", dialect, state, &mut out, Push),
+        deep: None,
+    };
+    c.s.unpack(state);
+    let rest = pass(&mut c);
+    *state = c.deep.unwrap_or_else(|| c.s.pack());
+    rest
+}
+
+/// [`block`]'s runs by theme rule pushed to `runs` ([`crate::CarryRuns`], X-074).
+#[inline(always)]
+fn block_runs(
+    dialect: Dialect,
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    out.0.clear();
+    let mut c = Carried {
+        s: Scan::fresh(b"", dialect, state, &mut out, Runs::new(rules, runs)),
         deep: None,
     };
     c.s.unpack(state);
@@ -480,17 +554,35 @@ fn block(
 /// A scan kept across a block's lines, and the state the last line left where a save and load
 /// don't leave its frames as they are (bodies below the stack, or more frames than a state's
 /// codes): a block ending there hands on that state, as `line` would.
-struct Carried<'b, 'o, 's> {
-    s: Scan<'b, 'o, 's>,
+struct Carried<'b, 'o, 's, K: Sink> {
+    s: Scan<'b, 'o, 's, K>,
     deep: Option<State>,
 }
 
-impl crate::Carry for Carried<'_, '_, '_> {
+impl crate::Carry for Carried<'_, '_, '_, Push> {
     fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        self.s.out.0.clear();
+        // SAFETY: the line is set back to an empty one before `b`'s borrow ends
+        self.carry(unsafe { crate::line_for(b) });
+        self.s.out.0
+    }
+}
+
+impl crate::CarryRuns for Carried<'_, '_, '_, Runs<'_>> {
+    fn next(&mut self, b: &[u8]) -> usize {
+        self.s.k.start_line();
+        // SAFETY: as above
+        self.carry(unsafe { crate::line_for(b) });
+        self.s.k.end_line(b.len())
+    }
+}
+
+impl<'b, K: Sink> Carried<'b, '_, '_, K> {
+    /// `b`, the block's next line, lexed on the scan; the scan's line an empty one again after.
+    #[inline(always)]
+    fn carry(&mut self, b: &'b [u8]) {
         let s = &mut self.s;
-        s.out.0.clear();
-        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
-        s.b = unsafe { crate::line_for(b) };
+        s.b = b;
         s.dead = (usize::MAX, 0);
         s.quoted_fail = usize::MAX;
         s.plus = (usize::MAX, 0, 0);
@@ -503,15 +595,14 @@ impl crate::Carry for Carried<'_, '_, '_> {
         }
         // `keep`'s codes in order and `expand`'s frames from them: the frames as they are
         self.deep = (s.base > 0 || s.depth > KEPT).then(|| s.reloaded());
-        s.out.0
     }
 }
 
-impl<'b, 'o, 's> Scan<'b, 'o, 's> {
+impl<'b, 'o, 's, K: Sink> Scan<'b, 'o, 's, K> {
     /// A scan of `b` in `dialect`, returned as a literal so that it is built in place; its
     /// frames are [`Scan::unpack`]'s.
     #[inline(always)]
-    fn fresh(b: &'b [u8], dialect: Dialect, state: &State, out: &'o mut Out<'s>) -> Self {
+    fn fresh(b: &'b [u8], dialect: Dialect, state: &State, out: &'o mut Out<'s>, k: K) -> Self {
         let scheme = matches!(dialect, Dialect::Scheme | Dialect::Racket);
         Scan {
             b,
@@ -521,6 +612,7 @@ impl<'b, 'o, 's> Scan<'b, 'o, 's> {
             class: if scheme { &SCHEME_CLASS } else { &CLASS },
             regex: state.arg as u8,
             level: DEPTH_KINDS + 4 * (state.arg >> 8).min(u16::from(DEPTHS) - 1),
+            k,
             out,
             stack: [TOP; MAX + 1],
             depth: 0,
@@ -549,7 +641,7 @@ impl<'b, 'o, 's> Scan<'b, 'o, 's> {
     }
 }
 
-struct Scan<'b, 'o, 's> {
+struct Scan<'b, 'o, 's, K: Sink> {
     b: &'b [u8],
     /// Emacs Lisp: `?a` is a character.
     elisp: bool,
@@ -564,6 +656,10 @@ struct Scan<'b, 'o, 's> {
     /// The lists open, modulo [`DEPTHS`], as that depth's first kind ([`DEPTH_KINDS`]): the
     /// depth the next `(` colors as.
     level: u16,
+    /// Where the lexemes go, a line's spans or its runs by theme rule (X-074, X-068's sink).
+    k: K,
+    /// The spans' vector: the span API's, and where an embedded regex pushes its spans for the
+    /// run sink to take.
     out: &'o mut Out<'s>,
     /// The frames at `1..=depth`, bottom first; at 0 what is below them: a body body (`BODY`)
     /// while `base` counts any, else `TOP`. So the top is one load, `stack[depth]`.
@@ -583,7 +679,7 @@ struct Scan<'b, 'o, 's> {
     digits: [(usize, usize); 2],
 }
 
-impl Scan<'_, '_, '_> {
+impl<K: Sink> Scan<'_, '_, '_, K> {
     /// The frames `state` keeps: the top ones on the stack (half of it at most, so that the line
     /// can open more), the list bodies below them counted in `base`.
     fn unpack(&mut self, state: &State) {
@@ -695,7 +791,7 @@ impl Scan<'_, '_, '_> {
     }
 
     fn put(&mut self, from: usize, to: usize, kind: L) {
-        self.out.push(from, to, kind as u16);
+        self.k.push_call(&mut self.out, from, to, kind as u16);
     }
 
     /// A list's delimiter `kind` (`(`, `)`, a parameter list's) at `from..to`, the kind of its
@@ -714,7 +810,7 @@ impl Scan<'_, '_, '_> {
                 self.level - 4
             };
         }
-        self.out.push(from, to, self.level + i);
+        self.k.push(&mut self.out, from, to, self.level + i);
         if i & 1 == 0 {
             self.level = if self.level == LAST {
                 FIRST
@@ -725,7 +821,7 @@ impl Scan<'_, '_, '_> {
     }
 
     fn put_merged(&mut self, from: usize, to: usize, kind: L) {
-        self.out.push_merged(from, to, kind as u16);
+        self.k.merge_call(&mut self.out, from, to, kind as u16);
     }
 
     /// An identifier's span as kind `kind`, its `|…|` delimiters as the two kinds after it. In
@@ -743,9 +839,9 @@ impl Scan<'_, '_, '_> {
     #[cold]
     fn put_quoted(&mut self, from: usize, id: Id, kind: L) {
         let k = kind as u16;
-        self.out.push(from, from + 1, k + 1);
-        self.out.push(from + 1, id.end - 1, k);
-        self.out.push(id.end - 1, id.end, k + 2);
+        self.k.push_call(&mut self.out, from, from + 1, k + 1);
+        self.k.push_call(&mut self.out, from + 1, id.end - 1, k);
+        self.k.push_call(&mut self.out, id.end - 1, id.end, k + 2);
     }
 
     fn at(&self, p: usize) -> u8 {
@@ -1514,7 +1610,7 @@ impl Scan<'_, '_, '_> {
 
     /// [`Scan::run_at`] stopped at `limit` (past it: an escape runs over it).
     fn run_at_to(&self, p: usize, limit: usize) -> (usize, bool, bool) {
-        Scan::run_in(&self.b[..limit], p, self.class)
+        Self::run_in(&self.b[..limit], p, self.class)
     }
 
     fn run_in(b: &[u8], p: usize, class: &[u8; 256]) -> (usize, bool, bool) {
@@ -2144,12 +2240,12 @@ impl Scan<'_, '_, '_> {
         };
         let (e, kind) = found?;
         let k = kind as u16;
-        self.out.push(p, p + 1, k + 1);
+        self.k.push_call(&mut self.out, p, p + 1, k + 1);
         if d > p + 1 {
-            self.out.push(p + 1, d, k + 2);
+            self.k.push_call(&mut self.out, p + 1, d, k + 2);
         }
-        self.out.push(d, q, k + 1);
-        self.out.push(q, e, k);
+        self.k.push_call(&mut self.out, d, q, k + 1);
+        self.k.push_call(&mut self.out, q, e, k);
         Some(e)
     }
 
@@ -2616,7 +2712,7 @@ impl Scan<'_, '_, '_> {
                 }
                 // `#e`, `#i`, `#d`: a number's exactness or radix
                 if matches!(c1 | 0x20, b'e' | b'i' | b'd') && p + 2 < n {
-                    let mark = self.out.len();
+                    let mark: Mark = self.k.mark(self.out);
                     self.put(p, p + 2, L::NumBase);
                     let q = if self.at(p + 2) == b'#' {
                         self.radix(p + 2, digits(b, p + 3))
@@ -2624,7 +2720,7 @@ impl Scan<'_, '_, '_> {
                         self.number(p + 2)
                     };
                     if q.is_none() {
-                        self.out.truncate(mark);
+                        self.k.undo(self.out, mark);
                     }
                     return q;
                 }
@@ -2774,7 +2870,10 @@ impl Scan<'_, '_, '_> {
             return e;
         }
         let mut at = p;
-        match crate::regex::embedded(b, p, self.regex, &REGEX_EMBED, &mut at, self.out) {
+        self.k.close(self.out);
+        let r = crate::regex::embedded(b, p, self.regex, &REGEX_EMBED, &mut at, self.out);
+        self.k.reopen(self.out, 16);
+        match r {
             Some((q, st)) => {
                 self.regex = st;
                 if q > n { n } else { q.max(p + 1) }

@@ -186,7 +186,7 @@ enum Path {
     Cut,
 }
 
-impl<'b> Scan<'b, '_> {
+impl<'b, K: Sink> Scan<'b, '_, K> {
     /// The name at `p`, whose first byte is an identifier's start.
     #[inline(always)]
     fn name(&self, p: usize) -> Name {
@@ -891,16 +891,12 @@ impl<'b> Scan<'b, '_> {
     /// of bat's grammar for them (`below`, then `generic-type-invocation`) and the rest left to
     /// those. Where the scan goes on, and whether they closed.
     fn type_args(&mut self, q: usize, below: &[u8]) -> (usize, bool) {
-        let (len, at) = (self.out.len(), self.at);
-        let last = self.out.0.last().map(|s| s.end);
+        let (m, at) = (self.k.mark(self.out), self.at);
         if let Some(r) = self.args_inline(q, 0) {
             return (r, true);
         }
-        // undone: the spans since `q`
-        self.out.truncate(len);
-        if let (Some(end), Some(s)) = (last, self.out.0.last_mut()) {
-            s.end = end;
-        }
+        // undone: the lexemes since `q`
+        self.k.undo(self.out, m);
         self.at = at;
         for &c in below {
             self.push(q, c);

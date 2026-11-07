@@ -3,7 +3,7 @@
 
 use super::*;
 
-impl<'b> Scan<'b, '_> {
+impl<'b, K: Sink> Scan<'b, '_, K> {
     /// Whether the line is `^\s*\*?\s*@`.
     pub(super) fn is_tag_line(&mut self) -> bool {
         let b = self.b;

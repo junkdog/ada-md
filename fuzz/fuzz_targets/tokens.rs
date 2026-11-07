@@ -28,8 +28,20 @@ use libfuzzer_sys::fuzz_target;
 
 /// The languages whose scan writes runs itself, not through spans (Rust X-068, the line-format
 /// engine's X-069, JSON's, TOML's and XML's X-072).
-const RUN_SCANS: [Lang; 13] = [
+const RUN_SCANS: [Lang; 25] = [
     Lang::Rust,
+    Lang::Java,
+    Lang::CSharp,
+    Lang::Kotlin,
+    Lang::TypeScript,
+    Lang::TypeScriptReact,
+    Lang::Python,
+    Lang::Lisp,
+    Lang::EmacsLisp,
+    Lang::Scheme,
+    Lang::Racket,
+    Lang::Clojure,
+    Lang::Dockerfile,
     Lang::Ini,
     Lang::Properties,
     Lang::DotEnv,

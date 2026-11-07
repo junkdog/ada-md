@@ -27,6 +27,7 @@ mod words;
 
 use std::cell::Cell;
 
+use crate::emit::{Push, Rules, Run, Runs, Sink};
 use crate::stack::HELD as KEPT;
 use crate::{Out, State, regex};
 
@@ -696,10 +697,50 @@ const STUCK: usize = 48;
 /// Lex `b`, a line of TypeScript (TSX if `tsx`) without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], tsx: bool, state: &mut State, out: &mut Out) {
-    let mut s = Scan::fresh(b, tsx, out);
+    let mut s = Scan::fresh(b, tsx, out, Push);
     s.load_state(state);
     s.lex();
     *state = s.state();
+}
+
+/// [`line`]'s runs by theme rule pushed to `runs` (X-074, X-068's sink): [`crate::lex_runs`] for
+/// TypeScript.
+#[inline(never)]
+pub fn line_runs(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    line_runs_of(false, b, state, out, rules, runs);
+}
+
+/// [`line_runs`] for TSX.
+#[inline(never)]
+pub fn line_runs_tsx(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    line_runs_of(true, b, state, out, rules, runs);
+}
+
+fn line_runs_of(
+    tsx: bool,
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    let mut s = Scan::fresh(b, tsx, out, Runs::new(rules, runs));
+    s.load_state(state);
+    s.lex();
+    *state = s.state();
+    s.k.end_line(b.len());
 }
 
 /// A block of TypeScript on one scan opened from `state` ([`crate::Carry`], X-067), `state`
@@ -728,7 +769,7 @@ fn block_of(
     pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
 ) -> Option<usize> {
     let mut out = Out::new(spans);
-    let mut s = Scan::fresh(b"", tsx, &mut out);
+    let mut s = Scan::fresh(b"", tsx, &mut out, Push);
     s.load_state(state);
     let mut c = Carried { s, deep: None };
     let rest = pass(&mut c);
@@ -736,11 +777,50 @@ fn block_of(
     rest
 }
 
-impl Scan<'_, '_, '_> {
+/// [`block`]'s runs by theme rule pushed to `runs` ([`crate::CarryRuns`], X-074).
+pub fn block_runs(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+) -> Option<usize> {
+    block_runs_of(false, state, spans, rules, runs, pass)
+}
+
+/// [`block_runs`] for TSX.
+pub fn block_runs_tsx(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+) -> Option<usize> {
+    block_runs_of(true, state, spans, rules, runs, pass)
+}
+
+fn block_runs_of(
+    tsx: bool,
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    out.0.clear();
+    let mut s = Scan::fresh(b"", tsx, &mut out, Runs::new(rules, runs));
+    s.load_state(state);
+    let mut c = Carried { s, deep: None };
+    let rest = pass(&mut c);
+    *state = c.deep.unwrap_or_else(|| c.s.state());
+    rest
+}
+
+impl<K: Sink> Scan<'_, '_, '_, K> {
     /// `b`, a block's next line, lexed on the scan: [`Carried`]'s.
     #[inline(always)]
     fn lex_next(&mut self, b: &[u8]) {
-        self.out.0.clear();
         // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
         self.b = unsafe { crate::line_for(b) };
         self.i = 0;
@@ -766,18 +846,30 @@ impl Scan<'_, '_, '_> {
 /// A scan kept across a block's lines, and the state the last line left where it ended past the
 /// levels a state holds: its levels' runs packed then, which loading and packing them again
 /// may pack apart, so a block ending there hands on that state, as `line` would.
-struct Carried<'a, 'o, 'p> {
-    s: Scan<'a, 'o, 'p>,
+struct Carried<'a, 'o, 'p, K: Sink> {
+    s: Scan<'a, 'o, 'p, K>,
     deep: Option<State>,
 }
 
-impl crate::Carry for Carried<'_, '_, '_> {
+impl crate::Carry for Carried<'_, '_, '_, Push> {
     fn next(&mut self, b: &[u8]) -> &[crate::Span] {
         let s = &mut self.s;
+        s.out.0.clear();
         s.lex_next(b);
         // the line's end as a state's save and the next line's load leave it
         self.deep = (s.depth - 1 > KEPT).then(|| s.reloaded());
         s.out.0
+    }
+}
+
+impl crate::CarryRuns for Carried<'_, '_, '_, Runs<'_>> {
+    fn next(&mut self, b: &[u8]) -> usize {
+        let s = &mut self.s;
+        s.k.start_line();
+        s.lex_next(b);
+        // as above
+        self.deep = (s.depth - 1 > KEPT).then(|| s.reloaded());
+        s.k.end_line(b.len())
     }
 }
 
@@ -787,11 +879,11 @@ fn ticked(b: &[u8]) -> usize {
     b.iter().rposition(|&c| c == b'`').map_or(0, |k| k + 1)
 }
 
-impl<'a, 'o, 'p> Scan<'a, 'o, 'p> {
+impl<'a, 'o, 'p, K: Sink> Scan<'a, 'o, 'p, K> {
     /// A scan of `b`, returned as a literal so that it is built in place; the state is
     /// [`Scan::load_state`]'s.
     #[inline(always)]
-    fn fresh(b: &'a [u8], tsx: bool, out: &'o mut Out<'p>) -> Self {
+    fn fresh(b: &'a [u8], tsx: bool, out: &'o mut Out<'p>, k: K) -> Self {
         Scan {
             b,
             i: 0,
@@ -814,6 +906,7 @@ impl<'a, 'o, 'p> Scan<'a, 'o, 'p> {
             g_type_brace: false,
             var_kw_eol: false,
             re: 0,
+            k,
             out,
         }
     }
@@ -954,7 +1047,7 @@ fn unpack(stack: &mut [u8; MAX], n: usize) -> usize {
     o - 1
 }
 
-struct Scan<'a, 'o, 'p> {
+struct Scan<'a, 'o, 'p, K: Sink> {
     b: &'a [u8],
     /// The place the scan has reached; `n` is the line's `\n`.
     i: usize,
@@ -993,10 +1086,14 @@ struct Scan<'a, 'o, 'p> {
     var_kw_eol: bool,
     /// The state of the regex in the top frame ([`REGEX_F`], [`RE_STR_F`]).
     re: u8,
+    /// Where the lexemes go, a line's spans or its runs by theme rule (X-074, X-068's sink).
+    k: K,
+    /// The spans' vector: the span API's, and where an embedded regex pushes its spans for the
+    /// run sink to take.
     out: &'o mut Out<'p>,
 }
 
-impl Scan<'_, '_, '_> {
+impl<K: Sink> Scan<'_, '_, '_, K> {
     fn run(&mut self) {
         // where the last turn failed at a space or tab in code, `usize::MAX` if the last one didn't
         let mut failed = usize::MAX;
@@ -1081,9 +1178,15 @@ impl Scan<'_, '_, '_> {
     }
 
     /// The bytes up to `to` that no token has covered, as the frames open make them.
+    #[inline(always)]
     fn fill(&mut self, to: usize) {
-        self.out
-            .fill(&mut self.done, to.min(self.b.len()), self.text | self.wrap);
+        let (p, text) = (to.min(self.b.len()), self.text | self.wrap);
+        if p > self.done {
+            if text != 0 {
+                self.k.merge(&mut self.out, self.done, p, text);
+            }
+            self.done = p;
+        }
     }
 
     /// Bytes `s..e` are `kind`: an empty token fills nothing, and none starts before where the
@@ -1097,7 +1200,7 @@ impl Scan<'_, '_, '_> {
         self.fill(s);
         let k = kind | self.wrap;
         if k != PLAIN {
-            self.out.push_merged(s, e, k);
+            self.k.merge(&mut self.out, s, e, k);
         }
         self.done = e;
     }

@@ -10,7 +10,7 @@ use super::c::*;
 use super::*;
 use crate::clike::{self, CLASS, DIGIT, SPACE};
 
-impl Scan<'_> {
+impl<K: Lex> Scan<'_, K> {
     /// The turns from `p` (past the line's start) while the top context is code's: blanks passed
     /// inline, each token's patterns tried as [`Scan::run`]'s turn would. Returns where the scan
     /// is when the top isn't code's, the line ends, or the turn at the place is one for
@@ -262,7 +262,7 @@ enum Turn {
     Not,
 }
 
-impl Scan<'_> {
+impl<K: Lex> Scan<'_, K> {
     /// An expression's tokens in a run of their own (X-025's third stage): while the top is
     /// `line_of_code_in`, an argument's expression or `arguments`, each token whose turn there
     /// is decided by its first byte and what follows it on the line (a plain name, a call's
@@ -503,29 +503,12 @@ impl Scan<'_> {
     pub(super) fn put_code(&mut self, s: usize, e: usize, leaf: u16) -> usize {
         let k = self.cur() | leaf;
         let at = self.at;
-        if s < at
-            || e < s
-            || e > self.b.len()
-            || (s > at && self.text != PLAIN)
-            || self.spans.len() == self.spans.capacity()
-        {
+        if s < at || e < s || e > self.b.len() || (s > at && self.text != PLAIN) || self.k.full(1) {
             self.put_kind(s, e, k);
             return e;
         }
         if e > s && k != PLAIN {
-            if let Some(last) = self.spans.last_mut()
-                && last.end as usize == s
-                && last.kind == k
-                && self.merge
-            {
-                last.end = e as u32;
-            } else {
-                self.spans.push(Span {
-                    start: s as u32,
-                    end: e as u32,
-                    kind: k,
-                });
-            }
+            self.k.emit(s, e, k);
         }
         self.at = e;
         e

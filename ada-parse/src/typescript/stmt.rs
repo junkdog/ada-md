@@ -22,7 +22,7 @@ const DECL_WORDS: &[&[u8]] = &[
     b"var",
 ];
 
-impl Scan<'_, '_, '_> {
+impl<K: Sink> Scan<'_, '_, '_, K> {
     /// `(?:^\s*(?:abstract|async|…|var)\b)` at `i`: only at the line's start.
     pub(super) fn decl_at_bol(&self, i: usize) -> bool {
         if i != 0 {

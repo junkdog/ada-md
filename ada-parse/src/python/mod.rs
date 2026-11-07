@@ -29,6 +29,7 @@ mod regex;
 mod strings;
 mod words;
 
+use crate::emit::{Push, Rules, Run, Runs, Sink};
 use crate::{Out, State};
 
 macro_rules! leaves {
@@ -737,10 +738,27 @@ const SYNTECT_DEPTH: usize = 99;
 /// Lex `b`, a line of Python without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut s = Scan::fresh(b, out);
+    let mut s = Scan::fresh(b, out, Push);
     s.load_state(state);
     s.lex();
     *state = s.state();
+}
+
+/// [`line`]'s runs by theme rule pushed to `runs` (X-074, X-068's sink): [`crate::lex_runs`] for
+/// Python.
+#[inline(never)]
+pub fn line_runs(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    let mut s = Scan::fresh(b, out, Runs::new(rules, runs));
+    s.load_state(state);
+    s.lex();
+    *state = s.state();
+    s.k.end_line(b.len());
 }
 
 /// A block's lines on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
@@ -751,18 +769,53 @@ pub fn block(
     pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
 ) -> Option<usize> {
     let mut out = Out::new(spans);
-    let mut s = Scan::fresh(b"", &mut out);
+    let mut s = Scan::fresh(b"", &mut out, Push);
     s.load_state(state);
     let rest = pass(&mut s);
     *state = s.state();
     rest
 }
 
-impl crate::Carry for Scan<'_, '_> {
+/// [`block`]'s runs by theme rule pushed to `runs` ([`crate::CarryRuns`], X-074).
+pub fn block_runs(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    out.0.clear();
+    let mut s = Scan::fresh(b"", &mut out, Runs::new(rules, runs));
+    s.load_state(state);
+    let rest = pass(&mut s);
+    *state = s.state();
+    rest
+}
+
+impl crate::Carry for Scan<'_, '_, Push> {
     fn next(&mut self, b: &[u8]) -> &[crate::Span] {
         self.out.0.clear();
-        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
-        self.b = unsafe { crate::line_for(b) };
+        // SAFETY: the line is set back to an empty one before `b`'s borrow ends
+        self.carry(unsafe { crate::line_for(b) });
+        self.out.0
+    }
+}
+
+impl crate::CarryRuns for Scan<'_, '_, Runs<'_>> {
+    fn next(&mut self, b: &[u8]) -> usize {
+        self.k.start_line();
+        // SAFETY: as above
+        self.carry(unsafe { crate::line_for(b) });
+        self.k.end_line(b.len())
+    }
+}
+
+impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
+    /// `b`, the block's next line, lexed on this scan; the scan's line an empty one again after.
+    #[inline(always)]
+    fn carry(&mut self, b: &'b [u8]) {
+        self.b = b;
         self.text = 0;
         self.at = 0;
         self.loop_at = (usize::MAX, 0);
@@ -781,15 +834,12 @@ impl crate::Carry for Scan<'_, '_> {
             self.reload();
         }
         self.b = b"";
-        self.out.0
     }
-}
 
-impl<'b, 'c> Scan<'b, 'c> {
     /// A scan of `b`, returned as a literal so that it is built in place; the state is
     /// [`Scan::load_state`]'s.
     #[inline(always)]
-    fn fresh(b: &'b [u8], out: &'b mut Out<'c>) -> Self {
+    fn fresh(b: &'b [u8], out: &'b mut Out<'c>, k: K) -> Self {
         Scan {
             b,
             stack: [MAIN; MAX],
@@ -806,6 +856,7 @@ impl<'b, 'c> Scan<'b, 'c> {
                 is_end: usize::MAX,
                 at: 0,
             },
+            k,
             out,
         }
     }
@@ -1236,7 +1287,7 @@ impl Word {
     };
 }
 
-struct Scan<'b, 'c> {
+struct Scan<'b, 'c, K: Sink> {
     /// The line, without its `\n`: its length is where the `\n` is.
     b: &'b [u8],
     stack: [u8; MAX],
@@ -1259,10 +1310,14 @@ struct Scan<'b, 'c> {
     wcache: [std::cell::Cell<(usize, Word)>; WCACHE],
     /// The SQL's scan between the string's turns on this line.
     sql: crate::sql::Embedded,
+    /// Where the lexemes go, a line's spans or its runs by theme rule (X-074, X-068's sink).
+    k: K,
+    /// The spans' vector: the span API's, and where SQL's scan pushes its spans for the run sink
+    /// to take.
     out: &'b mut Out<'c>,
 }
 
-impl Scan<'_, '_> {
+impl<K: Sink> Scan<'_, '_, K> {
     fn top(&self) -> u8 {
         self.stack[self.depth - 1]
     }
@@ -1495,13 +1550,26 @@ impl Scan<'_, '_> {
 
     /// The text up to `p` is the top context's.
     fn fill(&mut self, p: usize) {
-        self.out.fill(&mut self.at, p.min(self.b.len()), self.text);
+        self.fill_with(p.min(self.b.len()), self.text);
     }
 
-    /// Bytes `s..e` are `kind`, after the text before them.
+    /// Bytes `s..e` are `kind`, after the text before them ([`Out::put`]'s two fills).
     fn put(&mut self, s: usize, e: usize, kind: u16) {
-        self.out
-            .put(&mut self.at, s, e, self.b.len(), self.text, kind);
+        let n = self.b.len();
+        self.fill_with(s.min(n), self.text);
+        self.fill_with(e.min(n), kind);
+    }
+
+    /// The bytes from where the lexemes end to `p` are `kind` (plain where it is 0), and the
+    /// lexemes end at `p`; a `p` at or before that leaves both ([`Out::fill`]).
+    #[inline(always)]
+    fn fill_with(&mut self, p: usize, kind: u16) {
+        if p > self.at {
+            if kind != 0 {
+                self.k.merge(&mut self.out, self.at, p, kind);
+            }
+            self.at = p;
+        }
     }
 
     fn push(&mut self, c: u8) {
@@ -1740,14 +1808,17 @@ impl Scan<'_, '_> {
         self.fill(p);
         self.sql.at = self.at;
         let ctx = TO_SQL[usize::from(c - SQL_MAIN)];
-        let (q, ctx) = crate::sql::embedded(
+        self.k.close(self.out);
+        let r = crate::sql::embedded(
             &self.b[..self.b.len()],
             p,
             ctx,
             &embed,
             &mut self.sql,
             &mut *self.out,
-        )?;
+        );
+        self.k.reopen(self.out, 16);
+        let (q, ctx) = r?;
         self.at = self.sql.at;
         // the stack as the SQL leaves it
         self.depth = d + 1;

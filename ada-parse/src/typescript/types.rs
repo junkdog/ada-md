@@ -3,7 +3,7 @@
 
 use super::*;
 
-impl Scan<'_, '_, '_> {
+impl<K: Sink> Scan<'_, '_, '_, K> {
     /// `type-annotation` at `:`.
     pub(super) fn type_annotation(&mut self) -> bool {
         let i = self.i;

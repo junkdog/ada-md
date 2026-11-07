@@ -116,7 +116,7 @@ pub(super) fn line(b: &[u8], i: usize, state: &mut State, out: &mut Out) -> bool
 /// [`line`] on a scan kept across a block's lines (X-067): the same turns on its stack, which
 /// holds no more levels than a state at a line's start.
 #[inline(always)]
-pub(super) fn on_scan(b: &[u8], i: usize, s: &mut Scan) -> bool {
+pub(super) fn on_scan<K: Lex>(b: &[u8], i: usize, s: &mut Scan<'_, K>) -> bool {
     let c = match b.get(i) {
         None => 0,
         Some(&c @ (b'{' | b'}')) => {
@@ -164,12 +164,12 @@ fn take(i: usize, c: u8, state: &mut State, out: &mut Out) -> bool {
 
 /// [`on_scan`]'s case `c` at `i`.
 #[inline(never)]
-fn take_on(i: usize, c: u8, s: &mut Scan) -> bool {
+fn take_on<K: Lex>(i: usize, c: u8, s: &mut Scan<'_, K>) -> bool {
     let mut d = s.depth - 1;
     let (bits, depth) = (&s.bits, s.depth);
     // SAFETY: the bits of every level below `depth` are written ([`Scan::bits_at`])
     let any = || (1..depth).any(|k| unsafe { bits[k].assume_init() } != 0);
-    let mut out = Out(&mut *s.spans, s.merge);
+    let mut out = s.k.out();
     match turns(i, c, &mut s.stack[1..=KEPT], &mut d, any, &mut out) {
         Took::No => false,
         Took::Same => true,

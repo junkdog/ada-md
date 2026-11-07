@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl Scan<'_, '_, '_> {
+impl<K: Sink> Scan<'_, '_, '_, K> {
     /// `comment` at the place: `/** … */`, `/* … */`, `// …` (with the line's indentation before
     /// it as `punctuation.whitespace.comment.leading`).
     pub(super) fn comment(&mut self, consume_eol: bool) -> bool {
@@ -176,7 +176,10 @@ impl Scan<'_, '_, '_> {
             text: RE_HOSTS[host] | self.wrap,
         };
         let b = &self.b[..lim];
-        match regex::embedded(b, self.i, self.re, &embed, &mut self.done, self.out) {
+        self.k.close(self.out);
+        let r = regex::embedded(b, self.i, self.re, &embed, &mut self.done, self.out);
+        self.k.reopen(self.out, 16);
+        match r {
             Some((q, st)) => {
                 self.i = q;
                 self.re = st;

@@ -52,6 +52,18 @@ pub(crate) trait Sink: Copy {
     fn push(&mut self, out: &mut &mut Out, s: usize, e: usize, kind: u16) {
         self.merge(out, s, e, kind);
     }
+    /// As [`Sink::push`], for a scan whose writes sit in small helpers inlined at many places: on
+    /// the run sink one call, so that each place isn't a copy of the run's write (the Lisp
+    /// engine's, X-074); elsewhere the write itself.
+    #[inline(always)]
+    fn push_call(&mut self, out: &mut &mut Out, s: usize, e: usize, kind: u16) {
+        self.push(out, s, e, kind);
+    }
+    /// As [`Sink::merge`], one call on the run sink as [`Sink::push_call`] is.
+    #[inline(always)]
+    fn merge_call(&mut self, out: &mut &mut Out, s: usize, e: usize, kind: u16) {
+        self.merge(out, s, e, kind);
+    }
     /// Opened for writing at `out`'s end, room made there for `n` more spans.
     fn open(&mut self, out: &mut Out, n: usize);
     /// Closed for another scanner to push spans to `out`.
@@ -60,6 +72,23 @@ pub(crate) trait Sink: Copy {
     fn reopen(&mut self, out: &mut Out, n: usize);
     /// A line starts, on a sink open since an earlier one (a block's pass).
     fn start_line(&mut self);
+    /// Where the writing stands, for [`Sink::undo`].
+    fn mark(&self, out: &Out) -> Mark;
+    /// What was written since `m` undone, as if it never was: a scan's guess at a line's
+    /// lexemes taken back (Java's type arguments read ahead, Kotlin's string before `.toRegex(`,
+    /// X-074).
+    fn undo(&mut self, out: &mut Out, m: Mark);
+}
+
+/// Where a sink's writing stood ([`Sink::mark`]): its spans' or runs' count, where the last ends
+/// ([`u32::MAX`] for none on the line), and for a sink that keeps them the line's end and last
+/// rule. Writes after it only add to the count or move the last one's end, so these undo them.
+#[derive(Clone, Copy)]
+pub(crate) struct Mark {
+    n: usize,
+    prev: u32,
+    end: usize,
+    last: Rule,
 }
 
 /// A line's spans pushed to the vector as [`Out`] pushes them, no cursor: the span API of a
@@ -90,6 +119,46 @@ impl Sink for Push {
 
     #[inline(always)]
     fn start_line(&mut self) {}
+
+    #[inline(always)]
+    fn mark(&self, out: &Out) -> Mark {
+        Mark {
+            n: out.0.len(),
+            prev: out.0.last().map_or(u32::MAX, |l| l.end),
+            end: 0,
+            last: Rule(Rule::UNSET),
+        }
+    }
+
+    #[inline(always)]
+    fn undo(&mut self, out: &mut Out, m: Mark) {
+        out.0.truncate(m.n);
+        if let Some(l) = out.0.last_mut() {
+            l.end = m.prev;
+        }
+    }
+}
+
+/// A sink beside the spans' vector, written as [`Out`] is (`push`, `push_merged`): for a scan of
+/// free functions that took the vector (Dockerfile's, X-074), so that its code reads as
+/// it did, and on [`Push`] compiles as it did.
+pub(crate) struct To<'a, 'o, K: Sink> {
+    out: &'a mut Out<'o>,
+    k: &'a mut K,
+}
+
+impl<'a, 'o, K: Sink> To<'a, 'o, K> {
+    #[inline(always)]
+    pub(crate) fn new(out: &'a mut Out<'o>, k: &'a mut K) -> Self {
+        To { out, k }
+    }
+
+    /// Bytes `s..e` are `kind`; an empty stretch is nothing ([`Out::push`]). One call on the run
+    /// sink ([`Sink::push_call`]): these scans write a few spans a line from many places.
+    #[inline(always)]
+    pub(crate) fn push(&mut self, s: usize, e: usize, kind: u16) {
+        self.k.push_call(&mut self.out, s, e, kind);
+    }
 }
 
 /// A line's spans, on a write cursor in the scan's own fields: a span is three stores and a
@@ -194,6 +263,37 @@ impl Sink for Spans {
     #[inline(always)]
     fn start_line(&mut self) {
         (self.w, self.end) = (self.base, usize::MAX);
+    }
+
+    #[inline(always)]
+    fn mark(&self, _: &Out) -> Mark {
+        // SAFETY: the cursor is in the vector's allocation, past its start; `end` is a span's
+        // only once one is written below it
+        unsafe {
+            Mark {
+                n: self.w.offset_from(self.base) as usize,
+                prev: if self.end == usize::MAX {
+                    u32::MAX
+                } else {
+                    (*self.w.sub(1)).end
+                },
+                end: self.end,
+                last: Rule(Rule::UNSET),
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn undo(&mut self, _: &mut Out, m: Mark) {
+        // SAFETY: at or below the cursor, the spans there written; the cursor's room never
+        // shrinks, so the count holds across a growth
+        unsafe {
+            self.w = self.base.add(m.n);
+            if m.end != usize::MAX {
+                (*self.w.sub(1)).end = m.prev;
+            }
+        }
+        self.end = m.end;
     }
 }
 
@@ -424,6 +524,16 @@ impl Sink for Runs<'_> {
         }
     }
 
+    #[inline(never)]
+    fn push_call(&mut self, out: &mut &mut Out, s: usize, e: usize, kind: u16) {
+        self.merge(out, s, e, kind);
+    }
+
+    #[inline(never)]
+    fn merge_call(&mut self, out: &mut &mut Out, s: usize, e: usize, kind: u16) {
+        self.merge(out, s, e, kind);
+    }
+
     #[inline(always)]
     fn open(&mut self, _: &mut Out, _: usize) {}
 
@@ -442,6 +552,37 @@ impl Sink for Runs<'_> {
     fn start_line(&mut self) {
         (self.line, self.last, self.end) = (self.w, Rule(Rule::UNSET), 0);
     }
+
+    #[inline(always)]
+    fn mark(&self, _: &Out) -> Mark {
+        // SAFETY: the cursors are in the vector's allocation, `line` at or below `w`, the runs
+        // below `w` written
+        unsafe {
+            Mark {
+                n: self.w.offset_from(self.base) as usize,
+                prev: if self.w > self.line {
+                    (*self.w.sub(1)).end
+                } else {
+                    u32::MAX
+                },
+                end: self.end,
+                last: self.last,
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn undo(&mut self, _: &mut Out, m: Mark) {
+        // SAFETY: at or below the cursor, past the line's start where `prev` is a run's (a
+        // growth moves `line` with the runs and keeps the count)
+        unsafe {
+            self.w = self.base.add(m.n);
+            if m.prev != u32::MAX {
+                (*self.w.sub(1)).end = m.prev;
+            }
+        }
+        (self.end, self.last) = (m.end, m.last);
+    }
 }
 
 impl Runs<'_> {
@@ -456,7 +597,7 @@ impl Runs<'_> {
 
     /// [`Sink::merge`] of a span that isn't empty (a scanner's spans never are).
     #[inline(always)]
-    fn merge_span(&mut self, s: usize, e: usize, kind: u16) {
+    pub(crate) fn merge_span(&mut self, s: usize, e: usize, kind: u16) {
         let rule = self.t.get(kind);
         // a gap before it plain, each run joined to the one before where their rules are the
         // same
@@ -743,6 +884,153 @@ mod tests {
                 "<?xml version=\"1.0\"?>\n<!DOCTYPE a [\n  <!ELEMENT a (b|c)*>\n  <!ENTITY e \"x\">\n]>\n",
                 "<a x=\"1\"\n   y='2'>text &e; &#x41;<!-- c\n still -->\n<![CDATA[ raw\n<b>]]>",
                 "<b:c/></a>\n<?pi data?>\n< bad\n",
+            ),
+        );
+    }
+
+    /// Java's runs written by its scan (X-074) are those its spans give: through type arguments
+    /// read ahead and taken back (a `<` that doesn't close on its line, one that holds an
+    /// annotation), an embedded regex and SQL, Javadoc, a text block and a comment over lines.
+    #[test]
+    fn java_runs_are_its_spans() {
+        runs_are_spans(
+            Lang::Java,
+            concat!(
+                "package a.b;\nimport java.util.*;\n/** Doc {@link Map}\n * @param x the <b>x</b>\n */\n",
+                "@Deprecated(since = \"1\") public class A<T extends Map<String, List<Integer>>> {\n",
+                "  private Map<String,\n      List<int[]>> m = new HashMap<>();\n",
+                "  List<@NonNull String> n; int x = a < b ? 1 : c >> 2;\n",
+                "  Pattern p = Pattern.compile(\"^(?<y>\\\\d{4})-[a-z]+$\");\n",
+                "  @Language(\"SQL\") String q = \"SELECT a, b FROM t WHERE id = ?\";\n",
+                "  String t = \"\"\"\n    text \\n block\n    \"\"\";\n",
+                "  /* open\n  still */ void f(int... a) -> { return; }\n\n}\n",
+            ),
+        );
+    }
+
+    /// Kotlin's runs written by its scan (X-074) are those its spans give: through a string lexed
+    /// again as a regex before `.toRegex(` (its text's run joined to its quote's where their rules
+    /// are the same), templates, an embedded SQL string, raw strings and a comment over lines.
+    #[test]
+    fn kotlin_runs_are_its_spans() {
+        runs_are_spans(
+            Lang::Kotlin,
+            concat!(
+                "package a.b\nimport kotlin.text.*\n/** Doc [Map] */\n@JvmStatic fun <T> f(x: List<T>): Int {\n",
+                "    val r = \"^(\\\\d{4})-[a-z]+$\".toRegex()\n    val p = \"a.b\".toPattern(); val s = \"x $y ${z + 1}\"\n",
+                "    val q = \"SELECT a, b FROM t WHERE id = ?\" // language=SQL\n",
+                "    @Language(\"SQL\") val u = \"UPDATE t SET a = 1\"\n",
+                "    val t = \"\"\"\n      raw $v\n    \"\"\".trimIndent()\n",
+                "    /* open\n  still */ return when (x) { is A -> 1; else -> 2 }\n\n}\n",
+            ),
+        );
+    }
+
+    /// TypeScript's and TSX's runs written by their scan (X-074) are those their spans give:
+    /// through templates and their substitutions over lines, a regex literal and a regex string,
+    /// JSDoc, types, JSX's elements, attributes and text, and a comment over lines.
+    #[test]
+    fn typescript_runs_are_its_spans() {
+        let ts = concat!(
+            "import { a, b as c } from \"./m\";\n/** Doc {@link Map} @param {string} x */\n",
+            "export class A<T extends Map<string, number[]>> implements I {\n",
+            "  private m: Record<string, (x: number) => void> = {};\n",
+            "  f(x = /^(?<y>\\d{4})-[a-z]+$/gi, y = new RegExp(\"a+b\")): string {\n",
+            "    return `t ${x + `in ${y}`}\n  more ${z}`;\n  }\n",
+            "  /* open\n  still */ g = async <U,>(u: U) => u satisfies U ?? null;\n\n}\n",
+        );
+        runs_are_spans(Lang::TypeScript, ts);
+        runs_are_spans(Lang::TypeScriptReact, ts);
+        runs_are_spans(
+            Lang::TypeScriptReact,
+            concat!(
+                "const C = ({ a }: P) => (\n  <div className=\"x\" onClick={() => f(a)}>\n",
+                "    text {a ? <b>y</b> : null} &amp; more\n    <Foo.Bar {...p} k='v' />\n  </div>\n);\n",
+            ),
+        );
+    }
+
+    /// Python's runs written by its scan (X-074) are those its spans give: through f-strings and
+    /// their fields, a regex string and a SQL string, docstrings and strings over lines, and
+    /// decorators.
+    #[test]
+    fn python_runs_are_its_spans() {
+        runs_are_spans(
+            Lang::Python,
+            concat!(
+                "import re, os.path as p\nfrom a.b import (c,\n    d)\n@dataclass(frozen=True)\n",
+                "class A(B, metaclass=M):\n    \"\"\"Doc\n    more\"\"\"\n",
+                "    def f(self, x: int = 1, *a, **k) -> list[str]:\n",
+                "        r = re.compile(r\"^(?P<y>\\d{4})-[a-z]+$\")\n",
+                "        q = \"SELECT a, b FROM t WHERE id = ?\"\n",
+                "        s = f\"x {a + 1!r:>{w}} y {{z}}\" b'\\x00' \\\n            'cont'\n",
+                "        return [i ** 2 for i in range(10) if i % 2]  # c\n\nlambda: None\n",
+            ),
+        );
+    }
+
+    /// The Lisp engine's runs (four dialects) and Clojure's, written by their scans (X-074), are
+    /// those their spans give: through `#e`/`#i`/`#d` read ahead and taken back (a run of the
+    /// prefix's rule joined to the one before), `|…|` symbols, regexes, strings and comments
+    /// over lines, and lists past the depths' kinds.
+    #[test]
+    fn lisp_runs_are_their_spans() {
+        let lisp = concat!(
+            "; c\n(defun f (x &optional (y 2)) \"doc\n  more\" (let ((z #e1.5) (w #ifoo) (v #x1F))\n",
+            "  (format t \"~a~%\" '|odd sym| #\\Space #'car `(,x ,@y)) #| block\n still |# (((((((((x)))))))))))\n",
+            "#!/usr/bin/env racket\n#lang racket\n(define (g [a 1] #:k [k 2]) (regexp-match #rx\"^a(b|c)+$\" a))\n",
+            "[vector] {brace} #;(dropped) #(1 2) #e #d12 #i#x1F 1/2 -3.5e10\n",
+        );
+        for lang in [Lang::Lisp, Lang::EmacsLisp, Lang::Scheme, Lang::Racket] {
+            runs_are_spans(lang, lisp);
+        }
+        runs_are_spans(
+            Lang::Clojure,
+            concat!(
+                "(ns a.b (:require [c.d :as e]))\n;; c\n(defn f \"doc\n  more\" [x & {:keys [y]}]\n",
+                "  (let [r #\"^a(b|c)+\\d$\" m {:k 1, 'q \\c} s #{1 2}] (re-find r \"s\\n\")))\n",
+                "#?(:clj 1 :cljs 2) @(atom 1) ^:meta #_ (dropped) (((((((((x)))))))))\n",
+            ),
+        );
+    }
+
+    /// Dockerfile's runs written by its scan (X-074) are those its spans give, and Diff's (read
+    /// from its spans) too.
+    #[test]
+    fn dockerfile_and_diff_runs_are_their_spans() {
+        runs_are_spans(
+            Lang::Dockerfile,
+            concat!(
+                "# syntax=docker/dockerfile:1\nARG V=1\nFROM rust:1.80 AS build\nWORKDIR /src\n",
+                "COPY --from=build [\"a b\", \"/c\"]\nRUN cargo build \\\n    --release \"x\n  y\" 'z' && \\\n",
+                "\n    echo \\\"q\\\" # c\nONBUILD RUN make\nENV A=\"1\" B=2\nbad line\n",
+            ),
+        );
+        runs_are_spans(
+            Lang::Diff,
+            concat!(
+                "diff --git a/x b/x\nindex 1..2 100644\n--- a/x\n+++ b/x\n@@ -1,3 +1,4 @@ fn main\n",
+                " same\n-gone\n+new\n\\ No newline at end of file\n*** 1,2 ****\n--- 3,4 ----\n",
+                "! changed\n> right\n< left\n---\nIndex: f.c\n==== //depot/a#1 - /b ====\n1c1\n",
+            ),
+        );
+    }
+
+    /// C#'s runs written by its scan (X-074) are those its spans give: through lone braces and
+    /// blank lines (taken without the scan), `using` lines, an embedded regex, doc comments,
+    /// interpolated and verbatim strings over lines, and a comment over lines.
+    #[test]
+    fn csharp_runs_are_its_spans() {
+        runs_are_spans(
+            Lang::CSharp,
+            concat!(
+                "using System;\nusing System.Text.RegularExpressions;\nnamespace A.B\n{\n",
+                "    /// <summary>Doc <see cref=\"Map\"/></summary>\n    public class C<T> : I where T : new()\n    {\n",
+                "\n        private Dictionary<string, List<int>> m = new();\n",
+                "        bool r = Regex.IsMatch(s, @\"^(?<y>\\d{4})-[a-z]+$\");\n",
+                "        string t = $\"x {a + 1:N2} y\", v = @\"multi\n  line\";\n",
+                "        /* open\n  still */ void F(int a) => a switch { 1 => 2, _ => 3 };\n",
+                "    }\n}\n",
             ),
         );
     }

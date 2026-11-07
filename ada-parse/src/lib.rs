@@ -142,8 +142,10 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
 /// from its spans: a span's rule is `rules`' for its kind, a gap between spans is
 /// [`Rule::NONE`]'s, a run joins the one before where their rules are the same, a line where no
 /// rule is met has no runs, and one where one is ends at the line's end. `spans` is scratch
-/// space. Rust's scan writes the runs itself (X-068), as the line-format engine's do (X-069), and
-/// JSON's, TOML's and XML's (X-072); any other language's spans are read into them.
+/// space. Rust's scan writes the runs itself (X-068), as the line-format engine's do (X-069),
+/// JSON's, TOML's and XML's (X-072), and X-074's carried scans (Java's, C#'s, Kotlin's,
+/// TypeScript's, Python's, the Lisp engine's, Clojure's); any other language's spans are read
+/// into them.
 #[inline(never)]
 pub fn lex_runs(
     lang: Lang,
@@ -153,9 +155,9 @@ pub fn lex_runs(
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
 ) {
-    if lang == Lang::Rust {
+    if let Some((_, scan)) = carried_runs(lang) {
         spans.clear();
-        return rust::line_runs(line.as_bytes(), state, &mut Out::new(spans), rules, runs);
+        return scan(line.as_bytes(), state, &mut Out::new(spans), rules, runs);
     }
     if let Some(scan) = run_scanner(lang) {
         spans.clear();
@@ -214,9 +216,9 @@ pub fn lex_lines_runs(
     mut each: impl FnMut(usize),
 ) -> Option<usize> {
     let mut prep = prep;
-    if lang == Lang::Rust {
-        // Rust's scan writes the runs (X-068), on the shared loop (X-073)
-        return rust::block_runs(state, spans, rules, runs, &mut |c| {
+    if let Some((block, _)) = carried_runs(lang) {
+        // a carried scan writing the runs (X-068, X-074), on the shared loop (X-073)
+        return block(state, spans, rules, runs, &mut |c| {
             split_lines(text, max, buf, &mut prep, |l| each(c.next(l.as_bytes())))
         });
     }
@@ -347,11 +349,45 @@ type Block = fn(
 ) -> Option<usize>;
 
 /// As [`Carry`], a scan writing a line's runs by theme rule ([`emit::Runs`], X-068): Rust's, on
-/// the shared loop (X-073).
+/// the shared loop (X-073), and X-074's ([`carried_runs`]).
 pub(crate) trait CarryRuns {
     /// `b`, the block's next line, lexed on the scan as [`lex_runs`] lexes it after the lines
     /// before, its runs pushed: where they end.
     fn next(&mut self, b: &[u8]) -> usize;
+}
+
+/// A carried scanner's block on a run sink ([`CarryRuns`]), as [`Block`] on the spans: the runs
+/// pushed to the vector by the rules.
+type RunBlock = fn(
+    &mut State,
+    &mut Vec<Span>,
+    &mut dyn Rules,
+    &mut Vec<Run>,
+    &mut dyn FnMut(&mut dyn CarryRuns) -> Option<usize>,
+) -> Option<usize>;
+
+/// A carried scanner's line on a run sink, as [`lex_runs`] calls it.
+type LineRuns = fn(&[u8], &mut State, &mut Out, &mut dyn Rules, &mut Vec<Run>);
+
+/// `lang`'s block and line on a carried scan that writes runs: Rust's (X-068, X-073), and X-074's
+/// (Java's, C#'s, Kotlin's, TypeScript's and TSX's, Python's, the Lisp engine's and Clojure's).
+#[inline(always)]
+fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
+    Some(match lang {
+        Lang::Rust => (rust::block_runs, rust::line_runs),
+        Lang::Java => (java::block_runs, java::line_runs),
+        Lang::CSharp => (csharp::block_runs, csharp::line_runs),
+        Lang::Kotlin => (kotlin::block_runs, kotlin::line_runs),
+        Lang::TypeScript => (typescript::block_runs, typescript::line_runs),
+        Lang::TypeScriptReact => (typescript::block_runs_tsx, typescript::line_runs_tsx),
+        Lang::Python => (python::block_runs, python::line_runs),
+        Lang::Lisp => (lisp::block_runs_common, lisp::line_runs_common),
+        Lang::EmacsLisp => (lisp::block_runs_emacs, lisp::line_runs_emacs),
+        Lang::Scheme => (lisp::block_runs_scheme, lisp::line_runs_scheme),
+        Lang::Racket => (lisp::block_runs_racket, lisp::line_runs_racket),
+        Lang::Clojure => (lisp::clojure::block_runs, lisp::clojure::line_runs),
+        _ => return None,
+    })
 }
 
 /// `lang`'s block on a carried scan, where it has one. Without `SPANS`, the run API's table,
@@ -361,13 +397,13 @@ pub(crate) trait CarryRuns {
 fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
     Some(match lang {
         Lang::Rust if SPANS => rust::block,
-        Lang::Kotlin => kotlin::block,
-        Lang::Java => java::block,
-        Lang::Python => python::block,
+        Lang::Kotlin if SPANS => kotlin::block,
+        Lang::Java if SPANS => java::block,
+        Lang::Python if SPANS => python::block,
         Lang::Go => go::block,
-        Lang::CSharp => csharp::block,
-        Lang::TypeScript => typescript::block,
-        Lang::TypeScriptReact => typescript::block_tsx,
+        Lang::CSharp if SPANS => csharp::block,
+        Lang::TypeScript if SPANS => typescript::block,
+        Lang::TypeScriptReact if SPANS => typescript::block_tsx,
         Lang::JavaScript => javascript::block,
         Lang::Cpp => cpp::block,
         Lang::C => cpp::block_c,
@@ -379,11 +415,11 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::Scss => css::scss::block,
         Lang::Html => html::block,
         Lang::Xml if SPANS => xml_scan::block,
-        Lang::Lisp => lisp::block_common,
-        Lang::EmacsLisp => lisp::block_emacs,
-        Lang::Scheme => lisp::block_scheme,
-        Lang::Racket => lisp::block_racket,
-        Lang::Clojure => lisp::clojure::block,
+        Lang::Lisp if SPANS => lisp::block_common,
+        Lang::EmacsLisp if SPANS => lisp::block_emacs,
+        Lang::Scheme if SPANS => lisp::block_scheme,
+        Lang::Racket if SPANS => lisp::block_racket,
+        Lang::Clojure if SPANS => lisp::clojure::block,
         _ => return None,
     })
 }
@@ -418,8 +454,9 @@ type Scanner = fn(&str, &mut State, &mut Vec<Span>);
 type RunScanner = fn(&[u8], &mut State, &mut Out, &mut emit::Runs);
 
 /// `lang`'s lexer on a run sink, where its scan writes runs a line at a time: the line-format
-/// engine's (X-069), JSON's, TOML's and XML's (X-072; YAML's ran 1–2% slower in ada, X-072).
-/// Rust's runs come from its carried scan ([`CarryRuns`], X-068, X-073).
+/// engine's (X-069), JSON's, TOML's and XML's (X-072; YAML's ran 1–2% slower in ada, X-072),
+/// Dockerfile's (X-074; Diff's ran 3–4% slower in ada, its span API 10% slower alone).
+/// The carried scans' runs come from [`carried_runs`] (Rust's, X-068, X-073; X-074's).
 #[inline(always)]
 fn run_scanner(lang: Lang) -> Option<RunScanner> {
     Some(match lang {
@@ -435,12 +472,13 @@ fn run_scanner(lang: Lang) -> Option<RunScanner> {
         Lang::Json => json::line_runs,
         Lang::Toml => toml_scan::line_runs,
         Lang::Xml => xml_scan::line_runs,
+        Lang::Dockerfile => dockerfile::line_runs,
         _ => return None,
     })
 }
 
 /// `lang`'s lexer: its scanner behind the spans' [`Out`]. Without `SPANS`, the run API's table,
-/// the languages whose scans write runs (Rust's, X-068; [`run_scanner`]'s, X-069, X-072) are
+/// the languages whose scans write runs ([`carried_runs`]'; [`run_scanner`]'s, X-069, X-072) are
 /// none, so that a highlighter on runs doesn't carry their span scans.
 #[inline(always)]
 fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
@@ -474,6 +512,9 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
             json::tokens(l, &mut comment, v);
             s.set_word(u64::from(comment));
         },
+        Lang::Dockerfile if !SPANS => {
+            |_, _, _| unreachable!("Dockerfile's runs come from its own scan")
+        }
         Lang::Diff => |l, _, v| {
             v.clear();
             diff::line(l.as_bytes(), &mut Out::new(v));
@@ -486,22 +527,32 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::Xml => out!(xml_scan::line),
         Lang::Rust if !SPANS => |_, _, _| unreachable!("Rust's runs come from its own scan"),
         Lang::Rust => out!(rust::line),
+        Lang::Kotlin if !SPANS => |_, _, _| unreachable!("Kotlin's runs come from its own scan"),
         Lang::Kotlin => out!(kotlin::line),
+        Lang::Java if !SPANS => |_, _, _| unreachable!("Java's runs come from its own scan"),
         Lang::Java => out!(java::line),
         Lang::Cpp => out!(cpp::line),
         Lang::C => out!(cpp::line_c),
+        Lang::CSharp if !SPANS => |_, _, _| unreachable!("C#'s runs come from its own scan"),
         Lang::CSharp => out!(csharp::line),
         Lang::Go => out!(go::line),
+        Lang::Python if !SPANS => |_, _, _| unreachable!("Python's runs come from its own scan"),
         Lang::Python => out!(python::line),
         Lang::Lua => out!(lua::line),
         Lang::Sql => out!(sql::line),
         Lang::PowerShell => out!(powershell::line),
         Lang::JavaScript => out!(javascript::line),
+        Lang::TypeScript | Lang::TypeScriptReact if !SPANS => {
+            |_, _, _| unreachable!("TypeScript's runs come from its own scan")
+        }
         Lang::TypeScript => out!(|b, s, o| typescript::line(b, false, s, o)),
         Lang::TypeScriptReact => out!(|b, s, o| typescript::line(b, true, s, o)),
         Lang::Css => out!(css::line),
         Lang::Scss => out!(css::scss::line),
         Lang::Html => out!(html::line),
+        Lang::Lisp | Lang::EmacsLisp | Lang::Scheme | Lang::Racket | Lang::Clojure if !SPANS => {
+            |_, _, _| unreachable!("Lisp's and Clojure's runs come from their own scans")
+        }
         Lang::Lisp => out!(|b, s, o| lisp::line(b, Dialect::Common, s, o)),
         Lang::EmacsLisp => out!(|b, s, o| lisp::line(b, Dialect::Emacs, s, o)),
         Lang::Scheme => out!(|b, s, o| lisp::line(b, Dialect::Scheme, s, o)),
@@ -528,16 +579,6 @@ struct Out<'a>(&'a mut Vec<Span>, bool);
 impl<'a> Out<'a> {
     fn new(spans: &'a mut Vec<Span>) -> Out<'a> {
         Out(spans, true)
-    }
-
-    /// How many spans there are.
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// Drops the spans past the first `len`.
-    fn truncate(&mut self, len: usize) {
-        self.0.truncate(len);
     }
 
     /// Bytes `start..end` are `kind`; an empty stretch is skipped.

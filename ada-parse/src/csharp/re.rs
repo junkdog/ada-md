@@ -8,8 +8,8 @@
 //! but `.` and `\S` takes, and the line ends past it. Past ASCII, `\p{L}` is
 //! `char::is_alphabetic`, `\w` `char::is_alphanumeric`, `\s` ASCII's.
 
-use super::Scan;
 use super::words;
+use super::{Lex, Scan};
 use crate::clike::{CLASS, DIGIT, SPACE, WORD};
 pub(super) use crate::prim::char_len;
 
@@ -178,7 +178,7 @@ pub(super) fn space_len(b: &[u8]) -> Option<usize> {
     }
 }
 
-impl Scan<'_> {
+impl<K: Lex> Scan<'_, K> {
     /// The byte at `i`: the line's, its `\n` at the end, 0 past it.
     #[inline]
     pub(super) fn ch(&self, i: usize) -> u8 {

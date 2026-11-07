@@ -8,6 +8,7 @@
 //! Exact against bat's grammar on syntect: the `parse` fuzz target holds every byte's scopes to
 //! syntect's.
 
+use crate::emit::{Push, Runs, Sink, To};
 use crate::matcher::{Atom, atoms, is_space};
 use crate::{Out, State};
 
@@ -101,6 +102,17 @@ const EXACT_DEPTH: u64 = 96;
 /// levels bat's stack holds above `main`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
+    line_on(b, state, &mut To::new(out, &mut Push));
+}
+
+/// [`line`]'s runs by theme rule written to `k` (X-074, X-068's sink).
+pub(crate) fn line_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
+    line_on(b, state, &mut To::new(out, k));
+}
+
+/// [`line`] on a sink.
+#[inline(always)]
+fn line_on<K: Sink>(b: &[u8], state: &mut State, out: &mut To<'_, '_, K>) {
     let word = state.word();
     let mut ctx = match word & 0xf {
         1 => Ctx::Body,
@@ -167,7 +179,13 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
 
 /// The arguments or a string in them, from `p` to the line's end: the context the line
 /// leaves open, and the depth.
-fn args(b: &[u8], mut p: usize, mut ctx: Ctx, mut depth: u64, out: &mut Out) -> (Ctx, u64) {
+fn args<K: Sink>(
+    b: &[u8],
+    mut p: usize,
+    mut ctx: Ctx,
+    mut depth: u64,
+    out: &mut To<'_, '_, K>,
+) -> (Ctx, u64) {
     loop {
         if ctx == Ctx::Args {
             let k = crate::prim::find_in(b, p, b.len(), *b"\\\"'");
@@ -253,7 +271,7 @@ fn escaped(b: &[u8], k: usize) -> Option<usize> {
 }
 
 /// `^(\s*)((#).*(?m:$)\n?)`: the whole line, `\n` and all.
-fn comment(b: &[u8], out: &mut Out) -> bool {
+fn comment<K: Sink>(b: &[u8], out: &mut To<'_, '_, K>) -> bool {
     let Some(q) = b.iter().position(|&c| !is_space(c)) else {
         return false;
     };
@@ -362,9 +380,9 @@ fn word(b: &[u8], at: usize) -> (Word, usize) {
 /// …), `MAINTAINER`, `COPY` and `CMD` or `ENTRYPOINT`, `ONBUILD` before any but `MAINTAINER`
 /// (`^\s*(?i:(onbuild)\s+)?(?i:<words>)\s`). Where the match ends, its arguments' start: past
 /// the line's end when the keyword's `\s` is its `\n`. The line's first word is read once.
-fn directive(b: &[u8], out: &mut Out) -> Option<usize> {
+fn directive<K: Sink>(b: &[u8], out: &mut To<'_, '_, K>) -> Option<usize> {
     // caps 0 the keyword, 1 `onbuild` within it
-    let whole = |e: usize, onbuild: Option<usize>, kind: u16, out: &mut Out| {
+    let whole = |e: usize, onbuild: Option<usize>, kind: u16, out: &mut To<'_, '_, K>| {
         let end = e.min(b.len());
         match onbuild {
             Some(o) => {
@@ -402,7 +420,7 @@ fn directive(b: &[u8], out: &mut Out) -> Option<usize> {
 
 /// `^\s*((?i:(onbuild)\s+)?(?i:copy))(?:\s+--from=(\S+))?\s`: caps 1 the keyword, 2 `onbuild`,
 /// 3 the stage.
-fn copy(b: &[u8], out: &mut Out) -> Option<usize> {
+fn copy<K: Sink>(b: &[u8], out: &mut To<'_, '_, K>) -> Option<usize> {
     let q = spaces(b, 0);
     let (kw_end, onbuild) = match word_at(b, q, b"onbuild") {
         true => {
@@ -418,7 +436,7 @@ fn copy(b: &[u8], out: &mut Out) -> Option<usize> {
         false if word_at(b, q, b"copy") => (q + 4, false),
         false => return None,
     };
-    let keyword = |out: &mut Out| {
+    let keyword = |out: &mut To<'_, '_, K>| {
         if onbuild {
             out.push(q, q + 7, ONBUILD);
             out.push(q + 7, kw_end, KEYWORD);
@@ -443,7 +461,7 @@ fn copy(b: &[u8], out: &mut Out) -> Option<usize> {
 
 /// `^(?i:(from))\s+[^\s:@]+(?:[:@](\S+))?(?:\s+(?i:(as))\s+(\S+))?`: caps 1 `from`, 2 the tag
 /// or digest, 3 `as`, 4 the stage.
-fn from(b: &[u8], out: &mut Out) -> bool {
+fn from<K: Sink>(b: &[u8], out: &mut To<'_, '_, K>) -> bool {
     if !word_at(b, 0, b"from") {
         return false;
     }

@@ -12,6 +12,7 @@
 //! the stack, a byte a frame, runs of list tails as a count, and an open regex's state.
 
 use super::DEPTHS;
+use crate::emit::{Push, Rules, Run, Runs, Sink};
 use crate::regex;
 use crate::{Out, State};
 
@@ -226,10 +227,27 @@ fn escaped(b: &[u8], p: usize) -> bool {
 /// Lex `b`, a line of Clojure without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut s = Scan::fresh(b, state, out);
+    let mut s = Scan::fresh(b, state, out, Push);
     s.unpack(state);
     s.run();
     *state = s.pack();
+}
+
+/// [`line`]'s runs by theme rule pushed to `runs` (X-074, X-068's sink): [`crate::lex_runs`] for
+/// Clojure.
+#[inline(never)]
+pub fn line_runs(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    let mut s = Scan::fresh(b, state, out, Runs::new(rules, runs));
+    s.unpack(state);
+    s.run();
+    *state = s.pack();
+    s.k.end_line(b.len());
 }
 
 /// A block of Clojure on one scan opened from `state` ([`crate::Carry`], X-070), `state` left
@@ -241,7 +259,27 @@ pub fn block(
 ) -> Option<usize> {
     let mut out = Out::new(spans);
     let mut c = Carried {
-        s: Scan::fresh(b"", state, &mut out),
+        s: Scan::fresh(b"", state, &mut out, Push),
+        deep: None,
+    };
+    c.s.unpack(state);
+    let rest = pass(&mut c);
+    *state = c.deep.unwrap_or_else(|| c.s.pack());
+    rest
+}
+
+/// [`block`]'s runs by theme rule pushed to `runs` ([`crate::CarryRuns`], X-074).
+pub fn block_runs(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    out.0.clear();
+    let mut c = Carried {
+        s: Scan::fresh(b"", state, &mut out, Runs::new(rules, runs)),
         deep: None,
     };
     c.s.unpack(state);
@@ -253,17 +291,35 @@ pub fn block(
 /// A scan kept across a block's lines, and the state the last line left where a save and load
 /// don't leave its frames as they are (lists below the stack, or more frames than a state's
 /// codes): a block ending there hands on that state, as `line` would.
-struct Carried<'b, 'o, 's> {
-    s: Scan<'b, 'o, 's>,
+struct Carried<'b, 'o, 's, K: Sink> {
+    s: Scan<'b, 'o, 's, K>,
     deep: Option<State>,
 }
 
-impl crate::Carry for Carried<'_, '_, '_> {
+impl crate::Carry for Carried<'_, '_, '_, Push> {
     fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        self.s.out.0.clear();
+        // SAFETY: the line is set back to an empty one before `b`'s borrow ends
+        self.carry(unsafe { crate::line_for(b) });
+        self.s.out.0
+    }
+}
+
+impl crate::CarryRuns for Carried<'_, '_, '_, Runs<'_>> {
+    fn next(&mut self, b: &[u8]) -> usize {
+        self.s.k.start_line();
+        // SAFETY: as above
+        self.carry(unsafe { crate::line_for(b) });
+        self.s.k.end_line(b.len())
+    }
+}
+
+impl<'b, K: Sink> Carried<'b, '_, '_, K> {
+    /// `b`, the block's next line, lexed on the scan; the scan's line an empty one again after.
+    #[inline(always)]
+    fn carry(&mut self, b: &'b [u8]) {
         let s = &mut self.s;
-        s.out.0.clear();
-        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
-        s.b = unsafe { crate::line_for(b) };
+        s.b = b;
         s.run();
         s.b = b"";
         // a regex's state is kept only while it is the top frame (`pack`)
@@ -272,17 +328,17 @@ impl crate::Carry for Carried<'_, '_, '_> {
         }
         // `keep`'s codes in order and `expand`'s frames from them: the frames as they are
         self.deep = (s.base > 0 || s.depth > super::KEPT).then(|| s.reloaded());
-        s.out.0
     }
 }
 
-impl<'b, 'o, 's> Scan<'b, 'o, 's> {
+impl<'b, 'o, 's, K: Sink> Scan<'b, 'o, 's, K> {
     /// A scan of `b`, returned as a literal so that it is built in place; its frames are
     /// [`Scan::unpack`]'s.
     #[inline(always)]
-    fn fresh(b: &'b [u8], state: &State, out: &'o mut Out<'s>) -> Self {
+    fn fresh(b: &'b [u8], state: &State, out: &'o mut Out<'s>, k: K) -> Self {
         Scan {
             b,
+            k,
             out,
             stack: [TOP; MAX + 1],
             depth: 0,
@@ -309,8 +365,12 @@ impl<'b, 'o, 's> Scan<'b, 'o, 's> {
     }
 }
 
-struct Scan<'b, 'o, 's> {
+struct Scan<'b, 'o, 's, K: Sink> {
     b: &'b [u8],
+    /// Where the lexemes go, a line's spans or its runs by theme rule (X-074, X-068's sink).
+    k: K,
+    /// The spans' vector: the span API's, and where an embedded regex pushes its spans for the
+    /// run sink to take.
     out: &'o mut Out<'s>,
     /// The frames at `1..=depth`, bottom first; at 0 what is below them: a list body (`LIST`)
     /// while `base` counts any, else `TOP`. So the top is one load, `stack[depth]`.
@@ -326,7 +386,7 @@ struct Scan<'b, 'o, 's> {
     level: u16,
 }
 
-impl Scan<'_, '_, '_> {
+impl<K: Sink> Scan<'_, '_, '_, K> {
     fn unpack(&mut self, state: &State) {
         // most lines: every frame fits, none below the stack
         if let Some(d) = super::expand(state, LIST, &mut self.stack[1..]) {
@@ -428,7 +488,7 @@ impl Scan<'_, '_, '_> {
     }
 
     fn put(&mut self, from: usize, to: usize, kind: L) {
-        self.out.push(from, to, kind as u16);
+        self.k.push_call(&mut self.out, from, to, kind as u16);
     }
 
     /// A list's, a vector's or a map's delimiter `kind` at `from..to`, the kind of its depth
@@ -447,7 +507,7 @@ impl Scan<'_, '_, '_> {
                 self.level - 6
             };
         }
-        self.out.push(from, to, self.level + i);
+        self.k.push(&mut self.out, from, to, self.level + i);
         if i & 1 == 0 {
             self.level = if self.level == LAST {
                 FIRST
@@ -1046,21 +1106,21 @@ impl Scan<'_, '_, '_> {
         while q < n {
             match b[q] {
                 b'"' => {
-                    self.out.push_merged(from, q, L::Str as u16);
+                    self.k.merge_call(&mut self.out, from, q, L::Str as u16);
                     self.put(q, q + 1, L::StrEnd);
                     self.pop();
                     return q + 1;
                 }
                 b'\\' if q + 1 < n => {
                     let e = q + 1 + super::char_len(b[q + 1]);
-                    self.out.push_merged(from, q, L::Str as u16);
+                    self.k.merge_call(&mut self.out, from, q, L::Str as u16);
                     self.put(q, e, L::StrEscape);
                     (from, q) = (e, e);
                 }
                 _ => q += 1,
             }
         }
-        self.out.push_merged(from, n, L::Str as u16);
+        self.k.merge_call(&mut self.out, from, n, L::Str as u16);
         n
     }
 
@@ -1072,7 +1132,10 @@ impl Scan<'_, '_, '_> {
             return p + 1;
         }
         let mut at = p;
-        match regex::embedded(self.b, p, self.regex, &REGEX_EMBED, &mut at, self.out) {
+        self.k.close(self.out);
+        let r = regex::embedded(self.b, p, self.regex, &REGEX_EMBED, &mut at, self.out);
+        self.k.reopen(self.out, 16);
+        match r {
             Some((q, st)) => {
                 self.regex = st;
                 q.min(self.b.len()).max(if q > self.b.len() {

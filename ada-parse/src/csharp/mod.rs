@@ -45,6 +45,7 @@ mod re;
 mod words;
 
 use crate::clike::{CLASS, WORD};
+use crate::emit::{Rules, Run, Runs, Sink as _};
 use crate::matcher::KEPT as HALF;
 use crate::{Out, Span, State};
 use std::mem::MaybeUninit;
@@ -900,7 +901,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
 /// [`line`] by the scan, the line's leading ` ` and `\t` ending at `i`.
 #[inline(always)]
 fn scan(b: &[u8], i: usize, state: &mut State, out: &mut Out) {
-    let mut s = Scan::fresh(b, &mut *out.0, out.1);
+    let mut s = Scan::fresh(b, SpanLex::new(&mut *out.0, out.1));
     s.load_state(state);
     s.ind = s.sp_line(i);
     s.lex();
@@ -914,24 +915,203 @@ pub fn block(
     spans: &mut Vec<Span>,
     pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
 ) -> Option<usize> {
-    let mut s = Scan::fresh(b"", spans, true);
+    let mut s = Scan::fresh(b"", SpanLex::new(spans, true));
     s.load_state(state);
     let rest = pass(&mut s);
     *state = s.state();
     rest
 }
 
-impl crate::Carry for Scan<'_> {
+/// [`line`]'s runs by theme rule pushed to `runs` (X-074, X-068's sink): [`crate::lex_runs`] for
+/// C#. A blank line, a lone brace and a `using` line are the scan's here, as on a block's pass.
+#[inline(never)]
+pub fn line_runs(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    let mut s = Scan::fresh(b"", RunLex::new(rules, runs, &mut *out.0));
+    s.load_state(state);
+    crate::CarryRuns::next(&mut s, b);
+    *state = s.state();
+}
+
+/// [`block`]'s runs by theme rule pushed to `runs` ([`crate::CarryRuns`], X-074).
+pub fn block_runs(
+    state: &mut State,
+    spans: &mut Vec<Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    pass: &mut dyn FnMut(&mut dyn crate::CarryRuns) -> Option<usize>,
+) -> Option<usize> {
+    spans.clear();
+    let mut s = Scan::fresh(b"", RunLex::new(rules, runs, spans));
+    s.load_state(state);
+    let rest = pass(&mut s);
+    *state = s.state();
+    rest
+}
+
+impl crate::Carry for Scan<'_, SpanLex<'_>> {
     fn next(&mut self, b: &[u8]) -> &[Span] {
-        self.spans.clear();
-        let i = brace::lead(b);
-        // a blank line or a lone brace on the stack itself, a `using` line on the state it
-        // would be read from, as [`line`] takes them
-        if brace::on_scan(b, i, self) || (b.get(i) == Some(&b'u') && self.import(b, i)) {
-            return self.spans;
+        self.k.spans.clear();
+        // SAFETY: the line is set back to an empty one before `b`'s borrow ends
+        self.carry(unsafe { crate::line_for(b) });
+        self.k.spans
+    }
+}
+
+impl crate::CarryRuns for Scan<'_, RunLex<'_, '_>> {
+    fn next(&mut self, b: &[u8]) -> usize {
+        self.k.runs.start_line();
+        // SAFETY: as above
+        self.carry(unsafe { crate::line_for(b) });
+        self.k.runs.end_line(b.len())
+    }
+}
+
+/// Where C#'s scan writes its lexemes (X-074): its spans held in the scan, as its fast paths were
+/// tuned on them ([`SpanLex`]), or ada's runs by theme rule ([`RunLex`]). Each copy is compiled
+/// where it's used, so the span API's code is as it was.
+pub(crate) trait Lex {
+    /// Whether the fast paths can't write `n` more lexemes as they are (spans at their capacity).
+    fn full(&self, n: usize) -> bool;
+    /// Bytes `s..e` (`s < e`) are kind `k`: joined to the last lexeme where it ends at `s` with
+    /// the same kind.
+    fn emit(&mut self, s: usize, e: usize, k: u16);
+    /// As [`Lex::emit`], with room for one ([`Lex::full`] false): a span that doesn't fit is
+    /// dropped, never grown into.
+    fn emit_room(&mut self, s: usize, e: usize, k: u16);
+    /// The spans' vector, for a scan that pushes spans there itself: a regex's, a lone brace's,
+    /// a `using` line's.
+    fn out(&mut self) -> Out<'_>;
+    /// What was pushed to [`Lex::out`] taken: the run sink's runs.
+    fn took(&mut self);
+}
+
+/// C#'s spans, held directly ([`Out`]'s vector and flag): the span API.
+pub(crate) struct SpanLex<'b> {
+    /// Whether a span joins the last when it touches it with the same kind ([`Out`]'s flag).
+    merge: bool,
+    /// The line's spans ([`Out`]'s, held directly).
+    spans: &'b mut Vec<Span>,
+}
+
+impl<'b> SpanLex<'b> {
+    #[inline(always)]
+    fn new(spans: &'b mut Vec<Span>, merge: bool) -> Self {
+        SpanLex { merge, spans }
+    }
+}
+
+impl Lex for SpanLex<'_> {
+    #[inline(always)]
+    fn full(&self, n: usize) -> bool {
+        self.spans.len() + n > self.spans.capacity()
+    }
+
+    #[inline(always)]
+    fn emit(&mut self, s: usize, e: usize, k: u16) {
+        if let Some(last) = self.spans.last_mut()
+            && last.end as usize == s
+            && last.kind == k
+            && self.merge
+        {
+            last.end = e as u32;
+            return;
         }
-        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
-        self.b = unsafe { crate::line_for(b) };
+        self.spans.push(Span {
+            start: s as u32,
+            end: e as u32,
+            kind: k,
+        });
+    }
+
+    #[inline(always)]
+    fn emit_room(&mut self, s: usize, e: usize, k: u16) {
+        if let Some(last) = self.spans.last_mut()
+            && last.end as usize == s
+            && last.kind == k
+            && self.merge
+        {
+            last.end = e as u32;
+        } else if self.spans.len() < self.spans.capacity() {
+            self.spans.push(Span {
+                start: s as u32,
+                end: e as u32,
+                kind: k,
+            });
+        }
+    }
+
+    #[inline(always)]
+    fn out(&mut self) -> Out<'_> {
+        Out(&mut *self.spans, self.merge)
+    }
+
+    #[inline(always)]
+    fn took(&mut self) {}
+}
+
+/// C#'s runs by theme rule (X-074): what its scan writes goes to the run sink, what another scan
+/// pushes to the spans' vector is taken from there.
+pub(crate) struct RunLex<'b, 'r> {
+    runs: Runs<'r>,
+    spans: &'b mut Vec<Span>,
+}
+
+impl<'b, 'r> RunLex<'b, 'r> {
+    #[inline(always)]
+    fn new(rules: &'r mut dyn Rules, runs: &'r mut Vec<Run>, spans: &'b mut Vec<Span>) -> Self {
+        RunLex {
+            runs: Runs::new(rules, runs),
+            spans,
+        }
+    }
+}
+
+impl Lex for RunLex<'_, '_> {
+    #[inline(always)]
+    fn full(&self, _: usize) -> bool {
+        false
+    }
+
+    #[inline(always)]
+    fn emit(&mut self, s: usize, e: usize, k: u16) {
+        self.runs.merge_span(s, e, k);
+    }
+
+    #[inline(always)]
+    fn emit_room(&mut self, s: usize, e: usize, k: u16) {
+        self.runs.merge_span(s, e, k);
+    }
+
+    #[inline(always)]
+    fn out(&mut self) -> Out<'_> {
+        Out::new(&mut *self.spans)
+    }
+
+    #[inline(always)]
+    fn took(&mut self) {
+        self.runs.reopen(&mut Out::new(&mut *self.spans), 0);
+    }
+}
+
+impl<'b, K: Lex> Scan<'b, K> {
+    /// `b`, the block's next line, lexed on this scan: a blank line or a lone brace on the stack
+    /// itself, a `using` line on the state it would be read from, as [`line`] takes them; the
+    /// scan's line an empty one again after.
+    #[inline(always)]
+    fn carry(&mut self, b: &'b [u8]) {
+        let i = brace::lead(b);
+        let taken = brace::on_scan(b, i, self) || (b.get(i) == Some(&b'u') && self.import(b, i));
+        self.k.took();
+        if taken {
+            return;
+        }
+        self.b = b;
         self.text = PLAIN;
         self.at = 0;
         self.step = 0;
@@ -951,15 +1131,12 @@ impl crate::Carry for Scan<'_> {
             self.reload();
         }
         self.b = b"";
-        self.spans
     }
-}
 
-impl<'b> Scan<'b> {
-    /// A scan of `b`, its spans to `spans` (joined where `merge`), returned as a literal so that it
-    /// is built in place; the state is [`Scan::load_state`]'s.
+    /// A scan of `b`, its lexemes to `k`, returned as a literal so that it is built in place;
+    /// the state is [`Scan::load_state`]'s.
     #[inline(always)]
-    fn fresh(b: &'b [u8], spans: &'b mut Vec<Span>, merge: bool) -> Self {
+    fn fresh(b: &'b [u8], k: K) -> Self {
         Scan {
             b,
             ind: 0,
@@ -979,8 +1156,7 @@ impl<'b> Scan<'b> {
             pcache: std::cell::Cell::new((usize::MAX, None)),
             when: std::cell::Cell::new((usize::MAX, 0)),
             regex_calls: None,
-            merge,
-            spans,
+            k,
         }
     }
 
@@ -993,7 +1169,7 @@ impl<'b> Scan<'b> {
     }
 }
 
-impl Scan<'_> {
+impl<K: Lex> Scan<'_, K> {
     /// The stack and its levels' bits from `state`: the held levels above the bottom one in one
     /// copy, then each level's bits, none where no level gives any (the last save's flag, the
     /// usual case), else folded up from the bottom.
@@ -1031,7 +1207,7 @@ impl Scan<'_> {
     #[inline(never)]
     fn import(&mut self, b: &[u8], i: usize) -> bool {
         let state = self.state();
-        import::line(b, i, &state, &mut Out(&mut *self.spans, self.merge))
+        import::line(b, i, &state, &mut self.k.out())
     }
 
     /// The state the scan's last line leaves, its flag the lowest held level that gives bits of
@@ -1107,7 +1283,7 @@ static HELD_BITS: [[u16; KEPT]; KEPT + 1] = {
 /// ends, and where the blanks after it end.
 type Pair = (usize, usize, usize);
 
-pub(crate) struct Scan<'b> {
+pub(crate) struct Scan<'b, K: Lex> {
     /// The line, without its `\n`: its length is where the `\n` is.
     b: &'b [u8],
     /// Where the line's indentation ends, `^\s*` (its `\n` not taken).
@@ -1146,10 +1322,8 @@ pub(crate) struct Scan<'b> {
     when: std::cell::Cell<(usize, usize)>,
     /// The line's regex calls, found at its first string ([`RegexCalls`]).
     regex_calls: Option<RegexCalls>,
-    /// Whether a span joins the last when it touches it with the same kind ([`Out`]'s flag).
-    merge: bool,
-    /// The line's spans ([`Out`]'s, held directly).
-    spans: &'b mut Vec<Span>,
+    /// Where the lexemes go: the line's spans, or its runs by theme rule (X-074).
+    k: K,
 }
 
 /// The commas after the first argument of `Regex.IsMatch(` and the like on a line (up to
@@ -1326,7 +1500,7 @@ fn regex_first_argument(b: &[u8], q: usize) -> bool {
         || ends_word(b, w, b"RegularExpressionAttribute")
 }
 
-impl<'b> Scan<'b> {
+impl<'b> Scan<'b, SpanLex<'b>> {
     #[cfg(test)]
     fn for_test(b: &'b [u8], _state: &mut State, spans: &'b mut Vec<Span>) -> Self {
         Scan {
@@ -1348,13 +1522,12 @@ impl<'b> Scan<'b> {
             pcache: std::cell::Cell::new((usize::MAX, None)),
             when: std::cell::Cell::new((usize::MAX, 0)),
             regex_calls: None,
-            merge: true,
-            spans,
+            k: SpanLex::new(spans, true),
         }
     }
 }
 
-impl Scan<'_> {
+impl<K: Lex> Scan<'_, K> {
     /// The context at level `i`, below `depth`.
     #[inline(always)]
     fn ctx_at(&self, i: usize) -> u8 {
@@ -1430,19 +1603,7 @@ impl Scan<'_> {
     /// same kind.
     #[inline(always)]
     fn emit(&mut self, s: usize, e: usize, k: u16) {
-        if let Some(last) = self.spans.last_mut()
-            && last.end as usize == s
-            && last.kind == k
-            && self.merge
-        {
-            last.end = e as u32;
-            return;
-        }
-        self.spans.push(Span {
-            start: s as u32,
-            end: e as u32,
-            kind: k,
-        });
+        self.k.emit(s, e, k);
     }
 
     /// Bytes `s..e` are `leaf` in the top context, after the text before them.
@@ -1459,26 +1620,14 @@ impl Scan<'_> {
     fn put_kind(&mut self, s: usize, e: usize, k: u16) {
         let n = self.b.len();
         let at = self.at;
-        if (s.min(n) > at && self.text != PLAIN) || self.spans.len() == self.spans.capacity() {
+        if (s.min(n) > at && self.text != PLAIN) || self.k.full(1) {
             return self.put_slow(s, e, k);
         }
         let at = at.max(s.min(n));
         let s = s.max(at);
         let e = e.min(n);
         if k != PLAIN && e > s {
-            if let Some(last) = self.spans.last_mut()
-                && last.end as usize == s
-                && last.kind == k
-                && self.merge
-            {
-                last.end = e as u32;
-            } else if self.spans.len() < self.spans.capacity() {
-                self.spans.push(Span {
-                    start: s as u32,
-                    end: e as u32,
-                    kind: k,
-                });
-            }
+            self.k.emit_room(s, e, k);
         }
         self.at = at.max(e);
     }

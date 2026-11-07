@@ -3,7 +3,7 @@
 
 use super::*;
 
-impl Scan<'_, '_> {
+impl<K: Sink> Scan<'_, '_, K> {
     /// A regex context's own patterns at `p` (its string's prototype is tried before).
     pub(super) fn regex(&mut self, p: usize, c: u8) -> Option<usize> {
         match c {

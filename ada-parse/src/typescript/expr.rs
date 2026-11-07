@@ -55,7 +55,7 @@ enum Chain {
     Unknown,
 }
 
-impl Scan<'_, '_, '_> {
+impl<K: Sink> Scan<'_, '_, '_, K> {
     /// `expression` at the place.
     pub(super) fn expression(&mut self) -> bool {
         let c = self.c(self.i);
