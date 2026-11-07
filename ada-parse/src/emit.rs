@@ -1100,6 +1100,24 @@ mod tests {
         );
     }
 
+    /// JavaScript's runs written by its scan (X-058) are those its spans give: through a
+    /// function, an arrow and a class, a regex literal and `RegExp(…)`'s string (the regex
+    /// scanner's spans taken as runs), a template over lines, JSX and a comment over lines.
+    #[test]
+    fn javascript_runs_are_its_spans() {
+        runs_are_spans(
+            Lang::JavaScript,
+            concat!(
+                "#!/usr/bin/env node\n'use strict';\nimport { a as b } from \"x\";\n",
+                "function f(a, b = 1) { return a / b; }\nconst g = async (x, y) => x + y, h = z => z;\n",
+                "class A extends B {\n  static get x() { return this.y; }\n  m(p) { super.m(p); }\n}\n",
+                "let r = /^a[/.]b\\/(?<n>c)/gu, s = new RegExp(\"(\\\\d+)\", 'g');\n",
+                "const t = `a ${b + `c${d}`} e\nf`;\nconst j = (\n  <div className=\"x\">{y}&amp;</div>\n);\n",
+                "/* open\n still */ obj.key = function* () {}; o = { k: 1, 'q': [2, -3.5e1], m() {} };\n",
+            ),
+        );
+    }
+
     /// SCSS's runs written by its scan (X-075) are those its spans give: through CSS's selectors,
     /// at-rules, functions, strings and a comment over lines, its front matter (YAML's spans
     /// taken as runs), interpolation, maps and `//` comments. (CSS's are read from its spans:

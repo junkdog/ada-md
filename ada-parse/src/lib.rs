@@ -448,6 +448,7 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
         Lang::Makefile => (bash::make_block_runs, bash::make_line_runs),
         Lang::Cpp => (cc::block_runs, cc::line_runs),
         Lang::C => (cc::block_runs_c, cc::line_runs_c),
+        Lang::JavaScript => (javascript::block_runs, javascript::line_runs),
         _ => return None,
     })
 }

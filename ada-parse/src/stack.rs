@@ -6,7 +6,7 @@
 //! a kind built from the stack's wrap, spans never joined) keep their own. No behavior of
 //! their own: what each did before, the digests hold.
 
-use crate::{Out, State, matcher::KEPT as HALF};
+use crate::{State, matcher::KEPT as HALF};
 
 /// How many levels a state holds: its `levels`, then its `withs` as more of them.
 pub const HELD: usize = 2 * HALF;
@@ -116,28 +116,4 @@ fn hold_top(stack: &mut [u8], depth: &mut usize, exact: &mut bool) {
     stack.copy_within(1 + from..*depth, 1);
     *depth -= from;
     *exact = false;
-}
-
-impl Out<'_> {
-    /// The text from `*at`, where the spans end, to `p` is `text` (plain where it is 0, no
-    /// span), and the spans end at `p`; a `p` at or before `*at` leaves both.
-    #[inline(always)]
-    pub fn fill(&mut self, at: &mut usize, p: usize, text: u16) {
-        if p > *at {
-            if text != 0 {
-                self.push_merged(*at, p, text);
-            }
-            *at = p;
-        }
-    }
-
-    /// Bytes `s..e` of a line `n` long are `leaf` (plain where it is 0), after the text before
-    /// them is `text`: the token from where the spans end, so never over one already out. (The
-    /// two fills branch where `leaf != 0 && e > *at` took a `setcc` and a `max`: JavaScript
-    /// +0.74% instructions that way, −0.48% this way, against its own emitter.)
-    #[inline(always)]
-    pub fn put(&mut self, at: &mut usize, s: usize, e: usize, n: usize, text: u16, leaf: u16) {
-        self.fill(at, s.min(n), text);
-        self.fill(at, e.min(n), leaf);
-    }
 }

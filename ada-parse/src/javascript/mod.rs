@@ -22,6 +22,9 @@
 //! [`State`]'s levels). A JSX element's context keeps its tag's name as a 7-bit hash there, so
 //! a closing tag on a later line is matched by its hash; on its own line, by its text.
 
+mod code;
+
+use crate::emit::{Push, Rules, Run, Runs, Sink, Spans};
 use crate::prim::{WORD, char_len, digit, is_word, stops, wide_digit, wide_space, word_end};
 use crate::regex;
 use crate::{Out, State};
@@ -345,13 +348,21 @@ const SYNTECT_DEPTH: usize = 99;
 /// Lex `b`, a line of JavaScript without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    lex(b, 0, state, out);
+    let mut s = Scan::fresh(b, 0, state, out, Spans::new());
+    s.load_state(state);
+    s.k.open(s.out, b.len() / 4 + 16);
+    s.lex();
+    s.k.close(s.out);
+    *state = State::keep(&s.stack, s.depth, s.exact, 0);
 }
 
 /// Lex `b`, a line holding JavaScript from `from` (HTML's `<script>` and `on…="…"`), from `state`.
 #[inline(never)]
 pub(crate) fn line_from(b: &[u8], from: usize, state: &mut State, out: &mut Out) {
-    lex(b, from, state, out);
+    let mut s = Scan::fresh(b, from, state, out, Push);
+    s.load_state(state);
+    s.lex();
+    *state = State::keep(&s.stack, s.depth, s.exact, 0);
 }
 
 /// Whether a span of kind `kind` is a context's text (a comment's, a string's, a regex
@@ -365,12 +376,21 @@ pub(crate) fn is_text(kind: u16) -> bool {
             .is_some_and(|k| regex::is_set_text(k % regex::KINDS as u16))
 }
 
-#[inline(always)]
-fn lex(b: &[u8], from: usize, state: &mut State, out: &mut Out) {
-    let mut s = Scan::fresh(b, from, state, out);
+/// [`line`]'s runs by theme rule pushed to `runs` (X-058, X-068's sink): [`crate::lex_runs`]
+/// for JavaScript.
+#[inline(never)]
+pub fn line_runs(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    let mut s = Scan::fresh(b, 0, state, out, Runs::new(rules, runs));
     s.load_state(state);
     s.lex();
     *state = State::keep(&s.stack, s.depth, s.exact, 0);
+    s.k.end_line(b.len());
 }
 
 /// A block's lines on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
@@ -381,18 +401,57 @@ pub fn block(
     pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
 ) -> Option<usize> {
     let mut out = Out::new(spans);
-    let mut s = Scan::fresh(b"", 0, state, &mut out);
+    out.0.clear();
+    let mut s = Scan::fresh(b"", 0, state, &mut out, Spans::new());
     s.load_state(state);
+    s.k.open(s.out, 64);
     let rest = pass(&mut s);
     *state = State::keep(&s.stack, s.depth, s.exact, 0);
     rest
 }
 
-impl crate::Carry for Scan<'_, '_> {
+/// [`block`]'s runs by theme rule pushed to `runs` ([`crate::CarryRuns`], X-058), the lines'
+/// loop compiled with the scan ([`crate::RunLines`], X-086).
+pub fn block_runs(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    lines: &mut crate::RunLines,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    out.0.clear();
+    let mut s = Scan::fresh(b"", 0, state, &mut out, Runs::new(rules, runs));
+    s.load_state(state);
+    let rest = lines.pass(&mut s);
+    *state = State::keep(&s.stack, s.depth, s.exact, 0);
+    rest
+}
+
+impl crate::Carry for Scan<'_, '_, Spans> {
     fn next(&mut self, b: &[u8]) -> &[crate::Span] {
-        self.out.0.clear();
-        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
-        self.b = unsafe { crate::line_for(b) };
+        self.k.start_line();
+        // SAFETY: the line is set back to an empty one before `b`'s borrow ends
+        self.carry(unsafe { crate::line_for(b) });
+        self.k.close(self.out);
+        self.out.0
+    }
+}
+
+impl crate::CarryRuns for Scan<'_, '_, Runs<'_>> {
+    fn next(&mut self, b: &[u8]) -> usize {
+        self.k.start_line();
+        // SAFETY: as above
+        self.carry(unsafe { crate::line_for(b) });
+        self.k.end_line(b.len())
+    }
+}
+
+impl<'b, K: Sink + Loop> Scan<'b, '_, K> {
+    /// `b`, the block's next line, lexed on this scan; the scan's line an empty one again after.
+    #[inline(always)]
+    fn carry(&mut self, b: &'b [u8]) {
+        self.b = b;
         // the tags read only below their count
         self.tag_count = 0;
         self.low = self.depth;
@@ -413,7 +472,6 @@ impl crate::Carry for Scan<'_, '_> {
         // the line's end as a state's save and load leave it (`line` leaves that to its state)
         crate::stack::hold(&mut self.stack, &mut self.depth, &mut self.exact);
         self.b = b"";
-        self.out.0
     }
 }
 
@@ -425,11 +483,11 @@ const NO_NAME: Name = Name {
     mask: 0,
 };
 
-impl<'b, 'c> Scan<'b, 'c> {
+impl<'b, 'c, K: Sink + Loop> Scan<'b, 'c, K> {
     /// A scan of `b`, its spans from `from`, returned as a literal so that it is built in place;
     /// the state is [`Scan::load_state`]'s.
     #[inline(always)]
-    fn fresh(b: &'b [u8], from: usize, state: &State, out: &'b mut Out<'c>) -> Self {
+    fn fresh(b: &'b [u8], from: usize, state: &State, out: &'b mut Out<'c>, k: K) -> Self {
         Scan {
             b,
             stack: [MAIN; MAX],
@@ -437,6 +495,7 @@ impl<'b, 'c> Scan<'b, 'c> {
             tags: [(0, 0, 0); TAGS],
             tag_count: 0,
             depth: 1,
+            cur: MAIN,
             low: 1,
             exact: state.is_exact(),
             text: PLAIN,
@@ -448,8 +507,16 @@ impl<'b, 'c> Scan<'b, 'c> {
             parens: std::cell::Cell::new((usize::MAX, None)),
             paren_read: std::cell::Cell::new(0),
             paren_ends: std::cell::RefCell::new(Vec::new()),
+            openers: std::cell::RefCell::new(Vec::new()),
+            sets: std::cell::Cell::new(0),
+            pending: [const { std::mem::MaybeUninit::uninit() }; code::PENDING],
+            npending: 0,
+            prefix: None,
+            slow_at: usize::MAX,
             run: std::cell::Cell::new((usize::MAX, 0)),
             member: usize::MAX,
+            ahead: std::cell::Cell::new((UNREAD, UNREAD, UNREAD)),
+            k,
             out,
         }
     }
@@ -461,12 +528,17 @@ impl<'b, 'c> Scan<'b, 'c> {
     fn load_state(&mut self, state: &State) {
         // the levels kept, whole: those above the depth are never read
         self.depth = state.load(&mut self.stack);
+        self.cur = self.stack[self.depth - 1];
         self.low = self.depth;
     }
 
     /// The line lexed from the stack it starts with.
     #[inline(always)]
     fn lex(&mut self) {
+        self.ahead.set((UNREAD, UNREAD, UNREAD));
+        self.npending = 0;
+        self.prefix = None;
+        self.slow_at = usize::MAX;
         self.refresh();
         self.run();
         self.fill(self.b.len());
@@ -590,7 +662,7 @@ fn eol(b: &[u8], i: usize) -> bool {
 
 /// Whether `s` is at `i`.
 fn has(b: &[u8], i: usize, s: &[u8]) -> bool {
-    b.len() >= i + s.len() && &b[i..i + s.len()] == s
+    crate::has_at(b, i, s)
 }
 
 /// `(\((?>(?>[^()]+)|\g<-1>)*\))` at `p`: where the balanced parentheses end.
@@ -657,6 +729,137 @@ fn paren_ends(b: &[u8], ends: &mut Vec<u32>) {
         ends[top as usize] = NO_END;
         top = below;
     }
+}
+
+/// [`Scan::ahead`] not read yet on the line.
+const UNREAD: usize = usize::MAX;
+/// [`Scan::ahead`]'s none.
+const NONE_AHEAD: usize = usize::MAX - 1;
+
+/// [`Scan::sets`]: [`Scan::openers`] holds every method body's opener on the line.
+const SET_BODY: u8 = 1;
+/// [`Scan::sets`]: [`Scan::openers`] holds every arrow's opener on the line.
+const SET_ARROW: u8 = 2;
+
+/// What precedes a `{` or a `=>`, past ASCII's blanks.
+enum Before {
+    /// A `)` here.
+    Paren(usize),
+    /// A comment's end or a character past ASCII: a `)` may hide behind it.
+    Unsure,
+    None,
+}
+
+/// [`Scan::ahead`] for `b`: each `{` and `=>` found 8 bytes a step, the `)` before it (past
+/// ASCII's blanks) the bound; past a comment or a character past ASCII, the `{` or `=` itself;
+/// and the last `=>`. With it [`Scan::sets`]'s bits, and `set` filled as [`Scan::openers`]: each
+/// `)` matched back to its `(`, a read within twice the line's length (else no set holds).
+#[inline(never)]
+fn read_ahead(b: &[u8], set: &mut Vec<u32>) -> ((usize, usize, usize), u8) {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const HIGHS: u64 = 0x8080_8080_8080_8080;
+    let found = |x: u64, c: u8| {
+        let y = x ^ (ONES * u64::from(c));
+        y.wrapping_sub(ONES) & !y & HIGHS
+    };
+    let before = |i: usize| -> Before {
+        let mut j = i;
+        while j > 0 && matches!(b[j - 1], b' ' | b'\t' | b'\x0b' | b'\x0c' | b'\r') {
+            j -= 1;
+        }
+        match j.checked_sub(1).map(|k| b[k]) {
+            Some(b')') => Before::Paren(j - 1),
+            Some(b'/' | 0x80..) => Before::Unsure,
+            _ => Before::None,
+        }
+    };
+    set.clear();
+    let mut exact = if b.len() < (u32::MAX / 4) as usize {
+        SET_BODY | SET_ARROW
+    } else {
+        0
+    };
+    let (mut arrow, mut body, mut last) = (NONE_AHEAD, NONE_AHEAD, NONE_AHEAD);
+    let mut at = |k: usize| match b[k] {
+        b'{' => match before(k) {
+            Before::Paren(c) => {
+                body = c;
+                set.push((c as u32) << 1);
+            }
+            Before::Unsure => {
+                body = k;
+                exact &= !SET_BODY;
+            }
+            Before::None => {}
+        },
+        b'>' if k > 0 && b[k - 1] == b'=' => {
+            last = k - 1;
+            match before(k - 1) {
+                Before::Paren(c) => {
+                    arrow = c;
+                    set.push((c as u32) << 1 | 1);
+                }
+                Before::Unsure => {
+                    arrow = k - 1;
+                    exact &= !SET_ARROW;
+                }
+                Before::None => {}
+            }
+        }
+        _ => {}
+    };
+    let mut i = 0;
+    while i + 8 <= b.len() {
+        let x = u64::from_le_bytes(b[i..i + 8].try_into().unwrap());
+        let mut m = found(x, b'{') | found(x, b'>');
+        while m != 0 {
+            at(i + (m.trailing_zeros() / 8) as usize);
+            m &= m - 1;
+        }
+        i += 8;
+    }
+    while i < b.len() {
+        at(i);
+        i += 1;
+    }
+    if exact != 0 && !set.is_empty() {
+        // each `)` matched back to its `(`: the `(` whose balanced read ends there
+        let mut budget = 2 * b.len() + 64;
+        for e in set.iter_mut() {
+            let c = (*e >> 1) as usize;
+            let mut depth = 0usize;
+            let mut o = usize::MAX;
+            let mut k = c + 1;
+            while k > 0 {
+                k -= 1;
+                match b[k] {
+                    b')' => depth += 1,
+                    b'(' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            o = k;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let spent = c + 1 - k;
+            if spent > budget {
+                exact = 0;
+                break;
+            }
+            budget -= spent;
+            *e = if o == usize::MAX {
+                u32::MAX
+            } else {
+                (o as u32) << 1 | (*e & 1)
+            };
+        }
+        set.retain(|&e| e != u32::MAX);
+        set.sort_unstable();
+    }
+    ((arrow, body, last), exact)
 }
 
 /// `(?=(balanced)\s*(=>))` at `p`.
@@ -921,72 +1124,7 @@ const W_GQL: u16 = 1 << 14;
 /// (`W_*`), none for a word no pattern looks for. A name that has none and that none of `=:(`.[`
 /// follows can only be `literal-variable`'s.
 fn word_mask(w: &[u8]) -> u16 {
-    // one `match`: the compiler tells the words apart by length and bytes
-    match w {
-        b"Array" | b"ArrayBuffer" | b"Boolean" | b"DataView" | b"Date" | b"Float32Array"
-        | b"Float64Array" | b"Function" | b"Int16Array" | b"Int32Array" | b"Int8Array"
-        | b"JSON" | b"Map" | b"Math" | b"Number" | b"Object" | b"Promise" | b"Proxy"
-        | b"Reflect" | b"RegExp" | b"Set" | b"String" | b"Symbol" | b"System" | b"TypeError"
-        | b"Uint16Array" | b"Uint32Array" | b"Uint8Array" | b"Uint8ClampedArray" | b"WeakMap"
-        | b"WeakSet" | b"Error" | b"EvalError" | b"RangeError" | b"ReferenceError"
-        | b"SyntaxError" | b"URIError" | b"Buffer" => W_SUPPORT_CLASS,
-        b"Infinity" => W_SUPPORT_CLASS | W_NUMBER,
-        b"NaN" => W_SUPPORT_CLASS | W_CONSTANT,
-        b"constructor" => W_SUPPORT_OTHER | W_LANG_VAR,
-        b"decodeURI"
-        | b"decodeURIComponent"
-        | b"encodeURI"
-        | b"encodeURIComponent"
-        | b"escape"
-        | b"eval"
-        | b"hasOwnProperty"
-        | b"isFinite"
-        | b"isNaN"
-        | b"isPrototypeOf"
-        | b"parseFloat"
-        | b"parseInt"
-        | b"propertyIsEnumerable"
-        | b"toLocaleString"
-        | b"toString"
-        | b"unescape"
-        | b"valueOf"
-        | b"clearImmediate"
-        | b"clearInterval"
-        | b"clearTimeout"
-        | b"require"
-        | b"setImmediate"
-        | b"setInterval"
-        | b"setTimeout"
-        | b"document"
-        | b"window"
-        | b"global"
-        | b"GLOBAL"
-        | b"root"
-        | b"__dirname"
-        | b"__filename"
-        | b"console"
-        | b"process"
-        | b"exports" => W_SUPPORT_OTHER,
-        b"module" => W_SUPPORT_OTHER | W_KEYWORD,
-        b"const" | b"let" | b"var" | b"await" | b"yield" | b"return" | b"if" | b"else"
-        | b"catch" | b"finally" | b"throw" | b"try" | b"break" | b"continue" | b"do" | b"goto"
-        | b"while" | b"case" | b"enum" | b"public" | b"package" | b"private" | b"protected"
-        | b"debugger" => W_KEYWORD,
-        b"default" => W_KEYWORD | W_MODULE,
-        b"interface" => W_KEYWORD | W_CLASS,
-        b"import" | b"export" | b"from" | b"as" => W_MODULE,
-        b"class" => W_CLASS,
-        b"declare" | b"type" => W_FLOW,
-        b"true" | b"false" | b"null" | b"undefined" => W_CONSTANT,
-        b"arguments" | b"super" | b"this" | b"self" | b"__proto__" | b"prototype" => W_LANG_VAR,
-        b"new" => W_NEW | W_OPERATOR,
-        b"delete" | b"instanceof" | b"in" | b"of" | b"typeof" | b"void" | b"with" => W_OPERATOR,
-        b"async" | b"function" | b"static" | b"get" | b"set" => W_OTHER,
-        b"for" | b"switch" => W_FOR_SWITCH,
-        b"styled" | b"injectGlobal" | b"keyframes" => W_STYLED,
-        b"gql" => W_GQL,
-        _ => 0,
-    }
+    code::info(w).mask
 }
 
 /// The keywords a regex literal can follow, `\Wnew|…|^yield`.
@@ -1097,7 +1235,25 @@ const fn re_str_embed(yields: &'static [bool; 256], host: u16, text: u16) -> reg
     }
 }
 
-struct Scan<'b, 'c> {
+/// Whether a sink's scan runs the code frames' own loop ([`Scan::code_run`]): not HTML's embed
+/// (`Push`), whose copy of the scan stays the dispatch's alone, in ada beside the run copy.
+trait Loop {
+    const LOOP: bool;
+}
+
+impl Loop for Push {
+    const LOOP: bool = false;
+}
+
+impl Loop for Spans {
+    const LOOP: bool = true;
+}
+
+impl Loop for Runs<'_> {
+    const LOOP: bool = true;
+}
+
+struct Scan<'b, 'c, K: Sink> {
     /// The line, without its `\n`: its length is where the `\n` is.
     b: &'b [u8],
     stack: [u8; MAX],
@@ -1106,6 +1262,8 @@ struct Scan<'b, 'c> {
     /// How many tags were pushed on this line: the last [`TAGS`] are in `tags`, by count.
     tag_count: usize,
     depth: usize,
+    /// The top context, `stack[depth - 1]`, read without the stack (X-058).
+    cur: u8,
     /// The lowest depth the stack has had on this line: levels from it up were pushed on it.
     low: usize,
     exact: bool,
@@ -1132,10 +1290,34 @@ struct Scan<'b, 'c> {
     /// Where the parentheses opened at each `(` of the line end ([`paren_ends`]), kept across a
     /// block's lines for its allocation.
     paren_ends: std::cell::RefCell<Vec<u32>>,
+    /// The `(`s whose `)` a `{` follows (`(` at `2i`) or a `=>` (`2i + 1`), sorted, where
+    /// [`Scan::sets`] says the line's are all known (X-058): a method's or an arrow's opener is
+    /// one of them, with no balanced read from it.
+    openers: std::cell::RefCell<Vec<u32>>,
+    /// Which of [`Scan::openers`]' sets hold on the line: [`SET_BODY`], [`SET_ARROW`].
+    sets: std::cell::Cell<u8>,
+    /// The groups opened on this line whose `(` may turn out an arrow's or a method's, decided
+    /// at their `)` ([`code::Pending`], X-058): those below [`Scan::npending`].
+    pending: [std::mem::MaybeUninit<code::Pending>; code::PENDING],
+    npending: usize,
+    /// An assignment's `name =` whose value starts with the `(` at `.0`: that group's undo
+    /// point is before the name ([`code::Prefix`]).
+    prefix: Option<code::Prefix>,
+    /// A place the code frames' loop hands straight to the dispatch, once (a group's `(` or a
+    /// name taken back).
+    slow_at: usize,
     /// The last run of `\s` read from a place ([`Scan::spaces_at`]): where it starts and ends.
     run: std::cell::Cell<(usize, usize)>,
     /// Where the last member after a `.` [`Scan::after_object`] took starts.
     member: usize,
+    /// Where the line's last `)` before `\s*=>` and its last before `\s*{` (or a comment) are, at
+    /// most ([`NONE_AHEAD`] for none), read once a line when first asked ([`UNREAD`] till then):
+    /// an arrow's parameters and a method's close at neither past them (X-058); and where its
+    /// last `=>` is.
+    ahead: std::cell::Cell<(usize, usize, usize)>,
+    /// Where the lexemes go: a line's spans, as [`Out`] pushes them, or its runs by theme rule
+    /// (X-058, X-068's sink).
+    k: K,
     out: &'b mut Out<'c>,
 }
 
@@ -1152,9 +1334,17 @@ struct Name {
     mask: u16,
 }
 
-impl<'b> Scan<'b, '_> {
+impl<'b, K: Sink + Loop> Scan<'b, '_, K> {
+    #[inline(always)]
     fn top(&self) -> u8 {
-        self.stack[self.depth - 1]
+        self.cur
+    }
+
+    /// The top context replaced by `c`, in place (a regex's state).
+    #[inline(always)]
+    fn set_top(&mut self, c: u8) {
+        self.stack[self.depth - 1] = c;
+        self.cur = c;
     }
 
     fn refresh(&mut self) {
@@ -1208,31 +1398,48 @@ impl<'b> Scan<'b, '_> {
 
     /// The text up to `p` is the top context's.
     fn fill(&mut self, p: usize) {
-        self.out.fill(&mut self.at, p.min(self.b.len()), self.text);
+        let text = self.text;
+        self.fill_as(p, text);
+    }
+
+    /// The text up to `p` (past the line's end, to it) is `text`: one call on the run sink
+    /// ([`Sink::merge_call`]), these writes being inlined at many places.
+    #[inline(always)]
+    fn fill_as(&mut self, p: usize, text: u16) {
+        let p = p.min(self.b.len());
+        if p > self.at {
+            if text != PLAIN {
+                self.k.merge_call(&mut self.out, self.at, p, text);
+            }
+            self.at = p;
+        }
     }
 
     /// Bytes `s..e` are `leaf`, after the text before them.
     fn put(&mut self, s: usize, e: usize, leaf: u16) {
-        self.out
-            .put(&mut self.at, s, e, self.b.len(), self.text, leaf);
+        self.fill(s);
+        self.fill_as(e, leaf);
     }
 
     fn push(&mut self, c: u8) {
         if self.depth == MAX {
             crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
-            // the levels moved: the tags' places no longer name them
+            // the levels moved: the tags' places no longer name them, nor the groups' theirs
             self.tag_count = 0;
+            self.npending = 0;
             self.tags = [(0, 0, 0); TAGS];
             self.low = self.low.saturating_sub(1).max(1);
         }
         self.stack[self.depth] = c;
         self.depth += 1;
+        self.cur = c;
         self.refresh();
     }
 
     fn pop(&mut self) {
         if self.depth > 1 {
             self.depth -= 1;
+            self.cur = self.stack[self.depth - 1];
         }
         self.low = self.low.min(self.depth);
         self.refresh();
@@ -1294,6 +1501,14 @@ impl<'b> Scan<'b, '_> {
         let end = self.b.len() + 1;
         let mut p = self.at;
         loop {
+            // the code frames' own loop first (X-058), where one is on top
+            if K::LOOP && p < self.b.len() && code::is_fast(self.top()) {
+                let q = self.code_run(p);
+                if q != p {
+                    self.stuck = 0;
+                    p = q;
+                }
+            }
             // at the line's `\n` and past it no pattern of code, of a comment or of a template's
             // text can match (`core` and `expression` take nothing there, nor these contexts'
             // own patterns): the dispatches there would fail
@@ -1999,12 +2214,51 @@ impl<'b> Scan<'b, '_> {
 
     /// `(?=(…)\s*(=>))` at `p`.
     fn arrow_follows(&self, p: usize) -> bool {
-        self.is(p, b'(') && arrow_follows_in(self.b, self.balanced(p))
+        if !self.is(p, b'(') || !self.ahead_of(p).0 {
+            return false;
+        }
+        if self.sets.get() & SET_ARROW != 0 {
+            return self.opens(p, 1);
+        }
+        arrow_follows_in(self.b, self.balanced(p))
+    }
+
+    /// Whether the line's last `)` before `=>`, and its last before `{`, are past `p`.
+    #[inline(always)]
+    fn ahead_of(&self, p: usize) -> (bool, bool, bool) {
+        let (mut a, mut c, mut d) = self.ahead.get();
+        if a == UNREAD {
+            let x;
+            ((a, c, d), x) = read_ahead(self.b, &mut self.openers.borrow_mut());
+            self.ahead.set((a, c, d));
+            self.sets.set(x);
+        }
+        (
+            a != NONE_AHEAD && a > p,
+            c != NONE_AHEAD && c > p,
+            d != NONE_AHEAD && d > p,
+        )
     }
 
     /// A method's body after its parameters at `p`.
     fn body_follows(&self, p: usize) -> bool {
-        self.is(p, b'(') && body_follows_in(self.b, self.balanced(p))
+        if !self.is(p, b'(') || !self.ahead_of(p).1 {
+            return false;
+        }
+        if self.sets.get() & SET_BODY != 0 {
+            return self.opens(p, 0);
+        }
+        body_follows_in(self.b, self.balanced(p))
+    }
+
+    /// Whether the `(` at `p` is one of [`Scan::openers`]' set `kind` (0 a method's body, 1 an
+    /// arrow's).
+    #[inline(always)]
+    fn opens(&self, p: usize, kind: u32) -> bool {
+        self.openers
+            .borrow()
+            .binary_search(&((p as u32) << 1 | kind))
+            .is_ok()
     }
 
     /// The name at `p`, read once.
@@ -2310,10 +2564,15 @@ impl<'b> Scan<'b, '_> {
     /// `async`, `function`, `(…) =>` or a name before `=>`.
     fn function_value(&self, q: usize) -> bool {
         let b = self.b;
-        has(b, q, b"async")
-            || has(b, q, b"function")
-            || self.arrow_follows(q)
-            || ident(b, q).is_some_and(|e| has(b, spaces(b, e), b"=>"))
+        match self.c(q) {
+            Some(b'(') => self.arrow_follows(q),
+            Some(c) if ident_start(Some(c)) => {
+                (c == b'a' && has(b, q, b"async"))
+                    || (c == b'f' && has(b, q, b"function"))
+                    || ident(b, q).is_some_and(|e| has(b, spaces(b, e), b"=>"))
+            }
+            _ => false,
+        }
     }
 
     /// Whether a pattern of `core` or `expression` can start at the blank at `p`: one after a
@@ -3592,15 +3851,18 @@ impl<'b> Scan<'b, '_> {
             }
             usize::from(host == STR_S)
         };
-        let (q, st) = regex::embedded(
+        self.k.close(self.out);
+        let r = regex::embedded(
             self.b,
             p,
             top & regex::ECMA_STATE,
             &RE_STR_EMBED[which],
             &mut self.at,
             self.out,
-        )?;
-        self.stack[self.depth - 1] = RE_STR | st;
+        );
+        self.k.reopen(self.out, 16);
+        let (q, st) = r?;
+        self.set_top(RE_STR | st);
         Some(q)
     }
 
@@ -4344,15 +4606,18 @@ impl<'b> Scan<'b, '_> {
     /// A regex literal's body from `p`, where its end didn't match, in context `top`: the
     /// regex to where its end can (a `/` outside its groups and classes) or past the line.
     fn regex(&mut self, p: usize, top: u8) -> Option<usize> {
-        let (q, st) = regex::embedded(
+        self.k.close(self.out);
+        let r = regex::embedded(
             self.b,
             p,
             top & regex::ECMA_STATE,
             &RE_EMBED,
             &mut self.at,
             self.out,
-        )?;
-        self.stack[self.depth - 1] = REGEX | st;
+        );
+        self.k.reopen(self.out, 16);
+        let (q, st) = r?;
+        self.set_top(REGEX | st);
         Some(q)
     }
 }
@@ -4433,7 +4698,7 @@ mod tests {
         for (line, long) in &lines {
             let (state, mut spans) = (crate::State::default(), Vec::new());
             let mut out = crate::Out::new(&mut spans);
-            let s = super::Scan::fresh(line, 0, &state, &mut out);
+            let s = super::Scan::fresh(line, 0, &state, &mut out, crate::emit::Push);
             let all = 0..=line.len() + 1;
             for p in all.clone().chain(all.clone().rev()).chain(all) {
                 assert_eq!(s.balanced(p), super::balanced(line, p), "at {p}");
@@ -4460,7 +4725,7 @@ mod tests {
                 let b = line.as_bytes();
                 let (state, mut spans) = (crate::State::default(), Vec::new());
                 let mut out = crate::Out::new(&mut spans);
-                let s = super::Scan::fresh(b, 0, &state, &mut out);
+                let s = super::Scan::fresh(b, 0, &state, &mut out, crate::emit::Push);
                 let all = 0..=b.len() + 1;
                 for p in all.clone().chain(all.clone().rev()).chain(all) {
                     assert_eq!(s.spaces_at(p), super::spaces(b, p), "{line:?} at {p}");
@@ -4471,6 +4736,98 @@ mod tests {
 
     /// Every word a pattern at a name's start looks for has that pattern's bit: a word without
     /// it skips the pattern.
+    /// The word table's masks (X-058) are those of the `match` it replaced.
+    #[test]
+    fn the_word_tables_masks_are_the_matchs() {
+        use super::*;
+        #[allow(clippy::match_same_arms)]
+        fn old_mask(w: &[u8]) -> u16 {
+            // one `match`: the compiler tells the words apart by length and bytes
+            match w {
+                b"Array" | b"ArrayBuffer" | b"Boolean" | b"DataView" | b"Date"
+                | b"Float32Array" | b"Float64Array" | b"Function" | b"Int16Array"
+                | b"Int32Array" | b"Int8Array" | b"JSON" | b"Map" | b"Math" | b"Number"
+                | b"Object" | b"Promise" | b"Proxy" | b"Reflect" | b"RegExp" | b"Set"
+                | b"String" | b"Symbol" | b"System" | b"TypeError" | b"Uint16Array"
+                | b"Uint32Array" | b"Uint8Array" | b"Uint8ClampedArray" | b"WeakMap"
+                | b"WeakSet" | b"Error" | b"EvalError" | b"RangeError" | b"ReferenceError"
+                | b"SyntaxError" | b"URIError" | b"Buffer" => W_SUPPORT_CLASS,
+                b"Infinity" => W_SUPPORT_CLASS | W_NUMBER,
+                b"NaN" => W_SUPPORT_CLASS | W_CONSTANT,
+                b"constructor" => W_SUPPORT_OTHER | W_LANG_VAR,
+                b"decodeURI"
+                | b"decodeURIComponent"
+                | b"encodeURI"
+                | b"encodeURIComponent"
+                | b"escape"
+                | b"eval"
+                | b"hasOwnProperty"
+                | b"isFinite"
+                | b"isNaN"
+                | b"isPrototypeOf"
+                | b"parseFloat"
+                | b"parseInt"
+                | b"propertyIsEnumerable"
+                | b"toLocaleString"
+                | b"toString"
+                | b"unescape"
+                | b"valueOf"
+                | b"clearImmediate"
+                | b"clearInterval"
+                | b"clearTimeout"
+                | b"require"
+                | b"setImmediate"
+                | b"setInterval"
+                | b"setTimeout"
+                | b"document"
+                | b"window"
+                | b"global"
+                | b"GLOBAL"
+                | b"root"
+                | b"__dirname"
+                | b"__filename"
+                | b"console"
+                | b"process"
+                | b"exports" => W_SUPPORT_OTHER,
+                b"module" => W_SUPPORT_OTHER | W_KEYWORD,
+                b"const" | b"let" | b"var" | b"await" | b"yield" | b"return" | b"if" | b"else"
+                | b"catch" | b"finally" | b"throw" | b"try" | b"break" | b"continue" | b"do"
+                | b"goto" | b"while" | b"case" | b"enum" | b"public" | b"package" | b"private"
+                | b"protected" | b"debugger" => W_KEYWORD,
+                b"default" => W_KEYWORD | W_MODULE,
+                b"interface" => W_KEYWORD | W_CLASS,
+                b"import" | b"export" | b"from" | b"as" => W_MODULE,
+                b"class" => W_CLASS,
+                b"declare" | b"type" => W_FLOW,
+                b"true" | b"false" | b"null" | b"undefined" => W_CONSTANT,
+                b"arguments" | b"super" | b"this" | b"self" | b"__proto__" | b"prototype" => {
+                    W_LANG_VAR
+                }
+                b"new" => W_NEW | W_OPERATOR,
+                b"delete" | b"instanceof" | b"in" | b"of" | b"typeof" | b"void" | b"with" => {
+                    W_OPERATOR
+                }
+                b"async" | b"function" | b"static" | b"get" | b"set" => W_OTHER,
+                b"for" | b"switch" => W_FOR_SWITCH,
+                b"styled" | b"injectGlobal" | b"keyframes" => W_STYLED,
+                b"gql" => W_GQL,
+                _ => 0,
+            }
+        }
+
+        for w in super::code::LIST_WORDS {
+            assert_eq!(
+                super::word_mask(w),
+                old_mask(w),
+                "{}",
+                String::from_utf8_lossy(w)
+            );
+        }
+        for w in [&b"foo"[..], b"Foo", b"thi", b"thiss", b"Arra", b"", b"x"] {
+            assert_eq!(super::word_mask(w), old_mask(w));
+        }
+    }
+
     #[test]
     fn the_word_mask_names_every_pattern_a_word_can_start() {
         use super::*;
