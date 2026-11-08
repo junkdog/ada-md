@@ -30,6 +30,7 @@
 
 mod code;
 mod items;
+pub(crate) mod own;
 
 use crate::clike::{CLASS, HIGH, LOWER, SPACE, UPPER, WORD};
 use crate::emit::{Rules, Run, Runs, Sink, Spans};
