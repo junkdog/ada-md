@@ -12,14 +12,26 @@ pub(super) const A_LEAF: u16 = 0;
 pub(super) const A_CASE: u16 = 1;
 /// `public`, `private`, `protected`: a `:` after is a class's section.
 pub(super) const A_ACCESS: u16 = 2;
-/// `class`, `struct`, `union`: the next `{` opens a class's body.
+/// `class`, `struct`, `union`: the next `{` opens a class's body, the name before it the
+/// class's.
 pub(super) const A_CLASS: u16 = 3;
 /// `enum`: the next `{` opens its enumerators.
 pub(super) const A_ENUM: u16 = 4;
-/// `namespace`, `extern` (`extern "C" {`): the next `{` opens a namespace's level.
+/// `extern` (`extern "C" {`): the next `{` opens a namespace's level.
 pub(super) const A_NS: u16 = 5;
 /// One of C99's functions: its leaf only where called.
 pub(super) const A_C99: u16 = 6;
+/// `namespace`: its name next, the `{` after opening a namespace's level.
+pub(super) const A_NAMESPACE: u16 = 7;
+/// `typedef`: the name before its `;` is the type's.
+pub(super) const A_TYPEDEF: u16 = 8;
+/// `using`: a name before `=` is the alias's.
+pub(super) const A_USING: u16 = 9;
+/// `operator`: with its symbol (or the word after it) a function's name.
+pub(super) const A_OPERATOR: u16 = 10;
+/// `struct`, `union`: as [`A_CLASS`], their names' leaves their own.
+pub(super) const A_STRUCT: u16 = 11;
+pub(super) const A_UNION: u16 = 12;
 
 /// Where an [`INFO`] entry's action starts.
 pub(super) const ACT: u16 = 8;
@@ -47,9 +59,9 @@ const KEYWORDS: [(&[u8], u16, u16, u8); 118] = [
     (b"signed", STORAGE_TYPE, A_LEAF, BOTH),
     (b"unsigned", STORAGE_TYPE, A_LEAF, BOTH),
     (b"void", STORAGE_TYPE, A_LEAF, BOTH),
-    (b"typedef", STORAGE_TYPE, A_LEAF, BOTH),
-    (b"struct", STORAGE_TYPE, A_CLASS, BOTH),
-    (b"union", STORAGE_TYPE, A_CLASS, BOTH),
+    (b"typedef", STORAGE_TYPE, A_TYPEDEF, BOTH),
+    (b"struct", STORAGE_TYPE, A_STRUCT, BOTH),
+    (b"union", STORAGE_TYPE, A_UNION, BOTH),
     (b"enum", STORAGE_TYPE, A_ENUM, BOTH),
     // C's modifiers
     (b"static", MODIFIER, A_LEAF, BOTH),
@@ -94,11 +106,11 @@ const KEYWORDS: [(&[u8], u16, u16, u8); 118] = [
     (b"typename", STORAGE_TYPE, A_LEAF, CXX),
     (b"template", TEMPLATE_KW, A_LEAF, CXX),
     (b"concept", STORAGE_TYPE, A_LEAF, CXX),
-    (b"namespace", CONTROL, A_NS, CXX),
-    (b"using", CONTROL, A_LEAF, CXX),
+    (b"namespace", CONTROL, A_NAMESPACE, CXX),
+    (b"using", CONTROL, A_USING, CXX),
     (b"new", CONTROL, A_LEAF, CXX),
     (b"delete", CONTROL, A_LEAF, CXX),
-    (b"operator", CONTROL, A_LEAF, CXX),
+    (b"operator", CONTROL, A_OPERATOR, CXX),
     (b"try", CONTROL, A_LEAF, CXX),
     (b"catch", CONTROL, A_LEAF, CXX),
     (b"requires", CONTROL, A_LEAF, CXX),

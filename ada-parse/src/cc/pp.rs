@@ -12,7 +12,7 @@ impl<K: Sink> Scan<'_, '_, K> {
     #[inline(never)]
     pub(super) fn directive(&mut self, h: usize) {
         let b = self.b;
-        let kept = (self.prev, self.pending, self.ternary, self.case);
+        let kept = self.kept();
         self.at = h;
         let mut s = h + 1;
         while s < b.len() && CC[usize::from(b[s])] & SP != 0 {
@@ -24,6 +24,12 @@ impl<K: Sink> Scan<'_, '_, K> {
         }
         let w = &b[s..e];
         let e = e.max(h + 1);
+        match w {
+            b"if" | b"ifdef" | b"ifndef" => self.ifd = self.depth.saturating_add(1),
+            b"else" | b"elif" | b"elifdef" | b"elifndef" => self.branch(),
+            b"endif" => self.ifd = 0,
+            _ => {}
+        }
         match w {
             b"include" | b"include_next" | b"import" => {
                 self.put::<true>(h, e, IMPORT_INCLUDE);
@@ -46,13 +52,16 @@ impl<K: Sink> Scan<'_, '_, K> {
             b"if" => {
                 self.put::<true>(h, e, IMPORT);
                 self.pp = PP_REST;
+                // a number right after `#if` is one (bat's); `#if 0` opens a disabled branch
                 let t = skip_blanks(b, e);
-                if b.get(t) == Some(&b'0')
-                    && b.get(t + 1).is_none_or(|&c| CC[usize::from(c)] & NW == 0)
-                {
-                    self.put::<true>(t, t + 1, DEC);
-                    self.pp_rest(t + 1);
-                    if self.pp == PP_NONE && self.mode == M_CODE {
+                let mut d = t;
+                while d < b.len() && b[d].is_ascii_digit() {
+                    d += 1;
+                }
+                if d > t && b.get(d).is_none_or(|&c| CC[usize::from(c)] & NW == 0) {
+                    self.put::<true>(t, d, DEC);
+                    self.pp_rest(d);
+                    if &b[t..d] == b"0" && self.pp == PP_NONE && self.mode == M_CODE {
                         (self.mode, self.aux) = (M_DISABLED, 0);
                     }
                 } else {
@@ -65,7 +74,7 @@ impl<K: Sink> Scan<'_, '_, K> {
                 self.pp_rest(e);
             }
         }
-        (self.prev, self.pending, self.ternary, self.case) = kept;
+        self.restore(kept);
     }
 
     /// An include's path after its word, at `e`: `<…>` or `"…"`, then the line's rest.
@@ -115,7 +124,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             }
         }
         self.pp = PP_BODY;
-        self.prev = P_OTHER;
+        self.body_start();
         self.code::<true>(p);
         self.end_pp();
     }
@@ -220,6 +229,11 @@ impl<K: Sink> Scan<'_, '_, K> {
         self.end_pp();
     }
 
+    /// A `#define`'s body's line starts as an expression's: no declaration, no entity.
+    fn body_start(&mut self) {
+        (self.prev, self.decl, self.paren, self.angle) = (P_OTHER, D_DONE, 0, 0);
+    }
+
     /// A directive's line ended: its text filled to the end; the directive goes on on the next
     /// line where this one ends in `\` or in a comment or string that does.
     pub(super) fn end_pp(&mut self) {
@@ -240,18 +254,19 @@ impl<K: Sink> Scan<'_, '_, K> {
         if self.mode == M_DISABLED {
             return self.disabled();
         }
-        let kept = (self.prev, self.pending, self.ternary, self.case);
+        let kept = self.kept();
         let p = if self.pp != PP_NONE {
             self.resume::<true>()
         } else {
             self.resume::<false>()
         };
         match self.pp {
-            PP_NONE => self.code::<false>(p),
+            PP_NONE => self.code_line(p),
             PP_BODY => {
+                self.body_start();
                 self.code::<true>(p);
                 self.end_pp();
-                (self.prev, self.pending, self.ternary, self.case) = kept;
+                self.restore(kept);
             }
             _ => {
                 if p < self.b.len() {
@@ -259,7 +274,7 @@ impl<K: Sink> Scan<'_, '_, K> {
                 } else {
                     self.end_pp();
                 }
-                (self.prev, self.pending, self.ternary, self.case) = kept;
+                self.restore(kept);
             }
         }
     }
@@ -317,7 +332,7 @@ impl<K: Sink> Scan<'_, '_, K> {
 
 /// Where the blanks at `p` end.
 #[inline(always)]
-fn skip_blanks(b: &[u8], mut p: usize) -> usize {
+pub(super) fn skip_blanks(b: &[u8], mut p: usize) -> usize {
     while p < b.len() && CC[usize::from(b[p])] & SP != 0 {
         p += 1;
     }

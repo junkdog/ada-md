@@ -184,6 +184,8 @@ fn directives() {
         "#define BAR(a, b) ((a) + (b)) \\",
         "  * 2",
         "#if defined(X) && X > 2",
+        "#if 1",
+        "#endif",
         "#error \"no\" don't",
         "#if 0",
         "int dead;",
@@ -208,6 +210,7 @@ fn directives() {
     has(false, &l, "2", "constant.numeric.integer.decimal.c++");
     has(false, &l, "defined", "keyword.control.c++");
     has(false, &l, "(X) && X > 2", "meta.preprocessor.c++");
+    has(false, &l, "1", "constant.numeric.integer.decimal.c++");
     has(false, &l, "don't", "string.unquoted.c++");
     has(
         false,
@@ -268,4 +271,180 @@ fn a_block_lexes_as_its_lines() {
     });
     assert_eq!(all, one.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
     assert_eq!(state, one.last().unwrap().1);
+}
+
+#[test]
+fn definitions_and_parameters() {
+    let l = [
+        "static int",
+        "foo(SSL *ssl, const char *name, int n = g(1, 2), int arr[]) {",
+        "  return bar(ssl, n);",
+        "}",
+        "std::string Foo::get(std::map<int, int> m, unsigned) const;",
+        "Foo::~Foo() {}",
+        "bool operator==(const A &a);",
+        "FOO(x);",
+        "int x = make(1);",
+        "void f2(int a,",
+        "        int b) {}",
+    ];
+    for f in ["foo", "get", "~Foo", "operator==", "f2"] {
+        has(false, &l, f, "entity.name.function.c++");
+    }
+    for v in ["ssl", "name", "n", "arr", "m", "unsigned", "a", "b"] {
+        has(false, &l, v, "variable.parameter.c++");
+    }
+    for c in ["bar", "g", "FOO", "make"] {
+        has(false, &l, c, "variable.function.c++");
+    }
+    has(false, &l, "int", "storage.type.c++");
+    // a class's members: constructors, a macro's call, `operator` before a type
+    let l = [
+        "class EXPORT Foo final : public Bar {",
+        " public:",
+        "  Foo(int v);",
+        "  DISALLOW_COPY(Foo);",
+        "  operator bool() const;",
+        "  void run() { go(1); }",
+        "};",
+    ];
+    has(false, &l, "Foo", "entity.name.class.c++");
+    plain(false, &l, "EXPORT");
+    has(false, &l, "Foo", "entity.name.function.c++");
+    has(false, &l, "v", "variable.parameter.c++");
+    has(false, &l, "DISALLOW_COPY", "variable.function.c++");
+    has(false, &l, "bool", "entity.name.function.c++");
+    has(false, &l, "run", "entity.name.function.c++");
+    has(false, &l, "go", "variable.function.c++");
+    // C: `void` alone isn't a parameter, `restrict` before `)` is one
+    let l = ["int f(void);", "int g(char *restrict);"];
+    has(true, &l, "void", "storage.type.c");
+    has(true, &l, "restrict", "variable.parameter.c");
+    has(true, &l, "g", "entity.name.function.c");
+}
+
+#[test]
+fn entity_names() {
+    let l = [
+        "namespace a::b {",
+        "struct S;",
+        "struct stat st;",
+        "struct T { int x; };",
+        "enum class E : int { A };",
+        "union U { int i; };",
+        "typedef struct node node_t;",
+        "typedef struct { int x; } anon_t;",
+        "typedef void (*cb_t)(int a);",
+        "using Alias = std::vector<int>;",
+        "using namespace std;",
+        "}",
+    ];
+    has(false, &l, "a", "entity.name.namespace.c++");
+    has(
+        false,
+        &l,
+        "::",
+        "entity.name.namespace.c++ punctuation.accessor.double-colon.c++",
+    );
+    has(false, &l, "b", "entity.name.namespace.c++");
+    for s in ["S", "T"] {
+        has(false, &l, s, "entity.name.struct.c++");
+    }
+    plain(false, &l, "stat");
+    plain(false, &l, "st");
+    has(false, &l, "E", "entity.name.enum.c++");
+    has(false, &l, "U", "entity.name.union.c++");
+    for t in ["node_t", "anon_t"] {
+        has(false, &l, t, "entity.name.type.typedef.c++");
+    }
+    plain(false, &l, "node");
+    plain(false, &l, "cb_t");
+    plain(false, &l, "x");
+    has(false, &l, "Alias", "entity.name.type.using.c++");
+    plain(false, &l, "std");
+}
+
+#[test]
+fn a_directive_keeps_the_statement() {
+    // a parameter list across a directive, a `#define`'s body no definition
+    let l = ["int f(int a,", "#define G(x) int h(x)", "      int b);"];
+    has(false, &l, "b", "variable.parameter.c++");
+    has(false, &l, "h", "variable.function.c++");
+}
+
+#[test]
+fn bodies_after_branches_and_parameters() {
+    // a struct among the parameters names no level: the body's calls stay calls
+    let l = ["static void z(struct poly *p) {", "  memset_x(p);", "}"];
+    has(true, &l, "memset_x", "variable.function.c");
+    // each branch's header a definition, the body after them at the code's level
+    let l = [
+        "#if X",
+        "int k(int a) {",
+        "#else",
+        "int k(int a, int b) {",
+        "#endif",
+        "  return go(a);",
+        "}",
+        "int m(int c);",
+    ];
+    has(true, &l, "go", "variable.function.c");
+    has(true, &l, "m", "entity.name.function.c");
+    has(true, &l, "c", "variable.parameter.c");
+    // C's `extern "C" {` is a block of code; C++'s a namespace's level
+    let l = ["extern \"C\" {", "int f(int a);", "}"];
+    has(true, &l, "f", "variable.function.c");
+    has(false, &l, "f", "entity.name.function.c++");
+}
+
+#[test]
+fn macros_around_definitions() {
+    let l = [
+        "const STACK_OF(X509_EXTENSION) *X509_get0_extensions(const X509 *x);",
+        "DECL_X(a) qux(int c);",
+        "OPENSSL_MSVC_PRAGMA(warning(push, 3))",
+        "#include <winsock2.h>",
+        "OPENSSL_MSVC_PRAGMA(warning(pop))",
+    ];
+    for f in ["STACK_OF", "DECL_X", "OPENSSL_MSVC_PRAGMA"] {
+        has(true, &l, f, "variable.function.c");
+    }
+    for f in ["X509_get0_extensions", "qux"] {
+        has(true, &l, f, "entity.name.function.c");
+    }
+    let got = lexed(true, &l);
+    assert!(
+        !got.iter()
+            .any(|(t, s)| t == "OPENSSL_MSVC_PRAGMA" && s.starts_with("entity")),
+        "{got:#?}"
+    );
+}
+
+#[test]
+fn line_ends_and_nested_parameters() {
+    let l = [
+        "void* f1(size_t n) MI_FORWARD(go, n)",
+        "void* f2(size_t n) MI_FORWARD(go, n)",
+        "TEST_END",
+        "TEST_BEGIN(test_x) {",
+        "}",
+        "static my_t",
+        "bar(int b);",
+        "void f(int (*cmp)(const void *a, int), const STACK_OF(X) *s, int n);",
+        "Foo::Foo(int a)",
+        "    : x_(a),",
+        "      y_(g(a)) {}",
+    ];
+    for f in ["f1", "f2", "bar", "f", "Foo"] {
+        has(false, &l, f, "entity.name.function.c++");
+    }
+    for c in ["MI_FORWARD", "TEST_BEGIN", "STACK_OF", "x_", "y_"] {
+        has(false, &l, c, "variable.function.c++");
+    }
+    for v in ["b", "s", "n"] {
+        has(false, &l, v, "variable.parameter.c++");
+    }
+    for p in ["test_x", "cmp", "X"] {
+        plain(false, &l, p);
+    }
 }

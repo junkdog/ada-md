@@ -15,13 +15,21 @@
 //! what each open `{` opened, two bits a level (a namespace's level, a class's body, code, an
 //! initializer), and what a line can end in (a block comment, a string's or a line comment's
 //! `\` continuation, a raw string and its delimiter, a directive continued, an `#if 0`'s
-//! depth), with the token before the line's first ([`Scan::prev`]).
+//! depth), with the token before the line's first ([`Scan::prev`]) and the statement so far
+//! ([`Scan::decl`]).
+//!
+//! A name before `(` is a definition's or a call's by the statement it is in: at a namespace's
+//! or a class's level, after a type and outside parentheses, a definition's, whose list's words
+//! before `,` or `)` are its parameters ([`D_PARAMS`]); elsewhere a call's. The names after
+//! `class`, `struct`, `union`, `enum`, `namespace`, `using` and in a `typedef` are told by the
+//! word before them ([`P_ENTITY`]) and the byte after. bat's rules where a line's end or a macro
+//! decides are followed as probed (vault `ada-parse.md`, X-057's R2).
 //!
 //! Stages (vault `ada-parse.md`, X-057's redesign): **R1** this loop and the directive lexer
-//! ([`pp`]); R2 definitions, parameters and the names after `class`, `namespace`, `typedef`,
-//! `using`; R3 the tail parity shows (templates' `<>`, casts, attributes, raw strings' corners);
-//! R4 the switch, [`crate::cpp`] deleted. Until R4 it runs where ada-parse is built with
-//! `ADA_PARSE_X057` set ([`crate::X057`]).
+//! ([`pp`]); **R2** definitions, parameters and the entity names; R3 the tail parity shows
+//! (templates' `<>`, casts, attributes, raw strings' corners); R4 the switch, [`crate::cpp`]
+//! deleted. Until R4 it runs where ada-parse is built with `ADA_PARSE_X057` set
+//! ([`crate::X057`]).
 
 mod code;
 mod pp;
@@ -155,6 +163,15 @@ leaves! {
     PP_FUNCTION = ["entity.name.function.preprocessor"],
     PP_CONSTANT = ["entity.name.constant.preprocessor"],
     LABEL = ["entity.name.label"],
+    FUNC_DEF = ["entity.name.function"],
+    CLASS_NAME = ["entity.name.class"],
+    STRUCT_NAME = ["entity.name.struct"],
+    UNION_NAME = ["entity.name.union"],
+    ENUM_NAME = ["entity.name.enum"],
+    NAMESPACE_NAME = ["entity.name.namespace"],
+    NAMESPACE_SEP = ["entity.name.namespace", "punctuation.accessor.double-colon"],
+    TYPEDEF_NAME = ["entity.name.type.typedef"],
+    USING_NAME = ["entity.name.type.using"],
 }
 
 /// The scopes under `source.c++` a kind carries, outermost first.
@@ -220,6 +237,45 @@ const P_ACCESS: u8 = 3;
 const P_OTHER: u8 = 4;
 /// C's `->`: bat's C leaves the member after it plain (C++ colors it, as it does after `.`).
 const P_ARROW: u8 = 5;
+/// A word that names what follows ([`Scan::entity`]): `class`, `struct`, `union`, `enum`,
+/// `namespace`, `using`, `operator`.
+const P_ENTITY: u8 = 6;
+
+// What a statement at a namespace's or a class's level is so far ([`Scan::decl`]), for what a
+// name before `(` is: a definition's (or a declaration's) name, or a call.
+/// Nothing that rules a definition out: a name before `(` after a type is one.
+const D_NONE: u8 = 0;
+/// No definition: after a `=` (an initializer), a `:` (an initializer list, a base list).
+const D_DONE: u8 = 1;
+/// After a definition's parameters: no definition, and a line's end ends the statement
+/// (`void f(int n) MACRO(n)`, no `;`).
+const D_DEFINED: u8 = 2;
+/// A parameter's default value: code, to its `,` or the list's `)`.
+const D_DEFAULT: u8 = 3;
+/// A `typedef`'s, at its own level: the name before its `;` is the type's.
+const D_TYPEDEF: u8 = 4;
+/// A definition's parameter list: the word before a `,`, `)`, `[` or `=` is a parameter.
+const D_PARAMS: u8 = 5;
+
+// What a word names ([`Scan::entity`], [`ENTITY_LEAF`]).
+const E_CLASS: u8 = 1;
+const E_STRUCT: u8 = 2;
+const E_UNION: u8 = 3;
+const E_ENUM: u8 = 4;
+const E_NAMESPACE: u8 = 5;
+const E_USING: u8 = 6;
+const E_OPERATOR: u8 = 7;
+/// Each entity's leaf for the name it names.
+const ENTITY_LEAF: [u16; 8] = [
+    PLAIN,
+    CLASS_NAME,
+    STRUCT_NAME,
+    UNION_NAME,
+    ENUM_NAME,
+    NAMESPACE_NAME,
+    USING_NAME,
+    FUNC_DEF,
+];
 
 // [`State::arg`]'s bits.
 const A_MODE: u16 = 0x7;
@@ -234,7 +290,10 @@ const NO_PENDING: u8 = 0;
 
 /// A raw string's delimiter's bytes [`State`] keeps; a longer one is told by these and its
 /// length.
-const DELIM_KEPT: usize = 12;
+const DELIM_KEPT: usize = 8;
+/// Where [`State::withs`] keeps the statement's state: [`Scan::decl`], [`Scan::paren`] and
+/// [`Scan::angle`] in one byte, then [`Scan::td`], [`Scan::entity`], [`Scan::ifd`].
+const W_DECL: usize = 2 + DELIM_KEPT;
 
 /// Lex `b`, a line of C++ without its `\n`, from `state`.
 #[inline(never)]
@@ -402,6 +461,22 @@ struct Scan<'b, 'c, K: Sink> {
     ternary: u8,
     /// A raw string's delimiter, its first [`DELIM_KEPT`] bytes.
     delim: [u8; DELIM_KEPT],
+    /// What the statement is so far, at a namespace's or a class's level ([`D_NONE`]…).
+    decl: u8,
+    /// The `(`s open in the statement.
+    paren: u8,
+    /// The `<`s open in a declaration (template arguments).
+    angle: u8,
+    /// A `typedef`'s level plus one, while its statement is open (0: none).
+    td: u8,
+    /// What the word before names, where [`Scan::prev`] is [`P_ENTITY`] ([`E_CLASS`]…).
+    entity: u8,
+    /// The statement has a keyword (a type's, a modifier): a line's end doesn't end it
+    /// (`static int` before `foo(…)` on the next line).
+    kw: bool,
+    /// The level at the innermost open `#if` plus one (0: none): its `#else` or `#elif` closes
+    /// what its first branch left open (a function's header in each branch, one body).
+    ifd: u8,
     /// Where a directive's text is filled to ([`PP_TEXT`]).
     at: usize,
     /// What each word is in the language ([`words::INFO`]'s row).
@@ -428,6 +503,13 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             case: false,
             ternary: 0,
             delim: [0; DELIM_KEPT],
+            decl: D_NONE,
+            paren: 0,
+            angle: 0,
+            td: 0,
+            entity: 0,
+            kw: false,
+            ifd: 0,
             at: 0,
             info: &words::INFO[usize::from(c)],
             c,
@@ -454,8 +536,14 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.prev = (a >> A_PREV & 7) as u8;
         self.ternary = u8::from(a & A_TERNARY != 0);
         if self.mode == M_RAW {
-            self.delim.copy_from_slice(&state.withs[2..]);
+            self.delim.copy_from_slice(&state.withs[2..W_DECL]);
         }
+        let d = state.withs[W_DECL];
+        (self.decl, self.paren, self.angle) = (d & 7, d >> 3 & 7, d >> 6);
+        self.td = state.withs[W_DECL + 1];
+        self.entity = state.withs[W_DECL + 2] & 0x7f;
+        self.kw = state.withs[W_DECL + 2] & 0x80 != 0;
+        self.ifd = state.withs[W_DECL + 3];
     }
 
     /// The state the scan's last line left.
@@ -466,8 +554,16 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         s.levels.copy_from_slice(&w[..14]);
         s.withs[..2].copy_from_slice(&w[14..]);
         if self.mode == M_RAW {
-            s.withs[2..].copy_from_slice(&self.delim);
+            s.withs[2..W_DECL].copy_from_slice(&self.delim);
         }
+        s.withs[W_DECL] = self.decl | self.paren.min(7) << 3 | self.angle.min(3) << 6;
+        s.withs[W_DECL + 1] = self.td;
+        s.withs[W_DECL + 2] = if self.prev == P_ENTITY {
+            self.entity
+        } else {
+            0
+        } | if self.kw { 0x80 } else { 0 };
+        s.withs[W_DECL + 3] = self.ifd;
         s.depth = self.depth;
         s.inexact = !self.exact;
         s.arg = u16::from(self.mode)
@@ -509,7 +605,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         if b.get(p) == Some(&b'#') {
             self.directive(p);
         } else {
-            self.code::<false>(p);
+            self.code_line(p);
         }
     }
 
@@ -538,7 +634,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn open_brace(&mut self) {
         let kind = match self.pending {
             NO_PENDING => match self.level() {
-                // R2 tells a function's body from an initializer here
+                // a function's body; an initializer's braces are code to the statement too
                 NS | CLASS => CODE,
                 l => l,
             },
@@ -563,6 +659,78 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             }
         }
     }
+
+    /// An `#else` or `#elif`: the levels its `#if`'s first branch opened closed again.
+    fn branch(&mut self) {
+        if self.ifd != 0 && self.depth != u8::MAX {
+            let d = self.ifd - 1;
+            if self.depth > d {
+                let n = u32::from(self.depth - d);
+                self.braces = self.braces.checked_shr(2 * n).unwrap_or(0);
+                self.depth = d;
+            }
+        }
+    }
+
+    /// A statement's start (`;`, `{`, `}`, a class's section): nothing seen yet. Back at a
+    /// `typedef`'s level (`typedef struct { … } name;`), its statement goes on.
+    #[inline(always)]
+    fn new_statement(&mut self) {
+        (self.decl, self.paren, self.angle, self.kw) = (D_NONE, 0, 0, false);
+        if self.td != 0 {
+            if self.td == self.depth + 1 {
+                self.decl = D_TYPEDEF;
+            } else if self.td > self.depth + 1 {
+                self.td = 0;
+            }
+        }
+    }
+
+    /// What a directive keeps of the code around it, to set back after its line
+    /// ([`Scan::restore`]).
+    #[inline(always)]
+    fn kept(&self) -> Kept {
+        Kept {
+            prev: self.prev,
+            pending: self.pending,
+            ternary: self.ternary,
+            case: self.case,
+            decl: self.decl,
+            paren: self.paren,
+            angle: self.angle,
+            td: self.td,
+            entity: self.entity,
+            kw: self.kw,
+        }
+    }
+
+    #[inline(always)]
+    fn restore(&mut self, k: Kept) {
+        (self.prev, self.pending, self.ternary, self.case) = (k.prev, k.pending, k.ternary, k.case);
+        (
+            self.decl,
+            self.paren,
+            self.angle,
+            self.td,
+            self.entity,
+            self.kw,
+        ) = (k.decl, k.paren, k.angle, k.td, k.entity, k.kw);
+    }
+}
+
+/// The code's state a directive's line sets back ([`Scan::kept`]).
+#[derive(Clone, Copy)]
+struct Kept {
+    prev: u8,
+    pending: u8,
+    ternary: u8,
+    case: bool,
+    decl: u8,
+    paren: u8,
+    angle: u8,
+    td: u8,
+    entity: u8,
+    kw: bool,
 }
 
 // The byte classes ([`CC`]).

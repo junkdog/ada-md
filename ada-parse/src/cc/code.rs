@@ -3,11 +3,38 @@
 //! comments each a reader of its own. `PP` is a `#define`'s body ([`super::pp`]): its plain
 //! text is [`PP_TEXT`], filled before each token, and its braces open no level.
 
-use super::words::{A_ACCESS, A_C99, A_CASE, A_CLASS, A_ENUM, A_LEAF, A_NS, ACT, WORDS};
+use super::pp::skip_blanks;
+use super::words::{
+    A_ACCESS, A_C99, A_CASE, A_CLASS, A_ENUM, A_LEAF, A_NAMESPACE, A_NS, A_OPERATOR, A_STRUCT,
+    A_TYPEDEF, A_UNION, A_USING, ACT, WORDS,
+};
 use super::*;
 use crate::prim;
 
 impl<K: Sink> Scan<'_, '_, K> {
+    /// The code from `p` to the line's end. At a namespace's or a class's level, as bat has
+    /// it, a line's end ends a statement that a macro's call ends (`DECLARE(x)`), that has
+    /// names but no keyword (`TEST_END`), or a definition's header with no `;` or `{`.
+    #[inline(always)]
+    pub(super) fn code_line(&mut self, p: usize) {
+        self.code::<false>(p);
+        if self.paren == 0 && self.level() <= CLASS {
+            self.line_end();
+        }
+    }
+
+    #[inline(never)]
+    fn line_end(&mut self) {
+        let ends = match self.decl {
+            D_NONE => self.prev == P_CLOSE || self.prev == P_OTHER && !self.kw,
+            D_DEFINED => true,
+            _ => false,
+        };
+        if ends {
+            (self.prev, self.decl, self.kw) = (P_STMT, D_NONE, false);
+        }
+    }
+
     /// The code from `p` to the line's end.
     #[inline(never)]
     pub(super) fn code<const PP: bool>(&mut self, mut p: usize) {
@@ -52,6 +79,16 @@ impl<K: Sink> Scan<'_, '_, K> {
         };
         // SAFETY: an id is at most the table's words, the row's length less one
         let info = unsafe { *self.info.get_unchecked(usize::from(id)) };
+        if self.prev == P_ENTITY || self.decl >= D_TYPEDEF {
+            return self.word_in::<PP>(p, e, info);
+        }
+        self.word_on::<PP>(p, e, info)
+    }
+
+    /// The word `p..e`, `info` what it is ([`words::INFO`]), where no declaration's state rules
+    /// it.
+    #[inline(always)]
+    fn word_on<const PP: bool>(&mut self, p: usize, e: usize, info: u16) -> usize {
         if info == 0 {
             return self.name::<PP>(p, e, false);
         }
@@ -65,18 +102,192 @@ impl<K: Sink> Scan<'_, '_, K> {
                 self.prev = P_ACCESS;
                 return e;
             }
-            A_CLASS => {
+            A_CLASS | A_STRUCT | A_UNION | A_ENUM => {
+                let act = info >> ACT;
                 // `enum class` stays an enum's
-                if self.pending != INIT + 1 {
-                    self.pending = CLASS + 1;
+                self.pending = if act == A_ENUM { INIT + 1 } else { CLASS + 1 };
+                self.put::<PP>(p, e, leaf);
+                self.kw = true;
+                // a `typedef`'s struct leaves its name plain, as bat does
+                if self.decl == D_TYPEDEF {
+                    self.prev = P_OTHER;
+                } else {
+                    self.prev = P_ENTITY;
+                    self.entity = match act {
+                        A_CLASS => E_CLASS,
+                        A_STRUCT => E_STRUCT,
+                        A_UNION => E_UNION,
+                        _ => E_ENUM,
+                    };
                 }
+                return e;
             }
-            A_ENUM => self.pending = INIT + 1,
-            A_NS => self.pending = NS + 1,
+            // C++'s `extern "C" {` a namespace's level; C's a block of code, as bat has it
+            A_NS if !self.c => self.pending = NS + 1,
+            A_NAMESPACE => {
+                self.pending = NS + 1;
+                self.put::<PP>(p, e, leaf);
+                (self.prev, self.entity) = (P_ENTITY, E_NAMESPACE);
+                return e;
+            }
+            A_USING => {
+                self.put::<PP>(p, e, leaf);
+                (self.prev, self.entity) = (P_ENTITY, E_USING);
+                return e;
+            }
+            A_TYPEDEF => {
+                self.put::<PP>(p, e, leaf);
+                self.prev = P_OTHER;
+                (self.decl, self.td) = (D_TYPEDEF, self.depth.saturating_add(1));
+                return e;
+            }
+            A_OPERATOR if !PP && self.may_define() => return self.operator(p, e, leaf),
             _ => {}
         }
         self.put::<PP>(p, e, leaf);
+        self.kw = true;
+        // a modifier alone is no type: `const FOO(x) *f(` calls `FOO`, as bat has it
+        if leaf != MODIFIER || self.prev != P_STMT {
+            self.prev = P_OTHER;
+        }
+        e
+    }
+
+    /// The word `p..e` where a declaration's state rules it: after a word that names what
+    /// follows ([`P_ENTITY`]), in a definition's parameter list, in a `typedef`.
+    #[inline(never)]
+    fn word_in<const PP: bool>(&mut self, p: usize, e: usize, info: u16) -> usize {
+        let b = self.b;
+        let q = skip_blanks(b, e);
+        let next = next_byte(b, q);
+        if self.prev == P_ENTITY {
+            return self.entity_word::<PP>(p, e, info, q, next);
+        }
+        if self.decl == D_PARAMS {
+            // the word before a `,`, `)`, `[` or `=` is the parameter, a type's word too, but
+            // `void`
+            if self.angle == 0
+                && self.paren == 1
+                && matches!(next, b',' | b')' | b'[' | b'=')
+                && (info == 0 || &b[p..e] != b"void")
+            {
+                self.put::<PP>(p, e, PARAMETER);
+                self.prev = P_OTHER;
+                return e;
+            }
+        } else if next == b';' && self.paren == 0 && info == 0 {
+            // a `typedef`'s name
+            self.put::<PP>(p, e, TYPEDEF_NAME);
+            self.prev = P_OTHER;
+            return e;
+        }
+        self.word_on::<PP>(p, e, info)
+    }
+
+    /// The word `p..e` after one that names what follows ([`Scan::entity`]), `next` the byte at
+    /// `q`, after its blanks: a namespace's name (and its path), an alias's before `=`, a
+    /// class's, a struct's, a union's or an enum's before `{`, `:`, `;`, `<`, `final` or the
+    /// line's end (a macro in upper case before the name passed over), `operator`'s word before
+    /// `(`.
+    fn entity_word<const PP: bool>(
+        &mut self,
+        p: usize,
+        e: usize,
+        info: u16,
+        q: usize,
+        next: u8,
+    ) -> usize {
+        let b = self.b;
+        let kind = self.entity;
+        let leaf = ENTITY_LEAF[usize::from(kind)];
+        match kind {
+            E_NAMESPACE if info == 0 => {
+                // the prev stays, for a path's `::` and its next name
+                self.put::<PP>(p, e, leaf);
+                return e;
+            }
+            E_USING if info != 0 => {
+                // `using namespace std;`: no namespace's name
+                self.put::<PP>(p, e, info & ((1 << ACT) - 1));
+                self.prev = P_OTHER;
+                return e;
+            }
+            E_USING if next == b'=' && b.get(q + 1) != Some(&b'=') => {
+                self.put::<PP>(p, e, leaf);
+                self.prev = P_OTHER;
+                return e;
+            }
+            E_OPERATOR if next == b'(' => {
+                self.put::<PP>(p, e, leaf);
+                self.prev = P_OTHER;
+                (self.decl, self.angle) = (D_PARAMS, 0);
+                return e;
+            }
+            E_CLASS..=E_ENUM if info == 0 => {
+                let ends = match next {
+                    b'{' | b';' | b'<' | b'\n' => true,
+                    b':' => b.get(q + 1) != Some(&b':'),
+                    b'/' => matches!(b.get(q + 1), Some(b'/' | b'*')),
+                    _ => word_at(b, q, b"final"),
+                };
+                if ends {
+                    self.put::<PP>(p, e, leaf);
+                    self.prev = P_OTHER;
+                    return e;
+                }
+                if CC[usize::from(next)] & NS0 != 0 && upper(&b[p..e]) {
+                    // `class EXPORT Foo`: the macro plain, the name next
+                    return e;
+                }
+            }
+            E_ENUM if info >> ACT == A_CLASS => {
+                // `enum class`, `enum struct`
+                self.put::<PP>(p, e, info & ((1 << ACT) - 1));
+                return e;
+            }
+            _ => {}
+        }
         self.prev = P_OTHER;
+        self.word_on::<PP>(p, e, info)
+    }
+
+    /// Whether a name before `(` here could be a definition's: a namespace's or a class's level,
+    /// outside parentheses and template arguments, before any `=`.
+    #[inline(always)]
+    fn may_define(&self) -> bool {
+        self.decl == D_NONE && self.paren == 0 && self.angle == 0 && self.level() <= CLASS
+    }
+
+    /// `operator` at `p..e` (`leaf` its keyword's) where a definition's name may be: with its
+    /// symbol before `(` a function's name (`operator==`, `operator()`, `operator[]`); before a
+    /// word, that word's ([`E_OPERATOR`]).
+    #[cold]
+    #[inline(never)]
+    fn operator(&mut self, p: usize, e: usize, leaf: u16) -> usize {
+        let b = self.b;
+        let q = skip_blanks(b, e);
+        let next = next_byte(b, q);
+        let mut s = q;
+        match (next, b.get(q + 1)) {
+            _ if CC[usize::from(next)] & NS0 != 0 => {
+                self.put::<false>(p, e, leaf);
+                (self.prev, self.entity) = (P_ENTITY, E_OPERATOR);
+                return e;
+            }
+            (b'(', Some(b')')) | (b'[', Some(b']')) => s += 2,
+            _ => {
+                while s < b.len() && b"+-*/%^&|~!=<>,".contains(&b[s]) {
+                    s += 1;
+                }
+            }
+        }
+        self.prev = P_OTHER;
+        if s > q && next_byte(b, skip_blanks(b, s)) == b'(' {
+            self.put::<false>(p, s, FUNC_DEF);
+            (self.decl, self.angle) = (D_PARAMS, 0);
+            return s;
+        }
+        self.put::<false>(p, e, leaf);
         e
     }
 
@@ -89,7 +300,7 @@ impl<K: Sink> Scan<'_, '_, K> {
         let prev = self.prev;
         self.prev = P_OTHER;
         let leaf = match b.get(e) {
-            Some(b'(') => call_leaf(prev, c99),
+            Some(b'(') => self.call_leaf::<PP>(p, e, prev, c99),
             Some(b'"' | b'\'') => return self.prefixed::<PP>(p, e),
             Some(b':') if !PP && prev == P_STMT && b.get(e + 1) != Some(&b':') => {
                 self.put::<PP>(p, e, LABEL);
@@ -103,7 +314,7 @@ impl<K: Sink> Scan<'_, '_, K> {
                     q += 1;
                 }
                 if b.get(q) == Some(&b'(') {
-                    call_leaf(prev, c99)
+                    self.call_leaf::<PP>(p, e, prev, c99)
                 } else {
                     self.value_leaf(p, e, prev)
                 }
@@ -114,6 +325,30 @@ impl<K: Sink> Scan<'_, '_, K> {
             self.put::<PP>(p, e, leaf);
         }
         e
+    }
+
+    /// A name `p..e` before `(`: a definition's (or a declaration's) name where a statement at a
+    /// namespace's or a class's level has a type before it (`int f(`, `Foo::Foo(`), or at a
+    /// class's member's start a constructor's (a name in upper case is a macro's call); else a
+    /// call, a member's after an accessor, C99's for its functions.
+    #[inline(always)]
+    fn call_leaf<const PP: bool>(&mut self, p: usize, e: usize, prev: u8, c99: bool) -> u16 {
+        if !PP
+            && self.may_define()
+            && (prev == P_OTHER
+                || prev == P_CLOSE
+                || prev == P_STMT && self.level() == CLASS && !upper(&self.b[p..e]))
+        {
+            (self.decl, self.angle) = (D_PARAMS, 0);
+            return FUNC_DEF;
+        }
+        if prev == P_ACCESSOR {
+            MEMBER_FUNCTION
+        } else if c99 {
+            C99
+        } else {
+            FUNCTION
+        }
     }
 
     /// A name `p..e` that isn't called: a member after an accessor, else by its shape.
@@ -203,25 +438,41 @@ impl<K: Sink> Scan<'_, '_, K> {
             },
             b'(' => {
                 self.pending = NO_PENDING;
+                self.paren = self.paren.saturating_add(1);
                 (1, GROUP_BEGIN)
             }
             b')' => {
                 self.put::<PP>(p, p + 1, GROUP_END);
-                self.prev = P_CLOSE;
+                // a `struct` in parentheses names no `{`'s level
+                (self.prev, self.pending) = (P_CLOSE, NO_PENDING);
+                self.paren = self.paren.saturating_sub(1);
+                if self.paren == 0 && matches!(self.decl, D_PARAMS | D_DEFAULT) {
+                    self.decl = D_DEFINED;
+                }
                 return p + 1;
             }
             b';' => {
                 self.put::<PP>(p, p + 1, TERMINATOR);
                 (self.prev, self.pending, self.ternary, self.case) = (P_STMT, NO_PENDING, 0, false);
+                if self.td > self.depth {
+                    self.td = 0;
+                }
+                self.new_statement();
                 return p + 1;
             }
-            b',' => (1, SEPARATOR),
+            b',' => {
+                if self.decl == D_DEFAULT && self.paren == 1 {
+                    self.decl = D_PARAMS;
+                }
+                (1, SEPARATOR)
+            }
             b'{' => {
                 if !PP {
                     self.open_brace();
                 }
                 self.put::<PP>(p, p + 1, BLOCK_BEGIN);
                 (self.prev, self.ternary) = (P_STMT, 0);
+                self.new_statement();
                 return p + 1;
             }
             b'}' => {
@@ -230,6 +481,7 @@ impl<K: Sink> Scan<'_, '_, K> {
                 }
                 self.put::<PP>(p, p + 1, BLOCK_END);
                 (self.prev, self.ternary) = (P_STMT, 0);
+                self.new_statement();
                 return p + 1;
             }
             b'[' => (1, BRACKETS_BEGIN),
@@ -277,6 +529,11 @@ impl<K: Sink> Scan<'_, '_, K> {
                 b'=' => (2, COMPARISON),
                 _ => {
                     self.pending = NO_PENDING;
+                    match self.decl {
+                        D_NONE if self.paren == 0 && self.angle == 0 => self.decl = D_DONE,
+                        D_PARAMS if self.angle == 0 => self.decl = D_DEFAULT,
+                        _ => {}
+                    }
                     (1, ASSIGN)
                 }
             },
@@ -285,6 +542,9 @@ impl<K: Sink> Scan<'_, '_, K> {
                 _ => (1, OPERATOR),
             },
             b'<' | b'>' => {
+                if matches!(self.decl, D_NONE | D_PARAMS) && !PP && self.level() <= CLASS {
+                    self.angles(c, next);
+                }
                 if next == c {
                     if b.get(p + 2) == Some(&b'=') {
                         (3, ASSIGN_AUG)
@@ -301,7 +561,12 @@ impl<K: Sink> Scan<'_, '_, K> {
                     (1, COMPARISON)
                 }
             }
-            b'~' => (1, OPERATOR),
+            b'~' => {
+                if !PP && self.may_define() {
+                    return self.tilde::<PP>(p);
+                }
+                (1, OPERATOR)
+            }
             b'?' => {
                 self.ternary = self.ternary.saturating_add(1);
                 (1, TERNARY)
@@ -319,15 +584,58 @@ impl<K: Sink> Scan<'_, '_, K> {
         p + n
     }
 
+    /// A declaration's `<` or `>` (`c`, `next` the byte after): template arguments' depth.
+    #[inline(never)]
+    fn angles(&mut self, c: u8, next: u8) {
+        match (c, next) {
+            (b'<', b'<' | b'=') | (b'>', b'=') => {}
+            (b'<', _) => self.angle = self.angle.saturating_add(1),
+            (_, b'>') => self.angle = self.angle.saturating_sub(2),
+            _ => self.angle = self.angle.saturating_sub(1),
+        }
+    }
+
+    /// A `~` at `p` where a definition's name may be: before a name and `(` a destructor's name,
+    /// `~` and all; else the operator.
+    #[cold]
+    #[inline(never)]
+    fn tilde<const PP: bool>(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let mut e = p + 1;
+        if e < b.len() && CC[usize::from(b[e])] & NS0 != 0 {
+            while e < b.len() && CC[usize::from(b[e])] & NW != 0 {
+                e += 1;
+            }
+            if next_byte(b, skip_blanks(b, e)) == b'(' {
+                self.put::<PP>(p, e, FUNC_DEF);
+                self.prev = P_OTHER;
+                (self.decl, self.angle) = (D_PARAMS, 0);
+                return e;
+            }
+        }
+        self.put::<PP>(p, p + 1, OPERATOR);
+        self.prev = P_OTHER;
+        p + 1
+    }
+
     /// A `:` at `p`, or `::`: by the token before, a ternary's, a `case`'s, an access label's,
     /// an initializer list's, a base list's; else as bat has a bit-field's or a range `for`'s,
     /// the ternary's operator.
     #[inline(always)]
     fn colon<const PP: bool>(&mut self, p: usize, next: u8) -> usize {
         if next == b':' {
+            if self.prev == P_ENTITY && self.entity == E_NAMESPACE {
+                // a namespace's path: `namespace a::b`
+                self.put::<PP>(p, p + 2, NAMESPACE_SEP);
+                return p + 2;
+            }
             self.put::<PP>(p, p + 2, DOUBLE_COLON);
             self.prev = P_OTHER;
             return p + 2;
+        }
+        if self.decl <= D_DEFINED {
+            // an initializer list's, a base list's, a bit-field's: no definition after it
+            self.decl = D_DONE;
         }
         let (leaf, prev) = if self.ternary > 0 {
             self.ternary -= 1;
@@ -337,7 +645,10 @@ impl<K: Sink> Scan<'_, '_, K> {
             (SEPARATOR, P_STMT)
         } else {
             match self.prev {
-                P_ACCESS => (CLASS_SECTION, P_STMT),
+                P_ACCESS => {
+                    self.new_statement();
+                    (CLASS_SECTION, P_STMT)
+                }
                 P_CLOSE => (INIT_LIST, P_OTHER),
                 _ if self.pending == CLASS + 1 || self.pending == INIT + 1 => (SEPARATOR, P_OTHER),
                 _ => (TERNARY, P_OTHER),
@@ -685,16 +996,23 @@ impl<K: Sink> Scan<'_, '_, K> {
     }
 }
 
-/// A call's leaf, by the token before: a member's after an accessor, C99's for its functions.
+/// The byte at `q`, `\n` at the line's end.
 #[inline(always)]
-fn call_leaf(prev: u8, c99: bool) -> u16 {
-    if prev == P_ACCESSOR {
-        MEMBER_FUNCTION
-    } else if c99 {
-        C99
-    } else {
-        FUNCTION
-    }
+fn next_byte(b: &[u8], q: usize) -> u8 {
+    b.get(q).copied().unwrap_or(b'\n')
+}
+
+/// Whether the word at `q` is `w`.
+fn word_at(b: &[u8], q: usize, w: &[u8]) -> bool {
+    b.get(q..q + w.len()) == Some(w)
+        && b.get(q + w.len())
+            .is_none_or(|&c| CC[usize::from(c)] & NW == 0)
+}
+
+/// Whether a name is a macro's by its shape: upper case, digits and `_`, no lower case.
+fn upper(w: &[u8]) -> bool {
+    w.iter()
+        .all(|&c| CC[usize::from(c)] & (UP | DG) != 0 || c == b'_')
 }
 
 /// Where the digits `digit` takes from `p` end, a `'` between two of them taken (C++14's
