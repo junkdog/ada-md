@@ -162,8 +162,8 @@ pub fn expand_tabs_in<'a>(line: &'a str, buf: &'a mut String) -> &'a str {
 }
 
 /// [`expand_tabs`] into `buf` when the line changes, and whether it did: `false` leaves `buf`
-/// as it was, the line itself the answer (HL-006: `ada_parse::lex_lines`' `prep`).
-pub fn expand_tabs_to(line: &str, buf: &mut String) -> bool {
+/// as it was, the line itself the answer.
+fn expand_tabs_to(line: &str, buf: &mut String) -> bool {
     if !needs_expanding(line) {
         return false;
     }
@@ -301,7 +301,11 @@ fn expand_into(line: &str, out: &mut String) {
 
 /// [`expand_into`] a character at a time, for a line past ASCII.
 fn expand_chars(line: &str, out: &mut String) {
-    let mut col = 0;
+    expand_chars_at(line, 0, out);
+}
+
+/// [`expand_chars`] from column `col`.
+fn expand_chars_at(line: &str, mut col: usize, out: &mut String) {
     for c in line.chars() {
         if c == '\t' {
             let n = TAB_STOP - col % TAB_STOP;
@@ -314,6 +318,281 @@ fn expand_chars(line: &str, out: &mut String) {
             out.push(c);
             col += c.width().unwrap_or(0);
         }
+    }
+}
+
+/// The room [`expand_block`] keeps past what it has written: a gap's copy writes 64 bytes
+/// whatever its length.
+const ROOM: usize = 64;
+
+/// Up to `max` (one or more) of `text`'s lines, split as `ada_parse::lex_lines` splits them,
+/// into `out`, each as [`expand_tabs`] expands it, joined by their `\n`s (a `\r` before one,
+/// or at the end, kept for the split to drop): where the lines left start in `text`, `None`
+/// once its last line is in, as `lex_lines` returns it.
+///
+/// One pass over the block, 64 bytes a step (X-088: a line at a time, `needs_expanding`'s and
+/// `expand_into`'s loops each ran the line's length and missed their exits). A step's `\n`s,
+/// tabs and other stops (control characters, bytes past ASCII) are masks; the loop goes from
+/// a run of tabs to the next (an indentation is one run) and to each other stop, a `\n`
+/// costing nothing but where the mask says its line starts. The text between is copied 64
+/// bytes whatever its length, a run's spaces 32 at a time. A line past ASCII is expanded a
+/// character at a time from its first such byte.
+pub fn expand_block(text: &str, max: usize, out: &mut String) -> Option<usize> {
+    debug_assert!(max > 0);
+    let b = text.as_bytes();
+    out.clear();
+    // a tab adds up to three bytes: Go's blocks grow 13%, so an eighth more grew most of them
+    out.reserve(b.len() + b.len() / 4 + ROOM);
+    let mut o = 0; // bytes written, past `out`'s length until the end
+    let mut line = 0; // where the line being written starts in `out`
+    let mut lines = 0; // the `\n`s before the step
+    let mut at = 0; // `b`'s first byte not written
+    let mut w = 0; // the step's start
+    'step: loop {
+        let Stops {
+            mut nl,
+            mut tab,
+            mut other,
+            nls,
+        } = stops64(b, w);
+        // the `max`-th line's `\n` in the step: nothing past it
+        let mut end = None;
+        if lines + nls >= max {
+            let mut m = nl;
+            for _ in 0..max - lines - 1 {
+                m &= m - 1;
+            }
+            let q = m.trailing_zeros() as usize;
+            (nl, tab, other) = (nl & below(q), tab & below(q), other & below(q));
+            end = Some(q);
+        }
+        let mut s = tab | other;
+        while s != 0 {
+            let p = s.trailing_zeros() as usize;
+            let j = w + p;
+            // SAFETY: `at <= j`, and `gap` makes its room
+            unsafe { gap(b, at, j, out, o) };
+            o += j - at;
+            // the line starts past a `\n` since `at`, if there is one: the gap's bytes are
+            // `o - j` on in `out`
+            let starts = nl & below(p) & !below(at.saturating_sub(w));
+            if starts != 0 {
+                line = o - (j - (w + top(starts) + 1));
+            }
+            if other >> p & 1 != 0 {
+                // rare: one stop, written by the String's own means
+                // SAFETY: `out[..o]` written, whole characters
+                unsafe { out.as_mut_vec().set_len(o) };
+                let c = b[j];
+                if c < 0x80 {
+                    // a `\r` is dropped by the split before a `\n` or at the end; any other
+                    // control character, or a `\r` elsewhere, is a space
+                    let keep = c == b'\r' && b.get(j + 1).is_none_or(|&n| n == b'\n');
+                    out.push(if keep { '\r' } else { ' ' });
+                    (o, at) = (o + 1, j + 1);
+                    s &= s - 1;
+                    out.reserve(ROOM);
+                    continue;
+                }
+                // `j` is a character's first byte (every byte past ASCII is a stop, and a
+                // line past ASCII is written to its end here); the next step from its `\n`
+                let e = memchr::memchr(b'\n', &b[j..]).map_or(b.len(), |k| j + k);
+                let rest = &text[j..e];
+                let (rest, cr) = rest.strip_suffix('\r').map_or((rest, false), |r| (r, true));
+                expand_chars_at(rest, o - line, out);
+                if cr {
+                    out.push('\r');
+                }
+                if e == b.len() {
+                    return None;
+                }
+                lines += (nl & below(p)).count_ones() as usize;
+                (o, at, w) = (out.len(), e, e);
+                out.reserve(ROOM);
+                continue 'step;
+            }
+            // a run of tabs, the first to its stop and the rest a stop each
+            let k = (!(tab >> p)).trailing_zeros() as usize;
+            let n = TAB_STOP - (o - line) % TAB_STOP + TAB_STOP * (k - 1);
+            // SAFETY: `out[..o]` written
+            unsafe { spaces(out, o, n) };
+            (o, at) = (o + n, j + k);
+            s &= !below(p + k);
+        }
+        // a `\n` past the last stop starts the line
+        let starts = nl & !below(at.saturating_sub(w));
+        if starts != 0 {
+            line = o + (w + top(starts) + 1 - at);
+        }
+        if let Some(q) = end {
+            // the last line's `\n` isn't the text's: the lines left start past it
+            // SAFETY: `at <= w + q`, `gap` makes its room; `out[..o]` written, whole characters
+            unsafe {
+                gap(b, at, w + q, out, o);
+                out.as_mut_vec().set_len(o + w + q - at);
+            }
+            return Some(w + q + 1);
+        }
+        lines += nls;
+        w += 64;
+        if w >= b.len() {
+            // SAFETY: as above
+            unsafe {
+                gap(b, at, b.len(), out, o);
+                out.as_mut_vec().set_len(o + b.len() - at);
+            }
+            return None;
+        }
+    }
+}
+
+/// The bits below bit `q` (up to 64).
+#[inline(always)]
+fn below(q: usize) -> u64 {
+    if q >= 64 { u64::MAX } else { (1 << q) - 1 }
+}
+
+/// The highest set bit of `m`, not 0.
+#[inline(always)]
+fn top(m: u64) -> usize {
+    63 - m.leading_zeros() as usize
+}
+
+/// `b[from..to]` written at `o` into `out`'s spare room, with [`ROOM`] left past it: 64 bytes
+/// copied whatever the length where `b` has them, so a gap's length decides no branch.
+///
+/// # Safety
+///
+/// `out[..o]` is written, `out`'s length at most `o`, and `from <= to <= b.len()`.
+#[inline(always)]
+unsafe fn gap(b: &[u8], from: usize, to: usize, out: &mut String, o: usize) {
+    let n = to - from;
+    // SAFETY: the caller's
+    let v = unsafe { out.as_mut_vec() };
+    if v.capacity() - o < n + ROOM {
+        // SAFETY: the caller's
+        unsafe { v.set_len(o) };
+        v.reserve(n + ROOM);
+    }
+    // SAFETY: `b` holds `from..to`, and 64 bytes from `from` where the first branch reads them;
+    // `v` has room for `o + n + ROOM`
+    unsafe {
+        let (src, dst) = (b.as_ptr().add(from), v.as_mut_ptr().add(o));
+        if from + 64 <= b.len() {
+            std::ptr::copy_nonoverlapping(src, dst, 64);
+            if n > 64 {
+                std::ptr::copy_nonoverlapping(src.add(64), dst.add(64), n - 64);
+            }
+        } else {
+            std::ptr::copy_nonoverlapping(src, dst, n);
+        }
+    }
+}
+
+/// `n` spaces written at `o` into `out`'s spare room, 32 a store.
+///
+/// # Safety
+///
+/// `out[..o]` is written and `out`'s length at most `o`.
+#[inline(always)]
+unsafe fn spaces(out: &mut String, o: usize, n: usize) {
+    // SAFETY: the caller's
+    let v = unsafe { out.as_mut_vec() };
+    if v.capacity() - o < n + 32 {
+        // SAFETY: the caller's
+        unsafe { v.set_len(o) };
+        v.reserve(n + 32);
+    }
+    let mut i = 0;
+    while i < n {
+        // SAFETY: `v` has room for `o + n + 32`
+        unsafe {
+            v.as_mut_ptr()
+                .add(o + i)
+                .cast::<[u8; 32]>()
+                .write_unaligned([b' '; 32]);
+        }
+        i += 32;
+    }
+}
+
+/// A step's stops, byte `i` at bit `i`: its `\n`s, its tabs, the rest of its control
+/// characters and bytes past ASCII, and how many `\n`s.
+struct Stops {
+    nl: u64,
+    tab: u64,
+    other: u64,
+    nls: usize,
+}
+
+/// [`expand_block`]'s stops in `b[w..]`'s next 64 bytes; past `b`'s end none.
+#[inline(always)]
+fn stops64(b: &[u8], w: usize) -> Stops {
+    match b.get(w..).and_then(<[u8]>::first_chunk::<64>) {
+        Some(c) => stops(c),
+        None => {
+            let mut c = [b' '; 64];
+            let rest = &b[w.min(b.len())..];
+            c[..rest.len()].copy_from_slice(rest);
+            stops(&c)
+        }
+    }
+}
+
+/// The stops of `c`: SSE2's compares on x86-64 (a byte past ASCII is below 0x20 as a signed
+/// one), the `\n`s counted from theirs (`psadbw`: x86-64's floor has no `popcnt`), a byte at a
+/// time elsewhere.
+#[inline(always)]
+fn stops(c: &[u8; 64]) -> Stops {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use std::arch::x86_64::*;
+        // SAFETY: SSE2 is part of x86-64; each load reads 16 of `c`'s 64 bytes, unaligned
+        unsafe {
+            let (lo, del) = (_mm_set1_epi8(0x20), _mm_set1_epi8(0x7f));
+            let (lf, ht) = (_mm_set1_epi8(b'\n' as i8), _mm_set1_epi8(b'\t' as i8));
+            let bits = |v| u64::from(_mm_movemask_epi8(v) as u16);
+            let (mut nl, mut tab, mut stop) = (0, 0, 0);
+            let mut sum = _mm_setzero_si128();
+            for q in [0, 16, 32, 48] {
+                let v = _mm_loadu_si128(c.as_ptr().add(q).cast());
+                let n = _mm_cmpeq_epi8(v, lf);
+                nl |= bits(n) << q;
+                tab |= bits(_mm_cmpeq_epi8(v, ht)) << q;
+                stop |= bits(_mm_or_si128(_mm_cmplt_epi8(v, lo), _mm_cmpeq_epi8(v, del))) << q;
+                // each `\n` a -1 in its lane: the lanes' negated sums are the counts
+                sum = _mm_sub_epi8(sum, n);
+            }
+            let s = _mm_sad_epu8(sum, _mm_setzero_si128());
+            let nls = _mm_cvtsi128_si32(s) + _mm_cvtsi128_si32(_mm_unpackhi_epi64(s, s));
+            Stops {
+                nl,
+                tab,
+                other: stop & !(nl | tab),
+                nls: nls as usize,
+            }
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    stops_bytes(c)
+}
+
+/// [`stops`] a byte at a time, where x86-64's SSE2 isn't.
+#[cfg(any(test, not(target_arch = "x86_64")))]
+fn stops_bytes(c: &[u8; 64]) -> Stops {
+    let mask = |f: &dyn Fn(u8) -> bool| {
+        c.iter()
+            .enumerate()
+            .fold(0, |m, (i, &b)| m | u64::from(f(b)) << i)
+    };
+    let nl = mask(&|b| b == b'\n');
+    let tab = mask(&|b| b == b'\t');
+    let stop = mask(&|b| !(0x20..0x7f).contains(&b));
+    Stops {
+        nl,
+        tab,
+        other: stop & !(nl | tab),
+        nls: nl.count_ones() as usize,
     }
 }
 
@@ -422,6 +701,79 @@ mod tests {
         }
         assert_eq!(expand_tabs("\u{85}x\tñ\t"), " x  ñ   ");
         assert_eq!(expand_tabs_in("ñ\u{9f}", &mut buf), "ñ ");
+    }
+
+    /// Up to `max` of `text`'s lines, split and expanded a line at a time as ada-parse's
+    /// `split_lines` and `prep` did before X-088, and where the lines left start.
+    fn lines_expanded(text: &str, max: usize) -> (Vec<String>, Option<usize>) {
+        let (mut lines, mut p) = (Vec::new(), 0);
+        for _ in 0..max {
+            let e = text[p..].find('\n').map_or(text.len(), |i| p + i);
+            let line = &text[p..e];
+            lines.push(expand_tabs(line.strip_suffix('\r').unwrap_or(line)).into_owned());
+            if e == text.len() {
+                return (lines, None);
+            }
+            p = e + 1;
+        }
+        (lines, Some(p))
+    }
+
+    /// A block expanded at once splits into the lines a line at a time gives, and stops where
+    /// it does, whatever the stops and wherever they fall against the 64-byte steps (X-088).
+    #[test]
+    fn block_expands_as_its_lines_do() {
+        let pieces = [
+            "\t", "\t", "\t", "\n", "\n", "\r\n", "\r", "\u{7f}", "\u{1b}", "\0", "é", "日",
+            "\u{85}", "\u{9f}", "ñ\t", "ab", "abc", "abcdefgh", "    ",
+        ];
+        let mut seed = 0x2545_f491_u32;
+        let mut out = String::new();
+        for len in (0..40).chain([60, 90, 140]) {
+            for _ in 0..60 {
+                let text: String = (0..len)
+                    .map(|_| {
+                        seed ^= seed << 13;
+                        seed ^= seed >> 17;
+                        seed ^= seed << 5;
+                        pieces[seed as usize % pieces.len()]
+                    })
+                    .collect();
+                for max in [1, 2, 3, 7, usize::MAX] {
+                    let (want, next) = lines_expanded(&text, max);
+                    let got = expand_block(&text, max, &mut out);
+                    assert_eq!(got, next, "{text:?} max {max}");
+                    assert_eq!(
+                        lines_expanded(&out, usize::MAX).0,
+                        want,
+                        "{text:?} max {max}"
+                    );
+                }
+            }
+        }
+        assert_eq!(expand_block("a\tb\r\n\tc\r", 9, &mut out), None);
+        assert_eq!(out, "a   b\r\n    c\r");
+        assert_eq!(expand_block("\tx\ny\nz", 2, &mut out), Some(5));
+        assert_eq!(out, "    x\ny");
+    }
+
+    /// A step's stops on SSE2 are the bytes' own (X-088).
+    #[test]
+    fn stops_are_each_bytes() {
+        let mut c = [0u8; 64];
+        for k in 0..=255u8 {
+            for (i, b) in c.iter_mut().enumerate() {
+                *b = k.wrapping_add((i as u8).wrapping_mul(37));
+            }
+            let (a, b) = (stops(&c), stops_bytes(&c));
+            assert_eq!(
+                (a.nl, a.tab, a.other, a.nls),
+                (b.nl, b.tab, b.other, b.nls),
+                "{k}"
+            );
+        }
+        let c = [b'\n'; 64];
+        assert_eq!(stops(&c).nls, 64);
     }
 
     #[test]

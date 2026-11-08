@@ -7,7 +7,7 @@ mod table;
 pub mod wrap;
 
 pub use code::{
-    TAB_STOP, block_needs_expanding, expand_tabs, expand_tabs_in, expand_tabs_onto, expand_tabs_to,
+    TAB_STOP, block_needs_expanding, expand_block, expand_tabs, expand_tabs_in, expand_tabs_onto,
 };
 
 #[cfg(test)]

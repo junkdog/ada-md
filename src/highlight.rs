@@ -28,7 +28,7 @@ use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet
 use crate::app::{Computed, Msg};
 use crate::doc::{CodeBlock, CodeId};
 use crate::layout::{
-    block_needs_expanding, expand_tabs, expand_tabs_in, expand_tabs_onto, expand_tabs_to,
+    block_needs_expanding, expand_block, expand_tabs, expand_tabs_in, expand_tabs_onto,
 };
 use ada_parse::{FirstLine, Lang};
 
@@ -537,7 +537,7 @@ impl LineRuns {
 struct BlockScratch {
     spans: Vec<ada_parse::Span>,
     lines: LineRuns,
-    /// A line, when tabs expand it.
+    /// The block's lines, when tabs expand them ([`expand_block`]).
     buf: String,
 }
 
@@ -919,30 +919,19 @@ impl ParseRules {
 
     /// Highlight up to `max` of `text`'s lines into `out`, after the lines before them left
     /// `state`; returns where the lines left start, `None` once `text` is done (as
-    /// [`ada_parse::lex_lines`]). A line is expanded only when `expand`, its block's text
-    /// holding a control character, into `buf`; `spans` and `buf` are scratch space. Every
-    /// kind's rule must be resolved ([`ParseRules::new`]).
+    /// [`ada_parse::lex_lines`]). The lines are expanded only when `expand`, their block's
+    /// text holding a control character, into `buf` ([`lex_block`]); `spans` and `buf` are
+    /// scratch space. Every kind's rule must be resolved ([`ParseRules::new`]).
     fn lines(
         &self,
         text: &str,
         max: usize,
         state: &mut ada_parse::State,
-        (spans, buf, expand): (&mut Vec<ada_parse::Span>, &mut String, bool),
+        scratch: (&mut Vec<ada_parse::Span>, &mut String, bool),
         out: &mut LineRuns,
     ) -> Option<usize> {
-        let LineRuns { runs, ends } = out;
         let rules = &mut AllResolved(&self.rules);
-        ada_parse::lex_lines_runs(
-            self.lang,
-            text,
-            max,
-            state,
-            (spans, buf),
-            prep(expand),
-            rules,
-            runs,
-            ends,
-        )
+        lex_block(self.lang, text, max, state, scratch, rules, out)
     }
 
     /// As [`ParseRules::lines`], resolving the rules of kinds met for the first time.
@@ -951,35 +940,67 @@ impl ParseRules {
         text: &str,
         max: usize,
         state: &mut ada_parse::State,
-        (spans, buf, expand): (&mut Vec<ada_parse::Span>, &mut String, bool),
+        scratch: (&mut Vec<ada_parse::Span>, &mut String, bool),
         highlighter: &LazyHighlighter,
         out: &mut LineRuns,
     ) -> Option<usize> {
         let lang = self.lang;
-        let LineRuns { runs, ends } = out;
         // the rule looked up once a span, resolved in the same pass when it's new (HL-004)
         let rules = &mut Resolving {
             rules: self,
             highlighter,
         };
-        ada_parse::lex_lines_runs(
+        lex_block(lang, text, max, state, scratch, rules, out)
+    }
+}
+
+/// [`ada_parse::lex_lines_runs`] on up to `max` of `text`'s lines into `out`: where the lines
+/// left start in `text`, `None` once it's done. When `expand`, the block's text holding a
+/// control character, the lines are expanded into `buf` first, a pass over the block
+/// ([`expand_block`], X-088), and lexed from there: expanded a line at a time (ada-parse's
+/// `prep`), each line's length-dependent loops missed their exits. ada-parse's `prep` stays,
+/// `None` here: taken out of its line loop, Rust, Kotlin and Lua ran 0.5–1.7% slower in the
+/// default layout (placement; their lines have no tabs).
+fn lex_block(
+    lang: Lang,
+    text: &str,
+    max: usize,
+    state: &mut ada_parse::State,
+    (spans, buf, expand): (&mut Vec<ada_parse::Span>, &mut String, bool),
+    rules: &mut dyn ada_parse::Rules,
+    out: &mut LineRuns,
+) -> Option<usize> {
+    let LineRuns { runs, ends } = out;
+    if !expand {
+        return ada_parse::lex_lines_runs(
             lang,
             text,
             max,
             state,
             (spans, buf),
-            prep(expand),
+            None,
             rules,
             runs,
             ends,
-        )
+        );
     }
-}
-
-/// A block's lines' replacement for ada-parse: tabs expanded when `expand`, its text holding a
-/// control character.
-fn prep(expand: bool) -> Option<ada_parse::Prep> {
-    expand.then_some(expand_tabs_to)
+    if max == 0 {
+        return Some(0);
+    }
+    let next = expand_block(text, max, buf);
+    let done = ada_parse::lex_lines_runs(
+        lang,
+        buf,
+        usize::MAX,
+        state,
+        (spans, &mut String::new()),
+        None,
+        rules,
+        runs,
+        ends,
+    );
+    debug_assert!(done.is_none(), "every expanded line lexed");
+    next
 }
 
 /// Where a line's runs end, as [`LineRuns::ends`] holds it.
