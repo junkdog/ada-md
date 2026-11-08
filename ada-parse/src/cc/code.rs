@@ -117,6 +117,15 @@ impl<K: Sink> Scan<'_, '_, K> {
                 return e;
             }
             A_CASE => self.case = true,
+            // `delete[]` and `delete []` one keyword, as bat has it
+            A_DELETE => {
+                let q = skip_blanks(self.b, e);
+                if self.b.get(q..q + 2) == Some(b"[]") {
+                    self.put::<PP>(p, q + 2, leaf);
+                    (self.prev, self.kw) = (P_OTHER, self.kw | (self.paren == 0));
+                    return q + 2;
+                }
+            }
             A_ACCESS => {
                 self.put::<PP>(p, e, leaf);
                 self.prev = P_ACCESS;
@@ -145,11 +154,12 @@ impl<K: Sink> Scan<'_, '_, K> {
             A_CLASS | A_STRUCT | A_UNION | A_ENUM => {
                 let act = info >> ACT;
                 // `enum class` stays an enum's
-                self.pending = if act == A_ENUM { INIT + 1 } else { CLASS + 1 };
+                self.pending = if act == A_ENUM { PEND_INIT } else { PEND_CLASS };
                 self.put::<PP>(p, e, leaf);
                 self.kw |= self.paren == 0;
-                // a `typedef`'s struct leaves its name plain, as bat does
-                if self.decl == D_TYPEDEF {
+                // a `typedef`'s struct leaves its name plain, as bat does, and a friend's names
+                // nothing (`friend class Other;`)
+                if self.decl == D_TYPEDEF || act != A_ENUM && after_friend(self.b, p) {
                     self.prev = P_OTHER;
                 } else {
                     self.prev = P_ENTITY;
@@ -163,9 +173,9 @@ impl<K: Sink> Scan<'_, '_, K> {
                 return e;
             }
             // C++'s `extern "C" {` a namespace's level; C's a block of code, as bat has it
-            A_NS if !self.c => self.pending = NS + 1,
+            A_NS if !self.c => self.pending = PEND_NS,
             A_NAMESPACE => {
-                self.pending = NS + 1;
+                self.pending = PEND_NS;
                 self.put::<PP>(p, e, leaf);
                 (self.prev, self.entity) = (P_ENTITY, E_NAMESPACE);
                 return e;
@@ -281,8 +291,9 @@ impl<K: Sink> Scan<'_, '_, K> {
                 }
             }
             E_ENUM if info >> ACT == A_CLASS => {
-                // `enum class`, `enum struct`
-                self.put::<PP>(p, e, info & ((1 << ACT) - 1));
+                // `enum class`, `enum struct`: one token with `enum`, its blanks too (bat's)
+                let s = b[..p].trim_ascii_end().len();
+                self.put::<PP>(s, e, info & ((1 << ACT) - 1));
                 return e;
             }
             _ => {}
@@ -667,6 +678,8 @@ impl<K: Sink> Scan<'_, '_, K> {
                 }
             },
             b'-' => match next {
+                // a trailing return type's, after a definition's parameters (bat's)
+                b'>' if self.decl == D_DEFINED => (2, SEPARATOR),
                 b'>' => {
                     let n = if b.get(p + 2) == Some(&b'*') { 3 } else { 2 };
                     self.put::<PP>(p, p + n, ARROW);
@@ -817,7 +830,9 @@ impl<K: Sink> Scan<'_, '_, K> {
                 }
                 // C has no initializer lists: bat's C has an `asm`'s `:` the ternary's
                 P_CLOSE | P_DEFINED if !self.c => (INIT_LIST, P_OTHER),
-                _ if self.pending == CLASS + 1 || self.pending == INIT + 1 => (SEPARATOR, P_OTHER),
+                _ if self.pending == PEND_CLASS || self.pending == PEND_INIT => {
+                    (SEPARATOR, P_OTHER)
+                }
                 _ => (TERNARY, P_OTHER),
             }
         };
@@ -1224,6 +1239,13 @@ fn word_at(b: &[u8], q: usize, w: &[u8]) -> bool {
     b.get(q..q + w.len()) == Some(w)
         && b.get(q + w.len())
             .is_none_or(|&c| CC[usize::from(c)] & NW == 0)
+}
+
+/// Whether the word before `p`, past its blanks, is `friend`.
+#[cold]
+fn after_friend(b: &[u8], p: usize) -> bool {
+    let s = b[..p].trim_ascii_end();
+    s.ends_with(b"friend") && (s.len() == 6 || CC[usize::from(s[s.len() - 7])] & NW == 0)
 }
 
 /// Whether a name is a macro's by its shape: upper case, digits and `_`, no lower case.

@@ -586,3 +586,82 @@ fn a_column_zero_brace_closes_the_code() {
     has(true, &l, "g", "entity.name.function.c");
     has(true, &l, "a", "variable.parameter.c");
 }
+
+#[test]
+fn friends_trailing_returns_delete_and_pragma_mark() {
+    // a friend's class names nothing; its function is a declaration's, as any member's
+    let l = [
+        "class A {",
+        "  friend class Other;",
+        "  friend void f(int n);",
+        "};",
+    ];
+    plain(false, &l, "Other");
+    has(false, &l, "f", "entity.name.function.c++");
+    let l = ["enum class E { X };"];
+    has(false, &l, "enum class", "storage.type.c++");
+    // a trailing return type's `->` a separator, a member's an accessor
+    let l = ["auto get() const -> int { return p->x; }"];
+    let got = lexed(false, &l);
+    let arrows: Vec<&str> = got
+        .iter()
+        .filter(|(t, _)| t == "->")
+        .map(|(_, s)| s.as_str())
+        .collect();
+    assert_eq!(
+        arrows,
+        [
+            "punctuation.separator.c++",
+            "punctuation.accessor.arrow.c++"
+        ]
+    );
+    has(
+        false,
+        &["  delete [] a;"],
+        "delete []",
+        "keyword.control.c++",
+    );
+    // `#pragma mark` one keyword, but not `#pragma marked`
+    let l = ["#  pragma mark - Section"];
+    has(true, &l, "#  pragma mark", "keyword.control.import.c");
+    has(
+        false,
+        &["#pragma marked"],
+        "#pragma",
+        "keyword.control.import.c++",
+    );
+}
+
+#[test]
+fn a_block_keeps_what_state_keeps() {
+    // what a line hands the next as `State` keeps it: an enum's `{` on the next line, two `?`s
+    // open across a line, eight `(`s and four `<`s open, a class's word before its name's line
+    let text = concat!(
+        "enum E\n{\n  A = x ? y ? 1\n  : 2 : 3,\n};\n",
+        "int v = f((((((((a,\n  b))))))));\n",
+        "std::map<a<b<c<d<e, f>>>>,\n  g> m;\n",
+        "class\nC\n{\n};\n",
+    );
+    for lang in [crate::Lang::Cpp, crate::Lang::C] {
+        let (mut want, mut state, mut spans) = (Vec::new(), State::default(), Vec::new());
+        for l in text.split('\n') {
+            crate::lex(lang, l, &mut state, &mut spans);
+            want.push((spans.clone(), state));
+        }
+        let (mut got, mut buf) = (Vec::new(), String::new());
+        let mut block = State::default();
+        crate::lex_lines(
+            lang,
+            text,
+            usize::MAX,
+            &mut block,
+            (&mut spans, &mut buf),
+            |_, _| false,
+            |_, s| got.push(s.to_vec()),
+        );
+        assert_eq!(block, want.last().unwrap().1, "{lang:?}");
+        for (n, (g, (w, _))) in got.iter().zip(&want).enumerate() {
+            assert_eq!(g, w, "{lang:?} line {}", n + 1);
+        }
+    }
+}

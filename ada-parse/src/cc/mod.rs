@@ -1,5 +1,5 @@
 //! C and C++ by a scanner of ada's own design (X-057's redesign, ADR-41: speed first), in place
-//! of bat's compiled contexts ([`crate::cpp`]). Rust's shape (X-056): one loop over a line's
+//! of bat's contexts compiled by hand (deleted at R4). Rust's shape (X-056): one loop over a line's
 //! bytes, a byte's class one load ([`CC`]), a blank run and the token after it in one turn, a
 //! name read once and looked up once in one table of every word ([`words`]), punctuation one
 //! `match`, tokens straight to the sink. What a token is comes from its own bytes, the token
@@ -26,10 +26,12 @@
 //! decides are followed as probed (vault `ada-parse.md`, X-057's R2).
 //!
 //! Stages (vault `ada-parse.md`, X-057's redesign): **R1** this loop and the directive lexer
-//! ([`pp`]); **R2** definitions, parameters and the entity names; R3 the tail parity shows
-//! (templates' `<>`, casts, attributes, raw strings' corners); R4 the switch, [`crate::cpp`]
-//! deleted. Until R4 it runs where ada-parse is built with `ADA_PARSE_X057` set
-//! ([`crate::X057`]).
+//! ([`pp`]); **R2** definitions, parameters and the entity names; **R3** the tail parity
+//! showed (generics and template parameters, declared names, the preprocessor's corners);
+//! **R4** C and C++ on it alone, the compiled scanner deleted. Judged against syntect by
+//! color (each byte's theme rule), not scope for scope: where it reads C or C++ otherwise than
+//! bat, by design, is listed in ada's grammar tests (`cpp_rules_match_the_grammar`,
+//! `c_rules_match_the_grammar`) and the vault's X-057 notes.
 
 mod code;
 mod pp;
@@ -296,8 +298,16 @@ const A_PENDING: u32 = 10;
 const A_PREV: u32 = 12;
 /// A `?` waits for its `:`.
 const A_TERNARY: u16 = 0x8000;
-/// No `{` pending ([`Scan::pending`]).
+// What the next `{` opens where a word said ([`Scan::pending`]), in [`State`]'s two bits (code
+// is never pending: a `{` at a namespace's or a class's level opens it unasked).
+/// No `{` pending.
 const NO_PENDING: u8 = 0;
+/// A namespace's level: `namespace`, C++'s `extern "C"`.
+const PEND_NS: u8 = 1;
+/// A class's body: `class`, `struct`, `union`.
+const PEND_CLASS: u8 = 2;
+/// An initializer's braces: `enum`'s.
+const PEND_INIT: u8 = 3;
 
 /// A raw string's delimiter's bytes [`State`] keeps; a longer one is told by these and its
 /// length.
@@ -465,7 +475,7 @@ struct Scan<'b, 'c, K: Sink> {
     pp: u8,
     /// An `#if 0`'s open `#if`s, or a raw string's delimiter's length.
     aux: u8,
-    /// What the next `{` opens, where a word said ([`NO_PENDING`], else the level plus one).
+    /// What the next `{` opens, where a word said ([`NO_PENDING`], [`PEND_NS`]…).
     pending: u8,
     /// The token before ([`P_STMT`]…).
     prev: u8,
@@ -607,8 +617,24 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.k.start_line();
         self.b = b;
         self.lex_line();
+        self.settle();
         self.k.close(self.out);
         self.b = b"";
+    }
+
+    /// The fields as [`State`] keeps them ([`Scan::state`], [`Scan::load`]): a block's next
+    /// line starts from what the line API's would, so a block lexes as its lines one at a time.
+    /// One bit for the open `?`s, 7 `(`s, 3 `<`s, the word naming what follows only before
+    /// that name, the first [`LEVELS`] brace levels.
+    #[inline(always)]
+    fn settle(&mut self) {
+        self.ternary = self.ternary.min(1);
+        self.paren = self.paren.min(7);
+        self.angle = self.angle.min(3);
+        if self.prev != P_ENTITY {
+            self.entity = 0;
+        }
+        self.braces &= (1u128 << (2 * LEVELS)) - 1;
     }
 
     /// The line, from what the line before left: a mode's rest first, then a directive or the
@@ -663,7 +689,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 NS | CLASS => CODE,
                 l => l,
             },
-            p => p - 1,
+            PEND_NS => NS,
+            PEND_CLASS => CLASS,
+            _ => INIT,
         };
         self.pending = NO_PENDING;
         self.braces = self.braces << 2 | u128::from(kind);
@@ -717,9 +745,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn new_statement(&mut self) {
         (self.decl, self.paren, self.angle, self.tpl, self.kw) = (D_NONE, 0, 0, 0, false);
         if self.td != 0 {
-            if self.td == self.depth + 1 {
+            // a typedef's level plus one, as `td` was made
+            let level = self.depth.saturating_add(1);
+            if self.td == level {
                 self.decl = D_TYPEDEF;
-            } else if self.td > self.depth + 1 {
+            } else if self.td > level {
                 self.td = 0;
             }
         }

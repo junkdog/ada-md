@@ -96,6 +96,18 @@ impl<K: Sink> Scan<'_, '_, K> {
                 }
             }
             _ => {
+                // `#pragma mark` one keyword, as bat has it (Xcode's sections)
+                let t = skip_blanks(b, e);
+                let m = t + 4;
+                let e = if w == b"pragma"
+                    && t > e
+                    && b.get(t..m) == Some(b"mark")
+                    && b.get(m).is_none_or(|&c| CC[usize::from(c)] & SP != 0)
+                {
+                    m
+                } else {
+                    e
+                };
                 self.put::<true>(h, e, IMPORT);
                 self.pp = PP_REST;
                 self.pp_rest(e);

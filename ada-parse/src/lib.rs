@@ -20,7 +20,6 @@
 mod bash;
 mod cc;
 mod clike;
-mod cpp;
 mod csharp;
 mod css;
 mod diff;
@@ -67,11 +66,6 @@ mod yaml;
 mod yaml_scan;
 
 use std::mem::MaybeUninit;
-
-/// C's and C++'s scanner of ada's own (X-057's redesign, [`cc`]) in place of the compiled one
-/// ([`cpp`]): where ada-parse is built with `ADA_PARSE_X057` set, till the redesign's R4 switches
-/// it in for good.
-pub(crate) const X057: bool = option_env!("ADA_PARSE_X057").is_some();
 
 use emit::Sink as _;
 pub use emit::{Rule, Rules, Run};
@@ -452,10 +446,8 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
         Lang::Scss => (css::scss::block_runs, css::scss::line_runs),
         Lang::Bash => (bash::block_runs, bash::line_runs),
         Lang::Makefile => (bash::make_block_runs, bash::make_line_runs),
-        Lang::Cpp if X057 => (cc::block_runs, cc::line_runs),
-        Lang::C if X057 => (cc::block_runs_c, cc::line_runs_c),
-        Lang::Cpp => (cpp::block_runs, cpp::line_runs),
-        Lang::C => (cpp::block_runs_c, cpp::line_runs_c),
+        Lang::Cpp => (cc::block_runs, cc::line_runs),
+        Lang::C => (cc::block_runs_c, cc::line_runs_c),
         _ => return None,
     })
 }
@@ -475,10 +467,8 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::TypeScript if SPANS => typescript::block,
         Lang::TypeScriptReact if SPANS => typescript::block_tsx,
         Lang::JavaScript => javascript::block,
-        Lang::Cpp if SPANS && X057 => cc::block,
-        Lang::C if SPANS && X057 => cc::block_c,
-        Lang::Cpp if SPANS => cpp::block,
-        Lang::C if SPANS => cpp::block_c,
+        Lang::Cpp if SPANS => cc::block,
+        Lang::C if SPANS => cc::block_c,
         Lang::Bash if SPANS => bash::block,
         Lang::Makefile if SPANS => bash::make_block,
         Lang::Lua if SPANS => lua::block,
@@ -715,10 +705,8 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::Kotlin => out!(kotlin::line),
         Lang::Java if !SPANS => |_, _, _| unreachable!("Java's runs come from its own scan"),
         Lang::Java => out!(java::line),
-        Lang::Cpp if X057 => out!(cc::line),
-        Lang::C if X057 => out!(cc::line_c),
-        Lang::Cpp => out!(cpp::line),
-        Lang::C => out!(cpp::line_c),
+        Lang::Cpp => out!(cc::line),
+        Lang::C => out!(cc::line_c),
         Lang::CSharp if !SPANS => |_, _, _| unreachable!("C#'s runs come from its own scan"),
         Lang::CSharp => out!(csharp::line),
         Lang::Go if !SPANS => |_, _, _| unreachable!("Go's runs come from its own scan"),

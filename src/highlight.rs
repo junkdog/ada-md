@@ -2901,10 +2901,15 @@ mod tests {
         rules_match_the_grammar("java", "Java", text);
     }
 
-    /// ada-parse's C++ lexer picks the rules bat's grammar picks, in every built-in theme
-    /// (ADR-40): the preprocessor's rules (a disabled branch a comment, `#if 1`'s else
-    /// branch), an upper-case macro call on its own line handing its arguments to C's grammar,
-    /// raw strings across lines, the class, method and function definitions' corners.
+    /// ada-parse's C++ scanner (X-057's, of ada's own) colors each byte as bat's grammar does,
+    /// in every built-in theme (ADR-40, by rule a byte, not run for run: its kinds are leaves):
+    /// the preprocessor's rules (a disabled branch a comment, `#if 1`'s else branch, `#pragma
+    /// mark`), an upper-case macro call on its own line, raw strings across lines, the class,
+    /// method and function definitions' corners (a friend class, a trailing return type,
+    /// `delete[]`). Not where it departs from bat by design (ada-parse's `cc` tests): an enum's
+    /// underlying type and a base list's type words colored as types, where bat leaves them
+    /// plain; a friend function's name and parameters a declaration's, where bat leaves them
+    /// plain; a lambda's `-> int` a type, where bat reads a member.
     #[test]
     fn cpp_rules_match_the_grammar() {
         let text = concat!(
@@ -2946,7 +2951,7 @@ mod tests {
             "  double d_ = 1.5e-3f, e_ = .5L;\n",
             "};\n",
             "struct Point { int x, y; };\n",
-            "enum class Color : uint8_t { Red, Green = 2 };\n",
+            "enum class Color { Red, Green = 2 };\n",
             "union U { int i; float f; };\n",
             "typedef struct node node_t;\n",
             "int Widget::count = 0;\n",
@@ -2971,22 +2976,22 @@ mod tests {
             "#pragma mark Section\n",
             "#error \"stop\" here\n",
         );
-        rules_match_the_grammar("cpp", "C++", text);
+        colors_match_the_grammar("cpp", "C++", text);
     }
 
-    /// ada-parse's C lexer (C++'s scanner from C's root) picks the rules bat's grammar picks, in
-    /// every built-in theme (ADR-40): C's top level (a type, a function's name before its
-    /// parameters, a call's group, a struct and an enum), the global `#if` rules and branches,
-    /// a continued define, a float ending on its `.`, a hex number before a name, and C's
-    /// strings, escapes and placeholders.
+    /// ada-parse's C scanner (C++'s, X-057's) colors each byte as bat's grammar does, in every
+    /// built-in theme, by rule a byte as [`cpp_rules_match_the_grammar`]: C's top level (a
+    /// type, a function's name before its parameters, a call's group, a struct and an enum),
+    /// the global `#if` rules and branches, a continued define, a float ending on its `.`, a
+    /// hex number before a name, and C's strings, escapes and placeholders. The continued
+    /// `#define` comes last: bat's C keeps its body open past its last line, through the next
+    /// directive's block (an `#if 0` after it code), where ada's ends it with that line.
     #[test]
     fn c_rules_match_the_grammar() {
         let text = concat!(
             "#include <stdio.h>\n",
             "#include \"local.h\" /* why */\n",
             "#define MAX(a, b) ((a) > (b) ? (a) : (b))\n",
-            "#define NAME \\\n",
-            "          OTHER_NAME\n",
             "#define HALF 1.\n",
             "#if 0\n",
             "int disabled(void); #if nested\n",
@@ -3025,8 +3030,10 @@ mod tests {
             "}\n",
             "#pragma mark Section\n",
             "#error \"stop\" here\n",
+            "#define NAME \\\n",
+            "          OTHER_NAME\n",
         );
-        rules_match_the_grammar("c", "C", text);
+        colors_match_the_grammar("c", "C", text);
     }
 
     /// ada-parse's C# lexer picks the rules bat's grammar picks, in every built-in theme
@@ -4083,6 +4090,48 @@ mod tests {
             let want = highlight_syntect(reference_syntaxes(), name, text, &theme).unwrap();
             assert_eq!(painted(&highlight(1, lang, text, &theme)), painted(&want));
         }
+    }
+
+    /// As [`rules_match_the_grammar`], byte for byte rather than run for run: each byte's rule,
+    /// the theme entry that colors it, must be syntect's, however either cuts its runs. For a
+    /// scanner of ada's own whose kinds are a token's leaf scopes, not bat's stacks (X-057's C
+    /// and C++), so its runs may part where the rule doesn't; `examples/parity.rs` measures it so.
+    fn colors_match_the_grammar(lang: &str, name: &str, text: &str) {
+        assert_eq!(find_syntax(lang).unwrap().name(), name);
+        let by_byte = |spans: &CodeSpans, n: u32, len: usize| {
+            let mut out = vec![Rule::NONE; len];
+            let mut start = 0;
+            for run in spans.line(n) {
+                let end = (run.end as usize).min(len);
+                out[start.min(end)..end].fill(run.rule.0);
+                start = end;
+            }
+            out
+        };
+        // each line that differs, in the first theme it differs in: ada's rules, then syntect's
+        let mut bad: Vec<(u32, String)> = Vec::new();
+        for theme in Theme::builtins() {
+            let rules = SyntaxTheme::new(&theme.syntax);
+            let want = highlight_syntect(reference_syntaxes(), name, text, &rules).unwrap();
+            let got = highlight(1, lang, text, &rules);
+            for (n, line) in (0..).zip(text.lines()) {
+                let differs = by_byte(&got, n, line.len()) != by_byte(&want, n, line.len());
+                if differs && !bad.iter().any(|(m, _)| *m == n) {
+                    let (ours, theirs) = (
+                        rule_names(&theme, &got, line, n),
+                        rule_names(&theme, &want, line, n),
+                    );
+                    let at = format!("{}: line {}", theme.name, n + 1);
+                    bad.push((
+                        n,
+                        format!("{at}\n  ada:     {ours:?}\n  syntect: {theirs:?}"),
+                    ));
+                }
+            }
+        }
+        bad.sort_unstable();
+        let bad: Vec<String> = bad.into_iter().map(|(_, b)| b).collect();
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
     }
 
     /// A block's runs line by line, a line of plain runs as none: syntect's way gives a plain
