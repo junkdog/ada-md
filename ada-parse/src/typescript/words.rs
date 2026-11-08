@@ -51,7 +51,7 @@ pub(super) const AT_DOT: u32 = DOM_CONST | DOM_PROP | EVENT_HANDLER | BROWSER_FN
 /// The 1503 words and their bits.
 #[rustfmt::skip]
 #[allow(clippy::large_const_arrays)] // read only where the table is built: not in the binary
-const ENTRIES: [(&[u8], u32); 1503] = [
+pub(super) const ENTRIES: [(&[u8], u32); 1503] = [
     (b"ATTRIBUTE_NODE", DOM_CONST),
     (b"AnalyserNode", DOM_CLASS),
     (b"Array", BUILTIN_CLASS),

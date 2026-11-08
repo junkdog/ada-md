@@ -20,6 +20,7 @@ use crate::prim::char_len;
 mod expr;
 mod jsx;
 mod look;
+mod own;
 mod stmt;
 mod text;
 mod types;
@@ -694,9 +695,16 @@ const MAX: usize = 128;
 /// Matches that take nothing, in a row at one place, before the scan steps on regardless.
 const STUCK: usize = 48;
 
+/// Whether the scanner of ada's own designed for throughput (X-091, [`own`]) lexes, beside
+/// this one until its R4: set `ADA_PARSE_X091` when building.
+const OWN: bool = option_env!("ADA_PARSE_X091").is_some();
+
 /// Lex `b`, a line of TypeScript (TSX if `tsx`) without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], tsx: bool, state: &mut State, out: &mut Out) {
+    if OWN {
+        return own::line(b, tsx, state, out);
+    }
     let mut s = Scan::fresh(b, tsx, out, Push);
     s.load_state(state);
     s.lex();
@@ -736,6 +744,9 @@ fn line_runs_of(
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
 ) {
+    if OWN {
+        return own::line_runs(b, tsx, state, out, rules, runs);
+    }
     let mut s = Scan::fresh(b, tsx, out, Runs::new(rules, runs));
     s.load_state(state);
     s.lex();
@@ -768,6 +779,9 @@ fn block_of(
     spans: &mut Vec<crate::Span>,
     pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
 ) -> Option<usize> {
+    if OWN {
+        return own::block(tsx, state, spans, pass);
+    }
     let mut out = Out::new(spans);
     let mut s = Scan::fresh(b"", tsx, &mut out, Push);
     s.load_state(state);
@@ -807,6 +821,9 @@ fn block_runs_of(
     runs: &mut Vec<Run>,
     lines: &mut crate::RunLines,
 ) -> Option<usize> {
+    if OWN {
+        return own::block_runs(tsx, state, spans, rules, runs, lines);
+    }
     let mut out = Out::new(spans);
     out.0.clear();
     let mut s = Scan::fresh(b"", tsx, &mut out, Runs::new(rules, runs));
