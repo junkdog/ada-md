@@ -3875,7 +3875,14 @@ mod tests {
         rules_match_the_grammar(".git", "Git Link", link);
     }
 
-    /// The Makefile lexer picks the rules bat's grammar picks, in every built-in theme (G-002).
+    /// The Makefile lexer picks the rules bat's grammar picks, in every built-in theme (G-002),
+    /// byte for byte, but for a command's name in bash's color for it (as
+    /// `bash_rules_match_the_grammar`). Recipes are bash's scanner's since X-094, a make token
+    /// a word in the shell's text, and `$$` its `$`, as make hands the shell its line: by design
+    /// a flag after a token is an option (`$(CC) -c`, bat: a command `-c`), `$$f` a shell
+    /// variable (bat: `f` plain), and a `\` inside single quotes literal, as bash reads it (bat's
+    /// recipe prototype makes `\.` an escape everywhere), so the text leaves them out
+    /// (`ada_parse`'s Makefile tests pin them).
     #[test]
     fn make_rules_match_the_grammar() {
         let text = concat!(
@@ -3900,21 +3907,29 @@ mod tests {
             "endif\n",
             "all: $(OBJS) | dirs ; @echo inline\n",
             "%.o: %.c config.h\n",
-            "\t@$(CC) $(CFLAGS) -c $< -o $@\n",
+            "\t@gcc $(CFLAGS) -c $< -o $@\n",
             "\t-rm -f \"$@.tmp\" 2>/dev/null || true\n",
-            "\tfor f in $^; do [ -e \"$$f\" ] && echo `basename $$f`; done\n",
-            "\tf() { printf '%s\\n' $$1; }; f x\n",
+            "\tfor f in $^; do [ -e \"$<\" ] && echo `basename $@`; done\n",
+            "\tf() { printf '%s' $<; }; f x\n",
             "test: CFLAGS += -g\n",
             "test:: all\n",
             "\t$(info $(call show,$(OBJS),\"quoted\"))\n",
             "\t$(Q)$(kecho) \"  SYNC    $@\"\n",
-            "\tVAR=1 cd build && $(MAKE) -C sub $(shell uname -s)\n",
+            "\tVAR=1 cd build && make -C sub $(shell uname -s)\n",
             "\tif [ -n \"$${HOME}\" ]; then echo ok; else exit 1; fi\n",
-            "\tcase $$x in a|b) echo $$((1 + 2));; esac\n",
+            "\tcase $< in a|b) echo $$((1 + 2));; esac\n",
             "endef\n",
             "a((m)    ((g)    (i)    : b\n",
         );
-        rules_match_the_grammar("make", "Makefile", text);
+        colors_match_the_grammar_but(
+            "make",
+            "Makefile",
+            text,
+            &[(
+                "meta.function-call.shell support.function.command.shell",
+                "meta.function-call.shell variable.function.shell",
+            )],
+        );
     }
 
     /// The shell lexer picks the rules bat's bash grammar picks, in every built-in theme
@@ -4284,8 +4299,10 @@ mod tests {
             .line(n)
             .iter()
             .map(|r| {
-                let text = line[start..r.end as usize].to_owned();
-                start = r.end as usize;
+                // syntect's last run takes the line's `\n` too
+                let end = (r.end as usize).min(line.len()).max(start);
+                let text = line[start..end].to_owned();
+                start = end;
                 let rule = theme
                     .syntax
                     .get(usize::from(r.rule.0))
