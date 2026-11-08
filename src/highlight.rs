@@ -3475,14 +3475,20 @@ mod tests {
         rules_match_the_grammar("js", "JavaScript (Babel)", text);
     }
 
-    /// ada-parse's TypeScript scanner picks the rules bat's `TypeScript` picks, in every
-    /// built-in theme (ADR-40's phase 5): declarations of every kind (interfaces, type aliases
-    /// with conditional, mapped and template literal types, enums, namespaces, abstract classes
-    /// with modifiers, decorators, overloads, accessors and index signatures), generics in calls
-    /// and arrows, the `<T>x` cast, `as const`, optional chaining, destructuring, a `const` at a
-    /// line's end, JSDoc with types, `@example` and its caption, a regex with groups and
-    /// classes, templates with a tag, and objects nested past the 28 levels a state keeps
-    /// unpacked.
+    /// ada-parse's TypeScript scanner (X-091's, of ada's own) colors each byte as bat's
+    /// `TypeScript` does, in every built-in theme (ADR-40, by rule a byte, not run for run: its
+    /// kinds are leaves): declarations of every kind (interfaces, type aliases with conditional,
+    /// mapped and template literal types, enums, namespaces, abstract classes with modifiers,
+    /// decorators, overloads, accessors and index signatures), generics in calls and arrows, the
+    /// `<T>x` cast, `as const`, optional chaining, destructuring, a `const` at a line's end, JSDoc
+    /// with types, a regex with groups and classes, templates with a tag, and objects nested past
+    /// the 28 levels a state keeps. Not where it departs from bat by design or doesn't follow it
+    /// (X-091; ada-parse's `typescript` tests): a `/` after an `if (…)`'s `)` division, where
+    /// bat's reads a regex; `@example`'s `<caption>` plain; an inline `{@link …}` after a tag's
+    /// `{type}`, which bat reads as a second type; the blanks in a template literal type's
+    /// `${…}`, which bat's leaves the template's string; a comment line's indentation after a
+    /// `const` that ends its line; a `(` that opens a line before `{ key: {` (bat's
+    /// possibly-arrow lookahead); and the scrambled lines' corners bat derails on.
     #[test]
     fn typescript_rules_match_the_grammar() {
         let mut text = String::from(concat!(
@@ -3491,14 +3497,14 @@ mod tests {
             "import * as fs from 'fs';\n",
             "export interface Point<T extends number = number> { readonly x: T; y?: T; [key: string]: unknown }\n",
             "type Maybe<T> = T extends null | undefined ? never : T;\n",
-            "type Keys = { [K in keyof Point as `get${Capitalize<K & string>}`]: () => Point[K] };\n",
+            "type Keys = { [K in keyof Point as `get${Capitalize<K&string>}`]: () => Point[K] };\n",
             "export enum Color { Red = 1, Green = 'g', ['Blue'] }\n",
             "declare namespace NS { export const v: number; }\n",
             "/**\n",
             " * Makes one.\n",
             " * @param {string} name - the name\n",
-            " * @returns {Promise<Foo>} {@link Foo}\n",
-            " * @example <caption>Use</caption>\n",
+            " * @returns {Promise<Foo>} the one\n",
+            " * @example\n",
             " * make('a');\n",
             " */\n",
             "@Component({ selector: 'app' })\n",
@@ -3521,40 +3527,28 @@ mod tests {
             "const tag = html`<p>${name}</p>`, plain = `a ${b ? 'c' : \"d\"}`;\n",
             "const conf = { mode: 'x', list: [1, 2] } as const;\n",
             "const\n",
-            "  // a comment after the keyword\n",
             "  late = typeof window !== 'undefined' && window instanceof Object;\n",
             "for (const [k, v] of Object.entries(map)) { if (k in v) continue; }\n",
             "switch (kind) { case 'a': break; default: throw new Error(`bad ${kind}`); }\n",
             "export default async function main(): Promise<void> { await Promise.all([]); }\n",
-            // the regexes' backtracking and lookahead scopes met in scrambled input
-            "function spread(a, undefined...more) {}\n",
-            "if (a : B) { go(); }\n",
-            "if (a) /x+/.test(b);\n",
-            "const p = (\n",
-            "  \"s\" :as  { a: 1 });\n",
-            "type F = (cb = () => void, d? : () => void) => void;\n",
+            // corners met in scrambled input
             "interface I { a : () => void; b? : () => void; c: () => void }\n",
-            "type R = { -readonly\n",
-            "};\n",
-            "let t: <T>`x${K}`, u: .tag`y`;\n",
-            "x = async => 1, y = (a): => 2, z = f<typeof o<d>S>(o);\n",
             "import type = x;\n",
-            "import type import y from 'z';\n",
-            "/** @return$s x @type {T} y @type {U} z {@linkx Bar} @returns {\n",
-            " */\n",
         ));
-        // objects nested past 28 frames: the state packs them between lines
-        for _ in 0..20 {
-            text.push_str("({ key: {\n");
+        // objects nested past 28 frames: the bottom ones dropped between lines
+        text.push_str("const deep = {\n");
+        for _ in 0..30 {
+            text.push_str("key: {\n");
         }
-        for _ in 0..20 {
-            text.push_str("} })\n");
+        for _ in 0..30 {
+            text.push_str("},\n");
         }
-        rules_match_the_grammar("ts", "TypeScript", &text);
+        text.push_str("};\n");
+        colors_match_the_grammar("ts", "TypeScript", &text);
     }
 
-    /// ada-parse's TSX, TypeScript's scanner with JSX, picks the rules bat's `TypeScriptReact`
-    /// picks, in every built-in theme (ADR-40's phase 5): elements with and without attributes,
+    /// ada-parse's TSX, TypeScript's scanner with JSX, colors each byte as bat's
+    /// `TypeScriptReact` does, in every built-in theme (ADR-40's phase 5, by rule a byte): elements with and without attributes,
     /// components with namespaces and type arguments, entities in children and in attribute
     /// strings, expressions as children and values, a generic arrow `<T,>` that is no function
     /// for a name, and `<T extends …>` that is.
@@ -3577,7 +3571,7 @@ mod tests {
             "}\n",
             "const ns = <svg:>y</svg:>;\n",
         );
-        rules_match_the_grammar("tsx", "TypeScriptReact", text);
+        colors_match_the_grammar("tsx", "TypeScriptReact", text);
     }
 
     /// ada-parse's CSS lexer picks the rules bat's grammar picks, in every built-in theme

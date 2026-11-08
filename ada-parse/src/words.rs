@@ -63,32 +63,6 @@ pub const fn text_len(list: &[&[u8]]) -> usize {
     n
 }
 
-/// The words of a list of `(word, what it is)`, a [`Words`] table's list.
-pub const fn keys<T: Copy, const N: usize>(list: &[(&'static [u8], T); N]) -> [&'static [u8]; N] {
-    let mut k: [&[u8]; N] = [b""; N];
-    let mut i = 0;
-    while i < N {
-        k[i] = list[i].0;
-        i += 1;
-    }
-    k
-}
-
-/// What the words of a list of `(word, what it is)` are, by id: `none` at 0. `M` is `N + 1`.
-pub const fn by_id<T: Copy, const N: usize, const M: usize>(
-    list: &[(&'static [u8], T); N],
-    none: T,
-) -> [T; M] {
-    assert!(M == N + 1);
-    let mut t = [none; M];
-    let mut i = 0;
-    while i < N {
-        t[i + 1] = list[i].1;
-        i += 1;
-    }
-    t
-}
-
 impl<const SLOTS: usize, const N: usize, const TEXT: usize, const FOLD: bool>
     Words<SLOTS, N, TEXT, FOLD>
 {

@@ -1,1253 +1,1146 @@
-//! Comments, strings, templates, regex literals and JSDoc: the frames whose bytes are text.
+//! The text frames of TypeScript's own scanner ([`super::Scan`]): strings, templates, comments
+//! (JSDoc's tags, types and names in a `/** … */`), regex literals and regexes in `RegExp(…)`'s
+//! strings, and TSX's tags, attributes and children. Each opens from the code loop and, where
+//! it runs past the line, goes on as a frame whose turn ([`Scan::text_turn`]) the loop hands
+//! the next line to.
 
 use super::*;
+use crate::prim::stops;
 
-impl<K: Sink> Scan<'_, '_, '_, K> {
-    /// `comment` at the place: `/** … */`, `/* … */`, `// …` (with the line's indentation before
-    /// it as `punctuation.whitespace.comment.leading`).
-    pub(super) fn comment(&mut self, consume_eol: bool) -> bool {
-        let i = self.i;
-        let mut j = i;
-        if i == 0 {
-            j = self.sp(0);
-        }
-        if self.c(j) != b'/' {
-            return false;
-        }
-        match self.c(j + 1) {
-            b'*' if j == i => {
-                if self.c(j + 2) == b'*' && self.c(j + 3) != b'/' {
-                    self.tok(j, j + 3, DOC_MARK);
-                    self.i = j + 3;
-                    self.push(DOC_F);
-                    return true;
-                }
-                self.tok(j, j + 2, BLOCK_MARK);
-                self.i = j + 2;
-                self.push(BLOCK_F);
-                // (?:\s*((@)internal)(?=\s|(\*/)))?
-                let k = self.ws(j + 2);
-                if self.has(k, b"@internal") {
-                    let e = k + 9;
-                    if is_space(self.c(e)) || (self.c(e) == b'*' && self.c(e + 1) == b'/') {
-                        self.tok(k, k + 1, INTERNAL_MARK);
-                        self.tok(k + 1, e, INTERNAL);
-                        self.i = e;
-                    }
-                }
-                true
-            }
-            b'/' => {
-                if j > i {
-                    self.tok(i, j, LEADING);
-                }
-                self.tok(j, j + 2, LINE_MARK);
-                let mut e = j + 2;
-                let k = self.ws(e);
-                if self.has(k, b"@internal") {
-                    let f = k + 9;
-                    if f >= self.b.len() || is_space(self.c(f)) {
-                        self.tok(e, k, LINE);
-                        self.tok(k, k + 1, LINE_INTERNAL_MARK);
-                        self.tok(k + 1, f, LINE_INTERNAL);
-                        e = f;
-                    }
-                }
-                self.tok(e, self.b.len(), LINE);
-                self.i = if consume_eol {
-                    self.b.len() + 1
-                } else {
-                    self.b.len()
-                };
-                true
-            }
-            _ => false,
-        }
+/// The bytes a template's text stops at: its end, an escape, a substitution's `$`.
+static TPL_STOPS: [bool; 256] = stops(b"`\\$");
+/// The bytes a JSX element's children stop at.
+static CHILD_STOPS: [bool; 256] = stops(b"<{&");
+/// Where a regex in a `"…"` or a `'…'` yields to its string (its quote, an escape), and where a
+/// regex literal's body can end.
+static DQ_STOPS: [bool; 256] = stops(b"\"\\");
+static SQ_STOPS: [bool; 256] = stops(b"'\\");
+static REGEX_STOPS: [bool; 256] = stops(b"/");
+/// A template's, with its escapes: where its patterns start in a regex template.
+static TEMPLATE_RE_STOPS: [bool; 256] = stops(b"`$\\");
+
+/// A regex literal's body: its `/` ends it where no group or class is open.
+static RE_EMBED: regex::Embed<'static> = regex::Embed {
+    dialect: regex::Dialect::Ecma,
+    cooked: false,
+    yields: &REGEX_STOPS,
+    stop: |_, _, _| false,
+    arg: 0,
+    escape: regex::java_escape,
+    top_only: true,
+    continues: false,
+    base: RE_KINDS,
+    text: RE,
+};
+
+/// A regex in a `'…'`, a `"…"` and a template: the host's end, its escapes and a template's
+/// `${` come first ([`RE_HOSTS`]' order past the literal's).
+static RE_STR_EMBED: [regex::Embed<'static>; 3] = [
+    re_str_embed(&SQ_STOPS, 1, STR_S),
+    re_str_embed(&DQ_STOPS, 2, STR_D),
+    regex::Embed {
+        stop: |b, p, _| b[p] == b'`' || b.get(p + 1) == Some(&b'{'),
+        escape: |b, p| escape(b, p),
+        ..re_str_embed(&TEMPLATE_RE_STOPS, 3, TPL)
+    },
+];
+
+const fn re_str_embed(yields: &'static [bool; 256], host: u16, text: u16) -> regex::Embed<'static> {
+    regex::Embed {
+        dialect: regex::Dialect::Ecma,
+        cooked: true,
+        yields,
+        stop: |_, _, _| true,
+        arg: 0,
+        escape: |b, p| escape(b, p),
+        top_only: false,
+        continues: true,
+        base: RE_KINDS + host * regex::KINDS as u16,
+        text,
     }
+}
 
-    /// `string`: `'…'`, `"…"`, or a template (`template-call` first: a tag's `true` is the literal).
-    pub(super) fn string(&mut self) -> bool {
-        match self.c(self.i) {
-            b'\'' => {
-                let i = self.i;
-                self.tok(i, i + 1, STR_S_BEGIN);
-                self.i += 1;
-                self.push(STR_S_F);
-                if after_paren(self.b, i) && self.regexp_arg(i) {
-                    self.push_regex(RE_STR_F);
-                }
-                true
+/// A string escape at `p`, a `\` (bat's `string-character-escape`): `\xHH`, `\uHHHH`,
+/// `\u{H…}`, an octal's digits, else the `\` and the character after it. Where it ends.
+fn escape(b: &[u8], p: usize) -> usize {
+    let hex = |i: usize| b.get(i).is_some_and(u8::is_ascii_hexdigit);
+    let q = p + 2;
+    match b.get(p + 1) {
+        None => p + 1,
+        Some(b'x') if hex(q) && hex(q + 1) => q + 2,
+        Some(b'u') if b.get(q) == Some(&b'{') && hex(q + 1) => {
+            let mut e = q + 1;
+            while hex(e) {
+                e += 1;
             }
-            b'"' => {
-                let i = self.i;
-                self.tok(i, i + 1, STR_D_BEGIN);
-                self.i += 1;
-                self.push(STR_D_F);
-                if after_paren(self.b, i) && self.regexp_arg(i) {
-                    self.push_regex(RE_STR_F);
-                }
-                true
+            if b.get(e) == Some(&b'}') { e + 1 } else { q }
+        }
+        Some(b'u') if (q..q + 4).all(hex) => q + 4,
+        Some(b'0'..=b'7') => {
+            let mut e = p + 2;
+            while e < p + 4 && b.get(e).is_some_and(|c| matches!(c, b'0'..=b'7')) {
+                e += 1;
             }
-            _ => self.template_call() || self.template(false),
+            e
         }
+        Some(&c) => p + 1 + char_len(c),
     }
+}
 
-    /// `template`: `([_$[:alpha:]][_$[:alnum:]]*)?(`)`. In a type (`template-type`) its `${…}`
-    /// holds a type.
-    pub(super) fn template(&mut self, in_type: bool) -> bool {
-        let i = self.i;
-        if self.tick <= i {
-            return false;
-        }
-        let e = self.name(i);
-        if self.c(e) != b'`' {
-            return false;
-        }
-        if e > i {
-            self.tok(i, e, TPL_TAG);
-        }
-        self.tok(e, e + 1, TPL_BEGIN);
-        self.i = e + 1;
-        self.push(if in_type { TPL_TYPE } else { TPL_F });
-        if !in_type && e == i && after_paren(self.b, i) && self.regexp_arg(i) {
-            self.push_regex(RE_STR_F);
-        }
-        true
-    }
-
-    /// Whether the string or template opening at `i` is the first argument of `RegExp(`
-    /// (`new RegExp(…)` too): a regex, in ECMAScript's dialect, as WebStorm colors it.
+impl<K: Sink> Scan<'_, '_, K> {
+    /// A text frame's turn at `p` (`top`): where the scan goes; the line's end handled here
+    /// (a string not continued ends with its line).
     #[inline(never)]
-    pub(super) fn regexp_arg(&self, i: usize) -> bool {
+    pub(super) fn text_turn(&mut self, p: usize, top: u8) -> usize {
+        match top {
+            T_STR_D | T_STR_S => self.string_text(p, top),
+            T_TPL => self.template_text(p),
+            T_BLOCK | T_DOC => self.comment_text(p, top == T_DOC),
+            T_DOC_INLINE => self.doc_inline_text(p),
+            T_JSX_TAG => self.jsx_tag(p),
+            T_JSX_CHILD => self.jsx_children(p),
+            T_JSX_STR_D | T_JSX_STR_S => self.jsx_string_text(p, top),
+            T_RE_STR..=T_RE_STR_LAST => self.regex_string(p, top),
+            T_RE_LIT..=T_RE_LIT_LAST => {
+                // a literal whose group or class the line before left open
+                self.pop();
+                self.at = p;
+                self.regex_body(p, top & regex::ECMA_STATE)
+            }
+            _ => {
+                // a frame no turn reads: dropped
+                self.pop();
+                p
+            }
+        }
+    }
+
+    // --- strings ---
+
+    /// A `"` or `'` at `p` (`q`) in code: the string whole where it closes on the line before
+    /// any `\`, else its frame.
+    #[inline(always)]
+    pub(super) fn string(&mut self, p: usize, q: u8) -> usize {
         let b = self.b;
-        let mut k = i;
-        while k > 0 && is_space(b[k - 1]) {
-            k -= 1;
+        let keyed =
+            matches!(self.prev, P_KEY | P_MEMBER) && matches!(self.top(), F_OBJECT | F_CLASS_BODY);
+        self.prev = if keyed { P_KEYED } else { P_VALUE };
+        if p == self.re_arg {
+            return self.regex_arg(p, q);
         }
-        if k == 0 || b[k - 1] != b'(' {
-            return false;
-        }
-        k -= 1;
-        while k > 0 && is_space(b[k - 1]) {
-            k -= 1;
-        }
-        k >= 6
-            && &b[k - 6..k] == b"RegExp"
-            && (k == 6 || !(b[k - 7].is_ascii_alphanumeric() || matches!(b[k - 7], b'_' | b'$')))
-    }
-
-    /// Push a regex's frame, its state empty.
-    pub(super) fn push_regex(&mut self, f: u8) {
-        self.push(f);
-        self.re = 0;
-    }
-
-    /// The regex from the place in host `host` ([`RE_HOSTS`]' order: a literal, a `'…'`, a
-    /// `"…"`, a template), up to where the host's patterns can next match, before `lim`, or past
-    /// the line.
-    #[inline(never)]
-    pub(super) fn regex_run(&mut self, host: usize, lim: usize) -> bool {
-        static YIELDS: [[bool; 256]; 4] = [
-            regex::table(b"/"),
-            regex::table(b"'\\"),
-            regex::table(b"\"\\"),
-            regex::table(b"`\\$"),
-        ];
-        fn quote(_: &[u8], _: usize, _: usize) -> bool {
-            true
-        }
-        fn tpl(b: &[u8], p: usize, _: usize) -> bool {
-            b[p] == b'`' || b.get(p + 1) == Some(&b'{')
-        }
-        let embed = regex::Embed {
-            dialect: regex::Dialect::Ecma,
-            cooked: host != 0,
-            yields: &YIELDS[host],
-            stop: match host {
-                0 => |_, _, _| false,
-                3 => tpl,
-                _ => quote,
-            },
-            arg: 0,
-            escape: escape_at,
-            top_only: host == 0,
-            continues: host != 0,
-            base: (RE_KINDS + host as u16 * regex::KINDS as u16) | self.wrap,
-            text: RE_HOSTS[host] | self.wrap,
+        let (begin, text, end) = if q == b'"' {
+            (STR_D_BEGIN, STR_D, STR_D_END)
+        } else {
+            (STR_S_BEGIN, STR_S, STR_S_END)
         };
-        let b = &self.b[..lim];
-        self.k.close(self.out);
-        let r = regex::embedded(b, self.i, self.re, &embed, &mut self.done, self.out);
-        self.k.reopen(self.out, 16);
-        match r {
-            Some((q, st)) => {
-                self.i = q;
-                self.re = st;
-                true
+        let i = crate::prim::find_in(b, p + 1, b.len(), [q, b'\\']);
+        if i < b.len() && b[i] == q {
+            // a quoted key before `:`: a function as its value names it
+            let key = keyed && self.top() == F_OBJECT;
+            let mark = if key {
+                Some(self.k.mark(self.out))
+            } else {
+                None
+            };
+            self.tok(p, p + 1, begin);
+            self.tok(p + 1, i, text);
+            self.tok(i, i + 1, end);
+            if let Some(mark) = mark {
+                let s = skip_blanks(b, i + 1);
+                if b.get(s) == Some(&b':') {
+                    self.assigned_at(mark, p, i + 1, s, A_QUOTED);
+                    self.tok_far(s, s + 1, KEY_VALUE);
+                    self.prev = P_OP;
+                    return s + 1;
+                }
             }
-            None => false,
+            return i + 1;
+        }
+        self.tok_far(p, p + 1, begin);
+        self.push(if q == b'"' { T_STR_D } else { T_STR_S });
+        self.at = p + 1;
+        p + 1
+    }
+
+    /// A string's text from `p` (`top` its frame): its escapes, its end, or the line's.
+    fn string_text(&mut self, mut p: usize, top: u8) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let (q, text, end, esc) = if top == T_STR_D {
+            (b'"', STR_D, STR_D_END, STR_D_ESC)
+        } else {
+            (b'\'', STR_S, STR_S_END, STR_S_ESC)
+        };
+        loop {
+            let i = crate::prim::find_in(b, p, n, [q, b'\\']);
+            if i >= n {
+                // the string ends with its line
+                self.fill_as(n, text);
+                self.pop();
+                return n;
+            }
+            self.fill_as(i, text);
+            if b[i] == q {
+                self.tok_far(i, i + 1, end);
+                self.at = i + 1;
+                self.pop();
+                return i + 1;
+            }
+            if i + 1 >= n {
+                // `\` at the line's end: the string goes on
+                self.tok_far(i, n, esc);
+                self.at = n;
+                return n;
+            }
+            let e = escape(b, i);
+            self.tok_far(i, e, esc);
+            self.at = e;
+            p = e;
         }
     }
 
-    /// A regex string's turn ([`RE_STR_F`]): the host string's or template's patterns first
-    /// (its end, an escape but `\\`, which is the regex's `\`, a `${`, a string's last character
-    /// on its line), then the regex.
+    /// The string or template opening at `p` as `RegExp(`'s argument: a regex in ECMAScript's
+    /// dialect, above the string's frame.
     #[inline(never)]
-    pub(super) fn regex_string(&mut self) -> bool {
-        let i = self.i;
-        let c = self.c(i);
-        let host = self.stack[self.depth - 2];
-        if host == TPL_F {
+    fn regex_arg(&mut self, p: usize, q: u8) -> usize {
+        let (begin, frame) = match q {
+            b'"' => (STR_D_BEGIN, T_STR_D),
+            b'\'' => (STR_S_BEGIN, T_STR_S),
+            _ => (TPL_BEGIN, T_TPL),
+        };
+        self.tok_far(p, p + 1, begin);
+        self.push(frame);
+        self.push(T_RE_STR);
+        self.at = p + 1;
+        p + 1
+    }
+
+    /// A regex string's turn at `p` (`top`): the host string's or template's end, escapes
+    /// (but `\\`, the regex's `\`) and `${` first, then the regex.
+    fn regex_string(&mut self, p: usize, top: u8) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let host = self.under();
+        let c = b.get(p).copied();
+        let which = if host == T_TPL {
             match c {
-                b'`' => {
-                    self.tok(i, i + 1, TPL_END);
-                    self.i = i + 1;
-                    return self.end_regex_string();
+                Some(b'`') => {
+                    self.pop();
+                    self.pop();
+                    self.tok_far(p, p + 1, TPL_END);
+                    self.at = p + 1;
+                    self.prev = P_VALUE;
+                    return p + 1;
                 }
-                b'\\' if self.c(i + 1) != b'\\' => {
-                    let e = self.escape_end(i);
-                    self.tok(i, e, TPL_ESC);
-                    self.i = e;
-                    return true;
+                Some(b'$') if b.get(p + 1) == Some(&b'{') => {
+                    self.tok_far(p, p + 2, SUBST_BEGIN);
+                    self.push(F_SUBST);
+                    self.substs = (self.substs + 1).min(SUBSTS_MAX);
+                    self.prev = P_OP;
+                    return p + 2;
                 }
-                b'$' if self.c(i + 1) == b'{' => {
-                    self.tok(i, i + 2, SUBST_BEGIN);
-                    self.i = i + 2;
-                    self.spill();
-                    self.push(SUBST);
-                    return true;
+                Some(b'\\') if b.get(p + 1) != Some(&b'\\') => {
+                    let e = escape(b, p).min(n);
+                    self.tok_far(p, e, TPL_ESC);
+                    self.at = e;
+                    return e;
                 }
                 _ => {}
             }
-            if i >= self.b.len() {
-                self.i = self.b.len() + 1;
-                return true;
-            }
-            return self.regex_run(3, self.b.len());
-        }
-        let (q, h, end, esc, bad) = if host == STR_S_F {
-            (b'\'', 1, STR_S_END, STR_S_ESC, STR_S_BAD)
+            2
         } else {
-            (b'"', 2, STR_D_END, STR_D_ESC, STR_D_BAD)
-        };
-        if c == q {
-            self.tok(i, i + 1, end);
-            self.i = i + 1;
-            return self.end_regex_string();
-        }
-        if c == b'\\' && self.c(i + 1) != b'\\' {
-            let e = self.escape_end(i);
-            self.tok(i, e, esc);
-            self.i = e;
-            return true;
-        }
-        if i >= self.b.len() {
-            self.i = self.b.len() + 1;
-            return true;
-        }
-        // `((?:[^\\\n])$)`: the line's last character ends the string
-        let mut last = self.b.len() - 1;
-        while last > 0 && self.b[last] & 0xc0 == 0x80 {
-            last -= 1;
-        }
-        if i >= last {
-            self.tok(i, self.b.len(), bad);
-            self.i = self.b.len();
-            return self.end_regex_string();
-        }
-        // a `\` last is an escape's (a `\\`, the regex's `\`, and the string goes on) or the line's
-        // continuation, never `[^\\\n]$`
-        let lim = if self.b[last] == b'\\' {
-            self.b.len()
-        } else {
-            last
-        };
-        self.regex_run(h, lim)
-    }
-
-    /// The end of a regex string: its frame and the string's.
-    fn end_regex_string(&mut self) -> bool {
-        self.re = 0;
-        self.pop();
-        self.pop()
-    }
-
-    /// Keep the top regex's state as frames above its own, where something is pushed above it
-    /// or the line ends: [`RE_GROUP_F`] for each group open, then [`RE_SET_F`] for a class.
-    #[inline(never)]
-    pub(super) fn spill(&mut self) {
-        let st = self.re;
-        self.re = 0;
-        for _ in 0..st & regex::DEPTH {
-            self.push(RE_GROUP_F);
-        }
-        if st & regex::SET != 0 {
-            self.push(RE_SET_F);
-        }
-    }
-
-    /// Undo [`Scan::spill`], where its frames are the top again.
-    #[inline(never)]
-    pub(super) fn unspill(&mut self) {
-        let mut st = 0;
-        while self.depth > 1 && matches!(self.top(), RE_GROUP_F | RE_SET_F) {
-            st = if self.top() == RE_SET_F {
-                st | regex::SET
+            let (q, end, esc) = if host == T_STR_D {
+                (b'"', STR_D_END, STR_D_ESC)
             } else {
-                (st & regex::SET) | ((st & regex::DEPTH) + 1).min(regex::DEPTH)
+                (b'\'', STR_S_END, STR_S_ESC)
             };
-            self.depth -= 1;
-        }
-        self.re = if matches!(self.top(), REGEX_F | RE_STR_F) {
-            st
-        } else {
-            0
+            if c == Some(q) {
+                self.pop();
+                self.pop();
+                self.tok_far(p, p + 1, end);
+                self.at = p + 1;
+                self.prev = P_VALUE;
+                return p + 1;
+            }
+            if p >= n {
+                self.pop();
+                self.pop();
+                return n;
+            }
+            if c == Some(b'\\') && b.get(p + 1) != Some(&b'\\') {
+                // the string's escapes first (a `\\` is the regex's)
+                let e = escape(b, p).min(n);
+                self.tok_far(p, e, esc);
+                self.at = e;
+                return e;
+            }
+            usize::from(host == T_STR_D)
         };
-        self.refresh();
+        if p >= n {
+            return n;
+        }
+        self.k.close(self.out);
+        let r = regex::embedded(
+            b,
+            p,
+            top & regex::ECMA_STATE,
+            &RE_STR_EMBED[which],
+            &mut self.at,
+            self.out,
+        );
+        self.k.reopen(self.out, 16);
+        match r {
+            Some((q, st)) => {
+                self.set_top(T_RE_STR | st);
+                q.max(p + 1).min(n)
+            }
+            None => n,
+        }
     }
 
-    /// `string-character-escape` at the place, `\` there: its end.
-    pub(super) fn escape_end(&self, i: usize) -> usize {
-        escape_at(&self.b[..self.b.len()], i)
-    }
+    // --- templates ---
 
-    /// A frame of text's turn. Out of the scan's loop, where its arms would crowd the code's.
+    /// A template's `` ` `` at `p`.
     #[inline(never)]
-    pub(super) fn text_step(&mut self, f: u8) -> bool {
-        let i = self.i;
-        let c = self.c(i);
-        match f {
-            STR_S_F | STR_D_F | DIRECTIVE_STR_S_F | DIRECTIVE_STR_D_F => {
-                let q = if matches!(f, STR_S_F | DIRECTIVE_STR_S_F) {
-                    b'\''
-                } else {
-                    b'"'
-                };
-                let (end, esc, bad) = match f {
-                    STR_S_F => (STR_S_END, STR_S_ESC, STR_S_BAD),
-                    STR_D_F => (STR_D_END, STR_D_ESC, STR_D_BAD),
-                    DIRECTIVE_STR_S_F => (DIRECTIVE_STR_S_END, DIRECTIVE_STR_S_ESC, STR_S_BAD),
-                    _ => (DIRECTIVE_STR_D_END, DIRECTIVE_STR_D_ESC, STR_D_BAD),
-                };
-                // the next quote, backslash or the line's last character
-                let mut j = i;
-                while j < self.b.len() {
-                    let d = self.b[j];
-                    if d == q || d == b'\\' {
-                        break;
-                    }
-                    let l = char_len(d);
-                    if j + l >= self.b.len() {
-                        break;
-                    }
-                    j += l;
-                }
-                if j >= self.b.len() {
-                    self.i = self.b.len() + 1;
-                    return true;
-                }
-                self.fill(j);
-                let d = self.b[j];
-                if d == q {
-                    self.tok(j, j + 1, end);
-                    self.i = j + 1;
-                    return self.pop();
-                }
-                if d == b'\\' {
-                    let e = self.escape_end(j);
-                    self.tok(j, e, esc);
-                    self.i = e;
-                    return true;
-                }
-                // `((?:[^\\\n])$)`: the line's last character
-                let e = j + char_len(d);
-                self.tok(j, e, bad);
-                self.i = e;
-                self.pop()
+    pub(super) fn template(&mut self, p: usize) -> usize {
+        if p == self.re_arg {
+            return self.regex_arg(p, b'`');
+        }
+        self.tok_far(p, p + 1, TPL_BEGIN);
+        self.push(T_TPL);
+        self.at = p + 1;
+        p + 1
+    }
+
+    /// A template's text from `p`: to its end, a substitution, or the line's end.
+    fn template_text(&mut self, mut p: usize) -> usize {
+        let b = self.b;
+        let n = b.len();
+        loop {
+            let mut i = p;
+            while i < n && !TPL_STOPS[usize::from(b[i])] {
+                i += 1;
             }
-            TPL_F | TPL_TYPE => {
-                let mut j = i;
-                while j < self.b.len() && !matches!(self.b[j], b'`' | b'\\' | b'$') {
-                    j += 1;
-                }
-                if j >= self.b.len() {
-                    self.i = self.b.len() + 1;
-                    return true;
-                }
-                match self.b[j] {
-                    b'`' => {
-                        self.tok(j, j + 1, TPL_END);
-                        self.i = j + 1;
-                        self.pop()
-                    }
-                    b'\\' => {
-                        let e = self.escape_end(j);
-                        self.tok(j, e, TPL_ESC);
-                        self.i = e;
-                        true
-                    }
-                    _ if self.c(j + 1) == b'{' => {
-                        self.tok(j, j + 2, SUBST_BEGIN);
-                        self.i = j + 2;
-                        self.push(if f == TPL_F { SUBST } else { SUBST_TYPE });
-                        true
-                    }
-                    _ => {
-                        self.i = j + 1;
-                        true
-                    }
-                }
+            if i >= n {
+                self.fill_as(n, TPL);
+                return n;
             }
-            BLOCK_F => match find2(self.b, i, b'*', b'/') {
-                Some(j) => {
-                    self.tok(j, j + 2, BLOCK_MARK);
-                    self.i = j + 2;
-                    self.pop()
+            match b[i] {
+                b'`' => {
+                    self.fill_as(i, TPL);
+                    self.tok_far(i, i + 1, TPL_END);
+                    self.at = i + 1;
+                    self.pop();
+                    self.prev = P_VALUE;
+                    return i + 1;
                 }
-                None => {
-                    self.i = self.b.len() + 1;
-                    true
+                b'$' if b.get(i + 1) == Some(&b'{') => {
+                    self.fill_as(i, TPL);
+                    self.tok(i, i + 2, SUBST_BEGIN);
+                    self.at = i + 2;
+                    if (F_TYPE..TEXT).contains(&self.under()) {
+                        // a template literal type's substitution holds a type
+                        self.push(F_T_SUBST);
+                        self.prev = P_OP;
+                        return i + 2;
+                    }
+                    self.push(F_SUBST);
+                    self.substs = (self.substs + 1).min(SUBSTS_MAX);
+                    self.prev = P_OP;
+                    return i + 2;
                 }
-            },
-            DOC_F => {
-                if c == b'*' && self.c(i + 1) == b'/' {
-                    self.tok(i, i + 2, DOC_MARK);
-                    self.i = i + 2;
-                    return self.pop();
+                b'\\' => {
+                    let e = escape(b, i).min(n);
+                    self.fill_as(i, TPL);
+                    self.tok_far(i, e, TPL_ESC);
+                    self.at = e;
+                    p = e;
                 }
-                if c == b'@' || c == b'[' || c == b'{' {
-                    return self.docblock();
-                }
-                // to the next place a pattern can start
-                let mut j = i + 1;
-                while j < self.b.len() && !matches!(self.b[j], b'*' | b'@' | b'[' | b'{') {
-                    j += 1;
-                }
-                self.i = j;
-                true
+                _ => p = i + 1,
             }
-            REGEX_F => {
-                if c == b'/' && self.re == 0 {
+        }
+    }
+
+    // --- comments ---
+
+    /// A `//` at `p`: the rest of the line; the blanks before it the comment's where it starts
+    /// the line.
+    #[inline(always)]
+    pub(super) fn line_comment(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let n = b.len();
+        if p > 0 && b[..p].iter().all(|&c| c == b' ' || c == b'\t') {
+            self.tok(0, p, LEADING);
+        }
+        if b.get(p + 2) == Some(&b'/') && has(b, skip_blanks(b, p + 3), b"<") {
+            return self.directive(p);
+        }
+        // a CRLF line's `\r` stays plain, as bat's `$` leaves it
+        let end = if b[n - 1] == b'\r' { n - 1 } else { n };
+        self.tok(p, p + 2, LINE_MARK);
+        self.tok(p + 2, end, LINE);
+        n
+    }
+
+    /// A `///` directive's line at `p` (`/// <reference path="…" />`).
+    #[inline(never)]
+    fn directive(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let n = b.len();
+        self.tok_far(p, p + 3, DIRECTIVE_MARK);
+        let mut i = p + 3;
+        while i < n {
+            let c = b[i];
+            match c {
+                b'<' => {
+                    self.tok_far(i, i + 1, DIRECTIVE_TAG_MARK);
                     let mut e = i + 1;
-                    while matches!(
-                        self.c(e),
-                        b'd' | b'g' | b'i' | b'm' | b's' | b'u' | b'v' | b'y'
-                    ) {
+                    while e < n && NAME[usize::from(b[e])] {
                         e += 1;
                     }
-                    self.tok(i, i + 1, RE_END);
-                    self.tok(i + 1, e, RE_FLAGS);
-                    self.i = e;
-                    return self.pop();
+                    self.tok_far(i + 1, e, DIRECTIVE_TAG);
+                    i = e;
                 }
-                self.regex_run(0, self.b.len())
-            }
-            RE_STR_F => self.regex_string(),
-            RE_GROUP_F | RE_SET_F => {
-                self.unspill();
-                true
-            }
-            LINE_EOL => {
-                self.i = self.b.len() + 1;
-                true
-            }
-            DOC_EXAMPLE => {
-                if c == b'@' || (c == b'*' && self.c(i + 1) == b'/') {
-                    return self.pop_zero();
+                b'/' if b.get(i + 1) == Some(&b'>') => {
+                    self.tok_far(i, i + 2, DIRECTIVE_TAG_MARK);
+                    i += 2;
                 }
-                // ^\s\*\s+
-                if i == 0 && is_space(c) && self.c(1) == b'*' && is_space(self.c(2)) {
-                    self.i = self.ws(2).min(self.b.len());
-                    return true;
+                b'>' => {
+                    self.tok_far(i, i + 1, DIRECTIVE_TAG_MARK);
+                    i += 1;
                 }
-                // \G(<)caption(>): its failed search is cached for the rest of the line
-                if !self.g_caption && !self.has(i, b"<caption>") {
-                    self.g_caption = true;
+                b'=' => {
+                    self.tok_far(i, i + 1, DIRECTIVE_EQ);
+                    i += 1;
                 }
-                if !self.g_caption {
-                    self.tok(i, i + 1, JD_CAPTION_ANGLE_BEGIN);
-                    self.tok(i + 1, i + 8, JD_CAPTION_TAG);
-                    self.tok(i + 8, i + 9, JD_CAPTION_ANGLE_END);
-                    self.i = i + 9;
-                    self.push(DOC_CAPTION);
-                    return true;
-                }
-                if i < self.b.len() && !is_space(c) && c != b'@' && c != b'*' {
-                    // [^\s@*](?:[^*]|\*[^/])*
+                b'"' | b'\'' => {
+                    let (bg, t, en) = if c == b'"' {
+                        (DIRECTIVE_STR_D_BEGIN, DIRECTIVE_STR_D, DIRECTIVE_STR_D_END)
+                    } else {
+                        (DIRECTIVE_STR_S_BEGIN, DIRECTIVE_STR_S, DIRECTIVE_STR_S_END)
+                    };
                     let mut e = i + 1;
-                    while e < self.b.len() {
-                        if self.b[e] == b'*' {
-                            if self.c(e + 1) == b'/' || e + 1 >= self.b.len() {
-                                break;
-                            }
-                            e += 2;
-                        } else {
-                            e += 1;
-                        }
+                    while e < n && b[e] != c {
+                        e += 1;
                     }
-                    self.tok(i, e.min(self.b.len()), JD_EXAMPLE_CODE);
-                    self.i = e.min(self.b.len());
-                    return true;
+                    self.tok_far(i, i + 1, bg);
+                    self.tok_far(i + 1, e, t);
+                    if e < n {
+                        self.tok_far(e, e + 1, en);
+                        e += 1;
+                    }
+                    i = e;
                 }
-                false
+                _ if NAME[usize::from(c)] => {
+                    let mut e = i + 1;
+                    while e < n && NAME[usize::from(b[e])] {
+                        e += 1;
+                    }
+                    self.tok_far(i, e, DIRECTIVE_ATTR);
+                    i = e;
+                }
+                _ => {
+                    self.tok_far(i, i + 1, DIRECTIVE);
+                    i += 1;
+                }
             }
-            DOC_CAPTION => {
-                if self.has(i, b"</caption>") {
-                    self.tok(i, i + 2, JD_CAPTION_ANGLE_BEGIN);
-                    self.tok(i + 2, i + 9, JD_CAPTION_TAG);
-                    self.tok(i + 9, i + 10, JD_CAPTION_ANGLE_END);
-                    self.i = i + 10;
-                    return self.pop();
-                }
-                if c == b'*' && self.c(i + 1) == b'/' {
-                    return self.pop_zero();
-                }
-                false
+        }
+        n
+    }
+
+    /// A `/*` at `p`: whole where it closes on the line, else its frame.
+    #[inline(never)]
+    pub(super) fn block_comment(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let doc = b.get(p + 2) == Some(&b'*') && b.get(p + 3) != Some(&b'/');
+        let (open, mark) = if doc { (3, DOC_MARK) } else { (2, BLOCK_MARK) };
+        self.tok_far(p, p + open, mark);
+        self.push(if doc { T_DOC } else { T_BLOCK });
+        self.at = p + open;
+        self.comment_text(p + open, doc)
+    }
+
+    /// A block comment's text from `p`: to its `*/` or the line's end; a doc comment's JSDoc.
+    fn comment_text(&mut self, p: usize, doc: bool) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let text = if doc { DOC } else { BLOCK_TEXT };
+        let mark = if doc { DOC_MARK } else { BLOCK_MARK };
+        let mut i = p;
+        loop {
+            i = if doc {
+                crate::prim::find_in(b, i, n, *b"*@{")
+            } else {
+                crate::prim::find_in(b, i, n, *b"*")
+            };
+            if i >= n {
+                self.fill_as(n, text);
+                return n;
             }
-            DOC_TYPE => {
-                // ((}))\s*|(?=\*/)
-                if c == b'}' {
-                    // `((}))\s*`: the blanks are the pop's, outside the type's content scope
-                    self.tok(i, i + 1, JD_TYPE_END);
-                    self.i = i + 1;
+            match b[i] {
+                b'*' if b.get(i + 1) == Some(&b'/') => {
+                    self.fill_as(i, text);
+                    self.tok_far(i, i + 2, mark);
+                    self.at = i + 2;
                     self.pop();
-                    self.i = self.ws(i + 1).min(self.b.len());
-                    return true;
+                    return i + 2;
                 }
-                if c == b'*' && self.c(i + 1) == b'/' {
-                    return self.pop_zero();
+                b'@' => {
+                    i = self.jsdoc_tag(i);
                 }
-                self.doc_brackets()
+                b'{' if b.get(i + 1) == Some(&b'@') => {
+                    i = self.jsdoc_inline(i);
+                }
+                _ => i += 1,
             }
-            DOC_BRACKETS | DOC_BRACKETS_SQ => {
-                let close = if f == DOC_BRACKETS { b'}' } else { b']' };
-                if c == close {
-                    self.i = i + 1;
-                    return self.pop();
-                }
-                if c == b'*' && self.c(i + 1) == b'/' {
-                    return self.pop_zero();
-                }
-                self.doc_brackets()
-            }
-            DOC_TYPEDEF | DOC_PARAM | DOC_TYPED => {
-                // (?=\s|\*/|[^{}\[\]A-Za-z_$])
-                if i >= self.b.len()
-                    || is_space(c)
-                    || (c == b'*' && self.c(i + 1) == b'/')
-                    || !matches!(c, b'{' | b'}' | b'[' | b']' | b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'$')
-                {
-                    return self.pop_zero();
-                }
-                if self.jsdoctype() {
-                    return true;
-                }
-                match f {
-                    DOC_TYPEDEF => {
-                        // (?:[^@\s*/]|\*[^/])+
-                        let e = doc_run(self.b, i, b"@/");
-                        if e > i {
-                            return self.take(i, e, JD_TYPE);
-                        }
-                        false
-                    }
-                    DOC_PARAM => {
-                        if matches!(c, b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'$') {
-                            let mut e = i + 1;
-                            while matches!(self.c(e), b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'$' | b'.' | b'[' | b']')
-                            {
-                                e += 1;
-                            }
-                            return self.take(i, e, JD_VAR);
-                        }
-                        if c == b'[' {
-                            return self.doc_optional();
-                        }
-                        false
-                    }
-                    _ => false,
-                }
-            }
-            DOC_STRING_S | DOC_STRING_D => {
-                let q = if f == DOC_STRING_S { b'\'' } else { b'"' };
-                if c == q {
-                    self.tok(i, i + 1, JD_STR_END);
-                    self.i = i + 1;
-                    return self.pop();
-                }
-                if i >= self.b.len() || (c == b'*' && self.c(i + 1) == b'/') {
-                    return self.pop_zero();
-                }
-                false
-            }
-            DOC_INLINE => {
-                // }|(?=\*/)
-                if c == b'}' {
-                    self.tok(i, i + 1, JD_INLINE_END);
-                    self.i = i + 1;
-                    return self.pop();
-                }
-                if c == b'*' && self.c(i + 1) == b'/' {
-                    return self.pop_zero();
-                }
-                self.inline_g()
-            }
-            DIRECTIVE_F => {
-                if i >= self.b.len() {
-                    return self.pop_zero();
-                }
-                if c == b'<' {
-                    for w in [&b"reference"[..], b"amd-dependency", b"amd-module"] {
-                        if self.has(i + 1, w) {
-                            self.tok(i, i + 1, DIRECTIVE_TAG_MARK);
-                            self.tok(i + 1, i + 1 + w.len(), DIRECTIVE_TAG);
-                            self.i = i + 1 + w.len();
-                            self.push(DIRECTIVE_TAG_F);
-                            return true;
-                        }
-                    }
-                }
-                false
-            }
-            DIRECTIVE_TAG_F => {
-                if c == b'/' && self.c(i + 1) == b'>' {
-                    self.tok(i, i + 2, DIRECTIVE_TAG_MARK);
-                    self.i = i + 2;
-                    return self.pop();
-                }
-                for w in [&b"path"[..], b"types", b"no-default-lib", b"lib", b"name"] {
-                    if self.has(i, w) {
-                        return self.take(i, i + w.len(), DIRECTIVE_ATTR);
-                    }
-                }
-                match c {
-                    b'=' => self.take(i, i + 1, DIRECTIVE_EQ),
-                    b'\'' => {
-                        self.tok(i, i + 1, DIRECTIVE_STR_S_BEGIN);
-                        self.i = i + 1;
-                        self.push(DIRECTIVE_STR_S_F);
-                        true
-                    }
-                    b'"' => {
-                        self.tok(i, i + 1, DIRECTIVE_STR_D_BEGIN);
-                        self.i = i + 1;
-                        self.push(DIRECTIVE_STR_D_F);
-                        true
-                    }
-                    _ => false,
-                }
-            }
-            IF_REGEX => false,
-            _ => false,
         }
     }
 
-    /// `docblock`'s patterns at the place in a `/** … */`: `@`, `[` or `{` there.
-    pub(super) fn docblock(&mut self) -> bool {
-        let i = self.i;
-        let c = self.c(i);
-        if c == b'[' || c == b'{' {
-            return self.inline_tags();
-        }
-        // a tag's name
-        let s = i + 1;
+    /// A JSDoc block tag's `@` at `p` (bat's `docblock`): the tag,
+    /// and what the tag takes: a parameter's name, a `{type}` and a name, a `{type}`, a
+    /// namepath, `@see`'s link. Where the text goes on.
+    #[inline(never)]
+    fn jsdoc_tag(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let s = p + 1;
         let mut e = s;
-        while self.c(e).is_ascii_alphanumeric() || self.c(e) == b'_' || self.c(e) == b'$' {
+        while e < n && (b[e].is_ascii_alphanumeric() || b[e] == b'_' || b[e] == b'$') {
             e += 1;
         }
-        let tag = &self.b[s..e.min(self.b.len())];
-        let after = self.ws(e);
-        let gap = after > e;
-        let at_word = |w: &[u8]| tag == w;
-        let tag_tok = |me: &mut Self, e2: usize| {
-            me.tok(i, i + 1, JD_TAG_AT);
-            me.tok(i + 1, e2, JD_TAG);
-        };
-        // ((@)(?:access|api))\s+(private|protected|public)\b
-        if (at_word(b"access") || at_word(b"api")) && gap {
-            for w in [&b"private"[..], b"protected", b"public"] {
-                if let Some(we) = self.word_b(after, w) {
-                    tag_tok(self, e);
-                    return self.take(after, we, JD_ACCESS);
-                }
-            }
+        if e == s {
+            return p + 1;
         }
-        // ((@)author)\s+([^@\s<>*/](?:[^@<>*/]|\*[^/])*)(?:\s*(<)([^>\s]+)(>))?
-        if at_word(b"author")
-            && gap
-            && after < self.b.len()
-            && !matches!(self.c(after), b'@' | b'<' | b'>' | b'*' | b'/')
+        let tag = &b[s..e];
+        let after = skip_blanks(b, e);
+        let gap = after > e && after < n;
+        let next = if gap { b[after] } else { 0 };
+        let tagged = |me: &mut Self, end: usize| {
+            me.fill_as(p, DOC);
+            me.tok_far(p, p + 1, JD_TAG_AT);
+            me.tok_far(p + 1, end, JD_TAG);
+            me.at = end;
+        };
+        let word = |c: u8| c.is_ascii_alphabetic() || c == b'_' || c == b'$';
+        // a parameter's name, no type
+        if gap
+            && word(next)
+            && matches!(
+                tag,
+                b"arg"
+                    | b"argument"
+                    | b"const"
+                    | b"constant"
+                    | b"member"
+                    | b"namespace"
+                    | b"param"
+                    | b"var"
+            )
         {
             let mut k = after + 1;
-            while k < self.b.len() {
-                match self.b[k] {
-                    b'@' | b'<' | b'>' | b'/' => break,
-                    b'*' if self.c(k + 1) == b'/' || k + 1 >= self.b.len() => break,
-                    b'*' => k += 2,
-                    _ => k += 1,
-                }
-            }
-            let k = k.min(self.b.len());
-            tag_tok(self, e);
-            self.tok(after, k, JD_TYPE);
-            self.i = k;
-            let m = self.ws(k);
-            if self.c(m) == b'<' {
-                let mut q = m + 1;
-                while q < self.b.len() && self.b[q] != b'>' && !is_space(self.b[q]) {
-                    q += 1;
-                }
-                if q > m + 1 && self.c(q) == b'>' {
-                    self.tok(m, m + 1, JD_ANGLE_BEGIN);
-                    self.tok(m + 1, q, JD_EMAIL);
-                    self.tok(q, q + 1, JD_ANGLE_END);
-                    self.i = q + 1;
-                }
-            }
-            return true;
-        }
-        // ((@)borrows)\s+(namepath)\s+(as)\s+(namepath)
-        if at_word(b"borrows") && gap {
-            let k = doc_run(self.b, after, b"@/");
-            let m = self.ws(k);
-            if k > after
-                && m > k
-                && let Some(ae) = self.word_b(m, b"as")
+            while k < n
+                && (b[k].is_ascii_alphanumeric()
+                    || matches!(b[k], b'_' | b'$' | b'.' | b'[' | b']'))
             {
-                let q = self.ws(ae);
-                let r = doc_run(self.b, q, b"@/");
-                if q > ae && r > q {
-                    tag_tok(self, e);
-                    self.tok(after, k, JD_TYPE);
-                    self.tok(m, ae, JD_AS);
-                    return self.take(q, r, JD_TYPE);
-                }
-            }
-        }
-        if at_word(b"example") && gap {
-            tag_tok(self, e);
-            self.i = after.min(self.b.len());
-            self.push(DOC_EXAMPLE);
-            return true;
-        }
-        // @kind
-        if at_word(b"kind") && gap {
-            for w in [
-                &b"class"[..],
-                b"constant",
-                b"event",
-                b"external",
-                b"file",
-                b"function",
-                b"member",
-                b"mixin",
-                b"module",
-                b"namespace",
-                b"typedef",
-            ] {
-                if let Some(we) = self.word_b(after, w) {
-                    tag_tok(self, e);
-                    return self.take(after, we, JD_SYMBOL);
-                }
-            }
-        }
-        // @template A, B
-        if at_word(b"template")
-            && gap
-            && matches!(self.c(after), b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'$')
-        {
-            let mut k = after;
-            loop {
                 k += 1;
-                while matches!(self.c(k), b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'$' | b'.' | b'[' | b']')
-                {
-                    k += 1;
-                }
-                let m = self.ws(k);
-                if self.c(m) == b',' {
-                    let m2 = self.ws(m + 1);
-                    if matches!(self.c(m2), b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'$') {
-                        k = m2;
-                        continue;
+            }
+            tagged(self, e);
+            self.fill_as(after, DOC);
+            self.tok_far(after, k, JD_VAR);
+            self.at = k;
+            return k;
+        }
+        let param = matches!(
+            tag,
+            b"arg"
+                | b"argument"
+                | b"const"
+                | b"constant"
+                | b"member"
+                | b"namespace"
+                | b"param"
+                | b"prop"
+                | b"property"
+                | b"var"
+        );
+        let typed = param
+            || matches!(
+                tag,
+                b"define"
+                    | b"enum"
+                    | b"exception"
+                    | b"export"
+                    | b"extends"
+                    | b"lends"
+                    | b"implements"
+                    | b"modifies"
+                    | b"private"
+                    | b"protected"
+                    | b"returns"
+                    | b"return"
+                    | b"suppress"
+                    | b"this"
+                    | b"throws"
+                    | b"type"
+                    | b"yields"
+                    | b"yield"
+                    | b"typedef"
+            );
+        if gap && next == b'{' && typed {
+            tagged(self, e);
+            return self.jsdoc_typed(after, param);
+        }
+        if gap
+            && matches!(
+                tag,
+                b"alias"
+                    | b"augments"
+                    | b"callback"
+                    | b"constructs"
+                    | b"emits"
+                    | b"event"
+                    | b"fires"
+                    | b"exports"
+                    | b"export"
+                    | b"extends"
+                    | b"external"
+                    | b"function"
+                    | b"func"
+                    | b"host"
+                    | b"lends"
+                    | b"listens"
+                    | b"interface"
+                    | b"memberof"
+                    | b"method"
+                    | b"module"
+                    | b"mixes"
+                    | b"mixin"
+                    | b"name"
+                    | b"requires"
+                    | b"this"
+                    | b"typedef"
+                    | b"uses"
+            )
+            && !matches!(next, b'{' | b'}' | b'@')
+        {
+            let k = doc_run(b, after);
+            if k > after {
+                tagged(self, e);
+                self.fill_as(after, DOC);
+                self.tok_far(after, k, JD_TYPE);
+                self.at = k;
+                return k;
+            }
+        }
+        if gap && tag == b"see" {
+            let k = doc_run(b, after);
+            if has(b, after, b"http://") || has(b, after, b"https://") {
+                tagged(self, e);
+                self.fill_as(after, DOC);
+                self.tok_far(after, k, JD_LINK);
+                self.at = k;
+                return k;
+            }
+            if k > after && next != b'{' && next != b'[' && next != b'@' {
+                tagged(self, e);
+                self.fill_as(after, DOC);
+                self.tok_far(after, k, JD_TYPE);
+                self.at = k;
+                return k;
+            }
+        }
+        if doc_tag(tag) || (e < n && matches!(b[e], b' ' | b'\t')) || e == n {
+            tagged(self, e);
+            return e;
+        }
+        p + 1
+    }
+
+    /// A `{type}` at `p` after a typed tag, and after a parameter's (`param`) its name,
+    /// `[name=default]` an optional one's. Where the text goes on.
+    fn jsdoc_typed(&mut self, p: usize, param: bool) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let mut d = 0usize;
+        let mut q = p;
+        while q < n {
+            match b[q] {
+                b'{' => d += 1,
+                b'}' => {
+                    d -= 1;
+                    if d == 0 {
+                        break;
                     }
                 }
+                _ => {}
+            }
+            q += 1;
+        }
+        if q >= n {
+            return p;
+        }
+        self.fill_as(p, DOC);
+        self.tok_far(p, p + 1, JD_TYPE_BEGIN);
+        self.tok_far(p + 1, q, JD_TYPE);
+        self.tok_far(q, q + 1, JD_TYPE_END);
+        self.at = q + 1;
+        if !param {
+            return q + 1;
+        }
+        let s = skip_blanks(b, q + 1);
+        if b.get(s) == Some(&b'[') {
+            let mut r = s + 1;
+            while r < n && b[r] != b']' {
+                r += 1;
+            }
+            if r < n {
+                self.fill_as(s, DOC);
+                self.tok_far(s, s + 1, JD_OPT_BEGIN);
+                let eq = b[s + 1..r]
+                    .iter()
+                    .position(|&c| c == b'=')
+                    .map(|k| s + 1 + k);
+                match eq {
+                    Some(k) => {
+                        self.tok_far(s + 1, k, JD_VAR);
+                        self.tok_far(k, k + 1, JD_OPT_EQ);
+                        self.tok_far(k + 1, r, JD_OPT_VALUE);
+                    }
+                    None => {
+                        self.tok_far(s + 1, r, JD_VAR);
+                    }
+                }
+                self.tok_far(r, r + 1, JD_OPT_END);
+                self.at = r + 1;
+                return r + 1;
+            }
+            return s;
+        }
+        let mut r = s;
+        while r < n
+            && (NAME[usize::from(b[r])] || matches!(b[r], b'.' | b'[' | b']') || b[r] >= 0x80)
+        {
+            r += 1;
+        }
+        if r > s {
+            self.fill_as(s, DOC);
+            self.tok_far(s, r, JD_VAR);
+            self.at = r;
+        }
+        r.max(self.at)
+    }
+
+    /// An inline tag's `{@` at `p` (`{@link Foo}`): where the text goes on.
+    #[inline(never)]
+    fn jsdoc_inline(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let mut e = p + 2;
+        while e < n && b[e].is_ascii_alphabetic() {
+            e += 1;
+        }
+        if e == p + 2 {
+            return p + 1;
+        }
+        let Some(close) = b[e..].iter().position(|&c| c == b'}').map(|k| e + k) else {
+            return self.doc_inline_open(p, e);
+        };
+        self.fill_as(p, DOC);
+        self.tok_far(p, p + 1, JD_INLINE_BEGIN);
+        self.tok_far(p + 1, p + 2, JD_INLINE_TAG_AT);
+        self.tok_far(p + 2, e, JD_INLINE_TAG);
+        let s = skip_blanks(b, e);
+        if s > e {
+            self.tok_far(e, s, JD_INLINE);
+        }
+        // the target, then a description after a `|` or a blank
+        let mut t = s;
+        while t < close && !matches!(b[t], b' ' | b'\t' | b'|') {
+            t += 1;
+        }
+        if t > s {
+            self.tok_far(s, t, JD_INLINE_DESC);
+        }
+        if t < close {
+            self.tok_far(t, close, JD_INLINE);
+        }
+        self.tok_far(close, close + 1, JD_INLINE_END);
+        self.at = close + 1;
+        close + 1
+    }
+
+    /// An inline tag `{@tag` at `p..e` that doesn't close on its line: to the line's end, its
+    /// target a description's as on one line, its frame kept (bat's); where a `*/` follows,
+    /// the `{` the text's.
+    #[cold]
+    #[inline(never)]
+    fn doc_inline_open(&mut self, p: usize, e: usize) -> usize {
+        let b = self.b;
+        let n = b.len();
+        if b[e..].windows(2).any(|w| w == b"*/") {
+            return p + 1;
+        }
+        self.fill_as(p, DOC);
+        self.tok_far(p, p + 1, JD_INLINE_BEGIN);
+        self.tok_far(p + 1, p + 2, JD_INLINE_TAG_AT);
+        self.tok_far(p + 2, e, JD_INLINE_TAG);
+        let s = skip_blanks(b, e);
+        if s > e {
+            self.tok_far(e, s, JD_INLINE);
+        }
+        let mut t = s;
+        while t < n && !matches!(b[t], b' ' | b'\t' | b'|') {
+            t += 1;
+        }
+        if t > s {
+            self.tok_far(s, t, JD_INLINE_DESC);
+        }
+        if t < n {
+            self.tok_far(t, n, JD_INLINE);
+        }
+        self.push(T_DOC_INLINE);
+        self.at = n;
+        n
+    }
+
+    /// A line in an inline tag the line before left open, from `p`: the tag's to its `}`, or
+    /// to a `*/` that closes the comment, else the whole line.
+    #[inline(never)]
+    fn doc_inline_text(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let mut i = p;
+        while i < n {
+            match b[i] {
+                b'}' => {
+                    self.fill_as(p, DOC);
+                    if i > p {
+                        self.tok_far(p, i, JD_INLINE);
+                    }
+                    self.tok_far(i, i + 1, JD_INLINE_END);
+                    self.pop();
+                    self.at = i + 1;
+                    return i + 1;
+                }
+                b'*' if b.get(i + 1) == Some(&b'/') => {
+                    self.fill_as(p, DOC);
+                    if i > p {
+                        self.tok_far(p, i, JD_INLINE);
+                    }
+                    self.pop();
+                    self.at = i;
+                    return i;
+                }
+                _ => i += 1,
+            }
+        }
+        self.fill_as(p, DOC);
+        if n > p {
+            self.tok_far(p, n, JD_INLINE);
+        }
+        self.at = n;
+        n
+    }
+
+    // --- regex literals ---
+
+    /// A regex literal's `/` at `p`: its body on [`crate::regex`], its end and flags; it ends
+    /// with its line where it doesn't close on it.
+    #[inline(never)]
+    pub(super) fn regex_literal(&mut self, p: usize) -> usize {
+        self.tok_far(p, p + 1, RE_BEGIN);
+        self.at = p + 1;
+        self.regex_body(p + 1, 0)
+    }
+
+    /// A regex literal's body from `p` in regex state `st`: to its `/` and flags, or to the
+    /// line's end, its frame kept where a group or a class is open there.
+    fn regex_body(&mut self, p: usize, mut st: u8) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let mut q = p;
+        while q < n {
+            if b[q] == b'/' && st == 0 {
                 break;
             }
-            tag_tok(self, e);
-            return self.take(after, k.min(self.b.len()), JD_VAR);
-        }
-        let param_like = [
-            &b"arg"[..],
-            b"argument",
-            b"const",
-            b"constant",
-            b"member",
-            b"namespace",
-            b"param",
-            b"var",
-        ];
-        if param_like.contains(&tag)
-            && gap
-            && matches!(self.c(after), b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'$')
-        {
-            let mut k = after + 1;
-            while matches!(self.c(k), b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'$' | b'.' | b'[' | b']')
-            {
-                k += 1;
+            self.k.close(self.out);
+            let r = regex::embedded(b, q, st, &RE_EMBED, &mut self.at, self.out);
+            self.k.reopen(self.out, 16);
+            match r {
+                Some((e, s)) => {
+                    if e <= q && !(b.get(e) == Some(&b'/') && s == 0) {
+                        q += 1;
+                    } else {
+                        q = e;
+                    }
+                    st = s;
+                    if b.get(q) == Some(&b'/') && st == 0 {
+                        break;
+                    }
+                }
+                None => {
+                    q = n;
+                    break;
+                }
             }
-            tag_tok(self, e);
-            return self.take(after, k.min(self.b.len()), JD_VAR);
         }
-        if at_word(b"typedef") && gap && self.c(after) == b'{' {
-            tag_tok(self, e);
-            self.i = after;
-            self.push(DOC_TYPEDEF);
-            return true;
+        self.prev = P_VALUE;
+        if q >= n {
+            self.fill_as(n, RE);
+            if st != 0 {
+                self.push(T_RE_LIT | st);
+            }
+            return n;
         }
-        let param_typed = [
-            &b"arg"[..],
-            b"argument",
-            b"const",
-            b"constant",
-            b"member",
-            b"namespace",
-            b"param",
-            b"prop",
-            b"property",
-            b"var",
-        ];
-        if param_typed.contains(&tag) && gap && self.c(after) == b'{' {
-            tag_tok(self, e);
-            self.i = after;
-            self.push(DOC_PARAM);
-            return true;
+        self.fill_as(q, RE);
+        self.tok_far(q, q + 1, RE_END);
+        let mut f = q + 1;
+        while f < n && matches!(b[f], b'd' | b'g' | b'i' | b'm' | b's' | b'u' | b'v' | b'y') {
+            f += 1;
         }
-        let typed = [
-            &b"define"[..],
-            b"enum",
-            b"exception",
-            b"export",
-            b"extends",
-            b"lends",
-            b"implements",
-            b"modifies",
-            b"namespace",
-            b"private",
-            b"protected",
-            b"returns",
-            b"return",
-            b"suppress",
-            b"this",
-            b"throws",
-            b"type",
-            b"yields",
-            b"yield",
-        ];
-        if typed.contains(&tag) && gap && self.c(after) == b'{' {
-            tag_tok(self, e);
-            self.i = after;
-            self.push(DOC_TYPED);
-            return true;
+        self.tok_far(q + 1, f, RE_FLAGS);
+        self.at = f;
+        f
+    }
+
+    // --- JSX ---
+
+    /// A JSX tag's `<` at `p` (a name or `>` after it): its name, and the tag's frame.
+    #[inline(never)]
+    pub(super) fn jsx_open(&mut self, p: usize) -> usize {
+        let b = self.b;
+        if b.get(p + 1) == Some(&b'>') {
+            // a fragment
+            self.tok_far(p, p + 1, JSX_TAG_BEGIN);
+            self.tok_far(p + 1, p + 2, JSX_TAG_END);
+            self.push(T_JSX_CHILD);
+            return p + 2;
         }
-        let named = [
-            &b"alias"[..],
-            b"augments",
-            b"callback",
-            b"constructs",
-            b"emits",
-            b"event",
-            b"fires",
-            b"exports",
-            b"export",
-            b"extends",
-            b"external",
-            b"function",
-            b"func",
-            b"host",
-            b"lends",
-            b"listens",
-            b"interface",
-            b"memberof",
-            b"memberof!",
-            b"method",
-            b"module",
-            b"mixes",
-            b"mixin",
-            b"name",
-            b"requires",
-            b"see",
-            b"this",
-            b"typedef",
-            b"uses",
-        ];
-        let tag_x = if self.c(e) == b'!' && tag == b"memberof" {
-            &self.b[s..e + 1]
+        let e = tag_name_end(b, p + 1);
+        self.tok(p, p + 1, JSX_TAG_BEGIN);
+        self.tag_name(p + 1, e);
+        self.push(T_JSX_TAG);
+        e
+    }
+
+    /// A tag's name `s..e`: a component's (capitalized, or a path), else an element's.
+    fn tag_name(&mut self, mut s: usize, e: usize) {
+        if let Some(k) = self.b[s..e].iter().position(|&c| c == b':') {
+            // a namespace's, `svg:rect`
+            self.tok_far(s, s + k, JSX_TAG_NS);
+            self.tok_far(s + k, s + k + 1, JSX_NS_SEP);
+            s += k + 1;
+            if s >= e {
+                return;
+            }
+        }
+        let w = &self.b[s..e];
+        let leaf = if w.first().is_some_and(u8::is_ascii_uppercase) || w.contains(&b'.') {
+            JSX_COMPONENT
         } else {
-            tag
+            JSX_TAG_NAME
         };
-        let e_x = s + tag_x.len();
-        let after_x = self.ws(e_x);
-        if named.contains(&tag_x) && after_x > e_x {
-            // (?:[^{}@\s*]|\*[^/])+
-            let k = doc_run(self.b, after_x, b"{}@");
-            if k > after_x {
-                if tag_x == b"see" {
-                    // @see's own pattern comes first: a URL, or a namepath not before {@link
-                } else {
-                    tag_tok(self, e_x);
-                    return self.take(after_x, k, JD_TYPE);
-                }
-            }
-        }
-        if at_word(b"see") && gap {
-            let r = self.rest(after);
-            if crate::starts(r, b"http://") || crate::starts(r, b"https://") {
-                let k = doc_run(self.b, after, b"");
-                tag_tok(self, e);
-                return self.take(after, k, JD_LINK);
-            }
-            let k = doc_run(self.b, after, b"@/");
-            // not before an inline tag, a `[description]` before it or not
-            let inline = inline_tag_len(r).is_some()
-                || (crate::starts(r, b"[") && {
-                    let e = r.iter().position(|&c| c == b']');
-                    e.is_some_and(|e| {
-                        !r[1..e].contains(&b'[') && inline_tag_len(&r[e + 1..]).is_some()
-                    })
-                });
-            if k > after && !inline {
-                tag_tok(self, e);
-                return self.take(after, k, JD_TYPE);
-            }
-        }
-        // @default '…'
-        if (at_word(b"default")
-            || at_word(b"defaultvalue")
-            || at_word(b"license")
-            || at_word(b"version"))
-            && gap
-            && matches!(self.c(after), b'\'' | b'"')
-        {
-            tag_tok(self, e);
-            self.tok(after, after + 1, JD_STR_BEGIN);
-            self.i = after + 1;
-            self.push(if self.c(after) == b'\'' {
-                DOC_STRING_S
-            } else {
-                DOC_STRING_D
-            });
-            return true;
-        }
-        if [
-            &b"default"[..],
-            b"defaultvalue",
-            b"license",
-            b"tutorial",
-            b"variation",
-            b"version",
-        ]
-        .contains(&tag)
-            && gap
-        {
-            let mut k = after;
-            while k < self.b.len() && !is_space(self.b[k]) && self.b[k] != b'*' {
-                k += 1;
-            }
-            if k > after {
-                tag_tok(self, e);
-                return self.take(after, k, JD_VAR);
-            }
-        }
-        // (@)(?:abstract|…)\b: `$` is no word character, so `@return$s` is `@return` and `$s`
-        let mut w = s;
-        while self.c(w).is_ascii_alphanumeric() || self.c(w) == b'_' {
-            w += 1;
-        }
-        if doc_tag(&self.b[s..w.min(self.b.len())]) && self.boundary(w) {
-            tag_tok(self, w);
-            self.i = w;
-            return true;
-        }
-        // ((@)(?:[_$[:alpha:]][_$[:alnum:]]*))(?=\s+)
-        let ne = self.name(s);
-        if ne > s && is_space(self.c(ne)) {
-            tag_tok(self, ne);
-            self.i = ne;
-            return true;
-        }
-        false
+        self.tok(s, e, leaf);
     }
 
-    /// `inline-tags` at `[` or `{`.
-    pub(super) fn inline_tags(&mut self) -> bool {
-        let i = self.i;
-        if self.c(i) == b'[' {
-            // (\[)[^\]]+(\])(?={@(?:link|linkcode|linkplain|tutorial))
-            let mut e = i + 1;
-            while e < self.b.len() && self.b[e] != b']' {
-                e += 1;
-            }
-            if e > i + 1 && e < self.b.len() && inline_tag_len(self.rest(e + 1)).is_some() {
-                self.tok(i, i + 1, JD_DESC_BEGIN);
-                self.tok(i + 1, e, JD_DESC);
-                return self.take(e, e + 1, JD_DESC_END);
-            }
-            return false;
+    /// An opening tag's turn at `p`: its attributes, their values, its end.
+    fn jsx_tag(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let p = skip_blanks(b, p);
+        if p >= n {
+            return n;
         }
-        let Some(len) = inline_tag_len(self.rest(i)) else {
-            return false;
-        };
-        let e = i + 2 + len;
-        self.tok(i, i + 1, JD_INLINE_BEGIN);
-        self.tok(i + 1, i + 2, JD_INLINE_TAG_AT);
-        self.tok(i + 2, e, JD_INLINE_TAG);
-        let k = self.ws(e).min(self.b.len());
-        // the blanks after the tag are the push's, under the inline tag's scope
-        self.i = e;
-        self.push(DOC_INLINE);
-        self.i = k;
-        true
-    }
-
-    /// An inline tag's `\G` patterns at the place: a link or a description, then `|`. syntect
-    /// caches a pattern's failed search for the rest of the line, and a `\G` pattern's search
-    /// fails wherever it starts but at its match: so once one fails on a line, it doesn't match
-    /// again on it ([`Scan::g_link`], [`Scan::g_desc`]).
-    pub(super) fn inline_g(&mut self) -> bool {
-        let k = self.i;
-        let pipe = |me: &mut Self, j: usize| {
-            me.i = j;
-            if me.c(j) == b'|' {
-                me.tok(j, j + 1, JD_INLINE_PIPE);
-                me.i = j + 1;
+        match b[p] {
+            b'/' if b.get(p + 1) == Some(&b'>') => {
+                self.tok_far(p, p + 2, JSX_TAG_END);
+                self.pop();
+                self.prev = P_VALUE;
+                p + 2
             }
-            true
-        };
-        if !self.g_link {
-            let r = self.rest(k);
-            let mut j = k;
-            if crate::starts(r, b"http://") || crate::starts(r, b"https://") {
-                while j < self.b.len() {
-                    let d = self.b[j];
-                    if d == b'|' || d == b'}' || is_space(d) {
-                        break;
-                    }
-                    if d == b'*' {
-                        if self.c(j + 1) == b'/' {
-                            j += 2;
-                            continue;
-                        }
-                        break;
-                    }
-                    j += 1;
-                }
+            b'/' if matches!(b.get(p + 1), Some(b'/')) => self.line_comment(p),
+            b'/' if matches!(b.get(p + 1), Some(b'*')) => self.block_comment(p),
+            b'>' => {
+                self.tok(p, p + 1, JSX_TAG_END);
+                self.set_top(T_JSX_CHILD);
+                p + 1
             }
-            if j > k {
-                self.tok(k, j, JD_INLINE_LINK);
-                return pipe(self, j);
+            b'=' => self.tok(p, p + 1, ASSIGN),
+            q @ (b'"' | b'\'') => {
+                self.tok(p, p + 1, if q == b'"' { STR_D_BEGIN } else { STR_S_BEGIN });
+                self.push(if q == b'"' { T_JSX_STR_D } else { T_JSX_STR_S });
+                self.at = p + 1;
+                self.jsx_string_text(p + 1, self.top())
             }
-            self.g_link = true;
-        }
-        if !self.g_desc {
-            let mut j = k;
-            while j < self.b.len() {
-                let d = self.b[j];
-                if matches!(d, b'{' | b'}' | b'@' | b'|') || is_space(d) {
-                    break;
-                }
-                if d == b'*' {
-                    if self.c(j + 1) != b'/' && j + 1 < self.b.len() {
-                        j += 2;
-                        continue;
-                    }
-                    break;
-                }
-                j += 1;
-            }
-            if j > k {
-                self.tok(k, j, JD_INLINE_DESC);
-                return pipe(self, j);
-            }
-            self.g_desc = true;
-        }
-        false
-    }
-
-    /// `jsdoctype` at `{`.
-    ///
-    /// syntect caches a pattern's failed search for the rest of the line, and the cache is the
-    /// pattern's, shared by the three tag contexts that include `jsdoctype`: a `\G` pattern
-    /// searched where it doesn't match (after a type's `}`, at the description) doesn't match
-    /// again on the line, so a second `@type {T}` on it has no type (as [`Scan::inline_g`]).
-    /// Reached only where the tag's pop didn't match, so both were searched.
-    pub(super) fn jsdoctype(&mut self) -> bool {
-        let i = self.i;
-        if self.c(i) != b'{' {
-            self.g_type_open = true;
-            self.g_type_brace = true;
-            return false;
-        }
-        if !self.g_type_open {
-            if let Some(e) = self.jsdoctype_open(i) {
-                return self.take(i, e, JD_TYPE_BAD);
-            }
-            self.g_type_open = true;
-        }
-        if self.g_type_brace {
-            return false;
-        }
-        self.tok(i, i + 1, JD_TYPE_BEGIN);
-        self.i = i + 1;
-        self.push(DOC_TYPE);
-        true
-    }
-
-    /// `\G{(?:[^}*]|\*[^/}])+$` at the `{` at `i`: the line's end if it matches.
-    fn jsdoctype_open(&self, i: usize) -> Option<usize> {
-        // \G{(?:[^}*]|\*[^/}])+$: a type left open at the line's end. syntect's line ends in `\n`,
-        // which the class takes: a `{` or `*` last on the line is open too (`{\n`, `{x*\n`)
-        let mut j = i + 1;
-        while j < self.b.len() {
-            match self.b[j] {
-                b'}' => break,
-                b'*' if j + 1 < self.b.len() && matches!(self.b[j + 1], b'/' | b'}') => break,
-                b'*' => j += 2,
-                _ => j += 1,
-            }
-        }
-        (j >= self.b.len()).then_some(self.b.len())
-    }
-
-    /// `brackets`, in a JSDoc type.
-    pub(super) fn doc_brackets(&mut self) -> bool {
-        match self.c(self.i) {
             b'{' => {
-                self.i += 1;
-                self.push(DOC_BRACKETS);
-                true
+                self.tok(p, p + 1, JSX_EMBED_BEGIN);
+                self.push(F_J_EXPR);
+                self.prev = P_OP;
+                p + 1
             }
-            b'[' => {
-                self.i += 1;
-                self.push(DOC_BRACKETS_SQ);
-                true
+            b'<' => {
+                // a tag's type arguments (`<Foo<T> …>`)
+                self.type_args(p)
             }
-            _ => false,
+            c if c.is_ascii_alphabetic() || c == b'_' || c == b'$' => {
+                let mut e = p + 1;
+                while e < n && (NAME[usize::from(b[e])] || b[e] == b'-' || b[e] == b':') {
+                    e += 1;
+                }
+                self.tok(p, e, JSX_ATTR)
+            }
+            c => p + char_len(c),
         }
     }
 
-    /// A parameter's optional value, `[name=value]`, in a JSDoc tag.
-    pub(super) fn doc_optional(&mut self) -> bool {
-        let i = self.i;
-        let mut j = self.ws(i + 1);
-        let s = j;
-        while self.c(j).is_ascii_alphanumeric() || matches!(self.c(j), b'_' | b'$') {
-            j += 1;
-        }
-        if j == s {
-            return false;
-        }
+    /// A JSX attribute string's text from `p`, its frame `top`.
+    fn jsx_string_text(&mut self, mut p: usize, top: u8) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let (q, text, end, ent, bad) = if top == T_JSX_STR_D {
+            (b'"', STR_D, STR_D_END, JSX_STR_D_ENTITY, JSX_STR_D_BAD_AMP)
+        } else {
+            (b'\'', STR_S, STR_S_END, JSX_STR_S_ENTITY, JSX_STR_S_BAD_AMP)
+        };
         loop {
-            let mut k = j;
-            if self.has(k, b"[]") {
-                k += 2;
+            let i = crate::prim::find_in(b, p, n, [q, b'&']);
+            if i >= n {
+                self.fill_as(n, text);
+                return n;
             }
-            if self.c(k) == b'.'
-                && (self.c(k + 1).is_ascii_alphanumeric() || matches!(self.c(k + 1), b'_' | b'$'))
-            {
-                k += 1;
-                while self.c(k).is_ascii_alphanumeric() || matches!(self.c(k), b'_' | b'$') {
-                    k += 1;
+            self.fill_as(i, text);
+            if b[i] == q {
+                self.tok(i, i + 1, end);
+                self.at = i + 1;
+                self.pop();
+                return i + 1;
+            }
+            let e = self.entity(i, ent, bad, top == T_JSX_STR_D);
+            self.at = e;
+            p = e;
+        }
+    }
+
+    /// A JSX element's children from `p`: their text plain, entities, `{…}`, a nested element,
+    /// and the closing tag that ends them.
+    fn jsx_children(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let mut i = p;
+        while i < n && !CHILD_STOPS[usize::from(b[i])] {
+            i += 1;
+        }
+        if i >= n {
+            return n;
+        }
+        match b[i] {
+            b'{' => {
+                self.tok_far(i, i + 1, JSX_EMBED_BEGIN);
+                self.push(F_J_EXPR);
+                self.prev = P_OP;
+                i + 1
+            }
+            b'&' => self.entity(i, JSX_ENTITY, JSX_BAD_AMP, false),
+            _ => {
+                if b.get(i + 1) == Some(&b'/') {
+                    // a closing tag: the element ends
+                    let s = i + 2;
+                    let e = tag_name_end(b, s);
+                    self.tok(i, s, JSX_TAG_BEGIN);
+                    self.tag_name(s, e);
+                    self.pop();
+                    self.prev = P_VALUE;
+                    let g = skip_blanks(b, e);
+                    if b.get(g) == Some(&b'>') {
+                        return self.tok(g, g + 1, JSX_TAG_END);
+                    }
+                    return e;
                 }
-                j = k;
-                continue;
+                if matches!(
+                    b.get(i + 1),
+                    Some(b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' | b'>')
+                ) {
+                    return self.jsx_open(i);
+                }
+                i + 1
             }
+        }
+    }
+
+    /// `&…;` at `p`: an entity (its `&` and `;` marks in children), else a bad `&` up to the
+    /// last `;` before a space; else the `&` alone, plain.
+    fn entity(&mut self, p: usize, ok: u16, bad: u16, dq: bool) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let run = |from: usize, f: fn(&u8) -> bool| {
+            from + b[from.min(n)..].iter().take_while(|c| f(c)).count()
+        };
+        let alnum = run(p + 1, u8::is_ascii_alphanumeric);
+        let e = if alnum > p + 1 {
+            Some(alnum)
+        } else if b.get(p + 1) == Some(&b'#') {
+            if b.get(p + 2) == Some(&b'x') && run(p + 3, u8::is_ascii_hexdigit) > p + 3 {
+                Some(run(p + 3, u8::is_ascii_hexdigit))
+            } else {
+                let d = run(p + 2, u8::is_ascii_digit);
+                (d > p + 2).then_some(d)
+            }
+        } else {
+            None
+        };
+        if let Some(e) = e
+            && b.get(e) == Some(&b';')
+        {
+            let m = match ok {
+                JSX_ENTITY => JSX_ENTITY_MARK,
+                _ if dq => JSX_STR_D_ENTITY_MARK,
+                _ => JSX_STR_S_ENTITY_MARK,
+            };
+            self.tok_far(p, p + 1, m);
+            self.tok_far(p + 1, e, ok);
+            return self.tok_far(e, e + 1, m);
+        }
+        let mut s = p + 1;
+        while s < n && !matches!(b[s], b' ' | b'\t') {
+            s += 1;
+        }
+        match b[p + 1..s].iter().rposition(|&c| c == b';') {
+            Some(k) => self.tok_far(p, p + 1 + k + 1, bad),
+            // a `&` before a blank or the end: bat's bad ampersand
+            None if s == p + 1 => self.tok_far(p, p + 1, bad),
+            None => p + 1,
+        }
+    }
+}
+
+/// Where a JSX tag's name from `p` ends: `[-$\w:.]`, and letters past ASCII.
+fn tag_name_end(b: &[u8], mut p: usize) -> usize {
+    while p < b.len() {
+        let c = b[p];
+        if c < 0x80 {
+            if NAME[usize::from(c)] || matches!(c, b'-' | b':' | b'.') {
+                p += 1;
+            } else {
+                break;
+            }
+        } else if is_word(b, p) {
+            p += char_len(c);
+        } else {
             break;
         }
-        let mut eq = None;
-        let k = self.ws(j);
-        let mut end = k;
-        if self.c(k) == b'=' {
-            let v = self.ws(k + 1);
-            let mut e = v;
-            let mut depth = 0;
-            while e < self.b.len() {
-                let d = self.b[e];
-                if d == b'*' && self.c(e + 1) == b'/' {
-                    break;
-                }
-                if d == b'[' {
-                    depth += 1;
-                } else if d == b']' {
-                    if depth == 0 {
-                        break;
-                    }
-                    depth -= 1;
-                }
-                e += 1;
-            }
-            let mut ve = e;
-            while ve > v && is_space(self.b[ve - 1]) {
-                ve -= 1;
-            }
-            eq = Some((k, v, ve));
-            end = e;
-        }
-        let close = self.c(end) == b']';
-        if !close && !(self.c(end) == b'*' && self.c(end + 1) == b'/') {
-            return false;
-        }
-        self.tok(i, i + 1, JD_OPT_BEGIN);
-        if let Some((k, v, ve)) = eq {
-            self.tok(i + 1, k, JD_VAR);
-            self.tok(k, k + 1, JD_OPT_EQ);
-            self.tok(k + 1, v, JD_VAR);
-            self.tok(v, ve, JD_OPT_VALUE);
-            self.tok(ve, end, JD_VAR);
-        } else {
-            self.tok(i + 1, end, JD_VAR);
-        }
-        if close {
-            self.tok(end, end + 1, JD_OPT_END);
-            let bad = doc_run(self.b, end + 1, b"");
-            if bad > end + 1 {
-                self.tok(end + 1, bad, JD_OPT_BAD);
-                self.i = bad;
-                return true;
-            }
-            self.i = end + 1;
-        } else {
-            self.i = end;
-        }
-        true
     }
+    p
 }
 
-/// `{@link`, `{@linkcode`, `{@linkplain` or `{@tutorial` at the start of `r`: the tag's length,
-/// `link(?:code|plain)?|tutorial` with no `\b` after it (`{@linkn` is `link` and `n`).
-fn inline_tag_len(r: &[u8]) -> Option<usize> {
-    let r = r.strip_prefix(b"{@")?;
-    if crate::starts(r, b"linkcode") {
-        Some(8)
-    } else if crate::starts(r, b"linkplain") {
-        Some(9)
-    } else if crate::starts(r, b"link") {
-        Some(4)
-    } else if crate::starts(r, b"tutorial") {
-        Some(8)
-    } else {
-        None
-    }
-}
-
-/// `(?:[^<stop>\s*]|\*[^/])+` from `i`, with the extra stops in `stop`: its end.
-fn doc_run(b: &[u8], mut i: usize, stop: &[u8]) -> usize {
+/// `(?:[^{}@\s*]|\*[^/])+` from `i`: a JSDoc namepath's end.
+fn doc_run(b: &[u8], mut i: usize) -> usize {
     while i < b.len() {
         let c = b[i];
-        if is_space(c) || stop.contains(&c) {
+        if matches!(c, b' ' | b'\t' | b'{' | b'}' | b'@') {
             break;
         }
         if c == b'*' {
-            if i + 1 < b.len() && b[i + 1] != b'/' && !is_space(b[i + 1]) {
+            if i + 1 < b.len() && b[i + 1] != b'/' && !matches!(b[i + 1], b' ' | b'\t') {
                 i += 2;
                 continue;
             }
@@ -1258,7 +1151,7 @@ fn doc_run(b: &[u8], mut i: usize, stop: &[u8]) -> usize {
     i
 }
 
-/// The tags of `docblock`'s list of plain ones.
+/// The JSDoc tags bat's `docblock` names as tags wherever they stand.
 fn doc_tag(t: &[u8]) -> bool {
     matches!(
         t,
@@ -1388,65 +1281,4 @@ fn doc_tag(t: &[u8]) -> bool {
             | b"yields"
             | b"yield"
     )
-}
-
-/// The first `a` `b` pair in `s` from `i`.
-fn find2(s: &[u8], i: usize, a: u8, b: u8) -> Option<usize> {
-    let mut j = i;
-    while j + 1 < s.len() {
-        if s[j] == a && s[j + 1] == b {
-            return Some(j);
-        }
-        j += 1;
-    }
-    None
-}
-
-/// `string-character-escape` at `p` in line `b`, `\` there: its end (a `\` ending the line is
-/// one, its `\n` the next line's continuation).
-fn escape_at(b: &[u8], p: usize) -> usize {
-    let n = b.len();
-    let c = |k: usize| match k.cmp(&n) {
-        std::cmp::Ordering::Less => b[k],
-        std::cmp::Ordering::Equal => b'\n',
-        std::cmp::Ordering::Greater => 0,
-    };
-    let hex = |k: usize| c(k).is_ascii_hexdigit();
-    let oct = |k: usize| matches!(c(k), b'0'..=b'7');
-    match c(p + 1) {
-        b'x' if hex(p + 2) && hex(p + 3) => p + 4,
-        b'u' if (2..6).all(|k| hex(p + k)) => p + 6,
-        b'u' if c(p + 2) == b'{' && hex(p + 3) => {
-            let mut k = p + 3;
-            while hex(k) {
-                k += 1;
-            }
-            if c(k) == b'}' { k + 1 } else { p + 2 }
-        }
-        b'0'..=b'2' => {
-            let mut k = p + 2;
-            while k < p + 4 && oct(k) {
-                k += 1;
-            }
-            k
-        }
-        b'3' => match c(p + 2) {
-            b'0'..=b'7' => p + 3 + usize::from(oct(p + 3)),
-            _ => p + 2,
-        },
-        b'4'..=b'7' => p + 2 + usize::from(oct(p + 2)),
-        b'\n' => p + 1,
-        d => (p + 1 + char_len(d)).min(n),
-    }
-}
-
-/// Whether a `(` is right before `p`, or one blank and a `(` (`RegExp( "…")`): where a string may
-/// be `RegExp(`'s argument, tested inline before [`Scan::regexp_arg`] reads further back.
-#[inline]
-fn after_paren(b: &[u8], p: usize) -> bool {
-    match p {
-        0 => false,
-        1 => b[0] == b'(',
-        _ => b[p - 1] == b'(' || (b[p - 1] == b' ' && b[p - 2] == b'('),
-    }
 }
