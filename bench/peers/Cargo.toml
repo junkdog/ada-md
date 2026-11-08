@@ -1,0 +1,28 @@
+# ada-parse beside other highlighting engines on the census corpora: logos (a lexer generator, the
+# ceiling: tokens, no scopes), Lexilla (Scintilla's hand-written lexers) and KSyntaxHighlighting
+# (Kate's engine). Tracked except what it builds against (see .gitignore): before the first build, fetch
+#   ada-head/ada-parse: git archive HEAD ada-parse | tar -x -C bench/peers/ada-head   (refresh for a newer HEAD)
+#   vendor/lexilla-rel-5-5-5: GitHub ScintillaOrg/lexilla, tag rel-5-5-5
+#   vendor/scintilla-5.6.7: scintilla.org's scintilla567.tgz, its scintilla/include/ is all build.rs reads
+[package]
+name = "ada-peers"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# its own workspace, outside ada-md's
+[workspace]
+
+[dependencies]
+ada-parse = { path = "ada-head/ada-parse" }
+logos = "=0.16.1"
+libc = "=0.2.191"
+
+[build-dependencies]
+cc = "=1.8.0"
+
+# ada-md's release profile, so ada-parse is built as ada builds it
+[profile.release]
+lto = "fat"
+codegen-units = 1
+debug = "line-tables-only"

@@ -1,0 +1,10 @@
+# The harness is tracked; ada-parse's snapshot (ada-head/), the vendored Lexilla and Scintilla (vendor/), the
+# build and every run's output are not. An allowlist, since runs write their logs and dirs beside the sources.
+/*
+!/.gitignore
+!/Cargo.toml
+!/Cargo.lock
+!/build.rs
+!/src/
+!/shim/
+!/*.zsh
