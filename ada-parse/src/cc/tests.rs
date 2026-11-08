@@ -448,3 +448,141 @@ fn line_ends_and_nested_parameters() {
         plain(false, &l, p);
     }
 }
+
+#[test]
+fn generics_and_templates() {
+    const BEGIN: &str = "punctuation.section.generic.begin.c++";
+    const END: &str = "punctuation.section.generic.end.c++";
+    // a generic's shape after a name in code: template arguments, a call through them
+    let l = ["void f() {", "  auto p = std::make_unique<Foo>(1);", "}"];
+    has(false, &l, "<", BEGIN);
+    has(false, &l, ">", END);
+    has(false, &l, "make_unique", "variable.function.c++");
+    // a comparison has no such end
+    let l = ["void f() {", "  if (a < b) return;", "}"];
+    has(false, &l, "<", "keyword.operator.comparison.c++");
+    // in a declaration any `<`: a pointer's type, across lines; no call in the arguments
+    let l = ["std::vector<Foo*> v;", "UniquePtr<STACK_OF(X509)> s;"];
+    has(false, &l, "<", BEGIN);
+    plain(false, &l, "STACK_OF");
+    // a definition's name through its arguments; a type before a definition's name
+    let l = [
+        "template <> void foo<int>(int a);",
+        "std::vector<int> g(int b);",
+    ];
+    has(false, &l, "foo", "entity.name.function.c++");
+    has(false, &l, "g", "entity.name.function.c++");
+    has(false, &l, "b", "variable.parameter.c++");
+    // a template's parameters: `typename` and `class` a type's words, across lines
+    let l = [
+        "template <typename T,",
+        "          class U = int>",
+        "struct A;",
+    ];
+    has(false, &l, "typename", "storage.type.c++");
+    has(false, &l, "class", "storage.type.c++");
+    has(false, &l, ">", END);
+    plain(false, &l, "U");
+    // elsewhere `typename` a modifier; a cast's type; a member through `template`
+    let l = [
+        "typename T::type y = static_cast<int>(z);",
+        "a.template get<0>();",
+    ];
+    has(false, &l, "typename", "storage.modifier.c++");
+    has(false, &l, "<", BEGIN);
+    has(false, &l, "get", "variable.function.member.c++");
+    // C has no generics
+    let l = ["int f(void) { return a<b>(c); }"];
+    has(true, &l, "<", "keyword.operator.comparison.c");
+}
+
+#[test]
+fn declared_names_calls_and_modifiers() {
+    // the name a declaration declares is plain, not by its shape; used, it is
+    let l = ["static const int kMax = 3;", "int y = kMax;"];
+    let got = lexed(false, &l);
+    let k: Vec<_> = got.iter().filter(|(t, _)| t == "kMax").collect();
+    assert_eq!(k.len(), 1, "{got:#?}");
+    assert_eq!(k[0].1, "constant.other.variable.mac-classic.c++");
+    // C++'s `name{…}` a call's color; a base class's before a body isn't
+    let l = ["struct S : Base {", "  uint8_t *secret{};", "};"];
+    has(false, &l, "secret", "variable.function.c++");
+    plain(false, &l, "Base");
+    // `= default`, `= delete` after a definition's parameters; `decltype` a type
+    let l = [
+        "A::A() = default;",
+        "A& operator=(const A&) = delete;",
+        "decltype(x) y;",
+    ];
+    has(false, &l, "default", "storage.modifier.c++");
+    has(false, &l, "delete", "storage.modifier.c++");
+    has(false, &l, "decltype", "storage.type.c++");
+    // a member named as a support type
+    let l = ["x = a.Size;"];
+    has(false, &l, "Size", "variable.other.readwrite.member.c++");
+    // a constructor's initializer list on the line after its header
+    let l = ["class A {", "  A(int a)", "      : a_(a) {}", "};"];
+    has(false, &l, ":", "punctuation.separator.initializer-list.c++");
+}
+
+#[test]
+fn directives_corners() {
+    // `#if 1`'s `#else` branch is disabled, nested `#if`s counted; `#if 2`'s number plain
+    let l = [
+        "#if 1",
+        "#ifdef X",
+        "#else",
+        "int kept;",
+        "#endif",
+        "#else",
+        "int off;",
+        "#endif",
+        "#if 2",
+    ];
+    has(false, &l, "int", "storage.type.c++");
+    has(
+        false,
+        &l,
+        "int off;",
+        "comment.block.preprocessor.if-branch.c++",
+    );
+    plain(false, &l, "2");
+    // `#endif`'s rest outside the directive; an indented directive's indentation in it
+    let l = ["#endif  // x"];
+    plain(false, &l, "  ");
+    has(
+        false,
+        &l,
+        "//",
+        "comment.line.double-slash.c++ punctuation.definition.comment.c++",
+    );
+    let got = lexed(false, &["  #ifdef Y"]);
+    assert!(
+        got.contains(&("  ".into(), "meta.preprocessor.c++".into())),
+        "{got:#?}"
+    );
+    // a `#define`'s name under the directive's scope
+    has(
+        false,
+        &["#define N 1"],
+        "N",
+        "meta.preprocessor.c++ entity.name.constant.preprocessor.c++",
+    );
+}
+
+#[test]
+fn a_column_zero_brace_closes_the_code() {
+    // a `{` an `#if`'s branch leaves open: the function's `}` at a line's start closes all of
+    // its code, so the next function is defined, not called
+    let l = [
+        "void f(void) {",
+        "#if !defined X",
+        "  for (;;) {",
+        "#endif",
+        "  }",
+        "}",
+        "void g(int a) {}",
+    ];
+    has(true, &l, "g", "entity.name.function.c");
+    has(true, &l, "a", "variable.parameter.c");
+}

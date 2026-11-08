@@ -161,7 +161,9 @@ leaves! {
     MEMBER_FUNCTION = ["variable.function.member"],
     PARAMETER = ["variable.parameter"],
     PP_FUNCTION = ["entity.name.function.preprocessor"],
-    PP_CONSTANT = ["entity.name.constant.preprocessor"],
+    // under `meta.preprocessor`, as bat has it: a theme without a rule for the name (catppuccin's)
+    // paints it the directive's
+    PP_CONSTANT = ["meta.preprocessor", "entity.name.constant.preprocessor"],
     LABEL = ["entity.name.label"],
     FUNC_DEF = ["entity.name.function"],
     CLASS_NAME = ["entity.name.class"],
@@ -197,8 +199,8 @@ const CLASS: u8 = 1;
 const CODE: u8 = 2;
 /// An initializer, an enum's enumerators.
 const INIT: u8 = 3;
-/// The levels [`Scan::braces`] holds.
-const LEVELS: usize = 64;
+/// The levels [`State`] keeps of [`Scan::braces`] (its 15 bytes; the 16th is [`Scan::one`]).
+const LEVELS: usize = 60;
 
 // What a line can end in ([`Scan::mode`]).
 const M_CODE: u8 = 0;
@@ -240,6 +242,9 @@ const P_ARROW: u8 = 5;
 /// A word that names what follows ([`Scan::entity`]): `class`, `struct`, `union`, `enum`,
 /// `namespace`, `using`, `operator`.
 const P_ENTITY: u8 = 6;
+/// A definition's header that a line's end ended (no `;` or `{`): a `:` next is its
+/// initializer list's.
+const P_DEFINED: u8 = 7;
 
 // What a statement at a namespace's or a class's level is so far ([`Scan::decl`]), for what a
 // name before `(` is: a definition's (or a declaration's) name, or a call.
@@ -265,8 +270,12 @@ const E_ENUM: u8 = 4;
 const E_NAMESPACE: u8 = 5;
 const E_USING: u8 = 6;
 const E_OPERATOR: u8 = 7;
+/// `template`: a `<` next opens its parameters ([`Scan::tpl`]).
+const E_TEMPLATE: u8 = 8;
+/// A cast's word (`static_cast`): a `<` next opens its type.
+const E_CAST: u8 = 9;
 /// Each entity's leaf for the name it names.
-const ENTITY_LEAF: [u16; 8] = [
+const ENTITY_LEAF: [u16; 10] = [
     PLAIN,
     CLASS_NAME,
     STRUCT_NAME,
@@ -275,6 +284,8 @@ const ENTITY_LEAF: [u16; 8] = [
     NAMESPACE_NAME,
     USING_NAME,
     FUNC_DEF,
+    PLAIN,
+    PLAIN,
 ];
 
 // [`State::arg`]'s bits.
@@ -292,7 +303,8 @@ const NO_PENDING: u8 = 0;
 /// length.
 const DELIM_KEPT: usize = 8;
 /// Where [`State::withs`] keeps the statement's state: [`Scan::decl`], [`Scan::paren`] and
-/// [`Scan::angle`] in one byte, then [`Scan::td`], [`Scan::entity`], [`Scan::ifd`].
+/// [`Scan::angle`] in one byte, then [`Scan::td`], [`Scan::entity`] (with [`Scan::tpl`] and
+/// [`Scan::kw`]), [`Scan::ifd`].
 const W_DECL: usize = 2 + DELIM_KEPT;
 
 /// Lex `b`, a line of C++ without its `\n`, from `state`.
@@ -446,6 +458,9 @@ struct Scan<'b, 'c, K: Sink> {
     exact: bool,
     /// What the line ends in so far ([`M_CODE`]…).
     mode: u8,
+    /// The `#if`s open since an `#if 1`, it among them (0: none): the `#else` that closes it
+    /// opens a disabled branch, as bat has it.
+    one: u8,
     /// The directive the line is in ([`PP_NONE`]…).
     pp: u8,
     /// An `#if 0`'s open `#if`s, or a raw string's delimiter's length.
@@ -465,14 +480,17 @@ struct Scan<'b, 'c, K: Sink> {
     decl: u8,
     /// The `(`s open in the statement.
     paren: u8,
-    /// The `<`s open in a declaration (template arguments).
+    /// The generics' `<`s open: template arguments and parameters, a cast's type.
     angle: u8,
+    /// Which of the open `<`s are a `template`'s parameters, a bit a depth (the first lowest):
+    /// `typename` and `class` in them are a type's words.
+    tpl: u8,
     /// A `typedef`'s level plus one, while its statement is open (0: none).
     td: u8,
     /// What the word before names, where [`Scan::prev`] is [`P_ENTITY`] ([`E_CLASS`]…).
     entity: u8,
-    /// The statement has a keyword (a type's, a modifier): a line's end doesn't end it
-    /// (`static int` before `foo(…)` on the next line).
+    /// The statement has a keyword (a type's, a modifier) outside parentheses: a line's end
+    /// doesn't end it (`static int` before `foo(…)` on the next line; `HOOK(x, uint8_t)` ends).
     kw: bool,
     /// The level at the innermost open `#if` plus one (0: none): its `#else` or `#elif` closes
     /// what its first branch left open (a function's header in each branch, one body).
@@ -496,6 +514,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             depth: 0,
             exact: true,
             mode: M_CODE,
+            one: 0,
             pp: PP_NONE,
             aux: 0,
             pending: NO_PENDING,
@@ -506,6 +525,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             decl: D_NONE,
             paren: 0,
             angle: 0,
+            tpl: 0,
             td: 0,
             entity: 0,
             kw: false,
@@ -518,14 +538,16 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
     }
 
-    /// The scan's fields from `state`: the levels' bits in its first 16 bytes, a raw string's
-    /// delimiter in the next, the rest in [`State::arg`].
+    /// The scan's fields from `state`: the levels' bits in its first 15 bytes, [`Scan::one`],
+    /// a raw string's delimiter in the next, the statement's at [`W_DECL`], the rest in
+    /// [`State::arg`].
     #[inline(always)]
     fn load(&mut self, state: &State) {
         let mut w = [0u8; 16];
         w[..14].copy_from_slice(&state.levels);
-        w[14..].copy_from_slice(&state.withs[..2]);
+        w[14] = state.withs[0];
         self.braces = u128::from_le_bytes(w);
+        self.one = state.withs[1];
         self.depth = state.depth;
         self.exact = !state.inexact;
         let a = state.arg;
@@ -541,7 +563,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         let d = state.withs[W_DECL];
         (self.decl, self.paren, self.angle) = (d & 7, d >> 3 & 7, d >> 6);
         self.td = state.withs[W_DECL + 1];
-        self.entity = state.withs[W_DECL + 2] & 0x7f;
+        self.entity = state.withs[W_DECL + 2] & 0x0f;
+        self.tpl = state.withs[W_DECL + 2] >> 4 & 7;
         self.kw = state.withs[W_DECL + 2] & 0x80 != 0;
         self.ifd = state.withs[W_DECL + 3];
     }
@@ -552,7 +575,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         let w = self.braces.to_le_bytes();
         let mut s = State::default();
         s.levels.copy_from_slice(&w[..14]);
-        s.withs[..2].copy_from_slice(&w[14..]);
+        s.withs[0] = w[14];
+        s.withs[1] = self.one;
         if self.mode == M_RAW {
             s.withs[2..W_DECL].copy_from_slice(&self.delim);
         }
@@ -562,7 +586,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             self.entity
         } else {
             0
-        } | if self.kw { 0x80 } else { 0 };
+        } | (self.tpl & 7) << 4
+            | if self.kw { 0x80 } else { 0 };
         s.withs[W_DECL + 3] = self.ifd;
         s.depth = self.depth;
         s.inexact = !self.exact;
@@ -660,6 +685,20 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
     }
 
+    /// A `}` at a line's first byte where code is open: the end of a function's body (or an
+    /// initializer) at a namespace's or a class's level, so every code level is closed, back to
+    /// that level. Braces an `#if`'s branches leave unbalanced (`{` in one, none in the other)
+    /// are made good here, ada's own: bat's contexts stay a level deep.
+    #[cold]
+    fn resync(&mut self) {
+        loop {
+            self.close_brace();
+            if self.depth == 0 || self.level() < CODE {
+                break;
+            }
+        }
+    }
+
     /// An `#else` or `#elif`: the levels its `#if`'s first branch opened closed again.
     fn branch(&mut self) {
         if self.ifd != 0 && self.depth != u8::MAX {
@@ -676,7 +715,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// `typedef`'s level (`typedef struct { … } name;`), its statement goes on.
     #[inline(always)]
     fn new_statement(&mut self) {
-        (self.decl, self.paren, self.angle, self.kw) = (D_NONE, 0, 0, false);
+        (self.decl, self.paren, self.angle, self.tpl, self.kw) = (D_NONE, 0, 0, 0, false);
         if self.td != 0 {
             if self.td == self.depth + 1 {
                 self.decl = D_TYPEDEF;
@@ -698,6 +737,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             decl: self.decl,
             paren: self.paren,
             angle: self.angle,
+            tpl: self.tpl,
             td: self.td,
             entity: self.entity,
             kw: self.kw,
@@ -711,10 +751,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             self.decl,
             self.paren,
             self.angle,
+            self.tpl,
             self.td,
             self.entity,
             self.kw,
-        ) = (k.decl, k.paren, k.angle, k.td, k.entity, k.kw);
+        ) = (k.decl, k.paren, k.angle, k.tpl, k.td, k.entity, k.kw);
     }
 }
 
@@ -728,6 +769,7 @@ struct Kept {
     decl: u8,
     paren: u8,
     angle: u8,
+    tpl: u8,
     td: u8,
     entity: u8,
     kw: bool,

@@ -13,7 +13,6 @@ impl<K: Sink> Scan<'_, '_, K> {
     pub(super) fn directive(&mut self, h: usize) {
         let b = self.b;
         let kept = self.kept();
-        self.at = h;
         let mut s = h + 1;
         while s < b.len() && CC[usize::from(b[s])] & SP != 0 {
             s += 1;
@@ -24,10 +23,25 @@ impl<K: Sink> Scan<'_, '_, K> {
         }
         let w = &b[s..e];
         let e = e.max(h + 1);
+        // the indentation before `#` is the directive's, as bat has it, but `#endif`'s and
+        // `#define`'s
+        self.at = if matches!(w, b"endif" | b"define") {
+            h
+        } else {
+            0
+        };
         match w {
-            b"if" | b"ifdef" | b"ifndef" => self.ifd = self.depth.saturating_add(1),
+            b"if" | b"ifdef" | b"ifndef" => {
+                self.ifd = self.depth.saturating_add(1);
+                if self.one > 0 {
+                    self.one = self.one.saturating_add(1);
+                }
+            }
             b"else" | b"elif" | b"elifdef" | b"elifndef" => self.branch(),
-            b"endif" => self.ifd = 0,
+            b"endif" => {
+                self.ifd = 0;
+                self.one = self.one.saturating_sub(1);
+            }
             _ => {}
         }
         match w {
@@ -44,25 +58,38 @@ impl<K: Sink> Scan<'_, '_, K> {
                 self.pp = PP_MESSAGE;
                 self.pp_rest(e);
             }
+            b"endif" => {
+                // bat's `#endif` leaves the line's rest out of the directive: comments, plain
+                self.put::<true>(h, e, IMPORT);
+                self.endif_rest(e);
+            }
             b"else" => {
                 self.put::<true>(h, e, IMPORT_ELSE);
                 self.pp = PP_REST;
                 self.pp_rest(e);
+                // `#if 1`'s `#else` opens a disabled branch, as `#if 0` does
+                if self.one == 1 && self.pp == PP_NONE && self.mode == M_CODE {
+                    (self.mode, self.aux, self.one) = (M_DISABLED, 0, 0);
+                }
             }
             b"if" => {
                 self.put::<true>(h, e, IMPORT);
                 self.pp = PP_REST;
-                // a number right after `#if` is one (bat's); `#if 0` opens a disabled branch
+                // `#if 0` and `#if 1` their number colored (bat's): `#if 0` opens a disabled
+                // branch, `#if 1`'s `#else` will
                 let t = skip_blanks(b, e);
-                let mut d = t;
-                while d < b.len() && b[d].is_ascii_digit() {
-                    d += 1;
-                }
-                if d > t && b.get(d).is_none_or(|&c| CC[usize::from(c)] & NW == 0) {
+                let d = t + 1;
+                if matches!(b.get(t), Some(b'0' | b'1'))
+                    && b.get(d).is_none_or(|&c| CC[usize::from(c)] & NW == 0)
+                {
                     self.put::<true>(t, d, DEC);
                     self.pp_rest(d);
-                    if &b[t..d] == b"0" && self.pp == PP_NONE && self.mode == M_CODE {
-                        (self.mode, self.aux) = (M_DISABLED, 0);
+                    if self.pp == PP_NONE && self.mode == M_CODE {
+                        if b[t] == b'0' {
+                            (self.mode, self.aux) = (M_DISABLED, 0);
+                        } else if self.one == 0 {
+                            self.one = 1;
+                        }
                     }
                 } else {
                     self.pp_rest(e);
@@ -101,6 +128,31 @@ impl<K: Sink> Scan<'_, '_, K> {
         }
         self.pp = PP_REST;
         self.pp_rest(r);
+    }
+
+    /// `#endif`'s rest from `p`, outside the directive: its comments, the rest plain.
+    fn endif_rest(&mut self, mut p: usize) {
+        let b = self.b;
+        self.at = b.len();
+        self.pp = PP_NONE;
+        while p < b.len() {
+            if b[p] == b'/' {
+                match b.get(p + 1) {
+                    Some(b'/') => {
+                        self.put::<false>(p, p + 2, LINE_MARK);
+                        self.comment_line::<false>(p + 2);
+                        return;
+                    }
+                    Some(b'*') => {
+                        self.put::<false>(p, p + 2, COMMENT_MARK);
+                        p = self.comment_block::<false>(p + 2);
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            p += 1;
+        }
     }
 
     /// `#define`'s name at `e` (a function-like macro's parameters after it), then its body.
@@ -231,7 +283,7 @@ impl<K: Sink> Scan<'_, '_, K> {
 
     /// A `#define`'s body's line starts as an expression's: no declaration, no entity.
     fn body_start(&mut self) {
-        (self.prev, self.decl, self.paren, self.angle) = (P_OTHER, D_DONE, 0, 0);
+        (self.prev, self.decl, self.paren, self.angle, self.tpl) = (P_OTHER, D_DONE, 0, 0, 0);
     }
 
     /// A directive's line ended: its text filled to the end; the directive goes on on the next

@@ -32,6 +32,14 @@ pub(super) const A_OPERATOR: u16 = 10;
 /// `struct`, `union`: as [`A_CLASS`], their names' leaves their own.
 pub(super) const A_STRUCT: u16 = 11;
 pub(super) const A_UNION: u16 = 12;
+/// `template`: a `<` next opens its parameters.
+pub(super) const A_TEMPLATE: u16 = 13;
+/// `typename`: a modifier, but a type's word in a template's parameters.
+pub(super) const A_TYPENAME: u16 = 14;
+/// A cast's word: a `<` next opens its type.
+pub(super) const A_CAST: u16 = 15;
+/// `delete`: a modifier after a definition's `=` (`= delete;`), as `default` is.
+pub(super) const A_DELETE: u16 = 16;
 
 /// Where an [`INFO`] entry's action starts.
 pub(super) const ACT: u16 = 8;
@@ -103,13 +111,13 @@ const KEYWORDS: [(&[u8], u16, u16, u8); 118] = [
     (b"noErr", MAC_SUPPORT_CONSTANT, A_LEAF, BOTH),
     // C++'s own
     (b"class", STORAGE_TYPE, A_CLASS, CXX),
-    (b"typename", STORAGE_TYPE, A_LEAF, CXX),
-    (b"template", TEMPLATE_KW, A_LEAF, CXX),
+    (b"typename", MODIFIER, A_TYPENAME, CXX),
+    (b"template", TEMPLATE_KW, A_TEMPLATE, CXX),
     (b"concept", STORAGE_TYPE, A_LEAF, CXX),
     (b"namespace", CONTROL, A_NAMESPACE, CXX),
     (b"using", CONTROL, A_USING, CXX),
     (b"new", CONTROL, A_LEAF, CXX),
-    (b"delete", CONTROL, A_LEAF, CXX),
+    (b"delete", CONTROL, A_DELETE, CXX),
     (b"operator", CONTROL, A_OPERATOR, CXX),
     (b"try", CONTROL, A_LEAF, CXX),
     (b"catch", CONTROL, A_LEAF, CXX),
@@ -154,12 +162,12 @@ const KEYWORDS: [(&[u8], u16, u16, u8); 118] = [
     (b"alignof", WORD_OP, A_LEAF, CXX),
     (b"typeid", WORD_OP, A_LEAF, CXX),
     (b"static_assert", WORD_OP, A_LEAF, CXX),
-    (b"decltype", WORD_OP, A_LEAF, CXX),
+    (b"decltype", STORAGE_TYPE, A_LEAF, CXX),
     (b"co_await", WORD_OP, A_LEAF, CXX),
-    (b"const_cast", CAST_KW, A_LEAF, CXX),
-    (b"dynamic_cast", CAST_KW, A_LEAF, CXX),
-    (b"reinterpret_cast", CAST_KW, A_LEAF, CXX),
-    (b"static_cast", CAST_KW, A_LEAF, CXX),
+    (b"const_cast", CAST_KW, A_CAST, CXX),
+    (b"dynamic_cast", CAST_KW, A_CAST, CXX),
+    (b"reinterpret_cast", CAST_KW, A_CAST, CXX),
+    (b"static_cast", CAST_KW, A_CAST, CXX),
     // the raw string prefixes, plain but before a quote ([`A_LEAF`] with no leaf)
     (b"R", PLAIN, A_LEAF, CXX),
     (b"LR", PLAIN, A_LEAF, CXX),

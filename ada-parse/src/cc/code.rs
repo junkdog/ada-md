@@ -5,16 +5,17 @@
 
 use super::pp::skip_blanks;
 use super::words::{
-    A_ACCESS, A_C99, A_CASE, A_CLASS, A_ENUM, A_LEAF, A_NAMESPACE, A_NS, A_OPERATOR, A_STRUCT,
-    A_TYPEDEF, A_UNION, A_USING, ACT, WORDS,
+    A_ACCESS, A_C99, A_CASE, A_CAST, A_CLASS, A_DELETE, A_ENUM, A_LEAF, A_NAMESPACE, A_NS,
+    A_OPERATOR, A_STRUCT, A_TEMPLATE, A_TYPEDEF, A_TYPENAME, A_UNION, A_USING, ACT, WORDS,
 };
 use super::*;
 use crate::prim;
 
 impl<K: Sink> Scan<'_, '_, K> {
     /// The code from `p` to the line's end. At a namespace's or a class's level, as bat has
-    /// it, a line's end ends a statement that a macro's call ends (`DECLARE(x)`), that has
-    /// names but no keyword (`TEST_END`), or a definition's header with no `;` or `{`.
+    /// it, a line's end ends a statement without a keyword that a macro's call ends
+    /// (`DECLARE(x)`) or that has names (`TEST_END`), but not a path's `::`; and a definition's
+    /// header with no `;` or `{` ([`P_DEFINED`]: a `:` next is its initializer list's).
     #[inline(always)]
     pub(super) fn code_line(&mut self, p: usize) {
         self.code::<false>(p);
@@ -26,8 +27,17 @@ impl<K: Sink> Scan<'_, '_, K> {
     #[inline(never)]
     fn line_end(&mut self) {
         let ends = match self.decl {
-            D_NONE => self.prev == P_CLOSE || self.prev == P_OTHER && !self.kw,
-            D_DEFINED => true,
+            // a path's `::` at the line's end goes on (`PB_DS_CLASS_C_DEC::`, the name next)
+            // after a keyword (`static void __attribute__((destructor))`) the name is next
+            D_NONE => {
+                matches!(self.prev, P_CLOSE | P_OTHER)
+                    && !self.kw
+                    && !self.b.trim_ascii_end().ends_with(b"::")
+            }
+            D_DEFINED => {
+                (self.prev, self.decl, self.kw) = (P_DEFINED, D_NONE, false);
+                return;
+            }
             _ => false,
         };
         if ends {
@@ -94,12 +104,42 @@ impl<K: Sink> Scan<'_, '_, K> {
         }
         let leaf = info & ((1 << ACT) - 1);
         match info >> ACT {
+            // a member named as a support type (`.Size`)
+            A_LEAF if self.prev == P_ACCESSOR && (SYS_TYPE..=MAC_TYPE).contains(&leaf) => {
+                return self.name::<PP>(p, e, false);
+            }
             A_LEAF => {}
             A_C99 => return self.name::<PP>(p, e, true),
+            // `= default;`, `= delete;` after a definition's parameters
+            A_CASE | A_DELETE if self.decl == D_DEFINED => {
+                self.put::<PP>(p, e, MODIFIER);
+                self.prev = P_OTHER;
+                return e;
+            }
             A_CASE => self.case = true,
             A_ACCESS => {
                 self.put::<PP>(p, e, leaf);
                 self.prev = P_ACCESS;
+                return e;
+            }
+            // a template's parameters' `typename T`, `class U`: a type's word, no class
+            A_TYPENAME | A_CLASS if self.in_tpl() => {
+                self.put::<PP>(p, e, STORAGE_TYPE);
+                (self.prev, self.kw) = (P_OTHER, true);
+                return e;
+            }
+            A_TEMPLATE => {
+                self.put::<PP>(p, e, leaf);
+                self.kw |= self.paren == 0;
+                // `a.template get<0>()` keeps the member
+                if self.prev != P_ACCESSOR {
+                    (self.prev, self.entity) = (P_ENTITY, E_TEMPLATE);
+                }
+                return e;
+            }
+            A_CAST => {
+                self.put::<PP>(p, e, leaf);
+                (self.prev, self.entity) = (P_ENTITY, E_CAST);
                 return e;
             }
             A_CLASS | A_STRUCT | A_UNION | A_ENUM => {
@@ -107,7 +147,7 @@ impl<K: Sink> Scan<'_, '_, K> {
                 // `enum class` stays an enum's
                 self.pending = if act == A_ENUM { INIT + 1 } else { CLASS + 1 };
                 self.put::<PP>(p, e, leaf);
-                self.kw = true;
+                self.kw |= self.paren == 0;
                 // a `typedef`'s struct leaves its name plain, as bat does
                 if self.decl == D_TYPEDEF {
                     self.prev = P_OTHER;
@@ -145,7 +185,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             _ => {}
         }
         self.put::<PP>(p, e, leaf);
-        self.kw = true;
+        self.kw |= self.paren == 0;
         // a modifier alone is no type: `const FOO(x) *f(` calls `FOO`, as bat has it
         if leaf != MODIFIER || self.prev != P_STMT {
             self.prev = P_OTHER;
@@ -251,6 +291,15 @@ impl<K: Sink> Scan<'_, '_, K> {
         self.word_on::<PP>(p, e, info)
     }
 
+    /// Whether the innermost open `<` is a template's parameters'.
+    #[inline(always)]
+    fn in_tpl(&self) -> bool {
+        self.angle > 0
+            && u32::from(self.tpl)
+                .checked_shr(u32::from(self.angle) - 1)
+                .is_some_and(|t| t & 1 != 0)
+    }
+
     /// Whether a name before `(` here could be a definition's: a namespace's or a class's level,
     /// outside parentheses and template arguments, before any `=`.
     #[inline(always)]
@@ -302,6 +351,9 @@ impl<K: Sink> Scan<'_, '_, K> {
         let leaf = match b.get(e) {
             Some(b'(') => self.call_leaf::<PP>(p, e, prev, c99),
             Some(b'"' | b'\'') => return self.prefixed::<PP>(p, e),
+            Some(b'<') if !self.c => return self.name_lt::<PP>(p, e, e, prev),
+            // C++'s `name{…}`: a call's color, as bat has it (not a base class's before a body)
+            Some(b'{') if !self.c && self.pending == NO_PENDING => FUNCTION,
             Some(b':') if !PP && prev == P_STMT && b.get(e + 1) != Some(&b':') => {
                 self.put::<PP>(p, e, LABEL);
                 self.put::<PP>(e, e + 1, SEPARATOR);
@@ -315,6 +367,10 @@ impl<K: Sink> Scan<'_, '_, K> {
                 }
                 if b.get(q) == Some(&b'(') {
                     self.call_leaf::<PP>(p, e, prev, c99)
+                } else if b.get(q) == Some(&b'<') && !self.c {
+                    return self.name_lt::<PP>(p, e, q, prev);
+                } else if b.get(q) == Some(&b'{') && !self.c && self.pending == NO_PENDING {
+                    FUNCTION
                 } else {
                     self.value_leaf(p, e, prev)
                 }
@@ -337,18 +393,97 @@ impl<K: Sink> Scan<'_, '_, K> {
             && self.may_define()
             && (prev == P_OTHER
                 || prev == P_CLOSE
-                || prev == P_STMT && self.level() == CLASS && !upper(&self.b[p..e]))
+                || prev == P_STMT && self.level() == CLASS && !(e - p > 1 && upper(&self.b[p..e])))
         {
             (self.decl, self.angle) = (D_PARAMS, 0);
             return FUNC_DEF;
         }
         if prev == P_ACCESSOR {
             MEMBER_FUNCTION
+        } else if self.angle > 0 {
+            // no call in template arguments (`UniquePtr<STACK_OF(X509)>`), as bat has it
+            PLAIN
         } else if c99 {
             C99
         } else {
             FUNCTION
         }
+    }
+
+    /// A name `p..e` before `<` at `q` (C++): template arguments where a generic's shape
+    /// follows ([`generic_end`]), and in a declaration (a namespace's or a class's level, before
+    /// any `=`; a definition's parameters) or in template arguments any `<` but `<<` and `<=`.
+    /// Before `(` or `{` after them a call in code, a member's after an accessor, a
+    /// definition's name where one may be; else the name by its shape.
+    #[cold]
+    #[inline(never)]
+    fn name_lt<const PP: bool>(&mut self, p: usize, e: usize, q: usize, prev: u8) -> usize {
+        let b = self.b;
+        let end = generic_end(b, q);
+        if end.is_none() {
+            let lenient = !matches!(b.get(q + 1), Some(b'<' | b'='))
+                && (self.angle > 0
+                    || !PP
+                        && self.level() <= CLASS
+                        && (self.decl == D_NONE && self.paren == 0 || self.decl == D_PARAMS));
+            if !lenient {
+                let leaf = self.value_leaf(p, e, prev);
+                if leaf != PLAIN {
+                    self.put::<PP>(p, e, leaf);
+                }
+                return e;
+            }
+        }
+        let open = end.map_or(b.len(), |x| skip_blanks(b, x + 1));
+        let after = next_byte(b, open);
+        let leaf = if matches!(after, b'(' | b'{') {
+            // not a function pointer's type: `UniquePtr<X509> (*certificate)();`
+            if after == b'('
+                && !PP
+                && self.may_define()
+                && matches!(prev, P_OTHER | P_CLOSE)
+                && next_byte(b, skip_blanks(b, open + 1)) != b'*'
+            {
+                self.decl = D_PARAMS;
+                FUNC_DEF
+            } else if prev == P_ACCESSOR {
+                MEMBER_FUNCTION
+            } else if self.angle == 0 && self.level() > CLASS {
+                FUNCTION
+            } else {
+                PLAIN
+            }
+        } else {
+            self.value_leaf(p, e, prev)
+        };
+        if leaf != PLAIN {
+            self.put::<PP>(p, e, leaf);
+        }
+        self.generic_open::<PP>(q, false)
+    }
+
+    /// A generic's `<` at `p` (a template's parameters' where `tpl`).
+    #[inline(always)]
+    fn generic_open<const PP: bool>(&mut self, p: usize, tpl: bool) -> usize {
+        if tpl && self.angle < 3 {
+            self.tpl |= 1 << self.angle;
+        }
+        self.angle = self.angle.saturating_add(1);
+        self.put::<PP>(p, p + 1, GENERIC_BEGIN);
+        self.prev = P_OTHER;
+        p + 1
+    }
+
+    /// A generic's `>` at `p`.
+    #[inline(always)]
+    fn generic_close<const PP: bool>(&mut self, p: usize) -> usize {
+        self.angle -= 1;
+        if self.angle < 3 {
+            self.tpl &= !(1 << self.angle);
+        }
+        self.put::<PP>(p, p + 1, GENERIC_END);
+        self.prev = P_OTHER;
+        p + 1
     }
 
     /// A name `p..e` that isn't called: a member after an accessor, else by its shape.
@@ -366,7 +501,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             return PLAIN;
         }
         let second = b[p + 1];
-        if CC[usize::from(second)] & UP != 0 {
+        let leaf = if CC[usize::from(second)] & UP != 0 {
             match first {
                 b'f' | b'm' if !self.c => MEMBER_VAR,
                 b'g' => GLOBAL_MAC,
@@ -378,6 +513,34 @@ impl<K: Sink> Scan<'_, '_, K> {
             MEMBER_VAR
         } else {
             PLAIN
+        };
+        if leaf != PLAIN && prev != P_STMT && self.declared(e) {
+            return PLAIN;
+        }
+        leaf
+    }
+
+    /// Whether the name ending at `e` is the one a declaration at a namespace's or a class's
+    /// level declares, as bat reads it: after a type, before blanks (or a `*`, a `&`) and
+    /// something but `<`, `::`, `(` or the line's end (`const int kMax = 3;`): plain, not by its
+    /// shape; in C before `[` too.
+    #[cold]
+    fn declared(&self, e: usize) -> bool {
+        let b = self.b;
+        if !(self.decl == D_NONE && self.paren == 0 && self.angle == 0 && self.level() <= CLASS) {
+            return false;
+        }
+        let q = match b.get(e) {
+            Some(&c) if CC[usize::from(c)] & SP != 0 => skip_blanks(b, e),
+            Some(b'*' | b'&') => skip_blanks(b, e + 1),
+            // C's array: `static const uint8_t kData[] = {…};` (bat's C++ colors it)
+            Some(b'[') => return self.c,
+            _ => return false,
+        };
+        match b.get(q) {
+            None | Some(b'<' | b'(') => false,
+            Some(b':') => b.get(q + 1) != Some(&b':'),
+            _ => true,
         }
     }
 
@@ -477,7 +640,11 @@ impl<K: Sink> Scan<'_, '_, K> {
             }
             b'}' => {
                 if !PP {
-                    self.close_brace();
+                    if p == 0 && self.level() >= CODE {
+                        self.resync();
+                    } else {
+                        self.close_brace();
+                    }
                 }
                 self.put::<PP>(p, p + 1, BLOCK_END);
                 (self.prev, self.ternary) = (P_STMT, 0);
@@ -542,8 +709,18 @@ impl<K: Sink> Scan<'_, '_, K> {
                 _ => (1, OPERATOR),
             },
             b'<' | b'>' => {
-                if matches!(self.decl, D_NONE | D_PARAMS) && !PP && self.level() <= CLASS {
-                    self.angles(c, next);
+                if !self.c {
+                    if c == b'>' && self.angle > 0 {
+                        return self.generic_close::<PP>(p);
+                    }
+                    // `template <`, `static_cast<`
+                    if c == b'<'
+                        && self.prev == P_ENTITY
+                        && matches!(self.entity, E_TEMPLATE | E_CAST)
+                        && next != b'<'
+                    {
+                        return self.generic_open::<PP>(p, self.entity == E_TEMPLATE);
+                    }
                 }
                 if next == c {
                     if b.get(p + 2) == Some(&b'=') {
@@ -582,17 +759,6 @@ impl<K: Sink> Scan<'_, '_, K> {
         self.put::<PP>(p, p + n, leaf);
         self.prev = P_OTHER;
         p + n
-    }
-
-    /// A declaration's `<` or `>` (`c`, `next` the byte after): template arguments' depth.
-    #[inline(never)]
-    fn angles(&mut self, c: u8, next: u8) {
-        match (c, next) {
-            (b'<', b'<' | b'=') | (b'>', b'=') => {}
-            (b'<', _) => self.angle = self.angle.saturating_add(1),
-            (_, b'>') => self.angle = self.angle.saturating_sub(2),
-            _ => self.angle = self.angle.saturating_sub(1),
-        }
     }
 
     /// A `~` at `p` where a definition's name may be: before a name and `(` a destructor's name,
@@ -649,7 +815,8 @@ impl<K: Sink> Scan<'_, '_, K> {
                     self.new_statement();
                     (CLASS_SECTION, P_STMT)
                 }
-                P_CLOSE => (INIT_LIST, P_OTHER),
+                // C has no initializer lists: bat's C has an `asm`'s `:` the ternary's
+                P_CLOSE | P_DEFINED if !self.c => (INIT_LIST, P_OTHER),
                 _ if self.pending == CLASS + 1 || self.pending == INIT + 1 => (SEPARATOR, P_OTHER),
                 _ => (TERNARY, P_OTHER),
             }
@@ -1001,6 +1168,56 @@ impl<K: Sink> Scan<'_, '_, K> {
 fn next_byte(b: &[u8], q: usize) -> u8 {
     b.get(q).copied().unwrap_or(b'\n')
 }
+
+/// Where a generic's `>` is, its `<` at `lt`, on bat's shape: names, blanks, `,`, `::` and the
+/// like (no byte of `(){}&;*^%=<>-`), with one nested generic (itself with one) before at most
+/// one parenthesized group: `<(?:T+(?:<(?:T+(?:<T*>)?)?\s*>)?)?T*(?:\(T*\))?T*>`. A comparison
+/// (`a < b;`, `i < n)`) has no such end.
+#[inline(always)]
+fn generic_end(b: &[u8], lt: usize) -> Option<usize> {
+    let run = |mut i: usize| {
+        while i < b.len() && GT[usize::from(b[i])] {
+            i += 1;
+        }
+        i
+    };
+    let mut i = run(lt + 1);
+    if b.get(i) == Some(&b'<') && i > lt + 1 {
+        let s = i + 1;
+        let mut j = run(s);
+        if b.get(j) == Some(&b'<') && j > s {
+            let k = run(j + 1);
+            if b.get(k) != Some(&b'>') {
+                return None;
+            }
+            j = skip_blanks(b, k + 1);
+        }
+        if b.get(j) != Some(&b'>') {
+            return None;
+        }
+        i = run(j + 1);
+    }
+    if b.get(i) == Some(&b'(') {
+        let k = run(i + 1);
+        if b.get(k) != Some(&b')') {
+            return None;
+        }
+        i = run(k + 1);
+    }
+    (b.get(i) == Some(&b'>')).then_some(i)
+}
+
+/// The bytes a generic's text takes ([`generic_end`]).
+static GT: [bool; 256] = {
+    let mut t = [true; 256];
+    let x = b"(){}&;*^%=<>-";
+    let mut i = 0;
+    while i < x.len() {
+        t[x[i] as usize] = false;
+        i += 1;
+    }
+    t
+};
 
 /// Whether the word at `q` is `w`.
 fn word_at(b: &[u8], q: usize, w: &[u8]) -> bool {
