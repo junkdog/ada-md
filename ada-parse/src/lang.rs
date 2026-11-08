@@ -495,6 +495,8 @@ impl Lang {
             Lang::Rust => crate::rust::scopes(kind),
             Lang::Kotlin => crate::kotlin::scopes(kind),
             Lang::Java => crate::java::scopes(kind),
+            Lang::Cpp if crate::X057 => crate::cc::scopes(kind),
+            Lang::C if crate::X057 => crate::cc::scopes_c(kind),
             Lang::Cpp => crate::cpp::scopes(kind),
             Lang::C => crate::cpp::scopes(kind),
             Lang::CSharp => crate::csharp::scopes(kind),
