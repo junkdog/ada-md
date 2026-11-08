@@ -102,6 +102,16 @@ pub(crate) struct Mark {
     last: Rule,
 }
 
+impl Mark {
+    /// A mark of nothing written, for a slot a scan fills before it reads it.
+    pub(crate) const NONE: Mark = Mark {
+        n: 0,
+        prev: u32::MAX,
+        end: 0,
+        last: Rule(Rule::NONE),
+    };
+}
+
 /// A line's spans pushed to the vector as [`Out`] pushes them, no cursor: the span API of a
 /// scanner whose spans went that way before it was generic over its sink (the line-format
 /// engine, X-069), so that API's code stays as it was.
