@@ -711,11 +711,7 @@ mod tests {
             b.push_str(&l.replace('\t', "    "));
             l.contains('\t')
         };
-        for text in [
-            TEXT,
-            include_str!("rust/mod.rs"),
-            include_str!("rust/code.rs"),
-        ] {
+        for text in [TEXT, include_str!("rust/mod.rs"), include_str!("lib.rs")] {
             for (name, prep) in [("tabs", Some(tabs)), ("none", None)] {
                 let prep2 = |l: &str, b: &mut String| prep.is_some_and(|p: crate::Prep| p(l, b));
                 let want = from_spans(text, prep2);

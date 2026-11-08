@@ -67,11 +67,6 @@ mod yaml_scan;
 
 use std::mem::MaybeUninit;
 
-/// Rust's scanner of ada's own (X-090's redesign, [`rust::own`]) in place of the frames that keep
-/// bat's contexts: where ada-parse is built with `ADA_PARSE_X090` set, till the redesign's last
-/// stage switches it in for good.
-pub(crate) const X090: bool = option_env!("ADA_PARSE_X090").is_some();
-
 use emit::Sink as _;
 pub use emit::{Rule, Rules, Run};
 pub use lang::{ALIASES, FirstLine, Lang, first_line_syntaxes};
@@ -434,7 +429,6 @@ type LineRuns = fn(&[u8], &mut State, &mut Out, &mut dyn Rules, &mut Vec<Run>);
 #[inline(always)]
 fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
     Some(match lang {
-        Lang::Rust if X090 => (rust::own::block_runs, rust::own::line_runs),
         Lang::Rust => (rust::block_runs, rust::line_runs),
         Lang::Java => (java::block_runs, java::line_runs),
         Lang::CSharp => (csharp::block_runs, csharp::line_runs),
@@ -465,7 +459,6 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
 #[inline(always)]
 fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
     Some(match lang {
-        Lang::Rust if SPANS && X090 => rust::own::block,
         Lang::Rust if SPANS => rust::block,
         Lang::Kotlin if SPANS => kotlin::block,
         Lang::Java if SPANS => java::block,
@@ -708,7 +701,6 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::Xml if !SPANS => |_, _, _| unreachable!("XML's runs come from its own scan"),
         Lang::Xml => out!(xml_scan::line),
         Lang::Rust if !SPANS => |_, _, _| unreachable!("Rust's runs come from its own scan"),
-        Lang::Rust if X090 => out!(rust::own::line),
         Lang::Rust => out!(rust::line),
         Lang::Kotlin if !SPANS => |_, _, _| unreachable!("Kotlin's runs come from its own scan"),
         Lang::Kotlin => out!(kotlin::line),

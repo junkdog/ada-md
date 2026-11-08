@@ -2785,14 +2785,17 @@ mod tests {
         rules_match_the_grammar("yaml", "YAML", text);
     }
 
-    /// ada-parse's Rust lexer picks the rules bat's grammar picks, in every built-in theme
-    /// (ADR-40): its odd corners included (a one-digit width in a placeholder, `write!`'s
-    /// first argument, `impl` names past `for`). Not `?Sized`: bat's grammar marks its `?` invalid
-    /// and ends the generic there, which ada's type frames don't (X-056, by design; ada-parse's
-    /// `rust::tests::types`); nor a tuple struct's `pub` or a group in its fields, whose first `)`
-    /// ends them in bat's (X-063, by design; `rust::tests::tuple_fields`); nor a trait's or an
-    /// enum's generics and supertraits, or a struct's `where`, which bat's grammar leaves plain
-    /// (X-064, by design; `rust::tests::headers`).
+    /// ada-parse's Rust scanner (X-090's, of ada's own) picks the rules bat's grammar picks, in
+    /// every built-in theme (ADR-40), run for run: its odd corners included (a one-digit width in
+    /// a placeholder, `write!`'s first argument, `impl` names past `for`). Not `writeln!(out)`
+    /// without a format string, whose first-argument context never ends in bat's and derails the
+    /// lines after, nor `if a<b {`, whose `{` bat's reads as invalid (X-090, by design). Not
+    /// `?Sized`: bat's grammar marks its `?` invalid and ends the generic there, which ada's type
+    /// frames don't (X-056, by design; ada-parse's `rust::tests::types`); nor a tuple struct's
+    /// `pub` or a group in its fields, whose first `)` ends them in bat's (X-063, by design;
+    /// `rust::tests::tuple_fields`); nor a trait's or an enum's generics and supertraits, or a
+    /// struct's `where`, which bat's grammar leaves plain (X-064, by design;
+    /// `rust::tests::headers`).
     #[test]
     fn rust_rules_match_the_grammar() {
         let text = concat!(
