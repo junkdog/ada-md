@@ -49,6 +49,8 @@ pub enum Lang {
     SshConfig,
     /// bat's `SSHD Config`: OpenSSH's server config.
     SshdConfig,
+    /// bat's `Crontab`: cron's tables.
+    Crontab,
     /// bat's `Rust`.
     Rust,
     /// bat's `Kotlin`.
@@ -272,6 +274,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::KnownHosts, &["known_hosts", "known_hosts.old"]),
     (Lang::SshConfig, &["ssh_config"]),
     (Lang::SshdConfig, &["sshd_config"]),
+    (Lang::Crontab, &["tab", "crontab", "cron.d"]),
     (Lang::Rust, &["rs"]),
     (Lang::Kotlin, &["kt", "kts"]),
     (Lang::Java, &["java", "bsh"]),
@@ -333,7 +336,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 42] = [
+    pub const ALL: [Lang; 43] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -354,6 +357,7 @@ impl Lang {
         Lang::KnownHosts,
         Lang::SshConfig,
         Lang::SshdConfig,
+        Lang::Crontab,
         Lang::Rust,
         Lang::Kotlin,
         Lang::Java,
@@ -402,6 +406,7 @@ impl Lang {
             Lang::KnownHosts => "Known Hosts",
             Lang::SshConfig => "SSH Config",
             Lang::SshdConfig => "SSHD Config",
+            Lang::Crontab => "Crontab",
             Lang::Rust => "Rust",
             Lang::Kotlin => "Kotlin",
             Lang::Java => "Java",
@@ -459,6 +464,7 @@ impl Lang {
             Lang::KnownHosts => "text.known_hosts",
             Lang::SshConfig => "source.ssh_config",
             Lang::SshdConfig => "source.sshd_config",
+            Lang::Crontab => "source.crontab",
             Lang::Rust => "source.rust",
             Lang::Kotlin => "source.Kotlin",
             Lang::Java => "source.java",
@@ -532,6 +538,7 @@ impl Lang {
             Lang::Properties => crate::properties::scopes(kind),
             Lang::SshConfig => crate::ssh_config::scopes(kind, false),
             Lang::SshdConfig => crate::ssh_config::scopes(kind, true),
+            Lang::Crontab => crate::crontab::scopes(kind),
             _ => self
                 .kinds()
                 .get(usize::from(kind))
@@ -550,7 +557,13 @@ impl Lang {
     pub fn line_by_line(self) -> bool {
         matches!(
             self,
-            Lang::Diff | Lang::Ini | Lang::Log | Lang::Fstab | Lang::SshConfig | Lang::SshdConfig
+            Lang::Diff
+                | Lang::Ini
+                | Lang::Log
+                | Lang::Fstab
+                | Lang::SshConfig
+                | Lang::SshdConfig
+                | Lang::Crontab
         )
     }
 

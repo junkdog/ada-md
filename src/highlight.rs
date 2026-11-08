@@ -3874,6 +3874,44 @@ mod tests {
         );
     }
 
+    /// ada-parse's Crontab scanner picks the colors bat's grammar picks, in every built-in theme
+    /// (X-059), but for a shell command's name (bash's scanner's, X-093). Its other departure is
+    /// left out of the text: a command ends with its line, where bat's shell runs on into the
+    /// next after a `\` that ends a line or a schedule's blanks that end one.
+    #[test]
+    fn crontab_colors_match_the_grammar() {
+        let text = concat!(
+            "# m h dom mon dow command TODO: x\n",
+            "SHELL=/bin/bash\n",
+            "MAILTO=  # nobody\n",
+            "CRON_TZ=UTC\n",
+            "*/5 * * * * /usr/bin/php /var/www/cron.php > /dev/null 2>&1\n",
+            "15,45 1-5 1-31/2 Jan-Mar mon-fri echo $HOME; ls # done\n",
+            "0 0 15W * 5L cmd\n",
+            "0 0 ? x5 MON#2 cmd\n",
+            "60 24 0 13 8 cmd\n",
+            "5, ,5 ** */ Sunday cmd\n",
+            "00 1-2-3 H H(0-5) * cmd\n",
+            "  0 0 * * *\tcd /srv && ./run.sh \"$(date +%F)\"\n",
+            "@reboot sleep 60 && /opt/start.sh\n",
+            "@daily#c\n",
+            "@weekly\n",
+            "@foo bar # c\n",
+            "garbage line # c\n",
+            "  abc def\n",
+            "cron x\n",
+        );
+        colors_match_the_grammar_but(
+            "crontab",
+            "Crontab",
+            text,
+            &[(
+                "meta.function-call.shell support.function.command.shell",
+                "meta.function-call.shell variable.function.shell",
+            )],
+        );
+    }
+
     /// ada-parse's `.env` lexer picks the rules bat's grammar picks, in every built-in theme
     /// (ADR-40).
     #[test]

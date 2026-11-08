@@ -10,7 +10,7 @@
 //! The lexers are scanners of ada's own, speed first (ADR-40): one pass over a line's bytes,
 //! a fixed set of kinds carrying bat's scopes for the common case, syntect a guideline.
 //! Diff is a line lexer, each line on its own; INI, Java properties, `.env`, Git's own files
-//! (ignore, attributes, mailmap and link files), fstab, `known_hosts` and OpenSSH's configs share the line-format engine
+//! (ignore, attributes, mailmap and link files), fstab, `known_hosts`, OpenSSH's configs and crontabs share the line-format engine
 //! (`line_format.rs`); logs (O-043) and JSON (O-048) came from ada; Dockerfile's scanner is
 //! bat's grammar compiled by hand; these are exact against syntect (the `parse` fuzz target),
 //! and XML's, of ada's own design, is too; YAML's and TOML's read
@@ -21,6 +21,7 @@
 mod bash;
 mod cc;
 mod clike;
+mod crontab;
 mod csharp;
 mod css;
 mod diff;
@@ -647,6 +648,7 @@ fn run_scanner(lang: Lang) -> Option<RunScanner> {
         Lang::KnownHosts => known_hosts::line_runs,
         Lang::SshConfig => ssh_config::line_runs,
         Lang::SshdConfig => ssh_config::sshd_line_runs,
+        Lang::Crontab => crontab::line_runs,
         Lang::Json => json::line_runs,
         Lang::Toml => toml_scan::line_runs,
         Lang::Xml => xml_scan::line_runs,
@@ -680,6 +682,7 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         | Lang::KnownHosts
         | Lang::SshConfig
         | Lang::SshdConfig
+        | Lang::Crontab
             if !SPANS =>
         {
             |_, _, _| unreachable!("a line format's runs come from its own scan")
@@ -753,6 +756,7 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::KnownHosts => out!(known_hosts::line),
         Lang::SshConfig => out!(ssh_config::line),
         Lang::SshdConfig => out!(ssh_config::sshd_line),
+        Lang::Crontab => out!(crontab::line),
         Lang::Dockerfile => out!(dockerfile::line),
         Lang::Properties => out!(properties::line),
     }

@@ -352,6 +352,18 @@ Match Group sftp Address 10.0.0.0/8
   ForceCommand internal-sftp
 ```
 
+## Crontab
+
+```crontab
+# m h dom mon dow command
+SHELL=/bin/bash
+MAILTO=ops@example.com
+*/15 * * * * /usr/local/bin/sync.sh > /dev/null 2>&1
+30 2 1-7 * mon tar -czf "/backup/$(date +%F).tgz" /srv  # TODO: rotate
+0 9-17/2 * Jan,Jul 1-5 curl -fsS https://example.com/ping
+@reboot sleep 30 && /opt/app/start.sh
+```
+
 ## Rust
 
 ```rust
