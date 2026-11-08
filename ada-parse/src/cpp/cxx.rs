@@ -5,8 +5,8 @@
 use super::text::{
     at, boundary, eol_after, find_any, generic, id, id_loose, ident_end, is_ident, is_kw,
     is_upper_rest, is_word, next, non_space_at, non_word_at, operator, operator_name, paren_after,
-    paren_or_eol, path, path_then, prev, punct_at, run_of, space_at, spaces_generic, starts,
-    word_before, word_end,
+    paren_or_eol, path, path_may_end, path_then, prev, punct_at, run_of, space_at, spaces_generic,
+    starts, word_before, word_end,
 };
 use super::words::{Kw, c99_at};
 use super::*;
@@ -80,11 +80,19 @@ pub(super) fn is_stop_word(w: &[u8], with_operator: bool) -> bool {
 /// alternative ends, in order.
 pub(super) fn ds_keyword(b: &[u8], p: usize) -> [Option<usize>; 2] {
     let mut out = [None, None];
-    for (w, n) in [(&b"struct"[..], 6), (b"union", 5)] {
-        if starts(b, p, w) {
-            out[0] = Some(p + n);
+    // the first byte tells which word it may be (no call to compare the others)
+    match at(b, p) {
+        b's' | b'u' => {
+            for (w, n) in [(&b"struct"[..], 6), (b"union", 5)] {
+                if starts(b, p, w) {
+                    out[0] = Some(p + n);
+                    return out;
+                }
+            }
             return out;
         }
+        b'e' | b'c' => {}
+        _ => return out,
     }
     if starts(b, p, b"enum") {
         let s = skip_spaces(b, p + 4);
@@ -100,6 +108,28 @@ pub(super) fn ds_keyword(b: &[u8], p: usize) -> [Option<usize>; 2] {
         out[0] = Some(p + 5);
     }
     out
+}
+
+/// C's `operators` at a byte `c`, `d` and `e` after it (`\n` past the line): how many bytes
+/// the operator takes and its leaf (C's scopes added by the caller).
+#[inline(always)]
+pub(super) fn operator_at(c: u8, d: u8, e: u8) -> Option<(usize, u16)> {
+    Some(match c {
+        b'+' | b'-' if d == c => (2, ARITH),
+        b'-' if d == b'>' => (2, ACCESSOR),
+        b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^' if d == b'=' => (2, ASSIGN_AUG),
+        b'>' | b'<' if d == c && e == b'=' => (3, ASSIGN_AUG),
+        b'<' | b'>' | b'&' | b'|' if d == c => (2, ARITH),
+        b'<' | b'>' | b'=' | b'!' if d == b'=' => (2, COMPARISON),
+        b'<' | b'>' => (1, COMPARISON),
+        b'+' | b'-' | b'/' | b'%' | b'|' | b'^' | b'~' | b'!' => (1, ARITH),
+        b'*' | b'&' => (1, OPERATOR),
+        b'=' => (1, ASSIGN),
+        b'?' => (1, TERNARY),
+        b':' if d != b':' => (1, TERNARY),
+        b'.' if d == b'.' && e == b'.' => (3, VARIADIC),
+        _ => return None,
+    })
 }
 
 /// `\b(struct|union|enum\s+class|enum\s+struct|enum|class)\b` at `p`: where it ends.
@@ -933,21 +963,6 @@ impl<K: Sink> Scan<'_, '_, K> {
         }
     }
 
-    /// Whether `PATH` at `p` can be followed by a byte `want` takes: a quick test before a
-    /// lookahead's, from the first name and what follows its spaces (a `::` or `template`
-    /// leaves it to the lookahead).
-    fn path_may_end(&self, p: usize, want: fn(u8) -> bool) -> bool {
-        let b = self.b;
-        if starts(b, p, b"::") || starts(b, p, b"template") {
-            return true;
-        }
-        let Some(e) = self.id_at(p) else {
-            return false;
-        };
-        let q = skip_spaces(b, e);
-        q < b.len() && (want(b[q]) || starts(b, q, b"::"))
-    }
-
     /// `identifiers`: `(?:(::)\s*)?\bID\b\s*(::)\s*`, `(?:(::)\s*)?\bID\b`.
     pub(super) fn identifiers(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
@@ -1102,6 +1117,7 @@ impl<K: Sink> Scan<'_, '_, K> {
         self.put(q + 1, e + 1, DQ_BEGIN);
         self.delim[..e - s].copy_from_slice(&b[s..e]);
         self.delim_len = e - s;
+        self.raw_may = true;
         self.push(e + 1, RAW_STRING);
         Some(e + 1)
     }
@@ -1483,20 +1499,24 @@ impl<K: Sink> Scan<'_, '_, K> {
     /// `generic-type`'s lookaheads.
     pub(super) fn generic_type(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
-        if starts(b, p, b"template") || !self.path_may_end(p, |c| c == b'<') {
+        if starts(b, p, b"template") || !path_may_end(b, p, |c| c == b'<') {
             return None;
         }
-        // the first lookahead wants a call after the arguments; the second takes any
-        let call = path_then(b, p, |e| {
-            spaces_generic(b, e).is_some_and(|g| {
-                let s = skip_spaces(b, g);
-                s < b.len() && matches!(b[s], b'(' | b'{')
-            })
-        });
+        // the first lookahead wants a call after the arguments; the second takes any. Both
+        // only push at `p`, so one walk of the path's ends tells them: the first if any end
+        // has its arguments and a call, else the second if any has its arguments
+        let mut args = false;
+        let call = path(b, p, |_, e| {
+            let g = spaces_generic(b, e)?;
+            args = true;
+            let s = skip_spaces(b, g);
+            (s < b.len() && matches!(b[s], b'(' | b'{')).then_some(())
+        })
+        .is_some();
         if call {
             return Some(self.enter(p, &[GT]));
         }
-        path_then(b, p, |e| spaces_generic(b, e).is_some()).then(|| self.enter(p, &[GT_NAME]))
+        args.then(|| self.enter(p, &[GT_NAME]))
     }
 
     /// `early-expressions-after-generic-type`.
@@ -1540,24 +1560,7 @@ impl<K: Sink> Scan<'_, '_, K> {
     /// C's `operators`.
     pub(super) fn operators(&mut self, p: usize, c: u8) -> Option<usize> {
         let b = self.b;
-        let d = at(b, p + 1);
-        let e = at(b, p + 2);
-        let (n, leaf) = match c {
-            b'+' | b'-' if d == c => (2, ARITH),
-            b'-' if d == b'>' => (2, ACCESSOR),
-            b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^' if d == b'=' => (2, ASSIGN_AUG),
-            b'>' | b'<' if d == c && e == b'=' => (3, ASSIGN_AUG),
-            b'<' | b'>' | b'&' | b'|' if d == c => (2, ARITH),
-            b'<' | b'>' | b'=' | b'!' if d == b'=' => (2, COMPARISON),
-            b'<' | b'>' => (1, COMPARISON),
-            b'+' | b'-' | b'/' | b'%' | b'|' | b'^' | b'~' | b'!' => (1, ARITH),
-            b'*' | b'&' => (1, OPERATOR),
-            b'=' => (1, ASSIGN),
-            b'?' => (1, TERNARY),
-            b':' if d != b':' => (1, TERNARY),
-            b'.' if d == b'.' && e == b'.' => (3, VARIADIC),
-            _ => return None,
-        };
+        let (n, leaf) = operator_at(c, at(b, p + 1), at(b, p + 2))?;
         (p + n <= b.len()).then(|| self.token(p, n, leaf | C))
     }
 
@@ -1639,7 +1642,7 @@ impl<K: Sink> Scan<'_, '_, K> {
     /// `function-call`: `(?=PATH\s*(\(|\{))`.
     pub(super) fn function_call(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
-        if !self.path_may_end(p, |c| c == b'(' || c == b'{') {
+        if !path_may_end(b, p, |c| c == b'(' || c == b'{') {
             return None;
         }
         path_then(b, p, |e| {

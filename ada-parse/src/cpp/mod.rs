@@ -791,6 +791,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         // the delimiter's bytes) the bottom ones dropped
         if !self.raw() {
             self.delim_len = 0;
+            self.raw_may = false;
         }
         if self.depth - 1 + self.delim_len > HELD {
             self.reload();
@@ -823,6 +824,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             stuck: 0,
             delim: [0; DELIM],
             delim_len: 0,
+            raw_may: false,
             word_at: std::cell::Cell::new((usize::MAX, 0)),
             kw_at: std::cell::Cell::new((usize::MAX, words::Kw::Other)),
             id_cache: std::cell::Cell::new((usize::MAX, None)),
@@ -867,6 +869,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             self.delim[i] = state.level(n + i);
         }
         self.delim_len = d;
+        self.raw_may = state.arg != 0;
         self.depth = 1 + n;
         self.cur = self.stack[n];
         self.rekind();
@@ -901,6 +904,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// Whether a raw string is open on the stack.
     #[inline(always)]
     fn raw(&self) -> bool {
+        // none opened or loaded since the line's start, as on most lines: no levels to read
+        if !self.raw_may {
+            return false;
+        }
         // a few levels: a loop, not `contains`' call to `memchr` a line
         let mut i = 1;
         while i < self.depth {
@@ -988,6 +995,9 @@ struct Scan<'b, 'c, K: Sink> {
     /// The open raw string's delimiter.
     delim: [u8; DELIM],
     delim_len: usize,
+    /// Whether a raw string may be open: one was opened since the scan's start, or the state
+    /// loaded holds one (else [`Scan::raw`] reads no levels).
+    raw_may: bool,
     /// The last whole word looked up: where it starts and ends.
     word_at: std::cell::Cell<(usize, usize)>,
     /// What the last word looked up at a place is to C++'s expressions.
@@ -1052,44 +1062,72 @@ impl<'b, K: Sink> Scan<'b, '_, K> {
 
     fn push(&mut self, at: usize, c: u8) {
         self.fill(at);
+        self.push_on(c);
+    }
+
+    /// [`Scan::push`] where the text before the push is already out (a frame's turn): inlined,
+    /// so that a constant `c`'s counts and wrap fold away, and `wk` recomputed only where `c`
+    /// changes it.
+    #[inline(always)]
+    fn push_on(&mut self, c: u8) {
         if self.depth == MAX {
-            let gone = self.stack[1];
-            self.count_out(gone);
-            crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
+            self.full();
         }
         self.stack[self.depth] = c;
         self.depth += 1;
         self.cur = c;
         let i = info(c);
-        self.pre += (i >> 31) as usize;
-        let w = (i >> 16) as u16 & 0x7fff;
-        if w != 0 {
-            self.wrap = w;
+        if i & 0xffff_0000 != 0 {
+            self.pre += (i >> 31) as usize;
+            let w = (i >> 16) as u16 & 0x7fff;
+            if w != 0 {
+                self.wrap = w;
+            }
+            self.rekind();
         }
-        self.rekind();
         self.text = self.kind(i as u16 & TEXT);
+    }
+
+    /// A push on a full stack: its bottom level dropped first.
+    #[cold]
+    #[inline(never)]
+    fn full(&mut self) {
+        let gone = self.stack[1];
+        self.count_out(gone);
+        crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
     }
 
     fn pop(&mut self, at: usize) {
         self.fill(at);
+        self.pop_on();
+    }
+
+    /// [`Scan::pop`] where the text before it is already out (a frame's turn), inlined: `wk`
+    /// recomputed only where the context popped changes it.
+    #[inline(always)]
+    fn pop_on(&mut self) {
         if self.depth > 1 {
             self.depth -= 1;
             let i = info(self.cur);
             self.cur = self.stack[(self.depth - 1) % MAX];
-            self.pre -= (i >> 31) as usize;
-            if i & 0x7fff_0000 != 0 {
-                self.wrap = 0;
+            if i & 0xffff_0000 != 0 {
+                self.pre -= (i >> 31) as usize;
+                if i & 0x7fff_0000 != 0 {
+                    self.wrap = 0;
+                }
+                self.rekind();
             }
-            self.rekind();
         }
         self.refresh();
     }
 
     /// Replace the top with `cs`, bottom first.
     fn set(&mut self, at: usize, cs: &[u8]) {
-        self.pop(at);
+        // one fill: the pop's and the pushes' would find the text out
+        self.fill(at);
+        self.pop_on();
         for &c in cs {
-            self.push(at, c);
+            self.push_on(c);
         }
     }
 
@@ -1110,8 +1148,9 @@ impl<'b, K: Sink> Scan<'b, '_, K> {
     /// them leaves, however many there are, for its guard against a loop.
     fn enter(&mut self, p: usize, cs: &[u8]) -> usize {
         let depth = self.depth + 1;
+        self.fill(p);
         for &c in cs {
-            self.push(p, c);
+            self.push_on(c);
         }
         self.loop_at = (p, depth);
         p

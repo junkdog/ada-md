@@ -241,6 +241,21 @@ pub fn ident_end(b: &[u8], mut p: usize) -> usize {
 /// `\b[\p{L}_][\p{L}\p{N}_]*\b` at `p`: where it ends.
 #[inline]
 pub fn id(b: &[u8], p: usize) -> Option<usize> {
+    // ASCII around it, as most names are: the name's ASCII run, no character decoded
+    if let Some(&c) = b.get(p)
+        && c < 0x80
+        && (p == 0 || b[p - 1] < 0x80)
+    {
+        if !(c.is_ascii_alphabetic() || c == b'_')
+            || (p > 0 && CLASSES[usize::from(b[p - 1])] & W != 0)
+        {
+            return None;
+        }
+        let e = ascii_word_end(b, p + 1);
+        if e >= b.len() || b[e] < 0x80 {
+            return Some(e);
+        }
+    }
     if !is_ident_start(b, p) || word_before(b, p) {
         return None;
     }
@@ -259,7 +274,11 @@ pub fn id_loose(b: &[u8], p: usize) -> Option<usize> {
 
 /// Whether the whole word at `p` is `w`: `\bw\b`.
 pub fn is_kw(b: &[u8], p: usize, w: &[u8]) -> bool {
-    b[p.min(b.len())..].starts_with(w) && !word_before(b, p) && !is_word(b, p + w.len())
+    // the first byte before the compare, a call for most words
+    w.first().is_none_or(|f| b.get(p) == Some(f))
+        && b[p.min(b.len())..].starts_with(w)
+        && !word_before(b, p)
+        && !is_word(b, p + w.len())
 }
 
 /// Whether the text at `p` starts with `w` (no `\b`).
@@ -322,37 +341,63 @@ pub fn path<T>(b: &[u8], p: usize, mut f: impl FnMut(usize, usize) -> Option<T>)
     None
 }
 
+/// Whether [`path`] at `p` may end before `\s*` and a byte `want` takes, as `generic-type`'s
+/// (`<`) and `function-call`'s (`(`, `{`) lookaheads want: only its last segment's name can
+/// (each one before it is followed by `::`), unless a segment is `template`'s. An ASCII walk of
+/// the segments, so `false` is exact; a byte past ASCII where a name or its end is, a
+/// `template`, or more segments than [`path`] keeps leave it to the lookahead (`true`).
+#[inline]
+pub fn path_may_end(b: &[u8], p: usize, want: impl Fn(u8) -> bool) -> bool {
+    let mut q = if starts(b, p, b"::") {
+        skip_spaces(b, p + 2)
+    } else {
+        p
+    };
+    for _ in 0..32 {
+        let c = at(b, q);
+        if c >= 0x80 || starts(b, q, b"template") {
+            return true;
+        }
+        if !(c.is_ascii_alphabetic() || c == b'_') {
+            return false;
+        }
+        let e = ascii_word_end(b, q + 1);
+        if e < b.len() && b[e] >= 0x80 {
+            return true;
+        }
+        let s = skip_spaces(b, e);
+        if !starts(b, s, b"::") {
+            return s < b.len() && want(b[s]);
+        }
+        q = skip_spaces(b, s + 2);
+    }
+    true
+}
+
 /// Whether `PATH` at `p` is followed by what `f` takes at its end.
 pub fn path_then(b: &[u8], p: usize, f: impl Fn(usize) -> bool) -> bool {
     path(b, p, |_, e| f(e).then_some(())).is_some()
 }
 
-/// `[^(){}&;*^%=<>-]` at `i`: a template argument's byte (the `\n` at the line's end too,
-/// though nothing can follow it).
-#[inline]
-fn arg_byte(b: &[u8], i: usize) -> bool {
-    b.get(i).is_some_and(|&c| {
-        !matches!(
-            c,
-            b'(' | b')'
-                | b'{'
-                | b'}'
-                | b'&'
-                | b';'
-                | b'*'
-                | b'^'
-                | b'%'
-                | b'='
-                | b'<'
-                | b'>'
-                | b'-'
-        )
-    })
-}
+/// `[^(){}&;*^%=<>-]`'s bytes: a template argument's. Every byte past ASCII is one, so a
+/// character's bytes are all taken or none (the line is UTF-8).
+static ARG: [bool; 256] = {
+    let mut t = [true; 256];
+    let not = b"(){}&;*^%=<>-";
+    let mut i = 0;
+    while i < not.len() {
+        t[not[i] as usize] = false;
+        i += 1;
+    }
+    t
+};
 
+/// `[^(){}&;*^%=<>-]*` at `i`: where it ends (the `\n` at the line's end is one too, though
+/// nothing can follow it). A byte at a time ([`ARG`]).
+#[inline]
 fn args_run(b: &[u8], mut i: usize) -> usize {
-    while arg_byte(b, i) {
-        i = next(b, i);
+    while i < b.len() && ARG[usize::from(b[i])] {
+        i += 1;
     }
     i
 }

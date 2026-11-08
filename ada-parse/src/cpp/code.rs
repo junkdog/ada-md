@@ -761,7 +761,7 @@ impl<K: Sink> Scan<'_, '_, K> {
     #[inline(always)]
     fn f_open(&mut self, p: usize, n: usize, c: u8, leaf: u16) -> usize {
         self.text_to(p);
-        self.push(p, c);
+        self.push_on(c);
         self.tok(p, p + n, leaf)
     }
 
@@ -769,8 +769,16 @@ impl<K: Sink> Scan<'_, '_, K> {
     #[inline(always)]
     fn f_close(&mut self, p: usize, n: usize, leaf: u16) -> usize {
         self.tok(p, p + n, leaf);
-        self.pop(p + n);
+        self.pop_on();
         p + n
+    }
+
+    /// [`Scan::operators`] in a frame's turn, its token on [`Scan::tok`].
+    #[inline(always)]
+    fn f_operators(&mut self, p: usize, c: u8) -> Option<usize> {
+        let b = self.b;
+        let (n, leaf) = super::cxx::operator_at(c, at(b, p + 1), at(b, p + 2))?;
+        (p + n <= b.len()).then(|| self.tok(p, p + n, leaf | C))
     }
 
     /// A C++ decimal or hexadecimal integer at `p`, a digit at a word's start, with nothing after
@@ -1081,7 +1089,7 @@ impl<K: Sink> Scan<'_, '_, K> {
                 // `global`'s comment is a context of its own around it
                 b'*' if global => return None,
                 b'*' => self.f_open(p, 2, C_COMMENT, COMMENT_MARK | C),
-                _ => return self.operators(p, c),
+                _ => return self.f_operators(p, c),
             },
             b'*' if d == b'/' && at(b, p + 2) != b'*' => self.tok(p, p + 2, STRAY_COMMENT_END | C),
             b'<' if d == b'=' => self.tok(p, p + 2, COMPARISON | C),
@@ -1090,7 +1098,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             // `::` starts a path (`generic-type`, `identifiers`)
             b':' if d == b':' => return None,
             b'"' | b'\'' => return self.c_strings(p, c),
-            _ => return self.operators(p, c),
+            _ => return self.f_operators(p, c),
         };
         Some(r)
     }
@@ -1143,7 +1151,7 @@ impl<K: Sink> Scan<'_, '_, K> {
         }
         self.put(p, e, if kw == Kw::C99 { C99 | C } else { FUNCTION });
         self.put(q, q + 1, GROUP_BEGIN);
-        self.push(q + 1, if open == b'(' { PAREN } else { BRACE_EXPR });
+        self.push_on(if open == b'(' { PAREN } else { BRACE_EXPR });
         Some(q + 1)
     }
 
@@ -1279,12 +1287,12 @@ impl<K: Sink> Scan<'_, '_, K> {
             b'/' => match d {
                 b'/' => self.f_open(p, 2, C_LINE_COMMENT, LINE_MARK | C),
                 b'*' => self.f_open(p, 2, C_COMMENT, COMMENT_MARK | C),
-                _ => return self.operators(p, c),
+                _ => return self.f_operators(p, c),
             },
             b'*' if d == b'/' && at(b, p + 2) != b'*' => self.tok(p, p + 2, STRAY_COMMENT_END | C),
             b':' if d == b':' => return None,
             b'"' | b'\'' => return self.c_strings(p, c),
-            _ => return self.operators(p, c),
+            _ => return self.f_operators(p, c),
         };
         Some(r)
     }
@@ -1310,7 +1318,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             }
             self.put(p, e, if kw == Kw::C99 { C99 } else { FUNCTION } | C);
             self.put(q, q + 1, GROUP_BEGIN | C);
-            self.push(q + 1, C_PAREN);
+            self.push_on(C_PAREN);
             return Some(q + 1);
         }
         // no pattern takes it: a miss, and the advance past the word, which leaves the matches
