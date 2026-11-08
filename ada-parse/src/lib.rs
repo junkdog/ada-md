@@ -15,8 +15,8 @@
 //! bat's grammar compiled by hand; these are exact against syntect (the `parse` fuzz target),
 //! and XML's, of ada's own design, is too; YAML's and TOML's read
 //! their formats as bat's grammars do on well-formed text (TOML's as TOML 1.1 where bat's
-//! doesn't). bash's scanner is ada's own (X-093); a Makefile's recipes and other shell run on it
-//! between make's own patterns, which keep bat's contexts (X-094).
+//! doesn't). bash's scanner is ada's own (X-093); Makefile's is too (X-097), its recipes and
+//! other shell on bash's (X-094).
 
 mod bash;
 mod cc;

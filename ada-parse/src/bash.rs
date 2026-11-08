@@ -35,8 +35,6 @@ use crate::prim::{char_len, find_in};
 use crate::{Out, State};
 
 mod makefile;
-mod matchers;
-mod scan;
 
 pub use makefile::{line as make_line, scopes as make_scopes};
 

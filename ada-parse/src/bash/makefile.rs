@@ -1,25 +1,31 @@
-//! Makefiles (ADR-40): make's own contexts on a frame stack of their own, and the shell in
-//! recipes, `!=`, `$(shell …)` and `bash -c '…'` on bash's scanner ([`super::line_spans`], X-094).
-//! bat's `Makefile` is the reference for make's scopes and the parity oracle.
+//! Makefiles (ADR-40), on a scanner of ada's own (X-097, ADR-41): the floor probe's shape, grown
+//! with bat's corners. bat's `Makefile` is the reference for scopes and the parity oracle, not the
+//! design; the shell in recipes, `!=`, `$(shell …)` and `bash -c '…'` is bash's scanner
+//! ([`super::line_spans`], X-094).
 //!
-//! The Makefile grammar's own contexts hold few patterns, most of them searches (`just_eat`'s
-//! lookahead, `\s*(override)\b`, a `$(` anywhere), so they keep syntect's rule, the leftmost
-//! match of the context's patterns in order, each context's includes flattened at compile time
-//! ([`FLAT`]). Each pattern is a matcher of `matchers.rs`, its match kept for the line as
-//! syntect's search cache keeps it ([`Mk`]), so a line costs a search a pattern rather than one a
-//! step; and a matcher whose required byte the line lacks isn't called ([`REQUIRE`]).
-//! `variable-substitutions`' eleven patterns, all starting at a `$`, are one search
-//! ([`substitution`]).
+//! **A line is classified once**, at its start, by what the frames left open say it is (a recipe
+//! line under a rule, a `define`'s body, a continued construct) or else by `main`'s reading of
+//! it: a comment, a directive (`ifeq`, `else`, `endif`, `include`, `vpath`, `define`,
+//! `export`, `override`), an assignment or a rule, the leftmost of them as bat's patterns
+//! would find it, ties to the grammar's first ([`Scan::classify`]; `just_eat`'s lookaheads in
+//! [`Scan::var_ahead`] and [`Scan::rule_ahead`], over the line's parenthesis groups found once,
+//! [`Parens`]). The commonest lines, an assignment or a rule, are found first, and the other
+//! patterns searched only as far as they could still start before it.
+//!
+//! **The rest of the line is one loop** over its bytes on a small stack of frames: a construct's
+//! own (a variable's name, a value, a rule's targets and prerequisites, a directive's arguments, a
+//! comment) and the ones that nest (`$(…)`, `${…}`, a function's arguments, strings, groups).
+//! Each frame's stop bytes are one class table ([`STOP`]); the text between them is the frame's
+//! kind, written as the loop passes it.
 //!
 //! **A shell region is a frame** ([`SH_RECIPE`] and the others), where bat sets
-//! `scope:source.shell` with make's patterns in front (a `with_prototype`, or an embed's
-//! escape). Its text up to where the region ends (a line's end, the `)` closing `$(shell …)`, an
-//! embed's quote) is read for make's tokens first: `$(…)`, `${…}`, `$$`, `$@` and the like
-//! everywhere, and in `$(shell …)` make's strings and parentheses too. Each runs on make's
-//! frames above the region's, as bat runs them above the shell's contexts. bash's scanner then
-//! lexes the region's text in one call, from the state the region kept, **reading it as make
-//! hands it to the shell**: a token stands as a word (`_`), `$$` as `$` ([`Cuts::stand_in`]),
-//! and its spans are laid back around the tokens', a token's text that no make scope takes in
+//! `scope:source.shell` with make's patterns in front (X-094). Its text up to where the region
+//! ends (a line's end, the `)` closing `$(shell …)`, an embed's quote) is read for make's tokens
+//! first: `$(…)`, `${…}`, `$$`, `$@` and the like everywhere, and in `$(shell …)` make's strings
+//! and parentheses too. Each runs on make's frames above the region's. bash's scanner then lexes
+//! the region's text in one call, from the state the region kept, **reading it as make hands it
+//! to the shell**: a token stands as a word (`_`), `$$` as `$` ([`Cuts::stand_in`]), and its spans
+//! are laid back around the tokens' ([`Scan::lay`]), a token's text that no make scope takes in
 //! bash's kind at its byte (a string's, a command's name, an option's). So `$(CC) -c` reads `-c`
 //! as an option and `$$f` as a shell variable, where bat's shell never saw the token (a command
 //! `-c`, a plain `f`): departures by design. Where a token starts a word that goes on
@@ -33,15 +39,13 @@
 //! `variable.*` leaf: an option's ([`super::TWIN`]: a make token inside a shell option) or a
 //! make substitution's ([`TWIN_MK`]).
 //!
-//! Between lines the state holds make's frames, a byte each, and above them the shell's state
-//! where a region goes on past the line (a recipe's `\`, an open `$(shell …)`).
+//! Between lines the state holds the frames, a byte each, their count in `arg`, and above them
+//! bash's state for the topmost shell region open past the line (a recipe's `\`, an open
+//! `$(shell …)`).
 
 use std::mem::MaybeUninit;
 
-use super::matchers as g;
-use super::scan::Line;
-use super::scan::{self, M, R};
-use crate::prim::char_len;
+use crate::prim::{char_len, find_in};
 use crate::stack::HELD;
 use crate::{Out, State};
 
@@ -142,127 +146,203 @@ pub fn is_variable(kind: u16) -> bool {
     )
 }
 
-// ---- contexts: bat's, by its names
-
-macro_rules! contexts {
-    ($($c:ident,)*) => {
+macro_rules! frames {
+    ($($f:ident,)*) => {
         #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
         #[repr(u8)]
-        enum CtxId { $($c,)* Count }
-        $(const $c: u8 = CtxId::$c as u8;)*
-        /// How many contexts the Makefile grammar has.
-        const COUNT: usize = CtxId::Count as usize;
+        enum FrameId { $($f,)* Count }
+        $(const $f: u8 = FrameId::$f as u8;)*
+        const FRAMES: usize = FrameId::Count as usize;
     };
 }
 
-contexts! {
+// bat's contexts where a frame stands for one (by its name in the grammar)
+frames! {
+    // `main`
     MAIN,
-    INSIDE_CONTROL_FLOW,
-    STRING_SINGLE,
-    STRING_DOUBLE,
-    CONTROL_GROUP,
+    // a construct continued past a line's `\`, to the next line's first non-blank
+    CONT,
+    // a make comment, a shell comment in a recipe, a rule's trailing comment
+    COMMENT,
+    SH_COMMENT,
+    RULE_COMMENT,
+    // `ifeq (…)`'s arguments, the same in a recipe block, strings and groups in them
+    COND,
+    R_IF,
+    STR_S,
+    STR_D,
+    GROUP,
     VPATH,
     VPATH_DIRS,
     INCLUDE,
     ELSE,
     ENDIF,
-    EXPECT_RULE,
-    TARGET_VARIABLE,
-    TARGET_VARIABLE_VALUE,
-    RULE_COLON,
-    PREREQUISITES,
-    RULE_COMMENT_START,
-    RULE_COMMENT,
-    RULE_SEMICOLON,
-    RECIPE_JUNCTION,
-    RECIPE_IF,
-    RECIPE_INLINE,
-    RECIPE_WITH_SPACES,
-    RECIPE_WITH_TABS,
-    SHELL,
-    SHELL_COMMENT,
-    MK_CONTINUED,
-    COMMENT_START,
-    MK_COMMENT,
-    INSIDE_FUNCTION_CALL,
+    // a rule: its targets, a target-specific variable's definition, its prerequisites, a recipe
+    // after `;`, and the lines after it
+    TARGET,
+    TVAR,
+    PREREQ,
+    INLINE,
+    JUNCTION,
+    R_TABS,
+    R_SPACES,
+    // function calls: `$(name …)`'s arguments by kind, `$(call NAME, …)`'s name, a group
+    FCALL,
     CALL,
-    CALL_COMMA,
-    CALL_PATSUBST,
-    CALL_WILDCARD,
+    CALL_PAT,
+    CALL_WILD,
     CALL_INFO,
     CALL_SHELL,
+    BAL,
+    // definitions
     OVERRIDE,
     EXPORT,
     VARIABLE,
-    SHELL_ASSIGN,
-    ASSIGN,
-    PAREN_BALANCER,
-    EAT_WHITESPACE,
-    VALUE_MAYBE_SHELL,
-    EMBEDDED_SCRIPT_SQ,
-    EMBEDDED_SCRIPT_DQ,
-    EMBEDDED_SCRIPT_BT,
+    MAYBE_SHELL,
     VALUE,
-    VALUE_COMMENT_START,
     DEFINE,
-    DEFINE_ASSIGN,
     DEFINE_VALUE,
     DEFINE_NESTED,
-    SUBSTITUTION_PAREN,
-    SUBSTITUTION_BRACE,
+    // substitutions
+    SUBST_P,
+    SUBST_B,
+    // `bash -c '…'`'s closing quote
+    EMBED_SQ,
+    EMBED_DQ,
+    EMBED_BT,
+    // shell regions, last: a recipe's commands, `$(shell …)`, `!=`'s, `bash -c`'s by its quote
+    SH_RECIPE,
+    SH_CALL,
+    SH_ASSIGN,
+    SH_SQ,
+    SH_DQ,
+    SH_BT,
 }
 
-// ---- shell regions: where bat sets `scope:source.shell` with make's patterns in front
-
-/// A recipe's commands, to the line's end (or on past a `\` ending it).
-const SH_RECIPE: u8 = COUNT as u8;
-/// `$(shell …)`: to the `)` that closes it, make's strings and parentheses its own.
-const SH_CALL: u8 = SH_RECIPE + 1;
-/// `VAR != …`: to the line's end, or a `)`, taken.
-const SH_ASSIGN: u8 = SH_RECIPE + 2;
-/// `bash -c '…'`, `"…"`, `` `…` ``: to the quote.
-const SH_SQ: u8 = SH_RECIPE + 3;
-const SH_DQ: u8 = SH_RECIPE + 4;
-const SH_BT: u8 = SH_RECIPE + 5;
-/// Contexts with the shell regions.
-const CONTEXTS: usize = COUNT + 6;
-
-/// Per context, its meta scope's kind and its meta content scope's (a non-meta leaf, or
-/// [`PLAIN`]).
-static INFO: [(u16, u16); CONTEXTS] = {
-    let mut t = [(PLAIN, PLAIN); CONTEXTS];
+/// Per frame, the kind of the text in it no token takes, where it has one of its own (else the
+/// frame below's).
+static BASE: [u16; FRAMES] = {
+    let mut t = [PLAIN; FRAMES];
     macro_rules! set {
-        ($($c:ident: $meta:expr, $content:expr;)*) => {
-            $(t[$c as usize] = ($meta, $content);)*
+        ($($f:ident: $k:expr;)*) => {
+            $(t[$f as usize] = $k;)*
         };
     }
     set! {
-        STRING_SINGLE: mk::STR_SINGLE, PLAIN;
-        STRING_DOUBLE: mk::STR_DOUBLE, PLAIN;
-        VPATH_DIRS: PLAIN, mk::UNQUOTED;
-        INCLUDE: PLAIN, mk::UNQUOTED;
-        EXPECT_RULE: mk::TARGET, PLAIN;
-        PREREQUISITES: PLAIN, mk::PREREQ;
-        RULE_COMMENT: mk::COMMENT, PLAIN;
-        SHELL_COMMENT: super::k::COMMENT, PLAIN;
-        MK_COMMENT: mk::COMMENT, PLAIN;
-        CALL: PLAIN, mk::VAR_FUNCTION;
-        EXPORT: PLAIN, mk::VAR_OTHER;
-        VARIABLE: PLAIN, mk::VAR_OTHER;
-        VALUE: PLAIN, mk::UNQUOTED;
-        DEFINE: PLAIN, mk::VAR_OTHER;
-        DEFINE_VALUE: PLAIN, mk::UNQUOTED;
-        SUBSTITUTION_PAREN: mk::VAR_PARAM, PLAIN;
-        SUBSTITUTION_BRACE: mk::VAR_PARAM, PLAIN;
+        COMMENT: mk::COMMENT;
+        SH_COMMENT: super::k::COMMENT;
+        RULE_COMMENT: mk::COMMENT;
+        STR_S: mk::STR_SINGLE;
+        STR_D: mk::STR_DOUBLE;
+        VPATH_DIRS: mk::UNQUOTED;
+        INCLUDE: mk::UNQUOTED;
+        TARGET: mk::TARGET;
+        PREREQ: mk::PREREQ;
+        CALL: mk::VAR_FUNCTION;
+        EXPORT: mk::VAR_OTHER;
+        VARIABLE: mk::VAR_OTHER;
+        VALUE: mk::UNQUOTED;
+        DEFINE: mk::VAR_OTHER;
+        DEFINE_VALUE: mk::UNQUOTED;
+        SUBST_P: mk::VAR_PARAM;
+        SUBST_B: mk::VAR_PARAM;
+    }
+    t
+};
+
+// ---- byte classes: a bit each; a frame's stops are their union
+
+const C_DOLLAR: u32 = 1;
+const C_BSLASH: u32 = 1 << 1;
+const C_HASH: u32 = 1 << 2;
+const C_PERCENT: u32 = 1 << 3;
+const C_STAR: u32 = 1 << 4;
+const C_OPEN: u32 = 1 << 5;
+const C_CLOSE: u32 = 1 << 6;
+const C_BRACE: u32 = 1 << 7;
+const C_COMMA: u32 = 1 << 8;
+const C_COLON: u32 = 1 << 9;
+const C_EQ: u32 = 1 << 10;
+const C_SEMI: u32 = 1 << 11;
+const C_SQ: u32 = 1 << 12;
+const C_DQ: u32 = 1 << 13;
+const C_BT: u32 = 1 << 14;
+/// `\s` but the line's end
+const C_WS: u32 = 1 << 15;
+/// `i`: `ifeq` and its kin after `else`
+const C_I: u32 = 1 << 16;
+
+static CLS: [u32; 256] = {
+    let mut t = [0u32; 256];
+    t[b'$' as usize] = C_DOLLAR;
+    t[b'\\' as usize] = C_BSLASH;
+    t[b'#' as usize] = C_HASH;
+    t[b'%' as usize] = C_PERCENT;
+    t[b'*' as usize] = C_STAR;
+    t[b'(' as usize] = C_OPEN;
+    t[b')' as usize] = C_CLOSE;
+    t[b'}' as usize] = C_BRACE;
+    t[b',' as usize] = C_COMMA;
+    t[b':' as usize] = C_COLON;
+    t[b'=' as usize] = C_EQ;
+    t[b';' as usize] = C_SEMI;
+    t[b'\'' as usize] = C_SQ;
+    t[b'"' as usize] = C_DQ;
+    t[b'`' as usize] = C_BT;
+    t[b' ' as usize] = C_WS;
+    t[b'\t' as usize] = C_WS;
+    t[b'\r' as usize] = C_WS;
+    t[0x0b] = C_WS;
+    t[0x0c] = C_WS;
+    t[b'i' as usize] = C_I;
+    t
+};
+
+/// Per frame, the bytes its loop stops at.
+static STOP: [u32; FRAMES] = {
+    let mut t = [0u32; FRAMES];
+    const CALL_ARGS: u32 = C_CLOSE | C_OPEN | C_COMMA | C_BSLASH | C_SQ | C_DQ | C_DOLLAR;
+    macro_rules! set {
+        ($($f:ident: $k:expr;)*) => {
+            $(t[$f as usize] = $k;)*
+        };
+    }
+    set! {
+        COND: C_SQ | C_DQ | C_OPEN | C_CLOSE | C_BSLASH;
+        R_IF: C_SQ | C_DQ | C_OPEN | C_CLOSE | C_BSLASH | C_HASH;
+        STR_S: C_SQ | C_BSLASH | C_DOLLAR;
+        STR_D: C_DQ | C_BSLASH | C_DOLLAR;
+        GROUP: C_CLOSE | C_DOLLAR | C_COMMA;
+        VPATH: C_STAR | C_WS;
+        INCLUDE: C_BSLASH | C_DOLLAR | C_HASH;
+        ELSE: C_HASH | C_I;
+        ENDIF: C_HASH;
+        TARGET: C_BSLASH | C_DOLLAR | C_PERCENT | C_COLON;
+        PREREQ: C_BSLASH | C_DOLLAR | C_PERCENT | C_HASH | C_SEMI;
+        FCALL: CALL_ARGS;
+        CALL_PAT: CALL_ARGS | C_PERCENT;
+        CALL_WILD: CALL_ARGS | C_STAR;
+        CALL_INFO: C_CLOSE | C_OPEN | C_COMMA | C_DOLLAR;
+        CALL: C_CLOSE | C_COMMA | C_DOLLAR;
+        BAL: C_CLOSE | C_DOLLAR;
+        EXPORT: C_BSLASH | C_DOLLAR | C_EQ;
+        VARIABLE: C_DOLLAR | C_EQ;
+        VALUE: C_BSLASH | C_HASH | C_DOLLAR;
+        DEFINE: C_DOLLAR;
+        SUBST_P: C_CLOSE | C_COLON | C_EQ | C_PERCENT | C_DOLLAR;
+        SUBST_B: C_BRACE | C_COLON | C_EQ | C_PERCENT | C_DOLLAR;
+        EMBED_SQ: C_SQ;
+        EMBED_DQ: C_DQ;
+        EMBED_BT: C_BT;
     }
     t
 };
 
 /// Per byte, the shell regions a make token or the region's end may start on, a bit each
-/// (`1 << (ctx - SH_RECIPE)`): a `$` in every region but an embed's, `\` (bash's escape, which
+/// (`1 << (id - SH_RECIPE)`): a `$` in every region but an embed's, `\` (bash's escape, which
 /// takes the byte after it from make, as bat's prototype does) where bash's prototype comes
-/// before make's patterns, `)` ending `$(shell …)` and `!=`, make's strings and parentheses in
-/// `$(shell …)`, an embed's quote.
+/// before make's patterns, `)` ending `$(shell …)` and `!=`'s, make's strings and parentheses
+/// in `$(shell …)`, an embed's quote.
 static TRIGGER: [u8; 256] = {
     const R: u8 = 1;
     const C: u8 = 1 << (SH_CALL - SH_RECIPE);
@@ -278,749 +358,194 @@ static TRIGGER: [u8; 256] = {
     t
 };
 
-// ---- matchers: the port's, each with its argument
+/// The function names a `$(` takes before a blank, by the frame their arguments open: `call`,
+/// `patsubst` and `filter`, `wildcard`, `info` and kin, the rest, `shell`.
+const CALLS: [(&[u8], u8); 37] = [
+    (b"call", CALL),
+    (b"patsubst", CALL_PAT),
+    (b"filter", CALL_PAT),
+    (b"wildcard", CALL_WILD),
+    (b"info", CALL_INFO),
+    (b"warning", CALL_INFO),
+    (b"error", CALL_INFO),
+    (b"subst", FCALL),
+    (b"strip", FCALL),
+    (b"findstring", FCALL),
+    (b"filter-out", FCALL),
+    (b"sort", FCALL),
+    (b"word", FCALL),
+    (b"wordlist", FCALL),
+    (b"words", FCALL),
+    (b"firstword", FCALL),
+    (b"lastword", FCALL),
+    (b"dir", FCALL),
+    (b"notdir", FCALL),
+    (b"suffix", FCALL),
+    (b"basename", FCALL),
+    (b"addsuffix", FCALL),
+    (b"addprefix", FCALL),
+    (b"join", FCALL),
+    (b"realpath", FCALL),
+    (b"abspath", FCALL),
+    (b"if", FCALL),
+    (b"or", FCALL),
+    (b"and", FCALL),
+    (b"foreach", FCALL),
+    (b"file", FCALL),
+    (b"value", FCALL),
+    (b"eval", FCALL),
+    (b"origin", FCALL),
+    (b"flavor", FCALL),
+    (b"guile", FCALL),
+    (b"shell", CALL_SHELL),
+];
 
-type Find = fn(&Line, usize, u16) -> R;
-
-macro_rules! matchers {
-    ($($id:ident = $f:expr, $a:expr;)*) => {
-        #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
-        #[repr(u8)]
-        enum Mid { $($id,)* Count }
-        $(const $id: u8 = Mid::$id as u8;)*
-        const MATCHERS: usize = Mid::Count as usize;
-        static FIND: [(Find, u16); MATCHERS] = [$(($f, $a),)*];
-    };
+/// `\s`, in ASCII.
+fn ws(c: u8) -> bool {
+    matches!(c, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
 }
 
-/// Per matcher, a byte every match of it holds (0 for none): where the line lacks it, the
-/// matcher isn't called.
-static REQUIRE: [u8; MATCHERS] = {
-    let mut t = [0u8; MATCHERS];
-    macro_rules! req {
-        ($($c:literal: $($id:ident),*;)*) => {
-            $($(t[$id as usize] = $c;)*)*
+/// Whether bash's kind is an option's: a make token right after it is inside the option.
+fn in_option(kind: u16) -> bool {
+    kind != PLAIN && kind & super::TWIN != 0
+        || matches!(
+            kind,
+            super::k::OPTION | super::k::OPTION_MARK | super::k::OPTION_ASSIGN
+        )
+}
+
+// ---- the parenthesis groups `just_eat` takes
+
+/// The paren structure behind bat's `just_eat`: up to four levels of groups, each level
+/// allowing only so many groups of so many shapes. Every `(` that closes gets its `)` and
+/// whether the group, as level 1, is a shape `just_eat` takes; such a group is matched whole
+/// or not at all, so the lookaheads built on it read runs of text between parens.
+struct Parens {
+    /// `(open, close, fits)` by `open`.
+    g: [(u32, u32, bool); 32],
+    n: usize,
+}
+
+impl Parens {
+    fn new(b: &[u8]) -> Self {
+        /// An open group: where, and what its groups so far allow.
+        #[derive(Clone, Copy, Default)]
+        struct Open {
+            at: u32,
+            kids: u8,
+            k0_leaf: bool,
+            k0_g2a: bool,
+            k0_g2b: bool,
+            k1_g2b: bool,
+            all_g3a: bool,
+            all_g3b: bool,
+        }
+        let mut p = Parens {
+            g: [(0, 0, false); 32],
+            n: 0,
         };
-    }
-    req! {
-        b'\'': X_SQ, X_QUOTE_SQ;
-        b'"': X_DQ, X_QUOTE_DQ;
-        b'`': X_QUOTE_BT;
-        b'(': X_OPEN;
-        b')': X_CLOSE, X_CLOSE_AHEAD;
-        b',': X_COMMA, X_COMMA_AHEAD;
-        b'%': X_PERCENT;
-        b'*': X_STAR;
-        b'#': X_HASH, X_HASH_AHEAD, X_COMMENT_AHEAD, X_HASH_WS;
-        b';': X_SEMI, X_SEMI_AHEAD;
-        b':': X_COLON, X_COLON_EQ_AHEAD, X_COLON_AHEAD, X_COLONS_WS, X_COLONS, X_RULE_AHEAD;
-        b'=': X_EQ, X_VAR_AHEAD, X_ASSIGN_OP, X_ASSIGN_OP_BANG, X_ASSIGN_AHEAD,
-            X_DEFINE_OP_AHEAD, X_DEFINE_ASSIGN;
-        b'}': X_BRACE_CLOSE;
-        b'!': X_SHELL_ASSIGN_AHEAD, X_BANG_EQ;
-        b'\\': X_LINE_CONT, X_ESCAPE;
-        b'$': X_SUBST;
-        b'f': X_ENDEF_STRAY, X_ENDEF, X_DEFINE_NESTED, X_ENDIF, X_IFDEF, X_RECIPE_IF,
-            X_DEFINE_WS, X_DEFINE_WORD;
-        b'l': X_ELSE;
-        b'x': X_EXPORT;
-        b'v': X_VPATH_WS, X_VPATH_EOL, X_OVERRIDE;
-        b'u': X_INCLUDE;
-        b'h': X_SHELL_C;
-    }
-    t
-};
-
-/// Per byte, its bit in a line's [`Mk::present`] when a matcher requires it ([`REQUIRE`]),
-/// else 0: the line's set is the bytes' bits or'ed, one load each.
-static BIT: [u32; 256] = {
-    let mut t = [0u32; 256];
-    let mut next = 0;
-    let mut m = 0;
-    while m < MATCHERS {
-        let c = REQUIRE[m] as usize;
-        if c != 0 && t[c] == 0 {
-            t[c] = 1 << next;
-            next += 1;
-        }
-        m += 1;
-    }
-    assert!(next <= 32, "a bit for each required byte");
-    t
-};
-
-const _: () = assert!(MATCHERS <= 128, "a valid bit for each matcher");
-
-/// `'`, `"` or `` ` ``: the quote an embedded script ends at.
-fn quote<const Q: u8>(l: &Line, pos: usize, _: u16) -> R {
-    g::byte::<Q>(l, pos, 0)
-}
-
-/// `((?:bash|sh|zsh)\s+-c\s+)(['"`])`: each of the words holds `sh`, so only where an `sh` is
-/// can one start: two bytes before it (`bash`), one (`zsh`), or there.
-fn shell_c(l: &Line, pos: usize, _: u16) -> R {
-    let b = l.b;
-    let mut at = pos;
-    while let Some(j) = scan::find(b, at, b's') {
-        at = j + 1;
-        if l.at(j + 1) != b'h' {
-            continue;
-        }
-        let starts = [
-            (j >= pos + 2 && b[j - 2..j] == *b"ba").then(|| (j - 2, j + 2)),
-            (j > pos && b[j - 1] == b'z').then(|| (j - 1, j + 2)),
-            Some((j, j + 2)),
-        ];
-        for (i, word_end) in starts.into_iter().flatten() {
-            let k = scan::ws_end(b, word_end);
-            if k == word_end || !b[k..].starts_with(b"-c") {
-                continue;
+        let mut stack = [Open::default(); 32];
+        let mut depth = 0;
+        let mut i = 0;
+        loop {
+            i = find_in(b, i, b.len(), *b"()");
+            if i >= b.len() {
+                break;
             }
-            let q = scan::ws_end(b, k + 2);
-            if q > k + 2 && matches!(l.at(q), b'\'' | b'"' | b'`') {
-                return Some(M::at(i, q + 1).cap(1, i, q).cap(2, q, q + 1));
-            }
-        }
-    }
-    None
-}
-
-/// `variable-substitutions`, its eleven patterns in one search: each starts at a `$`, so the
-/// leftmost match among them is at the first `$` where one matches, the first of them in the
-/// grammar's order. Which one is group 5's start, an index into [`SUBSTITUTIONS`].
-fn substitution(l: &Line, pos: usize, _: u16) -> R {
-    let mut at = pos;
-    while let Some(i) = scan::find(l.b, at, b'$') {
-        if let Some((m, which)) = substitution_at(l, i) {
-            return Some(m.cap(5, which, which));
-        }
-        at = i + 1;
-    }
-    None
-}
-
-/// The first of `variable-substitutions`' patterns that matches at the `$` at `i`.
-fn substitution_at(l: &Line, i: usize) -> Option<(M, usize)> {
-    let c = l.at(i + 1);
-    // `\$\$?` then `(`, `{`, an automatic variable's character
-    let (o, after) = if c == b'$' {
-        (i + 2, l.at(i + 2))
-    } else {
-        (i + 1, c)
-    };
-    // `function-invocations`: `(\$\$?\()(NAME)\s`, by group
-    if after == b'(' {
-        let name = o + 1;
-        let rest = &l.b[name.min(l.len())..];
-        for (g, words) in g::CALL_NAMES.iter().enumerate() {
-            for word in *words {
-                let e = name + word.len();
-                if rest.starts_with(word) && scan::ws(l.at(e)) {
-                    return Some((M::at(i, e + 1).cap(1, i, name).cap(2, name, e), g));
+            if b[i] == b'(' {
+                if depth < stack.len() {
+                    stack[depth] = Open {
+                        at: i as u32,
+                        all_g3a: true,
+                        all_g3b: true,
+                        ..Open::default()
+                    };
+                }
+                depth += 1;
+            } else if depth > 0 {
+                depth -= 1;
+                if depth < stack.len() {
+                    let o = stack[depth];
+                    let leaf = o.kids == 0;
+                    let one_leaf = o.kids == 1 && o.k0_leaf;
+                    let g3a = (leaf && i == o.at as usize + 1) || one_leaf;
+                    let g3b = leaf || one_leaf;
+                    let g2a = o.kids <= 2 && o.all_g3a;
+                    let g2b = o.kids <= 3 && o.all_g3b;
+                    let g1 = match o.kids {
+                        0 => true,
+                        1 => o.k0_g2a || o.k0_g2b,
+                        2 => o.k0_g2a && o.k1_g2b,
+                        _ => false,
+                    };
+                    if p.n < p.g.len() {
+                        p.g[p.n] = (o.at, i as u32, g1);
+                        p.n += 1;
+                    }
+                    if depth > 0 && depth - 1 < stack.len() {
+                        let parent = &mut stack[depth - 1];
+                        parent.kids = parent.kids.saturating_add(1);
+                        if parent.kids == 1 {
+                            parent.k0_leaf = leaf;
+                            parent.k0_g2a = g2a;
+                            parent.k0_g2b = g2b;
+                        } else if parent.kids == 2 {
+                            parent.k1_g2b = g2b;
+                        }
+                        parent.all_g3a &= g3a;
+                        parent.all_g3b &= g3b;
+                    }
                 }
             }
+            i += 1;
         }
+        p.g[..p.n].sort_unstable_by_key(|g| g.0);
+        p
     }
-    // `\$\$?\(`, `\$\$?{`, `\$\$?[@%<?^+|*]`: `$$` then the character, or `$` then it
-    let pred = |x: u8| match x {
-        b'(' => Some(6),
-        b'{' => Some(7),
-        b'@' | b'%' | b'<' | b'?' | b'^' | b'+' | b'|' | b'*' => Some(8),
-        _ => None,
-    };
-    let dd = if c == b'$' { pred(l.at(i + 2)) } else { None };
-    let d = pred(c);
-    for which in 6..=8 {
-        if dd == Some(which) {
-            return Some((M::at(i, i + 3), which));
-        }
-        if d == Some(which) {
-            return Some((M::at(i, i + 2), which));
-        }
-    }
-    // `\$\$`
-    if c == b'$' {
-        return Some((M::at(i, i + 2), 9));
-    }
-    // `(\$)[[:alpha:]]`
-    let n = l.alpha_at(i + 1)?;
-    Some((M::at(i, i + 1 + n).cap(1, i, i + 1), 10))
-}
 
-matchers! {
-    X_EMPTY = g::empty, 0;
-    X_BOL = g::bol, 0;
-    X_EOL = g::eol, 0;
-    X_EOL_NL = g::eol_nl, 0;
-    X_SQ = g::byte::<b'\''>, 0;
-    X_DQ = g::byte::<b'"'>, 0;
-    X_OPEN = g::byte::<b'('>, 0;
-    X_CLOSE = g::byte::<b')'>, 0;
-    X_COMMA = g::byte::<b','>, 0;
-    X_PERCENT = g::byte::<b'%'>, 0;
-    X_STAR = g::byte::<b'*'>, 0;
-    X_HASH = g::byte::<b'#'>, 0;
-    X_SEMI = g::byte::<b';'>, 0;
-    X_COLON = g::byte::<b':'>, 0;
-    X_EQ = g::byte::<b'='>, 0;
-    X_BRACE_CLOSE = g::byte::<b'}'>, 0;
-    X_CLOSE_AHEAD = g::ahead::<b')'>, 0;
-    X_COMMA_AHEAD = g::ahead::<b','>, 0;
-    X_HASH_AHEAD = g::ahead::<b'#'>, 0;
-    X_WS1 = g::ws1, 0;
-    X_NL = g::nl, 0;
-    X_EAT_WS = g::eat_ws, 0;
-    X_ENDEF_STRAY = g::endef_stray, 0;
-    X_ENDEF = g::endef, 0;
-    X_DEFINE_NESTED = g::define_nested, 0;
-    X_ELSE = g::else_kw, 0;
-    X_ENDIF = g::endif_kw, 0;
-    X_EXPORT = g::export_kw, 0;
-    X_VPATH_WS = g::vpath_ws, 0;
-    X_VPATH_EOL = g::vpath_eol, 0;
-    X_INCLUDE = g::include_kw, 0;
-    X_IFDEF = g::ifdef, 0;
-    X_RECIPE_IF = g::recipe_if, 0;
-    X_COMMENT_AHEAD = g::comment_ahead, 0;
-    X_LINE_CONT = g::line_cont, 0;
-    X_CONT_END = g::cont_end, 0;
-    X_ESCAPE = g::escape_any, 0;
-    X_RULE_AHEAD = g::rule_ahead, 0;
-    X_VAR_AHEAD = g::var_ahead, 0;
-    X_COLON_EQ_AHEAD = g::colon_then_eq_ahead, 0;
-    X_COLON_AHEAD = g::colon_ahead, 0;
-    X_COLONS_WS = g::colons_ws, 0;
-    X_COLONS = g::colons, 0;
-    X_SEMI_AHEAD = g::semicolon_ahead, 0;
-    X_SPACES_AHEAD = g::spaces_ahead, 0;
-    X_TAB_AHEAD = g::tab_ahead, 0;
-    X_RECIPE_SPACES = g::recipe_spaces, 0;
-    X_RECIPE_TAB2 = g::recipe_tab::<false>, 0;
-    X_RECIPE_TAB1 = g::recipe_tab::<true>, 0;
-    X_NOT_SPACES = g::not_spaces, 0;
-    X_NOT_TAB = g::not_tab, 0;
-    X_BLANK = g::blank, 0;
-    X_HASH_WS = g::hash_ws, 0;
-    X_CALL_QUOTE = g::call_quote, 0;
-    X_SUBST = substitution, 0;
-    X_OVERRIDE = g::override_kw, 0;
-    X_DEFINE_WS = g::define_ws, 0;
-    X_DEFINE_WORD = g::define_word, 0;
-    X_ASSIGN_OP = g::assign_op::<false>, 0;
-    X_ASSIGN_OP_BANG = g::assign_op::<true>, 0;
-    X_ASSIGN_AHEAD = g::assign_ahead, 0;
-    X_SHELL_ASSIGN_AHEAD = g::shell_assign_ahead, 0;
-    X_BANG_EQ = g::bang_eq, 0;
-    X_SHELL_C = shell_c, 0;
-    X_QUOTE_SQ = quote::<b'\''>, 0;
-    X_QUOTE_DQ = quote::<b'"'>, 0;
-    X_QUOTE_BT = quote::<b'`'>, 0;
-    X_DEFINE_OP_AHEAD = g::define_op_ahead, 0;
-    X_DEFINE_ASSIGN = g::define_assign, 0;
-}
-
-/// A Makefile's line as its make patterns read it, and their matches on it: each valid while
-/// it starts at or after the place being matched, or when there is none from an earlier
-/// place, as syntect's search cache keeps them.
-pub struct Mk<'a> {
-    l: Line<'a>,
-    /// The required bytes the line holds, by their [`BIT`]s.
-    present: u32,
-    valid: [u64; 2],
-    /// Where each match starts and ends, or [`NO_MATCH`].
-    span: [MaybeUninit<(u32, u32)>; MATCHERS],
-    found: [MaybeUninit<M>; MATCHERS],
-}
-
-/// A span's start where its matcher found none.
-const NO_MATCH: u32 = u32::MAX;
-
-// ---- patterns
-
-/// A pattern: its matcher, the kind its match takes, its groups' kinds, what it does.
-#[derive(Clone, Copy)]
-struct Pat {
-    m: u8,
-    scope: u16,
-    caps: &'static [(u8, u16)],
-    op: Op<'static>,
-    /// `bash -c '…'`: the contexts it pushes are the ones for its quote, group 2.
-    quote: bool,
-}
-
-const fn p(m: u8) -> Pat {
-    Pat {
-        m,
-        scope: PLAIN,
-        caps: &[],
-        op: Op::None,
-        quote: false,
-    }
-}
-
-impl Pat {
-    const fn sc(mut self, kind: u16) -> Pat {
-        self.scope = kind;
-        self
-    }
-    const fn caps(mut self, caps: &'static [(u8, u16)]) -> Pat {
-        self.caps = caps;
-        self
-    }
-    const fn push(mut self, ctxs: &'static [u8]) -> Pat {
-        self.op = Op::Push(ctxs);
-        self
-    }
-    const fn set(mut self, ctxs: &'static [u8]) -> Pat {
-        self.op = Op::Set(ctxs);
-        self
-    }
-    const fn pop(mut self) -> Pat {
-        self.op = Op::Pop;
-        self
-    }
-}
-
-/// A context's entry: a pattern, or another context's patterns.
-enum It {
-    P(Pat),
-    I(&'static [It]),
-    /// `variable-substitutions`, one search for its eleven patterns ([`SUBSTITUTIONS`]).
-    V,
-}
-
-use It::{I, P};
-
-const LINE_CONTINUATION: &[It] = &[P(p(X_LINE_CONT)
-    .caps(&[(1, mk::CONTINUATION)])
-    .push(&[MK_CONTINUED]))];
-const POP_ON_LINE_END: &[It] = &[P(p(X_EOL).pop())];
-const CONTINUATION_OR_POP: &[It] = &[I(LINE_CONTINUATION), I(POP_ON_LINE_END)];
-const QUOTED_STRING: &[It] = &[
-    P(p(X_SQ).sc(mk::STR_BEGIN).push(&[STRING_SINGLE])),
-    P(p(X_DQ).sc(mk::STR_BEGIN).push(&[STRING_DOUBLE])),
-];
-const ESCAPE_LITERALS: &[It] = &[P(p(X_ESCAPE).sc(mk::ESCAPE))];
-const COMMENTS_POP_ON_LINE_END: &[It] = &[I(LINE_CONTINUATION), P(p(X_EOL_NL).pop())];
-const COMMENTS: &[It] = &[
-    P(p(X_COMMENT_AHEAD).push(&[COMMENT_START])),
-    P(p(X_HASH).sc(mk::COMMENT_MARK).push(&[MK_COMMENT])),
-];
-const HIGHLIGHT_PERCENT: &[It] = &[P(p(X_PERCENT).sc(mk::PERCENT))];
-const HIGHLIGHT_WILDCARD: &[It] = &[P(p(X_STAR).sc(mk::WILDCARD))];
-
-const CALL_CAPS: &[(u8, u16)] = &[(1, mk::BLOCK_BEGIN), (2, mk::BUILTIN)];
-/// `variable-substitutions`' patterns in the grammar's order (`function-invocations` first):
-/// the one [`substitution`] found is `found[5]`'s start. Their matcher is [`X_SUBST`].
-static SUBSTITUTIONS: [Pat; 11] = [
-    p(X_SUBST)
-        .caps(&[(1, mk::BLOCK_BEGIN), (2, mk::CALL_LANG)])
-        .push(&[CALL]),
-    p(X_SUBST).caps(CALL_CAPS).push(&[CALL_PATSUBST]),
-    p(X_SUBST).caps(CALL_CAPS).push(&[CALL_WILDCARD]),
-    p(X_SUBST).caps(CALL_CAPS).push(&[CALL_INFO]),
-    p(X_SUBST).caps(CALL_CAPS).push(&[INSIDE_FUNCTION_CALL]),
-    p(X_SUBST).caps(CALL_CAPS).push(&[CALL_SHELL]),
-    p(X_SUBST).sc(mk::BLOCK_BEGIN).push(&[SUBSTITUTION_PAREN]),
-    p(X_SUBST).sc(mk::BLOCK_BEGIN).push(&[SUBSTITUTION_BRACE]),
-    p(X_SUBST).sc(mk::AUTOMATIC),
-    p(X_SUBST).sc(mk::ESCAPE),
-    p(X_SUBST).sc(mk::VAR_PARAM).caps(&[(1, mk::SINGLE_CHAR)]),
-];
-const VARIABLE_SUBSTITUTIONS: &[It] = &[It::V];
-const SUBSTITUTION_COMMON: &[It] = &[
-    P(p(X_COLON).sc(mk::SUBST_MARK)),
-    P(p(X_EQ).sc(mk::ASSIGN_MARK)),
-    I(HIGHLIGHT_PERCENT),
-    I(VARIABLE_SUBSTITUTIONS),
-];
-const CONTROL_FLOW: &[It] = &[
-    P(p(X_VPATH_WS).caps(&[(1, mk::VPATH)]).push(&[VPATH])),
-    P(p(X_VPATH_EOL)),
-    P(p(X_INCLUDE).caps(&[(1, mk::IMPORT)]).push(&[INCLUDE])),
-    P(p(X_IFDEF).sc(mk::CONDITIONAL).push(&[INSIDE_CONTROL_FLOW])),
-    P(p(X_ELSE).caps(&[(1, mk::CONDITIONAL)]).push(&[ELSE])),
-    P(p(X_ENDIF).caps(&[(1, mk::CONDITIONAL)]).push(&[ENDIF])),
-];
-const VARIABLE_DEFINITIONS: &[It] = &[
-    P(p(X_OVERRIDE).caps(&[(1, mk::CONTROL)]).set(&[OVERRIDE])),
-    P(p(X_DEFINE_WS).caps(&[(1, mk::CONTROL)]).push(&[DEFINE])),
-    P(p(X_EXPORT).caps(&[(1, mk::CONTROL)]).push(&[EXPORT])),
-    P(p(X_VAR_AHEAD).push(&[VARIABLE])),
-];
-const INSIDE_CONTROL_FLOW_P: &[It] = &[
-    P(p(X_SQ).sc(mk::STR_BEGIN).push(&[STRING_SINGLE])),
-    P(p(X_DQ).sc(mk::STR_BEGIN).push(&[STRING_DOUBLE])),
-    P(p(X_OPEN).sc(mk::GROUP_BEGIN).push(&[CONTROL_GROUP])),
-    P(p(X_CLOSE).sc(mk::STRAY_PAREN)),
-    I(CONTINUATION_OR_POP),
-];
-const RECIPE_JUNCTION_P: &[It] = &[
-    I(COMMENTS),
-    P(p(X_RECIPE_IF)
-        .caps(&[(1, mk::CONDITIONAL)])
-        .push(&[RECIPE_IF])),
-    P(p(X_SPACES_AHEAD).set(&[RECIPE_WITH_SPACES])),
-    P(p(X_TAB_AHEAD).set(&[RECIPE_WITH_TABS])),
-    P(p(X_BOL).pop()),
-];
-const RECIPE_COMMON: &[It] = &[I(CONTROL_FLOW), P(p(X_BLANK))];
-const INSIDE_FUNCTION_CALL_P: &[It] = &[
-    P(p(X_CLOSE).sc(mk::BLOCK_END).pop()),
-    P(p(X_OPEN).push(&[PAREN_BALANCER])),
-    P(p(X_COMMA).sc(mk::SEPARATOR)),
-    P(p(X_CALL_QUOTE)),
-    I(VARIABLE_SUBSTITUTIONS),
-    I(QUOTED_STRING),
-];
-const STRING_BODY: &[It] = &[
-    I(ESCAPE_LITERALS),
-    I(LINE_CONTINUATION),
-    I(VARIABLE_SUBSTITUTIONS),
-];
-
-const MAIN_P: &[It] = &[
-    I(COMMENTS),
-    I(VARIABLE_DEFINITIONS),
-    P(p(X_RULE_AHEAD).push(&[EXPECT_RULE])),
-    I(VARIABLE_SUBSTITUTIONS),
-    I(CONTROL_FLOW),
-    P(p(X_ENDEF_STRAY).caps(&[(1, mk::STRAY_ENDEF)])),
-];
-const STRING_SINGLE_P: &[It] = &[P(p(X_SQ).sc(mk::STR_END).pop()), I(STRING_BODY)];
-const STRING_DOUBLE_P: &[It] = &[P(p(X_DQ).sc(mk::STR_END).pop()), I(STRING_BODY)];
-const CONTROL_GROUP_P: &[It] = &[
-    P(p(X_CLOSE).sc(mk::GROUP_END).pop()),
-    I(VARIABLE_SUBSTITUTIONS),
-    P(p(X_COMMA).sc(mk::SEPARATOR)),
-];
-const VPATH_P: &[It] = &[
-    I(HIGHLIGHT_WILDCARD),
-    P(p(X_WS1).set(&[VPATH_DIRS])),
-    I(POP_ON_LINE_END),
-];
-const INCLUDE_P: &[It] = &[
-    I(CONTINUATION_OR_POP),
-    I(VARIABLE_SUBSTITUTIONS),
-    I(COMMENTS),
-];
-const ELSE_P: &[It] = &[I(CONTROL_FLOW), I(COMMENTS), I(POP_ON_LINE_END)];
-const ENDIF_P: &[It] = &[I(COMMENTS), I(POP_ON_LINE_END)];
-const EXPECT_RULE_P: &[It] = &[
-    I(LINE_CONTINUATION),
-    I(VARIABLE_SUBSTITUTIONS),
-    I(HIGHLIGHT_PERCENT),
-    P(p(X_COLON_EQ_AHEAD).set(&[TARGET_VARIABLE])),
-    P(p(X_COLON_AHEAD).set(&[RULE_COLON])),
-];
-const TARGET_VARIABLE_P: &[It] = &[P(p(X_COLONS).sc(mk::ASSIGN).set(&[TARGET_VARIABLE_VALUE]))];
-const TARGET_VARIABLE_VALUE_P: &[It] = &[
-    I(VARIABLE_DEFINITIONS),
-    I(VARIABLE_SUBSTITUTIONS),
-    I(CONTINUATION_OR_POP),
-];
-const RULE_COLON_P: &[It] = &[P(p(X_COLONS_WS)
-    .caps(&[(1, mk::ASSIGN)])
-    .set(&[PREREQUISITES]))];
-const PREREQUISITES_P: &[It] = &[
-    I(LINE_CONTINUATION),
-    I(VARIABLE_SUBSTITUTIONS),
-    I(HIGHLIGHT_PERCENT),
-    P(p(X_HASH_AHEAD).set(&[RULE_COMMENT_START])),
-    P(p(X_EOL).set(&[RECIPE_JUNCTION])),
-    P(p(X_SEMI_AHEAD).set(&[RULE_SEMICOLON])),
-];
-const RULE_COMMENT_START_P: &[It] = &[P(p(X_HASH).sc(mk::COMMENT_MARK).set(&[RULE_COMMENT]))];
-const RULE_COMMENT_P: &[It] = &[P(p(X_EOL).set(&[RECIPE_JUNCTION]))];
-const RULE_SEMICOLON_P: &[It] = &[P(p(X_SEMI).sc(mk::TERMINATOR).set(&[RECIPE_INLINE]))];
-const RECIPE_IF_P: &[It] = &[I(INSIDE_CONTROL_FLOW_P), I(RECIPE_JUNCTION_P)];
-const RECIPE_INLINE_P: &[It] = &[
-    I(RECIPE_JUNCTION_P),
-    I(CONTROL_FLOW),
-    P(p(X_EOL).set(&[RECIPE_JUNCTION])),
-    P(p(X_EMPTY).push(&[SHELL])),
-];
-const RECIPE_WITH_SPACES_P: &[It] = &[
-    P(p(X_RECIPE_SPACES)
-        .caps(&[(2, mk::CONST_LANG)])
-        .push(&[SHELL])),
-    P(p(X_RECIPE_TAB2).caps(&[(1, mk::EXPECTED_SPACES), (2, mk::CONST_LANG)])),
-    I(RECIPE_COMMON),
-    P(p(X_NOT_SPACES).pop()),
-];
-const RECIPE_WITH_TABS_P: &[It] = &[
-    P(p(X_RECIPE_TAB1).caps(&[(1, mk::CONST_LANG)]).push(&[SHELL])),
-    P(p(X_RECIPE_SPACES).caps(&[(1, mk::EXPECTED_TAB), (2, mk::CONST_LANG)])),
-    I(RECIPE_COMMON),
-    P(p(X_NOT_TAB).pop()),
-];
-const SHELL_P: &[It] = &[
-    P(p(X_HASH_WS)
-        .caps(&[(1, super::k::COMMENT_BEGIN)])
-        .set(&[SHELL_COMMENT])),
-    P(p(X_EMPTY).set(&[SH_RECIPE])),
-];
-const MK_CONTINUED_P: &[It] = &[P(p(X_CONT_END).pop())];
-const COMMENT_START_P: &[It] = &[P(p(X_HASH).sc(mk::COMMENT_MARK).set(&[MK_COMMENT]))];
-const CALL_P: &[It] = &[
-    P(p(X_CLOSE_AHEAD).set(&[INSIDE_FUNCTION_CALL])),
-    P(p(X_COMMA_AHEAD).set(&[CALL_COMMA])),
-    I(VARIABLE_SUBSTITUTIONS),
-];
-const CALL_COMMA_P: &[It] = &[P(p(X_COMMA).sc(mk::SEPARATOR).set(&[INSIDE_FUNCTION_CALL]))];
-const CALL_PATSUBST_P: &[It] = &[I(HIGHLIGHT_PERCENT), I(INSIDE_FUNCTION_CALL_P)];
-const CALL_WILDCARD_P: &[It] = &[I(INSIDE_FUNCTION_CALL_P), I(HIGHLIGHT_WILDCARD)];
-const CALL_INFO_P: &[It] = &[
-    P(p(X_CLOSE).sc(mk::BLOCK_END).pop()),
-    P(p(X_OPEN).push(&[PAREN_BALANCER])),
-    P(p(X_COMMA).sc(mk::SEPARATOR)),
-    I(VARIABLE_SUBSTITUTIONS),
-];
-const CALL_SHELL_P: &[It] = &[
-    P(p(X_CLOSE).sc(mk::BLOCK_END).pop()),
-    P(p(X_EMPTY).push(&[SH_CALL])),
-];
-const OVERRIDE_P: &[It] = &[
-    P(p(X_DEFINE_WORD).sc(mk::CONTROL).push(&[DEFINE])),
-    I(VARIABLE_DEFINITIONS),
-    I(CONTINUATION_OR_POP),
-];
-const EXPORT_P: &[It] = &[
-    I(CONTINUATION_OR_POP),
-    I(VARIABLE_SUBSTITUTIONS),
-    P(p(X_ASSIGN_OP).sc(mk::ASSIGN).set(&[VALUE, EAT_WHITESPACE])),
-];
-const VARIABLE_P: &[It] = &[
-    P(p(X_SHELL_ASSIGN_AHEAD).set(&[SHELL_ASSIGN])),
-    P(p(X_ASSIGN_AHEAD).set(&[ASSIGN])),
-    I(VARIABLE_SUBSTITUTIONS),
-];
-const SHELL_ASSIGN_P: &[It] = &[P(p(X_BANG_EQ).sc(mk::ASSIGN).set(&[SH_ASSIGN]))];
-const ASSIGN_P: &[It] = &[
-    P(p(X_ASSIGN_OP_BANG)
-        .sc(mk::ASSIGN)
-        .set(&[VALUE_MAYBE_SHELL, EAT_WHITESPACE])),
-    I(VARIABLE_SUBSTITUTIONS),
-    I(CONTINUATION_OR_POP),
-];
-const PAREN_BALANCER_P: &[It] = &[P(p(X_CLOSE).pop()), I(VARIABLE_SUBSTITUTIONS)];
-const EAT_WHITESPACE_P: &[It] = &[P(p(X_EAT_WS).pop())];
-const VALUE_MAYBE_SHELL_P: &[It] = &[
-    P(Pat {
-        quote: true,
-        ..p(X_SHELL_C).caps(&[(1, mk::UNQUOTED), (2, mk::INTERP_BEGIN)])
-    }),
-    P(p(X_EMPTY).set(&[VALUE])),
-];
-const EMBEDDED_SCRIPT_SQ_P: &[It] = &[P(p(X_QUOTE_SQ).sc(mk::INTERP_END).pop())];
-const EMBEDDED_SCRIPT_DQ_P: &[It] = &[P(p(X_QUOTE_DQ).sc(mk::INTERP_END).pop())];
-const EMBEDDED_SCRIPT_BT_P: &[It] = &[P(p(X_QUOTE_BT).sc(mk::INTERP_END).pop())];
-const VALUE_P: &[It] = &[
-    I(ESCAPE_LITERALS),
-    P(p(X_HASH_AHEAD).set(&[VALUE_COMMENT_START])),
-    I(VARIABLE_SUBSTITUTIONS),
-    I(CONTINUATION_OR_POP),
-];
-const DEFINE_P: &[It] = &[
-    P(p(X_DEFINE_OP_AHEAD).set(&[DEFINE_ASSIGN])),
-    P(p(X_NL).set(&[DEFINE_VALUE])),
-    I(VARIABLE_SUBSTITUTIONS),
-];
-const DEFINE_ASSIGN_P: &[It] = &[P(p(X_DEFINE_ASSIGN)
-    .caps(&[(1, mk::ASSIGN)])
-    .set(&[DEFINE_VALUE]))];
-const DEFINE_VALUE_P: &[It] = &[
-    P(p(X_ENDEF).caps(&[(1, mk::CONTROL)]).pop()),
-    P(p(X_DEFINE_NESTED).push(&[DEFINE_NESTED])),
-];
-const DEFINE_NESTED_P: &[It] = &[P(p(X_ENDEF).pop())];
-const SUBSTITUTION_PAREN_P: &[It] = &[
-    P(p(X_CLOSE).sc(mk::BLOCK_END).pop()),
-    I(SUBSTITUTION_COMMON),
-];
-const SUBSTITUTION_BRACE_P: &[It] = &[
-    P(p(X_BRACE_CLOSE).sc(mk::BLOCK_END).pop()),
-    I(SUBSTITUTION_COMMON),
-];
-
-/// Each context's patterns, by its index.
-const PATS: [&[It]; COUNT] = [
-    MAIN_P,
-    INSIDE_CONTROL_FLOW_P,
-    STRING_SINGLE_P,
-    STRING_DOUBLE_P,
-    CONTROL_GROUP_P,
-    VPATH_P,
-    POP_ON_LINE_END, // VPATH_DIRS
-    INCLUDE_P,
-    ELSE_P,
-    ENDIF_P,
-    EXPECT_RULE_P,
-    TARGET_VARIABLE_P,
-    TARGET_VARIABLE_VALUE_P,
-    RULE_COLON_P,
-    PREREQUISITES_P,
-    RULE_COMMENT_START_P,
-    RULE_COMMENT_P,
-    RULE_SEMICOLON_P,
-    RECIPE_JUNCTION_P,
-    RECIPE_IF_P,
-    RECIPE_INLINE_P,
-    RECIPE_WITH_SPACES_P,
-    RECIPE_WITH_TABS_P,
-    SHELL_P,
-    COMMENTS_POP_ON_LINE_END, // SHELL_COMMENT
-    MK_CONTINUED_P,
-    COMMENT_START_P,
-    COMMENTS_POP_ON_LINE_END, // MK_COMMENT
-    INSIDE_FUNCTION_CALL_P,
-    CALL_P,
-    CALL_COMMA_P,
-    CALL_PATSUBST_P,
-    CALL_WILDCARD_P,
-    CALL_INFO_P,
-    CALL_SHELL_P,
-    OVERRIDE_P,
-    EXPORT_P,
-    VARIABLE_P,
-    SHELL_ASSIGN_P,
-    ASSIGN_P,
-    PAREN_BALANCER_P,
-    EAT_WHITESPACE_P,
-    VALUE_MAYBE_SHELL_P,
-    EMBEDDED_SCRIPT_SQ_P,
-    EMBEDDED_SCRIPT_DQ_P,
-    EMBEDDED_SCRIPT_BT_P,
-    VALUE_P,
-    COMMENT_START_P, // VALUE_COMMENT_START: the same pattern
-    DEFINE_P,
-    DEFINE_ASSIGN_P,
-    DEFINE_VALUE_P,
-    DEFINE_NESTED_P,
-    SUBSTITUTION_PAREN_P,
-    SUBSTITUTION_BRACE_P,
-];
-
-/// `variable-substitutions` in a flattened list: [`SUBSTITUTIONS`]' one search.
-const SUBSTITUTION_ENTRY: Pat = p(X_SUBST);
-
-/// The most patterns a context reaches through its includes.
-const FLAT_MAX: usize = 16;
-
-/// A context's patterns, its includes followed, in order.
-struct Flat {
-    n: usize,
-    pats: [&'static Pat; FLAT_MAX],
-}
-
-const fn flatten(its: &'static [It], into: &mut Flat) {
-    let mut i = 0;
-    while i < its.len() {
-        match &its[i] {
-            P(pat) => {
-                assert!(into.n < FLAT_MAX, "a context's patterns fit");
-                into.pats[into.n] = pat;
-                into.n += 1;
-            }
-            I(inner) => flatten(inner, into),
-            It::V => {
-                assert!(into.n < FLAT_MAX, "a context's patterns fit");
-                into.pats[into.n] = &SUBSTITUTION_ENTRY;
-                into.n += 1;
-            }
-        }
-        i += 1;
-    }
-}
-
-/// Each context's flattened patterns, by its index.
-static FLAT: [Flat; COUNT] = {
-    let mut t = [const {
-        Flat {
-            n: 0,
-            pats: [&SUBSTITUTION_ENTRY; FLAT_MAX],
-        }
-    }; COUNT];
-    let mut c = 0;
-    while c < COUNT {
-        flatten(PATS[c], &mut t[c]);
-        c += 1;
-    }
-    t
-};
-
-/// The contexts `bash -c` pushes, by its quote.
-static EMBEDDED: [&[u8]; 3] = [
-    &[EMBEDDED_SCRIPT_SQ, SH_SQ],
-    &[EMBEDDED_SCRIPT_DQ, SH_DQ],
-    &[EMBEDDED_SCRIPT_BT, SH_BT],
-];
-
-/// The best match a context's patterns have found so far at a step.
-#[derive(Clone, Copy)]
-struct Best {
-    min: usize,
-    pat: Option<&'static Pat>,
-    would_loop: bool,
-}
-
-impl Best {
-    fn new() -> Self {
-        Self {
-            min: usize::MAX,
-            pat: None,
-            would_loop: false,
-        }
+    /// Where the group opened at `open` closes, when it is one `just_eat` takes.
+    fn fitting(&self, open: usize) -> Option<usize> {
+        let i = self.g[..self.n]
+            .binary_search_by_key(&(open as u32), |g| g.0)
+            .ok()?;
+        let (_, close, fits) = self.g[i];
+        fits.then_some(close as usize)
     }
 }
 
 // ---- the frames
 
-/// What a pattern does to the stack.
-#[derive(Clone, Copy)]
-enum Op<'c> {
-    None,
-    Push(&'c [u8]),
-    Set(&'c [u8]),
-    Pop,
-}
-
 #[derive(Clone, Copy)]
 struct Frame {
-    ctx: u8,
+    id: u8,
     /// Inside a make substitution's `variable.parameter` ([`TWIN_MK`]).
     param: bool,
-    /// The kind of the text in it that no pattern takes: its meta content scope's, its meta
-    /// scope's, or the one below's.
+    /// The kind of the text in it no token takes.
     base: u16,
 }
 
-const FRAME: Frame = Frame {
-    ctx: MAIN,
-    param: false,
-    base: PLAIN,
-};
-
 /// The frames a scan holds.
 const MAX: usize = 128;
-/// syntect's limit: a push at this depth (its stack, ours plus its `__start`) is refused.
+/// syntect's limit: a push at this depth is refused.
 const SYNTECT_DEPTH: usize = 99;
 
 struct Scan<'a, 'o, 'p> {
     b: &'a [u8],
+    n: usize,
     /// The frames below `depth` are written; those above are not.
     stack: [MaybeUninit<Frame>; MAX],
     depth: usize,
     /// Where the spans so far end.
     emitted: usize,
-    /// syntect's loop guard: where the last push that matched nothing was, and the depth it
-    /// left.
-    push_at: (usize, usize),
-    /// Whether that holds at the place being matched.
-    guard: bool,
     exact: bool,
     out: &'o mut Out<'p>,
-    mk: Mk<'a>,
+    /// The `\` a line continuation is at (`\` and spaces to the line's end), or `usize::MAX`.
+    cont: usize,
+    parens: Option<Parens>,
+    /// `var_ahead`'s and `rule_ahead`'s last answers, from where: still the answer from a later
+    /// place up to it (none stays none), so a line of many substitutions in `main` reads them once.
+    var_memo: (usize, Option<usize>),
+    rule_memo: (usize, Option<usize>),
     /// The shell's state across lines, the topmost shell region's: its frame's depth (the
     /// frame below it is the region's; 0 for none), and bash's state.
     sh: (usize, State),
@@ -1039,8 +564,8 @@ enum Stop {
     Past(usize),
 }
 
-/// A shell region's make tokens on a line, in order: where each starts and ends.
-/// A token's byte in the shell's text, or none.
+/// A shell region's make tokens on a line, in order: where each starts and ends, and the byte
+/// it stands as in the shell's text (0 for none).
 struct Cuts {
     n: usize,
     at: [(u32, u32, u8); 16],
@@ -1142,110 +667,170 @@ impl Cuts {
     }
 }
 
-/// Whether bash's kind is an option's: a make token right after it is inside the option.
-fn in_option(kind: u16) -> bool {
-    kind != PLAIN && kind & super::TWIN != 0
-        || matches!(
-            kind,
-            super::k::OPTION | super::k::OPTION_MARK | super::k::OPTION_ASSIGN
-        )
-}
-
 /// Lex `b`, a line of a Makefile without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     let n = b.len();
-    let mut small = [0u8; 256];
-    let heap: Vec<u8>;
-    let buf: &[u8] = if n < small.len() {
-        small[..n].copy_from_slice(b);
-        small[n] = b'\n';
-        &small[..=n]
+    // the line continuation: a `\` then spaces to the line's end
+    let mut k = n;
+    while k > 0 && b[k - 1] == b' ' {
+        k -= 1;
+    }
+    let cont = if k > 0 && b[k - 1] == b'\\' {
+        k - 1
     } else {
-        let mut v = Vec::with_capacity(n + 1);
-        v.extend_from_slice(b);
-        v.push(b'\n');
-        heap = v;
-        &heap
+        usize::MAX
     };
-    // SAFETY: a line's text, a `str`, then a `\n`
-    let text = unsafe { std::str::from_utf8_unchecked(buf) };
     let mut s = Scan {
-        b: &buf[..n],
+        b,
+        n,
         stack: [const { MaybeUninit::uninit() }; MAX],
         depth: 1,
         emitted: 0,
-        push_at: (0, 0),
-        guard: false,
         exact: state.is_exact(),
         out,
-        mk: Mk {
-            l: Line::new(text),
-            present: b.iter().fold(0, |set, &c| set | BIT[usize::from(c)]),
-            valid: [0; 2],
-            span: [const { MaybeUninit::uninit() }; MATCHERS],
-            found: [const { MaybeUninit::uninit() }; MATCHERS],
-        },
+        cont,
+        parens: None,
+        var_memo: (usize::MAX, None),
+        rule_memo: (usize::MAX, None),
         sh: (0, State::default()),
     };
-    s.stack[0] = MaybeUninit::new(FRAME);
+    s.stack[0] = MaybeUninit::new(Frame {
+        id: MAIN,
+        param: false,
+        base: PLAIN,
+    });
     s.load(state);
-    s.run(0, 0);
+    if let Some(p) = s.start() {
+        s.run(p, 0);
+    }
     s.fill(n);
     *state = s.save();
 }
 
+/// What a step did: `Ok` with where the line goes on from, `Err` where the line ends with the
+/// frames as they are.
+type Step = Result<usize, ()>;
+
 impl Scan<'_, '_, '_> {
     // ---- the line
 
+    /// The byte at `i`: past the line's end a `\n` (syntect's line ends in one), then 0.
     fn at(&self, i: usize) -> u8 {
         match self.b.get(i) {
             Some(&c) => c,
-            None if i == self.b.len() => b'\n',
+            None if i == self.n => b'\n',
             None => 0,
         }
     }
 
-    /// The place after the character at `p`.
-    fn next_char(&self, p: usize) -> usize {
-        if p >= self.b.len() {
-            p + 1
-        } else {
-            p + char_len(self.b[p])
+    /// Whether the character at `i` is a word character (`\w`).
+    fn word_at(&self, i: usize) -> bool {
+        match self.b.get(i) {
+            None => false,
+            Some(&c) if c < 0x80 => c.is_ascii_alphanumeric() || c == b'_',
+            Some(_) => self.char_at(i).is_some_and(char::is_alphanumeric),
         }
+    }
+
+    /// Whether the character before `i` is a word character.
+    fn word_before(&self, i: usize) -> bool {
+        match i.checked_sub(1).map(|j| self.b[j]) {
+            None => false,
+            Some(c) if c < 0x80 => c.is_ascii_alphanumeric() || c == b'_',
+            Some(_) => self.char_before(i).is_some_and(char::is_alphanumeric),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn char_at(&self, i: usize) -> Option<char> {
+        std::str::from_utf8(&self.b[i..(i + 4).min(self.n)])
+            .or_else(|e| std::str::from_utf8(&self.b[i..i + e.valid_up_to()]))
+            .ok()
+            .and_then(|t| t.chars().next())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn char_before(&self, i: usize) -> Option<char> {
+        let mut s = i - 1;
+        while s > 0 && i - s < 4 && self.b[s] & 0xc0 == 0x80 {
+            s -= 1;
+        }
+        std::str::from_utf8(&self.b[s..i])
+            .ok()
+            .and_then(|t| t.chars().next_back())
+    }
+
+    /// The end of the blanks (`\s`) from `i`.
+    fn ws_end(&self, mut i: usize) -> usize {
+        while i < self.n && ws(self.b[i]) {
+            i += 1;
+        }
+        i
+    }
+
+    /// Where the blanks (`\s`) before `i` start, not before `lo`.
+    fn ws_back(&self, lo: usize, mut i: usize) -> usize {
+        while i > lo && ws(self.b[i - 1]) {
+            i -= 1;
+        }
+        i
+    }
+
+    /// The first `x` at or after `from`.
+    fn find(&self, from: usize, x: u8) -> Option<usize> {
+        let i = find_in(self.b, from.min(self.n), self.n, [x]);
+        (i < self.n).then_some(i)
+    }
+
+    /// The first `word` starting from `from` to `to` (inclusive).
+    fn find_str_to(&self, from: usize, to: usize, word: &[u8]) -> Option<usize> {
+        let mut at = from;
+        while let Some(i) = self.find_to(at, to, word[0]) {
+            if self.b[i..].starts_with(word) {
+                return Some(i);
+            }
+            at = i + 1;
+        }
+        None
+    }
+
+    /// The first stop of `mask` at or after `p`, or the line's end.
+    #[inline(always)]
+    fn stop(&self, mut p: usize, mask: u32) -> usize {
+        while p < self.n && CLS[usize::from(self.b[p])] & mask == 0 {
+            p += 1;
+        }
+        p
     }
 
     // ---- the stack
 
-    fn top(&self) -> &Frame {
-        self.at_frame(self.depth - 1)
-    }
-
-    /// The frame at `i`, below `depth`.
-    fn at_frame(&self, i: usize) -> &Frame {
+    fn frame(&self, i: usize) -> &Frame {
         debug_assert!(i < self.depth);
-        // SAFETY: every frame below `depth` was written (`push_frame`, and the bottom one in
-        // `line`); `depth` never passes `MAX`
+        // SAFETY: every frame below `depth` was written (`push`, and the bottom one in `line`);
+        // `depth` never passes `MAX`
         unsafe { self.stack.get_unchecked(i).assume_init_ref() }
     }
 
-    fn push_frame(&mut self, ctx: u8) {
+    fn top(&self) -> &Frame {
+        self.frame(self.depth - 1)
+    }
+
+    /// The frame below the top's base.
+    fn below_base(&self) -> u16 {
+        self.frame(self.depth.saturating_sub(2)).base
+    }
+
+    fn push(&mut self, id: u8) {
         let below = *self.top();
-        let (meta, content) = INFO[usize::from(ctx)];
-        let base = if ctx == EAT_WHITESPACE {
-            // `clear_scopes: 1`, where what it clears is all there is
-            PLAIN
-        } else if content != PLAIN {
-            content
-        } else if meta != PLAIN {
-            meta
-        } else {
-            below.base
-        };
+        let own = BASE[usize::from(id)];
         let f = Frame {
-            ctx,
-            param: below.param || matches!(ctx, SUBSTITUTION_PAREN | SUBSTITUTION_BRACE),
-            base,
+            id,
+            param: below.param || matches!(id, SUBST_P | SUBST_B),
+            base: if own != PLAIN { own } else { below.base },
         };
         if self.depth == MAX {
             self.stack.copy_within(1.., 0);
@@ -1256,16 +841,31 @@ impl Scan<'_, '_, '_> {
         self.depth += 1;
     }
 
-    fn pop_frame(&mut self) {
+    /// A push syntect would make: refused at its depth limit.
+    fn open(&mut self, id: u8) -> bool {
+        if self.depth >= SYNTECT_DEPTH {
+            return false;
+        }
+        self.push(id);
+        true
+    }
+
+    fn pop(&mut self) {
         if self.depth > 1 {
             self.depth -= 1;
         }
     }
 
+    /// The top frame replaced by `id` (syntect's `set`).
+    fn set(&mut self, id: u8) {
+        self.pop();
+        self.push(id);
+    }
+
     // ---- spans
 
     fn put(&mut self, s: usize, e: usize, kind: u16) {
-        let e = e.min(self.b.len());
+        let e = e.min(self.n);
         if e > s && kind != PLAIN {
             let kind = if self.top().param && super::is_variable(kind) {
                 kind | TWIN_MK
@@ -1279,139 +879,1169 @@ impl Scan<'_, '_, '_> {
         }
     }
 
-    /// The text up to `to` that no pattern took, in the top context's kind.
+    /// The text up to `to` no token took, in the top frame's kind.
     fn fill(&mut self, to: usize) {
-        let s = self.emitted;
-        if to > s {
+        if to > self.emitted {
             let base = self.top().base;
-            self.put(s, to, base);
+            self.put(self.emitted, to, base);
         }
     }
 
-    /// A match's text `s..e` in `base`, its groups in theirs, the innermost on top.
-    fn paint(&mut self, s: usize, e: usize, base: u16, caps: &[(usize, usize, u16)]) {
-        if caps.is_empty() {
-            return self.put(s, e, base);
-        }
-        let mut at = s;
-        while at < e {
-            // the innermost group holding `at`, and where the next boundary is
-            let mut kind = base;
-            let mut len = usize::MAX;
-            let mut next = e;
-            for &(cs, ce, ck) in caps {
-                if cs > at {
-                    next = next.min(cs);
-                } else if ce > at {
-                    next = next.min(ce);
-                    if ce - cs < len {
-                        len = ce - cs;
-                        kind = ck;
+    /// A token `s..e` in `kind`, the text before it filled.
+    fn tok(&mut self, s: usize, e: usize, kind: u16) {
+        self.fill(s);
+        self.put(s, e, kind);
+    }
+
+    /// The line's continuation at `i`: its `\`, the spaces after it in the top frame's kind,
+    /// and the next line's blanks to come.
+    fn continued(&mut self, i: usize) -> Step {
+        self.tok(i, i + 1, mk::CONTINUATION);
+        self.fill(self.n);
+        self.push(CONT);
+        Err(())
+    }
+
+    // ---- the line's start
+
+    /// The line's start, by the frames left open: `None` when the line is done.
+    fn start(&mut self) -> Option<usize> {
+        let b = self.b;
+        let n = self.n;
+        loop {
+            let id = self.top().id;
+            match id {
+                CONT => {
+                    // `(?=\S|^\s*$)`: the blanks the construct's, then the construct
+                    let i = self.ws_end(0);
+                    if i < n {
+                        self.fill(i);
+                        self.pop();
+                        return Some(i);
+                    }
+                    self.pop();
+                    if self.top().id == MAIN {
+                        return Some(0);
                     }
                 }
+                DEFINE_VALUE | DEFINE_NESTED => {
+                    let i = self.ws_end(0);
+                    let word = |w: &[u8]| b[i..].starts_with(w) && !self.word_at(i + w.len());
+                    if word(b"endef") {
+                        let e = i + 5;
+                        if id == DEFINE_VALUE {
+                            let below = self.below_base();
+                            self.put(0, i, below);
+                            self.put(i, e, mk::CONTROL);
+                        } else {
+                            self.fill(e);
+                        }
+                        self.pop();
+                        return Some(e);
+                    }
+                    if id == DEFINE_VALUE && word(b"define") {
+                        self.push(DEFINE_NESTED);
+                    }
+                    self.fill(n);
+                    return None;
+                }
+                JUNCTION => {
+                    let i = self.ws_end(0);
+                    if self.at(i) == b'#' {
+                        self.tok(i, i + 1, mk::COMMENT_MARK);
+                        self.push(COMMENT);
+                        return Some(i + 1);
+                    }
+                    if let Some(e) = self.if_directive(i) {
+                        self.tok(i, e, mk::CONDITIONAL);
+                        self.push(R_IF);
+                        return Some(e);
+                    }
+                    match self.at(0) {
+                        b' ' => self.set(R_SPACES),
+                        b'\t' => self.set(R_TABS),
+                        _ => self.pop(),
+                    }
+                }
+                R_TABS | R_SPACES => {
+                    let (own, other) = if id == R_TABS {
+                        (b'\t', b' ')
+                    } else {
+                        (b' ', b'\t')
+                    };
+                    let c = self.at(0);
+                    if c == own {
+                        // the recipe's indent, its prefix, then the shell
+                        let s = if own == b'\t' {
+                            1
+                        } else {
+                            b.iter().position(|&c| c != b' ').unwrap_or(n)
+                        };
+                        let e = self.prefix_end(s);
+                        self.tok(s, e, mk::CONST_LANG);
+                        return Some(self.shell_start(e));
+                    }
+                    if c == other {
+                        // the other indent: invalid, its prefix, the line plain
+                        let s = if other == b'\t' {
+                            1
+                        } else {
+                            b.iter().position(|&c| c != b' ').unwrap_or(n)
+                        };
+                        let e = self.prefix_end(s);
+                        let bad = if id == R_TABS {
+                            mk::EXPECTED_TAB
+                        } else {
+                            mk::EXPECTED_SPACES
+                        };
+                        self.put(0, s, bad);
+                        self.put(s, e, mk::CONST_LANG);
+                        return Some(e);
+                    }
+                    if n == 0 {
+                        // `^\n`: a blank line keeps the recipe
+                        return None;
+                    }
+                    if let Some(r) = self.control_flow(0) {
+                        return r.ok();
+                    }
+                    self.pop();
+                }
+                _ => return Some(0),
             }
-            self.put(at, next, kind);
-            at = next;
         }
     }
 
-    /// Do a match `s..e`: its scope (or [`PLAIN`]), its groups' scopes, its operation. `None`
-    /// when it is a pop that would loop.
-    fn exec(
-        &mut self,
-        s: usize,
-        e: usize,
-        scope: u16,
-        caps: &[(usize, usize, u16)],
-        op: Op,
-    ) -> Option<usize> {
-        if s == e && matches!(op, Op::Pop) && self.guard {
-            return None;
+    /// `([-@]{1,2})?` from `i`: where it ends.
+    fn prefix_end(&self, i: usize) -> usize {
+        let mut e = i;
+        while e < i + 2 && matches!(self.at(e), b'-' | b'@') {
+            e += 1;
         }
-        if let Op::Push(ctxs) = op
-            && self.depth >= SYNTECT_DEPTH
-            && !ctxs.is_empty()
+        e
+    }
+
+    /// A recipe's shell from `p`: a comment right there (`\s*#`), or its commands.
+    fn shell_start(&mut self, p: usize) -> usize {
+        if let Some(c) = self.find(p, b'#')
+            && self.ws_back(p, c) == p
         {
-            return None;
+            self.put(p, c, super::k::COMMENT);
+            self.put(c, c + 1, super::k::COMMENT_BEGIN);
+            self.push(SH_COMMENT);
+            return c + 1;
         }
-        self.fill(s);
-        // the text's kind where no scope of the pattern's is: the meta scope of the contexts
-        // it opens, for a push or a set; the closing context's, for a pop
-        let base = match op {
-            Op::Push(ctxs) | Op::Set(ctxs) => ctxs
-                .iter()
-                .rev()
-                .map(|&c| INFO[usize::from(c)].0)
-                .find(|&m| m != PLAIN)
-                .unwrap_or(self.top().base),
-            Op::Pop => {
-                let ctx = self.top().ctx;
-                let meta = INFO[usize::from(ctx)].0;
-                if ctx == EAT_WHITESPACE {
-                    // what it cleared comes back after the match
-                    PLAIN
-                } else if meta != PLAIN {
-                    meta
-                } else {
-                    self.at_frame(self.depth.saturating_sub(2)).base
-                }
-            }
-            Op::None => self.top().base,
-        };
-        let base = if scope != PLAIN { scope } else { base };
-        self.paint(s, e, base, caps);
-        match op {
-            Op::None => {}
-            Op::Pop => self.pop_frame(),
-            Op::Push(ctxs) => {
-                if s == e {
-                    self.push_at = (e, self.depth + 1);
-                }
-                for &c in ctxs {
-                    self.push_frame(c);
-                }
-            }
-            Op::Set(ctxs) => {
-                self.pop_frame();
-                for &c in ctxs {
-                    self.push_frame(c);
-                }
-            }
-        }
-        Some(e)
+        self.push(SH_RECIPE);
+        p
     }
 
-    fn push(&mut self, s: usize, e: usize, scope: u16, ctxs: &[u8]) -> Option<usize> {
-        self.exec(s, e, scope, &[], Op::Push(ctxs))
+    /// `ifn?(def|eq)` at `i`: where it ends.
+    fn if_directive(&self, i: usize) -> Option<usize> {
+        let b = self.b;
+        if !b[i.min(self.n)..].starts_with(b"if") {
+            return None;
+        }
+        let tail = |j: usize| {
+            if b[j.min(self.n)..].starts_with(b"def") {
+                Some(j + 3)
+            } else if b[j.min(self.n)..].starts_with(b"eq") {
+                Some(j + 2)
+            } else {
+                None
+            }
+        };
+        let j = i + 2;
+        (self.at(j) == b'n')
+            .then(|| tail(j + 1))
+            .flatten()
+            .or_else(|| tail(j))
+    }
+
+    /// `\bifn?(def|eq)\b` from `p`: where it starts and ends.
+    fn ifdef(&self, p: usize) -> Option<(usize, usize)> {
+        self.ifdef_to(p, self.n)
+    }
+
+    /// `\bifn?(def|eq)\b` starting from `p` to `to` (inclusive).
+    fn ifdef_to(&self, p: usize, to: usize) -> Option<(usize, usize)> {
+        let mut at = p;
+        while let Some(i) = self.find_str_to(at, to, b"if") {
+            if !self.word_before(i) {
+                let j = i + 2;
+                let ends = [
+                    (self.at(j) == b'n').then(|| self.tail(j + 1)).flatten(),
+                    self.tail(j),
+                ];
+                if let Some(e) = ends.into_iter().flatten().find(|&e| !self.word_at(e)) {
+                    return Some((i, e));
+                }
+            }
+            at = i + 1;
+        }
+        None
+    }
+
+    fn tail(&self, j: usize) -> Option<usize> {
+        let r = &self.b[j.min(self.n)..];
+        if r.starts_with(b"def") {
+            Some(j + 3)
+        } else if r.starts_with(b"eq") {
+            Some(j + 2)
+        } else {
+            None
+        }
+    }
+
+    /// `^\s*(KW)\b`: where `kw` starts and ends, at the line's start.
+    fn bol_word(&self, kw: &[u8]) -> Option<(usize, usize)> {
+        let i = self.ws_end(0);
+        (self.b[i..].starts_with(kw) && !self.word_at(i + kw.len())).then(|| (i, i + kw.len()))
+    }
+
+    /// bat's `control-flow` at the line's start (`vpath`, `include`, `ifeq` and its kin,
+    /// `else`, `endif`), where one is there; `ifeq` only where nothing comes before it.
+    fn control_flow(&mut self, p: usize) -> Option<Step> {
+        debug_assert_eq!(p, 0);
+        let i = self.ws_end(0);
+        if let Some(e) = self.vpath_at(i) {
+            return Some(Ok(self.vpath(i, e)));
+        }
+        if let Some((s, e)) = self.include_at(i) {
+            return Some(Ok(self.include(s, e)));
+        }
+        if i == 0
+            && let Some(e) = self.if_directive(0)
+            && !self.word_at(e)
+        {
+            self.put(0, e, mk::CONDITIONAL);
+            self.push(COND);
+            return Some(Ok(e));
+        }
+        if let Some((s, e)) = self.bol_word(b"else") {
+            self.put(s, e, mk::CONDITIONAL);
+            self.push(ELSE);
+            return Some(Ok(e));
+        }
+        if let Some((s, e)) = self.bol_word(b"endif") {
+            self.put(s, e, mk::CONDITIONAL);
+            self.push(ENDIF);
+            return Some(Ok(e));
+        }
+        None
+    }
+
+    /// `([s-]?include)\s+` at `i`: where the word starts and ends.
+    fn include_at(&self, i: usize) -> Option<(usize, usize)> {
+        let b = self.b;
+        let j = if matches!(self.at(i), b's' | b'-')
+            && b[(i + 1).min(self.n)..].starts_with(b"include")
+        {
+            i + 1
+        } else {
+            i
+        };
+        if !b[j.min(self.n)..].starts_with(b"include") {
+            return None;
+        }
+        let e = j + 7;
+        ws(self.at(e)).then_some((i, e))
+    }
+
+    /// `^\s*([s-]?include)\s+` matched, the word at `s..e`: the keyword, its blanks, the paths.
+    fn include(&mut self, s: usize, e: usize) -> usize {
+        let end = self.ws_end(e);
+        self.tok(s, e, mk::IMPORT);
+        let base = self.top().base;
+        self.put(e, end, base);
+        self.push(INCLUDE);
+        end
+    }
+
+    /// `vpath\s` at `i` (the `\s` the line's `\n` too): where the word ends.
+    fn vpath_at(&self, i: usize) -> Option<usize> {
+        let e = i + 5;
+        (self.b[i.min(self.n)..].starts_with(b"vpath") && ws(self.at(e))).then_some(e)
+    }
+
+    /// `^\s*(vpath)\s` matched to `e`: the keyword, then its pattern (none past the line's end,
+    /// where the `\s` was its `\n`).
+    fn vpath(&mut self, i: usize, e: usize) -> usize {
+        self.tok(i, e, mk::VPATH);
+        if e < self.n {
+            let base = self.top().base;
+            self.put(e, e + 1, base);
+            self.push(VPATH);
+            return e + 1;
+        }
+        e
+    }
+
+    // ---- `just_eat`'s lookaheads
+
+    fn parens(&mut self) -> &Parens {
+        if self.parens.is_none() {
+            self.parens = Some(Parens::new(self.b));
+        }
+        self.parens.as_ref().unwrap()
+    }
+
+    /// The next paren at or after `q`, or the line's end.
+    fn next_paren(&self, q: usize) -> usize {
+        find_in(self.b, q.min(self.n), self.n, *b"()")
+    }
+
+    /// The last `:` not followed by `=` in `a..r`.
+    fn last_colon(&self, a: usize, r: usize) -> Option<usize> {
+        let mut r = r;
+        while let Some(c) = self.b[a..r].iter().rposition(|&x| x == b':') {
+            let c = a + c;
+            if self.at(c + 1) != b'=' {
+                return Some(c);
+            }
+            r = c;
+        }
+        None
+    }
+
+    fn has_eq(&self, a: usize, r: usize) -> bool {
+        a < r && find_in(self.b, a, r, *b"=") < r
+    }
+
+    /// The group opened at `r`, when `just_eat` takes it: where it closes, and where the text
+    /// after it runs to.
+    fn group_at(&mut self, r: usize) -> Option<(usize, usize)> {
+        if self.at(r) != b'(' {
+            return None;
+        }
+        let close = self.parens().fitting(r)?;
+        Some((close, self.next_paren(close + 1)))
+    }
+
+    /// `(?={{rule_lookahead}})`: `just_eat` then a `:` that isn't `:=`. From `q` the colon is in
+    /// the run of text up to the next paren, or in the run after the group that paren opens.
+    fn rule_ahead(&mut self, pos: usize) -> Option<usize> {
+        let (from, memo) = self.rule_memo;
+        if from <= pos && memo.is_none_or(|q| q >= pos) {
+            return memo;
+        }
+        let r = self.rule_search(pos);
+        self.rule_memo = (pos, r);
+        r
+    }
+
+    fn rule_search(&mut self, pos: usize) -> Option<usize> {
+        let mut q = pos;
+        while q < self.n {
+            let r = self.next_paren(q);
+            let group = self.group_at(r);
+            if self.last_colon(q, r).is_some()
+                || group.is_some_and(|(c, r1)| self.last_colon(c + 1, r1).is_some())
+            {
+                return Some(q);
+            }
+            q = r + 1;
+        }
+        None
+    }
+
+    /// `(?={{var_lookahead}}|{{first_assign_then_colon}})`: an `=` after `just_eat` where no rule
+    /// colon is.
+    fn var_ahead(&mut self, pos: usize) -> Option<usize> {
+        let (from, memo) = self.var_memo;
+        if from <= pos && memo.is_none_or(|v| v >= pos) {
+            return memo;
+        }
+        let r = self.var_search(pos);
+        self.var_memo = (pos, r);
+        r
+    }
+
+    fn var_search(&mut self, pos: usize) -> Option<usize> {
+        let mut q = pos;
+        while q < self.n {
+            let r = self.next_paren(q);
+            let group = self.group_at(r);
+            let colon_after = group.is_some_and(|(c, r1)| self.last_colon(c + 1, r1).is_some());
+            let eq_after = group.is_some_and(|(c, r1)| self.has_eq(c + 1, r1));
+            if !colon_after {
+                let v = self.last_colon(q, r).map_or(q, |c| c + 1);
+                if v < r && (self.has_eq(v, r) || eq_after) {
+                    return Some(v);
+                }
+                if v == r && self.at(r) == b'(' && eq_after {
+                    return Some(r);
+                }
+            }
+            q = r + 1;
+        }
+        None
     }
 
     // ---- the run
 
-    /// The line from `p` until the frames are back to `floor` (where they end, `Some`) or the
-    /// line ends (`None`).
+    /// The line from `p` until the frames are back to `floor` (`Some`, where) or the line ends.
     fn run(&mut self, mut p: usize, floor: usize) -> Option<usize> {
-        let n = self.b.len();
         loop {
             if self.depth <= floor {
                 return Some(p);
             }
-            self.guard = self.push_at == (p, self.depth);
-            let ctx = self.top().ctx;
-            let step = if ctx >= SH_RECIPE {
-                self.shell(p, ctx)
+            let id = self.top().id;
+            let step = if id >= SH_RECIPE {
+                self.shell(p, id)
             } else {
-                self.make_step(p, ctx)
+                self.step(p, id)
             };
             match step {
                 Ok(e) => p = e,
-                Err(next) => {
-                    if p > n || next > n + 1 {
-                        return None;
-                    }
-                    p = next.max(p + 1).min(n + 1);
-                }
+                Err(()) => return None,
             }
         }
+    }
+
+    /// A frame's step from `p`.
+    fn step(&mut self, p: usize, id: u8) -> Step {
+        match id {
+            MAIN => return self.classify(p),
+            TVAR => return self.defs(p, false),
+            OVERRIDE => return self.defs(p, true),
+            CONT => {
+                let i = self.ws_end(p);
+                if i < self.n {
+                    self.fill(i);
+                    self.pop();
+                    return Ok(i);
+                }
+                return Err(());
+            }
+            COMMENT | SH_COMMENT => {
+                if self.cont != usize::MAX && self.cont >= p {
+                    return self.continued(self.cont);
+                }
+                self.fill(self.n);
+                self.pop();
+                return Ok(self.n);
+            }
+            RULE_COMMENT => {
+                self.fill(self.n);
+                self.set(JUNCTION);
+                return Err(());
+            }
+            INLINE => {
+                if p >= self.n {
+                    self.set(JUNCTION);
+                    return Err(());
+                }
+                if self.b[p] == b'#' {
+                    self.tok(p, p + 1, mk::COMMENT_MARK);
+                    self.push(COMMENT);
+                    return Ok(p + 1);
+                }
+                return Ok(self.shell_start(p));
+            }
+            JUNCTION => {
+                if let Some(h) = self.find(p, b'#') {
+                    self.tok(h, h + 1, mk::COMMENT_MARK);
+                    self.push(COMMENT);
+                    return Ok(h + 1);
+                }
+                self.fill(self.n);
+                return Err(());
+            }
+            R_TABS | R_SPACES => {
+                if let Some((s, e)) = self.ifdef(p) {
+                    self.tok(s, e, mk::CONDITIONAL);
+                    self.push(COND);
+                    return Ok(e);
+                }
+                self.fill(self.n);
+                return Err(());
+            }
+            CALL_SHELL => {
+                if self.at(p) == b')' {
+                    self.tok(p, p + 1, mk::BLOCK_END);
+                    self.pop();
+                    return Ok(p + 1);
+                }
+                self.push(SH_CALL);
+                return Ok(p);
+            }
+            MAYBE_SHELL => {
+                if let Some(e) = self.shell_c(p) {
+                    return Ok(e);
+                }
+                self.set(VALUE);
+                return Ok(p);
+            }
+            DEFINE_VALUE | DEFINE_NESTED | VPATH_DIRS => {
+                self.fill(self.n);
+                if id == VPATH_DIRS {
+                    self.pop();
+                    return Ok(self.n);
+                }
+                return Err(());
+            }
+            DEFINE => return self.define(p),
+            _ => {}
+        }
+        let i = self.stop(p, STOP[usize::from(id)]);
+        if i >= self.n {
+            return self.eol(id);
+        }
+        let c = self.b[i];
+        match (id, c) {
+            (_, b'$') => Ok(self.subst(i).unwrap_or(i + 1)),
+            (_, b'\\') => {
+                // an escape where the frame has them, else the line's continuation
+                let escapes = matches!(id, VALUE | STR_S | STR_D);
+                if escapes && i + 1 < self.n {
+                    let e = i + 1 + char_len(self.b[i + 1]);
+                    self.tok(i, e, mk::ESCAPE);
+                    return Ok(e);
+                }
+                if matches!(id, FCALL | CALL_PAT | CALL_WILD) {
+                    // `\\['"]`: the quote not a string's
+                    if matches!(self.at(i + 1), b'\'' | b'"') {
+                        return Ok(i + 2);
+                    }
+                    return Ok(i + 1);
+                }
+                if i == self.cont {
+                    return self.continued(i);
+                }
+                Ok(i + 1)
+            }
+            (_, b'#') => {
+                self.tok(i, i + 1, mk::COMMENT_MARK);
+                match id {
+                    VALUE => self.set(COMMENT),
+                    PREREQ => self.set(RULE_COMMENT),
+                    _ => self.push(COMMENT),
+                }
+                Ok(i + 1)
+            }
+            (_, b'%') => {
+                self.tok(i, i + 1, mk::PERCENT);
+                Ok(i + 1)
+            }
+            (_, b'*') if id == VPATH || id == CALL_WILD => {
+                self.tok(i, i + 1, mk::WILDCARD);
+                Ok(i + 1)
+            }
+            (COND | R_IF, _) => {
+                match c {
+                    b'\'' => {
+                        self.tok(i, i + 1, mk::STR_BEGIN);
+                        self.open(STR_S);
+                    }
+                    b'"' => {
+                        self.tok(i, i + 1, mk::STR_BEGIN);
+                        self.open(STR_D);
+                    }
+                    b'(' => {
+                        self.tok(i, i + 1, mk::GROUP_BEGIN);
+                        self.open(GROUP);
+                    }
+                    _ => self.tok(i, i + 1, mk::STRAY_PAREN),
+                }
+                Ok(i + 1)
+            }
+            (STR_S, b'\'') | (STR_D, b'"') => {
+                self.tok(i, i + 1, mk::STR_END);
+                self.pop();
+                Ok(i + 1)
+            }
+            (GROUP, b')') => {
+                self.tok(i, i + 1, mk::GROUP_END);
+                self.pop();
+                Ok(i + 1)
+            }
+            (GROUP | FCALL | CALL_PAT | CALL_WILD | CALL_INFO, b',') => {
+                self.tok(i, i + 1, mk::SEPARATOR);
+                Ok(i + 1)
+            }
+            (VPATH, _) => {
+                // `\s`: the directories
+                self.fill(i);
+                self.put(i, i + 1, self.top().base);
+                self.set(VPATH_DIRS);
+                Ok(i + 1)
+            }
+            (ELSE, _) => {
+                if let Some((s, e)) = self.ifdef_to(i, i) {
+                    self.tok(s, e, mk::CONDITIONAL);
+                    self.push(COND);
+                    return Ok(e);
+                }
+                Ok(i + 1)
+            }
+            (TARGET, b':') => Ok(self.rule_colon(i)),
+            (PREREQ, b';') => {
+                // `(?=\s*;)`: the blanks before it the rule's, then the recipe
+                let q = self.ws_back(self.emitted, i);
+                self.fill(q);
+                let below = self.below_base();
+                self.put(q, i, below);
+                self.put(i, i + 1, mk::TERMINATOR);
+                self.set(INLINE);
+                Ok(i + 1)
+            }
+            (FCALL | CALL_PAT | CALL_WILD | CALL_INFO | SUBST_P, b')') | (SUBST_B, b'}') => {
+                self.tok(i, i + 1, mk::BLOCK_END);
+                self.pop();
+                Ok(i + 1)
+            }
+            (FCALL | CALL_PAT | CALL_WILD | CALL_INFO, b'(') => {
+                self.fill(i);
+                self.open(BAL);
+                Ok(i + 1)
+            }
+            (FCALL | CALL_PAT | CALL_WILD, _) => {
+                // a quote: `['"](?=\s*,)` passed, else a string
+                if self.at(self.ws_end(i + 1)) == b',' {
+                    return Ok(i + 1);
+                }
+                self.tok(i, i + 1, mk::STR_BEGIN);
+                self.open(if c == b'\'' { STR_S } else { STR_D });
+                Ok(i + 1)
+            }
+            (CALL, _) => {
+                // `(?=\))` or `,`: the name ends, the arguments follow
+                self.fill(i);
+                if c == b',' {
+                    self.set(FCALL);
+                    self.put(i, i + 1, mk::SEPARATOR);
+                    return Ok(i + 1);
+                }
+                self.set(FCALL);
+                Ok(i)
+            }
+            (BAL, _) => {
+                self.fill(i + 1);
+                self.pop();
+                Ok(i + 1)
+            }
+            (SUBST_P | SUBST_B, b':') => {
+                self.tok(i, i + 1, mk::SUBST_MARK);
+                Ok(i + 1)
+            }
+            (SUBST_P | SUBST_B, _) => {
+                self.tok(i, i + 1, mk::ASSIGN_MARK);
+                Ok(i + 1)
+            }
+            (EXPORT, _) => {
+                // `(\?|\+|::?)?=`: the value
+                let s = self.op_start::<false>(self.emitted, i);
+                self.tok(s, i + 1, mk::ASSIGN);
+                self.pop();
+                Ok(self.value(i + 1, false))
+            }
+            (VARIABLE, _) => Ok(self.assign(i)),
+            (EMBED_SQ | EMBED_DQ | EMBED_BT, _) => {
+                self.tok(i, i + 1, mk::INTERP_END);
+                self.pop();
+                Ok(i + 1)
+            }
+            _ => Ok(i + 1),
+        }
+    }
+
+    /// A frame at the line's end.
+    fn eol(&mut self, id: u8) -> Step {
+        self.fill(self.n);
+        match id {
+            COND | R_IF | INCLUDE | ELSE | ENDIF | EXPORT | VALUE => {
+                self.pop();
+                Ok(self.n)
+            }
+            PREREQ => {
+                self.set(JUNCTION);
+                Err(())
+            }
+            VPATH => {
+                // `\s` takes the line's `\n`, and the directories end with it
+                self.pop();
+                Ok(self.n)
+            }
+            _ => Err(()),
+        }
+    }
+
+    /// `main`'s patterns from `p`, the leftmost, ties to the grammar's first: a comment, the
+    /// definitions (`override`, `define`, `export`, an assignment), a rule, a substitution, the
+    /// directives. The assignment and the rule are found first, the commonest lines; the others
+    /// only where they'd start no later.
+    fn classify(&mut self, p: usize) -> Step {
+        const HASH: u8 = 0;
+        const OVERRIDE_KW: u8 = 1;
+        const DEFINE_KW: u8 = 2;
+        const EXPORT_KW: u8 = 3;
+        const VAR: u8 = 4;
+        const RULE: u8 = 5;
+        const SUBST: u8 = 6;
+        const VPATH_KW: u8 = 7;
+        const INCLUDE_KW: u8 = 9;
+        const IFDEF: u8 = 10;
+        const ELSE_KW: u8 = 11;
+        const ENDIF_KW: u8 = 12;
+        const ENDEF_KW: u8 = 13;
+        let n = self.n;
+        if p >= n {
+            return Err(());
+        }
+        let i = self.ws_end(p);
+        if p == 0 && self.at(i) == b'#' {
+            self.tok(i, i + 1, mk::COMMENT_MARK);
+            self.push(COMMENT);
+            return Ok(i + 1);
+        }
+        let var = self.var_ahead(p);
+        // a rule can't win over an assignment at the start
+        let rule = if var == Some(p) {
+            None
+        } else {
+            self.rule_ahead(p)
+        };
+        let mut win = (usize::MAX, u8::MAX);
+        let take = |s: Option<usize>, rank: u8, win: &mut (usize, u8)| {
+            if let Some(s) = s
+                && (s, rank) < *win
+            {
+                *win = (s, rank);
+            }
+        };
+        take(var, VAR, &mut win);
+        take(rule, RULE, &mut win);
+        // the nearest substitution bounds the searches of those ranked before it
+        take(self.first_subst(p, win.0), SUBST, &mut win);
+        take(self.find_to(p, win.0, b'#'), HASH, &mut win);
+        let ov = self.word_ws(p, win.0, b"override");
+        take(ov.map(|w| w.0), OVERRIDE_KW, &mut win);
+        let df = self.word_ws(p, win.0, b"define");
+        take(df.map(|w| w.0), DEFINE_KW, &mut win);
+        let export = if p == 0 {
+            self.bol_word(b"export")
+        } else {
+            None
+        };
+        take(export.map(|_| 0), EXPORT_KW, &mut win);
+        let at0 = p == 0 && win.0 > 0;
+        let vp = if at0 { self.vpath_at(i) } else { None };
+        take(vp.map(|_| 0), VPATH_KW, &mut win);
+        let inc = if at0 { self.include_at(i) } else { None };
+        take(inc.map(|_| 0), INCLUDE_KW, &mut win);
+        let ifd = if win.0 > p {
+            self.ifdef_to(p, win.0 - 1)
+        } else {
+            None
+        };
+        take(ifd.map(|w| w.0), IFDEF, &mut win);
+        let els = if at0 { self.bol_word(b"else") } else { None };
+        take(els.map(|_| 0), ELSE_KW, &mut win);
+        let endif = if at0 { self.bol_word(b"endif") } else { None };
+        take(endif.map(|_| 0), ENDIF_KW, &mut win);
+        let endef = at0 && self.b[i..].starts_with(b"endef");
+        take(endef.then_some(0), ENDEF_KW, &mut win);
+        let (s, rank) = win;
+        match rank {
+            HASH => {
+                self.tok(s, s + 1, mk::COMMENT_MARK);
+                self.push(COMMENT);
+                Ok(s + 1)
+            }
+            OVERRIDE_KW => Ok(self.keyword(s, ov.unwrap().1, 8, OVERRIDE)),
+            DEFINE_KW => Ok(self.keyword(s, df.unwrap().1, 6, DEFINE)),
+            EXPORT_KW => {
+                let (k, e) = export.unwrap();
+                self.tok(k, e, mk::CONTROL);
+                self.push(EXPORT);
+                Ok(e)
+            }
+            VAR => {
+                self.fill(s);
+                self.push(VARIABLE);
+                Ok(s)
+            }
+            RULE => {
+                self.fill(s);
+                self.push(TARGET);
+                Ok(s)
+            }
+            SUBST => {
+                self.fill(s);
+                Ok(self.subst(s).unwrap_or(s + 1))
+            }
+            VPATH_KW => Ok(self.vpath(i, vp.unwrap())),
+            INCLUDE_KW => {
+                let (k, e) = inc.unwrap();
+                Ok(self.include(k, e))
+            }
+            IFDEF => {
+                let (k, e) = ifd.unwrap();
+                self.tok(k, e, mk::CONDITIONAL);
+                self.push(COND);
+                Ok(e)
+            }
+            ELSE_KW | ENDIF_KW => {
+                let (k, e) = if rank == ELSE_KW { els } else { endif }.unwrap();
+                self.tok(k, e, mk::CONDITIONAL);
+                self.push(if rank == ELSE_KW { ELSE } else { ENDIF });
+                Ok(e)
+            }
+            ENDEF_KW => {
+                self.tok(i, i + 5, mk::STRAY_ENDEF);
+                Ok(i + 5)
+            }
+            _ => {
+                self.fill(n);
+                Err(())
+            }
+        }
+    }
+
+    /// The first `x` from `from` to `to` (inclusive).
+    fn find_to(&self, from: usize, to: usize, x: u8) -> Option<usize> {
+        let end = to.saturating_add(1).min(self.n);
+        let i = find_in(self.b, from.min(end), end, [x]);
+        (i < end).then_some(i)
+    }
+
+    /// `\s*(WORD)\b` from `p`, starting no later than `best` (a tie the word's): where the
+    /// match and the word start.
+    fn word_ws(&self, p: usize, best: usize, word: &[u8]) -> Option<(usize, usize)> {
+        let to = if best >= self.n {
+            self.n
+        } else {
+            self.ws_end(best)
+        };
+        let mut at = p;
+        while let Some(k) = self.find_str_to(at, to, word) {
+            let s = self.ws_back(p, k);
+            if s > best {
+                return None;
+            }
+            if !self.word_at(k + word.len()) {
+                return Some((s, k));
+            }
+            at = k + 1;
+        }
+        None
+    }
+
+    /// `\s*(KW)\b` matched `s..k+len`: the keyword, its frame pushed.
+    fn keyword(&mut self, s: usize, k: usize, len: usize, id: u8) -> usize {
+        self.fill(s);
+        let base = self.top().base;
+        self.put(s, k, base);
+        self.put(k, k + len, mk::CONTROL);
+        if id == OVERRIDE && self.top().id != MAIN {
+            self.set(id);
+        } else {
+            self.open(id);
+        }
+        k + len
+    }
+
+    /// The definitions after a target's `:` (`TVAR`) or `override` (`define_word`): the leftmost
+    /// of `define` (as a word, after `override`), `override`, `define`, an assignment, a
+    /// substitution (not after `override`), the line's continuation, its end.
+    fn defs(&mut self, p: usize, define_word: bool) -> Step {
+        let n = self.n;
+        let var = self.var_ahead(p);
+        let mut win = (usize::MAX, u8::MAX);
+        let take = |s: Option<usize>, rank: u8, win: &mut (usize, u8)| {
+            if let Some(s) = s
+                && (s, rank) < *win
+            {
+                *win = (s, rank);
+            }
+        };
+        take(var, 4, &mut win);
+        if !define_word {
+            take(self.first_subst(p, win.0), 5, &mut win);
+        }
+        // `override` first: the nearest, it bounds the search for `define` before it
+        let ov = self.word_ws(p, win.0, b"override");
+        take(ov.map(|w| w.0), 1, &mut win);
+        let mut dw = None;
+        if define_word {
+            let mut at = p;
+            while let Some(k) = self.find_str_to(at, win.0, b"define") {
+                if !self.word_before(k) && !self.word_at(k + 6) {
+                    dw = Some(k);
+                    break;
+                }
+                at = k + 1;
+            }
+        }
+        take(dw, 0, &mut win);
+        let df = self.word_ws(p, win.0, b"define");
+        take(df.map(|w| w.0), 2, &mut win);
+        if self.cont != usize::MAX && self.cont >= p {
+            take(Some(self.cont), 6, &mut win);
+        }
+        let (s, rank) = win;
+        match rank {
+            0 => Ok(self.keyword(s, s, 6, DEFINE)),
+            1 => Ok(self.keyword(s, ov.unwrap().1, 8, OVERRIDE)),
+            2 => Ok(self.keyword(s, df.unwrap().1, 6, DEFINE)),
+            4 => {
+                self.fill(s);
+                self.push(VARIABLE);
+                Ok(s)
+            }
+            5 => {
+                self.fill(s);
+                Ok(self.subst(s).unwrap_or(s + 1))
+            }
+            6 => self.continued(s),
+            _ => {
+                self.fill(n);
+                self.pop();
+                Ok(n)
+            }
+        }
+    }
+
+    /// The first `$` from `p` to `to` (inclusive) a substitution starts at.
+    fn first_subst(&self, p: usize, to: usize) -> Option<usize> {
+        let mut at = p;
+        while let Some(i) = self.find_to(at, to, b'$') {
+            if self.subst_end(i).is_some() {
+                return Some(i);
+            }
+            at = i + 1;
+        }
+        None
+    }
+
+    /// A rule's `:` at `c`: a target-specific variable's (an `=` after it, and it isn't `:=`), or
+    /// the rule's, its prerequisites after it.
+    fn rule_colon(&mut self, c: usize) -> usize {
+        // `(?= *::?)`: the spaces before it the rule's
+        let mut q = c;
+        while q > self.emitted && self.b[q - 1] == b' ' {
+            q -= 1;
+        }
+        self.fill(q);
+        let below = self.below_base();
+        self.put(q, c, below);
+        let e = if self.at(c + 1) == b':' { c + 2 } else { c + 1 };
+        let last_eq = self.b.iter().rposition(|&x| x == b'=');
+        if self.at(c + 1) != b'=' && last_eq.is_some_and(|l| l > c + 1) {
+            self.put(c, e, mk::ASSIGN);
+            self.set(TVAR);
+            return e;
+        }
+        self.put(c, e, mk::ASSIGN);
+        let end = self.ws_end(e);
+        self.put(e, end, below);
+        self.set(PREREQ);
+        end
+    }
+
+    /// Where `(\?|\+|::?)?=` (with `!` when `BANG`) ending at the `=` at `f` starts, not before
+    /// `pos`.
+    fn op_start<const BANG: bool>(&self, pos: usize, f: usize) -> usize {
+        let b = self.b;
+        if f >= pos + 2 && b[f - 2] == b':' && b[f - 1] == b':' {
+            f - 2
+        } else if f > pos && (matches!(b[f - 1], b'?' | b'+' | b':') || (BANG && b[f - 1] == b'!'))
+        {
+            f - 1
+        } else {
+            f
+        }
+    }
+
+    /// A variable's `=` at `f`: its operator, then the value (or `!=`'s shell).
+    fn assign(&mut self, f: usize) -> usize {
+        let s = self.op_start::<true>(self.emitted, f);
+        let q = self.ws_back(self.emitted, s);
+        self.fill(q);
+        self.pop();
+        let base = self.top().base;
+        self.put(q, s, base);
+        self.put(s, f + 1, mk::ASSIGN);
+        if self.b[s] == b'!' {
+            self.open(SH_ASSIGN);
+            return f + 1;
+        }
+        self.value(f + 1, true)
+    }
+
+    /// A value from `p`, past its leading blanks: `bash -c '…'` (where `shell`), else text.
+    fn value(&mut self, p: usize, shell: bool) -> usize {
+        let e = self.ws_end(p);
+        self.put(p, e, PLAIN);
+        if shell {
+            self.push(MAYBE_SHELL);
+        } else {
+            self.push(VALUE);
+        }
+        e
+    }
+
+    /// `((?:bash|sh|zsh)\s+-c\s+)(['"`])` at `p`: the shell's word unquoted, the quote an
+    /// interpolation's, the embedded script's frames.
+    fn shell_c(&mut self, p: usize) -> Option<usize> {
+        let b = self.b;
+        let r = &b[p.min(self.n)..];
+        let w = if r.starts_with(b"bash") {
+            4
+        } else if r.starts_with(b"zsh") {
+            3
+        } else if r.starts_with(b"sh") {
+            2
+        } else {
+            return None;
+        };
+        let k = self.ws_end(p + w);
+        if k == p + w || !b[k.min(self.n)..].starts_with(b"-c") {
+            return None;
+        }
+        let q = self.ws_end(k + 2);
+        if q == k + 2 || q >= self.n {
+            return None;
+        }
+        let (embed, region) = match b[q] {
+            b'\'' => (EMBED_SQ, SH_SQ),
+            b'"' => (EMBED_DQ, SH_DQ),
+            b'`' => (EMBED_BT, SH_BT),
+            _ => return None,
+        };
+        self.put(p, q, mk::UNQUOTED);
+        self.put(q, q + 1, mk::INTERP_BEGIN);
+        self.open(embed);
+        self.open(region);
+        Some(q + 1)
+    }
+
+    /// A `define` line from `p`: the name, then an operator ending the line (`=`, `:=` and the
+    /// like), then the body.
+    fn define(&mut self, p: usize) -> Step {
+        let n = self.n;
+        // the line's last character but blanks, when it is an `=`
+        let t = (0..n).rev().find(|&i| !ws(self.b[i]));
+        let op = t
+            .filter(|&t| t >= p && self.b[t] == b'=')
+            .map(|t| (self.op_start::<true>(p, t), t + 1));
+        let to = op.map_or(n, |(s, _)| s);
+        let mut at = p;
+        while let Some(i) = self.find(at, b'$').filter(|&i| i < to) {
+            if let Some(e) = self.subst(i) {
+                if self.top().id != DEFINE {
+                    return Ok(e);
+                }
+                at = e;
+            } else {
+                at = i + 1;
+            }
+        }
+        self.fill(to);
+        if let Some((s, e)) = op {
+            self.pop();
+            self.put(s, e, mk::ASSIGN);
+            self.fill(n);
+            self.push(DEFINE_VALUE);
+            return Err(());
+        }
+        self.set(DEFINE_VALUE);
+        Err(())
+    }
+
+    // ---- substitutions
+
+    /// The substitution at the `$` at `i`, as [`Scan::subst`] would take it: where it ends.
+    fn subst_end(&self, i: usize) -> Option<usize> {
+        let c = self.at(i + 1);
+        let (o, after) = if c == b'$' {
+            (i + 2, self.at(i + 2))
+        } else {
+            (i + 1, c)
+        };
+        if after == b'(' || after == b'{' {
+            return Some(o + 1);
+        }
+        if matches!(after, b'@' | b'%' | b'<' | b'?' | b'^' | b'+' | b'|' | b'*') {
+            return Some(o + 1);
+        }
+        if c == b'$' {
+            return Some(i + 2);
+        }
+        if i + 1 < self.n && self.b[i + 1].is_ascii_alphabetic() {
+            return Some(i + 2);
+        }
+        if i + 1 < self.n && self.b[i + 1] >= 0x80 {
+            return self
+                .char_at(i + 1)
+                .filter(|c| c.is_alphabetic())
+                .map(|c| i + 1 + c.len_utf8());
+        }
+        None
+    }
+
+    /// `variable-substitutions` at the `$` at `i`: a function's call, `$(…)`, `${…}`, an
+    /// automatic variable, `$$`, `$x`; painted, its frame pushed; where it ends.
+    fn subst(&mut self, i: usize) -> Option<usize> {
+        let c = self.at(i + 1);
+        let (o, after) = if c == b'$' {
+            (i + 2, self.at(i + 2))
+        } else {
+            (i + 1, c)
+        };
+        if after == b'(' {
+            // `(\$\$?\()(NAME)\s`: the name's word read once, then looked up
+            let name = o + 1;
+            let mut e = name;
+            while e < self.n && (self.b[e].is_ascii_lowercase() || self.b[e] == b'-') {
+                e += 1;
+            }
+            let word = &self.b[name.min(self.n)..e.max(name.min(self.n))];
+            if let Some(&(_, id)) = (e > name && ws(self.at(e)))
+                .then(|| CALLS.iter().find(|c| c.0 == word))
+                .flatten()
+            {
+                if self.depth >= SYNTECT_DEPTH {
+                    return None;
+                }
+                self.fill(i);
+                self.put(i, name, mk::BLOCK_BEGIN);
+                self.put(
+                    name,
+                    e,
+                    if id == CALL {
+                        mk::CALL_LANG
+                    } else {
+                        mk::BUILTIN
+                    },
+                );
+                let base = self.top().base;
+                self.put(e, e + 1, base);
+                self.push(id);
+                return Some((e + 1).min(self.n));
+            }
+        }
+        // `\$\$?\(`, `\$\$?{`, `\$\$?[@%<?^+|*]`, then `\$\$`, `(\$)[[:alpha:]]`
+        let e = self.subst_end(i)?;
+        self.fill(i);
+        match after {
+            b'(' | b'{' if e == o + 1 => {
+                if self.depth >= SYNTECT_DEPTH {
+                    return None;
+                }
+                self.put(i, e, mk::BLOCK_BEGIN);
+                self.push(if after == b'(' { SUBST_P } else { SUBST_B });
+            }
+            b'@' | b'%' | b'<' | b'?' | b'^' | b'+' | b'|' | b'*' if e == o + 1 => {
+                self.put(i, e, mk::AUTOMATIC);
+            }
+            _ if c == b'$' => self.put(i, e, mk::ESCAPE),
+            _ => {
+                self.put(i, i + 1, mk::SINGLE_CHAR);
+                self.put(i + 1, e, mk::VAR_PARAM);
+            }
+        }
+        Some(e)
     }
 
     // ---- shell regions
@@ -1421,9 +2051,9 @@ impl Scan<'_, '_, '_> {
     /// the region kept; the region popped where it ends on the line, else kept with bash's state
     /// (the module's doc).
     #[inline(never)]
-    fn shell(&mut self, p: usize, ctx: u8) -> Result<usize, usize> {
+    fn shell(&mut self, p: usize, id: u8) -> Step {
         let b = self.b;
-        let n = b.len();
+        let n = self.n;
         let d = self.depth;
         let mut st = if self.sh.0 == d {
             self.sh.0 = 0;
@@ -1433,12 +2063,12 @@ impl Scan<'_, '_, '_> {
         };
         if p >= n {
             // nothing of the region on the line: a recipe's and `!=`'s end, the others go on
-            if matches!(ctx, SH_RECIPE | SH_ASSIGN) {
-                self.pop_frame();
+            if matches!(id, SH_RECIPE | SH_ASSIGN) {
+                self.pop();
                 return Ok(n);
             }
             self.keep_shell(d, st);
-            return Err(usize::MAX);
+            return Err(());
         }
         // the make tokens, and where the region's text on the line ends; the tokens' text that
         // no make scope takes is bash's at the token's byte, so the region's kind is out of it
@@ -1448,7 +2078,7 @@ impl Scan<'_, '_, '_> {
             base: PLAIN,
             ..frame
         });
-        let bit = 1u8 << (ctx - SH_RECIPE);
+        let bit = 1u8 << (id - SH_RECIPE);
         let mut cuts = Cuts::new();
         let mark = self.out.0.len();
         let mut q = p;
@@ -1470,19 +2100,25 @@ impl Scan<'_, '_, '_> {
                     };
                     continue;
                 }
-                b')' if ctx == SH_ASSIGN => break (t, Stop::Past(t)),
+                b')' if id == SH_ASSIGN => break (t, Stop::Past(t)),
                 b')' => break (t, Stop::At(t)),
-                b'\'' | b'"' | b'`' if ctx != SH_CALL => break (t, Stop::At(t)),
+                b'\'' | b'"' | b'`' if id != SH_CALL => break (t, Stop::At(t)),
                 b'$' => {
                     self.emitted = t;
-                    self.substitution_at(t)
+                    self.subst(t)
                 }
                 c => {
                     self.emitted = t;
                     match c {
-                        b'\'' => self.push(t, t + 1, mk::STR_BEGIN, &[STRING_SINGLE]),
-                        b'"' => self.push(t, t + 1, mk::STR_BEGIN, &[STRING_DOUBLE]),
-                        _ => self.push(t, t + 1, PLAIN, &[PAREN_BALANCER]),
+                        b'\'' => {
+                            self.put(t, t + 1, mk::STR_BEGIN);
+                            self.open(STR_S).then_some(t + 1)
+                        }
+                        b'"' => {
+                            self.put(t, t + 1, mk::STR_BEGIN);
+                            self.open(STR_D).then_some(t + 1)
+                        }
+                        _ => self.open(BAL).then_some(t + 1),
                     }
                 }
             };
@@ -1559,7 +2195,7 @@ impl Scan<'_, '_, '_> {
         // `#` were the comment's text (bat's comment from the prototype has none of make's
         // patterns)
         let mut comment = usize::MAX;
-        if ctx == SH_RECIPE
+        if id == SH_RECIPE
             && let Some(at) = self.out.0[own_at..own_end]
                 .iter()
                 .find(|sp| sp.kind == super::k::COMMENT_BEGIN)
@@ -1588,12 +2224,12 @@ impl Scan<'_, '_, '_> {
         self.emitted = end;
         match stop {
             Stop::At(t) => {
-                self.pop_frame();
+                self.pop();
                 Ok(t)
             }
             Stop::Past(t) => {
-                let below = self.at_frame(d - 2).base;
-                self.pop_frame();
+                let below = self.below_base();
+                self.pop();
                 self.put(t, t + 1, below);
                 Ok(t + 1)
             }
@@ -1601,12 +2237,12 @@ impl Scan<'_, '_, '_> {
                 if self.sh.0 == 0 {
                     self.sh = (d, st);
                 }
-                Err(usize::MAX)
+                Err(())
             }
             Stop::Eol => {
                 // a recipe goes on past a `\` ending it, as bash's `\\\n` keeps bat's shell;
                 // `!=`'s ends with its line; `$(shell …)` and an embed go on
-                let goes_on = match ctx {
+                let goes_on = match id {
                     SH_RECIPE => {
                         comment == usize::MAX
                             && (cuts.n == 0 || cuts.get(cuts.n - 1).1 < n)
@@ -1617,9 +2253,9 @@ impl Scan<'_, '_, '_> {
                 };
                 if goes_on {
                     self.keep_shell(d, st);
-                    Err(usize::MAX)
+                    Err(())
                 } else {
-                    self.pop_frame();
+                    self.pop();
                     Ok(n)
                 }
             }
@@ -1639,7 +2275,6 @@ impl Scan<'_, '_, '_> {
     /// (`region`), and each token's spans (at `own.0..own.1`), its gaps in bash's kind at its
     /// byte, a variable inside an option twinned; past `comment`, the tokens are the comment's
     /// text.
-    #[allow(clippy::too_many_arguments)]
     fn lay(
         &mut self,
         p: usize,
@@ -1798,11 +2433,11 @@ impl Scan<'_, '_, '_> {
         let held = state.held();
         let frames = usize::from(state.flags() as u8).min(held);
         for i in 0..frames {
-            let ctx = state.level(i);
-            if usize::from(ctx) >= CONTEXTS {
+            let id = state.level(i);
+            if usize::from(id) >= FRAMES {
                 break;
             }
-            self.push_frame(ctx);
+            self.push(id);
         }
         if held > frames {
             // the topmost shell region's
@@ -1815,7 +2450,7 @@ impl Scan<'_, '_, '_> {
             }
             if let Some(d) = (1..self.depth)
                 .rev()
-                .find(|&d| self.at_frame(d).ctx >= SH_RECIPE)
+                .find(|&d| self.frame(d).id >= SH_RECIPE)
             {
                 self.sh = (d + 1, st);
             }
@@ -1835,10 +2470,10 @@ impl Scan<'_, '_, '_> {
             ..State::default()
         };
         for d in from..self.depth {
-            state.set_level(d - from, self.at_frame(d).ctx);
+            state.set_level(d - from, self.frame(d).id);
         }
         let (d, st) = &self.sh;
-        if *d != 0 && *d <= self.depth && self.at_frame(*d - 1).ctx >= SH_RECIPE {
+        if *d != 0 && *d <= self.depth && self.frame(*d - 1).id >= SH_RECIPE {
             let held = st.held();
             if frames + held <= HELD {
                 for i in 0..held {
@@ -1851,169 +2486,6 @@ impl Scan<'_, '_, '_> {
             }
         }
         state
-    }
-}
-
-impl Scan<'_, '_, '_> {
-    /// Where a make matcher's leftmost match from `p` starts and ends, kept for the line; the
-    /// match itself stays in the memo, for the pattern that wins.
-    fn search(&mut self, id: u8, p: usize) -> Option<(u32, u32)> {
-        let mk = &mut self.mk;
-        let i = usize::from(id);
-        // a byte the line lacks rules a match out from anywhere on it
-        let need = REQUIRE[i];
-        if need != 0 && mk.present & BIT[usize::from(need)] == 0 {
-            return None;
-        }
-        if mk.valid[i >> 6] >> (i & 63) & 1 == 1 {
-            // SAFETY: a span whose bit is set was written
-            match unsafe { mk.span[i].assume_init() } {
-                (NO_MATCH, _) => return None,
-                (s, e) if s as usize >= p => return Some((s, e)),
-                _ => {}
-            }
-        }
-        mk.valid[i >> 6] |= 1 << (i & 63);
-        let (find, arg) = FIND[i];
-        match find(&mk.l, p, arg) {
-            Some(m) => {
-                mk.span[i] = MaybeUninit::new(m.c[0]);
-                mk.found[i] = MaybeUninit::new(m);
-                Some(m.c[0])
-            }
-            None => {
-                mk.span[i] = MaybeUninit::new((NO_MATCH, 0));
-                None
-            }
-        }
-    }
-
-    /// The match a matcher's span stands for.
-    fn found(&self, id: u8) -> &M {
-        let mk = &self.mk;
-        // SAFETY: only read for a matcher whose span was a match, which wrote it
-        unsafe { mk.found[usize::from(id)].assume_init_ref() }
-    }
-
-    /// Weigh `pat`'s match from `p` against the best so far: true when it is the one, at `p`.
-    fn cand(&mut self, p: usize, b: &mut Best, pat: &'static Pat) -> bool {
-        let Some(se) = self.search(pat.m, p) else {
-            return false;
-        };
-        self.weigh(p, b, pat, se)
-    }
-
-    /// `variable-substitutions`' match from `p`, as one of its patterns.
-    fn cand_substitution(&mut self, p: usize, b: &mut Best) -> bool {
-        let Some(se) = self.search(X_SUBST, p) else {
-            return false;
-        };
-        let pat = &SUBSTITUTIONS[self.found(X_SUBST).c[5].0 as usize];
-        self.weigh(p, b, pat, se)
-    }
-
-    /// Weigh `pat`'s match `s..e` against the best so far: true when it is the one, at `p`.
-    fn weigh(&mut self, p: usize, b: &mut Best, pat: &'static Pat, (s, e): (u32, u32)) -> bool {
-        // a match that does nothing is passed over
-        if matches!(pat.op, Op::None) && s == e {
-            return false;
-        }
-        let (s, e) = (s as usize, e as usize);
-        if s < b.min || (s == b.min && b.would_loop) {
-            b.min = s;
-            b.would_loop = self.guard && e <= p && matches!(pat.op, Op::Pop);
-            b.pat = Some(pat);
-            return s == p && !b.would_loop;
-        }
-        false
-    }
-
-    fn walk(&mut self, its: &'static [It], p: usize, b: &mut Best) -> bool {
-        for it in its {
-            let found = match it {
-                I(inner) => self.walk(inner, p, b),
-                P(pat) => self.cand(p, b, pat),
-                It::V => self.cand_substitution(p, b),
-            };
-            if found {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Do the best match: `Ok` with where it ends, or `Err` with the next place to match.
-    fn take(&mut self, p: usize, b: Best) -> Result<usize, usize> {
-        let Some(pat) = b.pat else {
-            return Err(usize::MAX);
-        };
-        if b.would_loop {
-            return Err(self.next_char(p));
-        }
-        let m = *self.found(pat.m);
-        let (s, e) = (m.s(), m.e());
-        if s > p {
-            // the loop guard is about where the step started
-            self.guard = false;
-        }
-        let mut caps = [(0, 0, PLAIN); 2];
-        let mut n = 0;
-        for &(group, kind) in pat.caps {
-            let (cs, ce) = m.c[usize::from(group)];
-            if cs != u32::MAX && cs < ce {
-                caps[n] = (cs as usize, ce as usize, kind);
-                n += 1;
-            }
-        }
-        let op = if pat.quote {
-            let q = self.at(m.c[2].0 as usize);
-            Op::Push(
-                EMBEDDED[match q {
-                    b'\'' => 0,
-                    b'"' => 1,
-                    _ => 2,
-                }],
-            )
-        } else {
-            pat.op
-        };
-        self.exec(s, e, pat.scope, &caps[..n], op).ok_or(usize::MAX)
-    }
-
-    /// A step in a make context: syntect's leftmost match of its patterns.
-    #[inline(never)]
-    fn make_step(&mut self, p: usize, ctx: u8) -> Result<usize, usize> {
-        // none of `main`'s patterns matches in a line's `\n` alone: those at its start need
-        // `^`, the others text
-        if ctx == MAIN && p >= self.b.len() {
-            return Err(usize::MAX);
-        }
-        let mut b = Best::new();
-        let flat = &FLAT[usize::from(ctx)];
-        for &pat in &flat.pats[..flat.n] {
-            let found = if pat.m == X_SUBST {
-                self.cand_substitution(p, &mut b)
-            } else {
-                self.cand(p, &mut b, pat)
-            };
-            if found {
-                break;
-            }
-        }
-        self.take(p, b)
-    }
-
-    /// `variable-substitutions` at `p`.
-    fn substitution_at(&mut self, p: usize) -> Option<usize> {
-        if self.at(p) != b'$' || p >= self.b.len() {
-            return None;
-        }
-        let mut b = Best::new();
-        self.walk(VARIABLE_SUBSTITUTIONS, p, &mut b);
-        if b.pat.is_some() && b.min == p && !b.would_loop {
-            return self.take(p, b).ok();
-        }
-        None
     }
 }
 
