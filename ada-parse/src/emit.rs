@@ -64,17 +64,6 @@ pub(crate) trait Sink: Copy {
     fn merge_call(&mut self, out: &mut &mut Out, s: usize, e: usize, kind: u16) {
         self.merge(out, s, e, kind);
     }
-    /// [`Out::fill`] on the sink: the text from `*at` to `p` is `text` (plain where it is 0), and
-    /// the lexemes end at `p`; a `p` at or before `*at` leaves both (X-075, Lua's).
-    #[inline(always)]
-    fn fill(&mut self, out: &mut &mut Out, at: &mut usize, p: usize, text: u16) {
-        if p > *at {
-            if text != 0 {
-                self.merge(out, *at, p, text);
-            }
-            *at = p;
-        }
-    }
     /// Opened for writing at `out`'s end, room made there for `n` more spans.
     fn open(&mut self, out: &mut Out, n: usize);
     /// Closed for another scanner to push spans to `out`.

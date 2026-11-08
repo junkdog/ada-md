@@ -1,137 +1,24 @@
-//! Lua by a scanner of ada's own (ADR-40, speed first): bat's `Lua` grammar compiled by hand,
-//! as Go's and Python's were. Each of its contexts that can be open is an arm of one `match` on
-//! the top of a stack, trying its patterns in the grammar's order at the place the scan has
-//! reached, which is syntect's leftmost match; where no pattern can start, the scan steps on.
-//!
-//! The grammar (83 contexts and 155 patterns as syntect holds it, no embeds) has a
-//! **prototype**, the two comments, that every context but the strings and the comments tries
-//! first, so a `--` starts a comment wherever the scan is, even in a `\z` escape's spaces
-//! inside a string. The contexts whose only pattern besides it is `''` (`expression`, the
-//! meta pops after a call, a function and a table's value) are applied in place where no `--`
-//! follows ([`Scan::empty_matches`]), which is what syntect's next turns do there. Its expressions are a push of
-//! `expression` that a lookahead makes and that sets `expression-end` over `expression-begin`,
-//! each popping at the first byte it doesn't take (`(?=\S)`), so **syntect's guard against a
-//! loop** is followed: a pop that matches nothing right after a push that matched nothing
-//! there, at the depth that push left, is passed over for the context's later patterns, else
-//! the scan steps a character (a `,` in parentheses, which the grammar doesn't take, is
-//! stepped over this way). Long brackets (`[==[`, `--[==[`) end at the same number of `=`,
-//! kept with the state. A kind is a leaf, bat's scopes for a token (its pattern's and its
-//! captures'); of the context's meta scopes only those a theme can see are kept: a string's, a
-//! comment's and a `\z` escape's. Names and keywords are ASCII (`[A-Za-z_][A-Za-z0-9_]*`), `\d`
-//! Unicode's decimal digits, `\s` Unicode's spaces.
-//!
-//! The stack between lines is the contexts open above the top level, a byte each in
-//! [`State`]'s 28 levels. Lua nests deeper than that (a callback in a call is six contexts, a
-//! table's value three), so a stack deeper than 28 is kept in [`RUNS`]: the runs of contexts
-//! that deep stacks repeat, a byte each.
+//! Lua on a scanner of ada's own (X-098). The floor probe's shape (`x098`'s `sol`), Lua's own lexer's
+//! (`llex.c`, LuaJIT's `lj_lex.c`): one loop over a line's bytes, a byte's action one load from a
+//! table, a name read once and looked up once, the token before in one byte ([`Scan::prev`]),
+//! and frames only for what nests: blocks, groups, brackets, tables ([`Scan::frames`], three
+//! bits a level). Long brackets and strings continued past a line's end are a mode
+//! ([`Scan::mode`]). Kinds are the compiled scanner's leaves.
 
-use crate::emit::{Push, Rules, Run, Runs, Sink};
-use crate::matcher::KEPT as HALF;
-use crate::prim::{WORD, char_len, digit, is_nd, skip_spaces, space_len, wide_char};
+use crate::emit::{Rules, Run, Runs, Sink, Spans};
+use crate::prim::{WORD, char_len, digit, find_in};
+use crate::words::{Words, text_len};
 use crate::{Out, State};
 
-// The contexts, by bat's names where they have one.
-/// `main`: `statements`.
-const MAIN: u8 = 0;
-/// `block-contents`: `do … end` and a function's body.
-const BLOCK: u8 = 1;
-/// `if-block`.
-const IF_BLOCK: u8 = 2;
-/// `repeat`'s block, until `until`.
-const REPEAT_BLOCK: u8 = 3;
-/// `repeat`'s `until`.
-const UNTIL: u8 = 4;
-/// `while`'s and `for`'s `do`.
-const DO: u8 = 5;
-/// `for`'s `=` or `in`.
-const FOR_IN: u8 = 6;
-/// A label's name, after `::`.
-const LABEL: u8 = 7;
-/// A label's closing `::`.
-const LABEL_END: u8 = 8;
-/// `goto`'s label.
-const GOTO: u8 = 9;
-/// `if-then`.
-const IF_THEN: u8 = 10;
-/// `expression`.
-const EXPRESSION: u8 = 11;
-/// `expression-list`.
-const EXPRESSION_LIST: u8 = 12;
-/// `expression-end`.
-const EXPR_END: u8 = 13;
-/// `expression-list-end`.
-const EXPR_LIST_END: u8 = 14;
-/// `expression-begin`.
-const EXPR_BEGIN: u8 = 15;
-/// `function-arguments-meta`.
-const ARGS_META: u8 = 16;
-/// `function-arguments`.
-const ARGS: u8 = 17;
-/// A call's `( … )`.
-const ARGS_GROUP: u8 = 18;
-/// `parenthesized-expression`'s `( … )`.
-const PAREN_GROUP: u8 = 19;
-/// An accessor's `[ … ]`.
-const BRACKETS: u8 = 20;
-/// `property`.
-const PROPERTY: u8 = 21;
-/// `table-constructor`'s `{ … }`.
-const MAPPING: u8 = 22;
-/// A table's `[ … ]` key.
-const KEY_BRACKETS: u8 = 23;
-/// A table's `name =` key.
-const KEY: u8 = 24;
-/// A table's value after `=` (an `immediately-pop` under its expression).
-const VALUE_META: u8 = 25;
-/// `function-meta`.
-const FUNCTION_META: u8 = 26;
-/// `function-name`.
-const FNAME: u8 = 27;
-/// `function-name-begin`.
-const FNAME_BEGIN: u8 = 28;
-/// `function-name-end`.
-const FNAME_END: u8 = 29;
-/// `function-name-property`.
-const FNAME_PROPERTY: u8 = 30;
-/// `function-parameter-list`.
-const PARAMS: u8 = 31;
-/// A function's `( … )` of parameters.
-const PARAM_GROUP: u8 = 32;
-/// A string's `\z` escape: the spaces after it.
-const ESCAPE_Z: u8 = 33;
-/// A builtin module's name, before its `.` (the modules in [`MODULES`]'s order).
-const MODULE: u8 = 34;
-/// A builtin module's member, after its `.`.
-const MEMBER: u8 = 44;
-/// The contexts from here on are text: no prototype.
-const STRING_SINGLE: u8 = 54;
-const STRING_DOUBLE: u8 = 55;
-/// `[==[ … ]==]`.
-const LONG_STRING: u8 = 56;
-const COMMENT_LINE: u8 = 57;
-/// `--[==[ … ]==]`.
-const COMMENT_BLOCK: u8 = 58;
-
 /// The leaves: a token's scopes.
-static LEAVES: [&str; 98] = [
+static LEAVES: [&str; 88] = [
     "",
-    // comments: the text, its mark; a block's text, its begin, its end; then the same in a
-    // `\z` escape's spaces in a single-quoted string, and in a double-quoted one
+    // comments: the text, its mark; a block's text, its begin, its end
     "comment.line.lua",
     "comment.line.lua punctuation.definition.comment.lua",
     "comment.block.lua",
     "comment.block.lua punctuation.definition.comment.begin.lua",
     "comment.block.lua punctuation.definition.comment.end.lua",
-    "string.quoted.single.lua constant.character.escape.whitespace.lua comment.line.lua",
-    "string.quoted.single.lua constant.character.escape.whitespace.lua comment.line.lua punctuation.definition.comment.lua",
-    "string.quoted.single.lua constant.character.escape.whitespace.lua comment.block.lua",
-    "string.quoted.single.lua constant.character.escape.whitespace.lua comment.block.lua punctuation.definition.comment.begin.lua",
-    "string.quoted.single.lua constant.character.escape.whitespace.lua comment.block.lua punctuation.definition.comment.end.lua",
-    "string.quoted.double.lua constant.character.escape.whitespace.lua comment.line.lua",
-    "string.quoted.double.lua constant.character.escape.whitespace.lua comment.line.lua punctuation.definition.comment.lua",
-    "string.quoted.double.lua constant.character.escape.whitespace.lua comment.block.lua",
-    "string.quoted.double.lua constant.character.escape.whitespace.lua comment.block.lua punctuation.definition.comment.begin.lua",
-    "string.quoted.double.lua constant.character.escape.whitespace.lua comment.block.lua punctuation.definition.comment.end.lua",
     // strings: the text, then BEGIN, END, ESCAPE, ESCAPE_HEX, ESCAPE_DEC, ESCAPE_UNICODE,
     // ESCAPE_SPACES, INVALID_ESCAPE
     "string.quoted.single.lua",
@@ -225,11 +112,8 @@ const LINE_MARK: u16 = 2;
 const BLOCK_COMMENT: u16 = 3;
 const BLOCK_BEGIN: u16 = 4;
 const BLOCK_END: u16 = 5;
-/// How far a comment's leaves in a `\z` escape of a single-quoted string are; twice that, of a
-/// double-quoted one.
-const IN_ESCAPE: u16 = 5;
-const SINGLE: u16 = 16;
-const DOUBLE: u16 = 25;
+const SINGLE: u16 = 6;
+const DOUBLE: u16 = 15;
 // a string's leaves, from its text
 const BEGIN: u16 = 1;
 const END: u16 = 2;
@@ -239,64 +123,64 @@ const ESCAPE_DEC: u16 = 5;
 const ESCAPE_UNICODE: u16 = 6;
 const ESCAPE_SPACES: u16 = 7;
 const INVALID_ESCAPE: u16 = 8;
-const MULTILINE: u16 = 34;
-const TERMINATOR: u16 = 37;
-const FUNCTION_KEYWORD: u16 = 38;
-const BREAK: u16 = 39;
-const RETURN: u16 = 40;
-const LOCAL: u16 = 41;
-const UNEXPECTED_END: u16 = 42;
-const GROUP_BEGIN: u16 = 43;
-const GROUP_END: u16 = 44;
-const COMMA: u16 = 45;
-const UNEXPECTED_KEYWORD: u16 = 46;
-const PARAMETER: u16 = 47;
-const LANGUAGE: u16 = 48;
-const ACCESSOR: u16 = 49;
-const VARIABLE: u16 = 50;
-const FUNCTION_NAME: u16 = 51;
-const PROPERTY_LEAF: u16 = 52;
-const PROPERTY_METAMETHOD: u16 = 53;
-const PROPERTY_FUNCTION_NAME: u16 = 54;
-const CONTROL: u16 = 55;
-const CONDITIONAL: u16 = 56;
-const LOOP: u16 = 57;
-const LABEL_BEGIN: u16 = 58;
-const LABEL_NAME: u16 = 59;
-const LABEL_CLOSE: u16 = 60;
-const GOTO_KEYWORD: u16 = 61;
-const LABEL_VARIABLE: u16 = 62;
-const END_KEYWORD: u16 = 63;
-const COMPARISON: u16 = 64;
-const ARITHMETIC: u16 = 65;
-const BITWISE: u16 = 66;
-const CONCATENATION: u16 = 67;
-const ASSIGNMENT: u16 = 68;
-const LOGICAL: u16 = 69;
-const LENGTH: u16 = 70;
-const BRACKETS_BEGIN: u16 = 71;
-const BRACKETS_END: u16 = 72;
-const PROPERTY_CALL: u16 = 73;
-const PROPERTY_METAPROPERTY: u16 = 74;
-const BOOLEAN: u16 = 75;
-const NULL: u16 = 76;
-const THIS: u16 = 77;
-const SUPPORT_CONSTANT: u16 = 78;
-const SUPPORT_FUNCTION: u16 = 79;
-const CALL: u16 = 80;
-const FLOAT_HEX: u16 = 81;
-const INT_HEX: u16 = 84;
-const FLOAT_DEC: u16 = 86;
-const INT_DEC: u16 = 88;
-const BRACES_BEGIN: u16 = 89;
-const BRACES_END: u16 = 90;
-const FIELD_SEPARATOR: u16 = 91;
-const KEY_METAMETHOD: u16 = 92;
-const KEY_METAPROPERTY: u16 = 93;
-const KEY_LEAF: u16 = 94;
-const KEY_VALUE: u16 = 95;
-const MEMBER_FUNCTION: u16 = 96;
-const MEMBER_CONSTANT: u16 = 97;
+const MULTILINE: u16 = 24;
+const TERMINATOR: u16 = 27;
+const FUNCTION_KEYWORD: u16 = 28;
+const BREAK: u16 = 29;
+const RETURN: u16 = 30;
+const LOCAL: u16 = 31;
+const UNEXPECTED_END: u16 = 32;
+const GROUP_BEGIN: u16 = 33;
+const GROUP_END: u16 = 34;
+const COMMA: u16 = 35;
+const UNEXPECTED_KEYWORD: u16 = 36;
+const PARAMETER: u16 = 37;
+const LANGUAGE: u16 = 38;
+const ACCESSOR: u16 = 39;
+const VARIABLE: u16 = 40;
+const FUNCTION_NAME: u16 = 41;
+const PROPERTY_LEAF: u16 = 42;
+const PROPERTY_METAMETHOD: u16 = 43;
+const PROPERTY_FUNCTION_NAME: u16 = 44;
+const CONTROL: u16 = 45;
+const CONDITIONAL: u16 = 46;
+const LOOP: u16 = 47;
+const LABEL_BEGIN: u16 = 48;
+const LABEL_NAME: u16 = 49;
+const LABEL_CLOSE: u16 = 50;
+const GOTO_KEYWORD: u16 = 51;
+const LABEL_VARIABLE: u16 = 52;
+const END_KEYWORD: u16 = 53;
+const COMPARISON: u16 = 54;
+const ARITHMETIC: u16 = 55;
+const BITWISE: u16 = 56;
+const CONCATENATION: u16 = 57;
+const ASSIGNMENT: u16 = 58;
+const LOGICAL: u16 = 59;
+const LENGTH: u16 = 60;
+const BRACKETS_BEGIN: u16 = 61;
+const BRACKETS_END: u16 = 62;
+const PROPERTY_CALL: u16 = 63;
+const PROPERTY_METAPROPERTY: u16 = 64;
+const BOOLEAN: u16 = 65;
+const NULL: u16 = 66;
+const THIS: u16 = 67;
+const SUPPORT_CONSTANT: u16 = 68;
+const SUPPORT_FUNCTION: u16 = 69;
+const CALL: u16 = 70;
+const FLOAT_HEX: u16 = 71;
+const INT_HEX: u16 = 74;
+const FLOAT_DEC: u16 = 76;
+const INT_DEC: u16 = 78;
+const BRACES_BEGIN: u16 = 79;
+const BRACES_END: u16 = 80;
+const FIELD_SEPARATOR: u16 = 81;
+const KEY_METAMETHOD: u16 = 82;
+const KEY_METAPROPERTY: u16 = 83;
+const KEY_LEAF: u16 = 84;
+const KEY_VALUE: u16 = 85;
+const MEMBER_FUNCTION: u16 = 86;
+const MEMBER_CONSTANT: u16 = 87;
 
 /// The scopes under `source.lua` a kind carries, outermost first.
 pub fn scopes(kind: u16) -> Vec<&'static str> {
@@ -305,492 +189,154 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
     })
 }
 
-/// How many contexts a line can hold; one pushed past it drops the bottom one.
-const MAX: usize = 128;
-/// How many the state keeps between lines: [`State`]'s levels and withs.
-const KEPT: usize = 2 * HALF;
-/// Matches that take nothing, in a row at one place, before the scan steps on regardless.
-const STUCK: usize = 64;
-/// syntect's stack limit (Go's): at it, a push's pattern matches nothing, so the patterns
-/// after it get their turn.
-const SYNTECT_DEPTH: usize = 99;
+// A byte's action ([`ACT`]).
+const A_OTHER: u8 = 0;
+const A_SPACE: u8 = 1;
+const A_NAME: u8 = 2;
+const A_DIGIT: u8 = 3;
+const A_QUOTE: u8 = 4;
+const A_DASH: u8 = 5;
+const A_LBRACKET: u8 = 6;
+const A_RBRACKET: u8 = 7;
+const A_LPAREN: u8 = 8;
+const A_RPAREN: u8 = 9;
+const A_LBRACE: u8 = 10;
+const A_RBRACE: u8 = 11;
+const A_COMMA: u8 = 12;
+const A_SEMI: u8 = 13;
+const A_DOT: u8 = 14;
+const A_COLON: u8 = 15;
+const A_EQ: u8 = 16;
+const A_LT: u8 = 17;
+const A_GT: u8 = 18;
+const A_TILDE: u8 = 19;
+const A_SLASH: u8 = 20;
+/// `+`, `*`, `%`, `^`.
+const A_ARITH: u8 = 21;
+/// `&`, `|`.
+const A_BITWISE: u8 = 22;
+const A_HASH: u8 = 23;
 
-/// Lex `b`, a line of Lua without its `\n`, from `state`.
-#[inline(never)]
-pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut s = Scan::fresh(b, out, Push);
-    s.load_state(state);
-    s.lex();
-    *state = s.state();
-}
-
-/// [`line`]'s runs by theme rule pushed to `runs` (X-075, X-068's sink): [`crate::lex_runs`] for
-/// Lua.
-#[inline(never)]
-pub fn line_runs(
-    b: &[u8],
-    state: &mut State,
-    out: &mut Out,
-    rules: &mut dyn Rules,
-    runs: &mut Vec<Run>,
-) {
-    let mut s = Scan::fresh(b, out, Runs::new(rules, runs));
-    s.load_state(state);
-    s.lex();
-    *state = s.state();
-    s.k.end_line(b.len());
-}
-
-/// A block of Lua on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
-/// the last line leaves it.
-pub fn block(
-    state: &mut State,
-    spans: &mut Vec<crate::Span>,
-    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
-) -> Option<usize> {
-    let mut out = Out::new(spans);
-    let mut s = Scan::fresh(b"", &mut out, Push);
-    s.load_state(state);
-    let mut c = Carried { s, deep: None };
-    let rest = pass(&mut c);
-    *state = c.deep.unwrap_or_else(|| c.s.state());
-    rest
-}
-
-/// [`block`]'s runs by theme rule pushed to `runs` ([`crate::CarryRuns`], X-075).
-pub fn block_runs(
-    state: &mut State,
-    spans: &mut Vec<crate::Span>,
-    rules: &mut dyn Rules,
-    runs: &mut Vec<Run>,
-    lines: &mut crate::RunLines,
-) -> Option<usize> {
-    let mut out = Out::new(spans);
-    out.0.clear();
-    let mut s = Scan::fresh(b"", &mut out, Runs::new(rules, runs));
-    s.load_state(state);
-    let mut c = Carried { s, deep: None };
-    let rest = lines.pass(&mut c);
-    *state = c.deep.unwrap_or_else(|| c.s.state());
-    rest
-}
-
-impl<K: Sink> Scan<'_, '_, K> {
-    /// `b`, a block's next line, lexed on the scan: [`Carried`]'s.
-    #[inline(always)]
-    fn lex_next(&mut self, b: &[u8]) {
-        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
-        self.b = unsafe { crate::line_for(b) };
-        self.at = 0;
-        self.loop_at = (usize::MAX, 0);
-        self.looped = false;
-        self.lex();
-        self.b = b"";
-    }
-}
-
-/// A scan kept across a block's lines, and the state the last line left where it ended past the
-/// levels a state holds: its levels' runs packed then, which loading and packing them again
-/// may pack apart, so a block ending there hands on that state, as `line` would.
-struct Carried<'b, 'c, K: Sink> {
-    s: Scan<'b, 'c, K>,
-    deep: Option<State>,
-}
-
-impl crate::Carry for Carried<'_, '_, Push> {
-    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
-        let s = &mut self.s;
-        s.out.0.clear();
-        s.lex_next(b);
-        // the line's end as a state's save and the next line's load leave it
-        self.deep = (s.depth - 1 > KEPT).then(|| s.reloaded());
-        s.out.0
-    }
-}
-
-impl crate::CarryRuns for Carried<'_, '_, Runs<'_>> {
-    fn next(&mut self, b: &[u8]) -> usize {
-        let s = &mut self.s;
-        s.k.start_line();
-        s.lex_next(b);
-        self.deep = (s.depth - 1 > KEPT).then(|| s.reloaded());
-        s.k.end_line(b.len())
-    }
-}
-
-impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
-    /// A scan of `b`, returned as a literal so that it is built in place; the state is
-    /// [`Scan::load_state`]'s.
-    #[inline(always)]
-    fn fresh(b: &'b [u8], out: &'b mut Out<'c>, k: K) -> Self {
-        Scan {
-            b,
-            stack: [MAIN; MAX],
-            depth: 1,
-            exact: true,
-            level: 0,
-            at: 0,
-            loop_at: (usize::MAX, 0),
-            looped: false,
-            k,
-            out,
-        }
-    }
-
-    /// What [`Scan::fresh`] leaves to `state`: the stack and what is read from it, apart from
-    /// the literal, which a constructor that changed it before returning it copied (a `memcpy`
-    /// a line, X-056's trap).
-    #[inline(always)]
-    fn load_state(&mut self, state: &State) {
-        self.load(state);
-    }
-
-    /// The stack from `state`, its runs expanded, and an open long bracket's level.
-    #[inline(always)]
-    fn load(&mut self, state: &State) {
-        self.exact = state.is_exact();
-        self.level = usize::from(state.arg);
-        self.depth = 1;
-        for i in 0..usize::from(state.depth) {
-            let c = state.level(i);
-            match RUNS.get(usize::from(c).wrapping_sub(usize::from(RUN))) {
-                Some(run) => run.iter().for_each(|&c| self.push(c)),
-                None => self.push(c),
-            }
-        }
-    }
-
-    /// The level a line hands the next: an open long bracket's, as a state's `arg` holds it.
-    #[inline(always)]
-    fn arg(&self) -> u16 {
-        if matches!(self.top(), LONG_STRING | COMMENT_BLOCK) {
-            u16::try_from(self.level).unwrap_or(u16::MAX)
-        } else {
-            0
-        }
-    }
-
-    /// The line lexed from the stack it starts with, the level kept only for an open long
-    /// bracket.
-    #[inline(always)]
-    fn lex(&mut self) {
-        self.run();
-        self.fill(self.b.len());
-        self.level = usize::from(self.arg());
-    }
-
-    /// The scan as a state's save and load leave it, its stack deeper than a state holds: the
-    /// state.
-    #[cold]
-    #[inline(never)]
-    fn reloaded(&mut self) -> State {
-        let state = self.state();
-        self.load(&state);
-        state
-    }
-
-    /// The state the scan's last line leaves: a byte a context above the base, or past the
-    /// levels, a byte a run.
-    fn state(&self) -> State {
-        let open = &self.stack[1..self.depth];
-        let mut runs;
-        let (codes, depth) = if open.len() <= KEPT {
-            (&self.stack, self.depth)
-        } else {
-            runs = [0; MAX];
-            let (mut i, mut k) = (1, 1);
-            while i < self.depth {
-                let (code, len) = packed(&self.stack, i, self.depth);
-                runs[k] = code;
-                (i, k) = (i + len, k + 1);
-            }
-            (&runs, k)
+static ACT: [u8; 256] = {
+    let mut t = [A_OTHER; 256];
+    let mut c = 0;
+    while c < 128 {
+        let b = c as u8;
+        t[c] = match b {
+            b' ' | b'\t' | b'\r' | 0x0b | 0x0c => A_SPACE,
+            b'a'..=b'z' | b'A'..=b'Z' | b'_' => A_NAME,
+            b'0'..=b'9' => A_DIGIT,
+            b'"' | b'\'' => A_QUOTE,
+            b'-' => A_DASH,
+            b'[' => A_LBRACKET,
+            b']' => A_RBRACKET,
+            b'(' => A_LPAREN,
+            b')' => A_RPAREN,
+            b'{' => A_LBRACE,
+            b'}' => A_RBRACE,
+            b',' => A_COMMA,
+            b';' => A_SEMI,
+            b'.' => A_DOT,
+            b':' => A_COLON,
+            b'=' => A_EQ,
+            b'<' => A_LT,
+            b'>' => A_GT,
+            b'~' => A_TILDE,
+            b'/' => A_SLASH,
+            b'+' | b'*' | b'%' | b'^' => A_ARITH,
+            b'&' | b'|' => A_BITWISE,
+            b'#' => A_HASH,
+            _ => A_OTHER,
         };
-        State::keep(codes, depth, self.exact, self.arg())
+        c += 1;
     }
-}
-
-/// The run of [`RUNS`] that the contexts of `stack` from `at` to `end` start with, the first in
-/// their order, as its byte and length, else the context at `at` alone: [`Scan::state`]'s
-/// packing, a line deeper than the levels. Without a slice compare (X-077: a `memcmp` a run a
-/// level, which libFuzzer's compare hooks made most of Lua's time): the eight contexts from
-/// `at` as a word, against only the runs that start with the first ([`BY_FIRST`]), each by its
-/// length's bytes ([`KEYS`]).
-#[inline(always)]
-fn packed(stack: &[u8; MAX], at: usize, end: usize) -> (u8, usize) {
-    let left = end - at;
-    let w = match stack.get(at..at + 8) {
-        Some(s) => u64::from_le_bytes(s.try_into().unwrap()),
-        None => stack[at..end]
-            .iter()
-            .rev()
-            .fold(0, |w, &c| (w << 8) | u64::from(c)),
-    };
-    let mut m = BY_FIRST[usize::from(stack[at] % RUN)];
-    while m != 0 {
-        let r = m.trailing_zeros() as usize;
-        let (key, mask, len) = KEYS[r];
-        if len <= left && w & mask == key {
-            return (RUN + r as u8, len);
-        }
-        m &= m - 1;
-    }
-    (stack[at], 1)
-}
-
-/// Each run of [`RUNS`] as [`packed`] compares it: its contexts as a little-endian word, the mask
-/// of its length's bytes, its length.
-static KEYS: [(u64, u64, usize); RUN_COUNT] = {
-    let mut keys = [(0, 0, 0); RUN_COUNT];
-    let mut r = 0;
-    while r < RUN_COUNT {
-        let run = RUN_LIST[r];
-        assert!(!run.is_empty() && run.len() <= 8);
-        let (mut key, mut i) = (0u64, run.len());
-        while i > 0 {
-            i -= 1;
-            assert!(run[i] < RUN);
-            key = (key << 8) | run[i] as u64;
-        }
-        let mask = u64::MAX >> (64 - 8 * run.len());
-        keys[r] = (key, mask, run.len());
-        r += 1;
-    }
-    keys
+    t
 };
 
-/// The runs of [`RUNS`] by their first context: bit `r` of a context's mask for each run `r`
-/// that starts with it.
-static BY_FIRST: [u64; RUN as usize] = {
-    assert!(RUN_COUNT <= 64);
-    let mut by = [0; RUN as usize];
-    let mut r = 0;
-    while r < RUN_COUNT {
-        by[RUN_LIST[r][0] as usize] |= 1 << r;
-        r += 1;
-    }
-    by
-};
+// What a word is ([`WORDS`], [`INFO`]): the reserved words first, up to [`W_END`].
+const W_NONE: u8 = 0;
+const W_AND_OR: u8 = 1;
+const W_NOT: u8 = 2;
+const W_BOOLEAN: u8 = 3;
+const W_NIL: u8 = 4;
+const W_FUNCTION: u8 = 5;
+const W_LOCAL: u8 = 6;
+const W_RETURN: u8 = 7;
+const W_BREAK: u8 = 8;
+const W_GOTO: u8 = 9;
+const W_DO: u8 = 10;
+const W_IF: u8 = 11;
+const W_THEN: u8 = 12;
+const W_ELSEIF: u8 = 13;
+const W_ELSE: u8 = 14;
+const W_WHILE: u8 = 15;
+const W_FOR: u8 = 16;
+const W_IN: u8 = 17;
+const W_REPEAT: u8 = 18;
+const W_UNTIL: u8 = 19;
+const W_END: u8 = 20;
+/// `self`.
+const W_SELF: u8 = 21;
+/// `_G`, `_VERSION`.
+const W_SUPPORT: u8 = 22;
+/// `support`'s builtin functions.
+const W_BUILTIN: u8 = 23;
+/// A builtin module, plus its index in `builtin-modules`' order.
+const W_MODULE: u8 = 32;
 
-/// The first byte that stands for a run of [`RUNS`] (the contexts are below it).
-const RUN: u8 = 64;
-
-/// The runs of contexts that deep stacks repeat, longest first, each kept as a byte between
-/// lines once a stack is deeper than [`KEPT`] (`RUN` and up): a call's open arguments, a
-/// function among them and its body, a table's value; picked on the stacks of the corpus that
-/// went past the levels.
-static RUNS: [&[u8]; RUN_COUNT] = RUN_LIST;
-
-/// [`RUNS`] as a constant, for [`KEYS`] and [`BY_FIRST`].
-const RUN_LIST: [&[u8]; RUN_COUNT] = [
-    &[
-        BLOCK,
-        EXPR_END,
-        ARGS_META,
-        ARGS_GROUP,
-        EXPR_LIST_END,
-        FUNCTION_META,
-        BLOCK,
-        EXPR_END,
-    ],
-    &[
-        BLOCK,
-        EXPR_END,
-        ARGS_META,
-        ARGS_GROUP,
-        EXPR_LIST_END,
-        FUNCTION_META,
-        BLOCK,
-        EXPR_LIST_END,
-    ],
-    &[
-        DO,
-        BLOCK,
-        EXPR_END,
-        ARGS_META,
-        ARGS_GROUP,
-        EXPR_LIST_END,
-        FUNCTION_META,
-        BLOCK,
-    ],
-    &[
-        EXPR_LIST_END,
-        FUNCTION_META,
-        BLOCK,
-        EXPR_END,
-        ARGS_META,
-        ARGS_GROUP,
-        EXPR_LIST_END,
-        FUNCTION_META,
-    ],
-    &[
-        ARGS_META,
-        ARGS_GROUP,
-        EXPR_LIST_END,
-        FUNCTION_META,
-        BLOCK,
-        EXPR_END,
-        ARGS_META,
-        ARGS_GROUP,
-    ],
-    &[
-        ARGS_META,
-        ARGS_GROUP,
-        EXPR_LIST_END,
-        FUNCTION_META,
-        BLOCK,
-        EXPR_LIST_END,
-        ARGS_META,
-        ARGS_GROUP,
-    ],
-    &[
-        ARGS_GROUP,
-        EXPR_LIST_END,
-        FUNCTION_META,
-        BLOCK,
-        EXPR_END,
-        ARGS_META,
-        ARGS_GROUP,
-        EXPR_LIST_END,
-    ],
-    &[
-        ARGS_GROUP,
-        EXPR_LIST_END,
-        FUNCTION_META,
-        BLOCK,
-        EXPR_LIST_END,
-        ARGS_META,
-        ARGS_GROUP,
-        EXPR_LIST_END,
-    ],
-    &[
-        FUNCTION_META,
-        BLOCK,
-        EXPR_END,
-        ARGS_META,
-        ARGS_GROUP,
-        EXPR_LIST_END,
-        FUNCTION_META,
-        BLOCK,
-    ],
-    &[
-        BLOCK,
-        EXPR_END,
-        ARGS_META,
-        ARGS_GROUP,
-        EXPR_LIST_END,
-        FUNCTION_META,
-        BLOCK,
-    ],
-    &[
-        EXPR_END,
-        ARGS_META,
-        ARGS_GROUP,
-        EXPR_LIST_END,
-        FUNCTION_META,
-        BLOCK,
-        EXPR_END,
-    ],
-    &[
-        EXPR_END,
-        ARGS_META,
-        ARGS_GROUP,
-        EXPR_LIST_END,
-        FUNCTION_META,
-        BLOCK,
-        EXPR_LIST_END,
-    ],
-    &[
-        EXPR_LIST_END,
-        FUNCTION_META,
-        BLOCK,
-        EXPR_END,
-        ARGS_META,
-        ARGS_GROUP,
-        EXPR_LIST_END,
-    ],
-    &[
-        ARGS_META,
-        ARGS_GROUP,
-        EXPR_LIST_END,
-        FUNCTION_META,
-        BLOCK,
-        EXPR_END,
-        ARGS_META,
-    ],
-    &[DO, BLOCK, EXPR_END, ARGS_META, ARGS_GROUP, EXPR_LIST_END],
-    &[
-        EXPR_END,
-        ARGS_META,
-        ARGS_GROUP,
-        EXPR_LIST_END,
-        FUNCTION_META,
-        BLOCK,
-    ],
-    &[
-        EXPR_LIST_END,
-        FUNCTION_META,
-        BLOCK,
-        EXPR_END,
-        ARGS_META,
-        ARGS_GROUP,
-    ],
-    &[
-        ARGS_META,
-        ARGS_GROUP,
-        EXPR_LIST_END,
-        FUNCTION_META,
-        BLOCK,
-        EXPR_END,
-    ],
-    &[
-        ARGS_META,
-        ARGS_GROUP,
-        EXPR_LIST_END,
-        FUNCTION_META,
-        BLOCK,
-        EXPR_LIST_END,
-    ],
-    &[MAPPING, VALUE_META, EXPR_END, MAPPING, VALUE_META, EXPR_END],
-    &[
-        FUNCTION_META,
-        BLOCK,
-        EXPR_END,
-        ARGS_META,
-        ARGS_GROUP,
-        EXPR_LIST_END,
-    ],
-    &[BLOCK, EXPR_END, ARGS_META, ARGS_GROUP, EXPR_LIST_END],
-    &[EXPR_END, MAPPING, VALUE_META, EXPR_END, MAPPING],
-    &[EXPR_LIST_END, FUNCTION_META, BLOCK, EXPR_END, ARGS_META],
-    &[ARGS_META, ARGS_GROUP, EXPR_LIST_END, FUNCTION_META, BLOCK],
-    &[FUNCTION_META, BLOCK, EXPR_END, ARGS_META, ARGS_GROUP],
-    &[BLOCK, EXPR_END, ARGS_META, ARGS_GROUP],
-    &[EXPR_END, ARGS_META, ARGS_GROUP, EXPR_LIST_END],
-    &[EXPR_END, MAPPING, VALUE_META, EXPR_END],
-    &[EXPR_LIST_END, FUNCTION_META, BLOCK, EXPR_END],
-    &[EXPR_LIST_END, FUNCTION_META, BLOCK, EXPR_LIST_END],
-    &[ARGS_GROUP, EXPR_LIST_END, FUNCTION_META, BLOCK],
-    &[MAPPING, VALUE_META, EXPR_END, MAPPING],
-    &[FUNCTION_META, BLOCK, EXPR_END, ARGS_META],
-    &[BLOCK, EXPR_END, ARGS_META],
-    &[EXPR_END, ARGS_META, ARGS_GROUP],
-    &[EXPR_LIST_END, FUNCTION_META, BLOCK],
-    &[ARGS_META, ARGS_GROUP, EXPR_LIST_END],
-    &[MAPPING, VALUE_META, EXPR_END],
-    &[VALUE_META, EXPR_END, MAPPING],
-    &[FUNCTION_META, BLOCK, EXPR_END],
-    &[FUNCTION_META, BLOCK, EXPR_LIST_END],
-    &[BLOCK, EXPR_END],
-    &[EXPR_END, ARGS_META],
-    &[ARGS_META, ARGS_GROUP],
-    &[ARGS_GROUP, EXPR_LIST_END],
-    &[FUNCTION_META, BLOCK],
-];
-const RUN_COUNT: usize = 47;
-
-/// The builtin modules, in `builtin-modules`' order.
-static MODULES: [&[u8]; 10] = [
+const WORD_LIST: [&[u8]; 62] = [
+    b"and",
+    b"or",
+    b"not",
+    b"true",
+    b"false",
+    b"nil",
+    b"function",
+    b"local",
+    b"return",
+    b"break",
+    b"goto",
+    b"do",
+    b"if",
+    b"then",
+    b"elseif",
+    b"else",
+    b"while",
+    b"for",
+    b"in",
+    b"repeat",
+    b"until",
+    b"end",
+    b"self",
+    b"_G",
+    b"_VERSION",
+    b"assert",
+    b"collectgarbage",
+    b"dofile",
+    b"error",
+    b"getmetatable",
+    b"ipairs",
+    b"load",
+    b"loadfile",
+    b"next",
+    b"pairs",
+    b"pcall",
+    b"print",
+    b"rawequal",
+    b"rawget",
+    b"rawlen",
+    b"rawset",
+    b"select",
+    b"setmetatable",
+    b"tonumber",
+    b"tostring",
+    b"type",
+    b"xpcall",
+    b"require",
+    b"getfenv",
+    b"module",
+    b"setfenv",
+    b"unpack",
     b"coroutine",
     b"package",
     b"string",
@@ -802,6 +348,1027 @@ static MODULES: [&[u8]; 10] = [
     b"debug",
     b"bit32",
 ];
+const N: usize = WORD_LIST.len();
+static WORDS: Words<128, N, { text_len(&WORD_LIST) }> = Words::new(&WORD_LIST);
+/// A word's [`W_NONE`]… by its id.
+static INFO: [u8; N + 1] = {
+    let mut t = [W_NONE; N + 1];
+    let head = [
+        W_AND_OR, W_AND_OR, W_NOT, W_BOOLEAN, W_BOOLEAN, W_NIL, W_FUNCTION, W_LOCAL, W_RETURN,
+        W_BREAK, W_GOTO, W_DO, W_IF, W_THEN, W_ELSEIF, W_ELSE, W_WHILE, W_FOR, W_IN, W_REPEAT,
+        W_UNTIL, W_END, W_SELF, W_SUPPORT, W_SUPPORT,
+    ];
+    let mut i = 0;
+    while i < head.len() {
+        t[i + 1] = head[i];
+        i += 1;
+    }
+    while i < 52 {
+        t[i + 1] = W_BUILTIN;
+        i += 1;
+    }
+    while i < N {
+        t[i + 1] = W_MODULE + (i - 52) as u8;
+        i += 1;
+    }
+    t
+};
+
+// The frames, three bits a level in [`Scan::frames`]; 0 is none (the top level, or a level
+// lost past [`LEVELS`]).
+const F_NONE: u8 = 0;
+/// A block ended by `end`: `do`'s, `then`'s, a function's body.
+const F_BLOCK: u8 = 1;
+/// `repeat`'s block, ended by `until`.
+const F_REPEAT: u8 = 2;
+/// A call's `( … )`: its `,`s separate.
+const F_CALL: u8 = 3;
+/// A parenthesized expression's `( … )`.
+const F_PAREN: u8 = 4;
+/// A function's parameters' `( … )`.
+const F_PARAMS: u8 = 5;
+/// `[ … ]`: an index, or a table's key.
+const F_BRACKET: u8 = 6;
+/// A table's `{ … }`.
+const F_TABLE: u8 = 7;
+/// The levels [`Scan::frames`] holds.
+const LEVELS: u8 = 42;
+
+// The token before ([`Scan::prev`]). The first four are the common ones.
+/// An operand may start: a statement's start, after an operator, an opening.
+const P_BEGIN: u8 = 0;
+/// After an operand: `(`, a string or `{` are a call's arguments, `[` an index, `.` an accessor.
+const P_END: u8 = 1;
+/// After a table's `{`, `,` or `;`: a key may start.
+const P_FIELD: u8 = 2;
+/// After a table's key: `=` separates its value.
+const P_KEY: u8 = 3;
+/// After an accessor: a property.
+const P_PROP: u8 = 4;
+/// After `function`: its name.
+const P_FUNC: u8 = 5;
+/// After a function's name or a part of it: `.`, `:` or its parameters.
+const P_FNEND: u8 = 6;
+/// After an accessor in a function's name.
+const P_FNPROP: u8 = 7;
+/// After a builtin module's name ([`Scan::module`]).
+const P_MODULE: u8 = 8;
+/// After a builtin module's `.`: its member.
+const P_MEMBER: u8 = 9;
+/// After `::`: a label's name.
+const P_LABEL: u8 = 10;
+/// After a label's name: its closing `::`.
+const P_LABEL_END: u8 = 11;
+/// After `goto`: its label.
+const P_GOTO: u8 = 12;
+
+// What a line starts in ([`Scan::mode`]).
+const M_CODE: u8 = 0;
+/// A long string's `[==[ … ]==]`, at [`Scan::level`].
+const M_STRING: u8 = 1;
+/// A block comment's `--[==[ … ]==]`, at [`Scan::level`].
+const M_COMMENT: u8 = 2;
+/// A single-quoted string continued past a `\` at the line's end.
+const M_SINGLE: u8 = 3;
+const M_DOUBLE: u8 = 4;
+/// A single-quoted string's `\z` escape's spaces, past the line's end.
+const M_Z_SINGLE: u8 = 5;
+const M_Z_DOUBLE: u8 = 6;
+
+/// Lex `b`, a line of Lua without its `\n`, from `state`.
+#[inline(never)]
+pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
+    line_on::<_, false>(b, state, out, Spans::new());
+}
+
+/// [`line`]'s runs by theme rule pushed to `runs`.
+#[inline(never)]
+pub fn line_runs(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    let mut k = line_on::<_, true>(b, state, out, Runs::new(rules, runs));
+    k.end_line(b.len());
+}
+
+#[inline(always)]
+fn line_on<K: Sink, const SHARED: bool>(b: &[u8], state: &mut State, out: &mut Out, k: K) -> K {
+    let mut s = Scan::new(b, out, k);
+    s.load(state);
+    s.k.open(s.out, b.len() / 4 + 16);
+    s.lex_line::<SHARED>();
+    s.k.close(s.out);
+    *state = s.state();
+    s.k
+}
+
+/// A block of Lua on one scan opened from `state` ([`crate::Carry`]).
+pub fn block(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut s = Scan::new(b"", &mut out, Spans::new());
+    s.load(state);
+    s.out.0.clear();
+    s.k.open(s.out, 64);
+    let rest = pass(&mut s);
+    *state = s.state();
+    rest
+}
+
+/// [`block`]'s runs by theme rule pushed to `runs` ([`crate::CarryRuns`]).
+pub fn block_runs(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    lines: &mut crate::RunLines,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    let mut s = Scan::new(b"", &mut out, Runs::new(rules, runs));
+    s.load(state);
+    s.out.0.clear();
+    s.k.open(s.out, 64);
+    let rest = lines.pass(&mut s);
+    *state = s.state();
+    rest
+}
+
+impl crate::Carry for Scan<'_, '_, Spans> {
+    fn next(&mut self, b: &[u8]) -> &[crate::Span] {
+        // SAFETY: the line is set back to an empty one before `b`'s borrow ends
+        self.carry::<false>(unsafe { crate::line_for(b) });
+        self.out.0
+    }
+}
+
+impl crate::CarryRuns for Scan<'_, '_, Runs<'_>> {
+    fn next(&mut self, b: &[u8]) -> usize {
+        // SAFETY: as above
+        self.carry::<true>(unsafe { crate::line_for(b) });
+        self.k.end_line(b.len())
+    }
+}
+
+struct Scan<'b, 'c, K: Sink> {
+    b: &'b [u8],
+    /// What each open frame is ([`F_BLOCK`]…), three bits a level, the innermost lowest; past
+    /// [`LEVELS`] the outer ones are lost (and the state inexact).
+    frames: u128,
+    /// How many frames are open, up to 255.
+    depth: u8,
+    exact: bool,
+    /// The token before ([`P_BEGIN`]…).
+    prev: u8,
+    /// The statement is an expression list (`local`, `return`, `for`, `in`): its `,`s separate.
+    list: bool,
+    /// [`Scan::list`] at each open frame, a bit a level, the innermost lowest: what a statement
+    /// a frame interrupts is again once it closes (a function's body in a `return`'s list).
+    lists: u64,
+    /// What the line starts in ([`M_CODE`]…).
+    mode: u8,
+    /// An open long bracket's `=`s.
+    level: u16,
+    /// The builtin module named before ([`P_MODULE`]).
+    module: u8,
+    k: K,
+    out: &'b mut Out<'c>,
+}
+
+impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
+    #[inline(always)]
+    fn new(b: &'b [u8], out: &'b mut Out<'c>, k: K) -> Self {
+        Scan {
+            b,
+            frames: 0,
+            depth: 0,
+            exact: true,
+            prev: P_BEGIN,
+            list: false,
+            lists: 0,
+            mode: M_CODE,
+            level: 0,
+            module: 0,
+            k,
+            out,
+        }
+    }
+
+    /// The scan's fields from `state`: the frames in its levels and the first two withs, the
+    /// level and the module in the next three, the rest in [`State::arg`].
+    #[inline(always)]
+    fn load(&mut self, state: &State) {
+        let mut w = [0u8; 16];
+        w[..14].copy_from_slice(&state.levels);
+        w[14] = state.withs[0];
+        w[15] = state.withs[1];
+        self.frames = u128::from_le_bytes(w);
+        self.depth = state.depth;
+        self.exact = !state.inexact;
+        self.level = u16::from_le_bytes([state.withs[2], state.withs[3]]);
+        self.module = state.withs[4];
+        let mut l = [0u8; 8];
+        l.copy_from_slice(&state.withs[5..13]);
+        self.lists = u64::from_le_bytes(l);
+        let a = state.arg;
+        self.mode = (a & 7) as u8;
+        self.prev = (a >> 3 & 15) as u8;
+        self.list = a & 0x80 != 0;
+    }
+
+    /// The state the scan's last line left: every field as it is, so a block lexes as its
+    /// lines do one at a time.
+    #[inline(always)]
+    fn state(&self) -> State {
+        let w = self.frames.to_le_bytes();
+        let mut s = State::default();
+        s.levels.copy_from_slice(&w[..14]);
+        s.withs[0] = w[14];
+        s.withs[1] = w[15];
+        [s.withs[2], s.withs[3]] = self.level.to_le_bytes();
+        s.withs[4] = self.module;
+        s.withs[5..13].copy_from_slice(&self.lists.to_le_bytes());
+        s.depth = self.depth;
+        s.inexact = !self.exact;
+        s.arg = u16::from(self.mode) | u16::from(self.prev) << 3 | u16::from(self.list) << 7;
+        s
+    }
+
+    /// `b`, a block's next line, lexed on this scan, its sink closed; the scan's line an empty
+    /// one again after.
+    #[inline(always)]
+    fn carry<const SHARED: bool>(&mut self, b: &'b [u8]) {
+        self.k.start_line();
+        self.b = b;
+        self.lex_line::<SHARED>();
+        self.k.close(self.out);
+        self.b = b"";
+    }
+
+    #[inline(always)]
+    fn put(&mut self, s: usize, e: usize, kind: u16) {
+        self.k.merge(&mut self.out, s, e, kind);
+    }
+
+    #[inline(always)]
+    fn top(&self) -> u8 {
+        (self.frames & 7) as u8
+    }
+
+    #[inline(always)]
+    fn push(&mut self, f: u8) {
+        self.frames = self.frames << 3 | u128::from(f);
+        self.lists = self.lists << 1 | u64::from(self.list);
+        self.list = false;
+        self.depth = self.depth.saturating_add(1);
+        if self.depth > LEVELS {
+            self.exact = false;
+        }
+    }
+
+    #[inline(always)]
+    fn pop(&mut self) {
+        if self.depth > 0 {
+            self.frames >>= 3;
+            self.depth -= 1;
+            self.list = self.lists & 1 != 0;
+            self.lists >>= 1;
+        }
+    }
+
+    /// Whether the token before ends an operand, so that `(`, `[` and `.` follow one.
+    #[inline(always)]
+    fn after_operand(&self) -> bool {
+        matches!(self.prev, P_END | P_KEY | P_MODULE)
+    }
+
+    /// The line, from what the line before left: a mode's rest first; the loop out of line where
+    /// `SHARED` ([`Scan::code_shared`]).
+    #[inline(always)]
+    fn lex_line<const SHARED: bool>(&mut self) {
+        let mut p = if self.mode == M_CODE {
+            0
+        } else {
+            self.resume()
+        };
+        if self.top() == F_PARAMS {
+            p = self.params(p);
+        }
+        if SHARED {
+            self.code_shared(p);
+        } else {
+            self.code(p);
+        }
+    }
+
+    /// [`Scan::code`] out of line: on the run sink, one copy that the line API and a block's
+    /// lines share (inlined into each, ada held two, +24 KB); on the span sink, which ada doesn't
+    /// hold, inlined (out of line it ran 2% slower alone).
+    #[inline(never)]
+    fn code_shared(&mut self, p: usize) {
+        self.code(p);
+    }
+
+    /// The code from `p` to the line's end.
+    #[inline(always)]
+    fn code(&mut self, mut p: usize) {
+        let b = self.b;
+        let n = b.len();
+        while p < n {
+            let c = b[p];
+            p = match ACT[usize::from(c)] {
+                A_SPACE => {
+                    let mut e = p + 1;
+                    while e < n && ACT[usize::from(b[e])] == A_SPACE {
+                        e += 1;
+                    }
+                    e
+                }
+                A_NAME => self.name(p),
+                A_DIGIT => self.number(p),
+                A_QUOTE => self.string(p, c),
+                A_DASH => {
+                    if b.get(p + 1) == Some(&b'-') {
+                        self.comment(p)
+                    } else {
+                        self.op(p, 1, ARITHMETIC)
+                    }
+                }
+                A_LBRACKET => self.lbracket(p),
+                A_RBRACKET => {
+                    if self.top() == F_BRACKET {
+                        self.pop();
+                        self.put(p, p + 1, BRACKETS_END);
+                        self.prev = if self.top() == F_TABLE { P_KEY } else { P_END };
+                    }
+                    p + 1
+                }
+                A_LPAREN => {
+                    let f = match self.prev {
+                        P_FUNC | P_FNEND => F_PARAMS,
+                        P_END | P_KEY | P_MODULE => F_CALL,
+                        _ => F_PAREN,
+                    };
+                    self.push(f);
+                    self.put(p, p + 1, GROUP_BEGIN);
+                    self.prev = P_BEGIN;
+                    if f == F_PARAMS {
+                        self.params(p + 1)
+                    } else {
+                        p + 1
+                    }
+                }
+                A_RPAREN => {
+                    match self.top() {
+                        F_CALL | F_PAREN => {
+                            self.pop();
+                            self.put(p, p + 1, GROUP_END);
+                            self.prev = P_END;
+                        }
+                        _ => {}
+                    }
+                    p + 1
+                }
+                A_LBRACE => {
+                    self.push(F_TABLE);
+                    self.put(p, p + 1, BRACES_BEGIN);
+                    self.prev = P_FIELD;
+                    p + 1
+                }
+                A_RBRACE => {
+                    if self.top() == F_TABLE {
+                        self.pop();
+                        self.put(p, p + 1, BRACES_END);
+                        self.prev = P_END;
+                    }
+                    p + 1
+                }
+                A_COMMA => {
+                    match self.top() {
+                        F_TABLE => {
+                            self.put(p, p + 1, FIELD_SEPARATOR);
+                            self.prev = P_FIELD;
+                        }
+                        F_CALL => {
+                            self.put(p, p + 1, COMMA);
+                            self.prev = P_BEGIN;
+                        }
+                        F_PAREN | F_BRACKET => {}
+                        _ => {
+                            if self.list {
+                                self.put(p, p + 1, COMMA);
+                                self.prev = P_BEGIN;
+                            }
+                        }
+                    }
+                    p + 1
+                }
+                A_SEMI => {
+                    match self.top() {
+                        F_TABLE => {
+                            self.put(p, p + 1, FIELD_SEPARATOR);
+                            self.prev = P_FIELD;
+                        }
+                        F_NONE | F_BLOCK | F_REPEAT => {
+                            self.put(p, p + 1, TERMINATOR);
+                            (self.prev, self.list) = (P_BEGIN, false);
+                        }
+                        _ => {}
+                    }
+                    p + 1
+                }
+                A_DOT => self.dot(p),
+                A_COLON if b.get(p + 1) == Some(&b':') && self.prev != P_LABEL_END => {
+                    self.put(p, p + 2, LABEL_BEGIN);
+                    self.prev = P_LABEL;
+                    p + 2
+                }
+                A_COLON if b.get(p + 1) == Some(&b':') && self.prev == P_LABEL_END => {
+                    self.put(p, p + 2, LABEL_CLOSE);
+                    self.prev = P_BEGIN;
+                    p + 2
+                }
+                A_COLON => {
+                    self.put(p, p + 1, ACCESSOR);
+                    self.prev = if self.prev == P_FNEND {
+                        P_FNPROP
+                    } else {
+                        P_PROP
+                    };
+                    p + 1
+                }
+                A_EQ => {
+                    if b.get(p + 1) == Some(&b'=') {
+                        self.op(p, 2, COMPARISON)
+                    } else if self.prev == P_KEY {
+                        self.op(p, 1, KEY_VALUE)
+                    } else {
+                        self.op(p, 1, ASSIGNMENT)
+                    }
+                }
+                A_LT | A_GT => match b.get(p + 1) {
+                    Some(&b'=') => self.op(p, 2, COMPARISON),
+                    Some(&d) if d == c => self.op(p, 2, BITWISE),
+                    _ => self.op(p, 1, COMPARISON),
+                },
+                A_TILDE => {
+                    if b.get(p + 1) == Some(&b'=') {
+                        self.op(p, 2, COMPARISON)
+                    } else {
+                        self.op(p, 1, BITWISE)
+                    }
+                }
+                A_SLASH => {
+                    let l = if b.get(p + 1) == Some(&b'/') { 2 } else { 1 };
+                    self.op(p, l, ARITHMETIC)
+                }
+                A_ARITH => self.op(p, 1, ARITHMETIC),
+                A_BITWISE => self.op(p, 1, BITWISE),
+                A_HASH => self.op(p, 1, LENGTH),
+                _ => p + char_len(c),
+            };
+        }
+    }
+
+    /// A function's parameters from `p`, after its `(`: names, `,`, `...` and comments, to its
+    /// `)`, where its body opens, or the line's end; bat's list takes nothing else, so other
+    /// bytes are plain, and a reserved word ends it as its `)` would.
+    #[inline(never)]
+    fn params(&mut self, mut p: usize) -> usize {
+        let b = self.b;
+        let n = b.len();
+        while p < n {
+            let c = b[p];
+            match ACT[usize::from(c)] {
+                A_NAME => {
+                    let mut e = p + 1;
+                    while e < n && WORD[usize::from(b[e])] {
+                        e += 1;
+                    }
+                    let w = WORDS.value(&b[p..e], &INFO);
+                    if w != W_NONE && w <= W_END {
+                        return self.body(p, e, UNEXPECTED_KEYWORD);
+                    }
+                    self.put(p, e, PARAMETER);
+                    p = e;
+                }
+                A_COMMA => {
+                    self.put(p, p + 1, COMMA);
+                    p += 1;
+                }
+                A_RPAREN => return self.body(p, p + 1, GROUP_END),
+                A_DOT if b.get(p + 1..p + 3) == Some(b"..") => {
+                    self.put(p, p + 3, LANGUAGE);
+                    p += 3;
+                }
+                A_DASH if b.get(p + 1) == Some(&b'-') => {
+                    p = self.comment(p);
+                    if self.mode != M_CODE {
+                        return p;
+                    }
+                }
+                _ => p += char_len(c),
+            }
+        }
+        p
+    }
+
+    /// The parameters end at `b[p..e]`, `kind`: the function's body opens.
+    #[inline(always)]
+    fn body(&mut self, p: usize, e: usize, kind: u16) -> usize {
+        self.put(p, e, kind);
+        self.pop();
+        self.push(F_BLOCK);
+        self.prev = P_BEGIN;
+        e
+    }
+
+    /// An operator of `len` bytes at `p`: an operand may follow.
+    #[inline(always)]
+    fn op(&mut self, p: usize, len: usize, kind: u16) -> usize {
+        self.put(p, p + len, kind);
+        self.prev = P_BEGIN;
+        p + len
+    }
+
+    /// A name at `p`: a keyword, a builtin, or a name by where it stands.
+    #[inline(always)]
+    fn name(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let mut e = p + 1;
+        while e < b.len() && WORD[usize::from(b[e])] {
+            e += 1;
+        }
+        let w = WORDS.value(&b[p..e], &INFO);
+        if w == W_NONE || w > W_END {
+            self.ident(p, e, w);
+        } else {
+            self.keyword(p, e, w);
+        }
+        e
+    }
+
+    /// A name `b[p..e]` that isn't a reserved word (`w` what else it is).
+    #[inline(always)]
+    fn ident(&mut self, p: usize, e: usize, w: u8) {
+        let top = self.top();
+        if self.prev > P_KEY {
+            return self.ident_after(p, e, w);
+        }
+        let b = self.b;
+        let q = skip(b, e);
+        let next = b.get(q).copied().unwrap_or(0);
+        // a table's key: `name =`, not `==`
+        if top == F_TABLE && self.prev != P_BEGIN && next == b'=' && b.get(q + 1) != Some(&b'=') {
+            return self.key(p, e, q);
+        }
+        self.variable(p, e, w, q, next);
+    }
+
+    /// A name in an operand's place, `q` past its blanks and `next` the byte there: a
+    /// variable, a function's (`name = function`), a call's, or a builtin.
+    #[inline(always)]
+    fn variable(&mut self, p: usize, e: usize, w: u8, q: usize, next: u8) {
+        if self.after_operand() {
+            self.list = false;
+        }
+        let kind = match w {
+            W_NONE => match next {
+                b'(' | b'"' | b'\'' | b'{' => CALL,
+                b'=' if fn_assign(self.b, q) => FUNCTION_NAME,
+                b'[' if long_open(self.b, q).is_some() => CALL,
+                _ => VARIABLE,
+            },
+            W_SELF => THIS,
+            W_SUPPORT => SUPPORT_CONSTANT,
+            W_BUILTIN => SUPPORT_FUNCTION,
+            _ => {
+                self.put(p, e, SUPPORT_CONSTANT);
+                self.module = w - W_MODULE;
+                self.prev = P_MODULE;
+                return;
+            }
+        };
+        self.put(p, e, kind);
+        self.prev = P_END;
+    }
+
+    /// A table's key `b[p..e]`, its `=` at `q`.
+    #[cold]
+    #[inline(never)]
+    fn key(&mut self, p: usize, e: usize, q: usize) {
+        let w = &self.b[p..e];
+        let method = w.starts_with(b"__") && is_metamethod(w);
+        let kind = if fn_assign(self.b, q) {
+            if method {
+                KEY_METAMETHOD
+            } else {
+                FUNCTION_NAME
+            }
+        } else if method {
+            KEY_METAMETHOD
+        } else if w.starts_with(b"__") && is_metaproperty(w) {
+            KEY_METAPROPERTY
+        } else {
+            KEY_LEAF
+        };
+        self.put(p, e, kind);
+        self.prev = P_KEY;
+    }
+
+    /// A name after an accessor, `function`, a module's `.`, a label's `::` or `goto`.
+    #[inline(never)]
+    fn ident_after(&mut self, p: usize, e: usize, w: u8) {
+        let b = self.b;
+        let (kind, prev) = match self.prev {
+            P_PROP => (self.property(p, e), P_END),
+            P_MEMBER => (
+                member(usize::from(self.module), &b[p..e]).unwrap_or_else(|| self.property(p, e)),
+                P_END,
+            ),
+            P_FUNC => {
+                let dot = matches!(b.get(skip(b, e)), Some(b'.' | b':'));
+                (if dot { VARIABLE } else { FUNCTION_NAME }, P_FNEND)
+            }
+            P_FNPROP => {
+                let kind = if matches!(b.get(skip(b, e)), Some(b'.' | b':')) {
+                    PROPERTY_LEAF
+                } else if is_metamethod(&b[p..e]) {
+                    PROPERTY_METAMETHOD
+                } else {
+                    PROPERTY_FUNCTION_NAME
+                };
+                (kind, P_FNEND)
+            }
+            P_LABEL => (LABEL_NAME, P_LABEL_END),
+            P_GOTO => (LABEL_VARIABLE, P_BEGIN),
+            _ => {
+                // after a function's name, a module's or a label's: a statement starts
+                self.prev = P_END;
+                return self.ident(p, e, w);
+            }
+        };
+        self.put(p, e, kind);
+        self.prev = prev;
+    }
+
+    /// A property `b[p..e]`, after an accessor: its kind.
+    #[inline(always)]
+    fn property(&self, p: usize, e: usize) -> u16 {
+        let b = self.b;
+        let w = &b[p..e];
+        let meta = w.starts_with(b"__");
+        let q = skip(b, e);
+        match b.get(q) {
+            Some(b'=') if fn_assign(b, q) => {
+                if meta && is_metamethod(w) {
+                    PROPERTY_METAMETHOD
+                } else {
+                    PROPERTY_FUNCTION_NAME
+                }
+            }
+            Some(b'(' | b'"' | b'\'' | b'{') => PROPERTY_CALL,
+            Some(b'[') if long_open(b, q).is_some() => PROPERTY_CALL,
+            _ if meta && is_metaproperty(w) => PROPERTY_METAPROPERTY,
+            _ => PROPERTY_LEAF,
+        }
+    }
+
+    /// A reserved word `b[p..e]`, `w`.
+    #[inline(always)]
+    fn keyword(&mut self, p: usize, e: usize, w: u8) {
+        if (self.prev > P_KEY || matches!(self.top(), F_CALL | F_PAREN | F_BRACKET))
+            && self.misplaced(p, e, w)
+        {
+            return;
+        }
+        // a statement's word ends an expression list; the frame it opens or closes keeps
+        // or gives back its own
+        if !matches!(
+            w,
+            W_AND_OR | W_NOT | W_BOOLEAN | W_NIL | W_FUNCTION | W_LOCAL | W_RETURN | W_FOR | W_IN
+        ) {
+            self.list = false;
+        }
+        let (kind, prev) = match w {
+            W_AND_OR | W_NOT => (LOGICAL, P_BEGIN),
+            W_BOOLEAN => (BOOLEAN, P_END),
+            W_NIL => (NULL, P_END),
+            W_FUNCTION => (FUNCTION_KEYWORD, P_FUNC),
+            W_LOCAL | W_RETURN => {
+                self.list = true;
+                (if w == W_LOCAL { LOCAL } else { RETURN }, P_BEGIN)
+            }
+            W_BREAK => (BREAK, P_BEGIN),
+            W_GOTO => (GOTO_KEYWORD, P_GOTO),
+            W_DO => {
+                self.push(F_BLOCK);
+                (CONTROL, P_BEGIN)
+            }
+            W_IF | W_ELSE => (CONDITIONAL, P_BEGIN),
+            W_THEN => {
+                self.push(F_BLOCK);
+                (CONDITIONAL, P_BEGIN)
+            }
+            W_ELSEIF => {
+                if self.top() == F_BLOCK {
+                    self.pop();
+                }
+                (CONDITIONAL, P_BEGIN)
+            }
+            W_WHILE => (LOOP, P_BEGIN),
+            W_FOR | W_IN => {
+                self.list = true;
+                (LOOP, P_BEGIN)
+            }
+            W_REPEAT => {
+                self.push(F_REPEAT);
+                (LOOP, P_BEGIN)
+            }
+            W_UNTIL => {
+                if self.top() == F_REPEAT {
+                    self.pop();
+                }
+                (LOOP, P_BEGIN)
+            }
+            _ => {
+                // `end`
+                if self.top() == F_BLOCK {
+                    // a function's body in a list ends an operand; a statement's block, a
+                    // statement
+                    self.pop();
+                    (END_KEYWORD, if self.list { P_END } else { P_BEGIN })
+                } else {
+                    (UNEXPECTED_END, P_BEGIN)
+                }
+            }
+        };
+        self.put(p, e, kind);
+        self.prev = prev;
+    }
+
+    /// A reserved word where bat reads it as out of place, `invalid.unexpected-keyword`: after an
+    /// accessor; a statement's word in a group or brackets (which it ends). Whether it was (in
+    /// a function's parameters, [`Scan::params`]).
+    #[cold]
+    #[inline(never)]
+    fn misplaced(&mut self, p: usize, e: usize, w: u8) -> bool {
+        if matches!(self.prev, P_PROP | P_MEMBER) {
+            self.put(p, e, UNEXPECTED_KEYWORD);
+            self.prev = P_END;
+            return true;
+        }
+        match self.top() {
+            F_CALL | F_PAREN | F_BRACKET
+                if !matches!(w, W_NOT | W_BOOLEAN | W_NIL | W_FUNCTION)
+                    && !(w == W_AND_OR && self.after_operand()) =>
+            {
+                self.put(p, e, UNEXPECTED_KEYWORD);
+                self.pop();
+                self.prev = P_END;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// A number at `p` (a digit, or `.` and one).
+    #[inline(always)]
+    fn number(&mut self, p: usize) -> usize {
+        if self.after_operand() {
+            self.list = false;
+        }
+        let Some((e, kind, caps)) = number(self.b, p) else {
+            return p + 1;
+        };
+        let mut at = p;
+        for (s, ce, k) in caps {
+            if ce > s {
+                self.put(at, s, kind);
+                self.put(s, ce, k);
+                at = ce;
+            }
+        }
+        self.put(at, e, kind);
+        self.prev = P_END;
+        e
+    }
+
+    /// `.` at `p`: `...`, a number, `..`, or an accessor.
+    #[inline(always)]
+    fn dot(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let operand = self.after_operand();
+        if b.get(p + 1) == Some(&b'.') {
+            if !operand && b.get(p + 2) == Some(&b'.') {
+                self.put(p, p + 3, LANGUAGE);
+                self.prev = P_END;
+                return p + 3;
+            }
+            return self.op(p, 2, CONCATENATION);
+        }
+        if !operand && b.get(p + 1).is_some_and(u8::is_ascii_digit) {
+            return self.number(p);
+        }
+        self.put(p, p + 1, ACCESSOR);
+        self.prev = match self.prev {
+            P_MODULE => P_MEMBER,
+            P_FNEND => P_FNPROP,
+            _ => P_PROP,
+        };
+        p + 1
+    }
+
+    /// `[` at `p`: a long string, or a bracket.
+    #[inline(always)]
+    fn lbracket(&mut self, p: usize) -> usize {
+        if let Some((e, level)) = long_open(self.b, p) {
+            self.put(p, e, MULTILINE + BEGIN);
+            self.prev = P_END;
+            self.level = u16::try_from(level).unwrap_or(u16::MAX);
+            return self.long(e, M_STRING);
+        }
+        self.push(F_BRACKET);
+        self.put(p, p + 1, BRACKETS_BEGIN);
+        self.prev = P_BEGIN;
+        p + 1
+    }
+
+    /// A long bracket's text from `p` to its close at [`Scan::level`] (`mode` a string's or a
+    /// comment's), or to the line's end, the mode kept.
+    #[inline(always)]
+    fn long(&mut self, p: usize, mode: u8) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let (text, end) = if mode == M_STRING {
+            (MULTILINE, MULTILINE + END)
+        } else {
+            (BLOCK_COMMENT, BLOCK_END)
+        };
+        let level = usize::from(self.level);
+        let mut q = p;
+        loop {
+            q = find_in(b, q, n, *b"]");
+            if q >= n {
+                self.put(p, n, text);
+                self.mode = mode;
+                return n;
+            }
+            let c = q + 1 + level;
+            if c < n && b[c] == b']' && b[q + 1..c].iter().all(|&x| x == b'=') {
+                self.put(p, q, text);
+                self.put(q, c + 1, end);
+                self.mode = M_CODE;
+                return c + 1;
+            }
+            q += 1;
+        }
+    }
+
+    /// `--` at `p`: a block comment or a line's.
+    #[inline(always)]
+    fn comment(&mut self, p: usize) -> usize {
+        if let Some((e, level)) = long_open(self.b, p + 2) {
+            self.put(p, e, BLOCK_BEGIN);
+            self.level = u16::try_from(level).unwrap_or(u16::MAX);
+            return self.long(e, M_COMMENT);
+        }
+        let n = self.b.len();
+        self.put(p, p + 2, LINE_MARK);
+        self.put(p + 2, n, LINE_COMMENT);
+        n
+    }
+
+    /// A quoted string at `p`, its quote `q`.
+    #[inline(always)]
+    fn string(&mut self, p: usize, q: u8) -> usize {
+        let base = if q == b'\'' { SINGLE } else { DOUBLE };
+        self.put(p, p + 1, base + BEGIN);
+        self.prev = P_END;
+        self.text(p + 1, q, base)
+    }
+
+    /// A quoted string's text from `p`: to its closing quote, or the line's end.
+    #[inline(always)]
+    fn text(&mut self, mut p: usize, q: u8, base: u16) -> usize {
+        let b = self.b;
+        let n = b.len();
+        loop {
+            let e = find_in(b, p, n, [q, b'\\']);
+            self.put(p, e, base);
+            if e >= n {
+                return n;
+            }
+            if b[e] == q {
+                self.put(e, e + 1, base + END);
+                return e + 1;
+            }
+            p = self.escape(e, q, base);
+            if p >= n {
+                return n;
+            }
+        }
+    }
+
+    /// An escape at `p`, in a string of `q` (`base` its text's kind): where it ends.
+    #[cold]
+    #[inline(never)]
+    fn escape(&mut self, p: usize, q: u8, base: u16) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let Some(&c) = b.get(p + 1) else {
+            // the line's `\n` escaped: the string goes on
+            self.put(p, n, base + ESCAPE);
+            self.mode = if q == b'\'' { M_SINGLE } else { M_DOUBLE };
+            return n;
+        };
+        let hex = |i: usize| b.get(i).is_some_and(u8::is_ascii_hexdigit);
+        let (e, kind) = match c {
+            b'a' | b'b' | b'f' | b'n' | b'r' | b't' | b'v' | b'\\' | b'\'' | b'"' | b'[' | b']' => {
+                (p + 2, ESCAPE)
+            }
+            b'x' if hex(p + 2) && hex(p + 3) => (p + 4, ESCAPE_HEX),
+            b'0'..=b'9' => {
+                let mut e = p + 2;
+                while e < (p + 4).min(n) && b[e].is_ascii_digit() {
+                    e += 1;
+                }
+                (e, ESCAPE_DEC)
+            }
+            b'u' if b.get(p + 2) == Some(&b'{') && hex(p + 3) => {
+                let mut e = p + 4;
+                while hex(e) {
+                    e += 1;
+                }
+                if b.get(e) == Some(&b'}') {
+                    (e + 1, ESCAPE_UNICODE)
+                } else {
+                    (p + 2, INVALID_ESCAPE)
+                }
+            }
+            b'z' => {
+                let e = skip(b, p + 2);
+                self.put(p, e, base + ESCAPE_SPACES);
+                if e >= n {
+                    self.mode = if q == b'\'' { M_Z_SINGLE } else { M_Z_DOUBLE };
+                }
+                return e;
+            }
+            _ => (p + 1 + char_len(c), INVALID_ESCAPE),
+        };
+        let e = e.min(n);
+        self.put(p, e, base + kind);
+        e
+    }
+
+    /// The rest of a mode the line before left open: where the code starts.
+    #[cold]
+    #[inline(never)]
+    fn resume(&mut self) -> usize {
+        let mode = self.mode;
+        self.mode = M_CODE;
+        match mode {
+            M_STRING | M_COMMENT => self.long(0, mode),
+            M_SINGLE => self.text(0, b'\'', SINGLE),
+            M_DOUBLE => self.text(0, b'"', DOUBLE),
+            _ => {
+                let (q, base) = if mode == M_Z_SINGLE {
+                    (b'\'', SINGLE)
+                } else {
+                    (b'"', DOUBLE)
+                };
+                let e = skip(self.b, 0);
+                self.put(0, e, base + ESCAPE_SPACES);
+                if e >= self.b.len() {
+                    self.mode = mode;
+                    return e;
+                }
+                self.text(e, q, base)
+            }
+        }
+    }
+}
+
+/// Whether `\s*=\s*function\b` is at `q`, its `=` there: a function assigned.
+#[inline(always)]
+fn fn_assign(b: &[u8], q: usize) -> bool {
+    let r = skip(b, q + 1);
+    b.get(r..r + 8) == Some(b"function") && !b.get(r + 8).is_some_and(|&c| WORD[usize::from(c)])
+}
+
+/// Past the blanks at `p`.
+#[inline(always)]
+fn skip(b: &[u8], mut p: usize) -> usize {
+    while p < b.len() && ACT[usize::from(b[p])] == A_SPACE {
+        p += 1;
+    }
+    p
+}
 
 /// A module's member at its `.`: its constants', then its functions' leaf, or none.
 fn member(module: usize, w: &[u8]) -> Option<u16> {
@@ -952,41 +1519,6 @@ fn member(module: usize, w: &[u8]) -> Option<u16> {
     function.then_some(MEMBER_FUNCTION)
 }
 
-/// `{{reserved_word}}`: whether the word `w` is one.
-fn is_reserved(w: &[u8]) -> bool {
-    matches!(
-        w,
-        b"and"
-            | b"break"
-            | b"do"
-            | b"elseif"
-            | b"else"
-            | b"end"
-            | b"false"
-            | b"for"
-            | b"function"
-            | b"goto"
-            | b"if"
-            | b"in"
-            | b"local"
-            | b"nil"
-            | b"not"
-            | b"or"
-            | b"repeat"
-            | b"return"
-            | b"then"
-            | b"true"
-            | b"until"
-            | b"while"
-    )
-}
-
-/// `{{reserved_word_statement}}`: the reserved words but `not`, `true`, `nil`, `false` and
-/// `function`.
-fn is_reserved_statement(w: &[u8]) -> bool {
-    is_reserved(w) && !matches!(w, b"not" | b"true" | b"nil" | b"false" | b"function")
-}
-
 /// `{{metamethod}}`, the word after its `__`.
 fn is_metamethod(w: &[u8]) -> bool {
     w.strip_prefix(b"__").is_some_and(|m| {
@@ -1025,40 +1557,6 @@ fn is_metamethod(w: &[u8]) -> bool {
 /// `{{metaproperty}}`.
 fn is_metaproperty(w: &[u8]) -> bool {
     matches!(w, b"__metatable" | b"__mode")
-}
-
-/// `support`'s builtin functions.
-fn is_builtin_function(w: &[u8]) -> bool {
-    matches!(
-        w,
-        b"assert"
-            | b"collectgarbage"
-            | b"dofile"
-            | b"error"
-            | b"getmetatable"
-            | b"ipairs"
-            | b"load"
-            | b"loadfile"
-            | b"next"
-            | b"pairs"
-            | b"pcall"
-            | b"print"
-            | b"rawequal"
-            | b"rawget"
-            | b"rawlen"
-            | b"rawset"
-            | b"select"
-            | b"setmetatable"
-            | b"tonumber"
-            | b"tostring"
-            | b"type"
-            | b"xpcall"
-            | b"require"
-            | b"getfenv"
-            | b"module"
-            | b"setfenv"
-            | b"unpack"
-    )
 }
 
 /// `\d*` at `p`: where it ends.
@@ -1145,967 +1643,9 @@ fn long_open(b: &[u8], p: usize) -> Option<(usize, usize)> {
     (b.get(q) == Some(&b'[')).then_some((q + 1, q - p - 1))
 }
 
-/// A long bracket's closing of `level` at `p`, `\]\1\]`: its end.
-fn long_close(b: &[u8], p: usize, level: usize) -> Option<usize> {
-    let e = p + level + 2;
-    (b.get(p) == Some(&b']')
-        && b.get(e - 1) == Some(&b']')
-        && b[p + 1..e - 1].iter().all(|&c| c == b'='))
-    .then_some(e)
-}
-
-struct Scan<'b, 'c, K: Sink> {
-    /// The line, without its `\n`: its length is where the `\n` is.
-    b: &'b [u8],
-    stack: [u8; MAX],
-    depth: usize,
-    exact: bool,
-    /// The `=` of the long bracket open on top.
-    level: usize,
-    /// Where the spans so far end.
-    at: usize,
-    /// Where the last push that matched nothing was, and the depth it left: a pop there, at
-    /// that depth, that matches nothing would loop, so syntect tries the patterns after it and
-    /// else steps a character.
-    loop_at: (usize, usize),
-    /// A pop at the place was passed over (`loop_at`).
-    looped: bool,
-    /// Where the lexemes go, a line's spans or its runs by theme rule (X-075, X-068's sink).
-    k: K,
-    /// The spans' vector, the span API's.
-    out: &'b mut Out<'c>,
-}
-
-impl<K: Sink> Scan<'_, '_, K> {
-    fn top(&self) -> u8 {
-        self.stack[self.depth - 1]
-    }
-
-    /// How far a comment's leaves are from the plain ones: by the `\z` escape and string under
-    /// it, if any.
-    fn comment_wrap(&self) -> u16 {
-        if self.depth >= 3 && self.stack[self.depth - 2] == ESCAPE_Z {
-            match self.stack[self.depth - 3] {
-                STRING_SINGLE => return IN_ESCAPE,
-                STRING_DOUBLE => return 2 * IN_ESCAPE,
-                _ => {}
-            }
-        }
-        0
-    }
-
-    /// The string a `\z` escape on top is in: its text's leaf.
-    fn escape_host(&self) -> u16 {
-        if self.depth >= 2 && self.stack[self.depth - 2] == STRING_SINGLE {
-            SINGLE
-        } else {
-            DOUBLE
-        }
-    }
-
-    /// The kind of text no pattern of the top context matches.
-    fn text(&self) -> u16 {
-        match self.top() {
-            ..ESCAPE_Z => PLAIN,
-            STRING_SINGLE => SINGLE,
-            STRING_DOUBLE => DOUBLE,
-            LONG_STRING => MULTILINE,
-            COMMENT_LINE => LINE_COMMENT + self.comment_wrap(),
-            COMMENT_BLOCK => BLOCK_COMMENT + self.comment_wrap(),
-            ESCAPE_Z => self.escape_host() + ESCAPE_SPACES,
-            _ => PLAIN,
-        }
-    }
-
-    /// The text up to `p` is the top context's.
-    fn fill(&mut self, p: usize) {
-        let p = p.min(self.b.len());
-        if p > self.at {
-            let text = self.text();
-            if text != PLAIN {
-                self.k.merge(&mut self.out, self.at, p, text);
-            }
-            self.at = p;
-        }
-    }
-
-    /// Bytes `s..e` are `leaf`, after the text before them.
-    fn put(&mut self, s: usize, e: usize, leaf: u16) {
-        self.fill(s);
-        let e = e.min(self.b.len());
-        self.k.fill(&mut self.out, &mut self.at, e, leaf);
-    }
-
-    fn push(&mut self, c: u8) {
-        if self.depth == MAX {
-            crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
-        }
-        self.stack[self.depth] = c;
-        self.depth += 1;
-    }
-
-    fn pop(&mut self) {
-        if self.depth > 1 {
-            self.depth -= 1;
-        }
-    }
-
-    /// Replace the top with `cs`, bottom first.
-    fn set(&mut self, cs: &[u8]) {
-        self.pop();
-        for &c in cs {
-            self.push(c);
-        }
-    }
-
-    /// `cs` pushed by a match that took nothing at `p`: syntect keeps the depth the first of
-    /// them leaves for its guard against a loop.
-    fn enter(&mut self, p: usize, cs: &[u8]) -> Option<usize> {
-        if self.depth >= SYNTECT_DEPTH {
-            return None;
-        }
-        self.fill(p);
-        let depth = self.depth + 1;
-        for &c in cs {
-            self.push(c);
-        }
-        self.loop_at = (p, depth);
-        Some(p)
-    }
-
-    /// The top replaced with `cs` by a match that took nothing at `p`.
-    fn shift(&mut self, p: usize, cs: &[u8]) -> Option<usize> {
-        self.fill(p);
-        self.set(cs);
-        Some(p)
-    }
-
-    /// A pop that takes nothing at `p`, unless it would loop: then syntect passes over it for
-    /// the patterns after it (`None`).
-    fn leave(&mut self, p: usize) -> Option<usize> {
-        if self.loop_at == (p, self.depth) {
-            self.looped = true;
-            return None;
-        }
-        self.fill(p);
-        self.pop();
-        Some(p)
-    }
-
-    /// Bytes `s..e` are `leaf`; then `cs` are pushed.
-    fn tok_push(&mut self, s: usize, e: usize, leaf: u16, cs: &[u8]) -> Option<usize> {
-        if self.depth >= SYNTECT_DEPTH {
-            return None;
-        }
-        self.fill(s);
-        for &c in cs {
-            self.push(c);
-        }
-        self.put(s, e, leaf);
-        Some(e)
-    }
-
-    /// Bytes `s..e` are `leaf`, then the top context pops.
-    fn close(&mut self, s: usize, e: usize, leaf: u16) -> Option<usize> {
-        self.put(s, e, leaf);
-        self.pop();
-        Some(e)
-    }
-
-    /// Bytes `s..e` are `leaf`, then the top context is replaced with `cs`.
-    fn then(&mut self, s: usize, e: usize, leaf: u16, cs: &[u8]) -> Option<usize> {
-        self.put(s, e, leaf);
-        self.set(cs);
-        Some(e)
-    }
-
-    /// Bytes `s..e` are `leaf`, and the context stays.
-    fn tok(&mut self, s: usize, e: usize, leaf: u16) -> Option<usize> {
-        self.put(s, e, leaf);
-        Some(e)
-    }
-
-    fn run(&mut self) {
-        let n = self.b.len();
-        let mut p = 0;
-        let mut stuck = 0;
-        loop {
-            // where no pattern of the context starts at a space, the spaces are skipped whole
-            if p < n && spaces_inert(self.top()) && space_len(self.b, p).is_some() {
-                p = skip_spaces(self.b, p).min(n);
-            }
-            if p > n {
-                return;
-            }
-            self.looped = false;
-            if let Some(q) = self.at(p) {
-                stuck = if q == p { stuck + 1 } else { 0 };
-                p = q;
-                self.empty_matches(p);
-                if stuck > STUCK {
-                    stuck = 0;
-                    p = self.next(p);
-                }
-            } else if p >= n {
-                return;
-            } else {
-                // after a pop passed over (syntect's guard), a step of a character; else the
-                // next place a pattern can start
-                p = if self.looped {
-                    self.next(p)
-                } else {
-                    self.advance(p)
-                };
-                stuck = 0;
-            }
-        }
-    }
-
-    /// The contexts on top whose only pattern besides the prototype's comments is `''` (a set
-    /// or a pop), applied at `p` where no comment starts: what the scan's next turns would do
-    /// there, without them.
-    fn empty_matches(&mut self, p: usize) {
-        if p > self.b.len() || self.b.get(p) == Some(&b'-') && self.b.get(p + 1) == Some(&b'-') {
-            return;
-        }
-        loop {
-            match self.top() {
-                EXPRESSION => self.set(&[EXPR_END, EXPR_BEGIN]),
-                EXPRESSION_LIST => self.set(&[EXPR_LIST_END, EXPR_BEGIN]),
-                ARGS_META | VALUE_META | FUNCTION_META if self.loop_at != (p, self.depth) => {
-                    self.pop();
-                }
-                _ => return,
-            }
-        }
-    }
-
-    /// Where the character at `p` ends (the line's `\n` is one byte).
-    fn next(&self, p: usize) -> usize {
-        crate::prim::next_char(self.b, p)
-    }
-
-    /// Where a pattern of the top context can next start, after none did at `p`.
-    fn advance(&self, p: usize) -> usize {
-        let b = self.b;
-        let stop: fn(u8) -> bool = match self.top() {
-            STRING_SINGLE => |c| matches!(c, b'\\' | b'\''),
-            STRING_DOUBLE => |c| matches!(c, b'\\' | b'"'),
-            LONG_STRING | COMMENT_BLOCK => |c| c == b']',
-            COMMENT_LINE => return self.b.len(),
-            _ => return self.next(p),
-        };
-        let mut q = p + 1;
-        while q < self.b.len() && !stop(b[q]) {
-            q += 1;
-        }
-        q
-    }
-
-    /// The ASCII word at `p`: where it ends (`p` for none).
-    fn word_end(&self, p: usize) -> usize {
-        let b = self.b;
-        let mut e = p;
-        while e < self.b.len() && WORD[usize::from(b[e])] {
-            e += 1;
-        }
-        e
-    }
-
-    /// The word at `p` is `w` (`w{{identifier_break}}`).
-    fn word_is(&self, p: usize, w: &[u8]) -> bool {
-        self.b[p.min(self.b.len())..].starts_with(w)
-            && !self
-                .b
-                .get(p + w.len())
-                .is_some_and(|&c| WORD[usize::from(c)])
-    }
-
-    /// `{{identifier}}` at `p`: where it ends.
-    fn ident(&self, p: usize) -> Option<usize> {
-        let &c = self.b.get(p)?;
-        if !(c.is_ascii_alphabetic() || c == b'_') {
-            return None;
-        }
-        let e = self.word_end(p);
-        (!is_reserved(&self.b[p..e])).then_some(e)
-    }
-
-    /// `(?=\S)` at `p`.
-    fn nonblank(&self, p: usize) -> bool {
-        p < self.b.len() && space_len(self.b, p).is_none()
-    }
-
-    /// `else-pop`.
-    fn else_pop(&mut self, p: usize) -> Option<usize> {
-        if self.nonblank(p) {
-            self.leave(p)
-        } else {
-            None
-        }
-    }
-
-    /// `\s*` then a byte `ok` takes, after `e`.
-    fn ahead(&self, e: usize, ok: impl Fn(&[u8], usize) -> bool) -> bool {
-        let q = skip_spaces(self.b, e);
-        q < self.b.len() && ok(self.b, q)
-    }
-
-    /// `{{function_call_ahead}}` after `e`.
-    fn call_ahead(&self, e: usize) -> bool {
-        self.ahead(e, args_begin)
-    }
-
-    /// `{{function_assignment_ahead}}` after `e`: `\s*=\s*function{{identifier_break}}`.
-    fn assignment_ahead(&self, e: usize) -> bool {
-        let q = skip_spaces(self.b, e);
-        q < self.b.len() && self.b[q] == b'=' && {
-            let r = skip_spaces(self.b, q + 1);
-            r < self.b.len() && self.word_is(r, b"function")
-        }
-    }
-
-    /// The first pattern of the top context that matches at `p`, applied: where the scan goes
-    /// on, or `None` when none does.
-    fn at(&mut self, p: usize) -> Option<usize> {
-        let top = self.top();
-        if top < STRING_SINGLE
-            && let Some(q) = self.prototype(p)
-        {
-            return Some(q);
-        }
-        match top {
-            MAIN => self.statements(p),
-            BLOCK => self.end(p).or_else(|| self.statements(p)),
-            IF_BLOCK => {
-                if self.word_is(p, b"end") {
-                    return self.close(p, p + 3, END_KEYWORD);
-                }
-                if self.word_is(p, b"elseif") {
-                    return self.then(p, p + 6, CONDITIONAL, &[IF_THEN, EXPRESSION]);
-                }
-                if self.word_is(p, b"else") {
-                    return self.then(p, p + 4, CONDITIONAL, &[IF_BLOCK]);
-                }
-                self.statements(p)
-            }
-            REPEAT_BLOCK => {
-                if self.word_is(p, b"until")
-                    && let Some(q) = self.leave(p)
-                {
-                    return Some(q);
-                }
-                self.statements(p)
-            }
-            UNTIL => {
-                if self.word_is(p, b"until") {
-                    return self.then(p, p + 5, LOOP, &[EXPRESSION]);
-                }
-                None
-            }
-            DO => {
-                if self.word_is(p, b"do") {
-                    return self.tok_push(p, p + 2, CONTROL, &[BLOCK]);
-                }
-                self.else_pop(p)
-            }
-            FOR_IN => {
-                if self.b.get(p) == Some(&b'=') {
-                    return self.shift(p, &[EXPR_LIST_END]);
-                }
-                if self.word_is(p, b"in") {
-                    return self.then(p, p + 2, LOOP, &[EXPRESSION_LIST]);
-                }
-                self.else_pop(p)
-            }
-            LABEL => {
-                if let Some(e) = self.ident(p) {
-                    return self.then(p, e, LABEL_NAME, &[LABEL_END]);
-                }
-                self.else_pop(p)
-            }
-            LABEL_END => {
-                if self.b[p.min(self.b.len())..].starts_with(b"::") {
-                    return self.close(p, p + 2, LABEL_CLOSE);
-                }
-                self.else_pop(p)
-            }
-            GOTO => {
-                if let Some(e) = self.ident(p) {
-                    return self.close(p, e, LABEL_VARIABLE);
-                }
-                self.else_pop(p)
-            }
-            IF_THEN => {
-                if self.word_is(p, b"then") {
-                    return self.then(p, p + 4, CONDITIONAL, &[IF_BLOCK]);
-                }
-                self.else_pop(p)
-            }
-            EXPRESSION => self.shift(p, &[EXPR_END, EXPR_BEGIN]),
-            EXPRESSION_LIST => self.shift(p, &[EXPR_LIST_END, EXPR_BEGIN]),
-            EXPR_END => self.expression_end(p),
-            EXPR_LIST_END => {
-                if self.b.get(p) == Some(&b',') {
-                    return self.tok_push(p, p + 1, COMMA, &[EXPR_BEGIN]);
-                }
-                self.expression_end(p)
-            }
-            EXPR_BEGIN => self.expression_begin(p),
-            ARGS_META | VALUE_META | FUNCTION_META => self.leave(p),
-            ARGS => self.arguments(p),
-            ARGS_GROUP | PAREN_GROUP | BRACKETS => {
-                let (close, leaf, inner) = match top {
-                    ARGS_GROUP => (b')', GROUP_END, EXPRESSION_LIST),
-                    PAREN_GROUP => (b')', GROUP_END, EXPRESSION),
-                    _ => (b']', BRACKETS_END, EXPRESSION),
-                };
-                if self.b.get(p) == Some(&close) {
-                    return self.close(p, p + 1, leaf);
-                }
-                let e = self.word_end(p);
-                if e > p && is_reserved_statement(&self.b[p..e]) {
-                    return self.close(p, e, UNEXPECTED_KEYWORD);
-                }
-                if self.nonblank(p) {
-                    return self.enter(p, &[inner]);
-                }
-                None
-            }
-            PROPERTY => self.property(p),
-            MAPPING => self.mapping(p),
-            KEY_BRACKETS => {
-                if self.b.get(p) == Some(&b']') {
-                    return self.close(p, p + 1, BRACKETS_END);
-                }
-                if self.nonblank(p) {
-                    return self.enter(p, &[EXPRESSION]);
-                }
-                None
-            }
-            KEY => self.key(p),
-            FNAME => {
-                if self.nonblank(p) {
-                    return self.shift(p, &[FNAME_END, FNAME_BEGIN]);
-                }
-                None
-            }
-            FNAME_BEGIN => {
-                if let Some(e) = self.ident(p) {
-                    let leaf = if self.ahead(e, |b, q| matches!(b[q], b'.' | b':')) {
-                        VARIABLE
-                    } else {
-                        FUNCTION_NAME
-                    };
-                    return self.close(p, e, leaf);
-                }
-                self.else_pop(p)
-            }
-            FNAME_END => {
-                if matches!(self.b.get(p), Some(b'.' | b':')) {
-                    return self.tok_push(p, p + 1, ACCESSOR, &[FNAME_PROPERTY]);
-                }
-                self.else_pop(p)
-            }
-            FNAME_PROPERTY => {
-                if let Some(e) = self.ident(p)
-                    && self.ahead(e, |b, q| matches!(b[q], b'.' | b':'))
-                {
-                    return self.close(p, e, PROPERTY_LEAF);
-                }
-                let e = self.word_end(p);
-                if is_metamethod(&self.b[p..e]) {
-                    return self.close(p, e, PROPERTY_METAMETHOD);
-                }
-                if let Some(e) = self.ident(p) {
-                    return self.close(p, e, PROPERTY_FUNCTION_NAME);
-                }
-                self.else_pop(p)
-            }
-            PARAMS => {
-                if self.b.get(p) == Some(&b'(') {
-                    return self.then(p, p + 1, GROUP_BEGIN, &[PARAM_GROUP]);
-                }
-                self.else_pop(p)
-            }
-            PARAM_GROUP => {
-                match self.b.get(p) {
-                    Some(b')') => return self.close(p, p + 1, GROUP_END),
-                    Some(b',') => return self.tok(p, p + 1, COMMA),
-                    _ => {}
-                }
-                let e = self.word_end(p);
-                if e > p && is_reserved(&self.b[p..e]) {
-                    return self.close(p, e, UNEXPECTED_KEYWORD);
-                }
-                if let Some(e) = self.ident(p) {
-                    return self.tok(p, e, PARAMETER);
-                }
-                if self.b[p.min(self.b.len())..].starts_with(b"...") {
-                    return self.tok(p, p + 3, LANGUAGE);
-                }
-                None
-            }
-            ESCAPE_Z => self.else_pop(p),
-            MODULE..MEMBER => {
-                if self.b.get(p) == Some(&b'.') {
-                    return self.then(p, p + 1, ACCESSOR, &[top - MODULE + MEMBER]);
-                }
-                self.else_pop(p)
-            }
-            MEMBER..STRING_SINGLE => {
-                let e = self.word_end(p);
-                if let Some(leaf) = member(usize::from(top - MEMBER), &self.b[p..e]) {
-                    return self.close(p, e, leaf);
-                }
-                self.property(p)
-            }
-            STRING_SINGLE | STRING_DOUBLE => self.string(p, top),
-            LONG_STRING => {
-                if let Some(e) = long_close(self.b, p, self.level) {
-                    return self.close(p, e, MULTILINE + END);
-                }
-                None
-            }
-            COMMENT_LINE => {
-                if p == self.b.len() {
-                    return self.close(p, p + 1, LINE_COMMENT);
-                }
-                None
-            }
-            COMMENT_BLOCK => {
-                if let Some(e) = long_close(self.b, p, self.level) {
-                    let leaf = BLOCK_END + self.comment_wrap();
-                    return self.close(p, e, leaf);
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    /// The `prototype`: the comments.
-    fn prototype(&mut self, p: usize) -> Option<usize> {
-        let b = self.b;
-        if b.get(p) != Some(&b'-') || b.get(p + 1) != Some(&b'-') {
-            return None;
-        }
-        if self.depth >= SYNTECT_DEPTH {
-            return None;
-        }
-        if let Some((e, level)) = long_open(b, p + 2) {
-            self.fill(p);
-            self.push(COMMENT_BLOCK);
-            self.level = level;
-            let leaf = BLOCK_BEGIN + self.comment_wrap();
-            self.put(p, e, leaf);
-            return Some(e);
-        }
-        self.fill(p);
-        self.push(COMMENT_LINE);
-        let leaf = LINE_MARK + self.comment_wrap();
-        self.put(p, p + 2, leaf);
-        Some(p + 2)
-    }
-
-    /// `end`.
-    fn end(&mut self, p: usize) -> Option<usize> {
-        if self.word_is(p, b"end") {
-            return self.close(p, p + 3, END_KEYWORD);
-        }
-        None
-    }
-
-    /// `statements`.
-    fn statements(&mut self, p: usize) -> Option<usize> {
-        let b = self.b;
-        let &c = b.get(p)?;
-        if c == b';' {
-            return self.tok(p, p + 1, TERMINATOR);
-        }
-        if c.is_ascii_lowercase() {
-            let e = self.word_end(p);
-            match &b[p..e] {
-                b"function" => {
-                    return self.tok_push(
-                        p,
-                        e,
-                        FUNCTION_KEYWORD,
-                        &[FUNCTION_META, BLOCK, PARAMS, FNAME],
-                    );
-                }
-                b"do" => return self.tok_push(p, e, CONTROL, &[BLOCK]),
-                b"if" => return self.tok_push(p, e, CONDITIONAL, &[IF_THEN, EXPRESSION]),
-                b"while" => return self.tok_push(p, e, LOOP, &[DO, EXPRESSION]),
-                b"repeat" => return self.tok_push(p, e, LOOP, &[UNTIL, REPEAT_BLOCK]),
-                b"for" => return self.tok_push(p, e, LOOP, &[DO, FOR_IN, EXPRESSION_LIST]),
-                b"goto" => return self.tok_push(p, e, GOTO_KEYWORD, &[GOTO]),
-                b"break" => return self.tok(p, e, BREAK),
-                b"return" => return self.tok_push(p, e, RETURN, &[EXPRESSION_LIST]),
-                b"local" => return self.tok_push(p, e, LOCAL, &[EXPRESSION_LIST]),
-                b"end" => return self.tok(p, e, UNEXPECTED_END),
-                _ => {}
-            }
-        } else if c == b':' && b.get(p + 1) == Some(&b':') {
-            return self.tok_push(p, p + 2, LABEL_BEGIN, &[LABEL]);
-        }
-        if self.nonblank(p) {
-            return self.enter(p, &[EXPRESSION]);
-        }
-        None
-    }
-
-    /// `expression-end`.
-    fn expression_end(&mut self, p: usize) -> Option<usize> {
-        let b = self.b;
-        let &c = b.get(p)?;
-        if c == b';' {
-            return self.leave(p).or_else(|| self.expression_end_rest(p));
-        }
-        if args_begin(b, p) {
-            return self
-                .enter(p, &[ARGS_META, ARGS])
-                .or_else(|| self.expression_end_rest(p));
-        }
-        self.expression_end_rest(p)
-    }
-
-    /// `expression-end` after its lookaheads: the infix operators, the accessors and
-    /// `else-pop`.
-    fn expression_end_rest(&mut self, p: usize) -> Option<usize> {
-        if let Some((e, leaf)) = self.infix(p) {
-            return self
-                .tok_push(p, e, leaf, &[EXPR_BEGIN])
-                .or_else(|| self.accessor_or_pop(p));
-        }
-        self.accessor_or_pop(p)
-    }
-
-    fn accessor_or_pop(&mut self, p: usize) -> Option<usize> {
-        match self.b.get(p) {
-            Some(b'.' | b':') => {
-                if let Some(q) = self.tok_push(p, p + 1, ACCESSOR, &[PROPERTY]) {
-                    return Some(q);
-                }
-            }
-            Some(b'[') => {
-                if let Some(q) = self.tok_push(p, p + 1, BRACKETS_BEGIN, &[BRACKETS]) {
-                    return Some(q);
-                }
-            }
-            _ => {}
-        }
-        self.else_pop(p)
-    }
-
-    /// `infix-operator` at `p`: the operator's end and leaf.
-    fn infix(&self, p: usize) -> Option<(usize, u16)> {
-        let b = self.b;
-        let c = *b.get(p)?;
-        let next = b.get(p + 1).copied();
-        Some(match c {
-            b'=' | b'<' | b'>' | b'~' if next == Some(b'=') => (p + 2, COMPARISON),
-            b'/' if next == Some(b'/') => (p + 2, ARITHMETIC),
-            b'-' | b'+' | b'*' | b'/' | b'%' | b'^' => (p + 1, ARITHMETIC),
-            b'>' if next == Some(b'>') => (p + 2, BITWISE),
-            b'<' if next == Some(b'<') => (p + 2, BITWISE),
-            b'&' | b'|' | b'~' => (p + 1, BITWISE),
-            b'<' | b'>' => (p + 1, COMPARISON),
-            b'.' if next == Some(b'.') => (p + 2, CONCATENATION),
-            b'=' => (p + 1, ASSIGNMENT),
-            b'a' if self.word_is(p, b"and") => (p + 3, LOGICAL),
-            b'o' if self.word_is(p, b"or") => (p + 2, LOGICAL),
-            _ => return None,
-        })
-    }
-
-    /// `expression-begin`.
-    fn expression_begin(&mut self, p: usize) -> Option<usize> {
-        let b = self.b;
-        let &c = b.get(p)?;
-        match c {
-            b';' => return self.leave(p).or_else(|| self.expression_begin_rest(p, c)),
-            // `prefix-operator`
-            b'#' => return self.tok(p, p + 1, LENGTH),
-            b'-' => return self.tok(p, p + 1, ARITHMETIC),
-            b'~' => return self.tok(p, p + 1, BITWISE),
-            _ => {}
-        }
-        self.expression_begin_rest(p, c)
-    }
-
-    /// `expression-begin` after `(?=;)` and the prefix operators.
-    fn expression_begin_rest(&mut self, p: usize, c: u8) -> Option<usize> {
-        let b = self.b;
-        if c.is_ascii_alphabetic() || c == b'_' {
-            let e = self.word_end(p);
-            let w = &b[p..e];
-            match w {
-                b"not" => return self.tok(p, e, LOGICAL),
-                b"true" | b"false" => return self.close(p, e, BOOLEAN),
-                b"nil" => return self.close(p, e, NULL),
-                b"self" => return self.close(p, e, THIS),
-                b"_G" | b"_VERSION" => return self.close(p, e, SUPPORT_CONSTANT),
-                b"function" => {
-                    return self.then(
-                        p,
-                        e,
-                        FUNCTION_KEYWORD,
-                        &[FUNCTION_META, BLOCK, PARAMS, FNAME],
-                    );
-                }
-                _ => {}
-            }
-            if is_builtin_function(w) {
-                return self.close(p, e, SUPPORT_FUNCTION);
-            }
-            if let Some(m) = MODULES.iter().position(|&m| m == w) {
-                return self.then(p, e, SUPPORT_CONSTANT, &[MODULE + m as u8]);
-            }
-            if !is_reserved(w) {
-                let leaf = if self.assignment_ahead(e) {
-                    FUNCTION_NAME
-                } else if self.call_ahead(e) {
-                    CALL
-                } else {
-                    VARIABLE
-                };
-                return self.close(p, e, leaf);
-            }
-            return self.else_pop(p);
-        }
-        if c == b'.' && b.get(p + 1) == Some(&b'.') && b.get(p + 2) == Some(&b'.') {
-            return self.close(p, p + 3, LANGUAGE);
-        }
-        if let Some((e, leaf, caps)) = number(b, p) {
-            let mut q = p;
-            for (s, ce, cl) in caps {
-                if cl != PLAIN {
-                    self.put(q, s, leaf);
-                    self.put(s, ce, cl);
-                    q = ce;
-                }
-            }
-            return self.close(q, e, leaf);
-        }
-        if let Some(q) = self.string_open(p) {
-            return Some(q);
-        }
-        match c {
-            b'(' => self.then(p, p + 1, GROUP_BEGIN, &[PAREN_GROUP]),
-            b'{' => self.then(p, p + 1, BRACES_BEGIN, &[MAPPING]),
-            _ => self.else_pop(p),
-        }
-    }
-
-    /// `string` at `p`: a string's opening, setting its context.
-    fn string_open(&mut self, p: usize) -> Option<usize> {
-        match self.b.get(p) {
-            Some(b'\'') => self.then(p, p + 1, SINGLE + BEGIN, &[STRING_SINGLE]),
-            Some(b'"') => self.then(p, p + 1, DOUBLE + BEGIN, &[STRING_DOUBLE]),
-            Some(b'[') => {
-                let (e, level) = long_open(self.b, p)?;
-                self.put(p, e, MULTILINE + BEGIN);
-                self.set(&[LONG_STRING]);
-                self.level = level;
-                Some(e)
-            }
-            _ => None,
-        }
-    }
-
-    /// `function-arguments`.
-    fn arguments(&mut self, p: usize) -> Option<usize> {
-        if let Some(q) = self.string_open(p) {
-            return Some(q);
-        }
-        match self.b.get(p) {
-            Some(b'{') => self.then(p, p + 1, BRACES_BEGIN, &[MAPPING]),
-            Some(b'(') => self.then(p, p + 1, GROUP_BEGIN, &[ARGS_GROUP]),
-            _ => None,
-        }
-    }
-
-    /// `property`.
-    fn property(&mut self, p: usize) -> Option<usize> {
-        let e = self.word_end(p);
-        let w = &self.b[p..e];
-        if let Some(e) = self.ident(p) {
-            if self.assignment_ahead(e) {
-                let leaf = if is_metamethod(w) {
-                    PROPERTY_METAMETHOD
-                } else {
-                    PROPERTY_FUNCTION_NAME
-                };
-                return self.close(p, e, leaf);
-            }
-            if self.call_ahead(e) {
-                return self.close(p, e, PROPERTY_CALL);
-            }
-            if is_metaproperty(w) {
-                return self.close(p, e, PROPERTY_METAPROPERTY);
-            }
-            return self.close(p, e, PROPERTY_LEAF);
-        }
-        if e > p && is_reserved(w) {
-            return self.close(p, e, UNEXPECTED_KEYWORD);
-        }
-        self.else_pop(p)
-    }
-
-    /// `table-constructor`'s `{ … }`.
-    fn mapping(&mut self, p: usize) -> Option<usize> {
-        let b = self.b;
-        let &c = b.get(p)?;
-        match c {
-            b'}' => return self.close(p, p + 1, BRACES_END),
-            b',' | b';' => return self.tok(p, p + 1, FIELD_SEPARATOR),
-            b'[' if long_open(b, p).is_none() => {
-                if let Some(q) = self.tok_push(p, p + 1, BRACKETS_BEGIN, &[KEY_BRACKETS]) {
-                    return Some(q);
-                }
-            }
-            _ => {}
-        }
-        // `(?={{identifier}}\s*=(?!=))`
-        if let Some(e) = self.ident(p) {
-            let q = skip_spaces(b, e);
-            if q < self.b.len()
-                && b[q] == b'='
-                && b.get(q + 1) != Some(&b'=')
-                && let Some(r) = self.enter(p, &[KEY])
-            {
-                return Some(r);
-            }
-        }
-        if c == b'='
-            && b.get(p + 1) != Some(&b'=')
-            && let Some(q) = self.tok_push(p, p + 1, KEY_VALUE, &[VALUE_META, EXPRESSION])
-        {
-            return Some(q);
-        }
-        if self.nonblank(p) {
-            return self.enter(p, &[EXPRESSION]);
-        }
-        None
-    }
-
-    /// A table's `name =` key: `(?=…)` made sure a name is at `p`.
-    fn key(&mut self, p: usize) -> Option<usize> {
-        let e = self.ident(p)?;
-        let w = &self.b[p..e];
-        // `(?:({{metamethod}})|{{identifier}})(?=\s*=\s*function\b)`
-        let q = skip_spaces(self.b, e);
-        if q < self.b.len() && self.b[q] == b'=' {
-            let r = skip_spaces(self.b, q + 1);
-            if self.b[r.min(self.b.len())..].starts_with(b"function")
-                && !is_word_char(self.b, r + 8)
-            {
-                let leaf = if is_metamethod(w) {
-                    KEY_METAMETHOD
-                } else {
-                    FUNCTION_NAME
-                };
-                return self.close(p, e, leaf);
-            }
-        }
-        if is_metamethod(w) {
-            return self.close(p, e, KEY_METAMETHOD);
-        }
-        if is_metaproperty(w) {
-            return self.close(p, e, KEY_METAPROPERTY);
-        }
-        self.close(p, e, KEY_LEAF)
-    }
-
-    /// A quoted string's patterns at `p`: `string-content`'s, then its closing quote.
-    fn string(&mut self, p: usize, top: u8) -> Option<usize> {
-        let b = self.b;
-        let host = if top == STRING_SINGLE { SINGLE } else { DOUBLE };
-        if p == self.b.len() {
-            // `\n`: the string is left unclosed
-            return self.close(p, p + 1, host);
-        }
-        match b[p] {
-            b'\\' => {
-                let Some(&c) = b.get(p + 1) else {
-                    // `\\\n`: an escape
-                    return self.tok(p, p + 2, host + ESCAPE);
-                };
-                match c {
-                    b'a' | b'b' | b'f' | b'n' | b'r' | b't' | b'v' | b'\\' | b'\'' | b'"'
-                    | b'[' | b']' => return self.tok(p, p + 2, host + ESCAPE),
-                    b'x' if b.get(p + 2).is_some_and(u8::is_ascii_hexdigit)
-                        && b.get(p + 3).is_some_and(u8::is_ascii_hexdigit) =>
-                    {
-                        return self.tok(p, p + 4, host + ESCAPE_HEX);
-                    }
-                    b'u' if b.get(p + 2) == Some(&b'{') => {
-                        let h = hex_digits(b, p + 3);
-                        if h > p + 3 && b.get(h) == Some(&b'}') {
-                            return self.tok(p, h + 1, host + ESCAPE_UNICODE);
-                        }
-                    }
-                    b'z' if self.depth < SYNTECT_DEPTH => {
-                        self.fill(p);
-                        self.push(ESCAPE_Z);
-                        self.put(p, p + 2, host + ESCAPE_SPACES);
-                        return Some(p + 2);
-                    }
-                    _ => {}
-                }
-                // `\\\d{1,3}`
-                if let Some(mut e) = digit(b, p + 1) {
-                    for _ in 0..2 {
-                        match digit(b, e) {
-                            Some(f) => e = f,
-                            None => break,
-                        }
-                    }
-                    return self.tok(p, e, host + ESCAPE_DEC);
-                }
-                // `\\.`
-                let e = p + 1 + char_len(c).min(self.b.len() - p - 1);
-                self.tok(p, e, host + INVALID_ESCAPE)
-            }
-            c if c == if top == STRING_SINGLE { b'\'' } else { b'"' } => {
-                self.close(p, p + 1, host + END)
-            }
-            _ => None,
-        }
-    }
-}
-
-/// `\w` at `i` (Unicode's letters and decimal digits; marks and connector punctuation aren't
-/// followed), for `\b`.
-fn is_word_char(b: &[u8], i: usize) -> bool {
-    match b.get(i) {
-        Some(&c) if c < 0x80 => WORD[usize::from(c)],
-        Some(_) => wide_char(b, i).is_some_and(|c| c.is_alphabetic() || is_nd(c)),
-        None => false,
-    }
-}
-
-/// `{{function_args_begin}}` at `p`: `\(|"|'|\[=*\[|\{`.
-fn args_begin(b: &[u8], p: usize) -> bool {
-    match b.get(p) {
-        Some(b'(' | b'"' | b'\'' | b'{') => true,
-        Some(b'[') => long_open(b, p).is_some(),
-        _ => false,
-    }
-}
-
-/// Whether no pattern of context `c` starts at a space: all but the ones that match nothing
-/// (`''`) and the text.
-const fn spaces_inert(c: u8) -> bool {
-    !matches!(
-        c,
-        EXPRESSION | EXPRESSION_LIST | ARGS_META | VALUE_META | FUNCTION_META
-    ) && c < STRING_SINGLE
-}
-
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::Lang;
     use crate::tests::marked;
 
@@ -2208,52 +1748,58 @@ mod tests {
         has(&l, "pi", "meta.property.lua support.constant.builtin.lua");
     }
 
-    /// [`super::packed`] (X-077) picks the run the slice compare it replaced picked: the first
-    /// of `RUNS` the contexts start with, on stacks of the runs' contexts, other contexts, and
-    /// runs cut short at the stack's end, up to `MAX` deep.
+    /// `text` a line at a time on the line API: each line's spans and the state after it.
+    fn lines(text: &str) -> Vec<(Vec<crate::Span>, State)> {
+        let mut state = State::default();
+        let mut out = Vec::new();
+        for l in text.lines() {
+            let mut spans = Vec::new();
+            line(l.as_bytes(), &mut state, &mut Out::new(&mut spans));
+            out.push((spans, state));
+        }
+        out
+    }
+
     #[test]
-    fn packing_without_compares() {
-        use super::{MAX, RUN, RUNS, packed};
-        let mut ctx: Vec<u8> = RUNS.iter().flat_map(|r| r.iter().copied()).collect();
-        ctx.sort_unstable();
-        ctx.dedup();
-        ctx.extend([0, 2, 11, 58]);
-        let mut x = 0x9e37_79b9_7f4a_7c15_u64;
-        let mut next = |n: usize| {
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
-            (x % n as u64) as usize
-        };
-        for _ in 0..20_000 {
-            let mut stack = [0u8; MAX];
-            let depth = 2 + next(MAX - 1);
-            let mut i = 1;
-            while i < depth {
-                if next(3) > 0 {
-                    let r = RUNS[next(RUNS.len())];
-                    let n = r.len().min(depth - i);
-                    stack[i..i + n].copy_from_slice(&r[..n]);
-                    i += n;
-                } else {
-                    stack[i] = ctx[next(ctx.len())];
-                    i += 1;
-                }
+    fn a_block_lexes_as_its_lines() {
+        // every field a line hands the next: frames past the levels, a long bracket's level, a
+        // string continued by `\` and by `\z`, the token before, an expression list
+        let deep = "{ ".repeat(50) + &"} ".repeat(48);
+        let text = format!(
+            "local t = {deep}\n}}}}\nx = [==[ a\n]=] b ]==] s = 'a\\\nb' z = \"c\\z\n   d\"\n\
+             --[[ c\n]] function M.f\n(a,\nb) return a,\nb end\nfoo\n(1) local\nx, y = 1, 2\n"
+        );
+        let one = lines(&text);
+        let mut state = State::default();
+        let mut all = Vec::new();
+        let mut v = Vec::new();
+        block(&mut state, &mut v, &mut |c| {
+            for l in text.lines() {
+                all.push(c.next(l.as_bytes()).to_vec());
             }
-            // what lies past the depth is a deeper line's leftovers
-            for c in &mut stack[depth..] {
-                *c = ctx[next(ctx.len())];
-            }
-            let mut i = 1;
-            while i < depth {
-                let rest = &stack[i..depth];
-                let want = RUNS
-                    .iter()
-                    .position(|r| rest.starts_with(r))
-                    .map_or((rest[0], 1), |r| (RUN + r as u8, RUNS[r].len()));
-                assert_eq!(packed(&stack, i, depth), want, "{rest:?}");
-                i += want.1;
-            }
+            None
+        });
+        assert_eq!(all, one.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
+        assert_eq!(state, one.last().unwrap().1);
+        assert!(!one[0].1.is_exact());
+    }
+
+    #[test]
+    fn long_lines_lex_in_linear_time() {
+        for unit in [
+            "a.b(",
+            "{ k = ",
+            "x = 'q\\z",
+            "f [[",
+            "::a:: ",
+            "function f(",
+            "t[",
+            "--[[ ",
+        ] {
+            let l = unit.repeat(20_000);
+            let t = std::time::Instant::now();
+            lines(&l);
+            assert!(t.elapsed().as_millis() < 200, "{unit:?}: {:?}", t.elapsed());
         }
     }
 }

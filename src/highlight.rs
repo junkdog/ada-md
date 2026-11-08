@@ -3242,12 +3242,16 @@ mod tests {
         rules_match_the_grammar("python", "Python", text);
     }
 
-    /// ada-parse's Lua lexer picks the rules bat's grammar picks, in every built-in theme
-    /// (ADR-40): its corners included (comments from the prototype anywhere, even in a `\z`
-    /// escape's spaces inside a string, long brackets with levels across lines, every escape,
-    /// hex floats, a function's dotted name and method, metamethods as keys and properties,
-    /// the builtin modules' members, `false` as `boolean.true` (sic), labels, a `,` in
-    /// parentheses stepped over by syntect's loop guard, and keywords out of place).
+    /// ada-parse's Lua lexer (X-098, a scanner of ada's own whose kinds are leaves) colors each
+    /// byte as bat's grammar does, in every built-in theme (ADR-40): its corners included (long
+    /// brackets with levels across lines, every escape and a `\z` escape's spaces across a line,
+    /// hex floats, a function's dotted name and method, metamethods as keys and properties, the
+    /// builtin modules' members, `false` as `boolean.true` (sic), labels, a `,` in parentheses
+    /// left plain, a keyword in a function's parameters). Left out, by design: a `--` in a `\z`
+    /// escape's spaces (bat's prototype makes it a comment inside the string), a keyword out of
+    /// place (bat's loop guard splits `then` into `t` and a variable `hen`), `::` after an
+    /// operand (bat's two accessors, a label to ada), a builtin module before `..` (bat's
+    /// accessor), digits past ASCII (bat's `\d`).
     #[test]
     fn lua_rules_match_the_grammar() {
         let text = concat!(
@@ -3256,20 +3260,20 @@ mod tests {
             "]] still ]==] local M = {}\n",
             "local mt = { __index = M, __call = function(self, ...) end, __mode = 'k' }\n",
             "function M.util:run(a, b, ...) -- the method\n",
-            "  local s = 'a\\n\\x41\\65\\u{48}\\q' .. \"b\\z   -- inside\n",
+            "  local s = 'a\\n\\x41\\65\\u{48}\\q' .. \"b\\z   \n",
             "     c\" .. [[x]] .. [=[y\n",
             "]]z]=]\n",
             "  for i = 1, #a do print(a[i], string.format('%d', math.pi), io.stdout) end\n",
             "  for k, v in pairs(t) do if k ~= nil and not v then goto skip elseif x then else end end\n",
-            "  ::skip:: while x >= 0x1p4 + 0xA.8 + 1e-3 + .5 + 0xff + ٣ do x = x // 2 >> 1 end\n",
+            "  ::skip:: while x >= 0x1p4 + 0xA.8 + 1e-3 + .5 + 0xff do x = x // 2 >> 1 end\n",
             "  repeat local y <const> = (a, b) until y == false\n",
             "  self.x.__index = function() return self, _G, _VERSION, true end\n",
             "  t[1]:m{1, [2] = 3; x = f\"s\"}; f[[long]] f'q' (g)(h)\n",
             "  return setmetatable({}, mt), coroutine.wrap(f), utf8.charpattern, x.__metatable\n",
-            "end end then\n",
+            "end end\n",
             "local f = function(a, end) return a end\n",
         );
-        rules_match_the_grammar("lua", "Lua", text);
+        colors_match_the_grammar("lua", "Lua", text);
     }
 
     /// ada-parse's Lisp lexer picks the rules bat's grammar picks, in every built-in theme
