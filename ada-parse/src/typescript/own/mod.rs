@@ -123,7 +123,10 @@ const F_T_TPARAMS: u8 = 41;
 const F_T_ARROW_TP: u8 = 42;
 /// A template literal type's `${`: a type, back to the template's text at its `}`.
 const F_T_SUBST: u8 = 43;
-const _: () = assert!(F_T_SUBST < TEXT);
+/// A generic arrow's type parameters whose `<` ended its line: its `>(` opens the arrow's
+/// parameters with plain brackets, as bat's possibly-arrow `(` (`F_PARAMS_PLAIN`).
+const F_T_ARROW_TP_LINE: u8 = 44;
+const _: () = assert!(F_T_ARROW_TP_LINE < TEXT);
 /// The first text frame.
 const TEXT: u8 = 64;
 /// A `"…"` continued by a `\` at a line's end.
@@ -236,6 +239,10 @@ const ARG_PREV: u16 = 0xff;
 /// How many template substitutions are open (up to 15), from bit [`ARG_SUBSTS_SHIFT`].
 const ARG_SUBSTS: u16 = 0x1e00;
 const ARG_SUBSTS_SHIFT: u16 = 9;
+/// The most open substitutions counted (the most [`ARG_SUBSTS`] holds).
+const SUBSTS_MAX: u8 = 15;
+/// A `const`'s destructuring is open (its names constants on the lines it spans).
+const ARG_BIND_CONST: u16 = 0x100;
 
 /// How many groups a line keeps a mark for at once ([`Group`]).
 const GROUPS: usize = 8;
@@ -311,6 +318,7 @@ const ID_IMPLEMENTS: u16 = words::id_of(b"implements");
 const ID_GET: u16 = words::id_of(b"get");
 const ID_SET: u16 = words::id_of(b"set");
 const ID_CONSTRUCTOR: u16 = words::id_of(b"constructor");
+const ID_REQUIRE: u16 = words::id_of(b"require");
 const ID_REGEXP: u16 = words::id_of(b"RegExp");
 const ID_KEYOF: u16 = words::id_of(b"keyof");
 const ID_TYPEOF: u16 = words::id_of(b"typeof");
@@ -435,8 +443,9 @@ pub(super) struct Scan<'b, 'c, K: Sink> {
     tsx: bool,
     /// Whether the open destructuring is a `const`'s (its names constants).
     bind_const: bool,
-    /// How many template substitutions are open: a bracket in one is the template's string
-    /// (bat's `meta.template.expression` under `string.template`).
+    /// How many template substitutions are open, up to [`SUBSTS_MAX`] (what a state keeps, so a
+    /// block counts as its lines do): a bracket in one is the template's string (bat's
+    /// `meta.template.expression` under `string.template`).
     substs: u8,
     /// The depth a declaration on the line declared a name at (0 for none) and whether it is a
     /// `const`'s: a `,` there declares the next.
@@ -492,6 +501,16 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         let arg = state.flags();
         self.prev = (arg & ARG_PREV) as u8;
         self.substs = ((arg & ARG_SUBSTS) >> ARG_SUBSTS_SHIFT) as u8;
+        self.bind_const = arg & ARG_BIND_CONST != 0;
+    }
+
+    /// The state's `arg`: the previous token, the open substitutions, a `const`'s
+    /// destructuring.
+    #[inline(always)]
+    fn arg(&self) -> u16 {
+        u16::from(self.saved_prev())
+            | u16::from(self.substs) << ARG_SUBSTS_SHIFT
+            | if self.bind_const { ARG_BIND_CONST } else { 0 }
     }
 
     /// The previous token a state keeps: a line that ended after a value at the top level or in
@@ -509,8 +528,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// The state this line leaves.
     #[inline(always)]
     fn keep(&self) -> State {
-        let arg = u16::from(self.saved_prev()) | u16::from(self.substs.min(15)) << ARG_SUBSTS_SHIFT;
-        State::keep(&self.stack, self.depth, self.exact, arg)
+        State::keep(&self.stack, self.depth, self.exact, self.arg())
     }
 
     /// The line lexed.
@@ -527,7 +545,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
         if self.cur < TEXT {
             p = indent(self.b);
-            if self.substs != 0 && p > 0 {
+            if self.substs != 0 && p > 0 && self.b.get(p) != Some(&b'/') {
+                // as the run loop's blanks: before a `/`, `slash`'s to write
                 self.tok_far(0, p, TPL);
             }
         }
@@ -692,8 +711,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 while p < n && matches!(b[p], b' ' | b'\t') {
                     p += 1;
                 }
-                if self.substs != 0 {
-                    // a substitution's blanks are the template's string
+                if self.substs != 0 && b.get(p) != Some(&b'/') {
+                    // a substitution's blanks are the template's string (before a `/`,
+                    // `slash`'s to write: a comment's or a regex literal's may take them)
                     self.tok_far(s, p, TPL);
                 }
                 if p >= n {
@@ -851,8 +871,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     if self.assign.value == p as u32 {
                         self.function_named();
                     } else if self.async_value(p) {
-                        self.function_named();
+                        // read before `function_named` clears it
                         let v = self.assign.value as usize;
+                        self.function_named();
                         self.tok(v, v + 5, ASYNC);
                     }
                     self.tok(p, e, PARAM);
@@ -1032,7 +1053,12 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     return None;
                 }
                 self.prev = P_VALUE;
-                Some(self.tok(p, e, info.leaf))
+                let leaf = if id == ID_REQUIRE && import_equals(self.b, p) {
+                    REQUIRE
+                } else {
+                    info.leaf
+                };
+                Some(self.tok(p, e, leaf))
             }
             W_OBJ => {
                 if id == ID_MODULE
@@ -1354,7 +1380,21 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 }
             }
         };
+        if kind == PLAIN {
+            return self.plain_member(p, e);
+        }
         self.tok(p, e, kind)
+    }
+
+    /// A member `p..e` whose leaf is plain (`Number.MAX_VALUE`'s): no span, but the template's
+    /// string in a substitution.
+    #[cold]
+    #[inline(never)]
+    fn plain_member(&mut self, p: usize, e: usize) -> usize {
+        if self.substs != 0 {
+            return self.tok(p, e, TPL);
+        }
+        e
     }
 
     /// A member `p..e` before a blank, a `=`, a `<`, a `` ` ``, a `?` or a `!`: a call's (`a.b
@@ -1400,6 +1440,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             }
             _ => prop(b),
         };
+        if kind == PLAIN {
+            return self.plain_member(p, e);
+        }
         self.tok(p, e, kind)
     }
 
@@ -1593,17 +1636,24 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             return self.tok(p, e, MODIFIER);
         }
         if self.prev == P_EXTENDS {
-            // a path's names, the last the class inherited
-            let leaf = if b.get(e) == Some(&b'.') {
-                TYPE_MODULE
-            } else {
-                INHERITED
+            // a path's names, the last the class inherited (a function's where it's called:
+            // `extends mixin(A)`, `extends mock<T>()`)
+            let leaf = match b.get(e) {
+                Some(b'.') => TYPE_MODULE,
+                Some(b'(') => ENTITY_FN,
+                Some(b'<')
+                    if types::type_args_end(b, e, false)
+                        .is_some_and(|q| b.get(q) == Some(&b'(')) =>
+                {
+                    ENTITY_FN
+                }
+                _ => INHERITED,
             };
             self.tok(p, e, leaf);
-            self.prev = if leaf == INHERITED {
-                P_EXTENDS
-            } else {
+            self.prev = if leaf == TYPE_MODULE {
                 P_EXTENDS_PATH
+            } else {
+                P_EXTENDS
             };
             if b.get(e) == Some(&b'<') {
                 return self.type_args(e);
@@ -2021,6 +2071,15 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         p + 1
     }
 
+    /// A destructuring's frame closed: past the outermost, its `const` read no more (a closed
+    /// state the default one).
+    #[inline(always)]
+    fn bind_closed(&mut self) {
+        if !matches!(self.cur, F_BIND | F_BIND_ARR) {
+            self.bind_const = false;
+        }
+    }
+
     /// A `)` at `p`.
     #[inline(always)]
     fn close_paren(&mut self, p: usize) -> usize {
@@ -2206,6 +2265,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             F_PATTERN | F_BIND_ARR => {
                 self.pop();
                 self.prev = if top == F_BIND_ARR {
+                    self.bind_closed();
                     P_DECLARED
                 } else {
                     P_VALUE
@@ -2322,7 +2382,12 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             }
             F_PATTERN | F_BIND => {
                 self.pop();
-                self.prev = if top == F_BIND { P_DECLARED } else { P_VALUE };
+                self.prev = if top == F_BIND {
+                    self.bind_closed();
+                    P_DECLARED
+                } else {
+                    P_VALUE
+                };
                 return self.tok(p, p + 1, BIND_OBJ);
             }
             F_BLOCK => {
@@ -2678,26 +2743,48 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn slash(&mut self, p: usize) -> usize {
         let b = self.b;
         match b.get(p + 1) {
-            Some(b'/') => return self.line_comment(p),
-            Some(b'*') => return self.block_comment(p),
+            Some(b'/') => {
+                if self.substs != 0 {
+                    self.slash_blanks(p, true);
+                }
+                return self.line_comment(p);
+            }
+            Some(b'*') => {
+                if self.substs != 0 {
+                    self.slash_blanks(p, false);
+                }
+                return self.block_comment(p);
+            }
             _ => {}
         }
         if matches!(self.prev, P_START | P_OP | P_ARROW | P_KEY | P_IMPORT) && p + 1 < b.len() {
             // bat's regex takes the blanks before its `/`
-            let mut s = p;
-            while s > 0 && matches!(b[s - 1], b' ' | b'\t') {
-                s -= 1;
-            }
+            let s = blanks_before(b, p);
             if s < p {
                 self.tok_far(s, p, RE);
             }
             return self.regex_literal(p);
+        }
+        if self.substs != 0 {
+            self.slash_blanks(p, false);
         }
         self.prev = P_OP;
         if b.get(p + 1) == Some(&b'=') {
             return self.tok(p, p + 2, COMPOUND);
         }
         self.tok(p, p + 1, ARITHMETIC)
+    }
+
+    /// The blanks before a `/` at `p` in a template's substitution, which the run loop leaves
+    /// unwritten: a line comment's where they start the line (its `LEADING`), else the
+    /// template's string.
+    #[cold]
+    #[inline(never)]
+    fn slash_blanks(&mut self, p: usize, line_comment: bool) {
+        let s = blanks_before(self.b, p);
+        if s < p && !(line_comment && s == 0) {
+            self.tok(s, p, TPL);
+        }
     }
 
     /// `@` at `p`: a decorator's.
@@ -2787,6 +2874,33 @@ fn var_kind(first: u8, bits: u8) -> u16 {
     }
 }
 
+/// Whether `require` at `p` is an `import X = require(…)`'s: `=` before it, the line an
+/// `import`'s (or an `export import`'s).
+#[cold]
+#[inline(never)]
+fn import_equals(b: &[u8], p: usize) -> bool {
+    let k = blanks_before(b, p);
+    if k == 0 || b[k - 1] != b'=' {
+        return false;
+    }
+    let s = skip_blanks(b, 0);
+    let s = if has(b, s, b"export ") {
+        skip_blanks(b, s + 7)
+    } else {
+        s
+    };
+    has(b, s, b"import ")
+}
+
+/// Where the blanks before `p` start.
+#[inline(always)]
+fn blanks_before(b: &[u8], mut p: usize) -> usize {
+    while p > 0 && matches!(b[p - 1], b' ' | b'\t') {
+        p -= 1;
+    }
+    p
+}
+
 #[inline(always)]
 fn skip_blanks(b: &[u8], mut p: usize) -> usize {
     while p < b.len() && matches!(b[p], b' ' | b'\t') {
@@ -2871,8 +2985,7 @@ impl<K: Sink> Scan<'_, '_, K> {
     /// The state a block's pass leaves: as the last line left it (a block that lexed no line
     /// leaves the state it was given).
     fn keep_block(&self) -> State {
-        let arg = u16::from(self.saved_prev()) | u16::from(self.substs.min(15)) << ARG_SUBSTS_SHIFT;
-        State::keep(&self.stack, self.depth, self.exact, arg)
+        State::keep(&self.stack, self.depth, self.exact, self.arg())
     }
 }
 
@@ -3234,15 +3347,115 @@ mod tests {
         }
     }
 
+    /// Spans fuzzing found out of order or without scopes (R2): a substitution's blanks before
+    /// a `//` or a regex literal written twice, `Number`'s constants as a span of no kind, a
+    /// template literal type's `${` left at a `;` (its text read again), `key: async x =>`'s
+    /// `async` written before the line.
+    #[test]
+    fn spans_where_fuzzing_found_them_wrong() {
+        let m = ts(&[
+            "const s = `a ${",
+            "\t// a comment",
+            "  /x/.test(b) / 2",
+            "}`;",
+            "f(Number.MAX_VALUE, 1);",
+            "const o = { install: async resource => 1 };",
+            "type A = `x${B;",
+        ]);
+        assert!(
+            m.iter().all(|(_, s)| !s.is_empty()),
+            "a span without scopes: {m:?}"
+        );
+        assert!(!m.iter().any(|(t, _)| *t == "MAX_VALUE"), "{m:?}");
+        has(&m, "\t", "punctuation.whitespace.comment.leading.ts");
+        has(&m, "  ", "string.regexp.ts");
+        has(&m, "install", "entity.name.function.ts");
+        has(&m, "async", "storage.modifier.async.ts");
+        has(&m, "resource", "variable.parameter.ts");
+    }
+
+    /// A `<` that ends its line after `=`, `(`, `,`, `return` or a key's `:` opens a generic
+    /// arrow's type parameters, as bat's; after `&&` an operator.
+    #[test]
+    fn a_less_than_ending_its_line() {
+        let m = ts(&[
+            "export const eq = <",
+            "  T extends Record<string, any>,",
+            ">(",
+            "  a: T,",
+            ") => 1;",
+            "x = y && <",
+            "z;",
+        ]);
+        has(
+            &m,
+            "eq",
+            "variable.other.constant.ts entity.name.function.ts",
+        );
+        has(&m, "<", "punctuation.definition.typeparameters.begin.ts");
+        has(&m, "extends", "storage.modifier.ts");
+        has(&m, "Record", "entity.name.type.ts");
+        has(&m, "a", "variable.parameter.ts");
+        has(&m, "<", "keyword.operator.relational.ts");
+    }
+
+    /// Values in a type after `typeof` (`import(`'s keyword), a constructor type's `new`,
+    /// `import X = require(…)`, a class extending a call's value, `as T[]`.
+    #[test]
+    fn type_corners_as_bat_reads_them() {
+        let m = ts(&[
+            "let a: typeof global.fetch | typeof foo.bar.baz;",
+            "type E = typeof import('x');",
+            "type C = new (a: string) => X;",
+            "import React = require('react');",
+            "class K extends mock<I>() {}",
+            "class M extends mix(A, B) {}",
+            "let v = x as string[] | undefined;",
+        ]);
+        has(&m, "global", "support.variable.object.node.ts");
+        has(&m, "fetch", "variable.other.property.ts");
+        has(&m, "foo", "variable.other.object.ts");
+        has(&m, "bar", "variable.other.object.property.ts");
+        has(&m, "baz", "variable.other.property.ts");
+        has(&m, "import", "keyword.operator.expression.import.ts");
+        has(&m, "new", "keyword.control.new.ts");
+        has(&m, "require", "keyword.control.require.ts");
+        has(&m, "mock", "entity.name.function.ts");
+        has(&m, "mix", "entity.name.function.ts");
+        has(&m, "|", "keyword.operator.type.ts");
+        has(&m, "undefined", "support.type.builtin.ts");
+    }
+
+    /// A `const`'s destructuring across lines: its names constants on every line (the state
+    /// keeps it), a `let`'s variables.
+    #[test]
+    fn a_const_destructuring_across_lines() {
+        let m = ts(&[
+            "const {",
+            "  filename,",
+            "  b",
+            "} = x;",
+            "let {",
+            "  c",
+            "} = y;",
+        ]);
+        has(&m, "filename", "variable.other.constant.ts");
+        has(&m, "b", "variable.other.constant.ts");
+        has(&m, "c", "variable.other.readwrite.ts");
+    }
+
     /// A block lexes as its lines do one at a time, past the levels a state holds too.
     #[test]
     fn a_block_lexes_as_its_lines() {
         let deep = format!("{}\n{}\n", "f({ a: [".repeat(12), "x, ".repeat(9));
         let text = format!(
-            "{deep}const s = 'a\\\nb'; type T =\n  | A\n  | B;\nclass C {{\n  x: number\n  y = (\n    a: T,\n  ) => a\n}}\n\
+            "{deep}const s = 'a\\\nb'; type T =\n  | A\n  | B;\nconst {{\n  fa,\n  fb\n}} = o;\n\
+             class C {{\n  x: number\n  y = (\n    a: T,\n  ) => a\n}}\n\
              /** @param {{T}} v\n */ t = `a ${{f(\n1)}} b`;\nlet [p,\n q] = r\n{}",
             "]})".repeat(14)
         );
+        // more substitutions open than a state counts
+        let text = format!("{text}\nq = {}\n{};", "`${".repeat(17), "}`".repeat(17));
         for lang in [Lang::TypeScript, Lang::TypeScriptReact] {
             let (mut want, mut state, mut spans) = (Vec::new(), State::default(), Vec::new());
             for line in text.split('\n') {

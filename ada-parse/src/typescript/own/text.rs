@@ -234,7 +234,7 @@ impl<K: Sink> Scan<'_, '_, K> {
                 Some(b'$') if b.get(p + 1) == Some(&b'{') => {
                     self.tok(p, p + 2, SUBST_BEGIN);
                     self.push(F_SUBST);
-                    self.substs = self.substs.saturating_add(1);
+                    self.substs = (self.substs + 1).min(SUBSTS_MAX);
                     self.prev = P_OP;
                     return p + 2;
                 }
@@ -344,7 +344,7 @@ impl<K: Sink> Scan<'_, '_, K> {
                         return i + 2;
                     }
                     self.push(F_SUBST);
-                    self.substs = self.substs.saturating_add(1);
+                    self.substs = (self.substs + 1).min(SUBSTS_MAX);
                     self.prev = P_OP;
                     return i + 2;
                 }

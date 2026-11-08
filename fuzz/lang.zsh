@@ -12,7 +12,8 @@
 #                                           language it doesn't (libFuzzer's -merge=1, filtered to the
 #                                           language); 12 languages at a time, logs in out/lang/
 #   lang.zsh smoke TARGET LANGS SECONDS [SEEDS…]
-#                                           12 forks for SECONDS after the seed pass, on the languages'
+#                                           12 forks for SECONDS after the seed pass (less where a
+#                                           finding stops the fuzzer: -fork stops at its first), on the languages'
 #                                           corpora and the SEEDS dirs (read only); the inputs it adds go
 #                                           to the first language's corpus and are copied to corpus/TARGET
 #                                           (the union; `parse`'s CI rounds' seed); findings and the log in
@@ -161,7 +162,9 @@ smoke() {
   # the seed pass, bounded by the fuzzer itself
   while kill -0 $pid 2> /dev/null && ! grep -q 'starting to fuzz' $o/log.txt; do sleep 1; done
   print "seed pass done at $(date +%T)"
-  kill -0 $pid 2> /dev/null && sleep $secs
+  # SECONDS of fuzzing, or less: -fork stops at its first finding, and the lock is let go then
+  local deadline=$(( SECONDS + secs ))
+  while kill -0 $pid 2> /dev/null && (( SECONDS < deadline )); do sleep 1; done
   kill -TERM -- -$pid 2> /dev/null || true
   wait $pid || rc=$?
   trap - INT TERM EXIT

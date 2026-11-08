@@ -35,6 +35,11 @@ impl<K: Sink> Scan<'_, '_, K> {
         let c = b[p];
         let nested = top >= F_T_ROUND;
         let leave = |s: &mut Self| {
+            if top == F_T_SUBST {
+                // a template literal type's substitution ends only at its `}`: left here, the
+                // template's text would read again what its tokens wrote
+                return p + char_len(b[p]);
+            }
             s.pop();
             p
         };
@@ -76,6 +81,10 @@ impl<K: Sink> Scan<'_, '_, K> {
                     };
                     return p + 1;
                 }
+                if top == F_TYPE_AS && self.prev == P_VALUE && b.get(p + 1) == Some(&b']') {
+                    // `as T[]`: an array's type
+                    return p + 2;
+                }
                 if top != F_TYPE_AS && self.prev == P_VALUE || self.prev != P_VALUE {
                     self.push(F_T_SQUARE);
                     self.prev = P_OP;
@@ -98,7 +107,18 @@ impl<K: Sink> Scan<'_, '_, K> {
                 self.tok(p, p + 1, TP_BEGIN)
             }
             A_OP => match c {
-                b'>' if matches!(top, F_T_ANGLE | F_T_TPARAMS | F_T_ARROW_TP | F_T_CAST) => {
+                b'>' if top == F_T_ARROW_TP_LINE && b.get(p + 1) == Some(&b'(') => {
+                    self.pop();
+                    self.tok(p, p + 1, TP_END);
+                    self.push(F_PARAMS_PLAIN);
+                    self.prev = P_OP;
+                    p + 2
+                }
+                b'>' if matches!(
+                    top,
+                    F_T_ANGLE | F_T_TPARAMS | F_T_ARROW_TP | F_T_ARROW_TP_LINE | F_T_CAST
+                ) =>
+                {
                     self.pop();
                     if top != F_T_CAST {
                         self.tok(p, p + 1, TP_END);
@@ -187,7 +207,10 @@ impl<K: Sink> Scan<'_, '_, K> {
                     return self.tok(p, p + 2, ARROW);
                 }
                 if b.get(p + 1) != Some(&b'=')
-                    && matches!(top, F_TYPE_DECL | F_T_ANGLE | F_T_TPARAMS | F_T_ARROW_TP)
+                    && matches!(
+                        top,
+                        F_TYPE_DECL | F_T_ANGLE | F_T_TPARAMS | F_T_ARROW_TP | F_T_ARROW_TP_LINE
+                    )
                 {
                     self.prev = P_OP;
                     return self.tok(p, p + 1, ASSIGN);
@@ -199,7 +222,9 @@ impl<K: Sink> Scan<'_, '_, K> {
                     self.prev = P_OP;
                     return self.tok(p, p + 3, SPREAD);
                 }
-                self.prev = P_DOT;
+                if self.prev != P_TYPEOF {
+                    self.prev = P_DOT;
+                }
                 self.tok(p, p + 1, ACCESSOR)
             }
             A_SLASH => match b.get(p + 1) {
@@ -260,14 +285,7 @@ impl<K: Sink> Scan<'_, '_, K> {
         }
         let leaf = match prev {
             P_ALIAS_NAME => TYPE_ALIAS,
-            P_TYPEOF => {
-                self.prev = if next == Some(b'.') {
-                    P_TYPEOF
-                } else {
-                    P_VALUE
-                };
-                return self.tok(p, e, READWRITE);
-            }
+            P_TYPEOF => return self.typeof_name(p, e, id),
             P_DOT => {
                 if next == Some(b'.') {
                     TYPE_MODULE
@@ -303,6 +321,27 @@ impl<K: Sink> Scan<'_, '_, K> {
             return self.type_args(e);
         }
         e
+    }
+
+    /// A name `p..e` (`id` its word) after a type's `typeof`, or after a `.` there: a value's
+    /// as bat reads it (a support object's, an object's, a property's; `import(`'s keyword).
+    #[inline(never)]
+    fn typeof_name(&mut self, p: usize, e: usize, id: u16) -> usize {
+        let b = self.b;
+        let dotted = b.get(e) == Some(&b'.') && b.get(e + 1) != Some(&b'.');
+        let leaf = if p > 0 && b[p - 1] == b'.' {
+            if dotted { OBJECT_PROP } else { PROPERTY }
+        } else if id == ID_IMPORT && b.get(e) == Some(&b'(') {
+            IMPORT_OP
+        } else {
+            match INFO[usize::from(id)].leaf {
+                l @ (NODE_OBJ | DOM_VAR) if id != 0 => l,
+                _ if dotted => OBJECT,
+                _ => READWRITE,
+            }
+        };
+        self.prev = if dotted { P_TYPEOF } else { P_VALUE };
+        self.tok(p, e, leaf)
     }
 
     /// A name `p..e` (`id` its word) at a member's place in an object type, or a tuple's
@@ -407,11 +446,23 @@ impl<K: Sink> Scan<'_, '_, K> {
         self.tok(p, p + 1, TP_BEGIN)
     }
 
-    /// A `<` at `p` where an expression starts: a generic arrow's type parameters, a cast
-    /// (TypeScript) or JSX's tag (TSX); `None` for an operator.
+    /// A `<` at `p` where an expression starts: a generic arrow's type parameters (one that
+    /// ends its line after `(`, `=`, `,`, `return` or a key's `:` always), a cast (TypeScript)
+    /// or JSX's tag (TSX); `None` for an operator.
     #[inline(never)]
     pub(super) fn angle_start(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
+        if skip_blanks(b, p + 1) >= b.len() {
+            // a `<` that ends its line where bat's possibly-arrow `(` would: a generic arrow's
+            // type parameters (a cast's too, as bat's), its `(` plain; a key's value's as one
+            // on its line
+            if possibly_arrow(b, p) {
+                return Some(self.generic_arrow(p, F_T_ARROW_TP_LINE));
+            }
+            if self.assign.value == p as u32 && self.assign.kind == A_KEY {
+                return Some(self.generic_arrow(p, F_T_ARROW_TP));
+            }
+        }
         if self.tsx {
             let s = p + 1;
             if !b.get(s).is_some_and(|&c| NAME[usize::from(c)] || c == b'>') {
@@ -427,13 +478,13 @@ impl<K: Sink> Scan<'_, '_, K> {
                 && (b.get(t) == Some(&b',') || (t > e && has(b, t, b"extends ")))
                 && type_args_end(b, p, true).is_some_and(|q| b.get(q) == Some(&b'('))
             {
-                return Some(self.generic_arrow(p));
+                return Some(self.generic_arrow(p, F_T_ARROW_TP));
             }
             return Some(self.jsx_open(p));
         }
         let q = type_args_end(b, p, true)?;
         if b.get(q) == Some(&b'(') {
-            return Some(self.generic_arrow(p));
+            return Some(self.generic_arrow(p, F_T_ARROW_TP));
         }
         // a cast: its `<` and `>` plain
         self.push(F_T_CAST);
@@ -442,8 +493,8 @@ impl<K: Sink> Scan<'_, '_, K> {
     }
 
     /// A generic arrow's `<` at `p`: an assigned name whose value it starts named a function's;
-    /// the type parameters' frame pushed.
-    fn generic_arrow(&mut self, p: usize) -> usize {
+    /// the type parameters' frame (`frame`) pushed.
+    fn generic_arrow(&mut self, p: usize, frame: u8) -> usize {
         if self.assign.value == p as u32 {
             self.function_named();
         } else if self.async_value(p) {
@@ -451,7 +502,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             self.function_named();
             self.tok(v, v + 5, ASYNC);
         }
-        self.push(F_T_ARROW_TP);
+        self.push(frame);
         self.prev = P_OP;
         self.tok(p, p + 1, TP_BEGIN)
     }
@@ -495,7 +546,8 @@ fn type_word(id: u16) -> Option<(u16, u8)> {
         ID_READONLY | ID_UNIQUE | ID_ABSTRACT => (MODIFIER, P_OP),
         ID_IN => (IN, P_OP),
         ID_AS => (AS, P_OP),
-        ID_NEW => (NEW, P_OP),
+        // a constructor type's (an object type's `new (` is a member's, `type_member`)
+        ID_NEW => (NEW_CONTROL, P_OP),
         _ => return None,
     })
 }
