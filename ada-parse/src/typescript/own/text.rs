@@ -96,6 +96,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             T_STR_D | T_STR_S => self.string_text(p, top),
             T_TPL => self.template_text(p),
             T_BLOCK | T_DOC => self.comment_text(p, top == T_DOC),
+            T_DOC_INLINE => self.doc_inline_text(p),
             T_JSX_TAG => self.jsx_tag(p),
             T_JSX_CHILD => self.jsx_children(p),
             T_JSX_STR_D | T_JSX_STR_S => self.jsx_string_text(p, top),
@@ -148,14 +149,14 @@ impl<K: Sink> Scan<'_, '_, K> {
                 let s = skip_blanks(b, i + 1);
                 if b.get(s) == Some(&b':') {
                     self.assigned_at(mark, p, i + 1, s, A_QUOTED);
-                    self.tok(s, s + 1, KEY_VALUE);
+                    self.tok_far(s, s + 1, KEY_VALUE);
                     self.prev = P_OP;
                     return s + 1;
                 }
             }
             return i + 1;
         }
-        self.tok(p, p + 1, begin);
+        self.tok_far(p, p + 1, begin);
         self.push(if q == b'"' { T_STR_D } else { T_STR_S });
         self.at = p + 1;
         p + 1
@@ -180,19 +181,19 @@ impl<K: Sink> Scan<'_, '_, K> {
             }
             self.fill_as(i, text);
             if b[i] == q {
-                self.tok(i, i + 1, end);
+                self.tok_far(i, i + 1, end);
                 self.at = i + 1;
                 self.pop();
                 return i + 1;
             }
             if i + 1 >= n {
                 // `\` at the line's end: the string goes on
-                self.tok(i, n, esc);
+                self.tok_far(i, n, esc);
                 self.at = n;
                 return n;
             }
             let e = escape(b, i);
-            self.tok(i, e, esc);
+            self.tok_far(i, e, esc);
             self.at = e;
             p = e;
         }
@@ -207,7 +208,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             b'\'' => (STR_S_BEGIN, T_STR_S),
             _ => (TPL_BEGIN, T_TPL),
         };
-        self.tok(p, p + 1, begin);
+        self.tok_far(p, p + 1, begin);
         self.push(frame);
         self.push(T_RE_STR);
         self.at = p + 1;
@@ -226,13 +227,13 @@ impl<K: Sink> Scan<'_, '_, K> {
                 Some(b'`') => {
                     self.pop();
                     self.pop();
-                    self.tok(p, p + 1, TPL_END);
+                    self.tok_far(p, p + 1, TPL_END);
                     self.at = p + 1;
                     self.prev = P_VALUE;
                     return p + 1;
                 }
                 Some(b'$') if b.get(p + 1) == Some(&b'{') => {
-                    self.tok(p, p + 2, SUBST_BEGIN);
+                    self.tok_far(p, p + 2, SUBST_BEGIN);
                     self.push(F_SUBST);
                     self.substs = (self.substs + 1).min(SUBSTS_MAX);
                     self.prev = P_OP;
@@ -240,7 +241,7 @@ impl<K: Sink> Scan<'_, '_, K> {
                 }
                 Some(b'\\') if b.get(p + 1) != Some(&b'\\') => {
                     let e = escape(b, p).min(n);
-                    self.tok(p, e, TPL_ESC);
+                    self.tok_far(p, e, TPL_ESC);
                     self.at = e;
                     return e;
                 }
@@ -256,7 +257,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             if c == Some(q) {
                 self.pop();
                 self.pop();
-                self.tok(p, p + 1, end);
+                self.tok_far(p, p + 1, end);
                 self.at = p + 1;
                 self.prev = P_VALUE;
                 return p + 1;
@@ -269,7 +270,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             if c == Some(b'\\') && b.get(p + 1) != Some(&b'\\') {
                 // the string's escapes first (a `\\` is the regex's)
                 let e = escape(b, p).min(n);
-                self.tok(p, e, esc);
+                self.tok_far(p, e, esc);
                 self.at = e;
                 return e;
             }
@@ -305,7 +306,7 @@ impl<K: Sink> Scan<'_, '_, K> {
         if p == self.re_arg {
             return self.regex_arg(p, b'`');
         }
-        self.tok(p, p + 1, TPL_BEGIN);
+        self.tok_far(p, p + 1, TPL_BEGIN);
         self.push(T_TPL);
         self.at = p + 1;
         p + 1
@@ -327,7 +328,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             match b[i] {
                 b'`' => {
                     self.fill_as(i, TPL);
-                    self.tok(i, i + 1, TPL_END);
+                    self.tok_far(i, i + 1, TPL_END);
                     self.at = i + 1;
                     self.pop();
                     self.prev = P_VALUE;
@@ -351,7 +352,7 @@ impl<K: Sink> Scan<'_, '_, K> {
                 b'\\' => {
                     let e = escape(b, i).min(n);
                     self.fill_as(i, TPL);
-                    self.tok(i, e, TPL_ESC);
+                    self.tok_far(i, e, TPL_ESC);
                     self.at = e;
                     p = e;
                 }
@@ -386,30 +387,30 @@ impl<K: Sink> Scan<'_, '_, K> {
     fn directive(&mut self, p: usize) -> usize {
         let b = self.b;
         let n = b.len();
-        self.tok(p, p + 3, DIRECTIVE_MARK);
+        self.tok_far(p, p + 3, DIRECTIVE_MARK);
         let mut i = p + 3;
         while i < n {
             let c = b[i];
             match c {
                 b'<' => {
-                    self.tok(i, i + 1, DIRECTIVE_TAG_MARK);
+                    self.tok_far(i, i + 1, DIRECTIVE_TAG_MARK);
                     let mut e = i + 1;
                     while e < n && NAME[usize::from(b[e])] {
                         e += 1;
                     }
-                    self.tok(i + 1, e, DIRECTIVE_TAG);
+                    self.tok_far(i + 1, e, DIRECTIVE_TAG);
                     i = e;
                 }
                 b'/' if b.get(i + 1) == Some(&b'>') => {
-                    self.tok(i, i + 2, DIRECTIVE_TAG_MARK);
+                    self.tok_far(i, i + 2, DIRECTIVE_TAG_MARK);
                     i += 2;
                 }
                 b'>' => {
-                    self.tok(i, i + 1, DIRECTIVE_TAG_MARK);
+                    self.tok_far(i, i + 1, DIRECTIVE_TAG_MARK);
                     i += 1;
                 }
                 b'=' => {
-                    self.tok(i, i + 1, DIRECTIVE_EQ);
+                    self.tok_far(i, i + 1, DIRECTIVE_EQ);
                     i += 1;
                 }
                 b'"' | b'\'' => {
@@ -422,10 +423,10 @@ impl<K: Sink> Scan<'_, '_, K> {
                     while e < n && b[e] != c {
                         e += 1;
                     }
-                    self.tok(i, i + 1, bg);
-                    self.tok(i + 1, e, t);
+                    self.tok_far(i, i + 1, bg);
+                    self.tok_far(i + 1, e, t);
                     if e < n {
-                        self.tok(e, e + 1, en);
+                        self.tok_far(e, e + 1, en);
                         e += 1;
                     }
                     i = e;
@@ -435,11 +436,11 @@ impl<K: Sink> Scan<'_, '_, K> {
                     while e < n && NAME[usize::from(b[e])] {
                         e += 1;
                     }
-                    self.tok(i, e, DIRECTIVE_ATTR);
+                    self.tok_far(i, e, DIRECTIVE_ATTR);
                     i = e;
                 }
                 _ => {
-                    self.tok(i, i + 1, DIRECTIVE);
+                    self.tok_far(i, i + 1, DIRECTIVE);
                     i += 1;
                 }
             }
@@ -453,7 +454,7 @@ impl<K: Sink> Scan<'_, '_, K> {
         let b = self.b;
         let doc = b.get(p + 2) == Some(&b'*') && b.get(p + 3) != Some(&b'/');
         let (open, mark) = if doc { (3, DOC_MARK) } else { (2, BLOCK_MARK) };
-        self.tok(p, p + open, mark);
+        self.tok_far(p, p + open, mark);
         self.push(if doc { T_DOC } else { T_BLOCK });
         self.at = p + open;
         self.comment_text(p + open, doc)
@@ -479,7 +480,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             match b[i] {
                 b'*' if b.get(i + 1) == Some(&b'/') => {
                     self.fill_as(i, text);
-                    self.tok(i, i + 2, mark);
+                    self.tok_far(i, i + 2, mark);
                     self.at = i + 2;
                     self.pop();
                     return i + 2;
@@ -516,8 +517,8 @@ impl<K: Sink> Scan<'_, '_, K> {
         let next = if gap { b[after] } else { 0 };
         let tagged = |me: &mut Self, end: usize| {
             me.fill_as(p, DOC);
-            me.tok(p, p + 1, JD_TAG_AT);
-            me.tok(p + 1, end, JD_TAG);
+            me.tok_far(p, p + 1, JD_TAG_AT);
+            me.tok_far(p + 1, end, JD_TAG);
             me.at = end;
         };
         let word = |c: u8| c.is_ascii_alphabetic() || c == b'_' || c == b'$';
@@ -545,7 +546,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             }
             tagged(self, e);
             self.fill_as(after, DOC);
-            self.tok(after, k, JD_VAR);
+            self.tok_far(after, k, JD_VAR);
             self.at = k;
             return k;
         }
@@ -626,7 +627,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             if k > after {
                 tagged(self, e);
                 self.fill_as(after, DOC);
-                self.tok(after, k, JD_TYPE);
+                self.tok_far(after, k, JD_TYPE);
                 self.at = k;
                 return k;
             }
@@ -636,14 +637,14 @@ impl<K: Sink> Scan<'_, '_, K> {
             if has(b, after, b"http://") || has(b, after, b"https://") {
                 tagged(self, e);
                 self.fill_as(after, DOC);
-                self.tok(after, k, JD_LINK);
+                self.tok_far(after, k, JD_LINK);
                 self.at = k;
                 return k;
             }
             if k > after && next != b'{' && next != b'[' && next != b'@' {
                 tagged(self, e);
                 self.fill_as(after, DOC);
-                self.tok(after, k, JD_TYPE);
+                self.tok_far(after, k, JD_TYPE);
                 self.at = k;
                 return k;
             }
@@ -679,9 +680,9 @@ impl<K: Sink> Scan<'_, '_, K> {
             return p;
         }
         self.fill_as(p, DOC);
-        self.tok(p, p + 1, JD_TYPE_BEGIN);
-        self.tok(p + 1, q, JD_TYPE);
-        self.tok(q, q + 1, JD_TYPE_END);
+        self.tok_far(p, p + 1, JD_TYPE_BEGIN);
+        self.tok_far(p + 1, q, JD_TYPE);
+        self.tok_far(q, q + 1, JD_TYPE_END);
         self.at = q + 1;
         if !param {
             return q + 1;
@@ -694,22 +695,22 @@ impl<K: Sink> Scan<'_, '_, K> {
             }
             if r < n {
                 self.fill_as(s, DOC);
-                self.tok(s, s + 1, JD_OPT_BEGIN);
+                self.tok_far(s, s + 1, JD_OPT_BEGIN);
                 let eq = b[s + 1..r]
                     .iter()
                     .position(|&c| c == b'=')
                     .map(|k| s + 1 + k);
                 match eq {
                     Some(k) => {
-                        self.tok(s + 1, k, JD_VAR);
-                        self.tok(k, k + 1, JD_OPT_EQ);
-                        self.tok(k + 1, r, JD_OPT_VALUE);
+                        self.tok_far(s + 1, k, JD_VAR);
+                        self.tok_far(k, k + 1, JD_OPT_EQ);
+                        self.tok_far(k + 1, r, JD_OPT_VALUE);
                     }
                     None => {
-                        self.tok(s + 1, r, JD_VAR);
+                        self.tok_far(s + 1, r, JD_VAR);
                     }
                 }
-                self.tok(r, r + 1, JD_OPT_END);
+                self.tok_far(r, r + 1, JD_OPT_END);
                 self.at = r + 1;
                 return r + 1;
             }
@@ -723,7 +724,7 @@ impl<K: Sink> Scan<'_, '_, K> {
         }
         if r > s {
             self.fill_as(s, DOC);
-            self.tok(s, r, JD_VAR);
+            self.tok_far(s, r, JD_VAR);
             self.at = r;
         }
         r.max(self.at)
@@ -738,19 +739,19 @@ impl<K: Sink> Scan<'_, '_, K> {
         while e < n && b[e].is_ascii_alphabetic() {
             e += 1;
         }
-        let Some(close) = b[e..].iter().position(|&c| c == b'}').map(|k| e + k) else {
-            return p + 1;
-        };
         if e == p + 2 {
             return p + 1;
         }
+        let Some(close) = b[e..].iter().position(|&c| c == b'}').map(|k| e + k) else {
+            return self.doc_inline_open(p, e);
+        };
         self.fill_as(p, DOC);
-        self.tok(p, p + 1, JD_INLINE_BEGIN);
-        self.tok(p + 1, p + 2, JD_INLINE_TAG_AT);
-        self.tok(p + 2, e, JD_INLINE_TAG);
+        self.tok_far(p, p + 1, JD_INLINE_BEGIN);
+        self.tok_far(p + 1, p + 2, JD_INLINE_TAG_AT);
+        self.tok_far(p + 2, e, JD_INLINE_TAG);
         let s = skip_blanks(b, e);
         if s > e {
-            self.tok(e, s, JD_INLINE);
+            self.tok_far(e, s, JD_INLINE);
         }
         // the target, then a description after a `|` or a blank
         let mut t = s;
@@ -758,14 +759,87 @@ impl<K: Sink> Scan<'_, '_, K> {
             t += 1;
         }
         if t > s {
-            self.tok(s, t, JD_INLINE_DESC);
+            self.tok_far(s, t, JD_INLINE_DESC);
         }
         if t < close {
-            self.tok(t, close, JD_INLINE);
+            self.tok_far(t, close, JD_INLINE);
         }
-        self.tok(close, close + 1, JD_INLINE_END);
+        self.tok_far(close, close + 1, JD_INLINE_END);
         self.at = close + 1;
         close + 1
+    }
+
+    /// An inline tag `{@tag` at `p..e` that doesn't close on its line: to the line's end, its
+    /// target a description's as on one line, its frame kept (bat's); where a `*/` follows,
+    /// the `{` the text's.
+    #[cold]
+    #[inline(never)]
+    fn doc_inline_open(&mut self, p: usize, e: usize) -> usize {
+        let b = self.b;
+        let n = b.len();
+        if b[e..].windows(2).any(|w| w == b"*/") {
+            return p + 1;
+        }
+        self.fill_as(p, DOC);
+        self.tok_far(p, p + 1, JD_INLINE_BEGIN);
+        self.tok_far(p + 1, p + 2, JD_INLINE_TAG_AT);
+        self.tok_far(p + 2, e, JD_INLINE_TAG);
+        let s = skip_blanks(b, e);
+        if s > e {
+            self.tok_far(e, s, JD_INLINE);
+        }
+        let mut t = s;
+        while t < n && !matches!(b[t], b' ' | b'\t' | b'|') {
+            t += 1;
+        }
+        if t > s {
+            self.tok_far(s, t, JD_INLINE_DESC);
+        }
+        if t < n {
+            self.tok_far(t, n, JD_INLINE);
+        }
+        self.push(T_DOC_INLINE);
+        self.at = n;
+        n
+    }
+
+    /// A line in an inline tag the line before left open, from `p`: the tag's to its `}`, or
+    /// to a `*/` that closes the comment, else the whole line.
+    #[inline(never)]
+    fn doc_inline_text(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let mut i = p;
+        while i < n {
+            match b[i] {
+                b'}' => {
+                    self.fill_as(p, DOC);
+                    if i > p {
+                        self.tok_far(p, i, JD_INLINE);
+                    }
+                    self.tok_far(i, i + 1, JD_INLINE_END);
+                    self.pop();
+                    self.at = i + 1;
+                    return i + 1;
+                }
+                b'*' if b.get(i + 1) == Some(&b'/') => {
+                    self.fill_as(p, DOC);
+                    if i > p {
+                        self.tok_far(p, i, JD_INLINE);
+                    }
+                    self.pop();
+                    self.at = i;
+                    return i;
+                }
+                _ => i += 1,
+            }
+        }
+        self.fill_as(p, DOC);
+        if n > p {
+            self.tok_far(p, n, JD_INLINE);
+        }
+        self.at = n;
+        n
     }
 
     // --- regex literals ---
@@ -774,7 +848,7 @@ impl<K: Sink> Scan<'_, '_, K> {
     /// with its line where it doesn't close on it.
     #[inline(never)]
     pub(super) fn regex_literal(&mut self, p: usize) -> usize {
-        self.tok(p, p + 1, RE_BEGIN);
+        self.tok_far(p, p + 1, RE_BEGIN);
         self.at = p + 1;
         self.regex_body(p + 1, 0)
     }
@@ -819,12 +893,12 @@ impl<K: Sink> Scan<'_, '_, K> {
             return n;
         }
         self.fill_as(q, RE);
-        self.tok(q, q + 1, RE_END);
+        self.tok_far(q, q + 1, RE_END);
         let mut f = q + 1;
         while f < n && matches!(b[f], b'd' | b'g' | b'i' | b'm' | b's' | b'u' | b'v' | b'y') {
             f += 1;
         }
-        self.tok(q + 1, f, RE_FLAGS);
+        self.tok_far(q + 1, f, RE_FLAGS);
         self.at = f;
         f
     }
@@ -837,8 +911,8 @@ impl<K: Sink> Scan<'_, '_, K> {
         let b = self.b;
         if b.get(p + 1) == Some(&b'>') {
             // a fragment
-            self.tok(p, p + 1, JSX_TAG_BEGIN);
-            self.tok(p + 1, p + 2, JSX_TAG_END);
+            self.tok_far(p, p + 1, JSX_TAG_BEGIN);
+            self.tok_far(p + 1, p + 2, JSX_TAG_END);
             self.push(T_JSX_CHILD);
             return p + 2;
         }
@@ -853,8 +927,8 @@ impl<K: Sink> Scan<'_, '_, K> {
     fn tag_name(&mut self, mut s: usize, e: usize) {
         if let Some(k) = self.b[s..e].iter().position(|&c| c == b':') {
             // a namespace's, `svg:rect`
-            self.tok(s, s + k, JSX_TAG_NS);
-            self.tok(s + k, s + k + 1, JSX_NS_SEP);
+            self.tok_far(s, s + k, JSX_TAG_NS);
+            self.tok_far(s + k, s + k + 1, JSX_NS_SEP);
             s += k + 1;
             if s >= e {
                 return;
@@ -879,7 +953,7 @@ impl<K: Sink> Scan<'_, '_, K> {
         }
         match b[p] {
             b'/' if b.get(p + 1) == Some(&b'>') => {
-                self.tok(p, p + 2, JSX_TAG_END);
+                self.tok_far(p, p + 2, JSX_TAG_END);
                 self.pop();
                 self.prev = P_VALUE;
                 p + 2
@@ -961,7 +1035,7 @@ impl<K: Sink> Scan<'_, '_, K> {
         }
         match b[i] {
             b'{' => {
-                self.tok(i, i + 1, JSX_EMBED_BEGIN);
+                self.tok_far(i, i + 1, JSX_EMBED_BEGIN);
                 self.push(F_J_EXPR);
                 self.prev = P_OP;
                 i + 1
@@ -1022,18 +1096,18 @@ impl<K: Sink> Scan<'_, '_, K> {
                 _ if dq => JSX_STR_D_ENTITY_MARK,
                 _ => JSX_STR_S_ENTITY_MARK,
             };
-            self.tok(p, p + 1, m);
-            self.tok(p + 1, e, ok);
-            return self.tok(e, e + 1, m);
+            self.tok_far(p, p + 1, m);
+            self.tok_far(p + 1, e, ok);
+            return self.tok_far(e, e + 1, m);
         }
         let mut s = p + 1;
         while s < n && !matches!(b[s], b' ' | b'\t') {
             s += 1;
         }
         match b[p + 1..s].iter().rposition(|&c| c == b';') {
-            Some(k) => self.tok(p, p + 1 + k + 1, bad),
+            Some(k) => self.tok_far(p, p + 1 + k + 1, bad),
             // a `&` before a blank or the end: bat's bad ampersand
-            None if s == p + 1 => self.tok(p, p + 1, bad),
+            None if s == p + 1 => self.tok_far(p, p + 1, bad),
             None => p + 1,
         }
     }

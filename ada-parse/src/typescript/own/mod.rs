@@ -41,6 +41,7 @@ use crate::{Out, State};
 
 /// How many frames a line can hold; one pushed past it drops the bottom one.
 const MAX: usize = 64;
+const _: () = assert!(MAX.is_power_of_two());
 
 // The frames. Code frames first; [`F_TYPE`] and up a type frame's ([`Scan::type_turn`]),
 // [`TEXT`] and up a text frame's ([`Scan::text_turn`]).
@@ -126,7 +127,10 @@ const F_T_SUBST: u8 = 43;
 /// A generic arrow's type parameters whose `<` ended its line: its `>(` opens the arrow's
 /// parameters with plain brackets, as bat's possibly-arrow `(` (`F_PARAMS_PLAIN`).
 const F_T_ARROW_TP_LINE: u8 = 44;
-const _: () = assert!(F_T_ARROW_TP_LINE < TEXT);
+/// A type's `(` that ended its line (bat's possibly a function type's parameters): its
+/// brackets plain, a name before `:` or `?:` a parameter, else a type's group.
+const F_T_ROUND_LINE: u8 = 45;
+const _: () = assert!(F_T_ROUND_LINE < TEXT);
 /// The first text frame.
 const TEXT: u8 = 64;
 /// A `"…"` continued by a `\` at a line's end.
@@ -146,6 +150,8 @@ const T_JSX_CHILD: u8 = 70;
 /// A JSX attribute's `"…"` and `'…'`.
 const T_JSX_STR_D: u8 = 71;
 const T_JSX_STR_S: u8 = 72;
+/// A JSDoc inline tag (`{@link …`) open past its line, above its doc comment's frame.
+const T_DOC_INLINE: u8 = 73;
 /// A regex in a `RegExp(…)` string or template, its state in the low bits, above the string's
 /// frame.
 const T_RE_STR: u8 = 0x80;
@@ -496,7 +502,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(always)]
     fn load(&mut self, state: &State) {
         self.depth = state.load(&mut self.stack);
-        self.cur = self.stack[self.depth - 1];
+        self.cur = self.stack[(self.depth - 1) & (MAX - 1)];
         self.exact = state.is_exact();
         let arg = state.flags();
         self.prev = (arg & ARG_PREV) as u8;
@@ -561,8 +567,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[cold]
     #[inline(never)]
     fn shebang(&mut self) -> usize {
-        self.tok(0, 2, SHEBANG_MARK);
-        self.tok(2, self.b.len(), SHEBANG)
+        self.tok_far(0, 2, SHEBANG_MARK);
+        self.tok_far(2, self.b.len(), SHEBANG)
     }
 
     /// A line after one that ended after a value: the frames that line closed (a
@@ -598,12 +604,14 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     }
 
     /// Whether the line goes on with a type: a type's operator first (bat's alias ends at an
-    /// empty line).
+    /// empty line), or a comment, which leaves the previous token, so the line after it is
+    /// asked again.
     #[inline(never)]
     fn type_goes_on(&self) -> bool {
         let b = self.b;
         let s = skip_blanks(b, 0);
         matches!(b.get(s), Some(b'|' | b'&' | b'?' | b':' | b'=' | b'.'))
+            || (b.get(s) == Some(&b'/') && matches!(b.get(s + 1), Some(b'/' | b'*')))
             || (b.len() - s.min(b.len()) >= 7 && &b[s..s + 7] == b"extends")
     }
 
@@ -616,7 +624,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(always)]
     fn under(&self) -> u8 {
         if self.depth >= 2 {
-            self.stack[self.depth - 2]
+            self.stack[(self.depth - 2) & (MAX - 1)]
         } else {
             F_TOP
         }
@@ -627,7 +635,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         if self.depth == MAX {
             self.full();
         }
-        self.stack[self.depth] = c;
+        // below MAX here; the mask (MAX a power of two) spares each push its bounds check
+        self.stack[self.depth & (MAX - 1)] = c;
         self.depth += 1;
         self.cur = c;
     }
@@ -642,13 +651,14 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn pop(&mut self) {
         if self.depth > 1 {
             self.depth -= 1;
-            self.cur = self.stack[self.depth - 1];
+            // 1 ≤ depth ≤ MAX: as `push`'s mask
+            self.cur = self.stack[(self.depth - 1) & (MAX - 1)];
         }
     }
 
     #[inline(always)]
     fn set_top(&mut self, c: u8) {
-        self.stack[self.depth - 1] = c;
+        self.stack[(self.depth - 1) & (MAX - 1)] = c;
         self.cur = c;
     }
 
@@ -812,7 +822,26 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 return q;
             }
         }
+        if prev == P_IMPORT {
+            return self.import_default(p, e);
+        }
         self.plain(p, e, top, bits)
+    }
+
+    /// A default import's name `p..e` (`import N, { … }`): an alias's; its `,` keeps the
+    /// import's place for the `{` or `*` after it.
+    #[cold]
+    #[inline(never)]
+    fn import_default(&mut self, p: usize, e: usize) -> usize {
+        let b = self.b;
+        self.tok_far(p, e, ALIAS);
+        let s = skip_blanks(b, e);
+        if b.get(s) == Some(&b',') {
+            self.prev = P_IMPORT;
+            return self.tok_far(s, s + 1, COMMA);
+        }
+        self.prev = P_VALUE;
+        e
     }
 
     /// A name `p..e` (`id` its word) in a frame that places names but not here: a keyword's,
@@ -843,6 +872,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             Some(b'.') => {
                 if b.get(e + 1) == Some(&b'.') {
                     var_kind(b[p], bits)
+                } else if b.get(e + 1) == Some(&b'p') && prototype(b, e + 1) {
+                    // bat's `X.prototype`: a class's
+                    SUPPORT_CLASS
                 } else if is_const(b[p], bits) {
                     CONSTANT_OBJ
                 } else {
@@ -874,9 +906,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                         // read before `function_named` clears it
                         let v = self.assign.value as usize;
                         self.function_named();
-                        self.tok(v, v + 5, ASYNC);
+                        self.tok_far(v, v + 5, ASYNC);
                     }
-                    self.tok(p, e, PARAM);
+                    self.tok_far(p, e, PARAM);
                     return e;
                 }
                 Some(b'=') => var_kind(b[p], bits),
@@ -888,13 +920,18 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             Some(b':')
                 if matches!(top, F_TOP | F_BLOCK) && start && b.get(s + 1) != Some(&b':') =>
             {
-                self.tok(p, e, LABEL);
-                self.tok(s, s + 1, LABEL_SEP);
+                self.tok_far(p, e, LABEL);
+                self.tok_far(s, s + 1, LABEL_SEP);
                 self.prev = P_START;
                 return s + 1;
             }
             Some(b'(') if s == e => ENTITY_FN,
-            Some(b'?') if b.get(s + 1) == Some(&b'.') && b.get(s + 2) == Some(&b'(') => ENTITY_FN,
+            Some(b'?') if b.get(s + 1) == Some(&b'.') => match b.get(s + 2) {
+                Some(b'(') => ENTITY_FN,
+                Some(b'0'..=b'9') => var_kind(b[p], bits),
+                _ if s == e => OBJECT,
+                _ => var_kind(b[p], bits),
+            },
             Some(b'!') if b.get(s + 1) == Some(&b'(') => ENTITY_FN,
             Some(b'`') => TPL_TAG,
             _ => var_kind(b[p], bits),
@@ -915,19 +952,19 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             F_BIND | F_BIND_ARR => Some(self.bound(p, e, top, bits)),
             F_ENUM if matches!(self.prev, P_START | P_OP) => {
                 self.prev = P_VALUE;
-                Some(self.tok(p, e, ENUM_MEMBER))
+                Some(self.tok_far(p, e, ENUM_MEMBER))
             }
             F_IMPORT => Some(self.imported(p, e, id)),
             F_FUNC_HEAD => {
                 self.prev = P_VALUE;
-                Some(self.tok(p, e, ENTITY_FN))
+                Some(self.tok_far(p, e, ENTITY_FN))
             }
             F_CLASS_HEAD | F_IFACE_HEAD => Some(self.head_name(p, e, top, id)),
             F_INDEX if self.prev == P_OP => {
                 let s = skip_blanks(self.b, e);
                 self.prev = P_VALUE;
                 if self.b.get(s) == Some(&b':') {
-                    return Some(self.tok(p, e, PARAM));
+                    return Some(self.tok_far(p, e, PARAM));
                 }
                 None
             }
@@ -947,8 +984,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 let mut s = p;
                 while b.get(q) == Some(&b'.') && b.get(q + 1).is_some_and(|&c| NAME[usize::from(c)])
                 {
-                    self.tok(s, q, TYPE_MODULE);
-                    self.tok(q, q + 1, ACCESSOR);
+                    self.tok_far(s, q, TYPE_MODULE);
+                    self.tok_far(q, q + 1, ACCESSOR);
                     s = q + 1;
                     q = s + 1;
                     while q < b.len() && NAME[usize::from(b[q])] {
@@ -956,7 +993,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     }
                 }
                 self.prev = P_VALUE;
-                self.tok(s, q, TYPE);
+                self.tok_far(s, q, TYPE);
                 if b.get(q) == Some(&b'<') {
                     return Some(self.type_args(q));
                 }
@@ -965,15 +1002,15 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             P_DECL | P_DECL_CONST => Some(self.declared(p, e, self.prev == P_DECL_CONST)),
             P_ENUM_NAME => {
                 self.prev = P_ENUM_BODY;
-                Some(self.tok(p, e, TYPE_ENUM))
+                Some(self.tok_far(p, e, TYPE_ENUM))
             }
             P_MODULE_NAME => {
                 // `namespace a.b.c`
-                Some(self.tok(p, e, TYPE_MODULE))
+                Some(self.tok_far(p, e, TYPE_MODULE))
             }
             P_JUMP => {
                 self.prev = P_VALUE;
-                Some(self.tok(p, e, LABEL))
+                Some(self.tok_far(p, e, LABEL))
             }
             P_DECORATOR => {
                 let leaf = if b.get(e) == Some(&b'.') {
@@ -995,7 +1032,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 } else {
                     P_VALUE
                 };
-                Some(self.tok(p, e, leaf))
+                Some(self.tok_far(p, e, leaf))
             }
             P_DOT_MATH..=P_DOT_MODULE => {
                 let _ = id;
@@ -1025,7 +1062,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 }
                 self.prev = P_VALUE;
                 if self.b.get(e) == Some(&b'<') {
-                    self.tok(p, e, info.leaf);
+                    self.tok_far(p, e, info.leaf);
                     if types::type_args_end(self.b, e, false)
                         .is_some_and(|q| self.b.get(q) == Some(&b'('))
                     {
@@ -1058,7 +1095,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 } else {
                     info.leaf
                 };
-                Some(self.tok(p, e, leaf))
+                Some(self.tok_far(p, e, leaf))
             }
             W_OBJ => {
                 if id == ID_MODULE
@@ -1073,7 +1110,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     P_VALUE
                 };
                 let leaf = self.plainish(info.leaf);
-                Some(self.tok(p, e, leaf))
+                Some(self.tok_far(p, e, leaf))
             }
             W_CONTEXT => self.context_word(p, e, id, info, top),
             _ => None,
@@ -1095,7 +1132,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 if id == ID_CONST && has(b, skip_blanks(b, e), b"enum ") {
                     // `const enum`: a modifier
                     self.prev = P_START;
-                    return self.tok(p, e, MODIFIER);
+                    return self.tok_far(p, e, MODIFIER);
                 }
                 self.prev = if id == ID_CONST { P_DECL_CONST } else { P_DECL };
                 self.tok(p, e, info.leaf)
@@ -1105,16 +1142,16 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     match b.get(e) {
                         Some(b'(') => {
                             self.prev = P_VALUE;
-                            return self.tok(p, e, IMPORT_OP);
+                            return self.tok_far(p, e, IMPORT_OP);
                         }
                         Some(b'.') => {
-                            self.tok(p, e, IMPORT);
+                            self.tok_far(p, e, IMPORT);
                             if has(b, e + 1, b"meta")
                                 && !b.get(e + 5).is_some_and(|&c| NAME[usize::from(c)])
                             {
-                                self.tok(e, e + 1, ACCESSOR);
+                                self.tok_far(e, e + 1, ACCESSOR);
                                 self.prev = P_VALUE;
-                                return self.tok(e + 1, e + 5, IMPORT_META);
+                                return self.tok_far(e + 1, e + 5, IMPORT_META);
                             }
                             self.prev = P_VALUE;
                             return e;
@@ -1131,7 +1168,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     return self.function(p, e);
                 }
                 if id == ID_CLASS {
-                    self.tok(p, e, info.leaf);
+                    self.tok_far(p, e, info.leaf);
                     self.push(F_CLASS_HEAD);
                     self.prev = P_OP;
                     return e;
@@ -1139,35 +1176,35 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 if id == ID_CASE || (id == ID_DEFAULT && self.prev != P_IMPORT) {
                     if id == ID_DEFAULT && !matches!(self.top(), F_BLOCK) {
                         // `export default` reads as `default` after a value too
-                        self.tok(p, e, DEFAULT);
+                        self.tok_far(p, e, DEFAULT);
                         self.prev = P_OP;
                         return e;
                     }
-                    self.tok(p, e, info.leaf);
+                    self.tok_far(p, e, info.leaf);
                     self.push(F_CASE);
                     self.prev = P_OP;
                     return e;
                 }
                 if id == ID_DEFAULT {
-                    self.tok(p, e, DEFAULT);
+                    self.tok_far(p, e, DEFAULT);
                     self.prev = P_OP;
                     return e;
                 }
                 if id == ID_NEW && b.get(e) == Some(&b'.') {
-                    self.tok(p, e, NEW);
+                    self.tok_far(p, e, NEW);
                     if has(b, e + 1, b"target") {
-                        self.tok(e, e + 1, ACCESSOR);
+                        self.tok_far(e, e + 1, ACCESSOR);
                         self.prev = P_VALUE;
-                        return self.tok(e + 1, e + 7, NEW_TARGET);
+                        return self.tok_far(e + 1, e + 7, NEW_TARGET);
                     }
                     self.prev = P_VALUE;
                     return e;
                 }
                 if id == ID_YIELD && b.get(skip_blanks(b, e)) == Some(&b'*') {
                     let s = skip_blanks(b, e);
-                    self.tok(p, e, info.leaf);
+                    self.tok_far(p, e, info.leaf);
                     self.prev = P_OP;
-                    return self.tok(s, s + 1, ASTERISK);
+                    return self.tok_far(s, s + 1, ASTERISK);
                 }
                 if info.after == P_ENUM_NAME && top == F_CLASS_BODY {
                     return self.plain(p, e, top, 0);
@@ -1196,13 +1233,13 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     Some(b'(') => {
                         let mark = self.k.mark(self.out);
                         self.asy = (s, p, mark);
-                        self.tok(p, e, READWRITE);
+                        self.tok_far(p, e, READWRITE);
                     }
                     Some(b'<') => {
-                        self.tok(p, e, ASYNC);
+                        self.tok_far(p, e, ASYNC);
                     }
                     _ if named => {
-                        self.tok(p, e, ASYNC);
+                        self.tok_far(p, e, ASYNC);
                     }
                     _ => return None,
                 }
@@ -1210,7 +1247,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 Some(e)
             }
             ID_OF if matches!(self.prev, P_VALUE | P_DECLARED) => {
-                self.tok(p, e, info.leaf);
+                self.tok_far(p, e, info.leaf);
                 self.prev = P_OP;
                 Some(e)
             }
@@ -1224,7 +1261,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     if id == ID_SATISFIES {
                         return None;
                     }
-                    self.tok(p, e, info.leaf);
+                    self.tok_far(p, e, info.leaf);
                     self.prev = P_IMPORT;
                     return Some(e);
                 }
@@ -1239,12 +1276,12 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     // `as const`: a modifier, unless a type's name follows (`as const T`)
                     let t = skip_blanks(b, s + 5);
                     if !b.get(t).is_some_and(|&c| NAME[usize::from(c)]) {
-                        self.tok(p, e, AS);
+                        self.tok_far(p, e, AS);
                         self.prev = P_VALUE;
-                        return Some(self.tok(s, s + 5, MODIFIER));
+                        return Some(self.tok_far(s, s + 5, MODIFIER));
                     }
                 }
-                self.tok(p, e, AS);
+                self.tok_far(p, e, AS);
                 self.push(F_TYPE_AS);
                 self.prev = P_OP;
                 Some(e)
@@ -1252,7 +1289,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             ID_TYPE => {
                 if self.prev == P_IMPORT && !(named && types::alias_ahead(b, s)) {
                     if named || matches!(next, Some(b'{' | b'*')) {
-                        self.tok(p, e, TYPE_CONTROL);
+                        self.tok_far(p, e, TYPE_CONTROL);
                         return Some(e);
                     }
                     return None;
@@ -1260,7 +1297,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 if !(named && self.statement_place()) {
                     return None;
                 }
-                self.tok(p, e, TYPE_KW);
+                self.tok_far(p, e, TYPE_KW);
                 self.push(F_TYPE_DECL);
                 self.prev = P_ALIAS_NAME;
                 Some(e)
@@ -1269,7 +1306,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 if !(named && self.statement_place()) {
                     return None;
                 }
-                self.tok(p, e, INTERFACE_KW);
+                self.tok_far(p, e, INTERFACE_KW);
                 self.push(F_IFACE_HEAD);
                 self.prev = P_OP;
                 Some(e)
@@ -1284,13 +1321,13 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 if !(named && self.statement_place()) {
                     return None;
                 }
-                self.tok(p, e, MODIFIER);
+                self.tok_far(p, e, MODIFIER);
                 self.prev = P_START;
                 Some(e)
             }
             ID_GLOBAL => {
                 if self.prev == P_START && next == Some(b'{') {
-                    self.tok(p, e, NODE_OBJ);
+                    self.tok_far(p, e, NODE_OBJ);
                     self.prev = P_VALUE;
                     return Some(e);
                 }
@@ -1322,7 +1359,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         {
             return None;
         }
-        self.tok(p, e, NAMESPACE_KW);
+        self.tok_far(p, e, NAMESPACE_KW);
         self.prev = P_MODULE_NAME;
         Some(e)
     }
@@ -1335,9 +1372,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         } else if self.async_value(p) {
             let v = self.assign.value as usize;
             self.function_named();
-            self.tok(v, v + 5, ASYNC);
+            self.tok_far(v, v + 5, ASYNC);
         }
-        self.tok(p, e, FUNCTION_KW);
+        self.tok_far(p, e, FUNCTION_KW);
         self.push(F_FUNC_HEAD);
         self.prev = P_OP;
         e
@@ -1392,7 +1429,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(never)]
     fn plain_member(&mut self, p: usize, e: usize) -> usize {
         if self.substs != 0 {
-            return self.tok(p, e, TPL);
+            return self.tok_far(p, e, TPL);
         }
         e
     }
@@ -1423,10 +1460,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 }
             }
             Some(b'<') if s == e => {
-                if let Some(q) = types::type_args_end(b, e, false)
-                    && matches!(b.get(q), Some(b'(' | b'`'))
-                {
-                    self.tok(p, e, ENTITY_FN);
+                if types::generic_call(b, e) {
+                    self.tok_far(p, e, ENTITY_FN);
                     return self.type_args(e);
                 }
                 prop(b)
@@ -1482,7 +1517,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         match found {
             Some(leaf) => {
                 self.prev = P_VALUE;
-                self.tok(p, e, leaf)
+                self.tok_far(p, e, leaf)
             }
             None => {
                 self.prev = P_DOT;
@@ -1523,8 +1558,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         let sep = a.sep as usize;
         match a.kind {
             A_KEY => {
-                self.tok(s, e, ENTITY_FN);
-                self.tok(sep, sep + 1, KEY_VALUE);
+                self.tok_far(s, e, ENTITY_FN);
+                self.tok_far(sep, sep + 1, KEY_VALUE);
             }
             A_QUOTED => {
                 let q = if self.b[s] == b'"' {
@@ -1532,18 +1567,18 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 } else {
                     (STR_S_BEGIN, STR_S, STR_S_END)
                 };
-                self.tok(s, s + 1, q.0);
-                self.tok(s + 1, e - 1, q.1);
-                self.tok(e - 1, e, q.2);
-                self.tok(sep, sep + 1, KEY_VALUE);
+                self.tok_far(s, s + 1, q.0);
+                self.tok_far(s + 1, e - 1, q.1);
+                self.tok_far(e - 1, e, q.2);
+                self.tok_far(sep, sep + 1, KEY_VALUE);
             }
             A_CONST => {
-                self.tok(s, e, CONST_FN);
-                self.tok(sep, sep + 1, ASSIGN);
+                self.tok_far(s, e, CONST_FN);
+                self.tok_far(sep, sep + 1, ASSIGN);
             }
             _ => {
-                self.tok(s, e, ENTITY_FN);
-                self.tok(sep, sep + 1, ASSIGN);
+                self.tok_far(s, e, ENTITY_FN);
+                self.tok_far(sep, sep + 1, ASSIGN);
             }
         }
     }
@@ -1589,17 +1624,17 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         if matches!(self.prev, P_BIND | P_OP | P_KEY) {
             let s = skip_blanks(b, e);
             if top == F_BIND && b.get(s) == Some(&b':') {
-                self.tok(p, e, OBJ_PROPERTY);
-                self.tok(s, s + 1, DESTRUCTURING);
+                self.tok_far(p, e, OBJ_PROPERTY);
+                self.tok_far(s, s + 1, DESTRUCTURING);
                 self.prev = P_BIND;
                 return s + 1;
             }
             self.prev = P_VALUE;
             let leaf = if self.bind_const { CONSTANT } else { READWRITE };
-            return self.tok(p, e, leaf);
+            return self.tok_far(p, e, leaf);
         }
         self.prev = P_VALUE;
-        self.tok(p, e, READWRITE)
+        self.tok_far(p, e, READWRITE)
     }
 
     /// A name `p..e` in an import's or an export's `{ … }` (`id` its word).
@@ -1608,16 +1643,17 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         match id {
             ID_AS => {
                 self.prev = P_IMPORT;
-                return self.tok(p, e, AS);
+                return self.tok_far(p, e, AS);
             }
             ID_DEFAULT => {
                 self.prev = P_VALUE;
-                return self.tok(p, e, DEFAULT);
+                return self.tok_far(p, e, DEFAULT);
             }
             _ => {}
         }
         let s = skip_blanks(self.b, e);
-        let leaf = if has(self.b, s, b"as ") {
+        // the name after `as` an alias (`{type Props as P}`)
+        let leaf = if has(self.b, s, b"as ") && !after_as(self.b, p) {
             READWRITE
         } else {
             ALIAS
@@ -1633,7 +1669,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         let b = self.b;
         if id == ID_EXTENDS || id == ID_IMPLEMENTS {
             self.prev = P_EXTENDS;
-            return self.tok(p, e, MODIFIER);
+            return self.tok_far(p, e, MODIFIER);
         }
         if self.prev == P_EXTENDS {
             // a path's names, the last the class inherited (a function's where it's called:
@@ -1649,7 +1685,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 }
                 _ => INHERITED,
             };
-            self.tok(p, e, leaf);
+            self.tok_far(p, e, leaf);
             self.prev = if leaf == TYPE_MODULE {
                 P_EXTENDS_PATH
             } else {
@@ -1665,7 +1701,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             return self.unplaced(p, e, top, id);
         }
         self.prev = P_VALUE;
-        self.tok(
+        self.tok_far(
             p,
             e,
             if top == F_CLASS_HEAD {
@@ -1695,18 +1731,18 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 s + 1
             }
             Some(b'(') => {
-                self.tok(p, e, ENTITY_FN);
+                self.tok_far(p, e, ENTITY_FN);
                 self.prev = P_KEYED;
                 e
             }
             Some(b'<') => {
-                self.tok(p, e, ENTITY_FN);
+                self.tok_far(p, e, ENTITY_FN);
                 self.prev = P_KEYED;
                 self.type_params(s)
             }
             Some(b'?') if b.get(s + 1) == Some(&b'(') => {
-                self.tok(p, e, ENTITY_FN);
-                self.tok(s, s + 1, OPTIONAL);
+                self.tok_far(p, e, ENTITY_FN);
+                self.tok_far(s, s + 1, OPTIONAL);
                 self.prev = P_KEYED;
                 s + 1
             }
@@ -1727,24 +1763,28 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     ID_ASYNC => ASYNC,
                     _ => {
                         self.prev = P_VALUE;
-                        return self.tok(p, e, var_kind(b[p], bits));
+                        return self.tok_far(p, e, var_kind(b[p], bits));
                     }
                 };
-                self.tok(p, e, leaf);
+                self.tok_far(p, e, leaf);
                 // the key place stays, an accessor's after `get` or `set`
                 if leaf == PROPERTY_KW {
                     self.prev = P_ACCESSOR;
                 }
                 e
             }
-            _ => {
+            next => {
                 self.prev = P_VALUE;
-                let leaf = if id != 0 && INFO[usize::from(id)].class == W_VALUE {
+                // a shorthand's name is bat's variable, a support word's too (`{ document }`)
+                let leaf = if id != 0
+                    && INFO[usize::from(id)].class == W_VALUE
+                    && !matches!(next, None | Some(b',' | b'}'))
+                {
                     INFO[usize::from(id)].leaf
                 } else {
                     var_kind(b[p], bits)
                 };
-                self.tok(p, e, leaf)
+                self.tok_far(p, e, leaf)
             }
         }
     }
@@ -1757,7 +1797,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             // after a value, something else
             return self.unplaced(p, e, top, id);
         }
-        if top == F_PARAMS_PLAIN && !param_follows(b, e) {
+        if top == F_PARAMS_PLAIN
+            && (!param_follows(b, e)
+                || (id != 0 && id != ID_THIS && INFO[usize::from(id)].class == W_VALUE))
+        {
+            // `undefined` at a line's end stays bat's constant
             return self.unplaced(p, e, top, id);
         }
         if top == F_PATTERN
@@ -1767,8 +1811,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         {
             // a key before `:` in an object pattern renames
             let s = skip_blanks(b, e);
-            self.tok(p, e, OBJ_PROPERTY);
-            self.tok(s, s + 1, DESTRUCTURING);
+            self.tok_far(p, e, OBJ_PROPERTY);
+            self.tok_far(s, s + 1, DESTRUCTURING);
             self.prev = P_OP;
             return s + 1;
         }
@@ -1782,12 +1826,12 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 let s = skip_blanks(b, e);
                 if s > e && b.get(s).is_some_and(|&c| NAME[usize::from(c)]) {
                     self.prev = P_MEMBER;
-                    return self.tok(p, e, MODIFIER);
+                    return self.tok_far(p, e, MODIFIER);
                 }
             }
             if id == ID_THIS {
                 self.prev = P_VALUE;
-                return self.tok(p, e, THIS_PARAM);
+                return self.tok_far(p, e, THIS_PARAM);
             }
         }
         self.prev = P_VALUE;
@@ -1831,23 +1875,23 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                         return e;
                     }
                     P_ACCESSOR => {
-                        self.tok(p, e, PROPERTY_KW);
+                        self.tok_far(p, e, PROPERTY_KW);
                         self.prev = P_ACCESSOR;
                         return e;
                     }
                     _ if id == ID_ASYNC => {
-                        self.tok(p, e, ASYNC);
+                        self.tok_far(p, e, ASYNC);
                         return e;
                     }
                     _ if id == ID_DECLARE || id == ID_ABSTRACT => {
-                        self.tok(p, e, MODIFIER);
+                        self.tok_far(p, e, MODIFIER);
                         return e;
                     }
                     _ => {}
                 }
             }
             if id == ID_CONSTRUCTOR && next == Some(b'(') {
-                self.tok(p, e, STORAGE);
+                self.tok_far(p, e, STORAGE);
                 self.prev = P_KEYED;
                 return e;
             }
@@ -1859,15 +1903,15 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 s
             }
             Some(b'<') => {
-                self.tok(p, e, ENTITY_FN);
+                self.tok_far(p, e, ENTITY_FN);
                 self.prev = P_KEYED;
                 self.type_params(s)
             }
             Some(b'?') | Some(b'!') => {
                 let t = skip_blanks(b, s + 1);
                 if b.get(t) == Some(&b'(') {
-                    self.tok(p, e, ENTITY_FN);
-                    self.tok(s, s + 1, OPTIONAL);
+                    self.tok_far(p, e, ENTITY_FN);
+                    self.tok_far(s, s + 1, OPTIONAL);
                     self.prev = P_KEYED;
                     return t;
                 }
@@ -1879,8 +1923,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     } else {
                         OBJ_PROPERTY
                     };
-                self.tok(p, e, leaf);
-                self.tok(
+                self.tok_far(p, e, leaf);
+                self.tok_far(
                     s,
                     s + 1,
                     if next == Some(b'?') {
@@ -1895,14 +1939,15 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             }
             Some(b'=') if b.get(s + 1) != Some(&b'>') => {
                 self.assigned(p, e, s, A_NAMED);
-                self.tok(p, e, OBJ_PROPERTY);
-                self.tok(s, s + 1, ASSIGN);
+                self.tok_far(p, e, OBJ_PROPERTY);
+                self.tok_far(s, s + 1, ASSIGN);
                 self.push(F_FIELD);
                 self.prev = P_OP;
                 s + 1
             }
             Some(b':') => {
-                let leaf = if s == e && types::fn_typed(b, s + 1) {
+                let leaf = if s == e && (types::fn_typed(b, s + 1) || types::annotated_fn(b, s + 1))
+                {
                     ENTITY_FN
                 } else {
                     OBJ_PROPERTY
@@ -1914,7 +1959,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             }
             _ => {
                 self.prev = P_MEMBER;
-                self.tok(p, e, OBJ_PROPERTY)
+                self.tok_far(p, e, OBJ_PROPERTY)
             }
         }
     }
@@ -1970,7 +2015,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             return self.member(p, e, 0, C_LO);
         }
         self.prev = P_VALUE;
-        self.tok(p, e, READWRITE)
+        self.tok_far(p, e, READWRITE)
     }
 
     // --- punctuation ---
@@ -2046,20 +2091,27 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// A `(` at `p` that ends its line where an expression starts: an arrow's parameters'.
     #[inline(never)]
     fn line_end_params(&mut self, p: usize) -> usize {
+        self.arrow_head(p);
+        self.push(F_PARAMS_PLAIN);
+        self.prev = P_OP;
+        p + 1
+    }
+
+    /// Before an arrow's parameters known at their `(` at `p`: the name assigned a value it
+    /// starts a function's, an `async` before it the arrow's.
+    #[inline(never)]
+    fn arrow_head(&mut self, p: usize) {
         if self.assign.value == p as u32 {
             self.function_named();
         } else if self.async_value(p) {
             let v = self.assign.value as usize;
             self.function_named();
-            self.tok(v, v + 5, ASYNC);
+            self.tok_far(v, v + 5, ASYNC);
         } else if self.asy.0 == p {
             let a = self.asy.1;
             self.k.undo(self.out, self.asy.2);
-            self.tok(a, a + 5, ASYNC);
+            self.tok_far(a, a + 5, ASYNC);
         }
-        self.push(F_PARAMS_PLAIN);
-        self.prev = P_OP;
-        p + 1
     }
 
     /// A function's parameters' `(` at `p`.
@@ -2111,6 +2163,13 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     return p + 1;
                 }
                 self.prev = P_VALUE;
+                let b = self.b;
+                if (b.get(p + 1) == Some(&b':')
+                    || (b.get(p + 1) == Some(&b' ') && b.get(p + 2) == Some(&b':')))
+                    && self.line_group_return(p)
+                {
+                    self.prev = P_ARROW_PARAMS;
+                }
                 return self.wrapped(p);
             }
             F_PARAMS | F_PARAMS_PLAIN | F_PARAMS_ARROW => {
@@ -2119,9 +2178,14 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     self.tok(p, p + 1, PARAMS_END);
                 }
                 // a declaration's (or a method's) `):` is its return type's, an arrow's the
-                // return type its `=>` ends
+                // return type its `=>` ends; a possibly-arrow group without one a value
+                // (`(…) as T`)
                 self.prev = if top == F_PARAMS {
                     P_PARAMS_END
+                } else if top == F_PARAMS_PLAIN
+                    && !matches!(self.b.get(skip_blanks(self.b, p + 1)), Some(b':' | b'='))
+                {
+                    P_VALUE
                 } else {
                     P_ARROW_PARAMS
                 };
@@ -2151,6 +2215,42 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         Some(self.arrow_params(g))
     }
 
+    /// Whether the `:` after a group's `)` at `p` that no mark of this line holds (its `(` lines
+    /// before) is an arrow's return type: its type runs to a `=>` on the line, and no ternary
+    /// or `case` takes the `:`. Its names stay as written, as bat's.
+    #[cold]
+    #[inline(never)]
+    fn line_group_return(&self, p: usize) -> bool {
+        !matches!(self.top(), F_TERNARY | F_CASE)
+            && types::arrow_return(self.b, skip_blanks(self.b, p + 1) + 1)
+    }
+
+    /// The group this line marked whose first name the `:` at `p` follows (`(name:`), taken
+    /// off the marks.
+    #[cold]
+    #[inline(never)]
+    fn first_name_group(&mut self, p: usize) -> Option<Group> {
+        if self.ngroups == 0 {
+            return None;
+        }
+        // SAFETY: entries below the count are written
+        let g = unsafe { self.groups[self.ngroups - 1].assume_init() };
+        if usize::from(g.depth) != self.depth {
+            return None;
+        }
+        let b = self.b;
+        let s = g.open as usize + 1;
+        let mut e = s;
+        while e < p && NAME[usize::from(b[e])] {
+            e += 1;
+        }
+        if e == s || skip_blanks(b, e) != p {
+            return None;
+        }
+        self.ngroups -= 1;
+        Some(g)
+    }
+
     #[inline(never)]
     fn arrow_params(&mut self, g: Group) -> usize {
         let open = g.open as usize;
@@ -2163,12 +2263,12 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             let v = g.assign.value as usize;
             self.assign = g.assign;
             self.function_named();
-            self.tok(v, v + 5, ASYNC);
+            self.tok_far(v, v + 5, ASYNC);
         } else {
             self.k.undo(self.out, g.mark);
             if g.asy != NO_VALUE {
                 let a = g.asy as usize;
-                self.tok(a, a + 5, ASYNC);
+                self.tok_far(a, a + 5, ASYNC);
             }
         }
         self.open_params(open, F_PARAMS_ARROW)
@@ -2206,7 +2306,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             {
                 self.push(F_PATTERN);
                 self.prev = P_OP;
-                return self.tok(p, p + 1, BIND_ARR);
+                return self.tok_far(p, p + 1, BIND_ARR);
             }
             _ if self.prev >= P_DECL
                 || (matches!(top, F_BIND | F_BIND_ARR) && self.prev == P_BIND) =>
@@ -2218,7 +2318,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 }
                 self.push(F_BIND_ARR);
                 self.prev = P_BIND;
-                return self.tok(p, p + 1, BIND_ARR);
+                return self.tok_far(p, p + 1, BIND_ARR);
             }
             _ => F_BRACKET,
         };
@@ -2270,7 +2370,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 } else {
                     P_VALUE
                 };
-                self.tok(p, p + 1, BIND_ARR)
+                self.tok_far(p, p + 1, BIND_ARR)
             }
             _ => {
                 self.prev = P_VALUE;
@@ -2290,10 +2390,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             Some(b'?') | Some(b'!') => {
                 let t = skip_blanks(b, s + 1);
                 if b.get(t) == Some(&b'(') {
-                    self.tok(s, s + 1, OPTIONAL);
+                    self.tok_far(s, s + 1, OPTIONAL);
                     return t;
                 }
-                self.tok(s, s + 1, OPTIONAL);
+                self.tok_far(s, s + 1, OPTIONAL);
                 self.push(F_FIELD);
                 self.prev = P_DECLARED;
                 s + 1
@@ -2304,7 +2404,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 p
             }
             Some(b'=') => {
-                self.tok(s, s + 1, ASSIGN);
+                self.tok_far(s, s + 1, ASSIGN);
                 self.push(F_FIELD);
                 self.prev = P_OP;
                 s + 1
@@ -2388,7 +2488,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 } else {
                     P_VALUE
                 };
-                return self.tok(p, p + 1, BIND_OBJ);
+                return self.tok_far(p, p + 1, BIND_OBJ);
             }
             F_BLOCK => {
                 self.pop();
@@ -2423,7 +2523,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     SPREAD
                 };
                 self.prev = if leaf == REST { self.prev } else { P_OP };
-                return self.tok(p, p + 3, leaf);
+                return self.tok_far(p, p + 3, leaf);
             }
             _ => {}
         }
@@ -2459,11 +2559,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 } else {
                     P_OP
                 };
-                self.tok(p, p + 1, COMMA)
+                self.tok_far(p, p + 1, COMMA)
             }
             F_BIND | F_BIND_ARR => {
                 self.prev = P_BIND;
-                self.tok(p, p + 1, COMMA)
+                self.tok_far(p, p + 1, COMMA)
             }
             F_IMPORT => {
                 self.prev = P_IMPORT;
@@ -2471,9 +2571,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             }
             F_ENUM => {
                 self.prev = P_START;
-                self.tok(p, p + 1, COMMA)
+                self.tok_far(p, p + 1, COMMA)
             }
-            F_CLASS_HEAD | F_IFACE_HEAD => self.tok(p, p + 1, COMMA),
+            F_CLASS_HEAD | F_IFACE_HEAD => self.tok_far(p, p + 1, COMMA),
             _ => {
                 if self.depth == self.decl.0 {
                     // a declaration's next declared name
@@ -2517,13 +2617,16 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             F_TERNARY => {
                 self.pop();
                 self.prev = P_OP;
-                self.tok(p, p + 1, TERNARY)
+                self.tok_far(p, p + 1, TERNARY)
             }
             F_CASE => {
                 self.pop();
                 self.prev = P_START;
-                self.tok(p, p + 1, CASE_SEP)
+                self.tok_far(p, p + 1, CASE_SEP)
             }
+            // `(name:`: an arrow's parameters, as bat's lookahead reads them (the group read
+            // again as them)
+            F_PAREN if let Some(g) = self.first_name_group(p) => self.arrow_params(g),
             // a group's `:` after a pattern's `}` or a name: its parameter's type (a group whose
             // `=>` is lines on, as bat reads it)
             F_PARAMS | F_PARAMS_PLAIN | F_PARAMS_ARROW | F_INDEX | F_FIELD | F_PAREN => {
@@ -2532,7 +2635,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             F_PATTERN if self.prev == P_VALUE => self.annotation(p, F_TYPE),
             _ => {
                 self.prev = P_OP;
-                self.tok(p, p + 1, KEY_VALUE)
+                self.tok_far(p, p + 1, KEY_VALUE)
             }
         }
     }
@@ -2553,7 +2656,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         let b = self.b;
         match b.get(p + 1) {
             Some(b'.') if !matches!(b.get(p + 2), Some(b'0'..=b'9')) => {
-                self.tok(p, p + 2, ACCESSOR_OPT);
+                self.tok_far(p, p + 2, ACCESSOR_OPT);
                 self.prev = if matches!(b.get(p + 2), Some(b'(' | b'[')) {
                     P_VALUE
                 } else {
@@ -2568,7 +2671,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     p + 2
                 };
                 self.prev = P_OP;
-                return self.tok(p, e, if e == p + 3 { COMPOUND } else { LOGICAL });
+                return self.tok_far(p, e, if e == p + 3 { COMPOUND } else { LOGICAL });
             }
             _ => {}
         }
@@ -2576,13 +2679,17 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             top,
             F_PARAMS | F_PARAMS_PLAIN | F_PARAMS_ARROW | F_PATTERN | F_INDEX
         ) && self.prev == P_VALUE
+            && matches!(
+                b.get(skip_blanks(b, p + 1)),
+                Some(b':' | b',' | b')' | b'=') | None
+            )
         {
-            // a parameter's `?:`
-            return self.tok(p, p + 1, OPTIONAL);
+            // a parameter's `?:` (a `?` before a value a ternary's)
+            return self.tok_far(p, p + 1, OPTIONAL);
         }
         self.push(F_TERNARY);
         self.prev = P_OP;
-        self.tok(p, p + 1, TERNARY)
+        self.tok_far(p, p + 1, TERNARY)
     }
 
     /// A `=` at `p` in frame `top`: `=>`, a comparison, or an assignment.
@@ -2595,7 +2702,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             Some(b'=') => (p + 2, COMPARISON, P_OP),
             _ => {
                 if matches!(top, F_PARAMS | F_PARAMS_PLAIN | F_PARAMS_ARROW | F_PATTERN) {
-                    self.tok(p, p + 1, ASSIGN);
+                    self.tok_far(p, p + 1, ASSIGN);
                     self.push(F_DEFAULT);
                     self.prev = P_OP;
                     return p + 1;
@@ -2647,10 +2754,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 p + 2
             };
             self.prev = P_OP;
-            return self.tok(p, e, COMPARISON);
+            return self.tok_far(p, e, COMPARISON);
         }
         if self.prev == P_DECLARED {
-            return self.tok(p, p + 1, DEFINITE);
+            return self.tok_far(p, p + 1, DEFINITE);
         }
         if self.prev != P_VALUE {
             self.prev = P_OP;
@@ -2667,10 +2774,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             || (top == F_CLASS_BODY && self.prev == P_MEMBER)
             || (self.prev == P_KEY && top == F_OBJECT)
         {
-            return self.tok(p, p + 1, ASTERISK);
+            return self.tok_far(p, p + 1, ASTERISK);
         }
         if self.prev == P_IMPORT {
-            return self.tok(p, p + 1, IMPORT_ALL);
+            return self.tok_far(p, p + 1, IMPORT_ALL);
         }
         let (len, leaf) = match (b.get(p + 1), b.get(p + 2)) {
             (Some(b'*'), Some(b'=')) => (3, COMPOUND),
@@ -2679,7 +2786,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             _ => (1, ARITHMETIC),
         };
         self.prev = P_OP;
-        self.tok(p, p + len, leaf)
+        self.tok_far(p, p + len, leaf)
     }
 
     /// Whether a `*` is before `p`, past blanks (`import * as x`).
@@ -2700,18 +2807,18 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             Some(&d) if d == c => {
                 // `++`, `--`: the value stays one
                 let prev = if self.prev == P_VALUE { P_VALUE } else { P_OP };
-                self.tok(p, p + 2, if c == b'+' { INCREMENT } else { DECREMENT });
+                self.tok_far(p, p + 2, if c == b'+' { INCREMENT } else { DECREMENT });
                 self.prev = prev;
                 return p + 2;
             }
             Some(b'=') => {
                 self.prev = P_OP;
-                return self.tok(p, p + 2, COMPOUND);
+                return self.tok_far(p, p + 2, COMPOUND);
             }
             _ => {}
         }
         self.prev = P_OP;
-        self.tok(p, p + 1, ARITHMETIC)
+        self.tok_far(p, p + 1, ARITHMETIC)
     }
 
     /// A `<` at `p` in frame `top`: a head's type parameters, a cast's or a generic arrow's
@@ -2727,6 +2834,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         {
             return q;
         }
+        if self.prev == P_VALUE && p > 0 && b[p - 1] == b')' && types::call_type_args(b, p) {
+            // a call's result called with type arguments (`styled(X)<P>(…)`)
+            return self.type_args(p);
+        }
         let at1 = b.get(p + 1).copied();
         let (len, leaf) = match at1 {
             Some(b'<') if b.get(p + 2) == Some(&b'=') => (3, COMPOUND_BITWISE),
@@ -2735,7 +2846,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             _ => (1, RELATIONAL),
         };
         self.prev = P_OP;
-        self.tok(p, p + len, leaf)
+        self.tok_far(p, p + len, leaf)
     }
 
     /// A `/` at `p`: a comment's, a regex literal's, or division.
@@ -2770,9 +2881,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
         self.prev = P_OP;
         if b.get(p + 1) == Some(&b'=') {
-            return self.tok(p, p + 2, COMPOUND);
+            return self.tok_far(p, p + 2, COMPOUND);
         }
-        self.tok(p, p + 1, ARITHMETIC)
+        self.tok_far(p, p + 1, ARITHMETIC)
     }
 
     /// The blanks before a `/` at `p` in a template's substitution, which the run loop leaves
@@ -2783,7 +2894,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn slash_blanks(&mut self, p: usize, line_comment: bool) {
         let s = blanks_before(self.b, p);
         if s < p && !(line_comment && s == 0) {
-            self.tok(s, p, TPL);
+            self.tok_far(s, p, TPL);
         }
     }
 
@@ -2791,7 +2902,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(never)]
     fn decorator(&mut self, p: usize) -> usize {
         self.prev = P_DECORATOR;
-        self.tok(p, p + 1, DECORATOR)
+        self.tok_far(p, p + 1, DECORATOR)
     }
 
     /// A number at `p` (a digit, or a `.` before a digit): a hex, octal or binary literal,
@@ -2843,14 +2954,14 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             P_VALUE
         };
         if b.get(e) == Some(&b'n') {
-            self.tok(p, e, leaf);
+            self.tok_far(p, e, leaf);
             let big = match leaf {
                 HEX => HEX_BIG,
                 BINARY => BINARY_BIG,
                 OCTAL => OCTAL_BIG,
                 _ => DECIMAL_BIG,
             };
-            return self.tok(e, e + 1, big);
+            return self.tok_far(e, e + 1, big);
         }
         self.tok(p, e, leaf)
     }
@@ -3053,6 +3164,18 @@ fn possibly_arrow(b: &[u8], p: usize) -> bool {
         b'n' => k >= 6 && &b[k - 6..k] == b"return" && (k == 6 || !NAME[usize::from(b[k - 7])]),
         _ => false,
     }
+}
+
+/// Whether the token before `p` is `as`.
+fn after_as(b: &[u8], p: usize) -> bool {
+    let k = blanks_before(b, p);
+    k >= 2 && &b[k - 2..k] == b"as" && (k == 2 || !NAME[usize::from(b[k - 3])])
+}
+
+/// Whether `prototype` is the whole name at `p`.
+#[inline(never)]
+fn prototype(b: &[u8], p: usize) -> bool {
+    has(b, p, b"prototype") && !b.get(p + 9).is_some_and(|&c| NAME[usize::from(c)])
 }
 
 /// Whether a name ending at `e` in a possibly-arrow `(` is a parameter: `:`, `?` (not `?.`),
@@ -3424,6 +3547,66 @@ mod tests {
         has(&m, "mix", "entity.name.function.ts");
         has(&m, "|", "keyword.operator.type.ts");
         has(&m, "undefined", "support.type.builtin.ts");
+    }
+
+    /// R3's corners from the census: a type alias going on past a comment line, a group's
+    /// `):` lines after its `(` an arrow's return type, type arguments after a call's `)` and
+    /// before a bracket the line ends in, `(name:` an arrow's parameters, `X.prototype` a
+    /// class, a shorthand key a variable, a possibly-arrow group's ternary, `undefined` and
+    /// `as T`, a default import before `{type P as A}`, a type's `(` ending its line, a name
+    /// typed `Function` a function's.
+    #[test]
+    fn corners_bat_reads_across_lines() {
+        let m = ts(&[
+            "type Union =",
+            "  | Before",
+            "  // a comment",
+            "  | AfterComment;",
+            "r.reduce(",
+            "  (",
+            "    acc: number",
+            "  ): X => {",
+            "    if (acc) {}",
+            "  },",
+            ");",
+            "const S = styled(Slider)<StyledProps>(() => 1);",
+            "const [c, setC] = React.useState<{",
+            "}>({});",
+            "const Btn = (props: {",
+            "}) => 1;",
+            "f(Foo.prototype);",
+            "const o = { document };",
+            "const h = (",
+            "  cfg?.v !== undefined",
+            "    ? x",
+            "    : y",
+            ") as RichTextField;",
+            "import N, {type Props as Alias} from 'x';",
+            "type F = (",
+            "  container: U,",
+            ") => boolean;",
+            "let fnv: Function;",
+        ]);
+        has(&m, "AfterComment", "entity.name.type.ts");
+        has(&m, "if", "keyword.control.conditional.ts");
+        has(&m, "StyledProps", "entity.name.type.ts");
+        has(&m, "useState", "entity.name.function.ts");
+        has(
+            &m,
+            "Btn",
+            "variable.other.constant.ts entity.name.function.ts",
+        );
+        has(&m, "props", "variable.parameter.ts");
+        has(&m, "Foo", "support.class.ts");
+        has(&m, "document", "variable.other.readwrite.ts");
+        has(&m, "cfg", "variable.other.object.ts");
+        has(&m, "undefined", "constant.language.undefined.ts");
+        has(&m, ":", "keyword.operator.ternary.ts");
+        has(&m, "RichTextField", "entity.name.type.ts");
+        has(&m, "N", "variable.other.readwrite.alias.ts");
+        has(&m, "Alias", "variable.other.readwrite.alias.ts");
+        has(&m, "container", "variable.parameter.ts");
+        has(&m, "fnv", "entity.name.function.ts");
     }
 
     /// A `const`'s destructuring across lines: its names constants on every line (the state

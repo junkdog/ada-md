@@ -54,16 +54,21 @@ impl<K: Sink> Scan<'_, '_, K> {
             A_TICK => self.template(p),
             A_SIGN => {
                 if b.get(p + 1).is_some_and(u8::is_ascii_digit) {
-                    self.tok(p, p + 1, ARITHMETIC);
+                    self.tok_far(p, p + 1, ARITHMETIC);
                     return self.number(p + 1);
                 }
                 if matches!(b.get(p + 1), Some(b'?' | b'r')) && top == F_T_CURLY {
                     // a mapped type's `-?`, `+readonly`
-                    return self.tok(p, p + 1, TYPE_MODIFIER_OP);
+                    return self.tok_far(p, p + 1, TYPE_MODIFIER_OP);
                 }
                 if nested { p + 1 } else { leave(self) }
             }
             A_PAREN => {
+                if skip_blanks(b, p + 1) >= b.len() {
+                    self.push(F_T_ROUND_LINE);
+                    self.prev = P_OP;
+                    return p + 1;
+                }
                 if fn_type_params(b, p + 1) {
                     return self.open_params(p, F_PARAMS);
                 }
@@ -99,17 +104,17 @@ impl<K: Sink> Scan<'_, '_, K> {
                 }
                 self.push(F_T_CURLY);
                 self.prev = P_KEY;
-                self.tok(p, p + 1, BLOCK_BRACE)
+                self.tok_far(p, p + 1, BLOCK_BRACE)
             }
             A_LT => {
                 self.push(F_T_ANGLE);
                 self.prev = P_OP;
-                self.tok(p, p + 1, TP_BEGIN)
+                self.tok_far(p, p + 1, TP_BEGIN)
             }
             A_OP => match c {
                 b'>' if top == F_T_ARROW_TP_LINE && b.get(p + 1) == Some(&b'(') => {
                     self.pop();
-                    self.tok(p, p + 1, TP_END);
+                    self.tok_far(p, p + 1, TP_END);
                     self.push(F_PARAMS_PLAIN);
                     self.prev = P_OP;
                     p + 2
@@ -144,7 +149,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             },
             A_CLOSE_CURLY if top == F_T_SUBST => {
                 self.pop();
-                self.tok(p, p + 1, SUBST_END);
+                self.tok_far(p, p + 1, SUBST_END);
                 self.at = p + 1;
                 p + 1
             }
@@ -154,23 +159,23 @@ impl<K: Sink> Scan<'_, '_, K> {
                     b']' => F_T_SQUARE,
                     _ => F_T_CURLY,
                 };
-                if top != closes {
+                if top != closes && !(c == b')' && top == F_T_ROUND_LINE) {
                     return leave(self);
                 }
                 self.pop();
                 self.prev = P_VALUE;
                 if c == b'}' {
-                    return self.tok(p, p + 1, BLOCK_BRACE);
+                    return self.tok_far(p, p + 1, BLOCK_BRACE);
                 }
                 p + 1
             }
             A_COMMA if nested => {
                 self.prev = if top == F_T_CURLY { P_KEY } else { P_OP };
-                self.tok(p, p + 1, COMMA)
+                self.tok_far(p, p + 1, COMMA)
             }
             A_SEMI if top == F_T_CURLY => {
                 self.prev = P_KEY;
-                self.tok(p, p + 1, TERMINATOR)
+                self.tok_far(p, p + 1, TERMINATOR)
             }
             A_COLON => {
                 if matches!(top, F_TYPE_AS | F_TYPE_RET)
@@ -180,7 +185,7 @@ impl<K: Sink> Scan<'_, '_, K> {
                 }
                 self.prev = P_OP;
                 let leaf = match top {
-                    F_T_CURLY | F_T_SQUARE => ANNOTATION,
+                    F_T_CURLY | F_T_SQUARE | F_T_ROUND_LINE => ANNOTATION,
                     _ => TERNARY,
                 };
                 self.tok(p, p + 1, leaf)
@@ -196,7 +201,7 @@ impl<K: Sink> Scan<'_, '_, K> {
                     TERNARY
                 };
                 self.prev = P_OP;
-                self.tok(p, p + 1, leaf)
+                self.tok_far(p, p + 1, leaf)
             }
             A_EQ => {
                 if b.get(p + 1) == Some(&b'>') {
@@ -204,7 +209,7 @@ impl<K: Sink> Scan<'_, '_, K> {
                         return leave(self);
                     }
                     self.prev = P_OP;
-                    return self.tok(p, p + 2, ARROW);
+                    return self.tok_far(p, p + 2, ARROW);
                 }
                 if b.get(p + 1) != Some(&b'=')
                     && matches!(
@@ -213,19 +218,19 @@ impl<K: Sink> Scan<'_, '_, K> {
                     )
                 {
                     self.prev = P_OP;
-                    return self.tok(p, p + 1, ASSIGN);
+                    return self.tok_far(p, p + 1, ASSIGN);
                 }
                 leave(self)
             }
             A_DOT => {
                 if b.get(p + 1) == Some(&b'.') && b.get(p + 2) == Some(&b'.') {
                     self.prev = P_OP;
-                    return self.tok(p, p + 3, SPREAD);
+                    return self.tok_far(p, p + 3, SPREAD);
                 }
                 if self.prev != P_TYPEOF {
                     self.prev = P_DOT;
                 }
-                self.tok(p, p + 1, ACCESSOR)
+                self.tok_far(p, p + 1, ACCESSOR)
             }
             A_SLASH => match b.get(p + 1) {
                 Some(b'/') => self.line_comment(p),
@@ -279,9 +284,10 @@ impl<K: Sink> Scan<'_, '_, K> {
                 && top == F_TYPE
                 && next == Some(b' ')
                 && has(b, skip_blanks(b, e), b"is "))
+            || (top == F_T_ROUND_LINE && prev == P_OP && param_colon(b, e))
         {
             self.prev = P_VALUE;
-            return self.tok(p, e, PARAM);
+            return self.tok_far(p, e, PARAM);
         }
         let leaf = match prev {
             P_ALIAS_NAME => TYPE_ALIAS,
@@ -341,7 +347,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             }
         };
         self.prev = if dotted { P_TYPEOF } else { P_VALUE };
-        self.tok(p, e, leaf)
+        self.tok_far(p, e, leaf)
     }
 
     /// A name `p..e` (`id` its word) at a member's place in an object type, or a tuple's
@@ -357,26 +363,26 @@ impl<K: Sink> Scan<'_, '_, K> {
                 && s > e
                 && b.get(s).is_some_and(|&c| NAME[usize::from(c)] || c == b'[')
             {
-                return Some(self.tok(p, e, MODIFIER));
+                return Some(self.tok_far(p, e, MODIFIER));
             }
             if id == ID_NEW && matches!(b.get(s), Some(b'(' | b'<')) {
                 self.prev = P_OP;
-                return Some(self.tok(p, e, NEW));
+                return Some(self.tok_far(p, e, NEW));
             }
             let leaf = match b.get(s) {
                 Some(b'(') => {
-                    self.tok(p, e, ENTITY_FN);
+                    self.tok_far(p, e, ENTITY_FN);
                     self.prev = P_KEYED;
                     return Some(self.open_params(s, F_PARAMS));
                 }
                 Some(b'<') => {
-                    self.tok(p, e, ENTITY_FN);
+                    self.tok_far(p, e, ENTITY_FN);
                     return Some(self.type_params(s));
                 }
                 Some(b'?') if b.get(skip_blanks(b, s + 1)) == Some(&b'(') => {
                     let t = skip_blanks(b, s + 1);
-                    self.tok(p, e, ENTITY_FN);
-                    self.tok(s, s + 1, OPTIONAL);
+                    self.tok_far(p, e, ENTITY_FN);
+                    self.tok_far(s, s + 1, OPTIONAL);
                     return Some(self.open_params(t, F_PARAMS));
                 }
                 _ => {
@@ -401,17 +407,17 @@ impl<K: Sink> Scan<'_, '_, K> {
             };
             if b.get(t) == Some(&b':') {
                 if prev == P_INDEX {
-                    self.tok(p, e, PARAM);
+                    self.tok_far(p, e, PARAM);
                     self.prev = P_VALUE;
-                    self.tok(t, t + 1, ANNOTATION);
+                    self.tok_far(t, t + 1, ANNOTATION);
                     self.prev = P_OP;
                     return Some(t + 1);
                 }
-                self.tok(p, e, LABEL);
+                self.tok_far(p, e, LABEL);
                 if t > s {
-                    self.tok(s, s + 1, OPTIONAL);
+                    self.tok_far(s, s + 1, OPTIONAL);
                 }
-                self.tok(t, t + 1, LABEL_SEP);
+                self.tok_far(t, t + 1, LABEL_SEP);
                 self.prev = P_OP;
                 return Some(t + 1);
             }
@@ -443,7 +449,7 @@ impl<K: Sink> Scan<'_, '_, K> {
     pub(super) fn type_params(&mut self, p: usize) -> usize {
         self.push(F_T_TPARAMS);
         self.prev = P_OP;
-        self.tok(p, p + 1, TP_BEGIN)
+        self.tok_far(p, p + 1, TP_BEGIN)
     }
 
     /// A `<` at `p` where an expression starts: a generic arrow's type parameters (one that
@@ -500,11 +506,11 @@ impl<K: Sink> Scan<'_, '_, K> {
         } else if self.async_value(p) {
             let v = self.assign.value as usize;
             self.function_named();
-            self.tok(v, v + 5, ASYNC);
+            self.tok_far(v, v + 5, ASYNC);
         }
         self.push(frame);
         self.prev = P_OP;
-        self.tok(p, p + 1, TP_BEGIN)
+        self.tok_far(p, p + 1, TP_BEGIN)
     }
 
     /// A name `p..e` before `<`: a generic call's (`f<T>(`, `` f<T>` ``) where the type
@@ -512,20 +518,31 @@ impl<K: Sink> Scan<'_, '_, K> {
     #[inline(never)]
     pub(super) fn maybe_generic_call(&mut self, p: usize, e: usize, bits: u8) -> usize {
         let b = self.b;
-        if let Some(q) = type_args_end(b, e, false)
-            && matches!(b.get(q), Some(b'(' | b'`'))
-        {
-            self.tok(p, e, ENTITY_FN);
+        if generic_call(b, e) {
+            self.tok_far(p, e, ENTITY_FN);
             return self.type_args(e);
         }
-        // type arguments that open a bracket the line ends in (`useState<{`)
-        let s = skip_blanks(b, e + 1);
-        if matches!(b.get(s), Some(b'{' | b'[' | b'(')) && skip_blanks(b, s + 1) >= b.len() {
-            self.tok(p, e, ENTITY_FN);
-            return self.type_args(e);
-        }
-        self.tok(p, e, var_kind(b[p], bits))
+        self.tok_far(p, e, var_kind(b[p], bits))
     }
+}
+
+/// Whether the `<` at `e` after a name opens a generic call's type arguments: they close
+/// before a `(` or a template, or open a bracket the line ends in (`useState<{`).
+#[inline(never)]
+pub(super) fn generic_call(b: &[u8], e: usize) -> bool {
+    if type_args_end(b, e, false).is_some_and(|q| matches!(b.get(q), Some(b'(' | b'`'))) {
+        return true;
+    }
+    let s = skip_blanks(b, e + 1);
+    matches!(b.get(s), Some(b'{' | b'[' | b'(')) && skip_blanks(b, s + 1) >= b.len()
+}
+
+/// Whether a `<` at `p` right after a `)` opens type arguments that close before a `(`, as
+/// bat reads a call's result called with them (`styled(X)<P>(…)`).
+#[cold]
+#[inline(never)]
+pub(super) fn call_type_args(b: &[u8], p: usize) -> bool {
+    type_args_end(b, p, false).is_some_and(|q| b.get(q) == Some(&b'('))
 }
 
 /// A type word's leaf and the previous token it leaves, by id: `None` for a type's name.
@@ -709,11 +726,47 @@ pub(super) fn arrow_return(b: &[u8], p: usize) -> bool {
     false
 }
 
+/// Whether a name ending at `e` is a parameter's in a function type: `:` or `?:` after it.
+#[cold]
+#[inline(never)]
+fn param_colon(b: &[u8], e: usize) -> bool {
+    let s = skip_blanks(b, e);
+    match b.get(s) {
+        Some(b':') => true,
+        Some(b'?') => b.get(skip_blanks(b, s + 1)) == Some(&b':'),
+        _ => false,
+    }
+}
+
+/// Whether an assignment's `=` from `p` on the line (not `=>` or `==`) is followed by what
+/// could start a function value (`function`, `async`, `(`, `<`): [`annotated_fn`]'s gate, so
+/// the common annotation without one isn't walked.
+#[inline(always)]
+fn fn_value_ahead(b: &[u8], p: usize) -> bool {
+    let n = b.len();
+    let mut i = p;
+    loop {
+        i = crate::prim::find_in(b, i, n, *b"=");
+        if i >= n {
+            return false;
+        }
+        if !matches!(b.get(i + 1), Some(b'>' | b'=')) {
+            let v = skip_blanks(b, i + 1);
+            if matches!(b.get(v), Some(b'f' | b'a' | b'(' | b'<')) {
+                return true;
+            }
+        }
+        i += 1;
+    }
+}
+
 /// Whether a type's `(` before `p` opens a function type's parameters: `()` before `=>`, a
-/// rest, a pattern, or a name before `:`, `?`, `,`, or `)` and `=>`.
+/// rest, a pattern, or a name before `:`, `?`, `,`, or `)` and `=>`; one that ends its line
+/// possibly (bat's).
 pub(super) fn fn_type_params(b: &[u8], p: usize) -> bool {
     let s = skip_blanks(b, p);
     match b.get(s) {
+        None => true,
         Some(b')') => {
             let t = skip_blanks(b, s + 1);
             b.get(t) == Some(&b'=') && b.get(t + 1) == Some(&b'>')
@@ -751,13 +804,16 @@ pub(super) fn index_signature(b: &[u8], p: usize) -> bool {
     e > s && b.get(skip_blanks(b, e)) == Some(&b':')
 }
 
-/// Whether a type from `p` (past a member's or a parameter's `:`) is a function's: `(…) =>`
-/// or `<T>(…) =>`.
+/// Whether a type from `p` (past a member's or a parameter's `:`) is a function's: `(…) =>`,
+/// `<T>(…) =>`, or bat's `Function`.
 pub(super) fn fn_typed(b: &[u8], p: usize) -> bool {
     let s = skip_blanks(b, p);
     match b.get(s) {
         Some(b'(') => fn_type_params(b, s + 1),
         Some(b'<') => type_args_end(b, s, true).is_some_and(|q| b.get(q) == Some(&b'(')),
+        Some(b'F') => {
+            has(b, s, b"Function") && !b.get(s + 8).is_some_and(|&c| NAME[usize::from(c)])
+        }
         _ => false,
     }
 }
@@ -785,6 +841,9 @@ pub(super) fn annotated_name(b: &[u8], p: usize) -> bool {
 /// function as the value: `function`, `async`, a `(` that ends the line or opens an arrow's
 /// parameters, a generic arrow's `<` (bat's `var-single-variable` lookahead).
 pub(super) fn annotated_fn(b: &[u8], p: usize) -> bool {
+    if !fn_value_ahead(b, p) {
+        return false;
+    }
     // the type, to its `=` at depth 0
     let mut nest = 0u32;
     let mut i = p;
