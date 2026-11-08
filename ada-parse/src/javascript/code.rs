@@ -226,6 +226,47 @@ pub(super) fn info(w: &[u8]) -> Info {
     WORDS.value(w, &INFO)
 }
 
+/// A name's bytes past its first, ASCII's: `[$\w]`.
+static NAME: [bool; 256] = {
+    let mut t = WORD;
+    t[b'$' as usize] = true;
+    t
+};
+
+/// The bytes before a place inside a name (or a word past ASCII's): `[$\w]` and any byte past
+/// ASCII, where no `\b` holds for the patterns at a name's start.
+static IN_NAME: [bool; 256] = {
+    let mut t = NAME;
+    let mut c = 0x80;
+    while c < 256 {
+        t[c] = true;
+        c += 1;
+    }
+    t
+};
+
+/// The kind of a name `p..e` that starts uppercase or with `_`, no `.` after it, read from its
+/// bytes: a constant's capitals (`_*[A-Z][_$\dA-Z]*`), else `var` (X-058: every name in an
+/// expression is one color in the themes, so `literal-variable`'s patterns aren't read again).
+/// Out of line: inline at its three sites the loop grew dearer than the calls (X-058, C1).
+#[inline(never)]
+pub(super) fn upper_kind(b: &[u8], p: usize, e: usize, var: u16) -> u16 {
+    let mut u = p;
+    while u < e && b[u] == b'_' {
+        u += 1;
+    }
+    if u < e
+        && b[u].is_ascii_uppercase()
+        && b[u + 1..e]
+            .iter()
+            .all(|&c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == b'_' || c == b'$')
+    {
+        CONSTANT
+    } else {
+        var
+    }
+}
+
 /// How many groups a line keeps pending at once ([`Scan::pending`]); past it, a group's `(` is
 /// decided by its lookahead, as the dispatch does.
 pub(super) const PENDING: usize = 8;
@@ -282,8 +323,7 @@ impl<K: Sink + Loop> Scan<'_, '_, K> {
         let b = self.b;
         loop {
             let top = self.top();
-            if p >= b.len() || !is_fast(top) || p == self.slow_at {
-                self.slow_at = usize::MAX;
+            if p >= b.len() || !is_fast(top) {
                 return p;
             }
             let mut c = b[p];
@@ -304,6 +344,10 @@ impl<K: Sink + Loop> Scan<'_, '_, K> {
             };
             match q {
                 Some(q) => p = q,
+                // a group taken back hands its place to the dispatch ([`Scan::decide`])
+                None if self.slow_at != usize::MAX => {
+                    return std::mem::replace(&mut self.slow_at, usize::MAX);
+                }
                 None => return p,
             }
         }
@@ -337,26 +381,25 @@ impl<K: Sink + Loop> Scan<'_, '_, K> {
         let b = self.b;
         // inside a word (after a digit's run or a letter past ASCII) only the dispatch's
         // patterns without a `\b` take it; never after blanks
-        if !blank && p > 0 && (WORD[usize::from(b[p - 1])] || b[p - 1] >= 0x80 || b[p - 1] == b'$')
-        {
+        if !blank && p > 0 && IN_NAME[usize::from(b[p - 1])] {
             return None;
         }
-        // `[$\w]+`, ASCII only; `we`, where its first `\w` run ends (the word the patterns key on)
+        // `[$\w]+`, ASCII only; `we`, where its first `\w` run ends (the word the patterns key
+        // on), then the rest of the name past a `$`
         let mut e = p;
-        let mut we = usize::MAX;
-        while let Some(&c) = b.get(e) {
-            if WORD[usize::from(c)] {
+        while e < b.len() && WORD[usize::from(b[e])] {
+            e += 1;
+        }
+        let we = e;
+        if e < b.len() && b[e] == b'$' {
+            e += 1;
+            while e < b.len() && NAME[usize::from(b[e])] {
                 e += 1;
-            } else if c == b'$' {
-                we = we.min(e);
-                e += 1;
-            } else if c >= 0x80 {
-                return None;
-            } else {
-                break;
             }
         }
-        let we = we.min(e);
+        if e < b.len() && b[e] >= 0x80 {
+            return None;
+        }
         let word = info(&b[p..we]);
         let mask = word.mask;
         let after_dot = p > 0 && b[p - 1] == b'.';
@@ -441,8 +484,13 @@ impl<K: Sink + Loop> Scan<'_, '_, K> {
                 _ => None,
             };
         }
-        // `literal-variable`'s: a property after a `.`, else a variable
+        // `literal-variable`'s: a property after a `.`, else a variable; a name starting
+        // uppercase or with `_` by its bytes (X-058: every name in an expression is one color in
+        // the themes, so its shape is read here, not by `literal-variable`'s patterns again)
         let var = if after_dot { PROPERTY } else { READWRITE };
+        // past a `.` or `[` the object's kind is `upper_member`'s, which reads `Foo.bar(` in one
+        // turn and leaves a member a function is assigned to (`entity.name.class`) to the dispatch
+        let var_at = |e| if upper { upper_kind(b, p, e, var) } else { var };
         match next {
             Some(b'=') => {
                 let mut group = None;
@@ -463,11 +511,7 @@ impl<K: Sink + Loop> Scan<'_, '_, K> {
                     }
                 };
                 let undo = (self.k.mark(self.out), self.at);
-                let q = if upper {
-                    self.variable(p)?
-                } else {
-                    self.tok_code(p, e, var)?
-                };
+                let q = self.tok_code(p, e, var_at(e))?;
                 if let Some(v) = group {
                     self.prefix = Some(Prefix {
                         at: v,
@@ -540,15 +584,14 @@ impl<K: Sink + Loop> Scan<'_, '_, K> {
                 let after_q = before(b, p) == Some(b'?')
                     || space_before(b, p).is_some_and(|s| s > 0 && b[s - 1] == b'?');
                 if after_q || after_dot {
-                    return self.variable_at(p, e, upper, var);
+                    return self.tok_code(p, e, var_at(e));
                 }
                 self.tok_code(p, e, OBJ_KEY_LABEL);
                 self.tok_code(e, s, OBJ_KEY);
                 self.tok_code(s, s + 1, OBJ_KEY_SEP)
             }
             Some(b'`') => None,
-            _ if upper => self.variable(p),
-            _ => self.tok_code(p, e, var),
+            _ => self.tok_code(p, e, var_at(e)),
         }
     }
 
@@ -594,14 +637,11 @@ impl<K: Sink + Loop> Scan<'_, '_, K> {
             _ => return false,
         }
         let mut e = m + 1;
-        while let Some(&c) = b.get(e) {
-            if WORD[usize::from(c)] || c == b'$' {
-                e += 1;
-            } else if c >= 0x80 {
-                return self.plain_dot(d);
-            } else {
-                break;
-            }
+        while e < b.len() && NAME[usize::from(b[e])] {
+            e += 1;
+        }
+        if e < b.len() && b[e] >= 0x80 {
+            return self.plain_dot(d);
         }
         if crate::same(&b[m..e], b"prototype") {
             return false;
@@ -662,12 +702,8 @@ impl<K: Sink + Loop> Scan<'_, '_, K> {
             PARAM_DEFAULT if matches!(c, b',' | b')') => return None,
             _ => None,
         };
-        if top == ROUND
-            && c == b')'
-            && self.npending > 0
-            && let Some(q) = self.decide(p)
-        {
-            return Some(q);
+        if top == ROUND && c == b')' && self.npending > 0 && self.decide(p) {
+            return None;
         }
         if let Some(leaf) = closer {
             if leaf == PLAIN {
@@ -684,7 +720,7 @@ impl<K: Sink + Loop> Scan<'_, '_, K> {
             b';' | b',' => {
                 if core || top == FOR_IN {
                     let leaf = if c == b';' { TERMINATOR } else { COMMA };
-                    self.tok(p, p + 1, leaf)
+                    self.tok_code(p, p + 1, leaf)
                 } else {
                     Some(p + 1)
                 }
@@ -979,10 +1015,10 @@ impl<K: Sink + Loop> Scan<'_, '_, K> {
     /// The `)` at `p` that closes the group on top: where it was pending, what follows decides
     /// it. A call's before `{` (or a comment, or a space past ASCII) is a method's head, a group's
     /// or call's before `=>` an arrow's parameters: what was written since its undo point taken
-    /// back and its place handed to the dispatch (`Some` of it, [`Scan::slow_at`]). `None` for a
-    /// plain group, its `)` the closer's.
+    /// back and its place handed to the dispatch ([`Scan::slow_at`], where the loop leaves):
+    /// `true`. `false` for a plain group, its `)` the closer's.
     #[inline(always)]
-    fn decide(&mut self, p: usize) -> Option<usize> {
+    fn decide(&mut self, p: usize) -> bool {
         // groups left pending above this one (none but where the stack moved) are dropped
         while self.npending > 0 {
             // SAFETY: entries below the count are written
@@ -993,7 +1029,7 @@ impl<K: Sink + Loop> Scan<'_, '_, K> {
                 continue;
             }
             if depth < self.depth {
-                return None;
+                return false;
             }
             self.npending -= 1;
             let b = self.b;
@@ -1011,14 +1047,14 @@ impl<K: Sink + Loop> Scan<'_, '_, K> {
                 Some(b'/') if g.call && comment => {}
                 Some(0x80..) => {}
                 Some(b'=') if b.get(t + 1) == Some(&b'>') => {}
-                _ => return None,
+                _ => return false,
             }
             self.k.undo(self.out, g.undo);
             self.at = g.at as usize;
             self.pop();
             self.slow_at = g.slow as usize;
-            return Some(g.slow as usize);
+            return true;
         }
-        None
+        false
     }
 }

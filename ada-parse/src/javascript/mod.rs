@@ -2417,7 +2417,7 @@ impl<'b, K: Sink + Loop> Scan<'b, '_, K> {
     fn upper_member(&mut self, p: usize, e: usize) -> Option<usize> {
         let b = self.b;
         if self.is(spaces(b, e), b'[') {
-            return self.variable(p);
+            return self.upper_object(p, e, None);
         }
         if !self.is(e, b'.') {
             return None;
@@ -2445,8 +2445,31 @@ impl<'b, K: Sink + Loop> Scan<'b, '_, K> {
                 }
                 Some(ms)
             }
-            _ => self.variable(p),
+            _ => self.upper_object(p, e, Some(m)),
         }
+    }
+
+    /// `literal-variable` for a name `p..e` starting uppercase or with `_` before `[` or `.` (its
+    /// member `e + 1..m`), from what [`Scan::upper_member`] read (X-058: no second read; every
+    /// name in an expression is one color in the themes): a constant's capitals; a class's
+    /// capital, with its member static; else an object, or a property after a `.`.
+    fn upper_object(&mut self, p: usize, e: usize, member: Option<usize>) -> Option<usize> {
+        let b = self.b;
+        if code::upper_kind(b, p, e, OBJECT) == CONSTANT {
+            return self.tok(p, e, CONSTANT);
+        }
+        if let Some(m) = member
+            && b[p].is_ascii_uppercase()
+            && boundary(b, p)
+        {
+            self.put(p, e, CLASS_VAR);
+            self.put(e, e + 1, ACCESSOR);
+            return self.tok(e + 1, m, STATIC_PROP);
+        }
+        if before(b, p) == Some(b'.') {
+            return self.tok(p, e, PROPERTY);
+        }
+        self.tok(p, spaces(b, e), OBJECT)
     }
 
     /// [`Scan::plain_name`] for a word of `literal-keywords`', `literal-language-constant`'s or
