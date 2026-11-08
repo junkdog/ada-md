@@ -209,7 +209,7 @@ impl<K: Sink> Scan<'_, '_, K> {
     /// `preprocessor-practical-workarounds`, C++'s: its `uppercase-ident-lines`, then C's
     /// `uppercase-calls-without-semicolon`.
     pub(super) fn practical_workarounds(&mut self) -> Option<usize> {
-        if !self.upper_line_start() {
+        if !self.upper_line_start() || !self.upper_line() {
             return None;
         }
         if self.upper_ident_line() {
@@ -221,7 +221,7 @@ impl<K: Sink> Scan<'_, '_, K> {
 
     /// C's.
     pub(super) fn c_practical_workarounds(&mut self) -> Option<usize> {
-        if !self.upper_line_start() {
+        if !self.upper_line_start() || !self.upper_line() {
             return None;
         }
         if self.upper_ident_line() {
@@ -237,6 +237,38 @@ impl<K: Sink> Scan<'_, '_, K> {
         let b = self.b;
         let q = self.lead;
         q < b.len() && (b[q].is_ascii_uppercase() || b[q] == b'_' || b[q] >= 0x80)
+    }
+
+    /// Whether the line is either workaround's ([`Scan::upper_ident_line`] or
+    /// [`Scan::upper_call`]), its first word read once and the answer kept for the line: the
+    /// line-start tests ask it up to four times a line.
+    #[inline]
+    pub(super) fn upper_line(&self) -> bool {
+        match self.upper.get() {
+            0 => {}
+            v => return v == 2,
+        }
+        let b = self.b;
+        let v = upper_word(b, self.lead).is_some_and(|e| {
+            let s = skip_spaces(b, e);
+            if s >= b.len() {
+                return true;
+            }
+            if b[s] == b'(' {
+                // a call's (an upper-case word list can't go on past a `(`)
+                return b[s + 1..]
+                    .iter()
+                    .position(|&x| x == b')')
+                    .is_some_and(|k| skip_spaces(b, s + 2 + k) >= b.len());
+            }
+            let mut q = s;
+            while let Some(e) = upper_word(b, q) {
+                q = skip_spaces(b, e);
+            }
+            q >= b.len()
+        });
+        self.upper.set(1 + u8::from(v));
+        v
     }
 
     /// `^(\s*\b[\p{Lu}_][\p{Lu}\p{Nd}_]{2,}\b)+\s*(?m:$)`.
@@ -909,6 +941,84 @@ impl<K: Sink> Scan<'_, '_, K> {
     /// C's `preprocessor-line-continuation`: `(\\)(?m:$)\n`, `\\(\s+?)(?m:$)`.
     pub(super) fn continuation(&mut self, p: usize, c: u8) -> Option<usize> {
         self.line_continuation(p, c)
+    }
+
+    /// An include line's frames' turn at `p` (X-057): `PP_INCLUDE`'s (C's too) the line's end,
+    /// blanks (the arm's miss), a header's opening `<` or `"`; the header's text to its closer.
+    /// `None` for the arm's (a continuation, a comment, an unclosed header at the line's end,
+    /// anything else).
+    #[inline(never)]
+    pub(super) fn include_turn(&mut self, p: usize, top: u8) -> Option<usize> {
+        let b = self.b;
+        let cl = top >= C_FIRST;
+        let lang = if cl { C } else { 0 };
+        let Some(&c) = b.get(p) else {
+            return matches!(top, PP_INCLUDE | C_PP_INCLUDE).then(|| self.line_end());
+        };
+        let close = match top {
+            PP_INCLUDE | C_PP_INCLUDE => {
+                return match c {
+                    b'"' => {
+                        Some(self.open(p, 1, pick(cl, PP_INC_DQ, C_PP_INC_DQ), INC_DQ_BEGIN | lang))
+                    }
+                    b'<' => {
+                        Some(self.open(p, 1, pick(cl, PP_INC_LT, C_PP_INC_LT), INC_LT_BEGIN | lang))
+                    }
+                    _ if crate::is_space(c) => Some(self.miss(skip_spaces(b, p))),
+                    _ => None,
+                };
+            }
+            PP_INC_LT | C_PP_INC_LT => b'>',
+            _ => b'"',
+        };
+        // the arm's advance passes to the closer: no pattern starts before it
+        let j = if c == close {
+            p
+        } else {
+            super::text::find_any(b, p + 1, [close])
+        };
+        if j >= b.len() {
+            return None;
+        }
+        let leaf = if close == b'>' {
+            INC_LT_END
+        } else {
+            INC_DQ_END
+        };
+        Some(self.close(j, 1, leaf | lang))
+    }
+
+    /// The rest of an `#if` line's turn at `p` (`OTHER_G`, `OTHER_S`, C's; X-057): its patterns
+    /// start only at a `\`, a comment's `/`, a `defined` at a word's start or the line's end,
+    /// and the arm's misses and advances visit each such place, so the turn passes to the first
+    /// and takes `defined` or the line's end there (the branch set, the line done). `None` at a
+    /// `\` or a comment (the arm's turn there; a miss to it first) and at a byte past ASCII.
+    #[inline(never)]
+    pub(super) fn other_turn(&mut self, p: usize, top: u8) -> Option<usize> {
+        let b = self.b;
+        let lang = if top >= C_FIRST { C } else { 0 };
+        let mut i = p;
+        while i < b.len() {
+            let c = b[i];
+            if c == b'\\' || c >= 0x80 || (c == b'/' && matches!(at(b, i + 1), b'*' | b'/')) {
+                return (i > p).then(|| self.miss(i));
+            }
+            if c == b'd' && super::text::is_kw(b, i, b"defined") {
+                return Some(self.token(i, 7, CONTROL | lang));
+            }
+            i += 1;
+        }
+        let next = match top {
+            OTHER_G => IF_G,
+            C_OTHER_G => C_IF_G,
+            OTHER_S => IF_S,
+            _ => C_IF_S,
+        };
+        // the line's end, a set that takes nothing after the misses before it
+        self.set(i, &[next]);
+        self.halt = true;
+        self.stuck += 1;
+        Some(i | super::code::KEEP)
     }
 
     /// C's `preprocessor-line-ending`: `(?m:$)\n`, a pop.

@@ -1,14 +1,18 @@
-//! C++'s and C's expression contexts on a loop of their own (X-057): a block, a function's
-//! body, parentheses, brackets, a call's braces, C++'s and C's. These hold most of a file's
-//! turns (two in three on the corpus), and bat's grammar gives each the same long chain of
-//! included groups (`statements`, `expressions` and its parts) tried in order at every place.
-//! Here a turn reads the byte's class once and takes the token the chain's first pattern would:
-//! a blank run passed whole, the context's closer, a name read once and looked up once (a
-//! keyword's leaf, a call, a plain name), a plain number, an operator, a member after `.` or
-//! `->`, a comment's or a string's opener. The output is the compiled contexts' byte for byte:
-//! a turn the loop doesn't know (a lookahead's push, a name past ASCII, a rare keyword, the
-//! line's start) goes back to [`Scan::run`], which takes it on the context's arm at the same
-//! place, so the frames are the contexts and share their ids.
+//! C++'s and C's busiest contexts on a loop of their own (X-057): the expression contexts (a
+//! block, a function's body, parentheses, brackets, a call's braces, an `#if` branch and its
+//! block, a call's arguments in one, a `case` label, a macro's body), the top level's, a
+//! namespace's and an `extern "C"` block's statements, a class's body, a declaration's head
+//! ([`super::decl`]), a parameter list, comments, strings, an include line and the rest of an
+//! `#if` line ([`super::pp`]), C++'s and C's. bat's grammar gives each a long chain of included
+//! groups (`statements`, `expressions` and its parts) tried in order at every place. Here a
+//! turn reads the byte's class once and takes the token the chain's first pattern would: a
+//! blank run passed whole, the context's closer, a name read once and looked up once (a
+//! keyword's leaf, a call, a plain name; before `<` or `::` the arms' own patterns for it, in
+//! their order), a plain number, an operator, a member after `.` or `->`, a comment's or a
+//! string's opener. The output is the compiled contexts' byte for byte: a turn the loop doesn't
+//! know (a rare lookahead's push, a name past ASCII, a rare keyword, a directive's line start)
+//! goes back to [`Scan::run`], which takes it on the context's arm at the same place, so the
+//! frames are the contexts and share their ids.
 
 use super::text::{ascii_word_end, at, find_any, is_kw, next, starts};
 use super::words::{
@@ -22,7 +26,8 @@ use crate::skip_spaces;
 const NAME_START: u8 = UPPER | LOWER;
 
 /// What [`Scan::code_run`] does with a context on top: none of its turns, an expression's
-/// (C++'s or C's), a parameter list's, a comment's or a string's.
+/// (C++'s or C's), a parameter list's, a comment's, a string's or a preprocessor line's
+/// ([`Scan::text_turn`]), and the kinds below.
 const NOT: u8 = 0;
 const CXX_EXPR: u8 = 1;
 const C_EXPR: u8 = 2;
@@ -30,12 +35,16 @@ const PARAMS: u8 = 3;
 const TEXT: u8 = 4;
 /// `ANGLE`'s: `expressions` without `generic-type` or `function-call`.
 const CXX_ANGLE: u8 = 5;
-/// The top level's and a namespace's statements (`MAIN`, `NS_BLOCK`): `global`.
+/// The top level's, a namespace's and an `extern "C"` block's statements (`MAIN`, `NS_BLOCK`,
+/// `G_EXTERN_BLOCK`): `global`.
 const GLOBAL: u8 = 6;
-/// A declaration's head ([`super::decl`]).
+/// A declaration's head, at the top level, in a namespace or in a class ([`super::decl`]).
 const DECL: u8 = 7;
 /// C's top level's statements (`C_MAIN`): its `global`.
 const C_GLOBAL: u8 = 8;
+/// A class's, a struct's or a union's body (`data-structures-body`): a member's line start,
+/// else `expressions` as a parameter list has them.
+const DS_BODY: u8 = 9;
 
 /// A frame's turn's position bit for a turn that set [`Scan::stuck`] itself: a miss (it
 /// stays), or a match and a pop that took nothing after it.
@@ -45,11 +54,13 @@ pub(super) const KEEP: usize = 1 << (usize::BITS - 1);
 #[derive(Clone, Copy)]
 struct Frame {
     kind: u8,
-    /// An `#if` branch's bytes of its own ([`F_BRANCH_OPEN`], [`F_NEGATED`], [`F_PP_CALL`]).
+    /// An `#if` branch's, a macro's or a `case`'s bytes of its own ([`F_BRANCH_OPEN`],
+    /// [`F_NEGATED`], [`F_PP_CALL`], [`F_MACRO`], [`F_CASE`]).
     flags: u8,
-    /// The byte that closes it, and its leaf ([`BRANCH`] for a branch's block, whose `}` sets
-    /// the branch back); `0` for a frame closed otherwise (a parameter list's `)` sets what
-    /// follows it, a comment's or a string's end is its turn's).
+    /// The byte that closes it, and its leaf ([`BRANCH`] with it for a branch's block or a
+    /// call's arguments in a branch, whose `}` or `)` sets the branch back); `0` for a frame
+    /// closed otherwise (a parameter list's `)` sets what follows it, a comment's or a string's
+    /// end is its turn's).
     close: u8,
     leaf: u16,
 }
@@ -71,8 +82,14 @@ const F_NEGATED: u8 = 2;
 /// A statements' branch, where a name before a call is `preprocessor-if-branch-function-call`'s:
 /// the arm's.
 const F_PP_CALL: u8 = 4;
+/// A macro's body (`PP_MACRO`, `C_PP_MACRO`): a continuation and a comment are the arm's, `{`
+/// and `}` tokens of their own (no block), the line's end a pop that ends the line.
+const F_MACRO: u8 = 8;
+/// A `case` label's expression (`CASE`): a `)`, `;` or `,` pops it without taking it.
+const F_CASE: u8 = 16;
 
-/// A frame's leaf bit for a branch's block, whose `}` sets the branch back.
+/// A frame's leaf bit for a branch's block, whose `}` sets the branch back, and for a call's
+/// arguments in a branch, whose `)` does.
 const BRANCH: u16 = 1 << 15;
 
 /// The frames by context id.
@@ -129,13 +146,19 @@ static FRAMES: [Frame; 256] = {
         kind: CXX_EXPR,
         flags: 0,
         close: b'}',
-        leaf: BRANCH,
+        leaf: BRANCH | BLOCK_END,
     };
     t[BLOCK_IF_S as usize] = Frame {
         kind: CXX_EXPR,
         flags: 0,
         close: b'}',
-        leaf: BRANCH,
+        leaf: BRANCH | BLOCK_END,
+    };
+    t[PP_FC_ARGS as usize] = Frame {
+        kind: CXX_EXPR,
+        flags: 0,
+        close: b')',
+        leaf: BRANCH | GROUP_END,
     };
     t[ANGLE as usize] = Frame {
         kind: CXX_ANGLE,
@@ -155,6 +178,30 @@ static FRAMES: [Frame; 256] = {
         close: b'}',
         leaf: BLOCK_END | C,
     };
+    t[CASE as usize] = Frame {
+        kind: CXX_EXPR,
+        flags: F_CASE,
+        close: b':',
+        leaf: SEPARATOR,
+    };
+    t[PP_MACRO as usize] = Frame {
+        kind: CXX_EXPR,
+        flags: F_MACRO,
+        close: 0,
+        leaf: 0,
+    };
+    t[C_PP_MACRO as usize] = Frame {
+        kind: C_EXPR,
+        flags: F_MACRO,
+        close: 0,
+        leaf: 0,
+    };
+    t[C_CASE as usize] = Frame {
+        kind: C_EXPR,
+        flags: 0,
+        close: b':',
+        leaf: SEPARATOR | C,
+    };
     t[C_PAREN as usize] = Frame {
         kind: C_EXPR,
         flags: 0,
@@ -171,13 +218,19 @@ static FRAMES: [Frame; 256] = {
         kind: C_EXPR,
         flags: 0,
         close: b'}',
-        leaf: BRANCH,
+        leaf: BRANCH | BLOCK_END | C,
     };
     t[C_BLOCK_IF_S as usize] = Frame {
         kind: C_EXPR,
         flags: 0,
         close: b'}',
-        leaf: BRANCH,
+        leaf: BRANCH | BLOCK_END | C,
+    };
+    t[C_PP_FC_ARGS as usize] = Frame {
+        kind: C_EXPR,
+        flags: 0,
+        close: b')',
+        leaf: BRANCH | GROUP_END | C,
     };
     t[FN_PARAMS_IN as usize] = Frame {
         kind: PARAMS,
@@ -221,6 +274,39 @@ static FRAMES: [Frame; 256] = {
         close: 0,
         leaf: 0,
     };
+    let includes = [
+        PP_INCLUDE,
+        PP_INC_LT,
+        PP_INC_DQ,
+        C_PP_INCLUDE,
+        C_PP_INC_LT,
+        C_PP_INC_DQ,
+        OTHER_G,
+        OTHER_S,
+        C_OTHER_G,
+        C_OTHER_S,
+    ];
+    let mut i = 0;
+    while i < includes.len() {
+        t[includes[i] as usize] = Frame {
+            kind: TEXT,
+            flags: 0,
+            close: 0,
+            leaf: 0,
+        };
+        i += 1;
+    }
+    let bodies = [CLASS_BODY, STRUCT_BODY, UNION_BODY];
+    let mut i = 0;
+    while i < bodies.len() {
+        t[bodies[i] as usize] = Frame {
+            kind: DS_BODY,
+            flags: 0,
+            close: b'}',
+            leaf: BLOCK_END,
+        };
+        i += 1;
+    }
     t[MAIN as usize] = Frame {
         kind: GLOBAL,
         flags: 0,
@@ -232,6 +318,20 @@ static FRAMES: [Frame; 256] = {
         flags: 0,
         close: 0,
         leaf: 0,
+    };
+    // `extern "C" {`'s body: `global` and a `}` that closes it (and in the first, an `#ifdef
+    // __cplusplus` line, a directive's: the arm's)
+    t[G_EXTERN_BLOCK as usize] = Frame {
+        kind: GLOBAL,
+        flags: 0,
+        close: b'}',
+        leaf: BLOCK_END,
+    };
+    t[G_EXTERN_BLOCK2 as usize] = Frame {
+        kind: GLOBAL,
+        flags: 0,
+        close: b'}',
+        leaf: BLOCK_END,
     };
     t[C_MAIN as usize] = Frame {
         kind: C_GLOBAL,
@@ -296,6 +396,13 @@ static FRAMES: [Frame; 256] = {
         FN_PARAMS,
         FN_CONTINUE,
         IDENT_POP,
+        DS_MODIFIER,
+        DS_TYPE,
+        DS_MAYBE_METHOD,
+        DS_FN_ID,
+        GT_NAME,
+        METHOD_PARAMS,
+        METHOD_CONTINUE,
         C_G_MODIFIER,
         C_G_TYPE,
         C_G_MAYBE_FN,
@@ -328,7 +435,7 @@ pub(super) fn is_frame(c: u8) -> bool {
 pub(super) fn ends_at_eol(c: u8) -> bool {
     matches!(
         FRAMES[usize::from(c)].kind,
-        CXX_EXPR | C_EXPR | PARAMS | CXX_ANGLE | GLOBAL | C_GLOBAL
+        CXX_EXPR | C_EXPR | PARAMS | CXX_ANGLE | GLOBAL | C_GLOBAL | DS_BODY
     ) || matches!(
         c,
         G_MODIFIER
@@ -336,6 +443,12 @@ pub(super) fn ends_at_eol(c: u8) -> bool {
             | G_FN_ID
             | FN_PARAMS
             | FN_CONTINUE
+            | DS_MODIFIER
+            | DS_MAYBE_METHOD
+            | DS_FN_ID
+            | GT_NAME
+            | METHOD_PARAMS
+            | METHOD_CONTINUE
             | C_G_MODIFIER
             | C_G_MAYBE_FN
             | C_FN_PARAMS
@@ -391,12 +504,18 @@ impl<K: Sink> Scan<'_, '_, K> {
                 }
             }
             let Some(&c0) = b.get(p) else {
-                return p;
+                return self.frame_eol(p, frame.flags);
             };
-            if p == 0 && (kind == GLOBAL || kind == C_GLOBAL) {
-                // a namespace's `}` first, then the line's start
+            if p == 0 && (kind == GLOBAL || kind == C_GLOBAL || kind == DS_BODY) {
+                // a namespace's or a class's `}` first, then the line's start
                 let q = if top == NS_BLOCK && c0 == b'}' {
                     self.can_pop(0).then(|| self.leave(0))
+                } else if kind == DS_BODY {
+                    if c0 == b'}' {
+                        Some(self.close(0, 1, BLOCK_END))
+                    } else {
+                        self.ds_body_start()
+                    }
                 } else if kind == C_GLOBAL {
                     self.c_global_start()
                 } else {
@@ -424,7 +543,7 @@ impl<K: Sink> Scan<'_, '_, K> {
                 p = self.lead;
                 continue;
             }
-            if p == 0 && kind != GLOBAL && kind != C_GLOBAL {
+            if p == 0 && kind != GLOBAL && kind != C_GLOBAL && kind != DS_BODY {
                 // the line's start, where `^\s*` patterns may start: only a closer at once
                 // (a directive's line has a `#` or a blank first)
                 match self.closer_at_start(c0, top) {
@@ -439,7 +558,7 @@ impl<K: Sink> Scan<'_, '_, K> {
                 // no pattern of a frame starts at a blank past the line's start
                 p = crate::clike::skip_blanks(b, p);
                 let Some(&d) = b.get(p) else {
-                    return p;
+                    return self.frame_eol(p, frame.flags);
                 };
                 (d, CLASS[usize::from(d)])
             } else {
@@ -483,11 +602,46 @@ impl<K: Sink> Scan<'_, '_, K> {
         }
     }
 
-    /// An `#if` branch's own bytes at `p` ([`Frame::flags`]): its `{`, which opens the branch's
-    /// block; its `}` and a name before a call, the arm's; else the frame's turn.
+    /// An expression frame at the line's end `p`: a macro's body pops there and the line is
+    /// done ([`F_MACRO`], `preprocessor-line-ending`); the others match nothing there.
+    #[inline(always)]
+    fn frame_eol(&mut self, p: usize, flags: u8) -> usize {
+        if flags & F_MACRO != 0 {
+            return self.line_end();
+        }
+        p
+    }
+
+    /// An `#if` branch's, a macro's or a `case`'s own bytes at `p` ([`Frame::flags`]): a
+    /// branch's `{`, which opens the branch's block, its `}` and a name before a call, the arm's;
+    /// a macro's `{` and `}`, its continuation, comments and `namespace` (the arm's); a `case`'s
+    /// pop; else the frame's turn.
     #[cold]
     #[inline(never)]
     fn branch_byte(&mut self, p: usize, c: u8, k: u8, top: u8, flags: u8) -> Branch {
+        if flags & F_CASE != 0 {
+            // `(?=[);,])`'s pop, counted as `run` counts a match that takes nothing; where it
+            // would loop, `expressions`'
+            if matches!(c, b')' | b';' | b',') && self.can_pop(p) {
+                if self.stuck >= STUCK {
+                    return Branch::Arm;
+                }
+                return Branch::Took(self.leave(p));
+            }
+            return Branch::Turn;
+        }
+        if flags & F_MACRO != 0 {
+            let b = self.b;
+            let lang = if top >= C_FIRST { C } else { 0 };
+            return match c {
+                b'\\' => Branch::Arm,
+                b'/' if matches!(at(b, p + 1), b'*' | b'/') => Branch::Arm,
+                b'{' => Branch::Took(self.tok(p, p + 1, BLOCK_BEGIN | lang)),
+                b'}' => Branch::Took(self.tok(p, p + 1, BLOCK_END | lang)),
+                b'n' if top == PP_MACRO && is_kw(b, p, b"namespace") => Branch::Arm,
+                _ => Branch::Turn,
+            };
+        }
         match c {
             b'}' if flags & F_NEGATED != 0 => Branch::Arm,
             b'{' if flags & F_BRANCH_OPEN != 0 => {
@@ -541,8 +695,7 @@ impl<K: Sink> Scan<'_, '_, K> {
         if a < b.len() && (b[a] >= 0x80 || b[a] == b':') {
             return false;
         }
-        !((c.is_ascii_uppercase() || c == b'_')
-            && (self.upper_ident_line() || self.upper_call().is_some()))
+        !((c.is_ascii_uppercase() || c == b'_') && self.upper_line())
     }
 
     /// [`Scan::stuck`] after a frame's turn from `p` to `q`, as [`Scan::run`] has it after a
@@ -574,15 +727,15 @@ impl<K: Sink> Scan<'_, '_, K> {
             return None;
         }
         if leaf & BRANCH == 0 {
-            return Some(self.close(p, 1, leaf));
+            return Some(self.f_close(p, 1, leaf));
         }
-        let (branch, lang) = match top {
-            BLOCK_IF_G => (IF_G, 0),
-            BLOCK_IF_S => (IF_S, 0),
-            C_BLOCK_IF_G => (C_IF_G, C),
-            _ => (C_IF_S, C),
+        let branch = match top {
+            BLOCK_IF_G => IF_G,
+            BLOCK_IF_S | PP_FC_ARGS => IF_S,
+            C_BLOCK_IF_G => C_IF_G,
+            _ => C_IF_S,
         };
-        Some(self.then(p, 1, &[branch], BLOCK_END | lang))
+        Some(self.then(p, 1, &[branch], leaf & !BRANCH))
     }
 
     /// Bytes `s..e` are `leaf`, after the context's text before them: [`Scan::put`] where `s`
@@ -602,6 +755,22 @@ impl<K: Sink> Scan<'_, '_, K> {
         self.k.merge(&mut self.out, s, e, k);
         self.at = e;
         e
+    }
+
+    /// [`Scan::open`] in a frame's turn, its token on [`Scan::tok`] (no call to `put_kind`).
+    #[inline(always)]
+    fn f_open(&mut self, p: usize, n: usize, c: u8, leaf: u16) -> usize {
+        self.text_to(p);
+        self.push(p, c);
+        self.tok(p, p + n, leaf)
+    }
+
+    /// [`Scan::close`] in a frame's turn, its token on [`Scan::tok`].
+    #[inline(always)]
+    fn f_close(&mut self, p: usize, n: usize, leaf: u16) -> usize {
+        self.tok(p, p + n, leaf);
+        self.pop(p + n);
+        p + n
     }
 
     /// A C++ decimal or hexadecimal integer at `p`, a digit at a word's start, with nothing after
@@ -690,11 +859,15 @@ impl<K: Sink> Scan<'_, '_, K> {
                         return Some(n);
                     }
                     if b[p] == b'*' && at(b, p + 1) == b'/' {
-                        return Some(self.close(p, 2, COMMENT_MARK | C));
+                        return Some(self.f_close(p, 2, COMMENT_MARK | C));
                     }
                     p = find_any(b, p + 1, *b"*");
                 }
             }
+            PP_INCLUDE | PP_INC_LT | PP_INC_DQ | C_PP_INCLUDE | C_PP_INC_LT | C_PP_INC_DQ => {
+                self.include_turn(p, top)
+            }
+            OTHER_G | OTHER_S | C_OTHER_G | C_OTHER_S => self.other_turn(p, top),
             _ => {
                 let dq = top == C_STRING;
                 loop {
@@ -705,7 +878,7 @@ impl<K: Sink> Scan<'_, '_, K> {
                     let c = b[p];
                     let quote = if dq { b'"' } else { b'\'' };
                     if c == quote {
-                        return Some(self.close(p, 1, if dq { DQ_END } else { SQ_END } | C));
+                        return Some(self.f_close(p, 1, if dq { DQ_END } else { SQ_END } | C));
                     }
                     if c == b'\\' {
                         if p + 1 == n {
@@ -747,7 +920,38 @@ impl<K: Sink> Scan<'_, '_, K> {
         let b = self.b;
         let cl = top == C_FN_PARAMS_IN;
         let lang = if cl { C } else { 0 };
-        if c == b')' {
+        let ds = (CLASS_BODY..=UNION_BODY).contains(&top);
+        if ds {
+            // a class's body past the line's start: its `}`, its own words, then `expressions`
+            // as a parameter list has them (a `)` is a stray one there)
+            if c == b'}' {
+                return Some(self.close(p, 1, BLOCK_END));
+            }
+            if c == b')' {
+                return None;
+            }
+            if k & NAME_START != 0 || c == b'_' {
+                if self.inside_word(p) {
+                    return None;
+                }
+                let e = ascii_word_end(b, p + 1);
+                if e < b.len() && b[e] >= 0x80 {
+                    return None;
+                }
+                match &b[p..e] {
+                    b"template" | b"using" | b"typedef" => return None,
+                    b"private" | b"protected" | b"public" => {
+                        let s = skip_spaces(b, e);
+                        if at(b, s) == b':' && at(b, s + 1) != b':' && s < b.len() {
+                            self.put(p, e, MODIFIER);
+                            return Some(self.tok(s, s + 1, CLASS_SECTION));
+                        }
+                    }
+                    _ => {}
+                }
+                return self.cxx_name(p, true).or_else(|| self.name_path(p, false));
+            }
+        } else if c == b')' {
             let next = match top {
                 FN_PARAMS_IN => FN_CONTINUE,
                 METHOD_PARAMS_IN => METHOD_CONTINUE,
@@ -775,10 +979,10 @@ impl<K: Sink> Scan<'_, '_, K> {
             return if cl {
                 self.c_word(p)
             } else {
-                self.cxx_name(p, true)
+                self.cxx_name(p, true).or_else(|| self.name_path(p, false))
             };
         }
-        if c == b'=' && !cl {
+        if c == b'=' && !cl && !ds {
             let d = if top == FN_PARAMS_IN {
                 FN_PARAM_DEFAULT
             } else {
@@ -830,7 +1034,11 @@ impl<K: Sink> Scan<'_, '_, K> {
                     return None;
                 }
             }
-            return self.cxx_name(p, call);
+            let r = self.cxx_name(p, call);
+            if r.is_none() && call && !global {
+                return self.name_path(p, true);
+            }
+            return r;
         }
         if k & DIGIT != 0 {
             if self.inside_word(p) {
@@ -842,9 +1050,9 @@ impl<K: Sink> Scan<'_, '_, K> {
         }
         let d = at(b, p + 1);
         let r = match c {
-            b'(' => self.open(p, 1, PAREN, GROUP_BEGIN),
-            b'[' => self.open(p, 1, BRACKETS, BRACKETS_BEGIN),
-            b'{' => self.open(p, 1, BLOCK, BLOCK_BEGIN),
+            b'(' => self.f_open(p, 1, PAREN, GROUP_BEGIN),
+            b'[' => self.f_open(p, 1, BRACKETS, BRACKETS_BEGIN),
+            b'{' => self.f_open(p, 1, BLOCK, BLOCK_BEGIN),
             b',' => self.tok(p, p + 1, SEPARATOR),
             b';' => self.tok(p, p + 1, TERMINATOR),
             b')' | b'}' => self.tok(p, p + 1, STRAY_BRACKET),
@@ -860,19 +1068,19 @@ impl<K: Sink> Scan<'_, '_, K> {
                         self.tok(p, p + 2, ILLEGAL_SYNTAX | C)
                     }
                 } else {
-                    let m = self.open(p, 1, MEMBERS, DOT);
+                    let m = self.f_open(p, 1, MEMBERS, DOT);
                     return Some(self.member(m));
                 }
             }
             b'-' if d == b'>' => {
-                let m = self.open(p, 2, MEMBERS, ARROW);
+                let m = self.f_open(p, 2, MEMBERS, ARROW);
                 return Some(self.member(m));
             }
             b'/' => match d {
-                b'/' => self.open(p, 2, C_LINE_COMMENT, LINE_MARK | C),
+                b'/' => self.f_open(p, 2, C_LINE_COMMENT, LINE_MARK | C),
                 // `global`'s comment is a context of its own around it
                 b'*' if global => return None,
-                b'*' => self.open(p, 2, C_COMMENT, COMMENT_MARK | C),
+                b'*' => self.f_open(p, 2, C_COMMENT, COMMENT_MARK | C),
                 _ => return self.operators(p, c),
             },
             b'*' if d == b'/' && at(b, p + 2) != b'*' => self.tok(p, p + 2, STRAY_COMMENT_END | C),
@@ -905,7 +1113,10 @@ impl<K: Sink> Scan<'_, '_, K> {
                 None
             };
         }
-        if matches!(open, b'<' | b':' | b'"' | b'\'') && q < b.len() {
+        // a `<` (a template's arguments or a cast's), a string's prefix (its quote right after
+        // it) are the arms'; a single `:` (a ternary's, a label's past the line's start) takes
+        // nothing the name's patterns would
+        if q < b.len() && (open == b'<' || (open == b'"' || open == b'\'') && q == e) {
             return None;
         }
         let kw = lookup(&b[p..e]);
@@ -917,6 +1128,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             Kw::Modifier => Some(MODIFIER),
             Kw::CxxType => Some(STORAGE_TYPE),
             Kw::CType => Some(STORAGE_TYPE | C),
+            Kw::Case | Kw::Parens | Kw::Sizeof => return self.keyword_at(p, e, q, kw),
             _ => return None,
         };
         if let Some(leaf) = leaf {
@@ -933,6 +1145,58 @@ impl<K: Sink> Scan<'_, '_, K> {
         self.put(q, q + 1, GROUP_BEGIN);
         self.push(q + 1, if open == b'(' { PAREN } else { BRACE_EXPR });
         Some(q + 1)
+    }
+
+    /// `keyword`'s match for a `case`, `sizeof` or a word before parentheses at `p..e`, the
+    /// spaces after it to `q` (`early-expressions-before-generic-type`, where every frame's chain
+    /// takes it first): a `case`'s context opened, a word's group; `None` for what it leaves.
+    #[inline(never)]
+    fn keyword_at(&mut self, p: usize, e: usize, q: usize, kw: Kw) -> Option<usize> {
+        let b = self.b;
+        if kw == Kw::Case {
+            return Some(self.open(p, e - p, CASE, CONTROL));
+        }
+        if at(b, q) == b'(' && q < b.len() {
+            self.put(p, e, WORD_OP);
+            self.put(q, q + 1, GROUP_BEGIN);
+            self.push(q + 1, PAREN);
+            return Some(q + 1);
+        }
+        (kw == Kw::Sizeof).then(|| self.tok(p, e, WORD_OP | C))
+    }
+
+    /// A name at `p` in an expression's frame that [`Scan::cxx_name`] left, a plain one before
+    /// `<` or `::`: `expressions`' patterns after `name` for it, in their order (`generic-type`'s
+    /// lookaheads where the chain has them, `late-expressions-before-function-call`,
+    /// `function-call`, `identifiers`; `early-expressions-after-generic-type` and a parameter
+    /// list's `angle-brackets` take no such name), the arms' own functions; its [`Scan::stuck`]
+    /// set as [`Scan::run`] has it ([`KEEP`]). `None` for anything else, or where syntect's
+    /// guard against a loop may be due.
+    #[inline(never)]
+    fn name_path(&mut self, p: usize, generic: bool) -> Option<usize> {
+        let b = self.b;
+        if self.stuck >= STUCK {
+            return None;
+        }
+        let e = ascii_word_end(b, p + 1);
+        if e < b.len() && b[e] >= 0x80 {
+            return None;
+        }
+        let q = skip_spaces(b, e);
+        if !(q < b.len() && (b[q] == b'<' || starts(b, q, b"::"))) {
+            return None;
+        }
+        if !matches!(lookup(&b[p..e]), Kw::Other | Kw::C99) {
+            return None;
+        }
+        let r = generic
+            .then(|| self.generic_type(p))
+            .flatten()
+            .or_else(|| self.late_before_call(p))
+            .or_else(|| self.function_call(p))
+            .or_else(|| self.identifiers(p))?;
+        self.stuck = if r == p { self.stuck + 1 } else { 0 };
+        Some(r | KEEP)
     }
 
     /// `members-after-accessor-junction`'s turn at `p`, just after `.` or `->`, for an ASCII name
@@ -963,7 +1227,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             }
             b'<' if s < b.len() => p,
             b':' if at(b, s + 1) == b':' => p,
-            _ => self.close(p, e - p, MEMBER_VAR),
+            _ => self.f_close(p, e - p, MEMBER_VAR),
         }
     }
 
@@ -992,9 +1256,9 @@ impl<K: Sink> Scan<'_, '_, K> {
         }
         let d = at(b, p + 1);
         let r = match c {
-            b'(' => self.open(p, 1, C_PAREN, GROUP_BEGIN | C),
-            b'[' => self.open(p, 1, C_BRACKETS, BRACKETS_BEGIN | C),
-            b'{' => self.open(p, 1, C_BLOCK, BLOCK_BEGIN | C),
+            b'(' => self.f_open(p, 1, C_PAREN, GROUP_BEGIN | C),
+            b'[' => self.f_open(p, 1, C_BRACKETS, BRACKETS_BEGIN | C),
+            b'{' => self.f_open(p, 1, C_BLOCK, BLOCK_BEGIN | C),
             b',' => self.tok(p, p + 1, SEPARATOR | C),
             b';' => self.tok(p, p + 1, TERMINATOR | C),
             b')' | b'}' => self.tok(p, p + 1, STRAY_BRACKET | C),
@@ -1013,8 +1277,8 @@ impl<K: Sink> Scan<'_, '_, K> {
                 }
             }
             b'/' => match d {
-                b'/' => self.open(p, 2, C_LINE_COMMENT, LINE_MARK | C),
-                b'*' => self.open(p, 2, C_COMMENT, COMMENT_MARK | C),
+                b'/' => self.f_open(p, 2, C_LINE_COMMENT, LINE_MARK | C),
+                b'*' => self.f_open(p, 2, C_COMMENT, COMMENT_MARK | C),
                 _ => return self.operators(p, c),
             },
             b'*' if d == b'/' && at(b, p + 2) != b'*' => self.tok(p, p + 2, STRAY_COMMENT_END | C),
@@ -1062,6 +1326,20 @@ impl<K: Sink> Scan<'_, '_, K> {
         let b = self.b;
         let w = &b[p..e];
         let leaf = match w {
+            // `early-expressions`' first, but in `global`'s chain
+            b"case" | b"default" if FRAMES[usize::from(self.top())].kind == C_EXPR => {
+                return Some(self.open(p, e - p, C_CASE, CONTROL | C));
+            }
+            b"sizeof" if FRAMES[usize::from(self.top())].kind == C_EXPR => {
+                let s = skip_spaces(b, e);
+                if at(b, s) == b'(' && s < b.len() {
+                    self.put(p, e, WORD_OP | C);
+                    self.put(s, s + 1, GROUP_BEGIN | C);
+                    self.push(s + 1, C_PAREN);
+                    return Some(s + 1);
+                }
+                return Some(self.tok(p, e, WORD_OP | C));
+            }
             b"case" | b"default" | b"typedef" | b"sizeof" | b"__attribute__" | b"__declspec" => {
                 return None;
             }

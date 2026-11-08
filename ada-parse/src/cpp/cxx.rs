@@ -1481,7 +1481,7 @@ impl<K: Sink> Scan<'_, '_, K> {
     }
 
     /// `generic-type`'s lookaheads.
-    fn generic_type(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn generic_type(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
         if starts(b, p, b"template") || !self.path_may_end(p, |c| c == b'<') {
             return None;
@@ -1563,7 +1563,7 @@ impl<K: Sink> Scan<'_, '_, K> {
 
     /// `late-expressions-before-function-call`: `operator`, `modifiers-parens`, `modifiers`,
     /// `types`.
-    fn late_before_call(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn late_before_call(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
         if !is_word(b, p) {
             return None;
@@ -1637,7 +1637,7 @@ impl<K: Sink> Scan<'_, '_, K> {
     }
 
     /// `function-call`: `(?=PATH\s*(\(|\{))`.
-    fn function_call(&mut self, p: usize) -> Option<usize> {
+    pub(super) fn function_call(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
         if !self.path_may_end(p, |c| c == b'(' || c == b'{') {
             return None;

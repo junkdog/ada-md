@@ -782,6 +782,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.word_at.set((usize::MAX, 0));
         self.kw_at.set((usize::MAX, words::Kw::Other));
         self.id_cache.set((usize::MAX, None));
+        self.upper.set(0);
         // a pop clears the wrap where a load finds the one below
         self.rewrap();
         self.lex();
@@ -810,9 +811,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             dir: pp::directive(b, lead),
             stack: [root; MAX],
             depth: 1,
+            cur: root,
             exact: true,
             pre: 0,
             wrap: 0,
+            wk: 0,
             text: PLAIN,
             at: 0,
             loop_at: (usize::MAX, 0),
@@ -823,6 +826,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             word_at: std::cell::Cell::new((usize::MAX, 0)),
             kw_at: std::cell::Cell::new((usize::MAX, words::Kw::Other)),
             id_cache: std::cell::Cell::new((usize::MAX, None)),
+            upper: std::cell::Cell::new(0),
             k,
             out,
         }
@@ -834,10 +838,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(always)]
     fn load_state(&mut self, state: &State) {
         self.load(state);
-        self.rewrap();
     }
 
-    /// The stack, its counts and an open raw string's delimiter from `state`.
+    /// The stack, its counts, its wrap and an open raw string's delimiter from `state`: one
+    /// pass over its levels.
     #[inline(always)]
     fn load(&mut self, state: &State) {
         self.exact = state.is_exact();
@@ -846,16 +850,26 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         // an open raw string's delimiter is in the top bytes, its length plus 1 in `arg`
         let d = usize::from(state.arg).saturating_sub(1).min(stored);
         let n = stored - d;
+        // the topmost wrap, as [`Scan::rewrap`] finds it
+        let mut wrap = (info(self.stack[0]) >> 16) as u16 & 0x7fff;
         for i in 0..n {
             let c = state.level(i);
             self.stack[1 + i] = c;
-            self.count_in(c);
+            let k = info(c);
+            self.pre += (k >> 31) as usize;
+            let w = (k >> 16) as u16 & 0x7fff;
+            if w != 0 {
+                wrap = w;
+            }
         }
+        self.wrap = wrap;
         for i in 0..d {
             self.delim[i] = state.level(n + i);
         }
         self.delim_len = d;
         self.depth = 1 + n;
+        self.cur = self.stack[n];
+        self.rekind();
     }
 
     /// The wrap of the topmost context that has one, as a load finds it.
@@ -867,6 +881,13 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             .map(|&c| ((info(c) >> 16) as u16) & 0x7fff)
             .find(|&w| w != 0)
             .unwrap_or(0);
+        self.rekind();
+    }
+
+    /// [`Scan::wk`] from the wrap and the preprocessor's count.
+    #[inline(always)]
+    fn rekind(&mut self) {
+        self.wk = self.wrap | if self.pre > 0 { PRE } else { 0 };
     }
 
     /// The line lexed from the stack it starts with.
@@ -897,7 +918,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn reload(&mut self) {
         let state = self.state();
         self.load(&state);
-        self.rewrap();
     }
 
     /// The state the scan's last line leaves: the levels, and an open raw string's delimiter
@@ -944,11 +964,15 @@ struct Scan<'b, 'c, K: Sink> {
     dir: Option<(usize, usize, usize)>,
     stack: [u8; MAX],
     depth: usize,
+    /// The stack's top.
+    cur: u8,
     exact: bool,
     /// How many contexts on the stack hold `meta.preprocessor`.
     pre: usize,
     /// The wrap of the topmost context that has one.
     wrap: u16,
+    /// What a leaf takes here ([`Scan::kind`]): the wrap, and `PRE` in `meta.preprocessor`.
+    wk: u16,
     /// The kind of text no pattern matches.
     text: u16,
     /// Where the spans so far end.
@@ -970,6 +994,9 @@ struct Scan<'b, 'c, K: Sink> {
     kw_at: std::cell::Cell<(usize, words::Kw)>,
     /// Where the last identifier looked for at a place ends ([`text::id`]).
     id_cache: std::cell::Cell<(usize, Option<usize>)>,
+    /// Whether the line is one of the upper-case workarounds' ([`Scan::upper_line`]), once a
+    /// line: 0 not yet known, 1 not, 2 one.
+    upper: std::cell::Cell<u8>,
     /// Where the lexemes go, a line's spans on a write cursor (X-065's) or its runs by theme rule
     /// (X-068's).
     k: K,
@@ -978,14 +1005,12 @@ struct Scan<'b, 'c, K: Sink> {
 
 impl<'b, K: Sink> Scan<'b, '_, K> {
     fn top(&self) -> u8 {
-        // `depth` is 1 to `MAX`: the index without its bounds check
-        self.stack[(self.depth - 1) % MAX]
+        self.cur
     }
 
     /// `leaf` here: in `meta.preprocessor` and the wrap around.
     fn kind(&self, leaf: u16) -> u16 {
-        let k = leaf | self.wrap;
-        if self.pre > 0 { k | PRE } else { k }
+        leaf | self.wk
     }
 
     /// Bytes `s..e` are `leaf`, after the text before them.
@@ -1021,10 +1046,6 @@ impl<'b, K: Sink> Scan<'b, '_, K> {
         self.text = self.kind(info(self.top()) as u16 & TEXT);
     }
 
-    fn count_in(&mut self, c: u8) {
-        self.pre += (info(c) >> 31) as usize;
-    }
-
     fn count_out(&mut self, c: u8) {
         self.pre -= (info(c) >> 31) as usize;
     }
@@ -1038,12 +1059,14 @@ impl<'b, K: Sink> Scan<'b, '_, K> {
         }
         self.stack[self.depth] = c;
         self.depth += 1;
+        self.cur = c;
         let i = info(c);
         self.pre += (i >> 31) as usize;
         let w = (i >> 16) as u16 & 0x7fff;
         if w != 0 {
             self.wrap = w;
         }
+        self.rekind();
         self.text = self.kind(i as u16 & TEXT);
     }
 
@@ -1051,11 +1074,13 @@ impl<'b, K: Sink> Scan<'b, '_, K> {
         self.fill(at);
         if self.depth > 1 {
             self.depth -= 1;
-            let i = info(self.stack[self.depth]);
+            let i = info(self.cur);
+            self.cur = self.stack[(self.depth - 1) % MAX];
             self.pre -= (i >> 31) as usize;
             if i & 0x7fff_0000 != 0 {
                 self.wrap = 0;
             }
+            self.rekind();
         }
         self.refresh();
     }
@@ -1247,7 +1272,7 @@ impl<'b, K: Sink> Scan<'b, '_, K> {
                 return 0;
             }
         }
-        if upper && (self.upper_ident_line() || self.upper_call().is_some()) {
+        if upper && self.upper_line() {
             return 0;
         }
         q

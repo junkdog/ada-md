@@ -181,9 +181,42 @@ pub fn indent_end(b: &[u8]) -> usize {
     skip_spaces(b, p)
 }
 
-/// Where the run of ASCII `\w` at `p` ends.
+/// Where the run of ASCII `\w` at `p` ends. On x86-64 sixteen bytes a step (SSE2: a letter,
+/// a digit or `_` tested by lane, the first other byte from the mask), the line's last bytes
+/// read again from its end with the bytes before `p` shifted off; a byte at a time elsewhere
+/// and on lines shorter than sixteen bytes. A name's end takes no branch on its bytes (X-057).
 #[inline]
 pub fn ascii_word_end(b: &[u8], mut p: usize) -> usize {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use std::arch::x86_64::*;
+        let n = b.len();
+        // SAFETY: SSE2 is part of x86-64; each load reads `b[q..q + 16]` with `q + 16 <= n`
+        let word = |q: usize| unsafe {
+            let w = _mm_loadu_si128(b.as_ptr().add(q).cast());
+            let flip = _mm_set1_epi8(i8::MIN);
+            // unsigned `x < k` as a signed compare with both signs flipped
+            let below = |x: __m128i, k: u8| {
+                _mm_cmplt_epi8(_mm_xor_si128(x, flip), _mm_set1_epi8((k ^ 0x80) as i8))
+            };
+            let folded = _mm_or_si128(w, _mm_set1_epi8(0x20));
+            let letter = below(_mm_sub_epi8(folded, _mm_set1_epi8(b'a' as i8)), 26);
+            let digit = below(_mm_sub_epi8(w, _mm_set1_epi8(b'0' as i8)), 10);
+            let under = _mm_cmpeq_epi8(w, _mm_set1_epi8(b'_' as i8));
+            _mm_movemask_epi8(_mm_or_si128(_mm_or_si128(letter, digit), under)) as u32
+        };
+        while p + 16 <= n {
+            let m = word(p);
+            if m != 0xffff {
+                return p + (!m).trailing_zeros() as usize;
+            }
+            p += 16;
+        }
+        if p < n && n >= 16 {
+            let q = n - 16;
+            return p + (!(word(q) >> (p - q))).trailing_zeros() as usize;
+        }
+    }
     while p < b.len() && CLASSES[usize::from(b[p])] & W != 0 {
         p += 1;
     }
@@ -510,4 +543,36 @@ pub fn digits_plain(b: &[u8], q: usize) -> Option<usize> {
         e += 1;
     }
     (e > q).then_some(e)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// [`ascii_word_end`] against the byte loop: every start in lines of every length to 40 made
+    /// of a run of word bytes, then each byte value at a time, so that each run ends at each
+    /// place of a 16-byte step, of the line's last step and of a line under 16 bytes.
+    #[test]
+    fn ascii_word_end_is_the_byte_loop() {
+        let slow = |b: &[u8], mut p: usize| {
+            while p < b.len() && (b[p].is_ascii_alphanumeric() || b[p] == b'_') {
+                p += 1;
+            }
+            p
+        };
+        let word = b"aZ_09zA9_m";
+        for n in 0..=40 {
+            for stop in 0..=n {
+                for x in 0..=255u8 {
+                    let mut b: Vec<u8> = (0..n).map(|i| word[i % word.len()]).collect();
+                    if stop < n {
+                        b[stop] = x;
+                    }
+                    for p in 0..=n {
+                        assert_eq!(ascii_word_end(&b, p), slow(&b, p), "{b:?} at {p}");
+                    }
+                }
+            }
+        }
+    }
 }

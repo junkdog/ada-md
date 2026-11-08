@@ -1,12 +1,15 @@
-//! C++'s global declarations on frames (X-057): the top level's and a namespace's statements,
-//! and the contexts bat's grammar reads a declaration's head through (`global-modifier`,
-//! `global-type`, `global-maybe-function`, a function's name, its parameters' `(`, what follows
-//! them, a declarator's name). The grammar decides each step by a lookahead along the line (a
-//! path, then what follows it); here a turn reads the path once, plain ASCII names joined by
-//! `::`, and takes the arm's step from what follows it: the same push, set or pop, through the
-//! same helpers, so the output and the stack are the arms' byte for byte. A path or a byte the
-//! frames don't read (a template's `<`, a spaced `::`, a destructor's `~`, a name past ASCII, a
-//! keyword with a pattern of its own) is the arm's turn, at the same place.
+//! C++'s declarations on frames (X-057): the top level's and a namespace's statements, a class's
+//! body's line start, and the contexts bat's grammar reads a declaration's head through
+//! (`global-modifier`, `global-type`, `global-maybe-function`, a function's name, its
+//! parameters' `(`, what follows them, a declarator's name; a member's `data-structures-modifier`,
+//! `-type` and `-maybe-method`, a method's name, its parameters' `(` and what follows them), a
+//! template path's name (`GT_NAME`), and C's global declarations. The grammar decides each step
+//! by a lookahead along the line (a path, then what follows it); here a turn reads the path once,
+//! plain ASCII names joined by `::`, and takes the arm's step from what follows it: the same
+//! push, set or pop, through the same helpers, so the output and the stack are the arms' byte for
+//! byte. A path or a byte the frames don't read (a template's `<`, a spaced `::`, a destructor's
+//! `~`, a name past ASCII, a keyword with a pattern of its own) is the arm's turn, at the same
+//! place.
 
 use super::cxx::ds_keyword;
 use super::cxx::is_stop_word;
@@ -83,9 +86,7 @@ impl<K: Sink> Scan<'_, '_, K> {
         if w == b"extern" {
             return None;
         }
-        if (c.is_ascii_uppercase() || c == b'_')
-            && (self.upper_ident_line() || self.upper_call().is_some())
-        {
+        if (c.is_ascii_uppercase() || c == b'_') && self.upper_line() {
             return None;
         }
         if q == 0 {
@@ -109,6 +110,52 @@ impl<K: Sink> Scan<'_, '_, K> {
         Some(q)
     }
 
+    /// A class's body's line start, a byte other than `}` at 0 (`data-structures-body`): a
+    /// member's head, which `^\s*(?=~?\w|::)` hands to `data-structures-modifier` (pushed at
+    /// the indentation's end, or entered at 0 without indentation); blanks before anything
+    /// else, which the arm's miss passes. `None` for a directive, an upper-case workaround's
+    /// line, a name past ASCII, and without indentation the body's own words and a byte no
+    /// member starts with (the turn the frame takes past the line's start).
+    pub(super) fn ds_body_start(&mut self) -> Option<usize> {
+        let b = self.b;
+        if self.dir.is_some() {
+            return None;
+        }
+        let q = self.lead;
+        let Some(&c) = b.get(q) else {
+            return Some(self.miss(q));
+        };
+        if c >= 0x80 || ((c.is_ascii_uppercase() || c == b'_') && self.upper_line()) {
+            return None;
+        }
+        let t = if c == b'~' { q + 1 } else { q };
+        let d = at(b, t);
+        if d >= 0x80 && t < b.len() {
+            return None;
+        }
+        let member = (t < b.len() && CLASS[usize::from(d)] & WORD != 0) || starts(b, q, b"::");
+        if q == 0 {
+            if c.is_ascii_alphabetic() || c == b'_' {
+                let e = ascii_word_end(b, 1);
+                if e < b.len() && b[e] >= 0x80 {
+                    return None;
+                }
+                if matches!(
+                    &b[..e],
+                    b"template" | b"using" | b"typedef" | b"private" | b"protected" | b"public"
+                ) {
+                    return None;
+                }
+            }
+            return member.then(|| self.enter(0, &[DS_MODIFIER]));
+        }
+        if member {
+            self.push(q, DS_MODIFIER);
+            return Some(q);
+        }
+        Some(self.miss(q))
+    }
+
     /// A declaration's frame's turn at `p` ([`G_MODIFIER`], [`G_TYPE`], [`G_MAYBE_FN`],
     /// [`G_FN_ID`], [`FN_PARAMS`], [`FN_CONTINUE`], [`IDENT_POP`]): the arm's one match, a miss
     /// (blanks the arm passes, [`Scan::miss`]), or `None` for the arm's turn. Never one
@@ -125,6 +172,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             // match nothing there ([`super::code::ends_at_eol`])
             return match top {
                 G_TYPE => Some(self.shift(p, &[G_MAYBE_FN])),
+                DS_TYPE => Some(self.shift(p, &[DS_MAYBE_METHOD])),
                 IDENT_POP => self.can_pop(p).then(|| self.leave(p)),
                 _ => None,
             };
@@ -166,9 +214,67 @@ impl<K: Sink> Scan<'_, '_, K> {
                 }
                 Some(self.shift(p, &[G_TYPE]))
             }
-            G_TYPE => {
+            DS_MODIFIER => {
                 if crate::is_space(c) {
-                    return Some(self.shift(p, &[G_MAYBE_FN]));
+                    return Some(self.miss(skip_spaces(b, p)));
+                }
+                // a comment, a destructor, a path from `::`: the arm's
+                if matches!(c, b'/' | b'~' | b':') || (c == b'*' && at(b, p + 1) == b'/') {
+                    return None;
+                }
+                if !name {
+                    if c.is_ascii_digit() || c >= 0x80 {
+                        return None;
+                    }
+                    return Some(self.shift(p, &[DS_TYPE]));
+                }
+                let e = ascii_word_end(b, p + 1);
+                if e < b.len() && b[e] >= 0x80 {
+                    return None;
+                }
+                let w = &b[p..e];
+                if matches!(w, b"friend" | b"static_assert") {
+                    return None;
+                }
+                match lookup(w) {
+                    Kw::Modifier => return Some(self.token(p, e - p, MODIFIER)),
+                    Kw::Alignas | Kw::Attribute | Kw::Declspec => return None,
+                    _ => {}
+                }
+                // a macro's name before the member (`preprocessor-workaround-eat-macro-…`)
+                if e - p >= 3
+                    && (c.is_ascii_uppercase() || c == b'_')
+                    && w.iter()
+                        .all(|&x| x.is_ascii_uppercase() || x.is_ascii_digit() || x == b'_')
+                {
+                    return None;
+                }
+                let s = skip_spaces(b, e);
+                match at(b, s) {
+                    // a call's or a constructor's `(`
+                    b'(' if s < b.len() => return None,
+                    // a qualified destructor's or constructor's name
+                    b':' if at(b, s + 1) == b':' => {
+                        let t = skip_spaces(b, s + 2);
+                        let d = at(b, t);
+                        if d == b'~' || d >= 0x80 {
+                            return None;
+                        }
+                        if (d.is_ascii_alphabetic() || d == b'_')
+                            && paren_after(b, ascii_word_end(b, t + 1))
+                        {
+                            return None;
+                        }
+                    }
+                    _ => {}
+                }
+                Some(self.shift(p, &[DS_TYPE]))
+            }
+            G_TYPE | DS_TYPE => {
+                // `data-structures-type` differs in what follows it and in taking no call
+                let ds = top == DS_TYPE;
+                if crate::is_space(c) {
+                    return Some(self.shift(p, &[if ds { DS_MAYBE_METHOD } else { G_MAYBE_FN }]));
                 }
                 match c {
                     b'*' if at(b, p + 1) == b'/' => return None,
@@ -207,6 +313,12 @@ impl<K: Sink> Scan<'_, '_, K> {
                 if let Some(leaf) = leaf {
                     return Some(self.token(p, first - p, leaf));
                 }
+                if ds {
+                    if let Kw::Value(leaf) = kw {
+                        return Some(self.token(p, first - p, leaf));
+                    }
+                    return self.identifiers(p);
+                }
                 // a call: its name and group, where a `)` comes after its `(` and a byte
                 let s = skip_spaces(b, first);
                 if at(b, s) == b'(' && s < b.len() {
@@ -232,7 +344,10 @@ impl<K: Sink> Scan<'_, '_, K> {
                 }
                 self.identifiers(p)
             }
-            G_MAYBE_FN => {
+            G_MAYBE_FN | DS_MAYBE_METHOD => {
+                // `data-structures-maybe-method` differs in its operator, its macro's name, a
+                // declarator at the line's end and a method's `(`
+                let ds = top == DS_MAYBE_METHOD;
                 if crate::is_space(c) {
                     return Some(self.miss(skip_spaces(b, p)));
                 }
@@ -278,6 +393,12 @@ impl<K: Sink> Scan<'_, '_, K> {
                 };
                 if leaf != 0 {
                     return Some(self.token(p, first - p, leaf));
+                }
+                if ds {
+                    if starts(b, p, b"operator") {
+                        return None;
+                    }
+                    return self.ds_maybe_method(p);
                 }
                 // `[\p{Lu}\p{Nd}_]+\s*$`: a macro's name ending the line, no scope
                 let mut caps = p;
@@ -343,13 +464,20 @@ impl<K: Sink> Scan<'_, '_, K> {
                 b'/' => None,
                 _ => self.any_pop(p),
             },
-            FN_CONTINUE => {
+            METHOD_PARAMS => match c {
+                b'(' => Some(self.then(p, 1, &[METHOD_PARAMS_IN], GROUP_BEGIN)),
+                b'/' => None,
+                _ => self.any_pop(p),
+            },
+            FN_CONTINUE | METHOD_CONTINUE => {
                 if crate::is_space(c) {
                     return Some(self.miss(skip_spaces(b, p)));
                 }
                 match c {
                     b';' => return self.can_pop(p).then(|| self.leave(p)),
                     b'{' => return Some(self.then(p, 1, &[FN_BLOCK], BLOCK_BEGIN)),
+                    // a method's member initializers
+                    b':' if top == METHOD_CONTINUE => return Some(self.shift(p, &[MC_COLON])),
                     b'=' => return Some(self.token(p, 1, ASSIGN)),
                     b'&' => return Some(self.token(p, 1, OPERATOR)),
                     b'/' | b'-' | b'0' => return None,
@@ -379,8 +507,65 @@ impl<K: Sink> Scan<'_, '_, K> {
                 self.identifiers(p)
                     .or_else(|| self.can_pop(p).then(|| self.leave(p)))
             }
+            GT_NAME => {
+                // `identifiers`, then a `<` that sets the arguments
+                if crate::is_space(c) {
+                    return Some(self.miss(skip_spaces(b, p)));
+                }
+                if c == b'<' {
+                    return Some(self.then(p, 1, &[ANGLE], GENERIC_BEGIN));
+                }
+                if c >= 0x80 || (name && at(b, ascii_word_end(b, p + 1)) >= 0x80) {
+                    return None;
+                }
+                if name || c == b':' {
+                    return self.identifiers(p);
+                }
+                None
+            }
+            DS_FN_ID => {
+                if c >= 0x80 || (name && at(b, ascii_word_end(b, p + 1)) >= 0x80) {
+                    return None;
+                }
+                self.identifiers(p).or_else(|| self.any_pop(p))
+            }
             _ => None,
         }
+    }
+
+    /// `data-structures-maybe-method`'s path at `p`, an ASCII name past its words: a
+    /// declarator's name (`(?=PATH([ \t]+|[*&])(?!\s*(<|::|\())`, the line's end one too), a
+    /// method's name before its `(`, else a pop; `None` for a path the frame doesn't read or a
+    /// template's arguments after it.
+    #[inline(always)]
+    fn ds_maybe_method(&mut self, p: usize) -> Option<usize> {
+        let b = self.b;
+        let (e, _, _) = self.plain_path(p)?;
+        let s = skip_spaces(b, e);
+        if at(b, s) == b'<' && s < b.len() {
+            return None;
+        }
+        let mut t = e;
+        while t < b.len() && matches!(b[t], b' ' | b'\t') {
+            t += 1;
+        }
+        let after = if t > e {
+            Some(t)
+        } else if matches!(at(b, e), b'*' | b'&') && e < b.len() {
+            Some(e + 1)
+        } else {
+            None
+        };
+        if let Some(after) = after {
+            let s = skip_spaces(b, after);
+            if s >= b.len() || !(b[s] == b'<' || b[s] == b'(' || starts(b, s, b"::")) {
+                return Some(self.enter(p, &[IDENT_POP]));
+            }
+        }
+        if paren_after(b, e) {
+            return Some(self.shift(p, &[METHOD_PARAMS, DS_FN_ID]));
+        }
+        self.any_pop(p)
     }
 
     /// C's top level's line start, `C_MAIN` on top at 0 (its `#if` rules and `global`): a
@@ -406,9 +591,7 @@ impl<K: Sink> Scan<'_, '_, K> {
         if e < b.len() && b[e] >= 0x80 {
             return None;
         }
-        if (c.is_ascii_uppercase() || c == b'_')
-            && (self.upper_ident_line() || self.upper_call().is_some())
-        {
+        if (c.is_ascii_uppercase() || c == b'_') && self.upper_line() {
             return None;
         }
         if q == 0 {
