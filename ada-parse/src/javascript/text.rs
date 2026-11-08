@@ -53,14 +53,21 @@ impl<K: Sink> Scan<'_, '_, K> {
         let i = crate::prim::find_in(b, p + 1, b.len(), [q, b'\\']);
         if i < b.len() && b[i] == q {
             // a quoted key before `:`: a function as its value names it
-            let key = self.prev == P_KEYED && self.top() == F_OBJECT;
+            let keyed = self.prev == P_KEYED;
+            let key = keyed && self.top() == F_OBJECT;
             let mark = if key {
                 Some(self.k.mark(self.out))
             } else {
                 None
             };
             self.tok(p, p + 1, STR_BEGIN);
-            self.tok(p + 1, i, STR);
+            // a quoted method's name, `"name"(`, in an object or a class body
+            let text = if keyed && b.get(skip_blanks(b, i + 1)) == Some(&b'(') {
+                KEY_FN
+            } else {
+                STR
+            };
+            self.tok(p + 1, i, text);
             self.tok(i, i + 1, STR_END);
             if let Some(mark) = mark {
                 let s = skip_blanks(b, i + 1);

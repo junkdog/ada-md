@@ -534,17 +534,20 @@ struct Group {
 struct Assign {
     mark: Mark,
     name: (u32, u32),
-    /// The `=` or `:`, and where the blanks before it start.
+    /// The `=` or `:`; for [`A_CLASS_MEMBER`] the capitalized name's start.
     sep: (u32, u32),
     value: u32,
-    /// [`A_NAME`], [`A_KEY`] or [`A_QUOTED`]: what the name is, and how a function names it.
+    /// [`A_NAMED`], [`A_KEY`], [`A_QUOTED`] or [`A_CLASS_MEMBER`]: what the name is, and how a
+    /// function names it.
     kind: u8,
 }
 
-/// An assigned name's, a key's, a quoted key's [`Assign::kind`].
+/// An assigned name's, a key's, a quoted key's, a capitalized name's member's (`Foo.bar =`, the
+/// mark from before `Foo`) [`Assign::kind`].
 const A_NAMED: u8 = 0;
 const A_KEY: u8 = 1;
 const A_QUOTED: u8 = 2;
+const A_CLASS_MEMBER: u8 = 3;
 
 const NO_VALUE: u32 = u32::MAX;
 
@@ -880,6 +883,9 @@ pub(super) struct Scan<'b, 'c, K: Sink> {
     /// An `async` before a `(` (`async (…) =>`): the `(`'s place, the `async`'s, and the
     /// writing's mark from before it.
     asy: (usize, usize, Mark),
+    /// A capitalized name before a `.` (`Foo.`): the `.`'s place, the name's, and the writing's
+    /// mark from before it, for `Foo.bar = function`, which names `Foo` a class.
+    cls: (usize, usize, Mark),
     k: K,
     out: &'b mut Out<'c>,
 }
@@ -905,6 +911,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             assign: NO_ASSIGN,
             re_arg: usize::MAX,
             asy: (usize::MAX, 0, Mark::NONE),
+            cls: (usize::MAX, 0, Mark::NONE),
             k,
             out,
         }
@@ -934,6 +941,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.assign.value = NO_VALUE;
         self.re_arg = usize::MAX;
         self.asy.0 = usize::MAX;
+        self.cls.0 = usize::MAX;
         let mut p = from;
         if matches!(self.cur, F_TYPE | F_TYPE_DECL) && self.prev == P_VALUE {
             // a type the line before ended (no `;`, `,` or closer after it)
@@ -1133,13 +1141,23 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             return q;
         }
         if prev == P_NEW {
-            // `new a.b.C(`: the path before its last name plain, as Babel's constructor reads it
-            if b.get(e) == Some(&b'.') && b.get(e + 1).is_some_and(|&c| NAME[usize::from(c)]) {
-                return e + 1;
+            // `new a.b.C(`: the path before its last name plain, as Babel's constructor reads it,
+            // its last name the constructor's (a support word's too: `new errors.TypeError(`)
+            let (mut s, mut q) = (p, e);
+            while b.get(q) == Some(&b'.') && b.get(q + 1).is_some_and(|&c| NAME[usize::from(c)]) {
+                s = q + 1;
+                q = s + 1;
+                while q < b.len() && NAME[usize::from(b[q])] {
+                    q += 1;
+                }
             }
-            self.tok(p, e, CTOR_NAME);
+            if s > p && q < b.len() && b[q] >= 0x80 {
+                // a last name past ASCII: read by characters from its start, after `new` still
+                return s;
+            }
+            self.tok(s, q, CTOR_NAME);
             self.prev = P_VALUE;
-            return e;
+            return q;
         }
         let next = b.get(e).copied();
         let kind = match next {
@@ -1149,6 +1167,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     if has(b, e + 1, b"prototype") {
                         ENTITY_CLASS
                     } else {
+                        self.cls = (e, p, self.k.mark(self.out));
                         CLASS_VAR
                     }
                 } else {
@@ -1238,8 +1257,16 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             self.tok(e, sep, OBJ_KEY);
             self.tok(sep, sep + 1, OBJ_KEY_SEP);
         } else if a.kind == A_QUOTED {
-            self.tok(s, e, KEY_FN);
+            self.tok(s, s + 1, STR_BEGIN);
+            self.tok(s + 1, e - 1, KEY_FN);
+            self.tok(e - 1, e, STR_END);
             self.tok(sep, sep + 1, KEY_SEP);
+        } else if a.kind == A_CLASS_MEMBER {
+            // `Foo.bar = function`: `Foo` a class's name
+            self.tok(a.sep.1 as usize, s - 1, ENTITY_CLASS);
+            self.tok(s - 1, s, ACCESSOR);
+            self.tok(s, e, ENTITY_FN);
+            self.tok(sep, sep + 1, ASSIGN);
         } else {
             self.tok(s, e, ENTITY_FN);
             self.tok(sep, sep + 1, ASSIGN);
@@ -1380,7 +1407,13 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             Some(b' ' | b'\t' | b'=') => {
                 let s = skip_blanks(b, e);
                 if b.get(s) == Some(&b'=') && !matches!(b.get(s + 1), Some(b'=' | b'>')) {
-                    self.assigned(p, e, s, false);
+                    if p > 0 && self.cls.0 == p - 1 {
+                        // `Foo.bar =`: the mark from before `Foo`
+                        self.assigned_at(self.cls.2, p, e, s, A_CLASS_MEMBER);
+                        self.assign.sep.1 = self.cls.1 as u32;
+                    } else {
+                        self.assigned(p, e, s, false);
+                    }
                 }
                 if b.get(s) == Some(&b'(') {
                     FUNCTION
@@ -2073,6 +2106,15 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         let b = self.b;
         match b.get(p + 1) {
             Some(&d) if d == c => {
+                if c == b'-'
+                    && b.get(p + 2) == Some(&b'>')
+                    && b[..p].iter().all(|&x| matches!(x, b' ' | b'\t'))
+                {
+                    // `-->` at a line's start: an HTML-like comment's close (`x-->0` elsewhere
+                    // is `--` and `>`)
+                    self.prev = P_START;
+                    return self.tok_far(p, p + 3, HTML_COMMENT);
+                }
                 // `++`, `--`: the value stays one
                 let prev = if self.prev == P_VALUE { P_VALUE } else { P_OP };
                 self.tok(p, p + 2, ARITHMETIC);
@@ -2581,10 +2623,64 @@ mod tests {
         has(&m, "x", "entity.name.function.js");
         has(&m, "async", "storage.type.js");
         has(&m, "k", "string.unquoted.js entity.name.function.js");
-        has(&m, "'q'", "string.quoted.js entity.name.function.js");
+        // a quoted key's quotes stay the string's
+        has(&m, "q", "string.quoted.js entity.name.function.js");
+        has(
+            &m,
+            "'",
+            "string.quoted.js punctuation.definition.string.begin.js",
+        );
         has(&m, "n", "variable.parameter.function.js");
         // a group no `=>` follows stays one
         has(&m, "p", "variable.other.readwrite.js");
+    }
+
+    /// `Foo.bar = function` and `Foo.bar = (…) =>` name `Foo` a class and `bar` a function;
+    /// a value that isn't a function leaves `Foo` a class's variable.
+    #[test]
+    fn a_capitalized_names_member_assigned_a_function() {
+        let m = js(&[
+            "Foo.bar = function () {};",
+            "Baz.qux = (a) => a;",
+            "Kept.x = 1;",
+        ]);
+        has(&m, "Foo", "entity.name.class.js");
+        has(&m, "bar", "entity.name.function.js");
+        has(&m, "Baz", "entity.name.class.js");
+        has(&m, "qux", "entity.name.function.js");
+        has(&m, "Kept", "variable.other.class.js");
+        has(&m, "x", "variable.other.property.js");
+        // a `Foo.` on the line before, its `.` where this line's is, names nothing here
+        let m = js(&[
+            "Foo.y;",
+            "abc.d = function () {};",
+            "",
+            ".e = function () {};",
+        ]);
+        has(&m, "abc", "variable.other.object.js");
+        has(&m, "d", "entity.name.function.js");
+        has(&m, "e", "entity.name.function.js");
+    }
+
+    /// `<!--` is an HTML-like comment's open anywhere, `-->` its close only at a line's start:
+    /// elsewhere it's `--` and `>` (`x-->0`).
+    #[test]
+    fn html_like_comments() {
+        let m = js(&["<!-- legacy", "  -->", "while (x-->0) {}"]);
+        const H: &str = "comment.block.html.js punctuation.definition.comment.js";
+        has(&m, "<!--", H);
+        has(&m, "-->", H);
+        has(&m, "--", "keyword.operator.arithmetic.js");
+        has(&m, ">", "keyword.operator.relational.js");
+    }
+
+    /// After `new`, a path's last name is the constructor's, a support word's too; the path
+    /// before it plain.
+    #[test]
+    fn a_constructor_after_new() {
+        let m = js(&["a = new Foo(1);", "b = new errs.inner.TypeError('m');"]);
+        has(&m, "Foo", "variable.function.constructor.js");
+        has(&m, "TypeError", "variable.function.constructor.js");
     }
 
     /// Methods are told by their frame: a class's body, an object's key place.
@@ -2613,6 +2709,16 @@ mod tests {
         has(&m, "other", "entity.name.function.js");
         // an object's accessor, Babel's own color
         has(&m, "v", "entity.name.accessor.js");
+        // a quoted method's name, in an object and a class body
+        let q = js(&[
+            "o = { \"Arrow[p]\"(node) {}, 'q'(x) {} };",
+            "class C { \"m\"(z) {} }",
+        ]);
+        has(&q, "Arrow[p]", "string.quoted.js entity.name.function.js");
+        has(&q, "q", "string.quoted.js entity.name.function.js");
+        has(&q, "m", "string.quoted.js entity.name.function.js");
+        has(&q, "node", "variable.parameter.function.js");
+        has(&q, "z", "variable.parameter.function.js");
         // a computed method's parameters open after its `]`
         assert!(
             m.iter()

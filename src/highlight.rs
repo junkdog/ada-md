@@ -3397,13 +3397,17 @@ mod tests {
 
     /// ada-parse's JavaScript lexer picks the rules bat's `JavaScript (Babel)` picks, in every
     /// built-in theme (ADR-40's phase 5): its corners included (a shebang, labels and quoted keys
-    /// with functions and arrows, a ternary's `:` read as a key's in `core`, classes with
-    /// properties, accessors, static and async methods, prototype assignments, a regex after
-    /// `(` and `=` but a division after a name, a template with a substitution, escapes and a
-    /// line continuation, JSX across lines with attributes, entities and expressions, a Flow
-    /// annotation, `-Infinity`, octal and hex floats, `{{`, `switch` and `for`, a constructor,
-    /// node's and the console's objects). A regex's body is one kind by design, so the regexes
-    /// here hold no token bat's regex grammar colors.
+    /// with functions and arrows, classes with properties, static and async methods, an object's
+    /// accessor, prototype assignments, a regex after `(` and `=` but a division after a name, a
+    /// template with a substitution, escapes and a line continuation, JSX across lines with
+    /// attributes, entities and expressions, Flow annotations, `-Infinity`, hex, octal and
+    /// legacy octal numbers, `{{`, `switch` and `for`, a constructor, node's and the console's
+    /// objects, `<!--` and a line's `-->`). A regex's body is one kind by design, so the regexes
+    /// here hold no token bat's regex grammar colors. Not what X-058's scanner departs from
+    /// Babel in, by design (ada-parse's `javascript` tests): a ternary's `:`, which Babel reads
+    /// as a key's; a class field's `;` and the blank after a class's `get`, which Babel leaves
+    /// plain and colors (and a field without its `;` carries into a `static` after it); a Flow return type, which Babel reads as operators; `07.5`, which
+    /// Babel marks invalid; a `-->` past a line's start (`x-->0`), Babel's comment anywhere.
     #[test]
     fn javascript_rules_match_the_grammar() {
         let text = concat!(
@@ -3411,13 +3415,12 @@ mod tests {
             "/** The module. */\n",
             "import React, { useState } from 'react'; // a comment\n",
             "export default class Foo extends Bar {\n",
-            "  static count = 0;\n",
-            "  state = { open: false, 'quoted': \"x\\ty\\u00e9\" };\n",
-            "  @observable value: string = 'v';\n",
-            "  get size() { return this.items.length; }\n",
             "  static async *load(id, ...rest) { await fetch(`/api/${id}?q=${rest[0]}`); }\n",
+            "  static count = 0\n",
+            "  state = { open: false, 'quoted': \"x\\ty\\u00e9\" }\n",
+            "  @observable value: string = 'v'\n",
             "  render() {\n",
-            "    const { a, b } = this.props, n = a ? b : 1;\n",
+            "    const { a, b } = this.props, n = a ?? b ?? 1;\n",
             "    return (\n",
             "      <div className=\"box\" onClick={() => this.toggle(n)}>\n",
             "        &amp; {n > 1 && <Item key={n} label='one' />}\n",
@@ -3425,10 +3428,11 @@ mod tests {
             "    );\n",
             "  }\n",
             "}\n",
-            "Foo.prototype.reset = function reset() { this.n = 0x1F + 07.5 + 1e-3 + -Infinity; };\n",
+            "Foo.prototype.reset = function reset() { this.n = 0x1F + 0o17 + 07 + 1e-3 + -Infinity; };\n",
             "Foo.prototype.add = (a, b = 2) => a + b;\n",
             "const re = /abc/gi, half = total / 2, ok = re.test(s) && !(x instanceof Y);\n",
             "const obj = {\n",
+            "  get size() { return this.items.length; },\n",
             "  method: function (x) { return typeof x === 'number'; },\n",
             "  arrow: async (y) => y * 2,\n",
             "  'key': value,\n",
@@ -3439,9 +3443,10 @@ mod tests {
             "const s = \"line \\\n",
             "next\"; const t = `multi\n",
             "line ${ {{ }} }`;\n",
-            "function* gen(a: number, b?: string): Promise<void> { yield* other(); }\n",
+            "function* gen(a: number, b?: string) { yield* other(); }\n",
             "if (x) { throw new TypeError('bad'); } else { debugger; }\n",
-            "<!-- legacy -->\n",
+            "<!-- legacy\n",
+            "-->\n",
         );
         rules_match_the_grammar("js", "JavaScript (Babel)", text);
     }
@@ -3654,7 +3659,9 @@ mod tests {
     /// text, strings and unquoted values, `<style>` and `<script>` of each type with their closing
     /// tags (`<!--`, `-->`, `</style >`'s escape alone), `style="…"` and `on…='…'` with an
     /// escaped quote and a `//` comment past the quote, a `//` comment past `</script>`, a regex
-    /// class's text cut at `</script` and at an attribute's quote.
+    /// class's text cut at `</script` and at an attribute's quote. Not a ternary's `:` nor a regex
+    /// at an attribute's start, where JavaScript's scanner departs from Babel by design (X-058;
+    /// [`javascript_rules_match_the_grammar`]).
     #[test]
     fn html_rules_match_the_grammar() {
         let text = concat!(
@@ -3675,14 +3682,14 @@ mod tests {
             "y</style><style/>\n",
             "<script>\n",
             "<!--\n",
-            "  var x = 1 < 2 ? \"a\" : 'b'; // </script> stays a comment\n",
+            "  var x = 1 < 2 && \"a\" || 'b'; // </script> stays a comment\n",
             "  function f(a) { return `t ${a}` / 2; }\n",
             "-->\n",
             "</script>\n",
             "<script type=\"module\" src=x.js></script><script type='text/html'><b>t</b></script>\n",
             "<script type=\"text/template\"><div>{{x}}</div></script><script>f()</SCRIPT >\n",
             "<script>r = /[a</SCRIPT>b]/; s = /x[^c</script>d]/g;</script>\n",
-            "<b onclick=\"r = /[a\" c=\"]/\" onmouseover='/a[^b'>x</b>\n",
+            "<b onclick=\"r = /[a\" c=\"]/\" onmouseover='x = /a[^b'>x</b>\n",
             "</div></body></html>\n",
             // last: the comment runs past the quote, so the attribute stays open to the end
             "<i style='content:\"\\'x\"' onmouseover='a // b'>i</i>\n",
