@@ -67,11 +67,6 @@ mod yaml_scan;
 
 use std::mem::MaybeUninit;
 
-/// bash's scanner of ada's own (X-093's redesign, [`bash::own`]) in place of the one that keeps
-/// bat's contexts: where ada-parse is built with `ADA_PARSE_X093` set, till the redesign's last
-/// stage switches it in for good.
-pub(crate) const X093: bool = option_env!("ADA_PARSE_X093").is_some();
-
 use emit::Sink as _;
 pub use emit::{Rule, Rules, Run};
 pub use lang::{ALIASES, FirstLine, Lang, first_line_syntaxes};
@@ -449,8 +444,7 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
         Lang::Go => (go::block_runs, go::line_runs),
         Lang::Lua => (lua::block_runs, lua::line_runs),
         Lang::Scss => (css::scss::block_runs, css::scss::line_runs),
-        Lang::Bash if X093 => (bash::own::block_runs, bash::own::line_runs),
-        Lang::Bash => (bash::block_runs, bash::line_runs),
+        Lang::Bash => (bash::own::block_runs, bash::own::line_runs),
         Lang::Makefile => (bash::make_block_runs, bash::make_line_runs),
         Lang::Cpp => (cc::block_runs, cc::line_runs),
         Lang::C => (cc::block_runs_c, cc::line_runs_c),
@@ -476,8 +470,7 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::JavaScript => javascript::block,
         Lang::Cpp if SPANS => cc::block,
         Lang::C if SPANS => cc::block_c,
-        Lang::Bash if SPANS && X093 => bash::own::block,
-        Lang::Bash if SPANS => bash::block,
+        Lang::Bash if SPANS => bash::own::block,
         Lang::Makefile if SPANS => bash::make_block,
         Lang::Lua if SPANS => lua::block,
         Lang::PowerShell => powershell::block,
@@ -746,8 +739,7 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::Bash | Lang::Makefile if !SPANS => {
             |_, _, _| unreachable!("bash's and Makefile's runs come from their own scans")
         }
-        Lang::Bash if X093 => out!(bash::own::line),
-        Lang::Bash => out!(bash::line),
+        Lang::Bash => out!(bash::own::line),
         Lang::Makefile => out!(bash::make_line),
         Lang::DotEnv => out!(dotenv::line),
         Lang::GitIgnore => out!(git::ignore),

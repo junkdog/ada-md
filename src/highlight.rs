@@ -3918,7 +3918,10 @@ mod tests {
     }
 
     /// The shell lexer picks the rules bat's bash grammar picks, in every built-in theme
-    /// (G-003).
+    /// (G-003), byte for byte (X-093's scanner's kinds are leaves), but for a command's name:
+    /// ada colors it as the builtins (`support.function`, apart from its arguments, as
+    /// zsh-syntax-highlighting does), where bat's `variable.function` is every theme's plain
+    /// foreground.
     #[test]
     fn bash_rules_match_the_grammar() {
         let text = concat!(
@@ -3955,7 +3958,15 @@ mod tests {
             "arr+=( \"${arr[@]/#/-I}\" ) && echo ${arr[*]:1:2} {a,b}{1..3}\n",
             "trap 'rm -f \"$tmp\"' EXIT; wait $!; exit $?\n",
         );
-        rules_match_the_grammar("bash", "Bourne Again Shell (bash)", text);
+        colors_match_the_grammar_but(
+            "bash",
+            "Bourne Again Shell (bash)",
+            text,
+            &[(
+                "meta.function-call.shell support.function.command.shell",
+                "meta.function-call.shell variable.function.shell",
+            )],
+        );
     }
 
     /// A literal's punctuation takes the literal's color in every built-in theme (HL-005): a
@@ -4128,7 +4139,26 @@ mod tests {
     /// scanner of ada's own whose kinds are a token's leaf scopes, not bat's stacks (X-057's C
     /// and C++), so its runs may part where the rule doesn't; `examples/parity.rs` measures it so.
     fn colors_match_the_grammar(lang: &str, name: &str, text: &str) {
+        colors_match_the_grammar_but(lang, name, text, &[]);
+    }
+
+    /// The rule a scope stack takes in `rules`, under the language's base scope (the way a
+    /// lexer's kind is resolved, [`ParseRules`]).
+    fn rule_of(rules: &SyntaxTheme, base: &str, scopes: &str) -> u16 {
+        let h = SynHighlighter::new(&rules.theme);
+        let stack: Vec<Scope> = std::iter::once(base)
+            .chain(scopes.split(' '))
+            .map(|s| Scope::new(s).expect("scope"))
+            .collect();
+        decode_rule(h.style_for_stack(&stack).foreground).0
+    }
+
+    /// As [`colors_match_the_grammar`], a byte counted as syntect's where ada's rule is the
+    /// first scope stack's of a pair in `departs` and syntect's the second's: a by-design
+    /// departure from bat's scopes that a text can't leave out (bash's command names).
+    fn colors_match_the_grammar_but(lang: &str, name: &str, text: &str, departs: &[(&str, &str)]) {
         assert_eq!(find_syntax(lang).unwrap().name(), name);
+        let base = Lang::from_token(lang).expect("a lexer's language").base();
         let by_byte = |spans: &CodeSpans, n: u32, len: usize| {
             let mut out = vec![Rule::NONE; len];
             let mut start = 0;
@@ -4145,8 +4175,16 @@ mod tests {
             let rules = SyntaxTheme::new(&theme.syntax);
             let want = highlight_syntect(reference_syntaxes(), name, text, &rules).unwrap();
             let got = highlight(1, lang, text, &rules);
+            let same: Vec<(u16, u16)> = departs
+                .iter()
+                .map(|(ours, theirs)| (rule_of(&rules, base, ours), rule_of(&rules, base, theirs)))
+                .collect();
             for (n, line) in (0..).zip(text.lines()) {
-                let differs = by_byte(&got, n, line.len()) != by_byte(&want, n, line.len());
+                let (a, b) = (by_byte(&got, n, line.len()), by_byte(&want, n, line.len()));
+                let differs = a
+                    .iter()
+                    .zip(&b)
+                    .any(|(&x, &y)| x != y && !same.contains(&(x, y)));
                 if differs && !bad.iter().any(|(m, _)| *m == n) {
                     let (ours, theirs) = (
                         rule_names(&theme, &got, line, n),

@@ -1,8 +1,15 @@
-//! bash on a scanner of ada's own (X-093, ADR-41), beside the scanner that keeps bat's 106
-//! contexts ([`super`]), where ada-parse is built with `ADA_PARSE_X093` set.
+//! bash's scanner, of ada's own (X-093, ADR-41). The scanner that kept bat's 106 contexts
+//! ([`super`]) stays as the host of Makefile's recipes only.
 //!
 //! bat's `Bourne Again Shell (bash)` is the reference for scopes and the parity oracle, not the
-//! design. The scan is one loop over a line's bytes on a small stack of contexts of its own: the
+//! design. **A line starts on the fast loop** ([`Scan::fast`], the floor probe's shape): with only
+//! holders open, a command's words, options, parameters, strings closed on the line, operators,
+//! assignments and declarations are read a token a turn, the command's position in a local;
+//! whatever else it meets it hands to the stack loop at that token, the contexts the stack loop
+//! would have there pushed, so its spans are the stack loop's exactly. A line it takes whole
+//! leaves the state as it was.
+//!
+//! **The stack loop** is one loop over a line's bytes on a small stack of contexts of its own: the
 //! *holders*, where a command may start (the script, `$(…)`, backticks, `(…)`, `{ … }`, a
 //! function's body, a case clause's commands, `<(…)`); a command's *line contexts* (its name,
 //! its arguments, a builtin's arguments with that builtin's options, an assignment's name and
@@ -751,13 +758,14 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.top_from(self.depth);
     }
 
-    /// Level `d`'s fill and flags from the levels under it.
+    /// Level `d`'s fill and flags from the levels under it, written and returned.
     #[inline(always)]
-    fn derive(&mut self, d: usize) {
+    fn derive(&mut self, d: usize) -> u32 {
         let c = self.stack[d];
         if c & DATA != 0 {
             self.meta[d] = self.meta[d - 1];
-            return;
+            // SAFETY: levels below `d` are written before `d` is
+            return unsafe { self.meta[d - 1].assume_init() };
         }
         // under a here-document's body, its first line's commands take what was under it
         let mut u = d - 1;
@@ -768,19 +776,25 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             }
         }
         // SAFETY: levels below `d` are written before `d` is
-        let pm = unsafe { self.meta[u].assume_init() };
-        let pfl = (pm >> 16) as u8;
-        let info = INFO[usize::from(c)];
-        let mut fl = pfl & TW;
-        if c == OPTION {
-            fl |= TW;
-        }
-        if c == TICK || info & I_KEEPS_BT != 0 && pfl & BT != 0 {
-            fl |= BT;
-        }
-        let own = info as u16;
-        let fill = if own != 0 { twin(own, fl) } else { pm as u16 };
-        self.meta[d] = MaybeUninit::new(u32::from(fill) | u32::from(fl) << 16);
+        let m = derived(unsafe { self.meta[u].assume_init() }, c);
+        self.meta[d] = MaybeUninit::new(m);
+        m
+    }
+
+    /// The top's fill and flags, as a level keeps them.
+    #[inline(always)]
+    fn top_meta(&self) -> u32 {
+        u32::from(self.text) | u32::from(self.fl) << 16
+    }
+
+    /// `c` made the top at level `d`, its fill and flags `m`: the top's fields set from
+    /// registers, not read back from the levels.
+    #[inline(always)]
+    fn enter(&mut self, d: usize, c: u8, m: u32) {
+        self.depth = d + 1;
+        self.cur = c;
+        self.text = m as u16;
+        self.fl = (m >> 16) as u8;
     }
 
     #[inline(always)]
@@ -794,13 +808,24 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     }
 
     /// The line lexed from the stack it starts with, ended as a state ends it.
+    /// Whether the line left the stack as it was: the fast loop took it whole.
     #[inline(always)]
-    fn lex_line(&mut self) {
+    fn lex_line(&mut self) -> bool {
         self.at = 0;
         self.cont = false;
         self.last_bracket = usize::MAX;
         self.last_close = usize::MAX;
-        self.run();
+        let mut p = 0;
+        if FALLS && !self.fast_ok() {
+            eprintln!("SLOW {} {} {}", self.cur, self.depth, self.b.len());
+        }
+        if self.fast_ok() {
+            match self.fast(0) {
+                None => return true,
+                Some(q) => p = q,
+            }
+        }
+        self.run(p);
         let n = self.b.len();
         self.fill(n);
         if !self.cont {
@@ -813,6 +838,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             crate::stack::hold(&mut self.stack, &mut self.depth, &mut self.exact);
             self.derive_all();
         }
+        false
     }
 
     // --- the stack ---
@@ -824,10 +850,19 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         if self.depth == MAX {
             self.full();
         }
-        self.stack[self.depth] = c;
-        self.derive(self.depth);
-        self.depth += 1;
-        self.top_from(self.depth);
+        let d = self.depth;
+        self.stack[d] = c;
+        // the level below is the top: its fill and flags are the top's fields (but under a
+        // here-document's first line, [`Scan::derive`]'s)
+        let m = if c & DATA != 0 {
+            self.top_meta()
+        } else if c == LINEMAIN {
+            self.derive(d)
+        } else {
+            derived(self.top_meta(), c)
+        };
+        self.meta[d] = MaybeUninit::new(m);
+        self.enter(d, c, m);
     }
 
     #[cold]
@@ -854,10 +889,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         if self.depth > 1 {
             self.depth -= 1;
         }
-        self.stack[self.depth] = c;
-        self.derive(self.depth);
-        self.depth += 1;
-        self.top_from(self.depth);
+        let d = self.depth;
+        self.stack[d] = c;
+        let m = self.derive(d);
+        self.enter(d, c, m);
     }
 
     /// The text up to `p` is the top's fill.
@@ -884,11 +919,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     // --- the loop ---
 
     #[inline(always)]
-    fn run(&mut self) {
+    fn run(&mut self, mut p: usize) {
         let b = self.b;
         let n = b.len();
-        let mut p = 0;
-        if self.cur & !3 == HEREDOC {
+        if p == 0 && self.cur & !3 == HEREDOC {
             p = self.heredoc_end();
         }
         // turns that didn't move: past a bound, a character is passed (syntect's loop guard,
@@ -1144,9 +1178,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn dollar(&mut self, p: usize, what: u8) -> Option<usize> {
         let b = self.b;
         let n = b.len();
-        let Some(&c) = b.get(p + 1) else {
-            return None;
-        };
+        let &c = b.get(p + 1)?;
         Some(match c {
             b'{' => {
                 self.put(p, p + 1, k::VAR_MARK);
@@ -1361,7 +1393,53 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.push(end, c);
         self.push(end, LINEMAIN);
         self.push(end, ARGS);
+        // a comment right after the word: the blanks before it the body's (syntect matches the
+        // prototype in the preamble first)
+        let mut q = end;
+        while q < n && is_space(b[q]) {
+            q += 1;
+        }
+        if q > end && q < n && b[q] == b'#' {
+            return Some(self.put(end, q, k::HEREDOC));
+        }
         Some(end)
+    }
+
+    /// After `coproc` (at `e`): a coprocess's name and its `{ … }` (bat's `coproc-body`: the
+    /// next word holds a `{` or a `{` follows it), its commands in braces of their own and
+    /// arguments after them; else the command that follows is the coprocess.
+    fn coproc(&mut self, e: usize) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let blanks = |mut i: usize| {
+            while i < n && is_space(b[i]) {
+                i += 1;
+            }
+            i
+        };
+        let q = blanks(e);
+        if q >= n {
+            return e;
+        }
+        let mut w = q;
+        while w < n && !is_space(b[w]) {
+            w += 1;
+        }
+        let after = blanks(w);
+        if !(b[q + 1..w].contains(&b'{') || after < n && b[after] == b'{') {
+            return e;
+        }
+        // the name: up to the first place whose blanks end at `{`
+        let mut r = q;
+        while !(blanks(r) < n && b[blanks(r)] == b'{') {
+            r += 1;
+        }
+        self.put(q, r, k::COPROC_NAME);
+        let s = blanks(r);
+        self.push(r, ARGS);
+        self.put(s, s + 1, k::SECTION_BRACES_BEGIN);
+        self.push(s + 1, FUNCBODY);
+        s + 1
     }
 
     /// The here-document's word, when the line is its end: its levels popped, the line done.
@@ -1402,7 +1480,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         if self.cur & HD_RAW != 0 {
             return n;
         }
-        let e = find_in(b, p, n, [b'$', b'`', b'\\']);
+        let e = find_in(b, p, n, *b"$`\\");
         if e >= n {
             return n;
         }
@@ -1572,7 +1650,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             return r;
         }
         if what == W_COPROC && breaks(b, e) {
-            return self.put(p, e, kind);
+            self.put(p, e, kind);
+            return self.coproc(e);
         }
         if matches!(what, W_DECLARE | W_EXPORT | W_READONLY | W_ALIAS) && breaks(b, e) {
             self.put(p, e, kind);
@@ -1758,6 +1837,32 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         Some(e)
     }
 
+    /// Whether [`Scan::defines`] would read a definition at `p`.
+    #[inline(always)]
+    fn defines_at(&self, p: usize) -> bool {
+        let b = self.b;
+        let n = b.len();
+        if b[p].is_ascii_digit() || META[usize::from(b[p])] {
+            return false;
+        }
+        let mut e = p + 1;
+        while e < n && !META[usize::from(b[e])] && b[e] != b'=' {
+            e += 1;
+        }
+        let mut q = e;
+        while q < n && is_space(b[q]) {
+            q += 1;
+        }
+        if b.get(q) != Some(&b'(') {
+            return false;
+        }
+        let mut r = q + 1;
+        while r < n && is_space(b[r]) {
+            r += 1;
+        }
+        b.get(r) == Some(&b')')
+    }
+
     /// Whether `\s*\(\s*\)` follows `e`.
     #[inline(always)]
     fn parens_after(&self, e: usize) -> bool {
@@ -1921,7 +2026,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                             return r;
                         }
                     }
-                    _ if cur >= BARGS && cur < DATA && OPTS[usize::from(cur - BARGS)].bare != 0 => {
+                    _ if (BARGS..DATA).contains(&cur)
+                        && OPTS[usize::from(cur - BARGS)].bare != 0 =>
+                    {
                         if let Some(r) = self.bare(e) {
                             return r;
                         }
@@ -2084,7 +2191,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             }
             return None;
         }
-        if cur >= BARGS && cur < DATA {
+        if (BARGS..DATA).contains(&cur) {
             let o = cur - BARGS;
             let spec = &OPTS[usize::from(o)];
             if spec.dash == 0 {
@@ -3049,7 +3156,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn dq_one(&mut self, p: usize) -> usize {
         let b = self.b;
         let n = b.len();
-        let e = find_in(b, p, n, [b'"', b'$', b'`', b'\\']);
+        let e = find_in(b, p, n, *b"\"$`\\");
         if e >= n {
             return n;
         }
@@ -3075,7 +3182,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn sq(&mut self, p: usize) -> usize {
         let b = self.b;
         let n = b.len();
-        let e = find_in(b, p, n, [b'\'']);
+        let e = find_in(b, p, n, *b"'");
         if e >= n {
             return n;
         }
@@ -3088,7 +3195,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn ansi(&mut self, p: usize) -> usize {
         let b = self.b;
         let n = b.len();
-        let e = find_in(b, p, n, [b'\'', b'\\']);
+        let e = find_in(b, p, n, *b"'\\");
         if e >= n {
             return n;
         }
@@ -3128,6 +3235,26 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     }
 }
 
+/// A level's fill and flags for context `c` (not a here-document's word) over a level whose
+/// are `pm`: its own fill (its twin inside an option) or the one under it; an option's flag
+/// kept and set by [`OPTION`], a backtick's kept by the contexts a backtick ends and set by
+/// [`TICK`].
+#[inline(always)]
+fn derived(pm: u32, c: u8) -> u32 {
+    let pfl = (pm >> 16) as u8;
+    let info = INFO[usize::from(c)];
+    let mut fl = pfl & TW;
+    if c == OPTION {
+        fl |= TW;
+    }
+    if c == TICK || info & I_KEEPS_BT != 0 && pfl & BT != 0 {
+        fl |= BT;
+    }
+    let own = info as u16;
+    let fill = if own != 0 { twin(own, fl) } else { pm as u16 };
+    u32::from(fill) | u32::from(fl) << 16
+}
+
 /// Whether `let`'s word ends at `e` (`\blet\b`).
 #[inline(always)]
 fn breaks_word(b: &[u8], e: usize) -> bool {
@@ -3157,6 +3284,738 @@ const X_EXP: u8 = 0;
 /// bat's `expansion-and-string`.
 const X_ALL: u8 = X_STR | X_PAT | X_BRACE | X_TILDE | X_JOB;
 
+// --- the fast loop (R1′) ---------------------------------------------------------------------
+
+impl<K: Sink> Scan<'_, '_, K> {
+    /// Whether a line may start on [`Scan::fast`]: only holders open (a command may start), none
+    /// with a fill or a flag.
+    #[inline(always)]
+    fn fast_ok(&self) -> bool {
+        self.text == PLAIN
+            && self.fl == 0
+            && matches!(
+                self.cur,
+                ROOT | EXPCMD | SUBSHELL | BRACES | FUNCBODY | CASECMDS | PROC
+            )
+    }
+
+    /// The floor probe's loop (X-093's R1′): a line's commonest tokens, one turn a token, the
+    /// command's position in a local (`pos`: 0 at the holder, else the context the stack loop
+    /// would have on top: [`ARGS`], [`EOO`], a builtin's [`BARGS`]); nothing pushed, so a line it
+    /// takes whole leaves the stack as it was. What it doesn't take (a here-document, `${…}`, a
+    /// definition…) it hands to [`Scan::run`] at that token, the contexts open there pushed: its
+    /// spans are the stack loop's, which the digest holds.
+    #[inline(always)]
+    fn fast(&mut self, p: usize) -> Option<usize> {
+        let r = self.fast_loop(p);
+        if r.is_none() && self.text != PLAIN {
+            // an assignment's value to the line's end
+            self.fill(self.b.len());
+            self.text = PLAIN;
+        }
+        r
+    }
+
+    #[inline(always)]
+    fn fast_loop(&mut self, mut p: usize) -> Option<usize> {
+        let b = self.b;
+        let n = b.len();
+        let holder = self.cur;
+        // the command's position: 0 at the holder, else the context the stack loop would have on
+        // top (`pos`) over `base` (0, or [`MORE`] under a declaration's names and values, or
+        // [`ARGS`] under an option); a name's and a value's text the top's fill while they last
+        let mut pos: u8 = 0;
+        let mut base: u8 = 0;
+        while p < n {
+            let c = b[p];
+            match pos {
+                0 => match c {
+                    b' ' | b'\t' | b'\r' | 0x0b | 0x0c => {
+                        p += 1;
+                        while p < n && is_space(b[p]) {
+                            p += 1;
+                        }
+                    }
+                    b'#' if p == 0 || is_space(b[p - 1]) => {
+                        self.comment(p);
+                        return None;
+                    }
+                    b';' | b'|' | b'&' => match fast_op(b, p) {
+                        Some((e, kind)) => p = self.put(p, e, kind),
+                        None => return self.fall(p, 0, 0, 0),
+                    },
+                    _ if WORD[usize::from(c)] || matches!(c, b'/' | b'.' | b':') => {
+                        match self.fast_command(p, holder) {
+                            Some((e, at, under)) => {
+                                p = e;
+                                pos = at;
+                                base = under;
+                            }
+                            None => return self.fall(p, 0, 0, 0),
+                        }
+                    }
+                    _ => return self.fall(p, 0, 0, 0),
+                },
+                VALUE | VARNAME | MORE | DECL | DECL_EXPORT | DECL_READONLY => {
+                    match self.fast_names(p, pos, base) {
+                        Ok((q, at, under)) => {
+                            p = q;
+                            pos = at;
+                            base = under;
+                        }
+                        Err(r) => return r,
+                    }
+                }
+                _ => match c {
+                    // a command's arguments ([`ARGS`], [`EOO`], a builtin's [`BARGS`])
+                    b' ' | b'\t' | b'\r' | 0x0b | 0x0c => {
+                        let mut e = p + 1;
+                        while e < n && is_space(b[e]) {
+                            e += 1;
+                        }
+                        if e == n {
+                            return None;
+                        }
+                        let r = match b[e] {
+                            b'#' => {
+                                self.comment(e);
+                                return None;
+                            }
+                            b'-' => self.fast_dash(p, e, pos),
+                            b'+' if pos == BARGS + O_SET => self.fast_dash(p, e, pos),
+                            _ if pos >= BARGS && OPTS[usize::from(pos - BARGS)].bare != 0 => {
+                                Ok(self.bare_of(e, pos - BARGS).map(|q| (q, pos)))
+                            }
+                            _ => Ok(None),
+                        };
+                        match r {
+                            Ok(Some((q, at))) => {
+                                p = q;
+                                pos = at;
+                            }
+                            Ok(None) => p = e,
+                            Err((q, at)) => return self.fall(q, ARGS, at, 0),
+                        }
+                    }
+                    b';' | b'|' | b'&' => match fast_op(b, p) {
+                        Some((e, kind)) => {
+                            p = self.put(p, e, kind);
+                            pos = 0;
+                        }
+                        None => return self.fall(p, 0, pos, 0),
+                    },
+                    b'"' => match self.fast_dq(p) {
+                        Ok(e) => p = e,
+                        Err(q) => return self.fall(q, 0, pos, DQ),
+                    },
+                    b'\'' => match self.fast_sq(p) {
+                        Ok(e) => p = e,
+                        Err(q) => return self.fall(q, 0, pos, SQ),
+                    },
+                    b'$' => match self.fast_dollar(p, X_ALL, PLAIN) {
+                        Ok(Some(e)) => p = e,
+                        Ok(None) => p = plain_arg(b, p),
+                        Err(()) => return self.fall(p, 0, pos, 0),
+                    },
+                    b'*' | b'?' => {
+                        if b.get(p + 1) == Some(&b'(') {
+                            return self.fall(p, 0, pos, 0);
+                        }
+                        p = self.put(p, p + 1, k::QUANTIFIER);
+                    }
+                    b'+' | b'@' | b'!' if b.get(p + 1) == Some(&b'(') => {
+                        return self.fall(p, 0, pos, 0);
+                    }
+                    b'[' if self.bracket_after(p) => return self.fall(p, 0, pos, 0),
+                    b'~' => p = self.put(p, p + 1, k::TILDE),
+                    b')' | b'}' | b'`' | b'\\' | b'<' | b'>' | b'{' | b'%' => {
+                        return self.fall(p, 0, pos, 0);
+                    }
+                    _ => p = plain_arg(b, p),
+                },
+            }
+        }
+        None
+    }
+
+    /// The fast loop's turns in a declaration's or an assignment's names and values (out of the
+    /// hot loop: [`VALUE`], [`VARNAME`], [`MORE`], [`DECL`]…): the place, position and base after
+    /// them; `Err` with the loop's result where it ends here.
+    #[inline(never)]
+    fn fast_names(
+        &mut self,
+        mut p: usize,
+        mut pos: u8,
+        mut base: u8,
+    ) -> Result<(usize, u8, u8), Option<usize>> {
+        let b = self.b;
+        let n = b.len();
+        while p < n {
+            let c = b[p];
+            match pos {
+                VALUE => match c {
+                    // an assignment's unquoted value
+                    _ if META[usize::from(c)] || c == b'`' => {
+                        self.fill(p);
+                        self.text = PLAIN;
+                        pos = base;
+                        base = 0;
+                    }
+                    b'"' => match self.fast_dq(p) {
+                        Ok(e) => p = e,
+                        Err(q) => return Err(self.fall(q, base, pos, DQ)),
+                    },
+                    b'\'' => match self.fast_sq(p) {
+                        Ok(e) => p = e,
+                        Err(q) => return Err(self.fall(q, base, pos, SQ)),
+                    },
+                    b'$' => match self.fast_dollar(p, X_ALL, PLAIN) {
+                        Ok(Some(e)) => p = e,
+                        Ok(None) => p = plain_value(b, p),
+                        Err(()) => return Err(self.fall(p, base, pos, 0)),
+                    },
+                    b'*' | b'?' => {
+                        if b.get(p + 1) == Some(&b'(') {
+                            return Err(self.fall(p, base, pos, 0));
+                        }
+                        p = self.put(p, p + 1, k::QUANTIFIER);
+                    }
+                    b'+' | b'@' | b'!' if b.get(p + 1) == Some(&b'(') => {
+                        return Err(self.fall(p, base, pos, 0));
+                    }
+                    b'[' if self.bracket_after(p) => return Err(self.fall(p, base, pos, 0)),
+                    b'~' => p = self.put(p, p + 1, k::TILDE),
+                    b'\\' | b'{' | b'%' => return Err(self.fall(p, base, pos, 0)),
+                    _ => p = plain_value(b, p),
+                },
+                VARNAME => {
+                    // a declaration's name ([`Scan::varname`]'s), its operator, its value
+                    let next = b.get(p + 1).copied();
+                    let op = c == b'=' || matches!(c, b'+' | b'-' | b'?') && next == Some(b'=');
+                    if op || is_space(c) || META[usize::from(c)] || c == b'`' {
+                        let e = if c == b'=' {
+                            p + 1
+                        } else if op {
+                            p + 2
+                        } else {
+                            p
+                        };
+                        match b.get(e) {
+                            Some(b'(') => return Err(self.fall(p, base, pos, 0)),
+                            Some(b'&' | b'`') | None => {
+                                if e > p {
+                                    self.put(p, e, k::ASSIGN);
+                                }
+                                self.fill(e);
+                                self.text = PLAIN;
+                                pos = base;
+                                base = 0;
+                            }
+                            _ if e > p => {
+                                self.put(p, e, k::ASSIGN);
+                                self.text = k::UNQUOTED;
+                                pos = VALUE;
+                            }
+                            _ => {
+                                self.fill(e);
+                                self.text = PLAIN;
+                                pos = base;
+                                base = 0;
+                            }
+                        }
+                        p = e;
+                    } else {
+                        match c {
+                            b'[' | b'"' | b'\'' | b'\\' => return Err(self.fall(p, base, pos, 0)),
+                            b'$' if matches!(next, Some(b'\'' | b'"')) => {
+                                return Err(self.fall(p, base, pos, 0));
+                            }
+                            _ => {
+                                let mut e = p + 1;
+                                while e < n
+                                    && !matches!(
+                                        b[e],
+                                        b'[' | b'"'
+                                            | b'\''
+                                            | b'\\'
+                                            | b'='
+                                            | b'+'
+                                            | b'-'
+                                            | b'?'
+                                            | b'$'
+                                    )
+                                    && !is_space(b[e])
+                                    && !META[usize::from(b[e])]
+                                    && b[e] != b'`'
+                                {
+                                    e += 1;
+                                }
+                                p = e;
+                            }
+                        }
+                    }
+                }
+                MORE => match c {
+                    // after a declaration's name: more names (bat's `vardef-maybe-more`)
+                    b' ' | b'\t' | b'\r' | 0x0b | 0x0c => {
+                        let mut e = p + 1;
+                        while e < n && is_space(b[e]) {
+                            e += 1;
+                        }
+                        if e == n {
+                            return Err(None);
+                        }
+                        match b[e] {
+                            b'#' => pos = 0,
+                            b'-' => {
+                                if let Ok(Some((q, at))) = self.fast_dash(p, e, pos) {
+                                    p = q;
+                                    pos = at;
+                                    continue;
+                                }
+                            }
+                            _ => {}
+                        }
+                        p = e;
+                    }
+                    b';' | b'|' | b'&' => match fast_op(b, p) {
+                        Some((e, kind)) => {
+                            p = self.put(p, e, kind);
+                            pos = 0;
+                        }
+                        None => return Err(self.fall(p, 0, pos, 0)),
+                    },
+                    b'"' => match self.fast_dq(p) {
+                        Ok(e) => p = e,
+                        Err(q) => return Err(self.fall(q, 0, pos, DQ)),
+                    },
+                    b'\'' => match self.fast_sq(p) {
+                        Ok(e) => p = e,
+                        Err(q) => return Err(self.fall(q, 0, pos, SQ)),
+                    },
+                    b'$' => match self.fast_dollar(p, X_ALL, PLAIN) {
+                        Ok(Some(e)) => p = e,
+                        Ok(None) => {
+                            self.fill(p);
+                            self.text = k::VAR_ASSIGN;
+                            pos = VARNAME;
+                            base = MORE;
+                        }
+                        Err(()) => return Err(self.fall(p, 0, pos, 0)),
+                    },
+                    b'*' | b'?' => {
+                        if b.get(p + 1) == Some(&b'(') {
+                            return Err(self.fall(p, 0, pos, 0));
+                        }
+                        p = self.put(p, p + 1, k::QUANTIFIER);
+                    }
+                    b'+' | b'@' | b'!' if b.get(p + 1) == Some(&b'(') => {
+                        return Err(self.fall(p, 0, pos, 0));
+                    }
+                    b'[' if self.bracket_after(p) => return Err(self.fall(p, 0, pos, 0)),
+                    b'~' => p = self.put(p, p + 1, k::TILDE),
+                    b')' | b'}' | b'`' | b'\\' | b'<' | b'>' | b'{' | b'%' => {
+                        return Err(self.fall(p, 0, pos, 0));
+                    }
+                    _ => {
+                        self.fill(p);
+                        self.text = k::VAR_ASSIGN;
+                        pos = VARNAME;
+                        base = MORE;
+                    }
+                },
+                DECL | DECL_EXPORT | DECL_READONLY => {
+                    // a declaration's options ([`Scan::decl`]'s), then its first name
+                    let mut q = p;
+                    while q < n && is_space(b[q]) {
+                        q += 1;
+                    }
+                    if q < n && b[q] == b'-' {
+                        let set: &[u8] = match pos {
+                            DECL => b"aAfFgilnrtux",
+                            DECL_EXPORT => b"fn",
+                            _ => b"aAf",
+                        };
+                        let mut e = q + 1;
+                        while e < n && set.contains(&b[e]) {
+                            e += 1;
+                        }
+                        if e == q + 1 && b.get(e) == Some(&b'p') {
+                            e += 1;
+                        }
+                        if e > q + 1 {
+                            self.put(q, q + 1, k::OPTION_MARK);
+                            p = self.put(q + 1, e, k::OPTION);
+                            continue;
+                        }
+                    }
+                    p = q;
+                    self.fill(p);
+                    self.text = k::VAR_ASSIGN;
+                    pos = VARNAME;
+                    base = MORE;
+                }
+                _ => break,
+            }
+        }
+        Ok((p, pos, base))
+    }
+
+    /// The stack loop's contexts at the fast loop's position pushed, `base`, `pos` and `inner`
+    /// over them (each where not 0; at the end of the spans so far, so that text not yet filled
+    /// is the innermost one's): the place to resume at.
+    #[cold]
+    #[inline(never)]
+    fn fall(&mut self, p: usize, base: u8, pos: u8, inner: u8) -> Option<usize> {
+        // a name's or a value's fill is its context's again, pushed below
+        self.text = PLAIN;
+        if FALLS {
+            let w: String = self.b[p..].iter().take(12).map(|&c| c as char).collect();
+            eprintln!("FALL {pos} {inner} {} {w:?}", self.b.len() - p);
+        }
+        let at = self.at;
+        for c in [base, pos, inner] {
+            if c != 0 {
+                self.push(at, c);
+            }
+        }
+        Some(p)
+    }
+
+    /// A command's first word at `p` (a word byte) when the fast loop takes it: a word of word
+    /// bytes ending at a blank or the line's end that is a name, a keyword a command or
+    /// arguments follow, or a builtin; its end and the position after it. `None` for the rest
+    /// (definitions, assignments, the words with contexts of their own, a comment after a name).
+    #[inline(always)]
+    fn fast_command(&mut self, p: usize, holder: u8) -> Option<(usize, u8, u8)> {
+        let b = self.b;
+        let n = b.len();
+        let mut e = p;
+        while e < n && WORD[usize::from(b[e])] {
+            e += 1;
+        }
+        if e < n && (b[e] == b'=' || b[e] == b'+' && b.get(e + 1) == Some(&b'=')) {
+            // `name=`, `name+=` ([`Scan::command`]'s): the name, the operator, the value
+            let v = if b[e] == b'=' { e + 1 } else { e + 2 };
+            if v > e + 1
+                && matches!(
+                    lookup(b, p, e).0,
+                    W_DECLARE | W_EXPORT | W_READONLY | W_ALIAS | W_COPROC
+                )
+            {
+                return None;
+            }
+            match b.get(v) {
+                Some(b'(') => return None,
+                Some(b'&' | b'`') | None => {
+                    self.put(p, e, k::VAR_ASSIGN);
+                    return Some((self.put(e, v, k::ASSIGN), 0, 0));
+                }
+                _ => {
+                    self.put(p, e, k::VAR_ASSIGN);
+                    self.put(e, v, k::ASSIGN);
+                    self.text = k::UNQUOTED;
+                    return Some((v, VALUE, 0));
+                }
+            }
+        }
+        let c = b[p];
+        if e == p && c != b'/' && builtin_ends(b, p + 1) {
+            // `:` and `.`, the builtins, before a blank ([`Scan::command`]'s simple word)
+            if p + 1 < n && !matches!(b[p + 1], b' ' | b'\t' | b'\r') || self.parens_after(p + 1) {
+                return None;
+            }
+            let (_, kind, o) = word(&b[p..p + 1]);
+            return Some((self.put(p, p + 1, kind), BARGS + o, 0));
+        }
+        if e < n && matches!(b[e], 0x0b | 0x0c) {
+            // [`Scan::command`]'s blank, not a name's stop
+            return None;
+        }
+        let simple = e > p && (e == n || matches!(b[e], b' ' | b'\t' | b'\r'));
+        let (what, kind, o) = if e > p {
+            lookup(b, p, e)
+        } else {
+            (W_NONE, 0, 0)
+        };
+        if simple {
+            if !c.is_ascii_digit() && self.parens_after(e) {
+                return None;
+            }
+        } else {
+            // a word any other byte ends: a name only ([`Scan::command`]'s definition,
+            // assignment and redirection read first)
+            if what != W_NONE || self.defines_at(p) || self.assigns(p) {
+                return None;
+            }
+            let mut d = p;
+            while d < n && b[d].is_ascii_digit() {
+                d += 1;
+            }
+            if d < n && matches!(b[d], b'<' | b'>' | b'&') {
+                return None;
+            }
+        }
+        match what {
+            W_NONE => {}
+            W_BUILTIN => {
+                self.put(p, e, kind);
+                return Some((e, BARGS + o, 0));
+            }
+            W_DECLARE => return Some((self.put(p, e, kind), DECL, MORE)),
+            W_EXPORT => return Some((self.put(p, e, kind), DECL_EXPORT, MORE)),
+            W_READONLY => return Some((self.put(p, e, kind), DECL_READONLY, MORE)),
+            _ if !self.word_starts(p) => return None,
+            W_IF => return Some((self.put(p, e, kind), 0, 0)),
+            W_ARGS => return Some((self.put(p, e, kind), ARGS, 0)),
+            W_ESAC if holder != CASECMDS => return Some((self.put(p, e, kind), 0, 0)),
+            _ => return None,
+        }
+        // a name, up to where a name's plain run ends
+        let mut q = e;
+        while q < n && !NAME_STOP[usize::from(b[q])] {
+            q += 1;
+        }
+        if q == p
+            || q < n
+                && (matches!(b[q], b'"' | b'\'' | b'$' | b'~' | b'%' | b'\\')
+                    || is_space(b[q]) && self.comment_follows(q))
+        {
+            return None;
+        }
+        Some((self.put(p, q, COMMAND), ARGS, 0))
+    }
+
+    /// `-` (or `set`'s `+`) at `e` after the blank run from `p`, in the arguments at `pos`:
+    /// [`Scan::dash`]'s, an option's name taken whole. `Err` with the place to resume at and
+    /// the contexts to fall back with there.
+    #[inline(always)]
+    fn fast_dash(
+        &mut self,
+        p: usize,
+        e: usize,
+        pos: u8,
+    ) -> Result<Option<(usize, u8)>, (usize, u8)> {
+        let b = self.b;
+        let n = b.len();
+        if pos == EOO {
+            return Ok(None);
+        }
+        if b[e] == b'-' && b.get(e + 1) == Some(&b'-') && (e + 2 >= n || is_space(b[e + 2])) {
+            self.put(p, e + 2, k::END_OF_OPTIONS);
+            return Ok(Some((e + 2, EOO)));
+        }
+        if pos == ARGS {
+            let mut q = e + 1;
+            if b.get(q) == Some(&b'-') {
+                q += 1;
+            }
+            if !(q < n && (WORD[usize::from(b[q])] || b[q] == b'$')) {
+                return Ok(None);
+            }
+            self.put(p, q, k::OPTION_MARK);
+            // the option's name: word bytes and `-`, then `=`, a blank or another byte
+            let mut r = q;
+            while r < n && (WORD[usize::from(b[r])] || b[r] == b'-') {
+                r += 1;
+            }
+            if r > q {
+                self.put(q, r, k::OPTION);
+            }
+            if r < n && (b[r] == b'$' || is_space(b[r]) && self.comment_follows(r)) {
+                return Err((r, OPTION));
+            }
+            if r < n && b[r] == b'=' {
+                return Ok(Some((self.put(r, r + 1, k::OPTION_ASSIGN), ARGS)));
+            }
+            return Ok(Some((r, ARGS)));
+        }
+        if pos < BARGS {
+            return Ok(None);
+        }
+        let o = pos - BARGS;
+        let spec = &OPTS[usize::from(o)];
+        if spec.dash == 0 {
+            return Ok(None);
+        }
+        let mut q = e + 1;
+        if o == O_SET && q < n && b[q] == b'o' && option_ends(b, q + 1) {
+            q += 1;
+        } else if spec.many {
+            while q < n && in_set(spec.dash, b[q]) {
+                q += 1;
+            }
+            if q == e + 1 || !option_ends(b, q) {
+                return Ok(None);
+            }
+        } else {
+            if q >= n || !in_set(spec.dash, b[q]) || !option_ends(b, q + 1) {
+                return Ok(None);
+            }
+            q += 1;
+        }
+        if b[e] == b'+' && o != O_SET {
+            return Ok(None);
+        }
+        self.put(e, e + 1, k::OPTION_MARK);
+        Ok(Some((self.put(e + 1, q, k::OPTION), pos)))
+    }
+
+    /// A builtin's bare option at `e` ([`Scan::bare`]'s), its option set `o`.
+    #[inline(always)]
+    fn bare_of(&mut self, e: usize, o: u8) -> Option<usize> {
+        let b = self.b;
+        let n = b.len();
+        let spec = &OPTS[usize::from(o)];
+        let mut q = e;
+        while q < n && in_set(spec.bare, b[q]) {
+            q += 1;
+        }
+        if q == e || !option_ends(b, q) {
+            return None;
+        }
+        Some(self.put(e, q, k::OPTION))
+    }
+
+    /// `'…'` at `p` closed on its line: its end; `Err` with the place to resume at inside it
+    /// where it goes on past the line.
+    #[inline(always)]
+    fn fast_sq(&mut self, p: usize) -> Result<usize, usize> {
+        let b = self.b;
+        let n = b.len();
+        self.put(p, p + 1, k::STR_BEGIN);
+        let e = find_in(b, p + 1, n, *b"'");
+        if e >= n {
+            return Err(p + 1);
+        }
+        if e > p + 1 {
+            self.put(p + 1, e, k::STR_SINGLE);
+        }
+        Ok(self.put(e, e + 1, k::STR_END))
+    }
+
+    /// `"…"` at `p` closed on its line, with parameters and escapes in it: its end. `Err` with
+    /// the place to resume at inside it where something else starts (a substitution, `${`,
+    /// the line's end).
+    #[inline(always)]
+    fn fast_dq(&mut self, p: usize) -> Result<usize, usize> {
+        let b = self.b;
+        let n = b.len();
+        self.put(p, p + 1, k::STR_BEGIN);
+        let mut q = p + 1;
+        loop {
+            let e = find_in(b, q, n, *b"\"$`\\");
+            if e >= n {
+                return Err(q);
+            }
+            match b[e] {
+                b'"' => {
+                    if e > self.at {
+                        self.put(self.at, e, k::STR_DOUBLE);
+                    }
+                    return Ok(self.put(e, e + 1, k::STR_END));
+                }
+                b'\\' => {
+                    if e + 1 == n {
+                        return Err(e);
+                    }
+                    if matches!(b[e + 1], b'$' | b'`' | b'"' | b'\\') {
+                        if e > self.at {
+                            self.put(self.at, e, k::STR_DOUBLE);
+                        }
+                        q = self.put(e, e + 2, k::ESCAPE);
+                    } else {
+                        q = e + 1;
+                    }
+                }
+                b'$' => match self.fast_dollar(e, X_EXP, k::STR_DOUBLE) {
+                    Ok(Some(r)) => q = r,
+                    Ok(None) => q = e + 1,
+                    Err(()) => return Err(e),
+                },
+                _ => return Err(e),
+            }
+        }
+    }
+
+    /// `$` at `p` ([`Scan::dollar`]'s) when it is a parameter: its end; `Ok(None)` for a `$`
+    /// alone; `Err` where a context starts (`${`, `$(`, `$'`, `$"`). The text before it is
+    /// `fill`'s, put first.
+    #[inline(always)]
+    fn fast_dollar(&mut self, p: usize, what: u8, fill: u16) -> Result<Option<usize>, ()> {
+        let b = self.b;
+        let n = b.len();
+        let Some(&c) = b.get(p + 1) else {
+            return Ok(None);
+        };
+        let (e, kind) = match c {
+            b'{' | b'(' => return Err(()),
+            b'\'' | b'"' if what & X_STR != 0 => return Err(()),
+            b'0'..=b'9' => (p + 2, k::READWRITE),
+            b'$' | b'#' | b'@' | b'!' | b'~' | b'*' | b'?' | b'_' | b'-'
+                if p + 2 >= n || !WORD[usize::from(b[p + 2])] =>
+            {
+                (p + 2, k::LANG_VAR)
+            }
+            c if c.is_ascii_alphabetic() || c == b'_' || c >= 0x80 => {
+                let mut e = p + 2;
+                while e < n && WORD[usize::from(b[e])] {
+                    e += 1;
+                }
+                (e, k::READWRITE)
+            }
+            _ => return Ok(None),
+        };
+        if fill != PLAIN && p > self.at {
+            self.put(self.at, p, fill);
+        }
+        self.put(p, p + 1, k::VAR_MARK);
+        Ok(Some(self.put(p + 1, e, kind)))
+    }
+}
+
+/// Where ada-parse is built with `ADA_PARSE_X093_FALLS` set: each hand-over from the fast loop
+/// to the stack loop, and each line that can't start on the fast loop, to stderr (a census of
+/// what the fast loop doesn't take).
+const FALLS: bool = option_env!("ADA_PARSE_X093_FALLS").is_some();
+
+/// `;`, `|`, `&` at `p` ending a command (cmd-post's): its end and kind; `None` for `;;`, `;&`
+/// and `&>`.
+#[inline(always)]
+fn fast_op(b: &[u8], p: usize) -> Option<(usize, u16)> {
+    let next = b.get(p + 1).copied();
+    Some(match b[p] {
+        b';' if !matches!(next, Some(b';' | b'&')) => (p + 1, k::CONTINUE),
+        b'|' if next == Some(b'|') => (p + 2, k::OR),
+        b'|' => (p + 1, k::PIPE),
+        b'&' if next == Some(b'&') => (p + 2, k::AND),
+        b'&' if next != Some(b'>') => (p + 1, k::JOB),
+        _ => return None,
+    })
+}
+
+/// An unquoted value's plain run from `p`.
+#[inline(always)]
+fn plain_value(b: &[u8], p: usize) -> usize {
+    let n = b.len();
+    let mut e = p + 1;
+    while e < n && !VALUE_STOP[usize::from(b[e])] {
+        e += 1;
+    }
+    e
+}
+
+/// An argument's plain run from `p`.
+#[inline(always)]
+fn plain_arg(b: &[u8], p: usize) -> usize {
+    let n = b.len();
+    let mut e = p + 1;
+    while e < n && !ARG_STOP[usize::from(b[e])] {
+        e += 1;
+    }
+    e
+}
+
 // --- the entry points -------------------------------------------------------------------------
 
 /// Lex `b`, a line of bash without its `\n`, from `state`.
@@ -3168,9 +4027,11 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     let mut s = Scan::fresh(b, out, Spans::new());
     s.load(state);
     s.k.open(s.out, b.len() / 4 + 16);
-    s.lex_line();
+    let same = s.lex_line();
     s.k.close(s.out);
-    *state = s.keep();
+    if !same {
+        *state = s.keep();
+    }
 }
 
 /// A line with nothing open before it that is blank or a comment (a third of a script's
@@ -3214,8 +4075,9 @@ pub fn line_runs(
 ) {
     let mut s = Scan::fresh(b, out, Runs::new(rules, runs));
     s.load(state);
-    s.lex_line();
-    *state = s.keep();
+    if !s.lex_line() {
+        *state = s.keep();
+    }
     s.k.end_line(b.len());
 }
 
@@ -3305,6 +4167,191 @@ mod tests {
                     .collect()
             })
             .collect()
+    }
+
+    /// A line's tokens as (text, leaf scope), through `lex` (the switch's scanner).
+    fn leaves(line: &str) -> Vec<(String, String)> {
+        let (mut st, mut v) = (State::default(), Vec::new());
+        crate::lex(Lang::Bash, line, &mut st, &mut v);
+        v.iter()
+            .map(|s| {
+                let sc = Lang::Bash.scopes(s.kind);
+                (
+                    line[s.start as usize..s.end as usize].to_owned(),
+                    sc.last().copied().unwrap_or_default().to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    fn pairs(v: &[(&str, &str)]) -> Vec<(String, String)> {
+        v.iter()
+            .map(|&(t, s)| (t.to_owned(), s.to_owned()))
+            .collect()
+    }
+
+    /// The fast loop's corners (X-093's R1′), each as the stack loop reads it: a declaration's
+    /// blanks aren't its name's, an option's `=` is the option's and the value after it an
+    /// argument's, a value runs to a blank.
+    #[test]
+    fn the_fast_loop_reads_as_the_stack_loop() {
+        let assign = "variable.other.readwrite.assignment.shell";
+        let command = *Lang::Bash.scopes(super::COMMAND).last().unwrap();
+        assert_eq!(
+            leaves("export  A=1 B"),
+            pairs(&[
+                ("export", "storage.modifier.shell"),
+                ("A", assign),
+                ("=", "keyword.operator.assignment.shell"),
+                ("1", "string.unquoted.shell"),
+                ("B", assign),
+            ])
+        );
+        assert_eq!(
+            leaves("local -r x=\"$y\"z"),
+            pairs(&[
+                ("local", "storage.modifier.shell"),
+                ("-", "punctuation.definition.parameter.shell"),
+                ("r", "variable.parameter.option.shell"),
+                ("x", assign),
+                ("=", "keyword.operator.assignment.shell"),
+                ("\"", "punctuation.definition.string.begin.shell"),
+                ("$", "punctuation.definition.variable.shell"),
+                ("y", "variable.other.readwrite.shell"),
+                ("\"", "punctuation.definition.string.end.shell"),
+                ("z", "string.unquoted.shell"),
+            ])
+        );
+        assert_eq!(
+            leaves("ls -la --color=$c x"),
+            pairs(&[
+                ("ls", command),
+                (" -", "punctuation.definition.parameter.shell"),
+                ("la", "variable.parameter.option.shell"),
+                (" --", "punctuation.definition.parameter.shell"),
+                ("color", "variable.parameter.option.shell"),
+                ("=", "keyword.operator.assignment.option.shell"),
+                ("$", "punctuation.definition.variable.shell"),
+                ("c", "variable.other.readwrite.shell"),
+            ])
+        );
+        assert_eq!(
+            leaves("set -o pipefail"),
+            pairs(&[
+                ("set", "support.function.set.shell"),
+                ("-", "punctuation.definition.parameter.shell"),
+                ("o", "variable.parameter.option.shell"),
+            ])
+        );
+    }
+
+    /// A script lexed line by line and as one carried block (every line through the fast loop,
+    /// the stack loop, or both) gives the same spans and states.
+    #[test]
+    fn a_block_lexes_as_its_lines() {
+        let text = [
+            "#!/bin/bash",
+            "f() {",
+            "  local x=1 y=\"a $b",
+            "c\" z",
+            "  echo \"$x\" ${y:-d} $(cmd -v | wc -l) > /dev/null 2>&1",
+            "  [[ -f $x ]] && export A=1 || return 1",
+            "  case $1 in",
+            "    a|b) foo; bar=2 ;;",
+            "  esac",
+            "  cat <<-EOF",
+            "\tbody $x",
+            "\tEOF",
+            "  ls -la \\",
+            "    --color=auto '",
+            "  quoted' x=1",
+            "}",
+            "for i in 1 2; do x+=$i; done",
+        ]
+        .join("\n");
+        let (mut want, mut state, mut spans) = (Vec::new(), State::default(), Vec::new());
+        for line in text.split('\n') {
+            crate::lex(Lang::Bash, line, &mut state, &mut spans);
+            want.push((line.to_owned(), spans.clone(), state));
+        }
+        for max in [1, 2, usize::MAX] {
+            let (mut got, mut state, mut buf) = (Vec::new(), State::default(), String::new());
+            let mut rest = Some(&text[..]);
+            while let Some(t) = rest {
+                let next = crate::lex_lines(
+                    Lang::Bash,
+                    t,
+                    max,
+                    &mut state,
+                    (&mut spans, &mut buf),
+                    |_, _| false,
+                    |l, s| got.push((l.to_owned(), s.to_vec())),
+                );
+                assert_eq!(
+                    state,
+                    want[got.len() - 1].2,
+                    "max {max}, line {}",
+                    got.len()
+                );
+                rest = next.map(|p| &t[p..]);
+            }
+            let lines: Vec<_> = want
+                .iter()
+                .map(|(l, s, _)| (l.clone(), s.clone()))
+                .collect();
+            assert_eq!(got, lines, "max {max}");
+        }
+    }
+
+    /// The states the fast loop leaves: a line it takes whole leaves the state it was given
+    /// (here a function's body), a string it opens goes on to the next line.
+    #[test]
+    fn the_fast_loop_keeps_the_state() {
+        let (mut st, mut v) = (State::default(), Vec::new());
+        crate::lex(Lang::Bash, "f() {", &mut st, &mut v);
+        let body = st;
+        for line in [
+            "  local x=1",
+            "  echo \"$x\" -n",
+            "  a=b cmd arg; other || x",
+        ] {
+            crate::lex(Lang::Bash, line, &mut st, &mut v);
+            assert_eq!(st, body, "{line}");
+        }
+        crate::lex(Lang::Bash, "  echo \"open", &mut st, &mut v);
+        assert_ne!(st, body);
+        let got = spans(&["echo \"open", "still\" x"]);
+        assert_eq!(
+            got[1][0],
+            ("still".to_owned(), "string.quoted.double.shell".to_owned())
+        );
+        crate::lex(Lang::Bash, "closed\" x", &mut st, &mut v);
+        assert_eq!(st, body);
+        crate::lex(Lang::Bash, "}", &mut st, &mut v);
+        assert_eq!(st, State::default());
+    }
+
+    /// Lines of the fast loop's constructs repeated, and of the hand-overs from it, lex in
+    /// linear time.
+    #[test]
+    fn long_lines_stay_linear() {
+        let lines = [
+            "x=".repeat(30000),
+            "a=b ".repeat(20000),
+            format!("local {}", "a=$b ".repeat(15000)),
+            format!("echo {}", "\"$a\" -x --y=z ".repeat(8000)),
+            format!("echo \"{}", "$a ".repeat(20000)),
+            "${".repeat(20000),
+            "$(".repeat(20000),
+            "; ".repeat(30000),
+            "f ".repeat(30000),
+        ];
+        let t = std::time::Instant::now();
+        let (mut state, mut spans) = (State::default(), Vec::new());
+        for line in &lines {
+            crate::lex(Lang::Bash, line, &mut state, &mut spans);
+        }
+        assert!(t.elapsed().as_secs() < 2, "{:?}", t.elapsed());
     }
 
     #[test]

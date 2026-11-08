@@ -1,3 +1,6 @@
+//! **Makefile's recipes' shell** (since X-093, bash's own lexer is [`own`]): bat's bash contexts
+//! compiled, on which [`makefile`] runs a recipe's commands with its own patterns in front.
+//!
 //! bash by a scanner of ada's own (ADR-40, speed first), in place of the port of syntect's
 //! machine that ran it before (`make`, G-003). bat's `Bourne Again Shell (bash)` and its
 //! generated `commands-builtin-shell-bash` are the reference: the scanner keeps their contexts,
@@ -28,7 +31,7 @@
 
 use std::mem::MaybeUninit;
 
-use crate::emit::{Push, Rules, Run, Runs, Sink};
+use crate::emit::{Push, Runs, Sink};
 use crate::matcher::KEPT as HALF;
 use crate::prim::char_len;
 use crate::{Out, State};
@@ -766,70 +769,6 @@ fn hash(word: &[u8]) -> u32 {
         h = (h ^ u32::from(c)).wrapping_mul(0x0100_0193);
     }
     h
-}
-
-/// Lex `b`, a line of bash without its `\n`, from `state`.
-#[inline(never)]
-pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut s = Scan::new(b, state, out, None, Push);
-    s.stack[0] = MaybeUninit::new(FRAME);
-    s.load(state);
-    s.run::<false>();
-    s.fill(s.b.len());
-    *state = s.save();
-}
-
-/// [`line`]'s runs by theme rule pushed to `runs` (X-075, X-068's sink): [`crate::lex_runs`] for
-/// bash.
-#[inline(never)]
-pub fn line_runs(
-    b: &[u8],
-    state: &mut State,
-    out: &mut Out,
-    rules: &mut dyn Rules,
-    runs: &mut Vec<Run>,
-) {
-    let mut s = Scan::new(b, state, out, None, Runs::new(rules, runs));
-    s.stack[0] = MaybeUninit::new(FRAME);
-    s.load(state);
-    s.run::<false>();
-    s.fill(s.b.len());
-    *state = s.save();
-    s.k.end_line(b.len());
-}
-
-/// A block of bash on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
-/// the last line leaves it.
-pub fn block(
-    state: &mut State,
-    spans: &mut Vec<crate::Span>,
-    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
-) -> Option<usize> {
-    let mut out = Out::new(spans);
-    let mut s = Scan::new(b"", state, &mut out, None, Push);
-    s.stack[0] = MaybeUninit::new(FRAME);
-    s.load(state);
-    let rest = pass(&mut s);
-    *state = s.save();
-    rest
-}
-
-/// [`block`]'s runs by theme rule pushed to `runs` ([`crate::CarryRuns`], X-075).
-pub fn block_runs(
-    state: &mut State,
-    spans: &mut Vec<crate::Span>,
-    rules: &mut dyn Rules,
-    runs: &mut Vec<Run>,
-    lines: &mut crate::RunLines,
-) -> Option<usize> {
-    let mut out = Out::new(spans);
-    out.0.clear();
-    let mut s = Scan::new(b"", state, &mut out, None, Runs::new(rules, runs));
-    s.stack[0] = MaybeUninit::new(FRAME);
-    s.load(state);
-    let rest = lines.pass(&mut s);
-    *state = s.save();
-    rest
 }
 
 impl crate::Carry for Scan<'_, '_, '_, Push> {
@@ -3389,6 +3328,10 @@ mod tests {
     use crate::Lang;
     use crate::tests::marked;
 
+    /// A command's name: the builtins' color apart from its arguments (X-093), where bat has
+    /// `variable.function`.
+    const COMMAND: &str = "meta.function-call.shell support.function.command.shell";
+
     #[test]
     fn a_command_and_its_arguments() {
         let m = marked(Lang::Bash, &["echo \"hi $USER\" --flag=1 | grep -v x"]);
@@ -3397,7 +3340,7 @@ mod tests {
             "meta.function-call.shell support.function.echo.shell"
         )));
         assert!(m.contains(&("USER", "variable.other.readwrite.shell")));
-        assert!(m.contains(&("grep", "meta.function-call.shell variable.function.shell")));
+        assert!(m.contains(&("grep", COMMAND)));
         assert!(m.contains(&("|", "keyword.operator.logical.pipe.shell")));
     }
 
@@ -3413,6 +3356,6 @@ mod tests {
         let m = marked(Lang::Bash, &["cat <<EOF", "x $y", "EOF", "ls"]);
         assert!(m.contains(&("x ", "string.unquoted.heredoc.shell")));
         assert!(m.contains(&("EOF", "keyword.control.heredoc-token.shell")));
-        assert!(m.contains(&("ls", "meta.function-call.shell variable.function.shell")));
+        assert!(m.contains(&("ls", COMMAND)));
     }
 }
