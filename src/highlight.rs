@@ -3802,6 +3802,78 @@ mod tests {
         rules_match_the_grammar("known_hosts", "Known Hosts", text);
     }
 
+    /// ada-parse's SSH Config scanner picks the colors bat's grammar picks, in every built-in
+    /// theme (X-060), but for a shell command's name (bash's scanner's, X-093). Its other
+    /// departure is left out of the text: bat's client takes a value's first byte as a token
+    /// alone, so a list word, time or address first in a value is plain there
+    /// (`Ciphers aes128-ctr`, `ServerAliveInterval 60s`, `ProxyJump none`), colored here.
+    #[test]
+    fn ssh_config_colors_match_the_grammar() {
+        let text = concat!(
+            "# a comment\n",
+            "Host github.com *.example.org !bad ?x\n",
+            "  HostName 192.168.1.10\n",
+            "  User git\n",
+            "  Port 2222\n",
+            "  IdentityFile ~/.ssh/id_ed25519\n",
+            "  ForwardAgent yes\n",
+            "  StrictHostKeyChecking ask\n",
+            "  Ciphers +aes128-ctr,chacha20-poly1305@openssh.com,3des-cbc\n",
+            "  HostKeyAlgorithms -ssh-dss,ssh-ed25519\n",
+            "  ServerAliveInterval \"60s\"\n",
+            "  LocalForward 8080 localhost:80\n",
+            "  ProxyCommand ssh -W %h:%p bastion\n",
+            "  ControlPath ~/.ssh/cm-%r@%h:%p\n",
+            "  SendEnv LANG LC_*\n",
+            "Match host *.corp user admin exec \"test -f /tmp/x\"\n",
+            "  ForwardX11 no\n",
+            "Match originalhost x canonical all\n",
+            "  LocalCommand echo %n\n",
+        );
+        colors_match_the_grammar_but(
+            "ssh_config",
+            "SSH Config",
+            text,
+            &[(
+                "meta.function-call.shell support.function.command.shell",
+                "meta.function-call.shell variable.function.shell",
+            )],
+        );
+    }
+
+    /// ada-parse's SSHD Config scanner picks the colors bat's grammar picks, in every built-in
+    /// theme (X-060), but for a shell command's name (bash's scanner's, X-093). Its other
+    /// departure is left out of the text: bat reads `ForceCommand`'s value as a command only in a
+    /// `Match` block, ada everywhere.
+    #[test]
+    fn sshd_config_colors_match_the_grammar() {
+        let text = concat!(
+            "# $OpenBSD$\n",
+            "Port 22\n",
+            "ListenAddress 0.0.0.0\n",
+            "PermitRootLogin no\n",
+            "KexAlgorithms curve25519-sha256,diffie-hellman-group14-sha1\n",
+            "MACs hmac-sha2-256,hmac-md5\n",
+            "AuthorizedKeysFile .ssh/authorized_keys %h/.ssh/keys\n",
+            "RekeyLimit 1G 1h\n",
+            "Banner none\n",
+            "Subsystem sftp /usr/lib/ssh/sftp-server\n",
+            "Match User anoncvs,!root Address 10.0.0.0/8 LocalPort 2222\n",
+            "  X11Forwarding no\n",
+            "  ForceCommand cvs server\n",
+            "Match all\n",
+        );
+        colors_match_the_grammar_but(
+            "sshd_config",
+            "SSHD Config",
+            text,
+            &[(
+                "meta.function-call.shell support.function.command.shell",
+                "meta.function-call.shell variable.function.shell",
+            )],
+        );
+    }
+
     /// ada-parse's `.env` lexer picks the rules bat's grammar picks, in every built-in theme
     /// (ADR-40).
     #[test]

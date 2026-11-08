@@ -186,9 +186,14 @@ pub static IPV6: Re = Re::Alt(&[
 /// Where an IPv6 address from `p` ends (`ipv6`), if one starts there.
 #[inline(never)]
 pub fn ipv6(b: &[u8], p: usize) -> Option<usize> {
-    // every alternative starts with a `:`, or with one to four hex digits and a `:` (`fe80:`
-    // too): a name that starts with hex letters is passed without the matcher
-    if *b.get(p)? != b':' {
+    // every alternative starts with `::`, or with one to four hex digits and a `:` (`fe80:`
+    // too): a name that starts with hex letters, or a lone `:` (`host:22`), is passed without
+    // the matcher
+    if *b.get(p)? == b':' {
+        if b.get(p + 1) != Some(&b':') {
+            return None;
+        }
+    } else {
         let run = b[p..]
             .iter()
             .take(5)
@@ -196,6 +201,27 @@ pub fn ipv6(b: &[u8], p: usize) -> Option<usize> {
             .count();
         if !(1..=4).contains(&run) || b.get(p + run) != Some(&b':') {
             return None;
+        }
+        // past that, each but `fe80:…%` holds a `::` or seven `:` in its run of hex digits and
+        // colons (`db:5432`, `1:8080` are passed without the matcher)
+        if !b[p..]
+            .get(..5)
+            .is_some_and(|s| s.eq_ignore_ascii_case(b"fe80:"))
+        {
+            let (mut colons, mut double, mut last) = (0, false, 0);
+            for &x in b[p..]
+                .iter()
+                .take_while(|&&x| x == b':' || HEX[usize::from(x)])
+            {
+                if x == b':' {
+                    colons += 1;
+                    double |= last == b':';
+                }
+                last = x;
+            }
+            if !double && colons < 7 {
+                return None;
+            }
         }
     }
     match_end(&IPV6, b, p)
@@ -457,6 +483,30 @@ mod tests {
                 assert_eq!(
                     ipv4(&s, p),
                     want,
+                    "{:?} at {p}",
+                    String::from_utf8_lossy(&s)
+                );
+            }
+        }
+    }
+
+    /// `ipv6`'s pre-checks against its pattern on the matcher, at every place of strings of hex
+    /// digits, colons, dots, `%` and a letter.
+    #[test]
+    fn ipv6_reads_as_its_pattern_matches() {
+        let mut x = 0x9e37_79b9_7f4a_7c15_u64;
+        for _ in 0..100_000 {
+            let mut s = Vec::new();
+            for _ in 0..(x % 23) {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                s.push(b"0f1aE9::::...%zg"[(x % 16) as usize]);
+            }
+            for p in 0..s.len() {
+                assert_eq!(
+                    ipv6(&s, p),
+                    match_end(&IPV6, &s, p),
                     "{:?} at {p}",
                     String::from_utf8_lossy(&s)
                 );

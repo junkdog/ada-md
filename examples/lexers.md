@@ -320,6 +320,38 @@ github.com,140.82.121.4 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoq
 @cert-authority *.example.com ssh-dss AAAAB3NzaC1kc3MAAACBAP== ca
 ```
 
+## SSH Config
+
+```ssh_config
+# ~/.ssh/config
+Host bastion *.corp !legacy.corp
+  HostName 10.0.0.5
+  User deploy
+  Port 2222
+  IdentityFile ~/.ssh/id_ed25519
+  ForwardAgent yes
+  ServerAliveInterval 60s
+  Ciphers chacha20-poly1305@openssh.com,aes256-ctr,3des-cbc
+  ProxyCommand ssh -W %h:%p jump.example.com
+Match host *.lab exec "test -S ~/.ssh/agent.sock"
+  IdentityAgent none
+```
+
+## SSHD Config
+
+```sshd_config
+# /etc/ssh/sshd_config
+Port 22
+ListenAddress 0.0.0.0
+PermitRootLogin no
+KexAlgorithms curve25519-sha256,diffie-hellman-group1-sha1
+RekeyLimit 1G 1h
+Subsystem sftp internal-sftp
+Match Group sftp Address 10.0.0.0/8
+  ChrootDirectory %h
+  ForceCommand internal-sftp
+```
+
 ## Rust
 
 ```rust

@@ -32,6 +32,9 @@ const LANGS: &[(&str, Lang)] = &[
     ("mailmap", Lang::GitMailmap),
     ("fstab", Lang::Fstab),
     ("known_hosts", Lang::KnownHosts),
+    // X-060's corpus: GitHub's client and server configs, and this machine's
+    ("ssh_config", Lang::SshConfig),
+    ("sshd_config", Lang::SshdConfig),
     ("rust", Lang::Rust),
     ("kotlin", Lang::Kotlin),
     ("java", Lang::Java),

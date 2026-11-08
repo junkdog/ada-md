@@ -45,6 +45,10 @@ pub enum Lang {
     Fstab,
     /// bat's `Known Hosts`: OpenSSH's `known_hosts`.
     KnownHosts,
+    /// bat's `SSH Config`: OpenSSH's client config.
+    SshConfig,
+    /// bat's `SSHD Config`: OpenSSH's server config.
+    SshdConfig,
     /// bat's `Rust`.
     Rust,
     /// bat's `Kotlin`.
@@ -266,6 +270,8 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::GitLink, &[".git"]),
     (Lang::Fstab, &["fstab", "crypttab", "mtab"]),
     (Lang::KnownHosts, &["known_hosts", "known_hosts.old"]),
+    (Lang::SshConfig, &["ssh_config"]),
+    (Lang::SshdConfig, &["sshd_config"]),
     (Lang::Rust, &["rs"]),
     (Lang::Kotlin, &["kt", "kts"]),
     (Lang::Java, &["java", "bsh"]),
@@ -327,7 +333,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 40] = [
+    pub const ALL: [Lang; 42] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -346,6 +352,8 @@ impl Lang {
         Lang::GitLink,
         Lang::Fstab,
         Lang::KnownHosts,
+        Lang::SshConfig,
+        Lang::SshdConfig,
         Lang::Rust,
         Lang::Kotlin,
         Lang::Java,
@@ -392,6 +400,8 @@ impl Lang {
             Lang::GitLink => "Git Link",
             Lang::Fstab => "fstab",
             Lang::KnownHosts => "Known Hosts",
+            Lang::SshConfig => "SSH Config",
+            Lang::SshdConfig => "SSHD Config",
             Lang::Rust => "Rust",
             Lang::Kotlin => "Kotlin",
             Lang::Java => "Java",
@@ -447,6 +457,8 @@ impl Lang {
             Lang::GitLink => "text.git.link",
             Lang::Fstab => "source.fstab",
             Lang::KnownHosts => "text.known_hosts",
+            Lang::SshConfig => "source.ssh_config",
+            Lang::SshdConfig => "source.sshd_config",
             Lang::Rust => "source.rust",
             Lang::Kotlin => "source.Kotlin",
             Lang::Java => "source.java",
@@ -518,6 +530,8 @@ impl Lang {
             Lang::Makefile => crate::bash::make_scopes(kind),
             Lang::Dockerfile => crate::dockerfile::scopes(kind),
             Lang::Properties => crate::properties::scopes(kind),
+            Lang::SshConfig => crate::ssh_config::scopes(kind, false),
+            Lang::SshdConfig => crate::ssh_config::scopes(kind, true),
             _ => self
                 .kinds()
                 .get(usize::from(kind))
@@ -534,7 +548,10 @@ impl Lang {
     /// Whether a line's spans never depend on the lines before it, so that lines can be lexed
     /// in any order, on any thread, from `State::default()`.
     pub fn line_by_line(self) -> bool {
-        matches!(self, Lang::Diff | Lang::Ini | Lang::Log | Lang::Fstab)
+        matches!(
+            self,
+            Lang::Diff | Lang::Ini | Lang::Log | Lang::Fstab | Lang::SshConfig | Lang::SshdConfig
+        )
     }
 
     /// The language a syntax's own name gives, as `find_syntax_by_name` matches it: exactly.
