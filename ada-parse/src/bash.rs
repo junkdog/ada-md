@@ -35,6 +35,7 @@ use crate::{Out, State};
 
 mod makefile;
 mod matchers;
+pub(crate) mod own;
 mod scan;
 
 pub use makefile::{
@@ -223,6 +224,10 @@ kinds! {
     B_READARRAY = "meta.function-call.shell support.function.readarray.shell",
     B_SHOPT = "meta.function-call.shell support.function.shopt.shell",
     B_UNSET = "meta.function-call.shell support.function.unset.shell",
+    // a command's name in the builtins' color, apart from its arguments (X-093, the user's ask:
+    // "similar to the zsh syntax highlighting plugin"); bat's `variable.function` is every
+    // theme's plain foreground
+    COMMAND = "meta.function-call.shell support.function.command.shell",
 }
 
 /// No kind: plain text.
