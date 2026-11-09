@@ -29,14 +29,15 @@ use libfuzzer_sys::fuzz_target;
 /// The languages whose scan writes runs itself, not through spans (Rust X-068, the line-format
 /// engine's X-069, JSON's, TOML's and XML's X-072, the code languages' X-074; Go's, Lua's,
 /// SCSS's and bash's X-075, bash's run copy apart from its span copy since X-094; Makefile's
-/// runs come from its spans since X-094; C's and C++'s X-057).
-const RUN_SCANS: [Lang; 37] = [
+/// runs come from its spans since X-094; C's and C++'s X-057; Swift's X-101; CMake's X-104).
+const RUN_SCANS: [Lang; 39] = [
     Lang::Bash,
     Lang::Scss,
     Lang::Rust,
     Lang::Go,
     Lang::Lua,
     Lang::Swift,
+    Lang::CMake,
     Lang::Java,
     Lang::CSharp,
     Lang::Kotlin,
@@ -57,6 +58,7 @@ const RUN_SCANS: [Lang; 37] = [
     Lang::GitMailmap,
     Lang::GitLink,
     Lang::Fstab,
+    Lang::CMakeCache,
     Lang::KnownHosts,
     Lang::SshConfig,
     Lang::SshdConfig,

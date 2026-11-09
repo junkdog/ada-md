@@ -433,6 +433,30 @@ fn fstab_soup() {
 }
 
 #[test]
+fn cmake_cache_examples() {
+    let blocks = [
+        "# This is the CMakeCache file.\n//Path to a program.\nCMAKE_AR:FILEPATH=/usr/bin/ar\nK-2:STATIC=\n",
+        "  K:BOOL=ON # x\nKEY\n:STRING=a\nK:T==x\nK:STRING;x\nK:A B.c=v\n",
+        "x // c\n/x\nK=1\nK\n\n  \nK:\t=1\n# c\n",
+        "\u{e9}:INTERNAL=1\nK:a:b/c\\d=\u{e9}\n\t\n",
+        "",
+        "\n\n",
+    ];
+    for block in blocks {
+        exact(Lang::CMakeCache, block);
+    }
+}
+
+#[test]
+fn cmake_cache_soup() {
+    let tokens = [
+        "KEY", "K-2", ":", "STRING", "FILEPATH", "a b", "=", "==", "value", "/usr/bin", "#", "# c",
+        "//", "// doc", "/", " ", "  ", "\t", ";", "\u{e9}", "\n", "\n", "\n",
+    ];
+    soup(&[Lang::CMakeCache], &tokens, 30);
+}
+
+#[test]
 fn known_hosts_examples() {
     let blocks = [
         "# c\n  # c\n@revoked [a,b*]:22,1.2.3.4 ssh-rsa AAAAB3Nza+/= my label \n",

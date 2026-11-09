@@ -75,6 +75,10 @@ pub enum Lang {
     Php,
     /// bat's `Swift`.
     Swift,
+    /// bat's `CMake`.
+    CMake,
+    /// bat's `CMakeCache`: `CMakeCache.txt`.
+    CMakeCache,
     /// bat's `SQL`.
     Sql,
     /// bat's `PowerShell`.
@@ -350,6 +354,8 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
         ],
     ),
     (Lang::Swift, &["swift"]),
+    (Lang::CMake, &["cmakelists.txt", "cmake"]),
+    (Lang::CMakeCache, &["cmakecache.txt"]),
     (Lang::Sql, &["sql", "ddl", "dml"]),
     (Lang::PowerShell, &["ps1", "psm1", "psd1"]),
     (Lang::Css, &["css", "css.erb", "css.liquid"]),
@@ -366,7 +372,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 46] = [
+    pub const ALL: [Lang; 48] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -400,6 +406,8 @@ impl Lang {
         Lang::Lua,
         Lang::Php,
         Lang::Swift,
+        Lang::CMake,
+        Lang::CMakeCache,
         Lang::JavaScript,
         Lang::Sql,
         Lang::PowerShell,
@@ -452,6 +460,8 @@ impl Lang {
             Lang::Lua => "Lua",
             Lang::Php => "PHP",
             Lang::Swift => "Swift",
+            Lang::CMake => "CMake",
+            Lang::CMakeCache => "CMakeCache",
             Lang::Sql => "SQL",
             Lang::PowerShell => "PowerShell",
             Lang::JavaScript => "JavaScript (Babel)",
@@ -513,6 +523,8 @@ impl Lang {
             Lang::Lua => "source.lua",
             Lang::Php => "embedding.php",
             Lang::Swift => "source.swift",
+            Lang::CMake => "source.cmake",
+            Lang::CMakeCache => "source.cmakecache",
             Lang::Sql => "source.sql",
             Lang::PowerShell => "source.powershell",
             Lang::JavaScript => "source.js",
@@ -535,6 +547,7 @@ impl Lang {
             Lang::Diff => crate::diff::KINDS,
             Lang::Ini => crate::ini::KINDS,
             Lang::Fstab => crate::fstab::KINDS,
+            Lang::CMakeCache => crate::cmake_cache::KINDS,
             Lang::KnownHosts => crate::known_hosts::KINDS,
             Lang::Json => &crate::json::KINDS,
             Lang::Log => &crate::logs::KINDS,
@@ -560,6 +573,7 @@ impl Lang {
             Lang::Lua => crate::lua::scopes(kind),
             Lang::Php => crate::php::scopes(kind),
             Lang::Swift => crate::swift::scopes(kind),
+            Lang::CMake => crate::cmake::scopes(kind),
             Lang::Sql => crate::sql::scopes(kind),
             Lang::PowerShell => crate::powershell::scopes(kind),
             Lang::JavaScript => crate::javascript::scopes(kind),
@@ -865,7 +879,17 @@ const FIRST_LINES: &[FirstLineRegex] = &[
     // ^%YAML( ?1.\d+)?
     may("YAML", |t| t.line.starts_with("%YAML")),
     // # This is the CMakeCache file.
-    may("CMakeCache", |t| t.has("# This is the CMakeCache file")),
+    decided(
+        "CMakeCache",
+        Lang::CMakeCache,
+        |t| t.has("# This is the CMakeCache file"),
+        |line| {
+            Some(
+                line.match_indices("# This is the CMakeCache file")
+                    .any(|(i, m)| line.len() > i + m.len()),
+            )
+        },
+    ),
     // ^#!.*\bcoffee
     may("CoffeeScript", |t| t.shebang() && t.has("coffee")),
     // ^#!/.*\bcrystal

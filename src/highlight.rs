@@ -3776,6 +3776,25 @@ mod tests {
         rules_match_the_grammar("properties", "Java Properties", text);
     }
 
+    /// ada-parse's CMakeCache lexer picks the rules bat's grammar picks, in every built-in
+    /// theme (X-104).
+    #[test]
+    fn cmake_cache_rules_match_the_grammar() {
+        let text = concat!(
+            "# This is the CMakeCache file.\n",
+            "//Path to a program.\n",
+            "CMAKE_AR:FILEPATH=/usr/bin/ar\n",
+            "K-2:STATIC=\n",
+            "  K:BOOL=ON # x\n",
+            "KEY\n",
+            ":STRING=a\n",
+            "K:T==x\n",
+            "K:A B.c;v\n",
+            "x // c\n",
+        );
+        rules_match_the_grammar("cmakecache", "CMakeCache", text);
+    }
+
     /// ada-parse's fstab lexer picks the rules bat's grammar picks, in every built-in theme
     /// (ADR-40).
     #[test]
@@ -4098,6 +4117,64 @@ mod tests {
             "/* block */ let w = 2 // trailing\n",
         );
         colors_match_the_grammar("swift", "Swift", text);
+    }
+
+    /// ada-parse's CMake scanner picks the colors bat's grammar picks, in every built-in theme
+    /// (X-104): it follows bat's reading throughout, its derailments too (a builtin's arguments
+    /// end at their first `)`, a stray word waits for a `(`), so the text needs no departures.
+    #[test]
+    fn cmake_colors_match_the_grammar() {
+        let text = concat!(
+            "cmake_minimum_required(VERSION 3.16)\n",
+            "project(foo LANGUAGES CXX)\n",
+            "#[==[ a bracket\n",
+            "comment ]==] after\n",
+            "set(FOO bar CACHE STRING \"doc\" FORCE)\n",
+            "set(X 1 CACHE PATHS \"d\")\n",
+            "set(${X}_y 1 PARENT_SCOPE)\n",
+            "SET(\n",
+            "  Y 2)\n",
+            "if(NOT DEFINED FOO AND (A OR B) OR C VERSION_LESS_EQUAL 2)\n",
+            "  message(STATUS \"x ${FOO} $ENV{HOME} $<CONFIG:Debug> \\n \\q ; a\\\n",
+            "b\")\n",
+            "elseif(X MATCHES [[a.*b]] OR Y MATCHES\n",
+            "  [=[raw]=])\n",
+            "  break()\n",
+            "else()\n",
+            "endif()\n",
+            "endif()\n",
+            "else junk\n",
+            "function(my_fn a b)\n",
+            "  continue()\n",
+            "  break()\n",
+            "endfunction()\n",
+            "macro(m)\n",
+            "endmacro()\n",
+            "foreach(x IN LISTS y ITEMS z)\n",
+            "  if(x)\n",
+            "    continue()\n",
+            "  endif()\n",
+            "endforeach()\n",
+            "while(A)\n",
+            "endwhile()\n",
+            "my_cmd(FOO BAR_1 foo FOO=1 FOO-x (a b) \"s\" [[raw]] PROPERTIES FOO/${X}#c\n",
+            "BAR)\n",
+            "foo(a\\;b\\q c 'x y' -D${A}=\"$<$<CXX_COMPILER_ID:GNU>:-Wall ${W}>\")\n",
+            "target_link_libraries(foo PRIVATE bar (x) y)\n",
+            "add_executable(foo WIN32 src/a.c)\n",
+            "add_custom_command(OUTPUT x USES_TERMINAL COMMAND_EXPAND_LISTS)\n",
+            "install(TARGETS x INCLUDES DESTINATION y RUNTIME DESTINATION bin) # trailing\n",
+            "include(foo OPTIONAL RESULT_VARIABLE res)\n",
+            "if # c\n",
+            "(x)\n",
+            "endif()\n",
+            "message (STATUS x) junk\n",
+            "target_compile_options(x PRIVATE $<$<A:b>:c # d\n",
+            ">)\n",
+            "Set_Property(X ${a_${b}} ${A # e\n",
+            "})\n",
+        );
+        colors_match_the_grammar("cmake", "CMake", text);
     }
 
     /// ada-parse's `.env` lexer picks the rules bat's grammar picks, in every built-in theme

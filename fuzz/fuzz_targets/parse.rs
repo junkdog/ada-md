@@ -45,6 +45,7 @@ const EXACT: [Lang; 12] = [
     Lang::GitMailmap,
     Lang::GitLink,
     Lang::Fstab,
+    Lang::CMakeCache,
     Lang::KnownHosts,
 ];
 

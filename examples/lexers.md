@@ -160,6 +160,48 @@ int main(int argc, char** argv) {
 #_(println "ignored form")
 ```
 
+## CMake
+
+```cmake
+cmake_minimum_required(VERSION 3.16)
+project(demo LANGUAGES CXX)
+
+#[[ A bracket comment,
+    over lines. ]]
+option(DEMO_TESTS "Build the tests" ON)
+set(DEMO_FLAGS -Wall -Wextra CACHE STRING "Compiler flags")
+
+function(demo_add name)
+  add_library(${name} STATIC ${ARGN})
+  target_compile_options(${name} PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:${DEMO_FLAGS}>)
+endfunction()
+
+foreach(src IN LISTS DEMO_SOURCES)
+  if(NOT EXISTS "${src}" OR src MATCHES [[\.tmp$]])
+    message(WARNING "skipping ${src}: $ENV{HOME}\n")
+    continue()
+  endif()
+endforeach()
+
+install(TARGETS demo RUNTIME DESTINATION bin) # trailing
+```
+
+## CMakeCache
+
+```cmakecache
+# This is the CMakeCache file.
+# KEY:TYPE=VALUE
+
+//Path to a program.
+CMAKE_AR:FILEPATH=/usr/bin/ar
+
+//Choose the type of build.
+CMAKE_BUILD_TYPE:STRING=Release
+DEMO_TESTS:BOOL=ON
+CMAKE_CACHEFILE_DIR:INTERNAL=/home/me/demo/build
+```
+
 ## Crontab
 
 ```crontab

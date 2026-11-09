@@ -42,6 +42,8 @@ mod known_hosts;
 mod kotlin;
 mod lang;
 // the frame under INI, Java properties and `.env`
+mod cmake;
+mod cmake_cache;
 mod line_format;
 mod lisp;
 mod logs;
@@ -453,6 +455,7 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
         Lang::Lua => (lua::block_runs, lua::line_runs),
         Lang::Php => (php::block_runs, php::line_runs),
         Lang::Swift => (swift::block_runs, swift::line_runs),
+        Lang::CMake => (cmake::block_runs, cmake::line_runs),
         Lang::Scss => (css::scss::block_runs, css::scss::line_runs),
         Lang::Bash => (bash::block_runs, bash::line_runs),
         Lang::Cpp => (cc::block_runs, cc::line_runs),
@@ -483,6 +486,7 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::Lua if SPANS => lua::block,
         Lang::Php if SPANS => php::block,
         Lang::Swift if SPANS => swift::block,
+        Lang::CMake if SPANS => cmake::block,
         Lang::PowerShell => powershell::block,
         Lang::Css => css::block,
         Lang::Scss if SPANS => css::scss::block,
@@ -653,6 +657,7 @@ fn run_scanner(lang: Lang) -> Option<RunScanner> {
         Lang::GitMailmap => git::mailmap_runs,
         Lang::GitLink => git::link_runs,
         Lang::Fstab => fstab::line_runs,
+        Lang::CMakeCache => cmake_cache::line_runs,
         Lang::KnownHosts => known_hosts::line_runs,
         Lang::SshConfig => ssh_config::line_runs,
         Lang::SshdConfig => ssh_config::sshd_line_runs,
@@ -688,6 +693,7 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         | Lang::GitMailmap
         | Lang::GitLink
         | Lang::Fstab
+        | Lang::CMakeCache
         | Lang::KnownHosts
         | Lang::SshConfig
         | Lang::SshdConfig
@@ -738,6 +744,8 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::Php => out!(php::line),
         Lang::Swift if !SPANS => |_, _, _| unreachable!("Swift's runs come from its own scan"),
         Lang::Swift => out!(swift::line),
+        Lang::CMake if !SPANS => |_, _, _| unreachable!("CMake's runs come from its own scan"),
+        Lang::CMake => out!(cmake::line),
         Lang::Sql => out!(sql::line),
         Lang::PowerShell => out!(powershell::line),
         Lang::JavaScript => out!(javascript::line),
@@ -767,6 +775,7 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::GitMailmap => out!(git::mailmap),
         Lang::GitLink => out!(git::link),
         Lang::Fstab => out!(fstab::line),
+        Lang::CMakeCache => out!(cmake_cache::line),
         Lang::KnownHosts => out!(known_hosts::line),
         Lang::SshConfig => out!(ssh_config::line),
         Lang::SshdConfig => out!(ssh_config::sshd_line),

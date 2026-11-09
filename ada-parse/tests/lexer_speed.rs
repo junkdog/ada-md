@@ -52,6 +52,8 @@ const LANGS: &[(&str, Lang)] = &[
     ("php", Lang::Php),
     // X-101's corpus: 30 Swift repositories' files
     ("swift", Lang::Swift),
+    // X-104's corpus: 40 CMake-built repositories' CMake files
+    ("cmake", Lang::CMake),
     ("sql", Lang::Sql),
     ("powershell", Lang::PowerShell),
     ("javascript", Lang::JavaScript),
