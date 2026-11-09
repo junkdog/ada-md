@@ -37,6 +37,8 @@ const LANGS: &[(&str, Lang)] = &[
     ("sshd_config", Lang::SshdConfig),
     // X-059's corpus: GitHub's crontabs, and this machine's
     ("crontab", Lang::Crontab),
+    // X-061's corpus: GitHub's nginx configs and Markdown's nginx fences, and this machine's
+    ("nginx", Lang::Nginx),
     ("rust", Lang::Rust),
     ("kotlin", Lang::Kotlin),
     ("java", Lang::Java),

@@ -3913,6 +3913,66 @@ mod tests {
         );
     }
 
+    /// ada-parse's nginx scanner picks the colors bat's grammar picks, in every built-in theme
+    /// (X-061). Its departures are left out of the text: a `*_by_lua_block`'s body is Lua's to the
+    /// `}` that closes it, at any indent (bat's embed only matches at a line's start, leaves the
+    /// directive's name plain there, and pops a Lua context at any `}` that starts a line); `\'`
+    /// in an argument is an escaped quote, as nginx reads it (bat opens a string).
+    #[test]
+    fn nginx_colors_match_the_grammar() {
+        let text = concat!(
+            "\u{feff}user  www-data;  # who\n",
+            "worker_processes  auto;\n",
+            "events {\n",
+            "    worker_connections  1024;\n",
+            "}\n",
+            "http {\n",
+            "    include       mime.types;\n",
+            "    log_format  main  '$remote_addr - $remote_user [$time_local] \"$request\" '\n",
+            "                      '$status $body_bytes_sent';\n",
+            "    sendfile on; keepalive_timeout 65s;\n",
+            "    map $http_upgrade $connection_upgrade {\n",
+            "        default upgrade;\n",
+            "        ''      close;  # none\n",
+            "    }\n",
+            "    upstream backend {\n",
+            "        server 10.0.0.1:8080 weight=5;\n",
+            "        ip_hash;\n",
+            "    }\n",
+            "    server {\n",
+            "        listen 80 default_server;\n",
+            "        listen [::]:443 ssl http2;\n",
+            "        server_name example.com *.example.com;\n",
+            "        allow 192.168.1.0/24; deny all;\n",
+            "        location ~* \\.(jpg|png|gif)$ { expires 30d; }\n",
+            "        location = /50x.html { root html; }\n",
+            "        location ^~ /static/ { alias /var/www/static/; }\n",
+            "        location /api {\n",
+            "            proxy_set_header Host $host;\n",
+            "            proxy_pass http://backend;\n",
+            "            add_header Cache-Control \"public, max-age=300\" always;\n",
+            "        }\n",
+            "        if ($http_user_agent ~ MSIE) {\n",
+            "            rewrite ^(.*)$ /msie/$1 break;\n",
+            "        }\n",
+            "        if ($request_uri !~* \"^/ok\") { return 403; }\n",
+            "        rewrite \\.php$ /index.php last;\n",
+            "        set $a \"x\\\"y $b\";\n",
+            "        client_max_body_size 10m;\n",
+            "        stub_status;\n",
+            "        limit_req zone=one burst=5;\n",
+            "        brotli on;\n",
+            "        error_page 500 502 503 504 /50x.html;\n",
+            "    }\n",
+            "    types {\n",
+            "        text/html  html htm;\n",
+            "        application/vnd.ms-excel xls;\n",
+            "    }\n",
+            "}\n",
+        );
+        colors_match_the_grammar("nginx", "nginx", text);
+    }
+
     /// ada-parse's `.env` lexer picks the rules bat's grammar picks, in every built-in theme
     /// (ADR-40).
     #[test]

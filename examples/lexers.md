@@ -653,6 +653,31 @@ clean:
 	-rm -rf target/$(PROFILE) $(patsubst %.o,%.d,$(OBJS))
 ```
 
+## nginx
+
+```nginx
+# /etc/nginx/conf.d/app.conf
+upstream app { server 127.0.0.1:8080 weight=5; }
+map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+server {
+    listen 443 ssl http2;
+    server_name example.com;
+    client_max_body_size 10m;
+    location ~* \.(css|js|png)$ { expires 30d; }
+    location /api/ {
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_pass http://app;
+    }
+    location /hello {
+        content_by_lua_block {
+            local name = ngx.var.arg_name or "world"
+            ngx.say("hello, ", name, "!")
+        }
+    }
+    if ($http_user_agent ~ MSIE) { rewrite ^(.*)$ /msie/$1 break; }
+}
+```
+
 ## PowerShell
 
 ```ps1

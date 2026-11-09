@@ -47,6 +47,7 @@ mod lisp;
 mod logs;
 mod lua;
 mod matcher;
+mod nginx;
 mod powershell;
 mod prim;
 mod properties;
@@ -650,6 +651,7 @@ fn run_scanner(lang: Lang) -> Option<RunScanner> {
         Lang::SshConfig => ssh_config::line_runs,
         Lang::SshdConfig => ssh_config::sshd_line_runs,
         Lang::Crontab => crontab::line_runs,
+        Lang::Nginx => nginx::line_runs,
         Lang::Json => json::line_runs,
         Lang::Toml => toml_scan::line_runs,
         Lang::Xml => xml_scan::line_runs,
@@ -684,6 +686,7 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         | Lang::SshConfig
         | Lang::SshdConfig
         | Lang::Crontab
+        | Lang::Nginx
             if !SPANS =>
         {
             |_, _, _| unreachable!("a line format's runs come from its own scan")
@@ -758,6 +761,7 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::SshConfig => out!(ssh_config::line),
         Lang::SshdConfig => out!(ssh_config::sshd_line),
         Lang::Crontab => out!(crontab::line),
+        Lang::Nginx => out!(nginx::line),
         Lang::Dockerfile => out!(dockerfile::line),
         Lang::Properties => out!(properties::line),
     }

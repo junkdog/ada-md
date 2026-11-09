@@ -465,6 +465,32 @@ fn line_on<K: Sink, const SHARED: bool>(b: &[u8], state: &mut State, out: &mut O
     s.k
 }
 
+/// Lua in a host's block (nginx's `*_by_lua_block {`, X-061): `b` from `p` lexed onto the host's
+/// sink `k` from `state` (the default on the block's first line, `p` past its `{`), to the `}`
+/// that closes the block, one where no table is open (as nginx's own block reader counts
+/// braces, past strings and comments): where that `}` is, or `None` where the line ends inside
+/// the block, `state` then what the next line starts from. The high byte of `state`'s `arg` is
+/// the host's, kept. Where `SHARED`, the loop is [`Scan::code_shared`], the run copy ada holds
+/// for Lua's own lines (X-098), not another.
+#[inline(always)]
+pub(crate) fn hosted<K: Sink, const SHARED: bool>(
+    b: &[u8],
+    p: usize,
+    state: &mut State,
+    out: &mut Out,
+    k: &mut K,
+) -> Option<usize> {
+    let mut s = Scan::new(b, out, *k);
+    s.load(state);
+    s.stop = usize::MAX;
+    s.lex_from::<SHARED>(p);
+    *k = s.k;
+    let host = state.arg & 0xff00;
+    *state = s.state();
+    state.arg |= host;
+    (s.stop != usize::MAX).then(|| s.stop - 1)
+}
+
 /// A block of Lua on one scan opened from `state` ([`crate::Carry`]).
 pub fn block(
     state: &mut State,
@@ -536,6 +562,9 @@ struct Scan<'b, 'c, K: Sink> {
     level: u16,
     /// The builtin module named before ([`P_MODULE`]).
     module: u8,
+    /// 0 for Lua's own lines; in a host's block ([`hosted`]) `usize::MAX`, then one past the
+    /// `}` that closed it.
+    stop: usize,
     k: K,
     out: &'b mut Out<'c>,
 }
@@ -554,6 +583,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             mode: M_CODE,
             level: 0,
             module: 0,
+            stop: 0,
             k,
             out,
         }
@@ -620,6 +650,16 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         (self.frames & 7) as u8
     }
 
+    /// Whether a table's frame is open at any level.
+    #[inline(always)]
+    fn table_open(&self) -> bool {
+        // each of the [`LEVELS`] levels' low bit; a level is a table's where its three bits are
+        // all set
+        const LOW: u128 = 0x0924_9249_2492_4924_9249_2492_4924_9249;
+        let f = self.frames;
+        f & f >> 1 & f >> 2 & LOW != 0
+    }
+
     #[inline(always)]
     fn push(&mut self, f: u8) {
         self.frames = self.frames << 3 | u128::from(f);
@@ -651,8 +691,15 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// `SHARED` ([`Scan::code_shared`]).
     #[inline(always)]
     fn lex_line<const SHARED: bool>(&mut self) {
+        self.lex_from::<SHARED>(0);
+    }
+
+    /// [`Scan::lex_line`] from `p`: a mode's rest is the line's from its start, so where `p`
+    /// isn't 0 (a host's block's first line) the mode is [`M_CODE`].
+    #[inline(always)]
+    fn lex_from<const SHARED: bool>(&mut self, p: usize) {
         let mut p = if self.mode == M_CODE {
-            0
+            p
         } else {
             self.resume()
         };
@@ -745,6 +792,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                         self.pop();
                         self.put(p, p + 1, BRACES_END);
                         self.prev = P_END;
+                    } else if self.stop != 0 && !self.table_open() {
+                        // a host's block closes: the line's rest is the host's
+                        self.stop = p + 1;
+                        return;
                     }
                     p + 1
                 }

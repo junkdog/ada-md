@@ -51,6 +51,8 @@ pub enum Lang {
     SshdConfig,
     /// bat's `Crontab`: cron's tables.
     Crontab,
+    /// bat's `nginx`: nginx's configs.
+    Nginx,
     /// bat's `Rust`.
     Rust,
     /// bat's `Kotlin`.
@@ -128,6 +130,11 @@ pub const ALIASES: &[(&str, &str)] = &[
     ("pwsh", "powershell"),
     ("posh", "powershell"),
 ];
+
+/// Whole file names a syntax of bat's set that none of these is claims, where their extension
+/// is one of these languages' (`resolv.conf`, nginx's `conf`): syntect finds a file's whole name
+/// before its extension.
+static OTHERS: &[&str] = &["resolv.conf"];
 
 /// The extensions and whole file names each language's syntax claims, lowercase: syntect
 /// compares them ignoring ASCII case.
@@ -275,6 +282,18 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::SshConfig, &["ssh_config"]),
     (Lang::SshdConfig, &["sshd_config"]),
     (Lang::Crontab, &["tab", "crontab", "cron.d"]),
+    (
+        Lang::Nginx,
+        &[
+            "conf.erb",
+            "conf",
+            "nginx.conf",
+            "mime.types",
+            "fastcgi_params",
+            "scgi_params",
+            "uwsgi_params",
+        ],
+    ),
     (Lang::Rust, &["rs"]),
     (Lang::Kotlin, &["kt", "kts"]),
     (Lang::Java, &["java", "bsh"]),
@@ -336,7 +355,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 43] = [
+    pub const ALL: [Lang; 44] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -358,6 +377,7 @@ impl Lang {
         Lang::SshConfig,
         Lang::SshdConfig,
         Lang::Crontab,
+        Lang::Nginx,
         Lang::Rust,
         Lang::Kotlin,
         Lang::Java,
@@ -407,6 +427,7 @@ impl Lang {
             Lang::SshConfig => "SSH Config",
             Lang::SshdConfig => "SSHD Config",
             Lang::Crontab => "Crontab",
+            Lang::Nginx => "nginx",
             Lang::Rust => "Rust",
             Lang::Kotlin => "Kotlin",
             Lang::Java => "Java",
@@ -465,6 +486,7 @@ impl Lang {
             Lang::SshConfig => "source.ssh_config",
             Lang::SshdConfig => "source.sshd_config",
             Lang::Crontab => "source.crontab",
+            Lang::Nginx => "source.nginx",
             Lang::Rust => "source.rust",
             Lang::Kotlin => "source.Kotlin",
             Lang::Java => "source.java",
@@ -539,6 +561,7 @@ impl Lang {
             Lang::SshConfig => crate::ssh_config::scopes(kind, false),
             Lang::SshdConfig => crate::ssh_config::scopes(kind, true),
             Lang::Crontab => crate::crontab::scopes(kind),
+            Lang::Nginx => crate::nginx::scopes(kind),
             _ => self
                 .kinds()
                 .get(usize::from(kind))
@@ -604,6 +627,9 @@ impl Lang {
     pub fn from_file_name(name: &str) -> Option<Lang> {
         if let Some(l) = Lang::from_extension(name) {
             return Some(l);
+        }
+        if any_eq(OTHERS, name) {
+            return None;
         }
         // as `Path::extension`: after the last dot, but for a name that only starts with one
         let (stem, ext) = name.rsplit_once('.')?;
