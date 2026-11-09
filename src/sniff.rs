@@ -1,7 +1,7 @@
 //! What a text holds when its name can't tell: piped stdin, or a file with no extension. Only
 //! the first few KB are looked at, in an order where a sure signal beats a guess (plan, "Stdin:
-//! detect what's piped in"): the first line as syntect reads it, then the shapes of data, a log,
-//! and markdown last. Text none of them claims is left to the caller.
+//! detect what's piped in"): the first line as bat's syntax set reads it, then the shapes of data,
+//! a log, and markdown last. Text none of them claims is left to the caller.
 
 use std::sync::LazyLock;
 
@@ -19,8 +19,8 @@ pub fn sniff(text: &str) -> Option<FileType> {
     let lines: Vec<&str> = sample.lines().collect();
     let first = lines.first().copied().unwrap_or_default();
     let code = |lang| Some(FileType::Text { lang: Some(lang) });
-    // syntect takes `<!doctype html>` for Svelte, a patch's `From <sha>` for a Dockerfile's
-    // `FROM`, and `git show` for a Git Log, which leaves its diff plain
+    // bat's first-line regexes take `<!doctype html>` for Svelte, a patch's `From <sha>` for a
+    // Dockerfile's `FROM`, and `git show` for a Git Log, which leaves its diff plain
     if is_html(&lines) {
         return code("HTML");
     }

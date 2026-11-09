@@ -82,12 +82,12 @@ jobs:
           # symbols do (ADR-34); one built on ubuntu-24.04 wouldn't start on 22.04 or RHEL 9
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
           - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
-          # static, for Alpine and any Linux (REL-22): built with --target, onig by musl-tools' musl-gcc
+          # static, for Alpine and any Linux (REL-22): built with --target, jemalloc by musl-tools' musl-gcc
           - { target: x86_64-unknown-linux-musl, os: ubuntu-22.04, musl: true }
           - { target: aarch64-unknown-linux-musl, os: ubuntu-22.04-arm, musl: true }
           - { target: aarch64-apple-darwin, os: macos-15 }
           - { target: x86_64-apple-darwin, os: macos-15-intel }
-          # MSVC, with the default onig feature (WIN-010); a .zip, not a tarball
+          # MSVC (WIN-010); a .zip, not a tarball
           - { target: x86_64-pc-windows-msvc, os: windows-2025, windows: true }
     env:
       VERSION: ${{ needs.version.outputs.version }}

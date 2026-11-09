@@ -15,11 +15,11 @@ use ada::links::{Resolver, RootedResolver};
 use ada::print::stream::Start;
 use ada::record::{self, Recorder, ReplayOptions};
 use ada::theme::Theme;
-use ada::{completions, config, links, print, search, theme};
+use ada::{completions, config, print, search, theme};
 
-// libc named before std's libm, so `ldexp` (syntect's one libm call) binds to libc's copy and
-// `--as-needed` drops libm: ld.so no longer maps it and runs its IFUNC resolvers (~0.3–0.5 MiB of
-// every peak, MEM-04)
+// libc named before std's libm, so a libm call (`ldexp`, syntect's one until 1.1) binds to libc's
+// copy and `--as-needed` drops libm: ld.so no longer maps it and runs its IFUNC resolvers
+// (~0.3–0.5 MiB of every peak, MEM-04)
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 #[link(name = "c")]
 unsafe extern "C" {}
@@ -65,12 +65,6 @@ fn run() -> Result<(), String> {
     }
 
     let printing = args.print || !io::stdout().is_terminal();
-    if let (true, None, None, Some(Input::Path(path))) =
-        (printing, &args.replay, &args.language, &args.input)
-        && links::is_markdown(path)
-    {
-        print::start_file(path);
-    }
 
     let forced = match &args.language {
         Some(name) => Some(FileType::named(name).ok_or_else(|| {
@@ -405,7 +399,7 @@ fn print_doc(
     // a file of code prints on the terminal's background, as a note's text does
     let code_theme = matches!(filetype, FileType::Text { .. }).then(|| theme.without_code_bg());
     let theme = code_theme.as_ref().unwrap_or(theme);
-    print::start((filetype == FileType::Markdown).then_some(&*text));
+    print::start();
     // git runs while the document is parsed and laid out; never for stdin or an image
     // (architecture §8)
     let diffs = (args.gutter && !piped && filetype != FileType::Image).then(|| {

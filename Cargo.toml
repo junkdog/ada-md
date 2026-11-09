@@ -21,17 +21,13 @@ name = "ada"
 path = "src/main.rs"
 
 [features]
-default = ["onig", "jemalloc"]
-# Oniguruma (C, built with `cc`) for syntect's regexes: 10-25x faster first use per language, 3x
-# faster parsing and ~5x less memory than fancy-regex. Without it, highlighting stays pure Rust.
-onig = ["syntect/regex-onig", "two-face/syntect-onig"]
+default = ["jemalloc"]
 # jemalloc (C, built with `make`) for musl targets, below; nothing elsewhere.
 jemalloc = ["dep:tikv-jemallocator"]
 
 [dependencies]
 anpa = "0.13"
-# ada's own lexers and the language table that names them without loading syntect's set
-# (ADR-40)
+# ada's own lexers and the language table that names their languages (ADR-40, ADR-43)
 ada-parse = { version = "0.1.0", path = "ada-parse" }
 # `events` for keys and resizes (ratatui turned it on until CS-4); `windows` is the default's, only for
 # Windows targets. `use-dev-tty`: its event source waits with level-triggered poll(2). The default mio one is
@@ -55,9 +51,7 @@ memchr = "2.8"
 # whose speed hangs on where its loop lands in `.text` (PAR-005).
 pulldown-cmark = { version = "0.13.5", default-features = false, features = ["simd"] }
 regex = "1"
-syntect = { version = "5.3", default-features = false, features = ["parsing", "regex-fancy", "dump-load"] }
 toml = { version = "1.1", default-features = false, features = ["std", "parse"] }
-two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
 unicode-segmentation = "1.13"
 unicode-width = "0.2"
 
@@ -76,13 +70,17 @@ libc = "0.2.190"
 windows-sys = { version = "0.61.2", features = ["Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_IO", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 # jemalloc for the static musl binary (REL-22, MEM-09): musl's malloc has one lock for the process,
-# and Oniguruma (C) allocates through it on every search, so print's highlighting threads queue on
-# it. Unprefixed, it serves C's malloc too, which a Rust allocator alone doesn't.
+# so print's highlighting threads queue on it. Unprefixed, it serves C's malloc too, which a Rust
+# allocator alone doesn't.
 [target.'cfg(target_env = "musl")'.dependencies]
 tikv-jemallocator = { version = "0.7.0", optional = true, features = ["unprefixed_malloc_on_supported_platforms"] }
 
 [dev-dependencies]
 insta = "1.49"
+# bat's grammars on Oniguruma, as ada highlighted until 1.1: the reference ada's lexers and its
+# selector matching are checked against (tests, examples), never in the binary (ADR-43)
+syntect = { version = "5.3", default-features = false, features = ["parsing", "regex-onig"] }
+two-face = { version = "0.5", default-features = false, features = ["syntect-onig"] }
 # pulldown-cmark's HTML renderer, a reference beside ada's stages in examples/throughput (BEN-009)
 pulldown-cmark = { version = "0.13.5", default-features = false, features = ["html"] }
 

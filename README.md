@@ -85,11 +85,8 @@ macOS, from a clone:
 cargo ordered --locked   # target/release/ada, as released
 ```
 
-Rust 1.95 or newer, and a C compiler:
-syntax highlighting runs on [Oniguruma](https://github.com/kkos/oniguruma), which is built from source. For a pure-Rust
-build, add `--no-default-features`. Highlighting then runs on
-fancy-regex and looks the same, but each language costs 10–20 ms on first use instead of about
-1 ms. Git integration runs the `git` command.
+Rust 1.95 or newer. ada is pure Rust, but for jemalloc in a static musl build, which needs a C
+compiler and `make`. Git integration runs the `git` command.
 
 **Windows** is mostly untested. ada builds there, and the pager has run on Windows 10. The config
 and themes are in `%APPDATA%\ada` (or `$XDG_CONFIG_HOME\ada`), `~` in `[links] roots` is
@@ -329,8 +326,9 @@ are reported with the file, line and column.
 
 Markdown is rendered, a png, jpeg or gif is shown full screen, and code and config files (`main.rs`,
 `Cargo.lock`, `Makefile`, `.zshrc`, or a `#!` first line) are shown whole and highlighted, with
-the git gutter, search, `e` and `--line` working on their lines. Other text is shown plain;
-binary files aren't shown.
+the git gutter, search, `e` and `--line` working on their lines. ada highlights 48 languages with
+lexers of its own, the common ones and the config formats; the other languages bat knows open
+the same way, plain, as does other text. Binary files aren't shown.
 
 Stdin and files with no extension go by their first 8 KB: a diff, a mermaid diagram, JSON, 
 YAML, TOML, HTML, a log, or markdown. Piped text that's none of these is shown line for line, never

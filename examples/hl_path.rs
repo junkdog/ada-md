@@ -42,7 +42,7 @@ fn main() {
         }
     }
     let mode = env::var("MODE").unwrap_or_default();
-    // a syntect language only for the digest
+    // a language with no lexer, plain, only for the digest
     let own = match highlight::find_syntax(&lang) {
         Some(Syntax::Own(own)) => Some(own),
         _ if mode == "digest" => None,

@@ -678,7 +678,7 @@ impl Lang {
     pub fn from_first_line(line: &str) -> Option<Lang> {
         match Lang::first_line(line) {
             FirstLine::Lang(lang) => Some(lang),
-            FirstLine::None | FirstLine::Ask => None,
+            FirstLine::None | FirstLine::Syntax(_) | FirstLine::Ask => None,
         }
     }
 
@@ -693,23 +693,51 @@ impl Lang {
     /// stops at the first it may: one of these languages when that regex is one of theirs and
     /// matches, the set when only the set can tell.
     pub fn first_line(line: &str) -> FirstLine {
+        Lang::walk_first_lines(line, &mut |_, _| None, false)
+    }
+
+    /// [`Lang::first_line`], with `ask` answering for each regex the table can't decide on
+    /// `line`: given the regex's place in the set's order ([`first_line_syntaxes`]), whether it
+    /// matches, or `None` when it can't tell either. A regex `ask` can't tell about is decided
+    /// by the table's test for ASCII lines where there is one, though the line isn't ASCII;
+    /// `Ask` comes back only when there is none. ada answers with the set's regexes, as the
+    /// `regex` crate reads them (ADR-43).
+    pub fn first_line_asking(
+        line: &str,
+        ask: &mut dyn FnMut(usize, &str) -> Option<bool>,
+    ) -> FirstLine {
+        Lang::walk_first_lines(line, ask, true)
+    }
+
+    fn walk_first_lines(
+        line: &str,
+        ask: &mut dyn FnMut(usize, &str) -> Option<bool>,
+        lenient: bool,
+    ) -> FirstLine {
         let line = line.strip_prefix('\u{feff}').unwrap_or(line);
         // `^` also holds after a line feed
         if line.contains('\n') {
             return FirstLine::Ask;
         }
         let text = FirstLineText::new(line);
-        for regex in FIRST_LINES.iter().rev() {
+        for (i, regex) in FIRST_LINES.iter().enumerate().rev() {
             if !(regex.may)(&text) {
                 continue;
             }
-            // `\b`, `\s` and case folding reach past ASCII: such lines go to the set
-            match regex
-                .exact
-                .filter(|_| text.ascii)
-                .and_then(|exact| exact(line))
-            {
-                Some(true) => return regex.lang.map_or(FirstLine::Ask, FirstLine::Lang),
+            let exact = || regex.exact.and_then(|exact| exact(line));
+            // `\b`, `\s` and case folding reach past ASCII: such lines are asked about
+            let decided = if text.ascii { exact() } else { None };
+            let answer = decided
+                .or_else(|| ask(i, line))
+                .or_else(|| exact().filter(|_| lenient));
+            match answer {
+                Some(true) => {
+                    return match regex.lang {
+                        Some(lang) => FirstLine::Lang(lang),
+                        None if lenient => FirstLine::Syntax(regex.syntax),
+                        None => FirstLine::Ask,
+                    };
+                }
                 Some(false) => {}
                 None => return FirstLine::Ask,
             }
@@ -725,6 +753,9 @@ pub enum FirstLine {
     Lang(Lang),
     /// No first-line regex of the set matches the line.
     None,
+    /// The set's first-line match gives this syntax, one no lexer here covers, by its name: only
+    /// from [`Lang::first_line_asking`].
+    Syntax(&'static str),
     /// Only the set can tell: a syntax not covered here, or a regex the table can't decide.
     Ask,
 }
@@ -868,13 +899,7 @@ const FIRST_LINES: &[FirstLineRegex] = &[
                     .trim_start_matches(is_any_space)
                     .starts_with("<!doctype")
         },
-        |line| {
-            let decl = line
-                .strip_prefix("<?xml")
-                .is_some_and(|rest| rest.starts_with(is_space));
-            // the other two ways in are left to the set
-            decl.then_some(true)
-        },
+        |line| Some(is_xml_line(line)),
     ),
     // ^%YAML( ?1.\d+)?
     may("YAML", |t| t.line.starts_with("%YAML")),
@@ -895,14 +920,19 @@ const FIRST_LINES: &[FirstLineRegex] = &[
     // ^#!/.*\bcrystal
     may("Crystal", |t| t.shebang() && t.has("crystal")),
     // ^\s*(?i:(from(?!\s+\S+\s+import)|arg))\s+
-    may("Dockerfile", |t| {
-        let lower = t.lower.trim_start_matches(is_any_space);
-        ["from", "arg"].iter().any(|w| {
-            lower
-                .strip_prefix(w)
-                .is_some_and(|rest| rest.starts_with(is_any_space))
-        })
-    }),
+    decided(
+        "Dockerfile",
+        Lang::Dockerfile,
+        |t| {
+            let lower = t.lower.trim_start_matches(is_any_space);
+            ["from", "arg"].iter().any(|w| {
+                lower
+                    .strip_prefix(w)
+                    .is_some_and(|rest| rest.starts_with(is_any_space))
+            })
+        },
+        |line| Some(is_dockerfile_line(line)),
+    ),
     // ^#!/.*\b(?:elixirc?|iex)
     may("Elixir", |t| {
         t.shebang() && (t.has("elixir") || t.has("iex"))
@@ -1136,6 +1166,97 @@ fn is_bash_line(line: &str) -> bool {
     })
 }
 
+/// bat's XML first-line regex: `^<\?xml\s`, a SOAP envelope
+/// (`^\s*<([\w-]+):Envelope\s+xmlns:\1\s*=\s*"http://schemas.xmlsoap.org/soap/envelope/"\s*>`), or
+/// a doctype other than HTML's (`^\s*(?i:<!DOCTYPE\s+(?!html[ \t\n\f>]))`). `\s` is Unicode's
+/// blank, as Oniguruma's: the `regex` crate can't read this regex, so ada asks this test about
+/// a line that isn't ASCII too (`Lang::first_line_asking`); a name's `\w` stays ASCII's.
+fn is_xml_line(line: &str) -> bool {
+    if line
+        .strip_prefix("<?xml")
+        .is_some_and(|rest| rest.starts_with(char::is_whitespace))
+    {
+        return true;
+    }
+    let rest = line.trim_start_matches(char::is_whitespace);
+    if let Some(doctype) = strip_prefix_ci(rest, "<!doctype") {
+        // `\s+` backs off to one blank when there are more, and a blank isn't `html`
+        let mut blanks = doctype.chars().take_while(|&c| c.is_whitespace());
+        return match (blanks.next(), blanks.next()) {
+            (None, _) => false,
+            (Some(_), Some(_)) => true,
+            (Some(blank), None) => {
+                let after = &doctype[blank.len_utf8()..];
+                let html = strip_prefix_ci(after, "html")
+                    .is_some_and(|r| r.starts_with([' ', '\t', '\n', '\x0c', '>']));
+                !html
+            }
+        };
+    }
+    is_soap_envelope(rest)
+}
+
+/// XML's SOAP envelope, past the line's leading blanks: `<NAME:Envelope`, blanks, then
+/// `xmlns:NAME` declared as SOAP's namespace, and the tag's `>`.
+fn is_soap_envelope(rest: &str) -> bool {
+    let is_name = |b: u8| is_word(b) || b == b'-';
+    let Some(tag) = rest.strip_prefix('<') else {
+        return false;
+    };
+    let n = tag.bytes().take_while(|&b| is_name(b)).count();
+    let (name, rest) = tag.split_at(n);
+    let Some(rest) = rest.strip_prefix(":Envelope") else {
+        return false;
+    };
+    let attr = rest.trim_start_matches(char::is_whitespace);
+    if n == 0 || attr.len() == rest.len() {
+        return false;
+    }
+    let Some(rest) = attr
+        .strip_prefix("xmlns:")
+        .and_then(|r| r.strip_prefix(name))
+        .and_then(|r| r.trim_start_matches(char::is_whitespace).strip_prefix('='))
+    else {
+        return false;
+    };
+    rest.trim_start_matches(char::is_whitespace)
+        .strip_prefix("\"http://schemas.xmlsoap.org/soap/envelope/\"")
+        .is_some_and(|r| r.trim_start_matches(char::is_whitespace).starts_with('>'))
+}
+
+/// bat's Dockerfile first-line regex, `^\s*(?i:(from(?!\s+\S+\s+import)|arg))\s+`: `FROM` or
+/// `ARG` and a blank, but not Python's `from x import y`. `\s` is Unicode's blank, as for
+/// [`is_xml_line`].
+fn is_dockerfile_line(line: &str) -> bool {
+    let rest = line.trim_start_matches(char::is_whitespace);
+    if let Some(after) = strip_prefix_ci(rest, "arg") {
+        return after.starts_with(char::is_whitespace);
+    }
+    let Some(after) = strip_prefix_ci(rest, "from").filter(|a| a.starts_with(char::is_whitespace))
+    else {
+        return false;
+    };
+    // `\S+` takes the whole word, as the blanks after it must follow it, and `\s+` every blank
+    // before `import`, which isn't one
+    let word = after.trim_start_matches(char::is_whitespace);
+    let Some(end) = word.find(char::is_whitespace) else {
+        return true;
+    };
+    let import = strip_prefix_ci(
+        word[end..].trim_start_matches(char::is_whitespace),
+        "import",
+    )
+    .is_some();
+    !import
+}
+
+/// `s` past `prefix`, ignoring ASCII case.
+fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = s.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then(|| &s[prefix.len()..])
+}
+
 /// bat's Makefile first-line regex, ignoring case (`lower` is the line in lowercase):
 /// `^\#! .* \bmake\b`, or `^\# \s* -\*- [^*]* makefile [^*]* -\*-`.
 fn is_make_line(lower: &str) -> bool {
@@ -1284,5 +1405,62 @@ mod tests {
             FirstLine::Ask
         );
         assert_eq!(Lang::first_line("#!/usr/bin/\u{212a}sh"), FirstLine::Ask);
+    }
+
+    /// XML's and Dockerfile's regexes, which the `regex` crate can't read, decided here; ada's
+    /// tests hold them to syntect's on lines of every kind (`first_lines_agree_with_the_set`).
+    #[test]
+    fn xml_and_dockerfile_first_lines_are_decided() {
+        assert!(is_xml_line("<?xml version=\"1.0\"?>"));
+        assert!(!is_xml_line("<?xml"));
+        assert!(is_xml_line("  <!DOCTYPE note SYSTEM \"note.dtd\">"));
+        assert!(
+            is_xml_line("<!doctype  html>"),
+            "`\\s+` backs off to one blank"
+        );
+        assert!(is_xml_line("<!DOCTYPE htmlx>"));
+        assert!(is_xml_line("\u{3000}<!DOCTYPE\u{3000}note>"));
+        assert!(!is_xml_line("<!DOCTYPE html>"));
+        assert!(!is_xml_line("<!DOCTYPE HTML>"));
+        // nothing after `html` for `[ \t\n\f>]` to match: the lookahead holds
+        assert!(is_xml_line("<!DOCTYPE HTML"));
+        let soap = "<soap:Envelope xmlns:soap = \"http://schemas.xmlsoap.org/soap/envelope/\" >";
+        assert!(is_xml_line(soap));
+        assert!(!is_xml_line(&soap.replace("xmlns:soap", "xmlns:s")));
+        assert!(!is_xml_line(
+            &soap.replace("soap:Envelope ", "soap:Envelope")
+        ));
+        for line in [
+            "FROM rust:1.95",
+            "  arg VERSION=1",
+            "from rust",
+            "from x as y",
+            "\u{3000}FROM x",
+        ] {
+            assert!(is_dockerfile_line(line), "{line}");
+        }
+        for line in ["from os import path", "FROM x IMPORT y", "fromage", "ARG"] {
+            assert!(!is_dockerfile_line(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn asking_names_a_syntax_not_covered() {
+        // Ruby's is the last regex that may match: the walk asks about it first
+        let mut asked = Vec::new();
+        let found = Lang::first_line_asking("#!/usr/bin/env ruby", &mut |i, _| {
+            asked.push(first_line_syntaxes().nth(i).unwrap());
+            Some(true)
+        });
+        assert_eq!(found, FirstLine::Syntax("Ruby"));
+        assert_eq!(asked, ["Ruby"]);
+        let none = Lang::first_line_asking("#!/usr/bin/env ruby", &mut |_, _| Some(false));
+        assert_eq!(none, FirstLine::None);
+        // a regex nobody can tell about, with no test for ASCII lines to fall back on
+        let unknown = Lang::first_line_asking("#!/usr/bin/env ruby", &mut |_, _| None);
+        assert_eq!(unknown, FirstLine::Ask);
+        // the Kelvin sign: the table's test for ASCII lines stands in when asking can't tell
+        let make = Lang::first_line_asking("#!/usr/bin/ma\u{212a}e", &mut |_, _| None);
+        assert_eq!(make, FirstLine::None);
     }
 }

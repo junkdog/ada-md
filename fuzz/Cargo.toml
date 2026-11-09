@@ -15,8 +15,10 @@ unicode-segmentation = "1.13"
 unicode-width = "0.2"
 # the terminal the frames are checked on (F-04)
 vt100 = "0.18.1"
-# the grammars the `make` and `bash` targets check the lexer against (G-002, G-003); already in the tree
-syntect = { version = "5.3", default-features = false, features = ["parsing"] }
+# bat's grammars, which the `parse`, `make` and `bash` targets check ada's lexers against (ADR-40,
+# G-002, G-003): syntect on Oniguruma, as ada highlighted until 1.1 (ADR-43)
+syntect = { version = "5.3", default-features = false, features = ["parsing", "regex-onig"] }
+two-face = { version = "0.5", default-features = false, features = ["syntect-onig"] }
 ada-md = { path = ".." }
 ada-parse = { path = "../ada-parse" }
 

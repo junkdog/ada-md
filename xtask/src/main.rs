@@ -17,14 +17,13 @@
 //! `cargo xtask lackey`: a valgrind lackey trace on stdin to the 256-byte lines it touched
 //! (`lackey::filter`), for `bench/order/lackey.zsh`.
 //!
-//! `cargo xtask dump [--check]`: ada's syntax sets in `assets/`, two-face's with the grammars
-//! ada-parse's lexers stand in for emptied (`dump`, ADR-40); `--check` only compares.
+//! `cargo xtask names [--check]`: the names, extensions and first-line regexes of bat's syntax
+//! set in `assets/`, from two-face's (`names`, ADR-43); `--check` only compares.
 //!
-//! `cargo xtask size`: ada-parse's bytes in the release binary, by `nm`, beside the bytes the
-//! trimmed syntax set drops (`size`, ADR-40).
+//! `cargo xtask size`: ada-parse's bytes in the release binary, by `nm` (`size`, ADR-40).
 
-mod dump;
 mod lackey;
+mod names;
 mod size;
 mod symbols;
 
@@ -42,16 +41,16 @@ fn main() -> ExitCode {
         Some("demangle") => demangle()
             .map(|()| ExitCode::SUCCESS)
             .map_err(|e| e.to_string()),
-        Some("dump") => {
+        Some("names") => {
             let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-            dump::run(root, args.any(|a| a == "--check"))
+            names::run(root, args.any(|a| a == "--check"))
         }
         Some("size") => size::run(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap()),
         Some("lackey") => lackey::filter(io::stdin().lock(), BufWriter::new(io::stdout().lock()))
             .map(|()| ExitCode::SUCCESS)
             .map_err(|e| e.to_string()),
         _ => Err(
-            "usage: cargo ordered [CARGO_ARGS...] | cargo xtask demangle < NAMES | cargo xtask lackey < LOG | cargo xtask dump [--check] | cargo xtask size"
+            "usage: cargo ordered [CARGO_ARGS...] | cargo xtask demangle < NAMES | cargo xtask lackey < LOG | cargo xtask names [--check] | cargo xtask size"
                 .into(),
         ),
     };

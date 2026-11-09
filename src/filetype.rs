@@ -152,22 +152,22 @@ pub fn language_names() -> Vec<(String, &'static str)> {
         ("txt".to_owned(), "Plain Text"),
     ];
     names.extend(MERMAID.iter().map(|&m| (m.to_owned(), "Mermaid")));
-    for syntax in highlight::syntaxes().syntaxes() {
-        if syntax.hidden {
-            continue;
-        }
-        for ext in &syntax.file_extensions {
+    // bat's syntaxes, a line each: the name, then its extensions (ADR-43)
+    for line in highlight::names::LIST.lines() {
+        let mut fields = line.split('\t');
+        let name = fields.next().unwrap_or_default();
+        for ext in fields {
             let word = ext
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || "_+-.".contains(c));
             // the name must lead back to this syntax: an extension two of them claim goes to one
             let named = || match FileType::named(ext) {
-                Some(FileType::Markdown) => syntax.name == "Markdown",
-                Some(FileType::Text { lang }) => lang == Some(&*syntax.name),
+                Some(FileType::Markdown) => name == "Markdown",
+                Some(FileType::Text { lang }) => lang == Some(name),
                 _ => false,
             };
             if word && !ext.starts_with('.') && named() {
-                names.push((ext.clone(), &*syntax.name));
+                names.push((ext.to_owned(), name));
             }
         }
     }

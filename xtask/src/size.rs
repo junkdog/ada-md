@@ -1,30 +1,24 @@
 //! `cargo xtask size`: ada-parse's binary size (ADR-40). Builds ada as the release does (fat
 //! LTO), but unstripped and with line tables, in `target/size`; attributes the binary's symbols
-//! to their source files with `nm -S -l`; and reports ada-parse's bytes, those of ada's lexers
-//! outside it, the binary's size stripped (`strip`, as the profile's `strip = true` leaves it)
-//! and the bytes ada's trimmed syntax set drops from two-face's (`cargo xtask dump`). A report,
-//! not a gate: the size gate was retired on 2026-11-03, a guideline the scanners were always past.
+//! to their source files with `nm -S -l`; and reports ada-parse's bytes, ada's own, and the
+//! binary's size stripped (`strip`, as the profile's `strip = true` leaves it). A report, not a
+//! gate: the size gate, ada-parse's bytes against those its lexers took out of syntect's set, was
+//! retired on 2026-11-03, and the set left the binary with syntect (ADR-43).
 //!
 //! Fat LTO inlines generic code into the crate that instantiates it, under that crate's file
-//! names or std's, so a figure for a generic-heavy dependency (syntect) comes out low; ada's
-//! own modules and ada-parse's hold.
+//! names or std's, so a figure for a generic-heavy dependency comes out low; ada's own modules
+//! and ada-parse's hold.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
-use crate::dump;
-
 /// Where a symbol's source path puts it, first match wins: (group, a piece of the path).
 const GROUPS: &[(&str, &str)] = &[
     ("ada-parse", "/ada-parse/src/"),
-    ("src/json.rs", "/ada-md/src/json.rs"),
-    ("src/logs.rs", "/ada-md/src/logs.rs"),
-    ("src/highlight.rs", "/ada-md/src/highlight.rs"),
+    ("src/highlight", "/ada-md/src/highlight"),
     ("ada, the rest", "/ada-md/src/"),
-    ("syntect", "/syntect-"),
-    ("onig, Oniguruma", "/onig"),
 ];
 
 pub fn run(root: &Path) -> Result<ExitCode, String> {
@@ -81,9 +75,6 @@ pub fn run(root: &Path) -> Result<ExitCode, String> {
             .map_err(|e| format!("{}: {e}", p.display()))
     };
     let binary = len(&stripped)?;
-    let two_face = len(&dump::source_path(&dump::two_face_dir(root)?, "onig"))?;
-    let ours = len(&dump::asset_path(root, "onig"))?;
-    let budget = two_face.saturating_sub(ours);
 
     println!("symbols by source (nm -S -l), bytes:");
     for (group, _) in GROUPS {
@@ -95,8 +86,5 @@ pub fn run(root: &Path) -> Result<ExitCode, String> {
     let other = sizes.get("other, or no line").copied().unwrap_or(0);
     println!("  {:<28} {other:>9}", "other, or no line");
     println!("ada, stripped: {binary} bytes");
-    println!("syntax set: two-face's {two_face}, ada's {ours}: {budget} bytes dropped");
-    let parse = sizes.get("ada-parse").copied().unwrap_or(0);
-    println!("ada-parse: {parse} bytes, against the {budget} the trimmed set drops");
     Ok(ExitCode::SUCCESS)
 }

@@ -6,8 +6,6 @@ publish = false
 
 [dependencies]
 rustc-demangle = "0.1.28"
-# `dump`: ada's syntax sets, two-face's with the grammars ada-parse covers emptied (ADR-40);
-# bincode as syntect dumps them
-ada-parse = { path = "../ada-parse" }
-bincode = "1.3.3"
-syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load", "dump-create", "regex-fancy"] }
+# `names`: bat's syntax set's names, extensions and first-line regexes, read from two-face's dump
+# (ADR-43)
+syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load", "regex-fancy"] }

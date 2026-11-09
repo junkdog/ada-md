@@ -34,11 +34,15 @@ use std::time::{Duration, Instant};
 use std::{env, fs, thread};
 
 use ada::highlight::{self, CodeSpans, Rule, Syntax, SyntaxTheme};
-use ada::layout::expand_tabs;
+use ada::layout::{self, expand_tabs};
 use ada::theme::Theme;
 
-/// syntect's longest highlighted line (`highlight::MAX_LINE`).
-const MAX_LINE: usize = 4096;
+/// syntect on bat's whole set, the reference (ADR-43); it reads `highlight` and `layout` here.
+#[allow(dead_code)]
+#[path = "../src/highlight/reference.rs"]
+mod reference;
+
+use reference::MAX_LINE;
 
 /// One token's differences.
 #[derive(Default)]
@@ -98,7 +102,7 @@ fn main() {
     let themes = Theme::builtins();
     let rules: Vec<SyntaxTheme> = themes.iter().map(|t| SyntaxTheme::new(&t.syntax)).collect();
     // loaded once, before the threads race to
-    highlight::reference_syntaxes();
+    reference::syntaxes();
     if speed_only {
         return speed(&files, &lang, name, &rules[0]);
     }
@@ -241,8 +245,7 @@ fn speed(files: &[String], lang: &str, name: &str, rule: &SyntaxTheme) {
             continue;
         }
         let start = Instant::now();
-        let theirs =
-            highlight::highlight_syntect(highlight::reference_syntaxes(), name, &text, rule);
+        let theirs = reference::highlight(reference::syntaxes(), name, &text, rule);
         syntect += start.elapsed();
         if theirs.is_some() {
             texts.push(text);
@@ -313,7 +316,7 @@ fn compare(
         return r;
     }
     let start = Instant::now();
-    let theirs = highlight::highlight_syntect(highlight::reference_syntaxes(), name, &text, rule);
+    let theirs = reference::highlight(reference::syntaxes(), name, &text, rule);
     // speed is the first theme's
     if t == 0 {
         r.syntect_time = start.elapsed();

@@ -8,7 +8,7 @@
 version = 2
 yanked = "deny"
 ignore = [
-    { id = "RUSTSEC-2025-0141", reason = "bincode 1 unmaintained; syntect 5.3 (the latest) loads two-face's syntax dumps with it, data built into ada, not input" },
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1 unmaintained; syntect 5.3 (the latest) loads two-face's syntax dumps with it, in ada's tests, examples and xtask only (ADR-43): data, not input" },
 ]
 
 [licenses]
@@ -23,9 +23,6 @@ confidence-threshold = 0.93
 # version, the one expected to leave; drop it when its pair goes, so a new duplicate fails again.
 multiple-versions = "deny"
 skip = [
-    { crate = "thiserror@1.0.69", reason = "filedescriptor, through crossterm's use-dev-tty; syntect has 2" },
-    { crate = "thiserror-impl@1.0.69", reason = "thiserror 1's derive" },
-    { crate = "syn@2.0.119", reason = "thiserror-impl 1; serde_derive has 3" },
     { crate = "miniz_oxide@0.8.9", reason = "png 0.18 uses it directly; its flate2 has 0.9" },
 ]
 wildcards = "deny"

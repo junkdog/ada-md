@@ -1,11 +1,10 @@
 //! `--print`, and output to a pipe (ADR-15): the same [`Layout`], written
 //! as SGR-styled text, so ada can stand in for glow in pipes and fzf preview panes.
 
-use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Once, mpsc};
+use std::sync::{Arc, mpsc};
 use std::{panic, thread};
 
 use crate::geom::Size;
@@ -15,7 +14,7 @@ use regex::Regex;
 use unicode_width::UnicodeWidthChar;
 
 use crate::app;
-use crate::doc::{self, Doc, LineRange, LinkId};
+use crate::doc::{Doc, LineRange, LinkId};
 use crate::git::LineMarks;
 use crate::highlight::{self, Highlights, SyntaxTheme};
 use crate::images::{self, Probe, Proto};
@@ -671,46 +670,11 @@ fn alignment(layout: &Layout, line: u32) -> (usize, usize) {
 /// Get ready to print a whole file, before any other thread starts. glibc fixes how many malloc
 /// arenas there are when a thread first allocates, and the threads that highlight and paint
 /// need one each: on one, XL's 231 blocks took 1.7× the CPU, and M's layout and highlighting
-/// side by side 1.2× (PRN-01; ADR-27 amended). Then, once, start loading the syntax set when a
-/// `note` has a fence that names a language ada's own lexers don't cover (ADR-40), on a thread
-/// of its own: what's done before the note is highlighted hides the ~0.5 ms it takes.
-pub fn start(note: Option<&str>) {
-    // the main thread, the one loading the syntax set, the one waiting on the highlighting,
-    // then one a core
-    app::arenas(cores() + 3);
-    static LOADING: Once = Once::new();
-    let Some(note) = note else {
-        return;
-    };
-    // a fence in a language ada's own lexers cover doesn't need the set (ADR-40)
-    let named = |fence| {
-        note.match_indices(fence).any(|(i, _)| {
-            let info = note[i..].trim_start_matches(['`', '~', ' ', '\t']);
-            let info = info.split_once('\n').map_or(info, |(line, _)| line);
-            info.starts_with(char::is_alphanumeric)
-                && doc::fence_language(info).is_some_and(|l| highlight::needs_syntaxes(&l))
-        })
-    };
-    if !LOADING.is_completed() && (named("```") || named("~~~")) {
-        LOADING.call_once(|| {
-            thread::spawn(highlight::syntaxes);
-        });
-    }
+/// side by side 1.2× (PRN-01; ADR-27 amended).
+pub fn start() {
+    // the main thread, the one waiting on the highlighting, then one a core
+    app::arenas(cores() + 2);
 }
-
-/// [`start`] on the first `HEAD` bytes of a note file, as soon as ada knows it prints one:
-/// reading the config and the theme then hides more of the syntax set's loading (on S, 2.49 →
-/// 2.32 ms). A file that can't be read is left to the read that reports it.
-pub fn start_file(path: &Path) {
-    let mut head = Vec::new();
-    if let Ok(file) = File::open(path) {
-        let _ = file.take(HEAD).read_to_end(&mut head);
-    }
-    start(Some(&String::from_utf8_lossy(&head)));
-}
-
-/// How much of a note [`start_file`] reads.
-const HEAD: u64 = 64 * 1024;
 
 /// The cores to highlight and paint on, eight at most.
 fn cores() -> usize {

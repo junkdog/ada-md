@@ -266,8 +266,8 @@ pub struct Theme {
     pub palette: Vec<(String, Color)>,
     pub styles: [Style; StyleKey::COUNT],
     pub glyphs: Glyphs,
-    /// TextMate scope selector → style; [`crate::highlight::SyntaxTheme`] turns it into a
-    /// syntect theme (ADR-07).
+    /// TextMate scope selector → style; [`crate::highlight::SyntaxTheme`] matches the selectors
+    /// as syntect did (ADR-07, ADR-43).
     pub syntax: Vec<(String, Style)>,
 }
 

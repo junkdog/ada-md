@@ -122,9 +122,6 @@ pub fn start(path: &Path, forced: Option<FileType>, numbered: bool) -> Start {
     let FileType::Text { lang } = filetype else {
         return whole(first);
     };
-    if !Lexer::exists(lang) {
-        return whole(first);
-    }
     let lines = if numbered {
         match File::open(path).and_then(count_lines) {
             Ok(lines) => lines,
@@ -156,7 +153,6 @@ pub fn write_bytes(
     params: LayoutParams,
     w: &mut impl Write,
 ) -> io::Result<()> {
-    assert!(Lexer::exists(lang), "no lexer streams {lang:?}");
     let first = first.min(bytes.len());
     Stream {
         first: bytes[..first].to_vec(),
@@ -339,9 +335,7 @@ impl Stream {
 
     fn write(self, theme: &Theme, params: LayoutParams, w: &mut impl Write) -> io::Result<()> {
         let syntax = SyntaxTheme::new(&theme.syntax);
-        let Some(lexer) = Lexer::new(self.lang, &syntax) else {
-            unreachable!("`start` streams only what a lexer highlights");
-        };
+        let lexer = Lexer::new(self.lang, &syntax);
         let params = FileType::Text { lang: self.lang }.params(params);
         let paint = Paint {
             theme,
@@ -826,14 +820,12 @@ mod tests {
         }
     }
 
+    /// A language no lexer of ada's covers streams too, plain (ADR-43).
     #[test]
-    fn every_ada_parse_language_streams() {
-        for lang in ada_parse::Lang::ALL {
-            assert!(Lexer::exists(Some(lang.name())), "{lang:?}");
-        }
-        assert!(
-            !Lexer::exists(Some("Scala")),
-            "syntect's languages print whole"
-        );
+    fn a_language_with_no_lexer_streams_plain() {
+        let text = "object Main {\n  def main(args: Array[String]): Unit = {}\n}\n".repeat(40);
+        same_at(text.as_bytes(), Some("Scala"), 80, LineNumbers::Code, SMALL);
+        let syntax = SyntaxTheme::new(&Theme::builtin().syntax);
+        assert!(matches!(Lexer::new(Some("Scala"), &syntax), Lexer::Plain));
     }
 }

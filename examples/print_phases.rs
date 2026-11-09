@@ -1,5 +1,5 @@
 //! Where a print's time goes, in-process, one phase after another: the theme, parsing, layout,
-//! loading the syntax set, highlighting cold (compiling the regexes it meets) and warm, and the
+//! highlighting cold (resolving the theme's rules for the kinds it meets) and warm, and the
 //! whole print again, warm. A fresh process is one cold run, so run it a few times (PRN-01).
 //!
 //! ```zsh
@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{env, fs};
 
-use ada::highlight::{self, Highlights, SyntaxTheme};
+use ada::highlight::{Highlights, SyntaxTheme};
 use ada::layout::{self, LayoutParams};
 use ada::{app, doc, print, theme};
 
@@ -42,9 +42,6 @@ fn main() {
     let t = Instant::now();
     let rows = layout::layout(&doc, &theme.glyphs, params).rows.len();
     time("layout", t);
-    let t = Instant::now();
-    highlight::syntaxes();
-    time("syntax set", t);
     let syntax = Arc::new(SyntaxTheme::new(&theme.syntax));
     for name in ["highlight cold", "highlight warm"] {
         let t = Instant::now();

@@ -7,11 +7,16 @@
 //! The input is made ASCII (each byte's high bit dropped): Oniguruma's `\s`, `\w`, `\d` and
 //! `[[:alpha:]]` take Unicode classes where the lexers read ASCII, a known difference.
 
-// bat's whole set: ada's own has these grammars emptied (ADR-40)
-use ada::highlight::reference_syntaxes as syntaxes;
 use ada::layout::expand_tabs;
 use ada_parse::{Lang, State};
-use syntect::parsing::{ParseState, ScopeStack};
+use syntect::parsing::{ParseState, ScopeStack, SyntaxSet};
+
+/// bat's whole syntax set, as two-face ships it: what ada's lexers stand in for (ADR-40), and
+/// the reference since syntect left ada (ADR-43).
+fn syntaxes() -> &'static SyntaxSet {
+    static FULL: std::sync::OnceLock<SyntaxSet> = std::sync::OnceLock::new();
+    FULL.get_or_init(two_face::syntax::extra_newlines)
+}
 
 /// How a byte's scopes are compared.
 #[derive(Clone, Copy, PartialEq, Eq)]

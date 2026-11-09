@@ -1,144 +1,52 @@
-//! Syntax highlighting (ADR-07): syntect with bat's syntax set, run on a worker thread so
-//! the first paint never waits for it. The regexes run on Oniguruma by default; building without
-//! the `onig` feature keeps them on fancy-regex, pure Rust.
+//! Syntax highlighting (ADR-07, ADR-40, ADR-43): ada's own lexers (ada-parse), run on a worker
+//! thread so the first paint never waits for them. A language none of them covers shows plain:
+//! ada still names it, by bat's syntax set's names, extensions and first lines (`assets/`), but
+//! has no grammar for it, since syntect left the binary in 1.1 (ADR-43).
 //!
-//! Results are color-free. The theme's `[syntax]` table becomes a syntect theme whose rule `i`
-//! "colors" a token with `i` encoded in its foreground, so a highlighted line is a list of
+//! Results are color-free. A lexer's kinds carry bat's scopes, and the theme's `[syntax]` table
+//! gives each the rule `i` syntect would have ([`selector`]), so a highlighted line is a list of
 //! `(end byte, rule)` runs, and paint resolves each rule against the ada theme (ADR-03).
 //! Results are cached by [`key`], a hash of the language and the code.
 
-use std::cell::{Cell, OnceCell, RefCell};
+#[cfg(test)]
+mod reference;
+mod selector;
+
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::Path;
-use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::Duration;
 
 use crate::style::Style;
-use syntect::highlighting::{
-    Color, HighlightIterator, HighlightState, Highlighter as SynHighlighter, ScopeSelectors,
-    StyleModifier, Theme as SynTheme, ThemeItem, ThemeSettings,
-};
-use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
+use selector::Selectors;
 
 use crate::app::{Computed, Msg};
 use crate::doc::{CodeBlock, CodeId};
-use crate::layout::{
-    block_needs_expanding, expand_block, expand_tabs, expand_tabs_in, expand_tabs_onto,
-};
+use crate::layout::{block_needs_expanding, expand_block, expand_tabs, expand_tabs_in};
 use ada_parse::{FirstLine, Lang};
-
-/// Longer lines are left plain: backtracking regexes can be slow on them, and nobody reads them
-/// anyway.
-const MAX_LINE: usize = 4096;
 
 /// Cached blocks before the cache starts over.
 const CACHE_CAP: usize = 4096;
 
-/// Code a print highlights on each thread of its own: below it, the blocks' time is mostly
-/// compiling their grammars' regexes, which a second thread barely shortens (PRN-01).
+/// Code a print highlights on each thread of its own: below it, a second thread barely
+/// shortens the blocks' time (PRN-01, measured when syntect compiled each grammar's regexes;
+/// ada's own lexers start at once and run at hundreds of MB/s).
 const CODE_PER_THREAD: usize = 16 * 1024;
 
 /// Lines highlighted so far, by every thread. When it stands still for [`STALL`] while a block
-/// is being highlighted, syntect is stuck on a line: its parser can loop forever on a
-/// non-consuming push (syntect#656), as on the Scala line `:s| < @@@` (F-06).
+/// is being highlighted, a lexer is stuck on a line (F-06): syntect's parser could loop forever
+/// on a non-consuming push (syntect#656) until 1.1 (ADR-43). ada's own lexers are linear by
+/// construction and fuzzed; the watch stays for a bug in one.
 static LINES: AtomicU64 = AtomicU64::new(0);
 
-/// How long syntect may take on one line before its block is given up as plain. Real lines take
-/// microseconds, and the slowest grammar found so far (O-37) about a second.
+/// How long a lexer may take on one line before its block is given up as plain. Real lines take
+/// microseconds; the slowest of syntect's grammars (O-37) took about a second.
 const STALL: Duration = Duration::from_millis(if cfg!(test) { 300 } else { 2000 });
-
-/// The syntax set ada highlights with, once loaded.
-static SET: OnceLock<SyntaxSet> = OnceLock::new();
-
-/// bat's syntax set, as ada ships it (`assets/`, built by `cargo xtask dump`, ADR-40): two-face's,
-/// with the grammars ada's own lexers stand in for emptied. Loaded once, only for a language
-/// none of them covers: ~1 ms; syntect compiles each syntax's regexes on first use, which is
-/// the expensive part: ~1 ms a language on Oniguruma, up to ~200 ms (TypeScript) on
-/// fancy-regex.
-pub fn syntaxes() -> &'static SyntaxSet {
-    SET.get_or_init(|| {
-        #[cfg(feature = "onig")]
-        let dump = include_bytes!("../assets/syntaxes-onig.bin");
-        #[cfg(not(feature = "onig"))]
-        let dump = include_bytes!("../assets/syntaxes-fancy.bin");
-        let set = syntect::dumps::from_uncompressed_data(dump).expect("ada's syntax dump");
-        drop_read_only_pages();
-        set
-    })
-}
-
-/// Whether [`syntaxes`] has been loaded in this process.
-pub fn syntaxes_loaded() -> bool {
-    SET.get().is_some()
-}
-
-/// bat's whole syntax set, as two-face ships it, the grammars ada's own lexers stand in for
-/// still in it: what those lexers are checked against (tests, examples, fuzzing). ada never
-/// highlights with it.
-pub fn reference_syntaxes() -> &'static SyntaxSet {
-    static FULL: OnceLock<SyntaxSet> = OnceLock::new();
-    FULL.get_or_init(two_face::syntax::extra_newlines)
-}
-
-/// Give back the executable's read-only pages, once the syntax set is loaded (MEM-06). syntect
-/// deserializes the set from a 0.92 MiB dump in the binary, read whole once and never again
-/// (syntect copies what it keeps), but its pages stay mapped. Nothing names where the dump lies,
-/// so this unmaps the whole read-only segment: the pages stay in the page cache, and those read
-/// again come back as minor faults. The executable's program headers and the page size come from
-/// the auxiliary vector the kernel starts the process with.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn drop_read_only_pages() {
-    use std::ffi::c_void;
-
-    #[cfg(target_pointer_width = "64")]
-    type Phdr = libc::Elf64_Phdr;
-    #[cfg(target_pointer_width = "32")]
-    type Phdr = libc::Elf32_Phdr;
-
-    // SAFETY: `getauxval` only reads the auxiliary vector, whose `AT_PHDR` points at the
-    // executable's `AT_PHNUM` program headers, mapped as long as the process runs
-    let (at, headers, page) = unsafe {
-        let at = libc::getauxval(libc::AT_PHDR) as usize;
-        let n = libc::getauxval(libc::AT_PHNUM) as usize;
-        let page = libc::getauxval(libc::AT_PAGESZ) as usize;
-        if at == 0 || page == 0 {
-            return;
-        }
-        (at, std::slice::from_raw_parts(at as *const Phdr, n), page)
-    };
-    // where the executable was loaded: its `PT_PHDR` lies at `at`, linked at `p_vaddr`
-    let Some(base) = headers
-        .iter()
-        .find(|h| h.p_type == libc::PT_PHDR)
-        .map(|h| at - h.p_vaddr as usize)
-    else {
-        return;
-    };
-    let read_only = headers
-        .iter()
-        .filter(|h| h.p_type == libc::PT_LOAD && h.p_flags == libc::PF_R);
-    for h in read_only {
-        let start = base + h.p_vaddr as usize;
-        let end = start + h.p_memsz as usize;
-        // whole pages inside the segment only
-        let (start, end) = (start.next_multiple_of(page), end / page * page);
-        if start < end {
-            // SAFETY: the range is mapped read-only from the executable's file, which nothing
-            // writes; `MADV_DONTNEED` drops the process's pages, and reads fault them back in
-            unsafe {
-                libc::madvise(start as *mut c_void, end - start, libc::MADV_DONTNEED);
-            }
-        }
-    }
-}
-
-#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
-fn drop_read_only_pages() {}
 
 /// Languages that are deliberately plain.
 fn is_plain(lang: &str) -> bool {
@@ -149,12 +57,13 @@ fn is_plain(lang: &str) -> bool {
 
 pub use ada_parse::ALIASES;
 
-/// A language ada highlights: by a lexer of its own, which ada-parse's table names without the
-/// syntax set, or by a syntax of the set.
+/// A language ada names: one a lexer of its own highlights, or another of bat's syntax set,
+/// which shows plain (ADR-43).
 #[derive(Clone, Copy, Debug)]
 pub enum Syntax {
     Own(Lang),
-    Set(&'static SyntaxReference),
+    /// The set's syntax of this name, which no lexer of ada's covers.
+    Named(&'static str),
 }
 
 impl Syntax {
@@ -162,7 +71,7 @@ impl Syntax {
     pub fn name(self) -> &'static str {
         match self {
             Syntax::Own(lang) => lang.name(),
-            Syntax::Set(syntax) => &syntax.name,
+            Syntax::Named(name) => name,
         }
     }
 
@@ -171,23 +80,13 @@ impl Syntax {
     pub fn label(self) -> &'static str {
         match self {
             Syntax::Own(lang) => lang.label(),
-            Syntax::Set(syntax) => &syntax.name,
+            Syntax::Named(name) => name,
         }
     }
 
-    /// A syntax of the set, or the lexer that stands in for it: the set still names the
-    /// languages ada's lexers cover, but their grammars in it are empty.
-    fn of(syntax: &'static SyntaxReference) -> Self {
-        Lang::from_name(&syntax.name).map_or(Syntax::Set(syntax), Syntax::Own)
-    }
-
-    /// The set's syntax named `name`, or the lexer that stands in for it; only a syntax ada's
-    /// lexers don't cover loads the set.
-    fn named(name: &str) -> Option<Self> {
-        match Lang::from_name(name) {
-            Some(lang) => Some(Syntax::Own(lang)),
-            None => syntaxes().find_syntax_by_name(name).map(Syntax::Set),
-        }
+    /// The set's syntax named `name`, or the lexer that stands in for it.
+    fn named(name: &'static str) -> Self {
+        Lang::from_name(name).map_or(Syntax::Named(name), Syntax::Own)
     }
 }
 
@@ -202,8 +101,7 @@ thread_local! {
 /// Tokens kept in [`FOUND`]; past that it starts over.
 const FOUND_MAX: usize = 16;
 
-/// The syntax for a fence language, with the aliases the vault needs. Only a language the set
-/// has and ada-parse doesn't cover loads the set.
+/// The syntax for a fence language, with the aliases the vault needs.
 pub fn find_syntax(lang: &str) -> Option<Syntax> {
     let found = |found: &Vec<(Box<str>, Option<Syntax>)>| {
         found.iter().find(|(t, _)| **t == *lang).map(|&(_, s)| s)
@@ -230,20 +128,11 @@ fn search_syntax(lang: &str) -> Option<Syntax> {
     if let Some(lang) = Lang::from_token(lang) {
         return Some(Syntax::Own(lang));
     }
-    names::find(lang).and_then(Syntax::named)
-}
-
-/// Whether highlighting a fence in `lang` needs the syntax set: a language the set has and
-/// ada-parse doesn't cover.
-pub fn needs_syntaxes(lang: &str) -> bool {
-    !is_plain(lang)
-        && Lang::from_token(lang).is_none()
-        && names::find(lang).is_some_and(|name| Lang::from_name(name).is_none())
+    names::find(lang).map(Syntax::named)
 }
 
 /// The language of a whole file, by its name alone: the name itself (`Makefile`, `.zshrc`,
-/// `Cargo.lock`), then its extension. `None` when that says nothing, or says plain text. Never
-/// loads the set.
+/// `Cargo.lock`), then its extension. `None` when that says nothing, or says plain text.
 pub fn file_language(path: &Path) -> Option<&'static str> {
     let name = path.file_name().and_then(|n| n.to_str());
     if let Some(lang) = name.and_then(Lang::from_file_name) {
@@ -263,16 +152,14 @@ pub fn file_language(path: &Path) -> Option<&'static str> {
     by_name.or_else(by_ext).filter(|&n| n != "Plain Text")
 }
 
-/// The language a file's first line declares: a `#!` line, `<?xml`, a vim modeline. Only a
-/// line ada-parse can't tell about loads the set.
+/// The language a file's first line declares: a `#!` line, `<?xml`, a vim modeline, as bat's
+/// set's first-line regexes read it. ada-parse's table decides those it can, and the `regex`
+/// crate the rest ([`names::first_line_matches`]).
 pub fn first_line_language(line: &str) -> Option<&'static str> {
-    match Lang::first_line(line) {
+    match Lang::first_line_asking(line, &mut names::first_line_matches) {
         FirstLine::Lang(lang) => Some(lang.label()),
-        FirstLine::None => None,
-        FirstLine::Ask => syntaxes()
-            .find_syntax_by_first_line(line)
-            .map(Syntax::of)
-            .and_then(language),
+        FirstLine::Syntax(name) => language(Syntax::named(name)),
+        FirstLine::None | FirstLine::Ask => None,
     }
 }
 
@@ -280,16 +167,34 @@ fn language(syntax: Syntax) -> Option<&'static str> {
     Some(syntax.label()).filter(|&n| n != "Plain Text")
 }
 
-/// The set's syntaxes by name and extension, as `cargo xtask dump` lists them beside the set
-/// (`assets/syntax-names-*.txt`): syntect's lookups without loading the set.
-mod names {
+/// bat's syntax set by name, extension and first line, as `cargo xtask names` lists it from
+/// two-face's (`assets/`): syntect's lookups, without syntect (ADR-43).
+pub(crate) mod names {
+    use std::sync::OnceLock;
+
     use ada_parse::{ALIASES, Lang};
+    use regex::Regex;
 
     /// A line a syntax, in the set's order: its name, then its extensions, tab-separated.
-    #[cfg(feature = "onig")]
-    pub(super) static LIST: &str = include_str!("../assets/syntax-names-onig.txt");
-    #[cfg(not(feature = "onig"))]
-    pub(super) static LIST: &str = include_str!("../assets/syntax-names-fancy.txt");
+    pub(crate) static LIST: &str = include_str!("../assets/syntax-names.txt");
+
+    /// The set's first-line regexes, `(syntax, regex)` in its order, as the `regex` crate reads
+    /// them.
+    pub(crate) const FIRST_LINES: &[(&str, &str)] = &include!("../assets/syntax-first-lines.rs");
+
+    /// [`FIRST_LINES`]' regexes, each compiled the first time it's asked about: `None` for one
+    /// the `regex` crate refuses.
+    static COMPILED: [OnceLock<Option<Regex>>; FIRST_LINES.len()] =
+        [const { OnceLock::new() }; FIRST_LINES.len()];
+
+    /// Whether the set's `i`th first-line regex matches `line`, for `Lang::first_line_asking`:
+    /// `None` for XML's and Dockerfile's, whose lookarounds and back-reference the `regex`
+    /// crate refuses and ada-parse's table decides itself.
+    pub fn first_line_matches(i: usize, line: &str) -> Option<bool> {
+        let (_, regex) = FIRST_LINES.get(i)?;
+        let compiled = COMPILED[i].get_or_init(|| Regex::new(regex).ok());
+        compiled.as_ref().map(|r| r.is_match(line))
+    }
 
     /// The syntaxes as syntect searches them, the last first: each name and its extensions.
     fn syntaxes() -> impl Iterator<Item = (&'static str, std::str::Split<'static, char>)> {
@@ -349,16 +254,16 @@ pub fn key_of(lang: Option<&str>, hash: u64) -> Option<u64> {
     Some(h.finish())
 }
 
-/// The theme's `[syntax]` rules as a syntect theme. Rule `i` sets the foreground to an encoding
-/// of `i`; text no rule matches keeps the transparent default.
-#[derive(Debug, PartialEq)]
+/// The theme's `[syntax]` rules as scope selectors: rule `i` is the `i`th; text no rule
+/// matches takes [`Rule::NONE`].
+#[derive(Debug, PartialEq, Eq)]
 pub struct SyntaxTheme {
-    theme: SynTheme,
+    selectors: Selectors,
+    /// The rules' selectors as the theme writes them, for what checks ada against syntect.
+    scopes: Vec<Box<str>>,
     /// A hash of the rules' scope selectors: spans from another set of rules mean other rules.
     pub id: u64,
 }
-
-impl Eq for SyntaxTheme {}
 
 impl SyntaxTheme {
     pub fn new(rules: &[(String, Style)]) -> Self {
@@ -366,59 +271,34 @@ impl SyntaxTheme {
         for (scope, _) in rules {
             scope.hash(&mut h);
         }
-        let scopes = rules
+        let scopes: Vec<Box<str>> = rules
             .iter()
-            .enumerate()
             .take(usize::from(Rule::NONE))
-            .filter_map(|(i, (scope, _))| {
-                let scope = ScopeSelectors::from_str(scope).ok()?;
-                let foreground = Some(Color {
-                    r: (i >> 8) as u8,
-                    g: i as u8,
-                    b: 0,
-                    a: 0xff,
-                });
-                Some(ThemeItem {
-                    scope,
-                    style: StyleModifier {
-                        foreground,
-                        background: None,
-                        font_style: None,
-                    },
-                })
-            })
+            .map(|(scope, _)| scope.as_str().into())
             .collect();
-        let settings = ThemeSettings {
-            foreground: Some(Color {
-                r: 0,
-                g: 0,
-                b: 0,
-                a: 0,
-            }),
-            ..ThemeSettings::default()
-        };
         Self {
-            theme: SynTheme {
-                settings,
-                scopes,
-                ..SynTheme::default()
-            },
+            selectors: Selectors::new(scopes.iter().map(|s| &**s)),
+            scopes,
             id: h.finish(),
         }
+    }
+
+    /// The rules' selectors as the theme writes them, rule `i` the `i`th: what syntect's
+    /// reference theme is built from in ada's checks against it.
+    #[doc(hidden)]
+    pub fn scopes(&self) -> impl Iterator<Item = &str> {
+        self.scopes.iter().map(|s| &**s)
+    }
+
+    /// The rule a scope stack takes, its outermost scope first, as [`selector`] picks it.
+    pub fn rule(&self, stack: &[&str]) -> Rule {
+        self.selectors.rule(stack)
     }
 }
 
 /// An index into the theme's `[syntax]` rules, and a highlighted run: bytes up to `end` of the
 /// tab-expanded line take `rule`. ada-parse's, which its lexers write (X-068).
 pub use ada_parse::{Rule, Run};
-
-/// The rule a style's foreground stands for ([`SyntaxTheme::new`]'s encoding).
-fn decode_rule(c: Color) -> Rule {
-    match c.a {
-        0 => Rule(Rule::NONE),
-        _ => Rule(u16::from(c.r) << 8 | u16::from(c.g)),
-    }
-}
 
 /// `rule`'s style among the theme's `rules`; none for [`Rule::NONE`].
 pub fn rule_style(rule: Rule, rules: &[(String, Style)]) -> Option<Style> {
@@ -445,6 +325,26 @@ impl CodeSpans {
     /// How many lines are highlighted.
     pub fn line_count(&self) -> u32 {
         self.lines.len() as u32
+    }
+
+    /// A block's spans from its lines' runs, as something other than ada's lexers found them:
+    /// syntect, in ada's checks against it.
+    #[doc(hidden)]
+    pub fn from_lines(rules: u64, lines: impl IntoIterator<Item = Vec<Run>>) -> Self {
+        let mut runs = LineRuns::default();
+        for line in lines {
+            let mut open = runs.open_line();
+            for run in line {
+                open.push(run.end, run.rule);
+            }
+            open.end();
+        }
+        Self {
+            key: 0,
+            rules,
+            partial: false,
+            lines: runs.shrink(),
+        }
     }
 
     /// A block left plain, as a whole.
@@ -614,8 +514,8 @@ impl OpenLine<'_> {
     }
 }
 
-/// Wait on `rx` for as long as syntect gets somewhere: `None` once no line was highlighted for
-/// [`STALL`], or the sender is gone.
+/// Wait on `rx` for as long as the lexers get somewhere: `None` once no line was highlighted
+/// for [`STALL`], or the sender is gone.
 fn recv_watched<T>(rx: &Receiver<T>) -> Option<T> {
     let mut seen = LINES.load(Ordering::Relaxed);
     loop {
@@ -653,92 +553,11 @@ pub fn highlight_first(
     h.partial()
 }
 
-/// A code block's text highlighted by syntect with `set`'s syntax `name`, line by line as
-/// [`highlight`] goes; `None` when the set has no such syntax or syntect fails on a line. For
-/// holding ada's own lexers against bat's grammars ([`reference_syntaxes`]).
-pub fn highlight_syntect(
-    set: &'static SyntaxSet,
-    name: &str,
-    text: &str,
-    theme: &SyntaxTheme,
-) -> Option<CodeSpans> {
-    let syntax = set.find_syntax_by_name(name)?;
-    let highlighter = SynHighlighter::new(&theme.theme);
-    let mut state = LineState::new(set, syntax, &highlighter);
-    let (mut buf, mut lines) = (String::new(), LineRuns::default());
-    for line in Lines::new(text) {
-        state.line(line, &highlighter, &mut buf, &mut lines)?;
-    }
-    Some(CodeSpans {
-        key: 0,
-        rules: theme.id,
-        partial: false,
-        lines: lines.shrink(),
-    })
-}
-
-/// Where syntect is between two lines: what the next line's highlighting depends on, besides
-/// the line.
-struct LineState {
-    set: &'static SyntaxSet,
-    parse: ParseState,
-    scopes: HighlightState,
-}
-
-impl LineState {
-    fn new(
-        set: &'static SyntaxSet,
-        syntax: &SyntaxReference,
-        highlighter: &SynHighlighter,
-    ) -> Self {
-        Self {
-            set,
-            parse: ParseState::new(syntax),
-            scopes: HighlightState::new(highlighter, ScopeStack::new()),
-        }
-    }
-
-    /// Highlight one line into `out`, moving to the state after it. `None` when syntect fails,
-    /// with `out` as it was.
-    fn line(
-        &mut self,
-        line: &str,
-        highlighter: &SynHighlighter,
-        buf: &mut String,
-        out: &mut LineRuns,
-    ) -> Option<()> {
-        // expanded straight into the buffer syntect reads, with no copy between (HL-004)
-        buf.clear();
-        expand_tabs_onto(line, buf);
-        let len = buf.len();
-        if len > MAX_LINE {
-            out.open_line().end();
-            return Some(());
-        }
-        buf.push('\n');
-        let ops = self.parse.parse_line(buf, self.set).ok()?;
-        LINES.fetch_add(1, Ordering::Relaxed);
-        let mut out = out.open_line();
-        let mut end = 0;
-        for (style, piece) in HighlightIterator::new(&mut self.scopes, &ops, buf, highlighter) {
-            let start = end;
-            end = (end + piece.len()).min(len);
-            if end == start {
-                continue;
-            }
-            out.push(end as u32, decode_rule(style.foreground));
-        }
-        out.end();
-        Some(())
-    }
-}
-
-/// The lexer of ada's own that highlights a language, if one does: logs (O-43), JSON (O-48),
-/// Makefile (G-002), bash (G-003), or one of ada-parse's (ADR-40).
+/// The lexer of ada's own that highlights a language, if one does (ADR-40).
 fn own(lang: &str) -> Option<Lang> {
     match find_syntax(lang)? {
         Syntax::Own(lang) => Some(lang),
-        Syntax::Set(_) => None,
+        Syntax::Named(_) => None,
     }
 }
 
@@ -746,8 +565,8 @@ fn own(lang: &str) -> Option<Lang> {
 const UNSET: Rule = Rule(Rule::UNSET);
 
 /// The kinds' rules resolved so far, by language and theme (`SyntaxTheme::id`), for the next
-/// block in them to start from: resolving takes syntect's scope repository and a selector
-/// match for each kind, a sixth of a YAML corpus's time when each block did it anew (HL-004).
+/// block in them to start from: resolving takes a selector match for each kind, a sixth of a
+/// YAML corpus's time when each block did it anew (HL-004, on syntect's matcher).
 /// Shared, not copied, by the blocks that start from it: a table runs to the language's
 /// highest kind (C#'s and Python's embedded regexes and SQL put theirs past 30,000), and
 /// copying it cost a C# block ~66,000 instructions, as many as lexing 40 of its lines (X-022).
@@ -759,7 +578,7 @@ type Resolved = (Lang, u64, Arc<[Rule]>);
 /// Languages times themes kept in [`RESOLVED`]; past that it starts over.
 const RESOLVED_MAX: usize = 64;
 
-/// The theme's rule for each kind of an ada-parse language (ADR-40), as syntect would pick it
+/// The theme's rule for each kind of an ada-parse language (ADR-40), as [`selector`] picks it
 /// for the kind's scopes: all of them up front for a language with a fixed set
 /// (`ParseRules::new`), else each the first time a span has it (`ParseRules::lazy`).
 pub struct ParseRules {
@@ -778,10 +597,9 @@ pub struct ParseRules {
 impl ParseRules {
     /// Every kind's rule, for a language whose kinds are fixed (`Lang::kinds`).
     fn new(lang: Lang, theme: &SyntaxTheme) -> Self {
-        let highlighter = SynHighlighter::new(&theme.theme);
         let mut rules = Self::lazy(lang, theme.id);
         rules.rules = (0..lang.kinds().len() as u16)
-            .map(|k| rules.resolve(k, &highlighter))
+            .map(|k| rules.resolve(k, theme))
             .collect();
         rules
     }
@@ -863,16 +681,10 @@ impl ParseRules {
         self.start = kept;
     }
 
-    fn resolve(&self, kind: u16, highlighter: &SynHighlighter) -> Rule {
-        // the base scope here, not a block's set-up: syntect's scope repository is behind a lock
-        let mut stack = vec![Scope::new(self.lang.base()).expect("scope")];
-        stack.extend(
-            self.lang
-                .scopes(kind)
-                .iter()
-                .map(|s| Scope::new(s).expect("scope")),
-        );
-        let rule = decode_rule(highlighter.style_for_stack(&stack).foreground);
+    fn resolve(&self, kind: u16, theme: &SyntaxTheme) -> Rule {
+        let mut stack = vec![self.lang.base()];
+        stack.extend(self.lang.scopes(kind));
+        let rule = theme.rule(&stack);
         debug_assert_ne!(rule, UNSET);
         rule
     }
@@ -880,9 +692,9 @@ impl ParseRules {
     /// Resolve `kind`'s rule into `rules`, the first time a span has it.
     #[cold]
     #[inline(never)]
-    fn resolve_into(&mut self, kind: u16, highlighter: &SynHighlighter) -> Rule {
+    fn resolve_into(&mut self, kind: u16, theme: &SyntaxTheme) -> Rule {
         let (k, len) = (usize::from(kind), self.rules.len());
-        let rule = self.resolve(kind, highlighter);
+        let rule = self.resolve(kind, theme);
         match Arc::get_mut(&mut self.rules) {
             Some(rules) if k < len => rules[k] = rule,
             _ => {
@@ -941,15 +753,12 @@ impl ParseRules {
         max: usize,
         state: &mut ada_parse::State,
         scratch: (&mut Vec<ada_parse::Span>, &mut String, bool),
-        highlighter: &LazyHighlighter,
+        theme: &SyntaxTheme,
         out: &mut LineRuns,
     ) -> Option<usize> {
         let lang = self.lang;
         // the rule looked up once a span, resolved in the same pass when it's new (HL-004)
-        let rules = &mut Resolving {
-            rules: self,
-            highlighter,
-        };
+        let rules = &mut Resolving { rules: self, theme };
         lex_block(lang, text, max, state, scratch, rules, out)
     }
 }
@@ -1024,24 +833,23 @@ impl ada_parse::Rules for AllResolved<'_> {
 }
 
 /// A block's rules, each resolved into its table the first time a span has its kind.
-struct Resolving<'a, 'h> {
+struct Resolving<'a> {
     rules: &'a mut ParseRules,
-    highlighter: &'a LazyHighlighter<'h>,
+    theme: &'a SyntaxTheme,
 }
 
-impl ada_parse::Rules for Resolving<'_, '_> {
+impl ada_parse::Rules for Resolving<'_> {
     fn table(&self) -> &[Rule] {
         &self.rules.rules
     }
 
     fn resolve(&mut self, kind: u16) -> Rule {
-        self.rules.resolve_into(kind, self.highlighter.get())
+        self.rules.resolve_into(kind, self.theme)
     }
 }
 
 /// How a file printed a piece at a time is highlighted (O-52): not at all, or by one of ada's
-/// own lexers. A syntect syntax's state carries from line to line and can't move between
-/// threads, so none streams (O-053).
+/// own lexers. Every file streams since syntect's languages went plain (ADR-43).
 pub enum Lexer {
     Plain,
     /// An ada-parse language whose lines don't depend on each other (`Lang::line_by_line`),
@@ -1054,21 +862,12 @@ pub enum Lexer {
 }
 
 impl Lexer {
-    /// Whether a file in `lang`, or plain text with none, has a lexer.
-    pub fn exists(lang: Option<&str>) -> bool {
-        lang.is_none_or(|l| is_plain(l) || own(l).is_some())
-    }
-
-    /// The lexer for a file in `lang`, or plain text with none; `None` when syntect would
-    /// highlight it.
-    pub fn new(lang: Option<&str>, theme: &SyntaxTheme) -> Option<Self> {
-        match lang {
-            None => Some(Lexer::Plain),
-            Some(lang) if is_plain(lang) => Some(Lexer::Plain),
-            Some(lang) => match own(lang)? {
-                l if streams(l) => Some(Lexer::Parse(ParseRules::new(l, theme))),
-                l => Some(Lexer::Carry(l)),
-            },
+    /// The lexer for a file in `lang`: plain for none, or one no lexer of ada's covers.
+    pub fn new(lang: Option<&str>, theme: &SyntaxTheme) -> Self {
+        match lang.and_then(own) {
+            None => Lexer::Plain,
+            Some(l) if streams(l) => Lexer::Parse(ParseRules::new(l, theme)),
+            Some(l) => Lexer::Carry(l),
         }
     }
 
@@ -1184,7 +983,7 @@ fn streams(lang: Lang) -> bool {
 /// character as it is, as the whole block's does.
 pub struct Carrier<'a> {
     rules: ParseRules,
-    highlighter: LazyHighlighter<'a>,
+    theme: &'a SyntaxTheme,
     state: ada_parse::State,
     spans: Vec<ada_parse::Span>,
     /// The piece's runs, kept from piece to piece: [`LineRuns::done`] copies them out.
@@ -1196,10 +995,7 @@ impl<'a> Carrier<'a> {
     pub fn new(lang: Lang, theme: &'a SyntaxTheme) -> Self {
         Self {
             rules: ParseRules::cached(lang, theme.id),
-            highlighter: LazyHighlighter {
-                theme,
-                built: OnceCell::new(),
-            },
+            theme,
             state: ada_parse::State::default(),
             spans: Vec::new(),
             lines: LineRuns::default(),
@@ -1217,13 +1013,13 @@ impl<'a> Carrier<'a> {
                 usize::MAX,
                 &mut self.state,
                 (&mut self.spans, &mut self.buf, expand),
-                &self.highlighter,
+                self.theme,
                 &mut lines,
             );
         }
         let spans = CodeSpans {
             key,
-            rules: self.highlighter.theme.id,
+            rules: self.theme.id,
             partial: false,
             lines: lines.done(),
         };
@@ -1240,9 +1036,11 @@ impl Drop for Carrier<'_> {
 
 /// What highlights a block's lines.
 enum Engine {
-    Syntect(LineState),
     /// Also whether the block's text has a control character, which `expand_tabs` changes.
     Parse(ParseRules, ada_parse::State, Vec<ada_parse::Span>, bool),
+    /// A lexer stuck on a line, for the stall watch's tests (F-06).
+    #[cfg(test)]
+    Stuck,
 }
 
 /// The lines of a code block, split as [`crate::doc::code_lines`] splits them.
@@ -1271,28 +1069,13 @@ impl<'a> Iterator for Lines<'a> {
     }
 }
 
-/// syntect's highlighter for a theme, built the first time it's needed: an ada-parse block
-/// needs it only for a kind no block before it resolved (HL-004: building it sorts the
-/// theme's selectors, a few percent of a corpus's time when every block did).
-struct LazyHighlighter<'a> {
-    theme: &'a SyntaxTheme,
-    built: OnceCell<SynHighlighter<'a>>,
-}
-
-impl<'a> LazyHighlighter<'a> {
-    fn get(&self) -> &SynHighlighter<'a> {
-        self.built
-            .get_or_init(|| SynHighlighter::new(&self.theme.theme))
-    }
-}
-
-/// Highlights a block a few lines at a time, carrying syntect's state from one step to the
+/// Highlights a block a few lines at a time, carrying the lexer's state from one step to the
 /// next, so the worker can post the first lines early and stop between steps (O-05).
 pub struct Highlighter<'a> {
     key: u64,
     rules: u64,
-    highlighter: LazyHighlighter<'a>,
-    /// `None` once the block turns out plain, or syntect fails on it.
+    theme: &'a SyntaxTheme,
+    /// `None` for a block that shows plain.
     state: Option<Engine>,
     rest: Lines<'a>,
     lines: LineRuns,
@@ -1301,25 +1084,23 @@ pub struct Highlighter<'a> {
 
 impl<'a> Highlighter<'a> {
     pub fn new(key: u64, lang: &str, text: &'a str, theme: &'a SyntaxTheme) -> Self {
-        let highlighter = LazyHighlighter {
-            theme,
-            built: OnceCell::new(),
-        };
         let BlockScratch { spans, lines, buf } = BlockScratch::take();
-        let state = find_syntax(lang).map(|syntax| match syntax {
-            Syntax::Own(lang) => Engine::Parse(
+        let state = match own(lang) {
+            #[cfg(test)]
+            _ if lang == tests::STUCK => Some(Engine::Stuck),
+            Some(lang) => Some(Engine::Parse(
                 ParseRules::cached(lang, theme.id),
                 ada_parse::State::default(),
                 spans,
                 block_needs_expanding(text),
-            ),
-            Syntax::Set(s) => Engine::Syntect(LineState::new(syntaxes(), s, highlighter.get())),
-        });
+            )),
+            None => None,
+        };
         Self {
             key,
             rules: theme.id,
             state,
-            highlighter,
+            theme,
             rest: Lines::new(text),
             lines,
             buf,
@@ -1349,7 +1130,7 @@ impl<'a> Highlighter<'a> {
                         max,
                         state,
                         (spans, &mut self.buf, *expand),
-                        &self.highlighter,
+                        self.theme,
                         out,
                     );
                     LINES.fetch_add((out.ends.len() - done) as u64, Ordering::Relaxed);
@@ -1363,22 +1144,10 @@ impl<'a> Highlighter<'a> {
                     }
                 }
             }
-            Engine::Syntect(state) => {
-                for _ in 0..n {
-                    let Some(line) = self.rest.next() else {
-                        break;
-                    };
-                    if state
-                        .line(line, self.highlighter.get(), &mut self.buf, out)
-                        .is_none()
-                    {
-                        // plain, as a whole
-                        self.state = None;
-                        self.lines.clear();
-                        return false;
-                    }
-                }
-            }
+            #[cfg(test)]
+            Engine::Stuck => loop {
+                thread::park();
+            },
         }
         self.rest.0.is_some()
     }
@@ -1428,20 +1197,13 @@ impl Drop for Highlighter<'_> {
 const PARALLEL_BYTES: usize = 1 << 20;
 const PARALLEL_LINES: usize = 20_000;
 
-/// How often a chunk shows its state, to compare with the state the chunk before it really ends
-/// in.
-const CHECKPOINT_EVERY: usize = 32;
-
-/// [`highlight`] for print mode (O-04): a block of 1 MiB or 20,000 lines and up is cut into one
-/// chunk per thread, each highlighted at once from a fresh state, as if it began the block. The
-/// thread with the true state at a chunk's end (the first one, to begin with) then highlights
-/// on into the next chunk until its state matches one of that chunk's checkpoints. From there
-/// on the chunk's guess is what one thread would have produced, since a line's highlighting
-/// depends only on the line and the state before it, and that chunk's thread carries on. Most
-/// syntaxes come back to the same state within a few lines; for one that never does, the first
-/// thread does all the work. The result is [`highlight`]'s.
+/// [`highlight`] for print mode (O-04): a block of 1 MiB or 20,000 lines and up whose lines
+/// don't depend on each other (`Lang::line_by_line`, or JSON without a `/* */`) is cut into a
+/// chunk of lines per thread. Any other block goes on one thread: ada's lexers run at hundreds
+/// of MB/s, and the chunks that guessed a state and met the true one were syntect's, gone with
+/// it (ADR-43). The result is [`highlight`]'s.
 pub fn highlight_parallel(key: u64, lang: &str, text: &str, theme: &SyntaxTheme) -> CodeSpans {
-    let Some(syntax) = find_syntax(lang) else {
+    let Some(own) = own(lang) else {
         return highlight(key, lang, text, theme);
     };
     if text.len() < PARALLEL_BYTES && newlines(text) < PARALLEL_LINES {
@@ -1452,16 +1214,13 @@ pub fn highlight_parallel(key: u64, lang: &str, text: &str, theme: &SyntaxTheme)
     if threads < 2 {
         return highlight(key, lang, text, theme);
     }
-    match syntax {
+    match own {
         // a `/* */` comment carries over lines: rare in JSON this big, and fast on one thread
-        Syntax::Own(Lang::Json) if text.contains("/*") => highlight(key, lang, text, theme),
+        Lang::Json if text.contains("/*") => highlight(key, lang, text, theme),
         // without one, its lines don't depend on each other
-        Syntax::Own(Lang::Json) => highlight_parse_on(key, Lang::Json, text, theme, threads),
-        Syntax::Own(own) if own.line_by_line() => {
-            highlight_parse_on(key, own, text, theme, threads)
-        }
-        Syntax::Own(_) => highlight(key, lang, text, theme),
-        Syntax::Set(syntax) => highlight_on(key, syntax, text, theme, threads),
+        Lang::Json => highlight_parse_on(key, Lang::Json, text, theme, threads),
+        own if own.line_by_line() => highlight_parse_on(key, own, text, theme, threads),
+        _ => highlight(key, lang, text, theme),
     }
 }
 
@@ -1540,206 +1299,6 @@ fn lines_on(
         partial: false,
         lines: lines.shrink(),
     }
-}
-
-/// [`highlight_parallel`] on `threads` threads, whatever the size.
-fn highlight_on(
-    key: u64,
-    syntax: &SyntaxReference,
-    text: &str,
-    theme: &SyntaxTheme,
-    threads: usize,
-) -> CodeSpans {
-    let all: Vec<&str> = Lines::new(text).collect();
-    let chunks: Vec<&[&str]> = all.chunks(all.len().div_ceil(threads)).collect();
-    let seams = Seams::new(chunks.len());
-    let mut outs: Vec<Option<Chunk>> = thread::scope(|s| {
-        let handles: Vec<_> = (0..chunks.len())
-            .map(|k| {
-                let (chunks, seams) = (&chunks, &seams);
-                s.spawn(move || chunk(k, chunks, syntax, theme, seams))
-            })
-            .collect();
-        handles
-            .into_iter()
-            .map(|h| h.join().expect("highlight thread"))
-            .collect()
-    });
-    let mut lines = LineRuns::default();
-    let mut k = 0;
-    loop {
-        let Some(out) = outs.get_mut(k).and_then(Option::take) else {
-            // syntect failed on a line: plain, as a whole
-            lines.clear();
-            break;
-        };
-        lines.append(out.lines, out.from);
-        lines.append(out.over, 0);
-        match out.meet {
-            Some(m) => k = m,
-            None => break,
-        }
-    }
-    CodeSpans {
-        key,
-        rules: theme.id,
-        partial: false,
-        lines: lines.shrink(),
-    }
-}
-
-/// What a chunk's thread found. Its lines from `from` on are true, then `over`, the lines it
-/// highlighted after its chunk, run up to chunk `meet`'s checkpoint, or to the block's end.
-struct Chunk {
-    from: usize,
-    lines: LineRuns,
-    over: LineRuns,
-    meet: Option<usize>,
-}
-
-/// A state's fingerprint, to compare it with another thread's: its `Debug` text, which shows
-/// every field's value. Not for a state that holds a match's captures: an Oniguruma `Region`
-/// shows its pointers, and states can't move between threads to be compared directly.
-fn fingerprint(state: &LineState) -> Option<String> {
-    let text = format!("{:?}{:?}", state.parse, state.scopes);
-    (!text.contains("captures: Some")).then_some(text)
-}
-
-/// Where each chunk's thread learns from the one before it whether, and from which line, its
-/// guess is true.
-struct Seams {
-    seams: Mutex<(Vec<Seam>, bool)>,
-    changed: Condvar,
-}
-
-#[derive(Default)]
-struct Seam {
-    /// The fingerprints before every `CHECKPOINT_EVERY`th line, once guessed; empty if syntect
-    /// failed on the guess.
-    checkpoints: Option<Vec<Option<String>>>,
-    /// The first true line of the guess; `None` inside when the true state ran past the chunk.
-    from: Option<Option<usize>>,
-}
-
-impl Seams {
-    fn new(n: usize) -> Self {
-        Self {
-            seams: Mutex::new(((0..n).map(|_| Seam::default()).collect(), false)),
-            changed: Condvar::new(),
-        }
-    }
-
-    fn update(&self, f: impl FnOnce(&mut Vec<Seam>, &mut bool)) {
-        let mut guard = self.seams.lock().unwrap_or_else(PoisonError::into_inner);
-        let (seams, failed) = &mut *guard;
-        f(seams, failed);
-        self.changed.notify_all();
-    }
-
-    /// Wait until `get` has an answer, or the block fails.
-    fn wait<T>(&self, mut get: impl FnMut(&[Seam]) -> Option<T>) -> Option<T> {
-        let mut guard = self.seams.lock().unwrap_or_else(PoisonError::into_inner);
-        loop {
-            if guard.1 {
-                return None;
-            }
-            if let Some(answer) = get(&guard.0) {
-                return Some(answer);
-            }
-            guard = self
-                .changed
-                .wait(guard)
-                .unwrap_or_else(PoisonError::into_inner);
-        }
-    }
-
-    fn fail(&self) {
-        self.update(|_, failed| *failed = true);
-    }
-}
-
-/// Chunk `k`'s thread: guess the chunk, then, if the state at its end turns out true, carry it
-/// on until it meets a later chunk's checkpoint. `None` when syntect fails on a true line.
-fn chunk(
-    k: usize,
-    chunks: &[&[&str]],
-    syntax: &SyntaxReference,
-    theme: &SyntaxTheme,
-    seams: &Seams,
-) -> Option<Chunk> {
-    let highlighter = SynHighlighter::new(&theme.theme);
-    let mut state = LineState::new(syntaxes(), syntax, &highlighter);
-    let mut buf = String::new();
-    let mut lines = LineRuns::default();
-    lines.ends.reserve_exact(chunks[k].len());
-    let mut checkpoints = Vec::new();
-    let mut failed = false;
-    for (i, line) in chunks[k].iter().enumerate() {
-        if i > 0 && i % CHECKPOINT_EVERY == 0 {
-            checkpoints.push(fingerprint(&state));
-        }
-        if state
-            .line(line, &highlighter, &mut buf, &mut lines)
-            .is_none()
-        {
-            failed = true;
-            break;
-        }
-    }
-    if failed {
-        checkpoints.clear();
-    }
-    seams.update(|s, _| s[k].checkpoints = Some(checkpoints));
-    let from = match k {
-        0 => Some(0),
-        _ => seams.wait(|s| s[k].from)?,
-    };
-    let Some(from) = from else {
-        // the true state ran past this chunk: the guess isn't used
-        return Some(Chunk {
-            from: 0,
-            lines: LineRuns::default(),
-            over: LineRuns::default(),
-            meet: None,
-        });
-    };
-    if failed {
-        // the failing line comes after the checkpoint the true state met, so it fails for true
-        seams.fail();
-        return None;
-    }
-    let mut over = LineRuns::default();
-    for (m, chunk) in chunks.iter().enumerate().skip(k + 1) {
-        let theirs = seams.wait(|s| s[m].checkpoints.clone())?;
-        for (i, line) in chunk.iter().enumerate() {
-            if i > 0 && i % CHECKPOINT_EVERY == 0 {
-                let mine = fingerprint(&state);
-                if mine.is_some() && theirs.get(i / CHECKPOINT_EVERY - 1) == Some(&mine) {
-                    seams.update(|s, _| s[m].from = Some(Some(i)));
-                    return Some(Chunk {
-                        from,
-                        lines,
-                        over,
-                        meet: Some(m),
-                    });
-                }
-            }
-            if state
-                .line(line, &highlighter, &mut buf, &mut over)
-                .is_none()
-            {
-                seams.fail();
-                return None;
-            }
-        }
-        seams.update(|s, _| s[m].from = Some(None));
-    }
-    Some(Chunk {
-        from,
-        lines,
-        over,
-        meet: None,
-    })
 }
 
 fn newlines(text: &str) -> usize {
@@ -1930,16 +1489,16 @@ pub enum Request {
 /// Lines highlighted between two looks at the queue.
 const STEP: usize = 256;
 
-/// Start the highlight worker. It loads the syntax set right away, off the UI thread, then
-/// works through its queue, urgent jobs first, posting each result to `tx`. A block goes
+/// Start the highlight worker. It works through its queue, urgent jobs first, posting each
+/// result to `tx`. A block goes
 /// `STEP` lines at a time: in between, the worker takes new requests, and stops the block when
 /// another document or theme came along. A long block posts its first lines when 256, 512,
 /// 1,024 … are done, so the top shows highlighted long before the rest (O-05).
 ///
-/// A watcher thread stands by while a block is highlighted. When syntect gets stuck on a line
-/// (F-06), it posts the block as plain and starts a new worker on the same queue; the stuck
-/// thread is left to spin, since a thread can't be stopped from outside, and quits if it ever
-/// gets free. While the worker is idle, so is the watcher.
+/// A watcher thread stands by while a block is highlighted. When a lexer gets stuck on a line
+/// (F-06; syntect could, until 1.1), it posts the block as plain and starts a new worker on the
+/// same queue; the stuck thread is left to spin, since a thread can't be stopped from outside,
+/// and quits if it ever gets free. While the worker is idle, so is the watcher.
 pub fn spawn_worker(tx: Sender<Msg>) -> Sender<Request> {
     let (requests, rx) = mpsc::channel::<Request>();
     let shared = Arc::new(Worker {
@@ -1999,8 +1558,6 @@ impl Worker {
 
     /// The worker of generation `generation`.
     fn work(&self, generation: u64) {
-        // the syntax set loads with the first block ada's own lexers don't cover, not before:
-        // a note with none never loads it (ADR-40)
         loop {
             let job = {
                 let mut inbox = self.inbox.lock().unwrap_or_else(PoisonError::into_inner);
@@ -2160,6 +1717,11 @@ mod tests {
     use super::*;
     use crate::theme::Theme;
 
+    /// The language of a block whose lexer gets stuck on its first line ([`Engine::Stuck`]),
+    /// as syntect's parser did on the Scala line `:s| < @@@` (syntect#656). The stuck thread
+    /// stays parked until the tests end.
+    pub(super) const STUCK: &str = "stuck-for-tests";
+
     #[test]
     fn vault_languages_resolve() {
         for lang in [
@@ -2234,7 +1796,7 @@ mod tests {
 
     /// `find_syntax` as it was before ada-parse (ADR-40): on the whole set.
     fn find_in_full(lang: &str) -> Option<&'static str> {
-        let set = reference_syntaxes();
+        let set = reference::syntaxes();
         if is_plain(lang) {
             return None;
         }
@@ -2253,7 +1815,7 @@ mod tests {
     fn file_in_full(path: &str) -> Option<&'static str> {
         let path = Path::new(path);
         let name = path.file_name().and_then(|n| n.to_str());
-        let by_name = name.and_then(|n| reference_syntaxes().find_syntax_by_extension(n));
+        let by_name = name.and_then(|n| reference::syntaxes().find_syntax_by_extension(n));
         let by_ext = || find_in_full(path.extension()?.to_str()?);
         by_name.map(|s| &*s.name).or_else(by_ext)
     }
@@ -2265,7 +1827,7 @@ mod tests {
             .iter()
             .flat_map(|&(a, t)| [a.to_owned(), t.to_owned()])
             .collect();
-        for s in reference_syntaxes().syntaxes() {
+        for s in reference::syntaxes().syntaxes() {
             words.push(s.name.clone());
             words.extend(s.file_extensions.iter().cloned());
         }
@@ -2277,23 +1839,16 @@ mod tests {
     }
 
     /// ada-parse's table names a language only where syntect on the whole set names the same,
-    /// and misses none of the ones it covers; and ada, the table first and its trimmed set
-    /// after, names what the whole set names: as a fence's token, a file's whole name and its
-    /// extension. Two departures are by design (ADR-40): ada's JavaScript is Babel's grammar
-    /// whatever the token, where the set gives Sublime's `JavaScript` (```` ```JavaScript ````,
-    /// and in the fancy build, whose set has no Babel, `js` itself) or nothing (the fancy
-    /// build's `mjs`, `jsx`, …); and the fancy build's set has no PowerShell (its regexes need
-    /// Oniguruma), where ada's own lexer needs none.
+    /// and misses none of the ones it covers; and ada, the table first and the set's list of
+    /// names after (ADR-43), names what the whole set names: as a fence's token, a file's whole
+    /// name and its extension. One departure is by design (ADR-40): ada's JavaScript is
+    /// Babel's grammar whatever the token, where the set gives Sublime's `JavaScript` for
+    /// ```` ```JavaScript ````.
     #[test]
     fn the_language_table_agrees_with_the_set() {
         let covered = |name: Option<&str>| name.and_then(Lang::from_name);
-        let fancy_only = |ours: Option<&str>, full: Option<&str>| {
-            !cfg!(feature = "onig") && full.is_none() && ours == Some(Lang::PowerShell.name())
-        };
         let departs = |ours: Option<&str>, full: Option<&str>| {
-            fancy_only(ours, full)
-                || ours == Some(Lang::JavaScript.name())
-                    && (full == Some("JavaScript") || (!cfg!(feature = "onig") && full.is_none()))
+            ours == Some(Lang::JavaScript.name()) && full == Some("JavaScript")
         };
         let mut words = words();
         words.extend(["PowerShell", "powershell", "ps1", "PSM1", "psd1"].map(String::from));
@@ -2358,10 +1913,11 @@ mod tests {
     }
 
     /// The first lines ada-parse tells about are syntect's on the whole set: a language of its
-    /// own, or no syntax at all; and ada's answer is syntect's.
+    /// own, or no syntax at all; and ada's answer, with the `regex` crate on the set's regexes
+    /// for the rest (ADR-43), is syntect's.
     fn first_lines_agree(lines: &[String]) -> (usize, usize) {
         let full = |l: &str| {
-            let found = reference_syntaxes().find_syntax_by_first_line(l);
+            let found = reference::syntaxes().find_syntax_by_first_line(l);
             found.map(|s| &*s.name).filter(|&n| n != "Plain Text")
         };
         let (mut claimed, mut asked) = (0, 0);
@@ -2373,6 +1929,7 @@ mod tests {
                     claimed += 1;
                 }
                 FirstLine::None => assert_eq!(want, None, "{l:?}"),
+                FirstLine::Syntax(name) => panic!("{l:?}: {name} without asking"),
                 FirstLine::Ask => asked += 1,
             }
             assert_eq!(first_line_language(l), want, "{l:?}");
@@ -2539,27 +2096,42 @@ mod tests {
         let lines: Vec<String> = text.lines().map(str::to_owned).collect();
         let (claimed, asked) = first_lines_agree(&lines);
         println!(
-            "{} lines: {claimed} claimed, {asked} asked the set",
+            "{} lines: {claimed} claimed, {asked} asked the regexes",
             lines.len()
         );
     }
 
-    /// ada-parse's first-line table walks the set's first-line regexes in the set's order.
-    /// The table may list a syntax the set lacks (the fancy build has no `JavaScript (Babel)`
-    /// regex), which only sends more lines to the set.
+    /// ada-parse's first-line table walks the set's first-line regexes in the set's order, and
+    /// ada's list of them (`cargo xtask names`) is in the same: `first_line_asking` asks about
+    /// a regex by its place.
     #[test]
     fn the_first_line_table_follows_the_set() {
-        let set: Vec<&str> = reference_syntaxes()
+        let set: Vec<&str> = reference::syntaxes()
             .syntaxes()
             .iter()
             .filter(|s| s.first_line_match.is_some())
             .map(|s| &*s.name)
             .collect();
-        let mut table = ada_parse::first_line_syntaxes();
-        for name in &set {
+        let table: Vec<&str> = ada_parse::first_line_syntaxes().collect();
+        let listed: Vec<&str> = names::FIRST_LINES.iter().map(|&(name, _)| name).collect();
+        assert_eq!(table, set, "ada-parse's first-line table");
+        assert_eq!(listed, set, "run `cargo xtask names`");
+    }
+
+    /// The `regex` crate reads every first-line regex of the set but XML's and Dockerfile's,
+    /// whose lookarounds and back-reference ada-parse's table decides itself.
+    #[test]
+    fn the_regex_crate_reads_the_first_line_regexes() {
+        let refused: Vec<&str> = names::FIRST_LINES
+            .iter()
+            .filter(|(_, regex)| regex::Regex::new(regex).is_err())
+            .map(|&(name, _)| name)
+            .collect();
+        assert_eq!(refused, ["XML", "Dockerfile"]);
+        for name in refused {
             assert!(
-                table.any(|t| t == *name),
-                "{name}: not in ada-parse's first-line table, or out of the set's order"
+                Lang::from_name(name).is_some(),
+                "{name}: decided by the table"
             );
         }
     }
@@ -2568,29 +2140,22 @@ mod tests {
     /// or a changed regex, needs a look at that table.
     #[test]
     fn the_first_line_regexes() {
-        let regexes: Vec<String> = reference_syntaxes()
+        let regexes: Vec<String> = reference::syntaxes()
             .syntaxes()
             .iter()
             .filter_map(|s| Some(format!("{}: {}", s.name, s.first_line_match.as_ref()?)))
             .collect();
-        // two-face rewrites a few regexes for fancy-regex
-        let flavor = if cfg!(feature = "onig") {
-            "onig"
-        } else {
-            "fancy"
-        };
-        insta::with_settings!({ snapshot_suffix => flavor }, {
+        insta::with_settings!({ snapshot_suffix => "onig" }, {
             insta::assert_snapshot!(regexes.join("\n"));
         });
     }
 
-    /// A file's or a fence's language is named without the set (`file_language` never loads
-    /// it, `find_syntax` only for a syntax ada's lexers don't cover): the list `cargo xtask
-    /// dump` writes beside the set is the set's names and extensions, in its order.
+    /// A file's or a fence's language is named without syntect (ADR-43): the list `cargo
+    /// xtask names` writes is the set's names and extensions, in its order.
     #[test]
     fn the_name_list_is_the_sets() {
         let mut from_set = String::new();
-        for s in syntaxes().syntaxes() {
+        for s in reference::syntaxes().syntaxes() {
             from_set.push_str(&s.name);
             for e in &s.file_extensions {
                 from_set.push('\t');
@@ -2598,7 +2163,7 @@ mod tests {
             }
             from_set.push('\n');
         }
-        assert!(from_set == names::LIST, "run `cargo xtask dump`");
+        assert!(from_set == names::LIST, "run `cargo xtask names`");
     }
 
     /// On valid JSON, the scanner picks the rules bat's grammar picks, in every built-in theme
@@ -4524,7 +4089,7 @@ mod tests {
                 theme.name
             );
             let theme = SyntaxTheme::new(&syntax);
-            let want = highlight_syntect(reference_syntaxes(), name, text, &theme).unwrap();
+            let want = reference::highlight(reference::syntaxes(), name, text, &theme).unwrap();
             assert_eq!(painted(&highlight(1, lang, text, &theme)), painted(&want));
         }
     }
@@ -4540,12 +4105,8 @@ mod tests {
     /// The rule a scope stack takes in `rules`, under the language's base scope (the way a
     /// lexer's kind is resolved, [`ParseRules`]).
     fn rule_of(rules: &SyntaxTheme, base: &str, scopes: &str) -> u16 {
-        let h = SynHighlighter::new(&rules.theme);
-        let stack: Vec<Scope> = std::iter::once(base)
-            .chain(scopes.split(' '))
-            .map(|s| Scope::new(s).expect("scope"))
-            .collect();
-        decode_rule(h.style_for_stack(&stack).foreground).0
+        let stack: Vec<&str> = std::iter::once(base).chain(scopes.split(' ')).collect();
+        rules.rule(&stack).0
     }
 
     /// As [`colors_match_the_grammar`], a byte counted as syntect's where ada's rule is the
@@ -4568,7 +4129,7 @@ mod tests {
         let mut bad: Vec<(u32, String)> = Vec::new();
         for theme in Theme::builtins() {
             let rules = SyntaxTheme::new(&theme.syntax);
-            let want = highlight_syntect(reference_syntaxes(), name, text, &rules).unwrap();
+            let want = reference::highlight(reference::syntaxes(), name, text, &rules).unwrap();
             let got = highlight(1, lang, text, &rules);
             let same: Vec<(u16, u16)> = departs
                 .iter()
@@ -4598,6 +4159,44 @@ mod tests {
         assert!(bad.is_empty(), "{}", bad.join("\n"));
     }
 
+    /// ada's scope selectors pick syntect's rule (ADR-43), in every built-in theme: for every
+    /// kind of every lexer with a fixed set of kinds, under its base scope, and for stacks made
+    /// of the themes' own selectors' scopes, which reach the exclusions and the paths.
+    #[test]
+    fn selectors_pick_syntects_rules() {
+        let mut stacks: Vec<Vec<&str>> = Vec::new();
+        for lang in Lang::ALL {
+            for kind in 0..lang.kinds().len() as u16 {
+                let mut stack = vec![lang.base()];
+                stack.extend(lang.scopes(kind));
+                stacks.push(stack);
+            }
+        }
+        let themes = Theme::builtins();
+        let words: Vec<&str> = themes
+            .iter()
+            .flat_map(|t| &t.syntax)
+            .flat_map(|(sel, _)| sel.split([',', '|', ' ', '-']))
+            .filter(|w| !w.is_empty())
+            .collect();
+        for (i, w) in words.iter().enumerate() {
+            let next = words[(i * 7 + 3) % words.len()];
+            stacks.push(vec!["source.rust", w, next]);
+            stacks.push(vec!["text.html", next, "meta.block", w]);
+        }
+        let mut checked = 0;
+        for theme in &themes {
+            let ours = SyntaxTheme::new(&theme.syntax);
+            let theirs = reference::theme(&ours);
+            for stack in &stacks {
+                let want = reference::rule(&theirs, stack);
+                assert_eq!(ours.rule(stack), want, "{}: {stack:?}", theme.name);
+                checked += 1;
+            }
+        }
+        assert!(checked > 10_000, "{checked} stacks");
+    }
+
     /// A block's runs line by line, a line of plain runs as none: syntect's way gives a plain
     /// line its run, a lexer's leaves it empty, and both paint it plain.
     fn painted(spans: &CodeSpans) -> Vec<&[Run]> {
@@ -4612,7 +4211,8 @@ mod tests {
 
     /// G-002 on real Makefiles: `ADA_MAKE_CORPUS` names a file of paths, one a line, and each
     /// file's runs must be syntect's in every built-in theme. Files with a line over
-    /// `MAX_LINE` are left out, as syntect leaves those lines plain and the lexer doesn't.
+    /// `reference::MAX_LINE` are left out, as ada left those lines plain on syntect and the
+    /// lexer doesn't.
     /// Slow: `ADA_MAKE_CORPUS=list cargo test --release make_corpus -- --ignored`.
     #[test]
     #[ignore]
@@ -4643,12 +4243,13 @@ mod tests {
             let Ok(text) = std::fs::read_to_string(path) else {
                 continue;
             };
-            if Lines::new(&text).any(|l| expand_tabs(l).len() > MAX_LINE) {
+            if Lines::new(&text).any(|l| expand_tabs(l).len() > reference::MAX_LINE) {
                 continue;
             }
             files += 1;
             for (t, theme) in themes.iter().enumerate() {
-                let Some(want) = highlight_syntect(reference_syntaxes(), name, &text, theme) else {
+                let Some(want) = reference::highlight(reference::syntaxes(), name, &text, theme)
+                else {
                     break;
                 };
                 let want = want.lines;
@@ -4891,32 +4492,23 @@ mod tests {
         assert_eq!(next_whole, 3);
     }
 
-    /// The parallel highlighting gives what one thread gives, however the block is cut: with
-    /// states that hold captures (raw strings, heredocs), and with one that never comes back
-    /// (a comment left open).
+    /// The parallel highlighting gives what one thread gives, however the block is cut.
     #[test]
     fn parallel_highlighting_matches_one_thread() {
         let theme = Theme::builtin();
         let syntax = SyntaxTheme::new(&theme.syntax);
-        let ruby = "def f\n  s = <<~EOS\n    a \"quoted\" #{x}\n  EOS\n  # note\n  n = 0x1f\nend\n";
         let log =
             "2026-10-17 12:00:01 INFO started pid=42\n2026-10-17 12:00:02 ERROR failed: \"x\"\n";
-        let scala = "val x = 1 // note\n";
         let json = "  {\"k\": [1, -2.5e3, true, \"s\\\"\"], \"open\": \"x\n  \"n\": null},\n";
         let diff = "--- a/x\n+++ b/x\n@@ -1 +1 @@ fn main\n-old\n+new\n same\n";
         let ini = "[core]\n; note\neditor = \"vim\" ; the one\n";
         for (lang, unit, reps) in [
-            ("ruby", ruby, 60),
             ("log", log, 150),
-            ("scala", scala, 300),
             ("json", json, 150),
             ("diff", diff, 60),
             ("ini", ini, 100),
         ] {
-            let mut text = unit.repeat(reps);
-            if lang == "scala" {
-                text.insert_str(0, "/* never closed\n");
-            }
+            let text = unit.repeat(reps);
             let one = highlight(1, lang, &text, &syntax);
             assert!(one.line_count() > 200, "{lang}: highlighted at all");
             for threads in 2..=5 {
@@ -4924,8 +4516,7 @@ mod tests {
                     Syntax::Own(l) if streams(l) => {
                         highlight_parse_on(1, l, &text, &syntax, threads)
                     }
-                    Syntax::Own(_) => panic!("{lang}: on one thread"),
-                    Syntax::Set(found) => highlight_on(1, found, &text, &syntax, threads),
+                    _ => panic!("{lang}: on one thread"),
                 };
                 assert!(many == one, "{lang} on {threads} threads");
             }
@@ -4974,30 +4565,27 @@ mod tests {
         assert_eq!(got[1..], want[1..]);
     }
 
-    /// syntect's parser never returns on this Scala line (syntect#656); the stuck thread spins on
-    /// until the tests end.
-    const STUCK: &str = ":s| < @@@\n";
-
-    /// A block syntect gets stuck on prints plain, and the blocks after it still highlight (F-06).
+    /// A block a lexer gets stuck on prints plain, and the blocks after it still highlight
+    /// (F-06).
     #[test]
-    fn print_leaves_a_block_syntect_is_stuck_on_plain() {
+    fn print_leaves_a_block_a_lexer_is_stuck_on_plain() {
         let theme = Arc::new(SyntaxTheme::new(&Theme::builtin().syntax));
         let doc = crate::doc::parse(&format!(
-            "```scala\n{STUCK}```\n\n```rust\nfn main() {{}}\n```\n"
+            "```{STUCK}\nx\n```\n\n```rust\nfn main() {{}}\n```\n"
         ));
         let blocks = doc.code_blocks();
         let all = Highlights::compute_all(&blocks, &theme);
-        let [scala, rust] = [0, 1].map(|i| all.get(key(blocks[i]).unwrap()).unwrap());
-        assert_eq!(scala.line_count(), 0);
+        let [stuck, rust] = [0, 1].map(|i| all.get(key(blocks[i]).unwrap()).unwrap());
+        assert_eq!(stuck.line_count(), 0);
         assert!(rust.line(0).len() > 1);
     }
 
-    /// With code enough for several threads, the block syntect gets stuck on prints plain, and
+    /// With code enough for several threads, the block a lexer gets stuck on prints plain, and
     /// every other block as one thread highlights it (F-06, PRN-01).
     #[test]
     fn print_on_several_threads_leaves_only_the_stuck_block_plain() {
         let theme = Arc::new(SyntaxTheme::new(&Theme::builtin().syntax));
-        let mut text = format!("```rust\nfn first() {{}}\n```\n\n```scala\n{STUCK}```\n\n");
+        let mut text = format!("```rust\nfn first() {{}}\n```\n\n```{STUCK}\nx\n```\n\n");
         for i in 0..800 {
             let pad = "x".repeat(i % 90);
             text.push_str(&format!(
@@ -5023,7 +4611,7 @@ mod tests {
         }
     }
 
-    /// The worker posts a block syntect gets stuck on as plain, and a new worker takes the next
+    /// The worker posts a block a lexer gets stuck on as plain, and a new worker takes the next
     /// one (F-06).
     #[test]
     fn the_worker_gives_up_on_a_stuck_block_and_goes_on() {
@@ -5040,7 +4628,7 @@ mod tests {
             urgent: false,
             first: None,
         };
-        worker.send(Request::Job(job(0, "scala", STUCK))).unwrap();
+        worker.send(Request::Job(job(0, STUCK, "x\n"))).unwrap();
         worker
             .send(Request::Job(job(1, "rust", "fn main() {}\n")))
             .unwrap();

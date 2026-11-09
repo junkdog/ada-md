@@ -257,8 +257,8 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
   <div class="wrap">
     <h2 id="also" class="also-title">Also <a class="anchor" href="#also" aria-label="link to this section">#</a></h2>
     <ul class="also">
-      <li id="other-files"><h3>Not only markdown <a class="anchor" href="#other-files" aria-label="link to this section">#</a></h3><p>Code, config and other text files open whole and highlighted, in some 200
-        languages, and logs and JSON through parsers of ada's own (JSON colored however long its lines); <code>main.rs#L24</code> lands on line 24. <kbd>w</kbd>
+      <li id="other-files"><h3>Not only markdown <a class="anchor" href="#other-files" aria-label="link to this section">#</a></h3><p>Code, config and other text files open whole, highlighted in 48 languages by
+        lexers of ada's own, logs and JSON among them (colored however long their lines), and plain in the rest; <code>main.rs#L24</code> lands on line 24. <kbd>w</kbd>
         wraps code or scrolls it sideways, <kbd>#</kbd> shows line numbers.</p></li>
       <li id="callouts"><h3>Callouts, footnotes, task lists <a class="anchor" href="#callouts" aria-label="link to this section">#</a></h3><p>GitHub's five callout kinds, footnotes you can follow, and
         checkboxes.</p></li>
@@ -1257,8 +1257,8 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
     memory on Linux, and less than half that on macOS. That takes two links, which <code>cargo install</code> can't
     do. To build ada the way the releases are, on Linux (x86_64 and aarch64) and macOS, from a clone:</p>
   <pre><code>cargo ordered --locked   <span class="c"># target/release/ada, as released</span></code></pre>
-  <p>Rust 1.95 or newer, and a C compiler: highlighting runs on Oniguruma, built from source. For a pure-Rust
-    build, add <code>--no-default-features</code>. Git integration runs the <code>git</code> command.</p>
+  <p>Rust 1.95 or newer. ada is pure Rust, but for jemalloc in a static musl build, which needs a C compiler
+    and <code>make</code>. Git integration runs the <code>git</code> command.</p>
   <p>Windows is mostly untested: ada builds and runs there but doesn't follow Windows' conventions yet. The
     <a href="https://github.com/junkdog/ada-md#install">README</a> lists what's missing; support is planned for 1.1.</p>
   <pre><code><span class="c"># read a note</span>

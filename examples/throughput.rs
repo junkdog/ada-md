@@ -590,8 +590,8 @@ mod linux {
         }
 
         let syntax_theme = SyntaxTheme::new(&theme.syntax);
-        // bat's whole set: ada's own has the grammars of its lexers emptied (ADR-40)
-        let syntaxes = highlight::reference_syntaxes();
+        // bat's whole set, syntect's reference since it left ada (ADR-43)
+        let syntaxes = &two_face::syntax::extra_newlines();
         for (id, file, lang, set) in LEXERS.into_iter().filter(|(id, ..)| wanted(id)) {
             let text = read(&args.corpus, file);
             let input = Input {

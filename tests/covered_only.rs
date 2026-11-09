@@ -1,7 +1,7 @@
-//! ada-parse's phase-0 gate (ADR-40): printing a note whose fences are all plain or in languages
-//! ada's own lexers cover never loads syntect's syntax set, nor does naming such a file; one
-//! fence in another language does. One test, alone in its file: once loaded, the set stays
-//! loaded for the process.
+//! The languages ada's own lexers cover, and the others of bat's syntax set (ADR-40, ADR-43): a
+//! note whose fences are in covered languages prints highlighted, and a file in one is named
+//! by its name or its first line; a language of the set no lexer covers is named the same way,
+//! and shows plain, as syntect left the binary in 1.1.
 
 use std::path::Path;
 
@@ -213,7 +213,7 @@ no language at all
 
 fn print(note: &str) -> String {
     let path = Path::new("note.md");
-    print::start(Some(note));
+    print::start();
     let filetype = FileType::of(path, note);
     assert_eq!(filetype, FileType::Markdown);
     let doc = filetype.parse(path, note);
@@ -233,13 +233,9 @@ fn print(note: &str) -> String {
 }
 
 #[test]
-fn a_covered_only_note_prints_without_the_syntax_set() {
+fn covered_languages_highlight_and_the_others_are_named() {
     let out = print(NOTE);
     assert!(out.contains("\x1b["), "highlighted: {out}");
-    assert!(
-        !highlight::syntaxes_loaded(),
-        "a covered note loaded the set"
-    );
 
     for name in [
         "Makefile",
@@ -309,45 +305,57 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         "deps.edn",
     ] {
         let t = FileType::by_path(Path::new(name));
+        let lang = match t {
+            Some(FileType::Text { lang: Some(lang) }) => lang,
+            t => panic!("{name}: {t:?}"),
+        };
         assert!(
-            matches!(t, Some(FileType::Text { lang: Some(_) })),
-            "{name}"
+            matches!(
+                highlight::find_syntax(lang),
+                Some(highlight::Syntax::Own(_))
+            ),
+            "{name}: {lang} has a lexer"
         );
-        assert!(!highlight::syntaxes_loaded(), "{name} loaded the set");
     }
-    // a name no syntax claims, or one the set has but only names, never loads it: the name
-    // list beside the set answers
-    for name in [
-        "deploy",
-        "README",
-        "notes.weird",
-        "x.rb",
-        "Gemfile",
-        "x.txt",
-    ] {
-        let _ = FileType::by_path(Path::new(name));
-        assert!(!highlight::syntaxes_loaded(), "{name} loaded the set");
+    // a name no syntax claims
+    for name in ["deploy", "README", "notes.weird", "x.txt"] {
+        assert_eq!(highlight::file_language(Path::new(name)), None, "{name}");
     }
-    assert_eq!(highlight::file_language(Path::new("x.rb")), Some("Ruby"));
-    assert_eq!(highlight::file_language(Path::new("x.txt")), None);
-    assert!(!highlight::needs_syntaxes("nosuchlanguage"));
     assert!(highlight::find_syntax("nosuchlanguage").is_none());
-    // nor does a first line that names a covered language, or none at all
+    // a first line that names a covered language, or none at all
     for first in [
         "#!/bin/sh",
         "#!/usr/bin/env bash",
         "#!/usr/bin/make -f",
         "#!/usr/bin/env python3",
         "<?xml version=\"1.0\"?>",
+        "FROM rust:1.95",
     ] {
-        assert!(highlight::first_line_language(first).is_some(), "{first}");
-        assert!(!highlight::syntaxes_loaded(), "{first} loaded the set");
+        let lang = highlight::first_line_language(first);
+        let own = lang.and_then(highlight::find_syntax);
+        assert!(matches!(own, Some(highlight::Syntax::Own(_))), "{first}");
     }
     for first in ["# ada", "<p align=\"center\">", "Some text.", "{", ""] {
         assert!(highlight::first_line_language(first).is_none(), "{first}");
-        assert!(!highlight::syntaxes_loaded(), "{first} loaded the set");
     }
 
-    print(&format!("{NOTE}\n```ruby\nx = 1\n```\n"));
-    assert!(highlight::syntaxes_loaded(), "a Ruby fence needs the set");
+    // the set's other languages: named by file name, fence or first line, and plain
+    let syntax = highlight::SyntaxTheme::new(&Theme::builtin().syntax);
+    for (name, file, first) in [
+        ("Haskell", "Main.hs", None),
+        ("Perl", "x.pl", Some("#!/usr/bin/perl -w")),
+        ("Elixir", "mix.exs", Some("#!/usr/bin/env elixir")),
+        ("Git Log", "x.gitlog", Some("commit 0123456789abcdef")),
+    ] {
+        assert_eq!(highlight::file_language(Path::new(file)), Some(name));
+        assert!(FileType::opens_in_ada(Path::new(file)), "{file}");
+        assert!(
+            matches!(highlight::find_syntax(name), Some(highlight::Syntax::Named(n)) if n == name)
+        );
+        if let Some(first) = first {
+            assert_eq!(highlight::first_line_language(first), Some(name), "{first}");
+        }
+        let spans = highlight::highlight(1, name, "x = 1\ny = 2\n", &syntax);
+        assert_eq!(spans.line_count(), 0, "{name} shows plain");
+    }
 }

@@ -33,7 +33,7 @@ use libfuzzer_sys::fuzz_target;
 const LINE: usize = 256;
 
 /// The languages whose kinds carry bat's scopes exactly.
-const EXACT: [Lang; 12] = [
+const EXACT: [Lang; 13] = [
     Lang::Diff,
     Lang::Ini,
     Lang::Xml,
