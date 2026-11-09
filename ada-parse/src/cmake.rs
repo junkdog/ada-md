@@ -18,10 +18,15 @@
 //! quantifiers and `.` plain, and it reads `{n}`, `\d`, `(?:` and `[:alpha:]`, which CMake hasn't.
 //!
 //! **So is one in a quoted or unquoted argument** (X-107): after `MATCHES`, after `REGEX` in
-//! `file(…)` and `list(…)`, after `string(REGEX MATCH|MATCHALL|REPLACE`, on the keyword's line.
-//! CMake's escapes come first (`"\\."` is the regex's `\.`, `"\."` its `.`), a `${…}` or `$<…>` is
-//! an operand in CMake's colors, and the tokens sit under the string's scope where it is quoted.
-//! bat leaves these arguments plain.
+//! `file(…)`, `list(…)` and `install(…)`, after `string(REGEX MATCH|MATCHALL|REPLACE`, after
+//! `source_group(… REGULAR_EXPRESSION`, on the keyword's line or a later one (X-108). CMake's
+//! escapes come first (`"\\."` is the regex's `\.`, `"\."` its `.`), a `${…}` or `$<…>` is an
+//! operand in CMake's colors, and the tokens sit under the string's scope where it is quoted. bat
+//! leaves these arguments plain, and reads a `MATCHES [[…]]` on its keyword's line only.
+//!
+//! **Escapes are CMake's** (X-109): `\` before any character but a letter or digit is that
+//! character, `\t`, `\r`, `\n` and `\;` are CMake's, another letter or digit is an error, in a
+//! quoted argument and an unquoted one alike. bat's table calls `"\."` and `"\/"` invalid.
 
 use crate::emit::{Rules, Run, Runs, Sink, Spans};
 use crate::prim::{char_len, find_any, is_name_start, is_word_starting, word_end};
@@ -283,10 +288,18 @@ static UNQUOTED_STOP: [bool; 256] = crate::prim::stops(b" \t()#\"\\$;");
 static STRING_STOP: [bool; 256] = crate::prim::stops(b"\"\\$;");
 /// What ends a capitalized argument (`[\t ()#"\\]`), and `$`.
 static CAPS_STOP: [bool; 256] = crate::prim::stops(b" \t()#\"\\$");
-/// What a `\` escapes in an unquoted argument, `[; ()#"\\]`.
-static UNQUOTED_ESCAPES: [bool; 256] = crate::prim::stops(b"; ()#\"\\");
-/// … and in a quoted string, `[()#" \\$@^trn;]`.
-static STRING_ESCAPES: [bool; 256] = crate::prim::stops(b"()#\" \\$@^trn;");
+/// What a `\` escapes, in a quoted argument and an unquoted one (X-109, `cmake-language(7)`):
+/// any character but a letter or digit (`escape_identity`, `\;` its `escape_semicolon`), and
+/// `t`, `r`, `n` (`escape_encoded`); another letter or digit is an error to CMake.
+static ESCAPES: [bool; 256] = {
+    let mut t = [true; 256];
+    let mut c = 0;
+    while c < 256 {
+        t[c] = !(c as u8).is_ascii_alphanumeric() || matches!(c as u8, b't' | b'r' | b'n');
+        c += 1;
+    }
+    t
+};
 
 // The commands bat's grammar names apart from the builtins, their ids after the builtins'.
 const C_IF: u8 = 104;
@@ -354,20 +367,32 @@ const S_INCLUDE: u32 = 107;
 /// A list without keywords: `function`'s parameters, `break`'s, `continue`'s.
 const S_NONE: u32 = 108;
 /// The builtins whose `REGEX` a regex follows (X-107): `file(STRINGS … REGEX`, `file(COPY …
-/// REGEX`, `list(FILTER … REGEX`; `string(REGEX MATCH|MATCHALL|REPLACE`.
+/// REGEX`, `list(FILTER … REGEX`, `install(DIRECTORY … REGEX` (X-108); `string(REGEX
+/// MATCH|MATCHALL|REPLACE`; and `source_group(… REGULAR_EXPRESSION` (X-108).
 const S_FILE: u32 = 38;
 const S_LIST: u32 = 61;
 const S_STRING: u32 = 84;
+const S_INSTALL: u32 = 55;
+const S_SOURCE_GROUP: u32 = 83;
+/// `add_custom_command`'s, whose `USES_TERMINAL COMMAND_EXPAND_LISTS` is one keyword.
+const S_ADD_CUSTOM_COMMAND: u32 = 1;
 const _: () = assert!(
     eq(BUILTINS[S_FILE as usize], b"file")
         && eq(BUILTINS[S_LIST as usize], b"list")
         && eq(BUILTINS[S_STRING as usize], b"string")
+        && eq(BUILTINS[S_INSTALL as usize], b"install")
+        && eq(BUILTINS[S_SOURCE_GROUP as usize], b"source_group")
+        && eq(
+            BUILTINS[S_ADD_CUSTOM_COMMAND as usize],
+            b"add_custom_command"
+        )
 );
 
 // A keyword's flags, in its mask's top bits.
 /// `NOT`, `AND`, `OR`: an operator's leaf.
 const K_LOGICAL: u128 = 1 << 127;
-/// `CACHE`, `RESULT_VARIABLE`, `MATCHES`, `REGEX`: what follows is read apart.
+/// `CACHE`, `RESULT_VARIABLE`, `MATCHES`, `REGEX`, `REGULAR_EXPRESSION`: what follows is read
+/// apart ([`Scan::keyword`]).
 const K_ACTION: u128 = 1 << 126;
 /// `USES_TERMINAL`, `INCLUDES`: bat's two-word keywords' first.
 const K_TWO: u128 = 1 << 125;
@@ -398,8 +423,17 @@ static KEYWORD_INFO: [u128; NK + 1] = {
         if eq(w, b"NOT") || eq(w, b"AND") || eq(w, b"OR") {
             m |= K_LOGICAL;
         }
-        if eq(w, b"CACHE") || eq(w, b"RESULT_VARIABLE") || eq(w, b"MATCHES") || eq(w, b"REGEX") {
+        if eq(w, b"CACHE")
+            || eq(w, b"RESULT_VARIABLE")
+            || eq(w, b"MATCHES")
+            || eq(w, b"REGEX")
+            || eq(w, b"REGULAR_EXPRESSION")
+        {
             m |= K_ACTION;
+        }
+        // `install(DIRECTORY … REGEX "…")` (X-108): bat's `install` has `PATTERN`, not its twin
+        if eq(w, b"REGEX") {
+            m |= 1 << S_INSTALL;
         }
         if eq(w, b"USES_TERMINAL") || eq(w, b"INCLUDES") {
             m |= K_TWO;
@@ -599,7 +633,8 @@ struct Scan<'b, 'c, K: Sink> {
     sub: u8,
     /// What the open `${…}`s' and `$<…>`s' kinds add: 0, [`PRE_STRING`], [`PRE_CAPS`].
     pre: u8,
-    /// `MATCHES` or a `REGEX` was the last token on the line: the next argument is a regex.
+    /// `MATCHES`, a `REGEX` or `REGULAR_EXPRESSION` was the last argument: the next one is a
+    /// regex, on this line or a later one, past comments (X-108).
     matches: bool,
     /// What the line starts in ([`M_CODE`]…).
     mode: u8,
@@ -752,7 +787,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     }
 
     /// What a line's end ends: an unquoted argument, and what bat reads only on its line (the
-    /// first argument's name, `RESULT_VARIABLE`'s variable, `MATCHES`' regex).
+    /// first argument's name, `RESULT_VARIABLE`'s variable). A regex awaited ([`Scan::matches`])
+    /// stays: CMake reads the next argument wherever it stands (X-108).
     #[inline(always)]
     fn line_end(&mut self) {
         match self.top() {
@@ -760,7 +796,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             F_ARGS if self.sub > SUB_OPEN => self.sub = SUB_OPEN,
             _ => {}
         }
-        self.matches = false;
     }
 
     /// The line from `p`, each frame's loop in turn.
@@ -1068,12 +1103,16 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     }
 
     /// A token at `p` where the arguments' first name, `RESULT_VARIABLE`'s variable or a regex
-    /// (after `MATCHES` or a `REGEX`) may stand: where it does, its end; else the reading over
-    /// and `None`.
+    /// (after `MATCHES`, a `REGEX` or `REGULAR_EXPRESSION`) may stand: where it does, its end;
+    /// else the reading over and `None`. A comment before a regex is read, the regex still
+    /// awaited (X-108).
     #[inline(never)]
     fn first(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
         if self.matches {
+            if b[p] == b'#' {
+                return Some(self.comment(p));
+            }
             self.matches = false;
             self.rx = 0;
             return match b[p] {
@@ -1085,7 +1124,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     self.push(F_QUOTED_RX);
                     Some(self.regex::<H_QUOTED>(p + 1, Q_NONE))
                 }
-                b')' | b'(' | b'#' => None,
+                b')' | b'(' => None,
                 _ => Some(self.regex::<H_UNQUOTED>(p, Q_NONE)),
             };
         }
@@ -1111,7 +1150,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
     }
 
-    /// A keyword `b[p..e]` whose leaf or what follows is its own (`m`'s flags).
+    /// A keyword `b[p..e]` whose leaf or what follows is its own (`m`'s flags), by the word and
+    /// the list it is in (`RESULT_VARIABLE` is `file`'s and `include`'s, `REGEX` `string`'s).
     #[inline(never)]
     fn keyword(&mut self, p: usize, e: usize, m: u128, set: u32) -> usize {
         if m & K_LOGICAL != 0 {
@@ -1119,18 +1159,20 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             return e;
         }
         self.put(p, e, PARAM);
-        match (set, self.b[p]) {
+        match (set, &self.b[p..e]) {
             // `CACHE`'s type, on its line: a known one's spelling a prefix of the word
-            (S_SET, b'C') => self.cache_type(e),
-            (S_INCLUDE, b'R') => {
+            (S_SET, b"CACHE") => self.cache_type(e),
+            (S_INCLUDE, b"RESULT_VARIABLE") => {
                 self.sub = SUB_RESULT;
                 e
             }
-            (S_IF, b'M') | (S_FILE | S_LIST, b'R') => {
+            (S_IF, b"MATCHES")
+            | (S_FILE | S_LIST | S_INSTALL, b"REGEX")
+            | (S_SOURCE_GROUP, b"REGULAR_EXPRESSION") => {
                 self.matches = true;
                 e
             }
-            (S_STRING, b'R') => self.regex_mode(e),
+            (S_STRING, b"REGEX") => self.regex_mode(e),
             _ => e,
         }
     }
@@ -1189,8 +1231,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn two_words(&mut self, p: usize, e: usize, set: u32) -> Option<usize> {
         let b = self.b;
         let (second, kind): (&[u8], u16) = match (set, b[p]) {
-            (1, b'U') => (b" COMMAND_EXPAND_LISTS", TWO_TERMINAL),
-            (55, b'I') => (b" DESTINATION", TWO_INCLUDES),
+            (S_ADD_CUSTOM_COMMAND, b'U') => (b" COMMAND_EXPAND_LISTS", TWO_TERMINAL),
+            (S_INSTALL, b'I') => (b" DESTINATION", TWO_INCLUDES),
             _ => return None,
         };
         let e2 = e + second.len();
@@ -1248,8 +1290,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         e
     }
 
-    /// A `\` at `p`, in a quoted string or not: an escape, another character's an error; at the
-    /// line's end, text.
+    /// A `\` at `p`, in a quoted string or not: CMake's escape ([`ESCAPES`]), before a letter or
+    /// digit but `t`, `r`, `n` an error (X-109). At the line's end, text: a quoted string's line
+    /// continuation; in an unquoted argument CMake's parse error, but the wide list's two are in a
+    /// generic command's bracket argument, which bat's grammar doesn't read (`write_pkgconfig([[`).
     #[inline(always)]
     fn escape(&mut self, p: usize, quoted: bool) -> usize {
         let b = self.b;
@@ -1259,16 +1303,12 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             }
             return p + 1;
         };
-        let known = if quoted {
-            STRING_ESCAPES[usize::from(c)]
-        } else {
-            UNQUOTED_ESCAPES[usize::from(c)]
-        };
-        let (e, kind) = if known {
-            (p + 2, if quoted { S_ESCAPE } else { ESCAPE })
-        } else {
-            let e = (p + 1 + char_len(c)).min(b.len());
-            (e, if quoted { S_BAD_ESCAPE } else { BAD_ESCAPE })
+        let e = (p + 1 + char_len(c)).min(b.len());
+        let kind = match (quoted, ESCAPES[usize::from(c)]) {
+            (true, true) => S_ESCAPE,
+            (true, false) => S_BAD_ESCAPE,
+            (false, true) => ESCAPE,
+            (false, false) => BAD_ESCAPE,
         };
         self.put(p, e, kind);
         e
@@ -1881,12 +1921,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     }
 }
 
-/// The kind of CMake's escape of `c` in a regex argument spelled in `H`: an error before a
-/// letter or digit but `t`, `r`, `n` (CMake's "Invalid character escape").
+/// The kind of CMake's escape of `c` in a regex argument spelled in `H` ([`ESCAPES`], as
+/// [`Scan::escape`] reads it in other arguments).
 #[inline(always)]
 fn escape_kind<const H: u8>(c: u8) -> u16 {
-    let ok = !c.is_ascii_alphanumeric() || matches!(c, b't' | b'r' | b'n');
-    match (H == H_QUOTED, ok) {
+    match (H == H_QUOTED, ESCAPES[usize::from(c)]) {
         (true, true) => S_ESCAPE,
         (true, false) => S_BAD_ESCAPE,
         (false, true) => ESCAPE,
@@ -2469,7 +2508,7 @@ mod tests {
             "function(f a)",
             "endfunction()",
             "include(x RESULT_VARIABLE r)",
-            "if(A MATCHES [=[x]=] OR B MATCHES",
+            "if(A MATCHES [=[x]=] OR B",
             "  [[y]])",
             "endif()",
             "if x",
@@ -2699,6 +2738,64 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_regex_argument_on_a_later_line() {
+        let l = [
+            "if(A MATCHES",
+            "  [[^y]] OR B MATCHES # why",
+            "  # more",
+            "  \"z+\")",
+            "endif()",
+            "string(REGEX REPLACE",
+            "  \"a|b\" \"\\\\1\" out ${in})",
+            "install(DIRECTORY d/ DESTINATION x FILES_MATCHING REGEX \"\\\\.h\")",
+            "source_group(TREE . REGULAR_EXPRESSION \"x.*\" FILES a)",
+            "file(LOCK f RESULT_VARIABLE $r)",
+            "if(A MATCHES",
+            "  )",
+            "set(x ^w)",
+        ];
+        let q = |s: &str| format!("string.quoted.double.cmake {s}.regexp");
+        // bat reads `MATCHES [[…]]` on its line only; CMake reads the next argument
+        has(
+            &l,
+            "^",
+            "string.regexp.cmake keyword.control.anchors.regexp",
+        );
+        // a comment between keyword and regex, read
+        has(&l, " why", "comment.line.cmake");
+        has(&l, " more", "comment.line.cmake");
+        has(&l, "+", &q("keyword.operator.quantifier"));
+        has(&l, "|", &q("keyword.operator.alternation"));
+        // `install`'s `REGEX`, as `PATTERN`; `source_group`'s `REGULAR_EXPRESSION`
+        has(&l, "\\\\.", &q("constant.character.escape"));
+        has(&l, ".", &q("keyword.other.any"));
+        has(&l, "*", &q("keyword.operator.quantifier"));
+        let got = of(&l);
+        // `file(LOCK … RESULT_VARIABLE`'s variable no regex; a `)` ends the awaiting
+        assert!(
+            !got.iter().any(|(t, s)| s.ends_with(".regexp")
+                && (t == "$" || t == "^" && !s.starts_with("string.regexp"))),
+            "{got:#?}"
+        );
+    }
+
+    #[test]
+    fn escapes_are_cmakes() {
+        let l = ["message(\"\\. \\/ \\é \\t \\q \\0\" a\\.b c\\tn d\\9)"];
+        let s = |k: &str| format!("string.quoted.double.cmake {k}.character.escape.cmake");
+        // bat's table calls these invalid; CMake reads `\` before any but a letter or digit
+        for e in ["\\.", "\\/", "\\é", "\\t"] {
+            has(&l, e, &s("constant"));
+        }
+        for e in ["\\q", "\\0"] {
+            has(&l, e, &s("invalid.illegal"));
+        }
+        has(&l, "\\.", "constant.character.escape.cmake");
+        has(&l, "\\t", "constant.character.escape.cmake");
+        has(&l, "\\9", "invalid.illegal.character.escape.cmake");
+    }
+
     /// `text` a line at a time on the line API: each line's spans and the state after it.
     fn lines(text: &str) -> Vec<(Vec<crate::Span>, State)> {
         let mut state = State::default();
@@ -2722,7 +2819,8 @@ mod tests {
             "{deep}\n#[{eqs}[ a\n]{eqs}] b ]=] \n]{eqs}]\nfoo(\"${{a $<b:\nc>}}\" FOO\nBAR ${{x\n}}y)\n\
              if\n\n(x)\nset(\n X)\nendif()\n\
              if(A MATCHES [[(([a\n]b)\n|c)*]])\nendif()\n\
-             string(REGEX MATCH \"(([a${{b\n}}c]\n)\" x ^(${{y\nz}}|q)$)\n"
+             string(REGEX MATCH \"(([a${{b\n}}c]\n)\" x ^(${{y\nz}}|q)$)\n\
+             if(A MATCHES\n# c\n[[(x\n]])\nendif()\n"
         );
         let one = lines(&text);
         let mut state = State::default();
