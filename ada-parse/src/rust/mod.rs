@@ -836,9 +836,10 @@ const _: () = assert!(F_NEST_CURLY - F_MATCHER == 6 && F_MATCHER_GROUP - F_MATCH
 
 /// A statement's or an item's start: after `;`, `{`, `}`, an attribute.
 const P_START: u8 = 0;
-/// An expression's start: after an operator, `(`, `[`, `,`, a keyword.
+/// An expression's start: after an operator, `[`, `&`, `move`, a keyword. A `|` here opens a
+/// closure: it has no left operand.
 const P_OP: u8 = 1;
-/// After a value: a name, a literal, a closer.
+/// After a value: a name, a literal, a closer, `?`, `>` (see [`Scan::greater`]).
 const P_VALUE: u8 = 2;
 const P_FN: u8 = 3;
 /// A function's name: its `<` opens a generic, its `(` the parameters.
@@ -1650,7 +1651,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 A_HASH => self.hash(p),
                 A_DOLLAR => self.dollar(p),
                 A_OP => {
-                    self.prev = P_OP;
+                    // `?` ends a value (`x? | y`); `@` and `~` start an expression
+                    self.prev = if c == b'?' { P_VALUE } else { P_OP };
                     self.tok(p, p + 1, OPERATOR)
                 }
                 _ => p + 1,
@@ -2087,7 +2089,12 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             // plain in the arguments: `,`, `=` (an associated type's), `!` (the never type), the
             // brackets bat's grammar lets through
             b',' | b'=' | b'!' | b')' | b']' => {
-                self.prev = P_OP;
+                // a closer ends a value: a comparison read as a generic (`a<(b) | c`) keeps its `|`
+                self.prev = if matches!(c, b')' | b']') {
+                    P_VALUE
+                } else {
+                    P_OP
+                };
                 Some(p + 1)
             }
             b'+' | b'?' => Some(self.tok(p, p + 1, OPERATOR)),
@@ -2873,8 +2880,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.tok(p, p + 1, GENERIC_BEGIN)
     }
 
+    /// `>` at `p`: a comparison. It leaves a value: a `|` after it is an operator, not a closure
+    /// (`tag!(<a> | <b>)`, a generic no frame holds; nobody compares with a closure).
     fn greater(&mut self, p: usize) -> usize {
-        self.prev = P_OP;
+        self.prev = P_VALUE;
         self.compare(p, b'>')
     }
 
@@ -2945,8 +2954,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
     }
 
+    /// `|` at `p`: a closure's parameters where an expression starts (after `=`, `,`, `(`, an
+    /// operator, `move`, `&`, `[`, a keyword that takes an expression: no left operand there),
+    /// else an operator.
     fn pipe(&mut self, p: usize) -> usize {
-        if matches!(self.prev, P_SEP | P_OPEN | P_COLON | P_PARAMS_END) {
+        if matches!(self.prev, P_OP | P_SEP | P_OPEN | P_COLON | P_PARAMS_END) {
             return self.open_closure(p);
         }
         self.prev = P_OP;
@@ -4338,15 +4350,91 @@ mod tests {
         );
     }
 
-    /// bat's `after-operator` and `try-closure` as the token before: a closure's `|` and a
-    /// generic's `<` after `=`, `(`, `,`, not after `move`, `&` or `[`; else operators.
+    /// The token before: a generic's `<` after `=`, `(`, `,` (bat's `after-operator`), else a
+    /// comparison; a closure's `|` wherever an expression starts, else an operator.
     #[test]
     fn closures_and_generics_by_the_token_before() {
         let l = ["let a = move |x| x; f(|y| y); let z = i<n; w = a < b; x = 1 << 3;"];
-        has(&l, "|", "keyword.operator.bitwise.rust");
+        has(&l, "x", "variable.parameter.rust");
         has(&l, "y", "variable.parameter.rust");
         has(&l, "<", "punctuation.definition.generic.begin.rust");
         has(&l, "<", "keyword.operator.comparison.rust");
         has(&l, "<<", "keyword.operator.comparison.rust");
+    }
+
+    /// The scopes of `text`'s tokens in `line`, in order.
+    fn scopes_of(line: &str, text: &str) -> Vec<String> {
+        of(&[line])
+            .into_iter()
+            .filter(|(t, _)| t == text)
+            .map(|(_, s)| s)
+            .collect()
+    }
+
+    /// A `|` with no left operand opens a closure: after `move`, `&`, `[`, an operator, a
+    /// keyword that takes an expression (X-117).
+    #[test]
+    fn closures_where_an_expression_starts() {
+        for line in [
+            "thread::spawn(move |a| a);",
+            "let f = &|a| a;",
+            "let v = [|a| a];",
+            "let g = x + |a| a;",
+            "if c { break |a| a; }",
+            "let h = async move |a| a;",
+        ] {
+            assert_eq!(
+                scopes_of(line, "a").first().map(String::as_str),
+                Some("variable.parameter.rust"),
+                "{line}: {:#?}",
+                of(&[line])
+            );
+            assert!(
+                !of(&[line])
+                    .iter()
+                    .any(|(t, s)| t == "|" && s.contains("bitwise")),
+                "{line}: {:#?}",
+                of(&[line])
+            );
+        }
+        // no parameters: `||` opens and closes them, not a logical or
+        for line in ["thread::spawn(move || run());", "let v = [|| 1];"] {
+            assert!(
+                !of(&[line]).iter().any(|(_, s)| s.contains("logical")),
+                "{line}: {:#?}",
+                of(&[line])
+            );
+        }
+    }
+
+    /// A `|` after a value stays an operator: after a name, a closer, `?`, a generic's `>`, and
+    /// after a block's `}` (`if c { a } else { b } | m`).
+    #[test]
+    fn pipes_after_a_value() {
+        for (line, leaf) in [
+            ("let m = a | b;", "bitwise"),
+            ("let m = f()? | b;", "bitwise"),
+            ("let m = x? || y;", "logical"),
+            ("let m = v[0] | b;", "bitwise"),
+            ("let m = if c { a } else { b } | k;", "bitwise"),
+            ("let m = a<(b) | c;", "bitwise"),
+            ("match x { A | B => 1 }", "bitwise"),
+            ("tag!(<a> | <b>)", "bitwise"),
+        ] {
+            assert!(
+                of(&[line])
+                    .iter()
+                    .any(|(t, s)| t.starts_with('|') && s.contains(leaf)),
+                "{line}: {:#?}",
+                of(&[line])
+            );
+            assert!(
+                !of(&[line])
+                    .iter()
+                    .any(|(_, s)| s.contains("variable.parameter")),
+                "{line}: {:#?}",
+                of(&[line])
+            );
+        }
     }
 }
