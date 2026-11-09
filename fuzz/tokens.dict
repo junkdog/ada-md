@@ -1216,6 +1216,10 @@
 "1_000"
 "#if "
 "#endif"
+# its regex literals' dialect, a multi-line one's extended syntax
+"\\y"
+"[#a]"
+" # c"
 
 # CMake (X-104): commands and blocks, arguments' keywords, brackets with levels, `${…}`, `$ENV{…}`, `$<…:…>`,
 # escapes, what bat reads on one line only

@@ -4,14 +4,17 @@
 //! classes it: by spacing, not by grammar), and frames only for what nests: parentheses, braces,
 //! a string's interpolations ([`Scan::frames`], four bits a level). A multi-line string and a
 //! block comment continued past a line's end are a mode ([`Scan::mode`]). Kinds are bat's leaves.
+//! A regex literal's body is on [`crate::regex`] (Swift's dialect), a multi-line one's in its
+//! extended syntax, where `#` starts a comment.
 
 use crate::emit::{Rules, Run, Runs, Sink, Spans};
 use crate::prim::{WORD, char_len, is_word, is_word_starting, wide_space, word_end};
+use crate::regex;
 use crate::words::{Words, text_len};
 use crate::{Out, State};
 
 /// The leaves: a token's scopes.
-static LEAVES: [&str; 74] = [
+static LEAVES: [&str; 77] = [
     "",
     // comments: a line's text and its mark; a block's text, begin, end; a documentation
     // block's; a shebang's text and its mark
@@ -95,6 +98,10 @@ static LEAVES: [&str; 74] = [
     "punctuation.definition.code-block.end.swift",
     // a regex literal (Swift 5.7), which bat's grammar reads as code: ada's own leaf
     "string.regexp.swift",
+    "string.regexp.swift punctuation.definition.string.begin.swift",
+    "string.regexp.swift punctuation.definition.string.end.swift",
+    // a multi-line regex literal's comment (its extended syntax)
+    "string.regexp.swift comment.line.number-sign.regexp",
 ];
 
 const LINE_COMMENT: u16 = 1;
@@ -170,9 +177,44 @@ const PARAMS_END: u16 = 70;
 const BODY_BEGIN: u16 = 71;
 const BODY_END: u16 = 72;
 const REGEX: u16 = 73;
+const RE_BEGIN: u16 = 74;
+const RE_END: u16 = 75;
+const RE_COMMENT: u16 = 76;
+
+/// The kinds of a regex literal's tokens, from here: [`regex::KINDS`] of them.
+const RE_KINDS: u16 = 128;
+const _: () = assert!(LEAVES.len() <= RE_KINDS as usize);
+
+/// A regex literal's body, the line cut at its closing `/`: the regex's text, no host's
+/// patterns in it.
+static RE_EMBED: regex::Embed<'static> = re_embed(&NO_STOPS);
+/// A multi-line regex literal's: `#` outside a class starts a comment.
+static RE_X_EMBED: regex::Embed<'static> = re_embed(&HASH_STOPS);
+static NO_STOPS: [bool; 256] = regex::table(b"");
+static HASH_STOPS: [bool; 256] = regex::table(b"#");
+
+const fn re_embed(yields: &'static [bool; 256]) -> regex::Embed<'static> {
+    regex::Embed {
+        dialect: regex::Dialect::Swift,
+        cooked: false,
+        yields,
+        stop: |_, _, _| false,
+        arg: 0,
+        escape: regex::java_escape,
+        top_only: false,
+        continues: false,
+        base: RE_KINDS,
+        text: REGEX,
+    }
+}
 
 /// The scopes under `source.swift` a kind carries, outermost first.
 pub fn scopes(kind: u16) -> Vec<&'static str> {
+    if kind >= RE_KINDS {
+        let mut out = vec!["string.regexp.swift"];
+        out.extend(regex::scopes(kind - RE_KINDS));
+        return out;
+    }
     LEAVES.get(usize::from(kind)).map_or_else(Vec::new, |l| {
         l.split(' ').filter(|s| !s.is_empty()).collect()
     })
@@ -573,6 +615,8 @@ struct Scan<'b, 'c, K: Sink> {
     nest: u8,
     /// An open multi-line string's `#`s.
     hashes: u8,
+    /// An open multi-line regex literal's state on [`crate::regex`].
+    re: u8,
     /// The regex literals tried on the line that ran to its end unclosed: past
     /// [`REGEX_TRIES`], `/` is an operator for the rest of the line, so that a line of
     /// unclosed ones stays linear.
@@ -593,6 +637,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             mode: M_CODE,
             nest: 0,
             hashes: 0,
+            re: 0,
             misses: 0,
             k,
             out,
@@ -601,7 +646,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
 
     /// The scan's fields from `state`: the frames in its levels and the first two withs, the
     /// raw strings' `#`s in the next four, the comment's depth and the string's `#`s in the next
-    /// two, the mode in [`State::arg`].
+    /// two, the mode in [`State::arg`]'s low three bits and a multi-line regex's state above.
     #[inline(always)]
     fn load(&mut self, state: &State) {
         let mut w = [0u8; 16];
@@ -617,6 +662,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.nest = state.withs[6];
         self.hashes = state.withs[7];
         self.mode = (state.arg & 7) as u8;
+        self.re = (state.arg >> 3) as u8 & regex::STATE;
     }
 
     /// The state the scan's last line left: every field as it is, so a block lexes as its
@@ -633,7 +679,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         s.withs[7] = self.hashes;
         s.depth = self.depth;
         s.inexact = !self.exact;
-        s.arg = u16::from(self.mode);
+        s.arg = u16::from(self.mode) | u16::from(self.re) << 3;
         s
     }
 
@@ -1225,10 +1271,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             && !matches!(b.get(p + 1), None | Some(b' ' | b'\t'))
         {
             match regex_end(b, p + 1, 0) {
-                Ok(e) => {
-                    self.put(p, e, REGEX);
-                    return e;
-                }
+                Ok(e) => return self.regex_literal(p, p + 1, e - 1, e),
                 Err(true) => self.misses += 1,
                 Err(false) => {}
             }
@@ -1243,19 +1286,17 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         let b = self.b;
         let n = (q - p).min(255) as u8;
         if q + 1 == b.len() {
-            self.put(p, q + 1, REGEX);
+            self.put(p, q + 1, RE_BEGIN);
             self.mode = M_REGEX;
             self.hashes = n;
+            self.re = 0;
             return q + 1;
         }
         if self.misses >= REGEX_TRIES {
             return p + 1;
         }
         match regex_end(b, q + 1, n) {
-            Ok(e) => {
-                self.put(p, e, REGEX);
-                e
-            }
+            Ok(e) => self.regex_literal(p, q + 1, e - 1 - usize::from(n), e),
             Err(eol) => {
                 self.misses += u8::from(eol);
                 p + 1
@@ -1272,14 +1313,56 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         while q < b.len() {
             if b[q] == b'/' && hashes_at(b, q + 1, h) {
                 let e = q + 1 + usize::from(h);
-                self.put(p, e, REGEX);
+                self.regex_body(p, q, &RE_X_EMBED);
+                self.put(q, e, RE_END);
                 self.mode = M_CODE;
+                self.re = 0;
                 return e;
             }
             q += 1;
         }
-        self.put(p, b.len(), REGEX);
+        self.regex_body(p, b.len(), &RE_X_EMBED);
         b.len()
+    }
+
+    /// A regex literal on one line from `p`: its `#`s and `/` to `s`, its body to `be`, its `/`
+    /// and `#`s to `e`. Where it ends.
+    #[inline(never)]
+    fn regex_literal(&mut self, p: usize, s: usize, be: usize, e: usize) -> usize {
+        self.put(p, s, RE_BEGIN);
+        self.re = 0;
+        self.regex_body(s, be, &RE_EMBED);
+        self.re = 0;
+        self.put(be, e, RE_END);
+        e
+    }
+
+    /// A regex literal's body from `s` to `be` on [`crate::regex`], the line cut at `be`, from
+    /// the state in [`Scan::re`] and left there. On [`RE_X_EMBED`] (a multi-line literal's
+    /// extended syntax) a `#` outside a class starts a comment to `be`.
+    fn regex_body(&mut self, s: usize, be: usize, embed: &regex::Embed) {
+        if s >= be {
+            return;
+        }
+        let b = &self.b[..be];
+        self.k.close(self.out);
+        let mut at = s;
+        let mut q = s;
+        while let Some((e, st)) = regex::embedded(b, q, self.re, embed, &mut at, self.out) {
+            self.re = st;
+            if e >= be {
+                break;
+            }
+            // stopped at a `#`: a character in a class or `\Q…\E`, which the scan takes from
+            // there, else a comment
+            if st & regex::VERBATIM != 0 {
+                q = e;
+                continue;
+            }
+            self.out.push(e, be, RE_COMMENT);
+            break;
+        }
+        self.k.reopen(self.out, 16);
     }
 
     /// A string's opening quote at `q`, its `#`s from `s`: `"""` a multi-line one.
@@ -1894,18 +1977,128 @@ mod tests {
         has(&l, ".", "keyword.operator.custom.postfix.unary.swift");
         has(&l, "!.", "keyword.operator.custom.postfix.unary.swift");
         has(&l, "?", "keyword.operator.ternary.swift");
-        has(&l, "/^(\\d+) calls/", "string.regexp.swift");
-        has(&l, "#/a/b/#", "string.regexp.swift");
+        const BEGIN: &str = "string.regexp.swift punctuation.definition.string.begin.swift";
+        const END: &str = "string.regexp.swift punctuation.definition.string.end.swift";
+        has(&l, "/", BEGIN);
+        has(&l, "^", "string.regexp.swift keyword.control.anchor.regexp");
+        has(
+            &l,
+            "\\d",
+            "string.regexp.swift constant.other.character-class.escape.backslash.regexp",
+        );
+        has(&l, " calls", "string.regexp.swift");
+        has(&l, "#/", BEGIN);
+        has(&l, "a/b", "string.regexp.swift");
+        has(&l, "/#", END);
         has(&l, "/", "keyword.operator.arithmetic.swift");
         has(&l, "as?", "keyword.operator.type-casting.swift");
         let got = of(&l);
         assert_eq!(
-            got.iter()
-                .filter(|(_, s)| s == "string.regexp.swift")
-                .count(),
+            got.iter().filter(|(_, s)| s == BEGIN).count(),
             2,
             "{got:#?}"
         );
+    }
+
+    /// A regex literal's body is on ada's regex scanner, in Swift's dialect.
+    #[test]
+    fn regex_literals_have_parts() {
+        const RE: &str = "string.regexp.swift";
+        let l = [
+            "static let pattern = #/^(?<key>[a-z]+)-(\\d+)$/#",
+            "let r = /(?P<n>a)(?'m'b)\\k'm'(?#note)[[:alpha:]--[a-c]]\\u{1F600}\\y*+/",
+        ];
+        has(
+            &l,
+            "#/",
+            &format!("{RE} punctuation.definition.string.begin.swift"),
+        );
+        has(&l, "^", &format!("{RE} keyword.control.anchor.regexp"));
+        has(&l, "key", &format!("{RE} entity.name.other.group.regexp"));
+        has(
+            &l,
+            "a",
+            &format!(
+                "{RE} constant.other.character-class.set.regexp constant.other.character-class.range.regexp"
+            ),
+        );
+        has(&l, "+", &format!("{RE} keyword.operator.quantifier.regexp"));
+        has(&l, "-", RE);
+        has(&l, "$", &format!("{RE} keyword.control.anchor.regexp"));
+        has(
+            &l,
+            "/#",
+            &format!("{RE} punctuation.definition.string.end.swift"),
+        );
+        has(&l, "n", &format!("{RE} entity.name.other.group.regexp"));
+        has(&l, "m", &format!("{RE} entity.name.other.group.regexp"));
+        has(&l, "m", &format!("{RE} variable.other.group.regexp"));
+        has(&l, "note", &format!("{RE} comment.block.regexp"));
+        has(
+            &l,
+            "[:alpha:]",
+            &format!(
+                "{RE} constant.other.character-class.set.regexp constant.other.character-class.posix.regexp"
+            ),
+        );
+        has(
+            &l,
+            "--",
+            &format!(
+                "{RE} constant.other.character-class.set.regexp keyword.operator.difference.regexp"
+            ),
+        );
+        has(
+            &l,
+            "\\u{1F600}",
+            &format!("{RE} constant.character.escape.backslash.regexp"),
+        );
+        has(&l, "\\y", &format!("{RE} keyword.control.anchor.regexp"));
+        has(
+            &l,
+            "*+",
+            &format!("{RE} keyword.operator.quantifier.regexp"),
+        );
+    }
+
+    /// A multi-line regex literal is in extended syntax: `#` outside a class starts a comment,
+    /// and a group or a class stays open across its lines.
+    #[test]
+    fn multi_line_regex_literals_are_extended() {
+        const RE: &str = "string.regexp.swift";
+        let l = ["let r = #/", "  ( [#a] # a comment", "  \\d+ )", "/#.x"];
+        has(
+            &l,
+            "#/",
+            &format!("{RE} punctuation.definition.string.begin.swift"),
+        );
+        has(
+            &l,
+            "(",
+            &format!("{RE} punctuation.definition.group.begin.regexp"),
+        );
+        has(
+            &l,
+            "#a",
+            &format!("{RE} constant.other.character-class.set.regexp"),
+        );
+        has(
+            &l,
+            "# a comment",
+            &format!("{RE} comment.line.number-sign.regexp"),
+        );
+        has(&l, "+", &format!("{RE} keyword.operator.quantifier.regexp"));
+        has(
+            &l,
+            ")",
+            &format!("{RE} punctuation.definition.group.end.regexp"),
+        );
+        has(
+            &l,
+            "/#",
+            &format!("{RE} punctuation.definition.string.end.swift"),
+        );
+        lacks(&l, ".x");
     }
 
     #[test]
@@ -1938,14 +2131,14 @@ mod tests {
     #[test]
     fn a_block_lexes_as_its_lines() {
         // every field a line hands the next: frames past the levels, raw interpolations past
-        // their four, a comment's depth, a multi-line string's and regex's `#`s, a head across
-        // lines
+        // their four, a comment's depth, a multi-line string's and regex's `#`s, the regex's
+        // open group and class, a head across lines
         let deep = "( ".repeat(40) + &") ".repeat(38);
         let raws = "#\"\\#(".repeat(6);
         let text = format!(
             "let a = {deep}\n))\nlet r = {raws}\n) \"# ) \"# ) \"# ) \"# ) \"# ) \"#\n\
              /* a /* b /* c\n*/ */ d */ x\n##\"\"\"\n  \"\"\" \\##(f(\n  1)) \n\"\"\"## y\n\
-             let e = ##/\n  a /# b\n /## z\nfunc f<T>(\n  a: T\n) -> Int\n  where T: P\n{{\n}}\n\
+             let e = ##/\n  (a /# b\n  [x\n ]) /## z\nfunc f<T>(\n  a: T\n) -> Int\n  where T: P\n{{\n}}\n\
              func g()\nlet h = 1\n"
         );
         let one = lines(&text);

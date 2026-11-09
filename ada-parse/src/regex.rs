@@ -1,12 +1,12 @@
 //! Regular expressions in other languages' strings (ADR-40, phase 4): one scanner with a
 //! dialect per family, embedded where a host's construct makes a string a regex though bat's
 //! grammar leaves it plain (Kotlin's `Regex("…")`, Java's `Pattern.compile("…")`, …), and in
-//! JavaScript's regex literals.
+//! JavaScript's and Swift's regex literals.
 //!
 //! The kinds carry the scopes of bat's `Regular Expressions (Javascript)` (anchors, back
 //! references, quantifiers, groups and assertions, character classes and their sets, escapes),
 //! with a few of its own for what JavaScript lacks (inline options, atomic groups, `\Q…\E`).
-//! Five dialects ([`Dialect`]):
+//! Six dialects ([`Dialect`]):
 //! - **Java's** (`java.util.regex`, Kotlin's too) adds possessive quantifiers, `(?>…)`,
 //!   `(?idmsux-idmsux)` and `(?idmsux-idmsux:…)`, nested classes and `&&`, `\Q…\E`, `\pL`,
 //!   `\h\H\v\V\R\X`, `\A\G\Z\z` and its escapes.
@@ -23,6 +23,10 @@
 //!   `(?#…)` comments, `(?(name)…)` conditionals, class subtraction (`[a-z-[aeiou]]`), `\k'name'`,
 //!   `\p{IsGreek}` (braces only); a `]` first in a class is a character, and no possessive
 //!   quantifiers or `\Q…\E`.
+//! - **Swift's** (SE-0355, its regex literals): Java's, with what it takes from the others:
+//!   `(?P<name>…)`, `(?'name'…)` and balancing groups, `(?#…)` comments, `(?(name)…)`
+//!   conditionals, `(?iJmnsUxwDPSWy-…)`, `[:alpha:]`, `--` and `~~` in a class, `\p{^Greek}`,
+//!   `\u{…}`, `\k'name'`, `\y` and `\Y`; a `]` first in a class is a character.
 //!
 //! **A host's string spells the regex.** In a cooked string (Java's `"…"`, Kotlin's `"…"`)
 //! `\\` is the regex's `\`, so `"\\d+"` is `\d+`, and any other `\` starts the host's escape, a
@@ -51,6 +55,9 @@ pub(crate) const STATE: u8 = 0x7f;
 pub(crate) const ECMA_STATE: u8 = DEPTH | SET;
 /// The bits of a .NET regex's state: it has no `\Q…\E`.
 pub(crate) const NET_STATE: u8 = DEPTH | SET | NEST;
+/// The bits of a state where `#` is a character, not an extended syntax's comment: in a class,
+/// in `\Q…\E`.
+pub(crate) const VERBATIM: u8 = SET | QUOTE;
 
 /// The bytes a token of `main` (or a group in it) starts on, and of a class.
 static MAIN_BYTES: [bool; 256] = table(b"\\^$?*+{|().[");
@@ -79,6 +86,8 @@ pub(crate) enum Dialect {
     Rust,
     /// .NET's, C#'s and PowerShell's.
     DotNet,
+    /// Swift's regex literals'.
+    Swift,
 }
 
 macro_rules! leaves {
@@ -314,10 +323,6 @@ impl Scan<'_, '_, '_, '_> {
         bytes[c] || self.host.yields[c]
     }
 
-    fn java(&self) -> bool {
-        self.host.dialect == Dialect::Java
-    }
-
     fn ecma(&self) -> bool {
         self.host.dialect == Dialect::Ecma
     }
@@ -335,9 +340,32 @@ impl Scan<'_, '_, '_, '_> {
         self.host.dialect == Dialect::DotNet
     }
 
-    /// Java's and ECMAScript's have possessive quantifiers (ECMAScript's as bat colors them).
+    fn swift(&self) -> bool {
+        self.host.dialect == Dialect::Swift
+    }
+
+    /// Java's or Swift's, whose escapes and class escapes Swift's takes.
+    fn javaish(&self) -> bool {
+        matches!(self.host.dialect, Dialect::Java | Dialect::Swift)
+    }
+
+    /// Rust's or Swift's: `--` and `~~` in a class.
+    fn set_ops(&self) -> bool {
+        matches!(self.host.dialect, Dialect::Rust | Dialect::Swift)
+    }
+
+    /// .NET's or Swift's: `(?'name'`, balancing groups, `(?#…)`, conditionals.
+    fn netish(&self) -> bool {
+        matches!(self.host.dialect, Dialect::DotNet | Dialect::Swift)
+    }
+
+    /// Java's, ECMAScript's and Swift's have possessive quantifiers (ECMAScript's as bat
+    /// colors them).
     fn possessive(&self) -> bool {
-        matches!(self.host.dialect, Dialect::Java | Dialect::Ecma)
+        matches!(
+            self.host.dialect,
+            Dialect::Java | Dialect::Ecma | Dialect::Swift
+        )
     }
 
     /// The regex's character at `p`. Past where the scan took over, a place where the host's
@@ -516,22 +544,22 @@ impl Scan<'_, '_, '_, '_> {
                     open(self);
                     return self.tok(e, q + 1, L::NoCapture);
                 }
-                Some(b'>') if self.java() || self.dotnet() => {
+                Some(b'>') if self.javaish() || self.dotnet() => {
                     self.tok(p, e, L::GroupBegin);
                     open(self);
                     return self.tok(e, q + 1, L::Atomic);
                 }
                 Some(b'<' | b'P') => {
-                    // `(?<name>`, and RE2's and Rust's `(?P<name>`
+                    // `(?<name>`, and RE2's, Rust's and Swift's `(?P<name>`
                     let lt = if next == Some(b'P') {
-                        self.is(q, b'P').filter(|_| self.re2())
+                        self.is(q, b'P').filter(|_| self.re2() || self.swift())
                     } else {
                         Some(q)
                     };
                     if let Some(lt) = lt
                         && let Some(s) = self.is(lt, b'<')
                     {
-                        if self.dotnet() {
+                        if self.netish() {
                             if let Some(r) = self.net_group(p, e, lt, s, b'>') {
                                 return r;
                             }
@@ -547,18 +575,19 @@ impl Scan<'_, '_, '_, '_> {
                         }
                     }
                 }
-                // .NET's `(?'name'`
-                Some(b'\'') if self.dotnet() => {
+                // .NET's and Swift's `(?'name'`
+                Some(b'\'') if self.netish() => {
                     if let Some(s) = self.is(q, b'\'')
                         && let Some(r) = self.net_group(p, e, q, s, b'\'')
                     {
                         return r;
                     }
                 }
-                // .NET's `(?#…)`, a comment to the next `)`
-                Some(b'#') if self.dotnet() => return self.net_comment(p, q),
-                // .NET's `(?(name)` or `(?(1)`; else `(?` before a group, the condition
-                Some(b'(') if self.dotnet() => {
+                // .NET's and Swift's `(?#…)`, a comment to the next `)`
+                Some(b'#') if self.netish() => return self.net_comment(p, q),
+                // .NET's and Swift's `(?(name)` or `(?(1)`; else `(?` before a group, the
+                // condition
+                Some(b'(') if self.netish() => {
                     self.tok(p, e, L::GroupBegin);
                     open(self);
                     if let Some(r) = self.is(q, b'(')
@@ -574,12 +603,14 @@ impl Scan<'_, '_, '_, '_> {
                 _ => {}
             }
             if !self.ecma() {
-                // `(?idmsuxU-idmsuxU)` and `(?idmsuxU-idmsuxU:`, RE2's `imsU`, Rust's `imsRUux`
+                // `(?idmsuxU-idmsuxU)` and `(?idmsuxU-idmsuxU:`, RE2's `imsU`, Rust's `imsRUux`,
+                // .NET's `imnsx`, Swift's `iJmnsUxwDPSWy`
                 {
                     let flags: &[u8] = match self.host.dialect {
                         Dialect::Re2 => b"imsU",
                         Dialect::Rust => b"imsRUux",
                         Dialect::DotNet => b"imnsx",
+                        Dialect::Swift => b"iJmnsUxwDPSWy",
                         _ => b"idmsuxU",
                     };
                     let flag = |c: u8| flags.contains(&c);
@@ -615,8 +646,8 @@ impl Scan<'_, '_, '_, '_> {
 
     /// A group's name from `s`: Java's `[a-zA-Z][a-zA-Z0-9]*`, ECMAScript's
     /// `[_$\p{L}][_$\p{L}\p{N}]*` (any character past ASCII taken as a letter), RE2's
-    /// `\w+`, Rust's `[_a-zA-Z][_a-zA-Z0-9.\[\]]*`, .NET's `\w+` (past ASCII a letter). Where
-    /// it ends.
+    /// `\w+`, Rust's `[_a-zA-Z][_a-zA-Z0-9.\[\]]*`, .NET's `\w+` (past ASCII a letter), Swift's
+    /// an identifier (past ASCII a letter). Where it ends.
     fn group_name(&self, s: usize) -> Option<usize> {
         type Class = fn(u8) -> bool;
         let (first, rest): (Class, Class) = match self.host.dialect {
@@ -635,6 +666,10 @@ impl Scan<'_, '_, '_, '_> {
             ),
             Dialect::DotNet => (
                 |c| c.is_ascii_alphanumeric() || matches!(c, b'_' | 0x80..),
+                |c| c.is_ascii_alphanumeric() || matches!(c, b'_' | 0x80..),
+            ),
+            Dialect::Swift => (
+                |c| c.is_ascii_alphabetic() || matches!(c, b'_' | 0x80..),
                 |c| c.is_ascii_alphanumeric() || matches!(c, b'_' | 0x80..),
             ),
         };
@@ -659,8 +694,8 @@ impl Scan<'_, '_, '_, '_> {
             Some(n) => self.tok(e, n, L::Negation),
             None => e,
         };
-        // RE2's, Rust's and .NET's `[]a]`: a `]` first is a character
-        match self.is(e, b']').filter(|_| self.re2() || self.dotnet()) {
+        // RE2's, Rust's, .NET's and Swift's `[]a]`: a `]` first is a character
+        match self.is(e, b']').filter(|_| self.re2() || self.netish()) {
             Some(n) => n,
             None => e,
         }
@@ -695,12 +730,12 @@ impl Scan<'_, '_, '_, '_> {
                 }
                 r
             }
-            b'[' if self.re2()
+            b'[' if (self.re2() || self.swift())
                 && let Some(q) = self.is(e, b':').and_then(|c| self.posix(c)) =>
             {
                 self.tok(p, q, L::PosixClass)
             }
-            b'[' if self.java() || self.rust() => {
+            b'[' if self.javaish() || self.rust() => {
                 if self.st & NESTS != NESTS {
                     self.st += NEST;
                 }
@@ -710,11 +745,13 @@ impl Scan<'_, '_, '_, '_> {
                     None => e,
                 }
             }
-            b'&' if (self.java() || self.rust()) && self.is(e, b'&').is_some() => {
+            b'&' if (self.javaish() || self.rust()) && self.is(e, b'&').is_some() => {
                 self.tok(p, e + 1, L::Intersection)
             }
-            b'-' if self.rust() && self.is(e, b'-').is_some() => self.tok(p, e + 1, L::Difference),
-            b'~' if self.rust() && self.is(e, b'~').is_some() => {
+            b'-' if self.set_ops() && self.is(e, b'-').is_some() => {
+                self.tok(p, e + 1, L::Difference)
+            }
+            b'~' if self.set_ops() && self.is(e, b'~').is_some() => {
                 self.tok(p, e + 1, L::SymmetricDifference)
             }
             // .NET's `-[…]`, a class subtracted
@@ -751,13 +788,17 @@ impl Scan<'_, '_, '_, '_> {
             if !v.host && v.c == b'\\' {
                 let Some(w) = s.unit(v.end) else {
                     // ECMAScript: a `\` at the line's end is a character
-                    return (!s.java()).then_some((v.end, None));
+                    return (!s.javaish()).then_some((v.end, None));
                 };
-                let classes: &[u8] = if s.java() { b"wWsSdDhHvV" } else { b"wWsSdD" };
+                let classes: &[u8] = if s.javaish() {
+                    b"wWsSdDhHvV"
+                } else {
+                    b"wWsSdD"
+                };
                 if !w.host && classes.contains(&w.c) {
                     return Some((w.end, Some(L::RangeClassEscape)));
                 }
-                let e = if s.java() || w.host {
+                let e = if s.javaish() || w.host {
                     w.end
                 } else {
                     s.ecma_escape(w.end, w.c)
@@ -778,8 +819,9 @@ impl Scan<'_, '_, '_, '_> {
             end(self, p, true)?
         };
         let dash = self.is(d, b'-')?;
-        // Rust's `--` is a difference, not a range's dash, and .NET's `-[` a subtraction
-        if (self.rust() && self.is(dash, b'-').is_some())
+        // Rust's and Swift's `--` is a difference, not a range's dash, and .NET's `-[` a
+        // subtraction
+        if (self.set_ops() && self.is(dash, b'-').is_some())
             || (self.dotnet() && self.is(dash, b'[').is_some())
         {
             return None;
@@ -812,7 +854,7 @@ impl Scan<'_, '_, '_, '_> {
         if self.dotnet() {
             return self.backslash_net(p, e);
         }
-        if !self.java() {
+        if !self.javaish() {
             return self.backslash_ecma(p, e);
         }
         let Some(u) = self.unit(e) else {
@@ -824,14 +866,29 @@ impl Scan<'_, '_, '_, '_> {
         }
         let n = u.end;
         let in_set = self.st & SET != 0;
+        let swift = self.swift();
         match u.c {
             b'b' | b'B' | b'A' | b'G' | b'Z' | b'z' if !in_set => self.tok(p, n, L::Anchor),
+            // Swift's grapheme cluster boundaries
+            b'y' | b'Y' if swift && !in_set => self.tok(p, n, L::Anchor),
             b'1'..=b'9' if !in_set => {
                 let mut q = n;
                 while q < self.b.len() && self.b[q].is_ascii_digit() {
                     q += 1;
                 }
                 self.tok(p, q, L::BackReference)
+            }
+            // Swift's `\k'name'`
+            b'k' if swift
+                && !in_set
+                && let Some(s) = self.is(n, b'\'')
+                && let Some(t) = self.group_name(s)
+                && let Some(g) = self.is(t, b'\'') =>
+            {
+                self.tok(p, n, L::BackReference);
+                self.tok(n, s, L::NamedBegin);
+                self.tok(s, t, L::BackReferenceName);
+                self.tok(t, g, L::NamedEnd)
             }
             b'k' if !in_set => {
                 if let Some(s) = self.is(n, b'<')
@@ -880,6 +937,15 @@ impl Scan<'_, '_, '_, '_> {
             }
             b'u' => {
                 let hex = |q: usize| self.b.get(q).is_some_and(u8::is_ascii_hexdigit);
+                // Swift's `\u{H…}`
+                if swift
+                    && self.b.get(n) == Some(&b'{')
+                    && let Some(c) = (n + 1..self.b.len()).find(|&q| !hex(q))
+                    && c > n + 1
+                    && self.b[c] == b'}'
+                {
+                    return self.tok(p, c + 1, L::Escape);
+                }
                 let q = if (n..n + 4).all(hex) { n + 4 } else { n };
                 self.tok(p, q, L::Escape)
             }
@@ -1154,8 +1220,8 @@ impl Scan<'_, '_, '_, '_> {
             t
         };
         if let Some(o) = self.is(e, b'{') {
-            // RE2's `\p{^Greek}`
-            let neg = self.is(o, b'^').filter(|_| self.re2());
+            // RE2's and Swift's `\p{^Greek}`
+            let neg = self.is(o, b'^').filter(|_| self.re2() || self.swift());
             let k0 = neg.unwrap_or(o);
             let k = name(self, k0);
             if k > k0 {
