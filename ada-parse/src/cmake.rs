@@ -16,6 +16,12 @@
 //! close wherever that stands, as CMake's bracket argument does. bat lexes the body as a PCRE:
 //! its classes take a `\` as an escape and run past the close (`[;\]]=]`), its top level leaves
 //! quantifiers and `.` plain, and it reads `{n}`, `\d`, `(?:` and `[:alpha:]`, which CMake hasn't.
+//!
+//! **So is one in a quoted or unquoted argument** (X-107): after `MATCHES`, after `REGEX` in
+//! `file(…)` and `list(…)`, after `string(REGEX MATCH|MATCHALL|REPLACE`, on the keyword's line.
+//! CMake's escapes come first (`"\\."` is the regex's `\.`, `"\."` its `.`), a `${…}` or `$<…>` is
+//! an operand in CMake's colors, and the tokens sit under the string's scope where it is quoted.
+//! bat leaves these arguments plain.
 
 use crate::emit::{Rules, Run, Runs, Sink, Spans};
 use crate::prim::{char_len, find_any, is_name_start, is_word_starting, word_end};
@@ -23,7 +29,7 @@ use crate::words::{Words, text_len};
 use crate::{Out, State};
 
 /// The leaves: a token's scopes.
-static LEAVES: [&str; 82] = [
+static LEAVES: [&str; 104] = [
     "",
     // comments: a line's text and its mark; a bracket comment's text, begin, end
     "comment.line.cmake",
@@ -117,6 +123,30 @@ static LEAVES: [&str; 82] = [
     "string.regexp.cmake invalid.illegal.unexpected-quantifier.regexp",
     "string.regexp.cmake invalid.illegal.unmatched-brace.regexp",
     "string.regexp.cmake invalid.illegal.character.escape.regexp",
+    // … in a quoted argument that is a regex (X-107), under the string's scope
+    "string.quoted.double.cmake keyword.control.group.regexp",
+    "string.quoted.double.cmake keyword.control.anchors.regexp",
+    "string.quoted.double.cmake keyword.other.any.regexp",
+    "string.quoted.double.cmake keyword.control.set.regexp",
+    "string.quoted.double.cmake constant.character.escape.regexp",
+    "string.quoted.double.cmake constant.other.range.regexp",
+    "string.quoted.double.cmake keyword.operator.quantifier.regexp",
+    "string.quoted.double.cmake keyword.operator.alternation.regexp",
+    "string.quoted.double.cmake invalid.illegal.unexpected-quantifier.regexp",
+    "string.quoted.double.cmake invalid.illegal.unmatched-brace.regexp",
+    "string.quoted.double.cmake invalid.illegal.character.escape.regexp",
+    // … in an unquoted one, bare
+    "keyword.control.group.regexp",
+    "keyword.control.anchors.regexp",
+    "keyword.other.any.regexp",
+    "keyword.control.set.regexp",
+    "constant.character.escape.regexp",
+    "constant.other.range.regexp",
+    "keyword.operator.quantifier.regexp",
+    "keyword.operator.alternation.regexp",
+    "invalid.illegal.unexpected-quantifier.regexp",
+    "invalid.illegal.unmatched-brace.regexp",
+    "invalid.illegal.character.escape.regexp",
 ];
 
 const COMMENT: u16 = 1;
@@ -179,6 +209,10 @@ const RX_OR: u16 = 78;
 const RX_BAD_QUANTIFIER: u16 = 79;
 const RX_UNMATCHED: u16 = 80;
 const RX_BAD_ESCAPE: u16 = 81;
+/// What a regex's kinds add in a quoted argument ([`H_QUOTED`]) …
+const RX_IN_STRING: u16 = 11;
+/// … and in an unquoted one ([`H_UNQUOTED`]).
+const RX_BARE: u16 = 22;
 /// What a `${…}`'s or `$<…>`'s kinds add in a quoted string ([`Scan::pre`]).
 const PRE_STRING: u8 = 9;
 /// … and in a capitalized argument.
@@ -319,11 +353,21 @@ const S_SET: u32 = 106;
 const S_INCLUDE: u32 = 107;
 /// A list without keywords: `function`'s parameters, `break`'s, `continue`'s.
 const S_NONE: u32 = 108;
+/// The builtins whose `REGEX` a regex follows (X-107): `file(STRINGS … REGEX`, `file(COPY …
+/// REGEX`, `list(FILTER … REGEX`; `string(REGEX MATCH|MATCHALL|REPLACE`.
+const S_FILE: u32 = 38;
+const S_LIST: u32 = 61;
+const S_STRING: u32 = 84;
+const _: () = assert!(
+    eq(BUILTINS[S_FILE as usize], b"file")
+        && eq(BUILTINS[S_LIST as usize], b"list")
+        && eq(BUILTINS[S_STRING as usize], b"string")
+);
 
 // A keyword's flags, in its mask's top bits.
 /// `NOT`, `AND`, `OR`: an operator's leaf.
 const K_LOGICAL: u128 = 1 << 127;
-/// `CACHE`, `RESULT_VARIABLE`, `MATCHES`: what follows is read apart.
+/// `CACHE`, `RESULT_VARIABLE`, `MATCHES`, `REGEX`: what follows is read apart.
 const K_ACTION: u128 = 1 << 126;
 /// `USES_TERMINAL`, `INCLUDES`: bat's two-word keywords' first.
 const K_TWO: u128 = 1 << 125;
@@ -354,7 +398,7 @@ static KEYWORD_INFO: [u128; NK + 1] = {
         if eq(w, b"NOT") || eq(w, b"AND") || eq(w, b"OR") {
             m |= K_LOGICAL;
         }
-        if eq(w, b"CACHE") || eq(w, b"RESULT_VARIABLE") || eq(w, b"MATCHES") {
+        if eq(w, b"CACHE") || eq(w, b"RESULT_VARIABLE") || eq(w, b"MATCHES") || eq(w, b"REGEX") {
             m |= K_ACTION;
         }
         if eq(w, b"USES_TERMINAL") || eq(w, b"INCLUDES") {
@@ -404,8 +448,11 @@ const F_GENEX_ARGS: u8 = 11;
 const F_QUOTED: u8 = 12;
 /// A generic command's capitalized argument, to a blank.
 const F_CAPS: u8 = 13;
-/// An unquoted argument under a `${…}` or `$<…>`: it ends with its line.
+/// An unquoted argument under a `${…}` or `$<…>`: it ends with its line. A regex where
+/// [`Scan::rx`] has [`RX_UNQUOTED`].
 const F_UNQUOTED: u8 = 14;
+/// A quoted argument that is a regex (X-107), as [`F_QUOTED`].
+const F_QUOTED_RX: u8 = 15;
 /// The levels [`Scan::frames`] holds.
 const LEVELS: u8 = 32;
 
@@ -442,9 +489,21 @@ const Q_ANCHOR: u8 = 2;
 /// A quantifier (CMake's "nested *?+").
 const Q_QUANTIFIER: u8 = 3;
 /// The groups open a regex keeps count of ([`Scan::rx`]'s low bits): past it the state is inexact.
-const RX_DEPTH: u8 = 127;
+const RX_DEPTH: u8 = 63;
+/// [`Scan::rx`]'s bit: the unquoted argument under a `${…}` ([`F_UNQUOTED`]) is a regex.
+const RX_UNQUOTED: u8 = 64;
 /// [`Scan::rx`]'s bit: a class is open.
 const RX_IN_SET: u8 = 128;
+
+// What a regex is spelled in ([`Scan::regex`]).
+/// A bracket argument (`MATCHES [[…]]`, X-106): its text is the regex's.
+const H_BRACKET: u8 = 0;
+/// A quoted argument (X-107): CMake's escapes come first, `${…}` and `$<…>` interpolate.
+const H_QUOTED: u8 = 1;
+/// An unquoted argument (X-107): as a quoted one, to a blank, a parenthesis, `#` or `"`.
+const H_UNQUOTED: u8 = 2;
+/// What ends an unquoted argument that is a regex.
+static UNQUOTED_END: [bool; 256] = crate::prim::stops(b" \t()#\"");
 
 /// Lex `b`, a line of CMake without its `\n`, from `state`.
 #[inline(never)]
@@ -540,14 +599,15 @@ struct Scan<'b, 'c, K: Sink> {
     sub: u8,
     /// What the open `${…}`s' and `$<…>`s' kinds add: 0, [`PRE_STRING`], [`PRE_CAPS`].
     pre: u8,
-    /// `MATCHES` was the last token on the line: a bracket argument is a regex.
+    /// `MATCHES` or a `REGEX` was the last token on the line: the next argument is a regex.
     matches: bool,
     /// What the line starts in ([`M_CODE`]…).
     mode: u8,
     /// An open bracket's `=`s, up to 255 (where 255 is any more).
     eqs: u8,
-    /// In a regex ([`M_REGEX`]): the groups open, up to [`RX_DEPTH`], and [`RX_IN_SET`] where a
-    /// class is; a byte as the state keeps it, so a line that isn't in one only copies it.
+    /// In a regex ([`M_REGEX`], [`F_QUOTED_RX`], an unquoted one): the groups open, up to
+    /// [`RX_DEPTH`], [`RX_IN_SET`] where a class is, [`RX_UNQUOTED`] where it is an unquoted
+    /// argument's; a byte as the state keeps it, so a line that isn't in one only copies it.
     rx: u8,
     k: K,
     out: &'b mut Out<'c>,
@@ -716,6 +776,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 },
                 F_PAREN => self.args(p),
                 F_QUOTED => self.quoted(p),
+                F_QUOTED_RX => self.regex::<H_QUOTED>(p, Q_ATOM),
                 F_SUBST => self.subst(p),
                 F_GENEX | F_GENEX_ARGS => self.genex(p),
                 F_CAPS => self.caps(p),
@@ -1006,17 +1067,27 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         p
     }
 
-    /// A token at `p` where the arguments' first name, `RESULT_VARIABLE`'s variable or
-    /// `MATCHES`' regex may stand: where it does, its end; else the reading over and `None`.
+    /// A token at `p` where the arguments' first name, `RESULT_VARIABLE`'s variable or a regex
+    /// (after `MATCHES` or a `REGEX`) may stand: where it does, its end; else the reading over
+    /// and `None`.
     #[inline(never)]
     fn first(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
         if self.matches {
             self.matches = false;
-            if b[p] == b'[' {
-                return self.bracket_open(p, M_REGEX);
-            }
-            return None;
+            self.rx = 0;
+            return match b[p] {
+                b'[' => self
+                    .bracket_open(p, M_REGEX)
+                    .or_else(|| Some(self.regex::<H_UNQUOTED>(p, Q_NONE))),
+                b'"' => {
+                    self.put_hot(p, p + 1, STRING_BEGIN);
+                    self.push(F_QUOTED_RX);
+                    Some(self.regex::<H_QUOTED>(p + 1, Q_NONE))
+                }
+                b')' | b'(' | b'#' => None,
+                _ => Some(self.regex::<H_UNQUOTED>(p, Q_NONE)),
+            };
         }
         if is_name_start(b, p) {
             let e = word_end(b, p);
@@ -1055,12 +1126,34 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 self.sub = SUB_RESULT;
                 e
             }
-            (S_IF, b'M') => {
+            (S_IF, b'M') | (S_FILE | S_LIST, b'R') => {
                 self.matches = true;
                 e
             }
+            (S_STRING, b'R') => self.regex_mode(e),
             _ => e,
         }
+    }
+
+    /// `string(REGEX`'s mode from `p`, on its line: blanks, then `MATCH`, `MATCHALL` or
+    /// `REPLACE`, a regex after it; its end where it is one.
+    #[cold]
+    fn regex_mode(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let mut q = p;
+        while q < b.len() && CLASS[usize::from(b[q])] == C_BLANK {
+            q += 1;
+        }
+        if q == p || q == b.len() || CLASS[usize::from(b[q])] != C_NAME {
+            return p;
+        }
+        let e = word_end(b, q);
+        if !matches!(&b[q..e], b"MATCH" | b"MATCHALL" | b"REPLACE") {
+            return p;
+        }
+        self.put(q, e, PARAM);
+        self.matches = true;
+        e
     }
 
     /// `CACHE`'s type from `p`: blanks, then `FILEPATH`, `PATH`, `STRING`, `BOOL`, `INTERNAL`
@@ -1130,6 +1223,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 b'$' => {
                     if self.opens(p) {
                         self.push(F_UNQUOTED);
+                        self.rx = 0;
                         return self.dollar(p).unwrap_or(p + 1);
                     }
                     p += 1;
@@ -1139,10 +1233,15 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
     }
 
-    /// An unquoted argument's rest after a `${…}` or `$<…>` in it closed.
+    /// An unquoted argument's rest after a `${…}` or `$<…>` in it closed: a regex's where it is
+    /// one ([`RX_UNQUOTED`]).
     #[inline(never)]
     fn unquoted(&mut self, p: usize) -> usize {
-        let e = self.unquoted_run(p);
+        let e = if self.rx & RX_UNQUOTED != 0 {
+            self.regex::<H_UNQUOTED>(p, Q_ATOM)
+        } else {
+            self.unquoted_run(p)
+        };
         if self.top() == F_UNQUOTED {
             self.pop();
         }
@@ -1235,7 +1334,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         };
         match self.top() {
             F_SUBST | F_GENEX | F_GENEX_ARGS => {}
-            F_QUOTED => self.pre = PRE_STRING,
+            F_QUOTED | F_QUOTED_RX => self.pre = PRE_STRING,
             F_CAPS => self.pre = PRE_CAPS,
             _ => self.pre = 0,
         }
@@ -1440,7 +1539,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.eqs = eqs.min(255) as u8;
         if mode == M_REGEX {
             self.rx = 0;
-            return Some(self.regex(e, Q_NONE));
+            return Some(self.regex::<H_BRACKET>(e, Q_NONE));
         }
         Some(self.bracket(e))
     }
@@ -1466,7 +1565,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn bracket(&mut self, p: usize) -> usize {
         if self.mode == M_REGEX {
             // the line before's newline the regex's character
-            return self.regex(p, Q_ATOM);
+            return self.regex::<H_BRACKET>(p, Q_ATOM);
         }
         let b = self.b;
         let n = b.len();
@@ -1497,19 +1596,33 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         n
     }
 
-    /// A `MATCHES` regex's text from `p` ([`M_REGEX`]), read as CMake reads it (X-106): to the
-    /// bracket's close, which ends it wherever it stands (in a class or a group too), the mode
-    /// over; or the line's end. `prev` is what a quantifier at `p` would follow ([`Q_NONE`]…).
+    /// A regex's text from `p`, read as CMake reads it (X-106, X-107), spelled in `H`: a bracket
+    /// argument's ([`H_BRACKET`], [`M_REGEX`]) to its close, which ends it wherever it stands (in a
+    /// class or a group too), the mode over; a quoted argument's ([`H_QUOTED`], [`F_QUOTED_RX`])
+    /// to its `"`, the frame popped; an unquoted one's ([`H_UNQUOTED`]) to its end. Or to a
+    /// `${…}`'s or `$<…>`'s start, opened on its frame, the regex's state in [`Scan::rx`] (the
+    /// regex goes on after it, the substitution an operand); or to the line's end. `prev` is what
+    /// a quantifier at `p` would follow ([`Q_NONE`]…).
     ///
     /// CMake's regexes are Henry Spencer's: `^`, `$` and `.` anywhere, `\` and any character
     /// that character, `*`, `+`, `?` after an operand (one; a second, or one after nothing, an
     /// error), `|`, `(…)`; a class `[…]` or `[^…]` whose first `]` or `-` is a character, whose
-    /// `x-y` is a range, and where a `\` is a character. A `\` right before the close escapes
-    /// nothing (CMake's "trailing \"), a `)` with no group open is unmatched.
+    /// `x-y` is a range, and where a `\` is a character. A `\` right before the argument's end
+    /// escapes nothing (CMake's "trailing \"), a `)` with no group open is unmatched.
+    ///
+    /// In a quoted or unquoted argument CMake's escapes come first ([`Scan::unit`]): `\\` is the
+    /// regex's `\`, and `\` before another character is that character, colored as the regex's
+    /// operator where it reads as one (`"\."` is any character, `"\("` a group), else as the
+    /// string's escape. A `;` is the string's separator, an operand to the regex.
     #[inline(never)]
-    fn regex(&mut self, p: usize, mut prev: u8) -> usize {
+    fn regex<const H: u8>(&mut self, p: usize, mut prev: u8) -> usize {
         let b = self.b;
         let n = b.len();
+        let (off, plain) = match H {
+            H_BRACKET => (0, REGEX),
+            H_QUOTED => (RX_IN_STRING, STRING),
+            _ => (RX_BARE, 0),
+        };
         let mut depth = self.rx & RX_DEPTH;
         let mut set = self.rx & RX_IN_SET != 0;
         // where the regex's plain text not yet written starts
@@ -1517,12 +1630,18 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         let mut q = p;
         // a class's first character: a `]` there is one
         let mut first = false;
+        macro_rules! flush {
+            ($s:expr) => {{
+                let s = $s;
+                if text < s && plain != 0 {
+                    self.put(text, s, plain);
+                }
+            }};
+        }
         macro_rules! token {
             ($s:expr, $e:expr, $kind:expr) => {{
                 let (s, e) = ($s, $e);
-                if text < s {
-                    self.put(text, s, REGEX);
-                }
+                flush!(s);
                 self.put(s, e, $kind);
                 text = e;
                 q = e;
@@ -1530,59 +1649,117 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
         while q < n {
             let c = b[q];
-            if c == b']'
-                && let Some(e) = self.closes(q)
-            {
-                if text < q {
-                    self.put(text, q, REGEX);
+            if H == H_BRACKET {
+                if c == b']'
+                    && let Some(e) = self.closes(q)
+                {
+                    flush!(q);
+                    self.put(q, e, REGEX_END);
+                    self.mode = M_CODE;
+                    self.rx = 0;
+                    return e;
                 }
-                self.put(q, e, REGEX_END);
-                self.mode = M_CODE;
+            } else if self.ends::<H>(q) {
+                flush!(q);
                 self.rx = 0;
-                return e;
+                if H == H_QUOTED {
+                    self.put_hot(q, q + 1, STRING_END);
+                    self.pop();
+                    return q + 1;
+                }
+                return q;
+            } else if self.yields(q) {
+                match c {
+                    b'$' => {
+                        flush!(q);
+                        self.rx = depth | if set { RX_IN_SET } else { 0 };
+                        if H == H_UNQUOTED {
+                            self.rx |= RX_UNQUOTED;
+                            if self.top() != F_UNQUOTED {
+                                self.push(F_UNQUOTED);
+                            }
+                        }
+                        return self.dollar(q).unwrap_or(q + 1);
+                    }
+                    b';' => {
+                        let kind = if H == H_QUOTED {
+                            S_SEPARATOR
+                        } else {
+                            SEPARATOR
+                        };
+                        token!(q, q + 1, kind);
+                        first = false;
+                        if !set {
+                            prev = Q_ATOM;
+                        }
+                    }
+                    // a `\` ending the line: the string's, which goes on to the next one
+                    _ => break,
+                }
+                continue;
             }
+            let (u, e, host) = self.unit::<H>(q);
             if set {
-                if c == b']' && !first {
-                    token!(q, q + 1, RX_SET);
+                if u == b']' && !first {
+                    token!(q, e, RX_SET + off);
                     set = false;
                     prev = Q_ATOM;
                     continue;
                 }
                 first = false;
                 // a range `x-y`, its end no `]`
-                let d = (q + char_len(c)).min(n);
-                if d + 1 < n && b[d] == b'-' && b[d + 1] != b']' {
-                    token!(q, (d + 1 + char_len(b[d + 1])).min(n), RX_RANGE);
+                if e < n && !self.stops::<H>(e) {
+                    let (d, de, _) = self.unit::<H>(e);
+                    if d == b'-' && de < n && !self.stops::<H>(de) {
+                        let (z, ze, _) = self.unit::<H>(de);
+                        if z != b']' {
+                            token!(q, ze, RX_RANGE + off);
+                            continue;
+                        }
+                    }
+                }
+                if host {
+                    token!(q, e, escape_kind::<H>(u));
                 } else {
-                    q = d;
+                    q = e;
                 }
                 continue;
             }
-            match c {
-                b'\\' => {
-                    let e = q + 1;
-                    if e < n && b[e] == b']' && self.closes(e).is_some() {
-                        token!(q, e, RX_BAD_ESCAPE);
+            match u {
+                b'\\' if !host => {
+                    // the regex's escape and the character after it
+                    if e == n {
+                        // at the line's end the newline's, but where the argument ends there
+                        if H == H_UNQUOTED {
+                            token!(q, n, RX_BAD_ESCAPE + off);
+                        } else {
+                            token!(q, n, RX_ESCAPE + off);
+                            prev = Q_ATOM;
+                        }
+                    } else if self.ends_at::<H>(e) {
+                        token!(q, e, RX_BAD_ESCAPE + off);
                     } else {
-                        // at the line's end, the newline's escape
-                        token!(
-                            q,
-                            (e + b.get(e).map_or(0, |&c| char_len(c))).min(n),
-                            RX_ESCAPE
-                        );
+                        // a `$<` escaped is the regex's `$` (`"^\\$<LINK_ONLY:"`): CMake
+                        // doesn't evaluate a generator expression in a regex's argument
+                        let ee = if self.stops::<H>(e) && !b[e..].starts_with(b"$<") {
+                            e
+                        } else {
+                            self.unit::<H>(e).1
+                        };
+                        token!(q, ee, RX_ESCAPE + off);
                         prev = Q_ATOM;
                     }
                 }
                 b'^' | b'$' => {
-                    token!(q, q + 1, RX_ANCHOR);
+                    token!(q, e, RX_ANCHOR + off);
                     prev = Q_ANCHOR;
                 }
                 b'.' => {
-                    token!(q, q + 1, RX_ANY);
+                    token!(q, e, RX_ANY + off);
                     prev = Q_ATOM;
                 }
                 b'(' => {
-                    token!(q, q + 1, RX_GROUP);
+                    token!(q, e, RX_GROUP + off);
                     if depth < RX_DEPTH {
                         depth += 1;
                     } else {
@@ -1592,47 +1769,128 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 }
                 b')' => {
                     if depth > 0 {
-                        token!(q, q + 1, RX_GROUP);
+                        token!(q, e, RX_GROUP + off);
                         depth -= 1;
                     } else {
-                        token!(q, q + 1, RX_UNMATCHED);
+                        token!(q, e, RX_UNMATCHED + off);
                     }
                     prev = Q_ATOM;
                 }
                 b'|' => {
-                    token!(q, q + 1, RX_OR);
+                    token!(q, e, RX_OR + off);
                     prev = Q_NONE;
                 }
                 b'*' | b'+' | b'?' => {
-                    if prev == Q_ATOM || prev == Q_ANCHOR && c == b'?' {
-                        token!(q, q + 1, RX_QUANTIFIER);
+                    if prev == Q_ATOM || prev == Q_ANCHOR && u == b'?' {
+                        token!(q, e, RX_QUANTIFIER + off);
                         prev = Q_QUANTIFIER;
                     } else {
-                        token!(q, q + 1, RX_BAD_QUANTIFIER);
+                        token!(q, e, RX_BAD_QUANTIFIER + off);
                     }
                 }
                 b'[' => {
-                    let e = if b.get(q + 1) == Some(&b'^') {
-                        q + 2
+                    let e = if e < n && !self.stops::<H>(e) && self.unit::<H>(e).0 == b'^' {
+                        self.unit::<H>(e).1
                     } else {
-                        q + 1
+                        e
                     };
-                    token!(q, e, RX_SET);
+                    token!(q, e, RX_SET + off);
                     set = true;
                     first = true;
                     prev = Q_ATOM;
                 }
+                _ if host => {
+                    token!(q, e, escape_kind::<H>(u));
+                    prev = Q_ATOM;
+                }
                 _ => {
-                    q += 1;
+                    q = e;
                     prev = Q_ATOM;
                 }
             }
         }
-        if text < n {
-            self.put(text, n, REGEX);
-        }
-        self.rx = depth | if set { RX_IN_SET } else { 0 };
+        flush!(n);
+        self.rx = if H == H_UNQUOTED {
+            0
+        } else {
+            depth | if set { RX_IN_SET } else { 0 }
+        };
         n
+    }
+
+    /// The regex's character at `q` as `H` spells it: its byte, where it ends, and whether it is
+    /// the host's escape. In a quoted or unquoted argument `\\` is the regex's `\`, and `\` before
+    /// another character that character (but at the line's end, where the caller stops first).
+    #[inline(always)]
+    fn unit<const H: u8>(&self, q: usize) -> (u8, usize, bool) {
+        let b = self.b;
+        let n = b.len();
+        let c = b[q];
+        if H != H_BRACKET && c == b'\\' && q + 1 < n {
+            let d = b[q + 1];
+            if d == b'\\' {
+                return (b'\\', q + 2, false);
+            }
+            return (d, (q + 1 + char_len(d)).min(n), true);
+        }
+        (c, (q + char_len(c)).min(n), false)
+    }
+
+    /// Whether a quoted or unquoted regex argument ends at `q`: its `"`, or a blank, a
+    /// parenthesis, `#` or `"`.
+    #[inline(always)]
+    fn ends<const H: u8>(&self, q: usize) -> bool {
+        let c = self.b[q];
+        if H == H_QUOTED {
+            c == b'"'
+        } else {
+            UNQUOTED_END[usize::from(c)]
+        }
+    }
+
+    /// Whether the regex's argument ends at `q`, which is in the line: [`Scan::ends`], or a
+    /// bracket's close.
+    #[inline(always)]
+    fn ends_at<const H: u8>(&self, q: usize) -> bool {
+        if H == H_BRACKET {
+            self.b[q] == b']' && self.closes(q).is_some()
+        } else {
+            self.ends::<H>(q)
+        }
+    }
+
+    /// Whether the host reads `q` before the regex does, a quoted or unquoted argument's: a `${`,
+    /// `$ENV{` or `$<`, a `;`, a `\` ending the line.
+    #[inline(always)]
+    fn yields(&self, q: usize) -> bool {
+        let b = self.b;
+        match b[q] {
+            b'$' => self.opens(q),
+            b';' => true,
+            b'\\' => q + 1 == b.len(),
+            _ => false,
+        }
+    }
+
+    /// Whether a token of the regex that would take `q` (a range's end, an escape's character)
+    /// stops before it, in a quoted or unquoted argument: its end, or a byte the host reads first.
+    /// A bracket's close is a `]`, which neither takes.
+    #[inline(always)]
+    fn stops<const H: u8>(&self, q: usize) -> bool {
+        H != H_BRACKET && (self.ends::<H>(q) || self.yields(q))
+    }
+}
+
+/// The kind of CMake's escape of `c` in a regex argument spelled in `H`: an error before a
+/// letter or digit but `t`, `r`, `n` (CMake's "Invalid character escape").
+#[inline(always)]
+fn escape_kind<const H: u8>(c: u8) -> u16 {
+    let ok = !c.is_ascii_alphanumeric() || matches!(c, b't' | b'r' | b'n');
+    match (H == H_QUOTED, ok) {
+        (true, true) => S_ESCAPE,
+        (true, false) => S_BAD_ESCAPE,
+        (false, true) => ESCAPE,
+        (false, false) => BAD_ESCAPE,
     }
 }
 
@@ -2366,6 +2624,81 @@ mod tests {
         has(&l, "b", "string.regexp.cmake");
     }
 
+    #[test]
+    fn regex_arguments_are_read_through_cmakes_escapes() {
+        let l = [
+            "if(A MATCHES \"^a\\\\.(b|c)+\\.d$\" OR B MATCHES ^x[0-9]*${Y}z$)",
+            "string(REGEX REPLACE \"[\\\\/]\\\\+\" \"\\\\1.\" out \"${in}\")",
+            "string(REPLACE \"a.b\" \"c\" out x)",
+            "list(FILTER l INCLUDE REGEX \"\\(q\\)\\t\\d;w\")",
+            "file(STRINGS f v REGEX \"^#define X \\\"[^\\\"]*\\\"\")",
+            "string(REGEX MATCH \"([a${C}",
+            "]+)*\" m x)",
+            "if(A MATCHES [a-z]+\\\\)",
+        ];
+        let q = |s: &str| format!("string.quoted.double.cmake {s}.regexp");
+        let u = |s: &str| format!("{s}.regexp");
+        // a quoted argument: `\\` the regex's `\`, under the string's scope
+        has(&l, "^", &q("keyword.control.anchors"));
+        has(&l, "\\\\.", &q("constant.character.escape"));
+        has(&l, "(", &q("keyword.control.group"));
+        has(&l, "|", &q("keyword.operator.alternation"));
+        has(&l, "+", &q("keyword.operator.quantifier"));
+        // CMake's `\.` is the regex's `.`, its `\(` a group
+        has(&l, "\\.", &q("keyword.other.any"));
+        has(&l, "\\(", &q("keyword.control.group"));
+        has(&l, "\\)", &q("keyword.control.group"));
+        // CMake's other escapes the string's, `\d` an error, `;` its separator
+        has(
+            &l,
+            "\\t",
+            "string.quoted.double.cmake constant.character.escape.cmake",
+        );
+        has(
+            &l,
+            "\\d",
+            "string.quoted.double.cmake invalid.illegal.character.escape.cmake",
+        );
+        has(
+            &l,
+            "\\\"",
+            "string.quoted.double.cmake constant.character.escape.cmake",
+        );
+        has(
+            &l,
+            ";",
+            "string.quoted.double.cmake punctuation.separator.cmake",
+        );
+        // a `\\` in a class a character; the class's `]`
+        has(&l, "[^", &q("keyword.control.set"));
+        has(&l, "\\\\/", "string.quoted.double.cmake");
+        has(&l, "]", &q("keyword.control.set"));
+        // an unquoted argument, its `${…}` an operand
+        has(&l, "^", &u("keyword.control.anchors"));
+        has(&l, "0-9", &u("constant.other.range"));
+        has(&l, "*", &u("keyword.operator.quantifier"));
+        has(&l, "Y", "variable.other.readwrite.cmake");
+        has(&l, "$", &u("keyword.control.anchors"));
+        // a `\\` before the argument's end escapes nothing
+        has(&l, "\\\\", &u("invalid.illegal.character.escape"));
+        // `string(REPLACE` takes no regex; the replacement isn't one
+        has(&l, "a.b", "string.quoted.double.cmake");
+        has(&l, "1.", "string.quoted.double.cmake");
+        // a class and a group across a `${…}` and a line's end
+        has(
+            &l,
+            "C",
+            "string.quoted.double.cmake variable.other.readwrite.cmake",
+        );
+        has(&l, ")", &q("keyword.control.group"));
+        has(&l, "*", &q("keyword.operator.quantifier"));
+        has(
+            &l,
+            "\"",
+            "string.quoted.double.cmake punctuation.definition.string.end.cmake",
+        );
+    }
+
     /// `text` a line at a time on the line API: each line's spans and the state after it.
     fn lines(text: &str) -> Vec<(Vec<crate::Span>, State)> {
         let mut state = State::default();
@@ -2382,13 +2715,14 @@ mod tests {
     fn a_block_lexes_as_its_lines() {
         // every field a line hands the next: frames past the levels, a bracket's `=`s past 255,
         // a string's `${…}` across lines, a capitalized argument, the `(` awaited, the
-        // arguments' place
+        // arguments' place, a regex's groups and class in a quoted argument and an unquoted one
         let deep = "if(A)\n".repeat(20) + &"foo(( ".repeat(10) + "\n" + &") ".repeat(12);
         let eqs = "=".repeat(300);
         let text = format!(
             "{deep}\n#[{eqs}[ a\n]{eqs}] b ]=] \n]{eqs}]\nfoo(\"${{a $<b:\nc>}}\" FOO\nBAR ${{x\n}}y)\n\
              if\n\n(x)\nset(\n X)\nendif()\n\
-             if(A MATCHES [[(([a\n]b)\n|c)*]])\nendif()\n"
+             if(A MATCHES [[(([a\n]b)\n|c)*]])\nendif()\n\
+             string(REGEX MATCH \"(([a${{b\n}}c]\n)\" x ^(${{y\nz}}|q)$)\n"
         );
         let one = lines(&text);
         let mut state = State::default();
@@ -2421,6 +2755,9 @@ mod tests {
             "set(CACHE ",
             "MATCHES ",
             "MATCHES [[([a-\\",
+            "if(A MATCHES \"([a-\\\\",
+            "if(A MATCHES ^(${a}[",
+            "string(REGEX MATCH \"\\(\\[",
             "a\\",
             "x;",
             "endif() ",

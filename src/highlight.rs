@@ -4125,7 +4125,9 @@ mod tests {
     /// (X-106), which it reads as CMake does. The text's regex keeps to what both read alike: ada colors quantifiers, `.` and an unmatched `)` at the top level
     /// as in a group (bat leaves them plain there), takes a `\` in a class as a character and
     /// ends the regex at the bracket's close (bat's class takes `\]` and runs past it), and reads
-    /// `{n}`, `\d`, `(?:` and `[:alpha:]` as CMake does (bat as a PCRE's).
+    /// `{n}`, `\d`, `(?:` and `[:alpha:]` as CMake does (bat as a PCRE's). A regex in a quoted or
+    /// unquoted argument (`MATCHES "…"`, `string(REGEX MATCH "…"`; X-107) bat leaves plain, so the
+    /// text has none.
     #[test]
     fn cmake_colors_match_the_grammar() {
         let text = concat!(

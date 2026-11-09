@@ -187,6 +187,7 @@ endforeach()
 if(CMAKE_CXX_COMPILER_VERSION MATCHES [=[^([0-9]+)\.([0-9]+)(\.[0-9]+)?(-[^ ]+|)$]=])
   set(DEMO_COMPILER_MAJOR ${CMAKE_MATCH_1})
 endif()
+string(REGEX REPLACE "^v?([0-9]+)\\..*$" "\\1" DEMO_MAJOR "${DEMO_VERSION}")
 
 install(TARGETS demo RUNTIME DESTINATION bin) # trailing
 ```
