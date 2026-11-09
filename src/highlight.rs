@@ -4121,7 +4121,11 @@ mod tests {
 
     /// ada-parse's CMake scanner picks the colors bat's grammar picks, in every built-in theme
     /// (X-104): it follows bat's reading throughout, its derailments too (a builtin's arguments
-    /// end at their first `)`, a stray word waits for a `(`), so the text needs no departures.
+    /// end at their first `)`, a stray word waits for a `(`), but in a `MATCHES [[…]]` regex
+    /// (X-106), which it reads as CMake does. The text's regex keeps to what both read alike: ada colors quantifiers, `.` and an unmatched `)` at the top level
+    /// as in a group (bat leaves them plain there), takes a `\` in a class as a character and
+    /// ends the regex at the bracket's close (bat's class takes `\]` and runs past it), and reads
+    /// `{n}`, `\d`, `(?:` and `[:alpha:]` as CMake does (bat as a PCRE's).
     #[test]
     fn cmake_colors_match_the_grammar() {
         let text = concat!(
@@ -4137,7 +4141,7 @@ mod tests {
             "if(NOT DEFINED FOO AND (A OR B) OR C VERSION_LESS_EQUAL 2)\n",
             "  message(STATUS \"x ${FOO} $ENV{HOME} $<CONFIG:Debug> \\n \\q ; a\\\n",
             "b\")\n",
-            "elseif(X MATCHES [[a.*b]] OR Y MATCHES\n",
+            "elseif(X MATCHES [[^a(b|[0-9]+.*)\\.c$]] OR Y MATCHES\n",
             "  [=[raw]=])\n",
             "  break()\n",
             "else()\n",

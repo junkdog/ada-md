@@ -9,6 +9,13 @@
 //! ([`Scan::mode`]) with their `=`s. Kinds are bat's leaves, but for the keywords' and commands'
 //! names, which bat scopes one by one (`support.function.add_library.cmake`) and no theme tells
 //! apart: one leaf each.
+//!
+//! **A `MATCHES [[…]]` regex is read as CMake reads it** (X-106, [`Scan::regex`]): its syntax is
+//! Henry Spencer's (`^ $ . [] [^] * + ? | () \c`, a `\` in a class a character, `]` or `-` first
+//! in one a character), in the scopes of bat's `Regular Expression`, and it ends at the bracket's
+//! close wherever that stands, as CMake's bracket argument does. bat lexes the body as a PCRE:
+//! its classes take a `\` as an escape and run past the close (`[;\]]=]`), its top level leaves
+//! quantifiers and `.` plain, and it reads `{n}`, `\d`, `(?:` and `[:alpha:]`, which CMake hasn't.
 
 use crate::emit::{Rules, Run, Runs, Sink, Spans};
 use crate::prim::{char_len, find_any, is_name_start, is_word_starting, word_end};
@@ -16,7 +23,7 @@ use crate::words::{Words, text_len};
 use crate::{Out, State};
 
 /// The leaves: a token's scopes.
-static LEAVES: [&str; 71] = [
+static LEAVES: [&str; 82] = [
     "",
     // comments: a line's text and its mark; a bracket comment's text, begin, end
     "comment.line.cmake",
@@ -98,6 +105,18 @@ static LEAVES: [&str; 71] = [
     "variable.parameter.generic.cmake punctuation.section.block.begin.cmake",
     "variable.parameter.generic.cmake punctuation.section.block.end.cmake",
     "variable.parameter.generic.cmake punctuation.separator.generator-expression.cmake",
+    // a `MATCHES` regex's tokens ([`Scan::regex`]), in bat's `source.regexp` scopes
+    "string.regexp.cmake keyword.control.group.regexp",
+    "string.regexp.cmake keyword.control.anchors.regexp",
+    "string.regexp.cmake keyword.other.any.regexp",
+    "string.regexp.cmake keyword.control.set.regexp",
+    "string.regexp.cmake constant.character.escape.regexp",
+    "string.regexp.cmake constant.other.range.regexp",
+    "string.regexp.cmake keyword.operator.quantifier.regexp",
+    "string.regexp.cmake keyword.operator.alternation.regexp",
+    "string.regexp.cmake invalid.illegal.unexpected-quantifier.regexp",
+    "string.regexp.cmake invalid.illegal.unmatched-brace.regexp",
+    "string.regexp.cmake invalid.illegal.character.escape.regexp",
 ];
 
 const COMMENT: u16 = 1;
@@ -149,6 +168,17 @@ const GX_DOLLAR: u16 = 49;
 const GX_BEGIN: u16 = 50;
 const GX_END: u16 = 51;
 const GX_SEPARATOR: u16 = 52;
+const RX_GROUP: u16 = 71;
+const RX_ANCHOR: u16 = 72;
+const RX_ANY: u16 = 73;
+const RX_SET: u16 = 74;
+const RX_ESCAPE: u16 = 75;
+const RX_RANGE: u16 = 76;
+const RX_QUANTIFIER: u16 = 77;
+const RX_OR: u16 = 78;
+const RX_BAD_QUANTIFIER: u16 = 79;
+const RX_UNMATCHED: u16 = 80;
+const RX_BAD_ESCAPE: u16 = 81;
 /// What a `${…}`'s or `$<…>`'s kinds add in a quoted string ([`Scan::pre`]).
 const PRE_STRING: u8 = 9;
 /// … and in a capitalized argument.
@@ -402,6 +432,20 @@ const M_RAW: u8 = 2;
 /// A bracket argument after `MATCHES`.
 const M_REGEX: u8 = 3;
 
+// What a regex's quantifier may follow ([`Scan::regex`]).
+/// Nothing: the regex's start, `(`, `|` (CMake's "?+* follows nothing").
+const Q_NONE: u8 = 0;
+/// A character, `.`, a class, a group: a quantifier's operand.
+const Q_ATOM: u8 = 1;
+/// `^` or `$`: `?` only (CMake's "*+ operand could be empty").
+const Q_ANCHOR: u8 = 2;
+/// A quantifier (CMake's "nested *?+").
+const Q_QUANTIFIER: u8 = 3;
+/// The groups open a regex keeps count of ([`Scan::rx`]'s low bits): past it the state is inexact.
+const RX_DEPTH: u8 = 127;
+/// [`Scan::rx`]'s bit: a class is open.
+const RX_IN_SET: u8 = 128;
+
 /// Lex `b`, a line of CMake without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
@@ -502,6 +546,9 @@ struct Scan<'b, 'c, K: Sink> {
     mode: u8,
     /// An open bracket's `=`s, up to 255 (where 255 is any more).
     eqs: u8,
+    /// In a regex ([`M_REGEX`]): the groups open, up to [`RX_DEPTH`], and [`RX_IN_SET`] where a
+    /// class is; a byte as the state keeps it, so a line that isn't in one only copies it.
+    rx: u8,
     k: K,
     out: &'b mut Out<'c>,
 }
@@ -520,14 +567,15 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             matches: false,
             mode: M_CODE,
             eqs: 0,
+            rx: 0,
             k,
             out,
         }
     }
 
     /// The scan's fields from `state`: the frames in its levels and the first two withs, the
-    /// command and the `=`s in the next two, the mode, the arguments' place and the prefix in
-    /// [`State::arg`].
+    /// command, the `=`s and a regex's groups and class in the next three, the mode, the
+    /// arguments' place and the prefix in [`State::arg`].
     #[inline(always)]
     fn load(&mut self, state: &State) {
         let mut w = [0u8; 16];
@@ -539,6 +587,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.exact = !state.inexact;
         self.cmd = state.withs[2];
         self.eqs = state.withs[3];
+        self.rx = state.withs[4];
         let a = state.arg;
         self.mode = (a & 3) as u8;
         self.sub = (a >> 2 & 7) as u8;
@@ -557,6 +606,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         s.withs[1] = w[15];
         s.withs[2] = self.cmd;
         s.withs[3] = self.eqs;
+        s.withs[4] = self.rx;
         s.depth = self.depth;
         s.inexact = !self.exact;
         s.arg = u16::from(self.mode)
@@ -1388,13 +1438,36 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
         self.mode = mode;
         self.eqs = eqs.min(255) as u8;
+        if mode == M_REGEX {
+            self.rx = 0;
+            return Some(self.regex(e, Q_NONE));
+        }
         Some(self.bracket(e))
     }
 
+    /// Where the open bracket's close (`]`, its `=`s, `]`) that starts at `s`, a `]`, ends; `None`
+    /// where it is no close.
+    #[inline(always)]
+    fn closes(&self, s: usize) -> Option<usize> {
+        let b = self.b;
+        let n = b.len();
+        let want = usize::from(self.eqs);
+        let mut e = s + 1;
+        while e < n && b[e] == b'=' {
+            e += 1;
+        }
+        let k = e - s - 1;
+        (b.get(e) == Some(&b']') && (k == want || want == 255 && k >= 255)).then_some(e + 1)
+    }
+
     /// An open bracket's text from `p` ([`Scan::mode`]): to its close (`]`, its `=`s, `]`), the
-    /// mode over; or the line's end.
+    /// mode over; or the line's end. A regex's on [`Scan::regex`].
     #[inline(always)]
     fn bracket(&mut self, p: usize) -> usize {
+        if self.mode == M_REGEX {
+            // the line before's newline the regex's character
+            return self.regex(p, Q_ATOM);
+        }
         let b = self.b;
         let n = b.len();
         let pre = if self.mode == M_BLOCK && self.top() == F_CAPS {
@@ -1404,30 +1477,161 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         };
         let (text, end) = match self.mode {
             M_BLOCK => (BLOCK + pre, BLOCK_END + pre),
-            M_RAW => (RAW, RAW_END),
-            _ => (REGEX, REGEX_END),
+            _ => (RAW, RAW_END),
         };
-        let want = usize::from(self.eqs);
         let mut q = p;
         loop {
             let s = find_any(b, q, *b"]");
             if s >= n {
                 break;
             }
-            let mut e = s + 1;
-            while e < n && b[e] == b'=' {
-                e += 1;
-            }
-            let k = e - s - 1;
-            if b.get(e) == Some(&b']') && (k == want || want == 255 && k >= 255) {
+            if let Some(e) = self.closes(s) {
                 self.put(p, s, text);
-                self.put(s, e + 1, end);
+                self.put(s, e, end);
                 self.mode = M_CODE;
-                return e + 1;
+                return e;
             }
             q = s + 1;
         }
         self.put(p, n, text);
+        n
+    }
+
+    /// A `MATCHES` regex's text from `p` ([`M_REGEX`]), read as CMake reads it (X-106): to the
+    /// bracket's close, which ends it wherever it stands (in a class or a group too), the mode
+    /// over; or the line's end. `prev` is what a quantifier at `p` would follow ([`Q_NONE`]…).
+    ///
+    /// CMake's regexes are Henry Spencer's: `^`, `$` and `.` anywhere, `\` and any character
+    /// that character, `*`, `+`, `?` after an operand (one; a second, or one after nothing, an
+    /// error), `|`, `(…)`; a class `[…]` or `[^…]` whose first `]` or `-` is a character, whose
+    /// `x-y` is a range, and where a `\` is a character. A `\` right before the close escapes
+    /// nothing (CMake's "trailing \"), a `)` with no group open is unmatched.
+    #[inline(never)]
+    fn regex(&mut self, p: usize, mut prev: u8) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let mut depth = self.rx & RX_DEPTH;
+        let mut set = self.rx & RX_IN_SET != 0;
+        // where the regex's plain text not yet written starts
+        let mut text = p;
+        let mut q = p;
+        // a class's first character: a `]` there is one
+        let mut first = false;
+        macro_rules! token {
+            ($s:expr, $e:expr, $kind:expr) => {{
+                let (s, e) = ($s, $e);
+                if text < s {
+                    self.put(text, s, REGEX);
+                }
+                self.put(s, e, $kind);
+                text = e;
+                q = e;
+            }};
+        }
+        while q < n {
+            let c = b[q];
+            if c == b']'
+                && let Some(e) = self.closes(q)
+            {
+                if text < q {
+                    self.put(text, q, REGEX);
+                }
+                self.put(q, e, REGEX_END);
+                self.mode = M_CODE;
+                self.rx = 0;
+                return e;
+            }
+            if set {
+                if c == b']' && !first {
+                    token!(q, q + 1, RX_SET);
+                    set = false;
+                    prev = Q_ATOM;
+                    continue;
+                }
+                first = false;
+                // a range `x-y`, its end no `]`
+                let d = (q + char_len(c)).min(n);
+                if d + 1 < n && b[d] == b'-' && b[d + 1] != b']' {
+                    token!(q, (d + 1 + char_len(b[d + 1])).min(n), RX_RANGE);
+                } else {
+                    q = d;
+                }
+                continue;
+            }
+            match c {
+                b'\\' => {
+                    let e = q + 1;
+                    if e < n && b[e] == b']' && self.closes(e).is_some() {
+                        token!(q, e, RX_BAD_ESCAPE);
+                    } else {
+                        // at the line's end, the newline's escape
+                        token!(
+                            q,
+                            (e + b.get(e).map_or(0, |&c| char_len(c))).min(n),
+                            RX_ESCAPE
+                        );
+                        prev = Q_ATOM;
+                    }
+                }
+                b'^' | b'$' => {
+                    token!(q, q + 1, RX_ANCHOR);
+                    prev = Q_ANCHOR;
+                }
+                b'.' => {
+                    token!(q, q + 1, RX_ANY);
+                    prev = Q_ATOM;
+                }
+                b'(' => {
+                    token!(q, q + 1, RX_GROUP);
+                    if depth < RX_DEPTH {
+                        depth += 1;
+                    } else {
+                        self.exact = false;
+                    }
+                    prev = Q_NONE;
+                }
+                b')' => {
+                    if depth > 0 {
+                        token!(q, q + 1, RX_GROUP);
+                        depth -= 1;
+                    } else {
+                        token!(q, q + 1, RX_UNMATCHED);
+                    }
+                    prev = Q_ATOM;
+                }
+                b'|' => {
+                    token!(q, q + 1, RX_OR);
+                    prev = Q_NONE;
+                }
+                b'*' | b'+' | b'?' => {
+                    if prev == Q_ATOM || prev == Q_ANCHOR && c == b'?' {
+                        token!(q, q + 1, RX_QUANTIFIER);
+                        prev = Q_QUANTIFIER;
+                    } else {
+                        token!(q, q + 1, RX_BAD_QUANTIFIER);
+                    }
+                }
+                b'[' => {
+                    let e = if b.get(q + 1) == Some(&b'^') {
+                        q + 2
+                    } else {
+                        q + 1
+                    };
+                    token!(q, e, RX_SET);
+                    set = true;
+                    first = true;
+                    prev = Q_ATOM;
+                }
+                _ => {
+                    q += 1;
+                    prev = Q_ATOM;
+                }
+            }
+        }
+        if text < n {
+            self.put(text, n, REGEX);
+        }
+        self.rx = depth | if set { RX_IN_SET } else { 0 };
         n
     }
 }
@@ -2110,6 +2314,58 @@ mod tests {
         has(&l, "x", "variable.function.generic.cmake");
     }
 
+    #[test]
+    fn a_matches_regex_is_read_as_cmake_reads_it() {
+        let l = [
+            "if(A MATCHES [=[^a(b|c)+.d*?$x\\.y]=])",
+            "if(A MATCHES [[[]a-z_0-9_-]b[^-x]a]])",
+            "if(A MATCHES [[*x(+)|?)^*^?\\]])",
+            "if(A MATCHES [=[;(10\\.[0-9.]+)[;\\]]=] OR B)",
+            "if(A MATCHES [[([a",
+            "]b)*",
+            "c)]] OR C)",
+        ];
+        let rx = |s: &str| format!("string.regexp.cmake {s}.regexp");
+        has(&l, "^", &rx("keyword.control.anchors"));
+        has(&l, "$", &rx("keyword.control.anchors"));
+        has(&l, "(", &rx("keyword.control.group"));
+        has(&l, ")", &rx("keyword.control.group"));
+        has(&l, "|", &rx("keyword.operator.alternation"));
+        // at the top level as in a group: bat leaves them plain there
+        has(&l, "+", &rx("keyword.operator.quantifier"));
+        has(&l, ".", &rx("keyword.other.any"));
+        has(&l, "\\.", &rx("constant.character.escape"));
+        // a second quantifier, and one after nothing, `(`, `|` or (but `?`) an anchor
+        has(&l, "?", &rx("invalid.illegal.unexpected-quantifier"));
+        has(&l, "*", &rx("invalid.illegal.unexpected-quantifier"));
+        has(&l, "+", &rx("invalid.illegal.unexpected-quantifier"));
+        has(&l, "?", &rx("keyword.operator.quantifier"));
+        has(&l, ")", &rx("invalid.illegal.unmatched-brace"));
+        // a `\` before the close escapes nothing
+        has(&l, "\\", &rx("invalid.illegal.character.escape"));
+        // a class: its first `]` and `-` and a `\` in it characters, `x-y` a range
+        has(&l, "[", &rx("keyword.control.set"));
+        has(&l, "[^", &rx("keyword.control.set"));
+        has(&l, "]", &rx("keyword.control.set"));
+        has(&l, "]", "string.regexp.cmake");
+        has(&l, "a-z", &rx("constant.other.range"));
+        has(&l, "0-9", &rx("constant.other.range"));
+        has(&l, "_-", "string.regexp.cmake");
+        has(&l, "-x", "string.regexp.cmake");
+        // bat's class takes `\]` and runs past the close; CMake's ends at `]`, and the
+        // bracket at `]=]`
+        has(&l, ";\\", "string.regexp.cmake");
+        has(
+            &l,
+            "]=]",
+            "string.regexp.cmake punctuation.definition.string.end.cmake",
+        );
+        has(&l, "OR", "keyword.operator.logical.cmake");
+        // a class and a group open across lines
+        has(&l, "]", &rx("keyword.control.set"));
+        has(&l, "b", "string.regexp.cmake");
+    }
+
     /// `text` a line at a time on the line API: each line's spans and the state after it.
     fn lines(text: &str) -> Vec<(Vec<crate::Span>, State)> {
         let mut state = State::default();
@@ -2131,7 +2387,8 @@ mod tests {
         let eqs = "=".repeat(300);
         let text = format!(
             "{deep}\n#[{eqs}[ a\n]{eqs}] b ]=] \n]{eqs}]\nfoo(\"${{a $<b:\nc>}}\" FOO\nBAR ${{x\n}}y)\n\
-             if\n\n(x)\nset(\n X)\nendif()\n"
+             if\n\n(x)\nset(\n X)\nendif()\n\
+             if(A MATCHES [[(([a\n]b)\n|c)*]])\nendif()\n"
         );
         let one = lines(&text);
         let mut state = State::default();
@@ -2163,6 +2420,7 @@ mod tests {
             "foo(FOO ",
             "set(CACHE ",
             "MATCHES ",
+            "MATCHES [[([a-\\",
             "a\\",
             "x;",
             "endif() ",

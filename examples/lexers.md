@@ -184,6 +184,10 @@ foreach(src IN LISTS DEMO_SOURCES)
   endif()
 endforeach()
 
+if(CMAKE_CXX_COMPILER_VERSION MATCHES [=[^([0-9]+)\.([0-9]+)(\.[0-9]+)?(-[^ ]+|)$]=])
+  set(DEMO_COMPILER_MAJOR ${CMAKE_MATCH_1})
+endif()
+
 install(TARGETS demo RUNTIME DESTINATION bin) # trailing
 ```
 
