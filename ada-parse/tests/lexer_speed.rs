@@ -48,6 +48,8 @@ const LANGS: &[(&str, Lang)] = &[
     ("go", Lang::Go),
     ("python", Lang::Python),
     ("lua", Lang::Lua),
+    // X-099's corpus: twenty cloned PHP repositories
+    ("php", Lang::Php),
     ("sql", Lang::Sql),
     ("powershell", Lang::PowerShell),
     ("javascript", Lang::JavaScript),

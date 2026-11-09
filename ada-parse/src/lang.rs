@@ -71,6 +71,8 @@ pub enum Lang {
     Python,
     /// bat's `Lua`.
     Lua,
+    /// bat's `PHP`: HTML with PHP's `<?php … ?>` islands over `PHP Source`.
+    Php,
     /// bat's `SQL`.
     Sql,
     /// bat's `PowerShell`.
@@ -339,6 +341,12 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
         ],
     ),
     (Lang::Lua, &["lua"]),
+    (
+        Lang::Php,
+        &[
+            "php", "php3", "php4", "php5", "php7", "phps", "phpt", "phtml",
+        ],
+    ),
     (Lang::Sql, &["sql", "ddl", "dml"]),
     (Lang::PowerShell, &["ps1", "psm1", "psd1"]),
     (Lang::Css, &["css", "css.erb", "css.liquid"]),
@@ -355,7 +363,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 44] = [
+    pub const ALL: [Lang; 45] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -387,6 +395,7 @@ impl Lang {
         Lang::Go,
         Lang::Python,
         Lang::Lua,
+        Lang::Php,
         Lang::JavaScript,
         Lang::Sql,
         Lang::PowerShell,
@@ -437,6 +446,7 @@ impl Lang {
             Lang::Go => "Go",
             Lang::Python => "Python",
             Lang::Lua => "Lua",
+            Lang::Php => "PHP",
             Lang::Sql => "SQL",
             Lang::PowerShell => "PowerShell",
             Lang::JavaScript => "JavaScript (Babel)",
@@ -496,6 +506,7 @@ impl Lang {
             Lang::Go => "source.go",
             Lang::Python => "source.python",
             Lang::Lua => "source.lua",
+            Lang::Php => "embedding.php",
             Lang::Sql => "source.sql",
             Lang::PowerShell => "source.powershell",
             Lang::JavaScript => "source.js",
@@ -541,6 +552,7 @@ impl Lang {
             Lang::Go => crate::go::scopes(kind),
             Lang::Python => crate::python::scopes(kind),
             Lang::Lua => crate::lua::scopes(kind),
+            Lang::Php => crate::php::scopes(kind),
             Lang::Sql => crate::sql::scopes(kind),
             Lang::PowerShell => crate::powershell::scopes(kind),
             Lang::JavaScript => crate::javascript::scopes(kind),
@@ -795,9 +807,12 @@ const FIRST_LINES: &[FirstLineRegex] = &[
     // (?i)^format:\s*complete\s*$
     may("MultiMarkdown", |t| t.lower.starts_with("format:")),
     // ^(#!.*[^-]php[0-9]?|<\?php)\b
-    may("PHP", |t| {
-        t.shebang() && t.has("php") || t.line.starts_with("<?php")
-    }),
+    decided(
+        "PHP",
+        Lang::Php,
+        |t| t.shebang() && t.has("php") || t.line.starts_with("<?php"),
+        |line| Some(is_php_line(line)),
+    ),
     // (?xi: ^\#! .* \bperl\b | ^\# \s* -\*- [^*]* perl [^*]* -\*-)
     may("Perl", |t| t.has_ci("perl")),
     // ^#!\s*/.*\bpython(\d(\.\d)?)?\b
@@ -1002,6 +1017,23 @@ fn is_python_line(line: &str) -> bool {
             _ => false,
         };
         starts && ends
+    })
+}
+
+/// `^(#!.*[^-]php[0-9]?|<\?php)\b` on an ASCII line (X-099).
+fn is_php_line(line: &str) -> bool {
+    let b = line.as_bytes();
+    let ends = |i: usize| b.get(i).is_none_or(|&c| !is_word(c));
+    if let Some(rest) = line.strip_prefix("<?php") {
+        return ends(line.len() - rest.len());
+    }
+    if !line.starts_with("#!") {
+        return false;
+    }
+    line.match_indices("php").any(|(i, _)| {
+        // `.*[^-]`: a byte that isn't `-` between `#!` and `php`
+        let after = i + 3;
+        i >= 3 && b[i - 1] != b'-' && (ends(after) || b[after].is_ascii_digit() && ends(after + 1))
     })
 }
 

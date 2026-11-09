@@ -179,7 +179,8 @@ pub(crate) struct Embed<'t> {
     pub stop: fn(&[u8], usize, usize) -> bool,
     /// What the host's [`Embed::stop`] needs beside the line (Rust's raw string's `#`s).
     pub arg: usize,
-    /// Where the host's escape at `p` (a `\` that isn't a cooked `\\`) ends.
+    /// Where the host's escape at `p` (a `\` that isn't a cooked `\\`) ends; `p` itself where the
+    /// host has none there and the `\` is the regex's.
     pub escape: fn(&[u8], usize) -> usize,
     /// The host's patterns are tried only where no group or class is open: a regex literal's,
     /// whose contexts a group or a class sits above (`/[/]/` is one literal).
@@ -375,6 +376,15 @@ impl Scan<'_, '_, '_, '_> {
         // but where the host's escape is the `\` alone and its end or `${` follows (Babel's
         // template, where `\${` is a `\` and a substitution): the regex's `\`
         let end = (self.host.escape)(self.b, p);
+        if end == p {
+            // no escape of the host's here: the `\` is the regex's (PHP's single-quoted
+            // strings, where `\d` and `\\d` are both `\d`)
+            return Some(Unit {
+                c: b'\\',
+                end: p + 1,
+                host: false,
+            });
+        }
         if end == p + 1 && self.host_stop(p + 1) {
             return Some(Unit {
                 c: b'\\',

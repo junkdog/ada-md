@@ -131,6 +131,12 @@ function M.run(a, ...) --[==[ long
 ]==] return string.format('%d\\n', #a) .. [[x]] end
 ```
 
+```php
+<?php #[Route('/x')] final class A extends B { public function f(?int $a = 1): string { return \"{$this->n} \" . preg_replace('/\\d+/', '', <<<SQL
+SELECT 1
+SQL); } } ?><b><?= $x ?></b>
+```
+
 ```sql
 CREATE TABLE t (id bigint PRIMARY KEY, n varchar(20) NOT NULL); -- note
 SELECT a.b, count(*) FROM t WHERE n LIKE 'it''s' /* c */ GROUP BY a.b;
@@ -274,6 +280,8 @@ fn a_covered_only_note_prints_without_the_syntax_set() {
         "main.py",
         "stubs.pyi",
         "init.lua",
+        "index.php",
+        "view.phtml",
         "schema.sql",
         "profile.ps1",
         "Module.psm1",

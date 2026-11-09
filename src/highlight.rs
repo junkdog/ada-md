@@ -3973,6 +3973,77 @@ mod tests {
         colors_match_the_grammar("nginx", "nginx", text);
     }
 
+    /// ada-parse's PHP scanner picks the colors bat's grammar picks, in every built-in theme
+    /// (X-099), on a file that opens with `<?php` and a template's HTML. Its departures are left
+    /// out of the text: `#[…]` an attribute (bat: a `#` comment); `catch (E)` without a
+    /// variable closes (bat's catch context never pops); HTML one stream across PHP's islands,
+    /// also after a `?>` in a function's body (bat starts each such stretch afresh); an indented
+    /// heredoc closer ends an embedded language's body (bat stays in it); a PHP island in an
+    /// HTML attribute's value plain (bat: the value's string); a regex's `\xHH` one escape; a
+    /// qualified typed property's class a class (bat: a constant).
+    #[test]
+    fn php_colors_match_the_grammar() {
+        let text = concat!(
+            "<?php\n",
+            "namespace App\\Http;\n",
+            "\n",
+            "use Foo\\Bar as Baz, Qux;\n",
+            "use function strlen;\n",
+            "use const PHP_EOL;\n",
+            "\n",
+            "/**\n",
+            " * A doc, {@inheritdoc}.\n",
+            " * @param int $x the x\n",
+            " * @return string\n",
+            " */\n",
+            "abstract class Foo extends Bar implements \\Countable, Baz\n",
+            "{\n",
+            "    use SomeTrait;\n",
+            "    const ANSWER = 42;\n",
+            "    public static ?int $count = 0;\n",
+            "    protected array $items = [];\n",
+            "\n",
+            "    public function __construct(private Foo $foo, int $n = 3, ...$rest)\n",
+            "    {\n",
+            "        parent::__construct();\n",
+            "        $this->name = strtolower($foo->name . 'x');\n",
+            "        $y = self::ANSWER + static::$count++ ?? Foo::class;\n",
+            "        if ($y instanceof \\DateTime && !empty($rest)) {\n",
+            "            return array_map(fn($a) => $a * 2, $rest);\n",
+            "        }\n",
+            "        echo \"Hello $name, {$this->name}, $a->b, $c[0] and ${x} \\n\";\n",
+            "        $q = MY_CONST . E_ALL . PHP_EOL . true . null;\n",
+            "        $r = Foo\\Bar\\baz(1, 2.5, 0x1F, 0b101, 1_000);\n",
+            "        $s = $obj?->prop['key'][0] <=> $t;\n",
+            "        foreach ($list as $k => &$v) { continue; }\n",
+            "        try { throw new \\RuntimeException(\"bad\"); } catch (\\Exception $e) { }\n",
+            "        $sql = 'SELECT * FROM t WHERE id = 1';\n",
+            "        $h = <<<EOT\n",
+            "          Hello $name!\n",
+            "          EOT;\n",
+            "        $n = <<<'EOT'\n",
+            "        raw $x\n",
+            "        EOT;\n",
+            "        // a comment\n",
+            "        # another\n",
+            "        /* block */\n",
+            "        $b = (int) $x + (string)$y;\n",
+            "        $f = function ($x) use (&$y): int { return 1; };\n",
+            "    }\n",
+            "}\n",
+            "interface I extends J {}\n",
+            "trait T {}\n",
+            "label:\n",
+            "goto label;\n",
+            "?>\n",
+            "<div class=\"a\"><?= $x ?></div>\n",
+            "<?php if ($y): ?>\n",
+            "  <p>yes</p>\n",
+            "<?php endif; ?>\n",
+        );
+        colors_match_the_grammar("php", "PHP", text);
+    }
+
     /// ada-parse's `.env` lexer picks the rules bat's grammar picks, in every built-in theme
     /// (ADR-40).
     #[test]

@@ -48,6 +48,7 @@ mod logs;
 mod lua;
 mod matcher;
 mod nginx;
+mod php;
 mod powershell;
 mod prim;
 mod properties;
@@ -449,6 +450,7 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
         Lang::Clojure => (lisp::clojure::block_runs, lisp::clojure::line_runs),
         Lang::Go => (go::block_runs, go::line_runs),
         Lang::Lua => (lua::block_runs, lua::line_runs),
+        Lang::Php => (php::block_runs, php::line_runs),
         Lang::Scss => (css::scss::block_runs, css::scss::line_runs),
         Lang::Bash => (bash::block_runs, bash::line_runs),
         Lang::Cpp => (cc::block_runs, cc::line_runs),
@@ -477,6 +479,7 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::C if SPANS => cc::block_c,
         Lang::Bash if SPANS => bash::block,
         Lang::Lua if SPANS => lua::block,
+        Lang::Php if SPANS => php::block,
         Lang::PowerShell => powershell::block,
         Lang::Css => css::block,
         Lang::Scss if SPANS => css::scss::block,
@@ -728,6 +731,8 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::Python => out!(python::line),
         Lang::Lua if !SPANS => |_, _, _| unreachable!("Lua's runs come from its own scan"),
         Lang::Lua => out!(lua::line),
+        Lang::Php if !SPANS => |_, _, _| unreachable!("PHP's runs come from its own scan"),
+        Lang::Php => out!(php::line),
         Lang::Sql => out!(sql::line),
         Lang::PowerShell => out!(powershell::line),
         Lang::JavaScript => out!(javascript::line),

@@ -145,6 +145,12 @@ pub(crate) fn line_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs
     state.set_word(u64::from(comment));
 }
 
+/// A line of JSON in a host's text (PHP's `<<<JSON` here-documents, X-099): its spans pushed to
+/// `out` with JSON's kinds, `comment` as in [`tokens`].
+pub(crate) fn embedded(b: &[u8], comment: &mut bool, out: &mut Out) {
+    scan(b, comment, out, &mut Push);
+}
+
 /// [`tokens`]' scan of `b`, its lexemes written to `k`. A lexeme is never empty, nor joined to the
 /// one before.
 #[inline(always)]

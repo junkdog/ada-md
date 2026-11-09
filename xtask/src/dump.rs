@@ -114,8 +114,14 @@ const EMBEDDED: &[&str] = &[
     "HTML",
 ];
 
+/// Grammars a covered language's lexer stands in for under another name, emptied with it:
+/// `PHP Source`, the code of `PHP`'s `<?php` islands (X-099). Markdown's fences embed it by scope
+/// (`scope:source.php`), but ada lexes its fences itself; in a fallback grammar's block it shows
+/// plain, as any covered language's does.
+const ALSO: &[&str] = &["PHP Source"];
+
 /// The grammars to empty, by index: the ones ada-parse covers but [`BUILT_ON`]'s and
-/// [`EMBEDDED`]'s, then every
+/// [`EMBEDDED`]'s, and [`ALSO`]'s, then every
 /// hidden one no file is named for (no extensions, no first line) that only emptied ones link
 /// to, such as bash's `commands-builtin-shell-bash`.
 fn emptied(defs: &[SyntaxDefinition]) -> Vec<bool> {
@@ -125,6 +131,7 @@ fn emptied(defs: &[SyntaxDefinition]) -> Vec<bool> {
         .map(|d| {
             let name = d.name.as_str();
             covered.contains(&name) && !BUILT_ON.contains(&name) && !EMBEDDED.contains(&name)
+                || ALSO.contains(&name)
         })
         .collect();
     let links: Vec<BTreeMap<usize, usize>> = defs.iter().map(links).collect();

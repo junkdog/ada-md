@@ -678,6 +678,40 @@ server {
 }
 ```
 
+## PHP
+
+```php
+<?php
+declare(strict_types=1);
+
+namespace App\Http\Controllers;
+
+use App\Models\User;
+
+/**
+ * Lists the users.
+ * @param  int  $page
+ */
+#[Route('/users', methods: ['GET'])]
+final class UserController extends Controller
+{
+    public function __construct(private readonly UserRepository $users) {}
+
+    public function index(int $page = 1): array
+    {
+        $rows = $this->users->query('SELECT id, name FROM users WHERE active = 1');
+        $name = preg_replace('/\s+/', ' ', trim($rows[0]['name'] ?? ''));
+        return ['page' => $page, 'greeting' => "Hello {$name}!", 'count' => \count($rows)];
+    }
+}
+?>
+<ul>
+<?php foreach ($users as $user): ?>
+  <li class="user"><?= htmlspecialchars($user->name) ?></li>
+<?php endforeach; ?>
+</ul>
+```
+
 ## PowerShell
 
 ```ps1
