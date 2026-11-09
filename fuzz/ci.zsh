@@ -49,7 +49,7 @@ LANGS=(
   ini 689 1                  knownhosts 677 1      json 673 1           fstab 592 1
   gitlink 589 1              gitmailmap 490 1      properties 429 1     diff 281 1
   sshconfig 677 1            sshdconfig 677 1     crontab 677 1        nginx 677 1
-  php 677 1                  swift 2646 24        cmake 2646 24
+  php 677 1                  swift 2646 24        cmake 2646 24        ruby 2646 24
   cmakecache 592 1
 )
 typeset -A weight pass

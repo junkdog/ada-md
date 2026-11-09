@@ -56,6 +56,7 @@ mod prim;
 mod properties;
 mod python;
 mod regex;
+mod ruby;
 mod rust;
 mod sql;
 mod ssh;
@@ -456,6 +457,7 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
         Lang::Php => (php::block_runs, php::line_runs),
         Lang::Swift => (swift::block_runs, swift::line_runs),
         Lang::CMake => (cmake::block_runs, cmake::line_runs),
+        Lang::Ruby => (ruby::block_runs, ruby::line_runs),
         Lang::Scss => (css::scss::block_runs, css::scss::line_runs),
         Lang::Bash => (bash::block_runs, bash::line_runs),
         Lang::Cpp => (cc::block_runs, cc::line_runs),
@@ -487,6 +489,7 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::Php if SPANS => php::block,
         Lang::Swift if SPANS => swift::block,
         Lang::CMake if SPANS => cmake::block,
+        Lang::Ruby if SPANS => ruby::block,
         Lang::PowerShell => powershell::block,
         Lang::Css => css::block,
         Lang::Scss if SPANS => css::scss::block,
@@ -746,6 +749,8 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::Swift => out!(swift::line),
         Lang::CMake if !SPANS => |_, _, _| unreachable!("CMake's runs come from its own scan"),
         Lang::CMake => out!(cmake::line),
+        Lang::Ruby if !SPANS => |_, _, _| unreachable!("Ruby's runs come from its own scan"),
+        Lang::Ruby => out!(ruby::line),
         Lang::Sql => out!(sql::line),
         Lang::PowerShell => out!(powershell::line),
         Lang::JavaScript => out!(javascript::line),

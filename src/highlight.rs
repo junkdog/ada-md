@@ -3628,6 +3628,94 @@ mod tests {
         colors_match_the_grammar("php", "PHP", text);
     }
 
+    /// ada-parse's Ruby scanner picks the colors bat's grammar picks, in every built-in theme
+    /// (X-100). Its departures are left out of the text, as Ruby reads them: two here-documents
+    /// opened on a line have their bodies in the openers' order (bat's reads the later inside the
+    /// earlier and never closes it), a here-document's word is the whole word (bat's `<<~JSON`
+    /// is `JS`'s, closed by `JS`), its body ends at its closer whatever its text left open, `#{`
+    /// interpolates in a SQL body's quotes too, `class <<self` is a singleton class (bat's opens a
+    /// here-document); HTML, JavaScript, CSS and shell bodies are plain.
+    #[test]
+    fn ruby_colors_match_the_grammar() {
+        let text = concat!(
+            "#!/usr/bin/env ruby\n",
+            "# frozen_string_literal: true\n",
+            "require \"json\"\n",
+            "require_relative 'lib/thing'\n",
+            "\n",
+            "module Shop::Billing\n",
+            "  class Invoice < ApplicationRecord::Base\n",
+            "    include Comparable\n",
+            "    attr_accessor :total, :lines\n",
+            "    TAX_RATE = 0.25\n",
+            "    DEFAULTS, LIMITS = {}, []\n",
+            "\n",
+            "    def initialize(lines = [], total: 0, **opts, &blk)\n",
+            "      @lines = lines\n",
+            "      @@count ||= 0\n",
+            "      $stdout.sync = true\n",
+            "    end\n",
+            "\n",
+            "    def self.parse(text) = new(JSON.parse(text))\n",
+            "\n",
+            "    def <=>(other)\n",
+            "      total <=> other.total\n",
+            "    end\n",
+            "\n",
+            "    def to_s\n",
+            "      \"Invoice #{id}: #{format('%.2f', total)} (#@lines)\\n\"\n",
+            "    end\n",
+            "\n",
+            "    def each_line\n",
+            "      lines.each do |line, i = 0|\n",
+            "        next if line.nil?\n",
+            "        yield line unless line.empty?\n",
+            "      end\n",
+            "      lines.map { |l| l.amount * 2 }.sum\n",
+            "    end\n",
+            "\n",
+            "    def matches?(pattern)\n",
+            "      name =~ /^inv-(\\d+)$/i ? $1.to_i : %r{a/b}x.match?(name)\n",
+            "    end\n",
+            "\n",
+            "    private\n",
+            "\n",
+            "    def sql\n",
+            "      <<~SQL\n",
+            "        SELECT id, total FROM invoices\n",
+            "        WHERE id = #{id} -- one\n",
+            "      SQL\n",
+            "    end\n",
+            "\n",
+            "    def note\n",
+            "      <<-EOS.strip\n",
+            "        A note: #{@lines.size} lines \\t done\n",
+            "      EOS\n",
+            "    end\n",
+            "  end\n",
+            "end\n",
+            "\n",
+            "x = [1, 0x1F, 0b101, 017, 1_000, 1.5, 1e-3, 2r, 3i]\n",
+            "y = %w[a b c] + %i(d e) + %q{f {g}} + [%Q<h #{x}>]\n",
+            "z = a ? b : c\n",
+            "w = :sym, :\"quoted #{x}\", ?a\n",
+            "begin\n",
+            "  raise ArgumentError, \"bad\" if x.empty? && !y\n",
+            "rescue => e\n",
+            "  warn e.message\n",
+            "ensure\n",
+            "  puts \"done\"\n",
+            "end\n",
+            "case x\n",
+            "when Integer then 1\n",
+            "else 2\n",
+            "end\n",
+            "__END__\n",
+            "data\n",
+        );
+        colors_match_the_grammar("ruby", "Ruby", text);
+    }
+
     /// ada-parse's Swift scanner picks the colors bat's grammar picks, in every built-in theme
     /// (X-101). Its departures are left out of the text, as Swift reads them: a function's body
     /// ends at its own `}` (bat's at the first), its parameters', an attribute's arguments' and an

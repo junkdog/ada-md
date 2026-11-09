@@ -847,6 +847,49 @@ async def main(paths: list[str], *, limit: int = 0x10) -> None:
 #;(displayln "commented out")
 ```
 
+## Ruby
+
+```ruby
+# frozen_string_literal: true
+require "json"
+
+module Shop
+  class Invoice < ApplicationRecord
+    TAX_RATE = 0.25
+    attr_reader :lines
+
+    def self.parse(text) = new(JSON.parse(text, symbolize_names: true))
+
+    def initialize(lines = [], total: 0, **opts, &on_change)
+      @lines, @total = lines, total
+    end
+
+    def to_s
+      "Invoice ##{id}: #{format('%.2f', total * (1 + TAX_RATE))}\n"
+    end
+
+    def overdue?(today = Date.today) = due_on < today && !paid?
+
+    def summary
+      lines.group_by { |l| l.sku[/^[A-Z]+/] }.map do |prefix, items|
+        "#{prefix}: #{items.sum(&:amount)}"
+      end
+    end
+
+    def totals_sql
+      <<~SQL
+        SELECT sku, SUM(amount) FROM lines
+        WHERE invoice_id = #{id} -- this invoice
+        GROUP BY sku
+      SQL
+    end
+  end
+end
+
+words = %w[draft sent paid] + %i(void)
+puts words.grep(/^p/i).first&.upcase || ?-
+```
+
 ## Rust
 
 ```rust

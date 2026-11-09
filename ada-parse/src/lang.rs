@@ -79,6 +79,8 @@ pub enum Lang {
     CMake,
     /// bat's `CMakeCache`: `CMakeCache.txt`.
     CMakeCache,
+    /// bat's `Ruby`.
+    Ruby,
     /// bat's `SQL`.
     Sql,
     /// bat's `PowerShell`.
@@ -356,6 +358,44 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::Swift, &["swift"]),
     (Lang::CMake, &["cmakelists.txt", "cmake"]),
     (Lang::CMakeCache, &["cmakecache.txt"]),
+    (
+        Lang::Ruby,
+        &[
+            "rb",
+            "Appfile",
+            "Appraisals",
+            "Berksfile",
+            "Brewfile",
+            "capfile",
+            "cgi",
+            "Cheffile",
+            "config.ru",
+            "Deliverfile",
+            "Fastfile",
+            "fcgi",
+            "Gemfile",
+            "gemspec",
+            "Guardfile",
+            "irbrc",
+            "jbuilder",
+            "Podfile",
+            "podspec",
+            "prawn",
+            "rabl",
+            "rake",
+            "Rakefile",
+            "Rantfile",
+            "rbx",
+            "rjs",
+            "ruby.rail",
+            "Scanfile",
+            "simplecov",
+            "Snapfile",
+            "thor",
+            "Thorfile",
+            "Vagrantfile",
+        ],
+    ),
     (Lang::Sql, &["sql", "ddl", "dml"]),
     (Lang::PowerShell, &["ps1", "psm1", "psd1"]),
     (Lang::Css, &["css", "css.erb", "css.liquid"]),
@@ -372,7 +412,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 48] = [
+    pub const ALL: [Lang; 49] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -408,6 +448,7 @@ impl Lang {
         Lang::Swift,
         Lang::CMake,
         Lang::CMakeCache,
+        Lang::Ruby,
         Lang::JavaScript,
         Lang::Sql,
         Lang::PowerShell,
@@ -462,6 +503,7 @@ impl Lang {
             Lang::Swift => "Swift",
             Lang::CMake => "CMake",
             Lang::CMakeCache => "CMakeCache",
+            Lang::Ruby => "Ruby",
             Lang::Sql => "SQL",
             Lang::PowerShell => "PowerShell",
             Lang::JavaScript => "JavaScript (Babel)",
@@ -525,6 +567,7 @@ impl Lang {
             Lang::Swift => "source.swift",
             Lang::CMake => "source.cmake",
             Lang::CMakeCache => "source.cmakecache",
+            Lang::Ruby => "source.ruby",
             Lang::Sql => "source.sql",
             Lang::PowerShell => "source.powershell",
             Lang::JavaScript => "source.js",
@@ -574,6 +617,7 @@ impl Lang {
             Lang::Php => crate::php::scopes(kind),
             Lang::Swift => crate::swift::scopes(kind),
             Lang::CMake => crate::cmake::scopes(kind),
+            Lang::Ruby => crate::ruby::scopes(kind),
             Lang::Sql => crate::sql::scopes(kind),
             Lang::PowerShell => crate::powershell::scopes(kind),
             Lang::JavaScript => crate::javascript::scopes(kind),
@@ -875,7 +919,12 @@ const FIRST_LINES: &[FirstLineRegex] = &[
         |line| Some(is_python_line(line)),
     ),
     // (?xi: ^\#! .* \bj?ruby\b | ^\# \s* -\*- [^*]* ruby [^*]* -\*-)
-    may("Ruby", |t| t.has_ci("ruby")),
+    decided(
+        "Ruby",
+        Lang::Ruby,
+        |t| t.has_ci("ruby"),
+        |line| Some(is_ruby_line(&line.to_ascii_lowercase())),
+    ),
     // (?x) ^\#! .* \b(bash|zsh|sh|tcsh|ash|dash|ksh)\b
     //    | ^\# \s* -\*- [^*]* mode: \s* shell-script [^*]* -\*-
     decided(
@@ -1266,6 +1315,15 @@ fn is_make_line(lower: &str) -> bool {
     modeline(lower, |text| text.contains("makefile"))
 }
 
+/// Ruby's first line, lowercase: `#!` and the word `ruby` or `jruby` after it, or a
+/// `# -*- … ruby … -*-` modeline.
+fn is_ruby_line(lower: &str) -> bool {
+    if lower.starts_with("#!") {
+        return has_word(lower, 2, "ruby") || has_word(lower, 2, "jruby");
+    }
+    modeline(lower, |text| text.contains("ruby"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1356,6 +1414,16 @@ mod tests {
         for line in python {
             assert_eq!(Lang::from_first_line(line), Some(Lang::Python), "{line}");
         }
+        // the set tries Ruby's regex before Python's
+        let ruby = [
+            "#!/usr/bin/env ruby",
+            "#!/usr/bin/jruby -w",
+            "#!/usr/bin/env python3 # ruby",
+            "# -*- mode: ruby -*-",
+        ];
+        for line in ruby {
+            assert_eq!(Lang::from_first_line(line), Some(Lang::Ruby), "{line}");
+        }
         assert_eq!(
             Lang::from_first_line("<?xml version=\"1.0\"?>"),
             Some(Lang::Xml)
@@ -1367,7 +1435,7 @@ mod tests {
             "#!/bin/shell",
             "#!python3",
             "#!/usr/bin/python312",
-            "#!/usr/bin/env python3 # ruby",
+            "#!/usr/bin/rubyx",
             "<?xml",
             "# -*- mode: shell-script",
             "# -*- mode: shell-* -*-",
@@ -1397,7 +1465,7 @@ mod tests {
         for line in lines {
             assert_eq!(Lang::first_line(line), FirstLine::None, "{line}");
         }
-        assert_eq!(Lang::first_line("#!/usr/bin/env ruby"), FirstLine::Ask);
+        assert_eq!(Lang::first_line("#!/usr/bin/env perl"), FirstLine::Ask);
         // ignoring case, the Kelvin sign is a `k` and `ſ` an `s`
         assert_eq!(Lang::first_line("#!/usr/bin/ma\u{212a}e"), FirstLine::Ask);
         assert_eq!(
@@ -1446,18 +1514,18 @@ mod tests {
 
     #[test]
     fn asking_names_a_syntax_not_covered() {
-        // Ruby's is the last regex that may match: the walk asks about it first
+        // Odin's, a syntax no lexer covers, is the set's last regex: the walk asks about it first
         let mut asked = Vec::new();
-        let found = Lang::first_line_asking("#!/usr/bin/env ruby", &mut |i, _| {
+        let found = Lang::first_line_asking("// -*- Odin -*-", &mut |i, _| {
             asked.push(first_line_syntaxes().nth(i).unwrap());
             Some(true)
         });
-        assert_eq!(found, FirstLine::Syntax("Ruby"));
-        assert_eq!(asked, ["Ruby"]);
-        let none = Lang::first_line_asking("#!/usr/bin/env ruby", &mut |_, _| Some(false));
+        assert_eq!(found, FirstLine::Syntax("Odin"));
+        assert_eq!(asked, ["Odin"]);
+        let none = Lang::first_line_asking("// -*- Odin -*-", &mut |_, _| Some(false));
         assert_eq!(none, FirstLine::None);
         // a regex nobody can tell about, with no test for ASCII lines to fall back on
-        let unknown = Lang::first_line_asking("#!/usr/bin/env ruby", &mut |_, _| None);
+        let unknown = Lang::first_line_asking("// -*- Odin -*-", &mut |_, _| None);
         assert_eq!(unknown, FirstLine::Ask);
         // the Kelvin sign: the table's test for ASCII lines stands in when asking can't tell
         let make = Lang::first_line_asking("#!/usr/bin/ma\u{212a}e", &mut |_, _| None);

@@ -278,6 +278,8 @@ fn covered_languages_highlight_and_the_others_are_named() {
         "init.lua",
         "index.php",
         "view.phtml",
+        "x.rb",
+        "Gemfile",
         "schema.sql",
         "profile.ps1",
         "Module.psm1",
