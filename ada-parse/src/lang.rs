@@ -73,6 +73,8 @@ pub enum Lang {
     Lua,
     /// bat's `PHP`: HTML with PHP's `<?php … ?>` islands over `PHP Source`.
     Php,
+    /// bat's `Swift`.
+    Swift,
     /// bat's `SQL`.
     Sql,
     /// bat's `PowerShell`.
@@ -347,6 +349,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
             "php", "php3", "php4", "php5", "php7", "phps", "phpt", "phtml",
         ],
     ),
+    (Lang::Swift, &["swift"]),
     (Lang::Sql, &["sql", "ddl", "dml"]),
     (Lang::PowerShell, &["ps1", "psm1", "psd1"]),
     (Lang::Css, &["css", "css.erb", "css.liquid"]),
@@ -363,7 +366,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 45] = [
+    pub const ALL: [Lang; 46] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -396,6 +399,7 @@ impl Lang {
         Lang::Python,
         Lang::Lua,
         Lang::Php,
+        Lang::Swift,
         Lang::JavaScript,
         Lang::Sql,
         Lang::PowerShell,
@@ -447,6 +451,7 @@ impl Lang {
             Lang::Python => "Python",
             Lang::Lua => "Lua",
             Lang::Php => "PHP",
+            Lang::Swift => "Swift",
             Lang::Sql => "SQL",
             Lang::PowerShell => "PowerShell",
             Lang::JavaScript => "JavaScript (Babel)",
@@ -507,6 +512,7 @@ impl Lang {
             Lang::Python => "source.python",
             Lang::Lua => "source.lua",
             Lang::Php => "embedding.php",
+            Lang::Swift => "source.swift",
             Lang::Sql => "source.sql",
             Lang::PowerShell => "source.powershell",
             Lang::JavaScript => "source.js",
@@ -553,6 +559,7 @@ impl Lang {
             Lang::Python => crate::python::scopes(kind),
             Lang::Lua => crate::lua::scopes(kind),
             Lang::Php => crate::php::scopes(kind),
+            Lang::Swift => crate::swift::scopes(kind),
             Lang::Sql => crate::sql::scopes(kind),
             Lang::PowerShell => crate::powershell::scopes(kind),
             Lang::JavaScript => crate::javascript::scopes(kind),

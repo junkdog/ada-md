@@ -30,12 +30,13 @@ use libfuzzer_sys::fuzz_target;
 /// engine's X-069, JSON's, TOML's and XML's X-072, the code languages' X-074; Go's, Lua's,
 /// SCSS's and bash's X-075, bash's run copy apart from its span copy since X-094; Makefile's
 /// runs come from its spans since X-094; C's and C++'s X-057).
-const RUN_SCANS: [Lang; 36] = [
+const RUN_SCANS: [Lang; 37] = [
     Lang::Bash,
     Lang::Scss,
     Lang::Rust,
     Lang::Go,
     Lang::Lua,
+    Lang::Swift,
     Lang::Java,
     Lang::CSharp,
     Lang::Kotlin,

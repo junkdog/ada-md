@@ -50,6 +50,8 @@ const LANGS: &[(&str, Lang)] = &[
     ("lua", Lang::Lua),
     // X-099's corpus: twenty cloned PHP repositories
     ("php", Lang::Php),
+    // X-101's corpus: 30 Swift repositories' files
+    ("swift", Lang::Swift),
     ("sql", Lang::Sql),
     ("powershell", Lang::PowerShell),
     ("javascript", Lang::JavaScript),

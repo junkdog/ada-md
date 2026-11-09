@@ -4044,6 +4044,62 @@ mod tests {
         colors_match_the_grammar("php", "PHP", text);
     }
 
+    /// ada-parse's Swift scanner picks the colors bat's grammar picks, in every built-in theme
+    /// (X-101). Its departures are left out of the text, as Swift reads them: a function's body
+    /// ends at its own `}` (bat's at the first), its parameters', an attribute's arguments' and an
+    /// interpolation's parentheses nest (bat's end at the first `)`), a function's head without
+    /// a body (a protocol's requirement) ends with its line (bat's stays open until a later
+    /// `{ … }`, its words plain), comments in a head are comments; a `"` string ends with its
+    /// line, `"""` strings, raw strings, `\u{…}`, nested block comments, `/**/`, regex literals
+    /// (`string.regexp`) and quoted names are Swift's (bat's grammar has none of them), and an
+    /// operator's run ends where a comment starts.
+    #[test]
+    fn swift_colors_match_the_grammar() {
+        let text = concat!(
+            "#!/usr/bin/env swift\n",
+            "import Foundation\n",
+            "@testable import Kit\n",
+            "import struct Foundation.Date\n",
+            "/// A thing.\n",
+            "/** Docs. */\n",
+            "@objc public final class Foo: NSObject, Bar {\n",
+            "    private(set) var x: Int = 5\n",
+            "    weak var delegate: Delegate?\n",
+            "    lazy var names: [String: Any] = [:]\n",
+            "    let s = \"a\\(b.c + 1)d\\n\\t\\\"\"\n",
+            "    @available(iOS 13, *) func run<T: Equatable>(_ a: T, b: Array<Int>) throws -> Bool {\n",
+            "        return a == a && !c || x != 1\n",
+            "    }\n",
+            "    static func + (lhs: Foo, rhs: Foo) -> Foo { lhs }\n",
+            "    func compute() -> Dictionary<String, Int> { [:] }\n",
+            "}\n",
+            "let y = x-1 + -2 * 0x1F + 0b101 + 0o17 + 1e5 + 1_000 % 3\n",
+            "z?.bar(a ?? b)!.baz\n",
+            "guard let q = try? f() else { fatalError(\"no\") }\n",
+            "arr.map { $0 + 1 }.filter { $0 > 2 }\n",
+            "switch v { case .a: break; default: () }\n",
+            "let t = x ? 1 : 2\n",
+            "for i in 0..<10 where i > 2 { continue }\n",
+            "while true { repeat { } while false }\n",
+            "do { try g() } catch { throw e }\n",
+            "if let v = w as? Int, w is String { defer { } }\n",
+            "let n: Int8 = nil, u: UInt64 = 0, c: Character = \"c\"\n",
+            "x += 1; x -= 1; x &+= 1; y = x << 2 >> 1 & 3 | 4 ^ 5\n",
+            "let r = a ... b, h = a..<b\n",
+            "var v: Int { get { 1 } set { } }\n",
+            "extension Foo: P where T: Q { }\n",
+            "enum E: String { case a = \"x\", b }\n",
+            "typealias F = (Int) -> Void\n",
+            "subscript(i: Int) -> Int { 0 }\n",
+            "init?(raw: String) { self.init() ; super.foo() }\n",
+            "#if DEBUG\n",
+            "let d = __FILE__ + __LINE__\n",
+            "#endif\n",
+            "/* block */ let w = 2 // trailing\n",
+        );
+        colors_match_the_grammar("swift", "Swift", text);
+    }
+
     /// ada-parse's `.env` lexer picks the rules bat's grammar picks, in every built-in theme
     /// (ADR-40).
     #[test]
@@ -4761,20 +4817,20 @@ mod tests {
         let ruby = "def f\n  s = <<~EOS\n    a \"quoted\" #{x}\n  EOS\n  # note\n  n = 0x1f\nend\n";
         let log =
             "2026-10-17 12:00:01 INFO started pid=42\n2026-10-17 12:00:02 ERROR failed: \"x\"\n";
-        let swift = "let x = 1 // note\n";
+        let scala = "val x = 1 // note\n";
         let json = "  {\"k\": [1, -2.5e3, true, \"s\\\"\"], \"open\": \"x\n  \"n\": null},\n";
         let diff = "--- a/x\n+++ b/x\n@@ -1 +1 @@ fn main\n-old\n+new\n same\n";
         let ini = "[core]\n; note\neditor = \"vim\" ; the one\n";
         for (lang, unit, reps) in [
             ("ruby", ruby, 60),
             ("log", log, 150),
-            ("swift", swift, 300),
+            ("scala", scala, 300),
             ("json", json, 150),
             ("diff", diff, 60),
             ("ini", ini, 100),
         ] {
             let mut text = unit.repeat(reps);
-            if lang == "swift" {
+            if lang == "scala" {
                 text.insert_str(0, "/* never closed\n");
             }
             let one = highlight(1, lang, &text, &syntax);

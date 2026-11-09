@@ -947,6 +947,37 @@ Match Group sftp Address 10.0.0.0/8
   ForceCommand internal-sftp
 ```
 
+## Swift
+
+```swift
+import Foundation
+
+/// A cache of decoded values, keyed by name.
+@MainActor public final class Cache<Value: Decodable> {
+    private(set) var entries: [String: Value] = [:]
+    static let pattern = #/^(?<key>[a-z]+)-(\d+)$/#
+
+    func load(_ name: String, from url: URL) async throws -> Value? {
+        if let hit = entries[name] { return hit }
+        let (data, _) = try await URLSession.shared.data(from: url)
+        let value = try JSONDecoder().decode(Value.self, from: data)
+        entries[name] = value
+        print("loaded \(name) (\(data.count) bytes) in \u{1F680}")
+        return value
+    }
+}
+
+protocol Store {
+    func value(for key: String) -> Int?
+}
+
+let query = #"SELECT * FROM t WHERE name = "\#(name)""#
+let report = """
+    total: \(items.map { $0.price }.reduce(0, +))
+    """
+/* nested /* comments */ close here */ let ok = n > 0x1F ? true : false
+```
+
 ## TOML
 
 ```toml
