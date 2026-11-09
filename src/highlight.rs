@@ -4,7 +4,7 @@
 //! has no grammar for it, since syntect left the binary in 1.1 (ADR-43).
 //!
 //! Results are color-free. A lexer's kinds carry bat's scopes, and the theme's `[syntax]` table
-//! gives each the rule `i` syntect would have ([`selector`]), so a highlighted line is a list of
+//! gives each the rule `i` syntect would have (`selector`), so a highlighted line is a list of
 //! `(end byte, rule)` runs, and paint resolves each rule against the ada theme (ADR-03).
 //! Results are cached by [`key`], a hash of the language and the code.
 
@@ -154,7 +154,7 @@ pub fn file_language(path: &Path) -> Option<&'static str> {
 
 /// The language a file's first line declares: a `#!` line, `<?xml`, a vim modeline, as bat's
 /// set's first-line regexes read it. ada-parse's table decides those it can, and the `regex`
-/// crate the rest ([`names::first_line_matches`]).
+/// crate the rest (`names::first_line_matches`).
 pub fn first_line_language(line: &str) -> Option<&'static str> {
     match Lang::first_line_asking(line, &mut names::first_line_matches) {
         FirstLine::Lang(lang) => Some(lang.label()),
@@ -290,7 +290,7 @@ impl SyntaxTheme {
         self.scopes.iter().map(|s| &**s)
     }
 
-    /// The rule a scope stack takes, its outermost scope first, as [`selector`] picks it.
+    /// The rule a scope stack takes, its outermost scope first, as `selector` picks it.
     pub fn rule(&self, stack: &[&str]) -> Rule {
         self.selectors.rule(stack)
     }
@@ -578,7 +578,7 @@ type Resolved = (Lang, u64, Arc<[Rule]>);
 /// Languages times themes kept in [`RESOLVED`]; past that it starts over.
 const RESOLVED_MAX: usize = 64;
 
-/// The theme's rule for each kind of an ada-parse language (ADR-40), as [`selector`] picks it
+/// The theme's rule for each kind of an ada-parse language (ADR-40), as `selector` picks it
 /// for the kind's scopes: all of them up front for a language with a fixed set
 /// (`ParseRules::new`), else each the first time a span has it (`ParseRules::lazy`).
 pub struct ParseRules {
