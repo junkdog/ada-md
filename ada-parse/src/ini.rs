@@ -1,9 +1,13 @@
 //! INI files, in place of bat's `INI`, on the line-format engine: a line is a comment, a
 //! `[section]`, or a `key = value` declaration, whose key and value may be quoted and which may
-//! end in a `;` comment. A line doesn't depend on the ones before it.
+//! end in a `;` or `#` comment. A line doesn't depend on the ones before it.
+//!
+//! Not bat's: an unquoted value's comment starts at a `;` or `#` after a blank, as INI's readers
+//! take an inline comment (Python's `configparser`, inih), where bat's grammar ends the value at
+//! its first `;` and knows no `#` after a value. `MimeType=a;b;` and `color = #fff` are values.
 
 use crate::emit::{Push, Runs, Sink};
-use crate::line_format::{Cursor, Format, blanks, find, leads, trim};
+use crate::line_format::{BLANK, Cursor, Format, blanks, find, leads, trim};
 use crate::{Out, State};
 
 const COMMENT: u16 = 0;
@@ -21,7 +25,8 @@ const VALUE_QUOTE: u16 = 11;
 const VALUE: u16 = 12;
 const COMMENT_AFTER: u16 = 13;
 
-/// Each kind's scopes under `source.ini`, as bat's grammar gives them.
+/// Each kind's scopes under `source.ini`, as bat's grammar names them (a `#` comment takes its
+/// `;` comment's).
 pub const KINDS: &[&str] = &[
     "comment.line.semicolon.ini",
     "comment.line.semicolon.ini punctuation.definition.comment.ini",
@@ -39,8 +44,7 @@ pub const KINDS: &[&str] = &[
     "meta.declaration.ini comment.declarationline.semicolon.ini",
 ];
 
-/// Lex `b`, a line without its `\n`: by the first of the grammar's three patterns that matches
-/// it, the last matching any line.
+/// Lex `b`, a line without its `\n`: a comment, a section, or else a declaration.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     crate::line_format::line::<Ini, _>(b, state, out, &mut Push);
@@ -74,7 +78,7 @@ impl Format for Ini {
         c.put(c.len(), DECLARATION);
     }
 
-    /// `^\s*(\[)(.*?)(\])\s*(;.*)?$`: the name ends at the first `]` that only spaces and a
+    /// `^\s*(\[)(.*?)(\])\s*([;#].*)?$`: the name ends at the first `]` that only spaces and a
     /// comment follow.
     #[inline(always)]
     fn section<K: Sink>(c: &mut Cursor<K>, start: usize) -> Option<u64> {
@@ -99,7 +103,8 @@ impl Format for Ini {
         Some(0)
     }
 
-    /// `^(\s*(["']?)(.+?)(\2)\s*(=))?\s*((["']?)(.*?)(\7))\s*(;.*)?$`
+    /// `^(\s*(["']?)(.+?)(\2)\s*(=))?\s*((["']?)(.*?)(\7))\s*([;#].*)?$`, an unquoted value
+    /// running to its comment ([`unquoted_end`]).
     #[inline(always)]
     fn entry<K: Sink>(c: &mut Cursor<K>, start: usize) -> u64 {
         let b = c.b;
@@ -124,10 +129,9 @@ impl Format for Ini {
                 ends(b, close + 1).unwrap_or(b.len())
             }
             None => {
-                // the text ends where only spaces and a comment follow: before the first `;`
-                let semi = find(b, value, *b";");
-                c.put(trim(b, value, semi), VALUE);
-                semi
+                let comment = unquoted_end(b, value);
+                c.put(trim(b, value, comment), VALUE);
+                comment
             }
         };
         c.put(comment, DECLARATION);
@@ -153,11 +157,26 @@ fn quoted_value(b: &[u8], value: usize) -> Option<usize> {
     }
 }
 
-/// Where the comment starts when only spaces and a `;` comment follow `at`, `\s*(;.*)?$`, or
+/// Where an unquoted value starting at `value` ends: at a `;` or `#` after a blank, which starts
+/// a comment, or at the line's end. A mark inside the text is the value's (`a;b;`, `F#f00`), and
+/// so is a `#` that opens it (`= #fff`, a color); a `;` that opens it after a blank is a comment.
+fn unquoted_end(b: &[u8], value: usize) -> usize {
+    let mut p = value;
+    loop {
+        p = find(b, p, *b";#");
+        if p == b.len() || p > 0 && BLANK[usize::from(b[p - 1])] && (p > value || b[p] == b';') {
+            return p;
+        }
+        p += 1;
+    }
+}
+
+/// Where the comment starts when only spaces and a `;` or `#` comment follow `at`,
+/// `\s*([;#].*)?$`, or
 /// the line's end when only spaces do; `None` when something else does.
 fn ends(b: &[u8], at: usize) -> Option<usize> {
     let at = blanks(b, at);
-    (at == b.len() || b[at] == b';').then_some(at)
+    (at == b.len() || b[at] == b';' || b[at] == b'#').then_some(at)
 }
 
 /// A declaration's key, `\s*(["']?)(.+?)(\2)\s*(=)`, the spaces before it ending at `start`:
@@ -245,6 +264,14 @@ mod tests {
             ]
         );
         assert_eq!(kinds("bare"), [("bare", "string.name.value.ini")]);
+        assert_eq!(
+            kinds("bare ;c"),
+            [
+                ("bare", "string.name.value.ini"),
+                (" ", "meta.declaration.ini"),
+                (";c", "comment.declarationline.semicolon.ini"),
+            ]
+        );
         assert_eq!(kinds(""), []);
         assert_eq!(
             kinds("  = x"),
@@ -256,5 +283,39 @@ mod tests {
                 ("x", "string.name.value.ini"),
             ]
         );
+    }
+
+    /// Not bat's: a comment after a value starts at a `;` or `#` after a blank, and a `#`
+    /// opening the value is the value's.
+    #[test]
+    fn comments_after_a_blank() {
+        let only = |line, comment: bool| {
+            kinds(line)
+                .into_iter()
+                .filter(|&(_, s)| {
+                    if comment {
+                        s.starts_with("comment.")
+                    } else {
+                        s == "string.name.value.ini"
+                    }
+                })
+                .map(|(t, _)| t)
+                .collect::<Vec<_>>()
+        };
+        let mime = "MimeType=text/markdown;text/x-markdown;";
+        assert_eq!(only(mime, false), ["text/markdown;text/x-markdown;"]);
+        assert!(only(mime, true).is_empty());
+        assert_eq!(only("theme = \"dark\"   # note", false), ["dark"]);
+        assert_eq!(only("theme = \"dark\"   # note", true), ["# note"]);
+        assert_eq!(only("path = a b\t; note", false), ["a b"]);
+        assert_eq!(only("path = a b\t; note", true), ["; note"]);
+        assert_eq!(only("label = %{F#f00}x#y", false), ["%{F#f00}x#y"]);
+        assert_eq!(only("color = #fff # note", false), ["#fff"]);
+        assert_eq!(only("color = #fff # note", true), ["# note"]);
+        assert!(only("key = ; note", false).is_empty());
+        assert_eq!(only("key = ; note", true), ["; note"]);
+        assert_eq!(only("key=;", false), [";"]);
+        assert_eq!(only("[s] # note", true), ["# note"]);
+        assert_eq!(only("[s]#note", true), ["#note"]);
     }
 }
