@@ -32,6 +32,7 @@ mod fstab;
 // the matchers and context ids its scanner shares, from the port it replaced
 mod git;
 mod go;
+mod heredoc;
 mod html;
 mod ini;
 mod java;

@@ -3720,7 +3720,8 @@ mod tests {
     }
 
     /// ada-parse's Dockerfile lexer picks the rules bat's grammar picks, in every built-in
-    /// theme (ADR-40).
+    /// theme (ADR-40). Here-documents are left out: bat has none and reads their bodies as
+    /// instructions or `invalid`, where ada's are bash's opener and body (X-105).
     #[test]
     fn dockerfile_rules_match_the_grammar() {
         let text = concat!(

@@ -26,11 +26,14 @@
 //!
 //! Between lines the stack is kept in [`State`]'s 28 levels, a byte a context; a builtin's
 //! arguments carry the builtin's option set in their id, and a here-document its end word as a
-//! 28-bit hash in the four levels under it (bytes with the top bit set, which no context has).
+//! [`Label`] (X-105's primitive, 28 bits) in the four levels under it (bytes with the top bit set,
+//! which no context has). Where one line opens several, the later opener's levels go under the
+//! earlier's, so the bodies follow in the openers' order (bat reads the last opened first).
 
 use std::mem::MaybeUninit;
 
 use crate::emit::{Rule, Rules, Run, Runs, Sink, Spans};
+use crate::heredoc::{Label, Lead, Tail};
 use crate::prim::{char_len, find_in};
 use crate::{Out, State};
 
@@ -225,6 +228,12 @@ kinds! {
     COMMAND = "meta.function-call.shell support.function.command.shell",
 }
 
+/// The kinds a host's here-documents take from bash's (Dockerfile's, X-105): the opener's
+/// operator, its word's quotes and the word, a body's text.
+pub(crate) mod hd {
+    pub(crate) use super::k::{HEREDOC, HEREDOC_TOKEN, REDIRECT, STR_BEGIN, STR_END};
+}
+
 /// A `variable.*` kind inside an option is this plus the kind: it carries the option's scope
 /// too, whose `variable.parameter` selector then outranks `variable` (the module's doc).
 pub const TWIN: u16 = 0x200;
@@ -378,7 +387,7 @@ const HD_RAW: u8 = 2;
 /// A builtin's arguments, its option set ([`OPTS`]) added.
 const BARGS: u8 = 64;
 
-/// A level that holds a here-document's word's hash, 7 bits of it.
+/// A level that holds 7 bits of a here-document's [`Label`].
 const DATA: u8 = 0x80;
 
 /// The contexts a line's end pops (unless a `\` continues the line).
@@ -549,15 +558,6 @@ fn builtin_ends(b: &[u8], e: usize) -> bool {
 #[inline(always)]
 fn option_ends(b: &[u8], e: usize) -> bool {
     e >= b.len() || is_space(b[e]) || matches!(b[e], b';' | b'`' | b')')
-}
-
-/// A here-document's word's hash (FNV-1a), 28 bits of it.
-fn hash(word: &[u8]) -> u32 {
-    let mut h: u32 = 0x811c_9dc5;
-    for &c in word {
-        h = (h ^ u32::from(c)).wrapping_mul(0x0100_0193);
-    }
-    h & 0x0fff_ffff
 }
 
 // --- the command words ----------------------------------------------------------------------
@@ -919,6 +919,9 @@ struct Scan<'b, 'c, K: Sink> {
     /// not yet; `0` where none starts past the line's start, as none is ever asked for at 0).
     last_bracket: usize,
     last_close: usize,
+    /// The lowest level of the here-documents this line opened (`usize::MAX`: none yet): a later
+    /// opener's levels go there.
+    hd_at: usize,
     k: K,
     out: &'b mut Out<'c>,
 }
@@ -940,6 +943,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             cont: false,
             last_bracket: usize::MAX,
             last_close: usize::MAX,
+            hd_at: usize::MAX,
             k,
             out,
         }
@@ -989,11 +993,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             // SAFETY: levels below `d` are written before `d` is
             return unsafe { self.meta[d - 1].assume_init() };
         }
-        // under a here-document's body, its first line's commands take what was under it
+        // under a here-document's body, its first line's commands take what was under it (under
+        // every body the line opened)
         let mut u = d - 1;
         if c == LINEMAIN && self.stack[u] & !3 == HEREDOC {
-            u = u.saturating_sub(1);
-            while u > 0 && self.stack[u] & DATA != 0 {
+            while u > 0 && (self.stack[u] & DATA != 0 || self.stack[u] & !3 == HEREDOC) {
                 u -= 1;
             }
         }
@@ -1037,6 +1041,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.cont = false;
         self.last_bracket = usize::MAX;
         self.last_close = usize::MAX;
+        self.hd_at = usize::MAX;
         let mut p = 0;
         if FALLS && !self.fast_ok() {
             eprintln!("SLOW {} {} {}", self.cur, self.depth, self.b.len());
@@ -1601,7 +1606,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         if end > e {
             self.put(e, end, k::STR_END);
         }
-        let h = hash(&b[s..e]);
+        let label = Label::of(&b[s..e]).septets();
         let mut c = HEREDOC;
         if tabs {
             c |= HD_TABS;
@@ -1609,12 +1614,30 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         if quote.is_some() {
             c |= HD_RAW;
         }
-        for i in 0..4 {
-            self.push(end, DATA | ((h >> (7 * i)) & 0x7f) as u8);
+        let g = self.hd_at;
+        if g < self.depth
+            && g + 4 < self.depth
+            && self.stack[g + 4] & !3 == HEREDOC
+            && self.depth + 5 <= MAX
+        {
+            // a later opener on the line: its body after the earlier ones', its levels under theirs
+            self.fill(end);
+            self.stack.copy_within(g..self.depth, g + 5);
+            for (i, s) in label.into_iter().enumerate() {
+                self.stack[g + i] = DATA | s;
+            }
+            self.stack[g + 4] = c;
+            self.depth += 5;
+            self.derive_all();
+        } else {
+            for s in label {
+                self.push(end, DATA | s);
+            }
+            self.push(end, c);
+            self.hd_at = self.depth - 5;
+            self.push(end, LINEMAIN);
+            self.push(end, ARGS);
         }
-        self.push(end, c);
-        self.push(end, LINEMAIN);
-        self.push(end, ARGS);
         // a comment right after the word: the blanks before it the body's (syntect matches the
         // prototype in the preamble first)
         let mut q = end;
@@ -1669,30 +1692,41 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         let b = self.b;
         let n = b.len();
         let d = self.depth - 1;
-        let mut h = 0u32;
-        for i in 0..4 {
-            h |= u32::from(self.stack[d - 4 + i] & 0x7f) << (7 * i);
+        if d < 5 || self.stack[d - 4..d].iter().any(|&c| c & DATA == 0) {
+            return self.heredoc_lost();
         }
+        let label = Label::from_septets([0, 1, 2, 3].map(|i| self.stack[d - 4 + i]));
         let lead = if self.cur & HD_TABS != 0 {
-            b.iter().take_while(|&&c| is_space(c)).count()
+            Lead::Blanks
         } else {
-            0
+            Lead::None
         };
-        let w = &b[lead..];
-        let trimmed = w.len() - w.iter().rev().take_while(|&&c| is_space(c)).count();
-        if hash(w) == h {
-            self.fill(lead);
-            self.put(lead, n, k::HEREDOC_TOKEN);
-        } else if trimmed < w.len() && hash(&w[..trimmed]) == h {
-            self.fill(lead + trimmed);
-            self.put(lead + trimmed, n, k::HEREDOC_SPACES);
-        } else {
+        let Some(c) = label.close(b, lead, Tail::Blanks) else {
             return 0;
+        };
+        if c.end == n {
+            self.fill(c.start);
+            self.put(c.start, n, k::HEREDOC_TOKEN);
+        } else {
+            self.fill(c.end);
+            self.put(c.end, n, k::HEREDOC_SPACES);
         }
         for _ in 0..5 {
             self.pop(n);
         }
         n
+    }
+
+    /// A body whose word's levels the held levels cut (a line keeps [`crate::stack::HELD`]):
+    /// nothing can end it, so it ends here, the line read in what was under it.
+    #[cold]
+    #[inline(never)]
+    fn heredoc_lost(&mut self) -> usize {
+        self.pop(0);
+        while self.depth > 1 && self.cur & DATA != 0 {
+            self.pop(0);
+        }
+        0
     }
 
     /// A here-document's body: expansions where its word wasn't quoted.
@@ -4550,6 +4584,20 @@ mod tests {
             "  quoted' x=1",
             "}",
             "for i in 1 2; do x+=$i; done",
+            // several here-documents on a line, more than the held levels keep (a line keeps
+            // 28, five a body): the bodies in the openers' order, the lowest ones cut
+            "cat <<A1 <<'A2' <<-A3 <<A4 <<A5 <<A6 <<A7",
+            "a1 $x",
+            "A1",
+            "a2 $x",
+            "A2",
+            "\ta3",
+            "\tA3",
+            "A4",
+            "A5",
+            "A6",
+            "A7",
+            "echo after",
         ]
         .join("\n");
         let (mut want, mut state, mut spans) = (Vec::new(), State::default(), Vec::new());
@@ -4635,6 +4683,52 @@ mod tests {
             crate::lex(Lang::Bash, line, &mut state, &mut spans);
         }
         assert!(t.elapsed().as_secs() < 2, "{:?}", t.elapsed());
+    }
+
+    /// Here-documents opened on one line are read in the openers' order (X-105, a fix over bat,
+    /// which pushes the later one over the earlier and reads it first).
+    #[test]
+    fn here_documents_follow_their_openers_order() {
+        let body = "string.unquoted.heredoc.shell";
+        let token = "keyword.control.heredoc-token.shell";
+        let got = spans(&[
+            "cat <<A <<-'B' <<C",
+            "line a $x",
+            "A",
+            "\tline b $x",
+            "\tB",
+            "C",
+            "echo after",
+        ]);
+        assert!(
+            got[1].iter().any(|(t, s)| t == "line a " && s == body),
+            "{got:?}"
+        );
+        assert_eq!(got[2], [("A".to_owned(), token.to_owned())]);
+        // B's word was quoted: no expansions in its body
+        assert_eq!(got[3], [("\tline b $x".to_owned(), body.to_owned())]);
+        assert!(
+            got[4].iter().any(|(t, s)| t == "B" && s.ends_with(token)),
+            "{got:?}"
+        );
+        assert_eq!(got[5], [("C".to_owned(), token.to_owned())]);
+        assert!(got[6][0].1.contains("support.function.echo"), "{got:?}");
+    }
+
+    /// A body whose word's levels the held levels cut (its line keeps 28 levels, the body's
+    /// own among them, some of its word's not) ends where it would have been read (X-105: the
+    /// word's levels were read below the stack's base, a panic).
+    #[test]
+    fn a_here_document_cut_by_the_held_levels() {
+        for n in 20..30 {
+            let open = format!("cat <<A; {}", "{ ".repeat(n));
+            let close = "} ".repeat(n);
+            let got = spans(&[&open, &close, "body", "A", "echo after"]);
+            assert!(
+                got[4][0].1.contains("support.function.echo"),
+                "{n}: {got:?}"
+            );
+        }
     }
 
     #[test]

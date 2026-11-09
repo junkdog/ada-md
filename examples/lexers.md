@@ -226,6 +226,14 @@ FROM debian:bookworm-slim
 LABEL org.opencontainers.image.title="ada" version="1.0"
 ENV TERM=xterm-256color LANG=C.UTF-8
 COPY --from=build /src/target/release/ada /usr/local/bin/ada
+COPY <<EOF /etc/ada/config.toml
+theme = "gruvbox-dark"
+EOF
+RUN <<EOF
+if [ -x /usr/local/bin/ada ]; then
+  echo "ada $(ada --version)" > /etc/motd
+fi
+EOF
 EXPOSE 8080/tcp
 HEALTHCHECK --interval=30s CMD ["ada", "--version"]
 USER 1000
