@@ -4,7 +4,9 @@
 //! nests: a string's interpolations and the strings they sit in ([`Scan::frames`]). Where bat's
 //! grammar lets a regex start (after an operator, a separator, a keyword that takes an
 //! expression, at a line's start) is a place on the line ([`Scan::regex_at`]), not a context.
-//! Here-documents wait on X-105's [`Queue`] and their bodies are a mode. Kinds are bat's leaves.
+//! Here-documents wait on X-105's [`Queue`] and their bodies are a mode. A regex literal's body
+//! is on [`crate::regex`] in Ruby's dialect (X-114), the line cut where Ruby's lexer ends it.
+//! Kinds are bat's leaves, and the regex scanner's under a literal's.
 
 use crate::emit::{Rules, Run, Runs, Sink, Spans};
 use crate::heredoc::{Label, Lead, Queue, Tail};
@@ -73,9 +75,8 @@ static LEAVES: &[&str] = &[
     "punctuation.section.interpolation.begin.ruby",
     "punctuation.section.interpolation.end.ruby",
     "string.regexp.classic.ruby keyword.other.ruby",
-    "punctuation.definition.group.ruby",
-    "punctuation.definition.character-class.ruby",
-    "punctuation.definition.arbitrary-repetition.ruby",
+    "string.regexp.classic.ruby comment.line.number-sign.regexp",
+    "string.regexp.mod-r.ruby comment.line.number-sign.regexp",
     // symbols, characters
     "constant.other.symbol.ruby",
     "constant.other.symbol.ruby punctuation.definition.constant.ruby",
@@ -261,9 +262,9 @@ const INTERP_BEGIN: u16 = leaf("punctuation.section.interpolation.begin.ruby");
 const INTERP_END: u16 = leaf("punctuation.section.interpolation.end.ruby");
 const REGEX_TEXT: u16 = leaf("string.regexp.classic.ruby");
 const REGEX_FLAGS: u16 = leaf("string.regexp.classic.ruby keyword.other.ruby");
-const REGEX_GROUP: u16 = leaf("punctuation.definition.group.ruby");
-const REGEX_CLASS: u16 = leaf("punctuation.definition.character-class.ruby");
-const REGEX_REPEAT: u16 = leaf("punctuation.definition.arbitrary-repetition.ruby");
+const REGEX_R_TEXT: u16 = leaf("string.regexp.mod-r.ruby");
+/// A comment in a regex's extended syntax, `/…/` then `%r…`'s.
+const REGEX_COMMENT: u16 = leaf("string.regexp.classic.ruby comment.line.number-sign.regexp");
 const SYMBOL: u16 = leaf("constant.other.symbol.ruby");
 const SYMBOL_MARK: u16 = SYMBOL + 1;
 const CHARACTER: u16 = leaf("constant.character.ruby");
@@ -330,6 +331,17 @@ const RATIONAL: u16 = leaf("constant.numeric.rational.decimal.ruby");
 
 /// The scopes under `source.ruby` a kind carries, outermost first.
 pub fn scopes(kind: u16) -> Vec<&'static str> {
+    if kind >= RE_BASE {
+        let k = kind - RE_BASE;
+        let outer = if k >= RE_KINDS {
+            "string.regexp.mod-r.ruby"
+        } else {
+            "string.regexp.classic.ruby"
+        };
+        let mut out = vec![outer];
+        out.extend(crate::regex::scopes(k % RE_KINDS));
+        return out;
+    }
     if kind >= BASH_BASE {
         return crate::bash::scopes(kind - BASH_BASE);
     }
@@ -818,8 +830,9 @@ static INFO: [u16; N + 1] = {
     t
 };
 
-// The frames ([`Scan::frames`]), a byte each but a string's two: below 0x80 code's, a
-// string's kind byte (0x80 set) above its `aux` byte.
+// The frames ([`Scan::frames`]), a byte each but a string's two and a regex's three: below
+// 0x80 code's, a string's kind byte (0x80 set) above its `aux` byte, a regex's above its
+// regex state ([`crate::regex::RUBY_STATE`]) too.
 /// A string's interpolation, `#{` … `}`, the string under it.
 const F_INTERP: u8 = 1;
 /// A `{` … `}` in an interpolation or a default value (bat's `nest-curly-expressions`,
@@ -869,6 +882,41 @@ static SQL_YIELDS: [bool; 256] = {
     t
 };
 static SQL_LITERAL: [bool; 256] = [false; 256];
+/// Where a regex literal's tokens' kinds start (on [`crate::regex`], Ruby's dialect): a `/…/`
+/// literal's [`RE_KINDS`], then a `%r…` literal's.
+const RE_BASE: u16 = 0x600;
+const RE_KINDS: u16 = crate::regex::KINDS as u16;
+const _: () = assert!(BASH_BASE + 2 * crate::bash::TWIN <= RE_BASE);
+/// A regex literal's body, the line cut at the host's next place (its closing delimiter, an
+/// interpolation): `/…/`'s, then `%r…`'s, each plain and in the extended syntax (`#` outside a
+/// class a comment).
+static RE_EMBEDS: [crate::regex::Embed<'static>; 4] = [
+    re_embed(&NO_STOPS, RE_BASE, REGEX_TEXT),
+    re_embed(&HASH_STOPS, RE_BASE, REGEX_TEXT),
+    re_embed(&NO_STOPS, RE_BASE + RE_KINDS, REGEX_R_TEXT),
+    re_embed(&HASH_STOPS, RE_BASE + RE_KINDS, REGEX_R_TEXT),
+];
+static NO_STOPS: [bool; 256] = crate::regex::table(b"");
+static HASH_STOPS: [bool; 256] = crate::regex::table(b"#");
+
+const fn re_embed(
+    yields: &'static [bool; 256],
+    base: u16,
+    text: u16,
+) -> crate::regex::Embed<'static> {
+    crate::regex::Embed {
+        dialect: crate::regex::Dialect::Ruby,
+        cooked: false,
+        yields,
+        stop: |_, _, _| false,
+        arg: 0,
+        escape: crate::regex::java_escape,
+        top_only: false,
+        continues: false,
+        base,
+        text,
+    }
+}
 /// The bytes [`Scan::frames`] holds in a line.
 const FRAMES: usize = 64;
 /// The frames a [`State`] keeps between lines, the innermost.
@@ -1046,6 +1094,10 @@ struct Scan<'b, 'c, K: Sink> {
     /// it was assigned; it holds for the constants between [`Scan::chain_from`] and its end.
     chain: (usize, bool),
     chain_from: usize,
+    /// Whether the open regex is in the extended syntax ([`extended`]), once looked for on the
+    /// line: 0 not yet, 1 no, 2 yes. A regex opened or closed looks again, so a body resumed
+    /// after each of a line's interpolations doesn't read on to the line's end each time.
+    re_x: u8,
     k: K,
     out: &'b mut Out<'c>,
 }
@@ -1067,6 +1119,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             last_slash: usize::MAX,
             chain: (0, false),
             chain_from: 0,
+            re_x: 0,
             k,
             out,
         }
@@ -1203,6 +1256,22 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
     }
 
+    /// A regex literal's three bytes pushed: its regex state (none yet) under `aux` under its
+    /// kind byte.
+    #[inline(always)]
+    fn push_regex(&mut self, byte: u8, aux: u8) {
+        let d = usize::from(self.depth);
+        if d + 3 <= FRAMES {
+            self.frames[d] = 0;
+            self.frames[d + 1] = aux;
+            self.frames[d + 2] = byte;
+            self.re_x = 0;
+            self.depth += 3;
+        } else {
+            self.exact = false;
+        }
+    }
+
     /// The open string's kind byte and `aux`.
     #[inline(always)]
     fn string_top(&self) -> (u8, u8) {
@@ -1220,6 +1289,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.last_slash = usize::MAX;
         self.chain = (0, false);
         self.ruby_interp = false;
+        self.re_x = 0;
         let p = match self.mode {
             M_CODE => 0,
             M_BODY => {
@@ -1530,10 +1600,12 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             F_INTERP => {
                 self.pop();
                 self.put(p, p + 1, INTERP_END);
-                if self.top() == F_SQL {
-                    return self.sql_body(p + 1);
+                match self.top() {
+                    F_SQL => self.sql_body(p + 1),
+                    // the string under it cut with the frames past those kept: code goes on
+                    t if t < 0x80 => p + 1,
+                    _ => self.string(p + 1),
                 }
-                self.string(p + 1)
             }
             F_BRACE => {
                 self.pop();
@@ -2742,6 +2814,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             b'<' => (D_ANGLE, 0),
             _ => (D_CHAR, d),
         };
+        if kind == S_REGEX_R {
+            self.put(p, open, REGEX_R_TEXT + 1);
+            self.push_regex(string_byte(kind, delim), aux);
+            return self.string(open);
+        }
         self.open(p, open, string_byte(kind, delim), aux)
     }
 
@@ -2765,7 +2842,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 // the blanks bat's `\s*(/)` takes are the regex's
                 self.put(from, p, REGEX_TEXT);
                 self.put(p, p + 1, REGEX_TEXT + 1);
-                self.push_string(string_byte(S_REGEX, D_KIND), 0);
+                self.push_regex(string_byte(S_REGEX, D_KIND), 0);
                 return self.string(p + 1);
             }
         }
@@ -2903,149 +2980,154 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         n
     }
 
-    /// A regex's body from `p` (its frame on top), to its end and flags, or the line's.
+    /// A regex's body from `p` (its frame on top), to its end and flags, or the line's: on
+    /// [`crate::regex`] in Ruby's dialect, the line cut at each of the host's places, which Ruby's
+    /// lexer finds before the regex is read: the closing delimiter (an unescaped one, a bracket's
+    /// nesting counted wherever it stands, in a class too), `#{`, `#@x` and `#$x`.
     #[inline(never)]
     fn regex(&mut self, mut p: usize, open: u8, close: u8) -> usize {
         let b = self.b;
         let n = b.len();
         let (byte, mut aux) = self.string_top();
         let kind = byte & 0xf;
-        let text = STRING + 3 * u16::from(kind);
-        let mut group = 0u32;
-        let mut t = p;
-        while p < n {
-            let c = b[p];
-            if c == close && group == 0 {
-                if open != 0 && aux > 0 {
-                    aux -= 1;
-                    self.put(t, p, text);
-                    self.put(p, p + 1, SCOPE);
-                    p += 1;
-                    t = p;
+        let d = usize::from(self.depth);
+        let mut st = if d >= 3 {
+            self.frames[d - 3] & crate::regex::RUBY_STATE
+        } else {
+            0
+        };
+        let classic = kind == S_REGEX;
+        let base = 2 * usize::from(!classic);
+        let comment = REGEX_COMMENT + u16::from(!classic);
+        // where the host's places are looked for from: past a `#@` that isn't a variable's
+        let mut from = p;
+        loop {
+            let mut q = from;
+            while q < n {
+                let c = b[q];
+                if c == b'\\' {
+                    q = (q + 1 + b.get(q + 1).map_or(0, |&c| char_len(c))).min(n);
                     continue;
                 }
-                self.put(t, p, text);
-                let mut e = p + 1;
+                if c == close {
+                    if open != 0 && aux > 0 {
+                        aux -= 1;
+                        q += 1;
+                        continue;
+                    }
+                    break;
+                }
+                if c == open && open != 0 {
+                    aux = aux.saturating_add(1);
+                } else if c == b'#' && matches!(b.get(q + 1), Some(b'{' | b'@' | b'$')) {
+                    break;
+                }
+                q += 1;
+            }
+            if q < n && b[q] != close && b[q] == b'#' && b[q + 1] != b'{' && !is_interp_var(b, q) {
+                // `#@` before no name: the regex's
+                from = q + 1;
+                continue;
+            }
+            if self.re_x == 0 {
+                // the extended syntax from where the cut stopped: the flags after a closer, a body
+                // that goes on past the line; past an interpolation, a look ahead
+                let x = if q == n {
+                    true
+                } else if b[q] == close {
+                    flags_x(b, q + 1)
+                } else {
+                    extended(b, q, open, close, aux)
+                };
+                self.re_x = 1 + u8::from(x);
+            }
+            let embed = &RE_EMBEDS[base + usize::from(self.re_x == 2)];
+            self.regex_text(p, q, &mut st, embed, comment);
+            if q == n {
+                break;
+            }
+            if b[q] == close {
+                let mut e = q + 1;
                 while e < n && b"eimnosux".contains(&b[e]) {
                     e += 1;
                 }
-                if kind == S_REGEX {
-                    self.put(p, p + 1, text + 2);
-                    self.put(p + 1, e, REGEX_FLAGS);
+                let text = STRING + 3 * u16::from(kind);
+                if classic {
+                    self.put(q, q + 1, text + 2);
+                    self.put(q + 1, e, REGEX_FLAGS);
                 } else {
-                    self.put(p, e, text + 2);
+                    self.put(q, e, text + 2);
                 }
-                self.depth = self.depth.saturating_sub(2);
+                self.depth = self.depth.saturating_sub(3);
+                self.re_x = 0;
                 return e;
             }
-            match c {
-                b'\\' => {
-                    self.put(t, p, text);
-                    p = self.escape(p);
-                    t = p;
-                }
-                b'#' if b.get(p + 1) == Some(&b'{') => {
-                    self.put(t, p, text);
-                    self.put(p, p + 2, INTERP_BEGIN);
-                    let d = usize::from(self.depth);
-                    if d >= 2 {
-                        self.frames[d - 2] = aux;
-                    }
-                    self.push(F_INTERP);
-                    self.regex_at = p + 2;
-                    return p + 2;
-                }
-                b'#' if matches!(b.get(p + 1), Some(b'@' | b'$')) => {
-                    self.put(t, p, text);
-                    t = p;
-                    if let Some(e) = self.interp_var(p) {
-                        p = e;
-                        t = p;
-                    } else {
-                        p += 1;
-                    }
-                }
-                b'[' => {
-                    self.put(t, p, text);
-                    let s = p;
-                    p += 1;
-                    // bat's `\[(?:\^?\])?`: `^` the mark's only before `]`
-                    if b.get(p) == Some(&b']') {
-                        p += 1;
-                    } else if b.get(p) == Some(&b'^') && b.get(p + 1) == Some(&b']') {
-                        p += 2;
-                    }
-                    self.put(s, p, REGEX_CLASS);
-                    t = p;
-                    while p < n && b[p] != b']' {
-                        if b[p] == b'\\' {
-                            self.put(t, p, text);
-                            p = self.escape(p);
-                            t = p;
-                        } else {
-                            p += 1;
-                        }
-                    }
-                    self.put(t, p, text);
-                    if p < n {
-                        self.put(p, p + 1, REGEX_CLASS);
-                        p += 1;
-                    }
-                    t = p;
-                }
-                b'(' => {
-                    self.put(t, p, text);
-                    self.put(p, p + 1, REGEX_GROUP);
-                    group += 1;
-                    p += 1;
-                    t = p;
-                }
-                b')' if group > 0 => {
-                    self.put(t, p, text);
-                    self.put(p, p + 1, REGEX_GROUP);
-                    group -= 1;
-                    p += 1;
-                    t = p;
-                }
-                b'{' if repetition(b, p).is_some() => {
-                    let e = repetition(b, p).unwrap_or(p + 1);
-                    self.put(t, p, text);
-                    self.put(p, p + 1, REGEX_REPEAT);
-                    self.put(p + 1, e - 1, text);
-                    self.put(e - 1, e, REGEX_REPEAT);
-                    p = e;
-                    t = p;
-                }
-                b'#' if is_regex_comment(b, p) => {
-                    let s = if p > 0 && is_blank(b[p - 1]) {
-                        p - 1
-                    } else {
-                        p
-                    };
-                    self.put(t, s, text);
-                    self.put(s, p, COMMENT);
-                    self.put(p, p + 1, COMMENT_MARK);
-                    self.put(p + 1, n, COMMENT);
-                    p = n;
-                    t = p;
-                }
-                // bat's group takes only `regex-sub`: the delimiter nests outside groups
-                _ if c == open && open != 0 && group == 0 => {
-                    aux = aux.saturating_add(1);
-                    self.put(t, p, text);
-                    self.put(p, p + 1, SCOPE);
-                    p += 1;
-                    t = p;
-                }
-                _ => p += 1,
+            if b[q + 1] == b'{' {
+                self.put(q, q + 2, INTERP_BEGIN);
+                self.keep_regex(aux, st);
+                self.push(F_INTERP);
+                self.regex_at = q + 2;
+                return q + 2;
             }
+            let e = self.interp_var(q).unwrap_or(q + 1);
+            p = e;
+            from = e;
         }
-        self.put(t, n, text);
+        self.keep_regex(aux, st);
+        n
+    }
+
+    /// The open regex's `aux` and regex state kept in its frame.
+    #[inline(always)]
+    fn keep_regex(&mut self, aux: u8, st: u8) {
         let d = usize::from(self.depth);
         if d >= 2 {
             self.frames[d - 2] = aux;
         }
-        n
+        if d >= 3 {
+            self.frames[d - 3] = st;
+        }
+    }
+
+    /// A regex's text `s..e` on [`crate::regex`], the line cut at `e`, from regex state `st` and
+    /// left there. In the extended syntax a `#` outside a class starts a comment to `e`.
+    fn regex_text(
+        &mut self,
+        s: usize,
+        e: usize,
+        st: &mut u8,
+        embed: &crate::regex::Embed,
+        comment: u16,
+    ) {
+        if s >= e {
+            return;
+        }
+        let b = &self.b[..e];
+        let hash = embed.yields[usize::from(b'#')];
+        self.k.close(self.out);
+        if hash && b[s] == b'#' && *st & crate::regex::SET == 0 {
+            // the scan takes no place where it starts: a comment from there is the host's to see
+            self.out.push(s, e, comment);
+        } else {
+            let mut at = s;
+            let mut q = s;
+            while let Some((stop, ns)) = crate::regex::embedded(b, q, *st, embed, &mut at, self.out)
+            {
+                *st = ns;
+                if stop >= e {
+                    break;
+                }
+                // stopped at a `#`: in a class a character, which the scan takes from there,
+                // else a comment
+                if ns & crate::regex::SET != 0 {
+                    q = stop;
+                    continue;
+                }
+                self.out.push(stop, e, comment);
+                break;
+            }
+        }
+        self.k.reopen(self.out, 16);
     }
 
     /// A number at `p`: bat's forms in its order; a word that is none of them is plain.
@@ -3126,13 +3208,66 @@ fn ruby_marks(b: &[u8]) -> bool {
         .any(|(i, &c)| c == b'\\' || c == b'#' && matches!(b.get(i + 1), Some(b'{' | b'@' | b'$')))
 }
 
-/// bat's comment in a regex, `(?:^|\s)(#)\s[[a-zA-Z0-9,. \t?!-][^\x{00}-\x{7F}]]*$`, at `#` `p`.
-fn is_regex_comment(b: &[u8], p: usize) -> bool {
-    (p == 0 || is_blank(b[p - 1]))
-        && b.get(p + 1).is_some_and(|&c| is_blank(c))
-        && b[p + 2..]
-            .iter()
-            .all(|&c| c >= 0x80 || c.is_ascii_alphanumeric() || b",. \t?!-".contains(&c))
+/// Whether a regex's body from `p` is in the extended syntax: the flags after its closing
+/// delimiter on the line hold `x`, or the body goes on past the line (a literal over several
+/// lines is nearly always `%r{…}x`; its flags come only at its end).
+fn extended(b: &[u8], mut p: usize, open: u8, close: u8, mut aux: u8) -> bool {
+    let n = b.len();
+    while p < n {
+        let c = b[p];
+        if c == b'\\' {
+            p += 2;
+            continue;
+        }
+        if c == close {
+            if open != 0 && aux > 0 {
+                aux -= 1;
+                p += 1;
+                continue;
+            }
+            return flags_x(b, p + 1);
+        }
+        if c == open && open != 0 {
+            aux = aux.saturating_add(1);
+        } else if c == b'#' && b.get(p + 1) == Some(&b'{') {
+            // an interpolation's code, to its `}`
+            let mut depth = 0u32;
+            p += 2;
+            while p < n {
+                match b[p] {
+                    b'{' => depth += 1,
+                    b'}' if depth == 0 => break,
+                    b'}' => depth -= 1,
+                    _ => {}
+                }
+                p += 1;
+            }
+        }
+        p += 1;
+    }
+    true
+}
+
+/// Whether a regex's flags from `e` hold `x`.
+fn flags_x(b: &[u8], mut e: usize) -> bool {
+    while e < b.len() && b"eimnosux".contains(&b[e]) {
+        if b[e] == b'x' {
+            return true;
+        }
+        e += 1;
+    }
+    false
+}
+
+/// Whether `#` at `p` before `@` or `$` interpolates a variable ([`Scan::interp_var`]'s).
+fn is_interp_var(b: &[u8], p: usize) -> bool {
+    let s = match b.get(p + 1) {
+        Some(b'@') if b.get(p + 2) == Some(&b'@') => p + 3,
+        Some(b'@' | b'$') => p + 2,
+        _ => return false,
+    };
+    b.get(s)
+        .is_some_and(|&c| c.is_ascii_alphabetic() || c == b'_')
 }
 
 /// bat's `regexes` lookahead `(?=/\s*[^\w\(\s@"'])` at the byte after `/`, `q`.
@@ -3349,29 +3484,6 @@ fn placeholder(b: &[u8], p: usize) -> Option<usize> {
     b"diouxXDOUeEfFgGaAcCsSpnvtTbByYhHmMzZ%"
         .contains(&c)
         .then_some(q + 1)
-}
-
-/// `(\{)\d+(,\d+)?(\})` at `p`: where it ends.
-fn repetition(b: &[u8], p: usize) -> Option<usize> {
-    let mut q = p + 1;
-    let s = q;
-    while q < b.len() && b[q].is_ascii_digit() {
-        q += 1;
-    }
-    if q == s {
-        return None;
-    }
-    if b.get(q) == Some(&b',') {
-        let s = q + 1;
-        q += 1;
-        while q < b.len() && b[q].is_ascii_digit() {
-            q += 1;
-        }
-        if q == s {
-            return None;
-        }
-    }
-    (b.get(q) == Some(&b'}')).then_some(q + 1)
 }
 
 /// A number's parts as bat's grammar scopes them.
@@ -3824,7 +3936,12 @@ mod tests {
             "Foo::Bar.new(ENV['HOME']).baz x.class",
         ];
         has(&l, "/", "keyword.operator.arithmetic.ruby");
-        has(&l, "re+", "string.regexp.classic.ruby");
+        has(&l, "re", "string.regexp.classic.ruby");
+        has(
+            &l,
+            "+",
+            "string.regexp.classic.ruby keyword.operator.quantifier.regexp",
+        );
         has(&l, "i", "string.regexp.classic.ruby keyword.other.ruby");
         has(&l, "b/c", "string.regexp.mod-r.ruby");
         has(&l, "?", "keyword.operator.conditional.ruby");
@@ -3944,6 +4061,125 @@ mod tests {
     }
 
     #[test]
+    fn a_block_lexes_as_its_lines_with_regexes() {
+        // a regex's three frame bytes across lines (its groups and classes open, its nesting),
+        // under interpolations, and cut past the frames kept
+        let deep = "%r{(#{".repeat(20);
+        let text = format!(
+            "r = %r{{\n  (a{{2}}  # x\n  [b\n  #]c)\n}}x\nq = %r(a(b\n(c)#{{d\n}}e)f)i\n\
+             x = {deep}\n}}}}\n}})\ny = /a/\n"
+        );
+        let one = lines(&text);
+        let mut state = State::default();
+        let mut all = Vec::new();
+        let mut v = Vec::new();
+        block(&mut state, &mut v, &mut |c| {
+            for l in text.lines() {
+                all.push(c.next(l.as_bytes()).to_vec());
+            }
+            None
+        });
+        assert_eq!(all, one.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
+        assert_eq!(state, one.last().unwrap().1);
+    }
+
+    #[test]
+    fn an_interpolation_whose_string_was_cut() {
+        // three regexes' and five strings' interpolations, 27 frame bytes: the 20 kept start at the
+        // second regex's interpolation, whose `}` then has no string under it
+        let text = format!(
+            "x = {}{}\n{}}}}}}}\n",
+            "%r{#{".repeat(3),
+            "\"#{".repeat(5),
+            "}\"".repeat(5)
+        );
+        let one = lines(&text);
+        let mut state = State::default();
+        let mut all = Vec::new();
+        let mut v = Vec::new();
+        block(&mut state, &mut v, &mut |c| {
+            for l in text.lines() {
+                all.push(c.next(l.as_bytes()).to_vec());
+            }
+            None
+        });
+        assert_eq!(all, one.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
+        assert!(!one[0].1.is_exact());
+    }
+
+    #[test]
+    fn regex_literals_on_the_regex_scanner() {
+        let l = [
+            r"DATE = /\A(?<year>\d{4})-(?'m'\d\d)\k<year>\g<m>\z/i",
+            r"c = /[a-z&&[^aeiou]][[:alpha:]]\h+\p{^Greek}(?~x)(?#n)/",
+            r"g = %r{^/users/(\d+)\.(json|xml)$}, %r[[\d]+], %r!a|b!x",
+            r"k = /a#{b}c#@d[#{x}]e{2,}/",
+            "l = %r{",
+            "  (\\d+)  # digits",
+            "  [#a]",
+            "}x",
+            r"u = /a # b/; v = %r|a\|b|",
+        ];
+        let re = |leaf: &str| format!("string.regexp.classic.ruby {leaf}");
+        let rr = |leaf: &str| format!("string.regexp.mod-r.ruby {leaf}");
+        has(&l, "\\A", &re("keyword.control.anchor.regexp"));
+        has(&l, "year", &re("entity.name.other.group.regexp"));
+        has(&l, "m", &re("entity.name.other.group.regexp"));
+        has(&l, "\\k", &re("keyword.other.back-reference.regexp"));
+        has(&l, "\\g", &re("keyword.other.back-reference.regexp"));
+        has(
+            &l,
+            "4",
+            &re("keyword.operator.quantifier.regexp constant.literal.numeric.regexp"),
+        );
+        has(&l, "i", "string.regexp.classic.ruby keyword.other.ruby");
+        has(
+            &l,
+            "&&",
+            &re("constant.other.character-class.set.regexp keyword.operator.intersection.regexp"),
+        );
+        has(
+            &l,
+            "[:alpha:]",
+            &re(
+                "constant.other.character-class.set.regexp constant.other.character-class.posix.regexp",
+            ),
+        );
+        has(&l, "?~", &re("punctuation.definition.group.absent.regexp"));
+        has(&l, "n", &re("comment.block.regexp"));
+        // `%r…`: Ruby's lexer nests its brackets wherever they stand
+        has(&l, "/users/", "string.regexp.mod-r.ruby");
+        has(&l, "|", &rr("keyword.operator.or.regexp"));
+        has(
+            &l,
+            "]",
+            "string.regexp.mod-r.ruby punctuation.definition.string.end.ruby",
+        );
+        has(
+            &l,
+            "!x",
+            "string.regexp.mod-r.ruby punctuation.definition.string.end.ruby",
+        );
+        has(&l, "\\|", &rr("constant.character.escape.backslash.regexp"));
+        // interpolations and variables are Ruby's, in a class too
+        has(&l, "#{", "punctuation.section.interpolation.begin.ruby");
+        has(&l, "d", "variable.other.readwrite.instance.ruby");
+        has(
+            &l,
+            "[",
+            &re(
+                "constant.other.character-class.set.regexp punctuation.definition.character-class.begin.regexp",
+            ),
+        );
+        has(&l, "{", &re("keyword.operator.quantifier.regexp"));
+        // the extended syntax's comments where the flags hold `x` or the body spans lines; none
+        // in `/a # b/`
+        has(&l, "# digits", &rr("comment.line.number-sign.regexp"));
+        has(&l, "#a", &rr("constant.other.character-class.set.regexp"));
+        has(&l, "a # b", "string.regexp.classic.ruby");
+    }
+
+    #[test]
     fn long_lines_lex_in_linear_time() {
         for unit in [
             "a(",
@@ -3960,6 +4196,11 @@ mod tests {
             "<<A ",
             "%w[",
             "%r{(",
+            "/#{a}",
+            "%r{#{a}",
+            "%r{(#@ ",
+            "%r{[#",
+            "%r{a # ",
             "def f(",
             "def f a, ",
             "{ |",

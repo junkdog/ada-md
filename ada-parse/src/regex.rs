@@ -1,12 +1,12 @@
 //! Regular expressions in other languages' strings (ADR-40, phase 4): one scanner with a
 //! dialect per family, embedded where a host's construct makes a string a regex though bat's
 //! grammar leaves it plain (Kotlin's `Regex("…")`, Java's `Pattern.compile("…")`, …), and in
-//! JavaScript's and Swift's regex literals.
+//! JavaScript's, Swift's and Ruby's regex literals.
 //!
 //! The kinds carry the scopes of bat's `Regular Expressions (Javascript)` (anchors, back
 //! references, quantifiers, groups and assertions, character classes and their sets, escapes),
 //! with a few of its own for what JavaScript lacks (inline options, atomic groups, `\Q…\E`).
-//! Six dialects ([`Dialect`]):
+//! Seven dialects ([`Dialect`]):
 //! - **Java's** (`java.util.regex`, Kotlin's too) adds possessive quantifiers, `(?>…)`,
 //!   `(?idmsux-idmsux)` and `(?idmsux-idmsux:…)`, nested classes and `&&`, `\Q…\E`, `\pL`,
 //!   `\h\H\v\V\R\X`, `\A\G\Z\z` and its escapes.
@@ -27,6 +27,12 @@
 //!   `(?P<name>…)`, `(?'name'…)` and balancing groups, `(?#…)` comments, `(?(name)…)`
 //!   conditionals, `(?iJmnsUxwDPSWy-…)`, `[:alpha:]`, `--` and `~~` in a class, `\p{^Greek}`,
 //!   `\u{…}`, `\k'name'`, `\y` and `\Y`; a `]` first in a class is a character.
+//! - **Ruby's** (Onigmo, its regex literals): possessive quantifiers, `(?>…)`, `(?<name>…)`
+//!   and `(?'name'…)`, `(?imxadu-imx)` and `(?imx-imx:…)`, `(?#…)` comments, `(?(cond)…)`
+//!   conditionals, the absent operator `(?~…)`, nested classes and `&&`, `[:alpha:]`, `]` first
+//!   in a class a character, `\k<name>` and `\g<name>` (with `'…'`, numbers and levels),
+//!   `\h\H` (hex digits), `\R\X\K`, `\A\G\Z\z`, `\p{^Alpha}` (braces only), Ruby's
+//!   escapes (`\xH`, `\u{H H}`, `\cX`, `\C-x`, `\M-x`, octal); no `\Q…\E`.
 //!
 //! **A host's string spells the regex.** In a cooked string (Java's `"…"`, Kotlin's `"…"`)
 //! `\\` is the regex's `\`, so `"\\d+"` is `\d+`, and any other `\` starts the host's escape, a
@@ -55,6 +61,8 @@ pub(crate) const STATE: u8 = 0x7f;
 pub(crate) const ECMA_STATE: u8 = DEPTH | SET;
 /// The bits of a .NET regex's state: it has no `\Q…\E`.
 pub(crate) const NET_STATE: u8 = DEPTH | SET | NEST;
+/// The bits of a Ruby regex's state: it has no `\Q…\E`.
+pub(crate) const RUBY_STATE: u8 = DEPTH | SET | NEST;
 /// The bits of a state where `#` is a character, not an extended syntax's comment: in a class,
 /// in `\Q…\E`.
 pub(crate) const VERBATIM: u8 = SET | QUOTE;
@@ -88,6 +96,8 @@ pub(crate) enum Dialect {
     DotNet,
     /// Swift's regex literals'.
     Swift,
+    /// Ruby's regex literals' (Onigmo's Ruby syntax).
+    Ruby,
 }
 
 macro_rules! leaves {
@@ -144,6 +154,7 @@ leaves! {
     CommentEnd = "comment.block.regexp punctuation.definition.comment.end.regexp",
     Conditional = "punctuation.definition.group.assertion.conditional.regexp",
     Balancing = "keyword.operator.balancing-group.regexp",
+    Absent = "punctuation.definition.group.absent.regexp",
 }
 
 /// A kind's bit for a token in a class: under `constant.other.character-class.set.regexp`.
@@ -344,6 +355,10 @@ impl Scan<'_, '_, '_, '_> {
         self.host.dialect == Dialect::Swift
     }
 
+    fn ruby(&self) -> bool {
+        self.host.dialect == Dialect::Ruby
+    }
+
     /// Java's or Swift's, whose escapes and class escapes Swift's takes.
     fn javaish(&self) -> bool {
         matches!(self.host.dialect, Dialect::Java | Dialect::Swift)
@@ -359,12 +374,20 @@ impl Scan<'_, '_, '_, '_> {
         matches!(self.host.dialect, Dialect::DotNet | Dialect::Swift)
     }
 
-    /// Java's, ECMAScript's and Swift's have possessive quantifiers (ECMAScript's as bat
-    /// colors them).
+    /// Java's, ECMAScript's, Swift's and Ruby's have possessive quantifiers (ECMAScript's as
+    /// bat colors them).
     fn possessive(&self) -> bool {
         matches!(
             self.host.dialect,
-            Dialect::Java | Dialect::Ecma | Dialect::Swift
+            Dialect::Java | Dialect::Ecma | Dialect::Swift | Dialect::Ruby
+        )
+    }
+
+    /// Java's, Rust's, Swift's and Ruby's nest classes and intersect them with `&&`.
+    fn nested_sets(&self) -> bool {
+        matches!(
+            self.host.dialect,
+            Dialect::Java | Dialect::Rust | Dialect::Swift | Dialect::Ruby
         )
     }
 
@@ -544,7 +567,7 @@ impl Scan<'_, '_, '_, '_> {
                     open(self);
                     return self.tok(e, q + 1, L::NoCapture);
                 }
-                Some(b'>') if self.javaish() || self.dotnet() => {
+                Some(b'>') if self.javaish() || self.dotnet() || self.ruby() => {
                     self.tok(p, e, L::GroupBegin);
                     open(self);
                     return self.tok(e, q + 1, L::Atomic);
@@ -563,17 +586,53 @@ impl Scan<'_, '_, '_, '_> {
                             if let Some(r) = self.net_group(p, e, lt, s, b'>') {
                                 return r;
                             }
-                        } else if let Some(t) = self.group_name(s)
-                            && let Some(g) = self.is(t, b'>')
-                        {
-                            self.tok(p, e, L::GroupBegin);
-                            open(self);
-                            self.tok(e, lt, L::GroupBegin);
-                            self.tok(lt, s, L::NamedBegin);
-                            self.tok(s, t, L::GroupName);
-                            return self.tok(t, g, L::NamedEnd);
+                        } else if let Some(r) = self.named(p, e, lt, s, b'>') {
+                            return r;
                         }
                     }
+                }
+                // Ruby's `(?'name'`
+                Some(b'\'') if self.ruby() => {
+                    if let Some(s) = self.is(q, b'\'')
+                        && let Some(r) = self.named(p, e, q, s, b'\'')
+                    {
+                        return r;
+                    }
+                }
+                // Ruby's absent operator, `(?~…)`
+                Some(b'~') if self.ruby() => {
+                    self.tok(p, e, L::GroupBegin);
+                    open(self);
+                    return self.tok(e, q + 1, L::Absent);
+                }
+                // Ruby's `(?#…)`
+                Some(b'#') if self.ruby() => return self.net_comment(p, q),
+                // Ruby's `(?(1)`, `(?(<name>)`, `(?('name')`; else `(?(`, a condition
+                Some(b'(') if self.ruby() => {
+                    self.tok(p, e, L::GroupBegin);
+                    open(self);
+                    if let Some(r) = self.is(q, b'(') {
+                        let close = match self.unit(r).filter(|u| !u.host).map(|u| u.c) {
+                            Some(b'<') => Some(b'>'),
+                            Some(b'\'') => Some(b'\''),
+                            _ => None,
+                        };
+                        let s = if close.is_some() { r + 1 } else { r };
+                        if let Some(t) = self.ref_name(s) {
+                            let shut = match close {
+                                Some(c) => self.is(t, c),
+                                None => Some(t),
+                            };
+                            if let Some(shut) = shut
+                                && let Some(c) = self.is(shut, b')')
+                            {
+                                self.tok(e, s, L::Conditional);
+                                self.tok(s, t, L::BackReferenceName);
+                                return self.tok(t, c, L::Conditional);
+                            }
+                        }
+                    }
+                    return self.tok(e, q, L::Conditional);
                 }
                 // .NET's and Swift's `(?'name'`
                 Some(b'\'') if self.netish() => {
@@ -604,13 +663,14 @@ impl Scan<'_, '_, '_, '_> {
             }
             if !self.ecma() {
                 // `(?idmsuxU-idmsuxU)` and `(?idmsuxU-idmsuxU:`, RE2's `imsU`, Rust's `imsRUux`,
-                // .NET's `imnsx`, Swift's `iJmnsUxwDPSWy`
+                // .NET's `imnsx`, Swift's `iJmnsUxwDPSWy`, Ruby's `imxadu` (`adu` only on)
                 {
                     let flags: &[u8] = match self.host.dialect {
                         Dialect::Re2 => b"imsU",
                         Dialect::Rust => b"imsRUux",
                         Dialect::DotNet => b"imnsx",
                         Dialect::Swift => b"iJmnsUxwDPSWy",
+                        Dialect::Ruby => b"imxadu",
                         _ => b"idmsuxU",
                     };
                     let flag = |c: u8| flags.contains(&c);
@@ -647,7 +707,7 @@ impl Scan<'_, '_, '_, '_> {
     /// A group's name from `s`: Java's `[a-zA-Z][a-zA-Z0-9]*`, ECMAScript's
     /// `[_$\p{L}][_$\p{L}\p{N}]*` (any character past ASCII taken as a letter), RE2's
     /// `\w+`, Rust's `[_a-zA-Z][_a-zA-Z0-9.\[\]]*`, .NET's `\w+` (past ASCII a letter), Swift's
-    /// an identifier (past ASCII a letter). Where it ends.
+    /// and Ruby's an identifier (past ASCII a letter). Where it ends.
     fn group_name(&self, s: usize) -> Option<usize> {
         type Class = fn(u8) -> bool;
         let (first, rest): (Class, Class) = match self.host.dialect {
@@ -668,7 +728,7 @@ impl Scan<'_, '_, '_, '_> {
                 |c| c.is_ascii_alphanumeric() || matches!(c, b'_' | 0x80..),
                 |c| c.is_ascii_alphanumeric() || matches!(c, b'_' | 0x80..),
             ),
-            Dialect::Swift => (
+            Dialect::Swift | Dialect::Ruby => (
                 |c| c.is_ascii_alphabetic() || matches!(c, b'_' | 0x80..),
                 |c| c.is_ascii_alphanumeric() || matches!(c, b'_' | 0x80..),
             ),
@@ -684,6 +744,54 @@ impl Scan<'_, '_, '_, '_> {
         Some(t)
     }
 
+    /// A named group, `(` at `p` to `e`, its `<` or `'` at `lt` to `s`: a name, then `close`.
+    /// Where it ends, if it is one.
+    fn named(&mut self, p: usize, e: usize, lt: usize, s: usize, close: u8) -> Option<usize> {
+        let t = self.group_name(s)?;
+        let g = self.is(t, close)?;
+        self.tok(p, e, L::GroupBegin);
+        if self.st & DEPTH < DEPTH {
+            self.st += 1;
+        }
+        self.tok(e, lt, L::GroupBegin);
+        self.tok(lt, s, L::NamedBegin);
+        self.tok(s, t, L::GroupName);
+        Some(self.tok(t, g, L::NamedEnd))
+    }
+
+    /// Ruby's group reference from `s` (`\k<…>`, `\g<…>`, a condition): a name or a number
+    /// (`-1`, `+1` relative), then a nest level (`+0`, `-1`). Where it ends.
+    fn ref_name(&self, s: usize) -> Option<usize> {
+        let digits = |q: usize| {
+            let mut r = q;
+            while r < self.b.len() && self.b[r].is_ascii_digit() && !self.host_stop(r) {
+                r += 1;
+            }
+            r
+        };
+        let sign = |q: usize| usize::from(matches!(self.b.get(q), Some(b'-' | b'+')));
+        let t = match self.group_name(s) {
+            Some(t) => t,
+            None => {
+                let d = s + sign(s);
+                let t = digits(d);
+                if t == d {
+                    return None;
+                }
+                t
+            }
+        };
+        // a level: `+n` or `-n`
+        let l = t + sign(t);
+        if l > t {
+            let m = digits(l);
+            if m > l {
+                return Some(m);
+            }
+        }
+        Some(t)
+    }
+
     /// `[` at `p` to `e`, or `[^`.
     fn open_set(&mut self, p: usize, e: usize) -> usize {
         // the text before it isn't the class's
@@ -694,8 +802,11 @@ impl Scan<'_, '_, '_, '_> {
             Some(n) => self.tok(e, n, L::Negation),
             None => e,
         };
-        // RE2's, Rust's, .NET's and Swift's `[]a]`: a `]` first is a character
-        match self.is(e, b']').filter(|_| self.re2() || self.netish()) {
+        // RE2's, Rust's, .NET's, Swift's and Ruby's `[]a]`: a `]` first is a character
+        match self
+            .is(e, b']')
+            .filter(|_| self.re2() || self.netish() || self.ruby())
+        {
             Some(n) => n,
             None => e,
         }
@@ -730,12 +841,12 @@ impl Scan<'_, '_, '_, '_> {
                 }
                 r
             }
-            b'[' if (self.re2() || self.swift())
+            b'[' if (self.re2() || self.swift() || self.ruby())
                 && let Some(q) = self.is(e, b':').and_then(|c| self.posix(c)) =>
             {
                 self.tok(p, q, L::PosixClass)
             }
-            b'[' if self.javaish() || self.rust() => {
+            b'[' if self.nested_sets() => {
                 if self.st & NESTS != NESTS {
                     self.st += NEST;
                 }
@@ -745,7 +856,7 @@ impl Scan<'_, '_, '_, '_> {
                     None => e,
                 }
             }
-            b'&' if (self.javaish() || self.rust()) && self.is(e, b'&').is_some() => {
+            b'&' if self.nested_sets() && self.is(e, b'&').is_some() => {
                 self.tok(p, e + 1, L::Intersection)
             }
             b'-' if self.set_ops() && self.is(e, b'-').is_some() => {
@@ -788,17 +899,23 @@ impl Scan<'_, '_, '_, '_> {
             if !v.host && v.c == b'\\' {
                 let Some(w) = s.unit(v.end) else {
                     // ECMAScript: a `\` at the line's end is a character
-                    return (!s.javaish()).then_some((v.end, None));
+                    return (!s.javaish() && !s.ruby()).then_some((v.end, None));
                 };
                 let classes: &[u8] = if s.javaish() {
                     b"wWsSdDhHvV"
+                } else if s.ruby() {
+                    b"wWsSdDhH"
                 } else {
                     b"wWsSdD"
                 };
                 if !w.host && classes.contains(&w.c) {
                     return Some((w.end, Some(L::RangeClassEscape)));
                 }
-                let e = if s.javaish() || w.host {
+                let e = if w.host {
+                    w.end
+                } else if s.ruby() {
+                    s.ruby_escape(v.end, w.c, w.end)
+                } else if s.javaish() {
                     w.end
                 } else {
                     s.ecma_escape(w.end, w.c)
@@ -853,6 +970,9 @@ impl Scan<'_, '_, '_, '_> {
         }
         if self.dotnet() {
             return self.backslash_net(p, e);
+        }
+        if self.ruby() {
+            return self.backslash_ruby(p, e);
         }
         if !self.javaish() {
             return self.backslash_ecma(p, e);
@@ -1132,6 +1252,101 @@ impl Scan<'_, '_, '_, '_> {
         }
     }
 
+    /// `\…` in Ruby, its `\` at `p` to `e`: where it ends.
+    #[inline(never)]
+    fn backslash_ruby(&mut self, p: usize, e: usize) -> usize {
+        let Some(u) = self.unit(e) else {
+            return self.tok(p, e, L::Escape);
+        };
+        if u.host {
+            return self.tok(p, u.end, L::Escape);
+        }
+        let n = u.end;
+        let in_set = self.st & SET != 0;
+        match u.c {
+            b'b' | b'B' | b'A' | b'G' | b'Z' | b'z' | b'K' if !in_set => self.tok(p, n, L::Anchor),
+            b'1'..=b'9' if !in_set => {
+                let mut q = n;
+                while q < self.b.len() && self.b[q].is_ascii_digit() {
+                    q += 1;
+                }
+                self.tok(p, q, L::BackReference)
+            }
+            // `\k<name>`, `\k'name'`, `\k<1>`, `\k<-1>`, `\k<name+0>`; `\g…`, a call, the same
+            b'k' | b'g' if !in_set => {
+                let close = match self.unit(n).filter(|v| !v.host).map(|v| v.c) {
+                    Some(b'<') => b'>',
+                    Some(b'\'') => b'\'',
+                    _ => return self.tok(p, n, L::Escape),
+                };
+                if let Some(t) = self.ref_name(n + 1)
+                    && let Some(g) = self.is(t, close)
+                {
+                    self.tok(p, n, L::BackReference);
+                    self.tok(n, n + 1, L::NamedBegin);
+                    self.tok(n + 1, t, L::BackReferenceName);
+                    return self.tok(t, g, L::NamedEnd);
+                }
+                self.tok(p, n, L::Escape)
+            }
+            b'w' | b'W' | b's' | b'S' | b'd' | b'D' | b'h' | b'H' => self.tok(p, n, L::ClassEscape),
+            b'R' | b'X' if !in_set => self.tok(p, n, L::ClassEscape),
+            b'p' | b'P' => self.property(p, n),
+            c => {
+                let q = self.ruby_escape(e, c, n);
+                self.tok(p, q, L::Escape)
+            }
+        }
+    }
+
+    /// Where Ruby's escape ends, its character `c` at `e` to `n`: `\xH`, `\xHH`, `\uHHHH`,
+    /// `\u{H H…}`, up to three octal digits, `\cX`, `\C-x`, `\M-x` and their nestings take more.
+    fn ruby_escape(&self, e: usize, c: u8, n: usize) -> usize {
+        let b = self.b;
+        let hex = |q: usize| q < b.len() && b[q].is_ascii_hexdigit();
+        match c {
+            b'x' if hex(n) => n + 1 + usize::from(hex(n + 1)),
+            b'u' if b.get(n) == Some(&b'{') => {
+                let mut q = n + 1;
+                while q < b.len() && (hex(q) || matches!(b[q], b' ' | b'\t')) {
+                    q += 1;
+                }
+                if q > n + 1 && b.get(q) == Some(&b'}') {
+                    q + 1
+                } else {
+                    n
+                }
+            }
+            b'u' if (n..n + 4).all(hex) => n + 4,
+            b'0'..=b'7' => {
+                let mut q = n;
+                while q < e + 3 && q < b.len() && matches!(b[q], b'0'..=b'7') {
+                    q += 1;
+                }
+                q
+            }
+            b'c' => self.control_end(n),
+            b'C' | b'M' if b.get(n) == Some(&b'-') => self.control_end(n + 1),
+            _ => n,
+        }
+    }
+
+    /// The character a `\cX`, `\C-X` or `\M-X` applies to, from `q`: one character, or an
+    /// escape of these again (`\M-\C-x`), or `\\`. Where it ends.
+    fn control_end(&self, q: usize) -> usize {
+        let b = self.b;
+        match b.get(q) {
+            None => q,
+            Some(b'\\') => match b.get(q + 1) {
+                Some(b'c') => self.control_end(q + 2),
+                Some(b'C' | b'M') if b.get(q + 2) == Some(&b'-') => self.control_end(q + 3),
+                Some(&d) => (q + 1 + char_len(d)).min(b.len()),
+                None => q + 1,
+            },
+            Some(&d) => (q + char_len(d)).min(b.len()),
+        }
+    }
+
     /// .NET's named group, `(` at `p` to `e`, its `<` or `'` at `lt` to `s`: a name, or a
     /// balancing group's (`<a-b>`, `<-b>`), then `close`. Where it ends, if it is one.
     fn net_group(&mut self, p: usize, e: usize, lt: usize, s: usize, close: u8) -> Option<usize> {
@@ -1220,8 +1435,10 @@ impl Scan<'_, '_, '_, '_> {
             t
         };
         if let Some(o) = self.is(e, b'{') {
-            // RE2's and Swift's `\p{^Greek}`
-            let neg = self.is(o, b'^').filter(|_| self.re2() || self.swift());
+            // RE2's, Swift's and Ruby's `\p{^Greek}`
+            let neg = self
+                .is(o, b'^')
+                .filter(|_| self.re2() || self.swift() || self.ruby());
             let k0 = neg.unwrap_or(o);
             let k = name(self, k0);
             if k > k0 {
@@ -1250,7 +1467,11 @@ impl Scan<'_, '_, '_, '_> {
             }
             return self.tok(p, e, L::Escape);
         }
-        if !self.ecma() && !self.dotnet() && self.b.get(e).is_some_and(u8::is_ascii_alphabetic) {
+        if !self.ecma()
+            && !self.dotnet()
+            && !self.ruby()
+            && self.b.get(e).is_some_and(u8::is_ascii_alphabetic)
+        {
             self.tok(p, e, L::Property);
             return self.tok(e, e + 1, L::PropertyName);
         }
@@ -1540,5 +1761,100 @@ mod tests {
         // `(?<名>…)`: a name past ASCII
         let t = lex_in("(?<名>a)", false, Dialect::Ecma);
         has(&t, "名", "entity.name.other.group.regexp");
+    }
+
+    #[test]
+    fn rubys_dialect() {
+        let t = lex_in(
+            r"\A(?<y>\d{,4})(?'m'\h+)(?>a)(?~b)(?#note)(?(<y>)c|d)(?(1)e)\k<y>\g'm'\g<-1>\k<y+0>\K\z",
+            false,
+            Dialect::Ruby,
+        );
+        has(&t, r"\A", "keyword.control.anchor.regexp");
+        has(&t, "y", "entity.name.other.group.regexp");
+        has(&t, "m", "entity.name.other.group.regexp");
+        has(&t, "'", "punctuation.definition.group.named.begin.regexp");
+        has(
+            &t,
+            ",",
+            "keyword.operator.quantifier.regexp punctuation.separator.comma.regexp",
+        );
+        has(
+            &t,
+            r"\h",
+            "constant.other.character-class.escape.backslash.regexp",
+        );
+        has(&t, "?>", "punctuation.definition.group.atomic.regexp");
+        has(&t, "?~", "punctuation.definition.group.absent.regexp");
+        has(&t, "note", "comment.block.regexp");
+        has(
+            &t,
+            "?(<",
+            "punctuation.definition.group.assertion.conditional.regexp",
+        );
+        has(
+            &t,
+            ">)",
+            "punctuation.definition.group.assertion.conditional.regexp",
+        );
+        has(&t, "1", "variable.other.group.regexp");
+        for g in [r"\k", r"\g"] {
+            has(&t, g, "keyword.other.back-reference.regexp");
+        }
+        for n in ["-1", "y+0"] {
+            has(&t, n, "variable.other.group.regexp");
+        }
+        has(&t, r"\K", "keyword.control.anchor.regexp");
+        // classes: `]` first a character, nested ones and `&&`, POSIX brackets, `\h` in a range
+        let t = lex_in(
+            r"[]a][a-z&&[^q]][[:^alpha:]][\h-z]\p{^Greek}\pL",
+            false,
+            Dialect::Ruby,
+        );
+        let set = "constant.other.character-class.set.regexp";
+        has(&t, "]a", set);
+        has(
+            &t,
+            "&&",
+            &format!("{set} keyword.operator.intersection.regexp"),
+        );
+        has(
+            &t,
+            "[:^alpha:]",
+            &format!("{set} constant.other.character-class.posix.regexp"),
+        );
+        has(
+            &t,
+            r"\h",
+            &format!(
+                "{set} constant.other.character-class.range.regexp constant.other.character-class.escape.backslash.regexp"
+            ),
+        );
+        has(&t, "^", "keyword.operator.negation.regexp");
+        has(&t, "Greek", "support.constant.unicode-property.regexp");
+        // `\pL` is Java's, not Ruby's: braces only
+        assert!(!t.iter().any(|(x, _)| *x == "L"), "{t:?}");
+        // Ruby's escapes, whole
+        let t = lex_in(
+            r"\x4\x41\u00e9\u{1F600 20}\cA\C-a\M-\C-b\012\e(?imx-imx:a)(?u)",
+            false,
+            Dialect::Ruby,
+        );
+        let esc = "constant.character.escape.backslash.regexp";
+        for e in [
+            r"\x4",
+            r"\x41",
+            r"\u00e9",
+            r"\u{1F600 20}",
+            r"\cA",
+            r"\C-a",
+            r"\M-\C-b",
+            r"\012",
+            r"\e",
+        ] {
+            has(&t, e, esc);
+        }
+        has(&t, "?imx-imx", "keyword.other.option-toggle.regexp");
+        has(&t, "?u", "keyword.other.option-toggle.regexp");
     }
 }

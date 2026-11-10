@@ -1,6 +1,6 @@
 # ada-parse's lexers
 
-One fenced snippet for each language ada highlights with a lexer of its own, so you can check them all in one place (`ada examples/lexers.md`).
+One fenced snippet for each language ada highlights with a lexer of its own, so you can check them all in one place (`ada examples/lexers.md`). Where a language has regexes (literals, or strings a regex call takes), its snippet holds one, read as that language's regex engine reads it.
 
 ## Bash
 
@@ -67,6 +67,7 @@ int main(void) {
 ```cs
 using System;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace Ada.Demo;
 
@@ -80,11 +81,12 @@ public record Note(string Title, int Words = 0)
 public static class Program
 {
     private const double Ratio = 2.5e3;
+    private static readonly Regex Dated = new Regex(@"^(?<date>\d{4}-\d{2}-\d{2})_(?<slug>[\w-]+?)(?:\.draft)?\.md$");
 
     public static async Task<int> Main(string[] args)
     {
         var notes = new List<Note> { new("ada", 1_000) { Path = "a.md" } };
-        foreach (var n in notes.Where(n => n.Words > 0))
+        foreach (var n in notes.Where(n => n.Words > 0 && !Regex.IsMatch(n.Title, @"^\s*(?:TODO|WIP)\b")))
         {
             Console.WriteLine($"{n.Title}: {n.Words / Ratio:F2}\t");
         }
@@ -409,7 +411,7 @@ import (
 	"regexp"
 )
 
-var word = regexp.MustCompile(`\w+`)
+var word = regexp.MustCompile(`(?i)\b(?P<word>[a-z]+(?:['-][a-z]+)*)\b`)
 
 type Note struct {
 	Title string `json:"title"`
@@ -488,7 +490,7 @@ import java.util.regex.Pattern;
 /** Counts the notes. */
 @SuppressWarnings("unchecked")
 public final class Counter<T extends Comparable<T>> implements AutoCloseable {
-    private static final Pattern WORD = Pattern.compile("\\w+");
+    private static final Pattern WORD = Pattern.compile("(?<word>\\p{L}+(?:'\\p{L}+)?)|\\d{1,3}(?:,\\d{3})*+");
     private final Map<String, Integer> counts = new HashMap<>();
     private double ratio = 2.5e3, small = .5f;
     private long mask = 0xFF_FFL;
@@ -532,7 +534,8 @@ empty.value =
 // count the words in notes
 import { readFile } from "node:fs/promises";
 
-const WORD = /\w+/gu;
+const WORD = /(?<word>[\p{L}\d]+(?:-[\p{L}\d]+)*)/gu;
+const HEADING = new RegExp("^(#{1,6})\\s+(.+?)\\s*#*$", "m");
 const ratio = 2.5e3, mask = 0xff, big = 10n;
 
 /** A note with a title. */
@@ -588,6 +591,9 @@ package ada.demo
 
 import kotlin.math.PI
 
+val WORD = Regex("""(?<word>\p{L}+)(?:-\p{L}+)*""")
+val DATED = "^\\d{4}-\\d{2}-\\d{2}_[\\w-]+\\.md$".toRegex()
+
 /** A note with a title. */
 @JvmInline
 value class Title(val text: String)
@@ -609,7 +615,7 @@ suspend fun main(args: Array<String>) {
             else -> println("""raw "$i" string""")
         }
     }
-    notes.filter { it.words > 0 }.forEach(::println) // line comment
+    notes.filter { it.words > 0 && WORD.matches(it.title.text) }.forEach(::println) // line comment
 }
 ```
 
@@ -759,7 +765,8 @@ final class UserController extends Controller
     public function index(int $page = 1): array
     {
         $rows = $this->users->query('SELECT id, name FROM users WHERE active = 1');
-        $name = preg_replace('/\s+/', ' ', trim($rows[0]['name'] ?? ''));
+        $name = preg_replace('/[\s\x00-\x1F]{2,}/u', ' ', trim($rows[0]['name'] ?? ''));
+        preg_match('/^(?<user>[\w.+-]+)@(?<host>[\w-]+(?:\.[\w-]+)+)$/', $rows[0]['email'], $m);
         return ['page' => $page, 'greeting' => "Hello {$name}!", 'count' => \count($rows)];
     }
 }
@@ -789,6 +796,7 @@ $notes = Get-ChildItem -Path $Path -Filter *.md -Recurse
 
 foreach ($note in $notes) {
     $words = (Get-Content $note.FullName -Raw) -split '\s+' | Measure-Object
+    if ($note.Name -match '^(?<date>\d{4}-\d{2}-\d{2})_(?<slug>[\w-]+)\.md$') { $slug = $Matches.slug }
     if ($words.Count -gt $Limit -and -not $note.Name.StartsWith('_')) {
         Write-Host "$($note.Name): $($words.Count / $ratio)`t" -ForegroundColor Green
     }
@@ -810,7 +818,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-WORD = re.compile(r"\w+")
+WORD = re.compile(r"(?P<word>[^\W\d_]+(?:'[^\W\d_]+)?)|\d{1,3}(?:,\d{3})*")
 
 
 @dataclass(frozen=True)
@@ -868,6 +876,12 @@ require "json"
 module Shop
   class Invoice < ApplicationRecord
     TAX_RATE = 0.25
+    SKU = /\A(?<prefix>[A-Z]{2,4})-(?<number>\d+)\z/
+    LINE = %r{
+      ^(?<sku>[A-Z]+-\d+)\s+          # the article
+      (?<qty>\d+)\s*[x×]\s+           # how many
+      \$?(?<price>\d+(?:\.\d\d)?)$    # its price
+    }x
     attr_reader :lines
 
     def self.parse(text) = new(JSON.parse(text, symbolize_names: true))
@@ -881,6 +895,8 @@ module Shop
     end
 
     def overdue?(today = Date.today) = due_on < today && !paid?
+
+    def self.line(text) = LINE.match(text)&.named_captures&.transform_keys(&:to_sym)
 
     def summary
       lines.group_by { |l| l.sku[/^[A-Z]+/] }.map do |prefix, items|
@@ -906,6 +922,7 @@ puts words.grep(/^p/i).first&.upcase || ?-
 
 ```rust
 //! Spans over a line.
+use regex::Regex;
 use std::{borrow::Cow, fmt};
 
 /// A highlighted stretch of a line.
@@ -930,6 +947,12 @@ impl<'a> Span<'a> {
 fn ratio<T: Into<f64>>(x: T) -> f64 {
     let scale = 2.5_f64 * 1e3; /* block comment */
     x.into() / scale + b'\n' as f64 + '\u{e9}' as u32 as f64
+}
+
+fn dated(name: &str) -> Option<(u16, u8)> {
+    let re = Regex::new(r"^(?P<y>\d{4})-(?P<m>0[1-9]|1[0-2])-\d{2}_[\w-]+\.md$").ok()?;
+    let c = re.captures(name)?;
+    Some((c["y"].parse().ok()?, c["m"].parse().ok()?))
 }
 
 macro_rules! span { ($t:expr) => { Span { text: $t, kind: 0 } }; }
@@ -1058,6 +1081,7 @@ import Foundation
 @MainActor public final class Cache<Value: Decodable> {
     private(set) var entries: [String: Value] = [:]
     static let pattern = #/^(?<key>[a-z]+)-(\d+)$/#
+    static let version = /v?(\d+)\.(\d+)(?:\.(\d+))?/
 
     func load(_ name: String, from url: URL) async throws -> Value? {
         if let hit = entries[name] { return hit }
@@ -1129,7 +1153,7 @@ export class Counter<T> implements Iterable<T> {
 }
 
 export function pick<T, K extends keyof T>(obj: T, ...keys: K[]): Pick<T, K> {
-  const re = /^[a-z]+$/i;
+  const re = /^(?<key>[a-z_]\w*)(?:\[(\d+)\])?$/i;
   return keys.reduce((acc, k) => ({ ...acc, [k]: obj[k] }), {} as Pick<T, K>);
 }
 
@@ -1150,8 +1174,9 @@ interface Props {
 export const Card: FC<Props> = ({ title, words = 0 }) => {
   const [open, setOpen] = useState<boolean>(false);
   const ratio = words / 2.5e3;
+  const slug = title.toLowerCase().replace(/[^\p{L}\d]+/gu, "-");
   return (
-    <div className="card" data-words={words} onClick={() => setOpen(!open)}>
+    <div className="card" id={slug} data-words={words} onClick={() => setOpen(!open)}>
       <h2>{title}</h2>
       {open && <p style={{ opacity: 0.5 }}>ratio: {ratio.toFixed(2)}&nbsp;kw</p>}
       <Badge<number> value={0x10} />

@@ -3653,7 +3653,9 @@ mod tests {
     /// earlier and never closes it), a here-document's word is the whole word (bat's `<<~JSON`
     /// is `JS`'s, closed by `JS`), its body ends at its closer whatever its text left open, `#{`
     /// interpolates in a SQL body's quotes too, `class <<self` is a singleton class (bat's opens a
-    /// here-document); HTML, JavaScript, CSS and shell bodies are plain.
+    /// here-document); HTML, JavaScript, CSS and shell bodies are plain. A regex literal's body is
+    /// on the regex scanner in Ruby's dialect (X-114; bat's reads it as a string with a few
+    /// marks), so the literals here hold only text both read alike.
     #[test]
     fn ruby_colors_match_the_grammar() {
         let text = concat!(
@@ -3694,7 +3696,7 @@ mod tests {
             "    end\n",
             "\n",
             "    def matches?(pattern)\n",
-            "      name =~ /^inv-(\\d+)$/i ? $1.to_i : %r{a/b}x.match?(name)\n",
+            "      name =~ /inv-/i ? $1.to_i : %r{a/b}x.match?(name)\n",
             "    end\n",
             "\n",
             "    private\n",
