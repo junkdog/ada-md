@@ -356,9 +356,12 @@
        "{" source.css punctuation.section.property-list.css
        ":" source.css punctuation.separator.key-value.css
        "}" source.css punctuation.section.property-list.css
-  15 | y</style><style/>
        "</" punctuation.definition.tag.begin.html
        "style" entity.name.tag.style.html
+       ">" punctuation.definition.tag.end.html
+  15 | y</style><style/>
+       "</" punctuation.definition.tag.begin.html
+       "style" entity.name.tag.inline.any.html
        ">" punctuation.definition.tag.end.html
        "<" punctuation.definition.tag.begin.html
        "style" entity.name.tag.style.html
@@ -369,7 +372,7 @@
        ">" punctuation.definition.tag.end.html
   17 | <!--
        "<!--" comment.block.html punctuation.definition.comment.begin.html
-  18 |   var x = 1 < 2 && "a" || 'b'; // </script> stays a comment
+  18 |   var x = 1 < 2 && "a" || 'b'; // a comment
        "var" source.js storage.type.js
        "x" source.js variable.other.readwrite.js
        "=" source.js keyword.operator.assignment.js
@@ -386,7 +389,7 @@
        "'" source.js string.quoted.js punctuation.definition.string.end.js
        ";" source.js punctuation.terminator.statement.js
        "//" source.js comment.line.double-slash.js punctuation.definition.comment.js
-       " </script> stays a comment" source.js comment.line.double-slash.js
+       " a comment" source.js comment.line.double-slash.js
   19 |   function f(a) { return `t ${a}` / 2; }
        "function" source.js storage.type.function.js
        "f" source.js entity.name.function.js
@@ -517,7 +520,66 @@
        "</" punctuation.definition.tag.begin.html
        "b" entity.name.tag.inline.any.html
        ">" punctuation.definition.tag.end.html
-  26 | </div></body></html>
+  26 | <script>a = 1; // x </script>y<script>s = "a</script>b"; t = `c</Script\t>d`</script>
+       "<" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.script.html
+       ">" punctuation.definition.tag.end.html
+       "a" source.js variable.other.readwrite.js
+       "=" source.js keyword.operator.assignment.js
+       "1" source.js constant.numeric.js
+       ";" source.js punctuation.terminator.statement.js
+       "//" source.js comment.line.double-slash.js punctuation.definition.comment.js
+       " x " source.js comment.line.double-slash.js
+       "</" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.script.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.script.html
+       ">" punctuation.definition.tag.end.html
+       "s" source.js variable.other.readwrite.js
+       "=" source.js keyword.operator.assignment.js
+       "\"" source.js string.quoted.js punctuation.definition.string.begin.js
+       "a" source.js string.quoted.js
+       "</" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.script.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "Script" entity.name.tag.inline.any.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.inline.any.html
+       ">" punctuation.definition.tag.end.html
+  27 | <script>/* c </script>*/ u = 1 </scripts> + 2;</script><style>a { content: "x</style>" }</style>
+       "<" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.script.html
+       ">" punctuation.definition.tag.end.html
+       "/*" source.js comment.block.js punctuation.definition.comment.begin.js
+       " c " source.js comment.block.js
+       "</" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.script.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "scripts" entity.name.tag.other.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.inline.any.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "style" entity.name.tag.style.html
+       ">" punctuation.definition.tag.end.html
+       "a" source.css entity.name.tag.css
+       "{" source.css punctuation.section.property-list.css
+       "content" source.css support.type.property-name.css
+       ":" source.css punctuation.separator.key-value.css
+       "\"" source.css string.quoted.double.css punctuation.definition.string.begin.css
+       "x" source.css string.quoted.double.css
+       "</" punctuation.definition.tag.begin.html
+       "style" entity.name.tag.style.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "style" entity.name.tag.inline.any.html
+       ">" punctuation.definition.tag.end.html
+  28 | </div></body></html>
        "</" punctuation.definition.tag.begin.html
        "div" entity.name.tag.block.any.html
        ">" punctuation.definition.tag.end.html
@@ -527,7 +589,7 @@
        "</" punctuation.definition.tag.begin.html
        "html" entity.name.tag.structure.any.html
        ">" punctuation.definition.tag.end.html
-  27 | <i style='content:"\'x"' onmouseover='a // b'>i</i>
+  29 | <i style='content:"\'x"' onmouseover='a // b'>i</i>
        "<" punctuation.definition.tag.begin.html
        "i" entity.name.tag.inline.any.html
        "style" entity.other.attribute-name.style.html
@@ -536,13 +598,18 @@
        "content" source.css support.type.property-name.css
        ":" source.css punctuation.separator.key-value.css
        "\"" source.css string.quoted.double.css punctuation.definition.string.begin.css
-       "\\'" source.css string.quoted.double.css constant.character.escape.css
-       "x" source.css string.quoted.double.css
-       "\"" source.css string.quoted.double.css punctuation.definition.string.end.css
+       "\\" source.css string.quoted.double.css constant.character.escape.newline.css
        "'" string.quoted.single punctuation.definition.string.end.html
+       "x" entity.other.attribute-name.html
+       "\"'" entity.other.attribute-name.html invalid.illegal.attribute-name.html
        "onmouseover" entity.other.attribute-name.event.html
        "=" punctuation.separator.key-value.html
        "'" string.quoted.single punctuation.definition.string.begin.html
        "a" source.js variable.other.readwrite.js
        "//" source.js comment.line.double-slash.js punctuation.definition.comment.js
-       " b'>i</i>" source.js comment.line.double-slash.js
+       " b" source.js comment.line.double-slash.js
+       "'" string.quoted.single punctuation.definition.string.end.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "i" entity.name.tag.inline.any.html
+       ">" punctuation.definition.tag.end.html

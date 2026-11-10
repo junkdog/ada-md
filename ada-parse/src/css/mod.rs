@@ -1920,12 +1920,6 @@ pub(crate) fn line_from(b: &[u8], from: usize, state: &mut State, out: &mut Out)
     lex::<false, _>(b, from, state, out, Push, |s| s.run());
 }
 
-/// Whether a span of kind `kind` is a context's text (a comment's, a string's), not a token: an
-/// HTML embed's escape cuts text, where a token that started before it runs past it.
-pub(crate) fn is_text(kind: u16) -> bool {
-    kind & ((1 << LEAF_BITS) - 1) == PLAIN
-}
-
 /// The state of CSS's `rule-list-body` alone, where HTML's `style="…"` starts.
 pub(crate) fn rule_list_body() -> State {
     let mut s = State {

@@ -175,12 +175,6 @@ const IN_SET: u16 = 64;
 /// How many kinds there are: each leaf, then each in a class.
 pub(crate) const KINDS: usize = 2 * IN_SET as usize;
 
-/// Whether kind `kind` (from the host's base) is a class's text, a context's text where the
-/// rest are tokens ([`Scan::fill`]): an HTML embed's escape cuts it.
-pub(crate) fn is_set_text(kind: u16) -> bool {
-    kind == IN_SET
-}
-
 /// The scopes kind `kind` carries, outermost first.
 pub(crate) fn scopes(kind: u16) -> Vec<&'static str> {
     let Some(leaf) = LEAVES.get(usize::from(kind & (IN_SET - 1))) else {

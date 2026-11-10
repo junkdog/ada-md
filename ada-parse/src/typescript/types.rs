@@ -279,11 +279,10 @@ impl<K: Sink> Scan<'_, '_, K> {
         {
             return q;
         }
+        // a type predicate's parameter, at a return type's start (a function's, an arrow's, a
+        // function type's): `x is T`
         if prev == P_ASSERTS
-            || (prev == P_OP
-                && top == F_TYPE
-                && next == Some(b' ')
-                && has(b, skip_blanks(b, e), b"is "))
+            || (prev == P_OP && next == Some(b' ') && has(b, skip_blanks(b, e), b"is "))
             || (top == F_T_ROUND_LINE && prev == P_OP && param_colon(b, e))
         {
             self.prev = P_VALUE;

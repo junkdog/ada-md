@@ -5,15 +5,14 @@
 //!
 //! **Embeds.** `<style>`'s text is CSS and `style="…"`'s is CSS's `rule-list-body`; `<script>`'s
 //! text and `on…="…"`'s are JavaScript. Each runs on that language's scanner, entered at the
-//! embed's place on the whole line, so its lookaheads and lookbehinds see what syntect's do. syntect
-//! makes an embed's `escape` a zero-width pop tried before the embedded grammar's patterns at every
-//! place (`(?=</style)`, `(?="`), so a search that reaches the escape's place before any embedded
-//! pattern matches ends the embed there: the embedded spans are cut at the first escape after the
-//! embed's start. A token that started before it is a single match and runs past it (JavaScript's
-//! `//` comment takes a `</script>` after it, and the line); bytes of a context's text are cut. The
-//! scanner sees the line up to [`WINDOW`] bytes past the escape, so a line of many `style="…"`s
-//! stays linear. syntect's loop guard is followed where it shows: `</style >` (the escape, but not
-//! `style-close-tag`) leaves only the embed's escape context, to the next `</style` ([`STYLE_ESC`]).
+//! embed's place and seeing the line only to the embed's end, as a browser's tokenizer hands the
+//! text over (X-120): a script ends at its first `</script`, a style at its first `</style` (each
+//! ASCII case-insensitive, its name followed by a blank, `/`, `>` or the line's end), an
+//! attribute's value at its quote, wherever they stand, so a comment, a string, a regex or a
+//! template holding one is cut there. bat's escape also ends a script at `-->` before `</script`
+//! (the `-->` a comment's end). A closing `</style >` or `</script >` is a tag to its `>`.
+//! **Not followed:** a script's double-escaped text (`<!--` then `<script>` inside it, where
+//! the next `</script>` doesn't end it).
 //!
 //! **Kinds.** A kind of HTML's own is a leaf, bat's scopes for the token, under the string, comment
 //! or name it sits in ([`LEAVES`]); meta scopes are left out (no theme selects one). An embedded
@@ -28,7 +27,7 @@
 //! `(?i)` folds ASCII case only, `\s` and `\S` are Unicode's, `\b`'s word characters are ASCII's
 //! and, past ASCII, letters and numbers.
 
-use crate::{Out, Span, State};
+use crate::{Out, State};
 
 // ---- the contexts ----
 
@@ -94,8 +93,6 @@ const STYLE_TYPE_EQ: u8 = 27;
 const STYLE_BODY: u8 = 28;
 /// `style-other`'s body: `style-close-tag` alone.
 const STYLE_OTHER_BODY: u8 = 29;
-/// CSS's embed's escape context alone, to its escape (syntect's loop guard).
-const STYLE_ESC: u8 = 30;
 /// `<script`'s tag: `script-javascript`.
 const SCRIPT_TAG: u8 = 31;
 /// `script-html`: a `<script type="text/html">`.
@@ -284,12 +281,6 @@ impl Emb {
         matches!(self, Emb::StyleAttr | Emb::EventAttr)
     }
 }
-
-/// How far past an embed's escape its scanner sees the line, for the lookaheads of the tokens
-/// before the escape: so a line of many `style="…"`s isn't read again for each. An attribute's
-/// sees less: a line of syntect's own HTML output holds a `style="…"` for each token.
-const WINDOW: usize = 512;
-const WINDOW_ATTR: usize = 64;
 
 /// `State::arg` while a line ends inside an embed: the embed (3 bits from 13), a single quote
 /// (bit 12), how many `<script type="text/html">` bodies are open below it (6 bits from 6), and
@@ -795,13 +786,23 @@ impl Scan<'_, '_, '_> {
         })
     }
 
-    /// `(?i)(?=(?:-->\s*)?</TAG)` at `i`, `tag` lowercase.
+    /// Whether a closing tag `tag` (lowercase) starts at `i`, or a `-->` and blanks before one:
+    /// `(?i)(?:-->\s*)?</TAG(?=[\t\f\r />]|$)`, as a browser ends a script's or a style's text.
     fn close_at(&self, i: usize, tag: &[u8]) -> bool {
-        let closing = |j: usize| self.is(j, b"</") && self.is_ic(j + 2, tag);
+        // a browser's end tag: the name, then a blank, `/`, `>` or the line's end (`</scripts`
+        // is the script's text)
+        let closing = |j: usize| {
+            self.is(j, b"</")
+                && self.is_ic(j + 2, tag)
+                && matches!(
+                    self.c(j + 2 + tag.len()),
+                    None | Some(b' ' | b'\t' | b'\x0c' | b'\r' | b'/' | b'>')
+                )
+        };
         closing(i) || (self.is(i, b"-->") && closing(self.spaces(i + 3)))
     }
 
-    /// The first place from `i` where `(?i)(?=(?:-->\s*)?</TAG)` matches.
+    /// The first place from `i` where a closing tag `tag` starts ([`Scan::close_at`]).
     fn find_close(&self, mut i: usize, tag: &[u8]) -> Option<usize> {
         while i < self.b.len() {
             let c = self.b[i];
@@ -887,7 +888,6 @@ impl Scan<'_, '_, '_> {
                 STYLE_TYPE_EQ | SCRIPT_TYPE_EQ => self.type_value(p),
                 STYLE_BODY => self.style_body(p),
                 STYLE_OTHER_BODY => self.style_other_body(p),
-                STYLE_ESC => self.style_esc(p),
                 SCRIPT_BODY => self.script_body(p),
                 SCRIPT_OTHER_BODY => self.script_other_body(p),
                 SCRIPT_CLOSE => self.script_close(p),
@@ -1488,47 +1488,40 @@ impl Scan<'_, '_, '_> {
         Some(q)
     }
 
-    /// `<style>`'s body: `</style>`, else CSS from the first character that isn't a space.
+    /// `<style>`'s body: its closing tag, else CSS from the first character that isn't a space.
     fn style_body(&mut self, p: usize) -> Option<usize> {
         let q = self.spaces(p);
         self.c(q)?;
-        if self.is_ic(q, b"</style>") {
-            self.style_close(q);
-            return Some(q + 8);
-        }
         if self.close_at(q, b"style") {
-            // the embed's escape at its own push: the escape context alone stays, a character on
-            self.fill(q);
-            self.push(STYLE_ESC);
-            return Some(self.next(q));
+            return Some(self.style_close(q));
         }
         self.embed(Emb::StyleTag, 0, q, None)
     }
 
-    /// `(?i)(</)(style)(>)` at `q`, a pop.
-    fn style_close(&mut self, q: usize) {
-        self.tok(q, q + 2, TAG_BEGIN);
-        self.tok(q + 2, q + 7, N_STYLE);
-        self.tok(q + 7, q + 8, TAG_END);
-        self.pop();
+    /// `</style` at `q` (or after a `-->` and blanks there): its `</` and its name, then the
+    /// closing tag to its `>` (`</style >` closes as a browser closes it, its blanks and
+    /// attributes the tag's).
+    fn style_close(&mut self, q: usize) -> usize {
+        let t = if self.is(q, b"-->") {
+            self.spaces(q + 3)
+        } else {
+            q
+        };
+        self.fill(t);
+        self.tok(t, t + 2, TAG_BEGIN);
+        self.tok(t + 2, t + 7, N_STYLE);
+        self.set(TAG);
+        t + 7
     }
 
     fn style_other_body(&mut self, mut p: usize) -> Option<usize> {
         while p < self.b.len() {
-            if self.b[p] == b'<' && self.is_ic(p, b"</style>") {
-                self.style_close(p);
-                return Some(p + 8);
+            if self.b[p] == b'<' && self.close_at(p, b"style") {
+                return Some(self.style_close(p));
             }
             p += 1;
         }
         None
-    }
-
-    fn style_esc(&mut self, p: usize) -> Option<usize> {
-        let e = self.find_close(p, b"style")?;
-        self.fill(e);
-        self.pop();
-        Some(e)
     }
 
     /// `<script>`'s body: `<!--`, `script-close-tag`'s lookahead, else JavaScript.
@@ -1600,55 +1593,45 @@ impl Scan<'_, '_, '_> {
     /// The embed `emb` from `from` (an attribute's from after its quote `quote`), its language's
     /// state `st` there (`None` for a fresh one): its spans to its escape, where HTML goes on
     /// (after an attribute's closing quote); `None` when the line ends inside it.
+    ///
+    /// The embedded scanner sees the line only to the escape, as a browser hands the text over: a
+    /// script ends at its first `</script`, a style at its `</style`, an attribute's value at its
+    /// quote, wherever they stand, so a token that started before the escape (a `//` comment, a
+    /// string, `/* … */`, a regex, a template, `\"`) is cut there and its language's state is
+    /// dropped with the embed. Its lookbehinds still see the line before `from`.
     fn embed(&mut self, emb: Emb, quote: u8, from: usize, st: Option<State>) -> Option<usize> {
         let n = self.b.len();
         let first = self.escape(emb, quote, from);
         self.fill(from);
         // a fresh `style="…"` is CSS's `rule-list-body`
-        let st0 = st.unwrap_or_else(|| {
+        let mut st = st.unwrap_or_else(|| {
             if emb == Emb::StyleAttr {
                 crate::css::rule_list_body()
             } else {
                 State::default()
             }
         });
-        let mut e = from;
+        // an empty line inside an embed is lexed too: it ends what a line's end ends there
         if first != Some(from) {
             let k = self.out.0.len();
-            let window = if emb.attr() { WINDOW_ATTR } else { WINDOW };
-            let mut end = first.map_or(n, |e| (e + window).min(n));
-            loop {
-                while end < n && self.b[end] & 0xc0 == 0x80 {
-                    end += 1;
-                }
-                let mut st = st0;
-                let b = &self.b[..end];
-                self.out.1 = false;
-                if emb.css() {
-                    crate::css::line_from(b, from, &mut st, self.out);
-                } else {
-                    crate::javascript::line_from(b, from, &mut st, self.out);
-                }
-                self.out.1 = true;
-                match self.mark(k, emb, quote, first, from, end, window) {
-                    Mark::Escaped(at) => {
-                        e = at;
-                        break;
-                    }
-                    Mark::Inside => {
-                        self.at = n;
-                        self.emb = Some((emb, quote, st));
-                        return None;
-                    }
-                    Mark::Wider(to) => {
-                        // a token ran past the escape, and the next one is past what the scanner
-                        // saw: again, seeing more of the line
-                        self.out.0.truncate(k);
-                        end = to;
-                    }
-                }
+            let b = &self.b[..first.unwrap_or(n)];
+            self.out.1 = false;
+            if emb.css() {
+                crate::css::line_from(b, from, &mut st, self.out);
+            } else {
+                crate::javascript::line_from(b, from, &mut st, self.out);
+            }
+            self.out.1 = true;
+            let bit = if emb.css() { CSS_KIND } else { JS_KIND };
+            for s in &mut self.out.0[k..] {
+                s.kind |= bit;
             }
         }
+        let Some(e) = first else {
+            self.at = n;
+            self.emb = Some((emb, quote, st));
+            return None;
+        };
         self.at = e;
         if emb.attr() {
             let end = if quote == b'"' { ED_END } else { ES_END };
@@ -1657,72 +1640,115 @@ impl Scan<'_, '_, '_> {
         }
         Some(e)
     }
-
-    /// The embedded spans from `k` on, the scanner having seen the line to `end`: set the embed's
-    /// bit, and cut them at the escape (the
-    /// first from `first`). A context's text is cut there; a token from before it is one match
-    /// that runs past it (a `//` comment, an escape such as `\"`, `<<`), and the escape is the next
-    /// one after it. The scanner joined no spans, so each is one token or one stretch of text.
-    #[allow(clippy::too_many_arguments)]
-    fn mark(
-        &mut self,
-        k: usize,
-        emb: Emb,
-        quote: u8,
-        first: Option<usize>,
-        from: usize,
-        end: usize,
-        window: usize,
-    ) -> Mark {
-        let n = self.b.len();
-        let bit = if emb.css() { CSS_KIND } else { JS_KIND };
-        let mut escape = first;
-        let mut i = k;
-        while i < self.out.0.len() {
-            let s = self.out.0[i];
-            if let Some(e) = escape {
-                if s.start as usize >= e {
-                    self.out.0.truncate(i);
-                    return Mark::Escaped(e);
-                }
-                if s.end as usize > e {
-                    let text = if emb.css() {
-                        crate::css::is_text(s.kind)
-                    } else {
-                        crate::javascript::is_text(s.kind)
-                    };
-                    if text {
-                        self.out.0[i] = Span {
-                            end: e as u32,
-                            kind: s.kind | bit,
-                            ..s
-                        };
-                        self.out.0.truncate(i + 1);
-                        return Mark::Escaped(e);
-                    }
-                    escape = self.escape(emb, quote, s.end as usize);
-                    let seen = escape.map_or(n, |e| (e + window).min(n));
-                    if end < n && seen > end {
-                        return Mark::Wider(seen.max(end + (end - from)).min(n));
-                    }
-                }
-            }
-            self.out.0[i].kind |= bit;
-            i += 1;
-        }
-        match escape {
-            Some(e) => Mark::Escaped(e),
-            None => Mark::Inside,
-        }
-    }
 }
 
-/// What an embed's spans come to ([`Scan::mark`]).
-enum Mark {
-    /// Its escape is at this place.
-    Escaped(usize),
-    /// The line ends inside it.
-    Inside,
-    /// Its scanner must see the line to this place.
-    Wider(usize),
+#[cfg(test)]
+mod tests {
+    use crate::Lang;
+    use crate::tests::marked;
+
+    fn html(lines: &[&'static str]) -> Vec<(&'static str, &'static str)> {
+        marked(Lang::Html, lines)
+    }
+
+    #[track_caller]
+    fn has(m: &[(&str, &str)], text: &str, scopes: &str) {
+        assert!(m.contains(&(text, scopes)), "{text:?} {scopes:?} in {m:?}");
+    }
+
+    /// Whether no piece of `m` holds `text` (a token's or a cut text's).
+    #[track_caller]
+    fn none_holds(m: &[(&str, &str)], text: &str) {
+        assert!(
+            !m.iter().any(|(t, _)| t.contains(text)),
+            "{text:?} in {m:?}"
+        );
+    }
+
+    const CLOSE: &str = "punctuation.definition.tag.begin.html";
+    const SCRIPT: &str = "entity.name.tag.script.html";
+    const STYLE: &str = "entity.name.tag.style.html";
+
+    /// A script ends at its first `</script` wherever it stands, as a browser's tokenizer ends
+    /// it: in a `//` comment, a string, a `/* */` comment, a template, a regex and its class;
+    /// the token is cut there and what follows is HTML's.
+    #[test]
+    fn a_script_ends_at_its_first_close_tag() {
+        for line in [
+            "<script>a = 1; // x </script><b>",
+            "<script>s = \"a</script><b>\";",
+            "<script>s = 'a</script><b>';",
+            "<script>/* a </script><b> */",
+            "<script>t = `a</script><b>`;",
+            "<script>r = /a</script><b>/;",
+            "<script>r = /[a</script><b>]/;",
+            "<script>a = 1 -->  </script><b>",
+        ] {
+            let m = html(&[line]);
+            has(&m, "</", CLOSE);
+            has(&m, "script", SCRIPT);
+            has(&m, "b", "entity.name.tag.inline.any.html");
+            none_holds(&m, "</script");
+        }
+    }
+
+    /// The close tag's name ends at a blank, `/`, `>` or the line's end, in any case;
+    /// `</scripts>` is the script's text.
+    #[test]
+    fn a_close_tag_needs_its_name_whole() {
+        let m = html(&["<script>a = '</scripts>' + 1;</SCRIPT\t>"]);
+        has(&m, "</scripts>", "source.js string.quoted.js");
+        has(&m, "SCRIPT", SCRIPT);
+        let m = html(&["<script>a = '</script"]);
+        has(&m, "script", SCRIPT);
+        let m = html(&["<script>a = 1;</script/>"]);
+        has(&m, "script", SCRIPT);
+    }
+
+    /// A style ends at its first `</style`; `</style >` is a closing tag to its `>`.
+    #[test]
+    fn a_style_ends_at_its_first_close_tag() {
+        let m = html(&["<style>a { content: \"x</style><b>\" }"]);
+        has(&m, "style", STYLE);
+        has(&m, "b", "entity.name.tag.inline.any.html");
+        none_holds(&m, "</style");
+        let m = html(&["<style>/* x </style >q"]);
+        has(&m, "style", STYLE);
+        has(&m, ">", "punctuation.definition.tag.end.html");
+        none_holds(&m, "q");
+        let m = html(&["<style type=text/less>@x: 1; </style\t>q"]);
+        has(&m, "style", STYLE);
+        none_holds(&m, "q");
+    }
+
+    /// An attribute's value ends at its quote, wherever it stands: a `\` before it or a `//`
+    /// comment holds nothing past it.
+    #[test]
+    fn an_attribute_ends_at_its_quote() {
+        let m = html(&["<b onclick=\"f(\\\"x\\\")\" id=y style='a: \"b' title=z>"]);
+        has(
+            &m,
+            "\"",
+            "string.quoted.double punctuation.definition.string.end.html",
+        );
+        has(&m, "id", "entity.other.attribute-name.id.html");
+        has(&m, "title", "entity.other.attribute-name.html");
+        let m = html(&["<b onclick='a // b' id=y>"]);
+        has(&m, "id", "entity.other.attribute-name.id.html");
+        has(&m, " b", "source.js comment.line.double-slash.js");
+    }
+
+    /// A script across lines keeps its language's state to the line that ends it, and that
+    /// line's token is cut at `</script`.
+    #[test]
+    fn across_lines() {
+        let m = html(&["<script>", "/* a", "b </script><b>", "c */"]);
+        has(&m, "b ", "source.js comment.block.js");
+        has(&m, "script", SCRIPT);
+        has(&m, "b", "entity.name.tag.inline.any.html");
+        none_holds(&m, "c */");
+        let m = html(&["<script>", "s = `a", "</script>", "<i>"]);
+        has(&m, "script", SCRIPT);
+        has(&m, "i", "entity.name.tag.inline.any.html");
+    }
 }

@@ -1120,9 +1120,10 @@ fn scss() {
 /// the doctype with its external id and internal subset, `<?xml`, comments good and bad, CDATA,
 /// every tag list and its end, custom tags with bad characters, attributes of each kind with
 /// quoted, unquoted and bad values, character references, `<style>` and `<script>` of each type
-/// with their closing tags, `style="…"` and `on…='…'` with an escaped quote and a `//` comment past
-/// the quote, a `//` comment past `</script>`, a regex class's text cut at `</script` and at an
-/// attribute's quote.
+/// with their closing tags (`</style >` a tag to its `>`), `style="…"` and `on…='…'`; each embed
+/// ended where a browser ends it (X-120): a script at its first `</script`, a style at its first
+/// `</style`, an attribute's value at its quote, wherever they stand (a `//` or `/* */` comment, a
+/// string, a template, a regex and its class, `\'`), not at `</scripts>`.
 #[test]
 fn html() {
     let text = concat!(
@@ -1143,7 +1144,7 @@ fn html() {
         "y</style><style/>\n",
         "<script>\n",
         "<!--\n",
-        "  var x = 1 < 2 && \"a\" || 'b'; // </script> stays a comment\n",
+        "  var x = 1 < 2 && \"a\" || 'b'; // a comment\n",
         "  function f(a) { return `t ${a}` / 2; }\n",
         "-->\n",
         "</script>\n",
@@ -1151,8 +1152,10 @@ fn html() {
         "<script type=\"text/template\"><div>{{x}}</div></script><script>f()</SCRIPT >\n",
         "<script>r = /[a</SCRIPT>b]/; s = /x[^c</script>d]/g;</script>\n",
         "<b onclick=\"r = /[a\" c=\"]/\" onmouseover='x = /a[^b'>x</b>\n",
+        "<script>a = 1; // x </script>y<script>s = \"a</script>b\"; t = `c</Script\t>d`</script>\n",
+        "<script>/* c </script>*/ u = 1 </scripts> + 2;</script><style>a { content: \"x</style>\" }</style>\n",
         "</div></body></html>\n",
-        // last: the comment runs past the quote, so the attribute stays open to the end
+        // an escaped quote and a `//` comment end at the attribute's quote
         "<i style='content:\"\\'x\"' onmouseover='a // b'>i</i>\n",
     );
     readings("html", Lang::Html, text);

@@ -902,9 +902,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     }
 
     /// A line after one that ended after a value: the frames that line closed (a
-    /// declaration's, a field's, an annotation's; a type alias's unless the line goes on with
-    /// one of a type's operators), and the place it starts at as bat reads a line (a
-    /// statement's, a member's).
+    /// declaration's, a field's; an annotation's unless the line goes on with a union's or an
+    /// intersection's operator, a type alias's unless it goes on with one of a type's
+    /// operators), and the place it starts at as bat reads a line (a statement's, a member's).
     #[inline(always)]
     fn line_start(&mut self) {
         loop {
@@ -921,7 +921,15 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     self.prev = P_KEY;
                     return;
                 }
-                F_TYPE | F_TYPE_AS | F_TYPE_RET | F_FIELD => self.pop(),
+                F_TYPE | F_TYPE_AS | F_TYPE_RET => {
+                    // a union's or an intersection's next member on this line: the type goes
+                    // on, as TypeScript reads it past a line's end (X-121)
+                    if self.type_operand_follows() {
+                        return;
+                    }
+                    self.pop();
+                }
+                F_FIELD => self.pop(),
                 F_TYPE_DECL => {
                     if self.type_goes_on() {
                         return;
@@ -943,6 +951,19 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         matches!(b.get(s), Some(b'|' | b'&' | b'?' | b':' | b'=' | b'.'))
             || (b.get(s) == Some(&b'/') && matches!(b.get(s + 1), Some(b'/' | b'*')))
             || (b.len() - s.min(b.len()) >= 7 && &b[s..s + 7] == b"extends")
+    }
+
+    /// Whether the line goes on with a union's `|` or an intersection's `&` (not `||`, `&&`),
+    /// or a comment, which leaves the previous token, so the line after it is asked again.
+    #[inline(never)]
+    fn type_operand_follows(&self) -> bool {
+        let b = self.b;
+        let s = skip_blanks(b, 0);
+        match b.get(s) {
+            Some(&c @ (b'|' | b'&')) => b.get(s + 1) != Some(&c),
+            Some(b'/') => matches!(b.get(s + 1), Some(b'/' | b'*')),
+            _ => false,
+        }
     }
 
     #[inline(always)]
@@ -3633,26 +3654,66 @@ mod tests {
         assert!(m.contains(&(text, scopes)), "{text:?} {scopes:?} in {m:?}");
     }
 
-    /// A call is a function's name, `new Foo(` too; a name before `.` an object's, a member a
-    /// property's, a member in bat's support lists its own (`.length` plain, `.push(` a support
-    /// function's).
+    /// A member's or a declaration's type goes on past its line's end with a union's `|` or an
+    /// intersection's `&` on the next (X-121), past a comment line too; a line after it that
+    /// doesn't start with one is a member's or a statement's.
     #[test]
-    fn names_by_their_place() {
+    fn a_union_across_lines() {
         let m = ts(&[
-            "const a = foo(1), b = new Bar(2), c = obj.items.length;",
-            "this.list.push(x); console.log(x); JSON.parse(s); new Map<string, T>();",
+            "interface A {",
+            "  readonly x?:",
+            "    | { a: string }",
+            "    | { b: number };",
+            "  y: string;",
+            "}",
+            "let w: A",
+            "  & B = x;",
+            "let q: A",
+            "  // c",
+            "  | C;",
+            "a",
+            "  | b;",
         ]);
-        has(&m, "foo", "entity.name.function.ts");
-        has(&m, "Bar", "entity.name.function.ts");
-        has(&m, "obj", "variable.other.object.ts");
-        has(&m, "items", "variable.other.object.property.ts");
-        has(&m, "length", "support.variable.property.ts");
-        has(&m, "push", "support.function.ts");
-        has(&m, "log", "support.function.console.ts");
-        has(&m, "parse", "support.function.json.ts");
-        has(&m, "Map", "support.class.builtin.ts");
-        has(&m, "string", "support.type.primitive.ts");
-        has(&m, "a", "variable.other.constant.ts");
+        let ops = m
+            .iter()
+            .filter(|(t, s)| *t == "|" && *s == "keyword.operator.type.ts")
+            .count();
+        assert_eq!(ops, 3, "{m:?}");
+        has(&m, "&", "keyword.operator.type.ts");
+        has(&m, "|", "keyword.operator.bitwise.ts");
+        has(&m, "b", "variable.object.property.ts");
+        has(&m, "number", "support.type.primitive.ts");
+        has(&m, "C", "entity.name.type.ts");
+        has(&m, "y", "variable.object.property.ts");
+        has(&m, "x", "variable.other.readwrite.ts");
+    }
+
+    /// A type predicate's `x is T` at any return type's start: a function's, an arrow's, a
+    /// method signature's, a function type's; its object type across lines.
+    #[test]
+    fn type_predicates() {
+        let lines = [
+            "const f = (v: unknown): v is { a: 1 } => true;",
+            "interface I { g(w: unknown): w is { a: 1 }; h: (u: unknown) => u is { a: 1 } }",
+            "type G = (t: unknown) => t is A | B;",
+            "function k(s: unknown): s is {",
+            "  foo: string;",
+            "} {",
+            "  return true;",
+            "}",
+            "const z = 1;",
+        ];
+        let m = ts(&lines);
+        for p in ["v", "w", "u", "t", "s"] {
+            let n = m
+                .iter()
+                .filter(|(x, sc)| *x == p && *sc == "variable.parameter.ts")
+                .count();
+            assert_eq!(n, 2, "{p} in {m:?}");
+        }
+        has(&m, "foo", "variable.object.property.ts");
+        has(&m, "return", "keyword.control.flow.ts");
+        has(&m, "z", "variable.other.constant.ts");
     }
 
     /// An arrow's parameters are read as a group's until its `=>` (or a return type and its

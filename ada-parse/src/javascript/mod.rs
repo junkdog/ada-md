@@ -230,17 +230,6 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
 /// How many frames a line can hold; one pushed past it drops the bottom one.
 const MAX: usize = 128;
 
-/// Whether a span of kind `kind` is a context's text (a comment's, a string's, a regex
-/// literal's, a regex class's in any host), or a template's, which Babel matches a character at
-/// a time, not a token: an HTML embed's escape cuts text, where a token that started before it
-/// runs past it (a `//` comment takes a `</script>` after it, `\"` an attribute's quote).
-pub(crate) fn is_text(kind: u16) -> bool {
-    matches!(kind, DOC_TEXT | BLOCK_TEXT | STR | RE | JSTR | TPL_TEXT)
-        || kind
-            .checked_sub(RE_KINDS)
-            .is_some_and(|k| regex::is_set_text(k % regex::KINDS as u16))
-}
-
 /// Whether `s` is at `i`.
 fn has(b: &[u8], i: usize, s: &[u8]) -> bool {
     crate::has_at(b, i, s)
