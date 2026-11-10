@@ -1,9 +1,10 @@
 //! Ruby on a scanner of ada's own (X-100), from a floor probe: one loop over a line's bytes, a
 //! byte's action one load from a table, a name read once and looked up once (its leaf, whether
-//! a regex may follow it, what it reads past itself), and a byte stack of frames only for what
-//! nests: a string's interpolations and the strings they sit in ([`Scan::frames`]). Where bat's
-//! grammar lets a regex start (after an operator, a separator, a keyword that takes an
-//! expression, at a line's start) is a place on the line ([`Scan::regex_at`]), not a context.
+//! what may follow it, what it reads past itself), and a byte stack of frames only for what
+//! nests: a string's interpolations and the strings they sit in ([`Scan::frames`]). What `/`,
+//! `<<` and `?` start is Ruby's lexer's call (X-118), by its state after the token before: places
+//! on the line, not contexts, where an expression starts ([`Scan::regex_at`]) and where a method
+//! call's name ends ([`Scan::arg_at`]), a name assigned before ([`Scan::locals`]) a variable.
 //! Here-documents wait on X-105's [`Queue`] and their bodies are a mode. A regex literal's body
 //! is on [`crate::regex`] in Ruby's dialect (X-114), the line cut where Ruby's lexer ends it.
 //! Kinds are bat's leaves, and the regex scanner's under a literal's.
@@ -82,7 +83,6 @@ static LEAVES: &[&str] = &[
     "constant.other.symbol.ruby punctuation.definition.constant.ruby",
     "constant.character.ruby",
     "constant.character.ruby punctuation.definition.constant.ruby",
-    "constant.character.ruby invalid.illegal.character.ruby",
     // variables
     "variable.other.readwrite.instance.ruby",
     "variable.other.readwrite.instance.ruby punctuation.definition.variable.ruby",
@@ -269,7 +269,6 @@ const SYMBOL: u16 = leaf("constant.other.symbol.ruby");
 const SYMBOL_MARK: u16 = SYMBOL + 1;
 const CHARACTER: u16 = leaf("constant.character.ruby");
 const CHARACTER_MARK: u16 = CHARACTER + 1;
-const CHARACTER_BAD: u16 = CHARACTER + 2;
 const IVAR: u16 = leaf("variable.other.readwrite.instance.ruby");
 const IVAR_MARK: u16 = IVAR + 1;
 const CVAR: u16 = IVAR + 2;
@@ -428,27 +427,39 @@ static ACT: [u8; 256] = {
     t
 };
 
-// What a word is ([`WORDS`], [`INFO`]): its leaf in the low byte, then flags.
-/// A regex may follow it (bat's `after-keyword`, `function-call-arguments`).
-const W_REGEX: u16 = 1 << 8;
+// What a word is ([`WORDS`], [`INFO`]): its leaf in the low byte, then flags. What may follow
+// a word is Ruby's lexer's state after it (`parse.y`'s keyword table): an expression's start
+// ([`W_BEG`]), a method call's argument ([`W_ARG`], and every one of bat's methods), or neither
+// (`end`, `self`, `nil`: an operand's end).
+/// An expression starts after it (Ruby's `EXPR_BEG` and `EXPR_MID`: `if`, `return`, `then` …).
+const W_BEG: u16 = 1 << 8;
 /// Not a match before `?` or `!` (`(?![?!])`).
 const W_NO_QB: u16 = 1 << 9;
 /// Not a match before `?`, `!` or `=` (`(?![!?=])`).
 const W_NO_QBE: u16 = 1 << 10;
-/// One of bat's well-known methods: the same after `.` and `::`.
+/// One of bat's well-known methods: the same after `.` and `::`; a method call, as [`W_ARG`].
 const W_METHOD: u16 = 1 << 11;
+/// A method call's argument may follow it (Ruby's `EXPR_ARG`: `super`, `yield`, `defined?` …).
+const W_ARG: u16 = 1 << 12;
+/// A word after which Ruby reads `/`, `<<` and `?` as a command's argument's start.
+const W_ARGS: u16 = W_METHOD | W_ARG;
 /// What it reads past itself (the high bits).
-const W_ACTION: u16 = 0xf << 12;
-const W_DO: u16 = 1 << 12;
-const W_ELSE: u16 = 2 << 12;
-const W_DEF: u16 = 3 << 12;
-const W_CLASS: u16 = 4 << 12;
-const W_MODULE: u16 = 5 << 12;
+const W_ACTION: u16 = 0x7 << 13;
+const W_DO: u16 = 1 << 13;
+const W_ELSE: u16 = 2 << 13;
+const W_DEF: u16 = 3 << 13;
+const W_CLASS: u16 = 4 << 13;
+const W_MODULE: u16 = 5 << 13;
+const W_RESCUE: u16 = 6 << 13;
 
+/// An operand's end (`end`, `self`, `nil`, `redo` …).
 const KW: u16 = W_NO_QB;
-const KWR: u16 = W_NO_QB | W_REGEX;
-const WK: u16 = W_METHOD | W_REGEX;
-const WKE: u16 = W_METHOD | W_REGEX | W_NO_QBE;
+/// An expression's start after it (`if`, `return`, `then` …).
+const KWB: u16 = W_NO_QB | W_BEG;
+/// A command's argument after it (`super`, `yield`).
+const KWA: u16 = W_NO_QB | W_ARG;
+const WK: u16 = W_METHOD;
+const WKE: u16 = W_METHOD | W_NO_QBE;
 
 /// The words bat's grammar names, each with what its first pattern in `expressions`' order
 /// makes of it.
@@ -479,38 +490,42 @@ const WORD_LIST: &[(&[u8], &str, u16)] = &[
     ),
     (b"do", "keyword.control.block.do.ruby", W_DO),
     // keywords
-    (b"begin", "keyword.control.block.begin.ruby", KWR),
+    (b"begin", "keyword.control.block.begin.ruby", KWB),
     (b"end", "keyword.control.block.end.ruby", KW),
-    (b"case", "keyword.control.conditional.case.ruby", KWR),
-    (b"else", "keyword.control.conditional.if.ruby", KWR | W_ELSE),
-    (b"elsif", "keyword.control.conditional.elseif.ruby", KWR),
-    (b"if", "keyword.control.conditional.if.ruby", KWR),
-    (b"then", "keyword.control.conditional.then.ruby", KW),
-    (b"unless", "keyword.control.conditional.unless.ruby", KWR),
-    (b"when", "keyword.control.conditional.when.ruby", KWR),
-    (b"ensure", "keyword.control.exception.ensure.ruby", KWR),
-    (b"rescue", "keyword.control.exception.rescue.ruby", KWR),
-    (b"for", "keyword.control.loop.for.ruby", KWR),
-    (b"until", "keyword.control.loop.until.ruby", KWR),
-    (b"while", "keyword.control.loop.while.ruby", KWR),
-    (b"break", "keyword.control.flow.break.ruby", KW),
-    (b"next", "keyword.control.flow.next.ruby", KW),
+    (b"case", "keyword.control.conditional.case.ruby", KWB),
+    (b"else", "keyword.control.conditional.if.ruby", KWB | W_ELSE),
+    (b"elsif", "keyword.control.conditional.elseif.ruby", KWB),
+    (b"if", "keyword.control.conditional.if.ruby", KWB),
+    (b"then", "keyword.control.conditional.then.ruby", KWB),
+    (b"unless", "keyword.control.conditional.unless.ruby", KWB),
+    (b"when", "keyword.control.conditional.when.ruby", KWB),
+    (b"ensure", "keyword.control.exception.ensure.ruby", KWB),
+    (
+        b"rescue",
+        "keyword.control.exception.rescue.ruby",
+        KWB | W_RESCUE,
+    ),
+    (b"for", "keyword.control.loop.for.ruby", KWB),
+    (b"until", "keyword.control.loop.until.ruby", KWB),
+    (b"while", "keyword.control.loop.while.ruby", KWB),
+    (b"break", "keyword.control.flow.break.ruby", KWB),
+    (b"next", "keyword.control.flow.next.ruby", KWB),
     (b"redo", "keyword.control.flow.redo.ruby", KW),
     (b"retry", "keyword.control.flow.retry.ruby", KW),
-    (b"return", "keyword.control.flow.return.ruby", KW),
-    (b"yield", "keyword.control.flow.yield.ruby", KW),
-    (b"alias", "keyword.declaration.alias.ruby", KWR),
-    (b"alias_method", "keyword.declaration.alias.ruby", KWR),
-    (b"undef", "keyword.declaration.undef.ruby", KWR),
-    (b"and", "keyword.operator.logical.ruby", W_REGEX),
-    (b"not", "keyword.operator.logical.ruby", W_REGEX),
-    (b"or", "keyword.operator.logical.ruby", W_REGEX),
-    (b"in", "keyword.operator.logical.ruby", KWR),
+    (b"return", "keyword.control.flow.return.ruby", KWB),
+    (b"yield", "keyword.control.flow.yield.ruby", KWA),
+    (b"alias", "keyword.declaration.alias.ruby", KW),
+    (b"alias_method", "keyword.declaration.alias.ruby", KWA),
+    (b"undef", "keyword.declaration.undef.ruby", KW),
+    (b"and", "keyword.operator.logical.ruby", W_BEG),
+    (b"not", "keyword.operator.logical.ruby", W_ARG),
+    (b"or", "keyword.operator.logical.ruby", W_BEG),
+    (b"in", "keyword.operator.logical.ruby", KWB),
     (b"BEGIN", "entity.name.function.prepocessor.ruby", KW),
     (b"END", "entity.name.function.prepocessor.ruby", KW),
-    (b"defined?", "support.function.builtin.ruby", W_REGEX),
-    (b"block_given?", "support.function.builtin.ruby", W_REGEX),
-    (b"super", "support.function.builtin.ruby", KWR),
+    (b"defined?", "support.function.builtin.ruby", W_ARG),
+    (b"block_given?", "support.function.builtin.ruby", W_ARG),
+    (b"super", "support.function.builtin.ruby", KWA),
     // well-known methods
     (
         b"catch",
@@ -919,8 +934,22 @@ const fn re_embed(
 }
 /// The bytes [`Scan::frames`] holds in a line.
 const FRAMES: usize = 64;
-/// The frames a [`State`] keeps between lines, the innermost.
-const KEPT: usize = 20;
+/// The frames a [`State`] keeps between lines, the innermost: in its levels' first twelve bytes;
+/// [`Scan::locals`] in the withs' last eight (one copy each line), the queue in the levels' last
+/// two and the withs' first six (read and written only while a here-document waits). Of the wide list's 25,116
+/// files 11 leave more than 12 open at a line's end (X-118's probe).
+const KEPT: usize = 12;
+/// How many local variables' names [`Scan::locals`] holds, the most recent. A method's name taken
+/// for a local loses its here-document (its body read as code), a local's taken for a method only
+/// `x <<y` or `x /y/` written without the blank after: few slots of many bits (10-bit slots,
+/// six of them, took bundler's `lockfile <<-L` for `rev2`, a local of the same hash).
+const LOCALS: usize = 4;
+/// A local's slot in [`Scan::locals`]: a hash of its name, 0 for none.
+const LOCAL_BITS: u32 = 16;
+const LOCAL_MASK: u64 = (1 << LOCAL_BITS) - 1;
+/// A 1 in each of [`Scan::locals`]' lanes' lowest bit.
+const LANES: u64 = 0x0001_0001_0001_0001;
+const _: () = assert!(LOCALS as u32 * LOCAL_BITS == 64 && LOCAL_BITS == 16);
 
 // A string's kind ([`string_byte`]'s low four bits): its leaves are at `STRING + 3 * kind`.
 const S_SQ: u8 = 0;
@@ -1084,9 +1113,28 @@ struct Scan<'b, 'c, K: Sink> {
     /// Whether the line is a RUBY here-document's that interpolates: its `#{` and escapes are
     /// the body's (bat's `interpolated-heredoc-ruby`, `escaped-char`).
     ruby_interp: bool,
-    /// Where a regex may start on the line: the end of the last token after which bat's grammar
-    /// tries one (an operator, a separator, a keyword), the line's start, or past the line.
+    /// Where an expression may start on the line (Ruby's `EXPR_BEG`): the end of the last token
+    /// after which one does (an operator, a separator, `(`, a keyword such as `if` or `return`),
+    /// the line's start, or past the line. A regex, a here-document and a character literal
+    /// start there.
     regex_at: usize,
+    /// Where the last name that may be a method call ends (Ruby's `EXPR_ARG`: a name not known
+    /// as a local variable, a constant, a method after `.`), past the line for none: after it
+    /// and a blank, `/x/`, `<<X` and `?a` are its argument's start, as Ruby reads them.
+    arg_at: usize,
+    /// Where that name starts, if it may be a local variable ([`usize::MAX`] if not: a
+    /// constant, a method after `.` or `::`).
+    arg_from: usize,
+    /// The local variables last assigned (or taken as parameters) in the scope, a hash of each
+    /// name ([`local_hash`]) in [`LOCAL_BITS`] bits, the newest lowest: a name among them is a
+    /// variable, Ruby's rule for `x /y` and `x <<y` (an operator after it). Cleared at `def`,
+    /// `class` and `module`, which start a scope.
+    locals: u64,
+    /// Whether the line has a `rescue`: a name after its `=>` is a local ([`Scan::rescued`]).
+    rescue: bool,
+    /// Where the line's first `,` in code is ([`usize::MAX`] for none): a multiple assignment's
+    /// list is looked for back from an `=` only past one ([`Scan::assigning`]).
+    comma_at: usize,
     /// Where the line's last `/` is ([`usize::MAX`] until it's looked for).
     last_slash: usize,
     /// The last constant list [`Scan::assigned`] read on the line: where it ended, and whether
@@ -1114,6 +1162,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             base: 0,
             ruby_interp: false,
             regex_at: 0,
+            arg_at: usize::MAX,
+            arg_from: usize::MAX,
+            locals: 0,
+            rescue: false,
+            comma_at: usize::MAX,
             last_slash: usize::MAX,
             chain: (0, false),
             chain_from: 0,
@@ -1123,22 +1176,27 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
     }
 
-    /// The scan's fields from `state`: the innermost [`KEPT`] frames in its levels and first
-    /// withs, the queue in the next eight withs, the mode, the queue's length and its literal
-    /// bits in [`State::arg`].
+    /// The scan's fields from `state`: the innermost [`KEPT`] frames in its levels' first
+    /// bytes, the locals in the withs' last eight, the queue in the levels' last two and the
+    /// withs' first six, the mode, the queue's length and its literal bits in [`State::arg`].
     #[inline(always)]
     fn load(&mut self, state: &State) {
         let d = usize::from(state.depth).min(KEPT);
         if d > 0 {
-            self.frames[..14].copy_from_slice(&state.levels);
-            self.frames[14..KEPT].copy_from_slice(&state.withs[..KEPT - 14]);
+            self.frames[..KEPT].copy_from_slice(&state.levels[..KEPT]);
         }
         self.depth = d as u8;
+        let mut w = [0u8; 8];
+        w.copy_from_slice(&state.withs[6..]);
+        self.locals = u64::from_le_bytes(w);
         let arg = state.arg;
         self.mode = (arg & 3) as u8;
         let queued = usize::from(arg >> 2 & 3);
         if queued > 0 {
-            self.queue = Queue::load(&state.withs[6..14], queued);
+            let mut q = [0u8; Queue::<QUEUED>::BYTES];
+            q[..2].copy_from_slice(&state.levels[KEPT..]);
+            q[2..].copy_from_slice(&state.withs[..6]);
+            self.queue = Queue::load(&q, queued);
             self.literal = (arg >> 4 & 3) as u8;
             self.base = ((arg >> 6) as u8 & 31).min(self.depth);
         }
@@ -1157,15 +1215,16 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             if from > 0 {
                 d = KEPT;
             }
-            let mut w = [0u8; KEPT];
-            w[..d].copy_from_slice(&self.frames[from..from + d]);
-            s.levels.copy_from_slice(&w[..14]);
-            s.withs[..KEPT - 14].copy_from_slice(&w[14..]);
+            s.levels[..d].copy_from_slice(&self.frames[from..from + d]);
         }
         s.depth = d as u8;
+        s.withs[6..].copy_from_slice(&self.locals.to_le_bytes());
         let mut arg = u16::from(self.mode);
         if !self.queue.is_empty() {
-            self.queue.save(&mut s.withs[6..14]);
+            let mut q = [0u8; Queue::<QUEUED>::BYTES];
+            self.queue.save(&mut q);
+            s.levels[KEPT..].copy_from_slice(&q[..2]);
+            s.withs[..6].copy_from_slice(&q[2..]);
             arg |= (self.queue.len() as u16) << 2
                 | u16::from(self.literal & 3) << 4
                 | u16::from(base.min(31)) << 6;
@@ -1269,10 +1328,138 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         )
     }
 
+    /// Whether an expression may start at `p` (Ruby's `EXPR_BEG`): [`Scan::regex_at`] with only
+    /// blanks between.
+    #[inline(always)]
+    fn beg_before(&self, p: usize) -> bool {
+        let a = self.regex_at;
+        a <= p && self.b[a..p].iter().all(|&c| is_blank(c))
+    }
+
+    /// Whether a method call's name ends before `p` with only blanks between (Ruby's
+    /// `EXPR_ARG`): `Some(true)` with a blank between (`foo /x/`, Ruby's `space_seen`),
+    /// `Some(false)` without; `None` after anything else, or after a local variable (`x /y`,
+    /// Ruby's `EXPR_END`).
+    #[inline(never)]
+    fn arg_before(&self, p: usize) -> Option<bool> {
+        let (a, f) = (self.arg_at, self.arg_from);
+        let b = self.b;
+        if a > p || !b[a..p].iter().all(|&c| is_blank(c)) {
+            return None;
+        }
+        if f != usize::MAX && self.is_local(&b[f..a]) {
+            return None;
+        }
+        Some(a < p)
+    }
+
+    /// Whether `name` is a local variable: among [`Scan::locals`], or a block's numbered
+    /// parameter (`_1` … `_9`).
+    fn is_local(&self, name: &[u8]) -> bool {
+        if let [b'_', b'1'..=b'9'] = name {
+            return true;
+        }
+        let x = self.locals ^ (local_hash(name) * LANES);
+        x.wrapping_sub(LANES) & !x & LANES << (LOCAL_BITS - 1) != 0
+    }
+
+    /// `b[p..e]` a local variable from here on: the newest of [`Scan::locals`] (moved there if
+    /// it was one), the oldest dropped past [`LOCALS`].
+    #[inline(never)]
+    fn define(&mut self, p: usize, e: usize) {
+        let h = local_hash(&self.b[p..e]);
+        let l = self.locals;
+        if l & LOCAL_MASK == h {
+            return;
+        }
+        // a slot holding `h`: its lane of `l ^ h…h` zero (no slot is 0 where `h` isn't)
+        let x = l ^ (h * LANES);
+        let zero = x.wrapping_sub(LANES) & !x & LANES << (LOCAL_BITS - 1);
+        self.locals = if zero == 0 {
+            l << LOCAL_BITS | h
+        } else {
+            // its lane dropped, the newer ones moved up past it, `h` the newest
+            let at = zero.trailing_zeros() + 1;
+            let below = l & ((1u64 << (at - LOCAL_BITS)) - 1);
+            let above = if at < 64 { l >> at << at } else { 0 };
+            above | below << LOCAL_BITS | h
+        };
+    }
+
+    /// An assignment's operator at `p` (`=`, `+=`, `||=` …): the name before it assigned where it
+    /// may be a local variable (Ruby's parser makes it one there), and with `=` (`multiple`) the
+    /// names of a list before it that starts a statement (`a, *b = …`).
+    #[inline(never)]
+    fn assigning(&mut self, p: usize, multiple: bool) {
+        let (a, f) = (self.arg_at, self.arg_from);
+        let b = self.b;
+        if f == usize::MAX || a > p || !b[a..p].iter().all(|&c| is_blank(c)) {
+            return;
+        }
+        self.define(f, a);
+        if !multiple || self.comma_at > f {
+            return;
+        }
+        // the list before `f`, back to the statement's start (the line's or a `;`): names and
+        // splats between commas, else no multiple assignment
+        let mut names = [(0usize, 0usize); 8];
+        let mut n = 0;
+        let mut q = f;
+        loop {
+            let mut s = q;
+            while s > 0 && is_blank(b[s - 1]) {
+                s -= 1;
+            }
+            if s == 0 || b[s - 1] == b';' {
+                break;
+            }
+            if b[s - 1] != b',' || n == names.len() {
+                return;
+            }
+            s -= 1;
+            while s > 0 && is_blank(b[s - 1]) {
+                s -= 1;
+            }
+            let e = s;
+            while s > 0 && is_word_byte(b[s - 1]) {
+                s -= 1;
+            }
+            if s == e || !(b[s].is_ascii_lowercase() || b[s] == b'_' || b[s] >= 0x80) {
+                return;
+            }
+            names[n] = (s, e);
+            n += 1;
+            if s > 0 && b[s - 1] == b'*' {
+                s -= 1;
+            }
+            q = s;
+        }
+        for &(s, e) in &names[..n] {
+            self.define(s, e);
+        }
+    }
+
+    /// `=>` ending at `q` on a line with `rescue`: the name after it a local variable (`rescue
+    /// Error => e`).
+    #[inline(never)]
+    fn rescued(&mut self, q: usize) {
+        let b = self.b;
+        let t = skip_blanks(b, q);
+        if b.get(t)
+            .is_some_and(|&c| c.is_ascii_lowercase() || c == b'_')
+        {
+            let e = word_end(b, t);
+            self.define(t, e);
+        }
+    }
+
     /// The line, from what the line before left.
     #[inline(always)]
     fn lex_line<const SHARED: bool>(&mut self) {
         self.regex_at = 0;
+        self.arg_at = usize::MAX;
+        self.rescue = false;
+        self.comma_at = usize::MAX;
         self.last_slash = usize::MAX;
         self.chain = (0, false);
         self.ruby_interp = false;
@@ -1405,6 +1592,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     } else {
                         self.put_hot(p, p + 1, SEQUENCE);
                         self.regex_at = p + 1;
+                        self.comma_at = self.comma_at.min(p);
                         p + 1
                     }
                 }
@@ -1453,6 +1641,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                         self.push(F_BRACE);
                     }
                     self.put_hot(p, p + 1, SCOPE);
+                    self.regex_at = p + 1;
                     self.block_open(p + 1)
                 }
                 A_RBRACE => self.rbrace(p),
@@ -1580,8 +1769,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn rbrace(&mut self, p: usize) -> usize {
         match self.top() {
             F_CODE_INTERP => {
+                // a RUBY body's interpolation stands for code the scan can't see: what follows
+                // it may start an expression (`#{prefix}<<~EOM`)
                 self.pop();
                 self.put(p, p + 1, INTERP_END);
+                self.regex_at = p + 1;
                 p + 1
             }
             F_INTERP => {
@@ -1754,12 +1946,13 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 b'=' => {
                     self.put(p, p + 1, OP_ASSIGNMENT);
                     self.push(F_BLOCK_DEFAULT);
-                    self.regex_at = usize::MAX;
+                    self.regex_at = p + 1;
                     return p + 1;
                 }
                 _ if is_name_start(b, p) => {
                     let e = word_end(b, p);
                     self.put(p, e, PARAMETER);
+                    self.define(p, e);
                     p = e;
                 }
                 _ => p += char_len(c),
@@ -1814,12 +2007,13 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 b'=' | b':' => {
                     self.put(p, p + 1, if c == b'=' { OP_ASSIGNMENT } else { SEPARATOR });
                     self.push(F_DEFAULT);
-                    self.regex_at = usize::MAX;
+                    self.regex_at = p + 1;
                     return p + 1;
                 }
                 _ if is_name_start(b, p) => {
                     let e = word_end(b, p);
                     self.put(p, e, PARAMETER);
+                    self.define(p, e);
                     p = e;
                 }
                 _ => p += char_len(c),
@@ -1852,6 +2046,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 _ if is_name_start(b, p) => {
                     let e = word_end(b, p);
                     self.put(p, e, PARAMETER);
+                    self.define(p, e);
                     p = e;
                 }
                 _ => p += char_len(c),
@@ -1896,12 +2091,13 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                         },
                     );
                     self.push(F_BARE_DEFAULT);
-                    self.regex_at = usize::MAX;
+                    self.regex_at = p + 1;
                     return p + 1;
                 }
                 _ if is_name_start(b, p) => {
                     let e = word_end(b, p);
                     self.put(p, e, PARAMETER);
+                    self.define(p, e);
                     p = e;
                 }
                 _ => p += char_len(c),
@@ -1917,6 +2113,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn def(&mut self, p: usize, e: usize) -> usize {
         let b = self.b;
         let n = b.len();
+        // a method's body is a scope of its own: no local outside it is one in it
+        self.locals = 0;
         self.put(p, e, DEF);
         let s = skip_blanks(b, e);
         if s == n {
@@ -1992,6 +2190,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(never)]
     fn class(&mut self, p: usize, e: usize) -> usize {
         let b = self.b;
+        self.locals = 0;
         self.put(p, e, CLASS);
         let s = skip_blanks(b, e);
         if b.get(s) == Some(&b'<') {
@@ -2025,6 +2224,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(never)]
     fn module(&mut self, p: usize, e: usize) -> usize {
         let b = self.b;
+        self.locals = 0;
         self.put(p, e, MODULE);
         let s = skip_blanks(b, e);
         if !path_at(b, s) {
@@ -2076,25 +2276,40 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
         let w = WORDS.value(&b[p..e], &INFO);
         if w == 0 || after == b'=' && w & W_NO_QBE != 0 {
-            return self.plain_name(e);
+            return self.plain_name(p, e);
         }
         if w & W_ACTION != 0 {
             return self.word_action(p, e, w);
         }
         self.put_hot(p, e, w & 0xff);
-        if w & W_REGEX != 0 {
-            self.regex_at = e;
-        }
+        self.word_state(p, e, w);
         e
     }
 
-    /// A plain name ending at `e`: its `=` (not `==`, `=>`, `=~`… as bat's `=(?![>=])`
-    /// takes `=~` too) is the name's.
+    /// What may follow a word `b[p..e]` that is `w`: an expression ([`W_BEG`]), a method call's
+    /// argument ([`W_ARGS`]: one of bat's methods may be a local variable too, a keyword can't).
     #[inline(always)]
-    fn plain_name(&mut self, e: usize) -> usize {
+    fn word_state(&mut self, p: usize, e: usize, w: u16) {
+        if w & W_BEG != 0 {
+            self.regex_at = e;
+        } else if w & W_ARGS != 0 {
+            self.arg_at = e;
+            self.arg_from = if w & W_METHOD != 0 { p } else { usize::MAX };
+        }
+    }
+
+    /// A plain name `b[p..e]`: a method call or a local variable, or with `=` after it (not
+    /// `==`, `=>`, `=~`) a local variable assigned, the `=` its operator (`x=1`).
+    #[inline(always)]
+    fn plain_name(&mut self, p: usize, e: usize) -> usize {
         let b = self.b;
-        if b.get(e) == Some(&b'=') && !matches!(b.get(e + 1), Some(b'>' | b'=')) {
-            return self.after_name(e + 1);
+        self.arg_at = e;
+        self.arg_from = p;
+        if b.get(e) == Some(&b'=') && !matches!(b.get(e + 1), Some(b'>' | b'=' | b'~')) {
+            self.assigning(e, true);
+            self.put(e, e + 1, OP_ASSIGNMENT);
+            self.regex_at = e + 1;
+            return e + 1;
         }
         e
     }
@@ -2113,11 +2328,30 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     }
 
     /// A name at `p..e` with `:`, `?` or `!` after it: a hash's key (`key:`), a word spelled
-    /// with its `?` or `!` (`defined?`, `gsub!`), or a name whose `?` or `!` is its own.
+    /// with its `?` or `!` (`defined?`, `gsub!`), or a name whose `?` or `!` is its own. Before
+    /// `=` neither is the name's (`x!=y`, as Ruby's lexer reads it).
     #[inline(never)]
     fn name_suffix(&mut self, p: usize, e: usize) -> usize {
         let b = self.b;
         let s = b[e];
+        if s != b':' && b.get(e + 1) == Some(&b'=') {
+            let w = WORDS.value(&b[p..e], &INFO);
+            if w == 0 {
+                if b[p].is_ascii_uppercase() {
+                    self.put(p, e, CONSTANT);
+                    self.arg_at = e;
+                    self.arg_from = usize::MAX;
+                    return e;
+                }
+                return self.plain_name(p, e);
+            }
+            if w & W_ACTION != 0 {
+                return self.word_action(p, e, w);
+            }
+            self.put(p, e, w & 0xff);
+            self.word_state(p, e, w);
+            return e;
+        }
         if s == b':' {
             if b.get(e + 1) != Some(&b':') {
                 self.put(p, e, SYMBOL);
@@ -2143,22 +2377,20 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         let w = WORDS.value(&b[p..e + 1], &INFO);
         if w != 0 {
             self.put(p, e + 1, w & 0xff);
-            if w & W_REGEX != 0 {
-                self.regex_at = e + 1;
-            }
+            self.word_state(p, e + 1, w);
             return e + 1;
         }
+        // one of bat's methods keeps its color before its `?` or `!`; a keyword's word is a
+        // method's name there to Ruby's lexer (`module?(node)`: `module?` is no reserved word)
         let w = WORDS.value(&b[p..e], &INFO);
-        if w != 0 && w & (W_NO_QB | W_NO_QBE) == 0 {
-            if w & W_ACTION != 0 {
-                return self.word_action(p, e, w);
-            }
+        if w & W_METHOD != 0 && w & (W_NO_QB | W_NO_QBE) == 0 {
             self.put(p, e, w & 0xff);
-            if w & W_REGEX != 0 {
-                self.regex_at = e;
-            }
+            self.word_state(p, e, w);
             return e;
         }
+        // a method's name with its `?` or `!` (Ruby's `tFID`): a call, never a variable
+        self.arg_at = e + 1;
+        self.arg_from = usize::MAX;
         self.after_name(e + 1)
     }
 
@@ -2173,7 +2405,14 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             W_MODULE => self.module(p, e),
             W_DO => {
                 self.put(p, e, kind);
+                self.regex_at = e;
                 self.block_open(e)
+            }
+            W_RESCUE => {
+                self.put(p, e, kind);
+                self.regex_at = e;
+                self.rescue = true;
+                e
             }
             W_ELSE => {
                 let s = skip_blanks(b, e);
@@ -2209,8 +2448,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         let w = WORDS.value(&b[p..e], &INFO);
         if w != 0 && !(after == b'=' && w & W_NO_QBE != 0) {
             self.put(p, e, w & 0xff);
-            if w & W_REGEX != 0 {
+            if w & W_BEG != 0 {
                 self.regex_at = e;
+            } else if w & W_ARGS != 0 {
+                self.arg_at = e;
+                self.arg_from = usize::MAX;
             }
             return e;
         }
@@ -2219,6 +2461,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             self.push(F_ENV);
             return e + 1;
         }
+        // a constant is a method call's name to Ruby's lexer (`Foo /x/`), never a variable
+        self.arg_at = e;
+        self.arg_from = usize::MAX;
         match after {
             b'.' if b.get(e + 1).is_some_and(|&c| is_name_byte(c)) => e,
             b'[' => e,
@@ -2405,50 +2650,54 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.method(s)
     }
 
-    /// A method's name at `s` after `.` or `::`: bat's well-known ones, else plain.
+    /// A method's name at `s` after `.` or `::`: bat's well-known ones, else plain; a call
+    /// (Ruby's `EXPR_ARG`), never a variable. Its `?` or `!` is its own but before `=`
+    /// (`a.b!=c`); a setter's `=` is the assignment's (`a.b=1`).
     #[inline(always)]
     fn method(&mut self, s: usize) -> usize {
         let b = self.b;
         let e = word_end(b, s);
         let after = b.get(e).copied().unwrap_or(b'\n');
-        if matches!(after, b'?' | b'!') {
+        let suffix = matches!(after, b'?' | b'!') && b.get(e + 1) != Some(&b'=');
+        if suffix {
             let w = WORDS.value(&b[s..e + 1], &INFO);
             if w & W_METHOD != 0 {
                 self.put(s, e + 1, w & 0xff);
-                self.regex_at = e + 1;
+                self.arg_at = e + 1;
+                self.arg_from = usize::MAX;
                 return e + 1;
             }
         }
         let w = WORDS.value(&b[s..e], &INFO);
+        let end = if suffix { e + 1 } else { e };
+        self.arg_at = end;
+        self.arg_from = usize::MAX;
         if w & W_METHOD != 0
-            && !(matches!(after, b'?' | b'!') && w & (W_NO_QB | W_NO_QBE) != 0)
+            && !(suffix && w & (W_NO_QB | W_NO_QBE) != 0)
             && !(after == b'=' && w & W_NO_QBE != 0)
         {
             self.put_hot(s, e, w & 0xff);
-            if w & W_REGEX != 0 {
-                self.regex_at = e;
-            }
+            self.arg_at = e;
             return e;
         }
-        if &b[s..e] == b"class" && !matches!(after, b'?' | b'!' | b'=') {
+        if &b[s..e] == b"class" && !suffix && after != b'=' {
             self.put(s, e, BUILTIN);
-            self.regex_at = e;
+            self.arg_at = e;
             return e;
         }
-        match after {
-            b'?' | b'!' => self.after_name(e + 1),
-            b'=' if !matches!(b.get(e + 1), Some(b'>' | b'=')) => self.after_name(e + 1),
-            _ => self.after_name(e),
-        }
+        self.after_name(end)
     }
 
-    /// `?` at `p`: a character literal, or the ternary's.
+    /// `?` at `p`: a character literal where Ruby's lexer reads one (where an expression starts
+    /// or a method call's argument may), or the ternary's.
     #[inline(always)]
     fn question(&mut self, p: usize) -> usize {
         let b = self.b;
-        if let Some((e, bad)) = character(b, p) {
+        if (self.beg_before(p) || self.arg_before(p).is_some())
+            && let Some(e) = character(b, p)
+        {
             self.put(p, p + 1, CHARACTER_MARK);
-            self.put(p + 1, e, if bad { CHARACTER_BAD } else { CHARACTER });
+            self.put(p + 1, e, CHARACTER);
             return e;
         }
         self.put(p, p + 1, OP_CONDITIONAL);
@@ -2530,12 +2779,20 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             }
             _ => (1, OP_BITWISE),
         };
+        match kind {
+            OP_ASSIGNMENT if self.arg_at <= p => self.assigning(p, true),
+            OP_AUGMENTED if self.arg_at <= p => self.assigning(p, false),
+            KEY_VALUE if self.rescue => self.rescued(p + 2),
+            _ => {}
+        }
         self.put_hot(p, p + len, kind);
         self.regex_at = p + len;
         p + len
     }
 
-    /// `<` at `p`: a here-document's opener, or an operator.
+    /// `<` at `p`: a here-document's opener where Ruby's lexer takes one (where an expression
+    /// starts, or after a method call's name and a blank: `puts <<~X`, not `list <<x` after a
+    /// local variable), or an operator.
     #[inline(always)]
     fn lt(&mut self, p: usize) -> usize {
         let b = self.b;
@@ -2543,10 +2800,14 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         if at(1) == b'<' {
             let c = at(2);
             if (matches!(c, b'~' | b'-' | b'"' | b'\'' | b'`') || WORD[usize::from(c)])
+                && (self.beg_before(p) || self.arg_before(p) == Some(true))
                 && let Some(e) = self.heredoc(p)
             {
                 return e;
             }
+        }
+        if at(1) == b'<' && at(2) == b'=' {
+            self.assigning(p, false);
         }
         let (len, kind) = match at(1) {
             b'<' if at(2) == b'=' => (3, OP_AUGMENTED),
@@ -2578,24 +2839,36 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             _ => 0,
         };
         let s = q;
-        while q < b.len() && WORD[usize::from(b[q])] {
-            q += 1;
-        }
+        let e = if quote == 0 {
+            while q < b.len() && WORD[usize::from(b[q])] {
+                q += 1;
+            }
+            q
+        } else {
+            // Ruby's quoted label is any text to its closing quote on the line (`<<~"begin;"`),
+            // and without one no here-document
+            while q < b.len() && b[q] != quote {
+                q += 1;
+            }
+            if q == b.len() {
+                return None;
+            }
+            q + 1
+        };
         if q == s {
             return None;
         }
         let word = &b[s..q];
-        let e = match quote {
-            0 => q,
-            c if b.get(q) == Some(&c) => q + 1,
-            // bat's `["`]?` closing quote is optional, its `'` isn't
-            b'\'' => return None,
-            _ => q,
-        };
         let lang = heredoc_language(word);
         let flags = lang | if indented { H_INDENTED } else { 0 };
         let i = self.queue.len();
-        if self.queue.push(Label::of(word), flags) && quote == b'\'' {
+        if self.mode == M_BODY {
+            // an opener on a line of a body read as code (a RUBY body's): its body is on the
+            // next lines, inside this one's, so it comes first
+            if self.queue.push_front(Label::of(word), flags) {
+                self.literal = self.literal << 1 | u8::from(quote == b'\'');
+            }
+        } else if self.queue.push(Label::of(word), flags) && quote == b'\'' {
             self.literal |= 1 << i;
         }
         self.put(p, e, HEREDOC_BEGIN);
@@ -2809,33 +3082,45 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.open(p, open, string_byte(kind, delim), aux)
     }
 
-    /// `/` at `p`: bat's `/=`, a regex where its grammar tries one and the line has another
-    /// `/` after it, else division.
+    /// `/` at `p`, as Ruby's lexer reads it: a regex where an expression starts (`/=` too), `/=`,
+    /// a regex after a method call's name, a blank and no blank after it (`foo /x/`, where Ruby
+    /// warns of the ambiguity; with its closing `/` on the line, so a local Ruby knows of and the
+    /// scan doesn't reads as division where it ends there), else division.
     #[inline(always)]
     fn slash(&mut self, p: usize) -> usize {
         let b = self.b;
+        if self.beg_before(p) {
+            // the blanks bat's `\s*(/)` takes are the regex's
+            self.put(self.regex_at, p, REGEX_TEXT);
+            return self.regex_open(p);
+        }
         if b.get(p + 1) == Some(&b'=') {
+            self.assigning(p, false);
             self.put(p, p + 2, OP_AUGMENTED);
             self.regex_at = p + 2;
             return p + 2;
         }
-        let tried = self.regex_at <= p && b[self.regex_at..p].iter().all(|&c| is_blank(c));
-        let from = if tried { self.regex_at } else { p };
-        if tried || regex_may_follow(b, p + 1) {
+        if b.get(p + 1).is_some_and(|&c| !is_blank(c)) && self.arg_before(p) == Some(true) {
             if self.last_slash == usize::MAX {
                 self.last_slash = b.iter().rposition(|&c| c == b'/').unwrap_or(0);
             }
             if self.last_slash > p {
                 // the blanks bat's `\s*(/)` takes are the regex's
-                self.put(from, p, REGEX_TEXT);
-                self.put(p, p + 1, REGEX_TEXT + 1);
-                self.push_regex(string_byte(S_REGEX, D_KIND), 0);
-                return self.string(p + 1);
+                self.put(self.arg_at, p, REGEX_TEXT);
+                return self.regex_open(p);
             }
         }
         self.put_hot(p, p + 1, OP_ARITHMETIC);
         self.regex_at = p + 1;
         p + 1
+    }
+
+    /// A `/…/` literal opening at `p`.
+    #[inline(never)]
+    fn regex_open(&mut self, p: usize) -> usize {
+        self.put(p, p + 1, REGEX_TEXT + 1);
+        self.push_regex(string_byte(S_REGEX, D_KIND), 0);
+        self.string(p + 1)
     }
 
     /// A string's opener at `p..q`: its begin, then its body.
@@ -3147,6 +3432,15 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     }
 }
 
+/// A local variable's name hashed into [`LOCAL_BITS`] bits, never 0 (FNV-1a's high bits).
+fn local_hash(name: &[u8]) -> u64 {
+    let mut h: u32 = 0x811c_9dc5;
+    for &c in name {
+        h = (h ^ u32::from(c)).wrapping_mul(0x0100_0193);
+    }
+    u64::from(h >> (32 - LOCAL_BITS)).max(1)
+}
+
 /// Oniguruma's `\s` on a line.
 #[inline(always)]
 fn is_blank(c: u8) -> bool {
@@ -3257,16 +3551,6 @@ fn is_interp_var(b: &[u8], p: usize) -> bool {
         .is_some_and(|&c| c.is_ascii_alphabetic() || c == b'_')
 }
 
-/// bat's `regexes` lookahead `(?=/\s*[^\w\(\s@"'])` at the byte after `/`, `q`.
-#[inline(always)]
-fn regex_may_follow(b: &[u8], q: usize) -> bool {
-    let s = skip_blanks(b, q);
-    match b.get(s) {
-        None => false,
-        Some(&c) => !(is_word_byte(c) || matches!(c, b'(' | b'@' | b'"' | b'\'')),
-    }
-}
-
 /// A here-document's language by its word, bat's `heredoc_type_*`: `([[:upper:]_]_)?TYPE`.
 fn heredoc_language(w: &[u8]) -> u8 {
     let w = if w.len() > 2 && w[1] == b'_' && (w[0].is_ascii_uppercase() || w[0] == b'_') {
@@ -3302,82 +3586,58 @@ fn op_symbol(b: &[u8], p: usize) -> usize {
     }
 }
 
-/// A character literal at `?` `p`, bat's `constant.character` forms in their order: where it
-/// ends, and whether it is the illegal form (`?abc`).
-fn character(b: &[u8], p: usize) -> Option<(usize, bool)> {
+/// A character literal at `?` `p`, as Ruby's lexer reads one: where it ends. None before a
+/// blank or the line's end, or before a letter, digit or `_` that a name's byte follows (`?abc`
+/// is the ternary's `?` and a name); an escape whole (`?\n`, `?\C-a`, `?\u{1F600}`); else one
+/// character.
+fn character(b: &[u8], p: usize) -> Option<usize> {
     let q = p + 1;
     let c = *b.get(q)?;
-    if c == b'\\' {
-        let d = *b.get(q + 1)?;
-        if let Some(e) = meta_end(b, q) {
-            return Some((e, false));
-        }
-        let e = match d {
-            b'x' if b.get(q + 2).is_some_and(u8::is_ascii_hexdigit) => {
-                let e = if b.get(q + 3).is_some_and(u8::is_ascii_hexdigit) {
-                    q + 4
-                } else {
-                    q + 3
-                };
-                (!is_word(b, e)).then_some(e)
-            }
-            b'0' => {
-                let mut e = q + 2;
-                while e < b.len() && e < q + 4 && (b'0'..=b'7').contains(&b[e]) {
-                    e += 1;
-                }
-                (!is_word(b, e)).then_some(e)
-            }
-            _ => None,
-        };
-        if let Some(e) = e {
-            return Some((e, false));
-        }
-        let e = (q + 1 + char_len(d)).min(b.len());
-        if !is_word(b, e) {
-            return Some((e, false));
-        }
-        return illegal(b, q).map(|e| (e, true));
-    }
-    if (c.is_ascii_alphabetic() || c == b'_' || c >= 0x80 && is_name_start(b, q))
-        && let Some(e) = illegal(b, q)
-    {
-        return Some((e, true));
-    }
-    if is_word_byte(c) {
-        let e = (q + char_len(c)).min(b.len());
-        if !is_word(b, e) && !colon_after(b, e) {
-            return Some((e, false));
-        }
-        return None;
-    }
     if is_blank(c) {
         return None;
     }
-    Some(((q + char_len(c)).min(b.len()), false))
+    if (c.is_ascii_alphanumeric() || c == b'_') && b.get(q + 1).is_some_and(|&d| is_word_byte(d)) {
+        return None;
+    }
+    if c == b'\\' {
+        return Some(char_escape(b, q));
+    }
+    Some((q + char_len(c)).min(b.len()))
 }
 
-/// bat's illegal character literal after `?`, `([[:alpha:]_\\]\S+)\b(?!\s*:)`, from `q`:
-/// where it ends (the run's last word boundary not before a `:`), looked for over 256 bytes.
-fn illegal(b: &[u8], q: usize) -> Option<usize> {
-    let mut r = q + 1;
-    let cap = (q + 256).min(b.len());
-    while r < cap && !is_blank(b[r]) {
-        r += 1;
-    }
-    let mut e = r;
-    while e >= q + 2 {
-        if is_word(b, e - 1) != is_word(b, e) && !colon_after(b, e) {
-            return Some(e);
+/// A character literal's escape at `\\` `q`, Ruby's `read_escape`: where it ends.
+fn char_escape(b: &[u8], q: usize) -> usize {
+    let n = b.len();
+    let Some(&d) = b.get(q + 1) else {
+        return n;
+    };
+    let run = |from: usize, max: usize, ok: fn(&u8) -> bool| {
+        let mut e = from;
+        while e < n && e < from + max && ok(&b[e]) {
+            e += 1;
         }
-        e -= 1;
+        e
+    };
+    match d {
+        b'u' if b.get(q + 2) == Some(&b'{') => {
+            let e = run(q + 3, 8, u8::is_ascii_hexdigit);
+            if b.get(e) == Some(&b'}') { e + 1 } else { e }
+        }
+        b'u' => run(q + 2, 4, u8::is_ascii_hexdigit),
+        b'x' => run(q + 2, 2, u8::is_ascii_hexdigit),
+        b'0'..=b'7' => run(q + 1, 3, |c| (b'0'..=b'7').contains(c)),
+        b'M' | b'C' if b.get(q + 2) == Some(&b'-') => match b.get(q + 3) {
+            Some(b'\\') => char_escape(b, q + 3),
+            Some(&c) => (q + 3 + char_len(c)).min(n),
+            None => n,
+        },
+        b'c' => match b.get(q + 2) {
+            Some(b'\\') => char_escape(b, q + 2),
+            Some(&c) => (q + 2 + char_len(c)).min(n),
+            None => n,
+        },
+        _ => (q + 1 + char_len(d)).min(n),
     }
-    None
-}
-
-/// Whether `\s*:` follows at `e`.
-fn colon_after(b: &[u8], e: usize) -> bool {
-    b.get(skip_blanks(b, e)) == Some(&b':')
 }
 
 /// `{{method_punctuation}}` after a name ending at `e`, `(?:[?!]|=(?![>=]))?`: where it ends.
@@ -4071,14 +4331,9 @@ mod tests {
 
     #[test]
     fn an_interpolation_whose_string_was_cut() {
-        // three regexes' and five strings' interpolations, 27 frame bytes: the 20 kept start at the
-        // second regex's interpolation, whose `}` then has no string under it
-        let text = format!(
-            "x = {}{}\n{}}}}}}}\n",
-            "%r{#{".repeat(3),
-            "\"#{".repeat(5),
-            "}\"".repeat(5)
-        );
+        // three regexes' and a string's interpolations, 15 frame bytes: the 12 kept start at the
+        // first regex's interpolation, whose `}` then has no string under it
+        let text = format!("x = {}\"#{{\n}}\"}}}}}}\n", "%r{#{".repeat(3));
         let one = lines(&text);
         let mut state = State::default();
         let mut all = Vec::new();
@@ -4162,6 +4417,230 @@ mod tests {
         has(&l, "# digits", &rr("comment.line.number-sign.regexp"));
         has(&l, "#a", &rr("constant.other.character-class.set.regexp"));
         has(&l, "a # b", "string.regexp.classic.ruby");
+    }
+
+    const HD: &str = "string.unquoted.heredoc.ruby punctuation.definition.string.begin.ruby";
+    const SHIFT: &str = "keyword.operator.assignment.augmented.ruby";
+    const RE: &str = "string.regexp.classic.ruby punctuation.definition.string.begin.ruby";
+    const DIV: &str = "keyword.operator.arithmetic.ruby";
+    const CHAR: &str = "constant.character.ruby";
+    const TERNARY: &str = "keyword.operator.conditional.ruby";
+
+    #[test]
+    fn assignments_read_as_ruby_reads_them() {
+        // X-118: `x=1` an assignment, not bat's `x=` name
+        let l = ["x=1", "y==1", "z=~/a/", "a.b=2", "c!=d", "e?=f", "g=:sym"];
+        let got = of(&l);
+        assert_eq!(
+            got.iter()
+                .filter(|(t, s)| t == "=" && s == "keyword.operator.assignment.ruby")
+                .count(),
+            3,
+            "{got:#?}"
+        );
+        lacks(&l, "x=");
+        lacks(&l, "b=");
+        has(&l, "==", "keyword.operator.comparison.ruby");
+        has(&l, "=~", "keyword.operator.comparison.ruby");
+        has(&l, "!=", "keyword.operator.comparison.ruby");
+        lacks(&l, "c!");
+        has(&l, "sym", "constant.other.symbol.ruby");
+    }
+
+    /// Each line's spans of `text`, the line's number with each.
+    fn on_lines(lines: &[&str]) -> Vec<(usize, String, String)> {
+        let mut state = State::default();
+        let mut got = Vec::new();
+        for (i, l) in lines.iter().enumerate() {
+            let mut spans = Vec::new();
+            line(l.as_bytes(), &mut state, &mut Out::new(&mut spans));
+            for s in &spans {
+                got.push((
+                    i,
+                    l[s.start as usize..s.end as usize].to_owned(),
+                    scopes(s.kind).join(" "),
+                ));
+            }
+        }
+        got
+    }
+
+    fn on(lines: &[&str], i: usize, text: &str, scopes: &str) -> bool {
+        on_lines(lines)
+            .iter()
+            .any(|(n, t, s)| *n == i && t == text && s == scopes)
+    }
+
+    #[test]
+    fn here_documents_where_ruby_takes_them() {
+        // after a method call's name and a blank, or where an expression starts
+        for (l, opener) in [
+            ("puts <<~X", "<<~X"),
+            ("foo <<X", "<<X"),
+            ("x = <<~X", "<<~X"),
+            ("return <<~X", "<<~X"),
+            ("f(a, <<-X)", "<<-X"),
+            ("a.b <<~X", "<<~X"),
+            ("Foo <<X", "<<X"),
+            ("h = { k: <<~X }", "<<~X"),
+        ] {
+            assert!(
+                on(&[l, "body", "X"], 0, opener, HD),
+                "{l}: {:#?}",
+                on_lines(&[l])
+            );
+        }
+        // after a local variable, an operand's end, or a name without a blank: the operator
+        let ls: [(&[&str], usize); 11] = [
+            (&["arr = []", "arr <<x"], 1),
+            (&["def f(list)", "  list <<x"], 1),
+            (&["a, *b = 1, 2", "b <<x"], 1),
+            (&["each do |s|", "  s <<x"], 1),
+            (&["@items <<x"], 0),
+            (&["foo() <<x"], 0),
+            (&["\"s\" <<x"], 0),
+            (&["puts<<x"], 0),
+            (&["n += 1", "n <<x"], 1),
+            (&["begin", "rescue E => err", "  err <<x"], 2),
+            (&["x = 1; [1].each { _1 <<x }"], 0),
+        ];
+        for (l, at) in ls {
+            assert!(on(l, at, "<<", SHIFT), "{l:?}: {:#?}", on_lines(l));
+        }
+        // a method's body is a scope of its own
+        let l = ["x = 1", "def f", "  x <<Y", "  y", "Y"];
+        assert!(on(&l, 2, "<<Y", HD), "{:#?}", on_lines(&l));
+    }
+
+    #[test]
+    fn regexes_where_ruby_takes_them() {
+        for l in [
+            "foo /x/",
+            "expect(a).to match /b/",
+            "x = /y/",
+            "if /a/",
+            "f { /a/ }",
+        ] {
+            assert!(on(&[l], 0, "/", RE), "{l}: {:#?}", on_lines(&[l]));
+        }
+        for l in [
+            ["n = 4", "n /2/ 1"],
+            ["n = 4", "foo / 2"],
+            ["n = 4", "foo /2"],
+            ["n = 4", "@n /2/ 1"],
+            ["n = 4", "f(n) /2/ 1"],
+            ["n = 4", "foo/2/ 1"],
+        ] {
+            assert!(on(&l, 1, "/", DIV), "{l:?}: {:#?}", on_lines(&l));
+        }
+        // where an expression starts, a regex goes on past its line as Ruby's does
+        let l = ["x = /a", "b/x"];
+        assert!(on(
+            &l,
+            1,
+            "/",
+            "string.regexp.classic.ruby punctuation.definition.string.end.ruby"
+        ));
+    }
+
+    #[test]
+    fn character_literals_where_ruby_takes_them() {
+        for (l, ch) in [
+            ("x == ?a", "a"),
+            ("foo ?b", "b"),
+            ("f(?\\n)", "\\n"),
+            ("[?\\C-a]", "\\C-a"),
+        ] {
+            assert!(on(&[l], 0, ch, CHAR), "{l}: {:#?}", on_lines(&[l]));
+        }
+        // `?abc` is the ternary's `?` and a name; after an operand's end the ternary's
+        for l in [
+            ["", "a ?abc : d"],
+            ["c = 1", "c ?a : b"],
+            ["", "f(x) ?a : b"],
+        ] {
+            assert!(on(&l, 1, "?", TERNARY), "{l:?}: {:#?}", on_lines(&l));
+            assert!(
+                !on_lines(&l).iter().any(|(_, _, s)| s.starts_with(CHAR)),
+                "{l:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn quoted_labels_and_keywords_as_method_names() {
+        // `<<~"begin;"`: the label to its closing quote (ruby/ruby's `assert_separately`)
+        let l = [
+            "f(\"#{<<~\"begin;\"}\\n#{<<~'end;'}\")",
+            "begin;",
+            "  x = 1",
+            "end;",
+            "y",
+        ];
+        assert!(
+            on(&l, 2, "  x = 1", "string.unquoted.heredoc.ruby"),
+            "{:#?}",
+            on_lines(&l)
+        );
+        assert!(on(&l, 4, "y", "") || !on_lines(&l).iter().any(|(n, _, _)| *n == 4));
+        // a keyword's word before `?` or `!` is a method's name
+        let l = ["ok = module?(node) && class!"];
+        let got = on_lines(&l);
+        assert!(
+            !got.iter().any(|(_, _, s)| s.contains("declaration")),
+            "{got:#?}"
+        );
+    }
+
+    #[test]
+    fn a_here_document_inside_a_ruby_body() {
+        // the inner body nests in the outer's: it closes first, the outer's lines code again
+        let l = [
+            "expect_offense(<<~RUBY)",
+            "  foo(<<-'+', <<~EOS)",
+            "    a",
+            "  +",
+            "  EOS",
+            "  bar",
+            "RUBY",
+            "baz",
+        ];
+        assert!(
+            on(&l, 2, "    a", "string.unquoted.heredoc.ruby"),
+            "{:#?}",
+            on_lines(&l)
+        );
+        assert!(
+            on(&l, 3, "+", HD.replace("begin", "end").as_str()),
+            "{:#?}",
+            on_lines(&l)
+        );
+        assert!(
+            on(&l, 6, "RUBY", HD.replace("begin", "end").as_str()),
+            "{:#?}",
+            on_lines(&l)
+        );
+        assert!(
+            !on_lines(&l).iter().any(|(n, _, _)| *n == 7),
+            "{:#?}",
+            on_lines(&l)
+        );
+    }
+
+    #[test]
+    fn locals_keep_the_newest() {
+        let l = [
+            "a = 1", "b = 1", "c = 1", "d = 1", "e = 1", "d = 2", "a <<X", "X",
+        ];
+        // four kept, `a` the oldest of five dropped: a method's call to Ruby's lexer as far as
+        // the scan knows
+        assert!(on(&l, 6, "<<X", HD), "{:#?}", on_lines(&l));
+        // assigned again, `b` the newest: `c` dropped
+        let l = [
+            "b = 1", "c = 1", "d = 1", "e = 1", "b = 2", "f = 1", "b <<x", "c <<X", "X",
+        ];
+        assert!(on(&l, 6, "<<", SHIFT), "{:#?}", on_lines(&l));
+        assert!(on(&l, 7, "<<X", HD), "{:#?}", on_lines(&l));
     }
 
     #[test]

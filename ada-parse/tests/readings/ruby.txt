@@ -369,6 +369,73 @@
        "2" constant.numeric.integer.decimal.ruby
   72 | end
        "end" keyword.control.block.end.ruby
-  73 | __END__
+  73 | buf=[]; n = 4
+       "=" keyword.operator.assignment.ruby
+       "[]" punctuation.section.array.ruby
+       ";" punctuation.terminator.statement.ruby
+       "=" keyword.operator.assignment.ruby
+       "4" constant.numeric.integer.decimal.ruby
+  74 | buf <<x if x!=1
+       "<<" keyword.operator.assignment.augmented.ruby
+       "if" keyword.control.conditional.if.ruby
+       "!=" keyword.operator.comparison.ruby
+       "1" constant.numeric.integer.decimal.ruby
+  75 | puts <<~TXT, n /2, buf.size / 2
+       "puts" support.function.builtin.ruby
+       "<<~TXT" string.unquoted.heredoc.ruby punctuation.definition.string.begin.ruby
+       "," punctuation.separator.sequence.ruby
+       "/" keyword.operator.arithmetic.ruby
+       "2" constant.numeric.integer.decimal.ruby
+       "," punctuation.separator.sequence.ruby
+       "." punctuation.accessor.dot.ruby
+       "/" keyword.operator.arithmetic.ruby
+       "2" constant.numeric.integer.decimal.ruby
+  76 |   #{buf}
+       "  " string.unquoted.heredoc.ruby
+       "#{" punctuation.section.interpolation.begin.ruby
+       "}" punctuation.section.interpolation.end.ruby
+  77 | TXT
+       "TXT" string.unquoted.heredoc.ruby punctuation.definition.string.end.ruby
+  78 | expect(out).to match /done$/
+       "(" punctuation.definition.group.begin.ruby
+       ")" punctuation.definition.group.end.ruby
+       "." punctuation.accessor.dot.ruby
+       "match" support.function.builtin.ruby
+       " " string.regexp.classic.ruby
+       "/" string.regexp.classic.ruby punctuation.definition.string.begin.ruby
+       "done" string.regexp.classic.ruby
+       "$" string.regexp.classic.ruby keyword.control.anchor.regexp
+       "/" string.regexp.classic.ruby punctuation.definition.string.end.ruby
+  79 | PATTERN = /
+       "PATTERN" entity.name.constant.ruby
+       "=" keyword.operator.assignment.ruby
+       " " string.regexp.classic.ruby
+       "/" string.regexp.classic.ruby punctuation.definition.string.begin.ruby
+  80 |   \A\d+
+       "  " string.regexp.classic.ruby
+       "\\A" string.regexp.classic.ruby keyword.control.anchor.regexp
+       "\\d" string.regexp.classic.ruby constant.other.character-class.escape.backslash.regexp
+       "+" string.regexp.classic.ruby keyword.operator.quantifier.regexp
+  81 | /x
+       "/" string.regexp.classic.ruby punctuation.definition.string.end.ruby
+       "x" string.regexp.classic.ruby keyword.other.ruby
+  82 | t = c ?abc : ?d
+       "=" keyword.operator.assignment.ruby
+       "?" keyword.operator.conditional.ruby
+       ":" keyword.operator.conditional.ruby
+       "?" constant.character.ruby punctuation.definition.constant.ruby
+       "d" constant.character.ruby
+  83 | f(?\C-a, 1<<2, module?(x))
+       "(" punctuation.definition.group.begin.ruby
+       "?" constant.character.ruby punctuation.definition.constant.ruby
+       "\\C-a" constant.character.ruby
+       "," punctuation.separator.sequence.ruby
+       "1" constant.numeric.integer.decimal.ruby
+       "<<" keyword.operator.assignment.augmented.ruby
+       "2" constant.numeric.integer.decimal.ruby
+       "," punctuation.separator.sequence.ruby
+       "(" punctuation.definition.group.begin.ruby
+       "))" punctuation.definition.group.end.ruby
+  84 | __END__
        "__END__" string.unquoted.program-block.ruby
-  74 | data
+  85 | data

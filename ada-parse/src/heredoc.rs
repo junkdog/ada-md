@@ -211,6 +211,20 @@ impl<const N: usize> Queue<N> {
         true
     }
 
+    /// `label` and its `flags` queued before those waiting: a body that nests in the front's (an
+    /// opener on a line of a body read as code, Ruby's RUBY bodies); `false` where `N` wait
+    /// already, the label dropped.
+    pub fn push_front(&mut self, label: Label, flags: u8) -> bool {
+        if self.len() == N {
+            return false;
+        }
+        let len = self.len();
+        self.items.copy_within(0..len, 1);
+        self.items[0] = label.0 | u32::from(flags & 0xf) << Label::BITS;
+        self.len += 1;
+        true
+    }
+
     /// The label whose body is next, and its flags.
     #[inline(always)]
     pub fn front(&self) -> Option<(Label, u8)> {

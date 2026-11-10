@@ -1468,7 +1468,8 @@ fn php() {
 
 /// Ruby's readings (X-100, a scanner of ada's own): classes, modules, methods, blocks, symbols,
 /// strings with interpolation, percent literals, here-documents (a SQL body), numbers,
-/// `begin`/`rescue`, `case`, `__END__`, regex literals in Ruby's dialect (X-114). Ruby's
+/// `begin`/`rescue`, `case`, `__END__`, regex literals in Ruby's dialect (X-114), and `/`, `<<`
+/// and `?` by Ruby's lexer state, a name assigned before a local variable (X-118). Ruby's
 /// here-document readings are pinned in ada-parse's `ruby` tests.
 #[test]
 fn ruby() {
@@ -1545,6 +1546,17 @@ fn ruby() {
         "when Integer then 1\n",
         "else 2\n",
         "end\n",
+        "buf=[]; n = 4\n",
+        "buf <<x if x!=1\n",
+        "puts <<~TXT, n /2, buf.size / 2\n",
+        "  #{buf}\n",
+        "TXT\n",
+        "expect(out).to match /done$/\n",
+        "PATTERN = /\n",
+        "  \\A\\d+\n",
+        "/x\n",
+        "t = c ?abc : ?d\n",
+        "f(?\\C-a, 1<<2, module?(x))\n",
         "__END__\n",
         "data\n",
     );
