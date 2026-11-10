@@ -362,6 +362,8 @@ impl<K: Sink> Scan<'_, '_, K> {
                 self.sq_body::<PP>(0)
             }
             M_RAW => self.raw_body::<PP>(0),
+            // begun only in code, never in a directive
+            M_RAW_RE => self.raw_regex(0),
             _ => 0,
         }
     }

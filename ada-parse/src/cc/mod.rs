@@ -25,6 +25,11 @@
 //! word before them ([`P_ENTITY`]) and the byte after. bat's rules where a line's end or a macro
 //! decides are followed as probed (vault `ada-parse.md`, X-057's R2).
 //!
+//! A string an engine's call takes as a pattern (`std::regex re("…")`, `regcomp(&re, "…", …)`,
+//! `QRegularExpression(…)`, X-115) is a regex on [`crate::regex`], in the dialect the call
+//! picks ([`regex_calls`]): its escapes and end the string's, the rest the regex's kinds from
+//! [`RE_DQ`]. A raw one carries the regex's state over lines ([`M_RAW_RE`]).
+//!
 //! Stages (vault `ada-parse.md`, X-057's redesign): **R1** this loop and the directive lexer
 //! ([`pp`]); **R2** definitions, parameters and the entity names; **R3** the tail parity
 //! showed (generics and template parameters, declared names, the preprocessor's corners);
@@ -35,11 +40,12 @@
 
 mod code;
 mod pp;
+mod regex_calls;
 pub(crate) mod support;
 mod words;
 
 use crate::emit::{Rules, Run, Runs, Sink, Spans};
-use crate::{Out, State};
+use crate::{Out, State, regex};
 
 macro_rules! leaves {
     ($($name:ident = [$($s:literal),*],)*) => {
@@ -178,18 +184,31 @@ leaves! {
     USING_NAME = ["entity.name.type.using"],
 }
 
+const _: () = assert!((Leaf::Count as u16) <= RE_DQ);
+
+/// A regex in a string ([`regex_calls`]): [`regex::KINDS`] kinds from here, under the string's
+/// scope.
+const RE_DQ: u16 = 256;
+
 /// The scopes under `source.c++` a kind carries, outermost first.
 pub fn scopes(kind: u16) -> Vec<&'static str> {
-    LEAVES
-        .get(usize::from(kind))
-        .map_or_else(Vec::new, |l| l[0].to_vec())
+    scopes_in(kind, 0)
 }
 
 /// The scopes under `source.c` a kind carries, outermost first.
 pub fn scopes_c(kind: u16) -> Vec<&'static str> {
+    scopes_in(kind, 1)
+}
+
+fn scopes_in(kind: u16, lang: usize) -> Vec<&'static str> {
+    if kind >= RE_DQ {
+        let mut out = vec![["string.quoted.double.c++", "string.quoted.double.c"][lang]];
+        out.extend(regex::scopes(kind - RE_DQ));
+        return out;
+    }
     LEAVES
         .get(usize::from(kind))
-        .map_or_else(Vec::new, |l| l[1].to_vec())
+        .map_or_else(Vec::new, |l| l[lang].to_vec())
 }
 
 // What a `{` opened, two bits a level ([`Scan::braces`]).
@@ -213,10 +232,13 @@ const M_LINE_COMMENT: u8 = 2;
 const M_DQ: u8 = 3;
 /// A `'…'` whose line ends in `\`.
 const M_SQ: u8 = 4;
-/// A raw string ([`Scan::delim`]).
-const M_RAW: u8 = 5;
 /// An `#if 0`'s lines, [`Scan::aux`] the `#if`s open in them.
-const M_DISABLED: u8 = 6;
+const M_DISABLED: u8 = 5;
+/// A raw string ([`Scan::delim`]). The raw modes are the last two: one compare tells them.
+const M_RAW: u8 = 6;
+/// A raw string that is a regex: its delimiter's first [`RE_DELIM_KEPT`] bytes in
+/// [`Scan::delim`], then the regex's dialect ([`RE_DIALECT`]) and state ([`RE_STATE`]).
+const M_RAW_RE: u8 = 7;
 
 // A directive the line continues ([`Scan::pp`]), beside a mode.
 /// None.
@@ -312,6 +334,12 @@ const PEND_INIT: u8 = 3;
 /// A raw string's delimiter's bytes [`State`] keeps; a longer one is told by these and its
 /// length.
 const DELIM_KEPT: usize = 8;
+/// A regex's raw string's: the last two bytes keep the regex's dialect and state.
+const RE_DELIM_KEPT: usize = DELIM_KEPT - 2;
+/// Where [`Scan::delim`] keeps a raw regex's dialect ([`regex_calls::dialect_code`]).
+const RE_DIALECT: usize = DELIM_KEPT - 2;
+/// Where [`Scan::delim`] keeps a raw regex's state ([`crate::regex`]'s byte).
+const RE_STATE: usize = DELIM_KEPT - 1;
 /// Where [`State::withs`] keeps the statement's state: [`Scan::decl`], [`Scan::paren`] and
 /// [`Scan::angle`] in one byte, then [`Scan::td`], [`Scan::entity`] (with [`Scan::tpl`] and
 /// [`Scan::kw`]), [`Scan::ifd`].
@@ -486,6 +514,9 @@ struct Scan<'b, 'c, K: Sink> {
     ternary: u8,
     /// A raw string's delimiter, its first [`DELIM_KEPT`] bytes.
     delim: [u8; DELIM_KEPT],
+    /// A regex engine's name came before on the line ([`words::A_REGEX`]): its strings are
+    /// checked for a pattern.
+    rx: bool,
     /// What the statement is so far, at a namespace's or a class's level ([`D_NONE`]…).
     decl: u8,
     /// The `(`s open in the statement.
@@ -532,6 +563,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             case: false,
             ternary: 0,
             delim: [0; DELIM_KEPT],
+            rx: false,
             decl: D_NONE,
             paren: 0,
             angle: 0,
@@ -567,7 +599,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.pending = (a >> A_PENDING & 3) as u8;
         self.prev = (a >> A_PREV & 7) as u8;
         self.ternary = u8::from(a & A_TERNARY != 0);
-        if self.mode == M_RAW {
+        if self.mode >= M_RAW {
             self.delim.copy_from_slice(&state.withs[2..W_DECL]);
         }
         let d = state.withs[W_DECL];
@@ -587,7 +619,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         s.levels.copy_from_slice(&w[..14]);
         s.withs[0] = w[14];
         s.withs[1] = self.one;
-        if self.mode == M_RAW {
+        if self.mode >= M_RAW {
             s.withs[2..W_DECL].copy_from_slice(&self.delim);
         }
         s.withs[W_DECL] = self.decl | self.paren.min(7) << 3 | self.angle.min(3) << 6;
@@ -642,6 +674,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(always)]
     fn lex_line(&mut self) {
         self.case = false;
+        self.rx = false;
         self.at = 0;
         if self.mode != M_CODE || self.pp != PP_NONE {
             self.lex_resumed();

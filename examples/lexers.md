@@ -34,6 +34,7 @@ case $count in 0) exit 1 ;; *) echo "done" ;; esac
 ## C
 
 ```c
+#include <regex.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -57,6 +58,9 @@ static int count_words(const char *s) {
 
 int main(void) {
     double ratio = 2.5e3; unsigned mask = 0xFFu;
+    regex_t pair;
+    if (regcomp(&pair, "^([a-z_]+)[[:space:]]*=[[:space:]]*([0-9]{1,3}|\"[^\"]*\")$", REG_EXTENDED))
+        return EXIT_FAILURE;
     printf("%d words, ratio %.2f\n", count_words("a b c"), ratio);
     return mask > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
@@ -111,6 +115,7 @@ public static class Program
 
 ```cpp
 #include <iostream>
+#include <regex>
 #include <vector>
 #define SQUARE(x) ((x) * (x))
 
@@ -135,6 +140,8 @@ int main(int argc, char** argv) {
     auto ratio = 2.5 * 1e3 + 0x1Fu + 'a';
     for (const auto& s : spans) std::cout << "len: " << s.len() << '\n';
     const char* raw = R"(raw "string")";
+    static const std::regex pair(R"re(^(\w+)\s*=\s*"([^"\\]*)"(?=\s*(?:#|$)))re");
+    if (std::regex_search(argv[0], std::regex("\\b(?:TODO|FIXME)\\b:?", std::regex::icase))) return 1;
     return argc > 1 ? EXIT_SUCCESS : static_cast<int>(ratio);
 }
 ```
@@ -163,7 +170,7 @@ int main(int argc, char** argv) {
 (defmacro unless [test & body]
   `(if (not ~test) (do ~@body)))
 
-(if-some [[_ first-name last-name] (re-matches #"(\w+)\s(\w+)" "Ada Lovelace")]
+(if-some [[_ first-name last-name] (re-matches #"(\p{Lu}\w+)\s+(?:[A-Z]\.\s)?(\w+)" "Ada Lovelace")]
   (println first-name last-name)          ;; matching case
   (println "Unparsable name"))            ;; nil case
 
@@ -411,7 +418,10 @@ import (
 	"regexp"
 )
 
-var word = regexp.MustCompile(`(?i)\b(?P<word>[a-z]+(?:['-][a-z]+)*)\b`)
+var (
+	word = regexp.MustCompile(`(?i)\b(?P<word>[a-z]+(?:['-][a-z]+)*)\b`)
+	pair = regexp.MustCompile(`^(?P<key>[[:alpha:]_]\w*)\s*=\s*(\d{1,3}|"[^"]*")$`)
+)
 
 type Note struct {
 	Title string `json:"title"`
@@ -491,6 +501,7 @@ import java.util.regex.Pattern;
 @SuppressWarnings("unchecked")
 public final class Counter<T extends Comparable<T>> implements AutoCloseable {
     private static final Pattern WORD = Pattern.compile("(?<word>\\p{L}+(?:'\\p{L}+)?)|\\d{1,3}(?:,\\d{3})*+");
+    private static final Pattern DATE = Pattern.compile("(?<year>\\d{4})-(?<month>\\d{2})(?:-\\d{2})?+(?![\\p{L}&&[^x]])");
     private final Map<String, Integer> counts = new HashMap<>();
     private double ratio = 2.5e3, small = .5f;
     private long mask = 0xFF_FFL;
@@ -536,6 +547,7 @@ import { readFile } from "node:fs/promises";
 
 const WORD = /(?<word>[\p{L}\d]+(?:-[\p{L}\d]+)*)/gu;
 const HEADING = new RegExp("^(#{1,6})\\s+(.+?)\\s*#*$", "m");
+const DATE = /^(?<y>\d{4})-(?<m>0[1-9]|1[0-2])(?=T|$)/u, TODO = new RegExp("\\b(?:TODO|FIXME)\\b", "i");
 const ratio = 2.5e3, mask = 0xff, big = 10n;
 
 /** A note with a title. */
@@ -609,6 +621,8 @@ fun <T : Comparable<T>> max(a: T, b: T): T = if (a > b) a else b
 suspend fun main(args: Array<String>) {
     val notes = listOf(Note(Title("ada"), 1_000), Note(Title("bat")))
     val big = 1e3 + 0xFFL + PI
+    val date = Regex("""(?<y>\d{4})-(?<m>\d{2})(?:-\d{2})?""")
+    val blanks = "\\s+(?=\\p{Lu})".toRegex()
     for ((i, n) in notes.withIndex()) {
         when {
             n.words > 500 -> println("$i: ${n.title.text} is long\t(${n.ratio})")
@@ -819,6 +833,7 @@ import re
 from dataclasses import dataclass
 
 WORD = re.compile(r"(?P<word>[^\W\d_]+(?:'[^\W\d_]+)?)|\d{1,3}(?:,\d{3})*")
+DATE = re.compile(r"(?P<year>\d{4})-(?P<month>0[1-9]|1[0-2])(?:-(?P<day>\d{2}))?(?=\.md$)")
 
 
 @dataclass(frozen=True)
@@ -851,6 +866,7 @@ async def main(paths: list[str], *, limit: int = 0x10) -> None:
 
 (define ratio 2.5)
 (define word-rx #px"\\w+")
+(define pair-rx #px"^([[:alpha:]_]+)\\s*=\\s*(\\d{1,3}|\"[^\"]*\")$")
 
 (define (count-words text #:limit [limit 16])
   (min limit (length (regexp-match* word-rx text))))
@@ -945,6 +961,7 @@ impl<'a> Span<'a> {
 }
 
 fn ratio<T: Into<f64>>(x: T) -> f64 {
+    let pair = Regex::new(r#"^(?<key>[\p{L}_][\w--\d]*)\s*=\s*(\d{1,3}|"[^"]*")$"#).unwrap();
     let scale = 2.5_f64 * 1e3; /* block comment */
     x.into() / scale + b'\n' as f64 + '\u{e9}' as u32 as f64
 }

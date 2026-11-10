@@ -6,7 +6,7 @@
 use super::pp::skip_blanks;
 use super::words::{
     A_ACCESS, A_C99, A_CASE, A_CAST, A_CLASS, A_DELETE, A_ENUM, A_LEAF, A_NAMESPACE, A_NS,
-    A_OPERATOR, A_STRUCT, A_TEMPLATE, A_TYPEDEF, A_TYPENAME, A_UNION, A_USING, ACT, WORDS,
+    A_OPERATOR, A_REGEX, A_STRUCT, A_TEMPLATE, A_TYPEDEF, A_TYPENAME, A_UNION, A_USING, ACT, WORDS,
 };
 use super::*;
 use crate::prim;
@@ -109,7 +109,12 @@ impl<K: Sink> Scan<'_, '_, K> {
                 return self.name::<PP>(p, e, false);
             }
             A_LEAF => {}
-            A_C99 => return self.name::<PP>(p, e, true),
+            // a regex engine's name: a plain name, its line's strings checked for a pattern
+            A_C99 | A_REGEX => {
+                let c99 = info >> ACT == A_C99;
+                self.rx |= !c99;
+                return self.name::<PP>(p, e, c99);
+            }
             // `= default;`, `= delete;` after a definition's parameters
             A_CASE | A_DELETE if self.decl == D_DEFINED => {
                 self.put::<PP>(p, e, MODIFIER);
@@ -207,6 +212,13 @@ impl<K: Sink> Scan<'_, '_, K> {
     /// follows ([`P_ENTITY`]), in a definition's parameter list, in a `typedef`.
     #[inline(never)]
     fn word_in<const PP: bool>(&mut self, p: usize, e: usize, info: u16) -> usize {
+        // a regex engine's name is a plain name here (`class RE2 {`, `namespace ctre {`)
+        let info = if info >> ACT == A_REGEX {
+            self.rx = true;
+            0
+        } else {
+            info
+        };
         let b = self.b;
         let q = skip_blanks(b, e);
         let next = next_byte(b, q);
@@ -566,6 +578,10 @@ impl<K: Sink> Scan<'_, '_, K> {
         if b[e] == b'"' {
             if plain {
                 self.put::<PP>(p, e, DQ_PREFIX);
+                if let Some(d) = self.regex_here::<PP>(p) {
+                    self.put::<PP>(e, e + 1, DQ_BEGIN);
+                    return self.dq_regex(e + 1, d);
+                }
                 return self.dq::<PP>(e);
             }
             if !self.c
@@ -598,6 +614,11 @@ impl<K: Sink> Scan<'_, '_, K> {
             }
             b'"' => {
                 self.prev = P_OTHER;
+                // a line with a regex engine's name: its strings checked for a pattern, out of
+                // the loop's way
+                if !PP && self.rx {
+                    return self.dq_checked(p);
+                }
                 return self.dq::<PP>(p);
             }
             b'\'' => {
@@ -1067,7 +1088,162 @@ impl<K: Sink> Scan<'_, '_, K> {
         self.aux = n as u8;
         self.put::<PP>(p, q, DQ_PREFIX);
         self.put::<PP>(q, d + 1, DQ_BEGIN);
+        if let Some(dialect) = self.regex_here::<PP>(p) {
+            self.delim[RE_DIALECT] = regex_calls::dialect_code(dialect);
+            self.delim[RE_STATE] = 0;
+            return Some(self.raw_regex(d + 1));
+        }
         Some(self.raw_body::<PP>(d + 1))
+    }
+
+    /// A `"…"` string at `p` on a line with a regex engine's name ([`Scan::rx`]): a regex's
+    /// where the call it is an argument of takes a pattern.
+    #[cold]
+    #[inline(never)]
+    fn dq_checked(&mut self, p: usize) -> usize {
+        if let Some(d) = self.regex_here::<false>(p) {
+            self.put::<false>(p, p + 1, DQ_BEGIN);
+            return self.dq_regex(p + 1, d);
+        }
+        self.dq::<false>(p)
+    }
+
+    /// Whether the string at `s` (its prefix, or its quote) is a regex, by the call it is an
+    /// argument of ([`regex_calls::regex_at`]): its dialect. Not in a directive.
+    #[inline(always)]
+    fn regex_here<const PP: bool>(&self, s: usize) -> Option<regex::Dialect> {
+        if PP || !self.rx {
+            return None;
+        }
+        let b = self.b;
+        let mut q = s;
+        while q > 0 && matches!(b[q - 1], b' ' | b'\t') {
+            q -= 1;
+        }
+        if q == 0 || !matches!(b[q - 1], b'(' | b'{' | b',' | b'<' | b')') {
+            return None;
+        }
+        regex_calls::regex_at(b, q - 1, s, self.c)
+    }
+
+    /// A regex's text in a `"…"` string from `p`, past its quote, on [`crate::regex`] in
+    /// `dialect`: the string's end and escapes the host's, the rest the regex's. A string whose
+    /// line ends in `\` goes on on the next as a string ([`M_DQ`]).
+    #[cold]
+    #[inline(never)]
+    fn dq_regex(&mut self, mut p: usize, dialect: regex::Dialect) -> usize {
+        static YIELDS: [bool; 256] = regex::table(b"\"\\");
+        let b = self.b;
+        let n = b.len();
+        let host = regex::Embed {
+            dialect,
+            cooked: true,
+            yields: &YIELDS,
+            stop: |b, p, _| b[p] == b'"',
+            arg: 0,
+            escape: escape_end,
+            top_only: false,
+            continues: true,
+            base: RE_DQ,
+            text: DQ,
+        };
+        let mut re = 0;
+        while p < n {
+            match b[p] {
+                b'"' => {
+                    self.put::<false>(p, p + 1, DQ_END);
+                    return p + 1;
+                }
+                b'\\' if p + 1 == n => {
+                    self.put::<false>(p, n, DQ_CONT);
+                    self.mode = M_DQ;
+                    return n;
+                }
+                b'\\' if b[p + 1] != b'\\' => {
+                    let e = escape_end(b, p).min(n);
+                    self.put::<false>(p, e, DQ_ESCAPE);
+                    p = e;
+                    continue;
+                }
+                _ => {}
+            }
+            self.k.close(self.out);
+            let mut at = p;
+            let r = regex::embedded(b, p, re, &host, &mut at, self.out);
+            self.k.reopen(self.out, 16);
+            match r {
+                Some((e, st)) => {
+                    re = st;
+                    p = e.max(p + 1);
+                }
+                None => break,
+            }
+        }
+        n
+    }
+
+    /// A regex's text in a raw string from `q` to its `)delim"`, or the line's end
+    /// ([`M_RAW_RE`]), on [`crate::regex`] in the dialect and from the state [`Scan::delim`]
+    /// keeps after the delimiter's bytes ([`RE_DIALECT`], [`RE_STATE`]): as it
+    /// reads, no escapes.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn raw_regex(&mut self, q: usize) -> usize {
+        static YIELDS: [bool; 256] = [false; 256];
+        let b = self.b;
+        let n = usize::from(self.aux);
+        let kept = n.min(RE_DELIM_KEPT);
+        // the string's end on this line, if it is on it
+        let mut end = None;
+        let mut i = q;
+        loop {
+            i = prim::find_swar(b, i, *b")");
+            if i >= b.len() {
+                break;
+            }
+            let e = i + 1 + n;
+            if e < b.len() && b[e] == b'"' && b[i + 1..i + 1 + kept] == self.delim[..kept] {
+                end = Some(i);
+                break;
+            }
+            i += 1;
+        }
+        let lim = end.unwrap_or(b.len());
+        if lim > q {
+            let host = regex::Embed {
+                dialect: regex_calls::dialect_of(self.delim[RE_DIALECT]),
+                cooked: false,
+                yields: &YIELDS,
+                stop: |_, _, _| false,
+                arg: 0,
+                escape: |_, p| p,
+                top_only: false,
+                continues: false,
+                base: RE_DQ,
+                text: DQ,
+            };
+            self.k.close(self.out);
+            let mut at = q;
+            let st = self.delim[RE_STATE];
+            if let Some((_, st)) = regex::embedded(&b[..lim], q, st, &host, &mut at, self.out) {
+                self.delim[RE_STATE] = st;
+            }
+            self.k.reopen(self.out, 16);
+        }
+        match end {
+            Some(i) => {
+                let e = i + 1 + n;
+                self.put::<false>(i, e + 1, DQ_END);
+                self.mode = M_CODE;
+                self.aux = 0;
+                self.delim = [0; DELIM_KEPT];
+                e + 1
+            }
+            None => {
+                self.mode = M_RAW_RE;
+                b.len()
+            }
+        }
     }
 
     /// A raw string's text from `q` to its `)delim"`, or the line's end.

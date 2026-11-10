@@ -665,3 +665,202 @@ fn a_block_keeps_what_state_keeps() {
         }
     }
 }
+
+/// Whether `text` holds a token of the regex's `leaf` (a regex scope's last part).
+fn has_re(c: bool, lines: &[&str], text: &str, leaf: &str) {
+    let s = if c {
+        "string.quoted.double.c"
+    } else {
+        "string.quoted.double.c++"
+    };
+    let got = lexed(c, lines);
+    assert!(
+        got.iter()
+            .any(|(t, sc)| t == text && sc.starts_with(s) && sc.ends_with(leaf)),
+        "{text:?} as {leaf:?} in {got:#?}"
+    );
+}
+
+/// Whether no token of `lines` is a regex's.
+fn no_regex(c: bool, lines: &[&str]) {
+    let got = lexed(c, lines);
+    assert!(
+        !got.iter().any(|(_, s)| s.contains("regexp")),
+        "a regex in {got:#?}"
+    );
+}
+
+#[test]
+fn regexes_by_the_engines_call() {
+    const ANCHOR: &str = "keyword.control.anchor.regexp";
+    const CLASS: &str = "constant.other.character-class.escape.backslash.regexp";
+    const GROUP: &str = "punctuation.definition.group.begin.regexp";
+    const LOOK: &str = "meta.assertion.look-ahead.regexp";
+    const POSIX: &str = "constant.other.character-class.posix.regexp";
+    const NAME: &str = "entity.name.other.group.regexp";
+    // `<regex>`: a call, a declaration, unqualified, braces; ECMAScript's lookahead
+    let l = [r#"auto ok = std::regex_match(s, std::regex("^\\d+(?=x)$"));"#];
+    has_re(false, &l, "^", ANCHOR);
+    has_re(false, &l, r"\\d", CLASS);
+    has_re(false, &l, "?=", LOOK);
+    has(
+        false,
+        &l,
+        "\"",
+        "string.quoted.double.c++ punctuation.definition.string.begin.c++",
+    );
+    has_re(
+        false,
+        &[r#"static const std::wregex re{L"[a-z]+"};"#],
+        "a",
+        "range.regexp",
+    );
+    has_re(
+        false,
+        &[r#"regex re ("(a|b)");"#],
+        "|",
+        "keyword.operator.or.regexp",
+    );
+    // the host's escape: a character to the regex, the string's color
+    has(
+        false,
+        &[r#"std::regex r("\"\\w\"");"#],
+        "\\\"",
+        "string.quoted.double.c++ constant.character.escape.c++",
+    );
+    // a raw string, its regex as it reads, across lines
+    let l = [
+        r#"const std::regex kRe(R"re(^(\w+)\s"#,
+        r#"  [[:alpha:]]$)re", std::regex::icase);"#,
+    ];
+    has_re(false, &l, r"\w", CLASS);
+    has(
+        false,
+        &l,
+        ")re\"",
+        "string.quoted.double.c++ punctuation.definition.string.end.c++",
+    );
+    // ECMAScript's class has no POSIX class: `[` and `:` its characters
+    plain(false, &l, "[:alpha:]");
+    // a flag after the pattern picks POSIX's grammar
+    let l = [r#"std::regex e("a\\(b\\)\\{2,3\\}[[:digit:]\\d]", std::regex::basic);"#];
+    has_re(false, &l, r"\\(", GROUP);
+    has_re(false, &l, "2", "constant.literal.numeric.regexp");
+    has_re(false, &l, "[:digit:]", POSIX);
+    let l = [r#"std::regex e("(a|b)+[[:space:]]", std::regex_constants::extended);"#];
+    has_re(false, &l, "(", GROUP);
+    has_re(false, &l, "[:space:]", POSIX);
+    // Boost's Perl, Qt's PCRE: Java's dialect; through a string's wrapper
+    let l = [r#"boost::regex e("(?<y>\\d{4})");"#];
+    has_re(false, &l, "y", NAME);
+    let l = [r#"static const QRegularExpression re(QStringLiteral("^(?<n>\\w+)$"));"#];
+    has_re(false, &l, "n", NAME);
+    has_re(
+        false,
+        &[r#"auto m = QRegularExpression(u"(\\d+)"_s).match(t);"#],
+        r"\\d",
+        CLASS,
+    );
+    // not a regex: a wildcard, a fixed string, Boost's literal
+    no_regex(
+        false,
+        &[r#"QRegExp rx("*.txt", Qt::CaseSensitive, QRegExp::Wildcard);"#],
+    );
+    no_regex(false, &[r#"boost::regex e("a+b", boost::regex::literal);"#]);
+    // RE2: its own, a pattern second in its matchers
+    let l = [r#"if (RE2::FullMatch("x", "(?P<k>\\w+)") && re2::RE2::PartialMatch(t, "\\pN")) {}"#];
+    has_re(false, &l, "k", NAME);
+    has_re(false, &l, r"\\p", "unicode-property.regexp");
+    has_re(
+        false,
+        &[r#"RE2 re("a{2}");"#],
+        "2",
+        "constant.literal.numeric.regexp",
+    );
+    // CTRE's template argument
+    has_re(
+        false,
+        &[r#"if (auto m = ctre::match<"([a-z]+)\\.?">(s)) {}"#],
+        "(",
+        GROUP,
+    );
+    has_re(
+        false,
+        &[r#"static constexpr auto p = ctll::fixed_string{ "h.*" };"#],
+        "*",
+        "quantifier.regexp",
+    );
+    // calls that aren't an engine's: plain strings
+    no_regex(
+        false,
+        &[r#"printf("(%d)\n", x); foo("a+", "b*"); s.find("^");"#],
+    );
+    no_regex(
+        false,
+        &[r#"std::string s("^a+$"); f(x, "a+"); std::regex re(make(p), "a*");"#],
+    );
+}
+
+#[test]
+fn regexes_in_cs_calls() {
+    const GROUP: &str = "punctuation.definition.group.begin.regexp";
+    const POSIX: &str = "constant.other.character-class.posix.regexp";
+    // POSIX's `regcomp(`: BRE, ERE with `REG_EXTENDED`; the first argument's brackets skipped
+    let l = [r#"if (regcomp(&cfg[i].re, "^\\(a\\)*[[:alpha:]\\]x$", REG_NEWLINE)) return 1;"#];
+    has_re(true, &l, r"\\(", GROUP);
+    has_re(true, &l, "[:alpha:]", POSIX);
+    // in a bracket expression a `\` is a character
+    has(
+        true,
+        &l,
+        r"\\",
+        "string.quoted.double.c constant.other.character-class.set.regexp",
+    );
+    let l = [r#"ret = regcomp(&re, "(a|b)+$", REG_EXTENDED | REG_ICASE);"#];
+    has_re(true, &l, "(", GROUP);
+    has_re(true, &l, "|", "keyword.operator.or.regexp");
+    // BRE's `(` and `|` are characters
+    let l = [r#"regcomp(&re, "(a|b)", 0);"#];
+    plain(true, &l, "|");
+    has_re(true, &l, "(a|b)", "string.quoted.double.c");
+    // PCRE2's, a cast before the pattern passed over
+    let l = [
+        r#"re = pcre2_compile((PCRE2_SPTR)"(?i)\\bfoo", PCRE2_ZERO_TERMINATED, 0, &e, &o, NULL);"#,
+    ];
+    has_re(true, &l, "?i", "keyword.other.option-toggle.regexp");
+    no_regex(
+        true,
+        &[r#"pcre2_compile((PCRE2_SPTR)"a.b", 3, PCRE2_LITERAL, &e, &o, NULL);"#],
+    );
+    // C has no C++ engine
+    no_regex(true, &[r#"regex re("a+"); RE2 r("b+");"#]);
+}
+
+#[test]
+fn a_raw_regex_across_lines_in_a_block() {
+    let text = "std::regex r(R\"abcdefgh((a|\n[b-c]{2}\n  )+)abcdefgh\");\nint x;\n";
+    let mut state = State::default();
+    let mut one = Vec::new();
+    let mut spans = Vec::new();
+    for l in text.lines() {
+        spans.clear();
+        line(l.as_bytes(), &mut state, &mut Out::new(&mut spans));
+        one.push((spans.clone(), state));
+    }
+    let mut state = State::default();
+    let mut all = Vec::new();
+    let mut v = Vec::new();
+    block(&mut state, &mut v, &mut |c| {
+        for l in text.lines() {
+            all.push(c.next(l.as_bytes()).to_vec());
+        }
+        None
+    });
+    assert_eq!(all, one.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
+    assert_eq!(state, one.last().unwrap().1);
+    let l: Vec<&str> = text.lines().collect();
+    // the group opened on the first line closes on the third, the string ends there
+    has_re(false, &l, ")", "punctuation.definition.group.end.regexp");
+    has_re(false, &l, "2", "constant.literal.numeric.regexp");
+    has(false, &l, "int", "storage.type.c++");
+}

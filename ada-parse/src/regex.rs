@@ -6,7 +6,7 @@
 //! The kinds carry the scopes of bat's `Regular Expressions (Javascript)` (anchors, back
 //! references, quantifiers, groups and assertions, character classes and their sets, escapes),
 //! with a few of its own for what JavaScript lacks (inline options, atomic groups, `\Q…\E`).
-//! Seven dialects ([`Dialect`]):
+//! Nine dialects ([`Dialect`]):
 //! - **Java's** (`java.util.regex`, Kotlin's too) adds possessive quantifiers, `(?>…)`,
 //!   `(?idmsux-idmsux)` and `(?idmsux-idmsux:…)`, nested classes and `&&`, `\Q…\E`, `\pL`,
 //!   `\h\H\v\V\R\X`, `\A\G\Z\z` and its escapes.
@@ -33,6 +33,15 @@
 //!   in a class a character, `\k<name>` and `\g<name>` (with `'…'`, numbers and levels),
 //!   `\h\H` (hex digits), `\R\X\K`, `\A\G\Z\z`, `\p{^Alpha}` (braces only), Ruby's
 //!   escapes (`\xH`, `\u{H H}`, `\cX`, `\C-x`, `\M-x`, octal); no `\Q…\E`.
+//! - **POSIX's**, extended (ERE: `regcomp(` with `REG_EXTENDED`, `std::regex::extended`,
+//!   `egrep`, `awk`) and basic (BRE: `regcomp(`, `std::regex::basic`, `grep`): no `(?…)`
+//!   group, no lazy or possessive quantifier, and in a bracket expression a `\` is a character,
+//!   `[:alpha:]`, `[=a=]` and `[.-.]` its classes and a `]` first a character. A `\` outside
+//!   one escapes the character after it, glibc's `\w\W\s\S`, `\b\B\<\>` and `` \` `` `\'` and
+//!   the back references `\1` to `\9` read as glibc reads them. In BRE `\(…\)` is a group and
+//!   `\{n,m\}` an interval, GNU's `\|`, `\+` and `\?` its alternation and quantifiers, and
+//!   `(`, `)`, `{`, `|`, `+` and `?` characters. A `^` or `$` is an anchor wherever it stands
+//!   (BRE's is a character but at an expression's ends).
 //!
 //! **A host's string spells the regex.** In a cooked string (Java's `"…"`, Kotlin's `"…"`)
 //! `\\` is the regex's `\`, so `"\\d+"` is `\d+`, and any other `\` starts the host's escape, a
@@ -98,6 +107,10 @@ pub(crate) enum Dialect {
     Swift,
     /// Ruby's regex literals' (Onigmo's Ruby syntax).
     Ruby,
+    /// POSIX's extended (ERE), as glibc reads it.
+    Ere,
+    /// POSIX's basic (BRE), as glibc reads it, GNU's `\|`, `\+` and `\?` with it.
+    Bre,
 }
 
 macro_rules! leaves {
@@ -359,6 +372,11 @@ impl Scan<'_, '_, '_, '_> {
         self.host.dialect == Dialect::Ruby
     }
 
+    /// POSIX's, extended or basic.
+    fn posix(&self) -> bool {
+        matches!(self.host.dialect, Dialect::Ere | Dialect::Bre)
+    }
+
     /// Java's or Swift's, whose escapes and class escapes Swift's takes.
     fn javaish(&self) -> bool {
         matches!(self.host.dialect, Dialect::Java | Dialect::Swift)
@@ -479,6 +497,12 @@ impl Scan<'_, '_, '_, '_> {
             return u.end;
         }
         let e = u.end;
+        if self.host.dialect == Dialect::Bre
+            && matches!(u.c, b'?' | b'+' | b'{' | b'|' | b'(' | b')')
+        {
+            // BRE's characters: `\(`, `\{`, `\|`, `\+` and `\?` are its tokens
+            return e;
+        }
         match u.c {
             b'\\' => self.backslash(p, e),
             b'^' | b'$' => self.tok(p, e, L::Anchor),
@@ -503,6 +527,14 @@ impl Scan<'_, '_, '_, '_> {
     /// colors as bat's two) after it ends at `e`: where it ends. RE2, Rust and .NET have no
     /// possessive.
     fn lazy(&self, e: usize) -> usize {
+        if self.posix() {
+            // POSIX has neither: ERE's `*?` is a quantifier repeated, alike to the eye; BRE's
+            // `?` a character
+            return match self.host.dialect {
+                Dialect::Ere => self.is(e, b'?').unwrap_or(e),
+                _ => e,
+            };
+        }
         self.is(e, b'?')
             .or_else(|| self.is(e, b'+').filter(|_| self.possessive()))
             .unwrap_or(e)
@@ -544,7 +576,7 @@ impl Scan<'_, '_, '_, '_> {
                 s.st += 1;
             }
         };
-        if let Some(q) = self.is(e, b'?') {
+        if let Some(q) = self.is(e, b'?').filter(|_| !self.posix()) {
             let next = self.unit(q).filter(|u| !u.host).map(|u| u.c);
             let assertion = match next {
                 Some(b'=') => Some((q + 1, L::LookAhead)),
@@ -711,7 +743,10 @@ impl Scan<'_, '_, '_, '_> {
     fn group_name(&self, s: usize) -> Option<usize> {
         type Class = fn(u8) -> bool;
         let (first, rest): (Class, Class) = match self.host.dialect {
-            Dialect::Java => (|c| c.is_ascii_alphabetic(), |c| c.is_ascii_alphanumeric()),
+            // POSIX has no named group: Java's, unused
+            Dialect::Java | Dialect::Ere | Dialect::Bre => {
+                (|c| c.is_ascii_alphabetic(), |c| c.is_ascii_alphanumeric())
+            }
             Dialect::Ecma => (
                 |c| c.is_ascii_alphabetic() || matches!(c, b'_' | b'$' | 0x80..),
                 |c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'$' | 0x80..),
@@ -802,10 +837,10 @@ impl Scan<'_, '_, '_, '_> {
             Some(n) => self.tok(e, n, L::Negation),
             None => e,
         };
-        // RE2's, Rust's, .NET's, Swift's and Ruby's `[]a]`: a `]` first is a character
+        // RE2's, Rust's, .NET's, Swift's, Ruby's and POSIX's `[]a]`: a `]` first is a character
         match self
             .is(e, b']')
-            .filter(|_| self.re2() || self.netish() || self.ruby())
+            .filter(|_| self.re2() || self.netish() || self.ruby() || self.posix())
         {
             Some(n) => n,
             None => e,
@@ -842,10 +877,15 @@ impl Scan<'_, '_, '_, '_> {
                 r
             }
             b'[' if (self.re2() || self.swift() || self.ruby())
-                && let Some(q) = self.is(e, b':').and_then(|c| self.posix(c)) =>
+                && let Some(q) = self.is(e, b':').and_then(|c| self.posix_class(c)) =>
             {
                 self.tok(p, q, L::PosixClass)
             }
+            // POSIX's `[:alpha:]`, `[=a=]`, `[.-.]`; another `[` a character
+            b'[' if self.posix() => match self.posix_bracket(e) {
+                Some(q) => self.tok(p, q, L::PosixClass),
+                None => self.range(p, u).unwrap_or(e),
+            },
             b'[' if self.nested_sets() => {
                 if self.st & NESTS != NESTS {
                     self.st += NEST;
@@ -883,7 +923,8 @@ impl Scan<'_, '_, '_, '_> {
                 if let Some(r) = self.range(p, u) {
                     return r;
                 }
-                if u.c == b'\\' {
+                // in a POSIX bracket expression a `\` is a character
+                if u.c == b'\\' && !self.posix() {
                     return self.backslash(p, e);
                 }
                 e
@@ -896,7 +937,7 @@ impl Scan<'_, '_, '_, '_> {
         // an end: a class escape, an escape, or a character but `]`
         let end = |s: &Self, q: usize, first: bool| -> Option<(usize, Option<L>)> {
             let v = s.unit(q)?;
-            if !v.host && v.c == b'\\' {
+            if !v.host && v.c == b'\\' && !s.posix() {
                 let Some(w) = s.unit(v.end) else {
                     // ECMAScript: a `\` at the line's end is a character
                     return (!s.javaish() && !s.ruby()).then_some((v.end, None));
@@ -949,8 +990,34 @@ impl Scan<'_, '_, '_, '_> {
         Some(self.tok(dash, e, l2.unwrap_or(L::Range)))
     }
 
+    /// POSIX's `[:alpha:]`, `[=a=]` or `[.-.]` in a bracket expression, from `s` past its `[`:
+    /// where it ends.
+    fn posix_bracket(&self, s: usize) -> Option<usize> {
+        let d = self
+            .unit(s)
+            .filter(|u| !u.host && matches!(u.c, b':' | b'=' | b'.'))?;
+        let mut t = d.end;
+        if d.c == b':' {
+            while t < self.b.len() && self.b[t].is_ascii_lowercase() {
+                t += 1;
+            }
+            if t == d.end {
+                return None;
+            }
+        } else {
+            // a collating element or an equivalence class: a character, or a name
+            let first = self.unit(t).filter(|u| !u.host)?;
+            t = first.end;
+            while t < self.b.len() && self.b[t].is_ascii_alphanumeric() && self.b[t] != d.c {
+                t += 1;
+            }
+        }
+        let c = self.is(t, d.c)?;
+        self.is(c, b']')
+    }
+
     /// `[:alpha:]` or `[:^alpha:]` in a class, from `s` past its `[:`: where it ends.
-    fn posix(&self, s: usize) -> Option<usize> {
+    fn posix_class(&self, s: usize) -> Option<usize> {
         let w = if self.b.get(s) == Some(&b'^') {
             s + 1
         } else {
@@ -965,6 +1032,9 @@ impl Scan<'_, '_, '_, '_> {
 
     /// `\…`, its `\` at `p` to `e`: where it ends.
     fn backslash(&mut self, p: usize, e: usize) -> usize {
+        if self.posix() {
+            return self.backslash_posix(p, e);
+        }
         if self.re2() {
             return self.backslash_re2(p, e);
         }
@@ -1128,6 +1198,75 @@ impl Scan<'_, '_, '_, '_> {
                 self.tok(p, q, L::Escape)
             }
         }
+    }
+
+    /// `\…` in POSIX's ERE or BRE outside a bracket expression, its `\` at `p` to `e`: where it
+    /// ends. BRE's groups, intervals, alternation and GNU's quantifiers are here.
+    #[inline(never)]
+    fn backslash_posix(&mut self, p: usize, e: usize) -> usize {
+        let Some(u) = self.unit(e) else {
+            return self.tok(p, e, L::Escape);
+        };
+        if u.host {
+            return self.tok(p, u.end, L::Escape);
+        }
+        let n = u.end;
+        if self.host.dialect == Dialect::Bre {
+            match u.c {
+                b'(' => {
+                    if self.st & DEPTH < DEPTH {
+                        self.st += 1;
+                    }
+                    return self.tok(p, n, L::GroupBegin);
+                }
+                b')' if self.st & DEPTH != 0 => {
+                    self.st -= 1;
+                    return self.tok(p, n, L::GroupEnd);
+                }
+                b'|' => return self.tok(p, n, L::Or),
+                b'+' | b'?' => return self.tok(p, n, L::Quantifier),
+                b'{' => {
+                    if let Some(r) = self.bre_interval(p, n) {
+                        return r;
+                    }
+                }
+                _ => {}
+            }
+        }
+        match u.c {
+            b'b' | b'B' | b'<' | b'>' | b'`' | b'\'' => self.tok(p, n, L::Anchor),
+            b'1'..=b'9' => self.tok(p, n, L::BackReference),
+            b'w' | b'W' | b's' | b'S' => self.tok(p, n, L::ClassEscape),
+            _ => self.tok(p, n, L::Escape),
+        }
+    }
+
+    /// BRE's `\{n\}`, `\{n,\}`, `\{n,m\}` or `\{,m\}`, its `\{` at `p` to `e`: where it ends.
+    fn bre_interval(&mut self, p: usize, e: usize) -> Option<usize> {
+        let digits = |q: usize| {
+            let mut r = q;
+            while r < self.b.len() && self.b[r].is_ascii_digit() {
+                r += 1;
+            }
+            r
+        };
+        let d1 = digits(e);
+        let (comma, d2) = match self.is(d1, b',') {
+            Some(c) => (Some(d1), digits(c)),
+            None => (None, d1),
+        };
+        if d1 == e && (comma.is_none() || d2 == d1 + 1) {
+            return None;
+        }
+        let close = self.is(d2, b'\\')?;
+        let end = self.is(close, b'}')?;
+        self.tok(p, e, L::Quantifier);
+        self.tok(e, d1, L::QuantifierNumber);
+        if let Some(c) = comma {
+            self.tok(c, c + 1, L::QuantifierComma);
+            self.tok(c + 1, d2, L::QuantifierNumber);
+        }
+        Some(self.tok(d2, end, L::Quantifier))
     }
 
     /// `\…` in RE2 or Rust, its `\` at `p` to `e`: where it ends.
@@ -1856,5 +1995,59 @@ mod tests {
         }
         has(&t, "?imx-imx", "keyword.other.option-toggle.regexp");
         has(&t, "?u", "keyword.other.option-toggle.regexp");
+    }
+
+    #[test]
+    fn posix_dialects() {
+        // ERE: groups, alternation, intervals; no `(?`, no lazy quantifier of its own; a `\`
+        // in a bracket expression a character, its classes, a `]` first
+        let t = lex_in(
+            r"(?:a|b){2,}[]\[:alpha:][=e=][.-.]a-z]\<x\1",
+            false,
+            Dialect::Ere,
+        );
+        has(&t, "(", "punctuation.definition.group.begin.regexp");
+        has(&t, "|", "keyword.operator.or.regexp");
+        has(
+            &t,
+            ",",
+            "keyword.operator.quantifier.regexp punctuation.separator.comma.regexp",
+        );
+        has(
+            &t,
+            "[:alpha:]",
+            "constant.other.character-class.set.regexp constant.other.character-class.posix.regexp",
+        );
+        has(
+            &t,
+            "[=e=]",
+            "constant.other.character-class.set.regexp constant.other.character-class.posix.regexp",
+        );
+        has(
+            &t,
+            "[.-.]",
+            "constant.other.character-class.set.regexp constant.other.character-class.posix.regexp",
+        );
+        has(&t, "]\\", "constant.other.character-class.set.regexp");
+        has(&t, r"\<", "keyword.control.anchor.regexp");
+        has(&t, r"\1", "keyword.other.back-reference.regexp");
+        assert!(!t.iter().any(|(x, _)| *x == "?:"), "{t:?}");
+        // BRE: `\(`, `\)`, `\{n,m\}`, GNU's `\|` and `\+`; `(`, `|`, `{`, `+` and `?` characters
+        let t = lex_in(r"\(a\|b\)\{1,3\}(c|d)+?{2}\+x*", false, Dialect::Bre);
+        has(&t, r"\(", "punctuation.definition.group.begin.regexp");
+        has(&t, r"\|", "keyword.operator.or.regexp");
+        has(&t, r"\)", "punctuation.definition.group.end.regexp");
+        has(&t, r"\{", "keyword.operator.quantifier.regexp");
+        has(&t, r"\}", "keyword.operator.quantifier.regexp");
+        has(
+            &t,
+            "3",
+            "keyword.operator.quantifier.regexp constant.literal.numeric.regexp",
+        );
+        has(&t, r"\+", "keyword.operator.quantifier.regexp");
+        has(&t, "*", "keyword.operator.quantifier.regexp");
+        for c in ["(", "|", "+", "?", "{"] {
+            assert!(!t.iter().any(|(x, _)| *x == c), "{c:?} in {t:?}");
+        }
     }
 }

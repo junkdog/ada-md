@@ -40,6 +40,9 @@ pub(super) const A_TYPENAME: u16 = 14;
 pub(super) const A_CAST: u16 = 15;
 /// `delete`: a modifier after a definition's `=` (`= delete;`), as `default` is.
 pub(super) const A_DELETE: u16 = 16;
+/// A regex engine's name ([`ENGINES`]): a plain name, but a string after it on its line may be
+/// a regex ([`super::regex_calls`]).
+pub(super) const A_REGEX: u16 = 17;
 
 /// Where an [`INFO`] entry's action starts.
 pub(super) const ACT: u16 = 8;
@@ -176,8 +179,36 @@ const KEYWORDS: [(&[u8], u16, u16, u8); 118] = [
     (b"u8R", PLAIN, A_LEAF, CXX),
 ];
 
-/// How many words [`WORDS`] holds: the keywords, then the support words.
-const N: usize = KEYWORDS.len() + SUPPORT.len();
+/// The names a regex engine's call has before its pattern on the line ([`A_REGEX`],
+/// [`super::regex_calls`]), and the languages that have them: a string is checked for one only
+/// after one of these on its line.
+const ENGINES: [(&[u8], u8); 20] = [
+    (b"regex", CXX),
+    (b"wregex", CXX),
+    (b"sregex", CXX),
+    (b"cregex", CXX),
+    (b"wsregex", CXX),
+    (b"wcregex", CXX),
+    (b"QRegularExpression", CXX),
+    (b"QRegExp", CXX),
+    (b"setFilterRegularExpression", CXX),
+    (b"setFilterRegExp", CXX),
+    (b"RE2", CXX),
+    (b"ctre", CXX),
+    (b"ctll", CXX),
+    (b"regcomp", BOTH),
+    (b"pcre2_compile", BOTH),
+    (b"pcre2_compile_8", BOTH),
+    (b"pcre2_compile_16", BOTH),
+    (b"pcre2_compile_32", BOTH),
+    (b"pcre_compile", BOTH),
+    (b"pcre_compile2", BOTH),
+];
+
+/// Where [`ENGINES`] start in [`LIST`].
+const E0: usize = KEYWORDS.len() + SUPPORT.len();
+/// How many words [`WORDS`] holds: the keywords, the support words, the engines' names.
+const N: usize = E0 + ENGINES.len();
 
 const LIST: [&[u8]; N] = {
     let mut l: [&[u8]; N] = [b""; N];
@@ -185,8 +216,10 @@ const LIST: [&[u8]; N] = {
     while i < N {
         l[i] = if i < KEYWORDS.len() {
             KEYWORDS[i].0
-        } else {
+        } else if i < E0 {
             SUPPORT[i - KEYWORDS.len()].0
+        } else {
+            ENGINES[i - E0].0
         };
         i += 1;
     }
@@ -211,6 +244,8 @@ pub(super) static INFO: [[u16; N + 1]; 2] = {
     while i < N {
         let (leaf, act, langs) = if i < KEYWORDS.len() {
             (KEYWORDS[i].1, KEYWORDS[i].2, KEYWORDS[i].3)
+        } else if i >= E0 {
+            (PLAIN, A_REGEX, ENGINES[i - E0].1)
         } else {
             let leaf = match SUPPORT[i - KEYWORDS.len()].1 {
                 Support::C99 => C99,
