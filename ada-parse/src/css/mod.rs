@@ -15,7 +15,8 @@
 //! (position `n`), and the search goes on past it (`n + 1`), where only empty matches can hold
 //! (`$`, `''`, a lookahead's pop); a pattern whose leftmost match is empty and does nothing counts
 //! only where a search starts (`(?:\s+([iI]))?` in an attribute selector); `^` only at a line's
-//! start; a push at syntect's depth limit matches nothing.
+//! start. Nesting has no limit of syntect's: a push past [`MAX`] levels drops the bottom one
+//! (X-133).
 //!
 //! A kind is a leaf, bat's scopes for the token, under a **wrap**: the comment or string the token
 //! sits in. Meta scopes are left out (no theme selects one of CSS's). The stack between lines is
@@ -1896,11 +1897,8 @@ struct Num {
 
 // ---- the scan ----
 
-/// How many contexts a line can hold (syntect's limit is below it).
+/// How many contexts a line can hold; one pushed past it drops the bottom one.
 const MAX: usize = 128;
-/// syntect's stack limit (with its two bottom contexts, `__start` and `main`): at it, a push's
-/// pattern matches nothing, so the patterns after it get their turn.
-const SYNTECT_DEPTH: usize = 99;
 
 /// Lex `b`, a line of CSS without its `\n`, from `state`.
 #[inline(never)]
@@ -2214,14 +2212,13 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
         }
     }
 
-    /// Whether a push may match: below syntect's limit.
-    fn can_push(&self) -> bool {
-        self.depth < SYNTECT_DEPTH
-    }
-
-    /// Push context `c` at `at`, the text before it filled first.
+    /// Push context `c` at `at`, the text before it filled first; at [`MAX`] the bottom
+    /// context (above the base) is dropped.
     fn push(&mut self, c: u8, at: usize) {
         self.fill(at);
+        if self.depth == MAX {
+            crate::stack::drop_bottom(&mut self.stack, &mut self.depth);
+        }
         self.stack[self.depth] = c;
         self.depth += 1;
         self.ctx = c;
@@ -3327,9 +3324,6 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
         match op {
             P_COMMENT => {
                 if p + 1 < n && b[p] == b'/' && b[p + 1] == b'*' {
-                    if !self.can_push() {
-                        return None;
-                    }
                     self.push(COMMENT, p);
                     self.tok(p, p + 2, COMMENT_MARK);
                     return Some(p + 2);
@@ -3338,9 +3332,7 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
             }
             P_SELECTOR | P_SELECTOR_IN => {
                 let c = c?;
-                if (matches!(c, b':' | b'.' | b'*' | b'#' | b'[') || c.is_ascii_alphabetic())
-                    && self.can_push()
-                {
+                if (matches!(c, b':' | b'.' | b'*' | b'#' | b'[') || c.is_ascii_alphabetic()) {
                     self.push(SELECTOR, p);
                     return Some(p);
                 }
@@ -3348,14 +3340,14 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
             }
             P_AT_RULES => self.at_rules(p),
             P_PL => {
-                if c == Some(b'{') && self.can_push() {
+                if c == Some(b'{') {
                     self.push(PL, p);
                     return Some(p);
                 }
                 None
             }
             P_RULE_LIST => {
-                if c == Some(b'{') && self.can_push() {
+                if c == Some(b'{') {
                     self.push(PL_BODY, p);
                     self.tok(p, p + 1, PL_MARK);
                     return Some(p + 1);
@@ -3389,14 +3381,14 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
             }
             P_PROP_NAME => {
                 let c = c?;
-                if (c == b'-' || c.is_ascii_lowercase()) && self.can_push() {
+                if c == b'-' || c.is_ascii_lowercase() {
                     self.push(PROP_NAME, p);
                     return Some(p);
                 }
                 None
             }
             P_VALUE | P_FONT_VALUE => {
-                if c == Some(b':') && self.can_push() {
+                if c == Some(b':') {
                     self.tok(p, p + 1, KEY_VALUE);
                     let q = self.blanks(p + 1);
                     self.push(
@@ -3448,7 +3440,7 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
             P_DOC_FNS => self.function_at(p, F_DOC),
             P_ADJ_FNS => self.function_at(p, F_ADJ),
             P_LINE_NAMES => {
-                if c == Some(b'[') && self.can_push() {
+                if c == Some(b'[') {
                     self.push(LINE_NAMES, p);
                     self.tok(p, p + 1, LINE_NAMES_BEGIN);
                     return Some(p + 1);
@@ -3484,9 +3476,6 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
                     Some(b'"') => STR_D,
                     _ => return None,
                 };
-                if !self.can_push() {
-                    return None;
-                }
                 self.push(q, p);
                 self.tok(p, p + 1, STRING_BEGIN);
                 Some(p + 1)
@@ -3563,9 +3552,6 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
                     // `(-family)?` backtracks when what follows fails
                     for e in [e, p + 4] {
                         if self.ch(e) != Some(b'-') && self.boundary(e) {
-                            if !self.can_push() {
-                                return None;
-                            }
                             self.tok(p, e, PROPERTY_NAME);
                             self.push(FONT_AFTER, e);
                             return Some(e);
@@ -3633,7 +3619,7 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
             P_COMBINATOR => self.combinator(p),
             P_PSEUDO => self.pseudo(p),
             P_ATTR_SEL => {
-                if c == Some(b'[') && self.can_push() {
+                if c == Some(b'[') {
                     self.push(ATTR_SEL, p);
                     self.tok(p, p + 1, ENTITY_MARK);
                     return Some(p + 1);
@@ -3675,9 +3661,6 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
             }
             P_ATTR_FN_NAME => {
                 let e = self.ident(p)?;
-                if !self.can_push() {
-                    return None;
-                }
                 self.tok(p, e, ATTR_NAME);
                 self.push(ATTR_FN_REST, e);
                 Some(e)
@@ -3689,9 +3672,6 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
                     Some(b'~' | b'*' | b'|' | b'^' | b'$') if b.get(s + 1) == Some(&b'=') => s + 2,
                     _ => return None,
                 };
-                if !self.can_push() {
-                    return None;
-                }
                 self.tok(s, o, ATTR_OP);
                 let e = self.spaces(o);
                 self.push(ATTR_VAL, e);
@@ -3748,7 +3728,7 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
                 None
             }
             P_GROUP => {
-                if c == Some(b'(') && self.can_push() {
+                if c == Some(b'(') {
                     self.tok(p, p + 1, GROUP_BEGIN);
                     self.push(ctx & !WRAP, p + 1);
                     return Some(p + 1);
@@ -3846,7 +3826,7 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
                 Some(e)
             }
             P_COUNTER_COMMA => {
-                if c == Some(b',') && self.can_push() {
+                if c == Some(b',') {
                     let rest = if ctx == G_COUNTER {
                         COUNTER_REST
                     } else {
@@ -3904,7 +3884,7 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
                 None
             }
             P_CALC_PAREN => {
-                if c == Some(b'(') && self.can_push() {
+                if c == Some(b'(') {
                     self.tok(p, p + 1, GROUP_BEGIN);
                     self.push(CALC_PARENS, p + 1);
                     return Some(p + 1);
@@ -3935,7 +3915,7 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
             }
             P_CM_KEYWORD => {
                 let s = self.spaces(p);
-                if crate::has_at(b, s, b"@custom-media") && self.can_push() {
+                if crate::has_at(b, s, b"@custom-media") {
                     self.at_keyword(s, s + 13, AT_CUSTOM_MEDIA);
                     self.push(CM, s + 13);
                     return Some(s + 13);
@@ -3960,14 +3940,11 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
                         if s > p { s - 1 } else { return None }
                     }
                 };
-                if !self.can_push() {
-                    return None;
-                }
                 self.push(if op == P_MQL { MQL } else { KF_NAMES }, e);
                 Some(e)
             }
             P_BLOCK => {
-                if c == Some(b'{') && self.can_push() {
+                if c == Some(b'{') {
                     self.push(BLOCK, p);
                     self.tok(p, p + 1, BLOCK_BEGIN);
                     return Some(p + 1);
@@ -4003,7 +3980,7 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
                         break;
                     }
                 }
-                if !crate::has_at(b, k, b"keyframes") || !self.can_push() {
+                if !crate::has_at(b, k, b"keyframes") {
                     return None;
                 }
                 let e = k + 9;
@@ -4020,7 +3997,7 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
             }
             P_AT_BLOCK => {
                 let s = self.spaces(p);
-                if self.ch(s) == Some(b'{') && self.can_push() {
+                if self.ch(s) == Some(b'{') {
                     self.tok(s, s + 1, PL_MARK);
                     self.push(if ctx == KF_OUT { KF_BODY } else { MEDIA_BODY }, s + 1);
                     return Some(s + 1);
@@ -4052,9 +4029,6 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
                     }
                     None => s,
                 };
-                if !self.can_push() {
-                    return None;
-                }
                 self.push(KF_NAME_END, e);
                 Some(e)
             }
@@ -4075,7 +4049,7 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
             }
             P_MEDIA_KEYWORD => {
                 let s = self.spaces(p);
-                if crate::has_at(b, s, b"@media") && self.can_push() {
+                if crate::has_at(b, s, b"@media") {
                     self.at_keyword(s, s + 6, AT_MEDIA);
                     self.push(MEDIA_HEAD, s + 6);
                     return Some(s + 6);
@@ -4109,7 +4083,7 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
                 None
             }
             P_MQ_PAREN | P_SUP_PAREN => {
-                if c == Some(b'(') && self.can_push() {
+                if c == Some(b'(') {
                     self.push(
                         if op == P_MQ_PAREN {
                             MQ_PAREN
@@ -4159,9 +4133,6 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
         }
         // `((@)document)` and `((@)supports)` take no spaces before them
         let k = &b[s + 1..];
-        if !self.can_push() {
-            return None;
-        }
         if k.starts_with(b"charset") && self.boundary(s + 8) {
             self.at_keyword(s, s + 8, AT_CHARSET);
             let e = self.spaces(s + 8);
@@ -4339,7 +4310,7 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
             return None;
         }
         let (family, leaf, group) = function(&b[p..e])?;
-        if family & families == 0 || !self.can_push() {
+        if family & families == 0 {
             return None;
         }
         self.tok(p, e, leaf);
@@ -4348,12 +4319,9 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
             return Some(e);
         }
         self.push(group | WRAP, e);
-        if self.can_push() {
-            self.tok(e, e + 1, GROUP_BEGIN);
-            self.push(group, e + 1);
-            return Some(e + 1);
-        }
-        Some(e)
+        self.tok(e, e + 1, GROUP_BEGIN);
+        self.push(group, e + 1);
+        Some(e + 1)
     }
 
     /// `unicode-range`: `(?xi)(u\+)([0-9a-f?]{1,6}(?:(-)[0-9a-f]{1,6})?)`.
@@ -4815,18 +4783,13 @@ impl<const S: bool, K: Sink> Scan<'_, '_, '_, S, K> {
                 }
                 _ => None,
             };
-            if let Some(g) = group
-                && self.can_push()
-            {
+            if let Some(g) = group {
                 self.tok(p, s, PSEUDO_CLASS_MARK);
                 self.tok(s, e, PSEUDO_CLASS);
                 self.push(g | WRAP, e);
-                if self.can_push() {
-                    self.tok(e, e + 1, GROUP_BEGIN);
-                    self.push(g, e + 1);
-                    return Some(e + 1);
-                }
-                return Some(e);
+                self.tok(e, e + 1, GROUP_BEGIN);
+                self.push(g, e + 1);
+                return Some(e + 1);
             }
         }
         let e = self.ident(s)?;
@@ -5114,6 +5077,26 @@ mod tests {
         assert_eq!(
             m.last(),
             Some(&("}", "punctuation.section.property-list.css"))
+        );
+    }
+
+    /// No limit of syntect's on nesting (X-133): past its 99 levels a group still opens at
+    /// every `(`, and a value in it still reads.
+    #[test]
+    fn nesting_past_syntects_depth() {
+        let line = format!("a {{ width: calc({}1px + 2em) }}", "(".repeat(120));
+        let got = marked(Lang::Css, &[&line]);
+        let groups = got
+            .iter()
+            .filter(|(t, s)| *t == "(" && *s == "punctuation.definition.group.begin.css")
+            .count();
+        assert_eq!(groups, 121, "{got:?}");
+        assert!(
+            got.contains(&(
+                "px",
+                "constant.numeric.integer.decimal.css keyword.other.unit.css"
+            )),
+            "{got:?}"
         );
     }
 }

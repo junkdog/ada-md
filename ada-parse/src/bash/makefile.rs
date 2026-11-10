@@ -526,8 +526,6 @@ struct Frame {
 
 /// The frames a scan holds.
 const MAX: usize = 128;
-/// syntect's limit: a push at this depth is refused.
-const SYNTECT_DEPTH: usize = 99;
 
 struct Scan<'a, 'o, 'p> {
     b: &'a [u8],
@@ -831,20 +829,16 @@ impl Scan<'_, '_, '_> {
             base: if own != PLAIN { own } else { below.base },
         };
         if self.depth == MAX {
-            self.stack.copy_within(1.., 0);
+            // the bottom frame above `main` dropped, and the shell region's depth with it
+            self.stack.copy_within(2.., 1);
             self.depth -= 1;
+            self.sh.0 = match self.sh.0 {
+                0..=2 => 0,
+                d => d - 1,
+            };
         }
         self.stack[self.depth] = MaybeUninit::new(f);
         self.depth += 1;
-    }
-
-    /// A push syntect would make: refused at its depth limit.
-    fn open(&mut self, id: u8) -> bool {
-        if self.depth >= SYNTECT_DEPTH {
-            return false;
-        }
-        self.push(id);
-        true
     }
 
     fn pop(&mut self) {
@@ -1428,15 +1422,15 @@ impl Scan<'_, '_, '_> {
                 match c {
                     b'\'' => {
                         self.tok(i, i + 1, mk::STR_BEGIN);
-                        self.open(STR_S);
+                        self.push(STR_S);
                     }
                     b'"' => {
                         self.tok(i, i + 1, mk::STR_BEGIN);
-                        self.open(STR_D);
+                        self.push(STR_D);
                     }
                     b'(' => {
                         self.tok(i, i + 1, mk::GROUP_BEGIN);
-                        self.open(GROUP);
+                        self.push(GROUP);
                     }
                     _ => self.tok(i, i + 1, mk::STRAY_PAREN),
                 }
@@ -1489,7 +1483,7 @@ impl Scan<'_, '_, '_> {
             }
             (FCALL | CALL_PAT | CALL_WILD | CALL_INFO, b'(') => {
                 self.fill(i);
-                self.open(BAL);
+                self.push(BAL);
                 Ok(i + 1)
             }
             (FCALL | CALL_PAT | CALL_WILD, _) => {
@@ -1498,7 +1492,7 @@ impl Scan<'_, '_, '_> {
                     return Ok(i + 1);
                 }
                 self.tok(i, i + 1, mk::STR_BEGIN);
-                self.open(if c == b'\'' { STR_S } else { STR_D });
+                self.push(if c == b'\'' { STR_S } else { STR_D });
                 Ok(i + 1)
             }
             (CALL, _) => {
@@ -1733,7 +1727,7 @@ impl Scan<'_, '_, '_> {
         if id == OVERRIDE && self.top().id != MAIN {
             self.set(id);
         } else {
-            self.open(id);
+            self.push(id);
         }
         k + len
     }
@@ -1860,7 +1854,7 @@ impl Scan<'_, '_, '_> {
         self.put(q, s, base);
         self.put(s, f + 1, mk::ASSIGN);
         if self.b[s] == b'!' {
-            self.open(SH_ASSIGN);
+            self.push(SH_ASSIGN);
             return f + 1;
         }
         self.value(f + 1, true)
@@ -1908,8 +1902,8 @@ impl Scan<'_, '_, '_> {
         };
         self.put(p, q, mk::UNQUOTED);
         self.put(q, q + 1, mk::INTERP_BEGIN);
-        self.open(embed);
-        self.open(region);
+        self.push(embed);
+        self.push(region);
         Some(q + 1)
     }
 
@@ -1998,9 +1992,6 @@ impl Scan<'_, '_, '_> {
                 .then(|| CALLS.iter().find(|c| c.0 == word))
                 .flatten()
             {
-                if self.depth >= SYNTECT_DEPTH {
-                    return None;
-                }
                 self.fill(i);
                 self.put(i, name, mk::BLOCK_BEGIN);
                 self.put(
@@ -2023,9 +2014,6 @@ impl Scan<'_, '_, '_> {
         self.fill(i);
         match after {
             b'(' | b'{' if e == o + 1 => {
-                if self.depth >= SYNTECT_DEPTH {
-                    return None;
-                }
                 self.put(i, e, mk::BLOCK_BEGIN);
                 self.push(if after == b'(' { SUBST_P } else { SUBST_B });
             }
@@ -2109,13 +2097,18 @@ impl Scan<'_, '_, '_> {
                     match c {
                         b'\'' => {
                             self.put(t, t + 1, mk::STR_BEGIN);
-                            self.open(STR_S).then_some(t + 1)
+                            self.push(STR_S);
+                            Some(t + 1)
                         }
                         b'"' => {
                             self.put(t, t + 1, mk::STR_BEGIN);
-                            self.open(STR_D).then_some(t + 1)
+                            self.push(STR_D);
+                            Some(t + 1)
                         }
-                        _ => self.open(BAL).then_some(t + 1),
+                        _ => {
+                            self.push(BAL);
+                            Some(t + 1)
+                        }
                     }
                 }
             };
@@ -2611,5 +2604,17 @@ mod tests {
             .count();
         assert_eq!(endifs, 2, "{m:?}");
         assert!(m.contains(&("c", "string.unquoted.shell")), "{m:?}");
+    }
+
+    /// No limit of syntect's on nesting (X-133): past its 99 levels a substitution and a
+    /// function call still open.
+    #[test]
+    fn nesting_past_syntects_depth() {
+        let line = format!("x := {}$(info y)", "$(".repeat(120));
+        let m = marked(Lang::Makefile, &[&line]);
+        assert!(
+            m.contains(&("info", "support.function.builtin.makefile")),
+            "{m:?}"
+        );
     }
 }

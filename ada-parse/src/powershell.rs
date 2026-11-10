@@ -12,9 +12,10 @@
 //! What syntect's machinery decides is followed: the comment docs' `(?:^|\G)` is tried only
 //! where a search starts (a line's start, after `<#` or `#`), and a failed search is cached for
 //! the rest of the line, across both comments; the line's `\n` ends `#` comments and `#requires`
-//! (whose `\s` may take it), and `$` holds before it; a push past syntect's depth limit matches
-//! nothing. The lazy and searching patterns (a command's `.+?`, `${…}`'s `[^}]*`, the
-//! prefix `…\` of a command and `foo.exe`'s run) are memoized per line, so a line stays linear.
+//! (whose `\s` may take it), and `$` holds before it. Nesting has no limit of syntect's: a push
+//! past [`MAX`] levels drops the bottom one (X-133). The lazy and searching patterns (a
+//! command's `.+?`, `${…}`'s `[^}]*`, the prefix `…\` of a command and `foo.exe`'s run) are
+//! memoized per line, so a line stays linear.
 //!
 //! A kind is a leaf, bat's scopes for the token with its pattern's own meta scope, under a
 //! **wrap**: the string or comment the token sits in, the one scope above it a theme can select
@@ -301,11 +302,8 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
         .collect()
 }
 
-/// How many contexts a line can hold (syntect's limit is below it).
+/// How many contexts a line can hold; one pushed past it drops the bottom one.
 const MAX: usize = 128;
-/// syntect's stack limit (with its two bottom contexts, `__start` and `main`): at it, a push's
-/// pattern matches nothing, so the patterns after it get their turn.
-const SYNTECT_DEPTH: usize = 99;
 
 /// Lex `b`, a line of PowerShell without its `\n`, from `state`.
 #[inline(never)]
@@ -954,14 +952,19 @@ impl Scan<'_, '_, '_> {
         }
     }
 
-    /// Whether a push may match: below syntect's limit.
-    fn can_push(&self) -> bool {
-        self.depth < SYNTECT_DEPTH
+    /// Room for a push: at [`MAX`], the bottom context (above the base) dropped.
+    fn room(&mut self) {
+        if self.depth == MAX {
+            self.stack.copy_within(2.., 1);
+            self.wraps.copy_within(2.., 1);
+            self.depth -= 1;
+        }
     }
 
     /// Push context `c` at `at`, the text before it filled first.
     fn push(&mut self, c: u8, at: usize) {
         self.fill(at);
+        self.room();
         let w = match OWN_WRAP[usize::from(c)] {
             W_NONE => self.wraps[self.depth - 1],
             w => w,
@@ -1229,7 +1232,7 @@ impl Scan<'_, '_, '_> {
         let next = b.get(p + 1).copied().unwrap_or(b'\n');
         match c {
             b'<' => {
-                if next == b'#' && self.can_push() {
+                if next == b'#' {
                     self.push(BLOCK, p);
                     self.tok(p, p + 2, BLOCK_BEGIN);
                     self.docs_at = p + 2;
@@ -1246,7 +1249,7 @@ impl Scan<'_, '_, '_> {
             }
             b'#' => {
                 let prev = if p > 0 { b[p - 1] } else { b'\n' };
-                if !matches!(prev, b'`' | b'\\' | b'-') && self.can_push() {
+                if !matches!(prev, b'`' | b'\\' | b'-') {
                     return Go::Changed(self.open_comment(p));
                 }
                 Go::On(p + 1)
@@ -1255,7 +1258,7 @@ impl Scan<'_, '_, '_> {
                 if let Some(q) = self.variable(p, true) {
                     return Go::On(q);
                 }
-                if next == b'(' && self.can_push() {
+                if next == b'(' {
                     self.push(SUBEXPR, p);
                     self.tok(p, p + 1, SUBEXPR_DOLLAR);
                     self.tok(p + 1, p + 2, GROUP_BEGIN);
@@ -1265,31 +1268,22 @@ impl Scan<'_, '_, '_> {
             }
             b'@' => self.at_sign(p),
             b'(' => {
-                if self.can_push() {
-                    self.push(GROUP, p);
-                    self.tok(p, p + 1, GROUP_BEGIN);
-                    return Go::Changed(p + 1);
-                }
-                Go::On(p + 1)
+                self.push(GROUP, p);
+                self.tok(p, p + 1, GROUP_BEGIN);
+                Go::Changed(p + 1)
             }
             b'{' => {
-                if self.can_push() {
-                    self.push(SCRIPT, p);
-                    self.tok(p, p + 1, BRACES_BEGIN);
-                    return Go::Changed(p + 1);
-                }
-                Go::On(p + 1)
+                self.push(SCRIPT, p);
+                self.tok(p, p + 1, BRACES_BEGIN);
+                Go::Changed(p + 1)
             }
             b'[' => {
-                if self.can_push() {
-                    if let Some(q) = self.attribute(p) {
-                        return Go::Changed(q);
-                    }
-                    self.push(TYPE, p);
-                    self.tok(p, p + 1, BRACKET_BEGIN);
-                    return Go::Changed(p + 1);
+                if let Some(q) = self.attribute(p) {
+                    return Go::Changed(q);
                 }
-                Go::On(p + 1)
+                self.push(TYPE, p);
+                self.tok(p, p + 1, BRACKET_BEGIN);
+                Go::Changed(p + 1)
             }
             b'"' | b'\'' => {
                 if ctx == HASH
@@ -1378,8 +1372,7 @@ impl Scan<'_, '_, '_> {
         let next = b.get(p + 1).copied().unwrap_or(b'\n');
         if !pw {
             // `(?<!\w)(--%)(?!\w)`
-            if next == b'-' && b.get(p + 2) == Some(&b'%') && !is_word(b, p + 3) && self.can_push()
-            {
+            if next == b'-' && b.get(p + 2) == Some(&b'%') && !is_word(b, p + 3) {
                 self.push(STOP, p);
                 self.tok(p, p + 3, CONTROL);
                 // `.+`, then the pop at `$`
@@ -1498,9 +1491,6 @@ impl Scan<'_, '_, '_> {
             return Go::On(q);
         }
         let next = b.get(p + 1).copied().unwrap_or(b'\n');
-        if !self.can_push() {
-            return Go::On(p + 1);
-        }
         if next == b'{' {
             self.push(HASH, p);
             self.tok(p, p + 1, HASH_KEYWORD);
@@ -1538,9 +1528,6 @@ impl Scan<'_, '_, '_> {
 
     /// A string's opening quote at `p`, `len` bytes, pushing `ctx`.
     fn open_string(&mut self, p: usize, len: usize, ctx: u8) -> Go {
-        if !self.can_push() {
-            return Go::On(p + len);
-        }
         self.push(ctx, p);
         self.tok(p, p + len, STRING_BEGIN);
         self.regex_in(p);
@@ -1564,7 +1551,8 @@ impl Scan<'_, '_, '_> {
                         && (ends_word_ci(b, q, b"select-string") || ends_word_ci(b, q, b"sls"))
                 }
             };
-        if regex && self.can_push() {
+        if regex {
+            self.room();
             let w = self.wraps[self.depth - 1];
             self.stack[self.depth] = REGEX;
             self.wraps[self.depth] = w;
@@ -1609,7 +1597,7 @@ impl Scan<'_, '_, '_> {
                             p = q;
                             continue;
                         }
-                        if b.get(p + 1) == Some(&b'(') && self.can_push() {
+                        if b.get(p + 1) == Some(&b'(') {
                             self.push(INTERP, p);
                             self.tok(p, p + 1, INTERP_DOLLAR);
                             self.tok(p + 1, p + 2, INTERP_BEGIN);
@@ -1884,7 +1872,7 @@ impl Scan<'_, '_, '_> {
         while let Some(l) = space_len(b, s) {
             s += l;
         }
-        if s == e || s >= self.b.len() || !self.can_push() {
+        if s == e || s >= self.b.len() {
             return None;
         }
         // `(?:(global|local|script|private):)?`
@@ -2261,7 +2249,7 @@ impl Scan<'_, '_, '_> {
                     self.pop();
                     return Some(p + 1);
                 }
-                b'(' if self.can_push() => {
+                b'(' => {
                     self.push(ATTR_ARGS, p);
                     self.tok(p, p + 1, GROUP_BEGIN);
                     return Some(p + 1);
@@ -2283,7 +2271,7 @@ impl Scan<'_, '_, '_> {
                 }
                 b'#' => {
                     let prev = if p > 0 { b[p - 1] } else { b'\n' };
-                    if !matches!(prev, b'`' | b'\\' | b'-') && self.can_push() {
+                    if !matches!(prev, b'`' | b'\\' | b'-') {
                         return Some(self.open_comment(p));
                     }
                     p += 1;
@@ -2384,7 +2372,7 @@ impl Scan<'_, '_, '_> {
         }
         loop {
             // `(?<=#)(?i:(requires))\s`
-            if p > 0 && b[p - 1] == b'#' && at_ci(b, p, b"requires") && self.can_push() {
+            if p > 0 && b[p - 1] == b'#' && at_ci(b, p, b"requires") {
                 let e = p + 8;
                 let sl = if e >= self.b.len() {
                     Some(1)
@@ -2450,7 +2438,7 @@ impl Scan<'_, '_, '_> {
                 p = e;
                 continue;
             }
-            if c == b'@' && b.get(p + 1) == Some(&b'{') && self.can_push() {
+            if c == b'@' && b.get(p + 1) == Some(&b'{') {
                 self.push(HASH, p);
                 self.tok(p, p + 1, HASH_KEYWORD);
                 self.tok(p + 1, p + 2, BRACES_BEGIN);
@@ -2558,7 +2546,7 @@ impl Scan<'_, '_, '_> {
                         p = q;
                         continue;
                     }
-                    if b.get(p + 1) == Some(&b'(') && self.can_push() {
+                    if b.get(p + 1) == Some(&b'(') {
                         self.push(INTERP, p);
                         self.tok(p, p + 1, INTERP_DOLLAR);
                         self.tok(p + 1, p + 2, INTERP_BEGIN);
@@ -3265,5 +3253,20 @@ mod tests {
         for want in ["1e10", "2e-3", "1.5e-3", "1.5e+10d", "2e"] {
             assert!(got.contains(&(want, n)), "{want}: {got:?}");
         }
+    }
+
+    /// No limit of syntect's on nesting (X-133): past its 99 levels a string, a script block
+    /// and a comment still open, and the levels close again.
+    #[test]
+    fn nesting_past_syntects_depth() {
+        let line = format!("{}'s' {{ $x }} # c", "(".repeat(120));
+        let got = marked(Lang::PowerShell, &[&line]);
+        let is = |text: &str, scope: &str| got.iter().any(|(t, s)| *t == text && s.contains(scope));
+        assert!(is("s", "string.quoted.single.powershell"), "{got:?}");
+        assert!(
+            is("{", "punctuation.section.braces.begin.powershell"),
+            "{got:?}"
+        );
+        assert!(is(" c", "comment.line.powershell"), "{got:?}");
     }
 }

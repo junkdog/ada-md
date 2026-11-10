@@ -2988,7 +2988,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                     return Some(q);
                 }
             }
-            if c == b'#' && b.get(i + 1) == Some(&b'{') && self.can_push() {
+            if c == b'#' && b.get(i + 1) == Some(&b'{') {
                 self.interp(i);
                 return Some(i + 2);
             }
@@ -3026,7 +3026,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
         let c = self.ch(p);
         match op {
             O_COMMENT_LINE => {
-                if c == Some(b'/') && b.get(p + 1) == Some(&b'/') && p + 1 < n && self.can_push() {
+                if c == Some(b'/') && b.get(p + 1) == Some(&b'/') && p + 1 < n {
                     self.push(LINE, p);
                     self.tok(p, p + 2, COMMENT_MARK);
                     return Some(p + 2);
@@ -3034,7 +3034,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 None
             }
             O_FRONT => {
-                if p == 0 && b == b"---" && self.can_push() {
+                if p == 0 && b == b"---" {
                     self.tok(0, 3, FRONT_BEGIN);
                     self.push(FRONT, 3);
                     return Some(3);
@@ -3079,7 +3079,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 let s = self.spaces_hot(p);
                 if self.ch(s) == Some(b':') && s < n {
                     for w in [&b"import"[..], b"export"] {
-                        if crate::has_at(b, s + 1, w) && self.can_push() {
+                        if crate::has_at(b, s + 1, w) {
                             let e = s + 1 + w.len();
                             self.tok(p, s, PSEUDO_MODULE);
                             self.tok(s, s + 1, PSEUDO_MODULE_MARK);
@@ -3110,7 +3110,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
             }
             O_COLON_VALUE => {
                 let s = self.spaces_hot(p);
-                if self.ch(s) == Some(b':') && self.can_push() {
+                if self.ch(s) == Some(b':') {
                     self.tok(s, s + 1, KEY_VALUE);
                     self.push(PV, s + 1);
                     return Some(s + 1);
@@ -3118,7 +3118,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 None
             }
             O_COLON_FONT => {
-                if c == Some(b':') && self.can_push() {
+                if c == Some(b':') {
                     self.tok(p, p + 1, KEY_VALUE);
                     self.push(FONT_VAL, p + 1);
                     return Some(p + 1);
@@ -3150,7 +3150,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 None
             }
             O_MAP => {
-                if c == Some(b'(') && self.can_push() {
+                if c == Some(b'(') {
                     self.push(MAP, p);
                     self.tok(p, p + 1, BEGIN_SASS);
                     return Some(p + 1);
@@ -3213,7 +3213,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 self.sop(O_INTERP, p, ctx, fresh)
             }
             O_INTERP => {
-                if c == Some(b'#') && b.get(p + 1) == Some(&b'{') && self.can_push() {
+                if c == Some(b'#') && b.get(p + 1) == Some(&b'{') {
                     self.interp(p);
                     return Some(p + 2);
                 }
@@ -3243,7 +3243,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                     && b.get(e) == Some(&b'.')
                 {
                     let f = run(e + 1);
-                    if f > e + 1 && b.get(f) == Some(&b'(') && self.can_push() {
+                    if f > e + 1 && b.get(f) == Some(&b'(') {
                         // its call pushes: at the depth limit the pattern matches nothing, no token
                         self.tok(p, e, FN_SASS_NS);
                         self.tok(e, e + 1, FN_SASS_NS_DOT);
@@ -3329,7 +3329,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 None
             }
             O_GROUP_CONIC => {
-                if c == Some(b'(') && self.can_push() {
+                if c == Some(b'(') {
                     self.tok(p, p + 1, SECTION_BEGIN);
                     self.push(ctx & !WRAP, p + 1);
                     return Some(p + 1);
@@ -3345,7 +3345,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 None
             }
             O_VAR_COMMA | O_COUNTER_COMMA => {
-                if c == Some(b',') && self.can_push() {
+                if c == Some(b',') {
                     let to = match ctx {
                         G_COUNTER => COUNTER_REST,
                         G_COUNTERS => COUNTERS_REST,
@@ -3358,9 +3358,6 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
             }
             O_ATTR_FN_NAME => {
                 let e = self.ident_m(p)?;
-                if !self.can_push() {
-                    return None;
-                }
                 self.tok(p, e, ATTR_NAME);
                 self.push(ATTR_FN_REST, e);
                 Some(e)
@@ -3458,7 +3455,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
             O_W_REPETITIONS => self.words_brk(p, &[b"auto-fill", b"auto-fit"], false, REPETITIONS),
             O_W_EVEN_ODD => self.words_brk(p, &[b"even", b"odd"], false, PSEUDO_KEYWORD),
             O_CALC_OPEN | O_CALC_PAREN => {
-                if c == Some(b'(') && self.can_push() {
+                if c == Some(b'(') {
                     self.tok(p, p + 1, GROUP_BEGIN);
                     self.push(CALC_PARENS, p + 1);
                     return Some(p + 1);
@@ -3475,7 +3472,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 None
             }
             O_ARGS_PAREN => {
-                if c == Some(b'(') && self.can_push() {
+                if c == Some(b'(') {
                     self.tok(p, p + 1, GROUP_BEGIN);
                     self.push(ARGS_PAREN, p + 1);
                     return Some(p + 1);
@@ -3514,7 +3511,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 while e < n && matches!(b[e], b'-' | b'_') {
                     e += 1;
                 }
-                if e == p || !self.can_push() {
+                if e == p {
                     return None;
                 }
                 self.tok(p, e, ATTR_NAME);
@@ -3522,7 +3519,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 Some(e)
             }
             O_ATTR_OPEN => {
-                if c == Some(b'[') && self.can_push() {
+                if c == Some(b'[') {
                     self.push(ATTR, p);
                     self.tok(p, p + 1, ENTITY_MARK);
                     return Some(p + 1);
@@ -3530,7 +3527,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 None
             }
             O_ISEL_OPEN => {
-                if c == Some(b'{') && self.can_push() {
+                if c == Some(b'{') {
                     self.tok(p, p + 1, BEGIN_SASS);
                     self.push(ISEL_IN, p + 1);
                     return Some(p + 1);
@@ -3538,7 +3535,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 None
             }
             O_PS_OPEN => {
-                if c == Some(b'(') && self.can_push() {
+                if c == Some(b'(') {
                     let g = match ctx {
                         PS_DIR => G_PDIR,
                         PS_SEL => G_PSEL,
@@ -3561,11 +3558,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
             }
             O_NTH => self.nth_sass(p),
             O_IN => {
-                if crate::has_at(b, p, b"in")
-                    && self.boundary(p)
-                    && self.boundary(p + 2)
-                    && self.can_push()
-                {
+                if crate::has_at(b, p, b"in") && self.boundary(p) && self.boundary(p + 2) {
                     self.tok(p, p + 2, OP_SASS);
                     self.push(EACH_IN, p + 2);
                     return Some(p + 2);
@@ -3648,7 +3641,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 None
             }
             O_MIXIN_OPEN | O_INCLUDE_OPEN => {
-                if c == Some(b'(') && self.can_push() {
+                if c == Some(b'(') {
                     self.tok(p, p + 1, BEGIN_SASS);
                     self.push(
                         if op == O_MIXIN_OPEN {
@@ -3663,7 +3656,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 None
             }
             O_PARAM => {
-                if c != Some(b'$') || !self.can_push() {
+                if c != Some(b'$') {
                     return None;
                 }
                 let e = self.var_name(p + 1)?;
@@ -3673,7 +3666,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 Some(e)
             }
             O_MIXIN_BLOCK => {
-                if c == Some(b'{') && self.can_push() {
+                if c == Some(b'{') {
                     self.tok(p, p + 1, PL_BEGIN_SASS);
                     self.push(MIXIN_BLOCK, p + 1);
                     return Some(p + 1);
@@ -3737,11 +3730,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
             O_USE_SHOW => {
                 for w in [&b"show"[..], b"hide"] {
                     let e = p + w.len();
-                    if crate::has_at(b, p, w)
-                        && self.boundary(p)
-                        && self.boundary(e)
-                        && self.can_push()
-                    {
+                    if crate::has_at(b, p, w) && self.boundary(p) && self.boundary(e) {
                         self.tok(p, e, KW_SHOW);
                         self.push(USE_SHOW, e);
                         return Some(e);
@@ -3752,7 +3741,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
             O_USE_WITH => {
                 if crate::has_at(b, p, b"with") {
                     let s = self.spaces_hot(p + 4);
-                    if s > p + 4 && self.ch(s) == Some(b'(') && self.can_push() {
+                    if s > p + 4 && self.ch(s) == Some(b'(') {
                         self.tok(p, p + 4, KW_WITH);
                         self.tok(s, s + 1, BEGIN_SASS);
                         self.push(USE_WITH, s + 1);
@@ -3769,7 +3758,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 None
             }
             O_URL_OPEN => {
-                if crate::has_at(b, p, b"url(") && self.can_push() {
+                if crate::has_at(b, p, b"url(") {
                     self.tok(p, p + 3, FN_URL);
                     self.tok(p + 3, p + 4, GROUP_BEGIN);
                     self.push(URL_G, p + 4);
@@ -3787,7 +3776,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
             }
             O_CM_KEYWORD => {
                 let s = self.spaces_hot(p);
-                if crate::has_at(b, s, b"@custom-media") && self.can_push() {
+                if crate::has_at(b, s, b"@custom-media") {
                     self.at_pair(s, s + 13, AT_CUSTOM_MEDIA);
                     self.push(CM, s + 13);
                     return Some(s + 13);
@@ -3855,7 +3844,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 None
             }
             O_SUP_OPEN | O_MQ_OPEN => {
-                if c == Some(b'(') && self.can_push() {
+                if c == Some(b'(') {
                     self.tok(p, p + 1, GROUP_BEGIN);
                     self.push(
                         if op == O_SUP_OPEN {
@@ -3909,7 +3898,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 None
             }
             O_CMOD_OPEN => {
-                if c == Some(b'(') && self.can_push() {
+                if c == Some(b'(') {
                     self.tok(p, p + 1, GROUP_BEGIN);
                     self.push(CMOD_G, p + 1);
                     return Some(p + 1);
@@ -3918,7 +3907,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
             }
             O_CMOD_BLOCK => {
                 let s = self.spaces_hot(p);
-                if self.ch(s) == Some(b'{') && self.can_push() {
+                if self.ch(s) == Some(b'{') {
                     // `\s*(\{)`'s scope is the whole match's
                     self.tok(p, s + 1, PL_BEGIN);
                     self.push(CMOD_BLOCK, s + 1);
@@ -3943,7 +3932,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                     return None;
                 }
                 let s = self.spaces_hot(e);
-                if self.ch(s) == Some(b':') && s < n && self.can_push() {
+                if self.ch(s) == Some(b':') && s < n {
                     self.tok(p, e, PROP_MODULE);
                     self.tok(s, s + 1, KEY_VALUE);
                     self.push(CMOD_VAL, s + 1);
@@ -3988,21 +3977,15 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
     /// A function's name at `p..e` as `leaf`, its call pushed and its group after the `(` at `e`
     /// (`begin` its leaf).
     fn call(&mut self, p: usize, e: usize, leaf: u16, group: u8, begin: u16) -> Option<usize> {
-        if !self.can_push() {
-            return None;
-        }
         self.tok(p, e, leaf);
         if group == CALC_W {
             self.push(CALC_W, e);
             return Some(e);
         }
         self.push(group | WRAP, e);
-        if self.can_push() {
-            self.tok(e, e + 1, begin);
-            self.push(group, e + 1);
-            return Some(e + 1);
-        }
-        Some(e)
+        self.tok(e, e + 1, begin);
+        self.push(group, e + 1);
+        Some(e + 1)
     }
 
     /// A builtin function of one of `families` at `p`.
@@ -4175,9 +4158,6 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
         let b = self.b;
         let c = *b.get(p)?;
         if !(c.is_ascii_digit() || matches!(c, b'-' | b'+' | b'.')) || p >= self.b.len() {
-            return None;
-        }
-        if !self.can_push() {
             return None;
         }
         let num = self.num_at(p);
@@ -4465,7 +4445,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
     fn selectors(&mut self, p: usize) -> Option<usize> {
         let (b, n) = (self.b, self.b.len());
         let s = self.spaces(p);
-        if s >= n || !self.can_push() {
+        if s >= n {
             return self.selectors_tail(p);
         }
         match b[s] {
@@ -4675,7 +4655,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
             ),
         ] {
             for w in words {
-                if call(w) && self.can_push() {
+                if call(w) {
                     let e = s + 1 + w.len();
                     self.tok(p, s, leaf);
                     self.tok(s, s + 1, mark);
@@ -4686,9 +4666,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
             }
         }
         // `\s*(:)(-(moz|ms|webkit)-){{ident}}`
-        if let Some((v, e)) = self.vendor_pseudo_at(s)
-            && self.can_push()
-        {
+        if let Some((v, e)) = self.vendor_pseudo_at(s) {
             self.tok(p, s, PSEUDO_CLASS);
             self.tok(s, s + 1, PSEUDO_CLASS_MARK);
             self.tok(s + 1, v, PSEUDO_VENDOR);
@@ -4708,7 +4686,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
                 self.tok(p, s, PSEUDO_MODULE);
                 self.tok(s, s + 1, PSEUDO_MODULE_MARK);
                 self.tok(s + 1, e, PSEUDO_MODULE);
-                if b.get(e) == Some(&b'(') && self.can_push() {
+                if b.get(e) == Some(&b'(') {
                     self.push(PS_LOCAL, e);
                 }
                 return Some(e);
@@ -4722,11 +4700,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
     fn custom_elements(&mut self, p: usize) -> Option<usize> {
         let (b, n) = (self.b, self.b.len());
         let s = self.spaces(p);
-        if s >= n
-            || !b[s].is_ascii_lowercase()
-            || !self.boundary(s)
-            || !self.can_push()
-            || s < self.custom_failed.get()
+        if s >= n || !b[s].is_ascii_lowercase() || !self.boundary(s) || s < self.custom_failed.get()
         {
             return None;
         }
@@ -4780,7 +4754,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
     fn interpolated_selector(&mut self, p: usize) -> Option<usize> {
         let (b, n) = (self.b, self.b.len());
         let s = self.spaces(p);
-        if s + 1 >= n || b[s] != b'#' || b[s + 1] != b'{' || !self.can_push() {
+        if s + 1 >= n || b[s] != b'#' || b[s + 1] != b'{' {
             return None;
         }
         // the last `}` of the line a lookahead follows, read once
@@ -4811,7 +4785,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
     fn pvw(&mut self, e: usize) -> usize {
         self.push(PVW, e);
         let s = self.spaces(e);
-        if self.ch(s) == Some(b':') && self.can_push() {
+        if self.ch(s) == Some(b':') {
             self.tok(s, s + 1, KEY_VALUE);
             self.push(PV, s + 1);
             return s + 1;
@@ -4830,9 +4804,6 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
             if let Some(e) = self.op(P_COMMENT, p, MAIN, false) {
                 return Some(e);
             }
-        }
-        if !self.can_push() {
-            return None;
         }
         let colon_after = |e: usize| self.ch(self.spaces(e)) == Some(b':');
         if c.is_ascii_alphabetic() && self.boundary(p) {
@@ -4929,7 +4900,7 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
     fn s_at_rules(&mut self, p: usize) -> Option<usize> {
         let (b, n) = (self.b, self.b.len());
         let s = self.spaces(p);
-        if s >= n || b[s] != b'@' || !self.can_push() {
+        if s >= n || b[s] != b'@' {
             return None;
         }
         let word = |w: &[u8]| self.lit(s + 1, w) && self.boundary(s + 1 + w.len());
@@ -5188,9 +5159,6 @@ impl<K: Sink> Scan<'_, '_, '_, true, K> {
             }
         }
         let (e, v1, v3) = best?;
-        if !self.can_push() {
-            return None;
-        }
         let mut i = p;
         for (a, z) in [v1, v3].into_iter().flatten() {
             self.tok(i, a, MEDIA_FEATURE);
@@ -5244,9 +5212,10 @@ mod tests {
     }
 
     #[test]
-    fn a_call_at_the_depth_limit_leaves_no_token() {
-        // `ns.f(` past syntect's depth limit matches nothing: its `ns` and `.` were once
-        // tokens before the call's push was refused, and the next op's came before them
+    fn a_call_past_the_stack_keeps_its_spans_in_order() {
+        // `ns.f(` with 200 groups open, past the stack's levels (the bottom ones dropped): the
+        // call's spans and the next op's in order (they once crossed where the call's push
+        // was refused at syntect's limit)
         let line = format!("$x: f({} res.text() }}", "(".repeat(200));
         let (mut st, mut spans) = (State::default(), Vec::new());
         lex(Lang::Scss, &line, &mut st, &mut spans);

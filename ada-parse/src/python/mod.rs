@@ -731,9 +731,6 @@ const WCACHE: usize = 8;
 const MAX: usize = 128;
 /// Matches that take nothing, in a row at one place, before the scan steps on regardless.
 const STUCK: usize = 64;
-/// syntect's stack limit (with its two bottom contexts, `__start` and `main`): at it, a push's
-/// pattern matches nothing, so the patterns after it get their turn.
-const SYNTECT_DEPTH: usize = 99;
 
 /// Lex `b`, a line of Python without its `\n`, from `state`.
 #[inline(never)]
@@ -1606,9 +1603,6 @@ impl<K: Sink> Scan<'_, '_, K> {
     /// `cs` pushed by a match that took nothing at `p`: syntect keeps the depth the first of
     /// them leaves for its guard against a loop.
     fn enter(&mut self, p: usize, cs: &[u8]) -> Option<usize> {
-        if self.depth >= SYNTECT_DEPTH {
-            return None;
-        }
         self.fill(p);
         let depth = self.depth + 1;
         for &c in cs {
@@ -1639,9 +1633,6 @@ impl<K: Sink> Scan<'_, '_, K> {
 
     /// Bytes `s..e` are `kind`; then `cs` are pushed.
     fn tok_push(&mut self, s: usize, e: usize, kind: u16, cs: &[u8]) -> Option<usize> {
-        if self.depth >= SYNTECT_DEPTH {
-            return None;
-        }
         self.put(s, e, kind);
         for &c in cs {
             self.push(c);
@@ -2878,7 +2869,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             names,
             k,
             paren,
-        }) = shape.filter(|_| d + 3 < SYNTECT_DEPTH.min(MAX))
+        }) = shape.filter(|_| d + 3 < MAX)
         else {
             return self.enter(p, &[CALL, QN_LEAF]);
         };
@@ -3177,7 +3168,7 @@ impl<K: Sink> Scan<'_, '_, K> {
     fn qualified_name(&mut self, p: usize) -> Option<usize> {
         self.ident(p)?;
         let d = self.depth;
-        if d + 3 >= SYNTECT_DEPTH || d + 3 >= MAX {
+        if d + 3 >= MAX {
             return self.enter(p, &[QN]);
         }
         let mut q = self.name_token(p, NAME);
@@ -3921,5 +3912,15 @@ mod tests {
         assert!(is_constant_name(b"_AB1"));
         assert!(!is_constant_name(b"A_B"));
         assert!(!is_constant_name(b"Abc"));
+    }
+
+    /// No limit of syntect's on nesting (X-133): past its 99 levels a string still opens and a
+    /// call's name still reads.
+    #[test]
+    fn nesting_past_syntects_depth() {
+        let t = lex(&format!("x = {}'s', len(y)", "(".repeat(120)));
+        let is = |text: &str, scope: &str| t.iter().any(|(x, s)| x == text && s.contains(&scope));
+        assert!(is("s", "string.quoted.single.python"), "{t:?}");
+        assert!(is("len", "support.function.builtin.python"), "{t:?}");
     }
 }

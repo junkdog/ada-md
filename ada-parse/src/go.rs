@@ -416,11 +416,6 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
 const MAX: usize = 128;
 /// Matches that take nothing, in a row at one place, before the scan steps on regardless.
 const STUCK: usize = 64;
-/// syntect's stack limit (with its two bottom contexts, `__start` and `main`): at it, a push's
-/// pattern matches nothing (a search that finds it gives none), so the patterns after it get
-/// their turn. (A match its search cached earlier on the line would end the line instead; not
-/// followed.)
-const SYNTECT_DEPTH: usize = 99;
 
 /// Lex `b`, a line of Go without its `\n`, from `state`.
 #[inline(never)]
@@ -1216,9 +1211,6 @@ impl<K: Sink> Scan<'_, '_, K> {
     /// `cs` pushed by a match that took nothing at `p`: syntect keeps the depth the first of
     /// them leaves for its guard against a loop.
     fn enter(&mut self, p: usize, cs: &[u8]) -> Option<usize> {
-        if self.depth >= SYNTECT_DEPTH {
-            return None;
-        }
         self.fill(p);
         let depth = self.depth + 1;
         for &c in cs {
@@ -1249,9 +1241,6 @@ impl<K: Sink> Scan<'_, '_, K> {
 
     /// Bytes `s..e` are `leaf`; then `cs` are pushed.
     fn tok_push(&mut self, s: usize, e: usize, leaf: u16, cs: &[u8]) -> Option<usize> {
-        if self.depth >= SYNTECT_DEPTH {
-            return None;
-        }
         self.fill(s);
         for &c in cs {
             self.push(c);
@@ -1738,9 +1727,6 @@ impl<K: Sink> Scan<'_, '_, K> {
     // out of line, so that `literals` keeps its inlined paths
     #[inline(never)]
     fn regex_in(&mut self, p: usize) {
-        if self.depth >= SYNTECT_DEPTH {
-            return;
-        }
         if self.mark <= p && self.marked(p) {
             self.sql_in();
         } else if regex_string(self.b, p) {
@@ -1822,9 +1808,7 @@ impl<K: Sink> Scan<'_, '_, K> {
     fn sql_string(&mut self, p: usize, raw: bool) -> Option<usize> {
         let (leaf, c) = if raw { (OTHER, RAW) } else { (DOUBLE, STRING) };
         let e = self.tok_push(p, p + 1, leaf + BEGIN, &[c])?;
-        if self.depth < SYNTECT_DEPTH {
-            self.sql_in();
-        }
+        self.sql_in();
         Some(e)
     }
 
@@ -2067,9 +2051,6 @@ impl<K: Sink> Scan<'_, '_, K> {
         let b = self.b;
         match b.get(p + 1) {
             Some(b'/') => {
-                if self.depth >= SYNTECT_DEPTH {
-                    return None;
-                }
                 if b[p + 2..].starts_with(b"go:") {
                     self.annotation(p);
                 } else {
@@ -2963,5 +2944,20 @@ mod tests {
             "comment.block.go punctuation.definition.comment.go",
         );
         has(&l, "return", "keyword.control.go");
+    }
+
+    /// No limit of syntect's on nesting (X-133): past its 99 levels a string still opens, its
+    /// SQL and regexes still read, and a `//` comment still takes the line.
+    #[test]
+    fn nesting_past_syntects_depth() {
+        let line = format!(
+            "x := {}\"s\", regexp.MustCompile(\"a+\") // c",
+            "(".repeat(120)
+        );
+        let got = of(&[&line]);
+        let is = |text: &str, scope: &str| got.iter().any(|(t, s)| t == text && s.contains(scope));
+        assert!(is("s", "string.quoted.double.go"), "{got:?}");
+        assert!(is("+", "keyword.operator.quantifier.regexp"), "{got:?}");
+        assert!(is(" c", "comment.line.go"), "{got:?}");
     }
 }
