@@ -2397,45 +2397,56 @@ mod tests {
         rules_match_the_grammar("rust", "Rust", text);
     }
 
-    /// ada-parse's Kotlin lexer picks the rules bat's grammar picks, in every built-in theme
-    /// (ADR-40): its odd corners included (`type` inside a word opening a typedef, a word before
-    /// `<` opening type arguments, a function's `}` closing its class, a header's every word its
-    /// class's name, backtick names past ASCII).
+    /// ada-parse's Kotlin scanner (X-130, a scanner of ada's own) picks the colors bat's grammar
+    /// picks, in every built-in theme, where both read Kotlin the same: a package and imports,
+    /// classes, functions and properties with their parameters, type parameters and types,
+    /// accessors, statements, operators, strings with templates and escapes, raw strings,
+    /// comments. Left out, Kotlin's readings by design: `type` is no keyword (bat's typedef opens
+    /// at it, even inside a word); `<` after a value is a comparison unless type arguments close
+    /// it; braces nest; `===`, `!in`, `!is`, `as?`, `..`, `!!` one operator each; Kotlin's numbers
+    /// (`1_000`, `0b1`, `1u`, `1.` before a word the number `1`, `.5`); a `"` string and a
+    /// character end with their line (a template open across lines aside); block comments nest;
+    /// comments in a parameter list are comments; a backticked name is a name; a template's
+    /// `${…}` ends at its own `}`; `\uXXXX` one escape; modifiers only where they modify (bat's
+    /// `data`, `open`, `in`… everywhere), `in` an operator outside types, Kotlin's own modifiers
+    /// (`value`, `lateinit`, `crossinline`…); `get()` and `set(` accessors only at a statement's
+    /// start or after a property's type (bat's `x.set(y)` a setter); a class's name its first word,
+    /// annotations plain; `constructor` and `init` keywords and their parameters; a receiver's
+    /// type a type; `fun` and `object` keywords in expressions; a function type's parameters types;
+    /// supertypes' built-in types (bat's plain).
     #[test]
-    fn kotlin_rules_match_the_grammar() {
+    fn kotlin_colors_match_the_grammar() {
         let text = concat!(
             "package sift.core.api // the api\n",
             "import kotlin.reflect.KClass as K\n",
             "import java.util.*\n",
             "/* block\n",
-            "   comment */ @Suppress(\"UNCHECKED_CAST\")\n",
+            "   comment */\n",
+            "@Suppress(\"UNCHECKED_CAST\")\n",
             "data class Foo<T : Comparable<T>, out R>(val x: Int, var y: List<String> = listOf()) : Bar(x), Baz {\n",
             "    companion object { const val MAX = 0x1FL; private val e = 1.5e-3f }\n",
-            "    override fun <R> List<T>.map(f: (T) -> R, vararg n: Int): Map<String, R>? = TODO()\n",
+            "    override fun <R> map(f: (T) -> R, vararg n: Int): Map<String, R>? = TODO()\n",
             "    val name: String get() = \"x\"\n",
             "    var size: Int\n",
             "        get() { return field }\n",
             "        set(value) { field = value }\n",
-            "    fun `a name — with an arrow → too`() {\n",
-            "        val s = \"a $x ${y.z} \\n \\u00e9\" + \"\"\"raw $w\n",
+            "    fun run() {\n",
+            "        val s = \"a $x ${y.z} \\n\" + \"\"\"raw $w\n",
             "            still\"\"\".trimIndent() + 'c' + '\\t'\n",
-            "        if (a?.b ?: 0 >= 1 && c !is D || !e) return null else x++\n",
-            "        for (i in 0 until n) if (i<n) y += i * 2 % 3 / 4 - 1\n",
-            "        when (val v = q) { is Int -> v; else -> throw IllegalStateException() }\n",
-            "        try { a::class.java; Foo::bar } catch (e: Exception) { } finally { }\n",
-            "        val prototype = isPrototype && a < b; 1.toString(); 1..10; x.5\n",
-            "        typealias Fn = (Int) -> Unit\n",
-            "        val lazyValue: String by lazy { \"v\" }; array[0] = `weird name`\n",
+            "        if (a?.b ?: 0 >= 1 && c is D || !e) return null else x++\n",
+            "        while (i < n) y += i * 2 % 3 / 4 - 1\n",
+            "        when (v) { is Int -> v; else -> throw IllegalStateException() }\n",
+            "        try { a::class; Foo::bar } catch (e: Exception) { } finally { }\n",
+            "        val lazyValue: String by lazy { \"v\" }; array[0] = 1\n",
             "    }\n",
             "    interface I { fun f(a: Array<Int>, b: IntArray): Unit }\n",
             "}\n",
             "enum class E { A, B; fun x() = A }\n",
             "sealed interface S\n",
-            "fun interface Op { fun run() }\n",
-            "object Single : Any() { suspend inline fun <reified T> t(): T? = null }\n",
-            "val x = 100<200; val y = 1_000; val z = 1e10; val w = .5\n",
+            "object Single : Base() { suspend inline fun <reified T> t(): T? = null }\n",
+            "val y = 1e10; val z = 100\n",
         );
-        rules_match_the_grammar("kotlin", "Kotlin", text);
+        colors_match_the_grammar("kotlin", "Kotlin", text);
     }
 
     /// ada-parse's Java lexer picks the rules bat's grammar picks, in every built-in theme

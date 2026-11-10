@@ -123,7 +123,8 @@
 "size_t"
 "extern \"C\" "
 "[u8; 4]"
-# Kotlin (ADR-40): what changes the scanner's context, and its odd corners
+# Kotlin (X-130): what opens a head, a frame or a mode on the scanner of ada's own (bat's `type` and
+# `namespace` corners kept as words it must not take)
 "package "
 "import "
 " as "
@@ -160,6 +161,23 @@
 "1.5e-3f"
 "MAX_VALUE"
 "when ("
+"constructor("
+"init {"
+"lateinit "
+"crossinline "
+"<in T, out R>"
+"suspend () -> "
+"fun interface "
+"((A) -> B)."
+"${ {"
+"/* /* */"
+"1_000"
+"0b1"
+"..<"
+"!!"
+"as?"
+"@field:"
+"value class "
 # SQL in Java's and Kotlin's strings (ADR-40's phase 4, step 4d): calls, annotations, markers, text blocks
 "prepareStatement(\""
 "executeQuery(\""

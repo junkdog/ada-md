@@ -916,9 +916,10 @@ mod tests {
         );
     }
 
-    /// Kotlin's runs written by its scan (X-074) are those its spans give: through a string lexed
-    /// again as a regex before `.toRegex(` (its text's run joined to its quote's where their rules
-    /// are the same), templates, an embedded SQL string, raw strings and a comment over lines.
+    /// Kotlin's runs written by its scan (X-074, X-130) are those its spans give: through a string
+    /// lexed again as a regex before `.toRegex(` (its text's run joined to its quote's where their
+    /// rules are the same), templates (one open across lines), an embedded SQL string, raw strings,
+    /// declarations' heads and parameters, and a comment over lines.
     #[test]
     fn kotlin_runs_are_its_spans() {
         runs_are_spans(
@@ -930,6 +931,7 @@ mod tests {
                 "    @Language(\"SQL\") val u = \"UPDATE t SET a = 1\"\n",
                 "    val t = \"\"\"\n      raw $v\n    \"\"\".trimIndent()\n",
                 "    /* open\n  still */ return when (x) { is A -> 1; else -> 2 }\n\n}\n",
+                "class C<in T>(private val a: Int = 1) : B(a) { val n = \"a ${f {\n x }} b\" }\n",
             ),
         );
     }

@@ -107,21 +107,6 @@ pub fn word_end(b: &[u8], mut p: usize) -> usize {
     }
 }
 
-/// [`word_end`] with the characters past ASCII that `wide` takes (at a character's start).
-#[inline(always)]
-pub fn word_end_by(b: &[u8], mut p: usize, wide: impl Fn(&[u8], usize) -> bool) -> usize {
-    loop {
-        while p < b.len() && WORD[usize::from(b[p])] {
-            p += 1;
-        }
-        if p < b.len() && b[p] >= 0x80 && wide(b, p) {
-            p += char_len(b[p]);
-        } else {
-            return p.min(b.len());
-        }
-    }
-}
-
 /// Whether `\b` holds before `p`, at a word's start ([`is_word`]).
 pub fn starts_word(b: &[u8], p: usize) -> bool {
     p == 0 || !is_word(b, p - 1)
