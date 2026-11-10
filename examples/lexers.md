@@ -1121,6 +1121,53 @@ let report = """
 /* nested /* comments */ close here */ let ok = n > 0x1F ? true : false
 ```
 
+## Terraform
+
+```terraform
+terraform {
+  required_providers {
+    aws = { source = "hashicorp/aws", version = "~> 5.0" }
+  }
+}
+
+variable "subnets" {
+  type = list(object({
+    id     = string
+    public = optional(bool, false)
+  }))
+  nullable = false
+}
+
+resource "aws_instance" "web" {
+  count         = var.enabled ? length(var.subnets) : 0
+  ami           = data.aws_ami.ubuntu.id
+  subnet_id     = var.subnets[count.index].id
+  tags          = merge(local.tags, { Name = "web-${count.index}" })
+  user_data     = <<-EOT
+    #!/bin/bash
+    echo "hello ${var.name}, not $${HOME}"
+    EOT
+
+  dynamic "ebs_block_device" {
+    for_each = { for d in var.disks : d.name => d if d.size > 0 }
+    content {
+      device_name = ebs_block_device.key
+      volume_size = try(ebs_block_device.value.size, 8)
+    }
+  }
+}
+
+locals {
+  public_ids = [for s in var.subnets : s.id if s.public] # a comment
+  greeting   = "%{ if var.formal ~}Good day%{ else }Hi%{ endif ~}, ${var.name}!"
+}
+
+moved {
+  from = aws_instance.old
+  to   = aws_instance.web
+}
+```
+
 ## TOML
 
 ```toml

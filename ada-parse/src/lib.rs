@@ -64,6 +64,7 @@ mod ssh;
 mod ssh_config;
 mod stack;
 mod swift;
+mod terraform;
 // the matchers and context ids its scanner shares, from the port it replaced
 mod toml;
 mod toml_scan;
@@ -450,6 +451,7 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
         Lang::Php => (php::block_runs, php::line_runs),
         Lang::Swift => (swift::block_runs, swift::line_runs),
         Lang::CMake => (cmake::block_runs, cmake::line_runs),
+        Lang::Terraform => (terraform::block_runs, terraform::line_runs),
         Lang::Ruby => (ruby::block_runs, ruby::line_runs),
         Lang::Scss => (css::scss::block_runs, css::scss::line_runs),
         Lang::Bash => (bash::block_runs, bash::line_runs),
@@ -482,6 +484,7 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::Php if SPANS => php::block,
         Lang::Swift if SPANS => swift::block,
         Lang::CMake if SPANS => cmake::block,
+        Lang::Terraform if SPANS => terraform::block,
         Lang::Ruby if SPANS => ruby::block,
         Lang::PowerShell => powershell::block,
         Lang::Css => css::block,
@@ -742,6 +745,10 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::Swift => out!(swift::line),
         Lang::CMake if !SPANS => |_, _, _| unreachable!("CMake's runs come from its own scan"),
         Lang::CMake => out!(cmake::line),
+        Lang::Terraform if !SPANS => {
+            |_, _, _| unreachable!("Terraform's runs come from its own scan")
+        }
+        Lang::Terraform => out!(terraform::line),
         Lang::Ruby if !SPANS => |_, _, _| unreachable!("Ruby's runs come from its own scan"),
         Lang::Ruby => out!(ruby::line),
         Lang::Sql => out!(sql::line),

@@ -79,6 +79,8 @@ pub enum Lang {
     CMake,
     /// bat's `CMakeCache`: `CMakeCache.txt`.
     CMakeCache,
+    /// bat's `Terraform`: Terraform's files and HCL's (`.hcl`).
+    Terraform,
     /// bat's `Ruby`.
     Ruby,
     /// bat's `SQL`.
@@ -358,6 +360,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::Swift, &["swift"]),
     (Lang::CMake, &["cmakelists.txt", "cmake"]),
     (Lang::CMakeCache, &["cmakecache.txt"]),
+    (Lang::Terraform, &["tf", "tfvars", "hcl"]),
     (
         Lang::Ruby,
         &[
@@ -412,7 +415,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 49] = [
+    pub const ALL: [Lang; 50] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -448,6 +451,7 @@ impl Lang {
         Lang::Swift,
         Lang::CMake,
         Lang::CMakeCache,
+        Lang::Terraform,
         Lang::Ruby,
         Lang::JavaScript,
         Lang::Sql,
@@ -503,6 +507,7 @@ impl Lang {
             Lang::Swift => "Swift",
             Lang::CMake => "CMake",
             Lang::CMakeCache => "CMakeCache",
+            Lang::Terraform => "Terraform",
             Lang::Ruby => "Ruby",
             Lang::Sql => "SQL",
             Lang::PowerShell => "PowerShell",
@@ -567,6 +572,7 @@ impl Lang {
             Lang::Swift => "source.swift",
             Lang::CMake => "source.cmake",
             Lang::CMakeCache => "source.cmakecache",
+            Lang::Terraform => "source.terraform",
             Lang::Ruby => "source.ruby",
             Lang::Sql => "source.sql",
             Lang::PowerShell => "source.powershell",
@@ -617,6 +623,7 @@ impl Lang {
             Lang::Php => crate::php::scopes(kind),
             Lang::Swift => crate::swift::scopes(kind),
             Lang::CMake => crate::cmake::scopes(kind),
+            Lang::Terraform => crate::terraform::scopes(kind),
             Lang::Ruby => crate::ruby::scopes(kind),
             Lang::Sql => crate::sql::scopes(kind),
             Lang::PowerShell => crate::powershell::scopes(kind),

@@ -30,8 +30,8 @@ use libfuzzer_sys::fuzz_target;
 /// engine's X-069, JSON's, TOML's and XML's X-072, the code languages' X-074; Go's, Lua's,
 /// SCSS's and bash's X-075, bash's run copy apart from its span copy since X-094; Makefile's
 /// runs come from its spans since X-094; C's and C++'s X-057; Swift's X-101; CMake's X-104;
-/// Ruby's X-100).
-const RUN_SCANS: [Lang; 40] = [
+/// Ruby's X-100; Terraform's X-102).
+const RUN_SCANS: [Lang; 41] = [
     Lang::Bash,
     Lang::Scss,
     Lang::Rust,
@@ -39,6 +39,7 @@ const RUN_SCANS: [Lang; 40] = [
     Lang::Lua,
     Lang::Swift,
     Lang::CMake,
+    Lang::Terraform,
     Lang::Ruby,
     Lang::Java,
     Lang::CSharp,

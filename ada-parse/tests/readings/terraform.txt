@@ -1,0 +1,477 @@
+# Terraform: ada-parse/tests/readings.rs, terraform
+   1 | # Terraform: blocks, attributes, objects
+       "#" comment.line.terraform punctuation.definition.comment.terraform
+       " Terraform: blocks, attributes, objects" comment.line.terraform
+   2 | terraform {
+       "terraform" storage.type.terraform
+       "{" punctuation.section.block.begin.terraform
+   3 |   required_providers {
+       "required_providers" entity.name.type.terraform
+       "{" punctuation.section.block.begin.terraform
+   4 |     aws = { source = "hashicorp/aws", version = "~> 5.0" }
+       "aws" variable.declaration.terraform variable.other.readwrite.terraform
+       " " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "{" punctuation.section.braces.begin.terraform
+       "source" meta.mapping.key.terraform string.unquoted.terraform
+       "=" keyword.operator.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "hashicorp/aws" string.quoted.double.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+       "," punctuation.separator.terraform
+       "version" meta.mapping.key.terraform string.unquoted.terraform
+       "=" keyword.operator.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "~> 5.0" string.quoted.double.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+       "}" punctuation.section.braces.end.terraform
+   5 |     null = { source = "hashicorp/null" }
+       "null" variable.declaration.terraform variable.other.readwrite.terraform
+       " " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "{" punctuation.section.braces.begin.terraform
+       "source" meta.mapping.key.terraform string.unquoted.terraform
+       "=" keyword.operator.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "hashicorp/null" string.quoted.double.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+       "}" punctuation.section.braces.end.terraform
+   6 |   }
+       "}" punctuation.section.block.end.terraform
+   7 | }
+       "}" punctuation.section.block.end.terraform
+   8 | resource "aws_instance" "web" {
+       "resource" storage.type.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "aws_instance" string.quoted.double.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "web" string.quoted.double.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+       "{" punctuation.section.block.begin.terraform
+   9 |   ami           = "ami-${var.ami_id}"
+       "ami" variable.declaration.terraform variable.other.readwrite.terraform
+       "           " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "ami-" string.quoted.double.terraform
+       "${" keyword.other.interpolation.begin.terraform
+       "var" support.constant.terraform
+       "." keyword.operator.accessor.terraform
+       "ami_id" variable.other.member.terraform
+       "}" keyword.other.interpolation.end.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+  10 |   count         = var.enabled ? 1 : 0
+       "count" variable.declaration.terraform variable.other.readwrite.terraform
+       "         " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "var" support.constant.terraform
+       "." keyword.operator.accessor.terraform
+       "enabled" variable.other.member.terraform
+       "?" keyword.operator.terraform
+       "1" constant.numeric.integer.terraform
+       ":" keyword.operator.terraform
+       "0" constant.numeric.integer.terraform
+  11 |   nullable=false
+       "nullable" variable.declaration.terraform variable.other.readwrite.terraform
+       "=" variable.declaration.terraform keyword.operator.assignment.terraform
+       "false" constant.language.terraform
+  12 |   tags = merge(local.tags, {
+       "tags" variable.declaration.terraform variable.other.readwrite.terraform
+       " " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "merge" support.function.builtin.terraform
+       "(" punctuation.section.parens.begin.terraform
+       "local" support.constant.terraform
+       "." keyword.operator.accessor.terraform
+       "tags" variable.other.member.terraform
+       "," punctuation.separator.terraform
+       "{" punctuation.section.braces.begin.terraform
+  13 |     Name      = "web-${count.index}"
+       "Name" meta.mapping.key.terraform string.unquoted.terraform
+       "=" keyword.operator.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "web-" string.quoted.double.terraform
+       "${" keyword.other.interpolation.begin.terraform
+       "." keyword.operator.accessor.terraform
+       "index" variable.other.member.terraform
+       "}" keyword.other.interpolation.end.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+  14 |     "k-1"     = 2
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "k-1" string.quoted.double.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+       "=" keyword.operator.terraform
+       "2" constant.numeric.integer.terraform
+  15 |     eventName : ["INSERT"]
+       "eventName" meta.mapping.key.terraform string.unquoted.terraform
+       ":" keyword.operator.terraform
+       "[" punctuation.section.brackets.begin.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "INSERT" string.quoted.double.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+       "]" punctuation.section.brackets.end.terraform
+  16 |   })
+       "}" punctuation.section.braces.end.terraform
+       ")" punctuation.section.parens.end.terraform
+  17 |   dynamic "ingress" {
+       "dynamic" entity.name.type.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "ingress" string.quoted.double.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+       "{" punctuation.section.block.begin.terraform
+  18 |     for_each = var.rules
+       "for_each" variable.declaration.terraform variable.other.readwrite.terraform
+       " " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "var" support.constant.terraform
+       "." keyword.operator.accessor.terraform
+       "rules" variable.other.member.terraform
+  19 |     content {
+       "content" entity.name.type.terraform
+       "{" punctuation.section.block.begin.terraform
+  20 |       from_port = ingress.value.port
+       "from_port" variable.declaration.terraform variable.other.readwrite.terraform
+       " " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "." keyword.operator.accessor.terraform
+       "value" variable.other.member.terraform
+       "." keyword.operator.accessor.terraform
+       "port" variable.other.member.terraform
+  21 |     }
+       "}" punctuation.section.block.end.terraform
+  22 |   }
+       "}" punctuation.section.block.end.terraform
+  23 |   lifecycle { ignore_changes = [tags] }
+       "lifecycle" entity.name.type.terraform
+       "{" punctuation.section.block.begin.terraform
+       "ignore_changes" variable.declaration.terraform variable.other.readwrite.terraform
+       " " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "[" punctuation.section.brackets.begin.terraform
+       "]" punctuation.section.brackets.end.terraform
+       "}" punctuation.section.block.end.terraform
+  24 | }
+       "}" punctuation.section.block.end.terraform
+  25 | module "vpc.a/b" {
+       "module" storage.type.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "vpc.a/b" string.quoted.double.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+       "{" punctuation.section.block.begin.terraform
+  26 |   source    = "./modules/vpc"
+       "source" variable.declaration.terraform variable.other.readwrite.terraform
+       "    " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "./modules/vpc" string.quoted.double.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+  27 |   providers = { aws.west = aws.west }
+       "providers" variable.declaration.terraform variable.other.readwrite.terraform
+       " " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "{" punctuation.section.braces.begin.terraform
+       "aws" meta.mapping.key.terraform string.unquoted.terraform
+       "." keyword.operator.accessor.terraform
+       "west" meta.mapping.key.terraform string.unquoted.terraform
+       "=" keyword.operator.terraform
+       "." keyword.operator.accessor.terraform
+       "west" variable.other.member.terraform
+       "}" punctuation.section.braces.end.terraform
+  28 | }
+       "}" punctuation.section.block.end.terraform
+  29 | moved {
+       "moved" storage.type.terraform
+       "{" punctuation.section.block.begin.terraform
+  30 |   from = aws_instance.old
+       "from" variable.declaration.terraform variable.other.readwrite.terraform
+       " " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "." keyword.operator.accessor.terraform
+       "old" variable.other.member.terraform
+  31 |   to   = aws_instance.web
+       "to" variable.declaration.terraform variable.other.readwrite.terraform
+       "   " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "." keyword.operator.accessor.terraform
+       "web" variable.other.member.terraform
+  32 | }
+       "}" punctuation.section.block.end.terraform
+  33 | path "secret/data/*" { capabilities = ["read"] }
+       "path" entity.name.type.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "secret/data/*" string.quoted.double.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+       "{" punctuation.section.block.begin.terraform
+       "capabilities" variable.declaration.terraform variable.other.readwrite.terraform
+       " " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "[" punctuation.section.brackets.begin.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "read" string.quoted.double.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+       "]" punctuation.section.brackets.end.terraform
+       "}" punctuation.section.block.end.terraform
+  34 | block_type bare-label "q" {}
+       "block_type" entity.name.type.terraform
+       "bare-label" entity.name.label.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "q" string.quoted.double.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+       "{" punctuation.section.block.begin.terraform
+       "}" punctuation.section.block.end.terraform
+  35 | locals {
+       "locals" storage.type.terraform
+       "{" punctuation.section.block.begin.terraform
+  36 |   ids   = [for s in var.subnets : s.id if s.public]
+       "ids" variable.declaration.terraform variable.other.readwrite.terraform
+       "   " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "[" punctuation.section.brackets.begin.terraform
+       "for" keyword.control.terraform
+       "s" variable.other.readwrite.terraform
+       "in" keyword.operator.word.terraform
+       "var" support.constant.terraform
+       "." keyword.operator.accessor.terraform
+       "subnets" variable.other.member.terraform
+       ":" keyword.operator.terraform
+       "s" variable.other.readwrite.terraform
+       "." keyword.operator.accessor.terraform
+       "id" variable.other.member.terraform
+       "if" keyword.control.conditional.terraform
+       "s" variable.other.readwrite.terraform
+       "." keyword.operator.accessor.terraform
+       "public" variable.other.member.terraform
+       "]" punctuation.section.brackets.end.terraform
+  37 |   by_az = { for k, v in local.m : k => v... }
+       "by_az" variable.declaration.terraform variable.other.readwrite.terraform
+       " " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "{" punctuation.section.braces.begin.terraform
+       "for" keyword.control.terraform
+       "k" variable.other.readwrite.terraform
+       "," punctuation.separator.terraform
+       "v" variable.other.readwrite.terraform
+       "in" keyword.operator.word.terraform
+       "local" support.constant.terraform
+       "." keyword.operator.accessor.terraform
+       "m" variable.other.member.terraform
+       ":" keyword.operator.terraform
+       "k" variable.other.readwrite.terraform
+       "=>" storage.type.function.terraform
+       "v" variable.other.readwrite.terraform
+       "..." keyword.operator.terraform
+       "}" punctuation.section.braces.end.terraform
+  38 |   first = try(aws_instance.web[*].id, a.0, (b), my_fn(c), -1.5e3, d.*.e)
+       "first" variable.declaration.terraform variable.other.readwrite.terraform
+       " " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "try" support.function.builtin.terraform
+       "(" punctuation.section.parens.begin.terraform
+       "." keyword.operator.accessor.terraform
+       "web" variable.other.member.terraform
+       "[" punctuation.section.brackets.begin.terraform
+       "*" punctuation.section.brackets.end.terraform keyword.operator.splat.terraform
+       "]" punctuation.section.brackets.end.terraform
+       "." keyword.operator.accessor.terraform
+       "id" variable.other.member.terraform
+       "," punctuation.separator.terraform
+       "." keyword.operator.accessor.terraform
+       "0" constant.numeric.integer.terraform
+       "," punctuation.separator.terraform
+       "(" punctuation.section.parens.begin.terraform
+       "b" variable.other.readwrite.terraform
+       ")" punctuation.section.parens.end.terraform
+       "," punctuation.separator.terraform
+       "my_fn" variable.function.terraform
+       "(" punctuation.section.parens.begin.terraform
+       ")" punctuation.section.parens.end.terraform
+       "," punctuation.separator.terraform
+       "-" keyword.operator.arithmetic.terraform
+       "1" constant.numeric.float.terraform
+       "." constant.numeric.float.terraform punctuation.separator.decimal.terraform
+       "5" constant.numeric.float.terraform
+       "e" constant.numeric.float.terraform punctuation.separator.exponent.terraform
+       "3" constant.numeric.float.terraform
+       "," punctuation.separator.terraform
+       "." keyword.operator.accessor.terraform
+       "*" keyword.operator.splat.terraform
+       "." keyword.operator.accessor.terraform
+       "e" variable.other.member.terraform
+       ")" punctuation.section.parens.end.terraform
+  39 |   _hidden = can(regex("^a", var.x)) && !false || null == true
+       "_hidden" variable.declaration.terraform variable.other.readwrite.terraform
+       " " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "can" support.function.builtin.terraform
+       "(" punctuation.section.parens.begin.terraform
+       "regex" support.function.builtin.terraform
+       "(" punctuation.section.parens.begin.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "^a" string.quoted.double.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+       "," punctuation.separator.terraform
+       "var" support.constant.terraform
+       "." keyword.operator.accessor.terraform
+       "x" variable.other.member.terraform
+       "))" punctuation.section.parens.end.terraform
+       "&&" keyword.operator.logical.terraform
+       "!" keyword.operator.logical.terraform
+       "false" constant.language.terraform
+       "||" keyword.operator.logical.terraform
+       "null" constant.language.terraform
+       "==" keyword.operator.terraform
+       "true" constant.language.terraform
+  40 |   t     = list(string)
+       "t" variable.declaration.terraform variable.other.readwrite.terraform
+       "     " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "list" support.function.builtin.terraform
+       "(" punctuation.section.parens.begin.terraform
+       "string" storage.type.terraform
+       ")" punctuation.section.parens.end.terraform
+  41 |   esc   = "a\"b\n \\ \u00e9 \U0001F600 $${no} %%{no} \."
+       "esc" variable.declaration.terraform variable.other.readwrite.terraform
+       "   " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "a" string.quoted.double.terraform
+       "\\\"" string.quoted.double.terraform constant.character.escape.terraform
+       "b" string.quoted.double.terraform
+       "\\n" string.quoted.double.terraform constant.character.escape.terraform
+       " " string.quoted.double.terraform
+       "\\\\" string.quoted.double.terraform constant.character.escape.terraform
+       " " string.quoted.double.terraform
+       "\\u00e9" string.quoted.double.terraform constant.character.escape.terraform
+       " " string.quoted.double.terraform
+       "\\U0001F600" string.quoted.double.terraform constant.character.escape.terraform
+       " " string.quoted.double.terraform
+       "$$" string.quoted.double.terraform constant.character.escape.terraform
+       "{no} " string.quoted.double.terraform
+       "%%" string.quoted.double.terraform constant.character.escape.terraform
+       "{no} \\." string.quoted.double.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+  42 |   tpl   = "%{ if var.x ~}yes%{ else }no%{ endif ~} ${ {a = 1}.a }"
+       "tpl" variable.declaration.terraform variable.other.readwrite.terraform
+       "   " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "%{" keyword.other.interpolation.begin.terraform
+       "if" keyword.control.terraform
+       "var" support.constant.terraform
+       "." keyword.operator.accessor.terraform
+       "x" variable.other.member.terraform
+       " ~" keyword.operator.template.right.trim.terraform
+       "}" keyword.other.interpolation.end.terraform
+       "yes" string.quoted.double.terraform
+       "%{" keyword.other.interpolation.begin.terraform
+       "else" keyword.control.terraform
+       "}" keyword.other.interpolation.end.terraform
+       "no" string.quoted.double.terraform
+       "%{" keyword.other.interpolation.begin.terraform
+       "endif" keyword.control.terraform
+       " ~" keyword.operator.template.right.trim.terraform
+       "}" keyword.other.interpolation.end.terraform
+       " " string.quoted.double.terraform
+       "${" keyword.other.interpolation.begin.terraform
+       "{" punctuation.section.braces.begin.terraform
+       "a" meta.mapping.key.terraform string.unquoted.terraform
+       "=" keyword.operator.terraform
+       "1" constant.numeric.integer.terraform
+       "}" punctuation.section.braces.end.terraform
+       "." keyword.operator.accessor.terraform
+       "a" variable.other.member.terraform
+       "}" keyword.other.interpolation.end.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+  43 |   open  = "runs to the line's end
+       "open" variable.declaration.terraform variable.other.readwrite.terraform
+       "  " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "runs to the line's end" string.quoted.double.terraform
+  44 |   multi = "${
+       "multi" variable.declaration.terraform variable.other.readwrite.terraform
+       " " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.begin.terraform
+       "${" keyword.other.interpolation.begin.terraform
+  45 |     var.x
+       "var" support.constant.terraform
+       "." keyword.operator.accessor.terraform
+       "x" variable.other.member.terraform
+  46 |   } after"
+       "}" keyword.other.interpolation.end.terraform
+       " after" string.quoted.double.terraform
+       "\"" string.quoted.double.terraform punctuation.definition.string.end.terraform
+  47 |   doc   = <<-EOT
+       "doc" variable.declaration.terraform variable.other.readwrite.terraform
+       "   " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "<<-" keyword.operator.heredoc.terraform
+       "EOT" keyword.control.heredoc.terraform
+  48 |     hello ${var.name} $${literal}
+       "    hello " string.unquoted.heredoc.terraform
+       "${" keyword.other.interpolation.begin.terraform
+       "var" support.constant.terraform
+       "." keyword.operator.accessor.terraform
+       "name" variable.other.member.terraform
+       "}" keyword.other.interpolation.end.terraform
+       " " string.unquoted.heredoc.terraform
+       "$$" string.unquoted.heredoc.terraform constant.character.escape.terraform
+       "{literal}" string.unquoted.heredoc.terraform
+  49 |     %{ for x in var.l ~}${x}%{ endfor }
+       "    " string.unquoted.heredoc.terraform
+       "%{" keyword.other.interpolation.begin.terraform
+       "for" keyword.control.terraform
+       "in" keyword.control.terraform
+       "var" support.constant.terraform
+       "." keyword.operator.accessor.terraform
+       "l" variable.other.member.terraform
+       " ~" keyword.operator.template.right.trim.terraform
+       "}" keyword.other.interpolation.end.terraform
+       "${" keyword.other.interpolation.begin.terraform
+       "}" keyword.other.interpolation.end.terraform
+       "%{" keyword.other.interpolation.begin.terraform
+       "endfor" keyword.control.terraform
+       "}" keyword.other.interpolation.end.terraform
+  50 |     EOT
+       "    EOT" keyword.control.heredoc.terraform
+  51 |   json = jsonencode(<<EOF
+       "json" variable.declaration.terraform variable.other.readwrite.terraform
+       " " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "jsonencode" support.function.builtin.terraform
+       "(" punctuation.section.parens.begin.terraform
+       "<<" keyword.operator.heredoc.terraform
+       "EOF" keyword.control.heredoc.terraform
+  52 | {"a": 1}
+       "{\"a\": 1}" string.unquoted.heredoc.terraform
+  53 | EOF
+       "EOF" keyword.control.heredoc.terraform
+  54 |   )
+       ")" punctuation.section.parens.end.terraform
+  55 | }
+       "}" punctuation.section.block.end.terraform
+  56 | // a line comment
+       "//" comment.line.terraform punctuation.definition.comment.terraform
+       " a line comment" comment.line.terraform
+  57 | x = 1 /* inline */ + 2
+       "x" variable.declaration.terraform variable.other.readwrite.terraform
+       " " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "1" constant.numeric.integer.terraform
+       "/*" comment.block.terraform punctuation.definition.comment.terraform
+       " inline " comment.block.terraform
+       "*/" comment.block.terraform punctuation.definition.comment.terraform
+       "+" keyword.operator.arithmetic.terraform
+       "2" constant.numeric.integer.terraform
+  58 | /* a block
+       "/*" comment.block.terraform punctuation.definition.comment.terraform
+       " a block" comment.block.terraform
+  59 |    comment */ y = 3
+       "   comment " comment.block.terraform
+       "*/" comment.block.terraform punctuation.definition.comment.terraform
+       "y" variable.declaration.terraform variable.other.readwrite.terraform
+       " " variable.declaration.terraform
+       "= " variable.declaration.terraform keyword.operator.assignment.terraform
+       "3" constant.numeric.integer.terraform

@@ -1656,6 +1656,75 @@ fn cmake() {
     readings("cmake", Lang::CMake, text);
 }
 
+/// Terraform's readings (X-102, a scanner of ada's own): blocks and their labels, attributes, objects' keys
+/// (`=`, `:`, a traversal), for-expressions, calls and builtins, templates with their directives and strip
+/// markers, HCL's escapes, a string ended with its line, here-documents, comments.
+#[test]
+fn terraform() {
+    let text = concat!(
+        "# Terraform: blocks, attributes, objects\n",
+        "terraform {\n",
+        "  required_providers {\n",
+        "    aws = { source = \"hashicorp/aws\", version = \"~> 5.0\" }\n",
+        "    null = { source = \"hashicorp/null\" }\n",
+        "  }\n",
+        "}\n",
+        "resource \"aws_instance\" \"web\" {\n",
+        "  ami           = \"ami-${var.ami_id}\"\n",
+        "  count         = var.enabled ? 1 : 0\n",
+        "  nullable=false\n",
+        "  tags = merge(local.tags, {\n",
+        "    Name      = \"web-${count.index}\"\n",
+        "    \"k-1\"     = 2\n",
+        "    eventName : [\"INSERT\"]\n",
+        "  })\n",
+        "  dynamic \"ingress\" {\n",
+        "    for_each = var.rules\n",
+        "    content {\n",
+        "      from_port = ingress.value.port\n",
+        "    }\n",
+        "  }\n",
+        "  lifecycle { ignore_changes = [tags] }\n",
+        "}\n",
+        "module \"vpc.a/b\" {\n",
+        "  source    = \"./modules/vpc\"\n",
+        "  providers = { aws.west = aws.west }\n",
+        "}\n",
+        "moved {\n",
+        "  from = aws_instance.old\n",
+        "  to   = aws_instance.web\n",
+        "}\n",
+        "path \"secret/data/*\" { capabilities = [\"read\"] }\n",
+        "block_type bare-label \"q\" {}\n",
+        "locals {\n",
+        "  ids   = [for s in var.subnets : s.id if s.public]\n",
+        "  by_az = { for k, v in local.m : k => v... }\n",
+        "  first = try(aws_instance.web[*].id, a.0, (b), my_fn(c), -1.5e3, d.*.e)\n",
+        "  _hidden = can(regex(\"^a\", var.x)) && !false || null == true\n",
+        "  t     = list(string)\n",
+        "  esc   = \"a\\\"b\\n \\\\ \\u00e9 \\U0001F600 $${no} %%{no} \\.\"\n",
+        "  tpl   = \"%{ if var.x ~}yes%{ else }no%{ endif ~} ${ {a = 1}.a }\"\n",
+        "  open  = \"runs to the line's end\n",
+        "  multi = \"${\n",
+        "    var.x\n",
+        "  } after\"\n",
+        "  doc   = <<-EOT\n",
+        "    hello ${var.name} $${literal}\n",
+        "    %{ for x in var.l ~}${x}%{ endfor }\n",
+        "    EOT\n",
+        "  json = jsonencode(<<EOF\n",
+        "{\"a\": 1}\n",
+        "EOF\n",
+        "  )\n",
+        "}\n",
+        "// a line comment\n",
+        "x = 1 /* inline */ + 2\n",
+        "/* a block\n",
+        "   comment */ y = 3\n",
+    );
+    readings("terraform", Lang::Terraform, text);
+}
+
 /// `.env`'s readings (ADR-40): comments, `export`, keys, values quoted and bare, interpolation,
 /// escapes, numbers and constants.
 #[test]
