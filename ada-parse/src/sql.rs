@@ -14,11 +14,29 @@
 //! `\s` takes the line's `\n`, so `CREATE TABLE` at a line's end leaves `identifier_create`
 //! open for the name on the next line, and `ALTER TABLE` and `COMMENT ON … IS` end there.
 //! The stack never holds more than `main` and one context above it, so the state between
-//! lines is that context, a byte: a block comment, one of the five strings, or
-//! `identifier_create`. `\w` past ASCII is a letter or a decimal digit, `\s` Unicode's spaces,
-//! `\d` Unicode's decimal digits; `(?i)` folds ASCII case only (Oniguruma's `ſ` for `s` isn't
-//! followed).
+//! lines is that context: a block comment, one of the five strings, a dollar-quoted string, or
+//! `identifier_create`; beside it, a dollar-quoted body's tag ([`line`]). `\w` past ASCII is a
+//! letter or a decimal digit, `\s` Unicode's spaces, `\d` Unicode's decimal digits; `(?i)`
+//! folds ASCII case only (Oniguruma's `ſ` for `s` isn't followed).
+//!
+//! **The dialects' words (X-124).** bat's lists are an old grammar's: most of what PostgreSQL,
+//! MySQL, SQLite and T-SQL add stayed plain. The table holds them too, in the kinds bat's
+//! scopes already give a word of their sort (a type `storage.type`, a function
+//! `support.function`, a DML word `keyword.other.DML`), and two of ada's own:
+//! `keyword.other.sql` for the statements' and clauses' words, `keyword.control.sql` for the
+//! procedural ones (`if`, `while`, `return`, `raise`, `throw`). A word that is often a
+//! column's name (`name`, `type`, `key`, `value`, `user`, `level`) stays plain; a function
+//! is one only before `(`. A word that starts one of bat's compound patterns keeps a color
+//! where the pattern doesn't follow (`on` without `delete`, `is` without `null`, `float`
+//! without a size, `create` before an object bat doesn't list). Departures from bat's
+//! reading, each a fix: `drop`'s and `create`'s objects are whole words (`drop tables` no
+//! longer colors `table`, `backdrop table` no `drop`); `create`'s modifiers (`temp`,
+//! `materialized`, `unique`…) come before its object; `if not exists`, `concurrently` and `on`
+//! after it aren't the name; T-SQL's `GO` alone on its line; `N'…'`, `E'…'`, `B'…'`, `X'…'`
+//! strings; PostgreSQL's dollar quotes (`$$…$$`, `$tag$…$tag$`): after `as` or `do` a
+//! function's body, read as SQL to its closing tag, otherwise a string.
 
+use crate::heredoc::Label;
 use crate::prim::{WORD, char_len, digit, is_word_starting as is_word, space_len, word_end};
 use crate::words::{Words, text_len};
 use crate::{Out, State, is_space, skip_spaces, trim_end};
@@ -43,6 +61,11 @@ pub(crate) const CREATE: u8 = 7;
 /// (on its own, a line comment is one token to the line's end).
 pub(crate) const DASHES: u8 = 8;
 pub(crate) const HASHES: u8 = 9;
+/// On its own only: a dollar-quoted string, `$tag$…$tag$` ([`Scan::label`] its tag).
+const DOLLAR: u8 = 10;
+/// Not a context: what `main` returns where a dollar-quoted body opens ([`Scan::opened`]), so
+/// [`line`] finds its closing tag before the body is read.
+const OPEN_BODY: u8 = 11;
 
 // The kinds: an index into [`LEAVES`].
 const DASH: u16 = 1;
@@ -96,9 +119,16 @@ const DATABASE: u16 = 73;
 const TABLE: u16 = 74;
 const SCOPE_BEGIN: u16 = 75;
 const SCOPE_END: u16 = 76;
+/// The dialects' words (X-124): a statement's or a clause's.
+const KEYWORD: u16 = 77;
+/// The dialects' procedural words.
+const CONTROL: u16 = 78;
+const DOLLAR_TEXT: u16 = 79;
+const DOLLAR_BEGIN: u16 = 80;
+const DOLLAR_END: u16 = 81;
 
 /// How many kinds there are.
-pub(crate) const KINDS: usize = 77;
+pub(crate) const KINDS: usize = 82;
 
 /// Each kind's scopes under `source.sql`: bat's for the token, with the meta scope of the
 /// pattern that matched it.
@@ -186,6 +216,11 @@ static LEAVES: [&str; KINDS] = [
     "constant.other.table-name.sql",
     "meta.block.sql punctuation.section.scope.begin.sql",
     "meta.block.sql punctuation.section.scope.end.sql",
+    "keyword.other.sql",
+    "keyword.control.sql",
+    "string.quoted.dollar.sql",
+    "string.quoted.dollar.sql punctuation.definition.string.begin.sql",
+    "string.quoted.dollar.sql punctuation.definition.string.end.sql",
 ];
 
 /// The scopes under `source.sql` kind `kind` carries.
@@ -195,35 +230,124 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
     })
 }
 
+// The state between lines on its own, a word: the context in the low bits; a dollar-quoted
+// body open and its tag's label; `as` or `do` ending the line (a dollar quote opening the next
+// is a body); a dollar-quoted string's tag's label.
+const CTX_BITS: u64 = 0xf;
+const BODY_OPEN: u64 = 1 << 4;
+const AFTER_AS: u64 = 1 << 5;
+const BODY_AT: u32 = 6;
+/// A MySQL client's `DELIMITER` line seen: `$` quotes nothing (`DELIMITER $$`, `END $$`).
+const MYSQL: u64 = 1 << 62;
+const STRING_AT: u32 = BODY_AT + Label::BITS;
+const _: () = assert!(STRING_AT + Label::BITS <= 62 && (OPEN_BODY as u64) <= CTX_BITS);
+
 /// Lex `b`, a line of SQL without its `\n`, from `state`.
+///
+/// In a dollar-quoted body the closing tag is found first, wherever it stands (PostgreSQL's
+/// lexer reads the body as one string before its text is SQL): the body's text is lexed up to
+/// it, whatever context it leaves open there ends with it, and `main` goes on past it.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut s = Scan {
-        b,
-        out,
-        mark: 0,
-        is_end: usize::MAX,
-        from: 0,
-        embed: None,
-        at: 0,
-    };
-    let mut ctx = state.word() as u8;
-    // a context's lexing up to the line's end, or to where it hands over to another
+    let w = state.word();
+    let mut ctx = (w & CTX_BITS) as u8;
+    let mut body = (w & BODY_OPEN != 0).then(|| Label::from_bits((w >> BODY_AT) as u32));
+    let mut label = Label::from_bits((w >> STRING_AT) as u32);
+    let mut after_as = w & AFTER_AS != 0;
+    let mut mysql = w & MYSQL != 0;
     let mut p = 0;
     loop {
-        let next = match ctx {
-            MAIN => s.main(p),
-            BLOCK => s.block(p),
-            SINGLE..=MODR => s.string(ctx, p),
-            CREATE => s.create(p),
-            _ => None,
+        let close = body.and_then(|l| find_tag(b, p, l));
+        let end = close.map_or(b.len(), |c| c.0);
+        let mut s = Scan {
+            b: &b[..end],
+            out,
+            mark: p,
+            is_end: usize::MAX,
+            from: 0,
+            embed: None,
+            at: 0,
+            label,
+            in_body: body.is_some(),
+            after_as,
+            opened: None,
+            mysql,
         };
-        match next {
-            Some((q, c)) => (p, ctx) = (q, c),
-            None => break,
+        // a context's lexing up to the region's end, or to where it hands over to another
+        loop {
+            let next = match ctx {
+                MAIN => s.main(p),
+                BLOCK => s.block(p),
+                SINGLE..=MODR => s.string(ctx, p),
+                CREATE => s.create(p),
+                DOLLAR => s.dollar(p),
+                _ => None,
+            };
+            match next {
+                Some((q, c)) => (p, ctx) = (q, c),
+                None => break,
+            }
+            if ctx == OPEN_BODY {
+                break;
+            }
         }
+        label = s.label;
+        after_as = s.as_before(end);
+        mysql = s.mysql;
+        if ctx == OPEN_BODY {
+            (body, ctx, after_as) = (s.opened, MAIN, false);
+            continue;
+        }
+        let Some((start, e)) = close else {
+            break;
+        };
+        out.push(start, e, DOLLAR_END);
+        (body, ctx, p, after_as) = (None, MAIN, e, false);
     }
-    state.set_word(u64::from(ctx));
+    let mut w = u64::from(ctx);
+    if let Some(l) = body {
+        w |= BODY_OPEN | u64::from(l.bits()) << BODY_AT;
+    }
+    if after_as {
+        w |= AFTER_AS;
+    }
+    if mysql {
+        w |= MYSQL;
+    }
+    if ctx == DOLLAR {
+        w |= u64::from(label.bits()) << STRING_AT;
+    }
+    state.set_word(w);
+}
+
+/// A dollar quote's tag at `p`, a `$`: `$$` or `$` and a name (not starting with a digit) and
+/// `$`. Where it ends.
+fn tag_end(b: &[u8], p: usize) -> Option<usize> {
+    let mut q = p + 1;
+    match *b.get(q)? {
+        b'$' => return Some(q + 1),
+        c if c >= 0x80 || c == b'_' || c.is_ascii_alphabetic() => {}
+        _ => return None,
+    }
+    while q < b.len() && (b[q] >= 0x80 || WORD[usize::from(b[q])]) {
+        q += 1;
+    }
+    (b.get(q) == Some(&b'$')).then_some(q + 1)
+}
+
+/// The first `$tag$` from `from` whose tag has `label`: where it starts and ends.
+fn find_tag(b: &[u8], from: usize, label: Label) -> Option<(usize, usize)> {
+    let mut q = from;
+    while let Some(i) = b.get(q..)?.iter().position(|&c| c == b'$') {
+        let s = q + i;
+        if let Some(e) = tag_end(b, s)
+            && Label::of(&b[s + 1..e - 1]) == label
+        {
+            return Some((s, e));
+        }
+        q = s + 1;
+    }
+    None
 }
 
 /// SQL in a host language's string (phase 4): what the host gives the scan.
@@ -273,6 +397,11 @@ pub(crate) fn embedded(
         from: p,
         embed: Some(host),
         at: keep.at,
+        label: Label::from_bits(0),
+        in_body: false,
+        after_as: false,
+        opened: None,
+        mysql: false,
     };
     let (mut p, mut ctx) = (p, ctx);
     loop {
@@ -549,6 +678,35 @@ const W_SCALAR: u8 = 37;
 /// `(AVG|COUNT|MIN|MAX|SUM)(?=\s*\()`.
 const W_AGGREGATE: u8 = 38;
 const W_STRING_FUNCTION: u8 = 39;
+// The dialects' words (X-124).
+/// A statement's or a clause's word: [`KEYWORD`].
+const W_KEYWORD: u8 = 40;
+/// A procedural word: [`CONTROL`].
+const W_CONTROL: u8 = 41;
+/// A function, `(?=\s*\()`: [`SCALAR`].
+const W_FUNCTION: u8 = 42;
+/// `do`: [`KEYWORD`], and a dollar quote after it a body.
+const W_DO: u8 = 43;
+/// T-SQL's `GO` (`go(\s+\d+)?`), alone on its line.
+const W_GO: u8 = 44;
+/// `each(\s+(row|statement))?`.
+const W_EACH: u8 = 45;
+/// `nulls(\s+(first|last|distinct))?`.
+const W_NULLS: u8 = 46;
+/// `isnull`: a function before `(` (T-SQL), else an operator (PostgreSQL, SQLite).
+const W_ISNULL: u8 = 47;
+/// `replace`: a function before `(`, else MySQL's and SQLite's statement or resolution.
+const W_REPLACE: u8 = 48;
+/// `repeat`: a function before `(`, else MySQL's loop.
+const W_REPEAT: u8 = 49;
+/// `savepoint`, `transaction`, `tran`: [`LUW`].
+const W_LUW: u8 = 50;
+/// `language`: [`KEYWORD`]; after `do` its name too keeps a dollar quote next a body
+/// (`DO LANGUAGE plpgsql $$`).
+const W_LANGUAGE: u8 = 51;
+/// A MySQL client's `DELIMITER` line: [`KEYWORD`], its delimiter plain, and `$` quotes nothing
+/// after it ([`MYSQL`]).
+const W_DELIMITER: u8 = 52;
 
 /// Every word that starts a pattern of `main`, lowercase, with the pattern.
 const ENTRIES: &[(&[u8], u8)] = &[
@@ -685,6 +843,416 @@ const ENTRIES: &[(&[u8], u8)] = &[
     (b"translate", W_STRING_FUNCTION),
     (b"trim", W_STRING_FUNCTION),
     (b"upper", W_STRING_FUNCTION),
+    // The dialects' words (X-124), from the survey of the corpus and the hosts' SQL: PostgreSQL,
+    // MySQL, SQLite and T-SQL first. Not here: words that are often a column's name (`name`,
+    // `type`, `key`, `value`, `user`, `role`, `level`, `owner`, `row`, `rows`, `first`, `next`,
+    // `option`, `open`, `close`, `filter`, `source`, `status`, `version`).
+    (b"add", W_KEYWORD),
+    (b"after", W_KEYWORD),
+    (b"always", W_KEYWORD),
+    (b"analyse", W_KEYWORD),
+    (b"analyze", W_KEYWORD),
+    (b"ansi_nulls", W_KEYWORD),
+    (b"array", W_KEYWORD),
+    (b"attach", W_KEYWORD),
+    (b"authorization", W_KEYWORD),
+    (b"before", W_KEYWORD),
+    (b"call", W_KEYWORD),
+    (b"cascade", W_KEYWORD),
+    (b"charset", W_KEYWORD),
+    (b"checkpoint", W_KEYWORD),
+    (b"clustered", W_KEYWORD),
+    (b"collate", W_KEYWORD),
+    (b"column", W_KEYWORD),
+    (b"concurrently", W_KEYWORD),
+    (b"conflict", W_KEYWORD),
+    (b"copy", W_KEYWORD),
+    (b"cursor", W_KEYWORD),
+    (b"database", W_KEYWORD),
+    (b"deallocate", W_KEYWORD),
+    (b"declare", W_KEYWORD),
+    (b"deferrable", W_KEYWORD),
+    (b"deferred", W_KEYWORD),
+    (b"definer", W_KEYWORD),
+    (b"detach", W_KEYWORD),
+    (b"deterministic", W_KEYWORD),
+    (b"diagnostics", W_KEYWORD),
+    (b"duplicate", W_KEYWORD),
+    (b"engine", W_KEYWORD),
+    (b"escape", W_KEYWORD),
+    (b"exclude", W_KEYWORD),
+    (b"exec", W_KEYWORD),
+    (b"execute", W_KEYWORD),
+    (b"explain", W_KEYWORD),
+    (b"extension", W_KEYWORD),
+    (b"following", W_KEYWORD),
+    (b"for", W_KEYWORD),
+    (b"function", W_KEYWORD),
+    (b"generated", W_KEYWORD),
+    (b"ignore", W_KEYWORD),
+    (b"immediate", W_KEYWORD),
+    (b"immutable", W_KEYWORD),
+    (b"include", W_KEYWORD),
+    (b"increment", W_KEYWORD),
+    (b"index", W_KEYWORD),
+    (b"inherits", W_KEYWORD),
+    (b"initially", W_KEYWORD),
+    (b"inout", W_KEYWORD),
+    (b"instead", W_KEYWORD),
+    (b"invoker", W_KEYWORD),
+    (b"leakproof", W_KEYWORD),
+    (b"listen", W_KEYWORD),
+    (b"lock", W_KEYWORD),
+    (b"materialized", W_KEYWORD),
+    (b"matched", W_KEYWORD),
+    (b"modifies", W_KEYWORD),
+    (b"nocount", W_KEYWORD),
+    (b"nolock", W_KEYWORD),
+    (b"nonclustered", W_KEYWORD),
+    (b"nothing", W_KEYWORD),
+    (b"notify", W_KEYWORD),
+    (b"nowait", W_KEYWORD),
+    (b"of", W_KEYWORD),
+    (b"off", W_KEYWORD),
+    (b"only", W_KEYWORD),
+    (b"partition", W_KEYWORD),
+    (b"pragma", W_KEYWORD),
+    (b"preceding", W_KEYWORD),
+    (b"prepare", W_KEYWORD),
+    (b"print", W_KEYWORD),
+    (b"proc", W_KEYWORD),
+    (b"procedure", W_KEYWORD),
+    (b"quoted_identifier", W_KEYWORD),
+    (b"reads", W_KEYWORD),
+    (b"readonly", W_KEYWORD),
+    (b"recompile", W_KEYWORD),
+    (b"recursive", W_KEYWORD),
+    (b"refresh", W_KEYWORD),
+    (b"reindex", W_KEYWORD),
+    (b"rename", W_KEYWORD),
+    (b"reset", W_KEYWORD),
+    (b"restrict", W_KEYWORD),
+    (b"returns", W_KEYWORD),
+    (b"schema", W_KEYWORD),
+    (b"schemabinding", W_KEYWORD),
+    (b"sequence", W_KEYWORD),
+    (b"setof", W_KEYWORD),
+    (b"show", W_KEYWORD),
+    (b"sqlexception", W_KEYWORD),
+    (b"sqlstate", W_KEYWORD),
+    (b"sqlwarning", W_KEYWORD),
+    (b"stable", W_KEYWORD),
+    (b"strict", W_KEYWORD),
+    (b"table", W_KEYWORD),
+    (b"tablespace", W_KEYWORD),
+    (b"temp", W_KEYWORD),
+    (b"temporary", W_KEYWORD),
+    (b"to", W_KEYWORD),
+    (b"trigger", W_KEYWORD),
+    (b"unbounded", W_KEYWORD),
+    (b"unlisten", W_KEYWORD),
+    (b"unlock", W_KEYWORD),
+    (b"unlogged", W_KEYWORD),
+    (b"use", W_KEYWORD),
+    (b"vacuum", W_KEYWORD),
+    (b"variadic", W_KEYWORD),
+    (b"verbose", W_KEYWORD),
+    (b"view", W_KEYWORD),
+    (b"virtual", W_KEYWORD),
+    (b"volatile", W_KEYWORD),
+    (b"without", W_KEYWORD),
+    (b"xact_abort", W_KEYWORD),
+    (b"do", W_DO),
+    (b"language", W_LANGUAGE),
+    (b"delimiter", W_DELIMITER),
+    (b"go", W_GO),
+    (b"each", W_EACH),
+    (b"nulls", W_NULLS),
+    (b"apply", W_DML),
+    (b"distinct", W_DML),
+    (b"except", W_DML),
+    (b"fetch", W_DML),
+    (b"intersect", W_DML),
+    (b"into", W_DML),
+    (b"lateral", W_DML),
+    (b"merge", W_DML),
+    (b"offset", W_DML),
+    (b"output", W_DML),
+    (b"over", W_DML),
+    (b"pivot", W_DML),
+    (b"qualify", W_DML),
+    (b"returning", W_DML),
+    (b"tablesample", W_DML),
+    (b"top", W_DML),
+    (b"unpivot", W_DML),
+    (b"window", W_DML),
+    (b"within", W_DML),
+    (b"by", W_DML),
+    (b"outer", W_INNER),
+    (b"full", W_SIDE),
+    (b"all", W_LOGICAL),
+    (b"any", W_LOGICAL),
+    (b"some", W_LOGICAL),
+    (b"ilike", W_LOGICAL),
+    (b"similar", W_LOGICAL),
+    (b"regexp", W_LOGICAL),
+    (b"rlike", W_LOGICAL),
+    (b"glob", W_LOGICAL),
+    (b"xor", W_LOGICAL),
+    (b"notnull", W_LOGICAL),
+    (b"isnull", W_ISNULL),
+    (b"replace", W_REPLACE),
+    (b"repeat", W_REPEAT),
+    (b"savepoint", W_LUW),
+    (b"transaction", W_LUW),
+    (b"tran", W_LUW),
+    (b"if", W_CONTROL),
+    (b"elsif", W_CONTROL),
+    (b"elseif", W_CONTROL),
+    (b"while", W_CONTROL),
+    (b"loop", W_CONTROL),
+    (b"return", W_CONTROL),
+    (b"exit", W_CONTROL),
+    (b"continue", W_CONTROL),
+    (b"leave", W_CONTROL),
+    (b"iterate", W_CONTROL),
+    (b"until", W_CONTROL),
+    (b"goto", W_CONTROL),
+    (b"raise", W_CONTROL),
+    (b"raiserror", W_CONTROL),
+    (b"throw", W_CONTROL),
+    (b"try", W_CONTROL),
+    (b"catch", W_CONTROL),
+    (b"break", W_CONTROL),
+    (b"foreach", W_CONTROL),
+    (b"waitfor", W_CONTROL),
+    (b"perform", W_CONTROL),
+    (b"signal", W_CONTROL),
+    (b"resignal", W_CONTROL),
+    (b"exception", W_CONTROL),
+    (b"unique", W_MODIFIER),
+    (b"unsigned", W_MODIFIER),
+    (b"zerofill", W_MODIFIER),
+    (b"auto_increment", W_MODIFIER),
+    (b"autoincrement", W_MODIFIER),
+    (b"identity", W_MODIFIER),
+    (b"current_role", W_SCALAR),
+    (b"current_schema", W_SCALAR),
+    (b"current_catalog", W_SCALAR),
+    (b"localtime", W_SCALAR),
+    (b"localtimestamp", W_SCALAR),
+    // PostgreSQL's types
+    (b"anyarray", W_TYPE),
+    (b"anyelement", W_TYPE),
+    (b"bool", W_TYPE),
+    (b"bpchar", W_TYPE),
+    (b"citext", W_TYPE),
+    (b"cstring", W_TYPE),
+    (b"daterange", W_TYPE),
+    (b"float4", W_TYPE),
+    (b"float8", W_TYPE),
+    (b"geography", W_TYPE),
+    (b"geometry", W_TYPE),
+    (b"hstore", W_TYPE),
+    (b"int2", W_TYPE),
+    (b"int4", W_TYPE),
+    (b"int8", W_TYPE),
+    (b"int4range", W_TYPE),
+    (b"int8range", W_TYPE),
+    (b"json", W_TYPE),
+    (b"jsonb", W_TYPE),
+    (b"macaddr8", W_TYPE),
+    (b"numrange", W_TYPE),
+    (b"record", W_TYPE),
+    (b"regclass", W_TYPE),
+    (b"regconfig", W_TYPE),
+    (b"regproc", W_TYPE),
+    (b"regtype", W_TYPE),
+    (b"serial2", W_TYPE),
+    (b"serial4", W_TYPE),
+    (b"serial8", W_TYPE),
+    (b"smallserial", W_TYPE),
+    (b"timetz", W_TYPE),
+    (b"tsquery", W_TYPE),
+    (b"tsrange", W_TYPE),
+    (b"tstzrange", W_TYPE),
+    (b"tsvector", W_TYPE),
+    (b"uuid", W_TYPE),
+    (b"varbit", W_TYPE),
+    (b"void", W_TYPE),
+    (b"xml", W_TYPE),
+    // MySQL's and SQLite's
+    (b"blob", W_TYPE),
+    (b"enum", W_TYPE),
+    (b"longblob", W_TYPE),
+    (b"longtext", W_TYPE),
+    (b"mediumblob", W_TYPE),
+    (b"mediumint", W_TYPE),
+    (b"mediumtext", W_TYPE),
+    (b"tinyblob", W_TYPE),
+    (b"tinytext", W_TYPE),
+    (b"binary", W_CHAR),
+    // T-SQL's, and the standard's large objects
+    (b"clob", W_TYPE),
+    (b"datetime2", W_TYPE),
+    (b"datetimeoffset", W_TYPE),
+    (b"hierarchyid", W_TYPE),
+    (b"nclob", W_TYPE),
+    (b"rowversion", W_TYPE),
+    (b"smalldatetime", W_TYPE),
+    (b"smallmoney", W_TYPE),
+    (b"sql_variant", W_TYPE),
+    (b"uniqueidentifier", W_TYPE),
+    (b"nchar", W_CHAR),
+    // functions, before `(`
+    (b"abs", W_FUNCTION),
+    (b"age", W_FUNCTION),
+    (b"array_length", W_FUNCTION),
+    (b"array_to_string", W_FUNCTION),
+    (b"btrim", W_FUNCTION),
+    (b"cast", W_FUNCTION),
+    (b"ceil", W_FUNCTION),
+    (b"ceiling", W_FUNCTION),
+    (b"char_length", W_FUNCTION),
+    (b"character_length", W_FUNCTION),
+    (b"charindex", W_FUNCTION),
+    (b"choose", W_FUNCTION),
+    (b"coalesce", W_FUNCTION),
+    (b"concat", W_FUNCTION),
+    (b"concat_ws", W_FUNCTION),
+    (b"curdate", W_FUNCTION),
+    (b"currval", W_FUNCTION),
+    (b"current_setting", W_FUNCTION),
+    (b"curtime", W_FUNCTION),
+    (b"date_format", W_FUNCTION),
+    (b"date_part", W_FUNCTION),
+    (b"date_trunc", W_FUNCTION),
+    (b"dateadd", W_FUNCTION),
+    (b"datediff", W_FUNCTION),
+    (b"datename", W_FUNCTION),
+    (b"datepart", W_FUNCTION),
+    (b"eomonth", W_FUNCTION),
+    (b"exp", W_FUNCTION),
+    (b"extract", W_FUNCTION),
+    (b"floor", W_FUNCTION),
+    (b"format", W_FUNCTION),
+    (b"format_type", W_FUNCTION),
+    (b"from_unixtime", W_FUNCTION),
+    (b"gen_random_uuid", W_FUNCTION),
+    (b"generate_series", W_FUNCTION),
+    (b"getdate", W_FUNCTION),
+    (b"getutcdate", W_FUNCTION),
+    (b"greatest", W_FUNCTION),
+    (b"ifnull", W_FUNCTION),
+    (b"iif", W_FUNCTION),
+    (b"initcap", W_FUNCTION),
+    (b"instr", W_FUNCTION),
+    (b"isnumeric", W_FUNCTION),
+    (b"json_array", W_FUNCTION),
+    (b"json_build_array", W_FUNCTION),
+    (b"json_build_object", W_FUNCTION),
+    (b"json_extract", W_FUNCTION),
+    (b"json_object", W_FUNCTION),
+    (b"json_query", W_FUNCTION),
+    (b"json_typeof", W_FUNCTION),
+    (b"json_value", W_FUNCTION),
+    (b"jsonb_build_array", W_FUNCTION),
+    (b"jsonb_build_object", W_FUNCTION),
+    (b"jsonb_set", W_FUNCTION),
+    (b"jsonb_typeof", W_FUNCTION),
+    (b"last_insert_id", W_FUNCTION),
+    (b"lastval", W_FUNCTION),
+    (b"least", W_FUNCTION),
+    (b"len", W_FUNCTION),
+    (b"length", W_FUNCTION),
+    (b"ln", W_FUNCTION),
+    (b"log", W_FUNCTION),
+    (b"lpad", W_FUNCTION),
+    (b"ltrim", W_FUNCTION),
+    (b"md5", W_FUNCTION),
+    (b"mod", W_FUNCTION),
+    (b"newid", W_FUNCTION),
+    (b"nextval", W_FUNCTION),
+    (b"now", W_FUNCTION),
+    (b"nullif", W_FUNCTION),
+    (b"nvl", W_FUNCTION),
+    (b"object_id", W_FUNCTION),
+    (b"octet_length", W_FUNCTION),
+    (b"patindex", W_FUNCTION),
+    (b"pg_sleep", W_FUNCTION),
+    (b"pg_typeof", W_FUNCTION),
+    (b"position", W_FUNCTION),
+    (b"power", W_FUNCTION),
+    (b"quote_ident", W_FUNCTION),
+    (b"quote_literal", W_FUNCTION),
+    (b"quote_nullable", W_FUNCTION),
+    (b"random", W_FUNCTION),
+    (b"regexp_like", W_FUNCTION),
+    (b"regexp_matches", W_FUNCTION),
+    (b"regexp_replace", W_FUNCTION),
+    (b"regexp_substr", W_FUNCTION),
+    (b"reverse", W_FUNCTION),
+    (b"round", W_FUNCTION),
+    (b"row_to_json", W_FUNCTION),
+    (b"rpad", W_FUNCTION),
+    (b"rtrim", W_FUNCTION),
+    (b"scope_identity", W_FUNCTION),
+    (b"set_config", W_FUNCTION),
+    (b"setval", W_FUNCTION),
+    (b"sign", W_FUNCTION),
+    (b"sleep", W_FUNCTION),
+    (b"split_part", W_FUNCTION),
+    (b"sqrt", W_FUNCTION),
+    (b"str_to_date", W_FUNCTION),
+    (b"string_to_array", W_FUNCTION),
+    (b"strpos", W_FUNCTION),
+    (b"stuff", W_FUNCTION),
+    (b"substr", W_FUNCTION),
+    (b"sysdatetime", W_FUNCTION),
+    (b"sysutcdatetime", W_FUNCTION),
+    (b"to_char", W_FUNCTION),
+    (b"to_date", W_FUNCTION),
+    (b"to_json", W_FUNCTION),
+    (b"to_jsonb", W_FUNCTION),
+    (b"to_number", W_FUNCTION),
+    (b"to_timestamp", W_FUNCTION),
+    (b"trunc", W_FUNCTION),
+    (b"try_cast", W_FUNCTION),
+    (b"try_convert", W_FUNCTION),
+    (b"unix_timestamp", W_FUNCTION),
+    (b"unnest", W_FUNCTION),
+    (b"uuid_generate_v4", W_FUNCTION),
+    // aggregates and window functions, before `(`
+    (b"array_agg", W_AGGREGATE),
+    (b"bool_and", W_AGGREGATE),
+    (b"bool_or", W_AGGREGATE),
+    (b"count_big", W_AGGREGATE),
+    (b"cume_dist", W_AGGREGATE),
+    (b"dense_rank", W_AGGREGATE),
+    (b"first_value", W_AGGREGATE),
+    (b"group_concat", W_AGGREGATE),
+    (b"json_agg", W_AGGREGATE),
+    (b"json_object_agg", W_AGGREGATE),
+    (b"jsonb_agg", W_AGGREGATE),
+    (b"jsonb_object_agg", W_AGGREGATE),
+    (b"lag", W_AGGREGATE),
+    (b"last_value", W_AGGREGATE),
+    (b"lead", W_AGGREGATE),
+    (b"listagg", W_AGGREGATE),
+    (b"nth_value", W_AGGREGATE),
+    (b"ntile", W_AGGREGATE),
+    (b"percent_rank", W_AGGREGATE),
+    (b"percentile_cont", W_AGGREGATE),
+    (b"percentile_disc", W_AGGREGATE),
+    (b"rank", W_AGGREGATE),
+    (b"row_number", W_AGGREGATE),
+    (b"stddev", W_AGGREGATE),
+    (b"stddev_pop", W_AGGREGATE),
+    (b"stddev_samp", W_AGGREGATE),
+    (b"string_agg", W_AGGREGATE),
+    (b"var_pop", W_AGGREGATE),
+    (b"var_samp", W_AGGREGATE),
+    (b"variance", W_AGGREGATE),
 ];
 
 /// The table's list: [`ENTRIES`]' words.
@@ -699,7 +1267,7 @@ const LIST: [&[u8]; ENTRIES.len()] = {
 };
 
 /// [`ENTRIES`]' words, ASCII case ignored: a word's id is its index plus one.
-static WORDS: Words<512, { ENTRIES.len() }, { text_len(&LIST) }, true> = Words::new(&LIST);
+static WORDS: Words<2048, { ENTRIES.len() }, { text_len(&LIST) }, true> = Words::new(&LIST);
 
 /// Each word's pattern word by its id, none at 0.
 static INFO: [u8; ENTRIES.len() + 1] = {
@@ -717,7 +1285,8 @@ fn lookup(w: &[u8]) -> u8 {
     WORDS.value(w, &INFO)
 }
 
-/// The objects `drop` and `alter` take, in their order: no `\b` after them.
+/// The objects `drop` and `alter` take, each a whole word (bat's had no `\b` after them, so
+/// `drop tables` colored `table`); bat's, then the dialects' (X-124).
 const OBJECTS: &[&[u8]] = &[
     b"aggregate",
     b"conversion",
@@ -739,10 +1308,27 @@ const OBJECTS: &[&[u8]] = &[
     b"type",
     b"user",
     b"view",
+    b"collation",
+    b"event",
+    b"extension",
+    b"login",
+    b"macro",
+    b"policy",
+    b"proc",
+    b"publication",
+    b"role",
+    b"server",
+    b"statistics",
+    b"subscription",
+    b"synonym",
 ];
 
+/// What may stand between `drop` or `alter` and its object (X-124): `materialized view`,
+/// `foreign table`, MySQL's `temporary table`.
+const OBJECT_MODIFIERS: &[&[u8]] = &[b"materialized", b"foreign", b"temporary", b"temp"];
+
 /// `create`'s, in extended mode (`operator class` is `operatorclass`), each followed by
-/// `\b`; `(?:unique\s+)?index` is tried apart.
+/// `\b`; bat's, then the dialects' (X-124).
 const CREATE_OBJECTS: &[&[u8]] = &[
     b"aggregate",
     b"conversion",
@@ -764,6 +1350,41 @@ const CREATE_OBJECTS: &[&[u8]] = &[
     b"type",
     b"user",
     b"view",
+    b"collation",
+    b"event",
+    b"extension",
+    b"login",
+    b"macro",
+    b"policy",
+    b"proc",
+    b"publication",
+    b"role",
+    b"server",
+    b"statistics",
+    b"subscription",
+    b"synonym",
+];
+
+/// What may stand between `create` (or `create or replace`) and its object, any number, each
+/// a whole word (X-124; bat's took only `unique` before `index`).
+const CREATE_MODIFIERS: &[&[u8]] = &[
+    b"temp",
+    b"temporary",
+    b"unlogged",
+    b"global",
+    b"local",
+    b"materialized",
+    b"recursive",
+    b"unique",
+    b"clustered",
+    b"nonclustered",
+    b"virtual",
+    b"external",
+    b"foreign",
+    b"trusted",
+    b"procedural",
+    b"constraint",
+    b"fulltext",
 ];
 
 /// `comment on`'s, each followed by `\s+`.
@@ -810,6 +1431,7 @@ static STOP: [bool; 256] = {
                     | b'`'
                     | b'%'
                     | b'('
+                    | b'$'
             );
         c += 1;
     }
@@ -843,10 +1465,23 @@ struct Scan<'b, 'o, 's, 'e> {
     embed: Option<&'e Embed<'e>>,
     /// Embedded: where the spans so far end.
     at: usize,
+    /// The open dollar-quoted string's tag ([`DOLLAR`]).
+    label: Label,
+    /// On its own: whether the text is a dollar-quoted body's, so a dollar quote in it is a
+    /// string.
+    in_body: bool,
+    /// Whether the last token was `as` or `do`: a dollar quote right after opens a body.
+    after_as: bool,
+    /// The tag of the body `main` opened ([`OPEN_BODY`]).
+    opened: Option<Label>,
+    /// On its own: a `DELIMITER` line seen, so the text is a MySQL client's script, where `$`
+    /// quotes nothing.
+    mysql: bool,
 }
 
 impl Scan<'_, '_, '_, '_> {
     fn tok(&mut self, start: usize, end: usize, kind: u16) {
+        self.after_as = false;
         let e = end.min(self.b.len());
         match self.embed {
             None => self.out.push(start, e, kind),
@@ -897,7 +1532,7 @@ impl Scan<'_, '_, '_, '_> {
         let stop = if self.embed.is_some() {
             // a word the host's token ended in the middle of: no `\b` before its rest
             if p > 0 && p < n && is_word(b, p) && is_word_before(b, p) {
-                p = self.rest_of_word(p, word_end(b, p));
+                p = word_end(b, p);
             }
             &EMBED_STOP
         } else {
@@ -910,6 +1545,15 @@ impl Scan<'_, '_, '_, '_> {
             }
             let c = b[p];
             if WORD[usize::from(c)] || (c >= 0x80 && is_word(b, p)) {
+                // `N'…'`, `E'…'`, `B'…'`, `X'…'`: the prefix is the string's (X-124)
+                if b.get(p + 1) == Some(&b'\'')
+                    && matches!(c | 0x20, b'n' | b'e' | b'b' | b'x')
+                    && !self.yields(p + 1)
+                    && (p == 0 || !is_word_before(b, p))
+                {
+                    self.tok(p, p + 2, string_kind(SINGLE, BEGIN));
+                    return Some((p + 2, SINGLE));
+                }
                 match self.word(p) {
                     Ok(q) => p = q,
                     Err(q) => return Some((q, CREATE)),
@@ -991,6 +1635,17 @@ impl Scan<'_, '_, '_, '_> {
                     self.tok(p + 1, p + 2, SCOPE_END);
                     p += 2;
                 }
+                b'$' if !self.mysql && (p == 0 || !(b[p - 1] == b'$' || is_word_before(b, p))) => {
+                    match tag_end(b, p) {
+                        Some(e) => {
+                            if let Some(r) = self.dollar_quote(p, e) {
+                                return Some(r);
+                            }
+                            p = self.mark;
+                        }
+                        None => p += 1,
+                    }
+                }
                 _ => p += char_len(c),
             }
         }
@@ -999,6 +1654,55 @@ impl Scan<'_, '_, '_, '_> {
             return Some((p, MAIN));
         }
         None
+    }
+
+    /// Whether `as` or `do` was the last token and only blanks stand between it and `p`.
+    fn as_before(&self, p: usize) -> bool {
+        self.after_as && self.b[self.mark.min(p)..p].iter().all(|&c| is_space(c))
+    }
+
+    /// The dollar quote `p..e` in `main` (X-124). On its own, a body's opening after `as` or
+    /// `do` (outside a body: [`OPEN_BODY`]), else a string's ([`DOLLAR`]). Embedded, with no
+    /// state between lines for a tag, a body's delimiter alone, or a string where it closes
+    /// before the host's next place: `None`, `main` going on at [`Scan::mark`].
+    fn dollar_quote(&mut self, p: usize, e: usize) -> Option<(usize, u8)> {
+        let body = self.as_before(p);
+        let label = Label::of(&self.b[p + 1..e - 1]);
+        if self.embed.is_some() {
+            let close = if body {
+                None
+            } else {
+                find_tag(&self.b[..self.host_next(e)], e, label)
+            };
+            self.tok(p, e, DOLLAR_BEGIN);
+            if let Some((s, t)) = close {
+                self.tok(e, s, DOLLAR_TEXT);
+                self.tok(s, t, DOLLAR_END);
+            }
+            return None;
+        }
+        self.tok(p, e, DOLLAR_BEGIN);
+        if body && !self.in_body {
+            self.opened = Some(label);
+            return Some((e, OPEN_BODY));
+        }
+        self.label = label;
+        Some((e, DOLLAR))
+    }
+
+    /// A dollar-quoted string from `p`: `None` at the region's end, or `main` past its tag.
+    fn dollar(&mut self, p: usize) -> Option<(usize, u8)> {
+        match find_tag(self.b, p, self.label) {
+            Some((s, e)) => {
+                self.tok(p, s, DOLLAR_TEXT);
+                self.tok(s, e, DOLLAR_END);
+                Some((e, MAIN))
+            }
+            None => {
+                self.tok(p, self.b.len(), DOLLAR_TEXT);
+                None
+            }
+        }
     }
 
     /// Embedded, a line comment from `p` (its mark's end): its text up to the host's next
@@ -1022,10 +1726,14 @@ impl Scan<'_, '_, '_, '_> {
         let b = self.b;
         let e = word_end(b, p);
         let id = lookup(&b[p..e]);
-        if id != W_NONE
-            && let Some(r) = self.keyword(id, p, e)
-        {
-            return r;
+        if id != W_NONE {
+            if let Some(r) = self.keyword(id, p, e) {
+                return r;
+            }
+            if let Some(kind) = self.alone(id, p, e) {
+                self.tok(p, e, kind);
+                return Ok(e);
+            }
         }
         // `\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b`, a fraction or an exponent: bat's grammar takes
         // only `\b\d+\b`, so `1.5` read as two numbers and `1e3` plain (X-008)
@@ -1045,20 +1753,29 @@ impl Scan<'_, '_, '_, '_> {
             self.tok(e + 1, t, TABLE);
             return Ok(t);
         }
-        Ok(self.rest_of_word(p, e))
+        Ok(e)
     }
 
-    /// The rest of a word from `p` to its end `e`, where no pattern starts but
-    /// `\s*(drop)\s+(table)\s+(\w+)(\s+cascade)?\b`, which has no `\b` before `drop`: where
-    /// the scan goes on.
-    fn rest_of_word(&mut self, p: usize, e: usize) -> usize {
-        if e >= p + 4
-            && at_ci(self.b, e - 4, b"drop")
-            && let Some(q) = self.drop_table(e - 4)
-        {
-            return q;
-        }
-        e
+    /// The kind a word that starts one of bat's compound patterns takes where the pattern
+    /// doesn't follow (X-124): `on` without `delete`, `is` without `null`, `float` without a
+    /// size, `create` before an object no list has, `left(` a function. `None` for plain.
+    fn alone(&self, id: u8, p: usize, e: usize) -> Option<u16> {
+        Some(match id {
+            W_CREATE | W_DROP | W_ALTER | W_ON => KEYWORD,
+            W_DOUBLE | W_SIZED | W_CHARACTER => TYPE,
+            W_KEY => MODIFIER,
+            W_BY | W_INNER | W_NATURAL | W_REPLACE => DML,
+            W_SIDE if self.paren(e) => STRING_FUNCTION,
+            W_SIDE if at_ci(self.b, p, b"full") => DML,
+            W_IS | W_NOT | W_ISNULL => LOGICAL,
+            W_REPEAT => CONTROL,
+            _ => return None,
+        })
+    }
+
+    /// Whether `(` follows `e`, past `\s*`.
+    fn paren(&self, e: usize) -> bool {
+        self.b.get(self.spaces(e)) == Some(&b'(')
     }
 
     /// The pattern word `id`, at `p` to `e`, starts: `None` if it doesn't match.
@@ -1117,7 +1834,10 @@ impl Scan<'_, '_, '_, '_> {
                 return Some(Ok(k));
             }
             W_INNER => {
-                let k = self.then_word(e, b"join")?;
+                // `(inner|cross)\s+join`; T-SQL's `(cross|outer)\s+apply`
+                let k = self
+                    .then_word(e, b"join")
+                    .or_else(|| self.then_word(e, b"apply"))?;
                 self.tok(p, k, DML);
                 return Some(Ok(k));
             }
@@ -1145,7 +1865,12 @@ impl Scan<'_, '_, '_, '_> {
             W_LOGICAL => LOGICAL,
             W_VALUES => DML2,
             W_WORK => {
-                let k = self.then_word(e, b"work").unwrap_or(e);
+                // T-SQL's `tran` and `transaction` too
+                let k = self
+                    .then_word(e, b"work")
+                    .or_else(|| self.then_word(e, b"transaction"))
+                    .or_else(|| self.then_word(e, b"tran"))
+                    .unwrap_or(e);
                 self.tok(p, k, LUW);
                 return Some(Ok(k));
             }
@@ -1174,7 +1899,11 @@ impl Scan<'_, '_, '_, '_> {
                 self.tok(self.spaces_before(p), k, OBJECT_COMMENTS);
                 return Some(Ok(k));
             }
-            W_AS => ALIAS,
+            W_AS | W_DO => {
+                self.tok(p, e, if id == W_AS { ALIAS } else { KEYWORD });
+                self.after_as = true;
+                return Some(Ok(e));
+            }
             W_ORDER => ORDER,
             W_SCALAR => SCALAR,
             W_AGGREGATE => {
@@ -1186,6 +1915,58 @@ impl Scan<'_, '_, '_, '_> {
                 AGGREGATE
             }
             W_STRING_FUNCTION => STRING_FUNCTION,
+            W_KEYWORD => KEYWORD,
+            W_CONTROL => CONTROL,
+            W_LUW => LUW,
+            W_FUNCTION | W_ISNULL if self.paren(e) => SCALAR,
+            W_REPLACE | W_REPEAT if self.paren(e) => STRING_FUNCTION,
+            W_GO => {
+                // alone on its line, a count after it allowed
+                let b = &self.b[..self.b.len()];
+                let mut q = e;
+                while q < b.len() && (is_space(b[q]) || b[q].is_ascii_digit()) {
+                    q += 1;
+                }
+                if q < b.len() || !b[..p].iter().all(|&c| is_space(c)) {
+                    return None;
+                }
+                KEYWORD
+            }
+            W_LANGUAGE => {
+                let was = self.after_as;
+                self.tok(p, e, KEYWORD);
+                let q = self
+                    .spaces1(e)
+                    .filter(|&q| is_word(&self.b[..self.b.len()], q));
+                if was && let Some(q) = q {
+                    self.mark = word_end(self.b, q);
+                    self.after_as = true;
+                    return Some(Ok(self.mark));
+                }
+                return Some(Ok(e));
+            }
+            W_DELIMITER if self.embed.is_none() && self.b[..p].iter().all(|&c| is_space(c)) => {
+                self.tok(p, e, KEYWORD);
+                self.mysql = true;
+                return Some(Ok(self.b.len()));
+            }
+            W_EACH => {
+                let k = self
+                    .then_word(e, b"row")
+                    .or_else(|| self.then_word(e, b"statement"))
+                    .unwrap_or(e);
+                self.tok(p, k, KEYWORD);
+                return Some(Ok(k));
+            }
+            W_NULLS => {
+                let k = self
+                    .then_word(e, b"first")
+                    .or_else(|| self.then_word(e, b"last"))
+                    .or_else(|| self.then_word(e, b"distinct"))
+                    .unwrap_or(e);
+                self.tok(p, k, KEYWORD);
+                return Some(Ok(k));
+            }
             _ => return None,
         };
         self.tok(p, e, kind);
@@ -1199,22 +1980,20 @@ impl Scan<'_, '_, '_, '_> {
             .or_else(|| self.then_word(e, b"join"))
     }
 
-    /// `\b(create(?:\s+or\s+replace)?)\s+(objects)\b\s*`, `create` at `p` to `e`: where
-    /// `identifier_create` is pushed.
+    /// `\b(create(?:\s+or\s+(?:replace|alter))?)\s+(?:(modifiers)\s+)*(objects)\b\s*`, `create`
+    /// at `p` to `e`: where `identifier_create` is pushed. T-SQL's `or alter` and the modifiers
+    /// are X-124's.
     fn create_statement(&mut self, p: usize, e: usize) -> Option<usize> {
-        let replace = self
-            .then_word(e, b"or")
-            .and_then(|q| self.then_word(q, b"replace"));
+        let replace = self.then_word(e, b"or").and_then(|q| {
+            self.then_word(q, b"replace")
+                .or_else(|| self.then_word(q, b"alter"))
+        });
         for c1 in [replace, Some(e)].into_iter().flatten() {
             let Some(s) = self.spaces1(c1) else {
                 continue;
             };
-            let unique = self
-                .keyword_at(s, b"unique")
-                .and_then(|q| self.then_word(q, b"index"));
-            let found =
-                unique.or_else(|| CREATE_OBJECTS.iter().find_map(|o| self.keyword_at(s, o)));
-            if let Some(o) = found {
+            let m = self.modifiers(s, CREATE_MODIFIERS);
+            if let Some(o) = CREATE_OBJECTS.iter().find_map(|o| self.keyword_at(m, o)) {
                 self.tok(p, c1, CREATE_KEYWORD);
                 self.tok(s, o, CREATE_OBJECT);
                 return Some(self.spaces(o));
@@ -1223,38 +2002,62 @@ impl Scan<'_, '_, '_, '_> {
         None
     }
 
-    /// `\s*\b(drop)\s+(objects)`, `drop` at `p` to `e`: where the scan goes on. The objects
-    /// have no `\b` after them, so the rest of a longer word is passed over (`tables`).
-    fn drop(&mut self, p: usize, e: usize) -> Option<usize> {
-        let s = self.spaces1(e)?;
-        let o = OBJECTS
+    /// Past the words of `list` from `p`, each a whole word and `\s+` after: where the next
+    /// word starts (`p` for none).
+    fn modifiers(&self, mut p: usize, list: &[&[u8]]) -> usize {
+        while let Some(q) = list
             .iter()
-            .find(|o| at_ci(&self.b[..self.b.len()], s, o))
-            .map(|o| s + o.len())?;
-        self.tok(p, e, DROP_KEYWORD);
-        self.tok(s, o, DROP_OBJECT);
-        let end = word_end(self.b, o);
-        Some(if end > o {
-            self.rest_of_word(o, end)
-        } else {
-            o
-        })
+            .find_map(|w| self.keyword_at(p, w))
+            .and_then(|q| self.spaces1(q))
+        {
+            p = q;
+        }
+        p
     }
 
-    /// `\s*(drop)\s+(table)\s+(\w+)(\s+cascade)?\b` with `drop` at `p`: where it ends.
-    fn drop_table(&mut self, p: usize) -> Option<usize> {
-        let t = self.spaces1(p + 4)?;
-        if !at_ci(&self.b[..self.b.len()], t, b"table") {
+    /// `\s*\b(drop)\s+(?:(modifiers)\s+)*(objects)\b`, `drop` at `p` to `e`: where the scan
+    /// goes on. bat's objects had no `\b` after them (`drop tables` colored `table`), and its
+    /// `drop table` with a name and `cascade` matched only with no `\b` before `drop`
+    /// (`backdrop table x`); here `drop table` reads its name (X-124).
+    fn drop(&mut self, p: usize, e: usize) -> Option<usize> {
+        let s = self.spaces1(e)?;
+        let m = self.modifiers(s, OBJECT_MODIFIERS);
+        let o = OBJECTS.iter().find_map(|o| self.keyword_at(m, o))?;
+        if m == s
+            && o == s + 5
+            && at_ci(self.b, s, b"table")
+            && let Some(q) = self.drop_table(p, e, s)
+        {
+            return Some(q);
+        }
+        self.tok(p, e, DROP_KEYWORD);
+        self.tok(s, o, DROP_OBJECT);
+        Some(o)
+    }
+
+    /// `(drop)\s+(table)\s+(?:(if)\s+(exists)\s+)?(\w+)(\s+cascade)?\b`, `drop` at `p` to
+    /// `e` and `table` at `t`: where it ends.
+    fn drop_table(&mut self, p: usize, e: usize, t: usize) -> Option<usize> {
+        let b = &self.b[..self.b.len()];
+        let mut nm = self.spaces1(t + 5)?;
+        let exists = self
+            .keyword_at(nm, b"if")
+            .and_then(|i| self.then_word(i, b"exists"));
+        let at = nm;
+        if let Some(x) = exists {
+            nm = self.spaces1(x)?;
+        }
+        if !is_word(b, nm) {
             return None;
         }
-        let nm = self.spaces1(t + 5)?;
-        if !is_word(&self.b[..self.b.len()], nm) {
-            return None;
-        }
-        let ne = word_end(self.b, nm);
+        let ne = word_end(b, nm);
         let cascade = self.then_word(ne, b"cascade");
-        self.tok(p, p + 4, DROP_KEYWORD);
+        self.tok(p, e, DROP_KEYWORD);
         self.tok(t, t + 5, DROP_TABLE);
+        if let Some(x) = exists {
+            self.tok(at, at + 2, CONTROL);
+            self.tok(x - 6, x, LOGICAL);
+        }
         self.tok(nm, ne, DROP_NAME);
         if let Some(c) = cascade {
             self.tok(ne, c, DROP_CASCADE);
@@ -1263,14 +2066,15 @@ impl Scan<'_, '_, '_, '_> {
         Some(ne)
     }
 
-    /// `\s*\b(alter)\s+(objects)\s+`, `alter` at `p` to `e`: where it ends.
+    /// `\s*\b(alter)\s+(?:(modifiers)\s+)*(objects)\s+`, `alter` at `p` to `e`: where it ends.
     fn alter(&mut self, p: usize, e: usize) -> Option<usize> {
         let s = self.spaces1(e)?;
+        let m = self.modifiers(s, OBJECT_MODIFIERS);
         let (o, end) = OBJECTS.iter().find_map(|o| {
-            if !at_ci(&self.b[..self.b.len()], s, o) {
+            if !at_ci(&self.b[..self.b.len()], m, o) {
                 return None;
             }
-            let q = s + o.len();
+            let q = m + o.len();
             Some((q, self.spaces1(q)?))
         })?;
         self.tok(p, e, ALTER_KEYWORD);
@@ -1296,6 +2100,11 @@ impl Scan<'_, '_, '_, '_> {
                 let t = match id {
                     W_SIZED => e,
                     W_CHARACTER => {
+                        // MySQL's `character set`
+                        if let Some(k) = self.then_word(e, b"set") {
+                            self.tok(p, k, KEYWORD);
+                            return Some(k);
+                        }
                         let q = self.space(e)?;
                         let v = q + b"varying".len();
                         if at_ci(&self.b[..self.b.len()], q, b"varying") && self.size(v).is_some() {
@@ -1683,12 +2492,16 @@ impl Scan<'_, '_, '_, '_> {
             if self.yields(p) {
                 return Some((p, CREATE));
             }
+            // X-124: `if not exists` and `concurrently` aren't the name, and `on` ends it (an
+            // index's `ON t` with no name before)
+            if let Some(q) = self.create_keywords(p) {
+                p = q;
+                continue;
+            }
+            if self.keyword_at(p, b"on").is_some() {
+                return Some((p, MAIN));
+            }
             if let Some((s, e, end)) = self.create_name(p) {
-                // `(?:(\w+)|'([^']+)'|"([^"]+)"|`([^`]+)`){{end_identifier}}`
-                if self.end_identifier(end) {
-                    self.tok(s, e, CREATE_NAME);
-                    return Some((end, MAIN));
-                }
                 // `(?:\w+|'[^']+'|"[^"]+"|`[^`]+`)\s*(\.)`
                 let mut d = end;
                 while let Some(k) = space_len(b, d) {
@@ -1699,6 +2512,11 @@ impl Scan<'_, '_, '_, '_> {
                     p = d + 1;
                     continue;
                 }
+                // the first name is the object's (X-124): bat's took a name only before
+                // `{{end_identifier}}`, so the last word before a `(` (`CREATE TYPE x AS ENUM (`
+                // named `ENUM`, `CREATE INDEX i ON t (` named `t`)
+                self.tok(s, e, CREATE_NAME);
+                return Some((end, MAIN));
             }
             if self.end_identifier(p) {
                 return Some((p, MAIN));
@@ -1713,6 +2531,24 @@ impl Scan<'_, '_, '_, '_> {
                 p += char_len(b[p]);
             }
         }
+    }
+
+    /// `if\s+not\s+exists` or `concurrently` at `p` in `identifier_create`, colored: where it
+    /// ends.
+    fn create_keywords(&mut self, p: usize) -> Option<usize> {
+        if let Some(i) = self.keyword_at(p, b"if") {
+            let s = self.spaces1(i)?;
+            let x = self
+                .keyword_at(s, b"not")
+                .and_then(|q| self.then_word(q, b"exists"))?;
+            self.tok(p, i, CONTROL);
+            self.tok(s, s + 3, LOGICAL);
+            self.tok(x - 6, x, LOGICAL);
+            return Some(x);
+        }
+        let c = self.keyword_at(p, b"concurrently")?;
+        self.tok(p, c, KEYWORD);
+        Some(c)
     }
 
     /// A name at `p`, `\w+` or one in quotes: its text's start and end, and its end.
@@ -1799,6 +2635,7 @@ mod tests {
                     "comment on table t  is ",
                     "keyword.other.object-comments.sql"
                 ),
+                ("is", "keyword.operator.logical.sql"),
                 (
                     "'",
                     "string.quoted.single.sql punctuation.definition.string.begin.sql"
@@ -1853,6 +2690,8 @@ mod tests {
                 ("timestamp", "storage.type.sql"),
                 ("3", "constant.numeric.sql"),
                 (" with time zone", "storage.type.sql"),
+                // bat's `double\sprecision` takes one `\s`; alone, `double` is MySQL's (X-124)
+                ("double", "storage.type.sql"),
             ]
         );
     }
@@ -1885,8 +2724,8 @@ mod tests {
                 ("TABLE", "meta.create.sql keyword.other.sql"),
                 ("s", "constant.other.database-name.sql"),
                 ("t", "constant.other.table-name.sql"),
-                ("drop", "meta.drop.sql keyword.other.create.sql"),
-                ("table", "meta.drop.sql keyword.other.sql"),
+                // a whole word only (bat's `drop` took `table` in `tables`)
+                ("drop", "keyword.other.sql"),
                 (
                     "  COMMENT ON TABLE t IS ",
                     "keyword.other.object-comments.sql"
@@ -1902,13 +2741,249 @@ mod tests {
                 ),
             ]
         );
+        // `drop` only at a word's start (bat's matched `backdrop table x`), and `drop table`
+        // with its name and `cascade`, past `if exists`
         assert_eq!(
-            kinds(&["backdrop table x cascade"]),
+            kinds(&["backdrop table x cascade; DROP TABLE IF EXISTS x CASCADE"]),
             [
-                ("drop", "meta.drop.sql keyword.other.create.sql"),
-                ("table", "meta.drop.sql keyword.other.table.sql"),
+                ("table", "keyword.other.sql"),
+                ("cascade", "keyword.other.sql"),
+                ("DROP", "meta.drop.sql keyword.other.create.sql"),
+                ("TABLE", "meta.drop.sql keyword.other.table.sql"),
+                ("IF", "keyword.control.sql"),
+                ("EXISTS", "keyword.operator.logical.sql"),
                 ("x", "meta.drop.sql entity.name.function.sql"),
-                (" cascade", "meta.drop.sql keyword.other.cascade.sql"),
+                (" CASCADE", "meta.drop.sql keyword.other.cascade.sql"),
+            ]
+        );
+    }
+
+    /// The dialects' words (X-124): `create`'s modifiers and `if not exists`, PostgreSQL's
+    /// types, a word of bat's compound patterns alone, a function only before `(`.
+    #[test]
+    fn the_dialects_words() {
+        assert_eq!(
+            kinds(&["CREATE TEMP TABLE IF NOT EXISTS t (id int4 GENERATED ALWAYS AS IDENTITY,"]),
+            [
+                ("CREATE", "meta.create.sql keyword.other.create.sql"),
+                ("TEMP TABLE", "meta.create.sql keyword.other.sql"),
+                ("IF", "keyword.control.sql"),
+                ("NOT", "keyword.operator.logical.sql"),
+                ("EXISTS", "keyword.operator.logical.sql"),
+                (
+                    "t",
+                    "meta.toc-list.full-identifier.sql entity.name.function.sql"
+                ),
+                ("int4", "storage.type.sql"),
+                ("GENERATED", "keyword.other.sql"),
+                ("ALWAYS", "keyword.other.sql"),
+                ("AS", "keyword.operator.assignment.alias.sql"),
+                ("IDENTITY", "storage.modifier.sql"),
+            ]
+        );
+        assert_eq!(
+            kinds(&["create index concurrently on t using gin (j) where j is not distinct from x"]),
+            [
+                ("create", "meta.create.sql keyword.other.create.sql"),
+                ("index", "meta.create.sql keyword.other.sql"),
+                ("concurrently", "keyword.other.sql"),
+                ("on", "keyword.other.sql"),
+                ("using", "keyword.other.DML.sql"),
+                ("where", "keyword.other.DML.sql"),
+                ("is", "keyword.operator.logical.sql"),
+                ("not", "keyword.operator.logical.sql"),
+                ("distinct", "keyword.other.DML.sql"),
+                ("from", "keyword.other.DML.sql"),
+            ]
+        );
+        assert_eq!(
+            kinds(&["select coalesce(a, 0), now (), coalesce, left(s, 2), x float, y::jsonb"]),
+            [
+                ("select", "keyword.other.DML.sql"),
+                ("coalesce", "support.function.scalar.sql"),
+                ("0", "constant.numeric.sql"),
+                ("now", "support.function.scalar.sql"),
+                ("(", "meta.block.sql punctuation.section.scope.begin.sql"),
+                (")", "meta.block.sql punctuation.section.scope.end.sql"),
+                ("left", "support.function.string.sql"),
+                ("2", "constant.numeric.sql"),
+                ("float", "storage.type.sql"),
+                ("jsonb", "storage.type.sql"),
+            ]
+        );
+        assert_eq!(
+            kinds(&["for each row execute function f(); insert into t on conflict do nothing"]),
+            [
+                ("for", "keyword.other.sql"),
+                ("each row", "keyword.other.sql"),
+                ("execute", "keyword.other.sql"),
+                ("function", "keyword.other.sql"),
+                ("(", "meta.block.sql punctuation.section.scope.begin.sql"),
+                (")", "meta.block.sql punctuation.section.scope.end.sql"),
+                ("insert into", "keyword.other.DML.sql"),
+                ("on", "keyword.other.sql"),
+                ("conflict", "keyword.other.sql"),
+                ("do", "keyword.other.sql"),
+                ("nothing", "keyword.other.sql"),
+            ]
+        );
+        // the first name is the object's (bat's took the last word before a `(`)
+        let name = "meta.toc-list.full-identifier.sql entity.name.function.sql";
+        for (line, want) in [
+            ("CREATE TYPE mood AS ENUM ('a')", "mood"),
+            ("CREATE DOMAIN year AS integer", "year"),
+            ("CREATE INDEX i ON t (a)", "i"),
+            ("CREATE OR ALTER PROCEDURE dbo.p AS", "p"),
+        ] {
+            let got = kinds(&[line]);
+            assert_eq!(
+                got.iter().filter(|(_, k)| *k == name).collect::<Vec<_>>(),
+                [&(want, name)],
+                "{line}"
+            );
+        }
+        // a column's name stays plain
+        assert_eq!(kinds(&["name, type, key, value, user, level"]), []);
+    }
+
+    /// T-SQL (X-124): `GO` alone on its line, `N'…'`, its batch and procedural words.
+    #[test]
+    fn t_sql() {
+        assert_eq!(
+            kinds(&[
+                "SET NOCOUNT ON; DECLARE x datetime2 = N'a';",
+                "GO",
+                "BEGIN TRY EXEC p; END TRY BEGIN CATCH THROW; END CATCH go 2",
+                "  go 2",
+            ]),
+            [
+                ("SET", "keyword.other.DML.sql"),
+                ("NOCOUNT", "keyword.other.sql"),
+                ("ON", "keyword.other.sql"),
+                ("DECLARE", "keyword.other.sql"),
+                ("datetime2", "storage.type.sql"),
+                ("=", "keyword.operator.comparison.sql"),
+                (
+                    "N'",
+                    "string.quoted.single.sql punctuation.definition.string.begin.sql"
+                ),
+                ("a", "string.quoted.single.sql"),
+                (
+                    "'",
+                    "string.quoted.single.sql punctuation.definition.string.end.sql"
+                ),
+                ("GO", "keyword.other.sql"),
+                ("BEGIN", "keyword.other.LUW.sql"),
+                ("TRY", "keyword.control.sql"),
+                ("EXEC", "keyword.other.sql"),
+                ("END", "keyword.other.DML.sql"),
+                ("TRY", "keyword.control.sql"),
+                ("BEGIN", "keyword.other.LUW.sql"),
+                ("CATCH", "keyword.control.sql"),
+                ("THROW", "keyword.control.sql"),
+                ("END", "keyword.other.DML.sql"),
+                ("CATCH", "keyword.control.sql"),
+                ("2", "constant.numeric.sql"),
+                ("go", "keyword.other.sql"),
+                ("2", "constant.numeric.sql"),
+            ]
+        );
+    }
+
+    /// PostgreSQL's dollar quotes (X-124): after `as` or `do` a body, its text SQL to the
+    /// closing tag wherever it stands (an open string inside ends there); else a string.
+    #[test]
+    fn dollar_quotes() {
+        let got = kinds(&[
+            "CREATE FUNCTION f() RETURNS int AS",
+            "$body$ BEGIN RETURN 'it''s $$ x'; -- $q$",
+            "  RAISE NOTICE 'a$body$; SELECT $q$it's$q$, 1 $q$x",
+            "y$q$ LANGUAGE plpgsql;",
+        ]);
+        let begin = "string.quoted.dollar.sql punctuation.definition.string.begin.sql";
+        let end = "string.quoted.dollar.sql punctuation.definition.string.end.sql";
+        let text = "string.quoted.dollar.sql";
+        assert_eq!(
+            &got[5..],
+            [
+                ("RETURNS", "keyword.other.sql"),
+                ("int", "storage.type.sql"),
+                ("AS", "keyword.operator.assignment.alias.sql"),
+                ("$body$", begin),
+                ("BEGIN", "keyword.other.LUW.sql"),
+                ("RETURN", "keyword.control.sql"),
+                (
+                    "'",
+                    "string.quoted.single.sql punctuation.definition.string.begin.sql"
+                ),
+                ("it", "string.quoted.single.sql"),
+                (
+                    "''",
+                    "string.quoted.single.sql constant.character.escape.sql"
+                ),
+                ("s $$ x", "string.quoted.single.sql"),
+                (
+                    "'",
+                    "string.quoted.single.sql punctuation.definition.string.end.sql"
+                ),
+                (
+                    "--",
+                    "comment.line.double-dash.sql punctuation.definition.comment.sql"
+                ),
+                (" $q$", "comment.line.double-dash.sql"),
+                ("RAISE", "keyword.control.sql"),
+                (
+                    "'",
+                    "string.quoted.single.sql punctuation.definition.string.begin.sql"
+                ),
+                ("a", "string.quoted.single.sql"),
+                ("$body$", end),
+                ("SELECT", "keyword.other.DML.sql"),
+                ("$q$", begin),
+                ("it's", text),
+                ("$q$", end),
+                ("1", "constant.numeric.sql"),
+                ("$q$", begin),
+                ("x", text),
+                ("y", text),
+                ("$q$", end),
+                ("LANGUAGE", "keyword.other.sql"),
+            ]
+        );
+        // `DO LANGUAGE plpgsql` before a body
+        assert_eq!(
+            kinds(&["DO LANGUAGE plpgsql", "$$ BEGIN"]),
+            [
+                ("DO", "keyword.other.sql"),
+                ("LANGUAGE", "keyword.other.sql"),
+                ("$$", begin),
+                ("BEGIN", "keyword.other.LUW.sql"),
+            ]
+        );
+        // a MySQL client's `DELIMITER $$`: `$` quotes nothing after it
+        assert_eq!(
+            kinds(&["DELIMITER $$", "SELECT 1 $$", "DELIMITER ;"]),
+            [
+                ("DELIMITER", "keyword.other.sql"),
+                ("SELECT", "keyword.other.DML.sql"),
+                ("1", "constant.numeric.sql"),
+                ("DELIMITER", "keyword.other.sql"),
+            ]
+        );
+        // `$1` a parameter, not a tag (its digits a number, as bat's); `do $$ … $$` a body on
+        // one line
+        assert_eq!(
+            kinds(&["do $$ begin perform 1; end $$; select $1"]),
+            [
+                ("do", "keyword.other.sql"),
+                ("$$", begin),
+                ("begin", "keyword.other.LUW.sql"),
+                ("perform", "keyword.control.sql"),
+                ("1", "constant.numeric.sql"),
+                ("end", "keyword.other.DML.sql"),
+                ("$$", end),
+                ("select", "keyword.other.DML.sql"),
+                ("1", "constant.numeric.sql"),
             ]
         );
     }

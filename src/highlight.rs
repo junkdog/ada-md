@@ -2913,23 +2913,25 @@ mod tests {
     }
 
     /// ada-parse's SQL lexer picks the rules bat's grammar picks, in every built-in theme
-    /// (ADR-40): its corners included (`create`'s name popped at the line's end, `drop`'s
-    /// objects as prefixes, `drop table` at a word's end, `comment on … is` with the spaces
-    /// before it, `alter`'s spaces ending its match, the types' sizes and time zones,
-    /// `is not null`, the multi-word DML, quotes doubled and escaped, interpolation, `%{}` and
-    /// `%r{}`, a block comment's `*` lines, `#` and `--` comments).
+    /// (ADR-40), where its readings are bat's: `create`'s name popped at the line's end,
+    /// `comment on … is` with the spaces before it, `alter`'s spaces ending its match, the
+    /// types' sizes and time zones, `is not null`, the multi-word DML, quotes doubled and
+    /// escaped, interpolation, `%{}` and `%r{}`, a block comment's `*` lines, `#` and `--`
+    /// comments. The dialects' words and X-124's fixes (`drop`'s objects whole words, `drop
+    /// table`'s name, `create`'s first name, `if not exists`, a word of a compound pattern
+    /// alone, dollar quotes) depart from bat's by design: ada-parse's `sql` tests hold them.
     #[test]
     fn sql_rules_match_the_grammar() {
         let text = concat!(
             "-- schema\n",
-            "CREATE OR REPLACE FUNCTION s.\"f\"(a int) RETURNS text AS $$ SELECT 1 $$;\n",
+            "CREATE OR REPLACE FUNCTION s.\"f\"(a int)\n",
             "CREATE UNIQUE INDEX\n",
-            "  idx ON t (a);\n",
-            "create table if not exists `t` (id bigint primary key, n varchar(255) not null,\n",
+            "  idx;\n",
+            "create table `t` (id bigint primary key, n varchar(255) not null,\n",
             "  p numeric(10,2) default 0, d timestamp(3) with time zone, c character varying(10),\n",
-            "  x double precision, y bit varying(3), z var char(2), f float(8), g float,\n",
+            "  x double precision, y bit varying(3), z var char(2), f float(8),\n",
             "  FOREIGN KEY (a) REFERENCES u(id) ON DELETE CASCADE, CHECK (n <> ''));\n",
-            "drop tables; DROP TABLE x CASCADE; backdrop table y; drop index_x;\n",
+            "DROP VIEW x;\n",
             "ALTER TABLE t COMMENT ON COLUMN a.b IS 'x';\n",
             "  COMMENT ON TABLE t IS 'it''s \\'q\\'';\n",
             "/* block\n",

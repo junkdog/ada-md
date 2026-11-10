@@ -2855,7 +2855,7 @@ mod tests {
             " a note",
             &format!("{RAW} comment.line.double-dash.sql"),
         );
-        has(&l, "  ADD id ", RAW);
+        has(&l, "ADD", &format!("{RAW} keyword.other.sql"));
         // `+` continues the SQL; not the next argument
         has(&l, "JOIN", &dml(DQ));
         has(&l, "WHERE", DQ);
