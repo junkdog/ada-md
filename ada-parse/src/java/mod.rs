@@ -3002,7 +3002,7 @@ mod tests {
             "  void f() {",
             "    var ps = conn.prepareStatement(",
             r#"      "SELECT id " +"#,
-            r#"      "FROM users", "ORDER");"#,
+            r#"      "FROM users WHERE id = ? AND n = :n", "ORDER");"#,
             r#"    jdbcTemplate.update("INSERT INTO t"); doc.select("UNION"); s.concat("LIMIT");"#,
             r#"    String p = "GROUP";"#,
             "  }",
@@ -3017,11 +3017,15 @@ mod tests {
         has(&l, "WHERE", &format!("{TB} keyword.other.DML.sql"));
         has(&l, " d", &format!("{TB} comment.line.double-dash.sql"));
         has(&l, "UPDATE", &format!("{AN} keyword.other.DML.sql"));
+        // JPA's positional parameter, JDBC's `?`, a named one (X-129)
+        has(&l, "?1", &format!("{AN} constant.other.placeholder.sql"));
         // `query =`'s value, not `name =`'s
         has(&l, "HAVING", AN);
         has(&[l[9]], "SELECT", &format!("{AN} keyword.other.DML.sql"));
         // a call's first argument, over lines and `+`; not its second
         has(&l, "FROM", &format!("{DQ} keyword.other.DML.sql"));
+        has(&l, "?", &format!("{DQ} constant.other.placeholder.sql"));
+        has(&l, ":n", &format!("{DQ} constant.other.placeholder.sql"));
         has(&l, "ORDER", DQ);
         has(&l, "INSERT INTO", &format!("{DQ} keyword.other.DML.sql"));
         // jsoup's `select`, any call, a plain string

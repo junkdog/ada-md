@@ -2842,6 +2842,8 @@ mod tests {
         has(&l, "%d", &format!("{DQ} string.quoted.single.sql"));
         // the first argument, after a context, after a destination
         has(&l, "DELETE", &dml(DQ));
+        // a parameter (X-129)
+        has(&l, "$1", &format!("{DQ} constant.other.placeholder.sql"));
         has(&l, "UPDATE", &dml(RAW));
         has(&l, "INSERT INTO", &dml(DQ));
         // pgx's statement name, then its SQL

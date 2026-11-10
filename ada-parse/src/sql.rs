@@ -35,6 +35,16 @@
 //! after it aren't the name; T-SQL's `GO` alone on its line; `N'…'`, `E'…'`, `B'…'`, `X'…'`
 //! strings; PostgreSQL's dollar quotes (`$$…$$`, `$tag$…$tag$`): after `as` or `do` a
 //! function's body, read as SQL to its closing tag, otherwise a string.
+//!
+//! **Variables, parameters, quoted names and a client's commands (X-129)**, none of which bat's
+//! grammar reads: T-SQL's and MySQL's `@x` a variable and `@@x` a system one; psql's `:x`,
+//! `:'x'`, `:"x"` and sqlcmd's `$(x)` variables; `$1` and `?1` parameters; T-SQL's `[…]` a
+//! name, its brackets marked and its text plain (not a string), not after a word, `)` or `]`
+//! (a subscript, `ARRAY[…]`) and not a list (`[1, 2]`); T-SQL's `#temp` after a word naming a
+//! table, not MySQL's comment. A client's command, psql's `\set` (anywhere on a line: `…
+//! \gset`) or sqlcmd's `:setvar` (at its start), takes the rest of its line: its quoted
+//! arguments strings, its `:x` and `$(x)` variables. In a host's string, `?`, `:name`, `@name`
+//! and `$name` are the drivers' parameters.
 
 use crate::heredoc::Label;
 use crate::prim::{WORD, char_len, digit, is_word_starting as is_word, space_len, word_end};
@@ -126,9 +136,26 @@ const CONTROL: u16 = 78;
 const DOLLAR_TEXT: u16 = 79;
 const DOLLAR_BEGIN: u16 = 80;
 const DOLLAR_END: u16 = 81;
+/// X-129: T-SQL's and MySQL's `@x`, psql's `:x`, sqlcmd's `$(x)`; the sigil its mark.
+const VARIABLE: u16 = 82;
+const VARIABLE_MARK: u16 = 83;
+/// `@@x`: T-SQL's system functions, MySQL's system variables.
+const SYSTEM: u16 = 84;
+const SYSTEM_MARK: u16 = 85;
+/// A parameter bound when the statement runs: `$1`, `?1`; in a host's string also `?`,
+/// `:name`, `@name`, `$name`.
+const PLACEHOLDER: u16 = 86;
+/// `[…]`: T-SQL's and SQLite's quoted names, read as T-SQL reads them, a name: its brackets
+/// and `]]` (a `]`), its text plain.
+const BRACKET_BEGIN: u16 = 87;
+const BRACKET_END: u16 = 88;
+const BRACKET_ESCAPE: u16 = 89;
+/// A client's command (psql's `\set`, sqlcmd's `:setvar`) and the rest of its line.
+const CLIENT: u16 = 90;
+const CLIENT_TEXT: u16 = 91;
 
 /// How many kinds there are.
-pub(crate) const KINDS: usize = 82;
+pub(crate) const KINDS: usize = 92;
 
 /// Each kind's scopes under `source.sql`: bat's for the token, with the meta scope of the
 /// pattern that matched it.
@@ -221,6 +248,16 @@ static LEAVES: [&str; KINDS] = [
     "string.quoted.dollar.sql",
     "string.quoted.dollar.sql punctuation.definition.string.begin.sql",
     "string.quoted.dollar.sql punctuation.definition.string.end.sql",
+    "variable.other.sql",
+    "variable.other.sql punctuation.definition.variable.sql",
+    "variable.language.sql",
+    "variable.language.sql punctuation.definition.variable.sql",
+    "constant.other.placeholder.sql",
+    "punctuation.definition.identifier.begin.sql",
+    "punctuation.definition.identifier.end.sql",
+    "constant.character.escape.sql",
+    "meta.preprocessor.client.sql keyword.other.client.sql",
+    "meta.preprocessor.client.sql",
 ];
 
 /// The scopes under `source.sql` kind `kind` carries.
@@ -239,6 +276,8 @@ const AFTER_AS: u64 = 1 << 5;
 const BODY_AT: u32 = 6;
 /// A MySQL client's `DELIMITER` line seen: `$` quotes nothing (`DELIMITER $$`, `END $$`).
 const MYSQL: u64 = 1 << 62;
+/// In psql's `COPY … FROM stdin` data, up to its `\.` line (X-129).
+const COPY_DATA: u64 = 1 << 63;
 const STRING_AT: u32 = BODY_AT + Label::BITS;
 const _: () = assert!(STRING_AT + Label::BITS <= 62 && (OPEN_BODY as u64) <= CTX_BITS);
 
@@ -250,6 +289,12 @@ const _: () = assert!(STRING_AT + Label::BITS <= 62 && (OPEN_BODY as u64) <= CTX
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     let w = state.word();
+    if w & COPY_DATA != 0 {
+        if !copy_data(b, out) {
+            state.set_word(w & !COPY_DATA);
+        }
+        return;
+    }
     let mut ctx = (w & CTX_BITS) as u8;
     let mut body = (w & BODY_OPEN != 0).then(|| Label::from_bits((w >> BODY_AT) as u32));
     let mut label = Label::from_bits((w >> STRING_AT) as u32);
@@ -317,7 +362,76 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     if ctx == DOLLAR {
         w |= u64::from(label.bits()) << STRING_AT;
     }
+    if ctx == MAIN && body.is_none() && copy_from_stdin(b) {
+        w |= COPY_DATA;
+    }
     state.set_word(w);
+}
+
+/// Whether line `b` is psql's `COPY … FROM stdin;` or `\copy … from stdin` (X-129): the lines
+/// after it are the table's data, up to a `\.` line.
+fn copy_from_stdin(b: &[u8]) -> bool {
+    let s = b
+        .iter()
+        .position(|&c| !matches!(c, b' ' | b'\t'))
+        .unwrap_or(b.len());
+    let meta = b.get(s) == Some(&b'\\');
+    let c = s + usize::from(meta);
+    if !at_ci(b, c, b"copy") || b.get(c + 4).is_some_and(|&x| WORD[usize::from(x)]) {
+        return false;
+    }
+    let t = &b[..trim_end(b, 0, b.len())];
+    if !meta && !t.ends_with(b";") {
+        return false;
+    }
+    // `from stdin`, its words whole, before the end
+    let mut i = c + 4;
+    while let Some(k) = t[i..]
+        .windows(4)
+        .position(|w| w.eq_ignore_ascii_case(b"from"))
+    {
+        let f = i + k;
+        i = f + 4;
+        if WORD[usize::from(t[f - 1])] || !matches!(t.get(i), Some(b' ' | b'\t')) {
+            continue;
+        }
+        let w = i + t[i..]
+            .iter()
+            .take_while(|&&x| matches!(x, b' ' | b'\t'))
+            .count();
+        if at_ci(t, w, b"stdin") && !t.get(w + 5).is_some_and(|&x| WORD[usize::from(x)]) {
+            return true;
+        }
+    }
+    false
+}
+
+/// A line of `COPY … FROM stdin`'s data (X-129), as psql reads it: the text plain, `\N` a
+/// null, a `\.` line the data's end (the client's). Whether the data goes on past it.
+fn copy_data(b: &[u8], out: &mut Out) -> bool {
+    let t = &b[..trim_end(b, 0, b.len())];
+    let s = t
+        .iter()
+        .position(|&c| !matches!(c, b' ' | b'\t'))
+        .unwrap_or(t.len());
+    if &t[s..] == b"\\." {
+        out.push(s, t.len(), CLIENT);
+        return false;
+    }
+    let mut i = 0;
+    while let Some(k) = b[i..].iter().position(|&c| c == b'\\') {
+        let x = i + k;
+        match b.get(x + 1) {
+            Some(b'N') => {
+                out.push(x, x + 2, NULL);
+                i = x + 2;
+            }
+            // `\\`, `\t`…: an escape, its character the data's
+            Some(_) => i = x + 2,
+            None => break,
+        }
+    }
+    true
 }
 
 /// A dollar quote's tag at `p`, a `$`: `$$` or `$` and a name (not starting with a digit) and
@@ -1406,7 +1520,33 @@ const COMMENT_OBJECTS: &[&[u8]] = &[
     b"view",
 ];
 
-/// The bytes `main`'s scan stops at: a word's, past ASCII, or one a pattern starts on.
+/// sqlcmd's commands, after a `:` at a line's start (X-129).
+const SQLCMD: &[&[u8]] = &[
+    b"connect",
+    b"ed",
+    b"error",
+    b"exit",
+    b"help",
+    b"listvar",
+    b"on",
+    b"out",
+    b"perftrace",
+    b"quit",
+    b"r",
+    b"reset",
+    b"serverlist",
+    b"setvar",
+    b"xml",
+];
+
+/// The words a T-SQL `#temp` table follows (X-129): there `#` starts a name, not MySQL's
+/// comment.
+const TEMP_BEFORE: &[&[u8]] = &[
+    b"from", b"into", b"join", b"table", b"update", b"exists", b"insert", b"delete", b"merge",
+];
+
+/// The bytes `main`'s scan stops at: a word's, past ASCII, or one a pattern starts on (since
+/// X-129 a variable's, a parameter's, a bracketed name's or a client's command's too).
 static STOP: [bool; 256] = {
     let mut t = [false; 256];
     let mut c = 0;
@@ -1432,6 +1572,11 @@ static STOP: [bool; 256] = {
                     | b'%'
                     | b'('
                     | b'$'
+                    | b'@'
+                    | b'['
+                    | b':'
+                    | b'?'
+                    | b'\\'
             );
         c += 1;
     }
@@ -1573,6 +1718,7 @@ impl Scan<'_, '_, '_, '_> {
                     self.tok(p + 2, n, DASH);
                     return None;
                 }
+                b'#' if let Some(e) = self.temp_table(p) => p = e,
                 b'#' => {
                     self.tok(p, p + 1, HASH_MARK);
                     if self.embed.is_some() {
@@ -1635,16 +1781,33 @@ impl Scan<'_, '_, '_, '_> {
                     self.tok(p + 1, p + 2, SCOPE_END);
                     p += 2;
                 }
-                b'$' if !self.mysql && (p == 0 || !(b[p - 1] == b'$' || is_word_before(b, p))) => {
-                    match tag_end(b, p) {
+                b'$' if p == 0 || !(b[p - 1] == b'$' || is_word_before(b, p)) => {
+                    match tag_end(b, p).filter(|_| !self.mysql) {
                         Some(e) => {
                             if let Some(r) = self.dollar_quote(p, e) {
                                 return Some(r);
                             }
                             p = self.mark;
                         }
-                        None => p += 1,
+                        None => p = self.dollar_parameter(p),
                     }
+                }
+                b'@' => p = self.at_sign(p),
+                b'[' => p = self.bracket(p),
+                b':' => p = self.colon(p),
+                b'?' => p = self.question(p),
+                // psql's `\set`, `\c`, `\gset` (MySQL's `\G` too): the client's to the line's end
+                b'\\'
+                    if self.embed.is_none()
+                        && next.is_some_and(|c| {
+                            c.is_ascii_alphabetic() || matches!(c, b'!' | b'?')
+                        }) =>
+                {
+                    let mut e = p + 2;
+                    while e < n && (b[e].is_ascii_alphanumeric() || b[e] == b'+') {
+                        e += 1;
+                    }
+                    p = self.client(p, e);
                 }
                 _ => p += char_len(c),
             }
@@ -1720,7 +1883,270 @@ impl Scan<'_, '_, '_, '_> {
         if q < n { Some((q, ctx)) } else { None }
     }
 
-    /// The patterns of `main` at `p`, a word's start: where the scan goes on in `main`, or
+    // X-129: variables, parameters, bracketed names and a client's commands, as their dialects
+    // read them; bat's grammar has none of them (`@Date` a type, `[Order]` a keyword, `$1` a
+    // number, `\set` a DML word).
+
+    /// A variable's name from `p`: `\w`, `$` and `#` (T-SQL's), up to the host's next place.
+    fn name_end(&self, mut p: usize) -> usize {
+        let b = self.b;
+        loop {
+            let e = word_end(b, p);
+            p = e;
+            match b.get(p) {
+                Some(b'$' | b'#') if !self.yields(p) => p += 1,
+                _ => return p,
+            }
+        }
+    }
+
+    /// `@` at `p`, not after a word (`user@host`): T-SQL's and MySQL's `@x`, `@@x` a system
+    /// function or variable (MySQL's `@@global.x`); embedded, a named parameter (`@name`).
+    /// Where the scan goes on.
+    fn at_sign(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let system = b.get(p + 1) == Some(&b'@');
+        let s = p + 1 + usize::from(system);
+        if (p > 0 && is_word_before(b, p)) || !is_word(b, s) || self.yields(s) {
+            return p + 1;
+        }
+        let mut e = self.name_end(s);
+        if !system {
+            if self.embed.is_some() {
+                self.tok(p, e, PLACEHOLDER);
+            } else {
+                self.tok(p, s, VARIABLE_MARK);
+                self.tok(s, e, VARIABLE);
+            }
+            return e;
+        }
+        // MySQL's scopes: `@@global.sql_mode`, `@@session.x`
+        if b.get(e) == Some(&b'.')
+            && is_word(b, e + 1)
+            && [
+                &b"global"[..],
+                b"session",
+                b"local",
+                b"persist",
+                b"persist_only",
+            ]
+            .iter()
+            .any(|w| b[s..e].eq_ignore_ascii_case(w))
+        {
+            e = word_end(b, e + 1);
+        }
+        self.tok(p, s, SYSTEM_MARK);
+        self.tok(s, e, SYSTEM);
+        e
+    }
+
+    /// `[` at `p`: T-SQL's (and SQLite's) quoted name, `]]` a `]`, closed on its line before
+    /// the host's next place: its brackets and escapes marked, its text plain, as T-SQL and
+    /// SSMS read it (a name, not a string; the user, 2026-11-10). Not after a word, `)` or `]` (PostgreSQL's `a[1]`, `ARRAY[…]`), and
+    /// not a list (DuckDB's `[1, 2]`, `['a']`): its text starts with a letter and holds no `,`,
+    /// quote or `[`. Where the scan goes on.
+    fn bracket(&mut self, p: usize) -> usize {
+        let b = self.b;
+        if (p > 0 && (matches!(b[p - 1], b')' | b']') || is_word_before(b, p)))
+            || !is_word(b, p + 1)
+            || digit(b, p + 1).is_some()
+        {
+            return p + 1;
+        }
+        let lim = self.host_next(p + 1);
+        let mut q = p + 1;
+        let close = loop {
+            q = crate::prim::find_in(b, q, lim, *b"],'\"[");
+            if q >= lim || b[q] != b']' {
+                return p + 1;
+            }
+            if b.get(q + 1) == Some(&b']') && q + 1 < lim {
+                q += 2;
+                continue;
+            }
+            break q;
+        };
+        self.tok(p, p + 1, BRACKET_BEGIN);
+        let mut i = p + 1;
+        while let Some(k) = b[i..close].iter().position(|&c| c == b']') {
+            self.tok(i + k, i + k + 2, BRACKET_ESCAPE);
+            i += k + 2;
+        }
+        self.tok(close, close + 1, BRACKET_END);
+        close + 1
+    }
+
+    /// `:` at `p`: psql's `:x`, `:'x'`, `:"x"` and Oracle's binds, a variable; embedded, a named
+    /// parameter (JPA's, PDO's, SQLite's `:name`). Not `::` (a cast), `:=`, or after a word
+    /// (`label:`, `a[1:n]`). At a line's start, sqlcmd's commands (`:setvar`, `:r`). Where the
+    /// scan goes on.
+    fn colon(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let next = b.get(p + 1).copied();
+        if next == Some(b':') {
+            return p + 2;
+        }
+        if (p > 0 && (matches!(b[p - 1], b':' | b')' | b']') || is_word_before(b, p)))
+            || self.yields(p + 1)
+        {
+            return p + 1;
+        }
+        if is_word(b, p + 1) && digit(b, p + 1).is_none() {
+            let e = word_end(b, p + 1);
+            if self.embed.is_some() {
+                self.tok(p, e, PLACEHOLDER);
+                return e;
+            }
+            if b[..p].iter().all(|&c| matches!(c, b' ' | b'\t'))
+                && SQLCMD.iter().any(|w| b[p + 1..e].eq_ignore_ascii_case(w))
+            {
+                return self.client(p, e);
+            }
+            self.tok(p, p + 1, VARIABLE_MARK);
+            self.tok(p + 1, e, VARIABLE);
+            return e;
+        }
+        // psql's quoted interpolations: `:'x'` a literal, `:"x"` an identifier
+        if self.embed.is_none()
+            && let Some(quote @ (b'\'' | b'"')) = next
+            && is_word(b, p + 2)
+        {
+            let e = word_end(b, p + 2);
+            if b.get(e) == Some(&quote) {
+                self.tok(p, p + 2, VARIABLE_MARK);
+                self.tok(p + 2, e, VARIABLE);
+                self.tok(e, e + 1, VARIABLE_MARK);
+                return e + 1;
+            }
+        }
+        p + 1
+    }
+
+    /// `?` at `p`: SQLite's `?1`, a parameter; embedded, JDBC's and the drivers' `?` too (not
+    /// `??`, `?|`, `?&`: PostgreSQL's JSON operators). Where the scan goes on.
+    fn question(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let d = digits0(b, p + 1);
+        if d > p + 1 && !self.yields(p + 1) {
+            self.tok(p, d, PLACEHOLDER);
+            return d;
+        }
+        if self.embed.is_some()
+            && b[p - usize::from(p > 0)] != b'?'
+            && !matches!(b.get(p + 1), Some(b'?' | b'|' | b'&'))
+        {
+            self.tok(p, p + 1, PLACEHOLDER);
+        }
+        p + 1
+    }
+
+    /// `$` at `p`, not a dollar quote's tag: PostgreSQL's `$1`, a parameter; sqlcmd's `$(x)`, a
+    /// variable; embedded, a named parameter (SQLite's `$name`). Where the scan goes on.
+    fn dollar_parameter(&mut self, p: usize) -> usize {
+        let b = self.b;
+        if self.yields(p + 1) {
+            return p + 1;
+        }
+        let d = digits0(b, p + 1);
+        if d > p + 1 {
+            self.tok(p, d, PLACEHOLDER);
+            return d;
+        }
+        if b.get(p + 1) == Some(&b'(') && is_word(b, p + 2) {
+            let e = word_end(b, p + 2);
+            if b.get(e) == Some(&b')') && !self.yields(e) {
+                self.tok(p, p + 2, VARIABLE_MARK);
+                self.tok(p + 2, e, VARIABLE);
+                self.tok(e, e + 1, VARIABLE_MARK);
+                return e + 1;
+            }
+        }
+        if self.embed.is_some() && is_word(b, p + 1) {
+            let e = word_end(b, p + 1);
+            self.tok(p, e, PLACEHOLDER);
+            return e;
+        }
+        p + 1
+    }
+
+    /// T-SQL's `#temp` and `##global` tables at `p`, after a word that names a table (`from`,
+    /// `into`, `join`, `table`…): where the name ends; `None` for MySQL's `#` comment.
+    fn temp_table(&self, p: usize) -> Option<usize> {
+        let b = self.b;
+        let s = p + 1 + usize::from(b.get(p + 1) == Some(&b'#'));
+        if !is_word(b, s) || self.yields(s) {
+            return None;
+        }
+        let mut q = p;
+        while q > 0 && matches!(b[q - 1], b' ' | b'\t') {
+            q -= 1;
+        }
+        let mut w = q;
+        while w > 0 && b[w - 1].is_ascii_alphabetic() {
+            w -= 1;
+        }
+        let before = &b[w..q];
+        (w < q
+            && (w == 0 || !WORD[usize::from(b[w - 1])])
+            && TEMP_BEFORE.iter().any(|x| before.eq_ignore_ascii_case(x)))
+        .then(|| self.name_end(s))
+    }
+
+    /// A client's command `p..e` (psql's `\set`, sqlcmd's `:setvar`), on its own: the line is
+    /// the client's to its end, its quoted arguments strings and its `:x` and `$(x)` variables.
+    /// The line's end.
+    fn client(&mut self, p: usize, e: usize) -> usize {
+        let (b, n) = (self.b, self.b.len());
+        self.tok(p, e, CLIENT);
+        let (mut text, mut q) = (e, e);
+        while q < n {
+            let c = b[q];
+            let start = q;
+            match c {
+                b'\'' | b'"' | b'`' => {
+                    let ctx = match c {
+                        b'\'' => SINGLE,
+                        b'"' => DOUBLE,
+                        _ => BACKTICK,
+                    };
+                    let close = b[q + 1..].iter().position(|&x| x == c).map(|i| q + 1 + i);
+                    self.out.push_merged(text, q, CLIENT_TEXT);
+                    self.tok(q, q + 1, string_kind(ctx, BEGIN));
+                    match close {
+                        Some(x) => {
+                            self.tok(q + 1, x, string_kind(ctx, TEXT));
+                            self.tok(x, x + 1, string_kind(ctx, END));
+                            q = x + 1;
+                        }
+                        None => {
+                            self.tok(q + 1, n, string_kind(ctx, TEXT));
+                            q = n;
+                        }
+                    }
+                }
+                b':' | b'$' => {
+                    self.out.push_merged(text, q, CLIENT_TEXT);
+                    // `mark` moves only where a token was written
+                    self.mark = usize::MAX;
+                    q = if c == b':' {
+                        self.colon(q)
+                    } else {
+                        self.dollar_parameter(q)
+                    };
+                    text = if self.mark == usize::MAX { start } else { q };
+                    continue;
+                }
+                _ => {
+                    q += 1;
+                    continue;
+                }
+            }
+            text = q;
+        }
+        self.out.push_merged(text, n, CLIENT_TEXT);
+        self.mark = n;
+        n
+    }
     /// (`Err`) where `identifier_create` is pushed.
     fn word(&mut self, p: usize) -> Result<usize, usize> {
         let b = self.b;
@@ -2551,11 +2977,13 @@ impl Scan<'_, '_, '_, '_> {
         Some(c)
     }
 
-    /// A name at `p`, `\w+` or one in quotes: its text's start and end, and its end.
+    /// A name at `p`, `\w+` or one in quotes (T-SQL's `[…]` too, X-129): its text's start and
+    /// end, and its end.
     fn create_name(&self, p: usize) -> Option<(usize, usize, usize)> {
         let b = &self.b[..self.b.len()];
         match *b.get(p)? {
-            quote @ (b'\'' | b'"' | b'`') => {
+            quote @ (b'\'' | b'"' | b'`' | b'[') => {
+                let quote = if quote == b'[' { b']' } else { quote };
                 let i = b[p + 1..].iter().position(|&c| c == quote)?;
                 (i > 0).then_some((p + 1, p + 1 + i, p + 2 + i))
             }
@@ -2567,14 +2995,15 @@ impl Scan<'_, '_, '_, '_> {
         }
     }
 
-    /// `{{end_identifier}}` at `p`: `(?=[ \t]*(?:[^\w'"`. \t]|$))`.
+    /// `{{end_identifier}}` at `p`: `(?=[ \t]*(?:[^\w'"`. \t]|$))`, and not before a bracketed
+    /// name (X-129).
     fn end_identifier(&self, p: usize) -> bool {
         let b = &self.b[..self.b.len()];
         let mut r = p;
         while matches!(b.get(r), Some(b' ' | b'\t')) {
             r += 1;
         }
-        r >= self.b.len() || !(is_word(b, r) || matches!(b[r], b'\'' | b'"' | b'`' | b'.'))
+        r >= self.b.len() || !(is_word(b, r) || matches!(b[r], b'\'' | b'"' | b'`' | b'.' | b'['))
     }
 }
 
@@ -2890,6 +3319,235 @@ mod tests {
         );
     }
 
+    /// X-129: T-SQL's and MySQL's variables, T-SQL's bracketed names and `#temp` tables.
+    #[test]
+    fn variables_and_bracketed_names() {
+        const VAR: &str = "variable.other.sql";
+        const VAR_MARK: &str = "variable.other.sql punctuation.definition.variable.sql";
+        const BR_BEGIN: &str = "punctuation.definition.identifier.begin.sql";
+        const BR_END: &str = "punctuation.definition.identifier.end.sql";
+        assert_eq!(
+            kinds(&["SET @Date = @@ROWCOUNT + @@global.sql_mode, 'u'@'h', a@b, x @> y, @@ z"]),
+            [
+                ("SET", "keyword.other.DML.sql"),
+                ("@", VAR_MARK),
+                ("Date", VAR),
+                ("=", "keyword.operator.comparison.sql"),
+                (
+                    "@@",
+                    "variable.language.sql punctuation.definition.variable.sql"
+                ),
+                ("ROWCOUNT", "variable.language.sql"),
+                ("+", "keyword.operator.math.sql"),
+                (
+                    "@@",
+                    "variable.language.sql punctuation.definition.variable.sql"
+                ),
+                ("global.sql_mode", "variable.language.sql"),
+                (
+                    "'",
+                    "string.quoted.single.sql punctuation.definition.string.begin.sql"
+                ),
+                ("u", "string.quoted.single.sql"),
+                (
+                    "'",
+                    "string.quoted.single.sql punctuation.definition.string.end.sql"
+                ),
+                (
+                    "'",
+                    "string.quoted.single.sql punctuation.definition.string.begin.sql"
+                ),
+                ("h", "string.quoted.single.sql"),
+                (
+                    "'",
+                    "string.quoted.single.sql punctuation.definition.string.end.sql"
+                ),
+                (">", "keyword.operator.comparison.sql"),
+            ]
+        );
+        // a bracketed name, `]]` its `]`, a keyword or a type in it a plain name; `create`'s
+        // name;
+        // PostgreSQL's subscripts and arrays and DuckDB's lists aren't names
+        assert_eq!(
+            kinds(&[
+                "SELECT [Order], [a]]b] FROM [dbo].[Order Details] [int]",
+                "CREATE TABLE [dbo].[Orders] (x int)",
+                "SELECT a[1], f(x)[2], ARRAY[1], [1, 2], ['a'], [a, b]",
+            ]),
+            [
+                ("SELECT", "keyword.other.DML.sql"),
+                ("[", BR_BEGIN),
+                ("]", BR_END),
+                ("[", BR_BEGIN),
+                ("]]", "constant.character.escape.sql"),
+                ("]", BR_END),
+                ("FROM", "keyword.other.DML.sql"),
+                ("[", BR_BEGIN),
+                ("]", BR_END),
+                ("[", BR_BEGIN),
+                ("]", BR_END),
+                ("[", BR_BEGIN),
+                ("]", BR_END),
+                ("CREATE", "meta.create.sql keyword.other.create.sql"),
+                ("TABLE", "meta.create.sql keyword.other.sql"),
+                (
+                    ".",
+                    "meta.toc-list.full-identifier.sql punctuation.accessor.dot.sql"
+                ),
+                (
+                    "Orders",
+                    "meta.toc-list.full-identifier.sql entity.name.function.sql"
+                ),
+                ("int", "storage.type.sql"),
+                ("SELECT", "keyword.other.DML.sql"),
+                ("1", "constant.numeric.sql"),
+                ("2", "constant.numeric.sql"),
+                ("ARRAY", "keyword.other.sql"),
+                ("1", "constant.numeric.sql"),
+                ("1", "constant.numeric.sql"),
+                ("2", "constant.numeric.sql"),
+                (
+                    "'",
+                    "string.quoted.single.sql punctuation.definition.string.begin.sql"
+                ),
+                ("a", "string.quoted.single.sql"),
+                (
+                    "'",
+                    "string.quoted.single.sql punctuation.definition.string.end.sql"
+                ),
+            ]
+        );
+        // T-SQL's `#temp` and `##global` tables after a word naming a table; MySQL's `#`
+        // comment elsewhere
+        assert_eq!(
+            kinds(&["SELECT a INTO #t FROM ##g JOIN #x$1 ON 1 = 1; # note"]),
+            [
+                ("SELECT", "keyword.other.DML.sql"),
+                ("INTO", "keyword.other.DML.sql"),
+                ("FROM", "keyword.other.DML.sql"),
+                ("JOIN", "keyword.other.DML.sql"),
+                ("ON", "keyword.other.sql"),
+                ("1", "constant.numeric.sql"),
+                ("=", "keyword.operator.comparison.sql"),
+                ("1", "constant.numeric.sql"),
+                (
+                    "#",
+                    "comment.line.number-sign.sql punctuation.definition.comment.sql"
+                ),
+                (" note", "comment.line.number-sign.sql"),
+            ]
+        );
+    }
+
+    /// X-129: PostgreSQL's and SQLite's parameters, psql's variables, and a client's commands
+    /// (psql's, sqlcmd's) to their line's end.
+    #[test]
+    fn parameters_and_client_commands() {
+        const PH: &str = "constant.other.placeholder.sql";
+        const VAR: &str = "variable.other.sql";
+        const VAR_MARK: &str = "variable.other.sql punctuation.definition.variable.sql";
+        const CMD: &str = "meta.preprocessor.client.sql keyword.other.client.sql";
+        const TEXT: &str = "meta.preprocessor.client.sql";
+        assert_eq!(
+            kinds(&["SELECT $1, ?2, $3::int, a ? 'k', :v, :'s', :\"i\", x := 1, a[1:n], y ::text"]),
+            [
+                ("SELECT", "keyword.other.DML.sql"),
+                ("$1", PH),
+                ("?2", PH),
+                ("$3", PH),
+                ("int", "storage.type.sql"),
+                (
+                    "'",
+                    "string.quoted.single.sql punctuation.definition.string.begin.sql"
+                ),
+                ("k", "string.quoted.single.sql"),
+                (
+                    "'",
+                    "string.quoted.single.sql punctuation.definition.string.end.sql"
+                ),
+                (":", VAR_MARK),
+                ("v", VAR),
+                (":'", VAR_MARK),
+                ("s", VAR),
+                ("'", VAR_MARK),
+                (":\"", VAR_MARK),
+                ("i", VAR),
+                ("\"", VAR_MARK),
+                ("=", "keyword.operator.comparison.sql"),
+                ("1", "constant.numeric.sql"),
+                ("1", "constant.numeric.sql"),
+                ("text", "storage.type.sql"),
+            ]
+        );
+        assert_eq!(
+            kinds(&[
+                "\\set id 'a b' :x",
+                "  \\c db",
+                "SELECT 1 AS n \\gset",
+                ":setvar Db \"x\"",
+                "USE $(Db);",
+                "SELECT x :r",
+            ]),
+            [
+                ("\\set", CMD),
+                (" id ", TEXT),
+                (
+                    "'",
+                    "string.quoted.single.sql punctuation.definition.string.begin.sql"
+                ),
+                ("a b", "string.quoted.single.sql"),
+                (
+                    "'",
+                    "string.quoted.single.sql punctuation.definition.string.end.sql"
+                ),
+                (" ", TEXT),
+                (":", VAR_MARK),
+                ("x", VAR),
+                ("\\c", CMD),
+                (" db", TEXT),
+                ("SELECT", "keyword.other.DML.sql"),
+                ("1", "constant.numeric.sql"),
+                ("AS", "keyword.operator.assignment.alias.sql"),
+                ("\\gset", CMD),
+                (":setvar", CMD),
+                (" Db ", TEXT),
+                (
+                    "\"",
+                    "string.quoted.double.sql punctuation.definition.string.begin.sql"
+                ),
+                ("x", "string.quoted.double.sql"),
+                (
+                    "\"",
+                    "string.quoted.double.sql punctuation.definition.string.end.sql"
+                ),
+                ("USE", "keyword.other.sql"),
+                ("$(", VAR_MARK),
+                ("Db", VAR),
+                (")", VAR_MARK),
+                ("SELECT", "keyword.other.DML.sql"),
+                (":", VAR_MARK),
+                ("r", VAR),
+            ]
+        );
+        // `COPY … FROM stdin`'s data to its `\.` line: plain, `\N` a null
+        assert_eq!(
+            kinds(&[
+                "COPY t (a, b) FROM stdin;",
+                "1\tx 2\t\\N\t\\\\",
+                "\\.",
+                "SELECT 1;",
+            ]),
+            [
+                ("COPY", "keyword.other.sql"),
+                ("FROM", "keyword.other.DML.sql"),
+                ("\\N", "constant.language.sql"),
+                ("\\.", CMD),
+                ("SELECT", "keyword.other.DML.sql"),
+                ("1", "constant.numeric.sql"),
+            ]
+        );
+    }
+
     /// PostgreSQL's dollar quotes (X-124): after `as` or `do` a body, its text SQL to the
     /// closing tag wherever it stands (an open string inside ends there); else a string.
     #[test]
@@ -2970,7 +3628,7 @@ mod tests {
                 ("DELIMITER", "keyword.other.sql"),
             ]
         );
-        // `$1` a parameter, not a tag (its digits a number, as bat's); `do $$ … $$` a body on
+        // `$1` a parameter, not a tag (X-129; bat's digits a number); `do $$ … $$` a body on
         // one line
         assert_eq!(
             kinds(&["do $$ begin perform 1; end $$; select $1"]),
@@ -2983,7 +3641,7 @@ mod tests {
                 ("end", "keyword.other.DML.sql"),
                 ("$$", end),
                 ("select", "keyword.other.DML.sql"),
-                ("1", "constant.numeric.sql"),
+                ("$1", "constant.other.placeholder.sql"),
             ]
         );
     }
