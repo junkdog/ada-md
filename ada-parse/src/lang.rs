@@ -610,7 +610,7 @@ impl Lang {
             Lang::Java => crate::java::scopes(kind),
             Lang::Cpp => crate::cc::scopes(kind),
             Lang::C => crate::cc::scopes_c(kind),
-            Lang::CSharp => crate::csharp::scopes(kind),
+            Lang::CSharp => crate::cs::scopes(kind),
             Lang::Go => crate::go::scopes(kind),
             Lang::Python => crate::python::scopes(kind),
             Lang::Lua => crate::lua::scopes(kind),

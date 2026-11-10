@@ -72,7 +72,10 @@ namespace Ada.Demo;
 
 /// <summary>A note with a title.</summary>
 [Serializable]
-public record Note(string Title, int Words = 0);
+public record Note(string Title, int Words = 0)
+{
+    public required string Path { get; init; }
+}
 
 public static class Program
 {
@@ -80,14 +83,23 @@ public static class Program
 
     public static async Task<int> Main(string[] args)
     {
-        var notes = new List<Note> { new("ada", 1_000), new("bat") };
+        var notes = new List<Note> { new("ada", 1_000) { Path = "a.md" } };
         foreach (var n in notes.Where(n => n.Words > 0))
         {
             Console.WriteLine($"{n.Title}: {n.Words / Ratio:F2}\t");
         }
-        string path = @"C:\notes\ada.md";
+        var json = $$"""
+            { "title": "{{notes[0].Title}}", "raw": "C:\notes" }
+            """;
+        var renamed = notes[0] with { Title = "bat" };
+        string size = renamed.Words switch
+        {
+            0 => "empty",
+            > 0 and < 100 => "short",
+            _ => "long",
+        };
+        if (args is [var first, ..] && first is not null) await Task.Delay(0x10);
         int? maybe = null;
-        await Task.Delay(0x10);
         return maybe ?? 0; // done
     }
 }

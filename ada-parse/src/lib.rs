@@ -22,7 +22,7 @@ mod bash;
 mod cc;
 mod clike;
 mod crontab;
-mod csharp;
+mod cs;
 mod css;
 mod diff;
 mod dockerfile;
@@ -441,7 +441,7 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
     Some(match lang {
         Lang::Rust => (rust::block_runs, rust::line_runs),
         Lang::Java => (java::block_runs, java::line_runs),
-        Lang::CSharp => (csharp::block_runs, csharp::line_runs),
+        Lang::CSharp => (cs::block_runs, cs::line_runs),
         Lang::Kotlin => (kotlin::block_runs, kotlin::line_runs),
         Lang::TypeScript => (typescript::block_runs, typescript::line_runs),
         Lang::TypeScriptReact => (typescript::block_runs_tsx, typescript::line_runs_tsx),
@@ -477,7 +477,7 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::Java if SPANS => java::block,
         Lang::Python if SPANS => python::block,
         Lang::Go if SPANS => go::block,
-        Lang::CSharp if SPANS => csharp::block,
+        Lang::CSharp if SPANS => cs::block,
         Lang::TypeScript if SPANS => typescript::block,
         Lang::TypeScriptReact if SPANS => typescript::block_tsx,
         Lang::JavaScript => javascript::block,
@@ -735,7 +735,7 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::Cpp => out!(cc::line),
         Lang::C => out!(cc::line_c),
         Lang::CSharp if !SPANS => |_, _, _| unreachable!("C#'s runs come from its own scan"),
-        Lang::CSharp => out!(csharp::line),
+        Lang::CSharp => out!(cs::line),
         Lang::Go if !SPANS => |_, _, _| unreachable!("Go's runs come from its own scan"),
         Lang::Go => out!(go::line),
         Lang::Python if !SPANS => |_, _, _| unreachable!("Python's runs come from its own scan"),
