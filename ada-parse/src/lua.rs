@@ -375,7 +375,7 @@ static INFO: [u8; N + 1] = {
 };
 
 // The frames, three bits a level in [`Scan::frames`]; 0 is none (the top level, or a level
-// lost past [`LEVELS`]).
+// lost past 42 levels).
 const F_NONE: u8 = 0;
 /// A block ended by `end`: `do`'s, `then`'s, a function's body.
 const F_BLOCK: u8 = 1;
@@ -391,8 +391,6 @@ const F_PARAMS: u8 = 5;
 const F_BRACKET: u8 = 6;
 /// A table's `{ … }`.
 const F_TABLE: u8 = 7;
-/// The levels [`Scan::frames`] holds.
-const LEVELS: u8 = 42;
 
 // The token before ([`Scan::prev`]). The first four are the common ones.
 /// An operand may start: a statement's start, after an operator, an opening.
@@ -544,11 +542,10 @@ impl crate::CarryRuns for Scan<'_, '_, Runs<'_>> {
 struct Scan<'b, 'c, K: Sink> {
     b: &'b [u8],
     /// What each open frame is ([`F_BLOCK`]…), three bits a level, the innermost lowest; past
-    /// [`LEVELS`] the outer ones are lost (and the state inexact).
+    /// 42 levels the outer ones are lost.
     frames: u128,
     /// How many frames are open, up to 255.
     depth: u8,
-    exact: bool,
     /// The token before ([`P_BEGIN`]…).
     prev: u8,
     /// The statement is an expression list (`local`, `return`, `for`, `in`): its `,`s separate.
@@ -576,7 +573,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             b,
             frames: 0,
             depth: 0,
-            exact: true,
             prev: P_BEGIN,
             list: false,
             lists: 0,
@@ -599,7 +595,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         w[15] = state.withs[1];
         self.frames = u128::from_le_bytes(w);
         self.depth = state.depth;
-        self.exact = !state.inexact;
         self.level = u16::from_le_bytes([state.withs[2], state.withs[3]]);
         self.module = state.withs[4];
         let mut l = [0u8; 8];
@@ -624,7 +619,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         s.withs[4] = self.module;
         s.withs[5..13].copy_from_slice(&self.lists.to_le_bytes());
         s.depth = self.depth;
-        s.inexact = !self.exact;
         s.arg = u16::from(self.mode) | u16::from(self.prev) << 3 | u16::from(self.list) << 7;
         s
     }
@@ -653,7 +647,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// Whether a table's frame is open at any level.
     #[inline(always)]
     fn table_open(&self) -> bool {
-        // each of the [`LEVELS`] levels' low bit; a level is a table's where its three bits are
+        // each of the 42 levels' low bit; a level is a table's where its three bits are
         // all set
         const LOW: u128 = 0x0924_9249_2492_4924_9249_2492_4924_9249;
         let f = self.frames;
@@ -666,9 +660,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.lists = self.lists << 1 | u64::from(self.list);
         self.list = false;
         self.depth = self.depth.saturating_add(1);
-        if self.depth > LEVELS {
-            self.exact = false;
-        }
     }
 
     #[inline(always)]
@@ -1832,7 +1823,6 @@ mod tests {
         });
         assert_eq!(all, one.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
         assert_eq!(state, one.last().unwrap().1);
-        assert!(!one[0].1.is_exact());
     }
 
     #[test]

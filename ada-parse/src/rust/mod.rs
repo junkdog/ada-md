@@ -1242,7 +1242,6 @@ struct Scan<'b, 'c, K: Sink> {
     depth: usize,
     /// The top frame, `stack[depth - 1]`.
     cur: u8,
-    exact: bool,
     /// The previous significant token ([`P_START`] …).
     prev: u8,
     /// The open raw string's `#`s.
@@ -1280,7 +1279,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             stack: [F_MAIN; MAX],
             depth: 1,
             cur: F_MAIN,
-            exact: true,
             prev: P_START,
             hashes: 0,
             annot: 0,
@@ -1305,7 +1303,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn load(&mut self, state: &State) {
         self.depth = state.load(&mut self.stack);
         self.cur = self.stack[self.depth - 1];
-        self.exact = state.is_exact();
         let arg = state.flags();
         self.hashes = usize::from(arg & ARG_HASHES);
         self.prev = ((arg & ARG_PREV) >> ARG_PREV_SHIFT) as u8;
@@ -1330,7 +1327,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         if self.annot != 0 {
             arg |= ARG_OPEN;
         }
-        State::keep(&self.stack, self.depth, self.exact, arg)
+        State::keep(&self.stack, self.depth, arg)
     }
 
     #[cold]
@@ -1366,7 +1363,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             self.stack.copy_within(1 + from..self.depth, 1);
             self.depth -= from;
             self.cur = self.stack[self.depth - 1];
-            self.exact = false;
             self.count();
         }
     }
@@ -1413,7 +1409,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[cold]
     #[inline(never)]
     fn full(&mut self) {
-        crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
+        crate::stack::drop_bottom(&mut self.stack, &mut self.depth);
         self.count();
     }
 
@@ -1505,7 +1501,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn push(&mut self, at: usize, c: u8) {
         self.fill(at);
         if self.depth == MAX {
-            crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
+            crate::stack::drop_bottom(&mut self.stack, &mut self.depth);
             self.count();
         }
         self.stack[self.depth] = c;
@@ -4175,7 +4171,11 @@ mod tests {
             crate::lex(Lang::Rust, line, &mut state, &mut spans);
             want.push((line.to_owned(), spans.clone(), state));
         }
-        assert!(!want[1].2.is_exact(), "the stack outgrew a state");
+        assert_eq!(
+            want[1].2.held(),
+            crate::stack::HELD,
+            "the stack outgrew a state"
+        );
         for max in [1, 2, usize::MAX] {
             let (mut got, mut state, mut buf) = (Vec::new(), State::default(), String::new());
             let mut rest = Some(&text[..]);

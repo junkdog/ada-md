@@ -1,0 +1,324 @@
+# Bash: ada-parse/tests/readings.rs, bash
+   1 | #!/usr/bin/env bash
+       "#" comment.line.number-sign.shell punctuation.definition.comment.begin.shell
+       "!/usr/bin/env bash" comment.line.number-sign.shell
+   2 | set -euo pipefail # strict
+       "set" meta.function-call.shell support.function.set.shell
+       "#" comment.line.number-sign.shell punctuation.definition.comment.begin.shell
+       " strict" comment.line.number-sign.shell
+   3 | readonly DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+       "readonly" storage.modifier.shell
+       "DIR" variable.other.readwrite.assignment.shell
+       "=" keyword.operator.assignment.shell
+       "\"" punctuation.definition.string.begin.shell
+       "$" punctuation.definition.variable.shell
+       "(" punctuation.section.parens.begin.shell
+       "cd" meta.function-call.shell support.function.cd.shell
+       " " string.quoted.double.shell
+       "\"" punctuation.definition.string.begin.shell
+       "$" punctuation.definition.variable.shell
+       "(" punctuation.section.parens.begin.shell
+       "dirname" meta.function-call.shell support.function.command.shell
+       " " string.quoted.double.shell
+       "\"" punctuation.definition.string.begin.shell
+       "$" punctuation.definition.variable.shell
+       "{" punctuation.section.expansion.parameter.begin.shell
+       "BASH_SOURCE" variable.other.readwrite.shell
+       "[" punctuation.section.braces.begin.shell
+       "0" constant.numeric.integer.decimal.shell
+       "]" punctuation.section.braces.end.shell
+       "}" meta.group.expansion.parameter.shell punctuation.section.expansion.parameter.end.shell
+       "\"" punctuation.definition.string.end.shell
+       ")" punctuation.section.parens.end.shell
+       "\"" punctuation.definition.string.end.shell
+       " " string.quoted.double.shell
+       "&&" keyword.operator.logical.and.shell
+       " " string.quoted.double.shell
+       "pwd" meta.function-call.shell support.function.command.shell
+       ")" punctuation.section.parens.end.shell
+       "\"" punctuation.definition.string.end.shell
+   4 | declare -A seen=([a]=1 [b]=2)
+       "declare" storage.modifier.shell
+       "-" punctuation.definition.parameter.shell
+       "A" variable.parameter.option.shell
+       "seen" variable.other.readwrite.assignment.shell
+       "=" keyword.operator.assignment.shell
+       "(" punctuation.section.parens.begin.shell
+       "[" punctuation.section.brackets.begin.shell
+       "]" punctuation.section.brackets.end.shell
+       "=" keyword.operator.assignment.shell
+       "[" punctuation.section.brackets.begin.shell
+       "]" punctuation.section.brackets.end.shell
+       "=" keyword.operator.assignment.shell
+       ")" punctuation.section.parens.end.shell
+   5 | export PATH="$HOME/bin:$PATH" LANG=C
+       "export" storage.modifier.shell
+       "PATH" variable.other.readwrite.assignment.shell
+       "=" keyword.operator.assignment.shell
+       "\"" punctuation.definition.string.begin.shell
+       "$" punctuation.definition.variable.shell
+       "HOME" variable.other.readwrite.shell
+       "/bin:" string.quoted.double.shell
+       "$" punctuation.definition.variable.shell
+       "PATH" variable.other.readwrite.shell
+       "\"" punctuation.definition.string.end.shell
+       "LANG" variable.other.readwrite.assignment.shell
+       "=" keyword.operator.assignment.shell
+       "C" string.unquoted.shell
+   6 | usage() {
+       "usage" entity.name.function.shell
+       "(" punctuation.section.parens.begin.shell
+       ")" punctuation.section.parens.end.shell
+       "{" punctuation.section.braces.begin.shell
+   7 |   printf 'usage: %s [-v] file...\n' "${0##*/}" >&2
+       "printf" meta.function-call.shell support.function.printf.shell
+       "'" punctuation.definition.string.begin.shell
+       "usage: %s [-v] file...\\n" string.quoted.single.shell
+       "'" punctuation.definition.string.end.shell
+       "\"" punctuation.definition.string.begin.shell
+       "$" punctuation.definition.variable.shell
+       "{" punctuation.section.expansion.parameter.begin.shell
+       "0" variable.other.readwrite.shell
+       "##" keyword.operator.expansion.shell
+       "*" keyword.operator.regexp.quantifier.shell
+       "/" string.quoted.double.shell
+       "}" meta.group.expansion.parameter.shell punctuation.section.expansion.parameter.end.shell
+       "\"" punctuation.definition.string.end.shell
+       ">&" keyword.operator.assignment.redirection.shell
+       "2" constant.numeric.integer.decimal.file-descriptor.shell
+   8 |   exit "${1:-1}"
+       "exit" meta.function-call.shell support.function.exit.shell
+       "\"" punctuation.definition.string.begin.shell
+       "$" punctuation.definition.variable.shell
+       "{" punctuation.section.expansion.parameter.begin.shell
+       "1" variable.other.readwrite.shell
+       ":-" keyword.operator.assignment.shell
+       "1" string.quoted.double.shell
+       "}" meta.group.expansion.parameter.shell punctuation.section.expansion.parameter.end.shell
+       "\"" punctuation.definition.string.end.shell
+   9 | }
+       "}" punctuation.section.braces.end.shell
+  10 | function log { echo "[$(date +%T)] $*"; }
+       "function" storage.type.function.shell
+       "log" entity.name.function.shell
+       "{" punctuation.section.braces.begin.shell
+       "echo" meta.function-call.shell support.function.echo.shell
+       "\"" punctuation.definition.string.begin.shell
+       "[" string.quoted.double.shell
+       "$" punctuation.definition.variable.shell
+       "(" punctuation.section.parens.begin.shell
+       "date" meta.function-call.shell support.function.command.shell
+       " +" string.quoted.double.shell
+       "%" meta.group.expansion.job.shell punctuation.definition.variable.job.shell
+       "T" variable.other.readwrite.shell
+       ")" punctuation.section.parens.end.shell
+       "] " string.quoted.double.shell
+       "$" punctuation.definition.variable.shell
+       "*" variable.language.shell
+       "\"" punctuation.definition.string.end.shell
+       ";" keyword.operator.logical.continue.shell
+       "}" punctuation.section.braces.end.shell
+  11 | while getopts 'vh' opt; do
+       "while" keyword.control.loop.while.shell
+       "getopts" meta.function-call.shell support.function.getopts.shell
+       "'" punctuation.definition.string.begin.shell
+       "vh" string.quoted.single.shell
+       "'" punctuation.definition.string.end.shell
+       ";" keyword.operator.logical.continue.shell
+       "do" keyword.control.loop.do.shell
+  12 |   case $opt in
+       "case" keyword.control.conditional.case.shell
+       "$" punctuation.definition.variable.shell
+       "opt" variable.other.readwrite.shell
+       "in" keyword.control.in.shell
+  13 |     v) verbose=1 ;;
+       ")" keyword.control.conditional.patterns.end.shell
+       "verbose" variable.other.readwrite.assignment.shell
+       "=" keyword.operator.assignment.shell
+       "1" string.unquoted.shell
+       ";;" meta.conditional.case.clause.commands.shell punctuation.terminator.case.clause.shell
+  14 |     h|*) usage 0 ;;
+       "|" keyword.operator.logical.shell
+       "*" keyword.operator.regexp.quantifier.shell
+       ")" keyword.control.conditional.patterns.end.shell
+       "usage" meta.function-call.shell support.function.command.shell
+       ";;" meta.conditional.case.clause.commands.shell punctuation.terminator.case.clause.shell
+  15 |   esac
+       "esac" keyword.control.conditional.end.shell
+  16 | done
+       "done" keyword.control.loop.end.shell
+  17 | shift $((OPTIND - 1))
+       "shift" meta.function-call.shell support.function.shift.shell
+       "$" punctuation.definition.variable.shell
+       "((" punctuation.section.parens.begin.shell
+       "-" keyword.operator.arithmetic.shell
+       "1" constant.numeric.integer.decimal.shell
+       "))" punctuation.section.parens.end.shell
+  18 | for f in "$@" *.txt; do
+       "for" keyword.control.loop.for.shell
+       "in" keyword.control.in.shell
+       "\"" punctuation.definition.string.begin.shell
+       "$" punctuation.definition.variable.shell
+       "@" variable.language.shell
+       "\"" punctuation.definition.string.end.shell
+       "*" keyword.operator.regexp.quantifier.shell
+       ";" keyword.operator.logical.continue.shell
+       "do" keyword.control.loop.do.shell
+  19 |   [[ -f $f && $f != *.bak ]] || continue
+       "[[" support.function.double-brace.begin.shell
+       "-" punctuation.definition.parameter.shell
+       "f" variable.parameter.option.shell
+       "$" punctuation.definition.variable.shell
+       "f" variable.other.readwrite.shell
+       "&&" keyword.operator.logical.shell
+       "$" punctuation.definition.variable.shell
+       "f" variable.other.readwrite.shell
+       "!=" keyword.operator.logical.shell
+       "*" keyword.operator.regexp.quantifier.shell
+       "]]" support.function.double-brace.end.shell
+       "||" keyword.operator.logical.or.shell
+       "continue" keyword.control.flow.continue.shell
+  20 |   if (( ${#f} > 3 )); then echo "${f%.txt}" | tr a-z A-Z; fi
+       "if" keyword.control.conditional.if.shell
+       "((" punctuation.section.arithmetic.begin.shell
+       "$" punctuation.definition.variable.shell
+       "{" punctuation.section.expansion.parameter.begin.shell
+       "#" keyword.operator.arithmetic.shell
+       "f" variable.other.readwrite.shell
+       "}" meta.group.expansion.parameter.shell punctuation.section.expansion.parameter.end.shell
+       ">" keyword.operator.logical.shell
+       "3" constant.numeric.integer.decimal.shell
+       "))" punctuation.section.arithmetic.end.shell
+       ";" keyword.operator.logical.continue.shell
+       "then" keyword.control.conditional.then.shell
+       "echo" meta.function-call.shell support.function.echo.shell
+       "\"" punctuation.definition.string.begin.shell
+       "$" punctuation.definition.variable.shell
+       "{" punctuation.section.expansion.parameter.begin.shell
+       "f" variable.other.readwrite.shell
+       "%" keyword.operator.expansion.shell
+       ".txt" string.quoted.double.shell
+       "}" meta.group.expansion.parameter.shell punctuation.section.expansion.parameter.end.shell
+       "\"" punctuation.definition.string.end.shell
+       "|" keyword.operator.logical.pipe.shell
+       "tr" meta.function-call.shell support.function.command.shell
+       ";" keyword.operator.logical.continue.shell
+       "fi" keyword.control.conditional.end.shell
+  21 | done 2>/dev/null
+       "done" keyword.control.loop.end.shell
+       "2" constant.numeric.integer.decimal.file-descriptor.shell
+       ">" keyword.operator.assignment.redirection.shell
+  22 | cat <<-EOF > "$DIR/out"
+       "cat" meta.function-call.shell support.function.command.shell
+       "<<-" keyword.operator.assignment.redirection.shell
+       "EOF" keyword.control.heredoc-token.shell
+       ">" keyword.operator.assignment.redirection.shell
+       "\"" punctuation.definition.string.begin.shell
+       "$" punctuation.definition.variable.shell
+       "DIR" variable.other.readwrite.shell
+       "/out" string.quoted.double.shell
+       "\"" punctuation.definition.string.end.shell
+  23 | \tname: ${USER}
+       "\tname: " string.unquoted.heredoc.shell
+       "$" punctuation.definition.variable.shell
+       "{" punctuation.section.expansion.parameter.begin.shell
+       "USER" variable.other.readwrite.shell
+       "}" meta.group.expansion.parameter.shell punctuation.section.expansion.parameter.end.shell
+  24 | \tEOF
+       "\t" string.unquoted.heredoc.shell
+       "EOF" keyword.control.heredoc-token.shell
+  25 | cat <<'EOF'\t# literal
+       "cat" meta.function-call.shell support.function.command.shell
+       "<<" keyword.operator.assignment.redirection.shell
+       "'" punctuation.definition.string.begin.shell
+       "EOF" keyword.control.heredoc-token.shell
+       "'" punctuation.definition.string.end.shell
+       "\t" string.unquoted.heredoc.shell
+       "#" comment.line.number-sign.shell punctuation.definition.comment.begin.shell
+       " literal" comment.line.number-sign.shell
+  26 | $x
+       "$x" string.unquoted.heredoc.shell
+  27 | EOF
+       "EOF" keyword.control.heredoc-token.shell
+  28 | coproc worker { while read -r l; do echo "$l"; done; }
+       "coproc" keyword.other.coproc.shell
+       "worker" entity.name.function.coproc.shell
+       "{" punctuation.section.braces.begin.shell
+       "while" keyword.control.loop.while.shell
+       "read" meta.function-call.shell support.function.read.shell
+       "-" punctuation.definition.parameter.shell
+       "r" variable.parameter.option.shell
+       ";" keyword.operator.logical.continue.shell
+       "do" keyword.control.loop.do.shell
+       "echo" meta.function-call.shell support.function.echo.shell
+       "\"" punctuation.definition.string.begin.shell
+       "$" punctuation.definition.variable.shell
+       "l" variable.other.readwrite.shell
+       "\"" punctuation.definition.string.end.shell
+       ";" keyword.operator.logical.continue.shell
+       "done" keyword.control.loop.end.shell
+       ";" keyword.operator.logical.continue.shell
+       "}" punctuation.section.braces.end.shell
+  29 | x=`basename $PWD` y=$'tab\there' z=~/src
+       "x" variable.other.readwrite.assignment.shell
+       "=" keyword.operator.assignment.shell
+       "`" punctuation.section.group.begin.shell
+       "basename" meta.function-call.shell support.function.command.shell
+       "$" punctuation.definition.variable.shell
+       "PWD" variable.other.readwrite.shell
+       "`" punctuation.section.group.end.shell
+       "$'" punctuation.definition.string.begin.shell
+       "tab" string.quoted.single.ansi-c.shell
+       "\\t" constant.character.escape.shell
+       "here" string.quoted.single.ansi-c.shell
+       "'" punctuation.definition.string.end.shell
+       "~" meta.group.expansion.tilde variable.language.tilde.shell
+  30 | arr+=( "${arr[@]/#/-I}" ) && echo ${arr[*]:1:2} {a,b}{1..3}
+       "arr" variable.other.readwrite.assignment.shell
+       "+=" keyword.operator.assignment.shell
+       "(" punctuation.section.parens.begin.shell
+       "\"" punctuation.definition.string.begin.shell
+       "$" punctuation.definition.variable.shell
+       "{" punctuation.section.expansion.parameter.begin.shell
+       "arr" variable.other.readwrite.shell
+       "[" punctuation.section.braces.begin.shell
+       "@" variable.language.array.shell
+       "]" punctuation.section.braces.end.shell
+       "/" keyword.operator.substitution.shell
+       "#" variable.parameter.switch.shell
+       "/" keyword.operator.substitution.shell
+       "-I" string.quoted.double.shell
+       "}" meta.group.expansion.parameter.shell punctuation.section.expansion.parameter.end.shell
+       "\"" punctuation.definition.string.end.shell
+       ")" punctuation.section.parens.end.shell
+       "&&" keyword.operator.logical.and.shell
+       "echo" meta.function-call.shell support.function.echo.shell
+       "$" punctuation.definition.variable.shell
+       "{" punctuation.section.expansion.parameter.begin.shell
+       "arr" variable.other.readwrite.shell
+       "[" punctuation.section.braces.begin.shell
+       "*" variable.language.array.shell
+       "]" punctuation.section.braces.end.shell
+       ":" keyword.operator.substring.begin.shell
+       "1" constant.numeric.integer.decimal.shell
+       ":" keyword.operator.substring.end.shell
+       "2" constant.numeric.integer.decimal.shell
+       "}" meta.group.expansion.parameter.shell punctuation.section.expansion.parameter.end.shell
+       "{" punctuation.section.expansion.brace.begin.shell
+       "," punctuation.separator.shell
+       "}" punctuation.section.expansion.brace.end.shell
+       "{" punctuation.section.expansion.brace.begin.shell
+       "}" punctuation.section.expansion.brace.end.shell
+  31 | trap 'rm -f "$tmp"' EXIT; wait $!; exit $?
+       "trap" meta.function-call.shell support.function.trap.shell
+       "'" punctuation.definition.string.begin.shell
+       "rm -f \"$tmp\"" string.quoted.single.shell
+       "'" punctuation.definition.string.end.shell
+       ";" keyword.operator.logical.continue.shell
+       "wait" meta.function-call.shell support.function.wait.shell
+       "$" punctuation.definition.variable.shell
+       "!" variable.language.shell
+       ";" keyword.operator.logical.continue.shell
+       "exit" meta.function-call.shell support.function.exit.shell
+       "$" punctuation.definition.variable.shell
+       "?" variable.language.shell

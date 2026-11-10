@@ -5,8 +5,8 @@
 //! patterns don't take is `invalid.illegal`, one character at a time (`.`), blanks too. After a
 //! key, its type's context (`:`, the type's run, else an error a character) stays open across
 //! lines until a type is read; the value's (`=`s, then the rest of the line) ends with the line.
-//! So what a line leaves open is whether a key still waits for its type. Exact against bat's
-//! grammar on syntect.
+//! So what a line leaves open is whether a key still waits for its type.
+//! Its readings are held by `tests/readings.rs`' snapshots (X-116).
 
 use crate::emit::{Push, Runs, Sink};
 use crate::line_format::{Cursor, Format, leads};

@@ -1,0 +1,97 @@
+# Json: ada-parse/tests/readings.rs, json
+   1 | {
+       "{" meta.mapping.json punctuation.section.mapping.begin.json
+   2 |   "name": "ada", "tab":\t"a\tb \"q\" \u00e9 \x",
+       "\"" meta.mapping.key.json string.quoted.double.json punctuation.definition.string.begin.json
+       "name" meta.mapping.key.json string.quoted.double.json
+       "\"" meta.mapping.key.json string.quoted.double.json punctuation.definition.string.end.json
+       ":" meta.mapping.json punctuation.separator.mapping.key-value.json
+       "\"" string.quoted.double.json punctuation.definition.string.begin.json
+       "ada" string.quoted.double.json
+       "\"" string.quoted.double.json punctuation.definition.string.end.json
+       "," punctuation.separator.json
+       "\"" meta.mapping.key.json string.quoted.double.json punctuation.definition.string.begin.json
+       "tab" meta.mapping.key.json string.quoted.double.json
+       "\"" meta.mapping.key.json string.quoted.double.json punctuation.definition.string.end.json
+       ":" meta.mapping.json punctuation.separator.mapping.key-value.json
+       "\"" string.quoted.double.json punctuation.definition.string.begin.json
+       "a" string.quoted.double.json
+       "\\t" string.quoted.double.json constant.character.escape.json
+       "b " string.quoted.double.json
+       "\\\"" string.quoted.double.json constant.character.escape.json
+       "q" string.quoted.double.json
+       "\\\"" string.quoted.double.json constant.character.escape.json
+       " " string.quoted.double.json
+       "\\u00e9" string.quoted.double.json constant.character.escape.json
+       " " string.quoted.double.json
+       "\\x" string.quoted.double.json invalid.illegal.unrecognized-string-escape.json
+       "\"" string.quoted.double.json punctuation.definition.string.end.json
+       "," punctuation.separator.json
+   3 |   "n" : [0, -12, 1.5, -0.25e+3, 1E9, true, false, null],
+       "\"" meta.mapping.key.json string.quoted.double.json punctuation.definition.string.begin.json
+       "n" meta.mapping.key.json string.quoted.double.json
+       "\"" meta.mapping.key.json string.quoted.double.json punctuation.definition.string.end.json
+       ":" meta.mapping.json punctuation.separator.mapping.key-value.json
+       "[" meta.sequence.json punctuation.section.sequence.begin.json
+       "0" constant.numeric.integer.decimal.json
+       "," punctuation.separator.json
+       "-12" constant.numeric.integer.decimal.json
+       "," punctuation.separator.json
+       "1" constant.numeric.float.decimal.json
+       "." constant.numeric.float.decimal.json punctuation.separator.decimal.json
+       "5" constant.numeric.float.decimal.json
+       "," punctuation.separator.json
+       "-0" constant.numeric.float.decimal.json
+       "." constant.numeric.float.decimal.json punctuation.separator.decimal.json
+       "25e+3" constant.numeric.float.decimal.json
+       "," punctuation.separator.json
+       "1E9" constant.numeric.float.decimal.json
+       "," punctuation.separator.json
+       "true" constant.language.json
+       "," punctuation.separator.json
+       "false" constant.language.json
+       "," punctuation.separator.json
+       "null" constant.language.json
+       "]" meta.sequence.json punctuation.section.sequence.end.json
+       "," punctuation.separator.json
+   4 |   "o": {"k": [], "e": {}}, // note
+       "\"" meta.mapping.key.json string.quoted.double.json punctuation.definition.string.begin.json
+       "o" meta.mapping.key.json string.quoted.double.json
+       "\"" meta.mapping.key.json string.quoted.double.json punctuation.definition.string.end.json
+       ":" meta.mapping.json punctuation.separator.mapping.key-value.json
+       "{" meta.mapping.json punctuation.section.mapping.begin.json
+       "\"" meta.mapping.key.json string.quoted.double.json punctuation.definition.string.begin.json
+       "k" meta.mapping.key.json string.quoted.double.json
+       "\"" meta.mapping.key.json string.quoted.double.json punctuation.definition.string.end.json
+       ":" meta.mapping.json punctuation.separator.mapping.key-value.json
+       "[" meta.sequence.json punctuation.section.sequence.begin.json
+       "]" meta.sequence.json punctuation.section.sequence.end.json
+       "," punctuation.separator.json
+       "\"" meta.mapping.key.json string.quoted.double.json punctuation.definition.string.begin.json
+       "e" meta.mapping.key.json string.quoted.double.json
+       "\"" meta.mapping.key.json string.quoted.double.json punctuation.definition.string.end.json
+       ":" meta.mapping.json punctuation.separator.mapping.key-value.json
+       "{" meta.mapping.json punctuation.section.mapping.begin.json
+       "}" meta.mapping.json punctuation.section.mapping.end.json
+       "}" meta.mapping.json punctuation.section.mapping.end.json
+       "," punctuation.separator.json
+       "//" comment.line.double-slash.js punctuation.definition.comment.json
+       " note" comment.line.double-slash.js
+   5 |   /* a comment
+       "/*" comment.block.json punctuation.definition.comment.json
+       " a comment" comment.block.json
+   6 |      over lines */ "k\"ey": "//" /* inline */
+       "     over lines */" comment.block.json
+       "\"" meta.mapping.key.json string.quoted.double.json punctuation.definition.string.begin.json
+       "k" meta.mapping.key.json string.quoted.double.json
+       "\\\"" meta.mapping.key.json string.quoted.double.json constant.character.escape.json
+       "ey" meta.mapping.key.json string.quoted.double.json
+       "\"" meta.mapping.key.json string.quoted.double.json punctuation.definition.string.end.json
+       ":" meta.mapping.json punctuation.separator.mapping.key-value.json
+       "\"" string.quoted.double.json punctuation.definition.string.begin.json
+       "//" string.quoted.double.json
+       "\"" string.quoted.double.json punctuation.definition.string.end.json
+       "/*" comment.block.json punctuation.definition.comment.json
+       " inline */" comment.block.json
+   7 | }
+       "}" meta.mapping.json punctuation.section.mapping.end.json

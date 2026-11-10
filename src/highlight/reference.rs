@@ -1,8 +1,8 @@
-//! syntect on bat's whole syntax set, as ada highlighted until 1.1: the reference ada's lexers
-//! and its scope selectors are checked against (ADR-43). syntect is a dev-dependency only, so
-//! this module isn't in the library: its tests include it as `highlight::reference`, and the
-//! examples by path, with `highlight` and `layout` at their crate's root
-//! (`use ada::{highlight, layout};`).
+//! syntect on bat's whole syntax set, as ada highlighted until 1.1: what ada's scope selectors
+//! are checked against (ADR-43), and what `examples/parity.rs` reports ada's lexers' colors
+//! against (a report, not a check: X-116). syntect is a dev-dependency only, so this module
+//! isn't in the library: its tests include it as `highlight::reference`, and the examples by
+//! path, with `highlight` and `layout` at their crate's root (`use ada::{highlight, layout};`).
 
 use std::str::FromStr;
 use std::sync::OnceLock;

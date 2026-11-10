@@ -1,0 +1,47 @@
+# Ini: ada-parse/tests/readings.rs, ini
+   1 | ; comment
+       ";" comment.line.semicolon.ini punctuation.definition.comment.ini
+       " comment" comment.line.semicolon.ini
+   2 |   # another
+       "  " comment.line.semicolon.ini
+       "#" comment.line.semicolon.ini punctuation.definition.comment.ini
+       " another" comment.line.semicolon.ini
+   3 | [section] ; why
+       "[" meta.tag.section.ini punctuation.definition.section.ini
+       "section" meta.tag.section.ini entity.section.ini
+       "]" meta.tag.section.ini punctuation.definition.section.ini
+       " " meta.tag.section.ini
+       "; why" meta.tag.section.ini comment.definition.section.ini
+   4 | [a]b]
+       "[" meta.tag.section.ini punctuation.definition.section.ini
+       "a]b" meta.tag.section.ini entity.section.ini
+       "]" meta.tag.section.ini punctuation.definition.section.ini
+   5 | key = value ; note
+       "key" meta.declaration.ini meta.property.ini keyword.name.ini
+       " " meta.declaration.ini meta.property.ini
+       "=" meta.declaration.ini meta.property.ini punctuation.definition.equals.ini
+       " " meta.declaration.ini
+       "value" meta.declaration.ini meta.value.ini string.name.value.ini
+       " " meta.declaration.ini
+       "; note" meta.declaration.ini comment.declarationline.semicolon.ini
+   6 | "quoted key" = 'quoted ; value' ; c
+       "\"" meta.declaration.ini meta.property.ini punctuation.definition.quote.ini
+       "quoted key" meta.declaration.ini meta.property.ini keyword.name.ini
+       "\"" meta.declaration.ini meta.property.ini punctuation.definition.quote.ini
+       " " meta.declaration.ini meta.property.ini
+       "=" meta.declaration.ini meta.property.ini punctuation.definition.equals.ini
+       " " meta.declaration.ini
+       "'" meta.declaration.ini meta.value.ini punctuation.definition.quote.ini
+       "quoted ; value" meta.declaration.ini meta.value.ini string.name.value.ini
+       "'" meta.declaration.ini meta.value.ini punctuation.definition.quote.ini
+       " " meta.declaration.ini
+       "; c" meta.declaration.ini comment.declarationline.semicolon.ini
+   7 |   = x
+       " " meta.declaration.ini meta.property.ini
+       " " meta.declaration.ini meta.property.ini keyword.name.ini
+       "=" meta.declaration.ini meta.property.ini punctuation.definition.equals.ini
+       " " meta.declaration.ini
+       "x" meta.declaration.ini meta.value.ini string.name.value.ini
+   8 | bare words
+       "bare words" meta.declaration.ini meta.value.ini string.name.value.ini
+   9 | 

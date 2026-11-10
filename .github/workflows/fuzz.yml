@@ -10,7 +10,7 @@ name: 🐛 Fuzz
 # take a group of its languages each, every one alone on its own corpus, corpus/tokens-LANG. By
 # hand only:
 #
-#   gh workflow run fuzz.yml -f minutes=15 -f workers='print=1 make=1'
+#   gh workflow run fuzz.yml -f minutes=15 -f workers='print=1 tokens=1'
 on:
   workflow_dispatch:
     inputs:
@@ -19,7 +19,7 @@ on:
         default: '240'
       workers:
         description: Workers per target
-        default: 'session=5 print=3 render=2 diagram=2 make=2 bash=2 stream=1 images=1 tokens=4 roots=1'
+        default: 'session=5 print=3 render=2 diagram=2 stream=1 images=1 tokens=8 roots=1'
 
 permissions:
   contents: read

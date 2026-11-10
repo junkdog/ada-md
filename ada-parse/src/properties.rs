@@ -3,8 +3,7 @@
 //! passes in one step; a key or value ending in `\` runs on into the next line, which is all the
 //! state there is.
 //!
-//! Exact against bat's grammar on syntect: the `parse` fuzz target holds every byte's scopes to
-//! syntect's.
+//! Its readings are held by `tests/readings.rs`' snapshots (X-116).
 
 use crate::emit::{Push, Runs, Sink};
 use crate::line_format::{Cursor, Format, blanks, find, find_by, leads};

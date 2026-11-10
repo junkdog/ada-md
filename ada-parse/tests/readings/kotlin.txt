@@ -1,0 +1,231 @@
+# Kotlin: ada-parse/tests/readings.rs, kotlin
+   1 | package sift.core.api // the api
+       "package" keyword.other.kotlin
+       "sift.core.api" entity.name.package.kotlin
+       "//" comment.line.double-slash.kotlin punctuation.definition.comment.kotlin
+       " the api" comment.line.double-slash.kotlin
+   2 | import kotlin.reflect.KClass as K
+       "import" keyword.other.kotlin
+       "as" keyword.other.kotlin
+   3 | import java.util.*
+       "import" keyword.other.kotlin
+   4 | /* block
+       "/*" comment.block.kotlin punctuation.definition.comment.kotlin
+       " block" comment.block.kotlin
+   5 |    comment */
+       "   comment " comment.block.kotlin
+       "*/" comment.block.kotlin punctuation.definition.comment.kotlin
+   6 | @Suppress("UNCHECKED_CAST")
+       "\"" string.quoted.double.kotlin punctuation.definition.string.begin.kotlin
+       "UNCHECKED_CAST" string.quoted.double.kotlin
+       "\"" string.quoted.double.kotlin punctuation.definition.string.end.kotlin
+   7 | data class Foo<T : Comparable<T>, out R>(val x: Int, var y: List<String> = listOf()) : Bar(x), Baz {
+       "data" storage.modifier.kotlin
+       "class" storage.modifier.kotlin
+       "Foo" entity.name.type.class.kotlin
+       "T" storage.type.generic.kotlin
+       ":" keyword.operator.declaration.kotlin
+       "out" storage.modifier.kotlin
+       "R" storage.type.generic.kotlin
+       "val" storage.modifier.kotlin
+       "x" variable.parameter.function.kotlin
+       ":" keyword.operator.declaration.kotlin
+       "Int" storage.type.buildin.kotlin
+       "var" storage.modifier.kotlin
+       "y" variable.parameter.function.kotlin
+       ":" keyword.operator.declaration.kotlin
+       "List" storage.type.buildin.collection.kotlin
+       "String" storage.type.buildin.kotlin
+       "=" keyword.operator.declaration.kotlin
+       ":" keyword.operator.declaration.kotlin
+   8 |     companion object { const val MAX = 0x1FL; private val e = 1.5e-3f }
+       "companion object" storage.modifier.kotlin
+       "const" storage.modifier.kotlin
+       "val" keyword.other.kotlin
+       "MAX" entity.name.variable.kotlin
+       "=" keyword.operator.assignment.kotlin
+       "0x1FL" constant.numeric.kotlin
+       ";" punctuation.terminator.kotlin
+       "private" storage.modifier.kotlin
+       "val" keyword.other.kotlin
+       "e" entity.name.variable.kotlin
+       "=" keyword.operator.assignment.kotlin
+       "1.5e-3f" constant.numeric.kotlin
+   9 |     override fun <R> map(f: (T) -> R, vararg n: Int): Map<String, R>? = TODO()
+       "override" storage.modifier.kotlin
+       "fun" keyword.other.kotlin
+       "R" storage.type.generic.kotlin
+       "map" entity.name.function.kotlin
+       "f" variable.parameter.function.kotlin
+       ":" keyword.operator.declaration.kotlin
+       "->" keyword.operator.declaration.kotlin
+       "vararg" storage.modifier.kotlin
+       "n" variable.parameter.function.kotlin
+       ":" keyword.operator.declaration.kotlin
+       "Int" storage.type.buildin.kotlin
+       ":" keyword.operator.declaration.kotlin
+       "Map" storage.type.buildin.collection.kotlin
+       "String" storage.type.buildin.kotlin
+       "=" keyword.operator.assignment.kotlin
+       "TODO" constant.other.kotlin
+  10 |     val name: String get() = "x"
+       "val" keyword.other.kotlin
+       "name" entity.name.variable.kotlin
+       ":" keyword.operator.declaration.kotlin
+       "String" storage.type.buildin.kotlin
+       "get" entity.name.function.kotlin
+       "=" keyword.operator.assignment.kotlin
+       "\"" string.quoted.double.kotlin punctuation.definition.string.begin.kotlin
+       "x" string.quoted.double.kotlin
+       "\"" string.quoted.double.kotlin punctuation.definition.string.end.kotlin
+  11 |     var size: Int
+       "var" keyword.other.kotlin
+       "size" entity.name.variable.kotlin
+       ":" keyword.operator.declaration.kotlin
+       "Int" storage.type.buildin.kotlin
+  12 |         get() { return field }
+       "get" entity.name.function.kotlin
+       "return" keyword.control.kotlin
+  13 |         set(value) { field = value }
+       "set" entity.name.function.kotlin
+       "value" variable.parameter.function.kotlin
+       "=" keyword.operator.assignment.kotlin
+  14 |     fun run() {
+       "fun" keyword.other.kotlin
+       "run" entity.name.function.kotlin
+  15 |         val s = "a $x ${y.z} \n" + """raw $w
+       "val" keyword.other.kotlin
+       "s" entity.name.variable.kotlin
+       "=" keyword.operator.assignment.kotlin
+       "\"" string.quoted.double.kotlin punctuation.definition.string.begin.kotlin
+       "a " string.quoted.double.kotlin
+       "$x" string.quoted.double.kotlin variable.parameter.template.kotlin
+       " " string.quoted.double.kotlin
+       "${y.z}" string.quoted.double.kotlin variable.parameter.template.kotlin
+       " " string.quoted.double.kotlin
+       "\\n" string.quoted.double.kotlin constant.character.escape.kotlin
+       "\"" string.quoted.double.kotlin punctuation.definition.string.end.kotlin
+       "+" keyword.operator.arithmetic.kotlin
+       "\"\"\"" string.quoted.third.kotlin punctuation.definition.string.begin.kotlin
+       "raw " string.quoted.third.kotlin
+       "$w" string.quoted.third.kotlin variable.parameter.template.kotlin
+  16 |             still""".trimIndent() + 'c' + '\t'
+       "            still" string.quoted.third.kotlin
+       "\"\"\"" string.quoted.third.kotlin punctuation.definition.string.end.kotlin
+       "." keyword.operator.dot.kotlin
+       "+" keyword.operator.arithmetic.kotlin
+       "'" string.quoted.single.kotlin punctuation.definition.string.begin.kotlin
+       "c" string.quoted.single.kotlin
+       "'" string.quoted.single.kotlin punctuation.definition.string.end.kotlin
+       "+" keyword.operator.arithmetic.kotlin
+       "'" string.quoted.single.kotlin punctuation.definition.string.begin.kotlin
+       "\\t" string.quoted.single.kotlin constant.character.escape.kotlin
+       "'" string.quoted.single.kotlin punctuation.definition.string.end.kotlin
+  17 |         if (a?.b ?: 0 >= 1 && c is D || !e) return null else x++
+       "if" keyword.control.kotlin
+       "?." keyword.operator.safenav.kotlin
+       "?:" keyword.operator.elvis.kotlin
+       "0" constant.numeric.kotlin
+       ">=" keyword.operator.comparison.kotlin
+       "1" constant.numeric.kotlin
+       "&&" keyword.operator.logical.kotlin
+       "is" keyword.operator.kotlin
+       "||" keyword.operator.logical.kotlin
+       "!" keyword.operator.logical.kotlin
+       "return" keyword.control.kotlin
+       "null" constant.language.kotlin
+       "else" keyword.control.kotlin
+       "++" keyword.operator.increment-decrement.kotlin
+  18 |         while (i < n) y += i * 2 % 3 / 4 - 1
+       "while" keyword.control.kotlin
+       "<" keyword.operator.comparison.kotlin
+       "+=" keyword.operator.arithmetic.assign.kotlin
+       "*" keyword.operator.arithmetic.kotlin
+       "2" constant.numeric.kotlin
+       "%" keyword.operator.arithmetic.kotlin
+       "3" constant.numeric.kotlin
+       "/" keyword.operator.arithmetic.kotlin
+       "4" constant.numeric.kotlin
+       "-" keyword.operator.arithmetic.kotlin
+       "1" constant.numeric.kotlin
+  19 |         when (v) { is Int -> v; else -> throw IllegalStateException() }
+       "when" keyword.control.kotlin
+       "is" keyword.operator.kotlin
+       "Int" storage.type.buildin.kotlin
+       "->" keyword.operator.declaration.kotlin
+       ";" punctuation.terminator.kotlin
+       "else" keyword.control.kotlin
+       "->" keyword.operator.declaration.kotlin
+       "throw" keyword.control.catch-exception.kotlin
+  20 |         try { a::class; Foo::bar } catch (e: Exception) { } finally { }
+       "try" keyword.control.catch-exception.kotlin
+       "::" keyword.operator.kotlin
+       ";" punctuation.terminator.kotlin
+       "::" keyword.operator.kotlin
+       "catch" keyword.control.catch-exception.kotlin
+       ":" keyword.operator.declaration.kotlin
+       "finally" keyword.control.catch-exception.kotlin
+  21 |         val lazyValue: String by lazy { "v" }; array[0] = 1
+       "val" keyword.other.kotlin
+       "lazyValue" entity.name.variable.kotlin
+       ":" keyword.operator.declaration.kotlin
+       "String" storage.type.buildin.kotlin
+       "by" keyword.other.by.kotlin
+       "\"" string.quoted.double.kotlin punctuation.definition.string.begin.kotlin
+       "v" string.quoted.double.kotlin
+       "\"" string.quoted.double.kotlin punctuation.definition.string.end.kotlin
+       ";" punctuation.terminator.kotlin
+       "0" constant.numeric.kotlin
+       "=" keyword.operator.assignment.kotlin
+       "1" constant.numeric.kotlin
+  22 |     }
+  23 |     interface I { fun f(a: Array<Int>, b: IntArray): Unit }
+       "interface" storage.modifier.kotlin
+       "I" entity.name.type.class.kotlin
+       "fun" keyword.other.kotlin
+       "f" entity.name.function.kotlin
+       "a" variable.parameter.function.kotlin
+       ":" keyword.operator.declaration.kotlin
+       "Array" storage.type.buildin.collection.kotlin
+       "Int" storage.type.buildin.kotlin
+       "b" variable.parameter.function.kotlin
+       ":" keyword.operator.declaration.kotlin
+       "IntArray" storage.type.buildin.array.kotlin
+       ":" keyword.operator.declaration.kotlin
+       "Unit" storage.type.buildin.kotlin
+  24 | }
+  25 | enum class E { A, B; fun x() = A }
+       "enum" storage.modifier.kotlin
+       "class" storage.modifier.kotlin
+       "E" entity.name.type.class.kotlin
+       ";" punctuation.terminator.kotlin
+       "fun" keyword.other.kotlin
+       "x" entity.name.function.kotlin
+       "=" keyword.operator.assignment.kotlin
+  26 | sealed interface S
+       "sealed" storage.modifier.kotlin
+       "interface" storage.modifier.kotlin
+       "S" entity.name.type.class.kotlin
+  27 | object Single : Base() { suspend inline fun <reified T> t(): T? = null }
+       "object" storage.modifier.kotlin
+       "Single" entity.name.type.class.kotlin
+       ":" keyword.operator.declaration.kotlin
+       "suspend" storage.modifier.kotlin
+       "inline" storage.modifier.kotlin
+       "fun" keyword.other.kotlin
+       "reified" storage.modifier.kotlin
+       "T" storage.type.generic.kotlin
+       "t" entity.name.function.kotlin
+       ":" keyword.operator.declaration.kotlin
+       "=" keyword.operator.assignment.kotlin
+       "null" constant.language.kotlin
+  28 | val y = 1e10; val z = 100
+       "val" keyword.other.kotlin
+       "y" entity.name.variable.kotlin
+       "=" keyword.operator.assignment.kotlin
+       "1e10" constant.numeric.kotlin
+       ";" punctuation.terminator.kotlin
+       "val" keyword.other.kotlin
+       "z" entity.name.variable.kotlin
+       "=" keyword.operator.assignment.kotlin
+       "100" constant.numeric.kotlin

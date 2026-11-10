@@ -93,16 +93,13 @@ pub fn block(
     let mut s = Scan::fresh(b"", 0, &mut out, Push);
     s.load_state(state);
     let mut f = Front {
-        c: Carried {
-            s,
-            exact: state.is_exact(),
-        },
+        c: Carried { s },
         held: in_front_matter(state).then_some(*state),
     };
     let rest = pass(&mut f);
     *state = match f.held {
         Some(held) => held,
-        None => State::keep(&f.c.s.stack, f.c.s.depth, f.c.exact, 0),
+        None => State::keep(&f.c.s.stack, f.c.s.depth, 0),
     };
     rest
 }
@@ -120,16 +117,13 @@ pub fn block_runs(
     let mut s = Scan::fresh(b"", 0, &mut out, Runs::new(rules, runs));
     s.load_state(state);
     let mut f = Front {
-        c: Carried {
-            s,
-            exact: state.is_exact(),
-        },
+        c: Carried { s },
         held: in_front_matter(state).then_some(*state),
     };
     let rest = lines.pass(&mut f);
     *state = match f.held {
         Some(held) => held,
-        None => State::keep(&f.c.s.stack, f.c.s.depth, f.c.exact, 0),
+        None => State::keep(&f.c.s.stack, f.c.s.depth, 0),
     };
     rest
 }
@@ -170,19 +164,18 @@ impl<K: Sink> Front<'_, '_, '_, K> {
             }
             // the `---` that ends it: the scan's, from the state
             s.depth = held.load(&mut s.stack);
-            self.c.exact = held.is_exact();
             self.held = None;
         }
         // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
         s.b = unsafe { crate::line_for(b) };
         s.line_start(0);
         s.scss_run();
-        crate::stack::hold(&mut s.stack, &mut s.depth, &mut self.c.exact);
+        crate::stack::hold(&mut s.stack, &mut s.depth);
         s.b = b"";
         // a line that opens the front matter: the state the next line's would start from
         let d = s.depth - 1;
         if (1..=crate::matcher::KEPT).contains(&d) && s.stack[d] == FRONT {
-            self.held = Some(State::keep(&s.stack, s.depth, self.c.exact, 0));
+            self.held = Some(State::keep(&s.stack, s.depth, 0));
         }
     }
 }

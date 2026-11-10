@@ -1,0 +1,287 @@
+# Yaml: ada-parse/tests/readings.rs, yaml
+   1 | %YAML 1.2
+       "%" meta.directive.yaml punctuation.definition.directive.begin.yaml
+       "YAML" meta.directive.yaml keyword.other.directive.yaml.yaml
+       " " meta.directive.yaml
+       "1.2" meta.directive.yaml constant.numeric.yaml-version.yaml
+   2 | %TAG !e! tag:example.com,2000:app/
+       "%" meta.directive.yaml punctuation.definition.directive.begin.yaml
+       "TAG" meta.directive.yaml keyword.other.directive.tag.yaml
+       " " meta.directive.yaml
+       "!e!" meta.directive.yaml storage.type.tag-handle.yaml
+       " " meta.directive.yaml
+       "tag:example.com,2000:app/" meta.directive.yaml support.type.tag-prefix.yaml
+   3 | %FOO bar baz # c
+       "%" meta.directive.yaml punctuation.definition.directive.begin.yaml
+       "FOO" meta.directive.yaml support.other.directive.reserved.yaml
+       " " meta.directive.yaml
+       "bar" meta.directive.yaml string.unquoted.directive-name.yaml
+       " " meta.directive.yaml
+       "baz" meta.directive.yaml string.unquoted.directive-parameter.yaml
+       "#" comment.line.number-sign.yaml punctuation.definition.comment.line.number-sign.yaml
+       " c" comment.line.number-sign.yaml
+   4 | ---
+       "---" entity.other.document.begin.yaml
+   5 | # a comment
+       "#" comment.line.number-sign.yaml punctuation.definition.comment.line.number-sign.yaml
+       " a comment" comment.line.number-sign.yaml
+   6 | name: ada # trailing
+       "name" string.unquoted.plain.out.yaml entity.name.tag.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "ada" string.unquoted.plain.out.yaml
+       "#" comment.line.number-sign.yaml punctuation.definition.comment.line.number-sign.yaml
+       " trailing" comment.line.number-sign.yaml
+   7 | on: yes
+       "on" constant.language.boolean.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "yes" constant.language.boolean.yaml
+   8 | nums: [0b101, 0o17, 017, 019, -42, 0x_ff, 1:30, 1_000, .5, -1.5e+3, 1.2.3, .inf, -.Inf, .NaN, 1:30.5]
+       "nums" string.unquoted.plain.out.yaml entity.name.tag.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "[" meta.flow-sequence.yaml punctuation.definition.sequence.begin.yaml
+       "0b" meta.flow-sequence.yaml constant.numeric.integer.binary.yaml punctuation.definition.numeric.base.yaml
+       "101" meta.flow-sequence.yaml constant.numeric.integer.binary.yaml
+       "," meta.flow-sequence.yaml punctuation.separator.sequence.yaml
+       "0o17" meta.flow-sequence.yaml string.unquoted.plain.in.yaml
+       "," meta.flow-sequence.yaml punctuation.separator.sequence.yaml
+       "0" meta.flow-sequence.yaml constant.numeric.integer.octal.yaml punctuation.definition.numeric.base.yaml
+       "17" meta.flow-sequence.yaml constant.numeric.integer.octal.yaml
+       "," meta.flow-sequence.yaml punctuation.separator.sequence.yaml
+       "019" meta.flow-sequence.yaml string.unquoted.plain.in.yaml
+       "," meta.flow-sequence.yaml punctuation.separator.sequence.yaml
+       "-42" meta.flow-sequence.yaml constant.numeric.integer.decimal.yaml
+       "," meta.flow-sequence.yaml punctuation.separator.sequence.yaml
+       "0x" meta.flow-sequence.yaml constant.numeric.integer.hexadecimal.yaml punctuation.definition.numeric.base.yaml
+       "_ff" meta.flow-sequence.yaml constant.numeric.integer.hexadecimal.yaml
+       "," meta.flow-sequence.yaml punctuation.separator.sequence.yaml
+       "1:30" meta.flow-sequence.yaml constant.numeric.integer.other.yaml
+       "," meta.flow-sequence.yaml punctuation.separator.sequence.yaml
+       "1_000" meta.flow-sequence.yaml constant.numeric.integer.decimal.yaml
+       "," meta.flow-sequence.yaml punctuation.separator.sequence.yaml
+       "." meta.flow-sequence.yaml constant.numeric.float.decimal.yaml punctuation.separator.decimal.yaml
+       "5" meta.flow-sequence.yaml constant.numeric.float.decimal.yaml
+       "," meta.flow-sequence.yaml punctuation.separator.sequence.yaml
+       "-1" meta.flow-sequence.yaml constant.numeric.float.decimal.yaml
+       "." meta.flow-sequence.yaml constant.numeric.float.decimal.yaml punctuation.separator.decimal.yaml
+       "5e+3" meta.flow-sequence.yaml constant.numeric.float.decimal.yaml
+       "," meta.flow-sequence.yaml punctuation.separator.sequence.yaml
+       "1" meta.flow-sequence.yaml constant.numeric.float.decimal.yaml
+       "." meta.flow-sequence.yaml constant.numeric.float.decimal.yaml punctuation.separator.decimal.yaml
+       "2.3" meta.flow-sequence.yaml constant.numeric.float.decimal.yaml
+       "," meta.flow-sequence.yaml punctuation.separator.sequence.yaml
+       "." meta.flow-sequence.yaml constant.numeric.float.other.yaml punctuation.separator.decimal.yaml
+       "inf" meta.flow-sequence.yaml constant.numeric.float.other.yaml
+       "," meta.flow-sequence.yaml punctuation.separator.sequence.yaml
+       "-" meta.flow-sequence.yaml constant.numeric.float.other.yaml
+       "." meta.flow-sequence.yaml constant.numeric.float.other.yaml punctuation.separator.decimal.yaml
+       "Inf" meta.flow-sequence.yaml constant.numeric.float.other.yaml
+       "," meta.flow-sequence.yaml punctuation.separator.sequence.yaml
+       "." meta.flow-sequence.yaml constant.numeric.float.other.yaml punctuation.separator.decimal.yaml
+       "NaN" meta.flow-sequence.yaml constant.numeric.float.other.yaml
+       "," meta.flow-sequence.yaml punctuation.separator.sequence.yaml
+       "1:30" meta.flow-sequence.yaml constant.numeric.float.other.yaml
+       "." meta.flow-sequence.yaml constant.numeric.float.other.yaml punctuation.separator.decimal.yaml
+       "5" meta.flow-sequence.yaml constant.numeric.float.other.yaml
+       "]" meta.flow-sequence.yaml punctuation.definition.sequence.end.yaml
+   9 | misc: {a: ~, b: null, c: =, <<: *base, ? d : e}
+       "misc" string.unquoted.plain.out.yaml entity.name.tag.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "{" meta.flow-mapping.yaml punctuation.definition.mapping.begin.yaml
+       "a" meta.flow-mapping.yaml string.unquoted.plain.in.yaml entity.name.tag.yaml
+       ":" meta.flow-mapping.yaml meta.flow-pair.yaml punctuation.separator.key-value.mapping.yaml
+       "~" meta.flow-mapping.yaml meta.flow-pair.value.yaml constant.language.null.yaml
+       "," meta.flow-mapping.yaml punctuation.separator.mapping.yaml
+       "b" meta.flow-mapping.yaml string.unquoted.plain.in.yaml entity.name.tag.yaml
+       ":" meta.flow-mapping.yaml meta.flow-pair.yaml punctuation.separator.key-value.mapping.yaml
+       "null" meta.flow-mapping.yaml meta.flow-pair.value.yaml constant.language.null.yaml
+       "," meta.flow-mapping.yaml punctuation.separator.mapping.yaml
+       "c" meta.flow-mapping.yaml string.unquoted.plain.in.yaml entity.name.tag.yaml
+       ":" meta.flow-mapping.yaml meta.flow-pair.yaml punctuation.separator.key-value.mapping.yaml
+       "=" meta.flow-mapping.yaml meta.flow-pair.value.yaml constant.language.value.yaml
+       "," meta.flow-mapping.yaml punctuation.separator.mapping.yaml
+       "<<" meta.flow-mapping.yaml constant.language.merge.yaml
+       ":" meta.flow-mapping.yaml meta.flow-pair.yaml punctuation.separator.key-value.mapping.yaml
+       "*" meta.flow-mapping.yaml meta.flow-pair.value.yaml keyword.control.flow.alias.yaml punctuation.definition.alias.yaml
+       "base" meta.flow-mapping.yaml meta.flow-pair.value.yaml variable.other.alias.yaml
+       "," meta.flow-mapping.yaml punctuation.separator.mapping.yaml
+       "?" meta.flow-mapping.yaml punctuation.definition.key-value.begin.yaml
+       "d" meta.flow-mapping.yaml string.unquoted.plain.in.yaml entity.name.tag.yaml
+       ":" meta.flow-mapping.yaml meta.flow-pair.yaml punctuation.separator.key-value.mapping.yaml
+       "e" meta.flow-mapping.yaml meta.flow-pair.value.yaml string.unquoted.plain.in.yaml
+       "}" meta.flow-mapping.yaml punctuation.definition.mapping.end.yaml
+  10 | when: 2001-12-14t21:59:43.10-05:00
+       "when" string.unquoted.plain.out.yaml entity.name.tag.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "2001" constant.other.timestamp.yaml
+       "-" constant.other.timestamp.yaml punctuation.separator.date.yaml
+       "12" constant.other.timestamp.yaml
+       "-" constant.other.timestamp.yaml punctuation.separator.date.yaml
+       "14t21" constant.other.timestamp.yaml
+       ":" constant.other.timestamp.yaml punctuation.separator.time.yaml
+       "59" constant.other.timestamp.yaml
+       ":" constant.other.timestamp.yaml punctuation.separator.time.yaml
+       "43" constant.other.timestamp.yaml
+       "." constant.other.timestamp.yaml punctuation.separator.time.yaml
+       "10-05" constant.other.timestamp.yaml
+       ":" constant.other.timestamp.yaml punctuation.separator.time.yaml
+       "00" constant.other.timestamp.yaml
+  11 | day: 2002-12-14
+       "day" string.unquoted.plain.out.yaml entity.name.tag.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "2002" constant.other.timestamp.yaml
+       "-" constant.other.timestamp.yaml punctuation.separator.date.yaml
+       "12" constant.other.timestamp.yaml
+       "-" constant.other.timestamp.yaml punctuation.separator.date.yaml
+       "14" constant.other.timestamp.yaml
+  12 | spaced: 2001-12-14 21:59:43.10 -5 # tz
+       "spaced" string.unquoted.plain.out.yaml entity.name.tag.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "2001" constant.other.timestamp.yaml
+       "-" constant.other.timestamp.yaml punctuation.separator.date.yaml
+       "12" constant.other.timestamp.yaml
+       "-" constant.other.timestamp.yaml punctuation.separator.date.yaml
+       "14 21" constant.other.timestamp.yaml
+       ":" constant.other.timestamp.yaml punctuation.separator.time.yaml
+       "59" constant.other.timestamp.yaml
+       ":" constant.other.timestamp.yaml punctuation.separator.time.yaml
+       "43" constant.other.timestamp.yaml
+       "." constant.other.timestamp.yaml punctuation.separator.time.yaml
+       "10 -5" constant.other.timestamp.yaml
+       "#" comment.line.number-sign.yaml punctuation.definition.comment.line.number-sign.yaml
+       " tz" comment.line.number-sign.yaml
+  13 | loose: 2001-1-2 3:04:05   
+       "loose" string.unquoted.plain.out.yaml entity.name.tag.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "2001" constant.other.timestamp.yaml
+       "-" constant.other.timestamp.yaml punctuation.separator.date.yaml
+       "1" constant.other.timestamp.yaml
+       "-" constant.other.timestamp.yaml punctuation.separator.date.yaml
+       "2 3" constant.other.timestamp.yaml
+       ":" constant.other.timestamp.yaml punctuation.separator.time.yaml
+       "04" constant.other.timestamp.yaml
+       ":" constant.other.timestamp.yaml punctuation.separator.time.yaml
+       "05   " constant.other.timestamp.yaml
+  14 | anchor: &base !!map
+       "anchor" string.unquoted.plain.out.yaml entity.name.tag.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "&" meta.property.yaml keyword.control.property.anchor.yaml punctuation.definition.anchor.yaml
+       "base" meta.property.yaml entity.name.other.anchor.yaml
+       "!!map" meta.property.yaml storage.type.tag-handle.yaml
+  15 |   key with spaces: value with: colon
+       "key with spaces" string.unquoted.plain.out.yaml entity.name.tag.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "value with" string.unquoted.plain.out.yaml entity.name.tag.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "colon" string.unquoted.plain.out.yaml
+  16 |   "quoted": 'it''s'
+       "\"" string.quoted.double.yaml punctuation.definition.string.begin.yaml
+       "quoted" string.quoted.double.yaml
+       "\"" string.quoted.double.yaml punctuation.definition.string.end.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "'" string.quoted.single.yaml punctuation.definition.string.begin.yaml
+       "it" string.quoted.single.yaml
+       "''" string.quoted.single.yaml constant.character.escape.single-quoted.yaml
+       "s" string.quoted.single.yaml
+       "'" string.quoted.single.yaml punctuation.definition.string.end.yaml
+  17 |   - item
+       "-" punctuation.definition.block.sequence.item.yaml
+       "item" string.unquoted.plain.out.yaml
+  18 |   - "esc \n \x41 \q"
+       "-" punctuation.definition.block.sequence.item.yaml
+       "\"" string.quoted.double.yaml punctuation.definition.string.begin.yaml
+       "esc " string.quoted.double.yaml
+       "\\n" string.quoted.double.yaml constant.character.escape.double-quoted.yaml
+       " " string.quoted.double.yaml
+       "\\x41" string.quoted.double.yaml constant.character.escape.double-quoted.yaml
+       " \\q" string.quoted.double.yaml
+       "\"" string.quoted.double.yaml punctuation.definition.string.end.yaml
+  19 |   -not a dash
+       "-not a dash" string.unquoted.plain.out.yaml
+  20 | tagged: !<tag:x> v
+       "tagged" string.unquoted.plain.out.yaml entity.name.tag.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "!<tag:x>" meta.property.yaml storage.type.tag-handle.yaml
+       "v" string.unquoted.plain.out.yaml
+  21 | local: !e!thing v
+       "local" string.unquoted.plain.out.yaml entity.name.tag.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "!e!thing" meta.property.yaml storage.type.tag-handle.yaml
+       "v" string.unquoted.plain.out.yaml
+  22 | bad: &a[b *c]d !
+       "bad" string.unquoted.plain.out.yaml entity.name.tag.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "&" meta.property.yaml keyword.control.property.anchor.yaml punctuation.definition.anchor.yaml
+       "a" meta.property.yaml entity.name.other.anchor.yaml
+       "[b" meta.property.yaml invalid.illegal.character.anchor.yaml
+       "*" keyword.control.flow.alias.yaml punctuation.definition.alias.yaml
+       "c" variable.other.alias.yaml
+       "d !" string.unquoted.plain.out.yaml
+  23 | literal: |2-
+       "literal" string.unquoted.plain.out.yaml entity.name.tag.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "|" keyword.control.flow.block-scalar.literal.yaml
+       "2" constant.numeric.integer.decimal.indentation-indicator.yaml
+       "-" storage.modifier.chomping-indicator.yaml
+  24 |     indented
+       "    indented" string.unquoted.block.yaml
+  25 | 
+  26 |    still
+       "still" string.unquoted.plain.out.yaml
+  27 |   back
+       "back" string.unquoted.plain.out.yaml
+  28 | folded: >
+       "folded" string.unquoted.plain.out.yaml entity.name.tag.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       ">" keyword.control.flow.block-scalar.folded.yaml
+  29 |   text
+       "  text" string.unquoted.block.yaml
+  30 |   # not a comment
+       "  # not a comment" string.unquoted.block.yaml
+  31 | next: x
+       "next" string.unquoted.plain.out.yaml entity.name.tag.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "x" string.unquoted.plain.out.yaml
+  32 | flow: [a, {b: c}, d: e, "f": g
+       "flow" string.unquoted.plain.out.yaml entity.name.tag.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "[" meta.flow-sequence.yaml punctuation.definition.sequence.begin.yaml
+       "a" meta.flow-sequence.yaml string.unquoted.plain.in.yaml
+       "," meta.flow-sequence.yaml punctuation.separator.sequence.yaml
+       "{" meta.flow-mapping.yaml punctuation.definition.mapping.begin.yaml
+       "b" meta.flow-mapping.yaml string.unquoted.plain.in.yaml entity.name.tag.yaml
+       ":" meta.flow-mapping.yaml meta.flow-pair.yaml punctuation.separator.key-value.mapping.yaml
+       "c" meta.flow-mapping.yaml meta.flow-pair.value.yaml string.unquoted.plain.in.yaml
+       "}" meta.flow-mapping.yaml punctuation.definition.mapping.end.yaml
+       "," meta.flow-sequence.yaml punctuation.separator.sequence.yaml
+       "d" meta.flow-sequence.yaml string.unquoted.plain.in.yaml entity.name.tag.yaml
+       ":" meta.flow-sequence.yaml meta.flow-pair.yaml punctuation.separator.key-value.mapping.yaml
+       "e" meta.flow-sequence.yaml meta.flow-pair.value.yaml string.unquoted.plain.in.yaml
+       "," meta.flow-sequence.yaml punctuation.separator.sequence.yaml
+       "\"" meta.flow-sequence.yaml string.quoted.double.yaml punctuation.definition.string.begin.yaml
+       "f" meta.flow-sequence.yaml string.quoted.double.yaml
+       "\"" meta.flow-sequence.yaml string.quoted.double.yaml punctuation.definition.string.end.yaml
+       ":" meta.flow-sequence.yaml meta.flow-pair.yaml punctuation.separator.key-value.mapping.yaml
+       "g" meta.flow-sequence.yaml meta.flow-pair.value.yaml string.unquoted.plain.in.yaml
+  33 |   , h]
+       "," meta.flow-sequence.yaml punctuation.separator.sequence.yaml
+       "h" meta.flow-sequence.yaml string.unquoted.plain.in.yaml
+       "]" meta.flow-sequence.yaml punctuation.definition.sequence.end.yaml
+  34 | multi: "line one
+       "multi" string.unquoted.plain.out.yaml entity.name.tag.yaml
+       ":" punctuation.separator.key-value.mapping.yaml
+       "\"" string.quoted.double.yaml punctuation.definition.string.begin.yaml
+       "line one" string.quoted.double.yaml
+  35 |   line two\
+       "  line two" string.quoted.double.yaml
+       "\\" string.quoted.double.yaml constant.character.escape.double-quoted.newline.yaml
+  36 |   end"
+       "  end" string.quoted.double.yaml
+       "\"" string.quoted.double.yaml punctuation.definition.string.end.yaml
+  37 | ? complex
+       "?" punctuation.definition.key-value.begin.yaml
+       "complex" string.unquoted.plain.out.yaml
+  38 | : value
+       ":" punctuation.separator.key-value.mapping.yaml
+       "value" string.unquoted.plain.out.yaml
+  39 | ...
+       "..." entity.other.document.end.yaml

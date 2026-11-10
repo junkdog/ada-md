@@ -845,7 +845,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             stack: [MAIN; MAX],
             raws: [0; MAX],
             depth: 1,
-            exact: true,
             text: 0,
             at: 0,
             loop_at: (usize::MAX, 0),
@@ -872,7 +871,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// The stack and its levels' wraps from `state`.
     #[inline(always)]
     fn load(&mut self, state: &State) {
-        self.exact = state.is_exact();
         self.depth = 1;
         let n = usize::from(state.depth);
         for i in 0..n {
@@ -900,7 +898,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// The state the scan's last line leaves.
     #[inline(always)]
     fn state(&self) -> State {
-        State::keep(&self.stack, self.depth, self.exact, 0)
+        State::keep(&self.stack, self.depth, 0)
     }
 }
 
@@ -1295,7 +1293,6 @@ struct Scan<'b, 'c, K: Sink> {
     /// (`BASES` gives its plain text's kind).
     raws: [u8; MAX],
     depth: usize,
-    exact: bool,
     /// The kind of text no pattern of the top context matches.
     text: u16,
     /// Where the spans so far end.
@@ -1574,7 +1571,7 @@ impl<K: Sink> Scan<'_, '_, K> {
 
     fn push(&mut self, c: u8) {
         if self.depth == MAX {
-            crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
+            crate::stack::drop_bottom(&mut self.stack, &mut self.depth);
             for d in 1..self.depth {
                 self.relevel(d);
             }

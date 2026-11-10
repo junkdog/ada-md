@@ -474,9 +474,8 @@ fn sql_indicator(b: &[u8], p: usize) -> bool {
 }
 
 /// The last with's bit for a line that ends in PHP ([`Scan::state`]); its low three bits are
-/// how many of HTML's levels are kept below the PHP, [`HTML_LOST`] where HTML's state wasn't.
+/// how many of HTML's levels are kept below the PHP.
 const PHP_LAYOUT: u8 = 0x80;
-const HTML_LOST: u8 = 0x40;
 /// In HTML's layout, the bit for a text whose first line has decided it's a template's (a `<`):
 /// without it (the default state), the first non-blank line decides ([`Scan::fresh`]).
 const HTML_DECIDED: u8 = 0x40;
@@ -910,7 +909,7 @@ const UNIT_TAGS: u16 = 31;
 static TAGS: Words<256, 66, { text_len(&TAG_LIST) }> = Words::new(&TAG_LIST);
 
 // The frames, four bits a level in [`Scan::frames`]; 0 is none (the top level, or a level lost
-// past [`LEVELS`]).
+// past 32 levels).
 const F_NONE: u8 = 0;
 /// `{ … }`: a block, a function's body.
 const F_BLOCK: u8 = 1;
@@ -940,8 +939,6 @@ const F_INTERP: u8 = 12;
 const F_ATTR: u8 = 13;
 /// An anonymous class's arguments (`new class( … )`): its head and body follow.
 const F_CLASS_ARGS: u8 = 15;
-/// The levels [`Scan::frames`] holds.
-const LEVELS: u8 = 32;
 
 // The token before ([`Scan::prev`]), and where it stands.
 /// An operand may start.
@@ -1121,11 +1118,10 @@ struct Host {
 struct Scan<'b, 'c, K: Sink> {
     b: &'b [u8],
     /// What each open frame is ([`F_BLOCK`]…), four bits a level, the innermost lowest; past
-    /// [`LEVELS`] the outer ones are lost (and the state inexact).
+    /// 32 levels the outer ones are lost.
     frames: u128,
     /// How many frames are open, up to 255.
     depth: u8,
-    exact: bool,
     /// The token before ([`P_BEGIN`]…).
     prev: u8,
     /// What the line starts in ([`M_CODE`]…).
@@ -1154,7 +1150,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             b,
             frames: 0,
             depth: 0,
-            exact: true,
             prev: P_BEGIN,
             mode: M_HTML,
             aux: 0,
@@ -1183,7 +1178,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         w[15] = state.withs[1];
         self.frames = u128::from_le_bytes(w);
         self.depth = state.depth;
-        self.exact = !state.inexact;
         let mut x = [0u8; 8];
         x[..6].copy_from_slice(&state.withs[2..8]);
         self.aux = u64::from_le_bytes(x);
@@ -1191,12 +1185,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.mode = (a & 15) as u8;
         self.prev = (a >> 4 & 31) as u8;
         // HTML below the PHP: its stack's top levels, up to [`HTML_HELD`]
-        if tag & (7 | HTML_LOST) != 0 {
+        if tag & 7 != 0 {
             let k = usize::from(tag & 7);
             let mut h = State::default();
             h.levels[..k].copy_from_slice(&state.withs[8..8 + k]);
             h.depth = k as u8;
-            h.inexact = tag & HTML_LOST != 0;
             self.host().html = h;
         } else if let Some(h) = self.host.as_mut() {
             h.html = State::default();
@@ -1288,7 +1281,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn html_set(&self) -> bool {
         self.host
             .as_ref()
-            .is_some_and(|h| h.html.depth != 0 || h.html.arg != 0 || h.html.inexact)
+            .is_some_and(|h| h.html.depth != 0 || h.html.arg != 0)
     }
 
     /// [`Scan::load`] of a line that starts in HTML: HTML's state, and PHP's innermost
@@ -1305,11 +1298,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         w[..3].copy_from_slice(&state.withs[10..13]);
         self.frames = u128::from(u32::from_le_bytes(w));
         self.depth = k as u8;
-        self.exact = !state.inexact;
         self.mode = M_HTML;
         let mut h = *state;
         h.withs[10..14].fill(0);
-        if h.depth != 0 || h.arg != 0 || h.inexact {
+        if h.depth != 0 || h.arg != 0 {
             self.host().html = h;
         } else if let Some(x) = self.host.as_mut() {
             x.html = State::default();
@@ -1332,7 +1324,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         s.withs[1] = w[15];
         s.withs[2..8].copy_from_slice(&self.aux.to_le_bytes()[..6]);
         s.depth = self.depth;
-        s.inexact = !self.exact;
         s.arg = u16::from(self.mode) | u16::from(self.prev) << 4;
         s.withs[13] = PHP_LAYOUT;
         if self.html_set() {
@@ -1354,12 +1345,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         if k <= HTML_HELD && h.arg == 0 && h.withs.iter().all(|&w| w == 0) {
             s.withs[8..8 + k].copy_from_slice(&h.levels[..k]);
             tag |= k as u8;
-            if h.inexact {
-                tag |= HTML_LOST;
-            }
-        } else {
-            tag |= HTML_LOST;
-            s.inexact = true;
         }
         s.withs[13] = tag;
     }
@@ -1372,15 +1357,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         if s.withs[10..14] != [0; 4] {
             // HTML's (or its embed's) stack reached the withs PHP keeps its frames in
             s.withs[10..14].fill(0);
-            s.inexact = true;
         }
         let k = self.depth.min(PHP_HELD);
         let f = (self.frames as u32) & ((1 << (4 * u32::from(k))) - 1);
         s.withs[10..13].copy_from_slice(&f.to_le_bytes()[..3]);
         s.withs[13] = k | if self.fresh { 0 } else { HTML_DECIDED };
-        if self.depth > PHP_HELD || !self.exact {
-            s.inexact = true;
-        }
         s
     }
 
@@ -1423,9 +1404,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn push(&mut self, f: u8) {
         self.frames = self.frames << 4 | u128::from(f);
         self.depth = self.depth.saturating_add(1);
-        if self.depth > LEVELS {
-            self.exact = false;
-        }
     }
 
     #[inline(always)]
@@ -4235,7 +4213,6 @@ mod tests {
         });
         assert_eq!(all, one.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
         assert_eq!(state, one.last().unwrap().1);
-        assert!(!one[2].1.is_exact());
     }
 
     #[test]

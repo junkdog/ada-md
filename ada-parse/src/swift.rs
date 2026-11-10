@@ -470,7 +470,7 @@ static INFO: [u16; N + 1] = {
 };
 
 // The frames, four bits a level in [`Scan::frames`]; 0 is none (the top level, or a level lost
-// past [`LEVELS`]).
+// past 32 levels).
 /// `(` … `)`.
 const F_PAREN: u8 = 1;
 /// `{` … `}`.
@@ -504,8 +504,6 @@ const F_ARRAY: u8 = 14;
 const F_DICTIONARY: u8 = 15;
 /// The regex literals a line may try that run to its end unclosed ([`Scan::misses`]).
 const REGEX_TRIES: u8 = 8;
-/// The levels [`Scan::frames`] holds.
-const LEVELS: u8 = 32;
 
 // What a line starts in ([`Scan::mode`]).
 const M_CODE: u8 = 0;
@@ -601,11 +599,10 @@ impl crate::CarryRuns for Scan<'_, '_, Runs<'_>> {
 struct Scan<'b, 'c, K: Sink> {
     b: &'b [u8],
     /// What each open frame is ([`F_PAREN`]…), four bits a level, the innermost lowest; past
-    /// [`LEVELS`] the outer ones are lost (and the state inexact).
+    /// 32 levels the outer ones are lost.
     frames: u128,
     /// How many frames are open, up to 255.
     depth: u8,
-    exact: bool,
     /// The `#`s of the raw strings whose interpolations are open, a byte each, the innermost
     /// lowest.
     raws: u32,
@@ -632,7 +629,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             b,
             frames: 0,
             depth: 0,
-            exact: true,
             raws: 0,
             mode: M_CODE,
             nest: 0,
@@ -655,7 +651,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         w[15] = state.withs[1];
         self.frames = u128::from_le_bytes(w);
         self.depth = state.depth;
-        self.exact = !state.inexact;
         let mut r = [0u8; 4];
         r.copy_from_slice(&state.withs[2..6]);
         self.raws = u32::from_le_bytes(r);
@@ -678,7 +673,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         s.withs[6] = self.nest;
         s.withs[7] = self.hashes;
         s.depth = self.depth;
-        s.inexact = !self.exact;
         s.arg = u16::from(self.mode) | u16::from(self.re) << 3;
         s
     }
@@ -718,9 +712,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn push(&mut self, f: u8) {
         self.frames = self.frames << 4 | u128::from(f);
         self.depth = self.depth.saturating_add(1);
-        if self.depth > LEVELS {
-            self.exact = false;
-        }
     }
 
     #[inline(always)]
@@ -2153,7 +2144,6 @@ mod tests {
         });
         assert_eq!(all, one.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
         assert_eq!(state, one.last().unwrap().1);
-        assert!(!one[0].1.is_exact());
         // the multi-line string and regex end, the head ends at `let`
         assert_eq!(one.last().unwrap().1.arg & 7, u16::from(M_CODE));
     }

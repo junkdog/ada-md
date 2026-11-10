@@ -12,8 +12,7 @@
 //! steps past a pop that would loop after a push that took nothing. That bracket is all a line
 //! leaves open.
 //!
-//! Exact against bat's grammar on syntect, as far as ASCII goes (`tests/exact_lexers.rs`, the
-//! `parse` fuzz target).
+//! Its readings are held by `tests/readings.rs`' snapshots (X-116).
 
 use crate::emit::{Push, Runs, Sink};
 use crate::line_format::{BLANK, Cursor, Format, blanks, leads};

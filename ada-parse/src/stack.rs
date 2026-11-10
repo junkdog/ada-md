@@ -49,10 +49,10 @@ impl State {
     }
 
     /// The state that holds the top [`HELD`] levels of `stack[1..depth]` (the base below them
-    /// isn't kept), the bytes past the top zero, and `arg` beside them; inexact where `exact`
-    /// is false or a level below them is dropped. `stack` is at least `1 + HELD` long.
+    /// isn't kept, nor the levels below the top `HELD`), the bytes past the top zero, and `arg`
+    /// beside them. `stack` is at least `1 + HELD` long.
     #[inline(always)]
-    pub fn keep(stack: &[u8], depth: usize, exact: bool, arg: u16) -> State {
+    pub fn keep(stack: &[u8], depth: usize, arg: u16) -> State {
         let n = depth - 1;
         let from = n.saturating_sub(HELD);
         let kept = n - from;
@@ -65,7 +65,6 @@ impl State {
         }
         let mut state = State {
             depth: kept as u8,
-            inexact: !exact || from > 0,
             arg,
             ..State::default()
         };
@@ -91,29 +90,26 @@ static MASKS: [[u8; HELD]; HELD + 1] = {
 };
 
 /// Room for a level in a full stack: the lowest above the base (`stack[0]`) dropped, those
-/// above it a level down, and the lines after no longer syntect's.
+/// above it a level down.
 #[inline(always)]
-pub fn drop_bottom(stack: &mut [u8], depth: &mut usize, exact: &mut bool) {
+pub fn drop_bottom(stack: &mut [u8], depth: &mut usize) {
     stack.copy_within(2.., 1);
     *depth -= 1;
-    *exact = false;
 }
 
 /// A line's end as a state's save and the next line's load leave its stack, for a scan kept
-/// across a block's lines (X-067): past the levels a state holds, the bottom ones dropped, and
-/// the lines after no longer syntect's.
+/// across a block's lines (X-067): past the levels a state holds, the bottom ones dropped.
 #[inline(always)]
-pub fn hold(stack: &mut [u8], depth: &mut usize, exact: &mut bool) {
+pub fn hold(stack: &mut [u8], depth: &mut usize) {
     if *depth - 1 > HELD {
-        hold_top(stack, depth, exact);
+        hold_top(stack, depth);
     }
 }
 
 #[cold]
 #[inline(never)]
-fn hold_top(stack: &mut [u8], depth: &mut usize, exact: &mut bool) {
+fn hold_top(stack: &mut [u8], depth: &mut usize) {
     let from = *depth - 1 - HELD;
     stack.copy_within(1 + from..*depth, 1);
     *depth -= from;
-    *exact = false;
 }

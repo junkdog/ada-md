@@ -1,0 +1,70 @@
+# DotEnv: ada-parse/tests/readings.rs, dotenv
+   1 | # comment
+       "#" comment.line.number-sign.env punctuation.definition.comment.env
+       " comment" comment.line.number-sign.env
+   2 | export DATABASE_URL="postgres://${USER}:$PASS@host/db\n" # c
+       "export" keyword.other.env
+       "DATABASE_URL" variable.other.env
+       "=" keyword.operator.assignment.env
+       "\"" string.quoted.double.env punctuation.definition.string.begin.env
+       "postgres://" string.quoted.double.env
+       "${" string.quoted.double.env string.interpolated.env keyword.other.template.begin.env
+       "USER" string.quoted.double.env variable.other.env
+       "}" string.quoted.double.env string.interpolated.env keyword.other.template.end.env
+       ":" string.quoted.double.env
+       "$" string.quoted.double.env punctuation.definition.variable.env variable.other.env
+       "PASS" string.quoted.double.env variable.other.env
+       "@host/db" string.quoted.double.env
+       "\\n" string.quoted.double.env constant.character.escape.env
+       "\"" string.quoted.double.env punctuation.definition.string.end
+       "#" comment.line.number-sign.env punctuation.definition.comment.env
+       " c" comment.line.number-sign.env
+   3 | DEBUG = true
+       "DEBUG" variable.other.env
+       " =" keyword.operator.assignment.env
+       " true" constant.language.env
+   4 | N=0x1F
+       "N" variable.other.env
+       "=" keyword.operator.assignment.env
+       "0x1F" constant.numeric.env
+   5 | F=1.5e+3
+       "F" variable.other.env
+       "=" keyword.operator.assignment.env
+       "1.5e+3" constant.numeric.env
+   6 | G=.5
+       "G" variable.other.env
+       "=" keyword.operator.assignment.env
+       ".5" constant.numeric.env
+   7 | H=1. 2.x
+       "H" variable.other.env
+       "=" keyword.operator.assignment.env
+       "1." constant.numeric.env
+   8 | S='single $NOT'
+       "S" variable.other.env
+       "=" keyword.operator.assignment.env
+       "'" string.quoted.single.env punctuation.definition.string.begin.env
+       "single $NOT" string.quoted.single.env
+       "'" string.quoted.single.env punctuation.definition.string.end
+   9 | M="multi
+       "M" variable.other.env
+       "=" keyword.operator.assignment.env
+       "\"" string.quoted.double.env punctuation.definition.string.begin.env
+       "multi" string.quoted.double.env
+  10 | line {x} $$y"
+       "line " string.quoted.double.env
+       "{" string.quoted.double.env string.interpolated.env keyword.other.template.begin.env
+       "x" string.quoted.double.env variable.other.env
+       "}" string.quoted.double.env string.interpolated.env keyword.other.template.end.env
+       " " string.quoted.double.env
+       "$$" string.quoted.double.env punctuation.definition.variable.env variable.other.env
+       "y" string.quoted.double.env variable.other.env
+       "\"" string.quoted.double.env punctuation.definition.string.end
+  11 | EXPORTER=null
+       "EXPORTER" variable.other.env
+       "=" keyword.operator.assignment.env
+       "null" constant.language.env
+  12 | a=b=c
+       "a" variable.other.env
+       "=" keyword.operator.assignment.env
+       "b" variable.other.env
+       "=" keyword.operator.assignment.env

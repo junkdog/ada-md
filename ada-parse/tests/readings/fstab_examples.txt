@@ -1,0 +1,199 @@
+# Fstab: ada-parse/tests/readings.rs, fstab_examples
+
+## block 1
+   1 | # <file system> <dir> <type> <options> <dump> <pass>
+       "# <file system> <dir> <type> <options> <dump> <pass>" comment.line
+   2 | UUID=ab12\t/\text4\trw,relatime\t0 1
+       "UUID=" punctuation.accessor
+       "ab12" keyword.other.device
+       "/\t" string.unquoted.mountpoint
+       "ext4\t" variable.parameter.filesystem
+       "rw" entity.name.option
+       "," punctuation.separator
+       "relatime" entity.name.option
+       "0 " constant.numeric
+       "1" constant.numeric
+
+## block 2
+   1 | LABEL=x /boot vfat rw,fmask=0077,x=,=y,a=b=c 0 2 # c
+       "LABEL=" punctuation.accessor
+       "x" keyword.other.device
+       "/boot " string.unquoted.mountpoint
+       "vfat " variable.parameter.filesystem
+       "rw" entity.name.option
+       "," punctuation.separator
+       "fmask" entity.name.option
+       "=" entity.other.separator
+       "0077" variable.parameter
+       "," punctuation.separator
+       "x=" entity.name.option
+       "," punctuation.separator
+       "=y" entity.name.option
+       "," punctuation.separator
+       "a" entity.name.option
+       "=" entity.other.separator
+       "b=c" variable.parameter
+       "0 " constant.numeric
+       "2 " constant.numeric
+       "# c" comment.line
+   2 | /dev/sda1 none swap sw 0 0
+       "/dev/" punctuation.accessor
+       "sda1" keyword.other.device
+       "none " invalid.illegal
+       "swap " variable.parameter.filesystem
+       "sw" entity.name.option
+       "0 " constant.numeric
+       "0" constant.numeric
+
+## block 3
+   1 | //srv/share /mnt cifs user=a,pass=b 0 0
+       "//" punctuation.accessor
+       "srv/share" keyword.other.device
+       "/mnt " string.unquoted.mountpoint
+       "cifs " variable.parameter.filesystem
+       "user" entity.name.option
+       "=" entity.other.separator
+       "a" variable.parameter
+       "," punctuation.separator
+       "pass" entity.name.option
+       "=" entity.other.separator
+       "b" variable.parameter
+       "0 " constant.numeric
+       "0" constant.numeric
+   2 | \\srv\x /m smb defaults
+       "\\\\" punctuation.accessor
+       "srv\\x" keyword.other.device
+       "/m " string.unquoted.mountpoint
+       "smb " variable.parameter.filesystem
+       "defaults" entity.name.option
+   3 | server:/export /nfs nfs4 _netdev 0 0
+       "server" keyword.other.device
+       ":" punctuation.accessor
+       "/export" keyword.other.device
+       "/nfs " string.unquoted.mountpoint
+       "nfs4 " variable.parameter.filesystem
+       "_netdev" entity.name.option
+       "0 " constant.numeric
+       "0" constant.numeric
+
+## block 4
+   1 |   sda1  /x  ext4
+       "  sda1  " keyword.other.device
+       "/x  " string.unquoted.mountpoint
+       "ext4" variable.parameter.filesystem
+   2 | abc/def /m
+       "abc" keyword.other.device
+       "/def " string.unquoted.mountpoint
+       "/m" variable.parameter.filesystem
+   3 | /a/b/ /c
+       "a/" punctuation.accessor
+       "b/" keyword.other.device
+       "/c" string.unquoted.mountpoint
+   4 | / / / / 1 2
+       "/" keyword.other.device
+       "/ " string.unquoted.mountpoint
+       "/ " variable.parameter.filesystem
+       "/" entity.name.option
+       "1 " constant.numeric
+       "2" constant.numeric
+   5 | /x/ y
+       "/" punctuation.accessor
+       "x/" keyword.other.device
+       "y" invalid.illegal
+   6 | \x/y z
+       "\\x/" punctuation.accessor
+       "y" keyword.other.device
+       "z" invalid.illegal
+   7 | :a b
+       ":a " keyword.other.device
+       "b" invalid.illegal
+   8 | a: b
+       "a: " keyword.other.device
+       "b" invalid.illegal
+   9 | =a b
+       "=a " keyword.other.device
+       "b" invalid.illegal
+  10 | x=y
+       "x=" punctuation.accessor
+       "y" keyword.other.device
+
+## block 5
+   1 | tmpfs /tmp tmpfs defaults 10 20 extra
+       "tmpfs " keyword.other.device
+       "/tmp " string.unquoted.mountpoint
+       "tmpfs " variable.parameter.filesystem
+       "defaults" entity.name.option
+       "1" constant.numeric
+       "0 " constant.numeric
+   2 | proc /proc proc defaults 3 x y
+       "proc " keyword.other.device
+       "/proc " string.unquoted.mountpoint
+       "proc " variable.parameter.filesystem
+       "defaults" entity.name.option
+       "3 " invalid.illegal
+       "x " invalid.illegal
+   3 | a b c d,e,,f g h # c
+       "a " keyword.other.device
+       "b " invalid.illegal
+       "c " variable.parameter.filesystem
+       "d" entity.name.option
+       "," punctuation.separator
+       "e" entity.name.option
+       "," punctuation.separator
+       "," punctuation.separator
+       "f" entity.name.option
+       "g " invalid.illegal
+       "h " invalid.illegal
+       "# c" comment.line
+
+## block 6
+   1 | a #b
+       "a " keyword.other.device
+       "#b" comment.line
+   2 | a b #c
+       "a " keyword.other.device
+       "b " invalid.illegal
+       "#c" comment.line
+   3 | a b c #d
+       "a " keyword.other.device
+       "b " invalid.illegal
+       "c " variable.parameter.filesystem
+       "#d" comment.line
+   4 | a b c d #e
+       "a " keyword.other.device
+       "b " invalid.illegal
+       "c " variable.parameter.filesystem
+       "d" entity.name.option
+       " #e" comment.line
+   5 | a b c d 0 #f
+       "a " keyword.other.device
+       "b " invalid.illegal
+       "c " variable.parameter.filesystem
+       "d" entity.name.option
+       "0 " constant.numeric
+       "#f" comment.line
+   6 |   # c
+       "  # c" comment.line
+   7 | \t
+
+## block 7
+   1 | a b c d
+       "a " keyword.other.device
+       "b " invalid.illegal
+       "c " variable.parameter.filesystem
+       "d" entity.name.option
+   2 | e f g
+       "e " keyword.other.device
+       "f " invalid.illegal
+       "g" variable.parameter.filesystem
+   3 | h i
+       "h " keyword.other.device
+       "i" invalid.illegal
+   4 | j
+       "j" keyword.other.device
+
+## block 8
+
+## block 9
+   1 | 
+   2 | 

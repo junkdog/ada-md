@@ -1,0 +1,451 @@
+# JavaScript: ada-parse/tests/readings.rs, javascript
+   1 | #!/usr/bin/env node
+       "#!" comment.line.shebang.js punctuation.definition.comment.js
+       "/usr/bin/env node" comment.line.shebang.js
+   2 | /** The module. */
+       "/**" comment.block.documentation.js punctuation.definition.comment.js
+       " The module. " comment.block.documentation.js
+       "*/" comment.block.documentation.js punctuation.definition.comment.js
+   3 | import React, { useState } from 'react'; // a comment
+       "import" keyword.operator.module.js
+       "React" variable.other.class.js
+       "," meta.delimiter.comma.js
+       "{" meta.brace.curly.begin.js
+       "useState" variable.other.readwrite.js
+       "}" meta.brace.curly.end.js
+       "from" keyword.operator.module.js
+       "'" string.quoted.js punctuation.definition.string.begin.js
+       "react" string.quoted.js
+       "'" string.quoted.js punctuation.definition.string.end.js
+       ";" punctuation.terminator.statement.js
+       "//" comment.line.double-slash.js punctuation.definition.comment.js
+       " a comment" comment.line.double-slash.js
+   4 | export default class Foo extends Bar {
+       "export" keyword.operator.module.js
+       "default" keyword.control.loop.js
+       "class" storage.type.class.js
+       "Foo" entity.name.class.js
+       "extends" storage.type.extends.js
+       "Bar" variable.other.class.js
+       "{" meta.brace.curly.begin.js
+   5 |   static async *load(id, ...rest) { await fetch(`/api/${id}?q=${rest[0]}`); }
+       "static" storage.modifier.js
+       "async" storage.type.js
+       "*" keyword.generator.asterisk.js
+       "load" entity.name.function.js
+       "(" punctuation.definition.parameters.begin.js
+       "id" variable.parameter.function.js
+       "," punctuation.separator.parameter.function.js
+       "..." keyword.operator.spread.js
+       "rest" variable.parameter.function.js
+       ")" punctuation.definition.parameters.end.js
+       "{" meta.brace.curly.begin.js
+       "await" keyword.control.flow.js
+       "fetch" variable.function.js
+       "(" meta.brace.round.begin.js
+       "`" string.interpolated.js keyword.other.template.begin.js
+       "/api/" string.interpolated.js
+       "${" keyword.other.substitution.begin.js
+       "id" variable.other.readwrite.js
+       "}" keyword.other.substitution.end.js
+       "?q=" string.interpolated.js
+       "${" keyword.other.substitution.begin.js
+       "rest" variable.other.readwrite.js
+       "[" meta.brace.square.begin.js
+       "0" constant.numeric.js
+       "]" meta.brace.square.end.js
+       "}" keyword.other.substitution.end.js
+       "`" string.interpolated.js keyword.other.template.end.js
+       ")" meta.brace.round.end.js
+       ";" punctuation.terminator.statement.js
+       "}" meta.brace.curly.end.js
+   6 |   static count = 0
+       "static" storage.modifier.js
+       "count" variable.other.property.js
+       "=" keyword.operator.assignment.js
+       "0" constant.numeric.js
+   7 |   state = { open: false, 'quoted': "x\ty\u00e9" }
+       "state" variable.other.property.js
+       "=" keyword.operator.assignment.js
+       "{" meta.brace.curly.begin.js
+       "open" constant.other.object.key.js string.unquoted.label.js
+       ":" constant.other.object.key.js punctuation.separator.key-value.js
+       "false" constant.language.boolean.false.js
+       "," meta.delimiter.comma.js
+       "'" string.quoted.js punctuation.definition.string.begin.js
+       "quoted" string.quoted.js
+       "'" string.quoted.js punctuation.definition.string.end.js
+       ":" punctuation.separator.key-value.js
+       "\"" string.quoted.js punctuation.definition.string.begin.js
+       "x" string.quoted.js
+       "\\t" string.quoted.js constant.character.escape.js
+       "y" string.quoted.js
+       "\\u00e9" string.quoted.js constant.character.escape.js
+       "\"" string.quoted.js punctuation.definition.string.end.js
+       "}" meta.brace.curly.end.js
+   8 |   @observable value: string = 'v'
+       "@" tag.decorator.js punctuation.definition.tag.js
+       "observable" tag.decorator.js entity.name.tag.js
+       "value" variable.other.property.js
+       ":" keyword.operator.flowtype.annotation.js
+       "string" constant.other.primitve.flowtype.js
+       "=" keyword.operator.assignment.js
+       "'" string.quoted.js punctuation.definition.string.begin.js
+       "v" string.quoted.js
+       "'" string.quoted.js punctuation.definition.string.end.js
+   9 |   render() {
+       "render" entity.name.function.js
+       "(" punctuation.definition.parameters.begin.js
+       ")" punctuation.definition.parameters.end.js
+       "{" meta.brace.curly.begin.js
+  10 |     const { a, b } = this.props, n = a ?? b ?? 1;
+       "const" storage.type.js
+       "{" meta.brace.curly.begin.js
+       "a" variable.other.readwrite.js
+       "," meta.delimiter.comma.js
+       "b" variable.other.readwrite.js
+       "}" meta.brace.curly.end.js
+       "=" keyword.operator.assignment.js
+       "this" variable.language.this.js
+       "." keyword.operator.accessor.js
+       "props" variable.other.property.js
+       "," meta.delimiter.comma.js
+       "n" variable.other.readwrite.js
+       "=" keyword.operator.assignment.js
+       "a" variable.other.readwrite.js
+       "??" keyword.operator.logical.js
+       "b" variable.other.readwrite.js
+       "??" keyword.operator.logical.js
+       "1" constant.numeric.js
+       ";" punctuation.terminator.statement.js
+  11 |     return (
+       "return" keyword.control.flow.js
+       "(" meta.brace.round.begin.js
+  12 |       <div className="box" onClick={() => this.toggle(n)}>
+       "<" meta.tag.jsx punctuation.definition.tag.begin.jsx
+       "div" meta.tag.jsx entity.name.tag.jsx
+       "className" entity.other.attribute-name.jsx
+       "=" keyword.operator.assignment.jsx
+       "\"" string.quoted.jsx punctuation.definition.string.begin.jsx
+       "box" string.quoted.jsx
+       "\"" string.quoted.jsx punctuation.definition.string.end.jsx
+       "onClick" entity.other.attribute-name.jsx
+       "=" keyword.operator.assignment.jsx
+       "{" punctuation.section.embedded.begin.jsx
+       "(" punctuation.definition.parameters.begin.js
+       ")" punctuation.definition.parameters.end.js
+       "=>" storage.type.function.arrow.js
+       "this" variable.language.this.js
+       "." keyword.operator.accessor.js
+       "toggle" variable.function.js
+       "(" meta.brace.round.begin.js
+       "n" variable.other.readwrite.js
+       ")" meta.brace.round.end.js
+       "}" punctuation.section.embedded.end.jsx
+       ">" meta.tag.jsx punctuation.definition.tag.end.jsx
+  13 |         &amp; {n > 1 && <Item key={n} label='one' />}
+       "&amp;" constant.character.entity.jsx
+       "{" punctuation.section.embedded.begin.jsx
+       "n" variable.other.readwrite.js
+       ">" keyword.operator.relational.js
+       "1" constant.numeric.js
+       "&&" keyword.operator.logical.js
+       "<" meta.tag.jsx punctuation.definition.tag.begin.jsx
+       "Item" meta.tag.jsx entity.name.tag.jsx
+       "key" entity.other.attribute-name.jsx
+       "=" keyword.operator.assignment.jsx
+       "{" punctuation.section.embedded.begin.jsx
+       "n" variable.other.readwrite.js
+       "}" punctuation.section.embedded.end.jsx
+       "label" entity.other.attribute-name.jsx
+       "=" keyword.operator.assignment.jsx
+       "'" string.quoted.jsx punctuation.definition.string.begin.jsx
+       "one" string.quoted.jsx
+       "'" string.quoted.jsx punctuation.definition.string.end.jsx
+       "/>" meta.tag.jsx punctuation.definition.tag.end.jsx
+       "}" punctuation.section.embedded.end.jsx
+  14 |       </div>
+       "</" meta.tag.jsx punctuation.definition.tag.begin.jsx
+       "div" meta.tag.jsx entity.name.tag.jsx
+       ">" meta.tag.jsx punctuation.definition.tag.end.jsx
+  15 |     );
+       ")" meta.brace.round.end.js
+       ";" punctuation.terminator.statement.js
+  16 |   }
+       "}" meta.brace.curly.end.js
+  17 | }
+       "}" meta.brace.curly.end.js
+  18 | Foo.prototype.reset = function reset() { this.n = 0x1F + 0o17 + 07 + 1e-3 + -Infinity; };
+       "Foo" entity.name.class.js
+       "." keyword.operator.accessor.js
+       "prototype" variable.language.prototype.js
+       "." keyword.operator.accessor.js
+       "reset" entity.name.function.js
+       "=" keyword.operator.assignment.js
+       "function" storage.type.function.js
+       "reset" entity.name.function.js
+       "(" punctuation.definition.parameters.begin.js
+       ")" punctuation.definition.parameters.end.js
+       "{" meta.brace.curly.begin.js
+       "this" variable.language.this.js
+       "." keyword.operator.accessor.js
+       "n" variable.other.property.js
+       "=" keyword.operator.assignment.js
+       "0x1F" constant.numeric.js
+       "+" keyword.operator.arithmetic.js
+       "0o17" constant.numeric.js
+       "+" keyword.operator.arithmetic.js
+       "07" constant.numeric.js
+       "+" keyword.operator.arithmetic.js
+       "1e-3" constant.numeric.js
+       "+" keyword.operator.arithmetic.js
+       "-Infinity" constant.language.infinity.js
+       ";" punctuation.terminator.statement.js
+       "}" meta.brace.curly.end.js
+       ";" punctuation.terminator.statement.js
+  19 | Foo.prototype.add = (a, b = 2) => a + b;
+       "Foo" entity.name.class.js
+       "." keyword.operator.accessor.js
+       "prototype" variable.language.prototype.js
+       "." keyword.operator.accessor.js
+       "add" entity.name.function.js
+       "=" keyword.operator.assignment.js
+       "(" punctuation.definition.parameters.begin.js
+       "a" variable.parameter.function.js
+       "," punctuation.separator.parameter.function.js
+       "b" variable.parameter.function.js
+       "=" keyword.operator.assignment.js
+       "2" constant.numeric.js
+       ")" punctuation.definition.parameters.end.js
+       "=>" storage.type.function.arrow.js
+       "a" variable.other.readwrite.js
+       "+" keyword.operator.arithmetic.js
+       "b" variable.other.readwrite.js
+       ";" punctuation.terminator.statement.js
+  20 | const re = /abc/gi, half = total / 2, ok = re.test(s) && !(x instanceof Y);
+       "const" storage.type.js
+       "re" variable.other.readwrite.js
+       "=" keyword.operator.assignment.js
+       " " string.regexp.js
+       "/" string.regexp.js punctuation.definition.string.begin.js
+       "abc" string.regexp.js
+       "/" string.regexp.js punctuation.definition.string.end.js
+       "gi" string.regexp.js keyword.other.js
+       "," meta.delimiter.comma.js
+       "half" variable.other.readwrite.js
+       "=" keyword.operator.assignment.js
+       "total" variable.other.readwrite.js
+       "/" keyword.operator.arithmetic.js
+       "2" constant.numeric.js
+       "," meta.delimiter.comma.js
+       "ok" variable.other.readwrite.js
+       "=" keyword.operator.assignment.js
+       "re" variable.other.object.js
+       "." keyword.operator.accessor.js
+       "test" variable.function.js
+       "(" meta.brace.round.begin.js
+       "s" variable.other.readwrite.js
+       ")" meta.brace.round.end.js
+       "&&" keyword.operator.logical.js
+       "!" keyword.operator.logical.js
+       "(" meta.brace.round.begin.js
+       "x" variable.other.readwrite.js
+       "instanceof" keyword.operator.js
+       "Y" variable.other.class.js
+       ")" meta.brace.round.end.js
+       ";" punctuation.terminator.statement.js
+  21 | const obj = {
+       "const" storage.type.js
+       "obj" variable.other.readwrite.js
+       "=" keyword.operator.assignment.js
+       "{" meta.brace.curly.begin.js
+  22 |   get size() { return this.items.length; },
+       "get" storage.type.accessor.js
+       "size" entity.name.accessor.js
+       "(" punctuation.definition.parameters.begin.js
+       ")" punctuation.definition.parameters.end.js
+       "{" meta.brace.curly.begin.js
+       "return" keyword.control.flow.js
+       "this" variable.language.this.js
+       "." keyword.operator.accessor.js
+       "items" variable.other.property.js
+       "." keyword.operator.accessor.js
+       "length" variable.other.property.js
+       ";" punctuation.terminator.statement.js
+       "}" meta.brace.curly.end.js
+       "," meta.delimiter.comma.js
+  23 |   method: function (x) { return typeof x === 'number'; },
+       "method" string.unquoted.js entity.name.function.js
+       ":" constant.other.object.key.js punctuation.separator.key-value.js
+       "function" storage.type.function.js
+       "(" punctuation.definition.parameters.begin.js
+       "x" variable.parameter.function.js
+       ")" punctuation.definition.parameters.end.js
+       "{" meta.brace.curly.begin.js
+       "return" keyword.control.flow.js
+       "typeof" keyword.operator.js
+       "x" variable.other.readwrite.js
+       "===" keyword.operator.comparison.js
+       "'" string.quoted.js punctuation.definition.string.begin.js
+       "number" string.quoted.js
+       "'" string.quoted.js punctuation.definition.string.end.js
+       ";" punctuation.terminator.statement.js
+       "}" meta.brace.curly.end.js
+       "," meta.delimiter.comma.js
+  24 |   arrow: async (y) => y * 2,
+       "arrow" string.unquoted.js entity.name.function.js
+       ":" constant.other.object.key.js punctuation.separator.key-value.js
+       "async" storage.type.js
+       "(" punctuation.definition.parameters.begin.js
+       "y" variable.parameter.function.js
+       ")" punctuation.definition.parameters.end.js
+       "=>" storage.type.function.arrow.js
+       "y" variable.other.readwrite.js
+       "*" keyword.operator.arithmetic.js
+       "2" constant.numeric.js
+       "," meta.delimiter.comma.js
+  25 |   'key': value,
+       "'" string.quoted.js punctuation.definition.string.begin.js
+       "key" string.quoted.js
+       "'" string.quoted.js punctuation.definition.string.end.js
+       ":" punctuation.separator.key-value.js
+       "value" variable.other.readwrite.js
+       "," meta.delimiter.comma.js
+  26 |   [computed]: null,
+       "[" meta.brace.square.begin.js
+       "computed" variable.other.readwrite.js
+       "]" meta.brace.square.end.js
+       ":" punctuation.separator.key-value.js
+       "null" constant.language.null.js
+       "," meta.delimiter.comma.js
+  27 | };
+       "}" meta.brace.curly.end.js
+       ";" punctuation.terminator.statement.js
+  28 | switch (kind) { case 'a': break; default: console.log(process.env.HOME); }
+       "switch" keyword.control.switch.js
+       "(" meta.brace.round.begin.js
+       "kind" variable.other.readwrite.js
+       ")" meta.brace.round.end.js
+       "{" meta.brace.curly.begin.js
+       "case" keyword.control.switch.js
+       "'" string.quoted.js punctuation.definition.string.begin.js
+       "a" string.quoted.js
+       "'" string.quoted.js punctuation.definition.string.end.js
+       ":" punctuation.separator.key-value.js
+       "break" keyword.control.loop.js
+       ";" punctuation.terminator.statement.js
+       "default" keyword.control.switch.js
+       ":" punctuation.separator.key-value.js
+       "console" support.type.object.console.js
+       "." keyword.operator.accessor.js
+       "log" support.function.console.js
+       "(" meta.brace.round.begin.js
+       "process" support.type.object.process.js
+       "." keyword.operator.accessor.js
+       "env" support.type.object.process.js
+       "." keyword.operator.accessor.js
+       "HOME" variable.other.constant.js
+       ")" meta.brace.round.end.js
+       ";" punctuation.terminator.statement.js
+       "}" meta.brace.curly.end.js
+  29 | for (let i = 0; i < 10; i++) { module.exports[i] = new Map(); }
+       "for" keyword.control.loop.js
+       "(" meta.brace.round.begin.js
+       "let" storage.type.js
+       "i" variable.other.readwrite.js
+       "=" keyword.operator.assignment.js
+       "0" constant.numeric.js
+       ";" punctuation.terminator.statement.js
+       "i" variable.other.readwrite.js
+       "<" keyword.operator.relational.js
+       "10" constant.numeric.js
+       ";" punctuation.terminator.statement.js
+       "i" variable.other.readwrite.js
+       "++" keyword.operator.arithmetic.js
+       ")" meta.brace.round.end.js
+       "{" meta.brace.curly.begin.js
+       "module" support.type.object.module.js
+       "." keyword.operator.accessor.js
+       "exports" support.type.object.module.js
+       "[" meta.brace.square.begin.js
+       "i" variable.other.readwrite.js
+       "]" meta.brace.square.end.js
+       "=" keyword.operator.assignment.js
+       "new" keyword.operator.new.js
+       "Map" support.class.builtin.js
+       "(" meta.brace.round.begin.js
+       ")" meta.brace.round.end.js
+       ";" punctuation.terminator.statement.js
+       "}" meta.brace.curly.end.js
+  30 | const s = "line \
+       "const" storage.type.js
+       "s" variable.other.readwrite.js
+       "=" keyword.operator.assignment.js
+       "\"" string.quoted.js punctuation.definition.string.begin.js
+       "line " string.quoted.js
+       "\\" string.quoted.js constant.character.escape.newline.js
+  31 | next"; const t = `multi
+       "next" string.quoted.js
+       "\"" string.quoted.js punctuation.definition.string.end.js
+       ";" punctuation.terminator.statement.js
+       "const" storage.type.js
+       "t" variable.other.readwrite.js
+       "=" keyword.operator.assignment.js
+       "`" string.interpolated.js keyword.other.template.begin.js
+       "multi" string.interpolated.js
+  32 | line ${ {{ }} }`;
+       "line " string.interpolated.js
+       "${" keyword.other.substitution.begin.js
+       "{{" meta.brace.curly.begin.js
+       "}}" meta.brace.curly.end.js
+       "}" keyword.other.substitution.end.js
+       "`" string.interpolated.js keyword.other.template.end.js
+       ";" punctuation.terminator.statement.js
+  33 | function* gen(a: number, b?: string) { yield* other(); }
+       "function" storage.type.function.js
+       "*" keyword.generator.asterisk.js
+       "gen" entity.name.function.js
+       "(" punctuation.definition.parameters.begin.js
+       "a" variable.parameter.function.js
+       ":" keyword.operator.flowtype.annotation.js
+       "number" constant.other.primitve.flowtype.js
+       "," punctuation.separator.parameter.function.js
+       "b" variable.parameter.function.js
+       "?" keyword.operator.flowtype.optional.js
+       ":" keyword.operator.flowtype.annotation.js
+       "string" constant.other.primitve.flowtype.js
+       ")" punctuation.definition.parameters.end.js
+       "{" meta.brace.curly.begin.js
+       "yield" keyword.control.flow.js
+       "*" keyword.generator.asterisk.js
+       "other" variable.function.js
+       "(" meta.brace.round.begin.js
+       ")" meta.brace.round.end.js
+       ";" punctuation.terminator.statement.js
+       "}" meta.brace.curly.end.js
+  34 | if (x) { throw new TypeError('bad'); } else { debugger; }
+       "if" keyword.control.conditional.js
+       "(" meta.brace.round.begin.js
+       "x" variable.other.readwrite.js
+       ")" meta.brace.round.end.js
+       "{" meta.brace.curly.begin.js
+       "throw" keyword.control.trycatch.js
+       "new" keyword.operator.new.js
+       "TypeError" support.class.builtin.js
+       "(" meta.brace.round.begin.js
+       "'" string.quoted.js punctuation.definition.string.begin.js
+       "bad" string.quoted.js
+       "'" string.quoted.js punctuation.definition.string.end.js
+       ")" meta.brace.round.end.js
+       ";" punctuation.terminator.statement.js
+       "}" meta.brace.curly.end.js
+       "else" keyword.control.conditional.js
+       "{" meta.brace.curly.begin.js
+       "debugger" keyword.other.js
+       ";" punctuation.terminator.statement.js
+       "}" meta.brace.curly.end.js
+  35 | <!-- legacy
+       "<!--" comment.block.html.js punctuation.definition.comment.js
+       "legacy" variable.other.readwrite.js
+  36 | -->
+       "-->" comment.block.html.js punctuation.definition.comment.js

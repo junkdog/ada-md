@@ -1,0 +1,277 @@
+# Swift: ada-parse/tests/readings.rs, swift
+   1 | #!/usr/bin/env swift
+       "#!" comment.line.shebang.swift punctuation.definition.comment.line.shebang.swift
+       "/usr/bin/env swift" comment.line.shebang.swift
+   2 | import Foundation
+       "import" keyword.other.import.swift
+       "Foundation" support.type.module.import.swift
+   3 | @testable import Kit
+       "@" storage.modifier.attribute.swift punctuation.definition.attribute.swift
+       "testable" storage.modifier.attribute.swift
+       "import" keyword.other.import.swift
+       "Kit" support.type.module.import.swift
+   4 | import struct Foundation.Date
+       "import" keyword.other.import.swift
+       "struct" storage.modifier.swift
+       "Foundation.Date" support.type.module.import.swift
+   5 | /// A thing.
+       "//" comment.line.double-slash.swift punctuation.definition.comment.line.double-slash.swift
+       "/ A thing." comment.line.double-slash.swift
+   6 | /** Docs. */
+       "/**" comment.block.documentation.swift punctuation.definition.comment.block.documentation.begin.swift
+       " Docs. " comment.block.documentation.swift
+       "*/" comment.block.documentation.swift punctuation.definition.comment.block.documentation.end.swift
+   7 | @objc public final class Foo: NSObject, Bar {
+       "@" storage.modifier.attribute.swift punctuation.definition.attribute.swift
+       "objc" storage.modifier.attribute.swift
+       "public" keyword.other.access-level-modifier.swift
+       "final" keyword.other.declaration-modifier.swift
+       "class" storage.type.swift
+   8 |     private(set) var x: Int = 5
+       "private(set)" keyword.other.access-level-modifier.swift
+       "var" storage.type.swift
+       "Int" support.type.swift
+       "=" keyword.operator.assignment.swift
+       "5" constant.numeric.integer.decimal.swift
+   9 |     weak var delegate: Delegate?
+       "weak" keyword.other.declaration-modifier.swift
+       "var" storage.type.swift
+  10 |     lazy var names: [String: Any] = [:]
+       "lazy" keyword.other.declaration-modifier.swift
+       "var" storage.type.swift
+       "String" support.type.swift
+       "=" keyword.operator.assignment.swift
+       ":" keyword.operator.ternary.swift
+  11 |     let s = "a\(b.c + 1)d\n\t\""
+       "let" storage.type.swift
+       "=" keyword.operator.assignment.swift
+       "\"a" string.quoted.double.swift
+       "\\(" support.punctuation.expression.begin.swift
+       "." keyword.operator.custom.postfix.unary.swift
+       "+" keyword.operator.arithmetic.swift
+       "1" constant.numeric.integer.decimal.swift
+       ")" support.punctuation.expression.end.swift
+       "d" string.quoted.double.swift
+       "\\n\\t\\\"" constant.character.escape.swift
+       "\"" string.quoted.double.swift
+  12 |     @available(iOS 13, *) func run<T: Equatable>(_ a: T, b: Array<Int>) throws -> Bool {
+       "@" storage.modifier.attribute.swift punctuation.definition.attribute.swift
+       "available" storage.modifier.attribute.swift punctuation.definition.attribute-arguments.begin.swift
+       "13" constant.numeric.integer.decimal.swift
+       "*" keyword.operator.arithmetic.swift
+       ")" punctuation.definition.attribute-arguments.end.swift
+       "func" storage.type.function.swift
+       "run" entity.type.function.swift
+       "<" punctuation.definition.generic-parameter-clause.begin.swift
+       ">" punctuation.definition.generic-parameter-clause.end.swift
+       "(" punctuation.definition.function-arguments.begin.swift
+       "Array" support.type.array.swift
+       "<" punctuation.array.begin.swift
+       "Int" support.type.swift
+       ">" punctuation.array.end.swift
+       ")" punctuation.definition.function-arguments.end.swift
+       "->" keyword.operator.function-result.swift
+       "Bool" support.type.swift
+       "{" punctuation.definition.code-block.begin.swift
+  13 |         return a == a && !c || x != 1
+       "return" keyword.control.transfer.swift
+       "==" keyword.operator.comparative.swift
+       "&&" keyword.operator.logical.swift
+       "!" keyword.operator.logical.swift
+       "||" keyword.operator.logical.swift
+       "!=" keyword.operator.comparative.swift
+       "1" constant.numeric.integer.decimal.swift
+  14 |     }
+       "}" punctuation.definition.code-block.end.swift
+  15 |     static func + (lhs: Foo, rhs: Foo) -> Foo { lhs }
+       "static" keyword.other.declaration-modifier.swift
+       "func" storage.type.function.swift
+       "+" entity.type.function.swift
+       "(" punctuation.definition.function-arguments.begin.swift
+       ")" punctuation.definition.function-arguments.end.swift
+       "->" keyword.operator.function-result.swift
+       "{" punctuation.definition.code-block.begin.swift
+       "}" punctuation.definition.code-block.end.swift
+  16 |     func compute() -> Dictionary<String, Int> { [:] }
+       "func" storage.type.function.swift
+       "compute" entity.type.function.swift
+       "(" punctuation.definition.function-arguments.begin.swift
+       ")" punctuation.definition.function-arguments.end.swift
+       "->" keyword.operator.function-result.swift
+       "Dictionary" support.type.dictionary.swift
+       "<" punctuation.dictionary.begin.swift
+       "String" support.type.swift
+       "Int" support.type.swift
+       ">" punctuation.dictionary.end.swift
+       "{" punctuation.definition.code-block.begin.swift
+       ":" keyword.operator.ternary.swift
+       "}" punctuation.definition.code-block.end.swift
+  17 | }
+  18 | let y = x-1 + -2 * 0x1F + 0b101 + 0o17 + 1e5 + 1_000 % 3
+       "let" storage.type.swift
+       "=" keyword.operator.assignment.swift
+       "-" keyword.operator.arithmetic.swift
+       "1" constant.numeric.integer.decimal.swift
+       "+" keyword.operator.arithmetic.swift
+       "-2" constant.numeric.integer.decimal.swift
+       "*" keyword.operator.arithmetic.swift
+       "0x1F" constant.numeric.integer.hexadecimal.swift
+       "+" keyword.operator.arithmetic.swift
+       "0b101" constant.numeric.integer.binary.swift
+       "+" keyword.operator.arithmetic.swift
+       "0o17" constant.numeric.integer.octal.swift
+       "+" keyword.operator.arithmetic.swift
+       "+" keyword.operator.arithmetic.swift
+       "1_000" constant.numeric.integer.decimal.swift
+       "%" keyword.operator.remainder.swift
+       "3" constant.numeric.integer.decimal.swift
+  19 | z?.bar(a ?? b)!.baz
+       "." keyword.operator.custom.postfix.unary.swift
+       "!." keyword.operator.custom.postfix.unary.swift
+  20 | guard let q = try? f() else { fatalError("no") }
+       "guard" keyword.statement.swift
+       "let" storage.type.swift
+       "=" keyword.operator.assignment.swift
+       "try" keyword.statement.swift
+       "else" keyword.control.if.swift
+       "\"no\"" string.quoted.double.swift
+  21 | arr.map { $0 + 1 }.filter { $0 > 2 }
+       "." keyword.operator.custom.postfix.unary.swift
+       "0" constant.numeric.integer.decimal.swift
+       "+" keyword.operator.arithmetic.swift
+       "1" constant.numeric.integer.decimal.swift
+       "." keyword.operator.custom.postfix.unary.swift
+       "0" constant.numeric.integer.decimal.swift
+       ">" keyword.operator.comparative.swift
+       "2" constant.numeric.integer.decimal.swift
+  22 | switch v { case .a: break; default: () }
+       "switch" keyword.control.switch.swift
+       "case" keyword.control.switch.swift
+       "." keyword.operator.custom.prefix.unary.swift
+       "break" keyword.control.transfer.swift
+       "default" keyword.control.switch.swift
+  23 | let t = x ? 1 : 2
+       "let" storage.type.swift
+       "=" keyword.operator.assignment.swift
+       "?" keyword.operator.ternary.swift
+       "1" constant.numeric.integer.decimal.swift
+       ":" keyword.operator.ternary.swift
+       "2" constant.numeric.integer.decimal.swift
+  24 | for i in 0..<10 where i > 2 { continue }
+       "for" keyword.control.loop.swift
+       "in" keyword.control.loop.swift
+       "0" constant.numeric.integer.decimal.swift
+       "..<" keyword.operator.custom.postfix.unary.swift
+       "10" constant.numeric.integer.decimal.swift
+       "where" keyword.control.switch.swift
+       ">" keyword.operator.comparative.swift
+       "2" constant.numeric.integer.decimal.swift
+       "continue" keyword.control.transfer.swift
+  25 | while true { repeat { } while false }
+       "while" keyword.control.loop.swift
+       "true" keyword.constant.boolean.swift
+       "repeat" keyword.control.loop.swift
+       "while" keyword.control.loop.swift
+       "false" keyword.constant.boolean.swift
+  26 | do { try g() } catch { throw e }
+       "do" kewyord.control.catch.swift
+       "try" keyword.statement.swift
+       "catch" kewyord.control.catch.swift
+       "throw" keyword.statement.swift
+  27 | if let v = w as? Int, w is String { defer { } }
+       "if" keyword.control.if.swift
+       "let" storage.type.swift
+       "=" keyword.operator.assignment.swift
+       "as?" keyword.operator.type-casting.swift
+       "Int" support.type.swift
+       "is" keyword.operator.type-casting.swift
+       "String" support.type.swift
+       "defer" keyword.statement.swift
+  28 | let n: Int8 = nil, u: UInt64 = 0, c: Character = "c"
+       "let" storage.type.swift
+       "Int8" support.type.swift
+       "=" keyword.operator.assignment.swift
+       "nil" constant.nil.swift
+       "UInt64" support.type.swift
+       "=" keyword.operator.assignment.swift
+       "0" constant.numeric.integer.decimal.swift
+       "Character" support.type.swift
+       "=" keyword.operator.assignment.swift
+       "\"c\"" string.quoted.double.swift
+  29 | x += 1; x -= 1; x &+= 1; y = x << 2 >> 1 & 3 | 4 ^ 5
+       "+=" keyword.operator.assignment.swift
+       "1" constant.numeric.integer.decimal.swift
+       "-=" keyword.operator.assignment.swift
+       "1" constant.numeric.integer.decimal.swift
+       "&+=" keyword.operator.custom.binary.swift
+       "1" constant.numeric.integer.decimal.swift
+       "=" keyword.operator.assignment.swift
+       "<<" keyword.operator.bitwise.swift
+       "2" constant.numeric.integer.decimal.swift
+       ">>" keyword.operator.bitwise.swift
+       "1" constant.numeric.integer.decimal.swift
+       "&" keyword.operator.bitwise.swift
+       "3" constant.numeric.integer.decimal.swift
+       "|" keyword.operator.bitwise.swift
+       "4" constant.numeric.integer.decimal.swift
+       "^" keyword.operator.bitwise.swift
+       "5" constant.numeric.integer.decimal.swift
+  30 | let r = a ... b, h = a..<b
+       "let" storage.type.swift
+       "=" keyword.operator.assignment.swift
+       "..." keyword.operator.range.swift
+       "=" keyword.operator.assignment.swift
+       "..<" keyword.operator.custom.postfix.unary.swift
+  31 | var v: Int { get { 1 } set { } }
+       "var" storage.type.swift
+       "Int" support.type.swift
+       "get" keyword.other.swift
+       "1" constant.numeric.integer.decimal.swift
+       "set" keyword.other.swift
+  32 | extension Foo: P where T: Q { }
+       "extension" storage.type.swift
+       "where" keyword.control.switch.swift
+  33 | enum E: String { case a = "x", b }
+       "enum" storage.type.swift
+       "String" support.type.swift
+       "case" keyword.control.switch.swift
+       "=" keyword.operator.assignment.swift
+       "\"x\"" string.quoted.double.swift
+  34 | typealias F = (Int) -> Void
+       "typealias" storage.type.swift
+       "=" keyword.operator.assignment.swift
+       "Int" support.type.swift
+       "->" keyword.operator.custom.binary.swift
+       "Void" support.type.swift
+  35 | subscript(i: Int) -> Int { 0 }
+       "subscript" keyword.declaration.swift
+       "Int" support.type.swift
+       "->" keyword.operator.custom.binary.swift
+       "Int" support.type.swift
+       "0" constant.numeric.integer.decimal.swift
+  36 | init?(raw: String) { self.init() ; super.foo() }
+       "init" keyword.declaration.swift
+       "String" support.type.swift
+       "self" keyword.other.statement.swift
+       "." keyword.operator.custom.postfix.unary.swift
+       "init" keyword.declaration.swift
+       "super" keyword.other.statement.swift
+       "." keyword.operator.custom.postfix.unary.swift
+  37 | #if DEBUG
+       "if" keyword.control.if.swift
+  38 | let d = __FILE__ + __LINE__
+       "let" storage.type.swift
+       "=" keyword.operator.assignment.swift
+       "__FILE__" keyword.other.literal.swift
+       "+" keyword.operator.arithmetic.swift
+       "__LINE__" keyword.other.literal.swift
+  39 | #endif
+  40 | /* block */ let w = 2 // trailing
+       "/*" comment.block.swift punctuation.definition.comment.block.begin.swift
+       " block " comment.block.swift
+       "*/" comment.block.swift punctuation.definition.comment.block.end.swift
+       "let" storage.type.swift
+       "=" keyword.operator.assignment.swift
+       "2" constant.numeric.integer.decimal.swift
+       "//" comment.line.double-slash.swift punctuation.definition.comment.line.double-slash.swift
+       " trailing" comment.line.double-slash.swift

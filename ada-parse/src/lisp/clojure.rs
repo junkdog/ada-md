@@ -343,7 +343,6 @@ impl<'b, 'o, 's, K: Sink> Scan<'b, 'o, 's, K> {
             stack: [TOP; MAX + 1],
             depth: 0,
             base: 0,
-            exact: state.is_exact(),
             regex: state.arg as u8,
             level: DEPTH_KINDS + 6 * (state.arg >> 8).min(u16::from(DEPTHS) - 1),
         }
@@ -359,7 +358,6 @@ impl<'b, 'o, 's, K: Sink> Scan<'b, 'o, 's, K> {
         self.stack = [TOP; MAX + 1];
         self.depth = 0;
         self.base = 0;
-        self.exact = state.is_exact();
         self.unpack(&state);
         state
     }
@@ -378,7 +376,6 @@ struct Scan<'b, 'o, 's, K: Sink> {
     depth: usize,
     /// List tails below the stack.
     base: usize,
-    exact: bool,
     /// An open regex literal's state.
     regex: u8,
     /// The lists, vectors and maps open, modulo [`DEPTHS`], as that depth's first kind
@@ -413,9 +410,7 @@ impl<K: Sink> Scan<'_, '_, '_, K> {
                 for _ in below..k {
                     self.push(LIST);
                 }
-            } else if below > 0 {
-                self.exact = false;
-            } else {
+            } else if below == 0 {
                 self.push(c);
             }
         }
@@ -431,13 +426,7 @@ impl<K: Sink> Scan<'_, '_, '_, K> {
             } else {
                 0
             };
-        super::keep(
-            &self.stack[1..=self.depth],
-            LIST,
-            self.base,
-            self.exact,
-            arg,
-        )
+        super::keep(&self.stack[1..=self.depth], LIST, self.base, arg)
     }
 
     fn top(&self) -> u8 {
@@ -450,8 +439,6 @@ impl<K: Sink> Scan<'_, '_, '_, K> {
             if self.stack[1] == LIST {
                 self.base += 1;
                 self.stack[0] = LIST;
-            } else {
-                self.exact = false;
             }
             self.stack.copy_within(2.., 1);
             self.depth -= 1;

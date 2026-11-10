@@ -1,0 +1,479 @@
+# Php: ada-parse/tests/readings.rs, php
+   1 | <?php
+       "<?php" text.html.basic source.php punctuation.section.embedded.begin.php
+   2 | namespace App\Http;
+       "namespace" text.html.basic source.php keyword.other.namespace.php
+       "App" text.html.basic source.php entity.name.namespace.php support.other.namespace.php
+       "\\" text.html.basic source.php entity.name.namespace.php punctuation.separator.namespace.php
+       "Http" text.html.basic source.php entity.name.namespace.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+   3 | 
+   4 | use Foo\Bar as Baz, Qux;
+       "use" text.html.basic source.php keyword.other.use.php
+       "Foo" text.html.basic source.php support.other.namespace.php
+       "\\" text.html.basic source.php punctuation.separator.namespace.php
+       "Bar" text.html.basic source.php support.class.php
+       "as" text.html.basic source.php keyword.other.use-as.php
+       "Baz" text.html.basic source.php entity.name.class.php
+       "," text.html.basic source.php punctuation.separator.php
+       "Qux" text.html.basic source.php support.class.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+   5 | use function strlen;
+       "use" text.html.basic source.php keyword.other.use.php
+       "function" text.html.basic source.php storage.type.php
+       "strlen" text.html.basic source.php support.function.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+   6 | use const PHP_EOL;
+       "use" text.html.basic source.php keyword.other.use.php
+       "const" text.html.basic source.php storage.type.php
+       "PHP_EOL" text.html.basic source.php constant.other.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+   7 | 
+   8 | /**
+       "/**" text.html.basic source.php comment.block.documentation.phpdoc.php punctuation.definition.comment.begin.php
+   9 |  * A doc, {@inheritdoc}.
+       " " text.html.basic source.php comment.block.documentation.phpdoc.php
+       "*" text.html.basic source.php comment.block.documentation.phpdoc.php punctuation.definition.comment.php
+       " A doc, {" text.html.basic source.php comment.block.documentation.phpdoc.php
+       "@inheritdoc" text.html.basic source.php comment.block.documentation.phpdoc.php keyword.other.phpdoc.php
+       "}." text.html.basic source.php comment.block.documentation.phpdoc.php
+  10 |  * @param int $x the x
+       " " text.html.basic source.php comment.block.documentation.phpdoc.php
+       "*" text.html.basic source.php comment.block.documentation.phpdoc.php punctuation.definition.comment.php
+       " " text.html.basic source.php comment.block.documentation.phpdoc.php
+       "@param" text.html.basic source.php comment.block.documentation.phpdoc.php keyword.other.phpdoc.php
+       " int $x the x" text.html.basic source.php comment.block.documentation.phpdoc.php
+  11 |  * @return string
+       " " text.html.basic source.php comment.block.documentation.phpdoc.php
+       "*" text.html.basic source.php comment.block.documentation.phpdoc.php punctuation.definition.comment.php
+       " " text.html.basic source.php comment.block.documentation.phpdoc.php
+       "@return" text.html.basic source.php comment.block.documentation.phpdoc.php keyword.other.phpdoc.php
+       " string" text.html.basic source.php comment.block.documentation.phpdoc.php
+  12 |  */
+       " " text.html.basic source.php comment.block.documentation.phpdoc.php
+       "*/" text.html.basic source.php comment.block.documentation.phpdoc.php punctuation.definition.comment.end.php
+  13 | abstract class Foo extends Bar implements \Countable, Baz
+       "abstract " text.html.basic source.php storage.modifier.abstract.php
+       "class" text.html.basic source.php storage.type.class.php
+       "Foo" text.html.basic source.php entity.name.class.php
+       "extends" text.html.basic source.php storage.modifier.extends.php
+       "Bar" text.html.basic source.php entity.other.inherited-class.php
+       "implements" text.html.basic source.php storage.modifier.implements.php
+       "\\" text.html.basic source.php punctuation.separator.namespace.php
+       "Countable" text.html.basic source.php entity.other.inherited-class.php support.class.builtin.php
+       "," text.html.basic source.php punctuation.separator.php
+       "Baz" text.html.basic source.php entity.other.inherited-class.php
+  14 | {
+       "{" text.html.basic source.php punctuation.section.block.php
+  15 |     use SomeTrait;
+       "use" text.html.basic source.php keyword.other.use.php
+       "SomeTrait" text.html.basic source.php entity.other.inherited-class.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+  16 |     const ANSWER = 42;
+       "const" text.html.basic source.php storage.modifier.php
+       "ANSWER" text.html.basic source.php constant.other.php
+       "=" text.html.basic source.php keyword.operator.assignment.php
+       "42" text.html.basic source.php constant.numeric.integer.decimal.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+  17 |     public static ?int $count = 0;
+       "public" text.html.basic source.php storage.modifier.php
+       "static" text.html.basic source.php storage.modifier.php
+       "?" text.html.basic source.php storage.type.nullable.php
+       "int" text.html.basic source.php support.class.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "count" text.html.basic source.php variable.other.php
+       "=" text.html.basic source.php keyword.operator.assignment.php
+       "0" text.html.basic source.php constant.numeric.integer.decimal.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+  18 |     protected array $items = [];
+       "protected" text.html.basic source.php storage.modifier.php
+       "array" text.html.basic source.php support.class.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "items" text.html.basic source.php variable.other.php
+       "=" text.html.basic source.php keyword.operator.assignment.php
+       "[" text.html.basic source.php punctuation.section.array.begin.php
+       "]" text.html.basic source.php punctuation.section.brackets.end.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+  19 | 
+  20 |     public function __construct(private Foo $foo, int $n = 3, ...$rest)
+       "public" text.html.basic source.php storage.modifier.php
+       "function" text.html.basic source.php storage.type.function.php
+       "__construct" text.html.basic source.php entity.name.function.php support.function.magic.php
+       "(" text.html.basic source.php punctuation.section.group.begin.php
+       "private" text.html.basic source.php support.class.php
+       "Foo" text.html.basic source.php support.class.php
+       "$" text.html.basic source.php variable.parameter.php punctuation.definition.variable.php
+       "foo" text.html.basic source.php variable.parameter.php
+       "," text.html.basic source.php punctuation.separator.php
+       "int" text.html.basic source.php storage.type.php
+       "$" text.html.basic source.php variable.parameter.php punctuation.definition.variable.php
+       "n" text.html.basic source.php variable.parameter.php
+       "=" text.html.basic source.php keyword.operator.assignment.php
+       "3" text.html.basic source.php constant.numeric.integer.decimal.php
+       "," text.html.basic source.php punctuation.separator.php
+       "..." text.html.basic source.php keyword.operator.spread.php
+       "$" text.html.basic source.php variable.parameter.php punctuation.definition.variable.php
+       "rest" text.html.basic source.php variable.parameter.php
+       ")" text.html.basic source.php punctuation.section.group.end.php
+  21 |     {
+       "{" text.html.basic source.php punctuation.section.block.begin.php
+  22 |         parent::__construct();
+       "parent" text.html.basic source.php variable.language.php
+       "::" text.html.basic source.php punctuation.accessor.double-colon.php
+       "__construct" text.html.basic source.php variable.function.php
+       "(" text.html.basic source.php punctuation.section.group.begin.php
+       ")" text.html.basic source.php punctuation.section.group.end.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+  23 |         $this->name = strtolower($foo->name . 'x');
+       "$" text.html.basic source.php variable.language.php punctuation.definition.variable.php
+       "this" text.html.basic source.php variable.language.php
+       "->" text.html.basic source.php punctuation.accessor.arrow.php
+       "name" text.html.basic source.php variable.other.member.php
+       "=" text.html.basic source.php keyword.operator.assignment.php
+       "strtolower" text.html.basic source.php support.function.string.php
+       "(" text.html.basic source.php punctuation.section.group.begin.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "foo" text.html.basic source.php variable.other.php
+       "->" text.html.basic source.php punctuation.accessor.arrow.php
+       "name" text.html.basic source.php variable.other.member.php
+       "." text.html.basic source.php keyword.operator.string.php
+       "'" text.html.basic source.php string.quoted.single.php punctuation.definition.string.begin.php
+       "x" text.html.basic source.php string.quoted.single.php
+       "'" text.html.basic source.php string.quoted.single.php punctuation.definition.string.end.php
+       ")" text.html.basic source.php punctuation.section.group.end.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+  24 |         $y = self::ANSWER + static::$count++ ?? Foo::class;
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "y" text.html.basic source.php variable.other.php
+       "=" text.html.basic source.php keyword.operator.assignment.php
+       "self" text.html.basic source.php variable.language.php
+       "::" text.html.basic source.php punctuation.accessor.double-colon.php
+       "ANSWER" text.html.basic source.php constant.other.class.php
+       "+" text.html.basic source.php keyword.operator.arithmetic.php
+       "static" text.html.basic source.php variable.language.php
+       "::" text.html.basic source.php punctuation.accessor.double-colon.php
+       "$" text.html.basic source.php variable.other.class.php punctuation.definition.variable.php
+       "count" text.html.basic source.php variable.other.class.php
+       "++" text.html.basic source.php keyword.operator.increment-decrement.php
+       "Foo" text.html.basic source.php support.class.php
+       "::" text.html.basic source.php punctuation.accessor.double-colon.php
+       "class" text.html.basic source.php constant.class.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+  25 |         if ($y instanceof \DateTime && !empty($rest)) {
+       "if" text.html.basic source.php keyword.control.php
+       "(" text.html.basic source.php punctuation.section.group.begin.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "y" text.html.basic source.php variable.other.php
+       "instanceof" text.html.basic source.php keyword.operator.type.php
+       "\\" text.html.basic source.php punctuation.separator.namespace.php
+       "DateTime" text.html.basic source.php support.class.builtin.php
+       "&&" text.html.basic source.php keyword.operator.logical.php
+       "!" text.html.basic source.php keyword.operator.logical.php
+       "empty" text.html.basic source.php support.function.construct.php
+       "(" text.html.basic source.php punctuation.section.group.begin.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "rest" text.html.basic source.php variable.other.php
+       "))" text.html.basic source.php punctuation.section.group.end.php
+       "{" text.html.basic source.php punctuation.section.block.begin.php
+  26 |             return array_map(fn($a) => $a * 2, $rest);
+       "return" text.html.basic source.php keyword.control.php
+       "array_map" text.html.basic source.php support.function.array.php
+       "(" text.html.basic source.php punctuation.section.group.begin.php
+       "fn" text.html.basic source.php variable.function.php
+       "(" text.html.basic source.php punctuation.section.group.begin.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "a" text.html.basic source.php variable.other.php
+       ")" text.html.basic source.php punctuation.section.group.end.php
+       "=>" text.html.basic source.php keyword.operator.key.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "a" text.html.basic source.php variable.other.php
+       "*" text.html.basic source.php keyword.operator.arithmetic.php
+       "2" text.html.basic source.php constant.numeric.integer.decimal.php
+       "," text.html.basic source.php punctuation.separator.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "rest" text.html.basic source.php variable.other.php
+       ")" text.html.basic source.php punctuation.section.group.end.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+  27 |         }
+       "}" text.html.basic source.php punctuation.section.block.end.php
+  28 |         echo "Hello $name, {$this->name}, $a->b, $c[0] and ${x} \n";
+       "echo" text.html.basic source.php support.function.construct.php
+       "\"" text.html.basic source.php string.quoted.double.php punctuation.definition.string.begin.php
+       "Hello " text.html.basic source.php string.quoted.double.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "name" text.html.basic source.php variable.other.php
+       ", " text.html.basic source.php string.quoted.double.php
+       "{" text.html.basic source.php punctuation.definition.expression.php
+       "$" text.html.basic source.php variable.language.php punctuation.definition.variable.php
+       "this" text.html.basic source.php variable.language.php
+       "->" text.html.basic source.php punctuation.accessor.arrow.php
+       "name" text.html.basic source.php variable.other.member.php
+       "}" text.html.basic source.php punctuation.definition.expression.php
+       ", " text.html.basic source.php string.quoted.double.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "a" text.html.basic source.php variable.other.php
+       "->" text.html.basic source.php punctuation.accessor.arrow.php
+       "b" text.html.basic source.php variable.other.member.php
+       ", " text.html.basic source.php string.quoted.double.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "c" text.html.basic source.php variable.other.php
+       "[" text.html.basic source.php punctuation.section.brackets.begin.php
+       "0" text.html.basic source.php constant.numeric.integer.decimal.php
+       "]" text.html.basic source.php punctuation.section.brackets.end.php
+       " and " text.html.basic source.php string.quoted.double.php
+       "${" text.html.basic source.php punctuation.definition.variable.php
+       "x" text.html.basic source.php variable.other.php
+       "}" text.html.basic source.php punctuation.definition.variable.php
+       " " text.html.basic source.php string.quoted.double.php
+       "\\n" text.html.basic source.php string.quoted.double.php constant.character.escape.php
+       "\"" text.html.basic source.php string.quoted.double.php punctuation.definition.string.end.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+  29 |         $q = MY_CONST . E_ALL . PHP_EOL . true . null;
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "q" text.html.basic source.php variable.other.php
+       "=" text.html.basic source.php keyword.operator.assignment.php
+       "MY_CONST" text.html.basic source.php constant.other.php
+       "." text.html.basic source.php keyword.operator.string.php
+       "E_ALL" text.html.basic source.php support.constant.core.php
+       "." text.html.basic source.php keyword.operator.string.php
+       "PHP_EOL" text.html.basic source.php support.constant.core.php
+       "." text.html.basic source.php keyword.operator.string.php
+       "true" text.html.basic source.php constant.language.php
+       "." text.html.basic source.php keyword.operator.string.php
+       "null" text.html.basic source.php constant.language.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+  30 |         $r = Foo\Bar\baz(1, 2.5, 0x1F, 0b101, 1_000);
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "r" text.html.basic source.php variable.other.php
+       "=" text.html.basic source.php keyword.operator.assignment.php
+       "Foo" text.html.basic source.php support.other.namespace.php
+       "\\" text.html.basic source.php punctuation.separator.namespace.php
+       "Bar" text.html.basic source.php support.other.namespace.php
+       "\\" text.html.basic source.php punctuation.separator.namespace.php
+       "baz" text.html.basic source.php variable.function.php
+       "(" text.html.basic source.php punctuation.section.group.begin.php
+       "1" text.html.basic source.php constant.numeric.integer.decimal.php
+       "," text.html.basic source.php punctuation.separator.php
+       "2.5" text.html.basic source.php constant.numeric.float.decimal.php
+       "," text.html.basic source.php punctuation.separator.php
+       "0x" text.html.basic source.php constant.numeric.integer.hexadecimal.php punctuation.definition.numeric.hexadecimal.php
+       "1F" text.html.basic source.php constant.numeric.integer.hexadecimal.php
+       "," text.html.basic source.php punctuation.separator.php
+       "0b" text.html.basic source.php constant.numeric.integer.binary.php punctuation.definition.numeric.binary.php
+       "101" text.html.basic source.php constant.numeric.integer.binary.php
+       "," text.html.basic source.php punctuation.separator.php
+       "1_000" text.html.basic source.php constant.numeric.integer.decimal.php
+       ")" text.html.basic source.php punctuation.section.group.end.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+  31 |         $s = $obj?->prop['key'][0] <=> $t;
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "s" text.html.basic source.php variable.other.php
+       "=" text.html.basic source.php keyword.operator.assignment.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "obj" text.html.basic source.php variable.other.php
+       "->" text.html.basic source.php punctuation.accessor.arrow.php
+       "prop" text.html.basic source.php variable.other.member.php
+       "[" text.html.basic source.php punctuation.section.brackets.begin.php
+       "'" text.html.basic source.php string.quoted.single.php punctuation.definition.string.begin.php
+       "key" text.html.basic source.php string.quoted.single.php
+       "'" text.html.basic source.php string.quoted.single.php punctuation.definition.string.end.php
+       "]" text.html.basic source.php punctuation.section.brackets.end.php
+       "[" text.html.basic source.php punctuation.section.brackets.begin.php
+       "0" text.html.basic source.php constant.numeric.integer.decimal.php
+       "]" text.html.basic source.php punctuation.section.brackets.end.php
+       "<=>" text.html.basic source.php keyword.operator.comparison.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "t" text.html.basic source.php variable.other.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+  32 |         foreach ($list as $k => &$v) { continue; }
+       "foreach" text.html.basic source.php keyword.control.php
+       "(" text.html.basic source.php punctuation.section.group.begin.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "list" text.html.basic source.php variable.other.php
+       "as" text.html.basic source.php keyword.operator.logical.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "k" text.html.basic source.php variable.other.php
+       "=>" text.html.basic source.php keyword.operator.key.php
+       "&" text.html.basic source.php storage.modifier.reference.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "v" text.html.basic source.php variable.other.php
+       ")" text.html.basic source.php punctuation.section.group.end.php
+       "{" text.html.basic source.php punctuation.section.block.begin.php
+       "continue" text.html.basic source.php keyword.control.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+       "}" text.html.basic source.php punctuation.section.block.end.php
+  33 |         try { throw new \RuntimeException("bad"); } catch (\Exception $e) { }
+       "try" text.html.basic source.php keyword.control.exception.php
+       "{" text.html.basic source.php punctuation.section.block.begin.php
+       "throw" text.html.basic source.php keyword.control.exception.php
+       "new" text.html.basic source.php keyword.other.new.php
+       "\\" text.html.basic source.php punctuation.separator.namespace.php
+       "RuntimeException" text.html.basic source.php support.class.builtin.php
+       "(" text.html.basic source.php punctuation.section.group.begin.php
+       "\"" text.html.basic source.php string.quoted.double.php punctuation.definition.string.begin.php
+       "bad" text.html.basic source.php string.quoted.double.php
+       "\"" text.html.basic source.php string.quoted.double.php punctuation.definition.string.end.php
+       ")" text.html.basic source.php punctuation.section.group.end.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+       "}" text.html.basic source.php punctuation.section.block.end.php
+       "catch" text.html.basic source.php keyword.control.exception.catch.php
+       "\\" text.html.basic source.php punctuation.separator.namespace.php
+       "Exception" text.html.basic source.php support.class.exception.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "e" text.html.basic source.php variable.other.php
+       "{" text.html.basic source.php punctuation.section.block.begin.php
+       "}" text.html.basic source.php punctuation.section.block.end.php
+  34 |         $sql = 'SELECT * FROM t WHERE id = 1';
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "sql" text.html.basic source.php variable.other.php
+       "=" text.html.basic source.php keyword.operator.assignment.php
+       "'" text.html.basic source.php string.quoted.single.php punctuation.definition.string.begin.php
+       "SELECT" text.html.basic source.php string.quoted.single.php source.sql keyword.other.DML.sql
+       " " text.html.basic source.php string.quoted.single.php source.sql
+       "*" text.html.basic source.php string.quoted.single.php source.sql variable.language.star.sql
+       " " text.html.basic source.php string.quoted.single.php source.sql
+       "FROM" text.html.basic source.php string.quoted.single.php source.sql keyword.other.DML.sql
+       " t " text.html.basic source.php string.quoted.single.php source.sql
+       "WHERE" text.html.basic source.php string.quoted.single.php source.sql keyword.other.DML.sql
+       " id " text.html.basic source.php string.quoted.single.php source.sql
+       "=" text.html.basic source.php string.quoted.single.php source.sql keyword.operator.comparison.sql
+       " " text.html.basic source.php string.quoted.single.php source.sql
+       "1" text.html.basic source.php string.quoted.single.php source.sql constant.numeric.sql
+       "'" text.html.basic source.php string.quoted.single.php punctuation.definition.string.end.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+  35 |         $h = <<<EOT
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "h" text.html.basic source.php variable.other.php
+       "=" text.html.basic source.php keyword.operator.assignment.php
+       "<<<" text.html.basic source.php string.unquoted.heredoc.php punctuation.definition.string.php
+       "EOT" text.html.basic source.php string.unquoted.heredoc.php punctuation.definition.string.php keyword.operator.heredoc.php
+  36 |           Hello $name!
+       "          Hello " text.html.basic source.php string.unquoted.heredoc.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "name" text.html.basic source.php variable.other.php
+       "!" text.html.basic source.php string.unquoted.heredoc.php
+  37 |           EOT;
+       "          " text.html.basic source.php
+       "EOT" text.html.basic source.php punctuation.section.embedded.end.php keyword.operator.heredoc.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+  38 |         $n = <<<'EOT'
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "n" text.html.basic source.php variable.other.php
+       "=" text.html.basic source.php keyword.operator.assignment.php
+       "<<<" text.html.basic source.php string.unquoted.nowdoc.php punctuation.definition.string.php
+       "'EOT'" text.html.basic source.php string.unquoted.nowdoc.php punctuation.definition.string.php keyword.operator.nowdoc.php
+  39 |         raw $x
+       "        raw $x" text.html.basic source.php string.unquoted.nowdoc.php
+  40 |         EOT;
+       "        " text.html.basic source.php
+       "EOT" text.html.basic source.php punctuation.section.embedded.end.php keyword.operator.heredoc.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+  41 |         // a comment
+       "//" text.html.basic source.php comment.line.double-slash.php punctuation.definition.comment.php
+       " a comment" text.html.basic source.php comment.line.double-slash.php
+  42 |         # another
+       "#" text.html.basic source.php comment.line.number-sign.php punctuation.definition.comment.php
+       " another" text.html.basic source.php comment.line.number-sign.php
+  43 |         /* block */
+       "/*" text.html.basic source.php comment.block.php punctuation.definition.comment.begin.php
+       " block " text.html.basic source.php comment.block.php
+       "*/" text.html.basic source.php comment.block.php punctuation.definition.comment.end.php
+  44 |         $b = (int) $x + (string)$y;
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "b" text.html.basic source.php variable.other.php
+       "=" text.html.basic source.php keyword.operator.assignment.php
+       "int" text.html.basic source.php storage.type.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "x" text.html.basic source.php variable.other.php
+       "+" text.html.basic source.php keyword.operator.arithmetic.php
+       "string" text.html.basic source.php storage.type.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "y" text.html.basic source.php variable.other.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+  45 |         $f = function ($x) use (&$y): int { return 1; };
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "f" text.html.basic source.php variable.other.php
+       "=" text.html.basic source.php keyword.operator.assignment.php
+       "function" text.html.basic source.php storage.type.function.php
+       "(" text.html.basic source.php punctuation.section.group.begin.php
+       "$" text.html.basic source.php variable.parameter.php punctuation.definition.variable.php
+       "x" text.html.basic source.php variable.parameter.php
+       ")" text.html.basic source.php punctuation.section.group.end.php
+       "use" text.html.basic source.php keyword.other.function.use.php
+       "(" text.html.basic source.php punctuation.section.group.begin.php
+       "&" text.html.basic source.php storage.modifier.reference.php
+       "$" text.html.basic source.php variable.parameter.php punctuation.definition.variable.php
+       "y" text.html.basic source.php variable.parameter.php
+       ")" text.html.basic source.php punctuation.section.group.end.php
+       ":" text.html.basic source.php punctuation.separator.php
+       "int" text.html.basic source.php storage.type.php
+       "{" text.html.basic source.php punctuation.section.block.begin.php
+       "return" text.html.basic source.php keyword.control.php
+       "1" text.html.basic source.php constant.numeric.integer.decimal.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+       "}" text.html.basic source.php punctuation.section.block.end.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+  46 |     }
+       "}" text.html.basic source.php punctuation.section.block.end.php
+  47 | }
+       "}" text.html.basic source.php punctuation.section.block.php
+  48 | interface I extends J {}
+       "interface" text.html.basic source.php storage.type.interface.php
+       "I" text.html.basic source.php entity.name.interface.php
+       "extends " text.html.basic source.php storage.modifier.extends.php
+       "J" text.html.basic source.php entity.other.inherited-class.php
+       "{" text.html.basic source.php punctuation.section.block.begin.php
+       "}" text.html.basic source.php punctuation.section.block.end.php
+  49 | trait T {}
+       "trait" text.html.basic source.php storage.type.trait.php
+       "T" text.html.basic source.php entity.name.trait.php
+       "{" text.html.basic source.php punctuation.section.block.begin.php
+       "}" text.html.basic source.php punctuation.section.block.end.php
+  50 | label:
+       "label" text.html.basic source.php entity.name.label.php
+       ":" text.html.basic source.php punctuation.separator.php
+  51 | goto label;
+       "goto" text.html.basic source.php keyword.control.goto.php
+       "label" text.html.basic source.php support.other.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+  52 | ?>
+       "?>" text.html.basic source.php punctuation.section.embedded.end.php
+  53 | <div class="a"><?= $x ?></div>
+       "<" text.html.basic punctuation.definition.tag.begin.html
+       "div" text.html.basic entity.name.tag.block.any.html
+       " " text.html.basic
+       "class" text.html.basic entity.other.attribute-name.class.html
+       "=" text.html.basic punctuation.separator.key-value.html
+       "\"" text.html.basic string.quoted.double.html punctuation.definition.string.begin.html
+       "a" text.html.basic string.quoted.double.html
+       "\"" text.html.basic string.quoted.double.html punctuation.definition.string.end.html
+       ">" text.html.basic punctuation.definition.tag.end.html
+       "<?=" text.html.basic source.php punctuation.section.embedded.begin.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "x" text.html.basic source.php variable.other.php
+       "?>" text.html.basic source.php punctuation.section.embedded.end.php
+       "</" text.html.basic punctuation.definition.tag.begin.html
+       "div" text.html.basic entity.name.tag.block.any.html
+       ">" text.html.basic punctuation.definition.tag.end.html
+  54 | <?php if ($y): ?>
+       "<?php" text.html.basic source.php punctuation.section.embedded.begin.php
+       "if" text.html.basic source.php keyword.control.php
+       "(" text.html.basic source.php punctuation.section.group.begin.php
+       "$" text.html.basic source.php variable.other.php punctuation.definition.variable.php
+       "y" text.html.basic source.php variable.other.php
+       ")" text.html.basic source.php punctuation.section.group.end.php
+       "?>" text.html.basic source.php punctuation.section.embedded.end.php
+  55 |   <p>yes</p>
+       "  " text.html.basic
+       "<" text.html.basic punctuation.definition.tag.begin.html
+       "p" text.html.basic entity.name.tag.block.any.html
+       ">" text.html.basic punctuation.definition.tag.end.html
+       "yes" text.html.basic
+       "</" text.html.basic punctuation.definition.tag.begin.html
+       "p" text.html.basic entity.name.tag.block.any.html
+       ">" text.html.basic punctuation.definition.tag.end.html
+  56 | <?php endif; ?>
+       "<?php" text.html.basic source.php punctuation.section.embedded.begin.php
+       "endif" text.html.basic source.php keyword.control.php
+       ";" text.html.basic source.php punctuation.terminator.expression.php
+       "?>" text.html.basic source.php punctuation.section.embedded.end.php

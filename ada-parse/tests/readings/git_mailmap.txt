@@ -1,0 +1,49 @@
+# GitMailmap: ada-parse/tests/readings.rs, git_mailmap
+   1 | # mailmap
+       "#" comment.line.git punctuation.definition.comment.git
+       " mailmap" comment.line.git
+   2 | Proper Name <proper@email.xx>
+       "Proper Name" meta.reference.user.git
+       "<" meta.reference.email.git punctuation.definition.reference.email.begin.git
+       "proper" meta.reference.email.git entity.name.reference.email.git
+       "@" meta.reference.email.git entity.name.reference.email.git punctuation.separator.email.git
+       "email" meta.reference.email.git entity.name.reference.email.git
+       "." meta.reference.email.git entity.name.reference.email.git punctuation.separator.domain.git
+       "xx" meta.reference.email.git entity.name.reference.email.git
+       ">" meta.reference.email.git punctuation.definition.reference.email.end.git
+   3 | <proper@email.xx> <commit@email.xx>
+       "<" meta.reference.email.git punctuation.definition.reference.email.begin.git
+       "proper" meta.reference.email.git entity.name.reference.email.git
+       "@" meta.reference.email.git entity.name.reference.email.git punctuation.separator.email.git
+       "email" meta.reference.email.git entity.name.reference.email.git
+       "." meta.reference.email.git entity.name.reference.email.git punctuation.separator.domain.git
+       "xx" meta.reference.email.git entity.name.reference.email.git
+       ">" meta.reference.email.git punctuation.definition.reference.email.end.git
+       "<" meta.reference.email.git punctuation.definition.reference.email.begin.git
+       "commit" meta.reference.email.git entity.name.reference.email.git
+       "@" meta.reference.email.git entity.name.reference.email.git punctuation.separator.email.git
+       "email" meta.reference.email.git entity.name.reference.email.git
+       "." meta.reference.email.git entity.name.reference.email.git punctuation.separator.domain.git
+       "xx" meta.reference.email.git entity.name.reference.email.git
+       ">" meta.reference.email.git punctuation.definition.reference.email.end.git
+   4 | Proper Name <proper@email.xx> Commit Name <commit@email.xx>
+       "Proper Name" meta.reference.user.git
+       "<" meta.reference.email.git punctuation.definition.reference.email.begin.git
+       "proper" meta.reference.email.git entity.name.reference.email.git
+       "@" meta.reference.email.git entity.name.reference.email.git punctuation.separator.email.git
+       "email" meta.reference.email.git entity.name.reference.email.git
+       "." meta.reference.email.git entity.name.reference.email.git punctuation.separator.domain.git
+       "xx" meta.reference.email.git entity.name.reference.email.git
+       ">" meta.reference.email.git punctuation.definition.reference.email.end.git
+       "Commit Name" meta.reference.user.git
+       "<" meta.reference.email.git punctuation.definition.reference.email.begin.git
+       "commit" meta.reference.email.git entity.name.reference.email.git
+       "@" meta.reference.email.git entity.name.reference.email.git punctuation.separator.email.git
+       "email" meta.reference.email.git entity.name.reference.email.git
+       "." meta.reference.email.git entity.name.reference.email.git punctuation.separator.domain.git
+       "xx" meta.reference.email.git entity.name.reference.email.git
+       ">" meta.reference.email.git punctuation.definition.reference.email.end.git
+   5 | Name Only
+       "Name Only" meta.reference.user.git
+   6 | <bad email> x
+       "bad email> x" meta.reference.user.git

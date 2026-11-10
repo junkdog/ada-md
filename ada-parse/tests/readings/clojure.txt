@@ -1,0 +1,335 @@
+# Clojure: ada-parse/tests/readings.rs, clojure
+   1 | #!/usr/bin/env bb
+       "#!" comment.line.clojure punctuation.definition.comment
+       "/usr/bin/env bb" comment.line.clojure
+   2 | (in my.app (:require [clojure.string :as str])) ; c
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "in" variable.function.clojure
+       "(" meta.depth-2.clojure punctuation.section.parens.begin.clojure
+       ":" constant.other.keyword.clojure punctuation.definition.keyword.clojure
+       "require" constant.other.keyword.clojure
+       "[" meta.depth-3.clojure punctuation.section.brackets.begin.clojure
+       ":" constant.other.keyword.clojure punctuation.definition.keyword.clojure
+       "as" constant.other.keyword.clojure
+       "]" meta.depth-3.clojure punctuation.section.brackets.end.clojure
+       ")" meta.depth-2.clojure punctuation.section.parens.end.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+       ";" comment.line.clojure punctuation.definition.comment
+       " c" comment.line.clojure
+   3 | (defn- f "doc" [x & ys] {:pre [(valid x)]} (str/join "," ys))
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "defn-" storage.modifier.def.clojure
+       "f" entity.name.function.clojure
+       "\"" string.quoted.double.clojure punctuation.definition.string.begin.clojure
+       "doc" string.quoted.double.clojure
+       "\"" string.quoted.double.clojure punctuation.definition.string.end.clojure
+       "[" meta.depth-2.clojure punctuation.section.brackets.begin.clojure
+       "]" meta.depth-2.clojure punctuation.section.brackets.end.clojure
+       "{" meta.depth-2.clojure punctuation.section.braces.begin.clojure
+       ":" constant.other.keyword.clojure punctuation.definition.keyword.clojure
+       "pre" constant.other.keyword.clojure
+       "[" meta.depth-3.clojure punctuation.section.brackets.begin.clojure
+       "(" meta.depth-4.clojure punctuation.section.parens.begin.clojure
+       "valid" variable.function.clojure
+       ")" meta.depth-4.clojure punctuation.section.parens.end.clojure
+       "]" meta.depth-3.clojure punctuation.section.brackets.end.clojure
+       "}" meta.depth-2.clojure punctuation.section.braces.end.clojure
+       "(" meta.depth-2.clojure punctuation.section.parens.begin.clojure
+       "str/join" variable.function.clojure
+       "\"" string.quoted.double.clojure punctuation.definition.string.begin.clojure
+       "," string.quoted.double.clojure
+       "\"" string.quoted.double.clojure punctuation.definition.string.end.clojure
+       ")" meta.depth-2.clojure punctuation.section.parens.end.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+   4 | (def ^:private x 1) (def ^{:a 1} y 2N) (default z)
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "def" storage.modifier.def.clojure
+       "^" keyword.operator.macro.clojure
+       ":" constant.other.keyword.clojure punctuation.definition.keyword.clojure
+       "private" constant.other.keyword.clojure
+       "x" entity.name.function.clojure
+       "1" constant.numeric.integer.decimal.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "def" storage.modifier.def.clojure
+       "^" keyword.operator.macro.clojure
+       "{" meta.depth-2.clojure punctuation.section.braces.begin.clojure
+       ":" constant.other.keyword.clojure punctuation.definition.keyword.clojure
+       "a" constant.other.keyword.clojure
+       "1" constant.numeric.integer.decimal.clojure
+       "}" meta.depth-2.clojure punctuation.section.braces.end.clojure
+       "y" entity.name.function.clojure
+       "2" constant.numeric.integer.decimal.clojure
+       "N" constant.numeric.integer.decimal.clojure storage.type.numeric.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "default" storage.modifier.def.clojure
+       "z" entity.name.function.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+   5 | (defprotocol P (m [this] "doc") (n [this a]))
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "defprotocol" storage.type.clojure
+       "P" entity.name.type.clojure
+       "(" meta.depth-2.clojure punctuation.section.parens.begin.clojure
+       "m" entity.name.function.clojure
+       "[" meta.depth-3.clojure punctuation.section.brackets.begin.clojure
+       "]" meta.depth-3.clojure punctuation.section.brackets.end.clojure
+       "\"" string.quoted.double.clojure punctuation.definition.string.begin.clojure
+       "doc" string.quoted.double.clojure
+       "\"" string.quoted.double.clojure punctuation.definition.string.end.clojure
+       ")" meta.depth-2.clojure punctuation.section.parens.end.clojure
+       "(" meta.depth-2.clojure punctuation.section.parens.begin.clojure
+       "n" entity.name.function.clojure
+       "[" meta.depth-3.clojure punctuation.section.brackets.begin.clojure
+       "]" meta.depth-3.clojure punctuation.section.brackets.end.clojure
+       ")" meta.depth-2.clojure punctuation.section.parens.end.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+   6 | (definterface I (go [])) (deftype T [a] P (m [_] a)) (defrecord R [a b])
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "definterface" storage.type.clojure
+       "I" entity.name.type.clojure
+       "(" meta.depth-2.clojure punctuation.section.parens.begin.clojure
+       "go" entity.name.function.fn.clojure
+       "[" meta.depth-3.clojure punctuation.section.brackets.begin.clojure
+       "]" meta.depth-3.clojure punctuation.section.brackets.end.clojure
+       ")" meta.depth-2.clojure punctuation.section.parens.end.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "deftype" storage.type.clojure
+       "T" entity.name.type.clojure
+       "[" meta.depth-2.clojure punctuation.section.brackets.begin.clojure
+       "]" meta.depth-2.clojure punctuation.section.brackets.end.clojure
+       "P" entity.other.inherited-class.clojure
+       "(" meta.depth-2.clojure punctuation.section.parens.begin.clojure
+       "m" entity.name.function.fn.clojure
+       "[" meta.depth-3.clojure punctuation.section.brackets.begin.clojure
+       "]" meta.depth-3.clojure punctuation.section.brackets.end.clojure
+       ")" meta.depth-2.clojure punctuation.section.parens.end.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "defrecord" storage.type.clojure
+       "R" entity.name.type.clojure
+       "[" meta.depth-2.clojure punctuation.section.brackets.begin.clojure
+       "]" meta.depth-2.clojure punctuation.section.brackets.end.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+   7 | (defmethod mm :k [x] x) (reify P (m [_] 1)) (proxy [Object] [] (toString [] "s"))
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "defmethod" storage.modifier.def.clojure
+       "mm" entity.name.function.fn.clojure
+       ":" constant.other.keyword.clojure punctuation.definition.keyword.clojure
+       "k" constant.other.keyword.clojure
+       "[" meta.depth-2.clojure punctuation.section.brackets.begin.clojure
+       "]" meta.depth-2.clojure punctuation.section.brackets.end.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "reify" variable.function.clojure
+       "P" entity.other.inherited-class.clojure
+       "(" meta.depth-2.clojure punctuation.section.parens.begin.clojure
+       "m" entity.name.function.fn.clojure
+       "[" meta.depth-3.clojure punctuation.section.brackets.begin.clojure
+       "]" meta.depth-3.clojure punctuation.section.brackets.end.clojure
+       "1" constant.numeric.integer.decimal.clojure
+       ")" meta.depth-2.clojure punctuation.section.parens.end.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "proxy" variable.function.clojure
+       "[" meta.depth-2.clojure punctuation.section.brackets.begin.clojure
+       "]" meta.depth-2.clojure punctuation.section.brackets.end.clojure
+       "[" meta.depth-2.clojure punctuation.section.brackets.begin.clojure
+       "]" meta.depth-2.clojure punctuation.section.brackets.end.clojure
+       "(" meta.depth-2.clojure punctuation.section.parens.begin.clojure
+       "toString" entity.name.function.fn.clojure
+       "[" meta.depth-3.clojure punctuation.section.brackets.begin.clojure
+       "]" meta.depth-3.clojure punctuation.section.brackets.end.clojure
+       "\"" string.quoted.double.clojure punctuation.definition.string.begin.clojure
+       "s" string.quoted.double.clojure
+       "\"" string.quoted.double.clojure punctuation.definition.string.end.clojure
+       ")" meta.depth-2.clojure punctuation.section.parens.end.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+   8 | (extend-protocol P String (m [s] s)) (extend-type T P (m [_] nil))
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "extend-protocol" variable.function.clojure
+       "P" entity.other.inherited-class.clojure
+       "String" entity.other.inherited-class.clojure
+       "(" meta.depth-2.clojure punctuation.section.parens.begin.clojure
+       "m" entity.name.function.fn.clojure
+       "[" meta.depth-3.clojure punctuation.section.brackets.begin.clojure
+       "]" meta.depth-3.clojure punctuation.section.brackets.end.clojure
+       ")" meta.depth-2.clojure punctuation.section.parens.end.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "extend-type" variable.function.clojure
+       "T" entity.other.inherited-class.clojure
+       "P" entity.other.inherited-class.clojure
+       "(" meta.depth-2.clojure punctuation.section.parens.begin.clojure
+       "m" entity.name.function.fn.clojure
+       "[" meta.depth-3.clojure punctuation.section.brackets.begin.clojure
+       "]" meta.depth-3.clojure punctuation.section.brackets.end.clojure
+       "nil" constant.language.clojure
+       ")" meta.depth-2.clojure punctuation.section.parens.end.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+   9 | (fn [x] x) (fn* [y] y) (fn name [z] z) (declare a b) (nil 1) (true) (f / 2)
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "fn" storage.modifier.fn.clojure
+       "[" meta.depth-2.clojure punctuation.section.brackets.begin.clojure
+       "]" meta.depth-2.clojure punctuation.section.brackets.end.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "fn*" storage.modifier.fn.clojure
+       "[" meta.depth-2.clojure punctuation.section.brackets.begin.clojure
+       "]" meta.depth-2.clojure punctuation.section.brackets.end.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "fn" storage.modifier.fn.clojure
+       "name" entity.name.function.fn.clojure
+       "[" meta.depth-2.clojure punctuation.section.brackets.begin.clojure
+       "]" meta.depth-2.clojure punctuation.section.brackets.end.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "declare" storage.modifier.declare.clojure
+       "a" entity.name.function.forward-decl.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "nil" constant.language.clojure
+       "1" constant.numeric.integer.decimal.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "true" constant.language.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "f" variable.function.clojure
+       "2" constant.numeric.integer.decimal.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+  10 | [1 -2 +3 012 1N 0x1F 0XffN 2r101 36rZZ 1/2 1.5 1.5e10 1e5 1M 1.5M 1. 1# x# x']
+       "[" meta.depth-1.clojure punctuation.section.brackets.begin.clojure
+       "1" constant.numeric.integer.decimal.clojure
+       "-" constant.numeric.integer.decimal.clojure punctuation.definition.numeric.sign.clojure
+       "2" constant.numeric.integer.decimal.clojure
+       "+" constant.numeric.integer.decimal.clojure punctuation.definition.numeric.sign.clojure
+       "3" constant.numeric.integer.decimal.clojure
+       "012" invalid.deprecated.clojure
+       "1" constant.numeric.integer.decimal.clojure
+       "N" constant.numeric.integer.decimal.clojure storage.type.numeric.clojure
+       "0x" constant.numeric.integer.hexadecimal.clojure punctuation.definition.numeric.base.clojure
+       "1F" constant.numeric.integer.hexadecimal.clojure
+       "0X" constant.numeric.integer.hexadecimal.clojure punctuation.definition.numeric.base.clojure
+       "ff" constant.numeric.integer.hexadecimal.clojure
+       "N" constant.numeric.integer.hexadecimal.clojure storage.type.numeric.clojure
+       "2r" constant.numeric.integer.other.clojure punctuation.definition.numeric.base.clojure
+       "101" constant.numeric.integer.other.clojure
+       "36r" constant.numeric.integer.other.clojure punctuation.definition.numeric.base.clojure
+       "ZZ" constant.numeric.integer.other.clojure
+       "1" constant.numeric.rational.decimal.clojure
+       "/" constant.numeric.rational.decimal.clojure punctuation.separator.rational.clojure
+       "2" constant.numeric.rational.decimal.clojure
+       "1" constant.numeric.float.decimal.clojure
+       "." constant.numeric.float.decimal.clojure punctuation.separator.decimal.clojure
+       "5" constant.numeric.float.decimal.clojure
+       "1" constant.numeric.float.decimal.clojure
+       "." constant.numeric.float.decimal.clojure punctuation.separator.decimal.clojure
+       "5e10" constant.numeric.float.decimal.clojure
+       "1e5" constant.numeric.float.decimal.clojure
+       "1" constant.numeric.float.decimal.clojure
+       "M" constant.numeric.float.decimal.clojure storage.type.numeric.clojure
+       "1" constant.numeric.float.decimal.clojure
+       "." constant.numeric.float.decimal.clojure punctuation.separator.decimal.clojure
+       "5" constant.numeric.float.decimal.clojure
+       "M" constant.numeric.float.decimal.clojure storage.type.numeric.clojure
+       "1" constant.numeric.integer.decimal.clojure
+       "#" keyword.operator.macro.clojure
+       "x#" keyword.operator.macro.clojure
+       "]" meta.depth-1.clojure punctuation.section.brackets.end.clojure
+  11 | {:k 'q `r ~s ~@t @u ::v :a/b \a \newline \( #_ (skip) ##Inf ##-Inf #inst "2020"}
+       "{" meta.depth-1.clojure punctuation.section.braces.begin.clojure
+       ":" constant.other.keyword.clojure punctuation.definition.keyword.clojure
+       "k" constant.other.keyword.clojure
+       "'" keyword.operator.macro.clojure
+       "`" keyword.operator.macro.clojure
+       "~" keyword.operator.macro.clojure
+       "~" keyword.operator.macro.clojure
+       "@" keyword.operator.macro.clojure
+       "@" keyword.operator.macro.clojure
+       ":" constant.other.keyword.clojure punctuation.definition.keyword.clojure
+       ":v" constant.other.keyword.clojure
+       ":" constant.other.keyword.clojure punctuation.definition.keyword.clojure
+       "a/b" constant.other.keyword.clojure
+       "\\a" constant.character.clojure
+       "\\newline" constant.character.clojure
+       "\\(" constant.character.clojure
+       "#" keyword.operator.macro.clojure
+       "_" keyword.operator.macro.clojure
+       "(" meta.depth-2.clojure punctuation.section.parens.begin.clojure
+       "skip" variable.function.clojure
+       ")" meta.depth-2.clojure punctuation.section.parens.end.clojure
+       "#" keyword.operator.macro.clojure
+       "#" keyword.operator.macro.clojure
+       "Inf" constant.other.symbolic.clojure
+       "#" keyword.operator.macro.clojure
+       "#" keyword.operator.macro.clojure
+       "-Inf" constant.other.symbolic.clojure
+       "#" keyword.operator.macro.clojure
+       "inst" keyword.operator.macro.clojure
+       "\"" string.quoted.double.clojure punctuation.definition.string.begin.clojure
+       "2020" string.quoted.double.clojure
+       "\"" string.quoted.double.clojure punctuation.definition.string.end.clojure
+       "}" meta.depth-1.clojure punctuation.section.braces.end.clojure
+  12 | #{1 2} #(g % 1) #?(:clj 1 :cljs 2) #?@(:clj [1]) #:a{:b 1} #'var , "multi
+       "#{" meta.depth-1.clojure punctuation.section.braces.begin.clojure
+       "1" constant.numeric.integer.decimal.clojure
+       "2" constant.numeric.integer.decimal.clojure
+       "}" meta.depth-1.clojure punctuation.section.braces.end.clojure
+       "#" keyword.operator.macro.clojure
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "g" variable.function.clojure
+       "1" constant.numeric.integer.decimal.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+       "#" keyword.operator.macro.clojure
+       "?" keyword.operator.macro.clojure
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       ":" constant.other.keyword.clojure punctuation.definition.keyword.clojure
+       "clj" constant.other.keyword.clojure
+       "1" constant.numeric.integer.decimal.clojure
+       ":" constant.other.keyword.clojure punctuation.definition.keyword.clojure
+       "cljs" constant.other.keyword.clojure
+       "2" constant.numeric.integer.decimal.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+       "#" keyword.operator.macro.clojure
+       "?" keyword.operator.macro.clojure
+       "@" keyword.operator.macro.clojure
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       ":" constant.other.keyword.clojure punctuation.definition.keyword.clojure
+       "clj" constant.other.keyword.clojure
+       "[" meta.depth-2.clojure punctuation.section.brackets.begin.clojure
+       "1" constant.numeric.integer.decimal.clojure
+       "]" meta.depth-2.clojure punctuation.section.brackets.end.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure
+       "#" keyword.operator.macro.clojure
+       ":" constant.other.keyword.clojure punctuation.definition.keyword.clojure
+       "a" constant.other.keyword.clojure
+       "{" meta.depth-1.clojure punctuation.section.braces.begin.clojure
+       ":" constant.other.keyword.clojure punctuation.definition.keyword.clojure
+       "b" constant.other.keyword.clojure
+       "1" constant.numeric.integer.decimal.clojure
+       "}" meta.depth-1.clojure punctuation.section.braces.end.clojure
+       "#" keyword.operator.macro.clojure
+       "'" keyword.operator.macro.clojure
+       "," punctuation.comma.clojure comment.punctuation.comma.clojure
+       "\"" string.quoted.double.clojure punctuation.definition.string.begin.clojure
+       "multi" string.quoted.double.clojure
+  13 | line" "esc\"aped" ) ] } (h [a 1] a)
+       "line" string.quoted.double.clojure
+       "\"" string.quoted.double.clojure punctuation.definition.string.end.clojure
+       "\"" string.quoted.double.clojure punctuation.definition.string.begin.clojure
+       "esc" string.quoted.double.clojure
+       "\\\"" string.quoted.double.clojure constant.character.escape.clojure
+       "aped" string.quoted.double.clojure
+       "\"" string.quoted.double.clojure punctuation.definition.string.end.clojure
+       ")" invalid.illegal.clojure
+       "]" invalid.illegal.clojure
+       "}" invalid.illegal.clojure
+       "(" meta.depth-1.clojure punctuation.section.parens.begin.clojure
+       "h" variable.function.clojure
+       "[" meta.depth-2.clojure punctuation.section.brackets.begin.clojure
+       "1" constant.numeric.integer.decimal.clojure
+       "]" meta.depth-2.clojure punctuation.section.brackets.end.clojure
+       ")" meta.depth-1.clojure punctuation.section.parens.end.clojure

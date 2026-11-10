@@ -1,0 +1,435 @@
+# Rust: ada-parse/tests/readings.rs, rust
+   1 | //! crate docs $x
+       "//!" comment.line.documentation.rust punctuation.definition.comment.rust
+       " crate docs " comment.line.documentation.rust
+       "$x" comment.line.documentation.rust variable.other.rust
+   2 | #![allow(dead_code)]
+       "#!" meta.annotation.rust punctuation.definition.annotation.rust
+       "[" meta.annotation.rust punctuation.section.group.begin.rust
+       "allow" meta.annotation.rust variable.annotation.rust
+       "(" meta.annotation.rust meta.annotation.parameters.rust meta.group.rust punctuation.section.group.begin.rust
+       "dead_code" meta.annotation.rust
+       ")" meta.annotation.rust meta.annotation.parameters.rust meta.group.rust punctuation.section.group.end.rust
+       "]" meta.annotation.rust punctuation.section.group.end.rust
+   3 | #[derive(Debug, Clone)] #[cfg(not(feature = "x"))]
+       "#" meta.annotation.rust punctuation.definition.annotation.rust
+       "[" meta.annotation.rust punctuation.section.group.begin.rust
+       "derive" meta.annotation.rust variable.annotation.rust
+       "(" meta.annotation.rust meta.annotation.parameters.rust meta.group.rust punctuation.section.group.begin.rust
+       "Debug" meta.annotation.rust
+       "," meta.annotation.rust punctuation.separator.rust
+       " Clone" meta.annotation.rust
+       ")" meta.annotation.rust meta.annotation.parameters.rust meta.group.rust punctuation.section.group.end.rust
+       "]" meta.annotation.rust punctuation.section.group.end.rust
+       "#" meta.annotation.rust punctuation.definition.annotation.rust
+       "[" meta.annotation.rust punctuation.section.group.begin.rust
+       "cfg" meta.annotation.rust variable.annotation.rust
+       "(" meta.annotation.rust meta.annotation.parameters.rust meta.group.rust punctuation.section.group.begin.rust
+       "not" meta.annotation.rust meta.function-call.rust variable.function.rust
+       "(" meta.annotation.rust meta.function-call.rust meta.group.rust punctuation.section.group.begin.rust
+       "feature " meta.annotation.rust
+       "=" meta.annotation.rust keyword.operator.rust
+       " " meta.annotation.rust
+       "\"" meta.annotation.rust string.quoted.double.rust punctuation.definition.string.begin.rust
+       "x" meta.annotation.rust string.quoted.double.rust
+       "\"" meta.annotation.rust string.quoted.double.rust punctuation.definition.string.end.rust
+       ")" meta.annotation.rust meta.function-call.rust meta.group.rust punctuation.section.group.end.rust
+       ")" meta.annotation.rust meta.annotation.parameters.rust meta.group.rust punctuation.section.group.end.rust
+       "]" meta.annotation.rust punctuation.section.group.end.rust
+   4 | pub(crate) struct S<'a, T: Sized> { pub a: &'a T, b: Vec<[u8; 4]> }
+       "pub" storage.modifier.rust
+       "(" punctuation.section.group.begin.rust
+       "crate" keyword.other.rust
+       ")" meta.group.rust punctuation.section.group.end.rust
+       "struct" storage.type.struct.rust
+       "S" entity.name.struct.rust
+       "<" punctuation.definition.generic.begin.rust
+       "'a" storage.modifier.lifetime.rust
+       ":" punctuation.separator.rust
+       "Sized" support.type.rust
+       ">" punctuation.definition.generic.end.rust
+       "{" punctuation.section.block.begin.rust
+       "pub" storage.modifier.rust
+       "a" variable.other.member.rust
+       ":" punctuation.separator.type.rust
+       "&" keyword.operator.rust
+       "'a" storage.modifier.lifetime.rust
+       "b" variable.other.member.rust
+       ":" punctuation.separator.type.rust
+       "Vec" support.type.rust
+       "<" punctuation.definition.generic.begin.rust
+       "[" punctuation.section.group.begin.rust
+       "u8" storage.type.rust
+       ";" punctuation.separator.rust
+       "4" constant.numeric.integer.decimal.rust
+       "]" punctuation.section.group.end.rust
+       ">" punctuation.definition.generic.end.rust
+       "}" meta.block.rust punctuation.section.block.end.rust
+   5 | struct Tuple(u32, Option<u8>);
+       "struct" storage.type.struct.rust
+       "Tuple" entity.name.struct.rust
+       "(" punctuation.section.group.begin.rust
+       "u32" storage.type.rust
+       "Option" support.type.rust
+       "<" punctuation.definition.generic.begin.rust
+       "u8" storage.type.rust
+       ">" punctuation.definition.generic.end.rust
+       ")" punctuation.section.group.end.rust
+       ";" punctuation.terminator.rust
+   6 | enum E { A(u8), B { x: i32 }, C = 3 }
+       "enum" storage.type.enum.rust
+       "E" entity.name.enum.rust
+       "{" punctuation.section.block.begin.rust
+       "(" punctuation.section.group.begin.rust
+       "u8" storage.type.rust
+       ")" meta.group.rust punctuation.section.group.end.rust
+       "," punctuation.separator.rust
+       "{" punctuation.section.block.begin.rust
+       ":" punctuation.separator.rust
+       "i32" storage.type.rust
+       "}" meta.block.rust punctuation.section.block.end.rust
+       "," punctuation.separator.rust
+       "=" keyword.operator.assignment.rust
+       "3" constant.numeric.integer.decimal.rust
+       "}" meta.block.rust punctuation.section.block.end.rust
+   7 | trait Tr { type Out; fn f(&self) -> Self::Out; }
+       "trait" storage.type.trait.rust
+       "Tr" entity.name.trait.rust
+       "{" punctuation.section.block.begin.rust
+       "type" storage.type.type.rust
+       "Out" entity.name.type.rust
+       ";" punctuation.terminator.rust
+       "fn" storage.type.function.rust
+       "f" entity.name.function.rust
+       "(" punctuation.section.parameters.begin.rust
+       "&" keyword.operator.rust
+       "self" variable.parameter.rust
+       ")" meta.function.parameters.rust punctuation.section.parameters.end.rust
+       "->" punctuation.separator.rust
+       "Self" meta.path.rust storage.type.rust storage.type.rust
+       "::" meta.path.rust storage.type.rust punctuation.accessor.rust
+       ";" punctuation.terminator.rust
+       "}" meta.block.rust punctuation.section.block.end.rust
+   8 | impl<'a, T> fmt::Display for S<'a, T> where T: Copy {
+       "impl" storage.type.impl.rust
+       "<" punctuation.definition.generic.begin.rust
+       "'a" storage.modifier.lifetime.rust
+       ">" punctuation.definition.generic.end.rust
+       "::" meta.path.rust punctuation.accessor.rust
+       "for" keyword.other.rust
+       "S" entity.name.impl.rust
+       "<" punctuation.definition.generic.begin.rust
+       "'a" storage.modifier.lifetime.rust
+       ">" punctuation.definition.generic.end.rust
+       "where" keyword.other.rust
+       ":" punctuation.separator.rust
+       "{" punctuation.section.block.begin.rust
+   9 |     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+       "fn" storage.type.function.rust
+       "fmt" entity.name.function.rust
+       "(" punctuation.section.parameters.begin.rust
+       "&" keyword.operator.rust
+       "self" variable.parameter.rust
+       "f" variable.parameter.rust
+       ":" punctuation.separator.rust
+       "&" keyword.operator.rust
+       "mut" storage.modifier.rust
+       "::" meta.path.rust punctuation.accessor.rust
+       "<" punctuation.definition.generic.begin.rust
+       "_" keyword.operator.rust
+       ">" punctuation.definition.generic.end.rust
+       ")" meta.function.parameters.rust punctuation.section.parameters.end.rust
+       "->" punctuation.separator.rust
+       "::" meta.path.rust punctuation.accessor.rust
+       "{" punctuation.section.block.begin.rust
+  10 |         write!(f.out(), "{:>8} {:10} {0:.2} {name:?} {{}}", self.a)?;
+       "write!" support.macro.rust
+       "(" meta.group.rust punctuation.section.group.begin.rust
+       "\"" string.quoted.double.rust punctuation.definition.string.begin.rust
+       "{:>8}" string.quoted.double.rust constant.other.placeholder.rust
+       " {:10} " string.quoted.double.rust
+       "{0:.2}" string.quoted.double.rust constant.other.placeholder.rust
+       " " string.quoted.double.rust
+       "{name:?}" string.quoted.double.rust constant.other.placeholder.rust
+       " " string.quoted.double.rust
+       "{{}}" string.quoted.double.rust constant.character.escape.rust
+       "\"" string.quoted.double.rust punctuation.definition.string.end.rust
+       "," punctuation.separator.rust
+       "self" variable.language.rust
+       "." punctuation.accessor.dot.rust
+       ")" meta.group.rust punctuation.section.group.end.rust
+       "?" keyword.operator.rust
+       ";" punctuation.terminator.rust
+  11 |         println!("{:#?} {x:08x}", 1u8);
+       "println!" support.macro.rust
+       "(" meta.group.rust punctuation.section.group.begin.rust
+       "\"" string.quoted.double.rust punctuation.definition.string.begin.rust
+       "{:#?}" string.quoted.double.rust constant.other.placeholder.rust
+       " " string.quoted.double.rust
+       "{x:08x}" string.quoted.double.rust constant.other.placeholder.rust
+       "\"" string.quoted.double.rust punctuation.definition.string.end.rust
+       "," punctuation.separator.rust
+       "1" constant.numeric.integer.decimal.rust
+       "u8" storage.type.numeric.rust
+       ")" meta.group.rust punctuation.section.group.end.rust
+       ";" punctuation.terminator.rust
+  12 |         let r = r##"raw "# still"##; let b = b"\x00\q"; let c = ['\n', b'a', '\u{1F600}'];
+       "let" storage.type.rust
+       "=" keyword.operator.assignment.rust
+       "r" string.quoted.double.raw.rust storage.type.string.rust
+       "##\"" string.quoted.double.raw.rust punctuation.definition.string.begin.rust
+       "raw \"# still" string.quoted.double.raw.rust
+       "\"##" string.quoted.double.raw.rust punctuation.definition.string.end.rust
+       ";" punctuation.terminator.rust
+       "let" storage.type.rust
+       "=" keyword.operator.assignment.rust
+       "b" string.quoted.double.rust storage.type.string.rust
+       "\"" string.quoted.double.rust punctuation.definition.string.begin.rust
+       "\\x00" string.quoted.double.rust constant.character.escape.rust
+       "\\q" string.quoted.double.rust
+       "\"" string.quoted.double.rust punctuation.definition.string.end.rust
+       ";" punctuation.terminator.rust
+       "let" storage.type.rust
+       "=" keyword.operator.assignment.rust
+       "[" punctuation.section.group.begin.rust
+       "'" string.quoted.single.rust punctuation.definition.string.begin.rust
+       "\\n" string.quoted.single.rust constant.character.escape.rust
+       "'" string.quoted.single.rust punctuation.definition.string.end.rust
+       "," punctuation.separator.rust
+       "b" string.quoted.single.rust storage.type.string.rust
+       "'" string.quoted.single.rust punctuation.definition.string.begin.rust
+       "a" string.quoted.single.rust
+       "'" string.quoted.single.rust punctuation.definition.string.end.rust
+       "," punctuation.separator.rust
+       "'" string.quoted.single.rust punctuation.definition.string.begin.rust
+       "\\u{1F600}" string.quoted.single.rust constant.character.escape.rust
+       "'" string.quoted.single.rust punctuation.definition.string.end.rust
+       "]" punctuation.section.group.end.rust
+       ";" punctuation.terminator.rust
+  13 |         let f = |x: u32, (a, b): (u8, u8)| -> u32 { x + 1 };
+       "let" storage.type.rust
+       "f" entity.name.function.rust
+       "=" keyword.operator.rust
+       "|" punctuation.section.parameters.begin.rust
+       "x" variable.parameter.rust
+       ":" punctuation.separator.rust
+       "u32" storage.type.rust
+       "," punctuation.separator.rust
+       "(" meta.group.rust punctuation.section.group.begin.rust
+       "a" variable.parameter.rust
+       "," punctuation.separator.rust
+       "b" variable.parameter.rust
+       ")" meta.group.rust punctuation.section.group.end.rust
+       ":" punctuation.separator.rust
+       "(" meta.group.rust punctuation.section.group.begin.rust
+       "u8" storage.type.rust
+       "," punctuation.separator.rust
+       "u8" storage.type.rust
+       ")" meta.group.rust punctuation.section.group.end.rust
+       "|" punctuation.section.parameters.end.rust
+       "->" punctuation.separator.rust
+       "u32" storage.type.rust
+       "{" punctuation.section.block.begin.rust
+       "+" keyword.operator.arithmetic.rust
+       "1" constant.numeric.integer.decimal.rust
+       "}" meta.block.rust punctuation.section.block.end.rust
+       ";" punctuation.terminator.rust
+  14 |         'outer: loop { break 'outer; }
+       "'outer" entity.name.label.rust
+       ":" punctuation.separator.rust
+       "loop" keyword.control.rust
+       "{" punctuation.section.block.begin.rust
+       "break" keyword.control.rust
+       "'outer" storage.modifier.lifetime.rust
+       ";" punctuation.terminator.rust
+       "}" meta.block.rust punctuation.section.block.end.rust
+  15 |         let v: Vec<_> = xs.iter().map(|x| x * 2).collect::<Vec<_>>();
+       "let" storage.type.rust
+       ":" punctuation.separator.rust
+       "Vec" support.type.rust
+       "<" punctuation.definition.generic.begin.rust
+       "_" keyword.operator.rust
+       ">" punctuation.definition.generic.end.rust
+       "=" keyword.operator.assignment.rust
+       "." punctuation.accessor.dot.rust
+       "iter" support.function.rust
+       "(" punctuation.section.group.begin.rust
+       ")" meta.group.rust punctuation.section.group.end.rust
+       "." punctuation.accessor.dot.rust
+       "map" support.function.rust
+       "(" punctuation.section.group.begin.rust
+       "|" punctuation.section.parameters.begin.rust
+       "x" variable.parameter.rust
+       "|" punctuation.section.parameters.end.rust
+       "*" keyword.operator.arithmetic.rust
+       "2" constant.numeric.integer.decimal.rust
+       ")" meta.group.rust punctuation.section.group.end.rust
+       "." punctuation.accessor.dot.rust
+       "::" meta.path.rust punctuation.accessor.rust
+       "<" punctuation.definition.generic.begin.rust
+       "Vec" support.type.rust
+       "<" punctuation.definition.generic.begin.rust
+       "_" keyword.operator.rust
+       ">>" punctuation.definition.generic.end.rust
+       "(" punctuation.section.group.begin.rust
+       ")" meta.group.rust punctuation.section.group.end.rust
+       ";" punctuation.terminator.rust
+  16 |         match self { Self::A if a >= 0x1F_u8 => 1.5e-3f64, _ => 0o17 as f64 + 0b1010 as f64 };
+       "match" keyword.control.rust
+       "self" variable.language.rust
+       "{" punctuation.section.block.begin.rust
+       "Self" storage.type.rust
+       "::" meta.path.rust punctuation.accessor.rust
+       "if" keyword.control.rust
+       ">=" keyword.operator.comparison.rust
+       "0x1F_" constant.numeric.integer.hexadecimal.rust
+       "u8" storage.type.numeric.rust
+       "=>" keyword.operator.rust
+       "1.5e-3" constant.numeric.float.rust
+       "f64" storage.type.numeric.rust
+       "," punctuation.separator.rust
+       "_" keyword.operator.rust
+       "=>" keyword.operator.rust
+       "0o17" constant.numeric.integer.octal.rust
+       "as" keyword.operator.rust
+       "f64" storage.type.rust
+       "+" keyword.operator.arithmetic.rust
+       "0b1010" constant.numeric.integer.binary.rust
+       "as" keyword.operator.rust
+       "f64" storage.type.rust
+       "}" meta.block.rust punctuation.section.block.end.rust
+       ";" punctuation.terminator.rust
+  17 |         unsafe { *ptr = MAX_LEN << 2; std::mem::drop(x); }
+       "unsafe" storage.modifier.rust
+       "{" punctuation.section.block.begin.rust
+       "*" keyword.operator.arithmetic.rust
+       "=" keyword.operator.assignment.rust
+       "MAX_LEN" constant.other.rust
+       "<<" keyword.operator.comparison.rust
+       "2" constant.numeric.integer.decimal.rust
+       ";" punctuation.terminator.rust
+       "::" meta.path.rust punctuation.accessor.rust
+       "::" meta.path.rust punctuation.accessor.rust
+       "(" punctuation.section.group.begin.rust
+       ")" meta.group.rust punctuation.section.group.end.rust
+       ";" punctuation.terminator.rust
+       "}" meta.block.rust punctuation.section.block.end.rust
+  18 |         /* block /* nested */ still */ /** doc
+       "/*" comment.block.rust punctuation.definition.comment.rust
+       " block " comment.block.rust
+       "/*" comment.block.rust punctuation.definition.comment.rust
+       " nested " comment.block.rust
+       "*/" comment.block.rust punctuation.definition.comment.rust
+       " still " comment.block.rust
+       "*/" comment.block.rust punctuation.definition.comment.rust
+       "/** " comment.block.documentation.rust punctuation.definition.comment.rust
+       "doc" comment.block.documentation.rust
+  19 |           * star
+       "          " comment.block.documentation.rust
+       "*" comment.block.documentation.rust punctuation.definition.comment.rust
+       " star" comment.block.documentation.rust
+  20 |           */ x..=y; a != b && !c || d
+       "          " comment.block.documentation.rust
+       "*/" comment.block.documentation.rust punctuation.definition.comment.rust
+       ".." keyword.operator.range.rust
+       "=" keyword.operator.assignment.rust
+       ";" punctuation.terminator.rust
+       "!=" keyword.operator.comparison.rust
+       "&&" keyword.operator.logical.rust
+       "!" keyword.operator.logical.rust
+       "||" keyword.operator.logical.rust
+  21 |     }
+       "}" meta.block.rust punctuation.section.block.end.rust
+  22 | }
+       "}" meta.block.rust punctuation.section.block.end.rust
+  23 | macro_rules! m { ($x:expr, $($y:ident),*) => { $x + 1 }; }
+       "macro_rules!" support.function.rust
+       "m" entity.name.macro.rust
+       "{" meta.block.rust punctuation.section.block.begin.rust
+       "(" punctuation.section.group.begin.rust
+       "$x" variable.parameter.macro.rust
+       ":" punctuation.separator.rust
+       "expr" storage.type.rust
+       "$" punctuation.section.group.begin.rust keyword.operator.rust
+       "(" punctuation.section.group.begin.rust
+       "$y" variable.parameter.macro.rust
+       ":" punctuation.separator.rust
+       "ident" storage.type.rust
+       ")" punctuation.section.group.end.rust
+       "*" keyword.operator.rust
+       ")" punctuation.section.group.end.rust
+       "=>" keyword.operator.rust
+       "{" punctuation.section.block.begin.rust
+       "$x" variable.other.rust
+       "+" keyword.operator.arithmetic.rust
+       "1" constant.numeric.integer.decimal.rust
+       "}" meta.block.rust punctuation.section.block.end.rust
+       ";" punctuation.terminator.macro-matcher.rust
+       "}" meta.block.rust punctuation.section.block.end.rust
+  24 | type Alias = fn(u8) -> u8;
+       "type" storage.type.type.rust
+       "Alias" entity.name.type.rust
+       "=" keyword.operator.assignment.rust
+       "fn" storage.type.function.rust
+       "(" punctuation.section.group.begin.rust
+       "u8" storage.type.rust
+       ")" meta.group.rust punctuation.section.group.end.rust
+       "->" punctuation.separator.rust
+       "u8" storage.type.rust
+       ";" punctuation.terminator.rust
+  25 | mod tests { use super::*; }
+       "mod" storage.type.module.rust
+       "tests" entity.name.module.rust
+       "{" punctuation.section.block.begin.rust
+       "use" keyword.other.rust
+       "super" keyword.other.rust
+       "::" meta.path.rust punctuation.accessor.rust
+       "*" keyword.operator.arithmetic.rust
+       ";" punctuation.terminator.rust
+       "}" meta.block.rust punctuation.section.block.end.rust
+  26 | const C_T: c_int = 0; static mut size_t: usize = 1.;
+       "const" storage.type.rust
+       "C_T" constant.other.rust
+       ":" punctuation.separator.rust
+       "c_int" storage.type.rust
+       "=" keyword.operator.assignment.rust
+       "0" constant.numeric.integer.decimal.rust
+       ";" punctuation.terminator.rust
+       "static" storage.type.rust
+       "mut" storage.modifier.rust
+       "size_t" storage.type.rust
+       ":" punctuation.separator.rust
+       "usize" storage.type.rust
+       "=" keyword.operator.assignment.rust
+       "1." constant.numeric.float.rust
+       ";" punctuation.terminator.rust
+  27 | fn g<T>(
+       "fn" storage.type.function.rust
+       "g" entity.name.function.rust
+       "<" punctuation.definition.generic.begin.rust
+       ">" punctuation.definition.generic.end.rust
+       "(" punctuation.section.parameters.begin.rust
+  28 |     a: impl Iterator<Item = u8>,
+       "a" variable.parameter.rust
+       ":" punctuation.separator.rust
+       "Iterator" support.type.rust
+       "<" punctuation.definition.generic.begin.rust
+       "u8" storage.type.rust
+       ">" punctuation.definition.generic.end.rust
+  29 | ) -> Box<dyn Fn() -> u8 + Send> where T: Default {}
+       ")" meta.function.parameters.rust punctuation.section.parameters.end.rust
+       "->" punctuation.separator.rust
+       "Box" support.type.rust
+       "<" punctuation.definition.generic.begin.rust
+       "Fn" support.type.rust
+       "(" punctuation.section.group.begin.rust
+       ")" punctuation.section.group.end.rust
+       "->" punctuation.separator.generic.rust
+       "u8" storage.type.rust
+       "+" keyword.operator.rust
+       "Send" support.type.rust
+       ">" punctuation.definition.generic.end.rust
+       "where" keyword.other.rust
+       ":" punctuation.separator.rust
+       "{" punctuation.section.block.begin.rust
+       "}" meta.block.rust punctuation.section.block.end.rust

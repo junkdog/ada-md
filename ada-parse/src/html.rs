@@ -315,7 +315,6 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         stack: [MAIN; MAX],
         depth: 1,
         at: 0,
-        exact: state.is_exact(),
         emb: None,
     };
     let p = s.begin(state);
@@ -340,7 +339,6 @@ pub fn block(
         stack: [MAIN; MAX],
         depth: 1,
         at: 0,
-        exact: state.is_exact(),
         emb: None,
     };
     // the state loaded, not lexed on an empty line: an embed's language would end what an empty
@@ -368,7 +366,7 @@ impl crate::Carry for Scan<'_, '_, '_> {
         }
         // past the levels a state holds, the bottom ones dropped; an embed's line is its own
         if self.emb.is_none() {
-            crate::stack::hold(&mut self.stack, &mut self.depth, &mut self.exact);
+            crate::stack::hold(&mut self.stack, &mut self.depth);
         }
         self.b = b"";
         self.out.0
@@ -380,7 +378,7 @@ impl Scan<'_, '_, '_> {
     /// ([`Scan::begin`]).
     #[inline(never)]
     fn reopen(&mut self, state: &State) -> usize {
-        (self.depth, self.exact, self.emb) = (1, state.is_exact(), None);
+        (self.depth, self.emb) = (1, None);
         self.begin(state)
     }
 
@@ -438,13 +436,11 @@ impl Scan<'_, '_, '_> {
             } else {
                 0
             };
-            let exact = self.exact && st.is_exact() && bodies < 64;
             let mut state = st;
-            state.inexact = !exact;
             state.arg = frame(emb, quote == b'\'', bodies, tag);
             return state;
         }
-        State::keep(&self.stack, self.depth, self.exact, 0)
+        State::keep(&self.stack, self.depth, 0)
     }
 }
 
@@ -455,7 +451,6 @@ struct Scan<'b, 'o, 's> {
     depth: usize,
     /// Where the spans reach: the text before a token is filled from here.
     at: usize,
-    exact: bool,
     /// The embed the line ends in, its quote, and its language's state there.
     emb: Option<(Emb, u8, State)>,
 }
@@ -661,7 +656,7 @@ impl Scan<'_, '_, '_> {
 
     fn push(&mut self, ctx: u8) {
         if self.depth == MAX {
-            crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
+            crate::stack::drop_bottom(&mut self.stack, &mut self.depth);
         }
         self.stack[self.depth] = ctx;
         self.depth += 1;

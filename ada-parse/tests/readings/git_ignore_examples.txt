@@ -1,0 +1,326 @@
+# GitIgnore: ada-parse/tests/readings.rs, git_ignore_examples
+
+## block 1
+   1 | # build output
+       "#" comment.line.git punctuation.definition.comment.git
+       " build output" comment.line.git
+   2 | /target/
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       "target" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+   3 | !keep.me
+       "!" string.unquoted.git.ignore entity.name.pattern.git.ignore keyword.operator.logical.path.fnmatch.git.ignore
+       "keep" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "." string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.extension.fnmatch.git
+       "me" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   4 | *.log ; not a comment
+       "*" string.unquoted.git.ignore entity.name.pattern.git.ignore keyword.operator.path.asterisk.fnmatch.git
+       "." string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.extension.fnmatch.git
+       "log ; not a comment" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   5 | **/node_modules
+       "**" string.unquoted.git.ignore entity.name.pattern.git.ignore keyword.operator.path.asterisk.fnmatch.git
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       "node_modules" string.unquoted.git.ignore entity.name.pattern.git.ignore
+
+## block 2
+   1 | docs/[!a-c]*.md
+       "docs" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       "[" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.begin.fnmatch.git
+       "!" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.operator.logical.fnmatch.git
+       "a-c" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git constant.character.char-class.fnmatch.git
+       "]" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.end.fnmatch.git
+       "*" string.unquoted.git.ignore entity.name.pattern.git.ignore keyword.operator.path.asterisk.fnmatch.git
+       "." string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.extension.fnmatch.git
+       "md" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   2 | a[]b]c
+       "a" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "[" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.begin.fnmatch.git
+       "]b" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git constant.character.char-class.fnmatch.git
+       "]" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.end.fnmatch.git
+       "c" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   3 | a[x
+       "a" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "[" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.begin.fnmatch.git
+       "x" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git constant.character.char-class.fnmatch.git
+   4 | \#literal \ 
+       "\\#" string.unquoted.git.ignore entity.name.pattern.git.ignore constant.character.escape.path.fnmatch.git
+       "literal " string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "\\ " string.unquoted.git.ignore entity.name.pattern.git.ignore constant.character.escape.path.fnmatch.git
+   5 | $HOME/../.cache/./x
+       "$HOME" string.unquoted.git.ignore entity.name.pattern.git.ignore variable.language.environment.other.fnmatch.git
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       ".." string.unquoted.git.ignore entity.name.pattern.git.ignore constant.language.path.parent.fnmatch.git
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       ".cache" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       "." string.unquoted.git.ignore entity.name.pattern.git.ignore constant.language.path.self.fnmatch.git
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       "x" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   6 | C:/drive ~/home
+       "C" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       ":" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.drive.fnmatch.git
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       "drive ~" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       "home" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   7 |    
+
+## block 3
+   1 | a[\]b]c [^x] [*?] [ ] [é]
+       "a" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "[" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.begin.fnmatch.git
+       "\\]" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git constant.character.escape.char-class.fnmatch.git
+       "b" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git constant.character.char-class.fnmatch.git
+       "]" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.end.fnmatch.git
+       "c " string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "[" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.begin.fnmatch.git
+       "^" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.operator.logical.fnmatch.git
+       "x" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git constant.character.char-class.fnmatch.git
+       "]" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.end.fnmatch.git
+       " " string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "[" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.begin.fnmatch.git
+       "*?" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git invalid.illegal.unexpected.char-class.fnmatch.git
+       "]" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.end.fnmatch.git
+       " " string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "[" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.begin.fnmatch.git
+       " " string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git
+       "]" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.end.fnmatch.git
+       " " string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "[" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.begin.fnmatch.git
+       "é" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git constant.character.char-class.fnmatch.git
+       "]" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.end.fnmatch.git
+   2 | x\
+       "x" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "\\" string.unquoted.git.ignore entity.name.pattern.git.ignore constant.character.escape.path.fnmatch.git
+   3 | y\$z\*\é "q" a:b ./x ../y .z/w.v
+       "y\\" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "$z" string.unquoted.git.ignore entity.name.pattern.git.ignore variable.language.environment.other.fnmatch.git
+       "\\" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "*" string.unquoted.git.ignore entity.name.pattern.git.ignore keyword.operator.path.asterisk.fnmatch.git
+       "\\é" string.unquoted.git.ignore entity.name.pattern.git.ignore constant.character.escape.path.fnmatch.git
+       " \"q\" a" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       ":" string.unquoted.git.ignore entity.name.pattern.git.ignore invalid.illegal.separator.drive.fnmatch.git
+       "b ." string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       "x .." string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       "y .z" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       "w" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "." string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.extension.fnmatch.git
+       "v" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   4 | [
+       "[" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.begin.fnmatch.git
+   5 | \
+       "\\" string.unquoted.git.ignore entity.name.pattern.git.ignore constant.character.escape.path.fnmatch.git
+   6 | !
+       "!" string.unquoted.git.ignore entity.name.pattern.git.ignore keyword.operator.logical.path.fnmatch.git.ignore
+   7 | !!x
+       "!" string.unquoted.git.ignore entity.name.pattern.git.ignore keyword.operator.logical.path.fnmatch.git.ignore
+       "!x" string.unquoted.git.ignore entity.name.pattern.git.ignore
+
+## block 4
+   1 | # attributes
+       "#" comment.line.git punctuation.definition.comment.git
+       " attributes" comment.line.git
+   2 | * text=auto eol=lf
+       "*" string.unquoted.git.ignore entity.name.pattern.git.ignore keyword.operator.path.asterisk.fnmatch.git
+       " text=auto eol=lf" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   3 | *.png binary -diff
+       "*" string.unquoted.git.ignore entity.name.pattern.git.ignore keyword.operator.path.asterisk.fnmatch.git
+       "." string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.extension.fnmatch.git
+       "png binary -diff" string.unquoted.git.ignore entity.name.pattern.git.ignore
+
+## block 5
+   1 | *.rs diff=rust merge=union filter=lfs encoding=UTF-16 whitespace=tab-in-indent,trailing-space
+       "*" string.unquoted.git.ignore entity.name.pattern.git.ignore keyword.operator.path.asterisk.fnmatch.git
+       "." string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.extension.fnmatch.git
+       "rs diff=rust merge=union filter=lfs encoding=UTF-16 whitespace=tab-in-indent,trailing-space" string.unquoted.git.ignore entity.name.pattern.git.ignore
+
+## block 6
+   1 | "quoted path" -text !eol custom=a,b, x="q\"v"
+       "\"quoted path\" -text !eol custom=a,b, x=\"q" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "\\\"" string.unquoted.git.ignore entity.name.pattern.git.ignore constant.character.escape.path.fnmatch.git
+       "v\"" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   2 | [attr]binary -diff -merge -text
+       "[" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.begin.fnmatch.git
+       "attr" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git constant.character.char-class.fnmatch.git
+       "]" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.end.fnmatch.git
+       "binary -diff -merge -text" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   3 | -bad op
+       "-bad op" string.unquoted.git.ignore entity.name.pattern.git.ignore
+
+## block 7
+   1 | path/[ab]*.c foo= bar
+       "path" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       "[" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.begin.fnmatch.git
+       "ab" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git constant.character.char-class.fnmatch.git
+       "]" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.end.fnmatch.git
+       "*" string.unquoted.git.ignore entity.name.pattern.git.ignore keyword.operator.path.asterisk.fnmatch.git
+       "." string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.extension.fnmatch.git
+       "c foo= bar" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   2 | x a="open
+       "x a=\"open" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   3 | x a=, b=,c ,d a=b,,c a==b a=b=c
+       "x a=, b=,c ,d a=b,,c a==b a=b=c" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   4 |  !x
+       "!" string.unquoted.git.ignore entity.name.pattern.git.ignore keyword.operator.logical.path.fnmatch.git.ignore
+       "x" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   5 | "[a" b
+       "\"" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "[" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.begin.fnmatch.git
+       "a\"" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git constant.character.char-class.fnmatch.git
+       " " string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git
+       "b" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git constant.character.char-class.fnmatch.git
+   6 | "a
+       "\"a" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   7 | b\
+       "b" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "\\" string.unquoted.git.ignore entity.name.pattern.git.ignore constant.character.escape.path.fnmatch.git
+   8 | c d
+       "c d" string.unquoted.git.ignore entity.name.pattern.git.ignore
+
+## block 8
+   1 | x textual eolx diffx -diff- a-b- a--b _ é=é [ab] [-x] [!x] [a] b
+       "x textual eolx diffx -diff- a-b- a--b _ é=é " string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "[" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.begin.fnmatch.git
+       "ab" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git constant.character.char-class.fnmatch.git
+       "]" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.end.fnmatch.git
+       " " string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "[" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.begin.fnmatch.git
+       "-x" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git constant.character.char-class.fnmatch.git
+       "]" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.end.fnmatch.git
+       " " string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "[" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.begin.fnmatch.git
+       "!" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.operator.logical.fnmatch.git
+       "x" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git constant.character.char-class.fnmatch.git
+       "]" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.end.fnmatch.git
+       " " string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "[" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.begin.fnmatch.git
+       "a" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git constant.character.char-class.fnmatch.git
+       "]" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.end.fnmatch.git
+       " b" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   2 |  x\t\ty="\t\x" z=" "
+       "x\t\ty=\"" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "\\t\\x" string.unquoted.git.ignore entity.name.pattern.git.ignore constant.character.escape.path.fnmatch.git
+       "\" z=\" \"" string.unquoted.git.ignore entity.name.pattern.git.ignore
+
+## block 9
+   1 | # mailmap
+       "#" comment.line.git punctuation.definition.comment.git
+       " mailmap" comment.line.git
+   2 | Proper Name <proper@email.xx>
+       "Proper Name <proper@email" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "." string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.extension.fnmatch.git
+       "xx>" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   3 | <proper@email.xx> <commit@email.xx>
+       "<proper@email.xx> <commit@email" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "." string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.extension.fnmatch.git
+       "xx>" string.unquoted.git.ignore entity.name.pattern.git.ignore
+
+## block 10
+   1 | Proper Name <proper@email.xx> Commit Name <commit@email.xx>
+       "Proper Name <proper@email.xx> Commit Name <commit@email" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "." string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.extension.fnmatch.git
+       "xx>" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   2 | Name Only
+       "Name Only" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   3 | <bad email> x
+       "<bad email> x" string.unquoted.git.ignore entity.name.pattern.git.ignore
+
+## block 11
+   1 | a <b@c.d.e> f ; g
+       "a <b@c.d" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "." string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.extension.fnmatch.git
+       "e> f ; g" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   2 | <<a>> <> <a <a@b@c.d> a\t <x>
+       "<<a>> <> <a <a@b@c" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "." string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.extension.fnmatch.git
+       "d> a\t <x>" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   3 | name ;comment <x>
+       "name ;comment <x>" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   4 | \u{d}<a>
+       "<a>" string.unquoted.git.ignore entity.name.pattern.git.ignore
+
+## block 12
+   1 | gitdir: ../.git/modules/sub
+       "gitdir" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       ":" string.unquoted.git.ignore entity.name.pattern.git.ignore invalid.illegal.separator.drive.fnmatch.git
+       " .." string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       ".git" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       "modules" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       "sub" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   2 |   gitdir :C:\repo\.git.
+       "gitdir " string.unquoted.git.ignore entity.name.pattern.git.ignore
+       ":" string.unquoted.git.ignore entity.name.pattern.git.ignore invalid.illegal.separator.drive.fnmatch.git
+       "C" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       ":" string.unquoted.git.ignore entity.name.pattern.git.ignore invalid.illegal.separator.drive.fnmatch.git
+       "\\r" string.unquoted.git.ignore entity.name.pattern.git.ignore constant.character.escape.path.fnmatch.git
+       "epo" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "\\." string.unquoted.git.ignore entity.name.pattern.git.ignore constant.character.escape.path.fnmatch.git
+       "git" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "." string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.extension.fnmatch.git
+   3 | gitdir: ~/x/*
+       "gitdir" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       ":" string.unquoted.git.ignore entity.name.pattern.git.ignore invalid.illegal.separator.drive.fnmatch.git
+       " ~" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       "x" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       "*" string.unquoted.git.ignore entity.name.pattern.git.ignore keyword.operator.path.asterisk.fnmatch.git
+   4 | notgitdir: x
+       "notgitdir" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       ":" string.unquoted.git.ignore entity.name.pattern.git.ignore invalid.illegal.separator.drive.fnmatch.git
+       " x" string.unquoted.git.ignore entity.name.pattern.git.ignore
+
+## block 13
+   1 | # comment
+       "#" comment.line.git punctuation.definition.comment.git
+       " comment" comment.line.git
+   2 | gitdir
+       "gitdir" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   3 | x
+       "x" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   4 | gitdir x : y
+       "gitdir x " string.unquoted.git.ignore entity.name.pattern.git.ignore
+       ":" string.unquoted.git.ignore entity.name.pattern.git.ignore invalid.illegal.separator.drive.fnmatch.git
+       " y" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   5 | gitdir:
+       "gitdir" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       ":" string.unquoted.git.ignore entity.name.pattern.git.ignore invalid.illegal.separator.drive.fnmatch.git
+   6 | gitdir: a/..\./b.c.
+       "gitdir" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       ":" string.unquoted.git.ignore entity.name.pattern.git.ignore invalid.illegal.separator.drive.fnmatch.git
+       " a" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       ".." string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "\\." string.unquoted.git.ignore entity.name.pattern.git.ignore constant.character.escape.path.fnmatch.git
+       "/" string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.fnmatch.git
+       "b.c" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "." string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.extension.fnmatch.git
+   7 |  gitdir: .
+       "gitdir" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       ":" string.unquoted.git.ignore entity.name.pattern.git.ignore invalid.illegal.separator.drive.fnmatch.git
+       " " string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "." string.unquoted.git.ignore entity.name.pattern.git.ignore punctuation.separator.path.extension.fnmatch.git
+
+## block 14
+   1 | a"b c x"y="z" "q"r s
+       "a\"b c x\"y=\"z\" \"q\"r s" string.unquoted.git.ignore entity.name.pattern.git.ignore
+   2 | ab"[c" d
+       "ab\"" string.unquoted.git.ignore entity.name.pattern.git.ignore
+       "[" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git keyword.control.char-class.begin.fnmatch.git
+       "c\"" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git constant.character.char-class.fnmatch.git
+       " " string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git
+       "d" string.unquoted.git.ignore entity.name.pattern.git.ignore meta.char-class.fnmatch.git constant.character.char-class.fnmatch.git
+
+## block 15
+
+## block 16
+   1 | 
+   2 | 

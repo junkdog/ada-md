@@ -648,11 +648,10 @@ impl crate::CarryRuns for Scan<'_, '_, Runs<'_>> {
 struct Scan<'b, 'c, K: Sink> {
     b: &'b [u8],
     /// What each open frame is ([`F_PAREN`]…), four bits a level, the innermost lowest; past
-    /// [`LEVELS`] the outer ones are lost (and the state inexact).
+    /// [`LEVELS`] the outer ones are lost.
     frames: u128,
     /// How many frames are open, up to 255.
     depth: u8,
-    exact: bool,
     /// What the line starts in ([`M_CODE`]…).
     mode: u8,
     /// An open block comment's depth.
@@ -691,7 +690,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             b,
             frames: 0,
             depth: 0,
-            exact: true,
             mode: M_CODE,
             nest: 0,
             ctx: 0,
@@ -722,7 +720,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         w[15] = state.withs[1];
         self.frames = u128::from_le_bytes(w);
         self.depth = state.depth;
-        self.exact = !state.inexact;
         self.nest = state.withs[2];
         self.ctx = state.withs[3];
         self.mode = (state.arg & 7) as u8;
@@ -741,7 +738,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         s.withs[2] = self.nest;
         s.withs[3] = self.ctx;
         s.depth = self.depth;
-        s.inexact = !self.exact;
         s.arg = u16::from(self.mode) | if self.marked { MARKED } else { 0 };
         s
     }
@@ -818,9 +814,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn push(&mut self, f: u8) {
         self.frames = self.frames << 4 | u128::from(f);
         self.depth = self.depth.saturating_add(1);
-        if self.depth > LEVELS {
-            self.exact = false;
-        }
     }
 
     #[inline(always)]

@@ -1,0 +1,63 @@
+# SshdConfig: ada-parse/tests/readings.rs, sshd_config
+   1 | # $OpenBSD$
+       "#" comment.line.number-sign.sshd_config punctuation.definition.comment.sshd_config
+       " $OpenBSD$" comment.line.number-sign.sshd_config
+   2 | Port 22
+       "Port" keyword.other.sshd_config
+       "22" constant.numeric.sshd_config
+   3 | ListenAddress 0.0.0.0
+       "ListenAddress" keyword.other.sshd_config
+       "0.0.0.0" constant.numeric.ip-address.v4.ssh.common
+   4 | PermitRootLogin no
+       "PermitRootLogin" keyword.other.sshd_config
+       "no" constant.language.boolean.sshd_config
+   5 | KexAlgorithms curve25519-sha256,diffie-hellman-group14-sha1
+       "KexAlgorithms" keyword.other.sshd_config
+       "curve25519-sha256" support.function.kex-algorithm
+       "," punctuation.separator.sequence.sshd_config
+       "diffie-hellman-group14-sha1" invalid.deprecated.kex-algorithm
+   6 | MACs hmac-sha2-256,hmac-md5
+       "MACs" keyword.other.sshd_config
+       "hmac-sha2-256" support.function.mac-algorithm
+       "," punctuation.separator.sequence.sshd_config
+       "hmac-md5" invalid.deprecated.mac-algorithm
+   7 | AuthorizedKeysFile .ssh/authorized_keys %h/.ssh/keys
+       "AuthorizedKeysFile" keyword.other.sshd_config
+       ".ssh/authorized_keys " string.unquoted.sshd_config
+       "%h" constant.character.escape.sshd_config
+       "/.ssh/keys" string.unquoted.sshd_config
+   8 | RekeyLimit 1G 1h
+       "RekeyLimit" keyword.other.sshd_config
+       "1" constant.numeric.integer.decimal.ssh.common
+       "G" storage.modifier.unit.ssh.common
+       " " string.unquoted.sshd_config
+       "1" constant.numeric.integer.decimal.ssh.common
+       "h" storage.modifier.unit.ssh.common
+   9 | Banner none
+       "Banner" keyword.other.sshd_config
+       "none" constant.language.set.sshd_config
+  10 | Subsystem sftp /usr/lib/ssh/sftp-server
+       "Subsystem" keyword.other.sshd_config
+       "sftp /usr/lib/ssh/sftp-server" string.unquoted.sshd_config
+  11 | Match User anoncvs,!root Address 10.0.0.0/8 LocalPort 2222
+       "Match" keyword.control.conditional.sshd_config
+       "User" keyword.other.sshd_config
+       "anoncvs" string.unquoted.sshd_config
+       "," punctuation.separator.sequence.sshd_config
+       "!" keyword.operator.logical.sshd_config
+       "root" string.unquoted.sshd_config
+       "Address" keyword.other.sshd_config
+       "10.0.0.0" constant.numeric.ip-address.v4.ssh.common
+       "/" punctuation.separator.sequence.ssh.common
+       "8" constant.other.range.ssh.common
+       "LocalPort" keyword.other.sshd_config
+       "2222" constant.numeric.integer.decimal.sshd_config
+  12 |   X11Forwarding no
+       "X11Forwarding" keyword.other.sshd_config
+       "no" constant.language.boolean.sshd_config
+  13 |   ForceCommand cvs server
+       "ForceCommand" keyword.other.sshd_config
+       "cvs" meta.function-call.shell support.function.command.shell
+  14 | Match all
+       "Match" keyword.control.conditional.sshd_config
+       "all" constant.language.boolean.sshd_config

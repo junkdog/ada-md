@@ -1,0 +1,43 @@
+# CMakeCache: ada-parse/tests/readings.rs, cmake_cache
+   1 | # This is the CMakeCache file.
+       "#" comment.line.number-sign.cmakecache punctuation.definition.comment.cmakecache
+       " This is the CMakeCache file." comment.line.number-sign.cmakecache
+   2 | //Path to a program.
+       "//" comment.line.double-slash.doc.cmakecache punctuation.definition.comment.cmakecache
+       "Path to a program." comment.line.double-slash.doc.cmakecache
+   3 | CMAKE_AR:FILEPATH=/usr/bin/ar
+       "CMAKE_AR" variable.parameter.cmakecache
+       ":" punctuation.separator.cmakecache
+       "FILEPATH" storage.type.cmakecache
+       "=" keyword.operator.assignment.cmakecache
+       "/usr/bin/ar" string.unquoted.cmakecache
+   4 | K-2:STATIC=
+       "K-2" variable.parameter.cmakecache
+       ":" punctuation.separator.cmakecache
+       "STATIC" storage.type.cmakecache
+       "=" keyword.operator.assignment.cmakecache
+   5 |   K:BOOL=ON # x
+       "  K:BOOL=ON " invalid.illegal.cmakecache
+       "#" comment.line.number-sign.cmakecache punctuation.definition.comment.cmakecache
+       " x" comment.line.number-sign.cmakecache
+   6 | KEY
+       "KEY" variable.parameter.cmakecache
+   7 | :STRING=a
+       ":" punctuation.separator.cmakecache
+       "STRING" storage.type.cmakecache
+       "=" keyword.operator.assignment.cmakecache
+       "a" string.unquoted.cmakecache
+   8 | K:T==x
+       "K" variable.parameter.cmakecache
+       ":" punctuation.separator.cmakecache
+       "T" storage.type.cmakecache
+       "==" keyword.operator.assignment.cmakecache
+       "x" string.unquoted.cmakecache
+   9 | K:A B.c;v
+       "K" variable.parameter.cmakecache
+       ":" punctuation.separator.cmakecache
+       "A B.c" storage.type.cmakecache
+       ";v" string.unquoted.cmakecache
+  10 | x // c
+       "x" variable.parameter.cmakecache
+       " // c" storage.type.cmakecache

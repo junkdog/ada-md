@@ -1,0 +1,755 @@
+# Java: ada-parse/tests/readings.rs, java
+   1 | package org.example.app; // the app
+       "package" keyword.other.package.java
+       "org" entity.name.namespace.java
+       "." entity.name.namespace.java punctuation.accessor.dot.java
+       "example" entity.name.namespace.java
+       "." entity.name.namespace.java punctuation.accessor.dot.java
+       "app" entity.name.namespace.java
+       ";" punctuation.terminator.java
+       "//" comment.line.double-slash.java punctuation.definition.comment.java
+       " the app" comment.line.double-slash.java
+   2 | import java.util.*;
+       "import" keyword.control.import.java
+       "java" support.type.package.java
+       "." punctuation.accessor.dot.java
+       "util" support.type.package.java
+       "." punctuation.accessor.dot.java
+       "*" keyword.operator.wildcard.asterisk.java
+       ";" punctuation.terminator.java
+   3 | import static org.junit.Assert.assertEquals;
+       "import" keyword.control.import.java
+       "static" keyword.control.import.static.java
+       "org" support.type.package.java
+       "." punctuation.accessor.dot.java
+       "junit" support.type.package.java
+       "." punctuation.accessor.dot.java
+       "Assert" support.class.import.java
+       "." punctuation.accessor.dot.java
+       "assertEquals" support.function.import.java
+       ";" punctuation.terminator.java
+   4 | /** Doc with <a href="x" id=y class='z'>link</a>, <my-tag Bad>x</my-tag>, <!-- c -->
+       "/**" comment.block.documentation.javadoc punctuation.definition.comment.begin.javadoc
+       " Doc with " comment.block.documentation.javadoc text.html.javadoc
+       "<" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.tag.begin.html
+       "a" comment.block.documentation.javadoc text.html.javadoc entity.name.tag.inline.a.html
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "href" comment.block.documentation.javadoc text.html.javadoc entity.other.attribute-name.html
+       "=" comment.block.documentation.javadoc text.html.javadoc punctuation.separator.key-value.html
+       "\"" comment.block.documentation.javadoc text.html.javadoc string.quoted.double.html punctuation.definition.string.begin.html
+       "x" comment.block.documentation.javadoc text.html.javadoc string.quoted.double.html
+       "\"" comment.block.documentation.javadoc text.html.javadoc string.quoted.double.html punctuation.definition.string.end.html
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "id" comment.block.documentation.javadoc text.html.javadoc entity.other.attribute-name.id.html
+       "=" comment.block.documentation.javadoc text.html.javadoc punctuation.separator.key-value.html
+       "y" comment.block.documentation.javadoc text.html.javadoc string.unquoted.html
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "class" comment.block.documentation.javadoc text.html.javadoc entity.other.attribute-name.class.html
+       "=" comment.block.documentation.javadoc text.html.javadoc punctuation.separator.key-value.html
+       "'" comment.block.documentation.javadoc text.html.javadoc string.quoted.single.html punctuation.definition.string.begin.html
+       "z" comment.block.documentation.javadoc text.html.javadoc string.quoted.single.html
+       "'" comment.block.documentation.javadoc text.html.javadoc string.quoted.single.html punctuation.definition.string.end.html
+       ">" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.tag.end.html
+       "link" comment.block.documentation.javadoc text.html.javadoc
+       "</" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.tag.begin.html
+       "a" comment.block.documentation.javadoc text.html.javadoc entity.name.tag.inline.a.html
+       ">" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.tag.end.html
+       ", " comment.block.documentation.javadoc text.html.javadoc
+       "<" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.tag.begin.html
+       "my-tag" comment.block.documentation.javadoc text.html.javadoc entity.name.tag.custom.html
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "Bad" comment.block.documentation.javadoc text.html.javadoc entity.other.attribute-name.html
+       ">" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.tag.end.html
+       "x" comment.block.documentation.javadoc text.html.javadoc
+       "</" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.tag.begin.html
+       "my-tag" comment.block.documentation.javadoc text.html.javadoc entity.name.tag.custom.html
+       ">" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.tag.end.html
+       ", " comment.block.documentation.javadoc text.html.javadoc
+       "<!--" comment.block.documentation.javadoc text.html.javadoc comment.block.html punctuation.definition.comment.begin.html
+       " c " comment.block.documentation.javadoc text.html.javadoc comment.block.html
+       "-->" comment.block.documentation.javadoc text.html.javadoc comment.block.html punctuation.definition.comment.end.html
+   5 |  * &amp; &#169; &bad <> a<b List<String> {@code a {b} c} {@inheritDoc} {@value Foo#BAR}
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "*" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.comment.javadoc
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "&" comment.block.documentation.javadoc text.html.javadoc constant.character.entity.named.html punctuation.definition.entity.html
+       "amp" comment.block.documentation.javadoc text.html.javadoc constant.character.entity.named.html
+       ";" comment.block.documentation.javadoc text.html.javadoc constant.character.entity.named.html punctuation.terminator.entity.html
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "&#" comment.block.documentation.javadoc text.html.javadoc constant.character.entity.decimal.html punctuation.definition.entity.html
+       "169" comment.block.documentation.javadoc text.html.javadoc constant.character.entity.decimal.html
+       ";" comment.block.documentation.javadoc text.html.javadoc constant.character.entity.decimal.html punctuation.terminator.entity.html
+       " &bad " comment.block.documentation.javadoc text.html.javadoc
+       "<>" comment.block.documentation.javadoc text.html.javadoc invalid.illegal.incomplete.html
+       " a" comment.block.documentation.javadoc text.html.javadoc
+       "<" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.tag.begin.html
+       "b" comment.block.documentation.javadoc text.html.javadoc entity.name.tag.inline.any.html
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "List" comment.block.documentation.javadoc text.html.javadoc entity.other.attribute-name.html
+       "<" comment.block.documentation.javadoc text.html.javadoc entity.other.attribute-name.html invalid.illegal.attribute-name.html
+       "String" comment.block.documentation.javadoc text.html.javadoc entity.other.attribute-name.html
+       ">" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.tag.end.html
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "{" comment.block.documentation.javadoc text.html.javadoc punctuation.section.inline-tag.begin.javadoc
+       "@" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.code-or-literal.javadoc punctuation.definition.keyword.javadoc
+       "code" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.code-or-literal.javadoc
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "a {b} c" comment.block.documentation.javadoc text.html.javadoc markup.raw.javadoc
+       "}" comment.block.documentation.javadoc text.html.javadoc punctuation.section.inline-tag.end.javadoc
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "{" comment.block.documentation.javadoc text.html.javadoc punctuation.section.inline-tag.begin.javadoc
+       "@" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.javadoc punctuation.definition.keyword.javadoc
+       "inheritDoc" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.javadoc
+       "}" comment.block.documentation.javadoc text.html.javadoc punctuation.section.inline-tag.end.javadoc
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "{" comment.block.documentation.javadoc text.html.javadoc punctuation.section.inline-tag.begin.javadoc
+       "@" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.value.javadoc punctuation.definition.keyword.javadoc
+       "value" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.value.javadoc
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "Foo#BAR" comment.block.documentation.javadoc text.html.javadoc markup.underline.link.javadoc
+       "}" comment.block.documentation.javadoc text.html.javadoc punctuation.section.inline-tag.end.javadoc
+   6 |  * {@linkplain java.util.List#add(Object, int) the add}
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "*" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.comment.javadoc
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "{" comment.block.documentation.javadoc text.html.javadoc punctuation.section.inline-tag.begin.javadoc
+       "@" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.link.javadoc punctuation.definition.keyword.javadoc
+       "linkplain" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.link.javadoc
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "java.util.List#add(Object, int)" comment.block.documentation.javadoc text.html.javadoc markup.underline.link.javadoc
+       " the add" comment.block.documentation.javadoc text.html.javadoc
+       "}" comment.block.documentation.javadoc text.html.javadoc punctuation.section.inline-tag.end.javadoc
+   7 |  * @see Foo#bar(int, String)
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "*" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.comment.javadoc
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "@" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.see.javadoc punctuation.definition.keyword.javadoc
+       "see" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.see.javadoc
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "Foo#bar(int, String)" comment.block.documentation.javadoc text.html.javadoc markup.underline.link.javadoc
+   8 |  * @hidden unknown
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "*" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.comment.javadoc
+       " @hidden unknown" comment.block.documentation.javadoc text.html.javadoc
+   9 |  *   so this stays <b>plain</b>
+       " *   so this stays <b>plain</b>" comment.block.documentation.javadoc text.html.javadoc
+  10 |  * @param <T> the type
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "*" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.comment.javadoc
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "@" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.param.javadoc punctuation.definition.keyword.javadoc
+       "param" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.param.javadoc
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "<T>" comment.block.documentation.javadoc text.html.javadoc variable.parameter.javadoc
+       " the type" comment.block.documentation.javadoc text.html.javadoc
+  11 | @param at the line's start
+       "@param at the line's start" comment.block.documentation.javadoc text.html.javadoc
+  12 |  * @return the {@code value
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "*" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.comment.javadoc
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "@" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.javadoc punctuation.definition.keyword.javadoc
+       "return" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.javadoc
+       " the " comment.block.documentation.javadoc text.html.javadoc
+       "{" comment.block.documentation.javadoc text.html.javadoc punctuation.section.inline-tag.begin.javadoc
+       "@" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.code-or-literal.javadoc punctuation.definition.keyword.javadoc
+       "code" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.code-or-literal.javadoc
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "value" comment.block.documentation.javadoc text.html.javadoc markup.raw.javadoc
+  13 |  *   across} lines */
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "*" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.comment.javadoc
+       "   " comment.block.documentation.javadoc text.html.javadoc
+       "across" comment.block.documentation.javadoc text.html.javadoc markup.raw.javadoc
+       "}" comment.block.documentation.javadoc text.html.javadoc punctuation.section.inline-tag.end.javadoc
+       " lines " comment.block.documentation.javadoc text.html.javadoc
+       "*/" comment.block.documentation.javadoc punctuation.definition.comment.end.javadoc
+  14 | @SuppressWarnings({"unchecked", "rawtypes"})
+       "@" meta.annotation.java punctuation.definition.annotation.java
+       "SuppressWarnings" meta.annotation.java variable.annotation.java
+       "(" meta.annotation.java punctuation.section.parens.begin.java
+       "{" meta.annotation.java punctuation.section.braces.begin.java
+       "\"" meta.annotation.java string.quoted.double.java punctuation.definition.string.begin.java
+       "unchecked" meta.annotation.java string.quoted.double.java
+       "\"" meta.annotation.java string.quoted.double.java punctuation.definition.string.end.java
+       "," meta.annotation.java punctuation.separator.comma.java
+       " " meta.annotation.java
+       "\"" meta.annotation.java string.quoted.double.java punctuation.definition.string.begin.java
+       "rawtypes" meta.annotation.java string.quoted.double.java
+       "\"" meta.annotation.java string.quoted.double.java punctuation.definition.string.end.java
+       "}" meta.annotation.java punctuation.section.braces.end.java
+       ")" meta.annotation.java punctuation.section.parens.end.java
+  15 | @org.example.Ann(value = 1, other = @Inner(x = "y"), arr = {1, 2})
+       "@" meta.annotation.java punctuation.definition.annotation.java
+       "org" meta.annotation.java variable.annotation.package.java
+       "." meta.annotation.java punctuation.accessor.dot.java
+       "example" meta.annotation.java variable.annotation.package.java
+       "." meta.annotation.java punctuation.accessor.dot.java
+       "Ann" meta.annotation.java variable.annotation.java
+       "(" meta.annotation.java punctuation.section.parens.begin.java
+       "value" meta.annotation.java variable.parameter.java
+       " " meta.annotation.java
+       "=" meta.annotation.java keyword.operator.assignment.java
+       " " meta.annotation.java
+       "1" meta.annotation.java constant.numeric.integer.decimal.java
+       "," meta.annotation.java punctuation.separator.comma.java
+       " " meta.annotation.java
+       "other" meta.annotation.java variable.parameter.java
+       " " meta.annotation.java
+       "=" meta.annotation.java keyword.operator.assignment.java
+       " " meta.annotation.java
+       "@" meta.annotation.java punctuation.definition.annotation.java
+       "Inner" meta.annotation.java variable.annotation.java
+       "(" meta.annotation.java punctuation.section.parens.begin.java
+       "x" meta.annotation.java variable.parameter.java
+       " " meta.annotation.java
+       "=" meta.annotation.java keyword.operator.assignment.java
+       " " meta.annotation.java
+       "\"" meta.annotation.java string.quoted.double.java punctuation.definition.string.begin.java
+       "y" meta.annotation.java string.quoted.double.java
+       "\"" meta.annotation.java string.quoted.double.java punctuation.definition.string.end.java
+       ")" meta.annotation.java punctuation.section.parens.end.java
+       "," meta.annotation.java punctuation.separator.comma.java
+       " " meta.annotation.java
+       "arr" meta.annotation.java variable.parameter.java
+       " " meta.annotation.java
+       "=" meta.annotation.java keyword.operator.assignment.java
+       " " meta.annotation.java
+       "{" meta.annotation.java punctuation.section.block.begin.java
+       "1" meta.annotation.java constant.numeric.integer.decimal.java
+       "," meta.annotation.java punctuation.separator.comma.java
+       " " meta.annotation.java
+       "2" meta.annotation.java constant.numeric.integer.decimal.java
+       "}" meta.annotation.java punctuation.section.block.end.java
+       ")" meta.annotation.java punctuation.section.parens.end.java
+  16 | public abstract class Foo<T extends Comparable<? super T> & Serializable> extends com.x.Bar<T> implements Baz {
+       "public" storage.modifier.java
+       "abstract" storage.modifier.java
+       "class" storage.type.java
+       "Foo" entity.name.class.java
+       "<" punctuation.definition.generic.begin.java
+       "T" variable.parameter.type.java
+       "extends" keyword.declaration.extends.java
+       "Comparable" support.class.java
+       "<" punctuation.definition.generic.begin.java
+       "?" keyword.operator.wildcard.java
+       "super" keyword.declaration.super.java
+       "T" support.class.java
+       ">" punctuation.definition.generic.end.java
+       "&" keyword.operator.multiple-bounds.java
+       "Serializable" support.class.java
+       ">" punctuation.definition.generic.end.java
+       "extends" keyword.declaration.extends.java
+       "com" entity.other.inherited-class.package.java
+       "." punctuation.accessor.dot.java
+       "x" entity.other.inherited-class.package.java
+       "." punctuation.accessor.dot.java
+       "Bar" entity.other.inherited-class.java
+       "<" punctuation.definition.generic.begin.java
+       "T" support.class.java
+       ">" punctuation.definition.generic.end.java
+       "implements" keyword.declaration.implements.java
+       "Baz" entity.other.inherited-class.java
+       "{" punctuation.section.block.begin.java
+  17 |     private static final long A = 0x1FL, B = 0b1010_1010L, C = 0_17, D = 09, E = 1.5e-3f, F = .5d, G = 0x1.8p3;
+       "private" storage.modifier.java
+       "static" storage.modifier.java
+       "final" storage.modifier.java
+       "long" storage.type.primitive.java
+       "A" entity.name.constant.java
+       "=" keyword.operator.assignment.java
+       "0x" constant.numeric.integer.hexadecimal.java punctuation.definition.numeric.hexadecimal.java
+       "1F" constant.numeric.integer.hexadecimal.java
+       "L" constant.numeric.integer.hexadecimal.java storage.type.numeric.java
+       "," punctuation.separator.comma.java
+       "B" entity.name.constant.java
+       "=" keyword.operator.assignment.java
+       "0b" constant.numeric.integer.binary.java punctuation.definition.numeric.binary.java
+       "1010_1010" constant.numeric.integer.binary.java
+       "L" constant.numeric.integer.binary.java storage.type.numeric.java
+       "," punctuation.separator.comma.java
+       "C" entity.name.constant.java
+       "=" keyword.operator.assignment.java
+       "0" constant.numeric.integer.octal.java punctuation.definition.numeric.octal.java
+       "_17" constant.numeric.integer.octal.java
+       "," punctuation.separator.comma.java
+       "D" entity.name.constant.java
+       "=" keyword.operator.assignment.java
+       "0" constant.numeric.integer.octal.java punctuation.definition.numeric.octal.java
+       "9" constant.numeric.integer.octal.java invalid.illegal.numeric.java
+       "," punctuation.separator.comma.java
+       "E" entity.name.constant.java
+       "=" keyword.operator.assignment.java
+       "1" constant.numeric.float.decimal.java
+       "." constant.numeric.float.decimal.java punctuation.separator.decimal.java
+       "5e-3" constant.numeric.float.decimal.java
+       "f" constant.numeric.float.decimal.java storage.type.numeric.java
+       "," punctuation.separator.comma.java
+       "F" entity.name.constant.java
+       "=" keyword.operator.assignment.java
+       "." constant.numeric.float.decimal.java punctuation.separator.decimal.java
+       "5" constant.numeric.float.decimal.java
+       "d" constant.numeric.float.decimal.java storage.type.numeric.java
+       "," punctuation.separator.comma.java
+       "G" entity.name.constant.java
+       "=" keyword.operator.assignment.java
+       "0x" constant.numeric.float.hexadecimal.java punctuation.definition.numeric.hexadecimal.java
+       "1" constant.numeric.float.hexadecimal.java
+       "." constant.numeric.float.hexadecimal.java punctuation.separator.decimal.java
+       "8p3" constant.numeric.float.hexadecimal.java
+       ";" punctuation.terminator.java
+  18 |     protected int[] arr = new int[] {1, 2}, more[] = {};
+       "protected" storage.modifier.java
+       "int" storage.type.primitive.java
+       "[]" storage.modifier.array.java
+       "=" keyword.operator.assignment.java
+       "new" keyword.other.storage.new.java
+       "int" storage.type.primitive.java
+       "[" punctuation.section.brackets.begin.java
+       "]" punctuation.section.brackets.end.java
+       "{" punctuation.section.braces.begin.java
+       "1" constant.numeric.integer.decimal.java
+       "," punctuation.separator.comma.java
+       "2" constant.numeric.integer.decimal.java
+       "}" punctuation.section.braces.end.java
+       "," punctuation.separator.comma.java
+       "[]" storage.modifier.array.java
+       "=" keyword.operator.assignment.java
+       "{" punctuation.section.block.begin.java
+       "}" punctuation.section.block.end.java
+       ";" punctuation.terminator.java
+  19 |     char c = '\'', d = '\u00e9'; String s = "unterminated
+       "char" storage.type.primitive.java
+       "=" keyword.operator.assignment.java
+       "'" string.quoted.single.java punctuation.definition.string.begin.java
+       "\\'" string.quoted.single.java constant.character.escape.java
+       "'" string.quoted.single.java punctuation.definition.string.end.java
+       "," punctuation.separator.comma.java
+       "=" keyword.operator.assignment.java
+       "'" string.quoted.single.java punctuation.definition.string.begin.java
+       "\\u" string.quoted.single.java constant.character.escape.java
+       "00e9" string.quoted.single.java
+       "'" string.quoted.single.java punctuation.definition.string.end.java
+       ";" punctuation.terminator.java
+       "String" support.class.java
+       "=" keyword.operator.assignment.java
+       "\"" string.quoted.double.java punctuation.definition.string.begin.java
+       "unterminated" string.quoted.double.java
+  20 |     static { init(); }
+       "static" storage.modifier.java
+       "{" punctuation.section.block.begin.java
+       "init" variable.function.java
+       "(" punctuation.section.parens.begin.java
+       ")" punctuation.section.parens.end.java
+       ";" punctuation.terminator.java
+       "}" punctuation.section.block.end.java
+  21 |     @Override
+       "@" meta.annotation.java punctuation.definition.annotation.java
+       "Override" meta.annotation.java variable.annotation.java
+  22 |     public <R> List<R> map(final java.util.function.Function<? super T, ? extends R> f, int... xs) throws IOException {
+       "    " meta.annotation.java
+       "public" storage.modifier.java
+       "<" punctuation.definition.generic.begin.java
+       "R" variable.parameter.type.java
+       ">" punctuation.definition.generic.end.java
+       "List" support.class.java
+       "<" punctuation.definition.generic.begin.java
+       "R" support.class.java
+       ">" punctuation.definition.generic.end.java
+       "map" entity.name.function.java
+       "(" punctuation.section.parens.begin.java
+       "final" storage.modifier.java
+       "java" support.type.package.java
+       "." punctuation.accessor.dot.java
+       "util" support.type.package.java
+       "." punctuation.accessor.dot.java
+       "function" support.type.package.java
+       "." punctuation.accessor.dot.java
+       "Function" support.class.java
+       "<" punctuation.definition.generic.begin.java
+       "?" keyword.operator.wildcard.java
+       "super" keyword.declaration.super.java
+       "T" support.class.java
+       "," punctuation.separator.comma.java
+       "?" keyword.operator.wildcard.java
+       "extends" keyword.declaration.extends.java
+       "R" support.class.java
+       ">" punctuation.definition.generic.end.java
+       "f" variable.parameter.java
+       "," punctuation.separator.comma.java
+       "int" storage.type.primitive.java
+       "..." keyword.operator.variadic.java
+       "xs" variable.parameter.java
+       ")" punctuation.section.parens.end.java
+       "throws" keyword.declaration.throws.java
+       "IOException" support.class.java
+       "{" punctuation.section.block.begin.java
+  23 |         var list = new ArrayList<String>(10); Runnable r = () -> { System.out.println("x"); };
+       "var" storage.type.var.java
+       "=" keyword.operator.assignment.java
+       "new" keyword.other.storage.new.java
+       "ArrayList" support.class.java
+       "<" punctuation.definition.generic.begin.java
+       "String" support.class.java
+       ">" punctuation.definition.generic.end.java
+       "(" punctuation.section.parens.begin.java
+       "10" constant.numeric.integer.decimal.java
+       ")" punctuation.section.parens.end.java
+       ";" punctuation.terminator.java
+       "Runnable" support.class.java
+       "=" keyword.operator.assignment.java
+       "(" punctuation.section.parens.begin.java
+       ")" punctuation.section.parens.end.java
+       "->" storage.type.function.anonymous.java
+       "{" punctuation.section.block.begin.java
+       "System" support.class.java
+       "." punctuation.accessor.dot.java
+       "." punctuation.accessor.dot.java
+       "println" variable.function.java
+       "(" punctuation.section.parens.begin.java
+       "\"" string.quoted.double.java punctuation.definition.string.begin.java
+       "x" string.quoted.double.java
+       "\"" string.quoted.double.java punctuation.definition.string.end.java
+       ")" punctuation.section.parens.end.java
+       ";" punctuation.terminator.java
+       "}" punctuation.section.block.end.java
+       ";" punctuation.terminator.java
+  24 |         list.forEach(e -> f(e)); list.stream().map(String::valueOf); Foo.<String>bar(); Foo.class; T.x;
+       "." punctuation.accessor.dot.java
+       "forEach" variable.function.java
+       "(" punctuation.section.parens.begin.java
+       "e" variable.parameter.java
+       "->" storage.type.function.anonymous.java
+       "f" variable.function.java
+       "(" punctuation.section.parens.begin.java
+       "))" punctuation.section.parens.end.java
+       ";" punctuation.terminator.java
+       "." punctuation.accessor.dot.java
+       "stream" variable.function.java
+       "(" punctuation.section.parens.begin.java
+       ")" punctuation.section.parens.end.java
+       "." punctuation.accessor.dot.java
+       "map" variable.function.java
+       "(" punctuation.section.parens.begin.java
+       "String" support.class.java
+       "::" punctuation.accessor.double-colon.java
+       "valueOf" variable.function.reference.java
+       ")" punctuation.section.parens.end.java
+       ";" punctuation.terminator.java
+       "Foo" support.class.java
+       "." punctuation.accessor.dot.java
+       "<" punctuation.definition.generic.begin.java
+       "String" support.class.java
+       ">" punctuation.definition.generic.end.java
+       "bar" variable.function.java
+       "(" punctuation.section.parens.begin.java
+       ")" punctuation.section.parens.end.java
+       ";" punctuation.terminator.java
+       "Foo" support.class.java
+       "." punctuation.accessor.dot.java
+       "class" variable.language.java
+       ";" punctuation.terminator.java
+       "T" support.class.java
+       "." punctuation.accessor.dot.java
+       ";" punctuation.terminator.java
+  25 |         int x = a < b ? -1 : 1, y = x >>> 2; x >>= 1; x %= 2; boolean q = !(x != y) && x == y || ~x > 0;
+       "int" storage.type.primitive.java
+       "=" keyword.operator.assignment.java
+       "<" keyword.operator.comparison.java
+       "?" keyword.operator.ternary.java
+       "-" keyword.operator.arithmetic.java
+       "1" constant.numeric.integer.decimal.java
+       ":" keyword.operator.ternary.java
+       "1" constant.numeric.integer.decimal.java
+       "," punctuation.separator.comma.java
+       "=" keyword.operator.assignment.java
+       ">>>" keyword.operator.bitshift.java
+       "2" constant.numeric.integer.decimal.java
+       ";" punctuation.terminator.java
+       ">>" keyword.operator.bitshift.java
+       "=" keyword.operator.assignment.java
+       "1" constant.numeric.integer.decimal.java
+       ";" punctuation.terminator.java
+       "%" keyword.operator.arithmetic.java
+       "=" keyword.operator.assignment.java
+       "2" constant.numeric.integer.decimal.java
+       ";" punctuation.terminator.java
+       "boolean" storage.type.primitive.java
+       "=" keyword.operator.assignment.java
+       "!" keyword.operator.logical.java
+       "(" punctuation.section.parens.begin.java
+       "!=" keyword.operator.comparison.java
+       ")" punctuation.section.parens.end.java
+       "&&" keyword.operator.logical.java
+       "==" keyword.operator.comparison.java
+       "||" keyword.operator.logical.java
+       "~" keyword.operator.bitwise.java
+       ">" keyword.operator.comparison.java
+       "0" constant.numeric.integer.decimal.java
+       ";" punctuation.terminator.java
+  26 |         if (o instanceof String s) { return null; } else { }
+       "if" keyword.control.conditional.if.java
+       "(" punctuation.section.parens.begin.java
+       "instanceof" keyword.operator.word.instanceof.java
+       "String" support.class.java
+       ")" punctuation.section.parens.end.java
+       "{" punctuation.section.block.begin.java
+       "return" keyword.control.flow.return.java
+       "null" constant.language.java
+       ";" punctuation.terminator.java
+       "}" punctuation.section.block.end.java
+       "else" keyword.control.conditional.else.java
+       "{" punctuation.section.block.begin.java
+       "}" punctuation.section.block.end.java
+  27 |         switch (x) { case 1: break; case FOO -> g(); default -> {} default: continue; }
+       "switch" keyword.control.conditional.switch.java
+       "(" punctuation.section.parens.begin.java
+       ")" punctuation.section.parens.end.java
+       "{" punctuation.section.block.begin.java
+       "case" keyword.control.conditional.case.java
+       "1" constant.numeric.integer.decimal.java
+       ":" keyword.operator.ternary.java
+       "break" keyword.control.flow.break.java
+       ";" punctuation.terminator.java
+       "case" keyword.control.conditional.case.java
+       "FOO" variable.parameter.java
+       "->" storage.type.function.anonymous.java
+       "g" variable.function.java
+       "(" punctuation.section.parens.begin.java
+       ")" punctuation.section.parens.end.java
+       ";" punctuation.terminator.java
+       "default" storage.modifier.java
+       "-" keyword.operator.arithmetic.java
+       ">" keyword.operator.comparison.java
+       "{" punctuation.section.block.begin.java
+       "}" punctuation.section.block.end.java
+       "default" storage.modifier.java
+       ":" keyword.operator.ternary.java
+       "continue" keyword.control.flow.continue.java
+       ";" punctuation.terminator.java
+       "}" punctuation.section.block.end.java
+  28 |         for (int i = 0; i < 10; i++) { } try (var in = open(f)) { } catch (IOException | RuntimeException e) { } finally { }
+       "for" keyword.control.loop.for.java
+       "(" punctuation.section.parens.begin.java
+       "int" storage.type.primitive.java
+       "=" keyword.operator.assignment.java
+       "0" constant.numeric.integer.decimal.java
+       ";" punctuation.terminator.java
+       "<" keyword.operator.comparison.java
+       "10" constant.numeric.integer.decimal.java
+       ";" punctuation.terminator.java
+       "++" keyword.operator.increment-decrement.java
+       ")" punctuation.section.parens.end.java
+       "{" punctuation.section.block.begin.java
+       "}" punctuation.section.block.end.java
+       "try" keyword.control.exception.try.java
+       "(" punctuation.section.parens.begin.java
+       "var" storage.type.var.java
+       "=" keyword.operator.assignment.java
+       "open" variable.function.java
+       "(" punctuation.section.parens.begin.java
+       "))" punctuation.section.parens.end.java
+       "{" punctuation.section.block.begin.java
+       "}" punctuation.section.block.end.java
+       "catch" keyword.control.exception.catch.java
+       "(" punctuation.section.parens.begin.java
+       "IOException" support.class.java
+       "|" punctuation.separator.bar.java
+       "RuntimeException" support.class.java
+       "e" variable.parameter.java
+       ")" punctuation.section.parens.end.java
+       "{" punctuation.section.block.begin.java
+       "}" punctuation.section.block.end.java
+       "finally" keyword.control.exception.finally.java
+       "{" punctuation.section.block.begin.java
+       "}" punctuation.section.block.end.java
+  29 |         assert x > 0 : "msg"; synchronized (this) { this.x = super.y; }
+       "assert" keyword.control.flow.assert.java
+       ">" keyword.operator.comparison.java
+       "0" constant.numeric.integer.decimal.java
+       ":" punctuation.separator.expressions.java
+       "\"" string.quoted.double.java punctuation.definition.string.begin.java
+       "msg" string.quoted.double.java
+       "\"" string.quoted.double.java punctuation.definition.string.end.java
+       ";" punctuation.terminator.java
+       "synchronized" storage.modifier.java
+       "(" punctuation.section.parens.begin.java
+       "this" variable.language.java
+       ")" punctuation.section.parens.end.java
+       "{" punctuation.section.block.begin.java
+       "this" variable.language.java
+       "." punctuation.accessor.dot.java
+       "=" keyword.operator.assignment.java
+       "super" variable.language.java
+       "." punctuation.accessor.dot.java
+       ";" punctuation.terminator.java
+       "}" punctuation.section.block.end.java
+  30 |         Object o = new Object() { @Override public String toString() { return ""; } };
+       "Object" support.class.java
+       "=" keyword.operator.assignment.java
+       "new" keyword.other.storage.new.java
+       "Object" support.class.java
+       "(" punctuation.section.parens.begin.java
+       ")" punctuation.section.parens.end.java
+       "{" punctuation.section.braces.begin.java
+       "@" meta.annotation.java punctuation.definition.annotation.java
+       "Override" meta.annotation.java variable.annotation.java
+       " " meta.annotation.java
+       "public" storage.modifier.java
+       "String" support.class.java
+       "toString" entity.name.function.java
+       "(" punctuation.section.parens.begin.java
+       ")" punctuation.section.parens.end.java
+       "{" punctuation.section.block.begin.java
+       "return" keyword.control.flow.return.java
+       "\"" string.quoted.double.java punctuation.definition.string.begin.java
+       "\"" string.quoted.double.java punctuation.definition.string.end.java
+       ";" punctuation.terminator.java
+       "}" punctuation.section.block.end.java
+       "}" punctuation.section.braces.end.java
+       ";" punctuation.terminator.java
+  31 |         goto label; const int K = 1; 1abc(); $x = 1; foo$bar(); x = 1.foo;
+       "goto" invalid.illegal.keyword.java
+       ";" punctuation.terminator.java
+       "const" invalid.illegal.keyword.java
+       "int" storage.type.primitive.java
+       "K" support.class.java
+       "=" keyword.operator.assignment.java
+       "1" constant.numeric.integer.decimal.java
+       ";" punctuation.terminator.java
+       "abc" variable.function.java
+       "(" punctuation.section.parens.begin.java
+       ")" punctuation.section.parens.end.java
+       ";" punctuation.terminator.java
+       "=" keyword.operator.assignment.java
+       "1" constant.numeric.integer.decimal.java
+       ";" punctuation.terminator.java
+       "foo$bar" variable.function.java
+       "(" punctuation.section.parens.begin.java
+       ")" punctuation.section.parens.end.java
+       ";" punctuation.terminator.java
+       "=" keyword.operator.assignment.java
+       "1" constant.numeric.float.decimal.java
+       "." constant.numeric.float.decimal.java punctuation.separator.decimal.java
+       ";" punctuation.terminator.java
+  32 |     }
+       "}" punctuation.section.block.end.java
+  33 |     public @interface Ann { String value() default "x"; Class<?> c() default Object.class; }
+       "public" storage.modifier.java
+       "@" storage.type.java punctuation.definition.type.java
+       "interface" storage.type.java
+       "Ann" entity.name.class.java
+       "{" punctuation.section.block.begin.java
+       "String" support.class.java
+       "value" entity.name.function.java
+       "(" punctuation.section.parens.begin.java
+       ")" punctuation.section.parens.end.java
+       "default" meta.annotation.java keyword.declaration.default.java
+       " " meta.annotation.java
+       "\"" meta.annotation.java string.quoted.double.java punctuation.definition.string.begin.java
+       "x" meta.annotation.java string.quoted.double.java
+       "\"" meta.annotation.java string.quoted.double.java punctuation.definition.string.end.java
+       ";" punctuation.terminator.java
+       "Class" support.class.java
+       "<" punctuation.definition.generic.begin.java
+       "?" keyword.operator.wildcard.java
+       ">" punctuation.definition.generic.end.java
+       "c" entity.name.function.java
+       "(" punctuation.section.parens.begin.java
+       ")" punctuation.section.parens.end.java
+       "default" meta.annotation.java keyword.declaration.default.java
+       " " meta.annotation.java
+       "Object" meta.annotation.java support.class.java
+       "." meta.annotation.java punctuation.accessor.dot.java
+       "class" meta.annotation.java variable.language.java
+       ";" punctuation.terminator.java
+       "}" punctuation.section.block.end.java
+  34 |     enum Color { RED, GREEN("g") { void x() {} }, BLUE;
+       "enum" storage.type.java
+       "Color" entity.name.class.java
+       "{" punctuation.section.block.begin.java
+       "RED" support.class.java
+       "," punctuation.separator.comma.java
+       "GREEN" entity.name.constant.java
+       "{" punctuation.section.block.begin.java
+       "x" variable.function.java
+       "(" punctuation.section.parens.begin.java
+       ")" punctuation.section.parens.end.java
+       "{" punctuation.section.block.begin.java
+       "}" punctuation.section.block.end.java
+       "}" punctuation.section.block.end.java
+       "," punctuation.separator.comma.java
+       "BLUE" support.class.java
+       ";" punctuation.terminator.java
+  35 |         private final int v;
+       "private" storage.modifier.java
+       "final" storage.modifier.java
+       "int" storage.type.primitive.java
+       ";" punctuation.terminator.java
+  36 |     }
+       "}" punctuation.section.block.end.java
+  37 |     record P(int x, int y) implements I { }
+       "P" entity.name.function.constructor.java
+       "(" punctuation.section.parens.begin.java
+       "int" storage.type.primitive.java
+       "x" variable.parameter.java
+       "," punctuation.separator.comma.java
+       "int" storage.type.primitive.java
+       "y" variable.parameter.java
+       ")" punctuation.section.parens.end.java
+       "I" support.class.java
+       "{" punctuation.section.block.begin.java
+       "}" punctuation.section.block.end.java
+  38 |     x = y %> z;
+       "%" keyword.operator.arithmetic.java
+       ">" keyword.operator.comparison.java
+       ";" punctuation.terminator.java
+  39 | }
+       "}" invalid.illegal.stray-brace-end
+  40 | /* block /* not nested */ /** doc */ /***/ /**/ // line /* with a block
+       "/*" comment.block.java punctuation.definition.comment.java
+       " block /* not nested " comment.block.java
+       "*/" comment.block.java punctuation.definition.comment.java
+       "/**" comment.block.documentation.javadoc punctuation.definition.comment.begin.javadoc
+       " doc " comment.block.documentation.javadoc text.html.javadoc
+       "*/" comment.block.documentation.javadoc punctuation.definition.comment.end.javadoc
+       "/**" comment.block.documentation.javadoc punctuation.definition.comment.begin.javadoc
+       "*/" comment.block.documentation.javadoc punctuation.definition.comment.end.javadoc
+       "/**/" comment.block.empty.java punctuation.definition.comment.java
+       "//" comment.line.double-slash.java punctuation.definition.comment.java
+       " line /* with a block" comment.line.double-slash.java
+  41 | module com.example.mod { requires transitive java.base; exports com.example.api to other.mod; provides a.Spi with a.Impl; }
+       "module" storage.type.java
+       "com" entity.name.module.java
+       "." entity.name.module.java punctuation.accessor.dot.java
+       "example" entity.name.module.java
+       "." entity.name.module.java punctuation.accessor.dot.java
+       "mod" entity.name.module.java
+       "{" punctuation.section.braces.begin.java
+       "requires" keyword.other.module.requires.java
+       "transitive" keyword.other.module.transitive.java
+       "java" support.type.module.java
+       "." support.type.module.java punctuation.accessor.dot.java
+       "base" support.type.module.java
+       ";" punctuation.terminator.java
+       "exports" keyword.other.module.exports.java
+       "com" support.type.package.java
+       "." support.type.package.java punctuation.accessor.dot.java
+       "example" support.type.package.java
+       "." support.type.package.java punctuation.accessor.dot.java
+       "api" support.type.package.java
+       "to" keyword.other.module.to.java
+       "other" support.type.module.java
+       "." support.type.module.java punctuation.accessor.dot.java
+       "mod" support.type.module.java
+       ";" punctuation.terminator.java
+       "provides" keyword.other.module.provides.java
+       "a" support.type.package.java
+       "." punctuation.accessor.dot.java
+       "Spi" support.class.java
+       "with" keyword.other.module.with.java
+       "a" support.type.package.java
+       "." punctuation.accessor.dot.java
+       "Impl" support.class.java
+       ";" punctuation.terminator.java
+       "}" punctuation.section.braces.end.java

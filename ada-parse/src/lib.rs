@@ -12,11 +12,12 @@
 //! Diff is a line lexer, each line on its own; INI, Java properties, `.env`, Git's own files
 //! (ignore, attributes, mailmap and link files), fstab, `known_hosts`, OpenSSH's configs and crontabs share the line-format engine
 //! (`line_format.rs`); logs (O-043) and JSON (O-048) came from ada; Dockerfile's scanner is
-//! bat's grammar compiled by hand; these are exact against syntect (the `parse` fuzz target),
-//! and XML's, of ada's own design, is too; YAML's and TOML's read
+//! bat's grammar compiled by hand, and XML's of ada's own design; YAML's and TOML's read
 //! their formats as bat's grammars do on well-formed text (TOML's as TOML 1.1 where bat's
 //! doesn't). bash's scanner is ada's own (X-093); Makefile's is too (X-097), its recipes and
-//! other shell on bash's (X-094).
+//! other shell on bash's (X-094). Each is held by checks of ada's own, not by syntect (X-116):
+//! its unit tests, `tests/readings.rs`' snapshots of its readings, and the `tokens` fuzz target's
+//! invariants.
 
 mod bash;
 mod cc;
@@ -96,26 +97,19 @@ pub struct Span {
 /// A new block starts from `State::default()`.
 ///
 /// A scanner keeps a stack of its contexts here, up to 14 levels (twice that
-/// with the bytes beside them); nested deeper, the bottom ones are dropped and the lines
-/// after may differ from syntect's ([`State::is_exact`]). Others keep a word of their own.
+/// with the bytes beside them); nested deeper, the bottom ones are dropped. Others keep a word
+/// of their own.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct State {
     levels: [u8; matcher::KEPT],
     /// A byte a level beside `levels`, for the scanners that keep one.
     withs: [u8; matcher::KEPT],
     depth: u8,
-    inexact: bool,
     /// A scanner's bits beside its stack ([`State::flags`]).
     arg: u16,
 }
 
 impl State {
-    /// Whether the lines so far kept their whole stack, so that each got syntect's scopes.
-    #[doc(hidden)]
-    pub fn is_exact(&self) -> bool {
-        !self.inexact
-    }
-
     /// A scanner's state kept as a word of its own, 0 at a block's start, in the bytes a stack
     /// would take.
     fn word(&self) -> u64 {

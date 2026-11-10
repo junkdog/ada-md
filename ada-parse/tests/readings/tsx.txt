@@ -1,0 +1,180 @@
+# TypeScriptReact: ada-parse/tests/readings.rs, tsx
+   1 | import React from 'react';
+       "import" keyword.control.import.tsx
+       "React" variable.other.readwrite.alias.tsx
+       "from" keyword.control.from.tsx
+       "'" string.quoted.single.tsx punctuation.definition.string.begin.tsx
+       "react" string.quoted.single.tsx
+       "'" string.quoted.single.tsx punctuation.definition.string.end.tsx
+       ";" punctuation.terminator.statement.tsx
+   2 | export const List = <T,>({ items }: Props<T>) => (
+       "export" keyword.control.export.tsx
+       "const" storage.type.tsx
+       "List" variable.other.constant.tsx entity.name.function.tsx
+       "=" keyword.operator.assignment.tsx
+       "<" punctuation.definition.typeparameters.begin.tsx
+       "T" entity.name.type.tsx
+       "," punctuation.separator.comma.tsx
+       ">" punctuation.definition.typeparameters.end.tsx
+       "(" punctuation.definition.parameters.begin.tsx
+       "{" punctuation.definition.binding-pattern.object.tsx
+       "items" variable.parameter.tsx
+       "}" punctuation.definition.binding-pattern.object.tsx
+       ":" keyword.operator.type.annotation.tsx
+       "Props" entity.name.type.tsx
+       "<" punctuation.definition.typeparameters.begin.tsx
+       "T" entity.name.type.tsx
+       ">" punctuation.definition.typeparameters.end.tsx
+       ")" punctuation.definition.parameters.end.tsx
+       "=>" storage.type.function.arrow.tsx
+   3 |   <ul className="list" data-n='1 &amp; 2'>
+       "<" punctuation.definition.tag.begin.tsx
+       "ul" entity.name.tag.tsx
+       "className" entity.other.attribute-name.tsx
+       "=" keyword.operator.assignment.tsx
+       "\"" string.quoted.double.tsx punctuation.definition.string.begin.tsx
+       "list" string.quoted.double.tsx
+       "\"" string.quoted.double.tsx punctuation.definition.string.end.tsx
+       "data-n" entity.other.attribute-name.tsx
+       "=" keyword.operator.assignment.tsx
+       "'" string.quoted.single.tsx punctuation.definition.string.begin.tsx
+       "1 " string.quoted.single.tsx
+       "&" string.quoted.single.tsx constant.character.entity.tsx punctuation.definition.entity.tsx
+       "amp" string.quoted.single.tsx constant.character.entity.tsx
+       ";" string.quoted.single.tsx constant.character.entity.tsx punctuation.definition.entity.tsx
+       " 2" string.quoted.single.tsx
+       "'" string.quoted.single.tsx punctuation.definition.string.end.tsx
+       ">" punctuation.definition.tag.end.tsx
+   4 |     {items.map((item, i) => <Item<T> key={i} value={item} />)}
+       "{" punctuation.section.embedded.begin.tsx
+       "items" variable.other.object.tsx
+       "." punctuation.accessor.tsx
+       "map" entity.name.function.tsx
+       "(" punctuation.definition.parameters.begin.tsx
+       "item" variable.parameter.tsx
+       "," punctuation.separator.parameter.tsx
+       "i" variable.parameter.tsx
+       ")" punctuation.definition.parameters.end.tsx
+       "=>" storage.type.function.arrow.tsx
+       "<" punctuation.definition.tag.begin.tsx
+       "Item" entity.name.tag.tsx support.class.component.tsx
+       "<" punctuation.definition.typeparameters.begin.tsx
+       "T" entity.name.type.tsx
+       ">" punctuation.definition.typeparameters.end.tsx
+       "key" entity.other.attribute-name.tsx
+       "=" keyword.operator.assignment.tsx
+       "{" punctuation.section.embedded.begin.tsx
+       "i" variable.other.readwrite.tsx
+       "}" punctuation.section.embedded.end.tsx
+       "value" entity.other.attribute-name.tsx
+       "=" keyword.operator.assignment.tsx
+       "{" punctuation.section.embedded.begin.tsx
+       "item" variable.other.readwrite.tsx
+       "}" punctuation.section.embedded.end.tsx
+       "/>" punctuation.definition.tag.end.tsx
+       "}" punctuation.section.embedded.end.tsx
+   5 |     <svg:rect width={10} /> &copy; &#169; &#xA9; & more
+       "<" punctuation.definition.tag.begin.tsx
+       "svg" entity.name.tag.namespace.tsx
+       ":" punctuation.separator.namespace.tsx
+       "rect" entity.name.tag.tsx
+       "width" entity.other.attribute-name.tsx
+       "=" keyword.operator.assignment.tsx
+       "{" punctuation.section.embedded.begin.tsx
+       "10" constant.numeric.decimal.tsx
+       "}" punctuation.section.embedded.end.tsx
+       "/>" punctuation.definition.tag.end.tsx
+       "&" constant.character.entity.tsx punctuation.definition.entity.tsx
+       "copy" constant.character.entity.tsx
+       ";" constant.character.entity.tsx punctuation.definition.entity.tsx
+       "&" constant.character.entity.tsx punctuation.definition.entity.tsx
+       "#169" constant.character.entity.tsx
+       ";" constant.character.entity.tsx punctuation.definition.entity.tsx
+       "&" constant.character.entity.tsx punctuation.definition.entity.tsx
+       "#xA9" constant.character.entity.tsx
+       ";" constant.character.entity.tsx punctuation.definition.entity.tsx
+       "&" invalid.illegal.bad-ampersand.tsx
+   6 |     <></>
+       "<" punctuation.definition.tag.begin.tsx
+       ">" punctuation.definition.tag.end.tsx
+       "</" punctuation.definition.tag.begin.tsx
+       ">" punctuation.definition.tag.end.tsx
+   7 |   </ul>
+       "</" punctuation.definition.tag.begin.tsx
+       "ul" entity.name.tag.tsx
+       ">" punctuation.definition.tag.end.tsx
+   8 | );
+       ";" punctuation.terminator.statement.tsx
+   9 | const pick = <T extends object>(o: T) => o;
+       "const" storage.type.tsx
+       "pick" variable.other.constant.tsx entity.name.function.tsx
+       "=" keyword.operator.assignment.tsx
+       "<" punctuation.definition.typeparameters.begin.tsx
+       "T" entity.name.type.tsx
+       "extends" storage.modifier.tsx
+       "object" support.type.builtin.tsx
+       ">" punctuation.definition.typeparameters.end.tsx
+       "(" punctuation.definition.parameters.begin.tsx
+       "o" variable.parameter.tsx
+       ":" keyword.operator.type.annotation.tsx
+       "T" entity.name.type.tsx
+       ")" punctuation.definition.parameters.end.tsx
+       "=>" storage.type.function.arrow.tsx
+       "o" variable.other.readwrite.tsx
+       ";" punctuation.terminator.statement.tsx
+  10 | function App(): JSX.Element {
+       "function" storage.type.function.tsx
+       "App" entity.name.function.tsx
+       "(" punctuation.definition.parameters.begin.tsx
+       ")" punctuation.definition.parameters.end.tsx
+       ":" keyword.operator.type.annotation.tsx
+       "JSX" entity.name.type.module.tsx
+       "." punctuation.accessor.tsx
+       "Element" entity.name.type.tsx
+       "{" punctuation.definition.block.tsx
+  11 |   return <Layout.Main title={`a ${b}`} {...rest}>
+       "return" keyword.control.flow.tsx
+       "<" punctuation.definition.tag.begin.tsx
+       "Layout.Main" entity.name.tag.tsx support.class.component.tsx
+       "title" entity.other.attribute-name.tsx
+       "=" keyword.operator.assignment.tsx
+       "{" punctuation.section.embedded.begin.tsx
+       "`" string.template.tsx punctuation.definition.string.template.begin.tsx
+       "a " string.template.tsx
+       "${" string.template.tsx punctuation.definition.template-expression.begin.tsx
+       "b" variable.other.readwrite.tsx
+       "}" string.template.tsx punctuation.definition.template-expression.end.tsx
+       "`" string.template.tsx punctuation.definition.string.template.end.tsx
+       "}" punctuation.section.embedded.end.tsx
+       "{" punctuation.section.embedded.begin.tsx
+       "..." keyword.operator.spread.tsx
+       "rest" variable.other.readwrite.tsx
+       "}" punctuation.section.embedded.end.tsx
+       ">" punctuation.definition.tag.end.tsx
+  12 |     <p>text</p>
+       "<" punctuation.definition.tag.begin.tsx
+       "p" entity.name.tag.tsx
+       ">" punctuation.definition.tag.end.tsx
+       "</" punctuation.definition.tag.begin.tsx
+       "p" entity.name.tag.tsx
+       ">" punctuation.definition.tag.end.tsx
+  13 |   </Layout.Main>;
+       "</" punctuation.definition.tag.begin.tsx
+       "Layout.Main" entity.name.tag.tsx support.class.component.tsx
+       ">" punctuation.definition.tag.end.tsx
+       ";" punctuation.terminator.statement.tsx
+  14 | }
+       "}" punctuation.definition.block.tsx
+  15 | const ns = <svg:>y</svg:>;
+       "const" storage.type.tsx
+       "ns" variable.other.constant.tsx
+       "=" keyword.operator.assignment.tsx
+       "<" punctuation.definition.tag.begin.tsx
+       "svg" entity.name.tag.namespace.tsx
+       ":" punctuation.separator.namespace.tsx
+       ">" punctuation.definition.tag.end.tsx
+       "</" punctuation.definition.tag.begin.tsx
+       "svg" entity.name.tag.namespace.tsx
+       ":" punctuation.separator.namespace.tsx
+       ">" punctuation.definition.tag.end.tsx
+       ";" punctuation.terminator.statement.tsx

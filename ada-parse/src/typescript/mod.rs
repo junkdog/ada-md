@@ -775,7 +775,6 @@ pub(super) struct Scan<'b, 'c, K: Sink> {
     depth: usize,
     /// The top frame, `stack[depth - 1]`.
     cur: u8,
-    exact: bool,
     /// The previous significant token ([`P_START`] …).
     prev: u8,
     /// TSX: a `<` where an expression starts is JSX's.
@@ -813,7 +812,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             stack: [F_TOP; MAX],
             depth: 1,
             cur: F_TOP,
-            exact: true,
             prev: P_START,
             tsx,
             bind_const: false,
@@ -836,7 +834,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn load(&mut self, state: &State) {
         self.depth = state.load(&mut self.stack);
         self.cur = self.stack[(self.depth - 1) & (MAX - 1)];
-        self.exact = state.is_exact();
         let arg = state.flags();
         self.prev = (arg & ARG_PREV) as u8;
         self.substs = ((arg & ARG_SUBSTS) >> ARG_SUBSTS_SHIFT) as u8;
@@ -867,7 +864,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// The state this line leaves.
     #[inline(always)]
     fn keep(&self) -> State {
-        State::keep(&self.stack, self.depth, self.exact, self.arg())
+        State::keep(&self.stack, self.depth, self.arg())
     }
 
     /// The line lexed.
@@ -977,7 +974,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[cold]
     #[inline(never)]
     fn full(&mut self) {
-        crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
+        crate::stack::drop_bottom(&mut self.stack, &mut self.depth);
     }
 
     #[inline(always)]
@@ -3492,7 +3489,7 @@ impl<K: Sink> Scan<'_, '_, K> {
     /// The state a block's pass leaves: as the last line left it (a block that lexed no line
     /// leaves the state it was given).
     fn keep_block(&self) -> State {
-        State::keep(&self.stack, self.depth, self.exact, self.arg())
+        State::keep(&self.stack, self.depth, self.arg())
     }
 }
 
@@ -3523,7 +3520,7 @@ impl<'b, K: Sink> Scan<'b, '_, K> {
         self.at = 0;
         self.lex();
         // the line's end as a state's save and load leave it
-        crate::stack::hold(&mut self.stack, &mut self.depth, &mut self.exact);
+        crate::stack::hold(&mut self.stack, &mut self.depth);
         self.b = b"";
     }
 }
@@ -4041,7 +4038,11 @@ mod tests {
                 crate::lex(lang, line, &mut state, &mut spans);
                 want.push((line.to_owned(), spans.clone(), state));
             }
-            assert!(!want[1].2.is_exact(), "the stack outgrew a state");
+            assert_eq!(
+                want[1].2.held(),
+                crate::stack::HELD,
+                "the stack outgrew a state"
+            );
             for max in [1, 2, usize::MAX] {
                 let (mut got, mut state, mut buf) = (Vec::new(), State::default(), String::new());
                 let mut rest = Some(&text[..]);
@@ -4093,11 +4094,10 @@ mod tests {
         }
     }
 
-    /// Objects and JSX nested past the 28 frames a state keeps unpacked: every line's state
-    /// exact, the same scopes at each depth on the way out as on the way in, and the top level
-    /// again at the end.
+    /// Objects and JSX nested 24 deep, within the 28 frames a state keeps unpacked: the same
+    /// scopes at each depth on the way in, and the top level again at the end.
     #[test]
-    fn deep_nesting_stays_exact() {
+    fn deep_nesting_comes_back_out() {
         for (lang, open, close) in [
             (Lang::TypeScript, "key: {", "},"),
             (Lang::TypeScriptReact, "<div a={1}>", "</div>"),
@@ -4112,7 +4112,6 @@ mod tests {
             let mut ins = Vec::new();
             for _ in 0..24 {
                 crate::lex(lang, open, &mut state, &mut spans);
-                assert!(state.is_exact(), "{lang:?}");
                 ins.push(
                     spans
                         .iter()
@@ -4122,7 +4121,6 @@ mod tests {
             }
             for _ in 0..24 {
                 crate::lex(lang, close, &mut state, &mut spans);
-                assert!(state.is_exact(), "{lang:?}");
             }
             assert!(ins.windows(2).all(|w| w[0] == w[1]), "{lang:?}");
             crate::lex(

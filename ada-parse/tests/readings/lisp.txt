@@ -1,0 +1,542 @@
+# Lisp: ada-parse/tests/readings.rs, lisp
+   1 | ;;; -*- lisp -*-
+       ";;;" comment.line.semicolon.lisp punctuation.definition.comment.lisp
+       " -*- lisp -*-" comment.line.semicolon.lisp
+   2 | (defun foo (x &optional (y 2) &rest r) "Doc ~a~% ~2,'0d ~:@r ~10,2f ~5$" (car x))
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "defun" keyword.declaration.function.lisp
+       "foo" entity.name.function.lisp
+       "(" meta.depth-2.lisp punctuation.section.parameters.begin.lisp
+       "x" variable.parameter.lisp
+       "&" variable.annotation.lisp punctuation.definition.annotation.lisp
+       "optional" variable.annotation.lisp
+       "(" meta.depth-3.lisp punctuation.section.parens.begin.lisp
+       "y" variable.parameter.lisp
+       "2" constant.numeric.value.lisp
+       ")" meta.depth-3.lisp punctuation.section.parens.end.lisp
+       "&" variable.annotation.lisp punctuation.definition.annotation.lisp
+       "rest" variable.annotation.lisp
+       "r" variable.parameter.lisp
+       ")" meta.depth-2.lisp punctuation.section.parameters.end.lisp
+       "\"" string.quoted.double.lisp punctuation.definition.string.begin.lisp
+       "Doc " string.quoted.double.lisp
+       "~" string.quoted.double.lisp constant.other.placeholder.lisp punctuation.definition.placeholder.lisp
+       "a" string.quoted.double.lisp constant.other.placeholder.lisp
+       "~" string.quoted.double.lisp constant.character.escape.lisp punctuation.definition.placeholder.lisp
+       "%" string.quoted.double.lisp constant.character.escape.lisp
+       " " string.quoted.double.lisp
+       "~" string.quoted.double.lisp constant.other.placeholder.lisp punctuation.definition.placeholder.lisp
+       "2" string.quoted.double.lisp constant.other.placeholder.lisp
+       "," string.quoted.double.lisp constant.other.placeholder.lisp punctuation.separator.sequence.lisp
+       "'0d" string.quoted.double.lisp constant.other.placeholder.lisp
+       " " string.quoted.double.lisp
+       "~" string.quoted.double.lisp constant.other.placeholder.lisp punctuation.definition.placeholder.lisp
+       ":@r" string.quoted.double.lisp constant.other.placeholder.lisp
+       " " string.quoted.double.lisp
+       "~" string.quoted.double.lisp constant.other.placeholder.lisp punctuation.definition.placeholder.lisp
+       "10" string.quoted.double.lisp constant.other.placeholder.lisp
+       "," string.quoted.double.lisp constant.other.placeholder.lisp punctuation.separator.sequence.lisp
+       "2f" string.quoted.double.lisp constant.other.placeholder.lisp
+       " " string.quoted.double.lisp
+       "~" string.quoted.double.lisp constant.other.placeholder.lisp punctuation.definition.placeholder.lisp
+       "5$" string.quoted.double.lisp constant.other.placeholder.lisp
+       "\"" string.quoted.double.lisp punctuation.definition.string.end.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "car" support.function.lisp
+       "x" variable.other.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+   3 | (defmacro m (a &body b) `(progn ,a ,@b))
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "defmacro" keyword.declaration.macro.lisp
+       "m" entity.name.macro.lisp
+       "(" meta.depth-2.lisp punctuation.section.parameters.begin.lisp
+       "a" variable.parameter.lisp
+       "&" variable.annotation.lisp punctuation.definition.annotation.lisp
+       "body" variable.annotation.lisp
+       "b" variable.parameter.lisp
+       ")" meta.depth-2.lisp punctuation.section.parameters.end.lisp
+       "`" punctuation.definition.quoted.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "progn" support.function.lisp
+       "," punctuation.definition.variable.lisp
+       "a" variable.other.lisp
+       ",@" punctuation.definition.variable.lisp
+       "b" variable.other.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+   4 | (defclass c (pkg:a b) ((s :initarg :s)))
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "defclass" keyword.declaration.class.lisp
+       "c" entity.name.class.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "pkg" variable.namespace.lisp
+       ":" punctuation.accessor.lisp
+       "a" entity.other.inherited-class.lisp
+       "b" entity.other.inherited-class.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "(" meta.depth-3.lisp punctuation.section.parens.begin.lisp
+       "s" variable.function.lisp
+       ":" keyword.other.symbol.lisp punctuation.definition.keyword.lisp
+       "initarg" keyword.other.symbol.lisp
+       ":" keyword.other.symbol.lisp punctuation.definition.keyword.lisp
+       "s" keyword.other.symbol.lisp
+       ")" meta.depth-3.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+   5 | (defstruct (pt (:conc-name pt-)) x y) (deftype ty (&optional n) 'integer)
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "defstruct" keyword.declaration.struct.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "pt" entity.name.struct.lisp
+       "(" meta.depth-3.lisp punctuation.section.parens.begin.lisp
+       ":" keyword.other.symbol.lisp punctuation.definition.keyword.lisp
+       "conc-name" keyword.other.symbol.lisp
+       "pt-" variable.other.lisp
+       ")" meta.depth-3.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       "x" variable.other.lisp
+       "y" variable.other.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "deftype" keyword.declaration.type.lisp
+       "ty" entity.name.type.lisp
+       "(" meta.depth-2.lisp punctuation.section.parameters.begin.lisp
+       "&" variable.annotation.lisp punctuation.definition.annotation.lisp
+       "optional" variable.annotation.lisp
+       "n" variable.parameter.lisp
+       ")" meta.depth-2.lisp punctuation.section.parameters.end.lisp
+       "'" punctuation.definition.quoted.lisp
+       "integer" constant.other.symbol.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+   6 | (defvar *v* nil) (defparameter *p* t) (defconstant +c+ 3.5d0)
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "defvar" keyword.declaration.variable.lisp
+       "*v*" variable.other.lisp
+       "nil" constant.language.null.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "defparameter" keyword.declaration.variable.lisp
+       "*p*" variable.other.lisp
+       "t" constant.language.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "defconstant" keyword.declaration.constant.lisp
+       "+c+" constant.other.lisp
+       "3" constant.numeric.value.lisp
+       "." constant.numeric.value.lisp punctuation.separator.decimal.lisp
+       "5d0" constant.numeric.value.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+   7 | (let ((a 1) b) (declare (ignore b) (type fixnum a)) (flet ((f (z) z)) (f a)))
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "let" keyword.declaration.variable.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "(" meta.depth-3.lisp punctuation.section.parens.begin.lisp
+       "a" variable.other.lisp
+       "1" constant.numeric.value.lisp
+       ")" meta.depth-3.lisp punctuation.section.parens.end.lisp
+       "b" variable.other.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "declare" keyword.declaration.declare.lisp
+       "(" meta.depth-3.lisp punctuation.section.parens.begin.lisp
+       "ignore" storage.modifier.lisp
+       "b" variable.other.lisp
+       ")" meta.depth-3.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-3.lisp punctuation.section.parens.begin.lisp
+       "type" storage.modifier.lisp
+       "fixnum" storage.type.lisp
+       "a" variable.other.lisp
+       ")" meta.depth-3.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "flet" keyword.declaration.function.lisp
+       "(" meta.depth-3.lisp punctuation.section.parens.begin.lisp
+       "(" meta.depth-4.lisp punctuation.section.parens.begin.lisp
+       "f" entity.name.function.lisp
+       "(" meta.depth-5.lisp punctuation.section.parameters.begin.lisp
+       "z" variable.parameter.lisp
+       ")" meta.depth-5.lisp punctuation.section.parameters.end.lisp
+       "z" variable.other.lisp
+       ")" meta.depth-4.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-3.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-3.lisp punctuation.section.parens.begin.lisp
+       "f" support.function.lisp
+       "a" variable.other.lisp
+       ")" meta.depth-3.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+   8 | (macrolet ((mm (q) q)) (labels ((g () 1)) (g)))
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "macrolet" keyword.declaration.macro.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "(" meta.depth-3.lisp punctuation.section.parens.begin.lisp
+       "mm" entity.name.macro.lisp
+       "(" meta.depth-4.lisp punctuation.section.parameters.begin.lisp
+       "q" variable.parameter.lisp
+       ")" meta.depth-4.lisp punctuation.section.parameters.end.lisp
+       "q" variable.other.lisp
+       ")" meta.depth-3.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "labels" keyword.declaration.function.lisp
+       "(" meta.depth-3.lisp punctuation.section.parens.begin.lisp
+       "(" meta.depth-4.lisp punctuation.section.parens.begin.lisp
+       "g" entity.name.function.lisp
+       "(" meta.depth-5.lisp punctuation.section.parameters.begin.lisp
+       ")" meta.depth-5.lisp punctuation.section.parameters.end.lisp
+       "1" constant.numeric.value.lisp
+       ")" meta.depth-4.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-3.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-3.lisp punctuation.section.parens.begin.lisp
+       "g" variable.function.lisp
+       ")" meta.depth-3.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+   9 | (defmethod run :around ((o c) n) (call-next-method))
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "defmethod" keyword.declaration.function.lisp
+       "run" entity.name.function.lisp
+       ":" keyword.other.symbol.lisp punctuation.definition.keyword.lisp
+       "around" keyword.other.symbol.lisp
+       "(" meta.depth-2.lisp punctuation.section.parameters.begin.lisp
+       "(" meta.depth-3.lisp punctuation.section.parens.begin.lisp
+       "o" variable.parameter.lisp
+       "c" variable.other.lisp
+       ")" meta.depth-3.lisp punctuation.section.parens.end.lisp
+       "n" variable.parameter.lisp
+       ")" meta.depth-2.lisp punctuation.section.parameters.end.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "call-next-method" support.function.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+  10 | (loop named outer for i from 0 below 10 with s = 0 collect (1+ i) into xs
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "loop" keyword.control.loop.lisp
+       "named" keyword.declaration.name.lisp
+       "outer" entity.name.loop.lisp
+       "for" keyword.control.loop.lisp
+       "i" variable.other.lisp
+       "from" keyword.other.loop.lisp
+       "0" constant.numeric.value.lisp
+       "below" keyword.other.loop.lisp
+       "10" constant.numeric.value.lisp
+       "with" keyword.declaration.variable.lisp
+       "s" variable.other.lisp
+       "=" keyword.operator.lisp
+       "0" constant.numeric.value.lisp
+       "collect" support.function.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "1+" variable.function.lisp
+       "i" variable.other.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       "into" keyword.operator.assignment.lisp
+       "xs" variable.other.lisp
+  11 |       finally (return xs))
+       "finally" keyword.control.flow.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "return" keyword.control.flow.return.lisp
+       "xs" variable.other.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+  12 | (dolist (e l) (dotimes (i 3) (do ((k 0 (1+ k))) ((> k 2)) (print k))))
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "dolist" keyword.control.loop.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "e" variable.other.lisp
+       "l" variable.other.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "dotimes" keyword.control.loop.lisp
+       "(" meta.depth-3.lisp punctuation.section.parens.begin.lisp
+       "i" variable.other.lisp
+       "3" constant.numeric.value.lisp
+       ")" meta.depth-3.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-3.lisp punctuation.section.parens.begin.lisp
+       "do" keyword.control.loop.lisp
+       "(" meta.depth-4.lisp punctuation.section.parens.begin.lisp
+       "(" meta.depth-5.lisp punctuation.section.parens.begin.lisp
+       "k" variable.other.lisp
+       "0" constant.numeric.value.lisp
+       "(" meta.depth-6.lisp punctuation.section.parens.begin.lisp
+       "1+" variable.function.lisp
+       "k" variable.other.lisp
+       ")" meta.depth-6.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-5.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-4.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-4.lisp punctuation.section.parens.begin.lisp
+       "(" meta.depth-5.lisp punctuation.section.parens.begin.lisp
+       ">" keyword.operator.comparison.lisp
+       "k" variable.other.lisp
+       "2" constant.numeric.value.lisp
+       ")" meta.depth-5.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-4.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-4.lisp punctuation.section.parens.begin.lisp
+       "print" support.function.lisp
+       "k" variable.other.lisp
+       ")" meta.depth-4.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-3.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+  13 | (cl:defun g () (quote (a (b c))) '(d e) 'f #'car #'(lambda (q) q) #'+)
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "cl" variable.namespace.lisp
+       ":" punctuation.accessor.lisp
+       "defun" keyword.declaration.function.lisp
+       "g" entity.name.function.lisp
+       "(" meta.depth-2.lisp punctuation.section.parameters.begin.lisp
+       ")" meta.depth-2.lisp punctuation.section.parameters.end.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "quote" support.function.lisp
+       "(" meta.depth-3.lisp punctuation.section.parens.begin.lisp
+       "a" variable.other.lisp
+       "(" meta.depth-4.lisp punctuation.section.parens.begin.lisp
+       "b" variable.other.lisp
+       "c" variable.other.lisp
+       ")" meta.depth-4.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-3.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       "'" punctuation.definition.quoted.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "d" variable.other.lisp
+       "e" variable.other.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       "'" punctuation.definition.quoted.lisp
+       "f" constant.other.symbol.lisp
+       "#'" punctuation.definition.function.lisp
+       "car" support.function.lisp
+       "#'" punctuation.definition.function.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "lambda" keyword.declaration.function.inline.lisp
+       "(" meta.depth-3.lisp punctuation.section.parameters.begin.lisp
+       "q" variable.parameter.lisp
+       ")" meta.depth-3.lisp punctuation.section.parameters.end.lisp
+       "q" variable.other.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       "#'" punctuation.definition.function.lisp
+       "+" keyword.operator.arithmetic.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+  14 | (make-pt :x 1) (set! a 1) (null? a) (foo-p a) (|f| x) (when (eq a b) (return-from g))
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "make-pt" variable.function.constructor.lisp
+       ":" keyword.other.symbol.lisp punctuation.definition.keyword.lisp
+       "x" keyword.other.symbol.lisp
+       "1" constant.numeric.value.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "set!" variable.function.mutating.lisp
+       "a" variable.other.lisp
+       "1" constant.numeric.value.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "null?" variable.function.predicate.lisp
+       "a" variable.other.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "foo-p" variable.function.predicate.lisp
+       "a" variable.other.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "|" variable.function.lisp punctuation.definition.symbol.begin.lisp
+       "f" variable.function.lisp
+       "|" variable.function.lisp punctuation.definition.symbol.end.lisp
+       "x" variable.other.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "when" keyword.control.conditional.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "eq" keyword.operator.comparison.lisp
+       "a" variable.other.lisp
+       "b" variable.other.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "return-from" keyword.control.flow.return.lisp
+       "g" variable.other.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+  15 | #| block #| nested |# still
+       "#|" comment.block.lisp punctuation.definition.comment.begin.lisp
+       " block " comment.block.lisp
+       "#|" comment.block.lisp punctuation.definition.comment.begin.lisp
+       " nested " comment.block.lisp
+       "|#" comment.block.lisp punctuation.definition.comment.end.lisp
+       " still" comment.block.lisp
+  16 |    comment |# (if t nil) #\Space #\a #\( #2\x #+sbcl :a #-(or a b) b #. x #:g
+       "   comment " comment.block.lisp
+       "|#" comment.block.lisp punctuation.definition.comment.end.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "if" keyword.control.conditional.lisp
+       "t" constant.language.lisp
+       "nil" constant.language.null.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "#" constant.character.standard.lisp punctuation.definition.constant.lisp
+       "\\" constant.character.standard.lisp punctuation.definition.constant.lisp
+       "Space" constant.character.standard.lisp
+       "#" constant.character.standard.lisp punctuation.definition.constant.lisp
+       "\\" constant.character.standard.lisp punctuation.definition.constant.lisp
+       "a" constant.character.standard.lisp
+       "#" constant.character.standard.lisp punctuation.definition.constant.lisp
+       "\\" constant.character.standard.lisp punctuation.definition.constant.lisp
+       "(" constant.character.standard.lisp
+       "#" constant.character.standard.lisp punctuation.definition.constant.lisp
+       "2" constant.character.standard.lisp punctuation.definition.constant.lisp storage.modifier.attributes.lisp
+       "\\" constant.character.standard.lisp punctuation.definition.constant.lisp
+       "x" constant.character.standard.lisp
+       "#+" keyword.control.conditional.lisp
+       "sbcl" constant.other.feature.lisp
+       ":" keyword.other.symbol.lisp punctuation.definition.keyword.lisp
+       "a" keyword.other.symbol.lisp
+       "#-" keyword.control.conditional.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "or" keyword.operator.logical.lisp
+       "a" variable.other.lisp
+       "b" variable.other.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "b" variable.other.lisp
+       "#." punctuation.definition.variable.lisp
+       "x" variable.other.lisp
+       "#:" punctuation.definition.variable.lisp
+       "g" variable.other.lisp
+  17 | #1=(a . #1#) #(1 2) #3(a) #*1010 #b101 #B-1/10 #o17 #x1F #16rFF #3r12 #c(1 2)
+       "#" variable.other.local.lisp punctuation.definition.variable.lisp
+       "1" variable.other.local.lisp
+       "=" keyword.operator.assignment.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "a" variable.function.lisp
+       "." keyword.control.lisp
+       "#" variable.other.lisp punctuation.definition.variable.begin.lisp
+       "1" variable.other.lisp variable.other.local.lisp
+       "#" variable.other.lisp punctuation.definition.variable.end.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "#" punctuation.definition.vector.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "1" constant.numeric.value.lisp
+       "2" constant.numeric.value.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "#3" punctuation.definition.vector.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "a" variable.other.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "#*" punctuation.definition.vector.lisp
+       "1010" meta.number.integer.binary constant.numeric.value.lisp
+       "#b" constant.numeric.base.lisp
+       "101" constant.numeric.value.lisp
+       "#B" constant.numeric.base.lisp
+       "-" keyword.operator.arithmetic.lisp
+       "1" constant.numeric.value.lisp
+       "/" constant.numeric.value.lisp keyword.operator.arithmetic.lisp
+       "10" constant.numeric.value.lisp
+       "#o" constant.numeric.base.lisp
+       "17" constant.numeric.value.lisp
+       "#x" constant.numeric.base.lisp
+       "1F" constant.numeric.value.lisp
+       "#16r" constant.numeric.base.lisp
+       "FF" constant.numeric.value.lisp
+       "#3r" constant.numeric.base.lisp
+       "12" constant.numeric.value.lisp
+       "#c" punctuation.definition.complex.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "1" constant.numeric.value.lisp
+       "2" constant.numeric.value.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+  18 | #p"/tmp/x" #s(pt :x 1) #2A((1 2)) #a #< 1.5 .5 1. 1/2 -3 +4 1e10 12.x 1.2.3
+       "#p" punctuation.definition.pathname.lisp
+       "\"" string.quoted.double.lisp punctuation.definition.string.begin.lisp
+       "/tmp/x" string.quoted.double.lisp
+       "\"" string.quoted.double.lisp punctuation.definition.string.end.lisp
+       "#s" punctuation.definition.struct.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "pt" entity.name.struct.lisp
+       ":" keyword.other.symbol.lisp punctuation.definition.keyword.lisp
+       "x" keyword.other.symbol.lisp
+       "1" constant.numeric.value.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "#2A" punctuation.definition.array.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "(" meta.depth-2.lisp punctuation.section.parens.begin.lisp
+       "1" constant.numeric.value.lisp
+       "2" constant.numeric.value.lisp
+       ")" meta.depth-2.lisp punctuation.section.parens.end.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "#a" variable.other.lisp
+       "#<" keyword.control.exception.throw.lisp
+       "1" constant.numeric.value.lisp
+       "." constant.numeric.value.lisp punctuation.separator.decimal.lisp
+       "5" constant.numeric.value.lisp
+       "." constant.numeric.value.lisp punctuation.separator.decimal.lisp
+       "5" constant.numeric.value.lisp
+       "1" constant.numeric.value.lisp
+       "." constant.numeric.value.lisp punctuation.separator.decimal.lisp
+       "1" constant.numeric.value.lisp
+       "/" constant.numeric.value.lisp keyword.operator.arithmetic.lisp
+       "2" constant.numeric.value.lisp
+       "-" keyword.operator.arithmetic.lisp
+       "3" constant.numeric.value.lisp
+       "+" keyword.operator.arithmetic.lisp
+       "4" constant.numeric.value.lisp
+       "1e10" constant.numeric.value.lisp
+       "12" constant.numeric.value.lisp
+       "." constant.numeric.value.lisp punctuation.separator.decimal.lisp
+       "x" variable.other.lisp
+       "2" constant.numeric.value.lisp
+       "." constant.numeric.value.lisp punctuation.separator.decimal.lisp
+       "3" constant.numeric.value.lisp
+  19 | +a+b+ *print-base* array string true false keyword:k :key ::k |a b| &x |#
+       "+a+b+" constant.other.lisp
+       "*print-base*" variable.language.lisp
+       "array" storage.type.lisp
+       "string" storage.type.lisp
+       "true" constant.language.boolean.lisp
+       "false" constant.language.boolean.lisp
+       "keyword" variable.namespace.lisp
+       ":" keyword.other.symbol.lisp punctuation.definition.keyword.lisp
+       "k" keyword.other.symbol.lisp
+       ":" keyword.other.symbol.lisp punctuation.definition.keyword.lisp
+       "key" keyword.other.symbol.lisp
+       "::" keyword.other.symbol.lisp punctuation.definition.keyword.lisp
+       "k" keyword.other.symbol.lisp
+       "|" variable.other.lisp punctuation.definition.symbol.begin.lisp
+       "a b" variable.other.lisp
+       "|" variable.other.lisp punctuation.definition.symbol.end.lisp
+       "&" variable.annotation.lisp punctuation.definition.annotation.lisp
+       "x" variable.annotation.lisp
+       "|#" invalid.illegal.stray-comment-end.lisp
+  20 | (*x* 1) (&rest) ('a) (t) (:k) (1 2) ("s") () (:a . b))
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "*x*" variable.other.lisp
+       "1" constant.numeric.value.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "&" variable.annotation.lisp punctuation.definition.annotation.lisp
+       "rest" variable.annotation.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "'" punctuation.definition.quoted.lisp
+       "a" constant.other.symbol.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "t" constant.language.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       ":" keyword.other.symbol.lisp punctuation.definition.keyword.lisp
+       "k" keyword.other.symbol.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "1" constant.numeric.value.lisp
+       "2" constant.numeric.value.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       "\"" string.quoted.double.lisp punctuation.definition.string.begin.lisp
+       "s" string.quoted.double.lisp
+       "\"" string.quoted.double.lisp punctuation.definition.string.end.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       "(" meta.depth-1.lisp punctuation.section.parens.begin.lisp
+       ":" keyword.other.symbol.lisp punctuation.definition.keyword.lisp
+       "a" keyword.other.symbol.lisp
+       "." keyword.control.lisp
+       "b" variable.other.lisp
+       ")" meta.depth-1.lisp punctuation.section.parens.end.lisp
+       ")" invalid.illegal.stray-bracket-end.lisp

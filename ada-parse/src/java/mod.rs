@@ -691,7 +691,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             b,
             stack: [TOP; MAX],
             depth: 1,
-            exact: true,
             annot: 0,
             tags: 0,
             text: PLAIN,
@@ -729,7 +728,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// The stack, its counts, and what else a line hands the next, from `state`.
     #[inline(always)]
     fn load(&mut self, state: &State) {
-        self.exact = state.is_exact();
         (self.annot, self.tags) = (0, 0);
         let n = usize::from(state.depth);
         for i in 0..n {
@@ -792,7 +790,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(always)]
     fn state(&self) -> State {
         let flags = if self.mark != usize::MAX { MARKED } else { 0 };
-        State::keep(&self.stack, self.depth, self.exact, flags)
+        State::keep(&self.stack, self.depth, flags)
     }
 }
 
@@ -804,7 +802,6 @@ struct Scan<'b, 'c, K: Sink> {
     b: &'b [u8],
     stack: [u8; MAX],
     depth: usize,
-    exact: bool,
     /// How many annotations are open.
     annot: usize,
     /// How many Javadoc block tags are open (0 or 1).
@@ -1479,7 +1476,7 @@ impl<'b, K: Sink> Scan<'b, '_, K> {
         if self.depth == MAX {
             let gone = self.stack[1];
             self.count_out(gone);
-            crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
+            crate::stack::drop_bottom(&mut self.stack, &mut self.depth);
         }
         self.stack[self.depth] = c;
         self.depth += 1;

@@ -291,7 +291,6 @@ fn a_block_lexes_as_its_lines() {
     });
     assert_eq!(all, one.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
     assert_eq!(state, one.last().unwrap().1);
-    assert!(!one[6].1.is_exact());
     assert_eq!(one.last().unwrap().1.arg, u16::from(M_CODE));
 }
 

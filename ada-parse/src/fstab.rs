@@ -10,8 +10,7 @@
 //! blanks after it, its scope over them where the pattern has one; at a line's end it takes the
 //! `\n`, and the next context pops there, so no line leaves anything open.
 //!
-//! Exact against bat's grammar on syntect, as far as ASCII goes (`tests/exact_lexers.rs`, the
-//! `parse` fuzz target).
+//! Its readings are held by `tests/readings.rs`' snapshots (X-116).
 
 use crate::emit::{Push, Runs, Sink};
 use crate::line_format::{BLANK, Cursor, Format, blanks, leads};

@@ -1,0 +1,100 @@
+# SshConfig: ada-parse/tests/readings.rs, ssh_config
+   1 | # a comment
+       "#" comment.line.number-sign.ssh.common punctuation.definition.comment.ssh.common
+       " a comment" comment.line.number-sign.ssh.common
+   2 | Host github.com *.example.org !bad ?x
+       "Host" keyword.declaration.host-alias.ssh_config
+       "github.com" entity.name.label.host-alias.ssh_config
+       "*" entity.name.label.host-alias.ssh_config keyword.operator.wildcard.ssh_config
+       ".example.org" entity.name.label.host-alias.ssh_config
+       "!" keyword.operator.logical.ssh_config
+       "bad" entity.name.label.host-alias.ssh_config
+       "?" entity.name.label.host-alias.ssh_config keyword.operator.wildcard.ssh_config
+       "x" entity.name.label.host-alias.ssh_config
+   3 |   HostName 192.168.1.10
+       "HostName" keyword.declaration.host.ssh_config
+       "192.168.1.10" constant.numeric.ip-address.v4.ssh_config
+   4 |   User git
+       "User" keyword.other.ssh_config
+       "git" string.unquoted.ssh_config
+   5 |   Port 2222
+       "Port" keyword.other.ssh_config
+       "2222" constant.numeric.ssh_config
+   6 |   IdentityFile ~/.ssh/id_ed25519
+       "IdentityFile" keyword.other.ssh_config
+       "~/.ssh/id_ed25519" string.unquoted.ssh_config
+   7 |   ForwardAgent yes
+       "ForwardAgent" keyword.other.ssh_config
+       "yes" constant.language.boolean.ssh_config
+   8 |   StrictHostKeyChecking ask
+       "StrictHostKeyChecking" keyword.other.ssh_config
+       "ask" constant.language.set.ssh_config
+   9 |   Ciphers +aes128-ctr,chacha20-poly1305@openssh.com,3des-cbc
+       "Ciphers" keyword.other.ssh_config
+       "+" string.unquoted.ssh_config
+       "aes128-ctr" support.function.cipher
+       "," punctuation.separator.sequence.ssh_config
+       "chacha20-poly1305@openssh.com" support.function.cipher
+       "," punctuation.separator.sequence.ssh_config
+       "3des-cbc" invalid.deprecated.cipher
+  10 |   HostKeyAlgorithms -ssh-dss,ssh-ed25519
+       "HostKeyAlgorithms" keyword.other.ssh_config
+       "-" string.unquoted.ssh_config
+       "ssh-dss" invalid.deprecated.key-type
+       "," punctuation.separator.sequence.ssh_config
+       "ssh-ed25519" support.type.key-type
+  11 |   ServerAliveInterval "60s"
+       "ServerAliveInterval" keyword.other.ssh_config
+       "\"" string.quoted.double.ssh_config punctuation.definition.string.begin.ssh_config
+       "60" constant.numeric.integer.decimal.ssh.common
+       "s" storage.modifier.unit.ssh.common
+       "\"" string.quoted.double.ssh_config punctuation.definition.string.end.ssh_config
+  12 |   LocalForward 8080 localhost:80
+       "LocalForward" keyword.other.ssh_config
+       "8080" constant.numeric.ssh_config
+       "localhost:80" string.unquoted.ssh_config
+  13 |   ProxyCommand ssh -W %h:%p bastion
+       "ProxyCommand" keyword.other.ssh_config
+       "ssh" meta.function-call.shell support.function.command.shell
+       " -" punctuation.definition.parameter.shell
+       "W" variable.parameter.option.shell
+       "%h" constant.character.escape.ssh_config
+       "%p" constant.character.escape.ssh_config
+  14 |   ControlPath ~/.ssh/cm-%r@%h:%p
+       "ControlPath" keyword.other.ssh_config
+       "~/.ssh/cm-" string.unquoted.ssh_config
+       "%r" constant.character.escape.ssh_config
+       "@" string.unquoted.ssh_config
+       "%h" constant.character.escape.ssh_config
+       ":" string.unquoted.ssh_config
+       "%p" constant.character.escape.ssh_config
+  15 |   SendEnv LANG LC_*
+       "SendEnv" keyword.other.ssh_config
+       "LANG LC_" string.unquoted.ssh_config
+       "*" keyword.operator.wildcard.ssh_config
+  16 | Match host *.corp user admin exec "test -f /tmp/x"
+       "Match" keyword.control.conditional.ssh_config
+       "host" keyword.other.ssh_config
+       "*" entity.name.label.host-alias.ssh_config keyword.operator.wildcard.ssh_config
+       ".corp" entity.name.label.host-alias.ssh_config
+       "user" keyword.other.ssh_config
+       "admin" string.unquoted.ssh_config
+       "exec" keyword.other.ssh_config
+       "\"" string.quoted.double.ssh_config punctuation.definition.string.begin.ssh_config
+       "test" meta.function-call.shell support.function.command.shell
+       " -" punctuation.definition.parameter.shell
+       "f" variable.parameter.option.shell
+       "\"" string.quoted.double.ssh_config punctuation.definition.string.end.ssh_config
+  17 |   ForwardX11 no
+       "ForwardX11" keyword.other.ssh_config
+       "no" constant.language.boolean.ssh_config
+  18 | Match originalhost x canonical all
+       "Match" keyword.control.conditional.ssh_config
+       "originalhost" keyword.other.ssh_config
+       "x" entity.name.label.host-alias.ssh_config
+       "canonical" keyword.other.ssh_config
+       "all" constant.language.boolean.ssh_config
+  19 |   LocalCommand echo %n
+       "LocalCommand" keyword.other.ssh_config
+       "echo" meta.function-call.shell support.function.echo.shell
+       "%n" constant.character.escape.ssh_config

@@ -1,5 +1,5 @@
 #!/usr/bin/env zsh
-# lang.zsh COMMAND …: `tokens` or `parse` fuzzed on some of ada-parse's languages alone (ADA_FUZZ_LANGS,
+# lang.zsh COMMAND …: `tokens` fuzzed on some of ada-parse's languages alone (ADA_FUZZ_LANGS,
 # fuzz_targets/langs.rs), each language's inputs in a corpus of its own, corpus/TARGET-LANG. A smoke for a
 # new or changed lexer then neither replays the whole corpus through every lexer first nor shares its runs
 # with them. `tokens`' CI rounds fuzz the same way, and its corpora are their store (ci.zsh, F-017);
@@ -16,7 +16,7 @@
 #                                           finding stops the fuzzer: -fork stops at its first), on the languages'
 #                                           corpora and the SEEDS dirs (read only); the inputs it adds go
 #                                           to the first language's corpus and are copied to corpus/TARGET
-#                                           (the union; `parse`'s CI rounds' seed); findings and the log in
+#                                           (the union); findings and the log in
 #                                           out/lang/TARGET-LANGS/; its RC is 72, libFuzzer's on SIGTERM
 #   lang.zsh cmin TARGET LANGS              each language's corpus/TARGET-LANG minimized (libFuzzer's
 #                                           -set_cover_merge=1 into an empty dir, filtered to the
@@ -44,8 +44,7 @@ typeset bin
 setup() {
   case $1 in
     tokens) args=(-dict=tokens.dict -max_len=65536) ;;
-    parse) args=(-dict=parse.dict -max_len=4096) ;;
-    *) die "no target $1 (tokens or parse)" ;;
+    *) die "no target $1 (tokens)" ;;
   esac
   bin=target/x86_64-unknown-linux-gnu/release/$1
 }

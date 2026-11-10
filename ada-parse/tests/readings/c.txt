@@ -1,0 +1,317 @@
+# C: ada-parse/tests/readings.rs, c
+   1 | #include <stdio.h>
+       "#include" keyword.control.import.include.c
+       " " meta.preprocessor.c
+       "<" string.quoted.other.lt-gt.include.c punctuation.definition.string.begin.c
+       "stdio.h" string.quoted.other.lt-gt.include.c
+       ">" string.quoted.other.lt-gt.include.c punctuation.definition.string.end.c
+   2 | #include "local.h" /* why */
+       "#include" keyword.control.import.include.c
+       " " meta.preprocessor.c
+       "\"" string.quoted.double.include.c punctuation.definition.string.begin.c
+       "local.h" string.quoted.double.include.c
+       "\"" string.quoted.double.include.c punctuation.definition.string.end.c
+       " " meta.preprocessor.c
+       "/*" comment.block.c punctuation.definition.comment.c
+       " why " comment.block.c
+       "*/" comment.block.c punctuation.definition.comment.c
+   3 | #define MAX(a, b) ((a) > (b) ? (a) : (b))
+       "#define" keyword.control.import.define.c
+       " " meta.preprocessor.c
+       "MAX" entity.name.function.preprocessor.c
+       "(" punctuation.section.group.begin.c
+       "a" variable.parameter.c
+       "," punctuation.separator.c
+       " " meta.preprocessor.c
+       "b" variable.parameter.c
+       ")" punctuation.section.group.end.c
+       " " meta.preprocessor.c
+       "((" punctuation.section.group.begin.c
+       "a" meta.preprocessor.c
+       ")" punctuation.section.group.end.c
+       " " meta.preprocessor.c
+       ">" keyword.operator.comparison.c
+       " " meta.preprocessor.c
+       "(" punctuation.section.group.begin.c
+       "b" meta.preprocessor.c
+       ")" punctuation.section.group.end.c
+       " " meta.preprocessor.c
+       "?" keyword.operator.ternary.c
+       " " meta.preprocessor.c
+       "(" punctuation.section.group.begin.c
+       "a" meta.preprocessor.c
+       ")" punctuation.section.group.end.c
+       " " meta.preprocessor.c
+       ":" keyword.operator.ternary.c
+       " " meta.preprocessor.c
+       "(" punctuation.section.group.begin.c
+       "b" meta.preprocessor.c
+       "))" punctuation.section.group.end.c
+   4 | #define HALF 1.
+       "#define" keyword.control.import.define.c
+       " " meta.preprocessor.c
+       "HALF" meta.preprocessor.c entity.name.constant.preprocessor.c
+       " " meta.preprocessor.c
+       "1" constant.numeric.float.decimal.c
+       "." constant.numeric.float.decimal.c punctuation.separator.decimal.c
+   5 | #if 0
+       "#if" keyword.control.import.c
+       " " meta.preprocessor.c
+       "0" constant.numeric.integer.decimal.c
+   6 | int disabled(void); #if nested
+       "int disabled(void); #if nested" comment.block.preprocessor.if-branch.c
+   7 | #endif
+       "#endif" keyword.control.import.c
+   8 | #else
+       "#else" keyword.control.import.else.c
+   9 | int enabled;
+       "int" storage.type.c
+       ";" punctuation.terminator.c
+  10 | #endif
+       "#endif" keyword.control.import.c
+  11 | #if 1
+       "#if" keyword.control.import.c
+       " " meta.preprocessor.c
+       "1" constant.numeric.integer.decimal.c
+  12 | static int on;
+       "static" storage.modifier.c
+       "int" storage.type.c
+       ";" punctuation.terminator.c
+  13 | #else
+       "#else" keyword.control.import.else.c
+  14 | int off;
+       "int off;" comment.block.preprocessor.if-branch.c
+  15 | #endif
+       "#endif" keyword.control.import.c
+  16 | #ifdef HAVE_X
+       "#ifdef" keyword.control.import.c
+       " HAVE_X" meta.preprocessor.c
+  17 | { int braced; }
+       "{" punctuation.section.block.begin.c
+       "int" storage.type.c
+       ";" punctuation.terminator.c
+       "}" punctuation.section.block.end.c
+  18 | #elif defined(Y)
+       "#elif" keyword.control.import.c
+       " " meta.preprocessor.c
+       "defined" keyword.control.c
+       "(Y)" meta.preprocessor.c
+  19 | extern long y;
+       "extern" storage.modifier.c
+       "long" storage.type.c
+       ";" punctuation.terminator.c
+  20 | #endif
+       "#endif" keyword.control.import.c
+  21 | typedef struct node { struct node *next; int value; } node_t;
+       "typedef" storage.type.c
+       "struct" storage.type.c
+       "{" punctuation.section.block.begin.c
+       "struct" storage.type.c
+       "*" keyword.operator.c
+       ";" punctuation.terminator.c
+       "int" storage.type.c
+       ";" punctuation.terminator.c
+       "}" punctuation.section.block.end.c
+       "node_t" entity.name.type.typedef.c
+       ";" punctuation.terminator.c
+  22 | enum color { RED, GREEN = 2 };
+       "enum" storage.type.c
+       "color" entity.name.enum.c
+       "{" punctuation.section.block.begin.c
+       "," punctuation.separator.c
+       "=" keyword.operator.assignment.c
+       "2" constant.numeric.integer.decimal.c
+       "}" punctuation.section.block.end.c
+       ";" punctuation.terminator.c
+  23 | union u { int i; float f; };
+       "union" storage.type.c
+       "u" entity.name.union.c
+       "{" punctuation.section.block.begin.c
+       "int" storage.type.c
+       ";" punctuation.terminator.c
+       "float" storage.type.c
+       ";" punctuation.terminator.c
+       "}" punctuation.section.block.end.c
+       ";" punctuation.terminator.c
+  24 | static const char *names[] = { "a", "b\n", L"wide" };
+       "static" storage.modifier.c
+       "const" storage.modifier.c
+       "char" storage.type.c
+       "*" keyword.operator.c
+       "[" punctuation.section.brackets.begin.c
+       "]" punctuation.section.brackets.end.c
+       "=" keyword.operator.assignment.c
+       "{" punctuation.section.block.begin.c
+       "\"" string.quoted.double.c punctuation.definition.string.begin.c
+       "a" string.quoted.double.c
+       "\"" string.quoted.double.c punctuation.definition.string.end.c
+       "," punctuation.separator.c
+       "\"" string.quoted.double.c punctuation.definition.string.begin.c
+       "b" string.quoted.double.c
+       "\\n" string.quoted.double.c constant.character.escape.c
+       "\"" string.quoted.double.c punctuation.definition.string.end.c
+       "," punctuation.separator.c
+       "L" string.quoted.double.c storage.type.string.c
+       "\"" string.quoted.double.c punctuation.definition.string.begin.c
+       "wide" string.quoted.double.c
+       "\"" string.quoted.double.c punctuation.definition.string.end.c
+       "}" punctuation.section.block.end.c
+       ";" punctuation.terminator.c
+  25 | GType qmi_get_type (void) G_GNUC_CONST;
+       "qmi_get_type" entity.name.function.c
+       "(" punctuation.section.group.begin.c
+       "void" storage.type.c
+       ")" punctuation.section.group.end.c
+       ";" punctuation.terminator.c
+  26 | API_EXPORT int
+       "int" storage.type.c
+  27 | count_items(const struct list *l, size_t n)
+       "count_items" entity.name.function.c
+       "(" punctuation.section.group.begin.c
+       "const" storage.modifier.c
+       "struct" storage.type.c
+       "*" keyword.operator.c
+       "l" variable.parameter.c
+       "," punctuation.separator.c
+       "size_t" support.type.sys-types.c
+       "n" variable.parameter.c
+       ")" punctuation.section.group.end.c
+  28 | {
+       "{" punctuation.section.block.begin.c
+  29 |   int total = 0x1fUL + 017 + 1e3 + .5f + 0x__bad;
+       "int" storage.type.c
+       "=" keyword.operator.assignment.c
+       "0x" constant.numeric.integer.hexadecimal.c punctuation.definition.numeric.base.c
+       "1f" constant.numeric.integer.hexadecimal.c
+       "UL" constant.numeric.integer.hexadecimal.c storage.type.numeric.c
+       "+" keyword.operator.arithmetic.c
+       "0" constant.numeric.integer.octal.c punctuation.definition.numeric.base.c
+       "17" constant.numeric.integer.octal.c
+       "+" keyword.operator.arithmetic.c
+       "1e3" constant.numeric.float.decimal.c
+       "+" keyword.operator.arithmetic.c
+       "." constant.numeric.float.decimal.c punctuation.separator.decimal.c
+       "5" constant.numeric.float.decimal.c
+       "f" constant.numeric.float.decimal.c storage.type.numeric.c
+       "+" keyword.operator.arithmetic.c
+       "0x" constant.numeric.integer.hexadecimal.c punctuation.definition.numeric.base.c
+       "__bad" constant.numeric.integer.hexadecimal.c invalid.illegal.numeric.suffix.c
+       ";" punctuation.terminator.c
+  30 |   for (size_t i = 0; i < n; i++) {
+       "for" keyword.control.c
+       "(" punctuation.section.group.begin.c
+       "size_t" support.type.sys-types.c
+       "=" keyword.operator.assignment.c
+       "0" constant.numeric.integer.decimal.c
+       ";" punctuation.terminator.c
+       "<" keyword.operator.comparison.c
+       ";" punctuation.terminator.c
+       "++" keyword.operator.arithmetic.c
+       ")" punctuation.section.group.end.c
+       "{" punctuation.section.block.begin.c
+  31 |     if (l->items[i].ok && !l->skip) total += sizeof(l->items[i]);
+       "if" keyword.control.c
+       "(" punctuation.section.group.begin.c
+       "->" punctuation.accessor.arrow.c
+       "[" punctuation.section.brackets.begin.c
+       "]" punctuation.section.brackets.end.c
+       "." punctuation.accessor.dot.c
+       "ok" variable.other.readwrite.member.c
+       "&&" keyword.operator.c
+       "!" keyword.operator.c
+       "->" punctuation.accessor.arrow.c
+       ")" punctuation.section.group.end.c
+       "+=" keyword.operator.assignment.augmented.c
+       "sizeof" keyword.operator.word.c
+       "(" punctuation.section.group.begin.c
+       "->" punctuation.accessor.arrow.c
+       "[" punctuation.section.brackets.begin.c
+       "]" punctuation.section.brackets.end.c
+       ")" punctuation.section.group.end.c
+       ";" punctuation.terminator.c
+  32 |     else continue;
+       "else" keyword.control.c
+       "continue" keyword.control.flow.continue.c
+       ";" punctuation.terminator.c
+  33 |   }
+       "}" punctuation.section.block.end.c
+  34 |   switch (total) { case 1: break; default: goto done; }
+       "switch" keyword.control.c
+       "(" punctuation.section.group.begin.c
+       ")" punctuation.section.group.end.c
+       "{" punctuation.section.block.begin.c
+       "case" keyword.control.c
+       "1" constant.numeric.integer.decimal.c
+       ":" punctuation.separator.c
+       "break" keyword.control.flow.break.c
+       ";" punctuation.terminator.c
+       "default" keyword.control.c
+       ":" punctuation.separator.c
+       "goto" keyword.control.flow.goto.c
+       ";" punctuation.terminator.c
+       "}" punctuation.section.block.end.c
+  35 | done:
+       "done" entity.name.label.c
+       ":" punctuation.separator.c
+  36 |   printf("%5.2f %s %%\n", 1.0, u8"x");
+       "printf" support.function.C99.c
+       "(" punctuation.section.group.begin.c
+       "\"" string.quoted.double.c punctuation.definition.string.begin.c
+       "%5.2f" string.quoted.double.c constant.other.placeholder.c
+       " " string.quoted.double.c
+       "%s" string.quoted.double.c constant.other.placeholder.c
+       " " string.quoted.double.c
+       "%%" string.quoted.double.c constant.other.placeholder.c
+       "\\n" string.quoted.double.c constant.character.escape.c
+       "\"" string.quoted.double.c punctuation.definition.string.end.c
+       "," punctuation.separator.c
+       "1" constant.numeric.float.decimal.c
+       "." constant.numeric.float.decimal.c punctuation.separator.decimal.c
+       "0" constant.numeric.float.decimal.c
+       "," punctuation.separator.c
+       "u8" string.quoted.double.c storage.type.string.c
+       "\"" string.quoted.double.c punctuation.definition.string.begin.c
+       "x" string.quoted.double.c
+       "\"" string.quoted.double.c punctuation.definition.string.end.c
+       ")" punctuation.section.group.end.c
+       ";" punctuation.terminator.c
+  37 |   memcpy(dst, src, n); FOO_BAR(x)
+       "memcpy" support.function.C99.c
+       "(" punctuation.section.group.begin.c
+       "," punctuation.separator.c
+       "," punctuation.separator.c
+       ")" punctuation.section.group.end.c
+       ";" punctuation.terminator.c
+       "FOO_BAR" variable.function.c
+       "(" punctuation.section.group.begin.c
+       ")" punctuation.section.group.end.c
+  38 |   return total > 0 ? total : -1;
+       "return" keyword.control.flow.return.c
+       ">" keyword.operator.comparison.c
+       "0" constant.numeric.integer.decimal.c
+       "?" keyword.operator.ternary.c
+       ":" keyword.operator.ternary.c
+       "-" keyword.operator.arithmetic.c
+       "1" constant.numeric.integer.decimal.c
+       ";" punctuation.terminator.c
+  39 | }
+       "}" punctuation.section.block.end.c
+  40 | #pragma mark Section
+       "#pragma mark" keyword.control.import.c
+       " Section" meta.preprocessor.c
+  41 | #error "stop" here
+       "#error" keyword.control.import.error.c
+       " " meta.preprocessor.c
+       "\"" string.quoted.double.c punctuation.definition.string.begin.c
+       "stop" string.quoted.double.c
+       "\"" string.quoted.double.c punctuation.definition.string.end.c
+       " " meta.preprocessor.c
+       "here" string.unquoted.c
+  42 | #define NAME \
+       "#define" keyword.control.import.define.c
+       " " meta.preprocessor.c
+       "NAME" meta.preprocessor.c entity.name.constant.preprocessor.c
+       " " meta.preprocessor.c
+       "\\" punctuation.separator.continuation.c
+  43 |           OTHER_NAME
+       "          OTHER_NAME" meta.preprocessor.c

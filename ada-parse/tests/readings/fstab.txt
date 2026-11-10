@@ -1,0 +1,45 @@
+# Fstab: ada-parse/tests/readings.rs, fstab
+   1 | # <file system> <dir> <type> <options> <dump> <pass>
+       "# <file system> <dir> <type> <options> <dump> <pass>" comment.line
+   2 | UUID=ab12\t/\text4\trw,relatime,x=1\t0 1
+       "UUID=" punctuation.accessor
+       "ab12" keyword.other.device
+       "/\t" string.unquoted.mountpoint
+       "ext4\t" variable.parameter.filesystem
+       "rw" entity.name.option
+       "," punctuation.separator
+       "relatime" entity.name.option
+       "," punctuation.separator
+       "x" entity.name.option
+       "=" entity.other.separator
+       "1" variable.parameter
+       "0 " constant.numeric
+       "1" constant.numeric
+   3 | /dev/sda2 none swap sw 0 0
+       "/dev/" punctuation.accessor
+       "sda2" keyword.other.device
+       "none " invalid.illegal
+       "swap " variable.parameter.filesystem
+       "sw" entity.name.option
+       "0 " constant.numeric
+       "0" constant.numeric
+   4 | server:/export /nfs nfs4 _netdev 0 0 # c
+       "server" keyword.other.device
+       ":" punctuation.accessor
+       "/export" keyword.other.device
+       "/nfs " string.unquoted.mountpoint
+       "nfs4 " variable.parameter.filesystem
+       "_netdev" entity.name.option
+       "0 " constant.numeric
+       "0 " constant.numeric
+       "# c" comment.line
+   5 | //srv/share /mnt cifs user=a 3 x y
+       "//" punctuation.accessor
+       "srv/share" keyword.other.device
+       "/mnt " string.unquoted.mountpoint
+       "cifs " variable.parameter.filesystem
+       "user" entity.name.option
+       "=" entity.other.separator
+       "a" variable.parameter
+       "3 " invalid.illegal
+       "x " invalid.illegal

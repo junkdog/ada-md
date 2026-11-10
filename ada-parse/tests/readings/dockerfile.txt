@@ -1,0 +1,77 @@
+# Dockerfile: ada-parse/tests/readings.rs, dockerfile
+   1 | # syntax=docker/dockerfile:1
+       "#" comment.dockerfile punctuation.definition.comment.dockerfile
+       " syntax=docker/dockerfile:1" comment.dockerfile
+   2 | ARG BASE=alpine
+       "ARG " keyword.control.dockerfile
+   3 | FROM rust:1.88-slim@sha256:abc AS build
+       "FROM" keyword.control.dockerfile
+       "1.88-slim@sha256:abc" entity.name.enum.tag-digest
+       "AS" keyword.control.dockerfile
+       "build" variable.stage-name
+   4 |   # indented comment
+       "  " punctuation.whitespace.comment.leading.dockerfile
+       "#" comment.dockerfile punctuation.definition.comment.dockerfile
+       " indented comment" comment.dockerfile
+   5 | WORKDIR /src
+       "WORKDIR " keyword.control.dockerfile
+   6 | COPY --from=deps /cache /cache
+       "COPY" keyword.control.dockerfile
+       "deps" variable.stage-name
+   7 | copy . .
+       "copy" keyword.control.dockerfile
+   8 | RUN apt-get update && \
+       "RUN " keyword.control.dockerfile
+   9 |     apt-get install -y "curl" 'jq' \
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.begin.dockerfile
+       "curl" string.quoted.double.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.end.dockerfile
+       "'" string.quoted.single.dockerfile punctuation.definition.string.begin.dockerfile
+       "jq" string.quoted.single.dockerfile
+       "'" string.quoted.single.dockerfile punctuation.definition.string.end.dockerfile
+  10 | 
+  11 |     && echo "a \" b"
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.begin.dockerfile
+       "a " string.quoted.double.dockerfile
+       "\\\"" string.quoted.double.dockerfile constant.character.escaped.dockerfile
+       " b" string.quoted.double.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.end.dockerfile
+  12 | ENV PATH="/x:$PATH" \ 
+       "ENV " keyword.control.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.begin.dockerfile
+       "/x:$PATH" string.quoted.double.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.end.dockerfile
+  13 | ONBUILD RUN make
+  14 | MAINTAINER someone
+       "MAINTAINER " keyword.control.dockerfile
+  15 | EXPOSE 8080
+       "EXPOSE " keyword.control.dockerfile
+  16 | RUN
+       "RUN" keyword.control.dockerfile
+  17 | echo continues
+       "echo continues" invalid
+  18 | CMD ["ada", "--help"]
+       "CMD " keyword.operator.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.begin.dockerfile
+       "ada" string.quoted.double.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.end.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.begin.dockerfile
+       "--help" string.quoted.double.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.end.dockerfile
+  19 | ENTRYPOINT ["ada"]
+       "ENTRYPOINT " keyword.operator.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.begin.dockerfile
+       "ada" string.quoted.double.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.end.dockerfile
+  20 | LABEL x="open
+       "LABEL " keyword.control.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.begin.dockerfile
+       "open" string.quoted.double.dockerfile
+  21 | lower case line
+       "lower case line" invalid
+  22 | HEALTHCHECK CMD true
+       "HEALTHCHECK " keyword.control.dockerfile
+  23 | FROM scratch
+       "FROM" keyword.control.dockerfile
+  24 | garbage here
+       "garbage here" invalid

@@ -1,0 +1,219 @@
+# GitMailmap: ada-parse/tests/readings.rs, git_mailmap_examples
+
+## block 1
+   1 | # build output
+       "#" comment.line.git punctuation.definition.comment.git
+       " build output" comment.line.git
+   2 | /target/
+       "/target/" meta.reference.user.git
+   3 | !keep.me
+       "!keep.me" meta.reference.user.git
+   4 | *.log ; not a comment
+       "*.log ; not a comment" meta.reference.user.git
+   5 | **/node_modules
+       "**/node_modules" meta.reference.user.git
+
+## block 2
+   1 | docs/[!a-c]*.md
+       "docs/[!a-c]*.md" meta.reference.user.git
+   2 | a[]b]c
+       "a[]b]c" meta.reference.user.git
+   3 | a[x
+       "a[x" meta.reference.user.git
+   4 | \#literal \ 
+       "#" comment.line.git punctuation.definition.comment.git
+       "literal \\ " comment.line.git
+   5 | $HOME/../.cache/./x
+       "$HOME/../.cache/./x" meta.reference.user.git
+   6 | C:/drive ~/home
+       "C:/drive ~/home" meta.reference.user.git
+   7 |    
+
+## block 3
+   1 | a[\]b]c [^x] [*?] [ ] [é]
+       "a[\\]b]c [^x] [*?] [ ] [é]" meta.reference.user.git
+   2 | x\
+       "x\\" meta.reference.user.git
+   3 | y\$z\*\é "q" a:b ./x ../y .z/w.v
+       "y\\$z\\*\\é \"q\" a:b ./x ../y .z/w.v" meta.reference.user.git
+   4 | [
+   5 | \
+   6 | !
+   7 | !!x
+       "!!x" meta.reference.user.git
+
+## block 4
+   1 | # attributes
+       "#" comment.line.git punctuation.definition.comment.git
+       " attributes" comment.line.git
+   2 | * text=auto eol=lf
+       "* text=auto eol=lf" meta.reference.user.git
+   3 | *.png binary -diff
+       "*.png binary -diff" meta.reference.user.git
+
+## block 5
+   1 | *.rs diff=rust merge=union filter=lfs encoding=UTF-16 whitespace=tab-in-indent,trailing-space
+       "*.rs diff=rust merge=union filter=lfs encoding=UTF-16 whitespace=tab-in-indent,trailing-space" meta.reference.user.git
+
+## block 6
+   1 | "quoted path" -text !eol custom=a,b, x="q\"v"
+       "\"quoted path\" -text !eol custom=a,b, x=\"q\\\"v\"" meta.reference.user.git
+   2 | [attr]binary -diff -merge -text
+       "[attr]binary -diff -merge -text" meta.reference.user.git
+   3 | -bad op
+       "-bad op" meta.reference.user.git
+
+## block 7
+   1 | path/[ab]*.c foo= bar
+       "path/[ab]*.c foo= bar" meta.reference.user.git
+   2 | x a="open
+       "x a=\"open" meta.reference.user.git
+   3 | x a=, b=,c ,d a=b,,c a==b a=b=c
+       "x a=, b=,c ,d a=b,,c a==b a=b=c" meta.reference.user.git
+   4 |  !x
+       "!x" meta.reference.user.git
+   5 | "[a" b
+       "\"[a\" b" meta.reference.user.git
+   6 | "a
+       "\"a" meta.reference.user.git
+   7 | b\
+       "b\\" meta.reference.user.git
+   8 | c d
+       "c d" meta.reference.user.git
+
+## block 8
+   1 | x textual eolx diffx -diff- a-b- a--b _ é=é [ab] [-x] [!x] [a] b
+       "x textual eolx diffx -diff- a-b- a--b _ é=é [ab] [-x] [!x] [a] b" meta.reference.user.git
+   2 |  x\t\ty="\t\x" z=" "
+       "x\t\ty=\"\\t\\x\" z=\" \"" meta.reference.user.git
+
+## block 9
+   1 | # mailmap
+       "#" comment.line.git punctuation.definition.comment.git
+       " mailmap" comment.line.git
+   2 | Proper Name <proper@email.xx>
+       "Proper Name" meta.reference.user.git
+       "<" meta.reference.email.git punctuation.definition.reference.email.begin.git
+       "proper" meta.reference.email.git entity.name.reference.email.git
+       "@" meta.reference.email.git entity.name.reference.email.git punctuation.separator.email.git
+       "email" meta.reference.email.git entity.name.reference.email.git
+       "." meta.reference.email.git entity.name.reference.email.git punctuation.separator.domain.git
+       "xx" meta.reference.email.git entity.name.reference.email.git
+       ">" meta.reference.email.git punctuation.definition.reference.email.end.git
+   3 | <proper@email.xx> <commit@email.xx>
+       "<" meta.reference.email.git punctuation.definition.reference.email.begin.git
+       "proper" meta.reference.email.git entity.name.reference.email.git
+       "@" meta.reference.email.git entity.name.reference.email.git punctuation.separator.email.git
+       "email" meta.reference.email.git entity.name.reference.email.git
+       "." meta.reference.email.git entity.name.reference.email.git punctuation.separator.domain.git
+       "xx" meta.reference.email.git entity.name.reference.email.git
+       ">" meta.reference.email.git punctuation.definition.reference.email.end.git
+       "<" meta.reference.email.git punctuation.definition.reference.email.begin.git
+       "commit" meta.reference.email.git entity.name.reference.email.git
+       "@" meta.reference.email.git entity.name.reference.email.git punctuation.separator.email.git
+       "email" meta.reference.email.git entity.name.reference.email.git
+       "." meta.reference.email.git entity.name.reference.email.git punctuation.separator.domain.git
+       "xx" meta.reference.email.git entity.name.reference.email.git
+       ">" meta.reference.email.git punctuation.definition.reference.email.end.git
+
+## block 10
+   1 | Proper Name <proper@email.xx> Commit Name <commit@email.xx>
+       "Proper Name" meta.reference.user.git
+       "<" meta.reference.email.git punctuation.definition.reference.email.begin.git
+       "proper" meta.reference.email.git entity.name.reference.email.git
+       "@" meta.reference.email.git entity.name.reference.email.git punctuation.separator.email.git
+       "email" meta.reference.email.git entity.name.reference.email.git
+       "." meta.reference.email.git entity.name.reference.email.git punctuation.separator.domain.git
+       "xx" meta.reference.email.git entity.name.reference.email.git
+       ">" meta.reference.email.git punctuation.definition.reference.email.end.git
+       "Commit Name" meta.reference.user.git
+       "<" meta.reference.email.git punctuation.definition.reference.email.begin.git
+       "commit" meta.reference.email.git entity.name.reference.email.git
+       "@" meta.reference.email.git entity.name.reference.email.git punctuation.separator.email.git
+       "email" meta.reference.email.git entity.name.reference.email.git
+       "." meta.reference.email.git entity.name.reference.email.git punctuation.separator.domain.git
+       "xx" meta.reference.email.git entity.name.reference.email.git
+       ">" meta.reference.email.git punctuation.definition.reference.email.end.git
+   2 | Name Only
+       "Name Only" meta.reference.user.git
+   3 | <bad email> x
+       "bad email> x" meta.reference.user.git
+
+## block 11
+   1 | a <b@c.d.e> f ; g
+       "a " meta.reference.user.git
+       "<" meta.reference.email.git punctuation.definition.reference.email.begin.git
+       "b" meta.reference.email.git entity.name.reference.email.git
+       "@" meta.reference.email.git entity.name.reference.email.git punctuation.separator.email.git
+       "c" meta.reference.email.git entity.name.reference.email.git
+       "." meta.reference.email.git entity.name.reference.email.git punctuation.separator.domain.git
+       "d" meta.reference.email.git entity.name.reference.email.git
+       "." meta.reference.email.git entity.name.reference.email.git punctuation.separator.domain.git
+       "e" meta.reference.email.git entity.name.reference.email.git
+       ">" meta.reference.email.git punctuation.definition.reference.email.end.git
+       "f ; g" meta.reference.user.git
+   2 | <<a>> <> <a <a@b@c.d> a\t <x>
+       "<" meta.reference.email.git punctuation.definition.reference.email.begin.git
+       "<a" meta.reference.email.git entity.name.reference.email.git
+       ">" meta.reference.email.git punctuation.definition.reference.email.end.git
+       "> " meta.reference.user.git
+       "> " meta.reference.user.git
+       "a " meta.reference.user.git
+       "<" meta.reference.email.git punctuation.definition.reference.email.begin.git
+       "a" meta.reference.email.git entity.name.reference.email.git
+       "@" meta.reference.email.git entity.name.reference.email.git punctuation.separator.email.git
+       "b@c" meta.reference.email.git entity.name.reference.email.git
+       "." meta.reference.email.git entity.name.reference.email.git punctuation.separator.domain.git
+       "d" meta.reference.email.git entity.name.reference.email.git
+       ">" meta.reference.email.git punctuation.definition.reference.email.end.git
+       "a\t" meta.reference.user.git
+       "<" meta.reference.email.git punctuation.definition.reference.email.begin.git
+       "x" meta.reference.email.git entity.name.reference.email.git
+       ">" meta.reference.email.git punctuation.definition.reference.email.end.git
+   3 | name ;comment <x>
+       "name ;comment" meta.reference.user.git
+       "<" meta.reference.email.git punctuation.definition.reference.email.begin.git
+       "x" meta.reference.email.git entity.name.reference.email.git
+       ">" meta.reference.email.git punctuation.definition.reference.email.end.git
+   4 | \u{d}<a>
+       "<" meta.reference.email.git punctuation.definition.reference.email.begin.git
+       "a" meta.reference.email.git entity.name.reference.email.git
+       ">" meta.reference.email.git punctuation.definition.reference.email.end.git
+
+## block 12
+   1 | gitdir: ../.git/modules/sub
+       "gitdir: ../.git/modules/sub" meta.reference.user.git
+   2 |   gitdir :C:\repo\.git.
+       "gitdir :C:\\repo\\.git." meta.reference.user.git
+   3 | gitdir: ~/x/*
+       "gitdir: ~/x/*" meta.reference.user.git
+   4 | notgitdir: x
+       "notgitdir: x" meta.reference.user.git
+
+## block 13
+   1 | # comment
+       "#" comment.line.git punctuation.definition.comment.git
+       " comment" comment.line.git
+   2 | gitdir
+       "gitdir" meta.reference.user.git
+   3 | x
+   4 | gitdir x : y
+       "gitdir x : y" meta.reference.user.git
+   5 | gitdir:
+       "gitdir:" meta.reference.user.git
+   6 | gitdir: a/..\./b.c.
+       "gitdir: a/..\\./b.c." meta.reference.user.git
+   7 |  gitdir: .
+       "gitdir: ." meta.reference.user.git
+
+## block 14
+   1 | a"b c x"y="z" "q"r s
+       "a\"b c x\"y=\"z\" \"q\"r s" meta.reference.user.git
+   2 | ab"[c" d
+       "ab\"[c\" d" meta.reference.user.git
+
+## block 15
+
+## block 16
+   1 | 
+   2 | 

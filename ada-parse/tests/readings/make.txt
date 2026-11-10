@@ -1,0 +1,282 @@
+# Makefile: ada-parse/tests/readings.rs, make
+   1 | # build \
+       "#" comment.line.number-sign.makefile punctuation.definition.comment.makefile
+       " build " comment.line.number-sign.makefile
+       "\\" punctuation.separator.continuation.line.makefile
+   2 |   continued comment
+       "  continued comment" comment.line.number-sign.makefile
+   3 | include config.mk
+       "include" keyword.control.import.makefile
+       "config.mk" meta.string.makefile string.unquoted.makefile
+   4 | -include $(wildcard *.d)
+       "-include" keyword.control.import.makefile
+       "$(" keyword.other.block.begin.makefile
+       "wildcard" support.function.builtin.makefile
+       " " meta.string.makefile string.unquoted.makefile
+       "*" variable.language.wildcard.makefile
+       ".d" meta.string.makefile string.unquoted.makefile
+       ")" keyword.other.block.end.makefile
+   5 | vpath %.c src
+       "vpath" keyword.control.vpath.makefile
+       "src" meta.string.makefile string.unquoted.makefile
+   6 | CC ?= gcc
+       "CC" variable.other.makefile
+       "?=" keyword.operator.assignment.makefile
+       "gcc" meta.string.makefile string.unquoted.makefile
+   7 | CFLAGS := -O2 -Wall # flags
+       "CFLAGS" variable.other.makefile
+       ":=" keyword.operator.assignment.makefile
+       "-O2 -Wall " meta.string.makefile string.unquoted.makefile
+       "#" comment.line.number-sign.makefile punctuation.definition.comment.makefile
+       " flags" comment.line.number-sign.makefile
+   8 | OBJS = $(patsubst %.c,%.o,$(SRCS)) ${EXTRA:.c=.o}
+       "OBJS = " meta.function.makefile entity.name.function.makefile
+       "$(" keyword.other.block.begin.makefile
+       "patsubst" support.function.builtin.makefile
+       " " meta.function.makefile entity.name.function.makefile
+       "%" variable.language.makefile
+       ".c" meta.function.makefile entity.name.function.makefile
+       "," punctuation.separator.makefile
+       "%" variable.language.makefile
+       ".o" meta.function.makefile entity.name.function.makefile
+       "," punctuation.separator.makefile
+       "$(" keyword.other.block.begin.makefile
+       "SRCS" variable.parameter.makefile
+       "))" keyword.other.block.end.makefile
+       " " meta.function.makefile entity.name.function.makefile
+       "${" keyword.other.block.begin.makefile
+       "EXTRA" variable.parameter.makefile
+       ":" punctuation.definition.substitution.makefile
+       ".c" variable.parameter.makefile
+       "=" punctuation.definition.assignment.makefile
+       ".o" variable.parameter.makefile
+       "}" keyword.other.block.end.makefile
+   9 | override LDFLAGS += -lm
+       "override LDFLAGS += -lm" meta.function.makefile entity.name.function.makefile
+  10 | export PATH := $(HOME)/bin:$(PATH)
+       "export PATH" meta.function.makefile entity.name.function.makefile
+       ":" keyword.operator.assignment.makefile
+       "= " meta.function.arguments.makefile string.unquoted.makefile
+       "$(" keyword.other.block.begin.makefile
+       "HOME" variable.parameter.makefile
+       ")" keyword.other.block.end.makefile
+       "/bin:" meta.function.arguments.makefile string.unquoted.makefile
+       "$(" keyword.other.block.begin.makefile
+       "PATH" variable.parameter.makefile
+       ")" keyword.other.block.end.makefile
+  11 | REV != git rev-parse --short HEAD
+       "REV" variable.other.makefile
+       "!=" keyword.operator.assignment.makefile
+       "git" meta.function-call.shell support.function.command.shell
+       " --" punctuation.definition.parameter.shell
+       "short" variable.parameter.option.shell
+  12 | RUN = sh -c 'echo "$$1" && exit 0'
+       "RUN" variable.other.makefile
+       "=" keyword.operator.assignment.makefile
+       "sh -c " meta.string.makefile string.unquoted.makefile
+       "'" meta.interpolation.makefile punctuation.section.interpolation.begin.makefile
+       "echo" meta.function-call.shell support.function.echo.shell
+       "\"" punctuation.definition.string.begin.shell
+       "$" string.quoted.double.shell
+       "$" punctuation.definition.variable.shell
+       "1" variable.other.readwrite.shell
+       "\"" punctuation.definition.string.end.shell
+       "&&" keyword.operator.logical.and.shell
+       "exit" meta.function-call.shell support.function.exit.shell
+       "'" meta.interpolation.makefile punctuation.section.interpolation.end.makefile
+  13 | define HELP =
+       "define" keyword.control.makefile
+       " HELP " variable.other.makefile
+       "=" keyword.operator.assignment.makefile
+  14 |   usage: make [target]
+       "  usage: make [target]" meta.string.makefile string.unquoted.makefile
+  15 | endef
+       "endef" keyword.control.makefile
+  16 | ifeq ($(CC),gcc)
+       "ifeq" keyword.control.conditional.makefile
+       "(" punctuation.section.group.begin.makefile
+       "$(" keyword.other.block.begin.makefile
+       "CC" variable.parameter.makefile
+       ")" keyword.other.block.end.makefile
+       "," punctuation.separator.makefile
+       ")" punctuation.section.group.end.makefile
+  17 |   WARN = -Wextra
+       "  WARN" variable.other.makefile
+       "=" keyword.operator.assignment.makefile
+       "-Wextra" meta.string.makefile string.unquoted.makefile
+  18 | else ifneq "$(CC)" 'clang'
+       "else" keyword.control.conditional.makefile
+       "ifneq" keyword.control.conditional.makefile
+       "\"" punctuation.definition.string.begin.makefile
+       "$(" keyword.other.block.begin.makefile
+       "CC" variable.parameter.makefile
+       ")" keyword.other.block.end.makefile
+       "\"" punctuation.definition.string.end.makefile
+       "'" punctuation.definition.string.begin.makefile
+       "clang" meta.string.makefile string.quoted.single.makefile
+       "'" punctuation.definition.string.end.makefile
+  19 | endif
+       "endif" keyword.control.conditional.makefile
+  20 | all: $(OBJS) | dirs ; @echo inline
+       "all" meta.function.makefile entity.name.function.makefile
+       ":" keyword.operator.assignment.makefile
+       "$(" keyword.other.block.begin.makefile
+       "OBJS" variable.parameter.makefile
+       ")" keyword.other.block.end.makefile
+       " | dirs" meta.function.arguments.makefile string.unquoted.makefile
+       ";" punctuation.terminator.makefile
+       "@echo" meta.function-call.shell support.function.command.shell
+  21 | %.o: %.c config.h
+       "%" variable.language.makefile
+       ".o" meta.function.makefile entity.name.function.makefile
+       ":" keyword.operator.assignment.makefile
+       "%" variable.language.makefile
+       ".c config.h" meta.function.arguments.makefile string.unquoted.makefile
+  22 | \t@gcc $(CFLAGS) -c $< -o $@
+       "@" constant.language.makefile
+       "gcc" meta.function-call.shell support.function.command.shell
+       "$(" keyword.other.block.begin.makefile
+       "CFLAGS" variable.parameter.makefile
+       ")" keyword.other.block.end.makefile
+       " -" punctuation.definition.parameter.shell
+       "c" variable.parameter.option.shell
+       "$<" variable.language.automatic.makefile
+       " -" punctuation.definition.parameter.shell
+       "o" variable.parameter.option.shell
+       "$@" variable.language.automatic.makefile
+  23 | \t-rm -f "$@.tmp" 2>/dev/null || true
+       "-" constant.language.makefile
+       "rm" meta.function-call.shell support.function.command.shell
+       " -" punctuation.definition.parameter.shell
+       "f" variable.parameter.option.shell
+       "\"" punctuation.definition.string.begin.shell
+       "$@" variable.language.automatic.makefile
+       ".tmp" string.quoted.double.shell
+       "\"" punctuation.definition.string.end.shell
+       "2" constant.numeric.integer.decimal.file-descriptor.shell
+       ">" keyword.operator.assignment.redirection.shell
+       "||" keyword.operator.logical.or.shell
+       "true" meta.function-call.shell support.function.command.shell
+  24 | \tfor f in $^; do [ -e "$<" ] && echo `basename $@`; done
+       "for" keyword.control.loop.for.shell
+       "in" keyword.control.in.shell
+       "$^" variable.language.automatic.makefile
+       ";" keyword.operator.logical.continue.shell
+       "do" keyword.control.loop.do.shell
+       "[" support.function.test.begin.shell
+       "-" punctuation.definition.parameter.shell
+       "e" variable.parameter.option.shell
+       "\"" punctuation.definition.string.begin.shell
+       "$<" variable.language.automatic.makefile
+       "\"" punctuation.definition.string.end.shell
+       "]" support.function.test.end.shell
+       "&&" keyword.operator.logical.and.shell
+       "echo" meta.function-call.shell support.function.echo.shell
+       "`" punctuation.section.group.begin.shell
+       "basename" meta.function-call.shell support.function.command.shell
+       "$@" variable.language.automatic.makefile
+       "`" punctuation.section.group.end.shell
+       ";" keyword.operator.logical.continue.shell
+       "done" keyword.control.loop.end.shell
+  25 | \tf() { printf '%s' $<; }; f x
+       "f" entity.name.function.shell
+       "(" punctuation.section.parens.begin.shell
+       ")" punctuation.section.parens.end.shell
+       "{" punctuation.section.braces.begin.shell
+       "printf" meta.function-call.shell support.function.printf.shell
+       "'" punctuation.definition.string.begin.shell
+       "%s" string.quoted.single.shell
+       "'" punctuation.definition.string.end.shell
+       "$<" variable.language.automatic.makefile
+       ";" keyword.operator.logical.continue.shell
+       "}" punctuation.section.braces.end.shell
+       ";" keyword.operator.logical.continue.shell
+       "f" meta.function-call.shell support.function.command.shell
+  26 | test: CFLAGS += -g
+       "test" meta.function.makefile entity.name.function.makefile
+       ":" keyword.operator.assignment.makefile
+       " CFLAGS" variable.other.makefile
+       "+=" keyword.operator.assignment.makefile
+       "-g" meta.string.makefile string.unquoted.makefile
+  27 | test:: all
+       "test" meta.function.makefile entity.name.function.makefile
+       "::" keyword.operator.assignment.makefile
+       "all" meta.function.arguments.makefile string.unquoted.makefile
+  28 | \t$(info $(call show,$(OBJS),"quoted"))
+       "$(" keyword.other.block.begin.makefile
+       "info" support.function.builtin.makefile
+       "$(" keyword.other.block.begin.makefile
+       "call" meta.function-call.makefile constant.language.call.makefile
+       "show" meta.function-call.makefile variable.function.makefile
+       "," punctuation.separator.makefile
+       "$(" keyword.other.block.begin.makefile
+       "OBJS" variable.parameter.makefile
+       ")" keyword.other.block.end.makefile
+       "," punctuation.separator.makefile
+       "\"" punctuation.definition.string.begin.makefile
+       "quoted" meta.string.makefile string.quoted.double.makefile
+       "\"" punctuation.definition.string.end.makefile
+       "))" keyword.other.block.end.makefile
+  29 | \t$(Q)$(kecho) "  SYNC    $@"
+       "$(" keyword.other.block.begin.makefile
+       "Q" variable.parameter.makefile
+       ")" keyword.other.block.end.makefile
+       "$(" keyword.other.block.begin.makefile
+       "kecho" variable.parameter.makefile
+       ")" keyword.other.block.end.makefile
+       "\"" punctuation.definition.string.begin.shell
+       "  SYNC    " string.quoted.double.shell
+       "$@" variable.language.automatic.makefile
+       "\"" punctuation.definition.string.end.shell
+  30 | \tVAR=1 cd build && make -C sub $(shell uname -s)
+       "VAR" variable.other.readwrite.assignment.shell
+       "=" keyword.operator.assignment.shell
+       "1" string.unquoted.shell
+       "cd" meta.function-call.shell support.function.cd.shell
+       "&&" keyword.operator.logical.and.shell
+       "make" meta.function-call.shell support.function.command.shell
+       " -" punctuation.definition.parameter.shell
+       "C" variable.parameter.option.shell
+       "$(" keyword.other.block.begin.makefile
+       "shell" support.function.builtin.makefile
+       "uname" meta.function-call.shell support.function.command.shell
+       " -" punctuation.definition.parameter.shell
+       "s" variable.parameter.option.shell
+       ")" keyword.other.block.end.makefile
+  31 | \tif [ -n "$${HOME}" ]; then echo ok; else exit 1; fi
+       "if" keyword.control.conditional.if.shell
+       "[" support.function.test.begin.shell
+       "-" punctuation.definition.parameter.shell
+       "n" variable.parameter.option.shell
+       "\"" punctuation.definition.string.begin.shell
+       "$${" keyword.other.block.begin.makefile
+       "HOME" variable.parameter.makefile
+       "}" keyword.other.block.end.makefile
+       "\"" punctuation.definition.string.end.shell
+       "]" support.function.test.end.shell
+       ";" keyword.operator.logical.continue.shell
+       "then" keyword.control.conditional.then.shell
+       "echo" meta.function-call.shell support.function.echo.shell
+       ";" keyword.operator.logical.continue.shell
+       "else" keyword.control.conditional.else.shell
+       "exit" meta.function-call.shell support.function.exit.shell
+       ";" keyword.operator.logical.continue.shell
+       "fi" keyword.control.conditional.end.shell
+  32 | \tcase $< in a|b) echo $$((1 + 2));; esac
+       "case" keyword.control.conditional.case.shell
+       "$<" variable.language.automatic.makefile
+       "in" keyword.control.in.shell
+       "|" keyword.operator.logical.shell
+       ")" keyword.control.conditional.patterns.end.shell
+       "echo" meta.function-call.shell support.function.echo.shell
+       "$$(" keyword.other.block.begin.makefile
+       "(1 + 2" variable.parameter.makefile
+       ")" keyword.other.block.end.makefile
+       ";;" meta.conditional.case.clause.commands.shell punctuation.terminator.case.clause.shell
+       "esac" keyword.control.conditional.end.shell
+  33 | endef
+       "endef" invalid.illegal.stray.endef.makefile
+  34 | a((m)    ((g)    (i)    : b
+       "    (i)" meta.function.makefile entity.name.function.makefile
+       ":" keyword.operator.assignment.makefile
+       "b" meta.function.arguments.makefile string.unquoted.makefile

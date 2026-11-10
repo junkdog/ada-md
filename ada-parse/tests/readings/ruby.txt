@@ -1,0 +1,374 @@
+# Ruby: ada-parse/tests/readings.rs, ruby
+   1 | #!/usr/bin/env ruby
+       "#" comment.line.number-sign.ruby punctuation.definition.comment.ruby
+       "!/usr/bin/env ruby" comment.line.number-sign.ruby
+   2 | # frozen_string_literal: true
+       "#" comment.line.number-sign.ruby punctuation.definition.comment.ruby
+       " frozen_string_literal: true" comment.line.number-sign.ruby
+   3 | require "json"
+       "require" keyword.control.import.ruby
+       "\"" string.quoted.double.ruby punctuation.definition.string.begin.ruby
+       "json" string.quoted.double.ruby
+       "\"" string.quoted.double.ruby punctuation.definition.string.end.ruby
+   4 | require_relative 'lib/thing'
+       "require_relative" keyword.control.import.ruby
+       "'" string.quoted.single.ruby punctuation.definition.string.begin.ruby
+       "lib/thing" string.quoted.single.ruby
+       "'" string.quoted.single.ruby punctuation.definition.string.end.ruby
+   5 | 
+   6 | module Shop::Billing
+       "module" storage.type.namespace.ruby keyword.declaration.namespace.ruby
+       "Shop" entity.name.namespace.ruby
+       "::" punctuation.accessor.double-colon.ruby
+       "Billing" entity.name.namespace.ruby
+   7 |   class Invoice < ApplicationRecord::Base
+       "class" storage.type.class.ruby keyword.declaration.class.ruby
+       "Invoice" entity.name.class.ruby
+       "<" punctuation.separator.inheritance.ruby
+       "::" punctuation.accessor.double-colon.ruby
+   8 |     include Comparable
+       "include" keyword.other.special-method.ruby
+       "Comparable" variable.other.constant.ruby
+   9 |     attr_accessor :total, :lines
+       "attr_accessor" keyword.other.special-method.ruby
+       ":" constant.other.symbol.ruby punctuation.definition.constant.ruby
+       "total" constant.other.symbol.ruby
+       "," punctuation.separator.sequence.ruby
+       ":" constant.other.symbol.ruby punctuation.definition.constant.ruby
+       "lines" constant.other.symbol.ruby
+  10 |     TAX_RATE = 0.25
+       "TAX_RATE" entity.name.constant.ruby
+       "=" keyword.operator.assignment.ruby
+       "0" constant.numeric.float.decimal.ruby
+       "." constant.numeric.float.decimal.ruby punctuation.separator.decimal.ruby
+       "25" constant.numeric.float.decimal.ruby
+  11 |     DEFAULTS, LIMITS = {}, []
+       "DEFAULTS" entity.name.constant.ruby
+       "," punctuation.separator.sequence.ruby
+       "LIMITS" entity.name.constant.ruby
+       "=" keyword.operator.assignment.ruby
+       "{}" punctuation.section.scope.ruby
+       "," punctuation.separator.sequence.ruby
+       "[]" punctuation.section.array.ruby
+  12 | 
+  13 |     def initialize(lines = [], total: 0, **opts, &blk)
+       "def" storage.type.function.ruby keyword.declaration.function.ruby
+       "initialize" entity.name.function.ruby
+       "(" punctuation.definition.group.begin.ruby
+       "lines" variable.parameter.ruby
+       "=" keyword.operator.assignment.ruby
+       "[]" punctuation.section.array.ruby
+       "," punctuation.separator.ruby
+       "total" variable.parameter.ruby
+       ":" punctuation.separator.ruby
+       "0" constant.numeric.integer.decimal.ruby
+       "," punctuation.separator.ruby
+       "**" keyword.operator.splat.ruby
+       "opts" variable.parameter.ruby
+       "," punctuation.separator.ruby
+       "&" keyword.operator.ruby
+       "blk" variable.parameter.ruby
+       ")" punctuation.definition.group.end.ruby
+  14 |       @lines = lines
+       "@" variable.other.readwrite.instance.ruby punctuation.definition.variable.ruby
+       "lines" variable.other.readwrite.instance.ruby
+       "=" keyword.operator.assignment.ruby
+  15 |       @@count ||= 0
+       "@@" variable.other.readwrite.class.ruby punctuation.definition.variable.ruby
+       "count" variable.other.readwrite.class.ruby
+       "||=" keyword.operator.assignment.augmented.ruby
+       "0" constant.numeric.integer.decimal.ruby
+  16 |       $stdout.sync = true
+       "$" variable.other.readwrite.global.ruby punctuation.definition.variable.ruby
+       "stdout" variable.other.readwrite.global.ruby
+       "." punctuation.accessor.dot.ruby
+       "=" keyword.operator.assignment.ruby
+       "true" constant.language.ruby
+  17 |     end
+       "end" keyword.control.block.end.ruby
+  18 | 
+  19 |     def self.parse(text) = new(JSON.parse(text))
+       "def" storage.type.function.ruby keyword.declaration.function.ruby
+       "self" variable.language.ruby
+       "." punctuation.accessor.dot.ruby
+       "parse" entity.name.function.ruby
+       "(" punctuation.definition.group.begin.ruby
+       "text" variable.parameter.ruby
+       ")" punctuation.definition.group.end.ruby
+       "=" keyword.operator.assignment.ruby
+       "new" keyword.other.special-method.ruby
+       "(" punctuation.definition.group.begin.ruby
+       "." punctuation.accessor.dot.ruby
+       "(" punctuation.definition.group.begin.ruby
+       "))" punctuation.definition.group.end.ruby
+  20 | 
+  21 |     def <=>(other)
+       "def" storage.type.function.ruby keyword.declaration.function.ruby
+       "<=>" entity.name.function.ruby
+       "(" punctuation.definition.group.begin.ruby
+       "other" variable.parameter.ruby
+       ")" punctuation.definition.group.end.ruby
+  22 |       total <=> other.total
+       "<=>" keyword.operator.comparison.ruby
+       "." punctuation.accessor.dot.ruby
+  23 |     end
+       "end" keyword.control.block.end.ruby
+  24 | 
+  25 |     def to_s
+       "def" storage.type.function.ruby keyword.declaration.function.ruby
+       "to_s" entity.name.function.ruby
+  26 |       "Invoice #{id}: #{format('%.2f', total)} (#@lines)\n"
+       "\"" string.quoted.double.ruby punctuation.definition.string.begin.ruby
+       "Invoice " string.quoted.double.ruby
+       "#{" punctuation.section.interpolation.begin.ruby
+       "}" punctuation.section.interpolation.end.ruby
+       ": " string.quoted.double.ruby
+       "#{" punctuation.section.interpolation.begin.ruby
+       "format" support.function.builtin.ruby
+       "(" punctuation.definition.group.begin.ruby
+       "'" string.quoted.single.ruby punctuation.definition.string.begin.ruby
+       "%.2f" constant.other.placeholder.ruby
+       "'" string.quoted.single.ruby punctuation.definition.string.end.ruby
+       "," punctuation.separator.sequence.ruby
+       ")" punctuation.definition.group.end.ruby
+       "}" punctuation.section.interpolation.end.ruby
+       " (" string.quoted.double.ruby
+       "#@" variable.other.readwrite.instance.ruby punctuation.definition.variable.ruby
+       "lines" variable.other.readwrite.instance.ruby
+       ")" string.quoted.double.ruby
+       "\\n" constant.character.escape.ruby
+       "\"" string.quoted.double.ruby punctuation.definition.string.end.ruby
+  27 |     end
+       "end" keyword.control.block.end.ruby
+  28 | 
+  29 |     def each_line
+       "def" storage.type.function.ruby keyword.declaration.function.ruby
+       "each_line" entity.name.function.ruby
+  30 |       lines.each do |line, i = 0|
+       "." punctuation.accessor.dot.ruby
+       "do" keyword.control.block.do.ruby
+       "|" punctuation.definition.parameters.begin.ruby
+       "line" variable.parameter.ruby
+       "," punctuation.separator.ruby
+       "i" variable.parameter.ruby
+       "=" keyword.operator.assignment.ruby
+       "0" constant.numeric.integer.decimal.ruby
+       "|" punctuation.definition.parameters.end.ruby
+  31 |         next if line.nil?
+       "next" keyword.control.flow.next.ruby
+       "if" keyword.control.conditional.if.ruby
+       "." punctuation.accessor.dot.ruby
+       "nil?" support.function.builtin.ruby
+  32 |         yield line unless line.empty?
+       "yield" keyword.control.flow.yield.ruby
+       "unless" keyword.control.conditional.unless.ruby
+       "." punctuation.accessor.dot.ruby
+  33 |       end
+       "end" keyword.control.block.end.ruby
+  34 |       lines.map { |l| l.amount * 2 }.sum
+       "." punctuation.accessor.dot.ruby
+       "{" punctuation.section.scope.ruby
+       "|" punctuation.definition.parameters.begin.ruby
+       "l" variable.parameter.ruby
+       "|" punctuation.definition.parameters.end.ruby
+       "." punctuation.accessor.dot.ruby
+       "*" keyword.operator.arithmetic.ruby
+       "2" constant.numeric.integer.decimal.ruby
+       "}" punctuation.section.scope.ruby
+       "." punctuation.accessor.dot.ruby
+  35 |     end
+       "end" keyword.control.block.end.ruby
+  36 | 
+  37 |     def matches?(pattern)
+       "def" storage.type.function.ruby keyword.declaration.function.ruby
+       "matches?" entity.name.function.ruby
+       "(" punctuation.definition.group.begin.ruby
+       "pattern" variable.parameter.ruby
+       ")" punctuation.definition.group.end.ruby
+  38 |       name =~ /inv-/i ? $1.to_i : %r{a/b}x.match?(name)
+       "name" support.function.builtin.ruby
+       "=~" keyword.operator.comparison.ruby
+       " " string.regexp.classic.ruby
+       "/" string.regexp.classic.ruby punctuation.definition.string.begin.ruby
+       "inv-" string.regexp.classic.ruby
+       "/" string.regexp.classic.ruby punctuation.definition.string.end.ruby
+       "i" string.regexp.classic.ruby keyword.other.ruby
+       "?" keyword.operator.conditional.ruby
+       "$" variable.other.readwrite.global.pre-defined.ruby punctuation.definition.variable.ruby
+       "1" variable.other.readwrite.global.pre-defined.ruby
+       "." punctuation.accessor.dot.ruby
+       "to_i" support.function.builtin.ruby
+       ":" keyword.operator.conditional.ruby
+       "%r{" string.regexp.mod-r.ruby punctuation.definition.string.begin.ruby
+       "a/b" string.regexp.mod-r.ruby
+       "}x" string.regexp.mod-r.ruby punctuation.definition.string.end.ruby
+       "." punctuation.accessor.dot.ruby
+       "match?" support.function.builtin.ruby
+       "(" punctuation.definition.group.begin.ruby
+       "name" support.function.builtin.ruby
+       ")" punctuation.definition.group.end.ruby
+  39 |     end
+       "end" keyword.control.block.end.ruby
+  40 | 
+  41 |     private
+       "private" keyword.other.special-method.ruby
+  42 | 
+  43 |     def sql
+       "def" storage.type.function.ruby keyword.declaration.function.ruby
+       "sql" entity.name.function.ruby
+  44 |       <<~SQL
+       "<<~SQL" string.unquoted.heredoc.ruby punctuation.definition.string.begin.ruby
+  45 |         SELECT id, total FROM invoices
+       "SELECT" keyword.other.DML.sql
+       "FROM" keyword.other.DML.sql
+  46 |         WHERE id = #{id} -- one
+       "WHERE" keyword.other.DML.sql
+       "=" keyword.operator.comparison.sql
+       "#{" punctuation.section.interpolation.begin.ruby
+       "}" punctuation.section.interpolation.end.ruby
+       "--" comment.line.double-dash.sql punctuation.definition.comment.sql
+       " one" comment.line.double-dash.sql
+  47 |       SQL
+       "      " string.unquoted.heredoc.ruby
+       "SQL" string.unquoted.heredoc.ruby punctuation.definition.string.end.ruby
+  48 |     end
+       "end" keyword.control.block.end.ruby
+  49 | 
+  50 |     def note
+       "def" storage.type.function.ruby keyword.declaration.function.ruby
+       "note" entity.name.function.ruby
+  51 |       <<-EOS.strip
+       "<<-EOS" string.unquoted.heredoc.ruby punctuation.definition.string.begin.ruby
+       "." punctuation.accessor.dot.ruby
+  52 |         A note: #{@lines.size} lines \t done
+       "        A note: " string.unquoted.heredoc.ruby
+       "#{" punctuation.section.interpolation.begin.ruby
+       "@" variable.other.readwrite.instance.ruby punctuation.definition.variable.ruby
+       "lines" variable.other.readwrite.instance.ruby
+       "." punctuation.accessor.dot.ruby
+       "}" punctuation.section.interpolation.end.ruby
+       " lines " string.unquoted.heredoc.ruby
+       "\\t" constant.character.escape.ruby
+       " done" string.unquoted.heredoc.ruby
+  53 |       EOS
+       "      " string.unquoted.heredoc.ruby
+       "EOS" string.unquoted.heredoc.ruby punctuation.definition.string.end.ruby
+  54 |     end
+       "end" keyword.control.block.end.ruby
+  55 |   end
+       "end" keyword.control.block.end.ruby
+  56 | end
+       "end" keyword.control.block.end.ruby
+  57 | 
+  58 | x = [1, 0x1F, 0b101, 017, 1_000, 1.5, 1e-3, 2r, 3i]
+       "=" keyword.operator.assignment.ruby
+       "[" punctuation.section.array.ruby
+       "1" constant.numeric.integer.decimal.ruby
+       "," punctuation.separator.sequence.ruby
+       "0x" constant.numeric.integer.hexadecimal.ruby punctuation.definition.numeric.base.ruby
+       "1F" constant.numeric.integer.hexadecimal.ruby
+       "," punctuation.separator.sequence.ruby
+       "0b" constant.numeric.integer.binary.ruby punctuation.definition.numeric.base.ruby
+       "101" constant.numeric.integer.binary.ruby
+       "," punctuation.separator.sequence.ruby
+       "0" constant.numeric.integer.octal.ruby punctuation.definition.numeric.base.ruby
+       "17" constant.numeric.integer.octal.ruby
+       "," punctuation.separator.sequence.ruby
+       "1_000" constant.numeric.integer.decimal.ruby
+       "," punctuation.separator.sequence.ruby
+       "1" constant.numeric.float.decimal.ruby
+       "." constant.numeric.float.decimal.ruby punctuation.separator.decimal.ruby
+       "5" constant.numeric.float.decimal.ruby
+       "," punctuation.separator.sequence.ruby
+       "1e-3" constant.numeric.float.decimal.ruby
+       "," punctuation.separator.sequence.ruby
+       "2" constant.numeric.rational.decimal.ruby
+       "r" constant.numeric.rational.decimal.ruby storage.type.numeric.ruby
+       "," punctuation.separator.sequence.ruby
+       "3" constant.numeric.imaginary.decimal.ruby
+       "i" constant.numeric.imaginary.decimal.ruby storage.type.numeric.ruby
+       "]" punctuation.section.array.ruby
+  59 | y = %w[a b c] + %i(d e) + %q{f {g}} + [%Q<h #{x}>]
+       "=" keyword.operator.assignment.ruby
+       "%w[" string.quoted.other.literal.lower.ruby punctuation.definition.string.begin.ruby
+       "a b c" string.quoted.other.literal.lower.ruby
+       "]" string.quoted.other.literal.lower.ruby punctuation.definition.string.end.ruby
+       "+" keyword.operator.arithmetic.ruby
+       "%i(" string.quoted.other.literal.lower.ruby punctuation.definition.string.begin.ruby
+       "d e" string.quoted.other.literal.lower.ruby
+       ")" string.quoted.other.literal.lower.ruby punctuation.definition.string.end.ruby
+       "+" keyword.operator.arithmetic.ruby
+       "%q{" string.quoted.other.literal.lower.ruby punctuation.definition.string.begin.ruby
+       "f " string.quoted.other.literal.lower.ruby
+       "{" punctuation.section.scope.ruby
+       "g" string.quoted.other.literal.lower.ruby
+       "}" punctuation.section.scope.ruby
+       "}" string.quoted.other.literal.lower.ruby punctuation.definition.string.end.ruby
+       "+" keyword.operator.arithmetic.ruby
+       "[" punctuation.section.array.ruby
+       "%Q<" string.quoted.other.literal.upper.ruby punctuation.definition.string.begin.ruby
+       "h " string.quoted.other.literal.upper.ruby
+       "#{" punctuation.section.interpolation.begin.ruby
+       "}" punctuation.section.interpolation.end.ruby
+       ">" string.quoted.other.literal.upper.ruby punctuation.definition.string.end.ruby
+       "]" punctuation.section.array.ruby
+  60 | z = a ? b : c
+       "=" keyword.operator.assignment.ruby
+       "?" keyword.operator.conditional.ruby
+       ":" keyword.operator.conditional.ruby
+  61 | w = :sym, :"quoted #{x}", ?a
+       "=" keyword.operator.assignment.ruby
+       ":" constant.other.symbol.ruby punctuation.definition.constant.ruby
+       "sym" constant.other.symbol.ruby
+       "," punctuation.separator.sequence.ruby
+       ":\"" constant.other.symbol.double-quoted.ruby punctuation.definition.constant.ruby
+       "quoted " constant.other.symbol.double-quoted.ruby
+       "#{" punctuation.section.interpolation.begin.ruby
+       "}" punctuation.section.interpolation.end.ruby
+       "\"" constant.other.symbol.double-quoted.ruby punctuation.definition.constant.ruby
+       "," punctuation.separator.sequence.ruby
+       "?" constant.character.ruby punctuation.definition.constant.ruby
+       "a" constant.character.ruby
+  62 | begin
+       "begin" keyword.control.block.begin.ruby
+  63 |   raise ArgumentError, "bad" if x.empty? && !y
+       "raise" keyword.control.flow.throw.ruby
+       "ArgumentError" variable.other.constant.ruby
+       "," punctuation.separator.sequence.ruby
+       "\"" string.quoted.double.ruby punctuation.definition.string.begin.ruby
+       "bad" string.quoted.double.ruby
+       "\"" string.quoted.double.ruby punctuation.definition.string.end.ruby
+       "if" keyword.control.conditional.if.ruby
+       "." punctuation.accessor.dot.ruby
+       "&&" keyword.operator.logical.ruby
+       "!" keyword.operator.logical.ruby
+  64 | rescue => e
+       "rescue" keyword.control.exception.rescue.ruby
+       "=>" punctuation.separator.key-value.ruby
+  65 |   warn e.message
+       "warn" support.function.builtin.ruby
+       "." punctuation.accessor.dot.ruby
+  66 | ensure
+       "ensure" keyword.control.exception.ensure.ruby
+  67 |   puts "done"
+       "puts" support.function.builtin.ruby
+       "\"" string.quoted.double.ruby punctuation.definition.string.begin.ruby
+       "done" string.quoted.double.ruby
+       "\"" string.quoted.double.ruby punctuation.definition.string.end.ruby
+  68 | end
+       "end" keyword.control.block.end.ruby
+  69 | case x
+       "case" keyword.control.conditional.case.ruby
+  70 | when Integer then 1
+       "when" keyword.control.conditional.when.ruby
+       "Integer" support.function.builtin.ruby
+       "then" keyword.control.conditional.then.ruby
+       "1" constant.numeric.integer.decimal.ruby
+  71 | else 2
+       "else" keyword.control.conditional.if.ruby
+       "2" constant.numeric.integer.decimal.ruby
+  72 | end
+       "end" keyword.control.block.end.ruby
+  73 | __END__
+       "__END__" string.unquoted.program-block.ruby
+  74 | data

@@ -1,0 +1,168 @@
+# Sql: ada-parse/tests/readings.rs, sql
+   1 | -- schema
+       "--" comment.line.double-dash.sql punctuation.definition.comment.sql
+       " schema" comment.line.double-dash.sql
+   2 | CREATE OR REPLACE FUNCTION s."f"(a int)
+       "CREATE OR REPLACE" meta.create.sql keyword.other.create.sql
+       "FUNCTION" meta.create.sql keyword.other.sql
+       "." meta.toc-list.full-identifier.sql punctuation.accessor.dot.sql
+       "f" meta.toc-list.full-identifier.sql entity.name.function.sql
+       "int" storage.type.sql
+   3 | CREATE UNIQUE INDEX
+       "CREATE" meta.create.sql keyword.other.create.sql
+       "UNIQUE INDEX" meta.create.sql keyword.other.sql
+   4 |   idx;
+   5 | create table `t` (id bigint primary key, n varchar(255) not null,
+       "create" meta.create.sql keyword.other.create.sql
+       "table" meta.create.sql keyword.other.sql
+       "t" meta.toc-list.full-identifier.sql entity.name.function.sql
+       "bigint" storage.type.sql
+       "primary key" storage.modifier.sql
+       "varchar" storage.type.sql
+       "255" constant.numeric.sql
+       "not" keyword.operator.logical.sql
+       "null" constant.language.sql
+   6 |   p numeric(10,2) default 0, d timestamp(3) with time zone, c character varying(10),
+       "numeric" storage.type.sql
+       "10" constant.numeric.sql
+       "2" constant.numeric.sql
+       "default" storage.modifier.sql
+       "0" constant.numeric.sql
+       "timestamp" storage.type.sql
+       "3" constant.numeric.sql
+       " with time zone" storage.type.sql
+       "character varying" storage.type.sql
+       "10" constant.numeric.sql
+   7 |   x double precision, y bit varying(3), z var char(2), f float(8),
+       "double precision" storage.type.sql
+       "bit" storage.type.sql
+       "3" constant.numeric.sql
+       "var char" storage.type.sql
+       "2" constant.numeric.sql
+       "float" storage.type.sql
+       "8" constant.numeric.sql
+   8 |   FOREIGN KEY (a) REFERENCES u(id) ON DELETE CASCADE, CHECK (n <> ''));
+       "FOREIGN KEY" storage.modifier.sql
+       "REFERENCES" storage.modifier.sql
+       "ON DELETE CASCADE" storage.modifier.sql
+       "CHECK" storage.modifier.sql
+       "<>" keyword.operator.comparison.sql
+       "'" string.quoted.single.sql punctuation.definition.string.begin.sql
+       "'" string.quoted.single.sql punctuation.definition.string.end.sql
+   9 | DROP VIEW x;
+       "DROP" meta.drop.sql keyword.other.create.sql
+       "VIEW" meta.drop.sql keyword.other.sql
+  10 | ALTER TABLE t COMMENT ON COLUMN a.b IS 'x';
+       "ALTER" meta.alter.sql keyword.other.create.sql
+       "TABLE" meta.alter.sql keyword.other.table.sql
+       " COMMENT ON COLUMN a.b IS " keyword.other.object-comments.sql
+       "'" string.quoted.single.sql punctuation.definition.string.begin.sql
+       "x" string.quoted.single.sql
+       "'" string.quoted.single.sql punctuation.definition.string.end.sql
+  11 |   COMMENT ON TABLE t IS 'it''s \'q\'';
+       "  COMMENT ON TABLE t IS " keyword.other.object-comments.sql
+       "'" string.quoted.single.sql punctuation.definition.string.begin.sql
+       "it" string.quoted.single.sql
+       "''" string.quoted.single.sql constant.character.escape.sql
+       "s " string.quoted.single.sql
+       "\\'" string.quoted.single.sql constant.character.escape.sql
+       "q" string.quoted.single.sql
+       "\\'" string.quoted.single.sql constant.character.escape.sql
+       "'" string.quoted.single.sql punctuation.definition.string.end.sql
+  12 | /* block
+       "/*" comment.block.c punctuation.definition.comment.sql
+       " block" comment.block.c
+  13 |  * star
+       " " comment.block.c
+       "*" comment.block.c punctuation.definition.comment.sql
+       " star" comment.block.c
+  14 |  */ SELECT DISTINCT a.b, count(*), COUNT (x), counter(y), current_user, lower(n)
+       " */" comment.block.c
+       "SELECT DISTINCT" keyword.other.DML.sql
+       "a" constant.other.database-name.sql
+       "b" constant.other.table-name.sql
+       "count" support.function.aggregate.sql
+       "*" variable.language.star.sql
+       "COUNT" support.function.aggregate.sql
+       "current_user" support.function.scalar.sql
+       "lower" support.function.string.sql
+  15 | FROM t NATURAL LEFT OUTER JOIN u INNER JOIN v USING (id) # mysql
+       "FROM" keyword.other.DML.sql
+       "NATURAL LEFT OUTER JOIN" keyword.other.DML.sql
+       "INNER JOIN" keyword.other.DML.sql
+       "USING" keyword.other.DML.sql
+       "#" comment.line.number-sign.sql punctuation.definition.comment.sql
+       " mysql" comment.line.number-sign.sql
+  16 | WHERE x IS NOT NULL AND y not null OR z IS null AND q <=> 1 AND r != 2 || 'a'
+       "WHERE" keyword.other.DML.sql
+       "IS" keyword.operator.logical.sql
+       "NOT" keyword.operator.logical.sql
+       "NULL" constant.language.sql
+       "AND" keyword.operator.logical.sql
+       "not" keyword.operator.logical.sql
+       "null" constant.language.sql
+       "OR" keyword.operator.logical.sql
+       "IS" keyword.operator.logical.sql
+       "null" constant.language.sql
+       "AND" keyword.operator.logical.sql
+       "<=>" keyword.operator.comparison.sql
+       "1" constant.numeric.sql
+       "AND" keyword.operator.logical.sql
+       "!=" keyword.operator.comparison.sql
+       "2" constant.numeric.sql
+       "||" keyword.operator.concatenator.sql
+       "'" string.quoted.single.sql punctuation.definition.string.begin.sql
+       "a" string.quoted.single.sql
+       "'" string.quoted.single.sql punctuation.definition.string.end.sql
+  17 | GROUP BY a ORDER  BY b DESC LIMIT 10 UNION ALL SELECT TOP 5 * FROM w;
+       "GROUP BY" keyword.other.DML.sql
+       "ORDER  BY" keyword.other.DML.sql
+       "DESC" keyword.other.order.sql
+       "LIMIT" keyword.other.DML.sql
+       "10" constant.numeric.sql
+       "UNION ALL" keyword.other.DML.sql
+       "SELECT TOP" keyword.other.DML.sql
+       "5" constant.numeric.sql
+       "*" variable.language.star.sql
+       "FROM" keyword.other.DML.sql
+  18 | INSERT IGNORE INTO t VALUES (1, "a""b #{x} c", %{p #{q} r}, %r{s}, ());
+       "INSERT IGNORE INTO" keyword.other.DML.sql
+       "VALUES" keyword.other.DML.II.sql
+       "1" constant.numeric.sql
+       "\"" string.quoted.double.sql punctuation.definition.string.begin.sql
+       "a" string.quoted.double.sql
+       "\"\"" string.quoted.double.sql constant.character.escape.sql
+       "b " string.quoted.double.sql
+       "#{" string.quoted.double.sql string.interpolated.sql punctuation.definition.string.begin.sql
+       "x" string.quoted.double.sql string.interpolated.sql
+       "}" string.quoted.double.sql string.interpolated.sql punctuation.definition.string.end.sql
+       " c" string.quoted.double.sql
+       "\"" string.quoted.double.sql punctuation.definition.string.end.sql
+       "%{" string.other.quoted.brackets.sql punctuation.definition.string.begin.sql
+       "p " string.other.quoted.brackets.sql
+       "#{" string.other.quoted.brackets.sql string.interpolated.sql punctuation.definition.string.begin.sql
+       "q" string.other.quoted.brackets.sql string.interpolated.sql
+       "}" string.other.quoted.brackets.sql string.interpolated.sql punctuation.definition.string.end.sql
+       " r" string.other.quoted.brackets.sql
+       "}" string.other.quoted.brackets.sql punctuation.definition.string.end.sql
+       "%r{" string.regexp.modr.sql punctuation.definition.string.begin.sql
+       "s" string.regexp.modr.sql
+       "}" string.regexp.modr.sql punctuation.definition.string.end.sql
+       "(" meta.block.sql punctuation.section.scope.begin.sql
+       ")" meta.block.sql punctuation.section.scope.end.sql
+  19 | BEGIN WORK; START TRANSACTION; GRANT WITH GRANT OPTION; REVOKE; COMMIT;
+       "BEGIN WORK" keyword.other.LUW.sql
+       "START TRANSACTION" keyword.other.LUW.sql
+       "GRANT WITH GRANT OPTION" keyword.other.authorization.sql
+       "REVOKE" keyword.other.authorization.sql
+       "COMMIT" keyword.other.LUW.sql
+  20 | SELECT 1 AS one, true, FALSE, 12ab, ٣, x.y.z ASC;
+       "SELECT" keyword.other.DML.sql
+       "1" constant.numeric.sql
+       "AS" keyword.operator.assignment.alias.sql
+       "true" constant.boolean.sql
+       "FALSE" constant.boolean.sql
+       "٣" constant.numeric.sql
+       "x" constant.other.database-name.sql
+       "y" constant.other.table-name.sql
+       "ASC" keyword.other.order.sql

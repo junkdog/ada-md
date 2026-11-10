@@ -1,0 +1,105 @@
+# Properties: ada-parse/tests/readings.rs, properties_examples
+
+## block 1
+   1 | # c
+       "#" comment.line.java-props punctuation.definition.comment.java-props
+       " c" comment.line.java-props
+   2 |   ! c
+       "  " comment.line.java-props
+       "!" comment.line.java-props punctuation.definition.comment.java-props
+       " c" comment.line.java-props
+   3 | a\ b = x\ty \u00e9\
+       "a" meta.property.java-props entity.name.key.java-props
+       "\\ " meta.property.java-props entity.name.key.java-props constant.character.escape.java-props
+       "b" meta.property.java-props entity.name.key.java-props
+       " " meta.property.java-props
+       "=" meta.property.java-props punctuation.separator.java-props
+       " " meta.property.java-props
+       "x" meta.property.java-props string.unquoted.java-props
+       "\\t" meta.property.java-props string.unquoted.java-props constant.character.escape.java-props
+       "y " meta.property.java-props string.unquoted.java-props
+       "\\u00e9" meta.property.java-props string.unquoted.java-props constant.character.escape.unicode.java-props
+       "\\" meta.property.java-props string.unquoted.java-props punctuation.separator.continuation.java-props
+   4 |   more
+       "  more" meta.property.java-props string.unquoted.java-props
+   5 | k:v
+       "k" meta.property.java-props entity.name.key.java-props
+       ":" meta.property.java-props punctuation.separator.java-props
+       "v" meta.property.java-props string.unquoted.java-props
+   6 | k \
+       "k" meta.property.java-props entity.name.key.java-props
+       " " meta.property.java-props
+       "\\" meta.property.java-props string.unquoted.java-props punctuation.separator.continuation.java-props
+   7 |  v
+       " v" meta.property.java-props string.unquoted.java-props
+
+## block 2
+   1 | key
+       "key" meta.property.java-props entity.name.key.java-props
+   2 | key=
+       "key" meta.property.java-props entity.name.key.java-props
+       "=" meta.property.java-props punctuation.separator.java-props
+   3 | key =
+       "key" meta.property.java-props entity.name.key.java-props
+       " " meta.property.java-props
+       "=" meta.property.java-props punctuation.separator.java-props
+   4 | key  value:x
+       "key" meta.property.java-props entity.name.key.java-props
+       "  " meta.property.java-props
+       "value:x" meta.property.java-props string.unquoted.java-props
+   5 | =v
+       "=" meta.property.java-props punctuation.separator.java-props
+       "v" meta.property.java-props string.unquoted.java-props
+   6 | :v
+       ":" meta.property.java-props punctuation.separator.java-props
+       "v" meta.property.java-props string.unquoted.java-props
+   7 | k\u12x=y
+       "k\\u12x" meta.property.java-props entity.name.key.java-props
+       "=" meta.property.java-props punctuation.separator.java-props
+       "y" meta.property.java-props string.unquoted.java-props
+   8 | k\\=v
+       "k" meta.property.java-props entity.name.key.java-props
+       "\\\\" meta.property.java-props entity.name.key.java-props constant.character.escape.java-props
+       "=" meta.property.java-props punctuation.separator.java-props
+       "v" meta.property.java-props string.unquoted.java-props
+   9 | k\=x = y\\
+       "k" meta.property.java-props entity.name.key.java-props
+       "\\=" meta.property.java-props entity.name.key.java-props constant.character.escape.java-props
+       "x" meta.property.java-props entity.name.key.java-props
+       " " meta.property.java-props
+       "=" meta.property.java-props punctuation.separator.java-props
+       " " meta.property.java-props
+       "y" meta.property.java-props string.unquoted.java-props
+       "\\\\" meta.property.java-props string.unquoted.java-props constant.character.escape.java-props
+
+## block 3
+   1 | a = b\
+       "a" meta.property.java-props entity.name.key.java-props
+       " " meta.property.java-props
+       "=" meta.property.java-props punctuation.separator.java-props
+       " " meta.property.java-props
+       "b" meta.property.java-props string.unquoted.java-props
+       "\\" meta.property.java-props string.unquoted.java-props punctuation.separator.continuation.java-props
+   2 | c\
+       "c" meta.property.java-props string.unquoted.java-props
+       "\\" meta.property.java-props string.unquoted.java-props punctuation.separator.continuation.java-props
+   3 | d
+       "d" meta.property.java-props string.unquoted.java-props
+   4 |  x = \x
+       "x" meta.property.java-props entity.name.key.java-props
+       " " meta.property.java-props
+       "=" meta.property.java-props punctuation.separator.java-props
+       " " meta.property.java-props
+       "\\x" meta.property.java-props string.unquoted.java-props constant.character.escape.java-props
+   5 | \t\tx\t:\ty
+       "x" meta.property.java-props entity.name.key.java-props
+       "\t" meta.property.java-props
+       ":" meta.property.java-props punctuation.separator.java-props
+       "\t" meta.property.java-props
+       "y" meta.property.java-props string.unquoted.java-props
+
+## block 4
+
+## block 5
+   1 | 
+   2 | 

@@ -1,0 +1,722 @@
+# CSharp: ada-parse/tests/readings.rs, csharp
+   1 | // a note // nested
+       "//" comment.line.double-slash.cs punctuation.definition.comment.cs
+       " a note // nested" comment.line.double-slash.cs
+   2 | /* a block
+       "/*" comment.block.cs punctuation.definition.comment.begin.cs
+       " a block" comment.block.cs
+   3 | still the block */
+       "still the block " comment.block.cs
+       "*/" comment.block.cs punctuation.definition.comment.end.cs
+   4 | using System; using static System.Math; using Alias = Some.Name<int>;
+       "using" keyword.control.import.cs
+       ";" punctuation.terminator.statement.cs
+       "using" keyword.control.import.cs
+       "static" keyword.control.import.cs
+       "." punctuation.separator.namespace.cs
+       ";" punctuation.terminator.statement.cs
+       "using" keyword.control.import.cs
+       "=" keyword.operator.assignment.cs
+       "." punctuation.separator.namespace.cs
+       "<" punctuation.definition.generic.begin.cs
+       "int" storage.type.cs
+       ">" punctuation.definition.generic.end.cs
+       ";" punctuation.terminator.statement.cs
+   5 | #region Things
+       "#" meta.preprocessor.cs keyword.other.preprocessor.cs punctuation.definition.preprocessor.cs
+       "region" meta.preprocessor.cs keyword.other.preprocessor.cs
+       " " meta.preprocessor.cs
+       "Things" meta.preprocessor.cs entity.name.section.cs
+   6 | #if DEBUG && !RELEASE // why
+       "#" meta.preprocessor.cs keyword.other.preprocessor.cs punctuation.definition.preprocessor.cs
+       "if" meta.preprocessor.cs keyword.control.preprocessor.cs
+       " " meta.preprocessor.cs
+       "DEBUG" meta.preprocessor.cs constant.other.flag.cs
+       " " meta.preprocessor.cs
+       "&&" meta.preprocessor.cs keyword.operator.logical.cs
+       " " meta.preprocessor.cs
+       "!" meta.preprocessor.cs keyword.operator.logical.cs
+       "RELEASE" meta.preprocessor.cs constant.other.flag.cs
+       " " meta.preprocessor.cs
+       "//" meta.preprocessor.cs comment.line.double-slash.cs punctuation.definition.comment.cs
+       " why" meta.preprocessor.cs comment.line.double-slash.cs
+   7 | #pragma warning restore
+       "#" meta.preprocessor.cs keyword.other.preprocessor.cs punctuation.definition.preprocessor.cs
+       "pragma" meta.preprocessor.cs keyword.other.preprocessor.cs
+       " " meta.preprocessor.cs
+       "warning" meta.preprocessor.cs keyword.other.preprocessor.cs
+       " " meta.preprocessor.cs
+       "restore" meta.preprocessor.cs keyword.other.preprocessor.cs
+   8 | #endif
+       "#" meta.preprocessor.cs keyword.other.preprocessor.cs punctuation.definition.preprocessor.cs
+       "endif" meta.preprocessor.cs keyword.control.preprocessor.cs
+   9 | namespace A.B.C
+       "namespace" storage.type.namespace.cs
+       "A" entity.name.namespace.cs
+       "." entity.name.namespace.cs punctuation.separator.namespace.cs
+       "B" entity.name.namespace.cs
+       "." entity.name.namespace.cs punctuation.separator.namespace.cs
+       "C" entity.name.namespace.cs
+  10 | {
+       "{" punctuation.section.block.begin.cs
+  11 |     /// <summary>A <see cref="Foo"/> thing, TODO: https://x.y/z</summary>
+       "///" comment.block.documentation.cs punctuation.definition.comment.documentation.cs
+       " " comment.block.documentation.cs text.documentation.cs
+       "<" comment.block.documentation.cs punctuation.definition.tag.begin.cs
+       "summary" comment.block.documentation.cs entity.name.tag.begin.cs
+       ">" comment.block.documentation.cs punctuation.definition.tag.end.cs
+       "A " comment.block.documentation.cs text.documentation.cs
+       "<" comment.block.documentation.cs punctuation.definition.tag.begin.cs
+       "see" comment.block.documentation.cs entity.name.tag.begin.cs
+       " " comment.block.documentation.cs
+       "cref" comment.block.documentation.cs entity.other.attribute-name.cs
+       "=" comment.block.documentation.cs punctuation.separator.argument.value.cs
+       "\"Foo\"" comment.block.documentation.cs string.quoted.double.cs
+       "/>" comment.block.documentation.cs punctuation.definition.tag.end.cs
+       " thing, TODO: https://x.y/z" comment.block.documentation.cs text.documentation.cs
+       "</" comment.block.documentation.cs punctuation.definition.tag.begin.cs
+       "summary" comment.block.documentation.cs entity.name.tag.end.cs
+       ">" comment.block.documentation.cs punctuation.definition.tag.end.cs
+  12 |     /// <param name="x">the x</param>
+       "    " comment.block.documentation.cs
+       "///" comment.block.documentation.cs punctuation.definition.comment.documentation.cs
+       " " comment.block.documentation.cs text.documentation.cs
+       "<" comment.block.documentation.cs punctuation.definition.tag.begin.cs
+       "param" comment.block.documentation.cs entity.name.tag.begin.cs
+       " " comment.block.documentation.cs
+       "name" comment.block.documentation.cs entity.other.attribute-name.cs
+       "=" comment.block.documentation.cs punctuation.separator.argument.value.cs
+       "\"x\"" comment.block.documentation.cs string.quoted.double.cs
+       ">" comment.block.documentation.cs punctuation.definition.tag.end.cs
+       "the x" comment.block.documentation.cs text.documentation.cs
+       "</" comment.block.documentation.cs punctuation.definition.tag.begin.cs
+       "param" comment.block.documentation.cs entity.name.tag.end.cs
+       ">" comment.block.documentation.cs punctuation.definition.tag.end.cs
+  13 |     [Serializable, Obsolete("old", error: true)]
+       "[" meta.annotation.cs punctuation.definition.annotation.begin.cs
+       "Serializable" meta.annotation.cs variable.annotation.cs
+       "," meta.annotation.cs punctuation.separator.annotation.cs
+       " " meta.annotation.cs
+       "Obsolete" meta.annotation.cs variable.annotation.cs
+       "(" meta.annotation.cs punctuation.section.group.begin.cs
+       "\"" string.quoted.double.cs punctuation.definition.string.begin.cs
+       "old" string.quoted.double.cs
+       "\"" string.quoted.double.cs punctuation.definition.string.end.cs
+       "," meta.annotation.cs punctuation.separator.argument.cs
+       " " meta.annotation.cs
+       "error" meta.annotation.cs variable.parameter.cs
+       ":" meta.annotation.cs punctuation.separator.argument.value.cs
+       " " meta.annotation.cs
+       "true" constant.language.cs
+       ")" meta.annotation.cs punctuation.section.group.end.cs
+       "]" meta.annotation.cs punctuation.definition.annotation.end.cs
+  14 |     [assembly: global::Xunit.Auto._47DEQ.Attr]
+       "[" meta.annotation.cs punctuation.definition.annotation.begin.cs
+       "assembly" meta.annotation.cs storage.modifier.target.cs
+       ":" meta.annotation.cs punctuation.separator.key-value.cs
+       " global" meta.annotation.cs
+       "::" meta.annotation.cs punctuation.accessor.dot.cs
+       "Xunit" meta.annotation.cs variable.other.cs
+       "." meta.annotation.cs punctuation.accessor.dot.cs
+       "Auto" meta.annotation.cs variable.other.cs
+       "." meta.annotation.cs punctuation.accessor.dot.cs
+       "_47DEQ" meta.annotation.cs variable.other.cs
+       "." meta.annotation.cs punctuation.accessor.dot.cs
+       "Attr" meta.annotation.cs variable.annotation.cs
+       "]" meta.annotation.cs punctuation.definition.annotation.end.cs
+  15 |     public sealed partial class Foo<T, in U> : Bar<T>, IBaz where T : class, new()
+       "public" storage.modifier.access.cs
+       "sealed" storage.modifier.cs
+       "partial" storage.modifier.cs
+       "class" storage.type.class.cs
+       "Foo" entity.name.class.cs
+       "<" punctuation.definition.generic.begin.cs
+       "T" support.type.cs
+       "," punctuation.separator.type.cs
+       "in" storage.modifier.cs
+       "U" support.type.cs
+       ">" punctuation.definition.generic.end.cs
+       ":" punctuation.separator.type.cs
+       "Bar" entity.other.inherited-class.cs
+       "<" punctuation.definition.generic.begin.cs
+       "T" support.type.cs
+       ">" punctuation.definition.generic.end.cs
+       "," punctuation.separator.inherited-class.cs
+       "IBaz" entity.other.inherited-class.cs
+       "where" storage.modifier.cs
+       "T" support.type.cs
+       ":" punctuation.separator.type.cs
+       "class" storage.type.cs
+       "," punctuation.separator.inherited-class.cs
+       "new()" keyword.operator.new.cs
+  16 |     {
+       "{" punctuation.section.block.begin.cs
+  17 |         private readonly int _x = 0x1F_FF, _y = 0b1010;
+       "private" storage.modifier.access.cs
+       "readonly" storage.modifier.cs
+       "int" storage.type.cs
+       "_x" variable.other.member.cs
+       "=" keyword.operator.assignment.variable.cs
+       "0x" constant.numeric.integer.hexadecimal.cs punctuation.definition.numeric.base.cs
+       "1F_FF" constant.numeric.integer.hexadecimal.cs
+       "," punctuation.separator.variables.cs
+       "_y" variable.other.member.cs
+       "=" keyword.operator.assignment.variable.cs
+       "0b" constant.numeric.integer.binary.cs punctuation.definition.numeric.base.cs
+       "1010" constant.numeric.integer.binary.cs
+       ";" punctuation.terminator.statement.cs
+  18 |         public event EventHandler<int> Changed;
+       "public" storage.modifier.access.cs
+       "event" storage.modifier.cs
+       "EventHandler" support.type.cs
+       "<" punctuation.definition.generic.begin.cs
+       "int" storage.type.cs
+       ">" punctuation.definition.generic.end.cs
+       "Changed" variable.other.member.cs
+       ";" punctuation.terminator.statement.cs
+  19 |         public string Name { get; private set; } = "n";
+       "public" storage.modifier.access.cs
+       "string" storage.type.cs
+       "Name" variable.other.member.cs
+       "{" punctuation.section.block.begin.cs
+       "get" storage.type.function.accessor.get.cs
+       ";" punctuation.terminator.statement.cs
+       "private" storage.modifier.access.cs
+       "set" storage.type.function.accessor.set.cs
+       ";" punctuation.terminator.statement.cs
+       "}" punctuation.section.block.end.cs
+       "=" keyword.operator.assignment.cs
+       "\"" string.quoted.double.cs punctuation.definition.string.begin.cs
+       "n" string.quoted.double.cs
+       "\"" string.quoted.double.cs punctuation.definition.string.end.cs
+       ";" punctuation.terminator.statement.cs
+  20 |         public int this[int i] => i * 2;
+       "public" storage.modifier.access.cs
+       "int" storage.type.cs
+       "this" variable.language.cs
+       "[" punctuation.section.brackets.begin.cs
+       "int" storage.type.cs
+       "i" variable.parameter.cs
+       "]" punctuation.section.brackets.end.cs
+       "=>" storage.type.function.cs
+       "i" variable.other.cs
+       "*" keyword.operator.cs
+       "2" constant.numeric.integer.decimal.cs
+       ";" punctuation.terminator.statement.cs
+  21 |         static Foo() : base() { }
+       "static" storage.modifier.cs
+       "Foo" entity.name.function.constructor.cs
+       "(" punctuation.section.parameters.begin.cs
+       ")" punctuation.section.parameters.end.cs
+       ":" punctuation.separator.function.cs
+       "base" variable.language.cs
+       "(" punctuation.section.group.begin.cs
+       ")" punctuation.section.group.end.cs
+       "{" punctuation.section.block.begin.cs
+       "}" punctuation.section.block.end.cs
+  22 |         ~Foo() { }
+       "~Foo" entity.name.function.destructor.cs
+       "(" punctuation.section.parameters.begin.cs
+       ")" punctuation.section.parameters.end.cs
+       "{" punctuation.section.block.begin.cs
+       "}" punctuation.section.block.end.cs
+  23 |         public static Foo operator +(Foo a, Foo b) => a;
+       "public" storage.modifier.access.cs
+       "static" storage.modifier.cs
+       "Foo" support.type.cs
+       "operator" storage.modifier.other.cs
+       "+" entity.name.function.cs
+       "(" punctuation.section.parameters.begin.cs
+       "Foo" support.type.cs
+       "a" variable.parameter.cs
+       "," punctuation.separator.parameter.function.cs
+       "Foo" support.type.cs
+       "b" variable.parameter.cs
+       ")" punctuation.section.parameters.end.cs
+       "=>" storage.type.function.cs
+       "a" variable.other.cs
+       ";" punctuation.terminator.statement.cs
+  24 |         internal async Task<List<int>> GetAsync(ref int a, out int b, params object[] c)
+       "internal" storage.modifier.access.cs
+       "async" storage.modifier.cs
+       "Task" support.type.cs
+       "<" punctuation.definition.generic.begin.cs
+       "List" support.type.cs
+       "<" punctuation.definition.generic.begin.cs
+       "int" storage.type.cs
+       ">>" punctuation.definition.generic.end.cs
+       "GetAsync" entity.name.function.cs
+       "(" punctuation.section.parameters.begin.cs
+       "ref" storage.modifier.parameter.cs
+       "int" storage.type.cs
+       "a" variable.parameter.cs
+       "," punctuation.separator.parameter.function.cs
+       "out" storage.modifier.parameter.cs
+       "int" storage.type.cs
+       "b" variable.parameter.cs
+       "," punctuation.separator.parameter.function.cs
+       "params" storage.modifier.parameter.cs
+       "object" storage.type.cs
+       "[" punctuation.section.brackets.begin.cs
+       "]" punctuation.section.brackets.end.cs
+       "c" variable.parameter.cs
+       ")" punctuation.section.parameters.end.cs
+  25 |         {
+       "{" punctuation.section.block.begin.cs
+  26 |             var s = $"a {x,-10:N2} {{b}} {(y ? 1 : 2)}" + @"c:\dir"" {0}" + $@"{z}";
+       "var" storage.type.variable.cs
+       "s" variable.other.cs
+       "=" keyword.operator.assignment.variable.cs
+       "$\"" string.quoted.double.cs punctuation.definition.string.begin.cs
+       "a " string.quoted.double.cs
+       "{" punctuation.section.interpolation.begin.cs
+       "x" variable.other.cs
+       "," punctuation.separator.arguments.cs
+       "-10" constant.numeric.integer.decimal.formatting.cs
+       ":" constant.other.format-spec.cs punctuation.separator.cs
+       "N2" constant.other.format-spec.cs
+       "}" punctuation.section.interpolation.end.cs
+       " " string.quoted.double.cs
+       "{{" string.quoted.double.cs constant.character.escape.cs
+       "b" string.quoted.double.cs
+       "}}" string.quoted.double.cs constant.character.escape.cs
+       " " string.quoted.double.cs
+       "{" punctuation.section.interpolation.begin.cs
+       "(" punctuation.section.group.begin.cs
+       "y" variable.other.cs
+       "?" keyword.operator.ternary.cs
+       "1" constant.numeric.integer.decimal.cs
+       ":" keyword.operator.ternary.cs
+       "2" constant.numeric.integer.decimal.cs
+       ")" punctuation.section.group.end.cs
+       "}" punctuation.section.interpolation.end.cs
+       "\"" string.quoted.double.cs punctuation.definition.string.end.cs
+       "+" keyword.operator.cs
+       "@\"" string.quoted.double.raw.cs punctuation.definition.string.begin.cs
+       "c:\\dir" string.quoted.double.raw.cs
+       "\"\"" string.quoted.double.raw.cs constant.character.escape.cs
+       " " string.quoted.double.raw.cs
+       "{" string.quoted.double.raw.cs constant.other.placeholder.cs punctuation.definition.placeholder.begin.cs
+       "0" string.quoted.double.raw.cs constant.other.placeholder.cs constant.numeric.integer.decimal.cs
+       "}" string.quoted.double.raw.cs constant.other.placeholder.cs punctuation.definition.placeholder.end.cs
+       "\"" string.quoted.double.raw.cs punctuation.definition.string.end.cs
+       "+" keyword.operator.cs
+       "$@\"" string.quoted.double.raw.cs punctuation.definition.string.begin.cs
+       "{" punctuation.section.interpolation.begin.cs
+       "z" variable.other.cs
+       "}" punctuation.section.interpolation.end.cs
+       "\"" string.quoted.double.raw.cs punctuation.definition.string.end.cs
+       ";" punctuation.terminator.statement.cs
+  27 |             var f = string.Format("{0:D3} {1}", 1.5e-3f, 'c') + '\u0041' + 10UL + 0.5m;
+       "var" storage.type.variable.cs
+       "f" variable.other.cs
+       "=" keyword.operator.assignment.variable.cs
+       "string" storage.type.cs
+       "." punctuation.accessor.dot.cs
+       "Format" variable.function.cs
+       "(" punctuation.section.group.begin.cs
+       "\"" string.quoted.double.cs punctuation.definition.string.begin.cs
+       "{" string.quoted.double.cs constant.other.placeholder.cs punctuation.definition.placeholder.begin.cs
+       "0" string.quoted.double.cs constant.other.placeholder.cs constant.numeric.integer.decimal.cs
+       ":" string.quoted.double.cs constant.other.placeholder.cs constant.other.format-spec.cs punctuation.separator.cs
+       "D3" string.quoted.double.cs constant.other.placeholder.cs constant.other.format-spec.cs
+       "}" string.quoted.double.cs constant.other.placeholder.cs punctuation.definition.placeholder.end.cs
+       " " string.quoted.double.cs
+       "{" string.quoted.double.cs constant.other.placeholder.cs punctuation.definition.placeholder.begin.cs
+       "1" string.quoted.double.cs constant.other.placeholder.cs constant.numeric.integer.decimal.cs
+       "}" string.quoted.double.cs constant.other.placeholder.cs punctuation.definition.placeholder.end.cs
+       "\"" string.quoted.double.cs punctuation.definition.string.end.cs
+       "," punctuation.separator.argument.cs
+       "1" constant.numeric.float.decimal.cs
+       "." constant.numeric.float.decimal.cs punctuation.separator.decimal.cs
+       "5e-3" constant.numeric.float.decimal.cs
+       "f" constant.numeric.float.decimal.cs storage.type.numeric.cs
+       "," punctuation.separator.argument.cs
+       "'c'" constant.character.cs
+       ")" punctuation.section.group.end.cs
+       "+" keyword.operator.cs
+       "'" constant.character.cs
+       "\\u0041" constant.character.cs constant.character.escape.cs
+       "'" constant.character.cs
+       "+" keyword.operator.cs
+       "10" constant.numeric.integer.decimal.cs
+       "UL" constant.numeric.integer.decimal.cs storage.type.numeric.cs
+       "+" keyword.operator.cs
+       "0" constant.numeric.float.decimal.cs
+       "." constant.numeric.float.decimal.cs punctuation.separator.decimal.cs
+       "5" constant.numeric.float.decimal.cs
+       "m" constant.numeric.float.decimal.cs storage.type.numeric.cs
+       ";" punctuation.terminator.statement.cs
+  28 |             Texture.Create(TextureType.Cube, 1_000);
+       "Texture" variable.other.cs
+       "." punctuation.accessor.dot.cs
+       "Create" variable.function.cs
+       "(" punctuation.section.group.begin.cs
+       "TextureType" variable.other.cs
+       "." punctuation.accessor.dot.cs
+       "Cube" variable.other.cs
+       "," punctuation.separator.argument.cs
+       "1_000" constant.numeric.integer.decimal.cs
+       ")" punctuation.section.group.end.cs
+       ";" punctuation.terminator.statement.cs
+  29 |             if (a is int n && b as string != null) { return; } else if (x) y++; else z--;
+       "if" keyword.control.conditional.if.cs
+       "(" punctuation.section.group.begin.cs
+       "a" variable.other.cs
+       "is" keyword.operator.reflection.cs
+       "int" storage.type.cs
+       "n" variable.other.cs
+       "&&" keyword.operator.cs
+       "b" variable.other.cs
+       "as" keyword.operator.reflection.cs
+       "string" storage.type.cs
+       "!=" keyword.operator.cs
+       "null" constant.language.cs
+       ")" punctuation.section.group.end.cs
+       "{" punctuation.section.block.begin.cs
+       "return" keyword.control.flow.return.cs
+       ";" punctuation.terminator.statement.cs
+       "}" punctuation.section.block.end.cs
+       "else if" keyword.control.conditional.elseif.cs
+       "(" punctuation.section.group.begin.cs
+       "x" variable.other.cs
+       ")" punctuation.section.group.end.cs
+       "y" variable.other.cs
+       "++" keyword.operator.cs
+       ";" punctuation.terminator.statement.cs
+       "else " keyword.control.conditional.else.cs
+       "z" variable.other.cs
+       "--" keyword.operator.cs
+       ";" punctuation.terminator.statement.cs
+  30 |             foreach (var (k, v) in dict) { switch (k) { case 1: case Kind.A when v > 0: break; default: goto done; } }
+       "foreach" keyword.control.loop.foreach.cs
+       "(" punctuation.section.group.begin.cs
+       "var" storage.type.variable.cs
+       "(" punctuation.section.group.begin.cs
+       "k" variable.other.cs
+       "," punctuation.separator.argument.cs
+       "v" variable.other.cs
+       ")" punctuation.section.group.end.cs
+       "in" keyword.control.flow.cs
+       "dict" variable.other.cs
+       ")" punctuation.section.group.end.cs
+       "{" punctuation.section.block.begin.cs
+       "switch" keyword.control.flow.switch.cs
+       "(" punctuation.section.group.begin.cs
+       "k" variable.other.cs
+       ")" punctuation.section.group.end.cs
+       "{" punctuation.section.block.begin.cs
+       "case" keyword.control.switch.case.cs
+       "1" constant.numeric.integer.decimal.cs
+       ":" punctuation.separator.case-statement.cs
+       "case" keyword.control.switch.case.cs
+       "Kind" variable.other.cs
+       "." punctuation.accessor.dot.cs
+       "A" variable.other.cs
+       "when" keyword.control.switch.case.when.cs
+       "v" variable.other.cs
+       ">" keyword.operator.cs
+       "0" constant.numeric.integer.decimal.cs
+       ":" punctuation.separator.case-statement.cs
+       "break" keyword.control.flow.break.cs
+       ";" punctuation.terminator.statement.cs
+       "default" keyword.control.switch.case.cs
+       ":" punctuation.separator.case-statement.cs
+       "goto" keyword.control.flow.goto.cs
+       "done" constant.other.label.cs
+       ";" punctuation.terminator.statement.cs
+       "}" punctuation.section.block.end.cs
+       "}" punctuation.section.block.end.cs
+  31 |             for (int i = 0; i < 10; i++) while (true) do { } while (false);
+       "for" keyword.control.loop.for.cs
+       "(" punctuation.section.group.begin.cs
+       "int" storage.type.cs
+       "i" variable.other.cs
+       "=" keyword.operator.assignment.variable.loop.cs
+       "0" constant.numeric.integer.decimal.cs
+       ";" punctuation.terminator.statement.cs
+       "i" variable.other.cs
+       "<" keyword.operator.cs
+       "10" constant.numeric.integer.decimal.cs
+       ";" punctuation.terminator.statement.cs
+       "i" variable.other.cs
+       "++" keyword.operator.cs
+       ")" punctuation.section.group.end.cs
+       "while" keyword.control.loop.while.cs
+       "(" punctuation.section.group.begin.cs
+       "true" constant.language.cs
+       ")" punctuation.section.group.end.cs
+       "do" keyword.control.loop.do.cs
+       "{" punctuation.section.block.begin.cs
+       "}" punctuation.section.block.end.cs
+       "while" keyword.control.loop.while.cs
+       "(" punctuation.section.group.begin.cs
+       "false" constant.language.cs
+       ")" punctuation.section.group.end.cs
+       ";" punctuation.terminator.statement.cs
+  32 |             try { throw new InvalidOperationException(nameof(x)); }
+       "try" keyword.control.trycatch.try.cs
+       "{" punctuation.section.block.begin.cs
+       "throw" keyword.control.trycatch.throw.cs
+       "new" keyword.operator.new.cs
+       "InvalidOperationException" support.type.cs
+       "(" punctuation.section.group.begin.cs
+       "nameof" keyword.other.cs
+       "(" punctuation.section.group.begin.cs
+       "x" variable.other.cs
+       "))" punctuation.section.group.end.cs
+       ";" punctuation.terminator.statement.cs
+       "}" punctuation.section.block.end.cs
+  33 |             catch (Exception e) when (e.Message != null) { }
+       "catch" keyword.control.trycatch.catch.cs
+       "(" punctuation.section.group.begin.cs
+       "Exception" support.type.cs
+       "e" variable.other.cs
+       ")" punctuation.section.group.end.cs
+       "when" keyword.control.trycatch.when.cs
+       "(" punctuation.section.group.begin.cs
+       "e" variable.other.cs
+       "." punctuation.accessor.dot.cs
+       "Message" variable.other.cs
+       "!=" keyword.operator.cs
+       "null" constant.language.cs
+       ")" punctuation.section.group.end.cs
+       "{" punctuation.section.block.begin.cs
+       "}" punctuation.section.block.end.cs
+  34 |             finally { lock (o) { } }
+       "finally" keyword.control.trycatch.finally.cs
+       "{" punctuation.section.block.begin.cs
+       "lock" keyword.control.other.lock.cs
+       "(" punctuation.section.group.begin.cs
+       "o" variable.other.cs
+       ")" punctuation.section.group.end.cs
+       "{" punctuation.section.block.begin.cs
+       "}" punctuation.section.block.end.cs
+       "}" punctuation.section.block.end.cs
+  35 |             using (var r = new StreamReader(p)) { }
+       "using" keyword.control.using.cs
+       "(" punctuation.section.group.begin.cs
+       "var" storage.type.variable.cs
+       "r" variable.other.cs
+       "=" keyword.operator.assignment.variable.cs
+       "new" keyword.operator.new.cs
+       "StreamReader" support.type.cs
+       "(" punctuation.section.group.begin.cs
+       "p" variable.other.cs
+       "))" punctuation.section.group.end.cs
+       "{" punctuation.section.block.begin.cs
+       "}" punctuation.section.block.end.cs
+  36 |             Func<int, int> sq = x => x * x; var t = (1, 2); (int q, string w) = (1, "");
+       "Func" support.type.cs
+       "<" punctuation.definition.generic.begin.cs
+       "int" storage.type.cs
+       "," punctuation.separator.type.cs
+       "int" storage.type.cs
+       ">" punctuation.definition.generic.end.cs
+       "sq" variable.other.cs
+       "=" keyword.operator.assignment.variable.cs
+       "x" variable.parameter.cs
+       "=>" storage.type.function.lambda.cs
+       "x" variable.other.cs
+       "*" keyword.operator.cs
+       "x" variable.other.cs
+       ";" punctuation.terminator.statement.cs
+       "var" storage.type.variable.cs
+       "t" variable.other.cs
+       "=" keyword.operator.assignment.variable.cs
+       "(" punctuation.section.group.begin.cs
+       "1" constant.numeric.integer.decimal.cs
+       "," punctuation.separator.argument.cs
+       "2" constant.numeric.integer.decimal.cs
+       ")" punctuation.section.group.end.cs
+       ";" punctuation.terminator.statement.cs
+       "(" punctuation.section.group.begin.cs
+       "int" storage.type.cs
+       "q" variable.other.cs
+       "," punctuation.separator.argument.cs
+       "string" storage.type.cs
+       "w" variable.other.cs
+       ")" punctuation.section.group.end.cs
+       "=" keyword.operator.assignment.cs
+       "(" punctuation.section.group.begin.cs
+       "1" constant.numeric.integer.decimal.cs
+       "," punctuation.separator.argument.cs
+       "\"" string.quoted.double.cs punctuation.definition.string.begin.cs
+       "\"" string.quoted.double.cs punctuation.definition.string.end.cs
+       ")" punctuation.section.group.end.cs
+       ";" punctuation.terminator.statement.cs
+  37 |             var list = new List<int> { 1, 2 }; var anon = new { A = 1, B = "b" };
+       "var" storage.type.variable.cs
+       "list" variable.other.cs
+       "=" keyword.operator.assignment.variable.cs
+       "new" keyword.operator.new.cs
+       "List" support.type.cs
+       "<" punctuation.definition.generic.begin.cs
+       "int" storage.type.cs
+       ">" punctuation.definition.generic.end.cs
+       "{" punctuation.section.braces.begin.cs
+       "1" constant.numeric.integer.decimal.cs
+       "," punctuation.separator.array-element.cs
+       "2" constant.numeric.integer.decimal.cs
+       "}" punctuation.section.braces.end.cs
+       ";" punctuation.terminator.statement.cs
+       "var" storage.type.variable.cs
+       "anon" variable.other.cs
+       "=" keyword.operator.assignment.variable.cs
+       "new" keyword.operator.new.cs
+       "{" punctuation.section.braces.begin.cs
+       "A" variable.other.cs
+       "=" keyword.operator.assignment.cs
+       "1" constant.numeric.integer.decimal.cs
+       "," punctuation.separator.array-element.cs
+       "B" variable.other.cs
+       "=" keyword.operator.assignment.cs
+       "\"" string.quoted.double.cs punctuation.definition.string.begin.cs
+       "b" string.quoted.double.cs
+       "\"" string.quoted.double.cs punctuation.definition.string.end.cs
+       "}" punctuation.section.braces.end.cs
+       ";" punctuation.terminator.statement.cs
+  38 |             var arr = new int[] { 1 }; int? m = null; var c = (Foo)obj; checked(x + 1);
+       "var" storage.type.variable.cs
+       "arr" variable.other.cs
+       "=" keyword.operator.assignment.variable.cs
+       "new" keyword.operator.new.cs
+       "int" storage.type.cs
+       "[" punctuation.section.brackets.begin.cs
+       "]" punctuation.section.brackets.end.cs
+       "{" punctuation.section.braces.begin.cs
+       "1" constant.numeric.integer.decimal.cs
+       "}" punctuation.section.braces.end.cs
+       ";" punctuation.terminator.statement.cs
+       "int" storage.type.cs
+       "?" storage.type.nullable.cs
+       "m" variable.other.cs
+       "=" keyword.operator.assignment.variable.cs
+       "null" constant.language.cs
+       ";" punctuation.terminator.statement.cs
+       "var" storage.type.variable.cs
+       "c" variable.other.cs
+       "=" keyword.operator.assignment.variable.cs
+       "(" punctuation.section.group.begin.cs
+       "Foo" support.type.cs
+       ")" punctuation.section.group.end.cs
+       "obj" variable.other.cs
+       ";" punctuation.terminator.statement.cs
+       "checked" keyword.other.cs
+       "(" punctuation.section.group.begin.cs
+       "x" variable.other.cs
+       "+" keyword.operator.cs
+       "1" constant.numeric.integer.decimal.cs
+       ")" punctuation.section.group.end.cs
+       ";" punctuation.terminator.statement.cs
+  39 |             var q2 = from c in list where c > 1 select c;
+       "var" storage.type.variable.cs
+       "q2" variable.other.cs
+       "=" keyword.operator.assignment.variable.cs
+       "from" keyword.other.sql.cs
+       "c" variable.other.cs
+       "in" keyword.other.sql.cs
+       "list" variable.other.cs
+       "where" keyword.other.sql.cs
+       "c" variable.other.cs
+       ">" keyword.operator.cs
+       "1" constant.numeric.integer.decimal.cs
+       "select" keyword.other.sql.cs
+       "c" variable.other.cs
+       ";" punctuation.terminator.statement.cs
+  40 |             yield return default(T); typeof(List<>); unsafe { int* p = &x; }
+       "yield return" keyword.control.flow.return.cs
+       "default" keyword.operator.reflection.cs
+       "(" punctuation.section.group.begin.cs
+       "T" support.type.cs
+       ")" punctuation.section.group.end.cs
+       ";" punctuation.terminator.statement.cs
+       "typeof" keyword.operator.reflection.cs
+       "(" punctuation.section.group.begin.cs
+       "List" support.type.cs
+       "<" punctuation.definition.generic.begin.cs
+       ">" punctuation.definition.generic.end.cs
+       ")" punctuation.section.group.end.cs
+       ";" punctuation.terminator.statement.cs
+       "unsafe" keyword.other.cs
+       "{" punctuation.section.block.begin.cs
+       "int" storage.type.cs
+       "*" keyword.operator.pointer.cs
+       "p" variable.other.cs
+       "=" keyword.operator.assignment.variable.cs
+       "&" keyword.operator.cs
+       "x" variable.other.cs
+       ";" punctuation.terminator.statement.cs
+       "}" punctuation.section.block.end.cs
+  41 |         done:
+       "done" entity.name.label.cs
+       ":" punctuation.separator.cs
+  42 |             return await Task.FromResult(new List<int>());
+       "return" keyword.control.flow.return.cs
+       "await" keyword.control.other.cs
+       "Task" variable.other.cs
+       "." punctuation.accessor.dot.cs
+       "FromResult" variable.function.cs
+       "(" punctuation.section.group.begin.cs
+       "new" keyword.operator.new.cs
+       "List" support.type.cs
+       "<" punctuation.definition.generic.begin.cs
+       "int" storage.type.cs
+       ">" punctuation.definition.generic.end.cs
+       "(" punctuation.section.group.begin.cs
+       "))" punctuation.section.group.end.cs
+       ";" punctuation.terminator.statement.cs
+  43 |         }
+       "}" punctuation.section.block.end.cs
+  44 |     }
+       "}" punctuation.section.block.end.cs
+  45 |     public enum Color : byte { Red = 1, Green, }
+       "public" storage.modifier.access.cs
+       "enum" storage.type.enum.cs
+       "Color" entity.name.enum.cs
+       ":" punctuation.separator.key-value.type.cs
+       "byte" storage.type.cs
+       "{" punctuation.section.block.begin.cs
+       "Red" constant.other.enum.cs
+       "=" keyword.operator.assignment.cs
+       "1" constant.numeric.integer.decimal.cs
+       "," punctuation.separator.enum.cs
+       "Green" constant.other.enum.cs
+       "," punctuation.separator.enum.cs
+       "}" punctuation.section.block.end.cs
+  46 |     public delegate void Handler<T>(object sender, T args);
+       "public" storage.modifier.access.cs
+       "delegate" storage.type.delegate.cs
+       "void" storage.type.cs
+       "Handler" variable.other.member.delegate.cs
+       "<" punctuation.definition.generic.begin.cs
+       "T" support.type.cs
+       ">" punctuation.definition.generic.end.cs
+       "(" punctuation.section.parameters.begin.cs
+       "object" storage.type.cs
+       "sender" variable.parameter.cs
+       "," punctuation.separator.parameter.function.cs
+       "T" support.type.cs
+       "args" variable.parameter.cs
+       ")" punctuation.section.parameters.end.cs
+       ";" punctuation.terminator.statement.cs
+  47 |     interface IBaz { void Do(); }
+       "interface" storage.type.interface.cs
+       "IBaz" entity.name.interface.cs
+       "{" punctuation.section.block.begin.cs
+       "void" storage.type.cs
+       "Do" entity.name.function.cs
+       "(" punctuation.section.parameters.begin.cs
+       ")" punctuation.section.parameters.end.cs
+       ";" punctuation.terminator.statement.cs
+       "}" punctuation.section.block.end.cs
+  48 |     public readonly ref struct Span2 { }
+       "public" storage.modifier.access.cs
+       "readonly" storage.modifier.cs
+       "ref" storage.modifier.cs
+       "struct" storage.type.struct.cs
+       "Span2" entity.name.struct.cs
+       "{" punctuation.section.block.begin.cs
+       "}" punctuation.section.block.end.cs
+  49 | }
+       "}" punctuation.section.block.end.cs

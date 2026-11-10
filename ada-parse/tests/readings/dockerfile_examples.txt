@@ -1,0 +1,184 @@
+# Dockerfile: ada-parse/tests/readings.rs, dockerfile_examples
+
+## block 1
+   1 | # syntax=docker/dockerfile:1
+       "#" comment.dockerfile punctuation.definition.comment.dockerfile
+       " syntax=docker/dockerfile:1" comment.dockerfile
+   2 | ARG BASE=rust
+       "ARG " keyword.control.dockerfile
+   3 | FROM ${BASE}:1.95 AS build
+       "FROM" keyword.control.dockerfile
+       "1.95" entity.name.enum.tag-digest
+       "AS" keyword.control.dockerfile
+       "build" variable.stage-name
+
+## block 2
+   1 | FROM rust:1.95 as build
+       "FROM" keyword.control.dockerfile
+       "1.95" entity.name.enum.tag-digest
+       "as" keyword.control.dockerfile
+       "build" variable.stage-name
+   2 | WORKDIR /src
+       "WORKDIR " keyword.control.dockerfile
+   3 | COPY --from=deps /x /y
+       "COPY" keyword.control.dockerfile
+       "deps" variable.stage-name
+   4 | RUN cargo build \
+       "RUN " keyword.control.dockerfile
+   5 |   --release && \
+   6 |   echo "done\n" 'x'
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.begin.dockerfile
+       "done" string.quoted.double.dockerfile
+       "\\n" string.quoted.double.dockerfile constant.character.escaped.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.end.dockerfile
+       "'" string.quoted.single.dockerfile punctuation.definition.string.begin.dockerfile
+       "x" string.quoted.single.dockerfile
+       "'" string.quoted.single.dockerfile punctuation.definition.string.end.dockerfile
+   7 | # c
+       "#" comment.dockerfile punctuation.definition.comment.dockerfile
+       " c" comment.dockerfile
+   8 |   # c2
+       "  " punctuation.whitespace.comment.leading.dockerfile
+       "#" comment.dockerfile punctuation.definition.comment.dockerfile
+       " c2" comment.dockerfile
+
+## block 3
+   1 | FROM x
+       "FROM" keyword.control.dockerfile
+   2 | RUN echo "open
+       "RUN " keyword.control.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.begin.dockerfile
+       "open" string.quoted.double.dockerfile
+   3 | next
+       "next" invalid
+   4 | lower
+       "lower" invalid
+   5 | UPPER
+
+## block 4
+   1 | FROM x
+       "FROM" keyword.control.dockerfile
+   2 | onbuild run x
+       "onbuild" keyword.control.dockerfile keyword.other.special-method.dockerfile
+       " run " keyword.control.dockerfile
+   3 | ONBUILD COPY a b
+       "ONBUILD" keyword.control.dockerfile keyword.other.special-method.dockerfile
+       " COPY" keyword.control.dockerfile
+   4 | CMD ["a", "b"]
+       "CMD " keyword.operator.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.begin.dockerfile
+       "a" string.quoted.double.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.end.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.begin.dockerfile
+       "b" string.quoted.double.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.end.dockerfile
+   5 | ENTRYPOINT ["x"]
+       "ENTRYPOINT " keyword.operator.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.begin.dockerfile
+       "x" string.quoted.double.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.end.dockerfile
+   6 | MAINTAINER me
+       "MAINTAINER " keyword.control.dockerfile
+
+## block 5
+   1 | FROM x
+       "FROM" keyword.control.dockerfile
+   2 | RUN
+       "RUN" keyword.control.dockerfile
+   3 | next line
+       "next line" invalid
+   4 | COPY
+       "COPY" keyword.control.dockerfile
+   5 | x
+       "x" invalid
+
+## block 6
+   1 | FROM x
+       "FROM" keyword.control.dockerfile
+   2 | RUN a \ 
+       "RUN " keyword.control.dockerfile
+   3 | b
+   4 |   RUN x
+       "  RUN " keyword.control.dockerfile
+   5 | \tlabel a=b
+       "\tlabel " keyword.control.dockerfile
+
+## block 7
+   1 | FROM x@sha256:abc
+       "FROM" keyword.control.dockerfile
+       "sha256:abc" entity.name.enum.tag-digest
+   2 | FROM scratch
+       "FROM" keyword.control.dockerfile
+   3 | EXPOSE 80
+       "EXPOSE " keyword.control.dockerfile
+   4 | HEALTHCHECK CMD x
+       "HEALTHCHECK " keyword.control.dockerfile
+
+## block 8
+   1 | from x
+       "from" keyword.control.dockerfile
+   2 | FROM
+   3 | FROM 
+   4 | ARG
+       "ARG" keyword.control.dockerfile
+   5 | RUN 'a
+       "RUN " keyword.control.dockerfile
+       "'" string.quoted.single.dockerfile punctuation.definition.string.begin.dockerfile
+       "a" string.quoted.single.dockerfile
+   6 | 
+   7 | b'
+       "b'" invalid
+
+## block 9
+   1 | FROM x
+       "FROM" keyword.control.dockerfile
+   2 | ONBUILD MAINTAINER x
+   3 | ONBUILD ONBUILD RUN x
+   4 | RUN2 x
+   5 | COPYX y
+   6 | onbuild
+       "onbuild" invalid
+   7 | ONBUILD  
+
+## block 10
+   1 | FROM x
+       "FROM" keyword.control.dockerfile
+   2 | ONBUILDRUN x
+   3 | copy --from=a b c
+       "copy" keyword.control.dockerfile
+       "a" variable.stage-name
+   4 | Healthcheck NONE
+       "Healthcheck " keyword.control.dockerfile
+   5 | stopSignal x
+       "stopSignal " keyword.control.dockerfile
+   6 |   Add a b
+       "  Add " keyword.control.dockerfile
+   7 | OnBuild Cmd x
+       "OnBuild" keyword.operator.dockerfile keyword.other.special-method.dockerfile
+       " Cmd " keyword.operator.dockerfile
+
+## block 11
+   1 | FROM x
+       "FROM" keyword.control.dockerfile
+   2 | Shell ["a"]
+       "Shell " keyword.control.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.begin.dockerfile
+       "a" string.quoted.double.dockerfile
+       "\"" string.quoted.double.dockerfile punctuation.definition.string.end.dockerfile
+   3 | volume /x
+       "volume " keyword.control.dockerfile
+   4 | USER
+       "USER" keyword.control.dockerfile
+   5 | label\texpose 1
+       "label\t" keyword.control.dockerfile
+   6 | ENTRYPOINT
+       "ENTRYPOINT" keyword.operator.dockerfile
+   7 | MAINTAINERS x
+   8 | WORKDIR\tx
+       "WORKDIR\t" keyword.control.dockerfile
+
+## block 12
+
+## block 13
+   1 | 
+   2 | 

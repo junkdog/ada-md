@@ -1,0 +1,548 @@
+# Html: ada-parse/tests/readings.rs, html
+   1 | <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0//EN" 'x.dtd' [ <!-- s --> ]>
+       "<!" punctuation.definition.tag.begin.html
+       "DOCTYPE" keyword.declaration.doctype.html
+       "html" constant.language.doctype.html
+       "PUBLIC" keyword.content.external.html
+       "\"" string.quoted.double.html punctuation.definition.string.begin.html
+       "-//W3C//DTD XHTML 1.0//EN" string.quoted.double.html
+       "\"" string.quoted.double.html punctuation.definition.string.end.html
+       "'" string.quoted.single.html punctuation.definition.string.begin.html
+       "x.dtd" string.quoted.single.html
+       "'" string.quoted.single.html punctuation.definition.string.end.html
+       "[" punctuation.section.brackets.begin.html
+       "<!--" comment.block.html punctuation.definition.comment.begin.html
+       " s " comment.block.html
+       "-->" comment.block.html punctuation.definition.comment.end.html
+       "]" punctuation.section.brackets.end.html
+       ">" punctuation.definition.tag.end.html
+   2 | <?xml version="1.0" encoding='utf-8'?>
+       "<?" punctuation.definition.tag.begin.html
+       "xml" entity.name.tag.xml.html
+       "version" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "\"" string.quoted.double.html punctuation.definition.string.begin.html
+       "1.0" string.quoted.double.html
+       "\"" string.quoted.double.html punctuation.definition.string.end.html
+       "encoding" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "'" string.quoted.single.html punctuation.definition.string.begin.html
+       "utf-8" string.quoted.single.html
+       "'" string.quoted.single.html punctuation.definition.string.end.html
+       "?>" punctuation.definition.tag.end.html
+   3 | <!doctype html><!-- a <!-- b --!> c --> <!--> x --> <![CDATA[ <b> ]]> <>
+       "<!--" comment.block.html punctuation.definition.comment.begin.html
+       " a " comment.block.html
+       "<!--" comment.block.html invalid.illegal.bad-comments-or-CDATA.html
+       " b " comment.block.html
+       "--!>" comment.block.html invalid.illegal.bad-comments-or-CDATA.html
+       " c " comment.block.html
+       "-->" comment.block.html punctuation.definition.comment.end.html
+       "<!--" comment.block.html punctuation.definition.comment.begin.html
+       ">" comment.block.html invalid.illegal.bad-comments-or-CDATA.html
+       " x " comment.block.html
+       "-->" comment.block.html punctuation.definition.comment.end.html
+       "<![" punctuation.definition.tag.begin.html
+       "CDATA" keyword.declaration.cdata.html
+       "[" punctuation.definition.tag.begin.html
+       " <b> " string.unquoted.cdata.html
+       "]]>" punctuation.definition.tag.end.html
+       "<>" invalid.illegal.incomplete.html
+   4 | <html lang=en><head><meta charset="utf-8"><title>T &amp; &#169; &#x1F600; &x</title>
+       "<" punctuation.definition.tag.begin.html
+       "html" entity.name.tag.structure.any.html
+       "lang" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "en" string.unquoted.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "head" entity.name.tag.structure.any.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "meta" entity.name.tag.inline.any.html
+       "charset" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "\"" string.quoted.double.html punctuation.definition.string.begin.html
+       "utf-8" string.quoted.double.html
+       "\"" string.quoted.double.html punctuation.definition.string.end.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "title" entity.name.tag.inline.any.html
+       ">" punctuation.definition.tag.end.html
+       "&" constant.character.entity.named.html punctuation.definition.entity.html
+       "amp" constant.character.entity.named.html
+       ";" constant.character.entity.named.html punctuation.terminator.entity.html
+       "&#" constant.character.entity.decimal.html punctuation.definition.entity.html
+       "169" constant.character.entity.decimal.html
+       ";" constant.character.entity.decimal.html punctuation.terminator.entity.html
+       "&#x" constant.character.entity.hexadecimal.html punctuation.definition.entity.html
+       "1F600" constant.character.entity.hexadecimal.html
+       ";" constant.character.entity.hexadecimal.html punctuation.terminator.entity.html
+       "</" punctuation.definition.tag.begin.html
+       "title" entity.name.tag.inline.any.html
+       ">" punctuation.definition.tag.end.html
+   5 | <link rel=stylesheet href='a.css'/><base href=/x/></head>
+       "<" punctuation.definition.tag.begin.html
+       "link" entity.name.tag.inline.any.html
+       "rel" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "stylesheet" string.unquoted.html
+       "href" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "'" string.quoted.single.html punctuation.definition.string.begin.html
+       "a.css" string.quoted.single.html
+       "'" string.quoted.single.html punctuation.definition.string.end.html
+       "/>" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "base" entity.name.tag.inline.any.html
+       "href" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "/x" string.unquoted.html
+       "/>" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "head" entity.name.tag.structure.any.html
+       ">" punctuation.definition.tag.end.html
+   6 | <body class="a b" id='main' data-x="1" hidden><div><p>x<br/><hr/><HR>
+       "<" punctuation.definition.tag.begin.html
+       "body" entity.name.tag.structure.any.html
+       "class" entity.other.attribute-name.class.html
+       "=" punctuation.separator.key-value.html
+       "\"" string.quoted.double.html punctuation.definition.string.begin.html
+       "a b" string.quoted.double.html
+       "\"" string.quoted.double.html punctuation.definition.string.end.html
+       "id" entity.other.attribute-name.id.html
+       "=" punctuation.separator.key-value.html
+       "'" string.quoted.single.html punctuation.definition.string.begin.html
+       "main" string.quoted.single.html
+       "'" string.quoted.single.html punctuation.definition.string.end.html
+       "data-x" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "\"" string.quoted.double.html punctuation.definition.string.begin.html
+       "1" string.quoted.double.html
+       "\"" string.quoted.double.html punctuation.definition.string.end.html
+       "hidden" entity.other.attribute-name.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "div" entity.name.tag.block.any.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "p" entity.name.tag.block.any.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "br" entity.name.tag.inline.any.html
+       "/>" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "hr" entity.name.tag.block.any.html
+       "/>" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "HR" entity.name.tag.block.any.html
+       ">" punctuation.definition.tag.end.html
+   7 | <form action="/go"><fieldset><input type=text value="a&quot;b" disabled/><button>b</button>
+       "<" punctuation.definition.tag.begin.html
+       "form" entity.name.tag.block.form.html
+       "action" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "\"" string.quoted.double.html punctuation.definition.string.begin.html
+       "/go" string.quoted.double.html
+       "\"" string.quoted.double.html punctuation.definition.string.end.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "fieldset" entity.name.tag.block.form.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "input" entity.name.tag.inline.form.html
+       "type" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "text" string.unquoted.html
+       "value" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "\"" string.quoted.double.html punctuation.definition.string.begin.html
+       "a" string.quoted.double.html
+       "&" string.quoted.double.html constant.character.entity.named.html punctuation.definition.entity.html
+       "quot" string.quoted.double.html constant.character.entity.named.html
+       ";" string.quoted.double.html constant.character.entity.named.html punctuation.terminator.entity.html
+       "b" string.quoted.double.html
+       "\"" string.quoted.double.html punctuation.definition.string.end.html
+       "disabled" entity.other.attribute-name.html
+       "/>" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "button" entity.name.tag.inline.form.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "button" entity.name.tag.inline.form.html
+       ">" punctuation.definition.tag.end.html
+   8 | <a href="#x" a"b=1 c=d"e`f<g>l</a><table><tr><td>1</td></tr></table></fieldset></form>
+       "<" punctuation.definition.tag.begin.html
+       "a" entity.name.tag.inline.a.html
+       "href" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "\"" string.quoted.double.html punctuation.definition.string.begin.html
+       "#x" string.quoted.double.html
+       "\"" string.quoted.double.html punctuation.definition.string.end.html
+       "a" entity.other.attribute-name.html
+       "\"" entity.other.attribute-name.html invalid.illegal.attribute-name.html
+       "b" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "1" string.unquoted.html
+       "c" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "d" string.unquoted.html
+       "\"" string.unquoted.html invalid.illegal.attribute-value.html
+       "e" string.unquoted.html
+       "`" string.unquoted.html invalid.illegal.attribute-value.html
+       "f" string.unquoted.html
+       "<" string.unquoted.html invalid.illegal.attribute-value.html
+       "g" string.unquoted.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "a" entity.name.tag.inline.a.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "table" entity.name.tag.inline.table.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "tr" entity.name.tag.inline.table.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "td" entity.name.tag.inline.table.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "td" entity.name.tag.inline.table.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "tr" entity.name.tag.inline.table.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "table" entity.name.tag.inline.table.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "fieldset" entity.name.tag.block.form.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "form" entity.name.tag.block.form.html
+       ">" punctuation.definition.tag.end.html
+   9 | <my-el foo=bar></my-el><x-É-Y.z\.w></x-É-Y.z\.w><foo:bar baz='1'/></foo:bar><svg-x/>
+       "<" punctuation.definition.tag.begin.html
+       "my-el" entity.name.tag.custom.html
+       "foo" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "bar" string.unquoted.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "my-el" entity.name.tag.custom.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "x-É-" entity.name.tag.custom.html
+       "Y." entity.name.tag.custom.html invalid.illegal.custom-tag-name.html
+       "z\\.w" entity.name.tag.custom.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "x-É-" entity.name.tag.custom.html
+       "Y." entity.name.tag.custom.html invalid.illegal.custom-tag-name.html
+       "z\\.w" entity.name.tag.custom.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "foo:bar" entity.name.tag.other.html
+       "baz" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "'" string.quoted.single.html punctuation.definition.string.begin.html
+       "1" string.quoted.single.html
+       "'" string.quoted.single.html punctuation.definition.string.end.html
+       "/>" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "foo:bar" entity.name.tag.other.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "svg-x" entity.name.tag.custom.html
+       "/>" punctuation.definition.tag.end.html
+  10 | <span style="color: red; font-family: Arial" onclick="go(1); return false">s</span>
+       "<" punctuation.definition.tag.begin.html
+       "span" entity.name.tag.inline.any.html
+       "style" entity.other.attribute-name.style.html
+       "=" punctuation.separator.key-value.html
+       "\"" string.quoted.double punctuation.definition.string.begin.html
+       "color" source.css support.type.property-name.css
+       ":" source.css punctuation.separator.key-value.css
+       "red" source.css support.constant.color.w3c-standard-color-name.css
+       ";" source.css punctuation.terminator.rule.css
+       "font-family" source.css support.type.property-name.css
+       ":" source.css punctuation.separator.key-value.css
+       "Arial" source.css string.unquoted.css
+       "\"" string.quoted.double punctuation.definition.string.end.html
+       "onclick" entity.other.attribute-name.event.html
+       "=" punctuation.separator.key-value.html
+       "\"" string.quoted.double punctuation.definition.string.begin.html
+       "go" source.js variable.function.js
+       "(" source.js meta.brace.round.begin.js
+       "1" source.js constant.numeric.js
+       ")" source.js meta.brace.round.end.js
+       ";" source.js punctuation.terminator.statement.js
+       "return" source.js keyword.control.flow.js
+       "false" source.js constant.language.boolean.false.js
+       "\"" string.quoted.double punctuation.definition.string.end.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "span" entity.name.tag.inline.any.html
+       ">" punctuation.definition.tag.end.html
+  11 | <style type="text/css" media=print>
+       "<" punctuation.definition.tag.begin.html
+       "style" entity.name.tag.style.html
+       "type" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "\"" string.quoted.double.html punctuation.definition.string.begin.html
+       "text/css" string.quoted.double.html
+       "\"" string.quoted.double.html punctuation.definition.string.end.html
+       "media" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "print" string.unquoted.html
+       ">" punctuation.definition.tag.end.html
+  12 |   body > .a::before { color: #fc0; margin: 0 -1em; }
+       "body" source.css entity.name.tag.css
+       ">" source.css punctuation.separator.combinator.css
+       "." source.css entity.other.attribute-name.class.css punctuation.definition.entity.css
+       "a" source.css entity.other.attribute-name.class.css
+       "::" source.css entity.other.pseudo-element.css punctuation.definition.entity.css
+       "before" source.css entity.other.pseudo-element.css
+       "{" source.css punctuation.section.property-list.css
+       "color" source.css support.type.property-name.css
+       ":" source.css punctuation.separator.key-value.css
+       "#" source.css constant.other.color.rgb-value.css punctuation.definition.constant.css
+       "fc0" source.css constant.other.color.rgb-value.css
+       ";" source.css punctuation.terminator.rule.css
+       "margin" source.css support.type.property-name.css
+       ":" source.css punctuation.separator.key-value.css
+       "0" source.css constant.numeric.integer.decimal.css
+       "-1" source.css constant.numeric.integer.decimal.css
+       "em" source.css constant.numeric.integer.decimal.css keyword.other.unit.css
+       ";" source.css punctuation.terminator.rule.css
+       "}" source.css punctuation.section.property-list.css
+  13 |   /* c */ @media (min-width: 40em) { a:hover { b: c } }
+       "/*" source.css comment.block.css punctuation.definition.comment.css
+       " c " source.css comment.block.css
+       "*/" source.css comment.block.css punctuation.definition.comment.css
+       "@" source.css keyword.control.at-rule.media.css punctuation.definition.keyword.css
+       "media" source.css keyword.control.at-rule.media.css
+       "(" source.css punctuation.definition.group.begin.css
+       "min-width" source.css support.type.property-name.media.css
+       ":" source.css punctuation.separator.key-value.css
+       "40" source.css constant.numeric.integer.decimal.css
+       "em" source.css constant.numeric.integer.decimal.css keyword.other.unit.css
+       ")" source.css punctuation.definition.group.end.css
+       "{" source.css punctuation.section.property-list.css
+       "a" source.css entity.name.tag.css
+       ":" source.css entity.other.pseudo-class.css punctuation.definition.entity.css
+       "hover" source.css entity.other.pseudo-class.css
+       "{" source.css punctuation.section.property-list.css
+       ":" source.css punctuation.separator.key-value.css
+       "}" source.css punctuation.section.property-list.css
+       "}" source.css punctuation.section.property-list.css
+  14 | </style><style type=text/less>@x: 1;</style><style>a { b: c }</style >x
+       "</" punctuation.definition.tag.begin.html
+       "style" entity.name.tag.style.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "style" entity.name.tag.style.html
+       "type" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "text/less" string.unquoted.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "style" entity.name.tag.style.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "style" entity.name.tag.style.html
+       ">" punctuation.definition.tag.end.html
+       "a" source.css entity.name.tag.css
+       "{" source.css punctuation.section.property-list.css
+       ":" source.css punctuation.separator.key-value.css
+       "}" source.css punctuation.section.property-list.css
+  15 | y</style><style/>
+       "</" punctuation.definition.tag.begin.html
+       "style" entity.name.tag.style.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "style" entity.name.tag.style.html
+       "/>" punctuation.definition.tag.end.html
+  16 | <script>
+       "<" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.script.html
+       ">" punctuation.definition.tag.end.html
+  17 | <!--
+       "<!--" comment.block.html punctuation.definition.comment.begin.html
+  18 |   var x = 1 < 2 && "a" || 'b'; // </script> stays a comment
+       "var" source.js storage.type.js
+       "x" source.js variable.other.readwrite.js
+       "=" source.js keyword.operator.assignment.js
+       "1" source.js constant.numeric.js
+       "<" source.js keyword.operator.relational.js
+       "2" source.js constant.numeric.js
+       "&&" source.js keyword.operator.logical.js
+       "\"" source.js string.quoted.js punctuation.definition.string.begin.js
+       "a" source.js string.quoted.js
+       "\"" source.js string.quoted.js punctuation.definition.string.end.js
+       "||" source.js keyword.operator.logical.js
+       "'" source.js string.quoted.js punctuation.definition.string.begin.js
+       "b" source.js string.quoted.js
+       "'" source.js string.quoted.js punctuation.definition.string.end.js
+       ";" source.js punctuation.terminator.statement.js
+       "//" source.js comment.line.double-slash.js punctuation.definition.comment.js
+       " </script> stays a comment" source.js comment.line.double-slash.js
+  19 |   function f(a) { return `t ${a}` / 2; }
+       "function" source.js storage.type.function.js
+       "f" source.js entity.name.function.js
+       "(" source.js punctuation.definition.parameters.begin.js
+       "a" source.js variable.parameter.function.js
+       ")" source.js punctuation.definition.parameters.end.js
+       "{" source.js meta.brace.curly.begin.js
+       "return" source.js keyword.control.flow.js
+       "`" source.js string.interpolated.js keyword.other.template.begin.js
+       "t " source.js string.interpolated.js
+       "${" source.js keyword.other.substitution.begin.js
+       "a" source.js variable.other.readwrite.js
+       "}" source.js keyword.other.substitution.end.js
+       "`" source.js string.interpolated.js keyword.other.template.end.js
+       "/" source.js keyword.operator.arithmetic.js
+       "2" source.js constant.numeric.js
+       ";" source.js punctuation.terminator.statement.js
+       "}" source.js meta.brace.curly.end.js
+  20 | -->
+       "-->" source.js comment.block.html.js punctuation.definition.comment.js
+  21 | </script>
+       "</" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.script.html
+       ">" punctuation.definition.tag.end.html
+  22 | <script type="module" src=x.js></script><script type='text/html'><b>t</b></script>
+       "<" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.script.html
+       "type" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "\"" string.quoted.double.html punctuation.definition.string.begin.html
+       "module" string.quoted.double.html
+       "\"" string.quoted.double.html punctuation.definition.string.end.html
+       "src" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "x.js" string.unquoted.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.script.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.script.html
+       "type" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "'" string.quoted.single.html punctuation.definition.string.begin.html
+       "text/html" string.quoted.single.html
+       "'" string.quoted.single.html punctuation.definition.string.end.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "b" entity.name.tag.inline.any.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "b" entity.name.tag.inline.any.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.script.html
+       ">" punctuation.definition.tag.end.html
+  23 | <script type="text/template"><div>{{x}}</div></script><script>f()</SCRIPT >
+       "<" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.script.html
+       "type" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "\"" string.quoted.double.html punctuation.definition.string.begin.html
+       "text/template" string.quoted.double.html
+       "\"" string.quoted.double.html punctuation.definition.string.end.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.script.html
+       ">" punctuation.definition.tag.end.html
+       "<" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.script.html
+       ">" punctuation.definition.tag.end.html
+       "f" source.js variable.function.js
+       "(" source.js meta.brace.round.begin.js
+       ")" source.js meta.brace.round.end.js
+       "</" punctuation.definition.tag.begin.html
+       "SCRIPT" entity.name.tag.script.html
+       ">" punctuation.definition.tag.end.html
+  24 | <script>r = /[a</SCRIPT>b]/; s = /x[^c</script>d]/g;</script>
+       "<" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.script.html
+       ">" punctuation.definition.tag.end.html
+       "r" source.js variable.other.readwrite.js
+       "=" source.js keyword.operator.assignment.js
+       " " source.js string.regexp.js
+       "/" source.js string.regexp.js punctuation.definition.string.begin.js
+       "[" source.js string.regexp.js constant.other.character-class.set.regexp punctuation.definition.character-class.begin.regexp
+       "a" source.js string.regexp.js constant.other.character-class.set.regexp
+       "</" punctuation.definition.tag.begin.html
+       "SCRIPT" entity.name.tag.script.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.inline.any.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "script" entity.name.tag.inline.any.html
+       ">" punctuation.definition.tag.end.html
+  25 | <b onclick="r = /[a" c="]/" onmouseover='x = /a[^b'>x</b>
+       "<" punctuation.definition.tag.begin.html
+       "b" entity.name.tag.inline.any.html
+       "onclick" entity.other.attribute-name.event.html
+       "=" punctuation.separator.key-value.html
+       "\"" string.quoted.double punctuation.definition.string.begin.html
+       "r" source.js variable.other.readwrite.js
+       "=" source.js keyword.operator.assignment.js
+       " " source.js string.regexp.js
+       "/" source.js string.regexp.js punctuation.definition.string.begin.js
+       "[" source.js string.regexp.js constant.other.character-class.set.regexp punctuation.definition.character-class.begin.regexp
+       "a" source.js string.regexp.js constant.other.character-class.set.regexp
+       "\"" string.quoted.double punctuation.definition.string.end.html
+       "c" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "\"" string.quoted.double.html punctuation.definition.string.begin.html
+       "]/" string.quoted.double.html
+       "\"" string.quoted.double.html punctuation.definition.string.end.html
+       "onmouseover" entity.other.attribute-name.event.html
+       "=" punctuation.separator.key-value.html
+       "'" string.quoted.single punctuation.definition.string.begin.html
+       "x" source.js variable.other.readwrite.js
+       "=" source.js keyword.operator.assignment.js
+       " " source.js string.regexp.js
+       "/" source.js string.regexp.js punctuation.definition.string.begin.js
+       "a" source.js string.regexp.js
+       "[" source.js string.regexp.js constant.other.character-class.set.regexp punctuation.definition.character-class.begin.regexp
+       "^" source.js string.regexp.js constant.other.character-class.set.regexp keyword.operator.negation.regexp
+       "b" source.js string.regexp.js constant.other.character-class.set.regexp
+       "'" string.quoted.single punctuation.definition.string.end.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "b" entity.name.tag.inline.any.html
+       ">" punctuation.definition.tag.end.html
+  26 | </div></body></html>
+       "</" punctuation.definition.tag.begin.html
+       "div" entity.name.tag.block.any.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "body" entity.name.tag.structure.any.html
+       ">" punctuation.definition.tag.end.html
+       "</" punctuation.definition.tag.begin.html
+       "html" entity.name.tag.structure.any.html
+       ">" punctuation.definition.tag.end.html
+  27 | <i style='content:"\'x"' onmouseover='a // b'>i</i>
+       "<" punctuation.definition.tag.begin.html
+       "i" entity.name.tag.inline.any.html
+       "style" entity.other.attribute-name.style.html
+       "=" punctuation.separator.key-value.html
+       "'" string.quoted.single punctuation.definition.string.begin.html
+       "content" source.css support.type.property-name.css
+       ":" source.css punctuation.separator.key-value.css
+       "\"" source.css string.quoted.double.css punctuation.definition.string.begin.css
+       "\\'" source.css string.quoted.double.css constant.character.escape.css
+       "x" source.css string.quoted.double.css
+       "\"" source.css string.quoted.double.css punctuation.definition.string.end.css
+       "'" string.quoted.single punctuation.definition.string.end.html
+       "onmouseover" entity.other.attribute-name.event.html
+       "=" punctuation.separator.key-value.html
+       "'" string.quoted.single punctuation.definition.string.begin.html
+       "a" source.js variable.other.readwrite.js
+       "//" source.js comment.line.double-slash.js punctuation.definition.comment.js
+       " b'>i</i>" source.js comment.line.double-slash.js

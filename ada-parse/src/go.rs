@@ -519,7 +519,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.sql_nl = false;
         self.lex();
         // the line's end as a state's save and load leave it (`line` leaves that to its state)
-        crate::stack::hold(&mut self.stack, &mut self.depth, &mut self.exact);
+        crate::stack::hold(&mut self.stack, &mut self.depth);
         self.b = b"";
     }
 
@@ -531,7 +531,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             b,
             stack: [MAIN; MAX],
             depth: 1,
-            exact: state.is_exact(),
             text: PLAIN,
             at: 0,
             loop_at: (usize::MAX, 0),
@@ -583,7 +582,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(always)]
     fn state(&self) -> State {
         let flags = if self.mark != usize::MAX { MARKED } else { 0 };
-        State::keep(&self.stack, self.depth, self.exact, flags)
+        State::keep(&self.stack, self.depth, flags)
     }
 }
 
@@ -1103,7 +1102,6 @@ struct Scan<'b, 'c, K: Sink> {
     b: &'b [u8],
     stack: [u8; MAX],
     depth: usize,
-    exact: bool,
     /// The kind of text no pattern of the top context matches.
     text: u16,
     /// Where the spans so far end.
@@ -1193,7 +1191,7 @@ impl<K: Sink> Scan<'_, '_, K> {
 
     fn push(&mut self, c: u8) {
         if self.depth == MAX {
-            crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
+            crate::stack::drop_bottom(&mut self.stack, &mut self.depth);
         }
         self.stack[self.depth] = c;
         self.depth += 1;

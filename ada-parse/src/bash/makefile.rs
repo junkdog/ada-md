@@ -537,7 +537,6 @@ struct Scan<'a, 'o, 'p> {
     depth: usize,
     /// Where the spans so far end.
     emitted: usize,
-    exact: bool,
     out: &'o mut Out<'p>,
     /// The `\` a line continuation is at (`\` and spaces to the line's end), or `usize::MAX`.
     cont: usize,
@@ -687,7 +686,6 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
         stack: [const { MaybeUninit::uninit() }; MAX],
         depth: 1,
         emitted: 0,
-        exact: state.is_exact(),
         out,
         cont,
         parens: None,
@@ -835,7 +833,6 @@ impl Scan<'_, '_, '_> {
         if self.depth == MAX {
             self.stack.copy_within(1.., 0);
             self.depth -= 1;
-            self.exact = false;
         }
         self.stack[self.depth] = MaybeUninit::new(f);
         self.depth += 1;
@@ -2465,7 +2462,6 @@ impl Scan<'_, '_, '_> {
         let frames = self.depth - from;
         let mut state = State {
             depth: frames as u8,
-            inexact: !self.exact || from > 1,
             arg: frames as u16,
             ..State::default()
         };
@@ -2480,9 +2476,6 @@ impl Scan<'_, '_, '_> {
                     state.set_level(frames + i, st.level(i));
                 }
                 state.depth += held as u8;
-                state.inexact |= !st.is_exact();
-            } else {
-                state.inexact = true;
             }
         }
         state

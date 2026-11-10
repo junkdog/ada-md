@@ -1,0 +1,768 @@
+# TypeScript: ada-parse/tests/readings.rs, typescript
+   1 | /// <reference path="./types.d.ts" />
+       "///" comment.line.triple-slash.directive.ts punctuation.definition.comment.ts
+       " " comment.line.triple-slash.directive.ts
+       "<" comment.line.triple-slash.directive.ts punctuation.definition.tag.directive.ts
+       "reference" comment.line.triple-slash.directive.ts entity.name.tag.directive.ts
+       " " comment.line.triple-slash.directive.ts
+       "path" comment.line.triple-slash.directive.ts entity.other.attribute-name.directive.ts
+       "=" comment.line.triple-slash.directive.ts keyword.operator.assignment.ts
+       "\"" comment.line.triple-slash.directive.ts string.quoted.double.ts punctuation.definition.string.begin.ts
+       "./types.d.ts" comment.line.triple-slash.directive.ts string.quoted.double.ts
+       "\"" comment.line.triple-slash.directive.ts string.quoted.double.ts punctuation.definition.string.end.ts
+       " " comment.line.triple-slash.directive.ts
+       "/>" comment.line.triple-slash.directive.ts punctuation.definition.tag.directive.ts
+   2 | import type { A, B as C } from './a';
+       "import" keyword.control.import.ts
+       "type" keyword.control.type.ts
+       "{" punctuation.definition.block.ts
+       "A" variable.other.readwrite.alias.ts
+       "," punctuation.separator.comma.ts
+       "B" variable.other.readwrite.ts
+       "as" keyword.control.as.ts
+       "C" variable.other.readwrite.alias.ts
+       "}" punctuation.definition.block.ts
+       "from" keyword.control.from.ts
+       "'" string.quoted.single.ts punctuation.definition.string.begin.ts
+       "./a" string.quoted.single.ts
+       "'" string.quoted.single.ts punctuation.definition.string.end.ts
+       ";" punctuation.terminator.statement.ts
+   3 | import * as fs from 'fs';
+       "import" keyword.control.import.ts
+       "*" constant.language.import-export-all.ts
+       "as" keyword.control.as.ts
+       "fs" variable.other.readwrite.alias.ts
+       "from" keyword.control.from.ts
+       "'" string.quoted.single.ts punctuation.definition.string.begin.ts
+       "fs" string.quoted.single.ts
+       "'" string.quoted.single.ts punctuation.definition.string.end.ts
+       ";" punctuation.terminator.statement.ts
+   4 | export interface Point<T extends number = number> { readonly x: T; y?: T; [key: string]: unknown }
+       "export" keyword.control.export.ts
+       "interface" storage.type.interface.ts
+       "Point" entity.name.type.interface.ts
+       "<" punctuation.definition.typeparameters.begin.ts
+       "T" entity.name.type.ts
+       "extends" storage.modifier.ts
+       "number" support.type.primitive.ts
+       "=" keyword.operator.assignment.ts
+       "number" support.type.primitive.ts
+       ">" punctuation.definition.typeparameters.end.ts
+       "{" punctuation.definition.block.ts
+       "readonly" storage.modifier.ts
+       "x" variable.object.property.ts
+       ":" keyword.operator.type.annotation.ts
+       "T" entity.name.type.ts
+       ";" punctuation.terminator.statement.ts
+       "y" variable.object.property.ts
+       "?" keyword.operator.optional.ts
+       ":" keyword.operator.type.annotation.ts
+       "T" entity.name.type.ts
+       ";" punctuation.terminator.statement.ts
+       "key" variable.parameter.ts
+       ":" keyword.operator.type.annotation.ts
+       "string" support.type.primitive.ts
+       ":" keyword.operator.type.annotation.ts
+       "unknown" support.type.primitive.ts
+       "}" punctuation.definition.block.ts
+   5 | type Maybe<T> = T extends null | undefined ? never : T;
+       "type" storage.type.type.ts
+       "Maybe" entity.name.type.alias.ts
+       "<" punctuation.definition.typeparameters.begin.ts
+       "T" entity.name.type.ts
+       ">" punctuation.definition.typeparameters.end.ts
+       "=" keyword.operator.assignment.ts
+       "T" entity.name.type.ts
+       "extends" storage.modifier.ts
+       "null" support.type.builtin.ts
+       "|" keyword.operator.type.ts
+       "undefined" support.type.builtin.ts
+       "?" keyword.operator.ternary.ts
+       "never" support.type.primitive.ts
+       ":" keyword.operator.ternary.ts
+       "T" entity.name.type.ts
+       ";" punctuation.terminator.statement.ts
+   6 | type Keys = { [K in keyof Point as `get${Capitalize<K&string>}`]: () => Point[K] };
+       "type" storage.type.type.ts
+       "Keys" entity.name.type.alias.ts
+       "=" keyword.operator.assignment.ts
+       "{" punctuation.definition.block.ts
+       "K" entity.name.type.ts
+       "in" keyword.operator.expression.in.ts
+       "keyof" keyword.operator.expression.keyof.ts
+       "Point" entity.name.type.ts
+       "as" keyword.control.as.ts
+       "`" string.template.ts punctuation.definition.string.template.begin.ts
+       "get" string.template.ts
+       "${" string.template.ts punctuation.definition.template-expression.begin.ts
+       "Capitalize" entity.name.type.ts
+       "<" punctuation.definition.typeparameters.begin.ts
+       "K" entity.name.type.ts
+       "&" keyword.operator.type.ts
+       "string" support.type.primitive.ts
+       ">" punctuation.definition.typeparameters.end.ts
+       "}" string.template.ts punctuation.definition.template-expression.end.ts
+       "`" string.template.ts punctuation.definition.string.template.end.ts
+       ":" keyword.operator.type.annotation.ts
+       "(" punctuation.definition.parameters.begin.ts
+       ")" punctuation.definition.parameters.end.ts
+       "=>" storage.type.function.arrow.ts
+       "Point" entity.name.type.ts
+       "K" entity.name.type.ts
+       "}" punctuation.definition.block.ts
+       ";" punctuation.terminator.statement.ts
+   7 | export enum Color { Red = 1, Green = 'g', ['Blue'] }
+       "export" keyword.control.export.ts
+       "enum" storage.type.enum.ts
+       "Color" entity.name.type.enum.ts
+       "{" punctuation.definition.block.ts
+       "Red" variable.other.enummember.ts
+       "=" keyword.operator.assignment.ts
+       "1" constant.numeric.decimal.ts
+       "," punctuation.separator.comma.ts
+       "Green" variable.other.enummember.ts
+       "=" keyword.operator.assignment.ts
+       "'" string.quoted.single.ts punctuation.definition.string.begin.ts
+       "g" string.quoted.single.ts
+       "'" string.quoted.single.ts punctuation.definition.string.end.ts
+       "," punctuation.separator.comma.ts
+       "'" string.quoted.single.ts punctuation.definition.string.begin.ts
+       "Blue" string.quoted.single.ts
+       "'" string.quoted.single.ts punctuation.definition.string.end.ts
+       "}" punctuation.definition.block.ts
+   8 | declare namespace NS { export const v: number; }
+       "declare" storage.modifier.ts
+       "namespace" storage.type.namespace.ts
+       "NS" entity.name.type.module.ts
+       "{" punctuation.definition.block.ts
+       "export" keyword.control.export.ts
+       "const" storage.type.ts
+       "v" variable.other.constant.ts
+       ":" keyword.operator.type.annotation.ts
+       "number" support.type.primitive.ts
+       ";" punctuation.terminator.statement.ts
+       "}" punctuation.definition.block.ts
+   9 | /**
+       "/**" comment.block.documentation.ts punctuation.definition.comment.ts
+  10 |  * Makes one.
+       " * Makes one." comment.block.documentation.ts
+  11 |  * @param {string} name - the name
+       " * " comment.block.documentation.ts
+       "@" comment.block.documentation.ts storage.type.class.jsdoc punctuation.definition.block.tag.jsdoc
+       "param" comment.block.documentation.ts storage.type.class.jsdoc
+       " " comment.block.documentation.ts
+       "{" comment.block.documentation.ts entity.name.type.instance.jsdoc punctuation.definition.bracket.curly.begin.jsdoc
+       "string" comment.block.documentation.ts entity.name.type.instance.jsdoc
+       "}" comment.block.documentation.ts entity.name.type.instance.jsdoc punctuation.definition.bracket.curly.end.jsdoc
+       " " comment.block.documentation.ts
+       "name" comment.block.documentation.ts variable.other.jsdoc
+       " - the name" comment.block.documentation.ts
+  12 |  * @returns {Promise<Foo>} the one
+       " * " comment.block.documentation.ts
+       "@" comment.block.documentation.ts storage.type.class.jsdoc punctuation.definition.block.tag.jsdoc
+       "returns" comment.block.documentation.ts storage.type.class.jsdoc
+       " " comment.block.documentation.ts
+       "{" comment.block.documentation.ts entity.name.type.instance.jsdoc punctuation.definition.bracket.curly.begin.jsdoc
+       "Promise<Foo>" comment.block.documentation.ts entity.name.type.instance.jsdoc
+       "}" comment.block.documentation.ts entity.name.type.instance.jsdoc punctuation.definition.bracket.curly.end.jsdoc
+       " the one" comment.block.documentation.ts
+  13 |  * @example
+       " * " comment.block.documentation.ts
+       "@" comment.block.documentation.ts storage.type.class.jsdoc punctuation.definition.block.tag.jsdoc
+       "example" comment.block.documentation.ts storage.type.class.jsdoc
+  14 |  * make('a');
+       " * make('a');" comment.block.documentation.ts
+  15 |  */
+       " " comment.block.documentation.ts
+       "*/" comment.block.documentation.ts punctuation.definition.comment.ts
+  16 | @Component({ selector: 'app' })
+       "@" punctuation.decorator.ts
+       "Component" entity.name.function.ts
+       "{" punctuation.definition.block.ts
+       ":" punctuation.separator.key-value.ts
+       "'" string.quoted.single.ts punctuation.definition.string.begin.ts
+       "app" string.quoted.single.ts
+       "'" string.quoted.single.ts punctuation.definition.string.end.ts
+       "}" punctuation.definition.block.ts
+  17 | export abstract class Foo<T> extends Base<T> implements I {
+       "export" keyword.control.export.ts
+       "abstract" storage.modifier.ts
+       "class" storage.type.class.ts
+       "Foo" entity.name.type.class.ts
+       "<" punctuation.definition.typeparameters.begin.ts
+       "T" entity.name.type.ts
+       ">" punctuation.definition.typeparameters.end.ts
+       "extends" storage.modifier.ts
+       "Base" entity.other.inherited-class.ts
+       "<" punctuation.definition.typeparameters.begin.ts
+       "T" entity.name.type.ts
+       ">" punctuation.definition.typeparameters.end.ts
+       "implements" storage.modifier.ts
+       "I" entity.other.inherited-class.ts
+       "{" punctuation.definition.block.ts
+  18 |   private static readonly count: number = 0;
+       "private" storage.modifier.ts
+       "static" storage.modifier.ts
+       "readonly" storage.modifier.ts
+       "count" variable.object.property.ts
+       ":" keyword.operator.type.annotation.ts
+       "number" support.type.primitive.ts
+       "=" keyword.operator.assignment.ts
+       "0" constant.numeric.decimal.ts
+       ";" punctuation.terminator.statement.ts
+  19 |   #secret = 1;
+       "#secret" variable.object.property.ts
+       "=" keyword.operator.assignment.ts
+       "1" constant.numeric.decimal.ts
+       ";" punctuation.terminator.statement.ts
+  20 |   constructor(public name: string, protected opts?: Options) { super(); }
+       "constructor" storage.type.ts
+       "(" punctuation.definition.parameters.begin.ts
+       "public" storage.modifier.ts
+       "name" variable.parameter.ts
+       ":" keyword.operator.type.annotation.ts
+       "string" support.type.primitive.ts
+       "," punctuation.separator.parameter.ts
+       "protected" storage.modifier.ts
+       "opts" variable.parameter.ts
+       "?" keyword.operator.optional.ts
+       ":" keyword.operator.type.annotation.ts
+       "Options" entity.name.type.ts
+       ")" punctuation.definition.parameters.end.ts
+       "{" punctuation.definition.block.ts
+       "super" variable.language.super.ts
+       ";" punctuation.terminator.statement.ts
+       "}" punctuation.definition.block.ts
+  21 |   get size(): number { return this.items?.length ?? 0; }
+       "get" storage.type.property.ts
+       "size" entity.name.function.ts
+       "(" punctuation.definition.parameters.begin.ts
+       ")" punctuation.definition.parameters.end.ts
+       ":" keyword.operator.type.annotation.ts
+       "number" support.type.primitive.ts
+       "{" punctuation.definition.block.ts
+       "return" keyword.control.flow.ts
+       "this" variable.language.this.ts
+       "." punctuation.accessor.ts
+       "items" variable.other.property.ts
+       "?." punctuation.accessor.optional.ts
+       "length" support.variable.property.ts
+       "??" keyword.operator.logical.ts
+       "0" constant.numeric.decimal.ts
+       ";" punctuation.terminator.statement.ts
+       "}" punctuation.definition.block.ts
+  22 |   abstract run(): void;
+       "abstract" storage.modifier.ts
+       "run" entity.name.function.ts
+       "(" punctuation.definition.parameters.begin.ts
+       ")" punctuation.definition.parameters.end.ts
+       ":" keyword.operator.type.annotation.ts
+       "void" support.type.primitive.ts
+       ";" punctuation.terminator.statement.ts
+  23 |   async *load<U>(id: U, ...rest: unknown[]): AsyncGenerator<U> { yield* other<U>(id); }
+       "async" storage.modifier.async.ts
+       "*" keyword.generator.asterisk.ts
+       "load" entity.name.function.ts
+       "<" punctuation.definition.typeparameters.begin.ts
+       "U" entity.name.type.ts
+       ">" punctuation.definition.typeparameters.end.ts
+       "(" punctuation.definition.parameters.begin.ts
+       "id" variable.parameter.ts
+       ":" keyword.operator.type.annotation.ts
+       "U" entity.name.type.ts
+       "," punctuation.separator.parameter.ts
+       "..." keyword.operator.rest.ts
+       "rest" variable.parameter.ts
+       ":" keyword.operator.type.annotation.ts
+       "unknown" support.type.primitive.ts
+       ")" punctuation.definition.parameters.end.ts
+       ":" keyword.operator.type.annotation.ts
+       "AsyncGenerator" entity.name.type.ts
+       "<" punctuation.definition.typeparameters.begin.ts
+       "U" entity.name.type.ts
+       ">" punctuation.definition.typeparameters.end.ts
+       "{" punctuation.definition.block.ts
+       "yield" keyword.control.flow.ts
+       "*" keyword.generator.asterisk.ts
+       "other" entity.name.function.ts
+       "<" punctuation.definition.typeparameters.begin.ts
+       "U" entity.name.type.ts
+       ">" punctuation.definition.typeparameters.end.ts
+       "id" variable.other.readwrite.ts
+       ";" punctuation.terminator.statement.ts
+       "}" punctuation.definition.block.ts
+  24 |   handler = (e: Event): void => { console.log(e.target as HTMLElement); };
+       "handler" entity.name.function.ts
+       "=" keyword.operator.assignment.ts
+       "(" punctuation.definition.parameters.begin.ts
+       "e" variable.parameter.ts
+       ":" keyword.operator.type.annotation.ts
+       "Event" entity.name.type.ts
+       ")" punctuation.definition.parameters.end.ts
+       ":" keyword.operator.type.annotation.ts
+       "void" support.type.primitive.ts
+       "=>" storage.type.function.arrow.ts
+       "{" punctuation.definition.block.ts
+       "console" support.class.console.ts
+       "." punctuation.accessor.ts
+       "log" support.function.console.ts
+       "e" variable.other.object.ts
+       "." punctuation.accessor.ts
+       "target" support.variable.property.dom.ts
+       "as" keyword.control.as.ts
+       "HTMLElement" entity.name.type.ts
+       ";" punctuation.terminator.statement.ts
+       "}" punctuation.definition.block.ts
+       ";" punctuation.terminator.statement.ts
+  25 | }
+       "}" punctuation.definition.block.ts
+  26 | function over(a: string): string;
+       "function" storage.type.function.ts
+       "over" entity.name.function.ts
+       "(" punctuation.definition.parameters.begin.ts
+       "a" variable.parameter.ts
+       ":" keyword.operator.type.annotation.ts
+       "string" support.type.primitive.ts
+       ")" punctuation.definition.parameters.end.ts
+       ":" keyword.operator.type.annotation.ts
+       "string" support.type.primitive.ts
+       ";" punctuation.terminator.statement.ts
+  27 | function over(a: any) { return <string>a; }
+       "function" storage.type.function.ts
+       "over" entity.name.function.ts
+       "(" punctuation.definition.parameters.begin.ts
+       "a" variable.parameter.ts
+       ":" keyword.operator.type.annotation.ts
+       "any" support.type.primitive.ts
+       ")" punctuation.definition.parameters.end.ts
+       "{" punctuation.definition.block.ts
+       "return" keyword.control.flow.ts
+       "string" support.type.primitive.ts
+       "a" variable.other.readwrite.ts
+       ";" punctuation.terminator.statement.ts
+       "}" punctuation.definition.block.ts
+  28 | const { a, b: [c, d] } = obj, n = a! + 0x1F + 1_000n;
+       "const" storage.type.ts
+       "{" punctuation.definition.binding-pattern.object.ts
+       "a" variable.other.constant.ts
+       "," punctuation.separator.comma.ts
+       "b" variable.object.property.ts
+       ":" punctuation.destructuring.ts
+       "[" punctuation.definition.binding-pattern.array.ts
+       "c" variable.other.constant.ts
+       "," punctuation.separator.comma.ts
+       "d" variable.other.constant.ts
+       "]" punctuation.definition.binding-pattern.array.ts
+       "}" punctuation.definition.binding-pattern.object.ts
+       "=" keyword.operator.assignment.ts
+       "obj" variable.other.readwrite.ts
+       "," punctuation.separator.comma.ts
+       "n" variable.other.constant.ts
+       "=" keyword.operator.assignment.ts
+       "a" variable.other.readwrite.ts
+       "!" keyword.operator.logical.ts
+       "+" keyword.operator.arithmetic.ts
+       "0x1F" constant.numeric.hex.ts
+       "+" keyword.operator.arithmetic.ts
+       "1_000" constant.numeric.decimal.ts
+       "n" constant.numeric.decimal.ts storage.type.numeric.bigint.ts
+       ";" punctuation.terminator.statement.ts
+  29 | const pick = <T, K extends keyof T>(o: T, k: K): T[K] => o[k];
+       "const" storage.type.ts
+       "pick" variable.other.constant.ts entity.name.function.ts
+       "=" keyword.operator.assignment.ts
+       "<" punctuation.definition.typeparameters.begin.ts
+       "T" entity.name.type.ts
+       "," punctuation.separator.comma.ts
+       "K" entity.name.type.ts
+       "extends" storage.modifier.ts
+       "keyof" keyword.operator.expression.keyof.ts
+       "T" entity.name.type.ts
+       ">" punctuation.definition.typeparameters.end.ts
+       "(" punctuation.definition.parameters.begin.ts
+       "o" variable.parameter.ts
+       ":" keyword.operator.type.annotation.ts
+       "T" entity.name.type.ts
+       "," punctuation.separator.parameter.ts
+       "k" variable.parameter.ts
+       ":" keyword.operator.type.annotation.ts
+       "K" entity.name.type.ts
+       ")" punctuation.definition.parameters.end.ts
+       ":" keyword.operator.type.annotation.ts
+       "T" entity.name.type.ts
+       "K" entity.name.type.ts
+       "=>" storage.type.function.arrow.ts
+       "o" variable.other.readwrite.ts
+       "k" variable.other.readwrite.ts
+       ";" punctuation.terminator.statement.ts
+  30 | let re = /x+$/gi, half = total / 2;
+       "let" storage.type.ts
+       "re" variable.other.readwrite.ts
+       "=" keyword.operator.assignment.ts
+       " " string.regexp.ts
+       "/" string.regexp.ts punctuation.definition.string.begin.ts
+       "x" string.regexp.ts
+       "+" string.regexp.ts keyword.operator.quantifier.regexp
+       "$" string.regexp.ts keyword.control.anchor.regexp
+       "/" string.regexp.ts punctuation.definition.string.end.ts
+       "gi" string.regexp.ts keyword.other.ts
+       "," punctuation.separator.comma.ts
+       "half" variable.other.readwrite.ts
+       "=" keyword.operator.assignment.ts
+       "total" variable.other.readwrite.ts
+       "/" keyword.operator.arithmetic.ts
+       "2" constant.numeric.decimal.ts
+       ";" punctuation.terminator.statement.ts
+  31 | const tag = html`<p>${name}</p>`, plain = `a ${b ? 'c' : "d"}`;
+       "const" storage.type.ts
+       "tag" variable.other.constant.ts
+       "=" keyword.operator.assignment.ts
+       "html" string.template.ts entity.name.function.tagged-template.ts
+       "`" string.template.ts punctuation.definition.string.template.begin.ts
+       "<p>" string.template.ts
+       "${" string.template.ts punctuation.definition.template-expression.begin.ts
+       "name" variable.other.readwrite.ts
+       "}" string.template.ts punctuation.definition.template-expression.end.ts
+       "</p>" string.template.ts
+       "`" string.template.ts punctuation.definition.string.template.end.ts
+       "," punctuation.separator.comma.ts
+       "plain" variable.other.constant.ts
+       "=" keyword.operator.assignment.ts
+       "`" string.template.ts punctuation.definition.string.template.begin.ts
+       "a " string.template.ts
+       "${" string.template.ts punctuation.definition.template-expression.begin.ts
+       "b" variable.other.readwrite.ts
+       " " string.template.ts
+       "?" keyword.operator.ternary.ts
+       " " string.template.ts
+       "'" string.quoted.single.ts punctuation.definition.string.begin.ts
+       "c" string.quoted.single.ts
+       "'" string.quoted.single.ts punctuation.definition.string.end.ts
+       " " string.template.ts
+       ":" keyword.operator.ternary.ts
+       " " string.template.ts
+       "\"" string.quoted.double.ts punctuation.definition.string.begin.ts
+       "d" string.quoted.double.ts
+       "\"" string.quoted.double.ts punctuation.definition.string.end.ts
+       "}" string.template.ts punctuation.definition.template-expression.end.ts
+       "`" string.template.ts punctuation.definition.string.template.end.ts
+       ";" punctuation.terminator.statement.ts
+  32 | const conf = { mode: 'x', list: [1, 2] } as const;
+       "const" storage.type.ts
+       "conf" variable.other.constant.ts
+       "=" keyword.operator.assignment.ts
+       "{" punctuation.definition.block.ts
+       ":" punctuation.separator.key-value.ts
+       "'" string.quoted.single.ts punctuation.definition.string.begin.ts
+       "x" string.quoted.single.ts
+       "'" string.quoted.single.ts punctuation.definition.string.end.ts
+       "," punctuation.separator.comma.ts
+       ":" punctuation.separator.key-value.ts
+       "1" constant.numeric.decimal.ts
+       "," punctuation.separator.comma.ts
+       "2" constant.numeric.decimal.ts
+       "}" punctuation.definition.block.ts
+       "as" keyword.control.as.ts
+       "const" storage.modifier.ts
+       ";" punctuation.terminator.statement.ts
+  33 | const
+       "const" storage.type.ts
+  34 |   late = typeof window !== 'undefined' && window instanceof Object;
+       "late" variable.other.constant.ts
+       "=" keyword.operator.assignment.ts
+       "typeof" keyword.operator.expression.typeof.ts
+       "window" support.variable.dom.ts
+       "!==" keyword.operator.comparison.ts
+       "'" string.quoted.single.ts punctuation.definition.string.begin.ts
+       "undefined" string.quoted.single.ts
+       "'" string.quoted.single.ts punctuation.definition.string.end.ts
+       "&&" keyword.operator.logical.ts
+       "window" support.variable.dom.ts
+       "instanceof" keyword.operator.expression.instanceof.ts
+       "Object" entity.name.type.ts
+       ";" punctuation.terminator.statement.ts
+  35 | for (const [k, v] of Object.entries(map)) { if (k in v) continue; }
+       "for" keyword.control.loop.ts
+       "const" storage.type.ts
+       "[" punctuation.definition.binding-pattern.array.ts
+       "k" variable.other.constant.ts
+       "," punctuation.separator.comma.ts
+       "v" variable.other.constant.ts
+       "]" punctuation.definition.binding-pattern.array.ts
+       "of" keyword.operator.expression.of.ts
+       "Object" support.class.builtin.ts
+       "." punctuation.accessor.ts
+       "entries" support.function.dom.ts
+       "map" variable.other.readwrite.ts
+       "{" punctuation.definition.block.ts
+       "if" keyword.control.conditional.ts
+       "k" variable.other.readwrite.ts
+       "in" keyword.operator.expression.in.ts
+       "v" variable.other.readwrite.ts
+       "continue" keyword.control.loop.ts
+       ";" punctuation.terminator.statement.ts
+       "}" punctuation.definition.block.ts
+  36 | switch (kind) { case 'a': break; default: throw new Error(`bad ${kind}`); }
+       "switch" keyword.control.switch.ts
+       "kind" variable.other.readwrite.ts
+       "{" punctuation.definition.block.ts
+       "case" keyword.control.switch.ts
+       "'" string.quoted.single.ts punctuation.definition.string.begin.ts
+       "a" string.quoted.single.ts
+       "'" string.quoted.single.ts punctuation.definition.string.end.ts
+       ":" punctuation.definition.section.case-statement.ts
+       "break" keyword.control.loop.ts
+       ";" punctuation.terminator.statement.ts
+       "default" keyword.control.switch.ts
+       ":" punctuation.definition.section.case-statement.ts
+       "throw" keyword.control.trycatch.ts
+       "new" keyword.operator.new.ts
+       "Error" support.class.error.ts
+       "`" string.template.ts punctuation.definition.string.template.begin.ts
+       "bad " string.template.ts
+       "${" string.template.ts punctuation.definition.template-expression.begin.ts
+       "kind" variable.other.readwrite.ts
+       "}" string.template.ts punctuation.definition.template-expression.end.ts
+       "`" string.template.ts punctuation.definition.string.template.end.ts
+       ";" punctuation.terminator.statement.ts
+       "}" punctuation.definition.block.ts
+  37 | export default async function main(): Promise<void> { await Promise.all([]); }
+       "export" keyword.control.export.ts
+       "default" keyword.control.default.ts
+       "async" storage.modifier.async.ts
+       "function" storage.type.function.ts
+       "main" entity.name.function.ts
+       "(" punctuation.definition.parameters.begin.ts
+       ")" punctuation.definition.parameters.end.ts
+       ":" keyword.operator.type.annotation.ts
+       "Promise" entity.name.type.ts
+       "<" punctuation.definition.typeparameters.begin.ts
+       "void" support.type.primitive.ts
+       ">" punctuation.definition.typeparameters.end.ts
+       "{" punctuation.definition.block.ts
+       "await" keyword.control.flow.ts
+       "Promise" support.class.promise.ts
+       "." punctuation.accessor.ts
+       "all" support.function.promise.ts
+       ";" punctuation.terminator.statement.ts
+       "}" punctuation.definition.block.ts
+  38 | interface I { a : () => void; b? : () => void; c: () => void }
+       "interface" storage.type.interface.ts
+       "I" entity.name.type.interface.ts
+       "{" punctuation.definition.block.ts
+       "a" variable.object.property.ts
+       ":" keyword.operator.type.annotation.ts
+       "(" punctuation.definition.parameters.begin.ts
+       ")" punctuation.definition.parameters.end.ts
+       "=>" storage.type.function.arrow.ts
+       "void" support.type.primitive.ts
+       ";" punctuation.terminator.statement.ts
+       "b" variable.object.property.ts
+       "?" keyword.operator.optional.ts
+       ":" keyword.operator.type.annotation.ts
+       "(" punctuation.definition.parameters.begin.ts
+       ")" punctuation.definition.parameters.end.ts
+       "=>" storage.type.function.arrow.ts
+       "void" support.type.primitive.ts
+       ";" punctuation.terminator.statement.ts
+       "c" entity.name.function.ts
+       ":" keyword.operator.type.annotation.ts
+       "(" punctuation.definition.parameters.begin.ts
+       ")" punctuation.definition.parameters.end.ts
+       "=>" storage.type.function.arrow.ts
+       "void" support.type.primitive.ts
+       "}" punctuation.definition.block.ts
+  39 | import type = x;
+       "import" keyword.control.import.ts
+       "type" variable.other.readwrite.alias.ts
+       "=" keyword.operator.assignment.ts
+       "x" variable.other.readwrite.ts
+       ";" punctuation.terminator.statement.ts
+  40 | const deep = {
+       "const" storage.type.ts
+       "deep" variable.other.constant.ts
+       "=" keyword.operator.assignment.ts
+       "{" punctuation.definition.block.ts
+  41 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  42 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  43 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  44 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  45 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  46 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  47 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  48 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  49 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  50 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  51 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  52 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  53 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  54 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  55 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  56 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  57 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  58 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  59 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  60 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  61 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  62 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  63 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  64 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  65 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  66 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  67 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  68 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  69 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  70 | key: {
+       ":" punctuation.separator.key-value.ts
+       "{" punctuation.definition.block.ts
+  71 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  72 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  73 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  74 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  75 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  76 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  77 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  78 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  79 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  80 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  81 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  82 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  83 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  84 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  85 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  86 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  87 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  88 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  89 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  90 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  91 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  92 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  93 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  94 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  95 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  96 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  97 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  98 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+  99 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+ 100 | },
+       "}" punctuation.definition.block.ts
+       "," punctuation.separator.comma.ts
+ 101 | };
+       "}" punctuation.definition.block.ts
+       ";" punctuation.terminator.statement.ts

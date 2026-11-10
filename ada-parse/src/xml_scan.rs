@@ -10,12 +10,11 @@
 //! A span's kind is fixed ([`scopes`]): a doctype's, an internal subset's and a conditional
 //! section's meta scopes as a set, one of a tag's, a comment's, a declaration's or a group's,
 //! a string's, and a leaf, as when the scanner was bat's grammar compiled by hand (2026-10-31),
-//! so the themes color it as they did, and still exact against syntect on bat's grammar, each
-//! scope once (`tests/exact_lexers.rs`, the `parse` fuzz target). In a tag, a byte that starts
+//! so the themes color it as they did; its readings are held by `tests/readings.rs`' snapshots
+//! (X-116). In a tag, a byte that starts
 //! nothing (a stray `=`, `/` or `?`) is passed as the tag's own, where bat's grammar searched for
 //! the leftmost of its patterns, which reads the same wherever it was tried (the hand-picked
-//! blocks, the corpus, 36,000 lines of token soup). Nesting has no limit of syntect's; past
-//! where syntect's would stop, the state says the lines aren't exact.
+//! blocks, the corpus, 36,000 lines of token soup). Nesting has no limit of syntect's.
 //!
 //! The state between lines is one word: the mode, where a string returns to, the string's
 //! quote, the meta flags, the markup's meta scope, the conditional sections and an element's
@@ -321,31 +320,24 @@ fn find(b: &[u8], from: usize, set: impl Fn(u8) -> bool) -> Option<usize> {
 /// Lex `b`, a line without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let (w, deep) = lex(b, state.word(), out, &mut Push);
+    let w = lex(b, state.word(), out, &mut Push);
     state.set_word(w);
-    if deep {
-        state.inexact = true;
-    }
 }
 
 /// As [`line`], the line's runs written to `k` (X-072): a block's lines on one sink, as the
 /// line-format engine's, since all a line hands the next is the word.
 #[inline(never)]
 pub(crate) fn line_runs(b: &[u8], state: &mut State, out: &mut Out, k: &mut Runs) {
-    let (w, deep) = lex(b, state.word(), out, k);
+    let w = lex(b, state.word(), out, k);
     state.set_word(w);
-    if deep {
-        state.inexact = true;
-    }
 }
 
-/// `b` lexed from `w`, the word the line before left: the word it leaves, and whether it's
-/// nested past what syntect takes. The scan a local, its fields in registers.
+/// `b` lexed from `w`, the word the line before left: the word it leaves. The scan a local, its fields in registers.
 // one copy a sink, for `line` and the block: with two, `run`'s callees were no longer inlined
 // into it (XML +2.6% instructions). The sink by reference, as the doctype's paths are out of
 // line (X-069's lesson).
 #[inline(never)]
-fn lex<K: Sink>(b: &[u8], w: u64, out: &mut Out, k: &mut K) -> (u64, bool) {
+fn lex<K: Sink>(b: &[u8], w: u64, out: &mut Out, k: &mut K) -> u64 {
     let mut x = Scan {
         b,
         mode: 0,
@@ -365,7 +357,7 @@ fn lex<K: Sink>(b: &[u8], w: u64, out: &mut Out, k: &mut K) -> (u64, bool) {
     x.rebase();
     x.run(0);
     x.fill(b.len());
-    (x.pack(), x.too_deep())
+    x.pack()
 }
 
 /// A block of XML ([`crate::Carry`], X-067): each line on a scan of its own from the word the
@@ -380,28 +372,22 @@ pub fn block(
     let mut c = Carried {
         out: &mut out,
         w: state.word(),
-        deep: false,
     };
     let rest = pass(&mut c);
     state.set_word(c.w);
-    state.inexact |= c.deep;
     rest
 }
 
-/// What XML's lines hand on across a block: the word, and whether a line was nested past
-/// syntect's limit.
+/// What XML's lines hand on across a block: the word.
 struct Carried<'o, 'c> {
     out: &'o mut Out<'c>,
     w: u64,
-    deep: bool,
 }
 
 impl crate::Carry for Carried<'_, '_> {
     fn next(&mut self, b: &[u8]) -> &[crate::Span] {
         self.out.0.clear();
-        let deep;
-        (self.w, deep) = lex(b, self.w, self.out, &mut Push);
-        self.deep |= deep;
+        self.w = lex(b, self.w, self.out, &mut Push);
         self.out.0
     }
 }
@@ -430,18 +416,7 @@ impl<K: Sink> Scan<'_, '_, '_, K> {
             | u64::from(self.sections) << 19
             | u64::from(self.depth) << 27
     }
-
-    /// Whether the scan is nested past what syntect takes: no push past 100 levels, a section
-    /// two of its contexts, a group one.
-    #[inline(always)]
-    fn too_deep(&self) -> bool {
-        2 * usize::from(self.sections) + usize::from(self.depth) > EXACT_NESTING
-    }
 }
-
-/// How deep conditional sections (twice) and an element's groups nest before syntect's stack
-/// could reach its limit, past which a line's scopes are no longer bat's.
-const EXACT_NESTING: usize = 80;
 
 struct Scan<'b, 'o, 'c, K: Sink> {
     b: &'b [u8],

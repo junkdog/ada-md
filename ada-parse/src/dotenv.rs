@@ -1,13 +1,14 @@
 //! `.env` files by a scanner on the line-format engine: bat's `DotENV` compiled by hand. A line
 //! that starts with `#` is a comment; any other is `main`'s tokens (a name before its `=`,
 //! `export`, a constant after the `=`, a number, a comment, the strings) from its first byte, as
-//! bat's grammar reads them anywhere on the line. A `"` or `'` string runs on across lines, and
-//! is all the state there is.
+//! bat's grammar reads them, but where `.env`'s readers read otherwise (X-116): `export` only as
+//! the line's first word, in lowercase, before a blank (`export A=1`), `true`, `false` and `null`
+//! only as whole words, a number only as the whole of its token (`1.5x` none). A `"` or `'`
+//! string runs on across lines, and is all the state there is.
 //!
 //! `main` tests its patterns at a byte where one can start, in the grammar's order, where
 //! syntect asks every pattern for its leftmost match; the bytes none can start at are passed in
-//! one step ([`CLASS`]). Exact against syntect on bat's grammar (`tests/exact_lexers.rs`,
-//! the `parse` fuzz target). Names' `\x{7f}-\x{ff}` is any byte past ASCII here, and `\w` ASCII
+//! one step ([`CLASS`]). Names' `\x{7f}-\x{ff}` is any byte past ASCII here, and `\w` ASCII
 //! plus those.
 
 use crate::emit::{Push, Runs, Sink};
@@ -125,8 +126,8 @@ impl Format for DotEnv {
         scan(c, 0, ctx)
     }
 
-    /// `main` from the blank before `p`, where `\s?(export)` can start: none of `main`'s
-    /// patterns starts at a blank that another blank follows.
+    /// `main` from the blank before `p`, where `\s?(true|false|null)` can start: none of
+    /// `main`'s patterns starts at a blank that another blank follows.
     #[inline(always)]
     fn entry<K: Sink>(c: &mut Cursor<K>, p: usize) -> u64 {
         scan(c, p.saturating_sub(1), Ctx::Main)
@@ -328,12 +329,6 @@ fn folded<const N: usize>(b: &[u8], i: usize, word: &[u8; N]) -> bool {
     })
 }
 
-/// `export`, in any case, at `i`.
-#[inline(always)]
-fn export_at(b: &[u8], i: usize) -> bool {
-    folded(b, i, b"export")
-}
-
 /// `true|false|null`, in any case, at `i`: where it ends.
 fn constant_word(b: &[u8], i: usize) -> Option<usize> {
     let ok = match b.get(i)? | 0x20 {
@@ -346,8 +341,7 @@ fn constant_word(b: &[u8], i: usize) -> Option<usize> {
 }
 
 /// `main`'s patterns at `p`, in the grammar's order (a comment, the strings, `=`, a name, `export`,
-/// a constant, a number); past a word that is no name, to its end, as only `export` can start
-/// inside one.
+/// a constant, a number); past a word none of them takes, to its end.
 #[inline]
 fn main_at<K: Sink>(l: &Line, p: usize, o: &mut Cursor<K>) -> Step {
     let b = l.b;
@@ -392,51 +386,33 @@ fn main_at<K: Sink>(l: &Line, p: usize, o: &mut Cursor<K>) -> Step {
             o.tok(None, p, e, NAME);
             return Step::To(e);
         }
-        // `(?i)\s?(export)`
-        if export_at(b, p) {
-            o.tok(None, p, p + 6, EXPORT);
-            return Step::To(p + 6);
+        // `export` as a shell reads `export A=1` (X-116): the line's first word, in lowercase, a
+        // blank after it; elsewhere, in another case and inside a word (bat's `myexport`), text
+        if &b[p..e] == b"export" && b[..p].iter().all(|&c| is_space(c)) && l.is(e, is_space) {
+            o.tok(None, p, e, EXPORT);
+            return Step::To(e);
         }
-        // `(?i)(?<=\=)\s?(true|false|null)`
-        if after_eq && let Some(end) = constant_word(b, p) {
+        // `(?i)(?<=\=)\s?(true|false|null)`, a whole word (X-116: bat's `TRUEx` the constant
+        // `TRUE`)
+        if after_eq && let Some(end) = constant_word(b, p).filter(|&end| end == e) {
             o.tok(None, p, end, CONSTANT);
             return Step::To(end);
         }
         // a number's first byte in a word is a digit
         if c.is_ascii_digit()
-            && boundary(l, p)
             && let Some(end) = number_at(l, p)
         {
             o.tok(None, p, end, NUMBER);
             return Step::To(end);
         }
-        // inside the word only `export` can start (no `\b`, no `=` before, no space), and only
-        // where the word holds all six of its letters
-        let mut q = p + 1;
-        while q + 6 <= e {
-            q = find(&b[..e], q, *b"eE");
-            if q + 6 > e {
-                break;
-            }
-            if export_at(b, q) {
-                o.tok(None, q, q + 6, EXPORT);
-                return Step::To(q + 6);
-            }
-            q += 1;
-        }
         return Step::To(e);
     }
     if is_space(c) {
-        if export_at(b, p + 1) {
-            o.tok(None, p, p + 7, EXPORT);
-            return Step::To(p + 7);
-        }
-        if after_eq && let Some(end) = constant_word(b, p + 1) {
+        if after_eq && let Some(end) = constant_word(b, p + 1).filter(|&end| !word(l, end)) {
             o.tok(None, p, end, CONSTANT);
             return Step::To(end);
         }
     } else if c == b'.'
-        && boundary(l, p)
         && let Some(end) = number_at(l, p)
     {
         o.tok(None, p, end, NUMBER);
@@ -445,45 +421,137 @@ fn main_at<K: Sink>(l: &Line, p: usize, o: &mut Cursor<K>) -> Step {
     Step::To(p + 1)
 }
 
-/// `\b((0(x|X)[0-9a-fA-F]*)|(([0-9]+\.?[0-9]*)|(\.[0-9]+))((e|E)(\+|-)?[0-9]+)?)\b` at `p`, where
-/// a `\b` holds: where it ends. The regex backtracks through every shorter run of digits, but a
-/// `\b` can't hold between two digits, so only a run's ends are tried, in the regex's order.
+/// A number at `p` as the whole of its token, a run of `\w` and `.` (X-116): `0x` and hex
+/// digits, or digits with a `.` and digits after it or not, or `.` and digits, either with an
+/// exponent; where it ends. A token that only starts as a number is none (`1.5x`, `1.2.3`, `0x1g`,
+/// `1_000`, `a.5`), where bat's `\b`s took its first part (`1.` of `1.5x`).
 fn number_at(l: &Line, p: usize) -> Option<usize> {
+    let token = |c: u8| is_word(c) && c != b'\n' || c == b'.';
+    if p > 0 && l.is(p - 1, token) {
+        return None;
+    }
     let digits = |i: usize| l.run(i, |c| c.is_ascii_digit());
-    // `((e|E)(\+|-)?[0-9]+)?\b` after `j`
-    let exponent = |j: usize| {
-        if l.is(j, |c| c == b'e' || c == b'E') {
-            let s = j + 1 + usize::from(l.is(j + 1, |c| c == b'+' || c == b'-'));
-            let d = digits(s);
-            if d > s && boundary(l, d) {
-                return Some(d);
-            }
-        }
-        boundary(l, j).then_some(j)
-    };
-    if l.at(p) == Some(b'0') && l.is(p + 1, |c| c == b'x' || c == b'X') {
+    let end = if l.at(p) == Some(b'0') && l.is(p + 1, |c| c == b'x' || c == b'X') {
         let h = l.run(p + 2, |c| c.is_ascii_hexdigit());
-        if boundary(l, h) {
-            return Some(h);
+        if h == p + 2 {
+            return None;
         }
-    }
-    if l.is(p, |c| c.is_ascii_digit()) {
+        h
+    } else {
         let d0 = digits(p);
-        if l.at(d0) == Some(b'.') {
-            let d = digits(d0 + 1);
-            if let Some(e) = exponent(d) {
-                return Some(e);
-            }
-            if d > d0 + 1
-                && let Some(e) = exponent(d0 + 1)
-            {
-                return Some(e);
+        let mut e = d0;
+        if l.at(e) == Some(b'.') {
+            e = digits(e + 1);
+        }
+        // a digit before the `.` or after it
+        if e == p || (d0 == p && e == p + 1) {
+            return None;
+        }
+        // `((e|E)(\+|-)?[0-9]+)?`
+        if l.is(e, |c| c == b'e' || c == b'E') {
+            let s = e + 1 + usize::from(l.is(e + 1, |c| c == b'+' || c == b'-'));
+            let d = digits(s);
+            if d > s {
+                e = d;
             }
         }
-        return exponent(d0);
+        e
+    };
+    (!l.is(end, token)).then_some(end)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Lang;
+
+    /// What each token of `line` is, by its leaf scope (`-` for none), the plain text left out.
+    fn leaves(line: &str) -> Vec<(&str, &str)> {
+        crate::tests::marked(Lang::DotEnv, &[line])
+            .into_iter()
+            .map(|(t, s)| (t, s.rsplit(' ').next().unwrap_or("-")))
+            .collect()
     }
-    if l.at(p) == Some(b'.') && l.is(p + 1, |c| c.is_ascii_digit()) {
-        return exponent(digits(p + 1));
+
+    fn kind_of<'a>(got: &[(&'a str, &'a str)], text: &str) -> Option<&'a str> {
+        got.iter().find(|(t, _)| *t == text).map(|&(_, s)| s)
     }
-    None
+
+    /// `export` as a shell and `.env`'s readers take it (X-116): the line's first word, in
+    /// lowercase, before a blank; inside a word, later on the line or in another case it's
+    /// text, where bat's grammar took it anywhere (`myexportexport`, `reexport`, `EXPORTER`).
+    #[test]
+    fn export_starts_a_line() {
+        for line in ["export A=1", "  export\tA=1"] {
+            let got = leaves(line);
+            assert_eq!(
+                kind_of(&got, "export"),
+                Some("keyword.other.env"),
+                "{line:?}: {got:?}"
+            );
+        }
+        for line in [
+            "myexportexport=1 reexport",
+            "A=1 export B",
+            "EXPORT A=1",
+            "exporter A=1",
+            "x export y",
+        ] {
+            let got = leaves(line);
+            assert!(
+                got.iter().all(|(_, s)| *s != "keyword.other.env"),
+                "{line:?}: {got:?}"
+            );
+        }
+    }
+
+    /// `true`, `false` and `null` after `=` only as whole words (X-116): `TRUEx` and `nullable`
+    /// are text, where bat's grammar took their first letters.
+    #[test]
+    fn constants_are_whole_words() {
+        for line in ["a=true", "b= False", "c=NULL # none"] {
+            let got = leaves(line);
+            assert!(
+                got.iter().any(|(_, s)| *s == "constant.language.env"),
+                "{line:?}: {got:?}"
+            );
+        }
+        for line in ["z=TRUEx", "n=nullable", "f= falsey"] {
+            let got = leaves(line);
+            assert!(
+                got.iter().all(|(_, s)| *s != "constant.language.env"),
+                "{line:?}: {got:?}"
+            );
+        }
+    }
+
+    /// A number only as the whole of its token, a run of `\w` and `.` (X-116): `1.5x`, `1.2.3`,
+    /// `0x1g`, `1_000`, `a.5`, `3E-2y` and `0x` hold none, where bat's `\b`s took their first
+    /// part (`1.` of `1.5x`).
+    #[test]
+    fn numbers_are_whole_tokens() {
+        for (line, number) in [
+            ("N=0x1F", "0x1F"),
+            ("F=1.5e+3", "1.5e+3"),
+            ("G=.5", ".5"),
+            ("H=1. 2", "1."),
+            ("I=12e5", "12e5"),
+            ("J=-1", "1"),
+        ] {
+            let got = leaves(line);
+            assert_eq!(
+                kind_of(&got, number),
+                Some("constant.numeric.env"),
+                "{line:?}: {got:?}"
+            );
+        }
+        for line in [
+            "a=1.5x", "b=1.2.3", "c=0x1g", "d=1_000", "e=a.5", "f=3E-2y", "g=0x", "h=1e", "i=1..2",
+        ] {
+            let got = leaves(line);
+            assert!(
+                got.iter().all(|(_, s)| *s != "constant.numeric.env"),
+                "{line:?}: {got:?}"
+            );
+        }
+    }
 }

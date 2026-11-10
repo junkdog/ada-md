@@ -1,0 +1,294 @@
+# Xml: ada-parse/tests/readings.rs, xml
+   1 | <?xml version="1.0" encoding='UTF-8'?>
+       "<?" meta.tag.preprocessor.xml punctuation.definition.tag.begin.xml
+       "xml" meta.tag.preprocessor.xml entity.name.tag.xml
+       " " meta.tag.preprocessor.xml
+       "version" meta.tag.preprocessor.xml entity.other.attribute-name.localname.xml
+       "=" meta.tag.preprocessor.xml punctuation.separator.key-value.xml
+       "\"" meta.tag.preprocessor.xml string.quoted.double.xml punctuation.definition.string.begin.xml
+       "1.0" meta.tag.preprocessor.xml string.quoted.double.xml
+       "\"" meta.tag.preprocessor.xml string.quoted.double.xml punctuation.definition.string.end.xml
+       " " meta.tag.preprocessor.xml
+       "encoding" meta.tag.preprocessor.xml entity.other.attribute-name.localname.xml
+       "=" meta.tag.preprocessor.xml punctuation.separator.key-value.xml
+       "'" meta.tag.preprocessor.xml string.quoted.single.xml punctuation.definition.string.begin.xml
+       "UTF-8" meta.tag.preprocessor.xml string.quoted.single.xml
+       "'" meta.tag.preprocessor.xml string.quoted.single.xml punctuation.definition.string.end.xml
+       "?>" meta.tag.preprocessor.xml punctuation.definition.tag.end.xml
+   2 | <?xml-stylesheet href="a.xsl"?>
+       "<?" meta.tag.preprocessor.xml punctuation.definition.tag.begin.xml
+       "xml-stylesheet" meta.tag.preprocessor.xml entity.name.tag.xml
+       " " meta.tag.preprocessor.xml
+       "href" meta.tag.preprocessor.xml entity.other.attribute-name.localname.xml
+       "=" meta.tag.preprocessor.xml punctuation.separator.key-value.xml
+       "\"" meta.tag.preprocessor.xml string.quoted.double.xml punctuation.definition.string.begin.xml
+       "a.xsl" meta.tag.preprocessor.xml string.quoted.double.xml
+       "\"" meta.tag.preprocessor.xml string.quoted.double.xml punctuation.definition.string.end.xml
+       "?>" meta.tag.preprocessor.xml punctuation.definition.tag.end.xml
+   3 | <?php echo 1; ?>
+       "<?" meta.tag.preprocessor.xml punctuation.definition.tag.begin.xml
+       "php" meta.tag.preprocessor.xml entity.name.tag.xml
+       " echo 1; " meta.tag.preprocessor.xml
+       "?>" meta.tag.preprocessor.xml punctuation.definition.tag.end.xml
+   4 | <!DOCTYPE note SYSTEM "note.dtd" [
+       "<!" meta.tag.sgml.doctype.xml punctuation.definition.tag.begin.xml
+       "DOCTYPE" meta.tag.sgml.doctype.xml keyword.declaration.doctype.xml
+       " " meta.tag.sgml.doctype.xml
+       "note" meta.tag.sgml.doctype.xml variable.other.documentroot.localname.xml
+       " " meta.tag.sgml.doctype.xml
+       "SYSTEM" meta.tag.sgml.doctype.xml storage.type.external-content.xml
+       " " meta.tag.sgml.doctype.xml
+       "\"" meta.tag.sgml.doctype.xml string.quoted.double.xml punctuation.definition.string.begin.xml
+       "note.dtd" meta.tag.sgml.doctype.xml string.quoted.double.xml
+       "\"" meta.tag.sgml.doctype.xml string.quoted.double.xml punctuation.definition.string.end.xml
+       " " meta.tag.sgml.doctype.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml punctuation.section.brackets.begin.xml
+   5 |   <!ELEMENT note (to,from?,(a|b)*)>
+       "  " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml
+       "<!" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml punctuation.definition.tag.begin.xml
+       "ELEMENT" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml keyword.declaration.element.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml
+       "note" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml variable.other.element.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml
+       "(" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml meta.group.xml punctuation.definition.group.begin.xml
+       "to" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml meta.group.xml string.unquoted.xml
+       "," meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml meta.group.xml punctuation.separator.xml
+       "from" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml meta.group.xml string.unquoted.xml
+       "?" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml meta.group.xml keyword.operator.xml
+       "," meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml meta.group.xml punctuation.separator.xml
+       "(" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml meta.group.xml punctuation.definition.group.begin.xml
+       "a" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml meta.group.xml string.unquoted.xml
+       "|" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml meta.group.xml punctuation.separator.xml
+       "b" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml meta.group.xml string.unquoted.xml
+       ")" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml meta.group.xml punctuation.definition.group.end.xml
+       "*" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml meta.group.xml keyword.operator.xml
+       ")" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml meta.group.xml punctuation.definition.group.end.xml
+       ">" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml punctuation.definition.tag.end.xml
+   6 |   <!ELEMENT br EMPTY>
+       "  " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml
+       "<!" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml punctuation.definition.tag.begin.xml
+       "ELEMENT" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml keyword.declaration.element.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml
+       "br" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml variable.other.element.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml
+       "EMPTY" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml constant.other.xml
+       ">" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml punctuation.definition.tag.end.xml
+   7 |   <!ATTLIST note id ID #REQUIRED kind (x|y) "x" ref IDREFS #IMPLIED>
+       "  " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml
+       "<!" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml punctuation.definition.tag.begin.xml
+       "ATTLIST" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml keyword.declaration.attlist.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml
+       "note" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml variable.other.element.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml
+       "id" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml entity.other.attribute-name.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml
+       "ID" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml storage.type.attribute.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml
+       "#" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml storage.modifier.attribute.default-value.xml punctuation.definition.storage.xml
+       "REQUIRED" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml storage.modifier.attribute.default-value.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml
+       "kind" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml entity.other.attribute-name.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml
+       "(" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml meta.group.enumerated.xml punctuation.definition.group.begin.xml
+       "x" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml meta.group.enumerated.xml string.unquoted.xml
+       "|" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml meta.group.enumerated.xml punctuation.separator.logical.xml
+       "y" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml meta.group.enumerated.xml string.unquoted.xml
+       ")" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml meta.group.enumerated.xml punctuation.definition.group.end.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml
+       "\"" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml string.quoted.double.xml punctuation.definition.string.begin.xml
+       "x" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml string.quoted.double.xml
+       "\"" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml string.quoted.double.xml punctuation.definition.string.end.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml
+       "ref" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml entity.other.attribute-name.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml
+       "IDREFS" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml storage.type.attribute.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml
+       "#" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml storage.modifier.attribute.default-value.xml punctuation.definition.storage.xml
+       "IMPLIED" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml storage.modifier.attribute.default-value.xml
+       ">" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.attlist.xml punctuation.definition.tag.end.xml
+   8 |   <!ENTITY % param "value">
+       "  " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml
+       "<!" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml punctuation.definition.tag.begin.xml
+       "ENTITY" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml keyword.declaration.entity.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml
+       "%" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml punctuation.definition.entity.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml
+       "param" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml variable.other.entity.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml
+       "\"" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml string.quoted.double.xml punctuation.definition.string.begin.xml
+       "value" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml string.quoted.double.xml
+       "\"" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml string.quoted.double.xml punctuation.definition.string.end.xml
+       ">" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml punctuation.definition.tag.end.xml
+   9 |   <!ENTITY pic SYSTEM "p.gif" NDATA gif>
+       "  " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml
+       "<!" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml punctuation.definition.tag.begin.xml
+       "ENTITY" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml keyword.declaration.entity.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml
+       "pic" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml variable.other.entity.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml
+       "SYSTEM" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml storage.type.external-content.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml
+       "\"" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml string.quoted.double.xml punctuation.definition.string.begin.xml
+       "p.gif" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml string.quoted.double.xml
+       "\"" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml string.quoted.double.xml punctuation.definition.string.end.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml
+       "NDATA" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml storage.type.ndata.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml
+       "gif" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml string.unquoted.xml
+       ">" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.entity.xml punctuation.definition.tag.end.xml
+  10 |   <!NOTATION gif PUBLIC "image/gif">
+       "  " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml
+       "<!" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.notation.xml punctuation.definition.tag.begin.xml
+       "NOTATION" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.notation.xml keyword.declaration.notation.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.notation.xml
+       "gif" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.notation.xml variable.other.notation.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.notation.xml
+       "PUBLIC" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.notation.xml storage.type.external-content.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.notation.xml
+       "\"" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.notation.xml string.quoted.double.xml punctuation.definition.string.begin.xml
+       "image/gif" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.notation.xml string.quoted.double.xml
+       "\"" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.notation.xml string.quoted.double.xml punctuation.definition.string.end.xml
+       ">" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.notation.xml punctuation.definition.tag.end.xml
+  11 |   %param;
+       "  " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml
+       "%" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml variable.parameter.xml punctuation.definition.parameter.xml
+       "param" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml variable.parameter.xml
+       ";" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml variable.parameter.xml punctuation.terminator.parameter.xml
+  12 |   <!BOGUS x>
+       "  " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml
+       "<!" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.unknown.xml punctuation.definition.tag.begin.xml
+       "BOGUS" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.unknown.xml invalid.illegal.bad-tag-name.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.unknown.xml
+       "x" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.unknown.xml invalid.illegal.unexpected.xml
+       ">" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.unknown.xml punctuation.definition.tag.end.xml
+  13 | ]>
+       "]" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml punctuation.section.brackets.end.xml
+       ">" meta.tag.sgml.doctype.xml punctuation.definition.tag.end.xml
+  14 | <!doctype html>
+       "<!" meta.tag.sgml.doctype.xml punctuation.definition.tag.begin.xml
+       "doctype" meta.tag.sgml.doctype.xml invalid.illegal.bad-tag-name.xml
+       " " meta.tag.sgml.doctype.xml
+       "html" meta.tag.sgml.doctype.xml variable.other.documentroot.localname.xml
+       ">" meta.tag.sgml.doctype.xml punctuation.definition.tag.end.xml
+  15 | <ns:root xmlns:ns="urn:x" a='1' b=bare c = "&amp;&#65;&#x41;&bad">
+       "<" meta.tag.xml punctuation.definition.tag.begin.xml
+       "ns" meta.tag.xml entity.name.tag.namespace.xml
+       ":" meta.tag.xml entity.name.tag.xml punctuation.separator.namespace.xml
+       "root" meta.tag.xml entity.name.tag.localname.xml
+       " " meta.tag.xml
+       "xmlns" meta.tag.xml entity.other.attribute-name.namespace.xml
+       ":" meta.tag.xml entity.other.attribute-name.xml punctuation.separator.namespace.xml
+       "ns" meta.tag.xml entity.other.attribute-name.localname.xml
+       "=" meta.tag.xml punctuation.separator.key-value.xml
+       "\"" meta.tag.xml string.quoted.double.xml punctuation.definition.string.begin.xml
+       "urn:x" meta.tag.xml string.quoted.double.xml
+       "\"" meta.tag.xml string.quoted.double.xml punctuation.definition.string.end.xml
+       " " meta.tag.xml
+       "a" meta.tag.xml entity.other.attribute-name.localname.xml
+       "=" meta.tag.xml punctuation.separator.key-value.xml
+       "'" meta.tag.xml string.quoted.single.xml punctuation.definition.string.begin.xml
+       "1" meta.tag.xml string.quoted.single.xml
+       "'" meta.tag.xml string.quoted.single.xml punctuation.definition.string.end.xml
+       " " meta.tag.xml
+       "b" meta.tag.xml entity.other.attribute-name.localname.xml
+       "=" meta.tag.xml punctuation.separator.key-value.xml
+       "bare" meta.tag.xml invalid.illegal.bad-attribute-value.xml
+       " " meta.tag.xml
+       "c" meta.tag.xml entity.other.attribute-name.localname.xml
+       " " meta.tag.xml
+       "=" meta.tag.xml punctuation.separator.key-value.xml
+       " " meta.tag.xml
+       "\"" meta.tag.xml string.quoted.double.xml punctuation.definition.string.begin.xml
+       "&" meta.tag.xml string.quoted.double.xml constant.character.entity.named.xml punctuation.definition.entity.xml
+       "amp" meta.tag.xml string.quoted.double.xml constant.character.entity.named.xml
+       ";" meta.tag.xml string.quoted.double.xml constant.character.entity.named.xml punctuation.terminator.entity.xml
+       "&#" meta.tag.xml string.quoted.double.xml constant.character.entity.decimal.xml punctuation.definition.entity.xml
+       "65" meta.tag.xml string.quoted.double.xml constant.character.entity.decimal.xml
+       ";" meta.tag.xml string.quoted.double.xml constant.character.entity.decimal.xml punctuation.terminator.entity.xml
+       "&#x" meta.tag.xml string.quoted.double.xml constant.character.entity.hexadecimal.xml punctuation.definition.entity.xml
+       "41" meta.tag.xml string.quoted.double.xml constant.character.entity.hexadecimal.xml
+       ";" meta.tag.xml string.quoted.double.xml constant.character.entity.hexadecimal.xml punctuation.terminator.entity.xml
+       "&" meta.tag.xml string.quoted.double.xml invalid.illegal.bad-ampersand.xml
+       "bad" meta.tag.xml string.quoted.double.xml
+       "\"" meta.tag.xml string.quoted.double.xml punctuation.definition.string.end.xml
+       ">" meta.tag.xml punctuation.definition.tag.end.xml
+  16 |   <!-- a comment -- with -- dashes -->
+       "<!--" comment.block.xml punctuation.definition.comment.begin.xml
+       " a comment " comment.block.xml
+       "--" comment.block.xml invalid.illegal.double-hyphen-within-comment.xml
+       " with " comment.block.xml
+       "--" comment.block.xml invalid.illegal.double-hyphen-within-comment.xml
+       " dashes " comment.block.xml
+       "-->" comment.block.xml punctuation.definition.comment.end.xml
+  17 |   <![CDATA[ raw <text> ]]>
+       "<![" meta.tag.sgml.cdata.xml punctuation.definition.tag.begin.xml
+       "CDATA" meta.tag.sgml.cdata.xml keyword.declaration.cdata.xml
+       "[" meta.tag.sgml.cdata.xml punctuation.definition.tag.begin.xml
+       " raw <text> " meta.tag.sgml.cdata.xml string.unquoted.cdata.xml
+       "]]>" meta.tag.sgml.cdata.xml punctuation.definition.tag.end.xml
+  18 |   <item key="v"/>text &lt; & more < x
+       "<" meta.tag.xml punctuation.definition.tag.begin.xml
+       "item" meta.tag.xml entity.name.tag.localname.xml
+       " " meta.tag.xml
+       "key" meta.tag.xml entity.other.attribute-name.localname.xml
+       "=" meta.tag.xml punctuation.separator.key-value.xml
+       "\"" meta.tag.xml string.quoted.double.xml punctuation.definition.string.begin.xml
+       "v" meta.tag.xml string.quoted.double.xml
+       "\"" meta.tag.xml string.quoted.double.xml punctuation.definition.string.end.xml
+       "/>" meta.tag.xml punctuation.definition.tag.end.xml
+       "&" constant.character.entity.named.xml punctuation.definition.entity.xml
+       "lt" constant.character.entity.named.xml
+       ";" constant.character.entity.named.xml punctuation.terminator.entity.xml
+       "&" invalid.illegal.bad-ampersand.xml
+       "<" invalid.illegal.missing-entity.xml
+  19 |   <a:b:c d:e:f="1" ?>
+       "<" meta.tag.xml punctuation.definition.tag.begin.xml
+       "a" meta.tag.xml entity.name.tag.namespace.xml
+       ":" meta.tag.xml entity.name.tag.xml punctuation.separator.namespace.xml
+       "b:c" meta.tag.xml invalid.illegal.bad-tag-name.xml
+       " " meta.tag.xml
+       "d" meta.tag.xml entity.other.attribute-name.namespace.xml
+       ":" meta.tag.xml entity.other.attribute-name.xml punctuation.separator.namespace.xml
+       "e:f" meta.tag.xml invalid.illegal.bad-attribute-name.xml
+       "=" meta.tag.xml punctuation.separator.key-value.xml
+       "\"" meta.tag.xml string.quoted.double.xml punctuation.definition.string.begin.xml
+       "1" meta.tag.xml string.quoted.double.xml
+       "\"" meta.tag.xml string.quoted.double.xml punctuation.definition.string.end.xml
+       " " meta.tag.xml
+       "?>" meta.tag.xml invalid.illegal.bad-tag-end.xml
+  20 |   <bad$name 1x="2" / >
+       "<" meta.tag.xml punctuation.definition.tag.begin.xml
+       "bad$name" meta.tag.xml invalid.illegal.bad-tag-name.xml
+       " " meta.tag.xml
+       "1x" meta.tag.xml invalid.illegal.bad-attribute-name.xml
+       "=" meta.tag.xml punctuation.separator.key-value.xml
+       "\"" meta.tag.xml string.quoted.double.xml punctuation.definition.string.begin.xml
+       "2" meta.tag.xml string.quoted.double.xml
+       "\"" meta.tag.xml string.quoted.double.xml punctuation.definition.string.end.xml
+       " / " meta.tag.xml
+       ">" meta.tag.xml punctuation.definition.tag.end.xml
+  21 |   <multi
+       "<" meta.tag.xml punctuation.definition.tag.begin.xml
+       "multi" meta.tag.xml entity.name.tag.localname.xml
+  22 |     attr="v"
+       "    " meta.tag.xml
+       "attr" meta.tag.xml entity.other.attribute-name.localname.xml
+       "=" meta.tag.xml punctuation.separator.key-value.xml
+       "\"" meta.tag.xml string.quoted.double.xml punctuation.definition.string.begin.xml
+       "v" meta.tag.xml string.quoted.double.xml
+       "\"" meta.tag.xml string.quoted.double.xml punctuation.definition.string.end.xml
+  23 |   >
+       "  " meta.tag.xml
+       ">" meta.tag.xml punctuation.definition.tag.end.xml
+  24 | </ns:root>
+       "</" meta.tag.xml punctuation.definition.tag.begin.xml
+       "ns" meta.tag.xml entity.name.tag.namespace.xml
+       ":" meta.tag.xml entity.name.tag.xml punctuation.separator.namespace.xml
+       "root" meta.tag.xml entity.name.tag.localname.xml
+       ">" meta.tag.xml punctuation.definition.tag.end.xml
+  25 | <!-- open
+       "<!--" comment.block.xml punctuation.definition.comment.begin.xml
+       " open" comment.block.xml
+  26 | comment -->
+       "comment " comment.block.xml
+       "-->" comment.block.xml punctuation.definition.comment.end.xml

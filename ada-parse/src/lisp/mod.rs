@@ -617,7 +617,6 @@ impl<'b, 'o, 's, K: Sink> Scan<'b, 'o, 's, K> {
             stack: [TOP; MAX + 1],
             depth: 0,
             base: 0,
-            exact: state.is_exact(),
             dead: (usize::MAX, 0),
             quoted_fail: usize::MAX,
             plus: (usize::MAX, 0, 0),
@@ -635,7 +634,6 @@ impl<'b, 'o, 's, K: Sink> Scan<'b, 'o, 's, K> {
         self.stack = [TOP; MAX + 1];
         self.depth = 0;
         self.base = 0;
-        self.exact = state.is_exact();
         self.unpack(&state);
         state
     }
@@ -667,7 +665,6 @@ struct Scan<'b, 'o, 's, K: Sink> {
     depth: usize,
     /// Plain list bodies below the stack.
     base: usize,
-    exact: bool,
     /// A run of digits and dots no identifier is in: from, to.
     dead: (usize, usize),
     /// Where an unclosed `|…|` was found: no `|` there or after closes one.
@@ -709,9 +706,7 @@ impl<K: Sink> Scan<'_, '_, '_, K> {
                 for _ in below..k {
                     self.push(BODY);
                 }
-            } else if below > 0 {
-                self.exact = false;
-            } else {
+            } else if below == 0 {
                 self.push(c);
             }
         }
@@ -727,13 +722,7 @@ impl<K: Sink> Scan<'_, '_, '_, K> {
             } else {
                 0
             };
-        keep(
-            &self.stack[1..=self.depth],
-            BODY,
-            self.base,
-            self.exact,
-            arg,
-        )
+        keep(&self.stack[1..=self.depth], BODY, self.base, arg)
     }
 
     fn top(&self) -> u8 {
@@ -746,8 +735,6 @@ impl<K: Sink> Scan<'_, '_, '_, K> {
             if self.stack[1] == BODY {
                 self.base += 1;
                 self.stack[0] = BODY;
-            } else {
-                self.exact = false;
             }
             self.stack.copy_within(2.., 1);
             self.depth -= 1;
@@ -2998,10 +2985,10 @@ impl<K: Sink> Scan<'_, '_, '_, K> {
 /// The state that keeps `frames` (bottom first) over `base` plain bodies below them, `body` the
 /// frame a run counts (the engine's list body, Clojure's list tail): a code a frame, a run of
 /// `body` frames a code (`RUN` and up to 127 of them), the top [`KEPT`] codes kept and the bottom
-/// dropped past them (inexact then); `arg` beside them. The codes go through a ring of `KEPT`, so
+/// dropped past them; `arg` beside them. The codes go through a ring of `KEPT`, so
 /// no buffer of every code is cleared a line.
 #[inline(always)]
-pub(super) fn keep(frames: &[u8], body: u8, base: usize, exact: bool, arg: u16) -> State {
+pub(super) fn keep(frames: &[u8], body: u8, base: usize, arg: u16) -> State {
     // most lines: no bodies below the stack, and frames enough for the state's codes, so the
     // codes are written in order (a run's code stands for one frame or more), no ring
     if base == 0 && frames.len() <= KEPT {
@@ -3026,7 +3013,6 @@ pub(super) fn keep(frames: &[u8], body: u8, base: usize, exact: bool, arg: u16) 
         }
         let mut state = State {
             depth: k as u8,
-            inexact: !exact,
             arg,
             ..State::default()
         };
@@ -3077,7 +3063,6 @@ pub(super) fn keep(frames: &[u8], body: u8, base: usize, exact: bool, arg: u16) 
     let kept = ring.k.min(KEPT);
     let mut state = State {
         depth: kept as u8,
-        inexact: !exact || ring.k > KEPT || base > 0x7f * KEPT,
         arg,
         ..State::default()
     };

@@ -1,7 +1,8 @@
 //! Dockerfiles by a scanner: bat's `Dockerfile` compiled by hand. Every pattern but an
 //! instruction's arguments' is anchored at a line's start, so a line is decided by its first
 //! bytes: a comment, an instruction (its arguments then run to a line's end that isn't
-//! continued by `\`), `FROM`, or text bat marks `invalid`. A string left open at a line's end
+//! continued by `\`, blanks after it or not, and an instruction alone on its line ends with it,
+//! as Docker reads them: X-116), `FROM`, or text bat marks `invalid`. A string left open at a line's end
 //! turns the next line `invalid`, as bat's does. bat's `Dockerfile (with bash)`, which colors
 //! `RUN` as shell, is a syntax of its own that no file name selects, and stays on syntect.
 //!
@@ -11,11 +12,9 @@
 //! opener is; the bodies follow on the lines after, in the openers' order. A `RUN` whose command
 //! is the body (only flags and the opener, or a shell such as `bash` with the body its stdin) has
 //! it on bash's scanner, bash's state carried between its lines; any other body (`COPY`'s and
-//! `ADD`'s files, `RUN cat <<EOF > f`'s stdin) is a here-document's text, as bash's body is. From
-//! a here-document on, the state is inexact (no longer bat's).
+//! `ADD`'s files, `RUN cat <<EOF > f`'s stdin) is a here-document's text, as bash's body is.
 //!
-//! Exact against bat's grammar on syntect, up to the first here-document: the `parse` fuzz target
-//! holds every byte's scopes to syntect's while the state is exact.
+//! Its readings are held by its unit tests and `tests/readings.rs`' snapshots (X-116).
 
 use crate::bash::hd;
 use crate::emit::{Push, Runs, Sink, To};
@@ -110,15 +109,9 @@ enum Ctx {
     Invalid,
 }
 
-/// The levels bat's stack holds above `main` past which a line is no longer exact: syntect's
-/// stack, which also holds `__start` and `__main`, takes no push past 100 levels, where this
-/// scanner goes on.
-const EXACT_DEPTH: u64 = 96;
-
 // The state's word: the open context in bits 0–3, an instruction's here-document class in 4–5
-// (while its arguments are open), the depth of bat's stack above `main` from bit 6.
+// (while its arguments are open).
 const INST_SHIFT: u32 = 4;
-const DEPTH_SHIFT: u32 = 6;
 
 // An instruction's here-document class.
 /// Not `RUN`, `COPY` or `ADD`: no here-documents.
@@ -148,8 +141,8 @@ type Bodies = Queue<4>;
 /// stack drops its bottom levels, as bash's own does past its 28.
 const SCRIPT_HELD: usize = crate::stack::HELD - 4;
 
-/// Lex `b`, a line without its `\n`, from `state`: its word holds the open context and how many
-/// levels bat's stack holds above `main`; a here-document's body, its `arg`.
+/// Lex `b`, a line without its `\n`, from `state`: its word holds the open context and an open
+/// instruction's here-document class; a here-document's body, its `arg`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     line_on(b, state, &mut To::new(out, &mut Push));
@@ -176,24 +169,23 @@ fn line_on<K: Sink>(b: &[u8], state: &mut State, out: &mut To<'_, '_, K>) {
         _ => Ctx::Main,
     };
     let mut inst = word >> INST_SHIFT & 3;
-    let mut depth = word >> DEPTH_SHIFT;
     let blank = || b.iter().all(|&c| is_space(c));
     // the patterns anchored at the line's start; past them only the arguments' and strings'
     // patterns can match
     let p = match ctx {
         Ctx::Main | Ctx::Body => {
             if comment(b, out) {
-                return save(state, ctx, inst, depth);
+                return save(state, ctx, inst);
             }
             if ctx == Ctx::Body
                 && let Some((e, i)) = directive(b, out)
             {
                 ctx = Ctx::Args;
-                depth += 1;
                 inst = i;
-                // a keyword whose `\s` is the line's `\n` took it: nothing pops the arguments
+                // an instruction alone on its line ends with it, as Docker reads it (X-116: bat's
+                // keyword `\s` took the `\n`, and nothing popped the arguments)
                 if e > b.len() {
-                    return save(state, ctx, inst, depth);
+                    return save(state, Ctx::Body, inst);
                 }
                 e
             } else {
@@ -203,13 +195,12 @@ fn line_on<K: Sink>(b: &[u8], state: &mut State, out: &mut To<'_, '_, K>) {
                     out.push(0, b.len(), INVALID);
                 } else if from(b, out) {
                     ctx = Ctx::Body;
-                    depth += 1;
                 }
-                return save(state, ctx, inst, depth);
+                return save(state, ctx, inst);
             }
         }
         // `^\s*$` takes a blank line and its `\n`: the arguments go on
-        Ctx::Args if blank() || comment(b, out) => return save(state, ctx, inst, depth),
+        Ctx::Args if blank() || comment(b, out) => return save(state, ctx, inst),
         Ctx::Double | Ctx::Single if blank() => {
             let kind = if ctx == Ctx::Double {
                 DOUBLE
@@ -217,7 +208,7 @@ fn line_on<K: Sink>(b: &[u8], state: &mut State, out: &mut To<'_, '_, K>) {
                 DOUBLE + IN_SINGLE
             };
             out.push(0, b.len(), kind);
-            return save(state, ctx, inst, depth);
+            return save(state, ctx, inst);
         }
         Ctx::Args | Ctx::Double | Ctx::Single => 0,
         Ctx::Invalid => {
@@ -225,11 +216,11 @@ fn line_on<K: Sink>(b: &[u8], state: &mut State, out: &mut To<'_, '_, K>) {
                 out.push(0, b.len(), INVALID);
                 ctx = Ctx::Body;
             }
-            return save(state, ctx, inst, depth);
+            return save(state, ctx, inst);
         }
     };
     // the line's openers queue their labels in the state, [`HD_TEXT`]'s way
-    let (ctx, depth) = args(b, p, ctx, depth, inst, state, out);
+    let ctx = args(b, p, ctx, inst, state, out);
     // a `RUN`'s command read only where it matters: a body opened, or the arguments going on
     // without a command yet
     if inst == I_RUN && (state.flags() != 0 || ctx != Ctx::Body) {
@@ -238,7 +229,7 @@ fn line_on<K: Sink>(b: &[u8], state: &mut State, out: &mut To<'_, '_, K>) {
     if state.flags() != 0 {
         return open_bodies(state, inst);
     }
-    save(state, ctx, inst, depth);
+    save(state, ctx, inst);
 }
 
 /// A `RUN`'s first word from `p` that is neither a flag nor a here-document's opener: a shell
@@ -329,15 +320,12 @@ fn opener<K: Sink>(
 }
 
 /// The bodies a line's openers queued in `state`, waiting from the next line: a `RUN`'s one
-/// script on bash's state, else text. The state is no longer bat's.
+/// script on bash's state, else text.
 #[cold]
 #[inline(never)]
 fn open_bodies(state: &mut State, inst: u64) {
     let bodies = text_bodies(state);
-    *state = State {
-        inexact: true,
-        ..State::default()
-    };
+    *state = State::default();
     match bodies.front() {
         Some((label, flags)) if bodies.len() == 1 && (inst == I_RUN || inst == I_SHELL) => {
             for (i, c) in label.bits().to_le_bytes().into_iter().enumerate() {
@@ -369,11 +357,8 @@ fn save_text(state: &mut State, bodies: &Bodies) {
 
 /// The last body done: the instructions again.
 fn bodies_done(state: &mut State) {
-    *state = State {
-        inexact: true,
-        ..State::default()
-    };
-    save(state, Ctx::Body, I_NONE, 1);
+    *state = State::default();
+    save(state, Ctx::Body, I_NONE);
 }
 
 /// A line in a here-document's body, or its closer.
@@ -423,7 +408,6 @@ std::thread_local! {
 fn script<K: Sink>(b: &[u8], state: &mut State, out: &mut To<'_, '_, K>) {
     let mut sh = State {
         depth: state.depth,
-        inexact: state.inexact,
         ..State::default()
     };
     for i in 0..SCRIPT_HELD {
@@ -450,27 +434,24 @@ fn script<K: Sink>(b: &[u8], state: &mut State, out: &mut To<'_, '_, K>) {
         );
     }
     state.depth = (held - from) as u8;
-    state.inexact |= !sh.is_exact() || from > 0;
 }
 
 /// The arguments or a string in them, from `p` to the line's end: the context the line
-/// leaves open, and the depth.
-#[allow(clippy::too_many_arguments)]
+/// leaves open.
 fn args<K: Sink>(
     b: &[u8],
     mut p: usize,
     mut ctx: Ctx,
-    mut depth: u64,
     inst: u64,
     state: &mut State,
     out: &mut To<'_, '_, K>,
-) -> (Ctx, u64) {
+) -> Ctx {
     loop {
         if ctx == Ctx::Args {
             let k = crate::prim::find_in(b, p, b.len(), *b"\\\"'<");
             let Some(k) = (k < b.len()).then_some(k) else {
                 // `\n` pops the arguments
-                return (Ctx::Body, depth - 1);
+                return Ctx::Body;
             };
             match b[k] {
                 b'<' if inst != I_NONE => p = opener(b, k, state, out).unwrap_or(k + 1),
@@ -480,8 +461,8 @@ fn args<K: Sink>(
                         out.push(k, e, ESCAPED);
                         p = e;
                     }
-                    // `\\\s+$` takes the `\` and the `\n`: the arguments go on
-                    None => return (ctx, depth),
+                    // a `\` that continues the line: the arguments go on
+                    None => return ctx,
                 },
                 q => {
                     let single = if q == b'"' { 0 } else { IN_SINGLE };
@@ -492,7 +473,6 @@ fn args<K: Sink>(
                     } else {
                         Ctx::Single
                     };
-                    depth += 1;
                 }
             }
             continue;
@@ -505,14 +485,13 @@ fn args<K: Sink>(
         let Some(k) = (k < b.len()).then_some(k) else {
             // `\n` sets `invalid`
             out.push(p, b.len(), DOUBLE + single);
-            return (Ctx::Invalid, depth);
+            return Ctx::Invalid;
         };
         out.push(p, k, DOUBLE + single);
         if b[k] == quote {
             out.push(k, k + 1, DOUBLE_END + single);
             p = k + 1;
             ctx = Ctx::Args;
-            depth -= 1;
             continue;
         }
         match escaped(b, k) {
@@ -520,21 +499,18 @@ fn args<K: Sink>(
                 out.push(k, e, DOUBLE_ESCAPED + single);
                 p = e;
             }
-            // `\\\s+$`: the string goes on
+            // a `\` that continues the line: the string goes on
             None => {
                 out.push(k, b.len(), DOUBLE + single);
-                return (ctx, depth);
+                return ctx;
             }
         }
     }
 }
 
-/// Keeps the context a line leaves open, an open instruction's here-document class and the depth
-/// in `state`; a depth near syntect's limit marks it inexact.
-fn save(state: &mut State, ctx: Ctx, inst: u64, depth: u64) {
-    if depth >= EXACT_DEPTH {
-        state.inexact = true;
-    }
+/// Keeps the context a line leaves open and an open instruction's here-document class in
+/// `state`.
+fn save(state: &mut State, ctx: Ctx, inst: u64) {
     let inst = if matches!(ctx, Ctx::Args | Ctx::Double | Ctx::Single) {
         inst
     } else {
@@ -548,12 +524,16 @@ fn save(state: &mut State, ctx: Ctx, inst: u64, depth: u64) {
         Ctx::Single => 4,
         Ctx::Invalid => 5,
     };
-    state.set_word(depth.min(u64::MAX >> DEPTH_SHIFT) << DEPTH_SHIFT | inst << INST_SHIFT | ctx);
+    state.set_word(inst << INST_SHIFT | ctx);
 }
 
-/// `\\.` at `k`: where it ends; `None` for a `\` that ends the line, which `\\\s+$` takes.
+/// `\\.` at `k`: where it ends; `None` for a `\` that continues the line, blanks after it or
+/// not, as Docker reads `\\[ \t]*$` (X-116: bat's `\ ` an escape, and the arguments ending).
 fn escaped(b: &[u8], k: usize) -> Option<usize> {
-    (k + 1 < b.len()).then(|| k + 1 + char_len(b, k + 1))
+    if b[k + 1..].iter().all(|&c| c == b' ' || c == b'\t') {
+        return None;
+    }
+    Some(k + 1 + char_len(b, k + 1))
 }
 
 /// `^(\s*)((#).*(?m:$)\n?)`: the whole line, `\n` and all.
@@ -884,6 +864,32 @@ mod tests {
         // a shell as the command: its stdin is the script
         let got = leaves(&["FROM x", "RUN bash -e <<'EOF'", "set -x", "EOF"]);
         assert!(has(&got[2], "set", "support.function.set.shell"), "{got:?}");
+    }
+
+    /// An instruction alone on its line ends with it, and a `\` with blanks after it continues
+    /// the arguments, as Docker reads them (X-116: bat kept a bare `RUN`'s arguments open into
+    /// the next line, and took `\ ` as an escape that ended them).
+    #[test]
+    fn lines_end_and_continue_as_docker_reads_them() {
+        const KW: &str = "keyword.control.dockerfile";
+        let got = leaves(&["FROM x", "RUN", "COPY a b", "WORKDIR", "USER me"]);
+        assert!(has(&got[2], "COPY", KW), "{got:?}");
+        assert!(has(&got[4], "USER ", KW), "{got:?}");
+        let got = leaves(&["FROM x", "RUN a \\ ", "  \"b\" c", "RUN d \\\t", "COPY"]);
+        // the continued arguments: a string, not an instruction
+        assert!(
+            has(
+                &got[2],
+                "\"",
+                "punctuation.definition.string.begin.dockerfile"
+            ),
+            "{got:?}"
+        );
+        assert!(!got[2].iter().any(|(_, s)| s == KW), "{got:?}");
+        assert!(!got[4].iter().any(|(_, s)| s == KW), "{got:?}");
+        // a `\` with text after it is an escape, the arguments ending with the line
+        let got = leaves(&["FROM x", "RUN a \\ b", "COPY a b"]);
+        assert!(has(&got[2], "COPY", KW), "{got:?}");
     }
 
     /// Bodies of text (`COPY`'s, `ADD`'s, a `RUN` command's stdin) in the openers' order, a

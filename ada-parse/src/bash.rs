@@ -910,7 +910,6 @@ struct Scan<'b, 'c, K: Sink> {
     cur: u8,
     text: u16,
     fl: u8,
-    exact: bool,
     /// Where the spans so far end: the text from here to a token is the top's fill.
     at: usize,
     /// Whether the line ends in a continuation.
@@ -938,7 +937,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             cur: ROOT,
             text: PLAIN,
             fl: 0,
-            exact: true,
             at: 0,
             cont: false,
             last_bracket: usize::MAX,
@@ -952,7 +950,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// The stack from `state`, each level's fill and flags made again.
     #[inline(always)]
     fn load(&mut self, state: &State) {
-        self.exact = state.is_exact();
         if state.depth == 0 {
             // the commonest line: nothing open (the scan is fresh's)
             self.meta[0] = MaybeUninit::new(u32::from(PLAIN));
@@ -966,12 +963,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(always)]
     fn keep(&self) -> State {
         if self.depth == 1 {
-            return State {
-                inexact: !self.exact,
-                ..State::default()
-            };
+            return State::default();
         }
-        State::keep(&self.stack, self.depth, self.exact, 0)
+        State::keep(&self.stack, self.depth, 0)
     }
 
     /// Each level's fill and flags from the bottom up.
@@ -1062,7 +1056,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             }
         }
         if self.depth - 1 > crate::stack::HELD {
-            crate::stack::hold(&mut self.stack, &mut self.depth, &mut self.exact);
+            crate::stack::hold(&mut self.stack, &mut self.depth);
             self.derive_all();
         }
         false
@@ -1095,7 +1089,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[cold]
     #[inline(never)]
     fn full(&mut self) {
-        crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
+        crate::stack::drop_bottom(&mut self.stack, &mut self.depth);
         self.derive_all();
     }
 

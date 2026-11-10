@@ -1951,9 +1951,8 @@ fn lex<const S: bool, K: Sink>(
 ) -> K {
     let mut s = Scan::fresh(b, from, out, k);
     s.load_state(state);
-    let exact = state.is_exact();
     run(&mut s);
-    *state = State::keep(&s.stack, s.depth, exact, 0);
+    *state = State::keep(&s.stack, s.depth, 0);
     s.k
 }
 
@@ -1967,12 +1966,9 @@ pub fn block(
     let mut out = Out::new(spans);
     let mut s = Scan::fresh(b"", 0, &mut out, Push);
     s.load_state(state);
-    let mut c = Carried {
-        s,
-        exact: state.is_exact(),
-    };
+    let mut c = Carried { s };
     let rest = pass(&mut c);
-    *state = State::keep(&c.s.stack, c.s.depth, c.exact, 0);
+    *state = State::keep(&c.s.stack, c.s.depth, 0);
     rest
 }
 
@@ -1980,7 +1976,6 @@ pub fn block(
 /// a line's scan leaves to its caller.
 struct Carried<'b, 'o, 's, const S: bool, K: Sink> {
     s: Scan<'b, 'o, 's, S, K>,
-    exact: bool,
 }
 
 impl crate::Carry for Carried<'_, '_, '_, false, Push> {
@@ -2000,7 +1995,7 @@ impl<K: Sink> Carried<'_, '_, '_, false, K> {
         s.b = unsafe { crate::line_for(b) };
         s.line_start(0);
         s.run();
-        crate::stack::hold(&mut s.stack, &mut s.depth, &mut self.exact);
+        crate::stack::hold(&mut s.stack, &mut s.depth);
         s.b = b"";
     }
 }

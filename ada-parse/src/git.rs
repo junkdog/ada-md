@@ -9,7 +9,7 @@
 //! unquoted attributes pattern whose last `\` or unclosed `[` took the line's `\n` (the next
 //! line goes on in the pattern), and Git Link's `gitdir` waiting for its `:`.
 //!
-//! Exact against syntect on bat's grammars (`tests/exact_lexers.rs`, the `parse` fuzz target).
+//! Its readings are held by `tests/readings.rs`' snapshots (X-116).
 //! A span's kind is fixed ([`scopes`]): a scope list of its own, an `fnmatch` leaf under the
 //! pattern it is in (an ignore pattern, a quoted or an unquoted attributes pattern), or an
 //! attribute's leaf under its builtin's meta scope.

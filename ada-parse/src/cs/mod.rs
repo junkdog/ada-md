@@ -649,11 +649,10 @@ const GROUPS: usize = 4;
 struct Scan<'b, 'c, K: Sink> {
     b: &'b [u8],
     /// What each open frame is ([`F_NS`]…), [`FBITS`] a level, the innermost lowest; past
-    /// [`LEVELS`] the outer ones are lost (and the state inexact).
+    /// [`LEVELS`] the outer ones are lost.
     frames: u128,
     /// How many frames are open, up to 255.
     depth: u8,
-    exact: bool,
     /// What the line ends in so far ([`M_CODE`]…).
     mode: u8,
     /// The token before ([`P_STMT`]…).
@@ -694,7 +693,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             b,
             frames: 0,
             depth: 0,
-            exact: true,
             mode: M_CODE,
             prev: P_STMT,
             st: S_NONE,
@@ -723,7 +721,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         w[14] = state.withs[0];
         self.frames = u128::from_le_bytes(w);
         self.depth = state.depth;
-        self.exact = !state.inexact;
         self.prev = state.withs[W_PREV];
         self.st = state.withs[W_ST];
         self.pending = state.withs[W_PENDING];
@@ -756,7 +753,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         s.withs[W_RE] = self.re;
         s.withs[W_DOC] = u8::from(self.doc);
         s.depth = self.depth;
-        s.inexact = !self.exact;
         s.arg = u16::from(self.mode);
         s
     }
@@ -796,9 +792,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn push(&mut self, f: u8) {
         self.frames = (self.frames << FBITS | u128::from(f)) & KEPT_FRAMES;
         self.depth = self.depth.saturating_add(1);
-        if self.depth > LEVELS {
-            self.exact = false;
-        }
     }
 
     #[inline(always)]

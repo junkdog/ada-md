@@ -323,7 +323,7 @@ fn a_block_lexes_as_its_lines() {
     });
     assert_eq!(all, one.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
     assert_eq!(state, one.last().unwrap().1);
-    assert!(!one[0].1.is_exact());
+    assert!(one[0].1.depth > 32, "past the levels its frames keep");
     assert_eq!(one.last().unwrap().1.arg & 7, u16::from(M_CODE));
 }
 

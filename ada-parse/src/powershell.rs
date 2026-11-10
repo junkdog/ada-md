@@ -313,7 +313,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
     let mut s = Scan::fresh(b, out);
     s.load_state(state);
     s.lex();
-    *state = State::keep(&s.stack, s.depth, s.exact, 0);
+    *state = State::keep(&s.stack, s.depth, 0);
 }
 
 /// A block of PowerShell on one scan opened from `state` ([`crate::Carry`], X-067), `state`
@@ -327,7 +327,7 @@ pub fn block(
     let mut s = Scan::fresh(b"", &mut out);
     s.load_state(state);
     let rest = pass(&mut s);
-    *state = State::keep(&s.stack, s.depth, s.exact, 0);
+    *state = State::keep(&s.stack, s.depth, 0);
     rest
 }
 
@@ -367,7 +367,6 @@ impl<'b, 'o, 's> Scan<'b, 'o, 's> {
             stack: [MAIN; MAX],
             wraps: [W_NONE; MAX],
             depth: 1,
-            exact: true,
             at: 0,
             docs_failed: false,
             docs_at: usize::MAX,
@@ -392,7 +391,6 @@ impl<'b, 'o, 's> Scan<'b, 'o, 's> {
     /// The stack and its levels' wraps from `state`.
     #[inline(always)]
     fn load(&mut self, state: &State) {
-        self.exact = state.is_exact();
         let n = usize::from(state.depth);
         for i in 0..n {
             let c = state.level(i);
@@ -415,7 +413,7 @@ impl<'b, 'o, 's> Scan<'b, 'o, 's> {
     #[cold]
     #[inline(never)]
     fn reload(&mut self) {
-        let state = State::keep(&self.stack, self.depth, self.exact, 0);
+        let state = State::keep(&self.stack, self.depth, 0);
         self.load(&state);
     }
 }
@@ -897,7 +895,6 @@ struct Scan<'b, 'o, 's> {
     /// Each level's wrap: what a token in it sits in.
     wraps: [u8; MAX],
     depth: usize,
-    exact: bool,
     /// Where the spans pushed so far end: a context's text fills up to the next token.
     at: usize,
     /// Whether the docs' patterns failed a search on this line (syntect caches it).

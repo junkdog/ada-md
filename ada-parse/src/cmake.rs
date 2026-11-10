@@ -459,7 +459,7 @@ const fn eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 // The frames, four bits a level in [`Scan::frames`]; 0 is none (the file's top, or a level
-// lost past [`LEVELS`]).
+// lost past 32 levels).
 /// `if(…)` … `endif`, and `elseif(…)`'s.
 const F_IF: u8 = 1;
 /// `else(…)` … `endif`.
@@ -487,8 +487,6 @@ const F_CAPS: u8 = 13;
 const F_UNQUOTED: u8 = 14;
 /// A quoted argument that is a regex (X-107), as [`F_QUOTED`].
 const F_QUOTED_RX: u8 = 15;
-/// The levels [`Scan::frames`] holds.
-const LEVELS: u8 = 32;
 
 // Where a command's arguments stand ([`Scan::sub`]).
 /// Before the `(`: blanks, then `(` or the line's rest an error.
@@ -522,7 +520,7 @@ const Q_ATOM: u8 = 1;
 const Q_ANCHOR: u8 = 2;
 /// A quantifier (CMake's "nested *?+").
 const Q_QUANTIFIER: u8 = 3;
-/// The groups open a regex keeps count of ([`Scan::rx`]'s low bits): past it the state is inexact.
+/// The groups open a regex keeps count of ([`Scan::rx`]'s low bits): past it a group isn't counted.
 const RX_DEPTH: u8 = 63;
 /// [`Scan::rx`]'s bit: the unquoted argument under a `${…}` ([`F_UNQUOTED`]) is a regex.
 const RX_UNQUOTED: u8 = 64;
@@ -622,11 +620,10 @@ impl crate::CarryRuns for Scan<'_, '_, Runs<'_>> {
 struct Scan<'b, 'c, K: Sink> {
     b: &'b [u8],
     /// What each open frame is ([`F_IF`]…), four bits a level, the innermost lowest; past
-    /// [`LEVELS`] the outer ones are lost (and the state inexact).
+    /// 32 levels the outer ones are lost.
     frames: u128,
     /// How many frames are open, up to 255.
     depth: u8,
-    exact: bool,
     /// The command whose arguments are open ([`F_ARGS`]): a builtin's id, or [`C_IF`]….
     cmd: u8,
     /// Where its arguments stand ([`SUB_AWAIT`]…).
@@ -655,7 +652,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             b,
             frames: 0,
             depth: 0,
-            exact: true,
             cmd: 0,
             sub: SUB_AWAIT,
             pre: 0,
@@ -679,7 +675,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         w[15] = state.withs[1];
         self.frames = u128::from_le_bytes(w);
         self.depth = state.depth;
-        self.exact = !state.inexact;
         self.cmd = state.withs[2];
         self.eqs = state.withs[3];
         self.rx = state.withs[4];
@@ -703,7 +698,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         s.withs[3] = self.eqs;
         s.withs[4] = self.rx;
         s.depth = self.depth;
-        s.inexact = !self.exact;
         s.arg = u16::from(self.mode)
             | u16::from(self.sub) << 2
             | u16::from(self.pre) << 5
@@ -744,9 +738,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn push(&mut self, f: u8) {
         self.frames = self.frames << 4 | u128::from(f);
         self.depth = self.depth.saturating_add(1);
-        if self.depth > LEVELS {
-            self.exact = false;
-        }
     }
 
     #[inline(always)]
@@ -1802,8 +1793,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     token!(q, e, RX_GROUP + off);
                     if depth < RX_DEPTH {
                         depth += 1;
-                    } else {
-                        self.exact = false;
                     }
                     prev = Q_NONE;
                 }
@@ -2834,7 +2823,6 @@ mod tests {
         });
         assert_eq!(all, one.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
         assert_eq!(state, one.last().unwrap().1);
-        assert!(!one[30].1.is_exact());
     }
 
     #[test]

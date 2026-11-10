@@ -1,0 +1,296 @@
+# Lua: ada-parse/tests/readings.rs, lua
+   1 | #!/usr/bin/env lua
+       "#" keyword.operator.length.lua
+       "/" keyword.operator.arithmetic.lua
+       "usr" variable.other.lua
+       "/" keyword.operator.arithmetic.lua
+       "bin" variable.other.lua
+       "/" keyword.operator.arithmetic.lua
+       "env" variable.other.lua
+       "lua" variable.other.lua
+   2 | --[==[ a long comment
+       "--[==[" comment.block.lua punctuation.definition.comment.begin.lua
+       " a long comment" comment.block.lua
+   3 | ]] still ]==] local M = {}
+       "]] still " comment.block.lua
+       "]==]" comment.block.lua punctuation.definition.comment.end.lua
+       "local" storage.modifier.lua
+       "M" variable.other.lua
+       "=" keyword.operator.assignment.lua
+       "{" punctuation.section.block.begin.lua
+       "}" punctuation.section.block.end.lua
+   4 | local mt = { __index = M, __call = function(self, ...) end, __mode = 'k' }
+       "local" storage.modifier.lua
+       "mt" variable.other.lua
+       "=" keyword.operator.assignment.lua
+       "{" punctuation.section.block.begin.lua
+       "__index" entity.name.function.lua support.function.metamethod.lua
+       "=" meta.mapping.lua punctuation.separator.key-value.lua
+       "M" variable.other.lua
+       "," punctuation.separator.field.lua
+       "__call" entity.name.function.lua support.function.metamethod.lua
+       "=" meta.mapping.lua punctuation.separator.key-value.lua
+       "function" storage.type.function.lua
+       "(" punctuation.section.group.begin.lua
+       "self" variable.parameter.function.lua
+       "," punctuation.separator.comma.lua
+       "..." constant.language.lua
+       ")" punctuation.section.group.end.lua
+       "end" keyword.control.end.lua
+       "," punctuation.separator.field.lua
+       "__mode" string.unquoted.key.lua support.other.metaproperty.lua
+       "=" meta.mapping.lua punctuation.separator.key-value.lua
+       "'" string.quoted.single.lua punctuation.definition.string.begin.lua
+       "k" string.quoted.single.lua
+       "'" string.quoted.single.lua punctuation.definition.string.end.lua
+       "}" punctuation.section.block.end.lua
+   5 | function M.util:run(a, b, ...) -- the method
+       "function" storage.type.function.lua
+       "M" variable.other.lua
+       "." punctuation.accessor.lua
+       "util" meta.property.lua
+       ":" punctuation.accessor.lua
+       "run" meta.property.lua entity.name.function.lua
+       "(" punctuation.section.group.begin.lua
+       "a" variable.parameter.function.lua
+       "," punctuation.separator.comma.lua
+       "b" variable.parameter.function.lua
+       "," punctuation.separator.comma.lua
+       "..." constant.language.lua
+       ")" punctuation.section.group.end.lua
+       "--" comment.line.lua punctuation.definition.comment.lua
+       " the method" comment.line.lua
+   6 |   local s = 'a\n\x41\65\u{48}\q' .. "b\z   
+       "local" storage.modifier.lua
+       "s" variable.other.lua
+       "=" keyword.operator.assignment.lua
+       "'" string.quoted.single.lua punctuation.definition.string.begin.lua
+       "a" string.quoted.single.lua
+       "\\n" string.quoted.single.lua constant.character.escape.lua
+       "\\x41" string.quoted.single.lua constant.character.escape.hexadecimal.lua
+       "\\65" string.quoted.single.lua constant.character.escape.decimal.lua
+       "\\u{48}" string.quoted.single.lua constant.character.escape.unicode.lua
+       "\\q" string.quoted.single.lua invalid.illegal.invalid-escape.lua
+       "'" string.quoted.single.lua punctuation.definition.string.end.lua
+       ".." keyword.operator.concatenation.lua
+       "\"" string.quoted.double.lua punctuation.definition.string.begin.lua
+       "b" string.quoted.double.lua
+       "\\z   " string.quoted.double.lua constant.character.escape.whitespace.lua
+   7 |      c" .. [[x]] .. [=[y
+       "     " string.quoted.double.lua constant.character.escape.whitespace.lua
+       "c" string.quoted.double.lua
+       "\"" string.quoted.double.lua punctuation.definition.string.end.lua
+       ".." keyword.operator.concatenation.lua
+       "[[" string.quoted.multiline.lua punctuation.definition.string.begin.lua
+       "x" string.quoted.multiline.lua
+       "]]" string.quoted.multiline.lua punctuation.definition.string.end.lua
+       ".." keyword.operator.concatenation.lua
+       "[=[" string.quoted.multiline.lua punctuation.definition.string.begin.lua
+       "y" string.quoted.multiline.lua
+   8 | ]]z]=]
+       "]]z" string.quoted.multiline.lua
+       "]=]" string.quoted.multiline.lua punctuation.definition.string.end.lua
+   9 |   for i = 1, #a do print(a[i], string.format('%d', math.pi), io.stdout) end
+       "for" keyword.control.loop.lua
+       "i" variable.other.lua
+       "=" keyword.operator.assignment.lua
+       "1" constant.numeric.integer.decimal.lua
+       "," punctuation.separator.comma.lua
+       "#" keyword.operator.length.lua
+       "a" variable.other.lua
+       "do" keyword.control.lua
+       "print" support.function.builtin.lua
+       "(" punctuation.section.group.begin.lua
+       "a" variable.other.lua
+       "[" punctuation.section.brackets.begin.lua
+       "i" variable.other.lua
+       "]" punctuation.section.brackets.end.lua
+       "," punctuation.separator.comma.lua
+       "string" support.constant.builtin.lua
+       "." punctuation.accessor.lua
+       "format" meta.property.lua support.function.builtin.lua
+       "(" punctuation.section.group.begin.lua
+       "'" string.quoted.single.lua punctuation.definition.string.begin.lua
+       "%d" string.quoted.single.lua
+       "'" string.quoted.single.lua punctuation.definition.string.end.lua
+       "," punctuation.separator.comma.lua
+       "math" support.constant.builtin.lua
+       "." punctuation.accessor.lua
+       "pi" meta.property.lua support.constant.builtin.lua
+       ")" punctuation.section.group.end.lua
+       "," punctuation.separator.comma.lua
+       "io" support.constant.builtin.lua
+       "." punctuation.accessor.lua
+       "stdout" meta.property.lua support.constant.builtin.lua
+       ")" punctuation.section.group.end.lua
+       "end" keyword.control.end.lua
+  10 |   for k, v in pairs(t) do if k ~= nil and not v then goto skip elseif x then else end end
+       "for" keyword.control.loop.lua
+       "k" variable.other.lua
+       "," punctuation.separator.comma.lua
+       "v" variable.other.lua
+       "in" keyword.control.loop.lua
+       "pairs" support.function.builtin.lua
+       "(" punctuation.section.group.begin.lua
+       "t" variable.other.lua
+       ")" punctuation.section.group.end.lua
+       "do" keyword.control.lua
+       "if" keyword.control.conditional.lua
+       "k" variable.other.lua
+       "~=" keyword.operator.comparison.lua
+       "nil" constant.language.null.lua
+       "and" keyword.operator.logical.lua
+       "not" keyword.operator.logical.lua
+       "v" variable.other.lua
+       "then" keyword.control.conditional.lua
+       "goto" keyword.control.goto.lua
+       "skip" variable.label.lua
+       "elseif" keyword.control.conditional.lua
+       "x" variable.other.lua
+       "then" keyword.control.conditional.lua
+       "else" keyword.control.conditional.lua
+       "end" keyword.control.end.lua
+       "end" keyword.control.end.lua
+  11 |   ::skip:: while x >= 0x1p4 + 0xA.8 + 1e-3 + .5 + 0xff do x = x // 2 >> 1 end
+       "::" punctuation.definition.label.begin.lua
+       "skip" entity.name.label.lua
+       "::" punctuation.definition.label.end.lua
+       "while" keyword.control.loop.lua
+       "x" variable.other.lua
+       ">=" keyword.operator.comparison.lua
+       "0x" constant.numeric.float.hexadecimal.lua punctuation.definition.numeric.base.lua
+       "1p4" constant.numeric.float.hexadecimal.lua
+       "+" keyword.operator.arithmetic.lua
+       "0x" constant.numeric.float.hexadecimal.lua punctuation.definition.numeric.base.lua
+       "A" constant.numeric.float.hexadecimal.lua
+       "." constant.numeric.float.hexadecimal.lua punctuation.separator.decimal.lua
+       "8" constant.numeric.float.hexadecimal.lua
+       "+" keyword.operator.arithmetic.lua
+       "1e-3" constant.numeric.float.decimal.lua
+       "+" keyword.operator.arithmetic.lua
+       "." constant.numeric.float.decimal.lua punctuation.separator.decimal.lua
+       "5" constant.numeric.float.decimal.lua
+       "+" keyword.operator.arithmetic.lua
+       "0x" constant.numeric.integer.hexadecimal.lua punctuation.definition.numeric.base.lua
+       "ff" constant.numeric.integer.hexadecimal.lua
+       "do" keyword.control.lua
+       "x" variable.other.lua
+       "=" keyword.operator.assignment.lua
+       "x" variable.other.lua
+       "//" keyword.operator.arithmetic.lua
+       "2" constant.numeric.integer.decimal.lua
+       ">>" keyword.operator.bitwise.lua
+       "1" constant.numeric.integer.decimal.lua
+       "end" keyword.control.end.lua
+  12 |   repeat local y <const> = (a, b) until y == false
+       "repeat" keyword.control.loop.lua
+       "local" storage.modifier.lua
+       "y" variable.other.lua
+       "<" keyword.operator.comparison.lua
+       "const" variable.other.lua
+       ">" keyword.operator.comparison.lua
+       "=" keyword.operator.assignment.lua
+       "(" punctuation.section.group.begin.lua
+       "a" variable.other.lua
+       "b" variable.other.lua
+       ")" punctuation.section.group.end.lua
+       "until" keyword.control.loop.lua
+       "y" variable.other.lua
+       "==" keyword.operator.comparison.lua
+       "false" constant.language.boolean.true.lua
+  13 |   self.x.__index = function() return self, _G, _VERSION, true end
+       "self" variable.language.this.lua
+       "." punctuation.accessor.lua
+       "x" meta.property.lua
+       "." punctuation.accessor.lua
+       "__index" meta.property.lua entity.name.function.lua support.function.metamethod.lua
+       "=" keyword.operator.assignment.lua
+       "function" storage.type.function.lua
+       "(" punctuation.section.group.begin.lua
+       ")" punctuation.section.group.end.lua
+       "return" keyword.control.return.lua
+       "self" variable.language.this.lua
+       "," punctuation.separator.comma.lua
+       "_G" support.constant.builtin.lua
+       "," punctuation.separator.comma.lua
+       "_VERSION" support.constant.builtin.lua
+       "," punctuation.separator.comma.lua
+       "true" constant.language.boolean.true.lua
+       "end" keyword.control.end.lua
+  14 |   t[1]:m{1, [2] = 3; x = f"s"}; f[[long]] f'q' (g)(h)
+       "t" variable.other.lua
+       "[" punctuation.section.brackets.begin.lua
+       "1" constant.numeric.integer.decimal.lua
+       "]" punctuation.section.brackets.end.lua
+       ":" punctuation.accessor.lua
+       "m" meta.property.lua variable.function.lua
+       "{" punctuation.section.block.begin.lua
+       "1" constant.numeric.integer.decimal.lua
+       "," punctuation.separator.field.lua
+       "[" punctuation.section.brackets.begin.lua
+       "2" constant.numeric.integer.decimal.lua
+       "]" punctuation.section.brackets.end.lua
+       "=" meta.mapping.lua punctuation.separator.key-value.lua
+       "3" constant.numeric.integer.decimal.lua
+       ";" punctuation.separator.field.lua
+       "x" string.unquoted.key.lua
+       "=" meta.mapping.lua punctuation.separator.key-value.lua
+       "f" variable.function.lua
+       "\"" string.quoted.double.lua punctuation.definition.string.begin.lua
+       "s" string.quoted.double.lua
+       "\"" string.quoted.double.lua punctuation.definition.string.end.lua
+       "}" punctuation.section.block.end.lua
+       ";" punctuation.terminator.statement.lua
+       "f" variable.function.lua
+       "[[" string.quoted.multiline.lua punctuation.definition.string.begin.lua
+       "long" string.quoted.multiline.lua
+       "]]" string.quoted.multiline.lua punctuation.definition.string.end.lua
+       "f" variable.function.lua
+       "'" string.quoted.single.lua punctuation.definition.string.begin.lua
+       "q" string.quoted.single.lua
+       "'" string.quoted.single.lua punctuation.definition.string.end.lua
+       "(" punctuation.section.group.begin.lua
+       "g" variable.other.lua
+       ")" punctuation.section.group.end.lua
+       "(" punctuation.section.group.begin.lua
+       "h" variable.other.lua
+       ")" punctuation.section.group.end.lua
+  15 |   return setmetatable({}, mt), coroutine.wrap(f), utf8.charpattern, x.__metatable
+       "return" keyword.control.return.lua
+       "setmetatable" support.function.builtin.lua
+       "(" punctuation.section.group.begin.lua
+       "{" punctuation.section.block.begin.lua
+       "}" punctuation.section.block.end.lua
+       "," punctuation.separator.comma.lua
+       "mt" variable.other.lua
+       ")" punctuation.section.group.end.lua
+       "," punctuation.separator.comma.lua
+       "coroutine" support.constant.builtin.lua
+       "." punctuation.accessor.lua
+       "wrap" meta.property.lua support.function.builtin.lua
+       "(" punctuation.section.group.begin.lua
+       "f" variable.other.lua
+       ")" punctuation.section.group.end.lua
+       "," punctuation.separator.comma.lua
+       "utf8" support.constant.builtin.lua
+       "." punctuation.accessor.lua
+       "charpattern" meta.property.lua support.constant.builtin.lua
+       "," punctuation.separator.comma.lua
+       "x" variable.other.lua
+       "." punctuation.accessor.lua
+       "__metatable" meta.property.lua support.other.metaproperty.lua
+  16 | end end
+       "end" keyword.control.end.lua
+       "end" invalid.illegal.unexpected-end.lua
+  17 | local f = function(a, end) return a end
+       "local" storage.modifier.lua
+       "f" entity.name.function.lua
+       "=" keyword.operator.assignment.lua
+       "function" storage.type.function.lua
+       "(" punctuation.section.group.begin.lua
+       "a" variable.parameter.function.lua
+       "," punctuation.separator.comma.lua
+       "end" invalid.unexpected-keyword.lua
+       "return" keyword.control.return.lua
+       "a" variable.other.lua
+       "end" keyword.control.end.lua

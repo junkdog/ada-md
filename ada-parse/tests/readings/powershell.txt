@@ -1,0 +1,360 @@
+# PowerShell: ada-parse/tests/readings.rs, powershell
+   1 | #requires -Version 5.1 -Modules @{ ModuleName = 'x'; RequiredVersion = '1.0' }
+       "#" comment.line.powershell punctuation.definition.comment.powershell
+       "requires " comment.line.powershell keyword.control.requires.powershell
+       "-Version" comment.line.powershell keyword.other.powershell
+       " " comment.line.powershell
+       "5.1" comment.line.powershell variable.parameter.powershell
+       " " comment.line.powershell
+       "-Modules" comment.line.powershell keyword.other.powershell
+       " " comment.line.powershell
+       "@" comment.line.powershell keyword.other.hashtable.begin.powershell
+       "{" comment.line.powershell punctuation.section.braces.begin.powershell
+       " " comment.line.powershell
+       "ModuleName" comment.line.powershell meta.hashtable.assignment.powershell variable.other.readwrite.powershell
+       " " comment.line.powershell meta.hashtable.assignment.powershell
+       "=" comment.line.powershell meta.hashtable.assignment.powershell keyword.operator.assignment.powershell
+       " " comment.line.powershell meta.hashtable.assignment.powershell
+       "'" string.quoted.single.powershell punctuation.definition.string.begin.powershell
+       "x" string.quoted.single.powershell
+       "'" string.quoted.single.powershell punctuation.definition.string.end.powershell
+       ";" comment.line.powershell punctuation.terminator.statement.powershell
+       " " comment.line.powershell
+       "RequiredVersion" comment.line.powershell meta.hashtable.assignment.powershell variable.other.readwrite.powershell
+       " " comment.line.powershell meta.hashtable.assignment.powershell
+       "=" comment.line.powershell meta.hashtable.assignment.powershell keyword.operator.assignment.powershell
+       " " comment.line.powershell meta.hashtable.assignment.powershell
+       "'" string.quoted.single.powershell punctuation.definition.string.begin.powershell
+       "1.0" string.quoted.single.powershell
+       "'" string.quoted.single.powershell punctuation.definition.string.end.powershell
+       " " comment.line.powershell
+       "}" comment.line.powershell punctuation.section.braces.end.powershell
+   2 | using namespace System.IO.
+       "using" keyword.control.using.powershell
+       "namespace" keyword.other.powershell
+       "System.IO." variable.parameter.powershell
+   3 | <# .SYNOPSIS
+       "<#" comment.block.powershell punctuation.definition.comment.block.begin.powershell
+       " " comment.block.powershell comment.documentation.embedded.powershell
+       "." comment.block.powershell comment.documentation.embedded.powershell constant.string.documentation.powershell
+       "SYNOPSIS" comment.block.powershell comment.documentation.embedded.powershell keyword.operator.documentation.powershell
+   4 |   Does x.
+       "  Does x." comment.block.powershell
+   5 | .PARAMETER Name
+       "." comment.block.powershell comment.documentation.embedded.powershell constant.string.documentation.powershell
+       "PARAMETER" comment.block.powershell comment.documentation.embedded.powershell keyword.operator.documentation.powershell
+       " " comment.block.powershell comment.documentation.embedded.powershell
+       "Name" comment.block.powershell comment.documentation.embedded.powershell keyword.operator.documentation.powershell
+   6 |   The name.  #> <# .NOTES
+       "  The name.  " comment.block.powershell
+       "#>" comment.block.powershell punctuation.definition.comment.block.end.powershell
+       "<#" comment.block.powershell punctuation.definition.comment.block.begin.powershell
+       " .NOTES" comment.block.powershell
+   7 | #>
+       "#>" comment.block.powershell punctuation.definition.comment.block.end.powershell
+   8 | function global:Get-Thing {
+       "function" meta.function.powershell storage.type.powershell
+       " " meta.function.powershell
+       "global" meta.function.powershell storage.modifier.scope.powershell
+       ":" meta.function.powershell
+       "Get-Thing" meta.function.powershell entity.name.function.powershell
+       "{" punctuation.section.braces.begin.powershell
+   9 |     [CmdletBinding(SupportsShouldProcess = $true)]
+       "[" punctuation.section.bracket.begin.powershell
+       "CmdletBinding" support.function.attribute.powershell
+       "(" punctuation.section.group.begin.powershell
+       "SupportsShouldProcess" variable.parameter.attribute.powershell
+       "=" keyword.operator.assignment.powershell
+       "$" constant.language.powershell punctuation.definition.variable.powershell
+       "true" constant.language.powershell
+       ")" punctuation.section.group.end.powershell
+       "]" punctuation.section.bracket.end.powershell
+  10 |     param([Parameter(Mandatory, Position=0)][ValidateSet('a', 'b')][string[]] $Name, [int]$N = 0x1FUL)
+       "param" keyword.control.powershell
+       "(" punctuation.section.group.begin.powershell
+       "[" punctuation.section.bracket.begin.powershell
+       "Parameter" support.function.attribute.powershell
+       "(" punctuation.section.group.begin.powershell
+       "Mandatory" variable.parameter.attribute.powershell
+       "," keyword.operator.other.powershell
+       "Position" variable.parameter.attribute.powershell
+       "=" keyword.operator.assignment.powershell
+       "0" constant.numeric.integer.powershell
+       ")" punctuation.section.group.end.powershell
+       "]" punctuation.section.bracket.end.powershell
+       "[" punctuation.section.bracket.begin.powershell
+       "ValidateSet" support.function.attribute.powershell
+       "(" punctuation.section.group.begin.powershell
+       "'" string.quoted.single.powershell punctuation.definition.string.begin.powershell
+       "a" string.quoted.single.powershell
+       "'" string.quoted.single.powershell punctuation.definition.string.end.powershell
+       "," keyword.operator.other.powershell
+       "'" string.quoted.single.powershell punctuation.definition.string.begin.powershell
+       "b" string.quoted.single.powershell
+       "'" string.quoted.single.powershell punctuation.definition.string.end.powershell
+       ")" punctuation.section.group.end.powershell
+       "]" punctuation.section.bracket.end.powershell
+       "[" punctuation.section.bracket.begin.powershell
+       "string" storage.type.powershell
+       "[" punctuation.section.bracket.begin.powershell
+       "]" punctuation.section.bracket.end.powershell
+       "]" punctuation.section.bracket.end.powershell
+       "$" variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "Name" variable.other.readwrite.powershell
+       "," keyword.operator.other.powershell
+       "[" punctuation.section.bracket.begin.powershell
+       "int" storage.type.powershell
+       "]" punctuation.section.bracket.end.powershell
+       "$" variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "N" variable.other.readwrite.powershell
+       "=" keyword.operator.assignment.powershell
+       "0x1FUL" constant.numeric.hex.powershell
+       ")" punctuation.section.group.end.powershell
+  11 |     begin { $ErrorActionPreference = 'Stop' } process {
+       "begin" keyword.control.powershell
+       "{" punctuation.section.braces.begin.powershell
+       "$" variable.language.powershell punctuation.definition.variable.powershell
+       "ErrorActionPreference" variable.language.powershell
+       "=" keyword.operator.assignment.powershell
+       "'" string.quoted.single.powershell punctuation.definition.string.begin.powershell
+       "Stop" string.quoted.single.powershell
+       "'" string.quoted.single.powershell punctuation.definition.string.end.powershell
+       "}" punctuation.section.braces.end.powershell
+       "process" keyword.control.powershell
+       "{" punctuation.section.braces.begin.powershell
+  12 |         Get-ChildItem C:\x\Get-Foo.ps1 -Path $env:TEMP 2>&1 | ForEach-Object { $_.FullName } | Where-Object Length -gt 10mb
+       "Get-ChildItem" support.function.powershell
+       "C:\\x\\Get-Foo.ps1" support.function.powershell
+       "-" keyword.operator.assignment.powershell
+       "$" variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "env:" variable.other.readwrite.powershell support.variable.drive.powershell
+       "TEMP" variable.other.readwrite.powershell
+       "2>&1" keyword.operator.redirection.powershell
+       "|" keyword.operator.other.powershell
+       "ForEach-Object" support.function.powershell
+       "{" punctuation.section.braces.begin.powershell
+       "$" support.variable.automatic.powershell punctuation.definition.variable.powershell
+       "_" support.variable.automatic.powershell
+       ".FullName" support.variable.automatic.powershell variable.other.member.powershell
+       "}" punctuation.section.braces.end.powershell
+       "|" keyword.operator.other.powershell
+       "Where-Object" support.function.powershell
+       "-gt" keyword.operator.comparison.powershell
+       "10" constant.numeric.integer.powershell
+       "mb" keyword.other.powershell
+  13 |         $h = @{ 'k' = 1; Name = "a $x `n $($y.z) `u{1F600} `u{ ""q"" ${env:path}.Length" }; $a = @(1, 2..3, -.5, 1.5e3d, 1e1, _)
+       "$" variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "h" variable.other.readwrite.powershell
+       "=" keyword.operator.assignment.powershell
+       "@" keyword.other.hashtable.begin.powershell
+       "{" punctuation.section.braces.begin.powershell
+       "'" string.quoted.single.powershell punctuation.definition.string.begin.powershell
+       "k" string.quoted.single.powershell
+       "'" string.quoted.single.powershell punctuation.definition.string.end.powershell
+       "=" keyword.operator.assignment.powershell
+       "1" constant.numeric.integer.powershell
+       ";" punctuation.terminator.statement.powershell
+       "Name" meta.hashtable.assignment.powershell variable.other.readwrite.powershell
+       " " meta.hashtable.assignment.powershell
+       "=" meta.hashtable.assignment.powershell keyword.operator.assignment.powershell
+       " " meta.hashtable.assignment.powershell
+       "\"" string.quoted.double.powershell punctuation.definition.string.begin.powershell
+       "a " string.quoted.double.powershell
+       "$" string.quoted.double.powershell variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "x" string.quoted.double.powershell variable.other.readwrite.powershell
+       " " string.quoted.double.powershell
+       "`n" string.quoted.double.powershell constant.character.escape.powershell
+       " " string.quoted.double.powershell
+       "$" string.quoted.double.powershell keyword.other.substatement.powershell punctuation.definition.substatement.powershell punctuation.section.embedded.substatement.begin.powershell
+       "(" string.quoted.double.powershell punctuation.section.group.begin.powershell punctuation.section.embedded.substatement.begin.powershell
+       "$" string.quoted.double.powershell variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "y" string.quoted.double.powershell variable.other.readwrite.powershell
+       ".z" string.quoted.double.powershell variable.other.readwrite.powershell variable.other.member.powershell
+       ")" string.quoted.double.powershell punctuation.section.group.end.powershell punctuation.section.embedded.substatement.end.powershell
+       " " string.quoted.double.powershell
+       "`u{1F600}" string.quoted.double.powershell constant.character.escape.powershell
+       " " string.quoted.double.powershell
+       "`u{ " string.quoted.double.powershell invalid.character.escape.powershell
+       "\"\"" string.quoted.double.powershell constant.character.escape.powershell
+       "q" string.quoted.double.powershell
+       "\"\"" string.quoted.double.powershell constant.character.escape.powershell
+       " " string.quoted.double.powershell
+       "$" string.quoted.double.powershell variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "{" string.quoted.double.powershell variable.other.readwrite.powershell punctuation.section.braces.begin
+       "env:" string.quoted.double.powershell variable.other.readwrite.powershell support.variable.drive.powershell
+       "path" string.quoted.double.powershell variable.other.readwrite.powershell
+       "}" string.quoted.double.powershell variable.other.readwrite.powershell punctuation.section.braces.end
+       ".Length" string.quoted.double.powershell
+       "\"" string.quoted.double.powershell punctuation.definition.string.end.powershell
+       "}" punctuation.section.braces.end.powershell
+       ";" punctuation.terminator.statement.powershell
+       "$" variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "a" variable.other.readwrite.powershell
+       "=" keyword.operator.assignment.powershell
+       "@" keyword.other.array.begin.powershell
+       "(" punctuation.section.group.begin.powershell
+       "1" constant.numeric.integer.powershell
+       "," keyword.operator.other.powershell
+       "2" constant.numeric.integer.powershell
+       ".." keyword.operator.range.powershell
+       "3" constant.numeric.integer.powershell
+       "," keyword.operator.other.powershell
+       "-.5" constant.numeric.integer.powershell
+       "," keyword.operator.other.powershell
+       "1.5e3d" constant.numeric.integer.powershell
+       "," keyword.operator.other.powershell
+       "1e1" constant.numeric.integer.powershell
+       "," keyword.operator.other.powershell
+       "_" constant.numeric.integer.powershell
+       ")" punctuation.section.group.end.powershell
+  14 |         $s = @"
+       "$" variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "s" variable.other.readwrite.powershell
+       "=" keyword.operator.assignment.powershell
+       "@\"" string.quoted.double.heredoc.powershell punctuation.definition.string.begin.powershell
+  15 | text $v `t $(Get-Date) "" ${global:x}
+       "text " string.quoted.double.heredoc.powershell
+       "$" string.quoted.double.heredoc.powershell variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "v" string.quoted.double.heredoc.powershell variable.other.readwrite.powershell
+       " " string.quoted.double.heredoc.powershell
+       "`t" string.quoted.double.heredoc.powershell constant.character.escape.powershell
+       " " string.quoted.double.heredoc.powershell
+       "$" string.quoted.double.heredoc.powershell keyword.other.substatement.powershell punctuation.definition.substatement.powershell punctuation.section.embedded.substatement.begin.powershell
+       "(" string.quoted.double.heredoc.powershell punctuation.section.group.begin.powershell punctuation.section.embedded.substatement.begin.powershell
+       "Get-Date" string.quoted.double.heredoc.powershell support.function.powershell
+       ")" string.quoted.double.heredoc.powershell punctuation.section.group.end.powershell punctuation.section.embedded.substatement.end.powershell
+       " \"\" " string.quoted.double.heredoc.powershell
+       "$" string.quoted.double.heredoc.powershell variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "{" string.quoted.double.heredoc.powershell variable.other.readwrite.powershell storage.modifier.scope.powershell
+       "global:" string.quoted.double.heredoc.powershell variable.other.readwrite.powershell
+       "x" string.quoted.double.heredoc.powershell variable.other.readwrite.powershell keyword.other.powershell
+       "}" string.quoted.double.heredoc.powershell variable.other.readwrite.powershell variable.other.member.powershell
+  16 | "@
+       "\"@" string.quoted.double.heredoc.powershell punctuation.definition.string.end.powershell
+  17 |         $t = @'
+       "$" variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "t" variable.other.readwrite.powershell
+       "=" keyword.operator.assignment.powershell
+       "@'" string.quoted.single.heredoc.powershell punctuation.definition.string.begin.powershell
+  18 | raw $v ''
+       "raw $v ''" string.quoted.single.heredoc.powershell
+  19 | '@
+       "'@" string.quoted.single.heredoc.powershell punctuation.definition.string.end.powershell
+  20 |         if ($global:x -is [string] -and -not $script:y.Count -ceq 1 -or $z -bxor 2) { cmd.exe /c x --% raw %PATH% } elseif ($?) { return $null } else { throw }
+       "if" keyword.control.powershell
+       "(" punctuation.section.group.begin.powershell
+       "$" variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "global" variable.other.readwrite.powershell storage.modifier.scope.powershell
+       ":x" variable.other.readwrite.powershell
+       "-is" keyword.operator.comparison.powershell
+       "[" punctuation.section.bracket.begin.powershell
+       "string" storage.type.powershell
+       "]" punctuation.section.bracket.end.powershell
+       "-and" keyword.operator.logical.powershell
+       "-not" keyword.operator.logical.powershell
+       "$" variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "script" variable.other.readwrite.powershell storage.modifier.scope.powershell
+       ":y" variable.other.readwrite.powershell
+       ".Count" variable.other.readwrite.powershell variable.other.member.powershell
+       "-ceq" keyword.operator.comparison.powershell
+       "1" constant.numeric.integer.powershell
+       "-or" keyword.operator.logical.powershell
+       "$" variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "z" variable.other.readwrite.powershell
+       "-bxor" keyword.operator.bitwise.powershell
+       "2" constant.numeric.integer.powershell
+       ")" punctuation.section.group.end.powershell
+       "{" punctuation.section.braces.begin.powershell
+       "cmd.exe" support.function.powershell
+       "/" keyword.operator.assignment.powershell
+       "--%" keyword.control.powershell
+       " raw %PATH% } elseif ($?) { return $null } else { throw }" string.unquoted.powershell
+  21 |         $x.foreach({ $PSItem }) ; $y | % { $_ } ; x.% foo ; 'it''s' + ‘smart’ -f $Host.UI.RawUI
+       "$" variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "x" variable.other.readwrite.powershell
+       ".foreach" variable.other.readwrite.powershell variable.other.member.powershell
+       "(" punctuation.section.group.begin.powershell
+       "{" punctuation.section.braces.begin.powershell
+       "$" support.variable.automatic.powershell punctuation.definition.variable.powershell
+       "PSItem" support.variable.automatic.powershell
+       "}" punctuation.section.braces.end.powershell
+       ")" punctuation.section.group.end.powershell
+       ";" punctuation.terminator.statement.powershell
+       "$" variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "y" variable.other.readwrite.powershell
+       "|" keyword.operator.other.powershell
+       "%" keyword.control.powershell
+       "{" punctuation.section.braces.begin.powershell
+       "$" support.variable.automatic.powershell punctuation.definition.variable.powershell
+       "_" support.variable.automatic.powershell
+       "}" punctuation.section.braces.end.powershell
+       ";" punctuation.terminator.statement.powershell
+       "%" storage.type.powershell
+       "foo" entity.name.function
+       ";" punctuation.terminator.statement.powershell
+       "'" string.quoted.single.powershell punctuation.definition.string.begin.powershell
+       "it" string.quoted.single.powershell
+       "''" string.quoted.single.powershell constant.character.escape.powershell
+       "s" string.quoted.single.powershell
+       "'" string.quoted.single.powershell punctuation.definition.string.end.powershell
+       "+" keyword.operator.assignment.powershell
+       "‘" string.quoted.single.powershell punctuation.definition.string.begin.powershell
+       "smart" string.quoted.single.powershell
+       "’" string.quoted.single.powershell punctuation.definition.string.end.powershell
+       "-f" keyword.operator.string-format.powershell
+       "$" support.constant.variable.powershell punctuation.definition.variable.powershell
+       "Host" support.constant.variable.powershell
+       ".UI.RawUI" support.constant.variable.powershell variable.other.member.powershell
+  22 |     }
+       "}" punctuation.section.braces.end.powershell
+  23 | }
+       "}" punctuation.section.braces.end.powershell
+  24 | class Foo : Bar { hidden static [string] $Name }  # done ## x `
+       "class" storage.type.powershell
+       "Foo" entity.name.function
+       "{" punctuation.section.braces.begin.powershell
+       "hidden" storage.modifier.powershell
+       "static" storage.modifier.powershell
+       "[" punctuation.section.bracket.begin.powershell
+       "string" storage.type.powershell
+       "]" punctuation.section.bracket.end.powershell
+       "$" variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "Name" variable.other.readwrite.powershell
+       "}" punctuation.section.braces.end.powershell
+       "#" comment.line.powershell punctuation.definition.comment.powershell
+       " done ## x `" comment.line.powershell
+  25 | filter f { $input }; .\x.ps1 ; . $p; [System.IO.File]::Exists($p) ; [2abc] ; a2>> b ; "x `
+       "filter" meta.function.powershell storage.type.powershell
+       " " meta.function.powershell
+       "f" meta.function.powershell entity.name.function.powershell
+       "{" punctuation.section.braces.begin.powershell
+       "$" support.variable.automatic.powershell punctuation.definition.variable.powershell
+       "input" support.variable.automatic.powershell
+       "}" punctuation.section.braces.end.powershell
+       ";" punctuation.terminator.statement.powershell
+       ";" punctuation.terminator.statement.powershell
+       "." keyword.operator.other.powershell
+       "$" variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "p" variable.other.readwrite.powershell
+       ";" punctuation.terminator.statement.powershell
+       "[" punctuation.section.bracket.begin.powershell
+       "System.IO.File" storage.type.powershell
+       "]" punctuation.section.bracket.end.powershell
+       "(" punctuation.section.group.begin.powershell
+       "$" variable.other.readwrite.powershell punctuation.definition.variable.powershell
+       "p" variable.other.readwrite.powershell
+       ")" punctuation.section.group.end.powershell
+       ";" punctuation.terminator.statement.powershell
+       "[" punctuation.section.bracket.begin.powershell
+       "abc" storage.type.powershell
+       "]" punctuation.section.bracket.end.powershell
+       ";" punctuation.terminator.statement.powershell
+       "2>" keyword.operator.redirection.powershell
+       ">" keyword.operator.redirection.powershell
+       ";" punctuation.terminator.statement.powershell
+       "\"" string.quoted.double.powershell punctuation.definition.string.begin.powershell
+       "x " string.quoted.double.powershell
+       "`" string.quoted.double.powershell keyword.other.powershell
+  26 | y"
+       "y" string.quoted.double.powershell
+       "\"" string.quoted.double.powershell punctuation.definition.string.end.powershell

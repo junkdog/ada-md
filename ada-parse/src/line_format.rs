@@ -7,8 +7,8 @@
 //! `\`, a string not closed) is one word of the [`State`], 0 for nothing, and a line after one
 //! that isn't 0 is the format's to read whole ([`Format::resume`]).
 //!
-//! What stays a format's own is what its grammar's corners need, as each is exact against bat's
-//! grammar on syntect: where a key ends, what a separator is, which quotes close.
+//! What stays a format's own is what its corners need: where a key ends, what a separator is,
+//! which quotes close.
 
 use crate::emit::Sink;
 use crate::prim::{find_any, stops};

@@ -66,9 +66,6 @@ flags() {
     diagram) args=(-dict=diagram.dict) ;;
     stream|tokens) args=(-dict=tokens.dict -max_len=65536) ;;
     images) args=(-dict=images.dict -max_len=65536) ;;
-    make) args=(-dict=make.dict -max_len=4096) ;;
-    bash) args=(-dict=bash.dict -max_len=4096) ;;
-    parse) args=(-dict=parse.dict -max_len=4096) ;;
     probe) args=(-max_len=4096) ;;
     sixel) args=(-max_len=8192) ;;
     roots) args=(-max_len=1024) ;;

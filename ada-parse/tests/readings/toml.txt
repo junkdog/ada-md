@@ -1,0 +1,197 @@
+# Toml: ada-parse/tests/readings.rs, toml
+   1 | # comment
+       "#" comment.line.number-sign.toml punctuation.definition.comment.toml
+       " comment" comment.line.number-sign.toml
+   2 | [package]
+       "[" punctuation.definition.table.begin.toml
+       "package" meta.tag.table.toml entity.name.table.toml
+       "]" punctuation.definition.table.end.toml
+   3 | name = "ada-md" # why
+       "name" meta.tag.key.toml entity.name.tag.toml
+       "=" punctuation.definition.key-value.toml
+       "\"" string.quoted.double.basic.toml punctuation.definition.string.begin.toml
+       "ada-md" string.quoted.double.basic.toml
+       "\"" string.quoted.double.basic.toml punctuation.definition.string.end.toml
+       "#" comment.line.number-sign.toml punctuation.definition.comment.toml
+       " why" comment.line.number-sign.toml
+   4 | version.workspace = true
+       "version" meta.tag.key.toml entity.name.tag.toml
+       "." meta.tag.key.toml punctuation.separator.key.toml
+       "workspace" meta.tag.key.toml entity.name.tag.toml
+       "=" punctuation.definition.key-value.toml
+       "true" constant.language.toml
+   5 | "quoted key" = 'literal'
+       "\"" meta.tag.key.toml string.quoted.double.basic.toml punctuation.definition.string.begin.toml
+       "quoted key" meta.tag.key.toml string.quoted.double.basic.toml
+       "\"" meta.tag.key.toml string.quoted.double.basic.toml punctuation.definition.string.end.toml
+       "=" punctuation.definition.key-value.toml
+       "'" string.quoted.single.literal.toml punctuation.definition.string.begin.toml
+       "literal" string.quoted.single.literal.toml
+       "'" string.quoted.single.literal.toml punctuation.definition.string.end.toml
+   6 | [[bin]] # array of tables
+       "[[" punctuation.definition.table.array.begin.toml
+       "bin" meta.tag.table.array.toml entity.name.table.toml
+       "]]" punctuation.definition.table.array.end.toml
+       "#" comment.line.number-sign.toml punctuation.definition.comment.toml
+       " array of tables" comment.line.number-sign.toml
+   7 | [ a . "b" . 'c' ]
+       "[" punctuation.definition.table.begin.toml
+       "a" meta.tag.table.toml entity.name.table.toml
+       " " meta.tag.table.toml
+       "." meta.tag.table.toml punctuation.separator.table.toml
+       " " meta.tag.table.toml
+       "\"" meta.tag.table.toml string.quoted.double.basic.toml punctuation.definition.string.begin.toml
+       "b" meta.tag.table.toml string.quoted.double.basic.toml
+       "\"" meta.tag.table.toml string.quoted.double.basic.toml punctuation.definition.string.end.toml
+       " " meta.tag.table.toml
+       "." meta.tag.table.toml punctuation.separator.table.toml
+       " " meta.tag.table.toml
+       "'" meta.tag.table.toml string.quoted.single.literal.toml punctuation.definition.string.begin.toml
+       "c" meta.tag.table.toml string.quoted.single.literal.toml
+       "'" meta.tag.table.toml string.quoted.single.literal.toml punctuation.definition.string.end.toml
+       "]" punctuation.definition.table.end.toml
+   8 | dates = [1979-05-27T07:32:00Z, 1979-05-27 07:32:00.999, 1979-05-27, 07:32:00]
+       "dates" meta.tag.key.toml entity.name.tag.toml
+       "=" punctuation.definition.key-value.toml
+       "[" punctuation.definition.array.begin.toml
+       "1979-05-27T07:32:00Z" constant.other.datetime.toml
+       "," punctuation.separator.array.toml
+       "1979-05-27 07:32:00.999" constant.other.datetime.toml
+       "," punctuation.separator.array.toml
+       "1979-05-27" constant.other.datetime.toml
+       "," punctuation.separator.array.toml
+       "07:32:00" constant.other.datetime.toml
+       "]" punctuation.definition.array.end.toml
+   9 | nums = [ +1, -0x_1, 0xdead_BEEF, 0o17, 0b101, 1_000, 3.14, -2e-3, 6.0E+2, inf, -nan, 01 ]
+       "nums" meta.tag.key.toml entity.name.tag.toml
+       "=" punctuation.definition.key-value.toml
+       "[" punctuation.definition.array.begin.toml
+       "+" constant.numeric.integer.toml keyword.operator.arithmetic.toml
+       "1" constant.numeric.integer.toml
+       "," punctuation.separator.array.toml
+       "-" invalid.illegal.value.toml
+       "0x_1" invalid.illegal.array.toml
+       "," punctuation.separator.array.toml
+       "0xdead_BEEF" constant.numeric.integer.toml
+       "," punctuation.separator.array.toml
+       "0o17" constant.numeric.integer.toml
+       "," punctuation.separator.array.toml
+       "0b101" constant.numeric.integer.toml
+       "," punctuation.separator.array.toml
+       "1_000" constant.numeric.integer.toml
+       "," punctuation.separator.array.toml
+       "3.14" constant.numeric.float.toml
+       "," punctuation.separator.array.toml
+       "-" constant.numeric.float.toml keyword.operator.arithmetic.toml
+       "2e-3" constant.numeric.float.toml
+       "," punctuation.separator.array.toml
+       "6.0E+2" constant.numeric.float.toml
+       "," punctuation.separator.array.toml
+       "inf" constant.numeric.float.toml
+       "," punctuation.separator.array.toml
+       "-" constant.numeric.float.toml keyword.operator.arithmetic.toml
+       "nan" constant.numeric.float.toml
+       "," punctuation.separator.array.toml
+       "01" invalid.illegal.value.toml
+       "]" punctuation.definition.array.end.toml
+  10 | odd = [ 0o0k, 0x1g, x0b1, 1a ]
+       "odd" meta.tag.key.toml entity.name.tag.toml
+       "=" punctuation.definition.key-value.toml
+       "[" punctuation.definition.array.begin.toml
+       "0o0" constant.numeric.integer.toml
+       "k" invalid.illegal.array.toml
+       "," punctuation.separator.array.toml
+       "0x1" constant.numeric.integer.toml
+       "g" invalid.illegal.array.toml
+       "," punctuation.separator.array.toml
+       "x0b1" invalid.illegal.value.toml
+       "," punctuation.separator.array.toml
+       "1a" invalid.illegal.value.toml
+       "]" punctuation.definition.array.end.toml
+  11 | inline = { a = 1, b.c = "x\n\q", d = [ ] }
+       "inline" meta.tag.key.toml entity.name.tag.toml
+       "=" punctuation.definition.key-value.toml
+       "{" punctuation.definition.inline-table.begin.toml
+       "a" meta.tag.key.toml entity.name.tag.toml
+       "=" punctuation.definition.key-value.toml
+       "1" constant.numeric.integer.toml
+       "," punctuation.separator.inline-table.toml
+       "b" meta.tag.key.toml entity.name.tag.toml
+       "." meta.tag.key.toml punctuation.separator.key.toml
+       "c" meta.tag.key.toml entity.name.tag.toml
+       "=" punctuation.definition.key-value.toml
+       "\"" string.quoted.double.basic.toml punctuation.definition.string.begin.toml
+       "x" string.quoted.double.basic.toml
+       "\\n" string.quoted.double.basic.toml constant.character.escape.toml
+       "\\q" string.quoted.double.basic.toml invalid.illegal.string.escape.toml
+       "\"" string.quoted.double.basic.toml punctuation.definition.string.end.toml
+       "," punctuation.separator.inline-table.toml
+       "d" meta.tag.key.toml entity.name.tag.toml
+       "=" punctuation.definition.key-value.toml
+       "[" punctuation.definition.array.begin.toml
+       "]" punctuation.definition.array.end.toml
+       "}" punctuation.definition.inline-table.end.toml
+  12 | multi = """
+       "multi" meta.tag.key.toml entity.name.tag.toml
+       "=" punctuation.definition.key-value.toml
+       "\"\"\"" string.quoted.triple.basic.block.toml punctuation.definition.string.begin.toml
+  13 |   a \u00e9 b
+       "  a " string.quoted.triple.basic.block.toml
+       "\\u00e9" string.quoted.triple.basic.block.toml constant.character.escape.toml
+       " b" string.quoted.triple.basic.block.toml
+  14 |   """
+       "  " string.quoted.triple.basic.block.toml
+       "\"\"\"" string.quoted.triple.basic.block.toml punctuation.definition.string.end.toml
+  15 | lit = '''
+       "lit" meta.tag.key.toml entity.name.tag.toml
+       "=" punctuation.definition.key-value.toml
+       "'''" string.quoted.triple.literal.block.toml punctuation.definition.string.begin.toml
+  16 | raw \n'''
+       "raw \\n" string.quoted.triple.literal.block.toml
+       "'''" string.quoted.triple.literal.block.toml punctuation.definition.string.end.toml
+  17 | nested = [
+       "nested" meta.tag.key.toml entity.name.tag.toml
+       "=" punctuation.definition.key-value.toml
+       "[" punctuation.definition.array.begin.toml
+  18 |   [1, 2], # c
+       "[" punctuation.definition.array.begin.toml
+       "1" constant.numeric.integer.toml
+       "," punctuation.separator.array.toml
+       "2" constant.numeric.integer.toml
+       "]" punctuation.definition.array.end.toml
+       "," punctuation.separator.array.toml
+       "#" comment.line.number-sign.toml punctuation.definition.comment.toml
+       " c" comment.line.number-sign.toml
+  19 |   { x = 1 },
+       "{" punctuation.definition.inline-table.begin.toml
+       "x" meta.tag.key.toml entity.name.tag.toml
+       "=" punctuation.definition.key-value.toml
+       "1" constant.numeric.integer.toml
+       "}" punctuation.definition.inline-table.end.toml
+       "," punctuation.separator.array.toml
+  20 |   "s",
+       "\"" string.quoted.double.basic.toml punctuation.definition.string.begin.toml
+       "s" string.quoted.double.basic.toml
+       "\"" string.quoted.double.basic.toml punctuation.definition.string.end.toml
+       "," punctuation.separator.array.toml
+  21 | ]
+       "]" punctuation.definition.array.end.toml
+  22 | bad = ]
+       "bad" meta.tag.key.toml entity.name.tag.toml
+       "=" punctuation.definition.key-value.toml
+       "]" invalid.illegal.value.toml
+  23 | []
+       "[]" invalid.illegal.table.toml
+  24 | key
+       "key" meta.tag.key.toml entity.name.tag.toml
+  25 | = 1
+       "= 1" invalid.illegal.toml
+  26 | a = "unterminated
+       "a" meta.tag.key.toml entity.name.tag.toml
+       "=" punctuation.definition.key-value.toml
+       "\"" string.quoted.double.basic.toml punctuation.definition.string.begin.toml
+       "unterminated" string.quoted.double.basic.toml
+  27 | b = yes
+       "b" meta.tag.key.toml entity.name.tag.toml
+       "=" punctuation.definition.key-value.toml
+       "yes" invalid.illegal.value.toml

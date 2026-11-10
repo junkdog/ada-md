@@ -1,0 +1,206 @@
+# Nginx: ada-parse/tests/readings.rs, nginx
+   1 | \u{feff}user  www-data;  # who
+       "user" punctuation.definition.variable keyword.directive.nginx
+       "  www-data;" punctuation.definition.variable
+       "# who" comment.line.number-sign
+   2 | worker_processes  auto;
+       "worker_processes" punctuation.definition.variable keyword.directive.nginx
+       "  auto;" punctuation.definition.variable
+   3 | events {
+       "events" storage.type.context.nginx
+   4 |     worker_connections  1024;
+       "worker_connections" punctuation.definition.variable keyword.directive.module.events.nginx
+       "  " punctuation.definition.variable
+       "1024" string.ipaddress.nginx
+       ";" punctuation.definition.variable
+   5 | }
+   6 | http {
+       "http" storage.type.context.nginx
+   7 |     include       mime.types;
+       "include" punctuation.definition.variable keyword.directive.nginx
+       "       mime.types;" punctuation.definition.variable
+   8 |     log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+       "log_format" punctuation.definition.variable keyword.directive.module.http.log.nginx
+       " " punctuation.definition.variable
+       " main" constant.language.nginx
+       "  " punctuation.definition.variable
+       "'" string.quoted.single.nginx
+       "$remote_addr" string.quoted.single.nginx variable.other.nginx
+       " - " string.quoted.single.nginx
+       "$remote_user" string.quoted.single.nginx variable.other.nginx
+       " [" string.quoted.single.nginx
+       "$time_local" string.quoted.single.nginx variable.other.nginx
+       "] \"" string.quoted.single.nginx
+       "$request" string.quoted.single.nginx variable.other.nginx
+       "\" '" string.quoted.single.nginx
+   9 |                       '$status $body_bytes_sent';
+       "                      " punctuation.definition.variable
+       "'" string.quoted.single.nginx
+       "$status" string.quoted.single.nginx variable.other.nginx
+       " " string.quoted.single.nginx
+       "$body_bytes_sent" string.quoted.single.nginx variable.other.nginx
+       "'" string.quoted.single.nginx
+       ";" punctuation.definition.variable
+  10 |     sendfile on; keepalive_timeout 65s;
+       "sendfile" punctuation.definition.variable keyword.directive.module.http.nginx
+       " on" constant.language.nginx
+       ";" punctuation.definition.variable
+       "keepalive_timeout" punctuation.definition.variable keyword.directive.module.http.nginx
+       " " punctuation.definition.variable
+       "65s" constant.numeric.nginx
+       ";" punctuation.definition.variable
+  11 |     map $http_upgrade $connection_upgrade {
+       "map" storage.type.context.nginx
+       "$http_upgrade" variable.other.nginx
+       "$connection_upgrade" variable.other.nginx
+  12 |         default upgrade;
+       " default" constant.language.nginx
+       ";" punctuation.definition.map.nginx
+  13 |         ''      close;  # none
+       "''" string.quoted.single.nginx
+       ";" punctuation.definition.map.nginx
+       "# none" comment.line.number-sign
+  14 |     }
+  15 |     upstream backend {
+       "upstream" storage.type.context.nginx
+       "backend " entity.name.context.location.nginx
+  16 |         server 10.0.0.1:8080 weight=5;
+       "server" punctuation.definition.variable keyword.directive.module.http.upstream.nginx
+       " 10.0.0.1:8080 weight=5;" punctuation.definition.variable
+  17 |         ip_hash;
+       "ip_hash" punctuation.definition.variable keyword.directive.module.http.upstream.nginx
+       ";" punctuation.definition.variable
+  18 |     }
+  19 |     server {
+       "server" storage.type.context.nginx
+  20 |         listen 80 default_server;
+       "listen" punctuation.definition.variable keyword.directive.module.http.nginx
+       " " punctuation.definition.variable
+       "80" string.ipaddress.nginx
+       " default_server" constant.language.nginx
+       ";" punctuation.definition.variable
+  21 |         listen [::]:443 ssl http2;
+       "listen" punctuation.definition.variable keyword.directive.module.http.nginx
+       " [::]:443 ssl http2;" punctuation.definition.variable
+  22 |         server_name example.com *.example.com;
+       "server_name" punctuation.definition.variable keyword.directive.module.http.nginx
+       " example.com *.example.com;" punctuation.definition.variable
+  23 |         allow 192.168.1.0/24; deny all;
+       "allow" punctuation.definition.variable keyword.directive.module.http.access.nginx
+       " " punctuation.definition.variable
+       "192.168.1.0" string.ipaddress.nginx
+       "/24" constant.numeric.cidr.nginx
+       ";" punctuation.definition.variable
+       "deny" punctuation.definition.variable keyword.directive.module.http.access.nginx
+       " all" constant.language.nginx
+       ";" punctuation.definition.variable
+  24 |         location ~* \.(jpg|png|gif)$ { expires 30d; }
+       "location" storage.type.context.location.nginx
+       "\\.(jpg|png|gif)$ " string.regexp.nginx
+       "expires" punctuation.definition.variable keyword.directive.module.http.headers.nginx
+       " " punctuation.definition.variable
+       "30d" string.ipaddress.nginx
+       ";" punctuation.definition.variable
+  25 |         location = /50x.html { root html; }
+       "location" storage.type.context.location.nginx
+       "= /50x.html " entity.name.context.location.nginx
+       "root" punctuation.definition.variable keyword.directive.module.http.nginx
+       " html;" punctuation.definition.variable
+  26 |         location ^~ /static/ { alias /var/www/static/; }
+       "location" storage.type.context.location.nginx
+       "/static/ " string.regexp.nginx
+       "alias" punctuation.definition.variable keyword.directive.module.http.nginx
+       " /var/www/static/;" punctuation.definition.variable
+  27 |         location /api {
+       "location" storage.type.context.location.nginx
+       "/api " entity.name.context.location.nginx
+  28 |             proxy_set_header Host $host;
+       "proxy_set_header" punctuation.definition.variable keyword.directive.module.http.proxy.nginx
+       " Host " punctuation.definition.variable
+       "$host" variable.other.nginx
+       ";" punctuation.definition.variable
+  29 |             proxy_pass http://backend;
+       "proxy_pass" punctuation.definition.variable keyword.directive.module.http.proxy.nginx
+       " http://backend;" punctuation.definition.variable
+  30 |             add_header Cache-Control "public, max-age=300" always;
+       "add_header" punctuation.definition.variable keyword.directive.module.http.headers.nginx
+       " Cache-Control " punctuation.definition.variable
+       "\"public, max-age=300\"" string.quoted.double.nginx
+       " always;" punctuation.definition.variable
+  31 |         }
+  32 |         if ($http_user_agent ~ MSIE) {
+       "if" keyword.control.nginx
+       "$http_user_agent" variable.other.nginx
+       "~" string.regexp.nginx
+  33 |             rewrite ^(.*)$ /msie/$1 break;
+       "rewrite" punctuation.definition.variable keyword.directive.module.http.rewrite.nginx
+       " " punctuation.definition.variable
+       "^(.*)$ " string.regexp.nginx
+       "/msie/" punctuation.definition.variable
+       "$1" variable.other.nginx
+       " break;" punctuation.definition.variable
+  34 |         }
+  35 |         if ($request_uri !~* "^/ok") { return 403; }
+       "if" keyword.control.nginx
+       "$request_uri" variable.other.nginx
+       "!~*" string.regexp.nginx
+       "\"^/ok\"" string.quoted.double.nginx
+       "return" punctuation.definition.variable support.function.module.http.rewrite.nginx
+       " " punctuation.definition.variable
+       "403" string.ipaddress.nginx
+       ";" punctuation.definition.variable
+  36 |         rewrite \.php$ /index.php last;
+       "rewrite" punctuation.definition.variable keyword.directive.module.http.rewrite.nginx
+       " " punctuation.definition.variable
+       "\\.php$ " string.regexp.nginx
+       "/index.php" punctuation.definition.variable
+       " last" constant.language.nginx
+       ";" punctuation.definition.variable
+  37 |         set $a "x\"y $b";
+       "set" punctuation.definition.variable keyword.directive.module.http.rewrite.nginx
+       " " punctuation.definition.variable
+       "$a" variable.other.nginx
+       " " punctuation.definition.variable
+       "\"x" string.quoted.double.nginx
+       "\\\"" string.quoted.double.nginx constant.character.escape.nginx
+       "y " string.quoted.double.nginx
+       "$b" string.quoted.double.nginx variable.other.nginx
+       "\"" string.quoted.double.nginx
+       ";" punctuation.definition.variable
+  38 |         client_max_body_size 10m;
+       "client_max_body_size" punctuation.definition.variable keyword.directive.module.http.nginx
+       " " punctuation.definition.variable
+       "10m" constant.numeric.nginx
+       ";" punctuation.definition.variable
+  39 |         stub_status;
+       "stub_status" punctuation.definition.variable keyword.directive.module.http.stub_status.nginx
+       ";" punctuation.definition.variable
+  40 |         limit_req zone=one burst=5;
+       "limit_req" punctuation.definition.variable keyword.directive.module.http.limit_req.nginx
+       "one" punctuation.definition.variable keyword.directive.module.unsupported.nginx
+       " burst=5;" punctuation.definition.variable
+  41 |         brotli on;
+       "brotli" punctuation.definition.variable keyword.directive.module.unsupported.nginx
+       " on;" punctuation.definition.variable
+  42 |         error_page 500 502 503 504 /50x.html;
+       "error_page" punctuation.definition.variable keyword.directive.module.http.nginx
+       " " punctuation.definition.variable
+       "500" string.ipaddress.nginx
+       " " punctuation.definition.variable
+       "502" string.ipaddress.nginx
+       " " punctuation.definition.variable
+       "503" string.ipaddress.nginx
+       " " punctuation.definition.variable
+       "504" string.ipaddress.nginx
+       " /50x.html;" punctuation.definition.variable
+  43 |     }
+  44 |     types {
+       "types" storage.type.context.nginx
+  45 |         text/html  html htm;
+       "text/html" punctuation.definition.variable keyword.directive.module.http.nginx
+       "  html htm;" punctuation.definition.variable
+  46 |         application/vnd.ms-excel xls;
+       "application/vnd.ms-excel" punctuation.definition.variable keyword.directive.module.http.nginx
+       " xls;" punctuation.definition.variable
+  47 |     }
+  48 | }

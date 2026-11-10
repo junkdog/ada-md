@@ -1,0 +1,290 @@
+# GitLink: ada-parse/tests/readings.rs, git_link_examples
+
+## block 1
+   1 | # build output
+       "#" comment.line.git punctuation.definition.comment.git
+       " build output" comment.line.git
+   2 | /target/
+       "/target/" invalid.illegal.gitdir-expected.git.link
+   3 | !keep.me
+       "!keep.me" invalid.illegal.gitdir-expected.git.link
+   4 | *.log ; not a comment
+       "*.log" invalid.illegal.gitdir-expected.git.link
+       ";" invalid.illegal.gitdir-expected.git.link
+       "not" invalid.illegal.gitdir-expected.git.link
+       "a" invalid.illegal.gitdir-expected.git.link
+       "comment" invalid.illegal.gitdir-expected.git.link
+   5 | **/node_modules
+       "**/node_modules" invalid.illegal.gitdir-expected.git.link
+
+## block 2
+   1 | docs/[!a-c]*.md
+       "docs/[!a-c]*.md" invalid.illegal.gitdir-expected.git.link
+   2 | a[]b]c
+       "a[]b]c" invalid.illegal.gitdir-expected.git.link
+   3 | a[x
+       "a[x" invalid.illegal.gitdir-expected.git.link
+   4 | \#literal \ 
+       "\\#literal" invalid.illegal.gitdir-expected.git.link
+       "\\" invalid.illegal.gitdir-expected.git.link
+   5 | $HOME/../.cache/./x
+       "$HOME/../.cache/./x" invalid.illegal.gitdir-expected.git.link
+   6 | C:/drive ~/home
+       "C:/drive" invalid.illegal.gitdir-expected.git.link
+       "~/home" invalid.illegal.gitdir-expected.git.link
+   7 |    
+
+## block 3
+   1 | a[\]b]c [^x] [*?] [ ] [é]
+       "a[\\]b]c" invalid.illegal.gitdir-expected.git.link
+       "[^x]" invalid.illegal.gitdir-expected.git.link
+       "[*?]" invalid.illegal.gitdir-expected.git.link
+       "[" invalid.illegal.gitdir-expected.git.link
+       "]" invalid.illegal.gitdir-expected.git.link
+       "[é]" invalid.illegal.gitdir-expected.git.link
+   2 | x\
+       "x\\" invalid.illegal.gitdir-expected.git.link
+   3 | y\$z\*\é "q" a:b ./x ../y .z/w.v
+       "y\\$z\\*\\é" invalid.illegal.gitdir-expected.git.link
+       "\"q\"" invalid.illegal.gitdir-expected.git.link
+       "a:b" invalid.illegal.gitdir-expected.git.link
+       "./x" invalid.illegal.gitdir-expected.git.link
+       "../y" invalid.illegal.gitdir-expected.git.link
+       ".z/w.v" invalid.illegal.gitdir-expected.git.link
+   4 | [
+       "[" invalid.illegal.gitdir-expected.git.link
+   5 | \
+       "\\" invalid.illegal.gitdir-expected.git.link
+   6 | !
+       "!" invalid.illegal.gitdir-expected.git.link
+   7 | !!x
+       "!!x" invalid.illegal.gitdir-expected.git.link
+
+## block 4
+   1 | # attributes
+       "#" comment.line.git punctuation.definition.comment.git
+       " attributes" comment.line.git
+   2 | * text=auto eol=lf
+       "*" invalid.illegal.gitdir-expected.git.link
+       "text=auto" invalid.illegal.gitdir-expected.git.link
+       "eol=lf" invalid.illegal.gitdir-expected.git.link
+   3 | *.png binary -diff
+       "*.png" invalid.illegal.gitdir-expected.git.link
+       "binary" invalid.illegal.gitdir-expected.git.link
+       "-diff" invalid.illegal.gitdir-expected.git.link
+
+## block 5
+   1 | *.rs diff=rust merge=union filter=lfs encoding=UTF-16 whitespace=tab-in-indent,trailing-space
+       "*.rs" invalid.illegal.gitdir-expected.git.link
+       "diff=rust" invalid.illegal.gitdir-expected.git.link
+       "merge=union" invalid.illegal.gitdir-expected.git.link
+       "filter=lfs" invalid.illegal.gitdir-expected.git.link
+       "encoding=UTF-16" invalid.illegal.gitdir-expected.git.link
+       "whitespace=tab-in-indent,trailing-space" invalid.illegal.gitdir-expected.git.link
+
+## block 6
+   1 | "quoted path" -text !eol custom=a,b, x="q\"v"
+       "\"quoted" invalid.illegal.gitdir-expected.git.link
+       "path\"" invalid.illegal.gitdir-expected.git.link
+       "-text" invalid.illegal.gitdir-expected.git.link
+       "!eol" invalid.illegal.gitdir-expected.git.link
+       "custom=a,b," invalid.illegal.gitdir-expected.git.link
+       "x=\"q\\\"v\"" invalid.illegal.gitdir-expected.git.link
+   2 | [attr]binary -diff -merge -text
+       "[attr]binary" invalid.illegal.gitdir-expected.git.link
+       "-diff" invalid.illegal.gitdir-expected.git.link
+       "-merge" invalid.illegal.gitdir-expected.git.link
+       "-text" invalid.illegal.gitdir-expected.git.link
+   3 | -bad op
+       "-bad" invalid.illegal.gitdir-expected.git.link
+       "op" invalid.illegal.gitdir-expected.git.link
+
+## block 7
+   1 | path/[ab]*.c foo= bar
+       "path/[ab]*.c" invalid.illegal.gitdir-expected.git.link
+       "foo=" invalid.illegal.gitdir-expected.git.link
+       "bar" invalid.illegal.gitdir-expected.git.link
+   2 | x a="open
+       "x" invalid.illegal.gitdir-expected.git.link
+       "a=\"open" invalid.illegal.gitdir-expected.git.link
+   3 | x a=, b=,c ,d a=b,,c a==b a=b=c
+       "x" invalid.illegal.gitdir-expected.git.link
+       "a=," invalid.illegal.gitdir-expected.git.link
+       "b=,c" invalid.illegal.gitdir-expected.git.link
+       ",d" invalid.illegal.gitdir-expected.git.link
+       "a=b,,c" invalid.illegal.gitdir-expected.git.link
+       "a==b" invalid.illegal.gitdir-expected.git.link
+       "a=b=c" invalid.illegal.gitdir-expected.git.link
+   4 |  !x
+       "!x" invalid.illegal.gitdir-expected.git.link
+   5 | "[a" b
+       "\"[a\"" invalid.illegal.gitdir-expected.git.link
+       "b" invalid.illegal.gitdir-expected.git.link
+   6 | "a
+       "\"a" invalid.illegal.gitdir-expected.git.link
+   7 | b\
+       "b\\" invalid.illegal.gitdir-expected.git.link
+   8 | c d
+       "c" invalid.illegal.gitdir-expected.git.link
+       "d" invalid.illegal.gitdir-expected.git.link
+
+## block 8
+   1 | x textual eolx diffx -diff- a-b- a--b _ é=é [ab] [-x] [!x] [a] b
+       "x" invalid.illegal.gitdir-expected.git.link
+       "textual" invalid.illegal.gitdir-expected.git.link
+       "eolx" invalid.illegal.gitdir-expected.git.link
+       "diffx" invalid.illegal.gitdir-expected.git.link
+       "-diff-" invalid.illegal.gitdir-expected.git.link
+       "a-b-" invalid.illegal.gitdir-expected.git.link
+       "a--b" invalid.illegal.gitdir-expected.git.link
+       "_" invalid.illegal.gitdir-expected.git.link
+       "é=é" invalid.illegal.gitdir-expected.git.link
+       "[ab]" invalid.illegal.gitdir-expected.git.link
+       "[-x]" invalid.illegal.gitdir-expected.git.link
+       "[!x]" invalid.illegal.gitdir-expected.git.link
+       "[a]" invalid.illegal.gitdir-expected.git.link
+       "b" invalid.illegal.gitdir-expected.git.link
+   2 |  x\t\ty="\t\x" z=" "
+       "x" invalid.illegal.gitdir-expected.git.link
+       "y=\"\\t\\x\"" invalid.illegal.gitdir-expected.git.link
+       "z=\"" invalid.illegal.gitdir-expected.git.link
+       "\"" invalid.illegal.gitdir-expected.git.link
+
+## block 9
+   1 | # mailmap
+       "#" comment.line.git punctuation.definition.comment.git
+       " mailmap" comment.line.git
+   2 | Proper Name <proper@email.xx>
+       "Proper" invalid.illegal.gitdir-expected.git.link
+       "Name" invalid.illegal.gitdir-expected.git.link
+       "<proper@email.xx>" invalid.illegal.gitdir-expected.git.link
+   3 | <proper@email.xx> <commit@email.xx>
+       "<proper@email.xx>" invalid.illegal.gitdir-expected.git.link
+       "<commit@email.xx>" invalid.illegal.gitdir-expected.git.link
+
+## block 10
+   1 | Proper Name <proper@email.xx> Commit Name <commit@email.xx>
+       "Proper" invalid.illegal.gitdir-expected.git.link
+       "Name" invalid.illegal.gitdir-expected.git.link
+       "<proper@email.xx>" invalid.illegal.gitdir-expected.git.link
+       "Commit" invalid.illegal.gitdir-expected.git.link
+       "Name" invalid.illegal.gitdir-expected.git.link
+       "<commit@email.xx>" invalid.illegal.gitdir-expected.git.link
+   2 | Name Only
+       "Name" invalid.illegal.gitdir-expected.git.link
+       "Only" invalid.illegal.gitdir-expected.git.link
+   3 | <bad email> x
+       "<bad" invalid.illegal.gitdir-expected.git.link
+       "email>" invalid.illegal.gitdir-expected.git.link
+       "x" invalid.illegal.gitdir-expected.git.link
+
+## block 11
+   1 | a <b@c.d.e> f ; g
+       "a" invalid.illegal.gitdir-expected.git.link
+       "<b@c.d.e>" invalid.illegal.gitdir-expected.git.link
+       "f" invalid.illegal.gitdir-expected.git.link
+       ";" invalid.illegal.gitdir-expected.git.link
+       "g" invalid.illegal.gitdir-expected.git.link
+   2 | <<a>> <> <a <a@b@c.d> a\t <x>
+       "<<a>>" invalid.illegal.gitdir-expected.git.link
+       "<>" invalid.illegal.gitdir-expected.git.link
+       "<a" invalid.illegal.gitdir-expected.git.link
+       "<a@b@c.d>" invalid.illegal.gitdir-expected.git.link
+       "a" invalid.illegal.gitdir-expected.git.link
+       "<x>" invalid.illegal.gitdir-expected.git.link
+   3 | name ;comment <x>
+       "name" invalid.illegal.gitdir-expected.git.link
+       ";comment" invalid.illegal.gitdir-expected.git.link
+       "<x>" invalid.illegal.gitdir-expected.git.link
+   4 | \u{d}<a>
+       "<a>" invalid.illegal.gitdir-expected.git.link
+
+## block 12
+   1 | gitdir: ../.git/modules/sub
+       "gitdir" meta.mapping.key.git.link keyword.other.gitdir.git.link
+       ":" meta.mapping.git.link punctuation.separator.mapping.key-value.git.link
+       " " meta.mapping.value.git.link
+       ".." meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link constant.language.path.parent.git.link
+       "/" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.path.git.link
+       ".git" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link
+       "/" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.path.git.link
+       "modules" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link
+       "/" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.path.git.link
+       "sub" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link
+   2 |   gitdir :C:\repo\.git.
+       "gitdir" meta.mapping.key.git.link keyword.other.gitdir.git.link
+       " " meta.mapping.key.git.link
+       ":" meta.mapping.git.link punctuation.separator.mapping.key-value.git.link
+       "C" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link
+       ":" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.drive.git.link
+       "\\" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.path.git.link
+       "repo" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link
+       "\\" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.path.git.link
+       ".git" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link
+       "." meta.mapping.value.git.link punctuation.terminator.path.git.link
+   3 | gitdir: ~/x/*
+       "gitdir" meta.mapping.key.git.link keyword.other.gitdir.git.link
+       ":" meta.mapping.git.link punctuation.separator.mapping.key-value.git.link
+       " " meta.mapping.value.git.link
+       "~" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link variable.language.environment.home.git.link
+       "/" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.path.git.link
+       "x" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link
+       "/" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.path.git.link
+       "*" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link invalid.illegal.path.git.link
+   4 | notgitdir: x
+       "notgitdir:" invalid.illegal.gitdir-expected.git.link
+       "x" invalid.illegal.gitdir-expected.git.link
+
+## block 13
+   1 | # comment
+       "#" comment.line.git punctuation.definition.comment.git
+       " comment" comment.line.git
+   2 | gitdir
+       "gitdir" meta.mapping.key.git.link keyword.other.gitdir.git.link
+   3 | x
+       "x" meta.mapping.key.git.link invalid.illegal.separator-expected.git.link
+   4 | gitdir x : y
+       "gitdir" meta.mapping.key.git.link invalid.illegal.separator-expected.git.link
+       " " meta.mapping.key.git.link
+       "x" meta.mapping.key.git.link invalid.illegal.separator-expected.git.link
+       " " meta.mapping.key.git.link
+       ":" meta.mapping.git.link punctuation.separator.mapping.key-value.git.link
+       " " meta.mapping.value.git.link
+       "y" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link
+   5 | gitdir:
+       "gitdir" meta.mapping.key.git.link keyword.other.gitdir.git.link
+       ":" meta.mapping.git.link punctuation.separator.mapping.key-value.git.link
+   6 | gitdir: a/..\./b.c.
+       "gitdir" meta.mapping.key.git.link keyword.other.gitdir.git.link
+       ":" meta.mapping.git.link punctuation.separator.mapping.key-value.git.link
+       " " meta.mapping.value.git.link
+       "a" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link
+       "/" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.path.git.link
+       ".." meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link constant.language.path.parent.git.link
+       "\\" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.path.git.link
+       "." meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link constant.language.path.self.git.link
+       "/" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.path.git.link
+       "b.c" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link
+       "." meta.mapping.value.git.link punctuation.terminator.path.git.link
+   7 |  gitdir: .
+       "gitdir" meta.mapping.key.git.link keyword.other.gitdir.git.link
+       ":" meta.mapping.git.link punctuation.separator.mapping.key-value.git.link
+       " " meta.mapping.value.git.link
+       "." meta.mapping.value.git.link punctuation.terminator.path.git.link
+
+## block 14
+   1 | a"b c x"y="z" "q"r s
+       "a\"b" invalid.illegal.gitdir-expected.git.link
+       "c" invalid.illegal.gitdir-expected.git.link
+       "x\"y=\"z\"" invalid.illegal.gitdir-expected.git.link
+       "\"q\"r" invalid.illegal.gitdir-expected.git.link
+       "s" invalid.illegal.gitdir-expected.git.link
+   2 | ab"[c" d
+       "ab\"[c\"" invalid.illegal.gitdir-expected.git.link
+       "d" invalid.illegal.gitdir-expected.git.link
+
+## block 15
+
+## block 16
+   1 | 
+   2 | 

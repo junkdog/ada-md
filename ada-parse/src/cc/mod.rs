@@ -489,11 +489,10 @@ impl crate::CarryRuns for Scan<'_, '_, Runs<'_>> {
 struct Scan<'b, 'c, K: Sink> {
     b: &'b [u8],
     /// What each open `{` opened, two bits a level, the innermost lowest; past [`LEVELS`] the
-    /// outer ones are lost (and the state inexact).
+    /// outer ones are lost.
     braces: u128,
     /// How many `{` are open, up to 255.
     depth: u8,
-    exact: bool,
     /// What the line ends in so far ([`M_CODE`]…).
     mode: u8,
     /// The `#if`s open since an `#if 1`, it among them (0: none): the `#else` that closes it
@@ -553,7 +552,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             b,
             braces: 0,
             depth: 0,
-            exact: true,
             mode: M_CODE,
             one: 0,
             pp: PP_NONE,
@@ -591,7 +589,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.braces = u128::from_le_bytes(w);
         self.one = state.withs[1];
         self.depth = state.depth;
-        self.exact = !state.inexact;
         let a = state.arg;
         self.mode = (a & A_MODE) as u8;
         self.pp = (a >> A_PP & 3) as u8;
@@ -632,7 +629,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             | if self.kw { 0x80 } else { 0 };
         s.withs[W_DECL + 3] = self.ifd;
         s.depth = self.depth;
-        s.inexact = !self.exact;
         s.arg = u16::from(self.mode)
             | u16::from(self.pp) << A_PP
             | u16::from(self.aux) << A_AUX
@@ -728,9 +724,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         };
         self.pending = NO_PENDING;
         self.braces = self.braces << 2 | u128::from(kind);
-        if self.depth == u8::MAX || usize::from(self.depth) >= LEVELS {
-            self.exact = false;
-        }
         self.depth = self.depth.saturating_add(1);
     }
 

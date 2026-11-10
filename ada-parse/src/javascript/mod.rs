@@ -868,7 +868,6 @@ pub(super) struct Scan<'b, 'c, K: Sink> {
     depth: usize,
     /// The top frame, `stack[depth - 1]`.
     cur: u8,
-    exact: bool,
     /// The previous significant token ([`P_START`] …).
     prev: u8,
     /// Whether a line came before this one in the state's run (a shebang only on the first).
@@ -895,13 +894,12 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// (a scan changed before it's returned is copied whole, a line's fixed cost); the state is
     /// [`Scan::load`]'s.
     #[inline(always)]
-    fn fresh(b: &'b [u8], from: usize, state: &State, out: &'b mut Out<'c>, k: K) -> Self {
+    fn fresh(b: &'b [u8], from: usize, out: &'b mut Out<'c>, k: K) -> Self {
         Scan {
             b,
             stack: [F_TOP; MAX],
             depth: 1,
             cur: F_TOP,
-            exact: state.is_exact(),
             prev: P_START,
             later: false,
             at: from,
@@ -931,7 +929,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(always)]
     fn keep(&self) -> State {
         let arg = u16::from(self.prev) | ARG_LATER;
-        State::keep(&self.stack, self.depth, self.exact, arg)
+        State::keep(&self.stack, self.depth, arg)
     }
 
     /// The line lexed from `from`.
@@ -979,7 +977,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[cold]
     #[inline(never)]
     fn full(&mut self) {
-        crate::stack::drop_bottom(&mut self.stack, &mut self.depth, &mut self.exact);
+        crate::stack::drop_bottom(&mut self.stack, &mut self.depth);
     }
 
     #[inline(always)]
@@ -2472,7 +2470,7 @@ fn skip_blanks(b: &[u8], mut p: usize) -> usize {
 /// Lex `b`, a line of JavaScript without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut s = Scan::fresh(b, 0, state, out, Spans::new());
+    let mut s = Scan::fresh(b, 0, out, Spans::new());
     s.load(state);
     s.k.open(s.out, b.len() / 4 + 16);
     s.lex(0);
@@ -2484,7 +2482,7 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
 /// `state`.
 #[inline(never)]
 pub(crate) fn line_from(b: &[u8], from: usize, state: &mut State, out: &mut Out) {
-    let mut s = Scan::fresh(b, from, state, out, Push);
+    let mut s = Scan::fresh(b, from, out, Push);
     s.load(state);
     s.lex(from);
     *state = s.keep();
@@ -2499,7 +2497,7 @@ pub fn line_runs(
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
 ) {
-    let mut s = Scan::fresh(b, 0, state, out, Runs::new(rules, runs));
+    let mut s = Scan::fresh(b, 0, out, Runs::new(rules, runs));
     s.load(state);
     s.lex(0);
     *state = s.keep();
@@ -2514,7 +2512,7 @@ pub fn block(
 ) -> Option<usize> {
     let mut out = Out::new(spans);
     out.0.clear();
-    let mut s = Scan::fresh(b"", 0, state, &mut out, Spans::new());
+    let mut s = Scan::fresh(b"", 0, &mut out, Spans::new());
     s.load(state);
     s.k.open(s.out, 64);
     let rest = pass(&mut s);
@@ -2532,7 +2530,7 @@ pub fn block_runs(
 ) -> Option<usize> {
     let mut out = Out::new(spans);
     out.0.clear();
-    let mut s = Scan::fresh(b"", 0, state, &mut out, Runs::new(rules, runs));
+    let mut s = Scan::fresh(b"", 0, &mut out, Runs::new(rules, runs));
     s.load(state);
     let rest = lines.pass(&mut s);
     *state = s.keep_block();
@@ -2544,7 +2542,7 @@ impl<K: Sink> Scan<'_, '_, K> {
     /// leaves the state it was given).
     fn keep_block(&self) -> State {
         let arg = u16::from(self.prev) | if self.later { ARG_LATER } else { 0 };
-        State::keep(&self.stack, self.depth, self.exact, arg)
+        State::keep(&self.stack, self.depth, arg)
     }
 }
 
@@ -2575,7 +2573,7 @@ impl<'b, K: Sink> Scan<'b, '_, K> {
         self.at = 0;
         self.lex(0);
         // the line's end as a state's save and load leave it
-        crate::stack::hold(&mut self.stack, &mut self.depth, &mut self.exact);
+        crate::stack::hold(&mut self.stack, &mut self.depth);
         self.b = b"";
     }
 }

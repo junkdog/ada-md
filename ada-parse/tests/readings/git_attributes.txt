@@ -1,0 +1,107 @@
+# GitAttributes: ada-parse/tests/readings.rs, git_attributes
+   1 | # attributes
+       "#" comment.line.git punctuation.definition.comment.git
+       " attributes" comment.line.git
+   2 | * text=auto eol=lf
+       "*" string.unquoted.git.attributes entity.name.pattern.git.attributes keyword.operator.path.asterisk.fnmatch.git
+       " " meta.attributes-list.git.attributes meta.mapping.git.attributes
+       "text" meta.attributes-list.git.attributes meta.attribute.builtin.text.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+       "=" meta.attributes-list.git.attributes meta.attribute.builtin.text.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.key-value.git.attributes
+       "auto" meta.attributes-list.git.attributes meta.attribute.builtin.text.git.attributes meta.mapping.value.git.attributes string.unquoted.git.attributes
+       " " meta.attributes-list.git.attributes meta.attribute.builtin.text.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.pair.git.attributes
+       "eol" meta.attributes-list.git.attributes meta.attribute.builtin.eol.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+       "=" meta.attributes-list.git.attributes meta.attribute.builtin.eol.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.key-value.git.attributes
+       "lf" meta.attributes-list.git.attributes meta.attribute.builtin.eol.git.attributes meta.mapping.value.git.attributes string.unquoted.git.attributes
+   3 | *.png binary -diff
+       "*" string.unquoted.git.attributes entity.name.pattern.git.attributes keyword.operator.path.asterisk.fnmatch.git
+       "." string.unquoted.git.attributes entity.name.pattern.git.attributes punctuation.separator.path.extension.fnmatch.git
+       "png" string.unquoted.git.attributes entity.name.pattern.git.attributes
+       " " meta.attributes-list.git.attributes meta.mapping.git.attributes
+       "binary" meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+       " " meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.pair.git.attributes
+       "-" meta.attributes-list.git.attributes keyword.operator.logical.git.attributes
+       "diff" meta.attributes-list.git.attributes meta.attribute.builtin.diff.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+   4 | *.rs diff=rust merge=union filter=lfs encoding=UTF-16 whitespace=tab-in-indent,trailing-space
+       "*" string.unquoted.git.attributes entity.name.pattern.git.attributes keyword.operator.path.asterisk.fnmatch.git
+       "." string.unquoted.git.attributes entity.name.pattern.git.attributes punctuation.separator.path.extension.fnmatch.git
+       "rs" string.unquoted.git.attributes entity.name.pattern.git.attributes
+       " " meta.attributes-list.git.attributes meta.mapping.git.attributes
+       "diff" meta.attributes-list.git.attributes meta.attribute.builtin.diff.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+       "=" meta.attributes-list.git.attributes meta.attribute.builtin.diff.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.key-value.git.attributes
+       "rust" meta.attributes-list.git.attributes meta.attribute.builtin.diff.git.attributes meta.mapping.value.git.attributes string.unquoted.git.attributes
+       " " meta.attributes-list.git.attributes meta.attribute.builtin.diff.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.pair.git.attributes
+       "merge" meta.attributes-list.git.attributes meta.attribute.builtin.merge.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+       "=" meta.attributes-list.git.attributes meta.attribute.builtin.merge.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.key-value.git.attributes
+       "union" meta.attributes-list.git.attributes meta.attribute.builtin.merge.git.attributes meta.mapping.value.git.attributes string.unquoted.git.attributes
+       " " meta.attributes-list.git.attributes meta.attribute.builtin.merge.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.pair.git.attributes
+       "filter" meta.attributes-list.git.attributes meta.attribute.builtin.filter.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+       "=" meta.attributes-list.git.attributes meta.attribute.builtin.filter.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.key-value.git.attributes
+       "lfs" meta.attributes-list.git.attributes meta.attribute.builtin.filter.git.attributes meta.mapping.value.git.attributes string.unquoted.git.attributes
+       " " meta.attributes-list.git.attributes meta.attribute.builtin.filter.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.pair.git.attributes
+       "encoding" meta.attributes-list.git.attributes meta.attribute.builtin.encoding.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+       "=" meta.attributes-list.git.attributes meta.attribute.builtin.encoding.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.key-value.git.attributes
+       "UTF-16" meta.attributes-list.git.attributes meta.attribute.builtin.encoding.git.attributes meta.mapping.value.git.attributes string.unquoted.git.attributes
+       " " meta.attributes-list.git.attributes meta.attribute.builtin.encoding.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.pair.git.attributes
+       "whitespace" meta.attributes-list.git.attributes meta.attribute.builtin.whitespace.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+       "=" meta.attributes-list.git.attributes meta.attribute.builtin.whitespace.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.key-value.git.attributes
+       "tab-in-indent" meta.attributes-list.git.attributes meta.attribute.builtin.whitespace.git.attributes meta.mapping.value.git.attributes string.unquoted.git.attributes
+       "," meta.attributes-list.git.attributes meta.attribute.builtin.whitespace.git.attributes meta.mapping.value.git.attributes punctuation.separator.mapping.values.git.attributes
+       "trailing-space" meta.attributes-list.git.attributes meta.attribute.builtin.whitespace.git.attributes meta.mapping.value.git.attributes string.unquoted.git.attributes
+   5 | "quoted path" -text !eol custom=a,b, x="q\"v"
+       "\"" string.quoted.double.git.attributes punctuation.definition.string.begin.git.attributes
+       "quoted path" string.quoted.double.git.attributes entity.name.pattern.git.attributes
+       "\"" string.quoted.double.git.attributes punctuation.definition.string.end.git.attributes
+       " " meta.attributes-list.git.attributes meta.mapping.git.attributes
+       "-" meta.attributes-list.git.attributes keyword.operator.logical.git.attributes
+       "text" meta.attributes-list.git.attributes meta.attribute.builtin.text.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+       " " meta.attributes-list.git.attributes meta.attribute.builtin.text.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.pair.git.attributes
+       "!" meta.attributes-list.git.attributes keyword.operator.logical.git.attributes
+       "eol" meta.attributes-list.git.attributes meta.attribute.builtin.eol.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+       " " meta.attributes-list.git.attributes meta.attribute.builtin.eol.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.pair.git.attributes
+       "custom" meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+       "=" meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.key-value.git.attributes
+       "a" meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.value.git.attributes string.unquoted.git.attributes
+       "," meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.value.git.attributes punctuation.separator.mapping.values.git.attributes
+       "b" meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.value.git.attributes string.unquoted.git.attributes
+       "," meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.value.git.attributes punctuation.separator.mapping.values.git.attributes
+       " " meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.expect-value.git.attributes punctuation.separator.mapping.pair.git.attributes
+       "x" meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+       "=" meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.key-value.git.attributes
+       "\"" meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.value.git.attributes string.quoted.double.git.attributes punctuation.definition.string.begin.git.attributes
+       "q" meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.value.git.attributes string.quoted.double.git.attributes
+       "\\\"" meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.value.git.attributes string.quoted.double.git.attributes constant.character.escape.git.attributes
+       "v" meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.value.git.attributes string.quoted.double.git.attributes
+       "\"" meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.value.git.attributes string.quoted.double.git.attributes punctuation.definition.string.end.git.attributes
+   6 | [attr]binary -diff -merge -text
+       "[" meta.brackets.git.attributes punctuation.definition.brackets.begin.git.attributes
+       "attr" meta.brackets.git.attributes string.unquoted.git.attributes entity.name.macro.git.attributes
+       "]" meta.brackets.git.attributes punctuation.definition.brackets.end.git.attributes
+       "binary" meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+       " " meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.pair.git.attributes
+       "-" meta.attributes-list.git.attributes keyword.operator.logical.git.attributes
+       "diff" meta.attributes-list.git.attributes meta.attribute.builtin.diff.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+       " " meta.attributes-list.git.attributes meta.attribute.builtin.diff.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.pair.git.attributes
+       "-" meta.attributes-list.git.attributes keyword.operator.logical.git.attributes
+       "merge" meta.attributes-list.git.attributes meta.attribute.builtin.merge.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+       " " meta.attributes-list.git.attributes meta.attribute.builtin.merge.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.pair.git.attributes
+       "-" meta.attributes-list.git.attributes keyword.operator.logical.git.attributes
+       "text" meta.attributes-list.git.attributes meta.attribute.builtin.text.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+   7 | -bad op
+       "-" invalid.illegal.operator.git.attributes
+       "bad" string.unquoted.git.attributes entity.name.pattern.git.attributes
+       " " meta.attributes-list.git.attributes meta.mapping.git.attributes
+       "op" meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+   8 | path/[ab]*.c foo= bar
+       "path" string.unquoted.git.attributes entity.name.pattern.git.attributes
+       "/" string.unquoted.git.attributes entity.name.pattern.git.attributes punctuation.separator.path.fnmatch.git
+       "[" string.unquoted.git.attributes entity.name.pattern.git.attributes meta.char-class.fnmatch.git keyword.control.char-class.begin.fnmatch.git
+       "ab" string.unquoted.git.attributes entity.name.pattern.git.attributes meta.char-class.fnmatch.git constant.character.char-class.fnmatch.git
+       "]" string.unquoted.git.attributes entity.name.pattern.git.attributes meta.char-class.fnmatch.git keyword.control.char-class.end.fnmatch.git
+       "*" string.unquoted.git.attributes entity.name.pattern.git.attributes keyword.operator.path.asterisk.fnmatch.git
+       "." string.unquoted.git.attributes entity.name.pattern.git.attributes punctuation.separator.path.extension.fnmatch.git
+       "c" string.unquoted.git.attributes entity.name.pattern.git.attributes
+       " " meta.attributes-list.git.attributes meta.mapping.git.attributes
+       "foo" meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes
+       "=" meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.git.attributes punctuation.separator.mapping.key-value.git.attributes
+       " " meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.expect-value.git.attributes punctuation.separator.mapping.pair.git.attributes
+       "bar" meta.attributes-list.git.attributes meta.attribute.other.git.attributes meta.mapping.key.git.attributes variable.language.attribute.git.attributes

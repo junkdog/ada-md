@@ -1073,7 +1073,6 @@ struct Scan<'b, 'c, K: Sink> {
     frames: [u8; FRAMES],
     /// How many of [`Scan::frames`]' bytes are open.
     depth: u8,
-    exact: bool,
     /// What the line starts in ([`M_CODE`]…).
     mode: u8,
     /// The here-documents waiting for their bodies, in their openers' order.
@@ -1109,7 +1108,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             b,
             frames: [0; FRAMES],
             depth: 0,
-            exact: true,
             mode: M_CODE,
             queue: Queue::new(),
             literal: 0,
@@ -1136,7 +1134,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             self.frames[14..KEPT].copy_from_slice(&state.withs[..KEPT - 14]);
         }
         self.depth = d as u8;
-        self.exact = !state.inexact;
         let arg = state.arg;
         self.mode = (arg & 3) as u8;
         let queued = usize::from(arg >> 2 & 3);
@@ -1153,13 +1150,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn state(&self) -> State {
         let mut s = State::default();
         let mut d = usize::from(self.depth);
-        let mut exact = self.exact;
         let mut base = self.base.min(self.depth);
         if d > 0 {
             let from = d.saturating_sub(KEPT);
             base = base.saturating_sub(from as u8);
             if from > 0 {
-                exact = false;
                 d = KEPT;
             }
             let mut w = [0u8; KEPT];
@@ -1168,7 +1163,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             s.withs[..KEPT - 14].copy_from_slice(&w[14..]);
         }
         s.depth = d as u8;
-        s.inexact = !exact;
         let mut arg = u16::from(self.mode);
         if !self.queue.is_empty() {
             self.queue.save(&mut s.withs[6..14]);
@@ -1204,7 +1198,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         let from = d - KEPT;
         self.frames.copy_within(from..d, 0);
         self.depth = KEPT as u8;
-        self.exact = false;
         self.base = self.base.saturating_sub(from as u8);
     }
 
@@ -1234,8 +1227,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         if usize::from(self.depth) < FRAMES {
             self.frames[usize::from(self.depth)] = f;
             self.depth += 1;
-        } else {
-            self.exact = false;
         }
     }
 
@@ -1251,8 +1242,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             self.frames[usize::from(self.depth)] = aux;
             self.frames[usize::from(self.depth) + 1] = byte;
             self.depth += 2;
-        } else {
-            self.exact = false;
         }
     }
 
@@ -1267,8 +1256,6 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             self.frames[d + 2] = byte;
             self.re_x = 0;
             self.depth += 3;
-        } else {
-            self.exact = false;
         }
     }
 
@@ -4057,7 +4044,6 @@ mod tests {
         let k = text.lines().position(|l| l == "k").unwrap();
         assert_eq!(one[k].1.arg & 3, u16::from(M_CODE));
         assert_eq!(one[k].1.depth, 0);
-        assert!(!one[k + 1].1.is_exact());
     }
 
     #[test]
@@ -4104,7 +4090,6 @@ mod tests {
             None
         });
         assert_eq!(all, one.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
-        assert!(!one[0].1.is_exact());
     }
 
     #[test]

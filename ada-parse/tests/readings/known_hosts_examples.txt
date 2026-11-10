@@ -1,0 +1,195 @@
+# KnownHosts: ada-parse/tests/readings.rs, known_hosts_examples
+
+## block 1
+   1 | # c
+       "#" comment.line.number-sign.ssh.common punctuation.definition.comment.ssh.common
+       " c" comment.line.number-sign.ssh.common
+   2 |   # c
+       "#" comment.line.number-sign.ssh.common punctuation.definition.comment.ssh.common
+       " c" comment.line.number-sign.ssh.common
+   3 | @revoked [a,b*]:22,1.2.3.4 ssh-rsa AAAAB3Nza+/= my label 
+       "@" meta.line.known-host.known_hosts meta.annotation.known_hosts variable.annotation.known_hosts punctuation.definition.annotation.known_hosts
+       "revoked" meta.line.known-host.known_hosts meta.annotation.known_hosts variable.annotation.known_hosts
+       " " meta.line.known-host.known_hosts
+       "[" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.begin.known_hosts
+       "a,b" meta.line.known-host.known_hosts meta.brackets.host.known_hosts meta.string.host.known_hosts string.quoted.other.known_hosts
+       "*" meta.line.known-host.known_hosts meta.brackets.host.known_hosts meta.string.host.known_hosts string.quoted.other.known_hosts keyword.operator.wildcard.known_hosts
+       "]" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.end.known_hosts
+       ":" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.separator.sequence.known_hosts
+       "22" meta.line.known-host.known_hosts meta.brackets.host.known_hosts constant.numeric.integer.decimal.known_hosts
+       "," meta.line.known-host.known_hosts punctuation.separator.sequence.known_hosts
+       "1.2.3.4" meta.line.known-host.known_hosts constant.numeric.ip-address.v4.ssh.common
+       " " meta.line.known-host.known_hosts
+       "ssh-rsa" meta.line.known-host.known_hosts support.type.key-type
+       " " meta.line.known-host.known_hosts
+       "AAAAB3Nza+/=" meta.line.known-host.known_hosts variable.other.fingerprint.ssh.common
+       " " meta.line.known-host.known_hosts
+       "my label" meta.line.known-host.known_hosts meta.annotation.identifier.ssh.common string.unquoted.ssh.common
+       " " meta.line.known-host.known_hosts
+
+## block 2
+   1 | |1|abcdefghijklmnopqrstuvwxyz0=|abcdefghijklmnopqrstuvwxyz0= ssh-dss AAAAC3x
+       "|" meta.line.known-host.known_hosts meta.string.host.obfuscated.known_hosts punctuation.definition.known_hosts
+       "1" meta.line.known-host.known_hosts meta.string.host.obfuscated.known_hosts constant.numeric.integer.algorithm.known_hosts
+       "|" meta.line.known-host.known_hosts meta.string.host.obfuscated.known_hosts punctuation.definition.known_hosts
+       "abcdefghijklmnopqrstuvwxyz0=" meta.line.known-host.known_hosts meta.string.host.obfuscated.known_hosts string.unquoted.salt.known_hosts
+       "|" meta.line.known-host.known_hosts meta.string.host.obfuscated.known_hosts punctuation.definition.known_hosts
+       "abcdefghijklmnopqrstuvwxyz0=" meta.line.known-host.known_hosts meta.string.host.obfuscated.known_hosts string.unquoted.hash.known_hosts
+       " " meta.line.known-host.known_hosts
+       "ssh-dss" meta.line.known-host.known_hosts invalid.deprecated.key-type
+       " " meta.line.known-host.known_hosts
+       "AAAAC3x" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+
+## block 3
+   1 | [foo
+       "[" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.begin.known_hosts
+       "foo" meta.line.known-host.known_hosts meta.brackets.host.known_hosts meta.string.host.known_hosts string.quoted.other.known_hosts
+   2 | bar]x
+       "bar" meta.line.known-host.known_hosts meta.brackets.host.known_hosts meta.string.host.known_hosts string.quoted.other.known_hosts
+       "]" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.end.known_hosts
+       "x" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+   3 | [a
+       "[" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.begin.known_hosts
+       "a" meta.line.known-host.known_hosts meta.brackets.host.known_hosts meta.string.host.known_hosts string.quoted.other.known_hosts
+   4 | ,b
+       ",b" meta.line.known-host.known_hosts meta.brackets.host.known_hosts meta.string.host.known_hosts string.quoted.other.known_hosts
+   5 | ]:123456,c
+       "]" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.end.known_hosts
+       ":" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.separator.sequence.known_hosts
+       "12345" meta.line.known-host.known_hosts meta.brackets.host.known_hosts constant.numeric.integer.decimal.known_hosts
+       "6" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+       "," meta.line.known-host.known_hosts punctuation.separator.sequence.known_hosts
+       "c" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+
+## block 4
+   1 | github.com,140.82.121.4 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+       "github.com" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+       "," meta.line.known-host.known_hosts punctuation.separator.sequence.known_hosts
+       "140.82.121.4" meta.line.known-host.known_hosts constant.numeric.ip-address.v4.ssh.common
+       " " meta.line.known-host.known_hosts
+       "ssh-ed25519" meta.line.known-host.known_hosts support.type.key-type
+       " " meta.line.known-host.known_hosts
+       "AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" meta.line.known-host.known_hosts variable.other.fingerprint.ssh.common
+
+## block 5
+   1 | [::1]:22,::ffff:1.2.3.4,fe80::7:8%eth0,1:2:3:4:5:6:7:8 ecdsa-sha2-nistp256 AAAAE2VjZHNh=
+       "[" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.begin.known_hosts
+       "::1" meta.line.known-host.known_hosts meta.brackets.host.known_hosts constant.numeric.ip-address.v6.ssh.common
+       "]" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.end.known_hosts
+       ":" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.separator.sequence.known_hosts
+       "22" meta.line.known-host.known_hosts meta.brackets.host.known_hosts constant.numeric.integer.decimal.known_hosts
+       "," meta.line.known-host.known_hosts punctuation.separator.sequence.known_hosts
+       "::ffff:1.2.3.4" meta.line.known-host.known_hosts constant.numeric.ip-address.v6.ssh.common
+       "," meta.line.known-host.known_hosts punctuation.separator.sequence.known_hosts
+       "fe80::7:8%eth0" meta.line.known-host.known_hosts constant.numeric.ip-address.v6.ssh.common
+       "," meta.line.known-host.known_hosts punctuation.separator.sequence.known_hosts
+       "1:2:3:4:5:6:7:8" meta.line.known-host.known_hosts constant.numeric.ip-address.v6.ssh.common
+       " " meta.line.known-host.known_hosts
+       "ecdsa-sha2-nistp256" meta.line.known-host.known_hosts support.type.key-type
+       " " meta.line.known-host.known_hosts
+       "AAAAE2VjZHNh=" meta.line.known-host.known_hosts variable.other.fingerprint.ssh.common
+
+## block 6
+   1 | [!1.2.3.4,::1]x !a*b?c ssh-rsa,ssh-dss x509v3-ssh-rs"x AAAAB3N
+       "[" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.begin.known_hosts
+       "!" meta.line.known-host.known_hosts meta.brackets.host.known_hosts keyword.operator.logical.known_hosts
+       "1.2.3.4" meta.line.known-host.known_hosts meta.brackets.host.known_hosts constant.numeric.ip-address.v4.ssh.common
+       ",::1" meta.line.known-host.known_hosts meta.brackets.host.known_hosts meta.string.host.known_hosts string.quoted.other.known_hosts
+       "]" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.end.known_hosts
+       "x" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+       " " meta.line.known-host.known_hosts
+       "!" meta.line.known-host.known_hosts keyword.operator.logical.known_hosts
+       "a" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+       "*" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts keyword.operator.wildcard.known_hosts
+       "b" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+       "?" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts keyword.operator.wildcard.known_hosts
+       "c" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+       " " meta.line.known-host.known_hosts
+       "ssh-rsa" meta.line.known-host.known_hosts support.type.key-type
+       "," meta.line.known-host.known_hosts punctuation.separator.sequence.known_hosts
+       "ssh-dss" meta.line.known-host.known_hosts invalid.deprecated.key-type
+       " " meta.line.known-host.known_hosts
+       "x509v3-ssh-rs" meta.line.known-host.known_hosts support.type.key-type
+       "\"x" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+       " " meta.line.known-host.known_hosts
+       "AAAAB3N" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+
+## block 7
+   1 | @cert-authority *.example.com ssh-rsa AAAAB3NzaC1yc2E== a\u{b}
+       "@" meta.line.known-host.known_hosts meta.annotation.known_hosts variable.annotation.known_hosts punctuation.definition.annotation.known_hosts
+       "cert-authority" meta.line.known-host.known_hosts meta.annotation.known_hosts variable.annotation.known_hosts
+       " " meta.line.known-host.known_hosts
+       "*" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts keyword.operator.wildcard.known_hosts
+       ".example.com" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+       " " meta.line.known-host.known_hosts
+       "ssh-rsa" meta.line.known-host.known_hosts support.type.key-type
+       " " meta.line.known-host.known_hosts
+       "AAAAB3NzaC1yc2E==" meta.line.known-host.known_hosts variable.other.fingerprint.ssh.common
+       " a\u{b}" meta.line.known-host.known_hosts
+   2 | @revokedX y
+       "@" meta.line.known-host.known_hosts meta.annotation.known_hosts variable.annotation.known_hosts punctuation.definition.annotation.known_hosts
+       "revoked" meta.line.known-host.known_hosts meta.annotation.known_hosts variable.annotation.known_hosts
+       "X" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+       " " meta.line.known-host.known_hosts
+       "y" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+   3 |   @revoked z
+       "  " meta.line.known-host.known_hosts
+       "@revoked" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+       " " meta.line.known-host.known_hosts
+       "z" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+
+## block 8
+   1 | a AAAAB3Nza==ssh-rsa b
+       "a" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+       " " meta.line.known-host.known_hosts
+       "AAAAB3Nza==" meta.line.known-host.known_hosts variable.other.fingerprint.ssh.common
+       "ssh-rsa b" meta.line.known-host.known_hosts meta.annotation.identifier.ssh.common string.unquoted.ssh.common
+   2 | 1.2.3.456 1.2.3.4a ::1abg x::1 AAAAB3Nz\u{b} a  
+       "1.2.3.456" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+       " " meta.line.known-host.known_hosts
+       "1.2.3.4a" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+       " " meta.line.known-host.known_hosts
+       "::1ab" meta.line.known-host.known_hosts constant.numeric.ip-address.v6.ssh.common
+       "g" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+       " " meta.line.known-host.known_hosts
+       "x::1" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+       " " meta.line.known-host.known_hosts
+       "AAAAB3Nz" meta.line.known-host.known_hosts variable.other.fingerprint.ssh.common
+       "\u{b} " meta.line.known-host.known_hosts
+       "a" meta.line.known-host.known_hosts meta.annotation.identifier.ssh.common string.unquoted.ssh.common
+       "  " meta.line.known-host.known_hosts
+
+## block 9
+   1 |    
+       "   " meta.line.known-host.known_hosts
+   2 | 
+   3 | []
+       "[" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.begin.known_hosts
+       "]" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.end.known_hosts
+   4 | []:
+       "[" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.begin.known_hosts
+       "]" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.end.known_hosts
+       ":" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+   5 | []:x
+       "[" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.begin.known_hosts
+       "]" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.end.known_hosts
+       ":x" meta.line.known-host.known_hosts meta.string.host.known_hosts string.unquoted.known_hosts
+   6 | [1.2.3.4]:2
+       "[" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.begin.known_hosts
+       "1.2.3.4" meta.line.known-host.known_hosts meta.brackets.host.known_hosts constant.numeric.ip-address.v4.ssh.common
+       "]" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.end.known_hosts
+       ":" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.separator.sequence.known_hosts
+       "2" meta.line.known-host.known_hosts meta.brackets.host.known_hosts constant.numeric.integer.decimal.known_hosts
+   7 | [,]
+       "[" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.begin.known_hosts
+       "," meta.line.known-host.known_hosts meta.brackets.host.known_hosts meta.string.host.known_hosts string.quoted.other.known_hosts
+       "]" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.end.known_hosts
+   8 | [x*,?]
+       "[" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.begin.known_hosts
+       "x" meta.line.known-host.known_hosts meta.brackets.host.known_hosts meta.string.host.known_hosts string.quoted.other.known_hosts
+       "*" meta.line.known-host.known_hosts meta.brackets.host.known_hosts meta.string.host.known_hosts string.quoted.other.known_hosts keyword.operator.wildcard.known_hosts
+       "," meta.line.known-host.known_hosts meta.brackets.host.known_hosts meta.string.host.known_hosts string.quoted.other.known_hosts
+       "?" meta.line.known-host.known_hosts meta.brackets.host.known_hosts meta.string.host.known_hosts string.quoted.other.known_hosts keyword.operator.wildcard.known_hosts
+       "]" meta.line.known-host.known_hosts meta.brackets.host.known_hosts punctuation.definition.string.end.known_hosts
+
+## block 10

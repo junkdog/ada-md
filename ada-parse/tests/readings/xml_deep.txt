@@ -1,0 +1,146 @@
+# Xml: ada-parse/tests/readings.rs, xml_deep
+
+## block 1
+   1 | <!DOCTYPE x [<!ELEMENT a ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((b
+       "<!" meta.tag.sgml.doctype.xml punctuation.definition.tag.begin.xml
+       "DOCTYPE" meta.tag.sgml.doctype.xml keyword.declaration.doctype.xml
+       " " meta.tag.sgml.doctype.xml
+       "x" meta.tag.sgml.doctype.xml variable.other.documentroot.localname.xml
+       " " meta.tag.sgml.doctype.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml punctuation.section.brackets.begin.xml
+       "<!" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml punctuation.definition.tag.begin.xml
+       "ELEMENT" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml keyword.declaration.element.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml
+       "a" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml variable.other.element.xml
+       " " meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml
+       "((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml meta.group.xml punctuation.definition.group.begin.xml
+       "b" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.element.xml meta.group.xml string.unquoted.xml
+
+## block 2
+   1 | <!DOCTYPE x [<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[<![[
+       "<!" meta.tag.sgml.doctype.xml punctuation.definition.tag.begin.xml
+       "DOCTYPE" meta.tag.sgml.doctype.xml keyword.declaration.doctype.xml
+       " " meta.tag.sgml.doctype.xml
+       "x" meta.tag.sgml.doctype.xml variable.other.documentroot.localname.xml
+       " " meta.tag.sgml.doctype.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml
+       "<![" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.definition.tag.begin.xml
+       "[" meta.tag.sgml.doctype.xml meta.brackets.xml meta.internal-subset.xml meta.tag.sgml.subset.xml punctuation.section.brackets.begin.xml

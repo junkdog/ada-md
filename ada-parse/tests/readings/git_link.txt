@@ -1,0 +1,40 @@
+# GitLink: ada-parse/tests/readings.rs, git_link
+   1 | gitdir: ../.git/modules/sub
+       "gitdir" meta.mapping.key.git.link keyword.other.gitdir.git.link
+       ":" meta.mapping.git.link punctuation.separator.mapping.key-value.git.link
+       " " meta.mapping.value.git.link
+       ".." meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link constant.language.path.parent.git.link
+       "/" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.path.git.link
+       ".git" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link
+       "/" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.path.git.link
+       "modules" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link
+       "/" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.path.git.link
+       "sub" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link
+   2 |   gitdir :C:\repo\.git.
+       "gitdir" meta.mapping.key.git.link keyword.other.gitdir.git.link
+       " " meta.mapping.key.git.link
+       ":" meta.mapping.git.link punctuation.separator.mapping.key-value.git.link
+       "C" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link
+       ":" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.drive.git.link
+       "\\" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.path.git.link
+       "repo" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link
+       "\\" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.path.git.link
+       ".git" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link
+       "." meta.mapping.value.git.link punctuation.terminator.path.git.link
+   3 | gitdir: ~/x/*
+       "gitdir" meta.mapping.key.git.link keyword.other.gitdir.git.link
+       ":" meta.mapping.git.link punctuation.separator.mapping.key-value.git.link
+       " " meta.mapping.value.git.link
+       "~" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link variable.language.environment.home.git.link
+       "/" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.path.git.link
+       "x" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link
+       "/" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link punctuation.separator.path.git.link
+       "*" meta.mapping.value.git.link meta.path.git.link string.unquoted.git.link invalid.illegal.path.git.link
+   4 | notgitdir: x
+       "notgitdir:" invalid.illegal.gitdir-expected.git.link
+       "x" invalid.illegal.gitdir-expected.git.link
+   5 | # comment
+       "#" comment.line.git punctuation.definition.comment.git
+       " comment" comment.line.git
+   6 | gitdir
+       "gitdir" meta.mapping.key.git.link keyword.other.gitdir.git.link

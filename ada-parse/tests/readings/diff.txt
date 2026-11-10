@@ -1,0 +1,65 @@
+# Diff: ada-parse/tests/readings.rs, diff
+   1 | diff --git a/src/x.rs b/src/x.rs
+   2 | Index: src/x.rs
+       "Index" meta.diff.index meta.index.diff
+       ":" meta.diff.index meta.index.diff punctuation.separator.key-value.diff
+       " " meta.diff.index meta.index.diff
+       "src/x.rs" meta.diff.index meta.index.diff meta.toc-list.file-name.diff
+   3 | ===================================================================
+       "===================================================================" meta.separator.diff punctuation.definition.separator.diff
+   4 | --- a/src/x.rs\t2026-10-31
+       "---" meta.diff.header.from-file meta.header.from-file.diff punctuation.definition.from-file.diff
+       " a/src/x.rs\t2026-10-31" meta.diff.header.from-file meta.header.from-file.diff
+   5 | +++ b/src/x.rs
+       "+++" meta.diff.header.to-file meta.header.to-file.diff punctuation.definition.to-file.diff
+       " b/src/x.rs" meta.diff.header.to-file meta.header.to-file.diff
+   6 | @@ -1,3 +1,4 @@ fn main() {
+       "@@" meta.diff.range.unified meta.range.unified.diff punctuation.definition.range.diff
+       " " meta.diff.range.unified meta.range.unified.diff
+       "-1,3 +1,4" meta.diff.range.unified meta.range.unified.diff meta.toc-list.line-number.diff
+       " " meta.diff.range.unified meta.range.unified.diff
+       "@@" meta.diff.range.unified meta.range.unified.diff punctuation.definition.range.diff
+       " " meta.diff.range.unified meta.range.unified.diff
+       "fn main() {" meta.diff.range.unified meta.range.unified.diff entity.name.section.diff
+   7 |  context
+   8 | -removed
+       "-" markup.deleted.diff punctuation.definition.deleted.diff
+       "removed" markup.deleted.diff
+   9 | +added
+       "+" markup.inserted.diff punctuation.definition.inserted.diff
+       "added" markup.inserted.diff
+  10 | @@  @@
+       "@@" meta.diff.range.unified meta.range.unified.diff punctuation.definition.range.diff
+       " " meta.diff.range.unified meta.range.unified.diff
+       " " meta.diff.range.unified meta.range.unified.diff meta.toc-list.line-number.diff
+       "@@" meta.diff.range.unified meta.range.unified.diff punctuation.definition.range.diff
+  11 | ***************
+       "***************" meta.separator.diff punctuation.definition.separator.diff
+  12 | *** 1,5 ****
+       "***" meta.diff.range.context meta.range.context.diff punctuation.definition.range.diff
+       " 1,5 " meta.diff.range.context meta.range.context.diff
+       "****" meta.diff.range.context meta.range.context.diff punctuation.definition.range.diff
+  13 | ! changed
+       "!" markup.changed.diff punctuation.definition.changed.diff
+       " changed" markup.changed.diff
+  14 | --- 1,5 ----
+       "---" meta.diff.range.context meta.range.context.diff punctuation.definition.range.diff
+       " 1,5 " meta.diff.range.context meta.range.context.diff
+       "----" meta.diff.range.context meta.range.context.diff punctuation.definition.range.diff
+  15 | 12,15c12
+       "12,15c12" meta.diff.range.normal meta.range.normal.diff
+  16 | < old
+       "<" markup.deleted.diff punctuation.definition.deleted.diff
+       " old" markup.deleted.diff
+  17 | ---
+       "---" meta.separator.diff punctuation.definition.separator.diff
+  18 | > new
+       ">" markup.inserted.diff punctuation.definition.inserted.diff
+       " new" markup.inserted.diff
+  19 | ==== //depot/a.c#3 - /home/a.c ====
+       "====" meta.diff.header.from-file meta.header.from-file.diff punctuation.definition.from-file.diff
+       " //depot/a.c#3" meta.diff.header.from-file meta.header.from-file.diff
+       " " meta.diff.header.to-file meta.header.to-file.diff
+       "-" meta.diff.header.to-file meta.header.to-file.diff punctuation.definition.to-file.diff
+       " /home/a.c " meta.diff.header.to-file meta.header.to-file.diff
+       "====" meta.diff.header.to-file meta.header.to-file.diff punctuation.definition.to-file.diff

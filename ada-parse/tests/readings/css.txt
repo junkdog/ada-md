@@ -1,0 +1,685 @@
+# Css: ada-parse/tests/readings.rs, css
+   1 | @charset "utf-8"; x
+       "@" keyword.control.at-rule.charset.css punctuation.definition.keyword.css
+       "charset" keyword.control.at-rule.charset.css
+       "\"" string.quoted.double.css punctuation.definition.string.begin.css
+       "utf-8" string.quoted.double.css
+       "\"" string.quoted.double.css punctuation.definition.string.end.css
+       ";" punctuation.terminator.rule.css
+   2 | @import url("a.css") screen and (orientation: landscape);
+       "@" keyword.control.at-rule.import.css punctuation.definition.keyword.css
+       "import" keyword.control.at-rule.import.css
+       "url" support.function.url.css
+       "(" punctuation.definition.group.begin.css
+       "\"" string.quoted.double.css punctuation.definition.string.begin.css
+       "a.css" string.quoted.double.css
+       "\"" string.quoted.double.css punctuation.definition.string.end.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "screen" support.constant.media.css
+       "and" keyword.operator.logic.media.css
+       "(" punctuation.definition.group.begin.css
+       "orientation" support.type.property-name.media.css
+       ":" punctuation.separator.key-value.css
+       "landscape" support.constant.property-value.css
+       ")" punctuation.definition.group.end.css
+       ";" punctuation.terminator.rule.css
+   3 | @namespace svg url(http://www.w3.org/2000/svg);
+       "@" keyword.control.at-rule.namespace.css punctuation.definition.keyword.css
+       "namespace" keyword.control.at-rule.namespace.css
+       "svg" entity.other.namespace-prefix.css
+       "url" support.function.url.css
+       "(" punctuation.definition.group.begin.css
+       "h" string.unquoted.css
+       "t" string.unquoted.css
+       "t" string.unquoted.css
+       "p" string.unquoted.css
+       ":" string.unquoted.css
+       "/" string.unquoted.css
+       "/" string.unquoted.css
+       "w" string.unquoted.css
+       "w" string.unquoted.css
+       "w" string.unquoted.css
+       "." string.unquoted.css
+       "w" string.unquoted.css
+       "3" string.unquoted.css
+       "." string.unquoted.css
+       "o" string.unquoted.css
+       "r" string.unquoted.css
+       "g" string.unquoted.css
+       "/" string.unquoted.css
+       "2" string.unquoted.css
+       "0" string.unquoted.css
+       "0" string.unquoted.css
+       "0" string.unquoted.css
+       "/" string.unquoted.css
+       "s" string.unquoted.css
+       "v" string.unquoted.css
+       "g" string.unquoted.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       ";" punctuation.terminator.rule.css
+   4 | @custom-media --narrow (max-width: 30em);
+       "@" keyword.control.at-rule.custom-media.css punctuation.definition.keyword.css
+       "custom-media" keyword.control.at-rule.custom-media.css
+       "(" punctuation.definition.group.begin.css
+       "max-width" support.type.property-name.media.css
+       ":" punctuation.separator.key-value.css
+       "30" constant.numeric.integer.decimal.css
+       "em" constant.numeric.integer.decimal.css keyword.other.unit.css
+       ")" punctuation.definition.group.end.css
+       ";" punctuation.terminator.css
+   5 | /* a comment
+       "/*" comment.block.css punctuation.definition.comment.css
+       " a comment" comment.block.css
+   6 |  * across lines */
+       " " comment.block.css
+       "*" comment.block.css punctuation.definition.comment.css
+       " across lines " comment.block.css
+       "*/" comment.block.css punctuation.definition.comment.css
+   7 | @media only screen and (-webkit-min-device-pixel-ratio: 2), print and (aspect-ratio: 16/9) {
+       "@" keyword.control.at-rule.media.css punctuation.definition.keyword.css
+       "media" keyword.control.at-rule.media.css
+       "only" keyword.operator.logic.media.css
+       "screen" support.constant.media.css
+       "and" keyword.operator.logic.media.css
+       "(" punctuation.definition.group.begin.css
+       "-webkit-" support.type.property-name.media.css support.type.vendor-prefix.css
+       "min-device-pixel-ratio" support.type.property-name.media.css
+       ":" punctuation.separator.key-value.css
+       "2" constant.numeric.integer.decimal.css
+       ")" punctuation.definition.group.end.css
+       "," punctuation.definition.arbitrary-repetition.css
+       "print" support.constant.media.css
+       "and" keyword.operator.logic.media.css
+       "(" punctuation.definition.group.begin.css
+       "aspect-ratio" support.type.property-name.media.css
+       ":" punctuation.separator.key-value.css
+       "16" constant.numeric.integer.decimal.css
+       "/" keyword.operator.arithmetic.css
+       "9" constant.numeric.integer.decimal.css
+       ")" punctuation.definition.group.end.css
+       "{" punctuation.section.property-list.css
+   8 |   my-element > .btn-primary:hover::before, a[href$=".pdf" i] ~ #main *, svg|rect >>> b {
+       "my-element" entity.name.tag.custom.css
+       ">" punctuation.separator.combinator.css
+       "." entity.other.attribute-name.class.css punctuation.definition.entity.css
+       "btn-primary" entity.other.attribute-name.class.css
+       ":" entity.other.pseudo-class.css punctuation.definition.entity.css
+       "hover" entity.other.pseudo-class.css
+       "::" entity.other.pseudo-element.css punctuation.definition.entity.css
+       "before" entity.other.pseudo-element.css
+       "," punctuation.separator.sequence.css
+       "a" entity.name.tag.css
+       "[" punctuation.definition.entity.css
+       "href" entity.other.attribute-name.css
+       "$=" keyword.operator.attribute-selector.css
+       "\"" string.quoted.double.css punctuation.definition.string.begin.css
+       ".pdf" string.quoted.double.css
+       "\"" string.quoted.double.css punctuation.definition.string.end.css
+       "i" keyword.other.css
+       "]" punctuation.definition.entity.css
+       "~" punctuation.separator.combinator.css
+       "#" entity.other.attribute-name.id.css punctuation.definition.entity.css
+       "main" entity.other.attribute-name.id.css
+       "*" entity.name.tag.wildcard.css
+       "," punctuation.separator.sequence.css
+       "svg" entity.name.tag.css
+       "rect" entity.name.tag.css
+       ">>>" punctuation.separator.combinator.css
+       "b" entity.name.tag.css
+       "{" punctuation.section.property-list.css
+   9 |     -webkit-transition: opacity .3s ease-in-out, transform 0.5s cubic-bezier(.17, .67, .83, .67);
+       "-webkit-" support.type.vendor-prefix.css
+       "transition" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "opacity" support.constant.property-value.css
+       "." constant.numeric.float.decimal.css punctuation.separator.decimal.css
+       "3" constant.numeric.float.decimal.css
+       "s" constant.numeric.float.decimal.css keyword.other.unit.css
+       "ease-in-out" support.constant.property-value.css
+       "transform" support.constant.property-value.css
+       "0" constant.numeric.integer.decimal.css
+       "." constant.numeric.float.decimal.css punctuation.separator.decimal.css
+       "5" constant.numeric.float.decimal.css
+       "s" constant.numeric.float.decimal.css keyword.other.unit.css
+       "cubic-bezier" support.function.timing.css
+       "(" punctuation.definition.group.begin.css
+       "." constant.numeric.float.decimal.css punctuation.separator.decimal.css
+       "17" constant.numeric.float.decimal.css
+       "," punctuation.separator.sequence.css
+       "." constant.numeric.float.decimal.css punctuation.separator.decimal.css
+       "67" constant.numeric.float.decimal.css
+       "," punctuation.separator.sequence.css
+       "." constant.numeric.float.decimal.css punctuation.separator.decimal.css
+       "83" constant.numeric.float.decimal.css
+       "," punctuation.separator.sequence.css
+       "." constant.numeric.float.decimal.css punctuation.separator.decimal.css
+       "67" constant.numeric.float.decimal.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       ";" punctuation.terminator.rule.css
+  10 |     --main-color: #ffcc00aa; var-x y; color: var(--main-color, red) !important;
+       "--" support.type.custom-property.css punctuation.definition.custom-property.css
+       "main-color" support.type.custom-property.css support.type.custom-property.name.css
+       ":" punctuation.separator.key-value.css
+       "#" constant.other.color.rgba-value.css punctuation.definition.constant.css
+       "ffcc00aa" constant.other.color.rgba-value.css
+       ";" punctuation.terminator.rule.css
+       "var-" invalid.deprecated.custom-property.css keyword.other.custom-property.prefix.css
+       "x" invalid.deprecated.custom-property.css support.type.custom-property.name.css
+       "color" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "var" support.function.var.css
+       "(" punctuation.definition.group.begin.css
+       "--" support.type.custom-property.css punctuation.definition.custom-property.css
+       "main-color" support.type.custom-property.css support.type.custom-property.name.css
+       "," punctuation.separator.sequence.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "!important" keyword.other.important.css
+       ";" punctuation.terminator.rule.css
+  11 |     font: italic bold 12px/30px Georgia, "Times New Roman", serif;
+       "font" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "italic" support.constant.property-value.css
+       "bold" support.constant.property-value.css
+       "12" constant.numeric.integer.decimal.css
+       "px" constant.numeric.integer.decimal.css keyword.other.unit.css
+       "30" constant.numeric.integer.decimal.css
+       "px" constant.numeric.integer.decimal.css keyword.other.unit.css
+       "Georgia" string.unquoted.css
+       "," punctuation.separator.sequence.css
+       "\"" string.quoted.double.css punctuation.definition.string.begin.css
+       "Times New Roman" string.quoted.double.css
+       "\"" string.quoted.double.css punctuation.definition.string.end.css
+       "," punctuation.separator.sequence.css
+       "serif" support.constant.font-name.css
+       ";" punctuation.terminator.rule.css
+  12 |     background: url(img.png) no-repeat, linear-gradient(to right, rgba(0, 0, 0, .5) 0%, #fff 100%);
+       "background" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "url" support.function.url.css
+       "(" punctuation.definition.group.begin.css
+       "i" string.unquoted.css
+       "m" string.unquoted.css
+       "g" string.unquoted.css
+       "." string.unquoted.css
+       "p" string.unquoted.css
+       "n" string.unquoted.css
+       "g" string.unquoted.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "no-repeat" support.constant.property-value.css
+       "linear-gradient" support.function.gradient.css
+       "(" punctuation.definition.group.begin.css
+       "to" keyword.other.css
+       "right" support.constant.property-value.css
+       "," punctuation.separator.sequence.css
+       "rgba" support.function.color.css
+       "(" punctuation.definition.group.begin.css
+       "0" constant.numeric.integer.decimal.css
+       "," punctuation.separator.sequence.css
+       "0" constant.numeric.integer.decimal.css
+       "," punctuation.separator.sequence.css
+       "0" constant.numeric.integer.decimal.css
+       "," punctuation.separator.sequence.css
+       "." constant.numeric.float.decimal.css punctuation.separator.decimal.css
+       "5" constant.numeric.float.decimal.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "0" constant.numeric.integer.decimal.css
+       "%" constant.numeric.integer.decimal.css keyword.other.unit.css
+       "," punctuation.separator.sequence.css
+       "#" constant.other.color.rgb-value.css punctuation.definition.constant.css
+       "fff" constant.other.color.rgb-value.css
+       "100" constant.numeric.integer.decimal.css
+       "%" constant.numeric.integer.decimal.css keyword.other.unit.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       ";" punctuation.terminator.rule.css
+  13 |     grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)) [line-a] auto-flow;
+       "grid-template-columns" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "repeat" support.function.grid.css
+       "(" punctuation.definition.group.begin.css
+       "auto-fill" support.keyword.repetitions.css
+       "," punctuation.separator.sequence.css
+       "minmax" support.function.grid.css
+       "(" punctuation.definition.group.begin.css
+       "100" constant.numeric.integer.decimal.css
+       "px" constant.numeric.integer.decimal.css keyword.other.unit.css
+       "," punctuation.separator.sequence.css
+       "1" constant.numeric.integer.decimal.css
+       "fr" constant.numeric.integer.decimal.css keyword.other.unit.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "[" punctuation.section.begin.css
+       "line-a" string.unquoted.line-name.css
+       "]" punctuation.section.end.css
+       "auto-flow" support.constant.property-value.css
+       ";" punctuation.terminator.rule.css
+  14 |     transform: translateX(-10%) rotate(45deg) scale(1.5) translateZ(0.5px); width: calc(100% - (2 * 1.5em));
+       "transform" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "translateX" support.function.transform.css
+       "(" punctuation.definition.group.begin.css
+       "-10" constant.numeric.integer.decimal.css
+       "%" constant.numeric.integer.decimal.css keyword.other.unit.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "rotate" support.function.transform.css
+       "(" punctuation.definition.group.begin.css
+       "45" constant.numeric.integer.decimal.css
+       "deg" constant.numeric.integer.decimal.css keyword.other.unit.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "scale" support.function.transform.css
+       "(" punctuation.definition.group.begin.css
+       "1" constant.numeric.float.decimal.css
+       "." constant.numeric.float.decimal.css punctuation.separator.decimal.css
+       "5" constant.numeric.float.decimal.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "translateZ" support.function.transform.css
+       "(" punctuation.definition.group.begin.css
+       "0" constant.numeric.float.decimal.css
+       "." constant.numeric.float.decimal.css punctuation.separator.decimal.css
+       "5" constant.numeric.float.decimal.css
+       "px" constant.numeric.float.decimal.css keyword.other.unit.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       ";" punctuation.terminator.rule.css
+       "width" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "calc" support.function.calc.css
+       "(" punctuation.definition.group.begin.css
+       "100" constant.numeric.integer.decimal.css
+       "%" constant.numeric.integer.decimal.css keyword.other.unit.css
+       "-" keyword.operator.css
+       "(" punctuation.definition.group.begin.css
+       "2" constant.numeric.integer.decimal.css
+       "*" keyword.operator.css
+       "1" constant.numeric.float.decimal.css
+       "." constant.numeric.float.decimal.css punctuation.separator.decimal.css
+       "5" constant.numeric.float.decimal.css
+       "em" constant.numeric.float.decimal.css keyword.other.unit.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       ";" punctuation.terminator.rule.css
+  15 |     content: "\201C x \"" attr(data-x px, 1); filter: blur(10) progid:DXImageTransform.Microsoft.gradient(startColorstr='#80000000');
+       "content" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "\"" string.quoted.double.css punctuation.definition.string.begin.css
+       "\\201C" string.quoted.double.css constant.character.escape.css
+       " x " string.quoted.double.css
+       "\\\"" string.quoted.double.css constant.character.escape.css
+       "\"" string.quoted.double.css punctuation.definition.string.end.css
+       "attr" support.function.attr.css
+       "(" punctuation.definition.group.begin.css
+       "data-x" entity.other.attribute-name.css
+       "px" keyword.other.unit.css
+       "," punctuation.separator.sequence.css
+       "1" constant.numeric.integer.decimal.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       ";" punctuation.terminator.rule.css
+       "filter" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "blur" support.function.filter.css
+       "(" punctuation.definition.group.begin.css
+       "0" constant.numeric.integer.decimal.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "progid:DXImageTransform.Microsoft.gradient" support.constant.property-value.css
+       "'" string.quoted.single.css punctuation.definition.string.begin.css
+       "#80000000" string.quoted.single.css
+       "'" string.quoted.single.css punctuation.definition.string.end.css
+  16 |     list-style: decimal-leading-zero; counter-reset: c 1; content: counter(c, upper-roman) counters(c, ".", lower-alpha);
+       "list-style" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "decimal-leading-zero" support.constant.property-value.css
+       ";" punctuation.terminator.rule.css
+       "counter-reset" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "1" constant.numeric.integer.decimal.css
+       ";" punctuation.terminator.rule.css
+       "content" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "counter" support.function.counter.css
+       "(" punctuation.definition.group.begin.css
+       "c" entity.other.counter-name.css string.unquoted.css
+       "," punctuation.separator.sequence.css
+       "upper-roman" support.constant.property-value.counter-style.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "counters" support.function.counter.css
+       "(" punctuation.definition.group.begin.css
+       "c" entity.other.counter-name.css string.unquoted.css
+       "," punctuation.separator.sequence.css
+       "\"" string.quoted.double.css punctuation.definition.string.begin.css
+       "." string.quoted.double.css
+       "\"" string.quoted.double.css punctuation.definition.string.end.css
+       "," punctuation.separator.sequence.css
+       "lower-alpha" support.constant.property-value.counter-style.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       ";" punctuation.terminator.rule.css
+  17 |     margin: 0 auto -1.5e2px +2em; z-index: 10; line-height: 1.5; color: CurrentColor; outline: 1px solid aliceblue;
+       "margin" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "0" constant.numeric.integer.decimal.css
+       "auto" support.constant.property-value.css
+       "-1" constant.numeric.float.decimal.css
+       "." constant.numeric.float.decimal.css punctuation.separator.decimal.css
+       "5e2" constant.numeric.float.decimal.css
+       "px" constant.numeric.float.decimal.css keyword.other.unit.css
+       "+2" constant.numeric.integer.decimal.css
+       "em" constant.numeric.integer.decimal.css keyword.other.unit.css
+       ";" punctuation.terminator.rule.css
+       "z-index" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "10" constant.numeric.integer.decimal.css
+       ";" punctuation.terminator.rule.css
+       "line-height" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "1" constant.numeric.float.decimal.css
+       "." constant.numeric.float.decimal.css punctuation.separator.decimal.css
+       "5" constant.numeric.float.decimal.css
+       ";" punctuation.terminator.rule.css
+       "color" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "CurrentColor" support.constant.color.w3c-special-color-keyword.css
+       ";" punctuation.terminator.rule.css
+       "outline" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "1" constant.numeric.integer.decimal.css
+       "px" constant.numeric.integer.decimal.css keyword.other.unit.css
+       "solid" support.constant.property-value.css
+       "aliceblue" support.constant.color.w3c-extended-color-keywords.css
+       ";" punctuation.terminator.rule.css
+  18 |     content: 'a\
+       "content" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "'" string.quoted.single.css punctuation.definition.string.begin.css
+       "a" string.quoted.single.css
+       "\\" string.quoted.single.css constant.character.escape.newline.css
+  19 | b';
+       "b" string.quoted.single.css
+       "'" string.quoted.single.css punctuation.definition.string.end.css
+       ";" punctuation.terminator.rule.css
+  20 |   }
+       "}" punctuation.section.property-list.css
+  21 |   li:nth-child(2n + 1):not(.a, :first-child) { clip: rect(0, auto, 1px, 2px) }
+       "li" entity.name.tag.css
+       ":" entity.other.pseudo-class.css punctuation.definition.entity.css
+       "nth-child" entity.other.pseudo-class.css
+       "(" punctuation.definition.group.begin.css
+       "2" constant.numeric.integer.decimal.css
+       "n" constant.numeric.integer.decimal.css keyword.other.unit.css
+       "+ 1" constant.numeric.integer.decimal.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       ":" entity.other.pseudo-class.css punctuation.definition.entity.css
+       "not" entity.other.pseudo-class.css
+       "(" punctuation.definition.group.begin.css
+       "." entity.other.attribute-name.class.css punctuation.definition.entity.css
+       "a" entity.other.attribute-name.class.css
+       "," punctuation.separator.sequence.css
+       ":" entity.other.pseudo-class.css punctuation.definition.entity.css
+       "first-child" entity.other.pseudo-class.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "{" punctuation.section.property-list.css
+       "clip" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "rect" support.function.shape.css
+       "(" punctuation.definition.group.begin.css
+       "0" constant.numeric.integer.decimal.css
+       "auto" support.constant.property-value.css
+       "1" constant.numeric.integer.decimal.css
+       "px" constant.numeric.integer.decimal.css keyword.other.unit.css
+       "2" constant.numeric.integer.decimal.css
+       "px" constant.numeric.integer.decimal.css keyword.other.unit.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "}" punctuation.section.property-list.css
+  22 | }
+       "}" punctuation.section.property-list.css
+  23 | @font-face { font-family: "X"; src: local(Arial), url(x.woff2) format("woff2"); unicode-range: U+0025-00FF, u+4??; }
+       "@" keyword.control.at-rule.font-face.css punctuation.definition.keyword.css
+       "font-face" keyword.control.at-rule.font-face.css
+       "{" punctuation.section.property-list.css
+       "font-family" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "\"" string.quoted.double.css punctuation.definition.string.begin.css
+       "X" string.quoted.double.css
+       "\"" string.quoted.double.css punctuation.definition.string.end.css
+       ";" punctuation.terminator.rule.css
+       "src" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "local" support.function.font-face.css
+       "(" punctuation.definition.group.begin.css
+       "A" string.unquoted.css
+       "r" string.unquoted.css
+       "i" string.unquoted.css
+       "a" string.unquoted.css
+       "l" string.unquoted.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "url" support.function.url.css
+       "(" punctuation.definition.group.begin.css
+       "x" string.unquoted.css
+       "." string.unquoted.css
+       "w" string.unquoted.css
+       "o" string.unquoted.css
+       "f" string.unquoted.css
+       "f" string.unquoted.css
+       "2" string.unquoted.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "format" support.function.font-face.css
+       "(" punctuation.definition.group.begin.css
+       "\"" string.quoted.double.css punctuation.definition.string.begin.css
+       "woff2" string.quoted.double.css
+       "\"" string.quoted.double.css punctuation.definition.string.end.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       ";" punctuation.terminator.rule.css
+       "unicode-range" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "U+" support.unicode-range.css support.constant.unicode-range.prefix.css
+       "0025" support.unicode-range.css constant.codepoint-range.css
+       "-" support.unicode-range.css constant.codepoint-range.css punctuation.section.range.css
+       "00FF" support.unicode-range.css constant.codepoint-range.css
+       "u+" support.unicode-range.css support.constant.unicode-range.prefix.css
+       "4??" support.unicode-range.css constant.codepoint-range.css
+       ";" punctuation.terminator.rule.css
+       "}" punctuation.section.property-list.css
+  24 | @keyframes spin { from { transform: rotate(0deg) } 50% { opacity: .5 } to { transform: rotate(1turn) } }
+       "@" keyword.control.at-rule.keyframe.css punctuation.definition.keyword.css
+       "keyframes" keyword.control.at-rule.keyframe.css
+       "spin" entity.other.animation-name.css
+       "{" punctuation.section.property-list.css
+       "from" keyword.keyframe-selector.css
+       "{" punctuation.section.property-list.css
+       "transform" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "rotate" support.function.transform.css
+       "(" punctuation.definition.group.begin.css
+       "0" constant.numeric.integer.decimal.css
+       "deg" constant.numeric.integer.decimal.css keyword.other.unit.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "}" punctuation.section.property-list.css
+       "50" constant.numeric.integer.decimal.css
+       "%" constant.numeric.integer.decimal.css keyword.other.unit.css
+       "{" punctuation.section.property-list.css
+       "opacity" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "." constant.numeric.float.decimal.css punctuation.separator.decimal.css
+       "5" constant.numeric.float.decimal.css
+       "}" punctuation.section.property-list.css
+       "to" keyword.keyframe-selector.css
+       "{" punctuation.section.property-list.css
+       "transform" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "rotate" support.function.transform.css
+       "(" punctuation.definition.group.begin.css
+       "1" constant.numeric.integer.decimal.css
+       "turn" constant.numeric.integer.decimal.css keyword.other.unit.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "}" punctuation.section.property-list.css
+       "}" punctuation.section.property-list.css
+  25 | @-webkit-keyframes a, b { }
+       "@" keyword.control.at-rule.keyframe.css punctuation.definition.keyword.css
+       "-webkit-" keyword.control.at-rule.keyframe.css support.type.property-vendor.css
+       "keyframes" keyword.control.at-rule.keyframe.css
+       "a" entity.other.animation-name.css
+       "," punctuation.definition.arbitrary-repetition.css
+       "b" entity.other.animation-name.css
+       "{" punctuation.section.property-list.css
+       "}" punctuation.section.property-list.css
+  26 | @supports (display: grid) and (not (display: inline-grid)) { .x { display: grid } }
+       "@" keyword.control.at-rule.supports.css punctuation.definition.keyword.css
+       "supports" keyword.control.at-rule.supports.css
+       "(" punctuation.definition.group.begin.css
+       "display" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "grid" support.constant.property-value.css
+       ")" punctuation.definition.group.end.css
+       "and" keyword.operator.logic.css
+       "(" punctuation.definition.group.begin.css
+       "not" keyword.operator.logic.css
+       "(" punctuation.definition.group.begin.css
+       "display" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "inline" support.constant.property-value.css
+       "grid" support.constant.property-value.css
+       ")" punctuation.definition.group.end.css
+       ")" punctuation.definition.group.end.css
+       "{" punctuation.definition.block.begin.css
+       "." entity.other.attribute-name.class.css punctuation.definition.entity.css
+       "x" entity.other.attribute-name.class.css
+       "{" punctuation.section.property-list.css
+       "display" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "grid" support.constant.property-value.css
+       "}" punctuation.section.property-list.css
+       "}" meta.block.css punctuation.definition.block.end.css
+  27 | @page :first { margin: 1in }
+       "@" keyword.control.at-rule.page.css punctuation.definition.keyword.css
+       "page" keyword.control.at-rule.page.css
+       ":" punctuation.definition.entity.css
+       "first" entity.other.pseudo-class.css
+       "{" punctuation.section.property-list.css
+       "margin" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "1" constant.numeric.integer.decimal.css
+       "in" constant.numeric.integer.decimal.css keyword.other.unit.css
+       "}" punctuation.section.property-list.css
+  28 | @counter-style thumbs { system: cyclic; symbols: "x"; }
+       "@" keyword.control.at-rule.counter-style.css punctuation.definition.keyword.css
+       "counter-style" keyword.control.at-rule.counter-style.css
+       "thumbs" entity.other.counter-style-name.css
+       "{" punctuation.section.property-list.css
+       "system" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       ";" punctuation.terminator.rule.css
+       "symbols" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "\"" string.quoted.double.css punctuation.definition.string.begin.css
+       "x" string.quoted.double.css
+       "\"" string.quoted.double.css punctuation.definition.string.end.css
+       ";" punctuation.terminator.rule.css
+       "}" punctuation.section.property-list.css
+  29 | @document url(http://x), url-prefix(y), domain(z), regexp("a") { b { c: d } }
+       "@" keyword.control.at-rule.document.css punctuation.definition.keyword.css
+       "document" keyword.control.at-rule.document.css
+       "url" support.function.url.css
+       "(" punctuation.definition.group.begin.css
+       "h" string.unquoted.css
+       "t" string.unquoted.css
+       "t" string.unquoted.css
+       "p" string.unquoted.css
+       ":" string.unquoted.css
+       "/" string.unquoted.css
+       "/" string.unquoted.css
+       "x" string.unquoted.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "," punctuation.separator.sequence.css
+       "url-prefix" support.function.url-prefix.css
+       "(" punctuation.definition.group.begin.css
+       "y" string.unquoted.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "," punctuation.separator.sequence.css
+       "domain" support.function.domain.css
+       "(" punctuation.definition.group.begin.css
+       "z" string.unquoted.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "," punctuation.separator.sequence.css
+       "regexp" support.function.regexp.css
+       "(" punctuation.definition.group.begin.css
+       "\"" string.quoted.double.css punctuation.definition.string.begin.css
+       "a" string.quoted.double.css
+       "\"" string.quoted.double.css punctuation.definition.string.end.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "{" punctuation.definition.block.begin.css
+       "b" entity.name.tag.css
+       "{" punctuation.section.property-list.css
+       ":" punctuation.separator.key-value.css
+       "}" punctuation.section.property-list.css
+       "}" meta.block.css punctuation.definition.block.end.css
+  30 | div.a#b, h1 + p, clipPath, :root, ::-moz-selection, :lang(en), :drop(active) { -moz-box-sizing: border-box; }
+       "div" entity.name.tag.css
+       "." entity.other.attribute-name.class.css punctuation.definition.entity.css
+       "a" entity.other.attribute-name.class.css
+       "#" entity.other.attribute-name.id.css punctuation.definition.entity.css
+       "b" entity.other.attribute-name.id.css
+       "," punctuation.separator.sequence.css
+       "h1" entity.name.tag.css
+       "+" punctuation.separator.combinator.css
+       "p" entity.name.tag.css
+       "," punctuation.separator.sequence.css
+       "clipPath" entity.name.tag.css
+       "," punctuation.separator.sequence.css
+       ":" entity.other.pseudo-class.css punctuation.definition.entity.css
+       "root" entity.other.pseudo-class.css
+       "," punctuation.separator.sequence.css
+       "::" entity.other.pseudo-element.css punctuation.definition.entity.css
+       "-moz-" entity.other.pseudo-element.css support.type.vendor-prefix.css
+       "selection" entity.other.pseudo-element.css
+       "," punctuation.separator.sequence.css
+       ":" entity.other.pseudo-class.css punctuation.definition.entity.css
+       "lang" entity.other.pseudo-class.css
+       "(" punctuation.definition.group.begin.css
+       "e" string.unquoted.css
+       "n" string.unquoted.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "," punctuation.separator.sequence.css
+       ":" entity.other.pseudo-class.css punctuation.definition.entity.css
+       "drop" entity.other.pseudo-class.css
+       "(" punctuation.definition.group.begin.css
+       "active" keyword.other.pseudo-class.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "{" punctuation.section.property-list.css
+       "-moz-" support.type.vendor-prefix.css
+       "box-sizing" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "border-box" support.constant.property-value.css
+       ";" punctuation.terminator.rule.css
+       "}" punctuation.section.property-list.css
+  31 | @tailwind base; .é-x { top: 5q; transition: all 200ms steps(4, jump-end); color: hsl(120deg, 50%, 50%) }
+       "base" entity.name.tag.css
+       "." entity.other.attribute-name.class.css punctuation.definition.entity.css
+       "é-x" entity.other.attribute-name.class.css
+       "{" punctuation.section.property-list.css
+       "top" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "5" constant.numeric.integer.decimal.css
+       "q" constant.numeric.integer.decimal.css keyword.other.unit.css
+       ";" punctuation.terminator.rule.css
+       "transition" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "all" support.constant.property-value.css
+       "200" constant.numeric.integer.decimal.css
+       "ms" constant.numeric.integer.decimal.css keyword.other.unit.css
+       "steps" support.function.timing.css
+       "(" punctuation.definition.group.begin.css
+       "4" constant.numeric.integer.decimal.css
+       "," punctuation.separator.sequence.css
+       "end" support.keyword.timing-direction.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       ";" punctuation.terminator.rule.css
+       "color" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "hsl" support.function.color.css
+       "(" punctuation.definition.group.begin.css
+       "120" constant.numeric.integer.decimal.css
+       "deg" constant.numeric.integer.decimal.css keyword.other.unit.css
+       "," punctuation.separator.sequence.css
+       "50" constant.numeric.integer.decimal.css
+       "%" constant.numeric.integer.decimal.css keyword.other.unit.css
+       "," punctuation.separator.sequence.css
+       "50" constant.numeric.integer.decimal.css
+       "%" constant.numeric.integer.decimal.css keyword.other.unit.css
+       ")" meta.group.css punctuation.definition.group.end.css
+       "}" punctuation.section.property-list.css

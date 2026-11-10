@@ -1,0 +1,507 @@
+# Cpp: ada-parse/tests/readings.rs, cpp
+   1 | #include <vector>
+       "#include" keyword.control.import.include.c++
+       " " meta.preprocessor.c++
+       "<" string.quoted.other.lt-gt.include.c++ punctuation.definition.string.begin.c++
+       "vector" string.quoted.other.lt-gt.include.c++
+       ">" string.quoted.other.lt-gt.include.c++ punctuation.definition.string.end.c++
+   2 | #include "local.h" // why
+       "#include" keyword.control.import.include.c++
+       " " meta.preprocessor.c++
+       "\"" string.quoted.double.include.c++ punctuation.definition.string.begin.c++
+       "local.h" string.quoted.double.include.c++
+       "\"" string.quoted.double.include.c++ punctuation.definition.string.end.c++
+       " " meta.preprocessor.c++
+       "//" comment.line.double-slash.c++ punctuation.definition.comment.c++
+       " why" comment.line.double-slash.c++
+   3 | #define MAX(a, b) ((a) > (b) ? (a) : (b))
+       "#define" keyword.control.import.define.c++
+       " " meta.preprocessor.c++
+       "MAX" entity.name.function.preprocessor.c++
+       "(" punctuation.section.group.begin.c++
+       "a" variable.parameter.c++
+       "," punctuation.separator.c++
+       " " meta.preprocessor.c++
+       "b" variable.parameter.c++
+       ")" punctuation.section.group.end.c++
+       " " meta.preprocessor.c++
+       "((" punctuation.section.group.begin.c++
+       "a" meta.preprocessor.c++
+       ")" punctuation.section.group.end.c++
+       " " meta.preprocessor.c++
+       ">" keyword.operator.comparison.c++
+       " " meta.preprocessor.c++
+       "(" punctuation.section.group.begin.c++
+       "b" meta.preprocessor.c++
+       ")" punctuation.section.group.end.c++
+       " " meta.preprocessor.c++
+       "?" keyword.operator.ternary.c++
+       " " meta.preprocessor.c++
+       "(" punctuation.section.group.begin.c++
+       "a" meta.preprocessor.c++
+       ")" punctuation.section.group.end.c++
+       " " meta.preprocessor.c++
+       ":" keyword.operator.ternary.c++
+       " " meta.preprocessor.c++
+       "(" punctuation.section.group.begin.c++
+       "b" meta.preprocessor.c++
+       "))" punctuation.section.group.end.c++
+   4 | #define NAME "x" \
+       "#define" keyword.control.import.define.c++
+       " " meta.preprocessor.c++
+       "NAME" meta.preprocessor.c++ entity.name.constant.preprocessor.c++
+       " " meta.preprocessor.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.begin.c++
+       "x" string.quoted.double.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.end.c++
+       " " meta.preprocessor.c++
+       "\\" punctuation.separator.continuation.c++
+   5 |   "continued"
+       "  " meta.preprocessor.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.begin.c++
+       "continued" string.quoted.double.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.end.c++
+   6 | #if 0
+       "#if" keyword.control.import.c++
+       " " meta.preprocessor.c++
+       "0" constant.numeric.integer.decimal.c++
+   7 | int disabled(); #if nested
+       "int disabled(); #if nested" comment.block.preprocessor.if-branch.c++
+   8 | #endif
+       "#endif" keyword.control.import.c++
+   9 | #else
+       "#else" keyword.control.import.else.c++
+  10 | int enabled;
+       "int" storage.type.c++
+       ";" punctuation.terminator.c++
+  11 | #endif
+       "#endif" keyword.control.import.c++
+  12 | #if 1
+       "#if" keyword.control.import.c++
+       " " meta.preprocessor.c++
+       "1" constant.numeric.integer.decimal.c++
+  13 | int on;
+       "int" storage.type.c++
+       ";" punctuation.terminator.c++
+  14 | #else
+       "#else" keyword.control.import.else.c++
+  15 | int off;
+       "int off;" comment.block.preprocessor.if-branch.c++
+  16 | #endif
+       "#endif" keyword.control.import.c++
+  17 | #ifdef __cplusplus
+       "#ifdef" keyword.control.import.c++
+       " __cplusplus" meta.preprocessor.c++
+  18 | extern "C" {
+       "extern" storage.modifier.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.begin.c++
+       "C" string.quoted.double.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.end.c++
+       "{" punctuation.section.block.begin.c++
+  19 | #endif
+       "#endif" keyword.control.import.c++
+  20 | /* = banner = */
+       "/*" comment.block.c++ punctuation.definition.comment.c++
+       " = banner = " comment.block.c++
+       "*/" comment.block.c++ punctuation.definition.comment.c++
+  21 | namespace foo::bar {
+       "namespace" keyword.control.c++
+       "foo" entity.name.namespace.c++
+       "::" entity.name.namespace.c++ punctuation.accessor.double-colon.c++
+       "bar" entity.name.namespace.c++
+       "{" punctuation.section.block.begin.c++
+  22 | using namespace std;
+       "using" keyword.control.c++
+       "namespace" keyword.control.c++
+       ";" punctuation.terminator.c++
+  23 | using Alias = std::map<int, std::string>;
+       "using" keyword.control.c++
+       "Alias" entity.name.type.using.c++
+       "=" keyword.operator.assignment.c++
+       "::" punctuation.accessor.double-colon.c++
+       "<" punctuation.section.generic.begin.c++
+       "int" storage.type.c++
+       "," punctuation.separator.c++
+       "::" punctuation.accessor.double-colon.c++
+       ">" punctuation.section.generic.end.c++
+       ";" punctuation.terminator.c++
+  24 | template <typename T, class... Rest> class Widget final : public Base<T>, private virtual Other {
+       "template" storage.type.template.c++
+       "<" punctuation.section.generic.begin.c++
+       "typename" storage.type.c++
+       "," punctuation.separator.c++
+       "class" storage.type.c++
+       "..." keyword.operator.variadic.c++
+       ">" punctuation.section.generic.end.c++
+       "class" storage.type.c++
+       "Widget" entity.name.class.c++
+       "final" storage.modifier.c++
+       ":" punctuation.separator.c++
+       "public" storage.modifier.c++
+       "<" punctuation.section.generic.begin.c++
+       ">" punctuation.section.generic.end.c++
+       "," punctuation.separator.c++
+       "private" storage.modifier.c++
+       "virtual" storage.modifier.c++
+       "{" punctuation.section.block.begin.c++
+  25 |  public:
+       "public" storage.modifier.c++
+       ":" punctuation.section.class.c++
+  26 |   Widget(int x) : x_(x), y_{2} {}
+       "Widget" entity.name.function.c++
+       "(" punctuation.section.group.begin.c++
+       "int" storage.type.c++
+       "x" variable.parameter.c++
+       ")" punctuation.section.group.end.c++
+       ":" punctuation.separator.initializer-list.c++
+       "x_" variable.function.c++
+       "(" punctuation.section.group.begin.c++
+       ")" punctuation.section.group.end.c++
+       "," punctuation.separator.c++
+       "y_" variable.function.c++
+       "{" punctuation.section.block.begin.c++
+       "2" constant.numeric.integer.decimal.c++
+       "}" punctuation.section.block.end.c++
+       "{" punctuation.section.block.begin.c++
+       "}" punctuation.section.block.end.c++
+  27 |   ~Widget() override;
+       "~Widget" entity.name.function.c++
+       "(" punctuation.section.group.begin.c++
+       ")" punctuation.section.group.end.c++
+       "override" storage.modifier.c++
+       ";" punctuation.terminator.c++
+  28 |   explicit operator bool() const noexcept { return mFlag && m_ready; }
+       "explicit" storage.modifier.c++
+       "operator" keyword.control.c++
+       "bool" entity.name.function.c++
+       "(" punctuation.section.group.begin.c++
+       ")" punctuation.section.group.end.c++
+       "const" storage.modifier.c++
+       "noexcept" storage.modifier.c++
+       "{" punctuation.section.block.begin.c++
+       "return" keyword.control.flow.return.c++
+       "mFlag" variable.other.readwrite.member.c++
+       "&&" keyword.operator.c++
+       "m_ready" variable.other.readwrite.member.c++
+       ";" punctuation.terminator.c++
+       "}" punctuation.section.block.end.c++
+  29 |   Widget& operator=(const Widget&) = delete;
+       "&" keyword.operator.c++
+       "operator=" entity.name.function.c++
+       "(" punctuation.section.group.begin.c++
+       "const" storage.modifier.c++
+       "&" keyword.operator.c++
+       ")" punctuation.section.group.end.c++
+       "=" keyword.operator.assignment.c++
+       "delete" storage.modifier.c++
+       ";" punctuation.terminator.c++
+  30 |   static_assert(sizeof(T) > 0, "size");
+       "static_assert" keyword.operator.word.c++
+       "(" punctuation.section.group.begin.c++
+       "sizeof" keyword.operator.word.c++
+       "(" punctuation.section.group.begin.c++
+       ")" punctuation.section.group.end.c++
+       ">" keyword.operator.comparison.c++
+       "0" constant.numeric.integer.decimal.c++
+       "," punctuation.separator.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.begin.c++
+       "size" string.quoted.double.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.end.c++
+       ")" punctuation.section.group.end.c++
+       ";" punctuation.terminator.c++
+  31 |   friend class Other;
+       "friend" storage.modifier.c++
+       "class" storage.type.c++
+       ";" punctuation.terminator.c++
+  32 |   virtual void run() = 0;
+       "virtual" storage.modifier.c++
+       "void" storage.type.c++
+       "run" entity.name.function.c++
+       "(" punctuation.section.group.begin.c++
+       ")" punctuation.section.group.end.c++
+       "=" keyword.operator.assignment.c++
+       "0" constant.numeric.integer.decimal.c++
+       ";" punctuation.terminator.c++
+  33 |   auto get() const -> decltype(x_) { return this->x_; }
+       "auto" storage.type.c++
+       "get" entity.name.function.c++
+       "(" punctuation.section.group.begin.c++
+       ")" punctuation.section.group.end.c++
+       "const" storage.modifier.c++
+       "->" punctuation.separator.c++
+       "decltype" storage.type.c++
+       "(" punctuation.section.group.begin.c++
+       ")" punctuation.section.group.end.c++
+       "{" punctuation.section.block.begin.c++
+       "return" keyword.control.flow.return.c++
+       "this" variable.language.c++
+       "->" punctuation.accessor.arrow.c++
+       "x_" variable.other.readwrite.member.c++
+       ";" punctuation.terminator.c++
+       "}" punctuation.section.block.end.c++
+  34 |  private:
+       "private" storage.modifier.c++
+       ":" punctuation.section.class.c++
+  35 |   int x_ = 0b1010'1010, y_ = 0x1.8p3, z_ = 017, w_ = 1'000'000ull;
+       "int" storage.type.c++
+       "=" keyword.operator.assignment.c++
+       "0b" constant.numeric.integer.binary.c++ punctuation.definition.numeric.base.c++
+       "1010'1010" constant.numeric.integer.binary.c++
+       "," punctuation.separator.c++
+       "=" keyword.operator.assignment.c++
+       "0x" constant.numeric.float.hexadecimal.c++ punctuation.definition.numeric.base.c++
+       "1" constant.numeric.float.hexadecimal.c++
+       "." constant.numeric.float.hexadecimal.c++ punctuation.separator.decimal.c++
+       "8p3" constant.numeric.float.hexadecimal.c++
+       "," punctuation.separator.c++
+       "=" keyword.operator.assignment.c++
+       "0" constant.numeric.integer.octal.c++ punctuation.definition.numeric.base.c++
+       "17" constant.numeric.integer.octal.c++
+       "," punctuation.separator.c++
+       "=" keyword.operator.assignment.c++
+       "1'000'000" constant.numeric.integer.decimal.c++
+       "ull" constant.numeric.integer.decimal.c++ storage.type.numeric.c++
+       ";" punctuation.terminator.c++
+  36 |   double d_ = 1.5e-3f, e_ = .5L;
+       "double" storage.type.c++
+       "=" keyword.operator.assignment.c++
+       "1" constant.numeric.float.decimal.c++
+       "." constant.numeric.float.decimal.c++ punctuation.separator.decimal.c++
+       "5e-3" constant.numeric.float.decimal.c++
+       "f" constant.numeric.float.decimal.c++ storage.type.numeric.c++
+       "," punctuation.separator.c++
+       "=" keyword.operator.assignment.c++
+       "." constant.numeric.float.decimal.c++ punctuation.separator.decimal.c++
+       "5" constant.numeric.float.decimal.c++
+       "L" constant.numeric.float.decimal.c++ storage.type.numeric.c++
+       ";" punctuation.terminator.c++
+  37 | };
+       "}" punctuation.section.block.end.c++
+       ";" punctuation.terminator.c++
+  38 | struct Point { int x, y; };
+       "struct" storage.type.c++
+       "Point" entity.name.struct.c++
+       "{" punctuation.section.block.begin.c++
+       "int" storage.type.c++
+       "," punctuation.separator.c++
+       ";" punctuation.terminator.c++
+       "}" punctuation.section.block.end.c++
+       ";" punctuation.terminator.c++
+  39 | enum class Color { Red, Green = 2 };
+       "enum class" storage.type.c++
+       "Color" entity.name.enum.c++
+       "{" punctuation.section.block.begin.c++
+       "," punctuation.separator.c++
+       "=" keyword.operator.assignment.c++
+       "2" constant.numeric.integer.decimal.c++
+       "}" punctuation.section.block.end.c++
+       ";" punctuation.terminator.c++
+  40 | union U { int i; float f; };
+       "union" storage.type.c++
+       "U" entity.name.union.c++
+       "{" punctuation.section.block.begin.c++
+       "int" storage.type.c++
+       ";" punctuation.terminator.c++
+       "float" storage.type.c++
+       ";" punctuation.terminator.c++
+       "}" punctuation.section.block.end.c++
+       ";" punctuation.terminator.c++
+  41 | typedef struct node node_t;
+       "typedef" storage.type.c++
+       "struct" storage.type.c++
+       "node_t" entity.name.type.typedef.c++
+       ";" punctuation.terminator.c++
+  42 | int Widget::count = 0;
+       "int" storage.type.c++
+       "::" punctuation.accessor.double-colon.c++
+       "=" keyword.operator.assignment.c++
+       "0" constant.numeric.integer.decimal.c++
+       ";" punctuation.terminator.c++
+  43 | std::vector<int> make(size_t n, const char* s = nullptr) {
+       "::" punctuation.accessor.double-colon.c++
+       "<" punctuation.section.generic.begin.c++
+       "int" storage.type.c++
+       ">" punctuation.section.generic.end.c++
+       "make" entity.name.function.c++
+       "(" punctuation.section.group.begin.c++
+       "size_t" support.type.sys-types.c++
+       "n" variable.parameter.c++
+       "," punctuation.separator.c++
+       "const" storage.modifier.c++
+       "char" storage.type.c++
+       "*" keyword.operator.c++
+       "s" variable.parameter.c++
+       "=" keyword.operator.assignment.c++
+       "nullptr" constant.language.c++
+       ")" punctuation.section.group.end.c++
+       "{" punctuation.section.block.begin.c++
+  44 |   auto raw = R"delim(one
+       "auto" storage.type.c++
+       "=" keyword.operator.assignment.c++
+       "R" string.quoted.double.c++ storage.type.string.c++
+       "\"delim(" string.quoted.double.c++ punctuation.definition.string.begin.c++
+       "one" string.quoted.double.c++
+  45 | )" still )delim";
+       ")\" still " string.quoted.double.c++
+       ")delim\"" string.quoted.double.c++ punctuation.definition.string.end.c++
+       ";" punctuation.terminator.c++
+  46 |   auto lam = [&](int a) mutable { return a * 2; };
+       "auto" storage.type.c++
+       "=" keyword.operator.assignment.c++
+       "[" punctuation.section.brackets.begin.c++
+       "&" keyword.operator.c++
+       "]" punctuation.section.brackets.end.c++
+       "(" punctuation.section.group.begin.c++
+       "int" storage.type.c++
+       ")" punctuation.section.group.end.c++
+       "mutable" storage.modifier.c++
+       "{" punctuation.section.block.begin.c++
+       "return" keyword.control.flow.return.c++
+       "*" keyword.operator.c++
+       "2" constant.numeric.integer.decimal.c++
+       ";" punctuation.terminator.c++
+       "}" punctuation.section.block.end.c++
+       ";" punctuation.terminator.c++
+  47 |   if (n <= 0 || !s) { throw std::runtime_error("bad %d\n"); }
+       "if" keyword.control.c++
+       "(" punctuation.section.group.begin.c++
+       "<=" keyword.operator.comparison.c++
+       "0" constant.numeric.integer.decimal.c++
+       "||" keyword.operator.c++
+       "!" keyword.operator.c++
+       ")" punctuation.section.group.end.c++
+       "{" punctuation.section.block.begin.c++
+       "throw" keyword.control.flow.throw.c++
+       "::" punctuation.accessor.double-colon.c++
+       "runtime_error" variable.function.c++
+       "(" punctuation.section.group.begin.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.begin.c++
+       "bad " string.quoted.double.c++
+       "%d" string.quoted.double.c++ constant.other.placeholder.c++
+       "\\n" string.quoted.double.c++ constant.character.escape.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.end.c++
+       ")" punctuation.section.group.end.c++
+       ";" punctuation.terminator.c++
+       "}" punctuation.section.block.end.c++
+  48 |   for (auto& v : list) v.push_back(static_cast<int>(n));
+       "for" keyword.control.c++
+       "(" punctuation.section.group.begin.c++
+       "auto" storage.type.c++
+       "&" keyword.operator.c++
+       ":" keyword.operator.ternary.c++
+       ")" punctuation.section.group.end.c++
+       "." punctuation.accessor.dot.c++
+       "push_back" variable.function.member.c++
+       "(" punctuation.section.group.begin.c++
+       "static_cast" keyword.operator.word.cast.c++
+       "<" punctuation.section.generic.begin.c++
+       "int" storage.type.c++
+       ">" punctuation.section.generic.end.c++
+       "(" punctuation.section.group.begin.c++
+       "))" punctuation.section.group.end.c++
+       ";" punctuation.terminator.c++
+  49 |   switch (n) { case 1: break; default: goto done; }
+       "switch" keyword.control.c++
+       "(" punctuation.section.group.begin.c++
+       ")" punctuation.section.group.end.c++
+       "{" punctuation.section.block.begin.c++
+       "case" keyword.control.c++
+       "1" constant.numeric.integer.decimal.c++
+       ":" punctuation.separator.c++
+       "break" keyword.control.flow.break.c++
+       ";" punctuation.terminator.c++
+       "default" keyword.control.c++
+       ":" punctuation.separator.c++
+       "goto" keyword.control.flow.goto.c++
+       ";" punctuation.terminator.c++
+       "}" punctuation.section.block.end.c++
+  50 | done:
+       "done" entity.name.label.c++
+       ":" punctuation.separator.c++
+  51 |   printf("%5.2f %s %%", 1.0, u8"x");
+       "printf" support.function.C99.c++
+       "(" punctuation.section.group.begin.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.begin.c++
+       "%5.2f" string.quoted.double.c++ constant.other.placeholder.c++
+       " " string.quoted.double.c++
+       "%s" string.quoted.double.c++ constant.other.placeholder.c++
+       " " string.quoted.double.c++
+       "%%" string.quoted.double.c++ constant.other.placeholder.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.end.c++
+       "," punctuation.separator.c++
+       "1" constant.numeric.float.decimal.c++
+       "." constant.numeric.float.decimal.c++ punctuation.separator.decimal.c++
+       "0" constant.numeric.float.decimal.c++
+       "," punctuation.separator.c++
+       "u8" string.quoted.double.c++ storage.type.string.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.begin.c++
+       "x" string.quoted.double.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.end.c++
+       ")" punctuation.section.group.end.c++
+       ";" punctuation.terminator.c++
+  52 |   ptr->member.call<int>(1)->field;
+       "->" punctuation.accessor.arrow.c++
+       "member" variable.other.readwrite.member.c++
+       "." punctuation.accessor.dot.c++
+       "call" variable.function.member.c++
+       "<" punctuation.section.generic.begin.c++
+       "int" storage.type.c++
+       ">" punctuation.section.generic.end.c++
+       "(" punctuation.section.group.begin.c++
+       "1" constant.numeric.integer.decimal.c++
+       ")" punctuation.section.group.end.c++
+       "->" punctuation.accessor.arrow.c++
+       "field" variable.other.readwrite.member.c++
+       ";" punctuation.terminator.c++
+  53 |   delete[] arr; new int[3];
+       "delete[]" keyword.control.c++
+       ";" punctuation.terminator.c++
+       "new" keyword.control.c++
+       "int" storage.type.c++
+       "[" punctuation.section.brackets.begin.c++
+       "3" constant.numeric.integer.decimal.c++
+       "]" punctuation.section.brackets.end.c++
+       ";" punctuation.terminator.c++
+  54 |   TEST_MACRO(a, sizeof(b), "c")
+       "TEST_MACRO" variable.function.c++
+       "(" punctuation.section.group.begin.c++
+       "," punctuation.separator.c++
+       "sizeof" keyword.operator.word.c++
+       "(" punctuation.section.group.begin.c++
+       ")" punctuation.section.group.end.c++
+       "," punctuation.separator.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.begin.c++
+       "c" string.quoted.double.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.end.c++
+       ")" punctuation.section.group.end.c++
+  55 |   return std::move(n);
+       "return" keyword.control.flow.return.c++
+       "::" punctuation.accessor.double-colon.c++
+       "move" variable.function.c++
+       "(" punctuation.section.group.begin.c++
+       ")" punctuation.section.group.end.c++
+       ";" punctuation.terminator.c++
+  56 | }
+       "}" punctuation.section.block.end.c++
+  57 | }  // namespace foo::bar
+       "}" punctuation.section.block.end.c++
+       "//" comment.line.double-slash.c++ punctuation.definition.comment.c++
+       " namespace foo::bar" comment.line.double-slash.c++
+  58 | #ifdef __cplusplus
+       "#ifdef" keyword.control.import.c++
+       " __cplusplus" meta.preprocessor.c++
+  59 | }
+       "}" punctuation.section.block.end.c++
+  60 | #endif
+       "#endif" keyword.control.import.c++
+  61 | #pragma mark Section
+       "#pragma mark" keyword.control.import.c++
+       " Section" meta.preprocessor.c++
+  62 | #error "stop" here
+       "#error" keyword.control.import.error.c++
+       " " meta.preprocessor.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.begin.c++
+       "stop" string.quoted.double.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.end.c++
+       " " meta.preprocessor.c++
+       "here" string.unquoted.c++

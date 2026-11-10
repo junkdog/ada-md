@@ -1,0 +1,141 @@
+# Crontab: ada-parse/tests/readings.rs, crontab
+   1 | # m h dom mon dow command TODO: x
+       "#" comment.line.number-sign.crontab punctuation.definition.comment.crontab
+       " m h dom mon dow command " comment.line.number-sign.crontab
+       "TODO: x" comment.line.number-sign.crontab invalid.deprecated.todo.crontab
+   2 | SHELL=/bin/bash
+       "SHELL" variable.other.readwrite.crontab
+       "=" keyword.operator.assignment.crontab
+       "/bin/bash" string.unquoted.crontab
+   3 | MAILTO=  # nobody
+       "MAILTO" variable.other.readwrite.crontab
+       "=" keyword.operator.assignment.crontab
+       "  " comment.line.number-sign.crontab
+       "#" comment.line.number-sign.crontab punctuation.definition.comment.crontab
+       " nobody" comment.line.number-sign.crontab
+   4 | CRON_TZ=UTC
+       "CRON_TZ" invalid.illegal.crontab
+   5 | */5 * * * * /usr/bin/php /var/www/cron.php > /dev/null 2>&1
+       "*" constant.language.any-value.crontab
+       "/" punctuation.separator.step.crontab
+       "5" constant.numeric.integer.decimal.crontab
+       "*" constant.language.any-value.crontab
+       "*" constant.language.any-value.crontab
+       "*" constant.language.any-value.crontab
+       "*" constant.language.any-value.crontab
+       "/usr/bin/php" meta.function-call.shell support.function.command.shell
+       ">" keyword.operator.assignment.redirection.shell
+       "2" constant.numeric.integer.decimal.file-descriptor.shell
+       ">&" keyword.operator.assignment.redirection.shell
+       "1" constant.numeric.integer.decimal.file-descriptor.shell
+   6 | 15,45 1-5 1-31/2 Jan-Mar mon-fri echo $HOME; ls # done
+       "15" constant.numeric.integer.decimal.crontab
+       "," punctuation.separator.sequence.crontab
+       "45" constant.numeric.integer.decimal.crontab
+       "1-5" constant.other.range.crontab
+       "1-31" constant.other.range.crontab
+       "/" punctuation.separator.step.crontab
+       "2" constant.numeric.integer.decimal.crontab
+       "Jan" support.constant.month-name.crontab
+       "-" invalid.illegal.crontab
+       "Mar" support.constant.month-name.crontab
+       "mon" support.constant.day-of-week-name.crontab
+       "-" invalid.illegal.crontab
+       "fri" support.constant.day-of-week-name.crontab
+       "echo" meta.function-call.shell support.function.echo.shell
+       "$" punctuation.definition.variable.shell
+       "HOME" variable.other.readwrite.shell
+       ";" keyword.operator.logical.continue.shell
+       "ls " meta.function-call.shell support.function.command.shell
+       "#" comment.line.number-sign.shell punctuation.definition.comment.begin.shell
+       " done" comment.line.number-sign.shell
+   7 | 0 0 15W * 5L cmd
+       "0" constant.numeric.integer.decimal.crontab
+       "0" constant.numeric.integer.decimal.crontab
+       "15" constant.numeric.integer.decimal.crontab
+       "W" invalid.deprecated.non-standard.crontab
+       "*" constant.language.any-value.crontab
+       "5" constant.numeric.integer.decimal.crontab
+       "L" invalid.deprecated.non-standard.crontab
+       "cmd" meta.function-call.shell support.function.command.shell
+   8 | 0 0 ? x5 MON#2 cmd
+       "0" constant.numeric.integer.decimal.crontab
+       "0" constant.numeric.integer.decimal.crontab
+       "?" invalid.deprecated.non-standard.crontab
+       "5" invalid.illegal.crontab
+       "MON" support.constant.day-of-week-name.crontab
+       "#" invalid.deprecated.non-standard.crontab
+       "2" constant.numeric.integer.decimal.crontab
+       "cmd" meta.function-call.shell support.function.command.shell
+   9 | 60 24 0 13 8 cmd
+       "60" invalid.illegal.crontab
+       "24" invalid.illegal.crontab
+       "0" invalid.illegal.crontab
+       "13" invalid.illegal.crontab
+       "8" invalid.illegal.crontab
+       "cmd" meta.function-call.shell support.function.command.shell
+  10 | 5, ,5 ** */ Sunday cmd
+       "5" constant.numeric.integer.decimal.crontab
+       "," invalid.illegal.crontab
+       "," invalid.illegal.crontab
+       "5" constant.numeric.integer.decimal.crontab
+       "**" invalid.illegal.crontab
+       "*" constant.language.any-value.crontab
+       "/" invalid.illegal.crontab
+       "cmd" meta.function-call.shell support.function.command.shell
+  11 | 00 1-2-3 H H(0-5) * cmd
+       "00" invalid.illegal.crontab
+       "1-2" constant.other.range.crontab
+       "-3" invalid.illegal.crontab
+       "H" invalid.deprecated.non-standard.crontab
+       "H" invalid.deprecated.non-standard.crontab
+       "(0-" invalid.illegal.crontab
+       "5" constant.numeric.integer.decimal.crontab
+       ")" invalid.illegal.crontab
+       "*" constant.language.any-value.crontab
+       "cmd" meta.function-call.shell support.function.command.shell
+  12 |   0 0 * * *\tcd /srv && ./run.sh "$(date +%F)"
+       "0" constant.numeric.integer.decimal.crontab
+       "0" constant.numeric.integer.decimal.crontab
+       "*" constant.language.any-value.crontab
+       "*" constant.language.any-value.crontab
+       "*" constant.language.any-value.crontab
+       "cd" meta.function-call.shell support.function.cd.shell
+       "&&" keyword.operator.logical.and.shell
+       "./run.sh" meta.function-call.shell support.function.command.shell
+       "\"" punctuation.definition.string.begin.shell
+       "$" punctuation.definition.variable.shell
+       "(" punctuation.section.parens.begin.shell
+       "date" meta.function-call.shell support.function.command.shell
+       " +" string.quoted.double.shell
+       "%" meta.group.expansion.job.shell punctuation.definition.variable.job.shell
+       "F" variable.other.readwrite.shell
+       ")" punctuation.section.parens.end.shell
+       "\"" punctuation.definition.string.end.shell
+  13 | @reboot sleep 60 && /opt/start.sh
+       "@" constant.language.schedule.crontab punctuation.definition.variable.crontab
+       "reboot" constant.language.schedule.crontab
+       "sleep" meta.function-call.shell support.function.command.shell
+       "&&" keyword.operator.logical.and.shell
+       "/opt/start.sh" meta.function-call.shell support.function.command.shell
+  14 | @daily#c
+       "@" constant.language.schedule.crontab punctuation.definition.variable.crontab
+       "daily" constant.language.schedule.crontab
+       "#" comment.line.number-sign.crontab punctuation.definition.comment.crontab
+       "c" comment.line.number-sign.crontab
+  15 | @weekly
+       "@" constant.language.schedule.crontab punctuation.definition.variable.crontab
+       "weekly" constant.language.schedule.crontab
+  16 | @foo bar # c
+       "@" punctuation.definition.variable.crontab
+       " " comment.line.number-sign.crontab
+       "#" comment.line.number-sign.crontab punctuation.definition.comment.crontab
+       " c" comment.line.number-sign.crontab
+  17 | garbage line # c
+       "garbage" invalid.illegal.crontab
+       " " comment.line.number-sign.crontab
+       "#" comment.line.number-sign.crontab punctuation.definition.comment.crontab
+       " c" comment.line.number-sign.crontab
+  18 |   abc def
+       "  abc" invalid.illegal.crontab
+  19 | cron x

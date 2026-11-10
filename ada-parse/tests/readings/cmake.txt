@@ -1,0 +1,330 @@
+# CMake: ada-parse/tests/readings.rs, cmake
+   1 | cmake_minimum_required(VERSION 3.16)
+       "cmake_minimum_required" support.function.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "VERSION" variable.parameter.cmake
+       ")" punctuation.section.parens.end.cmake
+   2 | project(foo LANGUAGES CXX)
+       "project" support.function.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "LANGUAGES" variable.parameter.cmake
+       ")" punctuation.section.parens.end.cmake
+   3 | #[==[ a bracket
+       "#[==[" comment.block.cmake punctuation.definition.comment.begin.cmake
+       " a bracket" comment.block.cmake
+   4 | comment ]==] after
+       "comment " comment.block.cmake
+       "]==]" comment.block.cmake punctuation.definition.comment.end.cmake
+       "after" variable.function.generic.cmake
+   5 | set(FOO bar CACHE STRING "doc" FORCE)
+       "(" punctuation.section.parens.begin.cmake
+       "FOO" variable.parameter.generic.cmake
+       "CACHE" variable.parameter.generic.cmake
+       "STRING" variable.parameter.generic.cmake
+       "\"" string.quoted.double.cmake punctuation.definition.string.begin.cmake
+       "doc" string.quoted.double.cmake
+       "\"" string.quoted.double.cmake punctuation.definition.string.end.cmake
+       "FORCE" variable.parameter.generic.cmake
+       ")" punctuation.section.parens.end.cmake
+   6 | set(X 1 CACHE PATHS "d")
+       "set" support.function.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "X" variable.other.readwrite.assignment.cmake
+       "CACHE" variable.parameter.cmake
+       "PATH" storage.type.cmake
+       "\"" string.quoted.double.cmake punctuation.definition.string.begin.cmake
+       "d" string.quoted.double.cmake
+       "\"" string.quoted.double.cmake punctuation.definition.string.end.cmake
+       ")" punctuation.section.parens.end.cmake
+   7 | set(${X}_y 1 PARENT_SCOPE)
+       "set" support.function.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "$" punctuation.definition.variable.substitution.cmake
+       "{" punctuation.section.braces.begin.cmake
+       "X" variable.other.readwrite.cmake
+       "}" punctuation.section.braces.end.cmake
+       "_y" variable.other.readwrite.assignment.cmake
+       "PARENT_SCOPE" variable.parameter.cmake
+       ")" punctuation.section.parens.end.cmake
+   8 | SET(
+       "SET" support.function.cmake
+       "(" punctuation.section.parens.begin.cmake
+   9 |   Y 2)
+       ")" punctuation.section.parens.end.cmake
+  10 | if(NOT DEFINED FOO AND (A OR B) OR C VERSION_LESS_EQUAL 2)
+       "if" keyword.control.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "NOT" keyword.operator.logical.cmake
+       "DEFINED" variable.parameter.cmake
+       "AND" keyword.operator.logical.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "OR" keyword.operator.logical.cmake
+       ")" punctuation.section.parens.end.cmake
+       "OR" keyword.operator.logical.cmake
+       "VERSION_LESS_EQUAL" variable.parameter.cmake
+       ")" punctuation.section.parens.end.cmake
+  11 |   message(STATUS "x ${FOO} $ENV{HOME} $<CONFIG:Debug> \n \q ; a\
+       "message" support.function.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "STATUS" variable.parameter.cmake
+       "\"" string.quoted.double.cmake punctuation.definition.string.begin.cmake
+       "x " string.quoted.double.cmake
+       "$" string.quoted.double.cmake punctuation.definition.variable.substitution.cmake
+       "{" string.quoted.double.cmake punctuation.section.braces.begin.cmake
+       "FOO" string.quoted.double.cmake variable.other.readwrite.cmake
+       "}" string.quoted.double.cmake punctuation.section.braces.end.cmake
+       " " string.quoted.double.cmake
+       "$" string.quoted.double.cmake punctuation.definition.variable.substitution.cmake
+       "ENV" string.quoted.double.cmake keyword.operator.word.cmake
+       "{" string.quoted.double.cmake punctuation.section.braces.begin.cmake
+       "HOME" string.quoted.double.cmake variable.other.readwrite.cmake
+       "}" string.quoted.double.cmake punctuation.section.braces.end.cmake
+       " " string.quoted.double.cmake
+       "$" string.quoted.double.cmake punctuation.definition.variable.generator-expression.cmake
+       "<" string.quoted.double.cmake punctuation.section.block.begin.cmake
+       "CONFIG" string.quoted.double.cmake variable.other.readwrite.cmake
+       ":" string.quoted.double.cmake punctuation.separator.generator-expression.cmake
+       "Debug" string.quoted.double.cmake variable.other.readwrite.cmake
+       ">" string.quoted.double.cmake punctuation.section.block.end.cmake
+       " " string.quoted.double.cmake
+       "\\n" string.quoted.double.cmake constant.character.escape.cmake
+       " " string.quoted.double.cmake
+       "\\q" string.quoted.double.cmake invalid.illegal.character.escape.cmake
+       " " string.quoted.double.cmake
+       ";" string.quoted.double.cmake punctuation.separator.cmake
+       " a\\" string.quoted.double.cmake
+  12 | b")
+       "b" string.quoted.double.cmake
+       "\"" string.quoted.double.cmake punctuation.definition.string.end.cmake
+       ")" punctuation.section.parens.end.cmake
+  13 | elseif(X MATCHES [[^a(b|[0-9]+.*)\.c$]] OR Y
+       "elseif" keyword.control.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "MATCHES" variable.parameter.cmake
+       "[[" string.regexp.cmake
+       "^" string.regexp.cmake keyword.control.anchors.regexp
+       "a" string.regexp.cmake
+       "(" string.regexp.cmake keyword.control.group.regexp
+       "b" string.regexp.cmake
+       "|" string.regexp.cmake keyword.operator.alternation.regexp
+       "[" string.regexp.cmake keyword.control.set.regexp
+       "0-9" string.regexp.cmake constant.other.range.regexp
+       "]" string.regexp.cmake keyword.control.set.regexp
+       "+" string.regexp.cmake keyword.operator.quantifier.regexp
+       "." string.regexp.cmake keyword.other.any.regexp
+       "*" string.regexp.cmake keyword.operator.quantifier.regexp
+       ")" string.regexp.cmake keyword.control.group.regexp
+       "\\." string.regexp.cmake constant.character.escape.regexp
+       "c" string.regexp.cmake
+       "$" string.regexp.cmake keyword.control.anchors.regexp
+       "]]" string.regexp.cmake punctuation.definition.string.end.cmake
+       "OR" keyword.operator.logical.cmake
+  14 |   [=[raw]=])
+       "[=[" string.raw.cmake punctuation.definition.string.begin.cmake
+       "raw" string.raw.cmake
+       "]=]" string.raw.cmake punctuation.definition.string.end.cmake
+       ")" punctuation.section.parens.end.cmake
+  15 |   break()
+       "break" keyword.control.cmake
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
+  16 | else()
+       "else" keyword.control.cmake
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
+  17 | endif()
+       "endif" keyword.control.cmake
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
+  18 | endif()
+       "endif" invalid.illegal.stray.cmake
+  19 | else junk
+       "else" invalid.illegal.stray.cmake
+       "junk" variable.function.generic.cmake
+  20 | function(my_fn a b)
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
+  21 |   continue()
+       "continue" variable.function.generic.cmake
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
+  22 |   break()
+       "break" invalid.illegal.stray.cmake
+  23 | endfunction()
+       "endfunction" invalid.illegal.stray.cmake
+  24 | macro(m)
+       "macro" support.function.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "m" entity.name.function.cmake
+       ")" punctuation.section.parens.end.cmake
+  25 | endmacro()
+       "endmacro" support.function.cmake
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
+  26 | foreach(x IN LISTS y ITEMS z)
+       "foreach" keyword.control.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "IN" variable.parameter.cmake
+       "LISTS" variable.parameter.cmake
+       "ITEMS" variable.parameter.cmake
+       ")" punctuation.section.parens.end.cmake
+  27 |   if(x)
+       "if" keyword.control.cmake
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
+  28 |     continue()
+       "continue" variable.function.generic.cmake
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
+  29 |   endif()
+       "endif" keyword.control.cmake
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
+  30 | endforeach()
+       "endforeach" keyword.control.cmake
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
+  31 | while(A)
+       "while" keyword.control.cmake
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
+  32 | endwhile()
+       "endwhile" keyword.control.cmake
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
+  33 | my_cmd(FOO BAR_1 foo FOO=1 FOO-x (a b) "s" [[raw]] PROPERTIES FOO/${X}#c
+       "my_cmd" variable.function.generic.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "FOO" variable.parameter.generic.cmake
+       "BAR_1" variable.parameter.generic.cmake
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
+       "\"" string.quoted.double.cmake punctuation.definition.string.begin.cmake
+       "s" string.quoted.double.cmake
+       "\"" string.quoted.double.cmake punctuation.definition.string.end.cmake
+       "PROPERTIES" variable.parameter.generic.cmake
+       "FOO/" variable.parameter.generic.cmake
+       "$" variable.parameter.generic.cmake punctuation.definition.variable.substitution.cmake
+       "{" variable.parameter.generic.cmake punctuation.section.braces.begin.cmake
+       "X" variable.parameter.generic.cmake variable.other.readwrite.cmake
+       "}" variable.parameter.generic.cmake punctuation.section.braces.end.cmake
+       "#" variable.parameter.generic.cmake comment.line.cmake punctuation.definition.comment.cmake
+       "c" variable.parameter.generic.cmake comment.line.cmake
+  34 | BAR)
+       "BAR" variable.parameter.generic.cmake
+       ")" punctuation.section.parens.end.cmake
+  35 | foo(a\;b\q c 'x y' -D${A}="$<$<CXX_COMPILER_ID:GNU>:-Wall ${W}>")
+       "foo" variable.function.generic.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "\\;" constant.character.escape.cmake
+       "\\q" invalid.illegal.character.escape.cmake
+       "$" punctuation.definition.variable.substitution.cmake
+       "{" punctuation.section.braces.begin.cmake
+       "A" variable.other.readwrite.cmake
+       "}" punctuation.section.braces.end.cmake
+       "\"" string.quoted.double.cmake punctuation.definition.string.begin.cmake
+       "$" string.quoted.double.cmake punctuation.definition.variable.generator-expression.cmake
+       "<" string.quoted.double.cmake punctuation.section.block.begin.cmake
+       "$" string.quoted.double.cmake punctuation.definition.variable.generator-expression.cmake
+       "<" string.quoted.double.cmake punctuation.section.block.begin.cmake
+       "CXX_COMPILER_ID" string.quoted.double.cmake variable.other.readwrite.cmake
+       ":" string.quoted.double.cmake punctuation.separator.generator-expression.cmake
+       "GNU" string.quoted.double.cmake variable.other.readwrite.cmake
+       ">" string.quoted.double.cmake punctuation.section.block.end.cmake
+       ":" string.quoted.double.cmake punctuation.separator.generator-expression.cmake
+       "-" string.quoted.double.cmake
+       "Wall" string.quoted.double.cmake variable.other.readwrite.cmake
+       " " string.quoted.double.cmake
+       "$" string.quoted.double.cmake punctuation.definition.variable.substitution.cmake
+       "{" string.quoted.double.cmake punctuation.section.braces.begin.cmake
+       "W" string.quoted.double.cmake variable.other.readwrite.cmake
+       "}" string.quoted.double.cmake punctuation.section.braces.end.cmake
+       ">" string.quoted.double.cmake punctuation.section.block.end.cmake
+       "\"" string.quoted.double.cmake punctuation.definition.string.end.cmake
+       ")" punctuation.section.parens.end.cmake
+  36 | target_link_libraries(foo PRIVATE bar (x) y)
+       "target_link_libraries" support.function.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "PRIVATE" variable.parameter.cmake
+       "(" invalid.illegal.stray.parenthesis.cmake
+       ")" punctuation.section.parens.end.cmake
+       "y" variable.function.generic.cmake
+  37 | add_executable(foo WIN32 src/a.c)
+       "(" punctuation.section.parens.begin.cmake
+       "WIN32" variable.parameter.generic.cmake
+       ")" punctuation.section.parens.end.cmake
+  38 | add_custom_command(OUTPUT x USES_TERMINAL COMMAND_EXPAND_LISTS)
+       "add_custom_command" support.function.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "OUTPUT" variable.parameter.cmake
+       "USES_TERMINAL COMMAND_EXPAND_LISTS" variable.parameter.USES_TERMINAL COMMAND_EXPAND_LISTS.cmake
+       ")" punctuation.section.parens.end.cmake
+  39 | install(TARGETS x INCLUDES DESTINATION y RUNTIME DESTINATION bin) # trailing
+       "install" support.function.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "TARGETS" variable.parameter.cmake
+       "INCLUDES DESTINATION" variable.parameter.INCLUDES DESTINATION.cmake
+       "RUNTIME" variable.parameter.cmake
+       "DESTINATION" variable.parameter.cmake
+       ")" punctuation.section.parens.end.cmake
+       "#" comment.line.cmake punctuation.definition.comment.cmake
+       " trailing" comment.line.cmake
+  40 | include(foo OPTIONAL RESULT_VARIABLE res)
+       "include" keyword.control.import.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "OPTIONAL" variable.parameter.cmake
+       "RESULT_VARIABLE" variable.parameter.cmake
+       "res" variable.other.readwrite.cmake
+       ")" punctuation.section.parens.end.cmake
+  41 | if # c
+       "if" keyword.control.cmake
+       "#" comment.line.cmake punctuation.definition.comment.cmake
+       " c" comment.line.cmake
+  42 | (x)
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
+  43 | endif()
+       "endif" keyword.control.cmake
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
+  44 | message (STATUS x) junk
+       "message" support.function.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "STATUS" variable.parameter.cmake
+       ")" punctuation.section.parens.end.cmake
+       "junk" variable.function.generic.cmake
+  45 | target_compile_options(x PRIVATE $<$<A:b>:c # d
+       "(" punctuation.section.parens.begin.cmake
+       "PRIVATE" variable.parameter.generic.cmake
+       "$" punctuation.definition.variable.generator-expression.cmake
+       "<" punctuation.section.block.begin.cmake
+       "$" punctuation.definition.variable.generator-expression.cmake
+       "<" punctuation.section.block.begin.cmake
+       "A" variable.other.readwrite.cmake
+       ":" punctuation.separator.generator-expression.cmake
+       "b" variable.other.readwrite.cmake
+       ">" punctuation.section.block.end.cmake
+       ":" punctuation.separator.generator-expression.cmake
+       "c" variable.other.readwrite.cmake
+       "d" variable.other.readwrite.cmake
+  46 | >)
+       ">" punctuation.section.block.end.cmake
+       ")" punctuation.section.parens.end.cmake
+  47 | Set_Property(X ${a_${b}} ${A # e
+       "Set_Property" support.function.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "$" punctuation.definition.variable.substitution.cmake
+       "{" punctuation.section.braces.begin.cmake
+       "a_" variable.other.readwrite.cmake
+       "$" punctuation.definition.variable.substitution.cmake
+       "{" punctuation.section.braces.begin.cmake
+       "b" variable.other.readwrite.cmake
+       "}}" punctuation.section.braces.end.cmake
+       "$" punctuation.definition.variable.substitution.cmake
+       "{" punctuation.section.braces.begin.cmake
+       "A" variable.other.readwrite.cmake
+       "#" comment.line.cmake punctuation.definition.comment.cmake
+       " e" comment.line.cmake
+  48 | })
+       "}" punctuation.section.braces.end.cmake
+       ")" punctuation.section.parens.end.cmake
