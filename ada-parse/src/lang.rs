@@ -95,6 +95,8 @@ pub enum Lang {
     Terraform,
     /// bat's `Scala`: Scala's files, sbt's and scala-cli's scripts.
     Scala,
+    /// bat's `Groovy`: Groovy's files, Gradle's build scripts, Jenkinsfiles.
+    Groovy,
     /// bat's `Haskell`.
     Haskell,
     /// bat's `Literate Haskell`: prose around Haskell's code (Bird tracks, `\begin{code}`,
@@ -416,6 +418,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::CMakeCache, &["cmakecache.txt"]),
     (Lang::Terraform, &["tf", "tfvars", "hcl"]),
     (Lang::Scala, &["scala", "sbt", "sc"]),
+    (Lang::Groovy, &["groovy", "gvy", "gradle", "jenkinsfile"]),
     (Lang::Haskell, &["hs"]),
     (Lang::LiterateHaskell, &["lhs"]),
     (
@@ -472,7 +475,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 57] = [
+    pub const ALL: [Lang; 58] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -514,6 +517,7 @@ impl Lang {
         Lang::CMakeCache,
         Lang::Terraform,
         Lang::Scala,
+        Lang::Groovy,
         Lang::Haskell,
         Lang::LiterateHaskell,
         Lang::Ruby,
@@ -577,6 +581,7 @@ impl Lang {
             Lang::CMakeCache => "CMakeCache",
             Lang::Terraform => "Terraform",
             Lang::Scala => "Scala",
+            Lang::Groovy => "Groovy",
             Lang::Haskell => "Haskell",
             Lang::LiterateHaskell => "Literate Haskell",
             Lang::Ruby => "Ruby",
@@ -649,6 +654,7 @@ impl Lang {
             Lang::CMakeCache => "source.cmakecache",
             Lang::Terraform => "source.terraform",
             Lang::Scala => "source.scala",
+            Lang::Groovy => "source.groovy",
             Lang::Haskell => "source.haskell",
             Lang::LiterateHaskell => "text.tex.latex.haskell",
             Lang::Ruby => "source.ruby",
@@ -707,6 +713,7 @@ impl Lang {
             Lang::CMake => crate::cmake::scopes(kind),
             Lang::Terraform => crate::terraform::scopes(kind),
             Lang::Scala => crate::scala::scopes(kind),
+            Lang::Groovy => crate::groovy::scopes(kind),
             Lang::Haskell | Lang::LiterateHaskell => crate::haskell::scopes(kind),
             Lang::Ruby => crate::ruby::scopes(kind),
             Lang::Sql => crate::sql::scopes(kind),

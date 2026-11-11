@@ -1,0 +1,365 @@
+# Groovy: ada-parse/tests/readings.rs, groovy
+   1 | #!/usr/bin/env groovy
+       "#!" comment.line.hashbang.groovy punctuation.definition.comment.groovy
+       "/usr/bin/env groovy" comment.line.hashbang.groovy
+   2 | package com.example.app
+       "package" keyword.other.package.groovy
+       "com.example.app" storage.type.package.groovy
+   3 | import static org.junit.Assert.assertTrue
+       "import" keyword.other.import.groovy
+       "static" storage.modifier.static.groovy
+       "org.junit.Assert.assertTrue" storage.type.import.groovy
+   4 | import groovy.sql.Sql
+       "import" keyword.other.import.groovy
+       "groovy.sql.Sql" storage.type.import.groovy
+   5 | @Grab(group = 'org.foo', module = 'bar', version = '1.0')
+       "@Grab" storage.type.annotation.groovy
+       "(" punctuation.definition.annotation-arguments.begin.groovy
+       "group" constant.other.key.groovy
+       "=" keyword.operator.assignment.groovy
+       "'" string.quoted.single.groovy punctuation.definition.string.begin.groovy
+       "org.foo" string.quoted.single.groovy
+       "'" string.quoted.single.groovy punctuation.definition.string.end.groovy
+       "," punctuation.definition.separator.groovy
+       "module" constant.other.key.groovy
+       "=" keyword.operator.assignment.groovy
+       "'" string.quoted.single.groovy punctuation.definition.string.begin.groovy
+       "bar" string.quoted.single.groovy
+       "'" string.quoted.single.groovy punctuation.definition.string.end.groovy
+       "," punctuation.definition.separator.groovy
+       "version" constant.other.key.groovy
+       "=" keyword.operator.assignment.groovy
+       "'" string.quoted.single.groovy punctuation.definition.string.begin.groovy
+       "1.0" string.quoted.single.groovy
+       "'" string.quoted.single.groovy punctuation.definition.string.end.groovy
+       ")" punctuation.definition.annotation-arguments.end.groovy
+   6 | /**
+       "/**" comment.block.documentation.javadoc punctuation.definition.comment.begin.javadoc
+   7 |  * A greeter, {@code new Greeter()}; see {@link Foo#bar}.
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "*" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.comment.javadoc
+       " A greeter, " comment.block.documentation.javadoc text.html.javadoc
+       "{" comment.block.documentation.javadoc text.html.javadoc punctuation.section.inline-tag.begin.javadoc
+       "@" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.javadoc punctuation.definition.keyword.javadoc
+       "code" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.javadoc
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "new Greeter()" comment.block.documentation.javadoc text.html.javadoc markup.raw.javadoc
+       "}" comment.block.documentation.javadoc text.html.javadoc punctuation.section.inline-tag.end.javadoc
+       "; see " comment.block.documentation.javadoc text.html.javadoc
+       "{" comment.block.documentation.javadoc text.html.javadoc punctuation.section.inline-tag.begin.javadoc
+       "@" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.javadoc punctuation.definition.keyword.javadoc
+       "link" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.javadoc
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "Foo#bar" comment.block.documentation.javadoc text.html.javadoc markup.underline.link.javadoc
+       "}" comment.block.documentation.javadoc text.html.javadoc punctuation.section.inline-tag.end.javadoc
+       "." comment.block.documentation.javadoc text.html.javadoc
+   8 |  * @param name the <b>name</b>
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "*" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.comment.javadoc
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "@" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.javadoc punctuation.definition.keyword.javadoc
+       "param" comment.block.documentation.javadoc text.html.javadoc keyword.other.documentation.javadoc
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "name" comment.block.documentation.javadoc text.html.javadoc variable.parameter.javadoc
+       " the " comment.block.documentation.javadoc text.html.javadoc
+       "<" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.tag.begin.html
+       "b" comment.block.documentation.javadoc text.html.javadoc entity.name.tag.other.html
+       ">" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.tag.end.html
+       "name" comment.block.documentation.javadoc text.html.javadoc
+       "</" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.tag.begin.html
+       "b" comment.block.documentation.javadoc text.html.javadoc entity.name.tag.other.html
+       ">" comment.block.documentation.javadoc text.html.javadoc punctuation.definition.tag.end.html
+   9 |  */
+       " " comment.block.documentation.javadoc text.html.javadoc
+       "*/" comment.block.documentation.javadoc punctuation.definition.comment.end.javadoc
+  10 | @CompileStatic
+       "@CompileStatic" storage.type.annotation.groovy
+  11 | class Greeter extends Base implements Named, Serializable {
+       "class" storage.type.class.groovy
+       "Greeter" entity.name.type.class.groovy
+       "extends" storage.modifier.extends.groovy
+       "Base" entity.other.inherited-class.groovy
+       "implements" storage.modifier.implements.groovy
+       "Named" entity.other.inherited-class.interface.groovy
+       "," punctuation.definition.implemented.interfaces.separator.groovy
+       "Serializable" entity.other.inherited-class.interface.groovy
+  12 |     private static final int MAX_SIZE = 1_000
+       "private" storage.modifier.access-control.groovy
+       "static" storage.modifier.static.groovy
+       "final" storage.modifier.final.groovy
+       "int" storage.type.primitive.groovy
+       "MAX_SIZE" constant.other.groovy
+       "=" keyword.operator.assignment.groovy
+       "1_000" constant.numeric.groovy
+  13 |     String name
+       "String" storage.type.class.groovy
+  14 |     Greeter(String name) { this.name = name }
+       "Greeter" entity.name.function.constructor.groovy
+       "(" punctuation.definition.parameters.begin.groovy
+       "String" storage.type.parameter.groovy
+       "name" variable.parameter.groovy
+       ")" punctuation.definition.parameters.end.groovy
+       "this" variable.language.groovy
+       "." punctuation.accessor.dot.groovy
+       "=" keyword.operator.assignment.groovy
+  15 |     public <T> List<T> pick(Map opts = [:], T... items)
+       "public" storage.modifier.access-control.groovy
+       "List<T>" storage.type.return-type.class.groovy
+       "pick" entity.name.function.groovy
+       "(" punctuation.definition.parameters.begin.groovy
+       "Map" storage.type.parameter.groovy
+       "opts" variable.parameter.groovy
+       "=" keyword.operator.assignment.groovy
+       "[" punctuation.definition.structure.begin.groovy
+       "]" punctuation.definition.structure.end.groovy
+       "," punctuation.definition.parameters.separator.groovy
+       "T" storage.type.parameter.groovy
+       "items" variable.parameter.groovy
+       ")" punctuation.definition.parameters.end.groovy
+  16 |         throws IOException
+       "throws" storage.modifier.throws.groovy
+       "IOException" storage.type.throwable.groovy
+  17 |     {
+  18 |         def x = 10 / 2 / 5
+       "def" storage.type.def.groovy
+       "=" keyword.operator.assignment.groovy
+       "10" constant.numeric.groovy
+       "/" keyword.operator.arithmetic.groovy
+       "2" constant.numeric.groovy
+       "/" keyword.operator.arithmetic.groovy
+       "5" constant.numeric.groovy
+  19 |         def r = items.findAll { it =~ /^a+\d$/ }
+       "def" storage.type.def.groovy
+       "=" keyword.operator.assignment.groovy
+       "." punctuation.accessor.dot.groovy
+       "{" punctuation.section.block.begin.groovy
+       "=~" keyword.operator.find.groovy
+       "/" string.regexp.groovy punctuation.definition.string.regexp.begin.groovy
+       "^" string.regexp.groovy keyword.control.anchor.regexp
+       "a" string.regexp.groovy
+       "+" string.regexp.groovy keyword.operator.quantifier.regexp
+       "\\d" string.regexp.groovy constant.other.character-class.escape.backslash.regexp
+       "$" string.regexp.groovy keyword.control.anchor.regexp
+       "/" string.regexp.groovy punctuation.definition.string.regexp.end.groovy
+       "}" punctuation.section.block.end.groovy
+  20 |         println "Hi ${name.toUpperCase()}, $name.size of ${items.size() + 1}"
+       "println" support.function.print.groovy
+       "\"" string.quoted.double.groovy punctuation.definition.string.begin.groovy
+       "Hi " string.quoted.double.groovy
+       "${" string.quoted.double.groovy punctuation.section.embedded.groovy
+       "name" string.quoted.double.groovy
+       "." punctuation.accessor.dot.groovy
+       "toUpperCase" string.quoted.double.groovy
+       "(" punctuation.definition.method-parameters.begin.groovy
+       ")" punctuation.definition.method-parameters.end.groovy
+       "}" string.quoted.double.groovy punctuation.section.embedded.groovy
+       ", " string.quoted.double.groovy
+       "$name" string.quoted.double.groovy variable.other.interpolated.groovy
+       "." string.quoted.double.groovy punctuation.accessor.dot.groovy
+       "size" string.quoted.double.groovy variable.other.interpolated.groovy
+       " of " string.quoted.double.groovy
+       "${" string.quoted.double.groovy punctuation.section.embedded.groovy
+       "items" string.quoted.double.groovy
+       "." punctuation.accessor.dot.groovy
+       "size" string.quoted.double.groovy
+       "(" punctuation.definition.method-parameters.begin.groovy
+       ")" punctuation.definition.method-parameters.end.groovy
+       " " string.quoted.double.groovy
+       "+" keyword.operator.arithmetic.groovy
+       " " string.quoted.double.groovy
+       "1" constant.numeric.groovy
+       "}" string.quoted.double.groovy punctuation.section.embedded.groovy
+       "\"" string.quoted.double.groovy punctuation.definition.string.end.groovy
+  21 |         def t = x > 1 ? 'big' : "small"
+       "def" storage.type.def.groovy
+       "=" keyword.operator.assignment.groovy
+       ">" keyword.operator.comparison.groovy
+       "1" constant.numeric.groovy
+       "?" keyword.operator.ternary.groovy
+       "'" string.quoted.single.groovy punctuation.definition.string.begin.groovy
+       "big" string.quoted.single.groovy
+       "'" string.quoted.single.groovy punctuation.definition.string.end.groovy
+       ":" keyword.operator.ternary.expression-separator.groovy
+       "\"" string.quoted.double.groovy punctuation.definition.string.begin.groovy
+       "small" string.quoted.double.groovy
+       "\"" string.quoted.double.groovy punctuation.definition.string.end.groovy
+  22 |         assert t : 'message'
+       "assert" keyword.control.assert.groovy
+       ":" keyword.operator.assert.expression-separator.groovy
+       "'" string.quoted.single.groovy punctuation.definition.string.begin.groovy
+       "message" string.quoted.single.groovy
+       "'" string.quoted.single.groovy punctuation.definition.string.end.groovy
+  23 |         switch (x) {
+       "switch" keyword.control.groovy
+       "{" punctuation.section.block.begin.groovy
+  24 |             case ~/[0-9]+/: break
+       "case" keyword.control.groovy
+       "/" string.regexp.groovy punctuation.definition.string.regexp.begin.groovy
+       "[" string.regexp.groovy constant.other.character-class.set.regexp punctuation.definition.character-class.begin.regexp
+       "0" string.regexp.groovy constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "-" string.regexp.groovy constant.other.character-class.set.regexp constant.other.character-class.range.regexp punctuation.definition.range.regexp
+       "9" string.regexp.groovy constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "]" string.regexp.groovy constant.other.character-class.set.regexp punctuation.definition.character-class.end.regexp
+       "+" string.regexp.groovy keyword.operator.quantifier.regexp
+       "/" string.regexp.groovy punctuation.definition.string.regexp.end.groovy
+       ":" punctuation.definition.case-terminator.groovy
+       "break" keyword.control.groovy
+  25 |             default: return null
+       "default" keyword.control.groovy
+       "return" keyword.control.groovy
+       "null" constant.language.groovy
+  26 |         }
+       "}" punctuation.section.block.end.groovy
+  27 |         return r as List<T>
+       "return" keyword.control.groovy
+       "as" keyword.operator.as.groovy
+       "List" storage.type.class.groovy
+       "<" keyword.operator.comparison.groovy
+       ">" keyword.operator.comparison.groovy
+  28 |     }
+  29 | }
+  30 | interface Named { String getName() }
+       "interface" storage.type.class.groovy
+       "Named" entity.name.type.class.groovy
+       "String" storage.type.return-type.class.groovy
+       "getName" entity.name.function.groovy
+       "(" punctuation.definition.parameters.begin.groovy
+       ")" punctuation.definition.parameters.end.groovy
+  31 | enum Color { RED, GREEN }
+       "enum" storage.type.class.groovy
+       "Color" entity.name.type.class.groovy
+       "RED" constant.other.groovy
+       "GREEN" constant.other.groovy
+  32 | trait Loud { def shout() { name.toUpperCase() } }
+       "trait" storage.type.class.groovy
+       "Loud" entity.name.type.class.groovy
+       "def" storage.type.return-type.def.groovy
+       "shout" entity.name.function.groovy
+       "(" punctuation.definition.parameters.begin.groovy
+       ")" punctuation.definition.parameters.end.groovy
+       "." punctuation.accessor.dot.groovy
+       "(" punctuation.definition.method-parameters.begin.groovy
+       ")" punctuation.definition.method-parameters.end.groovy
+  33 | def sql = Sql.newInstance(url, user, pass)
+       "def" storage.type.def.groovy
+       "=" keyword.operator.assignment.groovy
+       "Sql" storage.type.class.groovy
+       "." punctuation.accessor.dot.groovy
+       "(" punctuation.definition.method-parameters.begin.groovy
+       "," punctuation.definition.separator.parameter.groovy
+       "," punctuation.definition.separator.parameter.groovy
+       ")" punctuation.definition.method-parameters.end.groovy
+  34 | sql.eachRow("SELECT id, name FROM users WHERE age > ${age}") { row -> println row.name }
+       "." punctuation.accessor.dot.groovy
+       "(" punctuation.definition.method-parameters.begin.groovy
+       "\"" string.quoted.double.groovy punctuation.definition.string.begin.groovy
+       "SELECT" string.quoted.double.groovy keyword.other.DML.sql
+       " id, name " string.quoted.double.groovy
+       "FROM" string.quoted.double.groovy keyword.other.DML.sql
+       " users " string.quoted.double.groovy
+       "WHERE" string.quoted.double.groovy keyword.other.DML.sql
+       " age " string.quoted.double.groovy
+       ">" string.quoted.double.groovy keyword.operator.comparison.sql
+       " " string.quoted.double.groovy
+       "${" string.quoted.double.groovy punctuation.section.embedded.groovy
+       "age" string.quoted.double.groovy
+       "}" string.quoted.double.groovy punctuation.section.embedded.groovy
+       "\"" string.quoted.double.groovy punctuation.definition.string.end.groovy
+       ")" punctuation.definition.method-parameters.end.groovy
+       "{" punctuation.section.block.begin.groovy
+       "->" keyword.operator.arrow.groovy
+       "println" support.function.print.groovy
+       "." punctuation.accessor.dot.groovy
+       "}" punctuation.section.block.end.groovy
+  35 | sql.execute '''
+       "." punctuation.accessor.dot.groovy
+       "'''" string.quoted.single.block.groovy punctuation.definition.string.begin.groovy
+  36 |     DELETE FROM users -- all of them
+       "    " string.quoted.single.block.groovy
+       "DELETE" string.quoted.single.block.groovy keyword.other.DML.sql
+       " " string.quoted.single.block.groovy
+       "FROM" string.quoted.single.block.groovy keyword.other.DML.sql
+       " users " string.quoted.single.block.groovy
+       "--" string.quoted.single.block.groovy comment.line.double-dash.sql punctuation.definition.comment.sql
+       " all of them" string.quoted.single.block.groovy comment.line.double-dash.sql
+  37 | '''
+       "'''" string.quoted.single.block.groovy punctuation.definition.string.end.groovy
+  38 | def p = java.util.regex.Pattern.compile("(\\w+)@(\\w+)")
+       "def" storage.type.def.groovy
+       "=" keyword.operator.assignment.groovy
+       "java.util.regex.Pattern" storage.type.class.groovy
+       "." punctuation.accessor.dot.groovy
+       "(" punctuation.definition.method-parameters.begin.groovy
+       "\"" string.quoted.double.groovy punctuation.definition.string.begin.groovy
+       "(" string.quoted.double.groovy punctuation.definition.group.begin.regexp
+       "\\\\w" string.quoted.double.groovy constant.other.character-class.escape.backslash.regexp
+       "+" string.quoted.double.groovy keyword.operator.quantifier.regexp
+       ")" string.quoted.double.groovy punctuation.definition.group.end.regexp
+       "@" string.quoted.double.groovy
+       "(" string.quoted.double.groovy punctuation.definition.group.begin.regexp
+       "\\\\w" string.quoted.double.groovy constant.other.character-class.escape.backslash.regexp
+       "+" string.quoted.double.groovy keyword.operator.quantifier.regexp
+       ")" string.quoted.double.groovy punctuation.definition.group.end.regexp
+       "\"" string.quoted.double.groovy punctuation.definition.string.end.groovy
+       ")" punctuation.definition.method-parameters.end.groovy
+  39 | def s = $/dollar ${p} slashy $$ /$
+       "def" storage.type.def.groovy
+       "=" keyword.operator.assignment.groovy
+       "$/" string.quoted.other.dollar-slashy.groovy punctuation.definition.string.begin.groovy
+       "dollar " string.quoted.other.dollar-slashy.groovy
+       "${" string.quoted.other.dollar-slashy.groovy punctuation.section.embedded.groovy
+       "p" string.quoted.other.dollar-slashy.groovy
+       "}" string.quoted.other.dollar-slashy.groovy punctuation.section.embedded.groovy
+       " slashy " string.quoted.other.dollar-slashy.groovy
+       "$$" string.quoted.other.dollar-slashy.groovy constant.character.escape.groovy
+       " " string.quoted.other.dollar-slashy.groovy
+       "/$" string.quoted.other.dollar-slashy.groovy punctuation.definition.string.end.groovy
+  40 | def v = 0x1F + 1.5e3 + 10L + 1.0G - 0b101
+       "def" storage.type.def.groovy
+       "=" keyword.operator.assignment.groovy
+       "0x1F" constant.numeric.groovy
+       "+" keyword.operator.arithmetic.groovy
+       "1.5e3" constant.numeric.groovy
+       "+" keyword.operator.arithmetic.groovy
+       "10L" constant.numeric.groovy
+       "+" keyword.operator.arithmetic.groovy
+       "1.0G" constant.numeric.groovy
+       "-" keyword.operator.arithmetic.groovy
+       "0b101" constant.numeric.groovy
+  41 | node('linux') {
+       "(" punctuation.definition.method-parameters.begin.groovy
+       "'" string.quoted.single.groovy punctuation.definition.string.begin.groovy
+       "linux" string.quoted.single.groovy
+       "'" string.quoted.single.groovy punctuation.definition.string.end.groovy
+       ")" punctuation.definition.method-parameters.end.groovy
+       "{" punctuation.section.block.begin.groovy
+  42 |     stage('Build') { sh "echo ${env.BUILD_ID}" }
+       "(" punctuation.definition.method-parameters.begin.groovy
+       "'" string.quoted.single.groovy punctuation.definition.string.begin.groovy
+       "Build" string.quoted.single.groovy
+       "'" string.quoted.single.groovy punctuation.definition.string.end.groovy
+       ")" punctuation.definition.method-parameters.end.groovy
+       "{" punctuation.section.block.begin.groovy
+       "\"" string.quoted.double.groovy punctuation.definition.string.begin.groovy
+       "echo " string.quoted.double.groovy
+       "${" string.quoted.double.groovy punctuation.section.embedded.groovy
+       "env" string.quoted.double.groovy
+       "." punctuation.accessor.dot.groovy
+       "BUILD_ID" constant.other.groovy
+       "}" string.quoted.double.groovy punctuation.section.embedded.groovy
+       "\"" string.quoted.double.groovy punctuation.definition.string.end.groovy
+       "}" punctuation.section.block.end.groovy
+  43 |     given: def m = [a: 1, (k): 2]
+       "given" constant.other.key.groovy
+       ":" punctuation.definition.separator.key-value.groovy
+       "def" storage.type.def.groovy
+       "=" keyword.operator.assignment.groovy
+       "[" punctuation.definition.structure.begin.groovy
+       "a" constant.other.key.groovy
+       ":" punctuation.definition.separator.key-value.groovy
+       "1" constant.numeric.groovy
+       "," punctuation.definition.separator.groovy
+       "2" constant.numeric.groovy
+       "]" punctuation.definition.structure.end.groovy
+  44 | }
+       "}" punctuation.section.block.end.groovy

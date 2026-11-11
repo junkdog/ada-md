@@ -432,6 +432,67 @@ fn scala() {
     readings("scala", Lang::Scala, text);
 }
 
+/// Groovy's readings (X-135, a scanner of ada's own): a hashbang, `package`, `import` and `import
+/// static` paths, annotations with keys, a class's head with `extends` and `implements`, an
+/// interface's, an enum's and a trait's, fields, constructors and methods with modifiers, `<T>`,
+/// result types, parameters with defaults and `throws`, a head carried to the next line's `{`,
+/// GStrings with `$name.a` and `${…}` (its plain text the string's), triple-quoted, slashy and
+/// dollar-slashy strings, a slashy string against division, closures, map keys and labels,
+/// ternaries, `case` and `assert` with their `:`, calls' punctuation, qualified class names and
+/// `env.X`'s constant, Groovy's numbers, Groovydoc, SQL in groovy.sql.Sql's calls (a GString's
+/// `${…}` a parameter), regexes after `~`, `=~` and in `Pattern.compile(`. The departures from
+/// bat's grammar are pinned in ada-parse's `groovy` tests.
+#[test]
+fn groovy() {
+    let text = concat!(
+        "#!/usr/bin/env groovy\n",
+        "package com.example.app\n",
+        "import static org.junit.Assert.assertTrue\n",
+        "import groovy.sql.Sql\n",
+        "@Grab(group = 'org.foo', module = 'bar', version = '1.0')\n",
+        "/**\n",
+        " * A greeter, {@code new Greeter()}; see {@link Foo#bar}.\n",
+        " * @param name the <b>name</b>\n",
+        " */\n",
+        "@CompileStatic\n",
+        "class Greeter extends Base implements Named, Serializable {\n",
+        "    private static final int MAX_SIZE = 1_000\n",
+        "    String name\n",
+        "    Greeter(String name) { this.name = name }\n",
+        "    public <T> List<T> pick(Map opts = [:], T... items)\n",
+        "        throws IOException\n",
+        "    {\n",
+        "        def x = 10 / 2 / 5\n",
+        "        def r = items.findAll { it =~ /^a+\\d$/ }\n",
+        "        println \"Hi ${name.toUpperCase()}, $name.size of ${items.size() + 1}\"\n",
+        "        def t = x > 1 ? 'big' : \"small\"\n",
+        "        assert t : 'message'\n",
+        "        switch (x) {\n",
+        "            case ~/[0-9]+/: break\n",
+        "            default: return null\n",
+        "        }\n",
+        "        return r as List<T>\n",
+        "    }\n",
+        "}\n",
+        "interface Named { String getName() }\n",
+        "enum Color { RED, GREEN }\n",
+        "trait Loud { def shout() { name.toUpperCase() } }\n",
+        "def sql = Sql.newInstance(url, user, pass)\n",
+        "sql.eachRow(\"SELECT id, name FROM users WHERE age > ${age}\") { row -> println row.name }\n",
+        "sql.execute '''\n",
+        "    DELETE FROM users -- all of them\n",
+        "'''\n",
+        "def p = java.util.regex.Pattern.compile(\"(\\\\w+)@(\\\\w+)\")\n",
+        "def s = $/dollar ${p} slashy $$ /$\n",
+        "def v = 0x1F + 1.5e3 + 10L + 1.0G - 0b101\n",
+        "node('linux') {\n",
+        "    stage('Build') { sh \"echo ${env.BUILD_ID}\" }\n",
+        "    given: def m = [a: 1, (k): 2]\n",
+        "}\n",
+    );
+    readings("groovy", Lang::Groovy, text);
+}
+
 /// Haskell's readings (X-136, a scanner of ada's own): pragmas, a module's head with its export
 /// list, imports, CPP's lines, data declarations with records and deriving clauses, classes and
 /// instances, type signatures across lines, operators read whole and in parentheses, backticks,

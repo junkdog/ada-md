@@ -132,6 +132,7 @@
 "```exclude\x0a"
 "```mailmap\x0a"
 "```go\x0a"
+"```groovy\x0a"
 "```html\x0a"
 "```hs\x0a"
 "```lhs\x0a"

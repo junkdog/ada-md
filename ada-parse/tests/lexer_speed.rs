@@ -62,6 +62,8 @@ const LANGS: &[(&str, Lang)] = &[
     ("terraform", Lang::Terraform),
     // X-137's corpus: 34 Scala repositories' files
     ("scala", Lang::Scala),
+    // X-135's corpus: 33 Groovy repositories' files (Gradle, Jenkins, Grails, Spock…)
+    ("groovy", Lang::Groovy),
     // X-136's corpus: 42 Haskell repositories' files
     ("haskell", Lang::Haskell),
     // X-100's corpus: 37 Ruby repositories' files

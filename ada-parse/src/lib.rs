@@ -46,6 +46,7 @@ mod lang;
 // the frame under INI, Java properties and `.env`
 mod cmake;
 mod cmake_cache;
+mod groovy;
 mod haskell;
 mod line_format;
 mod lisp;
@@ -456,6 +457,7 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
         Lang::CMake => (cmake::block_runs, cmake::line_runs),
         Lang::Terraform => (terraform::block_runs, terraform::line_runs),
         Lang::Scala => (scala::block_runs, scala::line_runs),
+        Lang::Groovy => (groovy::block_runs, groovy::line_runs),
         Lang::Haskell => (haskell::block_runs, haskell::line_runs),
         Lang::LiterateHaskell => (haskell::lhs::block_runs, haskell::lhs::line_runs),
         Lang::Ruby => (ruby::block_runs, ruby::line_runs),
@@ -496,6 +498,7 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::CMake if SPANS => cmake::block,
         Lang::Terraform if SPANS => terraform::block,
         Lang::Scala if SPANS => scala::block,
+        Lang::Groovy if SPANS => groovy::block,
         Lang::Haskell if SPANS => haskell::block,
         Lang::LiterateHaskell if SPANS => haskell::lhs::block,
         Lang::Ruby if SPANS => ruby::block,
@@ -768,6 +771,8 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::Terraform => out!(terraform::line),
         Lang::Scala if !SPANS => |_, _, _| unreachable!("Scala's runs come from its own scan"),
         Lang::Scala => out!(scala::line),
+        Lang::Groovy if !SPANS => |_, _, _| unreachable!("Groovy's runs come from its own scan"),
+        Lang::Groovy => out!(groovy::line),
         Lang::Haskell if !SPANS => |_, _, _| unreachable!("Haskell's runs come from its own scan"),
         Lang::Haskell => out!(haskell::line),
         Lang::LiterateHaskell if !SPANS => {

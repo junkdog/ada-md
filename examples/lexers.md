@@ -460,6 +460,41 @@ func main() {
 }
 ```
 
+## Groovy
+
+```groovy
+#!/usr/bin/env groovy
+import groovy.sql.Sql
+import java.util.regex.Pattern
+
+/**
+ * Greets users, stored and searched; see {@link Sql}.
+ * @param name who to greet
+ */
+@CompileStatic
+class Greeter implements Named {
+    private static final int MAX = 1_000
+    String name
+
+    Greeter(String name) { this.name = name }
+
+    String greet(int times = 1) {
+        "Hello, ${name.capitalize()}! " * times + "($name.size letters)"
+    }
+
+    List<String> findUsers(Sql sql, int age) {
+        sql.rows("SELECT name FROM users WHERE age > ${age} ORDER BY name")*.name
+    }
+}
+
+def emails = ~/(\w+)@(\w+)\.com/
+def ok = 'ada@example.com' ==~ emails ? 'valid' : 'invalid'
+def pipeline = [stage: 'build', steps: 3]
+node('linux') {
+    stage('Build') { sh "./gradlew build -Pversion=${env.BUILD_ID}" }
+}
+```
+
 ## Haskell
 
 ```haskell
