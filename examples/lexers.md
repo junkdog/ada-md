@@ -446,6 +446,38 @@ func main() {
 }
 ```
 
+## Haskell
+
+```haskell
+{-# LANGUAGE OverloadedStrings, QuasiQuotes #-}
+-- | Greetings, stored and searched.
+module Greet (Greeting (..), greet, findUsers) where
+
+import qualified Data.Map.Strict as M
+import Database.PostgreSQL.Simple (Connection, Only (..), query)
+import Text.Regex.TDFA ((=~))
+
+data Greeting = Greeting { who :: !Text, times :: Int }
+  deriving (Show, Eq)
+
+class Monad m => MonadGreet m where
+  greet :: Greeting -> m ()
+
+-- | Users whose name looks like a greeting's.
+findUsers :: Connection -> Text -> IO [(Int, Text)]
+findUsers conn name
+  | name =~ ("^[A-Z][a-z]+$" :: String) =
+      query conn "SELECT id, name FROM users WHERE name = ?" (Only name)
+  | otherwise = pure []
+
+counts :: [Greeting] -> M.Map Text Int
+counts = foldr (\g -> M.insertWith (+) (who g) (times g)) M.empty
+
+banner :: Text
+banner = "hello, \
+         \world" <> [r|raw {- text -}|] <> show (0x1F, 1_000, 'λ')
+```
+
 ## HTML
 
 ```html

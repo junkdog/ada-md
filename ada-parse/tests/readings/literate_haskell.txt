@@ -1,0 +1,49 @@
+# LiterateHaskell: ada-parse/tests/readings.rs, literate_haskell
+   1 | \section{Prose}
+   2 | Some prose with "quotes" -- and dashes.
+   3 | 
+   4 | > main :: IO ()
+       ">" punctuation.definition.bird-track.haskell
+       "main" entity.name.function.haskell
+       "::" keyword.other.double-colon.haskell
+       "IO" storage.type.haskell
+       "()" support.constant.unit.haskell
+   5 | > main = putStrLn "hi" -- c
+       ">" punctuation.definition.bird-track.haskell
+       "=" keyword.operator.haskell
+       "\"" string.quoted.double.haskell punctuation.definition.string.begin.haskell
+       "hi" string.quoted.double.haskell
+       "\"" string.quoted.double.haskell punctuation.definition.string.end.haskell
+       "--" comment.line.double-dash.haskell punctuation.definition.comment.haskell
+       " c" comment.line.double-dash.haskell
+   6 | 
+   7 | \begin{code}
+       "\\" support.function.be.latex punctuation.definition.backslash.latex
+       "begin" support.function.be.latex
+       "{" punctuation.definition.group.brace.begin.latex
+       "code" variable.parameter.function.latex
+       "}" punctuation.definition.group.brace.end.latex
+   8 | f :: Int -> Int
+       "f" entity.name.function.haskell
+       "::" keyword.other.double-colon.haskell
+       "Int" storage.type.haskell
+       "->" keyword.other.arrow.haskell
+       "Int" storage.type.haskell
+   9 | f = (+ 1)
+       "=" keyword.operator.haskell
+       "+" keyword.operator.haskell
+       "1" constant.numeric.integer.decimal.haskell
+  10 | \end{code}
+       "\\" support.function.be.latex punctuation.definition.backslash.latex
+       "end" support.function.be.latex
+       "{" punctuation.definition.group.brace.begin.latex
+       "code" variable.parameter.function.latex
+       "}" punctuation.definition.group.brace.end.latex
+  11 | ``` haskell
+  12 | g = 'x'
+       "=" keyword.operator.haskell
+       "'" string.quoted.single.haskell punctuation.definition.string.begin.haskell
+       "x" string.quoted.single.haskell
+       "'" string.quoted.single.haskell punctuation.definition.string.end.haskell
+  13 | ```
+  14 | h = "prose"

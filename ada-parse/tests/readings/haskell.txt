@@ -1,0 +1,316 @@
+# Haskell: ada-parse/tests/readings.rs, haskell
+   1 | {-# LANGUAGE OverloadedStrings,
+       "{-# " meta.preprocessor.haskell
+       "LANGUAGE" meta.preprocessor.haskell keyword.other.preprocessor.haskell
+       " OverloadedStrings," meta.preprocessor.haskell
+   2 |              QuasiQuotes #-}
+       "             QuasiQuotes #-}" meta.preprocessor.haskell
+   3 | -- | The module.
+       "--" comment.line.double-dash.haskell punctuation.definition.comment.haskell
+       " | The module." comment.line.double-dash.haskell
+   4 | module Data.Foo
+       "module" keyword.other.haskell
+       "Data.Foo" support.other.module.haskell
+   5 |   ( Foo (..), bar, (<+>)
+       "Foo" storage.type.haskell
+       "(..)" entity.name.function.infix.haskell
+       "," punctuation.separator.comma.haskell
+       "bar" entity.name.function.haskell
+       "," punctuation.separator.comma.haskell
+       "(<+>)" entity.name.function.infix.haskell
+   6 |   , module X
+       "," punctuation.separator.comma.haskell
+       "module" entity.name.function.haskell
+       "X" storage.type.haskell
+   7 |   ) where
+       "where" keyword.other.haskell
+   8 | import qualified Data.Map.Strict as M
+       "import" keyword.other.haskell
+       "qualified" keyword.other.haskell
+       "Data.Map.Strict" support.other.module.haskell
+       "as" keyword.other.haskell
+       "M" support.other.module.haskell
+   9 | import Data.List (sortBy, foldl')
+       "import" keyword.other.haskell
+       "Data.List" support.other.module.haskell
+       "sortBy" entity.name.function.haskell
+       "," punctuation.separator.comma.haskell
+       "foldl'" entity.name.function.haskell
+  10 | #if MIN_VERSION_base(4,8,0)
+       "#" meta.preprocessor.c punctuation.definition.preprocessor.c
+       "if" meta.preprocessor.c
+       "MIN_VERSION_base" constant.other.haskell
+       "4" constant.numeric.integer.decimal.haskell
+       "," punctuation.separator.comma.haskell
+       "8" constant.numeric.integer.decimal.haskell
+       "," punctuation.separator.comma.haskell
+       "0" constant.numeric.integer.decimal.haskell
+  11 | import Data.Functor ((<&>))
+       "import" keyword.other.haskell
+       "Data.Functor" support.other.module.haskell
+       "(<&>)" entity.name.function.infix.haskell
+  12 | #endif
+       "#" meta.preprocessor.c punctuation.definition.preprocessor.c
+       "endif" meta.preprocessor.c
+  13 | data Foo a = Foo { fooX :: !Int, fooY :: a }
+       "data" keyword.other.haskell
+       "Foo" constant.other.haskell
+       "=" keyword.operator.haskell
+       "Foo" constant.other.haskell
+       "::" keyword.operator.haskell
+       "!" keyword.operator.haskell
+       "Int" constant.other.haskell
+       "," punctuation.separator.comma.haskell
+       "::" keyword.operator.haskell
+  14 |   | Bar deriving (Show, Eq)
+       "|" keyword.operator.haskell
+       "Bar" constant.other.haskell
+       "deriving" keyword.other.haskell
+       "Show" entity.other.inherited-class.haskell
+       "Eq" entity.other.inherited-class.haskell
+  15 | newtype Wrap = Wrap Int deriving newtype Num
+       "newtype" keyword.other.haskell
+       "Wrap" constant.other.haskell
+       "=" keyword.operator.haskell
+       "Wrap" constant.other.haskell
+       "Int" constant.other.haskell
+       "deriving" keyword.other.haskell
+       "newtype" keyword.other.haskell
+       "Num" constant.other.haskell
+  16 | class (Eq a) => Container f a where
+       "class" keyword.other.haskell
+       "Eq" support.class.prelude.haskell
+       "a" variable.other.generic-type.haskell
+       "Container" entity.other.inherited-class.haskell
+       "f" variable.other.generic-type.haskell
+       "a" variable.other.generic-type.haskell
+       "where" keyword.other.haskell
+  17 |   empty :: f a
+       "empty" entity.name.function.haskell
+       "::" keyword.other.double-colon.haskell
+       "f" variable.other.generic-type.haskell
+       "a" variable.other.generic-type.haskell
+  18 | instance Show Wrap where
+       "instance" keyword.other.haskell
+       "Show" storage.type.haskell
+       "Wrap" storage.type.haskell
+       "where" keyword.other.haskell
+  19 |   show (Wrap x) = "Wrap " ++ show x
+       "Wrap" constant.other.haskell
+       "=" keyword.operator.haskell
+       "\"" string.quoted.double.haskell punctuation.definition.string.begin.haskell
+       "Wrap " string.quoted.double.haskell
+       "\"" string.quoted.double.haskell punctuation.definition.string.end.haskell
+       "++" keyword.operator.haskell
+  20 | infixl 6 <+>
+       "infixl" keyword.operator.haskell
+       "6" constant.numeric.integer.decimal.haskell
+       "<+>" keyword.operator.haskell
+  21 | (<+>) :: Foo a -> Foo a -> Foo a
+       "(<+>)" entity.name.function.haskell
+       "::" keyword.other.double-colon.haskell
+       "Foo" storage.type.haskell
+       "a" variable.other.generic-type.haskell
+       "->" keyword.other.arrow.haskell
+       "Foo" storage.type.haskell
+       "a" variable.other.generic-type.haskell
+       "->" keyword.other.arrow.haskell
+       "Foo" storage.type.haskell
+       "a" variable.other.generic-type.haskell
+  22 | a <+> _ = a
+       "<+>" keyword.operator.haskell
+       "=" keyword.operator.haskell
+  23 | bar :: forall a. (Ord a, Show a)
+       "bar" entity.name.function.haskell
+       "::" keyword.other.double-colon.haskell
+       "forall" keyword.other.haskell
+       "a" variable.other.generic-type.haskell
+       "Ord" storage.type.haskell
+       "a" variable.other.generic-type.haskell
+       "Show" storage.type.haskell
+       "a" variable.other.generic-type.haskell
+  24 |     => [a] -> M.Map a Int -> IO ()
+       "=>" keyword.other.big-arrow.haskell
+       "a" variable.other.generic-type.haskell
+       "->" keyword.other.arrow.haskell
+       "M" storage.type.haskell
+       "Map" storage.type.haskell
+       "a" variable.other.generic-type.haskell
+       "Int" storage.type.haskell
+       "->" keyword.other.arrow.haskell
+       "IO" storage.type.haskell
+       "()" support.constant.unit.haskell
+  25 | bar xs m = do
+       "=" keyword.operator.haskell
+       "do" keyword.control.haskell
+  26 |   let n = 0x1F + 0o17 + 0b101 + 1_000 + 1.5e-3 + 0x1.8p3
+       "let" keyword.other.haskell
+       "=" keyword.operator.haskell
+       "0x" constant.numeric.integer.hexadecimal.haskell punctuation.definition.numeric.base.haskell
+       "1F" constant.numeric.integer.hexadecimal.haskell
+       "+" keyword.operator.haskell
+       "0o" constant.numeric.integer.octal.haskell punctuation.definition.numeric.base.haskell
+       "17" constant.numeric.integer.octal.haskell
+       "+" keyword.operator.haskell
+       "0b" constant.numeric.integer.binary.haskell punctuation.definition.numeric.base.haskell
+       "101" constant.numeric.integer.binary.haskell
+       "+" keyword.operator.haskell
+       "1_000" constant.numeric.integer.decimal.haskell
+       "+" keyword.operator.haskell
+       "1" constant.numeric.float.decimal.haskell
+       "." constant.numeric.float.decimal.haskell punctuation.separator.decimal.haskell
+       "5e-3" constant.numeric.float.decimal.haskell
+       "+" keyword.operator.haskell
+       "0x" constant.numeric.float.hexadecimal.haskell punctuation.definition.numeric.base.haskell
+       "1.8p3" constant.numeric.float.hexadecimal.haskell
+  27 |       c = 'x' : '\n' : '\^C' : 'λ' : []
+       "=" keyword.operator.haskell
+       "'" string.quoted.single.haskell punctuation.definition.string.begin.haskell
+       "x" string.quoted.single.haskell
+       "'" string.quoted.single.haskell punctuation.definition.string.end.haskell
+       ":" keyword.operator.haskell
+       "'" string.quoted.single.haskell punctuation.definition.string.begin.haskell
+       "\\n" string.quoted.single.haskell constant.character.escape.haskell
+       "'" string.quoted.single.haskell punctuation.definition.string.end.haskell
+       ":" keyword.operator.haskell
+       "'" string.quoted.single.haskell punctuation.definition.string.begin.haskell
+       "\\^C" string.quoted.single.haskell constant.character.escape.control.haskell
+       "'" string.quoted.single.haskell punctuation.definition.string.end.haskell
+       ":" keyword.operator.haskell
+       "'" string.quoted.single.haskell punctuation.definition.string.begin.haskell
+       "λ" string.quoted.single.haskell
+       "'" string.quoted.single.haskell punctuation.definition.string.end.haskell
+       ":" keyword.operator.haskell
+       "[]" constant.language.empty-list.haskell
+  28 |   x <- pure $ M.lookup n m <*> y `div` 2 >>= f &&& g
+       "<-" keyword.operator.haskell
+       "$" keyword.operator.haskell
+       "M" constant.other.haskell
+       "." keyword.operator.haskell
+       "<*>" keyword.operator.haskell
+       "`" keyword.operator.function.infix.haskell punctuation.definition.entity.haskell
+       "div" keyword.operator.function.infix.haskell
+       "`" keyword.operator.function.infix.haskell punctuation.definition.entity.haskell
+       "2" constant.numeric.integer.decimal.haskell
+       ">>=" keyword.operator.haskell
+       "&&&" keyword.operator.haskell
+  29 |   case x of
+       "case" keyword.other.haskell
+       "of" keyword.other.haskell
+  30 |     Just v | v > 0 -> print v --> w
+       "Just" constant.other.haskell
+       "|" keyword.operator.haskell
+       ">" keyword.operator.haskell
+       "0" constant.numeric.integer.decimal.haskell
+       "->" keyword.operator.haskell
+       "-->" keyword.operator.haskell
+  31 |     _ -> pure () -- done
+       "->" keyword.operator.haskell
+       "()" constant.language.unit.haskell
+       "--" comment.line.double-dash.haskell punctuation.definition.comment.haskell
+       " done" comment.line.double-dash.haskell
+  32 |   where
+       "where" keyword.other.haskell
+  33 |     s = "a \"b\" \1234 \SOH gap \
+       "=" keyword.operator.haskell
+       "\"" string.quoted.double.haskell punctuation.definition.string.begin.haskell
+       "a " string.quoted.double.haskell
+       "\\\"" string.quoted.double.haskell constant.character.escape.haskell
+       "b" string.quoted.double.haskell
+       "\\\"" string.quoted.double.haskell constant.character.escape.haskell
+       " " string.quoted.double.haskell
+       "\\1234" string.quoted.double.haskell constant.character.escape.octal.haskell
+       " " string.quoted.double.haskell
+       "\\SOH" string.quoted.double.haskell constant.character.escape.haskell
+       " gap " string.quoted.double.haskell
+       "\\" string.quoted.double.haskell constant.character.escape.haskell
+  34 |         \on" ++ [r|raw|] {- a {- nested -} comment -}
+       "\\" string.quoted.double.haskell constant.character.escape.haskell
+       "on" string.quoted.double.haskell
+       "\"" string.quoted.double.haskell punctuation.definition.string.end.haskell
+       "++" keyword.operator.haskell
+       "[r|" keyword.other.quasibracket.haskell
+       "raw" string.quasiquoted.haskell
+       "|]" keyword.other.quasibracket.haskell
+       "{-" comment.block.haskell punctuation.definition.comment.begin.haskell
+       " a " comment.block.haskell
+       "{-" comment.block.haskell punctuation.definition.comment.begin.haskell
+       " nested " comment.block.haskell
+       "-}" comment.block.haskell punctuation.definition.comment.end.haskell
+       " comment " comment.block.haskell
+       "-}" comment.block.haskell punctuation.definition.comment.end.haskell
+  35 |     q = [sql| SELECT a FROM t WHERE b = ? |]
+       "=" keyword.operator.haskell
+       "[sql|" keyword.other.quasibracket.haskell
+       " " string.quasiquoted.haskell
+       "SELECT" string.quasiquoted.haskell keyword.other.DML.sql
+       " a " string.quasiquoted.haskell
+       "FROM" string.quasiquoted.haskell keyword.other.DML.sql
+       " t " string.quasiquoted.haskell
+       "WHERE" string.quasiquoted.haskell keyword.other.DML.sql
+       " b " string.quasiquoted.haskell
+       "=" string.quasiquoted.haskell keyword.operator.comparison.sql
+       " " string.quasiquoted.haskell
+       "?" string.quasiquoted.haskell constant.other.placeholder.sql
+       " " string.quasiquoted.haskell
+       "|]" keyword.other.quasibracket.haskell
+  36 |     r = [re|^(\d+)-(\w+)$|]
+       "=" keyword.operator.haskell
+       "[re|" keyword.other.quasibracket.haskell
+       "^" string.quasiquoted.haskell keyword.control.anchor.regexp
+       "(" string.quasiquoted.haskell punctuation.definition.group.begin.regexp
+       "\\d" string.quasiquoted.haskell constant.other.character-class.escape.backslash.regexp
+       "+" string.quasiquoted.haskell keyword.operator.quantifier.regexp
+       ")" string.quasiquoted.haskell punctuation.definition.group.end.regexp
+       "-" string.quasiquoted.haskell
+       "(" string.quasiquoted.haskell punctuation.definition.group.begin.regexp
+       "\\w" string.quasiquoted.haskell constant.other.character-class.escape.backslash.regexp
+       "+" string.quasiquoted.haskell keyword.operator.quantifier.regexp
+       ")" string.quasiquoted.haskell punctuation.definition.group.end.regexp
+       "$" string.quasiquoted.haskell keyword.control.anchor.regexp
+       "|]" keyword.other.quasibracket.haskell
+  37 |     t = [d| f = $(g 'h ''T) |]
+       "=" keyword.operator.haskell
+       "[d|" keyword.other.quasibracket.haskell
+       "=" keyword.operator.haskell
+       "$(" keyword.other.splice.haskell
+       "T" constant.other.haskell
+       "|]" keyword.other.quasibracket.haskell
+  38 |     u = query conn "SELECT id FROM users WHERE age > ?" (Only n)
+       "=" keyword.operator.haskell
+       "\"" string.quoted.double.haskell punctuation.definition.string.begin.haskell
+       "SELECT" string.quoted.double.haskell keyword.other.DML.sql
+       " id " string.quoted.double.haskell
+       "FROM" string.quoted.double.haskell keyword.other.DML.sql
+       " users " string.quoted.double.haskell
+       "WHERE" string.quoted.double.haskell keyword.other.DML.sql
+       " age " string.quoted.double.haskell
+       ">" string.quoted.double.haskell keyword.operator.comparison.sql
+       " " string.quoted.double.haskell
+       "?" string.quoted.double.haskell constant.other.placeholder.sql
+       "\"" string.quoted.double.haskell punctuation.definition.string.end.haskell
+       "Only" constant.other.haskell
+  39 |     v = s =~ "^[a-z]+(x|y)$" || isJust (mkRegex "a.b")
+       "=" keyword.operator.haskell
+       "=~" keyword.operator.haskell
+       "\"" string.quoted.double.haskell punctuation.definition.string.begin.haskell
+       "^" string.quoted.double.haskell keyword.control.anchor.regexp
+       "[" string.quoted.double.haskell constant.other.character-class.set.regexp punctuation.definition.character-class.begin.regexp
+       "a" string.quoted.double.haskell constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "-" string.quoted.double.haskell constant.other.character-class.set.regexp constant.other.character-class.range.regexp punctuation.definition.range.regexp
+       "z" string.quoted.double.haskell constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "]" string.quoted.double.haskell constant.other.character-class.set.regexp punctuation.definition.character-class.end.regexp
+       "+" string.quoted.double.haskell keyword.operator.quantifier.regexp
+       "(" string.quoted.double.haskell punctuation.definition.group.begin.regexp
+       "x" string.quoted.double.haskell
+       "|" string.quoted.double.haskell keyword.operator.or.regexp
+       "y" string.quoted.double.haskell
+       ")" string.quoted.double.haskell punctuation.definition.group.end.regexp
+       "$" string.quoted.double.haskell keyword.control.anchor.regexp
+       "\"" string.quoted.double.haskell punctuation.definition.string.end.haskell
+       "||" keyword.operator.haskell
+       "\"" string.quoted.double.haskell punctuation.definition.string.begin.haskell
+       "a" string.quoted.double.haskell
+       "." string.quoted.double.haskell constant.other.character-class.escape.backslash.regexp
+       "b" string.quoted.double.haskell
+       "\"" string.quoted.double.haskell punctuation.definition.string.end.haskell

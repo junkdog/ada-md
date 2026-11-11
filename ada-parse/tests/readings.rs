@@ -432,6 +432,82 @@ fn scala() {
     readings("scala", Lang::Scala, text);
 }
 
+/// Haskell's readings (X-136, a scanner of ada's own): pragmas, a module's head with its export
+/// list, imports, CPP's lines, data declarations with records and deriving clauses, classes and
+/// instances, type signatures across lines, operators read whole and in parentheses, backticks,
+/// comments (`-->` an operator), numbers, characters, strings with escapes and a gap,
+/// quasi-quotes (text, SQL, a regex), Template Haskell's quotes as code, SQL in a call's string,
+/// regexes after `=~` and `mkRegex`. The departures from bat's grammar are pinned in ada-parse's
+/// `haskell` tests.
+#[test]
+fn haskell() {
+    let text = concat!(
+        "{-# LANGUAGE OverloadedStrings,\n",
+        "             QuasiQuotes #-}\n",
+        "-- | The module.\n",
+        "module Data.Foo\n",
+        "  ( Foo (..), bar, (<+>)\n",
+        "  , module X\n",
+        "  ) where\n",
+        "import qualified Data.Map.Strict as M\n",
+        "import Data.List (sortBy, foldl')\n",
+        "#if MIN_VERSION_base(4,8,0)\n",
+        "import Data.Functor ((<&>))\n",
+        "#endif\n",
+        "data Foo a = Foo { fooX :: !Int, fooY :: a }\n",
+        "  | Bar deriving (Show, Eq)\n",
+        "newtype Wrap = Wrap Int deriving newtype Num\n",
+        "class (Eq a) => Container f a where\n",
+        "  empty :: f a\n",
+        "instance Show Wrap where\n",
+        "  show (Wrap x) = \"Wrap \" ++ show x\n",
+        "infixl 6 <+>\n",
+        "(<+>) :: Foo a -> Foo a -> Foo a\n",
+        "a <+> _ = a\n",
+        "bar :: forall a. (Ord a, Show a)\n",
+        "    => [a] -> M.Map a Int -> IO ()\n",
+        "bar xs m = do\n",
+        "  let n = 0x1F + 0o17 + 0b101 + 1_000 + 1.5e-3 + 0x1.8p3\n",
+        "      c = 'x' : '\\n' : '\\^C' : 'λ' : []\n",
+        "  x <- pure $ M.lookup n m <*> y `div` 2 >>= f &&& g\n",
+        "  case x of\n",
+        "    Just v | v > 0 -> print v --> w\n",
+        "    _ -> pure () -- done\n",
+        "  where\n",
+        "    s = \"a \\\"b\\\" \\1234 \\SOH gap \\\n",
+        "        \\on\" ++ [r|raw|] {- a {- nested -} comment -}\n",
+        "    q = [sql| SELECT a FROM t WHERE b = ? |]\n",
+        "    r = [re|^(\\d+)-(\\w+)$|]\n",
+        "    t = [d| f = $(g 'h ''T) |]\n",
+        "    u = query conn \"SELECT id FROM users WHERE age > ?\" (Only n)\n",
+        "    v = s =~ \"^[a-z]+(x|y)$\" || isJust (mkRegex \"a.b\")\n",
+    );
+    readings("haskell", Lang::Haskell, text);
+}
+
+/// Literate Haskell's readings (X-136): prose plain, Bird tracks, `\begin{code}` blocks and
+/// markdown-unlit's fences around Haskell's code.
+#[test]
+fn literate_haskell() {
+    let text = concat!(
+        "\\section{Prose}\n",
+        "Some prose with \"quotes\" -- and dashes.\n",
+        "\n",
+        "> main :: IO ()\n",
+        "> main = putStrLn \"hi\" -- c\n",
+        "\n",
+        "\\begin{code}\n",
+        "f :: Int -> Int\n",
+        "f = (+ 1)\n",
+        "\\end{code}\n",
+        "``` haskell\n",
+        "g = 'x'\n",
+        "```\n",
+        "h = \"prose\"\n",
+    );
+    readings("literate_haskell", Lang::LiterateHaskell, text);
+}
+
 /// Java's readings (ADR-40): an annotation's line end and the next line's indent, `default ->` a
 /// lambda's parameter, Javadoc's HTML and block tags, generics, lambdas, text blocks, the SQL
 /// marker before a string (phase 4).

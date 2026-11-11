@@ -344,7 +344,7 @@ fn covered_languages_highlight_and_the_others_are_named() {
     // the set's other languages: named by file name, fence or first line, and plain
     let syntax = highlight::SyntaxTheme::new(&Theme::builtin().syntax);
     for (name, file, first) in [
-        ("Haskell", "Main.hs", None),
+        ("Groovy", "x.groovy", None),
         ("Perl", "x.pl", Some("#!/usr/bin/perl -w")),
         ("Elixir", "mix.exs", Some("#!/usr/bin/env elixir")),
         ("Git Log", "x.gitlog", Some("commit 0123456789abcdef")),
