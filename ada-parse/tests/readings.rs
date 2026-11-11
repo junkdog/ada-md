@@ -375,6 +375,56 @@ fn kotlin() {
     readings("kotlin", Lang::Kotlin, text);
 }
 
+/// Scala's readings (X-137, a scanner of ada's own): a package and imports, classes, objects,
+/// traits with their parameters, type parameters and parents, defs, vals and vars, types,
+/// patterns, lambdas, for comprehensions, strings with interpolations, escapes and formats,
+/// comments with Scaladoc, numbers, annotations with their meta scope, XML literals, SQL and
+/// regexes in strings, and Scala 3's syntax. Scala's departures from bat's grammar (`a<b` no XML,
+/// a `"` string ending with its line, Scala 3's keywords, fewer braces' lambdas) are pinned in
+/// ada-parse's `scala` tests.
+#[test]
+fn scala() {
+    let text = concat!(
+        "package com.example.app // the app\n",
+        "import scala.util.{Try, Success => S, _}\n",
+        "import cats.syntax.all.*\n",
+        "/** A thing.\n",
+        "  * @param x the x, see {@link Other}\n",
+        "  */\n",
+        "@deprecated(\"use Bar\", since = \"1.0\")\n",
+        "final case class Foo[F[_]: Monad, +A <: AnyRef](x: Int, y: String = \"\")(implicit ev: Ord[A])\n",
+        "    extends Bar(x) with Baz {\n",
+        "  private[this] lazy val (a, b) = (1, 2L)\n",
+        "  var count: Long = 0x1FL\n",
+        "  type Alias[T] = Map[String, T]\n",
+        "  def +(that: Foo[F, A]): Foo[F, A] = ???\n",
+        "  override def run(xs: List[Int], f: Int => Boolean): Unit = {\n",
+        "    val s = s\"a $x ${xs.size + 1} \\n\" + f\"$y%.2f\" + raw\"\\d\" + \"\"\"raw $w\n",
+        "      still\"\"\".stripMargin + 'c' + 'sym.name\n",
+        "    for (i <- 1 to 10; j <- xs if j > i) yield i * j\n",
+        "    xs.map { case (k, v) => k } .foldLeft(0)((acc, n) => acc + n)\n",
+        "    x match {\n",
+        "      case Some(v) if v > 0 => v\n",
+        "      case e: Exception => throw e\n",
+        "      case _ => 0\n",
+        "    }\n",
+        "    val q = sql\"SELECT * FROM t WHERE id = $id\"\n",
+        "    val re = \"[a-z]+\\\\d\".r\n",
+        "    val node = <p class=\"x\">{s} &amp; more</p>\n",
+        "    if (a<b && c != d) return else ()\n",
+        "  }\n",
+        "}\n",
+        "object Foo extends App:\n",
+        "  given ord: Ordering[Foo[?, ?]] = Ordering.by(_.x)\n",
+        "  extension (f: Foo[?, ?]) def twice: Int = f.x * 2\n",
+        "  enum Color { case Red, Green }\n",
+        "  xs.flatMap: x =>\n",
+        "    if x > 0 then List(x) else Nil\n",
+        "end Foo\n",
+    );
+    readings("scala", Lang::Scala, text);
+}
+
 /// Java's readings (ADR-40): an annotation's line end and the next line's indent, `default ->` a
 /// lambda's parameter, Javadoc's HTML and block tags, generics, lambdas, text blocks, the SQL
 /// marker before a string (phase 4).

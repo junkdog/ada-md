@@ -1034,6 +1034,35 @@ fn dated(name: &str) -> Option<(u16, u8)> {
 macro_rules! span { ($t:expr) => { Span { text: $t, kind: 0 } }; }
 ```
 
+## Scala
+
+```scala
+package com.example
+
+import scala.util.{Try, Success => S}
+
+/** A parser of greetings.
+  * @param name who to greet
+  */
+final case class Greeter[F[_]: Monad](name: String, times: Int = 1):
+  private val Pattern = """hello,\s+(\w+)""".r
+
+  def greet(xs: List[String]): F[Unit] =
+    for {
+      x <- xs
+      if x.nonEmpty
+    } yield println(s"Hello, $name and ${x.toUpperCase}!")
+
+  def parse(line: String): Option[String] = line match
+    case Pattern(who) => Some(who)
+    case _            => None
+
+  val users = sql"SELECT id, name FROM users WHERE active = $true"
+  val page = <p class="hi">{name} &amp; friends</p>
+
+given Ordering[Greeter[?]] = Ordering.by(_.times)
+```
+
 ## Scheme
 
 ```scheme

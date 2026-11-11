@@ -86,6 +86,8 @@ pub enum Lang {
     CMakeCache,
     /// bat's `Terraform`: Terraform's files and HCL's (`.hcl`).
     Terraform,
+    /// bat's `Scala`: Scala's files, sbt's and scala-cli's scripts.
+    Scala,
     /// bat's `Ruby`.
     Ruby,
     /// bat's `SQL`.
@@ -375,6 +377,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::CMake, &["cmakelists.txt", "cmake"]),
     (Lang::CMakeCache, &["cmakecache.txt"]),
     (Lang::Terraform, &["tf", "tfvars", "hcl"]),
+    (Lang::Scala, &["scala", "sbt", "sc"]),
     (
         Lang::Ruby,
         &[
@@ -429,7 +432,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 52] = [
+    pub const ALL: [Lang; 53] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -468,6 +471,7 @@ impl Lang {
         Lang::CMake,
         Lang::CMakeCache,
         Lang::Terraform,
+        Lang::Scala,
         Lang::Ruby,
         Lang::JavaScript,
         Lang::Sql,
@@ -526,6 +530,7 @@ impl Lang {
             Lang::CMake => "CMake",
             Lang::CMakeCache => "CMakeCache",
             Lang::Terraform => "Terraform",
+            Lang::Scala => "Scala",
             Lang::Ruby => "Ruby",
             Lang::Sql => "SQL",
             Lang::PowerShell => "PowerShell",
@@ -593,6 +598,7 @@ impl Lang {
             Lang::CMake => "source.cmake",
             Lang::CMakeCache => "source.cmakecache",
             Lang::Terraform => "source.terraform",
+            Lang::Scala => "source.scala",
             Lang::Ruby => "source.ruby",
             Lang::Sql => "source.sql",
             Lang::PowerShell => "source.powershell",
@@ -646,6 +652,7 @@ impl Lang {
             Lang::Swift => crate::swift::scopes(kind),
             Lang::CMake => crate::cmake::scopes(kind),
             Lang::Terraform => crate::terraform::scopes(kind),
+            Lang::Scala => crate::scala::scopes(kind),
             Lang::Ruby => crate::ruby::scopes(kind),
             Lang::Sql => crate::sql::scopes(kind),
             Lang::PowerShell => crate::powershell::scopes(kind),

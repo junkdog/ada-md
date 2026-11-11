@@ -823,9 +823,15 @@ mod tests {
     /// A language no lexer of ada's covers streams too, plain (ADR-43).
     #[test]
     fn a_language_with_no_lexer_streams_plain() {
-        let text = "object Main {\n  def main(args: Array[String]): Unit = {}\n}\n".repeat(40);
-        same_at(text.as_bytes(), Some("Scala"), 80, LineNumbers::Code, SMALL);
+        let text = "module Main where\nmain :: IO ()\nmain = putStrLn \"hi\"\n".repeat(40);
+        same_at(
+            text.as_bytes(),
+            Some("Haskell"),
+            80,
+            LineNumbers::Code,
+            SMALL,
+        );
         let syntax = SyntaxTheme::new(&Theme::builtin().syntax);
-        assert!(matches!(Lexer::new(Some("Scala"), &syntax), Lexer::Plain));
+        assert!(matches!(Lexer::new(Some("Haskell"), &syntax), Lexer::Plain));
     }
 }

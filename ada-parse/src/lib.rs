@@ -60,6 +60,7 @@ mod python;
 mod regex;
 mod ruby;
 mod rust;
+mod scala;
 mod sql;
 mod ssh;
 mod ssh_config;
@@ -453,6 +454,7 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
         Lang::Swift => (swift::block_runs, swift::line_runs),
         Lang::CMake => (cmake::block_runs, cmake::line_runs),
         Lang::Terraform => (terraform::block_runs, terraform::line_runs),
+        Lang::Scala => (scala::block_runs, scala::line_runs),
         Lang::Ruby => (ruby::block_runs, ruby::line_runs),
         Lang::Scss => (css::scss::block_runs, css::scss::line_runs),
         Lang::Bash => (bash::block_runs, bash::line_runs),
@@ -490,6 +492,7 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::Swift if SPANS => swift::block,
         Lang::CMake if SPANS => cmake::block,
         Lang::Terraform if SPANS => terraform::block,
+        Lang::Scala if SPANS => scala::block,
         Lang::Ruby if SPANS => ruby::block,
         Lang::PowerShell => powershell::block,
         Lang::Css => css::block,
@@ -756,6 +759,8 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
             |_, _, _| unreachable!("Terraform's runs come from its own scan")
         }
         Lang::Terraform => out!(terraform::line),
+        Lang::Scala if !SPANS => |_, _, _| unreachable!("Scala's runs come from its own scan"),
+        Lang::Scala => out!(scala::line),
         Lang::Ruby if !SPANS => |_, _, _| unreachable!("Ruby's runs come from its own scan"),
         Lang::Ruby => out!(ruby::line),
         Lang::Sql => out!(sql::line),
