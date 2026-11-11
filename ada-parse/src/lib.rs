@@ -55,6 +55,7 @@ mod logs;
 mod lua;
 mod matcher;
 mod nginx;
+mod nix;
 mod php;
 mod powershell;
 mod prim;
@@ -458,6 +459,7 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
         Lang::Swift => (swift::block_runs, swift::line_runs),
         Lang::CMake => (cmake::block_runs, cmake::line_runs),
         Lang::Terraform => (terraform::block_runs, terraform::line_runs),
+        Lang::Nix => (nix::block_runs, nix::line_runs),
         Lang::Scala => (scala::block_runs, scala::line_runs),
         Lang::Groovy => (groovy::block_runs, groovy::line_runs),
         Lang::Haskell => (haskell::block_runs, haskell::line_runs),
@@ -501,6 +503,7 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::Swift if SPANS => swift::block,
         Lang::CMake if SPANS => cmake::block,
         Lang::Terraform if SPANS => terraform::block,
+        Lang::Nix if SPANS => nix::block,
         Lang::Scala if SPANS => scala::block,
         Lang::Groovy if SPANS => groovy::block,
         Lang::Haskell if SPANS => haskell::block,
@@ -774,6 +777,8 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
             |_, _, _| unreachable!("Terraform's runs come from its own scan")
         }
         Lang::Terraform => out!(terraform::line),
+        Lang::Nix if !SPANS => |_, _, _| unreachable!("Nix's runs come from its own scan"),
+        Lang::Nix => out!(nix::line),
         Lang::Scala if !SPANS => |_, _, _| unreachable!("Scala's runs come from its own scan"),
         Lang::Scala => out!(scala::line),
         Lang::Groovy if !SPANS => |_, _, _| unreachable!("Groovy's runs come from its own scan"),

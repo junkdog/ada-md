@@ -2180,6 +2180,60 @@ fn terraform() {
     readings("terraform", Lang::Terraform, text);
 }
 
+/// Nix's readings (X-103, a scanner of ada's own): a function's formals (on one line and across lines, `...`, `@`),
+/// `let` and `in`, bindings' attribute paths (a name's, a string's and an interpolation's parts), `inherit` and its
+/// source, `with` and `assert`, lambdas, members (a builtin under `builtins` only), the global builtins, strings of
+/// both kinds with their escapes and interpolations, `$${` as text, paths (relative, absolute, home, search paths,
+/// through an interpolation), URIs, floats, operators, comments and their remarks.
+#[test]
+fn nix() {
+    let text = concat!(
+        "# Nix: a package, its formals and bindings\n",
+        "{ lib, stdenv, fetchurl ? null, ... }@args:\n",
+        "{ pkgs\n",
+        ", enableFoo ? false\n",
+        ", ...\n",
+        "}:\n",
+        "let\n",
+        "  cfg = config.services.foo;\n",
+        "  inherit (pkgs) hello;\n",
+        "  inherit lib map;\n",
+        "  f = { x, y ? { }, ... }: x * y;\n",
+        "  g = x: y: x + y;\n",
+        "in\n",
+        "assert enableFoo -> stdenv.isLinux;\n",
+        "rec {\n",
+        "  pname = \"foo\";\n",
+        "  version = \"1.0\";\n",
+        "  src = fetchurl { url = \"https://x.org/${pname}-${version}.tar.gz\"; hash = \"sha256-abc\"; };\n",
+        "  meta = with lib; { license = licenses.mit; platforms = platforms.linux; };\n",
+        "  \"quoted.key\".a = 1;\n",
+        "  ${dyn}.b = 2;\n",
+        "  a.\"b\".${c}.d = 3;\n",
+        "  passthru.tests = { inherit (pkgs) hello; };\n",
+        "  buildInputs = [ pkgs.openssl ] ++ lib.optional stdenv.isLinux pkgs.systemd;\n",
+        "  x = if a > 1 then \"yes\" else \"no\";\n",
+        "  y = a.b or \"default\";\n",
+        "  z = !true && false || null == (attrs ? key) // { };\n",
+        "  n = [ 42 1.5 1.5e3 .5 (-1) ];\n",
+        "  w = builtins.readFile ./x.txt + toString (import ./y.nix { }) + lib.map f [ ];\n",
+        "  p = [ ./foo.nix ../bar/baz /etc/nixos ~/x <nixpkgs> <nixpkgs/lib> a/b ./foo/${name}.nix ];\n",
+        "  u = [ https://example.org/a?b=c git+https://x.org/y ];\n",
+        "  e = \"a \\n \\\" \\${no} $${no} $$${yes} \\\\\";\n",
+        "  s = ''\n",
+        "    text ${x} ''${no} ''' ''\\n $${no}\n",
+        "    ${ \"in ${y}\" } ${placeholder \"out\"}/bin\n",
+        "  '';\n",
+        "  m = \"multi\n",
+        "    line\";\n",
+        "}\n",
+        "# TODO: remarks as words, not in DEBUG\n",
+        "/* FIXME a block\n",
+        "   comment BUG !!! */\n",
+    );
+    readings("nix", Lang::Nix, text);
+}
+
 /// `.env`'s readings (ADR-40): comments, `export`, keys, values quoted and bare, interpolation,
 /// escapes, numbers and constants.
 #[test]

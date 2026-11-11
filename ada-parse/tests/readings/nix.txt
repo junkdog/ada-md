@@ -1,0 +1,406 @@
+# Nix: ada-parse/tests/readings.rs, nix
+   1 | # Nix: a package, its formals and bindings
+       "# Nix: a package, its formals and bindings" comment.line.number-sign.nix
+   2 | { lib, stdenv, fetchurl ? null, ... }@args:
+       "{" punctuation.definition.attrset-or-function.nix
+       "lib" variable.parameter.function.1.nix
+       "," keyword.operator.nix
+       "stdenv" variable.parameter.function.1.nix
+       "," keyword.operator.nix
+       "fetchurl" variable.parameter.function.1.nix
+       "?" keyword.operator.nix
+       "null" constant.language.nix
+       "," keyword.operator.nix
+       "... " keyword.operator.nix
+       "}" punctuation.definition.entity.function.nix
+       "args" variable.parameter.function.4.nix
+       ":" punctuation.definition.function.nix
+   3 | { pkgs
+       "{" punctuation.definition.attrset-or-function.nix
+       "pkgs" variable.parameter.function.1.nix
+   4 | , enableFoo ? false
+       "," keyword.operator.nix
+       "enableFoo" variable.parameter.function.1.nix
+       "?" keyword.operator.nix
+       "false" constant.language.nix
+   5 | , ...
+       "," keyword.operator.nix
+       "..." keyword.operator.nix
+   6 | }:
+       "}" punctuation.definition.entity.function.nix
+       ":" punctuation.definition.function.nix
+   7 | let
+       "let" keyword.other.nix
+   8 |   cfg = config.services.foo;
+       "cfg" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "config" variable.parameter.name.nix
+       "." keyword.operator.nix
+       "services" variable.parameter.name.nix
+       "." keyword.operator.nix
+       "foo" variable.parameter.name.nix
+       ";" punctuation.terminator.bind.nix
+   9 |   inherit (pkgs) hello;
+       "inherit" keyword.other.inherit.nix
+       "(" punctuation.section.function.arguments.nix
+       "pkgs" variable.parameter.name.nix
+       ")" punctuation.section.function.arguments.nix
+       "hello" entity.other.attribute-name.single.nix
+       ";" punctuation.terminator.inherit.nix
+  10 |   inherit lib map;
+       "inherit" keyword.other.inherit.nix
+       "lib" entity.other.attribute-name.single.nix
+       "map" entity.other.attribute-name.single.nix
+       ";" punctuation.terminator.inherit.nix
+  11 |   f = { x, y ? { }, ... }: x * y;
+       "f" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "{" punctuation.definition.attrset-or-function.nix
+       "x" variable.parameter.function.1.nix
+       "," keyword.operator.nix
+       "y" variable.parameter.function.1.nix
+       "?" keyword.operator.nix
+       "{" punctuation.definition.attrset-or-function.nix
+       "}" punctuation.definition.attrset.nix
+       "," keyword.operator.nix
+       "... " keyword.operator.nix
+       "}" punctuation.definition.entity.function.nix
+       ":" punctuation.definition.function.nix
+       "x" variable.parameter.name.nix
+       "*" keyword.operator.nix
+       "y" variable.parameter.name.nix
+       ";" punctuation.terminator.bind.nix
+  12 |   g = x: y: x + y;
+       "g" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "x" variable.parameter.function.4.nix
+       ":" punctuation.definition.function.nix
+       "y" variable.parameter.function.4.nix
+       ":" punctuation.definition.function.nix
+       "x" variable.parameter.name.nix
+       "+" keyword.operator.nix
+       "y" variable.parameter.name.nix
+       ";" punctuation.terminator.bind.nix
+  13 | in
+       "in" keyword.other.nix
+  14 | assert enableFoo -> stdenv.isLinux;
+       "assert" keyword.other.nix
+       "enableFoo" variable.parameter.name.nix
+       "->" keyword.operator.nix
+       "stdenv" variable.parameter.name.nix
+       "." keyword.operator.nix
+       "isLinux" variable.parameter.name.nix
+  15 | rec {
+       "rec" keyword.other.nix
+       "{" punctuation.definition.attrset-or-function.nix
+  16 |   pname = "foo";
+       "pname" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.start.nix
+       "foo" string.quoted.double.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.end.nix
+       ";" punctuation.terminator.bind.nix
+  17 |   version = "1.0";
+       "version" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.start.nix
+       "1.0" string.quoted.double.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.end.nix
+       ";" punctuation.terminator.bind.nix
+  18 |   src = fetchurl { url = "https://x.org/${pname}-${version}.tar.gz"; hash = "sha256-abc"; };
+       "src" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "fetchurl" variable.parameter.name.nix
+       "{" punctuation.definition.attrset-or-function.nix
+       "url" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.start.nix
+       "https://x.org/" string.quoted.double.nix
+       "${" punctuation.section.embedded.begin.nix
+       "pname" variable.parameter.name.nix
+       "}" punctuation.section.embedded.end.nix
+       "-" string.quoted.double.nix
+       "${" punctuation.section.embedded.begin.nix
+       "version" variable.parameter.name.nix
+       "}" punctuation.section.embedded.end.nix
+       ".tar.gz" string.quoted.double.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.end.nix
+       ";" punctuation.terminator.bind.nix
+       "hash" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.start.nix
+       "sha256-abc" string.quoted.double.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.end.nix
+       ";" punctuation.terminator.bind.nix
+       "}" punctuation.definition.attrset.nix
+       ";" punctuation.terminator.bind.nix
+  19 |   meta = with lib; { license = licenses.mit; platforms = platforms.linux; };
+       "meta" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "with" keyword.other.nix
+       "lib" variable.parameter.name.nix
+       "{" punctuation.definition.attrset-or-function.nix
+       "license" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "licenses" variable.parameter.name.nix
+       "." keyword.operator.nix
+       "mit" variable.parameter.name.nix
+       ";" punctuation.terminator.bind.nix
+       "platforms" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "platforms" variable.parameter.name.nix
+       "." keyword.operator.nix
+       "linux" variable.parameter.name.nix
+       ";" punctuation.terminator.bind.nix
+       "}" punctuation.definition.attrset.nix
+       ";" punctuation.terminator.bind.nix
+  20 |   "quoted.key".a = 1;
+       "\"" string.quoted.double.nix punctuation.definition.string.double.start.nix
+       "quoted.key" string.quoted.double.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.end.nix
+       "a" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "1" constant.numeric.nix
+       ";" punctuation.terminator.bind.nix
+  21 |   ${dyn}.b = 2;
+       "${" punctuation.section.embedded.begin.nix
+       "dyn" variable.parameter.name.nix
+       "}" punctuation.section.embedded.end.nix
+       "b" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "2" constant.numeric.nix
+       ";" punctuation.terminator.bind.nix
+  22 |   a."b".${c}.d = 3;
+       "a" entity.other.attribute-name.multipart.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.start.nix
+       "b" string.quoted.double.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.end.nix
+       "${" punctuation.section.embedded.begin.nix
+       "c" variable.parameter.name.nix
+       "}" punctuation.section.embedded.end.nix
+       "d" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "3" constant.numeric.nix
+       ";" punctuation.terminator.bind.nix
+  23 |   passthru.tests = { inherit (pkgs) hello; };
+       "passthru" entity.other.attribute-name.multipart.nix
+       "tests" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "{" punctuation.definition.attrset-or-function.nix
+       "inherit" keyword.other.inherit.nix
+       "(" punctuation.section.function.arguments.nix
+       "pkgs" variable.parameter.name.nix
+       ")" punctuation.section.function.arguments.nix
+       "hello" entity.other.attribute-name.single.nix
+       ";" punctuation.terminator.inherit.nix
+       "}" punctuation.definition.attrset.nix
+       ";" punctuation.terminator.bind.nix
+  24 |   buildInputs = [ pkgs.openssl ] ++ lib.optional stdenv.isLinux pkgs.systemd;
+       "buildInputs" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "[" punctuation.definition.list.nix
+       "pkgs" variable.parameter.name.nix
+       "." keyword.operator.nix
+       "openssl" variable.parameter.name.nix
+       "]" punctuation.definition.list.nix
+       "++" keyword.operator.nix
+       "lib" variable.parameter.name.nix
+       "." keyword.operator.nix
+       "optional" variable.parameter.name.nix
+       "stdenv" variable.parameter.name.nix
+       "." keyword.operator.nix
+       "isLinux" variable.parameter.name.nix
+       "pkgs" variable.parameter.name.nix
+       "." keyword.operator.nix
+       "systemd" variable.parameter.name.nix
+       ";" punctuation.terminator.bind.nix
+  25 |   x = if a > 1 then "yes" else "no";
+       "x" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "if" keyword.other.nix
+       "a" variable.parameter.name.nix
+       ">" keyword.operator.nix
+       "1" constant.numeric.nix
+       "then" keyword.other.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.start.nix
+       "yes" string.quoted.double.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.end.nix
+       "else" keyword.other.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.start.nix
+       "no" string.quoted.double.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.end.nix
+       ";" punctuation.terminator.bind.nix
+  26 |   y = a.b or "default";
+       "y" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "a" variable.parameter.name.nix
+       "." keyword.operator.nix
+       "b" variable.parameter.name.nix
+       "or" keyword.operator.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.start.nix
+       "default" string.quoted.double.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.end.nix
+       ";" punctuation.terminator.bind.nix
+  27 |   z = !true && false || null == (attrs ? key) // { };
+       "z" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "!" keyword.operator.nix
+       "true" constant.language.nix
+       "&&" keyword.operator.nix
+       "false" constant.language.nix
+       "||" keyword.operator.nix
+       "null" constant.language.nix
+       "==" keyword.operator.nix
+       "(" punctuation.definition.expression.nix
+       "attrs" variable.parameter.name.nix
+       "?" keyword.operator.nix
+       "key" variable.parameter.name.nix
+       ")" punctuation.definition.expression.nix
+       "//" keyword.operator.nix
+       "{" punctuation.definition.attrset-or-function.nix
+       "}" punctuation.definition.attrset.nix
+       ";" punctuation.terminator.bind.nix
+  28 |   n = [ 42 1.5 1.5e3 .5 (-1) ];
+       "n" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "[" punctuation.definition.list.nix
+       "42" constant.numeric.nix
+       "1.5" constant.numeric.nix
+       "1.5e3" constant.numeric.nix
+       ".5" constant.numeric.nix
+       "(" punctuation.definition.expression.nix
+       "-" keyword.operator.nix
+       "1" constant.numeric.nix
+       ")" punctuation.definition.expression.nix
+       "]" punctuation.definition.list.nix
+       ";" punctuation.terminator.bind.nix
+  29 |   w = builtins.readFile ./x.txt + toString (import ./y.nix { }) + lib.map f [ ];
+       "w" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "builtins" constant.language.nix
+       "." keyword.operator.nix
+       "readFile" support.function.nix
+       "./x.txt" string.unquoted.path.nix
+       "+" keyword.operator.nix
+       "toString" support.function.nix
+       "(" punctuation.definition.expression.nix
+       "import" support.function.nix
+       "./y.nix" string.unquoted.path.nix
+       "{" punctuation.definition.attrset-or-function.nix
+       "}" punctuation.definition.attrset.nix
+       ")" punctuation.definition.expression.nix
+       "+" keyword.operator.nix
+       "lib" variable.parameter.name.nix
+       "." keyword.operator.nix
+       "map" variable.parameter.name.nix
+       "f" variable.parameter.name.nix
+       "[" punctuation.definition.list.nix
+       "]" punctuation.definition.list.nix
+       ";" punctuation.terminator.bind.nix
+  30 |   p = [ ./foo.nix ../bar/baz /etc/nixos ~/x <nixpkgs> <nixpkgs/lib> a/b ./foo/${name}.nix ];
+       "p" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "[" punctuation.definition.list.nix
+       "./foo.nix" string.unquoted.path.nix
+       "../bar/baz" string.unquoted.path.nix
+       "/etc/nixos" string.unquoted.path.nix
+       "~/x" string.unquoted.path.nix
+       "<nixpkgs>" string.unquoted.spath.nix
+       "<nixpkgs/lib>" string.unquoted.spath.nix
+       "a/b" string.unquoted.path.nix
+       "./foo/" string.unquoted.path.nix
+       "${" punctuation.section.embedded.begin.nix
+       "name" variable.parameter.name.nix
+       "}" punctuation.section.embedded.end.nix
+       ".nix" string.unquoted.path.nix
+       "]" punctuation.definition.list.nix
+       ";" punctuation.terminator.bind.nix
+  31 |   u = [ https://example.org/a?b=c git+https://x.org/y ];
+       "u" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "[" punctuation.definition.list.nix
+       "https://example.org/a?b=c" string.unquoted.url.nix
+       "git+https://x.org/y" string.unquoted.url.nix
+       "]" punctuation.definition.list.nix
+       ";" punctuation.terminator.bind.nix
+  32 |   e = "a \n \" \${no} $${no} $$${yes} \\";
+       "e" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.start.nix
+       "a " string.quoted.double.nix
+       "\\n" string.quoted.double.nix constant.character.escape.nix
+       " " string.quoted.double.nix
+       "\\\"" string.quoted.double.nix constant.character.escape.nix
+       " " string.quoted.double.nix
+       "\\$" string.quoted.double.nix constant.character.escape.nix
+       "{no} $${no} $$" string.quoted.double.nix
+       "${" punctuation.section.embedded.begin.nix
+       "yes" variable.parameter.name.nix
+       "}" punctuation.section.embedded.end.nix
+       " " string.quoted.double.nix
+       "\\\\" string.quoted.double.nix constant.character.escape.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.end.nix
+       ";" punctuation.terminator.bind.nix
+  33 |   s = ''
+       "s" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "''" string.quoted.other.nix punctuation.definition.string.other.start.nix
+  34 |     text ${x} ''${no} ''' ''\n $${no}
+       "    text " string.quoted.other.nix
+       "${" punctuation.section.embedded.begin.nix
+       "x" variable.parameter.name.nix
+       "}" punctuation.section.embedded.end.nix
+       " " string.quoted.other.nix
+       "''$" string.quoted.other.nix constant.character.escape.nix
+       "{no} " string.quoted.other.nix
+       "'''" string.quoted.other.nix constant.character.escape.nix
+       " " string.quoted.other.nix
+       "''\\n" string.quoted.other.nix constant.character.escape.nix
+       " $${no}" string.quoted.other.nix
+  35 |     ${ "in ${y}" } ${placeholder "out"}/bin
+       "    " string.quoted.other.nix
+       "${" punctuation.section.embedded.begin.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.start.nix
+       "in " string.quoted.double.nix
+       "${" punctuation.section.embedded.begin.nix
+       "y" variable.parameter.name.nix
+       "}" punctuation.section.embedded.end.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.end.nix
+       "}" punctuation.section.embedded.end.nix
+       " " string.quoted.other.nix
+       "${" punctuation.section.embedded.begin.nix
+       "placeholder" support.function.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.start.nix
+       "out" string.quoted.double.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.end.nix
+       "}" punctuation.section.embedded.end.nix
+       "/bin" string.quoted.other.nix
+  36 |   '';
+       "  " string.quoted.other.nix
+       "''" string.quoted.other.nix punctuation.definition.string.other.end.nix
+       ";" punctuation.terminator.bind.nix
+  37 |   m = "multi
+       "m" entity.other.attribute-name.multipart.nix
+       "=" keyword.operator.bind.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.start.nix
+       "multi" string.quoted.double.nix
+  38 |     line";
+       "    line" string.quoted.double.nix
+       "\"" string.quoted.double.nix punctuation.definition.string.double.end.nix
+       ";" punctuation.terminator.bind.nix
+  39 | }
+       "}" punctuation.definition.attrset.nix
+  40 | # TODO: remarks as words, not in DEBUG
+       "# " comment.line.number-sign.nix
+       "TODO" comment.line.number-sign.nix markup.bold.comment.nix
+       ": remarks as words, not in DEBUG" comment.line.number-sign.nix
+  41 | /* FIXME a block
+       "/* " comment.block.nix
+       "FIXME" comment.block.nix markup.bold.comment.nix
+       " a block" comment.block.nix
+  42 |    comment BUG !!! */
+       "   comment " comment.block.nix
+       "BUG" comment.block.nix markup.bold.comment.nix
+       " " comment.block.nix
+       "!!!" comment.block.nix markup.bold.comment.nix
+       " */" comment.block.nix

@@ -881,6 +881,45 @@ server {
 }
 ```
 
+## Nix
+
+```nix
+{ lib, stdenv, fetchFromGitHub, ... }:
+
+let
+  inherit (lib) optional;
+  version = "1.4.2";
+in
+stdenv.mkDerivation rec {
+  pname = "hello";
+  inherit version;
+
+  src = fetchFromGitHub {
+    owner = "example";
+    repo = pname;
+    rev = "v${version}";
+    hash = "sha256-AAAA";
+  };
+
+  # TODO: drop once upstream fixes the build
+  patches = [ ./fix-build.patch ] ++ optional stdenv.isDarwin ./darwin.patch;
+  configureFlags = [ "--prefix=${placeholder "out"}" "--with-scale=1.5" ];
+  passthru.tests = import ./tests.nix { inherit lib; };
+
+  postInstall = ''
+    install -Dm644 ${./hello.desktop} $out/share/applications/hello.desktop
+    echo "built ''${pname} $${HOME}"
+  '';
+
+  meta = with lib; {
+    description = builtins.readFile ./description.txt;
+    homepage = https://example.org/hello;
+    license = licenses.gpl3Plus;
+    platforms = platforms.unix;
+  };
+}
+```
+
 ## Objective-C
 
 ```objc

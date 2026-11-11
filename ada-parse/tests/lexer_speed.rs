@@ -60,6 +60,8 @@ const LANGS: &[(&str, Lang)] = &[
     ("cmakecheader", Lang::CMakeCHeader),
     // X-102's corpus: 36 Terraform and HCL repositories' files
     ("terraform", Lang::Terraform),
+    // X-103's corpus: 55 Nix repositories' files (nixpkgs by its subtrees)
+    ("nix", Lang::Nix),
     // X-137's corpus: 34 Scala repositories' files
     ("scala", Lang::Scala),
     // X-135's corpus: 33 Groovy repositories' files (Gradle, Jenkins, Grails, Spock…)
