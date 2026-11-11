@@ -1,0 +1,438 @@
+# Elixir: ada-parse/tests/readings.rs, elixir
+   1 | #!/usr/bin/env elixir
+       "#" comment.line.number-sign.elixir punctuation.definition.comment.elixir
+       "!/usr/bin/env elixir" comment.line.number-sign.elixir
+   2 | defmodule MyApp.Accounts do
+       "defmodule" keyword.control.module.elixir
+       "MyApp" entity.name.class.elixir
+       "Accounts" entity.name.class.elixir
+       "do" keyword.control.module.elixir
+   3 |   @moduledoc """
+       "@moduledoc \"\"\"" comment.documentation.heredoc
+   4 |   Accounts, `#{__MODULE__}`.
+       "  Accounts, `" comment.documentation.heredoc
+       "#{" comment.documentation.heredoc punctuation.section.interpolation.begin.elixir
+       "__MODULE__" variable.language.elixir
+       "}" punctuation.section.interpolation.end.elixir
+       "`." comment.documentation.heredoc
+   5 |       iex> ~s"""
+       "      iex> ~s\"\"\"" comment.documentation.heredoc
+   6 |       ...> """
+       "      ...> \"\"\"" comment.documentation.heredoc
+   7 |   """
+       "  " comment.documentation.heredoc
+       "\"\"\"" comment.documentation.heredoc
+   8 |   use Ecto.Schema
+       "use" keyword.control.elixir
+       "Ecto" entity.name.class.elixir
+       "." punctuation.separator.method.elixir
+       "Schema" entity.name.class.elixir
+   9 |   import Ecto.Query, only: [from: 2]
+       "import" keyword.control.elixir
+       "Ecto" entity.name.class.elixir
+       "." punctuation.separator.method.elixir
+       "Query" entity.name.class.elixir
+       "," punctuation.separator.object.elixir
+       "only" constant.other.keywords.elixir
+       ":" constant.other.keywords.elixir punctuation.definition.constant.elixir
+       "[" punctuation.section.array.elixir
+       "from" constant.other.keywords.elixir
+       ":" constant.other.keywords.elixir punctuation.definition.constant.elixir
+       "2" constant.numeric.elixir
+       "]" punctuation.section.array.elixir
+  10 |   alias MyApp.{Repo, User}
+       "alias" keyword.control.elixir
+       "MyApp" entity.name.class.elixir
+       "." punctuation.separator.method.elixir
+       "{" punctuation.section.sequence.begin.elixir
+       "Repo" entity.name.class.elixir
+       "," punctuation.separator.sequence.elixir
+       "User" entity.name.class.elixir
+       "}" punctuation.section.sequence.end.elixir
+  11 |   @max 1_000
+       "@" variable.other.module.elixir keyword.operator.definition.constant.elixir
+       "max" variable.other.module.elixir
+       "1_000" constant.numeric.elixir
+  12 |   @doc ~S"raw"
+       "@" variable.other.module.elixir keyword.operator.definition.constant.elixir
+       "doc" variable.other.module.elixir
+       "~S" storage.type.string.elixir
+       "\"" string.quoted.other.literal.upper.elixir punctuation.definition.string.begin.elixir
+       "raw" string.quoted.other.literal.upper.elixir
+       "\"" string.quoted.other.literal.upper.elixir punctuation.definition.string.end.elixir
+  13 |   @doc false
+       "@doc false" comment.documentation.false
+  14 |   def get(id, opts \\ []) when is_integer(id) and id > 0, do: Repo.get(User, id)
+       "def" keyword.control.module.elixir
+       "get" entity.name.function.public.elixir
+       "(" punctuation.definition.parameters.elixir
+       "," punctuation.separator.object.elixir
+       "\\\\" keyword.operator.other.elixir
+       "[]" punctuation.section.array.elixir
+       ")" punctuation.section.function.elixir
+       "when" keyword.operator.elixir
+       "is_integer" keyword.guard.elixir
+       "(" punctuation.section.function.elixir
+       ")" punctuation.section.function.elixir
+       "and" keyword.operator.logical.elixir
+       ">" keyword.operator.comparison.elixir
+       "0" constant.numeric.elixir
+       "," punctuation.separator.object.elixir
+       "do:" constant.other.keywords.elixir
+       "Repo" entity.name.class.elixir
+       "." punctuation.separator.method.elixir
+       "(" punctuation.section.function.elixir
+       "User" entity.name.class.elixir
+       "," punctuation.separator.object.elixir
+       ")" punctuation.section.function.elixir
+  15 |   defp head(a,
+       "defp" keyword.control.module.elixir
+       "head" entity.name.function.private.elixir
+       "(" punctuation.definition.parameters.elixir
+       "," punctuation.separator.object.elixir
+  16 |             b)
+       ")" punctuation.section.function.elixir
+  17 |        when is_binary(a) do
+       "when" keyword.operator.elixir
+       "is_binary" keyword.guard.elixir
+       "(" punctuation.section.function.elixir
+       ")" punctuation.section.function.elixir
+       "do" keyword.control.module.elixir
+  18 |     %{"key": 1, name: a, ok: :ok, op: :<>, q: :"x #{b}"}
+       "{" punctuation.section.sequence.begin.elixir
+       "\"" constant.other.symbol.double-quoted.elixir punctuation.definition.constant.begin.regexp.elixir
+       "key" constant.other.symbol.double-quoted.elixir
+       "\":" constant.other.symbol.double-quoted.elixir punctuation.definition.constant.end.regexp.elixir
+       "1" constant.numeric.elixir
+       "," punctuation.separator.sequence.elixir
+       "name" constant.other.keywords.elixir
+       ":" constant.other.keywords.elixir punctuation.definition.constant.elixir
+       "," punctuation.separator.sequence.elixir
+       "ok" constant.other.keywords.elixir
+       ":" constant.other.keywords.elixir punctuation.definition.constant.elixir
+       ":" constant.other.symbol.elixir punctuation.definition.constant.elixir
+       "ok" constant.other.symbol.elixir
+       "," punctuation.separator.sequence.elixir
+       "op" constant.other.keywords.elixir
+       ":" constant.other.keywords.elixir punctuation.definition.constant.elixir
+       ":" constant.other.symbol.elixir punctuation.definition.constant.elixir
+       "<>" constant.other.symbol.elixir
+       "," punctuation.separator.sequence.elixir
+       "q" constant.other.keywords.elixir
+       ":" constant.other.keywords.elixir punctuation.definition.constant.elixir
+       ":\"" constant.other.symbol.double-quoted.elixir punctuation.definition.constant.elixir
+       "x " constant.other.symbol.double-quoted.elixir
+       "#{" constant.other.symbol.double-quoted.elixir punctuation.section.interpolation.begin.elixir
+       "}" punctuation.section.interpolation.end.elixir
+       "\"" constant.other.symbol.double-quoted.elixir punctuation.definition.constant.elixir
+       "}" punctuation.section.sequence.end.elixir
+  19 |     |> Enum.map(&String.upcase/1)
+       "|>" keyword.operator.pipe.elixir
+       "Enum" entity.name.class.elixir
+       "." punctuation.separator.method.elixir
+       "(" punctuation.section.function.elixir
+       "String" entity.name.class.elixir
+       "." punctuation.separator.method.elixir
+       "/" keyword.operator.arithmetic.elixir
+       "1" constant.numeric.elixir
+       ")" punctuation.section.function.elixir
+  20 |     |> Enum.filter(&valid?/1)
+       "|>" keyword.operator.pipe.elixir
+       "Enum" entity.name.class.elixir
+       "." punctuation.separator.method.elixir
+       "(" punctuation.section.function.elixir
+       "&" variable.other.capture.elixir keyword.operator.capture.elixir
+       "valid?" variable.other.capture.elixir
+       "/" keyword.operator.arithmetic.elixir
+       "1" constant.numeric.elixir
+       ")" punctuation.section.function.elixir
+  21 |     x = [?a, ?\n, 0x1F, 1.5e-3, ^pin, 'chars', "s \t #{a <> b}"]
+       "=" keyword.operator.assignment.elixir
+       "[" punctuation.section.array.elixir
+       "?a" constant.numeric.elixir
+       "," punctuation.separator.object.elixir
+       "?\\n" constant.numeric.elixir
+       "," punctuation.separator.object.elixir
+       "0x1F" constant.numeric.elixir
+       "," punctuation.separator.object.elixir
+       "1.5e-3" constant.numeric.elixir
+       "," punctuation.separator.object.elixir
+       "^" variable.other.pin.elixir keyword.operator.pin.elixir
+       "pin" variable.other.pin.elixir
+       "," punctuation.separator.object.elixir
+       "'" string.quoted.single.elixir punctuation.definition.string.begin.elixir
+       "chars" string.quoted.single.elixir
+       "'" string.quoted.single.elixir punctuation.definition.string.end.elixir
+       "," punctuation.separator.object.elixir
+       "\"" string.quoted.double.elixir punctuation.definition.string.begin.elixir
+       "s " string.quoted.double.elixir
+       "\\t" string.quoted.double.elixir constant.character.escape.char.elixir
+       " " string.quoted.double.elixir
+       "#{" string.quoted.double.elixir punctuation.section.interpolation.begin.elixir
+       "<>" keyword.operator.binary-concatenation.elixir
+       "}" punctuation.section.interpolation.end.elixir
+       "\"" string.quoted.double.elixir punctuation.definition.string.end.elixir
+       "]" punctuation.section.array.elixir
+  22 |     f = fn y when y > 0 -> y; _ -> nil end
+       "=" keyword.operator.assignment.elixir
+       "fn" keyword.control.elixir
+       "when" keyword.control.elixir
+       ">" keyword.operator.comparison.elixir
+       "0" constant.numeric.elixir
+       "->" keyword.operator.arrow.elixir
+       ";" punctuation.separator.statement.elixir
+       "->" keyword.operator.arrow.elixir
+       "nil" constant.language.elixir
+       "end" keyword.control.elixir
+  23 |     <<len::size(8), rest::binary-size(len), "ab", 1::utf8>> = x
+       "<<" binary.elixir punctuation.definition.binary.begin.elixir
+       "::" binary.elixir keyword.type.binary.elixir punctuation.binary.elixir
+       "size(" binary.elixir keyword.type.binary.elixir
+       "8" binary.elixir keyword.type.binary.elixir constant.numeric.elixir
+       ")" binary.elixir keyword.type.binary.elixir
+       "," binary.elixir punctuation.binary.elixir
+       "::" binary.elixir keyword.type.binary.elixir punctuation.binary.elixir
+       "binary-size(" binary.elixir keyword.type.binary.elixir
+       "len" binary.elixir keyword.type.binary.elixir variable.numeric.elixir
+       ")" binary.elixir keyword.type.binary.elixir
+       "," binary.elixir punctuation.binary.elixir
+       "\"" string.quoted.double.elixir punctuation.definition.string.begin.elixir
+       "ab" string.quoted.double.elixir
+       "\"" string.quoted.double.elixir punctuation.definition.string.end.elixir
+       "," binary.elixir punctuation.binary.elixir
+       "1" binary.elixir constant.numeric.elixir
+       "::" binary.elixir keyword.type.binary.elixir punctuation.binary.elixir
+       "utf8" binary.elixir keyword.type.binary.elixir
+       ">>" binary.elixir punctuation.definition.binary.end.elixir
+       "=" keyword.operator.assignment.elixir
+  24 |     ~w(a b c)a ++ ~S(p \) q) ++ ~HTML"<p>"
+       "~w" storage.type.string.elixir
+       "(" string.interpolated.elixir punctuation.definition.string.begin.elixir
+       "a b c" string.interpolated.elixir
+       ")" string.interpolated.elixir punctuation.definition.string.end.elixir
+       "a" string.quoted.modifiers.elixir storage.type.string.elixir
+       "++" keyword.operator.list-manipulation.elixir
+       "~S" storage.type.string.elixir
+       "(" string.quoted.other.literal.upper.elixir punctuation.definition.string.begin.elixir
+       "p \\) q" string.quoted.other.literal.upper.elixir
+       ")" string.quoted.other.literal.upper.elixir punctuation.definition.string.end.elixir
+       "++" keyword.operator.list-manipulation.elixir
+       "~HTML" storage.type.string.elixir
+       "\"" string.quoted.other.literal.upper.elixir punctuation.definition.string.begin.elixir
+       "<p>" string.quoted.other.literal.upper.elixir
+       "\"" string.quoted.other.literal.upper.elixir punctuation.definition.string.end.elixir
+  25 |     r = ~r/^(?<y>\d{4})-[a-z\/]+$/iu
+       "=" keyword.operator.assignment.elixir
+       "~r" storage.type.string.elixir
+       "/" string.interpolated.elixir punctuation.definition.string.begin.elixir
+       "^" string.interpolated.elixir keyword.control.anchor.regexp
+       "(" string.interpolated.elixir punctuation.definition.group.begin.regexp
+       "?" string.interpolated.elixir punctuation.definition.group.begin.regexp
+       "<" string.interpolated.elixir punctuation.definition.group.named.begin.regexp
+       "y" string.interpolated.elixir entity.name.other.group.regexp
+       ">" string.interpolated.elixir punctuation.definition.group.named.end.regexp
+       "\\d" string.interpolated.elixir constant.other.character-class.escape.backslash.regexp
+       "{" string.interpolated.elixir keyword.operator.quantifier.regexp
+       "4" string.interpolated.elixir keyword.operator.quantifier.regexp constant.literal.numeric.regexp
+       "}" string.interpolated.elixir keyword.operator.quantifier.regexp
+       ")" string.interpolated.elixir punctuation.definition.group.end.regexp
+       "-" string.interpolated.elixir
+       "[" string.interpolated.elixir constant.other.character-class.set.regexp punctuation.definition.character-class.begin.regexp
+       "a" string.interpolated.elixir constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "-" string.interpolated.elixir constant.other.character-class.set.regexp constant.other.character-class.range.regexp punctuation.definition.range.regexp
+       "z" string.interpolated.elixir constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "\\/" string.interpolated.elixir constant.other.character-class.set.regexp constant.character.escape.backslash.regexp
+       "]" string.interpolated.elixir constant.other.character-class.set.regexp punctuation.definition.character-class.end.regexp
+       "+" string.interpolated.elixir keyword.operator.quantifier.regexp
+       "$" string.interpolated.elixir keyword.control.anchor.regexp
+       "/" string.interpolated.elixir punctuation.definition.string.end.elixir
+       "iu" string.quoted.modifiers.elixir storage.type.string.elixir
+  26 |     Regex.compile!("^\\d+$")
+       "Regex" entity.name.class.elixir
+       "." punctuation.separator.method.elixir
+       "(" punctuation.section.function.elixir
+       "\"" string.quoted.double.elixir punctuation.definition.string.begin.elixir
+       "^" string.quoted.double.elixir keyword.control.anchor.regexp
+       "\\\\d" string.quoted.double.elixir constant.other.character-class.escape.backslash.regexp
+       "+" string.quoted.double.elixir keyword.operator.quantifier.regexp
+       "$" string.quoted.double.elixir keyword.control.anchor.regexp
+       "\"" string.quoted.double.elixir punctuation.definition.string.end.elixir
+       ")" punctuation.section.function.elixir
+  27 |     from(u in User, where: fragment("lower(?) = ?", u.email, ^a))
+       "(" punctuation.section.function.elixir
+       "in" keyword.operator.elixir
+       "User" entity.name.class.elixir
+       "," punctuation.separator.object.elixir
+       "where" constant.other.keywords.elixir
+       ":" constant.other.keywords.elixir punctuation.definition.constant.elixir
+       "(" punctuation.section.function.elixir
+       "\"" string.quoted.double.elixir punctuation.definition.string.begin.elixir
+       "lower" string.quoted.double.elixir support.function.string.sql
+       "(" string.quoted.double.elixir
+       "?" string.quoted.double.elixir constant.other.placeholder.sql
+       ") " string.quoted.double.elixir
+       "=" string.quoted.double.elixir keyword.operator.comparison.sql
+       " " string.quoted.double.elixir
+       "?" string.quoted.double.elixir constant.other.placeholder.sql
+       "\"" string.quoted.double.elixir punctuation.definition.string.end.elixir
+       "," punctuation.separator.object.elixir
+       "." punctuation.separator.method.elixir
+       "," punctuation.separator.object.elixir
+       "^" variable.other.pin.elixir keyword.operator.pin.elixir
+       "a" variable.other.pin.elixir
+       "))" punctuation.section.function.elixir
+  28 |     Repo.query!("SELECT * FROM users WHERE id = $1", [b]) # done
+       "Repo" entity.name.class.elixir
+       "." punctuation.separator.method.elixir
+       "(" punctuation.section.function.elixir
+       "\"" string.quoted.double.elixir punctuation.definition.string.begin.elixir
+       "SELECT" string.quoted.double.elixir keyword.other.DML.sql
+       " " string.quoted.double.elixir
+       "*" string.quoted.double.elixir variable.language.star.sql
+       " " string.quoted.double.elixir
+       "FROM" string.quoted.double.elixir keyword.other.DML.sql
+       " users " string.quoted.double.elixir
+       "WHERE" string.quoted.double.elixir keyword.other.DML.sql
+       " id " string.quoted.double.elixir
+       "=" string.quoted.double.elixir keyword.operator.comparison.sql
+       " " string.quoted.double.elixir
+       "$1" string.quoted.double.elixir constant.other.placeholder.sql
+       "\"" string.quoted.double.elixir punctuation.definition.string.end.elixir
+       "," punctuation.separator.object.elixir
+       "[" punctuation.section.array.elixir
+       "]" punctuation.section.array.elixir
+       ")" punctuation.section.function.elixir
+       "#" comment.line.number-sign.elixir punctuation.definition.comment.elixir
+       " done" comment.line.number-sign.elixir
+  29 |   end
+       "end" keyword.control.elixir
+  30 |   ## Section
+       "  " comment.line.section.elixir
+       "##" comment.line.section.elixir punctuation.definition.comment.elixir
+       " Section" comment.line.section.elixir
+  31 |   def render(assigns) do
+       "def" keyword.control.module.elixir
+       "render" entity.name.function.public.elixir
+       "(" punctuation.definition.parameters.elixir
+       ")" punctuation.section.function.elixir
+       "do" keyword.control.module.elixir
+  32 |     ~H"""
+       "~H" storage.type.string.elixir
+       "\"\"\"" string.quoted.triple.double.elixir punctuation.definition.string.begin.elixir
+  33 |     <div class={@class} phx-click="go">
+       "<" punctuation.definition.tag.begin.html
+       "div" entity.name.tag.block.any.html
+       "class" entity.other.attribute-name.class.html
+       "=" punctuation.separator.key-value.html
+       "{" punctuation.section.embedded.begin.elixir
+       "@" variable.other.module.elixir keyword.operator.definition.constant.elixir
+       "class" variable.other.module.elixir
+       "}" punctuation.section.embedded.end.elixir
+       "phx-click" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "\"" string.quoted.double.html punctuation.definition.string.begin.html
+       "go" string.quoted.double.html
+       "\"" string.quoted.double.html punctuation.definition.string.end.html
+       ">" punctuation.definition.tag.end.html
+  34 |       <.link navigate={~p"/a"}>{@name}</.link>
+       "<" punctuation.definition.tag.begin.html
+       ".link" entity.name.tag.other.html
+       "navigate" entity.other.attribute-name.html
+       "=" punctuation.separator.key-value.html
+       "{" punctuation.section.embedded.begin.elixir
+       "~p" storage.type.string.elixir
+       "\"" string.quoted.other.literal.lower.elixir punctuation.definition.string.begin.elixir
+       "/a" string.quoted.other.literal.lower.elixir
+       "\"" string.quoted.other.literal.lower.elixir punctuation.definition.string.end.elixir
+       "}" punctuation.section.embedded.end.elixir
+       ">" punctuation.definition.tag.end.html
+       "{" punctuation.section.embedded.begin.elixir
+       "@" variable.other.module.elixir keyword.operator.definition.constant.elixir
+       "name" variable.other.module.elixir
+       "}" punctuation.section.embedded.end.elixir
+       "</" punctuation.definition.tag.begin.html
+       ".link" entity.name.tag.other.html
+       ">" punctuation.definition.tag.end.html
+  35 |       <%= if @x do %><b>&amp;</b><% end %>
+       "<%=" punctuation.section.embedded.begin.elixir
+       "if" keyword.control.elixir
+       "@" variable.other.module.elixir keyword.operator.definition.constant.elixir
+       "x" variable.other.module.elixir
+       "do" keyword.control.elixir
+       "%>" punctuation.section.embedded.end.elixir
+       "<" punctuation.definition.tag.begin.html
+       "b" entity.name.tag.inline.any.html
+       ">" punctuation.definition.tag.end.html
+       "&" constant.character.entity.named.html punctuation.definition.entity.html
+       "amp" constant.character.entity.named.html
+       ";" constant.character.entity.named.html punctuation.terminator.entity.html
+       "</" punctuation.definition.tag.begin.html
+       "b" entity.name.tag.inline.any.html
+       ">" punctuation.definition.tag.end.html
+       "<%" punctuation.section.embedded.begin.elixir
+       "end" keyword.control.elixir
+       "%>" punctuation.section.embedded.end.elixir
+  36 |     </div>
+       "</" punctuation.definition.tag.begin.html
+       "div" entity.name.tag.block.any.html
+       ">" punctuation.definition.tag.end.html
+  37 |     """
+       "    " string.quoted.triple.double.elixir
+       "\"\"\"" string.quoted.triple.double.elixir punctuation.definition.string.end.elixir
+  38 |   end
+       "end" keyword.control.elixir
+  39 | end
+       "end" keyword.control.elixir
+  40 | defprotocol Size do
+       "defprotocol" keyword.control.protocol.elixir
+       "Size" entity.name.protocol.elixir
+       "do" keyword.control.protocol.elixir
+  41 |   def size(data)
+       "def" keyword.control.module.elixir
+       "size" entity.name.function.public.elixir
+       "(" punctuation.definition.parameters.elixir
+       ")" punctuation.section.function.elixir
+  42 | end
+       "end" keyword.control.elixir
+  43 | defimpl Size, for: BitString do
+       "defimpl" keyword.control.protocol.elixir
+       "Size" entity.name.protocol.elixir
+       "BitString" entity.name.protocol.elixir
+       "do" keyword.control.protocol.elixir
+  44 |   def size(s), do: byte_size(s)
+       "def" keyword.control.module.elixir
+       "size" entity.name.function.public.elixir
+       "(" punctuation.definition.parameters.elixir
+       ")" punctuation.section.function.elixir
+       "," punctuation.separator.object.elixir
+       "do:" constant.other.keywords.elixir
+       "(" punctuation.section.function.elixir
+       ")" punctuation.section.function.elixir
+  45 | end
+       "end" keyword.control.elixir
+  46 | defmodule MyApp.Repo.Migrations.Index do
+       "defmodule" keyword.control.module.elixir
+       "MyApp" entity.name.class.elixir
+       "Repo" entity.name.class.elixir
+       "Migrations" entity.name.class.elixir
+       "Index" entity.name.class.elixir
+       "do" keyword.control.module.elixir
+  47 |   def up, do: execute "CREATE INDEX i ON users (lower(email))"
+       "def" keyword.control.module.elixir
+       "up" entity.name.function.public.elixir
+       "," punctuation.separator.object.elixir
+       "do:" constant.other.keywords.elixir
+       "\"" string.quoted.double.elixir punctuation.definition.string.begin.elixir
+       "CREATE" string.quoted.double.elixir meta.create.sql keyword.other.create.sql
+       " " string.quoted.double.elixir
+       "INDEX" string.quoted.double.elixir meta.create.sql keyword.other.sql
+       " " string.quoted.double.elixir
+       "i" string.quoted.double.elixir meta.toc-list.full-identifier.sql entity.name.function.sql
+       " " string.quoted.double.elixir
+       "ON" string.quoted.double.elixir keyword.other.sql
+       " users (" string.quoted.double.elixir
+       "lower" string.quoted.double.elixir support.function.string.sql
+       "(email))" string.quoted.double.elixir
+       "\"" string.quoted.double.elixir punctuation.definition.string.end.elixir
+  48 | end
+       "end" keyword.control.elixir

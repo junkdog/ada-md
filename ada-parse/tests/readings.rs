@@ -493,6 +493,71 @@ fn groovy() {
     readings("groovy", Lang::Groovy, text);
 }
 
+/// Elixir's readings (X-138, a scanner of ada's own): a hashbang, a module's head, `@moduledoc`
+/// and `@doc` (a heredoc, a `~S` one, a string, `false`), attributes, `use`/`import`/`alias`,
+/// function heads with guards, defaults and `do:`, a head across lines, a protocol's head without
+/// a body, `defimpl`, keys (quoted too), atoms (quoted and operators'), captures, pins,
+/// characters, numbers, strings with escapes and `#{…}`, charlists, heredocs (one holding its
+/// delimiter past a line's start), sigils (lowercase, uppercase with an escaped delimiter,
+/// multi-letter, word lists with modifiers), `fn` with `when`, binaries with types, comments and
+/// sections, regexes in sigils and `Regex.compile`, SQL in Ecto's `fragment(`, a repository's
+/// `query!(` and a migration's `execute`, a HEEx template with islands. The departures from
+/// bat's grammar are pinned in ada-parse's `elixir` tests.
+#[test]
+fn elixir() {
+    let text = concat!(
+        "#!/usr/bin/env elixir\n",
+        "defmodule MyApp.Accounts do\n",
+        "  @moduledoc \"\"\"\n",
+        "  Accounts, `#{__MODULE__}`.\n",
+        "      iex> ~s\"\"\"\n",
+        "      ...> \"\"\"\n",
+        "  \"\"\"\n",
+        "  use Ecto.Schema\n",
+        "  import Ecto.Query, only: [from: 2]\n",
+        "  alias MyApp.{Repo, User}\n",
+        "  @max 1_000\n",
+        "  @doc ~S\"raw\"\n",
+        "  @doc false\n",
+        "  def get(id, opts \\\\ []) when is_integer(id) and id > 0, do: Repo.get(User, id)\n",
+        "  defp head(a,\n",
+        "            b)\n",
+        "       when is_binary(a) do\n",
+        "    %{\"key\": 1, name: a, ok: :ok, op: :<>, q: :\"x #{b}\"}\n",
+        "    |> Enum.map(&String.upcase/1)\n",
+        "    |> Enum.filter(&valid?/1)\n",
+        "    x = [?a, ?\\n, 0x1F, 1.5e-3, ^pin, 'chars', \"s \\t #{a <> b}\"]\n",
+        "    f = fn y when y > 0 -> y; _ -> nil end\n",
+        "    <<len::size(8), rest::binary-size(len), \"ab\", 1::utf8>> = x\n",
+        "    ~w(a b c)a ++ ~S(p \\) q) ++ ~HTML\"<p>\"\n",
+        "    r = ~r/^(?<y>\\d{4})-[a-z\\/]+$/iu\n",
+        "    Regex.compile!(\"^\\\\d+$\")\n",
+        "    from(u in User, where: fragment(\"lower(?) = ?\", u.email, ^a))\n",
+        "    Repo.query!(\"SELECT * FROM users WHERE id = $1\", [b]) # done\n",
+        "  end\n",
+        "  ## Section\n",
+        "  def render(assigns) do\n",
+        "    ~H\"\"\"\n",
+        "    <div class={@class} phx-click=\"go\">\n",
+        "      <.link navigate={~p\"/a\"}>{@name}</.link>\n",
+        "      <%= if @x do %><b>&amp;</b><% end %>\n",
+        "    </div>\n",
+        "    \"\"\"\n",
+        "  end\n",
+        "end\n",
+        "defprotocol Size do\n",
+        "  def size(data)\n",
+        "end\n",
+        "defimpl Size, for: BitString do\n",
+        "  def size(s), do: byte_size(s)\n",
+        "end\n",
+        "defmodule MyApp.Repo.Migrations.Index do\n",
+        "  def up, do: execute \"CREATE INDEX i ON users (lower(email))\"\n",
+        "end\n",
+    );
+    readings("elixir", Lang::Elixir, text);
+}
+
 /// Haskell's readings (X-136, a scanner of ada's own): pragmas, a module's head with its export
 /// list, imports, CPP's lines, data declarations with records and deriving clauses, classes and
 /// instances, type signatures across lines, operators read whole and in parentheses, backticks,

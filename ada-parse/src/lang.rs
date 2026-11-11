@@ -102,6 +102,8 @@ pub enum Lang {
     /// bat's `Literate Haskell`: prose around Haskell's code (Bird tracks, `\begin{code}`,
     /// markdown-unlit's fences).
     LiterateHaskell,
+    /// bat's `Elixir`: Elixir's source files and scripts (`mix.exs`).
+    Elixir,
     /// bat's `Ruby`.
     Ruby,
     /// bat's `SQL`.
@@ -421,6 +423,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::Groovy, &["groovy", "gvy", "gradle", "jenkinsfile"]),
     (Lang::Haskell, &["hs"]),
     (Lang::LiterateHaskell, &["lhs"]),
+    (Lang::Elixir, &["ex", "exs"]),
     (
         Lang::Ruby,
         &[
@@ -475,7 +478,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 58] = [
+    pub const ALL: [Lang; 59] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -520,6 +523,7 @@ impl Lang {
         Lang::Groovy,
         Lang::Haskell,
         Lang::LiterateHaskell,
+        Lang::Elixir,
         Lang::Ruby,
         Lang::JavaScript,
         Lang::Sql,
@@ -584,6 +588,7 @@ impl Lang {
             Lang::Groovy => "Groovy",
             Lang::Haskell => "Haskell",
             Lang::LiterateHaskell => "Literate Haskell",
+            Lang::Elixir => "Elixir",
             Lang::Ruby => "Ruby",
             Lang::Sql => "SQL",
             Lang::PowerShell => "PowerShell",
@@ -657,6 +662,7 @@ impl Lang {
             Lang::Groovy => "source.groovy",
             Lang::Haskell => "source.haskell",
             Lang::LiterateHaskell => "text.tex.latex.haskell",
+            Lang::Elixir => "source.elixir",
             Lang::Ruby => "source.ruby",
             Lang::Sql => "source.sql",
             Lang::PowerShell => "source.powershell",
@@ -715,6 +721,7 @@ impl Lang {
             Lang::Scala => crate::scala::scopes(kind),
             Lang::Groovy => crate::groovy::scopes(kind),
             Lang::Haskell | Lang::LiterateHaskell => crate::haskell::scopes(kind),
+            Lang::Elixir => crate::elixir::scopes(kind),
             Lang::Ruby => crate::ruby::scopes(kind),
             Lang::Sql => crate::sql::scopes(kind),
             Lang::PowerShell => crate::powershell::scopes(kind),
@@ -1167,9 +1174,12 @@ const FIRST_LINES: &[FirstLineRegex] = &[
         |line| Some(is_dockerfile_line(line)),
     ),
     // ^#!/.*\b(?:elixirc?|iex)
-    may("Elixir", |t| {
-        t.shebang() && (t.has("elixir") || t.has("iex"))
-    }),
+    decided(
+        "Elixir",
+        Lang::Elixir,
+        |t| t.shebang() && (t.has("elixir") || t.has("iex")),
+        |line| Some(is_elixir_line(line)),
+    ),
     // ^#!.*\b(fish)\b
     may("Fish", |t| t.shebang() && t.has("fish")),
     // -[*]-( Mode:)? GLSL -[*]-
@@ -1501,6 +1511,19 @@ fn is_make_line(lower: &str) -> bool {
 
 /// Ruby's first line, lowercase: `#!` and the word `ruby` or `jruby` after it, or a
 /// `# -*- … ruby … -*-` modeline.
+/// bat's `^#!/.*\b(?:elixirc?|iex)`: a hashbang naming `elixir`, `elixirc` or `iex` at a word's
+/// start.
+fn is_elixir_line(line: &str) -> bool {
+    line.starts_with("#!/")
+        && ["elixir", "iex"].iter().any(|w| {
+            line.match_indices(w).any(|(i, _)| {
+                i == 0
+                    || !line.as_bytes()[i - 1].is_ascii_alphanumeric()
+                        && line.as_bytes()[i - 1] != b'_'
+            })
+        })
+}
+
 fn is_ruby_line(lower: &str) -> bool {
     if lower.starts_with("#!") {
         return has_word(lower, 2, "ruby") || has_word(lower, 2, "jruby");

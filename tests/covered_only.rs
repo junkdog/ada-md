@@ -346,7 +346,7 @@ fn covered_languages_highlight_and_the_others_are_named() {
     for (name, file, first) in [
         ("Erlang", "x.erl", None),
         ("Perl", "x.pl", Some("#!/usr/bin/perl -w")),
-        ("Elixir", "mix.exs", Some("#!/usr/bin/env elixir")),
+        ("Crystal", "x.cr", Some("#!/usr/bin/env crystal")),
         ("Git Log", "x.gitlog", Some("commit 0123456789abcdef")),
     ] {
         assert_eq!(highlight::file_language(Path::new(file)), Some(name));

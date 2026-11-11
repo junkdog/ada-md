@@ -495,6 +495,41 @@ node('linux') {
 }
 ```
 
+## Elixir
+
+```elixir
+defmodule Greeter do
+  @moduledoc """
+  Greets users, stored and searched; see `Greeter.greet/2`.
+  """
+  import Ecto.Query, only: [from: 2]
+  alias MyApp.{Repo, User}
+
+  @max 1_000
+
+  @doc "Greets `name`, `times` over."
+  def greet(name, times \\ 1) when is_binary(name) and times > 0 do
+    "Hello, #{String.capitalize(name)}! " |> String.duplicate(times)
+  end
+
+  def find_users(age) do
+    from(u in User, where: u.age > ^age and fragment("lower(?) LIKE 'a%'", u.name))
+    |> Repo.all()
+    |> Enum.map(&{&1.id, &1.name})
+  end
+
+  def valid?(email), do: email =~ ~r/^(\w+)@(\w+)\.com$/i
+
+  def render(assigns) do
+    ~H"""
+    <ul class={@class}>
+      <li :for={user <- @users}>{user.name}</li>
+    </ul>
+    """
+  end
+end
+```
+
 ## Haskell
 
 ```haskell

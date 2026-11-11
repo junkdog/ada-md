@@ -31,8 +31,8 @@ use libfuzzer_sys::fuzz_target;
 /// SCSS's and bash's X-075, bash's run copy apart from its span copy since X-094; Makefile's
 /// runs come from its spans since X-094; C's and C++'s X-057; Swift's X-101; CMake's X-104;
 /// Ruby's X-100; Terraform's X-102; Scala's X-137; Haskell's and Literate Haskell's X-136;
-/// Groovy's X-135).
-const RUN_SCANS: [Lang; 47] = [
+/// Groovy's X-135; Elixir's X-138).
+const RUN_SCANS: [Lang; 48] = [
     Lang::Bash,
     Lang::Scss,
     Lang::Rust,
@@ -43,6 +43,7 @@ const RUN_SCANS: [Lang; 47] = [
     Lang::Terraform,
     Lang::Scala,
     Lang::Groovy,
+    Lang::Elixir,
     Lang::Haskell,
     Lang::LiterateHaskell,
     Lang::Ruby,
