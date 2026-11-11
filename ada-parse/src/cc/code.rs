@@ -5,20 +5,26 @@
 
 use super::pp::skip_blanks;
 use super::words::{
-    A_ACCESS, A_C99, A_CASE, A_CAST, A_CLASS, A_DELETE, A_ENUM, A_LEAF, A_NAMESPACE, A_NS,
-    A_OPERATOR, A_REGEX, A_STRUCT, A_TEMPLATE, A_TYPEDEF, A_TYPENAME, A_UNION, A_USING, ACT, WORDS,
+    A_ACCESS, A_C99, A_CASE, A_CAST, A_CLASS, A_DELETE, A_ENUM, A_ID, A_LEAF, A_NAMESPACE, A_NS,
+    A_OPERATOR, A_REGEX, A_SQL, A_STRUCT, A_TEMPLATE, A_TYPEDEF, A_TYPENAME, A_UNION, A_USING, ACT,
+    WORDS,
 };
 use super::*;
 use crate::prim;
 
-impl<K: Sink> Scan<'_, '_, K> {
+impl<K: Sink, const O: bool> Scan<'_, '_, K, O> {
     /// The code from `p` to the line's end. At a namespace's or a class's level, as bat has
     /// it, a line's end ends a statement without a keyword that a macro's call ends
     /// (`DECLARE(x)`) or that has names (`TEST_END`), but not a path's `::`; and a definition's
     /// header with no `;` or `{` ([`P_DEFINED`]: a `:` next is its initializer list's).
     #[inline(always)]
     pub(super) fn code_line(&mut self, p: usize) {
+        let p = if O { self.objc_line(p) } else { p };
         self.code::<false>(p);
+        // SQL a line's end leaves open, for the next ([`Scan::sqlp`])
+        if self.rx & (RX_SQL | RX_SQL_END | RX_SEL) != 0 && self.mode == M_CODE {
+            self.sql_line_end();
+        }
         if self.paren == 0 && self.level() <= CLASS {
             self.line_end();
         }
@@ -82,13 +88,26 @@ impl<K: Sink> Scan<'_, '_, K> {
             bits |= k;
             e += 1;
         }
+        // Objective-C's selectors, keyword parts and method heads, where a frame or a head is open
+        if O && self.nbr | self.head != 0
+            && let Some(r) = self.objc_word::<PP>(p, e)
+        {
+            return r;
+        }
         let id = if bits & HI == 0 {
             WORDS.get(&b[p..e])
         } else {
             0
         };
         // SAFETY: an id is at most the table's words, the row's length less one
-        let info = unsafe { *self.info.get_unchecked(usize::from(id)) };
+        let mut info = unsafe { *self.info.get_unchecked(usize::from(id)) };
+        if info == 0 && O && bits & HI == 0 {
+            info = self.cocoa(p, e);
+        }
+        // Objective-C's dot syntax: a member whatever its word (`NSException.class`, `x.default`)
+        if O && info != 0 && self.prev == P_ACCESSOR {
+            return self.name::<PP>(p, e, false);
+        }
         if self.prev == P_ENTITY || self.decl >= D_TYPEDEF {
             return self.word_in::<PP>(p, e, info);
         }
@@ -104,16 +123,35 @@ impl<K: Sink> Scan<'_, '_, K> {
         }
         let leaf = info & ((1 << ACT) - 1);
         match info >> ACT {
-            // a member named as a support type (`.Size`)
-            A_LEAF if self.prev == P_ACCESSOR && (SYS_TYPE..=MAC_TYPE).contains(&leaf) => {
+            // a member named as a support type (`.Size`), or as Cocoa's word
+            A_LEAF
+                if self.prev == P_ACCESSOR
+                    && ((SYS_TYPE..=MAC_TYPE).contains(&leaf)
+                        || (COCOA_FIRST..=COCOA_LAST).contains(&leaf)) =>
+            {
                 return self.name::<PP>(p, e, false);
+            }
+            // Objective-C's `id<Protocol>`
+            A_ID => {
+                self.put::<PP>(p, e, leaf);
+                self.prev = P_OTHER;
+                self.kw |= self.paren == 0;
+                let q = skip_blanks(self.b, e);
+                if self.b.get(q) == Some(&b'<') {
+                    return self.protocols::<PP>(q);
+                }
+                return e;
             }
             A_LEAF => {}
             // a regex engine's name: a plain name, its line's strings checked for a pattern
-            A_C99 | A_REGEX => {
-                let c99 = info >> ACT == A_C99;
-                self.rx |= !c99;
-                return self.name::<PP>(p, e, c99);
+            A_C99 | A_REGEX | A_SQL => {
+                let act = info >> ACT;
+                self.rx |= match act {
+                    A_REGEX => RX_RE,
+                    A_SQL => RX_SQL,
+                    _ => 0,
+                };
+                return self.name::<PP>(p, e, act == A_C99);
             }
             // `= default;`, `= delete;` after a definition's parameters
             A_CASE | A_DELETE if self.decl == D_DEFINED => {
@@ -213,11 +251,16 @@ impl<K: Sink> Scan<'_, '_, K> {
     #[inline(never)]
     fn word_in<const PP: bool>(&mut self, p: usize, e: usize, info: u16) -> usize {
         // a regex engine's name is a plain name here (`class RE2 {`, `namespace ctre {`)
-        let info = if info >> ACT == A_REGEX {
-            self.rx = true;
-            0
-        } else {
-            info
+        let info = match info >> ACT {
+            A_REGEX => {
+                self.rx |= RX_RE;
+                0
+            }
+            A_SQL => {
+                self.rx |= RX_SQL;
+                0
+            }
+            _ => info,
         };
         let b = self.b;
         let q = skip_blanks(b, e);
@@ -377,7 +420,13 @@ impl<K: Sink> Scan<'_, '_, K> {
             Some(b'<') if !self.c => return self.name_lt::<PP>(p, e, e, prev),
             // C++'s `name{…}`: a call's color, as bat has it (not a base class's before a body)
             Some(b'{') if !self.c && self.pending == NO_PENDING => FUNCTION,
-            Some(b':') if !PP && prev == P_STMT && b.get(e + 1) != Some(&b':') => {
+            // not an Objective-C dictionary's key (`@{ Key: value }`)
+            Some(b':')
+                if !PP
+                    && prev == P_STMT
+                    && b.get(e + 1) != Some(&b':')
+                    && !(O && self.level() == INIT) =>
+            {
                 self.put::<PP>(p, e, LABEL);
                 self.put::<PP>(e, e + 1, SEPARATOR);
                 self.prev = P_STMT;
@@ -492,7 +541,9 @@ impl<K: Sink> Scan<'_, '_, K> {
             self.tpl |= 1 << self.angle;
         }
         self.angle = self.angle.saturating_add(1);
-        self.put::<PP>(p, p + 1, GENERIC_BEGIN);
+        // Objective-C's lightweight generics: bat's protocol list's punctuation
+        let leaf = if self.c { SCOPE_BEGIN } else { GENERIC_BEGIN };
+        self.put::<PP>(p, p + 1, leaf);
         self.prev = P_OTHER;
         p + 1
     }
@@ -504,7 +555,8 @@ impl<K: Sink> Scan<'_, '_, K> {
         if self.angle < 3 {
             self.tpl &= !(1 << self.angle);
         }
-        self.put::<PP>(p, p + 1, GENERIC_END);
+        let leaf = if self.c { SCOPE_END } else { GENERIC_END };
+        self.put::<PP>(p, p + 1, leaf);
         self.prev = P_OTHER;
         p + 1
     }
@@ -550,7 +602,12 @@ impl<K: Sink> Scan<'_, '_, K> {
     #[cold]
     fn declared(&self, e: usize) -> bool {
         let b = self.b;
-        if !(self.decl == D_NONE && self.paren == 0 && self.angle == 0 && self.level() <= CLASS) {
+        // bat's Objective-C colors a declared `kFoo` as any
+        if O || !(self.decl == D_NONE
+            && self.paren == 0
+            && self.angle == 0
+            && self.level() <= CLASS)
+        {
             return false;
         }
         let q = match b.get(e) {
@@ -578,11 +635,17 @@ impl<K: Sink> Scan<'_, '_, K> {
         if b[e] == b'"' {
             if plain {
                 self.put::<PP>(p, e, DQ_PREFIX);
-                if let Some(d) = self.regex_here::<PP>(p) {
-                    self.put::<PP>(e, e + 1, DQ_BEGIN);
-                    return self.dq_regex(e + 1, d);
+                match self.embed_here::<PP>(p) {
+                    Embed::Re(d) => {
+                        self.put::<PP>(e, e + 1, DQ_BEGIN);
+                        return self.dq_regex(e + 1, d);
+                    }
+                    Embed::Sql(ctx) => {
+                        self.put::<PP>(e, e + 1, DQ_BEGIN);
+                        return self.dq_sql(e + 1, ctx);
+                    }
+                    Embed::None => return self.dq::<PP>(e),
                 }
-                return self.dq::<PP>(e);
             }
             if !self.c
                 && matches!(w, b"R" | b"LR" | b"uR" | b"UR" | b"u8R")
@@ -616,7 +679,7 @@ impl<K: Sink> Scan<'_, '_, K> {
                 self.prev = P_OTHER;
                 // a line with a regex engine's name: its strings checked for a pattern, out of
                 // the loop's way
-                if !PP && self.rx {
+                if !PP && self.rx != 0 {
                     return self.dq_checked(p);
                 }
                 return self.dq::<PP>(p);
@@ -631,6 +694,18 @@ impl<K: Sink> Scan<'_, '_, K> {
                 b'=' => (2, ASSIGN_AUG),
                 _ => (1, ARITH),
             },
+            b'(' if O
+                && self.head != 0
+                && let Some(r) = self.head_paren::<PP>(p, true) =>
+            {
+                return r;
+            }
+            b')' if O
+                && self.head != 0
+                && let Some(r) = self.head_paren::<PP>(p, false) =>
+            {
+                return r;
+            }
             b'(' => {
                 self.pending = NO_PENDING;
                 self.paren = self.paren.saturating_add(1);
@@ -647,6 +722,9 @@ impl<K: Sink> Scan<'_, '_, K> {
                 return p + 1;
             }
             b';' => {
+                if O && self.nbr | self.head != 0 {
+                    self.objc_semicolon();
+                }
                 self.put::<PP>(p, p + 1, TERMINATOR);
                 (self.prev, self.pending, self.ternary, self.case) = (P_STMT, NO_PENDING, 0, false);
                 if self.td > self.depth {
@@ -662,6 +740,9 @@ impl<K: Sink> Scan<'_, '_, K> {
                 (1, SEPARATOR)
             }
             b'{' => {
+                if O && self.nbr | self.head != 0 {
+                    self.objc_open_brace();
+                }
                 if !PP {
                     self.open_brace();
                 }
@@ -671,6 +752,9 @@ impl<K: Sink> Scan<'_, '_, K> {
                 return p + 1;
             }
             b'}' => {
+                if O && self.nbr != 0 {
+                    self.objc_close_brace();
+                }
                 if !PP {
                     if p == 0 && self.level() >= CODE {
                         self.resync();
@@ -683,6 +767,8 @@ impl<K: Sink> Scan<'_, '_, K> {
                 self.new_statement();
                 return p + 1;
             }
+            b'[' if O => return self.bracket_open::<PP>(p),
+            b']' if O && self.nbr != 0 => return self.bracket_close::<PP>(p),
             b'[' => (1, BRACKETS_BEGIN),
             b']' => (1, BRACKETS_END),
             b'.' => match next {
@@ -743,6 +829,16 @@ impl<K: Sink> Scan<'_, '_, K> {
                 _ => (1, OPERATOR),
             },
             b'<' | b'>' => {
+                // Objective-C's lightweight generics (`NSArray<NSString *> *`)
+                if O {
+                    if c == b'>' && self.angle > 0 && self.c {
+                        return self.generic_close::<PP>(p);
+                    }
+                    // after Cocoa's class, which C++'s generics don't reach (a keyword's word)
+                    if c == b'<' && self.objc_generic(p) {
+                        return self.generic_open::<PP>(p, false);
+                    }
+                }
                 if !self.c {
                     if c == b'>' && self.angle > 0 {
                         return self.generic_close::<PP>(p);
@@ -784,6 +880,7 @@ impl<K: Sink> Scan<'_, '_, K> {
             }
             b':' => return self.colon::<PP>(p, next),
             b'\\' if p + 1 == b.len() => (1, CONT),
+            b'@' if O => return self.at_sign::<PP>(p),
             _ => {
                 // a stray byte (`#`, `@`, a control character) is plain
                 self.prev = P_OTHER;
@@ -854,6 +951,8 @@ impl<K: Sink> Scan<'_, '_, K> {
                 _ if self.pending == PEND_CLASS || self.pending == PEND_INIT => {
                     (SEPARATOR, P_OTHER)
                 }
+                // Objective-C's dictionary, `@{key: value}` (bat's: the ternary's)
+                _ if O && self.level() == INIT => (SEPARATOR, P_OTHER),
                 _ => (TERNARY, P_OTHER),
             }
         };
@@ -1027,6 +1126,14 @@ impl<K: Sink> Scan<'_, '_, K> {
                         self.put::<PP>(q, e, DQ_PLACEHOLDER);
                         (s, q) = (e, e);
                     }
+                    // an `@"…"`'s object, `%@`
+                    None if self.at_str && b.get(q + 1) == Some(&b'@') => {
+                        if q > s {
+                            self.put::<PP>(s, q, DQ);
+                        }
+                        self.put::<PP>(q, q + 2, DQ_PLACEHOLDER);
+                        (s, q) = (q + 2, q + 2);
+                    }
                     None => q += 1,
                 },
             }
@@ -1088,10 +1195,18 @@ impl<K: Sink> Scan<'_, '_, K> {
         self.aux = n as u8;
         self.put::<PP>(p, q, DQ_PREFIX);
         self.put::<PP>(q, d + 1, DQ_BEGIN);
-        if let Some(dialect) = self.regex_here::<PP>(p) {
-            self.delim[RE_DIALECT] = regex_calls::dialect_code(dialect);
-            self.delim[RE_STATE] = 0;
-            return Some(self.raw_regex(d + 1));
+        match self.embed_here::<PP>(p) {
+            Embed::Re(dialect) => {
+                self.delim[RE_DIALECT] = regex_calls::dialect_code(dialect);
+                self.delim[RE_STATE] = 0;
+                return Some(self.raw_regex(d + 1));
+            }
+            Embed::Sql(ctx) => {
+                self.delim[RE_DIALECT] = SQL_CODE;
+                self.delim[RE_STATE] = ctx;
+                return Some(self.raw_sql(d + 1));
+            }
+            Embed::None => {}
         }
         Some(self.raw_body::<PP>(d + 1))
     }
@@ -1101,29 +1216,239 @@ impl<K: Sink> Scan<'_, '_, K> {
     #[cold]
     #[inline(never)]
     fn dq_checked(&mut self, p: usize) -> usize {
-        if let Some(d) = self.regex_here::<false>(p) {
-            self.put::<false>(p, p + 1, DQ_BEGIN);
-            return self.dq_regex(p + 1, d);
+        match self.embed_here::<false>(p) {
+            Embed::Re(d) => {
+                self.put::<false>(p, p + 1, DQ_BEGIN);
+                self.dq_regex(p + 1, d)
+            }
+            Embed::Sql(ctx) => {
+                self.put::<false>(p, p + 1, DQ_BEGIN);
+                self.dq_sql(p + 1, ctx)
+            }
+            Embed::None => self.dq::<false>(p),
         }
-        self.dq::<false>(p)
     }
 
-    /// Whether the string at `s` (its prefix, or its quote) is a regex, by the call it is an
-    /// argument of ([`regex_calls::regex_at`]): its dialect. Not in a directive.
-    #[inline(always)]
-    fn regex_here<const PP: bool>(&self, s: usize) -> Option<regex::Dialect> {
-        if PP || !self.rx {
-            return None;
+    /// What the string at `s` (its prefix, its quote, Objective-C's `@`) is, where the line asks
+    /// ([`Scan::rx`]): a regex by the call it is an argument of ([`regex_calls::regex_at`]), SQL
+    /// by the call ([`sql_calls::sql_at`]), an adjacent literal of a SQL string, the string after
+    /// a selector that takes one, SQL the line before left open. Not in a directive.
+    #[inline(never)]
+    pub(super) fn embed_here<const PP: bool>(&self, s: usize) -> Embed {
+        if PP || self.rx == 0 {
+            return Embed::None;
         }
         let b = self.b;
         let mut q = s;
         while q > 0 && matches!(b[q - 1], b' ' | b'\t') {
             q -= 1;
         }
-        if q == 0 || !matches!(b[q - 1], b'(' | b'{' | b',' | b'<' | b')') {
-            return None;
+        if q == 0 {
+            return if self.rx & RX_CARRY != 0 {
+                Embed::Sql(self.sqlp & 0x0f)
+            } else {
+                Embed::None
+            };
         }
-        regex_calls::regex_at(b, q - 1, s, self.c)
+        let c = b[q - 1];
+        if c == b'"' && self.rx & RX_SQL_END != 0 && self.sql_end == q {
+            return Embed::Sql(self.sql_ctx);
+        }
+        if c == b':' && self.rx & RX_SEL != 0 && self.sel_at == q {
+            return if self.sel == objc::SEL_SQL {
+                Embed::Sql(sql::MAIN)
+            } else {
+                Embed::Re(regex::Dialect::Java)
+            };
+        }
+        if !matches!(c, b'(' | b'{' | b',' | b'<' | b')') {
+            return Embed::None;
+        }
+        if self.rx & RX_RE != 0
+            && let Some(d) = regex_calls::regex_at(b, q - 1, s, self.c)
+        {
+            return Embed::Re(d);
+        }
+        if self.rx & RX_SQL != 0 && matches!(c, b'(' | b',') && sql_calls::sql_at(b, q - 1, !self.c)
+        {
+            return Embed::Sql(sql::MAIN);
+        }
+        Embed::None
+    }
+
+    /// SQL's text in a `"…"` string from `p`, past its quote, on [`crate::sql`] from context
+    /// `ctx`: the string's end and escapes the host's, SQL's tokens cut at its end. A string
+    /// whose line ends in `\` goes on on the next as a string ([`M_DQ`]); one that ends leaves
+    /// SQL's context for an adjacent literal ([`Scan::sql_end`]).
+    #[cold]
+    #[inline(never)]
+    pub(super) fn dq_sql(&mut self, p: usize, ctx: u8) -> usize {
+        static YIELDS: [bool; 256] = regex::table(b"\"\\");
+        let b = self.b;
+        let n = b.len();
+        let mut end = p;
+        while end < n && b[end] != b'"' {
+            end += if b[end] == b'\\' { 2 } else { 1 };
+        }
+        let end = end.min(n);
+        let line = &b[..end];
+        let host = sql::Embed {
+            yields: &YIELDS,
+            base: SQL_DQ,
+            text: DQ,
+        };
+        let mut keep = sql::Embedded {
+            is_end: usize::MAX,
+            at: p,
+        };
+        let (mut q, mut ctx) = (p, ctx);
+        while q < end {
+            if b[q] == b'\\' {
+                if q + 1 == n {
+                    self.put::<false>(q, n, DQ_CONT);
+                    self.mode = M_DQ;
+                    return n;
+                }
+                let e = escape_end(b, q).min(end);
+                self.put::<false>(q, e, DQ_ESCAPE);
+                q = e;
+                continue;
+            }
+            keep.at = q;
+            self.k.close(self.out);
+            let r = sql::embedded(line, q, ctx, &host, &mut keep, self.out);
+            self.k.reopen(self.out, 16);
+            let Some((e, c)) = r else {
+                break;
+            };
+            ctx = c;
+            let e = e.min(end);
+            if keep.at < e {
+                self.put::<false>(keep.at, e, DQ);
+            }
+            if e > q {
+                q = e;
+            } else {
+                // no progress: the character is the string's text
+                let e = (q + prim::char_len(b[q])).min(end);
+                self.put::<false>(q, e, DQ);
+                q = e;
+            }
+        }
+        if end < n {
+            self.put::<false>(end, end + 1, DQ_END);
+            self.sql_end = end + 1;
+            self.sql_ctx = if matches!(ctx, sql::DASHES | sql::HASHES) {
+                sql::MAIN
+            } else {
+                ctx
+            };
+            self.rx |= RX_SQL_END;
+            return end + 1;
+        }
+        n
+    }
+
+    /// SQL's text in a raw string from `q` to its `)delim"`, or the line's end ([`M_RAW_RE`] with
+    /// [`SQL_CODE`]), from the context [`Scan::delim`] keeps ([`RE_STATE`]): as it reads, no
+    /// escapes; at the line's end a line comment ends.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn raw_sql(&mut self, q: usize) -> usize {
+        static YIELDS: [bool; 256] = [false; 256];
+        let b = self.b;
+        let n = usize::from(self.aux);
+        let kept = n.min(RE_DELIM_KEPT);
+        let mut end = None;
+        let mut i = q;
+        loop {
+            i = prim::find_swar(b, i, *b")");
+            if i >= b.len() {
+                break;
+            }
+            let e = i + 1 + n;
+            if e < b.len() && b[e] == b'"' && b[i + 1..i + 1 + kept] == self.delim[..kept] {
+                end = Some(i);
+                break;
+            }
+            i += 1;
+        }
+        let lim = end.unwrap_or(b.len());
+        let line = &b[..lim];
+        let host = sql::Embed {
+            yields: &YIELDS,
+            base: SQL_DQ,
+            text: DQ,
+        };
+        let mut keep = sql::Embedded {
+            is_end: usize::MAX,
+            at: q,
+        };
+        let (mut p, mut ctx) = (q, self.delim[RE_STATE]);
+        while p < lim {
+            keep.at = p;
+            self.k.close(self.out);
+            let r = sql::embedded(line, p, ctx, &host, &mut keep, self.out);
+            self.k.reopen(self.out, 16);
+            let Some((e, c)) = r else {
+                break;
+            };
+            ctx = c;
+            let e = e.min(lim);
+            if keep.at < e {
+                self.put::<false>(keep.at, e, DQ);
+            }
+            if e > p {
+                p = e;
+            } else {
+                let e = (p + prim::char_len(b[p])).min(lim);
+                self.put::<false>(p, e, DQ);
+                p = e;
+            }
+        }
+        if matches!(ctx, sql::DASHES | sql::HASHES) {
+            ctx = sql::MAIN;
+        }
+        match end {
+            Some(i) => {
+                let e = i + 1 + n;
+                self.put::<false>(i, e + 1, DQ_END);
+                self.mode = M_CODE;
+                self.aux = 0;
+                self.delim = [0; DELIM_KEPT];
+                e + 1
+            }
+            None => {
+                self.delim[RE_STATE] = ctx;
+                self.mode = M_RAW_RE;
+                b.len()
+            }
+        }
+    }
+
+    /// The line's end where SQL may go on to the next ([`Scan::sqlp`]): after a SQL string
+    /// (an adjacent literal next), a SQL call's `(` or `,` before its SQL argument, a selector
+    /// that takes SQL.
+    #[cold]
+    #[inline(never)]
+    fn sql_line_end(&mut self) {
+        let b = self.b;
+        let t = b.trim_ascii_end().len();
+        if t == 0 || self.pp != PP_NONE {
+            return;
+        }
+        let ctx = if self.rx & RX_SQL_END != 0 && self.sql_end == t {
+            self.sql_ctx
+        } else if self.rx & RX_SQL != 0
+            && matches!(b[t - 1], b'(' | b',')
+            && sql_calls::sql_at(b, t - 1, !self.c)
+            || self.rx & RX_SEL != 0 && self.sel_at == t && self.sel == objc::SEL_SQL
+        {
+            sql::MAIN
+        } else {
+            return;
+        };
+        self.aux = 0x10 | ctx;
     }
 
     /// A regex's text in a `"…"` string from `p`, past its quote, on [`crate::regex`] in
@@ -1131,7 +1456,7 @@ impl<K: Sink> Scan<'_, '_, K> {
     /// line ends in `\` goes on on the next as a string ([`M_DQ`]).
     #[cold]
     #[inline(never)]
-    fn dq_regex(&mut self, mut p: usize, dialect: regex::Dialect) -> usize {
+    pub(super) fn dq_regex(&mut self, mut p: usize, dialect: regex::Dialect) -> usize {
         static YIELDS: [bool; 256] = regex::table(b"\"\\");
         let b = self.b;
         let n = b.len();
@@ -1189,6 +1514,9 @@ impl<K: Sink> Scan<'_, '_, K> {
     #[cold]
     #[inline(never)]
     pub(super) fn raw_regex(&mut self, q: usize) -> usize {
+        if self.delim[RE_DIALECT] == SQL_CODE {
+            return self.raw_sql(q);
+        }
         static YIELDS: [bool; 256] = [false; 256];
         let b = self.b;
         let n = usize::from(self.aux);
@@ -1318,7 +1646,9 @@ impl<K: Sink> Scan<'_, '_, K> {
         while q < b.len() && CC[usize::from(b[q])] & SP != 0 {
             q += 1;
         }
-        if b.get(q) == Some(&b'*') && b.get(q + 1) != Some(&b'/') {
+        // a leading `*` its punctuation, as bat's C++, C and Objective-C have it (its
+        // Objective-C++'s: text)
+        if !(O && !self.c) && b.get(q) == Some(&b'*') && b.get(q + 1) != Some(&b'/') {
             if q > 0 {
                 self.put::<PP>(0, q, BLOCK_TEXT);
             }
@@ -1354,6 +1684,14 @@ impl<K: Sink> Scan<'_, '_, K> {
     }
 }
 
+/// What a string is ([`Scan::embed_here`]).
+pub(super) enum Embed {
+    None,
+    Re(regex::Dialect),
+    /// SQL, from its context.
+    Sql(u8),
+}
+
 /// The byte at `q`, `\n` at the line's end.
 #[inline(always)]
 fn next_byte(b: &[u8], q: usize) -> u8 {
@@ -1365,7 +1703,7 @@ fn next_byte(b: &[u8], q: usize) -> u8 {
 /// one parenthesized group: `<(?:T+(?:<(?:T+(?:<T*>)?)?\s*>)?)?T*(?:\(T*\))?T*>`. A comparison
 /// (`a < b;`, `i < n)`) has no such end.
 #[inline(always)]
-fn generic_end(b: &[u8], lt: usize) -> Option<usize> {
+pub(super) fn generic_end(b: &[u8], lt: usize) -> Option<usize> {
     let run = |mut i: usize| {
         while i < b.len() && GT[usize::from(b[i])] {
             i += 1;

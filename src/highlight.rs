@@ -1087,7 +1087,13 @@ pub struct Highlighter<'a> {
 impl<'a> Highlighter<'a> {
     pub fn new(key: u64, lang: &str, text: &'a str, theme: &'a SyntaxTheme) -> Self {
         let BlockScratch { spans, lines, buf } = BlockScratch::take();
-        let state = match own(lang) {
+        // a header's fence (```` ```h ````) by its text, as a `.h` file (X-134)
+        let own = if lang.eq_ignore_ascii_case("h") {
+            Some(Lang::for_header(text.as_bytes()))
+        } else {
+            own(lang)
+        };
+        let state = match own {
             #[cfg(test)]
             _ if lang == tests::STUCK => Some(Engine::Stuck),
             Some(lang) => Some(Engine::Parse(

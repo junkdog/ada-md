@@ -30,6 +30,14 @@
 //! picks ([`regex_calls`]): its escapes and end the string's, the rest the regex's kinds from
 //! [`RE_DQ`]. A raw one carries the regex's state over lines ([`M_RAW_RE`]).
 //!
+//! A string SQL calls take (`sqlite3_exec(db, "…")`, `query.exec("…")`, FMDB's `executeQuery:`,
+//! X-134) is SQL on [`crate::sql`] ([`sql_calls`]), from [`SQL_DQ`]; its adjacent literals go on with
+//! it, over lines.
+//!
+//! Objective-C and Objective-C++ (X-134) are C's and C++'s rows with Objective-C's words and
+//! tokens ([`objc`]): sends, method heads, `@` keywords, Cocoa's words. Their scan is compiled
+//! apart (`Scan`'s `O`), so C's and C++'s has none of their checks.
+//!
 //! Stages (vault `ada-parse.md`, X-057's redesign): **R1** this loop and the directive lexer
 //! ([`pp`]); **R2** definitions, parameters and the entity names; **R3** the tail parity
 //! showed (generics and template parameters, declared names, the preprocessor's corners);
@@ -38,20 +46,28 @@
 //! bat, by design, is listed in ada's grammar tests (`cpp_rules_match_the_grammar`,
 //! `c_rules_match_the_grammar`) and the vault's X-057 notes.
 
+mod cocoa;
 mod code;
+mod objc;
 mod pp;
 mod regex_calls;
+mod sql_calls;
 pub(crate) mod support;
 mod words;
 
 use crate::emit::{Rules, Run, Runs, Sink, Spans};
-use crate::{Out, State, regex};
+use crate::{Out, State, regex, sql};
 
 macro_rules! leaves {
     ($($name:ident = [$($s:literal),*],)*) => {
-        /// The leaves: a token's scopes, C++'s and C's.
-        static LEAVES: [[&[&str]; 2]; Leaf::Count as usize] = [
-            $([&[$(concat!($s, ".c++")),*], &[$(concat!($s, ".c")),*]],)*
+        /// The leaves: a token's scopes, C++'s, C's, Objective-C's and Objective-C++'s.
+        static LEAVES: [[&[&str]; 4]; Leaf::Count as usize] = [
+            $([
+                &[$(concat!($s, ".c++")),*],
+                &[$(concat!($s, ".c")),*],
+                &[$(concat!($s, ".objc")),*],
+                &[$(concat!($s, ".objc++")),*],
+            ],)*
         ];
         #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
         #[repr(u16)]
@@ -145,6 +161,7 @@ leaves! {
     IMPORT_ELSE = ["keyword.control.import.else"],
     IMPORT_DEFINE = ["keyword.control.import.define"],
     IMPORT_INCLUDE = ["keyword.control.import.include"],
+    IMPORT_IMPORT = ["keyword.control.import.import"],
     IMPORT_ERROR = ["keyword.control.import.error"],
     DEFINED = ["keyword.control"],
     STORAGE_TYPE = ["storage.type"],
@@ -182,13 +199,72 @@ leaves! {
     NAMESPACE_SEP = ["entity.name.namespace", "punctuation.accessor.double-colon"],
     TYPEDEF_NAME = ["entity.name.type.typedef"],
     USING_NAME = ["entity.name.type.using"],
+    // Objective-C's (X-134): an `@` keyword's `@` and word, by bat's scopes for each
+    AT_STORAGE = ["storage.type", "punctuation.definition.storage.type"],
+    AT_PROPERTY = ["keyword.other.property", "punctuation.definition.keyword"],
+    PROPERTY = ["keyword.other.property"],
+    AT_DIRECTIVE = ["keyword.other.property.directive", "punctuation.definition.keyword"],
+    DIRECTIVE = ["keyword.other.property.directive"],
+    AT_EXCEPTION = ["keyword.control.exception", "punctuation.definition.keyword"],
+    EXCEPTION = ["keyword.control.exception"],
+    AT_SYNC = ["keyword.control.synchronize", "punctuation.definition.keyword"],
+    SYNC = ["keyword.control.synchronize"],
+    AT_MODIFIER = ["storage.modifier", "punctuation.definition.storage.modifier"],
+    AT_OTHER = ["keyword.other", "punctuation.definition.keyword"],
+    KEYWORD_OTHER = ["keyword.other"],
+    AT_CONTROL = ["keyword.control", "punctuation.definition.keyword"],
+    AT_IMPORT = ["keyword.control.import", "punctuation.definition.keyword"],
+    // `@interface Name : Super <Protocols>`
+    TYPE_NAME = ["entity.name.type"],
+    INHERIT_MARK = ["punctuation.definition.entity.other.inherited-class"],
+    INHERITED = ["entity.other.inherited-class"],
+    SCOPE_BEGIN = ["punctuation.section.scope.begin"],
+    SCOPE_END = ["punctuation.section.scope.end"],
+    // a send's selector: its first part, then its keyword parts
+    SELECTOR = ["support.function.any-method"],
+    SELECTOR_SEP = ["support.function.any-method", "punctuation.separator.arguments"],
+    SELECTOR_PART = ["support.function.any-method.name-of-parameter"],
+    SELECTOR_PART_SEP = [
+        "support.function.any-method.name-of-parameter",
+        "punctuation.separator.arguments"
+    ],
+    // a method's head: `- (Type)name:(Type)param part:(Type)param`
+    TYPE_PAREN = ["punctuation.definition.type"],
+    METHOD_SEP = ["entity.name.function.name-of-parameter", "punctuation.separator.arguments"],
+    METHOD_PART = ["entity.name.function.name-of-parameter"],
+    METHOD_PARAM = ["variable.parameter.function"],
+    PROP_ATTR = ["keyword.other.property.attribute"],
+    SELECTOR_PAREN = ["punctuation.definition.storage.type"],
+    PROTOCOL_MODIFIER = ["storage.modifier.protocol"],
+    ID_TYPE = ["storage.type.id"],
+    SELECTOR_VAR = ["variable.other.selector"],
+    NSAPP = ["support.variable.foundation"],
+    MACRO_CONTROL = ["keyword.control.macro"],
+    // Cocoa's words ([`cocoa`]), in its lists' order: the first and last are [`COCOA_FIRST`],
+    // [`COCOA_LAST`]
+    COCOA_CLASS = ["support.class.cocoa"],
+    COCOA_CLASS_LEOPARD = ["support.class.cocoa.leopard"],
+    QUARTZ_CLASS = ["support.class.quartz"],
+    COCOA_TYPE = ["support.type.cocoa"],
+    COCOA_TYPE_LEOPARD = ["support.type.cocoa.leopard"],
+    QUARTZ_TYPE = ["support.type.quartz"],
+    COCOA_FUNCTION = ["support.function.cocoa"],
+    COCOA_FUNCTION_LEOPARD = ["support.function.cocoa.leopard"],
 }
+
+/// Cocoa's first and last leaves ([`cocoa::Cocoa`]'s order).
+const COCOA_FIRST: u16 = COCOA_CLASS;
+const COCOA_LAST: u16 = COCOA_FUNCTION_LEOPARD;
 
 const _: () = assert!((Leaf::Count as u16) <= RE_DQ);
 
 /// A regex in a string ([`regex_calls`]): [`regex::KINDS`] kinds from here, under the string's
 /// scope.
 const RE_DQ: u16 = 256;
+/// SQL in a string ([`sql_calls`], X-134): [`sql::KINDS`] kinds from here, under the string's
+/// scope.
+const SQL_DQ: u16 = RE_DQ + 128;
+const _: () = assert!(regex::KINDS <= 128 && sql::KINDS <= 128);
 
 /// The scopes under `source.c++` a kind carries, outermost first.
 pub fn scopes(kind: u16) -> Vec<&'static str> {
@@ -200,9 +276,40 @@ pub fn scopes_c(kind: u16) -> Vec<&'static str> {
     scopes_in(kind, 1)
 }
 
+/// The scopes under `source.objc` a kind carries, outermost first.
+pub fn scopes_objc(kind: u16) -> Vec<&'static str> {
+    scopes_in(kind, 2)
+}
+
+/// The scopes under `source.objc++` a kind carries, outermost first.
+pub fn scopes_objcpp(kind: u16) -> Vec<&'static str> {
+    scopes_in(kind, 3)
+}
+
+/// The languages' rows: [`LEAVES`]' columns, [`words::INFO`]'s rows.
+const L_CPP: usize = 0;
+const L_C: usize = 1;
+const L_OBJC: usize = 2;
+const L_OBJCPP: usize = 3;
+
 fn scopes_in(kind: u16, lang: usize) -> Vec<&'static str> {
+    if kind >= SQL_DQ {
+        if usize::from(kind - SQL_DQ) >= sql::KINDS {
+            return Vec::new();
+        }
+        let mut out = scopes_in(DQ, lang);
+        out.extend(sql::scopes(kind - SQL_DQ));
+        return out;
+    }
     if kind >= RE_DQ {
-        let mut out = vec![["string.quoted.double.c++", "string.quoted.double.c"][lang]];
+        let mut out = vec![
+            [
+                "string.quoted.double.c++",
+                "string.quoted.double.c",
+                "string.quoted.double.objc",
+                "string.quoted.double.objc++",
+            ][lang],
+        ];
         out.extend(regex::scopes(kind - RE_DQ));
         return out;
     }
@@ -348,13 +455,25 @@ const W_DECL: usize = 2 + DELIM_KEPT;
 /// Lex `b`, a line of C++ without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    line_on(b, state, out, false, Spans::new());
+    line_on(b, state, out, L_CPP, Spans::new());
 }
 
 /// Lex `b`, a line of C, from `state`.
 #[inline(never)]
 pub fn line_c(b: &[u8], state: &mut State, out: &mut Out) {
-    line_on(b, state, out, true, Spans::new());
+    line_on(b, state, out, L_C, Spans::new());
+}
+
+/// Lex `b`, a line of Objective-C, from `state`.
+#[inline(never)]
+pub fn line_objc(b: &[u8], state: &mut State, out: &mut Out) {
+    line_on(b, state, out, L_OBJC, Spans::new());
+}
+
+/// Lex `b`, a line of Objective-C++, from `state`.
+#[inline(never)]
+pub fn line_objcpp(b: &[u8], state: &mut State, out: &mut Out) {
+    line_on(b, state, out, L_OBJCPP, Spans::new());
 }
 
 /// [`line`]'s runs by theme rule pushed to `runs`.
@@ -366,7 +485,7 @@ pub fn line_runs(
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
 ) {
-    let mut k = line_on(b, state, out, false, Runs::new(rules, runs));
+    let mut k = line_on(b, state, out, L_CPP, Runs::new(rules, runs));
     k.end_line(b.len());
 }
 
@@ -379,13 +498,54 @@ pub fn line_runs_c(
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
 ) {
-    let mut k = line_on(b, state, out, true, Runs::new(rules, runs));
+    let mut k = line_on(b, state, out, L_C, Runs::new(rules, runs));
+    k.end_line(b.len());
+}
+
+/// [`line_objc`]'s runs by theme rule pushed to `runs`.
+#[inline(never)]
+pub fn line_runs_objc(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    let mut k = line_on(b, state, out, L_OBJC, Runs::new(rules, runs));
+    k.end_line(b.len());
+}
+
+/// [`line_objcpp`]'s runs by theme rule pushed to `runs`.
+#[inline(never)]
+pub fn line_runs_objcpp(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    let mut k = line_on(b, state, out, L_OBJCPP, Runs::new(rules, runs));
     k.end_line(b.len());
 }
 
 #[inline(always)]
-fn line_on<K: Sink>(b: &[u8], state: &mut State, out: &mut Out, c: bool, k: K) -> K {
-    let mut s = Scan::new(b, out, c, k);
+fn line_on<K: Sink>(b: &[u8], state: &mut State, out: &mut Out, lang: usize, k: K) -> K {
+    if lang >= L_OBJC {
+        line_in::<K, true>(b, state, out, lang, k)
+    } else {
+        line_in::<K, false>(b, state, out, lang, k)
+    }
+}
+
+#[inline(always)]
+fn line_in<K: Sink, const O: bool>(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    lang: usize,
+    k: K,
+) -> K {
+    let mut s = Scan::<K, O>::new(b, out, lang, k);
     s.load(state);
     s.k.open(s.out, b.len() / 4 + 16);
     s.lex_line();
@@ -401,7 +561,7 @@ pub fn block(
     spans: &mut Vec<crate::Span>,
     pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
 ) -> Option<usize> {
-    block_on(state, spans, false, pass)
+    block_on(state, spans, L_CPP, pass)
 }
 
 /// [`block`] for C.
@@ -410,17 +570,48 @@ pub fn block_c(
     spans: &mut Vec<crate::Span>,
     pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
 ) -> Option<usize> {
-    block_on(state, spans, true, pass)
+    block_on(state, spans, L_C, pass)
+}
+
+/// [`block`] for Objective-C.
+pub fn block_objc(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    block_on(state, spans, L_OBJC, pass)
+}
+
+/// [`block`] for Objective-C++.
+pub fn block_objcpp(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    block_on(state, spans, L_OBJCPP, pass)
 }
 
 fn block_on(
     state: &mut State,
     spans: &mut Vec<crate::Span>,
-    c: bool,
+    lang: usize,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    if lang >= L_OBJC {
+        block_in::<true>(state, spans, lang, pass)
+    } else {
+        block_in::<false>(state, spans, lang, pass)
+    }
+}
+
+fn block_in<const O: bool>(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    lang: usize,
     pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
 ) -> Option<usize> {
     let mut out = Out::new(spans);
-    let mut s = Scan::new(b"", &mut out, c, Spans::new());
+    let mut s = Scan::<Spans, O>::new(b"", &mut out, lang, Spans::new());
     s.load(state);
     s.out.0.clear();
     s.k.open(s.out, 64);
@@ -437,7 +628,7 @@ pub fn block_runs(
     runs: &mut Vec<Run>,
     lines: &mut crate::RunLines,
 ) -> Option<usize> {
-    block_runs_on(state, spans, false, rules, runs, lines)
+    block_runs_on(state, spans, L_CPP, rules, runs, lines)
 }
 
 /// [`block_runs`] for C.
@@ -448,20 +639,57 @@ pub fn block_runs_c(
     runs: &mut Vec<Run>,
     lines: &mut crate::RunLines,
 ) -> Option<usize> {
-    block_runs_on(state, spans, true, rules, runs, lines)
+    block_runs_on(state, spans, L_C, rules, runs, lines)
+}
+
+/// [`block_runs`] for Objective-C.
+pub fn block_runs_objc(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    lines: &mut crate::RunLines,
+) -> Option<usize> {
+    block_runs_on(state, spans, L_OBJC, rules, runs, lines)
+}
+
+/// [`block_runs`] for Objective-C++.
+pub fn block_runs_objcpp(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    lines: &mut crate::RunLines,
+) -> Option<usize> {
+    block_runs_on(state, spans, L_OBJCPP, rules, runs, lines)
 }
 
 fn block_runs_on(
     state: &mut State,
     spans: &mut Vec<crate::Span>,
-    c: bool,
+    lang: usize,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    lines: &mut crate::RunLines,
+) -> Option<usize> {
+    if lang >= L_OBJC {
+        block_runs_in::<true>(state, spans, lang, rules, runs, lines)
+    } else {
+        block_runs_in::<false>(state, spans, lang, rules, runs, lines)
+    }
+}
+
+fn block_runs_in<const O: bool>(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    lang: usize,
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
     lines: &mut crate::RunLines,
 ) -> Option<usize> {
     let mut out = Out::new(spans);
     let k = Runs::new(rules, runs);
-    let mut s = Scan::new(b"", &mut out, c, k);
+    let mut s = Scan::<Runs, O>::new(b"", &mut out, lang, k);
     s.load(state);
     s.out.0.clear();
     s.k.open(s.out, 64);
@@ -470,7 +698,7 @@ fn block_runs_on(
     rest
 }
 
-impl crate::Carry for Scan<'_, '_, Spans> {
+impl<const O: bool> crate::Carry for Scan<'_, '_, Spans, O> {
     fn next(&mut self, b: &[u8]) -> &[crate::Span] {
         // SAFETY: the line is set back to an empty one before `b`'s borrow ends
         self.carry(unsafe { crate::line_for(b) });
@@ -478,7 +706,7 @@ impl crate::Carry for Scan<'_, '_, Spans> {
     }
 }
 
-impl crate::CarryRuns for Scan<'_, '_, Runs<'_>> {
+impl<const O: bool> crate::CarryRuns for Scan<'_, '_, Runs<'_>, O> {
     fn next(&mut self, b: &[u8]) -> usize {
         // SAFETY: as above
         self.carry(unsafe { crate::line_for(b) });
@@ -486,7 +714,9 @@ impl crate::CarryRuns for Scan<'_, '_, Runs<'_>> {
     }
 }
 
-struct Scan<'b, 'c, K: Sink> {
+/// `O`: Objective-C or Objective-C++, compiled apart so that C's and C++'s scan has none of
+/// its checks ([`objc`]).
+struct Scan<'b, 'c, K: Sink, const O: bool> {
     b: &'b [u8],
     /// What each open `{` opened, two bits a level, the innermost lowest; past [`LEVELS`] the
     /// outer ones are lost.
@@ -513,9 +743,23 @@ struct Scan<'b, 'c, K: Sink> {
     ternary: u8,
     /// A raw string's delimiter, its first [`DELIM_KEPT`] bytes.
     delim: [u8; DELIM_KEPT],
-    /// A regex engine's name came before on the line ([`words::A_REGEX`]): its strings are
-    /// checked for a pattern.
-    rx: bool,
+    /// What the line's strings are checked for ([`RX_RE`]…; 0: none, the loop's string arm as
+    /// it was): a regex engine's name came before on the line ([`words::A_REGEX`]), a SQL call's
+    /// ([`words::A_SQL`]), a SQL string ended ([`Scan::sql_end`]), a selector that takes SQL or
+    /// a regex ([`Scan::sel_at`]), SQL goes on from the line before ([`Scan::sqlp`]).
+    rx: u8,
+    /// Where the line's last SQL string ended ([`RX_SQL_END`]), and SQL's context there: an
+    /// adjacent literal goes on with it.
+    sql_end: usize,
+    sql_ctx: u8,
+    /// Where the string after an Objective-C selector that takes SQL or a regex starts its
+    /// argument ([`RX_SEL`]), and which ([`objc::SEL_SQL`], [`objc::SEL_RE`]).
+    sel_at: usize,
+    sel: u8,
+    /// SQL from the line before ([`RX_CARRY`]): `0x10 |` its context; a string that starts the
+    /// line goes on with it. Between lines in [`State`]'s `aux` bits, which a line ending in code
+    /// has free.
+    sqlp: u8,
     /// What the statement is so far, at a namespace's or a class's level ([`D_NONE`]…).
     decl: u8,
     /// The `(`s open in the statement.
@@ -539,15 +783,26 @@ struct Scan<'b, 'c, K: Sink> {
     at: usize,
     /// What each word is in the language ([`words::INFO`]'s row).
     info: &'static [u16],
-    /// C, not C++.
+    /// C or Objective-C, not C++ or Objective-C++.
     c: bool,
+    /// The `[`s open (and a send's blocks), two bits a frame, the innermost lowest
+    /// ([`objc::F_PLAIN`]…): past 16 the outer ones are lost.
+    br: u32,
+    /// How many frames [`Scan::br`] has, up to 255.
+    nbr: u8,
+    /// Where a method's head is ([`objc::H_START`]…; 0: none).
+    head: u8,
+    /// The `(`s open in a method's head's type.
+    htp: u8,
+    /// The string is an `@"…"`: `%@` a placeholder.
+    at_str: bool,
     k: K,
     out: &'b mut Out<'c>,
 }
 
-impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
+impl<'b, 'c, K: Sink, const O: bool> Scan<'b, 'c, K, O> {
     #[inline(always)]
-    fn new(b: &'b [u8], out: &'b mut Out<'c>, c: bool, k: K) -> Self {
+    fn new(b: &'b [u8], out: &'b mut Out<'c>, lang: usize, k: K) -> Self {
         Scan {
             b,
             braces: 0,
@@ -561,7 +816,12 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             case: false,
             ternary: 0,
             delim: [0; DELIM_KEPT],
-            rx: false,
+            rx: 0,
+            sql_end: 0,
+            sql_ctx: 0,
+            sel_at: 0,
+            sel: 0,
+            sqlp: 0,
             decl: D_NONE,
             paren: 0,
             angle: 0,
@@ -571,8 +831,13 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             kw: false,
             ifd: 0,
             at: 0,
-            info: &words::INFO[usize::from(c)],
-            c,
+            info: &words::INFO[lang],
+            c: lang == L_C || lang == L_OBJC,
+            br: 0,
+            nbr: 0,
+            head: 0,
+            htp: 0,
+            at_str: false,
             k,
             out,
         }
@@ -584,8 +849,14 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(always)]
     fn load(&mut self, state: &State) {
         let mut w = [0u8; 16];
-        w[..14].copy_from_slice(&state.levels);
-        w[14] = state.withs[0];
+        if O {
+            // Objective-C's: its brace levels in 13 bytes, its frames and its head in the next two
+            w[..13].copy_from_slice(&state.levels[..13]);
+            self.load_objc(state.levels[13], state.withs[0]);
+        } else {
+            w[..14].copy_from_slice(&state.levels);
+            w[14] = state.withs[0];
+        }
         self.braces = u128::from_le_bytes(w);
         self.one = state.withs[1];
         self.depth = state.depth;
@@ -613,8 +884,13 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn state(&self) -> State {
         let w = self.braces.to_le_bytes();
         let mut s = State::default();
-        s.levels.copy_from_slice(&w[..14]);
-        s.withs[0] = w[14];
+        if O {
+            s.levels[..13].copy_from_slice(&w[..13]);
+            (s.levels[13], s.withs[0]) = self.objc_state();
+        } else {
+            s.levels.copy_from_slice(&w[..14]);
+            s.withs[0] = w[14];
+        }
         s.withs[1] = self.one;
         if self.mode >= M_RAW {
             s.withs[2..W_DECL].copy_from_slice(&self.delim);
@@ -653,7 +929,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// The fields as [`State`] keeps them ([`Scan::state`], [`Scan::load`]): a block's next
     /// line starts from what the line API's would, so a block lexes as its lines one at a time.
     /// One bit for the open `?`s, 7 `(`s, 3 `<`s, the word naming what follows only before
-    /// that name, the first [`LEVELS`] brace levels.
+    /// that name, the first [`LEVELS`] brace levels (Objective-C's [`objc::LEVELS_OBJC`], its
+    /// innermost [`objc::FRAMES_KEPT`] frames, its head's type's 3 `(`s).
     #[inline(always)]
     fn settle(&mut self) {
         self.ternary = self.ternary.min(1);
@@ -662,7 +939,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         if self.prev != P_ENTITY {
             self.entity = 0;
         }
-        self.braces &= (1u128 << (2 * LEVELS)) - 1;
+        if O {
+            self.settle_objc();
+        } else {
+            self.braces &= (1u128 << (2 * LEVELS)) - 1;
+        }
     }
 
     /// The line, from what the line before left: a mode's rest first, then a directive or the
@@ -670,8 +951,15 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(always)]
     fn lex_line(&mut self) {
         self.case = false;
-        self.rx = false;
+        self.rx = 0;
         self.at = 0;
+        // SQL the line before left open ([`Scan::sqlp`])
+        if self.aux != 0 && self.mode == M_CODE {
+            if self.pp == PP_NONE {
+                (self.sqlp, self.rx) = (self.aux, RX_CARRY);
+            }
+            self.aux = 0;
+        }
         if self.mode != M_CODE || self.pp != PP_NONE {
             self.lex_resumed();
             return;
@@ -797,6 +1085,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             td: self.td,
             entity: self.entity,
             kw: self.kw,
+            br: self.br,
+            nbr: self.nbr,
+            head: self.head,
+            htp: self.htp,
         }
     }
 
@@ -812,6 +1104,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             self.entity,
             self.kw,
         ) = (k.decl, k.paren, k.angle, k.tpl, k.td, k.entity, k.kw);
+        (self.br, self.nbr, self.head, self.htp) = (k.br, k.nbr, k.head, k.htp);
     }
 }
 
@@ -829,7 +1122,25 @@ struct Kept {
     td: u8,
     entity: u8,
     kw: bool,
+    br: u32,
+    nbr: u8,
+    head: u8,
+    htp: u8,
 }
+
+// What a line's strings are checked for ([`Scan::rx`]).
+/// A regex engine's name.
+const RX_RE: u8 = 1;
+/// A SQL call's name.
+const RX_SQL: u8 = 2;
+/// A SQL string ended ([`Scan::sql_end`]).
+const RX_SQL_END: u8 = 4;
+/// A selector took a string ([`Scan::sel_at`]).
+const RX_SEL: u8 = 8;
+/// SQL from the line before ([`Scan::sqlp`]).
+const RX_CARRY: u8 = 16;
+/// [`Scan::delim`]'s dialect byte for a raw string that is SQL, its state SQL's context.
+const SQL_CODE: u8 = 0xff;
 
 // The byte classes ([`CC`]).
 /// A blank, `\s` but the line's `\n`.

@@ -63,6 +63,11 @@ pub enum Lang {
     Cpp,
     /// bat's `C`, on C++'s scanner from C's root.
     C,
+    /// bat's `Objective-C`: C's scanner with Objective-C's words and tokens (X-134). A header
+    /// (`.h`, which bat's set names Objective-C) is told by its text ([`Lang::for_header`]).
+    ObjC,
+    /// bat's `Objective-C++`: C++'s scanner with Objective-C's words and tokens (X-134).
+    ObjCpp,
     /// bat's `C#`.
     CSharp,
     /// bat's `Go`.
@@ -141,6 +146,13 @@ pub const ALIASES: &[(&str, &str)] = &[
     ("csharp", "cs"),
     ("pwsh", "powershell"),
     ("posh", "powershell"),
+    // GitHub's names for Objective-C and Objective-C++ (X-134)
+    ("objc", "m"),
+    ("obj-c", "m"),
+    ("objectivec", "m"),
+    ("objc++", "mm"),
+    ("obj-c++", "mm"),
+    ("objectivec++", "mm"),
 ];
 
 /// Whole file names a syntax of bat's set that none of these is claims, where their extension
@@ -316,6 +328,8 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
         ],
     ),
     (Lang::C, &["c"]),
+    (Lang::ObjC, &["m", "h"]),
+    (Lang::ObjCpp, &["mm"]),
     (Lang::CSharp, &["cs", "csx"]),
     (Lang::Go, &["go"]),
     (
@@ -415,7 +429,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 50] = [
+    pub const ALL: [Lang; 52] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -443,6 +457,8 @@ impl Lang {
         Lang::Java,
         Lang::Cpp,
         Lang::C,
+        Lang::ObjC,
+        Lang::ObjCpp,
         Lang::CSharp,
         Lang::Go,
         Lang::Python,
@@ -499,6 +515,8 @@ impl Lang {
             Lang::Java => "Java",
             Lang::Cpp => "C++",
             Lang::C => "C",
+            Lang::ObjC => "Objective-C",
+            Lang::ObjCpp => "Objective-C++",
             Lang::CSharp => "C#",
             Lang::Go => "Go",
             Lang::Python => "Python",
@@ -564,6 +582,8 @@ impl Lang {
             Lang::Java => "source.java",
             Lang::Cpp => "source.c++",
             Lang::C => "source.c",
+            Lang::ObjC => "source.objc",
+            Lang::ObjCpp => "source.objc++",
             Lang::CSharp => "source.cs",
             Lang::Go => "source.go",
             Lang::Python => "source.python",
@@ -616,6 +636,8 @@ impl Lang {
             Lang::Java => crate::java::scopes(kind),
             Lang::Cpp => crate::cc::scopes(kind),
             Lang::C => crate::cc::scopes_c(kind),
+            Lang::ObjC => crate::cc::scopes_objc(kind),
+            Lang::ObjCpp => crate::cc::scopes_objcpp(kind),
             Lang::CSharp => crate::cs::scopes(kind),
             Lang::Go => crate::go::scopes(kind),
             Lang::Python => crate::python::scopes(kind),
@@ -721,6 +743,19 @@ impl Lang {
             return None;
         }
         Lang::from_token(ext)
+    }
+
+    /// The language of a header (`.h`) whose text starts with `text`, one of C, C++, Objective-C
+    /// and Objective-C++, by the words in its first 64 KB (X-134): bat's set names every `.h`
+    /// Objective-C, its last claimant.
+    pub fn for_header(text: &[u8]) -> Lang {
+        crate::header::language(text)
+    }
+
+    /// Whether a file's name is a header's that [`Lang::for_header`] decides: `.h`.
+    pub fn is_header(name: &str) -> bool {
+        name.rsplit_once('.')
+            .is_some_and(|(stem, ext)| !stem.is_empty() && ext.eq_ignore_ascii_case("h"))
     }
 
     /// The language a file's first line declares (`#!/bin/sh`, `# -*- makefile -*-`), when

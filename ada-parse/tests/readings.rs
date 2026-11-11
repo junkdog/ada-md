@@ -554,6 +554,107 @@ fn c() {
     readings("c", Lang::C, text);
 }
 
+/// Objective-C's readings (X-134, C's scanner with Objective-C's words and tokens): `@interface`'s
+/// name, super class, category and protocols; `@property`'s attributes; method heads over lines and
+/// a macro after one (bat leaves the `@interface` there); sends whose receiver is a send, a member
+/// or a cast (bat reads them as brackets); blocks in a send's arguments; the `@` keywords and
+/// literals, `%@`, a dictionary's `:`; lightweight generics and `id<…>`; Cocoa's types, functions
+/// and classes; SQL in FMDB's and SQLite's strings, a pattern in `NSRegularExpression`'s.
+#[test]
+fn objc() {
+    let text = concat!(
+        "#import <Foundation/Foundation.h>\n",
+        "@class Bar, Baz;\n",
+        "NS_ASSUME_NONNULL_BEGIN\n",
+        "@protocol Runner <NSObject>\n",
+        "@required\n",
+        "- (void)run;\n",
+        "@optional\n",
+        "+ (nullable instancetype)make:(in NSString *)s, ...;\n",
+        "@end\n",
+        "@interface Foo<T> : NSObject <Runner, NSCopying> {\n",
+        "  @private\n",
+        "  __weak id<Runner> _runner;\n",
+        "}\n",
+        "@property (nonatomic, copy, getter=isOn) NSArray<NSString *> *names;\n",
+        "@property (class, readonly) void (^handler)(NSError * _Nullable error);\n",
+        "- (void)runWithBlock:(void (^)(BOOL finished))completion NS_SWIFT_NAME(run(block:));\n",
+        "- (instancetype)initWithName:(NSString *)name\n",
+        "                       count:(NSInteger)count NS_DESIGNATED_INITIALIZER;\n",
+        "@end\n",
+        "@interface Foo (Private)\n",
+        "@end\n",
+        "static NSString * const kKey = @\"key\";\n",
+        "@implementation Foo\n",
+        "@synthesize names = _names;\n",
+        "- (instancetype)initWithName:(NSString *)name count:(NSInteger)count\n",
+        "{\n",
+        "  self = [super init];\n",
+        "  if (self) { _names = [name copy]; self.count = count; }\n",
+        "  return self;\n",
+        "}\n",
+        "- (void)go {\n",
+        "  id x = [[[Foo alloc] initWithName:@\"%@ %d\\n\" count:2] autorelease];\n",
+        "  [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(go:with:) name:nil object:nil];\n",
+        "  [self.view addConstraint:[NSLayoutConstraint constraintWithItem:x\n",
+        "                                                        attribute:NSLayoutAttributeTop\n",
+        "                                                        relatedBy:0]];\n",
+        "  [UIView animateWithDuration:0.3 animations:^{\n",
+        "    switch (x.tag) { case 1: break; default: break; }\n",
+        "  } completion:^(BOOL finished) {\n",
+        "    [self done];\n",
+        "  }];\n",
+        "  NSArray *a = @[@1, @\"two\", @(x.count), @YES];\n",
+        "  NSDictionary *d = @{ @\"k\": @1, kKey: a[0] };\n",
+        "  for (id obj in a) { [obj run]; }\n",
+        "  @try { [self run]; } @catch (NSException *e) { @throw; } @finally { }\n",
+        "  @synchronized (self) { @autoreleasepool { NSLog(@\"%@\", NSStringFromClass([self class])); } }\n",
+        "  CGRect r = CGRectZero; SEL s = @selector(go); BOOL ok = YES; Class c = Nil;\n",
+        "  FMResultSet *rs = [db executeQuery:@\"SELECT * FROM t WHERE a = ?\", @1];\n",
+        "  sqlite3_prepare_v2(h, \"SELECT a \"\n",
+        "                        \"FROM t\", -1, &stmt, NULL);\n",
+        "  NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@\"^[a-z]+\\\\d$\" options:0 error:nil];\n",
+        "}\n",
+        "@end\n",
+        "NS_ASSUME_NONNULL_END\n",
+    );
+    readings("objc", Lang::ObjC, text);
+}
+
+/// Objective-C++'s readings (X-134, C++'s scanner with Objective-C's words and tokens): C++'s
+/// namespaces, classes, templates and lambdas beside an `@implementation`'s ivars, sends with C++
+/// in their arguments, a raw SQL string over lines in a Qt call.
+#[test]
+fn objcpp() {
+    let text = concat!(
+        "#import \"Bridge.h\"\n",
+        "#include <memory>\n",
+        "namespace app {\n",
+        "class Engine {\n",
+        " public:\n",
+        "  void run(std::vector<int> &v) { for (auto &x : v) { x++; } }\n",
+        "};\n",
+        "}  // namespace app\n",
+        "@implementation Bridge {\n",
+        "  std::unique_ptr<app::Engine> _engine;\n",
+        "}\n",
+        "- (void)start:(NSArray<NSString *> *)names {\n",
+        "  auto f = [&](int x) { return x + 1; };\n",
+        "  _engine->run(v);\n",
+        "  [self.delegate bridge:self didStart:static_cast<int>(names.count)];\n",
+        "  std::string s = [name UTF8String];\n",
+        "  query.exec(R\"sql(\n",
+        "    SELECT a -- the key\n",
+        "    FROM t)sql\");\n",
+        "  dispatch_async(dispatch_get_main_queue(), ^{\n",
+        "    [self finish];\n",
+        "  });\n",
+        "}\n",
+        "@end\n",
+    );
+    readings("objcpp", Lang::ObjCpp, text);
+}
+
 /// C#'s readings (X-122, a scanner of ada's own, C# 9–12): declarations, members, statements,
 /// expressions, generics, casts, lambdas, strings with placeholders and interpolations, doc
 /// comments, preprocessor lines, attributes. Departures from bat's grammar (records, `init`, raw

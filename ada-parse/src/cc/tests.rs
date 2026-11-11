@@ -238,7 +238,7 @@ fn braces_and_state() {
     assert_eq!(state.depth, 3);
     {
         let mut out = Out::new(&mut spans);
-        let mut s = Scan::new(b"", &mut out, false, Spans::new());
+        let mut s = Scan::<Spans, false>::new(b"", &mut out, L_CPP, Spans::new());
         s.load(&state);
         // innermost first: the function's body, the class's, the namespace's
         assert_eq!(s.braces & 0x3f, u128::from(CODE | CLASS << 2 | NS << 4));
@@ -863,4 +863,243 @@ fn a_raw_regex_across_lines_in_a_block() {
     has_re(false, &l, ")", "punctuation.definition.group.end.regexp");
     has_re(false, &l, "2", "constant.literal.numeric.regexp");
     has(false, &l, "int", "storage.type.c++");
+}
+
+/// Each line's tokens in `lang` as (text, scopes), through [`crate::lex`] from the default
+/// state, each line's spans checked as [`lexed`]'s.
+fn lexed_lang(lang: crate::Lang, lines: &[&str]) -> Vec<(String, String)> {
+    let mut state = State::default();
+    let mut got = Vec::new();
+    for l in lines {
+        let mut spans: Vec<Span> = Vec::new();
+        crate::lex(lang, l, &mut state, &mut spans);
+        let mut end = 0;
+        for s in &spans {
+            assert!(
+                s.start >= end && s.end > s.start && s.end as usize <= l.len(),
+                "{spans:?} on {l:?}"
+            );
+            end = s.end;
+            got.push((
+                l[s.start as usize..s.end as usize].to_owned(),
+                lang.scopes(s.kind).join(" "),
+            ));
+        }
+    }
+    got
+}
+
+fn has_in(lang: crate::Lang, lines: &[&str], text: &str, scopes: &str) {
+    let got = lexed_lang(lang, lines);
+    assert!(
+        got.iter().any(|(t, s)| t == text && s == scopes),
+        "{text:?} as {scopes:?} in {got:#?}"
+    );
+}
+
+fn plain_in(lang: crate::Lang, lines: &[&str], text: &str) {
+    let got = lexed_lang(lang, lines);
+    assert!(
+        !got.iter().any(|(t, _)| t == text),
+        "{text:?} not plain in {got:#?}"
+    );
+}
+
+#[test]
+fn objc_sends_heads_and_at_keywords() {
+    use crate::Lang::ObjC;
+    let l = [
+        "@interface Foo : NSObject <NSCopying>",
+        "@property (nonatomic, copy) NSArray<NSString *> *names;",
+        "- (void)run:(void (^)(BOOL done))block NS_SWIFT_NAME(run(block:));",
+        "- (instancetype)initWithName:(NSString *)name",
+        "                       count:(NSInteger)count;",
+        "@end",
+        "@implementation Foo",
+        "- (void)go {",
+        "  id x = [[[Foo alloc] initWithName:@\"%@ n\" count:2] autorelease];",
+        "  [self.view addConstraint:[NSLayoutConstraint constraintWithItem:x",
+        "                                                        attribute:1]];",
+        "  [UIView animateWithDuration:0.3 animations:^{",
+        "    switch (y) { case 1: break; }",
+        "  } completion:nil];",
+        "  NSDictionary *d = @{ @\"k\": @1 };",
+        "  return [self class];",
+        "}",
+        "@end",
+    ];
+    has_in(ObjC, &l, "Foo", "entity.name.type.objc");
+    has_in(ObjC, &l, "NSObject", "entity.other.inherited-class.objc");
+    has_in(
+        ObjC,
+        &l,
+        "nonatomic",
+        "keyword.other.property.attribute.objc",
+    );
+    has_in(ObjC, &l, "<", "punctuation.section.scope.begin.objc");
+    // the method heads, a macro after one, a head over two lines
+    for f in ["run", "initWithName", "go"] {
+        has_in(ObjC, &l, f, "entity.name.function.objc");
+    }
+    has_in(
+        ObjC,
+        &l,
+        "count",
+        "entity.name.function.name-of-parameter.objc",
+    );
+    for v in ["block", "name"] {
+        has_in(ObjC, &l, v, "variable.parameter.function.objc");
+    }
+    has_in(ObjC, &l, "NS_SWIFT_NAME", "variable.function.objc");
+    // sends: their receivers a send, a member; parts over lines; a block's `case` its own
+    for s in [
+        "alloc",
+        "autorelease",
+        "addConstraint",
+        "animateWithDuration",
+        "class",
+    ] {
+        has_in(ObjC, &l, s, "support.function.any-method.objc");
+    }
+    for s in ["attribute", "completion", "animations"] {
+        has_in(
+            ObjC,
+            &l,
+            s,
+            "support.function.any-method.name-of-parameter.objc",
+        );
+    }
+    has_in(
+        ObjC,
+        &l,
+        "%@",
+        "string.quoted.double.objc constant.other.placeholder.objc",
+    );
+    has_in(ObjC, &l, ":", "punctuation.separator.objc");
+    has_in(
+        ObjC,
+        &l,
+        "@",
+        "storage.type.objc punctuation.definition.storage.type.objc",
+    );
+    has_in(ObjC, &l, "NSInteger", "support.type.cocoa.leopard.objc");
+    has_in(ObjC, &l, "self", "variable.language.objc");
+    // C's scanner reads none of it
+    plain_in(crate::Lang::C, &l, "initWithName");
+}
+
+#[test]
+fn sql_in_strings() {
+    use crate::Lang::{C, Cpp, ObjC};
+    let c = [
+        "rc = sqlite3_exec(db, \"CREATE TABLE t (\"",
+        "                      \"  a INTEGER);\", NULL, NULL, &err);",
+        "rc = sqlite3_prepare_v2(db,",
+        "    \"DELETE FROM t\", -1, &s, 0);",
+        "PQprepare(conn, \"name\", \"SELECT 1\", 0, NULL);",
+        "printf(\"SELECT %d\", 1);",
+    ];
+    for k in ["CREATE", "DELETE", "SELECT"] {
+        assert!(
+            lexed_lang(C, &c)
+                .iter()
+                .any(|(t, s)| t == k && s.ends_with(".sql") && s.starts_with("string.quoted")),
+            "{k}"
+        );
+    }
+    has_in(C, &c, "INTEGER", "string.quoted.double.c storage.type.sql");
+    has_in(C, &c, "SELECT ", "string.quoted.double.c");
+    has_in(C, &c, "name", "string.quoted.double.c");
+    let cpp = [
+        "q.exec(R\"(",
+        "  SELECT a -- x",
+        "  FROM t)\");",
+        "QSqlQuery query(\"UPDATE t SET a = 1\");",
+        "proc.exec(\"ls\");",
+    ];
+    has_in(
+        Cpp,
+        &cpp,
+        "FROM",
+        "string.quoted.double.c++ keyword.other.DML.sql",
+    );
+    has_in(
+        Cpp,
+        &cpp,
+        "UPDATE",
+        "string.quoted.double.c++ keyword.other.DML.sql",
+    );
+    has_in(Cpp, &cpp, "ls", "string.quoted.double.c++");
+    let m = [
+        "[db executeQuery:@\"SELECT * FROM t\"];",
+        "[s rangeOfString:@\"a+\"];",
+    ];
+    has_in(
+        ObjC,
+        &m,
+        "SELECT",
+        "string.quoted.double.objc keyword.other.DML.sql",
+    );
+    has_in(ObjC, &m, "a+", "string.quoted.double.objc");
+    let re = ["[NSRegularExpression regularExpressionWithPattern:@\"^a+$\" options:0 error:nil];"];
+    has_in(
+        ObjC,
+        &re,
+        "+",
+        "string.quoted.double.objc keyword.operator.quantifier.regexp",
+    );
+}
+
+/// `text`'s lines lexed one at a time and as one block in `lang` agree, spans and state.
+fn block_as_lines(lang: crate::Lang, text: &str) {
+    let mut state = State::default();
+    let mut one = Vec::new();
+    let mut spans = Vec::new();
+    for l in text.lines() {
+        spans.clear();
+        crate::lex(lang, l, &mut state, &mut spans);
+        one.push((spans.clone(), state));
+    }
+    let mut state = State::default();
+    let mut all = Vec::new();
+    let mut v = Vec::new();
+    let block = match lang {
+        crate::Lang::ObjC => block_objc,
+        crate::Lang::ObjCpp => block_objcpp,
+        crate::Lang::C => block_c,
+        _ => block,
+    };
+    block(&mut state, &mut v, &mut |c| {
+        for l in text.lines() {
+            all.push(c.next(l.as_bytes()).to_vec());
+        }
+        None
+    });
+    for (i, (a, (o, _))) in all.iter().zip(&one).enumerate() {
+        assert_eq!(a, o, "line {} of {lang:?}", i + 1);
+    }
+    assert_eq!(state, one.last().unwrap().1, "{lang:?}");
+}
+
+#[test]
+fn objc_blocks_lex_as_their_lines() {
+    // frames past the kept three (a send in a block in a send in a block…), a head over lines,
+    // SQL over lines, a raw SQL string over lines, braces past Objective-C's 52 levels
+    let deep = "{".repeat(60);
+    let text = format!(
+        "- (void)a:(int)x\n  b:(int)y {{\n  [a b:^{{ [c d:^{{ [e f:^{{ [g h:1\n  i:2]; }}]; }}]; }}];\n\
+         [x y:[z w:[q r:[s t\n   u:1]]]];\n  sqlite3_exec(db, \"SELECT a \"\n   \"FROM t\", 0, 0, 0);\n\
+         [db executeQuery:\n  @\"SELECT 1\"];\n}}\n{deep}\nx;\n"
+    );
+    for lang in [crate::Lang::ObjC, crate::Lang::ObjCpp] {
+        block_as_lines(lang, &text);
+    }
+    block_as_lines(
+        crate::Lang::ObjCpp,
+        "q.exec(R\"x(\n SELECT -- a\n FROM t)x\");\n",
+    );
+    block_as_lines(
+        crate::Lang::C,
+        "sqlite3_prepare_v2(db,\n \"SELECT\"\n \" 1\", -1, &s, 0);\n",
+    );
 }

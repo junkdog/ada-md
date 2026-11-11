@@ -757,6 +757,65 @@ server {
 }
 ```
 
+## Objective-C
+
+```objc
+#import <Foundation/Foundation.h>
+
+NS_ASSUME_NONNULL_BEGIN
+
+@interface Store : NSObject <NSCopying>
+@property (nonatomic, copy, readonly) NSArray<NSString *> *names;
+- (nullable instancetype)initWithPath:(NSString *)path error:(NSError **)error;
+@end
+
+@implementation Store {
+  FMDatabase *_db;
+}
+
+- (nullable instancetype)initWithPath:(NSString *)path error:(NSError **)error {
+  if ((self = [super init])) {
+    _db = [FMDatabase databaseWithPath:path];
+    [_db executeUpdate:@"CREATE TABLE IF NOT EXISTS t (name TEXT NOT NULL)"];
+  }
+  return self;
+}
+
+- (void)load:(void (^)(NSArray<NSString *> *names))done {
+  NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@"^[a-z]+\\d*$"
+                                                                      options:0
+                                                                        error:nil];
+  dispatch_async(dispatch_get_main_queue(), ^{
+    FMResultSet *rs = [self->_db executeQuery:@"SELECT name FROM t WHERE name LIKE ?", @"a%"];
+    NSLog(@"%@ matched %lu", re.pattern, (unsigned long)[rs columnCount]);
+    done(@[@"one", @"two"]);
+  });
+}
+
+@end
+
+NS_ASSUME_NONNULL_END
+```
+
+## Objective-C++
+
+```objc++
+#import "Bridge.h"
+#include <memory>
+
+@implementation Bridge {
+  std::unique_ptr<app::Engine> _engine;
+}
+
+- (void)start:(NSDictionary<NSString *, id> *)options {
+  auto count = [options[@"count"] integerValue];
+  _engine = std::make_unique<app::Engine>(static_cast<int>(count));
+  [self.delegate bridge:self didStart:_engine->ready()];
+}
+
+@end
+```
+
 ## PHP
 
 ```php

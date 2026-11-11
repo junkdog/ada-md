@@ -1,0 +1,169 @@
+# ObjCpp: ada-parse/tests/readings.rs, objcpp
+   1 | #import "Bridge.h"
+       "#import" keyword.control.import.import.objc++
+       " " meta.preprocessor.objc++
+       "\"" string.quoted.double.include.objc++ punctuation.definition.string.begin.objc++
+       "Bridge.h" string.quoted.double.include.objc++
+       "\"" string.quoted.double.include.objc++ punctuation.definition.string.end.objc++
+   2 | #include <memory>
+       "#include" keyword.control.import.include.objc++
+       " " meta.preprocessor.objc++
+       "<" string.quoted.other.lt-gt.include.objc++ punctuation.definition.string.begin.objc++
+       "memory" string.quoted.other.lt-gt.include.objc++
+       ">" string.quoted.other.lt-gt.include.objc++ punctuation.definition.string.end.objc++
+   3 | namespace app {
+       "namespace" keyword.control.objc++
+       "app" entity.name.namespace.objc++
+       "{" punctuation.section.block.begin.objc++
+   4 | class Engine {
+       "class" storage.type.objc++
+       "Engine" entity.name.class.objc++
+       "{" punctuation.section.block.begin.objc++
+   5 |  public:
+       "public" storage.modifier.objc++
+       ":" punctuation.section.class.objc++
+   6 |   void run(std::vector<int> &v) { for (auto &x : v) { x++; } }
+       "void" storage.type.objc++
+       "run" entity.name.function.objc++
+       "(" punctuation.section.group.begin.objc++
+       "::" punctuation.accessor.double-colon.objc++
+       "<" punctuation.section.generic.begin.objc++
+       "int" storage.type.objc++
+       ">" punctuation.section.generic.end.objc++
+       "&" keyword.operator.objc++
+       "v" variable.parameter.objc++
+       ")" punctuation.section.group.end.objc++
+       "{" punctuation.section.block.begin.objc++
+       "for" keyword.control.objc++
+       "(" punctuation.section.group.begin.objc++
+       "auto" storage.type.objc++
+       "&" keyword.operator.objc++
+       ":" keyword.operator.ternary.objc++
+       ")" punctuation.section.group.end.objc++
+       "{" punctuation.section.block.begin.objc++
+       "++" keyword.operator.arithmetic.objc++
+       ";" punctuation.terminator.objc++
+       "}" punctuation.section.block.end.objc++
+       "}" punctuation.section.block.end.objc++
+   7 | };
+       "}" punctuation.section.block.end.objc++
+       ";" punctuation.terminator.objc++
+   8 | }  // namespace app
+       "}" punctuation.section.block.end.objc++
+       "//" comment.line.double-slash.objc++ punctuation.definition.comment.objc++
+       " namespace app" comment.line.double-slash.objc++
+   9 | @implementation Bridge {
+       "@" storage.type.objc++ punctuation.definition.storage.type.objc++
+       "implementation" storage.type.objc++
+       "Bridge" entity.name.type.objc++
+       "{" punctuation.section.block.begin.objc++
+  10 |   std::unique_ptr<app::Engine> _engine;
+       "::" punctuation.accessor.double-colon.objc++
+       "<" punctuation.section.generic.begin.objc++
+       "::" punctuation.accessor.double-colon.objc++
+       ">" punctuation.section.generic.end.objc++
+       ";" punctuation.terminator.objc++
+  11 | }
+       "}" punctuation.section.block.end.objc++
+  12 | - (void)start:(NSArray<NSString *> *)names {
+       "(" punctuation.definition.type.objc++
+       "void" storage.type.objc++
+       ")" punctuation.definition.type.objc++
+       "start" entity.name.function.objc++
+       ":" entity.name.function.name-of-parameter.objc++ punctuation.separator.arguments.objc++
+       "(" punctuation.definition.type.objc++
+       "NSArray" support.class.cocoa.objc++
+       "<" punctuation.section.generic.begin.objc++
+       "NSString" support.class.cocoa.objc++
+       "*" keyword.operator.objc++
+       ">" punctuation.section.generic.end.objc++
+       "*" keyword.operator.objc++
+       ")" punctuation.definition.type.objc++
+       "names" variable.parameter.function.objc++
+       "{" punctuation.section.block.begin.objc++
+  13 |   auto f = [&](int x) { return x + 1; };
+       "auto" storage.type.objc++
+       "=" keyword.operator.assignment.objc++
+       "[" punctuation.section.scope.begin.objc++
+       "&" keyword.operator.objc++
+       "]" punctuation.section.scope.end.objc++
+       "(" punctuation.section.group.begin.objc++
+       "int" storage.type.objc++
+       ")" punctuation.section.group.end.objc++
+       "{" punctuation.section.block.begin.objc++
+       "return" keyword.control.flow.return.objc++
+       "+" keyword.operator.arithmetic.objc++
+       "1" constant.numeric.integer.decimal.objc++
+       ";" punctuation.terminator.objc++
+       "}" punctuation.section.block.end.objc++
+       ";" punctuation.terminator.objc++
+  14 |   _engine->run(v);
+       "->" punctuation.accessor.arrow.objc++
+       "run" variable.function.member.objc++
+       "(" punctuation.section.group.begin.objc++
+       ")" punctuation.section.group.end.objc++
+       ";" punctuation.terminator.objc++
+  15 |   [self.delegate bridge:self didStart:static_cast<int>(names.count)];
+       "[" punctuation.section.scope.begin.objc++
+       "self" variable.language.objc++
+       "." punctuation.accessor.dot.objc++
+       "delegate" variable.other.readwrite.member.objc++
+       "bridge" support.function.any-method.objc++
+       ":" support.function.any-method.objc++ punctuation.separator.arguments.objc++
+       "self" variable.language.objc++
+       "didStart" support.function.any-method.name-of-parameter.objc++
+       ":" support.function.any-method.name-of-parameter.objc++ punctuation.separator.arguments.objc++
+       "static_cast" keyword.operator.word.cast.objc++
+       "<" punctuation.section.generic.begin.objc++
+       "int" storage.type.objc++
+       ">" punctuation.section.generic.end.objc++
+       "(" punctuation.section.group.begin.objc++
+       "." punctuation.accessor.dot.objc++
+       "count" variable.other.readwrite.member.objc++
+       ")" punctuation.section.group.end.objc++
+       "]" punctuation.section.scope.end.objc++
+       ";" punctuation.terminator.objc++
+  16 |   std::string s = [name UTF8String];
+       "::" punctuation.accessor.double-colon.objc++
+       "=" keyword.operator.assignment.objc++
+       "[" punctuation.section.scope.begin.objc++
+       "UTF8String" support.function.any-method.objc++
+       "]" punctuation.section.scope.end.objc++
+       ";" punctuation.terminator.objc++
+  17 |   query.exec(R"sql(
+       "." punctuation.accessor.dot.objc++
+       "exec" variable.function.member.objc++
+       "(" punctuation.section.group.begin.objc++
+       "R" string.quoted.double.objc++ storage.type.string.objc++
+       "\"sql(" string.quoted.double.objc++ punctuation.definition.string.begin.objc++
+  18 |     SELECT a -- the key
+       "    SELECT a -- the key" string.quoted.double.objc++
+  19 |     FROM t)sql");
+       "    FROM t" string.quoted.double.objc++
+       ")sql\"" string.quoted.double.objc++ punctuation.definition.string.end.objc++
+       ")" punctuation.section.group.end.objc++
+       ";" punctuation.terminator.objc++
+  20 |   dispatch_async(dispatch_get_main_queue(), ^{
+       "dispatch_async" variable.function.objc++
+       "(" punctuation.section.group.begin.objc++
+       "dispatch_get_main_queue" variable.function.objc++
+       "(" punctuation.section.group.begin.objc++
+       ")" punctuation.section.group.end.objc++
+       "," punctuation.separator.objc++
+       "^" keyword.operator.arithmetic.objc++
+       "{" punctuation.section.block.begin.objc++
+  21 |     [self finish];
+       "[" punctuation.section.scope.begin.objc++
+       "self" variable.language.objc++
+       "finish" support.function.any-method.objc++
+       "]" punctuation.section.scope.end.objc++
+       ";" punctuation.terminator.objc++
+  22 |   });
+       "}" punctuation.section.block.end.objc++
+       ")" punctuation.section.group.end.objc++
+       ";" punctuation.terminator.objc++
+  23 | }
+       "}" punctuation.section.block.end.objc++
+  24 | @end
+       "@" storage.type.objc++ punctuation.definition.storage.type.objc++
+       "end" storage.type.objc++

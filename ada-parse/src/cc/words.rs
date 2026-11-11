@@ -1,7 +1,11 @@
 //! Every word C's and C++'s scanner tells apart, in one table (X-057's redesign): the keywords by
-//! leaf, C's support types by list, C99's functions; a word's id reads what it is in C++ and in C
-//! from [`INFO`], a word C hasn't (`class`, `this`) plain there.
+//! leaf, C's support types by list, C99's functions; a word's id reads what it is in C++, in C, in
+//! Objective-C and in Objective-C++ from [`INFO`], a word the language hasn't (`class` in C, `self`
+//! in C++) plain there. Cocoa's words are a table of their own ([`COCOA_WORDS`]), looked up only
+//! in Objective-C's rows, so C's and C++'s table stays as it was.
 
+use super::cocoa::{COCOA, Cocoa};
+use super::sql_calls::SQL_NAMES;
 use super::support::{SUPPORT, Support};
 use super::*;
 use crate::words::{Words, text_len};
@@ -43,13 +47,20 @@ pub(super) const A_DELETE: u16 = 16;
 /// A regex engine's name ([`ENGINES`]): a plain name, but a string after it on its line may be
 /// a regex ([`super::regex_calls`]).
 pub(super) const A_REGEX: u16 = 17;
+/// Objective-C's `id`: a `<` next opens its protocols (`id<NSCopying>`).
+pub(super) const A_ID: u16 = 18;
+/// A SQL call's name ([`super::sql_calls::SQL_NAMES`]): a plain name, but a string after it on
+/// its line may be SQL.
+pub(super) const A_SQL: u16 = 19;
 
 /// Where an [`INFO`] entry's action starts.
 pub(super) const ACT: u16 = 8;
 
-/// A word in both languages, in C++ only, in C only.
+/// A word in both C and C++ (and so in Objective-C and Objective-C++), in C++ only (and
+/// Objective-C++), in Objective-C and Objective-C++ only.
 const BOTH: u8 = 3;
 const CXX: u8 = 1;
+const OBJC: u8 = 4;
 
 /// The keywords: word, leaf, action, the languages that have it.
 const KEYWORDS: [(&[u8], u16, u16, u8); 118] = [
@@ -205,10 +216,60 @@ const ENGINES: [(&[u8], u8); 20] = [
     (b"pcre_compile2", BOTH),
 ];
 
+/// Objective-C's words (X-134): word, leaf, action. bat's (`self`, `nil`, `SEL`, `_cmd`…), with
+/// ada's own: `instancetype` a type; ARC's and the nullability qualifiers modifiers (bat's plain).
+const OBJC_WORDS: [(&[u8], u16, u16); 37] = [
+    (b"self", VAR_LANGUAGE, A_LEAF),
+    (b"super", VAR_LANGUAGE, A_LEAF),
+    (b"_cmd", SELECTOR_VAR, A_LEAF),
+    (b"NSApp", NSAPP, A_LEAF),
+    (b"YES", LANGUAGE, A_LEAF),
+    (b"NO", LANGUAGE, A_LEAF),
+    (b"nil", LANGUAGE, A_LEAF),
+    (b"Nil", LANGUAGE, A_LEAF),
+    (b"id", ID_TYPE, A_ID),
+    (b"SEL", STORAGE_TYPE, A_LEAF),
+    (b"IMP", STORAGE_TYPE, A_LEAF),
+    (b"Class", STORAGE_TYPE, A_LEAF),
+    (b"unichar", STORAGE_TYPE, A_LEAF),
+    (b"IBOutlet", STORAGE_TYPE, A_LEAF),
+    (b"IBAction", STORAGE_TYPE, A_LEAF),
+    (b"instancetype", STORAGE_TYPE, A_LEAF),
+    (b"NS_DURING", MACRO_CONTROL, A_LEAF),
+    (b"NS_HANDLER", MACRO_CONTROL, A_LEAF),
+    (b"NS_ENDHANDLER", MACRO_CONTROL, A_LEAF),
+    (b"__weak", MODIFIER, A_LEAF),
+    (b"__strong", MODIFIER, A_LEAF),
+    (b"__block", MODIFIER, A_LEAF),
+    (b"__unsafe_unretained", MODIFIER, A_LEAF),
+    (b"__autoreleasing", MODIFIER, A_LEAF),
+    (b"__kindof", MODIFIER, A_LEAF),
+    (b"__bridge", MODIFIER, A_LEAF),
+    (b"__bridge_transfer", MODIFIER, A_LEAF),
+    (b"__bridge_retained", MODIFIER, A_LEAF),
+    (b"__covariant", MODIFIER, A_LEAF),
+    (b"__contravariant", MODIFIER, A_LEAF),
+    (b"_Nullable", MODIFIER, A_LEAF),
+    (b"_Nonnull", MODIFIER, A_LEAF),
+    (b"_Null_unspecified", MODIFIER, A_LEAF),
+    (b"_Nullable_result", MODIFIER, A_LEAF),
+    (b"__nullable", MODIFIER, A_LEAF),
+    (b"__nonnull", MODIFIER, A_LEAF),
+    (b"__null_unspecified", MODIFIER, A_LEAF),
+];
+
+/// Words C's lists have that are Objective-C's otherwise: `BOOL` its type (Windows' in C's).
+const OBJC_OVERRIDES: [(&[u8], u16); 1] = [(b"BOOL", STORAGE_TYPE)];
+
 /// Where [`ENGINES`] start in [`LIST`].
 const E0: usize = KEYWORDS.len() + SUPPORT.len();
-/// How many words [`WORDS`] holds: the keywords, the support words, the engines' names.
-const N: usize = E0 + ENGINES.len();
+/// Where [`OBJC_WORDS`] start in [`LIST`].
+const O0: usize = E0 + ENGINES.len();
+/// Where [`SQL_NAMES`] start in [`LIST`].
+const S0: usize = O0 + OBJC_WORDS.len();
+/// How many words [`WORDS`] holds: the keywords, the support words, the engines' names,
+/// Objective-C's words, the SQL calls' names.
+const N: usize = S0 + SQL_NAMES.len();
 
 const LIST: [&[u8]; N] = {
     let mut l: [&[u8]; N] = [b""; N];
@@ -218,8 +279,12 @@ const LIST: [&[u8]; N] = {
             KEYWORDS[i].0
         } else if i < E0 {
             SUPPORT[i - KEYWORDS.len()].0
-        } else {
+        } else if i < O0 {
             ENGINES[i - E0].0
+        } else if i < S0 {
+            OBJC_WORDS[i - O0].0
+        } else {
+            SQL_NAMES[i - S0]
         };
         i += 1;
     }
@@ -236,14 +301,22 @@ const _: () = assert!(
         && KEYWORDS[RAW_PREFIX as usize - 1].0[0] == b'R'
 );
 
-/// What each word id is in C++ (`[0]`) and in C (`[1]`): its leaf, its action at [`ACT`]; 0 for
-/// a plain name (id 0, and a word the language hasn't).
-pub(super) static INFO: [[u16; N + 1]; 2] = {
-    let mut t = [[0; N + 1]; 2];
+/// What each word id is in C++ (`[0]`), C (`[1]`), Objective-C (`[2]`) and Objective-C++
+/// (`[3]`, [`L_CPP`]…): its leaf, its action at [`ACT`]; 0 for a plain name (id 0, and a word the
+/// language hasn't). Objective-C has C's words and its own, Objective-C++ C++'s and Objective-C's.
+pub(super) static INFO: [[u16; N + 1]; 4] = {
+    let mut t = [[0; N + 1]; 4];
     let mut i = 0;
     while i < N {
         let (leaf, act, langs) = if i < KEYWORDS.len() {
             (KEYWORDS[i].1, KEYWORDS[i].2, KEYWORDS[i].3)
+        } else if i >= S0 {
+            // C's functions in every row; the members and types only C++ reads
+            let w = SQL_NAMES[i - S0];
+            let c = w[0] == b's' || w[0] == b'P';
+            (PLAIN, A_SQL, if c { BOTH } else { CXX })
+        } else if i >= O0 {
+            (OBJC_WORDS[i - O0].1, OBJC_WORDS[i - O0].2, OBJC)
         } else if i >= E0 {
             (PLAIN, A_REGEX, ENGINES[i - E0].1)
         } else {
@@ -261,11 +334,78 @@ pub(super) static INFO: [[u16; N + 1]; 2] = {
         };
         let v = leaf | act << ACT;
         if langs & CXX != 0 {
-            t[0][i + 1] = v;
+            t[L_CPP][i + 1] = v;
+            t[L_OBJCPP][i + 1] = v;
         }
         if langs & 2 != 0 {
-            t[1][i + 1] = v;
+            t[L_C][i + 1] = v;
+            t[L_OBJC][i + 1] = v;
         }
+        if langs & OBJC != 0 {
+            t[L_OBJC][i + 1] = v;
+            t[L_OBJCPP][i + 1] = v;
+        }
+        i += 1;
+    }
+    let mut o = 0;
+    while o < OBJC_OVERRIDES.len() {
+        let id = find(&LIST, OBJC_OVERRIDES[o].0);
+        t[L_OBJC][id + 1] = OBJC_OVERRIDES[o].1;
+        t[L_OBJCPP][id + 1] = OBJC_OVERRIDES[o].1;
+        o += 1;
+    }
+    t
+};
+
+/// `w`'s index in `list`, at compile time.
+const fn find(list: &[&[u8]], w: &[u8]) -> usize {
+    let mut i = 0;
+    while i < list.len() {
+        let l = list[i];
+        if l.len() == w.len() {
+            let mut k = 0;
+            while k < w.len() && l[k] == w[k] {
+                k += 1;
+            }
+            if k == w.len() {
+                return i;
+            }
+        }
+        i += 1;
+    }
+    panic!("an override's word isn't listed")
+}
+
+/// Cocoa's words ([`super::cocoa`]), a table of their own: looked up only in Objective-C's rows,
+/// a name starting with `N` or `C` that [`WORDS`] hasn't.
+pub(super) static COCOA_WORDS: Words<2048, { COCOA.len() }, { text_len(&COCOA_LIST) }> =
+    Words::new(&COCOA_LIST);
+
+const COCOA_LIST: [&[u8]; COCOA.len()] = {
+    let mut l: [&[u8]; COCOA.len()] = [b""; COCOA.len()];
+    let mut i = 0;
+    while i < COCOA.len() {
+        l[i] = COCOA[i].0;
+        i += 1;
+    }
+    l
+};
+
+/// What each Cocoa word id is: its leaf, as [`INFO`]'s entries ([`A_LEAF`]).
+pub(super) static COCOA_INFO: [u16; COCOA.len() + 1] = {
+    let mut t = [0; COCOA.len() + 1];
+    let mut i = 0;
+    while i < COCOA.len() {
+        t[i + 1] = match COCOA[i].1 {
+            Cocoa::Class => COCOA_CLASS,
+            Cocoa::ClassLeopard => COCOA_CLASS_LEOPARD,
+            Cocoa::ClassQuartz => QUARTZ_CLASS,
+            Cocoa::Type => COCOA_TYPE,
+            Cocoa::TypeLeopard => COCOA_TYPE_LEOPARD,
+            Cocoa::TypeQuartz => QUARTZ_TYPE,
+            Cocoa::Function => COCOA_FUNCTION,
+            Cocoa::FunctionLeopard => COCOA_FUNCTION_LEOPARD,
+        };
         i += 1;
     }
     t

@@ -7,7 +7,7 @@
 
 use super::*;
 
-impl<K: Sink> Scan<'_, '_, K> {
+impl<K: Sink, const O: bool> Scan<'_, '_, K, O> {
     /// The directive whose `#` is at `h`, the line's first token.
     #[inline(never)]
     pub(super) fn directive(&mut self, h: usize) {
@@ -46,7 +46,13 @@ impl<K: Sink> Scan<'_, '_, K> {
         }
         match w {
             b"include" | b"include_next" | b"import" => {
-                self.put::<true>(h, e, IMPORT_INCLUDE);
+                // Objective-C's `#import` its own (bat's), C's and C++'s an include's
+                let leaf = if O && w == b"import" {
+                    IMPORT_IMPORT
+                } else {
+                    IMPORT_INCLUDE
+                };
+                self.put::<true>(h, e, leaf);
                 self.include(e);
             }
             b"define" => {

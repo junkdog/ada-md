@@ -44,6 +44,8 @@ const LANGS: &[(&str, Lang)] = &[
     ("java", Lang::Java),
     ("cpp", Lang::Cpp),
     ("c", Lang::C),
+    ("objc", Lang::ObjC),
+    ("objcpp", Lang::ObjCpp),
     ("csharp", Lang::CSharp),
     ("go", Lang::Go),
     ("python", Lang::Python),

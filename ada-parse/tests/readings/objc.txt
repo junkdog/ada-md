@@ -1,0 +1,544 @@
+# ObjC: ada-parse/tests/readings.rs, objc
+   1 | #import <Foundation/Foundation.h>
+       "#import" keyword.control.import.import.objc
+       " " meta.preprocessor.objc
+       "<" string.quoted.other.lt-gt.include.objc punctuation.definition.string.begin.objc
+       "Foundation/Foundation.h" string.quoted.other.lt-gt.include.objc
+       ">" string.quoted.other.lt-gt.include.objc punctuation.definition.string.end.objc
+   2 | @class Bar, Baz;
+       "@" storage.type.objc punctuation.definition.storage.type.objc
+       "class" storage.type.objc
+       "," punctuation.separator.objc
+       ";" punctuation.terminator.objc
+   3 | NS_ASSUME_NONNULL_BEGIN
+   4 | @protocol Runner <NSObject>
+       "@" storage.type.objc punctuation.definition.storage.type.objc
+       "protocol" storage.type.objc
+       "Runner" entity.name.type.objc
+       "<" punctuation.section.scope.begin.objc
+       ">" punctuation.section.scope.end.objc
+   5 | @required
+       "@" storage.modifier.objc punctuation.definition.storage.modifier.objc
+       "required" storage.modifier.objc
+   6 | - (void)run;
+       "(" punctuation.definition.type.objc
+       "void" storage.type.objc
+       ")" punctuation.definition.type.objc
+       "run" entity.name.function.objc
+       ";" punctuation.terminator.objc
+   7 | @optional
+       "@" storage.modifier.objc punctuation.definition.storage.modifier.objc
+       "optional" storage.modifier.objc
+   8 | + (nullable instancetype)make:(in NSString *)s, ...;
+       "(" punctuation.definition.type.objc
+       "nullable" storage.modifier.objc
+       "instancetype" storage.type.objc
+       ")" punctuation.definition.type.objc
+       "make" entity.name.function.objc
+       ":" entity.name.function.name-of-parameter.objc punctuation.separator.arguments.objc
+       "(" punctuation.definition.type.objc
+       "in" storage.modifier.protocol.objc
+       "NSString" support.class.cocoa.objc
+       "*" keyword.operator.objc
+       ")" punctuation.definition.type.objc
+       "s" variable.parameter.function.objc
+       "," punctuation.separator.objc
+       "..." keyword.operator.variadic.objc
+       ";" punctuation.terminator.objc
+   9 | @end
+       "@" storage.type.objc punctuation.definition.storage.type.objc
+       "end" storage.type.objc
+  10 | @interface Foo<T> : NSObject <Runner, NSCopying> {
+       "@" storage.type.objc punctuation.definition.storage.type.objc
+       "interface" storage.type.objc
+       "Foo" entity.name.type.objc
+       "<" punctuation.section.scope.begin.objc
+       ">" punctuation.section.scope.end.objc
+       ":" punctuation.definition.entity.other.inherited-class.objc
+       "NSObject" entity.other.inherited-class.objc
+       "<" punctuation.section.scope.begin.objc
+       "," punctuation.separator.objc
+       ">" punctuation.section.scope.end.objc
+       "{" punctuation.section.block.begin.objc
+  11 |   @private
+       "@" storage.modifier.objc punctuation.definition.storage.modifier.objc
+       "private" storage.modifier.objc
+  12 |   __weak id<Runner> _runner;
+       "__weak" storage.modifier.objc
+       "id" storage.type.id.objc
+       "<" punctuation.section.scope.begin.objc
+       ">" punctuation.section.scope.end.objc
+       ";" punctuation.terminator.objc
+  13 | }
+       "}" punctuation.section.block.end.objc
+  14 | @property (nonatomic, copy, getter=isOn) NSArray<NSString *> *names;
+       "@" keyword.other.property.objc punctuation.definition.keyword.objc
+       "property" keyword.other.property.objc
+       "(" punctuation.section.scope.begin.objc
+       "nonatomic" keyword.other.property.attribute.objc
+       "," punctuation.separator.objc
+       "copy" keyword.other.property.attribute.objc
+       "," punctuation.separator.objc
+       "getter" keyword.other.property.attribute.objc
+       "=" keyword.operator.assignment.objc
+       ")" punctuation.section.scope.end.objc
+       "NSArray" support.class.cocoa.objc
+       "<" punctuation.section.scope.begin.objc
+       "NSString" support.class.cocoa.objc
+       "*" keyword.operator.objc
+       ">" punctuation.section.scope.end.objc
+       "*" keyword.operator.objc
+       ";" punctuation.terminator.objc
+  15 | @property (class, readonly) void (^handler)(NSError * _Nullable error);
+       "@" keyword.other.property.objc punctuation.definition.keyword.objc
+       "property" keyword.other.property.objc
+       "(" punctuation.section.scope.begin.objc
+       "class" keyword.other.property.attribute.objc
+       "," punctuation.separator.objc
+       "readonly" keyword.other.property.attribute.objc
+       ")" punctuation.section.scope.end.objc
+       "void" storage.type.objc
+       "(" punctuation.section.group.begin.objc
+       "^" keyword.operator.arithmetic.objc
+       ")" punctuation.section.group.end.objc
+       "(" punctuation.section.group.begin.objc
+       "NSError" support.class.cocoa.objc
+       "*" keyword.operator.objc
+       "_Nullable" storage.modifier.objc
+       ")" punctuation.section.group.end.objc
+       ";" punctuation.terminator.objc
+  16 | - (void)runWithBlock:(void (^)(BOOL finished))completion NS_SWIFT_NAME(run(block:));
+       "(" punctuation.definition.type.objc
+       "void" storage.type.objc
+       ")" punctuation.definition.type.objc
+       "runWithBlock" entity.name.function.objc
+       ":" entity.name.function.name-of-parameter.objc punctuation.separator.arguments.objc
+       "(" punctuation.definition.type.objc
+       "void" storage.type.objc
+       "(" punctuation.section.group.begin.objc
+       "^" keyword.operator.arithmetic.objc
+       ")" punctuation.section.group.end.objc
+       "(" punctuation.section.group.begin.objc
+       "BOOL" storage.type.objc
+       ")" punctuation.section.group.end.objc
+       ")" punctuation.definition.type.objc
+       "completion" variable.parameter.function.objc
+       "NS_SWIFT_NAME" variable.function.objc
+       "(" punctuation.section.group.begin.objc
+       "run" variable.function.objc
+       "(" punctuation.section.group.begin.objc
+       ":" keyword.operator.ternary.objc
+       "))" punctuation.section.group.end.objc
+       ";" punctuation.terminator.objc
+  17 | - (instancetype)initWithName:(NSString *)name
+       "(" punctuation.definition.type.objc
+       "instancetype" storage.type.objc
+       ")" punctuation.definition.type.objc
+       "initWithName" entity.name.function.objc
+       ":" entity.name.function.name-of-parameter.objc punctuation.separator.arguments.objc
+       "(" punctuation.definition.type.objc
+       "NSString" support.class.cocoa.objc
+       "*" keyword.operator.objc
+       ")" punctuation.definition.type.objc
+       "name" variable.parameter.function.objc
+  18 |                        count:(NSInteger)count NS_DESIGNATED_INITIALIZER;
+       "count" entity.name.function.name-of-parameter.objc
+       ":" entity.name.function.name-of-parameter.objc punctuation.separator.arguments.objc
+       "(" punctuation.definition.type.objc
+       "NSInteger" support.type.cocoa.leopard.objc
+       ")" punctuation.definition.type.objc
+       "count" variable.parameter.function.objc
+       ";" punctuation.terminator.objc
+  19 | @end
+       "@" storage.type.objc punctuation.definition.storage.type.objc
+       "end" storage.type.objc
+  20 | @interface Foo (Private)
+       "@" storage.type.objc punctuation.definition.storage.type.objc
+       "interface" storage.type.objc
+       "Foo" entity.name.type.objc
+       "(" punctuation.section.group.begin.objc
+       ")" punctuation.section.group.end.objc
+  21 | @end
+       "@" storage.type.objc punctuation.definition.storage.type.objc
+       "end" storage.type.objc
+  22 | static NSString * const kKey = @"key";
+       "static" storage.modifier.objc
+       "NSString" support.class.cocoa.objc
+       "*" keyword.operator.objc
+       "const" storage.modifier.objc
+       "kKey" constant.other.variable.mac-classic.objc
+       "=" keyword.operator.assignment.objc
+       "@\"" string.quoted.double.objc punctuation.definition.string.begin.objc
+       "key" string.quoted.double.objc
+       "\"" string.quoted.double.objc punctuation.definition.string.end.objc
+       ";" punctuation.terminator.objc
+  23 | @implementation Foo
+       "@" storage.type.objc punctuation.definition.storage.type.objc
+       "implementation" storage.type.objc
+       "Foo" entity.name.type.objc
+  24 | @synthesize names = _names;
+       "@" keyword.other.property.directive.objc punctuation.definition.keyword.objc
+       "synthesize" keyword.other.property.directive.objc
+       "=" keyword.operator.assignment.objc
+       ";" punctuation.terminator.objc
+  25 | - (instancetype)initWithName:(NSString *)name count:(NSInteger)count
+       "(" punctuation.definition.type.objc
+       "instancetype" storage.type.objc
+       ")" punctuation.definition.type.objc
+       "initWithName" entity.name.function.objc
+       ":" entity.name.function.name-of-parameter.objc punctuation.separator.arguments.objc
+       "(" punctuation.definition.type.objc
+       "NSString" support.class.cocoa.objc
+       "*" keyword.operator.objc
+       ")" punctuation.definition.type.objc
+       "name" variable.parameter.function.objc
+       "count" entity.name.function.name-of-parameter.objc
+       ":" entity.name.function.name-of-parameter.objc punctuation.separator.arguments.objc
+       "(" punctuation.definition.type.objc
+       "NSInteger" support.type.cocoa.leopard.objc
+       ")" punctuation.definition.type.objc
+       "count" variable.parameter.function.objc
+  26 | {
+       "{" punctuation.section.block.begin.objc
+  27 |   self = [super init];
+       "self" variable.language.objc
+       "=" keyword.operator.assignment.objc
+       "[" punctuation.section.scope.begin.objc
+       "super" variable.language.objc
+       "init" support.function.any-method.objc
+       "]" punctuation.section.scope.end.objc
+       ";" punctuation.terminator.objc
+  28 |   if (self) { _names = [name copy]; self.count = count; }
+       "if" keyword.control.objc
+       "(" punctuation.section.group.begin.objc
+       "self" variable.language.objc
+       ")" punctuation.section.group.end.objc
+       "{" punctuation.section.block.begin.objc
+       "=" keyword.operator.assignment.objc
+       "[" punctuation.section.scope.begin.objc
+       "copy" support.function.any-method.objc
+       "]" punctuation.section.scope.end.objc
+       ";" punctuation.terminator.objc
+       "self" variable.language.objc
+       "." punctuation.accessor.dot.objc
+       "count" variable.other.readwrite.member.objc
+       "=" keyword.operator.assignment.objc
+       ";" punctuation.terminator.objc
+       "}" punctuation.section.block.end.objc
+  29 |   return self;
+       "return" keyword.control.flow.return.objc
+       "self" variable.language.objc
+       ";" punctuation.terminator.objc
+  30 | }
+       "}" punctuation.section.block.end.objc
+  31 | - (void)go {
+       "(" punctuation.definition.type.objc
+       "void" storage.type.objc
+       ")" punctuation.definition.type.objc
+       "go" entity.name.function.objc
+       "{" punctuation.section.block.begin.objc
+  32 |   id x = [[[Foo alloc] initWithName:@"%@ %d\n" count:2] autorelease];
+       "id" storage.type.id.objc
+       "=" keyword.operator.assignment.objc
+       "[[[" punctuation.section.scope.begin.objc
+       "alloc" support.function.any-method.objc
+       "]" punctuation.section.scope.end.objc
+       "initWithName" support.function.any-method.objc
+       ":" support.function.any-method.objc punctuation.separator.arguments.objc
+       "@\"" string.quoted.double.objc punctuation.definition.string.begin.objc
+       "%@" string.quoted.double.objc constant.other.placeholder.objc
+       " " string.quoted.double.objc
+       "%d" string.quoted.double.objc constant.other.placeholder.objc
+       "\\n" string.quoted.double.objc constant.character.escape.objc
+       "\"" string.quoted.double.objc punctuation.definition.string.end.objc
+       "count" support.function.any-method.name-of-parameter.objc
+       ":" support.function.any-method.name-of-parameter.objc punctuation.separator.arguments.objc
+       "2" constant.numeric.integer.decimal.objc
+       "]" punctuation.section.scope.end.objc
+       "autorelease" support.function.any-method.objc
+       "]" punctuation.section.scope.end.objc
+       ";" punctuation.terminator.objc
+  33 |   [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(go:with:) name:nil object:nil];
+       "[[" punctuation.section.scope.begin.objc
+       "NSNotificationCenter" support.class.cocoa.objc
+       "defaultCenter" support.function.any-method.objc
+       "]" punctuation.section.scope.end.objc
+       "addObserver" support.function.any-method.objc
+       ":" support.function.any-method.objc punctuation.separator.arguments.objc
+       "self" variable.language.objc
+       "selector" support.function.any-method.name-of-parameter.objc
+       ":" support.function.any-method.name-of-parameter.objc punctuation.separator.arguments.objc
+       "@" storage.type.objc punctuation.definition.storage.type.objc
+       "selector" storage.type.objc
+       "(" punctuation.definition.storage.type.objc
+       "go:with:" support.function.any-method.name-of-parameter.objc
+       ")" punctuation.definition.storage.type.objc
+       "name" support.function.any-method.name-of-parameter.objc
+       ":" support.function.any-method.name-of-parameter.objc punctuation.separator.arguments.objc
+       "nil" constant.language.objc
+       "object" support.function.any-method.name-of-parameter.objc
+       ":" support.function.any-method.name-of-parameter.objc punctuation.separator.arguments.objc
+       "nil" constant.language.objc
+       "]" punctuation.section.scope.end.objc
+       ";" punctuation.terminator.objc
+  34 |   [self.view addConstraint:[NSLayoutConstraint constraintWithItem:x
+       "[" punctuation.section.scope.begin.objc
+       "self" variable.language.objc
+       "." punctuation.accessor.dot.objc
+       "view" variable.other.readwrite.member.objc
+       "addConstraint" support.function.any-method.objc
+       ":" support.function.any-method.objc punctuation.separator.arguments.objc
+       "[" punctuation.section.scope.begin.objc
+       "constraintWithItem" support.function.any-method.objc
+       ":" support.function.any-method.objc punctuation.separator.arguments.objc
+  35 |                                                         attribute:NSLayoutAttributeTop
+       "attribute" support.function.any-method.name-of-parameter.objc
+       ":" support.function.any-method.name-of-parameter.objc punctuation.separator.arguments.objc
+  36 |                                                         relatedBy:0]];
+       "relatedBy" support.function.any-method.name-of-parameter.objc
+       ":" support.function.any-method.name-of-parameter.objc punctuation.separator.arguments.objc
+       "0" constant.numeric.integer.decimal.objc
+       "]]" punctuation.section.scope.end.objc
+       ";" punctuation.terminator.objc
+  37 |   [UIView animateWithDuration:0.3 animations:^{
+       "[" punctuation.section.scope.begin.objc
+       "animateWithDuration" support.function.any-method.objc
+       ":" support.function.any-method.objc punctuation.separator.arguments.objc
+       "0" constant.numeric.float.decimal.objc
+       "." constant.numeric.float.decimal.objc punctuation.separator.decimal.objc
+       "3" constant.numeric.float.decimal.objc
+       "animations" support.function.any-method.name-of-parameter.objc
+       ":" support.function.any-method.name-of-parameter.objc punctuation.separator.arguments.objc
+       "^" keyword.operator.arithmetic.objc
+       "{" punctuation.section.block.begin.objc
+  38 |     switch (x.tag) { case 1: break; default: break; }
+       "switch" keyword.control.objc
+       "(" punctuation.section.group.begin.objc
+       "." punctuation.accessor.dot.objc
+       "tag" variable.other.readwrite.member.objc
+       ")" punctuation.section.group.end.objc
+       "{" punctuation.section.block.begin.objc
+       "case" keyword.control.objc
+       "1" constant.numeric.integer.decimal.objc
+       ":" punctuation.separator.objc
+       "break" keyword.control.flow.break.objc
+       ";" punctuation.terminator.objc
+       "default" keyword.control.objc
+       ":" punctuation.separator.objc
+       "break" keyword.control.flow.break.objc
+       ";" punctuation.terminator.objc
+       "}" punctuation.section.block.end.objc
+  39 |   } completion:^(BOOL finished) {
+       "}" punctuation.section.block.end.objc
+       "completion" support.function.any-method.name-of-parameter.objc
+       ":" support.function.any-method.name-of-parameter.objc punctuation.separator.arguments.objc
+       "^" keyword.operator.arithmetic.objc
+       "(" punctuation.section.group.begin.objc
+       "BOOL" storage.type.objc
+       ")" punctuation.section.group.end.objc
+       "{" punctuation.section.block.begin.objc
+  40 |     [self done];
+       "[" punctuation.section.scope.begin.objc
+       "self" variable.language.objc
+       "done" support.function.any-method.objc
+       "]" punctuation.section.scope.end.objc
+       ";" punctuation.terminator.objc
+  41 |   }];
+       "}" punctuation.section.block.end.objc
+       "]" punctuation.section.scope.end.objc
+       ";" punctuation.terminator.objc
+  42 |   NSArray *a = @[@1, @"two", @(x.count), @YES];
+       "NSArray" support.class.cocoa.objc
+       "*" keyword.operator.objc
+       "=" keyword.operator.assignment.objc
+       "[" punctuation.section.brackets.begin.objc
+       "1" constant.numeric.integer.decimal.objc
+       "," punctuation.separator.objc
+       "@\"" string.quoted.double.objc punctuation.definition.string.begin.objc
+       "two" string.quoted.double.objc
+       "\"" string.quoted.double.objc punctuation.definition.string.end.objc
+       "," punctuation.separator.objc
+       "(" punctuation.section.group.begin.objc
+       "." punctuation.accessor.dot.objc
+       "count" variable.other.readwrite.member.objc
+       ")" punctuation.section.group.end.objc
+       "," punctuation.separator.objc
+       "YES" constant.language.objc
+       "]" punctuation.section.brackets.end.objc
+       ";" punctuation.terminator.objc
+  43 |   NSDictionary *d = @{ @"k": @1, kKey: a[0] };
+       "NSDictionary" support.class.cocoa.objc
+       "*" keyword.operator.objc
+       "=" keyword.operator.assignment.objc
+       "{" punctuation.section.block.begin.objc
+       "@\"" string.quoted.double.objc punctuation.definition.string.begin.objc
+       "k" string.quoted.double.objc
+       "\"" string.quoted.double.objc punctuation.definition.string.end.objc
+       ":" punctuation.separator.objc
+       "1" constant.numeric.integer.decimal.objc
+       "," punctuation.separator.objc
+       "kKey" constant.other.variable.mac-classic.objc
+       ":" punctuation.separator.objc
+       "[" punctuation.section.brackets.begin.objc
+       "0" constant.numeric.integer.decimal.objc
+       "]" punctuation.section.brackets.end.objc
+       "}" punctuation.section.block.end.objc
+       ";" punctuation.terminator.objc
+  44 |   for (id obj in a) { [obj run]; }
+       "for" keyword.control.objc
+       "(" punctuation.section.group.begin.objc
+       "id" storage.type.id.objc
+       ")" punctuation.section.group.end.objc
+       "{" punctuation.section.block.begin.objc
+       "[" punctuation.section.scope.begin.objc
+       "run" support.function.any-method.objc
+       "]" punctuation.section.scope.end.objc
+       ";" punctuation.terminator.objc
+       "}" punctuation.section.block.end.objc
+  45 |   @try { [self run]; } @catch (NSException *e) { @throw; } @finally { }
+       "@" keyword.control.exception.objc punctuation.definition.keyword.objc
+       "try" keyword.control.exception.objc
+       "{" punctuation.section.block.begin.objc
+       "[" punctuation.section.scope.begin.objc
+       "self" variable.language.objc
+       "run" support.function.any-method.objc
+       "]" punctuation.section.scope.end.objc
+       ";" punctuation.terminator.objc
+       "}" punctuation.section.block.end.objc
+       "@" keyword.control.exception.objc punctuation.definition.keyword.objc
+       "catch" keyword.control.exception.objc
+       "(" punctuation.section.group.begin.objc
+       "NSException" support.class.cocoa.objc
+       "*" keyword.operator.objc
+       ")" punctuation.section.group.end.objc
+       "{" punctuation.section.block.begin.objc
+       "@" keyword.control.exception.objc punctuation.definition.keyword.objc
+       "throw" keyword.control.exception.objc
+       ";" punctuation.terminator.objc
+       "}" punctuation.section.block.end.objc
+       "@" keyword.control.exception.objc punctuation.definition.keyword.objc
+       "finally" keyword.control.exception.objc
+       "{" punctuation.section.block.begin.objc
+       "}" punctuation.section.block.end.objc
+  46 |   @synchronized (self) { @autoreleasepool { NSLog(@"%@", NSStringFromClass([self class])); } }
+       "@" keyword.control.synchronize.objc punctuation.definition.keyword.objc
+       "synchronized" keyword.control.synchronize.objc
+       "(" punctuation.section.group.begin.objc
+       "self" variable.language.objc
+       ")" punctuation.section.group.end.objc
+       "{" punctuation.section.block.begin.objc
+       "@" keyword.control.objc punctuation.definition.keyword.objc
+       "autoreleasepool" keyword.control.objc
+       "{" punctuation.section.block.begin.objc
+       "NSLog" support.function.cocoa.objc
+       "(" punctuation.section.group.begin.objc
+       "@\"" string.quoted.double.objc punctuation.definition.string.begin.objc
+       "%@" string.quoted.double.objc constant.other.placeholder.objc
+       "\"" string.quoted.double.objc punctuation.definition.string.end.objc
+       "," punctuation.separator.objc
+       "NSStringFromClass" support.function.cocoa.objc
+       "(" punctuation.section.group.begin.objc
+       "[" punctuation.section.scope.begin.objc
+       "self" variable.language.objc
+       "class" support.function.any-method.objc
+       "]" punctuation.section.scope.end.objc
+       "))" punctuation.section.group.end.objc
+       ";" punctuation.terminator.objc
+       "}" punctuation.section.block.end.objc
+       "}" punctuation.section.block.end.objc
+  47 |   CGRect r = CGRectZero; SEL s = @selector(go); BOOL ok = YES; Class c = Nil;
+       "CGRect" support.type.quartz.objc
+       "=" keyword.operator.assignment.objc
+       ";" punctuation.terminator.objc
+       "SEL" storage.type.objc
+       "=" keyword.operator.assignment.objc
+       "@" storage.type.objc punctuation.definition.storage.type.objc
+       "selector" storage.type.objc
+       "(" punctuation.definition.storage.type.objc
+       "go" support.function.any-method.name-of-parameter.objc
+       ")" punctuation.definition.storage.type.objc
+       ";" punctuation.terminator.objc
+       "BOOL" storage.type.objc
+       "=" keyword.operator.assignment.objc
+       "YES" constant.language.objc
+       ";" punctuation.terminator.objc
+       "Class" storage.type.objc
+       "=" keyword.operator.assignment.objc
+       "Nil" constant.language.objc
+       ";" punctuation.terminator.objc
+  48 |   FMResultSet *rs = [db executeQuery:@"SELECT * FROM t WHERE a = ?", @1];
+       "*" keyword.operator.objc
+       "=" keyword.operator.assignment.objc
+       "[" punctuation.section.scope.begin.objc
+       "executeQuery" support.function.any-method.objc
+       ":" support.function.any-method.objc punctuation.separator.arguments.objc
+       "@\"" string.quoted.double.objc punctuation.definition.string.begin.objc
+       "SELECT" string.quoted.double.objc keyword.other.DML.sql
+       " " string.quoted.double.objc
+       "*" string.quoted.double.objc variable.language.star.sql
+       " " string.quoted.double.objc
+       "FROM" string.quoted.double.objc keyword.other.DML.sql
+       " t " string.quoted.double.objc
+       "WHERE" string.quoted.double.objc keyword.other.DML.sql
+       " a " string.quoted.double.objc
+       "=" string.quoted.double.objc keyword.operator.comparison.sql
+       " " string.quoted.double.objc
+       "?" string.quoted.double.objc constant.other.placeholder.sql
+       "\"" string.quoted.double.objc punctuation.definition.string.end.objc
+       "," punctuation.separator.objc
+       "1" constant.numeric.integer.decimal.objc
+       "]" punctuation.section.scope.end.objc
+       ";" punctuation.terminator.objc
+  49 |   sqlite3_prepare_v2(h, "SELECT a "
+       "sqlite3_prepare_v2" variable.function.objc
+       "(" punctuation.section.group.begin.objc
+       "," punctuation.separator.objc
+       "\"" string.quoted.double.objc punctuation.definition.string.begin.objc
+       "SELECT" string.quoted.double.objc keyword.other.DML.sql
+       " a " string.quoted.double.objc
+       "\"" string.quoted.double.objc punctuation.definition.string.end.objc
+  50 |                         "FROM t", -1, &stmt, NULL);
+       "\"" string.quoted.double.objc punctuation.definition.string.begin.objc
+       "FROM" string.quoted.double.objc keyword.other.DML.sql
+       " t" string.quoted.double.objc
+       "\"" string.quoted.double.objc punctuation.definition.string.end.objc
+       "," punctuation.separator.objc
+       "-" keyword.operator.arithmetic.objc
+       "1" constant.numeric.integer.decimal.objc
+       "," punctuation.separator.objc
+       "&" keyword.operator.objc
+       "," punctuation.separator.objc
+       "NULL" constant.language.objc
+       ")" punctuation.section.group.end.objc
+       ";" punctuation.terminator.objc
+  51 |   NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@"^[a-z]+\\d$" options:0 error:nil];
+       "*" keyword.operator.objc
+       "=" keyword.operator.assignment.objc
+       "[" punctuation.section.scope.begin.objc
+       "regularExpressionWithPattern" support.function.any-method.objc
+       ":" support.function.any-method.objc punctuation.separator.arguments.objc
+       "@\"" string.quoted.double.objc punctuation.definition.string.begin.objc
+       "^" string.quoted.double.objc keyword.control.anchor.regexp
+       "[" string.quoted.double.objc constant.other.character-class.set.regexp punctuation.definition.character-class.begin.regexp
+       "a" string.quoted.double.objc constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "-" string.quoted.double.objc constant.other.character-class.set.regexp constant.other.character-class.range.regexp punctuation.definition.range.regexp
+       "z" string.quoted.double.objc constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "]" string.quoted.double.objc constant.other.character-class.set.regexp punctuation.definition.character-class.end.regexp
+       "+" string.quoted.double.objc keyword.operator.quantifier.regexp
+       "\\\\d" string.quoted.double.objc constant.other.character-class.escape.backslash.regexp
+       "$" string.quoted.double.objc keyword.control.anchor.regexp
+       "\"" string.quoted.double.objc punctuation.definition.string.end.objc
+       "options" support.function.any-method.name-of-parameter.objc
+       ":" support.function.any-method.name-of-parameter.objc punctuation.separator.arguments.objc
+       "0" constant.numeric.integer.decimal.objc
+       "error" support.function.any-method.name-of-parameter.objc
+       ":" support.function.any-method.name-of-parameter.objc punctuation.separator.arguments.objc
+       "nil" constant.language.objc
+       "]" punctuation.section.scope.end.objc
+       ";" punctuation.terminator.objc
+  52 | }
+       "}" punctuation.section.block.end.objc
+  53 | @end
+       "@" storage.type.objc punctuation.definition.storage.type.objc
+       "end" storage.type.objc
+  54 | NS_ASSUME_NONNULL_END

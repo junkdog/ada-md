@@ -57,6 +57,18 @@ impl FileType {
     /// What neither tells is plain text, kept line for line, but for a file with no extension:
     /// `README`, `TODO` and the like are read as markdown, as they always were.
     pub fn of(path: &Path, text: &str) -> FileType {
+        // a header by its text: C, C++, Objective-C or Objective-C++ (X-134; bat's set names
+        // every `.h` Objective-C)
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(ada_parse::Lang::is_header)
+        {
+            let lang = ada_parse::Lang::for_header(text.as_bytes());
+            return FileType::Text {
+                lang: Some(lang.label()),
+            };
+        }
         if let Some(t) = FileType::by_path(path) {
             return t;
         }
@@ -212,6 +224,25 @@ mod tests {
 
     fn lang(lang: &'static str) -> Option<FileType> {
         Some(FileType::Text { lang: Some(lang) })
+    }
+
+    #[test]
+    fn headers_by_their_text() {
+        let of = |text: &str| FileType::of(Path::new("dir/a.h"), text);
+        assert_eq!(of("int f(void);\n"), lang("C").unwrap());
+        assert_eq!(of("namespace a { class B; }\n"), lang("C++").unwrap());
+        assert_eq!(
+            of("@interface A : NSObject\n@end\n"),
+            lang("Objective-C").unwrap()
+        );
+        assert_eq!(
+            of("@class A;\nclass B {};\n"),
+            lang("Objective-C++").unwrap()
+        );
+        // by its name alone, bat's set's: Objective-C
+        assert_eq!(by_path("a.h"), lang("Objective-C"));
+        assert_eq!(by_path("a.m"), lang("Objective-C"));
+        assert_eq!(by_path("a.mm"), lang("Objective-C++"));
     }
 
     #[test]

@@ -33,6 +33,7 @@ mod fstab;
 // the matchers and context ids its scanner shares, from the port it replaced
 mod git;
 mod go;
+mod header;
 mod heredoc;
 mod html;
 mod ini;
@@ -457,6 +458,8 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
         Lang::Bash => (bash::block_runs, bash::line_runs),
         Lang::Cpp => (cc::block_runs, cc::line_runs),
         Lang::C => (cc::block_runs_c, cc::line_runs_c),
+        Lang::ObjC => (cc::block_runs_objc, cc::line_runs_objc),
+        Lang::ObjCpp => (cc::block_runs_objcpp, cc::line_runs_objcpp),
         Lang::JavaScript => (javascript::block_runs, javascript::line_runs),
         _ => return None,
     })
@@ -479,6 +482,8 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::JavaScript => javascript::block,
         Lang::Cpp if SPANS => cc::block,
         Lang::C if SPANS => cc::block_c,
+        Lang::ObjC if SPANS => cc::block_objc,
+        Lang::ObjCpp if SPANS => cc::block_objcpp,
         Lang::Bash if SPANS => bash::block,
         Lang::Lua if SPANS => lua::block,
         Lang::Php if SPANS => php::block,
@@ -731,6 +736,8 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::Java => out!(java::line),
         Lang::Cpp => out!(cc::line),
         Lang::C => out!(cc::line_c),
+        Lang::ObjC => out!(cc::line_objc),
+        Lang::ObjCpp => out!(cc::line_objcpp),
         Lang::CSharp if !SPANS => |_, _, _| unreachable!("C#'s runs come from its own scan"),
         Lang::CSharp => out!(cs::line),
         Lang::Go if !SPANS => |_, _, _| unreachable!("Go's runs come from its own scan"),
