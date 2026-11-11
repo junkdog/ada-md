@@ -1924,8 +1924,38 @@ fn cmake() {
         ">)\n",
         "Set_Property(X ${a_${b}} ${A # e\n",
         "})\n",
+        // X-119: a command as CMake parses one, `@ONLY` and `debug` keywords, a template's
+        // placeholder; X-110: a generic command's bracket argument
+        "configure_file(a.in a @ONLY)\n",
+        "target_link_libraries(t debug a optimized b)\n",
+        "add_custom_target(t COMMAND $(MAKE) -C (x))\n",
+        "@PACKAGE_INIT@\n",
+        "check_c_source_compiles([[int main(void) { return \"\"; }]] HAVE_X)\n",
+        "endif() endif()\n",
     );
     readings("cmake", Lang::CMake, text);
+}
+
+/// CMake's header templates (X-140): C's and C++'s scanner, `#cmakedefine` a `#define`, `@VAR@`
+/// and `${VAR}` placeholders in code, strings, comments and directives.
+#[test]
+fn cmake_headers() {
+    let text = concat!(
+        "/* config.h.in: @PROJECT_NAME@'s, see ${DOC_URL} or me@example.com */\n",
+        "#ifndef CONFIG_H\n",
+        "#define CONFIG_H\n",
+        "#cmakedefine HAVE_UNISTD_H 1\n",
+        "#cmakedefine01 ENABLE_X\n",
+        "# cmakedefine HAVE_${NAME} @VALUE@\n",
+        "#define VERSION \"@PROJECT_VERSION@\"\n",
+        "#define PREFIX \"${CMAKE_INSTALL_PREFIX}\"\n",
+        "#include \"@GEN_DIR@/gen.h\"\n",
+        "static const int k = @K@ + ${J};\n",
+        "int z_@SUFFIX@(void);\n",
+        "#endif\n",
+    );
+    readings("cmake_headers", Lang::CMakeCHeader, text);
+    readings("cmake_headers_cpp", Lang::CMakeCppHeader, text);
 }
 
 /// Terraform's readings (X-102, a scanner of ada's own): blocks and their labels, attributes, objects' keys

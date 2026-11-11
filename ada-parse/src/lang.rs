@@ -68,6 +68,13 @@ pub enum Lang {
     ObjC,
     /// bat's `Objective-C++`: C++'s scanner with Objective-C's words and tokens (X-134).
     ObjCpp,
+    /// bat's `CMake C Header`: a C header's `configure_file` template (`h.in`; ada's `.h.cmake`
+    /// too, and a `.h` one whose text is Objective-C's): C's scanner, its placeholders and
+    /// `#cmakedefine`s read over it (X-140).
+    CMakeCHeader,
+    /// bat's `CMake C++ Header`: a C++ header's template (`hh.in`, `hpp.in`, `hxx.in`, `h++.in`;
+    /// ada's `.h.in` and `.h.cmake` whose text is C++'s too), on C++'s scanner (X-140).
+    CMakeCppHeader,
     /// bat's `C#`.
     CSharp,
     /// bat's `Go`.
@@ -337,6 +344,11 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::C, &["c"]),
     (Lang::ObjC, &["m", "h"]),
     (Lang::ObjCpp, &["mm"]),
+    (Lang::CMakeCHeader, &["h.in"]),
+    (
+        Lang::CMakeCppHeader,
+        &["hh.in", "hpp.in", "hxx.in", "h++.in"],
+    ),
     (Lang::CSharp, &["cs", "csx"]),
     (Lang::Go, &["go"]),
     (
@@ -439,7 +451,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 55] = [
+    pub const ALL: [Lang; 57] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -469,6 +481,8 @@ impl Lang {
         Lang::C,
         Lang::ObjC,
         Lang::ObjCpp,
+        Lang::CMakeCHeader,
+        Lang::CMakeCppHeader,
         Lang::CSharp,
         Lang::Go,
         Lang::Python,
@@ -530,6 +544,8 @@ impl Lang {
             Lang::C => "C",
             Lang::ObjC => "Objective-C",
             Lang::ObjCpp => "Objective-C++",
+            Lang::CMakeCHeader => "CMake C Header",
+            Lang::CMakeCppHeader => "CMake C++ Header",
             Lang::CSharp => "C#",
             Lang::Go => "Go",
             Lang::Python => "Python",
@@ -600,6 +616,8 @@ impl Lang {
             Lang::C => "source.c",
             Lang::ObjC => "source.objc",
             Lang::ObjCpp => "source.objc++",
+            Lang::CMakeCHeader => "source.cmake.config.c",
+            Lang::CMakeCppHeader => "source.cmake.config.c++",
             Lang::CSharp => "source.cs",
             Lang::Go => "source.go",
             Lang::Python => "source.python",
@@ -657,6 +675,8 @@ impl Lang {
             Lang::C => crate::cc::scopes_c(kind),
             Lang::ObjC => crate::cc::scopes_objc(kind),
             Lang::ObjCpp => crate::cc::scopes_objcpp(kind),
+            Lang::CMakeCHeader => crate::cc::scopes_cmake_c(kind),
+            Lang::CMakeCppHeader => crate::cc::scopes_cmake_cpp(kind),
             Lang::CSharp => crate::cs::scopes(kind),
             Lang::Go => crate::go::scopes(kind),
             Lang::Python => crate::python::scopes(kind),
@@ -755,6 +775,9 @@ impl Lang {
         if let Some(l) = Lang::from_extension(name) {
             return Some(l);
         }
+        if let Some(l) = Lang::header_template(name) {
+            return Some(l);
+        }
         if any_eq(OTHERS, name) {
             return None;
         }
@@ -777,6 +800,40 @@ impl Lang {
     pub fn is_header(name: &str) -> bool {
         name.rsplit_once('.')
             .is_some_and(|(stem, ext)| !stem.is_empty() && ext.eq_ignore_ascii_case("h"))
+    }
+
+    /// The language of a CMake header template by its name (X-140): a header's name (`.h`,
+    /// `.hh`, `.hpp`, `.hxx`, `.h++`) with `.in` or `.cmake` after it, the name `configure_file`
+    /// takes it under (`config.h.in`, `llvm-config.h.cmake`, `version.hpp.in`). `.h`'s is
+    /// [`Lang::CMakeCHeader`], as bat's `h.in` (its text decides: [`Lang::for_header_template`]),
+    /// the others [`Lang::CMakeCppHeader`]. bat's set names a file by its last extension, or
+    /// by the whole name `h.in`: ada's reading departs from it for these names (`.in`, `.cmake`).
+    pub fn header_template(name: &str) -> Option<Lang> {
+        let (stem, ext) = name.rsplit_once('.')?;
+        if !(ext.eq_ignore_ascii_case("in") || ext.eq_ignore_ascii_case("cmake")) {
+            return None;
+        }
+        let (stem, header) = stem.rsplit_once('.')?;
+        if stem.is_empty() {
+            return None;
+        }
+        if header.eq_ignore_ascii_case("h") {
+            return Some(Lang::CMakeCHeader);
+        }
+        ["hh", "hpp", "hxx", "h++"]
+            .iter()
+            .any(|h| header.eq_ignore_ascii_case(h))
+            .then_some(Lang::CMakeCppHeader)
+    }
+
+    /// The language of a `.h` header's template (`h.in`, X-140) whose text starts with `text`:
+    /// C++'s ([`Lang::CMakeCppHeader`]) where the header's text is C++'s or Objective-C++'s
+    /// ([`Lang::for_header`]), else C's.
+    pub fn for_header_template(text: &[u8]) -> Lang {
+        match Lang::for_header(text) {
+            Lang::Cpp | Lang::ObjCpp => Lang::CMakeCppHeader,
+            _ => Lang::CMakeCHeader,
+        }
     }
 
     /// The language a file's first line declares (`#!/bin/sh`, `# -*- makefile -*-`), when

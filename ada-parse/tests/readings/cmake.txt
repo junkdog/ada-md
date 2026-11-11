@@ -15,16 +15,17 @@
    4 | comment ]==] after
        "comment " comment.block.cmake
        "]==]" comment.block.cmake punctuation.definition.comment.end.cmake
-       "after" variable.function.generic.cmake
+       "after" invalid.illegal.stray.cmake
    5 | set(FOO bar CACHE STRING "doc" FORCE)
+       "set" support.function.cmake
        "(" punctuation.section.parens.begin.cmake
-       "FOO" variable.parameter.generic.cmake
-       "CACHE" variable.parameter.generic.cmake
-       "STRING" variable.parameter.generic.cmake
+       "FOO" variable.other.readwrite.assignment.cmake
+       "CACHE" variable.parameter.cmake
+       "STRING" storage.type.cmake
        "\"" string.quoted.double.cmake punctuation.definition.string.begin.cmake
        "doc" string.quoted.double.cmake
        "\"" string.quoted.double.cmake punctuation.definition.string.end.cmake
-       "FORCE" variable.parameter.generic.cmake
+       "FORCE" variable.parameter.cmake
        ")" punctuation.section.parens.end.cmake
    6 | set(X 1 CACHE PATHS "d")
        "set" support.function.cmake
@@ -138,11 +139,15 @@
        ")" punctuation.section.parens.end.cmake
   18 | endif()
        "endif" invalid.illegal.stray.cmake
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
   19 | else junk
        "else" invalid.illegal.stray.cmake
-       "junk" variable.function.generic.cmake
+       "junk" invalid.illegal.expected-opening-brace.cmake
   20 | function(my_fn a b)
+       "function" support.function.cmake
        "(" punctuation.section.parens.begin.cmake
+       "my_fn" entity.name.function.cmake
        ")" punctuation.section.parens.end.cmake
   21 |   continue()
        "continue" variable.function.generic.cmake
@@ -150,8 +155,12 @@
        ")" punctuation.section.parens.end.cmake
   22 |   break()
        "break" invalid.illegal.stray.cmake
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
   23 | endfunction()
-       "endfunction" invalid.illegal.stray.cmake
+       "endfunction" support.function.cmake
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
   24 | macro(m)
        "macro" support.function.cmake
        "(" punctuation.section.parens.begin.cmake
@@ -202,6 +211,9 @@
        "\"" string.quoted.double.cmake punctuation.definition.string.begin.cmake
        "s" string.quoted.double.cmake
        "\"" string.quoted.double.cmake punctuation.definition.string.end.cmake
+       "[[" string.raw.cmake punctuation.definition.string.begin.cmake
+       "raw" string.raw.cmake
+       "]]" string.raw.cmake punctuation.definition.string.end.cmake
        "PROPERTIES" variable.parameter.generic.cmake
        "FOO/" variable.parameter.generic.cmake
        "$" variable.parameter.generic.cmake punctuation.definition.variable.substitution.cmake
@@ -246,12 +258,13 @@
        "target_link_libraries" support.function.cmake
        "(" punctuation.section.parens.begin.cmake
        "PRIVATE" variable.parameter.cmake
-       "(" invalid.illegal.stray.parenthesis.cmake
-       ")" punctuation.section.parens.end.cmake
-       "y" variable.function.generic.cmake
-  37 | add_executable(foo WIN32 src/a.c)
        "(" punctuation.section.parens.begin.cmake
-       "WIN32" variable.parameter.generic.cmake
+       ")" punctuation.section.parens.end.cmake
+       ")" punctuation.section.parens.end.cmake
+  37 | add_executable(foo WIN32 src/a.c)
+       "add_executable" support.function.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "WIN32" variable.parameter.cmake
        ")" punctuation.section.parens.end.cmake
   38 | add_custom_command(OUTPUT x USES_TERMINAL COMMAND_EXPAND_LISTS)
        "add_custom_command" support.function.cmake
@@ -281,10 +294,9 @@
        "#" comment.line.cmake punctuation.definition.comment.cmake
        " c" comment.line.cmake
   42 | (x)
-       "(" punctuation.section.parens.begin.cmake
-       ")" punctuation.section.parens.end.cmake
+       "(x)" invalid.illegal.stray.cmake
   43 | endif()
-       "endif" keyword.control.cmake
+       "endif" invalid.illegal.stray.cmake
        "(" punctuation.section.parens.begin.cmake
        ")" punctuation.section.parens.end.cmake
   44 | message (STATUS x) junk
@@ -292,10 +304,11 @@
        "(" punctuation.section.parens.begin.cmake
        "STATUS" variable.parameter.cmake
        ")" punctuation.section.parens.end.cmake
-       "junk" variable.function.generic.cmake
+       "junk" invalid.illegal.stray.cmake
   45 | target_compile_options(x PRIVATE $<$<A:b>:c # d
+       "target_compile_options" support.function.cmake
        "(" punctuation.section.parens.begin.cmake
-       "PRIVATE" variable.parameter.generic.cmake
+       "PRIVATE" variable.parameter.cmake
        "$" punctuation.definition.variable.generator-expression.cmake
        "<" punctuation.section.block.begin.cmake
        "$" punctuation.definition.variable.generator-expression.cmake
@@ -328,3 +341,39 @@
   48 | })
        "}" punctuation.section.braces.end.cmake
        ")" punctuation.section.parens.end.cmake
+  49 | configure_file(a.in a @ONLY)
+       "configure_file" support.function.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "@ONLY" variable.parameter.cmake
+       ")" punctuation.section.parens.end.cmake
+  50 | target_link_libraries(t debug a optimized b)
+       "target_link_libraries" support.function.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "debug" variable.parameter.cmake
+       "optimized" variable.parameter.cmake
+       ")" punctuation.section.parens.end.cmake
+  51 | add_custom_target(t COMMAND $(MAKE) -C (x))
+       "add_custom_target" support.function.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "COMMAND" variable.parameter.cmake
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "))" punctuation.section.parens.end.cmake
+  52 | @PACKAGE_INIT@
+       "@" punctuation.definition.variable.substitution.cmake
+       "PACKAGE_INIT" variable.other.readwrite.cmake
+       "@" punctuation.definition.variable.substitution.cmake
+  53 | check_c_source_compiles([[int main(void) { return ""; }]] HAVE_X)
+       "check_c_source_compiles" variable.function.generic.cmake
+       "(" punctuation.section.parens.begin.cmake
+       "[[" string.raw.cmake punctuation.definition.string.begin.cmake
+       "int main(void) { return \"\"; }" string.raw.cmake
+       "]]" string.raw.cmake punctuation.definition.string.end.cmake
+       "HAVE_X" variable.parameter.generic.cmake
+       ")" punctuation.section.parens.end.cmake
+  54 | endif() endif()
+       "endif" invalid.illegal.stray.cmake
+       "(" punctuation.section.parens.begin.cmake
+       ")" punctuation.section.parens.end.cmake
+       "endif()" invalid.illegal.stray.cmake

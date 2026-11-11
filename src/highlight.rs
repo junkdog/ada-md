@@ -1087,9 +1087,12 @@ pub struct Highlighter<'a> {
 impl<'a> Highlighter<'a> {
     pub fn new(key: u64, lang: &str, text: &'a str, theme: &'a SyntaxTheme) -> Self {
         let BlockScratch { spans, lines, buf } = BlockScratch::take();
-        // a header's fence (```` ```h ````) by its text, as a `.h` file (X-134)
+        // a header's fence (```` ```h ````) by its text, as a `.h` file (X-134); a header
+        // template's (```` ```h.in ````) too (X-140)
         let own = if lang.eq_ignore_ascii_case("h") {
             Some(Lang::for_header(text.as_bytes()))
+        } else if lang.eq_ignore_ascii_case("h.in") {
+            Some(Lang::for_header_template(text.as_bytes()))
         } else {
             own(lang)
         };
@@ -1849,14 +1852,19 @@ mod tests {
     /// ada-parse's table names a language only where syntect on the whole set names the same,
     /// and misses none of the ones it covers; and ada, the table first and the set's list of
     /// names after (ADR-43), names what the whole set names: as a fence's token, a file's whole
-    /// name and its extension. One departure is by design (ADR-40): ada's JavaScript is
-    /// Babel's grammar whatever the token, where the set gives Sublime's `JavaScript` for
-    /// ```` ```JavaScript ````.
+    /// name and its extension. Two departures are by design: ada's JavaScript is Babel's
+    /// grammar whatever the token, where the set gives Sublime's `JavaScript` for
+    /// ```` ```JavaScript ```` (ADR-40); and a CMake header template is named by its whole name
+    /// (`x.h.in`, `x.hpp.in`), where the set names only a file called `h.in` (X-140).
     #[test]
     fn the_language_table_agrees_with_the_set() {
         let covered = |name: Option<&str>| name.and_then(Lang::from_name);
         let departs = |ours: Option<&str>, full: Option<&str>| {
             ours == Some(Lang::JavaScript.name()) && full == Some("JavaScript")
+                || full.is_none()
+                    && [Lang::CMakeCHeader, Lang::CMakeCppHeader]
+                        .iter()
+                        .any(|l| ours == Some(l.name()))
         };
         let mut words = words();
         words.extend(["PowerShell", "powershell", "ps1", "PSM1", "psd1"].map(String::from));

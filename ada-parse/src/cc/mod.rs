@@ -38,6 +38,10 @@
 //! tokens ([`objc`]): sends, method heads, `@` keywords, Cocoa's words. Their scan is compiled
 //! apart (`Scan`'s `O`), so C's and C++'s has none of their checks.
 //!
+//! CMake's header templates (X-140, [`template`]) are C's and C++'s scan on the template's line
+//! masked (`#cmakedefine` a `#define`, a placeholder a name), the placeholders' spans laid over
+//! its spans after.
+//!
 //! Stages (vault `ada-parse.md`, X-057's redesign): **R1** this loop and the directive lexer
 //! ([`pp`]); **R2** definitions, parameters and the entity names; **R3** the tail parity
 //! showed (generics and template parameters, declared names, the preprocessor's corners);
@@ -53,7 +57,10 @@ mod pp;
 mod regex_calls;
 mod sql_calls;
 pub(crate) mod support;
+mod template;
 mod words;
+
+pub use template::{line_cmake_c, line_cmake_cpp};
 
 use crate::emit::{Rules, Run, Runs, Sink, Spans};
 use crate::{Out, State, regex, sql};
@@ -286,6 +293,17 @@ pub fn scopes_objcpp(kind: u16) -> Vec<&'static str> {
     scopes_in(kind, 3)
 }
 
+/// The scopes under `source.cmake.config.c` a kind of a C header's template carries (X-140),
+/// outermost first: C's, and a placeholder's ([`template`]).
+pub fn scopes_cmake_c(kind: u16) -> Vec<&'static str> {
+    scopes_in(kind, 1)
+}
+
+/// The scopes under `source.cmake.config.c++` a kind of a C++ header's template carries.
+pub fn scopes_cmake_cpp(kind: u16) -> Vec<&'static str> {
+    scopes_in(kind, 0)
+}
+
 /// The languages' rows: [`LEAVES`]' columns, [`words::INFO`]'s rows.
 const L_CPP: usize = 0;
 const L_C: usize = 1;
@@ -293,6 +311,9 @@ const L_OBJC: usize = 2;
 const L_OBJCPP: usize = 3;
 
 fn scopes_in(kind: u16, lang: usize) -> Vec<&'static str> {
+    if kind >= template::TPL {
+        return template::scopes(kind, lang);
+    }
     if kind >= SQL_DQ {
         if usize::from(kind - SQL_DQ) >= sql::KINDS {
             return Vec::new();

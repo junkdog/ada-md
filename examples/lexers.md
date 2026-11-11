@@ -228,6 +228,20 @@ DEMO_TESTS:BOOL=ON
 CMAKE_CACHEFILE_DIR:INTERNAL=/home/me/demo/build
 ```
 
+## CMake C Header
+
+```h.in
+/* config.h.in: @PROJECT_NAME@ ${PROJECT_VERSION}, mail me@example.com */
+#ifndef CONFIG_H
+#define CONFIG_H
+#cmakedefine HAVE_UNISTD_H 1
+#cmakedefine01 ENABLE_TESTS
+#define DEMO_VERSION "@PROJECT_VERSION@"
+#define DEMO_PREFIX "${CMAKE_INSTALL_PREFIX}"
+static const int demo_level = @DEMO_LEVEL@;
+#endif
+```
+
 ## Crontab
 
 ```crontab

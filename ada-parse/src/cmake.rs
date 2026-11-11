@@ -27,6 +27,16 @@
 //! **Escapes are CMake's** (X-109): `\` before any character but a letter or digit is that
 //! character, `\t`, `\r`, `\n` and `\;` are CMake's, another letter or digit is an error, in a
 //! quoted argument and an unquoted one alike. bat's table calls `"\."` and `"\/"` invalid.
+//!
+//! **A command is read as CMake parses one** (X-119, `cmake-language(7)`): its name, blanks and
+//! its `(` on the same line, or the line's rest an error and the command over (bat waits across
+//! lines, and lets `set` and a generic command take anything until a `(`); a `(` in any command's
+//! arguments nests to its `)` (bat ends a builtin's arguments at the first `)`, the `(` an error);
+//! after a command's `)` or a bracket comment only blanks and comments, and at a command's place
+//! only a name: anything else is the line's rest an error ([`Scan::stray`]). `@ONLY` is
+//! `configure_file`'s and `file`'s keyword, `debug`, `optimized` and `general`
+//! `target_link_libraries`'s too (bat's `\b@ONLY\b` never matches, and its
+//! `target_link_libraries` lacks them).
 
 use crate::emit::{Rules, Run, Runs, Sink, Spans};
 use crate::prim::{char_len, find_any, is_name_start, is_word_starting, word_end};
@@ -376,8 +386,14 @@ const S_INSTALL: u32 = 55;
 const S_SOURCE_GROUP: u32 = 83;
 /// `add_custom_command`'s, whose `USES_TERMINAL COMMAND_EXPAND_LISTS` is one keyword.
 const S_ADD_CUSTOM_COMMAND: u32 = 1;
+/// `target_link_libraries`'s, which takes `debug`, `optimized` and `general` as
+/// `link_libraries` does (X-119; bat's list lacks them).
+const S_TARGET_LINK_LIBRARIES: u32 = 92;
 const _: () = assert!(
-    eq(BUILTINS[S_FILE as usize], b"file")
+    eq(
+        BUILTINS[S_TARGET_LINK_LIBRARIES as usize],
+        b"target_link_libraries"
+    ) && eq(BUILTINS[S_FILE as usize], b"file")
         && eq(BUILTINS[S_LIST as usize], b"list")
         && eq(BUILTINS[S_STRING as usize], b"string")
         && eq(BUILTINS[S_INSTALL as usize], b"install")
@@ -435,6 +451,9 @@ static KEYWORD_INFO: [u128; NK + 1] = {
         if eq(w, b"REGEX") {
             m |= 1 << S_INSTALL;
         }
+        if eq(w, b"debug") || eq(w, b"optimized") || eq(w, b"general") {
+            m |= 1 << S_TARGET_LINK_LIBRARIES;
+        }
         if eq(w, b"USES_TERMINAL") || eq(w, b"INCLUDES") {
             m |= K_TWO;
         }
@@ -489,9 +508,9 @@ const F_UNQUOTED: u8 = 14;
 const F_QUOTED_RX: u8 = 15;
 
 // Where a command's arguments stand ([`Scan::sub`]).
-/// Before the `(`: blanks, then `(` or the line's rest an error.
+/// Before the `(`: blanks, then `(` on the name's line, or the line's rest an error (X-119).
 const SUB_AWAIT: u8 = 0;
-/// Before the `(` of `set` or a generic command: anything until it.
+/// Before the `(`, in the floor probe ([`SOL`]): anything until it, across lines.
 const SUB_LOOSE: u8 = 1;
 /// In the arguments.
 const SUB_OPEN: u8 = 2;
@@ -641,6 +660,9 @@ struct Scan<'b, 'c, K: Sink> {
     /// [`RX_DEPTH`], [`RX_IN_SET`] where a class is, [`RX_UNQUOTED`] where it is an unquoted
     /// argument's; a byte as the state keeps it, so a line that isn't in one only copies it.
     rx: u8,
+    /// A command's `)` or a bracket comment ended on this line: only blanks and comments may
+    /// follow it ([`Scan::commands`], CMake's "Expected a newline"). Not kept between lines.
+    done: bool,
     k: K,
     out: &'b mut Out<'c>,
 }
@@ -659,6 +681,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             mode: M_CODE,
             eqs: 0,
             rx: 0,
+            done: false,
             k,
             out,
         }
@@ -758,6 +781,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// where `SHARED` ([`Scan::code_shared`]).
     #[inline(always)]
     fn lex_line<const SHARED: bool>(&mut self) {
+        // a bracket comment that closes on this line is one a command can't follow
+        self.done = self.mode == M_BLOCK;
         let p = match self.mode {
             M_CODE => 0,
             _ => self.bracket(0),
@@ -777,13 +802,15 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.code(p);
     }
 
-    /// What a line's end ends: an unquoted argument, and what bat reads only on its line (the
-    /// first argument's name, `RESULT_VARIABLE`'s variable). A regex awaited ([`Scan::matches`])
+    /// What a line's end ends: an unquoted argument, a command still before its `(` (CMake's
+    /// "Expected "(", got newline", X-119), and what bat reads only on its line (the first
+    /// argument's name, `RESULT_VARIABLE`'s variable). A regex awaited ([`Scan::matches`])
     /// stays: CMake reads the next argument wherever it stands (X-108).
     #[inline(always)]
     fn line_end(&mut self) {
         match self.top() {
             F_UNQUOTED => self.pop(),
+            F_ARGS if self.sub == SUB_AWAIT => self.pop(),
             F_ARGS if self.sub > SUB_OPEN => self.sub = SUB_OPEN,
             _ => {}
         }
@@ -812,43 +839,114 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
     }
 
-    /// Commands, from `p` in a block or at the top: until one's name.
+    /// Commands, from `p` in a block or at the top: until one's name. A line holds one command,
+    /// after blanks and before blanks and comments (X-119): a name after a command's `)` or a
+    /// bracket comment, or anything else but blanks and comments, is [`Scan::stray`].
     #[inline(always)]
     fn commands(&mut self, mut p: usize) -> usize {
         let b = self.b;
         let n = b.len();
         while p < n {
-            let c = b[p];
-            match CLASS[usize::from(c)] {
-                C_NAME => return self.command(p, word_end(b, p)),
-                C_DIGIT => p = word_end(b, p),
-                C_HASH => p = self.comment(p),
-                C_DOLLAR => {
-                    if let Some(e) = self.dollar(p) {
-                        return e;
-                    }
-                    p += 1;
+            match CLASS[usize::from(b[p])] {
+                C_BLANK | C_SPACE => p += 1,
+                C_NAME if !self.done => return self.command(p, word_end(b, p)),
+                C_HASH => {
+                    p = self.comment(p);
+                    self.done = true;
                 }
-                C_WIDE => {
-                    if is_name_start(b, p) {
-                        return self.command(p, word_end(b, p));
-                    }
-                    p = if is_word_starting(b, p) {
-                        word_end(b, p)
-                    } else {
-                        p + char_len(c)
-                    };
-                }
-                _ => p += 1,
+                // a template's placeholder (`@PACKAGE_INIT@`), or a name that starts with one
+                C_OTHER if b[p] == b'@' && !self.done => match self.templated(p) {
+                    Some(e) => return e,
+                    None => return self.stray(p),
+                },
+                // a byte order mark: CMake skips one
+                C_WIDE if b[p..].starts_with("\u{feff}".as_bytes()) => p += 3,
+                _ => return self.stray(p),
             }
         }
         p
+    }
+
+    /// A command's name with a `configure_file` template's placeholders in it, at `p`: a run of
+    /// name characters and `@VAR@`s (CMake's `@[A-Za-z0-9_/.+-]+@`), at least one placeholder
+    /// (`@PACKAGE_INIT@`, `z_vcpkg_@PORT@_get_link_libraries(`). CMake never reads one: the
+    /// template's configuring replaces it first, so it is no error (X-119). Its `@`s as a `${…}`'s
+    /// `$`, its name as the variable's, the name's parts a generic command's; its end, the
+    /// command's `(` awaited. `None` where `p` starts no such name.
+    #[cold]
+    #[inline(never)]
+    fn templated(&mut self, p: usize) -> Option<usize> {
+        let b = self.b;
+        let n = b.len();
+        // the placeholder at `q`, an `@`: its closing `@`
+        let placeholder = |q: usize| {
+            let mut e = q + 1;
+            while e < n && (b[e].is_ascii_alphanumeric() || b"_/.+-".contains(&b[e])) {
+                e += 1;
+            }
+            (e > q + 1 && b.get(e) == Some(&b'@')).then_some(e)
+        };
+        // the run's pieces: name parts and placeholders
+        let mut q = p;
+        let mut any = false;
+        while q < n {
+            if b[q] == b'@'
+                && let Some(c) = placeholder(q)
+            {
+                any = true;
+                q = c + 1;
+            } else if CLASS[usize::from(b[q])] == C_NAME
+                || q > p && CLASS[usize::from(b[q])] == C_DIGIT
+            {
+                q += 1;
+            } else {
+                break;
+            }
+        }
+        if !any {
+            return None;
+        }
+        let e = q;
+        let mut q = p;
+        while q < e {
+            if b[q] == b'@' {
+                let c = placeholder(q).unwrap_or(q);
+                self.put(q, q + 1, DOLLAR);
+                self.put(q + 1, c, VARIABLE);
+                self.put(c, c + 1, DOLLAR);
+                q = c + 1;
+            } else {
+                let s = q;
+                while q < e && b[q] != b'@' {
+                    q += 1;
+                }
+                self.put(s, q, GENERIC);
+            }
+        }
+        self.open_args(C_GENERIC, SUB_AWAIT);
+        Some(e)
+    }
+
+    /// What CMake's parser stops at, at a command's place (X-119): a token that isn't a name
+    /// ("Expected a command name"), or one after a command or a bracket comment ("Expected a
+    /// newline"); the line's rest an error, as bat's after a name without its `(`.
+    #[cold]
+    #[inline(never)]
+    fn stray(&mut self, p: usize) -> usize {
+        let n = self.b.len();
+        self.put(p, n, STRAY);
+        n
     }
 
     /// A command's name, `b[p..e]`: its leaf, and its arguments' frame (bat's pattern order: the
     /// block's own words, the builtins, the control words, the stray ones, a generic command).
     #[inline(always)]
     fn command(&mut self, p: usize, e: usize) -> usize {
+        if self.b.get(e) == Some(&b'@')
+            && let Some(e) = self.templated(p)
+        {
+            return e;
+        }
         let id = COMMANDS.get(&self.b[p..e]);
         let cmd = if id == 0 { C_GENERIC } else { (id - 1) as u8 };
         if cmd < C_IF {
@@ -887,15 +985,21 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             C_BREAK if matches!(block, F_IF | F_ELSE | F_FOREACH | F_WHILE) => (CONTROL, SUB_AWAIT),
             C_CONTINUE if matches!(block, F_FOREACH | F_WHILE) => (CONTROL, SUB_AWAIT),
             C_IF | C_FOREACH | C_WHILE | C_FUNCTION | C_MACRO | C_INCLUDE => (leaf(cmd), SUB_AWAIT),
-            C_SET => (FUNCTION, SUB_LOOSE),
+            C_SET => (FUNCTION, SUB_AWAIT),
             C_CONTINUE | C_GENERIC => {
                 self.put_hot(p, e, GENERIC);
-                self.open_args(C_GENERIC, SUB_LOOSE);
+                self.open_args(C_GENERIC, SUB_AWAIT);
                 return e;
             }
-            // a block's word outside it
+            // a block's word outside it: its arguments as a closing word's (no block opened)
             _ => {
                 self.put(p, e, STRAY);
+                let as_closing = if matches!(cmd, C_ELSEIF | C_ELSE) {
+                    C_ENDIF
+                } else {
+                    cmd
+                };
+                self.open_args(as_closing, SUB_AWAIT);
                 return e;
             }
         };
@@ -911,8 +1015,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.push(F_ARGS);
     }
 
-    /// Between a command's name and its `(`: blanks (across lines), comments, `${…}`; anything
-    /// else the line's rest an error, and the command over.
+    /// Between a command's name and its `(`: blanks on the name's line ([`Scan::line_end`] ends
+    /// the command at the line's end), then its `(`; a comment is read and ends it, anything else
+    /// is the line's rest an error and the command over (X-119: CMake's "Expected "("").
     #[inline(always)]
     fn await_paren(&mut self, mut p: usize) -> usize {
         let b = self.b;
@@ -925,8 +1030,12 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
         match b[p] {
             b'(' => self.open_paren(p),
-            b'#' => self.comment(p),
-            b'$' if self.opens(p) => self.dollar(p).unwrap_or(p + 1),
+            b'#' => {
+                self.pop();
+                let e = self.comment(p);
+                self.done = true;
+                e
+            }
             _ => {
                 self.put(p, n, EXPECTED_PAREN);
                 self.pop();
@@ -935,7 +1044,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
     }
 
-    /// Between `set`'s or a generic command's name and its `(`: anything until it is plain.
+    /// Between a command's name and its `(` in the floor probe ([`SOL`]): anything until it is
+    /// plain.
     #[inline(always)]
     fn await_loose(&mut self, mut p: usize) -> usize {
         let b = self.b;
@@ -985,23 +1095,24 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         let b = self.b;
         let n = b.len();
         let frame = self.top();
-        // the list's keyword set, and whether `(` nests, a bracket argument is one, a
-        // capitalized word runs (bat's generic arguments)
-        let (set, nests, brackets, caps) = if frame == F_PAREN {
-            (S_IF, true, true, false)
-        } else {
-            match self.cmd {
-                c if c < C_IF => (u32::from(c), false, true, false),
-                C_IF | C_ELSEIF | C_ELSE | C_ENDIF | C_WHILE | C_ENDWHILE => {
-                    (S_IF, true, true, false)
-                }
-                C_FOREACH | C_ENDFOREACH => (S_FOREACH, false, true, false),
-                C_SET => (S_SET, false, true, false),
-                C_INCLUDE => (S_INCLUDE, false, true, false),
-                C_FUNCTION | C_MACRO | C_BREAK | C_CONTINUE => (S_NONE, false, true, false),
-                _ => (S_IF, true, false, true),
-            }
+        // the list's keyword set (a parenthesis's its command's, X-119), and whether a
+        // capitalized word runs (bat's generic arguments); a `(` nests in every command's (bat's
+        // ends a builtin's at the first `)`), and a bracket argument is one in every command's
+        // (X-110: bat's generic command takes none, so `check_c_source_compiles([[#include …]])`
+        // lexed its text as CMake)
+        let (set, caps) = match self.cmd {
+            c if c < C_IF => (u32::from(c), false),
+            C_IF | C_ELSEIF | C_ELSE | C_ENDIF | C_WHILE | C_ENDWHILE => (S_IF, false),
+            C_FOREACH | C_ENDFOREACH => (S_FOREACH, false),
+            C_SET => (S_SET, false),
+            C_INCLUDE => (S_INCLUDE, false),
+            C_FUNCTION | C_MACRO | C_BREAK | C_CONTINUE => (S_NONE, false),
+            _ if frame == F_PAREN => (S_IF, false),
+            _ => (S_IF, true),
         };
+        // the floor probe's ([`SOL`]) as bat's
+        let nests = !SOL || frame == F_PAREN || set == S_IF;
+        let brackets = !SOL || !caps;
         while p < n {
             let c = b[p];
             let class = CLASS[usize::from(c)];
@@ -1050,6 +1161,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 C_RPAREN => {
                     self.put_hot(p, p + 1, PAREN_END);
                     self.pop();
+                    // the command's: only blanks and comments may follow on its line
+                    self.done = frame == F_ARGS;
                     return p + 1;
                 }
                 C_LPAREN => {
@@ -1080,6 +1193,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     };
                 }
                 C_APOSTROPHE => p += 1,
+                C_OTHER if c == b'@' => p = self.at_word(p, set),
                 C_WIDE if is_word_starting(b, p) => {
                     let e = word_end(b, p);
                     p = self.unquoted_run(e);
@@ -1214,6 +1328,25 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
         self.put(p, e, EXPECTED_TYPE);
         e
+    }
+
+    /// An argument at `p`, an `@`: `@ONLY` where the list has it (`configure_file`'s, `file`'s;
+    /// X-119: bat's `\b@ONLY\b` needs a word before the `@`), else an unquoted argument.
+    #[cold]
+    fn at_word(&mut self, p: usize, set: u32) -> usize {
+        let b = self.b;
+        if b.get(p + 1)
+            .is_some_and(|&c| CLASS[usize::from(c)] == C_NAME)
+        {
+            let e = word_end(b, p + 1);
+            let m = KEYWORDS.value(&b[p..e], &KEYWORD_INFO);
+            // the whole argument (`@ONLY@` is a word of a template's)
+            if m >> set & 1 != 0 && b.get(e).is_none_or(|&c| UNQUOTED_END[usize::from(c)]) {
+                self.put(p, e, PARAM);
+                return e;
+            }
+        }
+        self.unquoted_run(p)
     }
 
     /// bat's two-word keywords, `USES_TERMINAL COMMAND_EXPAND_LISTS` (`add_custom_command`'s)
@@ -2533,14 +2666,109 @@ mod tests {
             "[[",
             "string.raw.cmake punctuation.definition.string.begin.cmake",
         );
-        // the builtin's arguments over at their `)`, `junk` a generic command
-        has(&l, "junk", "variable.function.generic.cmake");
+        // a word after a command's `)` an error (X-119), as a name without its `(`
+        has(&l, "junk", "invalid.illegal.stray.cmake");
+        has(&l, "()", "invalid.illegal.stray.cmake");
         has(&l, "x", "invalid.illegal.expected-opening-brace.cmake");
         has(
             &l,
             "INCLUDES DESTINATION",
             "variable.parameter.INCLUDES DESTINATION.cmake",
         );
+    }
+
+    #[test]
+    fn commands_as_cmake_parses_them() {
+        // X-119: `(` nests in a builtin's arguments; a name's `(` on its line; one command a
+        // line; `@ONLY`, `debug`, `optimized`, `general` keywords where CMake has them
+        let l = [
+            "message(STATUS (a (b) STATUS) c)",
+            "list(APPEND x (y))",
+            "foo bar(x)",
+            "set # note",
+            "(A 1)",
+            "message",
+            "  (STATUS y)",
+            "set(B 2) # fine",
+            "set(C 3) #[[ fine ]] # too",
+            "#[[ a ]] message(STATUS z)",
+            "${X}(y)",
+            "\u{feff}project(p)",
+            "configure_file(a b @ONLY)",
+            "configure_file(a b @ONLY@)",
+            "target_link_libraries(t debug a optimized b general c)",
+            "add_library(x STATIC (y)) 1",
+        ];
+        // a `(` nests: the arguments go on past its `)`, the command's keywords in it
+        let got = of(&l);
+        // bytes in spans of a leaf (adjacent spans of one leaf merge: `))`)
+        let n = |s: &str| {
+            got.iter()
+                .filter(|(_, b)| b == s)
+                .map(|(a, _)| a.len())
+                .sum::<usize>()
+        };
+        assert!(
+            !got.iter().any(|(_, s)| s.contains("stray.parenthesis")),
+            "{got:#?}"
+        );
+        // `STATUS` twice, `APPEND`, `@ONLY`, `debug`, `optimized`, `general`, `STATIC`
+        assert_eq!(n("variable.parameter.cmake"), 2 * 6 + 6 + 5 + 5 + 9 + 7 + 6);
+        assert_eq!(n("punctuation.section.parens.begin.cmake"), 13, "{got:#?}");
+        assert_eq!(n("punctuation.section.parens.end.cmake"), 13, "{got:#?}");
+        has(&l, "APPEND", "variable.parameter.cmake");
+        // a word between a name and its `(` an error, the command over
+        has(&l, "bar(x)", "invalid.illegal.expected-opening-brace.cmake");
+        // a name whose `(` isn't on its line: the command over at the line's end, a comment
+        // ending it too; a `(` at a command's place an error
+        has(&l, "(A 1)", "invalid.illegal.stray.cmake");
+        has(&l, "(STATUS y)", "invalid.illegal.stray.cmake");
+        lacks(&l, "A");
+        // only blanks and comments after a command or a bracket comment
+        has(&l, " fine", "comment.line.cmake");
+        has(&l, " fine ", "comment.block.cmake");
+        has(&l, " too", "comment.line.cmake");
+        has(&l, "message(STATUS z)", "invalid.illegal.stray.cmake");
+        has(&l, "${X}(y)", "invalid.illegal.stray.cmake");
+        has(&l, "1", "invalid.illegal.stray.cmake");
+        // a byte order mark skipped
+        has(&l, "project", "support.function.cmake");
+        has(&l, "@ONLY", "variable.parameter.cmake");
+        lacks(&l, "@ONLY@");
+        has(&l, "debug", "variable.parameter.cmake");
+        has(&l, "optimized", "variable.parameter.cmake");
+        has(&l, "general", "variable.parameter.cmake");
+    }
+
+    #[test]
+    fn templates_placeholders_and_generic_brackets() {
+        // a template's placeholders where a command stands (X-119); a generic command's
+        // bracket argument (X-110)
+        let l = [
+            "@PACKAGE_INIT@",
+            "z_vcpkg_@PORT@_get_link_libraries(x)",
+            "@a@ b",
+            "@ x",
+            "check_c_source_compiles([[#include <a.h>",
+            "int main(void) { return \"\"; }]] HAVE_A)",
+            "message(STATUS ok)",
+        ];
+        has(
+            &l,
+            "@",
+            "punctuation.definition.variable.substitution.cmake",
+        );
+        has(&l, "PACKAGE_INIT", "variable.other.readwrite.cmake");
+        has(&l, "z_vcpkg_", "variable.function.generic.cmake");
+        has(&l, "PORT", "variable.other.readwrite.cmake");
+        has(&l, "_get_link_libraries", "variable.function.generic.cmake");
+        // no `(` after a placeholder: the word after it an error, as after a name
+        has(&l, "b", "invalid.illegal.expected-opening-brace.cmake");
+        has(&l, "@ x", "invalid.illegal.stray.cmake");
+        has(&l, "#include <a.h>", "string.raw.cmake");
+        has(&l, "int main(void) { return \"\"; }", "string.raw.cmake");
+        has(&l, "HAVE_A", "variable.parameter.generic.cmake");
+        has(&l, "STATUS", "variable.parameter.cmake");
     }
 
     #[test]
@@ -2597,7 +2825,8 @@ mod tests {
         has(&l, "n", "variable.other.readwrite.cmake");
         has(&l, " done", "comment.line.cmake");
         has(&l, " a", "comment.block.cmake");
-        has(&l, "x", "variable.function.generic.cmake");
+        // a command after a bracket comment an error (X-119)
+        has(&l, "x()", "invalid.illegal.stray.cmake");
     }
 
     #[test]

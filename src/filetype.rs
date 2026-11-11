@@ -58,13 +58,21 @@ impl FileType {
     /// `README`, `TODO` and the like are read as markdown, as they always were.
     pub fn of(path: &Path, text: &str) -> FileType {
         // a header by its text: C, C++, Objective-C or Objective-C++ (X-134; bat's set names
-        // every `.h` Objective-C)
-        if path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(ada_parse::Lang::is_header)
-        {
-            let lang = ada_parse::Lang::for_header(text.as_bytes());
+        // every `.h` Objective-C); a `.h` header's CMake template (`config.h.in`, X-140) a C or
+        // a C++ one by its text
+        let name = path.file_name().and_then(|n| n.to_str());
+        let header = match name {
+            Some(n) if ada_parse::Lang::is_header(n) => {
+                Some(ada_parse::Lang::for_header(text.as_bytes()))
+            }
+            Some(n)
+                if ada_parse::Lang::header_template(n) == Some(ada_parse::Lang::CMakeCHeader) =>
+            {
+                Some(ada_parse::Lang::for_header_template(text.as_bytes()))
+            }
+            _ => None,
+        };
+        if let Some(lang) = header {
             return FileType::Text {
                 lang: Some(lang.label()),
             };
@@ -243,6 +251,22 @@ mod tests {
         assert_eq!(by_path("a.h"), lang("Objective-C"));
         assert_eq!(by_path("a.m"), lang("Objective-C"));
         assert_eq!(by_path("a.mm"), lang("Objective-C++"));
+        // a header's CMake template (X-140): `.h`'s C's or C++'s by its text, the others C++'s
+        let tpl = |name: &str, text: &str| FileType::of(Path::new(name), text);
+        assert_eq!(
+            tpl("config.h.in", "#cmakedefine X\n"),
+            lang("CMake C Header").unwrap()
+        );
+        assert_eq!(
+            tpl("llvm-config.h.cmake", "#cmakedefine X\nnamespace a {}\n"),
+            lang("CMake C++ Header").unwrap()
+        );
+        assert_eq!(
+            tpl("version.hpp.in", "#define V @V@\n"),
+            lang("CMake C++ Header").unwrap()
+        );
+        assert_eq!(by_path("config.h.in"), lang("CMake C Header"));
+        assert_eq!(by_path("Config.cmake.in"), None);
     }
 
     #[test]

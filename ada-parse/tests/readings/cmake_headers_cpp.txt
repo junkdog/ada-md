@@ -1,0 +1,95 @@
+# CMakeCppHeader: ada-parse/tests/readings.rs, cmake_headers_cpp
+   1 | /* config.h.in: @PROJECT_NAME@'s, see ${DOC_URL} or me@example.com */
+       "/*" comment.block.c++ punctuation.definition.comment.c++
+       " config.h.in: " comment.block.c++
+       "@" comment.block.c++ variable.cmake keyword.other.block.start.cmake
+       "PROJECT_NAME" comment.block.c++ variable.cmake
+       "@" comment.block.c++ variable.cmake keyword.other.block.end.cmake
+       "'s, see " comment.block.c++
+       "${" comment.block.c++ variable.cmake keyword.other.block.start.cmake
+       "DOC_URL" comment.block.c++ variable.cmake
+       "}" comment.block.c++ variable.cmake keyword.other.block.end.cmake
+       " or me@example.com " comment.block.c++
+       "*/" comment.block.c++ punctuation.definition.comment.c++
+   2 | #ifndef CONFIG_H
+       "#ifndef" keyword.control.import.c++
+       " CONFIG_H" meta.preprocessor.c++
+   3 | #define CONFIG_H
+       "#define" keyword.control.import.define.c++
+       " " meta.preprocessor.c++
+       "CONFIG_H" meta.preprocessor.c++ entity.name.constant.preprocessor.c++
+   4 | #cmakedefine HAVE_UNISTD_H 1
+       "#cmakedefine" keyword.control.import.define.c++
+       " " meta.preprocessor.c++
+       "HAVE_UNISTD_H" meta.preprocessor.c++ entity.name.constant.preprocessor.c++
+       " " meta.preprocessor.c++
+       "1" constant.numeric.integer.decimal.c++
+   5 | #cmakedefine01 ENABLE_X
+       "#cmakedefine01" keyword.control.import.define.c++
+       " " meta.preprocessor.c++
+       "ENABLE_X" meta.preprocessor.c++ entity.name.constant.preprocessor.c++
+   6 | # cmakedefine HAVE_${NAME} @VALUE@
+       "# cmakedefine" keyword.control.import.define.c++
+       " " meta.preprocessor.c++
+       "HAVE_" meta.preprocessor.c++ entity.name.constant.preprocessor.c++
+       "${" meta.preprocessor.c++ variable.cmake keyword.other.block.start.cmake
+       "NAME" meta.preprocessor.c++ variable.cmake
+       "}" meta.preprocessor.c++ variable.cmake keyword.other.block.end.cmake
+       " " meta.preprocessor.c++
+       "@" meta.preprocessor.c++ variable.cmake keyword.other.block.start.cmake
+       "VALUE" meta.preprocessor.c++ variable.cmake
+       "@" meta.preprocessor.c++ variable.cmake keyword.other.block.end.cmake
+   7 | #define VERSION "@PROJECT_VERSION@"
+       "#define" keyword.control.import.define.c++
+       " " meta.preprocessor.c++
+       "VERSION" meta.preprocessor.c++ entity.name.constant.preprocessor.c++
+       " " meta.preprocessor.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.begin.c++
+       "@" string.quoted.double.c++ variable.cmake keyword.other.block.start.cmake
+       "PROJECT_VERSION" string.quoted.double.c++ variable.cmake
+       "@" string.quoted.double.c++ variable.cmake keyword.other.block.end.cmake
+       "\"" string.quoted.double.c++ punctuation.definition.string.end.c++
+   8 | #define PREFIX "${CMAKE_INSTALL_PREFIX}"
+       "#define" keyword.control.import.define.c++
+       " " meta.preprocessor.c++
+       "PREFIX" meta.preprocessor.c++ entity.name.constant.preprocessor.c++
+       " " meta.preprocessor.c++
+       "\"" string.quoted.double.c++ punctuation.definition.string.begin.c++
+       "${" string.quoted.double.c++ variable.cmake keyword.other.block.start.cmake
+       "CMAKE_INSTALL_PREFIX" string.quoted.double.c++ variable.cmake
+       "}" string.quoted.double.c++ variable.cmake keyword.other.block.end.cmake
+       "\"" string.quoted.double.c++ punctuation.definition.string.end.c++
+   9 | #include "@GEN_DIR@/gen.h"
+       "#include" keyword.control.import.include.c++
+       " " meta.preprocessor.c++
+       "\"" string.quoted.double.include.c++ punctuation.definition.string.begin.c++
+       "@" string.quoted.double.include.c++ variable.cmake keyword.other.block.start.cmake
+       "GEN_DIR" string.quoted.double.include.c++ variable.cmake
+       "@" string.quoted.double.include.c++ variable.cmake keyword.other.block.end.cmake
+       "/gen.h" string.quoted.double.include.c++
+       "\"" string.quoted.double.include.c++ punctuation.definition.string.end.c++
+  10 | static const int k = @K@ + ${J};
+       "static" storage.modifier.c++
+       "const" storage.modifier.c++
+       "int" storage.type.c++
+       "=" keyword.operator.assignment.c++
+       "@" variable.cmake keyword.other.block.start.cmake
+       "K" variable.cmake
+       "@" variable.cmake keyword.other.block.end.cmake
+       "+" keyword.operator.arithmetic.c++
+       "${" variable.cmake keyword.other.block.start.cmake
+       "J" variable.cmake
+       "}" variable.cmake keyword.other.block.end.cmake
+       ";" punctuation.terminator.c++
+  11 | int z_@SUFFIX@(void);
+       "int" storage.type.c++
+       "z_" entity.name.function.c++
+       "@" variable.cmake keyword.other.block.start.cmake
+       "SUFFIX" variable.cmake
+       "@" variable.cmake keyword.other.block.end.cmake
+       "(" punctuation.section.group.begin.c++
+       "void" storage.type.c++
+       ")" punctuation.section.group.end.c++
+       ";" punctuation.terminator.c++
+  12 | #endif
+       "#endif" keyword.control.import.c++

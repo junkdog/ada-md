@@ -746,6 +746,8 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::C => out!(cc::line_c),
         Lang::ObjC => out!(cc::line_objc),
         Lang::ObjCpp => out!(cc::line_objcpp),
+        Lang::CMakeCHeader => out!(cc::line_cmake_c),
+        Lang::CMakeCppHeader => out!(cc::line_cmake_cpp),
         Lang::CSharp if !SPANS => |_, _, _| unreachable!("C#'s runs come from its own scan"),
         Lang::CSharp => out!(cs::line),
         Lang::Go if !SPANS => |_, _, _| unreachable!("Go's runs come from its own scan"),

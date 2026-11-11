@@ -56,6 +56,8 @@ const LANGS: &[(&str, Lang)] = &[
     ("swift", Lang::Swift),
     // X-104's corpus: 40 CMake-built repositories' CMake files
     ("cmake", Lang::CMake),
+    // X-140's: the clones' 54 `.h.in` and `.h.cmake` header templates
+    ("cmakecheader", Lang::CMakeCHeader),
     // X-102's corpus: 36 Terraform and HCL repositories' files
     ("terraform", Lang::Terraform),
     // X-137's corpus: 34 Scala repositories' files
