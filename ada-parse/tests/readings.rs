@@ -377,11 +377,12 @@ fn kotlin() {
 
 /// Scala's readings (X-137, a scanner of ada's own): a package and imports, classes, objects,
 /// traits with their parameters, type parameters and parents, defs, vals and vars, types,
-/// patterns, lambdas, for comprehensions, strings with interpolations, escapes and formats,
-/// comments with Scaladoc, numbers, annotations with their meta scope, XML literals, SQL and
-/// regexes in strings, and Scala 3's syntax. Scala's departures from bat's grammar (`a<b` no XML,
-/// a `"` string ending with its line, Scala 3's keywords, fewer braces' lambdas) are pinned in
-/// ada-parse's `scala` tests.
+/// patterns, lambdas (a block's typed parameter, `{ x: Int =>`, X-141), a self type, for
+/// comprehensions, strings with interpolations, escapes and formats, comments with Scaladoc,
+/// numbers, annotations with their meta scope, XML literals (a comment and an attribute's string
+/// across lines, elements in a sequence), SQL and regexes in strings, and Scala 3's syntax.
+/// Scala's departures from bat's grammar (`a<b` no XML, a `"` string ending with its line, Scala
+/// 3's keywords, fewer braces' lambdas) are pinned in ada-parse's `scala` tests.
 #[test]
 fn scala() {
     let text = concat!(
@@ -411,8 +412,14 @@ fn scala() {
         "    val q = sql\"SELECT * FROM t WHERE id = $id\"\n",
         "    val re = \"[a-z]+\\\\d\".r\n",
         "    val node = <p class=\"x\">{s} &amp; more</p>\n",
+        "    val inc = xs.map { x: Int => x + 1 }\n",
+        "    val seq = <a><!-- one\n",
+        "      two --></a> <b c=\"d\n",
+        "      e\"/>\n",
         "    if (a<b && c != d) return else ()\n",
         "  }\n",
+        "}\n",
+        "trait T { self: Foo[Int, String] =>\n",
         "}\n",
         "object Foo extends App:\n",
         "  given ord: Ordering[Foo[?, ?]] = Ordering.by(_.x)\n",

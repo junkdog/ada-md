@@ -138,6 +138,10 @@ fn patterns() {
     plain(&l, "Some");
     // the guard is code: no lambda at `a > 0 =>`
     never(&l, "0", PARAM);
+    // a type in a pattern's parentheses ends with them
+    let l = ["xs.collect { case (a: A) :: (b: B) :: Nil => b }"];
+    has(&l, "b", PARAM);
+    never(&l, "b", TYPE);
 }
 
 #[test]
@@ -161,6 +165,70 @@ fn lambdas() {
     plain(&l, "flatMap");
     // an untyped lambda's `,` plain, as bat's
     never(&l[1..2], ",", "punctuation.separator.scala");
+}
+
+#[test]
+fn typed_lambdas_in_braces() {
+    // Scala 2's `{ x: T =>`: a block's first name before `:` is its parameter, the type ends at
+    // its first `=>`, the lambda's arrow; the body is code again
+    let lambda = "storage.type.function.arrow.lambda.scala";
+    for l in [
+        &["xs.map { x: Int => x + 1 }"][..],
+        &["xs.map{x: Option[Int] ⇒ x.get}"],
+        &["xs.map {", "  x: Int => x", "}"],
+        &["xs.map { // c", "", "  x: Int => x", "}"],
+        &["xs.map { implicit x: Ctx =>", "  x", "}"],
+        &["trait A { x: B with C =>"],
+    ] {
+        let arrow = if l.concat().contains('⇒') {
+            "⇒"
+        } else {
+            "=>"
+        };
+        has(l, "x", PARAM);
+        has(l, arrow, lambda);
+        never(l, "x", TYPE);
+        never(l, "get", TYPE);
+    }
+    has(&["trait A { this: B =>"], "this", PARAM);
+    // Scala 3's indented body: a self type after `trait A:`
+    let l = ["trait A extends B:", "  this: C & D =>", "  def f = 1"];
+    has(&l, "this", PARAM);
+    has(&l, "=>", lambda);
+    // the type's names are a type's, not a parameter's
+    for (l, t) in [
+        ("xs.map { s: Ctx => s }", "Ctx"),
+        ("trait A { self: B with C =>", "C"),
+    ] {
+        never(&[l], t, PARAM);
+    }
+    has(&["xs.map { _: Int => 1 }"], "=>", lambda);
+    // a function type in parentheses, then the lambda's arrow
+    let l = ["val k = { f: (Int => Int) => f(1) }"];
+    has(&l, "=>", "keyword.operator.arrow.scala");
+    has(&l, "=>", lambda);
+    never(&l, "f", TYPE);
+    // not a block's first token, a `:` ending the line, Scala 3's fewer braces: no parameter
+    never(&["foo { a; b: Int => b }"], "b", PARAM);
+    never(&["locally {", "  f:", "    1", "}"], "f", PARAM);
+    plain(&["xs.foo { bar: x =>", "  x", "}"], "bar");
+    // an ascription's type ends with its line
+    let l = ["locally {", "  x: Int", "  y.z", "}"];
+    never(&l, "z", TYPE);
+    // a declared type's parenthesis across lines: its `=>` a function type's
+    let l = ["val f: (", "  A,", "  B", ") => C[D] =", "  (a, b) => c"];
+    has(&l, "=>", "keyword.operator.arrow.scala");
+    has(&l, "=>", lambda);
+    has(&l, "a", PARAM);
+    // a bracket at a block's start: its names are its own
+    let l = ["val f = if (a) {", "  (_: P) => None", "} else g"];
+    has(&l, "=>", lambda);
+    plain(&l, "None");
+    // `(x: Int,` across lines: a lambda's parameters
+    let l = ["xs.foreach { (x: Int,", "    y: String) =>", "  x", "}"];
+    has(&l, "x", PARAM);
+    has(&l, "y", PARAM);
+    has(&l, "=>", lambda);
 }
 
 #[test]
@@ -430,6 +498,36 @@ fn xml_literals() {
     let m = ["if (a<b) c", "val d = 1"];
     never(&m, "b", "text.xml meta.tag.xml entity.name.tag.xml");
     has(&m, "d", VAL);
+    // a comment, CDATA and an attribute's strings go on past their line
+    let l = [
+        "val e = <a>",
+        "  <!-- one",
+        "  two --> t",
+        "  <![CDATA[ x",
+        "  y ]]>",
+        "  <b c=\"d",
+        "  e\" f='g",
+        "  h'>i</b>",
+        "</a>",
+        "val after = 1",
+    ];
+    has(&l, "  two ", "text.xml comment.block.xml");
+    has(
+        &l,
+        "-->",
+        "text.xml comment.block.xml punctuation.definition.comment.end.xml",
+    );
+    has(&l, " t", "text.xml");
+    has(&l, "  y ]]>", "text.xml string.unquoted.cdata.xml");
+    has(&l, "  e", "text.xml meta.tag.xml string.quoted.double.xml");
+    has(&l, "  h", "text.xml meta.tag.xml string.quoted.double.xml");
+    has(&l, "i", "text.xml");
+    has(&l, "after", VAL);
+    // elements one after another are one literal, a sequence (Scala's parser), and no
+    // block's parameter after one
+    let l = ["val x = {", "  <x:a b=\"c\"/> <y:d e=\"f\"/>", "}"];
+    has(&l, "y:d", "text.xml meta.tag.xml entity.name.tag.xml");
+    never(&l, "y", PARAM);
 }
 
 #[test]
@@ -567,6 +665,12 @@ fn long_lines_lex_in_linear_time() {
         ": x =>",
         "a: ",
         "xs.map: ",
+        "{ x: ",
+        "{ (x: ",
+        "{ _: { x: ",
+        "<a b=\"",
+        "<a><!--",
+        "<a><![CDATA[",
     ] {
         let l = unit.repeat(20_000);
         let t = std::time::Instant::now();

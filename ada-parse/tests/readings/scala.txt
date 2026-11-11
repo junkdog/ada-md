@@ -305,7 +305,44 @@
        "</" text.xml punctuation.definition.tag.begin.xml
        "p" text.xml meta.tag.xml entity.name.tag.xml
        ">" text.xml meta.tag.xml punctuation.definition.tag.end.xml
-  27 |     if (a<b && c != d) return else ()
+  27 |     val inc = xs.map { x: Int => x + 1 }
+       "val" storage.type.stable.scala
+       "inc" variable.other.constant.scala
+       "=" keyword.operator.assignment.scala
+       "." punctuation.accessor.scala
+       "{" punctuation.section.block.begin.scala
+       "x" variable.parameter.scala
+       ":" punctuation.ascription.scala
+       "Int" storage.type.primitive.scala
+       "=>" storage.type.function.arrow.lambda.scala
+       "1" constant.numeric.integer.decimal.scala
+       "}" punctuation.section.block.end.scala
+  28 |     val seq = <a><!-- one
+       "val" storage.type.stable.scala
+       "seq" variable.other.constant.scala
+       "=" keyword.operator.assignment.scala
+       "<" text.xml punctuation.definition.tag.begin.xml
+       "a" text.xml meta.tag.xml entity.name.tag.xml
+       ">" text.xml meta.tag.xml punctuation.definition.tag.end.xml
+       "<!--" text.xml comment.block.xml punctuation.definition.comment.begin.xml
+       " one" text.xml comment.block.xml
+  29 |       two --></a> <b c="d
+       "      two " text.xml comment.block.xml
+       "-->" text.xml comment.block.xml punctuation.definition.comment.end.xml
+       "</" text.xml punctuation.definition.tag.begin.xml
+       "a" text.xml meta.tag.xml entity.name.tag.xml
+       ">" text.xml meta.tag.xml punctuation.definition.tag.end.xml
+       "<" text.xml punctuation.definition.tag.begin.xml
+       "b" text.xml meta.tag.xml entity.name.tag.xml
+       "c" text.xml meta.tag.xml entity.other.attribute-name.localname.xml
+       "=" text.xml meta.tag.xml punctuation.separator.key-value.xml
+       "\"" text.xml meta.tag.xml string.quoted.double.xml punctuation.definition.string.begin.xml
+       "d" text.xml meta.tag.xml string.quoted.double.xml
+  30 |       e"/>
+       "      e" text.xml meta.tag.xml string.quoted.double.xml
+       "\"" text.xml meta.tag.xml string.quoted.double.xml punctuation.definition.string.end.xml
+       "/>" text.xml meta.tag.xml punctuation.definition.tag.end.xml
+  31 |     if (a<b && c != d) return else ()
        "if" keyword.control.flow.scala
        "(" punctuation.section.group.begin.scala
        "!=" keyword.operator.comparison.scala
@@ -313,16 +350,29 @@
        "return" keyword.control.flow.jump.scala
        "else" keyword.control.flow.scala
        "()" constant.language.scala
-  28 |   }
+  32 |   }
        "}" punctuation.section.block.end.scala
-  29 | }
+  33 | }
        "}" punctuation.section.block.end.scala
-  30 | object Foo extends App:
+  34 | trait T { self: Foo[Int, String] =>
+       "trait" storage.type.class.scala
+       " T" entity.name.class.scala
+       "{" punctuation.section.block.begin.scala
+       "self" variable.parameter.scala
+       ":" punctuation.ascription.scala
+       "[" punctuation.definition.generic.begin.scala
+       "Int" storage.type.primitive.scala
+       "," punctuation.separator.scala
+       "]" punctuation.definition.generic.end.scala
+       "=>" storage.type.function.arrow.lambda.scala
+  35 | }
+       "}" punctuation.section.block.end.scala
+  36 | object Foo extends App:
        "object" storage.type.class.scala
        " Foo" entity.name.class.scala
        "extends" keyword.declaration.scala
        ":" punctuation.ascription.scala
-  31 |   given ord: Ordering[Foo[?, ?]] = Ordering.by(_.x)
+  37 |   given ord: Ordering[Foo[?, ?]] = Ordering.by(_.x)
        "given" storage.modifier.other.scala
        "ord" variable.other.constant.scala
        ":" punctuation.ascription.scala
@@ -338,7 +388,7 @@
        "_" variable.language.underscore.scala
        "." punctuation.accessor.scala
        ")" punctuation.section.group.end.scala
-  32 |   extension (f: Foo[?, ?]) def twice: Int = f.x * 2
+  38 |   extension (f: Foo[?, ?]) def twice: Int = f.x * 2
        "extension" storage.type.function.scala
        "(" punctuation.section.group.begin.scala
        "f" variable.parameter.scala
@@ -356,24 +406,24 @@
        "=" keyword.operator.assignment.scala
        "." punctuation.accessor.scala
        "2" constant.numeric.integer.decimal.scala
-  33 |   enum Color { case Red, Green }
+  39 |   enum Color { case Red, Green }
        "enum" storage.type.class.scala
        " Color" entity.name.class.scala
        "{" punctuation.section.block.begin.scala
        "case" keyword.other.declaration.scala
        "," punctuation.separator.scala
        "}" punctuation.section.block.end.scala
-  34 |   xs.flatMap: x =>
+  40 |   xs.flatMap: x =>
        "." punctuation.accessor.scala
        ":" punctuation.ascription.scala
        "x" variable.parameter.scala
        "=>" storage.type.function.arrow.lambda.scala
-  35 |     if x > 0 then List(x) else Nil
+  41 |     if x > 0 then List(x) else Nil
        "if" keyword.control.flow.scala
        "0" constant.numeric.integer.decimal.scala
        "then" keyword.control.flow.scala
        "(" punctuation.section.group.begin.scala
        ")" punctuation.section.group.end.scala
        "else" keyword.control.flow.scala
-  36 | end Foo
+  42 | end Foo
        "end" keyword.declaration.scala

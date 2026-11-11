@@ -665,6 +665,17 @@ const F_XML: u8 = 24;
 const F_XTAG: u8 = 25;
 /// An XML literal's `{` … `}`: code, the XML after.
 const F_XEXPR: u8 = 26;
+/// A block's first parameter's type, `{ x: T =>`, to its `=>` (Scala's `CompoundType`: no
+/// function type there) or the line's end.
+const F_BLTYPE: u8 = 27;
+/// An XML comment, `<!--` … `-->`, past its line.
+const F_XCOMMENT: u8 = 28;
+/// An XML CDATA section, `<![CDATA[` … `]]>`, past its line.
+const F_XCDATA: u8 = 29;
+/// An XML attribute's `"…"` string past its line.
+const F_XDQ: u8 = 30;
+/// An XML attribute's `'…'` string past its line.
+const F_XSQ: u8 = 31;
 /// The levels [`Scan::frames`] holds: 24 of five bits in the 120 [`State`] keeps.
 const LEVELS: u8 = 24;
 const FRAME_BITS: u32 = 5;
@@ -674,8 +685,14 @@ const FRAME_MASK: u128 = (1 << (FRAME_BITS * LEVELS as u32)) - 1;
 fn is_type_frame(f: u8) -> bool {
     matches!(
         f,
-        F_PTYPE | F_TBOUND | F_TARGS | F_TPAREN | F_TBRACE | F_LPTYPE
+        F_PTYPE | F_TBOUND | F_TARGS | F_TPAREN | F_TBRACE | F_LPTYPE | F_BLTYPE
     )
+}
+
+/// Whether frame `f` is an XML literal's text (not its `{…}` of code): a line in it goes on as
+/// XML.
+fn is_xml_frame(f: u8) -> bool {
+    matches!(f, F_XML | F_XTAG | F_XCOMMENT | F_XCDATA | F_XDQ | F_XSQ)
 }
 
 /// Whether frame `f` is a pattern's: its lowercase names bound.
@@ -797,6 +814,10 @@ const H_EXTENSION: u8 = 11;
 /// After `extends`, `with`, `derives` in a class's head: its parents, plain (bat's
 /// `entity.other.inherited-class`).
 const H_EXTENDS: u8 = 12;
+/// Past a `{` of statements (or Scala 3's `class A:`), before the block's first token, carried
+/// to the next line where only blanks or a comment follow: a first name before `:` is a lambda's
+/// parameter or a self type's ([`Scan::block_param`]), asked on [`Scan::name`]'s path for a head.
+const H_FRESH: u8 = 13;
 
 /// How far a lambda's `(` and an XML literal look for their close.
 const LOOK: usize = 512;
@@ -900,7 +921,7 @@ struct Scan<'b, 'c, K: Sink> {
     /// A SQL marker waits for its string past the line ([`MARKED`]).
     marked: bool,
     /// A def's or a class's head the line ended in ([`H_DEF_NAMED`], [`H_CLASS`]), for the next
-    /// line's parameters.
+    /// line's parameters; or [`H_FRESH`], a block opened with nothing after it.
     carried: u8,
     /// The depth an annotation's arguments opened at, 0 for none: inside them every byte is
     /// [`META`]'s.
@@ -1112,7 +1133,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             self.gap = 0;
         }
         let p = match self.mode {
-            M_CODE if matches!(self.top(), F_XML | F_XTAG) => self.xml_rest(0),
+            M_CODE if is_xml_frame(self.top()) => self.xml_rest(0),
             M_CODE => {
                 if !SOL && matches!(self.top(), F_FORBX | F_FORB) {
                     // a for's next enumerator, where the line has its `<-` or `=` (bat's)
@@ -1138,14 +1159,22 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         if !SOL {
             let n = self.b.len();
             self.marked = self.mark != usize::MAX && sql::marker_holds(self.b, self.mark, n);
-            if matches!(self.head, H_DEF_NAMED | H_CLASS)
-                && matches!(self.prev, P_NAME | P_VALUE)
-                && self.mode == M_CODE
-            {
-                self.carried = self.head;
+            if matches!(self.head, H_DEF_NAMED | H_CLASS | H_FRESH) && self.mode == M_CODE {
+                if self.head == H_FRESH {
+                    // a block opened with nothing after it: its first token is on a later line
+                    if self.prev == P_START {
+                        self.carried = H_FRESH;
+                    }
+                } else if matches!(self.prev, P_NAME | P_VALUE) {
+                    self.carried = self.head;
+                }
             }
-            if self.top() == F_CASE && self.prev != P_OP && self.mode == M_CODE {
+            let top = self.top();
+            if top == F_CASE && self.prev != P_OP && self.mode == M_CODE {
                 // a case without its `=>` on the line, `case A, B` in an enum
+                self.pop();
+            } else if top == F_BLTYPE {
+                // a block's typed first name with no `=>` on its line: an ascription, `{ x: Int }`
                 self.pop();
             }
         }
@@ -1258,7 +1287,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
         if b.get(p + 1) == Some(&b')')
             && !matches!(prev, P_NAME | P_VALUE)
-            && self.head == H_NONE
+            && matches!(self.head, H_NONE | H_FRESH)
             && !is_arrow_next(b, p + 2)
         {
             // `()`, the unit value
@@ -1296,10 +1325,12 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                         } else {
                             F_PAREN
                         }
-                    } else if lambda_params(b, p) {
-                        F_LPARAMS
                     } else {
-                        F_PAREN
+                        match params_scan(b, p) {
+                            Some(true) => F_LPARAMS,
+                            None if lambda_params_open(b, p) => F_LPARAMS,
+                            _ => F_PAREN,
+                        }
                     }
                 }
             }
@@ -1342,6 +1373,14 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
         self.put_hot(p, p + 1, GROUP_END);
         self.pop();
+        if self.ty > u16::from(self.depth) + 1 {
+            // a type opened inside the parenthesis ends with it: `case (a: A) :: (b: B)`
+            self.ty = 0;
+        } else if f == F_TPAREN && !self.typed() {
+            // a type's parenthesis closed on a later line than its type's `:` (a line forgets
+            // the type): the type goes on, `val f: (\n  A\n) => B =`
+            self.ty = u16::from(self.depth) + 1;
+        }
         if matches!(f, F_LPARAMS | F_LPTYPE) || (f == F_PAREN && is_arrow_next(self.b, p + 1)) {
             self.prev = P_LAMBDA;
         } else if matches!(f, F_PARAMS | F_PTYPE | F_PDEFAULT) && self.head != H_CLASS {
@@ -1379,6 +1418,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             self.ty = 0;
         }
         self.prev = P_START;
+        if f == F_BRACE {
+            self.head = H_FRESH;
+        }
         p + 1
     }
 
@@ -1591,7 +1633,13 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             return r;
         }
         if self.head != H_NONE {
-            return self.head_word(p, e, w);
+            if self.head != H_FRESH {
+                return self.head_word(p, e, w);
+            }
+            self.head = H_NONE;
+            if let Some(r) = self.block_param(p, e, w) {
+                return r;
+            }
         }
         if self.in_type() {
             return self.type_word(p, e, w);
@@ -1626,10 +1674,65 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         e
     }
 
+    /// A block's first name `b[p..e]` (`w` its info; `_` with 0) before a `:` ([`H_FRESH`]):
+    /// Scala 2's `{ x: T =>` (`{ implicit x: T =>`, `{ _: T =>`), a self type's `{ self: T =>` or
+    /// `{ this: T =>`, the name a parameter, its type in [`F_BLTYPE`] to the `=>`; `None`
+    /// elsewhere, and before a `:` that ends the line or opens Scala 3's fewer braces
+    /// (`{ f: x =>`). Decided at the `:`, with no look along the line for the `=>`: `{ x: Int }`
+    /// reads so too.
+    #[cold]
+    #[inline(never)]
+    fn block_param(&mut self, p: usize, e: usize, w: u16) -> Option<usize> {
+        let b = self.b;
+        if self.prev != P_START || !matches!(self.top(), 0 | F_BRACE) {
+            // a token before it (`{ <a/> y:`), or a bracket opened at the block's start
+            // (`{ (x: A) =>`): not the block's first name
+            return None;
+        }
+        let (mut s, mut e, mut w) = (p, e, w);
+        let implicit = w & W_ACTION == W_IMPLICIT;
+        if implicit {
+            let q = skip_spaces(b, e);
+            if q == e
+                || !b
+                    .get(q)
+                    .is_some_and(|&c| c.is_ascii_lowercase() || c == b'_')
+            {
+                return None;
+            }
+            (s, e) = (q, self.name_end(q));
+            w = WORDS.value(&b[s..e], &INFO);
+        }
+        let under = e == s + 1 && b[s] == b'_';
+        if !(under || w & 0xff == 0 || w & W_ACTION == W_SELF) || !is_colon_next(b, e) {
+            return None;
+        }
+        let c = skip_spaces(b, e);
+        if line_ends_after(b, c + 1) || self.lambda_after(c + 1) {
+            return None;
+        }
+        if implicit {
+            self.put(p, p + 8, MOD_OTHER);
+        }
+        self.put(s, e, if under { UNDERSCORE } else { PARAMETER });
+        self.put_hot(c, c + 1, ASCRIPTION);
+        self.push(F_BLTYPE);
+        self.head = H_NONE;
+        self.ty = 0;
+        self.prev = P_OP;
+        Some(c + 1)
+    }
+
     /// `_` at `p`: the underscore, `_*` varargs in a pattern or an argument.
     #[inline(always)]
     fn underscore(&mut self, p: usize) -> usize {
         let b = self.b;
+        if !SOL && self.head == H_FRESH {
+            self.head = H_NONE;
+            if let Some(r) = self.block_param(p, p + 1, 0) {
+                return r;
+            }
+        }
         if !SOL
             && (self.in_type() || is_pattern_frame(self.top()))
             && b.get(skip_spaces(b, p + 1)) == Some(&b'*')
@@ -1711,7 +1814,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 self.prev = P_NAME;
                 Some(e)
             }
-            F_PTYPE | F_TBOUND | F_TARGS | F_TPAREN | F_TBRACE | F_LPTYPE => {
+            F_PTYPE | F_TBOUND | F_TARGS | F_TPAREN | F_TBRACE | F_LPTYPE | F_BLTYPE => {
                 if top == F_TBRACE && w & W_ACTION != 0 {
                     return None;
                 }
@@ -2555,6 +2658,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn arrow(&mut self, p: usize, n: usize) -> usize {
         let top = self.top();
         let kind = match top {
+            F_BLTYPE => {
+                // a block's typed parameter's type ends at its first `=>`, `{ x: T =>`
+                self.pop();
+                LAMBDA_ARROW
+            }
             F_CASE | F_GUARD => {
                 self.pop();
                 self.ty = 0;
@@ -2617,9 +2725,13 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             }
             _ => {
                 self.put_hot(p, p + 1, ASCRIPTION);
-                if matches!(self.head, H_CLASS | H_NEW) && line_ends_after(self.b, p + 1) {
-                    // Scala 3's `class A:` before an indented body
-                    self.head = H_NONE;
+                if matches!(self.head, H_CLASS | H_NEW | H_EXTENDS)
+                    && line_ends_after(self.b, p + 1)
+                {
+                    // Scala 3's `class A:` before an indented body, whose first token may be a
+                    // self type's, as a `{`'s
+                    self.head = H_FRESH;
+                    self.prev = P_START;
                     return p + 1;
                 }
                 if !self.typed() && !self.lambda_after(p + 1) {
@@ -2950,6 +3062,33 @@ fn end_marker(b: &[u8], e: usize) -> bool {
 /// Whether the `(` at `p` opens a lambda's parameters: its `)` (on the line, within [`LOOK`]
 /// bytes) is followed by `=>`, and only a parameter list's bytes are between.
 fn lambda_params(b: &[u8], p: usize) -> bool {
+    params_scan(b, p) == Some(true)
+}
+
+/// Whether the `(` at `p`, whose bytes are a parameter list's to the line's end
+/// ([`params_scan`]'s `None`), opens a lambda's typed parameters past the line, `(x: Int,` with
+/// the rest and its `=>` on the lines after: a name and `:` first.
+#[cold]
+#[inline(never)]
+fn lambda_params_open(b: &[u8], p: usize) -> bool {
+    let q = skip_spaces(b, p + 1);
+    if !b
+        .get(q)
+        .is_some_and(|&c| c.is_ascii_lowercase() || c == b'_')
+    {
+        return false;
+    }
+    let mut e = q + 1;
+    while e < b.len() && NAME[usize::from(b[e])] {
+        e += 1;
+    }
+    is_colon_next(b, e) && b.len() - p <= LOOK
+}
+
+/// A parameter list's bytes from the `(` at `p` (within [`LOOK`] bytes): `Some` of whether `=>`
+/// follows where its `)` closes it, `Some(false)` at a byte no parameter list has, `None` where
+/// the line (or the look) ends inside it.
+fn params_scan(b: &[u8], p: usize) -> Option<bool> {
     let end = b.len().min(p + LOOK);
     let mut depth = 0u32;
     let mut i = p;
@@ -2959,14 +3098,14 @@ fn lambda_params(b: &[u8], p: usize) -> bool {
             b')' | b']' => {
                 depth -= 1;
                 if depth == 0 {
-                    return is_arrow_next(b, i + 1);
+                    return Some(is_arrow_next(b, i + 1));
                 }
             }
-            b'"' | b'\'' | b'{' | b'}' | b';' | b'/' => return false,
-            b'=' if b.get(i + 1) != Some(&b'>') => return false,
+            b'"' | b'\'' | b'{' | b'}' | b';' | b'/' => return Some(false),
+            b'=' if b.get(i + 1) != Some(&b'>') => return Some(false),
             _ => {}
         }
         i += 1;
     }
-    false
+    None
 }

@@ -2,8 +2,9 @@
 //! place, after a blank, `(` or `{`; bat's opens one at any `<` before a letter, `a<b`, and stays
 //! in XML to the next tag), its tags, attributes, text, comments, CDATA and entities, and its
 //! `{…}` of Scala. An element's content, a start tag and a `{…}` are frames ([`F_XML`],
-//! [`F_XTAG`], [`F_XEXPR`]), so a literal goes on across lines; it ends where its outermost
-//! element does.
+//! [`F_XTAG`], [`F_XEXPR`]), and so are a comment, CDATA and an attribute's string past their
+//! line ([`F_XCOMMENT`], [`F_XCDATA`], [`F_XDQ`], [`F_XSQ`]), so a literal goes on across lines;
+//! it ends where its outermost element does.
 
 use super::*;
 use crate::prim::find_in;
@@ -128,16 +129,9 @@ impl<K: Sink> Scan<'_, '_, K> {
                             return p + 1;
                         }
                         b'"' | b'\'' => {
-                            let q = b[p];
-                            let c = find_in(b, p + 1, n, [q]);
                             self.put(p, p + 1, XML_STR_BEGIN);
-                            self.put(p + 1, c, XML_STR);
-                            if c < n {
-                                self.put(c, c + 1, XML_STR_END);
-                                p = c + 1;
-                            } else {
-                                return n;
-                            }
+                            self.push(if b[p] == b'"' { F_XDQ } else { F_XSQ });
+                            p += 1;
                         }
                         b'}' | b')' | b']' => {
                             // bat's tag ends before a closer of the code around it
@@ -193,11 +187,71 @@ impl<K: Sink> Scan<'_, '_, K> {
                         _ => p = self.xml_lt(p),
                     }
                 }
+                F_XDQ | F_XSQ => {
+                    // an attribute's string, to its quote
+                    let c = find_in(b, p, n, [if self.top() == F_XDQ { b'"' } else { b'\'' }]);
+                    self.put(p, c, XML_STR);
+                    if c >= n {
+                        return n;
+                    }
+                    self.put(c, c + 1, XML_STR_END);
+                    self.pop();
+                    p = c + 1;
+                }
+                F_XCOMMENT | F_XCDATA => {
+                    let r = if self.top() == F_XCOMMENT {
+                        self.xml_until(p, *b"-->", XML_COMMENT)
+                    } else {
+                        self.xml_until(p, *b"]]>", XML_CDATA)
+                    };
+                    match r {
+                        Some(e) => p = e,
+                        None => return n,
+                    }
+                }
                 _ => {
-                    // the literal's end
+                    // the literal's end, but where another element follows past blanks: Scala's
+                    // parser reads `<a/> <b/>` as one literal, a sequence
+                    let q = crate::prim::skip_spaces(b, p);
+                    if b.get(q) == Some(&b'<') && xml_name_start(b, q + 1) {
+                        let e = xml_name_end(b, q + 1);
+                        self.put(q, q + 1, XML_TAG_BEGIN);
+                        self.put(q + 1, e, XML_TAG_NAME);
+                        self.push(F_XTAG);
+                        p = e;
+                        continue;
+                    }
                     self.prev = P_VALUE;
                     return p;
                 }
+            }
+        }
+    }
+
+    /// A comment's or CDATA's text from `p` (`kind`) to its `end` (`-->`, `]]>`), which closes its
+    /// frame: where the XML goes on, `None` where the text goes on past the line.
+    fn xml_until(&mut self, p: usize, end: [u8; 3], kind: u16) -> Option<usize> {
+        let b = self.b;
+        let n = b.len();
+        let c = b[p..]
+            .windows(3)
+            .position(|w| w == end.as_slice())
+            .map(|i| p + i);
+        match c {
+            Some(c) if kind == XML_CDATA => {
+                self.put(p, c + 3, XML_CDATA);
+                self.pop();
+                Some(c + 3)
+            }
+            Some(c) => {
+                self.put(p, c, kind);
+                self.put(c, c + 3, XML_COMMENT_END);
+                self.pop();
+                Some(c + 3)
+            }
+            None => {
+                self.put(p, n, kind);
+                None
             }
         }
     }
@@ -206,7 +260,6 @@ impl<K: Sink> Scan<'_, '_, K> {
     /// tag, a comment, CDATA; where the XML goes on.
     fn xml_lt(&mut self, p: usize) -> usize {
         let b = self.b;
-        let n = b.len();
         if b.get(p + 1) == Some(&b'/') {
             let e = xml_name_end(b, p + 2);
             self.put(p, p + 2, XML_TAG_BEGIN);
@@ -222,29 +275,13 @@ impl<K: Sink> Scan<'_, '_, K> {
         }
         if b[p..].starts_with(b"<!--") {
             self.put(p, p + 4, XML_COMMENT_BEGIN);
-            let c = b[p + 4..]
-                .windows(3)
-                .position(|w| w == b"-->")
-                .map(|i| p + 4 + i);
-            return match c {
-                Some(c) => {
-                    self.put(p + 4, c, XML_COMMENT);
-                    self.put(c, c + 3, XML_COMMENT_END);
-                    c + 3
-                }
-                None => {
-                    self.put(p + 4, n, XML_COMMENT);
-                    n
-                }
-            };
+            self.push(F_XCOMMENT);
+            return p + 4;
         }
         if b[p..].starts_with(b"<![CDATA[") {
-            let c = b[p + 9..]
-                .windows(3)
-                .position(|w| w == b"]]>")
-                .map_or(n, |i| p + 12 + i);
-            self.put(p, c, XML_CDATA);
-            return c;
+            self.put(p, p + 9, XML_CDATA);
+            self.push(F_XCDATA);
+            return p + 9;
         }
         if xml_name_start(b, p + 1) {
             let e = xml_name_end(b, p + 1);
