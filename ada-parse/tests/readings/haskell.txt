@@ -57,11 +57,13 @@
        "Foo" constant.other.haskell
        "=" keyword.operator.haskell
        "Foo" constant.other.haskell
-       "::" keyword.operator.haskell
-       "!" keyword.operator.haskell
-       "Int" constant.other.haskell
+       "fooX" entity.name.function.haskell
+       "::" keyword.other.double-colon.haskell
+       "Int" storage.type.haskell
        "," punctuation.separator.comma.haskell
-       "::" keyword.operator.haskell
+       "fooY" entity.name.function.haskell
+       "::" keyword.other.double-colon.haskell
+       "a" variable.other.generic-type.haskell
   14 |   | Bar deriving (Show, Eq)
        "|" keyword.operator.haskell
        "Bar" constant.other.haskell
@@ -76,7 +78,7 @@
        "Int" constant.other.haskell
        "deriving" keyword.other.haskell
        "newtype" keyword.other.haskell
-       "Num" constant.other.haskell
+       "Num" entity.other.inherited-class.haskell
   16 | class (Eq a) => Container f a where
        "class" keyword.other.haskell
        "Eq" support.class.prelude.haskell
@@ -314,3 +316,114 @@
        "." string.quoted.double.haskell constant.other.character-class.escape.backslash.regexp
        "b" string.quoted.double.haskell
        "\"" string.quoted.double.haskell punctuation.definition.string.end.haskell
+  40 | data R = R
+       "data" keyword.other.haskell
+       "R" constant.other.haskell
+       "=" keyword.operator.haskell
+       "R" constant.other.haskell
+  41 |   { rA, rB :: {-# UNPACK #-} !Int -- ^ doc
+       "rA" entity.name.function.haskell
+       "," punctuation.separator.comma.haskell
+       "rB" entity.name.function.haskell
+       "::" keyword.other.double-colon.haskell
+       "{-# " meta.preprocessor.haskell
+       "UNPACK" meta.preprocessor.haskell keyword.other.preprocessor.haskell
+       " #-}" meta.preprocessor.haskell
+       "Int" storage.type.haskell
+       "--" comment.line.double-dash.haskell punctuation.definition.comment.haskell
+       " ^ doc" comment.line.double-dash.haskell
+  42 |   , rC ::
+       "," punctuation.separator.comma.haskell
+       "rC" entity.name.function.haskell
+       "::" keyword.other.double-colon.haskell
+  43 |       Map Int String
+       "Map" storage.type.haskell
+       "Int" storage.type.haskell
+       "String" storage.type.haskell
+  44 |   }
+  45 |   deriving stock (Eq, Generic)
+       "deriving" keyword.other.haskell
+       "stock" keyword.other.haskell
+       "Eq" entity.other.inherited-class.haskell
+       "Generic" entity.other.inherited-class.haskell
+  46 |   deriving anyclass ToJSON
+       "deriving" keyword.other.haskell
+       "anyclass" keyword.other.haskell
+       "ToJSON" entity.other.inherited-class.haskell
+  47 |   deriving (Semigroup) via (Sum Int)
+       "deriving" keyword.other.haskell
+       "Semigroup" entity.other.inherited-class.haskell
+       "via" keyword.other.haskell
+       "Sum" storage.type.haskell
+       "Int" storage.type.haskell
+  48 | data T a where
+       "data" keyword.other.haskell
+       "T" constant.other.haskell
+       "where" keyword.other.haskell
+  49 |   TInt, TOne :: Int -> T Int
+       "TInt" constant.other.haskell
+       "," punctuation.separator.comma.haskell
+       "TOne" constant.other.haskell
+       "::" keyword.other.double-colon.haskell
+       "Int" storage.type.haskell
+       "->" keyword.other.arrow.haskell
+       "T" storage.type.haskell
+       "Int" storage.type.haskell
+  50 |   TRec :: { tf :: Int } -> T Int
+       "TRec" constant.other.haskell
+       "::" keyword.other.double-colon.haskell
+       "tf" entity.name.function.haskell
+       "::" keyword.other.double-colon.haskell
+       "Int" storage.type.haskell
+       "->" keyword.other.arrow.haskell
+       "T" storage.type.haskell
+       "Int" storage.type.haskell
+  51 | pattern Pair :: a -> b -> (a, b)
+       "pattern" keyword.other.haskell
+       "Pair" constant.other.haskell
+       "::" keyword.other.double-colon.haskell
+       "a" variable.other.generic-type.haskell
+       "->" keyword.other.arrow.haskell
+       "b" variable.other.generic-type.haskell
+       "->" keyword.other.arrow.haskell
+       "a" variable.other.generic-type.haskell
+       "b" variable.other.generic-type.haskell
+  52 | f, g
+       "," punctuation.separator.comma.haskell
+  53 |   :: (Monad m)
+       "::" keyword.other.double-colon.haskell
+       "Monad" storage.type.haskell
+       "m" variable.other.generic-type.haskell
+  54 |   => m ()
+       "=>" keyword.other.big-arrow.haskell
+       "m" variable.other.generic-type.haskell
+       "()" support.constant.unit.haskell
+  55 | f = let k :: Int
+       "=" keyword.operator.haskell
+       "let" keyword.other.haskell
+       "k" entity.name.function.haskell
+       "::" keyword.other.double-colon.haskell
+       "Int" storage.type.haskell
+  56 |         k = read "1" :: Int in pure (k :: Int, ())
+       "=" keyword.operator.haskell
+       "\"" string.quoted.double.haskell punctuation.definition.string.begin.haskell
+       "1" string.quoted.double.haskell
+       "\"" string.quoted.double.haskell punctuation.definition.string.end.haskell
+       "::" keyword.other.double-colon.haskell
+       "Int" storage.type.haskell
+       "in" keyword.other.haskell
+       "::" keyword.other.double-colon.haskell
+       "Int" storage.type.haskell
+       "," punctuation.separator.comma.haskell
+       "()" constant.language.unit.haskell
+  57 | instance
+       "instance" keyword.other.haskell
+  58 |   (Show a) =>
+       "Show" storage.type.haskell
+       "a" variable.other.generic-type.haskell
+       "=>" keyword.other.big-arrow.haskell
+  59 |   Show (W a) where
+       "Show" storage.type.haskell
+       "W" storage.type.haskell
+       "a" variable.other.generic-type.haskell
+       "where" keyword.other.haskell

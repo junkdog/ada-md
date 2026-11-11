@@ -437,8 +437,11 @@ fn scala() {
 /// instances, type signatures across lines, operators read whole and in parentheses, backticks,
 /// comments (`-->` an operator), numbers, characters, strings with escapes and a gap,
 /// quasi-quotes (text, SQL, a regex), Template Haskell's quotes as code, SQL in a call's string,
-/// regexes after `=~` and `mkRegex`. The departures from bat's grammar are pinned in ada-parse's
-/// `haskell` tests.
+/// regexes after `=~` and `mkRegex`; types wherever Haskell has one (X-143): a record's fields
+/// across lines, a GADT's constructors, `a, b ::`, `::` starting a line, `let f ::`, a pattern
+/// synonym's signature, deriving clauses with strategies and `via`, an instance's head across
+/// lines, annotations. The departures from bat's grammar are pinned in ada-parse's `haskell`
+/// tests.
 #[test]
 fn haskell() {
     let text = concat!(
@@ -481,6 +484,26 @@ fn haskell() {
         "    t = [d| f = $(g 'h ''T) |]\n",
         "    u = query conn \"SELECT id FROM users WHERE age > ?\" (Only n)\n",
         "    v = s =~ \"^[a-z]+(x|y)$\" || isJust (mkRegex \"a.b\")\n",
+        "data R = R\n",
+        "  { rA, rB :: {-# UNPACK #-} !Int -- ^ doc\n",
+        "  , rC ::\n",
+        "      Map Int String\n",
+        "  }\n",
+        "  deriving stock (Eq, Generic)\n",
+        "  deriving anyclass ToJSON\n",
+        "  deriving (Semigroup) via (Sum Int)\n",
+        "data T a where\n",
+        "  TInt, TOne :: Int -> T Int\n",
+        "  TRec :: { tf :: Int } -> T Int\n",
+        "pattern Pair :: a -> b -> (a, b)\n",
+        "f, g\n",
+        "  :: (Monad m)\n",
+        "  => m ()\n",
+        "f = let k :: Int\n",
+        "        k = read \"1\" :: Int in pure (k :: Int, ())\n",
+        "instance\n",
+        "  (Show a) =>\n",
+        "  Show (W a) where\n",
     );
     readings("haskell", Lang::Haskell, text);
 }

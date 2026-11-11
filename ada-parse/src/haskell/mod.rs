@@ -2,9 +2,10 @@
 //! byte's class one load from a table, a name read once and looked up once in one table (the
 //! keywords, the pragmas' words, the calls whose strings are SQL or a regex), an operator read
 //! as Haskell's lexer reads one (a run of symbol characters), and the few constructs bat colors
-//! by context read by small loops of their own: a type signature (`name ::` at a line's start,
-//! on to the lines indented past it), a module's head and an import's with their export lists,
-//! a class's head, an instance's, a deriving clause. Across lines the scan carries a word
+//! by context read by small loops of their own: a type (a signature's, `name ::` at a line's
+//! start, on to the lines indented past it; a record's field's; a GADT constructor's; an
+//! annotation's, `e :: T`), a module's head and an import's with their export lists, a class's
+//! head, an instance's, a deriving clause. Across lines the scan carries a word
 //! ([`Scan::state`]): the open block comment's depth, a pragma, a quasi-quote's kind with its
 //! SQL context or regex state, a string's gap, the head and the column it opened at. Kinds are
 //! bat's leaves; `meta.preprocessor` (pragmas, CPP's lines) is the one meta scope a theme keys.
@@ -25,7 +26,17 @@
 //!   (`x'`, `Foo'`);
 //! - numbers with `_` (`1_000`), binary (`0b101`), hexadecimal floats (`0x1.8p3`);
 //! - a class's head ends where its declaration does (a line not indented past it), not at the
-//!   next `where` in the file, and comments are comments in every head;
+//!   next `where` in the file, an instance's likewise, not at its line's end, and comments are
+//!   comments in every head;
+//! - a type is read wherever Haskell has one (X-143), not only after `name ::` at a line's
+//!   start: `a, b ::`, `(==), (/=) ::`, `::` starting a line, a record's fields (`{ f :: T`,
+//!   `, g :: T`, each to its `,` or `}`), a GADT's constructors (`Con ::`, its record's fields),
+//!   `where f ::`, `let f ::`, `default f ::`, `pattern P ::`, and an annotation (`(e :: T)`, to
+//!   its line's end or a bracket, `,`, `=`, `<-`, `|` or keyword outside its own); a type's
+//!   `::` is its keyword wherever it stands;
+//! - a deriving clause's classes are one reading with or without a strategy or parentheses
+//!   (`deriving Show`, `deriving stock (Eq)`, bat's constants), its strategy and `via` keywords,
+//!   `via`'s type a type; `foreign import` is no module's import;
 //! - a module's head has no invalid words, and an export list's parentheses nest across lines;
 //! - SQL in `[sql|…|]` and hasql-th's statement quasi-quotes, and in the strings of
 //!   postgresql-simple's, sqlite-simple's and persistent's calls (`query conn "…"`, `rawSql "…"`);
@@ -381,9 +392,9 @@ const W_MODULE: u16 = 1 << 8;
 const W_IMPORT: u16 = 2 << 8;
 /// `class`: a class's head, to its `where`.
 const W_CLASS: u16 = 3 << 8;
-/// `instance`: an instance's head, to its `where` or the line's end.
+/// `instance`: an instance's head, to its `where` or by layout.
 const W_INSTANCE: u16 = 4 << 8;
-/// `deriving`: a deriving clause's list where `(` follows.
+/// `deriving`: a deriving clause, its strategy, its classes, its `via`.
 const W_DERIVING: u16 = 5 << 8;
 /// `where`: a head's end.
 const W_WHERE: u16 = 6 << 8;
@@ -396,6 +407,14 @@ const W_FORALL: u16 = 8 << 8;
 const W_SQL: u16 = 9 << 8;
 /// A call whose string is a regex, POSIX's ERE: `mkRegex "…"`.
 const W_REGEX: u16 = 10 << 8;
+/// A deriving strategy, a keyword after `deriving`: `stock`, `newtype`, `anyclass`.
+const W_STRATEGY: u16 = 11 << 8;
+/// `via`: a keyword after `deriving` or its classes, a type after it.
+const W_VIA: u16 = 12 << 8;
+/// `let`, `default`: a signature may follow on their line (`let f :: Int`), as after `where`.
+const W_DECL: u16 = 13 << 8;
+/// `pattern` at a line's start before a capital: a pattern synonym's keyword, its signature.
+const W_PATTERN: u16 = 14 << 8;
 /// A pragma's word ([`PRAGMA_KW`] in `{-# … #-}`), a name elsewhere.
 const W_PRAGMA: u16 = 1 << 12;
 /// A class of the Prelude's: [`PRELUDE`] in a class's head.
@@ -412,10 +431,14 @@ const WORD_LIST: &[(&[u8], u16)] = &[
     (b"type", KEYWORD),
     (b"case", KEYWORD),
     (b"of", KEYWORD),
-    (b"let", KEYWORD),
+    (b"let", KEYWORD | W_DECL),
     (b"in", KEYWORD),
-    (b"newtype", KEYWORD),
-    (b"default", KEYWORD),
+    (b"newtype", KEYWORD | W_STRATEGY),
+    (b"stock", W_STRATEGY),
+    (b"anyclass", W_STRATEGY),
+    (b"via", W_VIA),
+    (b"default", KEYWORD | W_DECL),
+    (b"pattern", W_PATTERN),
     (b"foreign", KEYWORD),
     (b"infix", OPERATOR),
     (b"infixl", OPERATOR),
@@ -538,8 +561,10 @@ const M_GAP: u8 = 4;
 
 // A head the scan is in ([`Scan::head`]): what colors a name there.
 const H_NONE: u8 = 0;
-/// A type signature, `name ::` at a line's start, on to the lines indented past
-/// [`Scan::indent`].
+/// A type signature's type: after `name ::` or `a, b ::` at a line's start, a record's field
+/// (`{ name ::`, `, name ::`), a GADT constructor (`Con ::`), or `::` starting a line; on to
+/// the lines indented past [`Scan::indent`], to a `,`, `}`, `)`, `]` or `;` outside its
+/// brackets ([`Scan::paren`] deep), or at a `=`, `<-`, `|` or a keyword outside them.
 const H_SIG: u8 = 1;
 /// A module's head, to its `where`; its export list where [`Scan::paren`] is past 0.
 const H_MODULE: u8 = 2;
@@ -547,10 +572,17 @@ const H_MODULE: u8 = 2;
 const H_IMPORT: u8 = 3;
 /// A class's head, to its `where` or a line not indented past [`Scan::indent`].
 const H_CLASS: u8 = 4;
-/// An instance's head, to its `where` or the line's end.
+/// An instance's head, to its `where` or a line not indented past [`Scan::indent`] (bat's to
+/// the line's end), a data instance's to its `=` ([`Scan::paren`] 1); `via`'s type in a
+/// deriving clause.
 const H_INSTANCE: u8 = 5;
-/// A deriving clause's list, `deriving (…)`, to its `)`.
+/// A deriving clause: its strategy, its classes (in parentheses [`Scan::paren`] deep, or one
+/// bare), then a `via` or its end; [`Scan::indent`] 1 once its classes are read.
 const H_DERIVING: u8 = 6;
+/// An annotation's type, `e :: T` past a line's start: [`H_SIG`]'s reading and ends, and the
+/// line's end; a type application's bracketed type (`@(Maybe a)`, [`Scan::indent`] 1) to its
+/// close.
+const H_ANNOT: u8 = 7;
 
 // A quasi-quote's kind ([`Scan::quasi`]).
 /// Text: `[json|…|]`, `[r|…|]`.
@@ -661,9 +693,11 @@ struct Scan<'b, 'c, K: Sink> {
     head: u8,
     /// An open block comment's depth, up to 255.
     nest: u8,
-    /// The column a signature's or a class's head opened at (its line's blanks), up to 255.
+    /// The column a signature's or a class's head opened at (its line's blanks), up to 255; a
+    /// deriving clause's place; 1 for a type application's bracketed type.
     indent: u8,
-    /// How deep an export list's parentheses are, 0 outside one, up to 255.
+    /// How deep an export list's or a deriving clause's parentheses are, or a signature's
+    /// brackets; 0 outside one, up to 255. 1 in a data instance's head.
     paren: u8,
     /// An open quasi-quote's kind ([`Q_TEXT`]…).
     quasi: u8,
@@ -810,7 +844,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             M_CODE => {
                 let lead = blanks(self.b, base);
                 self.lead = lead;
-                if !SOL && matches!(self.head, H_SIG | H_CLASS) {
+                if !SOL && matches!(self.head, H_SIG | H_CLASS | H_INSTANCE) {
                     self.layout(lead);
                 }
                 if !SOL && self.sqlc != 0 {
@@ -831,7 +865,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.line_end();
     }
 
-    /// A signature's or a class's head at a line starting at `lead`: it goes on where the line
+    /// A signature's, a class's or an instance's head at a line starting at `lead`: it goes on where the line
     /// is indented past it, blank or a comment; else it ends (bat's
     /// `^(?!\s*(?:--|{-|$)|\1\s)`).
     #[inline(always)]
@@ -847,10 +881,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.head = H_NONE;
     }
 
-    /// What the line's end leaves: an import's head ends, a SQL call's place is carried.
+    /// What the line's end leaves: an import's head and an annotation's type end, a SQL call's
+    /// place is carried.
     #[inline(always)]
     fn line_end(&mut self) {
-        if self.head == H_INSTANCE || (self.head == H_IMPORT && self.paren == 0) {
+        if self.head == H_ANNOT || (self.head == H_IMPORT && self.paren == 0) {
             self.head = H_NONE;
         }
         self.sqlc = 0;
@@ -909,7 +944,21 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                         q
                     }
                 }
-                A_UPPER => self.upper(p),
+                A_UPPER => {
+                    // a constructor's, a type's or a module's name (`\b[A-Z]\w*\b`, its `'`s
+                    // with it), read once; a GADT's constructors where `::` or `,` follows
+                    let e = name_end(b, p);
+                    if p == self.lead
+                        && !SOL
+                        && matches!(b.get(blanks(b, e)), Some(b',' | b':' | 0xe2))
+                        && let Some(q) = self.decl_list(p, self.col(p))
+                    {
+                        // a GADT's constructors, `Con ::`
+                        return q;
+                    }
+                    self.put_hot(p, e, CONSTANT);
+                    e
+                }
                 A_DIGIT => self.number(p),
                 A_DQUOTE => self.dquote(p),
                 A_SQUOTE => self.squote(p),
@@ -924,13 +973,38 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     self.paren(p)
                 }
                 A_LBRACKET => self.bracket(p),
-                A_LBRACE => self.brace(p),
+                A_LBRACE => {
+                    let q = self.brace(p);
+                    if self.head != H_NONE {
+                        return q;
+                    }
+                    q
+                }
                 A_COMMA => {
                     self.put_hot(p, p + 1, COMMA);
+                    if p == self.lead
+                        && !SOL
+                        && let Some(q) = self.field(p + 1, self.col(p))
+                    {
+                        // a record's next field, `, name ::`
+                        return q;
+                    }
                     p + 1
                 }
-                A_DASH | A_SYM => self.op(p),
-                A_WIDE => self.wide(p),
+                A_DASH | A_SYM => {
+                    let q = self.op(p);
+                    if self.head != H_NONE {
+                        return q;
+                    }
+                    q
+                }
+                A_WIDE => {
+                    let q = self.wide(p);
+                    if self.head != H_NONE {
+                        return q;
+                    }
+                    q
+                }
                 _ => p + 1,
             };
         }
@@ -954,7 +1028,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 self.paren = 0;
                 e
             }
-            W_IMPORT => {
+            W_IMPORT if !after_word(&self.b[self.base..p], b"foreign") => {
                 self.head = H_IMPORT;
                 self.paren = 0;
                 e
@@ -966,17 +1040,19 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             }
             W_INSTANCE => {
                 self.head = H_INSTANCE;
+                self.indent = self.line_indent();
+                let before = &self.b[self.base..p];
+                self.paren =
+                    u8::from(after_word(before, b"data") || after_word(before, b"newtype"));
                 e
             }
             W_DERIVING => {
-                // `deriving (…)`: its list (bat's `(deriving)\s*\(`)
-                let q = blanks(self.b, e);
-                if self.b.get(q) == Some(&b'(') {
-                    self.head = H_DERIVING;
-                    q + 1
-                } else {
-                    e
-                }
+                // its classes one reading with or without a strategy or parentheses (bat's only
+                // after `deriving (`)
+                self.head = H_DERIVING;
+                self.paren = 0;
+                self.indent = 0;
+                e
             }
             W_SQL => {
                 self.sqlw = e;
@@ -986,8 +1062,37 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 self.rew = e;
                 e
             }
+            W_WHERE | W_DECL => self.keyword_sig(p, e).unwrap_or(e),
+            W_PATTERN if p == self.lead => {
+                let q = blanks(self.b, e);
+                match self.b.get(q) {
+                    Some(c) if c.is_ascii_uppercase() || *c == b'(' => {
+                        self.put(p, e, KEYWORD);
+                        self.decl_list(q, self.col(p)).unwrap_or(e)
+                    }
+                    _ => e,
+                }
+            }
             _ => e,
         }
+    }
+
+    /// A signature after `where`, `let` or `default` (the word `b[p..e]`) on its line:
+    /// `where f :: T`, `let g, h :: T`, `default m :: T`; the type's layout a `let`'s or a
+    /// `where`'s block's column (its name's), a `default`'s own.
+    #[inline(always)]
+    fn keyword_sig(&mut self, p: usize, e: usize) -> Option<usize> {
+        let b = self.b;
+        let q = blanks(b, e);
+        if q == e || !matches!(ACT[usize::from(*b.get(q)?)], A_LOWER | A_LPAREN) {
+            return None;
+        }
+        let indent = if b[p] == b'd' {
+            self.col(p)
+        } else {
+            self.col(q)
+        };
+        self.decl_list(q, indent)
     }
 
     /// The column the line's first token is at, from its code's start: a head's indent, up to
@@ -1008,40 +1113,121 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn signature(&mut self, p: usize, e: usize) -> Option<usize> {
         let b = self.b;
         let q = blanks(b, e);
-        let k = double_colon(b, q)?;
+        let Some(k) = double_colon(b, q) else {
+            // `a, b :: T`
+            return if b.get(q) == Some(&b',') {
+                self.decl_list(p, self.col(p))
+            } else {
+                None
+            };
+        };
         self.put(p, e, FUNCTION);
         self.put(q, q + k, DOUBLE_COLON);
-        self.head = H_SIG;
-        self.indent = (p - self.base).min(255) as u8;
+        self.open_sig(self.col(p));
         Some(q + k)
     }
 
     /// `(op) ::` at the line's start, `(` at `p`: a signature, whatever the operator's characters
-    /// (bat's `\([|!%$+\-.,=</>]+\)` turns away `(.&&.)`).
+    /// (bat's `\([|!%$+\-.,=</>]+\)` turns away `(.&&.)`), or a list of them (`(==), (/=) ::`).
     #[cold]
     #[inline(never)]
     fn op_signature(&mut self, p: usize) -> Option<usize> {
         let b = self.b;
-        let e = infix_name_end(b, p);
-        if e == p {
+        if infix_name_end(b, p) == p {
             return None;
         }
-        let q = blanks(b, e);
-        let k = double_colon(b, q)?;
-        self.put(p, e, FUNCTION);
-        self.put(q, q + k, DOUBLE_COLON);
-        self.head = H_SIG;
-        self.indent = (p - self.base).min(255) as u8;
-        Some(q + k)
+        self.decl_list(p, self.col(p))
     }
 
-    /// A name starting with a capital at `p`: a constructor's, a type's, a module's
-    /// (`\b[A-Z]\w*\b`, the name's `'`s with it).
+    /// The column `p` is at from the line's code's start, up to 255.
     #[inline(always)]
-    fn upper(&mut self, p: usize) -> usize {
-        let e = name_end(self.b, p);
-        self.put_hot(p, e, CONSTANT);
-        e
+    fn col(&self, p: usize) -> u8 {
+        (p - self.base).min(255) as u8
+    }
+
+    /// A signature's type opens: its head, the column its layout keeps to, its brackets.
+    #[inline(always)]
+    fn open_sig(&mut self, indent: u8) {
+        self.head = H_SIG;
+        self.indent = indent;
+        self.paren = 0;
+    }
+
+    /// A record's field after its `{` or `,`, from `p`: `name ::`, `a, b ::`, the signature's
+    /// type opened with `indent` (the `{`'s or a leading `,`'s column). `None` where none is.
+    #[inline(always)]
+    fn field(&mut self, p: usize, indent: u8) -> Option<usize> {
+        let q = blanks(self.b, p);
+        if ACT[usize::from(*self.b.get(q)?)] != A_LOWER {
+            return None;
+        }
+        self.decl_list(q, indent)
+    }
+
+    /// `{` at `p` in code, not a comment's: a record's first field after it, or plain.
+    #[inline(never)]
+    fn lbrace(&mut self, p: usize) -> usize {
+        let indent = self.col(p);
+        self.field(p + 1, indent).unwrap_or(p + 1)
+    }
+
+    /// The names a signature declares from `p`, then its `::`: `name ::`, `a, b ::`,
+    /// `(==), (/=) ::`, a GADT's `Con ::` and `A, B ::`. The names a function's (a constructor's
+    /// a constant as elsewhere), the commas, the `::`; the signature's type opened with `indent`.
+    /// Where the `::` ends, or `None` (and nothing written) where there's no `::` after them.
+    #[cold]
+    #[inline(never)]
+    fn decl_list(&mut self, p: usize, indent: u8) -> Option<usize> {
+        let e = self.decl_names(p)?;
+        self.open_sig(indent);
+        Some(e)
+    }
+
+    /// [`Scan::decl_list`]'s names and `::` written, the type not opened: where the `::` ends.
+    #[inline(always)]
+    fn decl_names(&mut self, p: usize) -> Option<usize> {
+        let (end, k) = decl_check(self.b, p)?;
+        Some(self.decl_write(p, end, k))
+    }
+
+    /// [`Scan::decl_names`]' writes, `b[p..end]` the names and commas, `k` bytes of `::` after.
+    #[inline(always)]
+    fn decl_write(&mut self, p: usize, end: usize, k: usize) -> usize {
+        let b = self.b;
+        let mut q = p;
+        while q < end {
+            q = match ACT[usize::from(b[q])] {
+                A_SPACE => blanks(b, q),
+                A_COMMA => {
+                    self.put(q, q + 1, COMMA);
+                    q + 1
+                }
+                c => {
+                    let e = decl_name_end(b, q).unwrap_or(q + 1);
+                    self.put(q, e, if c == A_UPPER { CONSTANT } else { FUNCTION });
+                    e
+                }
+            };
+        }
+        self.put(end, end + k, DOUBLE_COLON);
+        end + k
+    }
+
+    /// A GADT record's field in a constructor's type, from `p` (after its `{`, or a `,` a
+    /// bracket deep): its names and `::` as a field's, the type going on. Where the `::` ends.
+    #[cold]
+    #[inline(never)]
+    fn type_field(&mut self, p: usize) -> Option<usize> {
+        let b = self.b;
+        let q = blanks(b, p);
+        if ACT[usize::from(*b.get(q)?)] != A_LOWER {
+            return None;
+        }
+        let (end, k) = decl_check(b, q)?;
+        if b[p - 1] == b',' {
+            self.put(p - 1, p, COMMA);
+        }
+        Some(self.decl_write(q, end, k))
     }
 
     /// A number at `p`: bat's decimal, hexadecimal, octal and float forms, and Haskell's binary
@@ -1201,6 +1387,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn brace(&mut self, p: usize) -> usize {
         let b = self.b;
         if b.get(p + 1) != Some(&b'-') {
+            if !SOL && self.head == H_NONE {
+                return self.lbrace(p);
+            }
             return p + 1;
         }
         if b.get(p + 2) == Some(&b'#') {
@@ -1215,7 +1404,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     }
 
     /// An operator at `p`: a run of symbol characters, a comment where it's dashes alone, `$(`
-    /// a splice, `#` at the line's start a CPP directive.
+    /// a splice, `#` at the line's start a CPP directive, `@` before a type a type application,
+    /// `::` a type's start.
     #[inline(always)]
     fn op(&mut self, p: usize) -> usize {
         let b = self.b;
@@ -1240,14 +1430,79 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     self.put(p, p + 2, SPLICE);
                     return p + 2;
                 }
+                b'@' if !SOL => {
+                    if let Some(q) = self.type_app(p) {
+                        return q;
+                    }
+                }
                 _ => {}
             }
         }
         if !SOL && e == p + 2 && b[p] == b'=' && b[p + 1] == b'~' {
             self.rew = e;
         }
+        if !SOL && double_colon(b, p) == Some(e - p) {
+            self.put(p, e, DOUBLE_COLON);
+            if p == self.lead {
+                // `::` starting a line: a signature whose name is on the line before; its type
+                // on to the lines indented as far as the `::`
+                self.open_sig(self.col(p).saturating_sub(1));
+            } else {
+                // `(e :: T)`, `x :: Int <- m`, `data T :: Type where`
+                self.head = H_ANNOT;
+                self.paren = 0;
+                self.indent = 0;
+            }
+            return e;
+        }
         self.put_hot(p, e, OPERATOR);
         e
+    }
+
+    /// `@` at `p` before a type, after a blank or a bracket (Haskell's lexer's type application,
+    /// where `x@p` is an as-pattern): `@` an operator, the type after it a type's (a name, a
+    /// qualified one, a type variable, or a bracketed type to its close: an annotation's head
+    /// with [`Scan::indent`] 1). Where it ends, `None` where it isn't one.
+    #[cold]
+    #[inline(never)]
+    fn type_app(&mut self, p: usize) -> Option<usize> {
+        let b = self.b;
+        if p > self.base && !matches!(b[p - 1], b' ' | b'\t' | b'(' | b'[' | b',') {
+            return None;
+        }
+        let q = p + 1;
+        let c = *b.get(q)?;
+        match ACT[usize::from(c)] {
+            A_UPPER => {
+                self.put(p, q, OPERATOR);
+                let mut e = name_end(b, q);
+                self.put(q, e, STORAGE);
+                while e + 1 < b.len() && b[e] == b'.' && b[e + 1].is_ascii_uppercase() {
+                    let s = e + 1;
+                    e = name_end(b, s);
+                    self.put(s, e, STORAGE);
+                }
+                Some(e)
+            }
+            A_LOWER if c != b'_' => {
+                self.put(p, q, OPERATOR);
+                let e = name_end(b, q);
+                self.put(q, trim_primes(b, q, e), GENERIC);
+                Some(e)
+            }
+            A_LPAREN | A_LBRACKET => {
+                self.put(p, q, OPERATOR);
+                if b.get(q + 1) == Some(&b')') {
+                    self.put(q, q + 2, UNIT_TYPE);
+                    return Some(q + 2);
+                }
+                self.head = H_ANNOT;
+                self.paren = 0;
+                self.indent = 1;
+                Some(q)
+            }
+            _ => None,
+        }
     }
 
     /// `#` at the line's start: a CPP directive (bat's `^\s*(#)\s*\w+`), its blanks, `#` and
@@ -1295,11 +1550,24 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         while p < n && self.head != H_NONE {
             let c = b[p];
             let head = self.head;
+            if head == H_DERIVING && self.paren == 0 {
+                p = self.deriving(p);
+                continue;
+            }
             p = match ACT[usize::from(c)] {
                 A_SPACE => blanks(b, p + 1),
                 A_LOWER => self.head_lower(p),
                 A_UPPER => self.head_upper(p),
+                A_LBRACE if is_type(head) && b.get(p + 1) != Some(&b'-') => {
+                    // a GADT record's braces in a constructor's type
+                    self.paren = self.paren.saturating_add(1);
+                    self.type_field(p + 1).unwrap_or(p + 1)
+                }
                 A_LBRACE => self.brace(p),
+                A_LBRACKET if is_type(head) => {
+                    self.paren = self.paren.saturating_add(1);
+                    p + 1
+                }
                 A_DASH if b.get(p + 1) == Some(&b'-') && dashes(b, p) => self.line_comment(p),
                 A_SYM if c == b'#' && p == self.lead => match self.cpp(p) {
                     // a CPP line in a head: the rest of it isn't the head's
@@ -1311,15 +1579,27 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     self.paren = 0;
                     self.th_close(p, p + 1)
                 }
-                A_DASH | A_SYM if matches!(head, H_SIG | H_INSTANCE) => self.type_op(p),
-                A_WIDE if matches!(head, H_SIG | H_INSTANCE) && wide_symbol(b, p).is_some() => {
+                A_DASH | A_SYM if matches!(head, H_SIG | H_ANNOT | H_INSTANCE) => self.type_op(p),
+                A_WIDE
+                    if matches!(head, H_SIG | H_ANNOT | H_INSTANCE)
+                        && wide_symbol(b, p).is_some() =>
+                {
                     self.type_op(p)
                 }
                 A_LPAREN => self.head_paren(p),
-                A_CLOSE if c == b')' => self.head_close(p),
-                A_CLOSE if c == b';' && head == H_IMPORT && self.paren == 0 => {
+                A_CLOSE => self.head_close(p),
+                A_COMMA if head == H_SIG && self.paren == 0 => {
+                    // a record's field ends, the next may follow
                     self.head = H_NONE;
-                    p + 1
+                    self.put(p, p + 1, COMMA);
+                    self.field(p + 1, self.indent).unwrap_or(p + 1)
+                }
+                A_COMMA if head == H_ANNOT && self.paren == 0 => {
+                    self.head = H_NONE;
+                    p
+                }
+                A_COMMA if is_type(head) && self.paren == 1 => {
+                    self.type_field(p + 1).unwrap_or(p + 1)
                 }
                 A_COMMA if self.exports() => {
                     self.put(p, p + 1, COMMA);
@@ -1359,8 +1639,14 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             return e;
         }
         match head {
-            H_SIG | H_INSTANCE => {
-                if i & W_ACTION == W_FORALL {
+            H_SIG | H_ANNOT if matches!(i & 0xff, KEYWORD | CONTROL) && self.paren == 0 => {
+                // `where`, `of`, `in`, `then`, `deriving`: the type's end, left to the code
+                self.head = H_NONE;
+                return p;
+            }
+            H_SIG | H_ANNOT | H_INSTANCE => {
+                if i & W_ACTION == W_FORALL || (head == H_INSTANCE && i & W_ACTION == W_INSTANCE) {
+                    // `deriving via T instance C`'s `instance` too
                     self.put(p, e, KEYWORD);
                 } else if b[p] != b'_' {
                     // bat's `\b[a-z][a-zA-Z0-9_']*\b`: a trailing `'` isn't the name's
@@ -1397,7 +1683,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
         let e = name_end(b, p);
         match head {
-            H_SIG | H_INSTANCE => self.put(p, e, STORAGE),
+            H_SIG | H_ANNOT | H_INSTANCE => self.put(p, e, STORAGE),
             H_MODULE | H_IMPORT if self.paren == 1 => self.put(p, e, STORAGE),
             H_CLASS => {
                 let kind = if info(&b[p..e]) & W_PRELUDE != 0 {
@@ -1413,7 +1699,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         e
     }
 
-    /// An operator at `p` in a type: `->` and `=>` its arrows, others plain.
+    /// An operator at `p` in a type: `->` and `=>` its arrows, others plain; `=`, `<-` and `|`
+    /// outside a signature's or an annotation's brackets its end, left to the code, and `=` a
+    /// data instance's head's.
     #[inline(always)]
     fn type_op(&mut self, p: usize) -> usize {
         let b = self.b;
@@ -1422,9 +1710,23 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         let kind = match t {
             b"->" => ARROW,
             b"=>" => BIG_ARROW,
+            b"=" | b"<-" | b"|" if is_type(self.head) && self.paren == 0 => {
+                self.head = H_NONE;
+                return p;
+            }
+            // `data instance T a` ⏎ `= C a`: the instance's head ends at its constructors (a
+            // `type instance`'s right side a type)
+            b"=" if self.head == H_INSTANCE && self.paren == 1 => {
+                self.head = H_NONE;
+                return p;
+            }
             _ => match wide_symbol(b, p) {
                 Some((3, b"->")) if e == p + 3 => ARROW,
                 Some((3, b"=>")) if e == p + 3 => BIG_ARROW,
+                Some((3, b"<-")) if e == p + 3 && is_type(self.head) && self.paren == 0 => {
+                    self.head = H_NONE;
+                    return p;
+                }
                 _ => 0,
             },
         };
@@ -1439,11 +1741,18 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn head_paren(&mut self, p: usize) -> usize {
         let b = self.b;
         match self.head {
-            H_SIG | H_INSTANCE => {
+            H_SIG | H_ANNOT | H_INSTANCE => {
                 if b.get(p + 1) == Some(&b')') {
                     self.put(p, p + 2, UNIT_TYPE);
                     return p + 2;
                 }
+                if is_type(self.head) {
+                    self.paren = self.paren.saturating_add(1);
+                }
+                p + 1
+            }
+            H_DERIVING => {
+                self.paren = self.paren.saturating_add(1);
                 p + 1
             }
             H_MODULE | H_IMPORT => {
@@ -1461,16 +1770,104 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
     }
 
-    /// `)` at `p` in a head: an export list's close, a deriving list's end.
+    /// `)`, `]`, `}` or `;` at `p` in a head: an export list's close, an import's end, a
+    /// deriving clause's classes read; a signature's bracket closed, or its type's end outside
+    /// them (left to the code).
     #[inline(always)]
     fn head_close(&mut self, p: usize) -> usize {
+        let c = self.b[p];
         match self.head {
-            H_MODULE | H_IMPORT if self.paren > 0 => self.paren -= 1,
-            H_DERIVING => self.head = H_NONE,
+            H_SIG | H_ANNOT if self.paren > 0 && c != b';' => {
+                self.paren -= 1;
+                if self.paren == 0 && self.head == H_ANNOT && self.indent == 1 {
+                    // a type application's bracketed type, `@(Maybe a)`, read
+                    self.head = H_NONE;
+                }
+            }
+            H_SIG | H_ANNOT => {
+                self.head = H_NONE;
+                return p;
+            }
+            H_MODULE | H_IMPORT if c == b')' && self.paren > 0 => self.paren -= 1,
+            H_IMPORT if c == b';' && self.paren == 0 => self.head = H_NONE,
+            H_DERIVING if c == b')' => {
+                self.paren -= 1;
+                if self.paren == 0 {
+                    self.indent = 1;
+                }
+            }
             _ => {}
         }
         p + 1
     }
+
+    /// A deriving clause outside its parentheses, at `p`: its strategy (`stock`, `newtype`,
+    /// `anyclass`) and `instance` before its classes, a bare class (qualified or not) or its
+    /// parentheses' open, `via` with a type after it (an instance's head's reading); anything else ends it, left to the code.
+    #[inline(never)]
+    fn deriving(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let before = self.indent == 0;
+        match ACT[usize::from(b[p])] {
+            A_SPACE => blanks(b, p + 1),
+            A_DASH if b.get(p + 1) == Some(&b'-') && dashes(b, p) => self.line_comment(p),
+            A_LBRACE if b.get(p + 1) == Some(&b'-') => self.brace(p),
+            A_SYM if b[p] == b'#' && p == self.lead && self.cpp(p).is_some() => n,
+            A_LPAREN if before => {
+                self.paren = 1;
+                p + 1
+            }
+            A_UPPER if before => {
+                let mut e = name_end(b, p);
+                self.put(p, e, INHERITED);
+                while e + 1 < n && b[e] == b'.' && b[e + 1].is_ascii_uppercase() {
+                    let s = e + 1;
+                    e = name_end(b, s);
+                    self.put(s, e, INHERITED);
+                }
+                self.indent = 1;
+                e
+            }
+            A_LOWER => {
+                let e = name_end(b, p);
+                let a = info(&b[p..e]) & W_ACTION;
+                if a == W_VIA || (before && a == W_INSTANCE) {
+                    self.put(p, e, KEYWORD);
+                    self.head = H_INSTANCE;
+                    self.indent = self.line_indent();
+                    self.paren = 0;
+                } else if before && a == W_STRATEGY {
+                    self.put(p, e, KEYWORD);
+                } else {
+                    self.head = H_NONE;
+                    return p;
+                }
+                e
+            }
+            _ => {
+                self.head = H_NONE;
+                p
+            }
+        }
+    }
+}
+
+/// Whether `before`, a line's code before a keyword, ends in the word `w`: `foreign import`
+/// (a foreign declaration, not a module's import), `data instance`.
+#[inline(always)]
+fn after_word(before: &[u8], w: &[u8]) -> bool {
+    let mut e = before.len();
+    while e > 0 && is_blank(before[e - 1]) {
+        e -= 1;
+    }
+    before[..e].ends_with(w) && (e == w.len() || !NAME[usize::from(before[e - w.len() - 1])])
+}
+
+/// Whether `head` reads a type that ends outside its brackets: a signature's, an annotation's.
+#[inline(always)]
+fn is_type(head: u8) -> bool {
+    matches!(head, H_SIG | H_ANNOT)
 }
 
 /// Whether the operator at `p` is dashes alone: a comment's start (`--`, `---`), where `-->`
@@ -1484,12 +1881,40 @@ fn dashes(b: &[u8], p: usize) -> bool {
 /// `::` or `∷` at `q`: how many bytes it takes.
 #[inline(always)]
 fn double_colon(b: &[u8], q: usize) -> Option<usize> {
-    if b.get(q..q + 2) == Some(b"::") {
-        Some(2)
-    } else if b.get(q..q + 3) == Some("∷".as_bytes()) {
-        Some(3)
-    } else {
-        None
+    // byte tests, no slice comparison: `op` asks at every operator
+    match *b.get(q)? {
+        b':' => (b.get(q + 1) == Some(&b':')).then_some(2),
+        0xe2 => (b.get(q + 1) == Some(&0x88) && b.get(q + 2) == Some(&0xb7)).then_some(3),
+        _ => None,
+    }
+}
+
+/// The names a signature declares from `p` and its `::` ([`Scan::decl_list`]): where the `::`
+/// starts and its length, `None` where there's none after them.
+#[inline(always)]
+fn decl_check(b: &[u8], p: usize) -> Option<(usize, usize)> {
+    let mut q = p;
+    loop {
+        q = blanks(b, decl_name_end(b, q)?);
+        if b.get(q) == Some(&b',') {
+            q = blanks(b, q + 1);
+        } else {
+            return Some((q, double_colon(b, q)?));
+        }
+    }
+}
+
+/// Where a name a signature declares ends, from `q`: a name (a constructor's too), `(op)`;
+/// `None` where none starts.
+#[inline(always)]
+fn decl_name_end(b: &[u8], q: usize) -> Option<usize> {
+    match ACT[usize::from(*b.get(q)?)] {
+        A_LOWER | A_UPPER => Some(name_end(b, q)),
+        A_LPAREN => {
+            let e = infix_name_end(b, q);
+            (e > q).then_some(e)
+        }
+        _ => None,
     }
 }
 

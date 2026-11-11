@@ -100,6 +100,268 @@ fn signatures_run_to_their_layout() {
     never(&l, "x", VAR);
 }
 
+const DC: &str = "keyword.other.double-colon.haskell";
+const INHERITED: &str = "entity.other.inherited-class.haskell";
+
+#[test]
+fn record_fields_are_signatures() {
+    // on one line: each field's type to its `,` or `}`, outside its brackets
+    let l = ["data P = P { px :: Int, py, pz :: Maybe (Int, Int) } deriving Show"];
+    has(&l, "px", FUNC);
+    has(&l, "py", FUNC);
+    has(&l, "pz", FUNC);
+    has(&l, "Int", TYPE);
+    has(&l, "Maybe", TYPE);
+    has(&l, "P", CONST);
+    never(&l, "P", TYPE);
+    has(&l, "deriving", KW);
+    // leading commas, a type on the line after its `::`, a pragma and a comment in a type
+    let l = [
+        "data R = R",
+        "  { rA :: !Int",
+        "  , rB :: {-# UNPACK #-} !Double -- ^ doc",
+        "  , rC ::",
+        "      Map Int",
+        "        String",
+        "  , rD :: forall a. a -> [a]",
+        "  }",
+        "  deriving (Eq)",
+        "x = R { rA = 1 }",
+    ];
+    for f in ["rA", "rB", "rC", "rD"] {
+        has(&l, f, FUNC);
+    }
+    for t in ["Double", "Map", "String"] {
+        has(&l, t, TYPE);
+    }
+    has(&l, "a", VAR);
+    has(
+        &l,
+        "UNPACK",
+        "meta.preprocessor.haskell keyword.other.preprocessor.haskell",
+    );
+    has(&l, " ^ doc", COMMENT);
+    has(&l, "Eq", INHERITED);
+    // a record's construction isn't a field's declaration
+    never(&l, "x", FUNC);
+    never(&l, "R", TYPE);
+    // trailing commas, the record's `}` on a field's line
+    let l = [
+        "data S = S {",
+        "    sA :: Int,",
+        "    sB :: Bool }",
+        "y = 1",
+    ];
+    has(&l, "sA", FUNC);
+    has(&l, "Bool", TYPE);
+    has(&l, ",", "punctuation.separator.comma.haskell");
+    never(&l, "y", VAR);
+    // explicit braces' `;` ends a signature's type
+    let l = ["f = let { g :: Int -> Int; g = id } in g"];
+    has(&l, "g", FUNC);
+    has(&l, "Int", TYPE);
+    never(&l, "id", VAR);
+    never(&l, "in", VAR);
+}
+
+#[test]
+fn constructors_and_name_lists_are_signatures() {
+    let l = [
+        "data T a where",
+        "  TInt :: Int -> T Int",
+        "  TPair, TPair' :: T a -> T (a, b)",
+        "  TRec :: { tf :: Int, tg :: (Int, Int) } -> T Int",
+        "class C a where",
+        "  (==.), (/=.) :: a -> a -> Bool",
+        "  foo, bar :: a",
+        "f, g :: Int",
+        "f = id",
+    ];
+    has(&l, "TInt", CONST);
+    has(&l, "tg", FUNC);
+    has(&l, "TPair'", CONST);
+    has(&l, "T", TYPE);
+    has(&l, "->", "keyword.other.arrow.haskell");
+    // a GADT record's fields in a constructor's type, the type going on
+    has(&l, "tf", FUNC);
+    has(&l, "(==.)", FUNC);
+    has(&l, "(/=.)", FUNC);
+    has(&l, "foo", FUNC);
+    has(&l, "bar", FUNC);
+    has(&l, "g", FUNC);
+    has(&l, "Bool", TYPE);
+    never(&l, "id", VAR);
+    // a constructor at a line's start without `::` is a constant
+    let l = ["  Just x :: Maybe Int", "Foo.bar :: Int"];
+    has(&l, "Just", CONST);
+    never(&l, "Foo", TYPE);
+}
+
+#[test]
+fn signatures_after_a_keyword() {
+    let l = [
+        "class C a where",
+        "  default foo :: (Show a)",
+        "    => a",
+        "f = go where go :: Int",
+        "g = let k, j :: Int",
+        "        k = 1 in k",
+        "pattern Pair :: a -> b -> (a, b)",
+        "pattern = 1",
+    ];
+    for n in ["foo", "go", "k", "j"] {
+        has(&l, n, FUNC);
+    }
+    has(&l, "Show", TYPE);
+    has(&l, "Pair", CONST);
+    has(&l, "pattern", KW);
+    // `pattern` a name elsewhere
+    let toks = of(&l);
+    assert_eq!(
+        toks.iter().filter(|(t, _)| t == "pattern").count(),
+        1,
+        "{toks:#?}"
+    );
+    has(&l, "in", KW);
+}
+
+#[test]
+fn a_double_colon_starting_a_line_opens_a_signature() {
+    let l = [
+        "longName",
+        "  :: (Show a)",
+        "  => a",
+        "  -> Int",
+        "longName x = 1",
+    ];
+    has(&l, "::", DC);
+    has(&l, "Show", TYPE);
+    has(&l, "a", VAR);
+    has(&l, "->", "keyword.other.arrow.haskell");
+    never(&l, "x", VAR);
+    has(&l, "=", OP);
+}
+
+#[test]
+fn annotations_read_their_types() {
+    let l = [
+        "h x = (fromIntegral x :: Double) + read s :: Double",
+        "main = do",
+        "  n :: Int <- readLn",
+        "  let m = read s :: Int",
+        "      k = m",
+        "  pure (a :: Int, b)",
+        "  case v :: Maybe Int of",
+        "    _ -> if q :: Bool then r else w",
+        "type family F a :: Type where",
+        "foreign import ccall \"x\" c_x :: CInt -> IO ()",
+    ];
+    has(&l, "::", DC);
+    never(&l, "::", OP);
+    for t in ["Double", "Int", "Maybe", "Bool", "Type", "CInt", "IO"] {
+        has(&l, t, TYPE);
+    }
+    has(&l, "()", "support.constant.unit.haskell");
+    // each type ends where the expression goes on
+    has(&l, "+", OP);
+    has(&l, "<-", OP);
+    for k in ["of", "then", "else", "where"] {
+        has(
+            &l,
+            k,
+            KW_OR_CONTROL[usize::from(matches!(k, "then" | "else"))],
+        );
+    }
+    for v in ["readLn", "k", "m", "b", "r", "w", "s"] {
+        never(&l, v, VAR);
+    }
+}
+
+const KW_OR_CONTROL: [&str; 2] = [KW, "keyword.control.haskell"];
+
+#[test]
+fn type_applications() {
+    let l = [
+        "x = show @Int 1 <> f @(Maybe a) y @M.Map @k' @[Bool] @() z",
+        "g p@(Just q) = h q",
+    ];
+    for t in ["Int", "Maybe", "M", "Map", "Bool"] {
+        has(&l, t, TYPE);
+    }
+    has(&l, "a", VAR);
+    has(&l, "k", VAR);
+    has(&l, "()", "support.constant.unit.haskell");
+    // the type ends with its bracket, an as-pattern's `@` no type application's
+    for v in ["y", "z", "q"] {
+        never(&l, v, VAR);
+    }
+    never(&l, "Just", TYPE);
+}
+
+#[test]
+fn deriving_clauses() {
+    let l = [
+        "data S = S Int",
+        "  deriving stock (Eq, Generic)",
+        "  deriving anyclass (ToJSON)",
+        "  deriving newtype Num",
+        "  deriving Data.Data.Data",
+        "  deriving (Semigroup, Monoid) via (Sum Int)",
+        "  deriving",
+        "    ( Ord",
+        "    , Read",
+        "    )",
+        "    via Down S",
+        "deriving instance Show (T a)",
+        "deriving stock instance Eq P",
+        "deriving via (Max Int) instance Semigroup M",
+        "deriving via",
+        "  (Min Int)",
+        "  instance",
+        "    (Ord a) =>",
+        "    Monoid (W a)",
+        "data instance MVector s (a, b)",
+        "    = MV_2 !Int",
+        "type instance F Int = Bool",
+        "x = stock",
+    ];
+    for k in ["stock", "anyclass", "newtype", "via", "instance"] {
+        has(&l, k, KW);
+    }
+    for c in [
+        "Eq",
+        "Generic",
+        "ToJSON",
+        "Num",
+        "Data",
+        "Semigroup",
+        "Monoid",
+        "Ord",
+        "Read",
+    ] {
+        has(&l, c, INHERITED);
+    }
+    never(&l, "Num", CONST);
+    // `via`'s type, a standalone deriving's instance head
+    for t in ["Sum", "Down", "Show", "Max", "M", "Min", "Monoid", "W"] {
+        has(&l, t, TYPE);
+    }
+    // a data instance's constructors aren't its head's
+    has(&l, "MV_2", CONST);
+    // a type instance's right side a type
+    has(&l, "Bool", TYPE);
+    has(&l, "MVector", TYPE);
+    // the clause ends where its classes do
+    has(&l, "=", OP);
+    never(&l, "x", VAR);
+    let toks = of(&l);
+    assert_eq!(
+        toks.iter().filter(|(t, s)| t == "stock" && s == KW).count(),
+        2,
+        "{toks:#?}"
+    );
+}
+
 #[test]
 fn heads() {
     let l = [
@@ -435,7 +697,8 @@ fn a_block_lexes_as_its_lines() {
 fn spans_stay_in_order_on_every_line() {
     let text = "a = [sql|'x|] ++ \"\\\n\\\" [re|[\n|]\nx = 'λ' ∷ → ⇒ \"∙\" =~ \"∙\"\n>\\k<) (Ꭰ>\\k< `Ꭰx` Ꭰ'\n\
                 {-# A \"b\" #-} `M.f` (,) (∷)\n#\n# x\nq = query c \"a\\SOH\\&\\^\" \"b\"\n\
-                r = s =~ \"a\\\\\\^\\\nq = query c \"SELECT \\^\\\n";
+                r = s =~ \"a\\\\\\^\\\nq = query c \"SELECT \\^\\\n\
+                  C :: { a :: Int, b, c :: T } -> T\n  , d :: X, e :: Y }\nx = (a :: Int, b)\n";
     for (l, (spans, _)) in text.lines().zip(lines(text)) {
         let mut at = 0;
         for s in &spans {
@@ -469,6 +732,15 @@ fn long_lines_lex_in_linear_time() {
         "=~ \"",
         "mkRegex \"",
         "f :: ",
+        "{ a :: ",
+        "{a,",
+        ", a :: T, a :: ",
+        "deriving ",
+        "f :: (",
+        "x :: (",
+        "x :: [",
+        " @(",
+        " @A.",
         "--> ",
         "#",
         "a `b` ",
