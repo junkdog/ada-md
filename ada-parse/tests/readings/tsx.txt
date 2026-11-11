@@ -178,3 +178,17 @@
        ":" punctuation.separator.namespace.tsx
        ">" punctuation.definition.tag.end.tsx
        ";" punctuation.terminator.statement.tsx
+  16 | const G = createGlobalStyle`body { margin: 0 }`;
+       "const" storage.type.tsx
+       "G" variable.other.constant.tsx
+       "=" keyword.operator.assignment.tsx
+       "createGlobalStyle" string.template.tsx entity.name.function.tagged-template.tsx
+       "`" string.template.tsx punctuation.definition.string.template.begin.tsx
+       "body" source.css entity.name.tag.css
+       "{" source.css punctuation.section.property-list.css
+       "margin" source.css support.type.property-name.css
+       ":" source.css punctuation.separator.key-value.css
+       "0" source.css constant.numeric.integer.decimal.css
+       "}" source.css punctuation.section.property-list.css
+       "`" string.template.tsx punctuation.definition.string.template.end.tsx
+       ";" punctuation.terminator.statement.tsx

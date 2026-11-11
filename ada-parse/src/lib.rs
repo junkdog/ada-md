@@ -433,9 +433,10 @@ type LineRuns = fn(&[u8], &mut State, &mut Out, &mut dyn Rules, &mut Vec<Run>);
 /// `lang`'s block and line on a carried scan that writes runs: Rust's (X-068, X-073), X-074's
 /// (Java's, C#'s, Kotlin's, TypeScript's and TSX's, Python's, the Lisp engine's and Clojure's),
 /// X-075's (Go's, Lua's, SCSS's, bash's: since X-094 its one copy of the scan, which its span
-/// API and Makefile's recipes read back as spans; CSS's span copy stays in ada for
-/// HTML's embeds and SQL's for its hosts', so their runs are read from their spans, and
-/// PowerShell's ran no faster), and X-057's (C++'s and C's).
+/// API and Makefile's recipes read back as spans; SQL's span copy stays in ada for its hosts', so
+/// its runs are read from its spans, and PowerShell's ran no faster), X-057's (C++'s and C's),
+/// and CSS's since X-125 (its scanner of ada's own; HTML's embeds call its span copy on HTML's
+/// sink).
 #[inline(always)]
 fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
     Some(match lang {
@@ -464,6 +465,7 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
         Lang::Elixir => (elixir::block_runs, elixir::line_runs),
         Lang::Ruby => (ruby::block_runs, ruby::line_runs),
         Lang::Scss => (css::scss::block_runs, css::scss::line_runs),
+        Lang::Css => (css::own::block_runs, css::own::line_runs),
         Lang::Bash => (bash::block_runs, bash::line_runs),
         Lang::Cpp => (cc::block_runs, cc::line_runs),
         Lang::C => (cc::block_runs_c, cc::line_runs_c),
@@ -506,7 +508,7 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::Elixir if SPANS => elixir::block,
         Lang::Ruby if SPANS => ruby::block,
         Lang::PowerShell => powershell::block,
-        Lang::Css => css::block,
+        Lang::Css if SPANS => css::own::block,
         Lang::Scss if SPANS => css::scss::block,
         Lang::Html => html::block,
         Lang::Xml if SPANS => xml_scan::block,
@@ -795,7 +797,7 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::TypeScript => out!(|b, s, o| typescript::line(b, false, s, o)),
         Lang::TypeScriptReact => out!(|b, s, o| typescript::line(b, true, s, o)),
         Lang::Scss if !SPANS => |_, _, _| unreachable!("SCSS's runs come from its own scan"),
-        Lang::Css => out!(css::line),
+        Lang::Css => out!(css::own::line),
         Lang::Scss => out!(css::scss::line),
         Lang::Html => out!(html::line),
         Lang::Lisp | Lang::EmacsLisp | Lang::Scheme | Lang::Racket | Lang::Clojure if !SPANS => {

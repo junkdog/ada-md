@@ -21,6 +21,10 @@
 #   busy (5) over WORK_BUSY_WINDOW seconds of /proc/stat (5), for at most WORK_WAIT_MIN minutes (30), and exits 75
 #   without running CMD if they never do; WORK_MAX_BUSY=off skips the check. It catches what the lock can't: an
 #   unwrapped build, a script, a desktop app.
+#   A fuzz job stops after WORK_FUZZ_MAX minutes (150, above the longest so far, 99; 0 for none): CMD and everything
+#   in its process group get SIGTERM, then SIGKILL 60 s later, and the job ends with rc 124, logged as a `capped`
+#   event. A process CMD moved to a session of its own (lang.zsh smoke's fork jobs) is its own script's to stop on
+#   that SIGTERM. (X-125: a corpus merge ran 43 minutes on a hanging lexer before anyone asked.)
 #   The work log: .work/jobs/ID.json names each waiting or running job, held under a lock of its own (ID.lock), so a
 #   reader tells a killed job's file from a live one by trying that lock; .work/log.jsonl is the history (queue,
 #   start, end, skip, lost, clear). A job whose work.zsh is gone while its lock is still held is "leftover":
@@ -355,7 +359,18 @@ logev start ",\"wait_s\":$(( started - queued )),\"cpus\":\"$cpus\",\"pinned\":$
 print -r -- "work.zsh: $kind '$label' starts on CPUs $cpus, load $(load)${busy:+, busy $busy}"
 pre=()
 (( pinned )) && pre=(taskset -c $cpus)
+cap=0
+if [[ $kind == fuzz ]]; then
+  cap=${WORK_FUZZ_MAX:-150}
+  [[ $cap == <-> ]] || die "WORK_FUZZ_MAX: $cap"
+  # `timeout` runs CMD in a process group of its own and signals all of it
+  (( cap > 0 )) && pre=(timeout -k 60 $(( cap * 60 )) $pre)
+fi
 "${pre[@]}" "$@"
 rc=$?
+if (( cap > 0 && (rc == 124 || rc == 137) && EPOCHSECONDS - started >= cap * 60 )); then
+  print -r -- "work.zsh: fuzz '$label' stopped after WORK_FUZZ_MAX=$cap min, $(date -Is)"
+  logev capped ",\"max_min\":$cap"
+fi
 print -r -- "work.zsh: $kind '$label' done, rc=$rc, $(dur $(( EPOCHSECONDS - started ))), load $(load), $(date -Is)"
 exit $rc

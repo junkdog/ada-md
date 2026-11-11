@@ -18,6 +18,7 @@ impl<K: Sink> Scan<'_, '_, K> {
         match top {
             T_STR_D | T_STR_S => self.string_text(p, if top == T_STR_D { b'"' } else { b'\'' }),
             T_TPL | T_TPL_PLAIN => self.template_text(p, top == T_TPL_PLAIN),
+            T_TPL_CSS => self.css_text(p),
             T_BLOCK | T_DOC => self.comment_text(p, top == T_DOC),
             T_JSX_TAG => self.jsx_tag(p),
             T_JSX_CHILD => self.jsx_children(p),
@@ -220,11 +221,15 @@ impl<K: Sink> Scan<'_, '_, K> {
 
     // --- templates ---
 
-    /// A template's `` ` `` at `p`; `plain`, styled-components' or `gql`'s, whose text is plain.
+    /// A template's `` ` `` at `p`; `plain`, `gql`'s, whose text is plain; at a `styled(…)` chain's
+    /// mark, a CSS template ([`Scan::css_template`]).
     #[inline(never)]
     pub(super) fn template(&mut self, p: usize, plain: bool) -> usize {
         if !plain && p == self.re_arg {
             return self.regex_arg(p, b'`');
+        }
+        if p == self.css_arg {
+            return self.css_template(p, false);
         }
         if plain {
             self.tok(p, p + 1, TPL_MARK_BEGIN);
@@ -235,6 +240,67 @@ impl<K: Sink> Scan<'_, '_, K> {
         }
         self.at = p + 1;
         p + 1
+    }
+
+    /// A CSS template's `` ` `` at `p` (X-126): its frame over its CSS state's record, a keyframes
+    /// block's or a block of declarations'.
+    #[inline(never)]
+    pub(super) fn css_template(&mut self, p: usize, keyframes: bool) -> usize {
+        self.tok(p, p + 1, TPL_MARK_BEGIN);
+        for r in crate::css::own::hosted::start(keyframes) {
+            self.push(r);
+        }
+        self.push(T_TPL_CSS);
+        self.at = p + 1;
+        p + 1
+    }
+
+    /// A CSS template's text from `p`: CSS's scanner to the next `` ` `` or `${` (or the line's
+    /// end), its state in the record under the frame (a record the state cut short starts over).
+    #[inline(never)]
+    fn css_text(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let mut i = p;
+        while i < n {
+            match b[i] {
+                b'`' => break,
+                b'$' if b.get(i + 1) == Some(&b'{') => break,
+                b'\\' => i += 2,
+                _ => i += 1,
+            }
+        }
+        let i = i.min(n);
+        let whole = self.depth > RECORD + 1;
+        let mut rec = if whole {
+            let mut r = [0; RECORD];
+            r.copy_from_slice(&self.stack[self.depth - 1 - RECORD..self.depth - 1]);
+            r
+        } else {
+            crate::css::own::hosted::start(false)
+        };
+        self.k = crate::css::own::hosted::hosted(&b[..i], p, self.out, self.k, &mut rec, i < n);
+        if whole {
+            self.stack[self.depth - 1 - RECORD..self.depth - 1].copy_from_slice(&rec);
+        }
+        self.at = i;
+        if i >= n {
+            return n;
+        }
+        if b[i] == b'`' {
+            self.tok(i, i + 1, TPL_MARK_END);
+            self.at = i + 1;
+            for _ in 0..=RECORD {
+                self.pop();
+            }
+            self.prev = P_VALUE;
+            return i + 1;
+        }
+        self.tok(i, i + 2, SUBST_BEGIN);
+        self.at = i + 2;
+        self.push(F_SUBST);
+        self.prev = P_OP;
+        i + 2
     }
 
     /// A template's text from `p`: to its end, a substitution, or the line's end.

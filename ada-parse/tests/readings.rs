@@ -1314,6 +1314,10 @@ fn javascript() {
         "if (x) { throw new TypeError('bad'); } else { debugger; }\n",
         "<!-- legacy\n",
         "-->\n",
+        "const Box = styled(Base).attrs({ role: 'x' })`\n",
+        "  color: ${(p) => p.c}; &:hover { top: 0 }\n",
+        "  ${({ on }) => on && css`margin: 0;`}\n",
+        "`, fade = keyframes`from { opacity: 0 }`, q = gql`{ a }`;\n",
     );
     readings("javascript", Lang::JavaScript, text);
 }
@@ -1379,6 +1383,10 @@ fn typescript() {
         text.push_str("},\n");
     }
     text.push_str("};\n");
+    text.push_str(
+        "const B = styled.button<{ $on: boolean }>`color: ${(p) => (p.$on ? 'red' : 'blue')};`;\n",
+    );
+    text.push_str("static styles = css`:host { display: block; }`;\n");
     readings("typescript", Lang::TypeScript, &text);
 }
 
@@ -1404,6 +1412,7 @@ fn tsx() {
         "  </Layout.Main>;\n",
         "}\n",
         "const ns = <svg:>y</svg:>;\n",
+        "const G = createGlobalStyle`body { margin: 0 }`;\n",
     );
     readings("tsx", Lang::TypeScriptReact, text);
 }
@@ -1448,6 +1457,17 @@ fn css() {
         "@document url(http://x), url-prefix(y), domain(z), regexp(\"a\") { b { c: d } }\n",
         "div.a#b, h1 + p, clipPath, :root, ::-moz-selection, :lang(en), :drop(active) { -moz-box-sizing: border-box; }\n",
         "@tailwind base; .é-x { top: 5q; transition: all 200ms steps(4, jump-end); color: hsl(120deg, 50%, 50%) }\n",
+        "@layer reset, base;\n",
+        "@layer base {\n",
+        "  .card { color: oklch(70% 0.1 200 / 50%); &:hover { color: color-mix(in srgb, red 50%, blue) }\n",
+        "    > p { margin-inline: clamp(1rem, 2.5vw + 1rem, 3rem) } .x & { top: 0 }\n",
+        "    a:focus{top:0}b{width:1px} @media (width >= 600px) { padding: 2px } --theme: { a: b };\n",
+        "  }\n",
+        "}\n",
+        "@container sidebar (inline-size > 30em) and style(--on: true) { .c { container-type: inline-size } }\n",
+        "@property --angle { syntax: '<angle>'; inherits: false; initial-value: 0deg; }\n",
+        "@scope (.card) to (.content) { :scope > img { aspect-ratio: 16 / 9 } }\n",
+        "@starting-style { DIV:has(> img), *|*, [lang|=en], [data-x=y s] { opacity: 0 } }\n",
     );
     readings("css", Lang::Css, text);
 }

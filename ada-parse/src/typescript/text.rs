@@ -95,6 +95,7 @@ impl<K: Sink> Scan<'_, '_, K> {
         match top {
             T_STR_D | T_STR_S => self.string_text(p, top),
             T_TPL => self.template_text(p),
+            T_TPL_CSS => self.css_text(p),
             T_BLOCK | T_DOC => self.comment_text(p, top == T_DOC),
             T_DOC_INLINE => self.doc_inline_text(p),
             T_JSX_TAG => self.jsx_tag(p),
@@ -306,10 +307,87 @@ impl<K: Sink> Scan<'_, '_, K> {
         if p == self.re_arg {
             return self.regex_arg(p, b'`');
         }
+        if p == self.css_arg {
+            return self.css_template(p, false);
+        }
+        if let Some(keyframes) = css_tag_before(self.b, p) {
+            return self.css_template(p, keyframes);
+        }
         self.tok_far(p, p + 1, TPL_BEGIN);
         self.push(T_TPL);
         self.at = p + 1;
         p + 1
+    }
+
+    /// `styled` before `e`: the template its chain on the line ends at, if one does, marked
+    /// ([`Scan::css_arg`]).
+    #[inline(never)]
+    pub(super) fn styled(&mut self, e: usize) {
+        if let Some(t) = crate::javascript::styled_chain(self.b, e, true) {
+            self.css_arg = t;
+        }
+    }
+
+    /// A CSS template's `` ` `` at `p` (X-126): its frame over its CSS state's record, a keyframes
+    /// block's or a block of declarations'.
+    #[inline(never)]
+    fn css_template(&mut self, p: usize, keyframes: bool) -> usize {
+        self.tok_far(p, p + 1, TPL_BEGIN);
+        for r in crate::css::own::hosted::start(keyframes) {
+            self.push(r);
+        }
+        self.push(T_TPL_CSS);
+        self.at = p + 1;
+        p + 1
+    }
+
+    /// A CSS template's text from `p`: CSS's scanner to the next `` ` `` or `${` (or the line's
+    /// end), its state in the record under the frame (a record the state cut short starts over).
+    #[inline(never)]
+    fn css_text(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let n = b.len();
+        let mut i = p;
+        while i < n {
+            match b[i] {
+                b'`' => break,
+                b'$' if b.get(i + 1) == Some(&b'{') => break,
+                b'\\' => i += 2,
+                _ => i += 1,
+            }
+        }
+        let i = i.min(n);
+        let whole = self.depth > RECORD + 1;
+        let mut rec = if whole {
+            let mut r = [0; RECORD];
+            r.copy_from_slice(&self.stack[self.depth - 1 - RECORD..self.depth - 1]);
+            r
+        } else {
+            crate::css::own::hosted::start(false)
+        };
+        self.k = crate::css::own::hosted::hosted(&b[..i], p, self.out, self.k, &mut rec, i < n);
+        if whole {
+            self.stack[self.depth - 1 - RECORD..self.depth - 1].copy_from_slice(&rec);
+        }
+        self.at = i;
+        if i >= n {
+            return n;
+        }
+        if b[i] == b'`' {
+            self.tok_far(i, i + 1, TPL_END);
+            self.at = i + 1;
+            for _ in 0..=RECORD {
+                self.pop();
+            }
+            self.prev = P_VALUE;
+            return i + 1;
+        }
+        self.tok(i, i + 2, SUBST_BEGIN);
+        self.at = i + 2;
+        self.push(F_SUBST);
+        self.substs = (self.substs + 1).min(SUBSTS_MAX);
+        self.prev = P_OP;
+        i + 2
     }
 
     /// A template's text from `p`: to its end, a substitution, or the line's end.
@@ -1281,4 +1359,23 @@ fn doc_tag(t: &[u8]) -> bool {
             | b"yields"
             | b"yield"
     )
+}
+
+/// The tag before a template's `` ` `` at `p`, where it is a CSS template's (X-126): `css`,
+/// `createGlobalStyle`, `injectGlobal`, or `keyframes` (`Some(true)`: its text a keyframes block).
+fn css_tag_before(b: &[u8], p: usize) -> Option<bool> {
+    let e = blanks_before(b, p);
+    let mut s = e;
+    while s > 0 && (b[s - 1].is_ascii_alphanumeric() || matches!(b[s - 1], b'_' | b'$')) {
+        s -= 1;
+    }
+    if s > 0 && matches!(b[s - 1], b'.' | b'#') {
+        // a member (`theme.css`) or a private name
+        return None;
+    }
+    match &b[s..e] {
+        b"css" | b"createGlobalStyle" | b"injectGlobal" => Some(false),
+        b"keyframes" => Some(true),
+        _ => None,
+    }
 }

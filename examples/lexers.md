@@ -272,6 +272,10 @@ a[href^="https://"]:hover {
   content: "\201C";
 }
 
+@layer components {
+  .card { padding: clamp(1rem, 2vw, 2rem); &:hover { color: oklch(70% 0.1 200) } }
+}
+
 @keyframes fade { from { opacity: 0 } to { opacity: 1e0 } }
 ```
 
@@ -683,6 +687,10 @@ export async function count(paths, { limit = 16 } = {}) {
   }
   return notes.filter(({ words }) => words > 0); /* block */
 }
+
+const Badge = styled.span`
+  color: ${(p) => p.color}; &:hover { opacity: 0.8; }
+`;
 ```
 
 ## JSON

@@ -449,3 +449,82 @@
        "legacy" variable.other.readwrite.js
   36 | -->
        "-->" comment.block.html.js punctuation.definition.comment.js
+  37 | const Box = styled(Base).attrs({ role: 'x' })`
+       "const" storage.type.js
+       "Box" variable.other.class.js
+       "=" keyword.operator.assignment.js
+       "styled" variable.function.js
+       "(" meta.brace.round.begin.js
+       "Base" variable.other.class.js
+       ")" meta.brace.round.end.js
+       "." keyword.operator.accessor.js
+       "attrs" variable.function.js
+       "(" meta.brace.round.begin.js
+       "{" meta.brace.curly.begin.js
+       "role" constant.other.object.key.js string.unquoted.label.js
+       ":" constant.other.object.key.js punctuation.separator.key-value.js
+       "'" string.quoted.js punctuation.definition.string.begin.js
+       "x" string.quoted.js
+       "'" string.quoted.js punctuation.definition.string.end.js
+       "}" meta.brace.curly.end.js
+       ")" meta.brace.round.end.js
+       "`" punctuation.definition.string.template.begin.js
+  38 |   color: ${(p) => p.c}; &:hover { top: 0 }
+       "color" source.css support.type.property-name.css
+       ":" source.css punctuation.separator.key-value.css
+       "${" keyword.other.substitution.begin.js
+       "(" punctuation.definition.parameters.begin.js
+       "p" variable.parameter.function.js
+       ")" punctuation.definition.parameters.end.js
+       "=>" storage.type.function.arrow.js
+       "p" variable.other.object.js
+       "." keyword.operator.accessor.js
+       "c" variable.other.property.js
+       "}" keyword.other.substitution.end.js
+       ";" source.css punctuation.terminator.rule.css
+       "&" source.css keyword.operator.ampersand.css
+       ":" source.css entity.other.pseudo-class.css punctuation.definition.entity.css
+       "hover" source.css entity.other.pseudo-class.css
+       "{" source.css punctuation.section.property-list.css
+       "top" source.css support.type.property-name.css
+       ":" source.css punctuation.separator.key-value.css
+       "0" source.css constant.numeric.integer.decimal.css
+       "}" source.css punctuation.section.property-list.css
+  39 |   ${({ on }) => on && css`margin: 0;`}
+       "${" keyword.other.substitution.begin.js
+       "(" punctuation.definition.parameters.begin.js
+       "{" meta.brace.curly.begin.js
+       "on" variable.parameter.function.js
+       "}" meta.brace.curly.end.js
+       ")" punctuation.definition.parameters.end.js
+       "=>" storage.type.function.arrow.js
+       "on" variable.other.readwrite.js
+       "&&" keyword.operator.logical.js
+       "css" variable.function.tagged-template.js
+       "`" punctuation.definition.string.template.begin.js
+       "margin" source.css support.type.property-name.css
+       ":" source.css punctuation.separator.key-value.css
+       "0" source.css constant.numeric.integer.decimal.css
+       ";" source.css punctuation.terminator.rule.css
+       "`" punctuation.definition.string.template.end.js
+       "}" keyword.other.substitution.end.js
+  40 | `, fade = keyframes`from { opacity: 0 }`, q = gql`{ a }`;
+       "`" punctuation.definition.string.template.end.js
+       "," meta.delimiter.comma.js
+       "fade" variable.other.readwrite.js
+       "=" keyword.operator.assignment.js
+       "keyframes" variable.function.tagged-template.js
+       "`" punctuation.definition.string.template.begin.js
+       "from" source.css keyword.keyframe-selector.css
+       "{" source.css punctuation.section.property-list.css
+       "opacity" source.css support.type.property-name.css
+       ":" source.css punctuation.separator.key-value.css
+       "0" source.css constant.numeric.integer.decimal.css
+       "}" source.css punctuation.section.property-list.css
+       "`" punctuation.definition.string.template.end.js
+       "," meta.delimiter.comma.js
+       "q" variable.other.readwrite.js
+       "=" keyword.operator.assignment.js
+       "`" punctuation.definition.string.template.begin.js
+       "`" punctuation.definition.string.template.end.js
+       ";" punctuation.terminator.statement.js

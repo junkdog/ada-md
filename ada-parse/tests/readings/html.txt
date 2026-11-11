@@ -333,6 +333,7 @@
        ":" source.css entity.other.pseudo-class.css punctuation.definition.entity.css
        "hover" source.css entity.other.pseudo-class.css
        "{" source.css punctuation.section.property-list.css
+       "b" source.css support.type.property-name.css
        ":" source.css punctuation.separator.key-value.css
        "}" source.css punctuation.section.property-list.css
        "}" source.css punctuation.section.property-list.css
@@ -354,6 +355,7 @@
        ">" punctuation.definition.tag.end.html
        "a" source.css entity.name.tag.css
        "{" source.css punctuation.section.property-list.css
+       "b" source.css support.type.property-name.css
        ":" source.css punctuation.separator.key-value.css
        "}" source.css punctuation.section.property-list.css
        "</" punctuation.definition.tag.begin.html

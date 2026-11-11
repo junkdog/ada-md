@@ -28,6 +28,13 @@
 #
 # Each builds the target first, as `cargo fuzz run -s none -a` does. A language new to the target starts
 # empty, so `corpus` with its seeds (census files, a dir each) comes first.
+#
+# Timers (X-125, after a merge ran 43 minutes on a lexer that hung on 78 inputs: libFuzzer's merge restarts
+# after each input that times out, so a hanging lexer makes it endless): each language's merge or cmin stops
+# after LANG_MAX seconds (3600; a clean merge of the whole union on one core took 17 minutes), and an input
+# there times out after LANG_INPUT_TIMEOUT seconds (5; a corpus input lexes in milliseconds). A merge cut short
+# says so and counts its timeout inputs, which are findings: replay them before the next run. bench/work.zsh
+# caps a whole fuzz job too (WORK_FUZZ_MAX).
 # e.g. bench/work.zsh fuzz "py smoke" /home/junkdog/opt/dev/rust/ada-md/fuzz/lang.zsh smoke tokens python 300
 setopt err_exit pipe_fail no_unset extended_glob
 F=${0:A:h} CALLER=$PWD
@@ -36,6 +43,9 @@ export TMPDIR=$F/target/tmp
 mkdir -p $TMPDIR out/lang
 # twelve physical cores, the even CPUs, as the runbook's local rounds
 CORES=0,2,4,6,8,10,12,14,16,18,20,22
+MAX=${LANG_MAX:-3600}
+[[ $MAX == <1-> ]] || { print -u2 "lang.zsh: LANG_MAX: $MAX"; exit 1 }
+INPUT_TIMEOUT=${LANG_INPUT_TIMEOUT:-5}
 
 die() { print -u2 "lang.zsh: $*"; exit 1 }
 
@@ -85,11 +95,15 @@ merge1() {
   local -a was=($d/*(N)) crashed_before=(out/lang/merge-$t-$l-*(N))
   local rc=0
   # an input that crashes the target goes beside the log, not into fuzz/ (F-016)
-  ADA_FUZZ_LANGS=$l $bin $args -merge=1 -timeout=30 -rss_limit_mb=3072 -artifact_prefix=out/lang/merge-$t-$l- \
-    $d corpus/$t $@ > $log 2>&1 || rc=$?
+  ADA_FUZZ_LANGS=$l timeout -k 30 $MAX $bin $args -merge=1 -timeout=$INPUT_TIMEOUT -rss_limit_mb=3072 \
+    -artifact_prefix=out/lang/merge-$t-$l- $d corpus/$t $@ > $log 2>&1 || rc=$?
   local -a now=($d/*(N)) crashed=(out/lang/merge-$t-$l-*(N))
   print -r -- "$l: ${#was} → ${#now} inputs, $(du -sh $d | cut -f1), $(( ${#crashed} - ${#crashed_before} )) crashing (out/lang/merge-$t-$l-*)," \
     "rc $rc, $(date +%T)"
+  local -a hung=(out/lang/merge-$t-$l-timeout-*(N))
+  if (( rc == 124 || rc == 137 )); then
+    print -r -- "$l: merge stopped after LANG_MAX=${MAX}s, ${#hung} timeout inputs (out/lang/merge-$t-$l-timeout-*): a hanging lexer?"
+  fi
 }
 
 # cmin1 TARGET LANG: one language's corpus minimized, as `cmin` runs them side by side.
@@ -106,8 +120,11 @@ cmin1() {
   # set cover (F-017): the same edges and features in half the inputs and half the seed pass of -merge=1
   local merge=-set_cover_merge=1
   [[ ${LANG_MERGE:-cover} == merge ]] && merge=-merge=1
-  ADA_FUZZ_LANGS=$l $bin $args $merge -timeout=30 -rss_limit_mb=3072 -artifact_prefix=out/lang/cmin-$t-$l- \
-    $m $d > $log 2>&1 || rc=$?
+  ADA_FUZZ_LANGS=$l timeout -k 30 $MAX $bin $args $merge -timeout=$INPUT_TIMEOUT -rss_limit_mb=3072 \
+    -artifact_prefix=out/lang/cmin-$t-$l- $m $d > $log 2>&1 || rc=$?
+  if (( rc == 124 || rc == 137 )); then
+    print -r -- "$l: cmin stopped after LANG_MAX=${MAX}s; the corpus is left as it was"
+  fi
   local -a now=($m/*(N))
   if (( rc == 0 && ${#now} > 0 )); then
     rm -rf $d

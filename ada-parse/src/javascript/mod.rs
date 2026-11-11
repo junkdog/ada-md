@@ -207,9 +207,20 @@ leaves! {
 /// literal, a quoted string, a template.
 const RE_KINDS: u16 = 256;
 const _: () = assert!(LEAVES.len() <= RE_KINDS as usize);
+// a CSS template's kinds (X-126) above every other
+const _: () =
+    assert!(RE_KINDS as usize + 3 * regex::KINDS <= crate::css::own::hosted::HOST_KIND as usize);
 
 /// The scopes under `source.js` a kind carries, outermost first.
 pub fn scopes(kind: u16) -> Vec<&'static str> {
+    if kind & crate::css::own::hosted::HOST_KIND != 0 {
+        // a CSS template's (X-126)
+        let mut v = vec!["source.css"];
+        v.extend(crate::css::own::scopes(
+            kind & !crate::css::own::hosted::HOST_KIND,
+        ));
+        return v;
+    }
     if kind >= RE_KINDS {
         let n = regex::KINDS as u16;
         let host = match (kind - RE_KINDS) / n {
@@ -421,7 +432,7 @@ const F_FUNC_HEAD: u8 = 13;
 const F_CLASS_HEAD: u8 = 14;
 /// A class field's value: code, popped at its `;`.
 const F_FIELD: u8 = 15;
-/// A styled-components template's `${`, back to its plain text at its `}`.
+/// A `gql` template's `${`, back to its plain text at its `}`.
 const F_SUBST_PLAIN: u8 = 16;
 /// A computed key's `[` at a key's or a member's place: its `]` leaves [`P_KEYED`].
 const F_KEY_BRACKET: u8 = 17;
@@ -444,7 +455,7 @@ const T_STR_D: u8 = 32;
 const T_STR_S: u8 = 33;
 /// A template's text.
 const T_TPL: u8 = 34;
-/// A styled-components (or `gql`) template's text: plain.
+/// A `gql` template's text: plain.
 const T_TPL_PLAIN: u8 = 35;
 /// A block comment's text.
 const T_BLOCK: u8 = 36;
@@ -458,6 +469,11 @@ const T_JSX_CHILD: u8 = 39;
 const T_JSX_STR_D: u8 = 40;
 /// A JSX attribute's `'…'`.
 const T_JSX_STR_S: u8 = 41;
+/// A CSS template's text (X-126: ``css`…` ``, ``styled.div`…` ``, …) on CSS's scanner, its CSS state
+/// the [`RECORD`] bytes under this frame.
+const T_TPL_CSS: u8 = 42;
+/// How many stack bytes a CSS template's state takes, under its frame.
+const RECORD: usize = crate::css::own::hosted::RECORD;
 /// A regex in a `RegExp(…)` string or template, its state in the low bits, above the string's
 /// frame.
 const T_RE_STR: u8 = 0x40;
@@ -572,12 +588,13 @@ const W_CASE: u8 = 9;
 const W_CONTEXT: u8 = 10;
 /// `extends`.
 const W_EXTENDS: u8 = 11;
-/// `styled`, `injectGlobal`, `keyframes`, `gql`: a template after them is plain.
+/// `styled`, `css`, `createGlobalStyle`, `injectGlobal`, `keyframes`, `gql`: a template after them is
+/// CSS on CSS's scanner (X-126), `gql`'s plain.
 const W_STYLED: u8 = 12;
 /// Flow's `type` and `declare` at a statement's start.
 const W_FLOW: u8 = 13;
 
-const N: usize = 132;
+const N: usize = 134;
 
 /// Every word the scan tells apart: its class, its leaf, and the previous token it leaves.
 const LIST: [(&[u8], u8, u16, u8); N] = [
@@ -709,6 +726,8 @@ const LIST: [(&[u8], u8, u16, u8); N] = [
     (b"injectGlobal", W_STYLED, TAGGED, P_VALUE),
     (b"keyframes", W_STYLED, TAGGED, P_VALUE),
     (b"gql", W_STYLED, PLAIN, P_VALUE),
+    (b"css", W_STYLED, TAGGED, P_VALUE),
+    (b"createGlobalStyle", W_STYLED, TAGGED, P_VALUE),
     (b"prototype", W_LANG, PROTOTYPE, P_VALUE),
     (b"__proto__", W_LANG, PROTO, P_VALUE),
     (b"type", W_FLOW, TYPE_KW, P_OP),
@@ -754,6 +773,7 @@ const ID_REGEXP: u16 = id_of(b"RegExp");
 const ID_GQL: u16 = id_of(b"gql");
 const ID_TYPE: u16 = id_of(b"type");
 const ID_STYLED: u16 = id_of(b"styled");
+const ID_KEYFRAMES: u16 = id_of(b"keyframes");
 
 /// What a word is by id: its class, leaf and the previous token after it; 0 for none.
 static INFO: [(u8, u16, u8); N + 1] = {
@@ -868,6 +888,8 @@ pub(super) struct Scan<'b, 'c, K: Sink> {
     assign: Assign,
     /// Where a string after `RegExp(` would start: it's a regex.
     re_arg: usize,
+    /// Where the template a `styled(…)` or `.attrs(…)` chain ends at starts: its text is CSS.
+    css_arg: usize,
     /// An `async` before a `(` (`async (…) =>`): the `(`'s place, the `async`'s, and the
     /// writing's mark from before it.
     asy: (usize, usize, Mark),
@@ -897,6 +919,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             ngroups: 0,
             assign: NO_ASSIGN,
             re_arg: usize::MAX,
+            css_arg: usize::MAX,
             asy: (usize::MAX, 0, Mark::NONE),
             cls: (usize::MAX, 0, Mark::NONE),
             k,
@@ -927,6 +950,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.ngroups = 0;
         self.assign.value = NO_VALUE;
         self.re_arg = usize::MAX;
+        self.css_arg = usize::MAX;
         self.asy.0 = usize::MAX;
         self.cls.0 = usize::MAX;
         let mut p = from;
@@ -1601,8 +1625,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         p + char_len(self.b[p])
     }
 
-    /// `styled`, `injectGlobal`, `keyframes`, `gql` at `p..e`: before a template (or
-    /// `styled.x` before one), the template's text plain.
+    /// `styled`, `css`, `createGlobalStyle`, `injectGlobal`, `keyframes`, `gql` at `p..e` before a
+    /// template: its text CSS (X-126), `gql`'s plain. `styled.x` before one is read here; a
+    /// `styled(X)`, `.attrs(…)` or `.withConfig(…)` chain to one on its line marks the template
+    /// ([`Scan::css_arg`]) and is read as code.
     #[inline(never)]
     fn styled(&mut self, p: usize, e: usize, id: u16) -> Option<usize> {
         let b = self.b;
@@ -1618,8 +1644,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     self.tok(p, e, OBJECT);
                     self.tok(e, m, PUNCT_ACCESSOR);
                     self.tok(m, me, TAGGED);
-                    return Some(self.template(s, true));
+                    return Some(self.css_template(s, false));
                 }
+            }
+            if let Some(t) = styled_chain(b, e, false) {
+                self.css_arg = t;
             }
             return None;
         }
@@ -1627,10 +1656,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         if b.get(s) != Some(&b'`') {
             return None;
         }
-        if id != ID_GQL {
-            self.tok(p, e, TAGGED);
+        if id == ID_GQL {
+            return Some(self.template(s, true));
         }
-        Some(self.template(s, true))
+        self.tok(p, e, TAGGED);
+        Some(self.css_template(s, id == ID_KEYFRAMES))
     }
 
     // --- punctuation ---
@@ -2447,6 +2477,58 @@ fn var_kind(b: &[u8], p: usize, e: usize) -> u16 {
 }
 
 #[inline(always)]
+/// From after `styled` at `e`: where the template its chain on this line ends at starts (`.name`,
+/// `(…)` and `<…>` groups, blanks between), if one does; `direct`: a chain of names alone too
+/// (`styled.div`, which JavaScript reads where it stands).
+pub(crate) fn styled_chain(b: &[u8], e: usize, direct: bool) -> Option<usize> {
+    let n = b.len();
+    let mut r = e;
+    let mut called = false;
+    loop {
+        r = skip_blanks(b, r);
+        match *b.get(r)? {
+            b'`' if called || direct => return Some(r),
+            b'.' => {
+                r += 1;
+                let s = r;
+                while r < n && NAME[usize::from(b[r])] {
+                    r += 1;
+                }
+                if r == s {
+                    return None;
+                }
+            }
+            c @ (b'(' | b'<') => {
+                let close = if c == b'(' { b')' } else { b'>' };
+                let mut depth = 0u32;
+                loop {
+                    match *b.get(r)? {
+                        x if x == c => depth += 1,
+                        x if x == close => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        q @ (b'"' | b'\'') => {
+                            r += 1;
+                            while *b.get(r)? != q {
+                                r += if b[r] == b'\\' { 2 } else { 1 };
+                            }
+                        }
+                        b'`' => return None,
+                        _ => {}
+                    }
+                    r += 1;
+                }
+                r += 1;
+                called = true;
+            }
+            _ => return None,
+        }
+    }
+}
+
 fn skip_blanks(b: &[u8], mut p: usize) -> usize {
     while p < b.len() && matches!(b[p], b' ' | b'\t') {
         p += 1;
@@ -2578,6 +2660,70 @@ mod tests {
 
     fn has(m: &[(&str, &str)], text: &str, scopes: &str) {
         assert!(m.contains(&(text, scopes)), "{text:?} {scopes:?} in {m:?}");
+    }
+
+    /// styled-components', emotion's and Lit's templates on CSS's scanner (X-126), their `${…}`
+    /// JavaScript, the CSS state across lines and islands.
+    #[test]
+    fn css_templates() {
+        let m = js(&[
+            "const Button = styled.button`",
+            "  color: ${(p) => p.color};",
+            "  &:hover { background: red; }",
+            "  @media (min-width: 400px) { padding: 2px }",
+            "`;",
+            "const x = 1;",
+        ]);
+        has(&m, "button", "variable.function.tagged-template.js");
+        has(&m, "color", "source.css support.type.property-name.css");
+        has(&m, "${", "keyword.other.substitution.begin.js");
+        has(&m, "p", "variable.parameter.function.js");
+        has(&m, "hover", "source.css entity.other.pseudo-class.css");
+        has(
+            &m,
+            "red",
+            "source.css support.constant.color.w3c-standard-color-name.css",
+        );
+        has(
+            &m,
+            "min-width",
+            "source.css support.type.property-name.media.css",
+        );
+        has(&m, "const", "storage.type.js");
+        // a chain to the template, `css`, `createGlobalStyle`, `keyframes`
+        let c = js(&[
+            "const A = styled(Link).attrs({ role: 'link' })` margin: 0; `;",
+            "const b = css`top: 0;`, G = createGlobalStyle`body { margin: 0 }`;",
+            "const k = keyframes`from { opacity: 0 } to { opacity: 1 }`;",
+        ]);
+        has(&c, "margin", "source.css support.type.property-name.css");
+        has(&c, "top", "source.css support.type.property-name.css");
+        has(&c, "body", "source.css entity.name.tag.css");
+        has(&c, "from", "source.css keyword.keyframe-selector.css");
+        has(&c, "opacity", "source.css support.type.property-name.css");
+        // `gql` stays plain; a name `css` is a name
+        let g = js(&["const q = gql`query { a }`; css(x);"]);
+        assert!(
+            !g.iter().any(|(t, s)| *t == "a" && s.contains("css")),
+            "{g:?}"
+        );
+        // a string open at a `${` goes on after it; a nested template
+        let n = js(&[
+            "const D = styled.div`",
+            "  content: \"${a}x\";",
+            "  ${({ on }) => on && css`",
+            "    color: blue;",
+            "  `}",
+            "  top: 0;",
+            "`;",
+        ]);
+        has(&n, "x", "source.css string.quoted.double.css");
+        has(
+            &n,
+            "blue",
+            "source.css support.constant.color.w3c-standard-color-name.css",
+        );
+        has(&n, "top", "source.css support.type.property-name.css");
     }
 
     #[test]

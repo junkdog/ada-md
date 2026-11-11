@@ -3,7 +3,7 @@
 //! checked against. Each context is an arm of one `match` on the top of a stack, finding the
 //! leftmost place where one of its patterns matches, in the grammar's order there.
 //!
-//! **Embeds.** `<style>`'s text is CSS and `style="…"`'s is CSS's `rule-list-body`; `<script>`'s
+//! **Embeds.** `<style>`'s text is CSS and `style="…"`'s a block of CSS's declarations; `<script>`'s
 //! text and `on…="…"`'s are JavaScript. Each runs on that language's scanner, entered at the
 //! embed's place and seeing the line only to the embed's end, as a browser's tokenizer hands the
 //! text over (X-120): a script ends at its first `</script`, a style at its first `</style` (each
@@ -232,7 +232,7 @@ pub fn scopes(kind: u16) -> Vec<&'static str> {
     match kind & 0xf000 {
         CSS_KIND => {
             let mut v = vec!["source.css"];
-            v.extend(crate::css::scopes(kind & 0x0fff));
+            v.extend(crate::css::own::scopes(kind & 0x0fff));
             v
         }
         JS_KIND => {
@@ -256,7 +256,7 @@ enum Emb {
     StyleTag = 1,
     /// `<script>`'s text: JavaScript, to `</script`.
     ScriptTag = 2,
-    /// `style="…"`: CSS's `rule-list-body`, to the quote.
+    /// `style="…"`: a block of CSS's declarations, to the quote.
     StyleAttr = 3,
     /// `on…="…"`: JavaScript, to the quote.
     EventAttr = 4,
@@ -1603,10 +1603,10 @@ impl Scan<'_, '_, '_> {
         let n = self.b.len();
         let first = self.escape(emb, quote, from);
         self.fill(from);
-        // a fresh `style="…"` is CSS's `rule-list-body`
+        // a fresh `style="…"` is a block of CSS's declarations
         let mut st = st.unwrap_or_else(|| {
             if emb == Emb::StyleAttr {
-                crate::css::rule_list_body()
+                crate::css::own::rule_list_body()
             } else {
                 State::default()
             }
@@ -1617,7 +1617,7 @@ impl Scan<'_, '_, '_> {
             let b = &self.b[..first.unwrap_or(n)];
             self.out.1 = false;
             if emb.css() {
-                crate::css::line_from(b, from, &mut st, self.out);
+                crate::css::own::line_from(b, from, &mut st, self.out);
             } else {
                 crate::javascript::line_from(b, from, &mut st, self.out);
             }

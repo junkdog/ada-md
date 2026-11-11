@@ -342,6 +342,14 @@ const RE_HOSTS: [u16; 4] = [RE, STR_S, STR_D, TPL];
 
 /// The scopes under `source.ts` (`source.tsx` for TSX) a kind carries, outermost first.
 pub fn scopes(kind: u16, tsx: bool) -> Vec<&'static str> {
+    if kind & crate::css::own::hosted::HOST_KIND != 0 {
+        // a CSS template's (X-126)
+        let mut v = vec!["source.css"];
+        v.extend(crate::css::own::scopes(
+            kind & !crate::css::own::hosted::HOST_KIND,
+        ));
+        return v;
+    }
     let table = if tsx { TSX } else { TS };
     let k = kind & !WRAP;
     let (leaf, re) = if k >= RE_KINDS {
@@ -485,6 +493,16 @@ const T_JSX_STR_D: u8 = 71;
 const T_JSX_STR_S: u8 = 72;
 /// A JSDoc inline tag (`{@link …`) open past its line, above its doc comment's frame.
 const T_DOC_INLINE: u8 = 73;
+/// A CSS template's text (X-126: ``css`…` ``, ``styled.div`…` ``, …) on CSS's scanner, its CSS state
+/// the [`RECORD`] bytes under this frame.
+const T_TPL_CSS: u8 = 74;
+/// How many stack bytes a CSS template's state takes, under its frame.
+const RECORD: usize = crate::css::own::hosted::RECORD;
+// a CSS template's kinds (X-126) above every other but the substitution's bit
+const _: () = assert!(
+    RE_KINDS as usize + RE_HOSTS.len() * regex::KINDS
+        <= crate::css::own::hosted::HOST_KIND as usize
+);
 /// A regex in a `RegExp(…)` string or template, its state in the low bits, above the string's
 /// frame.
 const T_RE_STR: u8 = 0x80;
@@ -795,6 +813,8 @@ pub(super) struct Scan<'b, 'c, K: Sink> {
     assign: Assign,
     /// Where a string after `RegExp(` would start: it's a regex.
     re_arg: usize,
+    /// Where the template a `styled` chain ends at starts: its text is CSS (X-126).
+    css_arg: usize,
     /// An `async` before a `(` (`async (…) =>`): the `(`'s place, the `async`'s, and the
     /// writing's mark from before it.
     asy: (usize, usize, Mark),
@@ -823,6 +843,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             ngroups: 0,
             assign: NO_ASSIGN,
             re_arg: usize::MAX,
+            css_arg: usize::MAX,
             asy: (usize::MAX, 0, Mark::NONE),
             k,
             out,
@@ -873,6 +894,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.ngroups = 0;
         self.assign.value = NO_VALUE;
         self.re_arg = usize::MAX;
+        self.css_arg = usize::MAX;
         self.asy.0 = usize::MAX;
         self.decl.0 = 0;
         let mut p = 0;
@@ -1142,6 +1164,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn name_to(&mut self, p: usize, e: usize, top: u8, bits: u8) -> usize {
         let b = self.b;
         let prev = self.prev;
+        if e - p == 6 && b[p] == b's' && has(b, p, b"styled") {
+            self.styled(e);
+        }
         if prev == P_DOT {
             let id = if bits & C_HI == 0 {
                 DOT_WORDS.get(&b[p..e])
@@ -3652,6 +3677,40 @@ mod tests {
 
     fn has(m: &[(&str, &str)], text: &str, scopes: &str) {
         assert!(m.contains(&(text, scopes)), "{text:?} {scopes:?} in {m:?}");
+    }
+
+    /// styled-components', emotion's and Lit's templates on CSS's scanner (X-126) in TypeScript and
+    /// TSX: tags read back from the `` ` ``, `styled` chains with type arguments, `${…}` code.
+    #[test]
+    fn css_templates() {
+        for lang in [Lang::TypeScript, Lang::TypeScriptReact] {
+            let m = marked(
+                lang,
+                &[
+                    "const B = styled.button<{ $on: boolean }>`",
+                    "  color: ${({ $on }) => ($on ? 'red' : 'blue')};",
+                    "  &:hover { top: 0 }",
+                    "`;",
+                    "const L = styled(Link).attrs({ x: 1 })` margin: 0; `;",
+                    "static styles = css`:host { display: block }`;",
+                    "const k = keyframes`from { opacity: 0 }`;",
+                    "const n: number = 1;",
+                ],
+            );
+            has(&m, "color", "source.css support.type.property-name.css");
+            has(&m, "hover", "source.css entity.other.pseudo-class.css");
+            has(&m, "margin", "source.css support.type.property-name.css");
+            has(&m, "host", "source.css entity.other.pseudo-class.css");
+            has(&m, "display", "source.css support.type.property-name.css");
+            has(&m, "from", "source.css keyword.keyframe-selector.css");
+            assert!(
+                m.iter().any(|(t, s)| *t == "number" && !s.contains("css")),
+                "{m:?}"
+            );
+        }
+        // a member named `css` before a template isn't a tag
+        let o = ts(&["const t = theme.css`top: 0`;"]);
+        assert!(!o.iter().any(|(_, s)| s.contains("source.css")), "{o:?}");
     }
 
     /// A member's or a declaration's type goes on past its line's end with a union's `|` or an

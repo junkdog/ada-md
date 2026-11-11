@@ -766,3 +766,63 @@
  101 | };
        "}" punctuation.definition.block.ts
        ";" punctuation.terminator.statement.ts
+ 102 | const B = styled.button<{ $on: boolean }>`color: ${(p) => (p.$on ? 'red' : 'blue')};`;
+       "const" storage.type.ts
+       "B" variable.other.constant.ts
+       "=" keyword.operator.assignment.ts
+       "styled" variable.other.object.ts
+       "." punctuation.accessor.ts
+       "button" entity.name.function.ts
+       "<" punctuation.definition.typeparameters.begin.ts
+       "{" punctuation.definition.block.ts
+       "$on" variable.object.property.ts
+       ":" keyword.operator.type.annotation.ts
+       "boolean" support.type.primitive.ts
+       "}" punctuation.definition.block.ts
+       ">" punctuation.definition.typeparameters.end.ts
+       "`" string.template.ts punctuation.definition.string.template.begin.ts
+       "color" source.css support.type.property-name.css
+       ":" source.css punctuation.separator.key-value.css
+       "${" string.template.ts punctuation.definition.template-expression.begin.ts
+       "(" punctuation.definition.parameters.begin.ts
+       "p" variable.parameter.ts
+       ")" punctuation.definition.parameters.end.ts
+       " " string.template.ts
+       "=>" storage.type.function.arrow.ts
+       " (" string.template.ts
+       "p" variable.other.object.ts
+       "." punctuation.accessor.ts
+       "$on" variable.other.property.ts
+       " " string.template.ts
+       "?" keyword.operator.ternary.ts
+       " " string.template.ts
+       "'" string.quoted.single.ts punctuation.definition.string.begin.ts
+       "red" string.quoted.single.ts
+       "'" string.quoted.single.ts punctuation.definition.string.end.ts
+       " " string.template.ts
+       ":" keyword.operator.ternary.ts
+       " " string.template.ts
+       "'" string.quoted.single.ts punctuation.definition.string.begin.ts
+       "blue" string.quoted.single.ts
+       "'" string.quoted.single.ts punctuation.definition.string.end.ts
+       ")" string.template.ts
+       "}" string.template.ts punctuation.definition.template-expression.end.ts
+       ";" source.css punctuation.terminator.rule.css
+       "`" string.template.ts punctuation.definition.string.template.end.ts
+       ";" punctuation.terminator.statement.ts
+ 103 | static styles = css`:host { display: block; }`;
+       "static" variable.other.readwrite.ts
+       "styles" variable.other.readwrite.ts
+       "=" keyword.operator.assignment.ts
+       "css" string.template.ts entity.name.function.tagged-template.ts
+       "`" string.template.ts punctuation.definition.string.template.begin.ts
+       ":" source.css entity.other.pseudo-class.css punctuation.definition.entity.css
+       "host" source.css entity.other.pseudo-class.css
+       "{" source.css punctuation.section.property-list.css
+       "display" source.css support.type.property-name.css
+       ":" source.css punctuation.separator.key-value.css
+       "block" source.css support.constant.property-value.css
+       ";" source.css punctuation.terminator.rule.css
+       "}" source.css punctuation.section.property-list.css
+       "`" string.template.ts punctuation.definition.string.template.end.ts
+       ";" punctuation.terminator.statement.ts
