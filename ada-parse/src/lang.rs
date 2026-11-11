@@ -174,6 +174,27 @@ pub const ALIASES: &[(&str, &str)] = &[
 /// before its extension.
 static OTHERS: &[&str] = &["resolv.conf"];
 
+/// The suffixes bat ignores at a file name's end (its `IgnoredSuffixes`, checked on bat 0.26.1
+/// file by file, X-145): an editor's backup, apt's, dpkg's, ucf's and rpm's, and a build
+/// system's template (`.in`). bat names such a file by the rest ([`Lang::strip_ignored_suffix`]).
+pub const IGNORED_SUFFIXES: [&str; 15] = [
+    "~",
+    ".bak",
+    ".old",
+    ".orig",
+    ".dpkg-dist",
+    ".dpkg-new",
+    ".dpkg-old",
+    ".dpkg-tmp",
+    ".ucf-dist",
+    ".ucf-new",
+    ".ucf-old",
+    ".rpmnew",
+    ".rpmorig",
+    ".rpmsave",
+    ".in",
+];
+
 /// The extensions and whole file names each language's syntax claims, lowercase: syntect
 /// compares them ignoring ASCII case.
 static EXTENSIONS: &[(Lang, &[&str])] = &[
@@ -770,23 +791,37 @@ impl Lang {
     }
 
     /// The language a file's name gives, as ada reads one: the whole name (`Makefile`,
-    /// `.zshrc`), then its extension as a token.
+    /// `.zshrc`), a CMake template's ([`Lang::header_template`], [`Lang::configured_file`]),
+    /// then its extension as a token; failing those, the name without a suffix bat ignores
+    /// ([`Lang::strip_ignored_suffix`]: `Config.cmake.in`, `Makefile.in`, `setup.py.orig`).
     pub fn from_file_name(name: &str) -> Option<Lang> {
         if let Some(l) = Lang::from_extension(name) {
             return Some(l);
         }
-        if let Some(l) = Lang::header_template(name) {
+        if let Some(l) = Lang::header_template(name).or_else(|| Lang::configured_file(name)) {
             return Some(l);
         }
         if any_eq(OTHERS, name) {
             return None;
         }
         // as `Path::extension`: after the last dot, but for a name that only starts with one
-        let (stem, ext) = name.rsplit_once('.')?;
-        if stem.is_empty() {
-            return None;
+        if let Some((stem, ext)) = name.rsplit_once('.')
+            && !stem.is_empty()
+            && let Some(l) = Lang::from_token(ext)
+        {
+            return Some(l);
         }
-        Lang::from_token(ext)
+        Lang::strip_ignored_suffix(name).and_then(Lang::from_file_name)
+    }
+
+    /// `name` without the suffix bat ignores at its end, if it has one ([`IGNORED_SUFFIXES`]):
+    /// bat names such a file by the rest when neither its whole name nor its extension names
+    /// it, and strips again from the rest (`x.py.in.bak`). As bat, ASCII case counts.
+    pub fn strip_ignored_suffix(name: &str) -> Option<&str> {
+        IGNORED_SUFFIXES
+            .iter()
+            .find_map(|s| name.strip_suffix(s))
+            .filter(|rest| !rest.is_empty())
     }
 
     /// The language of a header (`.h`) whose text starts with `text`, one of C, C++, Objective-C
@@ -804,10 +839,12 @@ impl Lang {
 
     /// The language of a CMake header template by its name (X-140): a header's name (`.h`,
     /// `.hh`, `.hpp`, `.hxx`, `.h++`) with `.in` or `.cmake` after it, the name `configure_file`
-    /// takes it under (`config.h.in`, `llvm-config.h.cmake`, `version.hpp.in`). `.h`'s is
+    /// takes it under (`config.h.in`, `llvm-config.h.cmake`, `version.hpp.in`); since X-144 a
+    /// C or C++ source's too (`.c.in`, `.cpp.cmake`), read the same way. `.h`'s is
     /// [`Lang::CMakeCHeader`], as bat's `h.in` (its text decides: [`Lang::for_header_template`]),
-    /// the others [`Lang::CMakeCppHeader`]. bat's set names a file by its last extension, or
-    /// by the whole name `h.in`: ada's reading departs from it for these names (`.in`, `.cmake`).
+    /// `.c`'s too, the others [`Lang::CMakeCppHeader`]. bat's set names a file by its last
+    /// extension, or by the whole name `h.in`, and bat names a `.in` by the rest (`x.h.in` C's
+    /// or Objective-C's): ada's reading departs from both for these names (`.in`, `.cmake`).
     pub fn header_template(name: &str) -> Option<Lang> {
         let (stem, ext) = name.rsplit_once('.')?;
         if !(ext.eq_ignore_ascii_case("in") || ext.eq_ignore_ascii_case("cmake")) {
@@ -817,13 +854,33 @@ impl Lang {
         if stem.is_empty() {
             return None;
         }
-        if header.eq_ignore_ascii_case("h") {
+        if header.eq_ignore_ascii_case("h") || header.eq_ignore_ascii_case("c") {
             return Some(Lang::CMakeCHeader);
         }
-        ["hh", "hpp", "hxx", "h++"]
+        ["hh", "hpp", "hxx", "h++", "cc", "cpp", "cxx", "c++"]
             .iter()
             .any(|h| header.eq_ignore_ascii_case(h))
             .then_some(Lang::CMakeCppHeader)
+    }
+
+    /// The language of another language's `configure_file` template named for CMake (X-144):
+    /// `x.X.cmake`, where `X` is an extension (or a whole name) of one of these languages
+    /// (`SDLEntryTestActivity.java.cmake` Java, `AndroidManifest.xml.cmake` XML, `prefix.sh.cmake`
+    /// bash, `local.properties.cmake`), read in it as bat reads a `.in` template: its `@VAR@` and
+    /// `${VAR}` as the language reads them. A C or C++ name is [`Lang::header_template`]'s. Not
+    /// the set's other syntaxes: a `.cmake` named for one of those stays CMake (`.pc.cmake`, no
+    /// syntax; `.fish.cmake`), as do `x.toolchain.cmake`, `x.in.cmake` and the like. bat names
+    /// these CMake, by the last extension: a departure.
+    pub fn configured_file(name: &str) -> Option<Lang> {
+        let (stem, ext) = name.rsplit_once('.')?;
+        if !ext.eq_ignore_ascii_case("cmake") {
+            return None;
+        }
+        let (stem, inner) = stem.rsplit_once('.')?;
+        if stem.is_empty() {
+            return None;
+        }
+        Lang::from_extension(inner).filter(|&l| l != Lang::CMake)
     }
 
     /// The language of a `.h` header's template (`h.in`, X-140) whose text starts with `text`:
@@ -1498,6 +1555,42 @@ mod tests {
         assert_eq!(Lang::from_file_name(".json"), None);
         assert_eq!(Lang::from_file_name("Cargo.lock"), Some(Lang::Toml));
         assert_eq!(Lang::from_file_name("Cargo.toml"), Some(Lang::Toml));
+    }
+
+    /// A suffix bat ignores comes off where the name says nothing (X-145), as many times as
+    /// it takes, case kept; another language's template named for CMake is that language's
+    /// where it is one of these (X-144).
+    #[test]
+    fn ignored_suffixes_and_configured_files() {
+        for (name, lang) in [
+            ("Config.cmake.in", Some(Lang::CMake)),
+            ("CMakeLists.txt.in", Some(Lang::CMake)),
+            ("Makefile.in", Some(Lang::Makefile)),
+            ("setup.py.in", Some(Lang::Python)),
+            ("x.py.in.bak", Some(Lang::Python)),
+            ("x.py~", Some(Lang::Python)),
+            ("x.rs.dpkg-dist", Some(Lang::Rust)),
+            ("x.py.rpmsave", Some(Lang::Python)),
+            (".bashrc.orig", Some(Lang::Bash)),
+            ("known_hosts.old", Some(Lang::KnownHosts)),
+            ("x.py.IN", None),
+            ("x.in", None),
+            (".in", None),
+            ("~", None),
+            ("x.java.cmake", Some(Lang::Java)),
+            ("AndroidManifest.xml.cmake", Some(Lang::Xml)),
+            ("prefix.sh.cmake", Some(Lang::Bash)),
+            ("local.properties.cmake", Some(Lang::Properties)),
+            ("x.pc.cmake", Some(Lang::CMake)),
+            ("x.toolchain.cmake", Some(Lang::CMake)),
+            ("lists.in.cmake", Some(Lang::CMake)),
+            (".java.cmake", Some(Lang::CMake)),
+            ("x.java.cmake.in", Some(Lang::Java)),
+        ] {
+            assert_eq!(Lang::from_file_name(name), lang, "{name}");
+        }
+        assert_eq!(Lang::strip_ignored_suffix("a.in.bak"), Some("a.in"));
+        assert_eq!(Lang::strip_ignored_suffix("a.inn"), None);
     }
 
     #[test]

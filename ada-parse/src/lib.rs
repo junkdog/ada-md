@@ -84,7 +84,7 @@ use std::mem::MaybeUninit;
 
 use emit::Sink as _;
 pub use emit::{Rule, Rules, Run};
-pub use lang::{ALIASES, FirstLine, Lang, first_line_syntaxes};
+pub use lang::{ALIASES, FirstLine, IGNORED_SUFFIXES, Lang, first_line_syntaxes};
 use lisp::Dialect;
 
 /// Bytes `start..end` of a line are kind `kind` of the line's language, whose scopes

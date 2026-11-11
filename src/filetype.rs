@@ -8,6 +8,22 @@ use crate::highlight;
 use crate::layout::{LayoutParams, LineNumbers};
 use crate::{links, sniff};
 
+/// The language of a header named `name` by its `text`: C, C++, Objective-C or Objective-C++
+/// for a `.h` (X-134; bat's set names every `.h` Objective-C); a C or a C++ CMake template for
+/// a `.h` header's (`config.h.in`, `x.h.cmake`, X-140); `None` for any other name. As bat, a
+/// suffix it ignores comes off first where the name is neither (`x.h.orig`, X-145).
+fn header_by_text(name: &str, text: &str) -> Option<ada_parse::Lang> {
+    use ada_parse::Lang;
+    if Lang::is_header(name) {
+        return Some(Lang::for_header(text.as_bytes()));
+    }
+    if Lang::header_template(name).is_some() {
+        let (stem, _) = name.rsplit_once('.')?;
+        return Lang::is_header(stem).then(|| Lang::for_header_template(text.as_bytes()));
+    }
+    header_by_text(Lang::strip_ignored_suffix(name)?, text)
+}
+
 /// Text files no syntax claims, shown plain rather than handed to the system's opener.
 const PLAIN: &[&str] = &["txt", "text", "log", "out", "conf", "cfg", "env", "list"];
 
@@ -45,11 +61,22 @@ impl FileType {
         if ext.is_some_and(is_mermaid) {
             return Some(FileType::MERMAID);
         }
-        if let Some(lang) = highlight::file_language(path) {
+        let named = highlight::named_language(path);
+        if let Some(Some(lang)) = named {
             return Some(FileType::Text { lang: Some(lang) });
         }
         let plain = ext.is_some_and(|e| PLAIN.iter().any(|p| e.eq_ignore_ascii_case(p)));
-        plain.then_some(FileType::Text { lang: None })
+        if plain {
+            return Some(FileType::Text { lang: None });
+        }
+        if named.is_some() {
+            return None;
+        }
+        // as bat: a name nothing claims, without a suffix it ignores (`README.md.orig`,
+        // `notes.txt.bak`, `Makefile.in`, X-145)
+        let name = path.file_name()?.to_str()?;
+        let rest = ada_parse::Lang::strip_ignored_suffix(name)?;
+        FileType::by_path(&path.with_file_name(rest))
     }
 
     /// What a file holds, by its path and then its contents. Stdin and a file with no extension
@@ -57,22 +84,8 @@ impl FileType {
     /// What neither tells is plain text, kept line for line, but for a file with no extension:
     /// `README`, `TODO` and the like are read as markdown, as they always were.
     pub fn of(path: &Path, text: &str) -> FileType {
-        // a header by its text: C, C++, Objective-C or Objective-C++ (X-134; bat's set names
-        // every `.h` Objective-C); a `.h` header's CMake template (`config.h.in`, X-140) a C or
-        // a C++ one by its text
         let name = path.file_name().and_then(|n| n.to_str());
-        let header = match name {
-            Some(n) if ada_parse::Lang::is_header(n) => {
-                Some(ada_parse::Lang::for_header(text.as_bytes()))
-            }
-            Some(n)
-                if ada_parse::Lang::header_template(n) == Some(ada_parse::Lang::CMakeCHeader) =>
-            {
-                Some(ada_parse::Lang::for_header_template(text.as_bytes()))
-            }
-            _ => None,
-        };
-        if let Some(lang) = header {
+        if let Some(lang) = name.and_then(|n| header_by_text(n, text)) {
             return FileType::Text {
                 lang: Some(lang.label()),
             };
@@ -266,7 +279,65 @@ mod tests {
             lang("CMake C++ Header").unwrap()
         );
         assert_eq!(by_path("config.h.in"), lang("CMake C Header"));
-        assert_eq!(by_path("Config.cmake.in"), None);
+        // a C source's template is C's (X-144), its text not asked
+        assert_eq!(
+            tpl("x.c.in", "namespace a {}\n"),
+            lang("CMake C Header").unwrap()
+        );
+        // a suffix bat ignores off, then the text (X-145)
+        assert_eq!(of("int f(void);\n"), tpl("a.h.orig", "int f(void);\n"));
+        assert_eq!(
+            tpl("a.h~", "namespace a { class B; }\n"),
+            lang("C++").unwrap()
+        );
+        assert_eq!(
+            tpl("config.h.in.bak", "#cmakedefine X\nnamespace a {}\n"),
+            lang("CMake C++ Header").unwrap()
+        );
+    }
+
+    /// A name with a suffix bat ignores is named by the rest, as bat names it, and the rest
+    /// renders or shows as it would (X-145).
+    #[test]
+    fn suffixes_bat_ignores() {
+        assert_eq!(by_path("Config.cmake.in"), lang("CMake"));
+        assert_eq!(by_path("FooConfig.cmake.in"), lang("CMake"));
+        assert_eq!(by_path("CMakeLists.txt.in"), lang("CMake"));
+        assert_eq!(by_path("Makefile.in"), lang("Makefile"));
+        assert_eq!(by_path("GNUmakefile.in"), lang("Makefile"));
+        assert_eq!(by_path("setup.py.in"), lang("Python"));
+        assert_eq!(by_path("x.py.in.bak"), lang("Python"));
+        assert_eq!(by_path("main.rs.orig"), lang("Rust"));
+        assert_eq!(by_path("app.conf.dpkg-dist"), by_path("app.conf"));
+        assert_eq!(by_path("x.pl.rpmnew"), lang("Perl"));
+        assert_eq!(by_path("README.md.orig"), Some(FileType::Markdown));
+        assert_eq!(
+            by_path("notes.txt.bak"),
+            Some(FileType::Text { lang: None })
+        );
+        assert_eq!(by_path("pic.png~"), Some(FileType::Image));
+        assert_eq!(by_path("x.in"), None);
+        assert_eq!(by_path(".in"), None);
+        assert_eq!(by_path("x.IN"), None);
+        // the set's whole names first: `Makefile.in` is Makefile's own, `known_hosts.old`
+        // Known Hosts'
+        assert_eq!(by_path("known_hosts.old"), lang("Known Hosts"));
+        // another language's `configure_file` template named for CMake: the language
+        // (X-144), where ada lexes it
+        assert_eq!(by_path("SDLEntryTestActivity.java.cmake"), lang("Java"));
+        assert_eq!(by_path("AndroidManifest.xml.cmake"), lang("XML"));
+        assert_eq!(
+            by_path("prefix.sh.cmake"),
+            lang("Bourne Again Shell (bash)")
+        );
+        assert_eq!(by_path("local.properties.cmake"), lang("Java Properties"));
+        assert_eq!(by_path("protobuf.pc.cmake"), lang("CMake"));
+        assert_eq!(by_path("prefix.sh.fish.cmake"), lang("CMake"));
+        assert_eq!(by_path("arm.toolchain.cmake"), lang("CMake"));
+        assert_eq!(by_path("lists.in.cmake"), lang("CMake"));
+        assert_eq!(by_path("x.cmake.cmake"), lang("CMake"));
+        assert_eq!(by_path("foo.pc.cmake.in"), lang("CMake"));
+        assert_eq!(by_path("foo.java.cmake.in"), lang("Java"));
     }
 
     #[test]

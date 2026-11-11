@@ -841,7 +841,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
 
     /// Commands, from `p` in a block or at the top: until one's name. A line holds one command,
     /// after blanks and before blanks and comments (X-119): a name after a command's `)` or a
-    /// bracket comment, or anything else but blanks and comments, is [`Scan::stray`].
+    /// bracket comment, or anything else but blanks and comments, is [`Scan::stray`]; a
+    /// template's placeholder is read wherever a command may follow ([`Scan::templated`]).
     #[inline(always)]
     fn commands(&mut self, mut p: usize) -> usize {
         let b = self.b;
@@ -854,8 +855,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     p = self.comment(p);
                     self.done = true;
                 }
-                // a template's placeholder (`@PACKAGE_INIT@`), or a name that starts with one
-                C_OTHER if b[p] == b'@' && !self.done => match self.templated(p) {
+                // a template's placeholder (`@PACKAGE_INIT@`), or a name that starts with one;
+                // after a command's `)` too, where configuring puts more commands
+                // (`set(@var@_KEYS "@keys@")@code@`, X-145)
+                C_OTHER if b[p] == b'@' => match self.templated(p) {
                     Some(e) => return e,
                     None => return self.stray(p),
                 },
@@ -2752,12 +2755,17 @@ mod tests {
             "check_c_source_compiles([[#include <a.h>",
             "int main(void) { return \"\"; }]] HAVE_A)",
             "message(STATUS ok)",
+            "set(K \"@k@\")@code@",
+            "g() @ zz",
         ];
         has(
             &l,
             "@",
             "punctuation.definition.variable.substitution.cmake",
         );
+        // after a command's `)` too, where configuring puts more commands (X-145)
+        has(&l, "code", "variable.other.readwrite.cmake");
+        has(&l, "@ zz", "invalid.illegal.stray.cmake");
         has(&l, "PACKAGE_INIT", "variable.other.readwrite.cmake");
         has(&l, "z_vcpkg_", "variable.function.generic.cmake");
         has(&l, "PORT", "variable.other.readwrite.cmake");

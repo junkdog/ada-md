@@ -134,11 +134,23 @@ fn search_syntax(lang: &str) -> Option<Syntax> {
 }
 
 /// The language of a whole file, by its name alone: the name itself (`Makefile`, `.zshrc`,
-/// `Cargo.lock`), then its extension. `None` when that says nothing, or says plain text.
+/// `Cargo.lock`), then its extension; failing both, as bat, the name without a suffix bat
+/// ignores (`Makefile.in`, `x.pl.orig`: [`Lang::strip_ignored_suffix`], X-145). `None` when
+/// that says nothing, or says plain text.
 pub fn file_language(path: &Path) -> Option<&'static str> {
+    named_language(path).unwrap_or_else(|| {
+        let name = path.file_name()?.to_str()?;
+        file_language(Path::new(Lang::strip_ignored_suffix(name)?))
+    })
+}
+
+/// [`file_language`] before a suffix comes off: `Some(None)` when the name or its extension
+/// says plain text, `None` when they say nothing (for ada-parse's languages the suffix is off
+/// already: [`Lang::from_file_name`]).
+pub(crate) fn named_language(path: &Path) -> Option<Option<&'static str>> {
     let name = path.file_name().and_then(|n| n.to_str());
     if let Some(lang) = name.and_then(Lang::from_file_name) {
-        return Some(lang.label());
+        return Some(Some(lang.label()));
     }
     let by_name = name.and_then(names::by_extension).map(names::label);
     let by_ext = || {
@@ -151,7 +163,8 @@ pub fn file_language(path: &Path) -> Option<&'static str> {
             None => names::find(ext).map(names::label),
         }
     };
-    by_name.or_else(by_ext).filter(|&n| n != "Plain Text")
+    let found = by_name.or_else(by_ext)?;
+    Some(Some(found).filter(|&n| n != "Plain Text"))
 }
 
 /// The language a file's first line declares: a `#!` line, `<?xml`, a vim modeline, as bat's
@@ -1831,6 +1844,15 @@ mod tests {
         by_name.map(|s| &*s.name).or_else(by_ext)
     }
 
+    /// [`file_in_full`], then, where it names nothing, the name without a suffix bat ignores:
+    /// bat's reading of a file's name (X-145).
+    fn file_in_bat(path: &str) -> Option<&'static str> {
+        file_in_full(path).or_else(|| {
+            let name = Path::new(path).file_name()?.to_str()?;
+            file_in_bat(Lang::strip_ignored_suffix(name)?)
+        })
+    }
+
     /// Every name and extension the set knows and every alias, in its own case, lowercase and
     /// uppercase.
     fn words() -> Vec<String> {
@@ -1854,24 +1876,48 @@ mod tests {
     /// names after (ADR-43), names what the whole set names: as a fence's token, a file's whole
     /// name and its extension. Two departures are by design: ada's JavaScript is Babel's
     /// grammar whatever the token, where the set gives Sublime's `JavaScript` for
-    /// ```` ```JavaScript ```` (ADR-40); and a CMake header template is named by its whole name
-    /// (`x.h.in`, `x.hpp.in`), where the set names only a file called `h.in` (X-140).
+    /// ```` ```JavaScript ```` (ADR-40); a CMake template of C or C++ is named by its whole name
+    /// (`x.h.in`, `x.hpp.in`, `x.c.cmake`), where the set names only a file called `h.in` and
+    /// bat names `x.h.in` by `x.h` (X-140, X-144); and another language's template named for
+    /// CMake (`x.java.cmake`) is that language's, where the set says CMake (X-144). A file's
+    /// name is read as bat reads it: the set's, then, where that names nothing, without a
+    /// suffix bat ignores (`x.py.in`, `x.pyx.in`, X-145).
     #[test]
     fn the_language_table_agrees_with_the_set() {
         let covered = |name: Option<&str>| name.and_then(Lang::from_name);
-        let departs = |ours: Option<&str>, full: Option<&str>| {
+        let departs = |file: Option<&str>, ours: Option<&str>, full: Option<&str>| {
+            let template = [Lang::CMakeCHeader, Lang::CMakeCppHeader]
+                .iter()
+                .any(|l| ours == Some(l.name()));
             ours == Some(Lang::JavaScript.name()) && full == Some("JavaScript")
-                || full.is_none()
-                    && [Lang::CMakeCHeader, Lang::CMakeCppHeader]
-                        .iter()
-                        .any(|l| ours == Some(l.name()))
+                || template && ours != full
+                || full == Some("CMake") && file.and_then(Lang::configured_file).is_some()
         };
         let mut words = words();
         words.extend(["PowerShell", "powershell", "ps1", "PSM1", "psd1"].map(String::from));
+        // X-144's and X-145's names, each also as `x.{w}`
+        words.extend(
+            [
+                "java.cmake",
+                "xml.cmake",
+                "sh.cmake",
+                "pc.cmake",
+                "c.cmake",
+                "py.in",
+                "c.in",
+                "cmake.in",
+                "py.orig",
+                "rs.in.bak",
+                "pyx.in",
+                "txt.in",
+                "md.in",
+            ]
+            .map(String::from),
+        );
         for w in words {
             let full = find_in_full(&w);
             let ours = Lang::from_token(&w).map(Lang::name);
-            if departs(ours, full) {
+            if departs(None, ours, full) {
                 assert_eq!(find_syntax(&w).map(Syntax::name), ours, "token {w:?}");
             } else {
                 match Lang::from_token(&w) {
@@ -1881,10 +1927,10 @@ mod tests {
                 assert_eq!(find_syntax(&w).map(Syntax::name), full, "token {w:?}");
             }
             for file in [w.clone(), format!("x.{w}")] {
-                let full = file_in_full(&file);
+                let full = file_in_bat(&file);
                 let name = Path::new(&file).file_name().and_then(|n| n.to_str());
                 let ours = name.and_then(Lang::from_file_name).map(Lang::name);
-                if departs(ours, full) {
+                if departs(name, ours, full) {
                     assert_eq!(file_language(Path::new(&file)), ours, "file {file:?}");
                     continue;
                 }

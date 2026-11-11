@@ -355,9 +355,15 @@ mod tests {
             ("h.in", Some(Lang::CMakeCHeader)),
             ("hpp.in", Some(Lang::CMakeCppHeader)),
             (".h.in", None),
-            ("x.c.in", None),
+            // a C or C++ source's template too, and `.cmake` names (X-144)
+            ("x.c.in", Some(Lang::CMakeCHeader)),
+            ("isl_srcdir.c.cmake", Some(Lang::CMakeCHeader)),
+            ("x.cpp.in", Some(Lang::CMakeCppHeader)),
+            ("x.CC.cmake", Some(Lang::CMakeCppHeader)),
             ("x.h", Some(Lang::ObjC)),
-            ("Config.cmake.in", None),
+            // by the rest, as bat (X-145)
+            ("Config.cmake.in", Some(Lang::CMake)),
+            ("x.h.orig", Some(Lang::ObjC)),
         ] {
             assert_eq!(Lang::from_file_name(name), lang, "{name}");
         }
