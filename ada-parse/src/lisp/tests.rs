@@ -430,3 +430,77 @@ fn a_keywords_mark_is_the_keywords() {
     let racket = marked(Lang::Racket, &["(f #:kw 1)"]);
     assert!(racket.contains(&("#:", MARK)), "{racket:?}");
 }
+
+/// Lines of `pieces` in a fixed pseudo-random order, 16 to ~70 bytes: a step of sixteen
+/// meets each piece at every offset across the lines. Clojure's test too.
+#[cfg(target_arch = "x86_64")]
+pub(super) fn step_lines(pieces: &[&str]) -> Vec<String> {
+    let mut x = 0x9e37_79b9_u32;
+    let mut lines = Vec::new();
+    for _ in 0..600 {
+        let mut l = String::new();
+        let len = 16 + (x % 56) as usize;
+        while l.len() < len {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            l.push_str(pieces[x as usize % pieces.len()]);
+        }
+        lines.push(l);
+    }
+    lines
+}
+
+/// An identifier's run sixteen bytes a step (X-039) ends where a byte a step ends it, with the
+/// same digit and escape answers, from every place of lines holding what a step stops at but
+/// the run takes (control bytes, Unicode's letters and digits, escapes) and what ends it.
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn identifier_runs_step_as_bytes() {
+    use super::{Dialect, Scan};
+    use crate::emit::Push;
+    let pieces = [
+        "abc",
+        "x1",
+        "12",
+        ".",
+        "-",
+        "*v*",
+        "\u{1}",
+        "\u{1f}",
+        "\u{7f}",
+        "é",
+        "٣",
+        "\u{3000}",
+        "\u{a0}",
+        "\\(",
+        "\\é",
+        "\\",
+        "|",
+        "(",
+        ")",
+        "[",
+        "]",
+        "{",
+        "}",
+        "\t",
+        " ",
+        "'",
+        ",",
+        ":",
+        ";",
+        "\"",
+        "foo-bar-baz-quux",
+        "0123456789.0123",
+    ];
+    let mut spans = Vec::new();
+    for dialect in [Dialect::Common, Dialect::Scheme] {
+        for line in step_lines(&pieces) {
+            let mut out = crate::Out::new(&mut spans);
+            let s = Scan::fresh(line.as_bytes(), dialect, &State::default(), &mut out, Push);
+            for p in 0..=line.len() {
+                assert_eq!(s.run_wide(p), s.run_bytes(p), "{dialect:?} {line:?} at {p}");
+            }
+        }
+    }
+}

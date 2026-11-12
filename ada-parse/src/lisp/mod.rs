@@ -201,11 +201,6 @@ leaves! {
 /// under `string.regexp.lisp`.
 const REGEX_KINDS: u16 = 256;
 
-/// How many bytes of a run [`Scan::run_at`] reads a byte a step before sixteen a step: most
-/// symbols end in these, and a step of sixteen costs more than a short run's bytes.
-#[cfg(target_arch = "x86_64")]
-const PRE: usize = 4;
-
 /// How many depths a list's delimiters cycle through, each a rule of its own in a theme.
 pub(crate) const DEPTHS: u8 = 6;
 
@@ -927,47 +922,42 @@ impl<K: Sink> Scan<'_, '_, '_, K> {
     }
 
     /// [`Scan::run_at`] sixteen bytes a step (SSE2, which every x86-64 has), on a line of
-    /// sixteen or more: the bytes a run takes as they are ([`plain_masks`]) a step, an escape or a
-    /// character past ASCII as [`Scan::run_bytes`] takes it.
+    /// sixteen or more: a step's stops ([`stop_mask`]) then the byte it stopped at, an escape, a
+    /// character past ASCII or a control byte taken as [`Scan::run_bytes`] takes it. Whether a
+    /// byte is neither a digit nor a `.` is looked at only while none has been ([`digit_mask`]).
+    /// A run's first step is a step of sixteen too: X-019's four bytes a byte a step before it
+    /// took ~43 instructions a call on Common Lisp, more than the step they spared (X-039).
     #[cfg(target_arch = "x86_64")]
     #[inline(always)]
     fn run_wide(&self, p: usize) -> (usize, bool, bool) {
         let (b, n) = (self.b, self.b.len());
-        let (mut q, mut y, mut escaped) = (p, false, false);
-        // a short run's bytes a step, cheaper than a step of sixteen: most runs end in these,
-        // and the byte after them is read too, so a run of `PRE` (the commonest length) ends here
-        let pre = (p + PRE).min(n - 1);
-        while q <= pre {
+        // a run starting on a byte neither a digit nor a `.` (most) needs no digits looked at
+        // (`p` may be the line's end, or past it after a character's `#\`)
+        let other = b
+            .get(p)
+            .is_some_and(|&c| self.class[usize::from(c)] == C_OTHER);
+        let (mut q, mut y, mut escaped) = (p, other, false);
+        while q < n {
+            // the sixteen bytes from `q`, the line's last sixteen where fewer are left; a stop
+            // bit past them where none stops
+            let c = q.min(n - 16);
+            let s = q - c;
+            let stops = (stop_mask(b, c, self.scheme) >> s) | (1 << (16 - s));
+            let len = stops.trailing_zeros();
+            if !y {
+                // a byte taken that is neither a digit nor a `.`
+                y = ((1u32 << len) - 1) & !(digit_mask(b, c) >> s) != 0;
+            }
+            q += len as usize;
+            if len == (16 - s) as u32 {
+                continue;
+            }
             match self.class[usize::from(b[q])] {
+                // a step stops at bytes below `!`: the control bytes are the run's
                 C_OTHER => {
                     y = true;
                     q += 1;
                 }
-                C_DIGIT | C_DOT => q += 1,
-                // an escape or a character past ASCII: the steps below take it
-                C_ESCAPE | C_HIGH => break,
-                _ => return (q, y, escaped),
-            }
-        }
-        while q < n {
-            // the sixteen bytes from `q`, the line's last sixteen where fewer are left
-            let c = q.min(n - 16);
-            let s = q - c;
-            let (plain, digits) = plain_masks(b, c, self.scheme);
-            let stop = !(plain >> s) & (0xffff >> s);
-            let len = if stop != 0 {
-                stop.trailing_zeros()
-            } else {
-                16 - s as u32
-            };
-            // a byte taken that is neither a digit nor a `.`
-            let taken = (1u32 << len) - 1;
-            y |= (taken & !(digits >> s)) != 0;
-            q += len as usize;
-            if stop == 0 {
-                continue;
-            }
-            match self.class[usize::from(b[q])] {
                 C_ESCAPE => {
                     if q + 1 >= n {
                         break;
@@ -3075,12 +3065,12 @@ pub(super) fn keep(frames: &[u8], body: u8, base: usize, arg: u16) -> State {
     state
 }
 
-/// Of the sixteen bytes of `b` at `q` (`q + 16 <= b.len()`), a bit for each an identifier's run
-/// takes as it is (an ASCII byte but a space, a break and `\`; [`CLASS`], Scheme's [`SCHEME_CLASS`]
-/// with `scheme`), and a bit for each digit and `.`.
+/// Of the sixteen bytes of `b` at `q` (`q + 16 <= b.len()`), a bit for each a step of an
+/// identifier's run stops at: a space, a break, `\` and a byte past ASCII ([`CLASS`], Scheme's
+/// [`SCHEME_CLASS`] with `scheme`), and the control bytes, which the run takes past the step.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-fn plain_masks(b: &[u8], q: usize, scheme: bool) -> (u32, u32) {
+fn stop_mask(b: &[u8], q: usize, scheme: bool) -> u32 {
     use std::arch::x86_64::*;
     assert!(q + 16 <= b.len());
     // SAFETY: SSE2 is part of x86-64; the load reads `b[q..q + 16]`, inside `b` (above), and
@@ -3088,28 +3078,38 @@ fn plain_masks(b: &[u8], q: usize, scheme: bool) -> (u32, u32) {
     unsafe {
         let w = _mm_loadu_si128(b.as_ptr().add(q).cast());
         let eq = |x: __m128i, c: u8| _mm_cmpeq_epi8(x, _mm_set1_epi8(c as i8));
-        // `x - lo` at most `n`, unsigned: `x` in `lo..=lo + n`
-        let within = |x: __m128i, lo: u8, n: u8| {
-            let d = _mm_sub_epi8(x, _mm_set1_epi8(lo as i8));
-            _mm_cmpeq_epi8(_mm_min_epu8(d, _mm_set1_epi8(n as i8)), d)
-        };
         let or = |a, b| _mm_or_si128(a, b);
-        // `| 0x20` takes `\` to `|`, `[` to `{` and `]` to `}`, and no other byte to those
+        // below `!`, signed: the spaces, the control bytes and the bytes past ASCII
+        let low = _mm_cmplt_epi8(w, _mm_set1_epi8(b'!' as i8));
+        // `& !1` takes `(` `)` to `(` and `:` `;` to `:`; `| 0x20` takes `\` to `|`, `[` to `{`
+        // and `]` to `}`, and no other byte to those
+        let pair = _mm_and_si128(w, _mm_set1_epi8(!1));
         let up = _mm_or_si128(w, _mm_set1_epi8(0x20));
-        // `\t`..`\r` and ` `; `(` `)`, `:` `;`, `"`, `'`, `,`; `|` and `\`
-        let space = or(within(w, b'\t', 4), eq(w, b' '));
         let breaks = or(
-            or(within(w, b'(', 1), within(w, b':', 1)),
+            or(eq(pair, b'('), eq(pair, b':')),
             or(or(eq(w, b'"'), eq(w, b'\'')), eq(w, b',')),
         );
-        let mut stop = or(or(space, breaks), eq(up, b'|'));
+        let mut stop = or(or(low, breaks), eq(up, b'|'));
         if scheme {
             stop = or(stop, or(eq(up, b'{'), eq(up, b'}')));
         }
-        // bytes past ASCII stop too: their top bit
-        let stop = (_mm_movemask_epi8(or(stop, w)) as u32) & 0xffff;
-        let digits = or(within(w, b'0', 9), eq(w, b'.'));
-        (!stop & 0xffff, _mm_movemask_epi8(digits) as u32)
+        _mm_movemask_epi8(stop) as u32
+    }
+}
+
+/// Of the sixteen bytes of `b` at `q` (`q + 16 <= b.len()`), a bit for each digit and `.`.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn digit_mask(b: &[u8], q: usize) -> u32 {
+    use std::arch::x86_64::*;
+    assert!(q + 16 <= b.len());
+    // SAFETY: as [`stop_mask`]'s
+    unsafe {
+        let w = _mm_loadu_si128(b.as_ptr().add(q).cast());
+        let d = _mm_sub_epi8(w, _mm_set1_epi8(b'0' as i8));
+        let digit = _mm_cmpeq_epi8(_mm_min_epu8(d, _mm_set1_epi8(9)), d);
+        let digits = _mm_or_si128(digit, _mm_cmpeq_epi8(w, _mm_set1_epi8(b'.' as i8)));
+        _mm_movemask_epi8(digits) as u32
     }
 }
 

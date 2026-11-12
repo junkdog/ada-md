@@ -182,6 +182,35 @@ static RUN_STOP: [bool; 256] = {
     }
     t
 };
+/// Of the sixteen bytes of `b` at `q` (`q + 16 <= b.len()`), a bit for each a step of
+/// [`Scan::run_end`] stops at: [`DELIM`]'s bytes, the bytes past ASCII and the control bytes
+/// (the last two the run's but Unicode's spaces, looked at past the step).
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn stop_mask(b: &[u8], q: usize) -> u32 {
+    use std::arch::x86_64::*;
+    assert!(q + 16 <= b.len());
+    // SAFETY: SSE2 is part of x86-64; the load reads `b[q..q + 16]`, inside `b` (above), and
+    // needs no alignment
+    unsafe {
+        let w = _mm_loadu_si128(b.as_ptr().add(q).cast());
+        let eq = |x: __m128i, c: u8| _mm_cmpeq_epi8(x, _mm_set1_epi8(c as i8));
+        let or = |a, b| _mm_or_si128(a, b);
+        // below `!`, signed: the spaces, the control bytes and the bytes past ASCII
+        let low = _mm_cmplt_epi8(w, _mm_set1_epi8(b'!' as i8));
+        // `& !1` takes `(` `)` to `(`; `| 0x20` takes `[` to `{` and `]` to `}`, and no other
+        // byte to those
+        let pair = _mm_and_si128(w, _mm_set1_epi8(!1));
+        let up = _mm_or_si128(w, _mm_set1_epi8(0x20));
+        let brackets = or(eq(pair, b'('), or(eq(up, b'{'), eq(up, b'}')));
+        let marks = or(
+            or(or(eq(w, b','), eq(w, b';')), or(eq(w, b'"'), eq(w, b'\\'))),
+            or(or(eq(w, b'`'), eq(w, b'~')), or(eq(w, b'@'), eq(w, b'^'))),
+        );
+        _mm_movemask_epi8(or(low, or(brackets, marks))) as u32
+    }
+}
+
 /// The first bytes of `match-noise`'s patterns ([`Scan::noise`]).
 static NOISE: [bool; 256] = crate::regex::table(b";#,^");
 
@@ -528,8 +557,39 @@ impl<K: Sink> Scan<'_, '_, '_, K> {
         }
     }
 
-    /// `[^\s,;…]*` at `p`: where the run of non-delimiters ends.
+    /// `[^\s,;…]*` at `p`: where the run of non-delimiters ends. Sixteen bytes a step on a line
+    /// of sixteen or more ([`stop_mask`]): a step's end is a bit's place, not a branch a byte,
+    /// whose exit was the largest site of Clojure's branch misses (X-039: misses −18%, cycles
+    /// −6.6%).
     fn run_end(&self, mut p: usize) -> usize {
+        let (b, n) = (self.b, self.b.len());
+        #[cfg(target_arch = "x86_64")]
+        if n >= 16 {
+            while p < n {
+                // the sixteen bytes from `p`, the line's last sixteen where fewer are left; a
+                // stop bit past them where none stops
+                let c = p.min(n - 16);
+                let s = p - c;
+                let stops = (stop_mask(b, c) >> s) | (1 << (16 - s));
+                let len = stops.trailing_zeros();
+                p += len as usize;
+                if len == (16 - s) as u32 {
+                    continue;
+                }
+                // a step stops at the bytes below `!` and past ASCII too: a control byte, or
+                // a byte past ASCII but Unicode's space, is the run's
+                if DELIM[usize::from(b[p])] || (b[p] >= 0x80 && self.wide_space(p) > 0) {
+                    return p;
+                }
+                p += 1;
+            }
+            return p;
+        }
+        self.run_end_bytes(p)
+    }
+
+    /// [`Scan::run_end`] a byte a step.
+    fn run_end_bytes(&self, mut p: usize) -> usize {
         while p < self.b.len() {
             // one test a byte: a delimiter, or a byte past ASCII (a space of Unicode's, rare)
             if RUN_STOP[usize::from(self.b[p])] && (self.b[p] < 0x80 || self.wide_space(p) > 0) {
@@ -1146,6 +1206,62 @@ mod tests {
             .into_iter()
             .find(|(t, _)| *t == text)
             .map_or("(none)", |(_, s)| s)
+    }
+
+    /// A run of non-delimiters sixteen bytes a step (X-039) ends where a byte a step ends it,
+    /// from every place of lines holding what a step stops at but the run takes (control bytes,
+    /// Unicode's letters and digits) and what ends it (Unicode's spaces, delimiters).
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn runs_step_as_bytes() {
+        use super::Scan;
+        use crate::emit::Push;
+        let pieces = [
+            "abc",
+            "x1",
+            "12",
+            ".",
+            "-",
+            "*v*",
+            "#",
+            "'",
+            ":kw",
+            "\u{1}",
+            "\u{1f}",
+            "\u{7f}",
+            "é",
+            "٣",
+            "\u{3000}",
+            "\u{a0}",
+            "\u{2028}",
+            "\\",
+            "|",
+            "(",
+            ")",
+            "[",
+            "]",
+            "{",
+            "}",
+            "\t",
+            " ",
+            ",",
+            ";",
+            "\"",
+            "`",
+            "~",
+            "@",
+            "^",
+            "clojure.core/some->>",
+            "0123456789.0123",
+        ];
+        let mut spans = Vec::new();
+        for line in super::super::tests::step_lines(&pieces) {
+            let mut out = crate::Out::new(&mut spans);
+            let s = Scan::fresh(line.as_bytes(), &State::default(), &mut out, Push);
+            for p in 0..=line.len() {
+                assert_eq!(s.run_end(p), s.run_end_bytes(p), "{line:?} at {p}");
+            }
+        }
     }
 
     #[test]
