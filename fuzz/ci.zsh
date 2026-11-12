@@ -24,7 +24,7 @@
 # The corpus's store between rounds is the `corpus-TARGET` artifact (kept 90 days), so nothing
 # is written to the repo or its releases. Inputs are named by their hash, so a union is a copy.
 # `tokens`' store is its languages' corpora, corpus/tokens-LANG (F-017): every input runs
-# through each of its 40 lexers otherwise, and one merge of them all takes hours.
+# through every one of its lexers otherwise (LANGS's 60), and one merge of them all takes hours.
 setopt err_exit pipe_fail no_unset extended_glob
 F=${0:A:h} CALLER=$PWD
 cd $F

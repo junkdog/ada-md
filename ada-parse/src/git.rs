@@ -15,7 +15,7 @@
 //! attribute's leaf under its builtin's meta scope.
 //!
 //! `Git Config` and `Git Rebase Todo` embed a shell, and `Git Commit` and `Git Log` bat's
-//! `Diff`; they stay on syntect.
+//! `Diff`; they have no lexer here yet, so ada prints them plain (ADR-43).
 
 use crate::emit::{Push, Runs, Sink};
 use crate::line_format::{self, Cursor, Format, blanks, find, leads};

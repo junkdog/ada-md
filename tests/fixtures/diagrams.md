@@ -38,7 +38,7 @@ flowchart LR
         A[read file] --> B{markdown?}
     end
     B -->|yes| C[pulldown-cmark]
-    B -->|no| D[syntect]
+    B -->|no| D[scanner]
     C --> E[layout]
     D --> E
     E -.-> F((paint))

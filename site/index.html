@@ -1220,12 +1220,12 @@ rg -n . | fzf -d : --preview-window '+{2}-/2' \
     <div class="tile"><b>45.8 M</b><p>fuzzed sessions</p><small>whole scripted sessions, plus 1.5 B runs of the printer, scanners, highlighting lexers, image codecs, terminal probe, link lookup and diagrams; over 43 h in eighteen runs</small></div>
     <div class="tile"><b>12</b><p>bugs found, all fixed</p><small>an overflow on an impossible git hunk; five frame bugs with wide glyphs or a popup over an image; a parser blow-up and a highlighter loop, now bounded; three malformed images that took it down; a wiki link that lost its folder</small></div>
     <div class="tile"><b>0</b><p>crashes, hangs or OOMs</p><small>in every run since the fixes</small></div>
-    <div class="tile"><b>8</b><p><code>unsafe</code> blocks</p><small>two set glibc's malloc arena count, before the threads that use it start; two give back the binary's read-only pages once the syntax set has loaded; one reads a row of screen cells as bytes, to compare rows in wide loads; three find a document's newlines with AVX2 on x86_64, once the CPU is known to have it. Plus 17 for Windows interop, in the Windows build only: calls into the Win32 console, file-watch and shell APIs</small></div>
+    <div class="tile"><b>111</b><p><code>unsafe</code> blocks</p><small>18 in ada: two set glibc's malloc arena count, before the threads that use it start; one reads a row of screen cells as bytes, to compare rows in wide loads; three find a document's newlines with AVX2 on x86_64, once the CPU is known to have it; twelve expand a code block's tabs 64 bytes at a time. 93 in its lexers: 51 lend a scanner the line it reads, 19 write the color runs through the run writer's pointers, 6 compare 16 bytes at a time with SSE2, and 17 read a table entry, a stack slot or a span of bytes the scanner has already bounded. Plus 17 for Windows interop, in the Windows build only: calls into the Win32 console, file-watch and shell APIs</small></div>
   </div>
   <ul class="fuzz">
     <li><h3>Any document</h3><p>Markdown, code, config, plain text and images, built from random bytes and a
       dictionary of the parts markdown parsers find hardest. Other targets fuzz <code>--print</code>, whole
-      and streamed (which must match byte for byte), the log and JSON scanners, the Makefile and shell lexers (checked against syntect line for line), image decoding, mermaid diagrams at
+      and streamed (which must match byte for byte), every highlighting lexer (its runs checked against its own spans), image decoding, mermaid diagrams at
       any width, the sixel encoder, and the terminal's replies to ada's probe.</p></li>
     <li><h3>Any input</h3><p>Every action, through the real keymap or directly: scrolling, links, search, sorting,
       the outline, themes, the settings popup, saving the config, the mouse (wheel, clicks, selecting text by

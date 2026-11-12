@@ -54,7 +54,7 @@ fn bottom_to_top_and_right_to_left() {
 #[test]
 fn subgraphs_are_framed() {
     let src = "flowchart TD\n    subgraph parse[Parse]\n        A[read file] --> B{markdown?}\n    end\n\
-               B -->|yes| C[pulldown-cmark]\n    B -->|no| D[syntect]\n    C --> E[layout]\n    D --> E\n\
+               B -->|yes| C[pulldown-cmark]\n    B -->|no| D[scanner]\n    C --> E[layout]\n    D --> E\n\
                E --> F((paint))\n    E -.-> G[images worker]";
     insta::assert_snapshot!(drawn(src));
 }

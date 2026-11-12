@@ -3,10 +3,13 @@
 //!
 //! Each answer is the one syntect gives on bat's syntax set (two-face's), so that asking the
 //! table first never changes what ada picks. The table is a fast path, not the oracle: `None`
-//! means "ask syntect", whose set still names every language. ada's tests hold every `Some`
-//! against syntect: every name and extension the set knows, every alias, and first lines.
+//! means "ask the set's list", ada's copy of the set's names, extensions and first lines
+//! (`assets/`, ADR-43), which names every language, those without a lexer here too. ada's tests
+//! hold every `Some` against syntect, a dev-dependency there: every name and extension the set
+//! knows, every alias, and first lines.
 
-/// A language ada highlights with a lexer of its own instead of a syntect grammar.
+/// A language ada highlights with a lexer of its own; every other language bat's set names
+/// prints plain (ADR-43).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Lang {
     /// bat's `JSON` (O-048).

@@ -47,8 +47,8 @@
 //! showed (generics and template parameters, declared names, the preprocessor's corners);
 //! **R4** C and C++ on it alone, the compiled scanner deleted. Judged against syntect by
 //! color (each byte's theme rule), not scope for scope: where it reads C or C++ otherwise than
-//! bat, by design, is listed in ada's grammar tests (`cpp_rules_match_the_grammar`,
-//! `c_rules_match_the_grammar`) and the vault's X-057 notes.
+//! bat, by design, is in the vault's X-057 notes. Its readings are held by
+//! `tests/readings.rs`' snapshots (X-116), which replaced ada's grammar tests.
 
 mod cocoa;
 mod code;

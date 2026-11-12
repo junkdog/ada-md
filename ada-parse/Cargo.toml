@@ -7,8 +7,8 @@ description = "ada-md's own lexers for the most used languages, and the table th
 license = "MIT"
 repository = "https://github.com/junkdog/ada-md"
 
-# no syntect types (ADR-40), and no dependencies. ada checks the table against bat's grammars in
-# its own tests, where syntect is.
+# no syntect types (ADR-40), and no dependencies. ada checks the table against bat's syntax set
+# in its own tests, where syntect is a dev-dependency (ADR-43).
 [dependencies]
 
 [lints.rust]
