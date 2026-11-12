@@ -9,7 +9,7 @@
 
 mod words;
 
-use crate::emit::{Rules, Run, Runs, Sink, Spans};
+use crate::emit::{Rules, Run, Runs, Side, Sink, Spans};
 use crate::heredoc::{Label, Lead, Tail};
 use crate::prim::{WORD, char_len};
 use crate::words::{Words, text_len};
@@ -1121,12 +1121,12 @@ impl crate::CarryRuns for Scan<'_, '_, Runs<'_>> {
 
 /// HTML's side of a scan ([`Scan::host`]): its state outside the PHP (at the line's start, or its
 /// end once the line's HTML is lexed), the line's HTML lexed with its PHP blanked
-/// ([`Scan::html_pass`]), whether that's this line's, and the next of its spans to write.
+/// ([`Scan::html_pass`]) on the scan's sink's side ([`Side`]: runs by PHP's rules on the run
+/// sink, X-161), and whether that's this line's.
 struct Host {
     html: State,
-    spans: Vec<crate::Span>,
+    side: Side,
     line: bool,
-    next: usize,
 }
 
 struct Scan<'b, 'c, K: Sink> {
@@ -1283,9 +1283,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.host.get_or_insert_with(|| {
             Box::new(Host {
                 html: State::default(),
-                spans: Vec::new(),
+                side: Side::default(),
                 line: false,
-                next: 0,
             })
         })
     }
@@ -1533,7 +1532,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// The line's HTML from `p` lexed by HTML's scanner, from [`Scan::html`], on a copy of the line
     /// with what's before `p` and each PHP island after it (`<?` to its `?>`, or the line's end)
     /// blanked: HTML's contexts run across an island as across blanks, as bat's resume after
-    /// `?>`. The spans into [`Scan::hspans`], HTML's state to the line's end.
+    /// `?>`. Its lexemes onto HTML's side ([`Scan::html_line`]), HTML's state to the line's end.
     #[cold]
     #[inline(never)]
     fn html_pass(&mut self, p: usize) {
@@ -1551,43 +1550,36 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             buf[s..e].fill(b' ');
             q = e;
         }
-        let h = self.host();
-        h.spans.clear();
-        crate::html::line(&buf, &mut h.html, &mut Out::new(&mut h.spans));
-        h.line = true;
-        h.next = 0;
+        self.html_line(&buf);
     }
 
-    /// The line's HTML spans in `p..q` written, its text between them HTML's.
+    /// `buf`, the line as HTML's scanner sees it, lexed onto HTML's side ([`Sink::side_lex`]).
+    #[inline(always)]
+    fn html_line(&mut self, buf: &[u8]) {
+        self.host();
+        let Some(h) = self.host.as_mut() else {
+            return;
+        };
+        self.k.side_lex(
+            &mut h.side,
+            (HTML_KIND, HTML),
+            &mut h.html,
+            |st, out| crate::html::line(buf, st, out),
+            |st, out, rules, runs| crate::html::line_runs(buf, st, out, rules, runs),
+        );
+        h.line = true;
+    }
+
+    /// The line's HTML in `p..q` written, its text between tokens HTML's.
     #[inline(always)]
     fn write_html(&mut self, p: usize, q: usize) {
-        let mut at = p;
-        let mut i = self.host.as_ref().map_or(0, |h| h.next);
-        loop {
-            let sp = match self.host.as_ref() {
-                Some(h) if i < h.spans.len() => h.spans[i],
-                _ => break,
-            };
-            let (s, e) = (sp.start as usize, sp.end as usize);
-            if s >= q {
-                break;
+        match self.host.as_mut() {
+            Some(h) => {
+                self.k
+                    .side_write(&mut self.out, &mut h.side, p, q, HTML_KIND, HTML);
             }
-            if e > at {
-                let s = s.max(at);
-                self.put(at, s, HTML);
-                let e = e.min(q);
-                self.put(s, e, sp.kind | HTML_KIND);
-                at = e;
-            }
-            if e > q {
-                break;
-            }
-            i += 1;
+            None => self.put(p, q, HTML),
         }
-        if let Some(h) = self.host.as_mut() {
-            h.next = i;
-        }
-        self.put(at, q, HTML);
     }
 
     /// The code from `p` to the line's end, or to where a mode starts (a string or comment
@@ -3026,11 +3018,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 buf[s..e].fill(b' ');
                 q = e;
             }
-            let h = self.host();
-            h.spans.clear();
-            crate::html::line(&buf, &mut h.html, &mut Out::new(&mut h.spans));
-            h.line = true;
-            h.next = 0;
+            self.html_line(&buf);
         }
         let (s, e) = if now {
             (n, n)

@@ -6,7 +6,7 @@
 
 use std::marker::PhantomData;
 
-use crate::{Out, Span};
+use crate::{Out, Span, State};
 
 /// An index into a theme's rules, as a highlighter numbers them.
 #[repr(transparent)]
@@ -94,16 +94,165 @@ pub(crate) trait Sink: Copy {
     ) {
         unreachable!("a guest's runs on a sink of spans");
     }
+
+    /// An embedded language written in place (HTML's CSS and JavaScript, X-161): on the run
+    /// sink, `f` given a run sink at this one's place whose kind `k` is this one's `k | bit`
+    /// ([`Shifted`]), and `true`; on the span sinks `false`, `f` never called, the embed's spans
+    /// pushed to `out` between [`Sink::close`] and [`Sink::reopen`] instead.
+    #[inline(always)]
+    fn shifted<F>(&mut self, bit: u16, f: F) -> bool
+    where
+        F: for<'x> FnOnce(Runs<'x>) -> Runs<'x>,
+    {
+        let _ = (bit, f);
+        false
+    }
+
+    /// A line's lexemes of an embedded language lexed apart into `side`, for [`Sink::side_write`]
+    /// to write range by range among the host's own (PHP's and HEEx's HTML, X-161): on the span
+    /// sinks `spans` lexes them from `state` as spans, by the embedded language's kinds; on the
+    /// run sink `runs` lexes them as runs by this sink's rules for kind `k | bit` ([`Shifted`]), the
+    /// spans' vector its scratch. Only one of the two is called, so a host on the run sink
+    /// carries no copy of the embedded language's span scan.
+    #[inline(always)]
+    fn side_lex<S, R>(
+        &mut self,
+        side: &mut Side,
+        (bit, gap): (u16, u16),
+        state: &mut State,
+        spans: S,
+        runs: R,
+    ) where
+        S: FnOnce(&mut State, &mut Out),
+        R: FnOnce(&mut State, &mut Out, &mut dyn Rules, &mut Vec<Run>),
+    {
+        let _ = (bit, gap, runs);
+        side.spans.clear();
+        spans(state, &mut Out::new(&mut side.spans));
+        side.next = 0;
+    }
+
+    /// `side`'s lexemes ([`Sink::side_lex`]) in `p..q` written, each kind `k` as `k | bit`, the
+    /// bytes between them `gap`'s ([`Side::NO_GAP`]: left plain); `p` at or past the last write's
+    /// end, each range past the one before.
+    #[inline(always)]
+    fn side_write(
+        &mut self,
+        out: &mut &mut Out,
+        side: &mut Side,
+        p: usize,
+        q: usize,
+        bit: u16,
+        gap: u16,
+    ) {
+        let mut at = p;
+        let mut i = side.next;
+        while i < side.spans.len() {
+            let sp = side.spans[i];
+            let (s, e) = (sp.start as usize, sp.end as usize);
+            if s >= q {
+                break;
+            }
+            if e > at {
+                let s = s.max(at);
+                if gap != Side::NO_GAP {
+                    self.merge_call(out, at, s, gap);
+                }
+                let e = e.min(q);
+                self.merge_call(out, s, e, sp.kind | bit);
+                at = e;
+            }
+            if e > q {
+                break;
+            }
+            i += 1;
+        }
+        side.next = i;
+        if gap != Side::NO_GAP {
+            self.merge_call(out, at, q, gap);
+        }
+    }
+}
+
+/// A line's lexemes of an embedded language, lexed apart from its host's
+/// ([`Sink::side_lex`]) and written range by range among them ([`Sink::side_write`]): spans
+/// by the embedded language's kinds on the span sinks, runs by the host's rules on the run
+/// sink (X-161). Where the writing stands kept between ranges.
+#[derive(Default)]
+pub(crate) struct Side {
+    /// The span sinks' lexemes; the run sink's scratch for its embeds' spans.
+    spans: Vec<Span>,
+    /// The run sink's lexemes: the line's runs from its start, none where none has a rule.
+    runs: Vec<Run>,
+    /// The next span or run to write.
+    next: usize,
+    /// Where the next run starts.
+    start: u32,
+    /// The run sink's rules for the side where its gap has a rule ([`Shifted::own`]), kept from
+    /// line to line.
+    tab: Vec<Rule>,
+}
+
+impl Side {
+    /// A gap left plain ([`Sink::side_write`]).
+    pub(crate) const NO_GAP: u16 = u16::MAX;
+    /// A side's lexeme without a rule, where the gap has one ([`Shifted::own`]). No theme has
+    /// this many rules.
+    const PLAIN: Rule = Rule(Rule::UNSET - 1);
+}
+
+/// A host's rules as an embedded language whose kinds are the host's with `bit` set reads them
+/// (X-161): the host's table from `bit` on, a kind resolved as the host's `kind | bit`. The
+/// host's table stays one table, so a theme's rules are resolved once for both.
+pub(crate) struct Shifted<'r, 'v> {
+    host: *mut (dyn Rules + 'r),
+    bit: u16,
+    /// A table of its own, where a side's plain lexeme must be told from its gap
+    /// ([`Sink::side_write`]: the gap has a rule): a plain kind's rule [`Side::PLAIN`].
+    own: Option<&'v mut Vec<Rule>>,
+}
+
+impl Rules for Shifted<'_, '_> {
+    #[inline]
+    fn table(&self) -> &[Rule] {
+        if let Some(t) = &self.own {
+            return t;
+        }
+        // SAFETY: the host's rules outlive this view, and nothing else holds them while it's read
+        let t = unsafe { (*self.host).table() };
+        t.get(usize::from(self.bit)..).unwrap_or(&[])
+    }
+
+    fn resolve(&mut self, kind: u16) -> Rule {
+        let k = kind | self.bit;
+        // SAFETY: as above
+        let host = unsafe { &mut *self.host };
+        let Some(t) = &mut self.own else {
+            return host.resolve(k);
+        };
+        let r = match host.table().get(usize::from(k)) {
+            Some(&r) if r.0 != Rule::UNSET => r,
+            _ => host.resolve(k),
+        };
+        let r = if r.0 == Rule::NONE { Side::PLAIN } else { r };
+        let i = usize::from(kind);
+        if i >= t.len() {
+            t.resize((2 * t.len()).max(i + 1), Rule(Rule::UNSET));
+        }
+        t[i] = r;
+        r
+    }
 }
 
 /// A host's rules for a guest's kinds, `base` below the host's ([`Sink::host`]): its table from
-/// `base` on, read again by the guest's run sink after a kind is resolved.
-struct Shifted<'a> {
+/// `base` on, read again by the guest's run sink after a kind is resolved. A guest's kind is
+/// added to `base`, where an embed's has a bit set ([`Shifted`]).
+struct Guest<'a> {
     rules: &'a mut dyn Rules,
     base: u16,
 }
 
-impl Rules for Shifted<'_> {
+impl Rules for Guest<'_> {
     fn table(&self) -> &[Rule] {
         self.rules
             .table()
@@ -381,6 +530,16 @@ impl<'r> Table<'r> {
         rule
     }
 
+    /// The rules seen with `bit` set in each kind ([`Shifted`]), through `own` where given.
+    #[inline(always)]
+    fn shifted<'v>(&self, bit: u16, own: Option<&'v mut Vec<Rule>>) -> Shifted<'r, 'v> {
+        Shifted {
+            host: self.rules,
+            bit,
+            own,
+        }
+    }
+
     /// `kind`'s rule resolved, the table read again.
     #[cold]
     #[inline(never)]
@@ -393,7 +552,8 @@ impl<'r> Table<'r> {
         }
     }
 
-    /// The table read again, after another reader of the rules resolved kinds ([`Sink::host`]).
+    /// The table read again, after another reader of the rules resolved kinds and the table
+    /// moved: a guest's ([`Sink::host`]), or another view of them ([`Shifted`]).
     #[inline(always)]
     fn reload(&mut self) {
         // SAFETY: as above
@@ -659,7 +819,7 @@ impl Sink for Runs<'_> {
             let v = &mut *self.runs;
             v.set_len(n0);
             lex(
-                &mut Shifted {
+                &mut Guest {
                     rules: &mut *self.t.rules,
                     base,
                 },
@@ -682,9 +842,146 @@ impl Sink for Runs<'_> {
             }
         }
     }
+
+    #[inline(always)]
+    fn shifted<F>(&mut self, bit: u16, f: F) -> bool
+    where
+        F: for<'x> FnOnce(Runs<'x>) -> Runs<'x>,
+    {
+        let mut sh = self.t.shifted(bit, None);
+        // this sink's cursor, its rules seen through `sh`
+        let r = f(Runs {
+            t: Table::new(&mut sh),
+            runs: self.runs,
+            last: self.last,
+            end: self.end,
+            line: self.line,
+            w: self.w,
+            base: self.base,
+            lim: self.lim,
+        });
+        (self.last, self.end, self.line, self.w, self.base, self.lim) =
+            (r.last, r.end, r.line, r.w, r.base, r.lim);
+        self.t.reload();
+        true
+    }
+
+    #[inline(always)]
+    fn side_lex<S, R>(
+        &mut self,
+        side: &mut Side,
+        (bit, gap): (u16, u16),
+        state: &mut State,
+        spans: S,
+        runs: R,
+    ) where
+        S: FnOnce(&mut State, &mut Out),
+        R: FnOnce(&mut State, &mut Out, &mut dyn Rules, &mut Vec<Run>),
+    {
+        let _ = spans;
+        // a plain lexeme told from the gap where the gap has a rule: a table of the side's own
+        let exact = gap != Side::NO_GAP && self.t.get(gap).0 != Rule::NONE;
+        let mut sh = self.t.shifted(bit, exact.then_some(&mut side.tab));
+        side.runs.clear();
+        side.spans.clear();
+        runs(
+            state,
+            &mut Out::new(&mut side.spans),
+            &mut sh,
+            &mut side.runs,
+        );
+        self.t.reload();
+        (side.next, side.start) = (0, 0);
+    }
+
+    /// The side's runs in `p..q`, by their rules: lexed by the host's rules
+    /// ([`Sink::side_lex`]), a kind's with `bit` set already. A plain run is the gap's, and
+    /// [`Side::PLAIN`] a plain lexeme's: where the gap has no rule (every built-in theme's
+    /// `text.html.basic` under PHP, and HEEx's), the side's gaps and plain lexemes are one, no
+    /// table of its own is kept, and its runs are written as they stand.
+    #[inline(never)]
+    fn side_write(
+        &mut self,
+        _: &mut &mut Out,
+        side: &mut Side,
+        p: usize,
+        q: usize,
+        _: u16,
+        gap: u16,
+    ) {
+        let g = if gap == Side::NO_GAP {
+            Rule(Rule::NONE)
+        } else {
+            self.t.get(gap)
+        };
+        let (mut i, mut s) = (side.next, side.start as usize);
+        let n = side.runs.len();
+        if g.0 == Rule::NONE {
+            // the gap plain, so no plain lexeme told from it: the side's runs are this sink's as
+            // they stand, each written whole but the last, cut at `q`, plain ones too (a run
+            // covers from where the one before ends)
+            while i < n && side.runs[i].end as usize <= p {
+                (i, s) = (i + 1, side.runs[i].end as usize);
+            }
+            if p < q && i < n && s < q {
+                if p > self.end {
+                    self.put(p, Rule(Rule::NONE));
+                }
+                loop {
+                    let r = side.runs[i];
+                    let e = r.end as usize;
+                    self.end = e.min(q);
+                    self.put(self.end, r.rule);
+                    if e > q {
+                        break;
+                    }
+                    (i, s) = (i + 1, e);
+                    if i == n || s >= q {
+                        break;
+                    }
+                }
+            }
+            (side.next, side.start) = (i, s as u32);
+            return;
+        }
+        let mut at = p;
+        while i < n && s < q {
+            let r = side.runs[i];
+            let e = r.end as usize;
+            if e > at {
+                let rule = match r.rule {
+                    Rule(Rule::NONE) => g,
+                    Side::PLAIN => Rule(Rule::NONE),
+                    r => r,
+                };
+                let e = e.min(q);
+                self.merge_rule(at, e, rule);
+                at = e;
+            }
+            if e > q {
+                break;
+            }
+            (i, s) = (i + 1, e);
+        }
+        (side.next, side.start) = (i, s as u32);
+        // past the side's runs (a line with none colored, or after its last): the gap's
+        self.merge_rule(at, q, g);
+    }
 }
 
 impl Runs<'_> {
+    /// Bytes `s..e` in `rule`, as [`Runs::merge_span`] writes a kind's; a plain or an empty one
+    /// is nothing (the next write's gap).
+    #[inline(always)]
+    fn merge_rule(&mut self, s: usize, e: usize, rule: Rule) {
+        if e > s && rule.0 != Rule::NONE {
+            if s > self.end {
+                self.put(s, Rule(Rule::NONE));
+            }
+            self.put(e, rule);
+            self.end = e;
+        }
+    }
     #[cold]
     #[inline(never)]
     fn take(&mut self, out: &mut Out) {
@@ -1004,6 +1301,36 @@ mod tests {
                 "<a href='x'\n   title=\"t\">l</a><br/><custom-el data-x=y></custom-el>\n",
                 "<div style=\"color:\n red\">x</div><script>let a = '</script>' <b>\n\n",
                 "</p></html>",
+            ),
+        );
+    }
+
+    /// PHP's and HEEx's runs are those their spans give, their HTML lexed apart as runs by the
+    /// host's rules and written range by range among the host's own (X-161): islands inside a
+    /// tag, an attribute's value and a `<script>`, HTML's state across lines, a `<<<HTML`
+    /// here-document, a template's `{…}` and `<%= … %>`. The test's rules leave a fifth of the
+    /// kinds plain and give PHP's HTML text (`text.html.basic`) a rule: a plain lexeme told from
+    /// the gap.
+    #[test]
+    fn php_and_heex_runs_are_their_spans() {
+        runs_are_spans(
+            Lang::Php,
+            concat!(
+                "<!DOCTYPE html>\n<html><head><style>a { color: <?= $c ?>; }\n</style>\n",
+                "<script>var x = <?php echo json_encode($x); ?>; f('<?= $y ?>');\n</script></head>\n",
+                "<body class=\"<?= $cls ?> b\" onclick=\"go(<?= 1 ?>)\" style=\"margin: 0\">\n",
+                "<?php foreach ($rows as $r): ?><tr data-x='<?= $r ?>'>&amp; <!-- c <?= 2 ?>\n",
+                " still --></tr><?php endforeach; ?>\n<?php\n$h = <<<HTML\n<p id=\"{$id}\">\\$x &lt;</p>\n",
+                "HTML;\necho \"<b>\"; ?>\n<a href=\"x\"\n   title=\"t\">l</a>\n<?php if ($a) { ?><i>y</i><?php } ?>\n",
+            ),
+        );
+        runs_are_spans(
+            Lang::Elixir,
+            concat!(
+                "def render(assigns) do\n  ~H\"\"\"\n  <div class={@cls} id=\"x\">\n",
+                "    <.link navigate={~p\"/a\"}>A &amp; <%= @b %></.link>\n",
+                "    <style>a { color: red }</style><script>let a = 1;\n</script>\n",
+                "    <%!-- c --%><:item :for={x <- @xs}>{x}</:item>\n  </div>\n  \"\"\"\nend\n",
             ),
         );
     }

@@ -2559,6 +2559,21 @@ pub(crate) fn line_from(b: &[u8], from: usize, state: &mut State, out: &mut Out)
     *state = s.keep();
 }
 
+/// [`line_from`] on HTML's run sink, its rules seen with HTML's bit for JavaScript (X-161).
+pub(crate) fn line_from_runs<'r>(
+    b: &[u8],
+    from: usize,
+    state: &mut State,
+    out: &mut Out,
+    k: Runs<'r>,
+) -> Runs<'r> {
+    let mut s = Scan::fresh(b, from, out, k);
+    s.load(state);
+    s.lex(from);
+    *state = s.keep();
+    s.k
+}
+
 /// [`line`]'s runs by theme rule pushed to `runs`.
 #[inline(never)]
 pub fn line_runs(

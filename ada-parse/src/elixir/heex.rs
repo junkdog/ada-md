@@ -12,7 +12,7 @@
 //! below the island (three levels, no embed) and the reader's in withs 9 to 12.
 
 use super::*;
-use crate::Span;
+use crate::emit::Side;
 use crate::prim::find_in;
 
 /// The reader's states: the template's text, a tag's inside, a quoted attribute value's, a
@@ -36,16 +36,15 @@ pub(super) struct Heex {
     pub(super) html: State,
     /// The reader's state where the template's text stands.
     pub(super) r: u8,
-    /// HTML's spans of the line's pass.
-    spans: Vec<Span>,
+    /// HTML's lexemes of the line's pass, on the scan's sink's side ([`Side`]: runs by
+    /// Elixir's rules on the run sink, X-161).
+    side: Side,
     /// The line's copy HTML's scanner lexes, kept for the next line's.
     buf: Vec<u8>,
     /// The line's islands the pass found, each where it starts and the reader's state there;
     /// the reader's state where the pass ended.
     marks: Vec<(usize, u8)>,
     r_end: u8,
-    /// The next of [`Heex::spans`] to write.
-    next: usize,
     /// Whether the pass ran for this line.
     pub(super) line: bool,
 }
@@ -55,11 +54,10 @@ impl Heex {
         Heex {
             html: State::default(),
             r: R_TEXT,
-            spans: Vec::new(),
+            side: Side::default(),
             buf: Vec::new(),
             marks: Vec::new(),
             r_end: R_TEXT,
-            next: 0,
             line: false,
         }
     }
@@ -400,7 +398,7 @@ impl<K: Sink> Scan<'_, '_, K> {
 
     /// The line from `p` to `end` through HTML's scanner, from [`Heex::html`], on a copy with
     /// what's before `p`, each island and what's from `end` blanked, and a component's or a
-    /// slot's name a tag's. The spans into [`Heex::spans`], HTML's state to the line's end.
+    /// slot's name a tag's. Its lexemes onto [`Heex::side`], HTML's state to the line's end.
     fn html_pass(&mut self, p: usize, end: usize) {
         let b = self.b;
         let mut buf = std::mem::take(&mut self.heex().buf);
@@ -451,38 +449,27 @@ impl<K: Sink> Scan<'_, '_, K> {
             }
             q = e;
         }
-        let h = self.heex();
+        let Some(h) = self.heex.as_mut() else {
+            return;
+        };
         h.marks = marks;
         h.r_end = r;
-        h.spans.clear();
-        crate::html::line(&buf, &mut h.html, &mut Out::new(&mut h.spans));
+        self.k.side_lex(
+            &mut h.side,
+            (HTML_KIND, Side::NO_GAP),
+            &mut h.html,
+            |st, out| crate::html::line(&buf, st, out),
+            |st, out, rules, runs| crate::html::line_runs(&buf, st, out, rules, runs),
+        );
         h.buf = buf;
         h.line = true;
-        h.next = 0;
     }
 
-    /// The line's HTML spans in `p..q` written.
+    /// The line's HTML in `p..q` written, the text between its tokens plain.
     fn write_html(&mut self, p: usize, q: usize) {
-        let mut i = self.heex.as_ref().map_or(0, |h| h.next);
-        loop {
-            let sp = match self.heex.as_ref() {
-                Some(h) if i < h.spans.len() => h.spans[i],
-                _ => break,
-            };
-            let (s, e) = (sp.start as usize, sp.end as usize);
-            if s >= q {
-                break;
-            }
-            if e > p {
-                self.put(s.max(p), e.min(q), sp.kind | HTML_KIND);
-            }
-            if e > q {
-                break;
-            }
-            i += 1;
-        }
         if let Some(h) = self.heex.as_mut() {
-            h.next = i;
+            self.k
+                .side_write(&mut self.out, &mut h.side, p, q, HTML_KIND, Side::NO_GAP);
         }
     }
 

@@ -312,7 +312,8 @@ pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
 }
 
 /// [`line`]'s runs by theme rule pushed to `runs` (X-076): HTML's own tokens written as runs,
-/// an embed's spans read into them.
+/// and an embed's CSS or JavaScript on the same runs, its rules seen with its language's bit
+/// (X-161).
 #[inline(never)]
 pub fn line_runs(
     b: &[u8],
@@ -498,7 +499,8 @@ impl<K: Sink> Scan<'_, '_, '_, K> {
 
 struct Scan<'b, 'o, 's, K: Sink> {
     b: &'b [u8],
-    /// The spans' vector: the span API's, and an embed's spans on their way to the run sink.
+    /// The spans' vector: the span API's, and the embeds' scratch (on the run sink CSS and
+    /// JavaScript write in place, X-161, their own embeds' spans passing through it).
     out: &'o mut Out<'s>,
     /// Where HTML's own lexemes go: the spans as [`Out`] pushes them ([`Push`]), or a line's runs
     /// by theme rule (X-076).
@@ -1660,7 +1662,7 @@ impl<K: Sink> Scan<'_, '_, '_, K> {
     }
 
     /// The embed `emb` from `from` (an attribute's from after its quote `quote`), its language's
-    /// state `st` there (`None` for a fresh one): its spans to its escape, where HTML goes on
+    /// state `st` there (`None` for a fresh one): its lexemes to its escape, where HTML goes on
     /// (after an attribute's closing quote); `None` when the line ends inside it.
     ///
     /// The embedded scanner sees the line only to the escape, as a browser hands the text over: a
@@ -1682,23 +1684,35 @@ impl<K: Sink> Scan<'_, '_, '_, K> {
         });
         // an empty line inside an embed is lexed too: it ends what a line's end ends there
         if first != Some(from) {
-            // the embed's spans pushed to the vector, its language's bit set in each, then on a
-            // run sink read into the runs
-            self.k.close(self.out);
-            let k = self.out.0.len();
             let b = &self.b[..first.unwrap_or(n)];
-            self.out.1 = false;
-            if emb.css() {
-                crate::css::own::line_from(b, from, &mut st, self.out);
-            } else {
-                crate::javascript::line_from(b, from, &mut st, self.out);
+            let (css, st) = (emb.css(), &mut st);
+            let bit = if css { CSS_KIND } else { JS_KIND };
+            // on the run sink, the embed's runs written in place, its kinds seen with its
+            // language's bit (X-161)
+            let out = &mut *self.out;
+            let written = self.k.shifted(bit, |k| {
+                if css {
+                    crate::css::own::line_from_runs(b, from, st, out, k)
+                } else {
+                    crate::javascript::line_from_runs(b, from, st, out, k)
+                }
+            });
+            if !written {
+                // the embed's spans pushed to the vector, its language's bit set in each
+                self.k.close(self.out);
+                let k = self.out.0.len();
+                self.out.1 = false;
+                if css {
+                    crate::css::own::line_from(b, from, st, self.out);
+                } else {
+                    crate::javascript::line_from(b, from, st, self.out);
+                }
+                self.out.1 = true;
+                for s in &mut self.out.0[k..] {
+                    s.kind |= bit;
+                }
+                self.k.reopen(self.out, 16);
             }
-            self.out.1 = true;
-            let bit = if emb.css() { CSS_KIND } else { JS_KIND };
-            for s in &mut self.out.0[k..] {
-                s.kind |= bit;
-            }
-            self.k.reopen(self.out, 16);
         }
         let Some(e) = first else {
             self.at = n;

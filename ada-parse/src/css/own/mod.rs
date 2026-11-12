@@ -994,6 +994,17 @@ pub(crate) fn line_from(b: &[u8], from: usize, state: &mut State, out: &mut Out)
     line_on::<_, false, false>(b, from, state, out, Push);
 }
 
+/// [`line_from`] on HTML's run sink, its rules seen with HTML's bit for CSS (X-161).
+pub(crate) fn line_from_runs<'r>(
+    b: &[u8],
+    from: usize,
+    state: &mut State,
+    out: &mut Out,
+    k: Runs<'r>,
+) -> Runs<'r> {
+    line_on::<_, true, false>(b, from, state, out, k)
+}
+
 /// [`line`]'s runs by theme rule pushed to `runs`.
 #[inline(never)]
 pub fn line_runs(
