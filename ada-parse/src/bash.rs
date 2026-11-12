@@ -4368,15 +4368,11 @@ pub fn line_runs(
 #[inline(always)]
 fn plain_line(b: &[u8], out: &mut Out) -> bool {
     let n = b.len();
-    let mut i = 0;
-    while i < n && is_space(b[i]) {
-        i += 1;
-    }
+    let Some(i) = plain_at(b) else {
+        return false;
+    };
     if i == n {
         return true;
-    }
-    if b[i] != b'#' {
-        return false;
     }
     out.0.push(crate::Span {
         start: i as u32,
@@ -4392,6 +4388,22 @@ fn plain_line(b: &[u8], out: &mut Out) -> bool {
     }
     true
 }
+
+/// [`plain_line`]'s test, for a host that writes such a line itself (Nix's scripts on its run
+/// sink, X-151): where a blank or comment line's `#` is (its length for a blank one), `None`
+/// for any other line.
+#[inline(always)]
+pub(crate) fn plain_at(b: &[u8]) -> Option<usize> {
+    let n = b.len();
+    let mut i = 0;
+    while i < n && is_space(b[i]) {
+        i += 1;
+    }
+    (i == n || b[i] == b'#').then_some(i)
+}
+
+/// The kinds of [`plain_at`]'s comment line: its `#`, and its text after it.
+pub(crate) const PLAIN_COMMENT: (u16, u16) = (k::COMMENT_BEGIN, k::COMMENT);
 
 /// A block's lines on one scan opened from `state` ([`crate::Carry`]), the span API's.
 pub fn block(

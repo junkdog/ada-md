@@ -78,6 +78,42 @@ pub(crate) trait Sink: Copy {
     /// lexemes taken back (Java's type arguments read ahead, Kotlin's string before `.toRegex(`,
     /// X-074).
     fn undo(&mut self, out: &mut Out, m: Mark);
+    /// Whether this is the run sink, where [`Sink::host`] writes a guest's runs.
+    const RUNS: bool = false;
+    /// The run sink only ([`Sink::RUNS`]): another scanner's runs of the line's text from `at`
+    /// written in place by `lex`, which is handed the rules with its kinds `base` above the
+    /// host's (a view of the host's table) and the runs' vector at the line's runs so far, and
+    /// pushes its runs as for a line of its own (its ends from `at`, a gap to its end plain):
+    /// X-151's bash in Nix's scripts, with no spans between them. Every write before is at or
+    /// before `at`.
+    fn host(
+        &mut self,
+        _at: usize,
+        _base: u16,
+        _lex: &mut dyn FnMut(&mut dyn Rules, &mut Vec<Run>),
+    ) {
+        unreachable!("a guest's runs on a sink of spans");
+    }
+}
+
+/// A host's rules for a guest's kinds, `base` below the host's ([`Sink::host`]): its table from
+/// `base` on, read again by the guest's run sink after a kind is resolved.
+struct Shifted<'a> {
+    rules: &'a mut dyn Rules,
+    base: u16,
+}
+
+impl Rules for Shifted<'_> {
+    fn table(&self) -> &[Rule] {
+        self.rules
+            .table()
+            .get(usize::from(self.base)..)
+            .unwrap_or(&[])
+    }
+
+    fn resolve(&mut self, kind: u16) -> Rule {
+        self.rules.resolve(kind + self.base)
+    }
 }
 
 /// Where a sink's writing stood ([`Sink::mark`]): its spans' or runs' count, where the last ends
@@ -352,10 +388,17 @@ impl<'r> Table<'r> {
         // SAFETY: the rules outlive the table, and nothing else holds them while it's read
         unsafe {
             let r = (*self.rules).resolve(kind);
-            let t = (*self.rules).table();
-            (self.tab, self.tlen) = (t.as_ptr(), t.len());
+            self.reload();
             r
         }
+    }
+
+    /// The table read again, after another reader of the rules resolved kinds ([`Sink::host`]).
+    #[inline(always)]
+    fn reload(&mut self) {
+        // SAFETY: as above
+        let t = unsafe { (*self.rules).table() };
+        (self.tab, self.tlen) = (t.as_ptr(), t.len());
     }
 }
 
@@ -592,6 +635,52 @@ impl Sink for Runs<'_> {
             }
         }
         (self.end, self.last) = (m.end, m.last);
+    }
+
+    const RUNS: bool = true;
+
+    /// The guest's runs pushed to the vector as it stands at the cursor (its length set there),
+    /// after a plain gap to `at`; their ends moved from its text's to the line's, the first
+    /// joined to the host's last where their rules are the same; the cursor, the table and the
+    /// line's last rule and end read again from the vector.
+    #[inline(never)]
+    fn host(&mut self, at: usize, base: u16, lex: &mut dyn FnMut(&mut dyn Rules, &mut Vec<Run>)) {
+        debug_assert!(self.end <= at);
+        if self.end < at {
+            self.put(at, Rule(Rule::NONE));
+            self.end = at;
+        }
+        // SAFETY: the cursors are in the vector's allocation, every run below `w` written; the
+        // vector and the rules outlive the sink, and nothing else holds them while the guest
+        // writes
+        unsafe {
+            let line = self.line.offset_from(self.base) as usize;
+            let n0 = self.w.offset_from(self.base) as usize;
+            let v = &mut *self.runs;
+            v.set_len(n0);
+            lex(
+                &mut Shifted {
+                    rules: &mut *self.t.rules,
+                    base,
+                },
+                v,
+            );
+            let n1 = v.len();
+            for r in &mut v[n0..n1] {
+                r.end += at as u32;
+            }
+            if n1 > n0 && n0 > line && v[n0 - 1].rule == v[n0].rule {
+                v[n0 - 1].end = v[n0].end;
+                v.remove(n0);
+            }
+            self.t.reload();
+            self.open_runs(0);
+            self.line = self.base.add(line);
+            if self.w > self.line {
+                let last = *self.w.sub(1);
+                (self.last, self.end) = (last.rule, last.end as usize);
+            }
+        }
     }
 }
 
@@ -1162,6 +1251,37 @@ mod tests {
                 ".a-#{$n} { &:hover { @include m(1px); } %ph { @extend .b; } }\n",
                 "@each $k, $v in $map { .#{$k} { v: if($v > 1, $v * 2, null); } }\n",
                 "@function f($a...) { @return nth($a, 1); } /* open\n still */ .c { d: e }\n",
+            ),
+        );
+    }
+
+    /// Nix's runs are those its spans give, where its scripts' lines are bash's runs written on
+    /// its sink (X-151, [`Sink::host`]) and where they're bash's spans laid on it: a script's
+    /// lines of text alone (its indentation stripped, comments and blank lines with nothing
+    /// open, single quotes and `$$`, a here-document and a `$(` over lines), a script closed
+    /// on its line and another opened after it, lines with an interpolation, an escape or a
+    /// spliced string's close, a `"…"` script, writers' files (JSON's; bash's over lines, named
+    /// by its shebang, in a script's interpolation), and a block cut anywhere.
+    #[test]
+    fn nix_runs_are_its_spans() {
+        runs_are_spans(
+            Lang::Nix,
+            concat!(
+                "{ pkgs, ... }: {\n  postPatch = ''\n    # a comment\n\n    echo 'a b' $$HOME\n",
+                "    cat > $out/x <<EOF\n    text $(date\n    EOF\n    x=\"$(\n      pwd)\"\n",
+                "    for f in *.c; do sed -i 's/a/b/' \"$f\"; done\n  '';\n",
+                "  preBuild = ''make -j4 ''; postBuild = ''ls'' + ''\n    rm -rf x\n  '';\n",
+                "  installPhase = ''\n    cp ${pkgs.foo}/bin/foo $out\n    echo ''$HOME '''x\n",
+                "    ${lib.optionalString true ''\n      echo spliced\n    ''} done\n",
+                "    if [ -e a ]; then\n      exit 1\n    fi'';\n",
+                "  checkPhase = \"make check\\n  echo $x\";\n",
+                "  passthru.f = writeText \"a.json\" ''\n    {\"a\": 1}\n  '';\n",
+                "  passthru.g = writeText \"b.sh\" ''\n    # c\n    if [ -e \"$1\n    \" ]; then\n",
+                "      echo $HOME 'q'\n    fi'';\n",
+                "  passthru.h = writeScript \"h\" ''\n    #!/bin/sh\n    exec foo \"$@\"\n  '';\n",
+                "  postFixup = ''\n    cp ${writeText \"c.sh\" ''echo x''} $out\n",
+                "    cp ${writeText \"d.sh\" ''\n      echo y\n    ''} $out\n  '';\n",
+                "  script = ''\n    echo \"open\n    still\" # c\n  '';\n}\n",
             ),
         );
     }

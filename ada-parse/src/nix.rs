@@ -918,6 +918,8 @@ const RE_FILE: u8 = 0x80;
 /// The most [`Ext::sh_ind`]'s indentation keeps: one more than an indentation of 126.
 const INDENT_MAX: usize = 127;
 const _: () = assert!(SH_HELD < 16);
+// bash's kept levels are the state's first ([`Scan::bash_state`])
+const _: () = assert!(SH_HELD <= crate::matcher::KEPT);
 
 /// A line's shell text, as bash reads it, or a writer's file's, as its language does
 /// ([`Scan::view`]).
@@ -2549,6 +2551,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
         let file = self.ext.file_open();
         if !self.viewed(file) {
+            if K::RUNS
+                && let Some(e) = self.hosted(p, file)
+            {
+                return e;
+            }
             self.view(p);
         }
         let b = self.b;
@@ -2756,26 +2763,139 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             let dq = self.ext.dq();
             let from = self.text_from(p, lvl, dq);
             read_shell(b, from, self.frames, lvl + 1, dq, v);
-            let mut st = State {
-                depth: self.ext.bash_depth,
-                ..State::default()
-            };
-            for i in 0..usize::from(self.ext.bash_depth) {
-                st.set_level(i, self.ext.bash[i]);
-            }
+            let mut st = self.bash_state();
             crate::bash::line_spans(&v.cooked, &mut st, &mut Out::new(&mut v.bash));
-            // bash's levels, its bottom ones dropped past those kept
-            let held = st.held();
-            let from = held.saturating_sub(SH_HELD);
-            for i in 0..SH_HELD {
-                self.ext.bash[i] = if from + i < held {
-                    st.level(from + i)
-                } else {
-                    0
-                };
-            }
-            self.ext.bash_depth = (held - from) as u8;
+            self.keep_bash(&st);
         });
+    }
+
+    /// The script's bash state, from its levels kept in [`Ext::bash`]: its bytes, zero past
+    /// the top, the state's first levels.
+    #[inline(always)]
+    fn bash_state(&self) -> State {
+        let mut st = State {
+            depth: self.ext.bash_depth,
+            ..State::default()
+        };
+        st.levels[..SH_HELD].copy_from_slice(&self.ext.bash);
+        st
+    }
+
+    /// bash's state after a line kept in [`Ext::bash`]: its levels, its bottom ones dropped past
+    /// those kept. A state of up to [`SH_HELD`] levels in one copy (a state's bytes past its top
+    /// are zero).
+    #[inline(always)]
+    fn keep_bash(&mut self, st: &State) {
+        let held = st.held();
+        if held <= SH_HELD {
+            self.ext.bash.copy_from_slice(&st.levels[..SH_HELD]);
+            self.ext.bash_depth = held as u8;
+            return;
+        }
+        self.keep_deep_bash(st);
+    }
+
+    /// [`Scan::keep_bash`] past [`SH_HELD`] levels.
+    #[cold]
+    #[inline(never)]
+    fn keep_deep_bash(&mut self, st: &State) {
+        let held = st.held();
+        let from = held.saturating_sub(SH_HELD);
+        for i in 0..SH_HELD {
+            self.ext.bash[i] = if from + i < held {
+                st.level(from + i)
+            } else {
+                0
+            };
+        }
+        self.ext.bash_depth = (held - from) as u8;
+    }
+
+    /// X-151: on the run sink, a script's line whose shell text from `p` (its string on top) is
+    /// one run of the line's bytes, as [`Scan::view`] would read it (no interpolation, no Nix
+    /// escape) to the line's end or the outermost shell string's close, lexed by bash's run scan
+    /// onto the scan's own sink ([`Sink::host`]): its kinds [`SH_BASE`] up, its runs the line's
+    /// from where the text starts. No cooked copy, no spans read back and laid; bash's state
+    /// moves as [`Scan::view`] moves it. A writer's file in bash (`file`) the same, its own
+    /// string on top and its language decided (no shebang to read on the line), to the line's
+    /// end or its string's close, its state kept as [`Scan::file_view`] keeps it ([`pack`]).
+    /// Where the string closes, its `''` written and its frame popped; where the line's text is
+    /// the string's, how far the line is read; `None` for any other line, read by
+    /// [`Scan::view`].
+    #[inline(never)]
+    fn hosted(&mut self, p: usize, file: bool) -> Option<usize> {
+        let b = self.b;
+        let n = b.len();
+        if file
+            && (self.ext.fl_lang & (FL_LOST | FL_SLOT) != BASH_SLOT
+                || self.depth != self.ext.fl_mark
+                || b[p..].trim_ascii_start().starts_with(b"#!"))
+        {
+            return None;
+        }
+        let mut q = p;
+        // where the text stops: the line's end or a close, past single quotes and `$$`
+        let stop = loop {
+            let r = find_any(b, q, *b"'$");
+            if r >= n {
+                break n;
+            }
+            if b[r] == b'\'' {
+                if b.get(r + 1) != Some(&b'\'') {
+                    q = r + 1;
+                    continue;
+                }
+                if matches!(b.get(r + 2), Some(b'$' | b'\'' | b'\\'))
+                    || (!file && sh_in(self.frames >> 4, self.depth.saturating_sub(1)))
+                {
+                    // an escape, or a spliced string's close, which the script's text goes on past
+                    return None;
+                }
+                break r;
+            }
+            match b.get(r + 1) {
+                Some(b'{') => return None,
+                Some(b'$') => q = r + 2,
+                _ => q = r + 1,
+            }
+        };
+        let from = self.text_from(p, 0, false);
+        let text = &b[from..stop];
+        let mut st = self.bash_state();
+        match (st.depth, crate::bash::plain_at(text)) {
+            (0, Some(i)) => {
+                // a blank or comment line with nothing open, as `bash::line_spans` writes it
+                if i < text.len() {
+                    let (hash, rest) = crate::bash::PLAIN_COMMENT;
+                    self.put(from + i, from + i + 1, SH_BASE + hash);
+                    self.put(from + i + 1, stop, SH_BASE + rest);
+                }
+            }
+            _ => {
+                let out = &mut *self.out;
+                self.k.host(from, SH_BASE, &mut |rules, runs| {
+                    crate::bash::line_runs(text, &mut st, out, rules, runs);
+                });
+                if !file {
+                    self.keep_bash(&st);
+                } else {
+                    match pack(&FILES[usize::from(BASH_SLOT - 1)], &st) {
+                        Some((bytes, depth)) => {
+                            self.ext.bash = bytes;
+                            self.ext.bash_depth = depth;
+                        }
+                        None => self.ext.fl_lang |= FL_LOST,
+                    }
+                }
+            }
+        }
+        if stop == n {
+            return Some(n);
+        }
+        self.put(stop, stop + 2, IND_END);
+        self.pop();
+        self.closed_sh();
+        Some(stop + 2)
     }
 
     /// A writer's file's line from `p`, where the scan first meets its text (the file's string
