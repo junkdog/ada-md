@@ -119,7 +119,7 @@ pub enum Lang {
     TypeScriptReact,
     /// bat's `CSS`.
     Css,
-    /// bat's `SCSS`: CSS's scanner with SCSS's contexts.
+    /// bat's `SCSS`: CSS's scanner with Sass's readings (X-149).
     Scss,
     /// bat's `HTML`, with its CSS and JavaScript on their scanners.
     Html,
@@ -729,7 +729,7 @@ impl Lang {
             Lang::TypeScript => crate::typescript::scopes(kind, false),
             Lang::TypeScriptReact => crate::typescript::scopes(kind, true),
             Lang::Css => crate::css::own::scopes(kind),
-            Lang::Scss => crate::css::scopes(kind),
+            Lang::Scss => crate::css::own::scss_scopes(kind),
             Lang::Html => crate::html::scopes(kind),
             Lang::Lisp | Lang::EmacsLisp | Lang::Scheme | Lang::Racket => crate::lisp::scopes(kind),
             Lang::Clojure => crate::lisp::clojure::scopes(kind),

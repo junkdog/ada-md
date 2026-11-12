@@ -11,9 +11,8 @@
 //!   is checked by [`crate::same`]: two loads a side up to 16 bytes, no `memcmp`.
 //! - What a word is comes from the caller's array by id ([`Words::value`]), a miss answered
 //!   before the id is read.
-//! - `FOLD` tables ignore ASCII case: the hash and the compare fold eight bytes at a time, and
-//!   the blob keeps the words as listed, so a caller can still tell an exact spelling apart
-//!   ([`Words::get_spelled`]).
+//! - `FOLD` tables ignore ASCII case: the hash and the compare fold eight bytes at a time; the
+//!   blob keeps the words as listed.
 
 /// A list's words by their hash, open addressed. `SLOTS` is a power of two, at least twice the
 /// words; `N` is the list's length (under 2,048) and `TEXT` its words' bytes ([`text_len`], under
@@ -157,15 +156,6 @@ impl<const SLOTS: usize, const N: usize, const TEXT: usize, const FOLD: bool>
         }
         // SAFETY: an id is a list's index plus one, so at most `N`
         unsafe { *by_id.get_unchecked(usize::from(id(s))) }
-    }
-
-    /// Word `w`'s id, 0 for none, and whether `w` is spelled as listed (in a `FOLD` table, where
-    /// the id ignores ASCII case).
-    #[inline(always)]
-    pub fn get_spelled(&self, w: &[u8]) -> (u16, bool) {
-        let s = self.slot(w);
-        let exact = s != 0 && crate::same(&self.text[at(s)..at(s) + w.len()], w);
-        (id(s), exact)
     }
 
     /// [`Words::get`] at compile time, for a table built from another.
@@ -323,9 +313,6 @@ mod tests {
         assert_eq!(F.get(b"While"), 3);
         assert_eq!(F.get(b"InstanceOf"), 4);
         assert_eq!(F.get(b"A_RATHER_long_word_of_forty_bytes_or_so"), 6);
-        assert_eq!(F.get_spelled(b"while"), (3, true));
-        assert_eq!(F.get_spelled(b"wHile"), (3, false));
-        assert_eq!(F.get_spelled(b"whilst"), (0, false));
         for w in [&b"wHilE_"[..], b"\xc3\xa9", b"el@e", b"iF\0"] {
             assert_eq!(F.get(w), 0, "{}", String::from_utf8_lossy(w));
         }

@@ -30,6 +30,23 @@
 //! in any case (`DIV`); a namespace's `|`; an attribute selector's unquoted value whole and its
 //! `s` flag; an unclosed string ends with its line (bat's ran on); a missing `)` doesn't outlive
 //! its declaration or selector.
+//!
+//! **SCSS** (X-149) is a dialect of the same scan, `Scan<K, S = true>`: each of Sass's readings
+//! sits behind `S`, so CSS's copies hold none of them. Its frames take five bits a level and
+//! add Sass's: an interpolation (in code, or in a string whose text goes on after its `}`), a
+//! mixin's parameters and their defaults, a SassScript group or map, `if(`'s arguments, a URL's
+//! text after an interpolation. Variables (declared at an item's start before a `:`, a
+//! parameter, read), namespaces (`ns.$x`, `ns.f(`, `@include ns.m`), `//` comments,
+//! placeholders, `&`'s suffixes, nested properties (`font: { … }`), flags, Sass's at-rules with
+//! their preludes, operators where an expression is read, a sign after a value an operator
+//! (`1px+2px`) and before a number the number's, `true`/`false`/`null`, a value's word no list
+//! names an unquoted string (Sass's reading). A name an interpolation breaks goes on in its kind
+//! after the `}` (`.btn-#{$c}-lg`), for the line. The Jekyll front matter is YAML's. **Where
+//! Sass and bat's grammar part, Sass's reading:** a property bat's list lacks is one; a sign
+//! before a number isn't an operator (bat's `-` in `top: -10px`, its `invalid.illegal.operator`
+//! in `10px -5px`); maps, arguments and values across lines read on (bat read their later lines
+//! as selectors); `//` in a string or a URL is the string's; `@media #{$mq}` an interpolation;
+//! a namespaced `@include` without arguments a namespace and a mixin.
 
 pub(crate) mod hosted;
 mod words;
@@ -147,6 +164,149 @@ const AT_FIRST: u16 = 98;
 const KF_VENDOR: u16 = AT_FIRST + 2 * AT_SCOPES.len() as u16;
 /// `counter(`'s and `counters(`'s counter.
 const COUNTER_NAME: u16 = KF_VENDOR + 1;
+
+// SCSS's own leaves (X-149), after CSS's: [`SASS_LEAVES`] in order, then Sass's at-rules, two
+// leaves each in [`SASS_AT_SCOPES`]' order (the name, then its `@`).
+const SASS_FIRST: u16 = COUNTER_NAME + 1;
+const LINE_COMMENT: u16 = SASS_FIRST;
+const LINE_COMMENT_MARK: u16 = SASS_FIRST + 1;
+/// A variable's `$` and name, read (`variable.other`), declared, a parameter.
+const VAR_MARK: u16 = SASS_FIRST + 2;
+const VAR: u16 = SASS_FIRST + 3;
+const DECL_MARK: u16 = SASS_FIRST + 4;
+const DECL: u16 = SASS_FIRST + 5;
+const PARAM_MARK: u16 = SASS_FIRST + 6;
+const PARAM: u16 = SASS_FIRST + 7;
+const MAP_KEY: u16 = SASS_FIRST + 8;
+/// Interpolation's `#`, `{` and `}`.
+const INTERP_MARK: u16 = SASS_FIRST + 9;
+const INTERP_BEGIN: u16 = SASS_FIRST + 10;
+const INTERP_END: u16 = SASS_FIRST + 11;
+const PLACEHOLDER_MARK: u16 = SASS_FIRST + 12;
+const PLACEHOLDER: u16 = SASS_FIRST + 13;
+/// `==`, `!=`, `<`, `>=`, `and`, `or`, `not`, `in`, `from`, `through`, `to`, `...`.
+const SASS_OP: u16 = SASS_FIRST + 14;
+const SASS_ARITH: u16 = SASS_FIRST + 15;
+/// `!default`, `!global`, `!optional`.
+const FLAG: u16 = SASS_FIRST + 16;
+/// `true`, `false`, `null`.
+const CONST_LANG: u16 = SASS_FIRST + 17;
+/// A `@mixin`'s or `@function`'s name.
+const FN_NAME: u16 = SASS_FIRST + 18;
+/// An `@include`'s mixin.
+const INCLUDE_NAME: u16 = SASS_FIRST + 19;
+/// A module's namespace and its `.`: before a variable, a function, an included mixin.
+const NS_VAR: u16 = SASS_FIRST + 20;
+const NS_VAR_DOT: u16 = SASS_FIRST + 21;
+const NS_FN: u16 = SASS_FIRST + 22;
+const NS_FN_DOT: u16 = SASS_FIRST + 23;
+const NS_INCLUDE: u16 = SASS_FIRST + 24;
+const NS_INCLUDE_DOT: u16 = SASS_FIRST + 25;
+/// A module's function, after its namespace.
+const SASS_FN: u16 = SASS_FIRST + 26;
+const KW_AS: u16 = SASS_FIRST + 27;
+const KW_WITH: u16 = SASS_FIRST + 28;
+const KW_SHOW_HIDE: u16 = SASS_FIRST + 29;
+/// `@use "…" as *`'s `*`.
+const IMPORT_ALL: u16 = SASS_FIRST + 30;
+/// The Jekyll front matter's `---` lines.
+const FRONT_BEGIN: u16 = SASS_FIRST + 31;
+const FRONT_END: u16 = SASS_FIRST + 32;
+const SASS_AT_FIRST: u16 = SASS_FIRST + SASS_LEAVES.len() as u16;
+/// A token of the front matter's YAML: YAML's kind with this bit set.
+const YAML_KIND: u16 = 0x8000;
+
+/// SCSS's leaves from [`SASS_FIRST`].
+static SASS_LEAVES: [&str; 33] = [
+    "comment.line.double-slash.sass",
+    "comment.line.double-slash.sass punctuation.definition.comment.css",
+    "variable.other.sass punctuation.definition.variable.sass",
+    "variable.other.sass",
+    "variable.declaration.sass punctuation.definition.variable.sass",
+    "variable.declaration.sass",
+    "variable.parameter.sass punctuation.definition.variable.sass",
+    "variable.parameter.sass",
+    "variable.parameter.sass",
+    "punctuation.definition.variable.sass",
+    "punctuation.definition.group.begin.sass",
+    "punctuation.definition.group.end.sass",
+    "entity.other.attribute-name.placeholder.sass punctuation.definition.entity.sass",
+    "entity.other.attribute-name.placeholder.sass",
+    "keyword.operator.sass",
+    "keyword.operator.arithmetic.sass",
+    "keyword.other.sass",
+    "constant.language.sass",
+    "entity.name.function.sass",
+    "variable.function.sass",
+    "variable.other.sass entity.name.namespace.sass",
+    "variable.other.sass punctuation.separator.namespace.sass",
+    "support.function.sass entity.name.namespace.sass",
+    "support.function.sass punctuation.separator.namespace.sass",
+    "variable.function.sass entity.name.namespace.sass",
+    "variable.function.sass punctuation.separator.namespace.sass",
+    "support.function.sass",
+    "keyword.control.as.sass",
+    "keyword.control.with.sass",
+    "keyword.control.show-hide.sass",
+    "constant.language.import-all.sass",
+    "frontmatter.jekyll punctuation.section.frontmatter.begin.jekyll",
+    "frontmatter.jekyll punctuation.section.frontmatter.end.jekyll",
+];
+
+/// Sass's at-rules' scopes (bat's), each with its `@` under it.
+static SASS_AT_SCOPES: [&str; 11] = [
+    "keyword.control.at-rule.module.sass",
+    "keyword.control.at-rule.sass",
+    "variable.function.sass keyword.control.at-rule.sass",
+    "keyword.control.at-rule.content.sass",
+    "keyword.control.at-rule.return.sass",
+    "keyword.control.at-rule.extend.sass",
+    "keyword.control.at-rule.at-root.sass",
+    "keyword.control.at-rule.warn.sass",
+    "keyword.control.at-rule.debugger.sass",
+    "keyword.control.flow.conditional.sass",
+    "keyword.control.flow.sass",
+];
+
+/// The scopes under `source.scss` an SCSS kind carries, outermost first: CSS's leaves, but for
+/// numbers (Sass's `constant.numeric.value`, its unit a `suffix`) and a function no list names
+/// (`support.function.sass`), then Sass's own.
+pub fn scss_scopes(kind: u16) -> Vec<&'static str> {
+    if kind & YAML_KIND != 0 {
+        let mut v = vec!["frontmatter.jekyll", "source.yaml"];
+        v.extend(crate::yaml_scan::scopes(kind & !YAML_KIND));
+        return v;
+    }
+    match kind {
+        INT | FLOAT => return vec!["constant.numeric.value.css"],
+        INT_UNIT | FLOAT_UNIT => return vec!["constant.numeric.suffix.css"],
+        FLOAT_DOT => {
+            return vec![
+                "constant.numeric.value.css",
+                "punctuation.separator.decimal.css",
+            ];
+        }
+        FN_GENERIC => return vec!["support.function.sass"],
+        _ => {}
+    }
+    if kind < SASS_FIRST {
+        return scopes(kind);
+    }
+    let split = |l: &'static str| l.split(' ').collect();
+    if kind < SASS_AT_FIRST {
+        return split(SASS_LEAVES[usize::from(kind - SASS_FIRST)]);
+    }
+    let i = usize::from(kind - SASS_AT_FIRST);
+    match SASS_AT_SCOPES.get(i / 2) {
+        Some(&s) if i % 2 == 0 => split(s),
+        Some(&s) => {
+            let mut v: Vec<&str> = split(s);
+            v.push("punctuation.definition.keyword.sass");
+            v
+        }
+        None => Vec::new(),
+    }
+}
 
 /// The functions' groups, from [`FN_ATTR`].
 static FN_GROUPS: [&str; 20] = [
@@ -397,12 +557,27 @@ const A_SCOPE: u8 = 9;
 const A_OTHER: u8 = 10;
 /// A counter style's name: `@counter-style`.
 const A_COUNTER: u8 = 11;
-/// The prelude's kind is the low nibble of [`Scan::at`]; what the block holds the high one.
-const AT_KIND: u8 = 15;
+// Sass's (X-149).
+/// A SassScript expression: `@if`, `@else if`, `@while`, `@return`, `@debug`, `@warn`,
+/// `@error`, `@content`'s arguments.
+const A_EXPR: u8 = 12;
+/// `@each`'s variables, `in`, an expression.
+const A_EACH: u8 = 13;
+/// `@for`'s variable, `from`, `through` or `to`.
+const A_FOR: u8 = 14;
+/// A `@mixin`'s or `@function`'s parameters (its name read with its keyword), `@include`'s
+/// `using (…)`.
+const A_MIXIN: u8 = 15;
+/// An `@include`'s arguments (its mixin's name read with its keyword).
+const A_INCLUDE: u8 = 16;
+/// `@use`'s and `@forward`'s URL, `as`, `with (…)`, `show`, `hide`.
+const A_USE: u8 = 17;
+/// The prelude's kind is the low five bits of [`Scan::at`]; what the block holds the two above.
+const AT_KIND: u8 = 31;
 /// A block of rules (in a block of declarations, a block of both).
 const AB_RULES: u8 = 0;
-const AB_DECLS: u8 = 1 << 4;
-const AB_KEYFRAMES: u8 = 2 << 4;
+const AB_DECLS: u8 = 1 << 5;
+const AB_KEYFRAMES: u8 = 2 << 5;
 
 /// Each at-rule CSS has: its name, its leaf's index in [`AT_SCOPES`], its prelude, its block.
 static AT_NAMES: [(&[u8], u8, u8); 34] = [
@@ -461,6 +636,51 @@ static AT_INFO: [(u8, u8); AT_NAMES.len() + 1] = {
     let mut i = 0;
     while i < AT_NAMES.len() {
         t[i + 1] = (AT_NAMES[i].1, AT_NAMES[i].2);
+        i += 1;
+    }
+    t
+};
+
+/// A Sass at-rule whose prelude is a selector (`@extend`, `@at-root`): the item reads one.
+const A_SEL: u8 = 30;
+/// Sass's at-rules (X-149): its name, its leaf's index in [`SASS_AT_SCOPES`], its prelude, its
+/// block (each a block of both).
+static SASS_AT_NAMES: [(&[u8], u8, u8); 17] = [
+    (b"use", 0, A_USE | AB_DECLS),
+    (b"forward", 0, A_USE | AB_DECLS),
+    (b"mixin", 1, A_MIXIN | AB_DECLS),
+    (b"function", 1, A_MIXIN | AB_DECLS),
+    (b"include", 2, A_INCLUDE | AB_DECLS),
+    (b"content", 3, A_EXPR | AB_DECLS),
+    (b"return", 4, A_EXPR | AB_DECLS),
+    (b"extend", 5, A_SEL | AB_DECLS),
+    (b"at-root", 6, A_SEL | AB_DECLS),
+    (b"warn", 7, A_EXPR | AB_DECLS),
+    (b"error", 7, A_EXPR | AB_DECLS),
+    (b"debug", 8, A_EXPR | AB_DECLS),
+    (b"if", 9, A_EXPR | AB_DECLS),
+    (b"else", 9, A_EXPR | AB_DECLS),
+    (b"each", 10, A_EACH | AB_DECLS),
+    (b"for", 10, A_FOR | AB_DECLS),
+    (b"while", 10, A_EXPR | AB_DECLS),
+];
+static SASS_AT_TEXT: [&[u8]; SASS_AT_NAMES.len()] = {
+    let mut t: [&[u8]; SASS_AT_NAMES.len()] = [b""; SASS_AT_NAMES.len()];
+    let mut i = 0;
+    while i < SASS_AT_NAMES.len() {
+        t[i] = SASS_AT_NAMES[i].0;
+        i += 1;
+    }
+    t
+};
+static SASS_AT_WORDS: Words<64, { SASS_AT_NAMES.len() }, { text_len(&SASS_AT_TEXT) }, false> =
+    Words::new(&SASS_AT_TEXT);
+/// Each Sass at-rule's leaf index and prelude by id; none (`u8::MAX`) for a CSS one.
+static SASS_AT_INFO: [(u8, u8); SASS_AT_NAMES.len() + 1] = {
+    let mut t = [(u8::MAX, 0); SASS_AT_NAMES.len() + 1];
+    let mut i = 0;
+    while i < SASS_AT_NAMES.len() {
+        t[i + 1] = (SASS_AT_NAMES[i].1, SASS_AT_NAMES[i].2);
         i += 1;
     }
     t
@@ -693,11 +913,34 @@ const F_ATTR: u8 = 13;
 const F_ATTR_VAL: u8 = 14;
 /// An attribute selector after its value: its flag.
 const F_ATTR_FLAG: u8 = 15;
+// SCSS's (X-149), whose frames take five bits a level.
+/// `#{ … }`, a SassScript expression, in a selector, a name, a value or a prelude.
+const F_INTERP: u8 = 16;
+/// `#{ … }` in a double-quoted string, the string's text again after its `}`; then in a
+/// single-quoted one.
+const F_INTERP_D: u8 = 17;
+const F_INTERP_S: u8 = 18;
+/// A `@mixin`'s or `@function`'s parameters, before a default value's `:`.
+const F_PARAMS: u8 = 19;
+/// A parameter's default value, to its `,`.
+const F_PARAM_VAL: u8 = 20;
+/// `( … )` in a SassScript expression: a map (its keys before a `:`), a list, a grouping.
+const F_MAP: u8 = 21;
+/// `if(`'s arguments, whose `;` separates (`if(sass($a): 1; else: 2)`).
+const F_IF: u8 = 22;
+/// A URL's text after an interpolation in it (`url(#{$p}/img.png)`), to its `)`.
+const F_URL: u8 = 23;
 
 /// Whether frame `f` is a block (a `{`'s that a `}` closes, the top level among them).
 #[inline(always)]
 fn is_block(f: u8) -> bool {
     f <= F_KEYFRAMES
+}
+
+/// Whether frame `f` is an interpolation's.
+#[inline(always)]
+fn is_interp(f: u8) -> bool {
+    matches!(f, F_INTERP | F_INTERP_D | F_INTERP_S)
 }
 
 // ---- what a block's item is reading: [`Scan::mode`] ----
@@ -710,6 +953,8 @@ const M_SEL: u8 = 1;
 const M_VALUE: u8 = 2;
 /// An at-rule's prelude, to its `{` or `;` ([`Scan::at`]).
 const M_AT: u8 = 3;
+/// SCSS: a declaration's name with an interpolation in it, to its `:`.
+const M_NAME: u8 = 4;
 
 // A value's flags, [`Scan::vflags`].
 /// A custom property's value: anything, `{ … }` and `[ … ]` nesting.
@@ -723,6 +968,8 @@ const O_COMMENT: u8 = 1;
 /// A string continued by a `\` at the line's end, its quote: `"` or `'`.
 const O_STR_D: u8 = 2;
 const O_STR_S: u8 = 3;
+/// SCSS: the Jekyll front matter, YAML's state in the frames' low bytes.
+const O_FRONT: u8 = 4;
 
 /// The state of a block of declarations alone, where HTML's `style="…"` starts.
 pub(crate) fn rule_list_body() -> State {
@@ -737,14 +984,14 @@ pub(crate) fn rule_list_body() -> State {
 /// Lex `b`, a line of CSS without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    line_on::<_, false>(b, 0, state, out, Spans::new());
+    line_on::<_, false, false>(b, 0, state, out, Spans::new());
 }
 
 /// Lex `b`, a line holding CSS from `from` (HTML's `<style>` and `style="…"`), from `state`, on
 /// the vector as HTML has it (its spans not joined while it says so).
 #[inline(never)]
 pub(crate) fn line_from(b: &[u8], from: usize, state: &mut State, out: &mut Out) {
-    line_on::<_, false>(b, from, state, out, Push);
+    line_on::<_, false, false>(b, from, state, out, Push);
 }
 
 /// [`line`]'s runs by theme rule pushed to `runs`.
@@ -756,19 +1003,38 @@ pub fn line_runs(
     rules: &mut dyn Rules,
     runs: &mut Vec<Run>,
 ) {
-    let mut k = line_on::<_, true>(b, 0, state, out, Runs::new(rules, runs));
+    let mut k = line_on::<_, true, false>(b, 0, state, out, Runs::new(rules, runs));
+    k.end_line(b.len());
+}
+
+/// Lex `b`, a line of SCSS without its `\n`, from `state` (X-149).
+#[inline(never)]
+pub fn scss_line(b: &[u8], state: &mut State, out: &mut Out) {
+    line_on::<_, false, true>(b, 0, state, out, Spans::new());
+}
+
+/// [`scss_line`]'s runs by theme rule pushed to `runs`.
+#[inline(never)]
+pub fn scss_line_runs(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    let mut k = line_on::<_, true, true>(b, 0, state, out, Runs::new(rules, runs));
     k.end_line(b.len());
 }
 
 #[inline(always)]
-fn line_on<K: Sink, const SHARED: bool>(
+fn line_on<K: Sink, const SHARED: bool, const S: bool>(
     b: &[u8],
     from: usize,
     state: &mut State,
     out: &mut Out,
     k: K,
 ) -> K {
-    let mut s = Scan::new(b, out, k);
+    let mut s = Scan::<K, S>::new(b, out, k);
     s.load(state);
     s.k.open(s.out, (b.len() - from.min(b.len())) / 3 + 16);
     s.lex_line::<SHARED>(from);
@@ -783,8 +1049,26 @@ pub fn block(
     spans: &mut Vec<crate::Span>,
     pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
 ) -> Option<usize> {
+    block_on::<false>(state, spans, pass)
+}
+
+/// A block of SCSS on one scan opened from `state` ([`crate::Carry`]).
+pub fn scss_block(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
+    block_on::<true>(state, spans, pass)
+}
+
+#[inline(always)]
+fn block_on<const S: bool>(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
+) -> Option<usize> {
     let mut out = Out::new(spans);
-    let mut s = Scan::new(b"", &mut out, Spans::new());
+    let mut s = Scan::<Spans, S>::new(b"", &mut out, Spans::new());
     s.load(state);
     s.out.0.clear();
     s.k.open(s.out, 64);
@@ -801,8 +1085,30 @@ pub fn block_runs(
     runs: &mut Vec<Run>,
     lines: &mut crate::RunLines,
 ) -> Option<usize> {
+    block_runs_on::<false>(state, spans, rules, runs, lines)
+}
+
+/// [`scss_block`]'s runs by theme rule pushed to `runs` ([`crate::CarryRuns`]).
+pub fn scss_block_runs(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    lines: &mut crate::RunLines,
+) -> Option<usize> {
+    block_runs_on::<true>(state, spans, rules, runs, lines)
+}
+
+#[inline(always)]
+fn block_runs_on<const S: bool>(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    lines: &mut crate::RunLines,
+) -> Option<usize> {
     let mut out = Out::new(spans);
-    let mut s = Scan::new(b"", &mut out, Runs::new(rules, runs));
+    let mut s = Scan::<Runs, S>::new(b"", &mut out, Runs::new(rules, runs));
     s.load(state);
     s.out.0.clear();
     s.k.open(s.out, 64);
@@ -811,7 +1117,7 @@ pub fn block_runs(
     rest
 }
 
-impl crate::Carry for Scan<'_, '_, Spans> {
+impl<const S: bool> crate::Carry for Scan<'_, '_, Spans, S> {
     fn next(&mut self, b: &[u8]) -> &[crate::Span] {
         // SAFETY: the line is set back to an empty one before `b`'s borrow ends
         self.carry::<false>(unsafe { crate::line_for(b) });
@@ -819,7 +1125,7 @@ impl crate::Carry for Scan<'_, '_, Spans> {
     }
 }
 
-impl crate::CarryRuns for Scan<'_, '_, Runs<'_>> {
+impl<const S: bool> crate::CarryRuns for Scan<'_, '_, Runs<'_>, S> {
     fn next(&mut self, b: &[u8]) -> usize {
         // SAFETY: as above
         self.carry::<true>(unsafe { crate::line_for(b) });
@@ -827,10 +1133,12 @@ impl crate::CarryRuns for Scan<'_, '_, Runs<'_>> {
     }
 }
 
-struct Scan<'b, 'c, K: Sink> {
+/// The scan of a line: CSS's, or SCSS's where `S` (X-149: Sass's variables, interpolation,
+/// maps, operators, at-rules and `//` comments read in the same loop, each behind `S`).
+struct Scan<'b, 'c, K: Sink, const S: bool = false> {
     b: &'b [u8],
-    /// What each open frame is ([`F_RULES`]…), four bits a level, the innermost lowest; past 32
-    /// levels the outer ones are lost (read as [`F_TOP`]).
+    /// What each open frame is ([`F_RULES`]…), four bits a level (SCSS: five), the innermost
+    /// lowest; past 32 levels (SCSS: 25) the outer ones are lost (read as [`F_TOP`]).
     frames: u128,
     /// How many frames are open, up to 255.
     depth: u8,
@@ -848,11 +1156,20 @@ struct Scan<'b, 'c, K: Sink> {
     /// Hosted in another language's template ([`hosted`]): [`hosted::HOST_KIND`], ORed into each
     /// kind written; 0 else. A field, not a parameter: one copy of the scan a sink (X-125's R5).
     host: u16,
+    /// SCSS: where a name an interpolation broke goes on (the byte after its `}`), on this line,
+    /// and what that name is ([`CLASS`], [`ID`], …): `.btn-#{$c}-lg`'s `-lg` the class's.
+    glue_at: usize,
+    glue: u16,
     k: K,
     out: &'b mut Out<'c>,
 }
 
-impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
+impl<'b, 'c, K: Sink, const S: bool> Scan<'b, 'c, K, S> {
+    /// The bits a frame takes, and the levels kept.
+    const FW: u32 = if S { 5 } else { 4 };
+    const FMASK: u128 = (1 << Self::FW) - 1;
+    const KEEP: u128 = if S { (1 << 125) - 1 } else { u128::MAX };
+
     #[inline(always)]
     fn new(b: &'b [u8], out: &'b mut Out<'c>, k: K) -> Self {
         Scan {
@@ -865,6 +1182,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             open: O_NONE,
             cut: false,
             host: 0,
+            glue_at: usize::MAX,
+            glue: 0,
             k,
             out,
         }
@@ -928,33 +1247,38 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
 
     #[inline(always)]
     fn top(&self) -> u8 {
-        (self.frames & 15) as u8
+        (self.frames & Self::FMASK) as u8
     }
 
     #[inline(always)]
     fn push(&mut self, f: u8) {
-        self.frames = self.frames << 4 | u128::from(f);
+        self.frames = (self.frames << Self::FW | u128::from(f)) & Self::KEEP;
         self.depth = self.depth.saturating_add(1);
     }
 
     #[inline(always)]
     fn pop(&mut self) {
         if self.depth > 0 {
-            self.frames >>= 4;
+            self.frames >>= Self::FW;
             self.depth -= 1;
         }
     }
 
     #[inline(always)]
     fn set_top(&mut self, f: u8) {
-        self.frames = self.frames & !15 | u128::from(f);
+        self.frames = self.frames & !Self::FMASK | u128::from(f);
     }
 
     /// The frames above the innermost block popped (a missing `)` or `]` doesn't outlive the
-    /// item it opened in); in a value, those above a value's braces.
+    /// item it opened in); in a value, those above a value's braces; in SCSS, those above an
+    /// interpolation.
     #[inline(always)]
     fn pop_to_block(&mut self) {
-        while self.depth > 0 && !is_block(self.top()) && self.top() != F_BRACES {
+        while self.depth > 0
+            && !is_block(self.top())
+            && self.top() != F_BRACES
+            && !(S && is_interp(self.top()))
+        {
             self.pop();
         }
     }
@@ -963,6 +1287,16 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// the loop out of line where `SHARED` ([`Scan::code_shared`]).
     #[inline(always)]
     fn lex_line<const SHARED: bool>(&mut self, mut p: usize) {
+        if S {
+            // a line's own, as the line API has it (a block's scan keeps its fields)
+            self.glue_at = usize::MAX;
+            self.glue = 0;
+            if (self.open == O_FRONT || (self.depth == 0 && self.mode == M_START))
+                && self.front_matter()
+            {
+                return;
+            }
+        }
         match self.open {
             O_NONE => {}
             O_COMMENT => p = self.comment_line(p),
@@ -984,6 +1318,77 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(never)]
     fn code_shared(&mut self, p: usize) {
         self.code(p);
+    }
+
+    /// SCSS's Jekyll front matter: a `---` line at the top level opens it, the next closes it;
+    /// the lines between are YAML's, its state in the frames' low bytes. Whether the line was
+    /// the front matter's.
+    #[cold]
+    #[inline(never)]
+    fn front_matter(&mut self) -> bool {
+        let b = self.b;
+        if self.open != O_FRONT {
+            if self.open != O_NONE || b != b"---" {
+                return false;
+            }
+            self.put(0, 3, FRONT_BEGIN);
+            self.open = O_FRONT;
+            self.frames = 0;
+            return true;
+        }
+        if b == b"---" {
+            self.put(0, 3, FRONT_END);
+            self.open = O_NONE;
+            self.frames = 0;
+            return true;
+        }
+        let mut y = State::default();
+        y.levels[..8].copy_from_slice(&self.frames.to_le_bytes()[..8]);
+        let mut spans = Vec::new();
+        crate::yaml_scan::line(b, &mut y, &mut Out::new(&mut spans));
+        // YAML's spans, the gaps between them `frontmatter.jekyll source.yaml` (YAML's kind 0)
+        let mut at = 0;
+        for sp in &spans {
+            let (s, e) = (sp.start as usize, sp.end as usize);
+            self.put(at, s, YAML_KIND);
+            self.put(s, e, sp.kind | YAML_KIND);
+            at = e;
+        }
+        self.put(at, b.len(), YAML_KIND);
+        let mut w = [0u8; 16];
+        w[..8].copy_from_slice(&y.levels[..8]);
+        self.frames = u128::from_le_bytes(w);
+        true
+    }
+
+    /// Whether SCSS reads a SassScript expression at the scan's place: a value, an
+    /// interpolation, a map, a function's arguments, a Sass at-rule's prelude.
+    #[inline(always)]
+    fn in_expr(&self) -> bool {
+        if !S {
+            return false;
+        }
+        let top = self.top();
+        if is_block(top) {
+            return match self.mode {
+                M_VALUE => true,
+                M_AT => matches!(self.at & AT_KIND, A_EXPR..=A_USE),
+                _ => false,
+            };
+        }
+        matches!(
+            top,
+            F_INTERP
+                | F_INTERP_D
+                | F_INTERP_S
+                | F_MAP
+                | F_PARAM_VAL
+                | F_FN
+                | F_IF
+                | F_BRACES
+                | F_COND_VAL
+                | F_LINES
+        )
     }
 
     /// Whether the scan reads a selector at its place: in a selector's item, or in a selector's
@@ -1018,7 +1423,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                         p + 3
                     } else if ident_starts(b, p) {
                         self.word(p)
-                    } else if self.number_starts(p) {
+                    } else if self.number_starts(p) && !self.sign_is_op(p) {
                         self.number(p)
                     } else {
                         self.operator(p)
@@ -1040,23 +1445,27 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 C_LBRACKET => self.lbracket(p),
                 C_RBRACKET => self.rbracket(p),
                 C_QUOTE => self.string(p),
-                C_SLASH => {
-                    if b.get(p + 1) == Some(&b'*') {
-                        self.comment(p)
-                    } else {
-                        self.operator(p)
-                    }
-                }
+                C_SLASH => match b.get(p + 1) {
+                    Some(b'*') => self.comment(p),
+                    Some(b'/') if S => self.line_comment(p),
+                    _ => self.operator(p),
+                },
                 C_AT => self.at_rule(p),
                 C_BANG => self.bang(p),
                 C_PLUS => {
-                    if self.number_starts(p) && !self.in_selector() {
+                    if self.number_starts(p) && !self.in_selector() && !self.sign_is_op(p) {
                         self.number(p)
                     } else {
                         self.operator(p)
                     }
                 }
+                C_CARET
+                    if S && c == b'$' && b.get(p + 1).is_some_and(|&d| NAME[usize::from(d)]) =>
+                {
+                    self.variable(p)
+                }
                 C_STAR | C_GT | C_AMP | C_PIPE | C_LT | C_CARET => self.operator(p),
+                _ if S && c == b'%' => self.percent(p),
                 _ => p + 1,
             };
             debug_assert!(p > was, "no progress at {was}");
@@ -1069,28 +1478,45 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(always)]
     fn item(&mut self, p: usize) -> u8 {
         let top = self.top();
-        let mode = if top == F_DECLS && self.is_declaration(p) {
+        let mut mode = if top == F_DECLS && self.is_declaration(p) {
             M_VALUE
         } else {
             M_SEL
         };
+        // SCSS: a name an interpolation starts (`#{$side}-width: 0`) is read to its `:`
+        if S && mode == M_VALUE && self.b[p] == b'#' {
+            mode = M_NAME;
+        }
         self.mode = mode;
         self.vflags = 0;
         mode
     }
 
     /// Whether the item at `p` in a block of declarations is one: a custom property, or an
-    /// identifier before a `:` (CSS Nesting's parse, [the module's notes](self)).
+    /// identifier before a `:` (CSS Nesting's parse, [the module's notes](self)); in SCSS, a
+    /// name with interpolations in it (`margin-#{$side}: 0`).
     #[inline(always)]
     fn is_declaration(&self, p: usize) -> bool {
         let b = self.b;
-        if !ident_starts(b, p) {
-            return false;
-        }
-        if b[p] == b'-' && b.get(p + 1) == Some(&b'-') {
-            return true;
-        }
-        let q = blanks(b, ident_end(b, p));
+        let e = if S && b[p] == b'#' {
+            if b.get(p + 1) != Some(&b'{') {
+                return false;
+            }
+            name_end_interp(b, p)
+        } else {
+            if !ident_starts(b, p) {
+                return false;
+            }
+            if b[p] == b'-' && b.get(p + 1) == Some(&b'-') {
+                return true;
+            }
+            if S {
+                name_end_interp(b, p)
+            } else {
+                ident_end(b, p)
+            }
+        };
+        let q = blanks(b, e);
         if b.get(q) != Some(&b':') {
             return false;
         }
@@ -1128,6 +1554,13 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     };
                     continue;
                 }
+                // SCSS: a `//` comment ends the line, an interpolation's braces are its own
+                b'/' if S && b.get(r + 1) == Some(&b'/') => break,
+                b'#' if S && b.get(r + 1) == Some(&b'{') => {
+                    r = interp_end(b, r + 2);
+                    last = b'}';
+                    continue;
+                }
                 b'\\' => r += 1,
                 _ => {}
             }
@@ -1152,6 +1585,12 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                         self.put_hot(p, e, KF_SELECTOR);
                         return e;
                     }
+                    // SCSS: a module's variable set, `ns.$x: …`
+                    if S && b.get(e) == Some(&b'.') && b.get(e + 1) == Some(&b'$') {
+                        self.put(p, e, NS_VAR);
+                        self.put(e, e + 1, NS_VAR_DOT);
+                        return e + 1;
+                    }
                     if self.item(p) == M_VALUE {
                         return self.declaration(p, e);
                     }
@@ -1162,11 +1601,24 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             return match mode {
                 M_SEL => self.sel_word(p, e),
                 M_VALUE => self.value_word(p, e),
+                M_NAME if S => {
+                    // a declaration's name after an interpolation in it
+                    let k = if self.vflags & V_CUSTOM != 0 {
+                        CUSTOM_NAME
+                    } else {
+                        PROP
+                    };
+                    self.put(p, e, k);
+                    e
+                }
                 _ => self.prelude_word(p, e),
             };
         }
         match top {
             F_FN | F_MATH | F_BRACES | F_COND_VAL => self.value_word(p, e),
+            F_INTERP | F_INTERP_D | F_INTERP_S | F_MAP | F_PARAM_VAL | F_PARAMS | F_IF => {
+                self.value_word(p, e)
+            }
             F_LINES => {
                 if b[p] == b'-' && b.get(p + 1) == Some(&b'-') {
                     return self.value_word(p, e);
@@ -1242,6 +1694,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 self.vflags = V_FONT;
             }
         }
+        // SCSS: an interpolation in the name, which is read to its `:`
+        if S && b.get(e) == Some(&b'#') && b.get(e + 1) == Some(&b'{') {
+            self.mode = M_NAME;
+            return e;
+        }
         let q = blanks(b, e);
         // the `:` is there, but after a custom property's name, where the item was decided on
         // the `--`
@@ -1256,6 +1713,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(always)]
     fn sel_word(&mut self, p: usize, e: usize) -> usize {
         let b = self.b;
+        // SCSS: a name an interpolation broke goes on (`.btn-#{$c}-lg`'s `-lg`)
+        if S && p == self.glue_at {
+            self.put(p, e, self.glue);
+            return e;
+        }
         if b.get(e) == Some(&b'|') && b.get(e + 1) != Some(&b'|') {
             self.put(p, e, NS_PREFIX);
             self.put(e, e + 1, NS_SEP);
@@ -1275,6 +1737,24 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(always)]
     fn value_word(&mut self, p: usize, e: usize) -> usize {
         let b = self.b;
+        if S {
+            // a custom property's name an interpolation broke goes on
+            if p == self.glue_at {
+                self.put(p, e, self.glue);
+                return e;
+            }
+            if b.get(e) == Some(&b'.')
+                && let Some(r) = self.namespaced(p, e)
+            {
+                return r;
+            }
+            // a map's key, before its `:`
+            if self.top() == F_MAP && b.get(e) != Some(&b'(') && b.get(blanks(b, e)) == Some(&b':')
+            {
+                self.put(p, e, MAP_KEY);
+                return e;
+            }
+        }
         if b.get(e) == Some(&b'(') {
             return self.function(p, e);
         }
@@ -1314,8 +1794,219 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 return;
             }
         }
+        if S {
+            // Sass's constants and logic; any other word an unquoted string, as Sass has it
+            let k = match w {
+                b"true" | b"false" | b"null" => CONST_LANG,
+                b"and" | b"or" | b"not" | b"in" => SASS_OP,
+                _ => UNQUOTED,
+            };
+            self.put(p, e, k);
+            return;
+        }
         if self.vflags & V_FONT != 0 && self.top() != F_FN {
             self.put(p, e, UNQUOTED);
+        }
+    }
+
+    /// SCSS: a module's member, `ns.$x` or `ns.f(`, its namespace `b[p..e]` before the `.` at
+    /// `e`; `None` where none follows.
+    #[inline(never)]
+    fn namespaced(&mut self, p: usize, e: usize) -> Option<usize> {
+        let b = self.b;
+        match b.get(e + 1) {
+            Some(b'$') => {
+                self.put(p, e, NS_VAR);
+                self.put(e, e + 1, NS_VAR_DOT);
+                Some(e + 1)
+            }
+            _ if ident_starts(b, e + 1) => {
+                let f = ident_end(b, e + 1);
+                if b.get(f) != Some(&b'(') {
+                    return None;
+                }
+                self.put(p, e, NS_FN);
+                self.put(e, e + 1, NS_FN_DOT);
+                self.put(e + 1, f, SASS_FN);
+                self.put(f, f + 1, GROUP_BEGIN);
+                self.push(F_FN);
+                Some(f + 1)
+            }
+            _ => None,
+        }
+    }
+
+    /// SCSS: a variable at `p`, its `$`: declared at an item's start before a `:` (its value
+    /// read after), a parameter in a `@mixin`'s or `@function`'s, read elsewhere.
+    #[inline(never)]
+    fn variable(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let e = ident_end(b, p + 1);
+        let top = self.top();
+        if is_block(top) && self.mode == M_START && top != F_KEYFRAMES {
+            let q = blanks(b, e);
+            if b.get(q) == Some(&b':') {
+                self.put_hot(p, p + 1, DECL_MARK);
+                self.put_hot(p + 1, e, DECL);
+                self.put_hot(q, q + 1, KEY_VALUE);
+                self.mode = M_VALUE;
+                self.vflags = 0;
+                return q + 1;
+            }
+        }
+        let (mark, name) = if top == F_PARAMS {
+            (PARAM_MARK, PARAM)
+        } else {
+            (VAR_MARK, VAR)
+        };
+        self.put_hot(p, p + 1, mark);
+        self.put_hot(p + 1, e, name);
+        e
+    }
+
+    /// SCSS: `%` at `p`: a placeholder selector, or the modulo operator.
+    #[inline(never)]
+    fn percent(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let top = self.top();
+        if self.mode == M_START && is_block(top) && top != F_KEYFRAMES {
+            self.item(p);
+        }
+        if self.in_selector() {
+            if ident_starts(b, p + 1) {
+                let e = ident_end(b, p + 1);
+                self.put(p, p + 1, PLACEHOLDER_MARK);
+                self.put(p + 1, e, PLACEHOLDER);
+                return e;
+            }
+            if b.get(p + 1) == Some(&b'#') {
+                self.put(p, p + 1, PLACEHOLDER_MARK);
+            }
+            return p + 1;
+        }
+        if self.in_expr() {
+            self.put(p, p + 1, SASS_ARITH);
+        }
+        p + 1
+    }
+
+    /// SCSS: `#{` at `p`, an interpolation; in a selector, what the name it breaks is, for the
+    /// part after it ([`Scan::glue`]).
+    #[inline(never)]
+    fn interp_open(&mut self, p: usize) -> usize {
+        let b = self.b;
+        if self.in_selector() {
+            let mut s = p;
+            while s > 0 && NAME[usize::from(b[s - 1])] {
+                s -= 1;
+            }
+            let before = if s > 0 { b[s - 1] } else { b' ' };
+            // a name two interpolations break (`.#{$a}#{$b}-c`, `.a-#{$b}-c-#{$d}`): the first's
+            if before == b'}' && self.glue != 0 {
+                self.put(p, p + 1, INTERP_MARK);
+                self.put(p + 1, p + 2, INTERP_BEGIN);
+                self.push(F_INTERP);
+                return p + 2;
+            }
+            self.glue = if matches!(self.top(), F_ATTR | F_ATTR_VAL) {
+                ATTR_NAME
+            } else {
+                match before {
+                    b'.' => CLASS,
+                    b'#' => ID,
+                    b'%' => PLACEHOLDER,
+                    _ if s < p && before != b'&' => TAG,
+                    _ => ATTR_NAME,
+                }
+            };
+        } else {
+            // a custom property's name: `--#{$prefix}gap`, `var(#{$prefix}gap)`
+            let custom =
+                (p >= 2 && &b[p - 2..p] == b"--" && (p == 2 || !NAME[usize::from(b[p - 3])]))
+                    || (p >= 4 && is(&b[p - 4..p], b"var("));
+            self.glue = if custom { CUSTOM_NAME } else { 0 };
+        }
+        self.put(p, p + 1, INTERP_MARK);
+        self.put(p + 1, p + 2, INTERP_BEGIN);
+        self.push(F_INTERP);
+        p + 2
+    }
+
+    /// SCSS: a `}` at `p` closing an interpolation (the innermost one above the innermost
+    /// block, the frames above it popped): its end, and a string's text again after it where it
+    /// was in one; `None` where no interpolation is open.
+    #[inline(never)]
+    fn interp_close(&mut self, p: usize) -> Option<usize> {
+        let mut f = self.frames;
+        let mut i = 0;
+        let found = loop {
+            if i >= self.depth {
+                return None;
+            }
+            let t = (f & Self::FMASK) as u8;
+            if is_interp(t) {
+                break t;
+            }
+            if is_block(t) || t == F_BRACES {
+                return None;
+            }
+            f >>= Self::FW;
+            i += 1;
+        };
+        for _ in 0..=i {
+            self.pop();
+        }
+        self.put(p, p + 1, INTERP_END);
+        let b = self.b;
+        Some(match found {
+            F_INTERP_D => self.string_body(p + 1, STR_D, b'"'),
+            F_INTERP_S => self.string_body(p + 1, STR_S, b'\''),
+            _ if self.top() == F_URL => self.url_rest(p + 1),
+            _ => {
+                if self.glue != 0 && b.get(p + 1).is_some_and(|&c| NAME[usize::from(c)]) {
+                    self.glue_at = p + 1;
+                }
+                p + 1
+            }
+        })
+    }
+
+    /// SCSS: a `//` comment from `p` to the line's end.
+    #[inline(never)]
+    fn line_comment(&mut self, p: usize) -> usize {
+        let n = self.b.len();
+        self.put(p, p + 2, LINE_COMMENT_MARK);
+        self.put(p + 2, n, LINE_COMMENT);
+        n
+    }
+
+    /// SCSS: an operator's byte at `p` in a SassScript expression.
+    #[inline(never)]
+    fn sass_operator(&mut self, p: usize) -> usize {
+        let b = self.b;
+        match b[p] {
+            b'=' | b'<' | b'>' => {
+                let e = if b.get(p + 1) == Some(&b'=') {
+                    p + 2
+                } else {
+                    p + 1
+                };
+                self.put(p, e, SASS_OP);
+                e
+            }
+            b'*' if is_block(self.top()) && self.mode == M_AT && self.at & AT_KIND == A_USE => {
+                self.put(p, p + 1, IMPORT_ALL);
+                p + 1
+            }
+            b'+' | b'-' | b'*' | b'/' => {
+                self.put(p, p + 1, SASS_ARITH);
+                p + 1
+            }
+            b'&' => {
+                self.put(p, p + 1, NESTING);
+                p + 1
+            }
+            _ => p + 1,
         }
     }
 
@@ -1361,10 +2052,13 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             F_SELP
         } else {
             match self.top() {
+                _ if S && w == b"if" => F_IF,
                 F_COND | F_COND_VAL if is(w, b"style") => F_COND,
                 F_COND | F_COND_VAL if is(w, b"selector") => F_SELP,
                 F_MATH => F_MATH,
                 _ if kind == FN_CALC => F_MATH,
+                // SCSS: a function in a media feature's value, `map-get($bp, md)`
+                F_COND_VAL if S => F_FN,
                 F_COND | F_COND_VAL => F_ARGS,
                 _ if self.mode == M_AT && is_block(self.top()) => self.prelude_group(w),
                 _ => F_FN,
@@ -1400,6 +2094,15 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             self.push(F_FN);
             return q;
         }
+        // SCSS: a URL that is a variable is read as arguments; its text to an interpolation in it
+        if S {
+            if b.get(q) == Some(&b'$') {
+                self.push(F_FN);
+                return q;
+            }
+            self.push(F_URL);
+            return self.url_rest(q);
+        }
         let mut e = q;
         while e < b.len() && b[e] != b')' {
             e += if b[e] == b'\\' && e + 1 < b.len() {
@@ -1414,6 +2117,37 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             t -= 1;
         }
         self.put(q, t, UNQUOTED);
+        if e < b.len() {
+            self.put(e, e + 1, GROUP_END);
+            return e + 1;
+        }
+        e
+    }
+
+    /// SCSS: a URL's text from `p` in [`F_URL`]: to an interpolation (the frame kept), or to its
+    /// `)` (or the line's end), the frame popped.
+    #[inline(never)]
+    fn url_rest(&mut self, p: usize) -> usize {
+        let b = self.b;
+        let mut e = p;
+        while e < b.len() && b[e] != b')' {
+            if b[e] == b'#' && b.get(e + 1) == Some(&b'{') {
+                self.put(p, e, UNQUOTED);
+                return e;
+            }
+            e += if b[e] == b'\\' && e + 1 < b.len() {
+                2
+            } else {
+                1
+            };
+        }
+        let e = e.min(b.len());
+        let mut t = e;
+        while t > p && is_blank(b[t - 1]) {
+            t -= 1;
+        }
+        self.put(p, t, UNQUOTED);
+        self.pop();
         if e < b.len() {
             self.put(e, e + 1, GROUP_END);
             return e + 1;
@@ -1478,6 +2212,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(never)]
     fn prelude_word(&mut self, p: usize, e: usize) -> usize {
         let b = self.b;
+        if S && matches!(self.at & AT_KIND, A_EXPR..=A_USE) {
+            return self.sass_prelude_word(p, e);
+        }
         if b.get(e) == Some(&b'(') {
             return self.function(p, e);
         }
@@ -1516,6 +2253,80 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             self.put(p, e, kind);
         }
         e
+    }
+
+    /// SCSS: an identifier `b[p..e]` in a Sass at-rule's prelude: its keywords (`in`, `from`,
+    /// `through`, `to`, `as`, `with`, `show`, `hide`, `using`), a module's names plain, else a
+    /// value's word.
+    #[inline(never)]
+    fn sass_prelude_word(&mut self, p: usize, e: usize) -> usize {
+        let w = &self.b[p..e];
+        let kind = match self.at & AT_KIND {
+            A_EACH if w == b"in" => SASS_OP,
+            A_FOR if w == b"from" || w == b"through" || w == b"to" => SASS_OP,
+            A_USE if w == b"as" => KW_AS,
+            A_USE if w == b"with" => KW_WITH,
+            A_USE if w == b"show" || w == b"hide" => KW_SHOW_HIDE,
+            // a namespace, a prefix, a member shown or hidden
+            A_USE => return e,
+            A_INCLUDE if w == b"using" => {
+                // its parameters, as a mixin's
+                self.at = self.at & !AT_KIND | A_MIXIN;
+                SASS_OP
+            }
+            _ => return self.value_word(p, e),
+        };
+        self.put(p, e, kind);
+        e
+    }
+
+    /// SCSS: a Sass at-rule from its `@` at `p`, its name `b[p + 1..e]`, its leaf's index and
+    /// its prelude: `@else if` one keyword; a `@mixin`'s or `@function`'s name and an
+    /// `@include`'s mixin read with it; `@extend`'s and `@at-root`'s prelude a selector.
+    #[inline(never)]
+    fn sass_at_rule(&mut self, p: usize, e: usize, leaf: u8, at: u8) -> usize {
+        let b = self.b;
+        let kind = SASS_AT_FIRST + 2 * u16::from(leaf);
+        self.put(p, p + 1, kind + 1);
+        let mut e = e;
+        if &b[p + 1..e] == b"else" {
+            let q = blanks(b, e);
+            if b[q..].starts_with(b"if") && !b.get(q + 2).is_some_and(|&c| NAME[usize::from(c)]) {
+                e = q + 2;
+            }
+        }
+        self.put(p + 1, e, kind);
+        self.vflags = 0;
+        if at & AT_KIND == A_SEL {
+            self.mode = M_SEL;
+            return e;
+        }
+        self.mode = M_AT;
+        self.at = at;
+        let q = blanks(b, e);
+        if !ident_starts(b, q) {
+            return e;
+        }
+        match at & AT_KIND {
+            A_MIXIN => {
+                let f = ident_end(b, q);
+                self.put(q, f, FN_NAME);
+                f
+            }
+            A_INCLUDE => {
+                let f = ident_end(b, q);
+                if b.get(f) == Some(&b'.') && ident_starts(b, f + 1) {
+                    let g = ident_end(b, f + 1);
+                    self.put(q, f, NS_INCLUDE);
+                    self.put(f, f + 1, NS_INCLUDE_DOT);
+                    self.put(f + 1, g, INCLUDE_NAME);
+                    return g;
+                }
+                self.put(q, f, INCLUDE_NAME);
+                f
+            }
+            _ => e,
+        }
     }
 
     /// A number at `p` (`[+-]?`, digits with a fraction or not, an exponent), its unit after it.
@@ -1580,6 +2391,16 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         e
     }
 
+    /// SCSS: whether the sign at `p` is an operator rather than a number's, right after a value
+    /// (`1px+2px`, `(1)-2`), as Sass reads it.
+    #[inline(always)]
+    fn sign_is_op(&self, p: usize) -> bool {
+        S && p > 0 && {
+            let c = self.b[p - 1];
+            NAME[usize::from(c)] || matches!(c, b')' | b'%' | b']')
+        }
+    }
+
     /// Whether a number starts at `p`, a sign there: a digit, or `.` and a digit, after it.
     #[inline(always)]
     fn number_starts(&self, p: usize) -> bool {
@@ -1595,6 +2416,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(always)]
     fn dot(&mut self, p: usize) -> usize {
         let b = self.b;
+        // SCSS: `...`, a rest argument
+        if S && b.get(p + 1) == Some(&b'.') && b.get(p + 2) == Some(&b'.') {
+            self.put(p, p + 3, SASS_OP);
+            return p + 3;
+        }
         if self.mode == M_START && is_block(self.top()) {
             if self.top() == F_KEYFRAMES {
                 return self.number_or_skip(p);
@@ -1607,6 +2433,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 self.put_hot(p, p + 1, CLASS_MARK);
                 self.put_hot(p + 1, e, CLASS);
                 return e;
+            }
+            // SCSS: a class an interpolation names, `.#{$c}`
+            if S && b.get(p + 1) == Some(&b'#') {
+                self.put(p, p + 1, CLASS_MARK);
             }
             return p + 1;
         }
@@ -1628,6 +2458,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         let b = self.b;
         if self.mode == M_START && is_block(self.top()) {
             self.item(p);
+        }
+        if S && b.get(p + 1) == Some(&b'{') {
+            return self.interp_open(p);
         }
         if !ident_starts(b, p + 1) && !b.get(p + 1).is_some_and(u8::is_ascii_digit) {
             return p + 1;
@@ -1668,6 +2501,12 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             if self.mode == M_AT && self.at & AT_KIND == A_PAGE {
                 return self.pseudo(p);
             }
+            // SCSS: an interpolated name's `:`
+            if S && self.mode == M_NAME {
+                self.put(p, p + 1, KEY_VALUE);
+                self.mode = M_VALUE;
+                return p + 1;
+            }
         }
         if self.in_selector() {
             return self.pseudo(p);
@@ -1675,6 +2514,19 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         if top == F_COND {
             self.put(p, p + 1, KEY_VALUE);
             self.set_top(F_COND_VAL);
+        } else if S {
+            match top {
+                // a parameter's default value
+                F_PARAMS => {
+                    self.put(p, p + 1, KEY_VALUE);
+                    self.set_top(F_PARAM_VAL);
+                }
+                // a map's key's, a keyword argument's
+                F_MAP | F_FN | F_IF | F_INTERP | F_INTERP_D | F_INTERP_S | F_PARAM_VAL => {
+                    self.put(p, p + 1, KEY_VALUE);
+                }
+                _ => {}
+            }
         }
         p + 1
     }
@@ -1714,6 +2566,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// A `;` at `p`: a declaration's or an at-rule's end, but in a value's braces.
     #[inline(always)]
     fn semicolon(&mut self, p: usize) -> usize {
+        // SCSS: `if(`'s arguments' `;`
+        if S && self.top() == F_IF {
+            self.put(p, p + 1, TERMINATOR);
+            return p + 1;
+        }
         self.pop_to_block();
         if self.top() != F_BRACES {
             self.mode = M_START;
@@ -1729,14 +2586,23 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         if self.mode == M_START && is_block(top) && top != F_KEYFRAMES {
             self.item(p);
         }
+        if S && top == F_PARAM_VAL {
+            self.set_top(F_PARAMS);
+        }
         self.put_hot(p, p + 1, SEQUENCE);
     }
 
-    /// A `{` at `p`: a block's, by the item it ends; a value's braces.
+    /// A `{` at `p`: a block's, by the item it ends; a value's braces (SCSS: a nested
+    /// property's block, `font: { family: x; }`).
     #[inline(always)]
     fn lbrace(&mut self, p: usize) -> usize {
         self.put_hot(p, p + 1, BRACE);
         if self.mode == M_VALUE {
+            if S && self.vflags & V_CUSTOM == 0 && is_block(self.top()) {
+                self.push(F_DECLS);
+                self.mode = M_START;
+                return p + 1;
+            }
             self.push(F_BRACES);
             return p + 1;
         }
@@ -1762,6 +2628,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// A `}` at `p`: a value's braces', or the innermost block's.
     #[inline(always)]
     fn rbrace(&mut self, p: usize) -> usize {
+        if S && let Some(r) = self.interp_close(p) {
+            return r;
+        }
         self.pop_to_block();
         let top = self.top();
         if top == F_TOP {
@@ -1788,9 +2657,18 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 M_AT if !SOL => match self.at & AT_KIND {
                     A_MEDIA | A_SUPPORTS | A_CONTAINER | A_IMPORT => F_COND,
                     A_SCOPE => F_SELP,
+                    A_MIXIN if S => F_PARAMS,
+                    A_INCLUDE if S => F_FN,
+                    A_EXPR | A_EACH | A_FOR | A_USE if S => F_MAP,
                     _ => F_ARGS,
                 },
-                M_VALUE => F_FN,
+                M_VALUE => {
+                    if S {
+                        F_MAP
+                    } else {
+                        F_FN
+                    }
+                }
                 M_SEL => F_SELP,
                 _ => F_ARGS,
             }
@@ -1799,7 +2677,14 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 F_COND => F_COND,
                 F_MATH => F_MATH,
                 F_SELP | F_NTH => F_SELP,
-                F_FN | F_COND_VAL | F_BRACES | F_LINES => F_FN,
+                F_FN | F_COND_VAL | F_BRACES | F_LINES => {
+                    if S {
+                        F_MAP
+                    } else {
+                        F_FN
+                    }
+                }
+                F_INTERP | F_INTERP_D | F_INTERP_S | F_MAP | F_PARAM_VAL | F_IF => F_MAP,
                 _ => F_ARGS,
             }
         };
@@ -1815,7 +2700,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         while matches!(self.top(), F_ATTR | F_ATTR_VAL | F_ATTR_FLAG | F_LINES) {
             self.pop();
         }
-        if is_block(self.top()) || self.top() == F_BRACES {
+        if is_block(self.top()) || self.top() == F_BRACES || (S && is_interp(self.top())) {
             return p + 1;
         }
         self.put_hot(p, p + 1, GROUP_END);
@@ -1869,6 +2754,12 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             return p + 1;
         }
         let e = ident_end(b, p + 1);
+        if S {
+            let (leaf, at) = SASS_AT_WORDS.value(&b[p + 1..e], &SASS_AT_INFO);
+            if leaf != u8::MAX {
+                return self.sass_at_rule(p, e, leaf, at);
+            }
+        }
         let (leaf, at) = AT_WORDS.value(&b[p + 1..e], &AT_INFO);
         let kind = AT_FIRST + 2 * u16::from(leaf);
         self.put(p, p + 1, kind + 1);
@@ -1890,11 +2781,21 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(never)]
     fn bang(&mut self, p: usize) -> usize {
         let b = self.b;
+        if S && b.get(p + 1) == Some(&b'=') {
+            self.put(p, p + 2, SASS_OP);
+            return p + 2;
+        }
         let q = blanks(b, p + 1);
         if ident_starts(b, q) {
             let e = ident_end(b, q);
-            if is(&b[q..e], b"important") {
+            let w = &b[q..e];
+            if is(w, b"important") {
                 self.put(p, e, IMPORTANT);
+                return e;
+            }
+            // SCSS: `!default`, `!global`, `!optional`
+            if S && matches!(w, b"default" | b"global" | b"optional") {
+                self.put(p, e, FLAG);
                 return e;
             }
         }
@@ -1948,11 +2849,27 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             }
             _ => {}
         }
+        if S && self.in_expr() {
+            return self.sass_operator(p);
+        }
         if self.in_selector() {
             match c {
                 b'>' | b'~' | b'+' => self.put_hot(p, p + 1, COMBINATOR),
                 b'*' => self.put_hot(p, p + 1, WILDCARD),
-                b'&' => self.put_hot(p, p + 1, NESTING),
+                b'&' => {
+                    self.put_hot(p, p + 1, NESTING);
+                    // SCSS: a suffix on the parent's name, `&__el`, `&-lg`
+                    if S {
+                        let mut e = p + 1;
+                        while e < b.len() && NAME[usize::from(b[e])] {
+                            e += 1;
+                        }
+                        if e > p + 1 {
+                            self.put(p + 1, e, ATTR_NAME);
+                            return e;
+                        }
+                    }
+                }
                 b'|' if b.get(p + 1) == Some(&b'|') => {
                     self.put(p, p + 2, COMBINATOR);
                     return p + 2;
@@ -1995,6 +2912,14 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 self.put_hot(s, e, base);
                 self.put_hot(e, e + 1, base + END);
                 return e + 1;
+            }
+            // SCSS: an interpolation, the string's text again after its `}`
+            if S && c == b'#' && b.get(e + 1) == Some(&b'{') {
+                self.put(s, e, base);
+                self.put(e, e + 1, INTERP_MARK);
+                self.put(e + 1, e + 2, INTERP_BEGIN);
+                self.push(if q == b'"' { F_INTERP_D } else { F_INTERP_S });
+                return e + 2;
             }
             if c == b'\\' {
                 self.put(s, e, base);
@@ -2074,6 +2999,41 @@ fn string_end(b: &[u8], mut p: usize, q: u8) -> usize {
     b.len()
 }
 
+/// SCSS: where the interpolation whose text starts at `p` (after its `#{`) ends, after its `}`
+/// (or the line's end): braces counted, strings skipped.
+fn interp_end(b: &[u8], mut p: usize) -> usize {
+    let mut depth = 0u32;
+    while p < b.len() {
+        match b[p] {
+            b'{' => depth += 1,
+            b'}' if depth == 0 => return p + 1,
+            b'}' => depth -= 1,
+            q @ (b'"' | b'\'') => {
+                p = string_end(b, p + 1, q);
+                continue;
+            }
+            b'\\' => p += 1,
+            _ => {}
+        }
+        p += 1;
+    }
+    b.len()
+}
+
+/// SCSS: where a name from `p` ends, its identifiers' parts and its interpolations together
+/// (`margin-#{$side}`, `#{$p}-width`).
+fn name_end_interp(b: &[u8], p: usize) -> usize {
+    let mut e = p;
+    loop {
+        e = ident_end(b, e);
+        if b.get(e) == Some(&b'#') && b.get(e + 1) == Some(&b'{') {
+            e = interp_end(b, e + 2);
+        } else {
+            return e;
+        }
+    }
+}
+
 /// The first place from `p` where `x` and then `y` stand.
 #[inline(always)]
 fn find2(b: &[u8], mut p: usize, x: u8, y: u8) -> Option<usize> {
@@ -2142,5 +3102,7 @@ fn is_media_type(w: &[u8]) -> bool {
     TYPES.iter().any(|t| is(w, t))
 }
 
+#[cfg(test)]
+mod scss_tests;
 #[cfg(test)]
 mod tests;

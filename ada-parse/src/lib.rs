@@ -464,7 +464,7 @@ fn carried_runs(lang: Lang) -> Option<(RunBlock, LineRuns)> {
         Lang::LiterateHaskell => (haskell::lhs::block_runs, haskell::lhs::line_runs),
         Lang::Elixir => (elixir::block_runs, elixir::line_runs),
         Lang::Ruby => (ruby::block_runs, ruby::line_runs),
-        Lang::Scss => (css::scss::block_runs, css::scss::line_runs),
+        Lang::Scss => (css::own::scss_block_runs, css::own::scss_line_runs),
         Lang::Css => (css::own::block_runs, css::own::line_runs),
         Lang::Bash => (bash::block_runs, bash::line_runs),
         Lang::Cpp => (cc::block_runs, cc::line_runs),
@@ -509,7 +509,7 @@ fn carried<const SPANS: bool>(lang: Lang) -> Option<Block> {
         Lang::Ruby if SPANS => ruby::block,
         Lang::PowerShell => powershell::block,
         Lang::Css if SPANS => css::own::block,
-        Lang::Scss if SPANS => css::scss::block,
+        Lang::Scss if SPANS => css::own::scss_block,
         Lang::Html => html::block,
         Lang::Xml if SPANS => xml_scan::block,
         Lang::Lisp if SPANS => lisp::block_common,
@@ -798,7 +798,7 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::TypeScriptReact => out!(|b, s, o| typescript::line(b, true, s, o)),
         Lang::Scss if !SPANS => |_, _, _| unreachable!("SCSS's runs come from its own scan"),
         Lang::Css => out!(css::own::line),
-        Lang::Scss => out!(css::scss::line),
+        Lang::Scss => out!(css::own::scss_line),
         Lang::Html => out!(html::line),
         Lang::Lisp | Lang::EmacsLisp | Lang::Scheme | Lang::Racket | Lang::Clojure if !SPANS => {
             |_, _, _| unreachable!("Lisp's and Clojure's runs come from their own scans")

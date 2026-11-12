@@ -15,7 +15,7 @@
        "sass:math" string.quoted.double.css
        "\"" string.quoted.double.css punctuation.definition.string.end.css
        "as" keyword.control.as.sass
-       ";" punctuation.terminator.rule.sass
+       ";" punctuation.terminator.rule.css
    5 | @use "a" as *; @forward "b" show f, $g; @use "c" with ($d: 1);
        "@" keyword.control.at-rule.module.sass punctuation.definition.keyword.sass
        "use" keyword.control.at-rule.module.sass
@@ -24,7 +24,7 @@
        "\"" string.quoted.double.css punctuation.definition.string.end.css
        "as" keyword.control.as.sass
        "*" constant.language.import-all.sass
-       ";" punctuation.terminator.rule.sass
+       ";" punctuation.terminator.rule.css
        "@" keyword.control.at-rule.module.sass punctuation.definition.keyword.sass
        "forward" keyword.control.at-rule.module.sass
        "\"" string.quoted.double.css punctuation.definition.string.begin.css
@@ -34,42 +34,42 @@
        "," punctuation.separator.sequence.css
        "$" variable.other.sass punctuation.definition.variable.sass
        "g" variable.other.sass
-       ";" punctuation.terminator.rule.sass
+       ";" punctuation.terminator.rule.css
        "@" keyword.control.at-rule.module.sass punctuation.definition.keyword.sass
        "use" keyword.control.at-rule.module.sass
        "\"" string.quoted.double.css punctuation.definition.string.begin.css
        "c" string.quoted.double.css
        "\"" string.quoted.double.css punctuation.definition.string.end.css
        "with" keyword.control.with.sass
-       "(" punctuation.definition.group.begin.sass
+       "(" punctuation.definition.group.begin.css
        "$" variable.other.sass punctuation.definition.variable.sass
        "d" variable.other.sass
        ":" punctuation.separator.key-value.css
        "1" constant.numeric.value.css
-       ")" punctuation.definition.group.end.sass
-       ";" punctuation.terminator.rule.sass
+       ")" punctuation.definition.group.end.css
+       ";" punctuation.terminator.rule.css
    6 | @import "x", url(y) screen; @import (reference) "z";
        "@" keyword.control.at-rule.import.css punctuation.definition.keyword.css
        "import" keyword.control.at-rule.import.css
        "\"" string.quoted.double.css punctuation.definition.string.begin.css
        "x" string.quoted.double.css
        "\"" string.quoted.double.css punctuation.definition.string.end.css
-       "," punctuation.definition.arbitrary-repetition.css
+       "," punctuation.separator.sequence.css
        "url" support.function.url.css
        "(" punctuation.definition.group.begin.css
        "y" string.unquoted.css
-       ")" meta.group.css punctuation.definition.group.end.css
+       ")" punctuation.definition.group.end.css
        "screen" support.constant.media.css
-       ";" punctuation.terminator.rule.sass
+       ";" punctuation.terminator.rule.css
        "@" keyword.control.at-rule.import.css punctuation.definition.keyword.css
        "import" keyword.control.at-rule.import.css
-       "(" punctuation.definition.group.begin.sass
-       "reference" constant.other.sass
-       ")" punctuation.definition.group.end.sass
+       "(" punctuation.definition.group.begin.css
+       "reference" support.type.property-name.media.css
+       ")" punctuation.definition.group.end.css
        "\"" string.quoted.double.css punctuation.definition.string.begin.css
        "z" string.quoted.double.css
        "\"" string.quoted.double.css punctuation.definition.string.end.css
-       ";" punctuation.terminator.rule.sass
+       ";" punctuation.terminator.rule.css
    7 | // a line comment
        "//" comment.line.double-slash.sass punctuation.definition.comment.css
        " a line comment" comment.line.double-slash.sass
@@ -77,7 +77,7 @@
        "$" variable.declaration.sass punctuation.definition.variable.sass
        "map" variable.declaration.sass
        ":" punctuation.separator.key-value.css
-       "(" punctuation.definition.group.begin.sass
+       "(" punctuation.definition.group.begin.css
        "key" variable.parameter.sass
        ":" punctuation.separator.key-value.css
        "1" constant.numeric.value.css
@@ -86,7 +86,8 @@
        "'" string.quoted.single.css punctuation.definition.string.begin.css
        "k2" string.quoted.single.css
        "'" string.quoted.single.css punctuation.definition.string.end.css
-       "(" punctuation.definition.group.begin.sass
+       ":" punctuation.separator.key-value.css
+       "(" punctuation.definition.group.begin.css
        "a" variable.parameter.sass
        ":" punctuation.separator.key-value.css
        "#" constant.other.color.rgb-value.css punctuation.definition.constant.css
@@ -94,9 +95,9 @@
        "," punctuation.separator.sequence.css
        "$" variable.other.sass punctuation.definition.variable.sass
        "v" variable.other.sass
-       ":" variable.other.sass punctuation.separator.key-value.css
+       ":" punctuation.separator.key-value.css
        "red" support.constant.color.w3c-standard-color-name.css
-       ")" punctuation.definition.group.end.sass
+       ")" punctuation.definition.group.end.css
        "," punctuation.separator.sequence.css
        "b" variable.parameter.sass
        ":" punctuation.separator.key-value.css
@@ -104,7 +105,7 @@
        "." variable.other.sass punctuation.separator.namespace.sass
        "$" variable.other.sass punctuation.definition.variable.sass
        "pi" variable.other.sass
-       ")" punctuation.definition.group.end.sass
+       ")" punctuation.definition.group.end.css
        "!default" keyword.other.sass
        ";" punctuation.terminator.rule.css
    9 | $x: 10px - 2 * 3 / 4 !global;
@@ -117,7 +118,7 @@
        "2" constant.numeric.value.css
        "*" keyword.operator.arithmetic.sass
        "3" constant.numeric.value.css
-       "/" keyword.operator.arithmetic.css
+       "/" keyword.operator.arithmetic.sass
        "4" constant.numeric.value.css
        "!global" keyword.other.sass
        ";" punctuation.terminator.rule.css
@@ -125,7 +126,7 @@
        "@" keyword.control.at-rule.sass punctuation.definition.keyword.sass
        "mixin" keyword.control.at-rule.sass
        "m" entity.name.function.sass
-       "(" punctuation.definition.group.begin.sass
+       "(" punctuation.definition.group.begin.css
        "$" variable.parameter.sass punctuation.definition.variable.sass
        "a" variable.parameter.sass
        "," punctuation.separator.sequence.css
@@ -134,8 +135,8 @@
        ":" punctuation.separator.key-value.css
        "10" constant.numeric.value.css
        "px" constant.numeric.suffix.css
-       ")" punctuation.definition.group.end.sass
-       "{" punctuation.section.property-list.begin.css
+       ")" punctuation.definition.group.end.css
+       "{" punctuation.section.property-list.css
        "width" support.type.property-name.css
        ":" punctuation.separator.key-value.css
        "$" variable.other.sass punctuation.definition.variable.sass
@@ -146,17 +147,17 @@
        ";" punctuation.terminator.rule.css
        "@" keyword.control.at-rule.content.sass punctuation.definition.keyword.sass
        "content" keyword.control.at-rule.content.sass
-       ";" punctuation.terminator.rule.sass
-       "}" punctuation.section.property-list.end.css
+       ";" punctuation.terminator.rule.css
+       "}" punctuation.section.property-list.css
   11 | @function f($x) { @return math.div($x, 2) * 1%; }
        "@" keyword.control.at-rule.sass punctuation.definition.keyword.sass
        "function" keyword.control.at-rule.sass
        "f" entity.name.function.sass
-       "(" punctuation.definition.group.begin.sass
+       "(" punctuation.definition.group.begin.css
        "$" variable.parameter.sass punctuation.definition.variable.sass
        "x" variable.parameter.sass
-       ")" punctuation.definition.group.end.sass
-       "{" punctuation.section.property-list.begin.css
+       ")" punctuation.definition.group.end.css
+       "{" punctuation.section.property-list.css
        "@" keyword.control.at-rule.return.sass punctuation.definition.keyword.sass
        "return" keyword.control.at-rule.return.sass
        "math" support.function.sass entity.name.namespace.sass
@@ -167,12 +168,12 @@
        "x" variable.other.sass
        "," punctuation.separator.sequence.css
        "2" constant.numeric.value.css
-       ")" meta.group.css punctuation.definition.group.end.css
+       ")" punctuation.definition.group.end.css
        "*" keyword.operator.arithmetic.sass
        "1" constant.numeric.value.css
        "%" constant.numeric.suffix.css
        ";" punctuation.terminator.rule.css
-       "}" punctuation.section.property-list.end.css
+       "}" punctuation.section.property-list.css
   12 | @each $k, $v in $map { .icon-#{$k} { color: map-get($map, $k); } }
        "@" keyword.control.flow.sass punctuation.definition.keyword.sass
        "each" keyword.control.flow.sass
@@ -184,7 +185,7 @@
        "in" keyword.operator.sass
        "$" variable.other.sass punctuation.definition.variable.sass
        "map" variable.other.sass
-       "{" punctuation.section.property-list.begin.css
+       "{" punctuation.section.property-list.css
        "." entity.other.attribute-name.class.css punctuation.definition.entity.css
        "icon-" entity.other.attribute-name.class.css
        "#" punctuation.definition.variable.sass
@@ -192,7 +193,7 @@
        "$" variable.other.sass punctuation.definition.variable.sass
        "k" variable.other.sass
        "}" punctuation.definition.group.end.sass
-       "{" punctuation.section.property-list.begin.css
+       "{" punctuation.section.property-list.css
        "color" support.type.property-name.css
        ":" punctuation.separator.key-value.css
        "map-get" support.function.sass
@@ -202,10 +203,10 @@
        "," punctuation.separator.sequence.css
        "$" variable.other.sass punctuation.definition.variable.sass
        "k" variable.other.sass
-       ")" meta.group.css punctuation.definition.group.end.css
+       ")" punctuation.definition.group.end.css
        ";" punctuation.terminator.rule.css
-       "}" punctuation.section.property-list.end.css
-       "}" punctuation.section.property-list.end.css
+       "}" punctuation.section.property-list.css
+       "}" punctuation.section.property-list.css
   13 | @for $i from 1 through 3 { .m-#{$i} { margin: #{$i * 4}px -2px; } }
        "@" keyword.control.flow.sass punctuation.definition.keyword.sass
        "for" keyword.control.flow.sass
@@ -215,7 +216,7 @@
        "1" constant.numeric.value.css
        "through" keyword.operator.sass
        "3" constant.numeric.value.css
-       "{" punctuation.section.property-list.begin.css
+       "{" punctuation.section.property-list.css
        "." entity.other.attribute-name.class.css punctuation.definition.entity.css
        "m-" entity.other.attribute-name.class.css
        "#" punctuation.definition.variable.sass
@@ -223,7 +224,7 @@
        "$" variable.other.sass punctuation.definition.variable.sass
        "i" variable.other.sass
        "}" punctuation.definition.group.end.sass
-       "{" punctuation.section.property-list.begin.css
+       "{" punctuation.section.property-list.css
        "margin" support.type.property-name.css
        ":" punctuation.separator.key-value.css
        "#" punctuation.definition.variable.sass
@@ -234,12 +235,11 @@
        "4" constant.numeric.value.css
        "}" punctuation.definition.group.end.sass
        "px" string.unquoted.css
-       "-" keyword.operator.arithmetic.css
-       "2" constant.numeric.value.css
+       "-2" constant.numeric.value.css
        "px" constant.numeric.suffix.css
        ";" punctuation.terminator.rule.css
-       "}" punctuation.section.property-list.end.css
-       "}" punctuation.section.property-list.end.css
+       "}" punctuation.section.property-list.css
+       "}" punctuation.section.property-list.css
   14 | @if $a == b and not $c { @warn "w #{$d}"; } @else if $a != c { @debug $x; } @else { @error 'e'; }
        "@" keyword.control.flow.conditional.sass punctuation.definition.keyword.sass
        "if" keyword.control.flow.conditional.sass
@@ -251,42 +251,42 @@
        "not" keyword.operator.sass
        "$" variable.other.sass punctuation.definition.variable.sass
        "c" variable.other.sass
-       "{" punctuation.section.property-list.begin.css
+       "{" punctuation.section.property-list.css
        "@" keyword.control.at-rule.warn.sass punctuation.definition.keyword.sass
        "warn" keyword.control.at-rule.warn.sass
        "\"" string.quoted.double.css punctuation.definition.string.begin.css
        "w " string.quoted.double.css
-       "#" string.quoted.double.css punctuation.definition.variable.sass
-       "{" string.quoted.double.css punctuation.definition.group.begin.sass
-       "$" string.quoted.double.css variable.other.sass punctuation.definition.variable.sass
-       "d" string.quoted.double.css variable.other.sass
-       "}" string.quoted.double.css punctuation.definition.group.end.sass
+       "#" punctuation.definition.variable.sass
+       "{" punctuation.definition.group.begin.sass
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "d" variable.other.sass
+       "}" punctuation.definition.group.end.sass
        "\"" string.quoted.double.css punctuation.definition.string.end.css
-       ";" punctuation.terminator.rule.sass
-       "}" punctuation.section.property-list.end.css
+       ";" punctuation.terminator.rule.css
+       "}" punctuation.section.property-list.css
        "@" keyword.control.flow.conditional.sass punctuation.definition.keyword.sass
        "else if" keyword.control.flow.conditional.sass
        "$" variable.other.sass punctuation.definition.variable.sass
        "a" variable.other.sass
        "!=" keyword.operator.sass
        "c" string.unquoted.css
-       "{" punctuation.section.property-list.begin.css
+       "{" punctuation.section.property-list.css
        "@" keyword.control.at-rule.debugger.sass punctuation.definition.keyword.sass
        "debug" keyword.control.at-rule.debugger.sass
        "$" variable.other.sass punctuation.definition.variable.sass
        "x" variable.other.sass
-       ";" punctuation.terminator.rule.sass
-       "}" punctuation.section.property-list.end.css
+       ";" punctuation.terminator.rule.css
+       "}" punctuation.section.property-list.css
        "@" keyword.control.flow.conditional.sass punctuation.definition.keyword.sass
        "else" keyword.control.flow.conditional.sass
-       "{" punctuation.section.property-list.begin.css
+       "{" punctuation.section.property-list.css
        "@" keyword.control.at-rule.warn.sass punctuation.definition.keyword.sass
        "error" keyword.control.at-rule.warn.sass
        "'" string.quoted.single.css punctuation.definition.string.begin.css
        "e" string.quoted.single.css
        "'" string.quoted.single.css punctuation.definition.string.end.css
-       ";" punctuation.terminator.rule.sass
-       "}" punctuation.section.property-list.end.css
+       ";" punctuation.terminator.rule.css
+       "}" punctuation.section.property-list.css
   15 | @while $i > 0 { $i: $i - 1; }
        "@" keyword.control.flow.sass punctuation.definition.keyword.sass
        "while" keyword.control.flow.sass
@@ -294,7 +294,7 @@
        "i" variable.other.sass
        ">" keyword.operator.sass
        "0" constant.numeric.value.css
-       "{" punctuation.section.property-list.begin.css
+       "{" punctuation.section.property-list.css
        "$" variable.declaration.sass punctuation.definition.variable.sass
        "i" variable.declaration.sass
        ":" punctuation.separator.key-value.css
@@ -303,33 +303,35 @@
        "-" keyword.operator.arithmetic.sass
        "1" constant.numeric.value.css
        ";" punctuation.terminator.rule.css
-       "}" punctuation.section.property-list.end.css
+       "}" punctuation.section.property-list.css
   16 | %ph { a: b; } .a { @extend %ph; @extend .b !optional; }
        "%" entity.other.attribute-name.placeholder.sass punctuation.definition.entity.sass
        "ph" entity.other.attribute-name.placeholder.sass
-       "{" punctuation.section.property-list.begin.css
-       "b" entity.name.tag.css
-       "}" punctuation.section.property-list.end.css
+       "{" punctuation.section.property-list.css
+       "a" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "b" string.unquoted.css
+       ";" punctuation.terminator.rule.css
+       "}" punctuation.section.property-list.css
        "." entity.other.attribute-name.class.css punctuation.definition.entity.css
        "a" entity.other.attribute-name.class.css
-       "{" punctuation.section.property-list.begin.css
+       "{" punctuation.section.property-list.css
        "@" keyword.control.at-rule.extend.sass punctuation.definition.keyword.sass
        "extend" keyword.control.at-rule.extend.sass
-       " " entity.other.attribute-name.placeholder.sass
        "%" entity.other.attribute-name.placeholder.sass punctuation.definition.entity.sass
        "ph" entity.other.attribute-name.placeholder.sass
-       ";" punctuation.terminator.rule.sass
+       ";" punctuation.terminator.rule.css
        "@" keyword.control.at-rule.extend.sass punctuation.definition.keyword.sass
        "extend" keyword.control.at-rule.extend.sass
        "." entity.other.attribute-name.class.css punctuation.definition.entity.css
        "b" entity.other.attribute-name.class.css
        "!optional" keyword.other.sass
-       ";" punctuation.terminator.rule.sass
-       "}" punctuation.section.property-list.end.css
+       ";" punctuation.terminator.rule.css
+       "}" punctuation.section.property-list.css
   17 | .btn, #id > a:hover::before, my-el:not(.x, y), &__el, & + &, [data-x="y" i] {
        "." entity.other.attribute-name.class.css punctuation.definition.entity.css
        "btn" entity.other.attribute-name.class.css
-       "," punctuation.separator.css
+       "," punctuation.separator.sequence.css
        "#" entity.other.attribute-name.id.css punctuation.definition.entity.css
        "id" entity.other.attribute-name.id.css
        ">" punctuation.separator.combinator.css
@@ -338,24 +340,24 @@
        "hover" entity.other.pseudo-class.css
        "::" entity.other.pseudo-element.css punctuation.definition.entity.css
        "before" entity.other.pseudo-element.css
-       "," punctuation.separator.css
+       "," punctuation.separator.sequence.css
        "my-el" entity.name.tag.custom.css
        ":" entity.other.pseudo-class.css punctuation.definition.entity.css
        "not" entity.other.pseudo-class.css
        "(" punctuation.definition.group.begin.css
        "." entity.other.attribute-name.class.css punctuation.definition.entity.css
        "x" entity.other.attribute-name.class.css
-       "," punctuation.separator.css
+       "," punctuation.separator.sequence.css
+       "y" entity.name.tag.css
        ")" punctuation.definition.group.end.css
-       "," punctuation.separator.css
-       "&" keyword.operator.ampersand.sass
-       "__" entity.other.attribute-name.css
-       "el" entity.other.attribute-name.css
-       "," punctuation.separator.css
-       "&" keyword.operator.ampersand.sass
+       "," punctuation.separator.sequence.css
+       "&" keyword.operator.ampersand.css
+       "__el" entity.other.attribute-name.css
+       "," punctuation.separator.sequence.css
+       "&" keyword.operator.ampersand.css
        "+" punctuation.separator.combinator.css
-       "&" keyword.operator.ampersand.sass
-       "," punctuation.separator.css
+       "&" keyword.operator.ampersand.css
+       "," punctuation.separator.sequence.css
        "[" punctuation.definition.entity.css
        "data-x" entity.other.attribute-name.css
        "=" keyword.operator.attribute-selector.css
@@ -364,37 +366,40 @@
        "\"" string.quoted.double.css punctuation.definition.string.end.css
        "i" keyword.other.css
        "]" punctuation.definition.entity.css
-       "{" punctuation.section.property-list.begin.css
+       "{" punctuation.section.property-list.css
   18 |   @include ns.mx(1px, $b: 2) { c: d; }
        "@" variable.function.sass keyword.control.at-rule.sass punctuation.definition.keyword.sass
        "include" variable.function.sass keyword.control.at-rule.sass
-       " " variable.function.sass
        "ns" variable.function.sass entity.name.namespace.sass
        "." variable.function.sass punctuation.separator.namespace.sass
        "mx" variable.function.sass
-       "(" punctuation.definition.group.begin.sass
+       "(" punctuation.definition.group.begin.css
        "1" constant.numeric.value.css
        "px" constant.numeric.suffix.css
        "," punctuation.separator.sequence.css
        "$" variable.other.sass punctuation.definition.variable.sass
        "b" variable.other.sass
+       ":" punctuation.separator.key-value.css
        "2" constant.numeric.value.css
-       ")" punctuation.definition.group.end.sass
-       "{" punctuation.section.property-list.begin.css
-       "}" punctuation.section.property-list.end.css
+       ")" punctuation.definition.group.end.css
+       "{" punctuation.section.property-list.css
+       "c" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "d" string.unquoted.css
+       ";" punctuation.terminator.rule.css
+       "}" punctuation.section.property-list.css
   19 |   @include bp(md);
        "@" variable.function.sass keyword.control.at-rule.sass punctuation.definition.keyword.sass
        "include" variable.function.sass keyword.control.at-rule.sass
-       " " variable.function.sass
        "bp" variable.function.sass
-       "(" punctuation.definition.group.begin.sass
+       "(" punctuation.definition.group.begin.css
        "md" string.unquoted.css
-       ")" punctuation.definition.group.end.sass
-       ";" punctuation.terminator.rule.sass
+       ")" punctuation.definition.group.end.css
+       ";" punctuation.terminator.rule.css
   20 |   font: { family: "X", sans-serif; size: 12px; }
        "font" support.type.property-name.css
        ":" punctuation.separator.key-value.css
-       "{" punctuation.section.property-list.begin.css
+       "{" punctuation.section.property-list.css
        "family" support.type.property-name.css
        ":" punctuation.separator.key-value.css
        "\"" string.quoted.double.css punctuation.definition.string.begin.css
@@ -408,34 +413,33 @@
        "12" constant.numeric.value.css
        "px" constant.numeric.suffix.css
        ";" punctuation.terminator.rule.css
-       "}" punctuation.section.property-list.end.css
+       "}" punctuation.section.property-list.css
   21 |   border: { top-width: 1px; }
        "border" support.type.property-name.css
        ":" punctuation.separator.key-value.css
-       "{" punctuation.section.property-list.begin.css
+       "{" punctuation.section.property-list.css
        "top-width" support.type.property-name.css
        ":" punctuation.separator.key-value.css
        "1" constant.numeric.value.css
        "px" constant.numeric.suffix.css
        ";" punctuation.terminator.rule.css
-       "}" punctuation.section.property-list.end.css
+       "}" punctuation.section.property-list.css
   22 |   margin-#{$side}: 0; --#{$v}: 1; --custom: #{$z};
-       "margin" support.type.property-name.css
-       "-" support.type.property-name
-       "#" support.type.property-name punctuation.definition.variable.sass
-       "{" support.type.property-name punctuation.definition.group.begin.sass
-       "$" support.type.property-name variable.other.sass punctuation.definition.variable.sass
-       "side" support.type.property-name variable.other.sass
-       "}" support.type.property-name punctuation.definition.group.end.sass
+       "margin-" support.type.property-name.css
+       "#" punctuation.definition.variable.sass
+       "{" punctuation.definition.group.begin.sass
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "side" variable.other.sass
+       "}" punctuation.definition.group.end.sass
        ":" punctuation.separator.key-value.css
        "0" constant.numeric.value.css
        ";" punctuation.terminator.rule.css
-       "--" support.type.property-name
-       "#" support.type.property-name punctuation.definition.variable.sass
-       "{" support.type.property-name punctuation.definition.group.begin.sass
-       "$" support.type.property-name variable.other.sass punctuation.definition.variable.sass
-       "v" support.type.property-name variable.other.sass
-       "}" support.type.property-name punctuation.definition.group.end.sass
+       "--" support.type.custom-property.css punctuation.definition.custom-property.css
+       "#" punctuation.definition.variable.sass
+       "{" punctuation.definition.group.begin.sass
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "v" variable.other.sass
+       "}" punctuation.definition.group.end.sass
        ":" punctuation.separator.key-value.css
        "1" constant.numeric.value.css
        ";" punctuation.terminator.rule.css
@@ -475,7 +479,7 @@
        "," punctuation.separator.sequence.css
        "." constant.numeric.value.css punctuation.separator.decimal.css
        "67" constant.numeric.value.css
-       ")" meta.group.css punctuation.definition.group.end.css
+       ")" punctuation.definition.group.end.css
        ";" punctuation.terminator.rule.css
   24 |   background: url(#{$p}/img.png) no-repeat, linear-gradient(to right, rgba($c, .5) 0%, darken($c, 10%) 100%);
        "background" support.type.property-name.css
@@ -487,9 +491,8 @@
        "$" variable.other.sass punctuation.definition.variable.sass
        "p" variable.other.sass
        "}" punctuation.definition.group.end.sass
-       "/" keyword.operator.arithmetic.sass
-       "img.png" string.unquoted.css
-       ")" meta.group.css punctuation.definition.group.end.css
+       "/img.png" string.unquoted.css
+       ")" punctuation.definition.group.end.css
        "no-repeat" support.constant.property-value.css
        "," punctuation.separator.sequence.css
        "linear-gradient" support.function.gradient.css
@@ -504,7 +507,7 @@
        "," punctuation.separator.sequence.css
        "." constant.numeric.value.css punctuation.separator.decimal.css
        "5" constant.numeric.value.css
-       ")" meta.group.css punctuation.definition.group.end.css
+       ")" punctuation.definition.group.end.css
        "0" constant.numeric.value.css
        "%" constant.numeric.suffix.css
        "," punctuation.separator.sequence.css
@@ -515,10 +518,10 @@
        "," punctuation.separator.sequence.css
        "10" constant.numeric.value.css
        "%" constant.numeric.suffix.css
-       ")" meta.group.css punctuation.definition.group.end.css
+       ")" punctuation.definition.group.end.css
        "100" constant.numeric.value.css
        "%" constant.numeric.suffix.css
-       ")" meta.group.css punctuation.definition.group.end.css
+       ")" punctuation.definition.group.end.css
        ";" punctuation.terminator.rule.css
   25 |   width: calc(100% - #{$gutter}) clamp(1px, 2vw, 3px); color: Red; content: "a#{$b}c\"" + d;
        "width" support.type.property-name.css
@@ -554,15 +557,15 @@
        ":" punctuation.separator.key-value.css
        "\"" string.quoted.double.css punctuation.definition.string.begin.css
        "a" string.quoted.double.css
-       "#" string.quoted.double.css punctuation.definition.variable.sass
-       "{" string.quoted.double.css punctuation.definition.group.begin.sass
-       "$" string.quoted.double.css variable.other.sass punctuation.definition.variable.sass
-       "b" string.quoted.double.css variable.other.sass
-       "}" string.quoted.double.css punctuation.definition.group.end.sass
+       "#" punctuation.definition.variable.sass
+       "{" punctuation.definition.group.begin.sass
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "b" variable.other.sass
+       "}" punctuation.definition.group.end.sass
        "c" string.quoted.double.css
        "\\\"" string.quoted.double.css constant.character.escape.css
        "\"" string.quoted.double.css punctuation.definition.string.end.css
-       "+" keyword.operator.sass
+       "+" keyword.operator.arithmetic.sass
        "d" string.unquoted.css
        ";" punctuation.terminator.rule.css
   26 |   transform: translate(-50%, 1px) rotate(45deg); grid: repeat(auto-fill, minmax(10px, 1fr)) / auto;
@@ -570,24 +573,23 @@
        ":" punctuation.separator.key-value.css
        "translate" support.function.transform.css
        "(" punctuation.definition.group.begin.css
-       "-" keyword.operator.arithmetic.css
-       "50" constant.numeric.value.css
+       "-50" constant.numeric.value.css
        "%" constant.numeric.suffix.css
        "," punctuation.separator.sequence.css
        "1" constant.numeric.value.css
        "px" constant.numeric.suffix.css
-       ")" meta.group.css punctuation.definition.group.end.css
+       ")" punctuation.definition.group.end.css
        "rotate" support.function.transform.css
        "(" punctuation.definition.group.begin.css
        "45" constant.numeric.value.css
        "deg" constant.numeric.suffix.css
-       ")" meta.group.css punctuation.definition.group.end.css
+       ")" punctuation.definition.group.end.css
        ";" punctuation.terminator.rule.css
        "grid" support.type.property-name.css
        ":" punctuation.separator.key-value.css
        "repeat" support.function.grid.css
        "(" punctuation.definition.group.begin.css
-       "auto-fill" support.keyword.repetitions.css
+       "auto-fill" support.constant.property-value.css
        "," punctuation.separator.sequence.css
        "minmax" support.function.grid.css
        "(" punctuation.definition.group.begin.css
@@ -596,9 +598,8 @@
        "," punctuation.separator.sequence.css
        "1" constant.numeric.value.css
        "fr" constant.numeric.suffix.css
-       ")" meta.group.css punctuation.definition.group.end.css
-       ")" meta.group.css punctuation.definition.group.end.css
-       "/" keyword.operator.arithmetic.css
+       "))" punctuation.definition.group.end.css
+       "/" keyword.operator.arithmetic.sass
        "auto" support.constant.property-value.css
        ";" punctuation.terminator.rule.css
   27 |   @at-root .x { y: z; }
@@ -606,14 +607,14 @@
        "at-root" keyword.control.at-rule.at-root.sass
        "." entity.other.attribute-name.class.css punctuation.definition.entity.css
        "x" entity.other.attribute-name.class.css
-       "{" punctuation.section.property-list.begin.css
+       "{" punctuation.section.property-list.css
        "y" support.type.property-name.css
        ":" punctuation.separator.key-value.css
        "z" string.unquoted.css
        ";" punctuation.terminator.rule.css
-       "}" punctuation.section.property-list.end.css
+       "}" punctuation.section.property-list.css
   28 | }
-       "}" punctuation.section.property-list.end.css
+       "}" punctuation.section.property-list.css
   29 | @media screen and (min-width: $bp) and (orientation: landscape), print { .p { q: r } }
        "@" keyword.control.at-rule.media.css punctuation.definition.keyword.css
        "media" keyword.control.at-rule.media.css
@@ -629,16 +630,19 @@
        "(" punctuation.definition.group.begin.css
        "orientation" support.type.property-name.media.css
        ":" punctuation.separator.key-value.css
-       "landscape" support.constant.property-value.css
+       "landscape" string.unquoted.css
        ")" punctuation.definition.group.end.css
-       "," punctuation.definition.arbitrary-repetition.css
+       "," punctuation.separator.sequence.css
        "print" support.constant.media.css
-       "{" punctuation.section.property-list.begin.css
+       "{" punctuation.section.property-list.css
        "." entity.other.attribute-name.class.css punctuation.definition.entity.css
        "p" entity.other.attribute-name.class.css
-       "{" punctuation.section.property-list.begin.css
-       "}" punctuation.section.property-list.end.css
-       "}" punctuation.section.property-list.end.css
+       "{" punctuation.section.property-list.css
+       "q" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "r" string.unquoted.css
+       "}" punctuation.section.property-list.css
+       "}" punctuation.section.property-list.css
   30 | @keyframes #{$n} { from { a: b } 50% { c: d } to { e: f } }
        "@" keyword.control.at-rule.keyframe.css punctuation.definition.keyword.css
        "keyframes" keyword.control.at-rule.keyframe.css
@@ -647,19 +651,27 @@
        "$" variable.other.sass punctuation.definition.variable.sass
        "n" variable.other.sass
        "}" punctuation.definition.group.end.sass
-       "{" punctuation.section.property-list.begin.css
+       "{" punctuation.section.property-list.css
        "from" keyword.keyframe-selector.css
-       "{" punctuation.section.property-list.begin.css
-       "b" entity.name.tag.css
-       "}" punctuation.section.property-list.end.css
+       "{" punctuation.section.property-list.css
+       "a" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "b" string.unquoted.css
+       "}" punctuation.section.property-list.css
        "50" constant.numeric.value.css
        "%" constant.numeric.suffix.css
-       "{" punctuation.section.property-list.begin.css
-       "}" punctuation.section.property-list.end.css
+       "{" punctuation.section.property-list.css
+       "c" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "d" string.unquoted.css
+       "}" punctuation.section.property-list.css
        "to" keyword.keyframe-selector.css
-       "{" punctuation.section.property-list.begin.css
-       "}" punctuation.section.property-list.end.css
-       "}" punctuation.section.property-list.end.css
+       "{" punctuation.section.property-list.css
+       "e" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "f" string.unquoted.css
+       "}" punctuation.section.property-list.css
+       "}" punctuation.section.property-list.css
   31 | @supports (display: grid) and (not (x: y)) { .s { t: u } }
        "@" keyword.control.at-rule.supports.css punctuation.definition.keyword.css
        "supports" keyword.control.at-rule.supports.css
@@ -674,97 +686,336 @@
        "(" punctuation.definition.group.begin.css
        "x" support.type.property-name.css
        ":" punctuation.separator.key-value.css
-       "y" string.unquoted.css
-       ")" punctuation.definition.group.end.css
-       ")" punctuation.definition.group.end.css
-       "{" punctuation.section.property-list.begin.css
+       "y" support.constant.property-value.css
+       "))" punctuation.definition.group.end.css
+       "{" punctuation.section.property-list.css
        "." entity.other.attribute-name.class.css punctuation.definition.entity.css
        "s" entity.other.attribute-name.class.css
-       "{" punctuation.section.property-list.begin.css
-       "u" entity.name.tag.css
-       "}" punctuation.section.property-list.end.css
-       "}" punctuation.section.property-list.end.css
+       "{" punctuation.section.property-list.css
+       "t" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "u" string.unquoted.css
+       "}" punctuation.section.property-list.css
+       "}" punctuation.section.property-list.css
   32 | @font-face { src: url(x.woff2) format("woff2"); } @charset "utf-8";
-       "@" keyword.control.at-rule.css punctuation.definition.keyword.css
-       "font-face" keyword.control.at-rule.css
-       "{" punctuation.section.property-list.begin.css
+       "@" keyword.control.at-rule.font-face.css punctuation.definition.keyword.css
+       "font-face" keyword.control.at-rule.font-face.css
+       "{" punctuation.section.property-list.css
        "src" support.type.property-name.css
        ":" punctuation.separator.key-value.css
        "url" support.function.url.css
        "(" punctuation.definition.group.begin.css
        "x.woff2" string.unquoted.css
-       ")" meta.group.css punctuation.definition.group.end.css
+       ")" punctuation.definition.group.end.css
        "format" support.function.font-face.css
        "(" punctuation.definition.group.begin.css
        "\"" string.quoted.double.css punctuation.definition.string.begin.css
        "woff2" string.quoted.double.css
        "\"" string.quoted.double.css punctuation.definition.string.end.css
-       ")" meta.group.css punctuation.definition.group.end.css
+       ")" punctuation.definition.group.end.css
        ";" punctuation.terminator.rule.css
-       "}" punctuation.section.property-list.end.css
-       "@" keyword.control.at-rule.css punctuation.definition.keyword.css
-       "charset" keyword.control.at-rule.css
+       "}" punctuation.section.property-list.css
+       "@" keyword.control.at-rule.charset.css punctuation.definition.keyword.css
+       "charset" keyword.control.at-rule.charset.css
        "\"" string.quoted.double.css punctuation.definition.string.begin.css
        "utf-8" string.quoted.double.css
        "\"" string.quoted.double.css punctuation.definition.string.end.css
-       ";" punctuation.terminator.rule.sass
+       ";" punctuation.terminator.rule.css
   33 | @page :first { margin: 1in } @counter-style thumbs { system: cyclic; }
        "@" keyword.control.at-rule.page.css punctuation.definition.keyword.css
        "page" keyword.control.at-rule.page.css
-       ":" punctuation.definition.entity.css
+       ":" entity.other.pseudo-class.css punctuation.definition.entity.css
        "first" entity.other.pseudo-class.css
-       "{" punctuation.section.property-list.begin.css
+       "{" punctuation.section.property-list.css
        "margin" support.type.property-name.css
        ":" punctuation.separator.key-value.css
        "1" constant.numeric.value.css
        "in" constant.numeric.suffix.css
-       "}" punctuation.section.property-list.end.css
+       "}" punctuation.section.property-list.css
        "@" keyword.control.at-rule.counter-style.css punctuation.definition.keyword.css
        "counter-style" keyword.control.at-rule.counter-style.css
        "thumbs" entity.other.counter-style-name.css
-       "{" punctuation.section.property-list.begin.css
+       "{" punctuation.section.property-list.css
        "system" support.type.property-name.css
        ":" punctuation.separator.key-value.css
        "cyclic" string.unquoted.css
        ";" punctuation.terminator.rule.css
-       "}" punctuation.section.property-list.end.css
+       "}" punctuation.section.property-list.css
   34 | :export { primary: $primary; } :global(.g) { h: i }
-       ":" entity.other.pseudo-class.css-modules.css punctuation.definition.entity.css
-       "export" entity.other.pseudo-class.css-modules.css
-       " {" punctuation.section.property-list.begin.css
-       "primary" support.type.property-name.css-modules.css
+       ":" entity.other.pseudo-class.css punctuation.definition.entity.css
+       "export" entity.other.pseudo-class.css
+       "{" punctuation.section.property-list.css
+       "primary" support.type.property-name.css
        ":" punctuation.separator.key-value.css
-       "primary" string.unquoted.css
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "primary" variable.other.sass
        ";" punctuation.terminator.rule.css
-       "}" punctuation.section.property-list.end.css
-       " " entity.other.pseudo-class.css-modules.css
-       ":" entity.other.pseudo-class.css-modules.css punctuation.definition.entity.css
-       "global" entity.other.pseudo-class.css-modules.css
+       "}" punctuation.section.property-list.css
+       ":" entity.other.pseudo-class.css punctuation.definition.entity.css
+       "global" entity.other.pseudo-class.css
        "(" punctuation.definition.group.begin.css
        "." entity.other.attribute-name.class.css punctuation.definition.entity.css
        "g" entity.other.attribute-name.class.css
        ")" punctuation.definition.group.end.css
-       "{" punctuation.section.property-list.begin.css
-       "i" entity.name.tag.css
-       "}" punctuation.section.property-list.end.css
+       "{" punctuation.section.property-list.css
+       "h" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "i" string.unquoted.css
+       "}" punctuation.section.property-list.css
   35 | a { b: if(true, null, false) nth($l, 1) e("x") my-fn(1) ns.fn(2) 1px+2px; }
        "a" entity.name.tag.css
-       "{" punctuation.section.property-list.begin.css
+       "{" punctuation.section.property-list.css
+       "b" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "if" support.function.var.css
+       "(" punctuation.definition.group.begin.css
+       "true" constant.language.sass
        "," punctuation.separator.sequence.css
+       "null" constant.language.sass
        "," punctuation.separator.sequence.css
-       "$" variable.declaration.sass punctuation.definition.variable.sass
-       "l" variable.declaration.sass
+       "false" constant.language.sass
+       ")" punctuation.definition.group.end.css
+       "nth" support.function.sass
+       "(" punctuation.definition.group.begin.css
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "l" variable.other.sass
        "," punctuation.separator.sequence.css
        "1" constant.numeric.value.css
-       "x" support.type.property-name.css
-       "my-fn" entity.name.tag.custom.css
+       ")" punctuation.definition.group.end.css
+       "e" support.function.sass
+       "(" punctuation.definition.group.begin.css
+       "\"" string.quoted.double.css punctuation.definition.string.begin.css
+       "x" string.quoted.double.css
+       "\"" string.quoted.double.css punctuation.definition.string.end.css
+       ")" punctuation.definition.group.end.css
+       "my-fn" support.function.sass
+       "(" punctuation.definition.group.begin.css
        "1" constant.numeric.value.css
+       ")" punctuation.definition.group.end.css
+       "ns" support.function.sass entity.name.namespace.sass
+       "." support.function.sass punctuation.separator.namespace.sass
+       "fn" support.function.sass
+       "(" punctuation.definition.group.begin.css
+       "2" constant.numeric.value.css
+       ")" punctuation.definition.group.end.css
+       "1" constant.numeric.value.css
+       "px" constant.numeric.suffix.css
+       "+" keyword.operator.arithmetic.sass
+       "2" constant.numeric.value.css
+       "px" constant.numeric.suffix.css
+       ";" punctuation.terminator.rule.css
+       "}" punctuation.section.property-list.css
+  36 | .btn-#{$c}-lg, .#{$a}#{$b}x-#{$d}-y, #{$parent}--mod, %ph-#{$p} { a: b; }
        "." entity.other.attribute-name.class.css punctuation.definition.entity.css
-       "fn" entity.other.attribute-name.class.css
-       "2" constant.numeric.value.css
+       "btn-" entity.other.attribute-name.class.css
+       "#" punctuation.definition.variable.sass
+       "{" punctuation.definition.group.begin.sass
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "c" variable.other.sass
+       "}" punctuation.definition.group.end.sass
+       "-lg" entity.other.attribute-name.class.css
+       "," punctuation.separator.sequence.css
+       "." entity.other.attribute-name.class.css punctuation.definition.entity.css
+       "#" punctuation.definition.variable.sass
+       "{" punctuation.definition.group.begin.sass
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "a" variable.other.sass
+       "}" punctuation.definition.group.end.sass
+       "#" punctuation.definition.variable.sass
+       "{" punctuation.definition.group.begin.sass
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "b" variable.other.sass
+       "}" punctuation.definition.group.end.sass
+       "x-" entity.other.attribute-name.class.css
+       "#" punctuation.definition.variable.sass
+       "{" punctuation.definition.group.begin.sass
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "d" variable.other.sass
+       "}" punctuation.definition.group.end.sass
+       "-y" entity.other.attribute-name.class.css
+       "," punctuation.separator.sequence.css
+       "#" punctuation.definition.variable.sass
+       "{" punctuation.definition.group.begin.sass
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "parent" variable.other.sass
+       "}" punctuation.definition.group.end.sass
+       "--mod" entity.other.attribute-name.css
+       "," punctuation.separator.sequence.css
+       "%" entity.other.attribute-name.placeholder.sass punctuation.definition.entity.sass
+       "ph-" entity.other.attribute-name.placeholder.sass
+       "#" punctuation.definition.variable.sass
+       "{" punctuation.definition.group.begin.sass
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "p" variable.other.sass
+       "}" punctuation.definition.group.end.sass
+       "{" punctuation.section.property-list.css
+       "a" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "b" string.unquoted.css
+       ";" punctuation.terminator.rule.css
+       "}" punctuation.section.property-list.css
+  37 | .c { --#{$p}gap: 1; gap: var(--#{$p}gap) var(#{$p}gap); bg: url(#{$u}/i.png) url($v); }
+       "." entity.other.attribute-name.class.css punctuation.definition.entity.css
+       "c" entity.other.attribute-name.class.css
+       "{" punctuation.section.property-list.css
+       "--" support.type.custom-property.css punctuation.definition.custom-property.css
+       "#" punctuation.definition.variable.sass
+       "{" punctuation.definition.group.begin.sass
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "p" variable.other.sass
+       "}" punctuation.definition.group.end.sass
+       "gap" support.type.custom-property.css support.type.custom-property.name.css
+       ":" punctuation.separator.key-value.css
        "1" constant.numeric.value.css
+       ";" punctuation.terminator.rule.css
+       "gap" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "var" support.function.var.css
+       "(" punctuation.definition.group.begin.css
+       "--" support.type.custom-property.css punctuation.definition.custom-property.css
+       "#" punctuation.definition.variable.sass
+       "{" punctuation.definition.group.begin.sass
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "p" variable.other.sass
+       "}" punctuation.definition.group.end.sass
+       "gap" support.type.custom-property.css support.type.custom-property.name.css
+       ")" punctuation.definition.group.end.css
+       "var" support.function.var.css
+       "(" punctuation.definition.group.begin.css
+       "#" punctuation.definition.variable.sass
+       "{" punctuation.definition.group.begin.sass
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "p" variable.other.sass
+       "}" punctuation.definition.group.end.sass
+       "gap" support.type.custom-property.css support.type.custom-property.name.css
+       ")" punctuation.definition.group.end.css
+       ";" punctuation.terminator.rule.css
+       "bg" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "url" support.function.url.css
+       "(" punctuation.definition.group.begin.css
+       "#" punctuation.definition.variable.sass
+       "{" punctuation.definition.group.begin.sass
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "u" variable.other.sass
+       "}" punctuation.definition.group.end.sass
+       "/i.png" string.unquoted.css
+       ")" punctuation.definition.group.end.css
+       "url" support.function.url.css
+       "(" punctuation.definition.group.begin.css
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "v" variable.other.sass
+       ")" punctuation.definition.group.end.css
+       ";" punctuation.terminator.rule.css
+       "}" punctuation.section.property-list.css
+  38 | .d { inset-inline: 0; top: -10px; m: 10px -5px (1)-2; @include x using ($e) { f: $e; } }
+       "." entity.other.attribute-name.class.css punctuation.definition.entity.css
+       "d" entity.other.attribute-name.class.css
+       "{" punctuation.section.property-list.css
+       "inset-inline" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "0" constant.numeric.value.css
+       ";" punctuation.terminator.rule.css
+       "top" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "-10" constant.numeric.value.css
        "px" constant.numeric.suffix.css
-       "+" invalid.illegal.operator.css
+       ";" punctuation.terminator.rule.css
+       "m" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "10" constant.numeric.value.css
+       "px" constant.numeric.suffix.css
+       "-5" constant.numeric.value.css
+       "px" constant.numeric.suffix.css
+       "(" punctuation.definition.group.begin.css
+       "1" constant.numeric.value.css
+       ")" punctuation.definition.group.end.css
+       "-" keyword.operator.arithmetic.sass
        "2" constant.numeric.value.css
-       "px" constant.numeric.suffix.css
-       "}" punctuation.section.property-list.end.css
+       ";" punctuation.terminator.rule.css
+       "@" variable.function.sass keyword.control.at-rule.sass punctuation.definition.keyword.sass
+       "include" variable.function.sass keyword.control.at-rule.sass
+       "x" variable.function.sass
+       "using" keyword.operator.sass
+       "(" punctuation.definition.group.begin.css
+       "$" variable.parameter.sass punctuation.definition.variable.sass
+       "e" variable.parameter.sass
+       ")" punctuation.definition.group.end.css
+       "{" punctuation.section.property-list.css
+       "f" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "e" variable.other.sass
+       ";" punctuation.terminator.rule.css
+       "}" punctuation.section.property-list.css
+       "}" punctuation.section.property-list.css
+  39 | @media #{$mq} { .e { w: if(sass($m): 2; else: 1); } }
+       "@" keyword.control.at-rule.media.css punctuation.definition.keyword.css
+       "media" keyword.control.at-rule.media.css
+       "#" punctuation.definition.variable.sass
+       "{" punctuation.definition.group.begin.sass
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "mq" variable.other.sass
+       "}" punctuation.definition.group.end.sass
+       "{" punctuation.section.property-list.css
+       "." entity.other.attribute-name.class.css punctuation.definition.entity.css
+       "e" entity.other.attribute-name.class.css
+       "{" punctuation.section.property-list.css
+       "w" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "if" support.function.var.css
+       "(" punctuation.definition.group.begin.css
+       "sass" support.function.sass
+       "(" punctuation.definition.group.begin.css
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "m" variable.other.sass
+       ")" punctuation.definition.group.end.css
+       ":" punctuation.separator.key-value.css
+       "2" constant.numeric.value.css
+       ";" punctuation.terminator.rule.css
+       "else" string.unquoted.css
+       ":" punctuation.separator.key-value.css
+       "1" constant.numeric.value.css
+       ")" punctuation.definition.group.end.css
+       ";" punctuation.terminator.rule.css
+       "}" punctuation.section.property-list.css
+       "}" punctuation.section.property-list.css
+  40 | @use 'cfg' as c; c.$x: 1; .f { @include c.mx; g: color-mix(in srgb, red, $h...); }
+       "@" keyword.control.at-rule.module.sass punctuation.definition.keyword.sass
+       "use" keyword.control.at-rule.module.sass
+       "'" string.quoted.single.css punctuation.definition.string.begin.css
+       "cfg" string.quoted.single.css
+       "'" string.quoted.single.css punctuation.definition.string.end.css
+       "as" keyword.control.as.sass
+       ";" punctuation.terminator.rule.css
+       "c" variable.other.sass entity.name.namespace.sass
+       "." variable.other.sass punctuation.separator.namespace.sass
+       "$" variable.declaration.sass punctuation.definition.variable.sass
+       "x" variable.declaration.sass
+       ":" punctuation.separator.key-value.css
+       "1" constant.numeric.value.css
+       ";" punctuation.terminator.rule.css
+       "." entity.other.attribute-name.class.css punctuation.definition.entity.css
+       "f" entity.other.attribute-name.class.css
+       "{" punctuation.section.property-list.css
+       "@" variable.function.sass keyword.control.at-rule.sass punctuation.definition.keyword.sass
+       "include" variable.function.sass keyword.control.at-rule.sass
+       "c" variable.function.sass entity.name.namespace.sass
+       "." variable.function.sass punctuation.separator.namespace.sass
+       "mx" variable.function.sass
+       ";" punctuation.terminator.rule.css
+       "g" support.type.property-name.css
+       ":" punctuation.separator.key-value.css
+       "color-mix" support.function.color.css
+       "(" punctuation.definition.group.begin.css
+       "in" keyword.operator.sass
+       "srgb" support.constant.property-value.css
+       "," punctuation.separator.sequence.css
+       "red" support.constant.color.w3c-standard-color-name.css
+       "," punctuation.separator.sequence.css
+       "$" variable.other.sass punctuation.definition.variable.sass
+       "h" variable.other.sass
+       "..." keyword.operator.sass
+       ")" punctuation.definition.group.end.css
+       ";" punctuation.terminator.rule.css
+       "}" punctuation.section.property-list.css

@@ -1199,8 +1199,18 @@
 "injectGlobal`"
 "${(p) => p.c}"
 "`;"
-# SCSS (ADR-40's phase 6, CSS's scanner with SCSS's contexts): variables, maps, interpolation, Sass's
-# at-rules, mixins and includes, `&` and placeholders, Sass's functions and operators, `//`, front matter
+# SCSS (CSS's scanner with Sass's readings, X-149): variables, maps, interpolation, Sass's at-rules, mixins and
+# includes, `&` and its suffixes and placeholders, Sass's functions and operators, `//`, front matter
+"&__"
+"var(--#{"
+"url(#{"
+" using ("
+"if(sass("
+"; else: "
+"...)"
+"1px+2px"
+"font: {"
+"c.$x: "
 "$x"
 "math.$pi"
 "!default"

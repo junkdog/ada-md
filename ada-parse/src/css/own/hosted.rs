@@ -40,7 +40,7 @@ pub(crate) fn hosted<K: Sink>(
     rec: &mut Record,
     cut: bool,
 ) -> K {
-    let mut s = Scan::new(b, out, k);
+    let mut s = Scan::<K, false>::new(b, out, k);
     s.host = HOST_KIND;
     s.frames = u128::from(rec[0]) | u128::from(rec[1]) << 8 | u128::from(rec[2]) << 16;
     s.depth = rec[3] & 7;

@@ -1472,11 +1472,13 @@ fn css() {
     readings("css", Lang::Css, text);
 }
 
-/// SCSS's readings (CSS's scanner with SCSS's contexts): the front matter's YAML, `//` comments,
-/// variables (namespaced, declared, with flags), maps with keys of both kinds, interpolation in
-/// selectors, property names, strings and values, every Sass at-rule with its prelude, mixins with
-/// parameters and includes with arguments, `&` and placeholders, nested and partial property names,
-/// Sass's functions and custom ones, operators, the CSS at-rules in SCSS's form, css-modules.
+/// SCSS's readings (CSS's scanner with Sass's, X-149): the front matter's YAML, `//` comments,
+/// variables (namespaced, declared, set in a module, with flags), maps with keys of both kinds,
+/// interpolation in selectors (a name it breaks going on after it), property names, custom
+/// properties, strings, URLs and values, every Sass at-rule with its prelude, mixins with
+/// parameters and includes with arguments and `using`, `&` and its suffixes, placeholders, nested
+/// properties, Sass's functions and custom ones, `if(`'s `;`, operators and a sign's two readings,
+/// the CSS at-rules in SCSS's form, css-modules, a property bat's list lacks.
 #[test]
 fn scss() {
     let text = concat!(
@@ -1515,6 +1517,11 @@ fn scss() {
         "@page :first { margin: 1in } @counter-style thumbs { system: cyclic; }\n",
         ":export { primary: $primary; } :global(.g) { h: i }\n",
         "a { b: if(true, null, false) nth($l, 1) e(\"x\") my-fn(1) ns.fn(2) 1px+2px; }\n",
+        ".btn-#{$c}-lg, .#{$a}#{$b}x-#{$d}-y, #{$parent}--mod, %ph-#{$p} { a: b; }\n",
+        ".c { --#{$p}gap: 1; gap: var(--#{$p}gap) var(#{$p}gap); bg: url(#{$u}/i.png) url($v); }\n",
+        ".d { inset-inline: 0; top: -10px; m: 10px -5px (1)-2; @include x using ($e) { f: $e; } }\n",
+        "@media #{$mq} { .e { w: if(sass($m): 2; else: 1); } }\n",
+        "@use 'cfg' as c; c.$x: 1; .f { @include c.mx; g: color-mix(in srgb, red, $h...); }\n",
     );
     readings("scss", Lang::Scss, text);
 }
