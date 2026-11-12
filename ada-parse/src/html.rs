@@ -19,6 +19,13 @@
 //! token is the embedded language's kind with [`CSS_KIND`] or [`JS_KIND`] set, under `source.css` or
 //! `source.js`; the bytes between embedded tokens stay plain (no theme selects `source.css`).
 //!
+//! **Sinks (X-076).** HTML's own tokens go to the scan's sink: the spans ([`Push`]: the span API,
+//! and PHP's and HEEx's HTML, read from a line's spans), or ada's runs ([`Runs`]). An embed's
+//! scanner pushes spans to the vector either way, its language's bit set in each, and on the run
+//! sink they're read into the runs there: CSS's and JavaScript's span copies stay in ada for PHP's
+//! and HEEx's HTML, and reading an embed's spans is under 2% of ada's path on HTML's
+//! census.
+//!
 //! **State.** HTML's stack above `main`, up to 28 contexts, in [`State`]'s levels; or, when a line
 //! ends inside an embed, the embedded language's state there and HTML's stack below it in
 //! `State::arg` ([`frame`]): `main`, the `<script type="text/html">` bodies open around it, and the
@@ -27,6 +34,7 @@
 //! `(?i)` folds ASCII case only, `\s` and `\S` are Unicode's, `\b`'s word characters are ASCII's
 //! and, past ASCII, letters and numbers.
 
+use crate::emit::{Push, Rules, Run, Runs, Sink};
 use crate::{Out, State};
 
 // ---- the contexts ----
@@ -300,19 +308,32 @@ const MAX: usize = 128;
 /// Lex `b`, a line of HTML without its `\n`, from `state`.
 #[inline(never)]
 pub fn line(b: &[u8], state: &mut State, out: &mut Out) {
-    let mut s = Scan {
-        b,
-        out,
-        stack: [MAIN; MAX],
-        depth: 1,
-        at: 0,
-        emb: None,
-    };
+    line_on(b, state, out, Push);
+}
+
+/// [`line`]'s runs by theme rule pushed to `runs` (X-076): HTML's own tokens written as runs,
+/// an embed's spans read into them.
+#[inline(never)]
+pub fn line_runs(
+    b: &[u8],
+    state: &mut State,
+    out: &mut Out,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+) {
+    let mut k = line_on(b, state, out, Runs::new(rules, runs));
+    k.end_line(b.len());
+}
+
+#[inline(always)]
+fn line_on<K: Sink>(b: &[u8], state: &mut State, out: &mut Out, k: K) -> K {
+    let mut s = Scan::new(b, out, k);
     let p = s.begin(state);
     if p != usize::MAX {
         s.run(p);
     }
     *state = s.state();
+    s.k
 }
 
 /// A block of HTML on one scan opened from `state` ([`crate::Carry`], X-067), `state` left as
@@ -324,14 +345,7 @@ pub fn block(
     pass: &mut dyn FnMut(&mut dyn crate::Carry) -> Option<usize>,
 ) -> Option<usize> {
     let mut out = Out::new(spans);
-    let mut s = Scan {
-        b: b"",
-        out: &mut out,
-        stack: [MAIN; MAX],
-        depth: 1,
-        at: 0,
-        emb: None,
-    };
+    let mut s = Scan::new(b"", &mut out, Push);
     // the state loaded, not lexed on an empty line: an embed's language would end what an empty
     // line ends (a CSS string's `\` continuation, X-080); the first line reopens it from here
     s.emb = s.load(state);
@@ -340,11 +354,59 @@ pub fn block(
     rest
 }
 
-impl crate::Carry for Scan<'_, '_, '_> {
+/// [`block`]'s runs by theme rule pushed to `runs` ([`crate::CarryRuns`], X-076).
+pub fn block_runs(
+    state: &mut State,
+    spans: &mut Vec<crate::Span>,
+    rules: &mut dyn Rules,
+    runs: &mut Vec<Run>,
+    lines: &mut crate::RunLines,
+) -> Option<usize> {
+    let mut out = Out::new(spans);
+    out.0.clear();
+    let mut s = Scan::new(b"", &mut out, Runs::new(rules, runs));
+    s.emb = s.load(state);
+    let rest = lines.pass(&mut s);
+    *state = s.state();
+    rest
+}
+
+impl crate::Carry for Scan<'_, '_, '_, Push> {
     fn next(&mut self, b: &[u8]) -> &[crate::Span] {
         self.out.0.clear();
-        // SAFETY: the line is set back to an empty one below, before `b`'s borrow ends
-        self.b = unsafe { crate::line_for(b) };
+        // SAFETY: the line is set back to an empty one before `b`'s borrow ends
+        self.carry(unsafe { crate::line_for(b) });
+        self.out.0
+    }
+}
+
+impl crate::CarryRuns for Scan<'_, '_, '_, Runs<'_>> {
+    fn next(&mut self, b: &[u8]) -> usize {
+        self.k.start_line();
+        // SAFETY: as above
+        self.carry(unsafe { crate::line_for(b) });
+        self.k.end_line(b.len())
+    }
+}
+
+impl<'b, 'o, 's, K: Sink> Scan<'b, 'o, 's, K> {
+    #[inline(always)]
+    fn new(b: &'b [u8], out: &'o mut Out<'s>, k: K) -> Self {
+        Scan {
+            b,
+            out,
+            k,
+            stack: [MAIN; MAX],
+            depth: 1,
+            at: 0,
+            emb: None,
+        }
+    }
+
+    /// `b`, a block's next line, lexed on this scan; the scan's line an empty one again after.
+    #[inline(always)]
+    fn carry(&mut self, b: &'b [u8]) {
+        self.b = b;
         self.at = 0;
         let p = if self.emb.is_some() {
             let state = self.state();
@@ -360,11 +422,10 @@ impl crate::Carry for Scan<'_, '_, '_> {
             crate::stack::hold(&mut self.stack, &mut self.depth);
         }
         self.b = b"";
-        self.out.0
     }
 }
 
-impl Scan<'_, '_, '_> {
+impl<K: Sink> Scan<'_, '_, '_, K> {
     /// The scan opened from `state` again, at the line's start: where its scan starts
     /// ([`Scan::begin`]).
     #[inline(never)]
@@ -435,9 +496,13 @@ impl Scan<'_, '_, '_> {
     }
 }
 
-struct Scan<'b, 'o, 's> {
+struct Scan<'b, 'o, 's, K: Sink> {
     b: &'b [u8],
+    /// The spans' vector: the span API's, and an embed's spans on their way to the run sink.
     out: &'o mut Out<'s>,
+    /// Where HTML's own lexemes go: the spans as [`Out`] pushes them ([`Push`]), or a line's runs
+    /// by theme rule (X-076).
+    k: K,
     stack: [u8; MAX],
     depth: usize,
     /// Where the spans reach: the text before a token is filled from here.
@@ -561,7 +626,9 @@ const EVENTS: &[&[u8]] = &[
 
 /// A tag's name, lowercase ASCII: its name's leaf and whether its tag ends at `/?>`, as the
 /// grammar's lists have it (structure, block, `hr`, block form, inline, form, `a`, table, in
-/// the order `main` tries them).
+/// the order `main` tries them). Inline in its one caller: out of line once the scan was generic
+/// over its sink, a call a tag cost the span API 2.3% of its instructions (X-076).
+#[inline(always)]
 fn tag_kind(lower: &[u8]) -> Option<(u16, bool)> {
     Some(match lower {
         b"body" | b"head" | b"html" => (N_STRUCTURE, false),
@@ -640,7 +707,7 @@ const JS_MIMES: &[&[u8]] = &[
     b"text/livescript",
 ];
 
-impl Scan<'_, '_, '_> {
+impl<K: Sink> Scan<'_, '_, '_, K> {
     fn top(&self) -> u8 {
         self.stack[self.depth - 1]
     }
@@ -700,18 +767,20 @@ impl Scan<'_, '_, '_> {
         if to > self.at {
             let t = self.text();
             if t != PLAIN {
-                self.out.push_merged(self.at, to, t);
+                self.k.merge(&mut self.out, self.at, to, t);
             }
             self.at = to;
         }
     }
 
-    /// Bytes `s..e` are `kind`, after the text before them.
+    /// Bytes `s..e` are `kind`, after the text before them. Inline at each place, as before the
+    /// scan was generic over its sink: out of line, a call a token cost the span API 2.6% (X-076).
+    #[inline(always)]
     fn tok(&mut self, s: usize, e: usize, kind: u16) {
         self.fill(s);
         let e = e.min(self.b.len());
         if e > self.at {
-            self.out.push_merged(self.at, e, kind);
+            self.k.merge(&mut self.out, self.at, e, kind);
             self.at = e;
         }
     }
@@ -1613,6 +1682,9 @@ impl Scan<'_, '_, '_> {
         });
         // an empty line inside an embed is lexed too: it ends what a line's end ends there
         if first != Some(from) {
+            // the embed's spans pushed to the vector, its language's bit set in each, then on a
+            // run sink read into the runs
+            self.k.close(self.out);
             let k = self.out.0.len();
             let b = &self.b[..first.unwrap_or(n)];
             self.out.1 = false;
@@ -1626,6 +1698,7 @@ impl Scan<'_, '_, '_> {
             for s in &mut self.out.0[k..] {
                 s.kind |= bit;
             }
+            self.k.reopen(self.out, 16);
         }
         let Some(e) = first else {
             self.at = n;

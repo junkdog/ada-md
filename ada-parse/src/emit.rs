@@ -896,6 +896,25 @@ mod tests {
         );
     }
 
+    /// HTML's runs written by its scan (X-076) are those its spans give: through a doctype, a
+    /// comment, entities, attributes over lines, and its embeds, a `<style>` and a `<script>`
+    /// over lines and `style="…"` and `on…="…"` (their spans read into the runs).
+    #[test]
+    fn html_runs_are_its_spans() {
+        runs_are_spans(
+            Lang::Html,
+            concat!(
+                "<!DOCTYPE html>\n<html lang=\"en\"><!-- c\n still --><head>\n",
+                "<style>\n  a:hover { color: red; /* open\n  still */ }\n</style>\n",
+                "<script type=\"module\">\n  const s = `t ${x}\n  more`; if (a < b) f();\n</script>\n",
+                "<p class=\"x\" style=\"color: red; margin: 0\" onclick=\"go(1)\">a &amp; b &#x41;\n",
+                "<a href='x'\n   title=\"t\">l</a><br/><custom-el data-x=y></custom-el>\n",
+                "<div style=\"color:\n red\">x</div><script>let a = '</script>' <b>\n\n",
+                "</p></html>",
+            ),
+        );
+    }
+
     /// Java's runs written by its scan (X-074) are those its spans give: through type arguments
     /// read ahead and taken back (a `<` that doesn't close on its line, one that holds an
     /// annotation), an embedded regex and SQL, Javadoc, a text block and a comment over lines.
