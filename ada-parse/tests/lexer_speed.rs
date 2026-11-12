@@ -31,6 +31,8 @@ const LANGS: &[(&str, Lang)] = &[
     ("gitattributes", Lang::GitAttributes),
     ("mailmap", Lang::GitMailmap),
     ("fstab", Lang::Fstab),
+    // X-146's corpus: this machine's installed `.pc` files
+    ("pkgconfig", Lang::PkgConfig),
     ("known_hosts", Lang::KnownHosts),
     // X-060's corpus: GitHub's client and server configs, and this machine's
     ("ssh_config", Lang::SshConfig),

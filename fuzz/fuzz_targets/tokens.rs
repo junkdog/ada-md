@@ -32,7 +32,7 @@ use libfuzzer_sys::fuzz_target;
 /// runs come from its spans since X-094; C's and C++'s X-057; Swift's X-101; CMake's X-104;
 /// Ruby's X-100; Terraform's X-102; Scala's X-137; Haskell's and Literate Haskell's X-136;
 /// Groovy's X-135; Elixir's X-138; CSS's X-125; Nix's X-103).
-const RUN_SCANS: [Lang; 50] = [
+const RUN_SCANS: [Lang; 51] = [
     Lang::Bash,
     Lang::Scss,
     Lang::Css,
@@ -69,6 +69,7 @@ const RUN_SCANS: [Lang; 50] = [
     Lang::GitMailmap,
     Lang::GitLink,
     Lang::Fstab,
+    Lang::PkgConfig,
     Lang::CMakeCache,
     Lang::KnownHosts,
     Lang::SshConfig,

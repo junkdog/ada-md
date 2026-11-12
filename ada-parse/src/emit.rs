@@ -781,7 +781,7 @@ mod tests {
     /// blank ones.
     #[test]
     fn line_format_runs_are_their_spans() {
-        let texts: [(Lang, &str); 9] = [
+        let texts: [(Lang, &str); 10] = [
             (
                 Lang::Ini,
                 "; c\n[sec]\nkey = value ; x\n\n  name=\"q\"\n[bad\nplain\n# h\n",
@@ -810,6 +810,10 @@ mod tests {
             (
                 Lang::Fstab,
                 "# c\nUUID=ab-12 / ext4 defaults,noatime 0 1\n/dev/sda1\t/boot vfat rw 0 2\nbad\n\n",
+            ),
+            (
+                Lang::PkgConfig,
+                "# c\nprefix=@P@\nlibdir=${prefix}/lib # d\nName: x\nCflags: -I${a} \\\n  -DB\nRequires: y >= 1, z\n\n",
             ),
             (
                 Lang::KnownHosts,

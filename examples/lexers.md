@@ -378,6 +378,22 @@ UUID=ad252f43-ade0-4506-a583-d6d5cb53f5c2  /      ext4  rw,relatime        0 1
 server:/export                             /nfs   nfs4  _netdev,x-systemd  0 0
 ```
 
+## pkg-config
+
+```pkgconfig
+prefix=/usr
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: libpng
+Description: Loads and saves PNG files # a comment
+Version: 1.6.44
+Requires.private: zlib >= 1.2.13
+Libs: -L${libdir} -lpng16
+Libs.private: -lm -lz
+Cflags: -I${includedir}/libpng16
+```
+
 ## Git Attributes
 
 ```gitattributes

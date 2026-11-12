@@ -1874,12 +1874,14 @@ mod tests {
     /// ada-parse's table names a language only where syntect on the whole set names the same,
     /// and misses none of the ones it covers; and ada, the table first and the set's list of
     /// names after (ADR-43), names what the whole set names: as a fence's token, a file's whole
-    /// name and its extension. Two departures are by design: ada's JavaScript is Babel's
+    /// name and its extension. These departures are by design: ada's JavaScript is Babel's
     /// grammar whatever the token, where the set gives Sublime's `JavaScript` for
     /// ```` ```JavaScript ```` (ADR-40); a CMake template of C or C++ is named by its whole name
     /// (`x.h.in`, `x.hpp.in`, `x.c.cmake`), where the set names only a file called `h.in` and
     /// bat names `x.h.in` by `x.h` (X-140, X-144); and another language's template named for
-    /// CMake (`x.java.cmake`) is that language's, where the set says CMake (X-144). A file's
+    /// CMake (`x.java.cmake`) is that language's, where the set says CMake (X-144); pkg-config's
+    /// `.pc` and its templates (`x.pc.in`, `x.pc.cmake`) are pkg-config's, where the set says Perl
+    /// (its `pc`) or CMake (X-146). A file's
     /// name is read as bat reads it: the set's, then, where that names nothing, without a
     /// suffix bat ignores (`x.py.in`, `x.pyx.in`, X-145).
     #[test]
@@ -1891,6 +1893,7 @@ mod tests {
                 .any(|l| ours == Some(l.name()));
             ours == Some(Lang::JavaScript.name()) && full == Some("JavaScript")
                 || template && ours != full
+                || ours == Some(Lang::PkgConfig.name()) && full != ours
                 || full == Some("CMake") && file.and_then(Lang::configured_file).is_some()
         };
         let mut words = words();
@@ -1902,6 +1905,8 @@ mod tests {
                 "xml.cmake",
                 "sh.cmake",
                 "pc.cmake",
+                "pc.in",
+                "pc.cmake.in",
                 "c.cmake",
                 "py.in",
                 "c.in",

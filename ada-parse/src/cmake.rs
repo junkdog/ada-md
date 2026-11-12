@@ -24,6 +24,14 @@
 //! operand in CMake's colors, and the tokens sit under the string's scope where it is quoted. bat
 //! leaves these arguments plain, and reads a `MATCHES [[…]]` on its keyword's line only.
 //!
+//! **So are the regex arguments bat's keyword lists lack** (X-111, a departure): `list(TRANSFORM
+//! … REPLACE <regex>`, each argument after `PRE_INCLUDE_REGEXES` and its kin in
+//! `file(GET_RUNTIME_DEPENDENCIES` and `install(… RUNTIME_DEPENDENCIES` to the next keyword,
+//! `include_regular_expression(`'s, a test's `PASS_REGULAR_EXPRESSION`, `FAIL_…` and `SKIP_…`
+//! value in `set_tests_properties` and `set_property`, and `string(REGEX`'s mode on a later line.
+//! The keywords CMake documents for `list`, `install`'s runtime dependencies and `string(REGEX
+//! QUOTE` are added where bat's lists lack them ([`ADDED`]).
+//!
 //! **Escapes are CMake's** (X-109): `\` before any character but a letter or digit is that
 //! character, `\t`, `\r`, `\n` and `\;` are CMake's, another letter or digit is an error, in a
 //! quoted argument and an unquoted one alike. bat's table calls `"\."` and `"\/"` invalid.
@@ -389,11 +397,35 @@ const S_ADD_CUSTOM_COMMAND: u32 = 1;
 /// `target_link_libraries`'s, which takes `debug`, `optimized` and `general` as
 /// `link_libraries` does (X-119; bat's list lacks them).
 const S_TARGET_LINK_LIBRARIES: u32 = 92;
+/// The commands whose test properties' values are regexes (X-111): `set_tests_properties(…
+/// PROPERTIES PASS_REGULAR_EXPRESSION <regex>`, `set_property(TEST … PROPERTY
+/// PASS_REGULAR_EXPRESSION <regex>…`.
+const S_SET_TESTS_PROPERTIES: u32 = 81;
+const S_SET_PROPERTY: u32 = 78;
+/// `include_regular_expression(<regex> [<regex>])`: its arguments are regexes (X-111).
+const S_INCLUDE_REGULAR_EXPRESSION: u32 = 54;
+/// What a command's `(` starts [`Scan::rxarg`] at, by its id: [`RXA_LIST`] for
+/// `include_regular_expression`'s, else none.
+static OPEN_RX: [u8; 256] = {
+    let mut t = [0; 256];
+    if !SOL {
+        t[S_INCLUDE_REGULAR_EXPRESSION as usize] = RXA_LIST;
+    }
+    t
+};
 const _: () = assert!(
     eq(
         BUILTINS[S_TARGET_LINK_LIBRARIES as usize],
         b"target_link_libraries"
-    ) && eq(BUILTINS[S_FILE as usize], b"file")
+    ) && eq(
+        BUILTINS[S_SET_TESTS_PROPERTIES as usize],
+        b"set_tests_properties"
+    ) && eq(BUILTINS[S_SET_PROPERTY as usize], b"set_property")
+        && eq(
+            BUILTINS[S_INCLUDE_REGULAR_EXPRESSION as usize],
+            b"include_regular_expression"
+        )
+        && eq(BUILTINS[S_FILE as usize], b"file")
         && eq(BUILTINS[S_LIST as usize], b"list")
         && eq(BUILTINS[S_STRING as usize], b"string")
         && eq(BUILTINS[S_INSTALL as usize], b"install")
@@ -407,13 +439,104 @@ const _: () = assert!(
 // A keyword's flags, in its mask's top bits.
 /// `NOT`, `AND`, `OR`: an operator's leaf.
 const K_LOGICAL: u128 = 1 << 127;
-/// `CACHE`, `RESULT_VARIABLE`, `MATCHES`, `REGEX`, `REGULAR_EXPRESSION`: what follows is read
-/// apart ([`Scan::keyword`]).
+/// `CACHE`, `RESULT_VARIABLE`, `MATCHES`, `REGEX`, `REGULAR_EXPRESSION`, `REPLACE`, the
+/// `*_REGEXES`: what follows is read apart ([`Scan::keyword`]).
 const K_ACTION: u128 = 1 << 126;
 /// `USES_TERMINAL`, `INCLUDES`: bat's two-word keywords' first.
 const K_TWO: u128 = 1 << 125;
+/// `PASS_REGULAR_EXPRESSION`, `FAIL_REGULAR_EXPRESSION`, `SKIP_REGULAR_EXPRESSION`: a test
+/// property whose value is a regex, in no list (X-111; [`Scan::unlisted`]).
+const K_RX_PROPERTY: u128 = 1 << 124;
 
-const NK: usize = KEYWORD_LIST.len() + 1;
+const fn sets(ids: &[u32]) -> u128 {
+    let mut m = 0;
+    let mut i = 0;
+    while i < ids.len() {
+        m |= 1 << ids[i];
+        i += 1;
+    }
+    m
+}
+const LIST: u128 = sets(&[S_LIST]);
+const INSTALL: u128 = sets(&[S_INSTALL]);
+/// The keywords CMake (4.4) documents for the commands that take a regex, where bat's lists lack
+/// them (X-111, a departure): `list`'s subcommands, `TRANSFORM`'s actions and selectors, `SORT`'s
+/// and `FILTER`'s options; `install`'s runtime dependencies and the artifact kinds that may
+/// follow their regexes; `string(REGEX QUOTE`; the test properties whose value is a regex. A word
+/// bat lists for another command gets the bits here added to its own.
+const ADDED: &[(&[u8], u128)] = &[
+    (b"JOIN", LIST),
+    (b"SUBLIST", LIST),
+    (b"POP_BACK", LIST),
+    (b"POP_FRONT", LIST),
+    (b"PREPEND", LIST),
+    (b"TRANSFORM", LIST),
+    (b"APPLY", LIST),
+    (b"TOLOWER", LIST),
+    (b"TOUPPER", LIST),
+    (b"STRIP", LIST),
+    (b"GENEX_STRIP", LIST),
+    (b"REPLACE", LIST),
+    (b"AT", LIST),
+    (b"FOR", LIST),
+    (b"OUTPUT_VARIABLE", LIST),
+    (b"PREDICATE", LIST),
+    (b"COMPARE", LIST),
+    (b"CASE", LIST),
+    (b"ORDER", LIST),
+    (b"STRING", LIST),
+    (b"FILE_BASENAME", LIST),
+    (b"NATURAL", LIST),
+    (b"SENSITIVE", LIST),
+    (b"INSENSITIVE", LIST),
+    (b"ASCENDING", LIST),
+    (b"DESCENDING", LIST),
+    (b"RUNTIME_DEPENDENCIES", INSTALL),
+    (b"RUNTIME_DEPENDENCY_SET", INSTALL),
+    (b"IMPORTED_RUNTIME_ARTIFACTS", INSTALL),
+    (b"PRE_INCLUDE_REGEXES", INSTALL),
+    (b"PRE_EXCLUDE_REGEXES", INSTALL),
+    (b"POST_INCLUDE_REGEXES", INSTALL),
+    (b"POST_EXCLUDE_REGEXES", INSTALL),
+    (b"POST_INCLUDE_FILES", INSTALL),
+    (b"POST_EXCLUDE_FILES", INSTALL),
+    (b"DIRECTORIES", INSTALL),
+    (b"OBJECTS", INSTALL),
+    (b"FILE_SET", INSTALL),
+    (b"CXX_MODULES_BMI", INSTALL),
+    (b"NAMELINK_COMPONENT", INSTALL),
+    (b"QUOTE", sets(&[S_STRING])),
+    (b"PASS_REGULAR_EXPRESSION", K_RX_PROPERTY),
+    (b"FAIL_REGULAR_EXPRESSION", K_RX_PROPERTY),
+    (b"SKIP_REGULAR_EXPRESSION", K_RX_PROPERTY),
+];
+
+/// Whether bat's lists hold `w`.
+const fn listed(w: &[u8]) -> bool {
+    let mut i = 0;
+    while i < KEYWORD_LIST.len() {
+        if eq(KEYWORD_LIST[i].0, w) {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+/// [`ADDED`]'s words that bat's lists lack.
+const NEW_WORDS: usize = {
+    let mut n = 0;
+    let mut i = 0;
+    while i < ADDED.len() {
+        if !listed(ADDED[i].0) {
+            n += 1;
+        }
+        i += 1;
+    }
+    n
+};
+
+const NK: usize = KEYWORD_LIST.len() + NEW_WORDS + 1;
 static KEYWORD_TEXT: [&[u8]; NK] = {
     let mut t: [&[u8]; NK] = [b""; NK];
     let mut i = 0;
@@ -421,7 +544,15 @@ static KEYWORD_TEXT: [&[u8]; NK] = {
         t[i] = KEYWORD_LIST[i].0;
         i += 1;
     }
-    t[KEYWORD_LIST.len()] = b"INCLUDES";
+    let mut j = 0;
+    while j < ADDED.len() {
+        if !listed(ADDED[j].0) {
+            t[i] = ADDED[j].0;
+            i += 1;
+        }
+        j += 1;
+    }
+    t[i] = b"INCLUDES";
     t
 };
 static KEYWORDS: Words<1024, NK, { text_len(&KEYWORD_TEXT) }> = Words::new(&KEYWORD_TEXT);
@@ -436,6 +567,13 @@ static KEYWORD_INFO: [u128; NK + 1] = {
         } else {
             0
         };
+        let mut j = 0;
+        while j < ADDED.len() {
+            if eq(ADDED[j].0, w) {
+                m |= ADDED[j].1;
+            }
+            j += 1;
+        }
         if eq(w, b"NOT") || eq(w, b"AND") || eq(w, b"OR") {
             m |= K_LOGICAL;
         }
@@ -444,6 +582,11 @@ static KEYWORD_INFO: [u128; NK + 1] = {
             || eq(w, b"MATCHES")
             || eq(w, b"REGEX")
             || eq(w, b"REGULAR_EXPRESSION")
+            || eq(w, b"REPLACE")
+            || eq(w, b"PRE_INCLUDE_REGEXES")
+            || eq(w, b"PRE_EXCLUDE_REGEXES")
+            || eq(w, b"POST_INCLUDE_REGEXES")
+            || eq(w, b"POST_EXCLUDE_REGEXES")
         {
             m |= K_ACTION;
         }
@@ -520,6 +663,17 @@ const SUB_SET: u8 = 3;
 const SUB_NAME: u8 = 4;
 /// `include(… RESULT_VARIABLE`'s variable next, on its line.
 const SUB_RESULT: u8 = 5;
+/// `string(REGEX`'s mode next, on a later line or past a comment ([`Scan::regex_mode`],
+/// X-111): kept at a line's end.
+const SUB_MODE: u8 = 6;
+
+// Which arguments are regexes ([`Scan::rxarg`]).
+/// The next one, after `MATCHES`, a `REGEX`, `REGULAR_EXPRESSION`, `list(TRANSFORM … REPLACE`,
+/// `string(REGEX MATCH`, `set_tests_properties`' `PASS_REGULAR_EXPRESSION`.
+const RXA_ONE: u8 = 1;
+/// Each one to a keyword of the command's or its `)`: after `PRE_INCLUDE_REGEXES` and its kin,
+/// `set_property`'s `PASS_REGULAR_EXPRESSION`, in `include_regular_expression(` (X-111).
+const RXA_LIST: u8 = 2;
 
 // What a line starts in ([`Scan::mode`]).
 const M_CODE: u8 = 0;
@@ -649,9 +803,10 @@ struct Scan<'b, 'c, K: Sink> {
     sub: u8,
     /// What the open `${…}`s' and `$<…>`s' kinds add: 0, [`PRE_STRING`], [`PRE_CAPS`].
     pre: u8,
-    /// `MATCHES`, a `REGEX` or `REGULAR_EXPRESSION` was the last argument: the next one is a
-    /// regex, on this line or a later one, past comments (X-108).
-    matches: bool,
+    /// Which arguments are regexes: none (0), the next ([`RXA_ONE`]: after `MATCHES`, a `REGEX`
+    /// or `REGULAR_EXPRESSION`, on this line or a later one, past comments, X-108), or each to a
+    /// keyword ([`RXA_LIST`], X-111).
+    rxarg: u8,
     /// What the line starts in ([`M_CODE`]…).
     mode: u8,
     /// An open bracket's `=`s, up to 255 (where 255 is any more).
@@ -677,7 +832,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             cmd: 0,
             sub: SUB_AWAIT,
             pre: 0,
-            matches: false,
+            rxarg: 0,
             mode: M_CODE,
             eqs: 0,
             rx: 0,
@@ -705,7 +860,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         self.mode = (a & 3) as u8;
         self.sub = (a >> 2 & 7) as u8;
         self.pre = (a >> 5 & 31) as u8;
-        self.matches = a >> 10 & 1 != 0;
+        self.rxarg = (a >> 10 & 3) as u8;
     }
 
     /// The state the scan's last line left: every field as it is, so a block lexes as its
@@ -724,7 +879,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         s.arg = u16::from(self.mode)
             | u16::from(self.sub) << 2
             | u16::from(self.pre) << 5
-            | u16::from(self.matches) << 10;
+            | u16::from(self.rxarg) << 10;
         s
     }
 
@@ -804,14 +959,15 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
 
     /// What a line's end ends: an unquoted argument, a command still before its `(` (CMake's
     /// "Expected "(", got newline", X-119), and what bat reads only on its line (the first
-    /// argument's name, `RESULT_VARIABLE`'s variable). A regex awaited ([`Scan::matches`])
-    /// stays: CMake reads the next argument wherever it stands (X-108).
+    /// argument's name, `RESULT_VARIABLE`'s variable). A regex awaited ([`Scan::rxarg`]) and
+    /// `string(REGEX`'s mode ([`SUB_MODE`]) stay: CMake reads the next argument wherever it
+    /// stands (X-108, X-111).
     #[inline(always)]
     fn line_end(&mut self) {
         match self.top() {
             F_UNQUOTED => self.pop(),
             F_ARGS if self.sub == SUB_AWAIT => self.pop(),
-            F_ARGS if self.sub > SUB_OPEN => self.sub = SUB_OPEN,
+            F_ARGS if self.sub > SUB_OPEN && self.sub != SUB_MODE => self.sub = SUB_OPEN,
             _ => {}
         }
     }
@@ -1073,6 +1229,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(always)]
     fn open_paren(&mut self, p: usize) -> usize {
         self.put_hot(p, p + 1, PAREN_BEGIN);
+        // `include_regular_expression(`'s arguments are regexes (X-111): a load, no branch; an
+        // arm of the match below broke its jump table (lexer_speed −0.9 / −1.3%)
+        self.rxarg = OPEN_RX[usize::from(self.cmd)];
         let (block, sub) = match self.cmd {
             C_IF | C_ELSEIF => (F_IF, SUB_OPEN),
             C_ELSE => (F_ELSE, SUB_OPEN),
@@ -1126,8 +1285,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 }
                 continue;
             }
-            if (self.sub > SUB_OPEN || self.matches)
-                && let Some(e) = self.first(p)
+            if (self.sub > SUB_OPEN || self.rxarg != 0)
+                && let Some(e) = self.first(p, set)
             {
                 p = e;
                 if self.top() != frame {
@@ -1149,8 +1308,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                         continue;
                     }
                     if !SOL
-                        && m & K_TWO != 0
-                        && let Some(e2) = self.two_words(p, e, set)
+                        && m & (K_TWO | K_RX_PROPERTY) != 0
+                        && let Some(e2) = self.unlisted(p, e, m, set)
                     {
                         p = e2;
                         continue;
@@ -1210,18 +1369,29 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         p
     }
 
-    /// A token at `p` where the arguments' first name, `RESULT_VARIABLE`'s variable or a regex
-    /// (after `MATCHES`, a `REGEX` or `REGULAR_EXPRESSION`) may stand: where it does, its end;
-    /// else the reading over and `None`. A comment before a regex is read, the regex still
-    /// awaited (X-108).
+    /// A token at `p` where the arguments' first name, `RESULT_VARIABLE`'s variable,
+    /// `string(REGEX`'s mode or a regex ([`Scan::rxarg`]) may stand: where it does, its end; else
+    /// the reading over and `None`. A comment before a regex or a mode is read, the regex still
+    /// awaited (X-108); a keyword of the command's `set` ends a list of regexes, and is read as
+    /// one (X-111).
     #[inline(never)]
-    fn first(&mut self, p: usize) -> Option<usize> {
+    fn first(&mut self, p: usize, set: u32) -> Option<usize> {
         let b = self.b;
-        if self.matches {
+        if self.rxarg != 0 {
             if b[p] == b'#' {
                 return Some(self.comment(p));
             }
-            self.matches = false;
+            if self.rxarg == RXA_LIST && CLASS[usize::from(b[p])] == C_NAME {
+                let e = word_end(b, p);
+                let m = KEYWORDS.value(&b[p..e], &KEYWORD_INFO);
+                if m >> set & 1 != 0 || m & K_TWO != 0 {
+                    self.rxarg = 0;
+                    return None;
+                }
+            }
+            if self.rxarg == RXA_ONE || matches!(b[p], b')' | b'(') {
+                self.rxarg = 0;
+            }
             self.rx = 0;
             return match b[p] {
                 b'[' => self
@@ -1235,6 +1405,13 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 b')' | b'(' => None,
                 _ => Some(self.regex::<H_UNQUOTED>(p, Q_NONE)),
             };
+        }
+        if self.sub == SUB_MODE {
+            if b[p] == b'#' {
+                return Some(self.comment(p));
+            }
+            self.sub = SUB_OPEN;
+            return self.mode(p);
         }
         if is_name_start(b, p) {
             let e = word_end(b, p);
@@ -1276,8 +1453,13 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             }
             (S_IF, b"MATCHES")
             | (S_FILE | S_LIST | S_INSTALL, b"REGEX")
-            | (S_SOURCE_GROUP, b"REGULAR_EXPRESSION") => {
-                self.matches = true;
+            | (S_SOURCE_GROUP, b"REGULAR_EXPRESSION")
+            | (S_LIST, b"REPLACE") => {
+                self.rxarg = RXA_ONE;
+                e
+            }
+            (S_FILE | S_INSTALL, w) if w.ends_with(b"_REGEXES") => {
+                self.rxarg = RXA_LIST;
                 e
             }
             (S_STRING, b"REGEX") => self.regex_mode(e),
@@ -1285,8 +1467,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
     }
 
-    /// `string(REGEX`'s mode from `p`, on its line: blanks, then `MATCH`, `MATCHALL` or
-    /// `REPLACE`, a regex after it; its end where it is one.
+    /// `string(REGEX`'s mode from `p`: blanks, then `MATCH`, `MATCHALL` or `REPLACE`, a regex
+    /// after it; its end where it is one. At the line's end or a comment the mode is awaited on
+    /// ([`SUB_MODE`], X-111: CMake reads the next argument wherever it stands).
     #[cold]
     fn regex_mode(&mut self, p: usize) -> usize {
         let b = self.b;
@@ -1294,16 +1477,31 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         while q < b.len() && CLASS[usize::from(b[q])] == C_BLANK {
             q += 1;
         }
-        if q == p || q == b.len() || CLASS[usize::from(b[q])] != C_NAME {
+        if q == b.len() || b[q] == b'#' {
+            self.sub = SUB_MODE;
+            return q;
+        }
+        if q == p {
             return p;
         }
-        let e = word_end(b, q);
-        if !matches!(&b[q..e], b"MATCH" | b"MATCHALL" | b"REPLACE") {
-            return p;
+        self.mode(q).unwrap_or(p)
+    }
+
+    /// `string(REGEX`'s mode at `p`: `MATCH`, `MATCHALL` or `REPLACE` written and its end, a
+    /// regex after it; else `None`.
+    #[cold]
+    fn mode(&mut self, p: usize) -> Option<usize> {
+        let b = self.b;
+        if CLASS[usize::from(b[p])] != C_NAME {
+            return None;
         }
-        self.put(q, e, PARAM);
-        self.matches = true;
-        e
+        let e = word_end(b, p);
+        if !matches!(&b[p..e], b"MATCH" | b"MATCHALL" | b"REPLACE") {
+            return None;
+        }
+        self.put(p, e, PARAM);
+        self.rxarg = RXA_ONE;
+        Some(e)
     }
 
     /// `CACHE`'s type from `p`: blanks, then `FILEPATH`, `PATH`, `STRING`, `BOOL`, `INTERNAL`
@@ -1350,6 +1548,23 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             }
         }
         self.unquoted_run(p)
+    }
+
+    /// A keyword `b[p..e]` that isn't in the list `set` (`m`'s flags): bat's two-word keywords'
+    /// first ([`Scan::two_words`]), or a test property whose value is a regex (X-111): after
+    /// `set_tests_properties`' the next argument, after `set_property`'s each to its `)`. The
+    /// property's name is read as before (`None`).
+    #[cold]
+    fn unlisted(&mut self, p: usize, e: usize, m: u128, set: u32) -> Option<usize> {
+        if m & K_TWO != 0 {
+            return self.two_words(p, e, set);
+        }
+        match set {
+            S_SET_TESTS_PROPERTIES => self.rxarg = RXA_ONE,
+            S_SET_PROPERTY => self.rxarg = RXA_LIST,
+            _ => {}
+        }
+        None
     }
 
     /// bat's two-word keywords, `USES_TERMINAL COMMAND_EXPAND_LISTS` (`add_custom_command`'s)
@@ -3004,6 +3219,68 @@ mod tests {
                 && (t == "$" || t == "^" && !s.starts_with("string.regexp"))),
             "{got:#?}"
         );
+    }
+
+    #[test]
+    fn regex_arguments_bat_lacks() {
+        let l = [
+            "list(TRANSFORM v REPLACE \"^a+\" \"b\" AT 1 OUTPUT_VARIABLE o)",
+            "file(GET_RUNTIME_DEPENDENCIES EXECUTABLES e",
+            "  PRE_EXCLUDE_REGEXES \"x?\" [[y|z]]",
+            "  w$ POST_INCLUDE_FILES f.so)",
+            "install(TARGETS t RUNTIME_DEPENDENCIES PRE_INCLUDE_REGEXES",
+            "  \"(dep)\" INCLUDES DESTINATION i)",
+            "string(REGEX # mode",
+            "  MATCH \"q.\" o ${s})",
+            "include_regular_expression(\"^k*$\" \"^m\")",
+            "set_tests_properties(t PROPERTIES PASS_REGULAR_EXPRESSION \"p\\\\.\" TIMEOUT 9)",
+            "set_property(TEST t PROPERTY FAIL_REGULAR_EXPRESSION \"r|s\" \"u{2}\")",
+            "string(REGEX QUOTE o \"a.b\")",
+            "list(TRANSFORM v APPEND \"c.d\")",
+        ];
+        let q = |s: &str| format!("string.quoted.double.cmake {s}.regexp");
+        // `TRANSFORM`'s action and selectors, CMake's keywords
+        for w in [
+            "TRANSFORM",
+            "AT",
+            "OUTPUT_VARIABLE",
+            "RUNTIME_DEPENDENCIES",
+            "QUOTE",
+        ] {
+            has(&l, w, "variable.parameter.cmake");
+        }
+        has(&l, "^", &q("keyword.control.anchors"));
+        has(&l, "+", &q("keyword.operator.quantifier"));
+        // a list of regexes, quoted, bracketed and unquoted, to the next keyword
+        has(&l, "?", &q("keyword.operator.quantifier"));
+        has(
+            &l,
+            "|",
+            "string.regexp.cmake keyword.operator.alternation.regexp",
+        );
+        has(&l, "$", "keyword.control.anchors.regexp");
+        has(&l, "POST_INCLUDE_FILES", "variable.parameter.cmake");
+        has(&l, "(", &q("keyword.control.group"));
+        // `string(REGEX`'s mode past the line's end and a comment
+        has(&l, " mode", "comment.line.cmake");
+        has(&l, "MATCH", "variable.parameter.cmake");
+        has(&l, "*", &q("keyword.operator.quantifier"));
+        has(&l, "\\\\.", &q("constant.character.escape"));
+        let got = of(&l);
+        let rx = |t: &str| got.iter().any(|(x, s)| x == t && s.ends_with(".regexp"));
+        // each regex read, and nothing past the lists: `.` in `q.` and `r|s`'s `|`; `QUOTE`'s
+        // input, `APPEND`'s value, `b`, `f.so` and `9` no regex
+        assert!(rx("|") && rx("."), "{got:#?}");
+        assert!(
+            !got.iter().any(|(t, s)| s.ends_with(".regexp")
+                && (t == "b" || t == "9" || t == "f.so" || t == "DESTINATION")),
+            "{got:#?}"
+        );
+        let dots = got
+            .iter()
+            .filter(|(t, s)| t == "." && s.ends_with("keyword.other.any.regexp"))
+            .count();
+        assert_eq!(dots, 1, "{got:#?}");
     }
 
     #[test]

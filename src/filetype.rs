@@ -331,12 +331,15 @@ mod tests {
             lang("Bourne Again Shell (bash)")
         );
         assert_eq!(by_path("local.properties.cmake"), lang("Java Properties"));
-        assert_eq!(by_path("protobuf.pc.cmake"), lang("CMake"));
+        // pkg-config's templates pkg-config's (X-146)
+        assert_eq!(by_path("protobuf.pc.cmake"), lang("pkg-config"));
+        assert_eq!(by_path("zlib.pc.in"), lang("pkg-config"));
+        assert_eq!(by_path("zlib.pc"), lang("pkg-config"));
         assert_eq!(by_path("prefix.sh.fish.cmake"), lang("CMake"));
         assert_eq!(by_path("arm.toolchain.cmake"), lang("CMake"));
         assert_eq!(by_path("lists.in.cmake"), lang("CMake"));
         assert_eq!(by_path("x.cmake.cmake"), lang("CMake"));
-        assert_eq!(by_path("foo.pc.cmake.in"), lang("CMake"));
+        assert_eq!(by_path("foo.pc.cmake.in"), lang("pkg-config"));
         assert_eq!(by_path("foo.java.cmake.in"), lang("Java"));
     }
 

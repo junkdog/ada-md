@@ -10,7 +10,7 @@
 //! The lexers are scanners of ada's own, speed first (ADR-40): one pass over a line's bytes,
 //! a fixed set of kinds carrying bat's scopes for the common case, syntect a guideline.
 //! Diff is a line lexer, each line on its own; INI, Java properties, `.env`, Git's own files
-//! (ignore, attributes, mailmap and link files), fstab, `known_hosts`, OpenSSH's configs and crontabs share the line-format engine
+//! (ignore, attributes, mailmap and link files), fstab, `known_hosts`, OpenSSH's configs, crontabs and pkg-config's `.pc` files share the line-format engine
 //! (`line_format.rs`); logs (O-043) and JSON (O-048) came from ada; Dockerfile's scanner is
 //! bat's grammar compiled by hand, and XML's of ada's own design; YAML's and TOML's read
 //! their formats as bat's grammars do on well-formed text (TOML's as TOML 1.1 where bat's
@@ -57,6 +57,7 @@ mod matcher;
 mod nginx;
 mod nix;
 mod php;
+mod pkgconfig;
 mod powershell;
 mod prim;
 mod properties;
@@ -683,6 +684,7 @@ fn run_scanner(lang: Lang) -> Option<RunScanner> {
         Lang::GitMailmap => git::mailmap_runs,
         Lang::GitLink => git::link_runs,
         Lang::Fstab => fstab::line_runs,
+        Lang::PkgConfig => pkgconfig::line_runs,
         Lang::CMakeCache => cmake_cache::line_runs,
         Lang::KnownHosts => known_hosts::line_runs,
         Lang::SshConfig => ssh_config::line_runs,
@@ -719,6 +721,7 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         | Lang::GitMailmap
         | Lang::GitLink
         | Lang::Fstab
+        | Lang::PkgConfig
         | Lang::CMakeCache
         | Lang::KnownHosts
         | Lang::SshConfig
@@ -826,6 +829,7 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::GitMailmap => out!(git::mailmap),
         Lang::GitLink => out!(git::link),
         Lang::Fstab => out!(fstab::line),
+        Lang::PkgConfig => out!(pkgconfig::line),
         Lang::CMakeCache => out!(cmake_cache::line),
         Lang::KnownHosts => out!(known_hosts::line),
         Lang::SshConfig => out!(ssh_config::line),

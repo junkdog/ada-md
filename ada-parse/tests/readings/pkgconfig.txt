@@ -1,0 +1,109 @@
+# PkgConfig: ada-parse/tests/readings.rs, pkgconfig
+   1 | # zlib pkg-config file
+       "#" comment.line.number-sign.pkgconfig punctuation.definition.comment.pkgconfig
+       " zlib pkg-config file" comment.line.number-sign.pkgconfig
+   2 | prefix=@CMAKE_INSTALL_PREFIX@
+       "prefix" entity.name.variable.pkgconfig
+       "=" keyword.operator.assignment.pkgconfig
+       "@" punctuation.definition.placeholder.pkgconfig
+       "CMAKE_INSTALL_PREFIX" variable.other.placeholder.pkgconfig
+       "@" punctuation.definition.placeholder.pkgconfig
+   3 | exec_prefix = ${prefix}
+       "exec_prefix" entity.name.variable.pkgconfig
+       "=" keyword.operator.assignment.pkgconfig
+       "${" punctuation.definition.variable.begin.pkgconfig
+       "prefix" variable.other.readwrite.pkgconfig
+       "}" punctuation.definition.variable.end.pkgconfig
+   4 | libdir=${exec_prefix}/lib # the libraries
+       "libdir" entity.name.variable.pkgconfig
+       "=" keyword.operator.assignment.pkgconfig
+       "${" punctuation.definition.variable.begin.pkgconfig
+       "exec_prefix" variable.other.readwrite.pkgconfig
+       "}" punctuation.definition.variable.end.pkgconfig
+       "/lib " string.unquoted.pkgconfig
+       "#" comment.line.number-sign.pkgconfig punctuation.definition.comment.pkgconfig
+       " the libraries" comment.line.number-sign.pkgconfig
+   5 | sharp=a\#b$$c
+       "sharp" entity.name.variable.pkgconfig
+       "=" keyword.operator.assignment.pkgconfig
+       "a" string.unquoted.pkgconfig
+       "\\#" constant.character.escape.pkgconfig
+       "b" string.unquoted.pkgconfig
+       "$$" constant.character.escape.pkgconfig
+       "c" string.unquoted.pkgconfig
+   6 | @pc_data@
+       "@" punctuation.definition.placeholder.pkgconfig
+       "pc_data" variable.other.placeholder.pkgconfig
+       "@" punctuation.definition.placeholder.pkgconfig
+   7 | 
+   8 | Name: zlib
+       "Name" keyword.other.definition.pkgconfig
+       ":" punctuation.separator.key-value.pkgconfig
+       "zlib" string.unquoted.pkgconfig
+   9 | Description: zlib compression library, PKCS#11 cut here
+       "Description" keyword.other.definition.pkgconfig
+       ":" punctuation.separator.key-value.pkgconfig
+       "zlib compression library, PKCS" string.unquoted.pkgconfig
+       "#" comment.line.number-sign.pkgconfig punctuation.definition.comment.pkgconfig
+       "11 cut here" comment.line.number-sign.pkgconfig
+  10 | Version: @VERSION@
+       "Version" keyword.other.definition.pkgconfig
+       ":" punctuation.separator.key-value.pkgconfig
+       "@" punctuation.definition.placeholder.pkgconfig
+       "VERSION" variable.other.placeholder.pkgconfig
+       "@" punctuation.definition.placeholder.pkgconfig
+  11 | URL: https://zlib.net/
+       "URL" keyword.other.definition.pkgconfig
+       ":" punctuation.separator.key-value.pkgconfig
+       "https://zlib.net/" markup.underline.link.pkgconfig
+  12 | Requires: glib-2.0 >= 2.50, gio-2.0,libffi
+       "Requires" keyword.other.definition.pkgconfig
+       ":" punctuation.separator.key-value.pkgconfig
+       "glib-2.0" entity.name.package.pkgconfig
+       ">=" keyword.operator.comparison.pkgconfig
+       "2.50" constant.numeric.version.pkgconfig
+       "gio-2.0" entity.name.package.pkgconfig
+       "libffi" entity.name.package.pkgconfig
+  13 | Requires.private: x<=1 y != 2
+       "Requires.private" keyword.other.definition.pkgconfig
+       ":" punctuation.separator.key-value.pkgconfig
+       "x" entity.name.package.pkgconfig
+       "<=" keyword.operator.comparison.pkgconfig
+       "1" constant.numeric.version.pkgconfig
+       "y" entity.name.package.pkgconfig
+       "!=" keyword.operator.comparison.pkgconfig
+       "2" constant.numeric.version.pkgconfig
+  14 | Libs: -L${libdir} -lz@SUFFIX@ /usr/lib/libm.so
+       "Libs" keyword.other.definition.pkgconfig
+       ":" punctuation.separator.key-value.pkgconfig
+       "-L" variable.parameter.option.pkgconfig
+       "${" punctuation.definition.variable.begin.pkgconfig
+       "libdir" variable.other.readwrite.pkgconfig
+       "}" punctuation.definition.variable.end.pkgconfig
+       "-lz" variable.parameter.option.pkgconfig
+       "@" punctuation.definition.placeholder.pkgconfig
+       "SUFFIX" variable.other.placeholder.pkgconfig
+       "@" punctuation.definition.placeholder.pkgconfig
+       "/usr/lib/libm.so" string.unquoted.pkgconfig
+  15 | Libs.Private: -pthread
+       "Libs.Private" keyword.other.definition.pkgconfig
+       ":" punctuation.separator.key-value.pkgconfig
+       "-pthread" variable.parameter.option.pkgconfig
+  16 | CFlags: -I${includedir} \
+       "CFlags" keyword.other.definition.pkgconfig
+       ":" punctuation.separator.key-value.pkgconfig
+       "-I" variable.parameter.option.pkgconfig
+       "${" punctuation.definition.variable.begin.pkgconfig
+       "includedir" variable.other.readwrite.pkgconfig
+       "}" punctuation.definition.variable.end.pkgconfig
+       "\\" constant.character.escape.pkgconfig
+  17 |   -DZ=1 \
+       "-DZ=1" variable.parameter.option.pkgconfig
+       "\\" constant.character.escape.pkgconfig
+  18 |   -I/opt/x
+       "-I/opt/x" variable.parameter.option.pkgconfig
+  19 | Unknown: some text
+       "Unknown" keyword.other.definition.pkgconfig
+       ":" punctuation.separator.key-value.pkgconfig
+       "some text" string.unquoted.pkgconfig
+  20 | not a key line

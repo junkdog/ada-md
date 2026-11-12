@@ -53,7 +53,7 @@ LANGS=(
   cmakecache 592 1           terraform 2646 24    objc 2870 15         objcpp 2870 15
   scala 2646 24              haskell 2646 24      literatehaskell 677 1
   cmakecheader 677 1         cmakecppheader 677 1 groovy 2646 24       elixir 2646 24
-  nix 2646 24
+  nix 2646 24                pkgconfig 592 1
 )
 typeset -A weight pass
 for l w p in $LANGS; do weight[$l]=$w pass[$l]=$p; done

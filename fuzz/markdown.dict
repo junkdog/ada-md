@@ -178,6 +178,7 @@
 "```known_hosts\x0a"
 "```ssh_config\x0a"
 "```sshd_config\x0a"
+"```pkgconfig\x0a"
 "```zsh\x0a"
 "```shell\x0a"
 "```console\x0a"

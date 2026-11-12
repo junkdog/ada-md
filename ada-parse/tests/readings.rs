@@ -1659,6 +1659,35 @@ fn fstab() {
     readings("fstab", Lang::Fstab, text);
 }
 
+/// pkg-config's readings (X-146, ada's own): variables, fields by their key, comments wherever a
+/// `#` stands, escapes, a continued value, a template's placeholders.
+#[test]
+fn pkgconfig() {
+    let text = concat!(
+        "# zlib pkg-config file\n",
+        "prefix=@CMAKE_INSTALL_PREFIX@\n",
+        "exec_prefix = ${prefix}\n",
+        "libdir=${exec_prefix}/lib # the libraries\n",
+        "sharp=a\\#b$$c\n",
+        "@pc_data@\n",
+        "\n",
+        "Name: zlib\n",
+        "Description: zlib compression library, PKCS#11 cut here\n",
+        "Version: @VERSION@\n",
+        "URL: https://zlib.net/\n",
+        "Requires: glib-2.0 >= 2.50, gio-2.0,libffi\n",
+        "Requires.private: x<=1 y != 2\n",
+        "Libs: -L${libdir} -lz@SUFFIX@ /usr/lib/libm.so\n",
+        "Libs.Private: -pthread\n",
+        "CFlags: -I${includedir} \\\n",
+        "  -DZ=1 \\\n",
+        "  -I/opt/x\n",
+        "Unknown: some text\n",
+        "not a key line\n",
+    );
+    readings("pkgconfig", Lang::PkgConfig, text);
+}
+
 /// `known_hosts`' readings (ADR-40): markers, host patterns, hashed hosts, key types and keys,
 /// comments.
 #[test]

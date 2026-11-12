@@ -326,7 +326,7 @@ are reported with the file, line and column.
 
 Markdown is rendered, a png, jpeg or gif is shown full screen, and code and config files (`main.rs`,
 `Cargo.lock`, `Makefile`, `.zshrc`, or a `#!` first line) are shown whole and highlighted, with
-the git gutter, search, `e` and `--line` working on their lines. ada highlights 60 languages with
+the git gutter, search, `e` and `--line` working on their lines. ada highlights 61 languages with
 lexers of its own, the common ones and the config formats; the other languages bat knows open
 the same way, plain, as does other text. Binary files aren't shown.
 

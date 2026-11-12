@@ -46,6 +46,9 @@ pub enum Lang {
     GitLink,
     /// bat's `fstab`: fstab, crypttab and mtab.
     Fstab,
+    /// pkg-config's `.pc` files and their templates (X-146): ada's own, bat's set has no syntax
+    /// for them (its Perl claims `pc`).
+    PkgConfig,
     /// bat's `Known Hosts`: OpenSSH's `known_hosts`.
     KnownHosts,
     /// bat's `SSH Config`: OpenSSH's client config.
@@ -145,6 +148,8 @@ pub enum Lang {
 /// Fence languages that no syntax names, and the token each stands for (`zsh` for bash's).
 /// `fuzz/markdown.dict` names them all (F-013).
 pub const ALIASES: &[(&str, &str)] = &[
+    // pkg-config's other spelling (X-146)
+    ("pkgconfig", "pc"),
     ("zsh", "bash"),
     ("sh", "bash"),
     ("shell", "bash"),
@@ -346,6 +351,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
     (Lang::GitMailmap, &[".mailmap", "mailmap"]),
     (Lang::GitLink, &[".git"]),
     (Lang::Fstab, &["fstab", "crypttab", "mtab"]),
+    (Lang::PkgConfig, &["pc"]),
     (Lang::KnownHosts, &["known_hosts", "known_hosts.old"]),
     (Lang::SshConfig, &["ssh_config"]),
     (Lang::SshdConfig, &["sshd_config"]),
@@ -484,7 +490,7 @@ static EXTENSIONS: &[(Lang, &[&str])] = &[
 ];
 
 impl Lang {
-    pub const ALL: [Lang; 60] = [
+    pub const ALL: [Lang; 61] = [
         Lang::Json,
         Lang::Log,
         Lang::Makefile,
@@ -502,6 +508,7 @@ impl Lang {
         Lang::GitMailmap,
         Lang::GitLink,
         Lang::Fstab,
+        Lang::PkgConfig,
         Lang::KnownHosts,
         Lang::SshConfig,
         Lang::SshdConfig,
@@ -568,6 +575,7 @@ impl Lang {
             Lang::GitMailmap => "Git Mailmap",
             Lang::GitLink => "Git Link",
             Lang::Fstab => "fstab",
+            Lang::PkgConfig => "pkg-config",
             Lang::KnownHosts => "Known Hosts",
             Lang::SshConfig => "SSH Config",
             Lang::SshdConfig => "SSHD Config",
@@ -643,6 +651,7 @@ impl Lang {
             Lang::GitMailmap => "text.git.mailmap",
             Lang::GitLink => "text.git.link",
             Lang::Fstab => "source.fstab",
+            Lang::PkgConfig => "source.pkgconfig",
             Lang::KnownHosts => "text.known_hosts",
             Lang::SshConfig => "source.ssh_config",
             Lang::SshdConfig => "source.sshd_config",
@@ -695,6 +704,7 @@ impl Lang {
             Lang::Diff => crate::diff::KINDS,
             Lang::Ini => crate::ini::KINDS,
             Lang::Fstab => crate::fstab::KINDS,
+            Lang::PkgConfig => crate::pkgconfig::KINDS,
             Lang::CMakeCache => crate::cmake_cache::KINDS,
             Lang::KnownHosts => crate::known_hosts::KINDS,
             Lang::Json => &crate::json::KINDS,
@@ -893,9 +903,9 @@ impl Lang {
     /// (`SDLEntryTestActivity.java.cmake` Java, `AndroidManifest.xml.cmake` XML, `prefix.sh.cmake`
     /// bash, `local.properties.cmake`), read in it as bat reads a `.in` template: its `@VAR@` and
     /// `${VAR}` as the language reads them. A C or C++ name is [`Lang::header_template`]'s. Not
-    /// the set's other syntaxes: a `.cmake` named for one of those stays CMake (`.pc.cmake`, no
-    /// syntax; `.fish.cmake`), as do `x.toolchain.cmake`, `x.in.cmake` and the like. bat names
-    /// these CMake, by the last extension: a departure.
+    /// the set's other syntaxes: a `.cmake` named for one of those stays CMake (`.fish.cmake`),
+    /// as do `x.toolchain.cmake`, `x.in.cmake` and the like; pkg-config's `x.pc.cmake` is
+    /// pkg-config's since X-146. bat names these CMake, by the last extension: a departure.
     pub fn configured_file(name: &str) -> Option<Lang> {
         let (stem, ext) = name.rsplit_once('.')?;
         if !ext.eq_ignore_ascii_case("cmake") {
@@ -1622,7 +1632,10 @@ mod tests {
             ("AndroidManifest.xml.cmake", Some(Lang::Xml)),
             ("prefix.sh.cmake", Some(Lang::Bash)),
             ("local.properties.cmake", Some(Lang::Properties)),
-            ("x.pc.cmake", Some(Lang::CMake)),
+            ("x.pc.cmake", Some(Lang::PkgConfig)),
+            ("x.pc.cmake.in", Some(Lang::PkgConfig)),
+            ("x.pc.in", Some(Lang::PkgConfig)),
+            ("x.pc", Some(Lang::PkgConfig)),
             ("x.toolchain.cmake", Some(Lang::CMake)),
             ("lists.in.cmake", Some(Lang::CMake)),
             (".java.cmake", Some(Lang::CMake)),
