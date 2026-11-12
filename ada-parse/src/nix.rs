@@ -30,7 +30,7 @@
 //!   `builtins.readFile` a name);
 //! - a name is Nix's, `-` and `'` in it (bat's `\b` finds `import` in `import-cargo`).
 //!
-//! **Languages in strings** (bat reads both as a string's text):
+//! **Languages in strings** (bat reads each as a string's text):
 //! - **shell in a string** (X-147, X-152) that a derivation's phase or hook, NixOS's `script`
 //!   and their kin hold (a binding's name, [`shell_name`]), that a shell writer's call takes
 //!   (`writeShellScript`, `runCommand`, `writeShellApplication`'s set: [`W_SHELL`]), or that a
@@ -46,6 +46,19 @@
 //!   `''$`, `'''` and `''\x` are Nix's escapes, `\x` a `"…"` string's, cooked for bash. bash's
 //!   kinds from [`SH_BASE`], no string scope over them (a here-document's body's reading,
 //!   Ruby's).
+//! - **a writer's file in its language** (X-153): the string a writer writes to a file
+//!   (`writeText "a.json" ''…''`, `toFile`, `writeTextDir`, `writeScript "a.py"`: [`W_NAMED`],
+//!   the language its name's extension says as ada names a file, [`ext_slot`]; `writePython3`,
+//!   `writeLua`, `writeJS`, `writeHaskell`, `writeBabashka`, `writeGuile`, `writeRust`,
+//!   `writeCBin`: the writer's own, [`W_FILE`]; a name without an extension: its first line's
+//!   shebang's interpreter, [`shebang`]) on that language's scanner, through
+//!   [`crate::lex_runs`] (ada's own copy of each), read as a script's text is ([`Scan::view`],
+//!   its indentation stripped, an interpolation a placeholder, a `"…"` string's `\n` a line
+//!   break) where no shell string is open. Its kinds in a window each ([`FILES`], [`fold`]),
+//!   scoped by its language's base and its own; its state in bash's place by a map of the bytes
+//!   its language uses ([`FileLang::keep`]), the string a string's text from the next line on
+//!   where it doesn't fit. `.conf` names none (bat's nginx), nor a file in a script's
+//!   interpolation (bash's state holds that place).
 //! - **a regex in the string after `builtins.match` or `builtins.split`** (X-148, X-152;
 //!   `match` and `split` plain or selected from any set: `lib.match`, `with builtins; match`):
 //!   POSIX's extended syntax, Nix's `std::regex::extended`, on [`crate::regex`]'s ERE; in a
@@ -53,11 +66,11 @@
 //!   text as it is (`''\.''`), `${…}` an island. Its kinds from [`RE_BASE`] and
 //!   [`RE_IND_BASE`], under the string's scope.
 
-use crate::emit::{Rules, Run, Runs, Sink, Spans};
+use crate::emit::{Rule, Rules, Run, Runs, Sink, Spans};
 use crate::prim::{char_len, find_any, find_in};
 use crate::regex;
 use crate::words::{Words, text_len};
-use crate::{Out, Span, State};
+use crate::{Lang, Out, Span, State};
 
 /// The leaves: a token's scopes.
 static LEAVES: [&str; 39] = [
@@ -150,9 +163,241 @@ const RE_IND_BASE: u16 = RE_BASE + regex::KINDS as u16;
 /// Shell in a string (X-147): bash's kinds, its twins too, from here.
 const SH_BASE: u16 = 512;
 const _: () = assert!(RE_IND_BASE as usize + regex::KINDS <= SH_BASE as usize);
+/// A writer's file in its language (X-153): each language's kinds in a window of its own from
+/// here ([`FILES`]), past bash's and its twins.
+const FILE_BASE: u16 = SH_BASE + 2 * crate::bash::TWIN;
+
+/// A language a writer's file is read in (X-153), by its slot (one more than its index in
+/// [`FILES`]; 0 for none).
+struct FileLang {
+    lang: Lang,
+    /// Its kinds' window among Nix's, from [`FILE_BASES`]: a kind past it (or one its fold
+    /// drops, [`fold`]) is plain. bash's are in [`SH_BASE`]'s window, as a script's.
+    size: u16,
+    /// Its state's bytes kept in [`Ext::bash`], by position: `levels`' from 0, `withs`' from
+    /// [`W_`], `arg`'s [`A_LO`] and [`A_HI`] ([`NO`] for none). Every other byte zero, or its
+    /// reading stops ([`FL_LOST`]).
+    keep: [u8; SH_HELD],
+    /// Its depth kept too, up to 15, in bash's depth's place; else it is zero.
+    deep: bool,
+    /// The text an interpolation stands for, without file text in it.
+    ph: u8,
+}
+
+/// [`FileLang::keep`]'s none: a scratch byte of [`image`]'s, always 0 there.
+const NO: u8 = 31;
+// [`FileLang::keep`]'s positions past `levels`' 14: `withs`' from `W_`, `arg`'s two bytes.
+const W_: u8 = 14;
+const A_LO: u8 = 28;
+const A_HI: u8 = 29;
+
+/// [`FileLang::keep`] from a list.
+const fn keep(p: &[u8]) -> [u8; SH_HELD] {
+    let mut k = [NO; SH_HELD];
+    let mut i = 0;
+    while i < p.len() {
+        k[i] = p[i];
+        i += 1;
+    }
+    k
+}
+
+const fn file(lang: Lang, size: u16, keep: [u8; SH_HELD], deep: bool, ph: u8) -> FileLang {
+    FileLang {
+        lang,
+        size,
+        keep,
+        deep,
+        ph,
+    }
+}
+
+/// The languages a writer's file is read in, the smaller windows first (a theme's table by kind
+/// grows to the largest met). Each one's state kept as the census of its own files (`x153/foot`)
+/// uses it: SQL's levels, Python's levels and depth, PHP's frames, its layout's tag and its
+/// mode, C's and C++'s preprocessor withs.
+static FILES: [FileLang; 21] = [
+    file(
+        Lang::Bash,
+        0,
+        keep(&[0, 1, 2, 3, 4, 5, 6, 7, 8]),
+        true,
+        b'x',
+    ),
+    file(Lang::Json, 32, keep(&[0]), false, b'0'),
+    file(Lang::Toml, 256, keep(&[0, 1]), false, b'0'),
+    file(Lang::Ini, 64, keep(&[]), false, b'x'),
+    file(Lang::Properties, 64, keep(&[0]), false, b'x'),
+    file(Lang::Diff, 64, keep(&[]), false, b'x'),
+    file(Lang::Yaml, 512, keep(&[0, 1, 2, 3, 4, 5, 6]), false, b'x'),
+    file(Lang::Sql, 128, keep(&[0, 1, 2, 3, 4, 5, 6, 7]), false, b'x'),
+    file(
+        Lang::Lua,
+        128,
+        keep(&[0, 1, 2, 3, 4, 5, W_ + 4, W_ + 5, A_LO]),
+        true,
+        b'x',
+    ),
+    file(
+        Lang::Css,
+        512,
+        keep(&[0, 1, W_ + 2, W_ + 3, W_ + 4, W_ + 5]),
+        true,
+        b'x',
+    ),
+    file(
+        Lang::EmacsLisp,
+        512,
+        keep(&[0, 1, 2, 3, 4, 5, 6, 7, A_HI]),
+        true,
+        b'x',
+    ),
+    file(
+        Lang::Scheme,
+        512,
+        keep(&[0, 1, 2, 3, 4, 5, 6, 7, A_HI]),
+        true,
+        b'x',
+    ),
+    file(
+        Lang::Clojure,
+        512,
+        keep(&[0, 1, 2, 3, 4, 5, 6, A_LO, A_HI]),
+        true,
+        b'x',
+    ),
+    file(
+        Lang::C,
+        512,
+        keep(&[0, 1, W_ + 10, W_ + 11, W_ + 12, W_ + 13, A_LO, A_HI]),
+        true,
+        b'x',
+    ),
+    file(
+        Lang::Cpp,
+        512,
+        keep(&[0, 1, W_ + 10, W_ + 11, W_ + 12, W_ + 13, A_LO, A_HI]),
+        true,
+        b'x',
+    ),
+    file(
+        Lang::Haskell,
+        1024,
+        keep(&[0, 1, 2, 3, 4, 5, 6]),
+        false,
+        b'x',
+    ),
+    file(
+        Lang::Rust,
+        1024,
+        keep(&[0, 1, 2, 3, 4, 5, 6, A_LO, A_HI]),
+        true,
+        b'x',
+    ),
+    file(
+        Lang::JavaScript,
+        1024,
+        keep(&[0, 1, 2, 3, 4, 5, 6, A_LO, A_HI]),
+        true,
+        b'x',
+    ),
+    file(Lang::Xml, 4096, keep(&[0, 1, 2]), false, b'x'),
+    file(
+        Lang::Php,
+        4096,
+        keep(&[0, 1, 2, 3, 4, 5, W_ + 13, A_LO, A_HI]),
+        true,
+        b'x',
+    ),
+    file(
+        Lang::Python,
+        4096,
+        keep(&[0, 1, 2, 3, 4, 5, 6, 7, 8]),
+        true,
+        b'x',
+    ),
+];
+// Each language's slot, one more than its index in [`FILES`] (`file_slots_name_their_languages`).
+const BASH_SLOT: u8 = 1;
+const JSON_SLOT: u8 = 2;
+const TOML_SLOT: u8 = 3;
+const INI_SLOT: u8 = 4;
+const PROPS_SLOT: u8 = 5;
+const DIFF_SLOT: u8 = 6;
+const YAML_SLOT: u8 = 7;
+const SQL_SLOT: u8 = 8;
+const LUA_SLOT: u8 = 9;
+const CSS_SLOT: u8 = 10;
+const EL_SLOT: u8 = 11;
+const SCM_SLOT: u8 = 12;
+const CLJ_SLOT: u8 = 13;
+const C_SLOT: u8 = 14;
+const CPP_SLOT: u8 = 15;
+const HS_SLOT: u8 = 16;
+const RS_SLOT: u8 = 17;
+const JS_SLOT: u8 = 18;
+const XML_SLOT: u8 = 19;
+const PHP_SLOT: u8 = 20;
+const PY_SLOT: u8 = 21;
+/// A writer's file whose language its first line's shebang says (a script's or a file's
+/// named without an extension: `writeScript "update"`): decided there ([`shebang`]), a
+/// string's text where it names none.
+const SHEBANG: u8 = FL_SLOT;
+const _: () = assert!(FILES.len() < 32);
+
+/// Each file language's window's first kind, by its index in [`FILES`].
+static FILE_BASES: [u16; FILES.len()] = {
+    let mut t = [0; FILES.len()];
+    let mut at = FILE_BASE;
+    let mut i = 0;
+    while i < FILES.len() {
+        t[i] = at;
+        at += FILES[i].size;
+        i += 1;
+    }
+    t
+};
+
+/// A file's kind `kind`, in its language of slot `slot`, as Nix's: in its window, or `None`
+/// for plain. bash's are a script's.
+#[inline(always)]
+fn fold(slot: u8, kind: u16) -> Option<u16> {
+    let i = usize::from(slot - 1);
+    let f = &FILES[i];
+    let k = match f.lang {
+        Lang::Bash => return (kind < 2 * crate::bash::TWIN).then_some(SH_BASE + kind),
+        Lang::Python => crate::python::fold(kind)?,
+        Lang::Php => crate::php::fold(kind)?,
+        _ => kind,
+    };
+    (k < f.size).then_some(FILE_BASES[i] + k)
+}
+
+/// The language and its own kind a file's kind `kind` (at least [`FILE_BASE`]) is, [`fold`]'s
+/// inverse.
+fn unfold(kind: u16) -> Option<(Lang, u16)> {
+    let i = FILE_BASES.iter().rposition(|&b| b <= kind)?;
+    let (f, k) = (&FILES[i], kind - FILE_BASES[i]);
+    if k >= f.size {
+        return None;
+    }
+    Some(match f.lang {
+        Lang::Python => (f.lang, crate::python::unfold(k)),
+        Lang::Php => (f.lang, crate::php::unfold(k)),
+        l => (l, k),
+    })
+}
 
 /// The scopes under `source.nix` a kind carries, outermost first.
 pub fn scopes(kind: u16) -> Vec<&'static str> {
+    if kind >= FILE_BASE {
+        // a writer's file: its language's base and scopes, as in a file of its own
+        return unfold(kind).map_or_else(Vec::new, |(lang, k)| {
+            let mut out = vec![lang.base()];
+            out.extend(lang.scopes(k));
+            out
+        });
+    }
     if kind >= SH_BASE {
         return crate::bash::scopes(kind - SH_BASE);
     }
@@ -352,60 +597,79 @@ fn path_end(b: &[u8], mut q: usize) -> Option<usize> {
 
 // A word's flags, above its kind's byte ([`INFO`]).
 /// `let`: [`F_LET`] pushed.
-const W_LET: u16 = 1 << 8;
+const W_LET: u32 = 1 << 8;
 /// `in`: [`F_LET`] popped.
-const W_IN: u16 = 1 << 9;
+const W_IN: u32 = 1 << 9;
 /// `with` and `assert`: [`F_WITH`] pushed, to their `;`.
-const W_WITH: u16 = 1 << 10;
+const W_WITH: u32 = 1 << 10;
 /// `inherit`: [`F_INHERIT`] pushed, to its `;`.
-const W_INHERIT: u16 = 1 << 11;
+const W_INHERIT: u32 = 1 << 11;
 /// A keyword: never an attribute's name.
-const W_KEYWORD: u16 = 1 << 12;
+const W_KEYWORD: u32 = 1 << 12;
 /// What a word does past its kind.
-const W_ACTS: u16 = W_LET | W_IN | W_WITH | W_INHERIT;
+const W_ACTS: u32 = W_LET | W_IN | W_WITH | W_INHERIT;
 /// A name (no kind of its own) whose call takes a script: the strings after it at its level,
 /// to the `;` that ends its item, are shell ([`Ext::sh_mark`]), but its first argument, its
 /// name.
-const W_SHELL: u16 = 1 << 13;
+const W_SHELL: u32 = 1 << 13;
 /// `match` and `split`: a `"…"` string after it is a regex.
-const W_REGEX: u16 = 1 << 14;
+const W_REGEX: u32 = 1 << 14;
 /// A writer whose string isn't shell ([`text_writer`]).
-const W_TEXT: u16 = 1 << 15;
+const W_TEXT: u32 = 1 << 15;
+/// A writer whose file's language its first argument's name says, by its extension (X-153:
+/// `writeText "a.json"`, `toFile`, `writeScript "a.py"`).
+const W_NAMED: u32 = 1 << 16;
+/// A writer whose file's language it says: [`FILES`]' slot, from here (X-153: `writePython3`,
+/// `writeLua`).
+const FILE_SHIFT: u32 = 17;
+const W_FILE: u32 = 31 << FILE_SHIFT;
+/// What sends a name to [`Scan::call`].
+const W_CALLS: u32 = W_SHELL | W_REGEX | W_TEXT | W_NAMED | W_FILE;
 
-const WORD_LIST: &[(&[u8], u16)] = &[
-    (b"let", KEYWORD | W_LET | W_KEYWORD),
-    (b"in", KEYWORD | W_IN | W_KEYWORD),
-    (b"with", KEYWORD | W_WITH | W_KEYWORD),
-    (b"assert", KEYWORD | W_WITH | W_KEYWORD),
-    (b"inherit", INHERIT | W_INHERIT | W_KEYWORD),
-    (b"rec", KEYWORD | W_KEYWORD),
-    (b"if", KEYWORD | W_KEYWORD),
-    (b"then", KEYWORD | W_KEYWORD),
-    (b"else", KEYWORD | W_KEYWORD),
-    (b"or", OPERATOR | W_KEYWORD),
-    (b"true", CONSTANT),
-    (b"false", CONSTANT),
-    (b"null", CONSTANT),
-    (b"builtins", CONSTANT),
+/// A kind as a word's value.
+const fn k(kind: u16) -> u32 {
+    kind as u32
+}
+
+/// A writer of a file in the language of slot `slot`, its string no shell.
+const fn writes(slot: u8) -> u32 {
+    W_TEXT | (slot as u32) << FILE_SHIFT
+}
+
+const WORD_LIST: &[(&[u8], u32)] = &[
+    (b"let", k(KEYWORD) | W_LET | W_KEYWORD),
+    (b"in", k(KEYWORD) | W_IN | W_KEYWORD),
+    (b"with", k(KEYWORD) | W_WITH | W_KEYWORD),
+    (b"assert", k(KEYWORD) | W_WITH | W_KEYWORD),
+    (b"inherit", k(INHERIT) | W_INHERIT | W_KEYWORD),
+    (b"rec", k(KEYWORD) | W_KEYWORD),
+    (b"if", k(KEYWORD) | W_KEYWORD),
+    (b"then", k(KEYWORD) | W_KEYWORD),
+    (b"else", k(KEYWORD) | W_KEYWORD),
+    (b"or", k(OPERATOR) | W_KEYWORD),
+    (b"true", k(CONSTANT)),
+    (b"false", k(CONSTANT)),
+    (b"null", k(CONSTANT)),
+    (b"builtins", k(CONSTANT)),
     // the builtins in Nix's global scope
-    (b"scopedImport", SUPPORT),
-    (b"import", SUPPORT),
-    (b"isNull", SUPPORT),
-    (b"abort", SUPPORT),
-    (b"throw", SUPPORT),
-    (b"baseNameOf", SUPPORT),
-    (b"dirOf", SUPPORT),
-    (b"removeAttrs", SUPPORT),
-    (b"map", SUPPORT),
-    (b"toString", SUPPORT),
-    (b"derivationStrict", SUPPORT),
-    (b"derivation", SUPPORT),
-    (b"fetchTarball", SUPPORT),
-    (b"fetchGit", SUPPORT),
-    (b"fetchTree", SUPPORT),
-    (b"fetchMercurial", SUPPORT),
-    (b"fromTOML", SUPPORT),
-    (b"placeholder", SUPPORT),
+    (b"scopedImport", k(SUPPORT)),
+    (b"import", k(SUPPORT)),
+    (b"isNull", k(SUPPORT)),
+    (b"abort", k(SUPPORT)),
+    (b"throw", k(SUPPORT)),
+    (b"baseNameOf", k(SUPPORT)),
+    (b"dirOf", k(SUPPORT)),
+    (b"removeAttrs", k(SUPPORT)),
+    (b"map", k(SUPPORT)),
+    (b"toString", k(SUPPORT)),
+    (b"derivationStrict", k(SUPPORT)),
+    (b"derivation", k(SUPPORT)),
+    (b"fetchTarball", k(SUPPORT)),
+    (b"fetchGit", k(SUPPORT)),
+    (b"fetchTree", k(SUPPORT)),
+    (b"fetchMercurial", k(SUPPORT)),
+    (b"fromTOML", k(SUPPORT)),
+    (b"placeholder", k(SUPPORT)),
     // names: what their call's string is (X-147, X-148)
     (b"writeShellScript", W_SHELL),
     (b"writeShellScriptBin", W_SHELL),
@@ -422,14 +686,47 @@ const WORD_LIST: &[(&[u8], u16)] = &[
     (b"writeDashBin", W_SHELL),
     (b"match", W_REGEX),
     (b"split", W_REGEX),
-    // writers whose string is a file's or another language's (X-152)
-    (b"writeText", W_TEXT),
+    // writers whose string is a file's (X-152), in the language its name says (X-153)
+    (b"writeText", W_TEXT | W_NAMED),
     (b"writeTextFile", W_TEXT),
-    (b"writeTextDir", W_TEXT),
-    (b"toFile", W_TEXT),
-    (b"writePython3", W_TEXT),
-    (b"writePython3Bin", W_TEXT),
-    (b"writePyPy3Bin", W_TEXT),
+    (b"writeTextDir", W_TEXT | W_NAMED),
+    (b"toFile", W_TEXT | W_NAMED),
+    // a script, mostly shell with a shebang: a shell value's under a mark (X-152), else its
+    // name's language
+    (b"writeScript", W_NAMED),
+    (b"writeScriptBin", W_NAMED),
+    // nixpkgs' writers of another language's script (X-153)
+    (b"writePython3", writes(PY_SLOT)),
+    (b"writePython3Bin", writes(PY_SLOT)),
+    (b"writePyPy3", writes(PY_SLOT)),
+    (b"writePyPy3Bin", writes(PY_SLOT)),
+    (b"writePyPy2", writes(PY_SLOT)),
+    (b"writePyPy2Bin", writes(PY_SLOT)),
+    (b"writeLua", writes(LUA_SLOT)),
+    (b"writeLuaBin", writes(LUA_SLOT)),
+    (b"writeJS", writes(JS_SLOT)),
+    (b"writeJSBin", writes(JS_SLOT)),
+    (b"writeHaskell", writes(HS_SLOT)),
+    (b"writeHaskellBin", writes(HS_SLOT)),
+    (b"writeBabashka", writes(CLJ_SLOT)),
+    (b"writeBabashkaBin", writes(CLJ_SLOT)),
+    (b"writeGuile", writes(SCM_SLOT)),
+    (b"writeGuileBin", writes(SCM_SLOT)),
+    (b"writeRust", writes(RS_SLOT)),
+    (b"writeRustBin", writes(RS_SLOT)),
+    (b"writeCBin", writes(C_SLOT)),
+    // and of languages ada-parse doesn't read: no shell either
+    (b"writeRuby", W_TEXT),
+    (b"writeRubyBin", W_TEXT),
+    (b"writePerl", W_TEXT),
+    (b"writePerlBin", W_TEXT),
+    (b"writeNu", W_TEXT),
+    (b"writeNuBin", W_TEXT),
+    (b"writeFish", W_TEXT),
+    (b"writeFishBin", W_TEXT),
+    (b"writeNim", W_TEXT),
+    (b"writeNimBin", W_TEXT),
+    (b"writeFSharp", W_TEXT),
 ];
 
 const NW: usize = WORD_LIST.len();
@@ -442,10 +739,10 @@ static WORD_TEXT: [&[u8]; NW] = {
     }
     t
 };
-static WORDS: Words<128, NW, { text_len(&WORD_TEXT) }> = Words::new(&WORD_TEXT);
+static WORDS: Words<256, NW, { text_len(&WORD_TEXT) }> = Words::new(&WORD_TEXT);
 /// What each word is by id: its kind in the low byte, its flags above.
-static INFO: [u16; NW + 1] = {
-    let mut t = [0u16; NW + 1];
+static INFO: [u32; NW + 1] = {
+    let mut t = [0u32; NW + 1];
     let mut i = 0;
     while i < NW {
         t[i + 1] = WORD_LIST[i].1;
@@ -485,20 +782,28 @@ const F_PATH: u8 = 13;
 /// `...` at a line's end in formals: the next line's blanks before its `}` or `,` are the
 /// ellipsis's, as bat's meta scope over them.
 const F_ELLIPSIS: u8 = 14;
-/// A `''…''` string whose text is shell (X-147).
+/// A string whose text is another language's: shell (X-147), or a writer's file (X-153,
+/// [`Ext::fl_mark`]).
 const F_SH: u8 = 15;
+
+/// The levels a writer's file's mark and a regex's string are kept at (X-153): below it, so the
+/// state's byte for either keeps [`RE_FILE`] above it.
+const MARK_LEVELS: u8 = 127;
 
 /// How many of bash's levels the state keeps under a shell string (the bottom ones dropped
 /// past them, as bash's own drops its past 28).
 const SH_HELD: usize = 9;
 
-/// What the scan carries for the languages in strings (X-147, X-148, X-152), in the state's
-/// spare bytes: `withs[2]` the shell mark, `withs[3]` the regex string's level, `withs[4]` the
-/// string's indentation (its low seven bits) and [`IND_DQ`], `withs[5..14]` bash's levels;
-/// `arg` the regex's state (its low seven bits), [`EXT_LIVE`], bash's depth (bits 8 to 11),
-/// [`EXT_CALL`], the hold above the mark (bits 13 to 15). All zero but under such a string or
-/// a mark, so the state is as before elsewhere.
+/// What the scan carries for the languages in strings (X-147, X-148, X-152, X-153), in the
+/// state's spare bytes: `withs[2]` the shell mark, `withs[3]` the regex string's level or a
+/// writer's file's mark with [`RE_FILE`] (never both: no regex opens under a file's mark, nor a
+/// file's under a regex's string), `withs[4]` the string's indentation (its low seven bits) and
+/// [`IND_DQ`], `withs[5..14]` bash's levels or a file's state; `arg` the regex's state or the
+/// file's language (its low seven bits), [`EXT_LIVE`], bash's depth or a file's (bits 8 to
+/// 11), [`EXT_CALL`], the hold above the mark (bits 13 to 15). All zero but under such a string
+/// or a mark, so the state is as before elsewhere.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[repr(C)]
 struct Ext {
     /// One more than the level a shell value starts at: a `''…''` string opened at it or above
     /// is shell (a binding whose name holds a script: its value, `+`-joined strings and
@@ -507,6 +812,11 @@ struct Ext {
     /// at it only ([`Scan::dq_shell_here`]); to the `;` at that level or a closer below it.
     /// bash's state is the value's: its strings one script. 0 for none.
     sh_mark: u8,
+    /// One more than the level of a writer's call whose string is a file in a language ada
+    /// reads (X-153: `writeText "a.json"`, `writePython3`), the string at that level after its
+    /// name its text ([`Scan::file_here`]); to the `;` at that level or a closer below it,
+    /// while no shell string is open. 0 for none. Beside [`Ext::sh_mark`]: [`Ext::marked`].
+    fl_mark: u8,
     /// The mark is a call's: a string at its level only, not one in its arguments' sets
     /// (`runCommand "x" { a = writeText "a" ''…''; } ''…''`).
     sh_call: bool,
@@ -529,8 +839,13 @@ struct Ext {
     /// One byte, as the state keeps it.
     sh_ind: u8,
     /// bash's state under the open shell string: its levels held, bottom first, and how many.
+    /// Under a writer's file, the file's language's state ([`FileLang::keep`]) and its depth.
     bash_depth: u8,
     bash: [u8; SH_HELD],
+    /// The file's language, its slot in [`FILES`], and [`FL_OPEN`] once its string is: then
+    /// that string's frame is [`F_SH`] (no other is open below it, and none opens in its
+    /// interpolations), its state in [`Ext::bash`].
+    fl_lang: u8,
 }
 
 impl Ext {
@@ -550,6 +865,18 @@ impl Ext {
     fn dq(&self) -> bool {
         self.sh_ind & IND_DQ != 0
     }
+
+    /// A shell mark or a writer's file's is set: one load of the two bytes.
+    #[inline(always)]
+    fn marked(&self) -> bool {
+        u16::from_ne_bytes([self.sh_mark, self.fl_mark]) != 0
+    }
+
+    /// A writer's file's string is open.
+    #[inline(always)]
+    fn file_open(&self) -> bool {
+        self.fl_lang & FL_OPEN != 0
+    }
 }
 
 /// `arg`'s bit for a state that holds an [`Ext`].
@@ -560,11 +887,19 @@ const EXT_CALL: u16 = 0x1000;
 const EXT_HOLD_SHIFT: u16 = 13;
 /// [`Ext::sh_ind`]'s bit for a `"…"` shell string, above the indentation.
 const IND_DQ: u8 = 0x80;
+/// [`Ext::fl_lang`]'s bit for the file's string open, above its slot.
+const FL_OPEN: u8 = 0x20;
+/// [`Ext::fl_lang`]'s bit for a file whose state didn't fit on a line ([`Scan::file_view`]).
+const FL_LOST: u8 = 0x40;
+const FL_SLOT: u8 = 0x1f;
+/// `withs[3]`'s bit for a writer's file's mark in the regex's place ([`Ext`]).
+const RE_FILE: u8 = 0x80;
 /// The most [`Ext::sh_ind`]'s indentation keeps: one more than an indentation of 126.
 const INDENT_MAX: usize = 127;
 const _: () = assert!(SH_HELD < 16);
 
-/// A line's shell text, as bash reads it ([`Scan::view`]).
+/// A line's shell text, as bash reads it, or a writer's file's, as its language does
+/// ([`Scan::view`]).
 #[derive(Default)]
 struct ShellView {
     /// The script's text: the line's shell text from where the scan meets it, Nix's escapes
@@ -575,8 +910,18 @@ struct ShellView {
     segs: Vec<(u32, u32, u32)>,
     /// Open interpolations read from shell text: the level and where `cooked` stood.
     islands: Vec<(u32, u32)>,
-    /// bash's spans on `cooked`.
+    /// bash's spans on `cooked`; or the file's language's, as Nix's kinds ([`fold`]) less
+    /// [`SH_BASE`], which each is written with.
     bash: Vec<Span>,
+    /// A writer's file's reading ([`read_shell`]): the text an interpolation stands for, 0 for a
+    /// script's.
+    file: u8,
+    /// A file's language's spans and runs as [`crate::lex_runs`] writes them.
+    spans: Vec<Span>,
+    runs: Vec<Run>,
+    /// Where a file's `"…"` string's `\n` breaks its cooked text: each piece a line to its
+    /// language.
+    breaks: Vec<u32>,
 }
 
 std::thread_local! {
@@ -759,7 +1104,16 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             sh_ind: state.withs[4],
             bash_depth: (state.arg >> 8 & 15) as u8,
             bash,
+            fl_mark: 0,
+            fl_lang: 0,
         };
+        // a writer's file's mark in the regex's place
+        if state.withs[3] & RE_FILE != 0 {
+            self.ext.fl_mark = state.withs[3] & !RE_FILE;
+            self.ext.fl_lang = self.ext.re_st;
+            self.ext.re_at = 0;
+            self.ext.re_st = 0;
+        }
     }
 
     /// The state the scan's last line left: every field as it is, so a block lexes as its
@@ -773,7 +1127,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         s.withs[1] = w[15];
         s.depth = self.depth;
         let x = &self.ext;
-        if x.sh_mark | x.re_at | x.sh_ind | x.bash_depth != 0 {
+        if x.sh_mark | x.re_at | x.sh_ind | x.bash_depth | x.fl_mark != 0 {
             self.save_ext(&mut s);
         }
         s
@@ -792,6 +1146,10 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             | u16::from(x.bash_depth) << 8
             | if x.sh_call { EXT_CALL } else { 0 }
             | u16::from(x.sh_hold.saturating_sub(x.sh_mark) & 7) << EXT_HOLD_SHIFT;
+        if x.fl_mark != 0 {
+            s.withs[3] = x.fl_mark | RE_FILE;
+            s.arg = s.arg & !0x7f | u16::from(x.fl_lang & 0x7f);
+        }
     }
 
     /// `b`, a block's next line, lexed on this scan, its sink closed; the scan's line an empty
@@ -893,18 +1251,33 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     if !SOL && self.start {
                         self.lead(p);
                     }
-                    if !SOL && self.ext.sh_mark != 0 && self.dq_shell_here(p) {
-                        p = self.sh_dq_open(p);
-                        continue;
+                    if !SOL && self.ext.marked() {
+                        // a writer's file's mark set: its string, or a shell string beside it
+                        if self.ext.fl_mark != 0 {
+                            if let Some(r) = self.dq_marked(p) {
+                                p = r;
+                                continue;
+                            }
+                        } else if self.dq_shell_here(p) {
+                            p = self.sh_dq_open(p);
+                            continue;
+                        }
                     }
                     self.put_hot(p, p + 1, DQ_BEGIN);
                     self.push(F_DQ);
                     self.dq(p + 1)
                 }
                 C_SQUOTE if b.get(p + 1) == Some(&b'\'') => {
-                    if !SOL && self.ext.sh_mark != 0 && self.shell_here() {
-                        p = self.sh_open(p);
-                        continue;
+                    if !SOL && self.ext.marked() {
+                        if self.ext.fl_mark != 0 {
+                            if let Some(r) = self.sq_marked(p) {
+                                p = r;
+                                continue;
+                            }
+                        } else if self.shell_here() {
+                            p = self.sh_open(p);
+                            continue;
+                        }
                     }
                     self.put_hot(p, p + 2, IND_BEGIN);
                     self.push(F_IND);
@@ -989,7 +1362,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// closed with the bracket).
     #[inline(always)]
     fn unmark(&mut self) {
-        if self.ext.sh_mark != 0 {
+        if self.ext.marked() {
             self.unmark_on();
         }
     }
@@ -998,6 +1371,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(never)]
     fn unmark_on(&mut self) {
         let d1 = self.depth.saturating_add(1);
+        if self.ext.fl_mark > d1 {
+            self.clear_file();
+        }
         if self.ext.sh_mark > d1 {
             self.clear_mark();
         } else if self.ext.sh_hold > d1 {
@@ -1010,6 +1386,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     #[inline(never)]
     fn semi_mark(&mut self) {
         let d1 = self.depth.saturating_add(1);
+        if self.ext.fl_mark == d1 {
+            self.clear_file();
+        }
         if self.ext.sh_hold == d1 {
             self.ext.sh_hold = 0;
         } else if self.ext.sh_mark == d1 {
@@ -1046,15 +1425,30 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
         }
     }
 
-    /// The shell value ended: its mark and bash's state dropped.
+    /// The shell value ended: its mark and bash's state dropped (but a writer's file's, open
+    /// in it).
     #[cold]
     #[inline(never)]
     fn clear_mark(&mut self) {
         self.ext.sh_mark = 0;
         self.ext.sh_call = false;
         self.ext.sh_hold = 0;
-        self.ext.bash_depth = 0;
-        self.ext.bash = [0; SH_HELD];
+        if !self.ext.file_open() {
+            self.ext.bash_depth = 0;
+            self.ext.bash = [0; SH_HELD];
+        }
+    }
+
+    /// A writer's file's mark ended, or its string closed: its language and state dropped.
+    #[cold]
+    #[inline(never)]
+    fn clear_file(&mut self) {
+        if self.ext.file_open() {
+            self.ext.bash_depth = 0;
+            self.ext.bash = [0; SH_HELD];
+        }
+        self.ext.fl_mark = 0;
+        self.ext.fl_lang = 0;
     }
 
     /// A shell mark at the level on top, a call's or a binding's value's, unless one is set (a
@@ -1063,13 +1457,97 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// bash's state fresh.
     #[inline(always)]
     fn mark_shell(&mut self, call: bool) {
-        if self.ext.sh_mark == 0 || (self.ext.sh_call && !call) {
+        if (self.ext.sh_mark == 0 || (self.ext.sh_call && !call)) && !self.ext.file_open() {
             self.ext.sh_mark = self.depth.saturating_add(1);
             self.ext.sh_call = call;
             self.ext.sh_hold = 0;
             self.ext.bash_depth = 0;
             self.ext.bash = [0; SH_HELD];
         }
+    }
+
+    /// A `"` at `p`, a writer's file's mark set: its string opened, or a shell string (none
+    /// while a file's is open), or `None` for a string's.
+    #[cold]
+    #[inline(never)]
+    fn dq_marked(&mut self, p: usize) -> Option<usize> {
+        if self.file_here(p) {
+            self.ext.fl_lang |= FL_OPEN;
+            return Some(self.sh_dq_open(p));
+        }
+        (self.ext.sh_mark != 0 && !self.ext.file_open() && self.dq_shell_here(p))
+            .then(|| self.sh_dq_open(p))
+    }
+
+    /// `''` at `p`, a writer's file's mark set: as [`Scan::dq_marked`].
+    #[cold]
+    #[inline(never)]
+    fn sq_marked(&mut self, p: usize) -> Option<usize> {
+        if self.file_here(p) {
+            self.ext.fl_lang |= FL_OPEN;
+            return Some(self.sh_open(p));
+        }
+        (self.ext.sh_mark != 0 && !self.ext.file_open() && self.shell_here())
+            .then(|| self.sh_open(p))
+    }
+
+    /// Whether a string at `p` is a writer's file's (X-153): its mark's, at its call's level, not
+    /// the writer's first argument (its name), no shell string open, nor bash's state from the
+    /// value's strings before (the file's takes its place).
+    #[inline(always)]
+    fn file_here(&self, p: usize) -> bool {
+        let x = &self.ext;
+        x.fl_mark != 0
+            && !x.file_open()
+            && self.depth == x.fl_mark - 1
+            && x.bash_depth == 0
+            && x.sh_ind == 0
+            && !writer_before(self.b, p)
+            && !self.has_sh()
+    }
+
+    /// After a writer's name `w` ending at `e` whose file is in a language ada reads: its mark
+    /// set, the language its first argument's name says (`writeText "a.json"`) or the writer
+    /// does (`writePython3`). None where a file's mark is set or a shell string open, nor for a
+    /// script named as a shell's under a shell mark (X-152's reading: the value's script).
+    #[cold]
+    #[inline(never)]
+    fn file_call(&mut self, e: usize, w: u32) {
+        if self.ext.fl_mark | self.ext.re_at != 0 || self.depth >= MARK_LEVELS || self.has_sh() {
+            return;
+        }
+        let slot = if w & W_NAMED != 0 {
+            named(self.b, e)
+        } else {
+            (w >> FILE_SHIFT) as u8 & FL_SLOT
+        };
+        if slot == 0 || (matches!(slot, BASH_SLOT | SHEBANG) && self.ext.sh_mark != 0) {
+            return;
+        }
+        self.ext.fl_mark = self.depth + 1;
+        self.ext.fl_lang = slot;
+    }
+
+    /// A writer's file whose first line names no language ([`SHEBANG`]), or whose state didn't
+    /// fit ([`FL_LOST`]): its string, on top, a string's, the line's text from `p` written as its
+    /// by [`Scan::shell_text`] (one span of the string's kind over it), the next lines' as
+    /// [`Scan::ind`] or [`Scan::dq`] read them.
+    fn not_a_file(&mut self, b: &[u8], p: usize, v: &mut ShellView) {
+        let (frame, kind) = if self.ext.dq() {
+            (F_DQ, DQ)
+        } else {
+            (F_IND, IND)
+        };
+        self.set_top(frame);
+        self.ext.sh_ind = 0;
+        self.clear_file();
+        let n = (b.len() - p.min(b.len())) as u32;
+        v.segs.push((0, p as u32, n));
+        v.bash.push(Span {
+            start: 0,
+            end: n,
+            kind: kind.wrapping_sub(SH_BASE),
+        });
     }
 
     /// Whether a `''` opened here is shell, a mark set: at the mark's level or above (a call's
@@ -1143,7 +1621,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             self.put(p, e, ATTR_SINGLE);
             return e;
         }
-        let kind = w & 0xff;
+        let kind = (w & 0xff) as u16;
         if kind != 0 {
             self.put_hot(p, e, kind);
             if w & W_ACTS != 0 {
@@ -1167,7 +1645,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// no shell under a mark ([`W_TEXT`]): a shell mark set, a regex's string opened, or a hold.
     #[cold]
     #[inline(never)]
-    fn call(&mut self, e: usize, w: u16) -> usize {
+    fn call(&mut self, e: usize, w: u32) -> usize {
         let b = self.b;
         if w & W_SHELL != 0 {
             self.mark_shell(true);
@@ -1179,6 +1657,14 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 // file: `setupHook = writeText "x" ''…''` holds a script still)
                 self.hold(true);
             }
+            if w & (W_NAMED | W_FILE) != 0 {
+                self.file_call(e, w);
+            }
+            return e;
+        }
+        // none under a writer's file's mark, which takes the regex's place in the state, nor past
+        // the levels its byte keeps
+        if self.ext.fl_mark != 0 || self.depth >= MARK_LEVELS {
             return e;
         }
         let q = blanks(b, e);
@@ -1203,7 +1689,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// A keyword's frame: `let`'s pushed, `in`'s popped, `with`'s, `assert`'s and `inherit`'s
     /// pushed to their `;`.
     #[inline(never)]
-    fn keyword(&mut self, w: u16) {
+    fn keyword(&mut self, w: u32) {
         if w & W_LET != 0 {
             self.push(F_LET);
             self.start = true;
@@ -1222,7 +1708,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     /// A name `b[p..e]` at an item's start in an attribute set, a function's formals or `let`:
     /// a binding's attribute path, or a formal; `None` for an expression's name.
     #[inline(always)]
-    fn at_start(&mut self, p: usize, e: usize, w: u16, top: u8) -> Option<usize> {
+    fn at_start(&mut self, p: usize, e: usize, w: u32, top: u8) -> Option<usize> {
         let b = self.b;
         let q = blanks(b, e);
         // a formal is a name; at a line's end, in formals or a brace's first
@@ -1445,11 +1931,11 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             if !SOL
                 && matches!(
                     (b[q], e - q),
-                    (b'm' | b's', 5) | (b'w' | b'r', 9..) | (b't', 6)
+                    (b'm' | b's', 5) | (b'w', 7..) | (b'r', 9..) | (b't', 6)
                 )
             {
                 let w = WORDS.value(&b[q..e], &INFO);
-                if w & (W_SHELL | W_REGEX | W_TEXT) != 0 {
+                if w & W_CALLS != 0 {
                     return self.call(e, w);
                 }
             }
@@ -1553,7 +2039,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                 }
                 self.start = !SOL;
                 // a formal's default ended: a mark set in it (`runCommand ? pkgs.runCommand,`)
-                if self.ext.sh_mark != 0 {
+                if self.ext.marked() {
                     self.semi_mark();
                 }
                 (p + 1, OPERATOR)
@@ -1606,8 +2092,8 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             _ => {
                 self.put_hot(p, p + 1, TERMINATOR);
                 self.start = true;
-                // a binding's end: its shell mark's
-                if self.ext.sh_mark != 0 {
+                // a binding's end: its shell mark's, or a writer's file's
+                if self.ext.marked() {
                     self.semi_mark();
                 }
             }
@@ -1828,6 +2314,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
     fn end_string(&mut self) {
         self.ext.sh_ind = 0;
         self.ln.view = false;
+        if self.ext.file_open() {
+            self.clear_file();
+        }
     }
 
     /// Whether the shell string on top is a `"…"` string: the outermost, open below no other.
@@ -1969,7 +2458,7 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     break;
                 }
                 if rz > s {
-                    self.put(ra.max(s), rz.min(e), SH_BASE + sp[i].kind);
+                    self.put(ra.max(s), rz.min(e), SH_BASE.wrapping_add(sp[i].kind));
                 }
                 if rz > e {
                     break;
@@ -2028,6 +2517,9 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
                     from = sp.min(usize::from(self.ext.indent().saturating_sub(1)));
                 }
             }
+            if self.ext.file_open() {
+                return self.file_view(b, p, from, lvl, v);
+            }
             read_shell(b, from, self.frames, lvl + 1, dq, v);
             let mut st = State {
                 depth: self.ext.bash_depth,
@@ -2049,6 +2541,103 @@ impl<'b, 'c, K: Sink> Scan<'b, 'c, K> {
             }
             self.ext.bash_depth = (held - from) as u8;
         });
+    }
+
+    /// [`Scan::view`]'s reading of a writer's file's line from `from`, the file's string at
+    /// level `lvl` from the top: its text read as [`read_shell`] reads a script's (no string
+    /// spliced from an interpolation: one is the file's text only where the writer's caller
+    /// splices it, not known here), lexed by its language from its state in [`Ext::bash`]
+    /// ([`unpack`]), its spans as Nix's kinds ([`fold`]); the state kept again, or the
+    /// language's reading lost where it doesn't fit ([`pack`]): a string's text from the next
+    /// line on ([`FL_LOST`]). Where it turns out none, the line's text from `p` the string's
+    /// ([`Scan::not_a_file`]).
+    #[cold]
+    #[inline(never)]
+    fn file_view(&mut self, b: &[u8], p: usize, from: usize, lvl: usize, v: &mut ShellView) {
+        if self.ext.fl_lang & FL_LOST != 0 {
+            return self.not_a_file(b, p, v);
+        }
+        let mut slot = self.ext.fl_lang & FL_SLOT;
+        let t = b[from.min(b.len())..].trim_ascii_start();
+        if slot == SHEBANG
+            || (slot == BASH_SLOT
+                && t.starts_with(b"#!nix-shell")
+                && self.ext.bash_depth == 0
+                && self.ext.bash == [0; SH_HELD])
+        {
+            // the language its shebang says, on its first line with text (or a `nix-shell`
+            // shebang's `-i` on the next one, its state fresh still)
+            if t.is_empty() {
+                return;
+            }
+            match shebang(t) {
+                0 if slot == SHEBANG => return self.not_a_file(b, p, v),
+                0 => {}
+                s => {
+                    slot = s;
+                    self.ext.fl_lang = FL_OPEN | s;
+                }
+            }
+        }
+        let Some(f) = FILES.get(usize::from(slot).wrapping_sub(1)) else {
+            return;
+        };
+        v.file = f.ph;
+        v.breaks.clear();
+        read_shell(b, from, self.frames, lvl + 1, self.ext.dq(), v);
+        // a script's reading next ([`Scan::view`])
+        v.file = 0;
+        let mut st = unpack(f, &self.ext.bash, self.ext.bash_depth);
+        let ShellView {
+            cooked,
+            bash: out,
+            spans,
+            runs,
+            breaks,
+            ..
+        } = v;
+        // a line a piece, `"…"`'s `\n` between them
+        let mut a = 0;
+        for i in 0..=breaks.len() {
+            let z = breaks.get(i).map_or(cooked.len(), |&z| z as usize);
+            let piece = &cooked[a..z];
+            let n = out.len();
+            if f.lang == Lang::Bash {
+                crate::bash::line_spans(piece, &mut st, &mut Out::new(out));
+            } else {
+                // the cooked text is the line's characters cut at ASCII bytes, and ASCII
+                let Ok(text) = std::str::from_utf8(piece) else {
+                    return;
+                };
+                runs.clear();
+                crate::lex_runs(f.lang, text, &mut st, spans, &mut FileKinds, runs);
+                let mut at = 0;
+                for r in runs.iter() {
+                    if r.rule.0 != Rule::NONE
+                        && let Some(kind) = fold(slot, r.rule.0)
+                    {
+                        out.push(Span {
+                            start: at,
+                            end: r.end,
+                            kind: kind.wrapping_sub(SH_BASE),
+                        });
+                    }
+                    at = r.end;
+                }
+            }
+            for sp in &mut out[n..] {
+                sp.start += a as u32;
+                sp.end += a as u32;
+            }
+            a = z;
+        }
+        match pack(f, &st) {
+            Some((bytes, depth)) => {
+                self.ext.bash = bytes;
+                self.ext.bash_depth = depth;
+            }
+            None => self.ext.fl_lang |= FL_LOST,
+        }
     }
 
     /// A regex's text in a `"…"` string from `p` (its frame on top, [`Ext::re_at`]), on
@@ -2339,7 +2928,7 @@ fn shell_name(w: &[u8]) -> bool {
 /// shebang first. Its value is a store path, so a string in it isn't the script's even in a
 /// shell string's interpolation.
 #[inline(always)]
-fn text_writer(b: &[u8], e: usize, w: u16) -> bool {
+fn text_writer(b: &[u8], e: usize, w: u32) -> bool {
     if w & W_TEXT == 0 {
         return false;
     }
@@ -2352,6 +2941,275 @@ fn text_writer(b: &[u8], e: usize, w: u16) -> bool {
         Some(b'{' | b'(') => true,
         _ => false,
     }
+}
+
+/// Rules whose rule for a kind is the kind, for a writer's file's language's runs on
+/// [`crate::lex_runs`]: its runs are its spans ([`Scan::file_view`]). bash's own (`bash::Kinds`)
+/// stays its scan's alone.
+struct FileKinds;
+
+impl Rules for FileKinds {
+    fn table(&self) -> &[Rule] {
+        &[]
+    }
+
+    fn resolve(&mut self, kind: u16) -> Rule {
+        Rule(kind)
+    }
+}
+
+/// A state's bytes as [`FileLang::keep`] names them: `levels`, `withs`, `arg`, and [`NO`]'s
+/// scratch byte (0).
+#[inline(always)]
+fn image(s: &State) -> [u8; 32] {
+    let mut img = [0; 32];
+    img[..14].copy_from_slice(&s.levels);
+    img[14..28].copy_from_slice(&s.withs);
+    img[28..30].copy_from_slice(&s.arg.to_le_bytes());
+    img
+}
+
+/// A writer's file's state in language `f` from the bytes [`FileLang::keep`] names and its
+/// depth, the rest zero.
+fn unpack(f: &FileLang, bytes: &[u8; SH_HELD], depth: u8) -> State {
+    let mut img = [0u8; 32];
+    for (&p, &v) in f.keep.iter().zip(bytes) {
+        img[usize::from(p & 31)] = v;
+    }
+    let mut s = State::default();
+    s.levels.copy_from_slice(&img[..14]);
+    s.withs.copy_from_slice(&img[14..28]);
+    s.arg = u16::from_le_bytes([img[28], img[29]]);
+    s.depth = if f.deep { depth } else { 0 };
+    s
+}
+
+/// A writer's file's state `s` in language `f`, as [`Ext::bash`] and its depth keep it: the
+/// bytes [`FileLang::keep`] names; `None` where another is set or its depth doesn't fit.
+fn pack(f: &FileLang, s: &State) -> Option<([u8; SH_HELD], u8)> {
+    let mut img = image(s);
+    let mut out = [0; SH_HELD];
+    for (o, &p) in out.iter_mut().zip(&f.keep) {
+        *o = std::mem::take(&mut img[usize::from(p & 31)]);
+    }
+    let depth = if f.deep { s.depth } else { 0 };
+    (img == [0; 32] && depth == s.depth && depth < 16).then_some((out, depth))
+}
+
+/// The slot in [`FILES`] of the language a shebang `t` (a line's text from its `#!`) names by
+/// its interpreter: the word after `#!` (after `env` and its flags), its last path segment or
+/// an interpolation's last name (`${pkgs.bash}/bin/bash`, `${runtimeShell}`,
+/// `${python3.interpreter}`), `nix-shell`'s `-i` (bash where none is on the line: its next
+/// `#!nix-shell` line may name another); 0 for none.
+fn shebang(t: &[u8]) -> u8 {
+    let Some(r) = t.strip_prefix(b"#!") else {
+        return 0;
+    };
+    let mut words = r
+        // a `"…"` string's first line ends at its `\n`
+        .split(|&c| matches!(c, b' ' | b'\t' | b'\\'))
+        .filter(|w| !w.is_empty());
+    let Some(mut w) = words.next() else {
+        return 0;
+    };
+    let last = |w: &[u8]| -> usize { w.iter().rposition(|&c| c == b'/').map_or(0, |i| i + 1) };
+    if &w[last(w)..] == b"env" {
+        let Some(x) = words.find(|w| !w.starts_with(b"-")) else {
+            return 0;
+        };
+        w = x;
+    }
+    if w.ends_with(b"nix-shell") {
+        return match words.skip_while(|&w| w != b"-i").nth(1) {
+            Some(i) => interpreter(i),
+            None => BASH_SLOT,
+        };
+    }
+    interpreter(w)
+}
+
+/// The slot of the language an interpreter's path or name `w` is (a shebang's).
+fn interpreter(w: &[u8]) -> u8 {
+    let python = w.windows(6).any(|x| x == b"python");
+    // the path's last segment, or its interpolation's last name
+    let w = w.trim_ascii_end();
+    let w = w.strip_suffix(b"}").unwrap_or(w);
+    let i = w
+        .iter()
+        .rposition(|&c| matches!(c, b'/' | b'.' | b'{'))
+        .map_or(0, |i| i + 1);
+    let name = &w[i..];
+    let shell = matches!(
+        name,
+        b"bash"
+            | b"sh"
+            | b"ash"
+            | b"dash"
+            | b"ksh"
+            | b"mksh"
+            | b"runtimeShell"
+            | b"shell"
+            | b"bashInteractive"
+    );
+    if shell {
+        BASH_SLOT
+    } else if python || name.starts_with(b"pypy") {
+        PY_SLOT
+    } else if name.starts_with(b"lua") {
+        LUA_SLOT
+    } else if matches!(name, b"node" | b"nodejs") {
+        JS_SLOT
+    } else if name == b"php" {
+        PHP_SLOT
+    } else {
+        0
+    }
+}
+
+/// The slot in [`FILES`] of the language a writer's first argument after `e` names, a `"…"`
+/// string on the line, by its last path segment as ada names a file (`"a.json"`,
+/// `"share/x/y.toml"`, `"${name}.py"`); [`SHEBANG`] for a name without an extension (or one
+/// not written out: `name`, `(n + "-x")`); 0 for none. `.conf` names none: bat's set gives it
+/// nginx's, but a writer's `.conf` is mostly another program's (Nix's, systemd's, fontconfig's
+/// XML).
+fn named(b: &[u8], e: usize) -> u8 {
+    let q = blanks(b, e);
+    match b.get(q) {
+        Some(b'"') => {}
+        Some(&c) if c == b'(' || CLASS[usize::from(c)] == C_NAME => return SHEBANG,
+        _ => return 0,
+    }
+    let Some(r) = dq_end(b, q + 1) else {
+        return 0;
+    };
+    let name = &b[q + 1..r - 1];
+    let seg = name.rsplit(|&c| c == b'/').next().unwrap_or(name);
+    match seg.iter().rposition(|&c| c == b'.') {
+        Some(i) if i > 0 => ext_slot(&seg[i + 1..]),
+        _ => SHEBANG,
+    }
+}
+
+/// The extensions ada names a file of in [`FILES`]' languages (`EXTENSIONS` in `lang.rs`;
+/// `ext_slots_name_as_ada_does`), by slot.
+const EXT_LIST: &[(&[u8], u8)] = &[
+    (b"sh", BASH_SLOT),
+    (b"bash", BASH_SLOT),
+    (b"zsh", BASH_SLOT),
+    (b"ash", BASH_SLOT),
+    (b"json", JSON_SLOT),
+    (b"ipynb", JSON_SLOT),
+    (b"toml", TOML_SLOT),
+    (b"tml", TOML_SLOT),
+    (b"ini", INI_SLOT),
+    (b"inf", INI_SLOT),
+    (b"reg", INI_SLOT),
+    (b"lng", INI_SLOT),
+    (b"cfg", INI_SLOT),
+    (b"desktop", INI_SLOT),
+    (b"url", INI_SLOT),
+    (b"properties", PROPS_SLOT),
+    (b"diff", DIFF_SLOT),
+    (b"patch", DIFF_SLOT),
+    (b"yaml", YAML_SLOT),
+    (b"yml", YAML_SLOT),
+    (b"sql", SQL_SLOT),
+    (b"ddl", SQL_SLOT),
+    (b"dml", SQL_SLOT),
+    (b"lua", LUA_SLOT),
+    (b"css", CSS_SLOT),
+    (b"el", EL_SLOT),
+    (b"scm", SCM_SLOT),
+    (b"ss", SCM_SLOT),
+    (b"sld", SCM_SLOT),
+    (b"clj", CLJ_SLOT),
+    (b"cljc", CLJ_SLOT),
+    (b"cljs", CLJ_SLOT),
+    (b"edn", CLJ_SLOT),
+    (b"c", C_SLOT),
+    (b"cpp", CPP_SLOT),
+    (b"cc", CPP_SLOT),
+    (b"cp", CPP_SLOT),
+    (b"cxx", CPP_SLOT),
+    (b"c++", CPP_SLOT),
+    (b"hh", CPP_SLOT),
+    (b"hpp", CPP_SLOT),
+    (b"hxx", CPP_SLOT),
+    (b"h++", CPP_SLOT),
+    (b"inl", CPP_SLOT),
+    (b"ipp", CPP_SLOT),
+    (b"hs", HS_SLOT),
+    (b"rs", RS_SLOT),
+    (b"js", JS_SLOT),
+    (b"mjs", JS_SLOT),
+    (b"jsx", JS_SLOT),
+    (b"babel", JS_SLOT),
+    (b"es6", JS_SLOT),
+    (b"cjs", JS_SLOT),
+    (b"xml", XML_SLOT),
+    (b"xsd", XML_SLOT),
+    (b"xslt", XML_SLOT),
+    (b"tld", XML_SLOT),
+    (b"dtml", XML_SLOT),
+    (b"rng", XML_SLOT),
+    (b"rss", XML_SLOT),
+    (b"opml", XML_SLOT),
+    (b"svg", XML_SLOT),
+    (b"xaml", XML_SLOT),
+    (b"php", PHP_SLOT),
+    (b"php3", PHP_SLOT),
+    (b"php4", PHP_SLOT),
+    (b"php5", PHP_SLOT),
+    (b"php7", PHP_SLOT),
+    (b"phps", PHP_SLOT),
+    (b"phpt", PHP_SLOT),
+    (b"phtml", PHP_SLOT),
+    (b"py", PY_SLOT),
+    (b"py3", PY_SLOT),
+    (b"pyw", PY_SLOT),
+    (b"pyi", PY_SLOT),
+    (b"pyx", PY_SLOT),
+    (b"pxd", PY_SLOT),
+    (b"pxi", PY_SLOT),
+    (b"rpy", PY_SLOT),
+    (b"cpy", PY_SLOT),
+    (b"gyp", PY_SLOT),
+    (b"gypi", PY_SLOT),
+    (b"vpy", PY_SLOT),
+    (b"bzl", PY_SLOT),
+    (b"bazel", PY_SLOT),
+];
+const NE: usize = EXT_LIST.len();
+static EXT_TEXT: [&[u8]; NE] = {
+    let mut t: [&[u8]; NE] = [b""; NE];
+    let mut i = 0;
+    while i < NE {
+        t[i] = EXT_LIST[i].0;
+        i += 1;
+    }
+    t
+};
+static EXTS: Words<256, NE, { text_len(&EXT_TEXT) }> = Words::new(&EXT_TEXT);
+/// Each extension's slot by its id in [`EXTS`].
+static EXT_SLOTS: [u8; NE + 1] = {
+    let mut t = [0; NE + 1];
+    let mut i = 0;
+    while i < NE {
+        t[i + 1] = EXT_LIST[i].1;
+        i += 1;
+    }
+    t
+};
+
+/// The slot in [`FILES`] of the language ada names a file of extension `ext` in, 0 for none.
+fn ext_slot(ext: &[u8]) -> u8 {
+    let mut l = [0u8; 10];
+    let Some(l) = l.get_mut(..ext.len()) else {
+        return 0;
+    };
+    l.copy_from_slice(ext);
+    l.make_ascii_lowercase();
+    EXTS.value(l, &EXT_SLOTS)
 }
 
 /// Whether the `"` at `p` follows a writer's name on its line, so it is the writer's first
@@ -2406,7 +3264,8 @@ fn interp_in_text(b: &[u8], p: usize) -> bool {
 /// outermost shell string's (`rel` levels, it among them; a `"…"` string where `dq`) followed
 /// as the scan follows them, into `v`'s cooked text and its runs of the line's bytes. Ends at
 /// the line's end, the outermost string's close, a `#` comment in code, or past the levels the
-/// scan keeps.
+/// scan keeps. A writer's file's ([`ShellView::file`]): no string spliced from an
+/// interpolation, `\n` in a `"…"` string a line break ([`ShellView::breaks`]).
 fn read_shell(b: &[u8], mut q: usize, mut f: u128, mut rel: usize, dq: bool, v: &mut ShellView) {
     let n = b.len();
     let seg = |v: &mut ShellView, s: usize, e: usize| {
@@ -2462,7 +3321,9 @@ fn read_shell(b: &[u8], mut q: usize, mut f: u128, mut rel: usize, dq: bool, v: 
                             let e = (r + 1 + c.map_or(0, char_len)).min(n);
                             match c {
                                 // a line break in the script: its command ends
-                                Some(b'n') => v.cooked.push(b';'),
+                                Some(b'n') if v.file == 0 => v.cooked.push(b';'),
+                                // a file's line break: its language's next line
+                                Some(b'n') => v.breaks.push(v.cooked.len() as u32),
                                 Some(b'r') => v.cooked.push(b' '),
                                 Some(b't') => v.cooked.push(b'\t'),
                                 _ => v.cooked.extend_from_slice(&b[r + 1..e]),
@@ -2626,8 +3487,8 @@ fn read_shell(b: &[u8], mut q: usize, mut f: u128, mut rel: usize, dq: bool, v: 
                     }
                     C_SQUOTE if b.get(q + 1) == Some(&b'\'') => {
                         // a string in the script's interpolation: its text spliced in, but a
-                        // writer's whose string isn't shell
-                        if hold != 0 {
+                        // writer's whose string isn't shell; none in a file's
+                        if hold != 0 || v.file != 0 {
                             push!(F_IND);
                         } else {
                             push!(F_SH);
@@ -2663,7 +3524,7 @@ fn read_shell(b: &[u8], mut q: usize, mut f: u128, mut rel: usize, dq: bool, v: 
                                 {
                                     v.islands.pop();
                                     if v.cooked.len() == c as usize {
-                                        v.cooked.push(b'x');
+                                        v.cooked.push(if v.file == 0 { b'x' } else { v.file });
                                     }
                                 }
                                 pop!();

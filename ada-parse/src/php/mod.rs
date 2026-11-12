@@ -351,6 +351,20 @@ const REGEX_DOUBLE: u16 = 0x6000;
 
 /// HTML's kinds among PHP's: its own kind (its CSS's and JavaScript's flags kept) with this bit.
 const HTML_KIND: u16 = 0x8000;
+const _: () = assert!(KINDS <= 0x100);
+
+/// A kind folded into 12 bits, for a host that keeps PHP's kinds among its own (Nix's writers'
+/// files, X-153): the embed's nibble (SQL, JSON, a regex, HTML) above a kind below 256, PHP's own
+/// or the embedded language's; `None` past them (HTML's with its CSS's or JavaScript's flags).
+pub(crate) fn fold(kind: u16) -> Option<u16> {
+    let low = kind & 0x0fff;
+    (low < 0x100).then_some(kind >> 4 & 0x0f00 | low)
+}
+
+/// The kind [`fold`] folded into `k`.
+pub(crate) fn unfold(k: u16) -> u16 {
+    (k & 0x0f00) << 4 | k & 0xff
+}
 
 /// The scopes under `embedding.php` a kind carries, outermost first.
 pub fn scopes(kind: u16) -> Vec<&'static str> {

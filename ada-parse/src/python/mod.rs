@@ -370,6 +370,46 @@ fn unbase(kind: u16) -> (bool, u16, u16) {
     (ann, host, inner)
 }
 
+/// The wraps [`fold`] keeps, by their index above the leaf's bits: code, a format spec, each
+/// string's own text, the docstring's, and code under `meta.annotation`.
+static FOLDED: [u16; 8] = [
+    0,
+    1,
+    2,
+    2 + STRING_INNERS,
+    2 + 2 * STRING_INNERS,
+    2 + 3 * STRING_INNERS,
+    WRAPS - 1,
+    WRAPS,
+];
+
+/// A kind folded into 12 bits, for a host that keeps Python's kinds among its own (Nix's
+/// writers' files, X-153): its leaf in one of [`FOLDED`]'s wraps, a string's inner layer (a
+/// regex's, SQL's, a placeholder's) and an annotation over a string dropped; `None` past the
+/// wraps.
+pub(crate) fn fold(kind: u16) -> Option<u16> {
+    let mut i = kind >> LEAF_BITS;
+    if i >= 2 * WRAPS {
+        return None;
+    }
+    if i > WRAPS {
+        i -= WRAPS;
+    }
+    if (2..WRAPS - 1).contains(&i) {
+        i = 2 + (i - 2) / STRING_INNERS * STRING_INNERS;
+    }
+    let slot = FOLDED.iter().position(|&w| w == i)? as u16;
+    Some(slot << LEAF_BITS | kind & ((1 << LEAF_BITS) - 1))
+}
+
+/// The kind [`fold`] folded into `k`.
+pub(crate) fn unfold(k: u16) -> u16 {
+    FOLDED
+        .get(usize::from(k >> LEAF_BITS))
+        .map_or(0, |&w| w << LEAF_BITS)
+        | k & ((1 << LEAF_BITS) - 1)
+}
+
 /// The string or docstring a token is in, by a kind's host bits.
 static HOSTS: [&str; 6] = [
     "",

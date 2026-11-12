@@ -547,8 +547,9 @@ fn spliced_strings_and_writers() {
     // a flag, not a writer: no name after it
     has(&l, "chgrp", COMMAND);
     // a writer's file named as a shell script's, a script's binding below a mark that isn't
-    // one; and another file a string, the value's script going on after its binding
-    has(&l, "import os", "string.quoted.other.nix");
+    // one; and another file in its language (X-153), the value's script going on after its
+    // binding
+    has(&l, "import", "source.python keyword.control.import.python");
     has(&l, "python", COMMAND);
     has(
         &l,
@@ -726,5 +727,395 @@ fn marks_past_the_depth_counter() {
         });
         assert_eq!(all, one.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
         assert_eq!(state, one.last().unwrap().1);
+    }
+}
+
+/// Python's `import`.
+const PY_IMPORT: &str = "source.python keyword.control.import.python";
+
+#[test]
+fn writers_files_in_their_language() {
+    let l = [
+        "{",
+        "  a = writeText \"a.json\" ''",
+        "    { \"k\": ${toJSON v}, \"n\": [1, 2] }",
+        "  '';",
+        "  b = pkgs.writers.writePython3Bin \"b\" {",
+        "    libraries = [ ];",
+        "  } ''",
+        "    import os",
+        "  '';",
+        "  c = builtins.toFile \"c.toml\" \"[t]\\nk = 1\";",
+        "  d = writeText \"d.sql\" ''SELECT 1 FROM t'';",
+        "  e = writeScript \"e.sh\" ''",
+        "    ls -l",
+        "  '';",
+        "  f = writeText \"f.conf\" ''x = 1'';",
+        "  g = writeText name ''plain'';",
+        "  h = pkgs.writeTextDir \"share/h.yaml\" ''",
+        "    top:",
+        "      key: 1",
+        "  '';",
+        "  i = writeText \"i.json\"; j = ''also plain'';",
+        "  k = writeLua \"k\" { } ''local m = 1'';",
+        "}",
+    ];
+    has(
+        &l,
+        "k",
+        "source.json meta.mapping.key.json string.quoted.double.json",
+    );
+    has(&l, "toJSON", "variable.parameter.name.nix");
+    has(&l, "2", "source.json constant.numeric.integer.decimal.json");
+    // the writer's name and its set no file's
+    has(&l, "b", "string.quoted.double.nix");
+    has(&l, "libraries", "entity.other.attribute-name.multipart.nix");
+    has(&l, "import", PY_IMPORT);
+    // a `"…"` string's `\n` a line break to its language
+    has(
+        &l,
+        "k",
+        "source.toml meta.tag.key.toml entity.name.tag.toml",
+    );
+    has(&l, "SELECT", "source.sql keyword.other.DML.sql");
+    has(&l, "ls", COMMAND);
+    // `.conf` names none of a writer's (bat's nginx), a name without an extension none
+    has(&l, "x = 1", "string.quoted.other.nix");
+    has(&l, "plain", "string.quoted.other.nix");
+    // indentation stripped as Nix strips it
+    has(
+        &l,
+        "top",
+        "source.yaml string.unquoted.plain.out.yaml entity.name.tag.yaml",
+    );
+    has(
+        &l,
+        "key",
+        "source.yaml string.unquoted.plain.out.yaml entity.name.tag.yaml",
+    );
+    // a mark ended with its item
+    has(&l, "also plain", "string.quoted.other.nix");
+    has(&l, "local", "source.lua storage.modifier.lua");
+}
+
+#[test]
+fn files_and_scripts_apart() {
+    let l = [
+        "{",
+        // a file in a script's interpolation: a string (the script's state kept)
+        "  postInstall = ''",
+        "    cp ${writeText \"a.json\" ''{ \"x\": 1 }''} $out",
+        "  '';",
+        // a script named as one, at a shell value's level: the value's (X-152)
+        "  script = writeScript \"s.sh\" ''touch s'';",
+        // in a file's interpolation, no script and no other file
+        "  b = writeText \"b.py\" ''",
+        "    import ${writeShellScript \"t\" ''rm t''} ${writeText \"c.json\" ''[1]''}",
+        "  '';",
+        // a file in a binding below a shell value's mark, the value's script after it
+        "  preBuild = let f = toFile \"f.py\" ''import g''; in ''python ${f}'';",
+        "}",
+    ];
+    has(&l, "{ \"x\": 1 }", "string.quoted.other.nix");
+    has(&l, "cp", COMMAND);
+    has(&l, "touch", COMMAND);
+    has(&l, "rm t", "string.quoted.other.nix");
+    has(&l, "[1]", "string.quoted.other.nix");
+    has(&l, "import", PY_IMPORT);
+    has(&l, "python", COMMAND);
+    lacks(&l, "rm", COMMAND);
+}
+
+#[test]
+fn a_file_whose_state_does_not_fit() {
+    // Python sixteen brackets deep: its depth past the nibble kept, the string's text a string's
+    // from the next line on
+    let l = [
+        "a = writeText \"a.py\" ''",
+        "  x = ((((((((((((((((",
+        "  1",
+        "  ))))))))))))))))",
+        "'';",
+        "b = writeText \"b.py\" ''import c'';",
+    ];
+    has(
+        &l,
+        "((((((((((((((((",
+        "source.python punctuation.section.group.begin.python",
+    );
+    has(&l, "  1", "string.quoted.other.nix");
+    has(&l, "import", PY_IMPORT);
+}
+
+#[test]
+fn a_file_block_lexes_as_its_lines() {
+    let text = "{ a = writeText \"a.py\" ''\n  def f(\n    x,\n  ):\n    return \"${y}\"\n''; \
+                b = toFile \"b.json\" \"[1,\\n2]\"; c = writeText \"c.py\" ''\n  ((((((((((((((((\n  \
+                1\n''; d = writePython3 \"d\" {\n  e = 1;\n} ''\n  \"\"\"doc\n  ${f}\n  \"\"\"\n''; g = \
+                writeText \"g.sql\"\n  ''SELECT\n  1''; }\n";
+    let one = lines(text);
+    let mut state = State::default();
+    let mut all = Vec::new();
+    let mut v = Vec::new();
+    block(&mut state, &mut v, &mut |c| {
+        for l in text.lines() {
+            all.push(c.next(l.as_bytes()).to_vec());
+        }
+        None
+    });
+    assert_eq!(all, one.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
+    assert_eq!(state, one.last().unwrap().1);
+    // nothing kept past the strings
+    assert_eq!(state, State::default());
+}
+
+#[test]
+fn long_file_lines_lex_in_linear_time() {
+    for (head, unit) in [
+        ("a = writeText \"a.json\" ''", "[1, ${a}, "),
+        ("a = writeText \"a.py\" ''", "f(\"${a}\") "),
+        ("a = toFile \"a.toml\" \"", "k = 1\\n"),
+        ("a = toFile \"a.php\" \"<?php ", "$a${b}; "),
+    ] {
+        let l = String::from(head) + &unit.repeat(20_000);
+        let t = std::time::Instant::now();
+        lines(&l);
+        assert!(t.elapsed().as_millis() < 300, "{unit:?}: {:?}", t.elapsed());
+    }
+}
+
+#[test]
+fn file_kinds_fold_and_unfold() {
+    for (i, f) in FILES.iter().enumerate() {
+        let slot = i as u8 + 1;
+        for kind in 0..u16::MAX {
+            let Some(k) = fold(slot, kind) else {
+                continue;
+            };
+            if f.lang == Lang::Bash {
+                assert_eq!(k, SH_BASE + kind);
+                continue;
+            }
+            assert!(
+                k >= FILE_BASES[i] && k < FILE_BASES[i] + f.size,
+                "{:?} {kind}",
+                f.lang
+            );
+            let (lang, back) = unfold(k).unwrap();
+            assert_eq!(lang, f.lang);
+            // Python's and PHP's folds keep a kind's leaf and its wrap's or embed's own
+            assert_eq!(fold(slot, back), Some(k), "{:?} {kind} {back}", f.lang);
+            if !matches!(f.lang, Lang::Python | Lang::Php) {
+                assert_eq!(back, kind);
+            }
+        }
+    }
+}
+
+#[test]
+fn files_named_by_their_shebang() {
+    let l = [
+        "{",
+        "  a = writeScript \"update\" ''",
+        "    #!${runtimeShell}",
+        "    touch a",
+        "  '';",
+        "  b = writeScriptBin name ''",
+        "    #!/usr/bin/env nix-shell",
+        "    #!nix-shell -i python3 -p python3",
+        "    import sys",
+        "  '';",
+        "  c = writeText \"notes\" ''",
+        "    just text",
+        "  '';",
+        "  d = writeScript \"d\" ''#!${pkgs.python3}/bin/python3",
+        "    import os",
+        "  '';",
+        "  e = toFile \"e\" \"#!/bin/sh\\nrm e\";",
+        "}",
+    ];
+    has(&l, "touch", COMMAND);
+    has(&l, "import", PY_IMPORT);
+    has(&l, "    just text", "string.quoted.other.nix");
+    lacks(&l, "import", "string.quoted.other.nix");
+    has(&l, "rm", COMMAND);
+}
+
+#[test]
+fn file_slots_name_their_languages() {
+    for (slot, lang) in [
+        (BASH_SLOT, Lang::Bash),
+        (JSON_SLOT, Lang::Json),
+        (TOML_SLOT, Lang::Toml),
+        (INI_SLOT, Lang::Ini),
+        (PROPS_SLOT, Lang::Properties),
+        (DIFF_SLOT, Lang::Diff),
+        (YAML_SLOT, Lang::Yaml),
+        (SQL_SLOT, Lang::Sql),
+        (LUA_SLOT, Lang::Lua),
+        (CSS_SLOT, Lang::Css),
+        (EL_SLOT, Lang::EmacsLisp),
+        (SCM_SLOT, Lang::Scheme),
+        (CLJ_SLOT, Lang::Clojure),
+        (C_SLOT, Lang::C),
+        (CPP_SLOT, Lang::Cpp),
+        (HS_SLOT, Lang::Haskell),
+        (RS_SLOT, Lang::Rust),
+        (JS_SLOT, Lang::JavaScript),
+        (XML_SLOT, Lang::Xml),
+        (PHP_SLOT, Lang::Php),
+        (PY_SLOT, Lang::Python),
+    ] {
+        assert_eq!(FILES[usize::from(slot) - 1].lang, lang);
+    }
+    assert!(FILES.len() < usize::from(SHEBANG));
+}
+
+#[test]
+fn ext_slots_name_as_ada_does() {
+    for ext in [
+        "sh",
+        "bash",
+        "zsh",
+        "ash",
+        "json",
+        "ipynb",
+        "toml",
+        "tml",
+        "ini",
+        "inf",
+        "reg",
+        "lng",
+        "cfg",
+        "desktop",
+        "url",
+        "properties",
+        "diff",
+        "patch",
+        "yaml",
+        "yml",
+        "sql",
+        "ddl",
+        "dml",
+        "lua",
+        "css",
+        "el",
+        "scm",
+        "ss",
+        "sld",
+        "clj",
+        "cljc",
+        "cljs",
+        "edn",
+        "c",
+        "cpp",
+        "cc",
+        "cp",
+        "cxx",
+        "c++",
+        "hh",
+        "hpp",
+        "hxx",
+        "h++",
+        "inl",
+        "ipp",
+        "hs",
+        "rs",
+        "js",
+        "mjs",
+        "jsx",
+        "babel",
+        "es6",
+        "cjs",
+        "xml",
+        "xsd",
+        "xslt",
+        "tld",
+        "dtml",
+        "rng",
+        "rss",
+        "opml",
+        "svg",
+        "xaml",
+        "php",
+        "php3",
+        "php4",
+        "php5",
+        "php7",
+        "phps",
+        "phpt",
+        "phtml",
+        "py",
+        "py3",
+        "pyw",
+        "pyi",
+        "pyx",
+        "pxd",
+        "pxi",
+        "rpy",
+        "cpy",
+        "gyp",
+        "gypi",
+        "vpy",
+        "bzl",
+        "bazel",
+        "PY",
+    ] {
+        let slot = ext_slot(ext.as_bytes());
+        assert_ne!(slot, 0, "{ext}");
+        assert_eq!(
+            Lang::from_file_name(&format!("x.{ext}")),
+            Some(FILES[usize::from(slot) - 1].lang),
+            "{ext}"
+        );
+    }
+    // a language ada names a file in that no writer's file is read in (nginx's `.conf`), or none
+    for ext in ["conf", "txt", "nix", "rb", "h", "service"] {
+        assert_eq!(ext_slot(ext.as_bytes()), 0, "{ext}");
+    }
+}
+
+#[test]
+fn a_deep_file_block_lexes_as_its_lines() {
+    // a writer's file's mark deep in the frames, its interpolation past the 32 levels they keep
+    let open = "{ ".repeat(30);
+    let text = format!(
+        "{open}a = writeText \"a.json\" ''\n  [1, ${{ {{ b = {{ c = {{\n  }}; }}; }} }}, 2]\n''; }}\n\
+         {open}{{ d = writeText \"d.json\" ''\n  [3]\n''; }}\n"
+    );
+    let one = lines(&text);
+    let mut state = State::default();
+    let mut all = Vec::new();
+    let mut v = Vec::new();
+    block(&mut state, &mut v, &mut |c| {
+        for l in text.lines() {
+            all.push(c.next(l.as_bytes()).to_vec());
+        }
+        None
+    });
+    assert_eq!(all, one.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
+    assert_eq!(state, one.last().unwrap().1);
+}
+
+#[test]
+fn file_states_pack_and_unpack() {
+    for f in &FILES {
+        // every kept byte set, and the depth where it is kept
+        let mut bytes = [0u8; SH_HELD];
+        for (i, (b, &p)) in bytes.iter_mut().zip(&f.keep).enumerate() {
+            if p != NO {
+                *b = i as u8 + 1;
+            }
+        }
+        let depth = if f.deep { 15 } else { 0 };
+        let s = unpack(f, &bytes, depth);
+        assert_eq!(pack(f, &s), Some((bytes, depth)), "{:?}", f.lang);
+        // a byte it doesn't keep, or a depth past it: none
+        let mut t = s;
+        t.withs[if f.keep.contains(&(W_ + 13)) { 0 } else { 13 }] = 1;
+        assert_eq!(pack(f, &t), None, "{:?}", f.lang);
+        let mut t = s;
+        t.depth = if f.deep { 16 } else { 1 };
+        assert_eq!(pack(f, &t), None, "{:?}", f.lang);
     }
 }
