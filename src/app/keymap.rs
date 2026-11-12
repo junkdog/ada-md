@@ -476,6 +476,10 @@ pub struct Keymap {
     last_press: Option<((u16, u16), Instant, u8)>,
     /// The searches made, oldest first, each once.
     history: Vec<String>,
+    /// The searches submitted since `↑`/`↓` last read the history, oldest first, each once:
+    /// checked and moved into it only then ([`settle`]), so that a search's `Enter` doesn't
+    /// compile its pattern here too, beside the main thread's compile (SRCH-002).
+    submitted: Vec<String>,
 }
 
 /// The search prompt: the pattern typed so far, and the walk through the history.
@@ -514,17 +518,34 @@ fn edit(input: &mut Input, key: &KeyEvent) -> Option<bool> {
     })
 }
 
-/// A submitted search joins the end of the history (FEAT-017): not an empty one, which repeats
-/// the last search, nor one that doesn't compile; a repeat moves to the end.
-fn remember(history: &mut Vec<String>, pattern: &str) {
-    if pattern.is_empty() || search::compile(pattern).is_err() {
+/// A submitted search, to join the history when `↑`/`↓` next reads it: not an empty one, which
+/// repeats the last search; a repeat moves to the end. Past [`HISTORY`] waiting, they settle at
+/// once, so a session that never walks the history doesn't grow the queue without bound.
+fn submit(history: &mut Vec<String>, submitted: &mut Vec<String>, pattern: &str) {
+    if pattern.is_empty() {
         return;
     }
-    history.retain(|p| p != pattern);
-    if history.len() == HISTORY {
-        history.remove(0);
+    submitted.retain(|p| p != pattern);
+    submitted.push(pattern.to_owned());
+    if submitted.len() > HISTORY {
+        settle(history, submitted);
     }
-    history.push(pattern.to_owned());
+}
+
+/// The searches submitted since the history was last read join its end in order (FEAT-017): not
+/// one that doesn't compile; a repeat moves to the end. The same history as checking each at its
+/// `Enter`, since none is submitted during a walk, but the compile runs only when it's read.
+fn settle(history: &mut Vec<String>, submitted: &mut Vec<String>) {
+    for pattern in submitted.drain(..) {
+        if search::compile(&pattern).is_err() {
+            continue;
+        }
+        history.retain(|p| *p != pattern);
+        if history.len() == HISTORY {
+            history.remove(0);
+        }
+        history.push(pattern);
+    }
 }
 
 /// `↑` (`newer` false) or `↓` in the prompt: the next older or newer search, and past the newest,
@@ -570,7 +591,7 @@ impl Keymap {
                 let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
                 let changed = match key.code {
                     KeyCode::Enter => {
-                        remember(&mut self.history, prompt.input.text());
+                        submit(&mut self.history, &mut self.submitted, prompt.input.text());
                         self.mode = Mode::Normal;
                         return Some(Msg::SearchSubmit);
                     }
@@ -587,8 +608,10 @@ impl Keymap {
                         self.mode = Mode::Normal;
                         return Some(Msg::SearchCancel);
                     }
-                    KeyCode::Up => walk(&self.history, prompt, false),
-                    KeyCode::Down => walk(&self.history, prompt, true),
+                    KeyCode::Up | KeyCode::Down => {
+                        settle(&mut self.history, &mut self.submitted);
+                        walk(&self.history, prompt, key.code == KeyCode::Down)
+                    }
                     KeyCode::Home => prompt.input.home(),
                     KeyCode::End => prompt.input.end(),
                     _ => edit(&mut prompt.input, &key)?,
@@ -1393,9 +1416,42 @@ mod tests {
             typed(&mut km, &i.to_string());
             press(&mut km, KeyCode::Enter);
         }
+        settle(&mut km.history, &mut km.submitted);
         assert_eq!(km.history.len(), HISTORY);
         assert_eq!(km.history.first().map(String::as_str), Some("1"));
         assert_eq!(km.history.last(), Some(&HISTORY.to_string()));
+    }
+
+    /// SRCH-002: `Enter` queues the pattern without compiling it; the walk checks the queue.
+    #[test]
+    fn a_search_is_checked_when_the_history_is_read() {
+        let mut km = Keymap::default();
+        for pattern in ["foo", "(", "bar", "foo"] {
+            press(&mut km, KeyCode::Char('/'));
+            typed(&mut km, pattern);
+            press(&mut km, KeyCode::Enter);
+        }
+        assert!(km.history.is_empty(), "nothing checked at Enter");
+        assert_eq!(
+            km.submitted,
+            ["(", "bar", "foo"],
+            "each once, a repeat at the end"
+        );
+        press(&mut km, KeyCode::Char('/'));
+        assert_eq!(press(&mut km, KeyCode::Up), Some(input("foo")));
+        assert_eq!(km.history, ["bar", "foo"], "the bad pattern left out");
+        assert!(km.submitted.is_empty());
+        press(&mut km, KeyCode::Esc);
+
+        // a session that never walks: the queue settles past HISTORY
+        for i in 0..=HISTORY {
+            press(&mut km, KeyCode::Char('/'));
+            typed(&mut km, &format!("q{i}"));
+            press(&mut km, KeyCode::Enter);
+        }
+        assert!(km.submitted.is_empty());
+        assert_eq!(km.history.len(), HISTORY);
+        assert_eq!(km.history.last().map(String::as_str), Some("q100"));
     }
 
     #[test]

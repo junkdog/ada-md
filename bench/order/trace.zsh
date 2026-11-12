@@ -14,7 +14,7 @@
 # exits 1 when they reach more of cold `.text` than ADA_ORDER_COLD windows (then re-trace). ~2 min; order.txt stays.
 [[ $1 == --check ]] && { CHECK=1; shift }
 H=${0:A:h}; R=${H:h:h}; B2D=$R/bench/b2; S=${B2_ROOT:-$B2D/root}
-W=${1:-$(mktemp -d)}; mkdir -p $W/traces
+W=${${1:-$(mktemp -d)}:A}; mkdir -p $W/traces   # absolute: b2 runs the traced session from the corpus
 print "work: $W"
 # the release build of the working tree, as shipped (stripped, ordered), with lld's map for its symbols
 CARGO_TARGET_DIR=$W/target cargo run -q --locked --manifest-path $R/Cargo.toml -p xtask -- ordered --locked -q; rc=$?
