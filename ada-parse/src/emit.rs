@@ -1027,8 +1027,8 @@ mod tests {
         );
     }
 
-    /// Dockerfile's runs written by its scan (X-074) are those its spans give, and Diff's (read
-    /// from its spans) too.
+    /// Dockerfile's runs written by its scan (X-074) are those its spans give, and Diff's (X-163)
+    /// too.
     #[test]
     fn dockerfile_and_diff_runs_are_their_spans() {
         runs_are_spans(

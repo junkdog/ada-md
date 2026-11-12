@@ -158,9 +158,9 @@ pub fn lex(lang: Lang, line: &str, state: &mut State, spans: &mut Vec<Span>) {
 /// space. Rust's scan writes the runs itself (X-068), as the line-format engine's do (X-069),
 /// JSON's, TOML's and XML's (X-072), X-074's carried scans (Java's, C#'s, Kotlin's,
 /// TypeScript's, Python's, the Lisp engine's, Clojure's), X-075's (Go's, Lua's, SCSS's,
-/// bash's), HTML's (X-076, its embeds' spans read into them) and Makefile's (X-095, a shell
-/// region's laid spans read into them); any other language's spans (SQL's, whose run writes ran
-/// slower in ada in X-075 and X-076) are read into them.
+/// bash's), HTML's (X-076, its embeds' spans read into them), Makefile's (X-095, a shell
+/// region's laid spans read into them) and Diff's (X-163); any other language's spans (SQL's,
+/// whose run writes ran slower in ada in X-075 and X-076) are read into them.
 #[inline(never)]
 pub fn lex_runs(
     lang: Lang,
@@ -360,11 +360,11 @@ type RunLinesOf = fn(
 
 /// `lang`'s block on a scan that writes runs a line at a time, its line inline in the loop
 /// (X-050), for [`lex_runs`]' one line too: the line-format engine's (X-069), JSON's, TOML's and
-/// XML's (X-072; YAML's ran 1–2% slower in ada, X-072), Dockerfile's (X-074; Diff's ran 3–4%
-/// slower in ada, its span API 10% slower alone), Makefile's (X-095; X-075's SQL and log lexer
-/// ran slower in ada,
-/// and X-076's SQL again, on its own and lent its hosts' run sink: the span read it saved, a
-/// tight loop, cost less than a table lookup a token). The carried scans' runs come from
+/// XML's (X-072; YAML's ran 1–2% slower in ada, X-072), Dockerfile's (X-074), Makefile's (X-095;
+/// X-075's SQL and log lexer ran slower in ada, and X-076's SQL again, on its own and lent its
+/// hosts' run sink: the span read it saved, a tight loop, cost less than a table lookup a token),
+/// Diff's (X-163: X-074's, a table call a line, ran 3–4% slower in ada, its span API 10% slower
+/// alone; inline here, +49% with its scan by first byte). The carried scans' runs come from
 /// [`carried_runs`] (Rust's, X-068, X-073; X-074's).
 #[inline(always)]
 fn run_lines(lang: Lang) -> Option<RunLinesOf> {
@@ -389,6 +389,7 @@ fn run_lines(lang: Lang) -> Option<RunLinesOf> {
         Lang::Xml => lines_run::<xml_scan::RunLine>,
         Lang::Dockerfile => lines_run::<dockerfile::RunLine>,
         Lang::Makefile => lines_run::<bash::MakeRunLine>,
+        Lang::Diff => lines_run::<diff::RunLine>,
         _ => return None,
     })
 }
@@ -787,6 +788,7 @@ fn scanner<const SPANS: bool>(lang: Lang) -> Scanner {
         Lang::Dockerfile if !SPANS => {
             |_, _, _| unreachable!("Dockerfile's runs come from its own scan")
         }
+        Lang::Diff if !SPANS => |_, _, _| unreachable!("Diff's runs come from its own scan"),
         Lang::Diff => |l, _, v| {
             v.clear();
             diff::line(l.as_bytes(), &mut Out::new(v));

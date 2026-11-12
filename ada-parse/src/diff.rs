@@ -2,7 +2,8 @@
 //! header, a hunk's range, an added, removed or changed line, or context left plain. A line
 //! doesn't depend on the ones before it.
 
-use crate::{Out, skip_spaces, trim_end};
+use crate::emit::{Push, Runs, Sink};
+use crate::{Out, State, same, skip_spaces, trim_end};
 
 const SEPARATOR: u16 = 0;
 const RANGE_NORMAL: u16 = 1;
@@ -57,55 +58,99 @@ type Stretch = (usize, usize);
 /// One line, by the first of the grammar's patterns that matches it.
 #[inline(never)]
 pub fn line(b: &[u8], out: &mut Out) {
-    let len = b.len();
-    let whole = |out: &mut Out, kind: u16, mark: usize, mark_kind: u16| {
-        out.push(0, mark, mark_kind);
-        out.push(mark, len, kind);
-    };
-    let starts = |s: &[u8]| b.starts_with(s);
-    let after_mark = |c: u8| b.first() == Some(&c) && (len == 1 || b[1] == b' ');
-    if b == b"---" || b == [b'*'; 15] || b == [b'='; 67] {
-        out.push(0, len, SEPARATOR);
-    } else if normal_range(b) {
-        out.push(0, len, RANGE_NORMAL);
-    } else if let Some((lines, at, section)) = unified_range(b) {
-        out.push(0, 2, RANGE_MARK);
-        out.push(2, lines.0, RANGE);
-        out.push(lines.0, lines.1, RANGE_LINES);
-        out.push(lines.1, at, RANGE);
-        out.push(at, at + 2, RANGE_MARK);
-        out.push(at + 2, section.0, RANGE);
-        out.push(section.0, section.1, RANGE_SECTION);
-        out.push(section.1, len, RANGE);
-    } else if len >= 10
-        && ((starts(b"--- ") && b.ends_with(b" ----"))
-            || (starts(b"*** ") && b.ends_with(b" ****")))
-    {
-        out.push(0, 3, RANGE_CONTEXT_MARK);
-        out.push(3, len - 4, RANGE_CONTEXT);
-        out.push(len - 4, len, RANGE_CONTEXT_MARK);
-    } else if len >= 5 && (starts(b"--- ") || starts(b"*** ")) {
-        whole(out, FROM_FILE, 3, FROM_FILE_MARK);
-    } else if let Some(dash) = perforce_from(b) {
-        out.push(0, 4, FROM_FILE_MARK);
-        out.push(4, dash, FROM_FILE);
-        perforce_to(b, dash, out);
-    } else if len >= 5 && starts(b"+++ ") {
-        whole(out, TO_FILE, 3, TO_FILE_MARK);
-    } else if starts(b"+") || after_mark(b'>') {
-        whole(out, INSERTED, 1, INSERTED_MARK);
-    } else if starts(b"!") {
-        whole(out, CHANGED, 1, CHANGED_MARK);
-    } else if starts(b"-") || after_mark(b'<') {
-        whole(out, DELETED, 1, DELETED_MARK);
-    } else if len >= 8 && starts(b"Index: ") {
-        out.push(0, 5, INDEX);
-        out.push(5, 6, INDEX_SEPARATOR);
-        out.push(6, 7, INDEX);
-        out.push(7, len, INDEX_FILE);
-    } else {
-        perforce_to(b, 0, out);
+    scan(b, out, &mut Push);
+}
+
+/// [`line`]'s runs by theme rule written to `k` (X-163): inline in a block's loop, as the line
+/// formats' are (X-050), [`crate::lex_runs`]' line too. Read from its spans, a line cost ada's
+/// path ~118 instructions past its scan (X-074's run sink, a table call a line, ran 3–4% slower
+/// in ada).
+pub(crate) struct RunLine;
+
+impl crate::LineScan for RunLine {
+    #[inline(always)]
+    fn scan(b: &[u8], _: &mut State, out: &mut Out, k: &mut Runs) {
+        scan(b, out, k);
     }
+}
+
+/// [`line`] on the sink `k`. The grammar's patterns in its order, but only those that can
+/// match a line starting with its first byte (X-163): a context line, the commonest, is the
+/// Perforce to-file's test alone.
+#[inline(always)]
+fn scan<K: Sink>(b: &[u8], mut out: &mut Out, k: &mut K) {
+    // a header's or a range's writes, rare, through the sink's one call; a changed line's, the
+    // commonest, inline ([`Sink::push_call`]: every write through it ran ada's path 13% slower,
+    // every write inline cost ada 9.4 KB)
+    let push = &mut |s: usize, e: usize, kind: u16| k.push_call(&mut out, s, e, kind);
+    let len = b.len();
+    // the line its mark's and the rest its kind's
+    macro_rules! whole {
+        ($kind:expr, $mark:expr, $mark_kind:expr) => {{
+            push(0, $mark, $mark_kind);
+            push($mark, len, $kind);
+        }};
+    }
+    // as `whole!`, inline
+    macro_rules! changed {
+        ($kind:expr, $mark_kind:expr) => {{
+            k.push(&mut out, 0, 1, $mark_kind);
+            k.push(&mut out, 1, len, $kind);
+        }};
+    }
+    let starts = |s: &[u8]| len >= s.len() && same(&b[..s.len()], s);
+    let ends = |s: &[u8]| len >= s.len() && same(&b[len - s.len()..], s);
+    let Some(&first) = b.first() else {
+        return;
+    };
+    // `>` and `<` a mark before a blank or the line's end
+    let after_mark = len == 1 || b[1] == b' ';
+    match first {
+        b'+' if len >= 5 && starts(b"+++ ") => whole!(TO_FILE, 3, TO_FILE_MARK),
+        b'+' => changed!(INSERTED, INSERTED_MARK),
+        b'-' if len == 3 && starts(b"---") => push(0, len, SEPARATOR),
+        b'-' if len >= 10 && starts(b"--- ") && ends(b" ----") => context_range(len, push),
+        b'-' if len >= 5 && starts(b"--- ") => whole!(FROM_FILE, 3, FROM_FILE_MARK),
+        b'-' => changed!(DELETED, DELETED_MARK),
+        b'*' if b == [b'*'; 15] => push(0, len, SEPARATOR),
+        b'*' if len >= 10 && starts(b"*** ") && ends(b" ****") => context_range(len, push),
+        b'*' if len >= 5 && starts(b"*** ") => whole!(FROM_FILE, 3, FROM_FILE_MARK),
+        b'=' if b == [b'='; 67] => push(0, len, SEPARATOR),
+        b'=' if let Some(dash) = perforce_from(b) => {
+            push(0, 4, FROM_FILE_MARK);
+            push(4, dash, FROM_FILE);
+            perforce_to(b, dash, push);
+        }
+        b'0'..=b'9' if normal_range(b) => push(0, len, RANGE_NORMAL),
+        b'@' if let Some((lines, at, section)) = unified_range(b) => {
+            push(0, 2, RANGE_MARK);
+            push(2, lines.0, RANGE);
+            push(lines.0, lines.1, RANGE_LINES);
+            push(lines.1, at, RANGE);
+            push(at, at + 2, RANGE_MARK);
+            push(at + 2, section.0, RANGE);
+            push(section.0, section.1, RANGE_SECTION);
+            push(section.1, len, RANGE);
+        }
+        b'>' if after_mark => changed!(INSERTED, INSERTED_MARK),
+        b'!' => changed!(CHANGED, CHANGED_MARK),
+        b'<' if after_mark => changed!(DELETED, DELETED_MARK),
+        b'I' if len >= 8 && starts(b"Index: ") => {
+            push(0, 5, INDEX);
+            push(5, 6, INDEX_SEPARATOR);
+            push(6, 7, INDEX);
+            push(7, len, INDEX_FILE);
+        }
+        _ => perforce_to(b, 0, push),
+    }
+}
+
+/// A context diff's range, `--- 1,5 ----` or `*** 1,5 ****`: its marks and the range.
+#[inline(always)]
+fn context_range(len: usize, push: &mut impl FnMut(usize, usize, u16)) {
+    push(0, 3, RANGE_CONTEXT_MARK);
+    push(3, len - 4, RANGE_CONTEXT);
+    push(len - 4, len, RANGE_CONTEXT_MARK);
 }
 
 /// `^\d+(,\d+)*(a|d|c)\d+(,\d+)*$`: a normal diff's `12,15c12`.
@@ -161,9 +206,10 @@ fn perforce_from(b: &[u8]) -> Option<usize> {
 
 /// A Perforce header's to-file, ` (-) .* (={4})$`, searched for from `at`; nothing when there
 /// is none.
-fn perforce_to(b: &[u8], at: usize, out: &mut Out) {
+#[inline(always)]
+fn perforce_to(b: &[u8], at: usize, push: &mut impl FnMut(usize, usize, u16)) {
     let len = b.len();
-    if !b.ends_with(b" ====") {
+    if len < 5 || !same(&b[len - 5..], b" ====") {
         return;
     }
     let Some(dash) = find(&b[at..], b" - ").map(|i| at + i) else {
@@ -172,10 +218,10 @@ fn perforce_to(b: &[u8], at: usize, out: &mut Out) {
     if dash + 3 > len - 5 {
         return;
     }
-    out.push(dash, dash + 1, TO_FILE);
-    out.push(dash + 1, dash + 2, TO_FILE_MARK);
-    out.push(dash + 2, len - 4, TO_FILE);
-    out.push(len - 4, len, TO_FILE_MARK);
+    push(dash, dash + 1, TO_FILE);
+    push(dash + 1, dash + 2, TO_FILE_MARK);
+    push(dash + 2, len - 4, TO_FILE);
+    push(len - 4, len, TO_FILE_MARK);
 }
 
 /// Where `needle` first starts in `b`.
