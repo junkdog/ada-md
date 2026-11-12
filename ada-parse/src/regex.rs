@@ -6,7 +6,7 @@
 //! The kinds carry the scopes of bat's `Regular Expressions (Javascript)` (anchors, back
 //! references, quantifiers, groups and assertions, character classes and their sets, escapes),
 //! with a few of its own for what JavaScript lacks (inline options, atomic groups, `\Q…\E`).
-//! Nine dialects ([`Dialect`]):
+//! Ten dialects ([`Dialect`]):
 //! - **Java's** (`java.util.regex`, Kotlin's too) adds possessive quantifiers, `(?>…)`,
 //!   `(?idmsux-idmsux)` and `(?idmsux-idmsux:…)`, nested classes and `&&`, `\Q…\E`, `\pL`,
 //!   `\h\H\v\V\R\X`, `\A\G\Z\z` and its escapes.
@@ -33,6 +33,12 @@
 //!   in a class a character, `\k<name>` and `\g<name>` (with `'…'`, numbers and levels),
 //!   `\h\H` (hex digits), `\R\X\K`, `\A\G\Z\z`, `\p{^Alpha}` (braces only), Ruby's
 //!   escapes (`\xH`, `\u{H H}`, `\cX`, `\C-x`, `\M-x`, octal); no `\Q…\E`.
+//! - **Python's** (`re`, 3.11 on): `(?P<name>…)` and `(?P=name)`, `(?#…)` comments, `(?(1)…)` and
+//!   `(?(name)…)` conditionals, `(?>…)` and possessive quantifiers, `(?aiLmsux-imsx)` and
+//!   `(?aiLmsux-imsx:…)`, `]` first in a class a character; no nested class, no `\p`, no `\Q…\E`.
+//!   Its escapes: `\A`, `\b`, `\B`, `\Z`, `\z` anchors (`\b` a backspace in a class), `\1` to `\99`
+//!   references, three octal digits (or `\0` and up to two) an octal escape, `\xHH`, `\uHHHH`,
+//!   `\UHHHHHHHH`, `\N{name}`.
 //! - **POSIX's**, extended (ERE: `regcomp(` with `REG_EXTENDED`, `std::regex::extended`,
 //!   `egrep`, `awk`) and basic (BRE: `regcomp(`, `std::regex::basic`, `grep`): no `(?…)`
 //!   group, no lazy or possessive quantifier, and in a bracket expression a `\` is a character,
@@ -111,6 +117,8 @@ pub(crate) enum Dialect {
     Ere,
     /// POSIX's basic (BRE), as glibc reads it, GNU's `\|`, `\+` and `\?` with it.
     Bre,
+    /// Python's `re`.
+    Python,
 }
 
 macro_rules! leaves {
@@ -366,6 +374,10 @@ impl Scan<'_, '_, '_, '_> {
         self.host.dialect == Dialect::Ruby
     }
 
+    fn python(&self) -> bool {
+        self.host.dialect == Dialect::Python
+    }
+
     /// POSIX's, extended or basic.
     fn posix(&self) -> bool {
         matches!(self.host.dialect, Dialect::Ere | Dialect::Bre)
@@ -386,12 +398,12 @@ impl Scan<'_, '_, '_, '_> {
         matches!(self.host.dialect, Dialect::DotNet | Dialect::Swift)
     }
 
-    /// Java's, ECMAScript's, Swift's and Ruby's have possessive quantifiers (ECMAScript's as
-    /// bat colors them).
+    /// Java's, ECMAScript's, Swift's, Ruby's and Python's have possessive quantifiers
+    /// (ECMAScript's as bat colors them).
     fn possessive(&self) -> bool {
         matches!(
             self.host.dialect,
-            Dialect::Java | Dialect::Ecma | Dialect::Swift | Dialect::Ruby
+            Dialect::Java | Dialect::Ecma | Dialect::Swift | Dialect::Ruby | Dialect::Python
         )
     }
 
@@ -593,15 +605,26 @@ impl Scan<'_, '_, '_, '_> {
                     open(self);
                     return self.tok(e, q + 1, L::NoCapture);
                 }
-                Some(b'>') if self.javaish() || self.dotnet() || self.ruby() => {
+                Some(b'>') if self.javaish() || self.dotnet() || self.ruby() || self.python() => {
                     self.tok(p, e, L::GroupBegin);
                     open(self);
                     return self.tok(e, q + 1, L::Atomic);
                 }
+                // Python's `(?P=name)`, a reference
+                Some(b'P') if self.python() && self.is(q + 1, b'=').is_some() => {
+                    if let Some(t) = self.group_name(q + 2)
+                        && let Some(c) = self.is(t, b')')
+                    {
+                        self.tok(p, q + 2, L::BackReference);
+                        self.tok(q + 2, t, L::BackReferenceName);
+                        return self.tok(t, c, L::BackReference);
+                    }
+                }
                 Some(b'<' | b'P') => {
-                    // `(?<name>`, and RE2's, Rust's and Swift's `(?P<name>`
+                    // `(?<name>`, and RE2's, Rust's, Swift's and Python's `(?P<name>`
                     let lt = if next == Some(b'P') {
-                        self.is(q, b'P').filter(|_| self.re2() || self.swift())
+                        self.is(q, b'P')
+                            .filter(|_| self.re2() || self.swift() || self.python())
                     } else {
                         Some(q)
                     };
@@ -668,11 +691,11 @@ impl Scan<'_, '_, '_, '_> {
                         return r;
                     }
                 }
-                // .NET's and Swift's `(?#…)`, a comment to the next `)`
-                Some(b'#') if self.netish() => return self.net_comment(p, q),
-                // .NET's and Swift's `(?(name)` or `(?(1)`; else `(?` before a group, the
-                // condition
-                Some(b'(') if self.netish() => {
+                // .NET's, Swift's and Python's `(?#…)`, a comment to the next `)`
+                Some(b'#') if self.netish() || self.python() => return self.net_comment(p, q),
+                // .NET's, Swift's and Python's `(?(name)` or `(?(1)`; else `(?` before a group,
+                // the condition
+                Some(b'(') if self.netish() || self.python() => {
                     self.tok(p, e, L::GroupBegin);
                     open(self);
                     if let Some(r) = self.is(q, b'(')
@@ -697,6 +720,7 @@ impl Scan<'_, '_, '_, '_> {
                         Dialect::DotNet => b"imnsx",
                         Dialect::Swift => b"iJmnsUxwDPSWy",
                         Dialect::Ruby => b"imxadu",
+                        Dialect::Python => b"aiLmsux",
                         _ => b"idmsuxU",
                     };
                     let flag = |c: u8| flags.contains(&c);
@@ -757,7 +781,7 @@ impl Scan<'_, '_, '_, '_> {
                 |c| c.is_ascii_alphanumeric() || matches!(c, b'_' | 0x80..),
                 |c| c.is_ascii_alphanumeric() || matches!(c, b'_' | 0x80..),
             ),
-            Dialect::Swift | Dialect::Ruby => (
+            Dialect::Swift | Dialect::Ruby | Dialect::Python => (
                 |c| c.is_ascii_alphabetic() || matches!(c, b'_' | 0x80..),
                 |c| c.is_ascii_alphanumeric() || matches!(c, b'_' | 0x80..),
             ),
@@ -831,10 +855,11 @@ impl Scan<'_, '_, '_, '_> {
             Some(n) => self.tok(e, n, L::Negation),
             None => e,
         };
-        // RE2's, Rust's, .NET's, Swift's, Ruby's and POSIX's `[]a]`: a `]` first is a character
+        // RE2's, Rust's, .NET's, Swift's, Ruby's, POSIX's and Python's `[]a]`: a `]` first is a
+        // character
         match self
             .is(e, b']')
-            .filter(|_| self.re2() || self.netish() || self.ruby() || self.posix())
+            .filter(|_| self.re2() || self.netish() || self.ruby() || self.posix() || self.python())
         {
             Some(n) => n,
             None => e,
@@ -950,6 +975,8 @@ impl Scan<'_, '_, '_, '_> {
                     w.end
                 } else if s.ruby() {
                     s.ruby_escape(v.end, w.c, w.end)
+                } else if s.python() {
+                    s.python_escape(w.end, w.c)
                 } else if s.javaish() {
                     w.end
                 } else {
@@ -1037,6 +1064,9 @@ impl Scan<'_, '_, '_, '_> {
         }
         if self.ruby() {
             return self.backslash_ruby(p, e);
+        }
+        if self.python() {
+            return self.backslash_python(p, e);
         }
         if !self.javaish() {
             return self.backslash_ecma(p, e);
@@ -1145,6 +1175,61 @@ impl Scan<'_, '_, '_, '_> {
                 self.tok(p, q, L::Escape)
             }
             _ => self.tok(p, n, L::Escape),
+        }
+    }
+
+    /// `\…` in Python's `re`, its `\` at `p` to `e`: where it ends.
+    #[inline(never)]
+    fn backslash_python(&mut self, p: usize, e: usize) -> usize {
+        let Some(u) = self.unit(e) else {
+            return self.tok(p, e, L::Escape);
+        };
+        if u.host {
+            return self.tok(p, u.end, L::Escape);
+        }
+        let n = u.end;
+        let in_set = self.st & SET != 0;
+        let octal = |q: usize| self.b.get(q).is_some_and(|c| matches!(c, b'0'..=b'7'));
+        match u.c {
+            b'b' | b'B' | b'A' | b'Z' | b'z' if !in_set => self.tok(p, n, L::Anchor),
+            b'w' | b'W' | b's' | b'S' | b'd' | b'D' => self.tok(p, n, L::ClassEscape),
+            // a reference, but three octal digits (an escape)
+            b'1'..=b'9' if !in_set && !(octal(e) && octal(n) && octal(n + 1)) => {
+                let q = if self.b.get(n).is_some_and(u8::is_ascii_digit) {
+                    n + 1
+                } else {
+                    n
+                };
+                self.tok(p, q, L::BackReference)
+            }
+            c => {
+                let q = self.python_escape(n, c);
+                self.tok(p, q, L::Escape)
+            }
+        }
+    }
+
+    /// Where Python's escape `\c…` ends, `c` the character after its `\`, ending at `n`:
+    /// `\xHH`, `\uHHHH`, `\UHHHHHHHH`, `\N{name}` and up to three octal digits take more.
+    fn python_escape(&self, n: usize, c: u8) -> usize {
+        let hex = |q: usize| q < self.b.len() && self.b[q].is_ascii_hexdigit();
+        let octal = |q: usize| q < self.b.len() && matches!(self.b[q], b'0'..=b'7');
+        match c {
+            b'x' if hex(n) && hex(n + 1) => n + 2,
+            b'u' if (n..n + 4).all(hex) => n + 4,
+            b'U' if (n..n + 8).all(hex) => n + 8,
+            b'N' if self.b.get(n) == Some(&b'{') => (n + 1..self.b.len())
+                .take_while(|&q| self.unit(q).is_some_and(|u| !u.host))
+                .find(|&q| self.b[q] == b'}')
+                .map_or(n, |c| c + 1),
+            b'0'..=b'7' => {
+                let mut q = n;
+                while q < n + 2 && octal(q) {
+                    q += 1;
+                }
+                q
+            }
+            _ => n,
         }
     }
 

@@ -1062,11 +1062,14 @@ fn go() {
     readings("go", Lang::Go, text);
 }
 
-/// Python's readings (ADR-40): a docstring, decorators with and without a call, dicts, sets and
-/// tuples, f-strings with a conversion, a format spec and a nested replacement, a raw string's
-/// regex, SQL in a triple-quoted string with the string's escapes and placeholders in it, printf
-/// and `str.format` placeholders, py2 numbers, a line continuation, `print` as a statement and as a
-/// call.
+/// Python's readings (X-162, a scanner of ada's own): docstrings (any quote), decorators with and
+/// without a call and over lines, dicts, sets and tuples, f-strings with a conversion, a format
+/// spec and a nested replacement, PEP 701's quotes and lines in a field, a t-string, regexes at
+/// `re`'s calls (raw and cooked) and `match=`, a raw string read as a regex where `re` would take
+/// it and not where it wouldn't (a path), SQL by its uppercase keyword and by an execute-like
+/// call's first argument (a lone keyword not), printf, strftime and `str.format` placeholders,
+/// py2 numbers, a line continuation, `print` as a statement and as a call, PEP 695's type
+/// parameters and `type`, `match`/`case`, `except*`, keyword arguments, lambdas' parameters.
 #[test]
 fn python() {
     let text = concat!(
@@ -1108,6 +1111,29 @@ fn python() {
         "            return await x[1:2], ..., None, __name__, __init__\n",
         "    for i in range(10): del i\n",
         "    while not done: break\n",
+        "def first[T: (int, str), *Ts](xs: list[T], /, *, key=lambda v, w=1: v) -> T:\n",
+        "    'A docstring in single quotes.'\n",
+        "    type Pair[K] = tuple[K, K]\n",
+        "    match xs:\n",
+        "        case [x, *rest] if x:\n",
+        "            pass\n",
+        "        case _:\n",
+        "            pass\n",
+        "    match = re.match(r\"(?P<n>\\w+)=(?P=n)\", s) or re.compile(\"\\\\d+\")\n",
+        "    path, tex = r\"C:\\Users\\x\", r\"$\\mathrm{d}x$\"\n",
+        "    cur.execute(\"select a from t where b = %(b)s\", {\"b\": 1})\n",
+        "    methods = (\"DELETE\", \"GET\")\n",
+        "    msg = f\"{x[\"k\"]!r:>{w}} {y = }\" + t\"{z}\"\n",
+        "    with pytest.raises(ValueError, match=r\"bad \\d+\"):\n",
+        "        pass\n",
+        "    try:\n",
+        "        pass\n",
+        "    except* OSError as eg:\n",
+        "        raise\n",
+        "@pytest.mark.parametrize(\n",
+        "    \"a\", [1, 2],\n",
+        ")\n",
+        "def test(a): assert a\n",
     );
     readings("python", Lang::Python, text);
 }

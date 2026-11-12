@@ -221,8 +221,8 @@ const fn file(lang: Lang, size: u16, keep: [u8; SH_HELD], deep: bool, ph: u8) ->
 
 /// The languages a writer's file is read in, the smaller windows first (a theme's table by kind
 /// grows to the largest met). Each one's state kept as the census of its own files (`x153/foot`)
-/// uses it: SQL's levels, Python's levels and depth, PHP's frames, its layout's tag and its
-/// mode, C's and C++'s preprocessor withs.
+/// uses it: SQL's levels, Python's frames, depth, open string and head (X-162), PHP's frames, its
+/// layout's tag and its mode, C's and C++'s preprocessor withs.
 static FILES: [FileLang; 21] = [
     file(
         Lang::Bash,
@@ -319,7 +319,8 @@ static FILES: [FileLang; 21] = [
     file(
         Lang::Python,
         4096,
-        keep(&[0, 1, 2, 3, 4, 5, 6, 7, 8]),
+        // six frames, the open string's kind and the statement's head, the string's context
+        keep(&[0, 1, 2, 3, 4, 5, A_LO, A_HI, W_ + 12]),
         true,
         b'x',
     ),
@@ -373,7 +374,6 @@ fn fold(slot: u8, kind: u16) -> Option<u16> {
     let f = &FILES[i];
     let k = match f.lang {
         Lang::Bash => return (kind < 2 * crate::bash::TWIN).then_some(SH_BASE + kind),
-        Lang::Python => crate::python::fold(kind)?,
         Lang::Php => crate::php::fold(kind)?,
         _ => kind,
     };
@@ -389,7 +389,6 @@ fn unfold(kind: u16) -> Option<(Lang, u16)> {
         return None;
     }
     Some(match f.lang {
-        Lang::Python => (f.lang, crate::python::unfold(k)),
         Lang::Php => (f.lang, crate::php::unfold(k)),
         l => (l, k),
     })

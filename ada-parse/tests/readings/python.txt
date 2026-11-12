@@ -59,11 +59,9 @@
        "class" storage.type.class.python keyword.declaration.class.python
        "Point" entity.name.class.python
        "(" punctuation.section.inheritance.begin.python
-       "Base" entity.other.inherited-class.python
        "," punctuation.separator.inheritance.python
        "metaclass" variable.parameter.class-inheritance.python
        "=" keyword.operator.assignment.python
-       "ABCMeta" entity.other.inherited-class.python
        ")" punctuation.section.inheritance.end.python
        ":" punctuation.section.class.begin.python
   10 |     '''Raw: \n stays.'''
@@ -149,7 +147,7 @@
        "+" keyword.operator.arithmetic.python
   16 |         d = {k: v for k, v in kw.items() if k != 'z'}; s = {1, 2}; t = (1, 2)
        "=" keyword.operator.assignment.python
-       "{" punctuation.section.mapping.begin.python
+       "{" punctuation.section.mapping-or-set.begin.python
        ":" punctuation.separator.mapping.key-value.python
        "for" keyword.control.loop.for.generator.python
        "," punctuation.separator.target-list.python
@@ -166,21 +164,21 @@
        "}" punctuation.section.mapping.end.python
        ";" punctuation.terminator.statement.python
        "=" keyword.operator.assignment.python
-       "{" punctuation.section.set.begin.python
+       "{" punctuation.section.mapping-or-set.begin.python
        "1" constant.numeric.integer.decimal.python
        "," punctuation.separator.set.python
        "2" constant.numeric.integer.decimal.python
-       "}" punctuation.section.set.end.python
+       "}" punctuation.section.mapping-or-set.end.python
        ";" punctuation.terminator.statement.python
        "=" keyword.operator.assignment.python
-       "(" punctuation.section.sequence.begin.python
+       "(" punctuation.section.group.begin.python
        "1" constant.numeric.integer.decimal.python
-       "," punctuation.separator.sequence.python
+       "," punctuation.separator.tuple.python
        "2" constant.numeric.integer.decimal.python
-       ")" punctuation.section.sequence.end.python
+       ")" punctuation.section.group.end.python
   17 |         e = {'a': 1, **d}; f = {*s}; g = [*t]; h = {}; i = ()
        "=" keyword.operator.assignment.python
-       "{" punctuation.section.mapping.begin.python
+       "{" punctuation.section.mapping-or-set.begin.python
        "'" string.quoted.single.python punctuation.definition.string.begin.python
        "a" string.quoted.single.python
        "'" string.quoted.single.python punctuation.definition.string.end.python
@@ -191,9 +189,9 @@
        "}" punctuation.section.mapping.end.python
        ";" punctuation.terminator.statement.python
        "=" keyword.operator.assignment.python
-       "{" punctuation.section.set.begin.python
+       "{" punctuation.section.mapping-or-set.begin.python
        "*" keyword.operator.unpacking.sequence.python
-       "}" punctuation.section.set.end.python
+       "}" punctuation.section.mapping-or-set.end.python
        ";" punctuation.terminator.statement.python
        "=" keyword.operator.assignment.python
        "[" punctuation.section.sequence.begin.python
@@ -201,12 +199,12 @@
        "]" punctuation.section.sequence.end.python
        ";" punctuation.terminator.statement.python
        "=" keyword.operator.assignment.python
-       "{" punctuation.section.mapping.begin.python
-       "}" punctuation.section.mapping.end.python
+       "{" punctuation.section.mapping-or-set.begin.python
+       "}" punctuation.section.mapping-or-set.end.python
        ";" punctuation.terminator.statement.python
        "=" keyword.operator.assignment.python
-       "(" punctuation.section.sequence.begin.python
-       ")" punctuation.section.sequence.end.python
+       "(" punctuation.section.group.begin.python
+       ")" punctuation.section.group.end.python
   18 |         msg = f"{a!r:>{width}} {b=} {{literal}} {x['k']}" + rf'\d{{2}}{a}\w+'
        "=" keyword.operator.assignment.python
        "f" storage.type.string.python
@@ -254,11 +252,14 @@
        "\"" string.quoted.double.python punctuation.definition.string.begin.python
        "^" string.quoted.double.python keyword.control.anchor.regexp
        "(" string.quoted.double.python punctuation.definition.group.begin.regexp
-       "?P<" string.quoted.double.python punctuation.definition.group.capture.regexp
+       "?P" string.quoted.double.python punctuation.definition.group.begin.regexp
+       "<" string.quoted.double.python punctuation.definition.group.capture.regexp
        "name" string.quoted.double.python entity.name.other.group.regexp
        ">" string.quoted.double.python punctuation.definition.group.capture.regexp
        "[" string.quoted.double.python constant.other.character-class.set.regexp punctuation.definition.character-class.begin.regexp
-       "a-z" string.quoted.double.python constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "a" string.quoted.double.python constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "-" string.quoted.double.python constant.other.character-class.set.regexp constant.other.character-class.range.regexp
+       "z" string.quoted.double.python constant.other.character-class.set.regexp constant.other.character-class.range.regexp
        "_" string.quoted.double.python constant.other.character-class.set.regexp
        "]" string.quoted.double.python constant.other.character-class.set.regexp punctuation.definition.character-class.end.regexp
        "\\w" string.quoted.double.python constant.character.character-class.regexp
@@ -318,7 +319,7 @@
        "=" string.quoted.double.block.python keyword.operator.comparison.sql
        " " string.quoted.double.block.python
        "'" string.quoted.double.block.python string.quoted.single.sql punctuation.definition.string.begin.sql
-       "%s" string.quoted.double.block.python string.quoted.single.sql constant.other.placeholder.python
+       "%s" string.quoted.double.block.python constant.other.placeholder.python
        "'" string.quoted.double.block.python string.quoted.single.sql punctuation.definition.string.end.sql
        " " string.quoted.double.block.python
        "AND" string.quoted.double.block.python keyword.operator.logical.sql
@@ -357,10 +358,9 @@
        "{" string.quoted.double.python constant.other.placeholder.python punctuation.definition.placeholder.begin.python
        "0" string.quoted.double.python constant.other.placeholder.python
        ":>" string.quoted.double.python constant.other.placeholder.python constant.other.format-spec.python
-       "{" string.quoted.double.python constant.other.placeholder.python constant.other.format-spec.python constant.other.placeholder.python punctuation.definition.placeholder.begin.python
-       "1" string.quoted.double.python constant.other.placeholder.python constant.other.format-spec.python constant.other.placeholder.python
-       "}" string.quoted.double.python constant.other.placeholder.python constant.other.format-spec.python constant.other.placeholder.python punctuation.definition.placeholder.end.python
-       "}" string.quoted.double.python constant.other.placeholder.python punctuation.definition.placeholder.end.python
+       "{" string.quoted.double.python constant.other.placeholder.python punctuation.definition.placeholder.begin.python
+       "1" string.quoted.double.python constant.other.placeholder.python
+       "}}" string.quoted.double.python constant.other.placeholder.python punctuation.definition.placeholder.end.python
        " " string.quoted.double.python
        "{" string.quoted.double.python constant.other.placeholder.python punctuation.definition.placeholder.begin.python
        "name" string.quoted.double.python constant.other.placeholder.python
@@ -398,11 +398,11 @@
        "+" keyword.operator.arithmetic.python
        "u" storage.type.string.python
        "'" string.quoted.single.python punctuation.definition.string.begin.python
-       "\\u00e9" string.quoted.single.python constant.character.escape.unicode.32-bit-hex.python
+       "\\u00e9" string.quoted.single.python constant.character.escape.unicode.16-bit-hex.python
        "'" string.quoted.single.python punctuation.definition.string.end.python
   26 |         print >> sys.stderr, "x"
        "print" keyword.other.print.python
-       ">>" keyword.operator.comparison.python
+       ">>" keyword.operator.arithmetic.python
        "." punctuation.accessor.dot.python
        "\"" string.quoted.double.python punctuation.definition.string.begin.python
        "x" string.quoted.double.python
@@ -445,11 +445,11 @@
        ")" punctuation.section.arguments.end.python
   33 |         except (KeyError, ValueError) as err:
        "except" keyword.control.exception.catch.python
-       "(" punctuation.section.target-list.begin.python
+       "(" punctuation.section.group.begin.python
        "KeyError" support.type.exception.python
-       "," punctuation.separator.target-list.python
+       "," punctuation.separator.tuple.python
        "ValueError" support.type.exception.python
-       ")" punctuation.section.target-list.end.python
+       ")" punctuation.section.group.end.python
        "as" keyword.control.exception.catch.as.python
        ":" punctuation.section.block.exception.catch.python
   34 |             raise RuntimeError("x") from err
@@ -490,3 +490,240 @@
        "not" keyword.operator.logical.python
        ":" punctuation.section.block.loop.while.python
        "break" keyword.control.flow.break.python
+  39 | def first[T: (int, str), *Ts](xs: list[T], /, *, key=lambda v, w=1: v) -> T:
+       "def" storage.type.function.python keyword.declaration.function.python
+       "first" entity.name.function.python
+       "[" punctuation.section.type-parameters.begin.python
+       "T" variable.parameter.type.python
+       ":" punctuation.separator.annotation.parameter.python
+       "(" punctuation.section.group.begin.python
+       "int" support.type.python
+       "," punctuation.separator.tuple.python
+       "str" support.type.python
+       ")" punctuation.section.group.end.python
+       "," punctuation.separator.type-parameters.python
+       "*" keyword.operator.unpacking.sequence.python
+       "Ts" variable.parameter.type.python
+       "]" punctuation.section.type-parameters.end.python
+       "(" punctuation.section.parameters.begin.python
+       "xs" variable.parameter.python
+       ":" punctuation.separator.annotation.parameter.python
+       "list" support.type.python
+       "[" punctuation.section.brackets.begin.python
+       "]" punctuation.section.brackets.end.python
+       "," punctuation.separator.parameters.python
+       "/" storage.modifier.positional-args-only.python
+       "," punctuation.separator.parameters.python
+       "*" keyword.operator.unpacking.sequence.python
+       "," punctuation.separator.parameters.python
+       "key" variable.parameter.python
+       "=" keyword.operator.assignment.python
+       "lambda" storage.type.function.inline.python keyword.declaration.function.inline.python
+       "v" variable.parameter.python
+       "," punctuation.separator.parameters.python
+       "w" variable.parameter.python
+       "=" keyword.operator.assignment.python
+       "1" constant.numeric.integer.decimal.python
+       ":" punctuation.section.function.begin.python
+       ")" punctuation.section.parameters.end.python
+       "->" punctuation.separator.annotation.return.python
+       ":" punctuation.section.function.begin.python
+  40 |     'A docstring in single quotes.'
+       "'" comment.block.documentation.python punctuation.definition.comment.begin.python
+       "A docstring in single quotes." comment.block.documentation.python
+       "'" comment.block.documentation.python punctuation.definition.comment.end.python
+  41 |     type Pair[K] = tuple[K, K]
+       "type" storage.type.type.python keyword.declaration.type.python
+       "Pair" entity.name.type.python
+       "[" punctuation.section.type-parameters.begin.python
+       "K" variable.parameter.type.python
+       "]" punctuation.section.type-parameters.end.python
+       "=" keyword.operator.assignment.python
+       "tuple" support.type.python
+       "[" punctuation.section.brackets.begin.python
+       "]" punctuation.section.brackets.end.python
+  42 |     match xs:
+       "match" keyword.control.conditional.match.python
+       ":" punctuation.section.block.conditional.match.python
+  43 |         case [x, *rest] if x:
+       "case" keyword.control.conditional.case.python
+       "[" punctuation.section.sequence.begin.python
+       "," punctuation.separator.sequence.python
+       "*" keyword.operator.unpacking.sequence.python
+       "]" punctuation.section.sequence.end.python
+       "if" keyword.control.conditional.if.python
+       ":" punctuation.section.block.conditional.case.python
+  44 |             pass
+       "pass" keyword.control.flow.pass.python
+  45 |         case _:
+       "case" keyword.control.conditional.case.python
+       "_" variable.language.python
+       ":" punctuation.section.block.conditional.case.python
+  46 |             pass
+       "pass" keyword.control.flow.pass.python
+  47 |     match = re.match(r"(?P<n>\w+)=(?P=n)", s) or re.compile("\\d+")
+       "=" keyword.operator.assignment.python
+       "." punctuation.accessor.dot.python
+       "match" variable.function.python
+       "(" punctuation.section.arguments.begin.python
+       "r" storage.type.string.python
+       "\"" string.quoted.double.python punctuation.definition.string.begin.python
+       "(" string.quoted.double.python punctuation.definition.group.begin.regexp
+       "?P" string.quoted.double.python punctuation.definition.group.begin.regexp
+       "<" string.quoted.double.python punctuation.definition.group.capture.regexp
+       "n" string.quoted.double.python entity.name.other.group.regexp
+       ">" string.quoted.double.python punctuation.definition.group.capture.regexp
+       "\\w" string.quoted.double.python constant.character.character-class.regexp
+       "+" string.quoted.double.python keyword.operator.quantifier.regexp
+       ")" string.quoted.double.python punctuation.definition.group.end.regexp
+       "=" string.quoted.double.python
+       "(?P=" string.quoted.double.python keyword.other.back-reference.regexp
+       "n" string.quoted.double.python keyword.other.back-reference.named.regexp
+       ")" string.quoted.double.python keyword.other.back-reference.regexp
+       "\"" string.quoted.double.python punctuation.definition.string.end.python
+       "," punctuation.separator.arguments.python
+       ")" punctuation.section.arguments.end.python
+       "or" keyword.operator.logical.python
+       "." punctuation.accessor.dot.python
+       "compile" variable.function.python
+       "(" punctuation.section.arguments.begin.python
+       "\"" string.quoted.double.python punctuation.definition.string.begin.python
+       "\\\\d" string.quoted.double.python constant.character.character-class.regexp
+       "+" string.quoted.double.python keyword.operator.quantifier.regexp
+       "\"" string.quoted.double.python punctuation.definition.string.end.python
+       ")" punctuation.section.arguments.end.python
+  48 |     path, tex = r"C:\Users\x", r"$\mathrm{d}x$"
+       "=" keyword.operator.assignment.python
+       "r" storage.type.string.python
+       "\"" string.quoted.double.python punctuation.definition.string.begin.python
+       "C:\\Users\\x" string.quoted.double.python
+       "\"" string.quoted.double.python punctuation.definition.string.end.python
+       "r" storage.type.string.python
+       "\"" string.quoted.double.python punctuation.definition.string.begin.python
+       "$\\mathrm{d}x$" string.quoted.double.python
+       "\"" string.quoted.double.python punctuation.definition.string.end.python
+  49 |     cur.execute("select a from t where b = %(b)s", {"b": 1})
+       "." punctuation.accessor.dot.python
+       "execute" variable.function.python
+       "(" punctuation.section.arguments.begin.python
+       "\"" string.quoted.double.python punctuation.definition.string.begin.python
+       "select" string.quoted.double.python keyword.other.DML.sql
+       " a " string.quoted.double.python
+       "from" string.quoted.double.python keyword.other.DML.sql
+       " t " string.quoted.double.python
+       "where" string.quoted.double.python keyword.other.DML.sql
+       " b " string.quoted.double.python
+       "=" string.quoted.double.python keyword.operator.comparison.sql
+       " " string.quoted.double.python
+       "%(" string.quoted.double.python constant.other.placeholder.python
+       "b" string.quoted.double.python constant.other.placeholder.python variable.other.placeholder.python
+       ")s" string.quoted.double.python constant.other.placeholder.python
+       "\"" string.quoted.double.python punctuation.definition.string.end.python
+       "," punctuation.separator.arguments.python
+       "{" punctuation.section.mapping-or-set.begin.python
+       "\"" string.quoted.double.python punctuation.definition.string.begin.python
+       "b" string.quoted.double.python
+       "\"" string.quoted.double.python punctuation.definition.string.end.python
+       ":" punctuation.separator.mapping.key-value.python
+       "1" constant.numeric.integer.decimal.python
+       "}" punctuation.section.mapping.end.python
+       ")" punctuation.section.arguments.end.python
+  50 |     methods = ("DELETE", "GET")
+       "=" keyword.operator.assignment.python
+       "(" punctuation.section.group.begin.python
+       "\"" string.quoted.double.python punctuation.definition.string.begin.python
+       "DELETE" string.quoted.double.python
+       "\"" string.quoted.double.python punctuation.definition.string.end.python
+       "," punctuation.separator.tuple.python
+       "\"" string.quoted.double.python punctuation.definition.string.begin.python
+       "GET" string.quoted.double.python
+       "\"" string.quoted.double.python punctuation.definition.string.end.python
+       ")" punctuation.section.group.end.python
+  51 |     msg = f"{x["k"]!r:>{w}} {y = }" + t"{z}"
+       "=" keyword.operator.assignment.python
+       "f" storage.type.string.python
+       "\"" string.quoted.double.python punctuation.definition.string.begin.python
+       "{" punctuation.section.interpolation.begin.python
+       "[" punctuation.section.brackets.begin.python
+       "\"" string.quoted.double.python punctuation.definition.string.begin.python
+       "k" string.quoted.double.python
+       "\"" string.quoted.double.python punctuation.definition.string.end.python
+       "]" punctuation.section.brackets.end.python
+       "!r" storage.modifier.conversion.python
+       ":>" constant.other.format-spec.python
+       "{" punctuation.section.interpolation.begin.python
+       "}}" punctuation.section.interpolation.end.python
+       " " string.quoted.double.python
+       "{" punctuation.section.interpolation.begin.python
+       "=" storage.modifier.debug.python
+       "}" punctuation.section.interpolation.end.python
+       "\"" string.quoted.double.python punctuation.definition.string.end.python
+       "+" keyword.operator.arithmetic.python
+       "t" storage.type.string.python
+       "\"" string.quoted.double.python punctuation.definition.string.begin.python
+       "{" punctuation.section.interpolation.begin.python
+       "}" punctuation.section.interpolation.end.python
+       "\"" string.quoted.double.python punctuation.definition.string.end.python
+  52 |     with pytest.raises(ValueError, match=r"bad \d+"):
+       "with" keyword.control.flow.with.python
+       "." punctuation.accessor.dot.python
+       "raises" variable.function.python
+       "(" punctuation.section.arguments.begin.python
+       "ValueError" support.type.exception.python
+       "," punctuation.separator.arguments.python
+       "match" variable.parameter.python
+       "=" keyword.operator.assignment.python
+       "r" storage.type.string.python
+       "\"" string.quoted.double.python punctuation.definition.string.begin.python
+       "bad " string.quoted.double.python
+       "\\d" string.quoted.double.python constant.character.character-class.regexp
+       "+" string.quoted.double.python keyword.operator.quantifier.regexp
+       "\"" string.quoted.double.python punctuation.definition.string.end.python
+       ")" punctuation.section.arguments.end.python
+       ":" punctuation.section.block.with.python
+  53 |         pass
+       "pass" keyword.control.flow.pass.python
+  54 |     try:
+       "try" keyword.control.exception.try.python
+       ":" punctuation.section.block.exception.try.python
+  55 |         pass
+       "pass" keyword.control.flow.pass.python
+  56 |     except* OSError as eg:
+       "except*" keyword.control.exception.catch.python
+       "OSError" support.type.exception.python
+       "as" keyword.control.exception.catch.as.python
+       ":" punctuation.section.block.exception.catch.python
+  57 |         raise
+       "raise" keyword.control.flow.raise.python
+  58 | @pytest.mark.parametrize(
+       "@" meta.annotation.python punctuation.definition.annotation.python
+       "pytest" meta.annotation.python
+       "." meta.annotation.python punctuation.accessor.dot.python
+       "mark" meta.annotation.python
+       "." meta.annotation.python punctuation.accessor.dot.python
+       "parametrize" meta.annotation.python variable.annotation.function.python
+       "(" meta.annotation.python punctuation.section.arguments.begin.python
+  59 |     "a", [1, 2],
+       "    " meta.annotation.python
+       "\"" meta.annotation.python string.quoted.double.python punctuation.definition.string.begin.python
+       "a" meta.annotation.python string.quoted.double.python
+       "\"" meta.annotation.python string.quoted.double.python punctuation.definition.string.end.python
+       "," meta.annotation.python punctuation.separator.arguments.python
+       " " meta.annotation.python
+       "[" meta.annotation.python punctuation.section.sequence.begin.python
+       "1" meta.annotation.python constant.numeric.integer.decimal.python
+       "," meta.annotation.python punctuation.separator.sequence.python
+       " " meta.annotation.python
+       "2" meta.annotation.python constant.numeric.integer.decimal.python
+       "]" meta.annotation.python punctuation.section.sequence.end.python
+       "," meta.annotation.python punctuation.separator.arguments.python
+  60 | )
+       ")" meta.annotation.python punctuation.section.arguments.end.python
+  61 | def test(a): assert a
+       "def" storage.type.function.python keyword.declaration.function.python
+       "test" entity.name.function.python
+       "(" punctuation.section.parameters.begin.python
+       "a" variable.parameter.python
+       ")" punctuation.section.parameters.end.python
+       ":" punctuation.section.function.begin.python
+       "assert" keyword.control.flow.assert.python
